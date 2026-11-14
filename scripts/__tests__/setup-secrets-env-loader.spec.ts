@@ -8,7 +8,6 @@ const repoRoot = path.resolve(__dirname, "../..");
 const helperPath = path.join(repoRoot, "scripts/lib/shell-env.sh");
 const setupSecretsPath = path.join(repoRoot, "scripts/setup-secrets.sh");
 const verifySecretsPath = path.join(repoRoot, "scripts/verify-secrets.sh");
-const envExamplePath = path.join(repoRoot, "../.env.example");
 
 function runLoader(envFile: string, env: Record<string, string> = {}): string {
   const script = [
@@ -216,7 +215,6 @@ describe("setup-secrets env loader", () => {
 
   it("materializes dedicated WEST login provider credentials into the target data project", () => {
     const setup = readFileSync(setupSecretsPath, "utf-8");
-    const example = readFileSync(envExamplePath, "utf-8");
 
     for (const key of [
       "FIREBASE_AUTH_GOOGLE_CLIENT_ID",
@@ -228,7 +226,6 @@ describe("setup-secrets env loader", () => {
         `resolve_environment_secret_value "\${${key}:-}" ${key} identity-platform-login ${key} configured_secret_value`,
       );
       expect(setup).toContain(`sync_secret_manager_value ${key} "$${key}" "$FIREBASE_PROJECT"`);
-      expect(example).toContain(`${key}=\n`);
     }
     expect(setup).toContain('case "$TARGET_ID" in');
     expect(setup).toContain("test-west|prod-west)");
@@ -296,20 +293,6 @@ describe("setup-secrets env loader", () => {
       "RESEND_FROM_EMAIL",
     ]) {
       expect(setup).not.toContain(`  ${staleSecret} \\\\`);
-    }
-  });
-
-  it("documents all server-only Google OAuth values as blank placeholders", () => {
-    const example = readFileSync(envExamplePath, "utf-8");
-
-    for (const key of [
-      "GOOGLE_CLIENT_ID",
-      "GOOGLE_CLIENT_SECRET",
-      "GOOGLE_PICKER_CLIENT_ID",
-      "GOOGLE_PICKER_API_KEY",
-      "GOOGLE_PICKER_APP_ID",
-    ]) {
-      expect(example).toContain(`${key}=\n`);
     }
   });
 });

@@ -2,7 +2,7 @@ import { brokerRequestLimit } from "../middleware/broker-request-limit.js";
 import { Router, type Request } from "express";
 import { readGatewayAuthorizationInStore } from "@octogee/core/gateway-live-release";
 import { isCanonicalWorkspaceMembership } from "@octogee/core/gateway-principal-access";
-import type { SizingKeyReader } from "@octogee/core/user-activation-lease";
+import type { SizingKeyReader } from "@octogee/core/sizing-key";
 import type { PlatformStateRepositories, PlatformStateStore } from "@octogee/core/platform-state";
 import { isValidGatewayId } from "@octogee/shared/types/glm";
 import { resolveWorkspaceConversation, resolveWorkspaceToolChannel, resolveWorkspaceToolControl, type WorkspaceConversationDeps } from "../lib/workspace-conversation.js";

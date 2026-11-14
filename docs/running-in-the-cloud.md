@@ -9,9 +9,9 @@ not run a database or object store in your cluster on this path.
 controller, the platform API, the gateway edge or the LLM broker, so there are
 no users, shared gateways or isolated gateways to manage. The gateway is the
 stock `ghcr.io/openclaw/openclaw` image, and it holds the model keys you export
-in its own environment. The full platform runs only on a local kind cluster
-today; see [The full platform on kind](kind.md). It has not yet run on a cloud
-account.
+in its own environment. The full platform runs on a local kind cluster, see
+[The full platform on kind](kind.md), or on GKE, see
+[The full platform on GKE](gke.md).
 
 **The foundation has not run on a real cloud account either.** The Google
 Cloud and AWS recipes pass their tests against stubbed provider command-line

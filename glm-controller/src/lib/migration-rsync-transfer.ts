@@ -16,7 +16,7 @@ import {
   type PushRsyncStateRequestBody,
   SIGNATURE_HEADER,
 } from "@octogee/shared/types/fleet-controller";
-import { isUserActivateOperationIdFor } from "@octogee/core/user-activation-lease";
+import { isUserActivateOperationIdFor } from "@octogee/core/isolated-operation-ids";
 import type { MigrationSyncMode } from "@octogee/core/fleet-migration";
 import type { MigrationClient } from "@octogee/core/fleet-migration-client";
 import { gatewayScopedJobId, signFleetRequest } from "@octogee/core/fleet-signature";

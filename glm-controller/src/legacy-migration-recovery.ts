@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
-import { isUserActivateOperationIdFor } from "@octogee/core/user-activation-lease";
+import { isUserActivateOperationIdFor } from "@octogee/core/isolated-operation-ids";
 import { gatewayRetiredInStore, isolatedRuntimeMutationFenced } from "@octogee/core/gateway-retirement-claim";
 import type { PlatformUserRecord, GatewayAssignment, OperationPatch, PlatformStateStore, PlatformStateTransaction, Stored } from "@octogee/core/platform-state";
 import { readSchedulerMigrationIdentity, type Operation, type SchedulerHandoffState } from "@octogee/shared/types/glm";
@@ -108,10 +108,12 @@ export function legacyAttemptNeverQuiesced(operation: Operation): boolean {
   return steps?.length === 1 && steps[0]?.name === "keys-sync-state" && steps[0].status === "failed";
 }
 
-const QUIESCED_MOVE_STEPS = ["keys-sync-state:done", "pre-sync-state:done", "wait-for-active-work:done", "quiesce-source:done", "flush-source:done"];
+const QUIESCED_MOVE_STEPS = ["keys-sync-state:done", "pre-sync-state:done", "wait-for-active-work:done", "quiesce-source:done"];
+const FLUSHED_MOVE_STEPS = [...QUIESCED_MOVE_STEPS, "flush-source:done"];
 const UNCONFIRMED_TARGET_UNMOUNT_AFTER_QUIESCE = [
-  [...QUIESCED_MOVE_STEPS, "final-sync-state:failed", "rollback:unmount-target:failed"],
-  [...QUIESCED_MOVE_STEPS, "final-sync-state:done", "verify-target:failed", "rollback:unmount-target:failed"],
+  [...QUIESCED_MOVE_STEPS, "flush-source:failed", "rollback:unmount-target:failed"],
+  [...FLUSHED_MOVE_STEPS, "final-sync-state:failed", "rollback:unmount-target:failed"],
+  [...FLUSHED_MOVE_STEPS, "final-sync-state:done", "verify-target:failed", "rollback:unmount-target:failed"],
 ];
 
 function quiescedMoveWithUnconfirmedTargetUnmount(steps: Operation["steps"] | undefined): boolean {

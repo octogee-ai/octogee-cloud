@@ -157,16 +157,16 @@ describe("failed preparation whose target unmount was never confirmed", () => {
 describe("failed move to an isolated gateway whose target unmount was never confirmed after the source quiesced", () => {
   const target = "alice-xs-12345678";
   const retirementId = `operator-retire-${target}`;
-  type Scenario = "gone" | "retired" | "verify-target" | "running" | "retirement-failed" | "target-assigned" | "committed" |
+  type Scenario = "gone" | "retired" | "verify-target" | "flush-source" | "running" | "retirement-failed" | "target-assigned" | "committed" |
     "source-moved" | "other-marker" | "quiesced-by-another-move" | "activation" | "handoff-held" | "cutover-failed" | "unmount-done";
-  const forward = (failed: "final-sync-state" | "verify-target" | "cutover-firestore") => {
+  const forward = (failed: "flush-source" | "final-sync-state" | "verify-target" | "cutover-firestore") => {
     const order = ["keys-sync-state", "pre-sync-state", "wait-for-active-work", "quiesce-source", "flush-source", "final-sync-state", "verify-target", "cutover-firestore"];
     return order.slice(0, order.indexOf(failed) + 1).map((name) => ({ name, status: name === failed ? "failed" as const : "done" as const }));
   };
 
   function unconfirmedTargetUnmount(scenario: Scenario) {
     const h = fixture("mig-op-1:scheduler:1:claim:1000");
-    const failedStep = scenario === "verify-target" ? "verify-target" : scenario === "cutover-failed" ? "cutover-firestore" : "final-sync-state";
+    const failedStep = scenario === "verify-target" || scenario === "flush-source" ? scenario : scenario === "cutover-failed" ? "cutover-firestore" : "final-sync-state";
     Object.assign(h.operation, {
       error: `/push-rsync-state/shared-a: 500 connection refused — rollback:unmount-target: /unmount/${target} transport failed: fetch failed`,
       steps: [...forward(failedStep), { name: "rollback:unmount-target", status: scenario === "unmount-done" ? "done" : "failed", error: "transport failed: fetch failed" }],
@@ -196,7 +196,7 @@ describe("failed move to an isolated gateway whose target unmount was never conf
     return { ...h, logs, sweep, marker, source };
   }
 
-  it.each(["gone", "retired", "verify-target"] as const)("queues source recovery that skips the target once the target is retired (%s)", async (scenario) => {
+  it.each(["gone", "retired", "verify-target", "flush-source"] as const)("queues source recovery that skips the target once the target is retired (%s)", async (scenario) => {
     const h = unconfirmedTargetUnmount(scenario);
     const steps = h.operation.steps;
     await h.sweep();

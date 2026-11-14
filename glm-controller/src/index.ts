@@ -111,14 +111,13 @@ import {
 import { isolatedPrelaunchReserved, readIsolatedPrelaunchRefresh, runtimeMatchesPrelaunchRelease } from "./isolated-prelaunch.js";
 
 import {
-  assertSurgeAssignmentCoverage,
   reconcileSurgeUserHandoff,
   SurgeAssignmentBusyError,
   type SurgeUserHandoffDeps,
   type SurgeUserHandoffResult,
 } from "./surge-user-handoff.js";
 
-import { pruneSurgeOrphanAssignments } from "./surge-orphan-assignment.js";
+import { readSurgeAssignments } from "./surge-orphan-assignment.js";
 import {
   createSurgePodTransport,
   deleteSurgePod,
@@ -281,7 +280,7 @@ import {
   type CutoverDeps,
   type FleetStateDeps,
 } from "@octogee/core/fleet-state";
-import type { SizingKeyReader } from "@octogee/core/user-activation-lease";
+import type { SizingKeyReader } from "@octogee/core/sizing-key";
 import {
   provisionGatewayAuthSecret,
   deleteSecret,
@@ -2458,35 +2457,8 @@ function buildSurgeHandoffDeps(input: {
     deleteCrashLoopingPod: ({ pod }) => deleteSurgePod(runKubectl, NAMESPACE, pod),
     claimCrashLoopEviction: ({ gatewayId, imageTag, pod }) =>
       claimCrashLoopEviction(store, { gatewayId, imageTag, pod, now: Date.now() }),
-    readAssignments: async (gatewayId) => {
-      const [assignments, userRecords] = await Promise.all([
-        store.gateways.assignments.list(gatewayId),
-        store.users.records.listByGateway(gatewayId),
-      ]);
-      const projected = assignments.map((assignment) => ({
-        uid: assignment.uid,
-        slug: assignment.slug,
-        state: assignment.state,
-        epoch: assignment.epoch,
-        updatedAt: assignment.updatedAt,
-        updatedByOperationId: assignment.updatedByOperationId,
-        ...(assignment.sharedSurgeForwardRecovery ? { sharedSurgeForwardRecovery: assignment.sharedSurgeForwardRecovery } : {}),
-      }));
-      const assignedUsers = userRecords.map((userRecord) => {
-        if (!userRecord.slug) throw new Error(`assigned user ${userRecord.uid} has no gateway slug`);
-        return { uid: userRecord.uid, slug: userRecord.slug };
-      });
-      const retained = await pruneSurgeOrphanAssignments({
-        store,
-        gatewayId,
-        assignments: projected,
-        users: assignedUsers,
-        now: Date.now(),
-        log,
-      });
-      assertSurgeAssignmentCoverage(retained, assignedUsers);
-      return retained;
-    },
+    readAssignments: (gatewayId, liveRoster) =>
+      readSurgeAssignments({ store, gatewayId, ...(liveRoster ? { liveRoster } : {}), now: Date.now(), log }),
     readSystemConfigCommit: (pod) => readPodSystemConfigCommit(runKubectl, NAMESPACE, pod),
     markSharedSurgeForwardRecovery: (assignment) => markSharedSurgeForwardRecovery({ store, log }, assignment),
     rebindSharedSurgeForwardRecovery: (assignment) => rebindSharedSurgeForwardRecovery({ store, log }, assignment),

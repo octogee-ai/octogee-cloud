@@ -3,7 +3,7 @@ import request from "supertest";
 import type { Firestore } from "firebase-admin/firestore";
 import { expect, it } from "vitest";
 import { createOpenClawRuntimeBrokerRoutes } from "../routes/openclaw-runtime-broker.js";
-import { firestoreSizingKeyReader } from "@octogee/core/user-activation-lease";
+import { firestoreSizingKeyReader } from "@octogee/core/sizing-key";
 import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
 
 const OWNER = "a".repeat(26);

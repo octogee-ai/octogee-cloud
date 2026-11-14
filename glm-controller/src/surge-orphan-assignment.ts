@@ -1,16 +1,18 @@
 import { isolatedRuntimeMutationFenced } from "@octogee/core/gateway-retirement-claim";
 import type { FleetRegistryRecord, PlatformStateStore } from "@octogee/core/platform-state";
 import { GATEWAY_UNREACHABLE_AFTER_MS } from "@octogee/shared/types/fleet-controller";
-import type { SurgeAssignment } from "./surge-user-handoff.js";
+import { assertSurgeAssignmentCoverage, type SurgeAssignment, type SurgeLiveRoster } from "./surge-user-handoff.js";
 
 type AssignedUser = { uid: string; slug: string };
 
 function runtimeProvesAbsent(
   runtime: FleetRegistryRecord | null,
+  liveRoster: SurgeLiveRoster | undefined,
   gatewayId: string,
   slug: string,
   now: number,
 ): boolean {
+  if (liveRoster) return !liveRoster.mountedCustomers.includes(slug);
   const heartbeat = runtime?.heartbeat;
   const mounted = heartbeat?.mountedCustomers;
   const observedAt = heartbeat?.lastHeartbeatAt;
@@ -32,9 +34,10 @@ async function pruneOne(input: {
   store: PlatformStateStore;
   gatewayId: string;
   assignment: SurgeAssignment;
+  liveRoster: SurgeLiveRoster | undefined;
   now: number;
 }): Promise<boolean | "restore-fenced"> {
-  const { store, gatewayId, assignment, now } = input;
+  const { store, gatewayId, assignment, liveRoster, now } = input;
   const id = operationId(gatewayId, assignment);
   return store.transaction({ label: "surge-orphan-assignment.prune" }, async (tx) => {
     const [stored, owner, runtime, journal] = await Promise.all([
@@ -47,7 +50,7 @@ async function pruneOne(input: {
     if (owner && isolatedRuntimeMutationFenced(owner)) return "restore-fenced";
     if (stored.slug !== assignment.slug || stored.epoch !== assignment.epoch) return false;
     if (owner?.gateway?.gatewayId === gatewayId && owner.slug === assignment.slug) return false;
-    if (!runtimeProvesAbsent(runtime, gatewayId, assignment.slug, now)) return false;
+    if (!runtimeProvesAbsent(runtime, liveRoster, gatewayId, assignment.slug, now)) return false;
     if (journal) {
       throw new Error(`orphan assignment repair journal ${id} already exists while assignment remains`);
     }
@@ -81,6 +84,7 @@ export async function pruneSurgeOrphanAssignments(input: {
   gatewayId: string;
   assignments: readonly SurgeAssignment[];
   users: readonly AssignedUser[];
+  liveRoster?: SurgeLiveRoster;
   now: number;
   log: (message: string) => void;
 }): Promise<SurgeAssignment[]> {
@@ -95,6 +99,7 @@ export async function pruneSurgeOrphanAssignments(input: {
       store: input.store,
       gatewayId: input.gatewayId,
       assignment,
+      liveRoster: input.liveRoster,
       now: input.now,
     });
     if (removed === "restore-fenced") {
@@ -109,5 +114,43 @@ export async function pruneSurgeOrphanAssignments(input: {
       `uid=${assignment.uid} slug=${assignment.slug}`,
     );
   }
+  return retained;
+}
+
+export async function readSurgeAssignments(input: {
+  store: PlatformStateStore;
+  gatewayId: string;
+  liveRoster?: SurgeLiveRoster;
+  now: number;
+  log: (message: string) => void;
+}): Promise<SurgeAssignment[]> {
+  const { store, gatewayId } = input;
+  const [assignments, userRecords] = await Promise.all([
+    store.gateways.assignments.list(gatewayId),
+    store.users.records.listByGateway(gatewayId),
+  ]);
+  const projected = assignments.map((assignment) => ({
+    uid: assignment.uid,
+    slug: assignment.slug,
+    state: assignment.state,
+    epoch: assignment.epoch,
+    updatedAt: assignment.updatedAt,
+    updatedByOperationId: assignment.updatedByOperationId,
+    ...(assignment.sharedSurgeForwardRecovery ? { sharedSurgeForwardRecovery: assignment.sharedSurgeForwardRecovery } : {}),
+  }));
+  const assignedUsers = userRecords.map((userRecord) => {
+    if (!userRecord.slug) throw new Error(`assigned user ${userRecord.uid} has no gateway slug`);
+    return { uid: userRecord.uid, slug: userRecord.slug };
+  });
+  const retained = await pruneSurgeOrphanAssignments({
+    store,
+    gatewayId,
+    assignments: projected,
+    users: assignedUsers,
+    ...(input.liveRoster ? { liveRoster: input.liveRoster } : {}),
+    now: input.now,
+    log: input.log,
+  });
+  assertSurgeAssignmentCoverage(retained, assignedUsers);
   return retained;
 }

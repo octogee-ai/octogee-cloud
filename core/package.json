@@ -125,9 +125,13 @@
       "types": "./dist/platform-state-user-accounts.d.ts",
       "default": "./dist/platform-state-user-accounts.js"
     },
-    "./user-activation-lease": {
-      "types": "./dist/user-activation-lease.d.ts",
-      "default": "./dist/user-activation-lease.js"
+    "./sizing-key": {
+      "types": "./dist/sizing-key.d.ts",
+      "default": "./dist/sizing-key.js"
+    },
+    "./isolated-operation-ids": {
+      "types": "./dist/isolated-operation-ids.d.ts",
+      "default": "./dist/isolated-operation-ids.js"
     },
     "./byosub-onboarding": {
       "types": "./dist/byosub-onboarding.d.ts",
@@ -589,8 +593,11 @@
       "auth-profile-sqlite": [
         "dist/auth-profile-sqlite.d.ts"
       ],
-      "builder-activation-lease": [
-        "dist/user-activation-lease.d.ts"
+      "isolated-operation-ids": [
+        "dist/isolated-operation-ids.d.ts"
+      ],
+      "sizing-key": [
+        "dist/sizing-key.d.ts"
       ],
       "byosub-onboarding": [
         "dist/byosub-onboarding.d.ts"
