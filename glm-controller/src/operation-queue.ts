@@ -1,5 +1,5 @@
 import { hasUserActivationTargetRollback } from './user-activation-roll-recovery.js';
-import { isUserActivateOperationIdFor, isUserReturnOperationIdFor } from "@octogee/core/user-activation-lease";
+import { isUserActivateOperationIdFor, isUserReturnOperationIdFor } from "@octogee/core/isolated-operation-ids";
 import type { Operation } from "@octogee/shared/types/glm";
 import { serialFleetOperationsConflict, type RolloutLane } from "@octogee/core/fleet-operation-lock";
 import { MIGRATE_USER_KIND } from "./operation-kinds.js";

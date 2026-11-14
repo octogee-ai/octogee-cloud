@@ -30,7 +30,7 @@ import {
 } from "@octogee/shared/types/identity";
 import { projectGatewayDesiredRootForGateway } from "@octogee/shared/types/gateway-releases";
 import { projectAgentSecretDocId } from "@octogee/core/mattermost/project-agent";
-import type { SizingKeyReader } from "@octogee/core/user-activation-lease";
+import type { SizingKeyReader } from "@octogee/core/sizing-key";
 import {
   DuplicateRecordError,
   type PlatformUserRecord,
