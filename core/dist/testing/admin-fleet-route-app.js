@@ -3,7 +3,7 @@ import express from "express";
 import { GLM_GATEWAYS_COLLECTION, GLM_OPERATIONS_COLLECTION } from "@octogee/shared/types/glm";
 import { addAdminFleetRoutes } from "../admin-fleet-router.js";
 import { createJournalFixtureStore, journalRowsIn, } from "./journal-store.js";
-import { firestoreUserAccountReader } from "../user-account.js";
+import { firestoreUserAccountReader } from "./firestore-user-accounts.js";
 export function valueAtPath(data, path) {
     let cursor = data;
     for (const part of path.split(".")) {

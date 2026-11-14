@@ -7,7 +7,7 @@ import { GLM_GATEWAYS_COLLECTION, GLM_OPERATIONS_COLLECTION } from "@octogee/sha
 
 import { addAdminFleetRoutes } from "./admin-fleet-router.js";
 import { createDocumentFixtureStore, FIXTURE_SIZING_PROFILES } from "./testing/journal-store.js";
-import { firestoreUserAccountReader } from "./user-account.js";
+import { firestoreUserAccountReader } from "./testing/firestore-user-accounts.js";
 
 type Row = Record<string, unknown>;
 type Seed = Record<string, Row>;

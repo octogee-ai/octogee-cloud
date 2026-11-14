@@ -55,7 +55,7 @@ export function isTargetDirectoryEntryReadable(
 }
 
 export function resolveCommitAuthor(
-  user: FirebaseFirestore.DocumentData | undefined,
+  user: Record<string, unknown> | undefined,
   slug: string,
 ): CommitAuthor {
   const data = user as { displayName?: string; email?: string; username?: string } | undefined;

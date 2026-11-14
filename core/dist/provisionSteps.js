@@ -9,13 +9,11 @@ import { filterOutUserBindings } from "./apply-config-patch.js";
 import { parseTimeZone } from "@octogee/shared/types/time-zone";
 import { userEntitlements } from "@octogee/shared/types/user-entitlements";
 import { UNKNOWN_TIME_ZONE } from "./context-file-convergence.js";
-import { FieldValue } from "firebase-admin/firestore";
-import { DEFAULT_AGENT_LOOK } from "@octogee/shared/types/agent-characters";
 import * as fs from "fs";
 import * as path from "path";
 import { isValidUsername, usernameValidationError, } from "@octogee/shared/types/identity";
 import { log, OPENCLAW_DIR, CUSTOMERS_DIR, agentExists, } from "./config.js";
-import { db, platformStateStore } from "./firebase.js";
+import { platformStateStore } from "./provisioner-platform-state.js";
 import { MissingRecordError } from "./platform-state/errors.js";
 import { CREW_IDENTITY } from "./crew.js";
 import { workspaceRepoName } from "./gitea-naming.js";
@@ -189,37 +187,6 @@ export const noProvisioningProjection = {
     agent: async () => undefined,
     workspaceEntry: async () => undefined,
 };
-function storedString(value) {
-    return typeof value === "string" ? value : null;
-}
-export const firestoreProvisioningProjection = {
-    storedMattermostNames: async (uid, slug) => {
-        const [user, coachChannel] = await Promise.all([
-            db.doc(`users/${uid}`).get(),
-            db.doc(`workspaces/${slug}/channels/coach-dm`).get(),
-        ]);
-        return {
-            username: storedString(user.data()?.mattermost?.username),
-            coachChannelName: storedString(coachChannel.data()?.name),
-        };
-    },
-    systemConfig: async (ctx) => {
-        await db.doc(`users/${ctx.uid}/system/config`).set({ updatedAt: FieldValue.serverTimestamp() }, { merge: true });
-    },
-    user: async (ctx, mmUpdate) => {
-        await db.collection("users").doc(ctx.uid).update(buildUserProductFields(ctx, mmUpdate));
-    },
-    workspace: async (ctx) => {
-        await db.doc(`workspaces/${ctx.slug}`).set({ name: ctx.slug, ownerDisplayName: ctx.slug, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
-    },
-    channel: async (ctx, channelId, name) => {
-        await db.doc(`workspaces/${ctx.slug}/channels/${channelId}`).set({ name }, { merge: true });
-    },
-    agent: async (ctx) => {
-        await db.doc(`agents/${ctx.uid}`).set(buildDefaultAgentDoc(ctx.uid), { merge: true });
-    },
-    workspaceEntry: (ctx, allAgentIds) => updateUserWorkspaceEntry(ctx, buildProvisioningSnapshot(ctx, allAgentIds)),
-};
 export async function markProvisioningComplete(ctx, mmUpdate, allAgentIds, projection) {
     await writeDefaultRole(ctx);
     await projection.systemConfig(ctx);
@@ -234,17 +201,6 @@ export async function markProvisioningComplete(ctx, mmUpdate, allAgentIds, proje
     await projection.workspaceEntry(ctx, allAgentIds);
 }
 const SERVER_NOW = { serverNow: true };
-function buildProvisioningSnapshot(ctx, allAgentIds) {
-    return {
-        status: "complete",
-        version: "v1",
-        slug: ctx.slug,
-        ...(allAgentIds.length > 0 ? { agentIds: FieldValue.arrayUnion(...allAgentIds) } : {}),
-        activatedAgents: ["coach"],
-        customerDir: ctx.customerDir,
-        provisionedAt: FieldValue.serverTimestamp(),
-    };
-}
 async function writeDefaultRole(ctx) {
     await platformStateStore.transaction({ label: "provisioning.default-role" }, async (transaction) => {
         const user = await transaction.users.records.get(ctx.uid);
@@ -355,30 +311,4 @@ async function writeAgentIdentity(ctx, mmUpdate) {
         at: SERVER_NOW,
     });
     return true;
-}
-export function buildDefaultAgentDoc(uid) {
-    return {
-        id: uid,
-        name: "Octo",
-        persona: "",
-        avatarEmoji: "🐙",
-        look: DEFAULT_AGENT_LOOK,
-        createdAt: FieldValue.serverTimestamp(),
-        updatedAt: FieldValue.serverTimestamp(),
-    };
-}
-async function updateUserWorkspaceEntry(ctx, provisioningObj) {
-    const wsSnap = await db
-        .collection("users")
-        .doc(ctx.uid)
-        .collection("workspaces")
-        .where("workspaceSlug", "==", ctx.slug)
-        .limit(1)
-        .get();
-    if (!wsSnap.empty) {
-        await wsSnap.docs[0].ref.update({
-            ...Object.fromEntries(Object.entries(provisioningObj).map(([key, value]) => [`provisioning.openclaw.${key}`, value])),
-            updatedAt: FieldValue.serverTimestamp(),
-        });
-    }
 }

@@ -1,6 +1,5 @@
 import type { Request, Response } from "express";
 import type { Project } from "@octogee/shared/types/index";
-import { db } from "./db.js";
 import { userAccounts } from "./user-accounts.js";
 import { readProject } from "./firestoreReads.js";
 import { logger } from "../middleware/logging.js";
@@ -9,7 +8,7 @@ import { isValidProjectId, USERNAME_RE } from "@octogee/shared/types/identity";
 import { userEntitlements } from "@octogee/shared/types/user-entitlements";
 
 export type ProjectCtx = {
-  projectRef: FirebaseFirestore.DocumentReference;
+  projectPath: string;
   project: Project;
   uid: string;
   wid: string;
@@ -70,7 +69,6 @@ export async function withProject(
       return;
     }
 
-    const projectRef = db.doc(`workspaces/${wid}/projects/${pid}`);
     const project = await readProject(wid, pid);
     if (!project) {
       res.status(404).json({ error: "Project not found" });
@@ -101,7 +99,7 @@ export async function withProject(
       return;
     }
 
-    await handler({ projectRef, project, uid: req.uid!, wid, pid });
+    await handler({ projectPath: `workspaces/${wid}/projects/${pid}`, project, uid: req.uid!, wid, pid });
   } catch (err: unknown) {
     logger.error(`${logTag} ${wid}/${pid}:`, { err });
     respondToHandlerError(res, err, opts.errorMessage ?? "Operation failed");

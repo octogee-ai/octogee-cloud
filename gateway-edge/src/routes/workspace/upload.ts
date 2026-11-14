@@ -25,7 +25,7 @@ import { invalidateWorkspaceFileResponseCache } from "./file-response-cache.js";
 const router = Router();
 
 async function uploadStorageLimitBytes(
-  userData: FirebaseFirestore.DocumentData | undefined,
+  userData: Record<string, unknown> | undefined,
   target: FileTarget,
 ): Promise<number | undefined> {
   const compiledLimit = freeWorkspaceStorageLimitBytes(

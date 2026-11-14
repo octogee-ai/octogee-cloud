@@ -33,7 +33,7 @@ const h = vi.hoisted(() => {
   };
 });
 
-vi.mock("../firebase.js", async () => {
+vi.mock("../provisioner-platform-state.js", async () => {
   const { createDocumentFixtureStore } = await import("../testing/journal-store.js");
   return { db: h.db, platformStateStore: createDocumentFixtureStore(h.docs) };
 });

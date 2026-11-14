@@ -1,5 +1,5 @@
 import { log } from "../config.js";
-import { platformStateStore } from "../firebase.js";
+import { platformStateStore } from "../provisioner-platform-state.js";
 import { mmApiCall, getMmAdminToken } from "./client.js";
 
 export async function ensureAdminCredentials(): Promise<void> {

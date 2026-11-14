@@ -28,7 +28,7 @@ import {
 import type { PlatformStateTransaction } from "./platform-state/store.js";
 import { SPOT_PRICE_MULTIPLIER } from "@octogee/shared/types/cost-estimator";
 import { ACCOUNT_DELETION_RETENTION_MS } from "@octogee/shared/types/account-lifecycle";
-import { firestoreUserAccountReader } from "./user-account.js";
+import { firestoreUserAccountReader } from "./testing/firestore-user-accounts.js";
 import { isPlainObject, type PlainObject } from "./platform-state/documents/secrets.js";
 
 function storedProvisioning(user: PlainObject | undefined): PlainObject {

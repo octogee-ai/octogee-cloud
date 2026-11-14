@@ -30,7 +30,7 @@ const RESERVED_PROJECT_SLUGS = new Set([
 
 export interface ProjectCreateActor {
   uid: string;
-  userData: FirebaseFirestore.DocumentData | undefined;
+  userData: Record<string, unknown> | undefined;
   workspaceId: string | null | undefined;
   repoSourceAccess?: RepoSourceAccess;
   proveRepoSource?: (
@@ -48,7 +48,7 @@ export interface ProjectCreateResult {
 
 interface ProjectCreatePlan {
   uid: string;
-  userData: FirebaseFirestore.DocumentData | undefined;
+  userData: Record<string, unknown> | undefined;
   workspaceId: string;
   slug: string;
   trimmedName: string;

@@ -1,12 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { FieldValue } from "firebase-admin/firestore";
 import {
   installUserEntitlements,
   staticUserEntitlements,
   userEntitlements,
 } from "@octogee/shared/types/user-entitlements";
 import {
-  buildDefaultAgentDoc,
   buildProvisioningContext,
   buildRemoveUserConfig,
   buildProvisionedUserPatch,
@@ -127,20 +125,5 @@ describe("buildRemoveUserConfig", () => {
     expect(config.channels?.mattermost?.accounts).toEqual({
       "alice-b-proj-x": { botToken: "s" },
     });
-  });
-});
-
-describe("buildDefaultAgentDoc", () => {
-  it("gives every new defaultAgent the Octo identity with the coral Octo look", () => {
-    const doc = buildDefaultAgentDoc("uid-1");
-    expect(doc).toMatchObject({
-      id: "uid-1",
-      name: "Octo",
-      persona: "",
-      avatarEmoji: "🐙",
-      look: { style: "octo", color: "#e74e3c" },
-    });
-    expect(doc.createdAt).toEqual(FieldValue.serverTimestamp());
-    expect(doc.updatedAt).toEqual(FieldValue.serverTimestamp());
   });
 });

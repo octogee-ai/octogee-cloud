@@ -38,7 +38,7 @@ vi.mock("../lib/withProject.js", () => ({
       wid,
       pid,
       project: h.project,
-      projectRef: { path: `workspaces/${wid}/projects/${pid}` },
+      projectPath: `workspaces/${wid}/projects/${pid}`,
     });
   },
 }));

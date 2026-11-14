@@ -11,7 +11,6 @@ export const FIREBASE_REACH_ENTRYPOINTS = [
 ];
 
 export const FIREBASE_HANDLE_MODULES = [
-  "core/src/firebase.ts",
   "gateway-edge/src/lib/db.ts",
 ];
 
