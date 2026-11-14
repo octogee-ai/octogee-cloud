@@ -61,6 +61,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RUN: ${{ steps.build.outputs.run }}
         run: gh run download "$RUN" -R "$GITHUB_REPOSITORY" --name="image-manifest-$GITHUB_SHA" --dir="$RUNNER_TEMP/release"
+      - name: Write the release notes from the tag message
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FLEET: ${{ steps.fleet.outputs.version }}
+        run: |
+          set -euo pipefail
+          ref="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq '.object.type + " " + .object.sha')"
+          type="${ref%% *}" object="${ref#* }"
+          [[ "$type" == tag ]] \
+            || { echo "::error::$TAG is a lightweight tag; push an annotated tag whose message names the GKE install guide run"; exit 1; }
+          gh api "repos/$GITHUB_REPOSITORY/git/tags/$object" --jq .message > "$RUNNER_TEMP/tag-message"
+          node scripts/ci/release-notes.mjs --tag="$TAG" --fleet="$FLEET" \
+            --manifest="$RUNNER_TEMP/release/image-manifest.json" --tag-message="$RUNNER_TEMP/tag-message" > "$RUNNER_TEMP/notes.md"
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
@@ -77,10 +90,6 @@ jobs:
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
-          FLEET: ${{ steps.fleet.outputs.version }}
         run: |
-          set -euo pipefail
-          node scripts/ci/release-notes.mjs --tag="$TAG" --fleet="$FLEET" \
-            --manifest="$RUNNER_TEMP/release/image-manifest.json" > "$RUNNER_TEMP/notes.md"
           gh release create "$TAG" -R "$GITHUB_REPOSITORY" --verify-tag --title="$TAG" \
             --notes-file="$RUNNER_TEMP/notes.md" --generate-notes "$RUNNER_TEMP/release/image-manifest.json"

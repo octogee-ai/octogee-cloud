@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { releaseNotes } from "../ci/release-notes.mjs";
+import { gkeRunFrom, releaseNotes } from "../ci/release-notes.mjs";
 
 const root = fileURLToPath(new URL("../..", import.meta.url));
 const registry = "ghcr.io/octogee-ai/octogee-cloud";
@@ -17,7 +17,8 @@ const manifest = {
     "octogee-gateway-builder": { digest: digest(4), platforms: { "linux/amd64": digest(5) } },
   },
 };
-const notes = (overrides: Record<string, unknown> = {}) => releaseNotes({ tag: "v0.1.0", fleetVersion: "v0.2.0", manifest, ...overrides });
+const gkeRun = { date: "2026-11-15", commit: sha };
+const notes = (overrides: Record<string, unknown> = {}) => releaseNotes({ tag: "v0.1.0", fleetVersion: "v0.2.0", manifest, gkeRun, ...overrides });
 
 describe("release notes", () => {
   it("names the commit, how to start from the release and the octogee-fleet version it was tested with", () => {
@@ -35,7 +36,23 @@ describe("release notes", () => {
   });
 
   it("says what upgrading between pre-1.0 releases can and cannot promise", () => {
-    expect(notes()).toMatch(/pre-1\.0[\s\S]*no migrations[\s\S]*`down`[\s\S]*fresh `up`/);
+    const text = notes();
+    expect(text).toContain("schema migrations run forward automatically");
+    expect(text).toContain("no promise that stored data survives a minor release");
+    expect(text).toMatch(/may drop stored data or need `down` and a fresh `up`/);
+    expect(text).not.toContain("no migrations");
+  });
+
+  it("says what a user of this release gets and what is not there yet", () => {
+    const text = notes();
+    expect(text).toContain("## What this release is");
+    expect(text).toContain("PostgreSQL 16");
+    expect(text).toContain("Nothing places, scales or moves users automatically");
+    expect(text).toContain("The Admin API and the Helm values are pre-1.0");
+  });
+
+  it("names the date and commit of the full run of the GKE install guide", () => {
+    expect(notes()).toContain(`[docs/gke.md](https://github.com/octogee-ai/octogee-cloud/blob/v0.1.0/docs/gke.md) was followed end to end on a fresh Google Cloud project at ${sha} on 2026-11-15.`);
   });
 
   it.each([
@@ -43,8 +60,16 @@ describe("release notes", () => {
     [{ fleetVersion: "main" }, "An octogee-fleet release version looks like v0.2.0"],
     [{ manifest: { ...manifest, sha: "abc" } }, "The image manifest names no full commit SHA"],
     [{ manifest: { ...manifest, images: { "octogee-api": { digest: "latest", platforms: {} } } } }, "The image manifest has no index digest for octogee-api"],
+    [{ gkeRun: undefined }, "The tag message names no full GKE install guide run"],
+    [{ gkeRun: { date: "2026-11-15", commit: "d".repeat(40) } }, `The GKE install guide run was at ${"d".repeat(40)}, not the tagged commit ${sha}`],
   ])("refuses %j", (overrides, message) => {
     expect(() => notes(overrides)).toThrow(message);
+  });
+
+  it("reads the GKE install guide run from the tag message", () => {
+    expect(gkeRunFrom(`v0.1.0\n\nGKE install guide: 2026-11-15 ${sha}\n`)).toEqual(gkeRun);
+    expect(gkeRunFrom("v0.1.0")).toBeUndefined();
+    expect(gkeRunFrom(`GKE install guide: 15 Nov ${sha}`)).toBeUndefined();
   });
 
   it("writes the notes from the command line", () => {
@@ -52,7 +77,9 @@ describe("release notes", () => {
     try {
       const file = join(directory, "image-manifest.json");
       writeFileSync(file, JSON.stringify(manifest));
-      const result = spawnSync(process.execPath, ["scripts/ci/release-notes.mjs", "--tag=v0.1.0", "--fleet=v0.2.0", `--manifest=${file}`], { cwd: root, encoding: "utf8" });
+      const message = join(directory, "tag-message");
+      writeFileSync(message, `v0.1.0\n\nGKE install guide: 2026-11-15 ${sha}\n`);
+      const result = spawnSync(process.execPath, ["scripts/ci/release-notes.mjs", "--tag=v0.1.0", "--fleet=v0.2.0", `--manifest=${file}`, `--tag-message=${message}`], { cwd: root, encoding: "utf8" });
       expect(result.status, result.stderr).toBe(0);
       expect(result.stdout).toBe(notes());
     } finally {
