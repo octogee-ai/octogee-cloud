@@ -49,6 +49,7 @@ export declare function userActivationRecoveryTargetMatches(params: {
 }): boolean;
 export declare function completeWorkspaceMigrationRecovery(deps: FleetStateDeps, params: WorkspaceMigrationRecoveryParams): Promise<void>;
 export declare function sharedRecoveryTargetCleaned(input: Record<string, unknown>, schedulerHandoff: unknown): boolean;
+export declare function retiredTargetSourceRecovery(input: Record<string, unknown>, schedulerHandoff: unknown): boolean;
 export declare function isolatedTargetBelongsToUser(targetRoot: unknown, input: Record<string, unknown>): boolean;
 export declare function clearWorkspaceMigrationPreparation(deps: FleetStateDeps, params: WorkspaceMigrationPreparationParams): Promise<void>;
 export declare function clearRetiredUserActivationPreparation(deps: FleetStateDeps, params: {

@@ -264,6 +264,15 @@ export function isolatedRuntimeMutationFenced(user: Stored<PlatformUserRecord>):
   return user.fences.restoreFence !== undefined || user.fences.sourceTransferFence !== undefined;
 }
 
+export async function gatewayRetiredInStore(transaction: PlatformStateTransaction, gatewayId: string): Promise<boolean> {
+  const root = await transaction.gateways.roots.get(gatewayId);
+  if (root === null) return true;
+  const operationId = root.retirementClaim?.operationId;
+  if (root.desiredStatus !== "retired" || typeof operationId !== "string") return false;
+  const retirement = await transaction.journal.operations.get(operationId);
+  return retirement?.kind === "retire-gateway" && retirement.status === "succeeded" && retirement.input?.gatewayId === gatewayId;
+}
+
 export async function assertGatewayRuntimeMutationUnfencedInStore(
   transaction: PlatformStateTransaction,
   gatewayId: string,

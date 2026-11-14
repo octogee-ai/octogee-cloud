@@ -124,3 +124,84 @@ describe("failed preparation whose target unmount was never confirmed", () => {
       expect(h.logs).toEqual([]);
     });
 });
+
+describe("failed move to an isolated gateway whose target unmount was never confirmed after the source quiesced", () => {
+  const target = "alice-xs-12345678";
+  const retirementId = `operator-retire-${target}`;
+  type Scenario = "gone" | "retired" | "verify-target" | "running" | "retirement-failed" | "target-assigned" | "committed" |
+    "source-moved" | "other-marker" | "quiesced-by-another-move" | "activation" | "handoff-held" | "cutover-failed" | "unmount-done";
+  const forward = (failed: "final-sync-state" | "verify-target" | "cutover-firestore") => {
+    const order = ["keys-sync-state", "pre-sync-state", "wait-for-active-work", "quiesce-source", "flush-source", "final-sync-state", "verify-target", "cutover-firestore"];
+    return order.slice(0, order.indexOf(failed) + 1).map((name) => ({ name, status: name === failed ? "failed" as const : "done" as const }));
+  };
+
+  function unconfirmedTargetUnmount(scenario: Scenario) {
+    const h = fixture("mig-op-1:scheduler:1:claim:1000");
+    const failedStep = scenario === "verify-target" ? "verify-target" : scenario === "cutover-failed" ? "cutover-firestore" : "final-sync-state";
+    Object.assign(h.operation, {
+      error: `/push-rsync-state/shared-a: 500 connection refused — rollback:unmount-target: /unmount/${target} transport failed: fetch failed`,
+      steps: [...forward(failedStep), { name: "rollback:unmount-target", status: scenario === "unmount-done" ? "done" : "failed", error: "transport failed: fetch failed" }],
+      schedulerHandoffReleased: scenario !== "handoff-held",
+      ...(scenario === "committed" ? { cutoverCommittedAt: 1_500 } : {}),
+    });
+    Object.assign(h.operation.input, { source: scenario === "activation" ? "builder-activation-lease" : "operator-isolated-gateway", userSlug: "alice", toGatewayId: target });
+    Object.assign(h.operation.schedulerHandoff!, { toGatewayId: target, stageAfterCutover: true, scheduleTransfer: true });
+    h.records["users/alice"] = { provisioning: { openclaw: { gatewayId: scenario === "source-moved" ? "shared-b" : "shared-a",
+      migration: { state: "moving", phase: "transferring", startedAt: 1_000, operationId: scenario === "other-marker" ? "op-2" : "op-1" } } } };
+    h.records["gateways/shared-a/assignments/alice"] = { ...h.records["gateways/shared-a/assignments/alice"],
+      state: "quiescing", updatedByOperationId: scenario === "quiesced-by-another-move" ? "op-2" : "op-1" };
+    if (scenario !== "gone") {
+      h.records[`gateways/${target}`] = { gatewayId: target, desiredRelease: 1, latestRelease: 1, gatewayClass: "isolated", ownerUid: "alice",
+        desiredStatus: scenario === "running" ? "running" : "retired", retirementClaim: { operationId: retirementId, version: 1 } };
+      h.records[`glmOperations/${retirementId}`] = { id: retirementId, kind: "retire-gateway", status: scenario === "retirement-failed" ? "failed" : "succeeded",
+        createdBy: "test", createdAt: 2_100, input: { gatewayId: target } };
+    }
+    if (scenario === "target-assigned") {
+      h.records[`gateways/${target}/assignments/alice`] = { uid: "alice", slug: "alice", gatewayId: target, source: "migrate-user", state: "migrating", epoch: 0,
+        createdAt: 1_200, updatedAt: 1_200, updatedByOperationId: "op-1" };
+    }
+    const logs: string[] = [];
+    const sweep = () => recoverFailedLegacyMigrations({ store: createDocumentFixtureStore(h.records), log: (line) => logs.push(line), now: () => 3_000 });
+    const marker = () => (h.records["users/alice"]?.provisioning as { openclaw?: { migration?: unknown } } | undefined)?.openclaw?.migration;
+    const source = () => h.records["gateways/shared-a/assignments/alice"];
+    return { ...h, logs, sweep, marker, source };
+  }
+
+  it.each(["gone", "retired", "verify-target"] as const)("queues source recovery that skips the target once the target is retired (%s)", async (scenario) => {
+    const h = unconfirmedTargetUnmount(scenario);
+    const steps = h.operation.steps;
+    await h.sweep();
+    expect(h.stored()).toMatchObject({
+      status: "pending", input: { recoverSourceOnly: true, toGatewayId: target }, schedulerHandoffReleased: false,
+      schedulerHandoff: { sourceRecovery: { migrationId: "mig-op-1:scheduler:1:claim:1000", sourceEpoch: 4, steps, retiredTarget: { gatewayId: target } } },
+    });
+    expect(h.marker()).toMatchObject({ state: "moving", operationId: "op-1" });
+    expect(h.source()).toMatchObject({ state: "quiescing", updatedByOperationId: "op-1" });
+    expect(h.logs).toEqual(["[migration-recovery] queued native source recovery for op-1; assignment and marker remain held"]);
+  });
+
+  it("queues the retry of a retired-target recovery whose own attempt failed", async () => {
+    const h = unconfirmedTargetUnmount("retired");
+    await h.sweep();
+    const rearmed = h.stored() as unknown as Operation;
+    h.records["glmOperations/op-1"] = { ...rearmed, status: "failed", startedAt: 4_000, completedAt: 4_500, attempts: 2,
+      error: "source gateway starting; retry shortly", steps: [] } as unknown as Record<string, unknown>;
+    h.logs.length = 0;
+    await h.sweep();
+    expect(h.records["glmOperations/op-1"]).toMatchObject({ status: "pending", input: { recoverSourceOnly: true },
+      schedulerHandoff: { sourceRecovery: { retiredTarget: { gatewayId: target } } } });
+    expect(h.logs).toEqual(["[migration-recovery] queued native source recovery for op-1; assignment and marker remain held"]);
+  });
+
+  it.each(["running", "retirement-failed", "target-assigned", "committed", "source-moved", "other-marker", "quiesced-by-another-move", "activation",
+    "handoff-held", "cutover-failed", "unmount-done"] as const)(
+    "leaves the move held while the target may still hold the user or the move no longer owns the source: %s", async (scenario) => {
+      const h = unconfirmedTargetUnmount(scenario);
+      const [marker, source] = [h.marker(), h.source()];
+      await h.sweep();
+      expect(h.stored()).toBeUndefined();
+      expect(h.marker()).toEqual(marker);
+      expect(h.source()).toEqual(source);
+      expect(h.logs).toEqual([]);
+    });
+});
