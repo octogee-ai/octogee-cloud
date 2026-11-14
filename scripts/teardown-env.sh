@@ -644,7 +644,8 @@ remove_agent_store_reset_job() {
 }
 
 run_agent_store_reset_job() {
-  local database="$TARGET_CLOUD_SQL_AGENT_STORE_DATABASE" name logs reported
+  local ip_types="$1" database="$TARGET_CLOUD_SQL_AGENT_STORE_DATABASE" name logs reported proxy_route=""
+  [[ "$ip_types" == *PRIVATE* ]] && proxy_route=$'\n            - --private-ip'
   name="octogee-agent-store-reset-${RANDOM}${RANDOM}"
 
   kubectl get serviceaccount octogee-api -n "$K8S_NAMESPACE" --context "$K8S_CONTEXT" \
@@ -691,8 +692,7 @@ spec:
         - name: cloud-sql-proxy
           image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.27.0@sha256:7d156a5c466e31596afd6c8ed134f19c207a297418392fdad2686524ca4e7a3c
           restartPolicy: Always
-          args:
-            - --private-ip
+          args:${proxy_route}
             - --address=127.0.0.1
             - --port=5432
             - ${TARGET_CLOUD_SQL_CONNECTION}
@@ -785,11 +785,19 @@ YAML
   ok "$database — agent store emptied of every gateway role and agent schema"
 }
 
+platform_state_writers_absent() {
+  local resources
+  resources=$(kubectl get deployment -n "$K8S_NAMESPACE" --context "$K8S_CONTEXT" -l app=octogee-api -o name) \
+    || die "could not inspect octogee-api before the platform database reset"
+  [[ -z "$resources" ]]
+}
+
 reset_platform_databases() {
+  local ip_types="$1"
   info "Quiescing platform state writers..."
   quiesce_platform_state_writers
   info "Emptying agent store $TARGET_CLOUD_SQL_AGENT_STORE_DATABASE through its administrator..."
-  run_agent_store_reset_job
+  run_agent_store_reset_job "$ip_types"
   info "Recreating platform state database $PLATFORM_STATE_DB_NAME on $TARGET_CLOUD_SQL_PLATFORM_STATE_INSTANCE..."
   reset_database_through_api "$TARGET_CLOUD_SQL_PLATFORM_STATE_INSTANCE" "$PLATFORM_STATE_DB_NAME"
 }
@@ -1000,16 +1008,17 @@ if $FULL; then
       info "Resuming: an earlier full teardown reset the Cloud SQL databases before removing Mattermost and Gitea"
     else
       $RESUME && die "--resume finishes a teardown whose Mattermost and Gitea are already gone, but they are still running in $K8S_NAMESPACE; rerun without --resume"
-      reset_platform_databases
+      reset_platform_databases "$instance_ip_types"
       info "Cloud SQL has no public IP; resetting application-owned databases through exact-target in-cluster credentials..."
       reset_private_cloud_sql_databases
     fi
     PRIVATE_SQL_OWNER_RESET_DONE=true
     ok "Private Cloud SQL owner reset completed before Helm uninstall"
-  elif $RESUME; then
+  elif platform_state_writers_absent; then
+    $RESUME || die "octogee-api is not installed in $K8S_NAMESPACE, so the platform state and agent store reset cannot run. A full teardown resets both databases before it removes the platform; if an earlier run got that far, rerun with --resume to finish the remaining wipes."
     info "Resuming: an earlier full teardown reset the platform state and agent store databases"
   else
-    reset_platform_databases
+    reset_platform_databases "$instance_ip_types"
   fi
 fi
 

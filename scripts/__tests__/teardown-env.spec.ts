@@ -28,6 +28,7 @@ type TeardownOptions = {
   storageDescribeFailure?: boolean;
   firebaseProbeFailure?: boolean;
   sqlWritersAbsent?: boolean;
+  platformWritersAbsent?: boolean;
   resume?: boolean;
   storageListFailure?: boolean;
   storageEmpty?: boolean;
@@ -254,6 +255,7 @@ case "$1 $2" in
     esac
     ;;
   "get deployment")
+    [[ "$FAKE_PLATFORM_WRITERS_ABSENT" != "true" ]] || exit 0
     printf 'deployment.apps/octogee-api\\n'
     printf 'deployment.apps/llm-broker\\n'
     ;;
@@ -467,6 +469,7 @@ fi
       FAKE_STORAGE_DESCRIBE_FAILURE: options.storageDescribeFailure ? "true" : "false",
       FAKE_FIREBASE_PROBE_FAILURE: options.firebaseProbeFailure ? "true" : "false",
       FAKE_SQL_WRITERS_ABSENT: options.sqlWritersAbsent ? "true" : "false",
+      FAKE_PLATFORM_WRITERS_ABSENT: options.platformWritersAbsent ? "true" : "false",
       FAKE_STORAGE_LIST_FAILURE: options.storageListFailure ? "true" : "false",
       FAKE_STORAGE_EMPTY: options.storageEmpty ? "true" : "false",
       FAKE_STORAGE_RESIDUAL: options.storageResidual ? "true" : "false",
@@ -508,6 +511,14 @@ function resetOwnerScript(manifest: string): string {
   return manifest.slice(start, end).split("\n").map((line) => line.startsWith("              ")
     ? line.slice("              ".length)
     : line).join("\n");
+}
+
+function agentStoreJobManifest(manifest: string): string {
+  const marker = manifest.indexOf("octogee.ai/reset: agent-store");
+  expect(marker).toBeGreaterThan(-1);
+  const start = manifest.lastIndexOf("apiVersion:", marker);
+  const end = manifest.indexOf("apiVersion:", marker);
+  return manifest.slice(start, end === -1 ? undefined : end);
 }
 
 function agentStoreResetScript(manifest: string): string {
@@ -718,6 +729,40 @@ describe("full teardown for private-only Cloud SQL", { timeout: 180_000 }, () =>
     expect(result.sqlOwnerManifest).toContain(`- ${TEST_TARGET.cloudSqlConnectionName}`);
     expect(result.stdout).toContain(`${TEST_TARGET.cloudSqlAgentStoreDatabaseName} — agent store emptied`);
     expect(result.stdout).toContain("platform — Cloud SQL API confirmed a newly-created empty database");
+    expect(agentStoreJobManifest(result.sqlOwnerManifest)).toContain("- --private-ip\n");
+  });
+
+  it("resets the platform state and agent store through the public route when the instance has a public IP", () => {
+    const result = runPrivateCentralTeardown({ publicIp: true });
+
+    expect(result.calls).toContainEqual(expect.stringContaining("sql databases delete platform"));
+    expect(result.calls).toContainEqual(expect.stringContaining("sql databases create platform"));
+    expect(agentStoreJobManifest(result.sqlOwnerManifest)).not.toContain("--private-ip");
+  });
+
+  it("resets the platform state and agent store again when a resumed public-IP teardown still has its platform", () => {
+    const result = runPrivateCentralTeardown({ publicIp: true, resume: true });
+
+    expect(result.calls).toContainEqual(expect.stringContaining("create configmap octogee-agent-store-reset-"));
+    expect(result.calls).toContainEqual(expect.stringContaining("sql databases create platform"));
+  });
+
+  it("skips the platform state and agent store reset when a resumed public-IP teardown already removed its platform", () => {
+    const result = runPrivateCentralTeardown({ publicIp: true, resume: true, platformWritersAbsent: true });
+
+    expect(result.stdout).toContain("Resuming: an earlier full teardown reset the platform state and agent store databases");
+    expect(result.calls.some((entry) => entry.startsWith("sql databases delete platform"))).toBe(false);
+    expect(result.calls.some((entry) => entry.includes("create configmap octogee-agent-store-reset-"))).toBe(false);
+  });
+
+  it("refuses a public-IP full teardown whose platform is already gone unless resumed", () => {
+    const result = runPrivateCentralTeardown({ publicIp: true, platformWritersAbsent: true });
+
+    expect(result.status).toBe(1);
+    expect(`${result.stderr}\n${result.stdout}`).toContain("octogee-api is not installed");
+    expect(`${result.stderr}\n${result.stdout}`).toContain("rerun with --resume");
+    expect(result.calls.some((entry) => entry.startsWith("sql databases delete platform"))).toBe(false);
+    expect(result.calls.some((entry) => entry.startsWith("firebase firestore:delete"))).toBe(false);
   });
 
   it("lists the platform state and agent store databases among what a full teardown removes", () => {
