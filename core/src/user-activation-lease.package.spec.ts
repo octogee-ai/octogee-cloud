@@ -15,7 +15,7 @@ function parkedUserStore(): PlatformStateStore {
       generation: 7,
       status: "parked",
       eventKey: "run-start:run-1",
-      sizingTier: "xs",
+      sizingTier: "s",
     },
   };
   const assignment = {

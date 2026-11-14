@@ -796,7 +796,7 @@ describe("PATCH /gateways/:id — updates durable lifecycle", () => {
     expect(store.get("gateways/bench")).toMatchObject({ gatewayClass: "shared" });
   });
 
-  it("rejects an XS user tier before saving or journaling a release", async () => {
+  it("rejects a sizing tier that does not exist before saving or journaling a release", async () => {
     const seed = seedNewSchemaGateway("builder", sharedPayload(), { gatewayClass: "builder", imageProfile: "builder", profile: "builder", ownerUid: "uid-user", builderSlug: "builder", sizingTier: "s" });
     const { app, store } = mkApp(seed);
     const before = { ...store.get("gateways/builder") };

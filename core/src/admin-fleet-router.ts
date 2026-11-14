@@ -3369,9 +3369,6 @@ function buildDurableGatewayPatch(args: {
       },
     };
   }
-  if (args.current.gatewayClass === "builder" && args.body.sizingTier === "xs") {
-    return { error: { status: 400, body: { error: "User sizingTier must be s, m, or l" } } };
-  }
   const configPatch = mutableConfigPatchFromBody(args.body);
   const patch: Record<string, unknown> = { ...configPatch };
   if (args.body.desiredStatus !== undefined) {

@@ -738,7 +738,7 @@ describe("infra/gateway/apply-gateway-class-policy.mjs", () => {
 
   it.each([
     ["shared", { gatewayClass: "shared" as const }],
-    ["builder", { gatewayClass: "builder" as const, gatewayId: "alice-xs-12345678", apiOrigin: "https://api-test.octogee.com" }],
+    ["builder", { gatewayClass: "builder" as const, gatewayId: "alice-s-12345678", apiOrigin: "https://api-test.octogee.com" }],
   ])("projects %s platform-agent Mattermost accounts identically at boot and in the core invariant", (gatewayClass, context) => {
     const owner = "a".repeat(26);
     const accounts = () => ({
@@ -809,7 +809,7 @@ describe("infra/gateway/apply-gateway-class-policy.mjs", () => {
   it("keeps user policy output compatible with durable config validation", () => {
     const context = {
       gatewayClass: "builder" as const,
-      gatewayId: "alice-xs-12345678",
+      gatewayId: "alice-s-12345678",
       apiOrigin: "https://api-test.octogee.com",
     };
     const config: Record<string, unknown> = {

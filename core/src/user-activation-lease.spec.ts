@@ -62,7 +62,7 @@ describe("Isolated runtime demand refusal", () => {
     const docs = new Map<string, Record<string, unknown>>([
       ["config/orchestrator", { sizingProfiles: {
         ...FIXTURE_SIZING_PROFILES,
-        pod: { isolation: "isolated", sizingTier: "xs", fallbackStorageGb: null, computer: { runtime: "cluster", homeSizeGiB: 10 } },
+        pod: { isolation: "isolated", sizingTier: "s", fallbackStorageGb: null, computer: { runtime: "cluster", homeSizeGiB: 10 } },
       } }],
       ["users/uid-alice", {
         accountLifecycle: { status: "active" },

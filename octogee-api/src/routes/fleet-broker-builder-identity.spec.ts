@@ -39,7 +39,7 @@ function isolatedRoot(): Record<string, unknown> {
     profile: "builder",
     gatewayClass: "builder",
     imageProfile: "builder",
-    sizingTier: "xs",
+    sizingTier: "s",
     gcpProject: null,
     gatewayContainerSecurityContext: null,
     serviceAccountName: null,

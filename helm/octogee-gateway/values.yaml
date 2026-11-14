@@ -192,28 +192,15 @@ profileDefaults:
 # admin API); tests/specs/helm-octogee-gateway-sizing.spec.ts asserts the two
 # stay in lockstep. Edit both sides together.
 tiers:
-  xs:
-    resources:
-      requests:
-        cpu: "500m"
-        memory: "2Gi"
-        ephemeral-storage: "4Gi"
-      limits:
-        cpu: "1000m"
-        memory: "2Gi"
-        ephemeral-storage: "4Gi"
-    nodejs:
-      uvThreadpoolSize: "4"
-      maxOldSpaceSizeMb: "1536"
   s:
     resources:
       requests:
-        cpu: "2000m"
-        memory: "8Gi"
+        cpu: "1000m"
+        memory: "4Gi"
         ephemeral-storage: "4Gi"
       limits:
-        cpu: "2000m"
-        memory: "8Gi"
+        cpu: "1000m"
+        memory: "4Gi"
         ephemeral-storage: "4Gi"
     nodejs:
       uvThreadpoolSize: "4"

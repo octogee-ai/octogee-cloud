@@ -10,7 +10,7 @@ type Row = Record<string, unknown>;
 
 const STANDARD = {
   isolation: "isolated",
-  sizingTier: "xs",
+  sizingTier: "s",
   computer: {
     runtime: "gce-vm",
     desktop: "x11",
@@ -24,7 +24,7 @@ const STANDARD = {
 
 const POD = {
   isolation: "isolated",
-  sizingTier: "xs",
+  sizingTier: "s",
   computer: { runtime: "cluster", homeSizeGiB: 10 },
   fallbackStorageGb: null,
 };
@@ -100,7 +100,7 @@ describe("setting a sizing profile", () => {
     const res = await put(app, "standard", STANDARD).expect(200);
 
     expect(res.body).toMatchObject({ name: "standard", profile: STANDARD });
-    expect(await resolveIsolatedSizingProfile(store, "standard")).toEqual({ sizingKey: "standard", sizingTier: "xs" });
+    expect(await resolveIsolatedSizingProfile(store, "standard")).toEqual({ sizingKey: "standard", sizingTier: "s" });
     const audit = await store.journal.getRecord(res.body.operationId);
     expect(audit).toMatchObject({
       recordType: "audit",
@@ -137,6 +137,15 @@ describe("setting a sizing profile", () => {
 
     expect(res.body).toMatchObject({ name: "pod", profile: POD });
     expect((await store.config.orchestrator.get())?.sizingProfiles).toEqual({ pod: POD });
+  });
+
+  it("allows a pod profile at a tier where another profile runs a VM", async () => {
+    const { app, store } = harness(withFixtureProfiles());
+    expect(FIXTURE_SIZING_PROFILES.hobby).toMatchObject({ sizingTier: POD.sizingTier, computer: { runtime: "gce-vm" } });
+
+    await put(app, "pod", POD).expect(200);
+
+    expect((await store.config.orchestrator.get())?.sizingProfiles.pod).toEqual(POD);
   });
 
   it("allows a second profile at a tier when its VM settings are the same", async () => {
@@ -197,7 +206,6 @@ describe("refusing a sizing profile", () => {
     ["pod settings with a VM field", "pod", { ...POD, computer: { ...POD.computer, machineType: "e2-small" } }, 400, "sizing-profile-invalid"],
     ["pod settings without a home size", "pod", { ...POD, computer: { runtime: "cluster" } }, 400, "sizing-profile-invalid"],
     ["a pod home that is not a positive whole number of GiB", "pod", { ...POD, computer: { runtime: "cluster", homeSizeGiB: 0 } }, 400, "sizing-profile-invalid"],
-    ["a pod profile at a tier where another profile runs a VM", "pod", { ...POD, sizingTier: "m" }, 409, "sizing-tier-conflict"],
     ["VM settings that differ from another profile at the same tier", "studio", { ...FIXTURE_SIZING_PROFILES.pro, computer: { ...STANDARD.computer, desktop: "omarchy" }, sizingTier: "m" }, 409, "sizing-tier-conflict"],
   ];
 
@@ -224,7 +232,7 @@ describe("refusing a sizing profile", () => {
   });
 
   it("refuses and journals the failure when a conflicting profile is stored after the check", async () => {
-    const { app, store, records } = harness(withFixtureProfiles(), (seeded, label) => {
+    const { app, store, records } = harness({ "config/orchestrator": { sizingProfiles: { pro: FIXTURE_SIZING_PROFILES.pro } } }, (seeded, label) => {
       if (label !== "admin.sizing-profiles.set") return;
       const orchestrator = seeded.get("config/orchestrator")!;
       seeded.set("config/orchestrator", {

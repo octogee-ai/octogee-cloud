@@ -1744,7 +1744,8 @@ describe("runtime policy and stamping", () => {
     await expect(resolveGatewayVmPolicy(store, "s")).resolves.toMatchObject({ runtime: "gce-vm", machineType: "e2-medium" });
     await expect(resolveGatewayVmPolicy(store, "m")).resolves.toMatchObject({ runtime: "gce-vm", machineType: "e2-standard-2" });
     await expect(resolveGatewayVmPolicy(store, "l")).resolves.toMatchObject({ machineType: "e2-standard-4" });
-    await expect(resolveGatewayVmPolicy(store, "xs")).rejects.toThrow("No gateway VM policy for sizing tier xs");
+    const hobbyOnly = recordingStore({ "config/orchestrator": { sizingProfiles: { hobby: FIXTURE_SIZING_PROFILES.hobby } } }).store;
+    await expect(resolveGatewayVmPolicy(hobbyOnly, "l")).rejects.toThrow("No gateway VM policy for sizing tier l");
     expect(parseGatewayVmSpec(JSON.stringify(spec))).toEqual(spec);
     expect(() => parseGatewayVmSpec(undefined)).toThrow(/required/);
     expect(() => parseGatewayVmSpec(JSON.stringify({ ...spec, diskSizeGb: "40" }))).toThrow(/diskSizeGb/);
@@ -1843,17 +1844,52 @@ describe("runtime policy and stamping", () => {
     expect(docs["glmGateways/b-x"].vmSpec).toEqual({ ...persisted, provisioningModel: "STANDARD", diskSizeGb: 80 });
   });
 
-  const podProfile = { isolation: "isolated", sizingTier: "xs", computer: { runtime: "cluster", homeSizeGiB: 10 }, fallbackStorageGb: null } as const;
+  const podProfile = { isolation: "isolated", sizingTier: "s", computer: { runtime: "cluster", homeSizeGiB: 10 }, fallbackStorageGb: null } as const;
 
   it.each([
     ["a configured VM runtime", spec],
     ["no VM runtime", null],
-  ] as const)("stamps a new gateway whose tier's profile is a pod as a cluster gateway with no VM spec, with %s", async (_label, vmSpec) => {
+  ] as const)("stamps a new gateway whose sizing profile is a pod as a cluster gateway with no VM spec, with %s", async (_label, vmSpec) => {
     const { store, docs } = recordingStore({ "config/orchestrator": { sizingProfiles: { ...FIXTURE_SIZING_PROFILES, pod: podProfile } } });
 
-    expect(await stampGatewayRuntime({ store, gatewayId: "b-pod", initial: initialRuntime("b-pod"), gatewayClass: "builder", sizingTier: "xs", vmSpec, log: vi.fn() })).toBe("cluster");
+    expect(await stampGatewayRuntime({ store, gatewayId: "b-pod", initial: initialRuntime("b-pod"), gatewayClass: "builder", sizingTier: "s", sizingProfile: "pod", vmSpec, log: vi.fn() })).toBe("cluster");
 
     expect(docs["glmGateways/b-pod"]).toEqual({ ...initialRuntimeDoc("b-pod"), runtime: "cluster" });
+  });
+
+  it("stamps a VM gateway from its own sizing profile when a pod profile shares the tier", async () => {
+    const { store, docs } = recordingStore({ "config/orchestrator": { sizingProfiles: { ...FIXTURE_SIZING_PROFILES, pod: podProfile } } });
+
+    expect(await stampGatewayRuntime({ store, gatewayId: "b-vm", initial: initialRuntime("b-vm"), gatewayClass: "builder", sizingTier: "s", sizingProfile: "hobby", vmSpec: spec, log: vi.fn() })).toBe("gce-vm");
+
+    expect(docs["glmGateways/b-vm"].vmSpec).toMatchObject({ machineType: "e2-medium", homeDiskSizeGb: 10 });
+  });
+
+  it("refuses to guess the runtime of a new gateway that names no sizing profile when a pod and a VM share its tier", async () => {
+    const { store, writes } = recordingStore({ "config/orchestrator": { sizingProfiles: { ...FIXTURE_SIZING_PROFILES, pod: podProfile } } });
+
+    await expect(stampGatewayRuntime({ store, gatewayId: "b-any", initial: initialRuntime("b-any"), gatewayClass: "builder", sizingTier: "s", vmSpec: spec, log: vi.fn() }))
+      .rejects.toThrow("Conflicting gateway VM policies for sizing tier s: hobby, pod");
+    expect(writes).toEqual([]);
+  });
+
+  it("refuses a new gateway whose sizing profile is not an isolated profile", async () => {
+    const { store } = recordingStore({});
+
+    await expect(stampGatewayRuntime({ store, gatewayId: "b-gone", initial: initialRuntime("b-gone"), gatewayClass: "builder", sizingTier: "s", sizingProfile: "missing", vmSpec: spec, log: vi.fn() }))
+      .rejects.toThrow("gateway b-gone: sizing profile missing is not an isolated sizing profile");
+  });
+
+  it("keeps reshaping a stamped VM gateway from the VM profile at its tier when a pod profile shares the tier", async () => {
+    const stamped = { ...spec, machineType: "e2-small", homeDiskSizeGb: 10 };
+    const { store, docs } = recordingStore({
+      "glmGateways/b-old": { runtime: "gce-vm", vmSpec: stamped },
+      "config/orchestrator": { sizingProfiles: { ...FIXTURE_SIZING_PROFILES, pod: podProfile } },
+    });
+
+    expect(await stampGatewayRuntime({ store, gatewayId: "b-old", initial: initialRuntime("b-old"), gatewayClass: "builder", sizingTier: "s", vmSpec: spec, log: vi.fn() })).toBe("gce-vm");
+
+    expect(docs["glmGateways/b-old"].vmSpec).toMatchObject({ machineType: "e2-medium" });
   });
 
   it("keeps the stamped VM spec of a VM gateway whose tier now names a pod", async () => {
@@ -1863,7 +1899,7 @@ describe("runtime policy and stamping", () => {
       "config/orchestrator": { sizingProfiles: { pod: podProfile } },
     });
 
-    expect(await stampGatewayRuntime({ store, gatewayId: "b-x", initial: initialRuntime("b-x"), gatewayClass: "builder", sizingTier: "xs", vmSpec: spec, log: vi.fn() })).toBe("gce-vm");
+    expect(await stampGatewayRuntime({ store, gatewayId: "b-x", initial: initialRuntime("b-x"), gatewayClass: "builder", sizingTier: "s", vmSpec: spec, log: vi.fn() })).toBe("gce-vm");
 
     expect(docs["glmGateways/b-x"].vmSpec).toEqual(stamped);
     expect(writes).toEqual([]);

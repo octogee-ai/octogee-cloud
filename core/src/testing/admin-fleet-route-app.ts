@@ -337,7 +337,7 @@ export function isolatedGatewayRoot(
     profile: "builder",
     gatewayClass: "builder",
     imageProfile: "builder",
-    sizingTier: "xs",
+    sizingTier: "s",
     ownerUid,
     builderSlug,
     ...overrides,

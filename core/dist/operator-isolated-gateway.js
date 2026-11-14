@@ -124,6 +124,7 @@ export function operatorIsolatedGatewayConfig(input) {
         gatewayClass: "builder",
         imageProfile: "builder",
         sizingTier: input.sizingTier,
+        sizingProfile: input.sizingKey,
         gcpProject: null,
         gatewayContainerSecurityContext: null,
         serviceAccountName: isolatedGatewayServiceAccountName(input.gatewayId),
