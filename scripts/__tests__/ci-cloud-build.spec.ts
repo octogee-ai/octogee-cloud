@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { cloudBakePlan, copyPublished, digestsFromMetadata, imageManifest, imagePaths, mergeCommands, productFindings } from "../ci/cloud-build.mjs";
+import { cloudBakePlan, copyPublished, digestsFromMetadata, imageManifest, imagePaths, mergeCommands, productFindings, resolvePublished } from "../ci/cloud-build.mjs";
 import { IMAGE_BUILDS } from "../ci/image-build.mjs";
 
 const root = fileURLToPath(new URL("../..", import.meta.url));
@@ -221,8 +221,34 @@ describe("published image copy", () => {
     await expect(withTools({ docker }, copy)).rejects.toThrow(`${registry}/glm-controller:${sha} has no linux/arm64 image`);
   });
 
-  it("names the image a commit has not published", async () => {
-    await expect(withTools({ docker: "exit 1" }, copy)).rejects.toThrow(`No published image at ${registry}/glm-controller:${sha}`);
+  it("explains that the commit's build did not publish and where to find a commit that did", async () => {
+    const docker = `echo "ERROR: ${registry}/glm-controller:${sha}: not found" >&2; exit 1`;
+    const failure = withTools({ docker }, copy);
+    await expect(failure).rejects.toThrow(`Commit ${sha} has no published images: its Build main run did not publish ${registry}/glm-controller:${sha}`);
+    await expect(failure).rejects.toThrow("https://github.com/octogee-ai/octogee-cloud/releases/latest");
+    await expect(failure).rejects.toThrow("https://github.com/octogee-ai/octogee-cloud/actions/workflows/build-main.yml?query=branch%3Amain+is%3Asuccess");
+    await expect(failure).rejects.toThrow(`run Build main with workflow_dispatch on a branch or tag at ${sha}`);
+  });
+
+  it("reports any other registry error as the registry gave it", async () => {
+    const docker = `echo "ERROR: unexpected status 401 Unauthorized" >&2; exit 1`;
+    const failure = withTools({ docker }, copy);
+    await expect(failure).rejects.toThrow(`Could not read ${registry}/glm-controller:${sha}: ERROR: unexpected status 401 Unauthorized`);
+    await expect(failure).rejects.not.toThrow("has no published images");
+  });
+
+  it("resolves the published digests for a platform without copying them", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "cloud-build-resolve-"));
+    try {
+      const calls = join(directory, "calls");
+      const index = JSON.stringify({ manifests: [{ digest: digest(1), platform: { os: "linux", architecture: "amd64" } }] });
+      const docker = `echo "$*" >> ${calls}; case "$3" in inspect) echo '${index}' ;; *) exit 9 ;; esac`;
+      const resolved = await withTools({ docker }, () => resolvePublished({ registry, sha, platform: "linux/amd64", images: ["octogee-api", "gateway-edge"] }));
+      expect(resolved).toEqual({ "octogee-api": digest(1), "gateway-edge": digest(1) });
+      expect(readFileSync(calls, "utf8")).not.toContain("create");
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it("copies by default every image published for the host's platform", async () => {
