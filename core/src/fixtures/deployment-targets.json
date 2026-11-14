@@ -33,7 +33,9 @@
         "mattermostPasswordSecret": "MM_DB_PASSWORD",
         "giteaPasswordSecret": "gitea-db-password",
         "connectionNameSecret": "cloud-sql-connection-name",
-        "pointInTimeRecoveryEnabled": false
+        "pointInTimeRecoveryEnabled": false,
+        "platformStateInstance": "octogee-platform-prod",
+        "agentStoreDatabase": "octogee_agents_prod"
       },
       "kms": {
         "projectId": "octogee",
@@ -87,7 +89,9 @@
         "mattermostPasswordSecret": "MM_DB_PASSWORD",
         "giteaPasswordSecret": "gitea-db-password",
         "connectionNameSecret": "cloud-sql-connection-name",
-        "pointInTimeRecoveryEnabled": false
+        "pointInTimeRecoveryEnabled": false,
+        "platformStateInstance": "octogee-platform-test",
+        "agentStoreDatabase": "octogee_agents_test"
       },
       "kms": {
         "projectId": "octogee-test",

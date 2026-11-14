@@ -384,7 +384,7 @@ materialize_agent_store_postgres_secret "$FIREBASE_PROJECT" "$K8S_NAMESPACE" "$K
 ok "Secret: agent-store-postgres"
 
 if [[ "$ENV" != custom ]]; then
-  materialize_platform_state_postgres_secret "$FIREBASE_PROJECT" "$TARGET_CLOUD_SQL_PROJECT" "octogee-platform-$TARGET_ENVIRONMENT" "$K8S_NAMESPACE" "$K8S_CONTEXT"
+  materialize_platform_state_postgres_secret "$FIREBASE_PROJECT" "$TARGET_CLOUD_SQL_PROJECT" "$TARGET_CLOUD_SQL_PLATFORM_STATE_INSTANCE" "$K8S_NAMESPACE" "$K8S_CONTEXT"
   ok "Secret: platform-state-postgres"
 fi
 
