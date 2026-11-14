@@ -67,7 +67,7 @@ import {
   createMattermostArtifactSourceReader,
 } from "./lib/chat-artifact-adapters.js";
 import { resolveActiveArtifactWorkspaceSlug } from "./lib/chat-artifact-workspace.js";
-import { storage } from "../../gateway-edge/src/lib/db.js";
+import { gcsBucket } from "../../gateway-edge/src/lib/gcs-bucket.js";
 import { platformStateStore, readSizingKey } from "../../gateway-edge/src/lib/platform-state.js";
 import {
   ConnectorTokenReadError,
@@ -222,15 +222,15 @@ function chatArtifactRoutes(jobs: ArtifactJobStore) {
   let blobs: ReturnType<typeof createGcsArtifactBlobStore> | undefined;
   const blobStore = {
     put(input: Parameters<ReturnType<typeof createGcsArtifactBlobStore>["put"]>[0]) {
-      blobs ??= createGcsArtifactBlobStore(storage.bucket());
+      blobs ??= createGcsArtifactBlobStore(gcsBucket());
       return blobs.put(input);
     },
     open(output: Parameters<ReturnType<typeof createGcsArtifactBlobStore>["open"]>[0]) {
-      blobs ??= createGcsArtifactBlobStore(storage.bucket());
+      blobs ??= createGcsArtifactBlobStore(gcsBucket());
       return blobs.open(output);
     },
     delete(output: Parameters<ReturnType<typeof createGcsArtifactBlobStore>["delete"]>[0]) {
-      blobs ??= createGcsArtifactBlobStore(storage.bucket());
+      blobs ??= createGcsArtifactBlobStore(gcsBucket());
       return blobs.delete(output);
     },
   };

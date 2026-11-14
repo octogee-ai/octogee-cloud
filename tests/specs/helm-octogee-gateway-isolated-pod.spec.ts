@@ -172,7 +172,8 @@ describe("helm/octogee-gateway/ — isolated gateway as a Kubernetes pod", () =>
     const resources = container(deployment, "gateway").resources!;
     expect(resources.requests["ephemeral-storage"]).toBe("6Gi");
     expect(resources.limits["ephemeral-storage"]).toBe("6Gi");
-    expect(resources.requests.cpu).toBe("2000m");
+    expect(resources.requests.cpu).toBe("1000m");
+    expect(resources.requests.memory).toBe("4Gi");
   });
 
   it.each(["x11", "omarchy"])("refuses a %s desktop, which only a GCE VM carries", (computerDesktop) => {

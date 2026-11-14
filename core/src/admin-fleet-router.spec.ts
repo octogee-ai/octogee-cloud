@@ -10,6 +10,7 @@ import {
   projectGatewayReservation,
   projectGatewayControl,
   projectGatewaySummary,
+  rollupFleetStats,
   scheduleUserSelfDeletion,
   shapeOperationsHistoryRecord,
 } from "./admin-fleet-router.js";
@@ -200,8 +201,8 @@ describe("projectGatewaySummary — pod replacement projection", () => {
 
   function summaryWith(podReplacements: unknown) {
     return projectGatewaySummary(
-      { id: "ceckert-test-xs", data: () => ({ gatewayId: "ceckert-test-xs" }) },
-      { gatewayId: "ceckert-test-xs", podReplacements },
+      { id: "ceckert-test-s", data: () => ({ gatewayId: "ceckert-test-s" }) },
+      { gatewayId: "ceckert-test-s", podReplacements },
       NOW,
     );
   }
@@ -248,6 +249,102 @@ describe("projectGatewaySummary — pod replacement projection", () => {
 
   it("projects null rather than trusting a malformed stored record", () => {
     expect(summaryWith({ recentAt: "lots", total: 3 }).podReplacements).toBeNull();
+  });
+});
+
+describe("projectGatewaySummary — monthly cost", () => {
+  const vmSpec = {
+    zones: ["us-central1-b"], machineType: "e2-standard-2", imageFamily: "gateway", diskSizeGb: 80, bootDiskType: "pd-ssd",
+    homeDiskSizeGb: 50, provisioningModel: "STANDARD", desktop: "omarchy", serviceAccountEmail: "vm@example.iam.gserviceaccount.com", subnetwork: "default",
+  };
+  const summarize = (glmDoc: Record<string, unknown>) =>
+    projectGatewaySummary({ id: String(glmDoc.gatewayId), data: () => ({ gatewayId: glmDoc.gatewayId }) }, glmDoc, Date.now());
+  const vmGateway = { gatewayId: "ada-m-12345678", gatewayClass: "isolated", sizingTier: "m", desiredStatus: "running", runtime: "gce-vm", vmSpec };
+
+  it("prices a VM gateway from its machine type and disks, at the VM's own provisioning model", () => {
+    const summary = summarize(vmGateway);
+
+    expect(summary.sizing.monthlyCostUsd).toEqual({
+      compute: 49, onDemandCompute: 49, savings: 0, pricingMode: "on-demand", storage: 19, total: 68, onDemandTotal: 68,
+      basis: "vm", perUserAtTarget: 34, perUserAtTypical: 23,
+    });
+    expect(summary.reservation).toEqual({ type: "on-demand", priceMultiplier: 1, source: "vm" });
+  });
+
+  it("keeps a paused VM gateway's disks on the bill", () => {
+    expect(summarize({ ...vmGateway, desiredStatus: "paused" }).sizing.monthlyCostUsd)
+      .toMatchObject({ basis: "vm", compute: 0, storage: 19, total: 19 });
+  });
+
+  it("prices a pod gateway from its size, and a paused one at nothing", () => {
+    const pod = { gatewayId: "ada-s-12345678", gatewayClass: "isolated", sizingTier: "s", desiredStatus: "running", runtime: "cluster" };
+
+    expect(summarize(pod).sizing.monthlyCostUsd).toMatchObject({ basis: "size", compute: 14, storage: 0, total: 14, pricingMode: "spot" });
+    expect(summarize({ ...pod, desiredStatus: "paused" }).sizing.monthlyCostUsd).toMatchObject({ basis: "size", total: 0 });
+  });
+
+  it("prices a VM gateway from its size, still at the VM's provisioning model, when its machine type has no rate", () => {
+    const summary = summarize({ ...vmGateway, vmSpec: { ...vmSpec, machineType: "n2-standard-2" } });
+
+    expect(summary.sizing.monthlyCostUsd).toMatchObject({ basis: "size", storage: 0, compute: 94, pricingMode: "on-demand" });
+    expect(summary.reservation).toEqual({ type: "on-demand", priceMultiplier: 1, source: "vm" });
+  });
+
+  it("reports the pod Spot discount, not the VM one, for a Spot VM it can only price from its size", () => {
+    const summary = summarize({ ...vmGateway, vmSpec: { ...vmSpec, machineType: "n2-standard-2", provisioningModel: "SPOT" } });
+
+    expect(summary.reservation).toEqual({ type: "spot", priceMultiplier: SPOT_PRICE_MULTIPLIER, source: "vm" });
+    expect(summary.sizing.monthlyCostUsd).toMatchObject({ basis: "size", compute: 28, pricingMode: "spot" });
+  });
+
+  it("prices a Spot-specified VM that is running on demand at the on-demand rate", () => {
+    const summary = summarize({
+      ...vmGateway,
+      vmSpec: { ...vmSpec, provisioningModel: "SPOT" },
+      vm: { instanceName: "vm", zone: "us-central1-b", status: "RUNNING", provisioningModel: "STANDARD" },
+    });
+
+    expect(summary.reservation).toEqual({ type: "on-demand", priceMultiplier: 1, source: "vm" });
+    expect(summary.sizing.monthlyCostUsd).toMatchObject({ basis: "vm", compute: 49, savings: 0 });
+  });
+
+  it.each([
+    ["a specification for another region", { vmSpec: { ...vmSpec, zones: ["europe-west1-b"] } }],
+    ["a VM running in another region", { vm: { instanceName: "vm", zone: "europe-west1-b", status: "RUNNING", provisioningModel: "STANDARD" } }],
+  ])("prices a VM gateway from its size, not the us-central1 rates, with %s", (_name, elsewhere) => {
+    const summary = summarize({ ...vmGateway, ...elsewhere });
+
+    expect(summary.sizing.monthlyCostUsd).toMatchObject({ basis: "size", storage: 0, compute: 94 });
+    expect(summary.reservation).toEqual({ type: "on-demand", priceMultiplier: 1, source: "vm" });
+  });
+
+  it("prices the home disk the user actually keeps over the size in the VM specification", () => {
+    const summary = summarize({ ...vmGateway, homeDisk: { sizeGb: 100, diskType: "pd-ssd" } });
+
+    expect(summary.sizing.monthlyCostUsd).toMatchObject({ basis: "vm", storage: 31, total: 80 });
+  });
+
+  it("prices a boot disk with no recorded type as the SSD the controller creates", () => {
+    const { bootDiskType: _bootDiskType, ...unrecorded } = vmSpec;
+
+    expect(summarize({ ...vmGateway, vmSpec: unrecorded }).sizing.monthlyCostUsd).toMatchObject({ basis: "vm", storage: 19 });
+  });
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, -5])("never puts a disk size of %s into the bill", (diskSizeGb) => {
+    const summary = summarize({ ...vmGateway, vmSpec: { ...vmSpec, diskSizeGb } });
+
+    expect(summary.sizing.monthlyCostUsd).toMatchObject({ basis: "size", storage: 0, total: 94 });
+    expect(rollupFleetStats([summary]).fleetCost.monthlyUsd).toBe(94);
+  });
+
+  it("adds each gateway's whole monthly cost, disks included, into the fleet total", () => {
+    const shared = summarize({ gatewayId: "shared-abc", gatewayClass: "shared", desiredStatus: "running" });
+
+    expect(rollupFleetStats([summarize(vmGateway), shared]).fleetCost).toMatchObject({
+      monthlyUsd: 68 + 94,
+      onDemandMonthlyUsd: 68 + 94,
+      byTier: { m: { count: 2, subtotalUsd: 68 + 94 } },
+    });
   });
 });
 
@@ -405,7 +502,7 @@ describe("projectIsolatedRuntime — disposable lifecycle visibility", () => {
         cause: "run-start",
         requestedAt: now - 90_000,
         sourceGatewayId: "shared-blue",
-        sizingTier: "xs",
+        sizingTier: "s",
       }),
       new Map(),
       new Map(),
@@ -418,7 +515,7 @@ describe("projectIsolatedRuntime — disposable lifecycle visibility", () => {
       currentGatewayId: "shared-blue",
       sourceGatewayId: "shared-blue",
       targetGatewayId: null,
-      sizingTier: "xs",
+      sizingTier: "s",
     });
   });
 
@@ -457,7 +554,7 @@ describe("projectIsolatedRuntime — disposable lifecycle visibility", () => {
         activeAt: now - 19 * 60_000,
         sourceGatewayId: "shared-blue",
         targetGatewayId: "run-alice-12345678",
-        sizingTier: "xs",
+        sizingTier: "s",
       }),
       new Map(),
       new Map(),
@@ -486,7 +583,7 @@ describe("projectIsolatedRuntime — disposable lifecycle visibility", () => {
           returningAt: now - 30_000,
           sourceGatewayId: "shared-blue",
           targetGatewayId,
-          sizingTier: "xs",
+          sizingTier: "s",
         }),
         new Map([[targetGatewayId, {
           gatewayId: targetGatewayId,
@@ -521,7 +618,7 @@ describe("projectIsolatedRuntime — disposable lifecycle visibility", () => {
         failedAt: now - 10_000,
         sourceGatewayId: "shared-blue",
         targetGatewayId,
-        sizingTier: "xs",
+        sizingTier: "s",
         activationOperationId,
         lastError: {
           message: "restore target failed",
@@ -571,7 +668,7 @@ describe("projectIsolatedRuntime — disposable lifecycle visibility", () => {
   });
 
   it("omits a failed activation once its cleanup succeeded or its runtime record is gone", () => {
-    const targetGatewayId = "alice-xs-12345678";
+    const targetGatewayId = "alice-s-12345678";
     const cleanupOperationId = `placement-retire-uid-alice-${targetGatewayId}-g1`;
     const failedLease = {
       leaseId: "lease-1",
@@ -693,7 +790,7 @@ describe("projectDisposableFleetCapacity", () => {
         {
           gatewayId: "run-alice",
           gatewayClass: "isolated",
-          sizingTier: "xs",
+          sizingTier: "s",
           ownerUid: "uid-alice",
           allocation: {
             kind: "disposable-builder",
@@ -710,7 +807,7 @@ describe("projectDisposableFleetCapacity", () => {
     expect(projectDisposableFleetCapacity(gateways)).toEqual({
       disposableInstances: 1,
       stagedInstances: 0,
-      byTier: { xs: 1 },
+      byTier: { s: 1 },
       parkedUsers: 0,
       byLifecycle: {
         requested: 0,
@@ -867,7 +964,7 @@ describe("fleet gateway projection", () => {
                 activeAt: Date.now() - 90_000,
                 sourceGatewayId: "shared-blue",
                 targetGatewayId,
-                sizingTier: "xs",
+                sizingTier: "s",
               },
             },
           },
@@ -880,7 +977,7 @@ describe("fleet gateway projection", () => {
           profile: "isolated",
           gatewayClass: "isolated",
           imageProfile: "isolated",
-          sizingTier: "xs",
+          sizingTier: "s",
           ownerUid: "uid-alice",
           builderSlug: "alice",
           allocation: {
@@ -931,7 +1028,7 @@ describe("fleet gateway projection", () => {
       operatorParkedUsers: 0,
       disposableInstances: 1,
       stagedInstances: 0,
-      byTier: { xs: 1 },
+      byTier: { s: 1 },
       parkedUsers: 1,
       byLifecycle: {
         requested: 0,
@@ -970,7 +1067,7 @@ describe("fleet gateway projection", () => {
                 failedAt: Date.now() - 30_000,
                 sourceGatewayId: "shared-blue",
                 targetGatewayId,
-                sizingTier: "xs",
+                sizingTier: "s",
                 activationOperationId,
                 lastError: { message: "restore failed" },
               },
@@ -985,7 +1082,7 @@ describe("fleet gateway projection", () => {
           profile: "isolated",
           gatewayClass: "isolated",
           imageProfile: "isolated",
-          sizingTier: "xs",
+          sizingTier: "s",
           ownerUid: "uid-alice",
           builderSlug: "alice",
           allocation: {
@@ -1059,7 +1156,7 @@ describe("fleet gateway projection", () => {
                 failedAt: Date.now() - 30_000,
                 sourceGatewayId: "shared-blue",
                 targetGatewayId,
-                sizingTier: "xs",
+                sizingTier: "s",
                 activationOperationId,
               },
             },
@@ -1073,7 +1170,7 @@ describe("fleet gateway projection", () => {
           profile: "isolated",
           gatewayClass: "isolated",
           imageProfile: "isolated",
-          sizingTier: "xs",
+          sizingTier: "s",
           ownerUid: "uid-alice",
           builderSlug: "alice",
           allocation: {
@@ -1150,7 +1247,7 @@ describe("fleet gateway projection", () => {
                 failedAt: Date.now() - 30_000,
                 sourceGatewayId: "shared-blue",
                 targetGatewayId,
-                sizingTier: "xs",
+                sizingTier: "s",
               },
             },
           },
@@ -1163,7 +1260,7 @@ describe("fleet gateway projection", () => {
           profile: "isolated",
           gatewayClass: "isolated",
           imageProfile: "isolated",
-          sizingTier: "xs",
+          sizingTier: "s",
           ownerUid: "uid-alice",
           builderSlug: "alice",
           allocation: {
@@ -1236,7 +1333,7 @@ describe("fleet gateway projection", () => {
           profile: "isolated",
           gatewayClass: "isolated",
           imageProfile: "isolated",
-          sizingTier: "xs",
+          sizingTier: "s",
           ownerUid: "uid-alice",
           builderSlug: "alice",
           allocation: {
@@ -1307,19 +1404,19 @@ describe("fleet gateway projection", () => {
                 status: "failed",
                 requestedAt: now - 60_000,
                 failedAt: now - 30_000,
-                targetGatewayId: "fail-xs-deadbeef",
+                targetGatewayId: "fail-s-deadbeef",
               },
             },
           },
         },
       },
       gateways: {
-        "fail-xs-deadbeef": durableGatewayRoot("fail-xs-deadbeef", {
+        "fail-s-deadbeef": durableGatewayRoot("fail-s-deadbeef", {
           desiredStatus: "retired",
           profile: "isolated",
           gatewayClass: "isolated",
           imageProfile: "isolated",
-          sizingTier: "xs",
+          sizingTier: "s",
           ownerUid: "failed",
           builderSlug: "failed",
           allocation: {
@@ -1329,14 +1426,14 @@ describe("fleet gateway projection", () => {
             generation: 1,
             claimedByUid: "failed",
           },
-          retirementClaim: { operationId: "placement-retire-failed-fail-xs-deadbeef" },
+          retirementClaim: { operationId: "placement-retire-failed-fail-s-deadbeef" },
         }),
       },
       operations: {
-        "placement-retire-failed-fail-xs-deadbeef": {
+        "placement-retire-failed-fail-s-deadbeef": {
           kind: "retire-gateway",
           status: "running",
-          input: { gatewayId: "fail-xs-deadbeef" },
+          input: { gatewayId: "fail-s-deadbeef" },
         },
       },
     });
@@ -1485,12 +1582,12 @@ describe("fleet gateway projection", () => {
       users: {},
       gateways: {
         default: durableGatewayRoot("default", { liveRelease: 1 }),
-        "alice-xs-deadbeef": durableGatewayRoot("alice-xs-deadbeef", {
+        "alice-s-deadbeef": durableGatewayRoot("alice-s-deadbeef", {
           desiredStatus: "retired",
           profile: "isolated",
           gatewayClass: "isolated",
           imageProfile: "isolated",
-          sizingTier: "xs",
+          sizingTier: "s",
           ownerUid: "uid-alice",
           builderSlug: "alice",
           allocation: {

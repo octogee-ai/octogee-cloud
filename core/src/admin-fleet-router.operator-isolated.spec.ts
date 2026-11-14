@@ -139,7 +139,7 @@ describe("giving a user an isolated gateway", () => {
     const { gatewayId, operationId } = res.body as { gatewayId: string; operationId: string };
     expect(res.body).toEqual({ uid: UID, gatewayId, operationId, sizingProfile: "hobby", fromGatewayId: SHARED, managedBy: "operator" });
     expect(h.records.get(`gateways/${gatewayId}`)).toMatchObject({
-      gatewayClass: "isolated", imageProfile: "isolated", sizingTier: "s", desiredStatus: "running", liveRelease: null,
+      gatewayClass: "isolated", imageProfile: "isolated", sizingTier: "s", sizingProfile: "hobby", desiredStatus: "running", liveRelease: null,
       ownerUid: UID, builderSlug: SLUG, createdBy: "operator",
       allocation: { kind: "disposable-builder", generation: 1, claimedByUid: UID, leaseId: expect.stringMatching(/^operator-[0-9a-f-]{36}$/u) },
     });
@@ -172,7 +172,7 @@ describe("giving a user an isolated gateway", () => {
     const res = await give(h, { sizingProfile: "pod" }).expect(202);
 
     expect(h.records.get(`gateways/${res.body.gatewayId}`)).toMatchObject({
-      gatewayClass: "isolated", sizingTier: "s", ownerUid: UID, builderAccess: { controlIdentity: "per-user" },
+      gatewayClass: "isolated", sizingTier: "s", sizingProfile: "pod", ownerUid: UID, builderAccess: { controlIdentity: "per-user" },
     });
     expect(h.records.get(`${GLM_OPERATIONS_COLLECTION}/${res.body.operationId}`)).toMatchObject({ kind: "migrate-user", status: "pending" });
   });
@@ -605,6 +605,44 @@ describe("holding a user for the operator", () => {
     const openclaw = (h.records.get(`users/${UID}`)!.provisioning as { openclaw: Row }).openclaw;
     expect(openclaw).toMatchObject({ managedBy: "operator", activationLease: { leaseId: "lease-1", status: "requested" } });
     expect(h.records.get(`gateways/${SHARED}/assignments/${UID}`)).toBeUndefined();
+  });
+});
+
+describe("listing an isolated gateway that runs on a VM", () => {
+  it("prices it from the VM it was given and counts its disks in the fleet total", async () => {
+    const vmSpec = {
+      zones: ["us-central1-b"], machineType: "e2-medium", imageFamily: "gateway", diskSizeGb: 80, bootDiskType: "pd-balanced",
+      homeDiskSizeGb: 10, provisioningModel: "STANDARD", desktop: "x11", serviceAccountEmail: "vm@example.iam.gserviceaccount.com", subnetwork: "default",
+    };
+    const h = harness(fleet({ ...ownedGateway({ liveRelease: 1 }), ...runtime(OWNED, "ready", { runtime: "gce-vm", vmSpec }) }));
+
+    const res = await request(h.app).get("/gateways").expect(200);
+
+    const listed = (res.body.gateways as Row[]).find((gateway) => gateway.gatewayId === OWNED);
+    expect(listed).toMatchObject({
+      reservation: { type: "on-demand", source: "vm" },
+      sizing: { tier: "s", monthlyCostUsd: { basis: "vm", compute: 24, storage: 9, total: 33 } },
+    });
+    const others = (res.body.gateways as Row[]).filter((gateway) => gateway.gatewayId !== OWNED)
+      .reduce((sum, gateway) => sum + ((gateway.sizing as { monthlyCostUsd: { total: number } }).monthlyCostUsd.total), 0);
+    expect(res.body.stats.fleetCost.monthlyUsd).toBe(33 + others);
+  });
+});
+
+describe("listing an isolated VM gateway whose owner keeps a larger home disk", () => {
+  it("prices the retained home disk on the owner's record, not the size in the VM specification", async () => {
+    const vmSpec = {
+      zones: ["us-central1-b"], machineType: "e2-medium", imageFamily: "gateway", diskSizeGb: 80, bootDiskType: "pd-balanced",
+      homeDiskSizeGb: 10, provisioningModel: "STANDARD", desktop: "x11", serviceAccountEmail: "vm@example.iam.gserviceaccount.com", subnetwork: "default",
+    };
+    const seed = fleet({ ...ownedGateway({ liveRelease: 1 }), ...runtime(OWNED, "ready", { runtime: "gce-vm", vmSpec }), ...user(OWNED) });
+    (seed[`users/${UID}`].provisioning as Row).homeStorage = { disk: { sizeGb: 100, diskType: "pd-ssd" } };
+    const h = harness(seed);
+
+    const res = await request(h.app).get("/gateways").expect(200);
+
+    const listed = (res.body.gateways as Row[]).find((gateway) => gateway.gatewayId === OWNED);
+    expect(listed).toMatchObject({ sizing: { monthlyCostUsd: { basis: "vm", compute: 24, storage: 25, total: 49 } } });
   });
 });
 

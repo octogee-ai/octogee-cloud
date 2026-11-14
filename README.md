@@ -53,6 +53,8 @@ and a domain. [See every account and tier](docs/getting-started.md#what-you-need
   in `glm-controller`, `gateway-edge`, and `octogee-api`, with `infra`, `helm`,
   `terraform`, `templates` and `scripts` beside them. `tests/` holds the
   cross-package platform specs.
+- [Legacy names](docs/legacy-names.md) lists the stored names that keep
+  their spelling from before the platform was published.
 
 The Octogee product keeps its own private repository and builds on top of this
 one.

@@ -3,6 +3,10 @@
 {{- $blobStore := (.Values.global).blobStore | default dict -}}
 - name: BLOB_STORE_BACKEND
   value: {{ $blobBackend | quote }}
+{{- if eq $blobBackend "gcs" }}
+- name: BLOB_GCS_BUCKET
+  value: {{ required "global.blobStore.gcsBucket is required" $blobStore.gcsBucket | quote }}
+{{- end }}
 {{- if and (eq $blobBackend "s3") $blobStore.endpoint }}
 - name: BLOB_S3_ENDPOINT
   value: {{ $blobStore.endpoint | quote }}

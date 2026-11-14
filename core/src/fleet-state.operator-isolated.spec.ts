@@ -170,3 +170,47 @@ describe("the preparation fence of a give that failed", () => {
     expect(fence(records)).toMatchObject({ operationId: SECOND, phase: "preparing" });
   });
 });
+
+describe("source recovery of a move whose isolated target was retired before its unmount was confirmed", () => {
+  const RETIREMENT = `operator-retire-${TARGET}`;
+  const MIGRATION = `mig-${OP}:scheduler:1:claim:900`;
+  type Target = "gone" | "retired" | "running" | "retirement-failed" | "retirement-of-another-gateway";
+
+  function retiredTargetRecovery(target: Target) {
+    const records = seed({ sourceState: "quiescing", openclaw: { migration: { state: "moving", phase: "transferring", operationId: OP, startedAt: STARTED } } });
+    const operation = records.get(`${GLM_OPERATIONS_COLLECTION}/${OP}`)!;
+    records.set(`${GLM_OPERATIONS_COLLECTION}/${OP}`, {
+      ...operation, input: { ...(operation.input as Row), recoverSourceOnly: true },
+      schedulerHandoff: { migrationId: MIGRATION, uid: UID, slug: SLUG, fromGatewayId: SHARED, toGatewayId: TARGET, stageAfterCutover: true,
+        sourceRecovery: { migrationId: MIGRATION, sourceEpoch: 3, steps: [{ name: "rollback:unmount-target", status: "failed" }], retiredTarget: { gatewayId: TARGET } } },
+    });
+    if (target === "gone") records.delete(`gateways/${TARGET}`);
+    if (target !== "gone" && target !== "running") {
+      records.set(`gateways/${TARGET}`, isolated({ desiredStatus: "retired", retirementClaim: { operationId: RETIREMENT, version: 1 } }));
+      records.set(`${GLM_OPERATIONS_COLLECTION}/${RETIREMENT}`, {
+        kind: "retire-gateway", status: target === "retirement-failed" ? "failed" : "succeeded", createdBy: "operator", createdAt: 1_100,
+        input: { gatewayId: target === "retirement-of-another-gateway" ? "lin-s-ffffffff" : TARGET },
+      });
+    }
+    const deps = { store: createDocumentFixtureStore(records), now: () => new Date(2_000) };
+    const recovery = { uid: UID, sourceGatewayId: SHARED, operationId: OP, sourceEpoch: 3, claimStartedAt: STARTED };
+    const marker = () => (records.get(`users/${UID}`)!.provisioning as { openclaw: Row }).openclaw.migration;
+    return { records, complete: () => completeWorkspaceMigrationRecovery(deps, recovery), assert: () => assertWorkspaceMigrationRecoveryAuthority(deps, recovery), marker };
+  }
+
+  it.each(["gone", "retired"] as const)("puts the user back to serving on the shared gateway once the target is %s", async (target) => {
+    const h = retiredTargetRecovery(target);
+    await expect(h.assert()).resolves.toBeUndefined();
+    await h.complete();
+    expect(h.records.get(`gateways/${SHARED}/assignments/${UID}`)).toMatchObject({ state: "serving", epoch: 3, updatedByOperationId: OP });
+    expect(h.marker()).toBeUndefined();
+  });
+
+  it.each(["running", "retirement-failed", "retirement-of-another-gateway"] as const)("refuses while the target may still hold the user: %s", async (target) => {
+    const h = retiredTargetRecovery(target);
+    await expect(h.assert()).rejects.toThrow(REFUSED);
+    await expect(h.complete()).rejects.toThrow(REFUSED);
+    expect(h.records.get(`gateways/${SHARED}/assignments/${UID}`)).toMatchObject({ state: "quiescing" });
+    expect(h.marker()).toMatchObject({ operationId: OP });
+  });
+});

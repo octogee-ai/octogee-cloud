@@ -1083,11 +1083,12 @@ describe("gateway convergence pass outcomes", () => {
   });
 
   it.each([
-    ["no profile at its tier", { pod: POD_PROFILE }, "isolated gateway pod runs as a pod, and no isolated sizing profile at tier m describes one"],
-    ["a VM profile at its tier", { vm: VM_PROFILE }, "isolated gateway pod runs as a pod, but the isolated sizing profile at tier m describes a gce-vm computer"],
-  ])("refuses to start a pod gateway with %s", async (_name, sizingProfiles, error) => {
+    ["no profile at its tier", { pod: POD_PROFILE }, {}, "isolated gateway pod runs as a pod, and no isolated sizing profile at tier m describes one"],
+    ["only a VM profile at its tier", { vm: VM_PROFILE }, {}, "isolated gateway pod runs as a pod, and no isolated sizing profile at tier m describes one"],
+    ["a sizing profile that describes a VM", { vm: VM_PROFILE }, { sizingProfile: "vm" }, "isolated gateway pod runs as a pod, but its sizing profile vm describes a gce-vm computer"],
+  ])("refuses to start a pod gateway with %s", async (_name, sizingProfiles, named, error) => {
     const roots = {
-      pod: durableRoot({ gatewayId: "pod", gatewayClass: "isolated", profile: null, imageProfile: "isolated", sizingTier: "m", ownerUid: "u", builderSlug: "alice", liveRelease: null }),
+      pod: durableRoot({ gatewayId: "pod", gatewayClass: "isolated", profile: null, imageProfile: "isolated", sizingTier: "m", ownerUid: "u", builderSlug: "alice", liveRelease: null, ...named }),
     };
     const h = isolatedPodPass(roots, { pod: servingRuntime({ gatewayId: "pod", runtime: "cluster" }) }, sizingProfiles);
 

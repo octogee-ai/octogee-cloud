@@ -8,7 +8,7 @@ import { createAgentImportStore, agentImportBrokerBaseUrlFromEnv } from "./agent
 import { scanAgentImportSecrets } from "./agent-import-git.js";
 import { resolveUserDir, resolveProjectDir, workspaceMutationLeaseGitDir } from "./workspace-git.js";
 import { getManifestForQuota } from "./manifest.js";
-import { storage } from "./db.js";
+import { gcsBucket } from "./gcs-bucket.js";
 import { withinAgentExportDeadline, AgentExportService, type AgentExportSource, type AgentExportRecord } from "./agent-export-service.js";
 import { captureAgentExport, exportDigest, type AgentExportSnapshot } from "./agent-export-snapshot.js";
 import { agentExportGithub } from "./agent-export-github.js";
@@ -51,10 +51,10 @@ export function createAgentExportRuntime(input: { authorization: string; gateway
         return { manifest, deleted: deleted.sort() };
       },
       readBlob: brokered ? brokered.readBlob : async entry => {
-        const file = storage.bucket().file(entry.gcsPath);
+        const file = gcsBucket().file(entry.gcsPath);
         const [metadata] = await file.getMetadata();
         if (!metadata.generation || Number(metadata.size) !== entry.size) throw new Error("authored asset generation or size changed");
-        const [contents] = await storage.bucket().file(entry.gcsPath, { generation: metadata.generation }).download({ validation: "crc32c" });
+        const [contents] = await gcsBucket().file(entry.gcsPath, { generation: metadata.generation }).download({ validation: "crc32c" });
         return contents;
       },
       scan: directory => scanAgentImportSecrets(directory, { currentOnly: true }),
