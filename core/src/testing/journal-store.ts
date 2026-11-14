@@ -24,6 +24,7 @@ import type {
   AgentStoreRecord,
   UserFence,
   PlatformUserRecord,
+  UserAccountRecord,
   UserRepositories,
   GatewayFenceHolders,
 } from "../platform-state/users.js";
@@ -955,6 +956,24 @@ function userRepositories(documents: FixtureDocuments, write: Write, transaction
       write(() => documents.delete(`users/${uid}/agentStores/${storeKey}`));
     },
   });
+  const account = (uid: string, row: Record<string, unknown> | undefined): Stored<UserAccountRecord> | null => {
+    if (row === undefined || typeof row.username !== "string") return null;
+    const created = row.createdAt as { toMillis?: () => number } | number | undefined;
+    const createdAt = typeof created === "number" ? created : created?.toMillis?.() ?? 0;
+    const email = typeof row.email === "string" ? row.email : "";
+    return { uid, name: row.username, email, createdAt, revision: FIXTURE_REVISION };
+  };
+  const accounts = partialRepository<UserRepositories["accounts"]>("users.accounts", {
+    get: async (uid) => account(uid, documents.get(`users/${uid}`)),
+    getMany: async (uids) => new Map(uids.flatMap((uid) => {
+      const stored = account(uid, documents.get(`users/${uid}`));
+      return stored === null ? [] : [[uid, stored] as const];
+    })),
+    listAll: async () => documents.children("users").flatMap(([uid, row]) => {
+      const stored = account(uid, row);
+      return stored === null ? [] : [stored];
+    }),
+  });
   const transferPath = (uid: string, migrationId: string) => `users/${uid}/${SCHEDULE_TRANSFERS_SUBCOLLECTION}/${migrationId}`;
   const storedTransfer = (row: Record<string, unknown>) =>
     ({ ...structuredClone(row), revision: FIXTURE_REVISION }) as unknown as Stored<ScheduleTransferDoc>;
@@ -974,7 +993,7 @@ function userRepositories(documents: FixtureDocuments, write: Write, transaction
       .sort((a, b) => a.transfer.snapshotAt - b.transfer.snapshotAt || a.uid.localeCompare(b.uid) ||
         a.transfer.migrationId.localeCompare(b.transfer.migrationId)),
   });
-  return partialRepository<UserRepositories>("builders", { records, placementReceipts, scheduleTransfers, agentStores });
+  return partialRepository<UserRepositories>("builders", { records, accounts, placementReceipts, scheduleTransfers, agentStores });
 }
 
 function workspaceChannelLocation(path: string): { scope: { workspaceSlug: string; projectSlug: string | null }; channelId: string } | null {
