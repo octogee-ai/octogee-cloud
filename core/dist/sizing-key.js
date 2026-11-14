@@ -1,8 +1,8 @@
 import { userEntitlements } from "@octogee/shared/types/user-entitlements";
-export function firestoreSizingKeyReader(db) {
+export function accountSizingKeyReader(accounts) {
     return async (uid, now) => {
-        const snapshot = await db.doc(`users/${uid}`).get();
-        return snapshot.exists ? userEntitlements().sizingKey(snapshot.data() ?? {}, new Date(now)) : null;
+        const account = await accounts.get(uid);
+        return account === null ? null : userEntitlements().sizingKey(account.planInputs, new Date(now));
     };
 }
 const SIZING_KEY_READ_ATTEMPTS = 3;
