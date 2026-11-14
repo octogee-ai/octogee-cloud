@@ -36,7 +36,7 @@ import {
 import { readInstalledOpenClawBuild } from "../lib/openclaw-installed-build.js";
 import { isPerUserControlIdentity } from "@octogee/shared/types/openclaw-proxy-identity";
 import { isIsolatedGatewayClassValue } from "@octogee/shared/types/glm";
-import type { UserIdentity } from "../../shared/types/user-identity.js";
+import type { ClaimedUserIdentity, UserIdentity } from "../../shared/types/user-identity.js";
 
 const DEFAULT_HEALTH_TIMEOUT_MS = 600_000;
 const DEFAULT_STOP_GRACE_MS = 30_000;
@@ -1000,8 +1000,30 @@ export async function userBootMode(input: {
   return {
     prelaunchBoot: identity.bootMode === "prelaunch",
     ...(identity.activationMigrationId ? { activationMigrationId: identity.activationMigrationId } : {}),
-    userAuthorityKey: JSON.stringify([identity.gatewayId, identity.ownerUid, identity.builderSlug, identity.leaseId, identity.generation]),
+    userAuthorityKey: userAllocationKey(identity),
   };
+}
+
+function userAllocationKey(identity: ClaimedUserIdentity): string {
+  return JSON.stringify([identity.gatewayId, identity.ownerUid, identity.builderSlug, identity.leaseId, identity.generation]);
+}
+
+async function readUserAllocation(input: {
+  env: NodeJS.ProcessEnv;
+  readIdentity: () => Promise<UserIdentity>;
+}): Promise<string | undefined> {
+  if (!isolatedRuntime(input.env)) return undefined;
+  const identity = await input.readIdentity();
+  if (identity.state !== "claimed") throw new Error(`User allocation is unavailable: ${identity.reason}`);
+  return userAllocationKey(identity);
+}
+
+export function userAuthorityReaders(input: {
+  env: NodeJS.ProcessEnv;
+  readIdentity: (opts?: { nativeBoot?: true }) => Promise<UserIdentity>;
+}): { readBootMode: () => Promise<UserBootMode>; readAllocationAuthority: () => Promise<string | undefined> } {
+  const readBootMode = () => userBootMode({ env: input.env, readIdentity: () => input.readIdentity({ nativeBoot: true }) });
+  return { readBootMode, readAllocationAuthority: () => readUserAllocation({ env: input.env, readIdentity: () => input.readIdentity() }) };
 }
 
 async function main(): Promise<void> {
@@ -1023,9 +1045,9 @@ async function main(): Promise<void> {
     log,
     installedOpenClawBuild: () => readInstalledOpenClawBuild(OPENCLAW_BINARY),
   });
-  const readBootMode = () => userBootMode({
+  const { readBootMode, readAllocationAuthority } = userAuthorityReaders({
     env: process.env,
-    readIdentity: () => createFleetBrokerClient(gatewayId, revisionId).builderIdentity({ nativeBoot: true }),
+    readIdentity: (opts) => createFleetBrokerClient(gatewayId, revisionId).builderIdentity(opts),
   });
   const boot = await readBootMode();
   await recoverIsolatedPodGatewayLocks({
@@ -1042,7 +1064,7 @@ async function main(): Promise<void> {
     bootWatcher,
     ...boot,
     prepareSystemStore: (assertStopped) => prepareUserSystemStore({ root: openclawDir, assertCurrent: assertStopped, log,
-      readAuthority: async () => (await readBootMode()).userAuthorityKey }),
+      readAuthority: readAllocationAuthority }),
     assertPrelaunchAuthority: async () => {
       const current = await readBootMode();
       if (!current.prelaunchBoot || !boot.userAuthorityKey || current.userAuthorityKey !== boot.userAuthorityKey) throw new Error("Isolated prelaunch authority changed");
