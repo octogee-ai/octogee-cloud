@@ -69,6 +69,11 @@ import {
 import { resolveActiveArtifactWorkspaceSlug } from "./lib/chat-artifact-workspace.js";
 import { gcsBucket } from "../../gateway-edge/src/lib/gcs-bucket.js";
 import { installProjectPresentation, NO_PROJECT_PRESENTATION, type ProjectPresentation } from "../../gateway-edge/src/lib/project-presentation.js";
+import {
+  installProjectAgentDeliveryIntents,
+  NO_PROJECT_AGENT_DELIVERY_INTENTS,
+  type ProjectAgentDeliveryIntents,
+} from "../../gateway-edge/src/lib/project-agent-delivery-intents.js";
 import { installUserAccounts, readSizingKey } from "../../gateway-edge/src/lib/user-accounts.js";
 import { installAgentIdentity } from "../../gateway-edge/src/lib/agent-identity.js";
 import type { AuthUserSuspension } from "../../gateway-edge/src/lib/user-deletion-deps.js";
@@ -181,6 +186,7 @@ export interface ProductRuntime {
   publicCanvasFile?: PublicCanvasFileReader;
   sessionChannelPurpose?: SessionChannelPurposeReader;
   projectPresentation?: ProjectPresentation;
+  projectAgentDeliveryIntents?: ProjectAgentDeliveryIntents;
   workspaceStorageAccounting?: WorkspaceStorageAccounting;
   brokerRecords?: BrokerRecords;
   provisioningProjection?: ProvisioningProjection;
@@ -443,6 +449,7 @@ export function createPlatformApp(opts: PlatformAppOptions = {}) {
     readGithubToken: readFreshGithubToken,
   });
   installProjectPresentation(product?.projectPresentation ?? NO_PROJECT_PRESENTATION);
+  installProjectAgentDeliveryIntents(product?.projectAgentDeliveryIntents ?? NO_PROJECT_AGENT_DELIVERY_INTENTS);
   installWorkspaceStorageAccounting(product?.workspaceStorageAccounting ?? NO_WORKSPACE_STORAGE_ACCOUNTING);
   mountRouteTable(app, product?.routesBeforeMiddleware ?? []);
   const featurePolicy = opts.featurePolicy ?? product?.featurePolicy ?? new FeaturePolicy(configuredFeatureFlagProvider(process.env), { logger });

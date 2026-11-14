@@ -17,12 +17,15 @@ const { NO_PROJECT_PRESENTATION, projectPresentation, installProjectPresentation
 const { NO_BROKER_RECORDS } = await import("../lib/broker-records.js");
 const { NO_WORKSPACE_STORAGE_ACCOUNTING, installWorkspaceStorageAccounting, workspaceStorageAccounting } =
   await import("../../../gateway-edge/src/lib/workspace-storage-quota.js");
+const { NO_PROJECT_AGENT_DELIVERY_INTENTS, installProjectAgentDeliveryIntents, projectAgentDeliveryIntents } =
+  await import("../../../gateway-edge/src/lib/project-agent-delivery-intents.js");
 const { userAccounts } = await import("../../../gateway-edge/src/lib/user-accounts.js");
 const { noUserAccounts } = await import("@octogee/core/user-account");
 
 afterEach(() => {
   installProjectPresentation(NO_PROJECT_PRESENTATION);
   installWorkspaceStorageAccounting(NO_WORKSPACE_STORAGE_ACCOUNTING);
+  installProjectAgentDeliveryIntents(NO_PROJECT_AGENT_DELIVERY_INTENTS);
 });
 
 function productWith(runtime: Partial<ProductRuntime>) {
@@ -83,5 +86,21 @@ describe("createPlatformApp product ports", () => {
     createPlatformApp({ product: productWith({ workspaceStorageAccounting: accounting }) });
 
     expect(workspaceStorageAccounting()).toBe(accounting);
+  });
+
+  it("records no project agent delivery intents without a product", () => {
+    installProjectAgentDeliveryIntents({ ...NO_PROJECT_AGENT_DELIVERY_INTENTS });
+
+    createPlatformApp();
+
+    expect(projectAgentDeliveryIntents()).toBe(NO_PROJECT_AGENT_DELIVERY_INTENTS);
+  });
+
+  it("installs the product's project agent delivery intents", () => {
+    const intents = { ...NO_PROJECT_AGENT_DELIVERY_INTENTS, recordsIntents: true };
+
+    createPlatformApp({ product: productWith({ projectAgentDeliveryIntents: intents }) });
+
+    expect(projectAgentDeliveryIntents()).toBe(intents);
   });
 });
