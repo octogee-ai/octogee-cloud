@@ -14,7 +14,6 @@
     "gateway-edge/src/lib/project-agent-onboarding.ts",
     "gateway-edge/src/lib/user-deletion-deps.ts",
     "gateway-edge/src/lib/withProject.ts",
-    "gateway-edge/src/lib/workspace-blob.ts",
     "gateway-edge/src/routes/agent-models.ts",
     "gateway-edge/src/routes/billing/byot.ts",
     "gateway-edge/src/routes/byosub.ts",

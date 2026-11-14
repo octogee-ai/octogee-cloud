@@ -27,21 +27,6 @@ vi.mock("../lib/project-blob-upload.js", () => ({ uploadProjectBlobViaBroker: h.
 vi.mock("../lib/db.js", () => ({ db: { doc: h.dbDoc } }));
 vi.mock("../lib/gcs-bucket.js", () => ({ gcsBucket: h.bucket }));
 
-vi.mock("../lib/workspace-storage-quota.js", () => ({
-  WorkspaceStorageQuotaError: class WorkspaceStorageQuotaError extends Error {
-    name = "WorkspaceStorageQuotaError";
-    code = "FREE_STORAGE_LIMIT";
-    constructor(readonly limitBytes: number, readonly projectedBytes: number) {
-      super("quota");
-    }
-  },
-  reserveWorkspaceStorage: (...args: unknown[]) => h.reserveWorkspaceStorage(...args),
-  finalizeWorkspaceStorageReservation: (...args: unknown[]) =>
-    h.finalizeWorkspaceStorageReservation(...args),
-  rollbackWorkspaceStorageReservation: (...args: unknown[]) =>
-    h.rollbackWorkspaceStorageReservation(...args),
-  releaseWorkspaceStorage: (...args: unknown[]) => h.releaseWorkspaceStorage(...args),
-}));
 
 vi.mock("../lib/manifest.js", async (importOriginal) => ({
   ...await importOriginal<typeof import("../lib/manifest.js")>(),
@@ -55,6 +40,7 @@ vi.mock("../middleware/logging.js", () => ({
 }));
 
 import { removeWorkspaceBlob, storeWorkspaceBlob, storeWorkspaceBlobCentrally } from "../lib/workspace-blob.js";
+import { installWorkspaceStorageAccounting, NO_WORKSPACE_STORAGE_ACCOUNTING } from "../lib/workspace-storage-quota.js";
 import { manifestObjectPath, parseManifest, serializeManifest } from "@octogee/core/workspace-manifest";
 
 const target: FileTarget = {
@@ -82,7 +68,7 @@ beforeEach(() => {
   h.removeFromManifest.mockResolvedValue(undefined);
   h.getSignedUrl.mockResolvedValue(["https://signed-thumb"]);
   h.getManifestForQuota.mockResolvedValue({});
-  h.reserveWorkspaceStorage.mockImplementation(async (_db: unknown, input: {
+  h.reserveWorkspaceStorage.mockImplementation(async (input: {
     slug: string;
     path: string;
     newSize: number;
@@ -112,8 +98,17 @@ beforeEach(() => {
   h.finalizeWorkspaceStorageReservation.mockResolvedValue(undefined);
   h.rollbackWorkspaceStorageReservation.mockResolvedValue(undefined);
   h.releaseWorkspaceStorage.mockResolvedValue(undefined);
+  installWorkspaceStorageAccounting({
+    reserve: h.reserveWorkspaceStorage,
+    finalize: h.finalizeWorkspaceStorageReservation,
+    rollback: h.rollbackWorkspaceStorageReservation,
+    release: h.releaseWorkspaceStorage,
+  });
 });
-afterEach(() => { vi.unstubAllEnvs(); });
+afterEach(() => {
+  vi.unstubAllEnvs();
+  installWorkspaceStorageAccounting(NO_WORKSPACE_STORAGE_ACCOUNTING);
+});
 
 it("saves runtime project assets through the broker without broad cloud credentials", async () => {
   vi.stubEnv("FLEET_BROKER_URL", "http://tenant-api");

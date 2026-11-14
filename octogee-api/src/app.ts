@@ -70,6 +70,7 @@ import { resolveActiveArtifactWorkspaceSlug } from "./lib/chat-artifact-workspac
 import { gcsBucket } from "../../gateway-edge/src/lib/gcs-bucket.js";
 import { installProjectPresentation, NO_PROJECT_PRESENTATION, type ProjectPresentation } from "../../gateway-edge/src/lib/project-presentation.js";
 import { installUserAccounts } from "../../gateway-edge/src/lib/user-accounts.js";
+import { installWorkspaceStorageAccounting, NO_WORKSPACE_STORAGE_ACCOUNTING, type WorkspaceStorageAccounting } from "../../gateway-edge/src/lib/workspace-storage-quota.js";
 import { platformStateStore, readSizingKey } from "../../gateway-edge/src/lib/platform-state.js";
 import {
   ConnectorTokenReadError,
@@ -174,6 +175,7 @@ export interface ProductRuntime {
   publicCanvasFile?: PublicCanvasFileReader;
   sessionChannelPurpose?: SessionChannelPurposeReader;
   projectPresentation?: ProjectPresentation;
+  workspaceStorageAccounting?: WorkspaceStorageAccounting;
   brokerRecords?: BrokerRecords;
   provisioningProjection?: ProvisioningProjection;
   chatArtifactJobs?: ArtifactJobStore;
@@ -434,6 +436,7 @@ export function createPlatformApp(opts: PlatformAppOptions = {}) {
     readGithubToken: readFreshGithubToken,
   });
   installProjectPresentation(product?.projectPresentation ?? NO_PROJECT_PRESENTATION);
+  installWorkspaceStorageAccounting(product?.workspaceStorageAccounting ?? NO_WORKSPACE_STORAGE_ACCOUNTING);
   mountRouteTable(app, product?.routesBeforeMiddleware ?? []);
   const featurePolicy = opts.featurePolicy ?? product?.featurePolicy ?? new FeaturePolicy(configuredFeatureFlagProvider(process.env), { logger });
   const productRouteDeps: ProductRouteDeps = { featurePolicy };

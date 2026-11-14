@@ -1,6 +1,5 @@
 import { blobStatus, type BlobStore } from "./blob-store.js";
 import { createGcsBlobStore } from "./gcs-blob-store.js";
-import { db } from "./db.js";
 import { userAccounts } from "./user-accounts.js";
 import { gcsBucket } from "./gcs-bucket.js";
 import { platformStateStore } from "./platform-state.js";
@@ -39,10 +38,7 @@ import {
 import { invalidateWorkspaceFileResponseCache } from "../routes/workspace/file-response-cache.js";
 import { freeWorkspaceStorageLimitBytes } from "./free-storage.js";
 import {
-  finalizeWorkspaceStorageReservation,
-  releaseWorkspaceStorage,
-  reserveWorkspaceStorage,
-  rollbackWorkspaceStorageReservation,
+  workspaceStorageAccounting,
   type WorkspaceStorageReservation,
 } from "./workspace-storage-quota.js";
 import { isIsolatedGatewayClassValue } from "@octogee/shared/types/glm";
@@ -97,7 +93,7 @@ async function reserveBlobStorage(
   const manifest = await getManifestForQuota(target.gcsPrefix, blobStore ? manifestStoreForBlobs(blobStore) : undefined);
   const currentBytes = Object.values(manifest)
     .reduce((sum, entry) => sum + entry.size, 0);
-  return reserveWorkspaceStorage(db, {
+  return workspaceStorageAccounting().reserve({
     slug: target.slug,
     path: filePath,
     newSize: fileSize,
@@ -138,7 +134,7 @@ async function rollbackReservation(
 ): Promise<never> {
   if (!reservation) throw error;
   try {
-    await rollbackWorkspaceStorageReservation(db, reservation);
+    await workspaceStorageAccounting().rollback(reservation);
   } catch (rollbackError) {
     throw new AggregateError(
       [error, rollbackError],
@@ -235,7 +231,7 @@ export async function storeWorkspaceBlobCentrally(
       },
     };
     await updateManifest(target.gcsPrefix, entries, options.blobStore && manifestStoreForBlobs(options.blobStore));
-    if (reservation) await finalizeWorkspaceStorageReservation(db, reservation);
+    if (reservation) await workspaceStorageAccounting().finalize(reservation);
     invalidateListingCacheIfAddressable(target);
 
     return {
@@ -262,7 +258,7 @@ export async function removeWorkspaceBlob(target: WorkspaceBlobTarget, filePath:
   }
   await removeFromManifest(target.gcsPrefix, filePath, manifests);
   if (target.projectSlug === null && removedBytes > 0) {
-    await releaseWorkspaceStorage(db, {
+    await workspaceStorageAccounting().release({
       slug: target.slug,
       path: filePath,
       removedBytes,
