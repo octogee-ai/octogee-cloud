@@ -9,8 +9,6 @@ const h = vi.hoisted(() => ({
   logger: { error: vi.fn(), info: vi.fn(), warn: vi.fn() },
 }));
 
-vi.mock("../lib/db.js", () => ({ db: {}, FieldValue: {} }));
-
 vi.mock("../lib/platform-state.js", async () => {
   const { createDocumentFixtureStore } = await import("@octogee/core/testing/journal-store");
   return { platformStateStore: createDocumentFixtureStore(h.docs) };

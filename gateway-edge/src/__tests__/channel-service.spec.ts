@@ -46,15 +46,6 @@ function docRef(path: string) {
   };
 }
 
-vi.mock("../lib/db.js", () => ({
-  db: {
-    doc: (path: string) => docRef(path),
-  },
-  FieldValue: {
-    serverTimestamp: () => "SERVER_TS",
-  },
-}));
-
 vi.mock("../lib/platform-state.js", async () => {
   const { createDocumentFixtureStore } = await import("@octogee/core/testing/journal-store");
   return { platformStateStore: createDocumentFixtureStore(h.docs) };

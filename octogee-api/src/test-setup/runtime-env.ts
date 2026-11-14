@@ -5,3 +5,6 @@ process.env.PUBLIC_APP_ORIGINS ||= "https://octogee.com,https://app.octogee.com,
 
 process.env.BLOB_STORE_BACKEND ||= "gcs";
 process.env.BLOB_GCS_BUCKET ||= "unit-test-blobs";
+
+process.env.METADATA_SERVER_DETECTION ||= "none";
+process.env.GCE_METADATA_HOST ||= "127.0.0.1:1";

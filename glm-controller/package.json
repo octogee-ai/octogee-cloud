@@ -23,7 +23,6 @@
     "@octogee/shared": "file:../shared",
     "express": "^5.2.1",
     "express-rate-limit": "^8.7.3",
-    "firebase-admin": "^14.3.0",
     "google-auth-library": "^11.0.2",
     "tsx": "^4.23.15",
     "undici": "8.12.4"

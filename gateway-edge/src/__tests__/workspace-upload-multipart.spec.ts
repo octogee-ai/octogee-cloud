@@ -1,15 +1,9 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import type { Request } from 'express';
 
 // upload.ts pulls in lib/db (firebase admin) transitively; mock it so the
 // module imports without initializing Firebase. parseMultipart itself touches
 // none of it.
-vi.mock('../lib/db', () => ({
-  db: {},
-  auth: {},
-  FieldValue: { serverTimestamp: () => null, delete: () => null },
-}));
-
 import { parseMultipart } from '../routes/workspace/upload.js';
 
 const BOUNDARY = 'TESTBOUNDARY';

@@ -23,9 +23,6 @@ const firestore = vi.hoisted(() => ({
   collection: vi.fn(),
   readGatewayAuthorization: vi.fn(),
 }));
-vi.mock("../lib/db.js", () => ({
-  db: { doc: firestore.doc, collection: firestore.collection },
-}));
 vi.mock("@octogee/core/gateway-live-release", () => ({
   readGatewayAuthorizationInStore: (...args: unknown[]) => firestore.readGatewayAuthorization(...args),
 }));

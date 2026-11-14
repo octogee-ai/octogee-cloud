@@ -15,22 +15,6 @@ vi.mock("../lib/platform-state.js", async () => {
   return { platformStateStore: createDocumentFixtureStore(h.docs) };
 });
 
-vi.mock("../lib/db.js", () => ({
-  db: {
-    doc: (path: string) => ({
-      path,
-      get: async () => {
-        const data = h.docs.get(path);
-        return { exists: data !== undefined, data: () => data };
-      },
-      update: async (data: Record<string, unknown>) => {
-        h.updates.push({ path, data });
-      },
-    }),
-  },
-  FieldValue: { serverTimestamp: () => "SERVER_TS" },
-}));
-
 vi.mock("../middleware/security.js", () => ({
   strictRateLimit: (_req: unknown, _res: unknown, next: () => void) => next(),
 }));
