@@ -15,6 +15,7 @@ import { mountClusterRoutes, type ClusterRouteTable } from "../../gateway-edge/s
 import { createAdminRoutes, type ProductAdminRoutes } from "../../gateway-edge/src/routes/admin.js";
 import type { DeletionProductContextDiscovery } from "@octogee/core/admin-fleet-router";
 import type { AdminUserDirectorySource, AdminUserProductDetail } from "@octogee/core/admin-user-directory-router";
+import type { UserAccountReader } from "@octogee/core/user-account";
 import type { ControlSessionChecks } from "@octogee/core/platform-state";
 import type { ProvisioningProjection } from "@octogee/core/provisionSteps";
 import {
@@ -306,6 +307,7 @@ function clusterRouteOverrides(
   featurePolicy: FeaturePolicy,
   voiceCatalog: VoiceCatalog,
   product: ProductRuntime | undefined,
+  accounts: UserAccountReader,
   notifications?: ProductNotifications,
 ) {
   return {
@@ -314,6 +316,7 @@ function clusterRouteOverrides(
     productRoutes: product?.clusterRoutes({ featurePolicy }) ?? [],
     projectsDeleteRoutes: product?.projectsDeleteRoutes,
     adminRoutes: createAdminRoutes({
+      accounts,
       discoverDeletionProductContext: product?.discoverDeletionProductContext,
       userDetail: product?.adminUserDetail,
       userDirectory: product?.adminUserDirectory,
@@ -532,6 +535,7 @@ export function createPlatformApp(opts: PlatformAppOptions = {}) {
     featurePolicy,
     voiceOpenAiApiKey ? createOpenAiVoiceCatalog(voiceOpenAiApiKey) : createVoiceCatalog(voiceRelayConfig, { log: voiceRelayLog }),
     product,
+    brokerRecords.accounts,
     opts.product?.notifications,
   ));
   mountRouteTable(app, product?.apiRoutes(productRouteDeps) ?? []);
