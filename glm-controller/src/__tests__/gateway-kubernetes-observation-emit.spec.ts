@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { PlatformStateStore } from "@octogee/core/platform-state";
 import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
 
-import { persistKubernetesObservations } from "../placement-policy-reconciler.js";
+import { persistKubernetesObservations } from "../gateway-kubernetes-observation.js";
 
 const RS = { uid: "rs-live", name: "octogee-gateway-shared-a-98d6b8cd7", desiredReplicas: 1, observedReplicas: 0 };
 

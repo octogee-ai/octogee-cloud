@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
 import type { Operation } from "@octogee/shared/types/glm";
-import { attemptNeverHeldSource, rearmOwnedLegacyMigration, recoverFailedLegacyMigrations } from "./legacy-migration-recovery.js";
+import {
+  attemptNeverHeldSource,
+  rearmOwnedLegacyMigration,
+  recoverFailedLegacyMigrations,
+  sourceRecoveryForwardRetryable,
+} from "./legacy-migration-recovery.js";
 
 function fixture(migrationId: string, operationId = "op-1") {
   const steps = [{ name: "keys-sync-state", status: "failed" as const, error: "request timed out" }];
@@ -42,6 +47,30 @@ describe("claimed scheduler recovery evidence", () => {
     expect(attemptNeverHeldSource(h.operation)).toBe(false);
     expect(await h.rearm()).toBe(false);
     expect(h.stored()).toBeUndefined();
+  });
+});
+
+describe("forward retry after source recovery", () => {
+  const claimed = (steps: Operation["steps"]) => {
+    const { operation } = fixture("mig-op-1:scheduler:1:claim:1000");
+    operation.steps = steps;
+    return operation;
+  };
+
+  it("retries forward when every failed forward step was transient or left native cleanup incomplete", () => {
+    expect(sourceRecoveryForwardRetryable(claimed([{ name: "keys-sync-state", status: "failed", error: "request timed out" }]))).toBe(true);
+    expect(sourceRecoveryForwardRetryable(claimed([
+      { name: "keys-sync-state", status: "failed", error: "native cleanup incomplete: purgeFailed=true failed=[agent.db]" },
+      { name: "rollback:restore-source", status: "failed", error: "target refused the restore" },
+    ]))).toBe(true);
+  });
+
+  it("does not retry forward after a terminal forward failure", () => {
+    expect(sourceRecoveryForwardRetryable(claimed([{ name: "keys-sync-state", status: "failed", error: "target refused the restore" }]))).toBe(false);
+  });
+
+  it("does not retry forward without evidence from the claimed attempt", () => {
+    expect(sourceRecoveryForwardRetryable(fixture("mig-op-1:scheduler:1").operation)).toBe(false);
   });
 });
 
