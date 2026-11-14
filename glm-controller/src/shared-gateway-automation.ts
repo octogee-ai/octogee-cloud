@@ -1,6 +1,5 @@
 import type { GatewayArtifact } from "@octogee/core/gateway-live-release";
 import type { PlatformStateStore } from "@octogee/core/platform-state";
-import type { SharedGatewayMoves } from "./placement-policy-reconciler.js";
 import { sweepRetiredSharedGateways } from "./shared-gateway-retirement-sweep.js";
 
 export interface SharedGatewayProductDeps {
@@ -17,7 +16,6 @@ export interface SharedGatewayAutomationLoop {
 export interface SharedGatewayAutomation {
   recoverInterruptedAdds(): Promise<void>;
   start(): SharedGatewayAutomationLoop;
-  moves: SharedGatewayMoves;
 }
 
 export type SharedGatewayProductFactory = (deps: SharedGatewayProductDeps) => SharedGatewayAutomation;

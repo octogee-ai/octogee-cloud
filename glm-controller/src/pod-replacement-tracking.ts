@@ -6,7 +6,7 @@ import {
   type GatewayPodReplacements,
 } from "@octogee/shared/types/gateway-pod-replacements";
 
-import type { PlacementPolicyPodDiagnostics } from "./placement-policy-reconciler.js";
+import type { GatewayPodDiagnostics } from "./gateway-kubernetes-observation.js";
 
 // What a gateway's ReplicaSet wants and what its controller currently sees.
 // `desiredReplicas` is spec.replicas; `observedReplicas` is status.replicas.
@@ -27,7 +27,7 @@ function comparePodUid(left: GatewayPodPlacement, right: GatewayPodPlacement): n
 // would invent churn out of a transient API error, so the caller must leave the
 // tracked placements untouched instead.
 export function observedPodPlacements(
-  diagnostics: PlacementPolicyPodDiagnostics | undefined,
+  diagnostics: GatewayPodDiagnostics | undefined,
 ): GatewayPodPlacement[] | null {
   if (!diagnostics || diagnostics.error) return null;
   if (diagnostics.status === "unknown") return null;
@@ -51,7 +51,7 @@ export function observedPodPlacements(
 // `null` means the ReplicaSet list was not read this tick, so no vanished pod
 // can be classified and every one of them is carried forward unresolved.
 export function observedReplicaSets(
-  diagnostics: PlacementPolicyPodDiagnostics | undefined,
+  diagnostics: GatewayPodDiagnostics | undefined,
 ): ObservedReplicaSet[] | null {
   const replicaSets = diagnostics?.replicaSets;
   if (!replicaSets) return null;

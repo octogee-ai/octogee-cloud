@@ -19,7 +19,7 @@ import {
   startIsolatedPodBlockerObserver,
 } from "./isolated-pod-home.js";
 import { runNormalFleetMutation } from "@octogee/core/normal-fleet-mutation";
-import { platformStateStoreFromEnvironment, MissingRecordError, type WorkspaceProject, type FleetRegistryRecord, type GatewayRoot, type OpaqueMap, type GatewayRootFields, type GatewayRootPatch, type OperationRecord, type PlatformStateStore, type Stored, type WatchChange, type WatchEvent, type FleetRegistryInventory, type PlacementAdmissionPolicy } from "@octogee/core/platform-state";
+import { platformStateStoreFromEnvironment, MissingRecordError, type WorkspaceProject, type FleetRegistryRecord, type GatewayRoot, type OpaqueMap, type GatewayRootFields, type GatewayRootPatch, type OperationRecord, type PlatformStateStore, type Stored, type WatchChange, type WatchEvent, type FleetRegistryInventory } from "@octogee/core/platform-state";
 import { restartGatewayProcess, restartGatewayDeployment } from './lib/runtime-restart-transport.js';
 import { assertMigrationRestartUnfenced } from './lib/runtime-restart-coordinator.js';
 import { assertOwnerOperationUnfenced } from './lib/vm-recovery-fence.js';
@@ -339,24 +339,13 @@ import { startHelmRecoverySweeper } from "./helm-recovery-sweeper.js";
 import { resumeOrphanedRunningOps } from "./resume-orphaned-ops.js";
 import { computeChartFingerprint } from "./chart-fingerprint.js";
 import { startSharedGatewayLoop, type SharedGatewayAutomation, type SharedGatewayAutomationLoop, type SharedGatewayProductFactory } from "./shared-gateway-automation.js";
+import { startPlacement, type PlacementProductDeps, type PlacementProductFactory } from "./placement-product.js";
 import {
   platformGatewayArtifactFromEnvironment,
   writePlatformReleaseRecord,
 } from "./platform-release.js";
 import { VmCreationPendingError, FinalHomeCheckpointPendingError, clearReplacedVm } from "./vm-lifecycle.js";
 import { createCachedApiServerEgressResolver } from "./apiserver-egress.js";
-import {
-  PLACEMENT_ACTIVE_OPERATION_STATUSES,
-  PLACEMENT_POLICY_RECONCILE_MS_DEFAULT,
-  createFirestorePlacementPolicyReconcilerDeps,
-  reconcilePlacementPolicyOnce,
-  startPlacementPolicyReconciler,
-  type IsolatedGatewayAutomation,
-  type SharedGatewayMoves,
-  type IsolatedGatewayProductFactory,
-} from "./placement-policy-reconciler.js";
-import { placementPassOptions, type UserAdmissionSourceFactory } from "./user-admission.js";
-import { openPlacementAdmission } from "./initial-placement.js";
 import { noUserPolicyInputs, type UserPolicyInputsSource } from "./user-placement-document.js";
 import type {
   FleetBrokerChannelBinding,
@@ -433,10 +422,6 @@ export function requestGatewayRecheck(gatewayId: string): void {
   requestReconcileTickRef.recheck?.(gatewayId);
 }
 
-const PLACEMENT_POLICY_RECONCILE_MS = parseNonNegativeInt(
-  process.env.PLACEMENT_POLICY_RECONCILE_MS,
-  PLACEMENT_POLICY_RECONCILE_MS_DEFAULT,
-);
 const HELM_RECOVERY_SWEEP_MS = parseNonNegativeInt(
   process.env.HELM_RECOVERY_SWEEP_MS,
   3 * 60 * 1000,
@@ -2152,7 +2137,7 @@ export function buildGatewayHeartbeatPollerDeps(
   );
   return {
     ...buildHeartbeatPollerCoreDeps({ store, informer }, log, privateKey),
-    listActiveMigrations: () => store.journal.operations.listByKind("migrate-user", [...PLACEMENT_ACTIVE_OPERATION_STATUSES]),
+    listActiveMigrations: () => store.journal.operations.listByKind("migrate-user", ["pending", "running"]),
     ownsEviction: async (gatewayId: string) => {
       const stored = informer.gateways()?.find((root) => root.gatewayId === gatewayId) ??
         await store.gateways.roots.get(gatewayId);
@@ -2193,11 +2178,8 @@ interface ControllerBackgroundTasksDeps {
   accounts: UserAccountReader;
   userDirectory: AdminUserDirectorySource;
   adminIdentity: IdentityProvider;
-  placementAdmission: PlacementAdmissionPolicy;
   policyInputs: UserPolicyInputsSource;
-  userAdmission?: UserAdmissionSourceFactory | undefined;
-  isolatedGateways?: IsolatedGatewayProductFactory | undefined;
-  sharedGatewayMoves?: SharedGatewayMoves | undefined;
+  placement?: PlacementProductFactory | undefined;
   readSizingKey: SizingKeyReader;
   suspendSignIn: (uid: string) => Promise<void>;
   deps: ControllerDeps;
@@ -2226,44 +2208,22 @@ async function installSharedGatewayAutomation(
   factory: SharedGatewayProductFactory | undefined,
   store: PlatformStateStore,
   platformArtifact: GatewayArtifact,
-): Promise<{ moves: SharedGatewayMoves | undefined; startLoop(): SharedGatewayAutomationLoop | null }> {
+): Promise<{ startLoop(): SharedGatewayAutomationLoop | null }> {
   const automation = createSharedGatewayAutomation(factory, store, platformArtifact);
   await automation?.recoverInterruptedAdds();
-  return { moves: automation?.moves, startLoop: () => automation?.start() ?? null };
+  return { startLoop: () => automation?.start() ?? null };
 }
 
-function createIsolatedGatewayAutomation(
-  factory: IsolatedGatewayProductFactory | undefined,
-  readSizingKey: SizingKeyReader,
-  deps: ControllerDeps,
-): IsolatedGatewayAutomation | null {
-  if (!factory) {
-    log("[glm-controller] isolated gateways: platform only, no automatic activation, idle return or retirement");
-    return null;
-  }
-  if (!deps.kubeOps) throw new Error("isolated gateway automation requires Kubernetes operations");
-  log("[glm-controller] isolated gateways: product automation installed");
-  const homeServices = GATEWAY_VM_SPEC ? createUserHomeServices(deps.store, log) : undefined;
-  return factory({
-    store: deps.store,
-    readSizingKey,
-    namespace: NAMESPACE,
-    now: () => Date.now(),
-    log,
-    ensureAuthSecret: deps.ensureGatewayAuthSecret,
-    readGatewayPodDiagnostics: deps.kubeOps.readGatewayPodDiagnostics,
-    ...(homeServices
-      ? {
-          userHome: {
-            environment: VM_ENVIRONMENT,
-            subnetwork: GATEWAY_VM_SPEC!.subnetwork,
-            nativeZones: GATEWAY_VM_SPEC!.zones,
-            ...homeServices.provider,
-            copy: homeServices.copy,
-          },
-        }
-      : {}),
-  });
+function placementUserHome(store: PlatformStateStore): PlacementProductDeps["userHome"] {
+  if (!GATEWAY_VM_SPEC) return undefined;
+  const homeServices = createUserHomeServices(store, log);
+  return {
+    environment: VM_ENVIRONMENT,
+    subnetwork: GATEWAY_VM_SPEC.subnetwork,
+    nativeZones: GATEWAY_VM_SPEC.zones,
+    ...homeServices.provider,
+    copy: homeServices.copy,
+  };
 }
 
 const GITEA_GATEWAY_KEY_GC_INTERVAL_MS = 60_000;
@@ -2279,11 +2239,8 @@ function startControllerBackgroundTasks({
   accounts,
   userDirectory,
   adminIdentity,
-  placementAdmission,
   policyInputs,
-  userAdmission,
-  isolatedGateways,
-  sharedGatewayMoves,
+  placement,
   readSizingKey,
   suspendSignIn,
   deps,
@@ -2376,29 +2333,22 @@ function startControllerBackgroundTasks({
     intervalMs: HELM_RECOVERY_SWEEP_MS,
     log,
   });
-  const isolatedGatewayAutomation = createIsolatedGatewayAutomation(isolatedGateways, readSizingKey, deps);
-  const stopPlacementPolicyReconciler = startPlacementPolicyReconciler(
-    createFirestorePlacementPolicyReconcilerDeps({
-      store: deps.store,
-      informer,
-      policyInputs,
-      namespace: NAMESPACE,
-      platformArtifact,
-      now: () => Date.now(),
-      log,
-      placementAdmission,
-      debug: (message) => logger.debug(message),
-      readGatewayPodDiagnosticsBatch: deps.kubeOps.readGatewayPodDiagnosticsBatch,
-      ...(isolatedGatewayAutomation ? { isolatedGateways: isolatedGatewayAutomation } : {}),
-      ...(sharedGatewayMoves ? { sharedGatewayMoves } : {}),
-    }),
-    PLACEMENT_POLICY_RECONCILE_MS,
-    placementPassOptions({
-      admission: userAdmission ? { store: deps.store, source: userAdmission(log), log } : null,
-      runPlacementPass: reconcilePlacementPolicyOnce,
-      subscribeUnassigned: informer.subscribeUnassignedUsers?.bind(informer),
-    }),
-  );
+  const userHome = placement ? placementUserHome(deps.store) : undefined;
+  const stopPlacement = startPlacement(placement, {
+    store: deps.store,
+    informer,
+    policyInputs,
+    readSizingKey,
+    namespace: NAMESPACE,
+    platformArtifact,
+    now: () => Date.now(),
+    log,
+    debug: (message) => logger.debug(message),
+    ensureAuthSecret: deps.ensureGatewayAuthSecret,
+    readGatewayPodDiagnostics: deps.kubeOps.readGatewayPodDiagnostics,
+    readGatewayPodDiagnosticsBatch: deps.kubeOps.readGatewayPodDiagnosticsBatch,
+    ...(userHome ? { userHome } : {}),
+  });
   const stopDisruptionObserver = deps.startDisruptionObserver?.() ?? (() => undefined);
   const httpKubeOps = deps.kubeOps;
   const decryptConnectorSecret = createConnectorSecretDecryptor();
@@ -2452,7 +2402,7 @@ function startControllerBackgroundTasks({
     stopGiteaGatewayKeyGc,
     stopHelmRecoverySweeper,
     stopIsolatedPodBlockerObserver,
-    stopPlacementPolicyReconciler,
+    stopPlacement,
     stopDisruptionObserver,
     stopHttp,
     informer.stop,
@@ -2838,10 +2788,8 @@ export interface ControllerProduct {
   userDirectory?: (store: PlatformStateStore) => AdminUserDirectorySource;
   adminUserDetail?: (store: PlatformStateStore) => AdminUserProductDetail;
   adminIdentity?: IdentityProvider;
-  placementAdmission?: PlacementAdmissionPolicy;
-  userAdmission?: UserAdmissionSourceFactory;
   userPolicyInputs?: (store: PlatformStateStore, log: (message: string) => void) => UserPolicyInputsSource;
-  isolatedGateways?: IsolatedGatewayProductFactory;
+  placement?: PlacementProductFactory;
   sharedGateways?: SharedGatewayProductFactory;
   startProjection?: (deps: {
     store: PlatformStateStore;
@@ -2935,11 +2883,8 @@ export async function main(product: ControllerProduct): Promise<void> {
   const stoppers = startControllerBackgroundTasks({
     addProductAdminRoutes: product.addAdminRoutes,
     adminIdentity,
-    placementAdmission: product.placementAdmission ?? openPlacementAdmission,
     policyInputs,
-    userAdmission: product.userAdmission,
-    isolatedGateways: product.isolatedGateways,
-    sharedGatewayMoves: sharedGateways.moves,
+    placement: product.placement,
     readSizingKey: userDocumentsSizingKeyReader(documents),
     suspendSignIn: (uid) => userLifecycle?.suspension.suspendSignIn(uid) ?? Promise.resolve(),
     deps,

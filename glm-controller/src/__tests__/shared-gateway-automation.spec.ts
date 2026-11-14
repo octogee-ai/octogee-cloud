@@ -21,11 +21,9 @@ describe("shared gateway automation hook", () => {
 
   it("builds the product's automation from the platform store and the platform build", () => {
     const store = createDocumentFixtureStore(new Map());
-    const unused = () => { throw new Error("shared gateway moves are not used by this hook"); };
     const automation: SharedGatewayAutomation = {
       recoverInterruptedAdds: vi.fn(async () => undefined),
       start: vi.fn(() => ({ intervalMs: 1, tick: async () => undefined })),
-      moves: { startPass: unused, recoverUser: unused, placeUser: unused, reconcilePool: unused, assignmentLimitIn: unused },
     };
     const factory = vi.fn(() => automation);
 
