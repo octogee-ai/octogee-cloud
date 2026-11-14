@@ -111,6 +111,29 @@ describe("sizing a Google Cloud install", () => {
     expect(call("sql instances create")).toContain("--availability-type=REGIONAL");
   });
 
+  it("reaches the control plane through its DNS endpoint", () => {
+    expect(host.run("deploy/cloud/gcp.sh", [], { env: SETTINGS }).status).toBe(0);
+    expect(call("clusters create")).toContain("--enable-dns-access");
+    expect(call("clusters get-credentials")).toContain("--dns-endpoint");
+  });
+
+  it.each([
+    { dnsAccess: "", updated: true },
+    { dnsAccess: "True", updated: false },
+  ])("turns on DNS access for an existing cluster only when it is off ($dnsAccess)", ({ dnsAccess, updated }) => {
+    host.stub("gcloud", `case " $* " in
+  *" clusters describe "*--format*) echo "${dnsAccess}"; exit 0 ;;
+  *" clusters describe "*) exit 0 ;;
+esac
+${GCLOUD_STUB}`);
+    expect(host.run("deploy/cloud/gcp.sh", [], { env: SETTINGS }).status).toBe(0);
+    expect(lines("gcloud").some((line) => line.includes("clusters create"))).toBe(false);
+    const update = lines("gcloud").find((line) => line.includes("clusters update"));
+    expect(update !== undefined).toBe(updated);
+    if (updated) expect(update).toContain("--enable-dns-access");
+    expect(call("clusters get-credentials")).toContain("--dns-endpoint");
+  });
+
   it("starts small in one zone when asked", () => {
     const env = { ...SETTINGS, GCP_ZONE: "us-central1-a", SQL_AVAILABILITY: "ZONAL" };
     expect(host.run("deploy/cloud/gcp.sh", [], { env }).status).toBe(0);
