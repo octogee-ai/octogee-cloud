@@ -6,7 +6,9 @@ import { logger } from "../middleware/logging.js";
 
 export type AuthUserSuspension = (uid: string) => Promise<void>;
 
-export const ACCOUNT_LIFECYCLE_SUSPENSION: AuthUserSuspension = async () => {};
+export const ACCOUNT_LIFECYCLE_SUSPENSION: AuthUserSuspension = async (uid) => {
+  logger.info("No external identity to suspend; the account lifecycle refuses the deleted user's sessions", { uid });
+};
 
 export const userDeletionDeps = {
   suspendAuthUser: ACCOUNT_LIFECYCLE_SUSPENSION,

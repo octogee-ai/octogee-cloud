@@ -22,6 +22,7 @@ async function suspendAuthUser(uid: string): Promise<void> {
   suspendedUids.push(uid);
 }
 const loggedWarnings: string[] = [];
+const loggedInfo: string[] = [];
 
 function documentMap(collectionPath: string): Record<string, Row> {
   if (collectionPath === "users") return usersDocs;
@@ -146,7 +147,7 @@ vi.mock("../middleware/auth", () => ({
 
 vi.mock("../middleware/logging", () => ({
   logger: {
-    info: () => undefined,
+    info: (msg: string) => loggedInfo.push(msg),
     warn: (msg: string) => loggedWarnings.push(msg),
     error: () => undefined,
   },
@@ -171,6 +172,7 @@ beforeEach(() => {
   suspendedUids.length = 0;
   suspendNextError = null;
   loggedWarnings.length = 0;
+  loggedInfo.length = 0;
 });
 
 describe("POST /api/admin/users/:uid/delete — 404 + 409 paths", () => {
@@ -271,6 +273,7 @@ describe("POST /api/admin/users/:uid/delete — no-slug lifecycle", () => {
     expect(res.status).toBe(202);
     expect(suspendedUids).toEqual([]);
     expect(operationWrites()).toHaveLength(2);
+    expect(loggedInfo).toContain("No external identity to suspend; the account lifecycle refuses the deleted user's sessions");
   });
 
   it("reports a failed product identity suspension as a partial deletion", async () => {

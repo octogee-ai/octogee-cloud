@@ -7,7 +7,6 @@ import channelSessionModelRoutes from "./channel-session-models.js";
 import modelCredentialRoutes from "./model-credentials.js";
 import adminRoutes from "./admin.js";
 import connectRoutes from "./connect.js";
-import agentRoutes from "./agents.js";
 import isolatedGatewaysRoutes from "./user/gateways.js";
 import productivityApprovalRoutes from "./productivity-approvals.js";
 import voiceRoutes from "./voice.js";
@@ -92,14 +91,12 @@ const PUBLIC_API_ROUTES: readonly (readonly [string, RouteHandler])[] = [
   ["/api/model-credentials", modelCredentialRoutes],
   ["/api/admin", adminRoutes],
   ["/api/connect", connectRoutes],
-  ["/api/agents", agentRoutes],
   ["/api/builder", isolatedGatewaysRoutes],
   ["/api/productivity-approvals", productivityApprovalRoutes],
   ["/api/voice", voiceRoutes],
 ];
 
 const INTERNAL_ROUTES: readonly (readonly [string, RouteHandler])[] = [
-  ["/internal/agents", agentRoutes],
   ["/internal/workspace", internalWorkspaceCommitRoutes],
 ];
 
