@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
-import { isUserReturnOperationIdFor } from "@octogee/core/user-activation-lease";
+import { isUserReturnOperationIdFor } from "@octogee/core/isolated-operation-ids";
 import type { MigrationClient } from "@octogee/core/fleet-migration-client";
 import type { MigrationTransferTask, PlatformStateStore, PlatformStateTransaction, Stored } from "@octogee/core/platform-state";
 import type { CommandRunner } from "./migration-rsync-transfer.js";

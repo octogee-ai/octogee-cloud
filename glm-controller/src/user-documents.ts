@@ -1,6 +1,6 @@
 import type { PlatformStateStore } from "@octogee/core/platform-state";
 import { userAccountDocument } from "@octogee/core/platform-state-user-accounts";
-import type { SizingKeyReader } from "@octogee/core/user-activation-lease";
+import type { SizingKeyReader } from "@octogee/core/sizing-key";
 import { userEntitlements } from "@octogee/shared/types/user-entitlements";
 
 type UserDocument = Record<string, unknown>;

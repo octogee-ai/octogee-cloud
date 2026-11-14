@@ -16,7 +16,7 @@ import {
 import type { FleetBrokerUserSnapshot } from "@octogee/shared/types/fleet-broker";
 import { buildOperationCompletionUpdate, classifyOperationFailure, OPERATOR_ISOLATED_GATEWAY_WAIT_MS } from "../operation-retry";
 import { assertUserRestoreSettled, createOperationContext, PendingUserRestoreError } from "../operation-context";
-import { builderReturnOperationId } from "@octogee/core/user-activation-lease";
+import { builderReturnOperationId } from "@octogee/core/isolated-operation-ids";
 import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
 import type { NativeReturnPark, NativeSourcePark } from "../lib/native-vm-return";
 import { retireNativeSchedulerBeforeStage } from "../lib/native-scheduler-retirement";

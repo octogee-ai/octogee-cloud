@@ -1,6 +1,6 @@
 import type { GatewayArtifact } from "@octogee/core/gateway-live-release";
 import type { PlatformStateStore } from "@octogee/core/platform-state";
-import type { SizingKeyReader } from "@octogee/core/user-activation-lease";
+import type { SizingKeyReader } from "@octogee/core/sizing-key";
 import type { FleetInformer } from "./fleet-informer.js";
 import {
   startGatewayKubernetesObserver,

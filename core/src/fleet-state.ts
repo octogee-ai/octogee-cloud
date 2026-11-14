@@ -20,11 +20,11 @@ import {
   userMigrationV2GatewayRootFenceMatches,
 } from "./user-migration-v2.js";
 import {
-  builderActivateOperationId,
   withCurrentSizingKey,
   type SizingKeyReader,
   type CurrentSizingKey,
-} from "./user-activation-lease.js";
+} from "./sizing-key.js";
+import { builderActivateOperationId } from "./isolated-operation-ids.js";
 import { gatewayAuthorizationFromRootDocument } from "./gateway-live-release.js";
 import { MalformedRecordError } from "./platform-state/index.js";
 import type {

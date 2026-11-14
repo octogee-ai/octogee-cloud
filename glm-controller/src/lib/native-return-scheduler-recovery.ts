@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
-import { builderReturnOperationId, isUserReturnOperationIdFor } from "@octogee/core/user-activation-lease";
+import { builderReturnOperationId, isUserReturnOperationIdFor } from "@octogee/core/isolated-operation-ids";
 import { MigrationRpcError, type MigrationClient } from "@octogee/core/fleet-migration-client";
 import { runNormalFleetMutation } from "@octogee/core/normal-fleet-mutation";
 import type { PlatformUserRecord, FleetRegistryRecord, GatewayRoot, OperationRecord, PlatformStateStore, Stored } from "@octogee/core/platform-state";

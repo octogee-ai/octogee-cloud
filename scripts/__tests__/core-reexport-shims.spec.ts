@@ -3,7 +3,6 @@ import * as adminUserDirectoryRouterCore from "@octogee/core/admin-user-director
 import * as adminShapeCore from "@octogee/core/admin-shape";
 import * as agentModelTokenMaterializerCore from "@octogee/core/agent-model-token-materializer";
 import * as artifactRegistryCore from "@octogee/core/artifact-registry";
-import * as userActivationLeaseCore from "@octogee/core/user-activation-lease";
 import * as byosubOnboardingCore from "@octogee/core/byosub-onboarding";
 import * as byosubRestoreCore from "@octogee/core/byosub-restore";
 import * as byotSyncRuntimeCore from "@octogee/core/byot-sync-runtime";
@@ -34,7 +33,6 @@ import * as adminUserDirectoryRouterShim from "../lib/admin-user-directory-route
 import * as adminShapeShim from "../lib/admin-shape.js";
 import * as agentModelTokenMaterializerShim from "../lib/agent-model-token-materializer.js";
 import * as artifactRegistryShim from "../lib/artifact-registry.js";
-import * as userActivationLeaseShim from "../lib/user-activation-lease.js";
 import * as byosubOnboardingShim from "../lib/byosub-onboarding.js";
 import * as byosubRestoreShim from "../lib/byosub-restore.js";
 import * as byotSyncRuntimeShim from "../lib/byot-sync-runtime.js";
@@ -67,7 +65,6 @@ const shims = [
   ["admin-shape", adminShapeShim, adminShapeCore],
   ["agent-model-token-materializer", agentModelTokenMaterializerShim, agentModelTokenMaterializerCore],
   ["artifact-registry", artifactRegistryShim, artifactRegistryCore],
-  ["builder-activation-lease", userActivationLeaseShim, userActivationLeaseCore],
   ["byosub-onboarding", byosubOnboardingShim, byosubOnboardingCore],
   ["byosub-restore", byosubRestoreShim, byosubRestoreCore],
   ["byot-sync-runtime", byotSyncRuntimeShim, byotSyncRuntimeCore],

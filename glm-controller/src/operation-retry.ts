@@ -1,4 +1,4 @@
-import { isUserActivateOperationIdFor, isUserReturnOperationIdFor } from "@octogee/core/user-activation-lease";
+import { isUserActivateOperationIdFor, isUserReturnOperationIdFor } from "@octogee/core/isolated-operation-ids";
 import { OPERATOR_ISOLATED_GATEWAY_SOURCE } from "@octogee/core/operator-isolated-gateway";
 import { sourceTransferBlocksRelease } from './lib/source-transfer-execution.js';
 import type { SourceTransferExecution } from '@octogee/shared/types/glm';
