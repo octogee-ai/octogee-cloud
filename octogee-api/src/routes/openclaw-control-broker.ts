@@ -6,7 +6,7 @@ import {
   withCurrentSizingKey,
   type SizingKeyReader,
   type CurrentSizingKey,
-} from "@octogee/core/user-activation-lease";
+} from "@octogee/core/sizing-key";
 import { gatewayAuthorizationFromRootDocument, readGatewayArtifactInStore } from "@octogee/core/gateway-live-release";
 import {
   inspectOpenClawControlTicket,

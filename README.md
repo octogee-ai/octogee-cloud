@@ -25,9 +25,12 @@ gateway, [on your machine](docs/getting-started.md) or [on GKE or EKS](docs/runn
 It does not install the fleet controller, the platform API or the LLM broker.
 
 The full platform, with the fleet controller, users and shared gateways, runs
-on a local kind cluster from the images this repository publishes. See
-[The full platform on kind](docs/kind.md). It has not yet run on a cloud
-account, so there is no production install of it yet. Users on a shared
+from the images this repository publishes on a local kind cluster, see
+[The full platform on kind](docs/kind.md), or on GKE with Cloud SQL and Cloud
+Storage, see [The full platform on GKE](docs/gke.md). On GKE, one install
+added a shared gateway and a user, answered in Mattermost, moved the user to an
+isolated gateway and back, and retired the isolated gateway. That install is a
+single zone with no ingress; there is no production install guide yet. Users on a shared
 gateway work through Mattermost and Gitea; the OpenClaw Control UI is for
 isolated gateways only. The platform API knows a user by their Mattermost
 session or personal access token; see
@@ -55,8 +58,6 @@ and a domain. [See every account and tier](docs/getting-started.md#what-you-need
   cross-package platform specs.
 - [Legacy names](docs/legacy-names.md) lists the stored names that keep
   their spelling from before the platform was published.
-- `SHIP.md` shows the shape of the four commands that move a build to TEST, to
-  PROD, and to a single isolated gateway. Identities are placeholders.
 
 The Octogee product keeps its own private repository and builds on top of this
 one.

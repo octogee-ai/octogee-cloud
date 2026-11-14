@@ -719,21 +719,15 @@ describe("full teardown for private-only Cloud SQL", { timeout: 180_000 }, () =>
     expect(source).not.toContain("gcloud storage objects list");
   });
 
-  it("keeps the Auth preflight before data deletion", () => {
+  it("runs extension preflight hooks before data deletion and extension cleanup after Firestore", () => {
     const source = readFileSync(teardown, "utf8");
+    const preflight = source.indexOf('run_env_hooks ${ENV_TEARDOWN_FULL_PREFLIGHT[@]');
+    const cleanup = source.indexOf('run_env_hooks ${ENV_TEARDOWN_FULL_STEPS[@]');
 
-    expect(source).toContain("delete-firebase-auth-users.ts");
-    expect(source).toContain("run_auth_cleanup --verify");
-  });
-
-  it("authenticates Firebase Auth cleanup with application default credentials even when laptop key files exist", () => {
-    const result = runPrivateCentralTeardown();
-
-    expect(result.status, `${result.stderr}\n${result.stdout}`).toBe(0);
-    expect(result.calls.filter((call) => call.includes("delete-firebase-auth-users.ts"))).toEqual([
-      `npx -y tsx ops/delete-firebase-auth-users.ts --verify --project=${TEST_TARGET.firebaseProjectId}`,
-      `npx -y tsx ops/delete-firebase-auth-users.ts --project=${TEST_TARGET.firebaseProjectId}`,
-    ]);
+    expect(source.indexOf('load_env_extensions "$SCRIPT_DIR"')).toBeLessThan(preflight);
+    expect(preflight).toBeGreaterThan(-1);
+    expect(preflight).toBeLessThan(source.indexOf("# ── 1. Helm uninstall + resource cleanup"));
+    expect(cleanup).toBeGreaterThan(source.indexOf("firebase firestore:delete --all-collections"));
   });
 
   it("fails before Firestore or Auth cleanup when the target Storage bucket cannot be wiped", () => {
@@ -778,7 +772,6 @@ describe("full teardown for private-only Cloud SQL", { timeout: 180_000 }, () =>
     expect(result.status, `${result.stderr}\n${result.stdout}`).toBe(0);
     expect(result.sqlOwnerManifest).toBe("");
     expect(result.calls).toContain(`firebase firestore:delete --all-collections --project ${TEST_TARGET.firebaseProjectId} --force`);
-    expect(result.calls).toContain(`npx -y tsx ops/delete-firebase-auth-users.ts --project=${TEST_TARGET.firebaseProjectId}`);
   });
 
   it("refuses --resume while Mattermost and Gitea still run", () => {
