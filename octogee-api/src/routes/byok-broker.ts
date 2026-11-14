@@ -109,7 +109,7 @@ const AGENT_EMBEDDING_REQUESTS_PER_MINUTE = 60;
 // Mirrors gateway-edge/src/routes/byosub.ts: a byosub OAuth flow is short-lived.
 const BYOSUB_FLOW_TTL_MS = 60 * 60 * 1000;
 // flowId is a crypto.randomUUID() minted in-pod (claude-sso/device-auth managers);
-// pin a path-safe shape so it cannot steer the byosubFlows doc id elsewhere.
+// pin a path-safe shape so it cannot steer the subscription flow id elsewhere.
 const SAFE_FLOW_ID_RE = /^[A-Za-z0-9_-]{8,128}$/;
 
 function boundGateway(req: Request, res: Response): GatewayBinding | null {
@@ -858,8 +858,8 @@ export function createByokBrokerRoutes(opts: {
   // Record a byosub OAuth flow's owner mapping for a agent assigned to
   // this gateway. The sidecar /connect handler starts the in-pod auth flow
   // locally (its OPENCLAW_GATEWAY_TOKEN matches the in-pod manager), then brokers
-  // the flowId->owner mapping here because cattle pods have no Firestore. The
-  // in-pod /capture callback later reads byosubFlows to persist the captured
+  // the flowId->owner mapping here because gateway pods do not reach the platform store. The
+  // in-pod /capture callback later reads the flow to persist the captured
   // credential. Roster-scoped via findAssignedUserByAgentId — a gateway can only
   // record flows for a user assigned to it, and the owner uid is DERIVED from
   // the assignment, never trusted from the caller.

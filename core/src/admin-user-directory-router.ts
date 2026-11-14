@@ -364,7 +364,7 @@ function adminModelCredential(credential: ModelCredentialRecord | null): AdminUs
     fingerprint: credential.fingerprint,
     model: credential.model,
     baseUrl: credential.baseUrl,
-    lastUsedAt: toISODate(credential.lastUsedAt),
+    lastUsedAt: credential.lastUsedAt === null ? null : new Date(credential.lastUsedAt).toISOString(),
   };
 }
 

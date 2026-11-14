@@ -221,7 +221,7 @@ function adminModelCredential(credential) {
         fingerprint: credential.fingerprint,
         model: credential.model,
         baseUrl: credential.baseUrl,
-        lastUsedAt: toISODate(credential.lastUsedAt),
+        lastUsedAt: credential.lastUsedAt === null ? null : new Date(credential.lastUsedAt).toISOString(),
     };
 }
 function applyUserFilters(items, f) {

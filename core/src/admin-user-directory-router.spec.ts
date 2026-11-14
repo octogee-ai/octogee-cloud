@@ -115,6 +115,24 @@ describe("admin user routes — bare platform", () => {
     expect(res.body).toMatchObject({ workspaces: [], usageLogs: [], modelCosts: {}, modelCredential: null });
   });
 
+  it("details the stored model credential without its secret, with its last use as a date", async () => {
+    const res = await request(makeBarePlatformApp({
+      ...recorded(),
+      "modelCredentials/uid-1": {
+        uid: "uid-1", active: true, provider: "anthropic", mode: "api_key", status: "active", reasonCode: "ok",
+        secretName: "byok-builder-anthropic", fingerprint: "sk-ant…7890", keyHash: "deadbeefcafe", baseUrl: null,
+        model: "claude-sonnet-4-6", addedAt: 1, lastUsedAt: Date.parse("2026-06-02T03:04:05.000Z"),
+      },
+    })).get("/api/admin/users/uid-1").expect(200);
+
+    expect(res.body.modelCredential).toEqual({
+      active: true, provider: "anthropic", mode: "api_key", status: "active", reasonCode: "ok",
+      fingerprint: "sk-ant…7890", model: "claude-sonnet-4-6", baseUrl: null, lastUsedAt: "2026-06-02T03:04:05.000Z",
+    });
+    expect(res.body.byot).toEqual({ active: true });
+    expect(JSON.stringify(res.body)).not.toContain("byok-builder-anthropic");
+  });
+
   it("reports an empty audit trail", async () => {
     const res = await request(makeBarePlatformApp(recorded())).get("/api/admin/users/uid-1/audit").expect(200);
 
