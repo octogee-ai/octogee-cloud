@@ -1,7 +1,8 @@
 import { Router, Request, Response } from "express";
 import { strictRateLimit } from "../../middleware/security.js";
-import { db, FieldValue } from "../../lib/db.js";
+import { db } from "../../lib/db.js";
 import { platformStateStore } from "../../lib/platform-state.js";
+import { projectPresentation } from "../../lib/project-presentation.js";
 import { mmApi } from "../../lib/mattermost.js";
 import { createFreshPrivateChannel } from "../../lib/mattermost-channel-name.js";
 import { logger } from "../../middleware/logging.js";
@@ -68,7 +69,7 @@ async function claimProjectRetry(ctx: ProjectCtx): Promise<boolean> {
 
 async function restoreInterruptedProductFields(ctx: ProjectCtx): Promise<void> {
   if (ctx.project.name !== undefined) return;
-  await ctx.projectRef.set({
+  await projectPresentation().createProject(ctx.wid, ctx.pid, {
     name: ctx.pid,
     tagline: "",
     description: "",
@@ -79,8 +80,7 @@ async function restoreInterruptedProductFields(ctx: ProjectCtx): Promise<void> {
     publishedUrl: null,
     starCount: 0,
     memberCount: 1,
-    createdAt: FieldValue.serverTimestamp(),
-  }, { merge: true });
+  });
 }
 
 async function retryMattermostContext(ctx: ProjectCtx, res: Response): Promise<RetryMattermostContext | null> {
@@ -231,7 +231,7 @@ async function writeRetryGeneralChannel(
     createdBy: null,
     createdAt: { serverNow: true },
   });
-  await ctx.projectRef.collection("channels").doc("general").set({ name: "general" }, { merge: true });
+  await projectPresentation().writeChannel(generalChannelScope(ctx), "general", { name: "general" });
 }
 
 function restoredVisibility(ctx: ProjectCtx): string {

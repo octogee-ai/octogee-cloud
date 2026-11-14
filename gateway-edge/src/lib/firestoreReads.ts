@@ -3,6 +3,7 @@ import type { WorkspaceProject } from "@octogee/core/platform-state";
 import type { Agent, Project } from "@octogee/shared/types/index";
 import { db } from "./db.js";
 import { platformStateStore } from "./platform-state.js";
+import { projectPresentation } from "./project-presentation.js";
 import { storedForm } from "./user-platform-state.js";
 
 type ProductDocument = Record<string, unknown>;
@@ -49,10 +50,10 @@ export function projectWithPlatformState(product: ProductDocument, record: Works
 export async function readProject(workspaceSlug: string, projectSlug: string): Promise<Project | null> {
   const [record, product] = await Promise.all([
     platformStateStore.workspaces.projects.get(workspaceSlug, projectSlug),
-    db.doc(`workspaces/${workspaceSlug}/projects/${projectSlug}`).get(),
+    projectPresentation().readProject(workspaceSlug, projectSlug),
   ]);
   if (record === null) return null;
-  return projectWithPlatformState((product.exists ? product.data() : undefined) ?? {}, record);
+  return projectWithPlatformState(product ?? {}, record);
 }
 
 export async function readAgent(uid: string): Promise<Agent | null> {

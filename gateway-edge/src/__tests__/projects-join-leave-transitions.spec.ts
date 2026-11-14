@@ -1,6 +1,7 @@
 import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { installDocumentPresentation } from "./helpers/project-presentation.js";
 
 const h = vi.hoisted(() => ({
   docs: new Map<string, Record<string, unknown>>(),
@@ -18,16 +19,13 @@ vi.mock("../middleware/security.js", () => ({
   strictRateLimit: (_req: unknown, _res: unknown, next: () => void) => next(),
 }));
 vi.mock("../middleware/logging.js", () => ({ logger: h.logger }));
-vi.mock("../lib/db.js", () => ({
-  db: {
-    doc: (path: string) => ({
+const documentFake = (path: string) => ({
       get: async () => ({ data: () => h.docs.get(path) }),
       update: async (data: Record<string, unknown>) => {
         h.updates.push({ path, data });
       },
-    }),
-  },
-}));
+    });
+vi.mock("../lib/db.js", () => ({ db: { doc: (path: string) => documentFake(path) } }));
 vi.mock("../lib/platform-state.js", async () => {
   const { createDocumentFixtureStore } = await import("@octogee/core/testing/journal-store");
   return { platformStateStore: createDocumentFixtureStore(h.docs) };
@@ -56,6 +54,8 @@ vi.mock("../lib/channel-lifecycle.js", () => ({
 }));
 
 const { default: joinLeaveRoutes } = await import("../routes/projects/join-leave.js");
+
+installDocumentPresentation(documentFake);
 const { platformStateStore } = await import("../lib/platform-state.js");
 
 const PROJECT = "workspaces/mira/projects/orbit";

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { installDocumentPresentation } from "./helpers/project-presentation.js";
 
 const h = vi.hoisted(() => ({
   docs: new Map<string, Record<string, unknown>>(),
@@ -11,16 +12,12 @@ vi.mock("../lib/platform-state.js", async () => {
   return { platformStateStore: createDocumentFixtureStore(h.docs) };
 });
 
-vi.mock("../lib/db.js", () => ({
-  db: {
-    doc: (path: string) => ({
+const documentFake = (path: string) => ({
       get: async () => {
         const data = h.docs.get(path);
         return { exists: data !== undefined, data: () => data };
       },
-    }),
-  },
-}));
+    });
 
 vi.mock("../lib/mattermost.js", () => ({
   mmApi: (...args: unknown[]) => h.mmApi(...args),
@@ -39,6 +36,8 @@ const {
   setStoredChannelArchived,
   setStoredPrimaryChannelArchived,
 } = await import("../lib/channel-lifecycle.js");
+
+installDocumentPresentation(documentFake);
 
 const channelPath = "workspaces/alice/channels/general";
 

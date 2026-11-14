@@ -22,7 +22,11 @@ vi.mock('../lib/platform-state.js', async () => {
   return { platformStateStore: createDocumentFixtureStore(h.platform) };
 });
 
+import { db } from '../lib/db';
 import { readAgent, readProject } from '../lib/firestoreReads.js';
+import { installDocumentPresentation } from './helpers/project-presentation.js';
+
+installDocumentPresentation((path) => db.doc(path));
 
 const projectPath = 'workspaces/alice/projects/game';
 

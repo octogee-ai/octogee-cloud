@@ -1,6 +1,7 @@
 import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { NO_PROJECT_PRESENTATION, installProjectPresentation } from "../lib/project-presentation.js";
 
 type Project = Record<string, unknown>;
 type ProjectUpdate = Record<string, unknown>;
@@ -40,20 +41,7 @@ const PROJECT = "workspaces/mira/projects/orbit";
 const GENERAL = `${PROJECT}/channels/general`;
 
 function projectRef() {
-  return {
-    path: PROJECT,
-    set: async (data: ProjectUpdate, options?: ProjectUpdate) => {
-      h.productWrites.push({ data, options });
-    },
-    collection: (name: string) => ({
-      doc: (id: string) => ({
-        set: async (data: ProjectUpdate, options?: ProjectUpdate) => {
-          if (h.failChannelProductWrite) throw new Error("firestore unavailable");
-          h.channelWrites.push({ path: `${name}/${id}`, data, options });
-        },
-      }),
-    }),
-  };
+  return { path: PROJECT };
 }
 
 vi.mock("../middleware/security.js", () => ({
@@ -92,9 +80,6 @@ vi.mock("../lib/db.js", () => ({
         }),
       };
     },
-  },
-  FieldValue: {
-    serverTimestamp: () => "SERVER_TS",
   },
 }));
 
@@ -164,6 +149,17 @@ beforeEach(() => {
   h.docs.set(PROJECT, h.project);
   h.projectUpdates.length = 0;
   h.productWrites.length = 0;
+  installProjectPresentation({
+    ...NO_PROJECT_PRESENTATION,
+    remembersChannels: true,
+    createProject: async (_workspaceSlug, _projectSlug, data) => {
+      h.productWrites.push({ data, options: { merge: true } });
+    },
+    writeChannel: async (_scope, channelId, data) => {
+      if (h.failChannelProductWrite) throw new Error("firestore unavailable");
+      h.channelWrites.push({ path: `channels/${channelId}`, data, options: { merge: true } });
+    },
+  });
   h.channelWrites.length = 0;
   h.failChannelProductWrite = false;
   h.userData = { username: "mira" };

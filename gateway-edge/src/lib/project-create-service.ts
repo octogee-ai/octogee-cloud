@@ -1,5 +1,5 @@
-import { FieldValue, db } from "./db.js";
 import { platformStateStore } from "./platform-state.js";
+import { projectPresentation } from "./project-presentation.js";
 import { logger } from "../middleware/logging.js";
 import { mmApi } from "./mattermost.js";
 import { ChannelNameInUseError, createFreshPrivateChannel } from "./mattermost-channel-name.js";
@@ -327,10 +327,6 @@ function nonEmptyStringOr<T>(value: unknown, fallback: T): string | T {
   return typeof value === "string" && value.length > 0 ? value : fallback;
 }
 
-function projectDocument(plan: ProjectCreatePlan): FirebaseFirestore.DocumentReference {
-  return db.doc(`workspaces/${plan.workspaceId}/projects/${plan.slug}`);
-}
-
 async function reserveProvisioningProject(plan: ProjectCreatePlan): Promise<ProjectCreateResult | null> {
   const maxProjects = userEntitlements().maxProjects(plan.userData ?? {});
   return platformStateStore.transaction({ label: "project-create.reserve" }, async (tx) => {
@@ -368,7 +364,7 @@ async function reserveProvisioningProject(plan: ProjectCreatePlan): Promise<Proj
 }
 
 async function writeProjectProductFields(plan: ProjectCreatePlan): Promise<void> {
-  await projectDocument(plan).set({
+  await projectPresentation().createProject(plan.workspaceId, plan.slug, {
     id: plan.slug,
     workspaceId: plan.workspaceId,
     slug: plan.slug,
@@ -383,8 +379,7 @@ async function writeProjectProductFields(plan: ProjectCreatePlan): Promise<void>
     publishedUrl: null,
     starCount: 0,
     memberCount: 1,
-    createdAt: FieldValue.serverTimestamp(),
-  }, { merge: true });
+  });
 }
 
 async function writeProjectOwnerMember(plan: ProjectCreatePlan): Promise<void> {
@@ -493,7 +488,7 @@ async function writeProjectGeneralChannel(plan: ProjectCreatePlan, mmChannelId: 
     createdBy: null,
     createdAt: { serverNow: true },
   });
-  await projectDocument(plan).collection("channels").doc("general").set({ name: "general" }, { merge: true });
+  await projectPresentation().writeChannel({ workspaceSlug: plan.workspaceId, projectSlug: plan.slug }, "general", { name: "general" });
 }
 
 async function provisionProjectCodeRepo(

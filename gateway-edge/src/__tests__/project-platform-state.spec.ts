@@ -1,4 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { installDocumentPresentation } from "./helpers/project-presentation.js";
+import { installProjectPresentation, NO_PROJECT_PRESENTATION } from "../lib/project-presentation.js";
 
 const h = vi.hoisted(() => ({
   docs: new Map<string, Record<string, unknown>>(),
@@ -7,9 +9,7 @@ const h = vi.hoisted(() => ({
   onUpdate: null as (() => void) | null,
 }));
 
-vi.mock("../lib/db.js", () => ({
-  db: {
-    doc: (path: string) => ({
+const documentFake = (path: string) => ({
       update: async (data: Record<string, unknown>) => {
         h.updates.push({ path, data });
         h.onUpdate?.();
@@ -17,9 +17,7 @@ vi.mock("../lib/db.js", () => ({
       set: async (data: Record<string, unknown>) => {
         h.sets.push({ path, data, projectStillStored: h.docs.has(path) });
       },
-    }),
-  },
-}));
+    });
 
 vi.mock("../lib/platform-state.js", async () => {
   const { createDocumentFixtureStore } = await import("@octogee/core/testing/journal-store");
@@ -32,6 +30,8 @@ const {
   removeProjectMember,
   syncProjectMemberCount,
 } = await import("../lib/project-platform-state.js");
+
+installDocumentPresentation(documentFake);
 
 const PROJECT = "workspaces/mira/projects/orbit";
 
@@ -156,5 +156,29 @@ describe("deleteProjectPlatformState", () => {
     expect(h.docs.has(`${PROJECT}/channels/general`)).toBe(false);
     expect(h.docs.has("workspaces/mira/projects/sibling")).toBe(true);
     expect(h.docs.has("workspaces/mira/projects/sibling/members/member-1")).toBe(true);
+  });
+});
+
+describe("project platform state without a product presentation store", () => {
+  beforeEach(() => installProjectPresentation(NO_PROJECT_PRESENTATION));
+  afterEach(() => installDocumentPresentation(documentFake));
+
+  it("adds a member to the platform record without publishing a count", async () => {
+    await addProjectMember("mira", "orbit", "member-1");
+
+    expect(h.docs.has(`${PROJECT}/members/member-1`)).toBe(true);
+    expect(h.updates).toEqual([]);
+  });
+
+  it("deletes the project, its members and channels", async () => {
+    h.docs.set(`${PROJECT}/members/member-1`, { role: "member" });
+    h.docs.set(`${PROJECT}/channels/general`, { mattermost: { channelId: "ch" } });
+
+    await deleteProjectPlatformState("mira", "orbit", { ownerUid: "owner-1", repoProvider: "gitea" });
+
+    expect(h.docs.has(PROJECT)).toBe(false);
+    expect(h.docs.has(`${PROJECT}/members/member-1`)).toBe(false);
+    expect(h.docs.has(`${PROJECT}/channels/general`)).toBe(false);
+    expect(h.sets).toEqual([]);
   });
 });

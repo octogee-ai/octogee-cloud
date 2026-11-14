@@ -1,6 +1,7 @@
 import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { installDocumentPresentation } from "./helpers/project-presentation.js";
 
 type DocData = Record<string, unknown>;
 
@@ -144,6 +145,8 @@ vi.mock("../lib/channel-lifecycle.js", () => ({
 }));
 
 const { default: entitiesRoutes } = await import("../routes/entities.js");
+
+installDocumentPresentation(docRef);
 
 function app() {
   const a = express();

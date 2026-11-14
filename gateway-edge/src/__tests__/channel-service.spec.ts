@@ -1,4 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { installDocumentPresentation } from "./helpers/project-presentation.js";
+import { installProjectPresentation, NO_PROJECT_PRESENTATION } from "../lib/project-presentation.js";
 import { MalformedRecordError } from "@octogee/core/platform-state";
 
 type Write = {
@@ -88,6 +90,8 @@ const {
   sessionChannelNameAvailability,
 } = await import("../lib/channel-service.js");
 const { platformStateStore } = await import("../lib/platform-state.js");
+
+installDocumentPresentation(docRef);
 
 function actor(overrides: Record<string, unknown> = {}) {
   return {
@@ -577,6 +581,50 @@ describe("createSessionChannel", () => {
     });
     expect(h.logger.error).toHaveBeenCalled();
     expect(h.writes).toEqual([]);
+  });
+});
+
+describe("createSessionChannel without a product presentation store", () => {
+  const input = { name: "patchroll", displayName: "OpenClaw Patch Upgrade", purpose: "Roll OC patches" };
+
+  beforeEach(() => installProjectPresentation(NO_PROJECT_PRESENTATION));
+  afterEach(() => installDocumentPresentation(docRef));
+
+  it("creates the Mattermost channel and its platform record", async () => {
+    await expect(createSessionChannel(actor(), input)).resolves.toEqual({
+      status: 200,
+      body: { success: true, channelId: "channel-1", name: "patchroll" },
+    });
+    expect(h.docs.get(DOC_PATH)).toMatchObject({
+      mattermost: { channelId: "channel-1" },
+      createdBy: "owner-1",
+    });
+    expect(h.writes).toEqual([]);
+  });
+
+  it("answers the creator's repeat create with the existing channel", async () => {
+    await createSessionChannel(actor(), input);
+    h.mmApi.mockClear();
+
+    await expect(createSessionChannel(actor(), input)).resolves.toEqual({
+      status: 200,
+      body: { success: true, channelId: "channel-1", name: "patchroll" },
+    });
+    expect(h.mmApi).not.toHaveBeenCalled();
+    expect(h.writes).toEqual([]);
+  });
+
+  it("refuses another member's create of a taken name", async () => {
+    await createSessionChannel(actor(), input);
+    h.mmApi.mockClear();
+
+    await expect(createSessionChannel(actor({ uid: "member-2" }), input)).resolves.toEqual({
+      status: 409,
+      body: {
+        error: 'A channel already uses the name "patchroll". Choose a name that differs within its first 17 letters and numbers.',
+      },
+    });
+    expect(h.mmApi).not.toHaveBeenCalled();
   });
 });
 
