@@ -2,7 +2,7 @@ import { Router, Request, Response, NextFunction } from "express";
 import { randomUUID } from "node:crypto";
 import * as fs from "fs";
 import * as os from "os";
-import { FieldValue, type DocumentSnapshot } from "firebase-admin/firestore";
+import { FieldValue } from "firebase-admin/firestore";
 import { requireAuth, requireInternalServiceAuth } from "../middleware/auth.js";
 import { db } from "../lib/db.js";
 import { platformStateStore } from "../lib/platform-state.js";
@@ -41,7 +41,7 @@ import {
   OPENAI_CODEX_DEFAULT_PROFILE_ID,
 } from "@octogee/core/model-credential-materializer";
 import { triggerGatewayModelCredentialSync } from "../lib/byot-sync-trigger.js";
-import { pinSubscriptionModelAround, retargetSubscriptionModelPicks } from "../lib/subscription-model-pins.js";
+import { pinSubscriptionModel, retargetSubscriptionModelPicks } from "../lib/subscription-model-pins.js";
 import {
   claudeCliRuntimeConfig,
   codexRuntimeConfig,
@@ -248,19 +248,6 @@ async function flipUnifiedByosSignal(
   agentIds: readonly string[] = [],
 ): Promise<void> {
   const addedAt = FieldValue.serverTimestamp();
-  await pinSubscriptionModelAround(platformStateStore.users, {
-    uid,
-    agentIds,
-    model: subscriptionDefaultModel(signalProvider),
-  }, () => writeUnifiedByosSignal(uid, signalProvider, secretName, addedAt));
-}
-
-async function writeUnifiedByosSignal(
-  uid: string,
-  signalProvider: ModelCredentialOAuthProviderId,
-  secretName: string,
-  addedAt: FieldValue,
-): Promise<void> {
   await db
     .collection("users")
     .doc(uid)
@@ -294,6 +281,11 @@ async function writeUnifiedByosSignal(
       { merge: true },
     );
   await db.collection("users").doc(uid).set({ byotActive: true }, { merge: true });
+  await pinSubscriptionModel(platformStateStore.users, {
+    uid,
+    agentIds,
+    model: subscriptionDefaultModel(signalProvider),
+  });
 }
 
 function slugFromManagedAgentId(agentId: string): string | null {
@@ -403,29 +395,28 @@ async function commitByosubCapture(args: {
   modelCredentialProvider: ModelCredentialOAuthProviderId;
   secretName: string;
   captureClaimId?: string;
-}): Promise<void> {
+}): Promise<readonly string[]> {
   const ownerRef = db.collection("users").doc(args.flow.uid);
   const configRef = ownerRef.collection("system").doc("config");
   const integrationRef = ownerRef.collection("integrations").doc("byosub");
   const flowRef = db.collection("byosubFlows").doc(args.flowId);
   const addedAt = FieldValue.serverTimestamp();
-  const agentIds = await captureAgentIds(args.flow, await ownerRef.get());
-  await pinSubscriptionModelAround(platformStateStore.users, {
-    uid: args.flow.uid,
-    agentIds,
-    model: subscriptionDefaultModel(args.modelCredentialProvider),
-  }, () => db.runTransaction(async (tx) => {
-    const [owner, currentFlowSnap] = await Promise.all([
+  return db.runTransaction(async (tx) => {
+    const [owner, currentFlowSnap, userRecord] = await Promise.all([
       tx.get(ownerRef),
       tx.get(flowRef),
+      platformStateStore.users.records.get(args.flow.uid),
     ]);
     const currentFlow = currentFlowSnap.data() as FlowDoc | undefined;
+    const ownerData = owner.exists ? userDataWithUserState(owner.data() ?? {}, userRecord) : undefined;
+    if (!ownerData || !accountAllowsInteractiveAccess(ownerData)) {
+      throw new Error("BYOS credential owner is not active");
+    }
     if (!flowUnchangedForCommit(args.flow, currentFlow, args.captureClaimId)) {
       throw new Error("BYOS credential flow changed before commit");
     }
-    if (!sameAgentIds(await captureAgentIds(args.flow, owner), agentIds)) {
-      throw new Error("BYOS credential owner's agents changed before commit");
-    }
+    const slug = slugFromManagedAgentId(args.flow.agentId);
+    const agentIds = slug ? rosteredAgentIdsForSlug(ownerData, slug) : [args.flow.agentId];
     tx.set(configRef, {
       byot: {
         provider: args.modelCredentialProvider,
@@ -474,21 +465,20 @@ async function commitByosubCapture(args: {
         captureClaimedAt: FieldValue.delete(),
       }, { merge: true });
     }
-  }));
+    return agentIds;
+  });
 }
 
-async function captureAgentIds(flow: FlowDoc, owner: DocumentSnapshot): Promise<readonly string[]> {
-  const userRecord = await platformStateStore.users.records.get(flow.uid);
-  const ownerData = owner.exists ? userDataWithUserState(owner.data() ?? {}, userRecord) : undefined;
-  if (!ownerData || !accountAllowsInteractiveAccess(ownerData)) {
-    throw new Error("BYOS credential owner is not active");
-  }
-  const slug = slugFromManagedAgentId(flow.agentId);
-  return slug ? rosteredAgentIdsForSlug(ownerData, slug) : [flow.agentId];
-}
-
-function sameAgentIds(left: readonly string[], right: readonly string[]): boolean {
-  return left.length === right.length && left.every((agentId) => right.includes(agentId));
+async function pinCapturedSubscriptionModel(
+  flow: FlowDoc,
+  modelCredentialProvider: ModelCredentialOAuthProviderId,
+  agentIds: readonly string[],
+): Promise<void> {
+  await pinSubscriptionModel(platformStateStore.users, {
+    uid: flow.uid,
+    agentIds,
+    model: subscriptionDefaultModel(modelCredentialProvider),
+  });
 }
 
 async function claimByosubCapture(flowId: string, flow: FlowDoc): Promise<string> {
@@ -802,13 +792,14 @@ router.post(
       const secretName = byosubSecretName(flow.uid, secretProvider);
 
       if (flow.consumedAt) {
-        await commitByosubCapture({
+        const agentIds = await commitByosubCapture({
           flowId: b.flowId,
           flow,
           provider: secretProvider,
           modelCredentialProvider: signalProvider,
           secretName,
         });
+        await pinCapturedSubscriptionModel(flow, signalProvider, agentIds);
         triggerUnifiedByosSyncForFlow(flow, signalProvider);
         res.json({ ok: true, secretName, alreadyConsumed: true });
         return;
@@ -824,8 +815,9 @@ router.post(
         value: b.credential,
         labels: { byosub: "true", provider: secretProvider },
       });
+      let agentIds: readonly string[];
       try {
-        await commitByosubCapture({
+        agentIds = await commitByosubCapture({
           flowId: b.flowId,
           flow,
           provider: secretProvider,
@@ -844,6 +836,7 @@ router.post(
         }
         throw error;
       }
+      await pinCapturedSubscriptionModel(flow, signalProvider, agentIds);
       triggerUnifiedByosSyncForFlow(flow, signalProvider);
       res.json({ ok: true, secretName });
     } catch (e) {

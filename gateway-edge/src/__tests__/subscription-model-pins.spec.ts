@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
 
-import { pinSubscriptionModelAround, retargetSubscriptionModelPicks } from "../lib/subscription-model-pins.js";
+import { pinSubscriptionModel, retargetSubscriptionModelPicks, SubscriptionModelPinError } from "../lib/subscription-model-pins.js";
 
 const UID = "ada";
 const COACH = "octogee-ada-coach";
@@ -24,72 +24,35 @@ function storeWith(picks: Record<string, { primary: string; fallbacks?: string[]
   };
 }
 
-describe("pinSubscriptionModelAround", () => {
-  it("pins every agent to the subscription model before the commit runs", async () => {
+describe("pinSubscriptionModel", () => {
+  it("pins every agent to the subscription model and clears its fallbacks", async () => {
     const fixture = storeWith({ [COACH]: { primary: "openai/gpt-5", fallbacks: ["openai/gpt-5-mini"] } });
     await fixture.seed();
-    const seenAtCommit = vi.fn(async () => fixture.picks());
 
-    await pinSubscriptionModelAround(fixture.users, { uid: UID, agentIds: [COACH, WRITER], model: SUBSCRIPTION }, seenAtCommit);
+    await pinSubscriptionModel(fixture.users, { uid: UID, agentIds: [COACH, WRITER], model: SUBSCRIPTION });
 
-    const pinned = { [COACH]: { primary: SUBSCRIPTION, fallbacks: [] }, [WRITER]: { primary: SUBSCRIPTION, fallbacks: [] } };
-    await expect(seenAtCommit.mock.results[0]!.value).resolves.toEqual(pinned);
-    expect(await fixture.picks()).toEqual(pinned);
-  });
-
-  it("restores the previous picks when the commit fails", async () => {
-    const fixture = storeWith({ [COACH]: { primary: "openai/gpt-5", fallbacks: ["openai/gpt-5-mini"] } });
-    await fixture.seed();
-    const failure = new Error("commit refused");
-
-    await expect(pinSubscriptionModelAround(
-      fixture.users,
-      { uid: UID, agentIds: [COACH, WRITER], model: SUBSCRIPTION },
-      async () => { throw failure; },
-    )).rejects.toBe(failure);
-
-    expect(await fixture.picks()).toEqual({ [COACH]: { primary: "openai/gpt-5", fallbacks: ["openai/gpt-5-mini"] } });
-  });
-
-  it("never commits when a pin fails, and undoes the pins that landed", async () => {
-    const fixture = storeWith();
-    const put = fixture.users.agentModels.put.bind(fixture.users.agentModels);
-    vi.spyOn(fixture.users.agentModels, "put").mockImplementation(async (selection) => {
-      if (selection.agentId === WRITER) throw new Error("store unavailable");
-      await put(selection);
+    expect(await fixture.picks()).toEqual({
+      [COACH]: { primary: SUBSCRIPTION, fallbacks: [] },
+      [WRITER]: { primary: SUBSCRIPTION, fallbacks: [] },
     });
-    const commit = vi.fn(async () => undefined);
-
-    await expect(pinSubscriptionModelAround(
-      fixture.users,
-      { uid: UID, agentIds: [COACH, WRITER], model: SUBSCRIPTION },
-      commit,
-    )).rejects.toThrow("store unavailable");
-
-    expect(commit).not.toHaveBeenCalled();
-    expect(await fixture.picks()).toEqual({});
   });
 
-  it("reports both failures when the restore after a failed commit also fails", async () => {
+  it("names the agents left without a pick when the store refuses a pin", async () => {
     const fixture = storeWith();
-    vi.spyOn(fixture.users.agentModels, "delete").mockRejectedValue(new Error("store unavailable"));
+    const cause = new Error("store unavailable");
+    vi.spyOn(fixture.users.agentModels, "put").mockRejectedValue(cause);
 
-    const attempt = pinSubscriptionModelAround(
-      fixture.users,
-      { uid: UID, agentIds: [COACH], model: SUBSCRIPTION },
-      async () => { throw new Error("commit refused"); },
-    );
+    const attempt = pinSubscriptionModel(fixture.users, { uid: UID, agentIds: [COACH, WRITER], model: SUBSCRIPTION });
 
-    await expect(attempt).rejects.toBeInstanceOf(AggregateError);
-    await expect(attempt).rejects.toMatchObject({ errors: [expect.objectContaining({ message: "commit refused" }), expect.objectContaining({ message: "store unavailable" })] });
+    await expect(attempt).rejects.toBeInstanceOf(SubscriptionModelPinError);
+    await expect(attempt).rejects.toMatchObject({ uid: UID, agentIds: [COACH, WRITER], cause });
   });
 
-  it("commits without touching picks when the provider has no subscription model", async () => {
+  it("leaves picks alone when the provider has no subscription model", async () => {
     const fixture = storeWith({ [COACH]: { primary: "openai/gpt-5" } });
     await fixture.seed();
 
-    await expect(pinSubscriptionModelAround(fixture.users, { uid: UID, agentIds: [COACH], model: null }, async () => "done"))
-      .resolves.toBe("done");
+    await pinSubscriptionModel(fixture.users, { uid: UID, agentIds: [COACH], model: null });
 
     expect(await fixture.picks()).toEqual({ [COACH]: { primary: "openai/gpt-5", fallbacks: [] } });
   });

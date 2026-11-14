@@ -1,19 +1,21 @@
-import type { AgentModelSelectionRecord, UserRepositories } from "@octogee/core/platform-state";
+import type { UserRepositories } from "@octogee/core/platform-state";
 
 type AgentModels = Pick<UserRepositories, "agentModels">;
 
-export async function pinSubscriptionModelAround<T>(
+export class SubscriptionModelPinError extends Error {
+  override readonly name = "SubscriptionModelPinError";
+
+  constructor(readonly uid: string, readonly agentIds: readonly string[], cause: unknown) {
+    super(`Subscription credential is active but its model pick for ${agentIds.join(", ")} was not saved; reconnecting saves it`, { cause });
+  }
+}
+
+export async function pinSubscriptionModel(
   users: AgentModels,
   args: { uid: string; agentIds: readonly string[]; model: string | null },
-  commit: () => Promise<T>,
-): Promise<T> {
-  if (args.model === null || args.agentIds.length === 0) return commit();
+): Promise<void> {
   const model = args.model;
-  const previous = new Map(
-    (await users.agentModels.list(args.uid))
-      .filter((selection) => args.agentIds.includes(selection.agentId))
-      .map((selection) => [selection.agentId, selection]),
-  );
+  if (model === null || args.agentIds.length === 0) return;
   try {
     await Promise.all(args.agentIds.map((agentId) => users.agentModels.put({
       uid: args.uid,
@@ -22,14 +24,8 @@ export async function pinSubscriptionModelAround<T>(
       fallbacks: [],
       updatedAt: { serverNow: true },
     })));
-    return await commit();
   } catch (error) {
-    try {
-      await restoreSelections(users, args.uid, args.agentIds, previous);
-    } catch (restoreError) {
-      throw new AggregateError([error, restoreError], "Subscription commit and model pick restore failed");
-    }
-    throw error;
+    throw new SubscriptionModelPinError(args.uid, args.agentIds, error);
   }
 }
 
@@ -44,24 +40,4 @@ export async function retargetSubscriptionModelPicks(
   await Promise.all(pinned.map((agentId) => toModel === null
     ? users.agentModels.delete(args.uid, agentId)
     : users.agentModels.put({ uid: args.uid, agentId, primary: toModel, fallbacks: [], updatedAt: { serverNow: true } })));
-}
-
-async function restoreSelections(
-  users: AgentModels,
-  uid: string,
-  agentIds: readonly string[],
-  previous: ReadonlyMap<string, AgentModelSelectionRecord>,
-): Promise<void> {
-  await Promise.all(agentIds.map((agentId) => {
-    const selection = previous.get(agentId);
-    return selection === undefined
-      ? users.agentModels.delete(uid, agentId)
-      : users.agentModels.put({
-        uid,
-        agentId,
-        primary: selection.primary,
-        fallbacks: selection.fallbacks,
-        updatedAt: selection.updatedAt,
-      });
-  }));
 }
