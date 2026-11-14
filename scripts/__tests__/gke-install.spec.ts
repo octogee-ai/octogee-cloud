@@ -215,6 +215,15 @@ esac`;
     });
   });
 
+  it("stops before creating anything when the commit has no published images", () => {
+    host.stub("docker", `echo "ERROR: $4: not found" >&2; exit 1`);
+    const result = up();
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(`Commit ${SHA} has no published images: its Build main run did not publish`);
+    expect(result.stderr).toContain("releases/latest");
+    expect(host.calls().filter(call => call.startsWith("gcloud "))).toEqual([]);
+  });
+
   it("stops before creating anything when no model provider key is exported or stored", () => {
     const result = host.run(SCRIPT, ["up", `--sha=${SHA}`], { env: { GCP_PROJECT: PROJECT, OCTOGEE_GKE_STATE: state } });
     expect(result.status).toBe(1);
