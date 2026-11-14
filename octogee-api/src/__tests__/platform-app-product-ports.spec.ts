@@ -14,6 +14,9 @@ const { createPlatformApp } = await import("../app.js");
 const { FeaturePolicy, configuredFeatureFlagProvider } = await import("../lib/feature-policy.js");
 const { NO_PROJECT_PRESENTATION, projectPresentation, installProjectPresentation } =
   await import("../../../gateway-edge/src/lib/project-presentation.js");
+const { NO_BROKER_RECORDS } = await import("../lib/broker-records.js");
+const { userAccounts } = await import("../../../gateway-edge/src/lib/user-accounts.js");
+const { noUserAccounts } = await import("@octogee/core/user-account");
 
 afterEach(() => installProjectPresentation(NO_PROJECT_PRESENTATION));
 
@@ -47,5 +50,17 @@ describe("createPlatformApp product ports", () => {
     createPlatformApp({ product: productWith({ projectPresentation: presentation }) });
 
     expect(projectPresentation()).toBe(presentation);
+  });
+
+  it("reads user accounts from platform state without a product", async () => {
+    createPlatformApp();
+
+    expect(userAccounts()).not.toBe(noUserAccounts);
+    await expect(userAccounts().get("nobody")).resolves.toBeNull();
+  });
+
+  it("refuses to start when the product's broker records have no user account reader", () => {
+    expect(() => createPlatformApp({ product: productWith({ brokerRecords: NO_BROKER_RECORDS }) }))
+      .toThrow("The product's broker records must supply a user account reader");
   });
 });
