@@ -42,6 +42,8 @@ export const TABLE_AGGREGATES = {
     user_model_credentials: "model-credential",
     user_subscription_links: "subscription-link",
     subscription_flows: "subscription-flow",
+    user_connector_integrations: "connector-integration",
+    connect_flows: "connect-flow",
     workspaces: "workspace",
     workspace_members: "workspace-member",
     workspace_projects: "workspace-project",

@@ -167,6 +167,43 @@ const SUBSCRIPTION_FLOWS_TABLE = {
         column("modelPinnedAt", "bigint", { nullAs: "null" }),
     ],
 };
+const CONNECTOR_INTEGRATIONS_TABLE = {
+    table: "user_connector_integrations",
+    aggregate: "connector-integration",
+    keyColumns: ["uid", "connector_id"],
+    columns: [
+        column("uid", "text"),
+        column("connectorId", "text"),
+        column("status", "text"),
+        column("accountLabel", "text", NULLABLE),
+        column("scopes", "jsonb"),
+        column("captureMethod", "text", NULLABLE),
+        column("error", "text", NULLABLE),
+        column("detail", "jsonb"),
+        column("connectedAt", "bigint", NULLABLE),
+        column("verifiedAt", "bigint", NULLABLE),
+        column("updatedAt", "bigint"),
+    ],
+};
+const CONNECT_FLOWS_TABLE = {
+    table: "connect_flows",
+    aggregate: "connect-flow",
+    keyColumns: ["flow_id"],
+    immutableFields: ["uid", "connectorId", "kind", "requestedScopes", "codeVerifier", "encryptedDeviceCode", "createdAt", "expireAt"],
+    columns: [
+        column("flowId", "text"),
+        column("uid", "text"),
+        column("connectorId", "text"),
+        column("kind", "text"),
+        column("requestedScopes", "jsonb"),
+        column("codeVerifier", "text", NULLABLE),
+        column("encryptedDeviceCode", "text", NULLABLE),
+        column("createdAt", "bigint"),
+        column("expireAt", "bigint"),
+        column("consumedAt", "bigint", NULLABLE),
+        column("outcome", "text", NULLABLE),
+    ],
+};
 function withoutKeys(record, keys) {
     return Object.fromEntries(Object.entries(record).filter(([field]) => !keys.includes(field)));
 }
@@ -382,6 +419,41 @@ function createSubscriptionFlowsRepository(session) {
         },
     };
 }
+function createConnectorIntegrationsRepository(session) {
+    return {
+        async get(uid, connectorId) {
+            const row = await selectByKey(session, "users.connectorIntegrations.get", {
+                table: CONNECTOR_INTEGRATIONS_TABLE,
+                key: [uid, connectorId],
+            });
+            return row === null ? null : decodeStored(CONNECTOR_INTEGRATIONS_TABLE, row);
+        },
+        async list(uid) {
+            const rows = await selectRecords(session, "users.connectorIntegrations.list", "SELECT * FROM $schema.user_connector_integrations WHERE uid = $1::text ORDER BY connector_id", [uid]);
+            return rows.map((row) => decodeStored(CONNECTOR_INTEGRATIONS_TABLE, row));
+        },
+        async put(integration) {
+            await insertRecord(session, "users.connectorIntegrations.put", CONNECTOR_INTEGRATIONS_TABLE, integration, "put");
+        },
+    };
+}
+function createConnectFlowsRepository(session) {
+    return {
+        async get(flowId) {
+            const row = await selectByKey(session, "users.connectFlows.get", { table: CONNECT_FLOWS_TABLE, key: [flowId] });
+            return row === null ? null : decodeStored(CONNECT_FLOWS_TABLE, row);
+        },
+        async create(flow) {
+            await insertRecord(session, "users.connectFlows.create", CONNECT_FLOWS_TABLE, { ...flow, consumedAt: null, outcome: null }, "create");
+        },
+        async update(flowId, progress) {
+            await updateRecord(session, "users.connectFlows.update", { table: CONNECT_FLOWS_TABLE, key: [flowId] }, progress, []);
+        },
+        async deleteForUser(uid) {
+            await session.write("users.connectFlows.deleteForUser", { aggregate: "connect-flow", key: uid }, "DELETE FROM $schema.connect_flows WHERE uid = $1::text", [uid]);
+        },
+    };
+}
 export const createPostgresUserRepositories = (session) => ({
     records: createPostgresUserRecordsRepository(session),
     accounts: createUserAccountsRepository(session),
@@ -393,4 +465,6 @@ export const createPostgresUserRepositories = (session) => ({
     modelCredentials: createModelCredentialsRepository(session),
     subscriptionLinks: createSubscriptionLinksRepository(session),
     subscriptionFlows: createSubscriptionFlowsRepository(session),
+    connectorIntegrations: createConnectorIntegrationsRepository(session),
+    connectFlows: createConnectFlowsRepository(session),
 });

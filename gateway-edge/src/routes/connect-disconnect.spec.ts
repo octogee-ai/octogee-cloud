@@ -1,9 +1,11 @@
 import express, { type NextFunction, type Request, type Response } from "express";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { PlatformStateStore } from "@octogee/core/platform-state";
 
 const h = vi.hoisted(() => ({
-  writes: [] as string[],
+  events: [] as string[],
+  store: null as unknown as PlatformStateStore,
   revokeProviderGrant: vi.fn(async () => undefined),
 }));
 
@@ -20,27 +22,10 @@ vi.mock("@octogee/core/connector-revocation", () => ({
 }));
 
 vi.mock("../lib/platform-state.js", () => ({
-  platformStateStore: { secrets: {} },
+  get platformStateStore() { return h.store; },
 }));
 
-vi.mock("../lib/db.js", () => {
-  const doc = (path: string) => ({ path, doc: (id: string) => doc(`${path}/${id}`), collection: (id: string) => doc(`${path}/${id}`) });
-  return {
-    db: {
-      collection: (id: string) => doc(id),
-      batch: () => ({
-        set: (ref: { path: string }) => h.writes.push(`set ${ref.path}`),
-        delete: (ref: { path: string }) => h.writes.push(`delete ${ref.path}`),
-        commit: async () => {
-          h.writes.push("commit");
-        },
-      }),
-    },
-    FieldValue: { serverTimestamp: () => "now" },
-    Timestamp: { fromMillis: (ms: number) => ms },
-  };
-});
-
+const { createDocumentFixtureStore } = await import("@octogee/core/testing/journal-store");
 const { default: connectRoutes } = await import("./connect.js");
 const { NO_CONNECTOR_DISCONNECTED, installConnectorDisconnected } = await import("../lib/connector-disconnect.js");
 
@@ -51,31 +36,39 @@ function app() {
   return target;
 }
 
-beforeEach(() => {
-  h.writes.length = 0;
+beforeEach(async () => {
+  h.events.length = 0;
   h.revokeProviderGrant.mockClear();
+  h.store = createDocumentFixtureStore({ "users/owner": { accountLifecycle: { status: "active" } } });
+  await h.store.users.connectorIntegrations.put({
+    uid: "owner", connectorId: "google", status: "connected", accountLabel: "owner@example.com", scopes: [],
+    captureMethod: "oauth-web", error: null, detail: {}, connectedAt: 1, verifiedAt: null, updatedAt: 1,
+  });
+  const transaction = h.store.transaction.bind(h.store);
+  vi.spyOn(h.store, "transaction").mockImplementation((async (options, work) => {
+    const result = await transaction(options, work);
+    h.events.push("commit");
+    return result;
+  }) as PlatformStateStore["transaction"]);
 });
 
 afterEach(() => {
   installConnectorDisconnected(NO_CONNECTOR_DISCONNECTED);
+  vi.restoreAllMocks();
 });
 
 describe("connector disconnect", () => {
   it("tells the installed hook which connector the user disconnected, after the disconnect commits", async () => {
     const disconnected = vi.fn(async () => {
-      h.writes.push("hook");
+      h.events.push("hook");
     });
     installConnectorDisconnected(disconnected);
 
     await request(app()).post("/api/connect/disconnect").send({ connector: "google" }).expect(200, { ok: true });
 
     expect(disconnected).toHaveBeenCalledWith("owner", "google");
-    expect(h.writes).toEqual([
-      "set users/owner/integrations/google",
-      "delete users/owner/secrets/google",
-      "commit",
-      "hook",
-    ]);
+    expect(h.events).toEqual(["commit", "hook"]);
+    expect(await h.store.users.connectorIntegrations.get("owner", "google")).toMatchObject({ status: "disconnected" });
   });
 
   it("fails the disconnect when the installed hook fails", async () => {
@@ -91,7 +84,8 @@ describe("connector disconnect", () => {
   it("disconnects without a product hook", async () => {
     await request(app()).post("/api/connect/disconnect").send({ connector: "google" }).expect(200, { ok: true });
 
-    expect(h.writes).toContain("commit");
+    expect(h.events).toEqual(["commit"]);
+    expect(await h.store.users.connectorIntegrations.get("owner", "google")).toMatchObject({ status: "disconnected" });
   });
 
   it("does not serve the Google grant directory", async () => {
