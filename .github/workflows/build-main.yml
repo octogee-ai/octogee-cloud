@@ -14,8 +14,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: build-main-${{ github.ref }}-${{ inputs.rescan-latest && 'rescan' || 'build' }}
-  cancel-in-progress: true
+  group: build-main-${{ github.event_name == 'push' && 'automatic' || github.run_id }}
 
 env:
   REGISTRY: ghcr.io/octogee-ai/octogee-cloud
