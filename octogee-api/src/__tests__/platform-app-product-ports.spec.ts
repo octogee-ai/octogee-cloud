@@ -15,10 +15,15 @@ const { FeaturePolicy, configuredFeatureFlagProvider } = await import("../lib/fe
 const { NO_PROJECT_PRESENTATION, projectPresentation, installProjectPresentation } =
   await import("../../../gateway-edge/src/lib/project-presentation.js");
 const { NO_BROKER_RECORDS } = await import("../lib/broker-records.js");
+const { NO_WORKSPACE_STORAGE_ACCOUNTING, installWorkspaceStorageAccounting, workspaceStorageAccounting } =
+  await import("../../../gateway-edge/src/lib/workspace-storage-quota.js");
 const { userAccounts } = await import("../../../gateway-edge/src/lib/user-accounts.js");
 const { noUserAccounts } = await import("@octogee/core/user-account");
 
-afterEach(() => installProjectPresentation(NO_PROJECT_PRESENTATION));
+afterEach(() => {
+  installProjectPresentation(NO_PROJECT_PRESENTATION);
+  installWorkspaceStorageAccounting(NO_WORKSPACE_STORAGE_ACCOUNTING);
+});
 
 function productWith(runtime: Partial<ProductRuntime>) {
   return {
@@ -62,5 +67,21 @@ describe("createPlatformApp product ports", () => {
   it("refuses to start when the product's broker records have no user account reader", () => {
     expect(() => createPlatformApp({ product: productWith({ brokerRecords: NO_BROKER_RECORDS }) }))
       .toThrow("The product's broker records must supply a user account reader");
+  });
+
+  it("leaves workspace storage unaccounted without a product", () => {
+    installWorkspaceStorageAccounting({ ...NO_WORKSPACE_STORAGE_ACCOUNTING });
+
+    createPlatformApp();
+
+    expect(workspaceStorageAccounting()).toBe(NO_WORKSPACE_STORAGE_ACCOUNTING);
+  });
+
+  it("installs the product's workspace storage accounting", () => {
+    const accounting = { ...NO_WORKSPACE_STORAGE_ACCOUNTING };
+
+    createPlatformApp({ product: productWith({ workspaceStorageAccounting: accounting }) });
+
+    expect(workspaceStorageAccounting()).toBe(accounting);
   });
 });
