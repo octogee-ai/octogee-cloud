@@ -281,7 +281,7 @@ import {
   type CutoverDeps,
   type FleetStateDeps,
 } from "@octogee/core/fleet-state";
-import type { SizingKeyReader } from "@octogee/core/user-activation-lease";
+import type { SizingKeyReader } from "@octogee/core/sizing-key";
 import {
   provisionGatewayAuthSecret,
   deleteSecret,
