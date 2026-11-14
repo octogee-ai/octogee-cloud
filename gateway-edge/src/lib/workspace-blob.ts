@@ -1,6 +1,7 @@
 import { blobStatus, type BlobStore } from "./blob-store.js";
 import { createGcsBlobStore } from "./gcs-blob-store.js";
 import { db } from "./db.js";
+import { userAccounts } from "./user-accounts.js";
 import { gcsBucket } from "./gcs-bucket.js";
 import { platformStateStore } from "./platform-state.js";
 import { uploadProjectBlobViaBroker, uploadWorkspaceBlobViaBroker } from "./project-blob-upload.js";
@@ -77,11 +78,11 @@ async function configuredWorkspaceStorageLimitBytes(
   const ownerUid = (await platformStateStore.workspaces.records.get(target.slug))?.ownerUid;
   if (!ownerUid) throw new Error(`workspace ${target.slug} has no storage owner`);
   const [owner, config] = await Promise.all([
-    db.doc(`users/${ownerUid}`).get(),
+    userAccounts().get(ownerUid),
     readPlatformFreeConfig(),
   ]);
-  if (!owner.exists) throw new Error(`workspace storage owner ${ownerUid} was not found`);
-  return freeWorkspaceStorageLimitBytes(owner.data() ?? {}, false, config);
+  if (!owner) throw new Error(`workspace storage owner ${ownerUid} was not found`);
+  return freeWorkspaceStorageLimitBytes(owner.planInputs, false, config);
 }
 
 async function reserveBlobStorage(

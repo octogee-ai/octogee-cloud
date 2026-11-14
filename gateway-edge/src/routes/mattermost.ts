@@ -21,7 +21,7 @@ router.get("/token", authenticationFailureLimit, requireAuth, authenticatedReque
     const uid = req.uid!;
     const userData = req.user!;
 
-    const ctx = await getWorkspaceMmContext(uid, undefined, userData);
+    const ctx = await getWorkspaceMmContext(uid);
     const mmUserId = ctx?.userId;
     const dmChannelId = ctx?.coachDmChannelId;
 

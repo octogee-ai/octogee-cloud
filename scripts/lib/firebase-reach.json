@@ -6,10 +6,8 @@
     "core/src/provisionSteps.ts",
     "gateway-edge/src/lib/db.ts",
     "gateway-edge/src/lib/default-agent-identity.ts",
-    "gateway-edge/src/lib/fileTarget.ts",
     "gateway-edge/src/lib/firestoreReads.ts",
     "gateway-edge/src/lib/google-grant-approval.ts",
-    "gateway-edge/src/lib/mattermost-context.ts",
     "gateway-edge/src/lib/platform-state.ts",
     "gateway-edge/src/lib/productivity-approval-decision.ts",
     "gateway-edge/src/lib/project-agent-delivery.ts",
@@ -25,11 +23,8 @@
     "gateway-edge/src/routes/entities.ts",
     "gateway-edge/src/routes/google-grants.ts",
     "gateway-edge/src/routes/productivity-approvals.ts",
-    "gateway-edge/src/routes/projects/join-leave.ts",
-    "gateway-edge/src/routes/projects/members.ts",
     "gateway-edge/src/routes/projects/readme.ts",
     "gateway-edge/src/routes/projects/recipe.ts",
-    "gateway-edge/src/routes/projects/retry.ts",
     "gateway-edge/src/routes/projects/star.ts",
     "octogee-api/src/lib/openclaw-profile-appearance.ts"
   ]

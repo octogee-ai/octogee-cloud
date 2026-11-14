@@ -69,6 +69,7 @@ import {
 import { resolveActiveArtifactWorkspaceSlug } from "./lib/chat-artifact-workspace.js";
 import { gcsBucket } from "../../gateway-edge/src/lib/gcs-bucket.js";
 import { installProjectPresentation, NO_PROJECT_PRESENTATION, type ProjectPresentation } from "../../gateway-edge/src/lib/project-presentation.js";
+import { installUserAccounts } from "../../gateway-edge/src/lib/user-accounts.js";
 import { platformStateStore, readSizingKey } from "../../gateway-edge/src/lib/platform-state.js";
 import {
   ConnectorTokenReadError,
@@ -438,6 +439,7 @@ export function createPlatformApp(opts: PlatformAppOptions = {}) {
   const productRouteDeps: ProductRouteDeps = { featurePolicy };
   const modelBrokerRails = opts.product?.modelBrokerRails ?? operatorRailRegistry();
   const brokerRecords = product?.brokerRecords ?? platformStateBrokerRecords(platformStateStore);
+  installUserAccounts(brokerRecords.accounts);
   app.locals.productShutdown = product?.shutdown;
   const tenantBindingMetrics = createTenantBindingMetrics(metricsRegistry);
   const tenantBindingReviewer = opts.tenantBindingReviewer ?? createGatewayIdentityReviewer({

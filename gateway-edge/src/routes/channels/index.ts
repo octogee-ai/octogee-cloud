@@ -16,7 +16,6 @@ const router = Router();
 function actorFrom(req: Request): SessionChannelActor {
   return {
     uid: req.uid!,
-    userData: req.user,
     workspaceId: req.workspaceSlug,
   };
 }

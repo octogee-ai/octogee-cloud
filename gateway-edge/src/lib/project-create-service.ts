@@ -167,7 +167,7 @@ export async function createProjectForActor(
   try {
     await writeProjectProductFields(plan);
     await writeProjectOwnerMember(plan);
-    const callerCtx = await getWorkspaceMmContext(plan.uid, plan.workspaceId, plan.userData);
+    const callerCtx = await getWorkspaceMmContext(plan.uid, plan.workspaceId);
     const channel = await provisionProjectMattermost(plan, callerCtx, artifacts);
     await provisionProjectCodeRepo(plan, artifacts);
     await markProjectActive(plan);

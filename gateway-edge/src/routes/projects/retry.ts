@@ -1,6 +1,5 @@
 import { Router, Request, Response } from "express";
 import { strictRateLimit } from "../../middleware/security.js";
-import { db } from "../../lib/db.js";
 import { platformStateStore } from "../../lib/platform-state.js";
 import { projectPresentation } from "../../lib/project-presentation.js";
 import { mmApi } from "../../lib/mattermost.js";
@@ -84,8 +83,7 @@ async function restoreInterruptedProductFields(ctx: ProjectCtx): Promise<void> {
 }
 
 async function retryMattermostContext(ctx: ProjectCtx, res: Response): Promise<RetryMattermostContext | null> {
-  const userDoc = await db.doc(`users/${ctx.uid}`).get();
-  const callerCtx = await getWorkspaceMmContext(ctx.uid, ctx.wid, userDoc.data());
+  const callerCtx = await getWorkspaceMmContext(ctx.uid, ctx.wid);
   if (callerCtx?.teamId) return { ...callerCtx, teamId: callerCtx.teamId };
   await markRetryFailed(ctx, "Workspace has no Mattermost team context");
   res.status(502).json({ error: "Retry failed — workspace chat is not ready" });

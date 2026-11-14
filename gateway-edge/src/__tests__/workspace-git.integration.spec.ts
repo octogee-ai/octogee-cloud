@@ -111,6 +111,9 @@ import { createApp } from "../index.js";
 import { acquireWorkspaceMutationLeaseSync } from "@octogee/core/workspace-mutation-lease";
 import { workspaceMutationLeaseGitDir } from "../lib/workspace-git.js";
 import workspaceGitRoutes from "../routes/workspace/git.js";
+import { installDocumentUserAccounts } from "./helpers/user-accounts.js";
+
+installDocumentUserAccounts((uid) => firestoreData[`users/${uid}`]);
 
 type RouteLayer = {
   route?: {
