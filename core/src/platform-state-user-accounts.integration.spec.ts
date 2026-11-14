@@ -60,7 +60,7 @@ describe.skipIf(!dsn)("platform state user accounts", () => {
     await accounts.create({ userId: "u-bob", name: "bob", email: "bob@example.test" });
     const reader = platformStateUserAccountReader(harness.store);
 
-    expect(await reader.get("u-ada")).toMatchObject({ uid: "u-ada", username: "ada", email: "ada@example.test", byotActive: false });
+    expect(await reader.get("u-ada")).toMatchObject({ uid: "u-ada", username: "ada", email: "ada@example.test" });
     expect(await reader.get("u-nobody")).toBeNull();
     expect([...(await reader.getMany(["u-bob", "u-nobody"])).keys()]).toEqual(["u-bob"]);
     expect([...(await reader.list()).values()].map((account) => account.username)).toEqual(["ada", "bob"]);

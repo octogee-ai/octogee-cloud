@@ -332,7 +332,7 @@ describe.skipIf(!dsn)("PostgreSQL secrets and access repositories", { timeout: 3
         grant: {},
       });
 
-      expect(await harness.store.sweepExpired(NOW, 10)).toEqual({ operations: 0, operationAudits: 0, accessGrants: 3, modelBrokerUsageEvents: 0 });
+      expect(await harness.store.sweepExpired(NOW, 10)).toEqual({ operations: 0, operationAudits: 0, accessGrants: 3, modelBrokerUsageEvents: 0, subscriptionFlows: 0 });
       expect(await harness.store.access.gatewayTickets.get("live")).not.toBeNull();
       expect(await harness.store.access.gatewayTickets.get("expired")).toBeNull();
       expect(await harness.store.access.controlTickets.get("h1")).toBeNull();

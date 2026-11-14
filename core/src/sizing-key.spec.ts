@@ -10,7 +10,6 @@ const account = (planInputs: Record<string, unknown>): UserAccount => ({
   displayName: null,
   lastActive: null,
   planInputs,
-  byotActive: false,
   usage: {},
   mattermostUsername: null,
 });

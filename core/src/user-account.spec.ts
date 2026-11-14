@@ -15,18 +15,15 @@ describe("userAccountFromData", () => {
   it("projects the admin profile fields and drops non-string Mattermost usernames", () => {
     expect(userAccountFromData("u1", {
       displayName: "User",
-      byotActive: true,
       usage: { totalTokensUsed: 5 },
       mattermost: { username: "user-mm" },
     })).toMatchObject({
       displayName: "User",
-      byotActive: true,
       usage: { totalTokensUsed: 5 },
       mattermostUsername: "user-mm",
     });
-    expect(userAccountFromData("u1", { mattermost: { username: 456 }, byotActive: "yes" })).toMatchObject({
+    expect(userAccountFromData("u1", { mattermost: { username: 456 } })).toMatchObject({
       mattermostUsername: null,
-      byotActive: false,
       usage: {},
     });
   });

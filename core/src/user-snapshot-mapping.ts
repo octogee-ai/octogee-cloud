@@ -4,7 +4,7 @@ const logger = createServiceLogger("provisioner");
 import type { UserSnapshot } from "./user-lifecycle.js";
 import type { MattermostTokenSecret, SecretsRepository } from "./platform-state/secrets.js";
 import type { PlatformStateRepositories } from "./platform-state/store.js";
-import type { UserRepositories } from "./platform-state/users.js";
+import type { ModelCredentialRecord, UserRepositories } from "./platform-state/users.js";
 import type { WorkspaceProject } from "./platform-state/workspaces.js";
 import type { AgentModelSelections } from "@octogee/shared/types/agent-models";
 import { userEntitlements } from "@octogee/shared/types/user-entitlements";
@@ -187,34 +187,18 @@ function snapshotIdentity(
 type SnapshotSystemConfig = NonNullable<UserSnapshot["systemConfig"]>;
 
 export interface ByotSnapshotProjection {
-  byotActive: boolean | null;
+  byotActive: boolean;
   systemConfig?: SnapshotSystemConfig;
 }
 
-function objectRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : null;
-}
-
-function byotSystemConfigFromRecord(
-  credential: Record<string, unknown>,
-): SnapshotSystemConfig | undefined {
-  const out: { provider?: string; baseUrl?: string; model?: string } = {};
-  if (typeof credential.provider === "string") out.provider = credential.provider;
-  if (typeof credential.baseUrl === "string") out.baseUrl = credential.baseUrl;
-  if (typeof credential.model === "string") out.model = credential.model;
-  return Object.keys(out).length > 0 ? { byot: out } : undefined;
-}
-
-// Per-agent model picks travel with the snapshot no matter the credential
-// state — a plain platform user's picker choices must survive pod rolls too.
-function withAgentModels(
-  agentModels: AgentModelSelections,
-  systemConfig: SnapshotSystemConfig | undefined,
-): SnapshotSystemConfig | undefined {
-  if (Object.keys(agentModels).length === 0) return systemConfig;
-  return { ...(systemConfig ?? {}), agentModels };
+function byotSystemConfig(credential: ModelCredentialRecord): SnapshotSystemConfig {
+  return {
+    byot: {
+      provider: credential.provider,
+      ...(credential.baseUrl === null ? {} : { baseUrl: credential.baseUrl }),
+      ...(credential.model === null ? {} : { model: credential.model }),
+    },
+  };
 }
 
 export async function readAgentModelSelections(
@@ -225,41 +209,29 @@ export async function readAgentModelSelections(
   return Object.fromEntries(selections.map(({ agentId, primary, fallbacks }) => [agentId, { primary, fallbacks: [...fallbacks] }]));
 }
 
-export function byotSnapshotProjectionFromSystemConfig(
-  sysData: Record<string, unknown> | undefined,
+export function byotSnapshotProjection(
+  credential: ModelCredentialRecord | null,
   agentModels: AgentModelSelections,
 ): ByotSnapshotProjection {
-  const modelCredential = objectRecord(sysData?.modelCredential);
-  if (modelCredential) {
-    const byotConfig = modelCredential.active === true
-      ? byotSystemConfigFromRecord(modelCredential)
-      : undefined;
-    const systemConfig = withAgentModels(agentModels, byotConfig);
-    return {
-      byotActive: byotConfig !== undefined,
-      ...(systemConfig ? { systemConfig } : {}),
-    };
-  }
-
-  const byot = objectRecord(sysData?.byot);
-  const systemConfig = withAgentModels(
-    agentModels,
-    byot ? byotSystemConfigFromRecord(byot) : undefined,
-  );
+  const byotConfig = credential?.active === true ? byotSystemConfig(credential) : undefined;
+  const systemConfig = Object.keys(agentModels).length === 0
+    ? byotConfig
+    : { ...(byotConfig ?? {}), agentModels };
   return {
-    byotActive: null,
+    byotActive: byotConfig !== undefined,
     ...(systemConfig ? { systemConfig } : {}),
   };
 }
 
-// Project a users/{uid}/system/config doc down to the byot fields the mount-time
-// re-assert needs. Returns undefined when there is nothing usable so the snapshot stays
-// lean; deriveDesiredByotState then defaults the provider to anthropic for an active BYOT.
-export function byotSystemConfigFromDoc(
-  sysData: Record<string, unknown> | undefined,
-  agentModels: AgentModelSelections,
-): UserSnapshot["systemConfig"] {
-  return byotSnapshotProjectionFromSystemConfig(sysData, agentModels).systemConfig;
+export async function readByotSnapshotProjection(
+  users: Pick<UserRepositories, "agentModels" | "modelCredentials">,
+  uid: string,
+): Promise<ByotSnapshotProjection> {
+  const [credential, agentModels] = await Promise.all([
+    users.modelCredentials.get(uid),
+    readAgentModelSelections(users, uid),
+  ]);
+  return byotSnapshotProjection(credential, agentModels);
 }
 
 export function mapUserDocToSnapshot(
@@ -273,7 +245,7 @@ export function mapUserDocToSnapshot(
     uid,
     slug,
     channels,
-    byotActive: Boolean(data.byotActive),
+    byotActive: false,
     ...snapshotIdentity(data, slug),
     ...snapshotProvisioning(data),
     planInputs,

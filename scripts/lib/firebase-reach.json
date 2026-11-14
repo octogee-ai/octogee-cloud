@@ -10,9 +10,6 @@
     "gateway-edge/src/lib/project-agent-delivery.ts",
     "gateway-edge/src/lib/project-agent-onboarding.ts",
     "gateway-edge/src/lib/withProject.ts",
-    "gateway-edge/src/routes/agent-models.ts",
-    "gateway-edge/src/routes/billing/byot.ts",
-    "gateway-edge/src/routes/byosub.ts",
     "gateway-edge/src/routes/connect.ts",
     "gateway-edge/src/routes/google-grants.ts",
     "gateway-edge/src/routes/productivity-approvals.ts"

@@ -20,7 +20,7 @@ import {
   type UserAccount,
   type UserAccountReader,
 } from "./user-account.js";
-import type { UserActivationLease, PlatformUserRecord } from "./platform-state/users.js";
+import type { ModelCredentialRecord, UserActivationLease, PlatformUserRecord } from "./platform-state/users.js";
 import { MissingRecordError } from "./platform-state/errors.js";
 import type { AnonymousOperationalArchive } from "./platform-state/jobs.js";
 import type { PlatformStateStore, UntypedRecord } from "./platform-state/store.js";
@@ -101,7 +101,6 @@ export interface AdminUserDirectorySource {
   brokerEventCosts(uid: string, sinceMs: number, limit: number): Promise<UntypedRecord[]>;
   brokerRollup(uid: string): Promise<UntypedRecord | undefined>;
   totalUsers(): Promise<number | null>;
-  systemConfig(uid: string): Promise<UntypedRecord | undefined>;
   usageLogs(uid: string, sinceDate: string): Promise<UntypedRecord[]>;
   workspaces(uid: string): Promise<AdminUserDirectoryRecord[]>;
   workspaceModelUsage(slug: string): Promise<AdminUserDirectoryRecord[]>;
@@ -115,7 +114,6 @@ export const noAdminUserDirectorySource: AdminUserDirectorySource = {
   brokerEventCosts: async () => [],
   brokerRollup: async () => undefined,
   totalUsers: async () => null,
-  systemConfig: async () => undefined,
   usageLogs: async () => [],
   workspaces: async () => [],
   workspaceModelUsage: async () => [],
@@ -355,25 +353,17 @@ function stringValue(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
-function adminModelCredentialFromSystemConfig(
-  config: Record<string, unknown> | undefined,
-): AdminUserModelCredential | null {
-  const credential = objectValue(config?.modelCredential);
-  const provider = stringValue(credential?.provider);
-  const mode = stringValue(credential?.mode);
-  const status = stringValue(credential?.status);
-
-  if (!credential || !provider || !mode || !status) return null;
-
+function adminModelCredential(credential: ModelCredentialRecord | null): AdminUserModelCredential | null {
+  if (credential === null) return null;
   return {
-    active: credential.active === true,
-    provider,
-    mode,
-    status,
-    reasonCode: stringValue(credential.reasonCode),
-    fingerprint: stringValue(credential.fingerprint),
-    model: stringValue(credential.model),
-    baseUrl: stringValue(credential.baseUrl),
+    active: credential.active,
+    provider: credential.provider,
+    mode: credential.mode,
+    status: credential.status,
+    reasonCode: credential.reasonCode,
+    fingerprint: credential.fingerprint,
+    model: credential.model,
+    baseUrl: credential.baseUrl,
     lastUsedAt: toISODate(credential.lastUsedAt),
   };
 }
@@ -432,12 +422,18 @@ async function summarizeUsers(
   users: readonly PlatformUserRecord[],
 ): Promise<UserSummary[]> {
   const uids = users.map((userRecord) => userRecord.uid);
-  const [accounts, brokerUsage] = await Promise.all([
+  const [accounts, brokerUsage, credentials] = await Promise.all([
     directory.accounts.getMany(uids),
     readBrokerUserUsage(directory.source, uids, Date.now()),
+    Promise.all(uids.map((uid) => directory.store.users.modelCredentials.get(uid))),
   ]);
-  return users.map((userRecord) =>
-    buildUserSummary(userRecord, accountFor(accounts, userRecord.uid), brokerUsage.get(userRecord.uid) ?? {}));
+  return users.map((userRecord, index) =>
+    buildUserSummary(
+      userRecord,
+      accountFor(accounts, userRecord.uid),
+      credentials[index]?.active === true,
+      brokerUsage.get(userRecord.uid) ?? {},
+    ));
 }
 
 function newestFirstWithUndatedLast(a: string | null, b: string | null): number {
@@ -708,8 +704,8 @@ router.get(
 
         const thirtyDaysAgo = new Date();
         thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-        const modelCredential = adminModelCredentialFromSystemConfig(await source.systemConfig(uid));
-        const userCredentialActive = modelCredential?.active === true || account.byotActive;
+        const modelCredential = adminModelCredential(await store.users.modelCredentials.get(uid));
+        const userCredentialActive = modelCredential?.active === true;
 
         const usageLogs = await source.usageLogs(uid, thirtyDaysAgo.toISOString().slice(0, 10));
 
@@ -724,7 +720,7 @@ router.get(
           readBrokerDailyUsage(source, uid, thirtyDaysAgo.getTime(), logger),
           source.brokerRollup(uid),
         ]);
-        const summary = buildUserSummary(userRecord, account, brokerUsage.get(uid) ?? { now });
+        const summary = buildUserSummary(userRecord, account, userCredentialActive, brokerUsage.get(uid) ?? { now });
 
         const defaultAgentDm = userRecord.slug === null
           ? null

@@ -185,6 +185,10 @@
       "types": "./dist/user-deletion-plan.d.ts",
       "default": "./dist/user-deletion-plan.js"
     },
+    "./model-credential-records": {
+      "types": "./dist/model-credential-records.d.ts",
+      "default": "./dist/model-credential-records.js"
+    },
     "./user-snapshot-mapping": {
       "types": "./dist/user-snapshot-mapping.d.ts",
       "default": "./dist/user-snapshot-mapping.js"

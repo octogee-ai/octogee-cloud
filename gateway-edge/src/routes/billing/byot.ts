@@ -1,6 +1,7 @@
 import { Router, Request, Response, NextFunction } from "express";
 import { logger } from "../../middleware/logging.js";
-import { db, FieldValue } from "../../lib/db.js";
+import { platformStateStore } from "../../lib/platform-state.js";
+import type { ModelCredentialRecord } from "@octogee/core/platform-state";
 import {
   validateProviderKey,
   isSupportedProvider,
@@ -11,7 +12,6 @@ import { probeProviderKey } from "../../model-credentials/provider-probe.js";
 import { writeSecret, archiveSecret } from "@octogee/core/secret-store";
 import { byotSecretName, credentialVersionFingerprint, keyFingerprintFor } from "../../model-credentials/byot-key-identity.js";
 import { triggerGatewayModelCredentialSync } from "../../lib/byot-sync-trigger.js";
-import { modelCredentialApiKeyState } from "@octogee/shared/types/model-credentials";
 import { userEntitlements } from "@octogee/shared/types/user-entitlements";
 
 const router = Router();
@@ -37,16 +37,6 @@ type InputResolution =
 type ProviderResolution =
   | { ok: true; provider: Provider }
   | { ok: false; body: Record<string, unknown> };
-
-interface CredentialRecordInput {
-  provider: Provider;
-  secretName: string;
-  fingerprint: string;
-  keyHash: string;
-  addedAt: unknown;
-  baseUrl?: string;
-  model?: string;
-}
 
 function gatewayIdFromRequest(req: Request): string | null {
   const gatewayId = (req.user as { provisioning?: { openclaw?: { gatewayId?: unknown } } } | undefined)
@@ -157,17 +147,8 @@ function resolveCredentialInput(rawBody: unknown): InputResolution {
   };
 }
 
-function staticCredentialProviderFromConfig(
-  config: Record<string, unknown> | undefined,
-): Provider | undefined {
-  const modelCredential = objectRecord(config?.modelCredential);
-  if (modelCredential) {
-    const provider = modelCredential.active === true ? modelCredential.provider : undefined;
-    return isSupportedProvider(provider) ? provider : undefined;
-  }
-
-  const byot = objectRecord(config?.byot);
-  return isSupportedProvider(byot?.provider) ? byot.provider : undefined;
+function staticCredentialProvider(credential: ModelCredentialRecord | null): Provider | undefined {
+  return credential?.active === true && isSupportedProvider(credential.provider) ? credential.provider : undefined;
 }
 
 function sendProbeFailure(
@@ -192,9 +173,9 @@ function sendProbeFailure(
 async function archivePreviousProviderIfNeeded(
   slug: string,
   nextProvider: Provider,
-  config: Record<string, unknown> | undefined,
+  credential: ModelCredentialRecord | null,
 ): Promise<void> {
-  const previousProvider = staticCredentialProviderFromConfig(config);
+  const previousProvider = staticCredentialProvider(credential);
   if (!previousProvider || previousProvider === nextProvider) return;
 
   const oldSecretName = byotSecretName(slug, previousProvider);
@@ -204,38 +185,6 @@ async function archivePreviousProviderIfNeeded(
   } catch (err) {
     logger.warn(`[billing] model credential provider switch — failed to archive old ${oldSecretName}: ${err}`);
   }
-}
-
-function credentialRecords(input: CredentialRecordInput): {
-  byotMetadata: Record<string, unknown>;
-  modelCredential: Record<string, unknown>;
-} {
-  const byotMetadata: Record<string, unknown> = {
-    provider: input.provider,
-    secretName: input.secretName,
-    fingerprint: input.fingerprint,
-    keyHash: input.keyHash,
-    status: "active",
-    addedAt: input.addedAt,
-    lastUsedAt: null,
-    baseUrl: input.baseUrl ? input.baseUrl : FieldValue.delete(),
-    model: input.model ? input.model : FieldValue.delete(),
-  };
-  const modelCredential: Record<string, unknown> = {
-    ...modelCredentialApiKeyState({
-      provider: input.provider,
-      secretName: input.secretName,
-      fingerprint: input.fingerprint,
-      keyHash: input.keyHash,
-      ...(input.baseUrl ? { baseUrl: input.baseUrl } : {}),
-      ...(input.model ? { model: input.model } : {}),
-      addedAt: input.addedAt,
-    }),
-    baseUrl: input.baseUrl ? input.baseUrl : FieldValue.delete(),
-    model: input.model ? input.model : FieldValue.delete(),
-  };
-
-  return { byotMetadata, modelCredential };
 }
 
 export async function saveModelCredentialKey(
@@ -274,8 +223,7 @@ export async function saveModelCredentialKey(
     const secretName = byotSecretName(slug, provider);
     const fingerprint = keyFingerprintFor(key);
 
-    const cfgSnap = await db.collection("users").doc(uid).collection("system").doc("config").get();
-    await archivePreviousProviderIfNeeded(slug, provider, cfgSnap.data());
+    await archivePreviousProviderIfNeeded(slug, provider, await platformStateStore.users.modelCredentials.get(uid));
 
     const { versionName } = await writeSecret({
       name: secretName,
@@ -283,25 +231,20 @@ export async function saveModelCredentialKey(
       labels: { slug, provider, uid: uid.toLowerCase().slice(0, 63) },
     });
 
-    const addedAt = FieldValue.serverTimestamp();
-    const { byotMetadata, modelCredential } = credentialRecords({
+    await platformStateStore.users.modelCredentials.put({
+      uid,
+      active: true,
       provider,
+      mode: "api_key",
+      status: "active",
+      reasonCode: "ok",
       secretName,
       fingerprint,
       keyHash: credentialVersionFingerprint(versionName),
-      addedAt,
-      ...(baseUrl ? { baseUrl } : {}),
-      ...(model ? { model } : {}),
-    });
-
-    await db.collection("users").doc(uid).collection("system").doc("config").set(
-      { byot: byotMetadata, modelCredential },
-      { merge: true },
-    );
-
-    await db.collection("users").doc(uid).update({
-      byotActive: true,
-      updatedAt: FieldValue.serverTimestamp(),
+      baseUrl: baseUrl ?? null,
+      model: model ?? null,
+      addedAt: { serverNow: true },
+      lastUsedAt: null,
     });
 
     logger.info(`[billing] model credential key saved for ${uid} provider=${provider} (${fingerprint}) version=${versionName}`);
@@ -338,23 +281,12 @@ export async function deleteModelCredentialKey(
       return;
     }
 
-    const cfgSnap = await db.collection("users").doc(uid).collection("system").doc("config").get();
-    const provider = staticCredentialProviderFromConfig(cfgSnap.data()) ?? "anthropic";
+    const provider = staticCredentialProvider(await platformStateStore.users.modelCredentials.get(uid)) ?? "anthropic";
     const secretName = byotSecretName(slug, provider);
 
     const { disabledCount } = await archiveSecret(secretName);
 
-    await db.collection("users").doc(uid).collection("system").doc("config").set(
-      {
-        byot: FieldValue.delete(),
-        modelCredential: FieldValue.delete(),
-      },
-      { merge: true },
-    );
-    await db.collection("users").doc(uid).update({
-      byotActive: false,
-      updatedAt: FieldValue.serverTimestamp(),
-    });
+    await platformStateStore.users.modelCredentials.delete(uid);
 
     logger.info(`[billing] model credential key removed for ${uid} provider=${provider} (disabled ${disabledCount} SM version(s))`);
     triggerByotSync({ req, slug, byotActive: false });

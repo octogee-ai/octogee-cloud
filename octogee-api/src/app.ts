@@ -30,7 +30,7 @@ import { createOpenClawRuntimeBrokerRoutes, type SessionChannelPurposeReader } f
 import { createConnectorTokenBrokerRoutes, type PublicCanvasFileReader } from "./routes/connector-token-broker.js";
 import { createWorkspaceCommitProofBrokerRoutes } from "./routes/workspace-commit-proof-broker.js";
 import { createOwnerAutomationAuthorizationBrokerRoutes } from "./routes/owner-automation-authorization-broker.js";
-import { byosubFlowGatewayReader, createByokBrokerRoutes } from "./routes/byok-broker.js";
+import { subscriptionFlowGatewayReader, createByokBrokerRoutes } from "./routes/byok-broker.js";
 import { createGatewayVmContextRoutes } from "./routes/gateway-vm-context.js";
 import { createFleetBrokerRoutes, type ProvisionedUserReport } from "./routes/fleet-broker.js";
 import { createOpenClawControlBrokerRoutes } from "./routes/openclaw-control-broker.js";
@@ -469,7 +469,7 @@ export function createPlatformApp(opts: PlatformAppOptions = {}) {
   const tenantRoutes = product?.tenantRoutes ?? NO_PRODUCT_TENANT_ROUTES;
   const tenantBindingScope = createTenantBindingScope(tenantRoutes);
   const tenantEnforcementMiddleware = createTenantEnforcementMiddleware({
-    readFlowGateway: byosubFlowGatewayReader(brokerRecords.byosub),
+    readFlowGateway: subscriptionFlowGatewayReader(platformStateStore.users),
     store: platformStateStore,
     enforceWhen: tenantBindingScope.shouldEnforce,
     productRoutes: tenantRoutes,

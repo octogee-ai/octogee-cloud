@@ -6,7 +6,6 @@ import type { PlatformStateStore } from "@octogee/core/platform-state";
 
 const h = vi.hoisted(() => ({
   triggerSync: vi.fn(),
-  systemConfig: {} as Record<string, unknown>,
   store: null as unknown as PlatformStateStore,
 }));
 
@@ -16,11 +15,6 @@ vi.mock("../middleware/auth.js", () => ({
     next();
   },
   requireActiveAccount: (_req: express.Request, _res: express.Response, next: express.NextFunction) => next(),
-}));
-vi.mock("../lib/db.js", () => ({
-  db: { doc: (path: string) => ({
-    get: async () => ({ data: () => path.endsWith("/system/config") ? h.systemConfig : undefined }),
-  }) },
 }));
 vi.mock("../lib/platform-state.js", () => ({
   get platformStateStore() { return h.store; },
@@ -47,8 +41,12 @@ async function selections() {
 
 beforeEach(async () => {
   vi.clearAllMocks();
-  h.systemConfig = { modelCredential: { active: true, provider: "anthropic" } };
   h.store = createDocumentFixtureStore(new Map());
+  await h.store.users.modelCredentials.put({
+    uid: "alice-uid", active: true, provider: "anthropic", mode: "api_key", status: "active", reasonCode: "ok",
+    secretName: "byok-alice-anthropic", fingerprint: null, keyHash: null, baseUrl: null, model: null,
+    addedAt: 1, lastUsedAt: null,
+  });
   await h.store.users.agentModels.put({ uid: "alice-uid", agentId: coach, ...coachModel, updatedAt: 1 });
   await h.store.users.agentModels.put({ uid: "alice-uid", agentId: projectCoach, ...projectModel, updatedAt: 1 });
 });
@@ -81,9 +79,7 @@ it("deletes exactly one agent selection and syncs the other selections", async (
   expect(h.triggerSync.mock.calls[0]?.[0].userData.systemConfig.agentModels).toEqual({ [projectCoach]: projectModel });
 });
 
-it("lists the store's selections and ignores picks left in the system config document", async () => {
-  h.systemConfig = { agentModels: { [coach]: projectModel } };
-
+it("lists the store's selections", async () => {
   const res = await request(app).get("/").expect(200);
 
   expect(res.body.selections).toEqual({ [coach]: coachModel, [projectCoach]: projectModel });

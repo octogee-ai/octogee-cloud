@@ -1258,6 +1258,60 @@ CREATE INDEX session_model_audit_actor_idx ON session_model_audit (actor_uid);
 CREATE TRIGGER session_model_audit_revision BEFORE UPDATE ON session_model_audit
   FOR EACH ROW EXECUTE FUNCTION bump_revision();
 `;
+const MODEL_CREDENTIALS = String.raw `
+CREATE TABLE user_model_credentials (
+  uid           text PRIMARY KEY REFERENCES users (uid) ON DELETE CASCADE,
+  active        boolean NOT NULL,
+  provider      text NOT NULL CHECK (provider <> ''),
+  mode          text NOT NULL CHECK (mode IN ('api_key', 'token', 'oauth')),
+  status        text NOT NULL CHECK (status IN ('active', 'needs_reauth', 'missing', 'invalid', 'sync_pending')),
+  reason_code   text NOT NULL CHECK (reason_code <> ''),
+  secret_name   text NOT NULL CHECK (secret_name <> ''),
+  fingerprint   text,
+  key_hash      text,
+  base_url      text,
+  model         text,
+  added_at      bigint NOT NULL,
+  last_used_at  bigint,
+  revision      bigint NOT NULL DEFAULT nextval('record_revision_seq')
+);
+CREATE TRIGGER user_model_credentials_revision BEFORE UPDATE ON user_model_credentials
+  FOR EACH ROW EXECUTE FUNCTION bump_revision();
+
+CREATE TABLE user_subscription_links (
+  uid                        text NOT NULL REFERENCES users (uid) ON DELETE CASCADE,
+  provider                   text NOT NULL CHECK (provider IN ('openai', 'anthropic')),
+  model_credential_provider  text NOT NULL CHECK (model_credential_provider <> ''),
+  status                     text NOT NULL CHECK (status IN ('connected', 'needs_reauth', 'disconnected')),
+  gateway_id                 text,
+  flow_id                    text,
+  reason                     text,
+  updated_at                 bigint NOT NULL,
+  revision                   bigint NOT NULL DEFAULT nextval('record_revision_seq'),
+  PRIMARY KEY (uid, provider)
+);
+CREATE TRIGGER user_subscription_links_revision BEFORE UPDATE ON user_subscription_links
+  FOR EACH ROW EXECUTE FUNCTION bump_revision();
+
+CREATE TABLE subscription_flows (
+  flow_id                    text PRIMARY KEY CHECK (flow_id <> ''),
+  uid                        text NOT NULL REFERENCES users (uid) ON DELETE CASCADE,
+  gateway_id                 text NOT NULL CHECK (gateway_id <> ''),
+  agent_id                   text NOT NULL CHECK (agent_id <> ''),
+  provider                   text NOT NULL CHECK (provider <> ''),
+  model_credential_provider  text,
+  created_at                 bigint NOT NULL,
+  expire_at                  bigint NOT NULL,
+  consumed_at                bigint,
+  capture_claim_id           text,
+  capture_claimed_at         bigint,
+  revision                   bigint NOT NULL DEFAULT nextval('record_revision_seq')
+);
+CREATE INDEX subscription_flows_uid_idx ON subscription_flows (uid);
+CREATE INDEX subscription_flows_expire_idx ON subscription_flows (expire_at);
+CREATE TRIGGER subscription_flows_revision BEFORE UPDATE ON subscription_flows
+  FOR EACH ROW EXECUTE FUNCTION bump_revision();
+`;
 export const PLATFORM_STATE_MIGRATIONS = [
     { version: 1, name: "core-schema", sql: CORE_SCHEMA },
     { version: 2, name: "change-feed", sql: CHANGE_FEED },
@@ -1277,4 +1331,5 @@ export const PLATFORM_STATE_MIGRATIONS = [
     { version: 16, name: "neutral-stored-names-only", sql: NEUTRAL_STORED_NAMES_ONLY },
     { version: 17, name: "gateway-sizing-profile", sql: GATEWAY_SIZING_PROFILE },
     { version: 18, name: "model-settings", sql: MODEL_SETTINGS },
+    { version: 19, name: "model-credentials", sql: MODEL_CREDENTIALS },
 ];

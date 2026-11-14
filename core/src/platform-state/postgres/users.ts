@@ -6,10 +6,16 @@ import type {
   AgentModelSelectionsRepository,
   AgentStoreRecord,
   AgentStoresRepository,
+  ModelCredentialRecord,
+  ModelCredentialsRepository,
   PlacementReceiptsRepository,
   ScheduleTransfersRepository,
   SessionModelAuditRecord,
   SessionModelAuditRepository,
+  SubscriptionFlowRecord,
+  SubscriptionFlowsRepository,
+  SubscriptionLinkRecord,
+  SubscriptionLinksRepository,
   UserAccountRecord,
   UserAccountsRepository,
   UserRepositories,
@@ -134,6 +140,63 @@ const SESSION_MODEL_AUDIT_TABLE: TableSpec = {
     column("resultingModel", "text", { nullAs: "null" }),
     column("createdAt", "bigint"),
     column("completedAt", "bigint", { nullAs: "null" }),
+  ],
+};
+
+const MODEL_CREDENTIALS_TABLE: TableSpec = {
+  table: "user_model_credentials",
+  aggregate: "model-credential",
+  keyColumns: ["uid"],
+  columns: [
+    column("uid", "text"),
+    column("active", "boolean"),
+    column("provider", "text"),
+    column("mode", "text"),
+    column("status", "text"),
+    column("reasonCode", "text"),
+    column("secretName", "text"),
+    column("fingerprint", "text", { nullAs: "null" }),
+    column("keyHash", "text", { nullAs: "null" }),
+    column("baseUrl", "text", { nullAs: "null" }),
+    column("model", "text", { nullAs: "null" }),
+    column("addedAt", "bigint"),
+    column("lastUsedAt", "bigint", { nullAs: "null" }),
+  ],
+};
+
+const SUBSCRIPTION_LINKS_TABLE: TableSpec = {
+  table: "user_subscription_links",
+  aggregate: "subscription-link",
+  keyColumns: ["uid", "provider"],
+  columns: [
+    column("uid", "text"),
+    column("provider", "text"),
+    column("modelCredentialProvider", "text"),
+    column("status", "text"),
+    column("gatewayId", "text", { nullAs: "null" }),
+    column("flowId", "text", { nullAs: "null" }),
+    column("reason", "text", { nullAs: "null" }),
+    column("updatedAt", "bigint"),
+  ],
+};
+
+const SUBSCRIPTION_FLOWS_TABLE: TableSpec = {
+  table: "subscription_flows",
+  aggregate: "subscription-flow",
+  keyColumns: ["flow_id"],
+  immutableFields: ["uid", "gatewayId", "agentId", "provider", "modelCredentialProvider", "createdAt", "expireAt"],
+  columns: [
+    column("flowId", "text"),
+    column("uid", "text"),
+    column("gatewayId", "text"),
+    column("agentId", "text"),
+    column("provider", "text"),
+    column("modelCredentialProvider", "text", { nullAs: "null" }),
+    column("createdAt", "bigint"),
+    column("expireAt", "bigint"),
+    column("consumedAt", "bigint", { nullAs: "null" }),
+    column("captureClaimId", "text", { nullAs: "null" }),
+    column("captureClaimedAt", "bigint", { nullAs: "null" }),
   ],
 };
 
@@ -363,6 +426,64 @@ function createSessionModelAuditRepository(session: PostgresSession): SessionMod
   };
 }
 
+function createModelCredentialsRepository(session: PostgresSession): ModelCredentialsRepository {
+  return {
+    async get(uid) {
+      const row = await selectByKey(session, "users.modelCredentials.get", { table: MODEL_CREDENTIALS_TABLE, key: [uid] });
+      return row === null ? null : decodeStored<ModelCredentialRecord>(MODEL_CREDENTIALS_TABLE, row);
+    },
+
+    async put(credential) {
+      await insertRecord(session, "users.modelCredentials.put", MODEL_CREDENTIALS_TABLE, credential, "put");
+    },
+
+    async delete(uid) {
+      await deleteRecord(session, "users.modelCredentials.delete", { table: MODEL_CREDENTIALS_TABLE, key: [uid] });
+    },
+  };
+}
+
+function createSubscriptionLinksRepository(session: PostgresSession): SubscriptionLinksRepository {
+  return {
+    async list(uid) {
+      const rows = await selectRecords(
+        session,
+        "users.subscriptionLinks.list",
+        "SELECT * FROM $schema.user_subscription_links WHERE uid = $1::text ORDER BY provider",
+        [uid],
+      );
+      return rows.map((row) => decodeStored<SubscriptionLinkRecord>(SUBSCRIPTION_LINKS_TABLE, row));
+    },
+
+    async put(link) {
+      await insertRecord(session, "users.subscriptionLinks.put", SUBSCRIPTION_LINKS_TABLE, link, "put");
+    },
+  };
+}
+
+function createSubscriptionFlowsRepository(session: PostgresSession): SubscriptionFlowsRepository {
+  return {
+    async get(flowId) {
+      const row = await selectByKey(session, "users.subscriptionFlows.get", { table: SUBSCRIPTION_FLOWS_TABLE, key: [flowId] });
+      return row === null ? null : decodeStored<SubscriptionFlowRecord>(SUBSCRIPTION_FLOWS_TABLE, row);
+    },
+
+    async create(flow) {
+      await insertRecord(
+        session,
+        "users.subscriptionFlows.create",
+        SUBSCRIPTION_FLOWS_TABLE,
+        { ...flow, consumedAt: null, captureClaimId: null, captureClaimedAt: null },
+        "create",
+      );
+    },
+
+    async update(flowId, progress) {
+      await updateRecord(session, "users.subscriptionFlows.update", { table: SUBSCRIPTION_FLOWS_TABLE, key: [flowId] }, progress, []);
+    },
+  };
+}
+
 export const createPostgresUserRepositories: PostgresRepositoryFactory<UserRepositories> = (session) => ({
   records: createPostgresUserRecordsRepository(session),
   accounts: createUserAccountsRepository(session),
@@ -371,4 +492,7 @@ export const createPostgresUserRepositories: PostgresRepositoryFactory<UserRepos
   agentStores: createAgentStoresRepository(session),
   agentModels: createAgentModelSelectionsRepository(session),
   sessionModelAudit: createSessionModelAuditRepository(session),
+  modelCredentials: createModelCredentialsRepository(session),
+  subscriptionLinks: createSubscriptionLinksRepository(session),
+  subscriptionFlows: createSubscriptionFlowsRepository(session),
 });

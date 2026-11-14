@@ -11,7 +11,14 @@ import { readSecret, addSecretVersionKeepingLatest, type SubscriptionSecretVersi
 import { isSafeAgentId } from "@octogee/core/byosub-restore";
 import { readGatewayAuthorizationInStore } from "@octogee/core/gateway-live-release";
 import type { UserAccount, UserAccountReader } from "@octogee/core/user-account";
-import type { PlatformUserRecord, PlatformStateRepositories, PlatformStateStore } from "@octogee/core/platform-state";
+import type {
+  ModelCredentialRecord,
+  PlatformUserRecord,
+  PlatformStateRepositories,
+  PlatformStateStore,
+  UserRepositories,
+} from "@octogee/core/platform-state";
+import { readSubscriptionIntegration } from "@octogee/core/model-credential-records";
 import { userEntitlements, type UserPolicy } from "@octogee/shared/types/user-entitlements";
 import {
   spendWindowPercentUsed,
@@ -46,16 +53,13 @@ import {
   createAgentSupportTurnVerifier,
   type OwnerWorkspaceTurnVerifier,
 } from "../lib/openclaw-owner-turn.js";
-import { NO_BROKER_RECORDS, type BrokerRecords, type ByosubRecords } from "../lib/broker-records.js";
+import { NO_BROKER_RECORDS, type BrokerRecords } from "../lib/broker-records.js";
 import type { ModelBrokerUsageLedger } from "../lib/model-broker-usage.js";
 import type { FlowGatewayReader } from "../middleware/tenant-enforcement.js";
 import { logger } from "../../../gateway-edge/src/middleware/logging.js";
 
-export function byosubFlowGatewayReader(byosub: Pick<ByosubRecords, "readFlow">): FlowGatewayReader {
-  return async (flowId) => {
-    const gatewayId = (await byosub.readFlow(flowId))?.gatewayId;
-    return typeof gatewayId === "string" ? gatewayId : null;
-  };
+export function subscriptionFlowGatewayReader(users: Pick<UserRepositories, "subscriptionFlows">): FlowGatewayReader {
+  return async (flowId) => (await users.subscriptionFlows.get(flowId))?.gatewayId ?? null;
 }
 
 type GatewayBinding = Extract<
@@ -153,24 +157,17 @@ function requestedTokenPurpose(value: unknown): ModelBrokerTokenPurpose | null {
   return value === "model" || value === "embeddings" ? value : null;
 }
 
-function stringOrNull(value: unknown): string | null {
-  return typeof value === "string" && value.length > 0 ? value : null;
-}
 
 export type AgentCredentialPath =
   "platform_broker" | "byok_api_key" | "byosub" | "byosub_suppressed_customer";
 
 function credentialPathFor(
-  configData: Record<string, unknown>,
+  credential: ModelCredentialRecord | null,
   gatewayClass: string,
 ): { path: AgentCredentialPath; provider: string | null } {
   if (gatewayClass === "shared") return { path: "platform_broker", provider: null };
-  const credential =
-    configData.modelCredential && typeof configData.modelCredential === "object"
-      ? (configData.modelCredential as Record<string, unknown>)
-      : null;
   if (credential?.active !== true) return { path: "platform_broker", provider: null };
-  const provider = stringOrNull(credential.provider);
+  const provider = credential.provider;
   if (credential.mode !== "oauth") return { path: "byok_api_key", provider };
   return gatewayClass === "isolated"
     ? { path: "byosub", provider }
@@ -209,7 +206,6 @@ function deriveSpendStatus(input: {
 }
 
 interface UsageReaders {
-  records: BrokerRecords;
   store: PlatformStateRepositories;
   accounts: UserAccountReader;
   usage: ModelBrokerUsageLedger;
@@ -217,7 +213,7 @@ interface UsageReaders {
 }
 
 async function agentUsageStatusPayload(
-  { records, store, usage, rails }: Pick<UsageReaders, "records" | "store" | "usage" | "rails">,
+  { store, usage, rails }: Pick<UsageReaders, "store" | "usage" | "rails">,
   gatewayId: string,
   assigned: { uid: string; account: UserAccount },
   nowMs: number,
@@ -226,10 +222,10 @@ async function agentUsageStatusPayload(
   const weekStartMs = weekWindowStartMs(nowMs);
   const balanceLedger = rails.balanceLedger(assigned.uid);
   const owner = { gatewayId, ownerUid: assigned.uid, now: nowMs };
-  const [authorization, systemConfig, window, week, balanceUsd] =
+  const [authorization, ownerCredential, window, week, balanceUsd] =
     await Promise.all([
       readGatewayAuthorizationInStore(store, gatewayId),
-      records.userDocuments.systemConfig(assigned.uid),
+      store.users.modelCredentials.get(assigned.uid),
       usage.readWindowUsage(owner),
       usage.readWeekUsage(owner),
       balanceLedger ? usage.readBalance(balanceLedger) : 0,
@@ -242,7 +238,7 @@ async function agentUsageStatusPayload(
       `durable root config unavailable for gateways/${gatewayId}`,
     );
   }
-  const credential = credentialPathFor(systemConfig ?? {}, authorization.config.gatewayClass);
+  const credential = credentialPathFor(ownerCredential, authorization.config.gatewayClass);
   const spend = deriveSpendStatus({
     policy,
     railId,
@@ -345,7 +341,6 @@ async function handleApiKeyCredential(
 }
 
 async function handleByosubCred(input: {
-  byosub: ByosubRecords;
   store: PlatformStateRepositories;
   readCredentialSecret: (name: string, version?: string) => Promise<string>;
   gatewayId: string;
@@ -353,7 +348,7 @@ async function handleByosubCred(input: {
   agentId: string;
   res: Response;
 }): Promise<void> {
-  const { byosub, store, readCredentialSecret, gatewayId, podName, agentId, res } = input;
+  const { store, readCredentialSecret, gatewayId, podName, agentId, res } = input;
   const authorization = await readGatewayAuthorizationInStore(store, gatewayId);
   if (authorization?.config.gatewayClass !== "isolated") {
     res.status(403).json(FORBIDDEN);
@@ -369,7 +364,7 @@ async function handleByosubCred(input: {
     res.status(403).json(FORBIDDEN);
     return;
   }
-  const parsed = resolveUserByosubCredentialRefs(assigned.uid, await byosub.readIntegration(assigned.uid));
+  const parsed = resolveUserByosubCredentialRefs(assigned.uid, await readSubscriptionIntegration(store.users, assigned.uid));
   if (parsed.refs.length === 0) {
     warnSkippedUserByosubProviders({ gatewayId, agentId, uid: assigned.uid, skipped: parsed.skipped });
     res.status(parsed.skipped.length > 0 ? 500 : 404).json({
@@ -440,7 +435,6 @@ function isCodexAuthJson(credential: unknown): credential is string {
 // the owner is derived from the assignment, the provider must already be
 // connected, and only the codex shape rotates (claude-cli tokens are static).
 async function handleByosubCredSyncback(input: {
-  byosub: ByosubRecords;
   store: PlatformStateRepositories;
   readCredentialSecret: (name: string, version?: string) => Promise<string>;
   writeByosubCredential: (name: string, value: string) => Promise<SubscriptionSecretVersionResult>;
@@ -449,7 +443,7 @@ async function handleByosubCredSyncback(input: {
   body: { agentId?: unknown; provider?: unknown; credential?: unknown };
   res: Response;
 }): Promise<void> {
-  const { byosub, store, readCredentialSecret, writeByosubCredential, gatewayId, podName, body, res } = input;
+  const { store, readCredentialSecret, writeByosubCredential, gatewayId, podName, body, res } = input;
   if (typeof body.agentId !== "string" || !isSafeAgentId(body.agentId)) {
     res.status(400).json(VALID_AGENT_ID_REQUIRED);
     return;
@@ -477,7 +471,7 @@ async function handleByosubCredSyncback(input: {
     res.status(403).json(FORBIDDEN);
     return;
   }
-  const ref = resolveUserByosubCredentialRefs(assigned.uid, await byosub.readIntegration(assigned.uid)).refs
+  const ref = resolveUserByosubCredentialRefs(assigned.uid, await readSubscriptionIntegration(store.users, assigned.uid)).refs
     .find((candidate) => candidate.provider === "openai");
   if (!ref) {
     res.status(404).json({ error: "not_found" });
@@ -497,7 +491,6 @@ async function handleByosubCredSyncback(input: {
 
 function registerCredentialMaterializationRoutes(
   router: Router,
-  byosub: ByosubRecords,
   store: PlatformStateRepositories,
   readCredentialSecret: (name: string, version?: string) => Promise<string>,
   writeByosubCredential: (name: string, value: string) => Promise<SubscriptionSecretVersionResult>,
@@ -506,7 +499,6 @@ function registerCredentialMaterializationRoutes(
     const bound = boundGateway(req, res);
     if (!bound) return;
     await handleByosubCredSyncback({
-      byosub,
       store,
       readCredentialSecret,
       writeByosubCredential,
@@ -525,7 +517,6 @@ function registerCredentialMaterializationRoutes(
       return;
     }
     await handleByosubCred({
-      byosub,
       store,
       readCredentialSecret,
       gatewayId: bound.gatewayId,
@@ -616,7 +607,7 @@ async function fundedBudgetInspectionFields(
 }
 
 async function privateBrokerInspectionPayload(
-  readers: Pick<UsageReaders, "records" | "store" | "usage" | "rails">,
+  readers: Pick<UsageReaders, "store" | "usage" | "rails">,
   gatewayId: string,
   assigned: { uid: string; account: UserAccount },
   agentId: string,
@@ -676,7 +667,7 @@ function registerPrivateBrokerInspection(
   });
 }
 
-function registerByosubUserRoute(router: Router, byosub: ByosubRecords, store: PlatformStateRepositories): void {
+function registerByosubUserRoute(router: Router, store: PlatformStateRepositories): void {
   router.post("/byosub-user", async (req, res) => {
     const bound = boundGateway(req, res);
     if (!bound) return;
@@ -696,7 +687,7 @@ function registerByosubUserRoute(router: Router, byosub: ByosubRecords, store: P
       res.status(404).json({ error: "not_found" });
       return;
     }
-    const refs = resolveUserByosubCredentialRefs(uid, await byosub.readIntegration(uid)).refs;
+    const refs = resolveUserByosubCredentialRefs(uid, await readSubscriptionIntegration(store.users, uid)).refs;
     let refProvider: "openai" | "anthropic" | null = null;
     if (refs.some((ref) => ref.provider === "openai")) refProvider = "openai";
     else if (refs.some((ref) => ref.provider === "anthropic")) refProvider = "anthropic";
@@ -847,14 +838,13 @@ export function createByokBrokerRoutes(opts: {
   const router = Router();
   const { store } = opts;
   const records = opts.records ?? NO_BROKER_RECORDS;
-  const { byosub } = records;
   const now = opts.now ?? Date.now;
   const readCredentialSecret = opts.readSecret ?? readSecret;
   const writeByosubCredential = opts.writeByosubCredential ?? addSecretVersionKeepingLatest;
   const rails = opts.rails ?? operatorRailRegistry();
-  const readers: UsageReaders = { records, store, accounts: records.accounts, usage: records.usage, rails };
+  const readers: UsageReaders = { store, accounts: records.accounts, usage: records.usage, rails };
 
-  registerCredentialMaterializationRoutes(router, byosub, store, readCredentialSecret, writeByosubCredential);
+  registerCredentialMaterializationRoutes(router, store, readCredentialSecret, writeByosubCredential);
   registerAgentModelTokenRoute(router, store, readers.accounts, now, rails);
   registerPrivateBrokerInspection(router, readers, now);
 
@@ -912,7 +902,8 @@ export function createByokBrokerRoutes(opts: {
     }
 
     const now = Date.now();
-    await byosub.startFlow(body.flowId, {
+    await store.users.subscriptionFlows.create({
+      flowId: body.flowId,
       uid: assigned.uid,
       gatewayId: bound.gatewayId,
       agentId: body.agentId,
@@ -924,7 +915,7 @@ export function createByokBrokerRoutes(opts: {
     res.json({ ok: true });
   });
 
-  registerByosubUserRoute(router, byosub, store);
+  registerByosubUserRoute(router, store);
 
   router.post("/byosub-flow-read", async (req, res) => {
     const bound = boundGateway(req, res);
@@ -934,14 +925,8 @@ export function createByokBrokerRoutes(opts: {
       res.status(400).json({ error: "valid flowId required" });
       return;
     }
-    const data = await byosub.readFlow(flowId);
-    if (
-      !data ||
-      data.gatewayId !== bound.gatewayId ||
-      typeof data.uid !== "string" ||
-      typeof data.agentId !== "string" ||
-      typeof data.provider !== "string"
-    ) {
+    const data = await store.users.subscriptionFlows.get(flowId);
+    if (!data || data.gatewayId !== bound.gatewayId) {
       res.status(404).json({ error: "not_found" });
       return;
     }
@@ -956,9 +941,9 @@ export function createByokBrokerRoutes(opts: {
         gatewayId: data.gatewayId,
         agentId: data.agentId,
         provider: data.provider,
-        ...(typeof data.modelCredentialProvider === "string"
-          ? { modelCredentialProvider: data.modelCredentialProvider }
-          : {}),
+        ...(data.modelCredentialProvider === null
+          ? {}
+          : { modelCredentialProvider: data.modelCredentialProvider }),
       },
     });
   });

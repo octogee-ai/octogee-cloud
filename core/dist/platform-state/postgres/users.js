@@ -112,6 +112,60 @@ const SESSION_MODEL_AUDIT_TABLE = {
         column("completedAt", "bigint", { nullAs: "null" }),
     ],
 };
+const MODEL_CREDENTIALS_TABLE = {
+    table: "user_model_credentials",
+    aggregate: "model-credential",
+    keyColumns: ["uid"],
+    columns: [
+        column("uid", "text"),
+        column("active", "boolean"),
+        column("provider", "text"),
+        column("mode", "text"),
+        column("status", "text"),
+        column("reasonCode", "text"),
+        column("secretName", "text"),
+        column("fingerprint", "text", { nullAs: "null" }),
+        column("keyHash", "text", { nullAs: "null" }),
+        column("baseUrl", "text", { nullAs: "null" }),
+        column("model", "text", { nullAs: "null" }),
+        column("addedAt", "bigint"),
+        column("lastUsedAt", "bigint", { nullAs: "null" }),
+    ],
+};
+const SUBSCRIPTION_LINKS_TABLE = {
+    table: "user_subscription_links",
+    aggregate: "subscription-link",
+    keyColumns: ["uid", "provider"],
+    columns: [
+        column("uid", "text"),
+        column("provider", "text"),
+        column("modelCredentialProvider", "text"),
+        column("status", "text"),
+        column("gatewayId", "text", { nullAs: "null" }),
+        column("flowId", "text", { nullAs: "null" }),
+        column("reason", "text", { nullAs: "null" }),
+        column("updatedAt", "bigint"),
+    ],
+};
+const SUBSCRIPTION_FLOWS_TABLE = {
+    table: "subscription_flows",
+    aggregate: "subscription-flow",
+    keyColumns: ["flow_id"],
+    immutableFields: ["uid", "gatewayId", "agentId", "provider", "modelCredentialProvider", "createdAt", "expireAt"],
+    columns: [
+        column("flowId", "text"),
+        column("uid", "text"),
+        column("gatewayId", "text"),
+        column("agentId", "text"),
+        column("provider", "text"),
+        column("modelCredentialProvider", "text", { nullAs: "null" }),
+        column("createdAt", "bigint"),
+        column("expireAt", "bigint"),
+        column("consumedAt", "bigint", { nullAs: "null" }),
+        column("captureClaimId", "text", { nullAs: "null" }),
+        column("captureClaimedAt", "bigint", { nullAs: "null" }),
+    ],
+};
 function withoutKeys(record, keys) {
     return Object.fromEntries(Object.entries(record).filter(([field]) => !keys.includes(field)));
 }
@@ -288,6 +342,45 @@ function createSessionModelAuditRepository(session) {
         },
     };
 }
+function createModelCredentialsRepository(session) {
+    return {
+        async get(uid) {
+            const row = await selectByKey(session, "users.modelCredentials.get", { table: MODEL_CREDENTIALS_TABLE, key: [uid] });
+            return row === null ? null : decodeStored(MODEL_CREDENTIALS_TABLE, row);
+        },
+        async put(credential) {
+            await insertRecord(session, "users.modelCredentials.put", MODEL_CREDENTIALS_TABLE, credential, "put");
+        },
+        async delete(uid) {
+            await deleteRecord(session, "users.modelCredentials.delete", { table: MODEL_CREDENTIALS_TABLE, key: [uid] });
+        },
+    };
+}
+function createSubscriptionLinksRepository(session) {
+    return {
+        async list(uid) {
+            const rows = await selectRecords(session, "users.subscriptionLinks.list", "SELECT * FROM $schema.user_subscription_links WHERE uid = $1::text ORDER BY provider", [uid]);
+            return rows.map((row) => decodeStored(SUBSCRIPTION_LINKS_TABLE, row));
+        },
+        async put(link) {
+            await insertRecord(session, "users.subscriptionLinks.put", SUBSCRIPTION_LINKS_TABLE, link, "put");
+        },
+    };
+}
+function createSubscriptionFlowsRepository(session) {
+    return {
+        async get(flowId) {
+            const row = await selectByKey(session, "users.subscriptionFlows.get", { table: SUBSCRIPTION_FLOWS_TABLE, key: [flowId] });
+            return row === null ? null : decodeStored(SUBSCRIPTION_FLOWS_TABLE, row);
+        },
+        async create(flow) {
+            await insertRecord(session, "users.subscriptionFlows.create", SUBSCRIPTION_FLOWS_TABLE, { ...flow, consumedAt: null, captureClaimId: null, captureClaimedAt: null }, "create");
+        },
+        async update(flowId, progress) {
+            await updateRecord(session, "users.subscriptionFlows.update", { table: SUBSCRIPTION_FLOWS_TABLE, key: [flowId] }, progress, []);
+        },
+    };
+}
 export const createPostgresUserRepositories = (session) => ({
     records: createPostgresUserRecordsRepository(session),
     accounts: createUserAccountsRepository(session),
@@ -296,4 +389,7 @@ export const createPostgresUserRepositories = (session) => ({
     agentStores: createAgentStoresRepository(session),
     agentModels: createAgentModelSelectionsRepository(session),
     sessionModelAudit: createSessionModelAuditRepository(session),
+    modelCredentials: createModelCredentialsRepository(session),
+    subscriptionLinks: createSubscriptionLinksRepository(session),
+    subscriptionFlows: createSubscriptionFlowsRepository(session),
 });

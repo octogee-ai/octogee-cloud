@@ -1,6 +1,5 @@
 import type express from "express";
 import type { PlatformStateStore } from "@octogee/core/platform-state";
-import { isSecretNotFound } from "@octogee/core/secret-store";
 import type { UserAccountReader } from "@octogee/core/user-account";
 import { installUserEntitlements, staticUserEntitlements } from "@octogee/shared/types/user-entitlements";
 
@@ -11,10 +10,7 @@ import {
   parseOptionalLimitNumber,
 } from "./lib/model-broker-limits.js";
 import { createModelBrokerOwnerAccessResolver } from "./lib/model-broker-owner-access.js";
-import {
-  createModelBrokerProviderKeyResolver,
-  type OwnerModelCredentialConfigReader,
-} from "./lib/model-broker-provider-keys.js";
+import { createModelBrokerProviderKeyResolver } from "./lib/model-broker-provider-keys.js";
 import { operatorRailRegistry } from "./lib/model-broker-rails.js";
 import { createModelBrokerTokenStore } from "./lib/model-broker-tokens.js";
 import type { ModelBrokerUsageStore } from "./lib/model-broker-usage.js";
@@ -39,28 +35,6 @@ export interface PlatformLlmBrokerSources {
   readonly now?: () => number;
 }
 
-function ownerApiKeySecretName(slug: string): string {
-  return `byok-${slug}-anthropic`;
-}
-
-function secretStoreOwnerModelCredential(input: {
-  state: Pick<PlatformStateStore, "users">;
-  readSecret: (name: string) => Promise<string>;
-}): OwnerModelCredentialConfigReader {
-  return async (ownerUid) => {
-    const slug = (await input.state.users.records.get(ownerUid))?.slug;
-    if (!slug) return undefined;
-    const secretName = ownerApiKeySecretName(slug);
-    try {
-      await input.readSecret(secretName);
-    } catch (error) {
-      if (isSecretNotFound(error)) return undefined;
-      throw error;
-    }
-    return { modelCredential: { active: true, provider: "anthropic", mode: "api_key", secretName } };
-  };
-}
-
 export function createPlatformLlmBrokerApp(sources: PlatformLlmBrokerSources): express.Express {
   const { env, state, logger } = sources;
   installUserEntitlements(staticUserEntitlements);
@@ -79,7 +53,6 @@ export function createPlatformLlmBrokerApp(sources: PlatformLlmBrokerSources): e
     usageStore: sources.usageStore,
     providerKeys,
     providerKeyResolver: createModelBrokerProviderKeyResolver({
-      readOwnerModelCredentialConfig: secretStoreOwnerModelCredential({ state, readSecret: sources.readSecret }),
       store: state,
       platformKeys: providerKeys,
       readSecret: sources.readSecret,

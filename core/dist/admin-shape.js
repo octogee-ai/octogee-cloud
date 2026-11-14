@@ -29,7 +29,7 @@ function userSummaryFields(user) {
         accountLifecycleStatus: user.accountLifecycle?.status ?? "active",
     };
 }
-export function buildUserSummary(user, account, broker = {}) {
+export function buildUserSummary(user, account, ownerCredentialActive, broker = {}) {
     const now = broker.now ?? Date.now();
     const policy = userEntitlements().policy(account.planInputs, new Date(now));
     const usage = account.usage;
@@ -39,7 +39,7 @@ export function buildUserSummary(user, account, broker = {}) {
     // Owner-credential (BYOSUB/BYOT) traffic never lands in a spend window, so a
     // percentage against a zero budget would misleadingly read 100% — mirror the
     // user surfaces and show 0. The broker never throttles them either.
-    const onOwnerCredential = account.byotActive;
+    const onOwnerCredential = ownerCredentialActive;
     const degraded = userEntitlements().spendThrottle(policy, {
         windowCostUsd,
         weekCostUsd,
@@ -54,7 +54,7 @@ export function buildUserSummary(user, account, broker = {}) {
         displayName: displayNameFor(account),
         email: account.email ?? "",
         username: account.username ?? "",
-        byotActive: account.byotActive,
+        byotActive: ownerCredentialActive,
         windowCostUsd,
         windowBudgetUsd: policy.spendWindowUsd,
         weekCostUsd,

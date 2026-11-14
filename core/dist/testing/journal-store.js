@@ -898,6 +898,53 @@ function userRepositories(documents, write, transactional) {
             write(() => documents.set(path, { ...row, ...structuredClone(completion), completedAt: resolveServerNow(completion.completedAt) }));
         },
     });
+    const credentialPath = (uid) => `modelCredentials/${uid}`;
+    const modelCredentials = partialRepository("users.modelCredentials", {
+        get: async (uid) => {
+            const row = documents.get(credentialPath(uid));
+            return row === undefined ? null : ({ ...structuredClone(row), revision: FIXTURE_REVISION });
+        },
+        put: async (credential) => {
+            write(() => documents.set(credentialPath(credential.uid), {
+                ...structuredClone(credential),
+                addedAt: resolveServerNow(credential.addedAt),
+            }));
+        },
+        delete: async (uid) => {
+            write(() => documents.delete(credentialPath(uid)));
+        },
+    });
+    const subscriptionLinks = partialRepository("users.subscriptionLinks", {
+        list: async (uid) => documents.children(`users/${uid}/subscriptionLinks`)
+            .map(([, row]) => ({ ...structuredClone(row), revision: FIXTURE_REVISION }))
+            .sort((a, b) => a.provider.localeCompare(b.provider)),
+        put: async (link) => {
+            write(() => documents.set(`users/${link.uid}/subscriptionLinks/${link.provider}`, {
+                ...structuredClone(link),
+                updatedAt: resolveServerNow(link.updatedAt),
+            }));
+        },
+    });
+    const flowPath = (flowId) => `subscriptionFlows/${flowId}`;
+    const subscriptionFlows = partialRepository("users.subscriptionFlows", {
+        get: async (flowId) => {
+            const row = documents.get(flowPath(flowId));
+            return row === undefined ? null : ({ ...structuredClone(row), revision: FIXTURE_REVISION });
+        },
+        create: async (flow) => {
+            const path = flowPath(flow.flowId);
+            if (documents.get(path) !== undefined)
+                throw new AlreadyExistsError({ aggregate: "subscription-flow", key: flow.flowId });
+            write(() => documents.set(path, { ...structuredClone(flow), consumedAt: null, captureClaimId: null, captureClaimedAt: null }));
+        },
+        update: async (flowId, progress) => {
+            const path = flowPath(flowId);
+            const row = documents.get(path);
+            if (row === undefined)
+                throw new MissingRecordError({ aggregate: "subscription-flow", key: flowId });
+            write(() => documents.set(path, { ...row, ...structuredClone(progress) }));
+        },
+    });
     return partialRepository("builders", {
         records,
         accounts,
@@ -906,6 +953,9 @@ function userRepositories(documents, write, transactional) {
         agentStores,
         agentModels,
         sessionModelAudit,
+        modelCredentials,
+        subscriptionLinks,
+        subscriptionFlows,
     });
 }
 function workspaceChannelLocation(path) {

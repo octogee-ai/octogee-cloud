@@ -277,6 +277,70 @@ export interface SessionModelAuditRepository {
     create(entry: NewSessionModelAudit): Promise<void>;
     complete(auditId: string, completion: SessionModelAuditCompletion): Promise<void>;
 }
+export type ModelCredentialMode = "api_key" | "token" | "oauth";
+export type ModelCredentialStatus = "active" | "needs_reauth" | "missing" | "invalid" | "sync_pending";
+export interface ModelCredentialRecord {
+    readonly uid: string;
+    readonly active: boolean;
+    readonly provider: string;
+    readonly mode: ModelCredentialMode;
+    readonly status: ModelCredentialStatus;
+    readonly reasonCode: string;
+    readonly secretName: string;
+    readonly fingerprint: string | null;
+    readonly keyHash: string | null;
+    readonly baseUrl: string | null;
+    readonly model: string | null;
+    readonly addedAt: number;
+    readonly lastUsedAt: number | null;
+}
+export type ModelCredentialInput = Omit<ModelCredentialRecord, "addedAt"> & {
+    readonly addedAt: TimeInput;
+};
+export interface ModelCredentialsRepository {
+    get(uid: string): Promise<Stored<ModelCredentialRecord> | null>;
+    put(credential: ModelCredentialInput): Promise<void>;
+    delete(uid: string): Promise<void>;
+}
+export type SubscriptionProvider = "openai" | "anthropic";
+export type SubscriptionLinkStatus = "connected" | "needs_reauth" | "disconnected";
+export interface SubscriptionLinkRecord {
+    readonly uid: string;
+    readonly provider: SubscriptionProvider;
+    readonly modelCredentialProvider: string;
+    readonly status: SubscriptionLinkStatus;
+    readonly gatewayId: string | null;
+    readonly flowId: string | null;
+    readonly reason: string | null;
+    readonly updatedAt: number;
+}
+export type SubscriptionLinkInput = Omit<SubscriptionLinkRecord, "updatedAt"> & {
+    readonly updatedAt: TimeInput;
+};
+export interface SubscriptionLinksRepository {
+    list(uid: string): Promise<readonly Stored<SubscriptionLinkRecord>[]>;
+    put(link: SubscriptionLinkInput): Promise<void>;
+}
+export interface SubscriptionFlowRecord {
+    readonly flowId: string;
+    readonly uid: string;
+    readonly gatewayId: string;
+    readonly agentId: string;
+    readonly provider: string;
+    readonly modelCredentialProvider: string | null;
+    readonly createdAt: number;
+    readonly expireAt: number;
+    readonly consumedAt: number | null;
+    readonly captureClaimId: string | null;
+    readonly captureClaimedAt: number | null;
+}
+export type NewSubscriptionFlow = Omit<SubscriptionFlowRecord, "consumedAt" | "captureClaimId" | "captureClaimedAt">;
+export type SubscriptionFlowProgress = Partial<Pick<SubscriptionFlowRecord, "consumedAt" | "captureClaimId" | "captureClaimedAt">>;
+export interface SubscriptionFlowsRepository {
+    get(flowId: string): Promise<Stored<SubscriptionFlowRecord> | null>;
+    create(flow: NewSubscriptionFlow): Promise<void>;
+    update(flowId: string, progress: SubscriptionFlowProgress): Promise<void>;
+}
 export interface UserRepositories {
     readonly records: UserRecordsRepository;
     readonly accounts: UserAccountsRepository;
@@ -285,6 +349,9 @@ export interface UserRepositories {
     readonly agentStores: AgentStoresRepository;
     readonly agentModels: AgentModelSelectionsRepository;
     readonly sessionModelAudit: SessionModelAuditRepository;
+    readonly modelCredentials: ModelCredentialsRepository;
+    readonly subscriptionLinks: SubscriptionLinksRepository;
+    readonly subscriptionFlows: SubscriptionFlowsRepository;
 }
 export type PlacementAdmissionDecision = {
     readonly kind: "admitted";

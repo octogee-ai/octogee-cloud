@@ -118,8 +118,7 @@ import type { UserIdentity } from "@octogee/shared/types/builder-identity";
 import { readWorkspaceMigrationMarker } from "@octogee/shared/types/workspace-migration";
 import { isDeveloperToolchainStatus } from "@octogee/shared/types/developer-toolchain";
 import {
-  byotSnapshotProjectionFromSystemConfig,
-  readAgentModelSelections,
+  readByotSnapshotProjection,
   collectStoredProjectAgentStates,
 } from "@octogee/core/user-snapshot-mapping";
 import {
@@ -1482,7 +1481,7 @@ export function snapshotBaseFields(
   slug: string,
 ): Omit<
   FleetBrokerUserSnapshot,
-  "uid" | "slug" | "channels" | "projectCheckoutScope" | "projects" | "coachToken" | "coachMmUserId" | "coachIdentity"
+  "uid" | "slug" | "channels" | "projectCheckoutScope" | "projects" | "coachToken" | "coachMmUserId" | "coachIdentity" | "byotActive"
 > {
   const mattermostUserId = userRecord.mattermostUserId || null;
   const entitlements = userEntitlements();
@@ -1504,7 +1503,6 @@ export function snapshotBaseFields(
     timeZone: storedTimeZone(account),
     photoURL: stringAt(account, "photoURL"),
     persona: userRecord.persona,
-    byotActive: account.byotActive === true,
   };
 }
 
@@ -1552,7 +1550,7 @@ async function loadSnapshot(
   const { uid, slug } = userRecord;
   if (!slug || !isValidUsername(slug)) return null;
   const projectCheckoutScope = projectCheckoutScopeForGatewayRoot(options.gatewayData, options.gatewayId, uid, slug);
-  const [collectedChannels, projects, projectAgents, defaultAgent, agentData, systemConfig, agentModels, runtimeReset, restoreAuthority] = await Promise.all([
+  const [collectedChannels, projects, projectAgents, defaultAgent, agentData, credentialProjection, runtimeReset, restoreAuthority] = await Promise.all([
     collectChannelBindings(store, slug),
     projectCheckoutScope === "workspace-and-projects"
       ? collectProjects(deps, slug)
@@ -1560,12 +1558,10 @@ async function loadSnapshot(
     collectStoredProjectAgentStates(store, uid, slug),
     defaultAgentMattermostSecret(store, uid),
     records.userDocuments.agent(uid),
-    records.userDocuments.systemConfig(uid),
-    readAgentModelSelections(store.users, uid),
+    readByotSnapshotProjection(store.users, uid),
     admittedRuntimeReset(store, userRecord),
     readUserRestoreAuthoritySnapshot({ store }, { uid, slug, gatewayId: options.gatewayId }),
   ]);
-  const credentialProjection = byotSnapshotProjectionFromSystemConfig(systemConfig, agentModels);
   const baseFields = snapshotBaseFields(userRecord, account, slug);
   const channels = collectedChannels.bindings;
   const migration = readWorkspaceMigrationMarker({ migration: userRecord.fences.migration });
@@ -1580,7 +1576,7 @@ async function loadSnapshot(
       || (userRecord.fences.migration !== undefined && !sourcePreparing),
     ...(runtimeReset ? { runtimeReset } : {}),
     ...(restoreAuthority ? { restoreAuthority } : {}),
-    byotActive: credentialProjection.byotActive ?? baseFields.byotActive,
+    byotActive: credentialProjection.byotActive,
     freeTierModelRef: modelDials.freeTierModelRef,
     builderAgentDefault: modelDials.userAgentDefault,
     channels,

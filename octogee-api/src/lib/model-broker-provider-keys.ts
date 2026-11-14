@@ -1,4 +1,4 @@
-import type { PlatformUserRecord, PlatformStateRepositories } from "@octogee/core/platform-state";
+import type { ModelCredentialRecord, PlatformUserRecord, PlatformStateRepositories } from "@octogee/core/platform-state";
 import { readGatewayAuthorizationInStore, type GatewayAuthorization } from "@octogee/core/gateway-live-release";
 
 import type {
@@ -27,17 +27,13 @@ export type ModelBrokerProviderKeyResolver = (
 
 type ProviderKeyState = Pick<PlatformStateRepositories, "users" | "gateways">;
 
-export type OwnerModelCredentialConfigReader = (ownerUid: string) => Promise<Record<string, unknown> | undefined>;
-
 export interface AnthropicProviderKeyResolverDeps {
-  readOwnerModelCredentialConfig: OwnerModelCredentialConfigReader;
   store: ProviderKeyState;
   platformKey?: string;
   readSecret?: (name: string) => Promise<string>;
 }
 
 export interface ModelBrokerProviderKeyResolverDeps {
-  readOwnerModelCredentialConfig: OwnerModelCredentialConfigReader;
   store: ProviderKeyState;
   platformKeys?: Partial<Record<ModelBrokerProvider, string | undefined>>;
   readSecret?: (name: string) => Promise<string>;
@@ -50,17 +46,10 @@ export type AnthropicModelCredentialResolution =
 
 const SLUG_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 
-function objectRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
-
 export function configuredAnthropicModelCredentialResolution(
   builderSlug: string | null,
-  configData: Record<string, unknown> | undefined,
+  credential: ModelCredentialRecord | null,
 ): AnthropicModelCredentialResolution {
-  const credential = objectRecord(configData?.modelCredential);
   if (
     credential?.active !== true ||
     credential.provider !== "anthropic" ||
@@ -83,18 +72,18 @@ function platformKeyResolution(platformKey: string | undefined): ModelBrokerProv
 
 interface OwnerKeyAuthority {
   user: PlatformUserRecord | null;
-  config: Record<string, unknown> | undefined;
+  credential: ModelCredentialRecord | null;
 }
 
 async function readOwnerKeyAuthority(
-  deps: Pick<AnthropicProviderKeyResolverDeps, "readOwnerModelCredentialConfig" | "store">,
+  deps: Pick<AnthropicProviderKeyResolverDeps, "store">,
   ownerUid: string,
 ): Promise<OwnerKeyAuthority> {
-  const [user, config] = await Promise.all([
+  const [user, credential] = await Promise.all([
     deps.store.users.records.get(ownerUid),
-    deps.readOwnerModelCredentialConfig(ownerUid),
+    deps.store.users.modelCredentials.get(ownerUid),
   ]);
-  return { user, config };
+  return { user, credential };
 }
 
 function assignedUserOwnsKey(
@@ -121,7 +110,7 @@ export function createAnthropicProviderKeyResolver(
     if (authorization.config.gatewayClass === "shared") return platformKeyResolution(deps.platformKey);
     const owner = await readOwnerKeyAuthority(deps, record.ownerUid);
     if (!assignedUserOwnsKey(record, owner.user, authorization)) return null;
-    const resolution = configuredAnthropicModelCredentialResolution(owner.user.slug, owner.config);
+    const resolution = configuredAnthropicModelCredentialResolution(owner.user.slug, owner.credential);
     if (resolution.kind === "deny") return null;
     if (resolution.kind === "platform") return platformKeyResolution(deps.platformKey);
 
@@ -131,7 +120,7 @@ export function createAnthropicProviderKeyResolver(
       readOwnerKeyAuthority(deps, record.ownerUid),
     ]);
     if (!assignedUserOwnsKey(record, currentOwner.user, current)) return null;
-    const currentResolution = configuredAnthropicModelCredentialResolution(currentOwner.user.slug, currentOwner.config);
+    const currentResolution = configuredAnthropicModelCredentialResolution(currentOwner.user.slug, currentOwner.credential);
     if (currentResolution.kind !== "owner_model_credential" || currentResolution.secretName !== resolution.secretName) return null;
     return apiKey
       ? { apiKey, source: "owner_model_credential", secretName: resolution.secretName }
@@ -143,7 +132,6 @@ export function createModelBrokerProviderKeyResolver(
   deps: ModelBrokerProviderKeyResolverDeps,
 ): ModelBrokerProviderKeyResolver {
   const anthropic = createAnthropicProviderKeyResolver({
-    readOwnerModelCredentialConfig: deps.readOwnerModelCredentialConfig,
     store: deps.store,
     platformKey: deps.platformKeys?.anthropic,
     readSecret: deps.readSecret,
