@@ -27,7 +27,7 @@ export function runCorePostgresChecks() {
     mkdirSync(socket, { mode: 0o700 });
     if (process.getuid?.() === 0) run("chown", ["-R", "postgres:postgres", directory]);
     server("initdb", ["-D", data, "--username=postgres", "--auth-local=trust", "--auth-host=reject", "--encoding=UTF8", "--no-locale"]);
-    appendFileSync(join(data, "postgresql.conf"), `\nlisten_addresses = ''\nunix_socket_directories = '${socket.replaceAll("'", "''")}'\nunix_socket_permissions = 0700\n`);
+    appendFileSync(join(data, "postgresql.conf"), `\nlisten_addresses = ''\nunix_socket_directories = '${socket.replaceAll("'", "''")}'\nunix_socket_permissions = 0700\nmax_locks_per_transaction = 10\n`);
     server("pg_ctl", ["-D", data, "-l", join(directory, "server.log"), "-w", "-t", "30", "start"]);
     started = true;
     const connection = ["-h", socket, "-U", "postgres", "-v", "ON_ERROR_STOP=1"];
@@ -36,7 +36,7 @@ export function runCorePostgresChecks() {
     run(join(bin, "psql"), [...connection, "-d", "octogee_ci", "-c", "CREATE EXTENSION vector; CREATE EXTENSION unaccent; CREATE EXTENSION pg_trgm"]);
     const dsn = new URL("postgresql://octogee_ci_admin@localhost/octogee_ci");
     dsn.searchParams.set("host", socket);
-    const env = { ...process.env, OCTOGEE_TEST_POSTGRES_DSN: dsn.href };
+    const env = { ...process.env, OCTOGEE_TEST_POSTGRES_DSN: dsn.href, PATH: [bin, process.env.PATH].filter(Boolean).join(":") };
     const preflight = run(join(bin, "psql"), [dsn.href, "-v", "ON_ERROR_STOP=1", "-At", "-c", `SELECT current_user = 'octogee_ci_admin'
       AND current_setting('server_version_num')::int BETWEEN 160000 AND 169999
       AND NOT rolsuper AND rolcreaterole AND NOT rolcreatedb AND NOT rolbypassrls

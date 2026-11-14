@@ -379,6 +379,27 @@ quiesce_private_sql_writers() {
   done
 }
 
+wait_for_job() {
+  local name="$1" timeout_seconds="$2" deadline conditions
+  deadline=$((SECONDS + timeout_seconds))
+  while :; do
+    if ! conditions=$(kubectl get "job/$name" -n "$K8S_NAMESPACE" --context "$K8S_CONTEXT" \
+        -o 'jsonpath={range .status.conditions[?(@.status=="True")]}{.type}{" "}{end}'); then
+      warn "could not read the status of job $name"
+      return 1
+    fi
+    case " $conditions " in
+      *" Complete "*) return 0 ;;
+      *" Failed "*|*" FailureTarget "*) warn "job $name failed"; return 1 ;;
+    esac
+    if (( SECONDS >= deadline )); then
+      warn "job $name did not finish within ${timeout_seconds}s"
+      return 1
+    fi
+    sleep 2
+  done
+}
+
 run_private_sql_owner_job() {
   local service="$1" dbname="$2" owner="$3" secret_name="$4" secret_key="$5"
   local job_name logs observed_owner
@@ -507,8 +528,7 @@ spec:
               mountPath: /tmp
 YAML
 
-  if ! kubectl wait --for=condition=complete "job/$job_name" -n "$K8S_NAMESPACE" \
-      --context "$K8S_CONTEXT" --timeout=180s >/dev/null; then
+  if ! wait_for_job "$job_name" 180; then
     kubectl logs "job/$job_name" -n "$K8S_NAMESPACE" --context "$K8S_CONTEXT" --all-containers=true >&2 || true
     kubectl delete job "$job_name" -n "$K8S_NAMESPACE" --context "$K8S_CONTEXT" --wait=true >/dev/null 2>&1 || true
     die "private Cloud SQL owner reset job failed for $dbname"
@@ -766,8 +786,7 @@ YAML
     die "could not create the agent store reset job for $database"
   fi
 
-  if ! kubectl wait --for=condition=complete "job/$name" -n "$K8S_NAMESPACE" \
-      --context "$K8S_CONTEXT" --timeout=300s >/dev/null; then
+  if ! wait_for_job "$name" 300; then
     kubectl logs "job/$name" -n "$K8S_NAMESPACE" --context "$K8S_CONTEXT" --all-containers=true >&2 || true
     remove_agent_store_reset_job "$name" || true
     die "agent store reset job failed for $database"

@@ -120,34 +120,27 @@ END
 $reset$;
 COMMIT;
 
-BEGIN;
-SET LOCAL lock_timeout = '10s';
-DO $reset$
-DECLARE
-  fleet record;
-  store record;
-  roles text;
-BEGIN
-  FOR fleet IN SELECT rolname FROM agent_store_reset_roles ORDER BY rolname LOOP
-    EXECUTE format('GRANT %I TO CURRENT_USER WITH INHERIT TRUE, SET TRUE', fleet.rolname);
-  END LOOP;
-  SELECT string_agg(quote_ident(rolname), ', ' ORDER BY rolname) INTO roles FROM agent_store_reset_roles;
-  IF roles IS NOT NULL THEN
-    EXECUTE 'DROP OWNED BY ' || roles || ' CASCADE';
-  END IF;
-  FOR store IN
-    SELECT nspname FROM pg_catalog.pg_namespace
-    WHERE nspname NOT IN ('public', 'information_schema') AND nspname !~ '^pg_'
-    ORDER BY nspname
-  LOOP
-    EXECUTE format('DROP SCHEMA %I CASCADE', store.nspname);
-  END LOOP;
-  IF roles IS NOT NULL THEN
-    EXECUTE 'DROP ROLE ' || roles;
-  END IF;
-END
-$reset$;
-COMMIT;
+SET lock_timeout = '10s';
+
+SELECT pg_catalog.format('GRANT %I TO CURRENT_USER WITH INHERIT TRUE, SET TRUE', rolname)
+FROM agent_store_reset_roles
+ORDER BY rolname
+\gexec
+
+SELECT pg_catalog.format('DROP SCHEMA %I CASCADE', nspname)
+FROM pg_catalog.pg_namespace
+WHERE nspname NOT IN ('public', 'information_schema') AND nspname !~ '^pg_'
+ORDER BY nspname
+\gexec
+
+SELECT pg_catalog.format('DO $drop$ BEGIN EXECUTE %L; EXECUTE %L; END $drop$',
+  pg_catalog.format('DROP OWNED BY %I CASCADE', r.rolname), pg_catalog.format('DROP ROLE %I', r.rolname))
+FROM agent_store_reset_roles r
+ORDER BY EXISTS (
+  SELECT 1 FROM pg_catalog.pg_database d, pg_catalog.aclexplode(d.datacl) acl
+  WHERE d.datname = pg_catalog.current_database() AND acl.grantee = r.oid
+), r.rolname
+\gexec
 
 DO $reset$
 DECLARE
