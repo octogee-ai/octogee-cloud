@@ -27,5 +27,5 @@ export function resolveGatewayPrincipalAccess(input) {
     return { kind: "member", dashboard: true, workspaceManagement: false };
 }
 export function workspacePermissionsEnabled(config, owner, now = new Date()) {
-    return config.gatewayClass === "builder" && config.builderAccess?.controlIdentity === "per-user" && userEntitlements().sizingKey(owner, now) !== null;
+    return config.gatewayClass === "isolated" && config.builderAccess?.controlIdentity === "per-user" && userEntitlements().sizingKey(owner, now) !== null;
 }

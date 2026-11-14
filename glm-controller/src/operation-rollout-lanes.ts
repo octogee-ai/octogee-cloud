@@ -19,9 +19,9 @@ export async function readOperationRolloutLanes(
   for (const gatewayId of gatewayIds) {
     const root = roots.get(gatewayId);
     const runtime = runtimes.get(gatewayId);
-    if (root?.gatewayClass !== "shared" && root?.gatewayClass !== "builder") continue;
+    if (root?.gatewayClass !== "shared" && root?.gatewayClass !== "isolated") continue;
     if (runtime?.runtime === "cluster") lanes.set(gatewayId, "cluster");
-    if (root.gatewayClass === "builder" && runtime?.runtime === "gce-vm") lanes.set(gatewayId, "builder-vm");
+    if (root.gatewayClass === "isolated" && runtime?.runtime === "gce-vm") lanes.set(gatewayId, "builder-vm");
   }
   return lanes;
 }

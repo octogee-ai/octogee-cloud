@@ -68,7 +68,7 @@ describe("deriveSharedGatewayPoolConfig", () => {
       root("shared-1"),
       root("shared-0", { desiredStatus: "paused" }),
       root("shared-a", { desiredStatus: "draining" }),
-      root("walter", { gatewayClass: "builder" }),
+      root("walter", { gatewayClass: "isolated" }),
       root("shared-3", { desiredStatus: "retired" }),
       root("NOT VALID"),
     ])).toEqual({
@@ -89,7 +89,7 @@ describe("deriveSharedGatewayPoolConfig", () => {
   });
 
   it("is null for an empty pool and carries the autoscaling knobs when given", () => {
-    expect(deriveSharedGatewayPoolConfig([root("walter", { gatewayClass: "builder" })])).toBeNull();
+    expect(deriveSharedGatewayPoolConfig([root("walter", { gatewayClass: "isolated" })])).toBeNull();
     expect(deriveSharedGatewayPoolConfig(
       [root("shared-0")],
       { enabled: false, buildersPerGateway: 3 },
@@ -214,7 +214,7 @@ describe("shared gateway selection", () => {
     for (const overrides of [
       { ready: false },
       { heartbeatFresh: false },
-      { gatewayClass: "builder" },
+      { gatewayClass: "isolated" },
       { gatewayId: "isolated" },
     ]) {
       expect(isAcceptingSharedGateway(config, candidate("shared-0", overrides))).toBe(false);

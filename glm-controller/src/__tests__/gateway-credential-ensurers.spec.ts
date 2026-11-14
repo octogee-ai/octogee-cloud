@@ -11,7 +11,7 @@ const agentStoreClientDsn = "postgresql://private/agents_test";
 
 function harness(secret: Record<string, string> = { token: "synthetic-token" }) {
   const auth = { ensureAuthSecret: vi.fn(async () => {}) };
-  const readGateway = vi.fn(async (): Promise<{ gatewayClass: "shared" | "builder"; ownerUid: string | null; builderSlug: string | null; desiredStatus: string; retirementClaim?: unknown } | null> => null);
+  const readGateway = vi.fn(async (): Promise<{ gatewayClass: "shared" | "isolated"; ownerUid: string | null; builderSlug: string | null; desiredStatus: string; retirementClaim?: unknown } | null> => null);
   const provisionAgentStore = vi.fn(async (_identity: AgentStoreGatewayIdentity, assertCurrent: () => Promise<void>) => { await assertCurrent?.(); return "postgresql://gateway:synthetic@private/agents_test"; });
   const runKubectl = vi.fn<KubectlSubprocess>(async args =>
     ({ code: 0, stdout: args[args.indexOf("-o") + 1] === "json" ? secretJson(secret) : b64(secret.token!), stderr: "" }));
@@ -41,9 +41,9 @@ describe("Gateway credential provisioning stages", () => {
     expect(h.auth.ensureAuthSecret).toHaveBeenCalledWith(request);
     expect(h.readGateway).not.toHaveBeenCalled();
     expect(h.provisionAgentStore).not.toHaveBeenCalled();
-    h.readGateway.mockResolvedValue({ desiredStatus: "running", gatewayClass: "builder", ownerUid: "uid-alice", builderSlug: "alice" });
+    h.readGateway.mockResolvedValue({ desiredStatus: "running", gatewayClass: "isolated", ownerUid: "uid-alice", builderSlug: "alice" });
     await h.stages.ensureGatewayCredentials(request);
-    expect(h.provisionAgentStore).toHaveBeenCalledExactlyOnceWith({ gatewayId: request.gatewayId, gatewayClass: "builder", token: "synthetic-token", user: { uid: "uid-alice", slug: "alice" } }, expect.any(Function));
+    expect(h.provisionAgentStore).toHaveBeenCalledExactlyOnceWith({ gatewayId: request.gatewayId, gatewayClass: "isolated", token: "synthetic-token", user: { uid: "uid-alice", slug: "alice" } }, expect.any(Function));
   });
 
   it.each([{ desiredStatus: "retired" }, { retirementClaim: { operationId: "retire" } }, { retirementClaim: false }, { retirementClaim: "" }])("rejects issuance when retirement begins while waiting for SQL custody: %j", async retirement => {
@@ -62,10 +62,10 @@ describe("Gateway credential provisioning stages", () => {
 
   it("does not publish credentials if custody changes after SQL issuance", async () => {
     const h = harness();
-    h.readGateway.mockResolvedValue({ gatewayClass: "builder", ownerUid: "uid-alice", builderSlug: "alice", desiredStatus: "running" });
+    h.readGateway.mockResolvedValue({ gatewayClass: "isolated", ownerUid: "uid-alice", builderSlug: "alice", desiredStatus: "running" });
     h.provisionAgentStore.mockImplementationOnce(async (_identity, assertCurrent) => {
       await assertCurrent();
-      h.readGateway.mockResolvedValue({ gatewayClass: "builder", ownerUid: "uid-bob", builderSlug: "bob", desiredStatus: "running" });
+      h.readGateway.mockResolvedValue({ gatewayClass: "isolated", ownerUid: "uid-bob", builderSlug: "bob", desiredStatus: "running" });
       return "postgresql://synthetic";
     });
     await expect(h.stages.ensureGatewayCredentials(request)).rejects.toThrow("retired or changed");
@@ -105,12 +105,12 @@ describe("Gateway credential provisioning stages", () => {
 
   it("refuses incomplete desired ownership", async () => {
     const h = harness();
-    h.readGateway.mockResolvedValue({ desiredStatus: "running", gatewayClass: "builder", ownerUid: "uid-alice", builderSlug: null });
+    h.readGateway.mockResolvedValue({ desiredStatus: "running", gatewayClass: "isolated", ownerUid: "uid-alice", builderSlug: null });
     await expect(h.stages.ensureGatewayCredentials(request)).rejects.toThrow("desired owner");
     expect(h.provisionAgentStore).not.toHaveBeenCalled();
   });
 
-  it.each(["shared", "builder"] as const)("keeps an unowned %s runtime unclaimed", async gatewayClass => {
+  it.each(["shared", "isolated"] as const)("keeps an unowned %s runtime unclaimed", async gatewayClass => {
     const h = harness();
     h.readGateway.mockResolvedValue({ desiredStatus: "running", gatewayClass, ownerUid: null, builderSlug: null });
     await h.stages.ensureGatewayCredentials(request);
@@ -128,7 +128,7 @@ describe("Gateway credential provisioning stages", () => {
 });
 
 describe("Gateway credential reuse", () => {
-  const alice = { desiredStatus: "running", gatewayClass: "builder" as const, ownerUid: "uid-alice", builderSlug: "alice" };
+  const alice = { desiredStatus: "running", gatewayClass: "isolated" as const, ownerUid: "uid-alice", builderSlug: "alice" };
   const published = {
     token: "synthetic-token",
     "agent-store-dsn": "postgresql://octogee_gateway_fresh:synthetic-token@private/agents_test",

@@ -33,7 +33,7 @@ function identity(overrides: Partial<ClaimedUserIdentity> = {}): ClaimedUserIden
 }
 
 function env(openclawDir: string): NodeJS.ProcessEnv {
-  return { GATEWAY_CLASS: "builder", OPENCLAW_DIR: openclawDir, GATEWAY_ID: GATEWAY };
+  return { GATEWAY_CLASS: "isolated", OPENCLAW_DIR: openclawDir, GATEWAY_ID: GATEWAY };
 }
 
 describe("configured user report", () => {

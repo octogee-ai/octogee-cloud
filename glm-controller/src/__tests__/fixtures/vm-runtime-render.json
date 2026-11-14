@@ -226,9 +226,9 @@
     "app.kubernetes.io/instance": "octogee-gw-b-x",
     "app.kubernetes.io/managed-by": "Helm",
     "app.kubernetes.io/name": "octogee-gateway",
-    "gateway-class": "builder",
+    "gateway-class": "isolated",
     "gateway-instance": "b-x",
-    "gateway-profile": "builder",
+    "gateway-profile": "isolated",
     "helm.sh/chart": "octogee-gateway-0.1.0"
    },
    "name": "octogee-gateway-b-x",
@@ -250,11 +250,11 @@
      "annotations": {},
      "labels": {
       "app": "octogee-gateway",
-      "gateway-class": "builder",
+      "gateway-class": "isolated",
       "gateway-id": "b-x",
       "gateway-image": "main.abc123",
       "gateway-instance": "b-x",
-      "gateway-profile": "builder",
+      "gateway-profile": "isolated",
       "tier": "s"
      }
     },
@@ -362,11 +362,11 @@
         },
         {
          "name": "GATEWAY_PROFILE",
-         "value": "builder"
+         "value": "isolated"
         },
         {
          "name": "GATEWAY_CLASS",
-         "value": "builder"
+         "value": "isolated"
         },
         {
          "name": "ANTHROPIC_BASE_URL",
@@ -640,11 +640,11 @@
         },
         {
          "name": "GATEWAY_PROFILE",
-         "value": "builder"
+         "value": "isolated"
         },
         {
          "name": "GATEWAY_CLASS",
-         "value": "builder"
+         "value": "isolated"
         },
         {
          "name": "OPENROUTER_BASE_URL",

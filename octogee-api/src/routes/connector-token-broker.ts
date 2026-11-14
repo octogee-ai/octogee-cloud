@@ -305,7 +305,7 @@ async function ownerRuntimeAccessAuthorized(input: {
   if (
     input.uid !== input.ownerUid
     || input.builderSlug !== input.access.builderSlug
-    || input.gatewayClass !== "builder"
+    || input.gatewayClass !== "isolated"
   ) {
     return false;
   }
@@ -332,7 +332,7 @@ async function projectCloneGatewayMode(input: ProjectCloneAuthorizationInput): P
     assignment.slug !== access.builderSlug || assignment.state !== "serving") return refused(bound, "clone gateway does not own the serving assignment");
   const authorization = await verifiedGatewayAuthorization(store, bound);
   if (!authorization) return null;
-  if (authorization.gatewayClass !== "builder" || authorization.builderSlug !== access.builderSlug) {
+  if (authorization.gatewayClass !== "isolated" || authorization.builderSlug !== access.builderSlug) {
     return refused(bound, `clone requested for ${access.builderSlug} on a ${authorization.gatewayClass} gateway of ${authorization.builderSlug}`);
   }
   return "serving";

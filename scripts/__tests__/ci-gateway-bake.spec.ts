@@ -78,7 +78,7 @@ describe("gateway bake plan", () => {
     });
     expect(target["octogee-gateway-builder"].args).toEqual({
       BUILD_SHA: "aaaaaaa", OPENCLAW_RUNTIME_PLUGINS: "mattermost,parallel-plugin,codex",
-      GATEWAY_SYSTEM_IMAGE: "octogee-gateway-system", RUNTIME_BASE_IMAGE: "octogee-gateway-builder-base", IMAGE_PROFILE: "builder",
+      GATEWAY_SYSTEM_IMAGE: "octogee-gateway-system", RUNTIME_BASE_IMAGE: "octogee-gateway-builder-base", IMAGE_PROFILE: "isolated",
     });
   });
 

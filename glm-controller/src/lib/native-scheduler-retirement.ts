@@ -108,7 +108,7 @@ function vmAuthority(runtime: FleetRegistryRecord | null, user: PlatformUserReco
 }
 
 function targetMatches(root: GatewayRoot | null, runtime: FleetRegistryRecord | null, input: NativeSchedulerRetirementInput, authority: VmAuthority | null): boolean {
-  return root?.gatewayClass === "builder" && root.ownerUid === input.uid && root.builderSlug === input.slug && root.desiredStatus === "running" &&
+  return root?.gatewayClass === "isolated" && root.ownerUid === input.uid && root.builderSlug === input.slug && root.desiredStatus === "running" &&
     runtime?.runtime === "gce-vm" && authority !== null;
 }
 

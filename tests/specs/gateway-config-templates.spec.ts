@@ -48,7 +48,7 @@ describe("Native config template image gate", () => {
     const calls = f.calls();
     expect(calls.map(call => ({ args: call.args, config: call.config, gatewayClass: call.gatewayClass }))).toEqual([
       { args: ["config", "validate", "--json"], config: { kind: "shared" }, gatewayClass: "shared" },
-      { args: ["config", "validate", "--json"], config: { kind: "builder" }, gatewayClass: "builder" },
+      { args: ["config", "validate", "--json"], config: { kind: "builder" }, gatewayClass: "isolated" },
     ]);
     for (const call of calls) {
       expect(call.projected).toBe(join(f.root, "extensions")); expect(call.npm).toBe(join(f.root, "npm"));

@@ -98,8 +98,8 @@ function env(port?: number, openclawDir = "/home/node/.openclaw"): NodeJS.Proces
   return {
     GATEWAY_ID: "walter",
     GATEWAY_REVISION_ID: "walter-r7",
-    GATEWAY_CLASS: "builder",
-    GATEWAY_PROFILE: "builder",
+    GATEWAY_CLASS: "isolated",
+    GATEWAY_PROFILE: "isolated",
     API_PUBLIC_URL: "https://api.octogee.com",
     APP_URL: "https://app.octogee.com",
     OPENCLAW_GATEWAY_URL: `http://127.0.0.1:${port ?? 18789}`,
@@ -165,7 +165,7 @@ describe("OpenClaw Dashboard invariant context", () => {
     expect(invariantContext(env(), "walter", null)).toBeNull();
     expect(invariantContext({ ...env(), GATEWAY_OWNER_UID: "uid-mallory", GATEWAY_BUILDER_SLUG: "mallory" }, "walter", null)).toBeNull();
     expect(invariantContext(env(), "walter", CLAIMED_ALICE)).toMatchObject({
-      gatewayClass: "builder", gatewayId: "walter", ownerUid: "uid-owner", workspaceSlug: "alice",
+      gatewayClass: "isolated", gatewayId: "walter", ownerUid: "uid-owner", workspaceSlug: "alice",
     });
     expect(invariantContext({ ...env(), GATEWAY_CLASS: "shared" }, "shared-a", null)).toMatchObject({ gatewayClass: "shared" });
   });
@@ -174,7 +174,7 @@ describe("OpenClaw Dashboard invariant context", () => {
     expect(invariantContext(isolated, "walter", CLAIMED_ALICE)).toEqual(invariantContext(env(), "walter", CLAIMED_ALICE));
     expect(invariantContext({ ...env(), GATEWAY_CLASS: "operator" }, "walter", CLAIMED_ALICE)).toMatchObject({ gatewayClass: "shared" });
   });
-  it.each(["shared", "builder"])("preserves broker declarations through an unrelated %s Dashboard write and rejects rewiring", (gatewayClass) => {
+  it.each(["shared", "isolated"])("preserves broker declarations through an unrelated %s Dashboard write and rejects rewiring", (gatewayClass) => {
     const context = invariantContext({ ...env(), GATEWAY_CLASS: gatewayClass, OPENROUTER_BASE_URL: "https://broker.example/openrouter" }, "walter", CLAIMED_ALICE);
     if (!context) throw new Error("Expected claimed invariant context");
     const current = {};
@@ -1046,7 +1046,7 @@ describe("OpenClaw Dashboard WebSocket surface", () => {
       tempDirs.push(openclawDir);
       const currentConfig: Record<string, unknown> = { userSetting: "before" };
       reconcilePlatformInvariants(currentConfig, {
-        gatewayClass: "builder",
+        gatewayClass: "isolated",
         gatewayId: "walter",
         apiOrigin: "https://api.octogee.com",
       });
@@ -2176,7 +2176,7 @@ describe("OpenClaw Dashboard WebSocket surface", () => {
     const openclawDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-fence-"));
     tempDirs.push(openclawDir);
     const config: Record<string, unknown> = { agents: { defaults: { timeoutSeconds: 60 } } };
-    reconcilePlatformInvariants(config, { gatewayClass: "builder", gatewayId: "walter", apiOrigin: "https://api.octogee.com", controlIdentity: "per-user", ownerUid: CLAIMED_ALICE.ownerUid, workspaceSlug: CLAIMED_ALICE.builderSlug });
+    reconcilePlatformInvariants(config, { gatewayClass: "isolated", gatewayId: "walter", apiOrigin: "https://api.octogee.com", controlIdentity: "per-user", ownerUid: CLAIMED_ALICE.ownerUid, workspaceSlug: CLAIMED_ALICE.builderSlug });
     const calls: string[] = [];
     const upstream = http.createServer();
     const wss = new WebSocketServer({ server: upstream });
@@ -2247,7 +2247,7 @@ describe("OpenClaw Dashboard WebSocket surface", () => {
     const openclawDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-native-config-"));
     tempDirs.push(openclawDir);
     const config: Record<string, unknown> = { agents: { defaults: { timeoutSeconds: 60 } } };
-    reconcilePlatformInvariants(config, { gatewayClass: "builder", gatewayId: "walter", apiOrigin: "https://api.octogee.com", controlIdentity: "per-user", ownerUid: CLAIMED_ALICE.ownerUid, workspaceSlug: CLAIMED_ALICE.builderSlug });
+    reconcilePlatformInvariants(config, { gatewayClass: "isolated", gatewayId: "walter", apiOrigin: "https://api.octogee.com", controlIdentity: "per-user", ownerUid: CLAIMED_ALICE.ownerUid, workspaceSlug: CLAIMED_ALICE.builderSlug });
     const retained: Array<{ release(): Promise<void> }> = [];
     const calls: Array<{ method: string; user: string | undefined }> = [];
     const upstream = http.createServer();

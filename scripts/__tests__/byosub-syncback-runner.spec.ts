@@ -108,7 +108,7 @@ function userHome(): string {
   });
   process.env.HOME = home;
   process.env.GATEWAY_ID = "tester19-m-abc";
-  process.env.GATEWAY_CLASS = "builder";
+  process.env.GATEWAY_CLASS = "isolated";
   return home;
 }
 

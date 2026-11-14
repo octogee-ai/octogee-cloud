@@ -33,7 +33,7 @@ function legacyMigrationGate(
   operationId: string,
   operation: Operation,
 ): { operationId: string; uid: string; fromGatewayId: string } | null {
-  if (operation.kind !== "migrate-user" || operation.customerMigrationV2) return null;
+  if (operation.kind !== "migrate-user" || operation.userMigrationV2) return null;
   const details = operation.input;
   if (!details || typeof details !== "object") return null;
   const uid = details.uid;

@@ -49,8 +49,8 @@ describe("account deletion lifecycle", () => {
   it("normalizes archive metadata through closed operational sets", () => {
     expect(anonymousOperationalEnvironment("test")).toBe("test");
     expect(anonymousOperationalEnvironment("alice@example.com")).toBe("unknown");
-    expect(anonymousOperationalGatewayClass("builder")).toBe("builder");
-    expect(anonymousOperationalGatewayClass("isolated")).toBe(anonymousOperationalGatewayClass("builder"));
+    expect(anonymousOperationalGatewayClass("isolated")).toBe("isolated");
+    expect(anonymousOperationalGatewayClass("builder")).toBe("isolated");
     expect(anonymousOperationalGatewayClass("operator")).toBeNull();
     expect(anonymousOperationalGatewayClass("alice@example.com")).toBeNull();
   });

@@ -187,7 +187,7 @@ describe.skipIf(!dsn)("PostgreSQL agent store", () => {
       expect((await shared.query(`SELECT body FROM ${object(schema, "history")}`)).rowCount).toBe(1);
       bound = undefined;
       const isolatedGateway = `user-erase-${suffix}`;
-      const userDsn = await provision({ gatewayClass: "builder", gatewayId: isolatedGateway, token: "synthetic-user", user }, async () => {});
+      const userDsn = await provision({ gatewayClass: "isolated", gatewayId: isolatedGateway, token: "synthetic-user", user }, async () => {});
       await admin.query(`DROP SCHEMA ${pg.escapeIdentifier(schema)} CASCADE`);
       const userClient = new pg.Client({ connectionString: userDsn }); await userClient.connect();
       try { await create(schema, `octogee-${user.slug}-coach`, userClient); } finally { await userClient.end(); }
@@ -209,7 +209,7 @@ describe.skipIf(!dsn)("PostgreSQL agent store", () => {
     const gatewayId = `user-erase-system-${suffix}`;
     const provision = createAgentStoreCredentialProvisioner(dsn!, dsn!);
     const sharedDsn = await provision({ gatewayClass: "shared", gatewayId: `shared-system-${suffix}`, token: "synthetic-shared" }, async () => {});
-    const unownedDsn = await provision({ gatewayClass: "builder", gatewayId, token: "synthetic-user" }, async () => {});
+    const unownedDsn = await provision({ gatewayClass: "isolated", gatewayId, token: "synthetic-user" }, async () => {});
     const shared = new pg.Client({ connectionString: sharedDsn }), unowned = new pg.Client({ connectionString: unownedDsn });
     const admin = new pg.Client({ connectionString: dsn! });
     await shared.connect(); await unowned.connect(); await admin.connect();
@@ -236,7 +236,7 @@ describe.skipIf(!dsn)("PostgreSQL agent store", () => {
     try {
       await create(unowned, names.unmatched!, "agent", "octogee-unmatched-route");
       await create(unowned, names.state!, "state", null);
-      const userDsn = await provision({ gatewayClass: "builder", gatewayId, token: "synthetic-user", user }, async () => {});
+      const userDsn = await provision({ gatewayClass: "isolated", gatewayId, token: "synthetic-user", user }, async () => {});
       claimed = new pg.Client({ connectionString: userDsn }); await claimed.connect();
       await create(claimed, names.coach!, "agent", `octogee-${user.slug}-coach`);
       await create(shared, names.sharedDefaultAgent!, "agent", `octogee-${user.slug}-proj-project-coach`);
@@ -317,7 +317,7 @@ describe.skipIf(!dsn)("PostgreSQL agent store", () => {
       bindTargets: async (targets: readonly AgentStoreErasureTarget[]) => targets,
     };
     try {
-      const gatewayDsn = await createAgentStoreCredentialProvisioner(controllerDsn, controllerDsn)({ gatewayClass: "builder", gatewayId, token: "synthetic-user", user }, async () => {});
+      const gatewayDsn = await createAgentStoreCredentialProvisioner(controllerDsn, controllerDsn)({ gatewayClass: "isolated", gatewayId, token: "synthetic-user", user }, async () => {});
       const gateway = new pg.Client({ connectionString: gatewayDsn }); await gateway.connect();
       try {
         await gateway.query(`CREATE SCHEMA ${id(schema)}`);
@@ -381,7 +381,7 @@ describe.skipIf(!dsn)("PostgreSQL agent store", () => {
         await shared.query(`INSERT INTO ${object(schema!, "cache_entries")} VALUES ('retained', 1, 'history')`);
       }
       const unownedId = `unowned-${suffix}`;
-      const unownedDsn = await provision({ gatewayClass: "builder", gatewayId: unownedId, token: "synthetic-unowned-password" }, async () => {});
+      const unownedDsn = await provision({ gatewayClass: "isolated", gatewayId: unownedId, token: "synthetic-unowned-password" }, async () => {});
       const unowned = new pg.Client({ connectionString: unownedDsn }); await unowned.connect();
       try {
         await expect(unowned.query(`SELECT * FROM ${object(bobSchema, "session_nodes")}`)).rejects.toMatchObject({ code: "42501" });
@@ -393,9 +393,9 @@ describe.skipIf(!dsn)("PostgreSQL agent store", () => {
         await unowned.query(`CREATE TABLE ${object(unownedSchema, "state_leases")} (scope TEXT COLLATE "C" NOT NULL, lease_key TEXT COLLATE "C" NOT NULL, owner TEXT COLLATE "C" NOT NULL, expires_at BIGINT, heartbeat_at BIGINT, payload_json TEXT COLLATE "C", created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL, PRIMARY KEY (scope, lease_key))`);
         await unowned.query(`CREATE INDEX idx_state_leases_owner ON ${object(unownedSchema, "state_leases")} ((owner) ASC NULLS FIRST)`);
         await unowned.query(`INSERT INTO ${object(unownedSchema, "state_leases")} VALUES ('gateway', 'primary', 'preserved-owner', NULL, NULL, NULL, 0, 0)`);
-        const claimedDsn = await provision({ gatewayClass: "builder", gatewayId: unownedId, token: "synthetic-unowned-password", user: { uid: "alice-uid", slug: "alice" } }, async () => {});
+        const claimedDsn = await provision({ gatewayClass: "isolated", gatewayId: unownedId, token: "synthetic-unowned-password", user: { uid: "alice-uid", slug: "alice" } }, async () => {});
         expect(claimedDsn).toBe(unownedDsn);
-        await transfer(aliceUser, "builder");
+        await transfer(aliceUser, "isolated");
         expect((await unowned.query(`SELECT * FROM ${object(aliceSchema, "session_nodes")}`)).rowCount).toBe(1);
         expect((await unowned.query(`SELECT key FROM ${object(aliceSchema, "cache_entries")}`)).rows).toEqual([{ key: "history" }]);
         await expect(shared.query(`SELECT * FROM ${object(aliceSchema, "cache_entries")}`)).rejects.toMatchObject({ code: "42501" });
@@ -406,7 +406,7 @@ describe.skipIf(!dsn)("PostgreSQL agent store", () => {
         }
         finally { await claimed.end(); }
       } finally { await unowned.end(); }
-      const aliceDsn = await provision({ gatewayClass: "builder", gatewayId: "native-alice", token: "synthetic-alice-password", user: { uid: "alice-uid", slug: "alice" } }, async () => {});
+      const aliceDsn = await provision({ gatewayClass: "isolated", gatewayId: "native-alice", token: "synthetic-alice-password", user: { uid: "alice-uid", slug: "alice" } }, async () => {});
       const alice = new pg.Client({ connectionString: aliceDsn });
       await alice.connect();
       try {
@@ -441,17 +441,17 @@ describe.skipIf(!dsn)("PostgreSQL agent store", () => {
         expect(rows).toHaveLength(1);
         await alice.query(`CREATE SCHEMA ${pg.escapeIdentifier(rogueSchema)}`);
         await alice.query(`CREATE TABLE ${object(rogueSchema, "schema_meta")} (untrusted TEXT)`);
-        const secondDsn = await provision({ gatewayClass: "builder", gatewayId: "builder-alice", token: "synthetic-other-alice-password", user: { uid: "alice-uid", slug: "alice" } }, async () => {});
+        const secondDsn = await provision({ gatewayClass: "isolated", gatewayId: "builder-alice", token: "synthetic-other-alice-password", user: { uid: "alice-uid", slug: "alice" } }, async () => {});
         const second = new pg.Client({ connectionString: secondDsn }); await second.connect();
         try { expect((await second.query(`SELECT entry_json FROM ${object(aliceSchema, "session_nodes")}`)).rows).toEqual(rows); }
         finally { await second.end(); }
-        await expect(provision({ gatewayClass: "builder", gatewayId: "native-alice", token: "changed", user: { uid: "bob-uid", slug: "bob" } }, async () => {})).rejects.toThrow("identity changed");
+        await expect(provision({ gatewayClass: "isolated", gatewayId: "native-alice", token: "changed", user: { uid: "bob-uid", slug: "bob" } }, async () => {})).rejects.toThrow("identity changed");
         await expect(assertNoUserAgentStores(dsn!, { uid: "alice-uid", slug: "alice" })).rejects.toThrow("PostgreSQL agent stores remain");
         await expect(assertNoUserAgentStores(dsn!, { uid: "charlie-uid", slug: "charlie" })).resolves.toBeUndefined();
         await expect(shared.query(`SELECT * FROM ${object(aliceSchema, "session_nodes")}`)).rejects.toMatchObject({ code: "42501" });
         expect((await shared.query(`SELECT * FROM ${object(bobSchema, "session_nodes")}`)).rowCount).toBe(1);
-        await provision({ gatewayClass: "builder", gatewayId: "builder-bob", token: "synthetic-bob-password", user: { uid: "bob-uid", slug: "bob" } }, async () => {});
-        await transfer({ uid: "bob-uid", slug: "bob" }, "builder");
+        await provision({ gatewayClass: "isolated", gatewayId: "builder-bob", token: "synthetic-bob-password", user: { uid: "bob-uid", slug: "bob" } }, async () => {});
+        await transfer({ uid: "bob-uid", slug: "bob" }, "isolated");
         for (const schema of [aliceSchema, bobSchema, unownedSchema]) {
           const table = schema === unownedSchema ? "control_state" : "session_nodes";
           await expect(shared.query(`SELECT * FROM ${object(schema, table)}`)).rejects.toMatchObject({ code: "42501" });
@@ -464,7 +464,7 @@ describe.skipIf(!dsn)("PostgreSQL agent store", () => {
         await expect(shared.query(`SELECT * FROM ${object(unownedSchema, "control_state")}`)).rejects.toMatchObject({ code: "42501" });
         await expect(shared.query(`SET ROLE ${pg.escapeIdentifier(owner)}`)).rejects.toMatchObject({ code: "42501" });
         await transfer(aliceUser, "shared");
-        await transfer(aliceUser, "builder");
+        await transfer(aliceUser, "isolated");
         await expect(shared.query(`SELECT * FROM ${object(aliceSchema, "session_nodes")}`)).rejects.toMatchObject({ code: "42501" });
         await alice.query(`DROP SCHEMA ${pg.escapeIdentifier(rogueSchema)} CASCADE`);
         await alice.query(`ALTER TABLE ${object(aliceSchema, "session_nodes")} ADD COLUMN snapshot_revision BIGINT NOT NULL DEFAULT 0`);
@@ -486,8 +486,8 @@ describe.skipIf(!dsn)("PostgreSQL agent store", () => {
         }
         await expect(alice.query(`SELECT * FROM ${object(aliceSchema, "session_nodes")}`)).rejects.toMatchObject({ code: "42501" });
         await expect(shared.query(`SET ROLE ${pg.escapeIdentifier(owner)}`)).rejects.toMatchObject({ code: "42501" });
-        await transfer(aliceUser, "builder");
-        await transfer(aliceUser, "builder");
+        await transfer(aliceUser, "isolated");
+        await transfer(aliceUser, "isolated");
         expect((await alice.query(`SELECT shared_adoption FROM ${object(aliceSchema, "session_nodes")}`)).rows).toEqual([{ shared_adoption: "returned" }]);
         await expect(shared.query(`SELECT * FROM ${object(aliceSchema, "session_nodes")}`)).rejects.toMatchObject({ code: "42501" });
         await expect(shared.query(`DELETE FROM ${object(aliceSchema, "session_nodes")}`)).rejects.toMatchObject({ code: "42501" });
@@ -508,7 +508,7 @@ describe.skipIf(!dsn)("PostgreSQL agent store", () => {
     const transfer = createAgentStoreOwnershipTransferer(dsn!, async () => [{ schema, agentId: `octogee-${user.slug}-coach`, storeId }]);
     const user = { uid: `attacker-${suffix}`, slug: `attacker-${suffix}` };
     const sharedDsn = await provision({ gatewayClass: "shared", gatewayId: `shared-${suffix}`, token: "synthetic-shared" }, async () => {});
-    const userDsn = await provision({ gatewayClass: "builder", gatewayId: `builder-${suffix}`, token: "synthetic-user", user }, async () => {});
+    const userDsn = await provision({ gatewayClass: "isolated", gatewayId: `builder-${suffix}`, token: "synthetic-user", user }, async () => {});
     const admin = new pg.Client({ connectionString: dsn! });
     const shared = new pg.Client({ connectionString: sharedDsn });
     const source = new pg.Client({ connectionString: userDsn });
@@ -598,7 +598,7 @@ describe.skipIf(!dsn)("PostgreSQL agent store", () => {
     const provision = createAgentStoreCredentialProvisioner(dsn!, dsn!);
     const transfer = createAgentStoreOwnershipTransferer(dsn!, async () => [{ schema, agentId: `octogee-${user.slug}-coach`, storeId }]);
     await provision({ gatewayClass: "shared", gatewayId: `shared-race-${suffix}`, token: "synthetic-shared" }, async () => {});
-    const sourceDsn = await provision({ gatewayClass: "builder", gatewayId: `race-${suffix}`, token: "synthetic-source", user }, async () => {});
+    const sourceDsn = await provision({ gatewayClass: "isolated", gatewayId: `race-${suffix}`, token: "synthetic-source", user }, async () => {});
     const admin = new pg.Client({ connectionString: dsn! });
     const source = new pg.Client({ connectionString: sourceDsn });
     const racer = new pg.Client({ connectionString: sourceDsn });

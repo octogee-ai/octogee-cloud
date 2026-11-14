@@ -1953,7 +1953,7 @@ describe("configured user surge release", () => {
     tmpDirs.push(openclawDir);
     vi.stubEnv("OPENCLAW_DIR", openclawDir);
     vi.stubEnv("GATEWAY_ID", "b-chris");
-    vi.stubEnv("GATEWAY_CLASS", "builder");
+    vi.stubEnv("GATEWAY_CLASS", "isolated");
     try {
       writeUserClaim(openclawDir, userClaimFromIdentity({
         gatewayId: "b-chris", state: "claimed", ownerUid: "uid-chris", builderSlug: "chris",

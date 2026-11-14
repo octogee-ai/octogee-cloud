@@ -27,7 +27,7 @@ function root(gatewayId: string, extra: Row = {}): Row {
 
 function isolated(extra: Row = {}, allocation: Row | null = {}): Row {
   return root(TARGET, {
-    gatewayClass: "builder", imageProfile: "builder", profile: null, sizingTier: "s", ownerUid: UID, builderSlug: SLUG,
+    gatewayClass: "isolated", imageProfile: "isolated", profile: null, sizingTier: "s", ownerUid: UID, builderSlug: SLUG,
     ...(allocation === null ? {} : { allocation: { kind: "disposable-builder", schemaVersion: 1, leaseId: "operator-x", generation: 1, claimedByUid: UID, ...allocation } }),
     ...extra,
   });
@@ -53,7 +53,7 @@ function seed(input: { source?: string; target?: Row; sourceState?: string; open
     },
     [`${GLM_OPERATIONS_COLLECTION}/${OP}`]: {
       kind: "migrate-user", status: "running", createdBy: "operator", createdAt: 1, startedAt: STARTED, completedAt: null,
-      input: { uid: UID, builderSlug: SLUG, fromGatewayId: SHARED, toGatewayId: TARGET, ...(source ? { source } : {}) },
+      input: { uid: UID, userSlug: SLUG, fromGatewayId: SHARED, toGatewayId: TARGET, ...(source ? { source } : {}) },
       steps: [], gatewayId: TARGET, inputUid: UID,
     },
   }));
@@ -142,7 +142,7 @@ describe("the preparation fence of a give that failed", () => {
     records.set(`${GLM_OPERATIONS_COLLECTION}/${OP}`, { ...records.get(`${GLM_OPERATIONS_COLLECTION}/${OP}`)!, status: "failed", completedAt: 1_500 });
     records.set(`${GLM_OPERATIONS_COLLECTION}/${SECOND}`, {
       kind: "migrate-user", status: "running", createdBy: "operator", createdAt: 1_600, startedAt: 1_700, completedAt: null,
-      input: { uid: UID, builderSlug: SLUG, fromGatewayId: SHARED, toGatewayId: TARGET, source: "operator-isolated-gateway" },
+      input: { uid: UID, userSlug: SLUG, fromGatewayId: SHARED, toGatewayId: TARGET, source: "operator-isolated-gateway" },
       steps: [], gatewayId: TARGET, inputUid: UID,
     });
     return setWorkspaceMigrationPhase({ store: createDocumentFixtureStore(records), now: () => new Date(1_800) }, {

@@ -57,7 +57,7 @@ export function resolveContinuousUserPlacement(
   const gateway = input.ownedGateway;
   const ownedGatewayIsUsable = gateway !== null &&
     gateway.gatewayId === ownedGatewayId &&
-    gateway.gatewayClass === "builder" &&
+    gateway.gatewayClass === "isolated" &&
     gateway.ownerUid === input.uid &&
     gateway.disposable === true &&
     gateway.desiredStatus === "running" &&

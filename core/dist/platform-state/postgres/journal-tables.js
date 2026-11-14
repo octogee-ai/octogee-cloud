@@ -29,7 +29,7 @@ export const OPERATIONS_TABLE = {
         column("progress", "jsonb"),
         column("gatewayId", "text"),
         column("inputUid", "text"),
-        column("customerMigrationV2", "jsonb", { column: "user_migration_v2" }),
+        column("userMigrationV2", "jsonb", { column: "user_migration_v2" }),
         column("sourceTransferExecution", "jsonb"),
         column("schedulerHandoff", "jsonb"),
         column("schedulerHandoffReleased", "boolean"),

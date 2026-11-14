@@ -32,8 +32,8 @@ describe.skipIf(!dsn)("bound agent-store handoff", () => {
         await query(shared, `SELECT * FROM ${pg.escapeIdentifier(schema)}.schema_meta`);
       }
       const transfer = createAgentStoreOwnershipTransferer(dsn!, async () => inventory);
-      if (scenario === "locked-store") await expect(transfer(user, "builder")).rejects.toMatchObject({ code: "55P03" });
-      else await expect(transfer(user, "builder")).rejects.toThrow(/identity|owner|inventory/);
+      if (scenario === "locked-store") await expect(transfer(user, "isolated")).rejects.toMatchObject({ code: "55P03" });
+      else await expect(transfer(user, "isolated")).rejects.toThrow(/identity|owner|inventory/);
       expect((await admin.query("SELECT nspowner FROM pg_namespace WHERE nspname = $1", [schema])).rows).toEqual(before.rows);
     } finally {
       await shared.query("ROLLBACK");
@@ -63,10 +63,10 @@ describe.skipIf(!dsn)("bound agent-store handoff", () => {
       await shared.query("BEGIN");
       await query(shared, `SELECT * FROM ${pg.escapeIdentifier(other)}.schema_meta`);
       const transfer = createAgentStoreOwnershipTransferer(dsn!, async () => [{ schema, storeId, agentId }]);
-      pending = transfer(user, "builder");
+      pending = transfer(user, "isolated");
       const result = await Promise.race([pending.then(() => "moved"), new Promise<string>(resolve => setTimeout(() => resolve("blocked"), 1000))]);
       expect(result).toBe("moved");
-      await transfer(user, "builder");
+      await transfer(user, "isolated");
       await shared.query("ROLLBACK");
       await expect(query(shared, `SELECT * FROM ${pg.escapeIdentifier(schema)}.schema_meta`)).rejects.toMatchObject({ code: "42501" });
       expect((await query(shared, `SELECT * FROM ${pg.escapeIdentifier(other)}.schema_meta`)).rowCount).toBe(1);
@@ -107,7 +107,7 @@ describe.skipIf(!dsn)("agent-store handoff queued behind the fleet credential lo
       await holder.query("BEGIN");
       await holder.query(FLEET_CREDENTIAL_LOCK);
       const transfer = createAgentStoreOwnershipTransferer(dsn!, async () => [{ schema, storeId, agentId }]);
-      pending = transfer(user, "builder");
+      pending = transfer(user, "isolated");
       const settled = pending.then(() => "moved", error => `failed:${error.code}`);
       expect(await Promise.race([settled, delay(3_000).then(() => "waiting")])).toBe("waiting");
       await holder.query("ROLLBACK");

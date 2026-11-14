@@ -27,7 +27,7 @@ describe.skipIf(!dsn)("PostgreSQL user records: record fences", () => {
     await records.create({ uid: "alice", createdAt: NOW });
     await records.patch("alice", { openclaw: { status: "complete" } });
     await place("alice", "g1");
-    await records.setGatewayMirror("alice", { gatewayId: "g1", gatewayAssignedAt: NOW, gatewayProfile: "builder", controlUiEnabled: true });
+    await records.setGatewayMirror("alice", { gatewayId: "g1", gatewayAssignedAt: NOW, gatewayProfile: "isolated", controlUiEnabled: true });
     await assign("g2", "alice");
 
     await records.setGatewayMirror("alice", { gatewayId: "g2", gatewayProfile: "standard", controlUiEnabled: false }, { gatewayId: "g1" });

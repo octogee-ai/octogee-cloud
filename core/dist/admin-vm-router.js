@@ -28,7 +28,7 @@ async function boundVm(tx, gatewayId) {
     const root = stored === null ? null : projectGatewayDesiredRootForGateway(withoutRevision(stored), gatewayId);
     if (!root)
         throw new VmAdmissionError(404, "gateway not found");
-    if (root.gatewayClass !== "builder" || !root.ownerUid || !root.builderSlug || root.desiredStatus === "retired" || root.retirementClaim != null) {
+    if (root.gatewayClass !== "isolated" || !root.ownerUid || !root.builderSlug || root.desiredStatus === "retired" || root.retirementClaim != null) {
         throw new VmAdmissionError(409, "replacement requires an owned, non-retiring isolated gateway");
     }
     assertBoundVm(runtimeRecord);
@@ -40,7 +40,7 @@ async function boundVm(tx, gatewayId) {
 }
 async function assertForceRecoverableRoot(tx, gatewayId, ownerUid) {
     const root = await tx.gateways.roots.get(gatewayId);
-    if (root !== null && (root.ownerUid !== ownerUid || root.gatewayClass !== "builder" || !["paused", "retired"].includes(String(root.desiredStatus)))) {
+    if (root !== null && (root.ownerUid !== ownerUid || root.gatewayClass !== "isolated" || !["paused", "retired"].includes(String(root.desiredStatus)))) {
         throw new VmAdmissionError(409, "force recovery requires an absent or stopped, owned isolated gateway");
     }
 }

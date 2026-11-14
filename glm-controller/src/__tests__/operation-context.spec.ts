@@ -86,7 +86,7 @@ describe("createOperationContext", () => {
     });
     const rootFence = (gatewayId: string): UserMigrationV2GatewayRootFence => ({
       gatewayId, updatedAt: 1, latestRelease: 1, desiredRelease: 1, liveRelease: 1,
-      gatewayClass: "builder", ownerUid: "u1", builderSlug: "alice", configHash: "7".repeat(64),
+      gatewayClass: "isolated", ownerUid: "u1", builderSlug: "alice", configHash: "7".repeat(64),
     });
     const migration: UserMigrationV2State = {
       phase: "initialized",
@@ -260,7 +260,7 @@ describe("active operation claim", () => {
 describe("settled user restore", () => {
   const operation: Operation = {
     id: "return-1", kind: "migrate-user", status: "running", createdBy: "test", createdAt: 890, startedAt: 900, completedAt: null, steps: [],
-    input: { uid: "u1", fromGatewayId: "builder-1", toGatewayId: "shared-1", builderSlug: "alice" },
+    input: { uid: "u1", fromGatewayId: "builder-1", toGatewayId: "shared-1", userSlug: "alice" },
   };
   const acknowledged = {
     phase: "acknowledged", operationId: "return-1", uid: "u1", fromGatewayId: "builder-1",

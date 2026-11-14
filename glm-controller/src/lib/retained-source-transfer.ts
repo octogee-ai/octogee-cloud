@@ -28,14 +28,14 @@ function retainedSourceCancellationDeferred(context: RetainedSourceContext, fres
   return [fresh?.kind==='migrate-user',state.operationId===op.id,
     fresh?.input?.sourceTransferMode==='retained-pod',fresh?.input?.uid===state.uid,
     fresh?.input?.fromGatewayId===state.sourceGatewayId,fresh?.input?.toGatewayId===state.targetGatewayId,
-    isUserMigrationV2ForwardOnly(state),isDeepStrictEqual(fresh?.customerMigrationV2,state)].every(Boolean);
+    isUserMigrationV2ForwardOnly(state),isDeepStrictEqual(fresh?.userMigrationV2,state)].every(Boolean);
 }
 
 export function assertRetainedSourceAuthority(input: RetainedSourceContext, fresh: OperationRecord | null, user: Stored<PlatformUserRecord> | null, assignment: AssignmentDoc | null, roots: {source:GatewayRoot|null;target:GatewayRoot|null}): void {
   const {op,state} = input;
   const {source:root,target}=roots;
   if (!fresh) throw new Error('source transfer operation unavailable');
-  const durable = fresh.customerMigrationV2;
+  const durable = fresh.userMigrationV2;
   if (!durable) throw new Error('retained source transfer has no durable migration');
   const exact = user !== null && assignment !== null && root !== null && target !== null && [
     fresh.kind === 'migrate-user', fresh.status === 'running', fresh.startedAt === op.startedAt,
@@ -54,7 +54,7 @@ export function assertRetainedSourceAuthority(input: RetainedSourceContext, fres
     assignment.updatedByOperationId === op.id, root.gatewayClass === 'shared',
     ['running','draining'].includes(String(root.desiredStatus)), root.retirementClaim == null, root.runtimeRestartFence === undefined,
     root.desiredRelease === state.sourceRelease, root.liveRelease === state.sourceRelease,
-    ['shared','builder'].includes(String(target.gatewayClass)), target.desiredStatus === 'running',
+    ['shared', 'isolated'].includes(String(target.gatewayClass)), target.desiredStatus === 'running',
     target.retirementClaim == null, target.runtimeRestartFence === undefined, target.desiredRelease === state.targetRelease, target.liveRelease === state.targetRelease,
   ].every(Boolean);
   if (!exact) throw new Error('retained source transfer authority changed');

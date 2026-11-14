@@ -19,7 +19,7 @@ function fixture() {
   const gateway: DurableGateway = {
     gatewayId: "jefe-run", createdAt: 1, createdBy: "test", updatedAt: 2, updatedBy: "test",
     latestRelease: 2, desiredRelease: 2, liveRelease: 1, desiredStatus: "running",
-    configSchemaVersion: 1, profile: "builder", gatewayClass: "builder", imageProfile: "builder",
+    configSchemaVersion: 1, profile: "isolated", gatewayClass: "isolated", imageProfile: "isolated",
     sizingTier: "s", gcpProject: null, gatewayContainerSecurityContext: null,
     serviceAccountName: null, serviceAccount: null, builderAccess: null,
     ownerUid: "uid-jefe", builderSlug: "jefe", modelBrokerLimits: null,

@@ -50,9 +50,9 @@ export function orderGatewaysForConvergence(
 }
 
 function classKnobs(gateway: DurableGateway): {
-  gatewayClass?: "builder" | "shared";
-  profile?: "builder" | "standard";
-  imageProfile?: "builder" | "standard";
+  gatewayClass?: "isolated" | "shared";
+  profile?: "isolated" | "standard";
+  imageProfile?: "isolated" | "standard";
 } {
   return {
     gatewayClass: gateway.gatewayClass ?? undefined,
@@ -346,7 +346,7 @@ function gatewayServiceAccountName(gateway: DurableGateway): string {
 
 function gatewayIsolatedAccess(
   gateway: DurableGateway,
-  gatewayClass: "shared" | "builder",
+  gatewayClass: "shared" | "isolated",
 ): HelmInstanceValue["builderAccess"] | undefined {
   if (gatewayClass === "shared") return gateway.builderAccess ?? undefined;
   return resolveIsolatedGatewayAccess(gateway.ownerUid, gateway.builderAccess ?? undefined);

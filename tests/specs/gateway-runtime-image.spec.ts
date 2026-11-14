@@ -179,7 +179,7 @@ describe("gateway runtime image gate", () => {
     expect(result.stderr).toContain(`/${tool} is not executable`);
   });
 
-  it.each(["gateway", "builder"])("rejects a %s image whose executable Claude launcher is an installer placeholder", (profile) => {
+  it.each(["gateway", "isolated"])("rejects a %s image whose executable Claude launcher is an installer placeholder", (profile) => {
     const image = fakeImage();
     writeFileSync(join(image.env.OCTOGEE_TOOL_BIN_DIR, "claude"),
       'echo "Error: claude native binary not installed." >&2\nexit 1\n');
@@ -212,10 +212,10 @@ describe("isolated runtime image gate", () => {
   it("passes when the toolchain catalog matches its recorded digests", () => {
     const image = fakeImage();
 
-    const result = verify("builder", { ...image.env, ...image.toolchainEnv });
+    const result = verify("isolated", { ...image.env, ...image.toolchainEnv });
 
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toContain("OpenClaw runtime image gate: PASS (builder)");
+    expect(result.stdout).toContain("OpenClaw runtime image gate: PASS (isolated)");
   });
 
   it("does not require the toolchain catalog for the gateway profile", () => {
@@ -237,7 +237,7 @@ describe("isolated runtime image gate", () => {
       Object.entries(image.toolchainEnv).filter(([name]) => name !== missing),
     );
 
-    const result = verify("builder", { ...image.env, ...toolchainEnv });
+    const result = verify("isolated", { ...image.env, ...toolchainEnv });
 
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain(`${missing} is unset in the isolated image`);
@@ -247,7 +247,7 @@ describe("isolated runtime image gate", () => {
     const image = fakeImage();
     writeFileSync(image.toolchainEnv.OCTOGEE_BUILDER_TOOLCHAIN_PACKAGE_LOCK_PATH, "{}\n");
 
-    const result = verify("builder", { ...image.env, ...image.toolchainEnv });
+    const result = verify("isolated", { ...image.env, ...image.toolchainEnv });
 
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("Isolated toolchain lock does not match");
@@ -257,7 +257,7 @@ describe("isolated runtime image gate", () => {
     const image = fakeImage();
     writeFileSync(image.toolchainEnv.OCTOGEE_BUILDER_TOOL_GROUPS_PATH, "{}\n");
 
-    const result = verify("builder", { ...image.env, ...image.toolchainEnv });
+    const result = verify("isolated", { ...image.env, ...image.toolchainEnv });
 
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("Isolated tool groups do not match");

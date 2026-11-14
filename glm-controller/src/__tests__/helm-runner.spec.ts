@@ -44,9 +44,9 @@ describe("helm-runner helpers", () => {
       serviceAccount: { annotations: { "iam.gke.io/gcp-service-account": "gw@example.iam.gserviceaccount.com" } },
       gatewayContainerSecurityContext: { allowPrivilegeEscalation: false },
       builderAccess: { enabled: true, audiences: ["octogee-api"] },
-      profile: "builder",
-      gatewayClass: "builder",
-      imageProfile: "builder",
+      profile: "isolated",
+      gatewayClass: "isolated",
+      imageProfile: "isolated",
       sizingTier: "l",
       replicas: 0,
     })).toEqual({
@@ -54,9 +54,9 @@ describe("helm-runner helpers", () => {
       serviceAccount: { annotations: { "iam.gke.io/gcp-service-account": "gw@example.iam.gserviceaccount.com" } },
       gatewayContainerSecurityContext: { allowPrivilegeEscalation: false },
       builderAccess: { enabled: true, audiences: ["octogee-api"] },
-      profile: "builder",
-      gatewayClass: "builder",
-      imageProfile: "builder",
+      profile: "isolated",
+      gatewayClass: "isolated",
+      imageProfile: "isolated",
       sizingTier: "l",
       replicas: 0,
     });
@@ -76,7 +76,7 @@ describe("helm-runner helpers", () => {
   it("reads isolated class and profile knobs from deployed values the same as builder", () => {
     const knobs = (value: string) => readPersonalKnobs({ profile: value, gatewayClass: value, imageProfile: value });
     expect(knobs("isolated")).toEqual(knobs("builder"));
-    expect(knobs("isolated")).toEqual({ profile: "builder", gatewayClass: "builder", imageProfile: "builder" });
+    expect(knobs("isolated")).toEqual({ profile: "isolated", gatewayClass: "isolated", imageProfile: "isolated" });
   });
 
   it("drops a residual computeClassOverride left in a deployed release's values", () => {
@@ -96,9 +96,9 @@ describe("helm-runner helpers", () => {
       chartFingerprint: "f".repeat(64),
       deploymentIntentFingerprint: "d".repeat(64),
       rollStrategy: "surge",
-      profile: "builder",
-      gatewayClass: "builder",
-      imageProfile: "builder",
+      profile: "isolated",
+      gatewayClass: "isolated",
+      imageProfile: "isolated",
       sizingTier: "l",
       replicas: 0,
       serviceAccountName: "octogee-gateway-walter",
@@ -179,7 +179,7 @@ describe("helm-runner helpers", () => {
       imageTag: "abc1234",
       imageRepository: REPO,
       upgradeTimeout: "10m",
-      gatewayClass: "builder",
+      gatewayClass: "isolated",
     });
 
     expect(args.some((arg) => arg.startsWith("ownerUid="))).toBe(false);
@@ -679,10 +679,10 @@ describe("createHelmSubprocessRunner — upsertInstance", () => {
       imageRepository: REPO,
       imageTag: "abc1234",
       chartPath: "/charts/octogee-gateway",
-      profile: "builder",
+      profile: "isolated",
     });
 
-    expect(calls[0]).toContain("profile=builder");
+    expect(calls[0]).toContain("profile=isolated");
   });
 
   // eslint-disable-next-line sonarjs/parameterized-tests -- The adjacent profile, string-typing, and sizing cases assert different Helm flag invariants with incompatible setup and assertions.
@@ -712,7 +712,7 @@ describe("createHelmSubprocessRunner — upsertInstance", () => {
       imageRepository: REPO,
       imageTag: "3280519", // digits only — would be coerced to number by plain --set
       chartPath: "/charts/octogee-gateway",
-      profile: "builder",
+      profile: "isolated",
       sizingTier: "l",
       replicas: 1,
     });
@@ -726,7 +726,7 @@ describe("createHelmSubprocessRunner — upsertInstance", () => {
     expect(stringPair("imageTag")).toBe("imageTag=3280519");
     expect(stringPair("gatewayId")).toBe("gatewayId=walter");
     expect(args.join(" ")).not.toMatch(/ceckert/);
-    expect(stringPair("profile")).toBe("profile=builder");
+    expect(stringPair("profile")).toBe("profile=isolated");
     expect(stringPair("sizingTier")).toBe("sizingTier=l");
     // replicas stays on --set because it's number-typed.
     const replicasIdx = args.findIndex((a, i) => a === "--set" && args[i + 1] === "replicas=1");
@@ -2030,7 +2030,7 @@ describe("createHelmSubprocessRunner — recoverRelease", () => {
    const runKubectl = vi.fn(async () => ({ code: 0, stdout: "", stderr: "" }));
    const { runHelm } = mockSubprocess([{ stdout: "ok" }, { stdout: "ok" }]);
    const runner = createHelmSubprocessRunner({ runHelm: withPreflightStatusNotFound(runHelm), log: vi.fn(), runKubectl });
-   await runner.upsertInstance({ namespace: "octogee", gatewayId: "b-hobby", gatewayClass: "builder", sizingTier: "s", imageRepository: REPO, imageTag: "abc", chartPath: "/charts/octogee-gateway" });
+   await runner.upsertInstance({ namespace: "octogee", gatewayId: "b-hobby", gatewayClass: "isolated", sizingTier: "s", imageRepository: REPO, imageTag: "abc", chartPath: "/charts/octogee-gateway" });
    expect(runKubectl.mock.calls.flat(2)).not.toContain("pvc");
    const upgrade = runHelm.mock.calls.map(([args]) => args).find(args => args.includes("upgrade"))!;
    expect(upgrade.filter(arg => arg.startsWith("userHome"))).toEqual([]);

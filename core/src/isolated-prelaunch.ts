@@ -22,7 +22,7 @@ function prelaunchLease(gateway: DurableGateway, user: PlatformUserRecord | null
   if (!user || !accountAllowsInteractiveAccess({ accountLifecycle: user.accountLifecycle }) || !lease || !allocation) return null;
   return [
     gateway.desiredStatus === "running",
-    gateway.gatewayClass === "builder",
+    gateway.gatewayClass === "isolated",
     allocation.kind === "disposable-builder",
     gateway.ownerUid === allocation.claimedByUid,
     lease.leaseId === allocation.leaseId,
@@ -78,7 +78,7 @@ export async function isolatedPrelaunchReserved(input: {
 }): Promise<boolean> {
   const { reader, gateway, expectedGateway } = input;
   if (expectedGateway && !samePrelaunchAllocation(gateway, expectedGateway)) return false;
-  if (gateway.gatewayClass !== "builder" || gateway.allocation?.kind !== "disposable-builder" || !gateway.ownerUid) {
+  if (gateway.gatewayClass !== "isolated" || gateway.allocation?.kind !== "disposable-builder" || !gateway.ownerUid) {
     return false;
   }
   const user = await reader.users.records.get(gateway.ownerUid);
@@ -130,7 +130,7 @@ export async function isolatedBootMode(input: {
   reader: PrelaunchAuthorityReader; gateway: DurableGateway;
 }): Promise<{ mode: "prelaunch" | "normal" | "activating"; migrationId?: string }> {
   const { gateway, reader } = input;
-  if (gateway.gatewayClass !== "builder" || gateway.allocation?.kind !== "disposable-builder") return { mode: "normal" };
+  if (gateway.gatewayClass !== "isolated" || gateway.allocation?.kind !== "disposable-builder") return { mode: "normal" };
   if (!gateway.ownerUid) throw new Error("Isolated prelaunch owner is unavailable");
   const user = await reader.users.records.get(gateway.ownerUid);
   if (!user) throw new Error("Isolated prelaunch owner is unavailable");

@@ -9,8 +9,8 @@ const verifyEnv = readFileSync(resolve(import.meta.dirname, "../verify-env.sh"),
 const temporaryDirectories: string[] = [];
 const disposableComputeClassName = "octogee-gateway-test";
 
-function gatewayClass(instance: string): "builder" | "shared" {
-  return instance === "builder" ? "builder" : "shared";
+function gatewayClass(instance: string): "isolated" | "shared" {
+  return instance === "builder" ? "isolated" : "shared";
 }
 
 function deployment(instance: string, overrides: Record<string, unknown> = {}) {

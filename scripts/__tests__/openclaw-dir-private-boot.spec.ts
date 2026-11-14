@@ -10,7 +10,7 @@ afterEach(async () => {
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
 });
 
-it.each(["builder", "shared"])("makes the %s OpenClaw state root private before any pre-boot step runs", async (gatewayClass) => {
+it.each(["isolated", "shared"])("makes the %s OpenClaw state root private before any pre-boot step runs", async (gatewayClass) => {
   const root = await mkdtemp(path.join(tmpdir(), "openclaw-dir-private-"));
   roots.push(root);
   const state = path.join(root, ".openclaw");

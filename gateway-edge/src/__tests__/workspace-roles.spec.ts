@@ -34,7 +34,7 @@ function app() {
 }
 const setRoleConnections = () => call.mock.calls.filter(([method]) => method === 'users.setRole').map(([, , uid]) => uid);
 beforeEach(() => {
-  vi.clearAllMocks(); vi.stubEnv('GATEWAY_CLASS', 'builder'); vi.stubEnv('OPENCLAW_CONTROL_IDENTITY', 'per-user');
+  vi.clearAllMocks(); vi.stubEnv('GATEWAY_CLASS', 'isolated'); vi.stubEnv('OPENCLAW_CONTROL_IDENTITY', 'per-user');
   profiles = [{ id: 'native-caller', aliases: ['caller'], role: 'admin' }];
   resolveIdentity.mockImplementation(async input => ({ uid: 'caller', gatewayId: 'walter', workspaceSlug: 'alice', targetUid: input.targetUid }));
   openClient.mockImplementation(async (uid: string) => {

@@ -14,7 +14,7 @@ import {
 import { openClawOperatorRoles } from "@octogee/shared/types/openclaw-proxy-identity";
 
 const user = {
-  gatewayClass: "builder" as const,
+  gatewayClass: "isolated" as const,
   gatewayId: "walter",
   apiOrigin: "https://api.octogee.com",
 };
@@ -1161,7 +1161,7 @@ const PRE_NATIVE_ROLE_SET = {
 
 describe("per-user user role definitions", () => {
   const context = {
-    gatewayClass: "builder" as const, gatewayId: "jefe", apiOrigin: "https://api.octogee.com",
+    gatewayClass: "isolated" as const, gatewayId: "jefe", apiOrigin: "https://api.octogee.com",
     controlIdentity: "per-user" as const, workspaceSlug: "jefe",
   };
 

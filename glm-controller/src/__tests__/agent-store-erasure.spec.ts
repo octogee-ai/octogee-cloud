@@ -155,7 +155,7 @@ describe("due user PostgreSQL erasure authority", () => {
     ["reassigned", "users/uid-1", { provisioning: { openclaw: { gatewayId: "shared-new" } } }],
     ["assignment", "gateways/shared-new/assignments/uid-1", assignment("shared-new", "uid-1")],
     ["migration", "glmOperations/migration", { status: "running", input: { uid: "uid-1" } }],
-    ["owned running host", "gateways/builder-old", root("builder-old", { ownerUid: "uid-1", gatewayClass: "builder", desiredStatus: "running" })],
+    ["owned running host", "gateways/builder-old", root("builder-old", { ownerUid: "uid-1", gatewayClass: "isolated", desiredStatus: "running" })],
     ["user transfer", "glmMigrationTransferTasks/move-1__final", transferTask({ slug: "alice" })],
     ["transfer from the captured gateway", "glmMigrationTransferTasks/move-1__final", transferTask({ sourceGatewayId: "shared-old" })],
     ["transfer into the captured gateway", "glmMigrationTransferTasks/move-1__final", transferTask({ targetGatewayId: "shared-old" })],

@@ -277,10 +277,10 @@ export function durableGatewayRoot(gatewayId, overrides = {}) {
 export function isolatedGatewayRoot(gatewayId, ownerUid, builderSlug, overrides = {}) {
     return durableGatewayRoot(gatewayId, {
         liveRelease: 1,
-        profile: "builder",
-        gatewayClass: "builder",
-        imageProfile: "builder",
-        sizingTier: "xs",
+        profile: "isolated",
+        gatewayClass: "isolated",
+        imageProfile: "isolated",
+        sizingTier: "s",
         ownerUid,
         builderSlug,
         ...overrides,

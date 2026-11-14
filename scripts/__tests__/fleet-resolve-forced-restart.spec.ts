@@ -25,7 +25,7 @@ function harness() {
     target: { podName: "octogee-gateway-canary-old", podUid: "old-uid" } };
   const root = {
     gatewayId: "canary", createdAt: 1, createdBy: "test", updatedAt: 1, updatedBy: "test", latestRelease: 1, desiredRelease: 1, liveRelease: 1,
-    desiredStatus: "running", configSchemaVersion: 1, profile: "builder", gatewayClass: "builder", imageProfile: "builder", sizingTier: null,
+    desiredStatus: "running", configSchemaVersion: 1, profile: "isolated", gatewayClass: "isolated", imageProfile: "isolated", sizingTier: null,
     gcpProject: null, gatewayContainerSecurityContext: null, serviceAccountName: null, serviceAccount: null, builderAccess: null,
     ownerUid: "canary-owner", builderSlug: "canary", modelBrokerLimits: null, preemption: null, runtimeRestartFence: fence,
   };
@@ -128,7 +128,7 @@ describe("forced restart fence resolution", () => {
     ["foreign target custody", h => { h.docs.set("users/other", { provisioning: { openclaw: { sourceTransferFence: { targetGatewayId: "canary" } } } }); }],
     ["pending migration", h => { h.docs.set("glmOperations/move", { status: "pending", input: { fromGatewayId: "canary" } }); }],
     ["owner migration", h => { h.docs.set("glmOperations/move", { status: "running", input: { uid: "canary-owner" } }); }],
-    ["migration custody", h => { h.docs.set("glmOperations/move", { status: "running", customerMigrationV2: { sourceGatewayId: "canary" } }); }],
+    ["migration custody", h => { h.docs.set("glmOperations/move", { status: "running", userMigrationV2: { sourceGatewayId: "canary" } }); }],
     ["transfer task", h => { h.docs.set("glmMigrationTransferTasks/move", { status: "running", sourceGatewayId: "canary" }); }],
   ];
   it.each(rejectionCases)("preserves the fence when %s", async (_name, change) => {

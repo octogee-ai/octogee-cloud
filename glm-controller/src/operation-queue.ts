@@ -25,7 +25,7 @@ export interface OperationRef {
   kind: string;
   rolloutLane?: RolloutLane;
   input?: Record<string, unknown>;
-  customerMigrationV2?: {
+  userMigrationV2?: {
     sourceGatewayId?: string;
     sourceRevisionId?: string;
     targetGatewayId?: string;
@@ -171,7 +171,7 @@ function recoveryYieldsToTargetRoll(recovery: OperationRef, rollout: OperationRe
     recovery.input.recoverSourceOnly === true &&
     !hasUserActivationTargetRollback(recovery) &&
     inputString(recovery.input, "fromGatewayId")?.startsWith("shared-") === true &&
-    recovery.customerMigrationV2 === undefined &&
+    recovery.userMigrationV2 === undefined &&
     typeof recovery.cutoverCommittedAt !== "number" &&
     isUserActivateOperationIdFor(recovery.id, target) &&
     rollout.kind === "rollout" && rollout.rolloutLane === "cluster" && rollout.input?.gatewayId === target;
@@ -193,7 +193,7 @@ function hasNoInvocationHistory(operation: Operation): boolean {
 function hasNoRuntimeEffects(operation: Operation): boolean {
   return !("cancellationRequestedAt" in operation) &&
     [operation.lastResumedAt, operation.lastProgressAt, operation.error, operation.output,
-      operation.customerMigrationV2, operation.sourceTransferExecution, operation.schedulerHandoff,
+      operation.userMigrationV2, operation.sourceTransferExecution, operation.schedulerHandoff,
       operation.schedulerHandoffReleased, operation.schedulerHandoffReleasedAt, operation.schedulerHandoffLost,
       operation.cutoverCommittedAt].every(value => value === undefined);
 }
@@ -239,7 +239,7 @@ function isPendingUserActivation(operation: OperationRef): boolean {
   return operation.kind === MIGRATE_USER_KIND &&
     operation.input?.source === "builder-activation-lease" &&
     isUserActivateOperationIdFor(operation.id, inputString(operation.input, "toGatewayId")) &&
-    operation.customerMigrationV2 === undefined &&
+    operation.userMigrationV2 === undefined &&
     typeof operation.cutoverCommittedAt !== "number";
 }
 
@@ -248,7 +248,7 @@ function placementMoveYieldsToUserActivation(move: OperationRef, activation: Ope
   return isPendingUserActivation(activation) &&
     move.kind === MIGRATE_USER_KIND &&
     move.input?.source === "continuous-placement-policy" &&
-    move.customerMigrationV2 === undefined &&
+    move.userMigrationV2 === undefined &&
     typeof move.cutoverCommittedAt !== "number" &&
     source !== undefined &&
     inputString(move.input, "fromGatewayId") === source;

@@ -17,7 +17,7 @@ interface FakeOpDoc {
     lastProgressAt?: number;
     expireAt?: number;
     output?: Record<string, unknown>;
-    customerMigrationV2?: { phase: string };
+    userMigrationV2?: { phase: string };
     recordType?: string;
     input?: Record<string, unknown>;
     steps?: Array<{ name: string; status: string; error?: string }>;
@@ -206,7 +206,7 @@ describe("runStuckOpReaperTick", () => {
     const op: FakeOpDoc = { id: `builder-activate-${target}-g2`, data: {
       kind: "migrate-user", status: "running", startedAt: NOW - 1_000, attempts: 0,
       steps: [{ name: "quiesce-source", status: "done" }],
-      input: { uid: "alice", builderSlug: "alice", fromGatewayId: "shared-a", toGatewayId: target, source: "builder-activation-lease" },
+      input: { uid: "alice", userSlug: "alice", fromGatewayId: "shared-a", toGatewayId: target, source: "builder-activation-lease" },
       schedulerHandoffReleased: true,
       schedulerHandoff: { uid: "alice", slug: "alice", fromGatewayId: "shared-a", toGatewayId: target, migrationId: `mig-builder-activate-${target}-g2:scheduler:1:claim:${NOW - 1_000}`, stageAfterCutover: true },
     } };
@@ -216,7 +216,7 @@ describe("runStuckOpReaperTick", () => {
     const db = makeStore([op], {
       users: { alice: { provisioning: { openclaw: { gatewayId: "shared-a", ...(phase === "quiescing" ? { migration: marker } : {}), activationLease: { leaseId: "lease-a", generation: 2, status: "activating", sourceGatewayId: "shared-a", sourceAssignmentEpoch: 4, targetGatewayId: target } } } } },
       assignments: { "shared-a/alice": assignment },
-      roots: { [target]: { gatewayId: target, gatewayClass: "builder", ownerUid: "alice", allocation: { kind: "disposable-builder", leaseId: "lease-a", generation: 2, claimedByUid: "alice" } } },
+      roots: { [target]: { gatewayId: target, gatewayClass: "isolated", ownerUid: "alice", allocation: { kind: "disposable-builder", leaseId: "lease-a", generation: 2, claimedByUid: "alice" } } },
     });
     await recoverControllerOrphanedOperations({ store: db, log: vi.fn(), now: () => NOW, controllerStartedAt: NOW });
     expect(op.data.status).toBe("pending");
@@ -236,7 +236,7 @@ describe("runStuckOpReaperTick", () => {
       kind: "migrate-user", status: "failed", startedAt: NOW - 5_000, completedAt: NOW - 1_000, attempts: 1,
       error: "target import refused", steps,
       attemptHistory: [{ attempt: 1, startedAt: NOW - 5_000, completedAt: NOW - 1_000, error: "target import refused", classification: "terminal", steps }],
-      input: { uid: "alice", builderSlug: "alice", fromGatewayId: "shared-a", toGatewayId: target, source: "builder-activation-lease" },
+      input: { uid: "alice", userSlug: "alice", fromGatewayId: "shared-a", toGatewayId: target, source: "builder-activation-lease" },
       schedulerHandoffReleased: false,
       schedulerHandoff: { uid: "alice", slug: "alice", fromGatewayId: "shared-a", toGatewayId: target, migrationId: `mig-${id}:scheduler:1:claim:${NOW - 5_000}`, stageAfterCutover: true },
     } };
@@ -245,7 +245,7 @@ describe("runStuckOpReaperTick", () => {
       users: { alice: { provisioning: { openclaw: { gatewayId: "shared-a", migration: { state: "moving", operationId: id, startedAt: 100 },
         activationLease: { leaseId: "lease-a", generation: 2, status: "activating", sourceGatewayId: "shared-a", sourceAssignmentEpoch: 4, targetGatewayId: target } } } } },
       assignments: { "shared-a/alice": assignment },
-      roots: { [target]: { gatewayId: target, gatewayClass: "builder", ownerUid: "alice", allocation: { kind: "disposable-builder", leaseId: "lease-a", generation: 2, claimedByUid: "alice" } } },
+      roots: { [target]: { gatewayId: target, gatewayClass: "isolated", ownerUid: "alice", allocation: { kind: "disposable-builder", leaseId: "lease-a", generation: 2, claimedByUid: "alice" } } },
     });
     await runStuckOpReaperTick({ store: db, log: vi.fn(), now: () => NOW, stalenessMs: 15 * 60_000 });
     expect(op.data.status).toBe(held ? "pending" : "failed");
@@ -289,7 +289,7 @@ describe("runStuckOpReaperTick", () => {
     const op: FakeOpDoc = { id: "placement-owned", data: {
       kind: "migrate-user", status: "failed", attempts: 1, startedAt: 100, completedAt: NOW - 1_000, steps: [],
       error: "reaped: controller restarted mid-op", input: {
-        uid: "alice", builderSlug: "alice", fromGatewayId: "shared-a", toGatewayId: "shared-b",
+        uid: "alice", userSlug: "alice", fromGatewayId: "shared-a", toGatewayId: "shared-b",
       },
       schedulerHandoff: { uid: "alice", slug: "alice", fromGatewayId: "shared-a", toGatewayId: "shared-b", migrationId: "mig-placement-owned:scheduler:1:claim:100" },
     } };
@@ -337,7 +337,7 @@ describe("runStuckOpReaperTick", () => {
     if (scenario === "moved") openclaw.gatewayId = "shared-b";
     if (scenario === "foreign-gate") assignment.updatedByOperationId = "another";
     if (scenario === "cutover") op.data.cutoverCommittedAt = 200;
-    if (scenario === "v2") op.data.customerMigrationV2 = { phase: "initial" };
+    if (scenario === "v2") op.data.userMigrationV2 = { phase: "initial" };
     if (scenario === "cancelled") op.data.cancellationRequestedAt = 200;
     if (scenario === "restore") openclaw.restoreFence = { operationId: "restore" };
     if (scenario === "source-transfer") openclaw.sourceTransferFence = { operationId: op.id };
@@ -685,7 +685,7 @@ describe("runStuckOpReaperTick", () => {
           status: "running",
           kind: "migrate-user",
           startedAt: NOW - 60 * 60_000,
-          customerMigrationV2: { phase },
+          userMigrationV2: { phase },
         },
       }];
 
@@ -932,7 +932,7 @@ describe("recoverControllerOrphanedOperations", () => {
   it.each<[string, Partial<FakeOpDoc["data"]>]>([
     ["an add-gateway op", { kind: "add-gateway", input: { gatewayId: "shared-a" } }],
     ["a rollout the resume sweep re-drives", { kind: "rollout", input: { gatewayId: "shared-a" } }],
-    ["a durable V2 migration", { customerMigrationV2: { phase: "checkpointed" } }],
+    ["a durable V2 migration", { userMigrationV2: { phase: "checkpointed" } }],
     ["a suspend-customer op", { kind: "suspend-user" }],
   ])("leaves %s to its own restart recovery", async (_label, overrides) => {
     const op = orphanedPlacement(overrides);

@@ -361,9 +361,9 @@ async function readInstanceValue(
   };
 }
 
-const PROFILE_VALUES = new Set<GatewayProfile>(["standard", "builder"]);
-const GATEWAY_CLASS_VALUES = new Set<GatewayClass>(["shared", "builder"]);
-const IMAGE_PROFILE_VALUES = new Set<GatewayImageProfile>(["standard", "builder"]);
+const PROFILE_VALUES = new Set<GatewayProfile>(["standard", "isolated"]);
+const GATEWAY_CLASS_VALUES = new Set<GatewayClass>(["shared", "isolated"]);
+const IMAGE_PROFILE_VALUES = new Set<GatewayImageProfile>(["standard", "isolated"]);
 const SIZING_TIER_VALUES = new Set<SizingTier>(SIZING_TIERS);
 
 function nonEmptyString(v: unknown): string | undefined {

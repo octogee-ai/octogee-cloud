@@ -30,7 +30,7 @@ function shellFunction(name: string): string {
   if (!body) throw new Error(`Missing entrypoint function ${name}`);
   return body;
 }
-async function fixture(kind: "shared" | "builder", exitCode = 0) {
+async function fixture(kind: "shared" | "isolated", exitCode = 0) {
   const directory = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "gateway-shutdown-"));
   const native = path.join(directory, "native.mjs"), supervisor = path.join(directory, "supervisor.ts");
   const nativeProgram = `import fs from 'node:fs';
@@ -91,7 +91,7 @@ afterEach(async () => {
   }
 });
 
-it.each(["shared", "builder"] as const)("joins %s Native cleanup before exiting PID1", async kind => {
+it.each(["shared", "isolated"] as const)("joins %s Native cleanup before exiting PID1", async kind => {
   const f = await fixture(kind);f.child.kill("SIGTERM");
   await until(() => fs.existsSync(path.join(f.directory, "root-wait")) || f.child.exitCode !== null);
   expect(fs.existsSync(path.join(f.directory, "root-wait"))).toBe(true);

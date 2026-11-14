@@ -16,17 +16,17 @@ function boot(env: Record<string, string>) {
 }
 
 describe("gateway entrypoint class and profile", () => {
-  it("boots an isolated class and profile exactly as builder", () => {
-    for (const profile of ["builder", "isolated"]) {
-      expect(boot({ GATEWAY_CLASS: "isolated", GATEWAY_PROFILE: profile })).toEqual(boot({ GATEWAY_CLASS: "builder", GATEWAY_PROFILE: "builder" }));
-    }
-    expect(boot({ GATEWAY_CLASS: "isolated", GATEWAY_PROFILE: "isolated" })).toMatchObject({ status: 0, effectiveClass: "builder" });
+  it("boots the class and profile a previous controller renders as builder exactly as isolated", () => {
+    const isolated = boot({ GATEWAY_CLASS: "isolated", GATEWAY_PROFILE: "isolated" });
+    expect(isolated).toMatchObject({ status: 0, effectiveClass: "isolated" });
+    expect(boot({ GATEWAY_CLASS: "builder", GATEWAY_PROFILE: "builder" })).toEqual(isolated);
+    expect(boot({ GATEWAY_CLASS: "isolated", GATEWAY_PROFILE: "builder" })).toEqual(isolated);
     expect(boot({})).toMatchObject({ status: 0, effectiveClass: "shared" });
   });
 
   it("still refuses unknown classes and profiles", () => {
-    expect(boot({ GATEWAY_CLASS: "operator" })).toMatchObject({ status: 1, stderr: expect.stringContaining("GATEWAY_CLASS must be shared or builder") });
+    expect(boot({ GATEWAY_CLASS: "operator" })).toMatchObject({ status: 1, stderr: expect.stringContaining("GATEWAY_CLASS must be shared or isolated") });
     expect(boot({ GATEWAY_CLASS: "isolated", GATEWAY_PROFILE: "operator" }))
-      .toMatchObject({ status: 1, stderr: expect.stringContaining("GATEWAY_PROFILE must be standard or builder") });
+      .toMatchObject({ status: 1, stderr: expect.stringContaining("GATEWAY_PROFILE must be standard or isolated") });
   });
 });

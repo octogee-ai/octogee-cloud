@@ -183,9 +183,9 @@ describe("POST /gateways/:id/deploy", () => {
     const manifest = immutableBuild();
     const authority = buildAuthority(manifest);
     const user = (slug: string) => ({
-      gatewayClass: "builder",
-      imageProfile: "builder",
-      profile: "builder",
+      gatewayClass: "isolated",
+      imageProfile: "isolated",
+      profile: "isolated",
       ownerUid: `uid-${slug}`,
       builderSlug: slug,
     });
@@ -247,9 +247,9 @@ describe("manual gateway migrations", () => {
     const { app, store } = mkApp({
       "users/uid-alice": userAuthRecord("source"),
       ...seedServingGateway("legacy-owner", sharedPayload(), readyHeartbeat(), {
-        profile: "builder",
-        gatewayClass: "builder",
-        imageProfile: "builder",
+        profile: "isolated",
+        gatewayClass: "isolated",
+        imageProfile: "isolated",
         ownerUid: "uid-alice",
         builderSlug: "alice",
       }),
@@ -477,7 +477,7 @@ describe("POST /gateways — creates only the durable root and immutable release
     const res = await request(app).post("/gateways").send({
       gatewayId: "operator",
       gatewayClass: "isolated",
-      imageProfile: "builder",
+      imageProfile: "isolated",
       ownerUid: "uid-owner",
     });
 
@@ -511,9 +511,9 @@ describe("admin target resolution", () => {
         sharedPayload(),
         undefined,
         {
-          profile: "builder",
-          gatewayClass: "builder",
-          imageProfile: "builder",
+          profile: "isolated",
+          gatewayClass: "isolated",
+          imageProfile: "isolated",
           ownerUid: "uid-alice",
           builderSlug: "alice",
           builderAccess: { controlUiEnabled: true, reason: "owned-runtime-gateway" },
@@ -588,7 +588,7 @@ describe("admin target resolution", () => {
 });
 
 describe("POST /gateways/:id/releases/:n/rollback — cut a NEW release from release n's payload", () => {
-  const isolatedGateway = { gatewayClass: "builder", imageProfile: "builder", profile: "builder", ownerUid: "uid-user", builderSlug: "builder", sizingTier: "s" };
+  const isolatedGateway = { gatewayClass: "isolated", imageProfile: "isolated", profile: "isolated", ownerUid: "uid-user", builderSlug: "builder", sizingTier: "s" };
 
   it.each([
     { fence: { sourceGatewayId: "gamma", executionId: "transfer-1" }, mirror: "other" },
@@ -796,8 +796,8 @@ describe("PATCH /gateways/:id — updates durable lifecycle", () => {
     expect(store.get("gateways/bench")).toMatchObject({ gatewayClass: "shared" });
   });
 
-  it("rejects an XS user tier before saving or journaling a release", async () => {
-    const seed = seedNewSchemaGateway("builder", sharedPayload(), { gatewayClass: "builder", imageProfile: "builder", profile: "builder", ownerUid: "uid-user", builderSlug: "builder", sizingTier: "s" });
+  it("rejects a sizing tier that does not exist before saving or journaling a release", async () => {
+    const seed = seedNewSchemaGateway("builder", sharedPayload(), { gatewayClass: "isolated", imageProfile: "isolated", profile: "isolated", ownerUid: "uid-user", builderSlug: "builder", sizingTier: "s" });
     const { app, store } = mkApp(seed);
     const before = { ...store.get("gateways/builder") };
     await request(app).patch("/gateways/builder").send({ sizingTier: "xs" }).expect(400);
@@ -1020,6 +1020,24 @@ describe("PATCH /gateways/:id — build artifacts remain deploy-only", () => {
     expect(store.get(`gateways/beta/${GATEWAY_RELEASES_SUBCOLLECTION}/2`)).toBeUndefined();
   });
 
+  it("stops naming the sizing profile when an operator changes the gateway's size", async () => {
+    const isolated = { gatewayClass: "isolated", imageProfile: "isolated", profile: "isolated", ownerUid: "uid-user", builderSlug: "ada", sizingTier: "s", sizingProfile: "hobby" };
+    const { app, store } = mkApp(seedNewSchemaGateway("ada-s", sharedPayload(), isolated));
+
+    await request(app).patch("/gateways/ada-s").send({ sizingTier: "m" }).expect(202);
+
+    expect(store.get("gateways/ada-s")).toMatchObject({ sizingTier: "m", sizingProfile: null });
+  });
+
+  it("keeps the sizing profile when a PATCH repeats the gateway's size", async () => {
+    const isolated = { gatewayClass: "isolated", imageProfile: "isolated", profile: "isolated", ownerUid: "uid-user", builderSlug: "ada", sizingTier: "s", sizingProfile: "hobby" };
+    const { app, store } = mkApp(seedNewSchemaGateway("ada-s", sharedPayload(), isolated));
+
+    await request(app).patch("/gateways/ada-s").send({ sizingTier: "s" });
+
+    expect(store.get("gateways/ada-s")).toMatchObject({ sizingTier: "s", sizingProfile: "hobby" });
+  });
+
   it("rejects an imageTag PATCH on a gateway with a GatewayDoc", async () => {
     const { app } = mkApp(seedNewSchemaGateway("beta", sharedPayload()));
     const res = await request(app).patch("/gateways/beta").send({ imageTag: "deadbee" });
@@ -1048,9 +1066,9 @@ describe("durable config PATCHes", () => {
         "bench",
         sharedPayload(),
         {
-          profile: "builder",
-          gatewayClass: "builder",
-          imageProfile: "builder",
+          profile: "isolated",
+          gatewayClass: "isolated",
+          imageProfile: "isolated",
           ownerUid: "uid-1",
           builderSlug: "chris",
         },

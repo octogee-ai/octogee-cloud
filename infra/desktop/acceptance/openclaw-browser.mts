@@ -37,7 +37,7 @@ await mkdir(claimDir, { recursive: true });
 writeUserClaim(claimDir, userClaimFromIdentity({
   gatewayId: "acceptance", state: "claimed", ownerUid: "uid-native", builderSlug: "native", leaseId: null, generation: null,
 }, Date.now()));
-applyOpenClawComputerBrowserConfig(config, { GATEWAY_CLASS: "builder", GATEWAY_RUNTIME_KIND: "gce-vm", OPENCLAW_DIR: claimDir, GATEWAY_ID: "acceptance" });
+applyOpenClawComputerBrowserConfig(config, { GATEWAY_CLASS: "isolated", GATEWAY_RUNTIME_KIND: "gce-vm", OPENCLAW_DIR: claimDir, GATEWAY_ID: "acceptance" });
 setRuntimeConfigSnapshot(config);
 const resolvedProfile = (config.browser as typeof config.browser & { profiles: { computer: { cdpUrl: string; attachOnly: boolean } } }).profiles.computer;
 assert.equal(resolvedProfile.cdpUrl, "http://127.0.0.1:9222");

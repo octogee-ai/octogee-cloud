@@ -70,8 +70,8 @@ function app() {
 describe("internal connector materialize route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    process.env.GATEWAY_CLASS = "builder";
-    process.env.GATEWAY_PROFILE = "builder";
+    process.env.GATEWAY_CLASS = "isolated";
+    process.env.GATEWAY_PROFILE = "isolated";
     installTestUserIdentity(null);
   });
 
@@ -145,7 +145,7 @@ describe("internal connector materialize route", () => {
   });
 
   it("allows isolated-class gateways because they are isolated exec-capable runtimes", async () => {
-    process.env.GATEWAY_CLASS = "builder";
+    process.env.GATEWAY_CLASS = "isolated";
     process.env.GATEWAY_PROFILE = "standard";
     vi.mocked(readOwnerRuntimeConnectorAccessToken).mockResolvedValue("cf_secret");
 

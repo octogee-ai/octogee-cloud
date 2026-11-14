@@ -110,7 +110,7 @@ function createOperationsRepository(session) {
             return mergeById(lists);
         },
         async listByInputUserSlugPrefix(prefix) {
-            return list("journal.operations.listByInputBuilderSlugPrefix", collection().where("input.builderSlug", ">=", prefix).where("input.builderSlug", "<", `${prefix}`));
+            return list("journal.operations.listByInputBuilderSlugPrefix", collection().where("input.userSlug", ">=", prefix).where("input.userSlug", "<", `${prefix}`));
         },
         async enqueue(operation) {
             const doc = collection().doc();

@@ -132,7 +132,7 @@ async function releaseHandoff(deps: SchedulerHandoffReleaseDeps, operation: List
 async function releaseFailedHandoff(deps: SchedulerHandoffReleaseDeps, operation: ListedOperation): Promise<boolean> {
   const id = operation.id;
   if (operation.schedulerHandoff?.forwardRecovery !== undefined ||
-      ["sourceQuiesced", "finalSynced", "targetVerified", "cutover", "sourceRetired", "complete"].includes(operation.customerMigrationV2?.phase ?? "")) {
+      ["sourceQuiesced", "finalSynced", "targetVerified", "cutover", "sourceRetired", "complete"].includes(operation.userMigrationV2?.phase ?? "")) {
     deps.log(`[scheduler-handoff-release] ${id} requires forward recovery; source stays fenced`);
     return false;
   }

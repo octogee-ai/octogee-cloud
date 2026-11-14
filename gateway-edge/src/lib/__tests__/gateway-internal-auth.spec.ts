@@ -26,7 +26,7 @@ describe("gateway internal auth", () => {
     expect(
       resolveGatewayInternalAuthSecret({
         INTERNAL_SERVICE_KEY: "platform-key",
-        GATEWAY_PROFILE: "builder",
+        GATEWAY_PROFILE: "isolated",
       }),
     ).toEqual({
       value: "platform-key",
@@ -39,8 +39,8 @@ describe("gateway internal auth", () => {
     await withTokenFile("projected-sa-token\n", (tokenPath) => {
       expect(
         resolveGatewayInternalAuthSecret({
-          GATEWAY_CLASS: "builder",
-          GATEWAY_PROFILE: "builder",
+          GATEWAY_CLASS: "isolated",
+          GATEWAY_PROFILE: "isolated",
           OCTOGEE_API_SA_TOKEN_PATH: tokenPath,
         }),
       ).toEqual({
@@ -68,7 +68,7 @@ describe("gateway internal auth", () => {
     await withTokenFile("projected-sa-token\n", (tokenPath) => {
       expect(resolveGatewayInternalAuthSecret({
         GATEWAY_CLASS: "operator",
-        GATEWAY_PROFILE: "builder",
+        GATEWAY_PROFILE: "isolated",
         OCTOGEE_API_SA_TOKEN_PATH: tokenPath,
       })).toBeNull();
     });
@@ -103,8 +103,8 @@ describe("gateway internal auth", () => {
       : { authenticated: false };
     await withTokenFile("projected-sa-token\n", async (tokenPath) => {
       const env = {
-        GATEWAY_CLASS: "builder",
-        GATEWAY_PROFILE: "builder",
+        GATEWAY_CLASS: "isolated",
+        GATEWAY_PROFILE: "isolated",
         GATEWAY_ID: "walter",
         K8S_NAMESPACE: "octogee-test",
         OCTOGEE_API_SA_TOKEN_PATH: tokenPath,
@@ -137,8 +137,8 @@ describe("gateway internal auth on a gateway VM", () => {
     return `${enc({ alg: "RS256" })}.${enc(googlePayload())}.sig`;
   })();
   const env = {
-    GATEWAY_CLASS: "builder",
-    GATEWAY_PROFILE: "builder",
+    GATEWAY_CLASS: "isolated",
+    GATEWAY_PROFILE: "isolated",
     GATEWAY_ID: "walter",
     K8S_NAMESPACE: "octogee-test",
     GATEWAY_COMPUTER_SERVICE_ACCOUNT_EMAIL: vmEmail,
@@ -167,7 +167,7 @@ describe("gateway internal auth on a gateway VM", () => {
     });
     const verify = vi.fn(async () => googlePayload());
     const noVm = createGatewayInternalAuthReviewer(
-      { GATEWAY_CLASS: "builder", GATEWAY_PROFILE: "builder", GATEWAY_ID: "walter", K8S_NAMESPACE: "octogee-test" },
+      { GATEWAY_CLASS: "isolated", GATEWAY_PROFILE: "isolated", GATEWAY_ID: "walter", K8S_NAMESPACE: "octogee-test" },
       { kubernetes, verify },
     );
     await withTokenFile("projected-sa-token\n", async (tokenPath) => {

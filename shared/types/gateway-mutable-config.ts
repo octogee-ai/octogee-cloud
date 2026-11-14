@@ -36,6 +36,7 @@ export interface GatewayMutableConfig {
   gatewayClass: GatewayClass;
   imageProfile: GatewayImageProfile;
   sizingTier: SizingTier | null;
+  sizingProfile?: string | null;
   gcpProject: string | null;
   gatewayContainerSecurityContext: Record<string, unknown> | null;
   serviceAccountName: string | null;
@@ -198,8 +199,8 @@ function hasLegalClassProfiles(value: Record<string, unknown>): boolean {
     return (value.profile === null || value.profile === "standard") &&
       value.imageProfile === "standard";
   }
-  return (value.profile === null || value.profile === "builder") &&
-    value.imageProfile === "builder";
+  return (value.profile === null || value.profile === "isolated") &&
+    value.imageProfile === "isolated";
 }
 
 export function isBareGatewayId(value: unknown): value is string {
@@ -219,6 +220,7 @@ export function isGatewayMutableConfig(value: unknown): value is GatewayMutableC
     isGatewayClass(value.gatewayClass) &&
     isGatewayProfile(value.imageProfile) &&
     isNullableSizingTier(value.sizingTier) &&
+    (value.sizingProfile === undefined || isNullableString(value.sizingProfile)) &&
     isNullableString(value.gcpProject) &&
     isNullableRecord(value.gatewayContainerSecurityContext) &&
     isNullableServiceAccountName(value.serviceAccountName) &&

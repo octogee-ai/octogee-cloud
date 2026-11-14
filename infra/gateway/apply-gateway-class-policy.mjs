@@ -1563,7 +1563,7 @@ function applyControlIdentityPolicy(config, env, claim) {
 }
 
 function resolveGatewayClass(env) {
-  return isIsolatedGatewayClassValue(env.GATEWAY_CLASS) ? "builder" : "shared";
+  return isIsolatedGatewayClassValue(env.GATEWAY_CLASS) ? "isolated" : "shared";
 }
 
 function resolveOpenclawJsonPath() {
@@ -1614,11 +1614,11 @@ export function applyGatewayClassPolicy({ openclawJsonPath, env = process.env } 
       {
         resetAgentIds: scrub.resetAgentIds,
         directRuntimeModelRefs: scrub.directRuntimeModelRefs,
-        preserveNativeCredentials: gatewayClass === "builder",
+        preserveNativeCredentials: gatewayClass === "isolated",
       },
     );
     applyUserPolicy(config);
-  } else if (gatewayClass === "builder") {
+  } else if (gatewayClass === "isolated") {
     applyIsolatedPolicy(config, openclawDir, env);
   }
   if (JSON.stringify(config) === before) {

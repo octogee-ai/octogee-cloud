@@ -67,25 +67,25 @@ shared
 
 {{- define "octogee-gateway.dualReadGatewayClass" -}}
 {{- $class := include "octogee-gateway.gatewayClass" . -}}
-{{- ternary "builder" $class (eq $class "isolated") -}}
+{{- ternary "isolated" $class (eq $class "builder") -}}
 {{- end }}
 
 {{- define "octogee-gateway.dualReadImageProfile" -}}
 {{- $profile := include "octogee-gateway.imageProfile" . -}}
-{{- ternary "builder" $profile (eq $profile "isolated") -}}
+{{- ternary "isolated" $profile (eq $profile "builder") -}}
 {{- end }}
 
 {{/*
 Resolve the installed image/tooling profile. Shared uses the standard image;
-owner-bound disposable Builder gateways use the Builder image.
+owner-bound isolated gateways use the isolated image.
 */}}
 {{- define "octogee-gateway.imageProfile" -}}
 {{- if .Values.imageProfile -}}
 {{- .Values.imageProfile -}}
 {{- else if .Values.profile -}}
 {{- .Values.profile -}}
-{{- else if eq (include "octogee-gateway.dualReadGatewayClass" .) "builder" -}}
-builder
+{{- else if eq (include "octogee-gateway.dualReadGatewayClass" .) "isolated" -}}
+isolated
 {{- else -}}
 standard
 {{- end -}}
@@ -164,7 +164,7 @@ tier isn't declared in `.Values.tiers`.
 {{- $tier := include "octogee-gateway.effectiveTier" . -}}
 {{- $desktop := .Values.computerDesktop | default "auto" -}}
 {{- if eq $desktop "auto" -}}
-{{- if and (eq $class "builder") (eq (.Values.runtimeKind | default "cluster") "gce-vm") -}}x11{{- else -}}none{{- end -}}
+{{- if and (eq $class "isolated") (eq (.Values.runtimeKind | default "cluster") "gce-vm") -}}x11{{- else -}}none{{- end -}}
 {{- else if has $desktop (list "none" "x11" "omarchy") -}}
 {{- $desktop -}}
 {{- else -}}{{- fail "computerDesktop must be auto, none, x11, or omarchy" -}}{{- end -}}

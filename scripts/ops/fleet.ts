@@ -930,7 +930,7 @@ function withoutRevision<T extends { readonly revision: unknown }>(record: T): O
 }
 
 function assertUserForceRestart(root: { readonly gatewayClass?: unknown } | null): void {
-  if (root?.gatewayClass !== "builder") {
+  if (root?.gatewayClass !== "isolated") {
     throw new Error("Shared gateways cannot be force restarted; a dedicated isolated gateway is required");
   }
 }
@@ -1154,7 +1154,7 @@ let KUBE_NS = resolveFleetDeploymentTarget("test").namespace;
 type FirestoreTs = { toMillis(): number };
 
 function normalizeGatewayProfile(profile: unknown): GatewayProfile {
-  return profile === "builder" ? "builder" : "standard";
+  return profile === "isolated" ? "isolated" : "standard";
 }
 
 export interface GatewayHeartbeatView {

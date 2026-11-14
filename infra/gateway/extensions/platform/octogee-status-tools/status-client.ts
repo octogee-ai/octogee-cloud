@@ -135,7 +135,7 @@ export function formatStatusText(status: AgentUsageStatus): string {
 }
 
 function dualReadGatewayClassValue(value: string): string {
-  return value === "isolated" ? "builder" : value;
+  return value === "builder" ? "isolated" : value;
 }
 
 export function gatewayClassMismatchNote(podClass: string, fleetDocClass: string): string {

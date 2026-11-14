@@ -115,7 +115,7 @@ async function assertNoCompetingMigrations(tx: PlatformStateTransaction, active:
 }
 function pristineQueuedMigration(row: RecordValue): boolean {
   const untouched = ['firstStartedAt', 'lastProgressAt', 'lastResumedAt', 'nextAttemptAt', 'error', 'rolledBack', 'output',
-    'customerMigrationV2', 'sourceTransferExecution', 'schedulerHandoff', 'schedulerHandoffReleased',
+    'userMigrationV2', 'sourceTransferExecution', 'schedulerHandoff', 'schedulerHandoffReleased',
     'schedulerHandoffReleasedAt', 'schedulerHandoffLost', 'cutoverCommittedAt', 'restoreAttempt', 'cancellationRequestedAt'];
   const input = object(row.input);
   const identity = [input.uid, input.fromGatewayId, input.toGatewayId].every(value => typeof value === 'string' && value.length > 0);

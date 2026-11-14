@@ -62,7 +62,7 @@ function durableIsolatedGateway(
     roll: null,
     configSchemaVersion: 1,
     profile: "standard",
-    gatewayClass: "builder",
+    gatewayClass: "isolated",
     imageProfile: "standard",
     sizingTier: "m",
     gcpProject: null,
@@ -481,8 +481,8 @@ describe("createHttpServer — admin gateway routes", () => {
     }));
     store.gateways["gw-alice"] = {
       ...durableIsolatedGateway("gw-alice", "running"),
-      profile: "builder",
-      imageProfile: "builder",
+      profile: "isolated",
+      imageProfile: "isolated",
     };
     const app = createHttpServer(buildDeps(store, {
       releaseEnvironment: "test",
@@ -632,7 +632,7 @@ describe("createHttpServer — admin gateway routes", () => {
             generation: 1,
             status: "provisioning",
             sourceGatewayId: "shared-a",
-            targetGatewayId: "alice-xs-12345678",
+            targetGatewayId: "alice-s-12345678",
             activationOperationId: "activate-alice",
             requestedAt: Date.now() - 2_000,
           },
@@ -799,7 +799,7 @@ describe("createHttpServer — admin gateway routes", () => {
   });
 
   it("serves gateways requested by the fleet controller before their heartbeat docs exist", async () => {
-    store.gateways["canary"] = { ...durableSharedGateway("canary"), sizingTier: "xs" };
+    store.gateways["canary"] = { ...durableSharedGateway("canary"), sizingTier: "s" };
     store.glmGateways["canary"] = {
       ...servingRuntime("canary", { imageTag: "8507a63-oc2026.6.10" }),
       heartbeat: {},

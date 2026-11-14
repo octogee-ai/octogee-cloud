@@ -72,7 +72,7 @@ export function isAnonymousOperationalModelDimension(
 const ANONYMOUS_OPERATIONAL_ENVIRONMENTS = ["test", "prod"] as const;
 const ANONYMOUS_OPERATIONAL_GATEWAY_CLASSES = [
   "shared",
-  "builder",
+  "isolated",
 ] as const;
 
 export function closedOperationalValue(

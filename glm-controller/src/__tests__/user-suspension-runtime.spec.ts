@@ -174,7 +174,7 @@ describe("platform suspension fences", () => {
   it("terminally cancels queued user migrations and requests cancellation for started work", async () => {
     const records: Documents = {
       ...migration("queued-migration", {}),
-      ...migration("started-migration", { status: "running", startedAt: 20, customerMigrationV2: { phase: "initialized" } }),
+      ...migration("started-migration", { status: "running", startedAt: 20, userMigrationV2: { phase: "initialized" } }),
       ...migration("forward-retry", { schedulerHandoff: { forwardRecovery: { schemaVersion: 1, phase: "source-flushed" } } }),
       ...migration("other-user", { inputUid: "uid-2", input: { uid: "uid-2", fromGatewayId: "default", toGatewayId: "builder-2" } }),
     };

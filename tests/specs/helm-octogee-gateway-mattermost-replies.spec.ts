@@ -16,9 +16,9 @@ const REQUIRED_VALUES: Record<string, string> = {
 };
 
 const ISOLATED_VALUES: Record<string, string> = {
-  gatewayClass: "builder",
-  imageProfile: "builder",
-  profile: "builder",
+  gatewayClass: "isolated",
+  imageProfile: "isolated",
+  profile: "isolated",
   sizingTier: "s",
   runtimeKind: "gce-vm",
 };

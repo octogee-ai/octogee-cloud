@@ -17,7 +17,7 @@ const docs = {
   "gateways/b-x": {
     gatewayId: "b-x", createdAt: 1, createdBy: "t", updatedAt: 1, updatedBy: "t", latestRelease: 1, desiredRelease: 1, liveRelease: 1,
     liveRevisionId: "b-x-r1", trafficRevisionId: "b-x-r1", desiredStatus: "running", roll: null, configSchemaVersion: 1,
-    profile: "builder", gatewayClass: "builder", imageProfile: "builder", sizingTier: null, gcpProject: null,
+    profile: "isolated", gatewayClass: "isolated", imageProfile: "isolated", sizingTier: null, gcpProject: null,
     gatewayContainerSecurityContext: null, serviceAccountName: null, serviceAccount: null, builderAccess: null,
     ownerUid: "UidA", builderSlug: "mama", modelBrokerLimits: null, preemption: null,
     allocation: { kind: "disposable-builder", schemaVersion: 1, leaseId: "lease-mama", generation: 2, claimedByUid: "UidA" },

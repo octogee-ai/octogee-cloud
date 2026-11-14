@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readGatewayAuthSecret, type AuthSecretEnsurer, type GatewayAuthSecret, type KubectlSubprocess } from "./auth-secret-ensurer.js";
 
-type GatewayIdentity = { gatewayClass: "shared" | "builder"; ownerUid: string | null; builderSlug: string | null; desiredStatus: string; retirementClaim?: unknown };
+type GatewayIdentity = { gatewayClass: "shared" | "isolated"; ownerUid: string | null; builderSlug: string | null; desiredStatus: string; retirementClaim?: unknown };
 
 function retirementBegan(gateway: GatewayIdentity): boolean {
   return gateway.desiredStatus === "retired" || gateway.retirementClaim != null;
@@ -64,7 +64,7 @@ export function createGatewayCredentialEnsurers(deps: {
     }
     const dsn = await deps.provisionAgentStore({
       gatewayId: input.gatewayId, gatewayClass: gateway.gatewayClass, token: secret.token,
-      ...(gateway.gatewayClass === "builder" && gateway.ownerUid && gateway.builderSlug
+      ...(gateway.gatewayClass === "isolated" && gateway.ownerUid && gateway.builderSlug
         ? { user: { uid: gateway.ownerUid, slug: gateway.builderSlug } } : {}),
     }, assertCurrent);
     await assertCurrent();

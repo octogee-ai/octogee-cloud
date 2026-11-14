@@ -123,7 +123,7 @@ export function assertUserRestoreSettled(operation: Operation, attempt: unknown)
     receipt.uid === operation.input.uid,
     receipt.fromGatewayId === operation.input.fromGatewayId,
     receipt.gatewayId === operation.input.toGatewayId,
-    operation.input.builderSlug === undefined || receipt.slug === operation.input.builderSlug,
+    operation.input.userSlug === undefined || receipt.slug === operation.input.userSlug,
     Number.isSafeInteger(receipt.assignmentEpoch) && (receipt.assignmentEpoch as number) >= 0,
     positiveRestoreTimestamp(receipt.claimStartedAt),
     positiveRestoreTimestamp(receipt.dispatchedAt),

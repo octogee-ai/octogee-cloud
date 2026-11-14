@@ -48,7 +48,7 @@ async function readAuthority(transaction: PlatformStateTransaction, gatewayId: s
   const root = stored && withoutRevision(stored);
   const desired = root && projectGatewayDesiredRootForGateway(root, gatewayId);
   const liveRelease = root?.liveRelease;
-  if (!root || !desired || desired.gatewayClass !== "builder" || desired.desiredStatus !== "running" || root.retirementClaim != null ||
+  if (!root || !desired || desired.gatewayClass !== "isolated" || desired.desiredStatus !== "running" || root.retirementClaim != null ||
     (rootRuntime(root) !== undefined && rootRuntime(root) !== "cluster") || typeof liveRelease !== "number" || !Number.isSafeInteger(liveRelease) || liveRelease < 1 || liveRelease !== root.desiredRelease) {
     throw new Error("restart resolution requires a converged running isolated gateway");
   }
@@ -95,7 +95,7 @@ async function assertNoCustody(transaction: PlatformStateTransaction, gatewayId:
     return [ids.gatewayId, ids.fromGatewayId, ids.toGatewayId, ids.sourceGatewayId, ids.targetGatewayId].includes(gatewayId);
   };
   if (holders.sourceTransferSource.length > 0 || holders.sourceTransferTarget.length > 0 || holders.assigned.some(isolatedRuntimeMutationFenced) ||
-    operations.some(operation => touches(operation.input) || touches(operation.customerMigrationV2) || operation.input?.uid === ownerUid) || tasks.some(touches)) {
+    operations.some(operation => touches(operation.input) || touches(operation.userMigrationV2) || operation.input?.uid === ownerUid) || tasks.some(touches)) {
     throw new Error("restart resolution is blocked by active gateway custody");
   }
 }

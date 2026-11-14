@@ -46,7 +46,7 @@ describe("validateRequiredEnv", () => {
   });
 
   it("applies the same non-secret runtime requirements to shared and user profiles", () => {
-    expect(validateRequiredEnv({}, { isProd: true, profile: "builder" }).missing).toEqual(["GCP_PROJECT_ID"]);
+    expect(validateRequiredEnv({}, { isProd: true, profile: "isolated" }).missing).toEqual(["GCP_PROJECT_ID"]);
     expect(validateRequiredEnv({}, { isProd: true, profile: "standard" }).missing).toEqual(["GCP_PROJECT_ID"]);
   });
 

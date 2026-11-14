@@ -25,7 +25,7 @@ function gatewayRoot(gatewayId: string, overrides: Record<string, unknown> = {})
   return {
     gatewayId, createdAt: 1, createdBy: "test", updatedAt: 1, updatedBy: "test",
     latestRelease: 1, desiredRelease: 1, liveRelease: 1, desiredStatus: "paused",
-    configSchemaVersion: 1, profile: null, gatewayClass: "builder", imageProfile: "builder", sizingTier: null, gcpProject: null,
+    configSchemaVersion: 1, profile: null, gatewayClass: "isolated", imageProfile: "isolated", sizingTier: null, gcpProject: null,
     gatewayContainerSecurityContext: null, serviceAccountName: null, serviceAccount: null, builderAccess: null,
     ownerUid: "u1", builderSlug: "alice", modelBrokerLimits: null, preemption: null,
     ...overrides,
@@ -104,7 +104,7 @@ describe("TEST fleet operator release mutation", () => {
     expect(mocks.mutate).not.toHaveBeenCalled();
   });
   it("fails closed on a stored root that is not a durable gateway root", async () => {
-    const { store } = fixture({ "gateways/b-paused": { gatewayId: "b-paused", gatewayClass: "builder" } });
+    const { store } = fixture({ "gateways/b-paused": { gatewayId: "b-paused", gatewayClass: "isolated" } });
     await expect(deployFleetUser(store, { gatewayId: "b-paused" }, manifest, payload, "test")).rejects.toBeInstanceOf(MalformedRecordError);
     expect(mocks.mutate).not.toHaveBeenCalled();
   });
@@ -185,7 +185,7 @@ describe("TEST fleet snapshot", () => {
     expect(snapshot.sharedReplacements).toEqual([{ sourceGatewayId: "shared-1", targetGatewayId: "shared-2", updatedAt: 40 }]);
     expect(snapshot.retirements).toEqual([{ gatewayId: "b-gone", operationId: "retire-1", completedAt: 12, live: { observedAt: expect.any(Number), instances: [expect.objectContaining({ id: "pod-2" })] } }]);
     expect(snapshot.gateways).toEqual([expect.objectContaining({
-      gatewayId: "b-paused", gatewayClass: "builder", imageProfile: "builder", desiredStatus: "paused",
+      gatewayId: "b-paused", gatewayClass: "isolated", imageProfile: "isolated", desiredStatus: "paused",
       latestRelease: 1, desiredRelease: 1, liveRelease: 1, desiredPayload: payload, latestPayload: payload,
       runtime: { release: 1, lifecycle: "serving", status: "ready", heartbeatAt: 900, mountedCustomers: ["alice"], migratingIn: [] },
       live: { observedAt: expect.any(Number), instances: [expect.objectContaining({ id: "pod-1", ready: true })] },

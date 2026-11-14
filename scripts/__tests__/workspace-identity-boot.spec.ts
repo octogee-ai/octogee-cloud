@@ -14,7 +14,7 @@ afterEach(() => {
 });
 
 describe("workspace identity boot in the gateway package layout", () => {
-  it.each(["shared", "builder"])("boots %s with dependencies installed under scripts", gatewayClass => {
+  it.each(["shared", "isolated"])("boots %s with dependencies installed under scripts", gatewayClass => {
     const root = mkdtempSync(path.join(tmpdir(), "workspace-identity-boot-"));
     roots.push(root);
     mkdirSync(path.join(root, "core"));
@@ -29,6 +29,6 @@ describe("workspace identity boot in the gateway package layout", () => {
         GATEWAY_ID: "test-gateway", OPENCLAW_DIR: root },
     });
     expect(result.status, result.stderr).toBe(0);
-    if (gatewayClass === "builder") expect(readFileSync(path.join(root, "workspace-identity-boot"), "utf8")).toMatch(/^[0-9a-f-]{36}$/u);
+    if (gatewayClass === "isolated") expect(readFileSync(path.join(root, "workspace-identity-boot"), "utf8")).toMatch(/^[0-9a-f-]{36}$/u);
   });
 });

@@ -544,7 +544,7 @@ describe("Isolated target runtime enablement", () => {
     const previousGatewayClass = process.env.GATEWAY_CLASS;
     const previousApiOrigin = process.env.API_PUBLIC_URL;
     process.env.GATEWAY_ID = "alice-user";
-    process.env.GATEWAY_CLASS = "builder";
+    process.env.GATEWAY_CLASS = "isolated";
     process.env.API_PUBLIC_URL = "https://api.example.invalid";
     withUserClaim({ OPENCLAW_DIR: testRuntime.dir, GATEWAY_ID: "alice-user" }, "alice");
     const repo = path.join(testRuntime.dir, "system_config");
@@ -2224,7 +2224,7 @@ describe("buildBrokeredLifecycleAdapter migration import activation", () => {
 
   it("anchors a gateway VM's activation to the neutral agent with its desktop tools denied", async () => {
     stubUserClaim("tester10");
-    vi.stubEnv("GATEWAY_CLASS", "builder");
+    vi.stubEnv("GATEWAY_CLASS", "isolated");
     vi.stubEnv("GATEWAY_RUNTIME_KIND", "gce-vm");
     try {
       const rpc = {
@@ -3595,9 +3595,9 @@ describe("buildBrokeredLifecycleAdapter add config patch", () => {
     }
   });
 
-  it.each(["builder", "shared"])("keeps %s account endpoint ownership through a full remount", async (gatewayClass) => {
+  it.each(["isolated", "shared"])("keeps %s account endpoint ownership through a full remount", async (gatewayClass) => {
     vi.stubEnv("GATEWAY_CLASS", gatewayClass);
-    stubUserClaim(gatewayClass === "builder" ? "alice" : "");
+    stubUserClaim(gatewayClass === "isolated" ? "alice" : "");
     const snapshot = aliceSnapshot({ projectAgents: [
       { projectId: "orbit", enabled: true, mmUserId: "bot-orbit", token: "orbit-pat", status: "ready" },
       { projectId: "scout", enabled: true, mmUserId: "bot-scout", token: "scout-pat", status: "ready" },
@@ -3618,20 +3618,20 @@ describe("buildBrokeredLifecycleAdapter add config patch", () => {
     const adapter = buildBrokeredLifecycleAdapter({
       client: mkClient({ userSnapshot: vi.fn(async () => snapshot) }),
       rpc: mkGatewayRpc(rosterRpc(config)), log: vi.fn(),
-      isIsolatedGateway: () => gatewayClass === "builder",
+      isIsolatedGateway: () => gatewayClass === "isolated",
     });
 
     await adapter.applyAddUserConfigPatch(snapshot, { _coachPersonalToken: "default-agent-pat" });
 
     const accounts = patch!.channels.mattermost.accounts;
-    expect(accounts["alice-coach"].baseUrl).toBe(gatewayClass === "builder" ? "https://owner-coach.example" : "${MM_URL}");
-    expect(accounts["alice-proj-orbit"].baseUrl).toBe(gatewayClass === "builder" ? "https://owner-orbit.example" : "${MM_URL}");
+    expect(accounts["alice-coach"].baseUrl).toBe(gatewayClass === "isolated" ? "https://owner-coach.example" : "${MM_URL}");
+    expect(accounts["alice-proj-orbit"].baseUrl).toBe(gatewayClass === "isolated" ? "https://owner-orbit.example" : "${MM_URL}");
     expect(accounts["alice-proj-scout"].baseUrl).toBe("${MM_URL}");
   });
 
-  it.each(["builder", "shared"])("seeds a new %s project agent with the platform default and its fallbacks", async (gatewayClass) => {
+  it.each(["isolated", "shared"])("seeds a new %s project agent with the platform default and its fallbacks", async (gatewayClass) => {
     vi.stubEnv("GATEWAY_CLASS", gatewayClass);
-    stubUserClaim(gatewayClass === "builder" ? "alice" : "");
+    stubUserClaim(gatewayClass === "isolated" ? "alice" : "");
     const platformDefault = {
       primary: "platform-openai/gpt-6.1-terra",
       fallbacks: ["platform-openrouter/z-ai/glm-5.2"],
@@ -3650,7 +3650,7 @@ describe("buildBrokeredLifecycleAdapter add config patch", () => {
     const adapter = buildBrokeredLifecycleAdapter({
       client: mkClient({ userSnapshot: vi.fn(async () => snapshot) }),
       rpc: mkGatewayRpc(rosterRpc(config)), log: vi.fn(),
-      isIsolatedGateway: () => gatewayClass === "builder",
+      isIsolatedGateway: () => gatewayClass === "isolated",
     });
 
     await adapter.applyAddUserConfigPatch(snapshot, { _coachPersonalToken: "default-agent-pat" });
@@ -3660,7 +3660,7 @@ describe("buildBrokeredLifecycleAdapter add config patch", () => {
 
   it("seeds a new house-only project agent with the compiled agent model, never the platform default", async () => {
     installUserEntitlementsForTest(houseOnlyUserEntitlements);
-    vi.stubEnv("GATEWAY_CLASS", "builder");
+    vi.stubEnv("GATEWAY_CLASS", "isolated");
     stubUserClaim("alice");
     const snapshot = aliceSnapshot({
       planInputs: { tier: "free", selectedTier: "free" },
@@ -6284,15 +6284,15 @@ describe("projectCheckoutScopeForRuntime", () => {
 
   it("restores project checkouts for the exact configured isolated user", () => {
     expect(projectCheckoutScopeForRuntime("alice", withUserClaim({
-      GATEWAY_CLASS: "builder",
+      GATEWAY_CLASS: "isolated",
     }, "alice"))).toBe("workspace-and-projects");
   });
 
   it.each([
     ["a mismatched isolated user", "bob", withUserClaim({
-      GATEWAY_CLASS: "builder",
+      GATEWAY_CLASS: "isolated",
     }, "alice")],
-    ["an isolated gateway with no configured slug", "alice", { GATEWAY_CLASS: "builder" }],
+    ["an isolated gateway with no configured slug", "alice", { GATEWAY_CLASS: "isolated" }],
     ["a runtime with no class", "alice", withUserClaim({ }, "alice")],
     ["an unknown runtime class", "alice", withUserClaim({
       GATEWAY_CLASS: "unknown",

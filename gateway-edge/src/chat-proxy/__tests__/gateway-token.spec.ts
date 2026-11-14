@@ -181,7 +181,7 @@ describe("fetchGatewayToken", () => {
   });
 
   it("User profile uses the local in-pod OPENCLAW_GATEWAY_TOKEN instead of Secret Manager", async () => {
-    process.env.GATEWAY_PROFILE = "builder";
+    process.env.GATEWAY_PROFILE = "isolated";
     process.env.GATEWAY_ID = "gw-test";
     process.env.OPENCLAW_GATEWAY_TOKEN = "user-local-token";
     const err = Object.assign(new Error("PERMISSION_DENIED: locked KSA has no SM access"), { code: 7 });
@@ -192,7 +192,7 @@ describe("fetchGatewayToken", () => {
   });
 
   it("User env fallback is local-gateway only", async () => {
-    process.env.GATEWAY_PROFILE = "builder";
+    process.env.GATEWAY_PROFILE = "isolated";
     process.env.GATEWAY_ID = "gw-local";
     process.env.OPENCLAW_GATEWAY_TOKEN = "user-local-token";
     const err = Object.assign(new Error("PERMISSION_DENIED: locked KSA has no SM access"), { code: 7 });

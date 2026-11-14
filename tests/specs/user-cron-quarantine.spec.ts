@@ -307,7 +307,7 @@ function fixture(extraRows: CronRow[] = []) {
   return { root, jobCount: rows.length };
 }
 
-function run(root: string, gatewayClass: "shared" | "builder", scriptPath = script) {
+function run(root: string, gatewayClass: "shared" | "isolated", scriptPath = script) {
   return spawnSync("node", [realpathSync(scriptPath)], {
     encoding: "utf8",
     env: { ...process.env, OPENCLAW_DIR: root, GATEWAY_CLASS: gatewayClass },
@@ -329,7 +329,7 @@ describe("user cron routing quarantine", () => {
     expect(result.stdout).toContain("quarantined 26 unsafe user cron job(s)");
   });
 
-  it.each(["shared", "builder"] as const)(
+  it.each(["shared", "isolated"] as const)(
     "removes cross-tenant and unsafe persisted jobs before %s startup while preserving reminders and the full captured agent tool surface",
     (gatewayClass) => {
       const { root } = fixture();
@@ -459,7 +459,7 @@ describe("user cron routing quarantine", () => {
       row("dm-foreign-failure-alert", { ...direct, delivery_to: `user:${ownerPeer}`, failure_alert_to: `user:${"x".repeat(26)}` }),
     ]);
 
-    const result = run(root, "builder");
+    const result = run(root, "isolated");
 
     expect(result.status, result.stderr).toBe(0);
     const db = new DatabaseSync(path.join(root, "state", "openclaw.sqlite"), { readOnly: true });

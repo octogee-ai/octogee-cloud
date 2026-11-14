@@ -68,8 +68,8 @@ describe("gateway convergence surge wiring", () => {
   it("rechecks an initial disposable isolated prelaunch after an unavailable poll", async () => {
     const prelaunch = {
       ...gateway(),
-      gatewayClass: "builder",
-      imageProfile: "builder",
+      gatewayClass: "isolated",
+      imageProfile: "isolated",
       liveRelease: null,
       allocation: { kind: "disposable-builder" },
     } as DurableGateway;
@@ -215,9 +215,9 @@ describe("gateway convergence surge wiring", () => {
     const builderImageTag = `def5678-oc2026.7.1@sha256:${"b".repeat(64)}`;
     const isolatedGateway = {
       ...gateway(),
-      gatewayClass: "builder" as const,
-      profile: "builder" as const,
-      imageProfile: "builder" as const,
+      gatewayClass: "isolated" as const,
+      profile: "isolated" as const,
+      imageProfile: "isolated" as const,
       ownerUid: "uid-walter",
       builderSlug: "walter",
       allocation: {
@@ -269,9 +269,9 @@ describe("gateway convergence surge wiring", () => {
       latestRelease: 1,
       desiredRelease: 1,
       liveRelease: null,
-      gatewayClass: "builder" as const,
-      profile: "builder" as const,
-      imageProfile: "builder" as const,
+      gatewayClass: "isolated" as const,
+      profile: "isolated" as const,
+      imageProfile: "isolated" as const,
       ownerUid: "uid-walter",
       builderSlug: "walter",
       allocation: {
@@ -326,9 +326,9 @@ describe("gateway convergence surge wiring", () => {
       latestRelease: 1,
       desiredRelease: 1,
       liveRelease: null,
-      gatewayClass: "builder" as const,
-      profile: "builder" as const,
-      imageProfile: "builder" as const,
+      gatewayClass: "isolated" as const,
+      profile: "isolated" as const,
+      imageProfile: "isolated" as const,
       ownerUid: "uid-walter",
       builderSlug: "walter",
       allocation: {

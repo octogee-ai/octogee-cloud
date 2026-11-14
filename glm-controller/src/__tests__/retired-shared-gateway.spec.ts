@@ -48,7 +48,7 @@ describe("retired Shared gateway unmount proof", () => {
 
   it.each([
     ["live root", `gateways/${gatewayId}`, root({ gatewayClass: "shared", desiredStatus: "running" })],
-    ["foreign owner", `gateways/${gatewayId}`, root({ gatewayClass: "builder", ownerUid: "other", desiredStatus: "retired" })],
+    ["foreign owner", `gateways/${gatewayId}`, root({ gatewayClass: "isolated", ownerUid: "other", desiredStatus: "retired" })],
     ["runtime record", `glmGateways/${gatewayId}`, { docKind: "runtime", gatewayId, release: 1, lifecycle: "serving" }],
     ["assignment", `gateways/${gatewayId}/assignments/user`, assignment("user")],
     ["user reference", "users/user", { provisioning: { openclaw: { gatewayId } } }],

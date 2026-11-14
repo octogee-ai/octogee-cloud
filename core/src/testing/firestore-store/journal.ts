@@ -133,7 +133,7 @@ function createOperationsRepository(session: FirestoreSession): OperationsReposi
     async listByInputUserSlugPrefix(prefix) {
       return list(
         "journal.operations.listByInputBuilderSlugPrefix",
-        collection().where("input.builderSlug", ">=", prefix).where("input.builderSlug", "<", `${prefix}`),
+        collection().where("input.userSlug", ">=", prefix).where("input.userSlug", "<", `${prefix}`),
       );
     },
 

@@ -359,7 +359,7 @@ describe("product admin routes on the API's admin router", () => {
 
     expect(res.body).toMatchObject({ dryRun: true, plans: [{ what: "change the product setting", kind: "product-setting" }] });
     expect(res.status).toBe(200);
-    expect(addAdminRoutes).toHaveBeenCalledWith(expect.anything(), { db: expect.anything(), store: expect.anything() });
+    expect(addAdminRoutes).toHaveBeenCalledWith(expect.anything(), { store: expect.anything() });
   });
 
   it("has no idle setting and no lease routes when no product is installed", async () => {

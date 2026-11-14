@@ -1,6 +1,6 @@
 export interface AgentStoreGatewayIdentity {
     gatewayId: string;
-    gatewayClass: "shared" | "builder";
+    gatewayClass: "shared" | "isolated";
     token: string;
     user?: {
         uid: string;
@@ -21,7 +21,7 @@ export declare function createAgentStoreOwnershipTransferer(adminDsn: string, re
 }) => Promise<readonly AgentStoreHandoffIdentity[]>): (user: {
     uid: string;
     slug: string;
-}, target: "shared" | "builder", assertCurrent?: () => Promise<void>) => Promise<void>;
+}, target: "shared" | "isolated", assertCurrent?: () => Promise<void>) => Promise<void>;
 export declare function assertNoUserAgentStores(adminDsn: string, user: {
     uid: string;
     slug: string;

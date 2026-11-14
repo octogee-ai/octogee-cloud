@@ -143,7 +143,7 @@ describe('journaled Shared restore runtime recovery', () => {
     const queued = queuedMigration(h);
     const row = h.store['glmOperations/queued'];
     const error = 'expected exactly one ready pod for transport=shared-1; found 0';
-    row.input = { uid: 'other', builderSlug: 'bob', fromGatewayId: 'shared-1', toGatewayId: 'shared-2' };
+    row.input = { uid: 'other', userSlug: 'bob', fromGatewayId: 'shared-1', toGatewayId: 'shared-2' };
     Object.assign(row, { attempts, firstStartedAt: 1_100, lastProgressAt: 1_200 + attempts * 100, nextAttemptAt: 481_200 + attempts * 100,
       error: `attempt ${attempts} failed (transient): ${error} — retrying in 480s`,
       schedulerHandoff: { uid: 'other', slug: 'bob', fromGatewayId: 'shared-1', toGatewayId: 'shared-2', migrationId: `mig-queued:scheduler:${attempts}:claim:${1_100 + (attempts - 1) * 100}` },
@@ -354,7 +354,7 @@ describe('journaled Shared restore runtime recovery', () => {
   it.each([
     ['startedAt', 2_600], ['status', 'running'], ['completedAt', 2_600], ['steps', [{ name: 'keys-sync-state', status: 'running' }]],
     ['attempts', 14], ['attemptHistory', undefined], ['attemptHistory', []], ['resumeCount', 1], ['lastResumedAt', 2_500],
-    ['customerMigrationV2', {}], ['sourceTransferExecution', {}], ['schedulerHandoffLost', true], ['cutoverCommittedAt', 2_000],
+    ['userMigrationV2', {}], ['sourceTransferExecution', {}], ['schedulerHandoffLost', true], ['cutoverCommittedAt', 2_000],
     ['restoreAttempt', {}], ['cancellationRequestedAt', 2_000], ['rolledBack', false], ['output', { configCleanup: {} }],
     ['input.toGatewayId', 'builder-other'], ['input.sourceTransferMode', 'retained-pod'],
     ['input.recoverSourceOnly', true], ['schedulerHandoff.migrationId', 'mig-queued:scheduler:12'], ['schedulerHandoff.uid', 'foreign'],
@@ -507,7 +507,7 @@ describe('journaled Shared restore runtime recovery', () => {
     ['startedAt', 1], ['startedAt', undefined], ['firstStartedAt', 1], ['firstStartedAt', null],
     ['lastProgressAt', 1], ['lastResumedAt', 1], ['attempts', 1], ['attempts', '0'], ['resumeCount', 1],
     ['attemptHistory', [{}]], ['attemptHistory', {}], ['steps', [{}]], ['steps', undefined],
-    ['customerMigrationV2', { phase: 'initialized' }], ['schedulerHandoff', {}], ['sourceTransferExecution', {}],
+    ['userMigrationV2', { phase: 'initialized' }], ['schedulerHandoff', {}], ['sourceTransferExecution', {}],
     ['restoreAttempt', {}], ['cutoverCommittedAt', 1], ['output', {}], ['nextAttemptAt', 1],
     ['completedAt', 1], ['completedAt', undefined], ['status', 'running'], ['createdAt', 0], ['createdAt', undefined],
     ['input', { fromGatewayId: 'shared-1' }], ['schedulerHandoffReleased', false], ['schedulerHandoffLost', 'unknown'],
@@ -766,7 +766,7 @@ describe('journaled Shared source schema repair', () => {
           error: '/quiesce/shared-1: 500 ' + JSON.stringify({ error: 'quiesce failed', message: 'WorkerTaskError: Session history database read was revoked: code=unavailable' }),
           rolledBack: true, schedulerHandoffReleased: true, schedulerHandoffReleasedAt: 250, attemptHistory: [],
           schedulerHandoff: { migrationId: `mig-${operationId}:scheduler:1:claim:${row.startedAt}`, fromGatewayId: 'shared-1', toGatewayId: 'shared-2', uid, slug } });
-        Object.assign(row.input, { builderSlug: slug, source: 'continuous-placement-policy' });
+        Object.assign(row.input, { userSlug: slug, source: 'continuous-placement-policy' });
         row.steps = [{ name: 'keys-sync-state', status: 'done' }, { name: 'pre-sync-state', status: 'done' },
           { name: 'wait-for-active-work', status: 'failed', error: row.error }, { name: 'rollback:unmount-target', status: 'done' }];
         row.attemptHistory = [{ attempt: 1, startedAt: row.startedAt, completedAt: row.completedAt, error: row.error, steps: structuredClone(row.steps) }];
@@ -1141,7 +1141,8 @@ describe('journaled Shared source schema repair', () => {
       payloadHash: releasePayloadHash(payload), payload };
     h.store['glmGateways/shared-2'] = { docKind: 'runtime', gatewayId: 'shared-2', runtime: 'cluster', release: 1, lifecycle: 'serving',
       heartbeat: { status: 'ready', lastHeartbeatAt: h.deps.now(), mountedCustomers: [], migratingIn: [] } };
-    const request = { ...h.store[`glmOperations/${failedId}`].input, operationId: failedId };
+    const { userSlug, ...failedInput } = h.store[`glmOperations/${failedId}`].input;
+    const request = { ...failedInput, builderSlug: userSlug, operationId: failedId };
     await expect(enqueuePlacementMigration({ store: h.deps.store, now: h.deps.now, platformArtifact: payload }, request)).resolves.toBe(failedId);
     expect(h.store[`glmOperations/${failedId}`].status).toBe('pending');
   });

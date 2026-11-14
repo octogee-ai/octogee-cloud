@@ -141,11 +141,11 @@ describe("isValidNewGatewayId", () => {
 });
 
 describe("isolated class dual read", () => {
-  it("reads the isolated value the same as builder for class, profile and image profile", () => {
-    expect(dualReadGatewayClassValue("isolated")).toBe("builder");
-    expect(dualReadGatewayClassValue("builder")).toBe("builder");
-    expect(isIsolatedGatewayClassValue("isolated")).toBe(true);
+  it("reads the previous release's builder value as isolated for class, profile and image profile", () => {
+    expect(dualReadGatewayClassValue("builder")).toBe("isolated");
+    expect(dualReadGatewayClassValue("isolated")).toBe("isolated");
     expect(isIsolatedGatewayClassValue("builder")).toBe(true);
+    expect(isIsolatedGatewayClassValue("isolated")).toBe(true);
   });
 
   it("passes every other value through so validators still reject unknown classes", () => {
@@ -155,18 +155,18 @@ describe("isolated class dual read", () => {
     }
   });
 
-  it("resolves an isolated stored class and image profile the same as builder", () => {
+  it("resolves the previous release's builder class and image profile as isolated", () => {
     for (const value of ["builder", "isolated"]) {
       const stored = { gatewayClass: value, imageProfile: value };
       expect(resolveUserGatewayControlState({ ...stored, ownerUid: "u1", builderAccess: { controlUiEnabled: true } as never }, "u1"))
-        .toEqual({ gatewayProfile: "builder", controlUiEnabled: true });
+        .toEqual({ gatewayProfile: "isolated", controlUiEnabled: true });
     }
   });
 });
 
 describe("gateway class/profile resolution", () => {
   it("exposes exactly the shared and disposable isolated user classes", () => {
-    expect(GATEWAY_CLASSES).toEqual(["shared", "builder"]);
+    expect(GATEWAY_CLASSES).toEqual(["shared", "isolated"]);
   });
 
   it("does not infer a user class from a legacy runtime profile", () => {
@@ -184,12 +184,12 @@ describe("gateway class/profile resolution", () => {
   });
 
   it("maps the isolated class to its isolated image profile", () => {
-    expect(resolveGatewayClass({ gatewayClass: "builder", profile: "standard" })).toBe("builder");
-    expect(resolveGatewayImageProfile({ gatewayClass: "builder", profile: "standard" })).toBe("builder");
+    expect(resolveGatewayClass({ gatewayClass: "isolated", profile: "standard" })).toBe("isolated");
+    expect(resolveGatewayImageProfile({ gatewayClass: "isolated", profile: "standard" })).toBe("isolated");
   });
 
   it("lets explicit imageProfile override the class-derived image", () => {
-    expect(resolveGatewayImageProfile({ gatewayClass: "builder", imageProfile: "builder" })).toBe("builder");
+    expect(resolveGatewayImageProfile({ gatewayClass: "isolated", imageProfile: "isolated" })).toBe("isolated");
     expect(resolveGatewayImageProfile({ gatewayClass: "shared", imageProfile: "standard" })).toBe("standard");
   });
 });
@@ -207,17 +207,17 @@ describe("defaultIsolatedGatewayAccess", () => {
 
 describe("isGatewayClassControlUiAccessEnabled", () => {
   it("requires explicitly enabled Control UI on isolated classes", () => {
-    expect(isGatewayClassControlUiAccessEnabled("builder", {
+    expect(isGatewayClassControlUiAccessEnabled("isolated", {
       controlUiEnabled: true,
     })).toBe(true);
     expect(isGatewayClassControlUiAccessEnabled("shared", {
       controlUiEnabled: true,
     })).toBe(false);
-    expect(isGatewayClassControlUiAccessEnabled("builder", {
+    expect(isGatewayClassControlUiAccessEnabled("isolated", {
       controlUiEnabled: true,
     })).toBe(true);
-    expect(isGatewayClassControlUiAccessEnabled("builder", {})).toBe(false);
-    expect(isGatewayClassControlUiAccessEnabled("builder", {
+    expect(isGatewayClassControlUiAccessEnabled("isolated", {})).toBe(false);
+    expect(isGatewayClassControlUiAccessEnabled("isolated", {
       controlUiEnabled: false,
     })).toBe(false);
   });
@@ -242,20 +242,20 @@ describe("resolveUserGatewayControlState", () => {
     expect(
       resolveUserGatewayControlState(
         {
-          gatewayClass: "builder",
+          gatewayClass: "isolated",
           imageProfile: "standard",
           ownerUid: "uid-chris",
           builderAccess: { controlUiEnabled: true },
         },
         "uid-chris",
       ),
-    ).toEqual({ gatewayProfile: "builder", controlUiEnabled: true });
+    ).toEqual({ gatewayProfile: "isolated", controlUiEnabled: true });
   });
 
   it("does not grant Control UI to a non-owner", () => {
     expect(
       resolveUserGatewayControlState(
-        { gatewayClass: "builder", ownerUid: "uid-walter", builderAccess: { controlUiEnabled: true } },
+        { gatewayClass: "isolated", ownerUid: "uid-walter", builderAccess: { controlUiEnabled: true } },
         "uid-jack",
       ).controlUiEnabled,
     ).toBe(false);
@@ -264,10 +264,10 @@ describe("resolveUserGatewayControlState", () => {
   it("denies Control UI to a guest migrated onto someone else's isolated gateway", () => {
     expect(
       resolveUserGatewayControlState(
-        { gatewayClass: "builder", ownerUid: "uid-walter", builderAccess: { controlUiEnabled: true } },
+        { gatewayClass: "isolated", ownerUid: "uid-walter", builderAccess: { controlUiEnabled: true } },
         "uid-jack",
       ),
-    ).toEqual({ gatewayProfile: "builder", controlUiEnabled: false });
+    ).toEqual({ gatewayProfile: "isolated", controlUiEnabled: false });
   });
 
   it("never enables Control UI on a shared gateway", () => {
@@ -279,7 +279,7 @@ describe("resolveUserGatewayControlState", () => {
   it("respects explicitly locked user access even for the owner", () => {
     expect(
       resolveUserGatewayControlState(
-        { gatewayClass: "builder", ownerUid: "uid-chris", builderAccess: { controlUiEnabled: false } },
+        { gatewayClass: "isolated", ownerUid: "uid-chris", builderAccess: { controlUiEnabled: false } },
         "uid-chris",
       ).controlUiEnabled,
     ).toBe(false);

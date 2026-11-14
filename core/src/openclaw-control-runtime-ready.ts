@@ -121,7 +121,7 @@ async function isServingUserDuringRoll(
   runtime: GatewayRuntimeDoc,
   input: Parameters<typeof isOpenClawControlServingRevision>[2],
 ): Promise<boolean> {
-  if (gateway.gatewayClass !== "builder" || gateway.liveRelease === null || gateway.desiredRelease < gateway.liveRelease ||
+  if (gateway.gatewayClass !== "isolated" || gateway.liveRelease === null || gateway.desiredRelease < gateway.liveRelease ||
     gateway.retireAfter != null ||
     record(root)?.retirementClaim != null || record(root)?.runtimeRestartFence !== undefined ||
     (runtime.release !== gateway.liveRelease && runtime.release !== gateway.desiredRelease) ||

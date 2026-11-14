@@ -105,7 +105,7 @@ function preparingHarness(scenario = "valid") {
   const owner = { username: "owner", provisioning: { openclaw: { slug: "owner", gatewayId: "shared-source" } } };
   const gateway = { gatewayId: "b-owner", createdAt: 1, createdBy: "test", updatedAt: 1, updatedBy: "test",
     latestRelease: 1, desiredRelease: 1, liveRelease: 1, desiredStatus: "running", configSchemaVersion: 1,
-    profile: "builder", gatewayClass: "builder", imageProfile: "builder", sizingTier: null, gcpProject: null,
+    profile: "isolated", gatewayClass: "isolated", imageProfile: "isolated", sizingTier: null, gcpProject: null,
     gatewayContainerSecurityContext: null, serviceAccountName: null, serviceAccount: null, builderAccess: null,
     ownerUid: "uid-owner", builderSlug: "owner", modelBrokerLimits: null, preemption: null };
   const runtime = { docKind: "runtime", release: 1, lifecycle: "running", gatewayId: "b-owner", runtime: "gce-vm", vm: { instanceId: "4242" }, vmInstance: { ownerUid: "uid-owner", builderSlug: "owner" } };
@@ -182,7 +182,7 @@ describe("cancelled forward user preparation", () => {
   function forward(kind: "v2" | "legacy") {
     const h = preparingHarness();
     Object.assign(h.operation, { startedAt: 50, cancellationRequestedAt: 60 });
-    if (kind === "v2") h.operation.customerMigrationV2 = {
+    if (kind === "v2") h.operation.userMigrationV2 = {
       phase: "sourceQuiesced", operationId: "move-0", migrationId: "mig-move-0", uid: "uid-owner", slug: "owner",
       sourceGatewayId: "shared-source", targetGatewayId: "b-owner", sourceEpoch: 7,
     };
@@ -200,7 +200,7 @@ describe("cancelled forward user preparation", () => {
     expect(h.createBlobSignedUrl).toHaveBeenCalledOnce();
   });
   it.each(["phase", "operation", "migration", "uid", "slug", "source", "target", "epoch", "claim"])("rejects cancelled V2 preparation with changed %s authority", async change => {
-    const h = forward("v2"), state = h.operation.customerMigrationV2;
+    const h = forward("v2"), state = h.operation.userMigrationV2;
     if (change === "phase") state.phase = "preSynced";
     if (change === "operation") state.operationId = "other";
     if (change === "migration") state.migrationId = "mig-other";

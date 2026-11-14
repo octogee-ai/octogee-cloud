@@ -16,8 +16,8 @@ const REQUIRED_VALUES: Record<string, string> = {
 
 const ISOLATED_POD: Record<string, string> = {
   gatewayId: "gw-s-0a1b2c3d",
-  gatewayClass: "builder",
-  imageProfile: "builder",
+  gatewayClass: "isolated",
+  imageProfile: "isolated",
   sizingTier: "s",
   runtimeKind: "cluster",
   rollStrategy: "recreate",
@@ -154,7 +154,7 @@ describe("helm/octogee-gateway/ — isolated gateway as a Kubernetes pod", () =>
         const env = envOf(container(deployment, name));
         return { GATEWAY_CLASS: env.GATEWAY_CLASS, OPENCLAW_CONTROL_IDENTITY: env.OPENCLAW_CONTROL_IDENTITY };
       };
-      expect(identity(pod), name).toEqual({ GATEWAY_CLASS: "builder", OPENCLAW_CONTROL_IDENTITY: "per-user" });
+      expect(identity(pod), name).toEqual({ GATEWAY_CLASS: "isolated", OPENCLAW_CONTROL_IDENTITY: "per-user" });
       expect(identity(pod), name).toEqual(identity(vm));
     }
   });
@@ -172,7 +172,8 @@ describe("helm/octogee-gateway/ — isolated gateway as a Kubernetes pod", () =>
     const resources = container(deployment, "gateway").resources!;
     expect(resources.requests["ephemeral-storage"]).toBe("6Gi");
     expect(resources.limits["ephemeral-storage"]).toBe("6Gi");
-    expect(resources.requests.cpu).toBe("2000m");
+    expect(resources.requests.cpu).toBe("1000m");
+    expect(resources.requests.memory).toBe("4Gi");
   });
 
   it.each(["x11", "omarchy"])("refuses a %s desktop, which only a GCE VM carries", (computerDesktop) => {

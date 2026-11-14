@@ -12,7 +12,6 @@ import { GATEWAY_CLASSES, GATEWAY_PROFILES } from './glm.js';
 describe('sizing-tier SSOT', () => {
   it('declares tiers in ascending size order', () => {
     expect(SIZING_TIERS).toEqual([
-      'xs',
       's',
       'm',
       'l',
@@ -54,7 +53,7 @@ describe('sizing-tier SSOT', () => {
   });
 
   it('profiles use the matching class defaults', () => {
-    expect(PROFILE_DEFAULT_TIER.builder).toBe('s');
+    expect(PROFILE_DEFAULT_TIER.isolated).toBe('s');
     expect(PROFILE_DEFAULT_TIER.standard).toBe('l');
   });
 
@@ -66,13 +65,14 @@ describe('sizing-tier SSOT', () => {
   });
 
   it('isolated class defaults to s and the shared gateway defaults to l', () => {
-    expect(GATEWAY_CLASS_DEFAULT_TIER.builder).toBe('s');
+    expect(GATEWAY_CLASS_DEFAULT_TIER.isolated).toBe('s');
     expect(GATEWAY_CLASS_DEFAULT_TIER.shared).toBe('m');
   });
 
-  it('s gives the one active Hobby user browser and desktop headroom', () => {
-    expect(TIER_PRESETS.s.resources.requests.cpu).toBe('2000m');
-    expect(TIER_PRESETS.s.resources.requests.memory).toBe('8Gi');
+  it('s reserves one CPU and 4 GiB for one active user', () => {
+    expect(TIER_PRESETS.s.resources.requests.cpu).toBe('1000m');
+    expect(TIER_PRESETS.s.resources.requests.memory).toBe('4Gi');
+    expect(TIER_PRESETS.s.resources.limits).toEqual(TIER_PRESETS.s.resources.requests);
     expect(TIER_PRESETS.s.nodejs.maxOldSpaceSizeMb).toBe('3072');
     expect(TIER_PRESETS.s.capacity.targetActiveUsers).toBe(1);
   });
@@ -80,13 +80,13 @@ describe('sizing-tier SSOT', () => {
 
 describe('resolveSizingTier', () => {
   it('returns the explicit tier when set, regardless of profile', () => {
-    const result = resolveSizingTier({ sizingTier: 'm', profile: 'builder' });
+    const result = resolveSizingTier({ sizingTier: 'm', profile: 'isolated' });
     expect(result.tier).toBe('m');
     expect(result.resolvedFrom).toBe('explicit');
   });
 
   it('falls back to the profile default (small) when sizingTier is missing', () => {
-    const result = resolveSizingTier({ sizingTier: undefined, profile: 'builder' });
+    const result = resolveSizingTier({ sizingTier: undefined, profile: 'isolated' });
     expect(result.tier).toBe('s');
     expect(result.resolvedFrom).toBe('profile-default');
   });
@@ -100,7 +100,7 @@ describe('resolveSizingTier', () => {
   it('uses the class default before the legacy profile default', () => {
     const result = resolveSizingTier({
       sizingTier: undefined,
-      gatewayClass: 'builder',
+      gatewayClass: 'isolated',
       profile: 'standard',
     });
     expect(result.tier).toBe('s');

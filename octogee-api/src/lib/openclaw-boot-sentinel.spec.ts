@@ -10,7 +10,7 @@ const runtime = { docKind: "runtime", gatewayId, release: 1, lifecycle: "serving
 function fixture() {
   const data: Record<string, Record<string, unknown>> = {
     [`glmGateways/${gatewayId}`]: structuredClone(runtime),
-    [`gateways/${gatewayId}`]: { gatewayId, gatewayClass: "builder", desiredRelease: 1, latestRelease: 1, desiredStatus: "running" },
+    [`gateways/${gatewayId}`]: { gatewayId, gatewayClass: "isolated", desiredRelease: 1, latestRelease: 1, desiredStatus: "running" },
   };
   return { data, store: createOpenClawBootSentinelStore(createDocumentFixtureStore(data), () => 300) };
 }

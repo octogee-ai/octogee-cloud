@@ -1086,7 +1086,7 @@ export function activeMigration(operation: Stored<OperationRecord>): PlacementPo
   const input = record(data.input);
   if (!input) return null;
   const uid = nonEmptyString(input.uid) ?? nonEmptyString(data.inputUid);
-  const builderSlug = nonEmptyString(input.builderSlug);
+  const builderSlug = nonEmptyString(input.userSlug);
   const fromGatewayId = nonEmptyString(input.fromGatewayId);
   const toGatewayId = nonEmptyString(input.toGatewayId);
   const source = placementMigrationSource(input.source);
@@ -1416,7 +1416,7 @@ function gatewayRuntimeStartedAt(input: {
   diagnostics: PlacementPolicyPodDiagnostics | undefined;
 }): number | null {
   const heartbeatStartedAt = input.runtime ? millis(input.runtime.heartbeat.startedAt) : null;
-  if (input.gatewayClass !== "builder" || resolveGatewayRuntime(input.runtime?.runtime) !== "cluster") {
+  if (input.gatewayClass !== "isolated" || resolveGatewayRuntime(input.runtime?.runtime) !== "cluster") {
     return heartbeatStartedAt;
   }
   return heartbeatStartedAt ?? gatewayPodStartedAt(input.gatewayId, input.diagnostics);
@@ -1674,7 +1674,7 @@ function isAutomaticRolledBackPlacement(
     && data.origin === "automatic"
     && data.createdBy === PLACEMENT_POLICY_ACTOR
     && data.rolledBack === true
-    && data.customerMigrationV2 === undefined
+    && data.userMigrationV2 === undefined
     && millis(data.completedAt) !== null;
 }
 
@@ -1702,7 +1702,7 @@ function existingPlacementMigrationMatchesDemand(
   return [
     data.kind === MIGRATE_USER_KIND,
     operationInput?.uid === request.uid,
-    operationInput?.builderSlug === request.builderSlug,
+    operationInput?.userSlug === request.builderSlug,
     operationInput?.fromGatewayId === request.fromGatewayId,
     operationInput?.toGatewayId === request.toGatewayId,
     operationInput?.source === request.source,
@@ -1720,7 +1720,7 @@ function operatorRetriedUserReturnMatchesDemand(
     data.status === "failed" || data.status === ROLLED_BACK_STATUS,
     millis(data.retryRequestedAt) !== null,
     operationInput?.uid === request.uid,
-    operationInput?.builderSlug === request.builderSlug,
+    operationInput?.userSlug === request.builderSlug,
     operationInput?.fromGatewayId === request.fromGatewayId,
     operationInput?.source === request.source,
   ].every(Boolean);
@@ -1734,8 +1734,8 @@ function startupFailedReturnMatchesDemand(data: Record<string, unknown>, request
   const original = record(data.input);
   return request.source === USER_ACTIVATION_LEASE_SOURCE && data.kind === MIGRATE_USER_KIND &&
     data.status === "failed" && data.origin === "automatic" && data.createdBy === PLACEMENT_POLICY_ACTOR &&
-    data.customerMigrationV2 === undefined && data.cutoverCommittedAt === undefined && data.cancellationRequestedAt === undefined &&
-    original?.uid === request.uid && original.builderSlug === request.builderSlug &&
+    data.userMigrationV2 === undefined && data.cutoverCommittedAt === undefined && data.cancellationRequestedAt === undefined &&
+    original?.uid === request.uid && original.userSlug === request.builderSlug &&
     original.fromGatewayId === request.fromGatewayId && original.source === request.source &&
     isGatewayStartupUnavailable(typeof data.error === "string" ? data.error : undefined);
 }
@@ -1755,7 +1755,7 @@ function sharedRevisionPreflightReturnRetryable(data: Record<string, unknown>, o
     data.error === `placement rejected for ${original?.toGatewayId}: revision-not-ready`,
     Array.isArray(data.steps) && data.steps.length === 0,
     data.rolledBack === false,
-    data.customerMigrationV2 === undefined,
+    data.userMigrationV2 === undefined,
     data.cutoverCommittedAt === undefined,
     data.cancellationRequestedAt === undefined,
     data.sourceTransferExecution === undefined,
@@ -1770,7 +1770,7 @@ function sharedRevisionReturnMatchesDemand(data: Record<string, unknown>, reques
   const original = record(data.input);
   return sharedRevisionPreflightReturnRetryable(data, request.operationId) &&
     request.source === USER_ACTIVATION_LEASE_SOURCE && original?.uid === request.uid &&
-    original.builderSlug === request.builderSlug && original.fromGatewayId === request.fromGatewayId;
+    original.userSlug === request.builderSlug && original.fromGatewayId === request.fromGatewayId;
 }
 
 function preRpcAuthorityFailure(data: Record<string, unknown>, request: EnqueuePlacementMigrationInput): boolean {
@@ -1778,7 +1778,7 @@ function preRpcAuthorityFailure(data: Record<string, unknown>, request: EnqueueP
   const step = record(steps[0]);
   return request.source === CONTINUOUS_PLACEMENT_POLICY_SOURCE && data.status === "failed" &&
     data.origin === "automatic" && data.createdBy === PLACEMENT_POLICY_ACTOR &&
-    data.customerMigrationV2 === undefined && data.cutoverCommittedAt === undefined && data.cancellationRequestedAt === undefined &&
+    data.userMigrationV2 === undefined && data.cutoverCommittedAt === undefined && data.cancellationRequestedAt === undefined &&
     data.error === "workspace migration phase authority changed" && steps.length === 1 &&
     step?.name === "keys-sync-state" && step.status === "failed" && step.error === data.error;
 }
@@ -1830,7 +1830,7 @@ function startupReturnLeaseMatches(userRecord: Stored<PlatformUserRecord> | null
 
 function startupReturnSourceMatches(root: ReturnType<typeof projectGatewayDesiredRootForGateway>, lease: UserActivationLease, request: EnqueuePlacementMigrationInput): boolean {
   const allocation = root?.allocation;
-  return root?.gatewayClass === "builder" && root.ownerUid === request.uid && root.desiredStatus !== "retired" &&
+  return root?.gatewayClass === "isolated" && root.ownerUid === request.uid && root.desiredStatus !== "retired" &&
     allocation?.kind === ISOLATED_GATEWAY_ALLOCATION_KIND && allocation.claimedByUid === request.uid &&
     allocation.leaseId === lease.leaseId && allocation.generation === lease.generation;
 }
@@ -2105,7 +2105,7 @@ function supersededSharedDrainMoveCanRearm(
     data.startedAt === null &&
     data.attempts === undefined &&
     data.cutoverCommittedAt === undefined &&
-    data.customerMigrationV2 === undefined;
+    data.userMigrationV2 === undefined;
 }
 
 function assertUserPlacementNotHeld(userRecord: Stored<PlatformUserRecord> | null, uid: string): void {
@@ -2200,7 +2200,7 @@ export async function enqueuePlacementMigration(
     completedAt: null,
     input: {
       uid: request.uid,
-      builderSlug: request.builderSlug,
+      userSlug: request.builderSlug,
       fromGatewayId: request.fromGatewayId,
       toGatewayId: request.toGatewayId,
       source: request.source,

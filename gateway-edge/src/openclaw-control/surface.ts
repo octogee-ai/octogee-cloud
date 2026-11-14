@@ -237,9 +237,9 @@ function appOrigin(env: NodeJS.ProcessEnv): string {
   return origin.origin;
 }
 
-function gatewayClass(env: NodeJS.ProcessEnv): "shared" | "builder" {
+function gatewayClass(env: NodeJS.ProcessEnv): "shared" | "isolated" {
   return isIsolatedGatewayClassValue(env.GATEWAY_CLASS) && isIsolatedGatewayClassValue(env.GATEWAY_PROFILE)
-    ? "builder"
+    ? "isolated"
     : "shared";
 }
 

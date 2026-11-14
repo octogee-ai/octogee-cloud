@@ -13,7 +13,7 @@ export function workspaceServingDenial(state: WorkspaceServingState): WorkspaceS
 }
 
 export function workspaceServingResolver(input: {
-  gatewayClass: "shared" | "builder";
+  gatewayClass: "shared" | "isolated";
   identity: () => UserIdentity | null;
   store: Pick<RollRosterStore, "loaded" | "get"> | null;
 }): WorkspaceServingResolver {

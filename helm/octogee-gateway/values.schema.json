@@ -33,7 +33,7 @@
     "gatewayClass": {
       "type": "string",
       "enum": ["", "shared", "builder", "isolated"],
-      "description": "Product/security class. shared=multi-user shared gateway; builder=owner-bound disposable isolated gateway."
+      "description": "Gateway class. shared=multi-user shared gateway; isolated=owner-bound isolated gateway. builder is the previous spelling of isolated."
     },
     "imageProfile": {
       "type": "string",
@@ -60,16 +60,16 @@
     },
     "sizingTier": {
       "type": "string",
-      "enum": ["", "xs", "s", "m", "l"],
+      "enum": ["", "s", "m", "l"],
       "description": "Per-pod sizing tier. Empty = fall back to classDefaults[gatewayClass], then profileDefaults[imageProfile]."
     },
     "classDefaults": {
       "type": "object",
       "description": "Gateway class → default tier mapping. Used when sizingTier is unset.",
-      "required": ["shared", "builder"],
+      "required": ["shared", "isolated"],
       "properties": {
-        "shared": { "type": "string", "enum": ["xs", "s", "m", "l"] },
-        "builder": { "type": "string", "enum": ["xs", "s", "m", "l"] }
+        "shared": { "type": "string", "enum": ["s", "m", "l"] },
+        "isolated": { "type": "string", "enum": ["s", "m", "l"] }
       },
       "additionalProperties": { "type": "string" }
     },
@@ -78,15 +78,15 @@
       "description": "Legacy image-profile → default tier mapping. Used when sizingTier is unset and classDefaults is absent. `standard` is required — the effectiveTier helper falls back to it as the last-resort default.",
       "required": ["standard"],
       "properties": {
-        "standard": { "type": "string", "enum": ["xs", "s", "m", "l"] },
-        "builder": { "type": "string", "enum": ["xs", "s", "m", "l"] }
+        "standard": { "type": "string", "enum": ["s", "m", "l"] },
+        "isolated": { "type": "string", "enum": ["s", "m", "l"] }
       },
       "additionalProperties": { "type": "string" }
     },
     "tiers": {
       "type": "object",
       "description": "Tier preset matrix — resources + Node runtime tuning per tier. Mirrored in shared/types/sizing.ts. All tier keys are required so a typo or trim doesn't leave effectiveTier pointing at a missing preset.",
-      "required": ["xs", "s", "m", "l"],
+      "required": ["s", "m", "l"],
       "additionalProperties": {
         "type": "object",
         "required": ["resources", "nodejs"],

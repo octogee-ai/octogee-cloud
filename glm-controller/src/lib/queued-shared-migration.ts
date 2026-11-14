@@ -32,7 +32,7 @@ function untouchedTransportHistory(row: UntypedRecord): boolean {
 function handoffMatches(row: UntypedRecord, id: string): boolean {
   const input = row.input, handoff = row.schedulerHandoff;
   const identity = readSchedulerMigrationIdentity(id, handoff?.migrationId);
-  return handoff && identity !== null && handoff.uid === input.uid && handoff.slug === input.builderSlug &&
+  return handoff && identity !== null && handoff.uid === input.uid && handoff.slug === input.userSlug &&
     handoff.fromGatewayId === input.fromGatewayId && handoff.toGatewayId === input.toGatewayId &&
     identity.attempt === row.attempts &&
     identity.claimStartedAt === row.attemptHistory?.at(-1)?.startedAt &&
@@ -42,13 +42,13 @@ function handoffMatches(row: UntypedRecord, id: string): boolean {
 function queuedSharedScope(row: UntypedRecord): boolean {
   const input = row.input;
   return row.kind === 'migrate-user' && input &&
-    ['uid', 'builderSlug', 'fromGatewayId', 'toGatewayId'].every(key => typeof input[key] === 'string' && input[key].length > 0 && !input[key].includes('/')) &&
+    ['uid', 'userSlug', 'fromGatewayId', 'toGatewayId'].every(key => typeof input[key] === 'string' && input[key].length > 0 && !input[key].includes('/')) &&
     input.fromGatewayId.startsWith('shared-') && input.toGatewayId.startsWith('shared-') && input.fromGatewayId !== input.toGatewayId &&
     input.sourceTransferMode === undefined && input.recoverSourceOnly === undefined;
 }
 
 function unclaimedRetry(row: UntypedRecord): boolean {
-  const untouched = ['customerMigrationV2', 'sourceTransferExecution', 'schedulerHandoffLost', 'cutoverCommittedAt',
+  const untouched = ['userMigrationV2', 'sourceTransferExecution', 'schedulerHandoffLost', 'cutoverCommittedAt',
     'restoreAttempt', 'cancellationRequestedAt', 'rolledBack', 'lastResumedAt'];
   return row.status === 'pending' && row.startedAt === null && row.completedAt === null &&
     (row.resumeCount === undefined || row.resumeCount === 0) && untouched.every(key => row[key] === undefined) &&
@@ -68,7 +68,7 @@ function userOwnerMatches(row: UntypedRecord, id: string, owner: Stored<Platform
 
 function sourceAssignmentMatches(row: UntypedRecord, id: string, assignment: UntypedRecord | AssignmentDoc | null | undefined): boolean {
   if (!assignment) return false;
-  return assignment.uid === row.input.uid && assignment.slug === row.input.builderSlug && assignment.gatewayId === row.input.fromGatewayId &&
+  return assignment.uid === row.input.uid && assignment.slug === row.input.userSlug && assignment.gatewayId === row.input.fromGatewayId &&
     assignment.state === 'serving' && Number.isSafeInteger(assignment.epoch) && assignment.epoch >= 0 &&
     assignment.updatedByOperationId !== id &&
     (assignment.updatedByOperationId == null || typeof assignment.updatedByOperationId === 'string' && assignment.updatedByOperationId.length > 0);

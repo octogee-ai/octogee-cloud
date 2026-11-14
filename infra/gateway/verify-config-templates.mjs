@@ -12,7 +12,7 @@ const templates = realpathSync(templatesArg), extensions = realpathSync(extensio
 const cli = realpathSync(cliArg ?? "/usr/local/bin/openclaw");
 const root = mkdtempSync(path.join(tmpdir(), "octogee-config-template-"));
 try {
-  for (const [template, gatewayClass] of [["openclaw.template.json", "shared"], ["openclaw.isolated.template.json", "builder"]]) {
+  for (const [template, gatewayClass] of [["openclaw.template.json", "shared"], ["openclaw.isolated.template.json", "isolated"]]) {
     const home = path.join(root, gatewayClass), stateDir = path.join(home, ".openclaw");
     mkdirSync(stateDir, { recursive: true });
     symlinkSync(extensions, path.join(stateDir, "extensions"), "dir");

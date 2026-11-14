@@ -4,7 +4,7 @@ import { migrateUserStores } from "../ops/migrate-user-stores.js";
 const client = vi.hoisted(() => ({ migrateUserStores: vi.fn(), permitNormal: vi.fn() }));
 vi.mock("../lib/surge-openclaw-process-gate.js", () => ({ createSurgeOpenClawProcessSupervisorClient: () => client }));
 afterEach(() => { vi.resetAllMocks(); vi.restoreAllMocks(); });
-const env = { GATEWAY_CLASS: "builder", GATEWAY_ID: "source", OPENCLAW_DIR: "/fixture" };
+const env = { GATEWAY_CLASS: "isolated", GATEWAY_ID: "source", OPENCLAW_DIR: "/fixture" };
 
 it("requires an explicit allocation and apply flag before stopping anything", async () => {
   await expect(migrateUserStores([], env)).rejects.toThrow("expected-pod-uid");

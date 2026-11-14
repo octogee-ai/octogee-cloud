@@ -65,7 +65,7 @@ export async function ensureOwnedGatewaysRetired(
 ): Promise<OwnedGatewayRetirementOutcome> {
   const claimRetirement = input.claimRetirement ?? claimGatewayRetirementInStore;
   const owned = (await input.store.gateways.roots.list({ ownerUid: input.uid }))
-    .filter((root) => root.gatewayClass === "builder")
+    .filter((root) => root.gatewayClass === "isolated")
     .sort((a, b) => a.gatewayId.localeCompare(b.gatewayId));
   if (owned.length === 0) return "not-owned";
 
@@ -318,7 +318,7 @@ function recoveryUserMismatch(
   recoveryInput: Record<string, unknown>,
   allocation: Record<string, unknown> | undefined,
 ): boolean {
-  return typeof root.builderSlug !== "string" || !root.builderSlug || recoveryInput.builderSlug !== root.builderSlug ||
+  return typeof root.builderSlug !== "string" || !root.builderSlug || recoveryInput.userSlug !== root.builderSlug ||
     allocation?.kind !== "disposable-builder" || allocation.claimedByUid !== input.uid;
 }
 
@@ -346,7 +346,7 @@ function assertRetirementClaimOwnership(
   gatewayId: string,
   claimed: Record<string, unknown>,
 ): void {
-  if (claimed.ownerUid !== input.uid || claimed.gatewayClass !== "builder") {
+  if (claimed.ownerUid !== input.uid || claimed.gatewayClass !== "isolated") {
     throw new Error(`gateway ${gatewayId} ownership changed during user deletion`);
   }
 }

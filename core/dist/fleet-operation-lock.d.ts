@@ -4,7 +4,7 @@ export interface FleetOperationLockRef {
     kind: string;
     status?: string;
     input?: unknown;
-    customerMigrationV2?: unknown;
+    userMigrationV2?: unknown;
     rolloutLane?: RolloutLane;
     cutoverCommittedAt?: number;
 }

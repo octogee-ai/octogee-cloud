@@ -4,7 +4,7 @@ set -e
 . "${OCTOGEE_LIBEXEC_DIR:-/usr/local/libexec}/gateway-class-dual-read.sh"
 GATEWAY_CLASS_EFFECTIVE="$(dual_read_gateway_class "${GATEWAY_CLASS:-shared}")"
 
-if [ "$GATEWAY_CLASS_EFFECTIVE" = builder ] && [ "${GATEWAY_COMPUTER_DESKTOP:-}" = x11 ] && [ "${OCTOGEE_X11_SESSION:-0}" != 1 ]; then
+if [ "$GATEWAY_CLASS_EFFECTIVE" = isolated ] && [ "${GATEWAY_COMPUTER_DESKTOP:-}" = x11 ] && [ "${OCTOGEE_X11_SESSION:-0}" != 1 ]; then
   exec /usr/local/bin/octogee-hobby-desktop
 fi
 
@@ -19,12 +19,12 @@ export OPENCLAW_STATE_DIR="$OPENCLAW_DIR"
 TEMPLATES_DIR="${OCTOGEE_TEMPLATES_DIR:-/octogee/templates}"
 TSX=/octogee/scripts/node_modules/.bin/tsx
 case "$GATEWAY_CLASS_EFFECTIVE" in
-  shared|builder) ;;
-  *) echo "FATAL: GATEWAY_CLASS must be shared or builder" >&2; exit 1 ;;
+  shared|isolated) ;;
+  *) echo "FATAL: GATEWAY_CLASS must be shared or isolated" >&2; exit 1 ;;
 esac
 case "$(dual_read_gateway_class "${GATEWAY_PROFILE:-standard}")" in
-  standard|builder) ;;
-  *) echo "FATAL: GATEWAY_PROFILE must be standard or builder" >&2; exit 1 ;;
+  standard|isolated) ;;
+  *) echo "FATAL: GATEWAY_PROFILE must be standard or isolated" >&2; exit 1 ;;
 esac
 
 # Consistent ISO timestamp logging (matches OpenClaw gateway format)
@@ -120,7 +120,7 @@ export GATEWAY_ID="${GATEWAY_ID:?GATEWAY_ID env var is required (set via Helm va
 
 # ── User identity ───────────────────────────────────────────────────────
 BUILDER_SLUG=""
-if [ "$GATEWAY_CLASS_EFFECTIVE" = "builder" ]; then
+if [ "$GATEWAY_CLASS_EFFECTIVE" = "isolated" ]; then
   log "Pre-boot: reading user identity for ${GATEWAY_ID}..."
   while true; do
     if BUILDER_SLUG=$("$TSX" /octogee/scripts/entrypoints/user-identity.ts); then
@@ -145,13 +145,13 @@ if [ "$GATEWAY_CLASS_EFFECTIVE" = "builder" ]; then
   log "Pre-boot: User identity claimed for ${BUILDER_SLUG}"
 fi
 
-if [ "$GATEWAY_CLASS_EFFECTIVE" = "builder" ]; then
+if [ "$GATEWAY_CLASS_EFFECTIVE" = "isolated" ]; then
   log "Pre-boot: removing empty user project placeholders..."
   "$TSX" /octogee/scripts/entrypoints/clean-user-project-placeholders.ts
 fi
 
 GIT_SSH_HOST="${GIT_SSH_HOST:-octogee-gitea-ssh.octogee.svc.cluster.local}"
-if [ "$GATEWAY_CLASS_EFFECTIVE" = "builder" ]; then
+if [ "$GATEWAY_CLASS_EFFECTIVE" = "isolated" ]; then
   case "${BUILDER_SLUG}" in
     ""|*[!a-z0-9-]*) log "FATAL: a valid user slug is required for user SSH"; exit 1 ;;
   esac
@@ -166,7 +166,7 @@ Host gitea
   UserKnownHostsFile /dev/null
   LogLevel ERROR
 SSHEOF
-if [ "$GATEWAY_CLASS_EFFECTIVE" = "builder" ]; then
+if [ "$GATEWAY_CLASS_EFFECTIVE" = "isolated" ]; then
   cat >> "$HOME/.ssh/config" <<SSHEOF
   IdentityFile ${OPENCLAW_DIR}/customer-keys/${BUILDER_SLUG}/id_ed25519
   IdentitiesOnly yes
@@ -266,7 +266,7 @@ if [ "$GATEWAY_CLASS_EFFECTIVE" != "shared" ]; then
     RUNTIME_ROOT_QUARANTINE=""
     for runtime_name in npm extensions; do
       runtime_root="$OPENCLAW_CONFIG_DIR/$runtime_name"
-      if [ "$GATEWAY_CLASS_EFFECTIVE" = "builder" ]; then
+      if [ "$GATEWAY_CLASS_EFFECTIVE" = "isolated" ]; then
         if [ -n "$(git -C "$OPENCLAW_CONFIG_DIR" ls-files -- "$runtime_name" "$runtime_name/**")" ]; then
           log "FATAL: tracked system_config path conflicts with OpenClaw runtime root: ${runtime_name}"
           exit 1
@@ -411,13 +411,13 @@ if [ "$GATEWAY_CLASS_EFFECTIVE" != "shared" ]; then
   fi
 fi
 
-if [ "$GATEWAY_CLASS_EFFECTIVE" = "builder" ]; then
+if [ "$GATEWAY_CLASS_EFFECTIVE" = "isolated" ]; then
   log "Pre-boot: initializing configured user agent runtime directories..."
   "$TSX" /octogee/scripts/entrypoints/ensure-configured-agent-runtime-dirs.ts \
     || log "⚠ configured user agent runtime directories failed to initialize (exit $?); the OpenClaw supervisor re-runs this before every start"
 fi
 
-if [ "$GATEWAY_CLASS_EFFECTIVE" = "builder" ]; then
+if [ "$GATEWAY_CLASS_EFFECTIVE" = "isolated" ]; then
   "$TSX" /octogee/scripts/entrypoints/user-claim.ts mark-overlay-applied
 fi
 
@@ -432,7 +432,7 @@ fi
 # pod boots with OpenClaw held until the surge readiness path permits it, so the
 # entrypoint must not gate the auxiliary runners on OpenClaw health — the fleet
 # controller is what hydrates and releases a held pod.
-if [ "$GATEWAY_CLASS_EFFECTIVE" = "builder" ]; then
+if [ "$GATEWAY_CLASS_EFFECTIVE" = "isolated" ]; then
   supervise_runner github-cli-auth 5000 "$TSX" /octogee/scripts/entrypoints/github-cli-auth-hydrate.ts
   log "Starting OpenClaw process supervisor (hold-capable isolated boot: ${BUILD_SHA:-unknown})..."
   supervise_runner surge-openclaw-supervisor 5000 "$TSX" /octogee/scripts/entrypoints/surge-openclaw-supervisor.ts
@@ -472,13 +472,13 @@ if [ "$GATEWAY_CLASS_EFFECTIVE" = "shared" ]; then
   SUPERVISE="$TSX /octogee/scripts/entrypoints/supervise-runner.ts"
 fi
 supervise_runner fleet-controller 5000 "$TSX" /octogee/scripts/entrypoints/fleet-controller.ts
-if [ "$GATEWAY_CLASS_EFFECTIVE" = "builder" ]; then
+if [ "$GATEWAY_CLASS_EFFECTIVE" = "isolated" ]; then
   supervise_runner isolated-toolchain-hydrator 30000 "$TSX" /octogee/scripts/entrypoints/isolated-toolchain-hydrator.ts
 fi
 log "In-gateway project code runners disabled: previews and publishing use the isolated build service"
 log "site-build-api disabled: site publishing runs through trusted CI/CD, not the gateway pod"
 supervise_runner byosub-syncback 30000 "$TSX" /octogee/scripts/entrypoints/byosub-syncback-runner.ts
-if [ "$GATEWAY_CLASS_EFFECTIVE" = "builder" ]; then
+if [ "$GATEWAY_CLASS_EFFECTIVE" = "isolated" ]; then
   supervise_runner system-config-watch 5000 "$TSX" /octogee/scripts/entrypoints/system-config-watch.ts
 fi
 
@@ -495,7 +495,7 @@ fi
 ) &
 
 STAMPER=/octogee/infra/gateway/stamp-claude-first-run.mjs
-if [ "$GATEWAY_CLASS_EFFECTIVE" = "builder" ] && [ -f "$STAMPER" ]; then
+if [ "$GATEWAY_CLASS_EFFECTIVE" = "isolated" ] && [ -f "$STAMPER" ]; then
   node "$STAMPER" || log "stamp-claude-first-run: non-fatal failure"
 fi
 

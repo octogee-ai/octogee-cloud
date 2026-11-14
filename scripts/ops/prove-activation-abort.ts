@@ -26,7 +26,7 @@ const relocate = <T>(value: T): T => {
 };
 const slug = "detachproof", gatewayId = "abort-proof", migrationId = "abort-while-chatting", podUid = "disposable-target-pod";
 Object.assign(process.env, { OPENCLAW_DIR: state, OPENCLAW_STATE_DIR: state, OPENCLAW_CONFIG_PATH: configPath,
-  OPENCLAW_AGENTS_DIR: path.join(state, "agents"), GATEWAY_CLASS: "builder", GATEWAY_ID: gatewayId, POD_UID: podUid,
+  OPENCLAW_AGENTS_DIR: path.join(state, "agents"), GATEWAY_CLASS: "isolated", GATEWAY_ID: gatewayId, POD_UID: podUid,
   OPENCLAW_AGENT_STORE_DSN: dsn.href, OPENCLAW_NO_RESPAWN: "1", HOME: target,
   MM_URL: "http://host.docker.internal:62065", MM_SITE_URL: "http://host.docker.internal:62065",
   MM_INTERACTIONS_CALLBACK_BASE_URL: "http://127.0.0.1:3000", MM_INTERACTIONS_ALLOWED_SOURCE_IPS: "127.0.0.1/32",
@@ -59,7 +59,7 @@ for (const [id, entry] of Object.entries(config.agents.entries)) {
 }
 config.database.postgres.connection.id = "OCTOGEE_DETACH_PROOF_PG";
 reconcilePlatformInvariants(config, { gatewayClass: "shared" });
-reconcilePlatformInvariants(config, { gatewayClass: "builder", gatewayId, apiOrigin: deploymentEnvironmentSettings("test").appOrigin });
+reconcilePlatformInvariants(config, { gatewayClass: "isolated", gatewayId, apiOrigin: deploymentEnvironmentSettings("test").appOrigin });
 const agents = Object.keys(config.agents.entries).filter(id => id !== SAFE_DEFAULT_AGENT_ID);
 const anchors = new Map<string, unknown>(), transcripts = new Map<string, unknown>();
 const transcript = (file: string) => {

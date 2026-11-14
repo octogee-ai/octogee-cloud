@@ -137,10 +137,10 @@ export function operationFirstStartedAt(op: Pick<Operation,
 
 export function operationNeedsDurableUserMigrationV2Resume(op: {
   kind?: string;
-  customerMigrationV2?: UserMigrationV2State;
+  userMigrationV2?: UserMigrationV2State;
   sourceTransferExecution?: SourceTransferExecution;
 }): boolean {
-  return op.kind === MIGRATE_USER_KIND && op.customerMigrationV2 !== undefined;
+  return op.kind === MIGRATE_USER_KIND && op.userMigrationV2 !== undefined;
 }
 
 export function operationNeedsDurableRestartResume(op: {
@@ -148,7 +148,7 @@ export function operationNeedsDurableRestartResume(op: {
   kind?: string;
   origin?: string;
   input?: Record<string, unknown>;
-  customerMigrationV2?: UserMigrationV2State;
+  userMigrationV2?: UserMigrationV2State;
   schedulerHandoff?: SchedulerHandoffState;
   schedulerHandoffReleased?: boolean;
   cutoverCommittedAt?: number;
@@ -187,7 +187,7 @@ export interface OperationCompletionInput {
     attemptHistory?: OperationAttemptRecord[];
     startedAt?: number | null;
     output?: Record<string, unknown>;
-    customerMigrationV2?: UserMigrationV2State;
+    userMigrationV2?: UserMigrationV2State;
     schedulerHandoff?: SchedulerHandoffState;
     schedulerHandoffReleased?: boolean;
     cutoverCommittedAt?: number;
@@ -370,8 +370,8 @@ function operatorIsolatedGatewayWait(input: OperationCompletionInput, checks: nu
 }
 
 function restartAbortedMigration(op: OperationCompletionInput["op"]): OperationPatch {
-  return op.customerMigrationV2?.phase === "aborted"
-    ? { customerMigrationV2: CLEAR }
+  return op.userMigrationV2?.phase === "aborted"
+    ? { userMigrationV2: CLEAR }
     : {};
 }
 
@@ -391,7 +391,7 @@ function pendingCompletion(
     attemptHistory: failure.attemptHistory,
     queuedAt: input.op.kind === MIGRATE_USER_KIND && input.result.rolledBack === true &&
       !recordOutput(input.result.output?.configCleanup) &&
-      (input.op.customerMigrationV2 === undefined || input.op.customerMigrationV2.phase === "aborted")
+      (input.op.userMigrationV2 === undefined || input.op.userMigrationV2.phase === "aborted")
       ? input.now : CLEAR,
     nextAttemptAt: input.now + backoffMs,
     waitingOn: CLEAR,
@@ -495,7 +495,7 @@ function migrationCutoverNeedsRecovery(
 
 function userActivationRolledBack(op: OperationCompletionInput["op"], result: OperationResult): boolean {
   return result.rolledBack === true && op.kind === MIGRATE_USER_KIND &&
-    op.customerMigrationV2 === undefined && op.schedulerHandoff?.forwardRecovery === undefined &&
+    op.userMigrationV2 === undefined && op.schedulerHandoff?.forwardRecovery === undefined &&
     op.input?.source === "builder-activation-lease" &&
     isUserActivateOperationIdFor(op.id, op.input.toGatewayId);
 }
@@ -522,7 +522,7 @@ function shouldRetry(
   const hasDurableCleanup =
     result.output?.configCleanup !== null &&
     typeof result.output?.configCleanup === "object";
-  const activeMigration = op.customerMigrationV2;
+  const activeMigration = op.userMigrationV2;
   const hasActiveUserMigrationV2 = activeMigration !== undefined &&
     activeMigration.phase !== "complete" &&
     activeMigration.phase !== "aborted";
@@ -535,7 +535,7 @@ function shouldRetry(
 
 function needsSharedRollbackRecovery(input: OperationCompletionInput, steps: OperationStep[]): boolean {
   return input.op.kind === MIGRATE_USER_KIND &&
-    input.op.customerMigrationV2 === undefined &&
+    input.op.userMigrationV2 === undefined &&
     typeof input.op.input?.fromGatewayId === "string" &&
     input.op.input.fromGatewayId.startsWith("shared-") &&
     input.result.rolledBack !== true &&

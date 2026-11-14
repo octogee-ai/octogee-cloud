@@ -13,7 +13,7 @@ function prelaunchLease(gateway, user, activationBoot = false) {
         return null;
     return [
         gateway.desiredStatus === "running",
-        gateway.gatewayClass === "builder",
+        gateway.gatewayClass === "isolated",
         allocation.kind === "disposable-builder",
         gateway.ownerUid === allocation.claimedByUid,
         lease.leaseId === allocation.leaseId,
@@ -57,7 +57,7 @@ export async function isolatedPrelaunchReserved(input) {
     const { reader, gateway, expectedGateway } = input;
     if (expectedGateway && !samePrelaunchAllocation(gateway, expectedGateway))
         return false;
-    if (gateway.gatewayClass !== "builder" || gateway.allocation?.kind !== "disposable-builder" || !gateway.ownerUid) {
+    if (gateway.gatewayClass !== "isolated" || gateway.allocation?.kind !== "disposable-builder" || !gateway.ownerUid) {
         return false;
     }
     const user = await reader.users.records.get(gateway.ownerUid);
@@ -108,7 +108,7 @@ async function hasServingUserAssignment(reader, gateway, user) {
 }
 export async function isolatedBootMode(input) {
     const { gateway, reader } = input;
-    if (gateway.gatewayClass !== "builder" || gateway.allocation?.kind !== "disposable-builder")
+    if (gateway.gatewayClass !== "isolated" || gateway.allocation?.kind !== "disposable-builder")
         return { mode: "normal" };
     if (!gateway.ownerUid)
         throw new Error("Isolated prelaunch owner is unavailable");

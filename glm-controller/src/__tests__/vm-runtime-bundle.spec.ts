@@ -127,7 +127,7 @@ describe("renderVmRuntimeBundle", () => {
     expect(gateway.image).toBe("us-docker.pkg.dev/octogee/octogee/gateway:main.abc123");
     expect(gateway.env).toMatchObject({
       GATEWAY_ID: "b-x",
-      GATEWAY_CLASS: "builder",
+      GATEWAY_CLASS: "isolated",
       K8S_NAMESPACE: "octogee-test",
       POD_UID: "",
       OPENCLAW_GATEWAY_TOKEN: "gwtoken",

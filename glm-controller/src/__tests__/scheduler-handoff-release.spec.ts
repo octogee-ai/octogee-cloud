@@ -11,7 +11,7 @@ describe("abandoned forward migration fences", () => {
     const operation = {
       kind: "migrate-user", status: "failed", schedulerHandoff, schedulerHandoffReleased: false,
       input: { uid: "alice", fromGatewayId: "old-native", toGatewayId: "new-shared" },
-      ...(kind === "v2" ? { customerMigrationV2: { phase: "sourceQuiesced" } } : {}),
+      ...(kind === "v2" ? { userMigrationV2: { phase: "sourceQuiesced" } } : {}),
       steps: [{ name: "quiesce-source", status: "done" }, { name: "final-sync-state", status: "failed" }],
     };
     const records = { "glmOperations/upgrade": operation };

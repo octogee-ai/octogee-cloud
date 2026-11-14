@@ -36,7 +36,7 @@ afterEach(() => dirs.splice(0).forEach((dir) => rmSync(dir, { recursive: true, f
 function boot(dir: string, fetchIdentity: () => Promise<UserIdentity>) {
   const log = vi.fn();
   const result = resolveUserIdentityBoot({
-    env: { OPENCLAW_DIR: dir, GATEWAY_ID: "gw-alice", GATEWAY_CLASS: "builder" },
+    env: { OPENCLAW_DIR: dir, GATEWAY_ID: "gw-alice", GATEWAY_CLASS: "isolated" },
     fetchIdentity,
     now: () => 1_700_000_000_000,
     log,
@@ -129,7 +129,7 @@ describe("User identity entrypoint output", () => {
     };
     let settled = false;
     const exitCode = runUserIdentityEntrypoint({
-      env: { OPENCLAW_DIR: dir, GATEWAY_ID: "gw-alice", GATEWAY_CLASS: "builder" },
+      env: { OPENCLAW_DIR: dir, GATEWAY_ID: "gw-alice", GATEWAY_CLASS: "isolated" },
       fetchIdentity: async () => CLAIMED,
       now: () => 1,
       log: vi.fn(),
@@ -161,7 +161,7 @@ describe("User identity entrypoint output", () => {
           ...process.env,
           OPENCLAW_DIR: dir,
           GATEWAY_ID: "gw-alice",
-          GATEWAY_CLASS: "builder",
+          GATEWAY_CLASS: "isolated",
           FLEET_BROKER_URL: `http://127.0.0.1:${(broker.address() as AddressInfo).port}`,
           OCTOGEE_GATEWAY_CREDENTIAL_TOKEN_PATH: tokenPath,
           INTERNAL_SERVICE_KEY: "",

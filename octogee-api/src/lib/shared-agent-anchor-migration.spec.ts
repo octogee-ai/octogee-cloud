@@ -13,7 +13,7 @@ function fixture(kind: "v2" | "legacy" = "v2") {
   const handoff = { migrationId: `${migrationId}:scheduler:1:claim:50`, uid: "uid-bob", slug: "bob", fromGatewayId: source, toGatewayId: target,
     forwardRecovery: { schemaVersion: 1, phase: "source-flushed", sourceEpoch: 7 } };
   const operation: Record<string, any> = { kind: "migrate-user", status: "running", startedAt: 50, cancellationRequestedAt: 60,
-    input: { uid: "uid-bob", fromGatewayId: source, toGatewayId: target }, ...(kind === "v2" ? { customerMigrationV2: v2 } : { schedulerHandoff: handoff }) };
+    input: { uid: "uid-bob", fromGatewayId: source, toGatewayId: target }, ...(kind === "v2" ? { userMigrationV2: v2 } : { schedulerHandoff: handoff }) };
   const assigned = { uid: "uid-bob", slug: "bob", gatewayId: source, source: "migrate-user", epoch: 7, state: "quiescing", updatedByOperationId: operationId };
   const records: Record<string, Record<string, unknown>> = {
     [`glmOperations/${operationId}`]: operation, [`gateways/${source}`]: root(source), [`gateways/${target}`]: root(target),
@@ -105,7 +105,7 @@ function isolatedTargetFixture() {
   f.operation.schedulerHandoff = { ...handoff, toGatewayId: target };
   f.operation.input.toGatewayId = target;
   const allocation = { kind: "disposable-builder", schemaVersion: 1, leaseId: "operator-11111111-1111-4111-8111-111111111111", generation: 1, claimedByUid: "uid-bob" };
-  const root: Record<string, any> = { ...f.records[`gateways/${f.target}`], gatewayId: target, gatewayClass: "builder", imageProfile: "builder",
+  const root: Record<string, any> = { ...f.records[`gateways/${f.target}`], gatewayId: target, gatewayClass: "isolated", imageProfile: "isolated",
     ownerUid: "uid-bob", builderSlug: "bob", allocation };
   f.records[`gateways/${target}`] = root;
   return { ...f, isolated: target, root, allocation,

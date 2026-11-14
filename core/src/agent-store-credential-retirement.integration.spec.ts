@@ -42,7 +42,7 @@ describe.skipIf(!dsn)("retired Gateway PostgreSQL login", () => {
     const provision = createAgentStoreCredentialProvisioner(dsn!, dsn!);
     const revoke = createAgentStoreCredentialRevoker(dsn!);
     const verify = createAgentStoreCredentialRetirementVerifier(dsn!);
-    const identity = { gatewayId, gatewayClass: "builder" as const, user, token: "synthetic-retirement" };
+    const identity = { gatewayId, gatewayClass: "isolated" as const, user, token: "synthetic-retirement" };
     const neighbourGatewayId = `retirement-neighbour-${randomUUID()}`;
     const neighbourLogin = roleFor("gateway", `${scope}:${neighbourGatewayId}`);
     let active: pg.Client | undefined;

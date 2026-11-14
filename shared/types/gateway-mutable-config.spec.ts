@@ -12,9 +12,9 @@ function validConfig(
 ): GatewayMutableConfig {
   return {
     configSchemaVersion: 1,
-    profile: "builder",
-    gatewayClass: "builder",
-    imageProfile: "builder",
+    profile: "isolated",
+    gatewayClass: "isolated",
+    imageProfile: "isolated",
     sizingTier: "l",
     gcpProject: null,
     gatewayContainerSecurityContext: null,
@@ -37,6 +37,16 @@ describe("gateway mutable config", () => {
     }))).toBe(true);
   });
 
+  it("accepts a root that names its sizing profile, or names none", () => {
+    expect(isGatewayMutableConfig(validConfig({ sizingProfile: "hobby" }))).toBe(true);
+    expect(isGatewayMutableConfig(validConfig({ sizingProfile: null }))).toBe(true);
+    expect(isGatewayMutableConfig(validConfig())).toBe(true);
+  });
+
+  it("rejects a sizing profile that is not a name", () => {
+    expect(isGatewayMutableConfig({ ...validConfig(), sizingProfile: 7 })).toBe(false);
+  });
+
   it("rejects the retired operator user gateway class", () => {
     expect(isGatewayMutableConfig({
       ...validConfig(),
@@ -46,16 +56,16 @@ describe("gateway mutable config", () => {
 
   it("rejects class and runtime profile mismatches", () => {
     expect(isGatewayMutableConfig(validConfig({
-      gatewayClass: "builder",
+      gatewayClass: "isolated",
       imageProfile: "standard",
     }))).toBe(false);
     expect(isGatewayMutableConfig(validConfig({
       profile: "standard",
-      gatewayClass: "builder",
-      imageProfile: "builder",
+      gatewayClass: "isolated",
+      imageProfile: "isolated",
     }))).toBe(false);
     expect(isGatewayMutableConfig(validConfig({
-      profile: "builder",
+      profile: "isolated",
       gatewayClass: "shared",
       imageProfile: "standard",
       ownerUid: null,
@@ -64,7 +74,7 @@ describe("gateway mutable config", () => {
     expect(isGatewayMutableConfig(validConfig({
       profile: null,
       gatewayClass: "shared",
-      imageProfile: "builder",
+      imageProfile: "isolated",
       ownerUid: null,
       builderSlug: null,
     }))).toBe(false);

@@ -98,7 +98,7 @@ describe("Fleet force migration request", () => {
     ["accepted restore", (h: ReturnType<typeof harness>) => { h.op().restoreAttempt = { phase: "dispatched" }; }],
     ["accepted transfer", (h: ReturnType<typeof harness>) => { h.op().sourceTransferExecution = { status: "dispatched" }; }],
     ["cancellation", (h: ReturnType<typeof harness>) => { h.op().cancellationRequestedAt = 500; }],
-    ["advanced V2 custody", (h: ReturnType<typeof harness>) => { h.op().customerMigrationV2 = { phase: "sourceQuiesced" }; }],
+    ["advanced V2 custody", (h: ReturnType<typeof harness>) => { h.op().userMigrationV2 = { phase: "sourceQuiesced" }; }],
     ["user restore fence", (h: ReturnType<typeof harness>) => { h.docs.get("users/u1")!.provisioning.openclaw.restoreFence = {}; }],
     ["user transfer fence", (h: ReturnType<typeof harness>) => { h.docs.get("users/u1")!.provisioning.openclaw.sourceTransferFence = {}; }],
     ["source restart fence", (h: ReturnType<typeof harness>) => { h.docs.get("gateways/builder-a")!.runtimeRestartFence = {}; }],

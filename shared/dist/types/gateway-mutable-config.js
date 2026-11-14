@@ -135,8 +135,8 @@ function hasLegalClassProfiles(value) {
         return (value.profile === null || value.profile === "standard") &&
             value.imageProfile === "standard";
     }
-    return (value.profile === null || value.profile === "builder") &&
-        value.imageProfile === "builder";
+    return (value.profile === null || value.profile === "isolated") &&
+        value.imageProfile === "isolated";
 }
 export function isBareGatewayId(value) {
     return isValidGatewayId(value) && !REVISION_GATEWAY_ID_RE.test(value);
@@ -153,6 +153,7 @@ export function isGatewayMutableConfig(value) {
         isGatewayClass(value.gatewayClass) &&
         isGatewayProfile(value.imageProfile) &&
         isNullableSizingTier(value.sizingTier) &&
+        (value.sizingProfile === undefined || isNullableString(value.sizingProfile)) &&
         isNullableString(value.gcpProject) &&
         isNullableRecord(value.gatewayContainerSecurityContext) &&
         isNullableServiceAccountName(value.serviceAccountName) &&

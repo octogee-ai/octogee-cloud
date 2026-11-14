@@ -75,21 +75,21 @@ function resolveGatewayHelmKnobs(d: GatewayDesiredState): Pick<
     serviceAccountName = generatedGatewayServiceAccountName;
   }
   if (
-    gatewayClass === "builder" &&
+    gatewayClass === "isolated" &&
     serviceAccountName === generatedGatewayServiceAccountName &&
     !serviceAccount
   ) {
     serviceAccount = ISOLATED_GATEWAY_LOCKED_SERVICE_ACCOUNT;
   }
   if (
-    gatewayClass !== "builder" &&
+    gatewayClass !== "isolated" &&
     serviceAccountName === generatedGatewayServiceAccountName &&
     !serviceAccount
   ) {
     serviceAccount = { create: true };
   }
   const builderAccess =
-    gatewayClass === "builder"
+    gatewayClass === "isolated"
       ? resolveIsolatedGatewayAccess(d.ownerUid, d.builderAccess)
       : d.builderAccess;
   return {

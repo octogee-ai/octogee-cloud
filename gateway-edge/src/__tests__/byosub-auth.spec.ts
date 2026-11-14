@@ -60,7 +60,7 @@ function app() {
 describe("byosub-auth sidecar router", () => {
   beforeEach(() => {
     process.env.GATEWAY_ID = "walter";
-    process.env.GATEWAY_CLASS = "builder";
+    process.env.GATEWAY_CLASS = "isolated";
     resolveByosubUserGateway.mockReset().mockResolvedValue({ slug: "tester5", gatewayId: "walter" });
     readByosubFlow.mockReset();
     firestore.doc.mockReset();

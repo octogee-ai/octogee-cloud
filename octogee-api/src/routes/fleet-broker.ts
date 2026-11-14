@@ -1229,7 +1229,7 @@ export function projectCheckoutScopeForGatewayRoot(
   if (root.gatewayClass === "shared") return "workspace-and-projects";
   if (root.ownerUid !== uid || root.builderSlug !== slug) return "workspace-only";
   if (
-    (root.gatewayClass === "builder" || root.gatewayClass === "operator") &&
+    (root.gatewayClass === "isolated" || root.gatewayClass === "operator") &&
     root.allocation?.kind === "disposable-builder" &&
     root.allocation.claimedByUid === uid
   ) {
@@ -1792,7 +1792,7 @@ export function userIdentityForRoot(value: unknown, gatewayId: string): UserIden
   const root = projectGatewayDesiredRootForGateway(value, gatewayId) as
     (GatewayDoc & GatewayMutableConfig & { retirementClaim?: unknown }) | null;
   if (!root) return null;
-  if (root.gatewayClass !== "builder") return { gatewayId, state: "unavailable", reason: "not-builder" };
+  if (root.gatewayClass !== "isolated") return { gatewayId, state: "unavailable", reason: "not-builder" };
   if (root.desiredStatus === "retired") return { gatewayId, state: "unavailable", reason: "retired" };
   if (root.retireAfter != null || root.retirementClaim != null) {
     return { gatewayId, state: "unavailable", reason: "retiring" };
@@ -3471,7 +3471,7 @@ function vmHomeGatewayEligible(
     ? gateway.desiredStatus === "retired"
     : gateway.desiredStatus === "running" && gateway.retireAfter == null && gateway.retirementClaim == null;
   return lifecycleAdmits &&
-    gateway.gatewayClass === "builder" &&
+    gateway.gatewayClass === "isolated" &&
     gateway.builderSlug === slug &&
     typeof gateway.ownerUid === "string";
 }

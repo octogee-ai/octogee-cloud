@@ -4,12 +4,12 @@ import { createMigrationAgentStorePreparer, readUserAgentStoreInventory } from "
 import { classifyUserMigrationV2Error } from "@octogee/core/user-migration-v2";
 import { classifyOperationFailure } from "../operation-retry.js";
 
-function harness(gateway: { gatewayClass: "shared" | "builder"; ownerUid: string | null; builderSlug: string | null } | null) {
+function harness(gateway: { gatewayClass: "shared" | "isolated"; ownerUid: string | null; builderSlug: string | null } | null) {
   const order: string[] = [];
   const readGateway = vi.fn(async () => gateway);
   const readUserBySlug = vi.fn(async () => ({ uid: "uid-alice", slug: "alice" }));
   const ensureCredentials = vi.fn(async () => { order.push("credentials"); });
-  const transferOwnership = vi.fn<(user: { uid: string; slug: string }, target: "shared" | "builder", assertCurrent?: () => Promise<void>) => Promise<void>>(async () => { order.push("ownership"); });
+  const transferOwnership = vi.fn<(user: { uid: string; slug: string }, target: "shared" | "isolated", assertCurrent?: () => Promise<void>) => Promise<void>>(async () => { order.push("ownership"); });
   return { order, readGateway, readUserBySlug, ensureCredentials, transferOwnership,
     prepare: createMigrationAgentStorePreparer({ readGateway, readUserBySlug, ensureCredentials, transferOwnership }) };
 }
@@ -33,8 +33,8 @@ describe("migration agent-store ownership", () => {
     expect(classifyUserMigrationV2Error(error)).toBe("terminal");
     expect(classifyOperationFailure(error.message)).toBe("terminal");
   });
-  it.each(["shared", "builder"] as const)("prepares %s ownership from the authoritative user identity", async gatewayClass => {
-    const h = harness({ gatewayClass, ownerUid: gatewayClass === "builder" ? "uid-alice" : null, builderSlug: gatewayClass === "builder" ? "alice" : null });
+  it.each(["shared", "isolated"] as const)("prepares %s ownership from the authoritative user identity", async gatewayClass => {
+    const h = harness({ gatewayClass, ownerUid: gatewayClass === "isolated" ? "uid-alice" : null, builderSlug: gatewayClass === "isolated" ? "alice" : null });
     await h.prepare("target", "alice");
     expect(h.readGateway).toHaveBeenCalledWith("target");
     expect(h.readUserBySlug).toHaveBeenCalledWith("alice");
@@ -45,8 +45,8 @@ describe("migration agent-store ownership", () => {
 
   it.each([
     null,
-    { gatewayClass: "builder" as const, ownerUid: "uid-bob", builderSlug: "alice" },
-    { gatewayClass: "builder" as const, ownerUid: "uid-alice", builderSlug: "bob" },
+    { gatewayClass: "isolated" as const, ownerUid: "uid-bob", builderSlug: "alice" },
+    { gatewayClass: "isolated" as const, ownerUid: "uid-alice", builderSlug: "bob" },
     { gatewayClass: "shared" as const, ownerUid: "uid-alice", builderSlug: "alice" },
   ])("rejects a missing or mismatched desired owner (%j)", async gateway => {
     const h = harness(gateway);
@@ -94,7 +94,7 @@ describe("claimed agent-store recovery authority", () => {
     if (scenario === "changed-uid") h.readUserBySlug.mockResolvedValue({ uid: "uid-bob", slug: "alice" });
     h.ensureCredentials.mockImplementation(async () => {
       credentialsDone = true;
-      if (scenario === "gateway-rebound") h.readGateway.mockResolvedValue({ gatewayClass: "builder", ownerUid: "uid-bob", builderSlug: "alice" });
+      if (scenario === "gateway-rebound") h.readGateway.mockResolvedValue({ gatewayClass: "isolated", ownerUid: "uid-bob", builderSlug: "alice" });
       if (scenario === "slug-reassigned") h.readUserBySlug.mockResolvedValue({ uid: "uid-bob", slug: "alice" });
     });
     await expect(h.prepare("source", "alice", { expectedUserUid: "uid-alice", assertCurrent })).rejects.toThrow();

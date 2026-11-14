@@ -40,15 +40,15 @@ describe("resolveGatewayImageRepository", () => {
   });
 
   it("isolated profile selects the isolated image in the same registry and project", () => {
-    expect(resolveGatewayImageRepository(mkDesired({ imageProfile: "builder" }))).toBe(USER_REPO);
-    expect(PROFILE_IMAGE_NAME.builder).toBe("octogee-gateway-builder");
+    expect(resolveGatewayImageRepository(mkDesired({ imageProfile: "isolated" }))).toBe(USER_REPO);
+    expect(PROFILE_IMAGE_NAME.isolated).toBe("octogee-gateway-builder");
   });
 
   it("derivation follows the instance's own registry — no hardcoded AR host/project", () => {
 
 expect(
       resolveGatewayImageRepository(
-        mkDesired({ imageProfile: "builder", imageRepository: "europe-docker.pkg.dev/acme/reg/octogee-gateway" }),
+        mkDesired({ imageProfile: "isolated", imageRepository: "europe-docker.pkg.dev/acme/reg/octogee-gateway" }),
       ),
     ).toBe("europe-docker.pkg.dev/acme/reg/octogee-gateway-builder");
   });
@@ -57,7 +57,7 @@ expect(
 describe("The fleet controller resolves profile in the helm maps (image name, NOT the tag)", () => {
   it("buildInstancesMap: user profile selects the user repository with the fleet SHA", () => {
     const map = buildInstancesMap([
-      mkDesired({ gatewayId: "walter", imageProfile: "builder" }),
+      mkDesired({ gatewayId: "walter", imageProfile: "isolated" }),
     ]);
     expect(map.walter.image.repository).toBe(USER_REPO);
     expect(map.walter.image.tag).toBe("abc1234");
@@ -70,7 +70,7 @@ describe("The fleet controller resolves profile in the helm maps (image name, NO
 
   it("buildHelmTargetMap: User profile resolves the same way", () => {
     const map = buildHelmTargetMap([
-      mkDesired({ gatewayId: "walter", imageProfile: "builder" }),
+      mkDesired({ gatewayId: "walter", imageProfile: "isolated" }),
     ], {});
     expect(map.walter.image.repository).toBe(USER_REPO);
   });
@@ -78,7 +78,7 @@ describe("The fleet controller resolves profile in the helm maps (image name, NO
   it("changing profile is a reconcile `update` (the fleet controller rolls the instance onto the profile image)", () => {
     const actual = buildInstancesMap([mkDesired({ gatewayId: "walter" })]);
     const desired = buildInstancesMap([
-      mkDesired({ gatewayId: "walter", imageProfile: "builder" }),
+      mkDesired({ gatewayId: "walter", imageProfile: "isolated" }),
     ]);
     const changes = diffInstancesMap(actual, desired);
     expect(changes).toEqual([

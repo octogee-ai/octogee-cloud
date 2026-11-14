@@ -51,7 +51,7 @@ export function createVoiceConversationRoutes(deps: WorkspaceConversationDeps): 
       const { scope, context } = resolved;
       res.set('cache-control', 'no-store').json({
         ...context,
-        nativeInterrupt: scope.gatewayClass === 'builder' && scope.nativeAccess && scope.auth.config.builderAccess?.controlUiEnabled === true,
+        nativeInterrupt: scope.gatewayClass === 'isolated' && scope.nativeAccess && scope.auth.config.builderAccess?.controlUiEnabled === true,
       });
     } catch (error) { next(error); }
   });

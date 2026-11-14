@@ -14,7 +14,7 @@ function fixture(migration: "identity" | "database" = "identity") {
     `[import:livefixture] agents.create failed for octogee-livefixture-coach (AgentDatabaseMaintenanceRequiredError: Agent ${migration} migration requires stopped-writer maintenance; stop active agents and run openclaw doctor --fix.)` });
   const row = { kind: "migrate-user", status: "failed", origin: "automatic", createdBy: "glm-controller-placement-policy", attempts: 1,
     startedAt: 100, completedAt: 200, rolledBack: true, error,
-    input: { uid: "owner", builderSlug: "livefixture", fromGatewayId: "shared-old", toGatewayId: "shared-new", source: "continuous-placement-policy" },
+    input: { uid: "owner", userSlug: "livefixture", fromGatewayId: "shared-old", toGatewayId: "shared-new", source: "continuous-placement-policy" },
     schedulerHandoff: { migrationId: "mig-placement:scheduler:1:claim:100", uid: "owner", slug: "livefixture", fromGatewayId: "shared-old", toGatewayId: "shared-new" },
     steps: [...["keys-sync-state", "pre-sync-state", "wait-for-active-work", "quiesce-source", "flush-source"].map(name => ({ name, status: "done" })),
       { name: "final-sync-state", status: "failed", error }, ...["unmount-target", "resume-ingress"].map(name => ({ name: `rollback:${name}`, status: "done" }))] };
@@ -150,7 +150,7 @@ function addPostgresSourceRoster(f: ReturnType<typeof authorityFixture>): void {
       storeId: `00000000-0000-4000-8000-${String(index + 2).padStart(12, "0")}`, schema: `agent_owner_${index}`, recordedAt: 1 };
     const row = fixture("database");
     row.error = row.error.replaceAll("livefixture", slug);
-    Object.assign(row.input, { uid, builderSlug: slug });
+    Object.assign(row.input, { uid, userSlug: slug });
     Object.assign(row.schedulerHandoff, { uid, slug, migrationId: `mig-${operationId}:scheduler:1:claim:${row.startedAt}` });
     row.steps = row.steps.map(step => "error" in step ? { ...step, error: row.error } : step);
     row.attemptHistory = [{ attempt: 1, startedAt: row.startedAt, completedAt: row.completedAt, error: row.error, steps: structuredClone(row.steps) }];

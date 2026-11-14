@@ -23,7 +23,7 @@ const PROJECT_AGENT_TOOL_POLICY = "project-agent-tool-policy" as const;
 const FORBIDDEN_ARRAY = "forbidden-array" as const;
 const PLUGIN_ALLOWLIST_PATH = "plugins.allow";
 
-export type GatewayConfigClass = "shared" | "builder";
+export type GatewayConfigClass = "shared" | "isolated";
 
 export type GatewayControlIdentityMode = "shared-operator" | "per-user";
 
@@ -466,7 +466,7 @@ function controlIdentityInvariants(
 export function platformInvariantTable(
   context: SystemConfigInvariantContext,
 ): readonly PlatformInvariant[] {
-  const isolated = context.gatewayClass === "builder";
+  const isolated = context.gatewayClass === "isolated";
   const gatewayId = context.gatewayId?.trim();
   const apiOrigin = context.apiOrigin?.trim().replace(/\/$/, "");
   if (isolated && (!gatewayId || !apiOrigin)) {
@@ -568,7 +568,7 @@ export function platformInvariantTable(
   // in the pod, so host code, terminals, MCP servers, cron, skills, sub-agents,
   // and the codex BYOSUB plugin stay at the user's discretion. The platform
   // keeps only wiring and tenant-scoped secret providers.
-  return context.gatewayClass === "builder"
+  return context.gatewayClass === "isolated"
     ? platformProjection
     : [...platformProjection, ...userToolInvariants()];
 }
@@ -939,7 +939,7 @@ export function reconcilePlatformInvariants(
 }
 
 function reconcileOperatorRoles(config: JsonObject, context: SystemConfigInvariantContext): boolean {
-  if (context.gatewayClass !== "builder" || context.controlIdentity !== "per-user") return false;
+  if (context.gatewayClass !== "isolated" || context.controlIdentity !== "per-user") return false;
   const [gateway] = parentForPath(config, "gateway.roles");
   const roles = withOpenClawOperatorRoles(gateway.roles, context.workspaceSlug);
   if (equal(gateway.roles, roles)) return false;

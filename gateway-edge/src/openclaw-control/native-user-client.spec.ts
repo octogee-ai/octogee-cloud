@@ -83,7 +83,7 @@ async function gateway() {
   fs.writeFileSync(path.join(dir, "workspace-identity-boot"), "test-boot");
   fs.writeFileSync(path.join(dir, "workspace-identity-ready"), "test-boot");
   cleanup.push(async () => { fs.rmSync(dir, { recursive: true, force: true }); });
-  const env = { OPENCLAW_DIR: dir, GATEWAY_CLASS: "builder", GATEWAY_ID: "b-alice", OPENCLAW_CONTROL_IDENTITY: "per-user",
+  const env = { OPENCLAW_DIR: dir, GATEWAY_CLASS: "isolated", GATEWAY_ID: "b-alice", OPENCLAW_CONTROL_IDENTITY: "per-user",
     OPENCLAW_GATEWAY_TOKEN: "pod-secret", API_PUBLIC_URL: "https://api.octogee.com",
     OPENCLAW_GATEWAY_URL: `http://127.0.0.1:${(server.address() as AddressInfo).port}` };
   return { state, env };

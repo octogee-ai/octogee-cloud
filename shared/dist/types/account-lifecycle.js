@@ -47,7 +47,7 @@ export function isAnonymousOperationalModelDimension(provider, model) {
 const ANONYMOUS_OPERATIONAL_ENVIRONMENTS = ["test", "prod"];
 const ANONYMOUS_OPERATIONAL_GATEWAY_CLASSES = [
     "shared",
-    "builder",
+    "isolated",
 ];
 export function closedOperationalValue(value, allowed) {
     return typeof value === "string" && allowed.includes(value) ? value : null;

@@ -56,7 +56,7 @@ function activeMigrationTargetsGateway(operations, gatewayId) {
         if (operation.kind !== "migrate-user")
             return false;
         const input = operation.input;
-        const migration = operation.customerMigrationV2;
+        const migration = operation.userMigrationV2;
         const fields = [
             input && typeof input === "object" && !Array.isArray(input)
                 ? input

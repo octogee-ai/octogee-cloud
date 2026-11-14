@@ -90,7 +90,7 @@ describe("projectReleaseHistory", () => {
 
     it("shows an isolated gateway the image it runs from that build", () => {
       const [entry] = projectReleaseHistory({
-        gateway: { liveRelease: 1, desiredRelease: 1, gatewayClass: "builder", imageProfile: "builder" },
+        gateway: { liveRelease: 1, desiredRelease: 1, gatewayClass: "isolated", imageProfile: "isolated" },
         releases: [build],
       });
 

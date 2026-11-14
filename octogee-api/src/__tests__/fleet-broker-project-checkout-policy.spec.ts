@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { projectCheckoutScopeForGatewayRoot } from "../routes/fleet-broker.js";
 
 function gatewayRoot(
-  gatewayClass: "shared" | "builder",
+  gatewayClass: "shared" | "isolated",
   allocation: Record<string, unknown> | null = null,
 ): Record<string, unknown> {
   const owned = gatewayClass !== "shared";
@@ -18,9 +18,9 @@ function gatewayRoot(
     liveRelease: 1,
     desiredStatus: "running",
     configSchemaVersion: 1,
-    profile: gatewayClass === "builder" ? "builder" : "standard",
+    profile: gatewayClass === "isolated" ? "isolated" : "standard",
     gatewayClass,
-    imageProfile: gatewayClass === "builder" ? "builder" : "standard",
+    imageProfile: gatewayClass === "isolated" ? "isolated" : "standard",
     sizingTier: null,
     gcpProject: null,
     gatewayContainerSecurityContext: null,
@@ -47,7 +47,7 @@ describe("projectCheckoutScopeForGatewayRoot", () => {
 
   it("keeps non-disposable isolated gateways workspace-only", () => {
     expect(projectCheckoutScopeForGatewayRoot(
-      gatewayRoot("builder"),
+      gatewayRoot("isolated"),
       "default",
       "uid-alice",
       "alice",
@@ -56,13 +56,13 @@ describe("projectCheckoutScopeForGatewayRoot", () => {
 
   it("allows project checkouts only for an exact disposable isolated allocation", () => {
     expect(projectCheckoutScopeForGatewayRoot(
-      gatewayRoot("builder"),
+      gatewayRoot("isolated"),
       "default",
       "uid-alice",
       "alice",
     )).toBe("workspace-only");
     expect(projectCheckoutScopeForGatewayRoot(
-      gatewayRoot("builder", {
+      gatewayRoot("isolated", {
         kind: "disposable-builder",
         schemaVersion: 1,
         leaseId: "lease-alice",
@@ -77,7 +77,7 @@ describe("projectCheckoutScopeForGatewayRoot", () => {
 
   it("fails closed when the assigned user does not own the isolated gateway", () => {
     expect(projectCheckoutScopeForGatewayRoot(
-      gatewayRoot("builder"),
+      gatewayRoot("isolated"),
       "default",
       "uid-bob",
       "bob",

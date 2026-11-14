@@ -72,7 +72,7 @@ describe("resumeOrphanedRunningOps", () => {
       data: {
         status: "running",
         kind: "migrate-user",
-        customerMigrationV2: { phase: "checkpointed" },
+        userMigrationV2: { phase: "checkpointed" },
       },
     };
     const legacy = { id: "op-v1", data: { status: "running", kind: "migrate-user" } };
@@ -82,7 +82,7 @@ describe("resumeOrphanedRunningOps", () => {
       store: makeStore([active, legacy] as FakeOpDoc[]),
       log: vi.fn(),
       resumableKinds: new Set(["rollout", "migrate-user"]),
-      resumableOperation: (op) => op.kind !== "migrate-user" || !!op.customerMigrationV2,
+      resumableOperation: (op) => op.kind !== "migrate-user" || !!op.userMigrationV2,
       redrive,
     });
 
@@ -98,7 +98,7 @@ describe("resumeOrphanedRunningOps", () => {
         data: {
           status: "running",
           kind: "migrate-user",
-          customerMigrationV2: { phase },
+          userMigrationV2: { phase },
         },
       };
       const redrive = vi.fn<ResumeOrphanedOpsDeps["redrive"]>(async () => undefined);

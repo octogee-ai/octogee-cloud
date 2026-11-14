@@ -6,7 +6,7 @@ export interface FleetOperationLockRef {
   kind: string;
   status?: string;
   input?: unknown;
-  customerMigrationV2?: unknown;
+  userMigrationV2?: unknown;
   rolloutLane?: RolloutLane;
   cutoverCommittedAt?: number;
 }
@@ -39,7 +39,7 @@ export function fleetOperationLockResources(
   if (!SERIAL_KINDS.has(operation.kind)) return new Set();
   return new Set([
     ...stringFields(operation.input, RESOURCE_FIELDS),
-    ...stringFields(operation.customerMigrationV2, [
+    ...stringFields(operation.userMigrationV2, [
       "sourceGatewayId",
       "targetGatewayId",
     ]),

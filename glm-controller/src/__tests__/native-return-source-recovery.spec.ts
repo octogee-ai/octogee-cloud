@@ -12,7 +12,7 @@ function fixture() {
   const records: Record<string, any> = {
     [`users/${uid}`]: { username: "ceckert-test", provisioning: { openclaw: { slug: "ceckert-test", gatewayId: source,
       activationLease: { status: "returning", leaseId: "lease114", generation: 114, targetGatewayId: source, returnOperationId: operationId, pendingDemand: { eventKey: "human-chat" } } } } },
-    [`gateways/${source}`]: { gatewayId: source, latestRelease: 7, gatewayClass: "builder", ownerUid: uid, builderSlug: "ceckert-test", desiredStatus: "running", desiredRelease: 7, liveRelease: 7,
+    [`gateways/${source}`]: { gatewayId: source, latestRelease: 7, gatewayClass: "isolated", ownerUid: uid, builderSlug: "ceckert-test", desiredStatus: "running", desiredRelease: 7, liveRelease: 7,
       allocation: { kind: "disposable-builder", claimedByUid: uid, leaseId: "lease114", generation: 114 } },
     [`glmGateways/${source}`]: { docKind: "runtime", gatewayId: source, release: 7, lifecycle: "active", runtime: "gce-vm", vm: { instanceName: "native-source", instanceId: "vm114", zone: "us-central1-a" }, vmHome: { returnOperationId: operationId, checkpointRequestedAt: 50 } },
     [`gateways/${source}/assignments/${uid}`]: { uid, slug: "ceckert-test", gatewayId: source, source: "migrate-user", epoch: 25, state: "serving", createdAt: 10, updatedAt: 10, updatedByOperationId: null },
@@ -22,7 +22,7 @@ function fixture() {
     [`glmOperations/${operationId}`]: { kind: "migrate-user", status: "failed", origin: "automatic", createdBy: "glm-controller-placement-policy", inputUid: uid, gatewayId: target,
       startedAt: 90, completedAt: 100, attempts: 22, rolledBack: false, steps: [{ name: "quiesce-source", status: "failed" }],
       attemptHistory: [{ attempt: 22, error: "old Native cleanup permission denied", steps: [{ name: "quiesce-source", status: "failed" }] }],
-      input: { uid, builderSlug: "ceckert-test", fromGatewayId: source, toGatewayId: target, source: "builder-activation-lease" },
+      input: { uid, userSlug: "ceckert-test", fromGatewayId: source, toGatewayId: target, source: "builder-activation-lease" },
       schedulerHandoffReleased: false, schedulerHandoff: { uid, slug: "ceckert-test", fromGatewayId: source, toGatewayId: target, migrationId: `mig-${operationId}:scheduler:22:claim:90` } },
   };
   const events: string[] = [];

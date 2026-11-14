@@ -28,7 +28,7 @@ function gatewayRoot(gatewayId: string, overrides: Row = {}): Row {
 
 function isolatedRoot(lease: { leaseId: string; generation: number }, overrides: Row = {}): Row {
   return gatewayRoot(ISOLATED, {
-    gatewayClass: "builder", imageProfile: "builder", profile: "builder", sizingTier: "s",
+    gatewayClass: "isolated", imageProfile: "isolated", profile: "isolated", sizingTier: "s",
     ownerUid: "uid-owner", builderSlug: "owner",
     allocation: { kind: "disposable-builder", schemaVersion: 1, claimedByUid: "uid-owner", ...lease },
     ...overrides,

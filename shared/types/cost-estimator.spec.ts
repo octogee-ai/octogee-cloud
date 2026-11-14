@@ -16,13 +16,13 @@ describe("estimateGatewayMonthlyCost", () => {
     expect(HOURS_PER_MONTH).toBe(730);
   });
 
-  it("prices the surviving xs/s/m/l ladder on the default general-purpose class", () => {
-    expect(SIZING_TIERS).toEqual(["xs", "s", "m", "l"]);
+  it("prices the s/m/l ladder on the default general-purpose class", () => {
+    expect(SIZING_TIERS).toEqual(["s", "m", "l"]);
     expect(
       Object.fromEntries(
         SIZING_TIERS.map((tier) => [tier, estimateGatewayMonthlyCost(tier).computeUsd]),
       ),
-    ).toEqual({ xs: 23, s: 94, m: 94, l: 187 });
+    ).toEqual({ s: 47, m: 94, l: 187 });
   });
 
   it("computes compute cost from request CPU + memory at general-purpose Autopilot rates", () => {

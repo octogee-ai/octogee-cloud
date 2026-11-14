@@ -57,7 +57,7 @@ export function gatewayBakePlan({ repository, sha, base, isolatedBase, toolchain
     }),
     "octogee-gateway-builder": build.images.includes("octogee-gateway-builder") && image("octogee-gateway-builder", {
       dockerfile: "infra/gateway/Dockerfile", contexts: { [BASE]: from(BASE), [ISOLATED_BASE]: from(ISOLATED_BASE), ...systemContext, ...product },
-      args: { ...runtimeArgs, RUNTIME_BASE_IMAGE: ISOLATED_BASE, IMAGE_PROFILE: "builder" },
+      args: { ...runtimeArgs, RUNTIME_BASE_IMAGE: ISOLATED_BASE, IMAGE_PROFILE: "isolated" },
     }),
   };
   const target = Object.fromEntries(Object.entries(candidates).filter(([, definition]) => definition));

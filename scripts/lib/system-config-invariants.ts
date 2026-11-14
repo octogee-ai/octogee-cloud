@@ -25,8 +25,8 @@ export function systemConfigInvariantContextFromEnv(
   env: NodeJS.ProcessEnv = process.env,
 ): SystemConfigInvariantContext {
   const rawClass = env.GATEWAY_CLASS ?? env.GATEWAY_PROFILE ?? "shared";
-  const gatewayClass: GatewayConfigClass = isIsolatedGatewayClassValue(rawClass) ? "builder" : "shared";
-  const claim = gatewayClass === "builder" ? readUserClaimFromEnv(env) : null;
+  const gatewayClass: GatewayConfigClass = isIsolatedGatewayClassValue(rawClass) ? "isolated" : "shared";
+  const claim = gatewayClass === "isolated" ? readUserClaimFromEnv(env) : null;
   return {
     gatewayClass,
     ...(env.GATEWAY_ID ? { gatewayId: env.GATEWAY_ID } : {}),

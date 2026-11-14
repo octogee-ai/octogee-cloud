@@ -521,6 +521,7 @@ vi.mock("../middleware/auth", () => ({
 
 import express from "express";
 import adminRouter, { createAdminRoutes } from "../routes/admin.js";
+import { userAccountFromData, type UserAccountReader } from "@octogee/core/user-account";
 
 function eligibleUser(slug: string, openclaw: Record<string, unknown> = {}): Record<string, unknown> {
   return { username: slug, onboardingStep: "complete", provisioning: { status: "complete", openclaw: { slug, ...openclaw } } };
@@ -664,6 +665,20 @@ describe("GET /api/admin/users/:uid — what the product adds", () => {
     expect(res.body.onboarding).toEqual({ step: "complete", complete: true, milestones: {} });
   });
 
+  it("reads the user's account from the reader it is given", async () => {
+    const accounts: UserAccountReader = {
+      get: vi.fn(async (uid: string) => userAccountFromData(uid, { username: "alice", email: "alice@reader.test" })),
+      getMany: vi.fn(async () => new Map()),
+      list: vi.fn(async () => new Map()),
+    };
+
+    const res = await detailOf(createAdminRoutes({ accounts }));
+
+    expect(res.status).toBe(200);
+    expect(accounts.get).toHaveBeenCalledWith("uid-alice");
+    expect(res.body.summary).toMatchObject({ username: "alice", email: "alice@reader.test" });
+  });
+
   it("reports no onboarding state without a product", async () => {
     const res = await detailOf(createAdminRoutes());
 
@@ -676,7 +691,7 @@ describe("Admin default placement", () => {
   it("projects policy target, assigned gateway, mounted gateway, and pointer drift separately", async () => {
     seedDurableGateway("gw-source", {
       imageTag: "oldsha1",
-      root: { profile: "builder", gatewayClass: "builder", imageProfile: "builder", ownerUid: "uid-bob", builderSlug: "bob" },
+      root: { profile: "isolated", gatewayClass: "isolated", imageProfile: "isolated", ownerUid: "uid-bob", builderSlug: "bob" },
       heartbeat: { status: "ready", mountedCustomers: ["alice"] },
     });
     seedDurableGateway("gw-target", {
@@ -881,7 +896,7 @@ describe("POST /api/admin/gateways — create durable state + op", () => {
       ownerUid: "uid-jack",
     });
     expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/profile.*standard.*builder/i);
+    expect(res.body.error).toMatch(/profile.*standard.*isolated/i);
     expect(provisionerCalls).toEqual([]);
     expect(gatewaysDocs.jack).toBeUndefined();
   });
@@ -1052,9 +1067,9 @@ describe("GET /api/admin/gateways — sizing enrichment", () => {
       heartbeat: { status: "ready", mountedCustomers: ["alice"] },
       root: {
         sizingTier: "l",
-        profile: "builder",
-        gatewayClass: "builder",
-        imageProfile: "builder",
+        profile: "isolated",
+        gatewayClass: "isolated",
+        imageProfile: "isolated",
         ownerUid: "uid-walter",
         builderSlug: "walter",
       },
@@ -1074,9 +1089,9 @@ describe("GET /api/admin/gateways — sizing enrichment", () => {
     seedDurableGateway("default", {
       heartbeat: { status: "ready", mountedCustomers: [] },
       root: {
-        profile: "builder",
-        gatewayClass: "builder",
-        imageProfile: "builder",
+        profile: "isolated",
+        gatewayClass: "isolated",
+        imageProfile: "isolated",
         ownerUid: "uid-default",
         builderSlug: "default",
       },
@@ -1112,9 +1127,9 @@ describe("GET /api/admin/gateways — sizing enrichment", () => {
     seedDurableGateway("walter", {
       heartbeat: { status: "ready", mountedCustomers: [] },
       root: {
-        gatewayClass: "builder",
-        profile: "builder",
-        imageProfile: "builder",
+        gatewayClass: "isolated",
+        profile: "isolated",
+        imageProfile: "isolated",
         ownerUid: "uid-walter",
         builderSlug: "walter",
         sizingTier: "m",
@@ -1143,9 +1158,9 @@ describe("GET /api/admin/gateways — sizing enrichment", () => {
     seedDurableGateway("dedicated", {
       heartbeat: { status: "ready", mountedCustomers: [] },
       root: {
-        gatewayClass: "builder",
-        profile: "builder",
-        imageProfile: "builder",
+        gatewayClass: "isolated",
+        profile: "isolated",
+        imageProfile: "isolated",
         ownerUid: "uid-dedicated",
         builderSlug: "dedicated",
         sizingTier: "m",
@@ -1514,7 +1529,7 @@ describe("POST /api/admin/users/:uid/migrate — start migration", () => {
       status: "pending",
       input: {
         uid: "uid-alice",
-        builderSlug: "alice",
+        userSlug: "alice",
         fromGatewayId: "default",
         toGatewayId: "canary",
       },
@@ -1860,9 +1875,9 @@ describe("POST /api/admin/users/:uid/assign — initial placement", () => {
     seedDurableGateway("gw-operator", {
       heartbeat: { status: "ready", mountedCustomers: [] },
       root: {
-        profile: "builder",
-        gatewayClass: "builder",
-        imageProfile: "builder",
+        profile: "isolated",
+        gatewayClass: "isolated",
+        imageProfile: "isolated",
         ownerUid: "uid-owner",
         builderSlug: "owner",
         builderAccess: {

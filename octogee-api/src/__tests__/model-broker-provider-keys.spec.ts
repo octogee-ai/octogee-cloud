@@ -21,15 +21,15 @@ const record: ModelBrokerTokenRecord = {
   revoked: false,
 };
 
-function gatewayRoot(gatewayClass: "shared" | "builder" = "builder"): Record<string, unknown> {
+function gatewayRoot(gatewayClass: "shared" | "isolated" = "isolated"): Record<string, unknown> {
   return {
     gatewayId: "jack", createdAt: 1, createdBy: "test", updatedAt: 1, updatedBy: "test",
     latestRelease: 1, desiredRelease: 1, liveRelease: 1, desiredStatus: "running", configSchemaVersion: 1,
-    profile: gatewayClass === "builder" ? "builder" : null, gatewayClass,
-    imageProfile: gatewayClass === "builder" ? "builder" : "standard", sizingTier: null, gcpProject: null,
+    profile: gatewayClass === "isolated" ? "isolated" : null, gatewayClass,
+    imageProfile: gatewayClass === "isolated" ? "isolated" : "standard", sizingTier: null, gcpProject: null,
     gatewayContainerSecurityContext: null, serviceAccountName: null, serviceAccount: null, builderAccess: null,
-    ownerUid: gatewayClass === "builder" ? "uid-jack" : null,
-    builderSlug: gatewayClass === "builder" ? "smile-wring-011b" : null,
+    ownerUid: gatewayClass === "isolated" ? "uid-jack" : null,
+    builderSlug: gatewayClass === "isolated" ? "smile-wring-011b" : null,
     modelBrokerLimits: null, preemption: null,
   };
 }
@@ -46,7 +46,7 @@ function sources(docs: Docs) {
 describe("createAnthropicProviderKeyResolver", () => {
   it.each(["shared", "missing", "reassigned", "changed-during-secret", "parked-owner", "moved-during-secret", "revoked-during-secret"] as const)("keeps user keys behind current user authority: %s", async state => {
     const docs: Docs = {
-      ...(state === "missing" ? {} : { "gateways/jack": { ...gatewayRoot(state === "shared" ? "shared" : "builder"), ...(state === "reassigned" ? { ownerUid: "different-owner" } : {}) } }),
+      ...(state === "missing" ? {} : { "gateways/jack": { ...gatewayRoot(state === "shared" ? "shared" : "isolated"), ...(state === "reassigned" ? { ownerUid: "different-owner" } : {}) } }),
       "users/uid-jack": { username: "smile-wring-011b", provisioning: { openclaw: { gatewayId: state === "parked-owner" ? "shared-1" : "jack" } } },
       "users/uid-jack/system/config": { modelCredential: { active: true, provider: "anthropic", mode: "api_key", secretName: "byok-smile-wring-011b-anthropic" } },
     };

@@ -195,9 +195,9 @@ describe("terminal locality route — ticket boundary", () => {
 
 describe("terminalAvailable", () => {
   it("is on only for a per-user isolated gateway", () => {
-    expect(terminalAvailable({ OPENCLAW_CONTROL_IDENTITY: "per-user", GATEWAY_CLASS: "builder" })).toBe(true);
+    expect(terminalAvailable({ OPENCLAW_CONTROL_IDENTITY: "per-user", GATEWAY_CLASS: "isolated" })).toBe(true);
     expect(terminalAvailable({ OPENCLAW_CONTROL_IDENTITY: "per-user", GATEWAY_CLASS: "shared" })).toBe(false);
-    expect(terminalAvailable({ GATEWAY_CLASS: "builder" })).toBe(false);
+    expect(terminalAvailable({ GATEWAY_CLASS: "isolated" })).toBe(false);
   });
 });
 

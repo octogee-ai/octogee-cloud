@@ -304,7 +304,7 @@ describe("platform-owned user Git metadata", () => {
     const projectDir = path.join(usersRoot, "alice", "projects", "orbit");
     const metadataDir = path.join(root, "git-metadata", "alice", "projects", "orbit.git");
     process.env.CUSTOMERS_DIR = usersRoot;
-    process.env.GATEWAY_CLASS = "builder";
+    process.env.GATEWAY_CLASS = "isolated";
     try {
       await fs.mkdir(projectDir, { recursive: true });
       await fs.mkdir(metadataDir, { recursive: true });
@@ -315,7 +315,7 @@ describe("platform-owned user Git metadata", () => {
 
       const args = workspaceGitCommandArgs(projectDir, ["push"]);
       const env = workspaceGitEnvironment(
-        { GATEWAY_CLASS: "builder", GIT_CONFIG_GLOBAL: "/home/node/.gitconfig" },
+        { GATEWAY_CLASS: "isolated", GIT_CONFIG_GLOBAL: "/home/node/.gitconfig" },
         projectDir,
       );
 
@@ -344,7 +344,7 @@ describe("platform-owned user Git metadata", () => {
     const projectDir = path.join(usersRoot, "alice", "projects", "orbit");
     const metadataDir = path.join(root, "git-metadata", "alice", "projects", "orbit.git");
     process.env.CUSTOMERS_DIR = usersRoot;
-    process.env.GATEWAY_CLASS = "builder";
+    process.env.GATEWAY_CLASS = "isolated";
     try {
       await fs.mkdir(projectDir, { recursive: true });
       await fs.mkdir(metadataDir, { recursive: true });
@@ -356,7 +356,7 @@ describe("platform-owned user Git metadata", () => {
       const args = workspaceGitCommandArgs(projectDir, ["push"], true);
       const env = workspaceGitEnvironment(
         {
-          GATEWAY_CLASS: "builder",
+          GATEWAY_CLASS: "isolated",
           GIT_CONFIG_GLOBAL: "/home/node/.gitconfig",
           GH_TOKEN: "ambient-gh-token",
           GITHUB_TOKEN: "ambient-github-token",

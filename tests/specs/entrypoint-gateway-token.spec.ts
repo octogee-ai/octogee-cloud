@@ -127,7 +127,7 @@ describe("infra/gateway/entrypoint.sh — gateway token Secret Manager publish b
   });
 
   it("skips Secret Manager publish by default on isolated gateways", () => {
-    const result = runPublishBlock({ profile: "builder", nodeExit: 2 });
+    const result = runPublishBlock({ profile: "isolated", nodeExit: 2 });
     expect(result.status).toBe(0);
     expect(result.calledNode).toBe(false);
     expect(result.stderr).toMatch(/skipping gateway auth token Secret Manager publish/);
@@ -169,7 +169,7 @@ function runRunnerBlock(
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "entrypoint-runners-"));
   try {
     const marker = path.join(tmp, "runners");
-    const gatewayClass = opts.gatewayClass ?? (profile === "builder" ? "builder" : "shared");
+    const gatewayClass = opts.gatewayClass ?? (profile === "isolated" ? "isolated" : "shared");
     const script = `
       set -e
       log() { echo "$*" >&2; }
@@ -201,7 +201,7 @@ function runRunnerBlock(
 
 describe("infra/gateway/entrypoint.sh — in-pod runner boundary", () => {
   it("starts only the db-less controller and neutral side runners on isolated gateways", () => {
-    const result = runRunnerBlock("builder");
+    const result = runRunnerBlock("isolated");
     expect(result.status).toBe(0);
     expect(result.runners).toContain("fleet-controller");
     expect(result.runners).not.toContain("preview-proxy");
@@ -214,7 +214,7 @@ describe("infra/gateway/entrypoint.sh — in-pod runner boundary", () => {
   });
 
   it("starts isolated gateway user runners immediately", () => {
-    const result = runRunnerBlock("builder");
+    const result = runRunnerBlock("isolated");
     expect(result.status).toBe(0);
     expect(result.commands.get("system-config-watch")).toBe(
       "/octogee/scripts/node_modules/.bin/tsx /octogee/scripts/entrypoints/system-config-watch.ts",

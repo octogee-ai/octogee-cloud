@@ -14,7 +14,7 @@ const CLAIMED: UserIdentity = {
 };
 
 function user(identity: UserIdentity | null, roster: ReturnType<typeof store> | null) {
-  return workspaceServingResolver({ gatewayClass: "builder", identity: () => identity, store: roster });
+  return workspaceServingResolver({ gatewayClass: "isolated", identity: () => identity, store: roster });
 }
 
 describe("workspace serving resolver", () => {
@@ -39,7 +39,7 @@ describe("workspace serving resolver", () => {
 
   it("follows the user identity as it becomes claimed", () => {
     let identity: UserIdentity | null = null;
-    const resolve = workspaceServingResolver({ gatewayClass: "builder", identity: () => identity, store: store(true, "serving") });
+    const resolve = workspaceServingResolver({ gatewayClass: "isolated", identity: () => identity, store: store(true, "serving") });
     expect(resolve()).toBe("not-serving");
     identity = CLAIMED;
     expect(resolve()).toBe("serving");

@@ -19,7 +19,7 @@ describe("agent-anchor-restore entrypoint", () => {
     roots.push(dir);
     const initializeHost = vi.fn(async () => undefined);
     const result = await runAgentAnchorRestore({
-      env: withUserClaim({ GATEWAY_CLASS: 'builder', GATEWAY_RUNTIME_KIND: runtime, GATEWAY_ID: 'alice-s-first', OPENCLAW_STATE_DIR: dir }, 'alice'),
+      env: withUserClaim({ GATEWAY_CLASS: 'isolated', GATEWAY_RUNTIME_KIND: runtime, GATEWAY_ID: 'alice-s-first', OPENCLAW_STATE_DIR: dir }, 'alice'),
       broker: { readAgentAnchors: async () => ({ anchors: [] }) },
       readConfig: () => ({ agents: { entries: { [defaultAgent.agentId]: {} } } }),
       initializeHost,
@@ -32,7 +32,7 @@ describe("agent-anchor-restore entrypoint", () => {
     const dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'agent-anchor-first-import-')));
     roots.push(dir);
     await expect(runAgentAnchorRestore({
-      env: withUserClaim({ GATEWAY_CLASS: 'builder', GATEWAY_ID: 'alice-s-first', OPENCLAW_STATE_DIR: dir }, 'alice'),
+      env: withUserClaim({ GATEWAY_CLASS: 'isolated', GATEWAY_ID: 'alice-s-first', OPENCLAW_STATE_DIR: dir }, 'alice'),
       broker: { readAgentAnchors: async () => ({ anchors: [] }) }, readConfig: () => ({}),
       initializeHost: async () => { throw new Error('Native first-use failed'); }, log: () => {},
     })).rejects.toThrow('Native first-use failed');
@@ -48,7 +48,7 @@ describe("agent-anchor-restore entrypoint", () => {
       await expect(fs.stat(path.join(stateDir, "agents", defaultAgent.agentId))).rejects.toThrow();
     });
     const result = await runAgentAnchorRestore({
-      env: withUserClaim({ GATEWAY_CLASS: "builder", GATEWAY_ID: "alice-s-abc", OPENCLAW_STATE_DIR: dir }, "alice"),
+      env: withUserClaim({ GATEWAY_CLASS: "isolated", GATEWAY_ID: "alice-s-abc", OPENCLAW_STATE_DIR: dir }, "alice"),
       broker: { readAgentAnchors },
       readConfig: () => ({ agents: { entries: { [defaultAgent.agentId]: {}, "octogee-unmatched-route": {} } } }),
       verify,
@@ -71,7 +71,7 @@ describe("agent-anchor-restore entrypoint", () => {
     roots.push(dir);
     const verify = vi.fn();
     await expect(runAgentAnchorRestore({
-      env: withUserClaim({ GATEWAY_CLASS: "builder", GATEWAY_ID: "alice-s-abc", OPENCLAW_STATE_DIR: dir }, "alice"),
+      env: withUserClaim({ GATEWAY_CLASS: "isolated", GATEWAY_ID: "alice-s-abc", OPENCLAW_STATE_DIR: dir }, "alice"),
       broker: { readAgentAnchors: async () => ({ anchors: [defaultAgent] }) },
       readConfig: () => ({ agents: { entries: { [defaultAgent.agentId]: {} } } }),
       initializeHost: async () => { throw new Error("native boot refused existing history"); },
@@ -94,7 +94,7 @@ describe("agent-anchor-restore entrypoint", () => {
         await expect(fs.stat(path.join(root, "agents", defaultAgent.agentId))).rejects.toThrow();
       });
       const result = await runAgentAnchorRestore({
-        env: withUserClaim({ GATEWAY_CLASS: "builder", GATEWAY_RUNTIME_KIND: runtimeKind, GATEWAY_ID: "alice-s-abc", OPENCLAW_STATE_DIR: dir }, "alice"),
+        env: withUserClaim({ GATEWAY_CLASS: "isolated", GATEWAY_RUNTIME_KIND: runtimeKind, GATEWAY_ID: "alice-s-abc", OPENCLAW_STATE_DIR: dir }, "alice"),
         broker: { readAgentAnchors },
         readConfig: () => ({ agents: { entries: { [defaultAgent.agentId]: {} } } }),
         verify: async () => undefined,
@@ -124,7 +124,7 @@ describe("agent-anchor-restore entrypoint", () => {
     await fs.writeFile(path.join(dir, "state", "openclaw.sqlite"), "local");
     const verifyState = vi.fn();
     const result = await runAgentAnchorRestore({
-      env: withUserClaim({ GATEWAY_CLASS: "builder", GATEWAY_RUNTIME_KIND: "cluster", GATEWAY_ID: "alice-s-abc", OPENCLAW_STATE_DIR: dir }, "alice"),
+      env: withUserClaim({ GATEWAY_CLASS: "isolated", GATEWAY_RUNTIME_KIND: "cluster", GATEWAY_ID: "alice-s-abc", OPENCLAW_STATE_DIR: dir }, "alice"),
       broker: { readAgentAnchors: async () => ({ anchors: [], state: { storeId: "c8feb4c9-41a7-4be1-b863-fa07ef6d1bdd", schema: "octogee_state_c8feb4c941a74be1" } }) },
       readConfig: () => ({ agents: { entries: {} } }),
       verifyState,
@@ -140,7 +140,7 @@ describe("agent-anchor-restore entrypoint", () => {
     const readAgentAnchors = vi.fn();
     expect(await runAgentAnchorRestore({ env: { GATEWAY_CLASS: "shared", GATEWAY_ID: "shared-a" }, broker: { readAgentAnchors }, readConfig: () => ({}), log: () => {} }))
       .toEqual({ landed: [], preserved: [], skipped: true });
-    expect(await runAgentAnchorRestore({ env: { GATEWAY_CLASS: "builder", GATEWAY_ID: "alice-s-abc" }, broker: { readAgentAnchors }, readConfig: () => ({}), log: () => {} }))
+    expect(await runAgentAnchorRestore({ env: { GATEWAY_CLASS: "isolated", GATEWAY_ID: "alice-s-abc" }, broker: { readAgentAnchors }, readConfig: () => ({}), log: () => {} }))
       .toEqual({ landed: [], preserved: [], skipped: true });
     expect(readAgentAnchors).not.toHaveBeenCalled();
   });

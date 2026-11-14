@@ -21,7 +21,7 @@ export function fleetOperationLockResources(operation) {
         return new Set();
     return new Set([
         ...stringFields(operation.input, RESOURCE_FIELDS),
-        ...stringFields(operation.customerMigrationV2, [
+        ...stringFields(operation.userMigrationV2, [
             "sourceGatewayId",
             "targetGatewayId",
         ]),

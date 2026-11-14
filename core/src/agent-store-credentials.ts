@@ -14,7 +14,7 @@ const roleFor = (kind: string, id: string) => `octogee_${kind}_${createHash("sha
 
 export interface AgentStoreGatewayIdentity {
   gatewayId: string;
-  gatewayClass: "shared" | "builder";
+  gatewayClass: "shared" | "isolated";
   token: string;
   user?: { uid: string; slug: string };
 }
@@ -287,7 +287,7 @@ export function createAgentStoreOwnershipTransferer(
   const sharedRole = roleFor("shared", scope);
   const pool = new pg.Pool({ connectionString: adminDsn, max: 2, connectionTimeoutMillis: 10_000, allowExitOnIdle: true });
   pool.on("error", error => console.error("Agent-store ownership connection failed", error.message));
-  return async (user: { uid: string; slug: string }, target: "shared" | "builder", assertCurrent?: () => Promise<void>): Promise<void> => {
+  return async (user: { uid: string; slug: string }, target: "shared" | "isolated", assertCurrent?: () => Promise<void>): Promise<void> => {
     if (!user.uid || !user.slug) throw new Error("Agent-store ownership transfer requires a complete user identity");
     const owner = roleFor("builder", `${scope}:${user.uid}`);
     const client = await pool.connect();

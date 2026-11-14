@@ -10,7 +10,7 @@ const oldOperation = `builder-return-${oldSource}-g3`, heldBy = `mig-${oldOperat
 function fixture() {
   const op = { kind: "migrate-user", origin: "automatic", createdBy: "glm-controller-placement-policy", inputUid: uid,
     gatewayId: target, status: "running", startedAt: 500,
-    input: { uid, builderSlug: slug, fromGatewayId: source, toGatewayId: target, source: "builder-activation-lease" },
+    input: { uid, userSlug: slug, fromGatewayId: source, toGatewayId: target, source: "builder-activation-lease" },
     schedulerHandoff: { uid, slug, fromGatewayId: source, toGatewayId: target, migrationId: `mig-${operationId}:scheduler:1:claim:500` },
     schedulerHandoffReleased: false,
   };
@@ -21,7 +21,7 @@ function fixture() {
   };
   const openclaw = { slug, gatewayId: source, migration: { state: "moving", startedAt: 500, operationId },
     activationLease: { leaseId: "lease4", generation: 4, status: "returning", targetGatewayId: source, returnOperationId: operationId } };
-  const root = { gatewayId: source, gatewayClass: "builder", ownerUid: uid, builderSlug: slug, desiredStatus: "running",
+  const root = { gatewayId: source, gatewayClass: "isolated", ownerUid: uid, builderSlug: slug, desiredStatus: "running",
     desiredRelease: 1, liveRelease: 1, latestRelease: 1,
     allocation: { kind: "disposable-builder", claimedByUid: uid, leaseId: "lease4", generation: 4 } };
   const assignment = { uid, slug, gatewayId: source, epoch: 7, state: "quiescing", updatedByOperationId: operationId,

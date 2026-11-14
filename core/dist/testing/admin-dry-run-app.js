@@ -93,9 +93,9 @@ export function servingSharedGateway(gatewayId) {
 export function isolatedGateway(gatewayId, ownerUid, slug) {
     return {
         [`gateways/${gatewayId}`]: gatewayRoot(gatewayId, {
-            gatewayClass: "builder",
-            imageProfile: "builder",
-            profile: "builder",
+            gatewayClass: "isolated",
+            imageProfile: "isolated",
+            profile: "isolated",
             sizingTier: "s",
             ownerUid,
             builderSlug: slug,

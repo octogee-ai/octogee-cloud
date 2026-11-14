@@ -162,9 +162,9 @@ function mutableConfig(
 ): GatewayMutableConfig {
   return {
     configSchemaVersion: 1,
-    profile: "builder",
-    gatewayClass: "builder",
-    imageProfile: "builder",
+    profile: "isolated",
+    gatewayClass: "isolated",
+    imageProfile: "isolated",
     sizingTier: "l",
     gcpProject: null,
     gatewayContainerSecurityContext: null,
@@ -315,14 +315,14 @@ describe("gateway durable configuration authorization", () => {
     await expect(readGatewayAuthorizationInStore(createDocumentFixtureStore(docs), "walter")).resolves.toMatchObject({
       kind: "durable",
       config: {
-        gatewayClass: "builder",
+        gatewayClass: "isolated",
         ownerUid: "uid-ceckert",
         builderAccess: { controlUiEnabled: true },
       },
     });
     await expect(readServingGatewayAuthorization(createDocumentFixtureStore(docs), "walter")).resolves.toMatchObject({
       kind: "durable",
-      config: { gatewayClass: "builder" },
+      config: { gatewayClass: "isolated" },
     });
   });
 
@@ -345,7 +345,7 @@ describe("gateway durable configuration authorization", () => {
       "glmGateways/walter": {
         gatewayId: "walter",
         ownerUid: "uid-ceckert",
-        gatewayClass: "builder",
+        gatewayClass: "isolated",
       },
     };
 
@@ -357,7 +357,7 @@ describe("gateway durable configuration authorization", () => {
       "glmGateways/walter": {
         gatewayId: "walter",
         ownerUid: "uid-ceckert",
-        gatewayClass: "builder",
+        gatewayClass: "isolated",
         builderAccess: { controlUiEnabled: true },
       },
     };
@@ -369,7 +369,7 @@ describe("gateway durable configuration authorization", () => {
     const docs: Docs = {
       "glmGateways/walter": servingRuntime({
         ownerUid: "uid-ceckert",
-        gatewayClass: "builder",
+        gatewayClass: "isolated",
       }),
     };
 
@@ -382,7 +382,7 @@ describe("gateway durable configuration authorization", () => {
       "glmGateways/walter": {
         gatewayId: "walter",
         ownerUid: "uid-ceckert",
-        gatewayClass: "builder",
+        gatewayClass: "isolated",
         builderAccess: { controlUiEnabled: true },
       },
     };
@@ -417,7 +417,7 @@ describe("gateway durable configuration authorization", () => {
 
     expect(rendered).toMatchObject({
       imageTag: "deadbee",
-      gatewayClass: "builder",
+      gatewayClass: "isolated",
       ownerUid: "uid-ceckert",
     });
     expect(rendered).not.toHaveProperty("configSchemaVersion");

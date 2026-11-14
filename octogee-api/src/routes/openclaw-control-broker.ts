@@ -155,7 +155,7 @@ interface PrincipalReadArgs {
 }
 
 function perUserControlIdentity(config: GatewayRootAuthorization["config"]): boolean {
-  return config.gatewayClass === "builder" && config.builderAccess?.controlIdentity === "per-user";
+  return config.gatewayClass === "isolated" && config.builderAccess?.controlIdentity === "per-user";
 }
 
 function perUserIdentityEnabled(

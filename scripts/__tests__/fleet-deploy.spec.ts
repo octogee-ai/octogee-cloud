@@ -13,16 +13,16 @@ const tag = "aaaaaaa-oc2026.10.2";
 const payload: ReleasePayload = {
   imageRepository: "registry/images/octogee-gateway",
   imageTag: `${tag}@${digest("a")}`,
-  profileImages: { builder: { imageRepository: "registry/images/octogee-gateway-builder", imageTag: `${tag}@${digest("b")}` } },
+  profileImages: { isolated: { imageRepository: "registry/images/octogee-gateway-builder", imageTag: `${tag}@${digest("b")}` } },
   gatewayEdgeImage: { imageRepository: "registry/images/gateway-edge", imageTag: `${tag}@${digest("c")}` },
 };
 const old = { ...payload, imageTag: `old@${digest("d")}` };
 
 function gateway(id: string, patch: Partial<FleetGateway> = {}): FleetGateway {
   const shared = id.startsWith("shared-");
-  const image = shared ? payload : payload.profileImages!.builder;
+  const image = shared ? payload : payload.profileImages!.isolated;
   return {
-    gatewayId: id, gatewayClass: shared ? "shared" : "builder", imageProfile: shared ? "standard" : "builder", addedBy: shared ? "automation" : null,
+    gatewayId: id, gatewayClass: shared ? "shared" : "isolated", imageProfile: shared ? "standard" : "isolated", addedBy: shared ? "automation" : null,
     desiredStatus: "running", latestRelease: 2, desiredRelease: 2, liveRelease: 2,
     latestPayload: payload, desiredPayload: payload, assignments: [], operations: [],
     runtime: { release: 2, lifecycle: "serving", status: "ready", heartbeatAt: 100, mountedCustomers: [], migratingIn: [] },
@@ -124,7 +124,7 @@ describe("complete TEST fleet deployment", () => {
   });
 
   it("replaces a mixed desired image family and never declares it converged", async () => {
-    const mixed = { ...payload, profileImages: { builder: { ...payload.profileImages!.builder, imageTag: `old@${digest("e")}` } } };
+    const mixed = { ...payload, profileImages: { isolated: { ...payload.profileImages!.isolated, imageTag: `old@${digest("e")}` } } };
     const h = harness([snapshot(gateway("shared-0"), gateway("b-mixed", { latestPayload: mixed, desiredPayload: mixed }))]);
     expect((await h.run()).outcome).toBe("timed-out");
     expect(h.deploy).toHaveBeenCalledOnce();
@@ -195,7 +195,7 @@ describe("complete TEST fleet deployment", () => {
   it("accepts deployed short-SHA Shared tags while keeping user releases canonical", async () => {
     const deployed: ReleasePayload = {
       ...payload, imageTag: payload.imageTag.replace(tag, "aaaaaaa"),
-      profileImages: { builder: { ...payload.profileImages!.builder, imageTag: payload.profileImages!.builder.imageTag.replace(tag, "aaaaaaa") } },
+      profileImages: { isolated: { ...payload.profileImages!.isolated, imageTag: payload.profileImages!.isolated.imageTag.replace(tag, "aaaaaaa") } },
       gatewayEdgeImage: { ...payload.gatewayEdgeImage!, imageTag: payload.gatewayEdgeImage!.imageTag.replace(tag, "aaaaaaa") },
     };
     const h = harness([{ ...snapshot(gateway("shared-0", { latestPayload: deployed, desiredPayload: deployed }), gateway("b-old-tag", { latestPayload: deployed, desiredPayload: deployed })), platform: platformReleaseRecord(deployed, 100) },
@@ -207,7 +207,7 @@ describe("complete TEST fleet deployment", () => {
   it.each(["source", "openclaw"])("rejects platform %s supersession even when image digests are reused", async (field) => {
     const changed: ReleasePayload = field === "openclaw" ? { ...payload, openclawSourceSha: "f".repeat(40) } : {
       ...payload, imageTag: payload.imageTag.replace(tag, "bbbbbbb"),
-      profileImages: { builder: { ...payload.profileImages!.builder, imageTag: payload.profileImages!.builder.imageTag.replace(tag, "bbbbbbb") } },
+      profileImages: { isolated: { ...payload.profileImages!.isolated, imageTag: payload.profileImages!.isolated.imageTag.replace(tag, "bbbbbbb") } },
       gatewayEdgeImage: { ...payload.gatewayEdgeImage!, imageTag: payload.gatewayEdgeImage!.imageTag.replace(tag, "bbbbbbb") },
     };
     const h = harness([{ ...snapshot(gateway("shared-0")), platform: platformReleaseRecord(changed, 100) }]);

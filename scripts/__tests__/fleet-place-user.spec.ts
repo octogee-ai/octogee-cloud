@@ -56,7 +56,7 @@ describe("fleet add-customer placement", () => {
   it("repairs the mirrored profile without rewriting the existing assignment", async () => {
     const assignment = { uid: "u1", slug: "alice", gatewayId: "shared-b", source: "onboarding", state: "serving", epoch: 3, createdAt: 1, updatedAt: 2, updatedByOperationId: null };
     const { store, records } = placementStore({
-      "users/u1": alice({ gatewayId: "shared-b", gatewayProfile: "builder" }),
+      "users/u1": alice({ gatewayId: "shared-b", gatewayProfile: "isolated" }),
       "gateways/shared-b": root("shared-b"),
       "gateways/shared-b/assignments/u1": assignment,
     });
@@ -145,8 +145,8 @@ describe("fleet add-customer placement", () => {
   });
 
   it.each([
-    ["another user's isolated gateway", { "gateways/shared-b": root("shared-b", { gatewayClass: "builder", profile: "builder", imageProfile: "builder", ownerUid: "u2", builderSlug: "bob" }) }, "gateway shared-b is isolated"],
-    ["the user's own isolated gateway", { "gateways/shared-b": root("shared-b", { gatewayClass: "builder", profile: "builder", imageProfile: "builder", ownerUid: "u1", builderSlug: "alice" }) }, "gateway shared-b is isolated"],
+    ["another user's isolated gateway", { "gateways/shared-b": root("shared-b", { gatewayClass: "isolated", profile: "isolated", imageProfile: "isolated", ownerUid: "u2", builderSlug: "bob" }) }, "gateway shared-b is isolated"],
+    ["the user's own isolated gateway", { "gateways/shared-b": root("shared-b", { gatewayClass: "isolated", profile: "isolated", imageProfile: "isolated", ownerUid: "u1", builderSlug: "alice" }) }, "gateway shared-b is isolated"],
     ["a retired gateway", { "gateways/shared-b": root("shared-b", { desiredStatus: "retired" }) }, "gateway shared-b is retired"],
     ["a paused gateway", { "gateways/shared-b": root("shared-b", { desiredStatus: "paused" }) }, "gateway shared-b is paused, not running"],
     ["a user under a restore fence", { "users/u1": alice({ restoreFence: { operationId: "restore-1" } }) }, "restore in progress"],

@@ -172,7 +172,7 @@ function credentialPathFor(
   if (credential?.active !== true) return { path: "platform_broker", provider: null };
   const provider = stringOrNull(credential.provider);
   if (credential.mode !== "oauth") return { path: "byok_api_key", provider };
-  return gatewayClass === "builder"
+  return gatewayClass === "isolated"
     ? { path: "byosub", provider }
     : { path: "byosub_suppressed_customer", provider };
 }
@@ -305,7 +305,7 @@ async function apiKeyCredentialAllowed(
   const assigned = roster.some((userRecord) => userRecord.slug === slug) ||
     await configuredUserSlugCredentialBootstrapAllowed(store, bound.gatewayId, bound.podName, slug);
   const authorization = await readGatewayAuthorizationInStore(store, bound.gatewayId);
-  return assigned && authorization?.config.gatewayClass === "builder";
+  return assigned && authorization?.config.gatewayClass === "isolated";
 }
 
 async function handleApiKeyCredential(
@@ -355,7 +355,7 @@ async function handleByosubCred(input: {
 }): Promise<void> {
   const { byosub, store, readCredentialSecret, gatewayId, podName, agentId, res } = input;
   const authorization = await readGatewayAuthorizationInStore(store, gatewayId);
-  if (authorization?.config.gatewayClass !== "builder") {
+  if (authorization?.config.gatewayClass !== "isolated") {
     res.status(403).json(FORBIDDEN);
     return;
   }
@@ -463,7 +463,7 @@ async function handleByosubCredSyncback(input: {
     return;
   }
   const authorization = await readGatewayAuthorizationInStore(store, gatewayId);
-  if (authorization?.config.gatewayClass !== "builder") {
+  if (authorization?.config.gatewayClass !== "isolated") {
     res.status(403).json(FORBIDDEN);
     return;
   }

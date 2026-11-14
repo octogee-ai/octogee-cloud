@@ -359,7 +359,7 @@ function controlIdentityInvariants(perUser, ownerUid, workspaceSlug) {
     ];
 }
 export function platformInvariantTable(context) {
-    const isolated = context.gatewayClass === "builder";
+    const isolated = context.gatewayClass === "isolated";
     const gatewayId = context.gatewayId?.trim();
     const apiOrigin = context.apiOrigin?.trim().replace(/\/$/, "");
     if (isolated && (!gatewayId || !apiOrigin)) {
@@ -461,7 +461,7 @@ export function platformInvariantTable(context) {
     // in the pod, so host code, terminals, MCP servers, cron, skills, sub-agents,
     // and the codex BYOSUB plugin stay at the user's discretion. The platform
     // keeps only wiring and tenant-scoped secret providers.
-    return context.gatewayClass === "builder"
+    return context.gatewayClass === "isolated"
         ? platformProjection
         : [...platformProjection, ...userToolInvariants()];
 }
@@ -798,7 +798,7 @@ export function reconcilePlatformInvariants(config, context) {
     return { changedPaths };
 }
 function reconcileOperatorRoles(config, context) {
-    if (context.gatewayClass !== "builder" || context.controlIdentity !== "per-user")
+    if (context.gatewayClass !== "isolated" || context.controlIdentity !== "per-user")
         return false;
     const [gateway] = parentForPath(config, "gateway.roles");
     const roles = withOpenClawOperatorRoles(gateway.roles, context.workspaceSlug);

@@ -422,7 +422,7 @@ describe("fleet-controller entrypoint config", () => {
     }));
     const flush = createFleetControllerRequestedFlush({
       gatewayId: "builder-alice",
-      gatewayClass: "builder",
+      gatewayClass: "isolated",
       builderSlug: "alice",
       isolated: true,
       flushFiles,
@@ -457,7 +457,7 @@ describe("fleet-controller entrypoint config", () => {
     const flushFiles = vi.fn(async () => { throw new Error("workspace push failed"); });
     const flush = createFleetControllerRequestedFlush({
       gatewayId: "builder-alice",
-      gatewayClass: "builder",
+      gatewayClass: "isolated",
       builderSlug: "alice",
       isolated: true,
       flushFiles,
@@ -486,7 +486,7 @@ describe("fleet-controller entrypoint config", () => {
     const syncBlobs = vi.fn(async () => {});
     const syncSystemConfig = vi.fn(() => { throw new Error("platform-invariant-violation"); });
     const flush = createFleetControllerRequestedFlush({
-      gatewayId: "builder-alice", gatewayClass: "builder", builderSlug: "alice", isolated: true,
+      gatewayId: "builder-alice", gatewayClass: "isolated", builderSlug: "alice", isolated: true,
       flushFiles, syncBlobs, syncSystemConfig, log: () => {},
     });
     const result = await flush({ slug: "alice", reason: "native-return" });
@@ -500,7 +500,7 @@ describe("fleet-controller entrypoint config", () => {
   it.each(["bob", ""])("rejects native-return flush outside its configured user (%s)", async (builderSlug) => {
     const flushFiles = vi.fn(async () => {});
     const flush = createFleetControllerRequestedFlush({
-      gatewayId: "builder-alice", gatewayClass: "builder", builderSlug, isolated: true,
+      gatewayId: "builder-alice", gatewayClass: "isolated", builderSlug, isolated: true,
       flushFiles, log: () => {},
     });
     await expect(flush({ slug: "alice", reason: "native-return" })).rejects.toThrow(/configured user/);
@@ -516,7 +516,7 @@ describe("fleet-controller entrypoint config", () => {
     }));
     const flush = createFleetControllerRequestedFlush({
       gatewayId: "builder-alice",
-      gatewayClass: "builder",
+      gatewayClass: "isolated",
       builderSlug: "alice",
       isolated: true,
       flushFiles,
@@ -793,9 +793,9 @@ describe("fleet force gateway restart", () => {
       liveRelease: 1,
       desiredStatus: "running",
       configSchemaVersion: 1,
-      profile: "builder",
-      gatewayClass: "builder",
-      imageProfile: "builder",
+      profile: "isolated",
+      gatewayClass: "isolated",
+      imageProfile: "isolated",
       sizingTier: null,
       gcpProject: null,
       gatewayContainerSecurityContext: null,

@@ -17,7 +17,7 @@ function nonEmpty(value: unknown): value is string {
 
 function pausedRetirementClaimMatches(root: GatewayRoot, input: NativeRetirementInput): boolean {
   const claim = record(root.retirementClaim);
-  return root.gatewayClass === "builder" &&
+  return root.gatewayClass === "isolated" &&
     nonEmpty(root.ownerUid) && root.desiredStatus === "retired" &&
     claim.operationId === input.operationId && claim.version === input.version &&
     claim.phase === "claimed" && claim.previousDesiredStatus === "paused";

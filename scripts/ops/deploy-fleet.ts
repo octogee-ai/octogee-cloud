@@ -145,7 +145,7 @@ export async function deployFleetUser(store: PlatformStateStore, gateway: Pick<F
   const current = stored === null ? null : asDurableGatewayRoot(withoutRevision(stored), gateway.gatewayId);
   if (current?.desiredStatus === "retired") throw new FleetDeploymentDeferredError(`${gateway.gatewayId} retired during deployment selection`);
   if (stored === null) await rethrowMutationError(store, gateway.gatewayId, new InvalidGatewayRootError(gateway.gatewayId));
-  if (!current || current.gatewayClass !== "builder") throw new Error(`${gateway.gatewayId} is no longer a non-retired isolated gateway`);
+  if (!current || current.gatewayClass !== "isolated") throw new Error(`${gateway.gatewayId} is no longer a non-retired isolated gateway`);
   if (!matchesFleetPlatformRelease(platformRecordOf(platform), payload, manifest.sourceSha)) throw new Error("platform release was superseded before user deployment");
   const actor = process.env.RELEASE_ACTOR ?? `operator:${environment}-fleet`;
   try { return await runNormalFleetMutation(store, {

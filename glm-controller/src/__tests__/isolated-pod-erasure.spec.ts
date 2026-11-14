@@ -18,7 +18,7 @@ function parkedPodGateway() {
     [`gateways/${GATEWAY_ID}`]: {
       gatewayId: GATEWAY_ID, createdAt: 1, createdBy: "operator", updatedAt: 1, updatedBy: "operator",
       latestRelease: 1, desiredRelease: 1, liveRelease: 1, desiredStatus: "paused", configSchemaVersion: 1,
-      profile: null, gatewayClass: "builder", imageProfile: "builder", sizingTier: "s", gcpProject: null,
+      profile: null, gatewayClass: "isolated", imageProfile: "isolated", sizingTier: "s", gcpProject: null,
       gatewayContainerSecurityContext: null, serviceAccountName: null, serviceAccount: null, builderAccess: null,
       ownerUid: UID, builderSlug: "alice", modelBrokerLimits: null, preemption: null, coOwnerUids: [],
       allocation: { kind: "disposable-builder", schemaVersion: 1, leaseId: "operator-issued", generation: 1, claimedByUid: UID },

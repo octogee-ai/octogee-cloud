@@ -3,7 +3,7 @@ import type { GatewayVmClient } from "./compute-vm.js";
 
 export function nativeReturnSourceIdentity(runtime: UntypedRecord | undefined, root: UntypedRecord | undefined) {
   const vm = runtime?.vm;
-  if (runtime?.runtime !== "gce-vm" || root?.gatewayClass !== "builder" ||
+  if (runtime?.runtime !== "gce-vm" || root?.gatewayClass !== "isolated" ||
       !["paused", "retired"].includes(root.desiredStatus) ||
       ![root.ownerUid, root.builderSlug, vm?.instanceName, vm?.zone, vm?.instanceId].every(v => typeof v === "string" && v.length > 0)) return null;
   return { ownerUid: root.ownerUid, slug: root.builderSlug, desiredStatus: root.desiredStatus,

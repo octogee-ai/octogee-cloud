@@ -92,7 +92,7 @@ describe("serving isolated gateway during an unconverged roll", () => {
     const root: Record<string, unknown> = {
       gatewayId: "walter", createdAt: 1, createdBy: "test", updatedAt: 1, updatedBy: "test",
       latestRelease: 3, desiredRelease: 3, liveRelease: 2, desiredStatus: "running",
-      configSchemaVersion: 1, gatewayClass: "builder", profile: "builder", imageProfile: "builder",
+      configSchemaVersion: 1, gatewayClass: "isolated", profile: "isolated", imageProfile: "isolated",
       ownerUid: "owner", builderSlug: "walter", sizingTier: null, gcpProject: null,
       gatewayContainerSecurityContext: null, serviceAccountName: null, serviceAccount: null,
       builderAccess: null, modelBrokerLimits: null, preemption: null,

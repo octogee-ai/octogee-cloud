@@ -15,7 +15,7 @@ function fixture() {
   const op = {
     kind: "migrate-user", status: "running", origin: "automatic", createdBy: "glm-controller-placement-policy",
     createdAt: 80, startedAt: 500, inputUid: "uid-alice", gatewayId: target,
-    input: { uid: "uid-alice", builderSlug: "alice", fromGatewayId: source, toGatewayId: target, source: "builder-activation-lease" },
+    input: { uid: "uid-alice", userSlug: "alice", fromGatewayId: source, toGatewayId: target, source: "builder-activation-lease" },
     nativeReturnSourceRecoveryReceipts: [{ uid: "uid-alice", slug: "alice", operationId, sourceGatewayId: source,
       targetGatewayId: retired, completedAt: 400, targetRetirement: retirement }],
   };

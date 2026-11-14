@@ -20,9 +20,9 @@ function readers(gatewayClass: string) {
 }
 
 describe("gateway image readers of GATEWAY_CLASS", () => {
-  it("behave identically for isolated and builder", () => {
-    expect(readers("isolated")).toEqual(readers("builder"));
-    expect(readers("isolated")).toMatchObject({ invariantClass: "builder", invariantClaim: "alice", rosterUser: "alice", clusterIsolated: true });
+  it("read the builder class a previous controller renders exactly as isolated", () => {
+    expect(readers("builder")).toEqual(readers("isolated"));
+    expect(readers("isolated")).toMatchObject({ invariantClass: "isolated", invariantClaim: "alice", rosterUser: "alice", clusterIsolated: true });
   });
 
   it("still treat an unknown class as not isolated", () => {

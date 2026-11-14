@@ -145,7 +145,7 @@ async function assertDeletionAuthority(
 }
 
 function retiredRootMatches(root: GatewayRoot | null, proof: UserGatewayRetirementProof, uid: string): boolean {
-  return root === null || (root.ownerUid === uid && root.gatewayClass === "builder" && root.desiredStatus === "retired" &&
+  return root === null || (root.ownerUid === uid && root.gatewayClass === "isolated" && root.desiredStatus === "retired" &&
     root.retirementVersion === proof.version && root.retirementClaim?.operationId === proof.operationId);
 }
 

@@ -15,7 +15,7 @@ describe("project remote save client", () => {
     await expect(persistSharedUserFiles("alice", deps)).rejects.toThrow(/retain/);
     deps.fetch.mockResolvedValueOnce(Response.json({ projects: "saved" }));
     await expect(persistSharedUserFiles("alice", deps)).rejects.toThrow(/acknowledgement/);
-    await expect(persistSharedUserFiles("alice", { ...deps, env: { GATEWAY_CLASS: "builder" } })).rejects.toThrow(/identity/);
+    await expect(persistSharedUserFiles("alice", { ...deps, env: { GATEWAY_CLASS: "isolated" } })).rejects.toThrow(/identity/);
   });
   it("reads each fresh Shared roster and isolates one user's remote-save failure", async () => {
     const readUsers = vi.fn().mockResolvedValueOnce([{ slug: "alice" }, { slug: "bob" }]).mockResolvedValueOnce([{ slug: "bob" }]);

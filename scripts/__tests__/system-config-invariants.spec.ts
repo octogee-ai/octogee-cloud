@@ -175,7 +175,7 @@ describe("system config platform invariants", () => {
 
   it("accepts generated user agents at a durable checkpoint", () => {
     const candidate = config();
-    const userEnv = { ...env, GATEWAY_CLASS: "builder" };
+    const userEnv = { ...env, GATEWAY_CLASS: "isolated" };
     reconcilePlatformInvariants(candidate, userEnv);
     candidate.agents = {
       list: [
@@ -210,14 +210,14 @@ describe("system config platform invariants", () => {
     expect(systemConfigInvariantContextFromEnv(env).controlIdentity).toBe("shared-operator");
     expect(systemConfigInvariantContextFromEnv({
       ...env,
-      GATEWAY_CLASS: "builder",
+      GATEWAY_CLASS: "isolated",
       OPENCLAW_CONTROL_IDENTITY: "per-user",
     }).controlIdentity).toBe("per-user");
 
     const candidate = config();
     reconcilePlatformInvariants(candidate, withUserClaim({
       ...env,
-      GATEWAY_CLASS: "builder",
+      GATEWAY_CLASS: "isolated",
       OPENCLAW_CONTROL_IDENTITY: "per-user",
     }, "alice"));
     expect((candidate.gateway as { auth: { mode: string } }).auth.mode).toBe("trusted-proxy");

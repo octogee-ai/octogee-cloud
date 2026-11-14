@@ -10,7 +10,7 @@ describe("runGatewayPreStopFlush", () => {
     const calls: string[] = [];
     const result = await runGatewayPreStopFlush({
       gatewayId: "eggman-devdays",
-      gatewayClass: "builder",
+      gatewayClass: "isolated",
       quiesceSessions: vi.fn(async () => { calls.push("quiesce"); }),
       flushFiles: vi.fn(async () => { calls.push("workspaces"); }),
       syncBlobs: vi.fn(async () => { calls.push("blobs"); }),
@@ -28,7 +28,7 @@ describe("runGatewayPreStopFlush", () => {
     const releaseGiteaKey = vi.fn(async () => {});
     const result = await runGatewayPreStopFlush({
       gatewayId: "eggman-devdays",
-      gatewayClass: "builder",
+      gatewayClass: "isolated",
       flushFiles: vi.fn(async () => {}),
       syncSystemConfig: vi.fn(async () => { throw new Error("push failed"); }),
       releaseGiteaKey,
@@ -47,7 +47,7 @@ describe("runGatewayPreStopFlush", () => {
 
     const result = await runGatewayPreStopFlush({
       gatewayId: "builder-a",
-      gatewayClass: "builder",
+      gatewayClass: "isolated",
       flushFiles: vi.fn(async () => { calls.push("workspaces"); }),
       syncBlobs: vi.fn(async () => { calls.push("blobs"); }),
       syncSystemConfig: vi.fn(async () => {
@@ -72,7 +72,7 @@ describe("runGatewayPreStopFlush", () => {
       "skipped",
       "skipped",
     ]);
-    expect(logs.join("\n")).toMatch(/starting gateway=builder-a class=builder/);
+    expect(logs.join("\n")).toMatch(/starting gateway=builder-a class=isolated/);
     expect(logs.join("\n")).toMatch(/complete ok=true/);
   });
 
@@ -111,7 +111,7 @@ describe("runGatewayPreStopFlush", () => {
     const releaseGiteaKey = vi.fn(async () => {});
     const result = await runGatewayPreStopFlush({
       gatewayId: "builder-a",
-      gatewayClass: "builder",
+      gatewayClass: "isolated",
       quiesceSessions: vi.fn(async () => {
         calls.push("quiesce");
         throw new Error("2 sessions still running");
@@ -138,7 +138,7 @@ describe("runGatewayPreStopFlush", () => {
     const syncSystemConfig = vi.fn(async () => ({ acceptedCommit: "a".repeat(40) }));
     const result = await runGatewaySystemConfigConvergenceCheckpoint({
       gatewayId: "builder-alice",
-      gatewayClass: "builder",
+      gatewayClass: "isolated",
       syncSystemConfig,
       log: () => {},
     });
@@ -161,7 +161,7 @@ describe("runGatewayPreStopFlush", () => {
   it("keeps convergence fenced when the system config checkpoint fails", async () => {
     const result = await runGatewaySystemConfigConvergenceCheckpoint({
       gatewayId: "builder-alice",
-      gatewayClass: "builder",
+      gatewayClass: "isolated",
       syncSystemConfig: vi.fn(async () => { throw new Error("checkpoint failed"); }),
       log: () => {},
     });
@@ -180,7 +180,7 @@ describe("runGatewayPreStopFlush", () => {
   it("keeps convergence fenced without an accepted system config commit", async () => {
     const result = await runGatewaySystemConfigConvergenceCheckpoint({
       gatewayId: "builder-alice",
-      gatewayClass: "builder",
+      gatewayClass: "isolated",
       syncSystemConfig: vi.fn(async () => undefined) as never,
       log: () => {},
     });
@@ -204,7 +204,7 @@ describe("runGatewayPreStopFlush", () => {
     });
     const resultPromise = runGatewayPreStopFlush({
       gatewayId: "builder-a",
-      gatewayClass: "builder",
+      gatewayClass: "isolated",
       quiesceSessions: async () => { calls.push("quiesce"); },
       syncRuntimeState: async () => {
         calls.push("runtime");
