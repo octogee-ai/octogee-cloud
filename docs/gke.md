@@ -230,7 +230,11 @@ scripts/ops/gke-install.sh down
 
 This deletes the namespace, the cluster, the database, both buckets, the blob
 store service account and its keys, the network and its NAT, and the state
-directory. The data goes with them. If the project exists only for the
+directory. The data goes with them. Cloud SQL can hold the network's service
+networking connection for a while after the database is deleted. `down` retries
+the connection for ten minutes. If it is still held, `down` stops and keeps the
+state directory; run it again later, and it skips what is already gone.
+If the project exists only for the
 platform, deleting the project removes everything at once:
 
 ```bash

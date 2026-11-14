@@ -573,12 +573,23 @@ down() {
     g iam service-accounts delete "$BLOB_EMAIL" >/dev/null
   fi
   if [[ -n "$(g services vpc-peerings list --network="$NAME" --format='value(peering)' 2>/dev/null)" ]]; then
-    g services vpc-peerings delete --service=servicenetworking.googleapis.com --network="$NAME"
+    delete_sql_peering
   fi
   delete_present "$NAME-sql" compute addresses --global
   delete_present "$NAME" compute routers --region "$GCP_REGION"
   delete_present "$NAME" compute networks
   rm -rf "$STATE"
+}
+
+delete_sql_peering() {
+  local attempt
+  for attempt in 1 2 3 4 5 6 7 8 9 10; do
+    g services vpc-peerings delete --service=servicenetworking.googleapis.com --network="$NAME" && return 0
+    [[ "$attempt" -lt 10 ]] || break
+    echo "  Cloud SQL has not released the service networking connection yet; retrying in a minute"
+    sleep 60
+  done
+  die "Cloud SQL still holds the service networking connection of network $NAME; run down again later to delete it, its address range and the network"
 }
 
 delete_present() {
