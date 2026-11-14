@@ -8,7 +8,6 @@ import modelCredentialRoutes from "./model-credentials.js";
 import adminRoutes from "./admin.js";
 import connectRoutes from "./connect.js";
 import isolatedGatewaysRoutes from "./user/gateways.js";
-import productivityApprovalRoutes from "./productivity-approvals.js";
 import voiceRoutes from "./voice.js";
 
 import workspaceDisplayNameRoutes from "./workspace/display-name.js";
@@ -46,7 +45,6 @@ export interface MountClusterRoutesOpts {
   projectsCreateRoutes?: Router;
   publicProjectRoutes?: readonly RouteHandler[];
   projectsRepoSourceRoutes?: Router;
-  productivityApprovalRoutes?: Router;
   voiceRoutes?: Router;
   adminRoutes?: Router;
 }
@@ -92,7 +90,6 @@ const PUBLIC_API_ROUTES: readonly (readonly [string, RouteHandler])[] = [
   ["/api/admin", adminRoutes],
   ["/api/connect", connectRoutes],
   ["/api/builder", isolatedGatewaysRoutes],
-  ["/api/productivity-approvals", productivityApprovalRoutes],
   ["/api/voice", voiceRoutes],
 ];
 
@@ -115,9 +112,6 @@ export function mountClusterRoutes(app: Express, opts: MountClusterRoutesOpts = 
 
   mountRouteTable(app, PUBLIC_API_ROUTES.map(([path, route]) => {
     if (path === "/api/builder") return [path, opts.isolatedGatewaysRoutes ?? route] as const;
-    if (path === "/api/productivity-approvals") {
-      return [path, opts.productivityApprovalRoutes ?? route] as const;
-    }
     if (path === "/api/voice") return [path, opts.voiceRoutes ?? route] as const;
     if (path === "/api/admin") return [path, opts.adminRoutes ?? route] as const;
     return [path, route] as const;

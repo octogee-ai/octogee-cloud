@@ -48,7 +48,7 @@ import {
   type ConnectorClientCreds,
 } from "../lib/connector-tokens.js";
 
-import { createGoogleGrantRoutes } from "./google-grants.js";
+import { connectorDisconnected } from "../lib/connector-disconnect.js";
 
 const router = Router();
 const connectorAuthenticationLimit = rateLimit({
@@ -76,25 +76,7 @@ function connectorRateLimit(limit: number) {
     message: { error: "Too many connector requests, please try again later." },
   });
 }
-router.use("/google/grants", connectorAuthenticationLimit, requireAuthenticatedUid, connectorRateLimit(120), requireActiveAccount, createGoogleGrantRoutes(db));
 const APP_URL = process.env.APP_URL || "https://octogee.com";
-const PRODUCTIVITY_APPROVALS_COLLECTION = "productivityApprovals";
-
-const GOOGLE_PRODUCTIVITY_APPROVAL_KINDS = new Set([
-  "gmail-triage",
-  "gmail-draft-create",
-  "gmail-send",
-  "calendar-create",
-  "calendar-update",
-  "calendar-delete",
-  "docs-create",
-  "docs-append",
-  "sheets-create",
-  "sheets-append",
-  "tasks-create",
-  "tasks-update",
-]);
-
 interface TokenResponse {
   access_token: string;
   refresh_token?: string;
@@ -152,28 +134,6 @@ function flowsCol() {
 
 function userCol(uid: string, sub: "secrets" | "integrations") {
   return db.collection("users").doc(uid).collection(sub);
-}
-
-function isGoogleProductivityApproval(data: Record<string, unknown>): boolean {
-  if (data.connectorId === "google") return true;
-  const action = data.action;
-  if (action === null || typeof action !== "object" || Array.isArray(action)) return false;
-  const kind = (action as { kind?: unknown }).kind;
-  return typeof kind === "string" && GOOGLE_PRODUCTIVITY_APPROVAL_KINDS.has(kind);
-}
-
-async function purgeGoogleProductivityApprovals(uid: string): Promise<void> {
-  const snapshot = await db
-    .collection(PRODUCTIVITY_APPROVALS_COLLECTION)
-    .where("ownerUid", "==", uid)
-    .get();
-  const approvals = snapshot.docs.filter((approval) => isGoogleProductivityApproval(approval.data()));
-
-  for (let start = 0; start < approvals.length; start += 500) {
-    const batch = db.batch();
-    for (const approval of approvals.slice(start, start + 500)) batch.delete(approval.ref);
-    await batch.commit();
-  }
 }
 
 function requestScopesFor(def: ConnectorDef, capability: unknown): string[] | RouteError {
@@ -454,9 +414,7 @@ router.post(
       });
       disconnect.delete(userCol(req.uid!, "secrets").doc(def.meta.id));
       await disconnect.commit();
-      if (def.meta.id === "google") {
-        await purgeGoogleProductivityApprovals(req.uid!);
-      }
+      await connectorDisconnected()(req.uid!, def.meta.id);
       res.json({ ok: true });
     } catch (e) {
       next(e);
