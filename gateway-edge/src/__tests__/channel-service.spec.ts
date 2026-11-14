@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { installDocumentPresentation } from "./helpers/project-presentation.js";
 import { MalformedRecordError } from "@octogee/core/platform-state";
 
 type Write = {
@@ -88,6 +89,8 @@ const {
   sessionChannelNameAvailability,
 } = await import("../lib/channel-service.js");
 const { platformStateStore } = await import("../lib/platform-state.js");
+
+installDocumentPresentation(docRef);
 
 function actor(overrides: Record<string, unknown> = {}) {
   return {

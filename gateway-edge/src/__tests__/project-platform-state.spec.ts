@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { installDocumentPresentation } from "./helpers/project-presentation.js";
 
 const h = vi.hoisted(() => ({
   docs: new Map<string, Record<string, unknown>>(),
@@ -7,9 +8,7 @@ const h = vi.hoisted(() => ({
   onUpdate: null as (() => void) | null,
 }));
 
-vi.mock("../lib/db.js", () => ({
-  db: {
-    doc: (path: string) => ({
+const documentFake = (path: string) => ({
       update: async (data: Record<string, unknown>) => {
         h.updates.push({ path, data });
         h.onUpdate?.();
@@ -17,9 +16,7 @@ vi.mock("../lib/db.js", () => ({
       set: async (data: Record<string, unknown>) => {
         h.sets.push({ path, data, projectStillStored: h.docs.has(path) });
       },
-    }),
-  },
-}));
+    });
 
 vi.mock("../lib/platform-state.js", async () => {
   const { createDocumentFixtureStore } = await import("@octogee/core/testing/journal-store");
@@ -32,6 +29,8 @@ const {
   removeProjectMember,
   syncProjectMemberCount,
 } = await import("../lib/project-platform-state.js");
+
+installDocumentPresentation(documentFake);
 
 const PROJECT = "workspaces/mira/projects/orbit";
 

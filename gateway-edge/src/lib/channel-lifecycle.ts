@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import type { WorkspaceChannelScope } from "@octogee/core/platform-state";
-import { db } from "./db.js";
 import { mmApi } from "./mattermost.js";
 import { platformStateStore } from "./platform-state.js";
+import { projectPresentation } from "./project-presentation.js";
 import { retiredChannelName } from "./mattermost-channel-name.js";
 import { logger } from "../middleware/logging.js";
 import {
@@ -173,13 +173,14 @@ async function readStoredChannel(channelDocPath: string): Promise<StoredChannel>
   const { scope, channelId } = channelLocation(channelDocPath);
   const [channel, product] = await Promise.all([
     platformStateStore.workspaces.channels.get(scope, channelId),
-    db.doc(channelDocPath).get(),
+    projectPresentation().readChannel(scope, channelId),
   ]);
   if (channel === null) {
     throw new MattermostChannelBindingError(`channel document ${channelDocPath} was not found`);
   }
   const primaryChannelId = channel.mattermostChannelId ?? "";
-  const legacy = product.data()?.mattermost?.activityChannelId;
+  const mattermost = product?.mattermost;
+  const legacy = mattermost !== null && typeof mattermost === "object" ? (mattermost as Record<string, unknown>).activityChannelId : undefined;
   const legacyActivityChannelId = typeof legacy === "string" && legacy ? legacy : null;
   if (!primaryChannelId) {
     throw new MattermostChannelBindingError(`channel document ${channelDocPath} has no primary channel`);

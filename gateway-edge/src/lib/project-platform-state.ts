@@ -1,16 +1,11 @@
 import type { WorkspaceProject } from "@octogee/core/platform-state";
-import { db } from "./db.js";
 import { platformStateStore } from "./platform-state.js";
+import { projectPresentation, type PendingProjectDeletion, type ProjectRepoProvider } from "./project-presentation.js";
 import { logger } from "../middleware/logging.js";
 
 const MEMBER_COUNT_SYNC_ATTEMPTS = 5;
 
-export type ProjectRepoProvider = "github" | "gitea";
-
-export interface PendingProjectDeletion {
-  ownerUid: string;
-  repoProvider: ProjectRepoProvider;
-}
+export type { PendingProjectDeletion, ProjectRepoProvider };
 
 export function projectRepoProvider(project: Pick<WorkspaceProject, "repoSource">): ProjectRepoProvider {
   return project.repoSource?.provider === "github" ? "github" : "gitea";
@@ -31,7 +26,7 @@ export async function syncProjectMemberCount(workspaceSlug: string, projectSlug:
   for (let attempt = 0; attempt < MEMBER_COUNT_SYNC_ATTEMPTS; attempt += 1) {
     const memberCount = await storedMemberCount(workspaceSlug, projectSlug);
     if (memberCount === null || memberCount === published) return;
-    await db.doc(`workspaces/${workspaceSlug}/projects/${projectSlug}`).update({ memberCount });
+    await projectPresentation().publishProjectMemberCount(workspaceSlug, projectSlug, memberCount);
     published = memberCount;
   }
   logger.warn(`[projects] member count for ${workspaceSlug}/${projectSlug} kept changing after ${MEMBER_COUNT_SYNC_ATTEMPTS} writes`);
@@ -67,7 +62,7 @@ export async function deleteProjectPlatformState(
   projectSlug: string,
   pendingDeletion: PendingProjectDeletion,
 ): Promise<void> {
-  await db.doc(`workspaces/${workspaceSlug}/projects/${projectSlug}`).set({ pendingDeletion }, { merge: true });
+  await projectPresentation().markProjectPendingDeletion(workspaceSlug, projectSlug, pendingDeletion);
   await platformStateStore.transaction({ label: "project.delete" }, async (tx) => {
     const { projects, projectMembers, channels } = tx.workspaces;
     const scope = { workspaceSlug, projectSlug };
