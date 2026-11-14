@@ -478,6 +478,19 @@ async function commitByosubCapture(args: {
   });
 }
 
+async function replayConsumedCapture(args: {
+  flowId: string;
+  flow: FlowDoc;
+  provider: ByosubProvider;
+  modelCredentialProvider: ModelCredentialOAuthProviderId;
+  secretName: string;
+}): Promise<void> {
+  const agentIds = await commitByosubCapture(args);
+  const unpinned = await pinFailure(args.flow.uid, args.modelCredentialProvider, agentIds, pinUnpickedSubscriptionModel);
+  triggerUnifiedByosSyncForFlow(args.flow, args.modelCredentialProvider);
+  if (unpinned) throw unpinned;
+}
+
 async function claimByosubCapture(flowId: string, flow: FlowDoc): Promise<string> {
   const claimId = randomUUID();
   const ownerRef = db.collection("users").doc(flow.uid);
@@ -791,16 +804,13 @@ router.post(
       const secretName = byosubSecretName(flow.uid, secretProvider);
 
       if (flow.consumedAt) {
-        const agentIds = await commitByosubCapture({
+        await replayConsumedCapture({
           flowId: b.flowId,
           flow,
           provider: secretProvider,
           modelCredentialProvider: signalProvider,
           secretName,
         });
-        const unpinned = await pinFailure(flow.uid, signalProvider, agentIds, pinUnpickedSubscriptionModel);
-        triggerUnifiedByosSyncForFlow(flow, signalProvider);
-        if (unpinned) throw unpinned;
         res.json({ ok: true, secretName, alreadyConsumed: true });
         return;
       }
