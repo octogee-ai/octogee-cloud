@@ -9,7 +9,6 @@
     "gateway-edge/src/routes/agent-models.ts",
     "gateway-edge/src/routes/billing/byot.ts",
     "gateway-edge/src/routes/byosub.ts",
-    "gateway-edge/src/routes/channel-session-models.ts",
     "gateway-edge/src/routes/connect.ts"
   ]
 }

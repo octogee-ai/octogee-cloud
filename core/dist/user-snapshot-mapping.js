@@ -1,6 +1,5 @@
 import { createServiceLogger } from "@octogee/shared/server/service-logger";
 const logger = createServiceLogger("provisioner");
-import { parseAgentModelSelections } from "@octogee/shared/types/agent-models";
 import { userEntitlements } from "@octogee/shared/types/user-entitlements";
 import { projectAgentConfigured, projectRepoSourceFromDoc } from "@octogee/shared/types/project";
 export function mapWorkspaceChannelDoc(data) {
@@ -156,26 +155,29 @@ function byotSystemConfigFromRecord(credential) {
 }
 // Per-agent model picks travel with the snapshot no matter the credential
 // state — a plain platform user's picker choices must survive pod rolls too.
-function withAgentModels(sysData, systemConfig) {
-    const agentModels = parseAgentModelSelections(sysData?.agentModels);
+function withAgentModels(agentModels, systemConfig) {
     if (Object.keys(agentModels).length === 0)
         return systemConfig;
     return { ...(systemConfig ?? {}), agentModels };
 }
-export function byotSnapshotProjectionFromSystemConfig(sysData) {
+export async function readAgentModelSelections(users, uid) {
+    const selections = await users.agentModels.list(uid);
+    return Object.fromEntries(selections.map(({ agentId, primary, fallbacks }) => [agentId, { primary, fallbacks: [...fallbacks] }]));
+}
+export function byotSnapshotProjectionFromSystemConfig(sysData, agentModels) {
     const modelCredential = objectRecord(sysData?.modelCredential);
     if (modelCredential) {
         const byotConfig = modelCredential.active === true
             ? byotSystemConfigFromRecord(modelCredential)
             : undefined;
-        const systemConfig = withAgentModels(sysData, byotConfig);
+        const systemConfig = withAgentModels(agentModels, byotConfig);
         return {
             byotActive: byotConfig !== undefined,
             ...(systemConfig ? { systemConfig } : {}),
         };
     }
     const byot = objectRecord(sysData?.byot);
-    const systemConfig = withAgentModels(sysData, byot ? byotSystemConfigFromRecord(byot) : undefined);
+    const systemConfig = withAgentModels(agentModels, byot ? byotSystemConfigFromRecord(byot) : undefined);
     return {
         byotActive: null,
         ...(systemConfig ? { systemConfig } : {}),
@@ -184,8 +186,8 @@ export function byotSnapshotProjectionFromSystemConfig(sysData) {
 // Project a users/{uid}/system/config doc down to the byot fields the mount-time
 // re-assert needs. Returns undefined when there is nothing usable so the snapshot stays
 // lean; deriveDesiredByotState then defaults the provider to anthropic for an active BYOT.
-export function byotSystemConfigFromDoc(sysData) {
-    return byotSnapshotProjectionFromSystemConfig(sysData).systemConfig;
+export function byotSystemConfigFromDoc(sysData, agentModels) {
+    return byotSnapshotProjectionFromSystemConfig(sysData, agentModels).systemConfig;
 }
 export function mapUserDocToSnapshot(uid, data, channels) {
     const slug = deriveSlug(uid, data);

@@ -277,12 +277,75 @@ export interface UserAccountsRepository {
   create(account: NewUserAccountRecord): Promise<void>;
 }
 
+export interface AgentModelSelectionRecord {
+  readonly uid: string;
+  readonly agentId: string;
+  readonly primary: string;
+  readonly fallbacks: readonly string[];
+  readonly updatedAt: number;
+}
+
+export type AgentModelSelectionInput = Omit<AgentModelSelectionRecord, "updatedAt"> & { readonly updatedAt: TimeInput };
+
+export interface AgentModelSelectionsRepository {
+  list(uid: string): Promise<readonly Stored<AgentModelSelectionRecord>[]>;
+  put(selection: AgentModelSelectionInput): Promise<void>;
+  delete(uid: string, agentId: string): Promise<void>;
+}
+
+export type SessionModelOperationName =
+  | "getSessionModel"
+  | "listModels"
+  | "listModelsByProvider"
+  | "setSessionModel"
+  | "resetSessionModel";
+
+export type SessionModelAuditOutcome = "pending" | "failed" | "applied" | "rejected" | "unknown";
+
+export interface SessionModelAuditRecord {
+  readonly auditId: string;
+  readonly actorUid: string;
+  readonly channelId: string;
+  readonly workspaceSlug: string;
+  readonly projectId: string | null;
+  readonly agentId: string;
+  readonly operation: SessionModelOperationName;
+  readonly requestedModel: string | null;
+  readonly outcome: SessionModelAuditOutcome;
+  readonly commandPostId: string | null;
+  readonly replyPostId: string | null;
+  readonly resultingModel: string | null;
+  readonly createdAt: number;
+  readonly completedAt: number | null;
+}
+
+export type NewSessionModelAudit = Omit<
+  SessionModelAuditRecord,
+  "outcome" | "commandPostId" | "replyPostId" | "resultingModel" | "createdAt" | "completedAt"
+> & { readonly createdAt: TimeInput };
+
+export interface SessionModelAuditCompletion {
+  readonly outcome: Exclude<SessionModelAuditOutcome, "pending">;
+  readonly commandPostId: string | null;
+  readonly replyPostId: string | null;
+  readonly resultingModel: string | null;
+  readonly completedAt: TimeInput;
+}
+
+export interface SessionModelAuditRepository {
+  get(auditId: string): Promise<Stored<SessionModelAuditRecord> | null>;
+  create(entry: NewSessionModelAudit): Promise<void>;
+  complete(auditId: string, completion: SessionModelAuditCompletion): Promise<void>;
+}
+
 export interface UserRepositories {
   readonly records: UserRecordsRepository;
   readonly accounts: UserAccountsRepository;
   readonly placementReceipts: PlacementReceiptsRepository;
   readonly scheduleTransfers: ScheduleTransfersRepository;
   readonly agentStores: AgentStoresRepository;
+  readonly agentModels: AgentModelSelectionsRepository;
+  readonly sessionModelAudit: SessionModelAuditRepository;
 }
 
 export type PlacementAdmissionDecision =

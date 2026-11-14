@@ -424,12 +424,59 @@ function unsupportedUserAccounts() {
     };
     return { get: unsupported("get"), getMany: unsupported("getMany"), listAll: unsupported("listAll"), create: unsupported("create") };
 }
+const AGENT_MODEL_SELECTIONS_SUBCOLLECTION = "agentModelSelections";
+const SESSION_MODEL_AUDIT_COLLECTION = "sessionModelAudit";
+function createAgentModelSelectionsRepository(session) {
+    const collection = (uid) => usersCollection(session.db).doc(uid).collection(AGENT_MODEL_SELECTIONS_SUBCOLLECTION);
+    const key = (uid, agentId) => ({ aggregate: "agent-model-selection", key: `${uid}/${agentId}` });
+    return {
+        async list(uid) {
+            const snapshot = await session.query("users.agentModels.list", collection(uid));
+            return snapshot.docs
+                .map((doc) => ({ ...decodeDocumentData(doc), revision: revisionOf(doc) }))
+                .sort((a, b) => a.agentId.localeCompare(b.agentId));
+        },
+        async put(selection) {
+            await session.set("users.agentModels.put", key(selection.uid, selection.agentId), collection(selection.uid).doc(selection.agentId), encodeDocument(selection, STORED_AS_NUMBERS));
+        },
+        async delete(uid, agentId) {
+            await session.delete("users.agentModels.delete", key(uid, agentId), collection(uid).doc(agentId));
+        },
+    };
+}
+function createSessionModelAuditRepository(session) {
+    const ref = (auditId) => session.db.collection(SESSION_MODEL_AUDIT_COLLECTION).doc(auditId);
+    const key = (auditId) => ({ aggregate: "session-model-audit", key: auditId });
+    return {
+        async get(auditId) {
+            const snapshot = await session.read("users.sessionModelAudit.get", ref(auditId));
+            return snapshot.exists
+                ? ({ ...decodeDocumentData(snapshot), revision: revisionOf(snapshot) })
+                : null;
+        },
+        async create(entry) {
+            await session.create("users.sessionModelAudit.create", key(entry.auditId), ref(entry.auditId), encodeDocument({
+                ...entry,
+                outcome: "pending",
+                commandPostId: null,
+                replyPostId: null,
+                resultingModel: null,
+                completedAt: null,
+            }, STORED_AS_NUMBERS));
+        },
+        async complete(auditId, completion) {
+            await session.update("users.sessionModelAudit.complete", key(auditId), ref(auditId), encodePatch(completion, STORED_AS_NUMBERS));
+        },
+    };
+}
 export const createFirestoreUserRepositories = (session) => ({
     records: createUserRecordsRepository(session),
     accounts: unsupportedUserAccounts(),
     placementReceipts: createPlacementReceiptsRepository(session),
     scheduleTransfers: createScheduleTransfersRepository(session),
     agentStores: createAgentStoresRepository(session),
+    agentModels: createAgentModelSelectionsRepository(session),
+    sessionModelAudit: createSessionModelAuditRepository(session),
 });
 function storedRole(config) {
     return config?.exists === true ? config.get("role") : undefined;

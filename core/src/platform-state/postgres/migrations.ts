@@ -1245,6 +1245,41 @@ WHERE EXISTS (
   SELECT 1 FROM jsonb_each(sizing_profiles) AS entry(name, profile) WHERE profile->>'sizingTier' = 'xs'
 );
 `;
+const MODEL_SETTINGS = String.raw`
+CREATE TABLE user_agent_models (
+  uid             text NOT NULL REFERENCES users (uid) ON DELETE CASCADE,
+  agent_id        text NOT NULL CHECK (agent_id <> ''),
+  primary_model   text NOT NULL CHECK (primary_model <> ''),
+  fallback_models jsonb NOT NULL CHECK (jsonb_typeof(fallback_models) = 'array'),
+  updated_at      bigint NOT NULL,
+  revision        bigint NOT NULL DEFAULT nextval('record_revision_seq'),
+  PRIMARY KEY (uid, agent_id)
+);
+CREATE TRIGGER user_agent_models_revision BEFORE UPDATE ON user_agent_models
+  FOR EACH ROW EXECUTE FUNCTION bump_revision();
+
+CREATE TABLE session_model_audit (
+  audit_id         text PRIMARY KEY CHECK (audit_id <> ''),
+  actor_uid        text NOT NULL REFERENCES users (uid) ON DELETE CASCADE,
+  channel_id       text NOT NULL CHECK (channel_id <> ''),
+  workspace_slug   text NOT NULL CHECK (workspace_slug <> ''),
+  project_id       text,
+  agent_id         text NOT NULL CHECK (agent_id <> ''),
+  operation        text NOT NULL CHECK (operation IN ('getSessionModel', 'listModels', 'listModelsByProvider', 'setSessionModel', 'resetSessionModel')),
+  requested_model  text,
+  outcome          text NOT NULL CHECK (outcome IN ('pending', 'failed', 'applied', 'rejected', 'unknown')),
+  command_post_id  text,
+  reply_post_id    text,
+  resulting_model  text,
+  created_at       bigint NOT NULL,
+  completed_at     bigint,
+  revision         bigint NOT NULL DEFAULT nextval('record_revision_seq')
+);
+CREATE INDEX session_model_audit_actor_idx ON session_model_audit (actor_uid);
+CREATE TRIGGER session_model_audit_revision BEFORE UPDATE ON session_model_audit
+  FOR EACH ROW EXECUTE FUNCTION bump_revision();
+`;
+
 export const PLATFORM_STATE_MIGRATIONS: readonly PlatformStateMigration[] = [
   { version: 1, name: "core-schema", sql: CORE_SCHEMA },
   { version: 2, name: "change-feed", sql: CHANGE_FEED },
@@ -1263,4 +1298,5 @@ export const PLATFORM_STATE_MIGRATIONS: readonly PlatformStateMigration[] = [
   { version: 15, name: "model-broker-usage", sql: MODEL_BROKER_USAGE },
   { version: 16, name: "neutral-stored-names-only", sql: NEUTRAL_STORED_NAMES_ONLY },
   { version: 17, name: "gateway-sizing-profile", sql: GATEWAY_SIZING_PROFILE },
+  { version: 18, name: "model-settings", sql: MODEL_SETTINGS },
 ];

@@ -1,17 +1,15 @@
 import { authenticatedRequestLimit, authenticationFailureLimit } from "../middleware/authenticated-request-limit.js";
 import { Router, Request, Response, NextFunction } from "express";
-import { FieldPath } from "firebase-admin/firestore";
 import { requireActiveAccount, requireAuthenticatedUid } from "../middleware/auth.js";
-import { db, FieldValue } from "../lib/db.js";
+import { db } from "../lib/db.js";
 import { platformStateStore } from "../lib/platform-state.js";
 import { logger } from "../middleware/logging.js";
 import { triggerGatewayModelCredentialSync } from "../lib/byot-sync-trigger.js";
 import { readGatewayAuthorizationInStore } from "@octogee/core/gateway-live-release";
-import { byotSnapshotProjectionFromSystemConfig } from "@octogee/core/user-snapshot-mapping";
+import { byotSnapshotProjectionFromSystemConfig, readAgentModelSelections } from "@octogee/core/user-snapshot-mapping";
 import {
   agentIdBelongsToSlug,
   parseAgentModelSelection,
-  parseAgentModelSelections,
   platformModelRefs,
   type AgentModelSelection,
   type AgentModelSelections,
@@ -96,10 +94,7 @@ function triggerAgentModelSync(args: {
     logger.warn(`[agent-models] sync trigger skipped for ${args.slug}: missing gatewayId`);
     return;
   }
-  const projection = byotSnapshotProjectionFromSystemConfig({
-    ...args.sysData,
-    agentModels: args.agentModels,
-  });
+  const projection = byotSnapshotProjectionFromSystemConfig(args.sysData, args.agentModels);
   const user = (args.req.user ?? {}) as Record<string, unknown>;
   triggerGatewayModelCredentialSync({
     gatewayId,
@@ -117,8 +112,8 @@ function triggerAgentModelSync(args: {
 router.get("/", authenticationFailureLimit, requireAuthenticatedUid, authenticatedRequestLimit(120), requireActiveAccount, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const uid = req.uid!;
-    const [sysData, platformDefault, subscriptionProviders] = await Promise.all([
-      readSystemConfig(uid),
+    const [selections, platformDefault, subscriptionProviders] = await Promise.all([
+      readAgentModelSelections(platformStateStore.users, uid),
       platformAgentModelDefault((m) => logger.warn(m)),
       readSubscriptionProviders(uid),
     ]);
@@ -132,7 +127,7 @@ router.get("/", authenticationFailureLimit, requireAuthenticatedUid, authenticat
       byosub: subscriptionProviders.length > 0 && await isIsolatedRuntime(req),
       subscriptionProviders,
       catalog: agentModelCatalog(subscriptionProviders),
-      selections: parseAgentModelSelections(sysData.agentModels),
+      selections,
       platformDefault,
     });
   } catch (e) { next(e); }
@@ -188,14 +183,16 @@ router.put("/:agentId", authenticationFailureLimit, requireAuthenticatedUid, aut
     const gate = await gateSelectionRequest(req, { requireSelection: true });
     if (!gate.ok) { res.status(gate.status).json({ error: gate.error }); return; }
     const selection = gate.selection!;
-    const selections = new Map(Object.entries(parseAgentModelSelections(gate.sysData.agentModels)));
-    selections.set(agentId, selection);
+    await platformStateStore.users.agentModels.put({
+      uid,
+      agentId,
+      primary: selection.primary,
+      fallbacks: selection.fallbacks,
+      updatedAt: { serverNow: true },
+    });
 
-    await db
-      .doc(`users/${uid}/system/config`)
-      .set({ agentModels: Object.fromEntries([[agentId, selection]]) }, { merge: true });
-
-    triggerAgentModelSync({ req, uid, slug: gate.slug, sysData: gate.sysData, agentModels: Object.fromEntries(selections) });
+    const agentModels = await readAgentModelSelections(platformStateStore.users, uid);
+    triggerAgentModelSync({ req, uid, slug: gate.slug, sysData: gate.sysData, agentModels });
     logger.info(
       `[agent-models] ${gate.slug}: ${agentId} → ${selection.primary}` +
         (selection.fallbacks.length ? ` (fallback ${selection.fallbacks.join(", ")})` : ""),
@@ -212,13 +209,10 @@ router.delete("/:agentId", authenticationFailureLimit, requireAuthenticatedUid, 
     const gate = await gateSelectionRequest(req, { requireSelection: false });
     if (!gate.ok) { res.status(gate.status).json({ error: gate.error }); return; }
 
-    await db
-      .doc(`users/${uid}/system/config`)
-      .update(new FieldPath("agentModels", agentId), FieldValue.delete());
+    await platformStateStore.users.agentModels.delete(uid, agentId);
 
-    const selections = new Map(Object.entries(parseAgentModelSelections(gate.sysData.agentModels)));
-    selections.delete(agentId);
-    triggerAgentModelSync({ req, uid, slug: gate.slug, sysData: gate.sysData, agentModels: Object.fromEntries(selections) });
+    const agentModels = await readAgentModelSelections(platformStateStore.users, uid);
+    triggerAgentModelSync({ req, uid, slug: gate.slug, sysData: gate.sysData, agentModels });
     logger.info(
       `[agent-models] ${gate.slug}: ${agentId} pick removed — class default re-asserts on next sync`,
     );

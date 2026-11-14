@@ -1,7 +1,9 @@
 import { authenticatedRequestLimit, authenticationFailureLimit } from "../middleware/authenticated-request-limit.js";
 import { Router, type NextFunction, type Request, type Response } from "express";
 import rateLimit from "express-rate-limit";
-import { parseAgentModelSelections } from "@octogee/shared/types/agent-models";
+import { randomUUID } from "node:crypto";
+import type { SessionModelAuditCompletion } from "@octogee/core/platform-state";
+import { readAgentModelSelections } from "@octogee/core/user-snapshot-mapping";
 import {
   channelSessionModelCommand,
   parseChannelSessionModelOperation,
@@ -17,7 +19,7 @@ import {
   authorizeChannel,
   type AuthorizedChannel,
 } from "../lib/channel-session-authorization.js";
-import { db, FieldValue } from "../lib/db.js";
+import { platformStateStore } from "../lib/platform-state.js";
 import { requireActiveAccount, requireAuthenticatedUid } from "../middleware/auth.js";
 import { logger } from "../middleware/logging.js";
 
@@ -113,21 +115,25 @@ async function resolveModelOperationRequest(
   return { uid: req.uid!, channelId, operation, authorization };
 }
 
-async function createCommandAudit(request: ModelOperationRequest): Promise<FirebaseFirestore.DocumentReference> {
+async function createCommandAudit(request: ModelOperationRequest): Promise<string> {
   const { uid, channelId, operation, authorization } = request;
-  const audit = db.collection("channelSessionModelAudit").doc();
-  await audit.set({
+  const auditId = randomUUID();
+  await platformStateStore.users.sessionModelAudit.create({
+    auditId,
     actorUid: uid,
     channelId,
     workspaceSlug: authorization.target.workspaceSlug,
-    ...(authorization.target.projectId ? { projectId: authorization.target.projectId } : {}),
+    projectId: authorization.target.projectId ?? null,
     agentId: authorization.target.agentId,
     operation: operation.operation,
-    ...(operation.operation === "setSessionModel" ? { requestedModel: operation.modelRef } : {}),
-    outcome: "pending",
-    createdAt: FieldValue.serverTimestamp(),
+    requestedModel: operation.operation === "setSessionModel" ? operation.modelRef : null,
+    createdAt: { serverNow: true },
   });
-  return audit;
+  return auditId;
+}
+
+async function completeAudit(auditId: string, completion: Omit<SessionModelAuditCompletion, "completedAt">): Promise<void> {
+  await platformStateStore.users.sessionModelAudit.complete(auditId, { ...completion, completedAt: { serverNow: true } });
 }
 
 function requireCommandPost(
@@ -174,24 +180,24 @@ async function dispatchNativeCommand(
 }
 
 function auditLogContext(
-  audit: FirebaseFirestore.DocumentReference,
+  auditId: string,
   request: ModelOperationRequest,
 ): { auditId: string; channelId: string; operation: ChannelSessionModelOperation["operation"] } {
   return {
-    auditId: audit.id,
+    auditId,
     channelId: request.channelId,
     operation: request.operation.operation,
   };
 }
 
 async function markCommandFailed(
-  audit: FirebaseFirestore.DocumentReference,
+  auditId: string,
   request: ModelOperationRequest,
   error: unknown,
 ): Promise<void> {
-  const context = auditLogContext(audit, request);
+  const context = auditLogContext(auditId, request);
   try {
-    await audit.update({ outcome: "failed", completedAt: FieldValue.serverTimestamp() });
+    await completeAudit(auditId, { outcome: "failed", commandPostId: null, replyPostId: null, resultingModel: null });
   } catch (auditError) {
     logger.error("channel session model audit failure update failed", {
       ...context,
@@ -205,23 +211,22 @@ async function markCommandFailed(
 }
 
 async function completeCommandAudit(
-  audit: FirebaseFirestore.DocumentReference,
+  auditId: string,
   request: ModelOperationRequest,
   posted: MattermostModelPost,
   reply: MattermostModelPost | null,
   parsed: ReturnType<typeof parseNativeModelResult>,
 ): Promise<void> {
   try {
-    await audit.update({
-      commandPostId: posted.id,
-      ...(reply ? { replyPostId: reply.id } : {}),
+    await completeAudit(auditId, {
       outcome: parsed.outcome,
-      ...(parsed.currentModel ? { resultingModel: parsed.currentModel } : {}),
-      completedAt: FieldValue.serverTimestamp(),
+      commandPostId: posted.id,
+      replyPostId: reply?.id ?? null,
+      resultingModel: parsed.currentModel ?? null,
     });
   } catch (error) {
     logger.error("channel session model audit completion failed", {
-      ...auditLogContext(audit, request),
+      ...auditLogContext(auditId, request),
       error: error instanceof Error ? error.message : String(error),
     });
   }
@@ -255,13 +260,13 @@ router.get("/:channelId", authenticationFailureLimit, requireAuthenticatedUid, a
     const authorization = await authorizeChannel(req.uid!, channelId);
     if (!authorization) { res.status(404).json({ error: "Channel model controls unavailable" }); return; }
     if (authorization.forbidden) { res.status(403).json({ error: "Channel access denied" }); return; }
-    const config = await db.doc(`users/${authorization.target.ownerUid}/system/config`).get();
+    const selections = await readAgentModelSelections(platformStateStore.users, authorization.target.ownerUid);
     res.json({
       channelId,
       agentId: authorization.target.agentId,
       workspaceSlug: authorization.target.workspaceSlug,
       ...(authorization.target.projectId ? { projectId: authorization.target.projectId } : {}),
-      defaultModel: parseAgentModelSelections(config.data()?.agentModels)[authorization.target.agentId] ?? null,
+      defaultModel: selections[authorization.target.agentId] ?? null,
     });
   } catch (error) { handleRouteError(error, res, next); }
 });

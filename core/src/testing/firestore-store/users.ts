@@ -2,7 +2,8 @@ import { isDeepStrictEqual } from "node:util";
 import { type CollectionReference, type DocumentData, type DocumentReference, type DocumentSnapshot, FieldPath, FieldValue, type Firestore, type Query, type QueryDocumentSnapshot, type QuerySnapshot, type Timestamp } from "firebase-admin/firestore";
 import { SCHEDULE_TRANSFERS_SUBCOLLECTION, type ScheduleTransferDoc } from "@octogee/shared/types/fleet-controller";
 import { PLACEMENT_RECEIPTS_SUBCOLLECTION, type PlacementReceipt, placementReceiptDocId } from "@octogee/shared/types/placement-receipts";
-import type { ActivationLeaseFence, AgentStoreRecord, AgentStoresRepository, PlacementReceiptsRepository, UserAccountsRepository, PlatformUserRecord, ScheduleTransfersRepository, UserActivationLease, UserFence, UserRecordsRepository, UserRepositories, UserRole } from "../../platform-state/users.js";
+import type { ActivationLeaseFence, AgentModelSelectionRecord, AgentModelSelectionsRepository, AgentStoreRecord, AgentStoresRepository,
+  PlacementReceiptsRepository, SessionModelAuditRecord, SessionModelAuditRepository, UserAccountsRepository, PlatformUserRecord, ScheduleTransfersRepository, UserActivationLease, UserFence, UserRecordsRepository, UserRepositories, UserRole } from "../../platform-state/users.js";
 import { DuplicateRecordError, FenceMismatchError, MissingRecordError, type RecordKey, UnsupportedOperationError } from "../../platform-state/errors.js";
 import type { Page, PageRequest, Revision, Stored } from "../../platform-state/store.js";
 import { assertFenceEquals, assertFenceOneOf } from "../../platform-state/documents/fences.js";
@@ -560,12 +561,73 @@ function unsupportedUserAccounts(): UserAccountsRepository {
   return { get: unsupported("get"), getMany: unsupported("getMany"), listAll: unsupported("listAll"), create: unsupported("create") };
 }
 
+const AGENT_MODEL_SELECTIONS_SUBCOLLECTION = "agentModelSelections";
+const SESSION_MODEL_AUDIT_COLLECTION = "sessionModelAudit";
+
+function createAgentModelSelectionsRepository(session: FirestoreSession): AgentModelSelectionsRepository {
+  const collection = (uid: string) => usersCollection(session.db).doc(uid).collection(AGENT_MODEL_SELECTIONS_SUBCOLLECTION);
+  const key = (uid: string, agentId: string): RecordKey => ({ aggregate: "agent-model-selection", key: `${uid}/${agentId}` });
+
+  return {
+    async list(uid) {
+      const snapshot = await session.query("users.agentModels.list", collection(uid));
+      return snapshot.docs
+        .map((doc) => ({ ...decodeDocumentData(doc), revision: revisionOf(doc) }) as unknown as Stored<AgentModelSelectionRecord>)
+        .sort((a, b) => a.agentId.localeCompare(b.agentId));
+    },
+
+    async put(selection) {
+      await session.set(
+        "users.agentModels.put",
+        key(selection.uid, selection.agentId),
+        collection(selection.uid).doc(selection.agentId),
+        encodeDocument(selection, STORED_AS_NUMBERS),
+      );
+    },
+
+    async delete(uid, agentId) {
+      await session.delete("users.agentModels.delete", key(uid, agentId), collection(uid).doc(agentId));
+    },
+  };
+}
+
+function createSessionModelAuditRepository(session: FirestoreSession): SessionModelAuditRepository {
+  const ref = (auditId: string) => session.db.collection(SESSION_MODEL_AUDIT_COLLECTION).doc(auditId);
+  const key = (auditId: string): RecordKey => ({ aggregate: "session-model-audit", key: auditId });
+
+  return {
+    async get(auditId) {
+      const snapshot = await session.read("users.sessionModelAudit.get", ref(auditId));
+      return snapshot.exists
+        ? ({ ...decodeDocumentData(snapshot), revision: revisionOf(snapshot) }) as unknown as Stored<SessionModelAuditRecord>
+        : null;
+    },
+
+    async create(entry) {
+      await session.create("users.sessionModelAudit.create", key(entry.auditId), ref(entry.auditId), encodeDocument({
+        ...entry,
+        outcome: "pending",
+        commandPostId: null,
+        replyPostId: null,
+        resultingModel: null,
+        completedAt: null,
+      }, STORED_AS_NUMBERS));
+    },
+
+    async complete(auditId, completion) {
+      await session.update("users.sessionModelAudit.complete", key(auditId), ref(auditId), encodePatch(completion, STORED_AS_NUMBERS));
+    },
+  };
+}
+
 export const createFirestoreUserRepositories = (session: FirestoreSession): UserRepositories => ({
   records: createUserRecordsRepository(session),
   accounts: unsupportedUserAccounts(),
   placementReceipts: createPlacementReceiptsRepository(session),
   scheduleTransfers: createScheduleTransfersRepository(session),
   agentStores: createAgentStoresRepository(session),
+  agentModels: createAgentModelSelectionsRepository(session),
+  sessionModelAudit: createSessionModelAuditRepository(session),
 });
 
 interface RoleSubscription {

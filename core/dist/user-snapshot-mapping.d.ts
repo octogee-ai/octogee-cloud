@@ -2,6 +2,8 @@ import type { FleetBrokerProjectAgent } from "@octogee/shared/types/fleet-broker
 import type { UserSnapshot } from "./user-lifecycle.js";
 import type { MattermostTokenSecret } from "./platform-state/secrets.js";
 import type { PlatformStateRepositories } from "./platform-state/store.js";
+import type { UserRepositories } from "./platform-state/users.js";
+import type { AgentModelSelections } from "@octogee/shared/types/agent-models";
 type ChannelBinding = UserSnapshot["channels"][number];
 export declare function mapWorkspaceChannelDoc(data: Record<string, unknown>): ChannelBinding | null;
 export declare function mapProjectChannelDoc(projectId: string, data: Record<string, unknown>): ChannelBinding | null;
@@ -15,7 +17,8 @@ export interface ByotSnapshotProjection {
     byotActive: boolean | null;
     systemConfig?: SnapshotSystemConfig;
 }
-export declare function byotSnapshotProjectionFromSystemConfig(sysData: Record<string, unknown> | undefined): ByotSnapshotProjection;
-export declare function byotSystemConfigFromDoc(sysData: Record<string, unknown> | undefined): UserSnapshot["systemConfig"];
+export declare function readAgentModelSelections(users: Pick<UserRepositories, "agentModels">, uid: string): Promise<AgentModelSelections>;
+export declare function byotSnapshotProjectionFromSystemConfig(sysData: Record<string, unknown> | undefined, agentModels: AgentModelSelections): ByotSnapshotProjection;
+export declare function byotSystemConfigFromDoc(sysData: Record<string, unknown> | undefined, agentModels: AgentModelSelections): UserSnapshot["systemConfig"];
 export declare function mapUserDocToSnapshot(uid: string, data: Record<string, unknown>, channels: UserSnapshot["channels"]): UserSnapshot;
 export {};
