@@ -62,7 +62,7 @@ import {
 import { Router, type Request, type Response } from "express";
 
 import { logger } from "../../../gateway-edge/src/middleware/logging.js";
-import { storage } from "../../../gateway-edge/src/lib/db.js";
+import { gcsBucket } from "../../../gateway-edge/src/lib/gcs-bucket.js";
 import { parseAgentLook, type AgentLook } from "@octogee/shared/types/agent-look";
 import { parseTimeZone } from "@octogee/shared/types/time-zone";
 import { DEFAULT_AGENT_LOOK, characterSvg } from "@octogee/shared/types/agent-characters";
@@ -940,7 +940,7 @@ export function isolatedRuntimeStatePruneCandidates(input: {
 }
 
 const defaultPruneIsolatedRuntimeState: PruneIsolatedRuntimeState = async (input) => {
-  const bucket = storage.bucket();
+  const bucket = gcsBucket();
   const [liveMetadata] = await bucket.file(input.canonicalPath).getMetadata();
   const liveGenerationValue = liveMetadata.generation;
   if (typeof liveGenerationValue !== "string" && typeof liveGenerationValue !== "number") {

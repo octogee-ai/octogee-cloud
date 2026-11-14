@@ -35,9 +35,6 @@
     "gateway-edge/src/routes/projects/recipe.ts",
     "gateway-edge/src/routes/projects/retry.ts",
     "gateway-edge/src/routes/projects/star.ts",
-    "octogee-api/src/app.ts",
-    "octogee-api/src/lib/openclaw-profile-appearance.ts",
-    "octogee-api/src/lib/vm-home-checkpoint.ts",
-    "octogee-api/src/routes/fleet-broker.ts"
+    "octogee-api/src/lib/openclaw-profile-appearance.ts"
   ]
 }
