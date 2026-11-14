@@ -1,4 +1,4 @@
-import type { SizingKeyReader } from "@octogee/core/user-activation-lease";
+import type { SizingKeyReader } from "@octogee/core/sizing-key";
 import type { PlatformUserRecord, PlatformStateStore } from "@octogee/core/platform-state";
 import type { CopyHomeDisk, HomeCopyInput, HomeCopyProgress } from "./lib/compute-home-copy.js";
 
