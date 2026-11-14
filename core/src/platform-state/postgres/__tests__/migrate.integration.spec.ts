@@ -235,6 +235,61 @@ describe.skipIf(!dsn)("migratePlatformState", () => {
     expect(rows.map((row) => row.table_name)).toEqual(["user_secrets", "workspace_members"]);
   });
 
+  it("rewrites the removed xs size to s on gateways and sizing profiles, and adds the gateway's sizing profile", async () => {
+    const { pool, schema } = isolated();
+    const table = pg.escapeIdentifier(schema);
+    await migratePlatformState(pool, { schema, through: 16 });
+    const insertGateway = (gatewayId: string, sizingTier: string | null) => pool.query(
+      `INSERT INTO ${table}.gateways
+        (gateway_id, created_at, created_by, updated_at, updated_by, latest_release, desired_release, desired_status,
+         config_schema_version, gateway_class, image_profile, sizing_tier)
+        VALUES ($1, 1, 'fixture', 1, 'fixture', 0, 0, 'running', 1, 'isolated', 'isolated', $2)`,
+      [gatewayId, sizingTier],
+    );
+    await insertGateway("g-xs", "xs");
+    await insertGateway("g-m", "m");
+    await insertGateway("g-none", null);
+    const pod = { isolation: "isolated", sizingTier: "xs", computer: { runtime: "cluster", homeSizeGiB: 10 }, fallbackStorageGb: null };
+    const shared = { isolation: "shared" };
+    const pro = { isolation: "isolated", sizingTier: "m", computer: { runtime: "cluster", homeSizeGiB: 50 }, fallbackStorageGb: 500 };
+    await pool.query(
+      `INSERT INTO ${table}.orchestrator_config (id, sizing_profiles) VALUES ('orchestrator', $1)`,
+      [JSON.stringify({ pod, shared, pro })],
+    );
+
+    await migratePlatformState(pool, { schema });
+
+    const gateways = await pool.query(`SELECT gateway_id, sizing_tier, sizing_profile FROM ${table}.gateways ORDER BY gateway_id`);
+    expect(gateways.rows).toEqual([
+      { gateway_id: "g-m", sizing_tier: "m", sizing_profile: null },
+      { gateway_id: "g-none", sizing_tier: null, sizing_profile: null },
+      { gateway_id: "g-xs", sizing_tier: "s", sizing_profile: null },
+    ]);
+    const config = await pool.query(`SELECT sizing_profiles FROM ${table}.orchestrator_config`);
+    expect(config.rows[0].sizing_profiles).toEqual({ pod: { ...pod, sizingTier: "s" }, shared, pro });
+  });
+
+  it("refuses to fold an xs sizing profile into s beside a profile on the same runtime with other computer settings", async () => {
+    const { pool, schema } = isolated();
+    const table = pg.escapeIdentifier(schema);
+    await migratePlatformState(pool, { schema, through: 16 });
+    const pod = (sizingTier: string, homeSizeGiB: number) =>
+      ({ isolation: "isolated", sizingTier, computer: { runtime: "cluster", homeSizeGiB }, fallbackStorageGb: null });
+    await pool.query(
+      `INSERT INTO ${table}.orchestrator_config (id, sizing_profiles) VALUES ('orchestrator', $1)`,
+      [JSON.stringify({ small: pod("xs", 10), roomy: pod("s", 20), other: pod("m", 30) })],
+    );
+
+    await expect(migratePlatformState(pool, { schema })).rejects.toThrow(
+      "sizing profiles small and roomy would share size s on one runtime with different computer settings",
+    );
+
+    const { rows } = await pool.query(`SELECT max(version)::int AS version FROM ${table}.platform_state_migrations`);
+    expect(rows).toEqual([{ version: 16 }]);
+    const config = await pool.query(`SELECT sizing_profiles->'small'->>'sizingTier' AS tier FROM ${table}.orchestrator_config`);
+    expect(config.rows).toEqual([{ tier: "xs" }]);
+  });
+
   it("stops at the requested version and resumes from it", async () => {
     const { pool, schema } = isolated();
 

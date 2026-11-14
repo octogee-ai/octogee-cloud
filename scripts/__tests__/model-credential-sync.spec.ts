@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   deriveDesiredModelCredentialState,
   legacyByotSyncUserDataFromModelCredentialState,
-} from "../lib/model-credential-sync.js";
+} from "@octogee/core/model-credential-sync";
 import { syncModelCredentialsForUser } from "../lib/model-credential-sync-runtime.js";
 import { houseOnlyUserEntitlements, installUserEntitlementsForTest } from "./helpers/user-entitlements.js";
 

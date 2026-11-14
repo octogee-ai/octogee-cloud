@@ -6,7 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import {
   readAuthProfileStore,
   resolveAuthDbPath,
-} from "../../scripts/lib/auth-profile-sqlite";
+} from "../../core/src/auth-profile-sqlite";
 
 let TMP_ROOT: string;
 
@@ -244,7 +244,7 @@ describe("applyByotState — `.byot-managed` marker (auth-profile collision guar
 
     // Pre-existing payload (post-doctor cache, owned by openclaw).
     const openclawCacheBody = { profiles: { sample: { type: "oauth" } } };
-    const { writeAuthProfileStore } = await import("../../scripts/lib/auth-profile-sqlite");
+    const { writeAuthProfileStore } = await import("../../core/src/auth-profile-sqlite");
     writeAuthProfileStore(dir, openclawCacheBody);
     expect(fs.existsSync(markerPath(slug))).toBe(false);
 

@@ -796,7 +796,7 @@ describe("PATCH /gateways/:id — updates durable lifecycle", () => {
     expect(store.get("gateways/bench")).toMatchObject({ gatewayClass: "shared" });
   });
 
-  it("rejects an XS user tier before saving or journaling a release", async () => {
+  it("rejects a sizing tier that does not exist before saving or journaling a release", async () => {
     const seed = seedNewSchemaGateway("builder", sharedPayload(), { gatewayClass: "isolated", imageProfile: "isolated", profile: "isolated", ownerUid: "uid-user", builderSlug: "builder", sizingTier: "s" });
     const { app, store } = mkApp(seed);
     const before = { ...store.get("gateways/builder") };
@@ -1018,6 +1018,24 @@ describe("PATCH /gateways/:id — build artifacts remain deploy-only", () => {
     expect(store.get(`${GLM_GATEWAYS_COLLECTION}/beta`)?.sizingTier).toBeUndefined();
     expect(store.get("gateways/beta")?.sizingTier).toBe("m");
     expect(store.get(`gateways/beta/${GATEWAY_RELEASES_SUBCOLLECTION}/2`)).toBeUndefined();
+  });
+
+  it("stops naming the sizing profile when an operator changes the gateway's size", async () => {
+    const isolated = { gatewayClass: "isolated", imageProfile: "isolated", profile: "isolated", ownerUid: "uid-user", builderSlug: "ada", sizingTier: "s", sizingProfile: "hobby" };
+    const { app, store } = mkApp(seedNewSchemaGateway("ada-s", sharedPayload(), isolated));
+
+    await request(app).patch("/gateways/ada-s").send({ sizingTier: "m" }).expect(202);
+
+    expect(store.get("gateways/ada-s")).toMatchObject({ sizingTier: "m", sizingProfile: null });
+  });
+
+  it("keeps the sizing profile when a PATCH repeats the gateway's size", async () => {
+    const isolated = { gatewayClass: "isolated", imageProfile: "isolated", profile: "isolated", ownerUid: "uid-user", builderSlug: "ada", sizingTier: "s", sizingProfile: "hobby" };
+    const { app, store } = mkApp(seedNewSchemaGateway("ada-s", sharedPayload(), isolated));
+
+    await request(app).patch("/gateways/ada-s").send({ sizingTier: "s" });
+
+    expect(store.get("gateways/ada-s")).toMatchObject({ sizingTier: "s", sizingProfile: "hobby" });
   });
 
   it("rejects an imageTag PATCH on a gateway with a GatewayDoc", async () => {

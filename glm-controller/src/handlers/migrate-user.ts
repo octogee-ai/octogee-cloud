@@ -47,7 +47,7 @@ import type {
 import type { OperationContext, OperationHandler, OperationResult } from "../operation-router.js";
 import { vmPreemptionError } from "../operation-retry.js";
 import { MigrationDrainPendingError, MigrationRpcError, MigrationTransportError, type MigrationClient } from "@octogee/core/fleet-migration-client";
-import { sharedRecoveryTargetCleaned, type WorkspaceMigrationPreparationParams, type WorkspaceMigrationRecoveryParams, type WorkspaceMigrationSourcePreparationParams } from "@octogee/core/fleet-state";
+import { retiredTargetSourceRecovery, sharedRecoveryTargetCleaned, type WorkspaceMigrationPreparationParams, type WorkspaceMigrationRecoveryParams, type WorkspaceMigrationSourcePreparationParams } from "@octogee/core/fleet-state";
 import {
   advanceUserMigrationV2,
   beginUserMigrationV2Abort,
@@ -1684,14 +1684,14 @@ async function sharedRecoveryAuthority(deps: MigrateUserDeps, op: Operation, use
 
 function ownershipCheckedSourceRecovery(op: Operation, previous: SchedulerHandoffState): boolean {
   return !op.userMigrationV2 && previous.fromGatewayId.startsWith("shared-") &&
-    (previous.toGatewayId.startsWith("shared-") || userActivationSourceRecoveryPending(op));
+    (previous.toGatewayId.startsWith("shared-") || userActivationSourceRecoveryPending(op) || retiredTargetSourceRecovery(op.input, previous));
 }
 
 async function cleanupPreviousSchedulerTarget(deps: MigrateUserDeps, op: Operation, ctx: OperationContext, previous: SchedulerHandoffState, input: {
   sharedScope: boolean; recovery?: WorkspaceMigrationRecoveryParams; assertNativeReturnCurrent?: () => Promise<void>;
 }): Promise<void> {
   const { sharedScope, recovery, assertNativeReturnCurrent } = input;
-  if (sharedScope && sharedRecoveryTargetCleaned(op.input, previous)) return;
+  if (sharedScope && (sharedRecoveryTargetCleaned(op.input, previous) || retiredTargetSourceRecovery(op.input, previous))) return;
   await assertNativeReturnCurrent?.();
   if (!previous.stageAfterCutover) await abortPreviousTargetAttempt(deps, previous, assertNativeReturnCurrent);
   if (userActivationSourceRecoveryPending(op) || op.input.recoverSourceOnly === true && op.input.source === "builder-activation-lease") {

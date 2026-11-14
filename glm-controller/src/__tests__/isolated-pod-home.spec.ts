@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { FIXTURE_SIZING_PROFILES, createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
 
 import type { KubectlSubprocess } from "../fleet-ingress.js";
 import {
   ISOLATED_POD_HOME_PENDING_LIMIT_MS,
   ensureIsolatedPodHome,
+  isolatedPodHomeSizeGiB,
   observeIsolatedPodBlockers,
   readIsolatedPodBlocker,
 } from "../isolated-pod-home.js";
@@ -50,6 +51,35 @@ const GET_CLAIM = `get pvc ${CLAIM} -n ${NAMESPACE}`;
 const GET_EVENTS = `get events -n ${NAMESPACE}`;
 const GET_PODS = `get pods -n ${NAMESPACE}`;
 const GET_NODES = "get nodes";
+
+describe("sizing an isolated pod gateway's home", () => {
+  const pod = { isolation: "isolated", sizingTier: "s", computer: { runtime: "cluster", homeSizeGiB: 12 }, fallbackStorageGb: null };
+  const profiles = (sizingProfiles: Record<string, unknown>) =>
+    ({ config: { orchestrator: { get: async () => ({ sizingProfiles }) } } }) as unknown as Parameters<typeof isolatedPodHomeSizeGiB>[0];
+  const mixed = profiles({ ...FIXTURE_SIZING_PROFILES, pod });
+
+  it("takes the size from the gateway's own sizing profile when a VM profile shares its tier", async () => {
+    await expect(isolatedPodHomeSizeGiB(mixed, { gatewayId: GATEWAY, sizingTier: "s", sizingProfile: "pod" })).resolves.toBe(12);
+  });
+
+  it("reads only pod profiles at the tier for a gateway that names no sizing profile", async () => {
+    await expect(isolatedPodHomeSizeGiB(mixed, { gatewayId: GATEWAY, sizingTier: "s" })).resolves.toBe(12);
+  });
+
+  it("reads the pod profile at the tier when the sizing profile the gateway names is gone", async () => {
+    await expect(isolatedPodHomeSizeGiB(mixed, { gatewayId: GATEWAY, sizingTier: "s", sizingProfile: "deleted" })).resolves.toBe(12);
+  });
+
+  it("refuses a pod gateway whose sizing profile describes a VM", async () => {
+    await expect(isolatedPodHomeSizeGiB(mixed, { gatewayId: GATEWAY, sizingTier: "s", sizingProfile: "hobby" }))
+      .rejects.toThrow(`isolated gateway ${GATEWAY} runs as a pod, but its sizing profile hobby describes a gce-vm computer`);
+  });
+
+  it("refuses a pod gateway when no pod profile exists at its tier", async () => {
+    await expect(isolatedPodHomeSizeGiB(profiles(FIXTURE_SIZING_PROFILES), { gatewayId: GATEWAY, sizingTier: "s" }))
+      .rejects.toThrow(`isolated gateway ${GATEWAY} runs as a pod, and no isolated sizing profile at tier s describes one`);
+  });
+});
 
 describe("ensuring an isolated pod gateway's home claim", () => {
   const ensure = (run: KubectlSubprocess, served = false) =>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { validateDeployBody, validateDesiredStatusPatch } from "../lib/admin-fleet-router";
+import { validateDeployBody, validateDesiredStatusPatch } from "@octogee/core/admin-fleet-router";
 
 describe("validateDesiredStatusPatch", () => {
   it("rejects retired because retirement requires teardown", () => {

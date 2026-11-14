@@ -2,7 +2,7 @@ import { storeUploadedWorkspaceBlob as storeWorkspaceBlob } from "../../lib/proj
 import { Router, Request, Response, NextFunction } from "express";
 import Busboy from "busboy";
 import { requestBlobStore } from "../../lib/blob-store.js";
-import { storage } from "../../lib/db.js";
+import { gcsBucket } from "../../lib/gcs-bucket.js";
 import { readPlatformFreeConfig } from "../../lib/platform-free-config.js";
 import { validateFilePath } from "../../lib/path-validation.js";
 import { resolveFileTarget, withGiteaTarget, type FileTarget } from "../../lib/fileTarget.js";
@@ -211,7 +211,7 @@ router.post("/upload-blob", async (req: Request, res: Response, next: NextFuncti
     res.json({
       success: true,
       path: filePath,
-      ...(!target.blobStore && { gcsUrl: `gs://${storage.bucket().name}/${stored.gcsPath}` }),
+      ...(!target.blobStore && { gcsUrl: `gs://${gcsBucket().name}/${stored.gcsPath}` }),
       ...(stored.thumbnailUrl ? { thumbnailUrl: stored.thumbnailUrl } : {}),
       ...(stored.thumbnailError ? { thumbnailError: stored.thumbnailError } : {}),
       manifestUpdated: true,
