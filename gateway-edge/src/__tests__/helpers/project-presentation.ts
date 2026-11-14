@@ -25,6 +25,7 @@ async function read(document: FakeDocument): Promise<PresentationDocument | null
 export function installDocumentPresentation(doc: (path: string) => Partial<FakeDocument>): void {
   const at = (path: string) => doc(path) as FakeDocument;
   installProjectPresentation({
+    remembersChannels: true,
     readProject: (workspaceSlug, projectSlug) => read(at(projectPath(workspaceSlug, projectSlug))),
     createProject: async (workspaceSlug, projectSlug, fields) => {
       await at(projectPath(workspaceSlug, projectSlug)).set(fields, { merge: true });
