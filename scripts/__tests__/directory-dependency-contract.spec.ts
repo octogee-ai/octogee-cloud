@@ -111,12 +111,6 @@ describe("directory dependency repository contract", () => {
     },
   );
 
-  it("scripts refreshes packed dependencies before the fleet operator command", () => {
-    expect(readJson("scripts/package.json").scripts.prefleet).toBe(
-      "node ../scripts/ops/sync-local-file-deps.mjs --consumer .",
-    );
-  });
-
   it("copies each packed dependency and consumer npm config before Docker installs", () => {
     const api = dockerfile("octogee-api/Dockerfile");
     for (const source of ["core", "shared"]) {

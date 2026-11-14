@@ -7,8 +7,6 @@
   "type": "module",
   "scripts": {
     "provision": "tsx entrypoints/fleet-controller.ts",
-    "prefleet": "node ../scripts/ops/sync-local-file-deps.mjs --consumer .",
-    "fleet": "tsx ops/fleet.ts",
     "prewith-platform-state": "node ../scripts/ops/sync-local-file-deps.mjs --consumer .",
     "with-platform-state": "node ops/with-platform-state.mjs",
     "prerotate-secret-store-key": "node ../scripts/ops/sync-local-file-deps.mjs --consumer .",

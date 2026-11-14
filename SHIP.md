@@ -67,5 +67,5 @@ convergence. To deploy the same build to another gateway, run the command again
 with that gateway id.
 
 ```bash
-npm run fleet -- --env=<test|prod> gw deploy <isolated-gateway-id> --sha=<full-main-sha> --apply
+octogee-fleet --env=<test|prod> gateway deploy <isolated-gateway-id> --sha=<full-main-sha> --apply
 ```
