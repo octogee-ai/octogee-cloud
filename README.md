@@ -64,7 +64,8 @@ one.
 
 ## Contributing and security
 
-[Contributing](CONTRIBUTING.md) explains how to run checks and sign off commits.
+[Contributing](CONTRIBUTING.md) explains how to run checks and sign off commits,
+and [Releasing](docs/releasing.md) how a release is cut.
 Pull requests run dependency review, lint, typechecks, and package tests.
 Use the [security policy](SECURITY.md) to report vulnerabilities privately.
 
