@@ -17,7 +17,7 @@ import {
 } from "@octogee/core/admin-user-directory-router";
 import type { UserAccountReader } from "@octogee/core/user-account";
 import { platformStateUserAccountReader } from "@octogee/core/platform-state-user-accounts";
-import { userDeletionDeps } from "../lib/user-deletion-deps.js";
+import { userDeletionDeps, type AuthUserSuspension } from "../lib/user-deletion-deps.js";
 import { platformStateStore } from "../lib/platform-state.js";
 import { MODEL_CATALOG } from "@octogee/shared/types/model-catalog";
 import { modelRefForCatalogEntry } from "@octogee/shared/types/agent-models";
@@ -127,6 +127,7 @@ export type ProductAdminRoutes = (router: Router, deps: { store: typeof platform
 export interface AdminProductHooks {
   accounts?: UserAccountReader;
   discoverDeletionProductContext?: DeletionProductContextDiscovery;
+  suspendAuthUser?: AuthUserSuspension;
   userDetail?: AdminUserProductDetail;
   userDirectory?: AdminUserDirectorySource;
   addAdminRoutes?: ProductAdminRoutes;
@@ -160,7 +161,7 @@ export function createAdminRoutes(product: AdminProductHooks = {}): Router {
     provisionGatewayAuthSecret,
     listGatewayBuilds,
     ...centralReleaseRouteDeps(),
-    suspendAuthUser: userDeletionDeps.suspendAuthUser,
+    suspendAuthUser: product.suspendAuthUser ?? userDeletionDeps.suspendAuthUser,
     revokeConnectorGrantsForUser: userDeletionDeps.revokeConnectorGrantsForUser,
     discoverDeletionProductContext: product.discoverDeletionProductContext,
   });

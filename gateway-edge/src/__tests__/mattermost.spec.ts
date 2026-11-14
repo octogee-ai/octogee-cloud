@@ -91,6 +91,8 @@ vi.mock("../lib/db", () => {
 import router from "../routes/mattermost.js";
 import { getWorkspaceMmContext } from "../lib/mattermost-context.js";
 
+import { installAgentIdentity, NO_AGENT_IDENTITY } from "../lib/agent-identity.js";
+
 const ctxMock = vi.mocked(getWorkspaceMmContext);
 
 const app = express();
@@ -105,9 +107,19 @@ beforeEach(() => {
   authState.uid = "caller-uid";
   authState.user = {};
   ctxMock.mockReset();
+  installAgentIdentity({
+    ...NO_AGENT_IDENTITY,
+    read: async (uid) => {
+      const name = dbState.docs.get(`agents/${uid}`)?.name;
+      return { name: typeof name === "string" ? name : null, persona: null, emoji: null };
+    },
+  });
 });
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  installAgentIdentity(NO_AGENT_IDENTITY);
+});
 
 describe("GET /token", () => {
   it("202 provisioning when the MM context has no userId/dmChannelId", async () => {

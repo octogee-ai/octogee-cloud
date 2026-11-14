@@ -67,7 +67,7 @@ describe("project channel routes", () => {
 
     expect(resp.status).toBe(200);
     expect(h.createProjectSessionChannel).toHaveBeenCalledWith(
-      { uid: "owner-1", userData: { username: "mira" }, workspaceId: "mira" },
+      { uid: "owner-1", workspaceId: "mira" },
       "orbit",
       { name: "patchroll", displayName: "OC Patch Upgrade", purpose: "" },
     );
@@ -83,7 +83,7 @@ describe("project channel routes", () => {
 
     expect(resp.status).toBe(200);
     expect(h.renameProjectSessionChannel).toHaveBeenCalledWith(
-      { uid: "owner-1", userData: { username: "mira" }, workspaceId: "mira" },
+      { uid: "owner-1", workspaceId: "mira" },
       "orbit",
       "patchroll",
       { displayName: "New" },
@@ -97,7 +97,7 @@ describe("project channel routes", () => {
 
     expect(resp.status).toBe(200);
     expect(h.archiveProjectSessionChannel).toHaveBeenCalledWith(
-      { uid: "owner-1", userData: { username: "mira" }, workspaceId: "mira" },
+      { uid: "owner-1", workspaceId: "mira" },
       "orbit",
       "patchroll",
     );
@@ -128,7 +128,7 @@ describe("POST /api/channels", () => {
     expect(resp.status).toBe(200);
     expect(resp.body).toEqual({ success: true, channelId: "channel-1", name: "patchroll" });
     expect(h.createSessionChannel).toHaveBeenCalledWith(
-      { uid: "owner-1", userData: { username: "mira" }, workspaceId: "mira" },
+      { uid: "owner-1", workspaceId: "mira" },
       { name: "patchroll", displayName: "OC Patch Upgrade", purpose: "Rolls" },
     );
   });
@@ -154,7 +154,7 @@ describe("PATCH /api/channels/:name", () => {
 
     expect(resp.status).toBe(200);
     expect(h.renameSessionChannel).toHaveBeenCalledWith(
-      { uid: "owner-1", userData: { username: "mira" }, workspaceId: "mira" },
+      { uid: "owner-1", workspaceId: "mira" },
       "patchroll",
       { displayName: "New Name" },
     );
@@ -179,7 +179,7 @@ describe("POST /api/channels/:name/archive", () => {
 
     expect(resp.status).toBe(200);
     expect(h.archiveSessionChannel).toHaveBeenCalledWith(
-      { uid: "owner-1", userData: { username: "mira" }, workspaceId: "mira" },
+      { uid: "owner-1", workspaceId: "mira" },
       "patchroll",
     );
   });

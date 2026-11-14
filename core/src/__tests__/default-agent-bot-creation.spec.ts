@@ -8,14 +8,6 @@ const __dirname = path.dirname(__filename);
 
 const PROVISION_SRC = path.resolve(__dirname, "../mattermost/provision.ts");
 const CHANNEL_HOST_SRC = path.resolve(__dirname, "../channel-host/mattermost.ts");
-const GATEWAY_EDGE_AGENTS_SRC = path.resolve(
-  __dirname,
-  "../../../gateway-edge/src/routes/agents.ts",
-);
-const DEFAULT_AGENT_IDENTITY_SRC = path.resolve(
-  __dirname,
-  "../../../gateway-edge/src/lib/default-agent-identity.ts",
-);
 
 describe("coach is a MM bot — creation contract", () => {
   it("provision.ts creates the agent as a bot, not a user", () => {
@@ -50,20 +42,5 @@ describe("coach is a MM bot — creation contract", () => {
     expect(block).toMatch(/displayName:\s*"Octo"/);
     expect(block).not.toMatch(/firstName:/);
     expect(block).not.toMatch(/nickname:/);
-  });
-});
-
-describe("coach is a MM bot — rename contract", () => {
-  it("gateway-edge PATCH /me delegates agent writes to the shared identity core", () => {
-    const src = fs.readFileSync(GATEWAY_EDGE_AGENTS_SRC, "utf-8");
-    expect(src).toMatch(/import\s+\{\s*syncDefaultAgentIdentity\s*\}/);
-    expect(src).toMatch(/await\s+syncDefaultAgentIdentity\(uid,\s*patch\)/);
-  });
-
-  it("shared agent identity sync uses PUT /bots/{id} with display_name", () => {
-    const src = fs.readFileSync(DEFAULT_AGENT_IDENTITY_SRC, "utf-8");
-    expect(src).toMatch(/`\/bots\/\$\{defaultAgentMmUserId\}`,\s*"PUT"/);
-    expect(src).toMatch(/display_name:\s*patch\.name/);
-    expect(src).not.toMatch(/\/users\/\$\{defaultAgentMmUserId\}\/patch/);
   });
 });

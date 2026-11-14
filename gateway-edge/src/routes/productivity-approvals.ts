@@ -11,7 +11,8 @@ import { connectorReviewerHasWorkspaceAccess } from "../lib/connector-reviewer-a
 import { isProjectRecipeId } from "@octogee/shared/types/project";
 
 import { db as defaultDb } from "../lib/db.js";
-import { platformStateStore, readSizingKey } from "../lib/platform-state.js";
+import { platformStateStore } from "../lib/platform-state.js";
+import { readSizingKey } from "../lib/user-accounts.js";
 import type { SizingKeyReader } from "@octogee/core/sizing-key";
 import type { PlatformStateStore } from "@octogee/core/platform-state";
 import { requireAuth } from "../middleware/auth.js";

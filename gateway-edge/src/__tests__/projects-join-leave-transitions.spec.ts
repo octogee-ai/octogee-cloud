@@ -83,6 +83,18 @@ beforeEach(() => {
 });
 
 describe("POST /api/projects/:wid/:pid/join", () => {
+  it("adds the joiner to the project repo as the Gitea user named by their platform slug", async () => {
+    h.docs.set("users/joiner-1", {
+      username: "joiner-account",
+      provisioning: { openclaw: { slug: "joiner" } },
+      mattermost: { userId: "mm-joiner" },
+    });
+
+    await request(app()).post("/api/projects/mira/orbit/join").expect(200, { success: true });
+
+    expect(h.giteaApi).toHaveBeenCalledWith("mira", "orbit/collaborators/ws-joiner", "PUT", { permission: "read" });
+  });
+
   it("records the member and repairs the count after chat access succeeds", async () => {
     await request(app()).post("/api/projects/mira/orbit/join").expect(200, { success: true });
 

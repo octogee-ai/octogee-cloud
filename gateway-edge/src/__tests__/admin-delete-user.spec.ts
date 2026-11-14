@@ -1,4 +1,5 @@
 import { AdminDryRunPlanned } from "@octogee/core/admin-dry-run";
+import { accountAllowsInteractiveAccess } from "@octogee/shared/types/account-lifecycle";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -11,10 +12,18 @@ let assignmentDocs: Record<string, Record<string, Row>> = {};
 const secretDocs: Record<string, Record<string, Row>> = {};
 const systemDocs: Record<string, Record<string, Row>> = {};
 const storeWrites: Array<{ op: "set" | "delete"; path: string; row?: Row }> = [];
-const authDisabledUids: string[] = [];
-const authRevokedUids: string[] = [];
-let authNextError: Error | null = null;
+const suspendedUids: string[] = [];
+let suspendNextError: Error | null = null;
+async function suspendAuthUser(uid: string): Promise<void> {
+  if (suspendNextError) {
+    const error = suspendNextError;
+    suspendNextError = null;
+    throw error;
+  }
+  suspendedUids.push(uid);
+}
 const loggedWarnings: string[] = [];
+const loggedInfo: string[] = [];
 
 function documentMap(collectionPath: string): Record<string, Row> {
   if (collectionPath === "users") return usersDocs;
@@ -119,17 +128,6 @@ vi.mock("../lib/db", () => {
         return collection(name).doc(id);
       },
     },
-    auth: {
-      updateUser: async (uid: string) => {
-        if (authNextError) {
-          const e = authNextError;
-          authNextError = null;
-          throw e;
-        }
-        authDisabledUids.push(uid);
-      },
-      revokeRefreshTokens: async (uid: string) => { authRevokedUids.push(uid); },
-    },
     FieldValue: { serverTimestamp: () => "now", delete: () => "delete" },
     Timestamp: { now: () => ({ toDate: () => new Date() }) },
   };
@@ -150,7 +148,7 @@ vi.mock("../middleware/auth", () => ({
 
 vi.mock("../middleware/logging", () => ({
   logger: {
-    info: () => undefined,
+    info: (msg: string) => loggedInfo.push(msg),
     warn: (msg: string) => loggedWarnings.push(msg),
     error: () => undefined,
   },
@@ -159,7 +157,7 @@ vi.mock("../middleware/logging", () => ({
 import express from "express";
 import adminRouter, { createAdminRoutes } from "../routes/admin.js";
 
-function buildApp(router = adminRouter) {
+function buildApp(router = createAdminRoutes({ suspendAuthUser })) {
   const app = express();
   app.use(express.json());
   app.use("/api/admin", router);
@@ -172,10 +170,10 @@ beforeEach(() => {
   glmOperationsDocs = [];
   deletionJobsDocs = {};
   assignmentDocs = {};
-  authDisabledUids.length = 0;
-  authRevokedUids.length = 0;
-  authNextError = null;
+  suspendedUids.length = 0;
+  suspendNextError = null;
   loggedWarnings.length = 0;
+  loggedInfo.length = 0;
 });
 
 describe("POST /api/admin/users/:uid/delete — 404 + 409 paths", () => {
@@ -244,8 +242,7 @@ usersDocs["uid-alice"] = {
     expect(res.status).toBe(202);
     expect(res.body.slug).toBe("alice-via-onboarding");
     
-    expect(authDisabledUids).toEqual(["uid-alice"]);
-    expect(authRevokedUids).toEqual(["uid-alice"]);
+    expect(suspendedUids).toEqual(["uid-alice"]);
   });
 
   it("does NOT delete the user doc inline when slug is present (handler does that)", async () => {
@@ -254,39 +251,38 @@ usersDocs["uid-alice"] = {
       provisioning: { openclaw: { slug: "alice" } },
     };
     await request(buildApp()).post("/api/admin/users/uid-alice/delete");
-    expect(authDisabledUids).toEqual(["uid-alice"]);
+    expect(suspendedUids).toEqual(["uid-alice"]);
     expect(storeWrites).not.toContainEqual({ op: "delete", path: "users/uid-alice" });
     expect(usersDocs["uid-alice"]).toBeDefined();
   });
 });
 
 describe("POST /api/admin/users/:uid/delete — no-slug lifecycle", () => {
-  it("schedules retention and suspends Auth without deleting identity inline", async () => {
+  it("schedules retention and suspends the product identity without deleting it inline", async () => {
     usersDocs["uid-bob"] = { email: "bob@example.com" };
     const res = await request(buildApp()).post("/api/admin/users/uid-bob/delete");
     expect(res.status).toBe(202);
     expect(res.body).toMatchObject({ status: "deletion_scheduled", slug: null });
-    expect(authDisabledUids).toEqual(["uid-bob"]);
-    expect(authRevokedUids).toEqual(["uid-bob"]);
+    expect(suspendedUids).toEqual(["uid-bob"]);
     expect(storeWrites).not.toContainEqual({ op: "delete", path: "users/uid-bob" });
     expect(usersDocs["uid-bob"]).toBeDefined();
   });
 
-  it("treats an already-missing Auth account as an idempotent suspension success", async () => {
+  it("leaves sessions to the account lifecycle when no product suspends identities", async () => {
     usersDocs["uid-bob"] = { email: "bob@example.com" };
-    const e = Object.assign(new Error("user not found"), { code: "auth/user-not-found" });
-    authNextError = e;
-    const res = await request(buildApp()).post("/api/admin/users/uid-bob/delete");
+    const res = await request(buildApp(adminRouter)).post("/api/admin/users/uid-bob/delete");
     expect(res.status).toBe(202);
+    expect(suspendedUids).toEqual([]);
     expect(operationWrites()).toHaveLength(2);
+    expect(loggedInfo).toContain("No external identity to suspend; the account lifecycle refuses the deleted user's sessions");
+    const claimed = storeWrites.find((write) => write.op === "set" && write.path === "users/uid-bob")?.row;
+    expect(claimed?.accountLifecycle).toMatchObject({ status: "deletion_scheduled" });
+    expect(accountAllowsInteractiveAccess(claimed ?? {})).toBe(false);
   });
 
-  it("does NOT swallow other auth errors (e.g. quota) just because they mention 'user-not-found'", async () => {
+  it("reports a failed product identity suspension as a partial deletion", async () => {
     usersDocs["uid-bob"] = { email: "bob@example.com" };
-    const e = Object.assign(new Error("quota exceeded — user-not-found cache full"), {
-      code: "auth/quota-exceeded",
-    });
-    authNextError = e;
+    suspendNextError = new Error("identity provider unavailable");
     const res = await request(buildApp()).post("/api/admin/users/uid-bob/delete");
     expect(res.status).toBe(500);
     expect(glmOperationsDocs.map((entry) => entry.data)).toEqual(expect.arrayContaining([

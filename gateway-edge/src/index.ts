@@ -162,7 +162,7 @@ export function installRollRosterGate(gate: RequestHandler): void {
 export interface CreateAppOptions {
   surface?: GatewayEdgeSurface;
   productRoutes?: ClusterRouteTable;
-  projectsDeleteRoutes?: Router;
+  publicProjectRoutes?: readonly Router[];
   // Route tests inject an enabling policy to exercise the workspace sharing
   // paths; unset means the flag is off, which is what the pod surface wants.
   featurePolicy?: FeaturePolicy;
@@ -273,8 +273,8 @@ function mountClusterSurface(app: Express, opts: CreateAppOptions): void {
   // the gateway-edge sidecar surface intentionally does not mount this.
   app.use("/internal/gitea", internalGiteaAdminRoutes);
 
-  // mountClusterRoutes goes FIRST so its public /api/projects routes
-  // (readme) and explicit-auth sequencing aren't shadowed by the locality
+  // mountClusterRoutes goes FIRST so the public /api/projects routes
+  // and explicit-auth sequencing aren't shadowed by the locality
   // routers. Express tries handlers in mount order; locality routers are
   // gateway-edge-only and only match their specific paths.
   const featurePolicy = opts.featurePolicy;
@@ -284,7 +284,7 @@ function mountClusterSurface(app: Express, opts: CreateAppOptions): void {
       projectsRepoSourceRoutes: createProjectRepoSourceRoutes({ featurePolicy }),
     } : {}),
     productRoutes: opts.productRoutes ?? [],
-    projectsDeleteRoutes: opts.projectsDeleteRoutes,
+    publicProjectRoutes: opts.publicProjectRoutes,
   });
 }
 

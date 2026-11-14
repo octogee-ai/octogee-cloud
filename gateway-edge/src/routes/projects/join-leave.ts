@@ -1,6 +1,5 @@
 import { Router, Request, Response } from "express";
 import { strictRateLimit } from "../../middleware/security.js";
-import { db } from "../../lib/db.js";
 import { platformStateStore } from "../../lib/platform-state.js";
 import { removeProjectMember, syncProjectMemberCount } from "../../lib/project-platform-state.js";
 import { mmApi } from "../../lib/mattermost.js";
@@ -23,14 +22,10 @@ function errorIncludes(err: unknown, expected: string): boolean {
 }
 
 async function readProjectActor(uid: string): Promise<ProjectActor> {
-  const [actorDoc, user] = await Promise.all([
-    db.doc(`users/${uid}`).get(),
-    platformStateStore.users.records.get(uid),
-  ]);
-  const username = actorDoc.data()?.username;
+  const user = await platformStateStore.users.records.get(uid);
   return {
     mmUserId: user?.mattermostUserId ?? undefined,
-    giteaUser: username ? `ws-${username}` : null,
+    giteaUser: user?.slug ? `ws-${user.slug}` : null,
   };
 }
 

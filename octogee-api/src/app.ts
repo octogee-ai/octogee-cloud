@@ -69,7 +69,13 @@ import {
 import { resolveActiveArtifactWorkspaceSlug } from "./lib/chat-artifact-workspace.js";
 import { gcsBucket } from "../../gateway-edge/src/lib/gcs-bucket.js";
 import { installProjectPresentation, NO_PROJECT_PRESENTATION, type ProjectPresentation } from "../../gateway-edge/src/lib/project-presentation.js";
-import { platformStateStore, readSizingKey } from "../../gateway-edge/src/lib/platform-state.js";
+import { installUserAccounts, readSizingKey } from "../../gateway-edge/src/lib/user-accounts.js";
+import { installAgentIdentity } from "../../gateway-edge/src/lib/agent-identity.js";
+import type { AuthUserSuspension } from "../../gateway-edge/src/lib/user-deletion-deps.js";
+import type { UserProfileAppearanceSource } from "./lib/openclaw-profile-appearance.js";
+import { installWorkspaceStorageAccounting, NO_WORKSPACE_STORAGE_ACCOUNTING, type WorkspaceStorageAccounting } from "../../gateway-edge/src/lib/workspace-storage-quota.js";
+import { noUserAccounts } from "@octogee/core/user-account";
+import { platformStateStore } from "../../gateway-edge/src/lib/platform-state.js";
 import {
   ConnectorTokenReadError,
   getFreshAccessTokenFromStore,
@@ -166,13 +172,16 @@ export interface ProductRuntime {
   routesBeforeMiddleware?: ClusterRouteTable;
   routesBeforeTenantBinding?(deps: ProductRouteDeps): ClusterRouteTable;
   prewarmProjectCapacity?: () => Promise<void>;
-  projectsDeleteRoutes?: express.Router;
+  publicProjectRoutes?: readonly express.Router[];
   discoverDeletionProductContext?: DeletionProductContextDiscovery;
+  suspendAuthUser?: AuthUserSuspension;
+  userProfileAppearance?: UserProfileAppearanceSource;
   tenantRoutes?: ProductTenantRoutes;
   controlSessionChecks?: ControlSessionChecks;
   publicCanvasFile?: PublicCanvasFileReader;
   sessionChannelPurpose?: SessionChannelPurposeReader;
   projectPresentation?: ProjectPresentation;
+  workspaceStorageAccounting?: WorkspaceStorageAccounting;
   brokerRecords?: BrokerRecords;
   provisioningProjection?: ProvisioningProjection;
   chatArtifactJobs?: ArtifactJobStore;
@@ -316,10 +325,11 @@ function clusterRouteOverrides(
     mmRestProxyHandler: createMmRestProxyHandler(platformStateStore, notifications),
     mattermostMintRoutes: createMattermostMintRoutes(platformStateStore),
     productRoutes: product?.clusterRoutes({ featurePolicy }) ?? [],
-    projectsDeleteRoutes: product?.projectsDeleteRoutes,
+    publicProjectRoutes: product?.publicProjectRoutes,
     adminRoutes: createAdminRoutes({
       accounts,
       discoverDeletionProductContext: product?.discoverDeletionProductContext,
+      suspendAuthUser: product?.suspendAuthUser,
       userDetail: product?.adminUserDetail,
       userDirectory: product?.adminUserDirectory,
       addAdminRoutes: product?.addAdminRoutes,
@@ -433,11 +443,17 @@ export function createPlatformApp(opts: PlatformAppOptions = {}) {
     readGithubToken: readFreshGithubToken,
   });
   installProjectPresentation(product?.projectPresentation ?? NO_PROJECT_PRESENTATION);
+  installWorkspaceStorageAccounting(product?.workspaceStorageAccounting ?? NO_WORKSPACE_STORAGE_ACCOUNTING);
   mountRouteTable(app, product?.routesBeforeMiddleware ?? []);
   const featurePolicy = opts.featurePolicy ?? product?.featurePolicy ?? new FeaturePolicy(configuredFeatureFlagProvider(process.env), { logger });
   const productRouteDeps: ProductRouteDeps = { featurePolicy };
   const modelBrokerRails = opts.product?.modelBrokerRails ?? operatorRailRegistry();
   const brokerRecords = product?.brokerRecords ?? platformStateBrokerRecords(platformStateStore);
+  if (brokerRecords.accounts === noUserAccounts) {
+    throw new Error("The product's broker records must supply a user account reader");
+  }
+  installUserAccounts(brokerRecords.accounts);
+  installAgentIdentity(brokerRecords.agentIdentity);
   app.locals.productShutdown = product?.shutdown;
   const tenantBindingMetrics = createTenantBindingMetrics(metricsRegistry);
   const tenantBindingReviewer = opts.tenantBindingReviewer ?? createGatewayIdentityReviewer({
@@ -602,6 +618,7 @@ export function createPlatformApp(opts: PlatformAppOptions = {}) {
     store: platformStateStore,
     readSizingKey,
     sessionChecks: product?.controlSessionChecks,
+    userProfile: product?.userProfileAppearance,
   }));
   app.use(
     "/internal/automations",

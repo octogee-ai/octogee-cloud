@@ -1,6 +1,7 @@
 import type { Request, Response } from "express";
 import type { Project } from "@octogee/shared/types/index";
 import { db } from "./db.js";
+import { userAccounts } from "./user-accounts.js";
 import { readProject } from "./firestoreReads.js";
 import { logger } from "../middleware/logging.js";
 import { mapMattermostMembershipError } from "./channel-lifecycle.js";
@@ -43,9 +44,8 @@ function stateForbidden(opts: WithProjectOptions, project: Project): boolean {
 
 export async function projectIsArchived(project: Project): Promise<boolean> {
   if (project.commercialLifecycle?.status === "archived") return true;
-  const owner = await db.doc(`users/${project.ownerUid}`).get();
-  const ownerData = owner.exists ? owner.data() ?? {} : {};
-  return userEntitlements().projectMode(ownerData) !== "active";
+  const owner = await userAccounts().get(project.ownerUid);
+  return userEntitlements().projectMode(owner?.planInputs ?? {}) !== "active";
 }
 
 function respondToHandlerError(res: Response, err: unknown, fallbackErrorMessage: string): void {

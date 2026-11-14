@@ -1,6 +1,6 @@
 import type { Request, Response, NextFunction, RequestHandler } from "express";
 import { requestBlobStore, type BlobStore } from "./blob-store.js";
-import { db } from "./db.js";
+import { userAccounts } from "./user-accounts.js";
 import { readProject } from "./firestoreReads.js";
 import { platformStateStore } from "./platform-state.js";
 import { USERNAME_RE } from "@octogee/shared/types/identity";
@@ -113,9 +113,8 @@ async function projectMutationIsBlocked(
   project: { ownerUid: string; commercialLifecycle?: { status?: unknown } },
 ): Promise<boolean> {
   if (project.commercialLifecycle?.status === "archived") return true;
-  const owner = await db.doc(`users/${project.ownerUid}`).get();
-  const ownerData = owner.exists ? owner.data() ?? {} : {};
-  return userEntitlements().projectMode(ownerData) !== "active";
+  const owner = await userAccounts().get(project.ownerUid);
+  return userEntitlements().projectMode(owner?.planInputs ?? {}) !== "active";
 }
 
 function giteaProjectTarget(

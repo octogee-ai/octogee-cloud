@@ -7,8 +7,6 @@ import channelSessionModelRoutes from "./channel-session-models.js";
 import modelCredentialRoutes from "./model-credentials.js";
 import adminRoutes from "./admin.js";
 import connectRoutes from "./connect.js";
-import entitiesRoutes from "./entities.js";
-import agentRoutes from "./agents.js";
 import isolatedGatewaysRoutes from "./user/gateways.js";
 import productivityApprovalRoutes from "./productivity-approvals.js";
 import voiceRoutes from "./voice.js";
@@ -26,15 +24,12 @@ import workspaceGithubReposRoutes from "./workspace/github-repos.js";
 
 import channelsRoutes from "./channels/index.js";
 
-import projectsReadmeRoutes from "./projects/readme.js";
 import projectsCreateRoutes from "./projects/create.js";
 import projectsRetryRoutes from "./projects/retry.js";
 import projectsJoinLeaveRoutes from "./projects/join-leave.js";
-import projectsStarRoutes from "./projects/star.js";
 import projectsMembersRoutes from "./projects/members.js";
 import projectsAgentRoutes from "./projects/agent.js";
 import projectsRepoSourceRoutes from "./projects/repo-source.js";
-import projectsRecipeRoutes from "./projects/recipe.js";
 import projectsSettingsRoutes from "./projects/settings.js";
 
 import internalWorkspaceCommitRoutes from "./internal/workspace-commit.js";
@@ -49,7 +44,7 @@ export interface MountClusterRoutesOpts {
   productRoutes?: ClusterRouteTable;
   isolatedGatewaysRoutes?: Router;
   projectsCreateRoutes?: Router;
-  projectsDeleteRoutes?: Router;
+  publicProjectRoutes?: readonly RouteHandler[];
   projectsRepoSourceRoutes?: Router;
   productivityApprovalRoutes?: Router;
   voiceRoutes?: Router;
@@ -76,23 +71,19 @@ const CHANNEL_ROUTES: readonly RouteHandler[] = [requireAuth, channelsRoutes];
 
 function projectRoutes(opts: MountClusterRoutesOpts): readonly RouteHandler[] {
   return [
-    projectsReadmeRoutes,
-    ...(opts.projectsDeleteRoutes ? [opts.projectsDeleteRoutes] : []),
+    ...(opts.publicProjectRoutes ?? []),
     requireAuth,
     opts.projectsCreateRoutes ?? projectsCreateRoutes,
     projectsRetryRoutes,
     projectsJoinLeaveRoutes,
-    projectsStarRoutes,
     projectsMembersRoutes,
     projectsAgentRoutes,
     opts.projectsRepoSourceRoutes ?? projectsRepoSourceRoutes,
-    projectsRecipeRoutes,
     projectsSettingsRoutes,
   ];
 }
 
 const PUBLIC_API_ROUTES: readonly (readonly [string, RouteHandler])[] = [
-  ["/api/entities", entitiesRoutes],
   ["/api/mattermost", mattermostRoutes],
   ["/api/openclaw", openclawRoutes],
   ["/api/agent-models", agentModelRoutes],
@@ -100,14 +91,12 @@ const PUBLIC_API_ROUTES: readonly (readonly [string, RouteHandler])[] = [
   ["/api/model-credentials", modelCredentialRoutes],
   ["/api/admin", adminRoutes],
   ["/api/connect", connectRoutes],
-  ["/api/agents", agentRoutes],
   ["/api/builder", isolatedGatewaysRoutes],
   ["/api/productivity-approvals", productivityApprovalRoutes],
   ["/api/voice", voiceRoutes],
 ];
 
 const INTERNAL_ROUTES: readonly (readonly [string, RouteHandler])[] = [
-  ["/internal/agents", agentRoutes],
   ["/internal/workspace", internalWorkspaceCommitRoutes],
 ];
 

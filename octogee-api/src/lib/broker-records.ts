@@ -1,7 +1,7 @@
 import type { PlatformStateStore } from "@octogee/core/platform-state";
 import { platformStateUserAccountReader, userAccountDocument } from "@octogee/core/platform-state-user-accounts";
 import { noUserAccounts, type UserAccountReader } from "@octogee/core/user-account";
-import type { AgentLook } from "@octogee/shared/types/agent-look";
+import { NO_AGENT_IDENTITY, type AgentIdentityRecords } from "../../../gateway-edge/src/lib/agent-identity.js";
 import type { FleetBrokerUsageData } from "@octogee/shared/types/fleet-broker";
 
 import { UNCONFIGURED_MODEL_BROKER_USAGE, type ModelBrokerUsageLedger } from "./model-broker-usage.js";
@@ -40,26 +40,6 @@ export interface UsageEvent {
   readonly workspaceSlug: string | null;
 }
 
-export interface AgentIdentityPatch {
-  name?: string;
-  persona?: string;
-  emoji?: string;
-  avatarPng?: Buffer;
-  look?: AgentLook;
-}
-
-export interface AgentTextIdentity {
-  name: string | null;
-  persona: string | null;
-  emoji: string | null;
-}
-
-export interface AgentIdentityRecords {
-  read(uid: string): Promise<AgentTextIdentity>;
-  sync(uid: string, patch: AgentIdentityPatch, context?: { slug?: string }): Promise<string[]>;
-  replaceText(uid: string, identity: AgentTextIdentity): Promise<void>;
-}
-
 export interface BrokerRecords {
   readonly accounts: UserAccountReader;
   readonly userDocuments: UserDocuments;
@@ -68,10 +48,6 @@ export interface BrokerRecords {
   readonly agentIdentity: AgentIdentityRecords;
   recordUsageEvent(event: UsageEvent): Promise<void>;
 }
-
-const agentIdentityUnconfigured = async (): Promise<never> => {
-  throw new Error("agent identity needs a product store");
-};
 
 export const NO_BROKER_RECORDS: BrokerRecords = {
   accounts: noUserAccounts,
@@ -90,11 +66,7 @@ export const NO_BROKER_RECORDS: BrokerRecords = {
       throw new Error("BYOSUB flows need a product record store");
     },
   },
-  agentIdentity: {
-    read: async () => ({ name: null, persona: null, emoji: null }),
-    sync: agentIdentityUnconfigured,
-    replaceText: agentIdentityUnconfigured,
-  },
+  agentIdentity: NO_AGENT_IDENTITY,
   recordUsageEvent: async () => {
     throw new Error("usage events need a product recorder");
   },

@@ -3,7 +3,8 @@ import request from "supertest";
 import { describe, expect, it } from "vitest";
 
 import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
-import { NO_BROKER_RECORDS, type AgentIdentityPatch, type BrokerRecords } from "../lib/broker-records.js";
+import { NO_BROKER_RECORDS, type BrokerRecords } from "../lib/broker-records.js";
+import type { AgentIdentityPatch } from "../../../gateway-edge/src/lib/agent-identity.js";
 import { createFleetBrokerRoutes } from "./fleet-broker.js";
 
 const GATEWAY_ID = "shared-blue";

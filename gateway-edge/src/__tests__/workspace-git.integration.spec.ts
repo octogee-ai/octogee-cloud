@@ -9,7 +9,7 @@ const firestoreData = vi.hoisted(() => ({}) as Record<string, any>);
 
 vi.mock("../lib/platform-state.js", async () => {
   const { createDocumentFixtureStore } = await import("@octogee/core/testing/journal-store");
-  return { platformStateStore: createDocumentFixtureStore(firestoreData), readSizingKey: vi.fn() };
+  return { platformStateStore: createDocumentFixtureStore(firestoreData) };
 });
 
 vi.mock("../lib/db", () => ({
@@ -111,6 +111,9 @@ import { createApp } from "../index.js";
 import { acquireWorkspaceMutationLeaseSync } from "@octogee/core/workspace-mutation-lease";
 import { workspaceMutationLeaseGitDir } from "../lib/workspace-git.js";
 import workspaceGitRoutes from "../routes/workspace/git.js";
+import { installDocumentUserAccounts } from "./helpers/user-accounts.js";
+
+installDocumentUserAccounts((uid) => firestoreData[`users/${uid}`]);
 
 type RouteLayer = {
   route?: {

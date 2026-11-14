@@ -1,6 +1,5 @@
 import { Router, Request, Response } from "express";
 import { strictRateLimit } from "../../middleware/security.js";
-import { db } from "../../lib/db.js";
 import { platformStateStore } from "../../lib/platform-state.js";
 import { removeProjectMember, syncProjectMemberCount } from "../../lib/project-platform-state.js";
 import { giteaApi } from "../../lib/gitea.js";
@@ -31,14 +30,10 @@ async function guestRemovable(ctx: ProjectCtx, guestUid: string, res: Response):
 }
 
 async function readGuestActor(guestUid: string): Promise<GuestActor> {
-  const [guestDoc, user] = await Promise.all([
-    db.doc(`users/${guestUid}`).get(),
-    platformStateStore.users.records.get(guestUid),
-  ]);
-  const username = guestDoc.data()?.username;
+  const user = await platformStateStore.users.records.get(guestUid);
   return {
     mmUserId: user?.mattermostUserId ?? undefined,
-    giteaUser: username ? `ws-${username}` : null,
+    giteaUser: user?.slug ? `ws-${user.slug}` : null,
   };
 }
 

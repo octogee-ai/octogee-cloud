@@ -1,18 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const h = vi.hoisted(() => {
-  const docs = new Map<string, Record<string, unknown>>();
-  const db = {
-    doc: vi.fn((path: string) => ({
-      path,
-      get: vi.fn(async () => ({ data: () => docs.get(path) })),
-    })),
-  };
-  return { docs, db };
-});
-
-vi.mock("../lib/db.js", () => ({
-  db: h.db,
+const h = vi.hoisted(() => ({
+  docs: new Map<string, Record<string, unknown>>(),
 }));
 
 vi.mock("../lib/platform-state.js", async () => {
@@ -21,17 +10,17 @@ vi.mock("../lib/platform-state.js", async () => {
 });
 
 const { getWorkspaceMmContext } = await import("../lib/mattermost-context.js");
+const { installDocumentUserAccounts } = await import("./helpers/user-accounts.js");
+
+installDocumentUserAccounts((uid) => h.docs.get(`users/${uid}`));
 
 describe("getWorkspaceMmContext", () => {
   beforeEach(() => {
     h.docs.clear();
-    h.db.doc.mockClear();
   });
 
-  it("returns null when the owner user document is missing", async () => {
+  it("returns null when the owner has no account", async () => {
     await expect(getWorkspaceMmContext("uid-1")).resolves.toBeNull();
-
-    expect(h.db.doc).toHaveBeenCalledWith("users/uid-1");
   });
 
   it("assembles workspace Mattermost ids from the platform records and product username", async () => {
@@ -42,10 +31,7 @@ describe("getWorkspaceMmContext", () => {
     h.docs.set("workspaces/alice/channels/coach-dm", { mattermost: { channelId: "coach-dm-ch" } });
     h.docs.set("workspaces/alice/channels/admin", { mattermost: { channelId: "admin-ch" } });
 
-    const ctx = await getWorkspaceMmContext("uid-1", undefined, {
-      username: "alice",
-      mattermost: { userId: "stale-projected-mm", username: "alice-mm" },
-    });
+    const ctx = await getWorkspaceMmContext("uid-1");
 
     expect(ctx).toEqual({
       ownerUid: "uid-1",
@@ -58,5 +44,14 @@ describe("getWorkspaceMmContext", () => {
       generalChannelId: "general-ch",
       adminChannelId: "admin-ch",
     });
+  });
+
+  it("takes the workspace slug from the platform user record before the account username", async () => {
+    h.docs.set("users/uid-1", { username: "alice-account", provisioning: { openclaw: { slug: "alice" } } });
+    h.docs.set("workspaces/alice", { id: "alice", ownerUid: "uid-1", mattermost: { teamId: "team-1" } });
+
+    const ctx = await getWorkspaceMmContext("uid-1");
+
+    expect(ctx).toMatchObject({ slug: "alice", teamId: "team-1" });
   });
 });

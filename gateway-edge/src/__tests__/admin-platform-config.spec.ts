@@ -63,7 +63,7 @@ vi.mock("../lib/db", () => {
 
 vi.mock("../lib/platform-state", async () => {
   const { createDocumentFixtureStore } = await import("@octogee/core/testing/journal-store");
-  return { platformStateStore: createDocumentFixtureStore(platformDocs), readSizingKey: vi.fn() };
+  return { platformStateStore: createDocumentFixtureStore(platformDocs) };
 });
 
 vi.mock("../middleware/auth", () => ({

@@ -24,7 +24,6 @@ const MM_MEMBER_PAGE_SIZE = 200;
 
 export interface SessionChannelActor {
   uid: string;
-  userData: FirebaseFirestore.DocumentData | undefined;
   workspaceId: string | null | undefined;
 }
 
@@ -140,7 +139,7 @@ async function createSessionChannelImpl(
   const existingResult = await existingSessionChannelResult(channelScope, normalized, actor.uid);
   if (existingResult) return completeExistingSessionChannel(project, workspaceId, normalized.name, existingResult);
 
-  const ctx = await getWorkspaceMmContext(actor.uid, workspaceId, actor.userData);
+  const ctx = await getWorkspaceMmContext(actor.uid, workspaceId);
   if (!ctx?.teamId) {
     logger.error(`[channels] Create failed - no MM teamId for workspace ${workspaceId}`);
     return bad(502, "Channel creation failed - workspace chat is not ready");
