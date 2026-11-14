@@ -4,7 +4,8 @@ import { hasFreshReadyKubernetesObservation, isGatewayRuntimeDoc, projectGateway
 import { accountAllowsInteractiveAccess } from "@octogee/shared/types/account-lifecycle";
 import { readWorkspaceMigrationMarker } from "@octogee/shared/types/workspace-migration";
 import { userMigrationV2GatewayRootFenceEqual, userMigrationV2GatewayRootFenceMatches, } from "./user-migration-v2.js";
-import { builderActivateOperationId, withCurrentSizingKey, } from "./user-activation-lease.js";
+import { withCurrentSizingKey, } from "./sizing-key.js";
+import { builderActivateOperationId } from "./isolated-operation-ids.js";
 import { gatewayAuthorizationFromRootDocument } from "./gateway-live-release.js";
 import { MalformedRecordError } from "./platform-state/index.js";
 const MIGRATE_USER_OPERATION_KIND = "migrate-user";

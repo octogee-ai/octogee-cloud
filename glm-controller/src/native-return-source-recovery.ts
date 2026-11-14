@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
-import { builderReturnOperationId } from "@octogee/core/user-activation-lease";
+import { builderReturnOperationId } from "@octogee/core/isolated-operation-ids";
 import { isolatedRuntimeMutationFenced } from "@octogee/core/gateway-retirement-claim";
 import type {
   UserActivationLease,

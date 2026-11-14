@@ -1,4 +1,4 @@
-import { firestoreSizingKeyReader } from "@octogee/core/user-activation-lease";
+import { firestoreSizingKeyReader } from "@octogee/core/sizing-key";
 import { lazyInstance } from "@octogee/core/lazy-instance";
 import { platformStateStoreFromEnvironment } from "@octogee/core/platform-state";
 import { logger } from "../middleware/logging.js";

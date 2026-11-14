@@ -1,5 +1,5 @@
 import type { SurgePod, SurgePodHealth } from './surge-user-handoff.js';
-import { builderActivateOperationId } from '@octogee/core/user-activation-lease';
+import { builderActivateOperationId } from '@octogee/core/isolated-operation-ids';
 import { userActivationRecoveryTargetMatches } from '@octogee/core/fleet-state';
 import { isolatedRuntimeMutationFenced } from '@octogee/core/gateway-retirement-claim';
 import type {

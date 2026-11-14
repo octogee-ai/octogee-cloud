@@ -15,7 +15,7 @@ import { readSharedGatewayPoolConfigInStore, } from "./shared-gateway-pool-read.
 import { SIZING_TIERS, resolveSizingTier, } from "@octogee/shared/types/sizing";
 import { SPOT_PRICE_MULTIPLIER, estimateGatewayMonthlyCost, } from "@octogee/shared/types/cost-estimator";
 import { GATEWAY_UNREACHABLE_AFTER_MS, parseOpenClawProcessReport } from "@octogee/shared/types/fleet-controller";
-import { builderReturnOperationId, placementRetireOperationId, } from "./user-activation-lease.js";
+import { builderReturnOperationId, placementRetireOperationId, } from "./isolated-operation-ids.js";
 import { withActorEmails } from "./admin-journal-actor.js";
 import { AdminDryRunPlanned, admitAdminDryRunMarker, isAdminDryRun, refuseUnansweredAdminDryRun, respondToAdminDryRun, } from "./admin-dry-run.js";
 import { addAdminComputerRoutes } from "./admin-vm-router.js";

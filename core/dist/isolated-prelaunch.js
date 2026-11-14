@@ -1,4 +1,4 @@
-import { builderActivateOperationId } from "./user-activation-lease.js";
+import { builderActivateOperationId } from "./isolated-operation-ids.js";
 import { isOperatorIssuedAllocation } from "./operator-isolated-gateway.js";
 import { accountAllowsInteractiveAccess } from "@octogee/shared/types/account-lifecycle";
 function prelaunchStatusMatches(gatewayId, generation, lease, activationBoot) {

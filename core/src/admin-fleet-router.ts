@@ -96,7 +96,7 @@ import { GATEWAY_UNREACHABLE_AFTER_MS, parseOpenClawProcessReport } from "@octog
 import {
   builderReturnOperationId,
   placementRetireOperationId,
-} from "./user-activation-lease.js";
+} from "./isolated-operation-ids.js";
 import { withActorEmails } from "./admin-journal-actor.js";
 import {
   AdminDryRunPlanned,

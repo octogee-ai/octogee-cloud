@@ -12,7 +12,7 @@ import { isProjectRecipeId } from "@octogee/shared/types/project";
 
 import { db as defaultDb } from "../lib/db.js";
 import { platformStateStore, readSizingKey } from "../lib/platform-state.js";
-import type { SizingKeyReader } from "@octogee/core/user-activation-lease";
+import type { SizingKeyReader } from "@octogee/core/sizing-key";
 import type { PlatformStateStore } from "@octogee/core/platform-state";
 import { requireAuth } from "../middleware/auth.js";
 import { logger } from "../middleware/logging.js";

@@ -1,4 +1,4 @@
-import { isUserActivateOperationIdFor } from "@octogee/core/user-activation-lease";
+import { isUserActivateOperationIdFor } from "@octogee/core/isolated-operation-ids";
 import { isolatedRuntimeMutationFenced } from "@octogee/core/gateway-retirement-claim";
 import type { PlatformUserRecord, GatewayAssignment, OperationPatch, PlatformStateStore, PlatformStateTransaction, Stored } from "@octogee/core/platform-state";
 import { readSchedulerMigrationIdentity, type Operation, type SchedulerHandoffState } from "@octogee/shared/types/glm";
