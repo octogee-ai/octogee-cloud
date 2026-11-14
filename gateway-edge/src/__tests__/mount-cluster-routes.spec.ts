@@ -174,7 +174,6 @@ describe("mountClusterRoutes", () => {
       "/api/admin",
       "/api/connect",
       "/api/builder",
-      "/api/productivity-approvals",
       "/api/voice",
       "/internal/workspace",
     ]);

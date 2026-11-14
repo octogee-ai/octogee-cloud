@@ -73,6 +73,7 @@ import { installUserAccounts, readSizingKey } from "../../gateway-edge/src/lib/u
 import { installAgentIdentity } from "../../gateway-edge/src/lib/agent-identity.js";
 import type { AuthUserSuspension } from "../../gateway-edge/src/lib/user-deletion-deps.js";
 import type { UserProfileAppearanceSource } from "./lib/openclaw-profile-appearance.js";
+import { installConnectorDisconnected, NO_CONNECTOR_DISCONNECTED, type ConnectorDisconnected } from "../../gateway-edge/src/lib/connector-disconnect.js";
 import { installWorkspaceStorageAccounting, NO_WORKSPACE_STORAGE_ACCOUNTING, type WorkspaceStorageAccounting } from "../../gateway-edge/src/lib/workspace-storage-quota.js";
 import { noUserAccounts } from "@octogee/core/user-account";
 import { platformStateStore } from "../../gateway-edge/src/lib/platform-state.js";
@@ -182,6 +183,7 @@ export interface ProductRuntime {
   sessionChannelPurpose?: SessionChannelPurposeReader;
   projectPresentation?: ProjectPresentation;
   workspaceStorageAccounting?: WorkspaceStorageAccounting;
+  connectorDisconnected?: ConnectorDisconnected;
   brokerRecords?: BrokerRecords;
   provisioningProjection?: ProvisioningProjection;
   chatArtifactJobs?: ArtifactJobStore;
@@ -444,6 +446,7 @@ export function createPlatformApp(opts: PlatformAppOptions = {}) {
   });
   installProjectPresentation(product?.projectPresentation ?? NO_PROJECT_PRESENTATION);
   installWorkspaceStorageAccounting(product?.workspaceStorageAccounting ?? NO_WORKSPACE_STORAGE_ACCOUNTING);
+  installConnectorDisconnected(product?.connectorDisconnected ?? NO_CONNECTOR_DISCONNECTED);
   mountRouteTable(app, product?.routesBeforeMiddleware ?? []);
   const featurePolicy = opts.featurePolicy ?? product?.featurePolicy ?? new FeaturePolicy(configuredFeatureFlagProvider(process.env), { logger });
   const productRouteDeps: ProductRouteDeps = { featurePolicy };
