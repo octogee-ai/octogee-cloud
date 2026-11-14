@@ -41,7 +41,7 @@ import {
   OPENAI_CODEX_DEFAULT_PROFILE_ID,
 } from "@octogee/core/model-credential-materializer";
 import { triggerGatewayModelCredentialSync } from "../lib/byot-sync-trigger.js";
-import { pinSubscriptionModel, retargetSubscriptionModelPicks } from "../lib/subscription-model-pins.js";
+import { pinSubscriptionModel, retargetSubscriptionModelPicks, SubscriptionModelPinError } from "../lib/subscription-model-pins.js";
 import {
   claudeCliRuntimeConfig,
   codexRuntimeConfig,
@@ -245,7 +245,6 @@ async function flipUnifiedByosSignal(
   uid: string,
   signalProvider: ModelCredentialOAuthProviderId,
   secretName: string,
-  agentIds: readonly string[] = [],
 ): Promise<void> {
   const addedAt = FieldValue.serverTimestamp();
   await db
@@ -281,11 +280,20 @@ async function flipUnifiedByosSignal(
       { merge: true },
     );
   await db.collection("users").doc(uid).set({ byotActive: true }, { merge: true });
-  await pinSubscriptionModel(platformStateStore.users, {
-    uid,
-    agentIds,
-    model: subscriptionDefaultModel(signalProvider),
-  });
+}
+
+async function pinFailure(
+  uid: string,
+  provider: ModelCredentialOAuthProviderId,
+  agentIds: readonly string[],
+): Promise<SubscriptionModelPinError | null> {
+  try {
+    await pinSubscriptionModel(platformStateStore.users, { uid, agentIds, model: subscriptionDefaultModel(provider) });
+    return null;
+  } catch (error) {
+    if (error instanceof SubscriptionModelPinError) return error;
+    throw error;
+  }
 }
 
 function slugFromManagedAgentId(agentId: string): string | null {
@@ -466,18 +474,6 @@ async function commitByosubCapture(args: {
       }, { merge: true });
     }
     return agentIds;
-  });
-}
-
-async function pinCapturedSubscriptionModel(
-  flow: FlowDoc,
-  modelCredentialProvider: ModelCredentialOAuthProviderId,
-  agentIds: readonly string[],
-): Promise<void> {
-  await pinSubscriptionModel(platformStateStore.users, {
-    uid: flow.uid,
-    agentIds,
-    model: subscriptionDefaultModel(modelCredentialProvider),
   });
 }
 
@@ -733,7 +729,8 @@ router.post(
         value: b.token.trim(),
         labels: { byosub: "true", provider: entry.oauth.secretProvider },
       });
-      await flipUnifiedByosSignal(uid, entry.id, secretName, resolved.agentIds);
+      await flipUnifiedByosSignal(uid, entry.id, secretName);
+      const unpinned = await pinFailure(uid, entry.id, resolved.agentIds);
       await writeByosubIntegration({
         uid,
         provider: entry.oauth.subscriptionProvider,
@@ -747,6 +744,7 @@ router.post(
         slug: resolved.slug,
         provider: entry.id,
       });
+      if (unpinned) throw unpinned;
       res.json({ ok: true, secretName });
     } catch (e) {
       next(e);
@@ -792,14 +790,13 @@ router.post(
       const secretName = byosubSecretName(flow.uid, secretProvider);
 
       if (flow.consumedAt) {
-        const agentIds = await commitByosubCapture({
+        await commitByosubCapture({
           flowId: b.flowId,
           flow,
           provider: secretProvider,
           modelCredentialProvider: signalProvider,
           secretName,
         });
-        await pinCapturedSubscriptionModel(flow, signalProvider, agentIds);
         triggerUnifiedByosSyncForFlow(flow, signalProvider);
         res.json({ ok: true, secretName, alreadyConsumed: true });
         return;
@@ -836,8 +833,9 @@ router.post(
         }
         throw error;
       }
-      await pinCapturedSubscriptionModel(flow, signalProvider, agentIds);
+      const unpinned = await pinFailure(flow.uid, signalProvider, agentIds);
       triggerUnifiedByosSyncForFlow(flow, signalProvider);
+      if (unpinned) throw unpinned;
       res.json({ ok: true, secretName });
     } catch (e) {
       next(e);
