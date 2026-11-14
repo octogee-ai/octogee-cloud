@@ -85,6 +85,18 @@ export type ActorRequest = Request & {
         email?: string | null;
     };
 };
+interface GatewayMonthlyCostUsd {
+    compute: number;
+    onDemandCompute: number;
+    savings: number;
+    pricingMode: GatewayPricingMode;
+    storage: number;
+    total: number;
+    onDemandTotal: number;
+    basis: "vm" | "size";
+    perUserAtTarget: number;
+    perUserAtTypical: number;
+}
 declare function resolveSizingForResponse(glmDoc: Record<string, unknown> | undefined, reservation: ReturnType<typeof projectGatewayReservation>): {
     tier: SizingTier;
     resolvedFrom: "explicit" | "class-default" | "profile-default";
@@ -102,14 +114,7 @@ declare function resolveSizingForResponse(glmDoc: Record<string, unknown> | unde
         targetActiveUsers: number;
         typicalUsers: number;
     };
-    monthlyCostUsd: {
-        compute: number;
-        onDemandCompute: number;
-        savings: number;
-        pricingMode: GatewayPricingMode;
-        perUserAtTarget: number;
-        perUserAtTypical: number;
-    };
+    monthlyCostUsd: GatewayMonthlyCostUsd;
 };
 export declare function resolveFleetNamespace(env?: NodeJS.ProcessEnv): string;
 type GlmDoc = Record<string, unknown>;
@@ -213,7 +218,7 @@ declare function projectGatewayStorage(_gatewayId: string, _glmDoc: GlmDoc | und
 export declare function projectGatewayReservation(glmDoc: GlmDoc | undefined, observedCapacityType?: GatewayPodCapacityType): {
     type: GatewayPricingMode;
     priceMultiplier: number;
-    source: "kubernetes" | "class-default";
+    source: "kubernetes" | "class-default" | "vm";
 };
 declare function projectDisposableRuntime(glmDoc: GlmDoc | undefined): {
     ownerUid: string;
@@ -291,6 +296,27 @@ export declare function projectDisposableFleetCapacity(gateways: ReadonlyArray<R
     failedUsers: number;
     staleActivations: number;
     oldestActivationAgeMs: number | null;
+};
+export declare function rollupFleetStats(gateways: ReadonlyArray<ReturnType<typeof projectGatewaySummary>>): {
+    gateways: {
+        total: number;
+        ready: number;
+        paused: number;
+        unreachable: number;
+    };
+    usersMounted: number;
+    fleetCost: {
+        monthlyUsd: number;
+        onDemandMonthlyUsd: number;
+        savingsUsd: number;
+        byTier: Record<string, {
+            count: number;
+            subtotalUsd: number;
+            onDemandSubtotalUsd: number;
+            spotCount: number;
+            onDemandCount: number;
+        }>;
+    };
 };
 export declare const ERR_USER_NOT_FOUND = "user not found";
 export declare const ERR_TARGET_GATEWAY_NOT_READY = "target gateway not ready";

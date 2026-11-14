@@ -10,6 +10,7 @@ import {
   projectGatewayReservation,
   projectGatewayControl,
   projectGatewaySummary,
+  rollupFleetStats,
   scheduleUserSelfDeletion,
   shapeOperationsHistoryRecord,
 } from "./admin-fleet-router.js";
@@ -248,6 +249,102 @@ describe("projectGatewaySummary — pod replacement projection", () => {
 
   it("projects null rather than trusting a malformed stored record", () => {
     expect(summaryWith({ recentAt: "lots", total: 3 }).podReplacements).toBeNull();
+  });
+});
+
+describe("projectGatewaySummary — monthly cost", () => {
+  const vmSpec = {
+    zones: ["us-central1-b"], machineType: "e2-standard-2", imageFamily: "gateway", diskSizeGb: 80, bootDiskType: "pd-ssd",
+    homeDiskSizeGb: 50, provisioningModel: "STANDARD", desktop: "omarchy", serviceAccountEmail: "vm@example.iam.gserviceaccount.com", subnetwork: "default",
+  };
+  const summarize = (glmDoc: Record<string, unknown>) =>
+    projectGatewaySummary({ id: String(glmDoc.gatewayId), data: () => ({ gatewayId: glmDoc.gatewayId }) }, glmDoc, Date.now());
+  const vmGateway = { gatewayId: "ada-m-12345678", gatewayClass: "isolated", sizingTier: "m", desiredStatus: "running", runtime: "gce-vm", vmSpec };
+
+  it("prices a VM gateway from its machine type and disks, at the VM's own provisioning model", () => {
+    const summary = summarize(vmGateway);
+
+    expect(summary.sizing.monthlyCostUsd).toEqual({
+      compute: 49, onDemandCompute: 49, savings: 0, pricingMode: "on-demand", storage: 19, total: 68, onDemandTotal: 68,
+      basis: "vm", perUserAtTarget: 34, perUserAtTypical: 23,
+    });
+    expect(summary.reservation).toEqual({ type: "on-demand", priceMultiplier: 1, source: "vm" });
+  });
+
+  it("keeps a paused VM gateway's disks on the bill", () => {
+    expect(summarize({ ...vmGateway, desiredStatus: "paused" }).sizing.monthlyCostUsd)
+      .toMatchObject({ basis: "vm", compute: 0, storage: 19, total: 19 });
+  });
+
+  it("prices a pod gateway from its size, and a paused one at nothing", () => {
+    const pod = { gatewayId: "ada-s-12345678", gatewayClass: "isolated", sizingTier: "s", desiredStatus: "running", runtime: "cluster" };
+
+    expect(summarize(pod).sizing.monthlyCostUsd).toMatchObject({ basis: "size", compute: 14, storage: 0, total: 14, pricingMode: "spot" });
+    expect(summarize({ ...pod, desiredStatus: "paused" }).sizing.monthlyCostUsd).toMatchObject({ basis: "size", total: 0 });
+  });
+
+  it("prices a VM gateway from its size, still at the VM's provisioning model, when its machine type has no rate", () => {
+    const summary = summarize({ ...vmGateway, vmSpec: { ...vmSpec, machineType: "n2-standard-2" } });
+
+    expect(summary.sizing.monthlyCostUsd).toMatchObject({ basis: "size", storage: 0, compute: 94, pricingMode: "on-demand" });
+    expect(summary.reservation).toEqual({ type: "on-demand", priceMultiplier: 1, source: "vm" });
+  });
+
+  it("reports the pod Spot discount, not the VM one, for a Spot VM it can only price from its size", () => {
+    const summary = summarize({ ...vmGateway, vmSpec: { ...vmSpec, machineType: "n2-standard-2", provisioningModel: "SPOT" } });
+
+    expect(summary.reservation).toEqual({ type: "spot", priceMultiplier: SPOT_PRICE_MULTIPLIER, source: "vm" });
+    expect(summary.sizing.monthlyCostUsd).toMatchObject({ basis: "size", compute: 28, pricingMode: "spot" });
+  });
+
+  it("prices a Spot-specified VM that is running on demand at the on-demand rate", () => {
+    const summary = summarize({
+      ...vmGateway,
+      vmSpec: { ...vmSpec, provisioningModel: "SPOT" },
+      vm: { instanceName: "vm", zone: "us-central1-b", status: "RUNNING", provisioningModel: "STANDARD" },
+    });
+
+    expect(summary.reservation).toEqual({ type: "on-demand", priceMultiplier: 1, source: "vm" });
+    expect(summary.sizing.monthlyCostUsd).toMatchObject({ basis: "vm", compute: 49, savings: 0 });
+  });
+
+  it.each([
+    ["a specification for another region", { vmSpec: { ...vmSpec, zones: ["europe-west1-b"] } }],
+    ["a VM running in another region", { vm: { instanceName: "vm", zone: "europe-west1-b", status: "RUNNING", provisioningModel: "STANDARD" } }],
+  ])("prices a VM gateway from its size, not the us-central1 rates, with %s", (_name, elsewhere) => {
+    const summary = summarize({ ...vmGateway, ...elsewhere });
+
+    expect(summary.sizing.monthlyCostUsd).toMatchObject({ basis: "size", storage: 0, compute: 94 });
+    expect(summary.reservation).toEqual({ type: "on-demand", priceMultiplier: 1, source: "vm" });
+  });
+
+  it("prices the home disk the user actually keeps over the size in the VM specification", () => {
+    const summary = summarize({ ...vmGateway, homeDisk: { sizeGb: 100, diskType: "pd-ssd" } });
+
+    expect(summary.sizing.monthlyCostUsd).toMatchObject({ basis: "vm", storage: 31, total: 80 });
+  });
+
+  it("prices a boot disk with no recorded type as the SSD the controller creates", () => {
+    const { bootDiskType: _bootDiskType, ...unrecorded } = vmSpec;
+
+    expect(summarize({ ...vmGateway, vmSpec: unrecorded }).sizing.monthlyCostUsd).toMatchObject({ basis: "vm", storage: 19 });
+  });
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, -5])("never puts a disk size of %s into the bill", (diskSizeGb) => {
+    const summary = summarize({ ...vmGateway, vmSpec: { ...vmSpec, diskSizeGb } });
+
+    expect(summary.sizing.monthlyCostUsd).toMatchObject({ basis: "size", storage: 0, total: 94 });
+    expect(rollupFleetStats([summary]).fleetCost.monthlyUsd).toBe(94);
+  });
+
+  it("adds each gateway's whole monthly cost, disks included, into the fleet total", () => {
+    const shared = summarize({ gatewayId: "shared-abc", gatewayClass: "shared", desiredStatus: "running" });
+
+    expect(rollupFleetStats([summarize(vmGateway), shared]).fleetCost).toMatchObject({
+      monthlyUsd: 68 + 94,
+      onDemandMonthlyUsd: 68 + 94,
+      byTier: { m: { count: 2, subtotalUsd: 68 + 94 } },
+    });
   });
 });
 

@@ -13,7 +13,7 @@ import { resolveContinuousUserPlacement, resolveLiveActivationTargetGatewayId, }
 import { SHARED_POOL_SLOT_ID_REQUIREMENT, isSharedPoolSlotId, sharedGatewayAddedBy, } from "@octogee/shared/types/shared-gateway-pool";
 import { readSharedGatewayPoolConfigInStore, } from "./shared-gateway-pool-read.js";
 import { SIZING_TIERS, resolveSizingTier, } from "@octogee/shared/types/sizing";
-import { SPOT_PRICE_MULTIPLIER, estimateGatewayMonthlyCost, } from "@octogee/shared/types/cost-estimator";
+import { GCE_E2_SPOT_PRICE_MULTIPLIER, SPOT_PRICE_MULTIPLIER, estimateGatewayMonthlyCost, estimateVmGatewayMonthlyCost, } from "@octogee/shared/types/cost-estimator";
 import { GATEWAY_UNREACHABLE_AFTER_MS, parseOpenClawProcessReport } from "@octogee/shared/types/fleet-controller";
 import { builderReturnOperationId, placementRetireOperationId, } from "./user-activation-lease.js";
 import { withActorEmails } from "./admin-journal-actor.js";
@@ -44,6 +44,96 @@ function rejectPersistenceInBody(body) {
 const noDeletionProductContext = async () => ({});
 class GatewayAuthSecretProvisionError extends Error {
 }
+const VM_HOME_DISK_TYPE = "pd-balanced";
+const VM_BOOT_DISK_TYPE_WHEN_UNRECORDED = "pd-ssd";
+function isProvisioningModel(value) {
+    return value === "SPOT" || value === "STANDARD";
+}
+function vmDisk(type, sizeGb) {
+    return typeof type === "string" && typeof sizeGb === "number" && Number.isFinite(sizeGb) && sizeGb >= 0
+        ? { type, sizeGb }
+        : null;
+}
+function vmHomeDisk(glmDoc, vmSpec) {
+    const retained = isPlainRecord(glmDoc.homeDisk) ? vmDisk(glmDoc.homeDisk.diskType, glmDoc.homeDisk.sizeGb) : null;
+    return retained ?? vmDisk(VM_HOME_DISK_TYPE, vmSpec.homeDiskSizeGb);
+}
+function vmZones(glmDoc, vmSpec) {
+    const runningZone = isPlainRecord(glmDoc.vm) ? glmDoc.vm.zone : undefined;
+    if (typeof runningZone === "string")
+        return [runningZone];
+    return Array.isArray(vmSpec.zones) ? vmSpec.zones.filter((zone) => typeof zone === "string") : [];
+}
+function vmGatewayFacts(glmDoc) {
+    if (!glmDoc || resolveGatewayRuntime(glmDoc.runtime) !== "gce-vm" || !isPlainRecord(glmDoc.vmSpec))
+        return null;
+    const vmSpec = glmDoc.vmSpec;
+    const running = isPlainRecord(glmDoc.vm) ? glmDoc.vm.provisioningModel : undefined;
+    const provisioningModel = isProvisioningModel(running) ? running : vmSpec.provisioningModel;
+    if (!isProvisioningModel(provisioningModel))
+        return null;
+    const boot = vmDisk(vmSpec.bootDiskType ?? VM_BOOT_DISK_TYPE_WHEN_UNRECORDED, vmSpec.diskSizeGb);
+    const home = vmHomeDisk(glmDoc, vmSpec);
+    const input = typeof vmSpec.machineType === "string" && boot && home
+        ? { zones: vmZones(glmDoc, vmSpec), machineType: vmSpec.machineType, provisioningModel, disks: [boot, home] }
+        : null;
+    const priced = input && estimateVmGatewayMonthlyCost({ ...input, running: true }) ? input : null;
+    return { provisioningModel, priced };
+}
+function retainedHomeDiskByUid(userDocs) {
+    const disks = new Map();
+    for (const doc of userDocs) {
+        const provisioning = doc.data().provisioning;
+        const homeStorage = isPlainRecord(provisioning) ? provisioning.homeStorage : undefined;
+        const disk = isPlainRecord(homeStorage) ? homeStorage.disk : undefined;
+        if (isPlainRecord(disk))
+            disks.set(doc.id, disk);
+    }
+    return disks;
+}
+function withRetainedHomeDisk(glmDoc, disks) {
+    const homeDisk = typeof glmDoc?.ownerUid === "string" ? disks.get(glmDoc.ownerUid) : undefined;
+    return glmDoc && homeDisk ? { ...glmDoc, homeDisk } : glmDoc;
+}
+function sizeMonthlyCostUsd(tier, pricingMode, paused) {
+    if (paused) {
+        return {
+            compute: 0, onDemandCompute: 0, savings: 0, pricingMode, storage: 0, total: 0, onDemandTotal: 0,
+            basis: "size", perUserAtTarget: 0, perUserAtTypical: 0,
+        };
+    }
+    const cost = estimateGatewayMonthlyCost(tier, { pricingMode });
+    return {
+        compute: cost.computeUsd,
+        onDemandCompute: cost.onDemandComputeUsd,
+        savings: cost.savingsUsd,
+        pricingMode: cost.pricingMode,
+        storage: 0,
+        total: cost.computeUsd,
+        onDemandTotal: cost.onDemandComputeUsd,
+        basis: "size",
+        perUserAtTarget: cost.perUserAtTarget,
+        perUserAtTypical: cost.perUserAtTypical,
+    };
+}
+function vmMonthlyCostUsd(glmDoc, capacity, paused) {
+    const vm = vmGatewayFacts(glmDoc)?.priced;
+    const cost = vm ? estimateVmGatewayMonthlyCost({ ...vm, running: !paused }) : null;
+    if (!cost)
+        return null;
+    return {
+        compute: cost.computeUsd,
+        onDemandCompute: cost.onDemandComputeUsd,
+        savings: cost.savingsUsd,
+        pricingMode: cost.pricingMode,
+        storage: cost.storageUsd,
+        total: cost.totalUsd,
+        onDemandTotal: cost.onDemandTotalUsd,
+        basis: "vm",
+        perUserAtTarget: Math.round(cost.totalUsd / capacity.targetActiveUsers),
+        perUserAtTypical: Math.round(cost.totalUsd / capacity.typicalUsers),
+    };
+}
 function resolveSizingForResponse(glmDoc, reservation) {
     const sizingTier = typeof glmDoc?.sizingTier === "string" && SIZING_TIERS.includes(glmDoc.sizingTier)
         ? glmDoc.sizingTier
@@ -59,16 +149,6 @@ function resolveSizingForResponse(glmDoc, reservation) {
     // bill. Reflect that in both the per-gateway surface and the fleet roll-up
     // so the operator sees real cost, not nameplate.
     const isPaused = glmDoc?.desiredStatus === "paused";
-    const cost = isPaused
-        ? {
-            computeUsd: 0,
-            onDemandComputeUsd: 0,
-            savingsUsd: 0,
-            pricingMode: reservation.type,
-            perUserAtTarget: 0,
-            perUserAtTypical: 0,
-        }
-        : estimateGatewayMonthlyCost(resolved.tier, { pricingMode: reservation.type });
     return {
         tier: resolved.tier,
         resolvedFrom: resolved.resolvedFrom,
@@ -83,14 +163,8 @@ function resolveSizingForResponse(glmDoc, reservation) {
             },
         },
         capacity: resolved.preset.capacity,
-        monthlyCostUsd: {
-            compute: cost.computeUsd,
-            onDemandCompute: cost.onDemandComputeUsd,
-            savings: cost.savingsUsd,
-            pricingMode: cost.pricingMode,
-            perUserAtTarget: cost.perUserAtTarget,
-            perUserAtTypical: cost.perUserAtTypical,
-        },
+        monthlyCostUsd: vmMonthlyCostUsd(glmDoc, resolved.preset.capacity, isPaused) ??
+            sizeMonthlyCostUsd(resolved.tier, reservation.type, isPaused),
     };
 }
 function normalizeGatewayProfile(profile) {
@@ -710,9 +784,13 @@ function indexDurableGatewayRoots(docs) {
 function projectDurableGatewayRuntime(root, runtime) {
     if (!runtime)
         return { ...root, gateway: root.gatewayId };
+    const { runtime: runtimeKind, vmSpec, vm } = runtime;
     return {
         ...root,
         gateway: root.gatewayId,
+        runtime: runtimeKind,
+        vmSpec,
+        vm,
         imageRepository: runtime.helm.imageRepository,
         imageTag: runtime.helm.imageTag,
         appliedReplicas: runtime.helm.replicas,
@@ -918,6 +996,12 @@ function projectGatewayStorage(_gatewayId, _glmDoc) {
     return emptyDirGatewayStorage();
 }
 export function projectGatewayReservation(glmDoc, observedCapacityType) {
+    const vm = vmGatewayFacts(glmDoc);
+    if (vm) {
+        const spotMultiplier = vm.priced ? GCE_E2_SPOT_PRICE_MULTIPLIER : SPOT_PRICE_MULTIPLIER;
+        const spot = vm.provisioningModel === "SPOT";
+        return { type: spot ? "spot" : "on-demand", priceMultiplier: spot ? spotMultiplier : 1, source: "vm" };
+    }
     const type = observedCapacityType ??
         (normalizeGatewayClass(glmDoc) === "shared" ? "on-demand" : "spot");
     return {
@@ -1253,7 +1337,7 @@ export function projectDisposableFleetCapacity(gateways, isolatedRuntimes = [], 
         oldestActivationAgeMs: activationAges.length === 0 ? null : Math.max(...activationAges),
     };
 }
-function rollupFleetStats(gateways) {
+export function rollupFleetStats(gateways) {
     let ready = 0, paused = 0, unreachable = 0, usersMounted = 0, fleetMonthlyUsd = 0, fleetOnDemandUsd = 0;
     const byTier = {};
     for (const g of gateways) {
@@ -1264,8 +1348,8 @@ function rollupFleetStats(gateways) {
         else if (g.status === "ready")
             ready++;
         usersMounted += g.mountedUsers.length;
-        fleetMonthlyUsd += g.sizing.monthlyCostUsd.compute;
-        fleetOnDemandUsd += g.sizing.monthlyCostUsd.onDemandCompute;
+        fleetMonthlyUsd += g.sizing.monthlyCostUsd.total;
+        fleetOnDemandUsd += g.sizing.monthlyCostUsd.onDemandTotal;
         const entry = byTier[g.sizing.tier] ?? {
             count: 0,
             subtotalUsd: 0,
@@ -1274,8 +1358,8 @@ function rollupFleetStats(gateways) {
             onDemandCount: 0,
         };
         entry.count += 1;
-        entry.subtotalUsd += g.sizing.monthlyCostUsd.compute;
-        entry.onDemandSubtotalUsd += g.sizing.monthlyCostUsd.onDemandCompute;
+        entry.subtotalUsd += g.sizing.monthlyCostUsd.total;
+        entry.onDemandSubtotalUsd += g.sizing.monthlyCostUsd.onDemandTotal;
         if (g.reservation.type === "spot")
             entry.spotCount += 1;
         else
@@ -1943,32 +2027,15 @@ function observedGatewayCapacityType(diagnostics) {
     return undefined;
 }
 function repriceGatewaySummaryFromKubernetes(summary, diagnostics) {
+    if (summary.reservation.source === "vm")
+        return summary;
     const reservation = projectGatewayReservation({ gatewayClass: summary.gatewayClass }, observedGatewayCapacityType(diagnostics));
-    const cost = summary.desiredStatus === "paused"
-        ? {
-            computeUsd: 0,
-            onDemandComputeUsd: 0,
-            savingsUsd: 0,
-            pricingMode: reservation.type,
-            perUserAtTarget: 0,
-            perUserAtTypical: 0,
-        }
-        : estimateGatewayMonthlyCost(summary.sizing.tier, {
-            pricingMode: reservation.type,
-        });
     return {
         ...summary,
         reservation,
         sizing: {
             ...summary.sizing,
-            monthlyCostUsd: {
-                compute: cost.computeUsd,
-                onDemandCompute: cost.onDemandComputeUsd,
-                savings: cost.savingsUsd,
-                pricingMode: cost.pricingMode,
-                perUserAtTarget: cost.perUserAtTarget,
-                perUserAtTypical: cost.perUserAtTypical,
-            },
+            monthlyCostUsd: sizeMonthlyCostUsd(summary.sizing.tier, reservation.type, summary.desiredStatus === "paused"),
         },
     };
 }
@@ -3287,8 +3354,9 @@ export function addAdminFleetRoutes(router, deps) {
                 }
             }
             const gatewayIds = new Set(glmByGatewayId.keys());
+            const retainedHomeDisks = retainedHomeDiskByUid(userDocs);
             const gatewayInputs = [...gatewayIds].flatMap((gatewayId) => {
-                const glmDoc = glmByGatewayId.get(gatewayId);
+                const glmDoc = withRetainedHomeDisk(glmByGatewayId.get(gatewayId), retainedHomeDisks);
                 const retired = projectDesiredStatus(glmDoc) === "retired";
                 const retiredButListed = retired && (includeRetired || visibleRetiredGatewayIds.has(gatewayId));
                 if (retired && !retiredButListed)
