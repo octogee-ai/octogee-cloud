@@ -15,6 +15,9 @@ db:
   name: mattermost
   passwordSecret: mattermost-cloud-sql
   passwordKey: password
+  # Mattermost's own sslmode for the database connection: disable, require,
+  # verify-ca or verify-full.
+  sslmode: disable
 
 siteUrl: "https://mattermost.example.com"
 
