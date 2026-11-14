@@ -32,8 +32,9 @@ Every connection to Cloud SQL is encrypted, but no client verifies the server's
 certificate: Mattermost and Gitea connect with `sslmode=require`, the platform
 with `require`, and the agent stores with `no-verify`. Something that could
 answer on the database's private address inside the network could stand in for
-it. Mounting Cloud SQL's server CA in each client and moving to `verify-ca`
-would close that; this install does not do it yet.
+it. Giving each client Cloud SQL's server CA to verify against would close
+that; the platform already takes `verify-full` with a CA, but this install does
+not set it up yet.
 
 ## What you need
 
