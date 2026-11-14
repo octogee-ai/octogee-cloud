@@ -18,11 +18,14 @@ const { NO_BROKER_RECORDS } = await import("../lib/broker-records.js");
 const { NO_WORKSPACE_STORAGE_ACCOUNTING, installWorkspaceStorageAccounting, workspaceStorageAccounting } =
   await import("../../../gateway-edge/src/lib/workspace-storage-quota.js");
 const { userAccounts } = await import("../../../gateway-edge/src/lib/user-accounts.js");
+const { NO_CONNECTOR_DISCONNECTED, connectorDisconnected, installConnectorDisconnected } =
+  await import("../../../gateway-edge/src/lib/connector-disconnect.js");
 const { noUserAccounts } = await import("@octogee/core/user-account");
 
 afterEach(() => {
   installProjectPresentation(NO_PROJECT_PRESENTATION);
   installWorkspaceStorageAccounting(NO_WORKSPACE_STORAGE_ACCOUNTING);
+  installConnectorDisconnected(NO_CONNECTOR_DISCONNECTED);
 });
 
 function productWith(runtime: Partial<ProductRuntime>) {
@@ -83,5 +86,19 @@ describe("createPlatformApp product ports", () => {
     createPlatformApp({ product: productWith({ workspaceStorageAccounting: accounting }) });
 
     expect(workspaceStorageAccounting()).toBe(accounting);
+  });
+
+  it("does nothing more on connector disconnect without a product", () => {
+    createPlatformApp();
+
+    expect(connectorDisconnected()).toBe(NO_CONNECTOR_DISCONNECTED);
+  });
+
+  it("installs the product's connector disconnect hook", () => {
+    const disconnected = async () => undefined;
+
+    createPlatformApp({ product: productWith({ connectorDisconnected: disconnected }) });
+
+    expect(connectorDisconnected()).toBe(disconnected);
   });
 });
