@@ -340,37 +340,11 @@ ensure_buckets() {
   fi
 }
 
-published_digest() {
-  local name="$1"
-  if [[ -n "$MANIFEST" ]]; then
-    node -e '
-      const [file, name, sha] = process.argv.slice(1);
-      const build = JSON.parse(require("node:fs").readFileSync(file, "utf8"));
-      if (build.sha !== sha) throw new Error(`${file} is the manifest of ${build.sha}, not ${sha}`);
-      const digest = build.images?.[name]?.platforms?.["linux/amd64"];
-      if (!/^sha256:[a-f0-9]{64}$/.test(digest ?? "")) throw new Error(`${file} has no linux/amd64 digest for ${name}`);
-      console.log(digest);
-    ' "$MANIFEST" "$name" "$SHA"
-  else
-    node -e '
-      const index = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
-      const manifest = (index.manifests ?? []).find(entry => entry.platform?.os === "linux" && entry.platform?.architecture === "amd64");
-      if (!/^sha256:[a-f0-9]{64}$/.test(manifest?.digest ?? "")) throw new Error(`${process.argv[1]} has no linux/amd64 image`);
-      console.log(manifest.digest);
-    ' "$PUBLISHED/$name:$SHA" < <(docker buildx imagetools inspect "$PUBLISHED/$name:$SHA" --raw)
-  fi
-}
-
 resolve_images() {
-  local name digests=()
-  for name in "${IMAGES[@]}"; do
-    digests+=("$name=$(published_digest "$name")")
-  done
-  node -e '
-    const [file, sha, ...pairs] = process.argv.slice(1);
-    const images = Object.fromEntries(pairs.map(pair => pair.split("=")));
-    require("node:fs").writeFileSync(file, JSON.stringify({ platform: "linux/amd64", sha, images }, null, 2) + "\n");
-  ' "$STATE/digests.json" "$SHA" "${digests[@]}"
+  local options=(--registry="$PUBLISHED" --sha="$SHA" --platform=linux/amd64 --images="$(IFS=,; echo "${IMAGES[*]}")")
+  [[ -n "$MANIFEST" ]] && options+=(--manifest="$MANIFEST")
+  mkdir -p "$STATE"
+  node "$ROOT/scripts/ci/cloud-build.mjs" resolve "${options[@]}" > "$STATE/digests.json"
 }
 
 api_server_cidrs() {
@@ -674,6 +648,8 @@ up() {
   require_tools
   load_account
   require_provider_key
+  log "Images published at $SHORT"
+  resolve_images
   log "Launch template for gateway nodes, with gVisor"
   ensure_launch_template
   ensure_cluster
@@ -684,8 +660,6 @@ up() {
   ensure_database
   log "S3"
   ensure_buckets
-  log "Images published at $SHORT"
-  resolve_images
   environment_values
   log "Secrets"
   write_secrets

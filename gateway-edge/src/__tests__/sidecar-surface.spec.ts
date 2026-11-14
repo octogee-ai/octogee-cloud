@@ -21,19 +21,6 @@ const firestore = vi.hoisted(() => ({
   })),
 }));
 
-vi.mock("../lib/db", () => ({
-  db: {
-    collection: firestore.collection,
-    doc: firestore.doc,
-  },
-  FieldValue: {
-    delete: () => ({ __op: "delete" }),
-    increment: (n: number) => ({ __op: "increment", operand: n }),
-    serverTimestamp: () => ({ __op: "serverTimestamp" }),
-  },
-  Timestamp: { fromDate: (d: Date) => ({ toDate: () => d }) },
-}));
-
 import { createApp } from "../index.js";
 import { _setGatewayTokenReviewerForTests } from "../middleware/gateway-internal-auth.js";
 

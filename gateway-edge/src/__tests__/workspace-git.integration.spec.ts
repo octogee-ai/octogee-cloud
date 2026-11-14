@@ -12,60 +12,16 @@ vi.mock("../lib/platform-state.js", async () => {
   return { platformStateStore: createDocumentFixtureStore(firestoreData) };
 });
 
-vi.mock("../lib/db", () => ({
-  auth: {
-    verifyIdToken: vi.fn().mockResolvedValue({ uid: "caller-uid" }),
-  },
-  db: {
-    doc: function makeDocRef(p: string): any {
-      return {
-        get: async () => {
-          const data = firestoreData[p];
-          return { exists: !!data, data: () => data };
-        },
-        collection: (sub: string) => ({
-          doc: (subId: string) => ({
-            get: async () => {
-              const key = `${p}/${sub}/${subId}`;
-              return { exists: !!firestoreData[key], data: () => firestoreData[key] };
-            },
-          }),
-        }),
-      };
-    },
-    collection: (name: string) => ({
-      doc: (id: string) => ({
-        get: async () => {
-          const data = firestoreData[`${name}/${id}`];
-          return { exists: !!data, data: () => data };
-        },
-        collection: (sub: string) => ({
-          doc: (subId: string) => ({
-            get: async () => {
-              const key = `${name}/${id}/${sub}/${subId}`;
-              return { exists: !!firestoreData[key], data: () => firestoreData[key] };
-            },
-          }),
-        }),
-      }),
-    }),
-  },
-  FieldValue: { serverTimestamp: () => ({}) },
-  Timestamp: { fromDate: (d: Date) => ({ toDate: () => d }) },
-}));
-
 vi.mock("../lib/workspace-git-authorization-broker.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/workspace-git-authorization-broker.js")>();
-  const { auth, db } = await import("../lib/db.js");
   const { resolveFileTarget } = await import("../lib/fileTarget.js");
   const { resolveCanonicalWorkspaceSlug } = await import("../lib/canonical-workspace.js");
   const { resolveCommitAuthor } = await import("../routes/workspace/helpers.js");
   const { accountAllowsInteractiveAccess } = await import("@octogee/shared/types/account-lifecycle");
   const authorizeWorkspaceGit: typeof actual.authorizeWorkspaceGit = async (args) => {
     if (!args.authorization?.startsWith("Bearer ")) return { kind: "unauthenticated" };
-    const { uid } = await auth.verifyIdToken(args.authorization.slice(7));
-    const userSnap = await db.collection("users").doc(uid).get();
-    const user = userSnap.exists ? userSnap.data() : undefined;
+    const uid = "caller-uid";
+    const user = firestoreData[`users/${uid}`];
     if (!user || !accountAllowsInteractiveAccess(user)) {
       return { kind: "denied", status: 403, error: "Account is not active" };
     }

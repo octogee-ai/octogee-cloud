@@ -6,7 +6,6 @@ const h = vi.hoisted(() => ({
   remove: vi.fn(),
   verifiedId: vi.fn(),
 }));
-vi.mock("../lib/db.js", () => ({ db: {} }));
 vi.mock("../lib/mattermost.js", () => ({ mmApi: h.mmApi }));
 vi.mock("../lib/channel-lifecycle.js", () => ({
   addChannelMember: h.add,

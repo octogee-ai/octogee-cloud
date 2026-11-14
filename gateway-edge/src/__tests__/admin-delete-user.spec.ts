@@ -105,35 +105,6 @@ vi.mock("@octogee/core/platform-state", async (importOriginal) => {
   };
 });
 
-vi.mock("../lib/db", () => {
-  function collection(name: string): any {
-    return {
-      doc: (docId: string) => ({
-        id: docId,
-        get: async () => {
-          const data = name === "users" ? usersDocs[docId] : undefined;
-          return { exists: data !== undefined, data: () => data };
-        },
-        collection: (sub: string) => collection(sub),
-      }),
-      get: async () => ({ docs: [], size: 0 }),
-    };
-  }
-
-  return {
-    db: {
-      collection,
-      doc: (path: string) => {
-        const [name, id] = path.split("/");
-        return collection(name).doc(id);
-      },
-    },
-    FieldValue: { serverTimestamp: () => "now", delete: () => "delete" },
-    Timestamp: { now: () => ({ toDate: () => new Date() }) },
-  };
-});
-
-
 vi.mock("../middleware/auth", () => ({
   requireAdmin: (req: any, _res: any, next: any) => {
     req.uid = "admin-uid";

@@ -13,17 +13,17 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: build-main-${{ github.ref }}-${{ inputs.rescan-latest && 'rescan' || 'build' }}
-  cancel-in-progress: true
-
 env:
   REGISTRY: ghcr.io/octogee-ai/octogee-cloud
+  OCTOGEE_FLEET_VERSION: v0.2.0
+  OCTOGEE_FLEET_COMMIT: c38255767bc5ec7938555a8c8e30a23406bb23f4
 
 jobs:
   images:
     name: Images (${{ matrix.platform }})
     if: github.repository == 'octogee-ai/octogee-cloud' && !inputs.rescan-latest
+    concurrency:
+      group: build-main-images-${{ matrix.arch }}-${{ github.event_name == 'push' && 'automatic' || github.run_id }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     permissions:
@@ -77,6 +77,8 @@ jobs:
   publish:
     name: Publish
     needs: images
+    concurrency:
+      group: build-main-publish-${{ github.event_name == 'push' && 'automatic' || github.run_id }}
     outputs:
       sha: ${{ steps.published.outputs.sha }}
     runs-on: ubuntu-24.04
@@ -164,7 +166,7 @@ jobs:
           name: image-manifest-${{ github.sha }}
           path: ${{ runner.temp }}/build-manifest
       - name: Install octogee-fleet
-        run: GOBIN="$RUNNER_TEMP/bin" go install github.com/octogee-ai/octogee-fleet@2c4fbc9ae76406eeab47182778fc487d87324127 # v0.1.0
+        run: GOBIN="$RUNNER_TEMP/bin" go install "github.com/octogee-ai/octogee-fleet@${OCTOGEE_FLEET_COMMIT}"
       - name: Install the published images
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
@@ -229,7 +231,7 @@ jobs:
           name: image-manifest-${{ github.sha }}
           path: ${{ runner.temp }}/build-manifest
       - name: Install octogee-fleet
-        run: GOBIN="$RUNNER_TEMP/bin" go install github.com/octogee-ai/octogee-fleet@ee8f09e909d7c45e9a2a9c3b889468ec4b5fa5c8 # main after v0.1.0, with sizing
+        run: GOBIN="$RUNNER_TEMP/bin" go install "github.com/octogee-ai/octogee-fleet@${OCTOGEE_FLEET_COMMIT}"
       - name: Install the published images
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}

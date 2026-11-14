@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { loadOpenClawProfileAppearance, loadOpenClawChatProfileAppearance } from "./profile-appearance.js";
 
-vi.mock("../lib/db.js", () => { throw new Error("Gateway profile reads must not use Google ADC"); });
 const session = { uid: "uid-A", gatewayId: "walter", revisionId: "walter", sessionId: "opaque-session"};
 const env = { OPENCLAW_CONTROL_BROKER_URL: "https://broker.test" };
 

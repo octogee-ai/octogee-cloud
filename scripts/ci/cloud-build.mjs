@@ -245,11 +245,22 @@ function options(argv) {
   }));
 }
 
-function publishedIndex(reference) {
+function unbuiltCommit(sha, reference) {
+  return new Error([
+    `Commit ${sha} has no published images: its Build main run did not publish ${reference}. The run was cancelled, failed or is still running.`,
+    `Check out the latest release (${SOURCE_REPOSITORY}/releases/latest) or main's newest built commit`,
+    `(${SOURCE_REPOSITORY}/actions/workflows/build-main.yml?query=branch%3Amain+is%3Asuccess) and install again,`,
+    `or ask a maintainer to run Build main with workflow_dispatch on a branch or tag at ${sha}.`,
+  ].join("\n"));
+}
+
+function publishedIndex(reference, sha) {
   // eslint-disable-next-line sonarjs/no-os-command-from-path -- docker is the operator's own tool.
-  const result = spawnSync("docker", ["buildx", "imagetools", "inspect", reference, "--raw"], { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] });
-  if (result.status !== 0) throw new Error(`No published image at ${reference}`);
-  return JSON.parse(result.stdout);
+  const result = spawnSync("docker", ["buildx", "imagetools", "inspect", reference, "--raw"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  if (result.status === 0) return JSON.parse(result.stdout);
+  const error = (result.stderr ?? "").trim() || `docker exited ${result.status}`;
+  if (/: not found$/m.test(error)) throw unbuiltCommit(sha, reference);
+  throw new Error(`Could not read ${reference}: ${error}`);
 }
 
 function platformDigest(index, platform, reference) {
@@ -259,22 +270,26 @@ function platformDigest(index, platform, reference) {
   return manifest.digest;
 }
 
-export function copyPublished({ registry, sha, platform, tagPrefix, manifest, images = imagesFor(platform) }) {
+export function resolvePublished({ registry, sha, platform, manifest, images = imagesFor(platform) }) {
   checkInputs({ registry, sha, platform });
-  if (!tagPrefix) throw new Error("A tag prefix is required to copy published images");
   checkImages(images, platform);
   const build = manifest === undefined ? undefined : JSON.parse(readFileSync(manifest, "utf8"));
   if (manifest !== undefined && (build?.sha !== sha || build?.registry !== registry)) {
     throw new Error(`Image manifest does not match ${registry} at ${sha}`);
   }
-  const digests = Object.fromEntries(images.map(name => {
+  return Object.fromEntries(images.map(name => {
     const reference = `${registry}/${name}:${sha}`;
-    const digest = build ? build.images?.[name]?.platforms?.[platform] : platformDigest(publishedIndex(reference), platform, reference);
+    const digest = build ? build.images?.[name]?.platforms?.[platform] : platformDigest(publishedIndex(reference, sha), platform, reference);
     if (typeof digest !== "string" || !/^sha256:[a-f0-9]{64}$/.test(digest)) {
       throw new Error(`Image manifest: ${name} has no valid ${platform} digest`);
     }
     return [name, digest];
   }));
+}
+
+export function copyPublished({ registry, sha, platform, tagPrefix, manifest, images }) {
+  if (!tagPrefix) throw new Error("A tag prefix is required to copy published images");
+  const digests = resolvePublished({ registry, sha, platform, manifest, images });
   for (const [name, digest] of Object.entries(digests)) {
     docker(["buildx", "imagetools", "create", "--prefer-index=false", `--tag=${tagPrefix}${name}:${sha.slice(0, 7)}`, `${registry}/${name}@${digest}`]);
   }
@@ -317,13 +332,14 @@ const COMMANDS = {
     if (!PLATFORMS.includes(opts.platform)) throw new Error(`Unsupported platform: ${opts.platform}`);
     return { platform: opts.platform, images: digestsFromMetadata(JSON.parse(readFileSync(opts.metadata, "utf8")), selectedImages(opts).images ?? imagesFor(opts.platform)) };
   },
+  resolve: opts => ({ platform: opts.platform, sha: opts.sha, images: resolvePublished({ registry: opts.registry, sha: opts.sha, platform: opts.platform, manifest: opts.manifest, ...selectedImages(opts) }) }),
   copy: opts => copyPublished({ registry: opts.registry, sha: opts.sha, platform: opts.platform, tagPrefix: opts["tag-prefix"], manifest: opts.manifest, ...selectedImages(opts) }),
   publish,
   tripwire,
 };
 
 async function cli([command, ...rest]) {
-  if (!Object.hasOwn(COMMANDS, command ?? "")) throw new Error("Usage: cloud-build.mjs plan|digests|copy|publish|tripwire [--options]");
+  if (!Object.hasOwn(COMMANDS, command ?? "")) throw new Error("Usage: cloud-build.mjs plan|digests|resolve|copy|publish|tripwire [--options]");
   return COMMANDS[command](options(rest));
 }
 

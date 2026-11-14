@@ -6,9 +6,6 @@ import { signingKey, verificationKey } from "../test-setup/signature-keys.js";
 
 const { syncRuntime } = vi.hoisted(() => ({ syncRuntime: vi.fn(async () => undefined) }));
 
-vi.mock("../lib/db.js", () => ({
-  db: { collection: () => ({ doc: () => ({ get: async () => ({ data: () => undefined }) }) }) },
-}));
 vi.mock("@octogee/core/model-credential-sync-runtime", () => ({
   syncModelCredentialsForUser: syncRuntime,
   refreshModelCredentialRuntimeSessions: vi.fn(),

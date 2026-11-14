@@ -66,19 +66,6 @@ vi.mock("../lib/withProject.js", () => ({
   },
 }));
 
-vi.mock("../lib/db.js", () => ({
-  db: {
-    doc: (path: string) => {
-      if (path !== `users/${h.uid}`) throw new Error(`unexpected doc ${path}`);
-      return {
-        get: async () => ({
-          data: () => h.userData,
-        }),
-      };
-    },
-  },
-}));
-
 vi.mock("../lib/platform-state.js", async () => {
   const { createDocumentFixtureStore } = await import("@octogee/core/testing/journal-store");
   const store = createDocumentFixtureStore(h.docs);

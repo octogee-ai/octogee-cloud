@@ -228,7 +228,7 @@ function describePlacement(pod: GatewayPodPlacement): string {
 }
 
 // Log lines and the structured record are emitted only after the transaction
-// has committed: firebase-admin re-runs the transaction callback on contention,
+// has committed: the transaction callback can re-run on contention,
 // and a DELTA log metric would count every retry as another loss.
 function reportKubernetesObservationOutcome(input: {
   gatewayId: string;

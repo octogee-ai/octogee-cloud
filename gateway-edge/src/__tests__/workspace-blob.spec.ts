@@ -24,7 +24,6 @@ const h = vi.hoisted(() => ({
 }));
 vi.mock("../lib/project-blob-upload.js", () => ({ uploadProjectBlobViaBroker: h.brokerUpload, uploadWorkspaceBlobViaBroker: h.workspaceBrokerUpload }));
 
-vi.mock("../lib/db.js", () => ({ db: { doc: h.dbDoc } }));
 vi.mock("../lib/gcs-bucket.js", () => ({ gcsBucket: h.bucket }));
 
 

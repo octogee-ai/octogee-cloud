@@ -7,7 +7,6 @@ const { warn, error, info } = vi.hoisted(() => ({
   info: vi.fn(),
 }));
 
-vi.mock("../lib/db", () => ({ auth: {}, db: {} }));
 vi.mock("../middleware/logging", () => ({ logger: { warn, error, info } }));
 
 import {

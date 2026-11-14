@@ -1,25 +1,6 @@
 import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('../../../gateway-edge/src/lib/db', () => ({
-  db: {
-    collection: () => ({
-      doc: () => ({
-        get: async () => ({ exists: false, data: () => undefined }),
-        update: async () => undefined,
-        collection: () => ({
-          doc: () => ({ get: async () => ({ exists: false, data: () => undefined }) }),
-        }),
-      }),
-      where: () => ({ where: () => ({ get: async () => ({ size: 0, docs: [] }) }) }),
-    }),
-  },
-  FieldValue: {
-    increment: (n: number) => ({ __op: 'increment', operand: n }),
-    serverTimestamp: () => ({ __op: 'serverTimestamp' }),
-  },
-}));
-
 import { createApp } from '../index.js';
 
 const createSidecarApp = () => createApp({ surface: 'sidecar' });

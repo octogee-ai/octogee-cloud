@@ -61,7 +61,8 @@ state directory and in a Secret in the cluster.
   own for the platform makes it easy to see and remove what it costs.
 - The AWS CLI v2, eksctl, kubectl, Helm (tested with Helm 4.3), Docker (only
   `docker buildx imagetools`, to read image digests), Node.js 24, openssl,
-  ssh-keygen and git.
+  ssh-keygen, git, and the GitHub CLI (`gh`) to find the release or build to
+  check out.
 - Go, to install `octogee-fleet`.
 - A model provider key. OpenRouter is recommended;
   [Model provider keys](kind.md#model-provider-keys) says where to get each one
@@ -99,42 +100,50 @@ The script stores every provider key exported in its environment:
 `OPENROUTER_API_KEY`, `OPENAI_API_KEY` and `ANTHROPIC_API_KEY`. Unset any you
 do not mean to give the cluster before you run it.
 
-Pick the images. Build main publishes them about 15 minutes after a commit
-reaches `main`, and a newer push can cancel a run, so name the newest `main`
-commit whose Build main succeeded. The chart and the install steps come from
-your checkout, so check that commit out too:
+Pick the commit. The script installs the images Build main published for your
+checkout's commit, and the chart and the install steps come from the same
+checkout. Start from the latest release. Its commit always has images:
 
 ```bash
-SHA=$(gh run list -R octogee-ai/octogee-cloud --workflow=build-main.yml --branch=main \
-  --status=success --limit=1 --json headSha --jq '.[0].headSha')
-git checkout "$SHA"
+git checkout "$(gh release view -R octogee-ai/octogee-cloud --json tagName --jq .tagName)"
+```
+
+Until the first release is out, or to run newer code, check out `main`'s newest
+built commit instead, as [the GKE guide](gke.md#install) describes:
+
+```bash
+git checkout "$(gh run list -R octogee-ai/octogee-cloud --workflow=build-main.yml --branch=main \
+  --event=push --status=success --limit=1 --json headSha --jq '.[0].headSha')"
 ```
 
 Then run the script:
 
 ```bash
-scripts/ops/eks-install.sh up --sha="$SHA"
+scripts/ops/eks-install.sh up
 ```
+
+If your commit has no images, the script stops before it creates anything and
+says so.
 
 A first run should take 35 to 45 minutes, most of it the cluster and the
 database. The script:
 
 1. checks for a model provider key, exported or stored in the cluster;
-2. creates the launch template `octogee-gateways` for the gateway nodes, with
+2. reads the `linux/amd64` digest of each image published for the commit,
+   from `ghcr.io/octogee-ai/octogee-cloud`;
+3. creates the launch template `octogee-gateways` for the gateway nodes, with
    the gVisor boot script, an encrypted 100 GB root volume, and instance
    metadata limited to the node itself;
-3. creates the cluster `octogee` with eksctl, with the node groups `system`
+4. creates the cluster `octogee` with eksctl, with the node groups `system`
    and `gateways`, the VPC CNI's network policy agent and the EBS CSI driver,
    then the default `gp3` storage class and the `gvisor` runtime class;
-4. checks that a pod of runtime class `gvisor` runs under gVisor;
-5. creates the security group `octogee-database`, open on port 5432 to the
+5. checks that a pod of runtime class `gvisor` runs under gVisor;
+6. creates the security group `octogee-database`, open on port 5432 to the
    cluster only, and the RDS instance `octogee` on the VPC's private subnets,
    with daily backups kept for 7 days;
-6. creates the buckets `octogee-<account>-<region>-assets` and
+7. creates the buckets `octogee-<account>-<region>-assets` and
    `octogee-<account>-<region>-workspaces` with public access blocked, the IAM
    user `octogee-blob-store`, and an access key for it;
-7. reads the `linux/amd64` digest of each image published for the commit,
-   from `ghcr.io/octogee-ai/octogee-cloud`;
 8. generates every secret, as on kind, and stores each provider key you
    exported in a Secret of its own;
 9. creates the databases and their accounts;
@@ -158,7 +167,7 @@ plane; run `up` again after an upgrade.
 | --- | --- | --- |
 | `AWS_REGION` | none | The region to install into. Required. |
 | `INSTANCE_TYPE` | `m6i.xlarge` | System nodes. Applies when the node group is created. |
-| `GATEWAY_INSTANCE_TYPE` | `m6i.xlarge` | Gateway nodes. Applies when the launch template is created. A gateway of the `s` sizing tier needs 2 CPUs and 8 GiB. |
+| `GATEWAY_INSTANCE_TYPE` | `m6i.xlarge` | Gateway nodes, one gateway each. Applies when the launch template is created. A shared gateway defaults to the `m` sizing tier, 2 CPUs and 8 GiB, and an isolated gateway to `s`, 1 CPU and 4 GiB. The `l` tier, 4 CPUs and 16 GiB, needs a larger instance type. |
 | `SYSTEM_NODES` | `2` | Nodes in the `system` group. |
 | `GATEWAY_NODES` | `2` | Nodes in the `gateways` group, one for each gateway. |
 | `DB_CLASS` | `db.t4g.medium` | RDS instance class. |
@@ -178,8 +187,11 @@ group's size, run `up` again with the new count.
 Install the command line:
 
 ```bash
-go install github.com/octogee-ai/octogee-fleet@main
+go install "github.com/octogee-ai/octogee-fleet@$(sed -n 's/^  OCTOGEE_FLEET_VERSION: //p' .github/workflows/build-main.yml)"
 ```
+
+Run it from your checkout. It installs the octogee-fleet release that Build
+main tested that commit with.
 
 `up` ends by printing the variables to set in every terminal you use for the
 cluster, and the port-forward the command line needs. With the default

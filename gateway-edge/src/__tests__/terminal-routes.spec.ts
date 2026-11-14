@@ -8,9 +8,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { uidForBearer } = vi.hoisted(() => ({ uidForBearer: vi.fn<(token: string) => Promise<string>>() }));
 
-vi.mock("../lib/db", () => ({
-  db: {},
-}));
 vi.mock("../middleware/logging", () => ({
   logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));

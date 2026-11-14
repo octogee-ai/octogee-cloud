@@ -23,8 +23,6 @@ function resetProjectGate(): void {
   });
 }
 
-vi.mock("../lib/db.js", () => ({ db: {}, FieldValue: {} }));
-
 vi.mock("../lib/platform-state.js", async () => {
   const { createDocumentFixtureStore } = await import("@octogee/core/testing/journal-store");
   return { platformStateStore: createDocumentFixtureStore(h.documents) };

@@ -152,10 +152,12 @@ the operator asks for them or a current risk to users requires them.
   virtual machines today. The controller adds no gateway and moves no user on
   its own; automation such as autoscaling or returning idle users belongs to a
   product built on top.
-- **Firebase and Firestore** remain in a few paths that have not moved behind a
-  platform port yet: `gateway-edge/src/lib/db.ts` and its auth middleware. The
-  controller moves, suspends and erases users from platform state alone; a
-  product adds its own steps through `ProductUserLifecycle`. Do not add new ones.
+- **Firebase.** No platform package installs `firebase-admin` or
+  `firebase-functions` at runtime, and no platform entrypoint loads them;
+  `scripts/__tests__/firebase-reach.spec.ts` fails on either. User sign-in goes
+  through the `UserIdentityProvider` a product installs. The controller moves,
+  suspends and erases users from platform state alone; a product adds its own
+  steps through `ProductUserLifecycle`.
 
 ## Where to look
 

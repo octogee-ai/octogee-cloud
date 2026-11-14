@@ -1,6 +1,6 @@
-import { readFileSync, realpathSync } from "node:fs";
-import { join } from "node:path";
-import { reachableSources, resolveImport } from "./platform-boundary.js";
+import { readdirSync, readFileSync, realpathSync } from "node:fs";
+import { join, relative, sep } from "node:path";
+import { reachableSources } from "./platform-boundary.js";
 
 export const FIREBASE_REACH_ENTRYPOINTS = [
   "gateway-edge/src/main.ts",
@@ -10,18 +10,15 @@ export const FIREBASE_REACH_ENTRYPOINTS = [
   "octogee-api/src/npm-cache-proxy.ts",
 ];
 
-export const FIREBASE_HANDLE_MODULES = [
-  "gateway-edge/src/lib/db.ts",
-];
-
-export const FIREBASE_REACH_MANIFEST = "scripts/lib/firebase-reach.json";
-
 const STATEMENT_SPECIFIER_RE = /\bfrom\s*["']([^"']+)["']/gu;
 const SIDE_EFFECT_SPECIFIER_RE = /\bimport\s*["']([^"']+)["']/gu;
 const DYNAMIC_SPECIFIER_RE = /\bimport\(\s*["']([^"']+)["']\s*\)/gu;
 const STATEMENT_KEYWORD_RE = /\b(?:import|export)\b/gu;
 const TYPE_ONLY_STATEMENT_RE = /^(?:import|export)\s+type\s/u;
-const FIREBASE_ADMIN_RE = /^firebase-admin(?:\/|$)/u;
+const FIREBASE_SPECIFIER_RE = /^firebase-(?:admin|functions)(?:\/|$)/u;
+const FIREBASE_PACKAGES = new Set(["firebase-admin", "firebase-functions"]);
+const INSTALLED_SECTIONS = ["dependencies", "optionalDependencies", "peerDependencies"] as const;
+const SKIPPED_DIRECTORIES = new Set([".git", "dist", "node_modules"]);
 
 export function runtimeSpecifiers(source: string): string[] {
   const statementStarts = Array.from(source.matchAll(STATEMENT_KEYWORD_RE), (match) => match.index);
@@ -46,32 +43,35 @@ export function runtimeSpecifiers(source: string): string[] {
 export function firebaseReach(
   cloudRoot: string,
   entrypoints: readonly string[] = FIREBASE_REACH_ENTRYPOINTS,
-  handleModules: readonly string[] = FIREBASE_HANDLE_MODULES,
 ): string[] {
   const root = realpathSync(cloudRoot);
-  const handles = new Set(handleModules.map((file) => realpathSync(join(root, file))));
-  const loadsFirebase = (file: string): boolean => {
-    const path = join(root, file);
-    return runtimeSpecifiers(readFileSync(path, "utf8")).some((specifier) =>
-      FIREBASE_ADMIN_RE.test(specifier) || handles.has(resolveImport(specifier, path, root, "") ?? ""));
-  };
+  const loadsFirebase = (file: string): boolean =>
+    runtimeSpecifiers(readFileSync(join(root, file), "utf8")).some((specifier) => FIREBASE_SPECIFIER_RE.test(specifier));
   return [...reachableSources(entrypoints, root, "")].filter(loadsFirebase).sort();
 }
 
-export interface FirebaseReachReport {
-  reached: string[];
-  newFiles: string[];
-  staleFiles: string[];
+interface PackageManifest {
+  dependencies?: Record<string, string>;
+  optionalDependencies?: Record<string, string>;
+  peerDependencies?: Record<string, string>;
+  peerDependenciesMeta?: Record<string, { optional?: boolean }>;
 }
 
-export function firebaseReachReport(cloudRoot: string): FirebaseReachReport {
-  const ratchet = (JSON.parse(readFileSync(join(cloudRoot, FIREBASE_REACH_MANIFEST), "utf8")) as { files: string[] }).files;
-  const reached = firebaseReach(cloudRoot);
-  const reachedSet = new Set(reached);
-  const ratchetSet = new Set(ratchet);
-  return {
-    reached,
-    newFiles: reached.filter((file) => !ratchetSet.has(file)),
-    staleFiles: ratchet.filter((file) => !reachedSet.has(file)),
-  };
+function packageManifests(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    if (entry.isDirectory()) return SKIPPED_DIRECTORIES.has(entry.name) ? [] : packageManifests(join(dir, entry.name));
+    return entry.name === "package.json" ? [join(dir, entry.name)] : [];
+  });
+}
+
+export function firebaseRuntimeDependencies(cloudRoot: string): string[] {
+  const root = realpathSync(cloudRoot);
+  return packageManifests(root).flatMap((path) => {
+    const manifest = JSON.parse(readFileSync(path, "utf8")) as PackageManifest;
+    const file = relative(root, path).split(sep).join("/");
+    return INSTALLED_SECTIONS.flatMap((section) => Object.keys(manifest[section] ?? {})
+      .filter((name) => FIREBASE_PACKAGES.has(name))
+      .filter((name) => section !== "peerDependencies" || manifest.peerDependenciesMeta?.[name]?.optional !== true)
+      .map((name) => `${file} ${section}.${name}`));
+  }).sort();
 }

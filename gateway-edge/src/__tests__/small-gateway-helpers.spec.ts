@@ -9,15 +9,6 @@ const m = vi.hoisted(() => ({
   info: vi.fn(),
 }));
 
-vi.mock("../lib/db.js", () => ({
-  db: {
-    collection: (name: string) => m.collection(name),
-  },
-  FieldValue: {
-    serverTimestamp: () => m.serverTimestamp(),
-  },
-}));
-
 vi.mock("../middleware/logging.js", () => ({
   logger: {
     info: (...args: unknown[]) => m.info(...args),
