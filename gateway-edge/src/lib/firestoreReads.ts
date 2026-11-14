@@ -1,7 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
 import type { WorkspaceProject } from "@octogee/core/platform-state";
-import type { Agent, Project } from "@octogee/shared/types/index";
-import { db } from "./db.js";
+import type { Project } from "@octogee/shared/types/index";
 import { platformStateStore } from "./platform-state.js";
 import { projectPresentation } from "./project-presentation.js";
 import { storedForm } from "./user-platform-state.js";
@@ -54,11 +53,4 @@ export async function readProject(workspaceSlug: string, projectSlug: string): P
   ]);
   if (record === null) return null;
   return projectWithPlatformState(product ?? {}, record);
-}
-
-export async function readAgent(uid: string): Promise<Agent | null> {
-  const snap = await db.doc(`agents/${uid}`).get();
-  if (!snap.exists) return null;
-  const data = snap.data();
-  return data ? (data as Agent) : null;
 }

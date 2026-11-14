@@ -892,6 +892,7 @@ export function createOpenClawControlBrokerRoutes(args: {
   now?: () => number;
   mattermost?: MattermostBrokerDependencies;
   profile?: import("../lib/openclaw-profile-appearance.js").OpenClawProfileAppearanceLoader;
+  userProfile?: import("../lib/openclaw-profile-appearance.js").UserProfileAppearanceSource;
   chatAuthor?: import("../lib/openclaw-chat-author.js").OpenClawChatAuthorResolver;
 }): Router {
   const router = Router();
@@ -904,7 +905,7 @@ export function createOpenClawControlBrokerRoutes(args: {
   router.post("/redeem", (req, res, next) => redeemControlTicket(context, req, res, next));
   router.post("/authorize", brokerRequestLimit(1800), (req, res, next) => authorizeControlSession(context, req, res, next));
   const profile = cacheProfileAvatars(args.profile ?? (async (uid) =>
-    (await import("../lib/openclaw-profile-appearance.js")).loadOpenClawProfileAppearance(args.store, uid)));
+    (await import("../lib/openclaw-profile-appearance.js")).loadOpenClawProfileAppearance(args.store, uid, args.userProfile)));
   const chatAuthor = args.chatAuthor ?? (async (...params) =>
     (await import("../lib/openclaw-chat-author.js")).resolveOpenClawChatAuthor(args.store, ...params));
   router.post("/profile", (req, res, next) => loadControlProfile({ ...context, profile, chatAuthor }, req, res, next));

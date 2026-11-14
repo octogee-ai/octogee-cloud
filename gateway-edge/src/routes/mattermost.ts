@@ -1,7 +1,7 @@
 import { authenticationFailureLimit, authenticatedRequestLimit } from "../middleware/authenticated-request-limit.js";
 import { Router, Request, Response, NextFunction } from "express";
 import { requireAuth } from "../middleware/auth.js";
-import { readAgent } from "../lib/firestoreReads.js";
+import { agentIdentity } from "../lib/agent-identity.js";
 import { getWorkspaceMmContext } from "../lib/mattermost-context.js";
 import { readMattermostSecret } from "../lib/mattermost-secret.js";
 import { platformStateStore } from "../lib/platform-state.js";
@@ -45,7 +45,7 @@ router.get("/token", authenticationFailureLimit, requireAuth, authenticatedReque
 
     const proxyUrl = process.env.API_PUBLIC_URL || "";
     const defaultAgentMmUserId = ctx.coachUserId || null;
-    const coachName = (await readAgent(uid))?.name || null;
+    const coachName = (await agentIdentity().read(uid)).name || null;
     const gatewayId = extractValidGatewayId(userData);
 
     res.json({ mmUserId, dmChannelId, proxyUrl, gatewayId, coachMmUserId: defaultAgentMmUserId, coachName });

@@ -1,12 +1,10 @@
-import { Readable } from "node:stream";
 import sharp from "sharp";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
 
-const mocks = vi.hoisted(() => ({ doc: vi.fn(), file: vi.fn(), fetch: vi.fn() }));
-vi.mock("../../../gateway-edge/src/lib/db.js", () => ({ db: { doc: mocks.doc }, storage: { bucket: () => ({ file: mocks.file }) } }));
+const mocks = vi.hoisted(() => ({ fetch: vi.fn() }));
 vi.mock("../../../gateway-edge/src/lib/mattermost.js", () => ({ MM_URL: "http://mattermost.test" }));
-import { loadOpenClawProfileAppearance } from "./openclaw-profile-appearance.js";
+import { loadOpenClawProfileAppearance, type UserProfileAppearance } from "./openclaw-profile-appearance.js";
 
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
@@ -16,55 +14,55 @@ beforeEach(() => {
   vi.stubGlobal("fetch", mocks.fetch);
   vi.stubEnv("MM_ADMIN_TOKEN", undefined);
   documents = {
-    "users/uid-A": { displayName: "Account name", mattermost: { userId: "mm-A" } },
+    "users/uid-A": { mattermost: { userId: "mm-A" } },
     "users/uid-A/secrets/mattermost": { personalToken: "user-mm-token" },
   };
-  mocks.file.mockReturnValue({ getMetadata: async () => { throw Object.assign(new Error("not found"), { code: 404 }); } });
-  mocks.doc.mockImplementation((path: string) => ({ get: async () => ({ exists: Boolean(documents[path]), data: () => documents[path] }) }));
 });
 
-describe("Octogee profile appearance", () => {
-  it("reads the Octogee upload by UID without fetching a profile-supplied URL", async () => {
-    documents["users/uid-A/profile/public"] = { displayName: "Chris", avatarUrl: "https://untrusted.test/image" };
-    const png = await sharp({ create: { width: 16, height: 16, channels: 3, background: "red" } }).png().toBuffer();
-    mocks.file.mockReturnValue({ getMetadata: async () => [{ generation: "1" }], createReadStream: () => Readable.from([png]) });
-    const appearance = await loadOpenClawProfileAppearance(createDocumentFixtureStore(documents), "uid-A");
-    expect(appearance.displayName).toBe("Chris");
-    expect(appearance.avatar!.revision).toBe("octogee:1");
-    const bytes = await appearance.avatar!.read();
-    expect(mocks.file).toHaveBeenCalledWith("avatars/uid-A/user.jpg", { generation: "1" });
+const ownAppearance = (appearance: Partial<UserProfileAppearance>) =>
+  vi.fn(async () => ({ displayName: null, avatar: null, ...appearance }));
+
+describe("OpenClaw profile appearance", () => {
+  it("uses the user's own name and avatar without asking Mattermost", async () => {
+    const avatar = { revision: "upload:1", read: async () => Buffer.from("jpeg") };
+    const appearance = await loadOpenClawProfileAppearance(
+      createDocumentFixtureStore(documents), "uid-A", ownAppearance({ displayName: " Chris ", avatar }),
+    );
+    expect(appearance).toEqual({ displayName: "Chris", avatar });
     expect(mocks.fetch).not.toHaveBeenCalled();
-    expect(await sharp(bytes).metadata()).toMatchObject({ format: "jpeg", width: 256, height: 256 });
   });
 
-  it("imports the mapped Mattermost name and avatar when no Octogee appearance is set", async () => {
-    documents["users/uid-A"] = { mattermost: { userId: "mm-A" } };
+  it("imports the mapped Mattermost name and avatar when no installed profile is set", async () => {
     const png = await sharp({ create: { width: 8, height: 8, channels: 3, background: "blue" } }).png().toBuffer();
     mocks.fetch.mockResolvedValueOnce(new Response(JSON.stringify({ id: "mm-A", first_name: "Ada", last_name: "Lovelace", last_picture_update: 42 })))
       .mockResolvedValueOnce(new Response(new Uint8Array(png)));
     const appearance = await loadOpenClawProfileAppearance(createDocumentFixtureStore(documents), "uid-A");
     expect(appearance.displayName).toBe("Ada Lovelace");
     expect(appearance.avatar!.revision).toContain("42");
-    await appearance.avatar!.read();
+    const bytes = await appearance.avatar!.read();
     expect(mocks.fetch).toHaveBeenNthCalledWith(2, "http://mattermost.test/api/v4/users/mm-A/image", expect.objectContaining({
       headers: { Authorization: "Bearer user-mm-token" }, redirect: "error",
     }));
+    expect(await sharp(bytes).metadata()).toMatchObject({ format: "jpeg", width: 256, height: 256 });
   });
 
-  it("uses the mapped Mattermost avatar for OAuth photos without a stored upload", async () => {
-    documents["users/uid-A/profile/public"] = { avatarUrl: "https://google.test/photo" };
-    mocks.fetch.mockResolvedValue(new Response(JSON.stringify({ id: "mm-A", last_picture_update: 5 })));
-    const appearance = await loadOpenClawProfileAppearance(createDocumentFixtureStore(documents), "uid-A");
+  it("keeps the user's own name and fills the avatar from Mattermost", async () => {
+    mocks.fetch.mockResolvedValue(new Response(JSON.stringify({ id: "mm-A", first_name: "Other", last_picture_update: 5 })));
+    const appearance = await loadOpenClawProfileAppearance(
+      createDocumentFixtureStore(documents), "uid-A", ownAppearance({ displayName: "Ada" }),
+    );
+    expect(appearance.displayName).toBe("Ada");
     expect(appearance.avatar!.revision).toBe("mattermost:mm-A:5");
     expect(mocks.fetch).toHaveBeenCalledWith("http://mattermost.test/api/v4/users/me", expect.objectContaining({
       headers: { Authorization: "Bearer user-mm-token" },
     }));
   });
 
-  it("does not treat an OAuth URL as an upload for an unprovisioned user", async () => {
-    documents["users/uid-A"] = { displayName: "Ada" };
-    documents["users/uid-A/profile/public"] = { avatarUrl: "https://google.test/photo" };
-    expect(await loadOpenClawProfileAppearance(createDocumentFixtureStore(documents), "uid-A")).toEqual({ displayName: "Ada", avatar: null });
+  it("leaves an unprovisioned user's avatar absent and uses their own name", async () => {
+    documents["users/uid-A"] = {};
+    expect(await loadOpenClawProfileAppearance(
+      createDocumentFixtureStore(documents), "uid-A", ownAppearance({ displayName: "Ada Lovelace" }),
+    )).toEqual({ displayName: "Ada Lovelace", avatar: null });
     expect(mocks.fetch).not.toHaveBeenCalled();
   });
 
@@ -80,20 +78,17 @@ describe("Octogee profile appearance", () => {
     expect(mocks.fetch).not.toHaveBeenCalled();
   });
 
-  it("propagates storage outages instead of treating them as absent uploads", async () => {
-    mocks.file.mockReturnValue({ getMetadata: async () => { throw Object.assign(new Error("storage unavailable"), { code: 503 }); } });
-    await expect(loadOpenClawProfileAppearance(createDocumentFixtureStore(documents), "uid-A")).rejects.toThrow("storage unavailable");
+  it("propagates a failing profile source instead of treating it as an empty profile", async () => {
+    const failing = vi.fn(async () => { throw new Error("storage unavailable"); });
+    await expect(loadOpenClawProfileAppearance(createDocumentFixtureStore(documents), "uid-A", failing)).rejects.toThrow("storage unavailable");
     expect(mocks.fetch).not.toHaveBeenCalled();
   });
 
-  it("does not import another user's profile when the authenticated UID is missing", async () => {
-    await expect(loadOpenClawProfileAppearance(createDocumentFixtureStore(documents), "unknown")).rejects.toThrow("Octogee user not found");
+  it("does not read any profile when the authenticated UID is missing", async () => {
+    const source = ownAppearance({ displayName: "Someone" });
+    await expect(loadOpenClawProfileAppearance(createDocumentFixtureStore(documents), "unknown", source)).rejects.toThrow("Octogee user not found");
+    expect(source).not.toHaveBeenCalled();
     expect(mocks.fetch).not.toHaveBeenCalled();
-  });
-
-  it("leaves an unprovisioned user's avatar absent and uses their Octogee name", async () => {
-    documents["users/uid-A"] = { firstName: "Ada", lastName: "Lovelace" };
-    expect(await loadOpenClawProfileAppearance(createDocumentFixtureStore(documents), "uid-A")).toEqual({ displayName: "Ada Lovelace", avatar: null });
   });
 
   it("reports Mattermost failures rather than treating them as an empty profile", async () => {
@@ -101,9 +96,9 @@ describe("Octogee profile appearance", () => {
     await expect(loadOpenClawProfileAppearance(createDocumentFixtureStore(documents), "uid-A")).rejects.toThrow("Mattermost profile request failed: 403");
   });
 
-  it("rejects oversized avatar streams", async () => {
-    documents["users/uid-A/profile/public"] = { avatarUrl: "upload" };
-    mocks.file.mockReturnValue({ getMetadata: async () => [{ generation: "1" }], createReadStream: () => Readable.from([Buffer.alloc(5 * 1024 * 1024 + 1)]) });
+  it("rejects oversized Mattermost avatar streams", async () => {
+    mocks.fetch.mockResolvedValueOnce(new Response(JSON.stringify({ id: "mm-A", first_name: "Ada" })))
+      .mockResolvedValueOnce(new Response(new Uint8Array(5 * 1024 * 1024 + 1)));
     const appearance = await loadOpenClawProfileAppearance(createDocumentFixtureStore(documents), "uid-A");
     await expect(appearance.avatar!.read()).rejects.toThrow("Avatar exceeds 5 MB");
   });

@@ -1,7 +1,7 @@
 import { authenticationFailureLimit, authenticatedRequestLimit } from "../middleware/authenticated-request-limit.js";
 import { Router, Request, Response, NextFunction } from "express";
 import { requireAuth } from "../middleware/auth.js";
-import { syncDefaultAgentIdentity } from "../lib/default-agent-identity.js";
+import { agentIdentity } from "../lib/agent-identity.js";
 
 const router = Router();
 
@@ -32,7 +32,7 @@ router.patch("/me", authenticationFailureLimit, requireAuth, authenticatedReques
       return;
     }
 
-    const updated = await syncDefaultAgentIdentity(uid, patch);
+    const updated = await agentIdentity().sync(uid, patch);
 
     res.json({ ok: true, updated });
   } catch (e) { next(e); }

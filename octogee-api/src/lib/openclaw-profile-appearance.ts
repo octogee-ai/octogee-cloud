@@ -1,12 +1,10 @@
-import { addAbortSignal } from "node:stream";
 import sharp from "sharp";
 import type { PlatformStateRepositories } from "@octogee/core/platform-state";
-import { db, storage } from "../../../gateway-edge/src/lib/db.js";
 import { MM_URL } from "../../../gateway-edge/src/lib/mattermost.js";
 import type { OpenClawProfileAppearance } from "../../../gateway-edge/src/openclaw-control/proxy-identity.js";
 
 const MAX_AVATAR_BYTES = 5 * 1024 * 1024;
-const PROFILE_TIMEOUT_MS = 5_000;
+export const PROFILE_TIMEOUT_MS = 5_000;
 
 function text(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
@@ -20,7 +18,7 @@ function mattermostName(user: Record<string, unknown>): string {
   return fullName(user.first_name, user.last_name) || text(user.nickname) || text(user.username);
 }
 
-async function avatarJpeg(stream: AsyncIterable<Uint8Array>): Promise<Buffer> {
+export async function avatarJpeg(stream: AsyncIterable<Uint8Array>): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of stream) {
@@ -46,26 +44,14 @@ async function mattermostProfileRequest(path: string, token: string): Promise<Re
   return response;
 }
 
-async function uploadedAvatar(uid: string): Promise<OpenClawProfileAppearance["avatar"]> {
-  const bucket = storage.bucket();
-  const objectPath = `avatars/${uid}/user.jpg`;
-  let generation: string;
-  try {
-    const [metadata] = await bucket.file(objectPath).getMetadata();
-    generation = text(metadata.generation);
-    if (!generation) throw new Error("Uploaded avatar has no storage generation");
-  } catch (error) {
-    if (error && typeof error === "object" && "code" in error && error.code === 404) return null;
-    throw error;
-  }
-  return {
-    revision: `octogee:${generation}`,
-    read: () => avatarJpeg(addAbortSignal(
-      AbortSignal.timeout(PROFILE_TIMEOUT_MS),
-      bucket.file(objectPath, { generation }).createReadStream(),
-    )),
-  };
+export interface UserProfileAppearance {
+  displayName: string | null;
+  avatar: OpenClawProfileAppearance["avatar"];
 }
+
+export type UserProfileAppearanceSource = (uid: string) => Promise<UserProfileAppearance>;
+
+export const NO_USER_PROFILE_APPEARANCE: UserProfileAppearanceSource = async () => ({ displayName: null, avatar: null });
 
 type ProfileAppearanceStore = Pick<PlatformStateRepositories, "users" | "secrets">;
 
@@ -97,23 +83,17 @@ async function mattermostAppearance(
 export async function loadOpenClawProfileAppearance(
   store: ProfileAppearanceStore,
   uid: string,
+  userProfile: UserProfileAppearanceSource = NO_USER_PROFILE_APPEARANCE,
 ): Promise<OpenClawProfileAppearance> {
-  const [userRecord, userSnap, publicSnap] = await Promise.all([
-    store.users.records.get(uid),
-    db.doc(`users/${uid}`).get(),
-    db.doc(`users/${uid}/profile/public`).get(),
-  ]);
+  const userRecord = await store.users.records.get(uid);
   if (!userRecord) throw new Error("Octogee user not found for profile sync");
-  const user = userSnap.data() ?? {};
-  const profile = publicSnap.data() ?? {};
-  const avatar = await uploadedAvatar(uid);
+  const own = await userProfile(uid);
   const mmUserId = text(userRecord.mattermostUserId);
-  const displayName = text(profile.displayName) || text(user.displayName)
-    || fullName(user.firstName, user.lastName);
-  const mattermost = mmUserId && (!displayName || !avatar)
+  const displayName = text(own.displayName);
+  const mattermost = mmUserId && (!displayName || !own.avatar)
     ? await mattermostAppearance(store, uid, mmUserId) : null;
   return {
     displayName: displayName || mattermost?.displayName || null,
-    avatar: avatar ?? mattermost?.avatar ?? null,
+    avatar: own.avatar ?? mattermost?.avatar ?? null,
   };
 }

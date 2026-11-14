@@ -23,7 +23,7 @@ vi.mock('../lib/platform-state.js', async () => {
 });
 
 import { db } from '../lib/db';
-import { readAgent, readProject } from '../lib/firestoreReads.js';
+import { readProject } from '../lib/firestoreReads.js';
 import { installDocumentPresentation } from './helpers/project-presentation.js';
 
 installDocumentPresentation((path) => db.doc(path));
@@ -73,17 +73,5 @@ describe('readProject', () => {
     h.platform.set(projectPath, { ownerUid: 'u-alice', provisioningState: 'provisioning' });
 
     expect(await readProject('alice', 'game')).toMatchObject({ id: 'game', slug: 'game', workspaceId: 'alice', ownerUid: 'u-alice' });
-  });
-});
-
-describe('readAgent', () => {
-  it('returns null when the doc does not exist', async () => {
-    expect(await readAgent('nobody')).toBeNull();
-  });
-
-  it('returns the typed Agent on a present doc', async () => {
-    h.product['agents/u-alice'] = { id: 'u-alice', name: 'Scout' };
-
-    expect(await readAgent('u-alice')).toMatchObject({ id: 'u-alice', name: 'Scout' });
   });
 });

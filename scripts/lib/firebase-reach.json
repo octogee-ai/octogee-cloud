@@ -5,14 +5,11 @@
     "core/src/mattermost/provision.ts",
     "core/src/provisionSteps.ts",
     "gateway-edge/src/lib/db.ts",
-    "gateway-edge/src/lib/default-agent-identity.ts",
-    "gateway-edge/src/lib/firestoreReads.ts",
     "gateway-edge/src/lib/google-grant-approval.ts",
     "gateway-edge/src/lib/platform-state.ts",
     "gateway-edge/src/lib/productivity-approval-decision.ts",
     "gateway-edge/src/lib/project-agent-delivery.ts",
     "gateway-edge/src/lib/project-agent-onboarding.ts",
-    "gateway-edge/src/lib/user-deletion-deps.ts",
     "gateway-edge/src/lib/withProject.ts",
     "gateway-edge/src/routes/agent-models.ts",
     "gateway-edge/src/routes/billing/byot.ts",
@@ -20,7 +17,6 @@
     "gateway-edge/src/routes/channel-session-models.ts",
     "gateway-edge/src/routes/connect.ts",
     "gateway-edge/src/routes/google-grants.ts",
-    "gateway-edge/src/routes/productivity-approvals.ts",
-    "octogee-api/src/lib/openclaw-profile-appearance.ts"
+    "gateway-edge/src/routes/productivity-approvals.ts"
   ]
 }
