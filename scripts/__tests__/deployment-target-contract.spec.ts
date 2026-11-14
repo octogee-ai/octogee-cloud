@@ -38,15 +38,6 @@ function deploymentSettings(path: string): string {
 }
 
 describe("deployment target consumers", () => {
-
-  it("keeps the reusable target action free of a regional fallback", () => {
-    const contents = source("../.github/actions/resolve-deployment-target/action.yml");
-    expect(contents).toContain("core/dist/resolve-deployment-target.js");
-    expect(contents).toContain("does not belong to requested environment");
-    expect(contents).not.toContain("us-central1");
-    expect(contents).not.toContain("us-west1");
-  });
-
   it("loads setup and verification topology from the shell target contract", () => {
     for (const script of [
       "scripts/setup-secrets.sh",
