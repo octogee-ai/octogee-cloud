@@ -62,7 +62,7 @@ spec:
                   name: {{ .Values.db.passwordSecret }}
                   key: {{ .Values.db.passwordKey }}
             - name: MM_SQLSETTINGS_DATASOURCE
-              value: "postgres://{{ .Values.db.user }}:$(MM_DB_PASSWORD)@{{ .Values.db.host }}:{{ .Values.db.port }}/{{ .Values.db.name }}?sslmode=disable&connect_timeout=10"
+              value: "postgres://{{ .Values.db.user }}:$(MM_DB_PASSWORD)@{{ .Values.db.host }}:{{ .Values.db.port }}/{{ .Values.db.name }}?sslmode={{ .Values.db.sslmode | default "disable" }}&connect_timeout=10"
             - name: MM_SQLSETTINGS_DRIVERNAME
               value: postgres
             - name: MM_SERVICESETTINGS_SITEURL
