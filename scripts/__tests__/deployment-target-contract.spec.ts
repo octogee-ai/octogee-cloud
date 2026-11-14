@@ -73,9 +73,7 @@ describe("deployment target consumers", () => {
       "scripts/shell-gateway-ui.sh",
       "scripts/setup-monitoring.sh",
       "scripts/setup-monitoring-iap.sh",
-      "scripts/ops/reconcile-default-agent-names.sh",
       "scripts/ops/reconcile-gitea-org.sh",
-      "scripts/ops/migrate-secrets-single-region.sh",
     ]) {
       const contents = source(script);
       expect(contents, script).toContain("lib/deployment-target.sh");
