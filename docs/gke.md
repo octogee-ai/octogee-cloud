@@ -232,7 +232,8 @@ Gateways keep one pod per node, so the pool grows a node for the new gateway,
 and the move takes about ten minutes. `user inspect` then shows the user on the
 isolated gateway, and the agent answers in the same channel.
 Return the user with `user migrate lin --to=shared-a --apply` and retire the
-isolated gateway with `gateway retire <id> --apply`, as in
+isolated gateway with `gateway retire <id> --apply`, where `ops inspect` of
+the migration names the id, as in
 [An isolated gateway](kind.md#an-isolated-gateway).
 
 ## Remove everything

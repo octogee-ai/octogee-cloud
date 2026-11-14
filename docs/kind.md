@@ -296,8 +296,9 @@ octogee-fleet --env=kind sizing set pod-s --file=pod-s.json --apply
 ```
 
 Move the user to a new isolated gateway of that profile. The command prints the
-new gateway's id and the migration's operation id. Wait until `ops inspect`
-shows the migration succeeded. The user is mounted on the new gateway before the
+migration's operation id; `ops inspect` shows the new gateway's id on its
+`gateway` line, and `gateway ls` lists it. Wait until `ops inspect` shows the
+migration succeeded. The user is mounted on the new gateway before the
 migration finishes, and the Admin API refuses to park or retire a gateway while
 a migration to or from it is in flight:
 
