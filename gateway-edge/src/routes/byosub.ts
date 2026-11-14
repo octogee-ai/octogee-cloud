@@ -157,6 +157,7 @@ interface FlowDoc {
   provider: string;
   modelCredentialProvider?: string;
   consumedAt?: number;
+  modelPinnedAt?: number;
   expireAt?: number;
   captureClaimId?: string;
 }
@@ -478,6 +479,22 @@ async function commitByosubCapture(args: {
   });
 }
 
+async function recordModelPinned(flowId: string): Promise<void> {
+  await db.collection("byosubFlows").doc(flowId).set({ modelPinnedAt: Date.now() }, { merge: true });
+}
+
+async function pinAndRecord(
+  flowId: string,
+  uid: string,
+  provider: ModelCredentialOAuthProviderId,
+  agentIds: readonly string[],
+  pin: typeof pinSubscriptionModel,
+): Promise<SubscriptionModelPinError | null> {
+  const unpinned = await pinFailure(uid, provider, agentIds, pin);
+  if (!unpinned) await recordModelPinned(flowId);
+  return unpinned;
+}
+
 async function replayConsumedCapture(args: {
   flowId: string;
   flow: FlowDoc;
@@ -486,7 +503,9 @@ async function replayConsumedCapture(args: {
   secretName: string;
 }): Promise<void> {
   const agentIds = await commitByosubCapture(args);
-  const unpinned = await pinFailure(args.flow.uid, args.modelCredentialProvider, agentIds, pinUnpickedSubscriptionModel);
+  const unpinned = args.flow.modelPinnedAt
+    ? null
+    : await pinAndRecord(args.flowId, args.flow.uid, args.modelCredentialProvider, agentIds, pinUnpickedSubscriptionModel);
   triggerUnifiedByosSyncForFlow(args.flow, args.modelCredentialProvider);
   if (unpinned) throw unpinned;
 }
@@ -846,7 +865,7 @@ router.post(
         }
         throw error;
       }
-      const unpinned = await pinFailure(flow.uid, signalProvider, agentIds);
+      const unpinned = await pinAndRecord(b.flowId, flow.uid, signalProvider, agentIds, pinSubscriptionModel);
       triggerUnifiedByosSyncForFlow(flow, signalProvider);
       if (unpinned) throw unpinned;
       res.json({ ok: true, secretName });
