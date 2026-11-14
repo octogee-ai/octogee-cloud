@@ -161,6 +161,8 @@ function validateHostedTarget(target, targetId) {
         "mattermostPasswordSecret",
         "giteaPasswordSecret",
         "connectionNameSecret",
+        "platformStateInstance",
+        "agentStoreDatabase",
     ], `deployment target ${targetId}.cloudSql`);
     if (typeof cloudSql.pointInTimeRecoveryEnabled !== "boolean") {
         throw new Error(`deployment target ${targetId}.cloudSql.pointInTimeRecoveryEnabled must be a boolean`);
@@ -305,6 +307,8 @@ function settings(targetId, target) {
         cloudSqlGiteaPasswordSecretName: target.cloudSql.giteaPasswordSecret,
         cloudSqlConnectionNameSecretName: target.cloudSql.connectionNameSecret,
         cloudSqlPointInTimeRecoveryEnabled: target.cloudSql.pointInTimeRecoveryEnabled,
+        cloudSqlPlatformStateInstanceName: target.cloudSql.platformStateInstance,
+        cloudSqlAgentStoreDatabaseName: target.cloudSql.agentStoreDatabase,
         kmsProjectId: target.kms.projectId,
         kmsLocation: target.kms.location,
         kmsKeyRing: target.kms.keyRing,

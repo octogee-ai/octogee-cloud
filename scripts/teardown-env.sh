@@ -17,7 +17,8 @@ set -euo pipefail
 #   Preserves: all PVCs, K8s secrets, namespace, Secret Manager, Cloud SQL,
 #              Firestore, Functions, Auth.
 #
-# --full: also drops the per-env Cloud SQL databases, wipes Firebase Storage
+# --full: also drops the per-env Cloud SQL databases, recreates the platform
+#         state database, empties the agent store, wipes Firebase Storage
 #         and Firestore collections, deletes per-env Cloud Functions (chat
 #         proxy preserved), Firebase Auth users, durable application PVCs,
 #         dynamic per-gateway K8s ServiceAccounts/auth/model-key secrets, and
@@ -71,14 +72,15 @@ for arg in "$@"; do
       echo ""
       echo "  (default)  helm uninstall only — preserves PVCs, K8s secrets,"
       echo "             namespace, Secret Manager, Cloud SQL, Firebase Storage, Firestore, Auth"
-      echo "  --full     Also drops Cloud SQL DBs + wipes Firebase Storage, Firestore + Cloud"
+      echo "  --full     Also drops the Mattermost and Gitea DBs, recreates the platform state DB,"
+      echo "             empties the agent store DB, wipes Firebase Storage, Firestore + Cloud"
       echo "             Functions + Auth users + deletes durable PVCs."
       echo "             Still preserves platform/static K8s secrets, Secret Manager infra entries,"
       echo "             and namespace; removes dynamic per-gateway identities/secrets and"
       echo "             database-bound Gitea API token material."
       echo ""
       echo "  --resume   With --full: finish a full teardown whose earlier run already reset the"
-      echo "             private Cloud SQL databases and removed Mattermost and Gitea."
+      echo "             Cloud SQL databases and removed Mattermost and Gitea."
       echo ""
       echo "  To rotate a secret: scripts/rotate-secret.sh"
       exit 0
@@ -114,6 +116,8 @@ K8S_NAMESPACE="$TARGET_NAMESPACE"
 REGION="$TARGET_REGION"
 TARGET_ARG=" --deployment-target=$TARGET_ID"
 GITEA_API_TOKEN_SM_KEY="gitea-api-token-${TARGET_SECRET_NAME_SUFFIX}"
+PLATFORM_STATE_DB_NAME="platform"
+PLATFORM_STATE_WRITERS="glm-controller,octogee-api,llm-broker,platform-state-expiry,platform-state-migrate"
 
 case "$ENV" in
   prod)
@@ -173,6 +177,8 @@ echo "  Will remove:"
 echo "    • Helm release 'octogee' (gateway, gateway-edge, chat-proxy, MM + Gitea pods)"
 if $FULL; then
   echo -e "  ${RED}  + Cloud SQL DBs: $MM_DB_NAME, $GITEA_DB_NAME (DROP DATABASE)${NC}"
+  echo -e "  ${RED}  + Platform state DB: $PLATFORM_STATE_DB_NAME on $TARGET_CLOUD_SQL_PLATFORM_STATE_INSTANCE (users, gateways, operations, orchestrator config; recreated empty, migrated by the next Helm install)${NC}"
+  echo -e "  ${RED}  + Agent store DB $TARGET_CLOUD_SQL_AGENT_STORE_DATABASE: every agent schema and gateway role (database, owner and extensions kept)${NC}"
   echo -e "  ${RED}  + PVCs: mattermost-data, gitea-shared-storage (Helm-recreated on rebuild)${NC}"
   echo -e "  ${RED}  + Firebase Storage objects (all)${NC}"
   echo -e "  ${RED}  + Firestore collections (all)${NC}"
@@ -194,11 +200,11 @@ if ! $FULL; then
 fi
 echo "    • Namespace: $K8S_NAMESPACE"
 echo "    • Secret Manager: infra entries (DB passwords, API keys, tokens)"
-echo "    • Cloud SQL instance ($TARGET_CLOUD_SQL_INSTANCE)"
+echo "    • Cloud SQL instances ($TARGET_CLOUD_SQL_INSTANCE, $TARGET_CLOUD_SQL_PLATFORM_STATE_INSTANCE)"
 echo "    • GCP projects, GKE cluster, AR repo"
 echo "    • Firebase project, IAM, Service Accounts"
 if ! $FULL; then
-  echo "    • Cloud SQL data, Firestore, Functions (excl. chat proxy), Auth"
+  echo "    • Cloud SQL data (Mattermost, Gitea, platform state, agent store), Firestore, Functions (excl. chat proxy), Auth"
 fi
 echo ""
 
@@ -281,9 +287,9 @@ if $FULL; then
 fi
 
 database_exists() {
-  local dbname="$1" stderr_file rc
+  local instance="$1" dbname="$2" stderr_file rc
   stderr_file=$(mktemp)
-  gcloud sql databases describe "$dbname" --instance="$TARGET_CLOUD_SQL_INSTANCE" \
+  gcloud sql databases describe "$dbname" --instance="$instance" \
     --project="$TARGET_CLOUD_SQL_PROJECT" --format='value(name)' >/dev/null 2>"$stderr_file"
   rc=$?
   if [[ $rc -eq 0 ]]; then
@@ -301,13 +307,31 @@ database_exists() {
 }
 
 verify_database_through_api() {
-  local dbname="$1" verified_name
-  verified_name="$(gcloud sql databases describe "$dbname" --instance="$TARGET_CLOUD_SQL_INSTANCE" \
+  local instance="$1" dbname="$2" confirmed="$3" verified_name
+  verified_name="$(gcloud sql databases describe "$dbname" --instance="$instance" \
     --project="$TARGET_CLOUD_SQL_PROJECT" --format='value(name)')" \
     || die "Cloud SQL Admin API verification failed for $dbname"
   [[ "$verified_name" == "$dbname" ]] \
     || die "Cloud SQL Admin API verification returned '$verified_name' for $dbname"
-  ok "$dbname — Cloud SQL API confirmed the app-owned recreated database"
+  ok "$dbname — Cloud SQL API confirmed $confirmed"
+}
+
+reset_database_through_api() {
+  local instance="$1" dbname="$2" exists_rc
+  if database_exists "$instance" "$dbname"; then
+    info "Deleting $dbname through the Cloud SQL Admin API..."
+    gcloud sql databases delete "$dbname" --instance="$instance" \
+      --project="$TARGET_CLOUD_SQL_PROJECT" --quiet \
+      || die "Cloud SQL Admin API delete failed for $dbname"
+  else
+    exists_rc=$?
+    [[ $exists_rc -eq 1 ]] || die "Cloud SQL Admin API could not inspect $dbname"
+    info "$dbname is absent; creating its required fresh database through the Cloud SQL Admin API..."
+  fi
+  gcloud sql databases create "$dbname" --instance="$instance" \
+    --project="$TARGET_CLOUD_SQL_PROJECT" --quiet \
+    || die "Cloud SQL Admin API create failed for $dbname"
+  verify_database_through_api "$instance" "$dbname" "a newly-created empty database"
 }
 
 private_sql_writers_absent() {
@@ -554,7 +578,7 @@ reset_private_cloud_sql_databases() {
         ;;
       *) die "no private Cloud SQL owner reset credential is configured for $dbname" ;;
     esac
-    if database_exists "$dbname"; then
+    if database_exists "$TARGET_CLOUD_SQL_INSTANCE" "$dbname"; then
       :
     else
       exists_rc=$?
@@ -569,8 +593,213 @@ reset_private_cloud_sql_databases() {
     fi
     [[ "$observed_owner" == "$owner" ]] \
       || die "private Cloud SQL owner reset did not recreate $dbname under $owner"
-    verify_database_through_api "$dbname"
+    verify_database_through_api "$TARGET_CLOUD_SQL_INSTANCE" "$dbname" "the app-owned recreated database"
   done
+}
+
+quiesce_platform_state_writers() {
+  local resources resource pods
+  resources=$(kubectl get deployment -n "$K8S_NAMESPACE" --context "$K8S_CONTEXT" \
+    -l "app in (octogee-api,llm-broker)" -o name) \
+    || die "could not inspect platform state writers before the platform database reset"
+  while IFS= read -r resource; do
+    [[ -n "$resource" ]] || continue
+    kubectl scale "deployment/${resource#*/}" -n "$K8S_NAMESPACE" --context "$K8S_CONTEXT" --replicas=0 \
+      || die "could not quiesce platform state writer $resource"
+  done <<<"$resources"
+  resources=$(kubectl get cronjob -n "$K8S_NAMESPACE" --context "$K8S_CONTEXT" \
+    -l app=platform-state-expiry -o name) \
+    || die "could not inspect the platform state expiry schedule before the platform database reset"
+  while IFS= read -r resource; do
+    [[ -n "$resource" ]] || continue
+    kubectl patch "cronjob/${resource#*/}" -n "$K8S_NAMESPACE" --context "$K8S_CONTEXT" \
+      --type=merge -p '{"spec":{"suspend":true}}' >/dev/null \
+      || die "could not suspend platform state schedule $resource"
+  done <<<"$resources"
+  kubectl delete job -n "$K8S_NAMESPACE" --context "$K8S_CONTEXT" \
+    -l "app in (platform-state-expiry,platform-state-migrate)" --ignore-not-found=true --wait=true >/dev/null \
+    || die "could not remove platform state jobs before the platform database reset"
+  pods=$(kubectl get pods -n "$K8S_NAMESPACE" --context "$K8S_CONTEXT" \
+    -l "app in ($PLATFORM_STATE_WRITERS)" -o name) \
+    || die "could not inspect platform state writer pods before the platform database reset"
+  if [[ -n "$pods" ]]; then
+    kubectl wait --for=delete pod -n "$K8S_NAMESPACE" --context "$K8S_CONTEXT" \
+      -l "app in ($PLATFORM_STATE_WRITERS)" --timeout=120s \
+      || die "platform state writer pods did not terminate before the platform database reset"
+  fi
+  pods=$(kubectl get pods -n "$K8S_NAMESPACE" --context "$K8S_CONTEXT" \
+    -l "app in ($PLATFORM_STATE_WRITERS)" -o name) \
+    || die "could not verify platform state writer termination before the platform database reset"
+  [[ -z "$pods" ]] \
+    || die "platform state writer pods remain before the platform database reset: $(printf '%s' "$pods" | tr '\n' ' ')"
+  ok "Platform state writers quiesced"
+}
+
+remove_agent_store_reset_job() {
+  local name="$1"
+  kubectl delete job "$name" -n "$K8S_NAMESPACE" --context "$K8S_CONTEXT" \
+    --ignore-not-found=true --wait=true >/dev/null \
+    && kubectl delete configmap "$name" -n "$K8S_NAMESPACE" --context "$K8S_CONTEXT" \
+      --ignore-not-found=true >/dev/null
+}
+
+run_agent_store_reset_job() {
+  local ip_types="$1" database="$TARGET_CLOUD_SQL_AGENT_STORE_DATABASE" name logs reported proxy_route=""
+  [[ "$ip_types" == *PRIVATE* ]] && proxy_route=$'\n            - --private-ip'
+  name="octogee-agent-store-reset-${RANDOM}${RANDOM}"
+
+  kubectl get serviceaccount octogee-api -n "$K8S_NAMESPACE" --context "$K8S_CONTEXT" \
+    -o jsonpath='{.metadata.annotations.iam\.gke\.io/gcp-service-account}' | grep -q . \
+    || die "target KSA octogee-api has no Workload Identity credential for the agent store reset"
+
+  kubectl create configmap "$name" -n "$K8S_NAMESPACE" --context "$K8S_CONTEXT" \
+    --from-file=agent-store-reset.sql="$REPO_DIR/core/src/agent-store-reset.sql" >/dev/null \
+    || die "could not stage the agent store reset for $database"
+
+  if ! cat <<YAML | kubectl apply -f - --context "$K8S_CONTEXT" >/dev/null; then
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ${name}
+  namespace: ${K8S_NAMESPACE}
+  labels:
+    app: cloud-sql-proxy
+    octogee.ai/reset: agent-store
+    octogee.ai/deployment-target: ${TARGET_ID}
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        app: cloud-sql-proxy
+        octogee.ai/reset: agent-store
+    spec:
+      serviceAccountName: octogee-api
+      automountServiceAccountToken: true
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: reset
+          configMap:
+            name: ${name}
+      initContainers:
+        - name: cloud-sql-proxy
+          image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.27.0@sha256:7d156a5c466e31596afd6c8ed134f19c207a297418392fdad2686524ca4e7a3c
+          restartPolicy: Always
+          args:${proxy_route}
+            - --address=127.0.0.1
+            - --port=5432
+            - ${TARGET_CLOUD_SQL_CONNECTION}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      containers:
+        - name: reset-agent-store
+          image: postgres:16.14-alpine3.24@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
+          command: ["/bin/sh", "-ceu"]
+          args:
+            - |
+              for attempt in \$(seq 1 60); do
+                if pg_isready -h 127.0.0.1 -p 5432 >/dev/null 2>&1; then break; fi
+                if [ "\$attempt" = 60 ]; then echo "Cloud SQL proxy did not become ready" >&2; exit 1; fi
+                sleep 1
+              done
+              rest="\${AGENT_STORE_ADMIN_DSN#*://}"
+              [ "\$rest" != "\$AGENT_STORE_ADMIN_DSN" ] || { echo "agent-store admin DSN is not a URL" >&2; exit 1; }
+              credentials="\${rest%@*}"
+              [ "\$credentials" != "\$rest" ] || { echo "agent-store admin DSN names no administrator" >&2; exit 1; }
+              location="\${rest##*@}"
+              path="\${location#*/}"
+              [ "\$path" != "\$location" ] || { echo "agent-store admin DSN selects no database" >&2; exit 1; }
+              database="\${path%%\?*}"
+              [ "\$database" = "\$AGENT_STORE_DATABASE" ] || { echo "agent-store admin DSN selects \$database, not \$AGENT_STORE_DATABASE" >&2; exit 1; }
+              psql -X -q -At -v ON_ERROR_STOP=1 -d "postgresql://\$credentials@127.0.0.1:5432/\$database" -f /reset/agent-store-reset.sql
+          env:
+            - name: AGENT_STORE_ADMIN_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: agent-store-postgres
+                  key: admin-dsn
+            - name: AGENT_STORE_DATABASE
+              value: ${database}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 70
+            runAsGroup: 70
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: reset
+              mountPath: /reset
+              readOnly: true
+YAML
+    remove_agent_store_reset_job "$name" || true
+    die "could not create the agent store reset job for $database"
+  fi
+
+  if ! kubectl wait --for=condition=complete "job/$name" -n "$K8S_NAMESPACE" \
+      --context "$K8S_CONTEXT" --timeout=300s >/dev/null; then
+    kubectl logs "job/$name" -n "$K8S_NAMESPACE" --context "$K8S_CONTEXT" --all-containers=true >&2 || true
+    remove_agent_store_reset_job "$name" || true
+    die "agent store reset job failed for $database"
+  fi
+  if ! logs=$(kubectl logs "job/$name" -n "$K8S_NAMESPACE" --context "$K8S_CONTEXT" -c reset-agent-store); then
+    remove_agent_store_reset_job "$name" || true
+    die "could not read the agent store reset job output for $database"
+  fi
+  remove_agent_store_reset_job "$name" \
+    || die "could not clean up the agent store reset job for $database"
+  reported=$(printf '%s\n' "$logs" | sed -n 's/^OCTOGEE_AGENT_STORE_RESET=//p')
+  [[ "$reported" == "$database" ]] \
+    || die "agent store reset reported '$reported' instead of $database"
+  verify_database_through_api "$TARGET_CLOUD_SQL_INSTANCE" "$database" "the retained agent store database"
+  ok "$database — agent store emptied of every gateway role and agent schema"
+}
+
+platform_state_writers_absent() {
+  local resources
+  resources=$(kubectl get deployment -n "$K8S_NAMESPACE" --context "$K8S_CONTEXT" -l app=octogee-api -o name) \
+    || die "could not inspect octogee-api before the platform database reset"
+  [[ -z "$resources" ]]
+}
+
+reset_platform_databases() {
+  local ip_types="$1"
+  info "Quiescing platform state writers..."
+  quiesce_platform_state_writers
+  info "Emptying agent store $TARGET_CLOUD_SQL_AGENT_STORE_DATABASE through its administrator..."
+  run_agent_store_reset_job "$ip_types"
+  info "Recreating platform state database $PLATFORM_STATE_DB_NAME on $TARGET_CLOUD_SQL_PLATFORM_STATE_INSTANCE..."
+  reset_database_through_api "$TARGET_CLOUD_SQL_PLATFORM_STATE_INSTANCE" "$PLATFORM_STATE_DB_NAME"
 }
 
 verify_durable_pvcs_absent() {
@@ -772,18 +1001,24 @@ if $FULL; then
   instance_ip_types="$(gcloud sql instances describe "$TARGET_CLOUD_SQL_INSTANCE" \
     --project="$TARGET_CLOUD_SQL_PROJECT" --format='value(ipAddresses.type)')" \
     || die "Cloud SQL instance inspection failed; refusing to classify a transport/config failure as a credential failure"
+  prepare_gateway_runtime_for_database_reset
   if [[ "$instance_ip_types" != *"PRIMARY"* ]]; then
-    prepare_gateway_runtime_for_database_reset
     if private_sql_writers_absent; then
-      $RESUME || die "Mattermost and Gitea are not running in $K8S_NAMESPACE, so the private Cloud SQL reset cannot run. A full teardown resets both databases before it removes them; if an earlier run got that far, rerun with --resume to finish the remaining wipes."
-      info "Resuming: an earlier full teardown reset the private Cloud SQL databases before removing Mattermost and Gitea"
+      $RESUME || die "Mattermost and Gitea are not running in $K8S_NAMESPACE, so the private Cloud SQL reset cannot run. A full teardown resets the platform state, agent store, Mattermost and Gitea databases before it removes Mattermost and Gitea; if an earlier run got that far, rerun with --resume to finish the remaining wipes."
+      info "Resuming: an earlier full teardown reset the Cloud SQL databases before removing Mattermost and Gitea"
     else
       $RESUME && die "--resume finishes a teardown whose Mattermost and Gitea are already gone, but they are still running in $K8S_NAMESPACE; rerun without --resume"
+      reset_platform_databases "$instance_ip_types"
       info "Cloud SQL has no public IP; resetting application-owned databases through exact-target in-cluster credentials..."
       reset_private_cloud_sql_databases
     fi
     PRIVATE_SQL_OWNER_RESET_DONE=true
     ok "Private Cloud SQL owner reset completed before Helm uninstall"
+  elif platform_state_writers_absent; then
+    $RESUME || die "octogee-api is not installed in $K8S_NAMESPACE, so the platform state and agent store reset cannot run. A full teardown resets both databases before it removes the platform; if an earlier run got that far, rerun with --resume to finish the remaining wipes."
+    info "Resuming: an earlier full teardown reset the platform state and agent store databases"
+  else
+    reset_platform_databases "$instance_ip_types"
   fi
 fi
 
@@ -951,59 +1186,16 @@ if $FULL; then
     exit 1
   fi
 
-  database_exists() {
-    local dbname="$1" stderr_file rc
-    stderr_file=$(mktemp)
-    gcloud sql databases describe "$dbname" --instance="$TARGET_CLOUD_SQL_INSTANCE" \
-      --project="$TARGET_CLOUD_SQL_PROJECT" --format='value(name)' >/dev/null 2>"$stderr_file"
-    rc=$?
-    if [[ $rc -eq 0 ]]; then
-      rm -f "$stderr_file"
-      return 0
-    fi
-    if grep -qE "NOT_FOUND|was not found|does not exist" "$stderr_file"; then
-      rm -f "$stderr_file"
-      return 1
-    fi
-    echo -e "  ${RED}❌ Cloud SQL Admin API describe failed for $dbname:${NC}" >&2
-    sed 's/^/      /' "$stderr_file" >&2
-    rm -f "$stderr_file"
-    return 2
-  }
-
-  reset_database_through_api() {
-    local dbname="$1" exists_rc recreated_name
-    if database_exists "$dbname"; then
-      info "Deleting $dbname through the Cloud SQL Admin API..."
-      gcloud sql databases delete "$dbname" --instance="$TARGET_CLOUD_SQL_INSTANCE" \
-        --project="$TARGET_CLOUD_SQL_PROJECT" --quiet \
-        || die "Cloud SQL Admin API delete failed for $dbname"
-    else
-      exists_rc=$?
-      [[ $exists_rc -eq 1 ]] || die "Cloud SQL Admin API could not inspect $dbname"
-      info "$dbname is absent; creating its required fresh database through the Cloud SQL Admin API..."
-    fi
-    gcloud sql databases create "$dbname" --instance="$TARGET_CLOUD_SQL_INSTANCE" \
-      --project="$TARGET_CLOUD_SQL_PROJECT" --quiet \
-      || die "Cloud SQL Admin API create failed for $dbname"
-    recreated_name="$(gcloud sql databases describe "$dbname" --instance="$TARGET_CLOUD_SQL_INSTANCE" \
-      --project="$TARGET_CLOUD_SQL_PROJECT" --format='value(name)')" \
-      || die "Cloud SQL Admin API verification failed for $dbname"
-    [[ "$recreated_name" == "$dbname" ]] \
-      || die "Cloud SQL Admin API verification returned '$recreated_name' for $dbname"
-    ok "$dbname — Cloud SQL API confirmed a newly-created empty database"
-  }
-
   instance_ip_types="$(gcloud sql instances describe "$TARGET_CLOUD_SQL_INSTANCE" \
     --project="$TARGET_CLOUD_SQL_PROJECT" --format='value(ipAddresses.type)')" \
     || die "Cloud SQL instance inspection failed; refusing to classify a transport/config failure as a credential failure"
 
   if [[ "$instance_ip_types" != *"PRIMARY"* ]]; then
     info "Cloud SQL has no public IP; resetting databases through the Cloud SQL Admin API..."
-    reset_database_through_api "$MM_DB_NAME"
+    reset_database_through_api "$TARGET_CLOUD_SQL_INSTANCE" "$MM_DB_NAME"
     info "Deleting Gitea token material invalidated by the database reset..."
     remove_gitea_database_credentials
-    reset_database_through_api "$GITEA_DB_NAME"
+    reset_database_through_api "$TARGET_CLOUD_SQL_INSTANCE" "$GITEA_DB_NAME"
     echo ""
     echo -e "  ${BOLD}Cloud SQL reset complete:${NC}"
     echo -e "    ${GREEN}✅ Cloud SQL API confirmed both recreated databases are empty${NC}"

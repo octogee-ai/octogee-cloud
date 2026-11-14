@@ -2189,6 +2189,45 @@ describe("default placement", () => {
       driftState: "pointer-drift",
     });
   });
+
+  it("targets the isolated gateway an operator moved the user to", async () => {
+    const { app } = mkAdminFleetRouteApp({
+      config: { defaultGatewayId: "default-blue" },
+      users: {
+        "uid-rio": {
+          username: "rio",
+          provisioning: { openclaw: { slug: "rio", gatewayId: "rio-s-1", managedBy: "operator" } },
+        },
+      },
+      gateways: {
+        "default-blue": durableGatewayRoot("default-blue", { liveRelease: 1 }),
+        "rio-s-1": isolatedGatewayRoot("rio-s-1", "uid-rio", "rio", {
+          allocation: {
+            kind: "disposable-builder",
+            schemaVersion: 1,
+            leaseId: "operator-allocation",
+            generation: 1,
+            claimedByUid: "uid-rio",
+          },
+        }),
+      },
+      glmGateways: {
+        "default-blue": runtimeDoc("default-blue"),
+        "rio-s-1": runtimeDoc("rio-s-1", { status: "ready", mountedCustomers: ["rio"] }),
+      },
+    });
+
+    const res = await request(app).get("/placement").expect(200);
+
+    expect(res.body.users[0]).toMatchObject({
+      id: "uid-rio",
+      policyTargetGatewayId: "rio-s-1",
+      assignedGatewayId: "rio-s-1",
+      mountedGatewayId: "rio-s-1",
+      driftState: "healthy",
+    });
+    expect(res.body.users[0].warnings).toEqual([]);
+  });
 });
 
 describe("account deletion revokes connector grants at the provider first", () => {
