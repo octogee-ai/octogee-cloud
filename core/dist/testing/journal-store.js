@@ -817,6 +817,25 @@ function userRepositories(documents, write, transactional) {
             write(() => documents.delete(`users/${uid}/agentStores/${storeKey}`));
         },
     });
+    const account = (uid, row) => {
+        if (row === undefined || typeof row.username !== "string")
+            return null;
+        const created = row.createdAt;
+        const createdAt = typeof created === "number" ? created : created?.toMillis?.() ?? 0;
+        const email = typeof row.email === "string" ? row.email : "";
+        return { uid, name: row.username, email, createdAt, revision: FIXTURE_REVISION };
+    };
+    const accounts = partialRepository("users.accounts", {
+        get: async (uid) => account(uid, documents.get(`users/${uid}`)),
+        getMany: async (uids) => new Map(uids.flatMap((uid) => {
+            const stored = account(uid, documents.get(`users/${uid}`));
+            return stored === null ? [] : [[uid, stored]];
+        })),
+        listAll: async () => documents.children("users").flatMap(([uid, row]) => {
+            const stored = account(uid, row);
+            return stored === null ? [] : [stored];
+        }),
+    });
     const transferPath = (uid, migrationId) => `users/${uid}/${SCHEDULE_TRANSFERS_SUBCOLLECTION}/${migrationId}`;
     const storedTransfer = (row) => ({ ...structuredClone(row), revision: FIXTURE_REVISION });
     const scheduleTransfers = partialRepository("users.scheduleTransfers", {
@@ -836,7 +855,7 @@ function userRepositories(documents, write, transactional) {
             .sort((a, b) => a.transfer.snapshotAt - b.transfer.snapshotAt || a.uid.localeCompare(b.uid) ||
             a.transfer.migrationId.localeCompare(b.transfer.migrationId)),
     });
-    return partialRepository("builders", { records, placementReceipts, scheduleTransfers, agentStores });
+    return partialRepository("builders", { records, accounts, placementReceipts, scheduleTransfers, agentStores });
 }
 function workspaceChannelLocation(path) {
     const parts = path.split("/");

@@ -3,7 +3,6 @@ import { Router, type Request } from "express";
 import { MalformedRecordError } from "@octogee/core/platform-state";
 import { requireAdmin } from "../middleware/auth.js";
 import { logger } from "../middleware/logging.js";
-import { db } from "../lib/db.js";
 import { provisionGatewayAuthSecret } from "@octogee/core/secret-store";
 import {
   createCentralReleaseAuthority,
@@ -16,7 +15,8 @@ import {
   type AdminUserDirectorySource,
   type AdminUserProductDetail,
 } from "@octogee/core/admin-user-directory-router";
-import { firestoreUserAccountReader } from "@octogee/core/user-account";
+import type { UserAccountReader } from "@octogee/core/user-account";
+import { platformStateUserAccountReader } from "@octogee/core/platform-state-user-accounts";
 import { userDeletionDeps } from "../lib/user-deletion-deps.js";
 import { platformStateStore } from "../lib/platform-state.js";
 import { MODEL_CATALOG } from "@octogee/shared/types/model-catalog";
@@ -122,9 +122,10 @@ function resolvePlatformModelDials(data: PlatformModelConfig | undefined): {
   };
 }
 
-export type ProductAdminRoutes = (router: Router, deps: { db: typeof db; store: typeof platformStateStore }) => void;
+export type ProductAdminRoutes = (router: Router, deps: { store: typeof platformStateStore }) => void;
 
 export interface AdminProductHooks {
+  accounts?: UserAccountReader;
   discoverDeletionProductContext?: DeletionProductContextDiscovery;
   userDetail?: AdminUserProductDetail;
   userDirectory?: AdminUserDirectorySource;
@@ -140,7 +141,7 @@ export function createAdminRoutes(product: AdminProductHooks = {}): Router {
   });
   router.use(authenticationFailureLimit, requireAdmin, authenticatedRequestLimit(300));
 
-  const accounts = firestoreUserAccountReader(db);
+  const accounts = product.accounts ?? platformStateUserAccountReader(platformStateStore);
   addAdminUserDirectoryRoutes(router, {
     store: platformStateStore,
     accounts,
@@ -149,7 +150,7 @@ export function createAdminRoutes(product: AdminProductHooks = {}): Router {
     productUserDetail: product.userDetail,
   });
 
-  product.addAdminRoutes?.(router, { db, store: platformStateStore });
+  product.addAdminRoutes?.(router, { store: platformStateStore });
 
   addAdminFleetRoutes(router, {
     computerReplacementEnabled: true,
