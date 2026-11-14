@@ -1,4 +1,5 @@
 import { AdminDryRunPlanned } from "@octogee/core/admin-dry-run";
+import { accountAllowsInteractiveAccess } from "@octogee/shared/types/account-lifecycle";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -274,6 +275,9 @@ describe("POST /api/admin/users/:uid/delete — no-slug lifecycle", () => {
     expect(suspendedUids).toEqual([]);
     expect(operationWrites()).toHaveLength(2);
     expect(loggedInfo).toContain("No external identity to suspend; the account lifecycle refuses the deleted user's sessions");
+    const claimed = storeWrites.find((write) => write.op === "set" && write.path === "users/uid-bob")?.row;
+    expect(claimed?.accountLifecycle).toMatchObject({ status: "deletion_scheduled" });
+    expect(accountAllowsInteractiveAccess(claimed ?? {})).toBe(false);
   });
 
   it("reports a failed product identity suspension as a partial deletion", async () => {
