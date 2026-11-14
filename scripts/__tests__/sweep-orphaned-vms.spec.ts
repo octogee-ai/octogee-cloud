@@ -20,8 +20,8 @@ function refs(overrides: Partial<VmReferences> = {}): VmReferences {
 
 describe("sweep-orphaned-vms", () => {
   it("is dry-run by default, needs an environment, and rejects stray arguments", () => {
-    expect(parseSweepOrphanedVmsArgs(["--env=prod"])).toMatchObject({ environment: "prod", apply: false, firestoreProjectId: "octogee", computeProjectId: "octogee" });
-    expect(parseSweepOrphanedVmsArgs(["--env=test", "--apply"])).toMatchObject({ environment: "test", apply: true, firestoreProjectId: TEST_TARGET.firebaseProjectId, computeProjectId: TEST_TARGET.firebaseProjectId });
+    expect(parseSweepOrphanedVmsArgs(["--env=prod"])).toMatchObject({ environment: "prod", apply: false, computeProjectId: "octogee" });
+    expect(parseSweepOrphanedVmsArgs(["--env=test", "--apply"])).toMatchObject({ environment: "test", apply: true, computeProjectId: TEST_TARGET.firebaseProjectId });
     expect(() => parseSweepOrphanedVmsArgs([])).toThrow(/--env/);
     expect(() => parseSweepOrphanedVmsArgs(["--env=prod", "--force"])).toThrow(/--force/);
   });

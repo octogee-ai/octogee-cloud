@@ -1,6 +1,6 @@
 import type { GatewayClass, GatewayProfile } from './glm.js';
 
-export const SIZING_TIERS = ['xs', 's', 'm', 'l'] as const;
+export const SIZING_TIERS = ['s', 'm', 'l'] as const;
 
 export type SizingTier = (typeof SIZING_TIERS)[number];
 
@@ -36,23 +36,14 @@ export interface SizingTierPreset {
 }
 
 export const TIER_PRESETS: Record<SizingTier, SizingTierPreset> = {
-  xs: {
-    description: 'One-user floor — Spot/emptyDir active session',
-    resources: {
-      requests: { cpu: '500m', memory: '2Gi', 'ephemeral-storage': '4Gi' },
-      limits: { cpu: '1000m', memory: '2Gi', 'ephemeral-storage': '4Gi' },
-    },
-    nodejs: { uvThreadpoolSize: '4', maxOldSpaceSizeMb: '1536' },
-    capacity: { targetActiveUsers: 1, typicalUsers: 1 },
-  },
   s: {
-    description: 'One active user with browser and desktop headroom',
+    description: 'One active user',
     resources: {
-      requests: { cpu: '2000m', memory: '8Gi', 'ephemeral-storage': '4Gi' },
-      limits: { cpu: '2000m', memory: '8Gi', 'ephemeral-storage': '4Gi' },
+      requests: { cpu: '1000m', memory: '4Gi', 'ephemeral-storage': '4Gi' },
+      limits: { cpu: '1000m', memory: '4Gi', 'ephemeral-storage': '4Gi' },
     },
     nodejs: { uvThreadpoolSize: '4', maxOldSpaceSizeMb: '3072' },
-    capacity: { targetActiveUsers: 1, typicalUsers: 2 },
+    capacity: { targetActiveUsers: 1, typicalUsers: 1 },
   },
   m: {
     description: 'Shared default — light shared use',

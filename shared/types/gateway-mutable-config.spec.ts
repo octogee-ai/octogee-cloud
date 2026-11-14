@@ -37,6 +37,16 @@ describe("gateway mutable config", () => {
     }))).toBe(true);
   });
 
+  it("accepts a root that names its sizing profile, or names none", () => {
+    expect(isGatewayMutableConfig(validConfig({ sizingProfile: "hobby" }))).toBe(true);
+    expect(isGatewayMutableConfig(validConfig({ sizingProfile: null }))).toBe(true);
+    expect(isGatewayMutableConfig(validConfig())).toBe(true);
+  });
+
+  it("rejects a sizing profile that is not a name", () => {
+    expect(isGatewayMutableConfig({ ...validConfig(), sizingProfile: 7 })).toBe(false);
+  });
+
   it("rejects the retired operator user gateway class", () => {
     expect(isGatewayMutableConfig({
       ...validConfig(),

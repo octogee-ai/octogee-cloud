@@ -1,6 +1,7 @@
 import { blobStatus, type BlobStore } from "./blob-store.js";
 import { createGcsBlobStore } from "./gcs-blob-store.js";
-import { db, storage } from "./db.js";
+import { db } from "./db.js";
+import { gcsBucket } from "./gcs-bucket.js";
 import { platformStateStore } from "./platform-state.js";
 import { uploadProjectBlobViaBroker, uploadWorkspaceBlobViaBroker } from "./project-blob-upload.js";
 import { createHash } from "node:crypto";
@@ -209,7 +210,7 @@ export async function storeWorkspaceBlobCentrally(
   const sha256 = options.immutable ? createHash("sha256").update(fileBuffer).digest("hex") : undefined;
   const reservation = await reserveBlobStorage(target, filePath, fileBuffer.length, options);
   try {
-    const blobs = options.blobStore ?? createGcsBlobStore(() => storage.bucket());
+    const blobs = options.blobStore ?? createGcsBlobStore(gcsBucket);
     const gcsPath = sha256 ? `${target.gcsPrefix}/.objects/${sha256}` : `${target.gcsPrefix}/${filePath}`;
     await saveBlobObject(blobs, gcsPath, fileBuffer, contentType, sha256);
 
@@ -253,7 +254,7 @@ export async function removeWorkspaceBlob(target: WorkspaceBlobTarget, filePath:
   const manifests = target.blobStore && manifestStoreForBlobs(target.blobStore);
   const manifest = target.projectSlug === null ? await getManifestForQuota(target.gcsPrefix, manifests) : {};
   const removedBytes = manifest[filePath]?.size ?? 0;
-  const blobs = target.blobStore ?? createGcsBlobStore(() => storage.bucket());
+  const blobs = target.blobStore ?? createGcsBlobStore(gcsBucket);
   await blobs.delete(`${target.gcsPrefix}/${filePath}`);
   if (IMAGE_EXTENSIONS.has(getExtension(filePath))) {
     await blobs.delete(`${target.gcsPrefix}/.thumbs/${filePath}.png`);

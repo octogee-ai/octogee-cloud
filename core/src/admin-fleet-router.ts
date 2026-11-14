@@ -88,10 +88,14 @@ import {
   type SizingTier,
 } from "@octogee/shared/types/sizing";
 import {
+  GCE_E2_SPOT_PRICE_MULTIPLIER,
   SPOT_PRICE_MULTIPLIER,
   estimateGatewayMonthlyCost,
+  estimateVmGatewayMonthlyCost,
   type GatewayPricingMode,
+  type VmGatewayCostInput,
 } from "@octogee/shared/types/cost-estimator";
+import type { FleetRegistryVmFields } from "./platform-state/fleet-registry.js";
 import { GATEWAY_UNREACHABLE_AFTER_MS, parseOpenClawProcessReport } from "@octogee/shared/types/fleet-controller";
 import {
   builderReturnOperationId,
@@ -257,6 +261,132 @@ export type ActorRequest = Request & {
 
 class GatewayAuthSecretProvisionError extends Error {}
 
+interface GatewayMonthlyCostUsd {
+  compute: number;
+  onDemandCompute: number;
+  savings: number;
+  pricingMode: GatewayPricingMode;
+  storage: number;
+  total: number;
+  onDemandTotal: number;
+  basis: "vm" | "size";
+  perUserAtTarget: number;
+  perUserAtTypical: number;
+}
+
+const VM_HOME_DISK_TYPE = "pd-balanced";
+const VM_BOOT_DISK_TYPE_WHEN_UNRECORDED = "pd-ssd";
+
+type VmDisk = VmGatewayCostInput["disks"][number];
+
+interface VmGatewayFacts {
+  provisioningModel: VmGatewayCostInput["provisioningModel"];
+  priced: Omit<VmGatewayCostInput, "running"> | null;
+}
+
+function isProvisioningModel(value: unknown): value is VmGatewayCostInput["provisioningModel"] {
+  return value === "SPOT" || value === "STANDARD";
+}
+
+function vmDisk(type: unknown, sizeGb: unknown): VmDisk | null {
+  return typeof type === "string" && typeof sizeGb === "number" && Number.isFinite(sizeGb) && sizeGb >= 0
+    ? { type, sizeGb }
+    : null;
+}
+
+function vmHomeDisk(glmDoc: Record<string, unknown>, vmSpec: Record<string, unknown>): VmDisk | null {
+  const retained = isPlainRecord(glmDoc.homeDisk) ? vmDisk(glmDoc.homeDisk.diskType, glmDoc.homeDisk.sizeGb) : null;
+  return retained ?? vmDisk(VM_HOME_DISK_TYPE, vmSpec.homeDiskSizeGb);
+}
+
+function vmZones(glmDoc: Record<string, unknown>, vmSpec: Record<string, unknown>): string[] {
+  const runningZone = isPlainRecord(glmDoc.vm) ? glmDoc.vm.zone : undefined;
+  if (typeof runningZone === "string") return [runningZone];
+  return Array.isArray(vmSpec.zones) ? vmSpec.zones.filter((zone): zone is string => typeof zone === "string") : [];
+}
+
+function vmGatewayFacts(glmDoc: Record<string, unknown> | undefined): VmGatewayFacts | null {
+  if (!glmDoc || resolveGatewayRuntime(glmDoc.runtime) !== "gce-vm" || !isPlainRecord(glmDoc.vmSpec)) return null;
+  const vmSpec = glmDoc.vmSpec;
+  const running = isPlainRecord(glmDoc.vm) ? glmDoc.vm.provisioningModel : undefined;
+  const provisioningModel = isProvisioningModel(running) ? running : vmSpec.provisioningModel;
+  if (!isProvisioningModel(provisioningModel)) return null;
+  const boot = vmDisk(vmSpec.bootDiskType ?? VM_BOOT_DISK_TYPE_WHEN_UNRECORDED, vmSpec.diskSizeGb);
+  const home = vmHomeDisk(glmDoc, vmSpec);
+  const input = typeof vmSpec.machineType === "string" && boot && home
+    ? { zones: vmZones(glmDoc, vmSpec), machineType: vmSpec.machineType, provisioningModel, disks: [boot, home] }
+    : null;
+  const priced = input && estimateVmGatewayMonthlyCost({ ...input, running: true }) ? input : null;
+  return { provisioningModel, priced };
+}
+
+function retainedHomeDiskByUid(userDocs: ReadonlyArray<FirestoreDocLike>): Map<string, Record<string, unknown>> {
+  const disks = new Map<string, Record<string, unknown>>();
+  for (const doc of userDocs) {
+    const provisioning = doc.data().provisioning;
+    const homeStorage = isPlainRecord(provisioning) ? provisioning.homeStorage : undefined;
+    const disk = isPlainRecord(homeStorage) ? homeStorage.disk : undefined;
+    if (isPlainRecord(disk)) disks.set(doc.id, disk);
+  }
+  return disks;
+}
+
+function withRetainedHomeDisk(
+  glmDoc: GlmDoc | undefined,
+  disks: ReadonlyMap<string, Record<string, unknown>>,
+): GlmDoc | undefined {
+  const homeDisk = typeof glmDoc?.ownerUid === "string" ? disks.get(glmDoc.ownerUid) : undefined;
+  return glmDoc && homeDisk ? { ...glmDoc, homeDisk } : glmDoc;
+}
+
+function sizeMonthlyCostUsd(
+  tier: SizingTier,
+  pricingMode: GatewayPricingMode,
+  paused: boolean,
+): GatewayMonthlyCostUsd {
+  if (paused) {
+    return {
+      compute: 0, onDemandCompute: 0, savings: 0, pricingMode, storage: 0, total: 0, onDemandTotal: 0,
+      basis: "size", perUserAtTarget: 0, perUserAtTypical: 0,
+    };
+  }
+  const cost = estimateGatewayMonthlyCost(tier, { pricingMode });
+  return {
+    compute: cost.computeUsd,
+    onDemandCompute: cost.onDemandComputeUsd,
+    savings: cost.savingsUsd,
+    pricingMode: cost.pricingMode,
+    storage: 0,
+    total: cost.computeUsd,
+    onDemandTotal: cost.onDemandComputeUsd,
+    basis: "size",
+    perUserAtTarget: cost.perUserAtTarget,
+    perUserAtTypical: cost.perUserAtTypical,
+  };
+}
+
+function vmMonthlyCostUsd(
+  glmDoc: Record<string, unknown> | undefined,
+  capacity: { targetActiveUsers: number; typicalUsers: number },
+  paused: boolean,
+): GatewayMonthlyCostUsd | null {
+  const vm = vmGatewayFacts(glmDoc)?.priced;
+  const cost = vm ? estimateVmGatewayMonthlyCost({ ...vm, running: !paused }) : null;
+  if (!cost) return null;
+  return {
+    compute: cost.computeUsd,
+    onDemandCompute: cost.onDemandComputeUsd,
+    savings: cost.savingsUsd,
+    pricingMode: cost.pricingMode,
+    storage: cost.storageUsd,
+    total: cost.totalUsd,
+    onDemandTotal: cost.onDemandTotalUsd,
+    basis: "vm",
+    perUserAtTarget: Math.round(cost.totalUsd / capacity.targetActiveUsers),
+    perUserAtTypical: Math.round(cost.totalUsd / capacity.typicalUsers),
+  };
+}
+
 function resolveSizingForResponse(
   glmDoc: Record<string, unknown> | undefined,
   reservation: ReturnType<typeof projectGatewayReservation>,
@@ -265,14 +395,7 @@ function resolveSizingForResponse(
   resolvedFrom: "explicit" | "class-default" | "profile-default";
   resources: { requests: { cpu: string; memory: string }; limits: { cpu: string; memory: string } };
   capacity: { targetActiveUsers: number; typicalUsers: number };
-  monthlyCostUsd: {
-    compute: number;
-    onDemandCompute: number;
-    savings: number;
-    pricingMode: GatewayPricingMode;
-    perUserAtTarget: number;
-    perUserAtTypical: number;
-  };
+  monthlyCostUsd: GatewayMonthlyCostUsd;
 } {
   const sizingTier =
     typeof glmDoc?.sizingTier === "string" && (SIZING_TIERS as readonly string[]).includes(glmDoc.sizingTier)
@@ -289,16 +412,6 @@ function resolveSizingForResponse(
   // bill. Reflect that in both the per-gateway surface and the fleet roll-up
   // so the operator sees real cost, not nameplate.
   const isPaused = glmDoc?.desiredStatus === "paused";
-  const cost = isPaused
-    ? {
-        computeUsd: 0,
-        onDemandComputeUsd: 0,
-        savingsUsd: 0,
-        pricingMode: reservation.type,
-        perUserAtTarget: 0,
-        perUserAtTypical: 0,
-      }
-    : estimateGatewayMonthlyCost(resolved.tier, { pricingMode: reservation.type });
   return {
     tier: resolved.tier,
     resolvedFrom: resolved.resolvedFrom,
@@ -313,14 +426,9 @@ function resolveSizingForResponse(
       },
     },
     capacity: resolved.preset.capacity,
-    monthlyCostUsd: {
-      compute: cost.computeUsd,
-      onDemandCompute: cost.onDemandComputeUsd,
-      savings: cost.savingsUsd,
-      pricingMode: cost.pricingMode,
-      perUserAtTarget: cost.perUserAtTarget,
-      perUserAtTypical: cost.perUserAtTypical,
-    },
+    monthlyCostUsd:
+      vmMonthlyCostUsd(glmDoc, resolved.preset.capacity, isPaused) ??
+      sizeMonthlyCostUsd(resolved.tier, reservation.type, isPaused),
   };
 }
 
@@ -1256,9 +1364,13 @@ function projectDurableGatewayRuntime(
   runtime: GatewayRuntimeDoc | null,
 ): GlmDoc {
   if (!runtime) return { ...root, gateway: root.gatewayId };
+  const { runtime: runtimeKind, vmSpec, vm } = runtime as GatewayRuntimeDoc & FleetRegistryVmFields;
   return {
     ...root,
     gateway: root.gatewayId,
+    runtime: runtimeKind,
+    vmSpec,
+    vm,
     imageRepository: runtime.helm.imageRepository,
     imageTag: runtime.helm.imageTag,
     appliedReplicas: runtime.helm.replicas,
@@ -1537,8 +1649,14 @@ export function projectGatewayReservation(
 ): {
   type: GatewayPricingMode;
   priceMultiplier: number;
-  source: "kubernetes" | "class-default";
+  source: "kubernetes" | "class-default" | "vm";
 } {
+  const vm = vmGatewayFacts(glmDoc);
+  if (vm) {
+    const spotMultiplier = vm.priced ? GCE_E2_SPOT_PRICE_MULTIPLIER : SPOT_PRICE_MULTIPLIER;
+    const spot = vm.provisioningModel === "SPOT";
+    return { type: spot ? "spot" : "on-demand", priceMultiplier: spot ? spotMultiplier : 1, source: "vm" };
+  }
   const type = observedCapacityType ??
     (normalizeGatewayClass(glmDoc) === "shared" ? "on-demand" : "spot");
   return {
@@ -2063,7 +2181,7 @@ export function projectDisposableFleetCapacity(
   };
 }
 
-function rollupFleetStats(
+export function rollupFleetStats(
   gateways: ReadonlyArray<ReturnType<typeof projectGatewaySummary>>,
 ): {
   gateways: { total: number; ready: number; paused: number; unreachable: number };
@@ -2094,8 +2212,8 @@ function rollupFleetStats(
     else if (g.status === "unreachable") unreachable++;
     else if (g.status === "ready") ready++;
     usersMounted += g.mountedUsers.length;
-    fleetMonthlyUsd += g.sizing.monthlyCostUsd.compute;
-    fleetOnDemandUsd += g.sizing.monthlyCostUsd.onDemandCompute;
+    fleetMonthlyUsd += g.sizing.monthlyCostUsd.total;
+    fleetOnDemandUsd += g.sizing.monthlyCostUsd.onDemandTotal;
     const entry = byTier[g.sizing.tier] ?? {
       count: 0,
       subtotalUsd: 0,
@@ -2104,8 +2222,8 @@ function rollupFleetStats(
       onDemandCount: 0,
     };
     entry.count += 1;
-    entry.subtotalUsd += g.sizing.monthlyCostUsd.compute;
-    entry.onDemandSubtotalUsd += g.sizing.monthlyCostUsd.onDemandCompute;
+    entry.subtotalUsd += g.sizing.monthlyCostUsd.total;
+    entry.onDemandSubtotalUsd += g.sizing.monthlyCostUsd.onDemandTotal;
     if (g.reservation.type === "spot") entry.spotCount += 1;
     else entry.onDemandCount += 1;
     byTier[g.sizing.tier] = entry;
@@ -3028,35 +3146,17 @@ function repriceGatewaySummaryFromKubernetes<T extends ReturnType<typeof project
   summary: T,
   diagnostics: GatewayPodDiagnostics,
 ): T {
+  if (summary.reservation.source === "vm") return summary;
   const reservation = projectGatewayReservation(
     { gatewayClass: summary.gatewayClass },
     observedGatewayCapacityType(diagnostics),
   );
-  const cost = summary.desiredStatus === "paused"
-    ? {
-        computeUsd: 0,
-        onDemandComputeUsd: 0,
-        savingsUsd: 0,
-        pricingMode: reservation.type,
-        perUserAtTarget: 0,
-        perUserAtTypical: 0,
-      }
-    : estimateGatewayMonthlyCost(summary.sizing.tier, {
-        pricingMode: reservation.type,
-      });
   return {
     ...summary,
     reservation,
     sizing: {
       ...summary.sizing,
-      monthlyCostUsd: {
-        compute: cost.computeUsd,
-        onDemandCompute: cost.onDemandComputeUsd,
-        savings: cost.savingsUsd,
-        pricingMode: cost.pricingMode,
-        perUserAtTarget: cost.perUserAtTarget,
-        perUserAtTypical: cost.perUserAtTypical,
-      },
+      monthlyCostUsd: sizeMonthlyCostUsd(summary.sizing.tier, reservation.type, summary.desiredStatus === "paused"),
     },
   };
 }
@@ -3369,11 +3469,11 @@ function buildDurableGatewayPatch(args: {
       },
     };
   }
-  if (args.current.gatewayClass === "isolated" && args.body.sizingTier === "xs") {
-    return { error: { status: 400, body: { error: "User sizingTier must be s, m, or l" } } };
-  }
   const configPatch = mutableConfigPatchFromBody(args.body);
   const patch: Record<string, unknown> = { ...configPatch };
+  if (configPatch.sizingTier !== undefined && configPatch.sizingTier !== args.current.sizingTier && args.current.sizingProfile != null) {
+    patch.sizingProfile = null;
+  }
   if (args.body.desiredStatus !== undefined) {
     if (typeof args.body.desiredStatus !== "string") {
       return { error: { status: 400, body: { error: "desiredStatus must be a string" } } };
@@ -4746,8 +4846,9 @@ router.get(
           }
         }
         const gatewayIds = new Set(glmByGatewayId.keys());
+        const retainedHomeDisks = retainedHomeDiskByUid(userDocs);
         const gatewayInputs = [...gatewayIds].flatMap((gatewayId) => {
-          const glmDoc = glmByGatewayId.get(gatewayId);
+          const glmDoc = withRetainedHomeDisk(glmByGatewayId.get(gatewayId), retainedHomeDisks);
           const retired = projectDesiredStatus(glmDoc) === "retired";
           const retiredButListed =
             retired && (includeRetired || visibleRetiredGatewayIds.has(gatewayId));

@@ -2,7 +2,7 @@ import { storeUploadedWorkspaceBlob as storeWorkspaceBlob } from "../../lib/proj
 import { Router, Request, Response, NextFunction } from "express";
 import JSZip from "jszip";
 import { requestBlobStore, type BlobStore } from "../../lib/blob-store.js";
-import { storage } from "../../lib/db.js";
+import { gcsBucket } from "../../lib/gcs-bucket.js";
 import { logger } from "../../middleware/logging.js";
 import { manifestStoreForBlobs, removeFromManifest } from "../../lib/manifest.js";
 import { giteaApiAsUser } from "../../lib/gitea.js";
@@ -113,7 +113,7 @@ function zipObject(key: string, blobs?: BlobStore): ExtractZipContext["zip"] {
       delete: () => blobs.delete(key),
     };
   }
-  const file = storage.bucket().file(key);
+  const file = gcsBucket().file(key);
   return { download: async () => (await file.download())[0], delete: () => file.delete() };
 }
 

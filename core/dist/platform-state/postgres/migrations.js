@@ -1192,6 +1192,38 @@ ALTER TABLE operations ADD COLUMN input_user_slug text
   GENERATED ALWAYS AS (COALESCE(input ->> 'userSlug', input ->> 'builderSlug')) STORED;
 CREATE INDEX operations_user_slug_idx ON operations (input_user_slug text_pattern_ops);
 `;
+const GATEWAY_SIZING_PROFILE = String.raw `
+DO $$
+DECLARE
+  collision text;
+BEGIN
+  SELECT string_agg(removed.name || ' and ' || kept.name, ', ' ORDER BY removed.name, kept.name) INTO collision
+  FROM orchestrator_config,
+    jsonb_each(sizing_profiles) AS removed(name, profile),
+    jsonb_each(sizing_profiles) AS kept(name, profile)
+  WHERE removed.profile->>'isolation' = 'isolated' AND kept.profile->>'isolation' = 'isolated'
+    AND removed.profile->>'sizingTier' = 'xs' AND kept.profile->>'sizingTier' = 's'
+    AND removed.profile->'computer'->>'runtime' = kept.profile->'computer'->>'runtime'
+    AND removed.profile->'computer' <> kept.profile->'computer';
+  IF collision IS NOT NULL THEN
+    RAISE EXCEPTION 'sizing profiles % would share size s on one runtime with different computer settings; change one of each pair before upgrading', collision
+      USING ERRCODE = '23514';
+  END IF;
+END $$;
+ALTER TABLE gateways ADD COLUMN sizing_profile text CHECK (sizing_profile <> '');
+UPDATE gateways SET sizing_tier = 's' WHERE sizing_tier = 'xs';
+UPDATE orchestrator_config
+SET sizing_profiles = (
+  SELECT jsonb_object_agg(
+    name,
+    CASE WHEN profile->>'sizingTier' = 'xs' THEN jsonb_set(profile, '{sizingTier}', '"s"'::jsonb) ELSE profile END
+  )
+  FROM jsonb_each(sizing_profiles) AS entry(name, profile)
+)
+WHERE EXISTS (
+  SELECT 1 FROM jsonb_each(sizing_profiles) AS entry(name, profile) WHERE profile->>'sizingTier' = 'xs'
+);
+`;
 export const PLATFORM_STATE_MIGRATIONS = [
     { version: 1, name: "core-schema", sql: CORE_SCHEMA },
     { version: 2, name: "change-feed", sql: CHANGE_FEED },
@@ -1209,4 +1241,5 @@ export const PLATFORM_STATE_MIGRATIONS = [
     { version: 14, name: "user-accounts", sql: USER_ACCOUNTS },
     { version: 15, name: "model-broker-usage", sql: MODEL_BROKER_USAGE },
     { version: 16, name: "neutral-stored-names-only", sql: NEUTRAL_STORED_NAMES_ONLY },
+    { version: 17, name: "gateway-sizing-profile", sql: GATEWAY_SIZING_PROFILE },
 ];

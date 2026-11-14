@@ -330,7 +330,7 @@ export const EDGES: readonly ScopeEdge[] = [
       JOBS.platformTests,
     ],
     reason:
-      "@octogee/core is consumed by scripts + octogee-api (via scripts/lib re-export shims) + gateway-edge + glm-controller (direct package import); tests/specs' readSrc() helpers (model-credential-materializer, byot-sync-apply, gateway-rpc-local-exceptions specs) also fall back to reading core/src directly for logic that moved out of scripts/lib",
+      "@octogee/core is consumed by scripts + octogee-api (via scripts/lib re-export shims) + gateway-edge + glm-controller (direct package import); tests/specs' readSrc() helpers (model-credential-materializer, byot-sync-apply, gateway-rpc-local-exceptions specs) also fall back to reading core/src directly for logic that moved out of scripts/lib, and the byot-sync-apply and usage-log-line specs import core/src modules",
   },
   {
     when: "product/test-helpers/",
@@ -390,7 +390,7 @@ export const EDGES: readonly ScopeEdge[] = [
     when: "platform/scripts/",
     jobs: [JOBS.tests, JOBS.platformTests],
     reason:
-      "tests/specs reads scripts/ source directly beyond lib/: scripts/lib/* (byot-sync, auth-profile-sqlite, model-credential-materializer, usage-log-line specs), scripts/secret-resolver.mjs + scripts/entrypoints/fleet-controller.ts (byok-provider-registry-parity, gateway-entrypoint, gateway-rpc-local-exceptions specs), scripts/setup-secrets.sh + scripts/verify-secrets.sh (byot-sync-secret-management, openrouter-platform-secret-management specs), and internal-routing-guard.spec.ts walks the entire scripts/ tree",
+      "tests/specs reads scripts/ source directly beyond lib/: scripts/lib/* (byot-sync, model-credential-materializer specs), scripts/secret-resolver.mjs + scripts/entrypoints/fleet-controller.ts (byok-provider-registry-parity, gateway-entrypoint, gateway-rpc-local-exceptions specs), scripts/setup-secrets.sh + scripts/verify-secrets.sh (byot-sync-secret-management, openrouter-platform-secret-management specs), and internal-routing-guard.spec.ts walks the entire scripts/ tree",
   },
   {
     when: "platform/scripts/lib/vite-third-party-licenses.",
