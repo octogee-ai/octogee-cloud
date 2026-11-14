@@ -9,6 +9,7 @@ const h = vi.hoisted(() => ({
   deleteSecret: vi.fn(),
   addSecretVersionIfExists: vi.fn(),
   triggerSync: vi.fn(),
+  errors: [] as unknown[],
 }));
 
 vi.mock("../middleware/auth.js", () => ({
@@ -38,8 +39,10 @@ vi.mock("../lib/byot-sync-trigger.js", () => ({ triggerGatewayModelCredentialSyn
 const { createDocumentFixtureStore } = await import("@octogee/core/testing/journal-store");
 const { default: routes } = await import("../routes/byosub.js");
 const { codexRuntimeConfig } = await import("@octogee/core/model-credential-materializer");
+const { SubscriptionModelPinError } = await import("../lib/subscription-model-pins.js");
 
 const COACH = "octogee-ada-coach";
+const PROJECT_AGENT = "octogee-ada-site";
 const CODEX = JSON.stringify({ auth_mode: "chatgpt", tokens: { access_token: "a", refresh_token: "r" } });
 
 function app(boundGatewayId = "gw-ada") {
@@ -50,15 +53,31 @@ function app(boundGatewayId = "gw-ada") {
     next();
   });
   a.use(routes);
+  a.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    h.errors.push(err);
+    res.status(500).json({ error: "capture failed" });
+  });
   return a;
 }
 
-function ada(accountLifecycle?: Record<string, unknown>) {
+function ada(accountLifecycle?: Record<string, unknown>, agentIds: readonly string[] = [COACH]) {
   return {
     username: "ada",
     ...(accountLifecycle ? { accountLifecycle } : {}),
-    provisioning: { openclaw: { slug: "ada", gatewayId: "gw-ada", status: "complete", agentIds: [COACH] } },
+    provisioning: { openclaw: { slug: "ada", gatewayId: "gw-ada", status: "complete", agentIds } },
   };
+}
+
+function failCoachPinOnce() {
+  const put = h.store.users.agentModels.put.bind(h.store.users.agentModels);
+  let failed = false;
+  vi.spyOn(h.store.users.agentModels, "put").mockImplementation(async (selection) => {
+    if (selection.agentId === COACH && !failed) {
+      failed = true;
+      throw new Error("store unavailable");
+    }
+    return put(selection);
+  });
 }
 
 async function startFlow(flowId = "flow-1") {
@@ -76,6 +95,8 @@ async function startFlow(flowId = "flow-1") {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.restoreAllMocks();
+  h.errors.length = 0;
   h.writeSecret.mockResolvedValue(undefined);
   h.deleteSecret.mockResolvedValue(undefined);
   h.store = createDocumentFixtureStore({ "users/uid-ada": ada() });
@@ -125,6 +146,34 @@ describe("subscription capture on the platform store", () => {
     await request(app()).post("/capture").send({ flowId: "flow-1", credential: CODEX }).expect(200);
 
     expect(await h.store.users.agentModels.list("uid-ada")).toEqual([]);
+  });
+
+  it("fails a capture whose pin failed after the credential committed and leaves the flow unpinned", async () => {
+    await startFlow();
+    failCoachPinOnce();
+
+    await request(app()).post("/capture").send({ flowId: "flow-1", credential: CODEX }).expect(500);
+
+    expect(h.errors).toEqual([expect.any(SubscriptionModelPinError)]);
+    expect(await h.store.users.modelCredentials.get("uid-ada")).toMatchObject({ active: true, provider: "openai-codex" });
+    expect(await h.store.users.subscriptionFlows.get("flow-1")).toMatchObject({ consumedAt: expect.any(Number), modelPinnedAt: null });
+  });
+
+  it("fills only agents without a pick when a capture whose pin failed is retried", async () => {
+    h.store = createDocumentFixtureStore({ "users/uid-ada": ada(undefined, [COACH, PROJECT_AGENT]) });
+    await startFlow();
+    failCoachPinOnce();
+    await request(app()).post("/capture").send({ flowId: "flow-1", credential: CODEX }).expect(500);
+    await h.store.users.agentModels.put({ uid: "uid-ada", agentId: PROJECT_AGENT, primary: "anthropic/claude-opus-5", fallbacks: [], updatedAt: 2 });
+
+    const res = await request(app()).post("/capture").send({ flowId: "flow-1", credential: CODEX }).expect(200);
+
+    expect(res.body).toMatchObject({ ok: true, alreadyConsumed: true });
+    expect(await h.store.users.agentModels.list("uid-ada")).toMatchObject([
+      { agentId: COACH, primary: codexRuntimeConfig().model },
+      { agentId: PROJECT_AGENT, primary: "anthropic/claude-opus-5" },
+    ]);
+    expect(await h.store.users.subscriptionFlows.get("flow-1")).toMatchObject({ modelPinnedAt: expect.any(Number) });
   });
 
   it("refuses a flow another capture already claimed, before writing the secret", async () => {
