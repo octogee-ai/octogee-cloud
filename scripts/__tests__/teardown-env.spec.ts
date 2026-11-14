@@ -19,6 +19,7 @@ type TeardownOptions = {
   databaseOwner?: "mattermost" | "gitea" | "cloudsqlsuperuser" | "unexpected";
   sqlOwnerJobFailure?: boolean;
   agentStoreJobFailure?: boolean;
+  sqlOwnerJobFailed?: boolean;
   agentStoreReportedDatabase?: string;
   platformDatabaseFailure?: "delete" | "create" | "verify";
   publicIp?: boolean;
@@ -260,10 +261,12 @@ case "$1 $2" in
     printf 'deployment.apps/llm-broker\\n'
     ;;
   "get cronjob") printf 'cronjob.batch/platform-state-expiry\\n' ;;
-  "wait --for=condition=complete")
-    if [[ "$3" == job/octogee-agent-store-reset-* && "$FAKE_AGENT_STORE_JOB_FAILURE" == "true" ]]; then
-      printf 'timed out waiting for the condition\\n' >&2
-      exit 1
+  "get job/"*)
+    if [[ "$2" == job/octogee-agent-store-reset-* && "$FAKE_AGENT_STORE_JOB_FAILURE" == "true" ]] \\
+      || [[ "$2" != job/octogee-agent-store-reset-* && "$FAKE_SQL_OWNER_JOB_FAILED" == "true" ]]; then
+      printf 'FailureTarget Failed '
+    else
+      printf 'Complete '
     fi
     ;;
   "get deployment/glm-controller")
@@ -477,6 +480,7 @@ fi
       FAKE_SQL_OWNER_MANIFEST: sqlOwnerManifest,
       FAKE_SQL_OWNER_JOB_FAILURE: options.sqlOwnerJobFailure ? "true" : "false",
       FAKE_AGENT_STORE_JOB_FAILURE: options.agentStoreJobFailure ? "true" : "false",
+      FAKE_SQL_OWNER_JOB_FAILED: options.sqlOwnerJobFailed ? "true" : "false",
       FAKE_AGENT_STORE_REPORTED_DATABASE: options.agentStoreReportedDatabase ?? TEST_TARGET.cloudSqlAgentStoreDatabaseName,
       FAKE_PLATFORM_DATABASE_FAILURE: options.platformDatabaseFailure ?? "",
       FAKE_PLATFORM_DATABASE_STATE: platformDatabaseState,
@@ -792,6 +796,8 @@ describe("full teardown for private-only Cloud SQL", { timeout: 180_000 }, () =>
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain(`agent store reset job failed for ${TEST_TARGET.cloudSqlAgentStoreDatabaseName}`);
+    expect(result.calls).toContainEqual(expect.stringMatching(/^kubectl logs job\/octogee-agent-store-reset-\S+ .*--all-containers=true/));
+    expect(result.calls.some((entry) => entry.startsWith("kubectl wait --for=condition=complete"))).toBe(false);
     expect(result.calls.some((entry) => entry.startsWith("sql databases delete platform"))).toBe(false);
     expect(result.calls.some((entry) => entry.includes("scale deployment/mattermost"))).toBe(false);
     expect(result.calls).toContainEqual(expect.stringMatching(/^kubectl delete configmap octogee-agent-store-reset-/));
@@ -940,6 +946,16 @@ describe("full teardown for private-only Cloud SQL", { timeout: 180_000 }, () =>
     expect(`${result.stderr}\n${result.stdout}`).toContain("could not read private Cloud SQL owner reset job output for mattermost_test");
     expect(result.calls.some((call) => /^sql databases create (mattermost|gitea)_/.test(call))).toBe(false);
     expect(result.calls.some((call) => call.startsWith("firebase firestore:delete"))).toBe(false);
+  });
+
+  it("dies as soon as the private owner job reports failure, with its logs", () => {
+    const result = runPrivateCentralTeardown({ sqlOwnerJobFailed: true });
+
+    expect(result.status).toBe(1);
+    expect(`${result.stderr}\n${result.stdout}`).toContain("private Cloud SQL owner reset job failed for mattermost_test");
+    expect(result.calls).toContainEqual(expect.stringMatching(/^kubectl logs job\/\S+ .*--all-containers=true/));
+    expect(result.calls.some((entry) => entry.startsWith("kubectl wait --for=condition=complete"))).toBe(false);
+    expect(result.calls.some((call) => /^sql databases create (mattermost|gitea)_/.test(call))).toBe(false);
   });
 
   it("uses the Cloud SQL Admin API only when the database is API-owned", () => {
