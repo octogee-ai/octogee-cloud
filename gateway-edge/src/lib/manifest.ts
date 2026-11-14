@@ -11,7 +11,7 @@ import {
 } from "@octogee/core/workspace-manifest";
 
 import { logger } from "../middleware/logging.js";
-import { storage } from "./db.js";
+import { gcsBucket } from "./gcs-bucket.js";
 
 export type { Manifest, ManifestEntry };
 
@@ -25,7 +25,7 @@ interface CacheEntry {
 const manifestCache = new Map<string, CacheEntry>();
 
 function store(): ManifestStore {
-  return createGcsManifestStore(storage.bucket());
+  return createGcsManifestStore(gcsBucket());
 }
 
 export function manifestStoreForBlobs(blobs: BlobStore): ManifestStore {

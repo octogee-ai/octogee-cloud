@@ -26,6 +26,7 @@ import {
 } from "./sizing-key.js";
 import { builderActivateOperationId } from "./isolated-operation-ids.js";
 import { gatewayAuthorizationFromRootDocument } from "./gateway-live-release.js";
+import { gatewayRetiredInStore } from "./gateway-retirement-claim.js";
 import { MalformedRecordError } from "./platform-state/index.js";
 import type {
   ActivationLeaseFence,
@@ -39,6 +40,8 @@ import type {
   PlatformStateTransaction,
   Stored,
 } from "./platform-state/index.js";
+
+const USER_ACTIVATION_LEASE_SOURCE = "builder-activation-lease";
 
 const MIGRATE_USER_OPERATION_KIND = "migrate-user" as const;
 const CLEAR = { clear: true } as const;
@@ -271,7 +274,7 @@ export function userActivationRecoveryTargetMatches(params: {
     params.operationId === (generationValid && typeof input.toGatewayId === "string" && input.toGatewayId !== ""
       ? builderActivateOperationId(input.toGatewayId, lease.generation as number)
       : null),
-    input.source === "builder-activation-lease",
+    input.source === USER_ACTIVATION_LEASE_SOURCE,
     root.gatewayClass === "isolated", root.gatewayId === input.toGatewayId, root.ownerUid === input.uid,
     allocation.kind === "disposable-builder", allocation.claimedByUid === input.uid,
     typeof lease.leaseId === "string", lease.leaseId !== "", allocation.leaseId === lease.leaseId,
@@ -287,13 +290,19 @@ export async function completeWorkspaceMigrationRecovery(deps: FleetStateDeps, p
 }
 
 export function sharedRecoveryTargetCleaned(input: Record<string, unknown>, schedulerHandoff: unknown): boolean {
-  if (input.recoverSourceOnly !== true || input.source === "builder-activation-lease") return false;
+  if (input.recoverSourceOnly !== true || input.source === USER_ACTIVATION_LEASE_SOURCE) return false;
   const steps = recordOrEmpty(recordOrEmpty(schedulerHandoff).sourceRecovery).steps;
   if (!Array.isArray(steps)) return false;
   return steps.some(value => {
     const step = recordOrEmpty(value);
     return step.name === "rollback:unmount-target" && step.status === "done";
   });
+}
+
+export function retiredTargetSourceRecovery(input: Record<string, unknown>, schedulerHandoff: unknown): boolean {
+  const retiredTarget = recordOrEmpty(recordOrEmpty(recordOrEmpty(schedulerHandoff).sourceRecovery).retiredTarget);
+  return input.recoverSourceOnly === true && input.source !== USER_ACTIVATION_LEASE_SOURCE &&
+    typeof input.toGatewayId === "string" && retiredTarget.gatewayId === input.toGatewayId;
 }
 
 export function isolatedTargetBelongsToUser(targetRoot: unknown, input: Record<string, unknown>): boolean {
@@ -303,7 +312,7 @@ export function isolatedTargetBelongsToUser(targetRoot: unknown, input: Record<s
 }
 
 function assertRecoveryTarget(params: Parameters<typeof userActivationRecoveryTargetMatches>[0] & { schedulerHandoff: unknown }): void {
-  const matches = params.input.source === "builder-activation-lease"
+  const matches = params.input.source === USER_ACTIVATION_LEASE_SOURCE
     ? userActivationRecoveryTargetMatches(params)
     : sharedRecoveryTargetCleaned(params.input, params.schedulerHandoff) ||
       projectGatewayDesiredRootForGateway(params.targetRoot, String(params.input.toGatewayId))?.gatewayClass === "shared" ||
@@ -346,10 +355,14 @@ async function workspaceMigrationRecovery(
       tx.gateways.roots.get(String(input.toGatewayId)),
     ]);
     if (target !== null) throw new Error("workspace migration recovery target assignment remains");
-    assertRecoveryTarget({
-      operationId: params.operationId, input, openclaw: activationLeaseView(user), sourceEpoch: params.sourceEpoch,
-      targetRoot: withoutRevision(targetRoot), schedulerHandoff: handoff,
-    });
+    if (retiredTargetSourceRecovery(input, handoff)) {
+      if (!await gatewayRetiredInStore(tx, String(input.toGatewayId))) throw new Error("workspace migration recovery target authority changed");
+    } else {
+      assertRecoveryTarget({
+        operationId: params.operationId, input, openclaw: activationLeaseView(user), sourceEpoch: params.sourceEpoch,
+        targetRoot: withoutRevision(targetRoot), schedulerHandoff: handoff,
+      });
+    }
     if (!complete) return;
     await tx.gateways.assignments.patch(
       params.sourceGatewayId,
@@ -986,7 +999,7 @@ function assertUserActivationCutoverAuthorized(input: {
 }): void {
   const operationInput = recordOrEmpty(input.operation?.input);
   const allocation = recordOrEmpty(input.targetRoot?.allocation);
-  if (operationInput.source !== "builder-activation-lease" ||
+  if (operationInput.source !== USER_ACTIVATION_LEASE_SOURCE ||
       allocation.kind !== "disposable-builder") return;
   const lease = recordOrEmpty(input.user?.activationLease);
   const authorized = [

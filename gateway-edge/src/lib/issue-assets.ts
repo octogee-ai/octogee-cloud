@@ -4,7 +4,7 @@
 // the target's GCS namespace (never in the repo or the workspace-file
 // manifest) and are served through short-lived signed URLs.
 import { randomUUID } from "node:crypto";
-import { storage } from "./db.js";
+import { gcsBucket } from "./gcs-bucket.js";
 import type { FileTarget } from "./fileTarget.js";
 
 export const MAX_ISSUE_ASSET_BYTES = 25 * 1024 * 1024;
@@ -80,7 +80,7 @@ export async function storeIssueAsset(
   const id = randomUUID();
   const name = sanitizeAssetName(input.name);
   const objectPath = `${issueAssetsPrefix(target, num)}${id}/${name}`;
-  const file = storage.bucket().file(objectPath);
+  const file = gcsBucket().file(objectPath);
   await file.save(input.content, {
     contentType: input.contentType || "application/octet-stream",
     resumable: false,
@@ -103,7 +103,7 @@ interface AssetFileMetadata {
 
 export async function listIssueAssets(target: FileTarget, num: number): Promise<IssueAsset[]> {
   const prefix = issueAssetsPrefix(target, num);
-  const [files] = await storage.bucket().getFiles({ prefix });
+  const [files] = await gcsBucket().getFiles({ prefix });
   const assets = await Promise.all(
     files.map(async (file) => {
       const parsed = parseAssetObjectPath(prefix, file.name);
@@ -127,7 +127,7 @@ export async function listIssueAssets(target: FileTarget, num: number): Promise<
 export async function deleteIssueAsset(target: FileTarget, num: number, id: string): Promise<boolean> {
   if (!isValidAssetId(id)) return false;
   const prefix = `${issueAssetsPrefix(target, num)}${id}/`;
-  const [files] = await storage.bucket().getFiles({ prefix });
+  const [files] = await gcsBucket().getFiles({ prefix });
   if (files.length === 0) return false;
   await Promise.all(files.map((file) => file.delete()));
   return true;

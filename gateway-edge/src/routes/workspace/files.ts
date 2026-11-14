@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { storage } from "../../lib/db.js";
+import { gcsBucket } from "../../lib/gcs-bucket.js";
 import { validateFilePath } from "../../lib/path-validation.js";
 import { withFileTarget } from "../../lib/fileTarget.js";
 import { getManifest } from "../../lib/manifest.js";
@@ -247,7 +247,7 @@ export function blobFileEntries(
 async function signWorkspaceBlob(target: Parameters<typeof repoContentsApi>[0], key: string): Promise<string> {
   const expires = Date.now() + BLOB_SIGNED_URL_TTL_MS;
   if (target.blobStore) return (await target.blobStore.signedUrl({ gcsPath: key, action: "read" }, expires)).url;
-  const [url] = await storage.bucket().file(key).getSignedUrl({ action: "read", expires });
+  const [url] = await gcsBucket().file(key).getSignedUrl({ action: "read", expires });
   return url;
 }
 

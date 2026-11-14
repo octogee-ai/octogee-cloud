@@ -3,7 +3,7 @@ import {
   isGatewayVmHomeCheckpoint,
   type GatewayVmHomeCheckpoint,
 } from "@octogee/shared/types/glm";
-import { storage } from "../../../gateway-edge/src/lib/db.js";
+import { gcsBucket } from "../../../gateway-edge/src/lib/gcs-bucket.js";
 
 export class VmHomeCheckpointError extends Error {
   constructor(
@@ -83,7 +83,7 @@ function parseCurrent(raw: string, currentPath: string): GatewayVmHomeCheckpoint
 }
 
 async function bucket() {
-  return storage.bucket();
+  return gcsBucket();
 }
 
 type VmHomeBucket = Awaited<ReturnType<typeof bucket>>;

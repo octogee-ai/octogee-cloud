@@ -1200,6 +1200,7 @@ async function upsertGateway(
     initial: initialRuntime,
     gatewayClass: gateway.gatewayClass,
     sizingTier: gateway.sizingTier,
+    sizingProfile: gateway.sizingProfile,
     vmSpec: GATEWAY_VM_SPEC,
     assertStorage: gateway.gatewayClass === "isolated" && replicas > 0
       ? (runtime) => assertIsolatedRuntimeStorage({ store, runtime, ownerUid: gateway.ownerUid })

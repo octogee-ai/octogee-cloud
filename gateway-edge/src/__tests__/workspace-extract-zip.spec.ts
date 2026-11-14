@@ -4,9 +4,7 @@ import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../lib/platform-state", () => ({ platformStateStore: {} }));
-vi.mock("../lib/db", () => ({
-  storage: { bucket: vi.fn() },
-}));
+vi.mock("../lib/gcs-bucket", () => ({ gcsBucket: vi.fn() }));
 
 vi.mock("../lib/gitea", () => ({
   giteaApiAsUser: vi.fn(),
@@ -28,7 +26,7 @@ import {
   type ZipEntryLike,
 } from "../routes/workspace/extract-zip.js";
 import extractZipRouter from "../routes/workspace/extract-zip.js";
-import { storage } from "../lib/db.js";
+import { gcsBucket } from "../lib/gcs-bucket.js";
 import { giteaApiAsUser } from "../lib/gitea.js";
 import { removeFromManifest } from "../lib/manifest.js";
 
@@ -73,9 +71,9 @@ async function zipBuffer(): Promise<Buffer> {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.mocked(storage.bucket).mockReturnValue({
+  vi.mocked(gcsBucket).mockReturnValue({
     file: mockBucketFile,
-  } as unknown as ReturnType<typeof storage.bucket>);
+  } as unknown as ReturnType<typeof gcsBucket>);
   storeWorkspaceBlob.mockResolvedValue({
     gcsPath: "customers/alice/imports/site/assets/logo.png",
     size: 3,

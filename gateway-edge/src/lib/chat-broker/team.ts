@@ -2,7 +2,7 @@
  * Workspace slug → MM team_id and channel name → channel_id resolvers.
  *
  * Mattermost's team-per-workspace pattern means the team name == user
- * slug (scripts/lib/mattermost/provision.ts:202). Channel name → id is a
+ * slug (core/src/mattermost/provision.ts). Channel name → id is a
  * separate per-team lookup. Both are cached with the same TTL as the PAT
  * cache to keep cross-call drift bounded.
  *

@@ -2,7 +2,7 @@ import type { PlatformStateRepositories } from "@octogee/core/platform-state";
 import type { SizingTier } from "@octogee/shared/types/sizing";
 
 import type { KubectlSubprocess } from "./fleet-ingress.js";
-import { findGatewayVmPolicy } from "./vm-gateway-runtime.js";
+import { findGatewayVmPolicy, findSizingProfileComputer } from "./vm-gateway-runtime.js";
 
 export const ISOLATED_POD_HOME_PENDING_LIMIT_MS = 5 * 60_000;
 export const ISOLATED_POD_BLOCKER_OBSERVE_MS = 60_000;
@@ -16,17 +16,21 @@ export function isolatedPodHomeClaimName(gatewayId: string): string {
 
 export async function isolatedPodHomeSizeGiB(
   store: Pick<PlatformStateRepositories, "config">,
-  gateway: { gatewayId: string; sizingTier: SizingTier | null },
+  gateway: { gatewayId: string; sizingTier: SizingTier | null; sizingProfile?: string | null },
 ): Promise<number> {
+  const named = gateway.sizingProfile ? await findSizingProfileComputer(store, gateway.sizingProfile) : null;
+  if (named) {
+    if (named.runtime !== "cluster") {
+      throw new Error(
+        `isolated gateway ${gateway.gatewayId} runs as a pod, but its sizing profile ${gateway.sizingProfile} describes a ${named.runtime} computer`,
+      );
+    }
+    return named.homeSizeGiB;
+  }
   const tier = gateway.sizingTier ?? "s";
-  const computer = await findGatewayVmPolicy(store, tier);
+  const computer = await findGatewayVmPolicy(store, tier, "cluster");
   if (computer === null) {
     throw new Error(`isolated gateway ${gateway.gatewayId} runs as a pod, and no isolated sizing profile at tier ${tier} describes one`);
-  }
-  if (computer.runtime !== "cluster") {
-    throw new Error(
-      `isolated gateway ${gateway.gatewayId} runs as a pod, but the isolated sizing profile at tier ${tier} describes a ${computer.runtime} computer`,
-    );
   }
   return computer.homeSizeGiB;
 }

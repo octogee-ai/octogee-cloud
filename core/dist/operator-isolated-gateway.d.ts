@@ -41,6 +41,7 @@ export declare function operatorIsolatedGatewayConfig(input: {
     gatewayId: string;
     uid: string;
     slug: string;
+    sizingKey: string;
     sizingTier: SizingTier;
     allocationId: string;
 }): GatewayMutableConfig;

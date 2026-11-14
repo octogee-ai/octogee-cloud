@@ -1,11 +1,11 @@
+import { isDeepStrictEqual } from "node:util";
 import { isUserActivateOperationIdFor } from "@octogee/core/isolated-operation-ids";
-import { isolatedRuntimeMutationFenced } from "@octogee/core/gateway-retirement-claim";
+import { gatewayRetiredInStore, isolatedRuntimeMutationFenced } from "@octogee/core/gateway-retirement-claim";
 import type { PlatformUserRecord, GatewayAssignment, OperationPatch, PlatformStateStore, PlatformStateTransaction, Stored } from "@octogee/core/platform-state";
 import { readSchedulerMigrationIdentity, type Operation, type SchedulerHandoffState } from "@octogee/shared/types/glm";
 import { readWorkspaceMigrationMarker } from "@octogee/shared/types/workspace-migration";
-import { userActivationRecoveryTargetMatches } from "@octogee/core/fleet-state";
+import { retiredTargetSourceRecovery, userActivationRecoveryTargetMatches } from "@octogee/core/fleet-state";
 import { classifyOperationFailure, retryBackoffMs } from "./operation-retry.js";
-import { RETIRE_GATEWAY_KIND } from "./operation-kinds.js";
 
 function handoffAttemptEvidence(operation: Partial<Operation>) {
   const handoff = operation.schedulerHandoff;
@@ -108,6 +108,33 @@ export function legacyAttemptNeverQuiesced(operation: Operation): boolean {
   return steps?.length === 1 && steps[0]?.name === "keys-sync-state" && steps[0].status === "failed";
 }
 
+const QUIESCED_MOVE_STEPS = ["keys-sync-state:done", "pre-sync-state:done", "wait-for-active-work:done", "quiesce-source:done", "flush-source:done"];
+const UNCONFIRMED_TARGET_UNMOUNT_AFTER_QUIESCE = [
+  [...QUIESCED_MOVE_STEPS, "final-sync-state:failed", "rollback:unmount-target:failed"],
+  [...QUIESCED_MOVE_STEPS, "final-sync-state:done", "verify-target:failed", "rollback:unmount-target:failed"],
+];
+
+function quiescedMoveWithUnconfirmedTargetUnmount(steps: Operation["steps"] | undefined): boolean {
+  const shape = steps?.map((step) => `${step.name}:${step.status}`);
+  return UNCONFIRMED_TARGET_UNMOUNT_AFTER_QUIESCE.some((expected) => isDeepStrictEqual(shape, expected));
+}
+
+function failedIsolatedMoveAwaitingTargetRetirement(operation: Operation): boolean {
+  const { input, schedulerHandoff: handoff } = operation;
+  if (!handoff) return false;
+  return [
+    operation.status === "failed", operation.rolledBack !== true, operation.schedulerHandoffReleased === true,
+    input.recoverSourceOnly !== true, input.source !== "builder-activation-lease",
+    typeof input.toGatewayId === "string", !String(input.toGatewayId).startsWith("shared-"),
+    handoff.stageAfterCutover === true, handoff.forwardRecovery === undefined, handoff.sourceRecovery === undefined,
+    quiescedMoveWithUnconfirmedTargetUnmount(handoffAttemptEvidence(operation)?.steps),
+  ].every(Boolean);
+}
+
+function awaitsRetiredTarget(operation: Operation): boolean {
+  return failedIsolatedMoveAwaitingTargetRetirement(operation) || retiredTargetSourceRecovery(operation.input, operation.schedulerHandoff);
+}
+
 function recoverableLegacyScope(operation: Operation & { cancellationRequestedAt?: number }): boolean {
   const input = operation.input;
   const handoff = operation.schedulerHandoff;
@@ -120,7 +147,7 @@ function recoverableLegacyScope(operation: Operation & { cancellationRequestedAt
     Array.isArray(operation.steps),
     typeof input.uid === "string", input.fromGatewayId.startsWith("shared-"), input.fromGatewayId !== input.toGatewayId,
     handoff.uid === input.uid, handoff.fromGatewayId === input.fromGatewayId, handoff.toGatewayId === input.toGatewayId,
-    input.toGatewayId.startsWith("shared-") && handoff.stageAfterCutover !== true || userActivationSourceRecoveryPending(operation),
+    input.toGatewayId.startsWith("shared-") && handoff.stageAfterCutover !== true || userActivationSourceRecoveryPending(operation) || awaitsRetiredTarget(operation),
     identity !== null,
   ].every(Boolean);
 }
@@ -150,7 +177,9 @@ function recoveryAttemptHistory(operation: Operation, now: number): { attempt: n
   return { attempt, history: [...operation.attemptHistory ?? [], ...recorded].slice(-20) };
 }
 
-function recoveryIntent(operation: Operation, sourceEpoch: number): NonNullable<SchedulerHandoffState["sourceRecovery"]> | null {
+type SourceRecoveryIntent = NonNullable<SchedulerHandoffState["sourceRecovery"]>;
+
+function recoveryIntent(operation: Operation, sourceEpoch: number): SourceRecoveryIntent | null {
   const handoff = operation.schedulerHandoff!;
   const prior = handoff.sourceRecovery;
   if (prior) return prior.migrationId === handoff.migrationId && prior.sourceEpoch === sourceEpoch && Array.isArray(prior.steps) ? prior : null;
@@ -161,7 +190,7 @@ function recoveryIntent(operation: Operation, sourceEpoch: number): NonNullable<
 
 const CLEAR = { clear: true } as const;
 
-function recoveryRearmPatch(operation: Operation, intent: NonNullable<SchedulerHandoffState["sourceRecovery"]>, now: number): OperationPatch {
+function recoveryRearmPatch(operation: Operation, intent: SourceRecoveryIntent, now: number): OperationPatch {
   const { attempt, history } = recoveryAttemptHistory(operation, now);
   return {
     status: "pending", startedAt: null, completedAt: null, steps: [],
@@ -179,10 +208,29 @@ function failedRecoveryAdmitted(operation: Operation): boolean {
   if (operation.input.recoverSourceOnly === true) {
     return operation.rolledBack !== true && operation.schedulerHandoffReleased !== true && handoffAttemptEvidence(operation)?.steps !== undefined;
   }
-  if (userActivationSourceRecoveryPending(operation)) return true;
+  if (userActivationSourceRecoveryPending(operation) || failedIsolatedMoveAwaitingTargetRetirement(operation)) return true;
   return typeof operation.error === "string" && (legacyHeldTargetCleanupPending(operation) || rollbackRecoveryPending(operation) ||
     /^reaped: (?:controller restarted mid-op|op exceeded \d+m running budget)/.test(operation.error) ||
     /gateway starting; retry shortly|rsync import port \d+ is already serving migrationId=/.test(operation.error));
+}
+
+async function targetCheckedRecoveryIntent(
+  tx: PlatformStateTransaction,
+  operation: Operation,
+  owner: Stored<PlatformUserRecord>,
+  sourceEpoch: number,
+): Promise<SourceRecoveryIntent | null> {
+  const toGatewayId = operation.input.toGatewayId as string;
+  const recovered = recoveryIntent(operation, sourceEpoch);
+  const forward = operation.schedulerHandoff!.forwardRecovery;
+  if (!recovered || forward && forward.sourceEpoch !== recovered.sourceEpoch) return null;
+  if (awaitsRetiredTarget(operation)) {
+    return await gatewayRetiredInStore(tx, toGatewayId) ? { ...recovered, retiredTarget: { gatewayId: toGatewayId } } : null;
+  }
+  if (!userActivationSourceRecoveryPending(operation)) return recovered;
+  const root = await tx.gateways.roots.get(toGatewayId);
+  return userActivationRecoveryTargetMatches({ operationId: operation.id, input: operation.input,
+    openclaw: { activationLease: owner.activationLease ?? undefined }, sourceEpoch: recovered.sourceEpoch, targetRoot: root }) ? recovered : null;
 }
 
 export async function rearmOwnedLegacyMigration(input: {
@@ -203,13 +251,8 @@ export async function rearmOwnedLegacyMigration(input: {
       tx.gateways.assignments.get(toGatewayId, uid),
     ]);
     if (!ownsLegacySource(operation, owner, source, target !== null)) return false;
-    const intent = recoveryIntent(operation, source!.epoch);
-    if (!intent || operation.schedulerHandoff!.forwardRecovery && operation.schedulerHandoff!.forwardRecovery.sourceEpoch !== intent.sourceEpoch) return false;
-    if (userActivationSourceRecoveryPending(operation)) {
-      const root = await tx.gateways.roots.get(toGatewayId);
-      if (!userActivationRecoveryTargetMatches({ operationId: operation.id, input: operation.input,
-        openclaw: { activationLease: owner!.activationLease ?? undefined }, sourceEpoch: intent.sourceEpoch, targetRoot: root })) return false;
-    }
+    const intent = await targetCheckedRecoveryIntent(tx, operation, owner!, source!.epoch);
+    if (!intent) return false;
     await tx.journal.operations.patch(operation.id, recoveryRearmPatch(operation, intent, input.now),
       { status: [operation.status], startedAt: operation.startedAt });
     return true;
@@ -251,15 +294,6 @@ function preparationHeldAtSource(
   ].every(Boolean);
 }
 
-async function targetRetired(tx: PlatformStateTransaction, gatewayId: string): Promise<boolean> {
-  const root = await tx.gateways.roots.get(gatewayId);
-  if (root === null) return true;
-  const claim = root.retirementClaim as { operationId?: unknown } | null | undefined;
-  if (root.desiredStatus !== "retired" || typeof claim?.operationId !== "string") return false;
-  const retirement = await tx.journal.operations.get(claim.operationId);
-  return retirement?.kind === RETIRE_GATEWAY_KIND && retirement.status === "succeeded" && retirement.input?.gatewayId === gatewayId;
-}
-
 async function releaseRetiredTargetPreparation(
   store: PlatformStateStore,
   operationId: string,
@@ -275,7 +309,7 @@ async function releaseRetiredTargetPreparation(
       tx.gateways.assignments.get(toGatewayId, uid),
     ]);
     if (!owner || !preparationHeldAtSource(operation.id, endpoints, owner, source, target) ||
-        !await targetRetired(tx, toGatewayId)) return null;
+        !await gatewayRetiredInStore(tx, toGatewayId)) return null;
     await tx.users.records.setFence(uid, "migration", CLEAR, owner.fences.migration ?? "absent");
     return { uid, targetGatewayId: toGatewayId };
   });

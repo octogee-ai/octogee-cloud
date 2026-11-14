@@ -758,6 +758,44 @@ describe("abandoned Shared migration recovery", () => {
     expect(h.client.transferState).not.toHaveBeenCalled();
     expect(h.deps.commitCutover).not.toHaveBeenCalled();
   });
+  it("resumes the source of a failed move to an isolated gateway without contacting the target once that target is retired", async () => {
+    const h = recovery();
+    const target = "alice-xs-12345678";
+    const request = op();
+    request.input = { uid: "uid-alice", userSlug: "alice", source: "operator-isolated-gateway", fromGatewayId: "shared-blue", toGatewayId: target, recoverSourceOnly: true };
+    request.schedulerHandoff = { ...previous, toGatewayId: target, stageAfterCutover: true, sourceRecovery: { migrationId: previous.migrationId, sourceEpoch: 4, steps: [
+      { name: "quiesce-source", status: "done" },
+      { name: "flush-source", status: "done" },
+      { name: "final-sync-state", status: "failed" },
+      { name: "rollback:unmount-target", status: "failed" },
+    ], retiredTarget: { gatewayId: target } } };
+    const order: string[] = [];
+    vi.mocked(h.deps.resolveGatewayUrl).mockImplementation(async gatewayId => {
+      if (gatewayId === target) throw new Error("target gateway was retired");
+      return "http://source";
+    });
+    h.deps.assertMigrationRecoveryAuthority = vi.fn(async () => { order.push("authority"); });
+    h.client.scheduler = vi.fn(async ({ migrationId, phase, gatewayId }) => {
+      order.push(`scheduler:${phase}:${gatewayId}`);
+      return { operationId: migrationId, phase, agentIds: ["octogee-alice-coach"], drained: true };
+    });
+    h.client.resume = vi.fn(async ({ gatewayId }) => { order.push(`resume:${gatewayId}`); });
+    h.deps.completeMigrationRecovery = vi.fn(async () => { order.push("complete"); });
+
+    expect(await createMigrateUserHandler(h.deps)(request, h.ctx)).toMatchObject({
+      success: false, rolledBack: true, error: "abandoned Shared migration rolled back; native source recovery completed",
+    });
+
+    expect(order.filter(step => step !== "authority")).toEqual(["scheduler:resume:shared-blue", "resume:shared-blue", "complete"]);
+    expect(order[0]).toBe("authority");
+    expect(order.lastIndexOf("authority")).toBeLessThan(order.indexOf("scheduler:resume:shared-blue"));
+    expect(h.deps.resolveGatewayUrl).not.toHaveBeenCalledWith(target, expect.anything());
+    expect(h.deps.resolveGatewayUrl).not.toHaveBeenCalledWith(target);
+    expect(h.client.abortImport).not.toHaveBeenCalled();
+    expect(h.client.unmount).not.toHaveBeenCalled();
+    expect(h.client.transferState).not.toHaveBeenCalled();
+    expect(h.deps.commitCutover).not.toHaveBeenCalled();
+  });
   it("does not release unrelated voice ingress when the abandoned attempt failed before quiescence", async () => {
     const h = recovery();
     const request = op();
