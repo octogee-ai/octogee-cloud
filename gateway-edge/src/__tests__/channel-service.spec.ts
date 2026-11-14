@@ -602,11 +602,23 @@ describe("createSessionChannel without a product presentation store", () => {
     expect(h.writes).toEqual([]);
   });
 
-  it("refuses the creator's repeat create because the creation name cannot be confirmed", async () => {
+  it("answers the creator's repeat create with the existing channel", async () => {
     await createSessionChannel(actor(), input);
     h.mmApi.mockClear();
 
-    await expect(createSessionChannel(actor(), { ...input, displayName: "OpenClaw Patch-Upgrade" })).resolves.toEqual({
+    await expect(createSessionChannel(actor(), input)).resolves.toEqual({
+      status: 200,
+      body: { success: true, channelId: "channel-1", name: "patchroll" },
+    });
+    expect(h.mmApi).not.toHaveBeenCalled();
+    expect(h.writes).toEqual([]);
+  });
+
+  it("refuses another member's create of a taken name", async () => {
+    await createSessionChannel(actor(), input);
+    h.mmApi.mockClear();
+
+    await expect(createSessionChannel(actor({ uid: "member-2" }), input)).resolves.toEqual({
       status: 409,
       body: {
         error: 'A channel already uses the name "patchroll". Choose a name that differs within its first 17 letters and numbers.',
