@@ -521,6 +521,7 @@ vi.mock("../middleware/auth", () => ({
 
 import express from "express";
 import adminRouter, { createAdminRoutes } from "../routes/admin.js";
+import { userAccountFromData, type UserAccountReader } from "@octogee/core/user-account";
 
 function eligibleUser(slug: string, openclaw: Record<string, unknown> = {}): Record<string, unknown> {
   return { username: slug, onboardingStep: "complete", provisioning: { status: "complete", openclaw: { slug, ...openclaw } } };
@@ -662,6 +663,20 @@ describe("GET /api/admin/users/:uid — what the product adds", () => {
     expect(res.status).toBe(200);
     expect(userDetail).toHaveBeenCalledExactlyOnceWith("uid-alice");
     expect(res.body.onboarding).toEqual({ step: "complete", complete: true, milestones: {} });
+  });
+
+  it("reads the user's account from the reader it is given", async () => {
+    const accounts: UserAccountReader = {
+      get: vi.fn(async (uid: string) => userAccountFromData(uid, { username: "alice", email: "alice@reader.test" })),
+      getMany: vi.fn(async () => new Map()),
+      list: vi.fn(async () => new Map()),
+    };
+
+    const res = await detailOf(createAdminRoutes({ accounts }));
+
+    expect(res.status).toBe(200);
+    expect(accounts.get).toHaveBeenCalledWith("uid-alice");
+    expect(res.body.summary).toMatchObject({ username: "alice", email: "alice@reader.test" });
   });
 
   it("reports no onboarding state without a product", async () => {
