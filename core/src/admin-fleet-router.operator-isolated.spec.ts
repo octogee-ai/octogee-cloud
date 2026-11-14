@@ -140,7 +140,7 @@ describe("giving a user an isolated gateway", () => {
     const { gatewayId, operationId } = res.body as { gatewayId: string; operationId: string };
     expect(res.body).toEqual({ uid: UID, gatewayId, operationId, sizingProfile: "hobby", fromGatewayId: SHARED, managedBy: "operator" });
     expect(h.records.get(`gateways/${gatewayId}`)).toMatchObject({
-      gatewayClass: "builder", imageProfile: "builder", sizingTier: "s", desiredStatus: "running", liveRelease: null,
+      gatewayClass: "builder", imageProfile: "builder", sizingTier: "s", sizingProfile: "hobby", desiredStatus: "running", liveRelease: null,
       ownerUid: UID, builderSlug: SLUG, createdBy: "operator",
       allocation: { kind: "disposable-builder", generation: 1, claimedByUid: UID, leaseId: expect.stringMatching(/^operator-[0-9a-f-]{36}$/u) },
     });
@@ -173,7 +173,7 @@ describe("giving a user an isolated gateway", () => {
     const res = await give(h, { sizingProfile: "pod" }).expect(202);
 
     expect(h.records.get(`gateways/${res.body.gatewayId}`)).toMatchObject({
-      gatewayClass: "builder", sizingTier: "s", ownerUid: UID, builderAccess: { controlIdentity: "per-user" },
+      gatewayClass: "builder", sizingTier: "s", sizingProfile: "pod", ownerUid: UID, builderAccess: { controlIdentity: "per-user" },
     });
     expect(h.records.get(`${GLM_OPERATIONS_COLLECTION}/${res.body.operationId}`)).toMatchObject({ kind: "migrate-user", status: "pending" });
   });

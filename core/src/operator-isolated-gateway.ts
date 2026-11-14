@@ -173,6 +173,7 @@ export function operatorIsolatedGatewayConfig(input: {
   gatewayId: string;
   uid: string;
   slug: string;
+  sizingKey: string;
   sizingTier: SizingTier;
   allocationId: string;
 }): GatewayMutableConfig {
@@ -182,6 +183,7 @@ export function operatorIsolatedGatewayConfig(input: {
     gatewayClass: "builder",
     imageProfile: "builder",
     sizingTier: input.sizingTier,
+    sizingProfile: input.sizingKey,
     gcpProject: null,
     gatewayContainerSecurityContext: null,
     serviceAccountName: isolatedGatewayServiceAccountName(input.gatewayId),

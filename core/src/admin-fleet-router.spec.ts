@@ -200,8 +200,8 @@ describe("projectGatewaySummary — pod replacement projection", () => {
 
   function summaryWith(podReplacements: unknown) {
     return projectGatewaySummary(
-      { id: "ceckert-test-xs", data: () => ({ gatewayId: "ceckert-test-xs" }) },
-      { gatewayId: "ceckert-test-xs", podReplacements },
+      { id: "ceckert-test-s", data: () => ({ gatewayId: "ceckert-test-s" }) },
+      { gatewayId: "ceckert-test-s", podReplacements },
       NOW,
     );
   }
@@ -405,7 +405,7 @@ describe("projectIsolatedRuntime — disposable lifecycle visibility", () => {
         cause: "run-start",
         requestedAt: now - 90_000,
         sourceGatewayId: "shared-blue",
-        sizingTier: "xs",
+        sizingTier: "s",
       }),
       new Map(),
       new Map(),
@@ -418,7 +418,7 @@ describe("projectIsolatedRuntime — disposable lifecycle visibility", () => {
       currentGatewayId: "shared-blue",
       sourceGatewayId: "shared-blue",
       targetGatewayId: null,
-      sizingTier: "xs",
+      sizingTier: "s",
     });
   });
 
@@ -457,7 +457,7 @@ describe("projectIsolatedRuntime — disposable lifecycle visibility", () => {
         activeAt: now - 19 * 60_000,
         sourceGatewayId: "shared-blue",
         targetGatewayId: "run-alice-12345678",
-        sizingTier: "xs",
+        sizingTier: "s",
       }),
       new Map(),
       new Map(),
@@ -486,7 +486,7 @@ describe("projectIsolatedRuntime — disposable lifecycle visibility", () => {
           returningAt: now - 30_000,
           sourceGatewayId: "shared-blue",
           targetGatewayId,
-          sizingTier: "xs",
+          sizingTier: "s",
         }),
         new Map([[targetGatewayId, {
           gatewayId: targetGatewayId,
@@ -521,7 +521,7 @@ describe("projectIsolatedRuntime — disposable lifecycle visibility", () => {
         failedAt: now - 10_000,
         sourceGatewayId: "shared-blue",
         targetGatewayId,
-        sizingTier: "xs",
+        sizingTier: "s",
         activationOperationId,
         lastError: {
           message: "restore target failed",
@@ -571,7 +571,7 @@ describe("projectIsolatedRuntime — disposable lifecycle visibility", () => {
   });
 
   it("omits a failed activation once its cleanup succeeded or its runtime record is gone", () => {
-    const targetGatewayId = "alice-xs-12345678";
+    const targetGatewayId = "alice-s-12345678";
     const cleanupOperationId = `placement-retire-uid-alice-${targetGatewayId}-g1`;
     const failedLease = {
       leaseId: "lease-1",
@@ -693,7 +693,7 @@ describe("projectDisposableFleetCapacity", () => {
         {
           gatewayId: "run-alice",
           gatewayClass: "builder",
-          sizingTier: "xs",
+          sizingTier: "s",
           ownerUid: "uid-alice",
           allocation: {
             kind: "disposable-builder",
@@ -710,7 +710,7 @@ describe("projectDisposableFleetCapacity", () => {
     expect(projectDisposableFleetCapacity(gateways)).toEqual({
       disposableInstances: 1,
       stagedInstances: 0,
-      byTier: { xs: 1 },
+      byTier: { s: 1 },
       parkedUsers: 0,
       byLifecycle: {
         requested: 0,
@@ -867,7 +867,7 @@ describe("fleet gateway projection", () => {
                 activeAt: Date.now() - 90_000,
                 sourceGatewayId: "shared-blue",
                 targetGatewayId,
-                sizingTier: "xs",
+                sizingTier: "s",
               },
             },
           },
@@ -880,7 +880,7 @@ describe("fleet gateway projection", () => {
           profile: "builder",
           gatewayClass: "builder",
           imageProfile: "builder",
-          sizingTier: "xs",
+          sizingTier: "s",
           ownerUid: "uid-alice",
           builderSlug: "alice",
           allocation: {
@@ -931,7 +931,7 @@ describe("fleet gateway projection", () => {
       operatorParkedUsers: 0,
       disposableInstances: 1,
       stagedInstances: 0,
-      byTier: { xs: 1 },
+      byTier: { s: 1 },
       parkedUsers: 1,
       byLifecycle: {
         requested: 0,
@@ -970,7 +970,7 @@ describe("fleet gateway projection", () => {
                 failedAt: Date.now() - 30_000,
                 sourceGatewayId: "shared-blue",
                 targetGatewayId,
-                sizingTier: "xs",
+                sizingTier: "s",
                 activationOperationId,
                 lastError: { message: "restore failed" },
               },
@@ -985,7 +985,7 @@ describe("fleet gateway projection", () => {
           profile: "builder",
           gatewayClass: "builder",
           imageProfile: "builder",
-          sizingTier: "xs",
+          sizingTier: "s",
           ownerUid: "uid-alice",
           builderSlug: "alice",
           allocation: {
@@ -1059,7 +1059,7 @@ describe("fleet gateway projection", () => {
                 failedAt: Date.now() - 30_000,
                 sourceGatewayId: "shared-blue",
                 targetGatewayId,
-                sizingTier: "xs",
+                sizingTier: "s",
                 activationOperationId,
               },
             },
@@ -1073,7 +1073,7 @@ describe("fleet gateway projection", () => {
           profile: "builder",
           gatewayClass: "builder",
           imageProfile: "builder",
-          sizingTier: "xs",
+          sizingTier: "s",
           ownerUid: "uid-alice",
           builderSlug: "alice",
           allocation: {
@@ -1150,7 +1150,7 @@ describe("fleet gateway projection", () => {
                 failedAt: Date.now() - 30_000,
                 sourceGatewayId: "shared-blue",
                 targetGatewayId,
-                sizingTier: "xs",
+                sizingTier: "s",
               },
             },
           },
@@ -1163,7 +1163,7 @@ describe("fleet gateway projection", () => {
           profile: "builder",
           gatewayClass: "builder",
           imageProfile: "builder",
-          sizingTier: "xs",
+          sizingTier: "s",
           ownerUid: "uid-alice",
           builderSlug: "alice",
           allocation: {
@@ -1236,7 +1236,7 @@ describe("fleet gateway projection", () => {
           profile: "builder",
           gatewayClass: "builder",
           imageProfile: "builder",
-          sizingTier: "xs",
+          sizingTier: "s",
           ownerUid: "uid-alice",
           builderSlug: "alice",
           allocation: {
@@ -1307,19 +1307,19 @@ describe("fleet gateway projection", () => {
                 status: "failed",
                 requestedAt: now - 60_000,
                 failedAt: now - 30_000,
-                targetGatewayId: "fail-xs-deadbeef",
+                targetGatewayId: "fail-s-deadbeef",
               },
             },
           },
         },
       },
       gateways: {
-        "fail-xs-deadbeef": durableGatewayRoot("fail-xs-deadbeef", {
+        "fail-s-deadbeef": durableGatewayRoot("fail-s-deadbeef", {
           desiredStatus: "retired",
           profile: "builder",
           gatewayClass: "builder",
           imageProfile: "builder",
-          sizingTier: "xs",
+          sizingTier: "s",
           ownerUid: "failed",
           builderSlug: "failed",
           allocation: {
@@ -1329,14 +1329,14 @@ describe("fleet gateway projection", () => {
             generation: 1,
             claimedByUid: "failed",
           },
-          retirementClaim: { operationId: "placement-retire-failed-fail-xs-deadbeef" },
+          retirementClaim: { operationId: "placement-retire-failed-fail-s-deadbeef" },
         }),
       },
       operations: {
-        "placement-retire-failed-fail-xs-deadbeef": {
+        "placement-retire-failed-fail-s-deadbeef": {
           kind: "retire-gateway",
           status: "running",
-          input: { gatewayId: "fail-xs-deadbeef" },
+          input: { gatewayId: "fail-s-deadbeef" },
         },
       },
     });
@@ -1485,12 +1485,12 @@ describe("fleet gateway projection", () => {
       users: {},
       gateways: {
         default: durableGatewayRoot("default", { liveRelease: 1 }),
-        "alice-xs-deadbeef": durableGatewayRoot("alice-xs-deadbeef", {
+        "alice-s-deadbeef": durableGatewayRoot("alice-s-deadbeef", {
           desiredStatus: "retired",
           profile: "builder",
           gatewayClass: "builder",
           imageProfile: "builder",
-          sizingTier: "xs",
+          sizingTier: "s",
           ownerUid: "uid-alice",
           builderSlug: "alice",
           allocation: {

@@ -7,6 +7,7 @@ export interface GatewayMutableConfig {
     gatewayClass: GatewayClass;
     imageProfile: GatewayImageProfile;
     sizingTier: SizingTier | null;
+    sizingProfile?: string | null;
     gcpProject: string | null;
     gatewayContainerSecurityContext: Record<string, unknown> | null;
     serviceAccountName: string | null;

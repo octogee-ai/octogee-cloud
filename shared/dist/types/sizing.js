@@ -1,4 +1,4 @@
-export const SIZING_TIERS = ['xs', 's', 'm', 'l'];
+export const SIZING_TIERS = ['s', 'm', 'l'];
 // Runtime guard for tiers sourced from outside the type system (Firestore
 // desired state, persisted helm values). A stale pre-rename tier must read as
 // "not a tier" so callers fall back to the profile default rather than
@@ -8,23 +8,14 @@ export function isSizingTier(value) {
     return typeof value === 'string' && SIZING_TIERS.includes(value);
 }
 export const TIER_PRESETS = {
-    xs: {
-        description: 'One-user floor — Spot/emptyDir active session',
-        resources: {
-            requests: { cpu: '500m', memory: '2Gi', 'ephemeral-storage': '4Gi' },
-            limits: { cpu: '1000m', memory: '2Gi', 'ephemeral-storage': '4Gi' },
-        },
-        nodejs: { uvThreadpoolSize: '4', maxOldSpaceSizeMb: '1536' },
-        capacity: { targetActiveUsers: 1, typicalUsers: 1 },
-    },
     s: {
-        description: 'One active user with browser and desktop headroom',
+        description: 'One active user',
         resources: {
-            requests: { cpu: '2000m', memory: '8Gi', 'ephemeral-storage': '4Gi' },
-            limits: { cpu: '2000m', memory: '8Gi', 'ephemeral-storage': '4Gi' },
+            requests: { cpu: '1000m', memory: '4Gi', 'ephemeral-storage': '4Gi' },
+            limits: { cpu: '1000m', memory: '4Gi', 'ephemeral-storage': '4Gi' },
         },
         nodejs: { uvThreadpoolSize: '4', maxOldSpaceSizeMb: '3072' },
-        capacity: { targetActiveUsers: 1, typicalUsers: 2 },
+        capacity: { targetActiveUsers: 1, typicalUsers: 1 },
     },
     m: {
         description: 'Shared default — light shared use',

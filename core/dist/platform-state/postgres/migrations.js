@@ -1133,6 +1133,21 @@ CREATE TABLE model_broker_rate_windows (
   request_count  integer NOT NULL CHECK (request_count > 0)
 );
 `;
+const GATEWAY_SIZING_PROFILE = String.raw `
+ALTER TABLE gateways ADD COLUMN sizing_profile text CHECK (sizing_profile <> '');
+UPDATE gateways SET sizing_tier = 's' WHERE sizing_tier = 'xs';
+UPDATE orchestrator_config
+SET sizing_profiles = (
+  SELECT jsonb_object_agg(
+    name,
+    CASE WHEN profile->>'sizingTier' = 'xs' THEN jsonb_set(profile, '{sizingTier}', '"s"'::jsonb) ELSE profile END
+  )
+  FROM jsonb_each(sizing_profiles) AS entry(name, profile)
+)
+WHERE EXISTS (
+  SELECT 1 FROM jsonb_each(sizing_profiles) AS entry(name, profile) WHERE profile->>'sizingTier' = 'xs'
+);
+`;
 export const PLATFORM_STATE_MIGRATIONS = [
     { version: 1, name: "core-schema", sql: CORE_SCHEMA },
     { version: 2, name: "change-feed", sql: CHANGE_FEED },
@@ -1149,4 +1164,5 @@ export const PLATFORM_STATE_MIGRATIONS = [
     { version: 13, name: "activity-receipts", sql: ACTIVITY_RECEIPTS },
     { version: 14, name: "user-accounts", sql: USER_ACCOUNTS },
     { version: 15, name: "model-broker-usage", sql: MODEL_BROKER_USAGE },
+    { version: 16, name: "gateway-sizing-profile", sql: GATEWAY_SIZING_PROFILE },
 ];

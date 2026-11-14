@@ -86,12 +86,12 @@ function tierConflict(profiles: Profiles, name: string, profile: GatewaySizingPr
   const { sizingTier, computer } = profile;
   const rivals = Object.entries(profiles)
     .filter(([key, other]) => key !== name && other.isolation === "isolated" && other.sizingTier === sizingTier &&
-      !isDeepStrictEqual(other.computer, computer))
+      other.computer.runtime === computer.runtime && !isDeepStrictEqual(other.computer, computer))
     .map(([key]) => key)
     .sort();
   if (rivals.length === 0) return null;
   return refusal(409, "sizing-tier-conflict",
-    `isolated sizing profiles at tier ${sizingTier} must have the same computer settings, and ${rivals.join(", ")} has different ones`,
+    `isolated sizing profiles at tier ${sizingTier} on the ${computer.runtime} runtime must have the same computer settings, and ${rivals.join(", ")} has different ones`,
     { sizingTier, sizingProfiles: rivals });
 }
 

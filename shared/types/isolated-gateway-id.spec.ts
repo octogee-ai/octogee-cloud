@@ -27,9 +27,9 @@ describe("isolatedGatewayIdForSlug", () => {
 
 describe("isolatedGatewayId", () => {
   it("binds the identity to one activation generation", () => {
-    const first = isolatedGatewayId("jack", 1, "lease-one", "xs");
-    const retry = isolatedGatewayId("jack", 1, "lease-one", "xs");
-    const next = isolatedGatewayId("jack", 2, "lease-two", "xs");
+    const first = isolatedGatewayId("jack", 1, "lease-one", "s");
+    const retry = isolatedGatewayId("jack", 1, "lease-one", "s");
+    const next = isolatedGatewayId("jack", 2, "lease-two", "s");
 
     expect(first).toBe(retry);
     expect(next).not.toBe(first);
@@ -38,8 +38,8 @@ describe("isolatedGatewayId", () => {
   });
 
   it("names the runtime by shortened slug and instance size for pod listings", () => {
-    expect(isolatedGatewayId("jack", 1, "lease-one", "xs")).toMatch(
-      /^jack-xs-[0-9a-f]{8}$/u,
+    expect(isolatedGatewayId("jack", 1, "lease-one", "s")).toMatch(
+      /^jack-s-[0-9a-f]{8}$/u,
     );
     expect(isolatedGatewayId("jack", 1, "lease-one", "m")).toMatch(
       /^jack-m-[0-9a-f]{8}$/u,
@@ -58,9 +58,9 @@ describe("isolatedGatewayId", () => {
       "builder-with-green",
       "builder-with-blue",
     ]) {
-      const gatewayId = isolatedGatewayId(slug, 999_999, "lease-collision-seed", "xs");
+      const gatewayId = isolatedGatewayId(slug, 999_999, "lease-collision-seed", "s");
       expect(gatewayId.length).toBeLessThanOrEqual(32);
-      expect(gatewayId).toContain("-xs-");
+      expect(gatewayId).toContain("-s-");
       expect(isValidNewGatewayId(gatewayId)).toBe(true);
     }
   });

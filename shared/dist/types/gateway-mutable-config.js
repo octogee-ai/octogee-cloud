@@ -153,6 +153,7 @@ export function isGatewayMutableConfig(value) {
         isGatewayClass(value.gatewayClass) &&
         isGatewayProfile(value.imageProfile) &&
         isNullableSizingTier(value.sizingTier) &&
+        (value.sizingProfile === undefined || isNullableString(value.sizingProfile)) &&
         isNullableString(value.gcpProject) &&
         isNullableRecord(value.gatewayContainerSecurityContext) &&
         isNullableServiceAccountName(value.serviceAccountName) &&

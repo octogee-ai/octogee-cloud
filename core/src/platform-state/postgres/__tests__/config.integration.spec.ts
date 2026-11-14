@@ -27,7 +27,7 @@ const HOBBY: GatewaySizingProfile = {
 };
 const POD: GatewaySizingProfile = {
   isolation: "isolated",
-  sizingTier: "xs",
+  sizingTier: "s",
   fallbackStorageGb: null,
   computer: { runtime: "cluster", homeSizeGiB: 10 },
 };

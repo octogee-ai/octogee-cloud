@@ -60,6 +60,7 @@ export const GATEWAYS_TABLE: TableSpec = {
     column("gatewayClass", "text"),
     column("imageProfile", "text"),
     column("sizingTier", "text", { nullAs: "null" }),
+    column("sizingProfile", "text"),
     column("gcpProject", "text", { nullAs: "null" }),
     column("gatewayContainerSecurityContext", "jsonb", { nullAs: "null" }),
     column("serviceAccountName", "text", { nullAs: "null" }),

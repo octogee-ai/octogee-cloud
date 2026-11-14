@@ -60,7 +60,7 @@
     },
     "sizingTier": {
       "type": "string",
-      "enum": ["", "xs", "s", "m", "l"],
+      "enum": ["", "s", "m", "l"],
       "description": "Per-pod sizing tier. Empty = fall back to classDefaults[gatewayClass], then profileDefaults[imageProfile]."
     },
     "classDefaults": {
@@ -68,8 +68,8 @@
       "description": "Gateway class → default tier mapping. Used when sizingTier is unset.",
       "required": ["shared", "builder"],
       "properties": {
-        "shared": { "type": "string", "enum": ["xs", "s", "m", "l"] },
-        "builder": { "type": "string", "enum": ["xs", "s", "m", "l"] }
+        "shared": { "type": "string", "enum": ["s", "m", "l"] },
+        "builder": { "type": "string", "enum": ["s", "m", "l"] }
       },
       "additionalProperties": { "type": "string" }
     },
@@ -78,15 +78,15 @@
       "description": "Legacy image-profile → default tier mapping. Used when sizingTier is unset and classDefaults is absent. `standard` is required — the effectiveTier helper falls back to it as the last-resort default.",
       "required": ["standard"],
       "properties": {
-        "standard": { "type": "string", "enum": ["xs", "s", "m", "l"] },
-        "builder": { "type": "string", "enum": ["xs", "s", "m", "l"] }
+        "standard": { "type": "string", "enum": ["s", "m", "l"] },
+        "builder": { "type": "string", "enum": ["s", "m", "l"] }
       },
       "additionalProperties": { "type": "string" }
     },
     "tiers": {
       "type": "object",
       "description": "Tier preset matrix — resources + Node runtime tuning per tier. Mirrored in shared/types/sizing.ts. All tier keys are required so a typo or trim doesn't leave effectiveTier pointing at a missing preset.",
-      "required": ["xs", "s", "m", "l"],
+      "required": ["s", "m", "l"],
       "additionalProperties": {
         "type": "object",
         "required": ["resources", "nodejs"],
