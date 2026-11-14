@@ -365,6 +365,10 @@
       "types": "./dist/provisionSteps.d.ts",
       "default": "./dist/provisionSteps.js"
     },
+    "./provisioner-platform-state": {
+      "types": "./dist/provisioner-platform-state.d.ts",
+      "default": "./dist/provisioner-platform-state.js"
+    },
     "./crew": {
       "types": "./dist/crew.d.ts",
       "default": "./dist/crew.js"
@@ -754,6 +758,9 @@
       ],
       "provisionSteps": [
         "dist/provisionSteps.d.ts"
+      ],
+      "provisioner-platform-state": [
+        "dist/provisioner-platform-state.d.ts"
       ],
       "crew": [
         "dist/crew.d.ts"
