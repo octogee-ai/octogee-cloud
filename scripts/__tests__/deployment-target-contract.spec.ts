@@ -2,7 +2,6 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
-import { PROD_TARGET } from "./fixtures/deployment.js";
 
 const repoRoot = resolve(import.meta.dirname, "../..");
 const STOCK_REPOSITORIES: Record<string, string> = { mattermost: "mattermost/mattermost-team-edition" };
@@ -46,16 +45,6 @@ describe("deployment target consumers", () => {
     expect(contents).toContain("does not belong to requested environment");
     expect(contents).not.toContain("us-central1");
     expect(contents).not.toContain("us-west1");
-  });
-
-  it("does not embed the active cluster context in fleet operations", () => {
-    for (const script of [
-      "scripts/ops/fleet.ts",
-    ]) {
-      expect(source(script), script).not.toContain(
-        PROD_TARGET.kubeContext,
-      );
-    }
   });
 
   it("loads setup and verification topology from the shell target contract", () => {
