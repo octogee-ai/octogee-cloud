@@ -6,7 +6,9 @@ import { readWorkspaceMigrationMarker } from "@octogee/shared/types/workspace-mi
 import { userMigrationV2GatewayRootFenceEqual, userMigrationV2GatewayRootFenceMatches, } from "./user-migration-v2.js";
 import { builderActivateOperationId, withCurrentSizingKey, } from "./user-activation-lease.js";
 import { gatewayAuthorizationFromRootDocument } from "./gateway-live-release.js";
+import { gatewayRetiredInStore } from "./gateway-retirement-claim.js";
 import { MalformedRecordError } from "./platform-state/index.js";
+const USER_ACTIVATION_LEASE_SOURCE = "builder-activation-lease";
 const MIGRATE_USER_OPERATION_KIND = "migrate-user";
 const CLEAR = { clear: true };
 function nowMs(deps) {
@@ -173,7 +175,7 @@ export function userActivationRecoveryTargetMatches(params) {
         params.operationId === (generationValid && typeof input.toGatewayId === "string" && input.toGatewayId !== ""
             ? builderActivateOperationId(input.toGatewayId, lease.generation)
             : null),
-        input.source === "builder-activation-lease",
+        input.source === USER_ACTIVATION_LEASE_SOURCE,
         root.gatewayClass === "builder", root.gatewayId === input.toGatewayId, root.ownerUid === input.uid,
         allocation.kind === "disposable-builder", allocation.claimedByUid === input.uid,
         typeof lease.leaseId === "string", lease.leaseId !== "", allocation.leaseId === lease.leaseId,
@@ -187,7 +189,7 @@ export async function completeWorkspaceMigrationRecovery(deps, params) {
     await workspaceMigrationRecovery(deps, params, true);
 }
 export function sharedRecoveryTargetCleaned(input, schedulerHandoff) {
-    if (input.recoverSourceOnly !== true || input.source === "builder-activation-lease")
+    if (input.recoverSourceOnly !== true || input.source === USER_ACTIVATION_LEASE_SOURCE)
         return false;
     const steps = recordOrEmpty(recordOrEmpty(schedulerHandoff).sourceRecovery).steps;
     if (!Array.isArray(steps))
@@ -197,13 +199,18 @@ export function sharedRecoveryTargetCleaned(input, schedulerHandoff) {
         return step.name === "rollback:unmount-target" && step.status === "done";
     });
 }
+export function retiredTargetSourceRecovery(input, schedulerHandoff) {
+    const retiredTarget = recordOrEmpty(recordOrEmpty(recordOrEmpty(schedulerHandoff).sourceRecovery).retiredTarget);
+    return input.recoverSourceOnly === true && input.source !== USER_ACTIVATION_LEASE_SOURCE &&
+        typeof input.toGatewayId === "string" && retiredTarget.gatewayId === input.toGatewayId;
+}
 export function isolatedTargetBelongsToUser(targetRoot, input) {
     const root = projectGatewayDesiredRootForGateway(targetRoot, String(input.toGatewayId));
     return root?.gatewayClass === "builder" && typeof input.uid === "string" && root.ownerUid === input.uid &&
         root.allocation?.kind === "disposable-builder" && root.allocation.claimedByUid === input.uid;
 }
 function assertRecoveryTarget(params) {
-    const matches = params.input.source === "builder-activation-lease"
+    const matches = params.input.source === USER_ACTIVATION_LEASE_SOURCE
         ? userActivationRecoveryTargetMatches(params)
         : sharedRecoveryTargetCleaned(params.input, params.schedulerHandoff) ||
             projectGatewayDesiredRootForGateway(params.targetRoot, String(params.input.toGatewayId))?.gatewayClass === "shared" ||
@@ -244,10 +251,16 @@ async function workspaceMigrationRecovery(deps, params, complete) {
         ]);
         if (target !== null)
             throw new Error("workspace migration recovery target assignment remains");
-        assertRecoveryTarget({
-            operationId: params.operationId, input, openclaw: activationLeaseView(user), sourceEpoch: params.sourceEpoch,
-            targetRoot: withoutRevision(targetRoot), schedulerHandoff: handoff,
-        });
+        if (retiredTargetSourceRecovery(input, handoff)) {
+            if (!await gatewayRetiredInStore(tx, String(input.toGatewayId)))
+                throw new Error("workspace migration recovery target authority changed");
+        }
+        else {
+            assertRecoveryTarget({
+                operationId: params.operationId, input, openclaw: activationLeaseView(user), sourceEpoch: params.sourceEpoch,
+                targetRoot: withoutRevision(targetRoot), schedulerHandoff: handoff,
+            });
+        }
         if (!complete)
             return;
         await tx.gateways.assignments.patch(params.sourceGatewayId, params.uid, { state: "serving", updatedByOperationId: params.operationId, updatedAt: completedAt }, { epoch: params.sourceEpoch });
@@ -743,7 +756,7 @@ async function assertUserMigrationV2FenceCurrent(input) {
 function assertUserActivationCutoverAuthorized(input) {
     const operationInput = recordOrEmpty(input.operation?.input);
     const allocation = recordOrEmpty(input.targetRoot?.allocation);
-    if (operationInput.source !== "builder-activation-lease" ||
+    if (operationInput.source !== USER_ACTIVATION_LEASE_SOURCE ||
         allocation.kind !== "disposable-builder")
         return;
     const lease = recordOrEmpty(input.user?.activationLease);

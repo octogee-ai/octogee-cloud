@@ -457,6 +457,9 @@ export interface SchedulerHandoffState {
         sourceEpoch: number;
         steps: OperationStep[];
         targetRollback?: UserActivationTargetRollbackProof;
+        retiredTarget?: {
+            gatewayId: string;
+        };
     };
 }
 export interface SourceTransferAuthority {
