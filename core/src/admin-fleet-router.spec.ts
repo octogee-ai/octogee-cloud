@@ -1887,6 +1887,49 @@ describe("default placement", () => {
     });
   });
 
+  function quiescedAfterFailedMove(status: "failed" | "running") {
+    return mkAdminFleetRouteApp({
+      config: { defaultGatewayId: "shared-a", sharedGatewayIds: ["shared-a"] },
+      users: {
+        "uid-kai": {
+          username: "kai",
+          provisioning: { openclaw: { slug: "kai", gatewayId: "shared-a" } },
+        },
+      },
+      gateways: { "shared-a": durableGatewayRoot("shared-a", { liveRelease: 1 }) },
+      glmGateways: { "shared-a": runtimeDoc("shared-a", { status: "ready", mountedCustomers: ["kai"] }) },
+      assignments: {
+        "shared-a": {
+          "uid-kai": { uid: "uid-kai", slug: "kai", gatewayId: "shared-a", source: "onboarding", state: "quiescing", epoch: 3 },
+        },
+      },
+      operations: {
+        "op-move": { kind: "migrate-user", status, createdAt: 1_000, input: { uid: "uid-kai", fromGatewayId: "shared-a", toGatewayId: "kai-s-1" } },
+      },
+    });
+  }
+
+  it("reports a user whose assignment still quiesces after their move ended as not serving, not healthy", async () => {
+    const { app } = quiescedAfterFailedMove("failed");
+
+    const res = await request(app).get("/placement").expect(200);
+
+    expect(res.body.users[0]).toMatchObject({ driftState: "not-serving", rosterState: "quiescing" });
+    expect(res.body.users[0].warnings).toEqual([expect.objectContaining({
+      code: "not-serving", severity: "error", gatewayId: "shared-a",
+      message: "kai is quiescing on shared-a with no move in flight, so its agent does not answer",
+    })]);
+    expect(res.body.driftSummary).toMatchObject({ healthy: 0, "not-serving": 1 });
+  });
+
+  it("reports a user who quiesces under a running move as in flight", async () => {
+    const { app } = quiescedAfterFailedMove("running");
+
+    const res = await request(app).get("/placement").expect(200);
+
+    expect(res.body.users[0]).toMatchObject({ driftState: "in-flight", rosterState: "quiescing" });
+  });
+
   it("projects draining gateway counts and rosters from durable assignments", async () => {
     const { app } = mkAdminFleetRouteApp({
       config: {

@@ -14,8 +14,6 @@ const POLICY_AND_CREDENTIAL_SOURCES = [
   "octogee-api/src/routes/byok-broker.ts",
   "scripts/entrypoints/byosub-syncback-runner.ts",
   "scripts/entrypoints/pre-boot-config.ts",
-  "scripts/ops/capture-byosub-credential.ts",
-  "scripts/ops/assign-user-gateway.ts",
 ] as const;
 
 describe("durable gateway authority boundary", () => {

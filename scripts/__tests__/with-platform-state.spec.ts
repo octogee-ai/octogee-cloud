@@ -41,14 +41,14 @@ describe("withPlatformState", () => {
 
     const code = await withPlatformState({
       environment: "test",
-      command: ["tsx", "ops/set-admin-role.ts"],
+      command: ["tsx", "ops/sweep-orphaned-vms.ts"],
       deps,
       run,
       baseEnv: { PATH: "/usr/bin" },
     });
 
     expect(code).toBe(0);
-    expect(run).toHaveBeenCalledWith(["tsx", "ops/set-admin-role.ts"], expect.objectContaining({
+    expect(run).toHaveBeenCalledWith(["tsx", "ops/sweep-orphaned-vms.ts"], expect.objectContaining({
       PATH: "/usr/bin",
       PLATFORM_DB_HOST: "127.0.0.1",
       PLATFORM_DB_PORT: "61234",

@@ -1,6 +1,6 @@
 import { accountAllowsInteractiveAccess } from "@octogee/shared/types/account-lifecycle";
 import { readGatewayAuthorizationInStore } from "@octogee/core/gateway-live-release";
-import type { SizingKeyReader } from "@octogee/core/user-activation-lease";
+import type { SizingKeyReader } from "@octogee/core/sizing-key";
 import type { PlatformUserRecord, PlatformStateStore } from "@octogee/core/platform-state";
 import {
   perUserOwnerUid,

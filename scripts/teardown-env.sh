@@ -40,6 +40,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
 # shellcheck source=scripts/lib/deployment-target.sh
 source "$SCRIPT_DIR/lib/deployment-target.sh"
+# shellcheck source=scripts/lib/env-extensions.sh
+source "$SCRIPT_DIR/lib/env-extensions.sh"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -226,11 +228,9 @@ CURRENT_CTX=$(kubectl config current-context)
 [[ "$CURRENT_CTX" == "$K8S_CONTEXT" ]] || { echo -e "  ${RED}❌ Wrong context: $CURRENT_CTX${NC}"; exit 1; }
 ok "kubectl context: $CURRENT_CTX"
 
+load_env_extensions "$SCRIPT_DIR"
 if $FULL; then
-  run_auth_cleanup() {
-    (cd "$SCRIPT_DIR" && npx -y tsx ops/delete-firebase-auth-users.ts "$@" --project="$FIREBASE_PROJECT")
-  }
-  run_auth_cleanup --verify || die "Firebase Auth cleanup preflight failed for $FIREBASE_PROJECT"
+  run_env_hooks ${ENV_TEARDOWN_FULL_PREFLIGHT[@]+"${ENV_TEARDOWN_FULL_PREFLIGHT[@]}"}
   FIREBASE_STORAGE_BUCKET="gs://${FIREBASE_PROJECT}.firebasestorage.app"
   gcloud storage buckets describe "$FIREBASE_STORAGE_BUCKET" --project="$TARGET_STORAGE_PROJECT" >/dev/null \
     || die "Firebase Storage preflight failed for $FIREBASE_STORAGE_BUCKET; nothing has been torn down"
@@ -1256,15 +1256,9 @@ if $FULL; then
   fi
 fi
 
-# ── 9. Full: Firebase Auth ────────────────────────────────────────────────
+# ── 9. Full: extension cleanup ────────────────────────────────────────────
 if $FULL; then
-  echo ""
-  if confirm "Delete all Firebase Auth users in '$FIREBASE_PROJECT'?"; then
-    run_auth_cleanup
-    ok "Auth users deleted"
-  else
-    die "Full teardown cancelled; Firebase Auth users remain in $FIREBASE_PROJECT"
-  fi
+  run_env_hooks ${ENV_TEARDOWN_FULL_STEPS[@]+"${ENV_TEARDOWN_FULL_STEPS[@]}"}
 fi
 
 # ── Done ──────────────────────────────────────────────────────────────────
@@ -1276,9 +1270,6 @@ echo ""
 YES_FLAG=""
 [[ "$ENV" == "test" ]] && YES_FLAG=" --yes"
 
-# shellcheck source=scripts/lib/env-extensions.sh
-source "$SCRIPT_DIR/lib/env-extensions.sh"
-load_env_extensions "$SCRIPT_DIR"
 echo ""
 echo "  ╔═══════════════════════════════════════════════════════════════╗"
 echo "  ║           CANONICAL INSTALL SEQUENCE (run in order)           ║"
