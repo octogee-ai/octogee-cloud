@@ -27,7 +27,9 @@ It does not install the fleet controller, the platform API or the LLM broker.
 The full platform, with the fleet controller, users and shared gateways, runs
 from the images this repository publishes on a local kind cluster, see
 [The full platform on kind](docs/kind.md), or on GKE with Cloud SQL and Cloud
-Storage, see [The full platform on GKE](docs/gke.md). On GKE, one install
+Storage, see [The full platform on GKE](docs/gke.md). An EKS install with RDS
+and S3, [The full platform on EKS](docs/eks.md), follows the GKE one but has not
+run on a real AWS account yet. On GKE, one install
 added a shared gateway and a user, answered in Mattermost, moved the user to an
 isolated gateway and back, and retired the isolated gateway. That install is a
 single zone with no ingress; there is no production install guide yet. Users on a shared

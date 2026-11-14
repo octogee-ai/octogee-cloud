@@ -1,0 +1,267 @@
+# The full platform on EKS
+
+This guide installs the whole platform in one AWS account and region, from an
+empty account to an agent that replies in Mattermost. It uses only what this
+repository publishes: the images Build main pushes to GitHub's container
+registry, the Helm chart in `helm/octogee`, and the
+[octogee-fleet](https://github.com/octogee-ai/octogee-fleet) command line. One
+script, `scripts/ops/eks-install.sh`, creates the cloud resources and installs
+the chart. It follows [The full platform on GKE](gke.md) step for step.
+
+**This install has not run on a real AWS account.** Its tests run `up` and
+`down` against stubbed `aws`, `eksctl`, `kubectl` and `helm`, and its flags were
+checked against each tool's documentation. The GKE install it follows has run
+end to end. A first real run still has to show that:
+
+- the gateway nodes install gVisor at boot and containerd runs pods under it.
+  `up` checks this before it creates the database: it starts a pod of runtime
+  class `gvisor` and stops if the pod does not report the gVisor kernel;
+- eksctl accepts the gateway node group with the script's own launch template;
+- the VPC CNI enforces the chart's network policies.
+
+Expect rough edges, and please report them.
+
+The account runs:
+
+- an EKS cluster with private nodes in a new VPC, with one NAT gateway, network
+  policies enforced by the VPC CNI, and the EBS CSI driver;
+- a second managed node group, `gateways`, that runs gateways under gVisor.
+  Its nodes are tainted so that only gateways land on them, and their pods
+  cannot reach the instance metadata service;
+- RDS for PostgreSQL 16 on private subnets, encrypted, that takes connections
+  from the cluster only, for platform state, Mattermost, Gitea and the agent
+  stores;
+- two S3 buckets as the blob store, and an IAM user whose access key the
+  platform signs with;
+- in the cluster: Mattermost, Gitea, the fleet controller with its Admin API,
+  the gateway edge, the platform API, the LLM broker, and the gateways you add.
+
+The cluster's API endpoint is public and checks your AWS credentials, as eksctl
+sets it up by default; nothing else is exposed to the internet. You reach
+Mattermost, Gitea and the Admin API through `kubectl port-forward`, as on kind.
+
+RDS for PostgreSQL 16 takes encrypted connections only (`rds.force_ssl` is on by
+default), but, as on GKE, no client verifies the server's certificate.
+
+EKS has no managed gVisor, so the script makes its own node group for it. A
+launch template gives the gateway nodes a boot script that downloads `runsc`
+and its containerd shim from gVisor's release bucket, checks their SHA-512
+sums, and adds a `runsc` runtime to containerd's configuration before
+containerd starts. The `gvisor` runtime class schedules pods onto those nodes.
+
+The platform's S3 client signs with a static access key, so the blob store uses
+an IAM user, `octogee-blob-store`, whose policy allows the objects of the two
+buckets and reading their settings, and nothing else. Its key lives in the
+state directory and in a Secret in the cluster.
+
+## What you need
+
+- An AWS account you can create a VPC, an EKS cluster, an RDS instance, S3
+  buckets, IAM users and roles, and EC2 launch templates in. An account of its
+  own for the platform makes it easy to see and remove what it costs.
+- The AWS CLI v2, eksctl, kubectl, Helm (tested with Helm 4.3), Docker (only
+  `docker buildx imagetools`, to read image digests), Node.js 24, openssl,
+  ssh-keygen and git.
+- Go, to install `octogee-fleet`.
+- A model provider key. OpenRouter is recommended;
+  [Model provider keys](kind.md#model-provider-keys) says where to get each one
+  and which models it gives agents.
+
+These are billable resources that run until you remove them. With the defaults
+below, the cluster runs four `m6i.xlarge` nodes: two for the platform and two
+for gateways. Add the `db.t4g.medium` database, the NAT gateway and the
+cluster's hourly fee, and check current list prices before you start.
+
+## Install
+
+Sign in, then clone the repository and work from its root:
+
+```bash
+aws sso login
+```
+
+```bash
+git clone https://github.com/octogee-ai/octogee-cloud.git && cd octogee-cloud
+```
+
+Name your region and export your model provider key. `read -s` keeps the key
+out of your shell history:
+
+```bash
+export AWS_REGION=us-west-2
+```
+
+```bash
+read -rs OPENROUTER_API_KEY && export OPENROUTER_API_KEY
+```
+
+The script stores every provider key exported in its environment:
+`OPENROUTER_API_KEY`, `OPENAI_API_KEY` and `ANTHROPIC_API_KEY`. Unset any you
+do not mean to give the cluster before you run it.
+
+Pick the images. Build main publishes them about 15 minutes after a commit
+reaches `main`, and a newer push can cancel a run, so name the newest `main`
+commit whose Build main succeeded. The chart and the install steps come from
+your checkout, so check that commit out too:
+
+```bash
+SHA=$(gh run list -R octogee-ai/octogee-cloud --workflow=build-main.yml --branch=main \
+  --status=success --limit=1 --json headSha --jq '.[0].headSha')
+git checkout "$SHA"
+```
+
+Then run the script:
+
+```bash
+scripts/ops/eks-install.sh up --sha="$SHA"
+```
+
+A first run should take 35 to 45 minutes, most of it the cluster and the
+database. The script:
+
+1. checks for a model provider key, exported or stored in the cluster;
+2. creates the launch template `octogee-gateways` for the gateway nodes, with
+   the gVisor boot script, an encrypted 100 GB root volume, and instance
+   metadata limited to the node itself;
+3. creates the cluster `octogee` with eksctl, with the node groups `system`
+   and `gateways`, the VPC CNI's network policy agent and the EBS CSI driver,
+   then the default `gp3` storage class and the `gvisor` runtime class;
+4. checks that a pod of runtime class `gvisor` runs under gVisor;
+5. creates the security group `octogee-database`, open on port 5432 to the
+   cluster only, and the RDS instance `octogee` on the VPC's private subnets,
+   with daily backups kept for 7 days;
+6. creates the buckets `octogee-<account>-<region>-assets` and
+   `octogee-<account>-<region>-workspaces` with public access blocked, the IAM
+   user `octogee-blob-store`, and an access key for it;
+7. reads the `linux/amd64` digest of each image published for the commit,
+   from `ghcr.io/octogee-ai/octogee-cloud`;
+8. generates every secret, as on kind, and stores each provider key you
+   exported in a Secret of its own;
+9. creates the databases and their accounts;
+10. installs the Helm chart with `scripts/ops/eks/values.yaml` and the
+    account's own addresses;
+11. points agents at models of a provider whose key it stores;
+12. creates the Mattermost and Gitea admins, their tokens, the `octogee` team
+    and the `octogee` organization;
+13. restarts the platform so it reads those tokens and keys.
+
+Run it again at any time; each step checks what exists. The script keeps its
+state in `~/.local/state/octogee-eks/<account>-<region>`: the kubeconfig, the
+eksctl configuration, the generated secrets and the image digests. Set
+`OCTOGEE_EKS_STATE` to keep it elsewhere.
+
+The network policy that lets the project runner reach the Kubernetes API names
+the API server's addresses. EKS can change them when it upgrades the control
+plane; run `up` again after an upgrade.
+
+| Setting | Default | Effect |
+| --- | --- | --- |
+| `AWS_REGION` | none | The region to install into. Required. |
+| `INSTANCE_TYPE` | `m6i.xlarge` | System nodes. Applies when the node group is created. |
+| `GATEWAY_INSTANCE_TYPE` | `m6i.xlarge` | Gateway nodes. Applies when the launch template is created. A gateway of the `s` sizing tier needs 2 CPUs and 8 GiB. |
+| `SYSTEM_NODES` | `2` | Nodes in the `system` group. |
+| `GATEWAY_NODES` | `2` | Nodes in the `gateways` group, one for each gateway. |
+| `DB_CLASS` | `db.t4g.medium` | RDS instance class. |
+| `GVISOR_RELEASE` | `latest` | gVisor release the gateway nodes install, such as `20251110.0`. Applies when the launch template is created. |
+
+The node groups do not scale on their own. Gateways keep one pod per node, so
+`GATEWAY_NODES` must be at least the number of gateways you run. To change a
+group's size, run `up` again with the new count.
+
+| Flag | Effect |
+| --- | --- |
+| `--sha=<sha>` | Install the images published for this full commit SHA. The default is the checkout's commit. |
+| `--manifest=<file>` | Take the image digests from an extracted Build main `image-manifest-<sha>` artifact instead of the registry. |
+
+## Operate the fleet
+
+Install the command line:
+
+```bash
+go install github.com/octogee-ai/octogee-fleet@main
+```
+
+`up` ends by printing the variables to set in every terminal you use for the
+cluster, and the port-forward the command line needs. With the default
+location they are:
+
+```bash
+export STATE=~/.local/state/octogee-eks/<account>-$AWS_REGION
+export OCTOGEE_FLEET_CONFIG="$STATE/fleet-config.json"
+```
+
+The command line signs in with the operator key the script generated, through
+`scripts/ops/operator-token.mjs` in this checkout. Keep the Admin API forwarded
+in a second terminal:
+
+```bash
+kubectl --kubeconfig="$STATE/kubeconfig" --context="eks_${AWS_REGION}_octogee" -n octogee port-forward svc/glm-controller 18080:8080
+```
+
+Then add a shared gateway, a user, and place the user:
+
+```bash
+octogee-fleet --env=eks gateway add --id=shared-a --apply
+octogee-fleet --env=eks gateway ls
+octogee-fleet --env=eks user add lin --email=lin@example.com --apply
+octogee-fleet --env=eks user assign lin --to=shared-a --apply
+octogee-fleet --env=eks user inspect lin
+```
+
+Everything from [Users](kind.md#users) onward in the kind guide applies here,
+with `--env=eks`, namespace `octogee` and the kubeconfig in `$STATE`.
+
+## Talk to the agent
+
+Issue the user's passwords, forward Mattermost, and sign in at
+<http://localhost:8065> as `lin`:
+
+```bash
+octogee-fleet --env=eks user issue-passwords lin --apply
+```
+
+```bash
+kubectl --kubeconfig="$STATE/kubeconfig" --context="eks_${AWS_REGION}_octogee" -n octogee port-forward svc/mattermost 8065:8065
+```
+
+Open the Coach channel (`lin-coach`) and send a message. The agent answers in
+the channel, usually within a few seconds.
+
+## An isolated gateway
+
+The `gateways` node group runs isolated gateways too, and with the default two
+nodes it has room for one next to `shared-a`. On EKS an isolated gateway's
+computer is a pod; computers on virtual machines run on Google Compute Engine
+only. Write a sizing profile whose computer is a pod, and move the user to a
+new isolated gateway of that profile:
+
+```bash
+cat > pod-s.json <<'EOF'
+{"isolation":"isolated","sizingTier":"s","computer":{"runtime":"cluster","homeSizeGiB":10},"fallbackStorageGb":null}
+EOF
+octogee-fleet --env=eks sizing set pod-s --file=pod-s.json --apply
+octogee-fleet --env=eks user migrate lin --to-isolated=pod-s --apply
+```
+
+`user inspect` then shows the user on the isolated gateway, and the agent
+answers in the same channel. Return the user with
+`user migrate lin --to=shared-a --apply` and retire the isolated gateway with
+`gateway retire <id> --apply`, as in
+[An isolated gateway](kind.md#an-isolated-gateway).
+
+## Remove everything
+
+```bash
+scripts/ops/eks-install.sh down
+```
+
+This deletes the namespace and waits for its EBS volumes to be released, then
+the database without a final snapshot, along with its automated backups, its
+subnet group and security group, then the cluster with its VPC and NAT
+gateway, the launch template, both buckets with everything in them, the blob
+store user and its keys, and the state directory. The data goes with them. It
+skips what is already gone, and it stops at the first deletion AWS refuses,
+keeping the state directory; fix the cause and run it again.
+
+If the account exists only for the platform, closing the account removes
+everything at once.
