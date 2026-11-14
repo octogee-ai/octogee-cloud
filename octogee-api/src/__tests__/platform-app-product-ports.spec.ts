@@ -20,12 +20,15 @@ const { NO_WORKSPACE_STORAGE_ACCOUNTING, installWorkspaceStorageAccounting, work
 const { NO_PROJECT_AGENT_DELIVERY_INTENTS, installProjectAgentDeliveryIntents, projectAgentDeliveryIntents } =
   await import("../../../gateway-edge/src/lib/project-agent-delivery-intents.js");
 const { userAccounts } = await import("../../../gateway-edge/src/lib/user-accounts.js");
+const { NO_CONNECTOR_DISCONNECTED, connectorDisconnected, installConnectorDisconnected } =
+  await import("../../../gateway-edge/src/lib/connector-disconnect.js");
 const { noUserAccounts } = await import("@octogee/core/user-account");
 
 afterEach(() => {
   installProjectPresentation(NO_PROJECT_PRESENTATION);
   installWorkspaceStorageAccounting(NO_WORKSPACE_STORAGE_ACCOUNTING);
   installProjectAgentDeliveryIntents(NO_PROJECT_AGENT_DELIVERY_INTENTS);
+  installConnectorDisconnected(NO_CONNECTOR_DISCONNECTED);
 });
 
 function productWith(runtime: Partial<ProductRuntime>) {
@@ -102,5 +105,19 @@ describe("createPlatformApp product ports", () => {
     createPlatformApp({ product: productWith({ projectAgentDeliveryIntents: intents }) });
 
     expect(projectAgentDeliveryIntents()).toBe(intents);
+  });
+
+  it("does nothing more on connector disconnect without a product", () => {
+    createPlatformApp();
+
+    expect(connectorDisconnected()).toBe(NO_CONNECTOR_DISCONNECTED);
+  });
+
+  it("installs the product's connector disconnect hook", () => {
+    const disconnected = async () => undefined;
+
+    createPlatformApp({ product: productWith({ connectorDisconnected: disconnected }) });
+
+    expect(connectorDisconnected()).toBe(disconnected);
   });
 });
