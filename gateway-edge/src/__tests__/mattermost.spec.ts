@@ -33,61 +33,6 @@ vi.mock("../lib/platform-state.js", async () => {
   return { platformStateStore: createDocumentFixtureStore(dbState.docs) };
 });
 
-vi.mock("../lib/db", () => {
-  type Pred = (d: Record<string, unknown>) => boolean;
-  function makeQuery(coll: string, preds: Pred[]) {
-    return {
-      where(field: string, op: string, val: unknown) {
-        const pred: Pred = (d) => {
-          const fv = d[field];
-          if (op === "==") return fv === val;
-          if (op === "in") return Array.isArray(val) && val.includes(fv);
-          return true;
-        };
-        return makeQuery(coll, [...preds, pred]);
-      },
-      limit() {
-        return makeQuery(coll, preds);
-      },
-      async get() {
-        const rows = (dbState.collections.get(coll) ?? []).filter((r) => preds.every((p) => p(r.data)));
-        return { empty: rows.length === 0, docs: rows.map((r) => ({ id: r.id, data: () => r.data })) };
-      },
-    };
-  }
-  return {
-    db: {
-      doc: (path: string) => ({
-        async get() {
-          const d = dbState.docs.get(path);
-          return { exists: d !== undefined, data: () => d };
-        },
-        async set(data: Record<string, unknown>) {
-          dbState.docs.set(path, data);
-          dbState.writes.push({ op: "set", path, data });
-        },
-        async update(data: Record<string, unknown>) {
-          dbState.docs.set(path, { ...(dbState.docs.get(path) ?? {}), ...data });
-          dbState.writes.push({ op: "update", path, data });
-        },
-      }),
-      collection: (name: string) => ({
-        where: (f: string, o: string, v: unknown) => makeQuery(name, []).where(f, o, v),
-        async add(data: Record<string, unknown>) {
-          const id = `gen-${++dbState.addCounter}`;
-          const arr = dbState.collections.get(name) ?? [];
-          arr.push({ id, data });
-          dbState.collections.set(name, arr);
-          dbState.writes.push({ op: "add", collection: name, data });
-          return { id };
-        },
-      }),
-    },
-    FieldValue: { serverTimestamp: () => "SERVER_TS", increment: (n: number) => ({ __increment: n }) },
-    Timestamp: { fromDate: (d: Date) => ({ toDate: () => d }) },
-  };
-});
-
 import router from "../routes/mattermost.js";
 import { getWorkspaceMmContext } from "../lib/mattermost-context.js";
 

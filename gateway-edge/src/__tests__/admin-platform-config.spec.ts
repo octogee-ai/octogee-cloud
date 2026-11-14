@@ -9,58 +9,6 @@ const setCalls: Array<{ path: string; data: Record<string, unknown>; opts?: unkn
 const queryDocs: Record<string, Array<{ id: string; data: Record<string, unknown> }>> = {};
 const aggregateCalls: string[] = [];
 
-vi.mock("../lib/db", () => {
-  function collection(path: string): any {
-    const queryResult = (key: string, limit?: number) => {
-      const rows = (queryDocs[key] ?? []).slice(0, limit);
-      return {
-        docs: rows.map((row) => ({ id: row.id, data: () => row.data })),
-        size: rows.length,
-      };
-    };
-    return {
-      doc: (id: string) => ({
-        get: async () => ({
-          exists: platformDocs[`${path}/${id}`] !== undefined,
-          data: () => platformDocs[`${path}/${id}`],
-        }),
-        set: async (data: Record<string, unknown>, opts?: unknown) => {
-          setCalls.push({ path: `${path}/${id}`, data, opts });
-          platformDocs[`${path}/${id}`] = { ...(platformDocs[`${path}/${id}`] ?? {}), ...data };
-        },
-        collection: (subcollection: string) => ({
-          doc: (subId: string) => ({
-            get: async () => ({
-              exists: platformDocs[`${path}/${id}/${subcollection}/${subId}`] !== undefined,
-              data: () => platformDocs[`${path}/${id}/${subcollection}/${subId}`],
-            }),
-          }),
-        }),
-      }),
-      where: (field: string, _op: string, value: unknown) => ({
-        get: async () => queryResult(`${path}:${field}:${String(value)}`),
-        count: () => ({
-          get: async () => {
-            const key = `${path}:${field}:${String(value)}`;
-            aggregateCalls.push(key);
-            return { data: () => ({ count: queryDocs[key]?.length ?? 0 }) };
-          },
-        }),
-        orderBy: () => ({
-          limit: (count: number) => ({ get: async () => queryResult(`${path}:${field}:${String(value)}`, count) }),
-          get: async () => queryResult(`${path}:${field}:${String(value)}`),
-        }),
-      }),
-      orderBy: () => ({ get: async () => ({ docs: [], size: 0 }) }),
-    };
-  }
-  return {
-    db: { collection, doc: () => ({ get: async () => ({ exists: false, data: () => undefined }) }), getAll: async () => [] },
-    FieldValue: { serverTimestamp: () => "server-now" },
-    Timestamp: { now: () => ({ toDate: () => new Date() }) },
-  };
-});
-
 vi.mock("../lib/platform-state", async () => {
   const { createDocumentFixtureStore } = await import("@octogee/core/testing/journal-store");
   return { platformStateStore: createDocumentFixtureStore(platformDocs) };

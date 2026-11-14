@@ -1,12 +1,11 @@
 import express, { Router } from "express";
-import type { Firestore } from "firebase-admin/firestore";
 import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
 import { addAdminFleetRoutes } from "@octogee/core/admin-fleet-router";
 import type { AgentStoreErasureCustody } from "@octogee/core/agent-store-credentials";
 import type { OpaqueMap } from "@octogee/core/platform-state";
+import { userAccountFromData, type UserAccountReader } from "@octogee/core/user-account";
 import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
-import { firestoreUserAccountReader } from "@octogee/core/testing/firestore-user-accounts";
 import type { Operation, OperationStep } from "@octogee/shared/types/glm";
 import type { UserCleanupContext } from "../handlers/deprovision-user.js";
 import { createEraseUserHandler, type EraseUserDeps } from "../handlers/erase-user.js";
@@ -51,11 +50,15 @@ function provisionedUserOnSharedGateway(custody: Record<string, Record<string, u
 }
 
 function adminApi(records: Records) {
-  const account = { get: async () => ({ id: UID, exists: true, data: () => ({ email: "ada@example.com" }) }) };
-  const db = { collection: () => ({ doc: () => account }), doc: () => account } as unknown as Firestore;
+  const account = userAccountFromData(UID, { email: "ada@example.com" });
+  const accounts: UserAccountReader = {
+    get: async () => account,
+    getMany: async () => new Map([[UID, account]]),
+    list: async () => new Map([[UID, account]]),
+  };
   const router = Router();
   addAdminFleetRoutes(router, {
-    accounts: firestoreUserAccountReader(db),
+    accounts,
     store: createDocumentFixtureStore(records),
     logger: { info: vi.fn(), warn: vi.fn() },
     provisionGatewayAuthSecret: vi.fn(async () => ({})),

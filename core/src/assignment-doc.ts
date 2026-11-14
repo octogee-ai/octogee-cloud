@@ -12,8 +12,8 @@ import {
 // Bare user mirrors stay put; assignment docs carry the roster state the
 // migration plane flips while a user moves between gateways.
 
-// Narrow structural surfaces — the real firebase-admin Firestore satisfies them
-// (collection → doc → collection → doc/get), and tests fake exactly these.
+// Narrow structural surfaces (collection → doc → collection → doc/get) that
+// tests fake exactly.
 interface AssignmentDocRef {
   get: () => Promise<{ exists: boolean; data: () => Record<string, unknown> | undefined }>;
 }

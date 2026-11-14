@@ -5,28 +5,15 @@ const h = vi.hoisted(() => ({
   platform: new Map<string, Record<string, unknown>>(),
 }));
 
-vi.mock('../lib/db', () => ({
-  db: {
-    doc: (path: string) => ({
-      path,
-      get: async () => {
-        const data = h.product[path];
-        return { exists: !!data, data: () => data };
-      },
-    }),
-  },
-}));
-
 vi.mock('../lib/platform-state.js', async () => {
   const { createDocumentFixtureStore } = await import('@octogee/core/testing/journal-store');
   return { platformStateStore: createDocumentFixtureStore(h.platform) };
 });
 
-import { db } from '../lib/db';
 import { readProject } from '../lib/firestoreReads.js';
 import { installDocumentPresentation } from './helpers/project-presentation.js';
 
-installDocumentPresentation((path) => db.doc(path));
+installDocumentPresentation((path) => ({ get: async () => ({ data: () => h.product[path] }) }));
 
 const projectPath = 'workspaces/alice/projects/game';
 

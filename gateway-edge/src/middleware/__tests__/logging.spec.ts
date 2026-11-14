@@ -84,8 +84,8 @@ describe("middleware/logging — Error serialization in meta", () => {
     expect(typeof serialized.stack).toBe("string");
   });
 
-  it("preserves the Firebase Admin `code` field on AppError-like errors", () => {
-    // Caught errors from firebase-admin carry a `code` property like
+  it("preserves an SDK `code` field on AppError-like errors", () => {
+    // Caught errors from SDK clients carry a `code` property like
     // "auth/user-not-found" that's NOT a standard Error field. The
     // serializer must include arbitrary string/number/boolean own keys so
     // the next reader can branch on code.

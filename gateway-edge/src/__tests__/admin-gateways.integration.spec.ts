@@ -90,56 +90,6 @@ vi.mock("@octogee/core/platform-state", async (importOriginal) => {
   };
 });
 
-vi.mock("../lib/db", () => {
-  const ADMIN_UID = "admin-user";
-
-  function makeQuery(docs: Array<{ id: string; data: () => any }>) {
-    return {
-      orderBy: () => makeQuery(docs),
-      where: () => makeQuery(docs),
-      limit: () => makeQuery(docs),
-      get: async () => ({ docs, size: docs.length }),
-    };
-  }
-
-  function userDocs() {
-    return [...records.entries()].flatMap(([path, data]) =>
-      path.startsWith("users/") ? [{ id: path.slice("users/".length), data: () => data }] : []);
-  }
-
-  function collection(path: string): any {
-    if (path === "users") {
-      return {
-        get: async () => ({ docs: userDocs(), size: userDocs().length }),
-        doc: (uid: string) => ({
-          id: uid,
-          get: async () => ({ exists: records.has(`users/${uid}`), data: () => records.get(`users/${uid}`) }),
-          collection: () => ({
-            doc: () => ({
-              get: async () => ({ exists: false, data: () => undefined }),
-            }),
-          }),
-        }),
-      };
-    }
-    return makeQuery([]);
-  }
-
-  return {
-    db: {
-      collection,
-      collectionGroup: () => makeQuery([]),
-      doc: (_path: string) => ({
-        get: async () => ({ exists: false, data: () => undefined }),
-      }),
-      getAll: async () => [],
-    },
-    FieldValue: { serverTimestamp: () => "now" },
-    Timestamp: { now: () => ({ toDate: () => new Date() }) },
-    ADMIN_UID,
-  };
-});
-
 vi.mock("../middleware/auth", () => ({
   requireAdmin: (req: any, _res: any, next: any) => {
     req.user = { uid: "admin-user" };

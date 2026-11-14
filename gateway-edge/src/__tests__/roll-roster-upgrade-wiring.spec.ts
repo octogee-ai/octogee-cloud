@@ -2,8 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-// Source-text pins (house pattern — proxy.ts initializes firebase-admin at
-// import time): the roll-roster UPGRADE gate must run at every WS attach site.
+// Source-text pins: the roll-roster UPGRADE gate must run at every WS attach site.
 // A future upgrade path added to the shared handler is covered by construction
 // (the gate runs before any dispatch); these pins keep the wiring itself from
 // regressing.

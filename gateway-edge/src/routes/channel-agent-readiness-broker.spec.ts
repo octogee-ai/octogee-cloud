@@ -6,7 +6,6 @@ const mocks = vi.hoisted(() => ({
   authorize: vi.fn(),
   read: vi.fn(),
 }));
-vi.mock("../lib/db.js", () => { throw new Error("Gateway sidecar must not initialize Firestore"); });
 vi.mock("../middleware/auth.js", () => { throw new Error("Gateway sidecar must not verify Firebase through Firestore"); });
 vi.mock("../lib/channel-agent-readiness-authorization-broker.js", () => ({ authorizeChannelAgentReadiness: mocks.authorize }));
 vi.mock("../lib/channel-agent-readiness.js", () => ({ readChannelAgentReadiness: mocks.read }));

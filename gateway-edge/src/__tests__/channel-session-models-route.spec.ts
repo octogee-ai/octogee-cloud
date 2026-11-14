@@ -15,10 +15,6 @@ const h = vi.hoisted(() => ({
   threadPosts: {} as Record<string, unknown>,
 }));
 
-function snap(path: string) {
-  return { exists: h.docs.has(path), data: () => h.docs.get(path) };
-}
-
 vi.mock("../middleware/auth.js", () => ({
   requireActiveAccount: (_req: unknown, _res: unknown, next: () => void) => next(),
   requireAuthenticatedUid: (req: { uid?: string }, _res: unknown, next: () => void) => { req.uid = h.uid; next(); },
@@ -28,11 +24,6 @@ vi.mock("../middleware/logging.js", () => ({
   logger: { error: (message: string, context: Record<string, unknown>) => h.logs.push({ message, context }) },
 }));
 vi.mock("../lib/workspace-resolution.js", () => ({ resolveWorkspaceUid: async () => "owner-uid" }));
-vi.mock("../lib/db.js", () => ({
-  db: {
-    doc: (path: string) => ({ get: async () => snap(path) }),
-  },
-}));
 vi.mock("../lib/platform-state.js", async () => {
   const { createDocumentFixtureStore } = await import("@octogee/core/testing/journal-store");
   h.store = createDocumentFixtureStore(h.docs);
