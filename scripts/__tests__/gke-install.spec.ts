@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -133,6 +133,47 @@ describe("gke-install.sh up", () => {
     expect(values["glm-controller"].platformRelease.builderImageTag).toBe(`bbbbbbb@${AMD64}`);
     expect(values.networkPolicy.agentStorePostgresCidr).toBe("10.20.0.3/32");
     expect(values.projectRunner.apiServerEgressCidrs).toEqual(["172.16.0.2/32"]);
+  });
+
+  describe("down", () => {
+    const DOWN_GCLOUD = `case " $* " in
+  *" vpc-peerings list "*) [ -n "\${PRESENT:-}" ] && echo servicenetworking-googleapis-com ;;
+  *" hmac list "*) echo GOOG1STUBACCESS ;;
+  *" describe "*) [ -n "\${PRESENT:-}" ] || exit 1 ;;
+  *" delete "*) case " $* " in *" \${FAIL_DELETE:-none} "*) echo "stub: deletion refused" >&2; exit 1 ;; esac ;;
+esac`;
+    const down = (env: Record<string, string>) => {
+      host.stub("gcloud", DOWN_GCLOUD);
+      mkdirSync(join(state, PROJECT, "secrets"), { recursive: true });
+      writeFileSync(join(state, PROJECT, "secrets", "postgres-password"), "kept");
+      return host.run(SCRIPT, ["down"], { env: { GCP_PROJECT: PROJECT, OCTOGEE_GKE_STATE: state, ...env } });
+    };
+    const deletes = () => host.calls().filter(call => call.startsWith("gcloud ") && / delete /.test(call));
+
+    it("deletes every resource it finds, then its local state", () => {
+      const result = down({ PRESENT: "1" });
+      expect(result.status).toBe(0);
+      expect(deletes().map(call => call.replace(/^gcloud KUBECONFIG=unset --project \S+ --quiet /, "").split(" ").slice(0, 3).join(" "))).toEqual([
+        "container clusters delete", "sql instances delete", "storage hmac delete",
+        "iam service-accounts delete", "services vpc-peerings delete", "compute addresses delete",
+        "compute routers delete", "compute networks delete",
+      ]);
+      expect(existsSync(join(state, PROJECT))).toBe(false);
+    });
+
+    it("skips what is already gone", () => {
+      expect(down({}).status).toBe(0);
+      expect(deletes()).toEqual([]);
+      expect(existsSync(join(state, PROJECT))).toBe(false);
+    });
+
+    it("stops at a failed deletion and keeps the local secrets", () => {
+      const result = down({ PRESENT: "1", FAIL_DELETE: "instances" });
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("deletion refused");
+      expect(deletes().some(call => call.includes("networks delete"))).toBe(false);
+      expect(readFileSync(join(state, PROJECT, "secrets", "postgres-password"), "utf8")).toBe("kept");
+    });
   });
 
   it("stops before creating anything when no model provider key is exported or stored", () => {

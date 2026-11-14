@@ -554,25 +554,39 @@ EOF
 down() {
   log "Deleting the platform in $GCP_PROJECT"
   if [[ -s "$KUBECONFIG_FILE" ]] && k get namespace "$NAMESPACE" >/dev/null 2>&1; then
-    k delete namespace "$NAMESPACE" --wait=true --timeout=10m || true
+    k delete namespace "$NAMESPACE" --wait=true --timeout=10m \
+      || echo "gke-install: namespace $NAMESPACE did not finish deleting; the cluster goes next" >&2
   fi
-  g container clusters delete "$NAME" --zone "$GCP_ZONE" 2>/dev/null || true
-  g sql instances delete "$SQL_INSTANCE" 2>/dev/null || true
+  delete_present "$NAME" container clusters --zone "$GCP_ZONE"
+  delete_present "$SQL_INSTANCE" sql instances
   local bucket id
   for bucket in "$ASSETS_BUCKET" "$WORKSPACES_BUCKET"; do
-    g storage rm -r "gs://$bucket" 2>/dev/null || true
+    if g storage buckets describe "gs://$bucket" >/dev/null 2>&1; then
+      g storage rm -r "gs://$bucket"
+    fi
   done
   if blob_account_exists; then
     for id in $(g storage hmac list --service-account="$BLOB_EMAIL" --format='value(accessId)'); do
-      g storage hmac update "$id" --deactivate >/dev/null && g storage hmac delete "$id" >/dev/null
+      g storage hmac update "$id" --deactivate >/dev/null
+      g storage hmac delete "$id" >/dev/null
     done
     g iam service-accounts delete "$BLOB_EMAIL" >/dev/null
   fi
-  g services vpc-peerings delete --service=servicenetworking.googleapis.com --network="$NAME" 2>/dev/null || true
-  g compute addresses delete "$NAME-sql" --global 2>/dev/null || true
-  g compute routers delete "$NAME" --region "$GCP_REGION" 2>/dev/null || true
-  g compute networks delete "$NAME" 2>/dev/null || true
+  if [[ -n "$(g services vpc-peerings list --network="$NAME" --format='value(peering)' 2>/dev/null)" ]]; then
+    g services vpc-peerings delete --service=servicenetworking.googleapis.com --network="$NAME"
+  fi
+  delete_present "$NAME-sql" compute addresses --global
+  delete_present "$NAME" compute routers --region "$GCP_REGION"
+  delete_present "$NAME" compute networks
   rm -rf "$STATE"
+}
+
+delete_present() {
+  local resource="$1" group="$2" kind="$3"
+  shift 3
+  if g "$group" "$kind" describe "$resource" "$@" >/dev/null 2>&1; then
+    g "$group" "$kind" delete "$resource" "$@"
+  fi
 }
 
 case "$COMMAND" in

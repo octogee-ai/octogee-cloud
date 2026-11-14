@@ -28,6 +28,13 @@ through its DNS endpoint, which checks your Google Cloud credentials, so the
 script sets no authorized networks. You reach Mattermost, Gitea and the Admin
 API through `kubectl port-forward`, as on kind.
 
+Every connection to Cloud SQL is encrypted, but no client verifies the server's
+certificate: Mattermost and Gitea connect with `sslmode=require`, the platform
+with `require`, and the agent stores with `no-verify`. Something that could
+answer on the database's private address inside the network could stand in for
+it. Mounting Cloud SQL's server CA in each client and moving to `verify-ca`
+would close that; this install does not do it yet.
+
 ## What you need
 
 - A Google Cloud project with billing on, and an account that is an owner of
