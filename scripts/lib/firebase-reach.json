@@ -1,6 +1,5 @@
 {
   "files": [
-    "gateway-edge/src/lib/db.ts",
-    "gateway-edge/src/routes/connect.ts"
+    "gateway-edge/src/lib/db.ts"
   ]
 }

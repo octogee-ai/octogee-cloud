@@ -30,6 +30,8 @@ import type {
   ModelCredentialRecord,
   SubscriptionFlowRecord,
   SubscriptionLinkRecord,
+  ConnectFlowRecord,
+  ConnectorIntegrationRecord,
   UserRepositories,
   GatewayFenceHolders,
 } from "../platform-state/users.js";
@@ -909,6 +911,52 @@ function valueAt(row: Record<string, unknown>, path: readonly string[]): unknown
   return path.reduce<unknown>((value, segment) => (isMap(value) ? value[segment] : undefined), row);
 }
 
+function connectorRepositories(
+  documents: FixtureDocuments,
+  write: Write,
+): Pick<UserRepositories, "connectorIntegrations" | "connectFlows"> {
+  const connectorIntegrations = partialRepository<UserRepositories["connectorIntegrations"]>("users.connectorIntegrations", {
+    get: async (uid, connectorId) => {
+      const row = documents.get(`users/${uid}/connectorIntegrations/${connectorId}`);
+      return row === undefined ? null : ({ ...structuredClone(row), revision: FIXTURE_REVISION }) as unknown as Stored<ConnectorIntegrationRecord>;
+    },
+    list: async (uid) => documents.children(`users/${uid}/connectorIntegrations`)
+      .map(([, row]) => ({ ...structuredClone(row), revision: FIXTURE_REVISION }) as unknown as Stored<ConnectorIntegrationRecord>)
+      .sort((a, b) => a.connectorId.localeCompare(b.connectorId)),
+    put: async (integration) => {
+      write(() => documents.set(`users/${integration.uid}/connectorIntegrations/${integration.connectorId}`, {
+        ...structuredClone(integration),
+        connectedAt: resolveServerNow(integration.connectedAt),
+        verifiedAt: resolveServerNow(integration.verifiedAt),
+        updatedAt: resolveServerNow(integration.updatedAt),
+      }));
+    },
+  });
+  const connectFlowPath = (flowId: string) => `connectorFlows/${flowId}`;
+  const connectFlows = partialRepository<UserRepositories["connectFlows"]>("users.connectFlows", {
+    get: async (flowId) => {
+      const row = documents.get(connectFlowPath(flowId));
+      return row === undefined ? null : ({ ...structuredClone(row), revision: FIXTURE_REVISION }) as unknown as Stored<ConnectFlowRecord>;
+    },
+    create: async (flow) => {
+      const path = connectFlowPath(flow.flowId);
+      if (documents.get(path) !== undefined) throw new AlreadyExistsError({ aggregate: "connect-flow", key: flow.flowId });
+      write(() => documents.set(path, { ...structuredClone(flow), consumedAt: null, outcome: null }));
+    },
+    update: async (flowId, progress) => {
+      const path = connectFlowPath(flowId);
+      const row = documents.get(path);
+      if (row === undefined) throw new MissingRecordError({ aggregate: "connect-flow", key: flowId });
+      write(() => documents.set(path, { ...row, ...structuredClone(progress) }));
+    },
+    deleteForUser: async (uid) => {
+      const owned = documents.children("connectorFlows").filter(([, row]) => row.uid === uid);
+      write(() => { for (const [flowId] of owned) documents.delete(connectFlowPath(flowId)); });
+    },
+  });
+  return { connectorIntegrations, connectFlows };
+}
+
 function userRepositories(documents: FixtureDocuments, write: Write, transactional: boolean): UserRepositories {
   const holding = (path: readonly string[], gatewayId: string) =>
     documents.children("users").flatMap(([uid, row]) =>
@@ -1075,7 +1123,7 @@ function userRepositories(documents: FixtureDocuments, write: Write, transaction
     create: async (flow) => {
       const path = flowPath(flow.flowId);
       if (documents.get(path) !== undefined) throw new AlreadyExistsError({ aggregate: "subscription-flow", key: flow.flowId });
-      write(() => documents.set(path, { ...structuredClone(flow), consumedAt: null, captureClaimId: null, captureClaimedAt: null }));
+      write(() => documents.set(path, { ...structuredClone(flow), consumedAt: null, captureClaimId: null, captureClaimedAt: null, modelPinnedAt: null }));
     },
     update: async (flowId, progress) => {
       const path = flowPath(flowId);
@@ -1084,6 +1132,7 @@ function userRepositories(documents: FixtureDocuments, write: Write, transaction
       write(() => documents.set(path, { ...row, ...structuredClone(progress) }));
     },
   });
+  const { connectorIntegrations, connectFlows } = connectorRepositories(documents, write);
   return partialRepository<UserRepositories>("builders", {
     records,
     accounts,
@@ -1095,6 +1144,8 @@ function userRepositories(documents: FixtureDocuments, write: Write, transaction
     modelCredentials,
     subscriptionLinks,
     subscriptionFlows,
+    connectorIntegrations,
+    connectFlows,
   });
 }
 

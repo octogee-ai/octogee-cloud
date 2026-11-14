@@ -127,6 +127,7 @@ describe.skipIf(!dsn)("PostgreSQL subscription flows", () => {
       consumedAt: null,
       captureClaimId: null,
       captureClaimedAt: null,
+      modelPinnedAt: null,
       revision: expect.stringMatching(REVISION),
     });
 
@@ -135,6 +136,9 @@ describe.skipIf(!dsn)("PostgreSQL subscription flows", () => {
 
     await users.subscriptionFlows.update("flow-1", { consumedAt: NOW + 2, captureClaimId: null, captureClaimedAt: null });
     expect(await users.subscriptionFlows.get("flow-1")).toMatchObject({ consumedAt: NOW + 2, captureClaimId: null, captureClaimedAt: null });
+
+    await users.subscriptionFlows.update("flow-1", { modelPinnedAt: NOW + 3 });
+    expect(await users.subscriptionFlows.get("flow-1")).toMatchObject({ consumedAt: NOW + 2, modelPinnedAt: NOW + 3 });
     expect(await users.subscriptionFlows.get("flow-absent")).toBeNull();
   });
 

@@ -53,7 +53,10 @@ export interface IntegrationStatusDoc {
     captureMethod?: ConnectorCaptureMethod;
     pickedFiles?: GooglePickedFile[];
     error?: string;
-    connectedAt?: unknown;
-    updatedAt?: unknown;
-    verifiedAt?: unknown;
+    connectedAt: number | null;
+    updatedAt: number;
+    verifiedAt: number | null;
+}
+export interface IntegrationStatusResponse {
+    integrations: Record<string, IntegrationStatusDoc>;
 }

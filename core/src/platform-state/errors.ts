@@ -25,6 +25,8 @@ export type PlatformAggregate =
   | "model-credential"
   | "subscription-link"
   | "subscription-flow"
+  | "connector-integration"
+  | "connect-flow"
   | "workspace"
   | "workspace-member"
   | "workspace-project"

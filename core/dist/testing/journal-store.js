@@ -772,6 +772,51 @@ function fixtureAgentStoreRow(record) {
 function valueAt(row, path) {
     return path.reduce((value, segment) => (isMap(value) ? value[segment] : undefined), row);
 }
+function connectorRepositories(documents, write) {
+    const connectorIntegrations = partialRepository("users.connectorIntegrations", {
+        get: async (uid, connectorId) => {
+            const row = documents.get(`users/${uid}/connectorIntegrations/${connectorId}`);
+            return row === undefined ? null : ({ ...structuredClone(row), revision: FIXTURE_REVISION });
+        },
+        list: async (uid) => documents.children(`users/${uid}/connectorIntegrations`)
+            .map(([, row]) => ({ ...structuredClone(row), revision: FIXTURE_REVISION }))
+            .sort((a, b) => a.connectorId.localeCompare(b.connectorId)),
+        put: async (integration) => {
+            write(() => documents.set(`users/${integration.uid}/connectorIntegrations/${integration.connectorId}`, {
+                ...structuredClone(integration),
+                connectedAt: resolveServerNow(integration.connectedAt),
+                verifiedAt: resolveServerNow(integration.verifiedAt),
+                updatedAt: resolveServerNow(integration.updatedAt),
+            }));
+        },
+    });
+    const connectFlowPath = (flowId) => `connectorFlows/${flowId}`;
+    const connectFlows = partialRepository("users.connectFlows", {
+        get: async (flowId) => {
+            const row = documents.get(connectFlowPath(flowId));
+            return row === undefined ? null : ({ ...structuredClone(row), revision: FIXTURE_REVISION });
+        },
+        create: async (flow) => {
+            const path = connectFlowPath(flow.flowId);
+            if (documents.get(path) !== undefined)
+                throw new AlreadyExistsError({ aggregate: "connect-flow", key: flow.flowId });
+            write(() => documents.set(path, { ...structuredClone(flow), consumedAt: null, outcome: null }));
+        },
+        update: async (flowId, progress) => {
+            const path = connectFlowPath(flowId);
+            const row = documents.get(path);
+            if (row === undefined)
+                throw new MissingRecordError({ aggregate: "connect-flow", key: flowId });
+            write(() => documents.set(path, { ...row, ...structuredClone(progress) }));
+        },
+        deleteForUser: async (uid) => {
+            const owned = documents.children("connectorFlows").filter(([, row]) => row.uid === uid);
+            write(() => { for (const [flowId] of owned)
+                documents.delete(connectFlowPath(flowId)); });
+        },
+    });
+    return { connectorIntegrations, connectFlows };
+}
 function userRepositories(documents, write, transactional) {
     const holding = (path, gatewayId) => documents.children("users").flatMap(([uid, row]) => valueAt(row, path) === gatewayId ? [fixtureUserRecord(documents, uid, row)] : []);
     const records = partialRepository("users.records", {
@@ -935,7 +980,7 @@ function userRepositories(documents, write, transactional) {
             const path = flowPath(flow.flowId);
             if (documents.get(path) !== undefined)
                 throw new AlreadyExistsError({ aggregate: "subscription-flow", key: flow.flowId });
-            write(() => documents.set(path, { ...structuredClone(flow), consumedAt: null, captureClaimId: null, captureClaimedAt: null }));
+            write(() => documents.set(path, { ...structuredClone(flow), consumedAt: null, captureClaimId: null, captureClaimedAt: null, modelPinnedAt: null }));
         },
         update: async (flowId, progress) => {
             const path = flowPath(flowId);
@@ -945,6 +990,7 @@ function userRepositories(documents, write, transactional) {
             write(() => documents.set(path, { ...row, ...structuredClone(progress) }));
         },
     });
+    const { connectorIntegrations, connectFlows } = connectorRepositories(documents, write);
     return partialRepository("builders", {
         records,
         accounts,
@@ -956,6 +1002,8 @@ function userRepositories(documents, write, transactional) {
         modelCredentials,
         subscriptionLinks,
         subscriptionFlows,
+        connectorIntegrations,
+        connectFlows,
     });
 }
 function workspaceChannelLocation(path) {

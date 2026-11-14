@@ -3,6 +3,7 @@ import { type CollectionReference, type DocumentData, type DocumentReference, ty
 import { SCHEDULE_TRANSFERS_SUBCOLLECTION, type ScheduleTransferDoc } from "@octogee/shared/types/fleet-controller";
 import { PLACEMENT_RECEIPTS_SUBCOLLECTION, type PlacementReceipt, placementReceiptDocId } from "@octogee/shared/types/placement-receipts";
 import type { ActivationLeaseFence, AgentModelSelectionRecord, AgentModelSelectionsRepository, AgentStoreRecord, AgentStoresRepository,
+  ConnectFlowRecord, ConnectFlowsRepository, ConnectorIntegrationRecord, ConnectorIntegrationsRepository,
   ModelCredentialRecord, ModelCredentialsRepository, PlacementReceiptsRepository, SessionModelAuditRecord, SessionModelAuditRepository, SubscriptionFlowRecord, SubscriptionFlowsRepository, SubscriptionLinkRecord, SubscriptionLinksRepository, UserAccountsRepository, PlatformUserRecord, ScheduleTransfersRepository, UserActivationLease, UserFence, UserRecordsRepository, UserRepositories, UserRole } from "../../platform-state/users.js";
 import { DuplicateRecordError, FenceMismatchError, MissingRecordError, type RecordKey, UnsupportedOperationError } from "../../platform-state/errors.js";
 import type { Page, PageRequest, Revision, Stored } from "../../platform-state/store.js";
@@ -687,11 +688,77 @@ function createSubscriptionFlowsRepository(session: FirestoreSession): Subscript
         consumedAt: null,
         captureClaimId: null,
         captureClaimedAt: null,
+        modelPinnedAt: null,
       }, STORED_AS_NUMBERS));
     },
 
     async update(flowId, progress) {
       await session.update("users.subscriptionFlows.update", key(flowId), ref(flowId), encodePatch(progress, STORED_AS_NUMBERS));
+    },
+  };
+}
+
+const CONNECTOR_INTEGRATIONS_SUBCOLLECTION = "connectorIntegrations";
+const CONNECTOR_FLOWS_COLLECTION = "connectorFlows";
+
+function createConnectorIntegrationsRepository(session: FirestoreSession): ConnectorIntegrationsRepository {
+  const collection = (uid: string) => usersCollection(session.db).doc(uid).collection(CONNECTOR_INTEGRATIONS_SUBCOLLECTION);
+  const key = (uid: string, connectorId: string): RecordKey => ({ aggregate: "connector-integration", key: `${uid}/${connectorId}` });
+  const decode = (snapshot: DocumentSnapshot) =>
+    ({ ...decodeDocumentData(snapshot), revision: revisionOf(snapshot) }) as unknown as Stored<ConnectorIntegrationRecord>;
+
+  return {
+    async get(uid, connectorId) {
+      const snapshot = await session.read("users.connectorIntegrations.get", collection(uid).doc(connectorId));
+      return snapshot.exists ? decode(snapshot) : null;
+    },
+
+    async list(uid) {
+      const snapshot = await session.query("users.connectorIntegrations.list", collection(uid));
+      return snapshot.docs.map(decode).sort((a, b) => a.connectorId.localeCompare(b.connectorId));
+    },
+
+    async put(integration) {
+      await session.set(
+        "users.connectorIntegrations.put",
+        key(integration.uid, integration.connectorId),
+        collection(integration.uid).doc(integration.connectorId),
+        encodeDocument(integration, STORED_AS_NUMBERS),
+      );
+    },
+  };
+}
+
+function createConnectFlowsRepository(session: FirestoreSession): ConnectFlowsRepository {
+  const ref = (flowId: string) => session.db.collection(CONNECTOR_FLOWS_COLLECTION).doc(flowId);
+  const key = (flowId: string): RecordKey => ({ aggregate: "connect-flow", key: flowId });
+
+  return {
+    async get(flowId) {
+      const snapshot = await session.read("users.connectFlows.get", ref(flowId));
+      return snapshot.exists
+        ? ({ ...decodeDocumentData(snapshot), revision: revisionOf(snapshot) }) as unknown as Stored<ConnectFlowRecord>
+        : null;
+    },
+
+    async create(flow) {
+      await session.create("users.connectFlows.create", key(flow.flowId), ref(flow.flowId), encodeDocument({
+        ...flow,
+        consumedAt: null,
+        outcome: null,
+      }, STORED_AS_NUMBERS));
+    },
+
+    async update(flowId, progress) {
+      await session.update("users.connectFlows.update", key(flowId), ref(flowId), encodePatch(progress, STORED_AS_NUMBERS));
+    },
+
+    async deleteForUser(uid) {
+      const snapshot = await session.query(
+        "users.connectFlows.deleteForUser",
+        session.db.collection(CONNECTOR_FLOWS_COLLECTION).where("uid", "==", uid),
+      );
+      for (const doc of snapshot.docs) await session.delete("users.connectFlows.deleteForUser", key(doc.id), doc.ref);
     },
   };
 }
@@ -707,6 +774,8 @@ export const createFirestoreUserRepositories = (session: FirestoreSession): User
   modelCredentials: createModelCredentialsRepository(session),
   subscriptionLinks: createSubscriptionLinksRepository(session),
   subscriptionFlows: createSubscriptionFlowsRepository(session),
+  connectorIntegrations: createConnectorIntegrationsRepository(session),
+  connectFlows: createConnectFlowsRepository(session),
 });
 
 interface RoleSubscription {

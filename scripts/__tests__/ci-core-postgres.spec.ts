@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -11,6 +11,7 @@ let drift = false;
 let integrationFails = false;
 let roleValid = true;
 let preparationFails = false;
+let startedConfiguration = "";
 const calls: { command: string; args: string[]; env?: NodeJS.ProcessEnv }[] = [];
 
 beforeEach(() => {
@@ -30,6 +31,7 @@ beforeEach(() => {
       mkdirSync(data);
       writeFileSync(join(data, "postgresql.conf"), "");
     }
+    if (basename(command) === "pg_ctl" && args.includes("start")) startedConfiguration = readFileSync(join(args[args.indexOf("-D") + 1], "postgresql.conf"), "utf8");
     if (basename(command) === "psql" && args.includes("-At")) return roleValid ? "t\n" : "f\n";
     if (basename(command) === "git" && args.includes("diff") && drift) throw new Error("catalog drift");
     if (command === "corepack" && preparationFails) throw new Error("frozen dependency preparation failed");
@@ -86,6 +88,8 @@ describe("required core PostgreSQL CI", () => {
     const dsn = new URL(calls[integration].env!.OCTOGEE_TEST_POSTGRES_DSN!);
     expect(dsn.username).toBe("octogee_ci_admin");
     expect(dsn.searchParams.get("host")).toBe(join(directory, "socket"));
+    expect(startedConfiguration).toMatch(/^max_locks_per_transaction = 10$/m);
+    expect(calls[integration].env!.PATH!.split(":")[0]).toBe("/usr/lib/postgresql/16/bin");
     expect(calls.find(call => call.command === "psql" && call.args.some(arg => arg.includes("CREATE ROLE")))?.args.join(" ")).toContain("NOSUPERUSER NOCREATEDB CREATEROLE");
     expect(calls.at(-1)?.args).toContain("stop");
     expect(existsSync(directory)).toBe(false);
