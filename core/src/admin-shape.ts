@@ -88,6 +88,7 @@ function userSummaryFields(user: PlatformUserRecord) {
 export function buildUserSummary(
   user: PlatformUserRecord,
   account: UserAccount,
+  ownerCredentialActive: boolean,
   broker: BrokerUserUsage = {},
 ): UserSummary {
   const now = broker.now ?? Date.now();
@@ -99,7 +100,7 @@ export function buildUserSummary(
   // Owner-credential (BYOSUB/BYOT) traffic never lands in a spend window, so a
   // percentage against a zero budget would misleadingly read 100% — mirror the
   // user surfaces and show 0. The broker never throttles them either.
-  const onOwnerCredential = account.byotActive;
+  const onOwnerCredential = ownerCredentialActive;
   const degraded = userEntitlements().spendThrottle(policy, {
     windowCostUsd,
     weekCostUsd,
@@ -115,7 +116,7 @@ export function buildUserSummary(
     displayName: displayNameFor(account),
     email: account.email ?? "",
     username: account.username ?? "",
-    byotActive: account.byotActive,
+    byotActive: ownerCredentialActive,
     windowCostUsd,
     windowBudgetUsd: policy.spendWindowUsd,
     weekCostUsd,

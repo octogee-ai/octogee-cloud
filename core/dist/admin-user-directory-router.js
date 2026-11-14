@@ -63,7 +63,6 @@ export const noAdminUserDirectorySource = {
     brokerEventCosts: async () => [],
     brokerRollup: async () => undefined,
     totalUsers: async () => null,
-    systemConfig: async () => undefined,
     usageLogs: async () => [],
     workspaces: async () => [],
     workspaceModelUsage: async () => [],
@@ -210,23 +209,19 @@ function objectValue(value) {
 function stringValue(value) {
     return typeof value === "string" && value.length > 0 ? value : null;
 }
-function adminModelCredentialFromSystemConfig(config) {
-    const credential = objectValue(config?.modelCredential);
-    const provider = stringValue(credential?.provider);
-    const mode = stringValue(credential?.mode);
-    const status = stringValue(credential?.status);
-    if (!credential || !provider || !mode || !status)
+function adminModelCredential(credential) {
+    if (credential === null)
         return null;
     return {
-        active: credential.active === true,
-        provider,
-        mode,
-        status,
-        reasonCode: stringValue(credential.reasonCode),
-        fingerprint: stringValue(credential.fingerprint),
-        model: stringValue(credential.model),
-        baseUrl: stringValue(credential.baseUrl),
-        lastUsedAt: toISODate(credential.lastUsedAt),
+        active: credential.active,
+        provider: credential.provider,
+        mode: credential.mode,
+        status: credential.status,
+        reasonCode: credential.reasonCode,
+        fingerprint: credential.fingerprint,
+        model: credential.model,
+        baseUrl: credential.baseUrl,
+        lastUsedAt: credential.lastUsedAt === null ? null : new Date(credential.lastUsedAt).toISOString(),
     };
 }
 function applyUserFilters(items, f) {
@@ -258,11 +253,12 @@ function accountFor(accounts, uid) {
 }
 async function summarizeUsers(directory, users) {
     const uids = users.map((userRecord) => userRecord.uid);
-    const [accounts, brokerUsage] = await Promise.all([
+    const [accounts, brokerUsage, credentials] = await Promise.all([
         directory.accounts.getMany(uids),
         readBrokerUserUsage(directory.source, uids, Date.now()),
+        Promise.all(uids.map((uid) => directory.store.users.modelCredentials.get(uid))),
     ]);
-    return users.map((userRecord) => buildUserSummary(userRecord, accountFor(accounts, userRecord.uid), brokerUsage.get(userRecord.uid) ?? {}));
+    return users.map((userRecord, index) => buildUserSummary(userRecord, accountFor(accounts, userRecord.uid), credentials[index]?.active === true, brokerUsage.get(userRecord.uid) ?? {}));
 }
 function newestFirstWithUndatedLast(a, b) {
     if (a === null || b === null)
@@ -488,8 +484,8 @@ export function addAdminUserDirectoryRoutes(router, deps) {
             const account = (await accounts.get(uid)) ?? userAccountFromData(uid, {});
             const thirtyDaysAgo = new Date();
             thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-            const modelCredential = adminModelCredentialFromSystemConfig(await source.systemConfig(uid));
-            const userCredentialActive = modelCredential?.active === true || account.byotActive;
+            const modelCredential = adminModelCredential(await store.users.modelCredentials.get(uid));
+            const userCredentialActive = modelCredential?.active === true;
             const usageLogs = await source.usageLogs(uid, thirtyDaysAgo.toISOString().slice(0, 10));
             const workspaceRecords = await source.workspaces(uid);
             const productDetail = await deps.productUserDetail?.(uid);
@@ -500,7 +496,7 @@ export function addAdminUserDirectoryRoutes(router, deps) {
                 readBrokerDailyUsage(source, uid, thirtyDaysAgo.getTime(), logger),
                 source.brokerRollup(uid),
             ]);
-            const summary = buildUserSummary(userRecord, account, brokerUsage.get(uid) ?? { now });
+            const summary = buildUserSummary(userRecord, account, userCredentialActive, brokerUsage.get(uid) ?? { now });
             const defaultAgentDm = userRecord.slug === null
                 ? null
                 : await store.workspaces.channels.get({ workspaceSlug: userRecord.slug, projectSlug: null }, "coach-dm");

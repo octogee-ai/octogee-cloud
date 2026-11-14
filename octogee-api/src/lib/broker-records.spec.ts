@@ -32,7 +32,5 @@ describe("platform state broker records", () => {
 
     await expect(records.accounts.get("u-ada")).resolves.toMatchObject({ uid: "u-ada", username: "ada", email: "ada@example.test" });
     await expect(records.userDocuments.agent("u-ada")).resolves.toBeUndefined();
-    await expect(records.userDocuments.systemConfig("u-ada")).resolves.toBeUndefined();
-    await expect(records.byosub.startFlow("flow", {} as never)).rejects.toThrow("BYOSUB flows need a product record store");
   });
 });

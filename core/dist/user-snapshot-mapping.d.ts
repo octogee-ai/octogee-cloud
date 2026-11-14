@@ -2,7 +2,7 @@ import type { FleetBrokerProjectAgent } from "@octogee/shared/types/fleet-broker
 import type { UserSnapshot } from "./user-lifecycle.js";
 import type { MattermostTokenSecret } from "./platform-state/secrets.js";
 import type { PlatformStateRepositories } from "./platform-state/store.js";
-import type { UserRepositories } from "./platform-state/users.js";
+import type { ModelCredentialRecord, UserRepositories } from "./platform-state/users.js";
 import type { AgentModelSelections } from "@octogee/shared/types/agent-models";
 type ChannelBinding = UserSnapshot["channels"][number];
 export declare function mapWorkspaceChannelDoc(data: Record<string, unknown>): ChannelBinding | null;
@@ -14,11 +14,11 @@ export declare function collectStoredProjectAgentStates(state: Pick<PlatformStat
 export declare function deriveSlug(uid: string, data: Record<string, unknown>): string;
 type SnapshotSystemConfig = NonNullable<UserSnapshot["systemConfig"]>;
 export interface ByotSnapshotProjection {
-    byotActive: boolean | null;
+    byotActive: boolean;
     systemConfig?: SnapshotSystemConfig;
 }
 export declare function readAgentModelSelections(users: Pick<UserRepositories, "agentModels">, uid: string): Promise<AgentModelSelections>;
-export declare function byotSnapshotProjectionFromSystemConfig(sysData: Record<string, unknown> | undefined, agentModels: AgentModelSelections): ByotSnapshotProjection;
-export declare function byotSystemConfigFromDoc(sysData: Record<string, unknown> | undefined, agentModels: AgentModelSelections): UserSnapshot["systemConfig"];
+export declare function byotSnapshotProjection(credential: ModelCredentialRecord | null, agentModels: AgentModelSelections): ByotSnapshotProjection;
+export declare function readByotSnapshotProjection(users: Pick<UserRepositories, "agentModels" | "modelCredentials">, uid: string): Promise<ByotSnapshotProjection>;
 export declare function mapUserDocToSnapshot(uid: string, data: Record<string, unknown>, channels: UserSnapshot["channels"]): UserSnapshot;
 export {};

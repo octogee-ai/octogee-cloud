@@ -6,7 +6,6 @@ export interface UserAccount {
     readonly displayName: string | null;
     readonly lastActive: number | null;
     readonly planInputs: Readonly<Record<string, unknown>>;
-    readonly byotActive: boolean;
     readonly usage: Readonly<Record<string, unknown>>;
     readonly mattermostUsername: string | null;
 }

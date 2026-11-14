@@ -8,7 +8,6 @@ type UserDocument = Record<string, unknown>;
 export interface UserDocuments {
   account(uid: string): Promise<UserDocument | undefined>;
   agent(uid: string): Promise<UserDocument | undefined>;
-  systemConfig(uid: string): Promise<UserDocument | undefined>;
 }
 
 export function platformStateUserDocuments(store: Pick<PlatformStateStore, "users">): UserDocuments {
@@ -18,7 +17,6 @@ export function platformStateUserDocuments(store: Pick<PlatformStateStore, "user
       return record === null ? undefined : userAccountDocument(record);
     },
     agent: async () => undefined,
-    systemConfig: async () => undefined,
   };
 }
 

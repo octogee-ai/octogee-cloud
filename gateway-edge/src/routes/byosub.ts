@@ -2,18 +2,23 @@ import { Router, Request, Response, NextFunction } from "express";
 import { randomUUID } from "node:crypto";
 import * as fs from "fs";
 import * as os from "os";
-import { FieldValue } from "firebase-admin/firestore";
 import { requireAuth, requireInternalServiceAuth } from "../middleware/auth.js";
-import { db } from "../lib/db.js";
 import { platformStateStore } from "../lib/platform-state.js";
-import type { UserActivationLease, PlatformUserRecord } from "@octogee/core/platform-state";
+import type {
+  ModelCredentialInput,
+  PlatformStateTransaction,
+  PlatformUserRecord,
+  SubscriptionFlowRecord,
+  SubscriptionLinkStatus,
+  UserActivationLease,
+} from "@octogee/core/platform-state";
+import { readSubscriptionIntegration } from "@octogee/core/model-credential-records";
 import {
   deleteSecret,
   writeSecret,
   addSecretVersionIfExists,
 } from "@octogee/core/secret-store";
 import { accountAllowsInteractiveAccess } from "@octogee/shared/types/account-lifecycle";
-import { accountActiveInStore, userDataWithUserState } from "../lib/user-platform-state.js";
 import {
   byosubSecretName,
   validateCodexCredential,
@@ -48,7 +53,6 @@ import {
 } from "@octogee/core/model-credential-materializer";
 import { logger } from "../middleware/logging.js";
 import {
-  modelCredentialOAuthState,
   modelCredentialOAuthEntryByProviderId,
   modelCredentialOAuthEntryBySubscriptionProvider,
   resolveUserByosubCredentialRefs,
@@ -150,22 +154,14 @@ function userIntegrationConnectionView(data: unknown) {
   return byosubConnectionView({ providers: visible });
 }
 
-interface FlowDoc {
-  uid: string;
-  gatewayId: string;
-  agentId: string;
-  provider: string;
-  modelCredentialProvider?: string;
-  consumedAt?: number;
-  modelPinnedAt?: number;
-  expireAt?: number;
-  captureClaimId?: string;
-}
+type FlowDoc = SubscriptionFlowRecord;
 
 async function readFlow(flowId: string): Promise<FlowDoc | null> {
-  const snap = await db.collection("byosubFlows").doc(flowId).get();
-  if (!snap.exists) return null;
-  return (snap.data() || null) as FlowDoc | null;
+  return platformStateStore.users.subscriptionFlows.get(flowId);
+}
+
+function ownerAllowsInteractiveAccess(user: PlatformUserRecord | null): boolean {
+  return user !== null && accountAllowsInteractiveAccess({ accountLifecycle: user.accountLifecycle ?? undefined });
 }
 
 function agentBelongsToUser(userRecord: PlatformUserRecord, agentId: string): boolean {
@@ -216,20 +212,15 @@ router.get(
         res.json({ connected: false, providers: {} });
         return;
       }
-      const [snap, runtime] = await Promise.all([
-        db
-          .collection("users")
-          .doc(req.uid!)
-          .collection("integrations")
-          .doc("byosub")
-          .get(),
+      const [integration, runtime] = await Promise.all([
+        readSubscriptionIntegration(platformStateStore.users, req.uid!),
         subscriptionRuntimeFor(req.uid!, resolved),
       ]);
 
       // gatewayId lets the client target the sidecar locality seam
       // (/api/g/<gatewayId>/byosub/*) for the connect/status/submit flow.
       res.json({
-        ...userIntegrationConnectionView(snap.data()),
+        ...userIntegrationConnectionView(integration),
         gatewayId: resolved.gatewayId,
         runtime,
       });
@@ -239,48 +230,34 @@ router.get(
   },
 );
 
-// signalProvider is the PROVIDERS-registry key byot-sync reads to drive
-// materialization + the default-agent-model patch: "openai-codex" for ChatGPT Plus,
-// "claude-cli" for a Claude subscription.
+function oauthModelCredential(
+  uid: string,
+  provider: ModelCredentialOAuthProviderId,
+  secretName: string,
+): ModelCredentialInput {
+  return {
+    uid,
+    active: true,
+    provider,
+    mode: "oauth",
+    status: "active",
+    reasonCode: "ok",
+    secretName,
+    fingerprint: null,
+    keyHash: null,
+    baseUrl: null,
+    model: null,
+    addedAt: { serverNow: true },
+    lastUsedAt: null,
+  };
+}
+
 async function flipUnifiedByosSignal(
   uid: string,
   signalProvider: ModelCredentialOAuthProviderId,
   secretName: string,
 ): Promise<void> {
-  const addedAt = FieldValue.serverTimestamp();
-  await db
-    .collection("users")
-    .doc(uid)
-    .collection("system")
-    .doc("config")
-    .set(
-      {
-        byot: {
-          provider: signalProvider,
-          secretName: FieldValue.delete(),
-          fingerprint: FieldValue.delete(),
-          keyHash: FieldValue.delete(),
-          status: FieldValue.delete(),
-          addedAt: FieldValue.delete(),
-          lastUsedAt: FieldValue.delete(),
-          baseUrl: FieldValue.delete(),
-          model: FieldValue.delete(),
-        },
-        modelCredential: {
-          ...modelCredentialOAuthState({
-            provider: signalProvider,
-            secretName,
-            addedAt,
-          }),
-          fingerprint: FieldValue.delete(),
-          keyHash: FieldValue.delete(),
-          baseUrl: FieldValue.delete(),
-          model: FieldValue.delete(),
-        },
-      },
-      { merge: true },
-    );
-  await db.collection("users").doc(uid).set({ byotActive: true }, { merge: true });
+  await platformStateStore.users.modelCredentials.put(oauthModelCredential(uid, signalProvider, secretName));
 }
 
 async function pinFailure(
@@ -348,40 +325,31 @@ function triggerUnifiedByosSyncForFlow(
   triggerUnifiedByosSync({ gatewayId: flow.gatewayId, slug, provider });
 }
 
-async function writeByosubIntegration(args: {
+interface SubscriptionLinkWrite {
   uid: string;
   provider: ByosubProvider;
   modelCredentialProvider: ModelCredentialOAuthProviderId;
-  status: string;
-  connected: boolean;
-  summaryConnected?: boolean;
+  status: SubscriptionLinkStatus;
   gatewayId?: string;
   flowId?: string;
   reason?: string;
-}): Promise<void> {
-  const providerLeaf = {
+}
+
+function subscriptionLink(args: SubscriptionLinkWrite) {
+  return {
+    uid: args.uid,
     provider: args.provider,
     modelCredentialProvider: args.modelCredentialProvider,
     status: args.status,
-    connected: args.connected,
-    ...(args.gatewayId ? { gatewayId: args.gatewayId } : { gatewayId: FieldValue.delete() }),
-    ...(args.flowId ? { flowId: args.flowId } : { flowId: FieldValue.delete() }),
-    ...(args.reason ? { reason: args.reason } : { reason: FieldValue.delete() }),
-  };
-  await db
-    .collection("users")
-    .doc(args.uid)
-    .collection("integrations")
-    .doc("byosub")
-    .set(
-      {
-        connected: args.summaryConnected ?? args.connected,
-        ...(args.gatewayId ? { gatewayId: args.gatewayId } : {}),
-        providers: { [args.provider]: providerLeaf },
-        updatedAt: FieldValue.serverTimestamp(),
-      },
-      { merge: true },
-    );
+    gatewayId: args.gatewayId ?? null,
+    flowId: args.flowId ?? null,
+    reason: args.reason ?? null,
+    updatedAt: { serverNow: true },
+  } as const;
+}
+
+async function writeByosubIntegration(args: SubscriptionLinkWrite): Promise<void> {
+  await platformStateStore.users.subscriptionLinks.put(subscriptionLink(args));
 }
 
 function subscriptionDefaultModel(modelCredentialProvider: string): string | null {
@@ -390,12 +358,15 @@ function subscriptionDefaultModel(modelCredentialProvider: string): string | nul
   return null;
 }
 
-function flowUnchangedForCommit(flow: FlowDoc, current: FlowDoc | undefined, captureClaimId: string | undefined): boolean {
-  if (current === undefined) return false;
-  if (current.uid !== flow.uid || current.gatewayId !== flow.gatewayId || current.agentId !== flow.agentId) return false;
+function sameFlowOwner(flow: FlowDoc, current: FlowDoc | null): current is FlowDoc {
+  return current !== null && current.uid === flow.uid && current.gatewayId === flow.gatewayId && current.agentId === flow.agentId;
+}
+
+function flowUnchangedForCommit(flow: FlowDoc, current: FlowDoc | null, captureClaimId: string | undefined): boolean {
+  if (!sameFlowOwner(flow, current)) return false;
   return captureClaimId
-    ? current.consumedAt === undefined && current.captureClaimId === captureClaimId
-    : Boolean(current.consumedAt);
+    ? current.consumedAt === null && current.captureClaimId === captureClaimId
+    : current.consumedAt !== null;
 }
 
 async function commitByosubCapture(args: {
@@ -406,81 +377,43 @@ async function commitByosubCapture(args: {
   secretName: string;
   captureClaimId?: string;
 }): Promise<readonly string[]> {
-  const ownerRef = db.collection("users").doc(args.flow.uid);
-  const configRef = ownerRef.collection("system").doc("config");
-  const integrationRef = ownerRef.collection("integrations").doc("byosub");
-  const flowRef = db.collection("byosubFlows").doc(args.flowId);
-  const addedAt = FieldValue.serverTimestamp();
-  return db.runTransaction(async (tx) => {
-    const [owner, currentFlowSnap, userRecord] = await Promise.all([
-      tx.get(ownerRef),
-      tx.get(flowRef),
-      platformStateStore.users.records.get(args.flow.uid),
+  return platformStateStore.transaction({ label: "byosub.capture.commit" }, async (tx: PlatformStateTransaction) => {
+    const [currentFlow, owner] = await Promise.all([
+      tx.users.subscriptionFlows.get(args.flowId),
+      tx.users.records.get(args.flow.uid),
     ]);
-    const currentFlow = currentFlowSnap.data() as FlowDoc | undefined;
-    const ownerData = owner.exists ? userDataWithUserState(owner.data() ?? {}, userRecord) : undefined;
-    if (!ownerData || !accountAllowsInteractiveAccess(ownerData)) {
+    if (!owner || !ownerAllowsInteractiveAccess(owner)) {
       throw new Error("BYOS credential owner is not active");
     }
     if (!flowUnchangedForCommit(args.flow, currentFlow, args.captureClaimId)) {
       throw new Error("BYOS credential flow changed before commit");
     }
     const slug = slugFromManagedAgentId(args.flow.agentId);
-    const agentIds = slug ? rosteredAgentIdsForSlug(ownerData, slug) : [args.flow.agentId];
-    tx.set(configRef, {
-      byot: {
-        provider: args.modelCredentialProvider,
-        secretName: FieldValue.delete(),
-        fingerprint: FieldValue.delete(),
-        keyHash: FieldValue.delete(),
-        status: FieldValue.delete(),
-        addedAt: FieldValue.delete(),
-        lastUsedAt: FieldValue.delete(),
-        baseUrl: FieldValue.delete(),
-        model: FieldValue.delete(),
-      },
-      modelCredential: {
-        ...modelCredentialOAuthState({
-          provider: args.modelCredentialProvider,
-          secretName: args.secretName,
-          addedAt,
-        }),
-        fingerprint: FieldValue.delete(),
-        keyHash: FieldValue.delete(),
-        baseUrl: FieldValue.delete(),
-        model: FieldValue.delete(),
-      },
-    }, { merge: true });
-    tx.set(ownerRef, { byotActive: true }, { merge: true });
-    tx.set(integrationRef, {
-      connected: true,
+    const agentIds = slug
+      ? rosteredAgentIdsForSlug({ provisioning: { openclaw: { agentIds: owner.agents.agentIds } } }, slug)
+      : [args.flow.agentId];
+    await tx.users.modelCredentials.put(oauthModelCredential(args.flow.uid, args.modelCredentialProvider, args.secretName));
+    await tx.users.subscriptionLinks.put(subscriptionLink({
+      uid: args.flow.uid,
+      provider: args.provider,
+      modelCredentialProvider: args.modelCredentialProvider,
+      status: "connected",
       gatewayId: args.flow.gatewayId,
-      providers: {
-        [args.provider]: {
-          provider: args.provider,
-          modelCredentialProvider: args.modelCredentialProvider,
-          status: "connected",
-          connected: true,
-          gatewayId: args.flow.gatewayId,
-          flowId: args.flowId,
-          reason: FieldValue.delete(),
-        },
-      },
-      updatedAt: FieldValue.serverTimestamp(),
-    }, { merge: true });
-    if (!args.flow.consumedAt) {
-      tx.set(flowRef, {
+      flowId: args.flowId,
+    }));
+    if (args.flow.consumedAt === null) {
+      await tx.users.subscriptionFlows.update(args.flowId, {
         consumedAt: Date.now(),
-        captureClaimId: FieldValue.delete(),
-        captureClaimedAt: FieldValue.delete(),
-      }, { merge: true });
+        captureClaimId: null,
+        captureClaimedAt: null,
+      });
     }
     return agentIds;
   });
 }
 
 async function recordModelPinned(flowId: string): Promise<void> {
-  await db.collection("byosubFlows").doc(flowId).set({ modelPinnedAt: Date.now() }, { merge: true });
+  await platformStateStore.users.subscriptionFlows.update(flowId, { modelPinnedAt: Date.now() });
 }
 
 async function pinAndRecord(
@@ -512,33 +445,21 @@ async function replayConsumedCapture(args: {
 
 async function claimByosubCapture(flowId: string, flow: FlowDoc): Promise<string> {
   const claimId = randomUUID();
-  const ownerRef = db.collection("users").doc(flow.uid);
-  const flowRef = db.collection("byosubFlows").doc(flowId);
-  await db.runTransaction(async (tx) => {
-    const [owner, currentFlowSnap, ownerActive] = await Promise.all([
-      tx.get(ownerRef),
-      tx.get(flowRef),
-      accountActiveInStore(flow.uid),
+  await platformStateStore.transaction({ label: "byosub.capture.claim" }, async (tx: PlatformStateTransaction) => {
+    const [currentFlow, owner] = await Promise.all([
+      tx.users.subscriptionFlows.get(flowId),
+      tx.users.records.get(flow.uid),
     ]);
-    const currentFlow = currentFlowSnap.data() as FlowDoc | undefined;
-    if (!owner.exists || !ownerActive) {
+    if (!ownerAllowsInteractiveAccess(owner)) {
       throw new Error("BYOS credential owner is not active");
     }
-    if (
-      !currentFlowSnap.exists ||
-      !currentFlow ||
-      currentFlow.uid !== flow.uid ||
-      currentFlow.gatewayId !== flow.gatewayId ||
-      currentFlow.agentId !== flow.agentId ||
-      currentFlow.consumedAt ||
-      currentFlow.captureClaimId
-    ) {
+    if (!sameFlowOwner(flow, currentFlow) || currentFlow.consumedAt !== null || currentFlow.captureClaimId !== null) {
       throw new Error("BYOS credential flow is not claimable");
     }
-    tx.set(flowRef, {
+    await tx.users.subscriptionFlows.update(flowId, {
       captureClaimId: claimId,
       captureClaimedAt: Date.now(),
-    }, { merge: true });
+    });
   });
   return claimId;
 }
@@ -558,13 +479,8 @@ async function disconnectProviderFromUserIntegration(
   uid: string,
   provider: ByosubProvider,
 ): Promise<{ clearUserSignal: boolean; remainingProvider: RemainingByosubProvider | null }> {
-  const snap = await db
-    .collection("users")
-    .doc(uid)
-    .collection("integrations")
-    .doc("byosub")
-    .get();
-  const remaining = firstRemainingConnectedProvider(providerSetFromUserIntegration(snap.data()), provider);
+  const integration = await readSubscriptionIntegration(platformStateStore.users, uid);
+  const remaining = firstRemainingConnectedProvider(providerSetFromUserIntegration(integration), provider);
   return {
     clearUserSignal: !remaining,
     remainingProvider: remaining ? { provider: remaining.provider, entry: remaining.entry } : null,
@@ -572,19 +488,7 @@ async function disconnectProviderFromUserIntegration(
 }
 
 async function clearUserByosubSignal(uid: string): Promise<void> {
-  await db.collection("users").doc(uid).set({ byotActive: false }, { merge: true });
-  await db
-    .collection("users")
-    .doc(uid)
-    .collection("system")
-    .doc("config")
-    .set(
-      {
-        byot: FieldValue.delete(),
-        modelCredential: FieldValue.delete(),
-      },
-      { merge: true },
-    );
+  await platformStateStore.users.modelCredentials.delete(uid);
 }
 
 async function retargetSubscriptionModels(
@@ -700,8 +604,6 @@ router.post(
         provider,
         modelCredentialProvider: entry.id,
         status: "disconnected",
-        connected: false,
-        summaryConnected: !clearUserSignal,
         ...(resolved ? { gatewayId: resolved.gatewayId } : {}),
       });
 
@@ -769,7 +671,6 @@ router.post(
         provider: entry.oauth.subscriptionProvider,
         modelCredentialProvider: entry.id,
         status: "connected",
-        connected: true,
         gatewayId: resolved.gatewayId,
       });
       triggerUnifiedByosSync({
@@ -910,28 +811,17 @@ router.post(
         res.json({ ok: true, noop: true });
         return;
       }
-      const integrationSnap = await db
-        .collection("users")
-        .doc(assignedUid)
-        .collection("integrations")
-        .doc("byosub")
-        .get();
-      const providers = providerSetFromUserIntegration(integrationSnap.data());
+      const integration = await readSubscriptionIntegration(platformStateStore.users, assignedUid);
+      const providers = providerSetFromUserIntegration(integration);
       if (!providers || !isConnectedProvider(providers, provider)) {
         res.json({ ok: true, noop: true });
         return;
       }
-      const updatedProviders = {
-        ...providers,
-        [provider]: { ...(providers[provider] as Record<string, unknown>), status: "needs_reauth", connected: false },
-      };
       await writeByosubIntegration({
         uid: assignedUid,
         provider,
         modelCredentialProvider: entry.id,
         status: "needs_reauth",
-        connected: false,
-        summaryConnected: userIntegrationConnectionView({ providers: updatedProviders }).connected,
         gatewayId: b.gatewayId,
       });
       res.json({ ok: true });
@@ -979,13 +869,8 @@ router.post(
         res.json({ ok: true, noop: true });
         return;
       }
-      const integrationSnap = await db
-        .collection("users")
-        .doc(assignedUid)
-        .collection("integrations")
-        .doc("byosub")
-        .get();
-      const ref = resolveUserByosubCredentialRefs(assignedUid, integrationSnap.data()).refs.find(
+      const integration = await readSubscriptionIntegration(platformStateStore.users, assignedUid);
+      const ref = resolveUserByosubCredentialRefs(assignedUid, integration).refs.find(
         (candidate) => candidate.provider === "openai",
       );
       if (!ref) {

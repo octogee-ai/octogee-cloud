@@ -13,7 +13,6 @@ function harness(bound: BoundTenant | null, greeting: unknown) {
   const records: BrokerRecords = {
     ...NO_BROKER_RECORDS,
     userDocuments: { ...NO_BROKER_RECORDS.userDocuments, account: async (uid) => docs[`users/${uid}`] },
-    byosub: { ...NO_BROKER_RECORDS.byosub, startFlow: writes },
     recordUsageEvent: writes,
   };
   const app = express();

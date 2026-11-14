@@ -37,7 +37,7 @@ describe("controller user seams", () => {
     const supplied = {
       userAccounts: { create: vi.fn() },
       accountReader: { get: vi.fn(), getMany: vi.fn(), list: vi.fn() },
-      userDocuments: { account: vi.fn(), agent: vi.fn(), systemConfig: vi.fn() },
+      userDocuments: { account: vi.fn(), agent: vi.fn() },
       userDirectory: { ...noAdminUserDirectorySource },
       adminUserDetail: vi.fn(),
       userPolicyInputs: { current: vi.fn(), list: vi.fn(), subscribe: vi.fn() },

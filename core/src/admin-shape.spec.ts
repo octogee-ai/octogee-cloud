@@ -21,7 +21,7 @@ const LIVE_SIGNUP_OFFER = {
 };
 
 function summarize(uid: string, data: Record<string, unknown>, broker?: BrokerUserUsage) {
-  return buildUserSummary(userRecordFromData(uid, data, 0, null), userAccountFromData(uid, data), broker);
+  return buildUserSummary(userRecordFromData(uid, data, 0, null), userAccountFromData(uid, data), data.byotActive === true, broker);
 }
 
 describe("buildUserSummary", () => {

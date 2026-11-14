@@ -469,6 +469,66 @@ function createSessionModelAuditRepository(session) {
         },
     };
 }
+const MODEL_CREDENTIALS_COLLECTION = "modelCredentials";
+const SUBSCRIPTION_LINKS_SUBCOLLECTION = "subscriptionLinks";
+const SUBSCRIPTION_FLOWS_COLLECTION = "subscriptionFlows";
+function createModelCredentialsRepository(session) {
+    const ref = (uid) => session.db.collection(MODEL_CREDENTIALS_COLLECTION).doc(uid);
+    const key = (uid) => ({ aggregate: "model-credential", key: uid });
+    return {
+        async get(uid) {
+            const snapshot = await session.read("users.modelCredentials.get", ref(uid));
+            return snapshot.exists
+                ? ({ ...decodeDocumentData(snapshot), revision: revisionOf(snapshot) })
+                : null;
+        },
+        async put(credential) {
+            await session.set("users.modelCredentials.put", key(credential.uid), ref(credential.uid), encodeDocument(credential, STORED_AS_NUMBERS));
+        },
+        async delete(uid) {
+            await session.delete("users.modelCredentials.delete", key(uid), ref(uid));
+        },
+    };
+}
+function createSubscriptionLinksRepository(session) {
+    const collection = (uid) => usersCollection(session.db).doc(uid).collection(SUBSCRIPTION_LINKS_SUBCOLLECTION);
+    const key = (uid, provider) => ({ aggregate: "subscription-link", key: `${uid}/${provider}` });
+    return {
+        async list(uid) {
+            const snapshot = await session.query("users.subscriptionLinks.list", collection(uid));
+            return snapshot.docs
+                .map((doc) => ({ ...decodeDocumentData(doc), revision: revisionOf(doc) }))
+                .sort((a, b) => a.provider.localeCompare(b.provider));
+        },
+        async put(link) {
+            await session.set("users.subscriptionLinks.put", key(link.uid, link.provider), collection(link.uid).doc(link.provider), encodeDocument(link, STORED_AS_NUMBERS));
+        },
+    };
+}
+function createSubscriptionFlowsRepository(session) {
+    const ref = (flowId) => session.db.collection(SUBSCRIPTION_FLOWS_COLLECTION).doc(flowId);
+    const key = (flowId) => ({ aggregate: "subscription-flow", key: flowId });
+    return {
+        async get(flowId) {
+            const snapshot = await session.read("users.subscriptionFlows.get", ref(flowId));
+            return snapshot.exists
+                ? ({ ...decodeDocumentData(snapshot), revision: revisionOf(snapshot) })
+                : null;
+        },
+        async create(flow) {
+            await session.create("users.subscriptionFlows.create", key(flow.flowId), ref(flow.flowId), encodeDocument({
+                ...flow,
+                consumedAt: null,
+                captureClaimId: null,
+                captureClaimedAt: null,
+                modelPinnedAt: null,
+            }, STORED_AS_NUMBERS));
+        },
+        async update(flowId, progress) {
+            await session.update("users.subscriptionFlows.update", key(flowId), ref(flowId), encodePatch(progress, STORED_AS_NUMBERS));
+        },
+    };
+}
 export const createFirestoreUserRepositories = (session) => ({
     records: createUserRecordsRepository(session),
     accounts: unsupportedUserAccounts(),
@@ -477,6 +537,9 @@ export const createFirestoreUserRepositories = (session) => ({
     agentStores: createAgentStoresRepository(session),
     agentModels: createAgentModelSelectionsRepository(session),
     sessionModelAudit: createSessionModelAuditRepository(session),
+    modelCredentials: createModelCredentialsRepository(session),
+    subscriptionLinks: createSubscriptionLinksRepository(session),
+    subscriptionFlows: createSubscriptionFlowsRepository(session),
 });
 function storedRole(config) {
     return config?.exists === true ? config.get("role") : undefined;

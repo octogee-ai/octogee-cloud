@@ -27,6 +27,9 @@ import type {
   UserAccountRecord,
   AgentModelSelectionRecord,
   SessionModelAuditRecord,
+  ModelCredentialRecord,
+  SubscriptionFlowRecord,
+  SubscriptionLinkRecord,
   UserRepositories,
   GatewayFenceHolders,
 } from "../platform-state/users.js";
@@ -1036,6 +1039,51 @@ function userRepositories(documents: FixtureDocuments, write: Write, transaction
       write(() => documents.set(path, { ...row, ...structuredClone(completion), completedAt: resolveServerNow(completion.completedAt) }));
     },
   });
+  const credentialPath = (uid: string) => `modelCredentials/${uid}`;
+  const modelCredentials = partialRepository<UserRepositories["modelCredentials"]>("users.modelCredentials", {
+    get: async (uid) => {
+      const row = documents.get(credentialPath(uid));
+      return row === undefined ? null : ({ ...structuredClone(row), revision: FIXTURE_REVISION }) as unknown as Stored<ModelCredentialRecord>;
+    },
+    put: async (credential) => {
+      write(() => documents.set(credentialPath(credential.uid), {
+        ...structuredClone(credential),
+        addedAt: resolveServerNow(credential.addedAt),
+      }));
+    },
+    delete: async (uid) => {
+      write(() => documents.delete(credentialPath(uid)));
+    },
+  });
+  const subscriptionLinks = partialRepository<UserRepositories["subscriptionLinks"]>("users.subscriptionLinks", {
+    list: async (uid) => documents.children(`users/${uid}/subscriptionLinks`)
+      .map(([, row]) => ({ ...structuredClone(row), revision: FIXTURE_REVISION }) as unknown as Stored<SubscriptionLinkRecord>)
+      .sort((a, b) => a.provider.localeCompare(b.provider)),
+    put: async (link) => {
+      write(() => documents.set(`users/${link.uid}/subscriptionLinks/${link.provider}`, {
+        ...structuredClone(link),
+        updatedAt: resolveServerNow(link.updatedAt),
+      }));
+    },
+  });
+  const flowPath = (flowId: string) => `subscriptionFlows/${flowId}`;
+  const subscriptionFlows = partialRepository<UserRepositories["subscriptionFlows"]>("users.subscriptionFlows", {
+    get: async (flowId) => {
+      const row = documents.get(flowPath(flowId));
+      return row === undefined ? null : ({ ...structuredClone(row), revision: FIXTURE_REVISION }) as unknown as Stored<SubscriptionFlowRecord>;
+    },
+    create: async (flow) => {
+      const path = flowPath(flow.flowId);
+      if (documents.get(path) !== undefined) throw new AlreadyExistsError({ aggregate: "subscription-flow", key: flow.flowId });
+      write(() => documents.set(path, { ...structuredClone(flow), consumedAt: null, captureClaimId: null, captureClaimedAt: null, modelPinnedAt: null }));
+    },
+    update: async (flowId, progress) => {
+      const path = flowPath(flowId);
+      const row = documents.get(path);
+      if (row === undefined) throw new MissingRecordError({ aggregate: "subscription-flow", key: flowId });
+      write(() => documents.set(path, { ...row, ...structuredClone(progress) }));
+    },
+  });
   return partialRepository<UserRepositories>("builders", {
     records,
     accounts,
@@ -1044,6 +1092,9 @@ function userRepositories(documents: FixtureDocuments, write: Write, transaction
     agentStores,
     agentModels,
     sessionModelAudit,
+    modelCredentials,
+    subscriptionLinks,
+    subscriptionFlows,
   });
 }
 

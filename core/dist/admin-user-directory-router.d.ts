@@ -18,7 +18,6 @@ export interface AdminUserDirectorySource {
     brokerEventCosts(uid: string, sinceMs: number, limit: number): Promise<UntypedRecord[]>;
     brokerRollup(uid: string): Promise<UntypedRecord | undefined>;
     totalUsers(): Promise<number | null>;
-    systemConfig(uid: string): Promise<UntypedRecord | undefined>;
     usageLogs(uid: string, sinceDate: string): Promise<UntypedRecord[]>;
     workspaces(uid: string): Promise<AdminUserDirectoryRecord[]>;
     workspaceModelUsage(slug: string): Promise<AdminUserDirectoryRecord[]>;

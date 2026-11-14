@@ -37,4 +37,4 @@ export interface PlatformUserSummary {
     accountLifecycleStatus: string;
 }
 export type UserSummary = PlatformUserSummary & ProductFields;
-export declare function buildUserSummary(user: PlatformUserRecord, account: UserAccount, broker?: BrokerUserUsage): UserSummary;
+export declare function buildUserSummary(user: PlatformUserRecord, account: UserAccount, ownerCredentialActive: boolean, broker?: BrokerUserUsage): UserSummary;

@@ -1,12 +1,13 @@
 import { authenticatedRequestLimit, authenticationFailureLimit } from "../middleware/authenticated-request-limit.js";
 import { Router, Request, Response, NextFunction } from "express";
 import { requireActiveAccount, requireAuthenticatedUid } from "../middleware/auth.js";
-import { db } from "../lib/db.js";
 import { platformStateStore } from "../lib/platform-state.js";
 import { logger } from "../middleware/logging.js";
 import { triggerGatewayModelCredentialSync } from "../lib/byot-sync-trigger.js";
 import { readGatewayAuthorizationInStore } from "@octogee/core/gateway-live-release";
-import { byotSnapshotProjectionFromSystemConfig, readAgentModelSelections } from "@octogee/core/user-snapshot-mapping";
+import { byotSnapshotProjection, readAgentModelSelections } from "@octogee/core/user-snapshot-mapping";
+import { readSubscriptionIntegration } from "@octogee/core/model-credential-records";
+import type { ModelCredentialRecord } from "@octogee/core/platform-state";
 import {
   agentIdBelongsToSlug,
   parseAgentModelSelection,
@@ -41,9 +42,8 @@ function gatewayIdFromRequest(req: Request): string | null {
   return typeof gatewayId === "string" && gatewayId.length > 0 ? gatewayId : null;
 }
 
-async function readSystemConfig(uid: string): Promise<Record<string, unknown>> {
-  const snap = await db.doc(`users/${uid}/system/config`).get();
-  return snap.data() ?? {};
+async function readModelCredential(uid: string): Promise<ModelCredentialRecord | null> {
+  return platformStateStore.users.modelCredentials.get(uid);
 }
 
 // The operator's user Agent default dial — what an agent with no explicit
@@ -65,8 +65,8 @@ async function platformAgentModelDefault(
 }
 
 async function readSubscriptionProviders(uid: string) {
-  const integration = await db.doc(`users/${uid}/integrations/byosub`).get();
-  const { refs, skipped } = resolveUserByosubCredentialRefs(uid, integration.data());
+  const integration = await readSubscriptionIntegration(platformStateStore.users, uid);
+  const { refs, skipped } = resolveUserByosubCredentialRefs(uid, integration);
   if (skipped.length > 0) logger.warn(`[agent-models] ${uid}: ${skipped.join("; ")}`);
   return refs.map((ref) => ref.provider);
 }
@@ -86,7 +86,7 @@ function triggerAgentModelSync(args: {
   req: Request;
   uid: string;
   slug: string;
-  sysData: Record<string, unknown>;
+  credential: ModelCredentialRecord | null;
   agentModels: AgentModelSelections;
 }): void {
   const gatewayId = gatewayIdFromRequest(args.req);
@@ -94,12 +94,12 @@ function triggerAgentModelSync(args: {
     logger.warn(`[agent-models] sync trigger skipped for ${args.slug}: missing gatewayId`);
     return;
   }
-  const projection = byotSnapshotProjectionFromSystemConfig(args.sysData, args.agentModels);
+  const projection = byotSnapshotProjection(args.credential, args.agentModels);
   const user = (args.req.user ?? {}) as Record<string, unknown>;
   triggerGatewayModelCredentialSync({
     gatewayId,
     userData: {
-      byotActive: projection.byotActive ?? user.byotActive === true,
+      byotActive: projection.byotActive,
       username: args.slug,
       provisioning: { openclaw: { status: "complete" } },
       ...userEntitlements().previousImageFields("model-pick-push", user),
@@ -134,7 +134,7 @@ router.get("/", authenticationFailureLimit, requireAuthenticatedUid, authenticat
 });
 
 type SelectionGate =
-  | { ok: true; slug: string; selection: AgentModelSelection | null; sysData: Record<string, unknown> }
+  | { ok: true; slug: string; selection: AgentModelSelection | null; credential: ModelCredentialRecord | null }
   | { ok: false; status: number; error: string };
 
 async function gateSelectionRequest(
@@ -154,14 +154,14 @@ async function gateSelectionRequest(
   }
 
   if (!opts.requireSelection) {
-    return { ok: true, slug, selection: null, sysData: await readSystemConfig(uid) };
+    return { ok: true, slug, selection: null, credential: await readModelCredential(uid) };
   }
 
   const selection = parseAgentModelSelection(req.body);
   if (!selection) {
     return { ok: false, status: 400, error: "primary (and optional fallbacks) must be valid model refs" };
   }
-  const [sysData, subscriptionProviders] = await Promise.all([readSystemConfig(uid), readSubscriptionProviders(uid)]);
+  const [credential, subscriptionProviders] = await Promise.all([readModelCredential(uid), readSubscriptionProviders(uid)]);
   if (!(subscriptionProviders.length > 0 && await isIsolatedRuntime(req))) {
     const allowed = new Set(platformModelRefs());
     const strangers = [selection.primary, ...selection.fallbacks].filter((ref) => !allowed.has(ref));
@@ -173,7 +173,7 @@ async function gateSelectionRequest(
       };
     }
   }
-  return { ok: true, slug, selection, sysData };
+  return { ok: true, slug, selection, credential };
 }
 
 router.put("/:agentId", authenticationFailureLimit, requireAuthenticatedUid, authenticatedRequestLimit(30), requireActiveAccount, async (req: Request, res: Response, next: NextFunction) => {
@@ -192,7 +192,7 @@ router.put("/:agentId", authenticationFailureLimit, requireAuthenticatedUid, aut
     });
 
     const agentModels = await readAgentModelSelections(platformStateStore.users, uid);
-    triggerAgentModelSync({ req, uid, slug: gate.slug, sysData: gate.sysData, agentModels });
+    triggerAgentModelSync({ req, uid, slug: gate.slug, credential: gate.credential, agentModels });
     logger.info(
       `[agent-models] ${gate.slug}: ${agentId} → ${selection.primary}` +
         (selection.fallbacks.length ? ` (fallback ${selection.fallbacks.join(", ")})` : ""),
@@ -212,7 +212,7 @@ router.delete("/:agentId", authenticationFailureLimit, requireAuthenticatedUid, 
     await platformStateStore.users.agentModels.delete(uid, agentId);
 
     const agentModels = await readAgentModelSelections(platformStateStore.users, uid);
-    triggerAgentModelSync({ req, uid, slug: gate.slug, sysData: gate.sysData, agentModels });
+    triggerAgentModelSync({ req, uid, slug: gate.slug, credential: gate.credential, agentModels });
     logger.info(
       `[agent-models] ${gate.slug}: ${agentId} pick removed — class default re-asserts on next sync`,
     );

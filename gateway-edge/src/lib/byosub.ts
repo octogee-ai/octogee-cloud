@@ -271,7 +271,7 @@ function octogeeApiBrokerBase(env: NodeJS.ProcessEnv = process.env): string {
   return trimmed;
 }
 
-// Record the byosubFlows owner mapping through octogee-api on the gateway's own
+// Record the subscription flow owner mapping through octogee-api on the gateway's own
 // KSA identity (internalFetch attaches the projected SA token). Cattle pods are
 // datastore.viewer — they can READ Firestore (resolveUserGateway/readFlow) but
 // not WRITE, so the one write in the connect flow brokers here.

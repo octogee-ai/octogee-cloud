@@ -6,8 +6,9 @@ import { platformStateUserDocuments, userDocumentsSizingKeyReader, type UserDocu
 
 const LIN: UserAccountRecord = { uid: "uid-lin", name: "lin", email: "lin@users.invalid", createdAt: 1_700_000_000_000 };
 
-function platformStore(accounts: readonly UserAccountRecord[]): PlatformStateStore {
+function platformStore(accounts: readonly UserAccountRecord[], extra: Record<string, Record<string, unknown>> = {}): PlatformStateStore {
   const fixture = createDocumentFixtureStore({
+    ...extra,
     "users/uid-lin": {
       username: "lin",
       mattermost: { userId: "mm-lin" },
@@ -48,17 +49,27 @@ describe("move snapshot from platform state", () => {
     expect(snapshot).not.toHaveProperty("systemConfig");
   });
 
-  it("reads the agent identity and BYOT config from the documents a product supplies", async () => {
-    const store = platformStore([LIN]);
+  it("reads the agent identity a product supplies and the owner's stored model credential", async () => {
+    const store = platformStore([LIN], {
+      "modelCredentials/uid-lin": {
+        uid: "uid-lin", active: true, provider: "openrouter", mode: "api_key", status: "active", reasonCode: "ok",
+        secretName: "byok-lin-openrouter", fingerprint: null, keyHash: null, baseUrl: null, model: "openrouter/auto",
+        addedAt: 1, lastUsedAt: null,
+      },
+    });
     const documents: UserDocuments = {
-      account: async () => ({ username: "lin", displayName: "Lin", email: "lin@users.invalid", byotActive: true }),
+      account: async () => ({ username: "lin", displayName: "Lin", email: "lin@users.invalid" }),
       agent: async () => ({ name: "Ada", avatarEmoji: "🐙" }),
-      systemConfig: async () => ({ byot: { provider: "anthropic", status: "active" } }),
     };
 
     const snapshot = await readMigrationUserSnapshot(documents, store, "uid-lin", "shared-a");
 
-    expect(snapshot).toMatchObject({ ownerName: "Lin", byotActive: true, coachIdentity: { name: "Ada", emoji: "🐙" } });
+    expect(snapshot).toMatchObject({
+      ownerName: "Lin",
+      byotActive: true,
+      systemConfig: { byot: { provider: "openrouter", model: "openrouter/auto" } },
+      coachIdentity: { name: "Ada", emoji: "🐙" },
+    });
   });
 
   it("has no snapshot for a user without an account", async () => {
@@ -80,7 +91,6 @@ describe("move snapshot from platform state", () => {
     const productDocuments: UserDocuments = {
       account: async () => ({ username: "from-product" }),
       agent: async () => undefined,
-      systemConfig: async () => undefined,
     };
 
     const platform = controllerUserSeams({ userLifecycle: null }, store, () => undefined).documents;

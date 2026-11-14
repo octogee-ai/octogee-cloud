@@ -13,6 +13,7 @@ let gatewayReleasesDocs: Record<string, Record<string, unknown>> = {};
 let gatewayAssignmentsDocs: Record<string, Record<string, unknown>> = {};
 let usersDocs: Record<string, Record<string, unknown>> = {};
 const usersSystemDocs: Record<string, Record<string, unknown>> = {};
+const modelCredentialsDocs: Record<string, Record<string, unknown>> = {};
 let workspacesDocs: Record<string, Record<string, unknown>> = {};
 let configDocs: Record<string, Record<string, unknown>> = {};
 let controllerStateDocs: Record<string, Record<string, unknown>> = {};
@@ -29,6 +30,7 @@ function fixtureCollection(collectionPath: string): { docs: FixtureCollection; p
     glmGateways: glmGatewaysDocs,
     config: configDocs,
     glmControllerState: controllerStateDocs,
+    modelCredentials: modelCredentialsDocs,
   };
   const gatewaySubcollections: Record<string, FixtureCollection | undefined> = {
     releases: gatewayReleasesDocs,

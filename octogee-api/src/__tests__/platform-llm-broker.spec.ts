@@ -31,11 +31,17 @@ function gatewayRoot(gatewayId: string, gatewayClass: "shared" | "isolated"): Re
   };
 }
 
-function platform(gatewayId: "shared-1" | "lin") {
+const OWNER_API_KEY = {
+  uid: "uid-lin", active: true, provider: "anthropic", mode: "api_key", status: "active", reasonCode: "ok",
+  secretName: "byok-lin-anthropic", fingerprint: null, keyHash: null, baseUrl: null, model: null, addedAt: 1, lastUsedAt: null,
+};
+
+function platform(gatewayId: "shared-1" | "lin", ownerApiKey: boolean) {
   return createDocumentFixtureStore({
     "gateways/shared-1": gatewayRoot("shared-1", "shared"),
     "gateways/lin": gatewayRoot("lin", "isolated"),
     "users/uid-lin": { username: "lin", provisioning: { openclaw: { gatewayId } } },
+    ...(ownerApiKey ? { "modelCredentials/uid-lin": OWNER_API_KEY } : {}),
   });
 }
 
@@ -51,8 +57,9 @@ async function broker(input: {
   readSecret?: PlatformLlmBrokerSources["readSecret"];
   env?: PlatformLlmBrokerSources["env"];
   accounts?: UserAccountReader;
+  ownerApiKey?: boolean;
 }) {
-  const state = platform(input.gatewayId);
+  const state = platform(input.gatewayId, input.ownerApiKey ?? false);
   const usageStore = new InMemoryModelBrokerUsageStore();
   const fetchImpl = upstream();
   const errors: unknown[] = [];
@@ -100,12 +107,12 @@ describe("the platform LLM broker", () => {
     expect((await usageStore.readWindowUsage({ gatewayId: "shared-1", ownerUid: "uid-lin", now: NOW })).requestCount).toBe(1);
   });
 
-  it("uses an isolated gateway owner's key from the secret store", async () => {
+  it("uses an isolated gateway owner's stored API key", async () => {
     const readSecret = vi.fn(async (name: string) => {
       if (name === "byok-lin-anthropic") return "owner-anthropic-key";
       throw new SecretNotFoundError(name);
     });
-    const { send, upstreamKey, usageStore } = await broker({ gatewayId: "lin", readSecret });
+    const { send, upstreamKey, usageStore } = await broker({ gatewayId: "lin", readSecret, ownerApiKey: true });
 
     await send().expect(200);
 
@@ -128,6 +135,7 @@ describe("the platform LLM broker", () => {
     const failure = new Error("secret store unavailable");
     const { send, fetchImpl, errors } = await broker({
       gatewayId: "lin",
+      ownerApiKey: true,
       readSecret: async () => { throw failure; },
     });
 

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import {
-  byotSnapshotProjectionFromSystemConfig,
-  byotSystemConfigFromDoc,
+  byotSnapshotProjection,
+  readByotSnapshotProjection,
   deriveSlug,
   mapUserDocToSnapshot,
   mapWorkspaceChannelDoc,
@@ -12,6 +12,7 @@ import {
 } from "./user-snapshot-mapping.js";
 import { MalformedRecordError } from "./platform-state/errors.js";
 import type { Revision } from "./platform-state/store.js";
+import type { ModelCredentialRecord } from "./platform-state/users.js";
 import { createDocumentFixtureStore } from "./testing/journal-store.js";
 
 describe("deriveSlug", () => {
@@ -29,10 +30,8 @@ describe("deriveSlug", () => {
 describe("mapUserDocToSnapshot — users/{uid} doc → UserSnapshot", () => {
   const ch: never[] = [];
 
-  it("byotActive mirrors Boolean(data.byotActive) — the mount re-assert reads it to avoid clobbering BYOT", () => {
-    expect(mapUserDocToSnapshot("u", { username: "a", byotActive: true }, ch).byotActive).toBe(true);
-    expect(mapUserDocToSnapshot("u", { username: "a", byotActive: false }, ch).byotActive).toBe(false);
-    expect(mapUserDocToSnapshot("u", { username: "a" }, ch).byotActive).toBe(false);
+  it("leaves BYOT off until the stored credential projection fills it in", () => {
+    expect(mapUserDocToSnapshot("u", { username: "a", byotActive: true }, ch).byotActive).toBe(false);
   });
 
   it("ownerName fallback: displayName → username → slug", () => {
@@ -96,75 +95,50 @@ describe("channel-doc shaping (workspaces/{slug} producer → UserSnapshot.chann
   });
 });
 
-describe("byotSystemConfigFromDoc — users/{uid}/system/config → snapshot.systemConfig", () => {
-  it("projects active modelCredential into the byot-shaped mount snapshot", () => {
-    expect(
-      byotSystemConfigFromDoc({
-        modelCredential: {
-          active: true,
-          provider: "openai-codex",
-          mode: "oauth",
-          status: "active",
-          reasonCode: "ok",
-          secretName: "byosub-uid-openai",
-          model: "openai/gpt-5.5",
-        },
-      }, {}),
-    ).toEqual({ byot: { provider: "openai-codex", model: "openai/gpt-5.5" } });
-  });
+function credential(overrides: Partial<ModelCredentialRecord> = {}): ModelCredentialRecord {
+  return {
+    uid: "acme",
+    active: true,
+    provider: "anthropic",
+    mode: "api_key",
+    status: "active",
+    reasonCode: "ok",
+    secretName: "byok-acme-anthropic",
+    fingerprint: "sk-ant...1234",
+    keyHash: "hash",
+    baseUrl: null,
+    model: null,
+    addedAt: 1,
+    lastUsedAt: null,
+    ...overrides,
+  };
+}
 
-  it("reports active from modelCredential so callers no longer need users/{uid}.byotActive", () => {
-    expect(
-      byotSnapshotProjectionFromSystemConfig({
-        modelCredential: {
-          active: true,
-          provider: "anthropic",
-          mode: "api_key",
-          status: "active",
-          reasonCode: "ok",
-          secretName: "byok-acme-anthropic",
-          fingerprint: "sk-ant...1234",
-        },
-      }, {}),
-    ).toEqual({
+describe("byotSnapshotProjection — stored model credential → snapshot BYOT fields", () => {
+  it("projects an active credential's provider, base URL and model into the mount snapshot", () => {
+    expect(byotSnapshotProjection(credential({ provider: "openai", baseUrl: "https://x", model: "gpt-4o" }), {})).toEqual({
       byotActive: true,
-      systemConfig: { byot: { provider: "anthropic" } },
+      systemConfig: { byot: { provider: "openai", baseUrl: "https://x", model: "gpt-4o" } },
     });
   });
 
-  it("treats inactive modelCredential as authoritative over stale legacy byot", () => {
-    expect(
-      byotSnapshotProjectionFromSystemConfig({
-        modelCredential: {
-          active: false,
-          provider: "openai",
-          mode: "api_key",
-          status: "missing",
-          reasonCode: "missing_credential",
-          secretName: "byok-acme-openai",
-        },
-        byot: { provider: "openai", model: "gpt-4o" },
-      }, {}),
-    ).toEqual({ byotActive: false });
+  it("treats an inactive credential as no BYOT at all", () => {
+    expect(byotSnapshotProjection(credential({ active: false, status: "missing" }), {})).toEqual({ byotActive: false });
   });
 
-  it("projects the byot provider/baseUrl/model the in-pod re-assert needs", () => {
-    expect(
-      byotSystemConfigFromDoc({ byot: { provider: "openai", baseUrl: "https://x", model: "gpt-4o" } }, {}),
-    ).toEqual({ byot: { provider: "openai", baseUrl: "https://x", model: "gpt-4o" } });
+  it("reports no BYOT and no system config when the user has no credential", () => {
+    expect(byotSnapshotProjection(null, {})).toEqual({ byotActive: false });
   });
 
-  it("drops non-string fields and keeps only what is present", () => {
-    expect(byotSystemConfigFromDoc({ byot: { provider: "anthropic", model: 123 } }, {})).toEqual({
-      byot: { provider: "anthropic" },
-    });
-  });
+  it("reads the credential and picks from the platform store", async () => {
+    const get = vi.fn(async () => ({ ...credential({ provider: "openai-codex", mode: "oauth" }), revision: "1" as Revision }));
+    const list = vi.fn(async () => []);
 
-  it("returns undefined when there is no usable byot config (so the snapshot stays lean)", () => {
-    expect(byotSystemConfigFromDoc(undefined, {})).toBeUndefined();
-    expect(byotSystemConfigFromDoc({}, {})).toBeUndefined();
-    expect(byotSystemConfigFromDoc({ byot: {} }, {})).toBeUndefined();
-    expect(byotSystemConfigFromDoc({ byot: null as unknown as Record<string, unknown> }, {})).toBeUndefined();
+    await expect(readByotSnapshotProjection({
+      modelCredentials: { get, put: vi.fn(), delete: vi.fn() },
+      agentModels: { list, put: vi.fn(), delete: vi.fn() },
+    }, "acme")).resolves.toEqual({ byotActive: true, systemConfig: { byot: { provider: "openai-codex" } } });
+    expect(get).toHaveBeenCalledWith("acme");
   });
 });
 
@@ -336,21 +310,14 @@ describe("agent-model selections ride the snapshot regardless of byot state", ()
     },
   };
 
-  it("projects agentModels alongside an active modelCredential", () => {
-    expect(
-      byotSnapshotProjectionFromSystemConfig({ modelCredential: { active: true, provider: "anthropic" } }, AGENT_MODELS).systemConfig,
-    ).toEqual({ byot: { provider: "anthropic" }, agentModels: AGENT_MODELS });
+  it("projects agentModels alongside an active credential", () => {
+    expect(byotSnapshotProjection(credential(), AGENT_MODELS).systemConfig)
+      .toEqual({ byot: { provider: "anthropic" }, agentModels: AGENT_MODELS });
   });
 
-  it("projects agentModels even when no credential exists (platform user picks)", () => {
-    expect(byotSystemConfigFromDoc(undefined, AGENT_MODELS)).toEqual({ agentModels: AGENT_MODELS });
-    expect(
-      byotSnapshotProjectionFromSystemConfig({ modelCredential: { active: false, provider: "openai" } }, AGENT_MODELS).systemConfig,
-    ).toEqual({ agentModels: AGENT_MODELS });
-  });
-
-  it("ignores agent model picks left in the system config document", () => {
-    expect(byotSystemConfigFromDoc({ agentModels: AGENT_MODELS }, {})).toBeUndefined();
+  it("projects agentModels even when no credential is active (platform user picks)", () => {
+    expect(byotSnapshotProjection(null, AGENT_MODELS).systemConfig).toEqual({ agentModels: AGENT_MODELS });
+    expect(byotSnapshotProjection(credential({ active: false }), AGENT_MODELS).systemConfig).toEqual({ agentModels: AGENT_MODELS });
   });
 
   it("reads a user's agent model picks from the platform store", async () => {
