@@ -180,7 +180,7 @@ export function createProjectRepoSourceRoutes(
       ownerErrorMessage: "Only the project owner can change the connected repo",
       logTag: "[repo-source] crashed for",
       errorMessage: "Could not update the connected repo",
-    }, async ({ projectRef, project, uid }) => {
+    }, async ({ projectPath, project, uid }) => {
       const requested = requestedRepoSource(req.body);
       if (!requested.ok) {
         res.status(400).json({ error: requested.error });
@@ -206,7 +206,7 @@ export function createProjectRepoSourceRoutes(
       });
 
       logger.info(
-        `[repo-source] ${projectRef.path}: ${repoSourceLabel(project.repoSource)} → ${repoSourceLabel(requested.value)}`,
+        `[repo-source] ${projectPath}: ${repoSourceLabel(project.repoSource)} → ${repoSourceLabel(requested.value)}`,
         { uid },
       );
       res.json({ success: true, repoSource: requested.value });

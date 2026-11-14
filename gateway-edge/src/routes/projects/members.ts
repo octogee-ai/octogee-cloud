@@ -56,7 +56,7 @@ async function removeProjectGuest(ctx: ProjectCtx, guestUid: string, res: Respon
   const guest = await readGuestActor(guestUid);
   if (guest.mmUserId) {
     const { removeChannelMember } = await import("../../lib/channel-lifecycle.js");
-    await removeChannelMember(`${ctx.projectRef.path}/channels/general`, guest.mmUserId);
+    await removeChannelMember(`${ctx.projectPath}/channels/general`, guest.mmUserId);
   }
   await removeProjectMember(ctx.wid, ctx.pid, guestUid);
   await revokeGuestGiteaAccess(ctx, guest);

@@ -1,4 +1,3 @@
-import type { Firestore } from "firebase-admin/firestore";
 export interface UserAccount {
     readonly uid: string;
     readonly username: string | null;
@@ -16,6 +15,5 @@ export interface UserAccountReader {
 }
 type Data = Record<string, unknown>;
 export declare function userAccountFromData(uid: string, data: Data): UserAccount;
-export declare function firestoreUserAccountReader(db: Pick<Firestore, "collection" | "getAll">): UserAccountReader;
 export declare const noUserAccounts: UserAccountReader;
 export {};

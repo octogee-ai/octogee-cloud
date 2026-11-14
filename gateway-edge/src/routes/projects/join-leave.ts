@@ -137,7 +137,7 @@ async function joinProject(ctx: ProjectCtx, res: Response): Promise<void> {
   if (actor.mmUserId) await ensureActiveMattermostUser(actor.mmUserId);
   if (!(await ensureProjectJoinerTeamMember(ctx, actor, res))) return;
 
-  const channelPath = `${ctx.projectRef.path}/channels/general`;
+  const channelPath = `${ctx.projectPath}/channels/general`;
   await addChannelMember(channelPath, actor.mmUserId!);
   const commit = await commitProjectJoin(ctx);
   if (commit === "not-joinable") {
@@ -199,7 +199,7 @@ async function leaveProject(ctx: ProjectCtx, res: Response): Promise<void> {
   const actor = await readProjectActor(ctx.uid);
   if (actor.mmUserId) {
     const { removeChannelMember } = await import("../../lib/channel-lifecycle.js");
-    await removeChannelMember(`${ctx.projectRef.path}/channels/general`, actor.mmUserId);
+    await removeChannelMember(`${ctx.projectPath}/channels/general`, actor.mmUserId);
   }
   await removeProjectMember(ctx.wid, ctx.pid, ctx.uid);
   await revokeProjectGiteaAccess(ctx, actor);

@@ -1,11 +1,7 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import * as fs from "fs";
 import * as path from "path";
 import type { OpenClawConfig } from "../lib/config.js";
-
-vi.mock("../lib/firebase.js", () => ({
-  db: { collection: vi.fn() },
-}));
 
 import { applyGatewayDefaults } from "@octogee/core/gateway";
 

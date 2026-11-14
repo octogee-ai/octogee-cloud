@@ -5,7 +5,7 @@ import { GLM_GATEWAYS_COLLECTION, GLM_OPERATIONS_COLLECTION } from "@octogee/sha
 import { GATEWAY_RELEASES_SUBCOLLECTION, releasePayloadHash } from "@octogee/shared/types/gateway-releases";
 import { addAdminFleetRoutes } from "../admin-fleet-router.js";
 import { createJournalFixtureStore, fixtureDocumentsAt, journalRowsAtPaths } from "./journal-store.js";
-import { firestoreUserAccountReader } from "../user-account.js";
+import { firestoreUserAccountReader } from "./firestore-user-accounts.js";
 // ── Path-based in-memory Firestore ─────────────────────────────────────────
 // Supports the exact surface the release endpoints touch: doc get/set(merge)/
 // update, subcollections, collection get/where("in")/orderBy/add, and auto-ids.

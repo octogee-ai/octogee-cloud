@@ -9,7 +9,7 @@ import { addAdminFleetRoutes } from "../admin-fleet-router.js";
 import type { CentralReleaseAuthority } from "../artifact-registry.js";
 import type { PlatformStateStore } from "../platform-state/store.js";
 import { createJournalFixtureStore, fixtureDocumentsAt, journalRowsAtPaths } from "./journal-store.js";
-import { firestoreUserAccountReader } from "../user-account.js";
+import { firestoreUserAccountReader } from "./firestore-user-accounts.js";
 
 // ── Path-based in-memory Firestore ─────────────────────────────────────────
 // Supports the exact surface the release endpoints touch: doc get/set(merge)/

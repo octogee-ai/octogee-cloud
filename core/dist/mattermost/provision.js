@@ -1,6 +1,6 @@
 import * as crypto from "crypto";
 import { log } from "../config.js";
-import { platformStateStore } from "../firebase.js";
+import { platformStateStore } from "../provisioner-platform-state.js";
 import { workspaceGeneralChannelName, workspaceDefaultAgentChannelName, } from "@octogee/shared/types/identity";
 import { computeWorkspaceDisplayName, WORKSPACE_CHANNEL_DISPLAY_NAMES, } from "@octogee/shared/types/display-names";
 import { agentChannelPurpose } from "./agent-channel-purpose.js";

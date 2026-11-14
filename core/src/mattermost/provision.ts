@@ -1,6 +1,6 @@
 import * as crypto from "crypto";
 import { log } from "../config.js";
-import { platformStateStore } from "../firebase.js";
+import { platformStateStore } from "../provisioner-platform-state.js";
 import type { ServerNow } from "../platform-state/store.js";
 import {
   workspaceGeneralChannelName,

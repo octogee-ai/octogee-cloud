@@ -1,6 +1,7 @@
 import { Timestamp, type Firestore } from "firebase-admin/firestore";
 import { describe, expect, it, vi } from "vitest";
-import { firestoreUserAccountReader, noUserAccounts, userAccountFromData } from "./user-account.js";
+import { firestoreUserAccountReader } from "./testing/firestore-user-accounts.js";
+import { noUserAccounts, userAccountFromData } from "./user-account.js";
 
 describe("userAccountFromData", () => {
   it.each([

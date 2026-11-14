@@ -16,7 +16,7 @@ vi.mock("@google-cloud/secret-manager", () => ({
     createSecret = vi.fn(async () => [{}]);
   },
 }));
-vi.mock("../firebase.js", () => ({ platformStateStore: { config: { mattermostAdmin: { put: h.setSpy } } } }));
+vi.mock("../provisioner-platform-state.js", () => ({ platformStateStore: { config: { mattermostAdmin: { put: h.setSpy } } } }));
 vi.mock("../mattermost/client.js", () => ({
   getMmAdminToken: h.getMmAdminToken,
   mmApiCall: h.mmApiCall,

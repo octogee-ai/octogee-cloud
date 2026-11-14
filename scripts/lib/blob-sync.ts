@@ -49,12 +49,12 @@ export interface BlobStore {
 export type BlobStoreFactory = (slug: string) => BlobStore | Promise<BlobStore>;
 
 export interface BlobSyncOptions {
-  store?: BlobStore;
+  store: BlobStore;
   strict?: boolean;
 }
 
 export interface BlobSyncAllOptions {
-  storeForSlug?: BlobStoreFactory;
+  storeForSlug: BlobStoreFactory;
   strict?: boolean;
 }
 
@@ -224,26 +224,8 @@ function recordUpload(
   });
 }
 
-async function firebaseAdminBlobStore(): Promise<BlobStore> {
-  const { getStorage } = await import("./firebase.js");
-  const { createGcsManifestStore } = await import("@octogee/core/workspace-manifest");
-  const bucket = getStorage().bucket();
-  return {
-    manifestFor: () => createGcsManifestStore(bucket),
-    async download(input) {
-      await bucket.file(input.gcsPath).download({ destination: input.destination });
-    },
-    async upload(input) {
-      await bucket.upload(input.localPath, { destination: input.gcsPath });
-    },
-  };
-}
 
-export async function blobSyncAll(): Promise<void> {
-  return blobSyncAllWithOptions();
-}
-
-export async function blobSyncAllWithOptions(opts: BlobSyncAllOptions = {}): Promise<void> {
+export async function blobSyncAllWithOptions(opts: BlobSyncAllOptions): Promise<void> {
   if (!pathExists(CUSTOMERS_DIR)) return;
 
   const slugs = fs.readdirSync(CUSTOMERS_DIR).filter(d => {
@@ -254,7 +236,7 @@ export async function blobSyncAllWithOptions(opts: BlobSyncAllOptions = {}): Pro
   for (const slug of slugs) {
     try {
       await blobSyncForSlug(slug, {
-        store: opts.storeForSlug ? await opts.storeForSlug(slug) : undefined,
+        store: await opts.storeForSlug(slug),
         strict: opts.strict,
       });
     } catch (err) {
@@ -292,9 +274,9 @@ export function gcsPrefixForSlug(slug: string): string {
   return `customers/${slug}`;
 }
 
-export async function blobSyncForSlug(slug: string, opts: BlobSyncOptions = {}): Promise<void> {
+export async function blobSyncForSlug(slug: string, opts: BlobSyncOptions): Promise<void> {
   if (!isManifestPath(slug) || slug.includes("/")) throw new Error("invalid blob workspace slug");
-  const store = opts.store ?? await firebaseAdminBlobStore();
+  const store = opts.store;
   await mkdir(CUSTOMERS_DIR, { recursive: true });
   await withBlobDirectory(fs.realpathSync(CUSTOMERS_DIR), [slug, ".blobs"], true, blobsDir =>
     syncBlobDirectory(slug, blobsDir, store, opts.strict));

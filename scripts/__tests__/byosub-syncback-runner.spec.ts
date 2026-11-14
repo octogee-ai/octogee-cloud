@@ -27,7 +27,7 @@ afterEach(() => {
 });
 
 describe("byosub-syncback-runner loadTargets", () => {
-  it("does not attempt Firestore discovery on shared gateways", async () => {
+  it("finds no targets on shared gateways", async () => {
     process.env.HOME = mkHome({
       agents: {
         list: [{ id: "octogee-tester19-coach" }],
@@ -36,16 +36,9 @@ describe("byosub-syncback-runner loadTargets", () => {
     process.env.GATEWAY_ID = "default-green";
     process.env.GATEWAY_CLASS = "shared";
 
-    const firebaseImport = vi.fn();
-    vi.doMock("../lib/firebase.js", () => {
-      firebaseImport();
-      throw new Error("shared gateways must not import firebase");
-    });
-
     const { loadTargets } = await import("../entrypoints/byosub-syncback-runner.js");
 
     await expect(loadTargets()).resolves.toEqual([]);
-    expect(firebaseImport).not.toHaveBeenCalled();
   });
 });
 

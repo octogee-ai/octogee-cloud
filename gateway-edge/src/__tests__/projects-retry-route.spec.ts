@@ -40,10 +40,6 @@ const h = vi.hoisted(() => ({
 const PROJECT = "workspaces/mira/projects/orbit";
 const GENERAL = `${PROJECT}/channels/general`;
 
-function projectRef() {
-  return { path: PROJECT };
-}
-
 vi.mock("../middleware/security.js", () => ({
   strictRateLimit: (_req: unknown, _res: unknown, next: () => void) => {
     next();
@@ -61,7 +57,7 @@ vi.mock("../lib/withProject.js", () => ({
   ) => {
     req.uid = h.uid;
     await handler({
-      projectRef: projectRef(),
+      projectPath: PROJECT,
       project: h.project,
       uid: h.uid,
       wid,

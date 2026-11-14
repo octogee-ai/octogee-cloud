@@ -10,7 +10,7 @@ import {
   journalRowsIn,
   type FixtureDocuments,
 } from "./journal-store.js";
-import { firestoreUserAccountReader } from "../user-account.js";
+import { firestoreUserAccountReader } from "./firestore-user-accounts.js";
 
 export function valueAtPath(data: Record<string, unknown>, path: string): unknown {
   let cursor: unknown = data;
