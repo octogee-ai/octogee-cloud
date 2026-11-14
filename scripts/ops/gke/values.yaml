@@ -1,0 +1,126 @@
+# Values for the platform on GKE, in namespace octogee. gke-install.sh layers
+# the image references and the project's own addresses over this file.
+global:
+  ingressClassName: ""
+  nodeSelector: {}
+  deploymentTargetId: gke
+  secretStoreBackend: postgres
+  secretStoreRootKeySecretName: platform-root-key
+  encryptionRootKeySecretName: platform-root-key
+  blobStoreBackend: s3
+  blobStore:
+    endpoint: https://storage.googleapis.com
+    credentialsSecretName: blob-store-s3
+  publicAppOrigins:
+    - http://localhost:4322
+
+cloud-sql-proxy:
+  enabled: false
+
+mattermost:
+  db:
+    name: mattermost
+    sslmode: require
+  siteUrl: http://localhost:8065
+  allowedCorsOrigins: http://localhost:8065
+  pvc:
+    size: 10Gi
+
+gitea:
+  persistence:
+    size: 10Gi
+  gitea:
+    admin:
+      email: admin@users.invalid
+    config:
+      database:
+        NAME: gitea
+        USER: gitea
+        SSL_MODE: require
+      server:
+        DOMAIN: localhost
+        ROOT_URL: http://localhost:3000
+
+gateway-edge:
+  ingress:
+    enabled: false
+
+octogee-api:
+  serviceAccount:
+    annotations: {}
+  gatewayServiceAccount: ""
+  env:
+    MM_URL: http://mattermost.octogee.svc.cluster.local:8065
+    MM_INTERNAL_URL: http://mattermost.octogee.svc.cluster.local:8065
+    APP_URL: http://localhost:4322
+    API_PUBLIC_URL: http://localhost:3001
+    SITE_URL: http://localhost:4321
+    PREVIEW_PUBLIC_URL: http://localhost:3001
+
+serviceAccount:
+  gcpServiceAccount: ""
+
+glm-controller:
+  fleetIdentity:
+    operatorKeySecretName: fleet-operator-key
+  gcpServiceAccount: ""
+  gatewayServiceAccount: none
+  workloadIdentityProject: none
+  sharedPool:
+    minReplicas: 1
+    maxReplicas: 1
+  deploymentTargets:
+    schemaVersion: 1
+    activeTargets:
+      gke: gke
+    targets:
+      gke:
+        environment: gke
+        lifecycle: active
+        clusterName: octogee
+        namespace: octogee
+        siteOrigin: http://localhost:4321
+        appOrigin: http://localhost:4322
+        apiOrigin: http://localhost:3001
+        gitOrigin: http://localhost:3000
+        mattermostOrigin: http://localhost:8065
+        gatewayValuesFile: values.yaml
+  gatewayValues:
+    nodeSelector: {}
+    computeClass: ""
+    runtimeClassName: gvisor
+    env:
+      githubOrg: octogee
+      mmInternalUrl: http://mattermost.octogee.svc.cluster.local:8065
+      mmSiteUrl: http://localhost:8065
+      apiPublicUrl: http://localhost:3001
+      giteaPublicBaseUrl: http://localhost:3000
+      allowedWsOrigins: http://localhost:4322
+      openaiEmbeddingsEnabled: "false"
+    gatewayEdge:
+      publicAppOrigins:
+        - http://localhost:4322
+      env:
+        APP_URL: http://localhost:4322
+        API_PUBLIC_URL: http://localhost:3001
+        SITE_URL: http://localhost:4321
+
+gatewayFleet:
+  computeClass:
+    enabled: false
+  networkPolicy:
+    enabled: true
+
+llmBroker:
+  replicas: 1
+  providerSecret:
+    optional: true
+
+npmCacheProxy:
+  enabled: false
+
+artifactWorker:
+  enabled: false
+
+opsAgent:
+  enabled: false

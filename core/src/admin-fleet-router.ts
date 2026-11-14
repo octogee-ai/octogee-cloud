@@ -100,7 +100,7 @@ import { GATEWAY_UNREACHABLE_AFTER_MS, parseOpenClawProcessReport } from "@octog
 import {
   builderReturnOperationId,
   placementRetireOperationId,
-} from "./user-activation-lease.js";
+} from "./isolated-operation-ids.js";
 import { withActorEmails } from "./admin-journal-actor.js";
 import {
   AdminDryRunPlanned,
@@ -475,6 +475,7 @@ interface DurableGatewayRuntime {
 
 type AdminPlacementDriftState =
   | "healthy"
+  | "not-serving"
   | "pointer-drift"
   | "assigned-not-mounted"
   | "mounted-orphan"
@@ -485,6 +486,7 @@ type AdminPlacementWarningCode =
   | "default-gateway-missing"
   | "default-gateway-retired"
   | "default-gateway-not-shared"
+  | "not-serving"
   | "pointer-drift"
   | "assigned-not-mounted"
   | "mounted-orphan"
@@ -774,10 +776,21 @@ function userPlacementWarnings(input: {
   assignedGatewayId: string | null;
   mountedGatewayId: string | null;
   policyTargetGatewayId: string | null;
+  rosterState: AssignmentDoc["state"] | null;
   driftState: AdminPlacementDriftState;
   latestOperation: AdminPlacementLatestOperation | null;
 }): AdminPlacementWarning[] {
   const warnings: AdminPlacementWarning[] = [];
+  if (input.driftState === "not-serving") {
+    warnings.push({
+      code: "not-serving",
+      severity: "error",
+      uid: input.uid,
+      slug: input.slug ?? undefined,
+      gatewayId: input.assignedGatewayId ?? undefined,
+      message: `${input.slug ?? input.uid} is ${input.rosterState} on ${input.assignedGatewayId ?? "none"} with no move in flight, so its agent does not answer`,
+    });
+  }
   if (input.driftState === "pointer-drift") {
     warnings.push({
       code: "pointer-drift",
@@ -867,6 +880,7 @@ function driftStateForUser(input: {
   assignedGatewayId: string | null;
   mountedGatewayId: string | null;
   policyTargetGatewayId: string | null;
+  rosterState: AssignmentDoc["state"] | null;
   latestOperation: AdminPlacementLatestOperation | null;
   glmByGatewayId: Map<string, GlmDoc>;
 }): AdminPlacementDriftState {
@@ -878,6 +892,7 @@ function driftStateForUser(input: {
   if (missing(input.policyTargetGatewayId) || missing(input.assignedGatewayId)) {
     return "missing-gateway";
   }
+  if (input.rosterState !== null && input.rosterState !== "serving") return "not-serving";
   if (
     input.assignedGatewayId &&
     input.policyTargetGatewayId &&
@@ -885,19 +900,8 @@ function driftStateForUser(input: {
   ) {
     return "pointer-drift";
   }
-  if (
-    input.mountedGatewayId &&
-    input.assignedGatewayId &&
-    input.mountedGatewayId !== input.assignedGatewayId
-  ) {
-    return "mounted-orphan";
-  }
-  if (input.mountedGatewayId && !input.assignedGatewayId) return "mounted-orphan";
-  if (
-    input.assignedGatewayId &&
-    input.mountedGatewayId !== input.assignedGatewayId
-  ) {
-    return "assigned-not-mounted";
+  if (input.mountedGatewayId !== input.assignedGatewayId) {
+    return input.mountedGatewayId ? "mounted-orphan" : "assigned-not-mounted";
   }
   return "healthy";
 }
@@ -974,10 +978,12 @@ function buildUserPlacementProjection(input: {
     input.operations,
     (operation: AdminPlacementLatestOperation) => operationUid(operation) === input.uid,
   );
+  const rosterState = assignment ? assignment.state : null;
   const driftState = driftStateForUser({
     assignedGatewayId,
     mountedGatewayId,
     policyTargetGatewayId,
+    rosterState,
     latestOperation: latestOp,
     glmByGatewayId: input.glmByGatewayId,
   });
@@ -987,6 +993,7 @@ function buildUserPlacementProjection(input: {
     assignedGatewayId,
     mountedGatewayId,
     policyTargetGatewayId,
+    rosterState,
     driftState,
     latestOperation: latestOp,
   });
@@ -1000,7 +1007,7 @@ function buildUserPlacementProjection(input: {
     mountedGatewayId,
     provisioningStatus: readProvisioningStatus(input.data),
     driftState,
-    rosterState: assignment ? assignment.state : null,
+    rosterState,
     rosterRevisionId: assignment ? assignment.gatewayId : null,
     rosterEpoch: assignment ? assignment.epoch : null,
     warnings,
@@ -1096,6 +1103,7 @@ function buildPlacementResponse(opts: {
   }
   const driftSummary: Record<AdminPlacementDriftState, number> = {
     healthy: 0,
+    "not-serving": 0,
     "pointer-drift": 0,
     "assigned-not-mounted": 0,
     "mounted-orphan": 0,

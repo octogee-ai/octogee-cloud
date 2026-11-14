@@ -231,6 +231,52 @@ describe("surge orphan assignment repair", () => {
     expect(documents.has(journalPath)).toBe(false);
   });
 
+  it("removes an unmounted orphan behind a stale heartbeat when the sole live pod proves it unmounted", async () => {
+    const stale = runtime(now, ["smoke-dave-smoke"]);
+    (stale.heartbeat as Data).lastHeartbeatAt = 1;
+    const { state, documents } = seeded({
+      [orphanPath]: storedAssignment(orphan),
+      "glmGateways/shared-a": stale,
+    });
+
+    await expect(pruneSurgeOrphanAssignments({
+      store: state,
+      gatewayId: "shared-a",
+      assignments: [orphan],
+      users: [],
+      liveRoster: { mountedCustomers: ["alice"] },
+      now,
+      log: vi.fn(),
+    })).resolves.toEqual([]);
+
+    expect(documents.has(orphanPath)).toBe(false);
+    expect(documents.get(journalPath)).toMatchObject({
+      kind: "deprovision-user",
+      status: "succeeded",
+      input: { reason: "user-not-authoritative-runtime-unmounted" },
+    });
+  });
+
+  it("keeps an orphan while the sole live pod still mounts its slug", async () => {
+    const { state, documents } = seeded({
+      [orphanPath]: storedAssignment(orphan),
+      "glmGateways/shared-a": runtime(now, []),
+    });
+
+    await expect(pruneSurgeOrphanAssignments({
+      store: state,
+      gatewayId: "shared-a",
+      assignments: [orphan],
+      users: [],
+      liveRoster: { mountedCustomers: ["smoke-dave-smoke"] },
+      now,
+      log: vi.fn(),
+    })).resolves.toEqual([orphan]);
+
+    expect(documents.has(orphanPath)).toBe(true);
+    expect(documents.has(journalPath)).toBe(false);
+  });
+
   it("refuses to repair a malformed assignment without journaling a deletion", async () => {
     const { state, documents } = seeded({
       [orphanPath]: { malformed: true },

@@ -1,6 +1,6 @@
 import { readGatewayAuthorizationInStore } from "@octogee/core/gateway-live-release";
 import { isCanonicalWorkspaceMembership } from "@octogee/core/gateway-principal-access";
-import type { SizingKeyReader } from "@octogee/core/user-activation-lease";
+import type { SizingKeyReader } from "@octogee/core/sizing-key";
 import type { PlatformUserRecord, PlatformStateRepositories, PlatformStateStore, Stored, WorkspaceProject } from "@octogee/core/platform-state";
 import { accountAllowsInteractiveAccess } from "@octogee/shared/types/account-lifecycle";
 import { isValidGatewayId, resolveGatewayClass } from "@octogee/shared/types/glm";

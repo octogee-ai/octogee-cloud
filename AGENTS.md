@@ -123,8 +123,9 @@ the operator asks for them or a current risk to users requires them.
   to `ghcr.io/octogee-ai/octogee-cloud/<image>`, tagged with the full and short
   commit SHA, and keeps a manifest of every digest as a workflow artifact.
   Building never deploys.
-- Deploying a build is an operator command. [SHIP.md](SHIP.md) shows the shape
-  of those commands, and every fleet change the controller makes writes an
+- Deploying a build is an operator step. [docs/running-in-the-cloud.md](docs/running-in-the-cloud.md)
+  installs the charts, `octogee-fleet gateway deploy` moves one isolated gateway
+  to a build, and every fleet change the controller makes writes an
   operations-journal entry.
 
 ## Architecture
@@ -159,7 +160,7 @@ the operator asks for them or a current risk to users requires them.
 ## Where to look
 
 - [Getting started](docs/getting-started.md), [the full platform on kind](docs/kind.md),
-  [running in the cloud](docs/running-in-the-cloud.md) and
+  [the full platform on GKE](docs/gke.md), [running in the cloud](docs/running-in-the-cloud.md) and
   [requirements](docs/requirements.md).
 - [Why octogee-cloud](docs/why-octogee-cloud.md) and
   [OpenClaw compatibility](docs/openclaw-compatibility.md).

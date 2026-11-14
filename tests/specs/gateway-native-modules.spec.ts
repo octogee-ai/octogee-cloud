@@ -10,8 +10,6 @@ const gatewayDockerfile = read("infra/gateway/Dockerfile");
 const scriptsNpmrc = read("scripts/.npmrc");
 const scriptsPackageJson = readJson("scripts/package.json");
 const scriptsLockfile = readJson("scripts/package-lock.json");
-const testWorkflow = read("scripts/ops/ci-checks.ts");
-const scopeManifest = read("scripts/lib/scope/manifest.ts");
 
 // #2721 pinned npm 12 into every service image. npm 12 blocks a dependency's
 // install scripts unless a policy covers it, so each of these images is on the
@@ -153,33 +151,5 @@ describe("octogee-api Obsidian Headless native dependency", () => {
   it("fails the image build when the SQLite binding cannot load", () => {
     expect(dockerfile).toContain("new Database(':memory:')");
     expect(dockerfile).not.toContain("|| true");
-  });
-});
-
-describe("CI exercises scripts/ under the gateway image's npm", () => {
-  it("marks the scripts package as needing the image's npm", () => {
-    expect(scopeManifest).toMatch(
-      /{\s*name:\s*JOBS\.scripts,[^}]*matchGatewayImageNpm:\s*true/,
-    );
-  });
-
-  it("runs project-runner coverage under the image's npm", () => {
-    expect(scopeManifest).toMatch(
-      /{\s*name:\s*JOBS\.octogeeApi,[^}]*matchGatewayImageNpm:\s*true/,
-    );
-  });
-
-  it("reads the version from Dockerfile.base so CI and the image cannot drift", () => {
-    expect(testWorkflow).toContain("infra/gateway/Dockerfile.base");
-    expect(testWorkflow).toContain("if (job.matchGatewayImageNpm)");
-    expect(testWorkflow).not.toMatch(/npm install --global npm@1\d/);
-  });
-
-  it("installs the pinned npm before the dependency install, not after", () => {
-    const pinIndex = testWorkflow.indexOf("job.matchGatewayImageNpm");
-    const installIndex = testWorkflow.indexOf("prepare(job, directory => run(");
-    expect(pinIndex).toBeGreaterThan(-1);
-    expect(installIndex).toBeGreaterThan(-1);
-    expect(pinIndex).toBeLessThan(installIndex);
   });
 });

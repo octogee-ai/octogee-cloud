@@ -2,13 +2,13 @@
 
 Try the Octogee Cloud foundation on your own machine in Docker, or install it
 on managed cloud services. One installer, `install.sh`, handles both. The full
-platform runs on a local kind cluster.
+platform runs on a local kind cluster or on GKE.
 
-## Two installers
+## Three installers
 
 This repository holds the whole platform: the fleet controller with its Admin
 API, the platform API, the gateway edge and the OpenClaw gateway image. It has
-two installers.
+three installers.
 
 - `install.sh` installs the foundation: Kubernetes, PostgreSQL, S3 storage,
   ingress, a Git host, chat, and one OpenClaw gateway you can talk to. It runs
@@ -18,8 +18,10 @@ two installers.
   cluster, with the fleet controller, users, shared gateways and the LLM broker
   that gives agents their model provider. It copies the platform images this
   repository publishes, or builds them from your checkout.
-  See [The full platform on kind](kind.md). The full platform has not yet run
-  on a cloud account.
+  See [The full platform on kind](kind.md).
+- `scripts/ops/gke-install.sh` installs the same platform on GKE, with Cloud
+  SQL and Cloud Storage, from the published images. See
+  [The full platform on GKE](gke.md).
 
 On the full platform, users on a shared gateway reach their agent through
 Mattermost and Gitea. The OpenClaw Control UI is for users on an isolated
