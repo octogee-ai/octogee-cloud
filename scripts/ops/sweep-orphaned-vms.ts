@@ -1,7 +1,6 @@
 import "../src/main.js";
 import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
-import { applicationDefault, getApps, initializeApp } from "firebase-admin/app";
 import { type PlatformStateStore } from "@octogee/core/platform-state";
 import { deploymentEnvironmentSettings } from "@octogee/core/deployment-environment";
 import { operatorPlatformStateStore } from "../lib/platform-state-store.js";
@@ -11,7 +10,6 @@ import { GATEWAY_VM_INSTANCE_PREFIX } from "../../shared/types/glm.js";
 export interface SweepOrphanedVmsArgs {
   environment: "test" | "prod";
   apply: boolean;
-  firestoreProjectId: string;
   computeProjectId: string;
 }
 
@@ -21,7 +19,7 @@ export function parseSweepOrphanedVmsArgs(argv: string[]): SweepOrphanedVmsArgs 
   const unknown = argv.filter((arg) => !arg.startsWith("--env=") && arg !== "--apply");
   if (unknown.length > 0) throw new Error(`sweep-orphaned-vms: unexpected arguments ${unknown.join(" ")}`);
   const settings = deploymentEnvironmentSettings(envArg);
-  return { environment: envArg, apply: argv.includes("--apply"), firestoreProjectId: settings.firebaseProjectId, computeProjectId: settings.clusterProjectId };
+  return { environment: envArg, apply: argv.includes("--apply"), computeProjectId: settings.clusterProjectId };
 }
 
 export interface TerminatedVm {
@@ -104,7 +102,6 @@ export async function readVmReferences(store: PlatformStateStore, vms: readonly 
 
 async function main(): Promise<void> {
   const args = parseSweepOrphanedVmsArgs(process.argv.slice(2));
-  if (getApps().length === 0) initializeApp({ credential: applicationDefault(), projectId: args.firestoreProjectId });
   const store = await operatorPlatformStateStore(deploymentEnvironmentSettings(args.environment).targetId);
   const vms = listTerminatedVms(args);
   console.log(`${vms.length} TERMINATED ${GATEWAY_VM_INSTANCE_PREFIX}${args.environment}-* instance(s) in ${args.computeProjectId}`);

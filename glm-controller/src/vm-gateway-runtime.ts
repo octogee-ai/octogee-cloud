@@ -68,10 +68,13 @@ export interface VmGatewayRuntimeDeps {
 export async function findGatewayVmPolicy(
   store: Pick<PlatformStateStore, "config">,
   tier: SizingTier,
+  runtime?: GatewayRuntime,
 ): Promise<GatewayComputerProfile | null> {
   const config = await store.config.orchestrator.get();
   const matches = Object.entries(config?.sizingProfiles ?? {}).flatMap(([key, entry]) =>
-    entry.isolation === "isolated" && entry.sizingTier === tier ? [{ key, policy: entry.computer }] : []);
+    entry.isolation === "isolated" && entry.sizingTier === tier && (runtime === undefined || entry.computer.runtime === runtime)
+      ? [{ key, policy: entry.computer }]
+      : []);
   const [first] = matches;
   if (!first) return null;
   if (matches.some(({ policy }) => !isDeepStrictEqual(policy, first.policy))) {
@@ -89,6 +92,26 @@ export async function resolveGatewayVmPolicy(
   if (!policy) throw new Error(`No gateway VM policy for sizing tier ${tier}`);
   return policy;
 }
+
+export async function findSizingProfileComputer(
+  store: Pick<PlatformStateStore, "config">,
+  sizingProfile: string,
+): Promise<GatewayComputerProfile | null> {
+  const profiles = (await store.config.orchestrator.get())?.sizingProfiles ?? {};
+  const profile = Object.hasOwn(profiles, sizingProfile) ? profiles[sizingProfile] : undefined;
+  return profile?.isolation === "isolated" ? profile.computer : null;
+}
+
+async function sizingProfileComputer(
+  store: Pick<PlatformStateStore, "config">,
+  gatewayId: string,
+  sizingProfile: string,
+): Promise<GatewayComputerProfile> {
+  const computer = await findSizingProfileComputer(store, sizingProfile);
+  if (!computer) throw new Error(`gateway ${gatewayId}: sizing profile ${sizingProfile} is not an isolated sizing profile`);
+  return computer;
+}
+
 
 export function resolveIsolatedParking(env: Record<string, string | undefined>): boolean {
   const raw = env.GATEWAY_BUILDER_DISPOSABLE_PARKING?.trim();
@@ -173,6 +196,7 @@ interface GatewayRuntimeStampInput {
   initial: FleetRegistryRecord;
   gatewayClass: string | null | undefined;
   sizingTier?: SizingTier | null;
+  sizingProfile?: string | null;
   vmSpec: GatewayVmSpec | null;
   assertStorage?: (runtime: GatewayRuntime) => Promise<void>;
   log: (msg: string) => void;
@@ -181,7 +205,13 @@ interface GatewayRuntimeStampInput {
 async function reconcileStampedVmSpec(input: GatewayRuntimeStampInput, data: Partial<FleetRegistryRecord>): Promise<void> {
   if (data.runtime !== "gce-vm" || input.gatewayClass !== "isolated" || !input.vmSpec) return;
   const tier = input.sizingTier ?? "s";
-  const policy = await findGatewayVmPolicy(input.store, tier);
+  const named = input.sizingProfile ? await findSizingProfileComputer(input.store, input.sizingProfile) : null;
+  if (input.sizingProfile && !named) {
+    if (!data.vmSpec) throw new Error(`gateway ${input.gatewayId}: sizing profile ${input.sizingProfile} is not an isolated sizing profile`);
+    input.log(`[vm-gateway-runtime] ${input.gatewayId}: sizing profile ${input.sizingProfile} is not an isolated sizing profile; keeping the stamped VM spec`);
+    return;
+  }
+  const policy = named ?? await findGatewayVmPolicy(input.store, tier, "gce-vm");
   if (!policy) {
     if (!data.vmSpec) throw new Error(`No gateway VM policy for sizing tier ${tier}`);
     input.log(`[vm-gateway-runtime] ${input.gatewayId}: no sizing profile has tier ${tier}; keeping the stamped VM spec`);
@@ -205,7 +235,9 @@ async function newGatewayVmPolicy(
   data: Partial<FleetRegistryRecord>,
 ): Promise<GatewayVmProfile | null> {
   if (input.gatewayClass !== "isolated" || hasObservedClusterPods(data) || hasPriorClusterDeployment(data, input.gatewayId)) return null;
-  const policy = await resolveGatewayVmPolicy(input.store, input.sizingTier);
+  const policy = input.sizingProfile
+    ? await sizingProfileComputer(input.store, input.gatewayId, input.sizingProfile)
+    : await resolveGatewayVmPolicy(input.store, input.sizingTier);
   return policy.runtime === "gce-vm" ? policy : null;
 }
 

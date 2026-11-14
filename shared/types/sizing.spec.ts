@@ -12,7 +12,6 @@ import { GATEWAY_CLASSES, GATEWAY_PROFILES } from './glm.js';
 describe('sizing-tier SSOT', () => {
   it('declares tiers in ascending size order', () => {
     expect(SIZING_TIERS).toEqual([
-      'xs',
       's',
       'm',
       'l',
@@ -70,9 +69,10 @@ describe('sizing-tier SSOT', () => {
     expect(GATEWAY_CLASS_DEFAULT_TIER.shared).toBe('m');
   });
 
-  it('s gives the one active Hobby user browser and desktop headroom', () => {
-    expect(TIER_PRESETS.s.resources.requests.cpu).toBe('2000m');
-    expect(TIER_PRESETS.s.resources.requests.memory).toBe('8Gi');
+  it('s reserves one CPU and 4 GiB for one active user', () => {
+    expect(TIER_PRESETS.s.resources.requests.cpu).toBe('1000m');
+    expect(TIER_PRESETS.s.resources.requests.memory).toBe('4Gi');
+    expect(TIER_PRESETS.s.resources.limits).toEqual(TIER_PRESETS.s.resources.requests);
     expect(TIER_PRESETS.s.nodejs.maxOldSpaceSizeMb).toBe('3072');
     expect(TIER_PRESETS.s.capacity.targetActiveUsers).toBe(1);
   });

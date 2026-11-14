@@ -30,12 +30,10 @@ const h = vi.hoisted(() => {
   };
 });
 
-vi.mock("../lib/db.js", () => ({
-  storage: {
-    bucket: () => ({
-      file: (path: string) => h.bucketFile(path),
-    }),
-  },
+vi.mock("../lib/gcs-bucket.js", () => ({
+  gcsBucket: () => ({
+    file: (path: string) => h.bucketFile(path),
+  }),
 }));
 
 vi.mock("../lib/fileTarget.js", () => ({

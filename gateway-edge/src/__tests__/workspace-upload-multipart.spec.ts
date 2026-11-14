@@ -6,7 +6,6 @@ import type { Request } from 'express';
 // none of it.
 vi.mock('../lib/db', () => ({
   db: {},
-  storage: {},
   auth: {},
   FieldValue: { serverTimestamp: () => null, delete: () => null },
 }));

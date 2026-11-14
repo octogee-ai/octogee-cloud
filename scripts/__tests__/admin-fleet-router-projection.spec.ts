@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   projectGatewaySummary,
   resolveFleetNamespace,
-} from "../lib/admin-fleet-router.js";
+} from "@octogee/core/admin-fleet-router";
 
 function gatewayDoc(id: string, data: Record<string, unknown> = {}) {
   return {

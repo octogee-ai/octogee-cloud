@@ -1,8 +1,6 @@
 import { pipeline } from "node:stream/promises";
-import type { getStorage } from "firebase-admin/storage";
+import type { Bucket } from "@google-cloud/storage";
 import { blobStatus, type BlobMetadata, type BlobStore } from "./blob-store.js";
-
-type Bucket = ReturnType<ReturnType<typeof getStorage>["bucket"]>;
 
 function generationOf(generation: unknown): string | undefined {
   return typeof generation === "string" || typeof generation === "number" ? String(generation) : undefined;

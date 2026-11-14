@@ -1,13 +1,8 @@
 
 
-import { initializeApp, applicationDefault } from "firebase-admin/app";
 import type { PlatformStateStore } from "@octogee/core/platform-state";
 import { operatorPlatformStateStore } from "../lib/platform-state-store.js";
-import {
-  deploymentEnvironmentSettings,
-  deploymentSettingsForRuntime,
-  requireHostedDeploymentSettings,
-} from "@octogee/core/deployment-environment";
+import { deploymentEnvironmentSettings } from "@octogee/core/deployment-environment";
 import { systemConfigRepoName } from "@octogee/core/gitea-naming";
 import {
   planGiteaReconcile,
@@ -66,22 +61,6 @@ export function rewriteRepoUrl(
     }
   }
   return oldUrl; 
-}
-
-export function resolveReconcileFirebaseProject(
-  environment: "test" | "prod",
-  runtimeEnv: NodeJS.ProcessEnv = process.env,
-): string {
-  const target = deploymentSettingsForRuntime({
-    namespace: runtimeEnv.K8S_NAMESPACE ?? deploymentEnvironmentSettings(environment).namespace,
-    targetId: runtimeEnv.DEPLOYMENT_TARGET_ID,
-  });
-  if (target.name !== environment) {
-    throw new Error(
-      `Deployment target ${target.targetId} belongs to ${target.name}, not ${environment}`,
-    );
-  }
-  return requireHostedDeploymentSettings(target).firebaseProjectId;
 }
 
 interface GiteaIO {
@@ -289,10 +268,6 @@ function printPlan(slug: string, env: string, plan: ReturnType<typeof planGiteaR
 async function main(): Promise<void> {
   const args = parseReconcileArgs(process.argv.slice(2));
   const io = giteaIO();
-  initializeApp({
-    credential: applicationDefault(),
-    projectId: resolveReconcileFirebaseProject(args.env),
-  });
   const store = await operatorPlatformStateStore(deploymentEnvironmentSettings(args.env).targetId);
 
   const ctx = await gatherCtx(store, args.slug, io);

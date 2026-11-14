@@ -291,8 +291,8 @@ builderBalloon:
   priority: -10
   resources:
     requests:
-      cpu: 2100m
-      memory: 8448Mi
+      cpu: 1100m
+      memory: 4352Mi
       ephemeral-storage: 9Gi
 
 networkPolicy:

@@ -11,7 +11,7 @@ import { createAgentExportRuntime } from "./agent-export-runtime.js";
 const mocks = vi.hoisted(() => ({ broker: vi.fn(), manifest: vi.fn(), file: vi.fn(), download: vi.fn(), metadata: vi.fn() }));
 vi.mock("./agent-import-store.js", () => ({ agentImportBrokerBaseUrlFromEnv: () => "http://localhost", createAgentImportStore: () => ({ exportRequest: mocks.broker, readGithubToken: vi.fn(), listGithubSources: vi.fn() }) }));
 vi.mock("./manifest.js", () => ({ getManifestForQuota: mocks.manifest }));
-vi.mock("./db.js", () => ({ storage: { bucket: () => ({ file: mocks.file }) } }));
+vi.mock("./gcs-bucket.js", () => ({ gcsBucket: () => ({ file: mocks.file }) }));
 vi.mock("./agent-import-git.js", () => ({ scanAgentImportSecrets: async () => [] }));
 vi.mock("./agent-export-github.js", () => ({ agentExportGithub: () => ({ destination: async () => ({ owner: "alice", repo: "agent", branch: "main", head: "a".repeat(40), tree: "b".repeat(40), files: [] }) }) }));
 const roots: string[] = [];

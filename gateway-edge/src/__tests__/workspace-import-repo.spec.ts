@@ -3,9 +3,7 @@ import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../lib/platform-state", () => ({ platformStateStore: {} }));
-vi.mock("../lib/db", () => ({
-  storage: { bucket: vi.fn() },
-}));
+vi.mock("../lib/gcs-bucket", () => ({ gcsBucket: vi.fn() }));
 
 vi.mock("../lib/gitea", () => ({
   giteaApiAsUser: vi.fn(),
@@ -26,7 +24,7 @@ import importRepoRouter, {
   parseGitHubRepoUrl,
   validatedImportTargetDir,
 } from "../routes/workspace/import-repo.js";
-import { storage } from "../lib/db.js";
+import { gcsBucket } from "../lib/gcs-bucket.js";
 import { giteaApiAsUser } from "../lib/gitea.js";
 import { logger } from "../middleware/logging.js";
 
@@ -56,9 +54,9 @@ function jsonResponse(body: unknown, status = 200): Response {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.stubGlobal("fetch", mockFetch);
-  vi.mocked(storage.bucket).mockReturnValue({
+  vi.mocked(gcsBucket).mockReturnValue({
     file: mockBucketFile,
-  } as unknown as ReturnType<typeof storage.bucket>);
+  } as unknown as ReturnType<typeof gcsBucket>);
   storeWorkspaceBlob.mockResolvedValue({
     gcsPath: "customers/alice/imports/demo/assets/logo.png",
     size: 3,

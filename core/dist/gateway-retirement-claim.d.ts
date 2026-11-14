@@ -46,6 +46,7 @@ export type GatewayRetirementVerification = {
     error: string;
 };
 export declare function isolatedRuntimeMutationFenced(user: Stored<PlatformUserRecord>): boolean;
+export declare function gatewayRetiredInStore(transaction: PlatformStateTransaction, gatewayId: string): Promise<boolean>;
 export declare function assertGatewayRuntimeMutationUnfencedInStore(transaction: PlatformStateTransaction, gatewayId: string, allowedVmRecoveryOperationId?: string): Promise<void>;
 export declare function moveHasNotBegun(operation: OperationRecord, gatewayId: string): boolean;
 export declare function claimGatewayRetirementInStore(input: ClaimGatewayRetirementInStoreInput): Promise<{

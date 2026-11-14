@@ -30,8 +30,8 @@ describe("User tier VM placement", () => {
     await expect(resolveGatewayVmPolicy(shared, "s")).resolves.toMatchObject({ desktop: "x11" });
   });
 
-  it("uses Hobby sizing for an unspecified user and rejects a shared-only floor", async () => {
+  it("uses Hobby sizing for an unspecified user and rejects a tier no profile names", async () => {
     await expect(resolveGatewayVmPolicy(store, undefined)).resolves.toMatchObject({ desktop: "x11" });
-    await expect(resolveGatewayVmPolicy(store, "xs")).rejects.toThrow(/gateway VM/);
+    await expect(resolveGatewayVmPolicy(storeWith({ hobby: FIXTURE_SIZING_PROFILES.hobby }), "l")).rejects.toThrow(/gateway VM/);
   });
 });
