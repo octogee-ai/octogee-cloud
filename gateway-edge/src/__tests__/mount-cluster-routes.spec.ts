@@ -173,7 +173,6 @@ describe("mountClusterRoutes", () => {
       "/api/channel-session-models",
       "/api/model-credentials",
       "/api/admin",
-      "/api/integrations",
       "/api/connect",
       "/api/agents",
       "/api/builder",
