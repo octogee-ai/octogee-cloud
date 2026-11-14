@@ -108,6 +108,7 @@ function deliveryMessage(project: OnboardingProject, kind: DeliveryKind, workspa
       : "in your project checkout. Preserve existing project instructions and decisions, read runbook/ and DECISIONS.md when present, and commit these files together with your work using octogee_project_commit.";
     return `@${projectAgentMmUsername(workspaceId, projectSlug)} ${project.handoffMessage}\n\nYou are ${agent.identity.name} ${agent.identity.emoji}. ${agent.identity.persona}\nBefore starting, save this handoff in BRIEF.md, update IDENTITY.md and SOUL.md with your assigned identity, and record relevant user context in USER.md ${workspace} Create a fitting avatar and set your chat identity with octogee_chat_set_identity.`;
   }
+  if (!project.name) throw new Error("Project kickoff needs the project name");
   const identityHint = agent.requestedName ? `Your name is ${agent.requestedName}.` : "Choose your own fitting name.";
   const task = project.tagline?.trim()
     ? `The user's starting idea: ${project.tagline}\nIntroduce yourself and start with this idea.`
@@ -156,9 +157,10 @@ async function postOnboarding(uid: string, target: ProjectDeliveryTarget, claim:
   await ensureDefaultAgentMembership(channelId, userDefaultAgentId);
   let postId = await matchingDeliveryPost(target, claim, channelId, receipt, token);
   if (!postId) {
+    const message = deliveryMessage(project, kind, workspaceId, projectSlug);
     await beginDeliveryPost(target, claim);
     const post = await mmApi("/posts", "POST", { channel_id: channelId,
-      message: deliveryMessage(project, kind, workspaceId, projectSlug),
+      message,
       props: { octogee_project_delivery: receipt } }, token) as { id?: string };
     if (!post.id) throw new Error("Project handoff post returned no ID");
     postId = post.id;

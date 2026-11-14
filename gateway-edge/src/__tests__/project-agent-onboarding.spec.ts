@@ -291,6 +291,14 @@ it('releases the delivery lease and records the error when its delivery intent c
   expect(h.docs.get(projectPath).agent.deliveryLeaseId).toBeUndefined();
   expect(h.mm.mock.calls.some(c => c[0] === '/posts')).toBe(false);
 });
+it('refuses a kickoff whose project the presentation hook cannot read, leaving it pending', async () => {
+  installProjectPresentation(NO_PROJECT_PRESENTATION);
+  h.docs.get(projectPath).agent.kickoff = { status: 'pending' };
+  await expect(deliverProjectAgentOnboarding('u', 'alice', 'golf')).rejects.toThrow('Project kickoff needs the project name');
+  expect(h.mm.mock.calls.some(c => c[0] === '/posts')).toBe(false);
+  expect(h.docs.get(projectPath).agent).toMatchObject({ kickoff: { status: 'pending' }, lastError: 'Project kickoff needs the project name' });
+  expect(h.docs.get(`${projectPath}/agentState/kickoffDelivery`)).not.toHaveProperty('postAttempted');
+});
 it('starts UI-created projects with their own agent in project general', async () => {
   h.docs.get(projectPath).agent.kickoff = { status: 'pending' };
   await deliverProjectAgentOnboarding('u', 'alice', 'golf');

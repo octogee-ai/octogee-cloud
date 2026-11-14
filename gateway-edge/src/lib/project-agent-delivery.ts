@@ -13,7 +13,7 @@ import {
   type ProjectDeliveryTarget,
 } from "./project-agent-delivery-intents.js";
 
-export type OnboardingProject = { name: string; tagline?: string; agent: ProjectAgentConfig; repoSource: OpaqueMap | null; handoffMessage?: string };
+export type OnboardingProject = { name?: string; tagline?: string; agent: ProjectAgentConfig; repoSource: OpaqueMap | null; handoffMessage?: string };
 export interface DeliveryLease {
   kind: DeliveryKind;
   leaseId: string;
@@ -99,8 +99,8 @@ export async function openDeliveryIntent(target: ProjectDeliveryTarget, lease: D
   return {
     ...lease,
     project: {
-      name: product?.name as string,
-      tagline: product?.tagline as string | undefined,
+      name: typeof product?.name === "string" ? product.name : undefined,
+      tagline: typeof product?.tagline === "string" ? product.tagline : undefined,
       agent: lease.agent,
       repoSource: lease.repoSource,
     },
