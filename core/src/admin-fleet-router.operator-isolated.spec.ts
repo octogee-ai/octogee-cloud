@@ -608,6 +608,44 @@ describe("holding a user for the operator", () => {
   });
 });
 
+describe("listing an isolated gateway that runs on a VM", () => {
+  it("prices it from the VM it was given and counts its disks in the fleet total", async () => {
+    const vmSpec = {
+      zones: ["us-central1-b"], machineType: "e2-medium", imageFamily: "gateway", diskSizeGb: 80, bootDiskType: "pd-balanced",
+      homeDiskSizeGb: 10, provisioningModel: "STANDARD", desktop: "x11", serviceAccountEmail: "vm@example.iam.gserviceaccount.com", subnetwork: "default",
+    };
+    const h = harness(fleet({ ...ownedGateway({ liveRelease: 1 }), ...runtime(OWNED, "ready", { runtime: "gce-vm", vmSpec }) }));
+
+    const res = await request(h.app).get("/gateways").expect(200);
+
+    const listed = (res.body.gateways as Row[]).find((gateway) => gateway.gatewayId === OWNED);
+    expect(listed).toMatchObject({
+      reservation: { type: "on-demand", source: "vm" },
+      sizing: { tier: "s", monthlyCostUsd: { basis: "vm", compute: 24, storage: 9, total: 33 } },
+    });
+    const others = (res.body.gateways as Row[]).filter((gateway) => gateway.gatewayId !== OWNED)
+      .reduce((sum, gateway) => sum + ((gateway.sizing as { monthlyCostUsd: { total: number } }).monthlyCostUsd.total), 0);
+    expect(res.body.stats.fleetCost.monthlyUsd).toBe(33 + others);
+  });
+});
+
+describe("listing an isolated VM gateway whose owner keeps a larger home disk", () => {
+  it("prices the retained home disk on the owner's record, not the size in the VM specification", async () => {
+    const vmSpec = {
+      zones: ["us-central1-b"], machineType: "e2-medium", imageFamily: "gateway", diskSizeGb: 80, bootDiskType: "pd-balanced",
+      homeDiskSizeGb: 10, provisioningModel: "STANDARD", desktop: "x11", serviceAccountEmail: "vm@example.iam.gserviceaccount.com", subnetwork: "default",
+    };
+    const seed = fleet({ ...ownedGateway({ liveRelease: 1 }), ...runtime(OWNED, "ready", { runtime: "gce-vm", vmSpec }), ...user(OWNED) });
+    (seed[`users/${UID}`].provisioning as Row).homeStorage = { disk: { sizeGb: 100, diskType: "pd-ssd" } };
+    const h = harness(seed);
+
+    const res = await request(h.app).get("/gateways").expect(200);
+
+    const listed = (res.body.gateways as Row[]).find((gateway) => gateway.gatewayId === OWNED);
+    expect(listed).toMatchObject({ sizing: { monthlyCostUsd: { basis: "vm", compute: 24, storage: 25, total: 49 } } });
+  });
+});
+
 describe("listing an isolated gateway that has not started", () => {
   it("shows why it has not started before its first heartbeat", async () => {
     const message = "the isolated gateway image is linux/amd64 only, and this cluster has no amd64 node";

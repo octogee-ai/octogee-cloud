@@ -6,6 +6,7 @@ import {
   SPOT_PRICE_MULTIPLIER,
   estimateGatewayMonthlyCost,
   estimateFleetMonthlyCost,
+  estimateVmGatewayMonthlyCost,
 } from "./cost-estimator.js";
 import { TIER_PRESETS, SIZING_TIERS } from "./sizing.js";
 
@@ -133,5 +134,48 @@ describe("estimateFleetMonthlyCost", () => {
     expect(result.onDemandTotalUsd).toBe(0);
     expect(result.savingsUsd).toBe(0);
     expect(result.byTier).toEqual({});
+  });
+});
+
+describe("estimateVmGatewayMonthlyCost", () => {
+  const hobbyDisks = [{ type: "pd-balanced", sizeGb: 80 }, { type: "pd-balanced", sizeGb: 10 }];
+  const proDisks = [{ type: "pd-ssd", sizeGb: 80 }, { type: "pd-balanced", sizeGb: 50 }];
+  const teamDisks = [{ type: "pd-ssd", sizeGb: 80 }, { type: "pd-balanced", sizeGb: 100 }];
+
+  it("prices a running VM from its machine type plus its disks", () => {
+    expect(estimateVmGatewayMonthlyCost({ zones: ["us-central1-b"], machineType: "e2-medium", provisioningModel: "STANDARD", disks: hobbyDisks, running: true }))
+      .toEqual({ computeUsd: 24, onDemandComputeUsd: 24, savingsUsd: 0, storageUsd: 9, totalUsd: 33, onDemandTotalUsd: 33, pricingMode: "on-demand" });
+    expect(estimateVmGatewayMonthlyCost({ zones: ["us-central1-b"], machineType: "e2-standard-2", provisioningModel: "STANDARD", disks: proDisks, running: true }))
+      .toEqual({ computeUsd: 49, onDemandComputeUsd: 49, savingsUsd: 0, storageUsd: 19, totalUsd: 68, onDemandTotalUsd: 68, pricingMode: "on-demand" });
+  });
+
+  it("discounts a Spot VM's machine but not its disks", () => {
+    expect(estimateVmGatewayMonthlyCost({ zones: ["us-central1-b"], machineType: "e2-standard-4", provisioningModel: "SPOT", disks: teamDisks, running: true }))
+      .toEqual({ computeUsd: 59, onDemandComputeUsd: 98, savingsUsd: 39, storageUsd: 24, totalUsd: 82, onDemandTotalUsd: 121, pricingMode: "spot" });
+  });
+
+  it("keeps charging a stopped VM for its disks", () => {
+    expect(estimateVmGatewayMonthlyCost({ zones: ["us-central1-b"], machineType: "e2-standard-2", provisioningModel: "STANDARD", disks: proDisks, running: false }))
+      .toMatchObject({ computeUsd: 0, onDemandComputeUsd: 0, storageUsd: 19, totalUsd: 19, onDemandTotalUsd: 19 });
+  });
+
+  it("bills shared-core and predefined E2 shapes by their published vCPU and memory", () => {
+    const hourly = (machineType: string) =>
+      estimateVmGatewayMonthlyCost({ zones: ["us-central1-b"], machineType, provisioningModel: "STANDARD", disks: [], running: true })!.computeUsd;
+    expect(hourly("e2-small")).toBe(12);
+    expect(hourly("e2-highmem-2")).toBe(66);
+    expect(hourly("e2-highcpu-4")).toBe(72);
+  });
+
+  it("gives no price for a VM outside the region its rates are for", () => {
+    const elsewhere = { machineType: "e2-medium", provisioningModel: "STANDARD" as const, disks: hobbyDisks, running: true };
+    expect(estimateVmGatewayMonthlyCost({ ...elsewhere, zones: ["europe-west1-b"] })).toBeNull();
+    expect(estimateVmGatewayMonthlyCost({ ...elsewhere, zones: ["us-central1-b", "us-east1-c"] })).toBeNull();
+    expect(estimateVmGatewayMonthlyCost({ ...elsewhere, zones: [] })).toBeNull();
+  });
+
+  it("gives no price for a machine or disk type it has no rate for", () => {
+    expect(estimateVmGatewayMonthlyCost({ zones: ["us-central1-b"], machineType: "n2-standard-2", provisioningModel: "STANDARD", disks: proDisks, running: true })).toBeNull();
+    expect(estimateVmGatewayMonthlyCost({ zones: ["us-central1-b"], machineType: "e2-medium", provisioningModel: "STANDARD", disks: [{ type: "hyperdisk-balanced", sizeGb: 10 }], running: true })).toBeNull();
   });
 });
