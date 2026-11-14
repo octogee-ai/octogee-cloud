@@ -61,28 +61,31 @@ describe("mountClusterRoutes", () => {
     expect((channels[0].handlers[0] as { name?: string }).name).toBe("requireAuth");
   });
 
-  it("keeps public project reads before project auth and omits product deletion by default", () => {
+  it("starts project routes with auth when no product supplies public project routes", () => {
     const app = recordingApp();
 
     mountClusterRoutes(app);
 
     const projects = useCalls(app, "/api/projects");
-    expect(projects).toHaveLength(11);
-    expect((projects[1].handlers[0] as { name?: string }).name).toBe("requireAuth");
+    expect(projects).toHaveLength(8);
+    expect((projects[0].handlers[0] as { name?: string }).name).toBe("requireAuth");
   });
 
-  it("prefers the injected project routers over the fail-closed defaults", () => {
+  it("mounts public project routes before project auth and prefers the injected project routers", () => {
     const app = recordingApp();
+    const readme = Router();
+    const deletion = Router();
     const projectsCreateRoutes = Router();
-    const projectsDeleteRoutes = Router();
     const projectsRepoSourceRoutes = Router();
 
-    mountClusterRoutes(app, { projectsCreateRoutes, projectsDeleteRoutes, projectsRepoSourceRoutes });
+    mountClusterRoutes(app, { publicProjectRoutes: [readme, deletion], projectsCreateRoutes, projectsRepoSourceRoutes });
 
     const projects = useCalls(app, "/api/projects");
-    expect(projects[1].handlers).toEqual([projectsDeleteRoutes]);
+    expect(projects[0].handlers).toEqual([readme]);
+    expect(projects[1].handlers).toEqual([deletion]);
+    expect((projects[2].handlers[0] as { name?: string }).name).toBe("requireAuth");
     expect(projects[3].handlers).toEqual([projectsCreateRoutes]);
-    expect(projects[9].handlers).toEqual([projectsRepoSourceRoutes]);
+    expect(projects[8].handlers).toEqual([projectsRepoSourceRoutes]);
   });
 
   it("mounts the injected admin router in place of the platform default", () => {
@@ -163,10 +166,6 @@ describe("mountClusterRoutes", () => {
       "/api/projects",
       "/api/projects",
       "/api/projects",
-      "/api/projects",
-      "/api/projects",
-      "/api/projects",
-      "/api/entities",
       "/api/mattermost",
       "/api/openclaw",
       "/api/agent-models",

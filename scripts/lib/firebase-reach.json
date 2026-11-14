@@ -20,12 +20,8 @@
     "gateway-edge/src/routes/byosub.ts",
     "gateway-edge/src/routes/channel-session-models.ts",
     "gateway-edge/src/routes/connect.ts",
-    "gateway-edge/src/routes/entities.ts",
     "gateway-edge/src/routes/google-grants.ts",
     "gateway-edge/src/routes/productivity-approvals.ts",
-    "gateway-edge/src/routes/projects/readme.ts",
-    "gateway-edge/src/routes/projects/recipe.ts",
-    "gateway-edge/src/routes/projects/star.ts",
     "octogee-api/src/lib/openclaw-profile-appearance.ts"
   ]
 }

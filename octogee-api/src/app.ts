@@ -167,7 +167,7 @@ export interface ProductRuntime {
   routesBeforeMiddleware?: ClusterRouteTable;
   routesBeforeTenantBinding?(deps: ProductRouteDeps): ClusterRouteTable;
   prewarmProjectCapacity?: () => Promise<void>;
-  projectsDeleteRoutes?: express.Router;
+  publicProjectRoutes?: readonly express.Router[];
   discoverDeletionProductContext?: DeletionProductContextDiscovery;
   tenantRoutes?: ProductTenantRoutes;
   controlSessionChecks?: ControlSessionChecks;
@@ -317,7 +317,7 @@ function clusterRouteOverrides(
     mmRestProxyHandler: createMmRestProxyHandler(platformStateStore, notifications),
     mattermostMintRoutes: createMattermostMintRoutes(platformStateStore),
     productRoutes: product?.clusterRoutes({ featurePolicy }) ?? [],
-    projectsDeleteRoutes: product?.projectsDeleteRoutes,
+    publicProjectRoutes: product?.publicProjectRoutes,
     adminRoutes: createAdminRoutes({
       accounts,
       discoverDeletionProductContext: product?.discoverDeletionProductContext,
