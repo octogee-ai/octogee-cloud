@@ -45,6 +45,8 @@ export const TABLE_AGGREGATES: Readonly<Record<string, PlatformAggregate>> = {
   schedule_transfers: "schedule-transfer",
   agent_stores: "agent-store",
   user_accounts: "user-account",
+  user_agent_models: "agent-model-selection",
+  session_model_audit: "session-model-audit",
   workspaces: "workspace",
   workspace_members: "workspace-member",
   workspace_projects: "workspace-project",

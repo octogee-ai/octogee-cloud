@@ -8,6 +8,7 @@ import {
   mapProjectChannelDoc,
   mapProjectAgentState,
   collectStoredProjectAgentStates,
+  readAgentModelSelections,
 } from "./user-snapshot-mapping.js";
 import { MalformedRecordError } from "./platform-state/errors.js";
 import { createDocumentFixtureStore } from "./testing/journal-store.js";
@@ -107,7 +108,7 @@ describe("byotSystemConfigFromDoc — users/{uid}/system/config → snapshot.sys
           secretName: "byosub-uid-openai",
           model: "openai/gpt-5.5",
         },
-      }),
+      }, {}),
     ).toEqual({ byot: { provider: "openai-codex", model: "openai/gpt-5.5" } });
   });
 
@@ -123,7 +124,7 @@ describe("byotSystemConfigFromDoc — users/{uid}/system/config → snapshot.sys
           secretName: "byok-acme-anthropic",
           fingerprint: "sk-ant...1234",
         },
-      }),
+      }, {}),
     ).toEqual({
       byotActive: true,
       systemConfig: { byot: { provider: "anthropic" } },
@@ -142,27 +143,27 @@ describe("byotSystemConfigFromDoc — users/{uid}/system/config → snapshot.sys
           secretName: "byok-acme-openai",
         },
         byot: { provider: "openai", model: "gpt-4o" },
-      }),
+      }, {}),
     ).toEqual({ byotActive: false });
   });
 
   it("projects the byot provider/baseUrl/model the in-pod re-assert needs", () => {
     expect(
-      byotSystemConfigFromDoc({ byot: { provider: "openai", baseUrl: "https://x", model: "gpt-4o" } }),
+      byotSystemConfigFromDoc({ byot: { provider: "openai", baseUrl: "https://x", model: "gpt-4o" } }, {}),
     ).toEqual({ byot: { provider: "openai", baseUrl: "https://x", model: "gpt-4o" } });
   });
 
   it("drops non-string fields and keeps only what is present", () => {
-    expect(byotSystemConfigFromDoc({ byot: { provider: "anthropic", model: 123 } })).toEqual({
+    expect(byotSystemConfigFromDoc({ byot: { provider: "anthropic", model: 123 } }, {})).toEqual({
       byot: { provider: "anthropic" },
     });
   });
 
   it("returns undefined when there is no usable byot config (so the snapshot stays lean)", () => {
-    expect(byotSystemConfigFromDoc(undefined)).toBeUndefined();
-    expect(byotSystemConfigFromDoc({})).toBeUndefined();
-    expect(byotSystemConfigFromDoc({ byot: {} })).toBeUndefined();
-    expect(byotSystemConfigFromDoc({ byot: null as unknown as Record<string, unknown> })).toBeUndefined();
+    expect(byotSystemConfigFromDoc(undefined, {})).toBeUndefined();
+    expect(byotSystemConfigFromDoc({}, {})).toBeUndefined();
+    expect(byotSystemConfigFromDoc({ byot: {} }, {})).toBeUndefined();
+    expect(byotSystemConfigFromDoc({ byot: null as unknown as Record<string, unknown> }, {})).toBeUndefined();
   });
 });
 
@@ -336,30 +337,27 @@ describe("agent-model selections ride the snapshot regardless of byot state", ()
 
   it("projects agentModels alongside an active modelCredential", () => {
     expect(
-      byotSnapshotProjectionFromSystemConfig({
-        modelCredential: { active: true, provider: "anthropic" },
-        agentModels: AGENT_MODELS,
-      }).systemConfig,
+      byotSnapshotProjectionFromSystemConfig({ modelCredential: { active: true, provider: "anthropic" } }, AGENT_MODELS).systemConfig,
     ).toEqual({ byot: { provider: "anthropic" }, agentModels: AGENT_MODELS });
   });
 
   it("projects agentModels even when no credential exists (platform user picks)", () => {
-    expect(byotSystemConfigFromDoc({ agentModels: AGENT_MODELS })).toEqual({
-      agentModels: AGENT_MODELS,
-    });
+    expect(byotSystemConfigFromDoc(undefined, AGENT_MODELS)).toEqual({ agentModels: AGENT_MODELS });
     expect(
-      byotSnapshotProjectionFromSystemConfig({
-        modelCredential: { active: false, provider: "openai" },
-        agentModels: AGENT_MODELS,
-      }).systemConfig,
+      byotSnapshotProjectionFromSystemConfig({ modelCredential: { active: false, provider: "openai" } }, AGENT_MODELS).systemConfig,
     ).toEqual({ agentModels: AGENT_MODELS });
   });
 
-  it("drops malformed selections at the projection boundary", () => {
-    expect(
-      byotSystemConfigFromDoc({
-        agentModels: { "octogee-acme-coach": { primary: "no-slash" }, junk: 42 },
-      }),
-    ).toBeUndefined();
+  it("ignores agent model picks left in the system config document", () => {
+    expect(byotSystemConfigFromDoc({ agentModels: AGENT_MODELS }, {})).toBeUndefined();
+  });
+
+  it("reads a user's agent model picks from the platform store", async () => {
+    const list = vi.fn(async () => [
+      { uid: "acme", agentId: "octogee-acme-coach", primary: "platform-openrouter/z-ai/glm-5.2", fallbacks: ["anthropic/claude-haiku-4-5"], updatedAt: 1, revision: "1" },
+    ]);
+
+    await expect(readAgentModelSelections({ agentModels: { list, put: vi.fn(), delete: vi.fn() } }, "acme")).resolves.toEqual(AGENT_MODELS);
+    expect(list).toHaveBeenCalledWith("acme");
   });
 });

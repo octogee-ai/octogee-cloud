@@ -2,13 +2,17 @@ import type { UserAuxiliaryFamily } from "@octogee/shared/types/fleet-broker";
 import type { ScheduleTransferDoc } from "@octogee/shared/types/fleet-controller";
 import { placementReceiptDocId, type PlacementReceipt } from "@octogee/shared/types/placement-receipts";
 import type {
+  AgentModelSelectionRecord,
+  AgentModelSelectionsRepository,
   AgentStoreRecord,
   AgentStoresRepository,
+  PlacementReceiptsRepository,
+  ScheduleTransfersRepository,
+  SessionModelAuditRecord,
+  SessionModelAuditRepository,
   UserAccountRecord,
   UserAccountsRepository,
   UserRepositories,
-  PlacementReceiptsRepository,
-  ScheduleTransfersRepository,
 } from "../users.js";
 import { MalformedRecordError, MissingRecordError, type RecordKey } from "../errors.js";
 import type { Page, Stored } from "../store.js";
@@ -94,6 +98,42 @@ const AGENT_STORES_TABLE: TableSpec = {
     column("generation", "integer"),
     column("assignmentEpoch", "integer"),
     column("recordedAt", "bigint"),
+  ],
+};
+
+const AGENT_MODELS_TABLE: TableSpec = {
+  table: "user_agent_models",
+  aggregate: "agent-model-selection",
+  keyColumns: ["uid", "agent_id"],
+  columns: [
+    column("uid", "text"),
+    column("agentId", "text"),
+    column("primary", "text", { column: "primary_model" }),
+    column("fallbacks", "jsonb", { column: "fallback_models" }),
+    column("updatedAt", "bigint"),
+  ],
+};
+
+const SESSION_MODEL_AUDIT_TABLE: TableSpec = {
+  table: "session_model_audit",
+  aggregate: "session-model-audit",
+  keyColumns: ["audit_id"],
+  immutableFields: ["actorUid", "channelId", "workspaceSlug", "projectId", "agentId", "operation", "requestedModel", "createdAt"],
+  columns: [
+    column("auditId", "text"),
+    column("actorUid", "text"),
+    column("channelId", "text"),
+    column("workspaceSlug", "text"),
+    column("projectId", "text", { nullAs: "null" }),
+    column("agentId", "text"),
+    column("operation", "text"),
+    column("requestedModel", "text", { nullAs: "null" }),
+    column("outcome", "text"),
+    column("commandPostId", "text", { nullAs: "null" }),
+    column("replyPostId", "text", { nullAs: "null" }),
+    column("resultingModel", "text", { nullAs: "null" }),
+    column("createdAt", "bigint"),
+    column("completedAt", "bigint", { nullAs: "null" }),
   ],
 };
 
@@ -278,10 +318,57 @@ function createUserAccountsRepository(session: PostgresSession): UserAccountsRep
   };
 }
 
+function createAgentModelSelectionsRepository(session: PostgresSession): AgentModelSelectionsRepository {
+  return {
+    async list(uid) {
+      const rows = await selectRecords(
+        session,
+        "users.agentModels.list",
+        "SELECT * FROM $schema.user_agent_models WHERE uid = $1::text ORDER BY agent_id",
+        [uid],
+      );
+      return rows.map((row) => decodeStored<AgentModelSelectionRecord>(AGENT_MODELS_TABLE, row));
+    },
+
+    async put(selection) {
+      await insertRecord(session, "users.agentModels.put", AGENT_MODELS_TABLE, selection, "put");
+    },
+
+    async delete(uid, agentId) {
+      await deleteRecord(session, "users.agentModels.delete", { table: AGENT_MODELS_TABLE, key: [uid, agentId] });
+    },
+  };
+}
+
+function createSessionModelAuditRepository(session: PostgresSession): SessionModelAuditRepository {
+  return {
+    async get(auditId) {
+      const row = await selectByKey(session, "users.sessionModelAudit.get", { table: SESSION_MODEL_AUDIT_TABLE, key: [auditId] });
+      return row === null ? null : decodeStored<SessionModelAuditRecord>(SESSION_MODEL_AUDIT_TABLE, row);
+    },
+
+    async create(entry) {
+      await insertRecord(
+        session,
+        "users.sessionModelAudit.create",
+        SESSION_MODEL_AUDIT_TABLE,
+        { ...entry, outcome: "pending", commandPostId: null, replyPostId: null, resultingModel: null, completedAt: null },
+        "create",
+      );
+    },
+
+    async complete(auditId, completion) {
+      await updateRecord(session, "users.sessionModelAudit.complete", { table: SESSION_MODEL_AUDIT_TABLE, key: [auditId] }, completion, []);
+    },
+  };
+}
+
 export const createPostgresUserRepositories: PostgresRepositoryFactory<UserRepositories> = (session) => ({
   records: createPostgresUserRecordsRepository(session),
   accounts: createUserAccountsRepository(session),
   placementReceipts: createPlacementReceiptsRepository(session),
   scheduleTransfers: createScheduleTransfersRepository(session),
   agentStores: createAgentStoresRepository(session),
+  agentModels: createAgentModelSelectionsRepository(session),
+  sessionModelAudit: createSessionModelAuditRepository(session),
 });

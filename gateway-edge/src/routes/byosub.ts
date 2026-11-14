@@ -277,13 +277,11 @@ async function flipUnifiedByosSignal(
           baseUrl: FieldValue.delete(),
           model: FieldValue.delete(),
         },
-        ...(subscriptionModel
-          ? { agentModels: subscriptionModelPicks(agentIds, subscriptionModel) }
-          : {}),
       },
       { merge: true },
     );
   await db.collection("users").doc(uid).set({ byotActive: true }, { merge: true });
+  if (subscriptionModel) await pinSubscriptionModel(uid, agentIds, subscriptionModel);
 }
 
 function slugFromManagedAgentId(agentId: string): string | null {
@@ -372,11 +370,14 @@ async function writeByosubIntegration(args: {
     );
 }
 
-function subscriptionModelPicks(
-  agentIds: readonly string[],
-  model: string,
-): Record<string, { primary: string; fallbacks: string[] }> {
-  return Object.fromEntries(agentIds.map((agentId) => [agentId, { primary: model, fallbacks: [] }]));
+async function pinSubscriptionModel(uid: string, agentIds: readonly string[], model: string): Promise<void> {
+  await Promise.all(agentIds.map((agentId) => platformStateStore.users.agentModels.put({
+    uid,
+    agentId,
+    primary: model,
+    fallbacks: [],
+    updatedAt: { serverNow: true },
+  })));
 }
 
 function subscriptionDefaultModel(modelCredentialProvider: string): string | null {
@@ -406,7 +407,8 @@ async function commitByosubCapture(args: {
   const integrationRef = ownerRef.collection("integrations").doc("byosub");
   const flowRef = db.collection("byosubFlows").doc(args.flowId);
   const addedAt = FieldValue.serverTimestamp();
-  await db.runTransaction(async (tx) => {
+  const subscriptionModel = subscriptionDefaultModel(args.modelCredentialProvider);
+  const pinnedAgentIds = await db.runTransaction(async (tx) => {
     const [owner, currentFlowSnap, userRecord] = await Promise.all([
       tx.get(ownerRef),
       tx.get(flowRef),
@@ -420,14 +422,8 @@ async function commitByosubCapture(args: {
     if (!flowUnchangedForCommit(args.flow, currentFlow, args.captureClaimId)) {
       throw new Error("BYOS credential flow changed before commit");
     }
-    const subscriptionModel = subscriptionDefaultModel(args.modelCredentialProvider);
     const slug = slugFromManagedAgentId(args.flow.agentId);
     const agentIds = slug ? rosteredAgentIdsForSlug(ownerData, slug) : [args.flow.agentId];
-    if (subscriptionModel) {
-      tx.set(configRef, {
-        agentModels: subscriptionModelPicks(agentIds, subscriptionModel),
-      }, { merge: true });
-    }
     tx.set(configRef, {
       byot: {
         provider: args.modelCredentialProvider,
@@ -476,7 +472,9 @@ async function commitByosubCapture(args: {
         captureClaimedAt: FieldValue.delete(),
       }, { merge: true });
     }
+    return agentIds;
   });
+  if (subscriptionModel) await pinSubscriptionModel(args.flow.uid, pinnedAgentIds, subscriptionModel);
 }
 
 async function claimByosubCapture(flowId: string, flow: FlowDoc): Promise<string> {
@@ -564,17 +562,14 @@ async function retargetSubscriptionModelPicks(
   const fromModel = subscriptionDefaultModel(from);
   if (!fromModel) return;
   const toModel = to ? subscriptionDefaultModel(to) : null;
-  const configRef = db.collection("users").doc(uid).collection("system").doc("config");
-  const agentModels = (await configRef.get()).data()?.agentModels as
-    | Record<string, { primary?: unknown } | undefined>
-    | undefined;
-  const updates: Record<string, unknown> = {};
-  for (const [agentId, selection] of Object.entries(agentModels ?? {})) {
-    if (selection?.primary !== fromModel) continue;
-    updates[agentId] = toModel ? { primary: toModel, fallbacks: [] } : FieldValue.delete();
+  const pinned = (await platformStateStore.users.agentModels.list(uid))
+    .filter((selection) => selection.primary === fromModel)
+    .map((selection) => selection.agentId);
+  if (toModel) {
+    await pinSubscriptionModel(uid, pinned, toModel);
+    return;
   }
-  if (Object.keys(updates).length === 0) return;
-  await configRef.set({ agentModels: updates }, { merge: true });
+  await Promise.all(pinned.map((agentId) => platformStateStore.users.agentModels.delete(uid, agentId)));
 }
 
 async function applyRemainingByosubSignal(

@@ -4,8 +4,9 @@ const logger = createServiceLogger("provisioner");
 import type { UserSnapshot } from "./user-lifecycle.js";
 import type { MattermostTokenSecret, SecretsRepository } from "./platform-state/secrets.js";
 import type { PlatformStateRepositories } from "./platform-state/store.js";
+import type { UserRepositories } from "./platform-state/users.js";
 import type { WorkspaceProject } from "./platform-state/workspaces.js";
-import { parseAgentModelSelections } from "@octogee/shared/types/agent-models";
+import type { AgentModelSelections } from "@octogee/shared/types/agent-models";
 import { userEntitlements } from "@octogee/shared/types/user-entitlements";
 import { projectAgentConfigured, projectRepoSourceFromDoc, type ProjectAgentStatus, type ProjectAgentIdentity } from "@octogee/shared/types/project";
 
@@ -209,23 +210,31 @@ function byotSystemConfigFromRecord(
 // Per-agent model picks travel with the snapshot no matter the credential
 // state — a plain platform user's picker choices must survive pod rolls too.
 function withAgentModels(
-  sysData: Record<string, unknown> | undefined,
+  agentModels: AgentModelSelections,
   systemConfig: SnapshotSystemConfig | undefined,
 ): SnapshotSystemConfig | undefined {
-  const agentModels = parseAgentModelSelections(sysData?.agentModels);
   if (Object.keys(agentModels).length === 0) return systemConfig;
   return { ...(systemConfig ?? {}), agentModels };
 }
 
+export async function readAgentModelSelections(
+  users: Pick<UserRepositories, "agentModels">,
+  uid: string,
+): Promise<AgentModelSelections> {
+  const selections = await users.agentModels.list(uid);
+  return Object.fromEntries(selections.map(({ agentId, primary, fallbacks }) => [agentId, { primary, fallbacks: [...fallbacks] }]));
+}
+
 export function byotSnapshotProjectionFromSystemConfig(
   sysData: Record<string, unknown> | undefined,
+  agentModels: AgentModelSelections,
 ): ByotSnapshotProjection {
   const modelCredential = objectRecord(sysData?.modelCredential);
   if (modelCredential) {
     const byotConfig = modelCredential.active === true
       ? byotSystemConfigFromRecord(modelCredential)
       : undefined;
-    const systemConfig = withAgentModels(sysData, byotConfig);
+    const systemConfig = withAgentModels(agentModels, byotConfig);
     return {
       byotActive: byotConfig !== undefined,
       ...(systemConfig ? { systemConfig } : {}),
@@ -234,7 +243,7 @@ export function byotSnapshotProjectionFromSystemConfig(
 
   const byot = objectRecord(sysData?.byot);
   const systemConfig = withAgentModels(
-    sysData,
+    agentModels,
     byot ? byotSystemConfigFromRecord(byot) : undefined,
   );
   return {
@@ -248,8 +257,9 @@ export function byotSnapshotProjectionFromSystemConfig(
 // lean; deriveDesiredByotState then defaults the provider to anthropic for an active BYOT.
 export function byotSystemConfigFromDoc(
   sysData: Record<string, unknown> | undefined,
+  agentModels: AgentModelSelections,
 ): UserSnapshot["systemConfig"] {
-  return byotSnapshotProjectionFromSystemConfig(sysData).systemConfig;
+  return byotSnapshotProjectionFromSystemConfig(sysData, agentModels).systemConfig;
 }
 
 export function mapUserDocToSnapshot(

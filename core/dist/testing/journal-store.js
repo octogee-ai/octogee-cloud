@@ -855,7 +855,58 @@ function userRepositories(documents, write, transactional) {
             .sort((a, b) => a.transfer.snapshotAt - b.transfer.snapshotAt || a.uid.localeCompare(b.uid) ||
             a.transfer.migrationId.localeCompare(b.transfer.migrationId)),
     });
-    return partialRepository("builders", { records, accounts, placementReceipts, scheduleTransfers, agentStores });
+    const agentModelPath = (uid, agentId) => `users/${uid}/agentModelSelections/${agentId}`;
+    const agentModels = partialRepository("users.agentModels", {
+        list: async (uid) => documents.children(`users/${uid}/agentModelSelections`)
+            .map(([, row]) => ({ ...structuredClone(row), revision: FIXTURE_REVISION }))
+            .sort((a, b) => a.agentId.localeCompare(b.agentId)),
+        put: async (selection) => {
+            write(() => documents.set(agentModelPath(selection.uid, selection.agentId), {
+                ...structuredClone(selection),
+                updatedAt: resolveServerNow(selection.updatedAt),
+            }));
+        },
+        delete: async (uid, agentId) => {
+            write(() => documents.delete(agentModelPath(uid, agentId)));
+        },
+    });
+    const auditPath = (auditId) => `sessionModelAudit/${auditId}`;
+    const sessionModelAudit = partialRepository("users.sessionModelAudit", {
+        get: async (auditId) => {
+            const row = documents.get(auditPath(auditId));
+            return row === undefined ? null : ({ ...structuredClone(row), revision: FIXTURE_REVISION });
+        },
+        create: async (entry) => {
+            const path = auditPath(entry.auditId);
+            if (documents.get(path) !== undefined)
+                throw new AlreadyExistsError({ aggregate: "session-model-audit", key: entry.auditId });
+            write(() => documents.set(path, {
+                ...structuredClone(entry),
+                createdAt: resolveServerNow(entry.createdAt),
+                outcome: "pending",
+                commandPostId: null,
+                replyPostId: null,
+                resultingModel: null,
+                completedAt: null,
+            }));
+        },
+        complete: async (auditId, completion) => {
+            const path = auditPath(auditId);
+            const row = documents.get(path);
+            if (row === undefined)
+                throw new MissingRecordError({ aggregate: "session-model-audit", key: auditId });
+            write(() => documents.set(path, { ...row, ...structuredClone(completion), completedAt: resolveServerNow(completion.completedAt) }));
+        },
+    });
+    return partialRepository("builders", {
+        records,
+        accounts,
+        placementReceipts,
+        scheduleTransfers,
+        agentStores,
+        agentModels,
+        sessionModelAudit,
+    });
 }
 function workspaceChannelLocation(path) {
     const parts = path.split("/");

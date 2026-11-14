@@ -237,6 +237,7 @@ import { platformStateUserDocuments, userDocumentsSizingKeyReader, type UserDocu
 import { gatewayScopedJobId, signFleetRequest } from "@octogee/core/fleet-signature";
 import {
   byotSystemConfigFromDoc,
+  readAgentModelSelections,
   collectStoredProjectAgentStates,
 } from "@octogee/core/user-snapshot-mapping";
 import {
@@ -3010,11 +3011,12 @@ export async function readMigrationUserSnapshot(
   if (userRecord === null || data === undefined) return null;
   const slug = userRecord.slug;
   if (!slug) return null;
-  const [workspaceProjects, defaultAgentSecret, agentData, sysConfig, targetGateway, projectAgents] = await Promise.all([
+  const [workspaceProjects, defaultAgentSecret, agentData, sysConfig, agentModels, targetGateway, projectAgents] = await Promise.all([
     store.workspaces.projects.list(slug),
     store.secrets.get(uid, "coachMattermost"),
     documents.agent(uid),
     documents.systemConfig(uid),
+    readAgentModelSelections(store.users, uid),
     toGatewayId ? store.gateways.roots.get(toGatewayId) : Promise.resolve(null),
     collectStoredProjectAgentStates(store, uid, slug),
   ]);
@@ -3035,7 +3037,7 @@ export async function readMigrationUserSnapshot(
   // byotActive + the system/config byot subdoc must ride along so the migration target's
   // mount re-assert (reassertByot) sees the user's real BYOT state — without it a
   // non-anthropic BYOK user's models.json is not re-written on the new pod.
-  const systemConfig = byotSystemConfigFromDoc(sysConfig);
+  const systemConfig = byotSystemConfigFromDoc(sysConfig, agentModels);
   const entitlements = userEntitlements();
   const planInputs = entitlements.pickInputs(data);
   return {

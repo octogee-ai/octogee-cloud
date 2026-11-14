@@ -20,6 +20,8 @@ export type PlatformAggregate =
   | "schedule-transfer"
   | "agent-store"
   | "user-account"
+  | "agent-model-selection"
+  | "session-model-audit"
   | "workspace"
   | "workspace-member"
   | "workspace-project"
