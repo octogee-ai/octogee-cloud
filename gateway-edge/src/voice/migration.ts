@@ -32,7 +32,7 @@ export function createVoiceMigrationRegistry({ now = Date.now, graceMs = VOICE_D
     },
     resume(slug: string, operationId: string): number {
       const current = holds.get(slug);
-      if (current && current.operationId !== operationId) throw new Error('voice admission held by another migration');
+      if (current && current.operationId !== operationId && current.takeoverAfter > now()) throw new Error('voice admission held by another migration');
       if (current) clearTimeout(current.timer);
       holds.delete(slug);
       return calls.get(slug)?.size ?? 0;
