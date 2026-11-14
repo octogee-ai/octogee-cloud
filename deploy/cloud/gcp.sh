@@ -52,6 +52,10 @@ ensure_cluster() {
       --machine-type "${MACHINE_TYPE}" --num-nodes 1 \
       --enable-autoscaling --min-nodes 1 --max-nodes 3 \
       --workload-pool "${GCP_PROJECT}.svc.id.goog" --enable-shielded-nodes >/dev/null
+  elif [ "$(g container clusters describe "${CLUSTER_NAME}" "${CLUSTER_LOCATION[@]}" \
+    --format='value(controlPlaneEndpointsConfig.dnsEndpointConfig.allowExternalTraffic)')" != True ]; then
+    step "DNS access to the GKE control plane"
+    g container clusters update "${CLUSTER_NAME}" "${CLUSTER_LOCATION[@]}" --enable-dns-access >/dev/null
   fi
   g container clusters get-credentials "${CLUSTER_NAME}" "${CLUSTER_LOCATION[@]}" --dns-endpoint >/dev/null
   KUBE_CONTEXT="$(kubectl config current-context)"
