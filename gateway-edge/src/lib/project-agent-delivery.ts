@@ -1,16 +1,19 @@
 import { randomUUID } from "node:crypto";
 import type { OpaqueMap, PlatformStateTransaction, Stored, WorkspaceProject } from "@octogee/core/platform-state";
 import type { ProjectAgentConfig } from "@octogee/shared/types/project";
-import { db, FieldValue } from "./db.js";
 import { platformStateStore } from "./platform-state.js";
 import { mmApi } from "./mattermost.js";
+import { projectPresentation } from "./project-presentation.js";
+import {
+  DeliveryIntentReplacedError,
+  projectAgentDeliveryIntents,
+  type DeliveryIntentPatch,
+  type DeliveryKind,
+  type OpenedDeliveryIntent,
+  type ProjectDeliveryTarget,
+} from "./project-agent-delivery-intents.js";
 
-export type DeliveryKind = "handoff" | "kickoff";
-export interface ProjectDeliveryTarget {
-  workspaceId: string;
-  projectSlug: string;
-}
-export type OnboardingProject = { name: string; tagline?: string; agent: ProjectAgentConfig; repoSource: OpaqueMap | null; handoffMessage?: string };
+export type OnboardingProject = { name?: string; tagline?: string; agent: ProjectAgentConfig; repoSource: OpaqueMap | null; handoffMessage?: string };
 export interface DeliveryLease {
   kind: DeliveryKind;
   leaseId: string;
@@ -22,7 +25,7 @@ export interface DeliveryClaim extends DeliveryLease {
   startedAt: number;
   postAttempted: boolean;
   recoveryBefore?: string;
-  intentVersion: FirebaseFirestore.Timestamp;
+  intent: OpenedDeliveryIntent;
 }
 export type DeliveryOutcome = { postId: string } | { error: string };
 
@@ -31,20 +34,10 @@ type LeasedProject = { project: Stored<WorkspaceProject>; agent: DeliveryAgent }
 
 const DELIVERY_LEASE_MS = 120_000;
 const LEASE_REPLACED = "Project delivery lease was replaced";
-const FIRESTORE_ALREADY_EXISTS = 6;
-const FIRESTORE_FAILED_PRECONDITION = 9;
-
-function firestoreCode(error: unknown): unknown {
-  return error !== null && typeof error === "object" ? (error as { code?: unknown }).code : undefined;
-}
 
 function pendingDelivery(agent: ProjectAgentConfig): DeliveryKind | null {
   if (agent.handoff) return agent.handoff.status === "pending" ? "handoff" : null;
   return agent.kickoff?.status === "pending" ? "kickoff" : null;
-}
-
-function intentRef(target: ProjectDeliveryTarget, kind: DeliveryKind): FirebaseFirestore.DocumentReference {
-  return db.doc(`workspaces/${target.workspaceId}/projects/${target.projectSlug}/agentState/${kind}Delivery`);
 }
 
 async function readLeasedProject(
@@ -68,35 +61,19 @@ async function assertLeaseHeld(target: ProjectDeliveryTarget, leaseId: string): 
   if ((current?.agent as DeliveryAgent | null | undefined)?.deliveryLeaseId !== leaseId) throw new Error(LEASE_REPLACED);
 }
 
-type StoredIntent = { data: FirebaseFirestore.DocumentData; version: FirebaseFirestore.Timestamp; created: boolean };
-
-async function readIntent(ref: FirebaseFirestore.DocumentReference): Promise<StoredIntent | null> {
-  const snapshot = await ref.get();
-  return snapshot.exists ? { data: snapshot.data()!, version: snapshot.updateTime!, created: false } : null;
-}
-
-async function createOrReadIntent(ref: FirebaseFirestore.DocumentReference): Promise<StoredIntent> {
-  const existing = await readIntent(ref);
-  if (existing) return existing;
-  const data = { startedAt: Date.now() - 5_000 };
+async function updateIntent(claim: DeliveryClaim, patch: DeliveryIntentPatch): Promise<void> {
   try {
-    const { writeTime } = await ref.create(data);
-    return { data, version: writeTime, created: true };
+    await claim.intent.update(patch);
   } catch (error) {
-    if (firestoreCode(error) !== FIRESTORE_ALREADY_EXISTS) throw error;
-  }
-  const concurrent = await readIntent(ref);
-  if (!concurrent) throw new Error("Project delivery intent was removed while it was being opened");
-  return concurrent;
-}
-
-async function updateIntent(target: ProjectDeliveryTarget, claim: DeliveryClaim, patch: FirebaseFirestore.UpdateData<FirebaseFirestore.DocumentData>): Promise<void> {
-  try {
-    await intentRef(target, claim.kind).update(patch, { lastUpdateTime: claim.intentVersion });
-  } catch (error) {
-    if (firestoreCode(error) === FIRESTORE_FAILED_PRECONDITION) throw new Error(LEASE_REPLACED, { cause: error });
+    if (error instanceof DeliveryIntentReplacedError) throw new Error(LEASE_REPLACED, { cause: error });
     throw error;
   }
+}
+
+export async function pendingProjectDelivery(target: ProjectDeliveryTarget): Promise<DeliveryKind | null> {
+  const project = await platformStateStore.workspaces.projects.get(target.workspaceId, target.projectSlug);
+  const agent = project?.agent as ProjectAgentConfig | null | undefined;
+  return agent ? pendingDelivery(agent) : null;
 }
 
 export async function claimProjectDelivery(target: ProjectDeliveryTarget, uid: string): Promise<DeliveryLease | null> {
@@ -114,19 +91,23 @@ export async function claimProjectDelivery(target: ProjectDeliveryTarget, uid: s
 }
 
 export async function openDeliveryIntent(target: ProjectDeliveryTarget, lease: DeliveryLease): Promise<DeliveryClaim> {
-  const [intent, projectSnap] = await Promise.all([
-    createOrReadIntent(intentRef(target, lease.kind)),
-    db.doc(`workspaces/${target.workspaceId}/projects/${target.projectSlug}`).get(),
+  const [intent, product] = await Promise.all([
+    projectAgentDeliveryIntents().openIntent(target, lease.kind, { startedAt: Date.now() - 5_000 }),
+    projectPresentation().readProject(target.workspaceId, target.projectSlug),
   ]);
   if (intent.created) await assertLeaseHeld(target, lease.leaseId);
-  const product = projectSnap.data();
   return {
     ...lease,
-    project: { name: product?.name, tagline: product?.tagline, agent: lease.agent, repoSource: lease.repoSource },
-    startedAt: intent.data.startedAt,
-    postAttempted: intent.data.postAttempted === true,
-    recoveryBefore: intent.data.recoveryBefore,
-    intentVersion: intent.version,
+    project: {
+      name: typeof product?.name === "string" ? product.name : undefined,
+      tagline: typeof product?.tagline === "string" ? product.tagline : undefined,
+      agent: lease.agent,
+      repoSource: lease.repoSource,
+    },
+    startedAt: intent.startedAt,
+    postAttempted: intent.postAttempted,
+    recoveryBefore: intent.recoveryBefore,
+    intent,
   };
 }
 
@@ -137,7 +118,7 @@ export async function beginDeliveryPost(target: ProjectDeliveryTarget, claim: De
     if ((agent.deliveryLeaseUntil ?? 0) <= Date.now()) throw new Error(expired);
     await writeAgent(tx, project, { ...agent, deliveryLeaseUntil: Date.now() + DELIVERY_LEASE_MS });
   });
-  await updateIntent(target, claim, { postAttempted: true, startedAt: Date.now() - 5_000, recoveryBefore: FieldValue.delete() });
+  await updateIntent(claim, { postAttempted: true, startedAt: Date.now() - 5_000, recoveryBefore: null });
 }
 
 function deliveredAgent(agent: DeliveryAgent, kind: DeliveryKind, outcome: DeliveryOutcome): OpaqueMap {
@@ -170,6 +151,6 @@ export async function matchingDeliveryPost(target: ProjectDeliveryTarget, claim:
     before = nextBefore;
   }
   await assertLeaseHeld(target, claim.leaseId);
-  await updateIntent(target, claim, { recoveryBefore: before });
+  await updateIntent(claim, { recoveryBefore: before });
   throw new Error("Project delivery receipt history limit reached; recovery will continue on retry");
 }

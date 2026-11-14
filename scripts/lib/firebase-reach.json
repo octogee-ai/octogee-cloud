@@ -5,8 +5,6 @@
     "core/src/mattermost/provision.ts",
     "core/src/provisionSteps.ts",
     "gateway-edge/src/lib/db.ts",
-    "gateway-edge/src/lib/project-agent-delivery.ts",
-    "gateway-edge/src/lib/project-agent-onboarding.ts",
     "gateway-edge/src/lib/withProject.ts",
     "gateway-edge/src/routes/connect.ts"
   ]
