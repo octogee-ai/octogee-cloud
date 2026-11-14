@@ -5,12 +5,17 @@ import {
   finishProjectDelivery,
   matchingDeliveryPost,
   openDeliveryIntent,
+  pendingProjectDelivery,
   type DeliveryClaim,
-  type DeliveryKind,
   type OnboardingProject,
-  type ProjectDeliveryTarget,
 } from "./project-agent-delivery.js";
-import { db } from "./db.js";
+import {
+  projectAgentDeliveryIntents,
+  type DeliveryIntent,
+  type DeliveryKind,
+  type ProjectDeliveryTarget,
+  type QueuedProjectHandoff,
+} from "./project-agent-delivery-intents.js";
 import { platformStateStore } from "./platform-state.js";
 import { readMattermostSecret } from "./mattermost-secret.js";
 import { mmApi } from "./mattermost.js";
@@ -45,25 +50,25 @@ type HandoffAgent = Record<string, unknown> & {
   deliveryLeaseUntil?: number;
 };
 
-function initialPostStarted(state: { status?: string } | undefined, delivery: { postAttempted?: boolean } | undefined): boolean {
+function initialPostStarted(state: { status?: string } | undefined, delivery: DeliveryIntent | null): boolean {
   return state?.status === "sent" || delivery?.postAttempted === true;
 }
 
-function handoffAlreadyQueued(existing: FirebaseFirestore.DocumentData | undefined, agent: HandoffAgent, requested: ProjectHandoff): boolean {
+function handoffAlreadyQueued(existing: QueuedProjectHandoff | null, agent: HandoffAgent, requested: ProjectHandoff): boolean {
   return existing?.generation === agent.handoff?.generation
     && existing?.message === requested.message
     && (["name", "emoji", "persona"] as const).every(key => existing?.identity?.[key] === requested[key]);
 }
 
 export async function queueProjectHandoff(uid: string, workspaceId: string, projectSlug: string, handoff: ProjectHandoff): Promise<void> {
-  const agentStatePath = `workspaces/${workspaceId}/projects/${projectSlug}/agentState`;
-  const handoffRef = db.doc(`${agentStatePath}/handoff`);
-  const [existingSnapshot, deliverySnapshot, kickoffDeliverySnapshot] = await Promise.all([
-    handoffRef.get(),
-    db.doc(`${agentStatePath}/handoffDelivery`).get(),
-    db.doc(`${agentStatePath}/kickoffDelivery`).get(),
+  const intents = projectAgentDeliveryIntents();
+  if (!intents.recordsIntents) throw new Error("Project handoffs need a delivery intent store, and none is installed");
+  const target = { workspaceId, projectSlug };
+  const [existing, handoffDelivery, kickoffDelivery] = await Promise.all([
+    intents.readHandoff(target),
+    intents.readIntent(target, "handoff"),
+    intents.readIntent(target, "kickoff"),
   ]);
-  const existing = existingSnapshot.data();
   const queued = await platformStateStore.transaction({ label: "project-agent-onboarding.queue-handoff" }, async (tx) => {
     const { projects } = tx.workspaces;
     const project = await projects.get(workspaceId, projectSlug);
@@ -71,12 +76,12 @@ export async function queueProjectHandoff(uid: string, workspaceId: string, proj
       throw new Error("An active project with its own agent is required");
     }
     const agent = project.agent as HandoffAgent;
-    if (initialPostStarted(agent.kickoff, kickoffDeliverySnapshot.data())) {
+    if (initialPostStarted(agent.kickoff, kickoffDelivery)) {
       throw new Error("This project already has its initial kickoff; continue in its chat");
     }
     const next = { name: agent.requestedName || handoff.name, emoji: handoff.emoji, persona: handoff.persona };
     if (handoffAlreadyQueued(existing, agent, { ...next, message: handoff.message })) return null;
-    if (initialPostStarted(agent.handoff, deliverySnapshot.data())) {
+    if (initialPostStarted(agent.handoff, handoffDelivery)) {
       throw new Error("This project already has its initial handoff; continue in its chat");
     }
     if ((agent.deliveryLeaseUntil ?? 0) > Date.now()) throw new Error("Project agent delivery is in progress");
@@ -90,18 +95,7 @@ export async function queueProjectHandoff(uid: string, workspaceId: string, proj
     );
     return { identity: next, generation };
   });
-  if (queued) await writeHandoffMessage(handoffRef, { message: handoff.message, ...queued });
-}
-
-async function writeHandoffMessage(
-  ref: FirebaseFirestore.DocumentReference,
-  document: { message: string; identity: Omit<ProjectHandoff, "message">; generation: number },
-): Promise<void> {
-  await db.runTransaction(async (tx) => {
-    const current = await tx.get(ref);
-    if ((current.data()?.generation ?? 0) > document.generation) return;
-    tx.set(ref, document);
-  });
+  if (queued) await intents.writeHandoff(target, { message: handoff.message, ...queued });
 }
 
 function deliveryMessage(project: OnboardingProject, kind: DeliveryKind, workspaceId: string, projectSlug: string): string {
@@ -114,6 +108,7 @@ function deliveryMessage(project: OnboardingProject, kind: DeliveryKind, workspa
       : "in your project checkout. Preserve existing project instructions and decisions, read runbook/ and DECISIONS.md when present, and commit these files together with your work using octogee_project_commit.";
     return `@${projectAgentMmUsername(workspaceId, projectSlug)} ${project.handoffMessage}\n\nYou are ${agent.identity.name} ${agent.identity.emoji}. ${agent.identity.persona}\nBefore starting, save this handoff in BRIEF.md, update IDENTITY.md and SOUL.md with your assigned identity, and record relevant user context in USER.md ${workspace} Create a fitting avatar and set your chat identity with octogee_chat_set_identity.`;
   }
+  if (!project.name) throw new Error("Project kickoff needs the project name");
   const identityHint = agent.requestedName ? `Your name is ${agent.requestedName}.` : "Choose your own fitting name.";
   const task = project.tagline?.trim()
     ? `The user's starting idea: ${project.tagline}\nIntroduce yourself and start with this idea.`
@@ -139,9 +134,8 @@ async function ensureDefaultAgentMembership(channelId: string, userDefaultAgentI
 }
 
 async function readHandoffMessage(target: ProjectDeliveryTarget, generation: number | undefined): Promise<string | undefined> {
-  const handoff = await db.doc(`workspaces/${target.workspaceId}/projects/${target.projectSlug}/agentState/handoff`).get();
-  const stored = handoff.data();
-  return stored?.generation === generation ? stored?.message : undefined;
+  const stored = await projectAgentDeliveryIntents().readHandoff(target);
+  return stored && stored.generation === generation ? stored.message : undefined;
 }
 
 async function postOnboarding(uid: string, target: ProjectDeliveryTarget, claim: DeliveryClaim): Promise<string> {
@@ -163,9 +157,10 @@ async function postOnboarding(uid: string, target: ProjectDeliveryTarget, claim:
   await ensureDefaultAgentMembership(channelId, userDefaultAgentId);
   let postId = await matchingDeliveryPost(target, claim, channelId, receipt, token);
   if (!postId) {
+    const message = deliveryMessage(project, kind, workspaceId, projectSlug);
     await beginDeliveryPost(target, claim);
     const post = await mmApi("/posts", "POST", { channel_id: channelId,
-      message: deliveryMessage(project, kind, workspaceId, projectSlug),
+      message,
       props: { octogee_project_delivery: receipt } }, token) as { id?: string };
     if (!post.id) throw new Error("Project handoff post returned no ID");
     postId = post.id;
@@ -175,6 +170,13 @@ async function postOnboarding(uid: string, target: ProjectDeliveryTarget, claim:
 
 export async function deliverProjectAgentOnboarding(uid: string, workspaceId: string, projectSlug: string): Promise<void> {
   const target = { workspaceId, projectSlug };
+  if (!projectAgentDeliveryIntents().recordsIntents) {
+    const kind = await pendingProjectDelivery(target);
+    if (kind) {
+      logger.warn("Project agent delivery skipped: no delivery intent store is installed", { uid, workspaceId, projectSlug, kind });
+    }
+    return;
+  }
   const lease = await claimProjectDelivery(target, uid);
   if (!lease) return;
   try {

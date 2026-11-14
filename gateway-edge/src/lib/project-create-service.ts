@@ -1,5 +1,6 @@
 import { platformStateStore } from "./platform-state.js";
 import { projectPresentation } from "./project-presentation.js";
+import { projectAgentDeliveryIntents } from "./project-agent-delivery-intents.js";
 import { logger } from "../middleware/logging.js";
 import { mmApi } from "./mattermost.js";
 import { ChannelNameInUseError, createFreshPrivateChannel } from "./mattermost-channel-name.js";
@@ -61,6 +62,7 @@ interface ProjectCreatePlan {
   recipe: ProjectRecipeId;
   giteaRepoName: string;
   source: "ui" | "agent";
+  queuesKickoff: boolean;
 }
 
 interface NormalizedProjectCreateRequest {
@@ -156,6 +158,9 @@ export async function createProjectForActor(
 
   const reservationFailure = await reserveProvisioningProject(plan);
   if (reservationFailure) return reservationFailure;
+  if (plan.source === "ui" && !plan.queuesKickoff) {
+    logger.warn(`[projects] Kickoff skipped for ${plan.workspaceId}/${plan.slug}: no project agent delivery intent store is installed`);
+  }
   if (plan.recipe !== "static-site" && prewarmProjectRunCapacity) {
     void prewarmProjectCapacity(plan, prewarmProjectRunCapacity);
   }
@@ -278,6 +283,7 @@ function buildProjectCreatePlan(
       recipe: recipe.value,
       giteaRepoName: projectRepoName(request.slug),
       source: actor.source ?? "ui",
+      queuesKickoff: (actor.source ?? "ui") === "ui" && projectAgentDeliveryIntents().recordsIntents,
     },
   };
 }
@@ -355,7 +361,7 @@ async function reserveProvisioningProject(plan: ProjectCreatePlan): Promise<Proj
       agent: {
         requestedName: plan.agentName,
         identity: { name: plan.agentName || plan.slug, emoji: "🤖", persona: "" },
-        ...(plan.source === "ui" ? { kickoff: { status: "pending" } } : {}),
+        ...(plan.queuesKickoff ? { kickoff: { status: "pending" } } : {}),
       },
       updatedAt: { serverNow: true },
     });

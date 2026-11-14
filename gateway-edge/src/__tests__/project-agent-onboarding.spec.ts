@@ -1,4 +1,4 @@
-import { beforeEach, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -6,62 +6,86 @@ import { join } from "node:path";
 const h = vi.hoisted(() => ({
   docs: new Map<string, any>(), versions: new Map<string, number>(), refused: new Set<string>(),
   afterRead: new Map<string, () => void>(), afterWrite: new Map<string, () => void>(),
-  mm: vi.fn(), seed: vi.fn(), avatar: vi.fn(), blob: vi.fn(), log: vi.fn(),
+  mm: vi.fn(), seed: vi.fn(), avatar: vi.fn(), blob: vi.fn(), log: vi.fn(), warn: vi.fn(),
 }));
 function rewrite(path: string, value: unknown) {
   h.docs.set(path, structuredClone(value));
   h.versions.set(path, (h.versions.get(path) ?? 0) + 1);
 }
-function ref(path: string) {
-  const write = (value: unknown) => {
-    if (h.refused.has(path)) throw new Error('intent write refused');
-    rewrite(path, value);
-    h.afterWrite.get(path)?.();
-  };
-  return { path, set: async (value: unknown) => write(value), create: async (value: unknown) => {
-    if (h.docs.get(path) !== undefined) throw Object.assign(new Error('document already exists'), { code: 6 });
-    write(value);
-    return { writeTime: h.versions.get(path) };
-  }, get: async () => {
-    const data = structuredClone(h.docs.get(path));
-    const snapshot = { exists: data !== undefined, updateTime: h.versions.get(path) ?? 0, data: () => structuredClone(data) };
-    h.afterRead.get(path)?.();
-    return snapshot;
-  }, update: async (patch: Record<string, unknown>, precondition?: { lastUpdateTime?: number }) => {
-    if (precondition?.lastUpdateTime !== undefined && precondition.lastUpdateTime !== (h.versions.get(path) ?? 0)) {
-      throw Object.assign(new Error('document changed since the precondition read'), { code: 9 });
-    }
-    const data = structuredClone(h.docs.get(path));
-    for (const [key, value] of Object.entries(patch)) {
-      const parts = key.split('.'); let target = data;
-      for (const part of parts.slice(0, -1)) target = target[part] ??= {};
-      if (value === 'DELETE') delete target[parts.at(-1)!]; else target[parts.at(-1)!] = structuredClone(value);
-    }
-    rewrite(path, data);
-    h.afterWrite.get(path)?.();
-  } };
-}
-vi.mock('../lib/db.js', () => ({ db: { doc: ref, runTransaction: async (fn: any) => {
-  const writes: Array<() => Promise<unknown>> = [];
-  const result = await fn({ get: (r: any) => r.get(), set: (r: any, p: any) => { writes.push(() => r.set(p)); }, update: (r: any, p: any) => { writes.push(() => r.update(p)); } });
-  for (const write of writes) await write();
-  return result;
-} }, FieldValue: { delete: () => 'DELETE', serverTimestamp: () => 'NOW', increment: () => 1 } }));
 vi.mock('../lib/platform-state.js', async () => {
   const { createDocumentFixtureStore } = await import('@octogee/core/testing/journal-store');
   return { platformStateStore: createDocumentFixtureStore(h.docs) };
 });
 vi.mock('../lib/mattermost.js', () => ({ mmApi: h.mm, mmUploadAvatarBuffer: h.avatar }));
-vi.mock('../middleware/logging.js', () => ({ logger: { error: h.log } }));
+vi.mock('../middleware/logging.js', () => ({ logger: { error: h.log, warn: h.warn } }));
 vi.mock('../lib/gitea.js', () => ({ giteaWriteFiles: h.seed }));
 vi.mock('../lib/fileTarget.js', () => ({ resolveFileTarget: async () => ({ ok: true, target: {} }) }));
 vi.mock('../lib/workspace-blob.js', () => ({ storeWorkspaceBlob: h.blob }));
 import { parseProjectHandoff, queueProjectHandoff, deliverProjectAgentOnboarding } from '../lib/project-agent-onboarding.js';
+import {
+  DeliveryIntentReplacedError,
+  installProjectAgentDeliveryIntents,
+  NO_PROJECT_AGENT_DELIVERY_INTENTS,
+  type DeliveryKind,
+  type ProjectAgentDeliveryIntents,
+  type ProjectDeliveryTarget,
+} from '../lib/project-agent-delivery-intents.js';
+import { installProjectPresentation, NO_PROJECT_PRESENTATION } from '../lib/project-presentation.js';
 import { projectAgentSecretDocId } from '@octogee/core/mattermost/project-agent';
 const projectPath = 'workspaces/alice/projects/golf';
+function read(path: string) {
+  const data = structuredClone(h.docs.get(path));
+  h.afterRead.get(path)?.();
+  return data;
+}
+function write(path: string, value: unknown) {
+  if (h.refused.has(path)) throw new Error('intent write refused');
+  rewrite(path, value);
+  h.afterWrite.get(path)?.();
+}
+const agentState = (target: ProjectDeliveryTarget) => `workspaces/${target.workspaceId}/projects/${target.projectSlug}/agentState`;
+const intentPath = (target: ProjectDeliveryTarget, kind: DeliveryKind) => `${agentState(target)}/${kind}Delivery`;
+const memoryDeliveryIntents: ProjectAgentDeliveryIntents = {
+  recordsIntents: true,
+  async openIntent(target, kind, initial) {
+    const path = intentPath(target, kind);
+    let data = read(path);
+    let created = false;
+    if (data === undefined && h.docs.get(path) === undefined) {
+      write(path, initial);
+      data = initial;
+      created = true;
+    }
+    data ??= structuredClone(h.docs.get(path));
+    const version = h.versions.get(path) ?? 0;
+    return {
+      startedAt: data.startedAt, postAttempted: data.postAttempted === true, recoveryBefore: data.recoveryBefore, created,
+      async update(patch) {
+        if ((h.versions.get(path) ?? 0) !== version) throw new DeliveryIntentReplacedError();
+        const next = structuredClone(h.docs.get(path));
+        for (const [key, value] of Object.entries(patch)) if (value === null) delete next[key]; else next[key] = value;
+        write(path, next);
+      },
+    };
+  },
+  async readIntent(target, kind) {
+    const data = read(intentPath(target, kind));
+    return data === undefined ? null : { startedAt: data.startedAt, postAttempted: data.postAttempted === true, recoveryBefore: data.recoveryBefore };
+  },
+  async readHandoff(target) {
+    return read(`${agentState(target)}/handoff`) ?? null;
+  },
+  async writeHandoff(target, handoff) {
+    const path = `${agentState(target)}/handoff`;
+    if ((h.docs.get(path)?.generation ?? 0) > handoff.generation) return;
+    write(path, handoff);
+  },
+};
 const handoff = { name: 'Chip', emoji: '⛳', persona: 'A calm golf caddie, with Piper’s practical style.', message: 'Build Chris and Robert a shared golf dashboard. Chris prefers simple controls.' };
 beforeEach(() => {
   vi.clearAllMocks(); h.docs.clear(); h.versions.clear(); h.refused.clear(); h.afterRead.clear(); h.afterWrite.clear();
+  installProjectAgentDeliveryIntents(memoryDeliveryIntents);
+  installProjectPresentation({ ...NO_PROJECT_PRESENTATION, readProject: async (workspaceSlug, projectSlug) => structuredClone(h.docs.get(`workspaces/${workspaceSlug}/projects/${projectSlug}`)) ?? null });
   h.docs.set(projectPath, { ownerUid: 'u', name: 'Fairway Partners', tagline: 'A shared golf dashboard', provisioningState: 'active', agent: { mode: 'scoped', enabled: true, status: 'ready', requestedName: '', identity: { name: 'golf', emoji: '🤖', persona: '' } } });
   h.docs.set(`${projectPath}/channels/general`, { mattermost: { channelId: 'general' } });
   h.docs.set('workspaces/alice/channels/coach-dm', { mattermost: { channelId: 'coach-dm' } });
@@ -77,6 +101,30 @@ beforeEach(() => {
     return {};
   });
   h.seed.mockResolvedValue(undefined); h.avatar.mockResolvedValue(true); h.blob.mockResolvedValue({ gcsPath: 'private/avatar' });
+});
+describe('without a delivery intent store', () => {
+  beforeEach(() => installProjectAgentDeliveryIntents(NO_PROJECT_AGENT_DELIVERY_INTENTS));
+  it.each([
+    ['kickoff', { kickoff: { status: 'pending' } }],
+    ['handoff', { handoff: { status: 'pending', generation: 1 } }],
+  ] as const)('logs the skipped %s delivery and leaves it pending without posting', async (kind, pending) => {
+    Object.assign(h.docs.get(projectPath).agent, pending);
+    const before = structuredClone(h.docs.get(projectPath).agent);
+    await deliverProjectAgentOnboarding('u', 'alice', 'golf');
+    expect(h.warn).toHaveBeenCalledWith('Project agent delivery skipped: no delivery intent store is installed', { uid: 'u', workspaceId: 'alice', projectSlug: 'golf', kind });
+    expect(h.mm).not.toHaveBeenCalled();
+    expect(h.docs.get(projectPath).agent).toEqual(before);
+  });
+  it('stays quiet for a project with no pending delivery', async () => {
+    await deliverProjectAgentOnboarding('u', 'alice', 'golf');
+    expect(h.warn).not.toHaveBeenCalled();
+    expect(h.mm).not.toHaveBeenCalled();
+  });
+  it('refuses to queue a handoff it could not deliver and leaves the project agent unchanged', async () => {
+    const before = structuredClone(h.docs.get(projectPath).agent);
+    await expect(queueProjectHandoff('u', 'alice', 'golf', handoff)).rejects.toThrow('Project handoffs need a delivery intent store');
+    expect(h.docs.get(projectPath).agent).toEqual(before);
+  });
 });
 it('queues a distinct identity and context, honoring the user’s requested name', async () => {
   h.docs.get(projectPath).agent.requestedName = 'Birdie';
@@ -242,6 +290,14 @@ it('releases the delivery lease and records the error when its delivery intent c
   expect(h.docs.get(projectPath).agent).toMatchObject({ handoff: { status: 'pending' }, lastError: 'intent write refused' });
   expect(h.docs.get(projectPath).agent.deliveryLeaseId).toBeUndefined();
   expect(h.mm.mock.calls.some(c => c[0] === '/posts')).toBe(false);
+});
+it('refuses a kickoff whose project the presentation hook cannot read, leaving it pending', async () => {
+  installProjectPresentation(NO_PROJECT_PRESENTATION);
+  h.docs.get(projectPath).agent.kickoff = { status: 'pending' };
+  await expect(deliverProjectAgentOnboarding('u', 'alice', 'golf')).rejects.toThrow('Project kickoff needs the project name');
+  expect(h.mm.mock.calls.some(c => c[0] === '/posts')).toBe(false);
+  expect(h.docs.get(projectPath).agent).toMatchObject({ kickoff: { status: 'pending' }, lastError: 'Project kickoff needs the project name' });
+  expect(h.docs.get(`${projectPath}/agentState/kickoffDelivery`)).not.toHaveProperty('postAttempted');
 });
 it('starts UI-created projects with their own agent in project general', async () => {
   h.docs.get(projectPath).agent.kickoff = { status: 'pending' };
