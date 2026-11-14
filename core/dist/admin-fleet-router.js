@@ -2222,11 +2222,11 @@ function buildDurableGatewayPatch(args) {
             },
         };
     }
-    if (args.current.gatewayClass === "isolated" && args.body.sizingTier === "xs") {
-        return { error: { status: 400, body: { error: "User sizingTier must be s, m, or l" } } };
-    }
     const configPatch = mutableConfigPatchFromBody(args.body);
     const patch = { ...configPatch };
+    if (configPatch.sizingTier !== undefined && configPatch.sizingTier !== args.current.sizingTier && args.current.sizingProfile != null) {
+        patch.sizingProfile = null;
+    }
     if (args.body.desiredStatus !== undefined) {
         if (typeof args.body.desiredStatus !== "string") {
             return { error: { status: 400, body: { error: "desiredStatus must be a string" } } };

@@ -169,7 +169,7 @@ describe.skipIf(!dsn)("neutral stored names", () => {
       }],
     );
 
-    await expect(migratePlatformState(db.pool, { schema: db.schema })).resolves.toMatchObject({ applied: [NEUTRAL_ONLY] });
+    await expect(migratePlatformState(db.pool, { schema: db.schema, through: NEUTRAL_ONLY })).resolves.toMatchObject({ applied: [NEUTRAL_ONLY] });
 
     expect(await db.value(`SELECT kind FROM ${db.table("operations")} WHERE id = 'op-migrate-customer'`)).toEqual([{ kind: "migrate-user" }]);
     expect(await db.value(`SELECT source FROM ${db.table("gateway_assignments")} WHERE uid = $1`, [UID])).toEqual([{ source: "migrate-user" }]);
