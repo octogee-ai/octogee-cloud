@@ -10,6 +10,7 @@ export interface PendingProjectDeletion {
 }
 
 export interface ProjectPresentation {
+  readonly remembersChannels: boolean;
   readProject(workspaceSlug: string, projectSlug: string): Promise<PresentationDocument | null>;
   createProject(workspaceSlug: string, projectSlug: string, fields: PresentationDocument): Promise<void>;
   publishProjectMemberCount(workspaceSlug: string, projectSlug: string, memberCount: number): Promise<void>;
@@ -19,6 +20,7 @@ export interface ProjectPresentation {
 }
 
 export const NO_PROJECT_PRESENTATION: ProjectPresentation = {
+  remembersChannels: false,
   readProject: async () => null,
   createProject: async () => undefined,
   publishProjectMemberCount: async () => undefined,
