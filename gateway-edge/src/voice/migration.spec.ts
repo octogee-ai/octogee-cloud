@@ -80,6 +80,18 @@ describe('voice migration registry', () => {
     expect(registry.begin('alice')).toBeTypeOf('function');
   });
 
+  it('lets another operation release a hold whose takeover lease expired', () => {
+    let now = 0;
+    const registry = createVoiceMigrationRegistry({ now: () => now });
+    registry.hold('alice', 'failed-move');
+    now = 119_999;
+    expect(() => registry.resume('alice', 'unmount-1')).toThrow(/another migration/);
+    expect(registry.begin('alice')).toBeNull();
+    now = 120_000;
+    expect(registry.resume('alice', 'unmount-1')).toBe(0);
+    expect(registry.begin('alice')).toBeTypeOf('function');
+  });
+
   it('transfers an expired admission hold without expiring an active call', () => {
     let now = 0;
     const registry = createVoiceMigrationRegistry({ now: () => now });
@@ -97,6 +109,19 @@ describe('voice migration handler', () => {
     const r = request({ slug: 'alice', operationId: 'move-1', phase: 'hold' });
     await handler(r.req, r.res);
     expect(r.status()).toBe(200); expect(r.body()).toEqual({ activeCalls: 1 });
+  });
+  it('answers 409 to a resume while another migration holds a live lease, then 200 once it expires', async () => {
+    let now = 0;
+    const registry = createVoiceMigrationRegistry({ now: () => now });
+    registry.hold('alice', 'failed-move');
+    const handler = createVoiceMigrationHandler({ gatewayToken: 'secret', registry });
+    const live = request({ slug: 'alice', operationId: 'unmount-1', phase: 'resume' });
+    await handler(live.req, live.res);
+    expect(live.status()).toBe(409);
+    now = 120_000;
+    const expired = request({ slug: 'alice', operationId: 'unmount-1', phase: 'resume' });
+    await handler(expired.req, expired.res);
+    expect(expired.status()).toBe(200); expect(expired.body()).toEqual({ activeCalls: 0 });
   });
   it.each([['wrong', '127.0.0.1'], ['secret', '10.0.0.2']])('rejects untrusted credentials or peers', async (token, peer) => {
     const registry = createVoiceMigrationRegistry();
