@@ -42,7 +42,8 @@ not set it up yet.
   it. The script creates everything inside that one project.
 - The Google Cloud CLI with `gke-gcloud-auth-plugin`, kubectl, Helm (tested
   with Helm 4.3), Docker (only `docker buildx imagetools`, to read image
-  digests), Node.js 24, openssl, ssh-keygen and git.
+  digests), Node.js 24, openssl, ssh-keygen, git, and the GitHub CLI (`gh`)
+  to find the release or build to check out.
 - Go, to install `octogee-fleet`.
 - A model provider key. OpenRouter is recommended;
   [Model provider keys](kind.md#model-provider-keys) says where to get each one
@@ -81,41 +82,52 @@ The script stores every provider key exported in its environment:
 `OPENROUTER_API_KEY`, `OPENAI_API_KEY` and `ANTHROPIC_API_KEY`. Unset any you
 do not mean to give the cluster before you run it.
 
-Pick the images. Build main publishes them about 15 minutes after a commit
-reaches `main`, and a newer push can cancel a run, so name the newest `main`
-commit whose Build main succeeded. The chart and the install steps come from
-your checkout, so check that commit out too:
+Pick the commit. The script installs the images Build main published for your
+checkout's commit, and the chart and the install steps come from the same
+checkout. Start from the latest release. Its commit always has images:
 
 ```bash
-SHA=$(gh run list -R octogee-ai/octogee-cloud --workflow=build-main.yml --branch=main \
-  --status=success --limit=1 --json headSha --jq '.[0].headSha')
-git checkout "$SHA"
+git checkout "$(gh release view -R octogee-ai/octogee-cloud --json tagName --jq .tagName)"
+```
+
+Until the first release is out, or to run newer code, check out `main`'s newest
+built commit instead. Build main publishes a commit's images about 15 minutes
+after it reaches `main`. A running build always finishes, and only the newest
+push waits behind it, so a commit pushed in between can end up with no images.
+This checks out the newest `main` commit whose Build main succeeded:
+
+```bash
+git checkout "$(gh run list -R octogee-ai/octogee-cloud --workflow=build-main.yml --branch=main \
+  --event=push --status=success --limit=1 --json headSha --jq '.[0].headSha')"
 ```
 
 Then run the script:
 
 ```bash
-scripts/ops/gke-install.sh up --sha="$SHA"
+scripts/ops/gke-install.sh up
 ```
+
+If your commit has no images, the script stops before it creates anything and
+says so.
 
 A first run takes about 20 minutes, most of it the cluster and the database.
 The script:
 
 1. checks for a model provider key, exported or stored in the cluster;
-2. enables the Compute, Kubernetes Engine, Cloud SQL, Service Networking,
+2. reads the `linux/amd64` digest of each image published for the commit,
+   from `ghcr.io/octogee-ai/octogee-cloud`;
+3. enables the Compute, Kubernetes Engine, Cloud SQL, Service Networking,
    Cloud Storage and IAM APIs;
-3. creates the network `octogee` with Cloud NAT and a private services range
+4. creates the network `octogee` with Cloud NAT and a private services range
    for Cloud SQL;
-4. creates the cluster `octogee` in `GCP_ZONE` with one system node, and the
+5. creates the cluster `octogee` in `GCP_ZONE` with one system node, and the
    node pool `gateways`, which runs pods under gVisor;
-5. creates the Cloud SQL instance `octogee`, private address only, encrypted
+6. creates the Cloud SQL instance `octogee`, private address only, encrypted
    connections only;
-6. creates the buckets `<project>-octogee-assets` and
+7. creates the buckets `<project>-octogee-assets` and
    `<project>-octogee-workspaces`, the service account `octogee-blob-store`
    with access to those two buckets only (their objects, and reading each
    bucket's settings), and an HMAC key for it;
-7. reads the `linux/amd64` digest of each image published for the commit,
-   from `ghcr.io/octogee-ai/octogee-cloud`;
 8. generates every secret, as on kind, and stores each provider key you
    exported in a Secret of its own;
 9. creates the databases and their accounts;
@@ -136,7 +148,7 @@ secrets and the image digests. Set `OCTOGEE_GKE_STATE` to keep it elsewhere.
 | `GCP_REGION` | `us-central1` | Region of the network, NAT, database and buckets. |
 | `GCP_ZONE` | `<region>-a` | Zone of the cluster and the database. |
 | `MACHINE_TYPE` | `e2-standard-4` | System nodes. |
-| `GATEWAY_MACHINE_TYPE` | `e2-standard-4` | Gateway nodes. A gateway of the `s` sizing tier needs 2 CPUs and 8 GiB. |
+| `GATEWAY_MACHINE_TYPE` | `e2-standard-4` | Gateway nodes, one gateway each. A shared gateway defaults to the `m` sizing tier, 2 CPUs and 8 GiB, and an isolated gateway to `s`, 1 CPU and 4 GiB. The `l` tier, 4 CPUs and 16 GiB, needs a larger machine. |
 | `SQL_TIER` | `db-custom-1-3840` | Cloud SQL machine. |
 
 | Flag | Effect |
@@ -149,11 +161,12 @@ secrets and the image digests. Set `OCTOGEE_GKE_STATE` to keep it elsewhere.
 Install the command line:
 
 ```bash
-go install github.com/octogee-ai/octogee-fleet@main
+go install "github.com/octogee-ai/octogee-fleet@$(sed -n 's/^  OCTOGEE_FLEET_VERSION: //p' .github/workflows/build-main.yml)"
 ```
 
-`sizing`, used below for an isolated gateway, is newer than the v0.1.0
-release; install from `main` until a later release includes it.
+Run it from your checkout. It installs the octogee-fleet release that Build
+main tested that commit with, `OCTOGEE_FLEET_VERSION` in
+`.github/workflows/build-main.yml`, which a release's notes also name.
 
 `up` ends by printing the variables to set in every terminal you use for the
 cluster, and the port-forward the command line needs. With the default

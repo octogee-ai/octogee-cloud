@@ -25,6 +25,7 @@ The cluster runs:
 - kind, kubectl and Helm (tested with kind 0.33, kubectl 1.36 and Helm 4.3)
 - Node.js 24
 - openssl, ssh-keygen and git
+- the GitHub CLI, `gh`, to find the release or build to check out
 - Go, to install the `octogee-fleet` command line
 - a model provider key, so agents can reply. The script will not install
   without one. OpenRouter is recommended; [Model provider keys](#model-provider-keys)
@@ -91,27 +92,32 @@ the key out of your shell history:
 read -rs OPENROUTER_API_KEY && export OPENROUTER_API_KEY
 ```
 
+`--pull` copies the images that the Build main workflow published for your
+checkout's commit, described under [Images from GitHub](#images-from-github).
+Start from the latest release. Its commit always has images:
+
+```bash
+git checkout "$(gh release view -R octogee-ai/octogee-cloud --json tagName --jq .tagName)"
+```
+
+Until the first release is out, or to run newer code, check out `main`'s newest
+built commit instead. Build main publishes a commit's images about 15 minutes
+after it reaches `main`. A running build always finishes, and only the newest
+push waits behind it, so a commit pushed in between can end up with no images.
+This checks out the newest `main` commit whose Build main succeeded:
+
+```bash
+git checkout "$(gh run list -R octogee-ai/octogee-cloud --workflow=build-main.yml --branch=main \
+  --event=push --status=success --limit=1 --json headSha --jq '.[0].headSha')"
+```
+
 ```bash
 scripts/ops/kind-install.sh up --pull
 ```
 
-`--pull` copies the images that the Build main workflow published for your
-checkout's commit, described under [Images from GitHub](#images-from-github).
-Build main finishes about 15 minutes after a commit reaches `main`, and a newer
-push to `main` cancels a run that is still going, so a commit can end up with
-no images at all. Until its images exist, or on a commit that is not on `main`,
-name a `main` commit that has images. The Helm chart and the install steps
-still come from your checkout, so pick the commit nearest to it. This prints the
-newest `main` commit whose Build main succeeded:
-
-```bash
-gh run list -R octogee-ai/octogee-cloud --workflow=build-main.yml --branch=main \
-  --status=success --limit=1 --json headSha --jq '.[0].headSha'
-```
-
-```bash
-scripts/ops/kind-install.sh up --pull --sha=<full commit SHA>
-```
+If your commit has no images, `--pull` stops and says so. `--sha=<full commit
+SHA>` copies another commit's images instead, but the Helm chart and the
+install steps still come from your checkout, so keep the two close.
 
 To build the images from your checkout instead, leave out `--pull`. The gateway
 image is large. The builder's cache grows to about 25 GB across the platform
@@ -188,8 +194,12 @@ The fleet command line, [octogee-fleet](https://github.com/octogee-ai/octogee-fl
 talks to the Admin API. Install it with Go:
 
 ```bash
-go install github.com/octogee-ai/octogee-fleet@latest
+go install "github.com/octogee-ai/octogee-fleet@$(sed -n 's/^  OCTOGEE_FLEET_VERSION: //p' .github/workflows/build-main.yml)"
 ```
+
+Run it from your checkout. It installs the octogee-fleet release that Build
+main tested that commit with, `OCTOGEE_FLEET_VERSION` in
+`.github/workflows/build-main.yml`, which a release's notes also name.
 
 Go downloads the newer Go version the command line needs if yours is older, and
 puts the program in `$(go env GOPATH)/bin`, usually `~/go/bin`. Add that folder
@@ -272,12 +282,6 @@ on an arm64 host, such as an Apple Silicon Mac, the install leaves it out and a
 given gateway never starts. `gateway inspect` then shows, as its last error,
 that the isolated gateway image is linux/amd64 only and the cluster has no
 amd64 node.
-
-`sizing` needs an `octogee-fleet` newer than v0.1.0:
-
-```bash
-go install github.com/octogee-ai/octogee-fleet@main
-```
 
 Write a sizing profile whose computer is a pod. `homeSizeGiB` sizes the
 gateway's home claim, which kind's default storage class provides. CPU and
@@ -526,7 +530,10 @@ it on amd64 nodes. On arm64 laptops, it will not run in kind. The
 workflow pushes every image to `ghcr.io/octogee-ai/octogee-cloud/<image>`,
 tagged with the full and short commit SHA, and keeps an image manifest of every
 digest as a workflow artifact named `image-manifest-<sha>`. The manifest lists
-each image's platforms. `kind-install.sh up --pull` installs
+each image's platforms. A running build always finishes; a newer push waits
+behind it and replaces any push that was already waiting. A release adds its
+`vX.Y.Z` tag to each image and attaches the manifest, as
+[Releasing](releasing.md) describes. `kind-install.sh up --pull` installs
 these images. The post-build kind smoke test takes the amd64 digests directly
 from that run’s manifest and uses `octogee-fleet gateway ls` to query the new
 cluster’s Admin API. It then runs `kind-agent-round-trip.mjs` with Muse Ember on
