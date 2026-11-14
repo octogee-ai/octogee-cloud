@@ -328,6 +328,16 @@ function shouldIncludePlacementUser(input) {
 // eslint-disable-next-line complexity -- Warning projection intentionally enumerates each drift state with its distinct operator message.
 function userPlacementWarnings(input) {
     const warnings = [];
+    if (input.driftState === "not-serving") {
+        warnings.push({
+            code: "not-serving",
+            severity: "error",
+            uid: input.uid,
+            slug: input.slug ?? undefined,
+            gatewayId: input.assignedGatewayId ?? undefined,
+            message: `${input.slug ?? input.uid} is ${input.rosterState} on ${input.assignedGatewayId ?? "none"} with no move in flight, so its agent does not answer`,
+        });
+    }
     if (input.driftState === "pointer-drift") {
         warnings.push({
             code: "pointer-drift",
@@ -408,21 +418,15 @@ function driftStateForUser(input) {
     if (missing(input.policyTargetGatewayId) || missing(input.assignedGatewayId)) {
         return "missing-gateway";
     }
+    if (input.rosterState !== null && input.rosterState !== "serving")
+        return "not-serving";
     if (input.assignedGatewayId &&
         input.policyTargetGatewayId &&
         input.assignedGatewayId !== input.policyTargetGatewayId) {
         return "pointer-drift";
     }
-    if (input.mountedGatewayId &&
-        input.assignedGatewayId &&
-        input.mountedGatewayId !== input.assignedGatewayId) {
-        return "mounted-orphan";
-    }
-    if (input.mountedGatewayId && !input.assignedGatewayId)
-        return "mounted-orphan";
-    if (input.assignedGatewayId &&
-        input.mountedGatewayId !== input.assignedGatewayId) {
-        return "assigned-not-mounted";
+    if (input.mountedGatewayId !== input.assignedGatewayId) {
+        return input.mountedGatewayId ? "mounted-orphan" : "assigned-not-mounted";
     }
     return "healthy";
 }
@@ -470,10 +474,12 @@ function buildUserPlacementProjection(input) {
         : input.config.defaultGatewayId);
     const mountedGatewayId = slug ? input.mountedBySlug.get(slug) ?? null : null;
     const latestOp = latestOperation(input.operations, (operation) => operationUid(operation) === input.uid);
+    const rosterState = assignment ? assignment.state : null;
     const driftState = driftStateForUser({
         assignedGatewayId,
         mountedGatewayId,
         policyTargetGatewayId,
+        rosterState,
         latestOperation: latestOp,
         glmByGatewayId: input.glmByGatewayId,
     });
@@ -483,6 +489,7 @@ function buildUserPlacementProjection(input) {
         assignedGatewayId,
         mountedGatewayId,
         policyTargetGatewayId,
+        rosterState,
         driftState,
         latestOperation: latestOp,
     });
@@ -496,7 +503,7 @@ function buildUserPlacementProjection(input) {
         mountedGatewayId,
         provisioningStatus: readProvisioningStatus(input.data),
         driftState,
-        rosterState: assignment ? assignment.state : null,
+        rosterState,
         rosterRevisionId: assignment ? assignment.gatewayId : null,
         rosterEpoch: assignment ? assignment.epoch : null,
         warnings,
@@ -562,6 +569,7 @@ function buildPlacementResponse(opts) {
     }
     const driftSummary = {
         healthy: 0,
+        "not-serving": 0,
         "pointer-drift": 0,
         "assigned-not-mounted": 0,
         "mounted-orphan": 0,

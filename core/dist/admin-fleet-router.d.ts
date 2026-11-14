@@ -123,8 +123,8 @@ interface FirestoreDocLike {
     data(): GlmDoc;
 }
 export declare const ERR_SHARED_GATEWAY_NOT_ROLLED_IN_PLACE = "a shared gateway is not rolled in place; add a shared gateway on the new build, move its users to it, then retire this one";
-type AdminPlacementDriftState = "healthy" | "pointer-drift" | "assigned-not-mounted" | "mounted-orphan" | "missing-gateway" | "in-flight";
-type AdminPlacementWarningCode = "default-gateway-missing" | "default-gateway-retired" | "default-gateway-not-shared" | "pointer-drift" | "assigned-not-mounted" | "mounted-orphan" | "migration-in-flight" | "account-deletion-pending" | "shared-gateway-behind-platform-build";
+type AdminPlacementDriftState = "healthy" | "not-serving" | "pointer-drift" | "assigned-not-mounted" | "mounted-orphan" | "missing-gateway" | "in-flight";
+type AdminPlacementWarningCode = "default-gateway-missing" | "default-gateway-retired" | "default-gateway-not-shared" | "not-serving" | "pointer-drift" | "assigned-not-mounted" | "mounted-orphan" | "migration-in-flight" | "account-deletion-pending" | "shared-gateway-behind-platform-build";
 export interface AdminPlacementWarning {
     code: AdminPlacementWarningCode;
     message: string;

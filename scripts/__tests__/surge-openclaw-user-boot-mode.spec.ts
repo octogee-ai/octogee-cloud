@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { ClaimedUserIdentity, UserIdentity } from "../../shared/types/user-identity.js";
-import { userBootMode } from "../entrypoints/surge-openclaw-supervisor.js";
+import { userAuthorityReaders, userBootMode } from "../entrypoints/surge-openclaw-supervisor.js";
 
 const COMPUTER = { GATEWAY_CLASS: "isolated", GATEWAY_RUNTIME_KIND: "gce-vm" };
 const POD = { GATEWAY_CLASS: "isolated", GATEWAY_RUNTIME_KIND: "cluster" };
@@ -44,6 +44,42 @@ describe("an isolated gateway's user boot mode", () => {
     const readIdentity = vi.fn(async () => claimed({ bootMode: "prelaunch" }));
 
     await expect(userBootMode({ env: { GATEWAY_CLASS: "isolated" }, readIdentity })).resolves.toEqual({ prelaunchBoot: false });
+    expect(readIdentity).not.toHaveBeenCalled();
+  });
+});
+
+describe("an isolated gateway's user allocation check on an OpenClaw restart", () => {
+  const quiescingSourceBroker = () => vi.fn(async (opts?: { nativeBoot?: true }) => {
+    if (opts?.nativeBoot) throw new Error("Operator isolated gateway prelaunch authority is unavailable");
+    return claimed();
+  });
+
+  it("reads the allocation without a boot mode, so a failed move's rollback restarts prelaunch while the source still quiesces", async () => {
+    const readIdentity = quiescingSourceBroker();
+    const { readAllocationAuthority } = userAuthorityReaders({ env: POD, readIdentity });
+
+    await expect(readAllocationAuthority()).resolves.toBe(authority);
+    expect(readIdentity).toHaveBeenCalledExactlyOnceWith();
+  });
+
+  it("still refuses the boot itself while the source quiesces", async () => {
+    const { readBootMode } = userAuthorityReaders({ env: POD, readIdentity: quiescingSourceBroker() });
+
+    await expect(readBootMode()).rejects.toThrow("Operator isolated gateway prelaunch authority is unavailable");
+  });
+
+  it("refuses a restart once the gateway is retiring", async () => {
+    const readIdentity = vi.fn(async (): Promise<UserIdentity> => ({ gatewayId: "b-x", state: "unavailable", reason: "retiring" }));
+    const { readAllocationAuthority } = userAuthorityReaders({ env: POD, readIdentity });
+
+    await expect(readAllocationAuthority()).rejects.toThrow("User allocation is unavailable");
+  });
+
+  it("reads no allocation when the gateway names no isolated runtime", async () => {
+    const readIdentity = vi.fn(async () => claimed());
+    const { readAllocationAuthority } = userAuthorityReaders({ env: { GATEWAY_CLASS: "isolated" }, readIdentity });
+
+    await expect(readAllocationAuthority()).resolves.toBeUndefined();
     expect(readIdentity).not.toHaveBeenCalled();
   });
 });
