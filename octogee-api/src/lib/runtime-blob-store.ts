@@ -1,9 +1,9 @@
-import { storage } from "../../../gateway-edge/src/lib/db.js";
+import { gcsBucket } from "../../../gateway-edge/src/lib/gcs-bucket.js";
 import { createGcsBlobStore } from "../../../gateway-edge/src/lib/gcs-blob-store.js";
 import type { BlobStore } from "../../../gateway-edge/src/lib/blob-store.js";
 import { createS3BlobStore } from "./s3-blob-store.js";
 
-export const gcsBlobStore = createGcsBlobStore(async () => storage.bucket());
+export const gcsBlobStore = createGcsBlobStore(gcsBucket);
 
 function required(name: string): string {
   const value = process.env[name];

@@ -1,9 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../lib/platform-state", () => ({ platformStateStore: {} }));
-vi.mock("../lib/db", () => ({
-  storage: { bucket: vi.fn() },
-}));
+vi.mock("../lib/gcs-bucket", () => ({ gcsBucket: vi.fn() }));
 
 vi.mock("../lib/manifest", async (importOriginal) => ({
   ...await importOriginal<typeof import("../lib/manifest.js")>(),
@@ -50,7 +48,7 @@ import {
 } from "../routes/workspace/files.js";
 import { repoContentsApi, repoTreeApi } from "../routes/workspace/helpers.js";
 import { getManifest } from "../lib/manifest.js";
-import { storage } from "../lib/db.js";
+import { gcsBucket } from "../lib/gcs-bucket.js";
 import type { Manifest } from "../lib/manifest.js";
 import type { BlobStore } from "../lib/blob-store.js";
 import type { FileTarget } from "../lib/fileTarget.js";
@@ -83,7 +81,7 @@ describe("workspace file list helpers", () => {
     vi.mocked(repoContentsApi).mockReset();
     vi.mocked(repoTreeApi).mockReset();
     vi.mocked(getManifest).mockReset();
-    vi.mocked(storage.bucket).mockReset();
+    vi.mocked(gcsBucket).mockReset();
   });
 
   it("lists the requested project's committed asset revision without reviving deleted GCS entries", async () => {
@@ -117,7 +115,7 @@ describe("workspace file list helpers", () => {
       path: "photo.png", source: "blob", downloadUrl: `https://files.test/${key}`,
     });
     expect(download).toHaveBeenCalledWith("customers/alice/.files/manifest.json");
-    expect(storage.bucket).not.toHaveBeenCalled();
+    expect(gcsBucket).not.toHaveBeenCalled();
   });
 
   it("maps visible repo entries, including user-owned context files, and hides reserved or dot-prefixed names", () => {
@@ -408,7 +406,7 @@ describe("workspace file list helpers", () => {
   it("serves manifest-backed blobs from GCS without asking the repo contents API", async () => {
     const getSignedUrl = vi.fn().mockResolvedValue(["https://signed.test/logo.png"]);
     const file = vi.fn(() => ({ getSignedUrl }));
-    vi.mocked(storage.bucket).mockReturnValue({ file } as never);
+    vi.mocked(gcsBucket).mockReturnValue({ file } as never);
     vi.mocked(getManifest).mockResolvedValueOnce({
       "assets/logo.png": {
         type: "blob",

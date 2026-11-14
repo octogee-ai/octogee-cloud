@@ -14,6 +14,8 @@ global:
   deploymentTargetId: "__TARGET_ID__"
   deploymentProjectId: "__FIREBASE_PROJECT__"
   blobStoreBackend: gcs
+  blobStore:
+    gcsBucket: "__FIREBASE_PROJECT__.firebasestorage.app"
   publicAppOrigins:
     - "__SITE_ORIGIN__"
     - "__APP_ORIGIN__"

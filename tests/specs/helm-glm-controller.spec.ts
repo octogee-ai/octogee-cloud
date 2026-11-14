@@ -403,4 +403,10 @@ describe("glm-controller chart", () => {
     expect(platform).not.toContain("PROJECT_HOSTING_RETIREMENT_URL");
     expect(platform).not.toContain("project-hosting-retirement");
   });
+  it("names the GCS blob bucket only for a GCS backend and refuses a GCS backend without one", () => {
+    const gcs = findDoc(helmTemplate({ "global.blobStoreBackend": "gcs", "global.blobStore.gcsBucket": "blobs.example" }), "Deployment", "glm-controller");
+    expect(gcs).toMatch(/name: BLOB_GCS_BUCKET\s+value: "blobs\.example"/);
+    expect(() => helmTemplate({ "global.blobStoreBackend": "gcs" })).toThrow("global.blobStore.gcsBucket is required");
+    expect(findDoc(helmTemplate(), "Deployment", "glm-controller")).not.toContain("BLOB_GCS_BUCKET");
+  });
 });
