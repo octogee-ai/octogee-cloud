@@ -530,8 +530,9 @@ it on amd64 nodes. On arm64 laptops, it will not run in kind. The
 workflow pushes every image to `ghcr.io/octogee-ai/octogee-cloud/<image>`,
 tagged with the full and short commit SHA, and keeps an image manifest of every
 digest as a workflow artifact named `image-manifest-<sha>`. The manifest lists
-each image's platforms. A running build always finishes; a newer push waits
-behind it and replaces any push that was already waiting. A release adds its
+each image's platforms. A running image build always finishes; a newer push's
+image build waits behind it and replaces any that was already waiting. The
+smoke tests and scans that follow publication do not hold up the next build. A release adds its
 `vX.Y.Z` tag to each image and attaches the manifest, as
 [Releasing](releasing.md) describes. `kind-install.sh up --pull` installs
 these images. The post-build kind smoke test takes the amd64 digests directly

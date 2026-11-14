@@ -13,9 +13,6 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: build-main-${{ github.event_name == 'push' && 'automatic' || github.run_id }}
-
 env:
   REGISTRY: ghcr.io/octogee-ai/octogee-cloud
   OCTOGEE_FLEET_VERSION: v0.2.0
@@ -25,6 +22,8 @@ jobs:
   images:
     name: Images (${{ matrix.platform }})
     if: github.repository == 'octogee-ai/octogee-cloud' && !inputs.rescan-latest
+    concurrency:
+      group: build-main-images-${{ matrix.arch }}-${{ github.event_name == 'push' && 'automatic' || github.run_id }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     permissions:
@@ -78,6 +77,8 @@ jobs:
   publish:
     name: Publish
     needs: images
+    concurrency:
+      group: build-main-publish-${{ github.event_name == 'push' && 'automatic' || github.run_id }}
     outputs:
       sha: ${{ steps.published.outputs.sha }}
     runs-on: ubuntu-24.04
