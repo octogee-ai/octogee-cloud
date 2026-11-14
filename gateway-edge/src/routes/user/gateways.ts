@@ -2,7 +2,8 @@ import { Router, Request, Response, NextFunction } from "express";
 import rateLimit from "express-rate-limit";
 import { requireAuth } from "../../middleware/auth.js";
 import { authenticationFailureLimit, authenticatedRequestLimit } from "../../middleware/authenticated-request-limit.js";
-import { platformStateStore, readSizingKey } from "../../lib/platform-state.js";
+import { platformStateStore } from "../../lib/platform-state.js";
+import { readSizingKey } from "../../lib/user-accounts.js";
 import {
   withCurrentSizingKey,
   type SizingKeyReader,

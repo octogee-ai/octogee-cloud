@@ -69,12 +69,12 @@ import {
 import { resolveActiveArtifactWorkspaceSlug } from "./lib/chat-artifact-workspace.js";
 import { gcsBucket } from "../../gateway-edge/src/lib/gcs-bucket.js";
 import { installProjectPresentation, NO_PROJECT_PRESENTATION, type ProjectPresentation } from "../../gateway-edge/src/lib/project-presentation.js";
-import { installUserAccounts } from "../../gateway-edge/src/lib/user-accounts.js";
+import { installUserAccounts, readSizingKey } from "../../gateway-edge/src/lib/user-accounts.js";
 import { installAgentIdentity } from "../../gateway-edge/src/lib/agent-identity.js";
 import type { AuthUserSuspension } from "../../gateway-edge/src/lib/user-deletion-deps.js";
 import type { UserProfileAppearanceSource } from "./lib/openclaw-profile-appearance.js";
 import { installWorkspaceStorageAccounting, NO_WORKSPACE_STORAGE_ACCOUNTING, type WorkspaceStorageAccounting } from "../../gateway-edge/src/lib/workspace-storage-quota.js";
-import { platformStateStore, readSizingKey } from "../../gateway-edge/src/lib/platform-state.js";
+import { platformStateStore } from "../../gateway-edge/src/lib/platform-state.js";
 import {
   ConnectorTokenReadError,
   getFreshAccessTokenFromStore,
