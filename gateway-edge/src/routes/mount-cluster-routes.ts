@@ -6,7 +6,6 @@ import agentModelRoutes from "./agent-models.js";
 import channelSessionModelRoutes from "./channel-session-models.js";
 import modelCredentialRoutes from "./model-credentials.js";
 import adminRoutes from "./admin.js";
-import integrationRoutes from "./integrations.js";
 import connectRoutes from "./connect.js";
 import entitiesRoutes from "./entities.js";
 import agentRoutes from "./agents.js";
@@ -100,7 +99,6 @@ const PUBLIC_API_ROUTES: readonly (readonly [string, RouteHandler])[] = [
   ["/api/channel-session-models", channelSessionModelRoutes],
   ["/api/model-credentials", modelCredentialRoutes],
   ["/api/admin", adminRoutes],
-  ["/api/integrations", integrationRoutes],
   ["/api/connect", connectRoutes],
   ["/api/agents", agentRoutes],
   ["/api/builder", isolatedGatewaysRoutes],
