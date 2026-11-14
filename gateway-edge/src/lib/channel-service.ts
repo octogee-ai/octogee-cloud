@@ -263,8 +263,14 @@ async function existingSessionChannelResult(
   if (!channelId) {
     return bad(409, "A channel with this name already exists in your workspace");
   }
-  const presentation = await projectPresentation().readChannel(scope, request.name);
-  if (presentation?.name === undefined && presentation?.createdDisplayName === undefined && existing.createdBy === uid) {
+  const presentations = projectPresentation();
+  const presentation = await presentations.readChannel(scope, request.name);
+  if (
+    presentations.remembersChannels
+    && presentation?.name === undefined
+    && presentation?.createdDisplayName === undefined
+    && existing.createdBy === uid
+  ) {
     await writeSessionChannelPresentation(scope, request);
     return { status: 200, body: { success: true, channelId, name: request.name } };
   }
