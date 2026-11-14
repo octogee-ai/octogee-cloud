@@ -249,6 +249,13 @@ async function writeSessionChannelPresentation(
   });
 }
 
+function nameTaken(name: string): SessionChannelResult {
+  return bad(
+    409,
+    `A channel already uses the name "${name}". Choose a name that differs within its first ${CUSTOM_CHANNEL_MAX_LENGTH} letters and numbers.`,
+  );
+}
+
 async function existingSessionChannelResult(
   scope: WorkspaceChannelScope,
   request: NormalizedSessionChannelCreateInput,
@@ -264,10 +271,14 @@ async function existingSessionChannelResult(
     return bad(409, "A channel with this name already exists in your workspace");
   }
   const presentations = projectPresentation();
+  if (!presentations.remembersChannels) {
+    return existing.createdBy === uid
+      ? { status: 200, body: { success: true, channelId, name: request.name } }
+      : nameTaken(request.name);
+  }
   const presentation = await presentations.readChannel(scope, request.name);
   if (
-    presentations.remembersChannels
-    && presentation?.name === undefined
+    presentation?.name === undefined
     && presentation?.createdDisplayName === undefined
     && existing.createdBy === uid
   ) {
@@ -275,10 +286,7 @@ async function existingSessionChannelResult(
     return { status: 200, body: { success: true, channelId, name: request.name } };
   }
   if (presentation?.createdDisplayName !== request.displayName) {
-    return bad(
-      409,
-      `A channel already uses the name "${request.name}". Choose a name that differs within its first ${CUSTOM_CHANNEL_MAX_LENGTH} letters and numbers.`,
-    );
+    return nameTaken(request.name);
   }
   return { status: 200, body: { success: true, channelId, name: request.name } };
 }
