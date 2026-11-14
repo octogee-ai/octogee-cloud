@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { MigrationDrainPendingError } from "@octogee/core/fleet-migration-client";
+import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { readSurgeAssignments } from "../surge-orphan-assignment.js";
 import { reconcileSurgeUserHandoff, assertSurgeAssignmentCoverage,
   type SurgeAssignment, type SurgePod, type SurgePodHealth, type SurgeUserHandoffDeps } from "../surge-user-handoff.js";
 import { oldPod, targetPod, abandonedPodUid, abandonedOperationId,
@@ -797,6 +799,64 @@ describe("surge user handoff", () => {
     expect(h.deps.releaseTarget).not.toHaveBeenCalled();
     expect(h.events).toEqual([]);
     expect(h.assignments()[0].state).toBe("quiescing");
+    expect(h.deps.recheckGatewayLater).toHaveBeenCalledWith("default");
+  });
+
+  describe("sourceless Shared target with a leftover assignment", () => {
+    const now = 900_000;
+    const placed = (slug: string, gatewayId: string) => ({
+      username: slug,
+      provisioning: { openclaw: { gatewayId, slug } },
+    });
+    const stored = (row: SurgeAssignment) => ({
+      ...row, gatewayId: "default", source: "migrate-user", createdAt: 1, updatedAt: 1,
+    });
+    const scenario = (targetMountedUsers: string[]) => {
+      const rows = [assignment("u1", "alice"), assignment("u2", "bob"), assignment("u-gone", "isolatedcheck")];
+      const records: Record<string, Record<string, unknown>> = {
+        "gateways/default/assignments/u1": stored(rows[0]!),
+        "gateways/default/assignments/u2": stored(rows[1]!),
+        "gateways/default/assignments/u-gone": stored(rows[2]!),
+        "users/u1": placed("alice", "default"),
+        "users/u2": placed("bob", "default"),
+        "users/u-gone": placed("isolatedcheck", "isolated-elsewhere"),
+        "glmGateways/default": {
+          docKind: "runtime", gatewayId: "default", release: 1, lifecycle: "active",
+          heartbeat: { status: "ready", lastHeartbeatAt: 1, mountedCustomers: ["alice", "bob"] },
+        },
+      };
+      const store = createDocumentFixtureStore(records);
+      const h = harness({ pods: [targetPod], assignments: rows, targetMountedUsers });
+      vi.mocked(h.deps.readAssignments).mockImplementation((gatewayId, liveRoster) =>
+        readSurgeAssignments({ store, gatewayId, ...(liveRoster ? { liveRoster } : {}), now, log: h.deps.log }));
+      return { h, records };
+    };
+    const input = { gatewayId: "default", desiredImageTag: "new-sha", requiresUserMigration: true };
+
+    it.each([{}, { supersedingImageTag: "next-sha" }])("prunes the leftover row from the target's live roster and releases the target %j", async (queued) => {
+      const { h, records } = scenario(["alice", "bob"]);
+
+      await expect(reconcileSurgeUserHandoff(h.deps, { ...input, ...queued })).resolves.toEqual({ ready: false });
+
+      expect(records["gateways/default/assignments/u-gone"]).toBeUndefined();
+      expect(records["glmOperations/surge-prune-orphan-default-u-gone-1"]).toMatchObject({
+        kind: "deprovision-user",
+        status: "succeeded",
+        input: { uid: "u-gone", slug: "isolatedcheck", gatewayId: "default", reason: "user-not-authoritative-runtime-unmounted" },
+      });
+      expect(h.events).toEqual(["release:target-uid"]);
+    });
+
+    it("keeps the target held while a user still placed here is unmounted", async () => {
+      const { h, records } = scenario(["alice"]);
+
+      await expect(reconcileSurgeUserHandoff(h.deps, input)).resolves.toEqual({ ready: false });
+
+      expect(records["gateways/default/assignments/u-gone"]).toBeUndefined();
+      expect(records["gateways/default/assignments/u2"]).toBeDefined();
+      expect(h.deps.releaseTarget).not.toHaveBeenCalled();
+      expect(h.deps.recheckGatewayLater).toHaveBeenCalledWith("default");
+    });
   });
 
   it.each([false, true])("retains Shared admission during a queued rollout with an incomplete serving roster (source present=%s)", async sourcePresent => {

@@ -59,6 +59,10 @@ export interface SurgeAssignment {
   sharedSurgeForwardRecovery?: { operationId: string; targetPodUid: string; receivingPodUid: string };
 }
 
+export interface SurgeLiveRoster {
+  mountedCustomers: readonly string[];
+}
+
 export function assertSurgeAssignmentCoverage(
   assignments: readonly SurgeAssignment[],
   users: ReadonlyArray<{ uid: string; slug: string }>,
@@ -107,7 +111,7 @@ export interface SurgeUserHandoffDeps {
   deleteCancelledTarget: (input: { gatewayId: string; pod: SurgePod }) => Promise<void>;
   deleteCrashLoopingPod: (input: { gatewayId: string; pod: SurgePod }) => Promise<void>;
   claimCrashLoopEviction: (input: { gatewayId: string; imageTag: string; pod: SurgePod }) => Promise<CrashLoopEvictionClaim>;
-  readAssignments: (gatewayId: string) => Promise<SurgeAssignment[]>;
+  readAssignments: (gatewayId: string, liveRoster?: SurgeLiveRoster) => Promise<SurgeAssignment[]>;
   markSharedSurgeForwardRecovery: (input: { gatewayId: string; uid: string; slug: string; epoch: number; operationId: string; targetPodUid: string; expectedUpdatedAt: number }) => Promise<void>;
   rebindSharedSurgeForwardRecovery: (input: { gatewayId: string; uid: string; slug: string; epoch: number; operationId: string; targetPodUid: string; expectedReceivingPodUid: string; receivingPodUid: string; expectedUpdatedAt: number }) => Promise<void>;
   markAssignment: (input: {
@@ -690,6 +694,18 @@ function targetMountedAssignedUsers(
   return assigned.size === mounted.size && [...assigned].every((slug) => mounted.has(slug));
 }
 
+function soleTargetLiveRoster(
+  source: SurgeSourceSelection,
+  target: SurgePod,
+  targetHealth: SurgePodHealth,
+  observedPodUids: readonly string[],
+): SurgeLiveRoster | undefined {
+  return source.kind === "missing" && targetHealth.status === "ready" &&
+    observedPodUids.length === 1 && observedPodUids[0] === target.uid
+    ? { mountedCustomers: targetHealth.mountedCustomers }
+    : undefined;
+}
+
 type SurgeSourceSelection =
   | { kind: "missing" }
   | { kind: "waiting"; pod: SurgePod }
@@ -899,6 +915,7 @@ async function releaseSourcelessSharedTarget(
 ): Promise<void> {
   if (!targetMountedAssignedUsers(context.assignments, context.targetHealth.mountedCustomers)) {
     deps.log(`[surge-handoff] sourceless Shared target is missing its assigned mounted roster gateway=${input.gatewayId} target=${context.targetPod.name}`);
+    deps.recheckGatewayLater(input.gatewayId);
     return;
   }
   try {
@@ -1425,7 +1442,8 @@ async function tendSourcelessTarget(
   const { source, target, targetHealth, healthByUid, ownedBy, assignments, observedPodUids } = context;
   if (source.kind === "missing") {
     if (observedPodUids.length !== 1 || observedPodUids[0] !== target.uid) return;
-    const sourceAssignments = assignments ?? await deps.readAssignments(input.gatewayId);
+    const sourceAssignments = assignments ??
+      await deps.readAssignments(input.gatewayId, soleTargetLiveRoster(source, target, targetHealth, observedPodUids));
     const targetStillAlone = async () => {
       const snapshot = await deps.listPods(input.gatewayId);
       return physicalPodsProjected(snapshot) && snapshot.pods.length === 1 &&
@@ -1565,7 +1583,7 @@ async function standDownForSupersedingRelease(
     deps.log(`[surge-handoff] source admission remains closed while superseded target execution is uncertain gateway=${input.gatewayId} target=${target.name}`);
     return { ready: false };
   }
-  const assignments = await deps.readAssignments(input.gatewayId);
+  const assignments = await deps.readAssignments(input.gatewayId, soleTargetLiveRoster(source, target, targetHealth, observedPodUids));
   if (assignments.some(row => row.sharedSurgeForwardRecovery)) return { ready: false };
   if (!configuredUserProcessGateRequired(input)) {
     const servingHealth = source.kind === "missing" ? targetHealth : healthByUid.get(source.pod.uid);

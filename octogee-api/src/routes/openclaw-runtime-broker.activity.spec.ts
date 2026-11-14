@@ -3,7 +3,7 @@ import request from 'supertest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Firestore } from 'firebase-admin/firestore';
 import { createOpenClawRuntimeBrokerRoutes } from './openclaw-runtime-broker.js';
-import { firestoreSizingKeyReader } from '@octogee/core/user-activation-lease';
+import { firestoreSizingKeyReader } from '@octogee/core/sizing-key';
 import { createDocumentFixtureStore } from '@octogee/core/testing/journal-store';
 import { RecordingDocuments } from '../test-helpers/recording-documents.js';
 const authorize = vi.hoisted(() => vi.fn());
