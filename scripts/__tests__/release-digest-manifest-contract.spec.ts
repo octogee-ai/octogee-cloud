@@ -2,7 +2,7 @@ import { gzipSync } from "node:zlib";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createReleaseDigestManifest } from "../../../.github/actions/release-digest-manifest/release-digest-manifest.mjs";
-import { createCentralReleaseAuthority } from "../lib/artifact-registry.js";
+import { createCentralReleaseAuthority } from "@octogee/core/artifact-registry";
 
 /**
  * The generator and the release authority are one contract split across two
