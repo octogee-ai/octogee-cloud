@@ -160,7 +160,7 @@ the operator asks for them or a current risk to users requires them.
 ## Where to look
 
 - [Getting started](docs/getting-started.md), [the full platform on kind](docs/kind.md),
-  [running in the cloud](docs/running-in-the-cloud.md) and
+  [the full platform on GKE](docs/gke.md), [running in the cloud](docs/running-in-the-cloud.md) and
   [requirements](docs/requirements.md).
 - [Why octogee-cloud](docs/why-octogee-cloud.md) and
   [OpenClaw compatibility](docs/openclaw-compatibility.md).
