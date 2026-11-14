@@ -46,7 +46,7 @@ import {
   OPENAI_CODEX_DEFAULT_PROFILE_ID,
 } from "@octogee/core/model-credential-materializer";
 import { triggerGatewayModelCredentialSync } from "../lib/byot-sync-trigger.js";
-import { pinSubscriptionModel, retargetSubscriptionModelPicks, SubscriptionModelPinError } from "../lib/subscription-model-pins.js";
+import { pinSubscriptionModel, pinUnpickedSubscriptionModel, retargetSubscriptionModelPicks, SubscriptionModelPinError } from "../lib/subscription-model-pins.js";
 import {
   claudeCliRuntimeConfig,
   codexRuntimeConfig,
@@ -264,9 +264,10 @@ async function pinFailure(
   uid: string,
   provider: ModelCredentialOAuthProviderId,
   agentIds: readonly string[],
+  pin: typeof pinSubscriptionModel = pinSubscriptionModel,
 ): Promise<SubscriptionModelPinError | null> {
   try {
-    await pinSubscriptionModel(platformStateStore.users, { uid, agentIds, model: subscriptionDefaultModel(provider) });
+    await pin(platformStateStore.users, { uid, agentIds, model: subscriptionDefaultModel(provider) });
     return null;
   } catch (error) {
     if (error instanceof SubscriptionModelPinError) return error;
@@ -692,14 +693,16 @@ router.post(
       const secretName = byosubSecretName(flow.uid, secretProvider);
 
       if (flow.consumedAt) {
-        await commitByosubCapture({
+        const agentIds = await commitByosubCapture({
           flowId: b.flowId,
           flow,
           provider: secretProvider,
           modelCredentialProvider: signalProvider,
           secretName,
         });
+        const unpinned = await pinFailure(flow.uid, signalProvider, agentIds, pinUnpickedSubscriptionModel);
         triggerUnifiedByosSyncForFlow(flow, signalProvider);
+        if (unpinned) throw unpinned;
         res.json({ ok: true, secretName, alreadyConsumed: true });
         return;
       }

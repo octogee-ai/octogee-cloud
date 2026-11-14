@@ -946,6 +946,12 @@ function projectionAssignment(
     (assignments.length === 1 ? assignments[0]! : null);
 }
 
+function operatorManaged(data: Record<string, unknown>): boolean {
+  const provisioning = isPlainRecord(data.provisioning) ? data.provisioning : null;
+  const openclaw = isPlainRecord(provisioning?.openclaw) ? provisioning.openclaw : null;
+  return openclaw?.managedBy === "operator";
+}
+
 function buildUserPlacementProjection(input: {
   uid: string;
   data: Record<string, unknown>;
@@ -969,7 +975,8 @@ function buildUserPlacementProjection(input: {
     assignedGatewayId,
     glmByGatewayId: input.glmByGatewayId,
   }) ?? (
-    assignedGatewayId !== null && input.config.sharedGatewayIds.includes(assignedGatewayId)
+    assignedGatewayId !== null &&
+      (operatorManaged(input.data) || input.config.sharedGatewayIds.includes(assignedGatewayId))
       ? assignedGatewayId
       : input.config.defaultGatewayId
   );

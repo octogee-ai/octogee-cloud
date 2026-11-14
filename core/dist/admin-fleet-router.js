@@ -459,6 +459,11 @@ function projectionAssignment(assignmentsByUid, uid, mirroredGatewayId) {
     return assignments.find((candidate) => candidate.gatewayId === mirroredGatewayId) ??
         (assignments.length === 1 ? assignments[0] : null);
 }
+function operatorManaged(data) {
+    const provisioning = isPlainRecord(data.provisioning) ? data.provisioning : null;
+    const openclaw = isPlainRecord(provisioning?.openclaw) ? provisioning.openclaw : null;
+    return openclaw?.managedBy === "operator";
+}
 function buildUserPlacementProjection(input) {
     const slug = resolveUserSlug(input.data);
     const mirroredGatewayId = readUserGatewayId(input.data);
@@ -469,7 +474,8 @@ function buildUserPlacementProjection(input) {
         data: input.data,
         assignedGatewayId,
         glmByGatewayId: input.glmByGatewayId,
-    }) ?? (assignedGatewayId !== null && input.config.sharedGatewayIds.includes(assignedGatewayId)
+    }) ?? (assignedGatewayId !== null &&
+        (operatorManaged(input.data) || input.config.sharedGatewayIds.includes(assignedGatewayId))
         ? assignedGatewayId
         : input.config.defaultGatewayId);
     const mountedGatewayId = slug ? input.mountedBySlug.get(slug) ?? null : null;

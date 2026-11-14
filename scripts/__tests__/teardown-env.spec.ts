@@ -18,6 +18,9 @@ type TeardownOptions = {
   databaseFailure?: "inspect" | "delete" | "create" | "verify-command" | "verify-value";
   databaseOwner?: "mattermost" | "gitea" | "cloudsqlsuperuser" | "unexpected";
   sqlOwnerJobFailure?: boolean;
+  agentStoreJobFailure?: boolean;
+  agentStoreReportedDatabase?: string;
+  platformDatabaseFailure?: "delete" | "create" | "verify";
   publicIp?: boolean;
   pvcFailure?: "inspect" | "delete" | "finalize";
   secretFailure?: "absent" | "error";
@@ -25,6 +28,7 @@ type TeardownOptions = {
   storageDescribeFailure?: boolean;
   firebaseProbeFailure?: boolean;
   sqlWritersAbsent?: boolean;
+  platformWritersAbsent?: boolean;
   resume?: boolean;
   storageListFailure?: boolean;
   storageEmpty?: boolean;
@@ -65,6 +69,7 @@ function runPrivateCentralTeardown(options: TeardownOptions = {}) {
   const helmListCount = path.join(temp, "helm-list-count");
   const storageRemoved = path.join(temp, "storage-removed");
   const sqlOwnerManifest = path.join(temp, "sql-owner-manifest.yaml");
+  const platformDatabaseState = path.join(temp, "platform-database-state");
   const laptopServiceAccountKey = path.join(temp, ".openclaw", "secrets", `${TEST_TARGET.firebaseProjectId}-sa-key.json`);
   writeFileSync(log, "");
   writeFileSync(describeCount, "0");
@@ -75,12 +80,37 @@ function runPrivateCentralTeardown(options: TeardownOptions = {}) {
   writeFileSync(uninstalledGatewayReleases, "");
   writeFileSync(helmListCount, "0");
   writeFileSync(sqlOwnerManifest, "");
+  writeFileSync(platformDatabaseState, "present");
   mkdirSync(path.dirname(laptopServiceAccountKey), { recursive: true });
   writeFileSync(laptopServiceAccountKey, `{"type":"service_account","project_id":"${TEST_TARGET.firebaseProjectId}"}`);
 
   executable(path.join(temp, "gcloud"), `#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\\n' "$*" >> "$FAKE_CALL_LOG"
+if [[ "$1 $2" == "sql databases" && "$*" == *"--instance=$FAKE_PLATFORM_STATE_INSTANCE "* ]]; then
+  [[ "$4" == platform ]] || { printf 'unexpected platform state database %s\\n' "$4" >&2; exit 2; }
+  case "$3" in
+    delete)
+      [[ "$FAKE_PLATFORM_DATABASE_FAILURE" != "delete" ]] || { printf 'database is being accessed by other users\\n' >&2; exit 1; }
+      printf 'absent' > "$FAKE_PLATFORM_DATABASE_STATE"
+      ;;
+    create)
+      [[ "$FAKE_PLATFORM_DATABASE_FAILURE" != "create" ]] || { printf 'create failed\\n' >&2; exit 1; }
+      printf 'recreated' > "$FAKE_PLATFORM_DATABASE_STATE"
+      ;;
+    describe)
+      state="$(cat "$FAKE_PLATFORM_DATABASE_STATE")"
+      [[ "$state" != absent ]] || { printf 'NOT_FOUND: database was not found\\n' >&2; exit 1; }
+      if [[ "$state" == recreated && "$FAKE_PLATFORM_DATABASE_FAILURE" == "verify" ]]; then
+        printf 'other\\n'
+      else
+        printf 'platform\\n'
+      fi
+      ;;
+    *) printf 'unexpected platform state database call: %s\\n' "$*" >&2; exit 2 ;;
+  esac
+  exit 0
+fi
 case "$1 $2 $3" in
   "container clusters get-credentials") ;;
   "secrets versions access")
@@ -114,6 +144,10 @@ case "$1 $2 $3" in
     [[ "$FAKE_DATABASE_FAILURE" != "create" ]]
     ;;
   "sql databases describe")
+    if [[ "$4" == "$FAKE_AGENT_STORE_DATABASE" ]]; then
+      printf '%s\\n' "$4"
+      exit 0
+    fi
     count="$(cat "$FAKE_DESCRIBE_COUNT")"
     count=$((count + 1))
     printf '%s' "$count" > "$FAKE_DESCRIBE_COUNT"
@@ -220,6 +254,18 @@ case "$1 $2" in
       *"app.kubernetes.io/name=gitea"*) printf 'deployment.apps/%s\\n' "$FAKE_GITEA_WORKLOAD_NAME" ;;
     esac
     ;;
+  "get deployment")
+    [[ "$FAKE_PLATFORM_WRITERS_ABSENT" != "true" ]] || exit 0
+    printf 'deployment.apps/octogee-api\\n'
+    printf 'deployment.apps/llm-broker\\n'
+    ;;
+  "get cronjob") printf 'cronjob.batch/platform-state-expiry\\n' ;;
+  "wait --for=condition=complete")
+    if [[ "$3" == job/octogee-agent-store-reset-* && "$FAKE_AGENT_STORE_JOB_FAILURE" == "true" ]]; then
+      printf 'timed out waiting for the condition\\n' >&2
+      exit 1
+    fi
+    ;;
   "get deployment/glm-controller")
     [[ "$FAKE_GATEWAY_CONTROLLER_FAILURE" != "inspect" ]] || {
       printf 'glm-controller deployment is forbidden\\n' >&2
@@ -245,12 +291,14 @@ case "$1 $2" in
     }
     ;;
   "scale deployment/"*|"scale statefulset/"*)
-    if [[ "$2" == "deployment/$FAKE_GITEA_WORKLOAD_NAME" ]]; then
-      printf '%s\\n' "$2" >> "$FAKE_QUIESCED_SQL_WRITERS"
-    fi
+    printf '%s\\n' "$2" >> "$FAKE_QUIESCED_SQL_WRITERS"
     ;;
   "apply -f") cat >> "$FAKE_SQL_OWNER_MANIFEST" ;;
   "logs job/"*)
+    if [[ "$2" == job/octogee-agent-store-reset-* ]]; then
+      printf 'OCTOGEE_AGENT_STORE_RESET=%s\\n' "$FAKE_AGENT_STORE_REPORTED_DATABASE"
+      exit 0
+    fi
     if [[ "$FAKE_SQL_OWNER_JOB_FAILURE" == "true" ]]; then
       printf 'owner query failed\\n' >&2
       exit 1
@@ -403,6 +451,7 @@ fi
       PATH: `${temp}:${process.env.PATH ?? "/usr/bin:/bin"}`,
       FAKE_CALL_LOG: log,
       FAKE_DATABASE_FAILURE: options.databaseFailure ?? "",
+      FAKE_AGENT_STORE_DATABASE: TEST_TARGET.cloudSqlAgentStoreDatabaseName,
       FAKE_DESCRIBE_COUNT: describeCount,
       FAKE_DELETED_PVCS: deletedPvcs,
       FAKE_QUIESCED_SQL_WRITERS: quiescedSqlWriters,
@@ -420,12 +469,18 @@ fi
       FAKE_STORAGE_DESCRIBE_FAILURE: options.storageDescribeFailure ? "true" : "false",
       FAKE_FIREBASE_PROBE_FAILURE: options.firebaseProbeFailure ? "true" : "false",
       FAKE_SQL_WRITERS_ABSENT: options.sqlWritersAbsent ? "true" : "false",
+      FAKE_PLATFORM_WRITERS_ABSENT: options.platformWritersAbsent ? "true" : "false",
       FAKE_STORAGE_LIST_FAILURE: options.storageListFailure ? "true" : "false",
       FAKE_STORAGE_EMPTY: options.storageEmpty ? "true" : "false",
       FAKE_STORAGE_RESIDUAL: options.storageResidual ? "true" : "false",
       FAKE_STORAGE_REMOVED: storageRemoved,
       FAKE_SQL_OWNER_MANIFEST: sqlOwnerManifest,
       FAKE_SQL_OWNER_JOB_FAILURE: options.sqlOwnerJobFailure ? "true" : "false",
+      FAKE_AGENT_STORE_JOB_FAILURE: options.agentStoreJobFailure ? "true" : "false",
+      FAKE_AGENT_STORE_REPORTED_DATABASE: options.agentStoreReportedDatabase ?? TEST_TARGET.cloudSqlAgentStoreDatabaseName,
+      FAKE_PLATFORM_DATABASE_FAILURE: options.platformDatabaseFailure ?? "",
+      FAKE_PLATFORM_DATABASE_STATE: platformDatabaseState,
+      FAKE_PLATFORM_STATE_INSTANCE: TEST_TARGET.cloudSqlPlatformStateInstanceName,
       FAKE_DATABASE_OWNER_MATTERMOST: options.databaseOwner === "unexpected" ? "legacy-owner" : options.databaseOwner ?? "mattermost",
       FAKE_DATABASE_OWNER_GITEA: options.databaseOwner === "unexpected" ? "legacy-owner" : options.databaseOwner ?? "gitea",
       FAKE_FUNCTION_LIST_FAILURE: options.functionListFailure ? "true" : "false",
@@ -456,6 +511,44 @@ function resetOwnerScript(manifest: string): string {
   return manifest.slice(start, end).split("\n").map((line) => line.startsWith("              ")
     ? line.slice("              ".length)
     : line).join("\n");
+}
+
+function agentStoreJobManifest(manifest: string): string {
+  const marker = manifest.indexOf("octogee.ai/reset: agent-store");
+  expect(marker).toBeGreaterThan(-1);
+  const start = manifest.lastIndexOf("apiVersion:", marker);
+  const end = manifest.indexOf("apiVersion:", marker);
+  return manifest.slice(start, end === -1 ? undefined : end);
+}
+
+function agentStoreResetScript(manifest: string): string {
+  const container = manifest.indexOf("      containers:\n        - name: reset-agent-store\n");
+  if (container < 0) throw new Error("reset-agent-store container is missing from the agent store reset manifest");
+  const args = manifest.indexOf("          args:\n            - |\n", container);
+  if (args < 0) throw new Error("reset-agent-store script is missing from the agent store reset manifest");
+  const start = args + "          args:\n            - |\n".length;
+  const end = manifest.indexOf("\n          env:\n", start);
+  if (end < 0) throw new Error("reset-agent-store script has no env boundary in the agent store reset manifest");
+  return manifest.slice(start, end).split("\n").map((line) => line.startsWith("              ")
+    ? line.slice("              ".length)
+    : line).join("\n");
+}
+
+function runAgentStoreResetScript(script: string, adminDsn: string) {
+  const temp = mkdtempSync(path.join(tmpdir(), "octogee-agent-store-reset-"));
+  const psqlCalls = path.join(temp, "psql-calls");
+  writeFileSync(psqlCalls, "");
+  executable(path.join(temp, "pg_isready"), "#!/bin/sh\nexit 0\n");
+  executable(path.join(temp, "psql"), `#!/bin/sh\nfor argument in "$@"; do printf '%s\\n' "$argument" >> "${psqlCalls}"; done\n`);
+  const result = spawnSync("sh", ["-ceu", script], {
+    env: {
+      PATH: `${temp}:/usr/bin:/bin`,
+      AGENT_STORE_ADMIN_DSN: adminDsn,
+      AGENT_STORE_DATABASE: TEST_TARGET.cloudSqlAgentStoreDatabaseName,
+    },
+    encoding: "utf8",
+  });
+  return { ...result, psqlArguments: readFileSync(psqlCalls, "utf8").trim().split("\n").filter(Boolean) };
 }
 
 function expectGiteaTokenMaterialPreserved(calls: string[]): void {
@@ -589,14 +682,168 @@ describe("full teardown for private-only Cloud SQL", { timeout: 180_000 }, () =>
 
     expect(kubernetesDelete).toBeGreaterThan(-1);
     expect(secretManagerDelete).toBeGreaterThan(-1);
-    expect(databaseResets).toHaveLength(2);
+    expect(databaseResets).toHaveLength(3);
+    const [, mattermostReset, giteaReset] = databaseResets;
     expect(kubernetesDelete).toBeGreaterThan(controllerQuiescence);
     expect(kubernetesDelete).toBeGreaterThan(gatewayHelmRemoval);
     expect(kubernetesDelete).toBeGreaterThan(runtimeIdentityRemoval);
-    expect(kubernetesDelete).toBeGreaterThan(databaseResets[0]);
-    expect(secretManagerDelete).toBeGreaterThan(databaseResets[0]);
-    expect(databaseResets[1]).toBeGreaterThan(secretManagerDelete);
-    expect(databaseResets[1]).toBeGreaterThan(kubernetesDelete);
+    expect(kubernetesDelete).toBeGreaterThan(mattermostReset);
+    expect(secretManagerDelete).toBeGreaterThan(mattermostReset);
+    expect(giteaReset).toBeGreaterThan(secretManagerDelete);
+    expect(giteaReset).toBeGreaterThan(kubernetesDelete);
+  });
+
+  it("resets the platform state and agent store databases after quiescing every writer and before Mattermost and Gitea", () => {
+    const result = runPrivateCentralTeardown();
+    const call = (text: string) => result.calls.indexOf(text);
+    const scoped = `-n ${TEST_TARGET.namespace} --context ${TEST_TARGET.kubeContext}`;
+    const platformInstance = `--instance=${TEST_TARGET.cloudSqlPlatformStateInstanceName} --project=${TEST_TARGET.cloudSqlProjectId}`;
+
+    expect(result.status, `${result.stderr}\n${result.stdout}`).toBe(0);
+    const controller = call(`kubectl scale deployment/glm-controller ${scoped} --replicas=0`);
+    const gateways = result.calls.findIndex((entry) => entry.startsWith("helm uninstall octogee-gw-stale "));
+    const api = call(`kubectl scale deployment/octogee-api ${scoped} --replicas=0`);
+    const broker = call(`kubectl scale deployment/llm-broker ${scoped} --replicas=0`);
+    const expiry = call(`kubectl patch cronjob/platform-state-expiry ${scoped} --type=merge -p {"spec":{"suspend":true}}`);
+    const platformJobs = call(`kubectl delete job ${scoped} -l app in (platform-state-expiry,platform-state-migrate) --ignore-not-found=true --wait=true`);
+    const agentStore = result.calls.findIndex((entry) => entry.startsWith("kubectl create configmap octogee-agent-store-reset-"));
+    const platformDelete = call(`sql databases delete platform ${platformInstance} --quiet`);
+    const platformCreate = call(`sql databases create platform ${platformInstance} --quiet`);
+    const mattermost = call(`kubectl scale deployment/mattermost ${scoped} --replicas=0`);
+    for (const index of [controller, gateways, api, broker, expiry, platformJobs, agentStore, platformDelete, platformCreate, mattermost]) {
+      expect(index).toBeGreaterThan(-1);
+    }
+    for (const writer of [controller, gateways, api, broker, expiry, platformJobs]) {
+      expect(writer).toBeLessThan(agentStore);
+      expect(writer).toBeLessThan(platformDelete);
+    }
+    expect(platformCreate).toBeGreaterThan(platformDelete);
+    expect(mattermost).toBeGreaterThan(platformCreate);
+    expect(mattermost).toBeGreaterThan(agentStore);
+    expect(result.calls).toContainEqual(
+      `sql databases describe ${TEST_TARGET.cloudSqlAgentStoreDatabaseName} --instance=${TEST_TARGET.cloudSqlInstanceName} --project=${TEST_TARGET.cloudSqlProjectId} --format=value(name)`,
+    );
+    expect(result.calls[agentStore]).toContain(`--from-file=agent-store-reset.sql=${repoRoot}/core/src/agent-store-reset.sql`);
+    expect(result.sqlOwnerManifest).toContain("name: agent-store-postgres\n                  key: admin-dsn");
+    expect(result.sqlOwnerManifest).toContain(`value: ${TEST_TARGET.cloudSqlAgentStoreDatabaseName}`);
+    expect(result.sqlOwnerManifest).toContain(`- ${TEST_TARGET.cloudSqlConnectionName}`);
+    expect(result.stdout).toContain(`${TEST_TARGET.cloudSqlAgentStoreDatabaseName} — agent store emptied`);
+    expect(result.stdout).toContain("platform — Cloud SQL API confirmed a newly-created empty database");
+    expect(agentStoreJobManifest(result.sqlOwnerManifest)).toContain("- --private-ip\n");
+  });
+
+  it("resets the platform state and agent store through the public route when the instance has a public IP", () => {
+    const result = runPrivateCentralTeardown({ publicIp: true });
+
+    expect(result.calls).toContainEqual(expect.stringContaining("sql databases delete platform"));
+    expect(result.calls).toContainEqual(expect.stringContaining("sql databases create platform"));
+    expect(agentStoreJobManifest(result.sqlOwnerManifest)).not.toContain("--private-ip");
+  });
+
+  it("resets the platform state and agent store again when a resumed public-IP teardown still has its platform", () => {
+    const result = runPrivateCentralTeardown({ publicIp: true, resume: true });
+
+    expect(result.calls).toContainEqual(expect.stringContaining("create configmap octogee-agent-store-reset-"));
+    expect(result.calls).toContainEqual(expect.stringContaining("sql databases create platform"));
+  });
+
+  it("skips the platform state and agent store reset when a resumed public-IP teardown already removed its platform", () => {
+    const result = runPrivateCentralTeardown({ publicIp: true, resume: true, platformWritersAbsent: true });
+
+    expect(result.stdout).toContain("Resuming: an earlier full teardown reset the platform state and agent store databases");
+    expect(result.calls.some((entry) => entry.startsWith("sql databases delete platform"))).toBe(false);
+    expect(result.calls.some((entry) => entry.includes("create configmap octogee-agent-store-reset-"))).toBe(false);
+  });
+
+  it("refuses a public-IP full teardown whose platform is already gone unless resumed", () => {
+    const result = runPrivateCentralTeardown({ publicIp: true, platformWritersAbsent: true });
+
+    expect(result.status).toBe(1);
+    expect(`${result.stderr}\n${result.stdout}`).toContain("octogee-api is not installed");
+    expect(`${result.stderr}\n${result.stdout}`).toContain("rerun with --resume");
+    expect(result.calls.some((entry) => entry.startsWith("sql databases delete platform"))).toBe(false);
+    expect(result.calls.some((entry) => entry.startsWith("firebase firestore:delete"))).toBe(false);
+  });
+
+  it("lists the platform state and agent store databases among what a full teardown removes", () => {
+    const full = runPrivateCentralTeardown();
+    const helmOnly = runPrivateCentralTeardown({ full: false });
+    const removal = (output: string) => output.slice(output.indexOf("Will remove:"), output.indexOf("Will preserve:"));
+
+    expect(removal(full.stdout)).toContain(`platform on ${TEST_TARGET.cloudSqlPlatformStateInstanceName}`);
+    expect(removal(full.stdout)).toContain(TEST_TARGET.cloudSqlAgentStoreDatabaseName);
+    expect(removal(helmOnly.stdout)).not.toContain(TEST_TARGET.cloudSqlPlatformStateInstanceName);
+    expect(removal(helmOnly.stdout)).not.toContain(TEST_TARGET.cloudSqlAgentStoreDatabaseName);
+  });
+
+  it("keeps the platform state and agent store databases on an ordinary Helm-only teardown", () => {
+    const result = runPrivateCentralTeardown({ full: false });
+
+    expect(result.status, `${result.stderr}\n${result.stdout}`).toBe(0);
+    expect(result.calls.some((entry) => entry.startsWith("sql databases delete"))).toBe(false);
+    expect(result.calls.some((entry) => entry.startsWith("sql databases create"))).toBe(false);
+    expect(result.calls.some((entry) => entry.includes("create configmap octogee-agent-store-reset-"))).toBe(false);
+    expect(result.calls.some((entry) => entry.includes("scale deployment/octogee-api"))).toBe(false);
+    expect(result.calls.some((entry) => entry.includes("patch cronjob/platform-state-expiry"))).toBe(false);
+  });
+
+  it("stops before the platform state and Mattermost resets when the agent store reset fails", () => {
+    const result = runPrivateCentralTeardown({ agentStoreJobFailure: true });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(`agent store reset job failed for ${TEST_TARGET.cloudSqlAgentStoreDatabaseName}`);
+    expect(result.calls.some((entry) => entry.startsWith("sql databases delete platform"))).toBe(false);
+    expect(result.calls.some((entry) => entry.includes("scale deployment/mattermost"))).toBe(false);
+    expect(result.calls).toContainEqual(expect.stringMatching(/^kubectl delete configmap octogee-agent-store-reset-/));
+  });
+
+  it("refuses an agent store reset that reports a different database", () => {
+    const result = runPrivateCentralTeardown({ agentStoreReportedDatabase: "octogee_agents_other" });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(`agent store reset reported 'octogee_agents_other' instead of ${TEST_TARGET.cloudSqlAgentStoreDatabaseName}`);
+    expect(result.calls.some((entry) => entry.startsWith("sql databases delete platform"))).toBe(false);
+  });
+
+  it.each([
+    ["delete", "Cloud SQL Admin API delete failed for platform"],
+    ["create", "Cloud SQL Admin API create failed for platform"],
+    ["verify", "Cloud SQL Admin API verification returned 'other' for platform"],
+  ] as const)("stops before Mattermost when the platform state database %s fails", (platformDatabaseFailure, message) => {
+    const result = runPrivateCentralTeardown({ platformDatabaseFailure });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(message);
+    expect(result.calls.some((entry) => entry.includes("scale deployment/mattermost"))).toBe(false);
+    expect(result.calls.some((entry) => entry.startsWith("firebase firestore:delete"))).toBe(false);
+  });
+
+  it("connects the agent store reset through the proxy as the administrator its DSN names", () => {
+    const result = runPrivateCentralTeardown();
+    const script = agentStoreResetScript(result.sqlOwnerManifest);
+    const reset = runAgentStoreResetScript(
+      script,
+      `postgresql://octogee_agent_controller_test:p%40ss@10.89.0.4:5432/${TEST_TARGET.cloudSqlAgentStoreDatabaseName}?sslmode=verify-ca&uselibpqcompat=true&sslrootcert=/etc/ssl/certs/octogee-postgres-ca.pem`,
+    );
+
+    expect(spawnSync("sh", ["-n"], { input: script, encoding: "utf8" }).status).toBe(0);
+    expect(reset.status, reset.stderr).toBe(0);
+    expect(reset.psqlArguments).toContain(
+      `postgresql://octogee_agent_controller_test:p%40ss@127.0.0.1:5432/${TEST_TARGET.cloudSqlAgentStoreDatabaseName}`,
+    );
+    expect(reset.psqlArguments).toContain("/reset/agent-store-reset.sql");
+  });
+
+  it("refuses an agent store administrator DSN that selects another database", () => {
+    const result = runPrivateCentralTeardown();
+    const reset = runAgentStoreResetScript(
+      agentStoreResetScript(result.sqlOwnerManifest),
+      "postgresql://octogee_agent_controller_test:secret@10.89.0.4:5432/octogee_agents_prod?sslmode=require",
+    );
+
+    expect(reset.status).toBe(1);
+    expect(reset.stderr).toContain(`agent-store admin DSN selects octogee_agents_prod, not ${TEST_TARGET.cloudSqlAgentStoreDatabaseName}`);
+    expect(reset.psqlArguments).toEqual([]);
   });
 
   it("preserves dynamic gateway identities during the ordinary Helm-only teardown", () => {
@@ -682,7 +929,7 @@ describe("full teardown for private-only Cloud SQL", { timeout: 180_000 }, () =>
 
     expect(result.status).toBe(1);
     expect(`${result.stderr}\n${result.stdout}`).toContain("private Cloud SQL owner reset job returned unexpected owner 'legacy-owner' for mattermost_test");
-    expect(result.calls.some((call) => call.startsWith("sql databases create"))).toBe(false);
+    expect(result.calls.some((call) => /^sql databases create (mattermost|gitea)_/.test(call))).toBe(false);
     expect(result.calls.some((call) => call.startsWith("firebase firestore:delete"))).toBe(false);
   });
 
@@ -691,7 +938,7 @@ describe("full teardown for private-only Cloud SQL", { timeout: 180_000 }, () =>
 
     expect(result.status).toBe(1);
     expect(`${result.stderr}\n${result.stdout}`).toContain("could not read private Cloud SQL owner reset job output for mattermost_test");
-    expect(result.calls.some((call) => call.startsWith("sql databases create"))).toBe(false);
+    expect(result.calls.some((call) => /^sql databases create (mattermost|gitea)_/.test(call))).toBe(false);
     expect(result.calls.some((call) => call.startsWith("firebase firestore:delete"))).toBe(false);
   });
 
@@ -771,6 +1018,8 @@ describe("full teardown for private-only Cloud SQL", { timeout: 180_000 }, () =>
 
     expect(result.status, `${result.stderr}\n${result.stdout}`).toBe(0);
     expect(result.sqlOwnerManifest).toBe("");
+    expect(result.calls.some((entry) => entry.startsWith("sql databases delete platform"))).toBe(false);
+    expect(result.calls.some((entry) => entry.includes("create configmap octogee-agent-store-reset-"))).toBe(false);
     expect(result.calls).toContain(`firebase firestore:delete --all-collections --project ${TEST_TARGET.firebaseProjectId} --force`);
   });
 

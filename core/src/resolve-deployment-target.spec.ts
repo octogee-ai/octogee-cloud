@@ -81,6 +81,8 @@ describe("deployment target resolver", () => {
     expect(output).toContain("hosting_project_id=octogee\n");
     expect(output).toContain("customer_hosting_project_id=example-prod-hosting\n");
     expect(output).toContain("cloud_sql_point_in_time_recovery_enabled=false\n");
+    expect(output).toContain("cloud_sql_platform_state_instance_name=octogee-platform-prod\n");
+    expect(output).toContain("cloud_sql_agent_store_database_name=octogee_agents_prod\n");
     expect(output).not.toContain("compute_class");
     expect(output).toContain("network_policy_enforce_default_deny=false\n");
     expect(output).toContain("network_policy_control_plane_cidr=\n");
