@@ -61,7 +61,7 @@ import {
 } from "../lib/vm-home-checkpoint.js";
 import { Router, type Request, type Response } from "express";
 
-import { logger } from "../../../gateway-edge/src/middleware/logging.js";
+import { logger, redactRequestPath } from "../../../gateway-edge/src/middleware/logging.js";
 import { gcsBucket } from "../../../gateway-edge/src/lib/gcs-bucket.js";
 import { parseAgentLook, type AgentLook } from "@octogee/shared/types/agent-look";
 import { parseTimeZone } from "@octogee/shared/types/time-zone";
@@ -1151,6 +1151,7 @@ export async function runBrokered(
   try {
     await fn();
   } catch (err) {
+    logger.error("fleet broker call failed", { path: redactRequestPath(res.req.originalUrl), err });
     res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
   }
 }
