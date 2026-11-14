@@ -687,6 +687,7 @@ function createSubscriptionFlowsRepository(session: FirestoreSession): Subscript
         consumedAt: null,
         captureClaimId: null,
         captureClaimedAt: null,
+        modelPinnedAt: null,
       }, STORED_AS_NUMBERS));
     },
 

@@ -1327,6 +1327,7 @@ CREATE TABLE subscription_flows (
   consumed_at                bigint,
   capture_claim_id           text,
   capture_claimed_at         bigint,
+  model_pinned_at            bigint,
   revision                   bigint NOT NULL DEFAULT nextval('record_revision_seq')
 );
 CREATE INDEX subscription_flows_uid_idx ON subscription_flows (uid);

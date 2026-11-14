@@ -164,6 +164,7 @@ const SUBSCRIPTION_FLOWS_TABLE = {
         column("consumedAt", "bigint", { nullAs: "null" }),
         column("captureClaimId", "text", { nullAs: "null" }),
         column("captureClaimedAt", "bigint", { nullAs: "null" }),
+        column("modelPinnedAt", "bigint", { nullAs: "null" }),
     ],
 };
 function withoutKeys(record, keys) {
@@ -374,7 +375,7 @@ function createSubscriptionFlowsRepository(session) {
             return row === null ? null : decodeStored(SUBSCRIPTION_FLOWS_TABLE, row);
         },
         async create(flow) {
-            await insertRecord(session, "users.subscriptionFlows.create", SUBSCRIPTION_FLOWS_TABLE, { ...flow, consumedAt: null, captureClaimId: null, captureClaimedAt: null }, "create");
+            await insertRecord(session, "users.subscriptionFlows.create", SUBSCRIPTION_FLOWS_TABLE, { ...flow, consumedAt: null, captureClaimId: null, captureClaimedAt: null, modelPinnedAt: null }, "create");
         },
         async update(flowId, progress) {
             await updateRecord(session, "users.subscriptionFlows.update", { table: SUBSCRIPTION_FLOWS_TABLE, key: [flowId] }, progress, []);

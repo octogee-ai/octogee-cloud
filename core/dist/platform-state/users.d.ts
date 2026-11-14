@@ -333,9 +333,10 @@ export interface SubscriptionFlowRecord {
     readonly consumedAt: number | null;
     readonly captureClaimId: string | null;
     readonly captureClaimedAt: number | null;
+    readonly modelPinnedAt: number | null;
 }
-export type NewSubscriptionFlow = Omit<SubscriptionFlowRecord, "consumedAt" | "captureClaimId" | "captureClaimedAt">;
-export type SubscriptionFlowProgress = Partial<Pick<SubscriptionFlowRecord, "consumedAt" | "captureClaimId" | "captureClaimedAt">>;
+export type NewSubscriptionFlow = Omit<SubscriptionFlowRecord, "consumedAt" | "captureClaimId" | "captureClaimedAt" | "modelPinnedAt">;
+export type SubscriptionFlowProgress = Partial<Pick<SubscriptionFlowRecord, "consumedAt" | "captureClaimId" | "captureClaimedAt" | "modelPinnedAt">>;
 export interface SubscriptionFlowsRepository {
     get(flowId: string): Promise<Stored<SubscriptionFlowRecord> | null>;
     create(flow: NewSubscriptionFlow): Promise<void>;

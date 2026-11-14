@@ -1075,7 +1075,7 @@ function userRepositories(documents: FixtureDocuments, write: Write, transaction
     create: async (flow) => {
       const path = flowPath(flow.flowId);
       if (documents.get(path) !== undefined) throw new AlreadyExistsError({ aggregate: "subscription-flow", key: flow.flowId });
-      write(() => documents.set(path, { ...structuredClone(flow), consumedAt: null, captureClaimId: null, captureClaimedAt: null }));
+      write(() => documents.set(path, { ...structuredClone(flow), consumedAt: null, captureClaimId: null, captureClaimedAt: null, modelPinnedAt: null }));
     },
     update: async (flowId, progress) => {
       const path = flowPath(flowId);

@@ -197,6 +197,7 @@ const SUBSCRIPTION_FLOWS_TABLE: TableSpec = {
     column("consumedAt", "bigint", { nullAs: "null" }),
     column("captureClaimId", "text", { nullAs: "null" }),
     column("captureClaimedAt", "bigint", { nullAs: "null" }),
+    column("modelPinnedAt", "bigint", { nullAs: "null" }),
   ],
 };
 
@@ -473,7 +474,7 @@ function createSubscriptionFlowsRepository(session: PostgresSession): Subscripti
         session,
         "users.subscriptionFlows.create",
         SUBSCRIPTION_FLOWS_TABLE,
-        { ...flow, consumedAt: null, captureClaimId: null, captureClaimedAt: null },
+        { ...flow, consumedAt: null, captureClaimId: null, captureClaimedAt: null, modelPinnedAt: null },
         "create",
       );
     },

@@ -521,6 +521,7 @@ function createSubscriptionFlowsRepository(session) {
                 consumedAt: null,
                 captureClaimId: null,
                 captureClaimedAt: null,
+                modelPinnedAt: null,
             }, STORED_AS_NUMBERS));
         },
         async update(flowId, progress) {

@@ -96,7 +96,7 @@ describe("subscription capture on the platform store", () => {
       { provider: "openai", modelCredentialProvider: "openai-codex", status: "connected", gatewayId: "gw-ada", flowId: "flow-1" },
     ]);
     expect(await h.store.users.subscriptionFlows.get("flow-1")).toMatchObject({
-      consumedAt: expect.any(Number), captureClaimId: null, captureClaimedAt: null,
+      consumedAt: expect.any(Number), captureClaimId: null, captureClaimedAt: null, modelPinnedAt: expect.any(Number),
     });
     expect(await h.store.users.agentModels.list("uid-ada")).toMatchObject([
       { agentId: COACH, primary: codexRuntimeConfig().model },
@@ -115,6 +115,16 @@ describe("subscription capture on the platform store", () => {
     expect(res.body).toMatchObject({ ok: true, alreadyConsumed: true });
     expect(h.writeSecret).not.toHaveBeenCalled();
     expect(await h.store.users.agentModels.list("uid-ada")).toMatchObject([{ agentId: COACH, primary: "anthropic/claude-opus-5" }]);
+  });
+
+  it("replays a consumed flow without restoring a pick the user reset", async () => {
+    await startFlow();
+    await request(app()).post("/capture").send({ flowId: "flow-1", credential: CODEX }).expect(200);
+    await h.store.users.agentModels.delete("uid-ada", COACH);
+
+    await request(app()).post("/capture").send({ flowId: "flow-1", credential: CODEX }).expect(200);
+
+    expect(await h.store.users.agentModels.list("uid-ada")).toEqual([]);
   });
 
   it("refuses a flow another capture already claimed, before writing the secret", async () => {
