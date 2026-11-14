@@ -168,4 +168,5 @@ export interface ExpirySweepResult {
   readonly accessGrants: number;
   readonly modelBrokerUsageEvents: number;
   readonly subscriptionFlows: number;
+  readonly connectFlows: number;
 }

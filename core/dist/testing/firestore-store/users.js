@@ -529,6 +529,53 @@ function createSubscriptionFlowsRepository(session) {
         },
     };
 }
+const CONNECTOR_INTEGRATIONS_SUBCOLLECTION = "connectorIntegrations";
+const CONNECTOR_FLOWS_COLLECTION = "connectorFlows";
+function createConnectorIntegrationsRepository(session) {
+    const collection = (uid) => usersCollection(session.db).doc(uid).collection(CONNECTOR_INTEGRATIONS_SUBCOLLECTION);
+    const key = (uid, connectorId) => ({ aggregate: "connector-integration", key: `${uid}/${connectorId}` });
+    const decode = (snapshot) => ({ ...decodeDocumentData(snapshot), revision: revisionOf(snapshot) });
+    return {
+        async get(uid, connectorId) {
+            const snapshot = await session.read("users.connectorIntegrations.get", collection(uid).doc(connectorId));
+            return snapshot.exists ? decode(snapshot) : null;
+        },
+        async list(uid) {
+            const snapshot = await session.query("users.connectorIntegrations.list", collection(uid));
+            return snapshot.docs.map(decode).sort((a, b) => a.connectorId.localeCompare(b.connectorId));
+        },
+        async put(integration) {
+            await session.set("users.connectorIntegrations.put", key(integration.uid, integration.connectorId), collection(integration.uid).doc(integration.connectorId), encodeDocument(integration, STORED_AS_NUMBERS));
+        },
+    };
+}
+function createConnectFlowsRepository(session) {
+    const ref = (flowId) => session.db.collection(CONNECTOR_FLOWS_COLLECTION).doc(flowId);
+    const key = (flowId) => ({ aggregate: "connect-flow", key: flowId });
+    return {
+        async get(flowId) {
+            const snapshot = await session.read("users.connectFlows.get", ref(flowId));
+            return snapshot.exists
+                ? ({ ...decodeDocumentData(snapshot), revision: revisionOf(snapshot) })
+                : null;
+        },
+        async create(flow) {
+            await session.create("users.connectFlows.create", key(flow.flowId), ref(flow.flowId), encodeDocument({
+                ...flow,
+                consumedAt: null,
+                outcome: null,
+            }, STORED_AS_NUMBERS));
+        },
+        async update(flowId, progress) {
+            await session.update("users.connectFlows.update", key(flowId), ref(flowId), encodePatch(progress, STORED_AS_NUMBERS));
+        },
+        async deleteForUser(uid) {
+            const snapshot = await session.query("users.connectFlows.deleteForUser", session.db.collection(CONNECTOR_FLOWS_COLLECTION).where("uid", "==", uid));
+            for (const doc of snapshot.docs)
+                await session.delete("users.connectFlows.deleteForUser", key(doc.id), doc.ref);
+        },
+    };
+}
 export const createFirestoreUserRepositories = (session) => ({
     records: createUserRecordsRepository(session),
     accounts: unsupportedUserAccounts(),
@@ -540,6 +587,8 @@ export const createFirestoreUserRepositories = (session) => ({
     modelCredentials: createModelCredentialsRepository(session),
     subscriptionLinks: createSubscriptionLinksRepository(session),
     subscriptionFlows: createSubscriptionFlowsRepository(session),
+    connectorIntegrations: createConnectorIntegrationsRepository(session),
+    connectFlows: createConnectFlowsRepository(session),
 });
 function storedRole(config) {
     return config?.exists === true ? config.get("role") : undefined;

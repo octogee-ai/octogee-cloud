@@ -31,10 +31,10 @@ describe.skipIf(!dsn)("PostgreSQL platform state expiry sweep", { timeout: 30_00
     await harness.store.journal.operations.create(operation({ id: "not-yet", expireAt: 300 }));
     await harness.store.journal.operations.create(operation({ id: "forever" }));
 
-    expect(await harness.store.sweepExpired(250, 1)).toEqual({ operations: 1, operationAudits: 0, accessGrants: 0, modelBrokerUsageEvents: 0, subscriptionFlows: 0 });
+    expect(await harness.store.sweepExpired(250, 1)).toEqual({ operations: 1, operationAudits: 0, accessGrants: 0, modelBrokerUsageEvents: 0, subscriptionFlows: 0, connectFlows: 0 });
     expect(await remaining("operations", "id")).toEqual(["expired-late", "forever", "not-yet"]);
 
-    expect(await harness.store.sweepExpired(250, 10)).toEqual({ operations: 1, operationAudits: 0, accessGrants: 0, modelBrokerUsageEvents: 0, subscriptionFlows: 0 });
+    expect(await harness.store.sweepExpired(250, 10)).toEqual({ operations: 1, operationAudits: 0, accessGrants: 0, modelBrokerUsageEvents: 0, subscriptionFlows: 0, connectFlows: 0 });
     expect(await remaining("operations", "id")).toEqual(["forever", "not-yet"]);
   });
 
@@ -44,7 +44,7 @@ describe.skipIf(!dsn)("PostgreSQL platform state expiry sweep", { timeout: 30_00
     await harness.store.journal.audits.create(expired);
     await harness.store.journal.audits.create(kept);
 
-    expect(await harness.store.sweepExpired(500, 10)).toEqual({ operations: 0, operationAudits: 1, accessGrants: 0, modelBrokerUsageEvents: 0, subscriptionFlows: 0 });
+    expect(await harness.store.sweepExpired(500, 10)).toEqual({ operations: 0, operationAudits: 1, accessGrants: 0, modelBrokerUsageEvents: 0, subscriptionFlows: 0, connectFlows: 0 });
     expect(await harness.store.journal.audits.get(expired.id)).toBeNull();
     expect(await harness.store.journal.audits.get(kept.id)).not.toBeNull();
   });
@@ -63,12 +63,12 @@ describe.skipIf(!dsn)("PostgreSQL platform state expiry sweep", { timeout: 30_00
        VALUES ('s-expired', 'g1', 'uid-1', 100, '{}')`,
     );
 
-    expect(await harness.store.sweepExpired(500, 2)).toEqual({ operations: 0, operationAudits: 0, accessGrants: 2, modelBrokerUsageEvents: 0, subscriptionFlows: 0 });
+    expect(await harness.store.sweepExpired(500, 2)).toEqual({ operations: 0, operationAudits: 0, accessGrants: 2, modelBrokerUsageEvents: 0, subscriptionFlows: 0, connectFlows: 0 });
     expect(await remaining("gateway_tickets", "ticket_id")).toEqual(["t-live"]);
     expect(await remaining("control_tickets", "ticket_hash")).toEqual(["c-expired-2"]);
     expect(await remaining("control_sessions", "session_hash")).toEqual(["s-expired"]);
 
-    expect(await harness.store.sweepExpired(500, 2)).toEqual({ operations: 0, operationAudits: 0, accessGrants: 2, modelBrokerUsageEvents: 0, subscriptionFlows: 0 });
+    expect(await harness.store.sweepExpired(500, 2)).toEqual({ operations: 0, operationAudits: 0, accessGrants: 2, modelBrokerUsageEvents: 0, subscriptionFlows: 0, connectFlows: 0 });
     expect(await remaining("control_tickets", "ticket_hash")).toEqual([]);
     expect(await remaining("control_sessions", "session_hash")).toEqual([]);
   });
@@ -80,7 +80,7 @@ describe.skipIf(!dsn)("PostgreSQL platform state expiry sweep", { timeout: 30_00
               ('e-live', 'shared-1:uid-1', 1, 900, '{}')`,
     );
 
-    expect(await harness.store.sweepExpired(500, 1)).toEqual({ operations: 0, operationAudits: 0, accessGrants: 0, modelBrokerUsageEvents: 1, subscriptionFlows: 0 });
+    expect(await harness.store.sweepExpired(500, 1)).toEqual({ operations: 0, operationAudits: 0, accessGrants: 0, modelBrokerUsageEvents: 1, subscriptionFlows: 0, connectFlows: 0 });
     expect(await remaining("model_broker_usage_events", "event_id")).toEqual(["e-expired-2", "e-live"]);
   });
 

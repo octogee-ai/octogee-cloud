@@ -75,6 +75,9 @@ describe("shared document shapes", () => {
       status: "connected",
       captureMethod: "oauth-web",
       scopes: ["repo"],
+      connectedAt: 1,
+      updatedAt: 1,
+      verifiedAt: null,
     } satisfies IntegrationStatusDoc;
 
     expect(workspace.visibility).toBe("public");

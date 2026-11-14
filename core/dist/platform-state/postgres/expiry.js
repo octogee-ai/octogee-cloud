@@ -8,6 +8,9 @@ const MODEL_BROKER_USAGE_EVENTS = {
 const SUBSCRIPTION_FLOWS = {
     table: "subscription_flows", aggregate: "subscription-flow", key: "flow_id", expiry: "expire_at",
 };
+const CONNECT_FLOWS = {
+    table: "connect_flows", aggregate: "connect-flow", key: "flow_id", expiry: "expire_at",
+};
 const ACCESS_GRANTS = [
     { table: "gateway_tickets", aggregate: "gateway-ticket", key: "ticket_id", expiry: "expires_at" },
     { table: "gateway_ticket_mint_log", aggregate: "gateway-ticket", key: "id", expiry: "expires_at" },
@@ -50,6 +53,7 @@ export async function sweepExpiredPostgresState(context, now, limit) {
         accessGrants += await deleteExpired(context, target, now, limit - accessGrants);
     const modelBrokerUsageEvents = await deleteExpired(context, MODEL_BROKER_USAGE_EVENTS, now, limit);
     const subscriptionFlows = await deleteExpired(context, SUBSCRIPTION_FLOWS, now, limit);
+    const connectFlows = await deleteExpired(context, CONNECT_FLOWS, now, limit);
     await purgeChangeLog(context, now);
-    return { operations, operationAudits, accessGrants, modelBrokerUsageEvents, subscriptionFlows };
+    return { operations, operationAudits, accessGrants, modelBrokerUsageEvents, subscriptionFlows, connectFlows };
 }

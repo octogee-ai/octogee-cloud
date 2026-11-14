@@ -1336,6 +1336,45 @@ CREATE TRIGGER subscription_flows_revision BEFORE UPDATE ON subscription_flows
   FOR EACH ROW EXECUTE FUNCTION bump_revision();
 `;
 
+const CONNECTOR_INTEGRATIONS = String.raw`
+CREATE TABLE user_connector_integrations (
+  uid             text NOT NULL REFERENCES users (uid) ON DELETE CASCADE,
+  connector_id    text NOT NULL CHECK (connector_id <> ''),
+  status          text NOT NULL CHECK (status IN ('connected', 'disconnected', 'error', 'pending')),
+  account_label   text,
+  scopes          jsonb NOT NULL CHECK (jsonb_typeof(scopes) = 'array'),
+  capture_method  text CHECK (capture_method IN ('oauth-web', 'device', 'pat', 'fields', 'local-pairing')),
+  error           text,
+  detail          jsonb NOT NULL CHECK (jsonb_typeof(detail) = 'object'),
+  connected_at    bigint,
+  verified_at     bigint,
+  updated_at      bigint NOT NULL,
+  revision        bigint NOT NULL DEFAULT nextval('record_revision_seq'),
+  PRIMARY KEY (uid, connector_id)
+);
+CREATE TRIGGER user_connector_integrations_revision BEFORE UPDATE ON user_connector_integrations
+  FOR EACH ROW EXECUTE FUNCTION bump_revision();
+
+CREATE TABLE connect_flows (
+  flow_id                text PRIMARY KEY CHECK (flow_id <> ''),
+  uid                    text NOT NULL REFERENCES users (uid) ON DELETE CASCADE,
+  connector_id           text NOT NULL CHECK (connector_id <> ''),
+  kind                   text NOT NULL CHECK (kind IN ('oauth-web', 'device', 'local-pairing')),
+  requested_scopes       jsonb NOT NULL CHECK (jsonb_typeof(requested_scopes) = 'array'),
+  code_verifier          text,
+  encrypted_device_code  text,
+  created_at             bigint NOT NULL,
+  expire_at              bigint NOT NULL,
+  consumed_at            bigint,
+  outcome                text CHECK (outcome IN ('connected', 'cancelled', 'failed')),
+  revision               bigint NOT NULL DEFAULT nextval('record_revision_seq')
+);
+CREATE INDEX connect_flows_uid_idx ON connect_flows (uid);
+CREATE INDEX connect_flows_expire_idx ON connect_flows (expire_at);
+CREATE TRIGGER connect_flows_revision BEFORE UPDATE ON connect_flows
+  FOR EACH ROW EXECUTE FUNCTION bump_revision();
+`;
+
 export const PLATFORM_STATE_MIGRATIONS: readonly PlatformStateMigration[] = [
   { version: 1, name: "core-schema", sql: CORE_SCHEMA },
   { version: 2, name: "change-feed", sql: CHANGE_FEED },
@@ -1356,4 +1395,5 @@ export const PLATFORM_STATE_MIGRATIONS: readonly PlatformStateMigration[] = [
   { version: 17, name: "gateway-sizing-profile", sql: GATEWAY_SIZING_PROFILE },
   { version: 18, name: "model-settings", sql: MODEL_SETTINGS },
   { version: 19, name: "model-credentials", sql: MODEL_CREDENTIALS },
+  { version: 20, name: "connector-integrations", sql: CONNECTOR_INTEGRATIONS },
 ];

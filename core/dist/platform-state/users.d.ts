@@ -1,5 +1,6 @@
 import type { AccountLifecycle } from "@octogee/shared/types/account-lifecycle";
 import type { UserAuxiliaryFamily, FleetBrokerUserRuntimeReset } from "@octogee/shared/types/fleet-broker";
+import type { ConnectorCaptureMethod, IntegrationStatus } from "@octogee/shared/types/connectors";
 import type { ScheduleTransferDoc } from "@octogee/shared/types/fleet-controller";
 import type { UserParkedVm, GatewayProfile, GatewayVmHomeCheckpoint } from "@octogee/shared/types/glm";
 import type { PlacementReceipt, PlacementReceiptKind } from "@octogee/shared/types/placement-receipts";
@@ -342,6 +343,52 @@ export interface SubscriptionFlowsRepository {
     create(flow: NewSubscriptionFlow): Promise<void>;
     update(flowId: string, progress: SubscriptionFlowProgress): Promise<void>;
 }
+export interface ConnectorIntegrationRecord {
+    readonly uid: string;
+    readonly connectorId: string;
+    readonly status: IntegrationStatus;
+    readonly accountLabel: string | null;
+    readonly scopes: readonly string[];
+    readonly captureMethod: ConnectorCaptureMethod | null;
+    readonly error: string | null;
+    readonly detail: OpaqueMap;
+    readonly connectedAt: number | null;
+    readonly verifiedAt: number | null;
+    readonly updatedAt: number;
+}
+export type ConnectorIntegrationInput = Omit<ConnectorIntegrationRecord, "connectedAt" | "verifiedAt" | "updatedAt"> & {
+    readonly connectedAt: TimeInput | null;
+    readonly verifiedAt: TimeInput | null;
+    readonly updatedAt: TimeInput;
+};
+export interface ConnectorIntegrationsRepository {
+    get(uid: string, connectorId: string): Promise<Stored<ConnectorIntegrationRecord> | null>;
+    list(uid: string): Promise<readonly Stored<ConnectorIntegrationRecord>[]>;
+    put(integration: ConnectorIntegrationInput): Promise<void>;
+}
+export type ConnectFlowKind = "oauth-web" | "device" | "local-pairing";
+export type ConnectFlowOutcome = "connected" | "cancelled" | "failed";
+export interface ConnectFlowRecord {
+    readonly flowId: string;
+    readonly uid: string;
+    readonly connectorId: string;
+    readonly kind: ConnectFlowKind;
+    readonly requestedScopes: readonly string[];
+    readonly codeVerifier: string | null;
+    readonly encryptedDeviceCode: string | null;
+    readonly createdAt: number;
+    readonly expireAt: number;
+    readonly consumedAt: number | null;
+    readonly outcome: ConnectFlowOutcome | null;
+}
+export type NewConnectFlow = Omit<ConnectFlowRecord, "consumedAt" | "outcome">;
+export type ConnectFlowProgress = Partial<Pick<ConnectFlowRecord, "consumedAt" | "outcome">>;
+export interface ConnectFlowsRepository {
+    get(flowId: string): Promise<Stored<ConnectFlowRecord> | null>;
+    create(flow: NewConnectFlow): Promise<void>;
+    update(flowId: string, progress: ConnectFlowProgress): Promise<void>;
+    deleteForUser(uid: string): Promise<void>;
+}
 export interface UserRepositories {
     readonly records: UserRecordsRepository;
     readonly accounts: UserAccountsRepository;
@@ -353,6 +400,8 @@ export interface UserRepositories {
     readonly modelCredentials: ModelCredentialsRepository;
     readonly subscriptionLinks: SubscriptionLinksRepository;
     readonly subscriptionFlows: SubscriptionFlowsRepository;
+    readonly connectorIntegrations: ConnectorIntegrationsRepository;
+    readonly connectFlows: ConnectFlowsRepository;
 }
 export type PlacementAdmissionDecision = {
     readonly kind: "admitted";
