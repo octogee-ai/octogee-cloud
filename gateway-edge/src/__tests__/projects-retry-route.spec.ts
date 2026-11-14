@@ -151,6 +151,7 @@ beforeEach(() => {
   h.productWrites.length = 0;
   installProjectPresentation({
     ...NO_PROJECT_PRESENTATION,
+    remembersChannels: true,
     createProject: async (_workspaceSlug, _projectSlug, data) => {
       h.productWrites.push({ data, options: { merge: true } });
     },
