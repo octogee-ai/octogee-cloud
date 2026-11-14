@@ -162,7 +162,7 @@ describe("setup-secrets platform state wiring", () => {
   it("creates the secret from the deployment target's projects during bootstrap", () => {
     const { calls, output } = runSetupSecrets("--env=test", "--deployment-target=test-central", "--phase=bootstrap", "--yes");
     expect(output).toContain("MM_DB_PASSWORD not in Secret Manager");
-    expect(calls).toContain(`sql instances describe octogee-platform-test --project=${testCentral.cloudSql.projectId}`);
+    expect(calls).toContain(`sql instances describe ${testCentral.cloudSql.platformStateInstance} --project=${testCentral.cloudSql.projectId}`);
     expect(calls).toContain(`secrets versions access latest --secret=platform-state-postgres-runtime-password --project=${testCentral.firebaseProjectId}`);
     expect(calls).toContain(`create secret generic platform-state-postgres -n ${testCentral.namespace}`);
   });

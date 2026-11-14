@@ -21,6 +21,8 @@ interface CloudSqlDocument {
   giteaPasswordSecret: string;
   connectionNameSecret: string;
   pointInTimeRecoveryEnabled: boolean;
+  platformStateInstance: string;
+  agentStoreDatabase: string;
 }
 
 interface KmsDocument {
@@ -114,6 +116,8 @@ export interface DeploymentEnvironmentSettings {
   cloudSqlGiteaPasswordSecretName: string;
   cloudSqlConnectionNameSecretName: string;
   cloudSqlPointInTimeRecoveryEnabled: boolean;
+  cloudSqlPlatformStateInstanceName: string;
+  cloudSqlAgentStoreDatabaseName: string;
   kmsProjectId: string;
   kmsLocation: string;
   kmsKeyRing: string;
@@ -342,6 +346,8 @@ function validateHostedTarget(target: Record<string, unknown>, targetId: string)
       "mattermostPasswordSecret",
       "giteaPasswordSecret",
       "connectionNameSecret",
+      "platformStateInstance",
+      "agentStoreDatabase",
     ],
     `deployment target ${targetId}.cloudSql`,
   );
@@ -523,6 +529,8 @@ function settings(
     cloudSqlGiteaPasswordSecretName: target.cloudSql.giteaPasswordSecret,
     cloudSqlConnectionNameSecretName: target.cloudSql.connectionNameSecret,
     cloudSqlPointInTimeRecoveryEnabled: target.cloudSql.pointInTimeRecoveryEnabled,
+    cloudSqlPlatformStateInstanceName: target.cloudSql.platformStateInstance,
+    cloudSqlAgentStoreDatabaseName: target.cloudSql.agentStoreDatabase,
     kmsProjectId: target.kms.projectId,
     kmsLocation: target.kms.location,
     kmsKeyRing: target.kms.keyRing,

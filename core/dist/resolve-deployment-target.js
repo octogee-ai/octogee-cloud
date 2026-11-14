@@ -63,6 +63,8 @@ function deploymentTargetOutput(settings) {
         cloud_sql_gitea_password_secret_name: settings.cloudSqlGiteaPasswordSecretName,
         cloud_sql_connection_name_secret_name: settings.cloudSqlConnectionNameSecretName,
         cloud_sql_point_in_time_recovery_enabled: settings.cloudSqlPointInTimeRecoveryEnabled?.toString(),
+        cloud_sql_platform_state_instance_name: settings.cloudSqlPlatformStateInstanceName,
+        cloud_sql_agent_store_database_name: settings.cloudSqlAgentStoreDatabaseName,
         kms_project_id: settings.kmsProjectId,
         kms_location: settings.kmsLocation,
         kms_key_name: settings.kmsKeyName,
