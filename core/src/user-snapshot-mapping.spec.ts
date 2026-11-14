@@ -11,6 +11,7 @@ import {
   readAgentModelSelections,
 } from "./user-snapshot-mapping.js";
 import { MalformedRecordError } from "./platform-state/errors.js";
+import type { Revision } from "./platform-state/store.js";
 import { createDocumentFixtureStore } from "./testing/journal-store.js";
 
 describe("deriveSlug", () => {
@@ -354,7 +355,7 @@ describe("agent-model selections ride the snapshot regardless of byot state", ()
 
   it("reads a user's agent model picks from the platform store", async () => {
     const list = vi.fn(async () => [
-      { uid: "acme", agentId: "octogee-acme-coach", primary: "platform-openrouter/z-ai/glm-5.2", fallbacks: ["anthropic/claude-haiku-4-5"], updatedAt: 1, revision: "1" },
+      { uid: "acme", agentId: "octogee-acme-coach", primary: "platform-openrouter/z-ai/glm-5.2", fallbacks: ["anthropic/claude-haiku-4-5"], updatedAt: 1, revision: "1" as Revision },
     ]);
 
     await expect(readAgentModelSelections({ agentModels: { list, put: vi.fn(), delete: vi.fn() } }, "acme")).resolves.toEqual(AGENT_MODELS);
