@@ -2,7 +2,7 @@ import { randomInt } from "node:crypto";
 import { isOperationAuditRecord, } from "@octogee/shared/types/glm";
 import { MalformedRecordError, MissingRecordError } from "../errors.js";
 import { GATEWAY_RECOVERY_RECEIPTS_TABLE, OPERATION_AUDITS_TABLE, OPERATIONS_TABLE } from "./journal-tables.js";
-import { currentAuditMutation, currentOperationKind, operationKindsStoredAs } from "./legacy-stored-names.js";
+import { operationForStore, operationInputForStore, operationInputFromStored } from "./previous-release-operation-input.js";
 import { deleteRecord, equalsFence, insertRecord, oneOfFence, revisionFence, selectByKey, selectRecords, updateRecord, } from "./records.js";
 import { SqlParameters } from "./sql.js";
 import { columnFor, decodeStored, isClearField } from "./values.js";
@@ -23,15 +23,19 @@ const ACTION_CLAIM_ID = columnFor(OPERATION_AUDITS_TABLE, operationKey(""), "act
 const ACTION_STARTED_AT = columnFor(OPERATION_AUDITS_TABLE, operationKey(""), "actionStartedAt");
 export function decodeOperation(row) {
     const operation = decodeStored(OPERATIONS_TABLE, row);
-    return { ...operation, kind: currentOperationKind(operation.kind) };
+    return { ...operation, input: operationInputFromStored(operation.input) };
 }
 export function decodeOperationAudit(row) {
-    const stored = decodeStored(OPERATION_AUDITS_TABLE, row);
-    const audit = { ...stored, mutation: currentAuditMutation(stored.mutation) };
+    const audit = decodeStored(OPERATION_AUDITS_TABLE, row);
     if (!isOperationAuditRecord(audit)) {
         throw new MalformedRecordError({ aggregate: "operation-audit", key: String(row.id) }, "fails the operation audit schema");
     }
     return audit;
+}
+function patchForStore(patch) {
+    return patch.input !== null && typeof patch.input === "object" && !Array.isArray(patch.input)
+        ? { ...patch, input: operationInputForStore(patch.input) }
+        : patch;
 }
 function decodeRecoveryReceipt(row) {
     return decodeStored(GATEWAY_RECOVERY_RECEIPTS_TABLE, row);
@@ -74,37 +78,36 @@ function createOperationsRepository(session) {
             if (filter.statuses !== undefined)
                 conditions.push(`status = ANY(${parameters.add([...filter.statuses], "text[]")})`);
             if (filter.kind !== undefined)
-                conditions.push(`kind = ANY(${parameters.add(operationKindsStoredAs(filter.kind), "text[]")})`);
+                conditions.push(`kind = ${parameters.add(filter.kind, "text")}`);
             return list("journal.operations.listForUid", conditions.join(" AND "), parameters.values);
         },
         listByKind(kind, statuses) {
-            const kinds = operationKindsStoredAs(kind);
             if (statuses === undefined)
-                return list("journal.operations.listByKind", "kind = ANY($1::text[])", [kinds]);
-            return list("journal.operations.listByKind", "kind = ANY($1::text[]) AND status = ANY($2::text[])", [kinds, [...statuses]]);
+                return list("journal.operations.listByKind", "kind = $1::text", [kind]);
+            return list("journal.operations.listByKind", "kind = $1::text AND status = ANY($2::text[])", [kind, [...statuses]]);
         },
         listReferencingUid(uid) {
             return list("journal.operations.listReferencingUid", "input_uid = $1::text OR input_uid_raw = $1::text OR created_by = $1::text", [uid]);
         },
         listByInputUserSlugPrefix(prefix) {
-            return list("journal.operations.listByInputBuilderSlugPrefix", "input_user_slug LIKE $1::text ESCAPE '\\'", [`${escapeLike(prefix)}%`], "input_user_slug, id");
+            return list("journal.operations.listByInputUserSlugPrefix", "input_user_slug LIKE $1::text ESCAPE '\\'", [`${escapeLike(prefix)}%`], "input_user_slug, id");
         },
         async enqueue(operation) {
             const id = mintOperationId();
-            await insertRecord(session, "journal.operations.enqueue", OPERATIONS_TABLE, { ...operation, id }, "create");
+            await insertRecord(session, "journal.operations.enqueue", OPERATIONS_TABLE, operationForStore({ ...operation, id }), "create");
             return id;
         },
         async create(operation) {
-            await insertRecord(session, "journal.operations.create", OPERATIONS_TABLE, operation, "create");
+            await insertRecord(session, "journal.operations.create", OPERATIONS_TABLE, operationForStore(operation), "create");
         },
         async put(operation) {
-            await insertRecord(session, "journal.operations.put", OPERATIONS_TABLE, operation, "put");
+            await insertRecord(session, "journal.operations.put", OPERATIONS_TABLE, operationForStore(operation), "put");
         },
         async patch(operationId, patch, fence) {
             const table = isClearField(patch.createdBy)
                 ? { ...OPERATIONS_TABLE, immutableFields: ["id", "kind", "createdAt"] }
                 : OPERATIONS_TABLE;
-            await updateRecord(session, "journal.operations.patch", { table, key: [operationId] }, patch, [
+            await updateRecord(session, "journal.operations.patch", { table, key: [operationId] }, patchForStore(patch), [
                 ...revisionFence(fence?.revision),
                 ...oneOfFence("status", STATUS, fence?.status),
                 ...equalsFence("startedAt", STARTED_AT, fence?.startedAt),

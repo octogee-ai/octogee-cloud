@@ -119,11 +119,11 @@ describe("disruption observer environment isolation", () => {
 
 describe("disruption observer user attribution", () => {
   it.each([
-    ["an owned Builder root", { gatewayClass: "builder", ownerUid: "uid-ada", builderSlug: "ada" }, "ada"],
-    ["an unowned Builder root", { gatewayClass: "builder", ownerUid: null, builderSlug: null }, null],
+    ["an owned Builder root", { gatewayClass: "isolated", ownerUid: "uid-ada", builderSlug: "ada" }, "ada"],
+    ["an unowned Builder root", { gatewayClass: "isolated", ownerUid: null, builderSlug: null }, null],
   ])("attributes a isolated pod disruption from %s", async (_label, root, builderSlug) => {
     const pod = {
-      metadata: { name: "octogee-gateway-b-ada-abc", uid: "pod-uid", namespace: "octogee-test", labels: { "gateway-id": "b-ada", "gateway-class": "builder" } },
+      metadata: { name: "octogee-gateway-b-ada-abc", uid: "pod-uid", namespace: "octogee-test", labels: { "gateway-id": "b-ada", "gateway-class": "isolated" } },
       spec: { nodeName: "node-a" },
       status: { phase: "Running" },
     };
@@ -161,7 +161,7 @@ describe("disruption observer user attribution", () => {
       await vi.advanceTimersByTimeAsync(0);
       expect(emit).toHaveBeenCalledTimes(1);
       expect(emit.mock.calls[0][0].affectedGateways).toEqual([
-        expect.objectContaining({ gatewayId: "b-ada", gatewayClass: "builder", desiredStatus: "running", builderSlug }),
+        expect.objectContaining({ gatewayId: "b-ada", gatewayClass: "isolated", desiredStatus: "running", builderSlug }),
       ]);
     } finally {
       stop();

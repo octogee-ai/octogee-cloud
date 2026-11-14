@@ -11,7 +11,7 @@ const gateway = {
   gatewayId: GATEWAY, desiredStatus: "running",
   createdAt: 1, createdBy: "operator", updatedAt: 1, updatedBy: "operator",
   latestRelease: 1, desiredRelease: 1, liveRelease: 1,
-  configSchemaVersion: 1, profile: "builder", gatewayClass: "builder", imageProfile: "builder",
+  configSchemaVersion: 1, profile: "isolated", gatewayClass: "isolated", imageProfile: "isolated",
   sizingTier: "s", gcpProject: "octogee-test", gatewayContainerSecurityContext: null,
   serviceAccountName: null, serviceAccount: null, builderAccess: null,
   ownerUid: OWNER, builderSlug: "fixture", modelBrokerLimits: null,

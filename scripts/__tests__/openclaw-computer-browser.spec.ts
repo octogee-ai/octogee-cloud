@@ -5,7 +5,7 @@ import { buildSafeDefaultAgent, gatewayAgentRoster, SAFE_DEFAULT_AGENT_ID } from
 import { applyPreBootPatches } from "../entrypoints/pre-boot-config.js";
 import { withUserClaim } from "./helpers/user-claim.js";
 
-const vmEnv = withUserClaim({ GATEWAY_CLASS: "builder", GATEWAY_RUNTIME_KIND: "gce-vm" }, "owner");
+const vmEnv = withUserClaim({ GATEWAY_CLASS: "isolated", GATEWAY_RUNTIME_KIND: "gce-vm" }, "owner");
 const template = (): Record<string, any> => JSON.parse(readFileSync(
   new URL("../../infra/gateway/openclaw.isolated.template.json", import.meta.url), "utf8",
 ));
@@ -158,9 +158,9 @@ describe("computer browser runtime", () => {
   });
 
   it.each([
-    { GATEWAY_CLASS: "builder" },
+    { GATEWAY_CLASS: "isolated" },
     { GATEWAY_CLASS: "shared", GATEWAY_RUNTIME_KIND: "gce-vm" },
-    { GATEWAY_CLASS: "builder", GATEWAY_RUNTIME_KIND: "k8s" },
+    { GATEWAY_CLASS: "isolated", GATEWAY_RUNTIME_KIND: "k8s" },
   ])("leaves browser and tool permissions unchanged outside a gateway VM: %j", (env) => {
     const config = template();
     const before = structuredClone(config);

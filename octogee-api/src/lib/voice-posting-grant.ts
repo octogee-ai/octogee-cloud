@@ -98,7 +98,7 @@ export async function bindWorkspaceVoiceGrant(deps: WorkspaceConversationDeps, g
     return current;
   });
   const { scope } = resolved;
-  return grantBinding({ ...resolved.context, nativeInterrupt: scope.gatewayClass === 'builder' && scope.nativeAccess && scope.auth.config.builderAccess?.controlUiEnabled === true }, grant, request.sessionId);
+  return grantBinding({ ...resolved.context, nativeInterrupt: scope.gatewayClass === 'isolated' && scope.nativeAccess && scope.auth.config.builderAccess?.controlUiEnabled === true }, grant, request.sessionId);
 }
 export async function endWorkspaceVoiceGrant(deps: WorkspaceConversationDeps, gatewayId: string, request: VoiceGrantEndRequest): Promise<{ revoked: true }> {
   const ticketId = grantHash(request.voiceGrant);

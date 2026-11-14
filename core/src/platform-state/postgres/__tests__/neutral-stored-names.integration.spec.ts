@@ -2,13 +2,14 @@ import pg from "pg";
 import type { OperationKind } from "@octogee/shared/types/glm";
 import { afterEach, describe, expect, it } from "vitest";
 import { initialGatewayReleaseDocuments } from "../../../gateway-live-release.js";
-import { OperationAuditIdempotencyConflictError, recordOperationAuditIntent } from "../../../operation-audit.js";
 import { migratePlatformState } from "../migrate.js";
 import { createPostgresPlatformStateStore } from "../store.js";
 import { audit, dsn, newPool, newSchemaName, operation } from "./fixtures/harness.js";
 
 const BEFORE_RENAME = 11;
 const RENAME = 12;
+const BEFORE_NEUTRAL_ONLY = 15;
+const NEUTRAL_ONLY = 16;
 const UID = "uid-ada";
 
 describe.skipIf(!dsn)("neutral stored names", () => {
@@ -56,7 +57,7 @@ describe.skipIf(!dsn)("neutral stored names", () => {
     return initialGatewayReleaseDocuments({
       gatewayId,
       config: {
-        configSchemaVersion: 1, profile: "builder", gatewayClass: "builder", imageProfile: "builder", sizingTier: "l",
+        configSchemaVersion: 1, profile: "isolated", gatewayClass: "isolated", imageProfile: "isolated", sizingTier: "l",
         gcpProject: null, gatewayContainerSecurityContext: null, serviceAccountName: null, serviceAccount: null,
         builderAccess: { controlUiEnabled: true }, ownerUid: UID, builderSlug: "ada", modelBrokerLimits: null,
       },
@@ -145,9 +146,9 @@ describe.skipIf(!dsn)("neutral stored names", () => {
       uid: UID, slug: UID, gatewayId: "shared-a", source: "migrate-user", state: "serving", epoch: 1, createdAt: 1, updatedAt: 1,
       updatedByOperationId: "op-migrate",
     });
-    await db.store.users.records.setGatewayMirror(UID, { gatewayId: "shared-a", gatewayProfile: "builder" });
+    await db.store.users.records.setGatewayMirror(UID, { gatewayId: "shared-a", gatewayProfile: "isolated" });
     await db.store.gateways.roots.create(isolatedRoot("ada"));
-    await db.store.gateways.roots.patch("ada", { profile: "builder", imageProfile: "builder" });
+    await db.store.gateways.roots.patch("ada", { profile: "isolated", imageProfile: "isolated" });
 
     expect(await db.value(`SELECT kind FROM ${db.table("operations")}`)).toEqual([{ kind: "migrate-user" }]);
     expect(await db.value(`SELECT source FROM ${db.table("gateway_assignments")}`)).toEqual([{ source: "migrate-user" }]);
@@ -157,53 +158,53 @@ describe.skipIf(!dsn)("neutral stored names", () => {
     ]);
   });
 
-  it("reads names the previous release still writes as their neutral spellings and finds them by either spelling", async () => {
-    const db = await database();
+  it("rewrites names the previous release left after the first rename and rejects them afterwards", async () => {
+    const db = await database(BEFORE_NEUTRAL_ONLY);
     await storeLegacyNames(db);
-    await insertGateway(db, "bob", "isolated", "isolated");
-    await db.store.journal.operations.create(operation({ id: "op-migrate", kind: "migrate-user", inputUid: UID }));
+    await db.pool.query(
+      `UPDATE ${db.table("operations")} SET input = $2::jsonb, user_migration_v2 = $3::jsonb WHERE id = $1`,
+      ["op-migrate-customer", { builderSlug: "ada" }, {
+        sourceRootFence: { gatewayId: "shared-a", gatewayClass: "shared" },
+        targetRootFence: { gatewayId: "ada", gatewayClass: "builder" },
+      }],
+    );
 
-    const journal = db.store.journal;
-    expect((await journal.operations.get("op-migrate-customer"))?.kind).toBe("migrate-user");
-    expect((await journal.operations.listByKind("migrate-user")).map((op) => op.id)).toEqual(["op-migrate", "op-migrate-customer"]);
-    expect((await journal.operations.listForUid(UID, { kind: "erase-user" })).map((op) => op.id)).toEqual(["op-erase-customer"]);
-    expect((await journal.audits.getByIdempotencyKey("key-give-isolated-gateway"))?.mutation).toEqual({
-      kind: "move-to-isolated-gateway", uid: UID,
-    });
-    expect((await db.store.gateways.assignments.get("ada", UID))?.source).toBe("migrate-user");
-    expect((await db.store.gateways.roots.list({ gatewayClass: "builder" })).map((root) => [root.gatewayId, root.gatewayClass])).toEqual([
-      ["ada", "builder"],
-      ["bob", "builder"],
+    await expect(migratePlatformState(db.pool, { schema: db.schema })).resolves.toMatchObject({ applied: [NEUTRAL_ONLY] });
+
+    expect(await db.value(`SELECT kind FROM ${db.table("operations")} WHERE id = 'op-migrate-customer'`)).toEqual([{ kind: "migrate-user" }]);
+    expect(await db.value(`SELECT source FROM ${db.table("gateway_assignments")} WHERE uid = $1`, [UID])).toEqual([{ source: "migrate-user" }]);
+    expect(await db.value(`SELECT profile, gateway_class, image_profile FROM ${db.table("gateways")} WHERE gateway_id = 'ada'`)).toEqual([
+      { profile: "isolated", gateway_class: "isolated", image_profile: "isolated" },
     ]);
-    expect((await db.store.users.records.get(UID))?.gateway?.gatewayProfile).toBe("builder");
+    expect(await db.value(`SELECT gateway_profile FROM ${db.table("users")} WHERE uid = $1`, [UID])).toEqual([{ gateway_profile: "isolated" }]);
+    expect(await db.value(
+      `SELECT input, input_user_slug, user_migration_v2 #>> '{targetRootFence,gatewayClass}' AS target_class
+         FROM ${db.table("operations")} WHERE id = 'op-migrate-customer'`,
+    )).toEqual([{ input: { builderSlug: "ada", userSlug: "ada" }, input_user_slug: "ada", target_class: "isolated" }]);
+
+    await expect(insertGateway(db, "carol", "builder", "builder")).rejects.toThrow(/gateways_/);
+    await expect(insertUser(db, "uid-carol", "builder")).rejects.toThrow(/users_gateway_profile_check/);
+    await expect(db.store.journal.operations.create(operation({ kind: "erase-customer" as OperationKind })))
+      .rejects.toThrow(/operations_kind_check/);
   });
 
-  const retriedIntent = {
-    actor: "operator", forced: false, what: "give user an isolated gateway", why: "operator request",
-    target: { uid: UID }, preActionStatus: {}, idempotencyKey: "retry-1:give user an isolated gateway",
-  };
-  const legacyMutation = { kind: "give-isolated-gateway", uid: UID, sizingProfile: "hobby" };
-  const renamedMutation = { ...legacyMutation, kind: "move-to-isolated-gateway" };
-
-  async function expectRetryMatches(db: Database, auditId: string) {
-    await expect(recordOperationAuditIntent(db.store, { ...retriedIntent, mutation: renamedMutation }))
-      .resolves.toEqual({ auditId, disposition: "existing", status: "recorded" });
-    await expect(recordOperationAuditIntent(db.store, { ...retriedIntent, mutation: { ...renamedMutation, uid: "uid-bob" } }))
-      .rejects.toBeInstanceOf(OperationAuditIdempotencyConflictError);
-  }
-
-  it("matches a retry under the neutral name to an audit the migration renamed", async () => {
-    const db = await database(BEFORE_RENAME);
-    const recorded = await recordOperationAuditIntent(db.store, { ...retriedIntent, mutation: legacyMutation });
-    await migratePlatformState(db.pool, { schema: db.schema });
-
-    await expectRetryMatches(db, recorded.auditId);
-  });
-
-  it("matches a retry under the neutral name to an audit the previous release wrote after the migration", async () => {
+  it("stores the user slug under both keys so the previous release still finds it", async () => {
     const db = await database();
-    const recorded = await recordOperationAuditIntent(db.store, { ...retriedIntent, mutation: legacyMutation });
+    await db.store.journal.operations.create(operation({ id: "op-migrate", kind: "migrate-user", input: { userSlug: "ada", uid: UID } }));
+    await db.store.journal.operations.patch("op-migrate", { input: { userSlug: "ada-two", uid: UID } });
 
-    await expectRetryMatches(db, recorded.auditId);
+    expect(await db.value(`SELECT input, input_user_slug FROM ${db.table("operations")}`)).toEqual([
+      { input: { userSlug: "ada-two", builderSlug: "ada-two", uid: UID }, input_user_slug: "ada-two" },
+    ]);
+    expect((await db.store.journal.operations.get("op-migrate"))?.input).toEqual({ userSlug: "ada-two", uid: UID });
+  });
+
+  it("reads an operation the previous release wrote with only the old slug key as the user slug", async () => {
+    const db = await database();
+    await db.store.journal.operations.create(operation({ id: "op-previous", kind: "migrate-user" }));
+    await db.pool.query(`UPDATE ${db.table("operations")} SET input = $1::jsonb WHERE id = 'op-previous'`, [{ builderSlug: "ada", uid: UID }]);
+
+    expect((await db.store.journal.operations.get("op-previous"))?.input).toEqual({ userSlug: "ada", uid: UID });
+    expect((await db.store.journal.operations.listByInputUserSlugPrefix("ad")).map((op) => op.id)).toEqual(["op-previous"]);
   });
 });

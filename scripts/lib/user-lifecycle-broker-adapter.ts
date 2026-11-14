@@ -2083,7 +2083,7 @@ async function activateImportedUser(
     cache: ctx.configCache,
     signal: opts.signal,
     log: ctx.log,
-    gatewayClass: ctx.isIsolatedGateway() ? "builder" : "shared",
+    gatewayClass: ctx.isIsolatedGateway() ? "isolated" : "shared",
     ...(configuredBuilder
       ? {
         authInheritanceAnchor: {

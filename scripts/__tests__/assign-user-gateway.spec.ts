@@ -156,7 +156,7 @@ describe("assign-user-gateway placement", () => {
   it("refuses another user's isolated gateway", async () => {
     const { deps, records } = fixture({
       "users/u1": user(),
-      "gateways/iso-bob": sharedRoot("iso-bob", { gatewayClass: "builder", profile: "builder", imageProfile: "builder", ownerUid: "u2", builderSlug: "bob" }),
+      "gateways/iso-bob": sharedRoot("iso-bob", { gatewayClass: "isolated", profile: "isolated", imageProfile: "isolated", ownerUid: "u2", builderSlug: "bob" }),
       "glmGateways/iso-bob": servingRuntime("iso-bob"),
     });
 

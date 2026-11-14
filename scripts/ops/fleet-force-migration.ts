@@ -38,7 +38,7 @@ function record(value: unknown): Record<string, unknown> {
 }
 
 function assertForceMigrationSource(source: Record<string, unknown>, target: ForceMigrationTarget): void {
-  if (source.gatewayClass !== "builder") {
+  if (source.gatewayClass !== "isolated") {
     throw new Error("forced migration recovery requires a dedicated isolated gateway; Shared sources cannot be restarted");
   }
   if (source.ownerUid !== target.uid || source.builderSlug !== target.slug) {
@@ -82,7 +82,7 @@ async function assertNoCompetingCustody(tx: PlatformStateTransaction, target: Fo
     kind: operation.kind,
     status: operation.status,
     input: operation.input,
-    customerMigrationV2: operation.customerMigrationV2,
+    userMigrationV2: operation.userMigrationV2,
   }));
   if ([target.fromGatewayId, target.toGatewayId].some((id) => findActiveGatewayMigration(id, operations)) ||
     operations.some((op) => op.kind === "migrate-user" && record(op.input).uid === target.uid)) {
@@ -104,9 +104,9 @@ function assertPendingDrain(op: Record<string, unknown>, target: ForceMigrationT
 }
 
 function assertNoAcceptedCustody(op: Record<string, unknown>): void {
-  const v2 = record(op.customerMigrationV2);
+  const v2 = record(op.userMigrationV2);
   if (["cutoverCommittedAt", "restoreAttempt", "sourceTransferExecution", "cancellationRequestedAt"].some((key) => op[key] !== undefined) ||
-    op.customerMigrationV2 !== undefined && !["initialized", "keysSynced", "preSynced"].includes(String(v2.phase))) {
+    op.userMigrationV2 !== undefined && !["initialized", "keysSynced", "preSynced"].includes(String(v2.phase))) {
     throw new Error("force migration cannot replace accepted custody or cutover");
   }
 }

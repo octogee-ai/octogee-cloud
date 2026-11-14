@@ -198,8 +198,8 @@ function hasLegalClassProfiles(value: Record<string, unknown>): boolean {
     return (value.profile === null || value.profile === "standard") &&
       value.imageProfile === "standard";
   }
-  return (value.profile === null || value.profile === "builder") &&
-    value.imageProfile === "builder";
+  return (value.profile === null || value.profile === "isolated") &&
+    value.imageProfile === "isolated";
 }
 
 export function isBareGatewayId(value: unknown): value is string {

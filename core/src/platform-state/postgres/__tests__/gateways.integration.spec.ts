@@ -23,9 +23,9 @@ const ALLOCATION = { kind: "disposable-builder", schemaVersion: 1, leaseId: "lea
 function mutableConfig(overrides: Partial<GatewayMutableConfig> = {}): GatewayMutableConfig {
   return {
     configSchemaVersion: 1,
-    profile: "builder",
-    gatewayClass: "builder",
-    imageProfile: "builder",
+    profile: "isolated",
+    gatewayClass: "isolated",
+    imageProfile: "isolated",
     sizingTier: "l",
     gcpProject: null,
     gatewayContainerSecurityContext: null,
@@ -339,7 +339,7 @@ describe.skipIf(!dsn)("PostgreSQL gateway repositories", { timeout: 30_000 }, ()
 
       expect((await roots().list({ gatewayClass: "shared" })).map((root) => root.gatewayId)).toEqual(["shared-a"]);
       expect((await roots().list({ ownerUid: "uid-flexo" })).map((root) => root.gatewayId)).toEqual(["flexo"]);
-      expect((await roots().list({ gatewayClass: "builder", ownerUid: "uid-flexo" })).map((root) => root.gatewayId)).toEqual(["flexo"]);
+      expect((await roots().list({ gatewayClass: "isolated", ownerUid: "uid-flexo" })).map((root) => root.gatewayId)).toEqual(["flexo"]);
       expect((await roots().list()).map((root) => root.gatewayId)).toEqual(["flexo", "shared-a", "walter"]);
       expect([...(await roots().getMany(["walter", "ghost", "flexo"])).keys()].sort()).toEqual(["flexo", "walter"]);
       expect((await roots().getMany([])).size).toBe(0);

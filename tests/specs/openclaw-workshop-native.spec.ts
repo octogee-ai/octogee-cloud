@@ -12,7 +12,7 @@ const repo = path.resolve(import.meta.dirname, "../..");
 const sourceSha = JSON.parse(readFileSync(path.join(repo, "infra/gateway/openclaw-tarball/current.json"), "utf8")).sourceSha as string;
 
 describe.skipIf(!binary || !runtimePlugins || !extensions)("pinned Native Workshop config writes", () => {
-  it.each(["shared", "builder"] as const)("validates %s config after each writer and retains Workshop policy through Doctor", (gatewayClass) => {
+  it.each(["shared", "isolated"] as const)("validates %s config after each writer and retains Workshop policy through Doctor", (gatewayClass) => {
     const home = mkdtempSync(path.join(tmpdir(), "octogee-workshop-native-"));
     const state = path.join(home, ".openclaw");
     mkdirSync(state);

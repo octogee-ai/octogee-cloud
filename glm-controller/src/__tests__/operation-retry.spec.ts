@@ -104,7 +104,7 @@ describe("migration retry queue position", () => {
 
   it.each(["initialized", "promotionIntent", "aborting"])("keeps durable migration authority during %s", (phase) => {
     const update = buildOperationCompletionUpdate({
-      op: { kind: "migrate-user", customerMigrationV2: { phase } as never },
+      op: { kind: "migrate-user", userMigrationV2: { phase } as never },
       result: { success: false, rolledBack: true, error: "runtime-update timed out", steps: [] },
       steps: [], now: 10_000,
     });
@@ -113,12 +113,12 @@ describe("migration retry queue position", () => {
 
   it("moves an aborted durable migration to the queue tail after cleanup", () => {
     const update = buildOperationCompletionUpdate({
-      op: { kind: "migrate-user", customerMigrationV2: { phase: "aborted" } as never },
+      op: { kind: "migrate-user", userMigrationV2: { phase: "aborted" } as never },
       result: { success: false, rolledBack: true, error: "runtime-update timed out", steps: [] },
       steps: [], now: 10_000,
     });
     expect(update).toMatchObject({ status: "pending", queuedAt: 10_000,
-      customerMigrationV2: { clear: true } });
+      userMigrationV2: { clear: true } });
   });
 
 });
@@ -809,7 +809,7 @@ describe("buildOperationCompletionUpdate", () => {
       op: {
         attempts: MAX_OPERATION_ATTEMPTS,
         attemptHistory: [],
-        customerMigrationV2: { phase: "promotionIntent" } as never,
+        userMigrationV2: { phase: "promotionIntent" } as never,
       },
       result: {
         steps: [],
@@ -996,14 +996,14 @@ describe("buildOperationCompletionUpdate", () => {
   describe("a migration whose VM was preempted", () => {
     const rsyncReset = "push-rsync-state: 500 rsync code=12 errno=104 Connection reset";
     const preempted = `target computer octogee-pool-44847785 was preempted: ${rsyncReset}`;
-    const activation = (attempts: number, customerMigrationV2?: unknown) => ({
+    const activation = (attempts: number, userMigrationV2?: unknown) => ({
       id: "builder-activate-b-ceckert-s-b1ffafcf-g1",
       kind: "migrate-user",
       origin: "automatic",
       input: { source: "builder-activation-lease", fromGatewayId: "shared-0", toGatewayId: "b-ceckert-s-b1ffafcf" },
       attempts,
       attemptHistory: [],
-      ...(customerMigrationV2 ? { customerMigrationV2: customerMigrationV2 as never } : {}),
+      ...(userMigrationV2 ? { userMigrationV2: userMigrationV2 as never } : {}),
     });
 
     it("retries a rolled-back activation past the normal attempt cap and restarts its aborted migration from scratch", () => {
@@ -1016,7 +1016,7 @@ describe("buildOperationCompletionUpdate", () => {
 
       expect(update.status).toBe("pending");
       expect(update.error).toMatch(/^attempt 3 failed \(transient\): target computer octogee-pool-44847785 was preempted: /);
-      expect(update.customerMigrationV2).toEqual({ clear: true });
+      expect(update.userMigrationV2).toEqual({ clear: true });
     });
 
     it("gives up once the preemption retry budget is spent", () => {
@@ -1041,7 +1041,7 @@ describe("buildOperationCompletionUpdate", () => {
       });
 
       expect(update.status).toBe("pending");
-      expect(update).not.toHaveProperty("customerMigrationV2");
+      expect(update).not.toHaveProperty("userMigrationV2");
     });
 
     it("restarts any retried migration whose durable state already aborted, since resuming it would only replay the abort", () => {
@@ -1053,7 +1053,7 @@ describe("buildOperationCompletionUpdate", () => {
       });
 
       expect(update.status).toBe("pending");
-      expect(update.customerMigrationV2).toEqual({ clear: true });
+      expect(update.userMigrationV2).toEqual({ clear: true });
     });
 
     it("still fails a rolled-back activation without a preemption at the normal cap", () => {

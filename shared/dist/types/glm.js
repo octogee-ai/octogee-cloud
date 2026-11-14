@@ -1,11 +1,11 @@
-export const GATEWAY_PROFILES = ["standard", "builder"];
-export const GATEWAY_CLASSES = ["shared", "builder"];
-export const GATEWAY_IMAGE_PROFILES = ["standard", "builder"];
+export const GATEWAY_PROFILES = ["standard", "isolated"];
+export const GATEWAY_CLASSES = ["shared", "isolated"];
+export const GATEWAY_IMAGE_PROFILES = ["standard", "isolated"];
 export function dualReadGatewayClassValue(value) {
-    return value === "isolated" ? "builder" : value;
+    return value === "builder" ? "isolated" : value;
 }
 export function isIsolatedGatewayClassValue(value) {
-    return dualReadGatewayClassValue(value) === "builder";
+    return dualReadGatewayClassValue(value) === "isolated";
 }
 export const GATEWAY_RUNTIMES = ["cluster", "gce-vm"];
 export function isGatewayRuntime(value) {
@@ -316,7 +316,7 @@ export function isolatedGatewayServiceAccountName(gatewayId) {
     return `${ISOLATED_GATEWAY_SERVICE_ACCOUNT_PREFIX}${gatewayId}`;
 }
 export function isGatewayClassControlUiAccessEnabled(gatewayClass, builderAccess) {
-    return gatewayClass === "builder" && builderAccess?.controlUiEnabled === true;
+    return gatewayClass === "isolated" && builderAccess?.controlUiEnabled === true;
 }
 export function resolveUserGatewayControlState(data, uid) {
     const storedClass = dualReadGatewayClassValue(data?.gatewayClass);
@@ -329,7 +329,7 @@ export function resolveUserGatewayControlState(data, uid) {
     });
     const userOwns = data?.ownerUid === uid;
     return {
-        gatewayProfile: gatewayClass === "builder" ? "builder" : "standard",
+        gatewayProfile: gatewayClass === "isolated" ? "isolated" : "standard",
         controlUiEnabled: userOwns && isGatewayClassControlUiAccessEnabled(gatewayClass, data?.builderAccess),
     };
 }
@@ -515,16 +515,16 @@ export function isGatewayProfile(value) {
         GATEWAY_PROFILES.includes(value));
 }
 export function resolveGatewayClass(input) {
-    return input.gatewayClass === "builder" ? "builder" : "shared";
+    return input.gatewayClass === "isolated" ? "isolated" : "shared";
 }
 export function resolveGatewayImageProfile(input) {
-    if (input.imageProfile === "builder")
-        return "builder";
+    if (input.imageProfile === "isolated")
+        return "isolated";
     if (input.imageProfile === "standard")
         return "standard";
-    if (!input.gatewayClass && input.profile === "builder")
-        return "builder";
-    return resolveGatewayClass(input) === "builder" ? "builder" : "standard";
+    if (!input.gatewayClass && input.profile === "isolated")
+        return "isolated";
+    return resolveGatewayClass(input) === "isolated" ? "isolated" : "standard";
 }
 export function isGatewayVmBootRecoverySample(value) {
     const r = value;

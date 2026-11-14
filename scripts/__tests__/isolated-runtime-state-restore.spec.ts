@@ -18,7 +18,7 @@ const state = { storeId: "c8feb4c9-41a7-4be1-b863-fa07ef6d1bdd", schema: "octoge
 async function fixture(runtime = "cluster", recorded = true) {
   const root = await mkdtemp(join(tmpdir(), "isolated-boot-state-"));
   roots.push(root);
-  const env = withUserClaim({ GATEWAY_CLASS: "builder", GATEWAY_RUNTIME_KIND: runtime, GATEWAY_ID: "alice-s-abc", OPENCLAW_STATE_DIR: root, OPENCLAW_DIR: root }, "alice");
+  const env = withUserClaim({ GATEWAY_CLASS: "isolated", GATEWAY_RUNTIME_KIND: runtime, GATEWAY_ID: "alice-s-abc", OPENCLAW_STATE_DIR: root, OPENCLAW_DIR: root }, "alice");
   const broker = {
     readAgentAnchors: vi.fn(async () => ({ anchors: [], ...(recorded ? { state } : {}) })),
     isolatedRuntimeStateDownloadUrl: vi.fn(async () => ({ url: "https://storage.example/legacy", method: "GET" as const, gcsPath: "legacy", expiresAt: "later" })),

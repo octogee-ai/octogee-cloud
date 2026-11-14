@@ -55,8 +55,8 @@ describe("mapSaToTenant", () => {
     const result = await mapSaToTenant(
       createDocumentFixtureStore({
         "gateways/walter": durableGateway("walter", {
-          gatewayClass: "builder",
-          imageProfile: "builder",
+          gatewayClass: "isolated",
+          imageProfile: "isolated",
           ownerUid: "uid-walter",
           builderSlug: "walter",
         }),
@@ -77,8 +77,8 @@ describe("mapSaToTenant", () => {
       mapSaToTenant(
         createDocumentFixtureStore({
           "gateways/walter": durableGateway("walter", {
-            gatewayClass: "builder",
-            imageProfile: "builder",
+            gatewayClass: "isolated",
+            imageProfile: "isolated",
             ownerUid: "uid-walter",
             builderSlug: "walter",
             coOwnerUids: [],
@@ -97,8 +97,8 @@ describe("mapSaToTenant", () => {
       mapSaToTenant(
         createDocumentFixtureStore({
           "gateways/walter": durableGateway("walter", {
-            gatewayClass: "builder",
-            imageProfile: "builder",
+            gatewayClass: "isolated",
+            imageProfile: "isolated",
             ownerUid: "uid-walter",
             builderSlug: "walter",
             coOwnerUids: ["uid-former-helper"],
@@ -127,8 +127,8 @@ describe("mapSaToTenant", () => {
     const result = await mapSaToTenant(
       createDocumentFixtureStore({
         "gateways/walter": durableGateway("walter", {
-          gatewayClass: "builder",
-          imageProfile: "builder",
+          gatewayClass: "isolated",
+          imageProfile: "isolated",
           ownerUid: "uid-walter",
           builderSlug: "walter",
           serviceAccountName: "octogee-gateway-walter",
@@ -145,8 +145,8 @@ describe("mapSaToTenant", () => {
     const result = await mapSaToTenant(
       createDocumentFixtureStore({
         "gateways/walter": durableGateway("walter", {
-          gatewayClass: "builder",
-          imageProfile: "builder",
+          gatewayClass: "isolated",
+          imageProfile: "isolated",
           ownerUid: "uid-walter",
           builderSlug: "walter",
           serviceAccountName: "custom-operator-ksa",
@@ -339,8 +339,8 @@ describe("mapSaToTenant", () => {
     const result = await mapSaToTenant(
       createDocumentFixtureStore({
         "gateways/walter": durableGateway("walter", {
-          gatewayClass: "builder",
-          imageProfile: "builder",
+          gatewayClass: "isolated",
+          imageProfile: "isolated",
           ownerUid: "uid-current",
           builderSlug: "walter",
         }),

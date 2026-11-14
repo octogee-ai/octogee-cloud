@@ -556,7 +556,7 @@ describe("surge OpenClaw process supervisor", () => {
     const inspection = vi.spyOn(userStores, "inspectConfiguredUserAgentStores")
       .mockImplementationOnce(async () => { expect(children).toHaveLength(0); order.push("inspect"); return "exact"; });
     const bootWatcher = createSurgeOpenClawBootWatcher({
-      openclawDir, releaseKey: "isolated-release", log: () => {}, env: { GATEWAY_CLASS: "builder", OPENCLAW_CONFIG_PATH: path.join(openclawDir, "system_config/openclaw.json") },
+      openclawDir, releaseKey: "isolated-release", log: () => {}, env: { GATEWAY_CLASS: "isolated", OPENCLAW_CONFIG_PATH: path.join(openclawDir, "system_config/openclaw.json") },
       client: { claimOpenClawBoot: vi.fn().mockResolvedValue({ action: "start" }), completeOpenClawBoot: vi.fn(), completeOpenClawDoctor: vi.fn() },
       installedOpenClawBuild: async () => "b".repeat(40),
     });
@@ -578,7 +578,7 @@ describe("surge OpenClaw process supervisor", () => {
     const openclawDir = await temporaryOpenClawDir(), socketPath = path.join(os.tmpdir(), `oc-gate-${randomUUID()}.sock`);
     const inspection = vi.spyOn(userStores, "inspectConfiguredUserAgentStores").mockRejectedValue(new Error("newer store schema refused"));
     const spawnOpenClaw = vi.fn(() => new FakeChild());
-    const bootWatcher = createSurgeOpenClawBootWatcher({ openclawDir, releaseKey: "isolated-release", log: () => {}, env: { GATEWAY_CLASS: "builder" },
+    const bootWatcher = createSurgeOpenClawBootWatcher({ openclawDir, releaseKey: "isolated-release", log: () => {}, env: { GATEWAY_CLASS: "isolated" },
       client: { claimOpenClawBoot: vi.fn().mockResolvedValue({ action: "start" }), completeOpenClawBoot: vi.fn(), completeOpenClawDoctor: vi.fn() } });
     const supervisor = await startSurgeOpenClawSupervisor({ openclawDir, podUid: "builder-pod", socketPath, log: () => {},
       readinessReleased: async () => false, prepareTarget: async () => {}, prepareDatabases: async () => {}, bootWatcher, spawnOpenClaw, probeHealthz: async () => false });
@@ -1296,7 +1296,7 @@ it("keeps initial user startup held when store migration was deferred", async ()
   const openclawDir = await temporaryOpenClawDir();
   const configPath = path.join(openclawDir, "openclaw.json");
   await fs.writeFile(configPath, JSON.stringify({ database: { engine: "sqlite", families: { state: { engine: "postgres" }, agent: { engine: "postgres" } } } }));
-  vi.stubEnv("GATEWAY_CLASS", "builder"); vi.stubEnv("OPENCLAW_STATE_DIR", openclawDir); vi.stubEnv("OPENCLAW_CONFIG_PATH", configPath);
+  vi.stubEnv("GATEWAY_CLASS", "isolated"); vi.stubEnv("OPENCLAW_STATE_DIR", openclawDir); vi.stubEnv("OPENCLAW_CONFIG_PATH", configPath);
   const log = vi.fn(), spawnOpenClaw = vi.fn(() => new FakeChild());
   const socketPath = path.join(os.tmpdir(), `oc-gate-${randomUUID()}.sock`);
   const supervisor = await startSurgeOpenClawSupervisor({ openclawDir, podUid: "source-pod", socketPath,

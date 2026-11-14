@@ -71,7 +71,7 @@ function preparationCancellationDeferred(operation: Record<string, unknown>, ope
   if (operation.cancellationRequestedAt === undefined) return true;
   if (!Number.isSafeInteger(operation.startedAt) || Number(operation.startedAt) <= 0 ||
       !migrationCancellationDeferred(operation, operationId)) return false;
-  const state = operation.customerMigrationV2 as Record<string, unknown> | undefined;
+  const state = operation.userMigrationV2 as Record<string, unknown> | undefined;
   if (state) {
     return state.slug === slug && state.migrationId === `mig-${operationId}` &&
       ["sourceQuiesced", "finalSynced", "targetVerified"].includes(String(state.phase)) && state.cutoverAt === undefined &&

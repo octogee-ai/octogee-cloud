@@ -100,7 +100,7 @@ describe("durable migration root resolution", () => {
     const blocker = "the isolated gateway image is linux/amd64 only, and this cluster has no amd64 node";
     const db = database({
       "gateways/pod": durableGateway("pod", {
-        gatewayClass: "builder", imageProfile: "builder", sizingTier: "s", liveRelease: null, ownerUid: "uid-lin", builderSlug: "lin",
+        gatewayClass: "isolated", imageProfile: "isolated", sizingTier: "s", liveRelease: null, ownerUid: "uid-lin", builderSlug: "lin",
       }),
       "glmGateways/pod": servingRuntime("pod", { lifecycle: "provisioning", runtime: "cluster", lastError: { message: blocker, at: 5 } }),
       "gateways/shared": durableGateway("shared", { liveRelease: null }),

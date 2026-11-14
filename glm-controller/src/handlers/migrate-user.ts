@@ -272,7 +272,7 @@ async function initializeMigrationV2(
   if (targets.toRelease === null) {
     return { steps: [], success: false, error: "user migration V2 target has no release" };
   }
-  if (op.customerMigrationV2) return op.customerMigrationV2;
+  if (op.userMigrationV2) return op.userMigrationV2;
   const [sourceRootFence, targetRootFence] = await Promise.all([
     deps.readGatewayRootFence(targets.fromGatewayId),
     deps.readGatewayRootFence(targets.toGatewayId),
@@ -1240,7 +1240,7 @@ function terminalDurableMigrationResult(
   input: MigrateUserInput,
   request: { uid: string; toGatewayId: string },
 ): OperationResult | null {
-  const state = op.customerMigrationV2;
+  const state = op.userMigrationV2;
   if (state?.phase !== "complete" && state?.phase !== "aborted") return null;
   const scopeChanged = [
     state.operationId !== op.id,
@@ -1266,7 +1266,7 @@ function resumeDurableMigration(
   op: Operation,
   ctx: OperationContext,
 ): Promise<OperationResult> | null {
-  const state = op.customerMigrationV2;
+  const state = op.userMigrationV2;
   if (!state) return null;
   return runOrdinaryMigrationV2({
     op,
@@ -1683,7 +1683,7 @@ async function sharedRecoveryAuthority(deps: MigrateUserDeps, op: Operation, use
 }
 
 function ownershipCheckedSourceRecovery(op: Operation, previous: SchedulerHandoffState): boolean {
-  return !op.customerMigrationV2 && previous.fromGatewayId.startsWith("shared-") &&
+  return !op.userMigrationV2 && previous.fromGatewayId.startsWith("shared-") &&
     (previous.toGatewayId.startsWith("shared-") || userActivationSourceRecoveryPending(op));
 }
 
@@ -2263,7 +2263,7 @@ async function recordReleasedIsolatedTarget(input: {
 }
 
 function sourceOwnedUserActivation(targets: MigrationTargets): boolean {
-  return targets.fromGatewayClass === "shared" && targets.toGatewayClass === "builder";
+  return targets.fromGatewayClass === "shared" && targets.toGatewayClass === "isolated";
 }
 
 async function executeMigration(
@@ -2326,7 +2326,7 @@ async function executeMigrationAttempt(
     ? op.schedulerHandoff.migrationId : claimSchedulerMigrationId(prepared.migrationId, op);
   const persistSchedulerHandoff = ctx.persistSchedulerHandoff;
   if (!persistSchedulerHandoff) throw new Error("scheduler handoff persistence is required");
-  const heldTarget = prepared.targets.toGatewayClass === "builder";
+  const heldTarget = prepared.targets.toGatewayClass === "isolated";
   let handoff: SchedulerHandoffState = op.schedulerHandoff?.forwardRecovery !== undefined ? op.schedulerHandoff : {
     migrationId: schedulerMigrationId,
     fromGatewayId: prepared.user.currentGatewayId,
@@ -2446,7 +2446,7 @@ function migrationVms(op: Operation): Array<["source" | "target", string]> {
   const input = op.input as MigrateUserInput;
   const sourceGatewayId = typeof input.fromGatewayId === "string"
     ? input.fromGatewayId
-    : op.customerMigrationV2?.sourceGatewayId;
+    : op.userMigrationV2?.sourceGatewayId;
   return [
     ...(typeof input.toGatewayId === "string" ? [["target", input.toGatewayId] as ["target", string]] : []),
     ...(sourceGatewayId ? [["source", sourceGatewayId] as ["source", string]] : []),

@@ -130,7 +130,7 @@ function isGatewayProfileImages(
 ): value is GatewayProfileImages {
   if (!isPlainRecord(value) || Object.keys(value).length !== 1) return false;
   const [profile] = Object.keys(value);
-  if (dualReadGatewayClassValue(profile) !== "builder") return false;
+  if (dualReadGatewayClassValue(profile) !== "isolated") return false;
   const isolatedImage = value[profile];
   if (!isPlainRecord(isolatedImage) || Object.keys(isolatedImage).length !== 2) return false;
   const gatewayPackageSuffix = "/octogee-gateway";

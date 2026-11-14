@@ -144,7 +144,7 @@ describe("release status", () => {
       "gateways/shared-0": gatewayRoot("shared-0"),
       "gateways/shared-0/releases/4": release("shared-0", 4),
       "glmGateways/shared-0": runtime("shared-0"),
-      "gateways/invalid": gatewayRoot("invalid", { configSchemaVersion: 0, gatewayClass: "builder" }),
+      "gateways/invalid": gatewayRoot("invalid", { configSchemaVersion: 0, gatewayClass: "isolated" }),
     });
     expect(summarizeReleaseStatus(await readReleaseStatus(store, NOW))).toEqual({
       status: "incomplete", serving: 1, converged: 1, excluded: 0,
@@ -156,7 +156,7 @@ describe("release status", () => {
     const { store } = database({
       "config/orchestrator": { defaultGatewayId: "default" },
       "gateways/default": gatewayRoot("default", { desiredStatus: "paused" }),
-      "gateways/invalid": gatewayRoot("invalid", { configSchemaVersion: 0, gatewayClass: "builder" }),
+      "gateways/invalid": gatewayRoot("invalid", { configSchemaVersion: 0, gatewayClass: "isolated" }),
     });
     expect(summarizeReleaseStatus(await readReleaseStatus(store, NOW))).toEqual({
       status: "incomplete", serving: 0, converged: 0, excluded: 1,
@@ -408,7 +408,7 @@ describe("release status", () => {
   it("surfaces durable roots with unreadable configuration instead of silently omitting them", async () => {
     const { store } = database({
       "config/orchestrator": { defaultGatewayId: "default" },
-      "gateways/default": gatewayRoot("default", { configSchemaVersion: 0, gatewayClass: "builder" }),
+      "gateways/default": gatewayRoot("default", { configSchemaVersion: 0, gatewayClass: "isolated" }),
     });
 
     await expect(readReleaseStatus(store, NOW)).resolves.toEqual({

@@ -221,8 +221,8 @@ linuxTest("ignores deferred GitHub workspaces and disabled Gitea checkouts", asy
 });
 
 it.each(["serving", "quiescing"])("User %s flush never commits disabled Native bootstrap files", async state => {
-  vi.stubEnv("GATEWAY_CLASS", "builder");
-  vi.stubEnv("GATEWAY_PROFILE", "builder");
+  vi.stubEnv("GATEWAY_CLASS", "isolated");
+  vi.stubEnv("GATEWAY_PROFILE", "isolated");
   vi.stubEnv("GATEWAY_ID", "builder-one");
   vi.stubEnv("K8S_SERVICE_ACCOUNT_NAME", "octogee-gw-builder-one");
   reviewed.saName = "octogee-gw-builder-one";

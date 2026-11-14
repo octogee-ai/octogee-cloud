@@ -34,7 +34,7 @@ describe("pre-boot config entrypoint", () => {
     } finally { anchor.close(); }
     const before = fs.readFileSync(anchorPath);
     const env = {
-      ...process.env, HOME: root, GATEWAY_CLASS: "builder", GATEWAY_RUNTIME_KIND: "cluster",
+      ...process.env, HOME: root, GATEWAY_CLASS: "isolated", GATEWAY_RUNTIME_KIND: "cluster",
       OPENCLAW_DIR: root, OPENCLAW_STATE_DIR: root, OPENCLAW_CONFIG_PATH: configPath,
     };
     const result = spawnSync(tsx, [entrypoint, "--defer-builder-store-migration"], { encoding: "utf8", env });
@@ -102,7 +102,7 @@ describe("pre-boot config entrypoint", () => {
 });
 
 
-it.each(["builder", "shared"])("defers only a Builder's full migration to the held supervisor: %s", gatewayClass => {
+it.each(["isolated", "shared"])("defers only a Builder's full migration to the held supervisor: %s", gatewayClass => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "user-selector-boot-")); temporaryDirectories.push(root);
   const configPath = path.join(root, "openclaw.json");
   const raw = JSON.stringify({ database: { engine: "sqlite" } });
@@ -110,7 +110,7 @@ it.each(["builder", "shared"])("defers only a Builder's full migration to the he
   const result = spawnSync(tsx, [entrypoint, "--defer-builder-store-migration"], { encoding: "utf8", env: {
     ...process.env, HOME: root, OPENCLAW_DIR: root, OPENCLAW_STATE_DIR: root, OPENCLAW_CONFIG_PATH: configPath, GATEWAY_CLASS: gatewayClass,
   } });
-  expect(result.status).toBe(gatewayClass === "builder" ? 0 : 1);
+  expect(result.status).toBe(gatewayClass === "isolated" ? 0 : 1);
   expect(fs.readFileSync(configPath, "utf8")).toBe(raw);
-  if (gatewayClass === "builder") expect(result.stdout).toContain("supervisor");
+  if (gatewayClass === "isolated") expect(result.stdout).toContain("supervisor");
 });

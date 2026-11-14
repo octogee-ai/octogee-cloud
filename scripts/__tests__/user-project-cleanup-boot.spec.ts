@@ -34,7 +34,7 @@ async function boot(gatewayClass: string, runtime: string, expectEmptyRemoved: b
     .replace("export OPENCLAW_DIR=/home/node/.openclaw", `export OPENCLAW_DIR='${state}'`)
     .replace(/BUILDER_SLUG=""\nif [^\n]*\n[\s\S]*?\nfi\n/u, "BUILDER_SLUG=alice\n")
     .replaceAll("/octogee", repo);
-  if (gatewayClass === "builder") writeTestUserClaim(state, "alice");
+  if (gatewayClass === "isolated") writeTestUserClaim(state, "alice");
   const reader = path.join(root, "reader.mjs");
   await writeFile(reader, `import assert from 'node:assert/strict';import fs from 'node:fs';assert.equal(fs.existsSync(process.env.OPENCLAW_DIR+'/customers/alice/projects/rvshare'),${!expectEmptyRemoved});console.log('runtime-reader-started');`);
   return spawnSync("sh", ["-s"], {
@@ -44,7 +44,7 @@ async function boot(gatewayClass: string, runtime: string, expectEmptyRemoved: b
 }
 
 it.each(["gce-vm", "cluster"])("cleans retained %s user placeholders before runtime readers without reinitializing storage", async runtime => {
-  const result = await boot("builder", runtime, true);
+  const result = await boot("isolated", runtime, true);
   expect(result.status, result.stderr).toBe(0);
   expect(result.stdout).toContain("runtime-reader-started");
   expect(await readFile(path.join(projects, "demo/local.txt"), "utf8")).toBe("retain local work");
@@ -66,7 +66,7 @@ it("fails boot before runtime readers if an empty project is a symlink", async (
   const foreign = path.join(root, "foreign");
   await mkdir(foreign);
   await symlink(foreign, path.join(projects, "rvshare"));
-  const result = await boot("builder", "gce-vm", true);
+  const result = await boot("isolated", "gce-vm", true);
   expect(result.status).not.toBe(0);
   expect(result.stdout).not.toContain("runtime-reader-started");
   expect(await readdir(foreign)).toEqual([]);
@@ -86,7 +86,7 @@ it("cleans directory shells imported after boot before a held user is released",
 
 it("permits a fresh user with no existing projects without creating a working set", async () => {
   await rm(path.join(state, "customers"), { recursive: true });
-  await runUserProjectCleanup(withUserClaim({ GATEWAY_CLASS: "builder", OPENCLAW_DIR: state }, "alice"));
+  await runUserProjectCleanup(withUserClaim({ GATEWAY_CLASS: "isolated", OPENCLAW_DIR: state }, "alice"));
   await expect(readdir(path.join(state, "customers"))).rejects.toMatchObject({ code: "ENOENT" });
 });
 
@@ -96,13 +96,13 @@ it("rejects a symlink user ancestor without entering its work", async () => {
   await mkdir(path.join(foreign, "alice/projects/demo"), { recursive: true });
   await writeFile(path.join(foreign, "alice/projects/demo/local.txt"), "foreign work");
   await symlink(foreign, path.join(state, "customers"));
-  await expect(runUserProjectCleanup(withUserClaim({ GATEWAY_CLASS: "builder", OPENCLAW_DIR: state }, "alice"))).rejects.toThrow();
+  await expect(runUserProjectCleanup(withUserClaim({ GATEWAY_CLASS: "isolated", OPENCLAW_DIR: state }, "alice"))).rejects.toThrow();
   expect(await readFile(path.join(foreign, "alice/projects/demo/local.txt"), "utf8")).toBe("foreign work");
 });
 
 it.each([
   { label: "a shared gateway", gatewayClass: "shared", claimed: true },
-  { label: "a Builder without a claim", gatewayClass: "builder", claimed: false },
+  { label: "a Builder without a claim", gatewayClass: "isolated", claimed: false },
 ])("rejects cleanup for $label", async ({ gatewayClass, claimed }) => {
   const env = { GATEWAY_CLASS: gatewayClass, OPENCLAW_DIR: state, GATEWAY_ID: TEST_CLAIM_GATEWAY_ID, GATEWAY_BUILDER_SLUG: "alice" };
   await expect(runUserProjectCleanup(claimed ? withUserClaim(env, "alice") : env)).rejects.toThrow();

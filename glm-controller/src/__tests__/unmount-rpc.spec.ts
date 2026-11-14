@@ -188,7 +188,7 @@ describe("buildGatewayHeartbeatPollerDeps", () => {
   });
 
   it("leaves shared eviction to the in-pod reconciler and owns user eviction", async () => {
-    const durableGateway = (gatewayClass: "shared" | "builder") => ({
+    const durableGateway = (gatewayClass: "shared" | "isolated") => ({
       gatewayId: "walter",
       latestRelease: 1,
       desiredRelease: 1,
@@ -196,7 +196,7 @@ describe("buildGatewayHeartbeatPollerDeps", () => {
       configSchemaVersion: 1,
       profile: null,
       gatewayClass,
-      imageProfile: gatewayClass === "builder" ? "builder" : "standard",
+      imageProfile: gatewayClass === "isolated" ? "isolated" : "standard",
       sizingTier: null,
       gcpProject: null,
       gatewayContainerSecurityContext: null,
@@ -212,7 +212,7 @@ describe("buildGatewayHeartbeatPollerDeps", () => {
     const deps = buildGatewayHeartbeatPollerDeps(createDocumentFixtureStore(documents), vi.fn(), FLEET_KEY_PAIR.privateKey, stubInformer());
 
     await expect(deps.ownsEviction?.("walter")).resolves.toBe(false);
-    documents.set("gateways/walter", durableGateway("builder"));
+    documents.set("gateways/walter", durableGateway("isolated"));
     await expect(deps.ownsEviction?.("walter")).resolves.toBe(true);
   });
 });
@@ -341,8 +341,8 @@ describe("gateway heartbeat poll — a converged poll reads nothing", () => {
     desiredStatus: "running",
     configSchemaVersion: 1,
     profile: null,
-    gatewayClass: "builder",
-    imageProfile: "builder",
+    gatewayClass: "isolated",
+    imageProfile: "isolated",
     sizingTier: null,
     gcpProject: null,
     gatewayContainerSecurityContext: null,

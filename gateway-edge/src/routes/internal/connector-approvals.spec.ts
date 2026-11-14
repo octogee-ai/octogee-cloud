@@ -27,7 +27,7 @@ function send(body = { purpose: "connector-approval", command, authorization: "B
 }
 beforeEach(() => {
   vi.stubEnv("BYOT_SYNC_INTERNAL_PUBLIC_KEY", keys.publicKey.export({ type: "spki", format: "pem" }).toString());
-  vi.stubEnv("GATEWAY_ID", gatewayId); vi.stubEnv("GATEWAY_CLASS", "builder");
+  vi.stubEnv("GATEWAY_ID", gatewayId); vi.stubEnv("GATEWAY_CLASS", "isolated");
   h.run.mockReset().mockResolvedValue({ approval: { status: "allowed" } });
   h.identity.mockReset().mockResolvedValue({ uid: "delegate", gatewayId });
 });

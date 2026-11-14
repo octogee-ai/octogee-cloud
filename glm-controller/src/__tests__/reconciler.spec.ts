@@ -1029,7 +1029,7 @@ describe("gateway convergence pass outcomes", () => {
 
   it("converges an existing cluster user despite retained GCE VM state", async () => {
     const roots = {
-      hobby: durableRoot({ gatewayId: "hobby", gatewayClass: "builder", profile: null, imageProfile: "builder", sizingTier: "s", ownerUid: "u", builderSlug: "alice", liveRelease: null }),
+      hobby: durableRoot({ gatewayId: "hobby", gatewayClass: "isolated", profile: null, imageProfile: "isolated", sizingTier: "s", ownerUid: "u", builderSlug: "alice", liveRelease: null }),
       healthy: durableRoot({ gatewayId: "healthy", liveRelease: null }),
     };
     const runtimes: Record<string, Record<string, unknown>> = { hobby: servingRuntime({ gatewayId: "hobby", runtime: "cluster" }) };
@@ -1047,7 +1047,7 @@ describe("gateway convergence pass outcomes", () => {
 
   it("gives an isolated gateway that runs as a pod its home claim before Helm, and rolls it by recreate", async () => {
     const roots = {
-      pod: durableRoot({ gatewayId: "pod", gatewayClass: "builder", profile: null, imageProfile: "builder", sizingTier: "s", ownerUid: "u", builderSlug: "alice", liveRelease: null }),
+      pod: durableRoot({ gatewayId: "pod", gatewayClass: "isolated", profile: null, imageProfile: "isolated", sizingTier: "s", ownerUid: "u", builderSlug: "alice", liveRelease: null }),
       healthy: durableRoot({ gatewayId: "healthy", liveRelease: null }),
     };
     const runtimes: Record<string, Record<string, unknown>> = {};
@@ -1065,7 +1065,7 @@ describe("gateway convergence pass outcomes", () => {
 
   it("neither claims nor checks a pod gateway's home once its runtime mutation stops being allowed during the pass", async () => {
     const roots: Record<string, Record<string, unknown>> = {
-      pod: durableRoot({ gatewayId: "pod", gatewayClass: "builder", profile: null, imageProfile: "builder", sizingTier: "s", ownerUid: "u", builderSlug: "alice", liveRelease: null }),
+      pod: durableRoot({ gatewayId: "pod", gatewayClass: "isolated", profile: null, imageProfile: "isolated", sizingTier: "s", ownerUid: "u", builderSlug: "alice", liveRelease: null }),
     };
     const h = isolatedPodPass(roots, {}, { pod: POD_PROFILE });
     h.ensureIsolatedPodHome.mockRejectedValue(new Error("isolated gateway pod is served but its home claim octogee-gateway-pod-data is missing"));
@@ -1087,7 +1087,7 @@ describe("gateway convergence pass outcomes", () => {
     ["a VM profile at its tier", { vm: VM_PROFILE }, "isolated gateway pod runs as a pod, but the isolated sizing profile at tier m describes a gce-vm computer"],
   ])("refuses to start a pod gateway with %s", async (_name, sizingProfiles, error) => {
     const roots = {
-      pod: durableRoot({ gatewayId: "pod", gatewayClass: "builder", profile: null, imageProfile: "builder", sizingTier: "m", ownerUid: "u", builderSlug: "alice", liveRelease: null }),
+      pod: durableRoot({ gatewayId: "pod", gatewayClass: "isolated", profile: null, imageProfile: "isolated", sizingTier: "m", ownerUid: "u", builderSlug: "alice", liveRelease: null }),
     };
     const h = isolatedPodPass(roots, { pod: servingRuntime({ gatewayId: "pod", runtime: "cluster" }) }, sizingProfiles);
 
@@ -1465,9 +1465,9 @@ describe("startReconciler — durable root authority (GATEWAY-SIMPLE-ROLL-SPEC)"
       ...reconcilerState({
         roots: {
           default: durableRoot({
-            profile: "builder",
-            gatewayClass: "builder",
-            imageProfile: "builder",
+            profile: "isolated",
+            gatewayClass: "isolated",
+            imageProfile: "isolated",
             ownerUid: "uid-b",
             builderSlug: "b",
           }),
@@ -1735,9 +1735,9 @@ describe("startReconciler — targeted gateways ahead of a queued full reconcile
   function userRoot(gatewayId: string): Record<string, unknown> {
     return durableRoot({
       gatewayId,
-      profile: "builder",
-      gatewayClass: "builder",
-      imageProfile: "builder",
+      profile: "isolated",
+      gatewayClass: "isolated",
+      imageProfile: "isolated",
       ownerUid: `uid-${gatewayId}`,
       builderSlug: gatewayId,
       liveRelease: null,

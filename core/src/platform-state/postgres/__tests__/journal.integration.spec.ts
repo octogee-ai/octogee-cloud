@@ -42,7 +42,7 @@ describe.skipIf(!dsn)("PostgreSQL journal repositories", () => {
         firstStartedAt: 1_700_000_000_100,
         lastResumedAt: 1_700_000_000_200,
         completedAt: null,
-        input: { uid: "uid-1", gatewayId: "g1", builderSlug: "ada", nested: { list: [1, "two", null, { deep: true }] } },
+        input: { uid: "uid-1", gatewayId: "g1", userSlug: "ada", nested: { list: [1, "two", null, { deep: true }] } },
         steps: [{ name: "prepare", status: "done", startedAt: 1, completedAt: 2 }, { name: "copy", status: "running" }],
         error: "transient",
         rolledBack: false,
@@ -54,7 +54,7 @@ describe.skipIf(!dsn)("PostgreSQL journal repositories", () => {
         attemptHistory: [{ attempt: 1, steps: [], error: "first" } as never],
         output: { result: "ok" },
         progress: [{ phase: "copy", status: "running", at: 5, migrationId: "m1", slug: "ada", source: "g0" }],
-        customerMigrationV2: { phase: "preSynced" } as never,
+        userMigrationV2: { phase: "preSynced" } as never,
         sourceTransferExecution: { mode: "copy" } as never,
         schedulerHandoff: { state: "held" } as never,
         schedulerHandoffReleased: false,
@@ -163,11 +163,11 @@ describe.skipIf(!dsn)("PostgreSQL journal repositories", () => {
     });
 
     it("lists by user slug prefix, treating LIKE wildcards in the prefix literally", async () => {
-      await harness.store.journal.operations.create(operation({ id: "s1", input: { builderSlug: "ada-one" } }));
-      await harness.store.journal.operations.create(operation({ id: "s2", input: { builderSlug: "ada-two" } }));
-      await harness.store.journal.operations.create(operation({ id: "s3", input: { builderSlug: "adam" } }));
-      await harness.store.journal.operations.create(operation({ id: "s4", input: { builderSlug: "a%_x" } }));
-      await harness.store.journal.operations.create(operation({ id: "s5", input: { builderSlug: "abcx" } }));
+      await harness.store.journal.operations.create(operation({ id: "s1", input: { userSlug: "ada-one" } }));
+      await harness.store.journal.operations.create(operation({ id: "s2", input: { userSlug: "ada-two" } }));
+      await harness.store.journal.operations.create(operation({ id: "s3", input: { userSlug: "adam" } }));
+      await harness.store.journal.operations.create(operation({ id: "s4", input: { userSlug: "a%_x" } }));
+      await harness.store.journal.operations.create(operation({ id: "s5", input: { userSlug: "abcx" } }));
 
       expect(ids(await harness.store.journal.operations.listByInputUserSlugPrefix("ada-"))).toEqual(["s1", "s2"]);
       expect(ids(await harness.store.journal.operations.listByInputUserSlugPrefix("a%_"))).toEqual(["s4"]);

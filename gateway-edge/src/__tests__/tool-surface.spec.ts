@@ -65,7 +65,7 @@ describe('hosted native Browser surface', () => {
       });
     });
     const nativeBase = `http://127.0.0.1:${(native.address() as AddressInfo).port}`;
-    const surface = createToolSurface({ env: { GATEWAY_ID: 'b-alice', GATEWAY_CLASS: 'builder', OPENCLAW_CONTROL_IDENTITY: 'per-user', OCTOGEE_DESKTOP_NODE_IDENTITY_PATH: desktopIdentityPath, OPENCLAW_GATEWAY_URL: nativeBase, API_PUBLIC_URL: 'https://api.example' }, resolveAccess, resolveChannel, resolveControl, fetchImpl, authorizationIntervalMs: 25, log: vi.fn(), openUpstream: async () => {
+    const surface = createToolSurface({ env: { GATEWAY_ID: 'b-alice', GATEWAY_CLASS: 'isolated', OPENCLAW_CONTROL_IDENTITY: 'per-user', OCTOGEE_DESKTOP_NODE_IDENTITY_PATH: desktopIdentityPath, OPENCLAW_GATEWAY_URL: nativeBase, API_PUBLIC_URL: 'https://api.example' }, resolveAccess, resolveChannel, resolveControl, fetchImpl, authorizationIntervalMs: 25, log: vi.fn(), openUpstream: async () => {
       const ws = new WebSocket(nativeBase.replace('http:', 'ws:')); await new Promise<void>((resolve, reject) => { ws.once('open', resolve); ws.once('error', reject); }); return { ws, scopes };
     } });
     app = express(); app.use(express.json()); app.use('/api/g/:gatewayId/tools', surface.router);

@@ -74,7 +74,7 @@ function preparePluginRoots(root: string) {
   spawnSync("git", ["init", "-q", path.join(root, "system_config")], { stdio: "ignore" });
   return spawnSync("sh", ["-c", `set -e\nlog() { printf '%s\\n' "$*"; }\n${entrypoint.slice(start, end)}`], {
     encoding: "utf8",
-    env: { ...process.env, GATEWAY_CLASS_EFFECTIVE: "builder", OPENCLAW_DIR: root, OPENCLAW_CONFIG_PATH: path.join(root, "system_config", "openclaw.json") },
+    env: { ...process.env, GATEWAY_CLASS_EFFECTIVE: "isolated", OPENCLAW_DIR: root, OPENCLAW_CONFIG_PATH: path.join(root, "system_config", "openclaw.json") },
   });
 }
 
@@ -84,7 +84,7 @@ describe("Gateway startup state authority", () => {
     const configPath = "/home/node/.openclaw/system_config/openclaw.json";
     const run = spawnSync("sh", ["-c", `${setup}\n"$1" -e 'process.stdout.write(JSON.stringify({state:process.env.OPENCLAW_STATE_DIR,config:process.env.OPENCLAW_CONFIG_PATH}))'`, "_", process.execPath], {
       encoding: "utf8",
-      env: { ...process.env, OCTOGEE_LIBEXEC_DIR: path.join(repoRoot, "infra/gateway"), GATEWAY_CLASS: "builder", GATEWAY_RUNTIME_KIND: "", OPENCLAW_STATE_DIR: inheritedState, OPENCLAW_CONFIG_PATH: configPath },
+      env: { ...process.env, OCTOGEE_LIBEXEC_DIR: path.join(repoRoot, "infra/gateway"), GATEWAY_CLASS: "isolated", GATEWAY_RUNTIME_KIND: "", OPENCLAW_STATE_DIR: inheritedState, OPENCLAW_CONFIG_PATH: configPath },
     });
     expect(run.status, run.stderr).toBe(0);
     expect(JSON.parse(run.stdout)).toEqual({ state: "/home/node/.openclaw", config: configPath });
@@ -232,7 +232,7 @@ describe("infra/gateway/entrypoint.sh — identity-pure boot (GATEWAY-SIMPLE-ROL
     expect(entrypoint.match(/supervise_runner\s+system-config-watch/g)).toHaveLength(1);
     const watcherIdx = entrypoint.indexOf("supervise_runner system-config-watch");
     const guard = entrypoint.slice(entrypoint.lastIndexOf("if [", watcherIdx), watcherIdx);
-    expect(guard).toMatch(/"\$GATEWAY_CLASS_EFFECTIVE" = "builder"/);
+    expect(guard).toMatch(/"\$GATEWAY_CLASS_EFFECTIVE" = "isolated"/);
   });
 
   it("claims the user identity before any owner-scoped pre-boot step and never boots unclaimed", () => {
@@ -244,7 +244,7 @@ describe("infra/gateway/entrypoint.sh — identity-pure boot (GATEWAY-SIMPLE-ROL
     expect(entrypoint.slice(entrypoint.lastIndexOf("if [", restoreIdx), restoreIdx)).toMatch(/"\$GATEWAY_CLASS_EFFECTIVE" != "shared"/);
     for (const userOnly of ["clean-user-project-placeholders.ts", "IdentityFile", "mark-overlay-applied"]) {
       const idx = entrypoint.indexOf(userOnly);
-      expect(entrypoint.slice(entrypoint.lastIndexOf("if [", idx), idx), userOnly).toMatch(/"\$GATEWAY_CLASS_EFFECTIVE" = "builder"/);
+      expect(entrypoint.slice(entrypoint.lastIndexOf("if [", idx), idx), userOnly).toMatch(/"\$GATEWAY_CLASS_EFFECTIVE" = "isolated"/);
     }
     for (const runner of ["github-cli-auth-hydrate.ts", "isolated-toolchain-hydrator.ts", "system-config-watch.ts"]) {
       const idx = entrypoint.indexOf(`/octogee/scripts/entrypoints/${runner}`);
@@ -272,7 +272,7 @@ describe("infra/gateway/entrypoint.sh — identity-pure boot (GATEWAY-SIMPLE-ROL
     const supervisorIdx = entrypoint.indexOf("supervise_runner surge-openclaw-supervisor");
     const directStartIdx = entrypoint.indexOf("openclaw gateway run");
     expect(supervisorIdx).toBeGreaterThan(-1);
-    const branchIdx = entrypoint.lastIndexOf('if [ "$GATEWAY_CLASS_EFFECTIVE" = "builder" ]; then', supervisorIdx);
+    const branchIdx = entrypoint.lastIndexOf('if [ "$GATEWAY_CLASS_EFFECTIVE" = "isolated" ]; then', supervisorIdx);
     expect(branchIdx).toBeGreaterThan(-1);
     const nearestGuard = entrypoint.lastIndexOf("if [", supervisorIdx);
     expect(nearestGuard, "every user boot starts the supervisor").toBe(branchIdx);
@@ -313,9 +313,9 @@ describe("infra/gateway/entrypoint.sh — identity-pure boot (GATEWAY-SIMPLE-ROL
 
 describe("infra/gateway/entrypoint.sh — isolated-only user runtime", () => {
   it("rejects retired user gateway classes and profiles", () => {
-    expect(entrypoint).toMatch(/shared\|builder/);
-    expect(entrypoint).toMatch(/GATEWAY_CLASS must be shared or builder/);
-    expect(entrypoint).toMatch(/GATEWAY_PROFILE must be standard or builder/);
+    expect(entrypoint).toMatch(/shared\|isolated/);
+    expect(entrypoint).toMatch(/GATEWAY_CLASS must be shared or isolated/);
+    expect(entrypoint).toMatch(/GATEWAY_PROFILE must be standard or isolated/);
     expect(entrypoint).not.toMatch(/shared\|user\|operator|standard\|user\|operator/);
   });
 
@@ -323,7 +323,7 @@ describe("infra/gateway/entrypoint.sh — isolated-only user runtime", () => {
     const stamperRegion = entrypoint.match(
       /[\s\S]{0,200}stamp-claude-first-run\.mjs[\s\S]{0,250}/,
     )?.[0];
-    expect(stamperRegion).toMatch(/GATEWAY_CLASS_EFFECTIVE[\s\S]*= "builder"[\s\S]*-f/);
+    expect(stamperRegion).toMatch(/GATEWAY_CLASS_EFFECTIVE[\s\S]*= "isolated"[\s\S]*-f/);
     expect(entrypoint).not.toMatch(/apply-isolated-codex-sandbox\.mjs/);
     expect(entrypoint).not.toMatch(/apply-operator-codex-sandbox\.mjs/);
     expect(entrypoint).not.toMatch(/operator\.env/);

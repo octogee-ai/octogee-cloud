@@ -199,7 +199,7 @@ export async function prepareConfiguredIsolatedTarget(
 ): Promise<void> {
   const tsx = env.TSX ?? "/octogee/scripts/node_modules/.bin/tsx";
   const policy = env.GATEWAY_CLASS_POLICY_PATH ?? "/octogee/infra/gateway/apply-gateway-class-policy.mjs";
-  const userEnv = { ...env, GATEWAY_CLASS: "builder" };
+  const userEnv = { ...env, GATEWAY_CLASS: "isolated" };
   await run(tsx, ["/octogee/scripts/entrypoints/pre-boot-config.ts"], { env: userEnv });
   await run("node", [policy], { env: userEnv });
   await run(tsx, ["/octogee/scripts/entrypoints/ensure-configured-agent-runtime-dirs.ts"], { env: userEnv });

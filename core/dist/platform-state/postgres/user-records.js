@@ -1,11 +1,9 @@
 import { MANAGED_CHANNEL_INSTALLATION } from "../channel-identities.js";
 import { clearManagedChannelIdentity, linkChannelIdentity, managedExternalUserIdOf, managedOwnerIdOf } from "./channel-identities.js";
 import { isDeepStrictEqual } from "node:util";
-import { dualReadGatewayClassValue } from "@octogee/shared/types/glm";
 import { DuplicateRecordError, FenceMismatchError, MalformedRecordError, MissingRecordError, } from "../errors.js";
 import { serverNow } from "./records.js";
 import { SqlParameters } from "./sql.js";
-import { storedGatewayClassValue } from "./stored-gateway-class.js";
 import { column, containsServerNow, encodeColumn, isClearField, resolveJsonValue, revisionOf } from "./values.js";
 const LEASE_STATUSES = [
     "requested",
@@ -209,7 +207,7 @@ function decodeGatewayMirror(fields) {
     return present({
         gatewayId,
         gatewayAssignedAt: fields.optional("gateway_assigned_at"),
-        gatewayProfile: dualReadGatewayClassValue(fields.optional("gateway_profile")),
+        gatewayProfile: fields.optional("gateway_profile"),
         controlUiEnabled: fields.optional("control_ui_enabled"),
     });
 }
@@ -332,7 +330,7 @@ function patchAssignments(patch) {
 function encodeValue(spec, value, parameters, now) {
     if (value === null || isClearField(value))
         return "NULL";
-    return encodeColumn(spec, spec === COLUMNS.gatewayProfile ? storedGatewayClassValue(value) : value, parameters, now);
+    return encodeColumn(spec, value, parameters, now);
 }
 async function resolveNow(session, jsonValues) {
     return jsonValues.some((value) => !isClearField(value) && containsServerNow(value)) ? serverNow(session) : undefined;

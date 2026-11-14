@@ -11,8 +11,8 @@ let directory: string;
 beforeEach(()=>{
   directory=mkdtempSync(join(tmpdir(),"project-flush-auth-"));
   writeFileSync(join(directory,"token"),"projected-token");
-  vi.stubEnv("GATEWAY_CLASS","builder");installTestUserIdentity(claimedTestUser("alice","builder-one"));
-  vi.stubEnv("GATEWAY_PROFILE","builder");vi.stubEnv("INTERNAL_SERVICE_KEY","");
+  vi.stubEnv("GATEWAY_CLASS","isolated");installTestUserIdentity(claimedTestUser("alice","builder-one"));
+  vi.stubEnv("GATEWAY_PROFILE","isolated");vi.stubEnv("INTERNAL_SERVICE_KEY","");
   vi.stubEnv("GATEWAY_ID","builder-one");vi.stubEnv("K8S_NAMESPACE","octogee-test");
   vi.stubEnv("K8S_SERVICE_ACCOUNT_NAME","octogee-gw-builder-one");
   vi.stubEnv("OCTOGEE_API_SA_TOKEN_PATH",join(directory,"token"));

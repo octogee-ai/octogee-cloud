@@ -7,10 +7,10 @@ import {runGatewayRuntimeExclusive} from './gateway-runtime-mutation.js';
 
 function harness() {
  const state = {phase:'sourceQuiesced',operationId:'op-1',migrationId:'mig-1',uid:'uid-1',slug:'builder',sourceGatewayId:'shared-one',sourceEpoch:3,sourceRelease:1,targetRelease:2,sourceAssignmentMode:'assigned',targetGatewayId:'target'} as UserMigrationV2State;
- const op: Operation = {id:'op-1',kind:'migrate-user',status:'running',createdBy:'test',createdAt:90,startedAt:100,completedAt:null,steps:[],input:{uid:'uid-1',fromGatewayId:'shared-one',toGatewayId:'target',sourceTransferMode:'retained-pod'},customerMigrationV2:state};
+ const op: Operation = {id:'op-1',kind:'migrate-user',status:'running',createdBy:'test',createdAt:90,startedAt:100,completedAt:null,steps:[],input:{uid:'uid-1',fromGatewayId:'shared-one',toGatewayId:'target',sourceTransferMode:'retained-pod'},userMigrationV2:state};
  const user: {username:string;provisioning:{openclaw:{gatewayId:string;sourceTransferFence?:SourceTransferFence}}} = {username:'builder',provisioning:{openclaw:{gatewayId:'shared-one'}}};
  const assignment={uid:'uid-1',slug:'builder',gatewayId:'shared-one',source:'onboarding',epoch:3,state:'quiescing',updatedByOperationId:'op-1'};
- const docs = new Map<string,Record<string,unknown>>([['glmOperations/op-1',structuredClone(op) as unknown as Record<string,unknown>],['users/uid-1',user],['gateways/shared-one/assignments/uid-1',assignment],['gateways/shared-one',{gatewayId:'shared-one',gatewayClass:'shared',desiredStatus:'running',desiredRelease:1,latestRelease:1,liveRelease:1}],['gateways/target',{gatewayId:'target',gatewayClass:'builder',desiredStatus:'running',desiredRelease:2,latestRelease:2,liveRelease:2}],['glmGateways/target',{docKind:'runtime',gatewayId:'target',release:2,lifecycle:'serving',runtime:'gce-vm',vm:{instanceId:'instance-2',instanceName:'target',internalIp:'10.0.0.2'}}]]);
+ const docs = new Map<string,Record<string,unknown>>([['glmOperations/op-1',structuredClone(op) as unknown as Record<string,unknown>],['users/uid-1',user],['gateways/shared-one/assignments/uid-1',assignment],['gateways/shared-one',{gatewayId:'shared-one',gatewayClass:'shared',desiredStatus:'running',desiredRelease:1,latestRelease:1,liveRelease:1}],['gateways/target',{gatewayId:'target',gatewayClass:'isolated',desiredStatus:'running',desiredRelease:2,latestRelease:2,liveRelease:2}],['glmGateways/target',{docKind:'runtime',gatewayId:'target',release:2,lifecycle:'serving',runtime:'gce-vm',vm:{instanceId:'instance-2',instanceName:'target',internalIp:'10.0.0.2'}}]]);
  const store=createDocumentFixtureStore(docs);
  const pod={metadata:{name:'source',namespace:'octogee-test',uid:'pod-1',resourceVersion:'5'},spec:{volumes:[{name:'data',emptyDir:{}}],containers:[{name:'gateway',volumeMounts:[{name:'data',mountPath:'/home/node'}]}]},status:{podIP:'10.0.0.1',ephemeralContainerStatuses:[] as unknown[]}};
  const runCommand=vi.fn(async(_command:string,args:string[])=>{
@@ -93,7 +93,7 @@ describe('retained source controller',()=>{
  });
  it('withholds credentials when cancelled durable custody changes after dispatch but retains the fence until termination',async()=>{
   const h=harness();const original=h.runCommand.getMockImplementation()!;
-  h.runCommand.mockImplementation(async(command,args)=>{if(args.includes('patch')){const fresh=h.docs.get('glmOperations/op-1')!;fresh.cancellationRequestedAt=1;(fresh.customerMigrationV2 as UserMigrationV2State).phase='preSynced';}return original(command,args);});
+  h.runCommand.mockImplementation(async(command,args)=>{if(args.includes('patch')){const fresh=h.docs.get('glmOperations/op-1')!;fresh.cancellationRequestedAt=1;(fresh.userMigrationV2 as UserMigrationV2State).phase='preSynced';}return original(command,args);});
   await expect(h.controller().execute(h.input)).rejects.toThrow('active claim changed');
   expect(h.record().status).toBe('dispatched');expect(h.user.provisioning.openclaw).toHaveProperty('sourceTransferFence');expect(h.attach).not.toHaveBeenCalled();
  });
@@ -204,12 +204,12 @@ describe('retained source controller',()=>{
  it.each(['claim','cancel','slug','epoch','state','owner','root','retirement','stopped','restore','existing-fence'])('rejects changed %s authority before target prepare',async change=>{
   const h=harness();const op=h.docs.get('glmOperations/op-1')!;
   if(change==='claim')op.startedAt=101;
-  if(change==='cancel'){op.cancellationRequestedAt=1;(op.customerMigrationV2 as UserMigrationV2State).phase='preSynced';}
+  if(change==='cancel'){op.cancellationRequestedAt=1;(op.userMigrationV2 as UserMigrationV2State).phase='preSynced';}
   if(change==='slug')h.user.username='other';
   if(change==='epoch')h.assignment.epoch=4;
   if(change==='state')h.assignment.state='serving';
   if(change==='owner')h.assignment.updatedByOperationId='other';
-  if(change==='root')h.docs.set('gateways/shared-one',{...h.docs.get('gateways/shared-one'),gatewayClass:'builder'});
+  if(change==='root')h.docs.set('gateways/shared-one',{...h.docs.get('gateways/shared-one'),gatewayClass:'isolated'});
   if(change==='retirement')Object.assign(h.docs.get('gateways/shared-one')!,{retirementClaim:{operationId:'retire'}});
   if(change==='stopped')Object.assign(h.docs.get('gateways/shared-one')!,{desiredStatus:'retired'});
   if(change==='restore')Object.assign(h.user.provisioning.openclaw,{restoreFence:{}});
@@ -238,7 +238,7 @@ describe('retained source forward continuation',()=>{
  });
  it.each(['phase','claim','operation','migration','uid','slug','source','target','epoch'])('rejects cancelled continuation after its durable %s changes',async fault=>{
   const h=harness();const fresh=h.docs.get('glmOperations/op-1')!;fresh.cancellationRequestedAt=201;
-  const durable=fresh.customerMigrationV2 as Record<string,unknown>;
+  const durable=fresh.userMigrationV2 as Record<string,unknown>;
   if(fault==='phase')durable.phase='preSynced';
   if(fault==='claim')fresh.startedAt=101;
   const field={operation:'operationId',migration:'migrationId',uid:'uid',slug:'slug',source:'sourceGatewayId',target:'targetGatewayId',epoch:'sourceEpoch'}[fault];

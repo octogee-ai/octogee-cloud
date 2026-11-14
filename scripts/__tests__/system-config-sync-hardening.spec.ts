@@ -44,7 +44,7 @@ afterEach(() => {
 });
 
 describe("system config sync hardening", () => {
-  const userEnv = { ...env, GATEWAY_CLASS: "builder", GATEWAY_ID: "ceckert-s-1", GATEWAY_BUILDER_SLUG: "ceckert" };
+  const userEnv = { ...env, GATEWAY_CLASS: "isolated", GATEWAY_ID: "ceckert-s-1", GATEWAY_BUILDER_SLUG: "ceckert" };
   const driftedPlatformAccount = (config: Record<string, unknown>) => {
     config.agents = { list: [{ id: "octogee-ceckert-coach" }] };
     const channels = (config.channels ??= {}) as Record<string, unknown>;

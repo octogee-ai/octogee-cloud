@@ -55,7 +55,7 @@ function returnLeaseMatches(user: PlatformUserRecord, scope: RecoveryScope, oper
 function ownedSourceMatches(source: GatewayRoot | null, scope: RecoveryScope, lease: UserActivationLease): boolean {
   if (source === null) return false;
   const allocation = source.allocation;
-  return [source.gatewayId === scope.sourceId, source.gatewayClass === "builder",
+  return [source.gatewayId === scope.sourceId, source.gatewayClass === "isolated",
     source.ownerUid === scope.uid, source.builderSlug === scope.slug, source.desiredStatus === "running",
     (source.liveRelease ?? 0) > 0, source.liveRelease === source.desiredRelease, source.latestRelease === source.desiredRelease,
     source.runtimeRestartFence === undefined, source.retirementClaim == null,
@@ -167,15 +167,15 @@ function assertInitialFailureScheduler(operation: OperationRecord, operationId: 
 async function readAuthority(tx: PlatformStateTransaction, uid: string, operationId: string, claimedStartedAt?: number) {
   const operation = await tx.journal.operations.get(operationId);
   const input = operation?.input ?? {};
-  requireState(operation !== null && operation.kind === "migrate-user" && identity(input.fromGatewayId) && identity(input.toGatewayId) && identity(input.builderSlug), "native return recovery operation scope is unavailable");
+  requireState(operation !== null && operation.kind === "migrate-user" && identity(input.fromGatewayId) && identity(input.toGatewayId) && identity(input.userSlug), "native return recovery operation scope is unavailable");
   requireState([operation.origin === "automatic", operation.createdBy === "glm-controller-placement-policy", operation.inputUid === uid,
     input.uid === uid, input.source === "builder-activation-lease", operation.gatewayId === input.toGatewayId,
-    operation.cutoverCommittedAt === undefined, operation.cancellationRequestedAt === undefined, operation.customerMigrationV2 === undefined,
+    operation.cutoverCommittedAt === undefined, operation.cancellationRequestedAt === undefined, operation.userMigrationV2 === undefined,
     operation.sourceTransferExecution === undefined, operation.restoreAttempt === undefined, operation.schedulerHandoffLost === undefined, input.sourceTransferMode === undefined,
     readSchedulerMigrationIdentity(operationId, operation.schedulerHandoff?.migrationId) !== null].every(Boolean), "native return recovery operation custody changed");
   const { prior, failedAt } = recoveryPhase(operation, claimedStartedAt);
   assertInitialFailureScheduler(operation, operationId, prior);
-  const scope: RecoveryScope = { uid, sourceId: input.fromGatewayId, targetId: input.toGatewayId, slug: input.builderSlug };
+  const scope: RecoveryScope = { uid, sourceId: input.fromGatewayId, targetId: input.toGatewayId, slug: input.userSlug };
   const { sourceId, targetId } = scope;
   const retirementId = `shared-pool-retire-${targetId}`;
   const [user, source, runtime, assignment, targetAssignment, targetRoot, retirement, active] = await Promise.all([

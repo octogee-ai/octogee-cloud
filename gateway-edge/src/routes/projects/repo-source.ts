@@ -101,7 +101,7 @@ async function isolatedGatewayAssigned(
   const gatewayId = assignedGatewayId(req);
   if (!gatewayId || gatewayId.includes("/")) return false;
   const gateway = await platformStateStore.gateways.roots.get(gatewayId);
-  return gateway?.gatewayClass === "builder"
+  return gateway?.gatewayClass === "isolated"
     && gateway.ownerUid === uid
     && gateway.builderSlug === workspaceSlug;
 }

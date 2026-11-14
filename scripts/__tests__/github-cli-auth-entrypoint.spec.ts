@@ -10,7 +10,7 @@ describe("User GitHub credentials", () => {
   it("starts supervised GitHub auth convergence on every user boot before OpenClaw", () => {
     const entrypoint = readFileSync(path.join(repoRoot, "infra/gateway/entrypoint.sh"), "utf8");
 
-    expect(entrypoint).toMatch(/if \[ "\$GATEWAY_CLASS_EFFECTIVE" = "builder" \]; then\n(?: {2}#[^\n]*\n)* {2}supervise_runner github-cli-auth 5000 "\$TSX" \/octogee\/scripts\/entrypoints\/github-cli-auth-hydrate\.ts\n/);
+    expect(entrypoint).toMatch(/if \[ "\$GATEWAY_CLASS_EFFECTIVE" = "isolated" \]; then\n(?: {2}#[^\n]*\n)* {2}supervise_runner github-cli-auth 5000 "\$TSX" \/octogee\/scripts\/entrypoints\/github-cli-auth-hydrate\.ts\n/);
     expect(entrypoint.indexOf("github-cli-auth-hydrate.ts")).toBeLessThan(entrypoint.indexOf("supervise_runner surge-openclaw-supervisor"));
   });
 

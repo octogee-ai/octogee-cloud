@@ -20,7 +20,7 @@ function durableGateway(gatewayId: string, ownerUid: string | null): Record<stri
     roll: null,
     configSchemaVersion: 1,
     profile: null,
-    gatewayClass: "builder",
+    gatewayClass: "isolated",
     imageProfile: "standard",
     sizingTier: null,
     gcpProject: null,

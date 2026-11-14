@@ -76,12 +76,12 @@ export const TIER_PRESETS: Record<SizingTier, SizingTierPreset> = {
 
 export const PROFILE_DEFAULT_TIER: Record<GatewayProfile, SizingTier> = {
   standard: 'l',
-  builder: 's',
+  isolated: 's',
 };
 
 export const GATEWAY_CLASS_DEFAULT_TIER: Record<GatewayClass, SizingTier> = {
   shared: 'm',
-  builder: 's',
+  isolated: 's',
 };
 
 export const FALLBACK_DEFAULT_TIER: SizingTier = 'l';

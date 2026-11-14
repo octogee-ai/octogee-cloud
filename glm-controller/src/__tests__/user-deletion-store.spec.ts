@@ -8,7 +8,7 @@ import { persistDeletionProductContext } from "../lib/user-ops/deletion-job.js";
 
 const userRoot = {
   gatewayId: "alice-gw", latestRelease: 1, desiredRelease: 1, desiredStatus: "running",
-  gatewayClass: "builder", profile: "builder", imageProfile: "builder",
+  gatewayClass: "isolated", profile: "isolated", imageProfile: "isolated",
 };
 
 function deletionJob(overrides: Record<string, unknown> = {}) {
@@ -36,7 +36,7 @@ describe("ensureAnonymousDeletionArchive", () => {
 
     expect(documents.get("customerDeletionJobs/del-1")).toMatchObject({ archiveId, updatedAt: expect.any(Number) });
     expect(documents.get(`anonymousOperationalArchives/${archiveId}`)).toMatchObject({
-      schemaVersion: 1, accountCreatedMonth: "2026-04", gatewayClass: "builder", archivedAt: expect.any(Number),
+      schemaVersion: 1, accountCreatedMonth: "2026-04", gatewayClass: "isolated", archivedAt: expect.any(Number),
       totals: { costUsd: 0, totalTokens: 0, requestCount: 0 },
     });
     await expect(ensureAnonymousDeletionArchive(accountDocuments(ALICE_ACCOUNT), store, "del-1", null)).resolves.toBe(archiveId);

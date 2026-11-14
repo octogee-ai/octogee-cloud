@@ -33,7 +33,7 @@
     "gatewayClass": {
       "type": "string",
       "enum": ["", "shared", "builder", "isolated"],
-      "description": "Product/security class. shared=multi-user shared gateway; builder=owner-bound disposable isolated gateway."
+      "description": "Gateway class. shared=multi-user shared gateway; isolated=owner-bound isolated gateway. builder is the previous spelling of isolated."
     },
     "imageProfile": {
       "type": "string",
@@ -66,10 +66,10 @@
     "classDefaults": {
       "type": "object",
       "description": "Gateway class → default tier mapping. Used when sizingTier is unset.",
-      "required": ["shared", "builder"],
+      "required": ["shared", "isolated"],
       "properties": {
         "shared": { "type": "string", "enum": ["xs", "s", "m", "l"] },
-        "builder": { "type": "string", "enum": ["xs", "s", "m", "l"] }
+        "isolated": { "type": "string", "enum": ["xs", "s", "m", "l"] }
       },
       "additionalProperties": { "type": "string" }
     },
@@ -79,7 +79,7 @@
       "required": ["standard"],
       "properties": {
         "standard": { "type": "string", "enum": ["xs", "s", "m", "l"] },
-        "builder": { "type": "string", "enum": ["xs", "s", "m", "l"] }
+        "isolated": { "type": "string", "enum": ["xs", "s", "m", "l"] }
       },
       "additionalProperties": { "type": "string" }
     },

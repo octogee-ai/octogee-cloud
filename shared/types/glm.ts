@@ -2,21 +2,21 @@ import type { SizingTier } from "./sizing.js";
 
 export type GatewayDesiredStatus = "running" | "paused" | "draining" | "retired";
 
-export const GATEWAY_PROFILES = ["standard", "builder"] as const;
+export const GATEWAY_PROFILES = ["standard", "isolated"] as const;
 export type GatewayProfile = (typeof GATEWAY_PROFILES)[number];
 
-export const GATEWAY_CLASSES = ["shared", "builder"] as const;
+export const GATEWAY_CLASSES = ["shared", "isolated"] as const;
 export type GatewayClass = (typeof GATEWAY_CLASSES)[number];
 
-export const GATEWAY_IMAGE_PROFILES = ["standard", "builder"] as const;
+export const GATEWAY_IMAGE_PROFILES = ["standard", "isolated"] as const;
 export type GatewayImageProfile = (typeof GATEWAY_IMAGE_PROFILES)[number];
 
-export function dualReadGatewayClassValue<T>(value: T): T | "builder" {
-  return value === "isolated" ? "builder" : value;
+export function dualReadGatewayClassValue<T>(value: T): T | "isolated" {
+  return value === "builder" ? "isolated" : value;
 }
 
 export function isIsolatedGatewayClassValue(value: unknown): boolean {
-  return dualReadGatewayClassValue(value) === "builder";
+  return dualReadGatewayClassValue(value) === "isolated";
 }
 
 export interface GatewayDesiredState {
@@ -641,7 +641,7 @@ export function isGatewayClassControlUiAccessEnabled(
   gatewayClass: GatewayClass | undefined,
   builderAccess: IsolatedGatewayAccessSpec | undefined,
 ): boolean {
-  return gatewayClass === "builder" && builderAccess?.controlUiEnabled === true;
+  return gatewayClass === "isolated" && builderAccess?.controlUiEnabled === true;
 }
 
 export function resolveUserGatewayControlState(
@@ -666,7 +666,7 @@ export function resolveUserGatewayControlState(
   });
   const userOwns = data?.ownerUid === uid;
   return {
-    gatewayProfile: gatewayClass === "builder" ? "builder" : "standard",
+    gatewayProfile: gatewayClass === "isolated" ? "isolated" : "standard",
     controlUiEnabled: userOwns && isGatewayClassControlUiAccessEnabled(gatewayClass, data?.builderAccess),
   };
 }
@@ -1096,7 +1096,7 @@ export interface Operation {
   attemptHistory?: OperationAttemptRecord[];
   output?: Record<string, unknown>;
   progress?: MigrationProgressRecord[];
-  customerMigrationV2?: UserMigrationV2State;
+  userMigrationV2?: UserMigrationV2State;
   sourceTransferExecution?: SourceTransferExecution;
   schedulerHandoff?: SchedulerHandoffState;
   schedulerHandoffReleased?: boolean;
@@ -1125,7 +1125,7 @@ export interface UserMigrationV2GatewayRootFence {
   latestRelease: number;
   desiredRelease: number;
   liveRelease: number;
-  gatewayClass: "builder";
+  gatewayClass: "isolated";
   ownerUid: string;
   builderSlug: string;
   configHash: string;
@@ -1212,7 +1212,7 @@ export function resolveGatewayClass(input: {
   profile?: GatewayProfile;
   imageProfile?: GatewayImageProfile;
 }): GatewayClass {
-  return input.gatewayClass === "builder" ? "builder" : "shared";
+  return input.gatewayClass === "isolated" ? "isolated" : "shared";
 }
 
 export function resolveGatewayImageProfile(input: {
@@ -1220,10 +1220,10 @@ export function resolveGatewayImageProfile(input: {
   imageProfile?: GatewayImageProfile;
   profile?: GatewayProfile;
 }): GatewayImageProfile {
-  if (input.imageProfile === "builder") return "builder";
+  if (input.imageProfile === "isolated") return "isolated";
   if (input.imageProfile === "standard") return "standard";
-  if (!input.gatewayClass && input.profile === "builder") return "builder";
-  return resolveGatewayClass(input) === "builder" ? "builder" : "standard";
+  if (!input.gatewayClass && input.profile === "isolated") return "isolated";
+  return resolveGatewayClass(input) === "isolated" ? "isolated" : "standard";
 }
 
 export interface GatewayVmBootRecoverySample {

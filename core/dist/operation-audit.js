@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import { OPERATION_AUDIT_RECORD_TYPE, OPERATION_AUDIT_SCHEMA_VERSION, isOperationAuditRecord, isOperationAuditRow, } from "@octogee/shared/types/glm";
 import { MalformedRecordError } from "./platform-state/errors.js";
-import { auditMutationsStoredAs } from "./platform-state/postgres/legacy-stored-names.js";
 export class OperationAuditMissingError extends Error {
     constructor(auditId) {
         super(`operation audit ${auditId} does not exist`);
@@ -124,7 +123,7 @@ function assertMatchingAuditIntent(auditId, data, intent) {
     if (!isOperationAuditRecord(data))
         throw new OperationAuditSchemaError(auditId);
     if (data.idempotencyKey !== intent.document.idempotencyKey ||
-        !auditMutationsStoredAs(intent.document.mutation).map(operationAuditMutationFingerprint).includes(data.mutationFingerprint)) {
+        data.mutationFingerprint !== operationAuditMutationFingerprint(intent.document.mutation)) {
         throw new OperationAuditIdempotencyConflictError(auditId);
     }
     return { ...data, id: auditId };

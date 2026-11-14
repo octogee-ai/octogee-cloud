@@ -47,7 +47,7 @@ export interface UserActivationRollRecoveryRecords {
 function userHoldsRecovery(user: Stored<PlatformUserRecord> | null, request: Record<string, unknown>, operationId: unknown): boolean {
   if (user === null) return false;
   const marker = readWorkspaceMigrationMarker({ migration: user.fences.migration });
-  return [!isolatedRuntimeMutationFenced(user), user.slug === request.builderSlug, user.gateway?.gatewayId === request.fromGatewayId,
+  return [!isolatedRuntimeMutationFenced(user), user.slug === request.userSlug, user.gateway?.gatewayId === request.fromGatewayId,
     marker?.operationId === operationId, marker?.state === 'moving'].every(Boolean);
 }
 
@@ -64,24 +64,24 @@ function qualifyUserActivationRollRecoveryState(input: UserActivationRollRecover
     operationId !== null, operation.id === operationId, operation.kind === 'migrate-user',
     operationHoldsRecoveryCustody(operation, custodyOnly),
     operation.cancellationRequestedAt === undefined, operation.cutoverCommittedAt === undefined,
-    operation.customerMigrationV2 === undefined, operation.sourceTransferExecution === undefined,
+    operation.userMigrationV2 === undefined, operation.sourceTransferExecution === undefined,
     operation.schedulerHandoffReleased !== true, operation.rolledBack !== true,
     request.recoverSourceOnly === true, request.sourceTransferMode === undefined,
-    typeof request.uid === 'string', request.uid !== '', typeof request.builderSlug === 'string', request.builderSlug !== '',
+    typeof request.uid === 'string', request.uid !== '', typeof request.userSlug === 'string', request.userSlug !== '',
     typeof request.fromGatewayId === 'string', String(request.fromGatewayId).startsWith('shared-'),
     request.toGatewayId === gateway.gatewayId, request.fromGatewayId !== gateway.gatewayId,
     gateway.desiredStatus === 'running', gateway.runtimeRestartFence === undefined,
-    gateway.gatewayClass === 'builder', allocation.kind === 'disposable-builder',
+    gateway.gatewayClass === 'isolated', allocation.kind === 'disposable-builder',
     Number.isSafeInteger(gateway.liveRelease), Number(gateway.liveRelease) > 0,
     Number.isSafeInteger(gateway.desiredRelease), Number(gateway.desiredRelease) > Number(gateway.liveRelease),
     Number.isSafeInteger(gateway.latestRelease), Number(gateway.latestRelease) >= Number(gateway.desiredRelease),
     !input.targetOccupied, userHoldsRecovery(user, request, operation.id),
     sourceRoot.gatewayClass === 'shared', sourceRoot.gatewayId === request.fromGatewayId,
     sourceRoot.desiredStatus === 'running' || sourceRoot.desiredStatus === 'draining', sourceRoot.runtimeRestartFence === undefined,
-    assignment.uid === request.uid, assignment.slug === request.builderSlug, assignment.gatewayId === request.fromGatewayId,
+    assignment.uid === request.uid, assignment.slug === request.userSlug, assignment.gatewayId === request.fromGatewayId,
     assignment.state === 'quiescing', assignment.updatedByOperationId === operation.id,
     Number.isSafeInteger(assignment.epoch), Number(assignment.epoch) >= 0,
-    identity !== null, handoff.uid === request.uid, handoff.slug === request.builderSlug,
+    identity !== null, handoff.uid === request.uid, handoff.slug === request.userSlug,
     handoff.fromGatewayId === request.fromGatewayId, handoff.toGatewayId === request.toGatewayId,
     handoff.stageAfterCutover === true, handoff.stagedAt === undefined,
     recovery.migrationId === handoff.migrationId, recovery.sourceEpoch === assignment.epoch,
@@ -91,7 +91,7 @@ function qualifyUserActivationRollRecoveryState(input: UserActivationRollRecover
   ];
   if (!checks.every(Boolean)) return null;
   return {
-    operationId: String(operation.id), migrationId: String(handoff.migrationId), uid: String(request.uid), slug: String(request.builderSlug),
+    operationId: String(operation.id), migrationId: String(handoff.migrationId), uid: String(request.uid), slug: String(request.userSlug),
     sourceGatewayId: String(request.fromGatewayId), sourceEpoch: Number(assignment.epoch), targetGatewayId: String(gateway.gatewayId),
     leaseId: String(lease.leaseId), generation: Number(lease.generation), liveRelease: Number(gateway.liveRelease),
     desiredRelease: Number(gateway.desiredRelease), latestRelease: Number(gateway.latestRelease),
@@ -127,7 +127,7 @@ export function hasUserActivationTargetRollback(operation: {
     readSchedulerMigrationIdentity(operation.id, handoff.migrationId) !== null,
     proof.operationId === operation.id, proof.migrationId === handoff.migrationId,
     proof.migrationId === recovery.migrationId, proof.sourceEpoch === recovery.sourceEpoch,
-    proof.uid === input?.uid, proof.slug === input?.builderSlug, proof.uid === handoff.uid, proof.slug === handoff.slug,
+    proof.uid === input?.uid, proof.slug === input?.userSlug, proof.uid === handoff.uid, proof.slug === handoff.slug,
     proof.sourceGatewayId === input?.fromGatewayId, proof.sourceGatewayId === handoff.fromGatewayId,
     proof.targetGatewayId === input?.toGatewayId, proof.targetGatewayId === handoff.toGatewayId,
   ].every(Boolean);
@@ -250,7 +250,7 @@ async function readUserActivationRollRecoveryState(input: UserActivationRollReco
   const { state, gatewayId } = input;
   const gateway = await state.gateways.roots.get(gatewayId);
   const allocation = gateway?.allocation;
-  if (!gateway || gateway.gatewayClass !== 'builder' || allocation?.kind !== 'disposable-builder' || typeof gateway.ownerUid !== 'string' ||
+  if (!gateway || gateway.gatewayClass !== 'isolated' || allocation?.kind !== 'disposable-builder' || typeof gateway.ownerUid !== 'string' ||
       !Number.isSafeInteger(allocation.generation) || allocation.generation <= 0) return null;
   const operationId = builderActivateOperationId(gatewayId, allocation.generation);
   const [operation, user] = await Promise.all([

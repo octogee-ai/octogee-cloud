@@ -54,7 +54,7 @@ type NativeReturnDeps = {
 type Runtime = Stored<FleetRegistryRecord> | null;
 
 function assertOwner(data: GatewayRoot | null, input: NativeVmReturnInput): void {
-  if (data?.gatewayClass !== "builder" ||
+  if (data?.gatewayClass !== "isolated" ||
       data.ownerUid !== input.uid || data.builderSlug !== input.slug) {
     throw new Error(`native computer return ${input.fromGatewayId}: source ownership changed`);
   }

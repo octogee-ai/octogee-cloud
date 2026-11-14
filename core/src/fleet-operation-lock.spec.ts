@@ -15,7 +15,7 @@ describe("findActiveGatewayMigration", () => {
       {
         status: "running",
         input: { toGatewayId: "target" },
-        customerMigrationV2: {
+        userMigrationV2: {
           sourceGatewayId: "source",
           sourceAssignmentMode: "assigned",
         },
@@ -26,7 +26,7 @@ describe("findActiveGatewayMigration", () => {
       {
         status: "running",
         input: { toGatewayId: "target" },
-        customerMigrationV2: {
+        userMigrationV2: {
           sourceGatewayId: "source",
           sourceAssignmentMode: "unassigned-live",
         },
@@ -37,7 +37,7 @@ describe("findActiveGatewayMigration", () => {
       {
         status: "running",
         input: { fromGatewayId: "other" },
-        customerMigrationV2: { targetGatewayId: "source" },
+        userMigrationV2: { targetGatewayId: "source" },
       },
     ],
   ])("finds an active migration bound through its %s", (_name, operation) => {
@@ -55,7 +55,7 @@ describe("findActiveGatewayMigration", () => {
         id: "migration",
         kind: "migrate-user",
         status,
-        customerMigrationV2: { sourceGatewayId: "source" },
+        userMigrationV2: { sourceGatewayId: "source" },
       }])).toBeNull();
     },
   );
@@ -91,7 +91,7 @@ describe("serialFleetOperationsConflict", () => {
       {
         id: "migration",
         kind: "migrate-user",
-        customerMigrationV2: { sourceGatewayId: "source" },
+        userMigrationV2: { sourceGatewayId: "source" },
       },
     )).toBe(true);
   });

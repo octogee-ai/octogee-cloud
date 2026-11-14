@@ -21,7 +21,7 @@ export const REPAIR_UNRESTORED_SCHEDULES_USAGE =
 
 const IN_FLIGHT_KINDS: ReadonlySet<string> = new Set(["migrate-user", "suspend-user", "erase-user", "deprovision-user"]);
 const IN_FLIGHT_STATUSES = ["pending", "running"] as const;
-const ISOLATED_GATEWAY_CLASS = "builder";
+const ISOLATED_GATEWAY_CLASS = "isolated";
 const FLAGS = ["--apply", "--restore-unattempted"];
 const OPTIONS = ["--env=", "--uid=", "--gateway-url="];
 

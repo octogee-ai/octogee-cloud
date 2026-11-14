@@ -122,7 +122,7 @@ describe("createGatewayModelKeySecretEnsurer", () => {
     const result = await ensurer.syncGatewayModelKeySecret({
       namespace: "octogee-test",
       gatewayId: "walter",
-      gatewayClass: "builder",
+      gatewayClass: "isolated",
     });
 
     expect(result).toMatchObject({ action: "upserted", changed: true });
@@ -157,7 +157,7 @@ describe("createGatewayModelKeySecretEnsurer", () => {
     const result = await ensurer.syncGatewayModelKeySecret({
       namespace: "octogee-test",
       gatewayId: "jack",
-      gatewayClass: "builder",
+      gatewayClass: "isolated",
     });
 
     expect(result).toMatchObject({
@@ -182,7 +182,7 @@ describe("createGatewayModelKeySecretEnsurer", () => {
     const result = await ensurer.syncGatewayModelKeySecret({
       namespace: "octogee-test",
       gatewayId: "jack",
-      gatewayClass: "builder",
+      gatewayClass: "isolated",
     });
 
     expect(result).toMatchObject({
@@ -211,7 +211,7 @@ describe("createGatewayModelKeySecretEnsurer", () => {
     const result = await ensurer.syncGatewayModelKeySecret({
       namespace: "octogee-test",
       gatewayId: "jack",
-      gatewayClass: "builder",
+      gatewayClass: "isolated",
     });
 
     expect(result).toMatchObject({ action: "upserted", changed: true });
@@ -245,7 +245,7 @@ describe("createGatewayModelKeySecretEnsurer", () => {
     const result = await ensurer.syncGatewayModelKeySecret({
       namespace: "octogee-test",
       gatewayId: "jack",
-      gatewayClass: "builder",
+      gatewayClass: "isolated",
     });
 
     expect(result).toMatchObject({ action: "unchanged", changed: false });

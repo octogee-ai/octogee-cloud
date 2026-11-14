@@ -49,7 +49,7 @@ function world(options: { gatewayId?: string; returnJournaled?: boolean; fence?:
   const records: Record<string, Record<string, unknown>> = {
     "users/uid-alice": { username: "alice", provisioning: { openclaw: { slug: "alice", gatewayId, agentId: COACH, agentIds: [COACH, SITE] } } },
     [`gateways/${VM}`]: {
-      gatewayId: VM, gatewayClass: "builder", ownerUid: "uid-alice", builderSlug: "alice", desiredStatus: "running", desiredRelease: 1, liveRelease: 1, latestRelease: 1,
+      gatewayId: VM, gatewayClass: "isolated", ownerUid: "uid-alice", builderSlug: "alice", desiredStatus: "running", desiredRelease: 1, liveRelease: 1, latestRelease: 1,
     },
     [`gateways/${SHARED}`]: { gatewayId: SHARED, gatewayClass: "shared", desiredStatus: "running", desiredRelease: 1, liveRelease: 1, latestRelease: 1 },
     ...(options.returnJournaled === false ? {} : operation(RETURN_ID, {

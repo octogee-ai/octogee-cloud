@@ -45,7 +45,7 @@ export function userActivationSourceRecoveryPending(operation: Partial<Operation
   return operation.kind === "migrate-user" && input?.source === "builder-activation-lease" &&
     isUserActivateOperationIdFor(operation.id, input.toGatewayId) &&
     typeof input.fromGatewayId === "string" && input.fromGatewayId.startsWith("shared-") &&
-    operation.schedulerHandoff?.stageAfterCutover === true && operation.customerMigrationV2 === undefined &&
+    operation.schedulerHandoff?.stageAfterCutover === true && operation.userMigrationV2 === undefined &&
     operation.cutoverCommittedAt === undefined && operation.rolledBack !== true &&
     (operation.status === "pending" || operation.status === "running" ||
       operation.status === "failed" && failedActivationHeldSource(operation));
@@ -61,7 +61,7 @@ export function releasedUserActivationSourceRecovery(operation: Partial<Operatio
     Number.isSafeInteger(checkpoint.sourceEpoch), checkpoint.sourceEpoch >= 0,
     readSchedulerMigrationIdentity(operation.id, handoff.migrationId) !== null,
     handoff.uid === input.uid, handoff.fromGatewayId === input.fromGatewayId,
-    handoff.toGatewayId === input.toGatewayId, handoff.slug === input.builderSlug,
+    handoff.toGatewayId === input.toGatewayId, handoff.slug === input.userSlug,
     handoff.sourceRecovery === undefined || handoff.sourceRecovery.sourceEpoch === checkpoint.sourceEpoch,
   ].every(Boolean);
 }
@@ -100,7 +100,7 @@ export function sourceRecoveryForwardRetryable(operation: Partial<Operation>): b
 }
 
 export function legacyAttemptNeverQuiesced(operation: Operation): boolean {
-  if (operation.customerMigrationV2 !== undefined ||
+  if (operation.userMigrationV2 !== undefined ||
       !([operation.input.fromGatewayId, operation.input.toGatewayId].every((id) => typeof id === "string" && id.startsWith("shared-")) ||
         userActivationSourceRecoveryPending(operation))) return false;
   if (failedPreSyncCleanup(operation)) return true;
@@ -114,7 +114,7 @@ function recoverableLegacyScope(operation: Operation & { cancellationRequestedAt
   if (!handoff || typeof input.fromGatewayId !== "string" || typeof input.toGatewayId !== "string") return false;
   const identity = readSchedulerMigrationIdentity(operation.id, handoff.migrationId);
   return [
-    operation.kind === "migrate-user", operation.customerMigrationV2 === undefined, handoff.forwardRecovery === undefined || releasedUserActivationSourceRecovery(operation),
+    operation.kind === "migrate-user", operation.userMigrationV2 === undefined, handoff.forwardRecovery === undefined || releasedUserActivationSourceRecovery(operation),
     operation.cutoverCommittedAt === undefined, operation.cancellationRequestedAt === undefined,
     operation.sourceTransferExecution === undefined, input.sourceTransferMode === undefined,
     Array.isArray(operation.steps),
@@ -220,7 +220,7 @@ function preparationAwaitingTargetUnmount(operation: Operation & { cancellationR
   return [
     operation.kind === "migrate-user", operation.status === "failed",
     operation.input?.source !== "builder-activation-lease",
-    operation.cutoverCommittedAt === undefined, operation.customerMigrationV2 === undefined,
+    operation.cutoverCommittedAt === undefined, operation.userMigrationV2 === undefined,
     operation.cancellationRequestedAt === undefined,
     operation.schedulerHandoff === undefined || operation.schedulerHandoffReleased === true,
     preSyncFailedWithUnconfirmedUnmount(operation.steps),

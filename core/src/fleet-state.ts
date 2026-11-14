@@ -220,11 +220,11 @@ function sourcePreparationJournalCurrent(
     marker?.operationId === params.operationId, marker?.state === "preparing", marker?.phase === "preparing",
     operation.kind === MIGRATE_USER_OPERATION_KIND, operation.status === "running", operation.startedAt === params.claimStartedAt,
     operation.cancellationRequestedAt === undefined, operation.cutoverCommittedAt === undefined,
-    operation.customerMigrationV2 === undefined, operation.sourceTransferExecution === undefined,
+    operation.userMigrationV2 === undefined, operation.sourceTransferExecution === undefined,
     operation.restoreAttempt === undefined,
     operation.schedulerHandoffLost === undefined, input.recoverSourceOnly !== true, input.sourceTransferMode === undefined,
     input.uid === params.uid, input.fromGatewayId === params.sourceGatewayId, input.toGatewayId === params.targetGatewayId,
-    input.builderSlug === undefined || input.builderSlug === params.slug,
+    input.userSlug === undefined || input.userSlug === params.slug,
   ].every(Boolean);
 }
 
@@ -272,7 +272,7 @@ export function userActivationRecoveryTargetMatches(params: {
       ? builderActivateOperationId(input.toGatewayId, lease.generation as number)
       : null),
     input.source === "builder-activation-lease",
-    root.gatewayClass === "builder", root.gatewayId === input.toGatewayId, root.ownerUid === input.uid,
+    root.gatewayClass === "isolated", root.gatewayId === input.toGatewayId, root.ownerUid === input.uid,
     allocation.kind === "disposable-builder", allocation.claimedByUid === input.uid,
     typeof lease.leaseId === "string", lease.leaseId !== "", allocation.leaseId === lease.leaseId,
     Number.isSafeInteger(lease.generation), Number(lease.generation) > 0, allocation.generation === lease.generation,
@@ -298,7 +298,7 @@ export function sharedRecoveryTargetCleaned(input: Record<string, unknown>, sche
 
 export function isolatedTargetBelongsToUser(targetRoot: unknown, input: Record<string, unknown>): boolean {
   const root = projectGatewayDesiredRootForGateway(targetRoot, String(input.toGatewayId));
-  return root?.gatewayClass === "builder" && typeof input.uid === "string" && root.ownerUid === input.uid &&
+  return root?.gatewayClass === "isolated" && typeof input.uid === "string" && root.ownerUid === input.uid &&
     root.allocation?.kind === "disposable-builder" && root.allocation.claimedByUid === input.uid;
 }
 
@@ -333,7 +333,7 @@ async function workspaceMigrationRecovery(
       recoveryIntentMatches(params, input, handoff),
       operation.kind === MIGRATE_USER_OPERATION_KIND, operation.status === "running",
       operation.startedAt === params.claimStartedAt, Number.isFinite(params.claimStartedAt), params.claimStartedAt > 0,
-      operation.cutoverCommittedAt === undefined, operation.customerMigrationV2 === undefined,
+      operation.cutoverCommittedAt === undefined, operation.userMigrationV2 === undefined,
       operation.cancellationRequestedAt === undefined,
       input.uid === params.uid, input.fromGatewayId === params.sourceGatewayId,
       typeof input.toGatewayId === "string", input.toGatewayId !== params.sourceGatewayId,
@@ -460,7 +460,7 @@ function preparationCleanupMatches(operation: Data, phase: unknown): boolean {
   if (phase === "preparing" && preparationStepsMatch(operation, "done")) return true;
   if (operation.kind !== MIGRATE_USER_OPERATION_KIND ||
       !["running", "failed"].includes(String(operation.status)) ||
-      operation.cutoverCommittedAt !== undefined || operation.customerMigrationV2 !== undefined ||
+      operation.cutoverCommittedAt !== undefined || operation.userMigrationV2 !== undefined ||
       operation.cancellationRequestedAt !== undefined || !Array.isArray(operation.steps)) return false;
   if (phase === "transferring" || phase === "connecting") {
     return transferringRollbackConfirmed(operation);
@@ -508,7 +508,7 @@ export async function clearRetiredUserActivationPreparation(
     const handoff = recordOrEmpty(operation.schedulerHandoff);
     const exact = [
       marker.state === "preparing", marker.phase === "preparing",
-      operation.status === "failed", operation.customerMigrationV2 === undefined,
+      operation.status === "failed", operation.userMigrationV2 === undefined,
       operation.schedulerHandoffReleased === true,
       preparationStepsMatch(operation, "failed"),
       input.uid === params.uid, input.toGatewayId === params.targetGatewayId,
@@ -792,7 +792,7 @@ export function legacyForwardRecoveryMatches(operationId: string, input: Record<
 
 export function migrationCancellationDeferred(operation: Record<string, unknown>, operationId: string): boolean {
   const input = recordOrEmpty(operation.input);
-  const state = recordOrEmpty(operation.customerMigrationV2);
+  const state = recordOrEmpty(operation.userMigrationV2);
   const durableV2 = state.operationId === operationId && state.uid === input.uid &&
     state.sourceGatewayId === input.fromGatewayId && state.targetGatewayId === input.toGatewayId &&
     ["sourceQuiesced", "finalSynced", "targetVerified", "cutover", "sourceRetired", "complete"].includes(String(state.phase));
@@ -805,7 +805,7 @@ function userMigrationV2FenceIsExact(
   operation: Data | undefined,
   fence: UserMigrationV2Fence,
 ): boolean {
-  const state = recordOrEmpty(operation?.customerMigrationV2);
+  const state = recordOrEmpty(operation?.userMigrationV2);
   const sourceRootFence = state.sourceRootFence as UserMigrationV2GatewayRootFence;
   const targetRootFence = state.targetRootFence as UserMigrationV2GatewayRootFence;
   const claimBound = recordOrEmpty(operation?.input).sourceTransferMode === "retained-pod" || fence.claimStartedAt !== undefined;
@@ -1390,7 +1390,7 @@ async function assertDrainingMigrationUnclaimed(
     operation.status === "pending", operation.startedAt == null, operation.completedAt == null,
     operation.input.uid === params.uid, operation.input.fromGatewayId === params.fromGatewayId,
     operation.steps.length === 0, operation.sourceTransferExecution === undefined,
-    operation.cutoverCommittedAt === undefined, operation.customerMigrationV2 === undefined,
+    operation.cutoverCommittedAt === undefined, operation.userMigrationV2 === undefined,
     operation.restoreAttempt === undefined, operation.schedulerHandoffLost === undefined,
     handoff.stageAfterCutover === undefined, handoff.stagedAt === undefined, handoff.forwardRecovery === undefined,
     handoff.sourceRecovery === undefined,

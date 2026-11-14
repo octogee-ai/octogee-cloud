@@ -14,7 +14,7 @@ function harness() {
     "gateways/b-alice": {
       gatewayId: "b-alice", createdAt: 1, createdBy: "test", updatedAt: 1, updatedBy: "test",
       latestRelease: 1, desiredRelease: 1, liveRelease: 1, desiredStatus: "running", configSchemaVersion: 1,
-      profile: "builder", gatewayClass: "builder", imageProfile: "builder", sizingTier: null, gcpProject: null,
+      profile: "isolated", gatewayClass: "isolated", imageProfile: "isolated", sizingTier: null, gcpProject: null,
       gatewayContainerSecurityContext: null, serviceAccountName: null, serviceAccount: null,
       builderAccess: { controlUiEnabled: true, controlIdentity: "per-user" }, ownerUid: "owner", builderSlug: "alice",
       modelBrokerLimits: null, preemption: null,

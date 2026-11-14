@@ -54,7 +54,7 @@ describe('sizing-tier SSOT', () => {
   });
 
   it('profiles use the matching class defaults', () => {
-    expect(PROFILE_DEFAULT_TIER.builder).toBe('s');
+    expect(PROFILE_DEFAULT_TIER.isolated).toBe('s');
     expect(PROFILE_DEFAULT_TIER.standard).toBe('l');
   });
 
@@ -66,7 +66,7 @@ describe('sizing-tier SSOT', () => {
   });
 
   it('isolated class defaults to s and the shared gateway defaults to l', () => {
-    expect(GATEWAY_CLASS_DEFAULT_TIER.builder).toBe('s');
+    expect(GATEWAY_CLASS_DEFAULT_TIER.isolated).toBe('s');
     expect(GATEWAY_CLASS_DEFAULT_TIER.shared).toBe('m');
   });
 
@@ -80,13 +80,13 @@ describe('sizing-tier SSOT', () => {
 
 describe('resolveSizingTier', () => {
   it('returns the explicit tier when set, regardless of profile', () => {
-    const result = resolveSizingTier({ sizingTier: 'm', profile: 'builder' });
+    const result = resolveSizingTier({ sizingTier: 'm', profile: 'isolated' });
     expect(result.tier).toBe('m');
     expect(result.resolvedFrom).toBe('explicit');
   });
 
   it('falls back to the profile default (small) when sizingTier is missing', () => {
-    const result = resolveSizingTier({ sizingTier: undefined, profile: 'builder' });
+    const result = resolveSizingTier({ sizingTier: undefined, profile: 'isolated' });
     expect(result.tier).toBe('s');
     expect(result.resolvedFrom).toBe('profile-default');
   });
@@ -100,7 +100,7 @@ describe('resolveSizingTier', () => {
   it('uses the class default before the legacy profile default', () => {
     const result = resolveSizingTier({
       sizingTier: undefined,
-      gatewayClass: 'builder',
+      gatewayClass: 'isolated',
       profile: 'standard',
     });
     expect(result.tier).toBe('s');

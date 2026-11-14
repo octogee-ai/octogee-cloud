@@ -92,12 +92,12 @@ preStopFlush:
   terminationGracePeriodSeconds: 30
   timeoutSeconds: 10
 
-# Product/security class. Empty means the shared gateway. `builder` is the
-# owner-bound disposable gateway class.
+# Gateway class. Empty means the shared gateway. `isolated` is the
+# owner-bound isolated gateway class.
 gatewayClass: ""
 
 # Installed image/tooling profile. Empty derives from gatewayClass:
-# shared => standard, builder => builder.
+# shared => standard, isolated => isolated.
 imageProfile: ""
 
 # Legacy overloaded capability/image profile. Keep for existing desired-state
@@ -176,13 +176,13 @@ sizingTier: ""
 # Class → default tier mapping. Used when sizingTier is unset.
 classDefaults:
   shared: "m"
-  builder: "s"
+  isolated: "s"
 
 # Legacy image-profile → default tier mapping. Used when classDefaults is
 # absent on old releases.
 profileDefaults:
   standard: "l"
-  builder: "s"
+  isolated: "s"
 
 # Tier presets — the canonical sizing matrix, capped at 4 vCPU so every tier
 # fits Autopilot's general-purpose envelope (30 vCPU / 110 GiB / 10 GiB

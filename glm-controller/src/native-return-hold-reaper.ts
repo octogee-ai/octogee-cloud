@@ -88,7 +88,7 @@ async function releaseTerminalHold(
     deps.store.gateways.roots.get(gatewayId),
   ]);
   if (heldReturnOperationId(runtime?.vmHome) !== returnOperationId || !TERMINAL.has(returnOperationStatus(returnOperationId, operation))) return null;
-  if (desired?.gatewayClass !== "builder" || typeof desired.ownerUid !== "string") throw new Error("source ownership unavailable; hold retained");
+  if (desired?.gatewayClass !== "isolated" || typeof desired.ownerUid !== "string") throw new Error("source ownership unavailable; hold retained");
   const ownerUid = desired.ownerUid;
   const authority: HoldAuthority = { runtime, operation, desired, owner: await deps.store.users.records.get(ownerUid) };
   if (!rollbackStillOwnsSource(authority, desired, gatewayId)) {

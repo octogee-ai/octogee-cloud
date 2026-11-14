@@ -53,10 +53,10 @@ function nativeReturnScope(op: OperationRecord | null, uid: string, slug: string
   if (!op) return false;
   return [
     op.kind === "migrate-user", op.origin === "automatic", op.createdBy === "glm-controller-placement-policy",
-    op.inputUid === uid, op.input.uid === uid, op.input.builderSlug === slug, op.input.source === "builder-activation-lease",
+    op.inputUid === uid, op.input.uid === uid, op.input.userSlug === slug, op.input.source === "builder-activation-lease",
     typeof op.input.fromGatewayId === "string", typeof op.input.toGatewayId === "string",
     op.gatewayId === op.input.toGatewayId,
-    op.cutoverCommittedAt === undefined, op.customerMigrationV2 === undefined, op.sourceTransferExecution === undefined,
+    op.cutoverCommittedAt === undefined, op.userMigrationV2 === undefined, op.sourceTransferExecution === undefined,
     op.cancellationRequestedAt === undefined, op.restoreAttempt === undefined, op.schedulerHandoffLost === undefined,
   ].every(Boolean);
 }
@@ -102,7 +102,7 @@ function owningLeaseMatches(user: PlatformUserRecord, root: GatewayRoot, input: 
     Object.keys(fences).every(name => name === "migration"),
     fences.migration.operationId === operationId, fences.migration.state === "moving",
     (fences.migration.phase ?? "transferring") === "transferring",
-    root.gatewayClass === "builder", root.ownerUid === uid, root.builderSlug === slug, root.desiredStatus === "running",
+    root.gatewayClass === "isolated", root.ownerUid === uid, root.builderSlug === slug, root.desiredStatus === "running",
     root.runtimeRestartFence === undefined, root.retirementClaim == null, root.liveRelease === root.desiredRelease,
     allocation.kind === "disposable-builder", allocation.claimedByUid === uid,
     allocation.leaseId === lease.leaseId, allocation.generation === lease.generation,

@@ -4,10 +4,10 @@ import { qualifyUserActivationRollRecovery, type UserActivationRollRecoveryRecor
 
 function fixture() {
   const migrationId = 'mig-builder-activate-builder-a-g1:scheduler:1:claim:1000';
-  const gateway = { gatewayId: 'builder-a', gatewayClass: 'builder', ownerUid: 'alice', builderSlug: 'alice', desiredStatus: 'running', liveRelease: 1, desiredRelease: 2, latestRelease: 2,
+  const gateway = { gatewayId: 'builder-a', gatewayClass: 'isolated', ownerUid: 'alice', builderSlug: 'alice', desiredStatus: 'running', liveRelease: 1, desiredRelease: 2, latestRelease: 2,
     allocation: { kind: 'disposable-builder', leaseId: 'lease-a', generation: 1, claimedByUid: 'alice' } };
   const operation = { id: 'builder-activate-builder-a-g1', kind: 'migrate-user', status: 'pending', startedAt: null,
-    input: { uid: 'alice', builderSlug: 'alice', source: 'builder-activation-lease', fromGatewayId: 'shared-a', toGatewayId: 'builder-a', recoverSourceOnly: true },
+    input: { uid: 'alice', userSlug: 'alice', source: 'builder-activation-lease', fromGatewayId: 'shared-a', toGatewayId: 'builder-a', recoverSourceOnly: true },
     schedulerHandoff: { uid: 'alice', slug: 'alice', migrationId, fromGatewayId: 'shared-a', toGatewayId: 'builder-a', stageAfterCutover: true,
       sourceRecovery: { migrationId, sourceEpoch: 7, steps: [{ name: 'quiesce-source', status: 'done' }] } } };
   const lease = { leaseId: 'lease-a', generation: 1, status: 'activating', sourceGatewayId: 'shared-a', sourceAssignmentEpoch: 7, targetGatewayId: 'builder-a' };

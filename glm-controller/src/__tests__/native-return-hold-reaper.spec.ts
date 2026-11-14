@@ -14,7 +14,7 @@ function runtime(gatewayId: string, fields: Data): Data {
 function root(gatewayId: string): Data {
   return {
     gatewayId,
-    gatewayClass: "builder",
+    gatewayClass: "isolated",
     ownerUid: "alice",
     builderSlug: "alice",
     desiredRelease: 1,

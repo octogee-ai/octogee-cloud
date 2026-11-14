@@ -133,7 +133,7 @@ describe("prepareGatewayStateStore", () => {
     return root;
   }
 
-  const userEnv = (root: string) => ({ GATEWAY_CLASS: "builder", GATEWAY_RUNTIME_KIND: "cluster", GATEWAY_ID: GATEWAY, OPENCLAW_STATE_DIR: root });
+  const userEnv = (root: string) => ({ GATEWAY_CLASS: "isolated", GATEWAY_RUNTIME_KIND: "cluster", GATEWAY_ID: GATEWAY, OPENCLAW_STATE_DIR: root });
 
   it("does nothing outside a cluster user or for SQLite state", async () => {
     const waitForOwner = vi.fn();

@@ -96,7 +96,7 @@ describe("resolveContinuousUserPlacement", () => {
       defaultGatewayId: "shared-blue",
       ownedGateway: {
         gatewayId: "builder-alice",
-        gatewayClass: "builder",
+        gatewayClass: "isolated",
         ownerUid: "uid-alice",
         desiredStatus: "running",
         ready: true,
@@ -145,7 +145,7 @@ describe("resolveContinuousUserPlacement", () => {
       defaultGatewayId: "shared-blue",
       ownedGateway: {
         gatewayId: "builder-alice",
-        gatewayClass: "builder",
+        gatewayClass: "isolated",
         ownerUid: "uid-alice",
         disposable: true,
         desiredStatus: "running",
@@ -170,7 +170,7 @@ describe("resolveContinuousUserPlacement", () => {
       defaultGatewayId: "shared-blue",
       ownedGateway: {
         gatewayId: "builder-alice",
-        gatewayClass: "builder",
+        gatewayClass: "isolated",
         ownerUid: "uid-alice",
         disposable: true,
         desiredStatus: "running",
@@ -195,7 +195,7 @@ describe("resolveContinuousUserPlacement", () => {
       defaultGatewayId: "shared-blue",
       ownedGateway: {
         gatewayId: "builder-alice",
-        gatewayClass: "builder",
+        gatewayClass: "isolated",
         ownerUid: "uid-alice",
         desiredStatus: "running",
         ready: true,

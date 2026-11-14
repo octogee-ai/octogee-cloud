@@ -3,7 +3,7 @@
 {{- $tier := include "octogee-gateway.effectiveTier" . -}}
 {{- $preset := index .Values.tiers $tier -}}
 {{- $gatewayClass := include "octogee-gateway.gatewayClass" . -}}
-{{- $isolatedClass := eq (include "octogee-gateway.dualReadGatewayClass" .) "builder" -}}
+{{- $isolatedClass := eq (include "octogee-gateway.dualReadGatewayClass" .) "isolated" -}}
 {{- $computeClass := .Values.computeClass -}}
 {{- $imageProfile := include "octogee-gateway.imageProfile" . -}}
 {{- $computerDesktop := include "octogee-gateway.computerDesktop" . -}}

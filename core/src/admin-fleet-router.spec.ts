@@ -57,7 +57,7 @@ describe("projectGatewayControl", () => {
     const control = projectGatewayControl(
       {
         ...root,
-        gatewayClass: "builder",
+        gatewayClass: "isolated",
         sizingTier: "m",
         ownerUid: "uid-1",
         builderSlug: "alice",
@@ -71,8 +71,8 @@ describe("projectGatewayControl", () => {
       desiredRelease: 3,
       liveRelease: 2,
       runtime: "gce-vm",
-      gatewayClass: "builder",
-      imageProfile: "builder",
+      gatewayClass: "isolated",
+      imageProfile: "isolated",
       sizingTier: "m",
       ownerUid: "uid-1",
       userSlug: "alice",
@@ -99,7 +99,7 @@ describe("projectGatewayReservation", () => {
       priceMultiplier: 1,
       source: "class-default",
     });
-    expect(projectGatewayReservation({ gatewayClass: "builder" })).toEqual({
+    expect(projectGatewayReservation({ gatewayClass: "isolated" })).toEqual({
       type: "spot",
       priceMultiplier: SPOT_PRICE_MULTIPLIER,
       source: "class-default",
@@ -112,7 +112,7 @@ describe("projectGatewayReservation", () => {
       priceMultiplier: SPOT_PRICE_MULTIPLIER,
       source: "kubernetes",
     });
-    expect(projectGatewayReservation({ gatewayClass: "builder" }, "on-demand")).toEqual({
+    expect(projectGatewayReservation({ gatewayClass: "isolated" }, "on-demand")).toEqual({
       type: "on-demand",
       priceMultiplier: 1,
       source: "kubernetes",
@@ -284,7 +284,7 @@ describe("projectGatewaySummary — gateway identity projection", () => {
       { id: "run-alice-12345678", data: () => ({ gatewayId: "run-alice-12345678" }) },
       {
         gatewayId: "run-alice-12345678",
-        gatewayClass: "builder",
+        gatewayClass: "isolated",
         ownerUid: "uid-alice",
         allocation: {
           kind: "disposable-builder",
@@ -309,7 +309,7 @@ describe("projectGatewaySummary — why OpenClaw is not serving", () => {
   function reasonFor(heartbeat: Record<string, unknown>, now = Date.now()) {
     return projectGatewaySummary(
       { id: "christopher-s-1", data: () => ({ gatewayId: "christopher-s-1", lastHeartbeatAt: now, ...heartbeat }) },
-      { gatewayId: "christopher-s-1", gatewayClass: "builder", desiredStatus: "running" },
+      { gatewayId: "christopher-s-1", gatewayClass: "isolated", desiredStatus: "running" },
       now,
     ).statusReason;
   }
@@ -692,7 +692,7 @@ describe("projectDisposableFleetCapacity", () => {
         { id: "run-alice", data: () => ({ gatewayId: "run-alice" }) },
         {
           gatewayId: "run-alice",
-          gatewayClass: "builder",
+          gatewayClass: "isolated",
           sizingTier: "xs",
           ownerUid: "uid-alice",
           allocation: {
@@ -745,9 +745,9 @@ describe("retired operator reservation routes", () => {
 
 describe("the fleet command line contract", () => {
   const isolatedRoot = durableGatewayRoot("iso-ada", {
-    gatewayClass: "builder",
-    imageProfile: "builder",
-    profile: "builder",
+    gatewayClass: "isolated",
+    imageProfile: "isolated",
+    profile: "isolated",
     ownerUid: "uid-ada",
     builderSlug: "ada",
   });
@@ -877,9 +877,9 @@ describe("fleet gateway projection", () => {
         "shared-blue": durableGatewayRoot("shared-blue"),
         [targetGatewayId]: durableGatewayRoot(targetGatewayId, {
           desiredStatus: "retired",
-          profile: "builder",
-          gatewayClass: "builder",
-          imageProfile: "builder",
+          profile: "isolated",
+          gatewayClass: "isolated",
+          imageProfile: "isolated",
           sizingTier: "xs",
           ownerUid: "uid-alice",
           builderSlug: "alice",
@@ -982,9 +982,9 @@ describe("fleet gateway projection", () => {
         "shared-blue": durableGatewayRoot("shared-blue"),
         [targetGatewayId]: durableGatewayRoot(targetGatewayId, {
           desiredStatus: "retired",
-          profile: "builder",
-          gatewayClass: "builder",
-          imageProfile: "builder",
+          profile: "isolated",
+          gatewayClass: "isolated",
+          imageProfile: "isolated",
           sizingTier: "xs",
           ownerUid: "uid-alice",
           builderSlug: "alice",
@@ -1070,9 +1070,9 @@ describe("fleet gateway projection", () => {
         "shared-blue": durableGatewayRoot("shared-blue"),
         [targetGatewayId]: durableGatewayRoot(targetGatewayId, {
           desiredStatus: "retired",
-          profile: "builder",
-          gatewayClass: "builder",
-          imageProfile: "builder",
+          profile: "isolated",
+          gatewayClass: "isolated",
+          imageProfile: "isolated",
           sizingTier: "xs",
           ownerUid: "uid-alice",
           builderSlug: "alice",
@@ -1160,9 +1160,9 @@ describe("fleet gateway projection", () => {
         "shared-blue": durableGatewayRoot("shared-blue"),
         [targetGatewayId]: durableGatewayRoot(targetGatewayId, {
           desiredStatus: "retired",
-          profile: "builder",
-          gatewayClass: "builder",
-          imageProfile: "builder",
+          profile: "isolated",
+          gatewayClass: "isolated",
+          imageProfile: "isolated",
           sizingTier: "xs",
           ownerUid: "uid-alice",
           builderSlug: "alice",
@@ -1233,9 +1233,9 @@ describe("fleet gateway projection", () => {
       gateways: {
         [oldGatewayId]: durableGatewayRoot(oldGatewayId, {
           desiredStatus: "retired",
-          profile: "builder",
-          gatewayClass: "builder",
-          imageProfile: "builder",
+          profile: "isolated",
+          gatewayClass: "isolated",
+          imageProfile: "isolated",
           sizingTier: "xs",
           ownerUid: "uid-alice",
           builderSlug: "alice",
@@ -1316,9 +1316,9 @@ describe("fleet gateway projection", () => {
       gateways: {
         "fail-xs-deadbeef": durableGatewayRoot("fail-xs-deadbeef", {
           desiredStatus: "retired",
-          profile: "builder",
-          gatewayClass: "builder",
-          imageProfile: "builder",
+          profile: "isolated",
+          gatewayClass: "isolated",
+          imageProfile: "isolated",
           sizingTier: "xs",
           ownerUid: "failed",
           builderSlug: "failed",
@@ -1487,9 +1487,9 @@ describe("fleet gateway projection", () => {
         default: durableGatewayRoot("default", { liveRelease: 1 }),
         "alice-xs-deadbeef": durableGatewayRoot("alice-xs-deadbeef", {
           desiredStatus: "retired",
-          profile: "builder",
-          gatewayClass: "builder",
-          imageProfile: "builder",
+          profile: "isolated",
+          gatewayClass: "isolated",
+          imageProfile: "isolated",
           sizingTier: "xs",
           ownerUid: "uid-alice",
           builderSlug: "alice",
@@ -1871,7 +1871,7 @@ describe("default placement", () => {
         "shared-0": durableGatewayRoot("shared-0", { desiredStatus: "paused" }),
         "shared-a": durableGatewayRoot("shared-a", { desiredStatus: "draining" }),
         walter: durableGatewayRoot("walter", {
-          gatewayClass: "builder",
+          gatewayClass: "isolated",
           ownerUid: "uid-walter",
           builderSlug: "walter",
         }),
@@ -2231,7 +2231,7 @@ describe("account deletion revokes connector grants at the provider first", () =
     const recovery = scenario.startsWith("legacy") ? { schedulerHandoff: {
       ...input, slug: "alice", migrationId: "mig-move-1:scheduler:1:claim:100",
       forwardRecovery: { schemaVersion: 1, phase: "source-flushed", sourceEpoch: 3 },
-    } } : { customerMigrationV2: { operationId, uid: "u1", sourceGatewayId: "shared-1", targetGatewayId: "shared-2", phase: "sourceQuiesced" } };
+    } } : { userMigrationV2: { operationId, uid: "u1", sourceGatewayId: "shared-1", targetGatewayId: "shared-2", phase: "sourceQuiesced" } };
     const { store, discoverProductContext, deletionDeps, calls, remaining, otherDocs, added } = makeDeleteApp({ u1: user }, {
       [assignmentPath]: assignment,
       [`glmOperations/${operationId}`]: { kind: "migrate-user", status: scenario.endsWith("pending") ? "pending" : "running", inputUid: "u1", input, ...recovery },
@@ -2324,7 +2324,7 @@ describe("account deletion revokes connector grants at the provider first", () =
 
   it("also pauses the user's dedicated gateway when parking it", async () => {
     const { app, otherDocs } = makeDeleteApp({ u1: { username: "alice", provisioning: { openclaw: { gatewayId: "builder-alice" } } } }, {
-      "gateways/builder-alice": durableGatewayRoot("builder-alice", { gatewayClass: "builder", ownerUid: "u1", desiredStatus: "running" }),
+      "gateways/builder-alice": durableGatewayRoot("builder-alice", { gatewayClass: "isolated", ownerUid: "u1", desiredStatus: "running" }),
       "gateways/builder-alice/assignments/u1": { uid: "u1", slug: "alice", gatewayId: "builder-alice", source: "repair", state: "serving", epoch: 3 },
     });
     await request(app).patch("/users/u1/placement").send({ managedBy: "operator", gatewayId: null }).expect(200);
@@ -2335,7 +2335,7 @@ describe("account deletion revokes connector grants at the provider first", () =
     const lease = { leaseId: "lease-4", status: "active", generation: 4, targetGatewayId: "builder-alice" };
     const assignment = { uid: "u1", slug: "alice", gatewayId: "builder-alice", source: "repair", state: "serving", epoch: 3 };
     const { app, remaining, otherDocs, calls } = makeDeleteApp({ u1: { username: "alice", provisioning: { openclaw: { gatewayId: "builder-alice", activationLease: lease, status: "complete" } } } }, {
-      "gateways/builder-alice": durableGatewayRoot("builder-alice", { gatewayClass: "builder", ownerUid: "u1", desiredStatus: "running" }),
+      "gateways/builder-alice": durableGatewayRoot("builder-alice", { gatewayClass: "isolated", ownerUid: "u1", desiredStatus: "running" }),
       "gateways/builder-alice/assignments/u1": assignment,
     });
     await request(app).patch("/users/u1/placement").send({ managedBy: "operator", gatewayId: null }).expect(200);
@@ -2365,14 +2365,14 @@ describe("account deletion revokes connector grants at the provider first", () =
 
   it("parks a user while a lease has another gateway allocated for them, and leaves that gateway as it is", async () => {
     const user = { username: "alice", provisioning: { openclaw: { gatewayId: "shared-1", activationLease: { leaseId: "lease-4", status: "provisioning", generation: 4, targetGatewayId: "builder-alice" } } } };
-    const { app, remaining, otherDocs } = makeDeleteApp({ u1: user }, { "gateways/builder-alice": durableGatewayRoot("builder-alice", { gatewayClass: "builder", ownerUid: "u1", desiredStatus: "running" }) });
+    const { app, remaining, otherDocs } = makeDeleteApp({ u1: user }, { "gateways/builder-alice": durableGatewayRoot("builder-alice", { gatewayClass: "isolated", ownerUid: "u1", desiredStatus: "running" }) });
     await request(app).patch("/users/u1/placement").send({ managedBy: "operator", gatewayId: null }).expect(200);
     expect(storedOpenclaw(remaining.u1)).toMatchObject({ managedBy: "operator", activationLease: user.provisioning.openclaw.activationLease });
     expect(otherDocs["gateways/builder-alice"].desiredStatus).toBe("running");
   });
 
   it.each(["foreign-owner", "runtime-fence", "retirement"])("does not bypass a dedicated gateway %s when parking", async reason => {
-    const root = durableGatewayRoot("builder-alice", { gatewayClass: "builder", ownerUid: reason === "foreign-owner" ? "u2" : "u1", desiredStatus: "running", ...(reason === "runtime-fence" ? { runtimeRestartFence: { phase: "dispatched" } } : {}), ...(reason === "retirement" ? { retirementClaim: { phase: "claimed" } } : {}) });
+    const root = durableGatewayRoot("builder-alice", { gatewayClass: "isolated", ownerUid: reason === "foreign-owner" ? "u2" : "u1", desiredStatus: "running", ...(reason === "runtime-fence" ? { runtimeRestartFence: { phase: "dispatched" } } : {}), ...(reason === "retirement" ? { retirementClaim: { phase: "claimed" } } : {}) });
     const user = { username: "alice", provisioning: { openclaw: { gatewayId: "builder-alice" } } };
     const { app, otherDocs, remaining } = makeDeleteApp({ u1: user }, { "gateways/builder-alice": root });
     await request(app).patch("/users/u1/placement").send({ managedBy: "operator", gatewayId: null }).expect(409);

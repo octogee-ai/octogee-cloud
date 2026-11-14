@@ -87,8 +87,8 @@ function seedGateway(gatewayClass: string) {
     liveRelease: 1,
     desiredStatus: "running",
     configSchemaVersion: 1,
-    profile: "builder",
-    imageProfile: "builder",
+    profile: "isolated",
+    imageProfile: "isolated",
     sizingTier: null,
     gcpProject: null,
     gatewayContainerSecurityContext: null,
@@ -98,8 +98,8 @@ function seedGateway(gatewayClass: string) {
     modelBrokerLimits: null,
     preemption: null,
     gatewayClass,
-    ownerUid: gatewayClass === "builder" ? "owner-1" : null,
-    builderSlug: gatewayClass === "builder" ? "mira" : null,
+    ownerUid: gatewayClass === "isolated" ? "owner-1" : null,
+    builderSlug: gatewayClass === "isolated" ? "mira" : null,
   });
 }
 
@@ -116,7 +116,7 @@ beforeEach(() => {
   h.workspaceSlug = "mira";
   h.isAdmin = false;
   h.docs.clear();
-  seedGateway("builder");
+  seedGateway("isolated");
   h.createProjectForActor.mockReset().mockResolvedValue({
     status: 200,
     body: { success: true, slug: "orbit" },

@@ -116,7 +116,7 @@ function activeMigrationTargetsGateway(
   return operations.some((operation) => {
     if (operation.kind !== "migrate-user") return false;
     const input: unknown = operation.input;
-    const migration: unknown = operation.customerMigrationV2;
+    const migration: unknown = operation.userMigrationV2;
     const fields = [
       input && typeof input === "object" && !Array.isArray(input)
         ? input as Record<string, unknown>

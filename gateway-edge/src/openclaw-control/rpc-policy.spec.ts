@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { reconcilePlatformInvariants } from "@octogee/core/system-config-invariants";
 import { evaluateOpenClawControlRpc, openClawConfigSnapshotFromGetResponse, installedMethodsFromHello } from "./rpc-policy.js";
 
-const invariantContext = { gatewayClass: "builder" as const, gatewayId: "walter", apiOrigin: "https://api.octogee.com" };
+const invariantContext = { gatewayClass: "isolated" as const, gatewayId: "walter", apiOrigin: "https://api.octogee.com" };
 function request(method: string, params: Record<string, unknown> = {}) {
   return { type: "req", id: "rpc-1", method, params };
 }

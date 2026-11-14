@@ -106,7 +106,7 @@ describe("formatStatusText", () => {
   it("renders user byosub with no platform budget lines", () => {
     const text = formatStatusText(
       status({
-        gatewayClass: "builder",
+        gatewayClass: "isolated",
         credential: { path: "byosub", provider: "claude-cli" },
       }),
     );
@@ -151,7 +151,7 @@ describe("gatewayClassMismatchNote", () => {
   });
 
   it.each([
-    ["shared", "builder"],
+    ["shared", "isolated"],
     ["isolated", "shared"],
   ])("warns when pod class %s differs from fleet doc class %s", (podClass, fleetDocClass) => {
     expect(gatewayClassMismatchNote(podClass, fleetDocClass)).toBe(

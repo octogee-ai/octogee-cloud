@@ -189,7 +189,7 @@ describe("recording why isolated pod gateways are not running", () => {
     return {
       gatewayId, createdAt: 1, createdBy: "operator", updatedAt: 1, updatedBy: "operator",
       latestRelease: 1, desiredRelease: 1, liveRelease: null, desiredStatus: "running", configSchemaVersion: 1,
-      profile: null, gatewayClass: "builder", imageProfile: "builder", sizingTier: "s", gcpProject: null,
+      profile: null, gatewayClass: "isolated", imageProfile: "isolated", sizingTier: "s", gcpProject: null,
       gatewayContainerSecurityContext: null, serviceAccountName: null, serviceAccount: null, builderAccess: null,
       ownerUid: "uid-lin", builderSlug: "lin", modelBrokerLimits: null, preemption: null, coOwnerUids: [],
       ...extra,

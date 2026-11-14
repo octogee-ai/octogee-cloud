@@ -62,7 +62,7 @@ function durableIsolatedGateway(
     roll: null,
     configSchemaVersion: 1,
     profile: "standard",
-    gatewayClass: "builder",
+    gatewayClass: "isolated",
     imageProfile: "standard",
     sizingTier: "m",
     gcpProject: null,
@@ -481,8 +481,8 @@ describe("createHttpServer — admin gateway routes", () => {
     }));
     store.gateways["gw-alice"] = {
       ...durableIsolatedGateway("gw-alice", "running"),
-      profile: "builder",
-      imageProfile: "builder",
+      profile: "isolated",
+      imageProfile: "isolated",
     };
     const app = createHttpServer(buildDeps(store, {
       releaseEnvironment: "test",

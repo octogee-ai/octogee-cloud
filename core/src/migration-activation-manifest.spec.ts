@@ -310,7 +310,7 @@ describe("migration activation manifest", () => {
     );
   });
 
-  it.each(["builder", "shared"] as const)("keeps %s account endpoint ownership through imported activation", async (gatewayClass) => {
+  it.each(["isolated", "shared"] as const)("keeps %s account endpoint ownership through imported activation", async (gatewayClass) => {
     const source = manifest();
     source.mattermostAccount.baseUrl = "https://source-coach.example";
     source.projectAgents = ["orbit", "scout"].map((projectId) => ({
@@ -336,12 +336,12 @@ describe("migration activation manifest", () => {
 
     const patch = configPatch.mock.calls[0]![0] as Record<string, any>;
     const accounts = patch.channels.mattermost.accounts;
-    expect(accounts["alice-coach"].baseUrl).toBe(gatewayClass === "builder" ? "https://owner-coach.example" : "${MM_URL}");
-    expect(accounts["alice-proj-orbit"].baseUrl).toBe(gatewayClass === "builder" ? "https://owner-orbit.example" : "${MM_URL}");
+    expect(accounts["alice-coach"].baseUrl).toBe(gatewayClass === "isolated" ? "https://owner-coach.example" : "${MM_URL}");
+    expect(accounts["alice-proj-orbit"].baseUrl).toBe(gatewayClass === "isolated" ? "https://owner-orbit.example" : "${MM_URL}");
     expect(accounts["alice-proj-scout"].baseUrl).toBe("${MM_URL}");
   });
 
-  it.each(["builder", "shared"] as const)("only sets the imported agent as system agent on a Builder: %s", async (gatewayClass) => {
+  it.each(["isolated", "shared"] as const)("only sets the imported agent as system agent on an isolated gateway: %s", async (gatewayClass) => {
     const configPatch = vi.fn(async (patch: unknown) => ({ hash: "h2", config: patch }));
     const rpc = {
       configGet: vi.fn(async () => ({ hash: "h1", config: {
@@ -352,7 +352,7 @@ describe("migration activation manifest", () => {
     };
     await applyOpenClawActivationManifest(manifest(), { rpc: rpc as never, log: vi.fn(), gatewayClass });
     const patch = configPatch.mock.calls[0]![0] as { agents: { defaults?: { systemAgent?: { agentId: string } } } };
-    expect(patch.agents.defaults?.systemAgent?.agentId).toBe(gatewayClass === "builder" ? "octogee-alice-coach" : undefined);
+    expect(patch.agents.defaults?.systemAgent?.agentId).toBe(gatewayClass === "isolated" ? "octogee-alice-coach" : undefined);
   });
 
   it("patches agent, account, and bindings without keeping stale entries for the same agent", async () => {
@@ -489,7 +489,7 @@ describe("migration activation manifest", () => {
     await applyOpenClawActivationManifest(manifest(), {
       rpc: rpc as never,
       log: vi.fn(),
-      gatewayClass: "builder",
+      gatewayClass: "isolated",
       ownerCommandsPatch,
     });
 
@@ -514,7 +514,7 @@ describe("migration activation manifest", () => {
     await applyOpenClawActivationManifest(manifest(), {
       rpc: rpc as never,
       log: vi.fn(),
-      gatewayClass: "builder",
+      gatewayClass: "isolated",
       ownerCommandsPatch: () => undefined,
     });
 
@@ -550,7 +550,7 @@ describe("migration activation manifest", () => {
     await applyOpenClawActivationManifest(manifest(), {
       rpc: rpc as never,
       log: vi.fn(),
-      gatewayClass: "builder",
+      gatewayClass: "isolated",
       authInheritanceAnchor: { agentId: anchor.id, agent: anchor },
     });
 
@@ -607,7 +607,7 @@ describe("migration activation manifest", () => {
     await applyOpenClawActivationManifest(manifest(), {
       rpc: rpc as never,
       log: vi.fn(),
-      gatewayClass: "builder",
+      gatewayClass: "isolated",
       authInheritanceAnchor: { agentId: anchor.id, agent: anchor },
     });
 
@@ -645,7 +645,7 @@ describe("migration activation manifest", () => {
     await applyOpenClawActivationManifest(manifest(), {
       rpc: rpc as never,
       log: vi.fn(),
-      gatewayClass: "builder",
+      gatewayClass: "isolated",
       authInheritanceAnchor: { agentId: anchor.id, agent: anchor },
     });
 
@@ -702,7 +702,7 @@ describe("migration activation manifest", () => {
     }, {
       rpc: rpc as never,
       log: vi.fn(),
-      gatewayClass: "builder",
+      gatewayClass: "isolated",
     });
 
     const patch = configPatch.mock.calls[0]?.[0] as {
@@ -747,7 +747,7 @@ describe("migration activation manifest", () => {
     }, {
       rpc: rpc as never,
       log: vi.fn(),
-      gatewayClass: "builder",
+      gatewayClass: "isolated",
     });
 
     const patch = configPatch.mock.calls[0]?.[0] as {
@@ -800,7 +800,7 @@ describe("migration activation manifest", () => {
     }, {
       rpc: rpc as never,
       log: vi.fn(),
-      gatewayClass: "builder",
+      gatewayClass: "isolated",
     });
 
     const patch = configPatch.mock.calls[0]?.[0] as {
@@ -832,7 +832,7 @@ describe("migration activation manifest", () => {
     }, {
       rpc: rpc as never,
       log: vi.fn(),
-      gatewayClass: "builder",
+      gatewayClass: "isolated",
     });
 
     const patch = configPatch.mock.calls[0]?.[0] as {

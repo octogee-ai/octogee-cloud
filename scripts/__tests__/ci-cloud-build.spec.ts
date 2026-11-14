@@ -50,7 +50,7 @@ describe("public platform image plan", () => {
         "octogee-gateway-builder-base": "target:octogee-gateway-builder-base",
         "octogee-gateway-system": "target:octogee-gateway-system",
       },
-      args: { RUNTIME_BASE_IMAGE: "octogee-gateway-builder-base", IMAGE_PROFILE: "builder" },
+      args: { RUNTIME_BASE_IMAGE: "octogee-gateway-builder-base", IMAGE_PROFILE: "isolated" },
     });
     expect(target["octogee-gateway-builder-base"]).toMatchObject({
       dockerfile: "infra/gateway/Dockerfile.isolated-base",

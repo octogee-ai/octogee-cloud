@@ -29,7 +29,7 @@ afterEach(async () => {
 });
 function fixture() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "native-workspace-bootstrap-")); dirs.push(dir);
-  const env: NodeJS.ProcessEnv = { OPENCLAW_DIR: dir, GATEWAY_ID: "b-alice", GATEWAY_CLASS: "builder", OPENCLAW_CONTROL_IDENTITY: "per-user" };
+  const env: NodeJS.ProcessEnv = { OPENCLAW_DIR: dir, GATEWAY_ID: "b-alice", GATEWAY_CLASS: "isolated", OPENCLAW_CONTROL_IDENTITY: "per-user" };
   writeClaim(dir, "alice");
   const profiles: StoredProfile[] = [];
   const signInAs = (uid: string) => {

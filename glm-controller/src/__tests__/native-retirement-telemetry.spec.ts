@@ -7,7 +7,7 @@ import type { GatewayVmDescription } from "../lib/compute-vm.js";
 const input = { gatewayId: "builder-old", operationId: "retire-old", version: 2 };
 function fixture() {
   const root: Record<string, unknown> = {
-    gatewayId: input.gatewayId, gatewayClass: "builder", ownerUid: "uid", desiredStatus: "retired",
+    gatewayId: input.gatewayId, gatewayClass: "isolated", ownerUid: "uid", desiredStatus: "retired",
     desiredRelease: 1, latestRelease: 1,
     retirementClaim: { operationId: input.operationId, version: input.version, phase: "claimed", previousDesiredStatus: "paused" },
   };

@@ -5,7 +5,7 @@ declare const USER_AGENT_WORKSPACE: "customer-agent-workspace";
 declare const USER_AGENT_TOOL_POLICY: "customer-agent-tool-policy";
 declare const PROJECT_AGENT_TOOL_POLICY: "project-agent-tool-policy";
 declare const FORBIDDEN_ARRAY: "forbidden-array";
-export type GatewayConfigClass = "shared" | "builder";
+export type GatewayConfigClass = "shared" | "isolated";
 export type GatewayControlIdentityMode = "shared-operator" | "per-user";
 type BrokerProviderEnvironment = Partial<Pick<NodeJS.ProcessEnv, "OPENROUTER_BASE_URL" | "PLATFORM_OPENAI_BASE_URL" | "PLATFORM_VERTEX_BASE_URL" | "PLATFORM_META_BASE_URL">>;
 /** Declare provider ownership; API, model rows and credentials remain agent-local. */

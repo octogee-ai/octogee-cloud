@@ -102,7 +102,7 @@ function assignedUserOwnsKey(
   user: PlatformUserRecord | null,
   authorization: GatewayAuthorization | null,
 ): user is PlatformUserRecord {
-  return authorization?.config.gatewayClass === "builder" &&
+  return authorization?.config.gatewayClass === "isolated" &&
     authorization.config.ownerUid === record.ownerUid &&
     user !== null &&
     userAssignedToGateway(user, record.gatewayId, authorization.config.builderSlug);

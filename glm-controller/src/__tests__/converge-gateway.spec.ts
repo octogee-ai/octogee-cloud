@@ -234,8 +234,8 @@ describe("orderGatewaysForConvergence", () => {
   it("orders shared and isolated gateways by stable id", () => {
     expect(orderGatewaysForConvergence([
       gateway({ gatewayId: "zeta", gatewayClass: "shared" }),
-      gateway({ gatewayId: "beta", gatewayClass: "builder" }),
-      gateway({ gatewayId: "alpha", gatewayClass: "builder" }),
+      gateway({ gatewayId: "beta", gatewayClass: "isolated" }),
+      gateway({ gatewayId: "alpha", gatewayClass: "isolated" }),
     ]).map((item) => item.gatewayId)).toEqual(["alpha", "beta", "zeta"]);
   });
 });
@@ -245,8 +245,8 @@ describe("gatewayUpsertOptsFromRelease", () => {
     const opts = gatewayUpsertOptsFromRelease({
       namespace: "octogee",
       gateway: gateway({
-        gatewayClass: "builder",
-        imageProfile: "builder",
+        gatewayClass: "isolated",
+        imageProfile: "isolated",
         ownerUid: "uid-owner",
         builderSlug: "owner",
         serviceAccountName: "octogee-gw-walter",
@@ -276,8 +276,8 @@ describe("gatewayUpsertOptsFromRelease", () => {
     const opts = gatewayUpsertOptsFromRelease({
       namespace: "octogee-test",
       gateway: gateway({
-        gatewayClass: "builder",
-        imageProfile: "builder",
+        gatewayClass: "isolated",
+        imageProfile: "isolated",
       }),
       artifact: artifact({
         imageTag: `def5678@${standardDigest}`,
@@ -303,7 +303,7 @@ describe("gatewayUpsertOptsFromRelease", () => {
     const image = { imageRepository: USER_REPO, imageTag: `def5678@sha256:${"b".repeat(64)}` };
     const opts = (profileImages: ReleasePayload["profileImages"]) => gatewayUpsertOptsFromRelease({
       namespace: "octogee-test",
-      gateway: gateway({ gatewayClass: "builder", imageProfile: "builder" }),
+      gateway: gateway({ gatewayClass: "isolated", imageProfile: "isolated" }),
       artifact: artifact({ profileImages }),
       replicas: 1,
       chartPath: "/charts/octogee-gateway",
@@ -316,8 +316,8 @@ describe("gatewayUpsertOptsFromRelease", () => {
     expect(() => gatewayUpsertOptsFromRelease({
       namespace: "octogee-test",
       gateway: gateway({
-        gatewayClass: "builder",
-        imageProfile: "builder",
+        gatewayClass: "isolated",
+        imageProfile: "isolated",
       }),
       artifact: artifact({ profileImages: undefined }),
       replicas: 1,
@@ -326,7 +326,7 @@ describe("gatewayUpsertOptsFromRelease", () => {
   });
 
   it("retains the source Hobby pod for the fenced transfer of unpublished workspace state", () => {
-    const opts = gatewayUpsertOptsFromRelease({ namespace: "octogee-test", gateway: gateway({ gatewayClass: "builder", imageProfile: "builder", sizingTier: "s" }), artifact: artifact(), replicas: 1, chartPath: "/charts/octogee-gateway" });
+    const opts = gatewayUpsertOptsFromRelease({ namespace: "octogee-test", gateway: gateway({ gatewayClass: "isolated", imageProfile: "isolated", sizingTier: "s" }), artifact: artifact(), replicas: 1, chartPath: "/charts/octogee-gateway" });
     expect(opts.rollStrategy).toBe("surge");
   });
 
@@ -402,8 +402,8 @@ describe("gatewayUpsertOptsFromRelease", () => {
     const previous = gatewayUpsertOptsFromRelease({
       namespace: "octogee-test",
       gateway: gateway({
-        gatewayClass: "builder",
-        imageProfile: "builder",
+        gatewayClass: "isolated",
+        imageProfile: "isolated",
         ownerUid: "uid-previous",
         builderSlug: "previous",
       }),
@@ -414,8 +414,8 @@ describe("gatewayUpsertOptsFromRelease", () => {
     const successor = gatewayUpsertOptsFromRelease({
       namespace: "octogee-test",
       gateway: gateway({
-        gatewayClass: "builder",
-        imageProfile: "builder",
+        gatewayClass: "isolated",
+        imageProfile: "isolated",
         ownerUid: "uid-successor",
         builderSlug: "successor",
       }),
@@ -429,8 +429,8 @@ describe("gatewayUpsertOptsFromRelease", () => {
     expect(successor.deploymentIntentFingerprint).toBe(previous.deploymentIntentFingerprint);
     expect(planGatewayConvergence({
       gateway: gateway({
-        gatewayClass: "builder",
-        imageProfile: "builder",
+        gatewayClass: "isolated",
+        imageProfile: "isolated",
         ownerUid: "uid-successor",
         builderSlug: "successor",
         liveRelease: 2,
@@ -509,8 +509,8 @@ describe("gatewayUpsertOptsFromRelease", () => {
     const observed = gatewayUpsertOptsFromRelease({
       namespace: "octogee",
       gateway: gateway({
-        gatewayClass: "builder",
-        imageProfile: "builder",
+        gatewayClass: "isolated",
+        imageProfile: "isolated",
         ownerUid: "uid-previous",
         builderSlug: "previous",
       }),
@@ -522,8 +522,8 @@ describe("gatewayUpsertOptsFromRelease", () => {
     const desired = gatewayUpsertOptsFromRelease({
       namespace: "octogee",
       gateway: gateway({
-        gatewayClass: "builder",
-        imageProfile: "builder",
+        gatewayClass: "isolated",
+        imageProfile: "isolated",
         ownerUid: "uid-successor",
         builderSlug: "successor",
       }),
@@ -563,9 +563,9 @@ describe("gatewayUpsertOptsFromRelease", () => {
     const opts = gatewayUpsertOptsFromRelease({
       namespace: "octogee-test",
       gateway: gateway({
-        gatewayClass: "builder",
-        imageProfile: "builder",
-        profile: "builder",
+        gatewayClass: "isolated",
+        imageProfile: "isolated",
+        profile: "isolated",
         ownerUid: "uid-ceckert",
         builderSlug: "ceckert",
       }),
@@ -573,7 +573,7 @@ describe("gatewayUpsertOptsFromRelease", () => {
       replicas: 1,
       chartPath: "/charts/octogee-gateway",
     });
-    expect(opts.gatewayClass).toBe("builder");
+    expect(opts.gatewayClass).toBe("isolated");
     expect(opts.builderAccess).toBeDefined();
     expect(opts).not.toHaveProperty("builderSlug");
     expect(opts).not.toHaveProperty("ownerUid");
@@ -584,7 +584,7 @@ describe("gatewayUpsertOptsFromRelease", () => {
 describe("provisioningRuntimeDoc", () => {
   it("requires new runtime observations when a paused gateway resumes", () => {
     const existing = provisioningRuntimeDoc({
-      gateway: gateway({ gatewayClass: "builder", desiredStatus: "paused" }),
+      gateway: gateway({ gatewayClass: "isolated", desiredStatus: "paused" }),
       artifact: artifact(), existing: null, now: 100,
     });
     existing.lifecycle = "serving";
@@ -596,7 +596,7 @@ describe("provisioningRuntimeDoc", () => {
     existing.kubernetes = { status: "ready", totalPods: 1, readyPods: 1, observedAt: 99, pods: [] };
 
     const resumed = provisioningRuntimeDoc({
-      gateway: gateway({ gatewayClass: "builder", desiredStatus: "running" }),
+      gateway: gateway({ gatewayClass: "isolated", desiredStatus: "running" }),
       artifact: artifact(), existing, now: 200,
     });
 
@@ -687,8 +687,8 @@ describe("supersedingGatewayImageTag", () => {
       gateway: gateway({
         desiredRelease: 2,
         latestRelease: 3,
-        gatewayClass: "builder",
-        imageProfile: "builder",
+        gatewayClass: "isolated",
+        imageProfile: "isolated",
       }),
       desiredImage: { imageRepository: USER_REPO, imageTag: "def5678" },
       pendingArtifact: artifact({
@@ -733,8 +733,8 @@ describe("supersedingGatewayImageTag", () => {
       gateway: gateway({
         desiredRelease: 2,
         latestRelease: 3,
-        gatewayClass: "builder",
-        imageProfile: "builder",
+        gatewayClass: "isolated",
+        imageProfile: "isolated",
       }),
       desiredImage: { imageRepository: USER_REPO, imageTag: "def5678" },
       pendingArtifact: artifact({ imageTag: "aaa1111", profileImages: undefined }),

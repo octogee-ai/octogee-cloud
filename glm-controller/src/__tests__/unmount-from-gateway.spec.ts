@@ -114,7 +114,7 @@ describe("createUnmountFromGateway — runtime presence", () => {
 describe("createUnmountFromGateway — live pod unmount", () => {
   it("contacts a VM even when Kubernetes has no objects", async () => {
     const deps = mkDeps({
-      resolveGatewayUnmountTarget: vi.fn<UnmountFromGatewayDeps["resolveGatewayUnmountTarget"]>(async () => ({ gatewayId: "alice-vm", revisionId: "alice-vm", profile: "builder", runtime: "gce-vm" })),
+      resolveGatewayUnmountTarget: vi.fn<UnmountFromGatewayDeps["resolveGatewayUnmountTarget"]>(async () => ({ gatewayId: "alice-vm", revisionId: "alice-vm", profile: "isolated", runtime: "gce-vm" })),
       isRuntimeAbsent: vi.fn(async () => true),
     });
     await expect(createUnmountFromGateway(deps)("alice-vm", "alice")).resolves.toBe("unmounted");
@@ -124,7 +124,7 @@ describe("createUnmountFromGateway — live pod unmount", () => {
 
   it("keeps an unreachable VM failure visible instead of claiming Kubernetes absence", async () => {
     const deps = mkDeps({
-      resolveGatewayUnmountTarget: vi.fn<UnmountFromGatewayDeps["resolveGatewayUnmountTarget"]>(async () => ({ gatewayId: "alice-vm", revisionId: "alice-vm", profile: "builder", runtime: "gce-vm" })),
+      resolveGatewayUnmountTarget: vi.fn<UnmountFromGatewayDeps["resolveGatewayUnmountTarget"]>(async () => ({ gatewayId: "alice-vm", revisionId: "alice-vm", profile: "isolated", runtime: "gce-vm" })),
       isRuntimeAbsent: vi.fn(async () => true),
       unmountRpc: vi.fn(async () => { throw connectionError(); }),
       retryDeadlineMs: 0,
@@ -149,7 +149,7 @@ describe("createUnmountFromGateway — live pod unmount", () => {
       resolveGatewayUnmountTarget: vi.fn(async () => ({
         gatewayId: "walter",
         revisionId: "walter-r7",
-        profile: "builder" as const,
+        profile: "isolated" as const,
         runtime: "cluster" as const,
       })),
     });
@@ -253,7 +253,7 @@ describe("createUnmountFromGateway — connection-error retry", () => {
       resolveGatewayUnmountTarget: vi.fn(async () => ({
         gatewayId: "walter",
         revisionId: "walter-r7",
-        profile: "builder" as const,
+        profile: "isolated" as const,
         runtime: "cluster" as const,
       })),
       isRuntimeAbsent: vi.fn(async () => true),

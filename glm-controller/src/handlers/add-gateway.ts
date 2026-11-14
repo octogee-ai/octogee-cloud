@@ -198,7 +198,7 @@ async function waitForReadySignal(
   ctx: OperationContext,
   deps: AddGatewayDeps,
 ): Promise<StepResult> {
-  if (plan.gatewayClass === "builder") {
+  if (plan.gatewayClass === "isolated") {
     return publishPlatformReadyRecord(plan, ctx, deps);
   }
 

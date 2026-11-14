@@ -17,7 +17,7 @@ import type {
 } from "../operations.js";
 import type { Page, PageRequest, Stored } from "../store.js";
 import { GATEWAY_RECOVERY_RECEIPTS_TABLE, OPERATION_AUDITS_TABLE, OPERATIONS_TABLE } from "./journal-tables.js";
-import { currentAuditMutation, currentOperationKind, operationKindsStoredAs } from "./legacy-stored-names.js";
+import { operationForStore, operationInputForStore, operationInputFromStored } from "./previous-release-operation-input.js";
 import {
   deleteRecord,
   equalsFence,
@@ -52,16 +52,21 @@ const ACTION_STARTED_AT = columnFor(OPERATION_AUDITS_TABLE, operationKey(""), "a
 
 export function decodeOperation(row: Row): Stored<OperationRecord> {
   const operation = decodeStored<OperationRecord>(OPERATIONS_TABLE, row);
-  return { ...operation, kind: currentOperationKind(operation.kind) } as Stored<OperationRecord>;
+  return { ...operation, input: operationInputFromStored(operation.input) };
 }
 
 export function decodeOperationAudit(row: Row): Stored<OperationAuditRow> {
-  const stored = decodeStored<OperationAuditRow>(OPERATION_AUDITS_TABLE, row);
-  const audit = { ...stored, mutation: currentAuditMutation(stored.mutation) };
+  const audit = decodeStored<OperationAuditRow>(OPERATION_AUDITS_TABLE, row);
   if (!isOperationAuditRecord(audit)) {
     throw new MalformedRecordError({ aggregate: "operation-audit", key: String(row.id) }, "fails the operation audit schema");
   }
   return audit;
+}
+
+function patchForStore<T extends { input?: unknown }>(patch: T): T {
+  return patch.input !== null && typeof patch.input === "object" && !Array.isArray(patch.input)
+    ? { ...patch, input: operationInputForStore(patch.input as Record<string, unknown>) }
+    : patch;
 }
 
 function decodeRecoveryReceipt(row: Row): Stored<GatewayRecoveryReceipt> {
@@ -124,14 +129,13 @@ function createOperationsRepository(session: PostgresSession): OperationsReposit
       const parameters = new SqlParameters();
       const conditions = [`input_uid = ${parameters.add(uid, "text")}`];
       if (filter.statuses !== undefined) conditions.push(`status = ANY(${parameters.add([...filter.statuses], "text[]")})`);
-      if (filter.kind !== undefined) conditions.push(`kind = ANY(${parameters.add(operationKindsStoredAs(filter.kind), "text[]")})`);
+      if (filter.kind !== undefined) conditions.push(`kind = ${parameters.add(filter.kind, "text")}`);
       return list("journal.operations.listForUid", conditions.join(" AND "), parameters.values);
     },
 
     listByKind(kind: OperationKind, statuses?: readonly OperationStatus[]) {
-      const kinds = operationKindsStoredAs(kind);
-      if (statuses === undefined) return list("journal.operations.listByKind", "kind = ANY($1::text[])", [kinds]);
-      return list("journal.operations.listByKind", "kind = ANY($1::text[]) AND status = ANY($2::text[])", [kinds, [...statuses]]);
+      if (statuses === undefined) return list("journal.operations.listByKind", "kind = $1::text", [kind]);
+      return list("journal.operations.listByKind", "kind = $1::text AND status = ANY($2::text[])", [kind, [...statuses]]);
     },
 
     listReferencingUid(uid) {
@@ -144,7 +148,7 @@ function createOperationsRepository(session: PostgresSession): OperationsReposit
 
     listByInputUserSlugPrefix(prefix) {
       return list(
-        "journal.operations.listByInputBuilderSlugPrefix",
+        "journal.operations.listByInputUserSlugPrefix",
         "input_user_slug LIKE $1::text ESCAPE '\\'",
         [`${escapeLike(prefix)}%`],
         "input_user_slug, id",
@@ -153,23 +157,23 @@ function createOperationsRepository(session: PostgresSession): OperationsReposit
 
     async enqueue(operation) {
       const id = mintOperationId();
-      await insertRecord(session, "journal.operations.enqueue", OPERATIONS_TABLE, { ...operation, id }, "create");
+      await insertRecord(session, "journal.operations.enqueue", OPERATIONS_TABLE, operationForStore({ ...operation, id }), "create");
       return id;
     },
 
     async create(operation) {
-      await insertRecord(session, "journal.operations.create", OPERATIONS_TABLE, operation, "create");
+      await insertRecord(session, "journal.operations.create", OPERATIONS_TABLE, operationForStore(operation), "create");
     },
 
     async put(operation) {
-      await insertRecord(session, "journal.operations.put", OPERATIONS_TABLE, operation, "put");
+      await insertRecord(session, "journal.operations.put", OPERATIONS_TABLE, operationForStore(operation), "put");
     },
 
     async patch(operationId, patch, fence) {
       const table = isClearField(patch.createdBy)
         ? { ...OPERATIONS_TABLE, immutableFields: ["id", "kind", "createdAt"] }
         : OPERATIONS_TABLE;
-      await updateRecord(session, "journal.operations.patch", { table, key: [operationId] }, patch, [
+      await updateRecord(session, "journal.operations.patch", { table, key: [operationId] }, patchForStore(patch), [
         ...revisionFence(fence?.revision),
         ...oneOfFence("status", STATUS, fence?.status),
         ...equalsFence("startedAt", STARTED_AT, fence?.startedAt),

@@ -101,7 +101,7 @@ describe("gateway operation queue — enqueue instead of reject (glmOperations w
     const rollout = baseOp({ id: "target-roll", origin: "operator", createdAt: 2, input: { gatewayId: toGatewayId } });
     const events: string[] = [];
     const { db, store } = createOperationsFixture({ [migrationId]: waiting, "target-roll": rollout }, {
-      gateways: { "builder-a": { gatewayId: "builder-a", gatewayClass: "builder" }, "shared-a": { gatewayId: "shared-a", gatewayClass: "shared" } },
+      gateways: { "builder-a": { gatewayId: "builder-a", gatewayClass: "isolated" }, "shared-a": { gatewayId: "shared-a", gatewayClass: "shared" } },
       runtimes: { "builder-a": { runtime: "cluster" }, "shared-a": { runtime: "cluster" } },
     });
     const deps = buildDeps(db, {
@@ -120,13 +120,13 @@ describe("gateway operation queue — enqueue instead of reject (glmOperations w
     const returnId = "builder-return-builder-a-g2";
     const blockedReturn = baseOp({ id: returnId, kind: "migrate-user", origin: "automatic",
       createdBy: "glm-controller-placement-policy", createdAt: 2,
-      input: { uid: "alice", builderSlug: "alice", source: "builder-activation-lease", fromGatewayId: "builder-a", toGatewayId: "shared-target" } });
+      input: { uid: "alice", userSlug: "alice", source: "builder-activation-lease", fromGatewayId: "builder-a", toGatewayId: "shared-target" } });
     const olderMigration = baseOp({ id: "older-shared-move", kind: "migrate-user", createdAt: 1,
       nextAttemptAt: Date.now() + 60_000, input: { fromGatewayId: "shared-source", toGatewayId: "shared-target" } });
     const rollout = baseOp({ id: "operator-roll", origin: "operator", createdAt: 3, input: { gatewayId: "builder-a" } });
     const handler: OperationHandler = vi.fn(async () => ({ success: true, steps: [] }));
     const { db, store } = createOperationsFixture({ [returnId]: blockedReturn, "older-shared-move": olderMigration, "operator-roll": rollout }, {
-      gateways: { "builder-a": { gatewayId: "builder-a", gatewayClass: "builder" } },
+      gateways: { "builder-a": { gatewayId: "builder-a", gatewayClass: "isolated" } },
       runtimes: { "builder-a": { runtime: "cluster" } },
     });
 
@@ -146,7 +146,7 @@ describe("gateway operation queue — enqueue instead of reject (glmOperations w
     const userRoll = baseOp({ id: "user-roll", origin: "operator", createdAt: 3, input: { gatewayId: "builder-a" } });
     const handler: OperationHandler = vi.fn(async () => ({ success: true, steps: [] }));
     const { db, store } = createOperationsFixture({ [returnId]: returning, "shared-roll": sharedRoll, "user-roll": userRoll }, {
-      gateways: { "builder-a": { gatewayId: "builder-a", gatewayClass: "builder" }, "shared-target": { gatewayId: "shared-target", gatewayClass: "shared" } },
+      gateways: { "builder-a": { gatewayId: "builder-a", gatewayClass: "isolated" }, "shared-target": { gatewayId: "shared-target", gatewayClass: "shared" } },
       runtimes: { "builder-a": { runtime: "cluster" }, "shared-target": { runtime: "cluster" } },
     });
 
@@ -166,7 +166,7 @@ describe("gateway operation queue — enqueue instead of reject (glmOperations w
     { name: "transfer dispatch", returning: { sourceTransferExecution: { status: "dispatched" } } },
     { name: "scheduler custody", returning: { schedulerHandoff: { migrationId: "original" } } },
     { name: "released scheduler custody", returning: { schedulerHandoffReleased: true } },
-    { name: "migration state", returning: { customerMigrationV2: { phase: "initialized" } } },
+    { name: "migration state", returning: { userMigrationV2: { phase: "initialized" } } },
     { name: "cancellation", returning: { cancellationRequestedAt: 10 } },
     { name: "retained output", returning: { output: { configCleanup: { migrationId: "original" } } } },
     { name: "automatic rollout", rollout: { origin: "automatic" } },
@@ -298,7 +298,7 @@ describe("gateway operation queue — enqueue instead of reject (glmOperations w
       "shared-roll": baseOp({ id: "shared-roll", createdAt: 2, input: { gatewayId: "shared-0" } }),
     }, {
       gateways: {
-        sep092: { gatewayId: "sep092", gatewayClass: "builder" },
+        sep092: { gatewayId: "sep092", gatewayClass: "isolated" },
         "shared-0": { gatewayId: "shared-0", gatewayClass: "shared" },
       },
       runtimes: { sep092: { runtime: "gce-vm" }, "shared-0": { runtime: "cluster" } },
@@ -313,8 +313,8 @@ describe("gateway operation queue — enqueue instead of reject (glmOperations w
 
   it.each([
     ["another Shared", "shared-1", "shared", "cluster", "roll shared-0"],
-    ["another isolated VM", "builder-2", "builder", "gce-vm", "roll builder-1"],
-    ["an isolated gateway on Kubernetes", "builder-2", "builder", "cluster", "roll shared-0"],
+    ["another isolated VM", "builder-2", "isolated", "gce-vm", "roll builder-1"],
+    ["an isolated gateway on Kubernetes", "builder-2", "isolated", "cluster", "roll shared-0"],
   ] as const)("queues %s rollout when both rollout lanes are occupied", async (_name, gatewayId, gatewayClass, runtime, waitingOn) => {
     const handler: OperationHandler = vi.fn(async () => ({ steps: [], success: true }));
     const { db, store } = createOperationsFixture({
@@ -323,7 +323,7 @@ describe("gateway operation queue — enqueue instead of reject (glmOperations w
       "next-roll": baseOp({ id: "next-roll", createdAt: 2, input: { gatewayId } }),
     }, {
       gateways: {
-        "builder-1": { gatewayId: "builder-1", gatewayClass: "builder" },
+        "builder-1": { gatewayId: "builder-1", gatewayClass: "isolated" },
         "shared-0": { gatewayId: "shared-0", gatewayClass: "shared" },
         [gatewayId]: { gatewayId, gatewayClass },
       },
@@ -341,9 +341,9 @@ describe("gateway operation queue — enqueue instead of reject (glmOperations w
 
   it.each([
     ["missing root", undefined, { runtime: "gce-vm" }],
-    ["wrong root identity", { gatewayId: "other", gatewayClass: "builder" }, { runtime: "gce-vm" }],
-    ["missing runtime", { gatewayId: "builder", gatewayClass: "builder" }, undefined],
-    ["unstamped runtime", { gatewayId: "builder", gatewayClass: "builder" }, {}],
+    ["wrong root identity", { gatewayId: "other", gatewayClass: "isolated" }, { runtime: "gce-vm" }],
+    ["missing runtime", { gatewayId: "builder", gatewayClass: "isolated" }, undefined],
+    ["unstamped runtime", { gatewayId: "builder", gatewayClass: "isolated" }, {}],
     ["unknown class", { gatewayId: "builder", gatewayClass: "other" }, { runtime: "gce-vm" }],
     ["Shared VM mismatch", { gatewayId: "builder", gatewayClass: "shared" }, { runtime: "gce-vm" }],
   ] as const)("keeps an unclassified %s rollout globally exclusive", async (_name, root, runtime) => {
@@ -377,7 +377,7 @@ describe("gateway operation queue — enqueue instead of reject (glmOperations w
       "other-shared-roll": baseOp({ id: "other-shared-roll", createdAt: 0, input: { gatewayId: "shared-1" } }),
     }, {
       gateways: {
-        builder: { gatewayId: "builder", gatewayClass: "builder" },
+        builder: { gatewayId: "builder", gatewayClass: "isolated" },
         "shared-0": { gatewayId: "shared-0", gatewayClass: "shared" },
         "shared-1": { gatewayId: "shared-1", gatewayClass: "shared" },
       },

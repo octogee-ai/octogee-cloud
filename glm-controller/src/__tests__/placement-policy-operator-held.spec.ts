@@ -19,7 +19,7 @@ const sharedGateway: PlacementPolicyGateway = {
 
 function givenGateway(overrides: Partial<PlacementPolicyGateway> = {}): PlacementPolicyGateway {
   return {
-    gatewayId: GIVEN, gatewayClass: "builder", ownerUid: UID, desiredStatus: "running", ready: true, disposable: true,
+    gatewayId: GIVEN, gatewayClass: "isolated", ownerUid: UID, desiredStatus: "running", ready: true, disposable: true,
     allocation: { kind: "disposable-builder", schemaVersion: 1, leaseId: "operator-issued", generation: 1, claimedByUid: UID },
     assignmentCount: 1, mountedCustomers: ["lin"], configuredBuilder: { state: "claimed", generation: 1 },
     ...overrides,
@@ -104,7 +104,7 @@ describe("a user an operator gave an isolated gateway", () => {
       [`gateways/${GIVEN}`]: {
         gatewayId: GIVEN, createdAt: 1, createdBy: "operator", updatedAt: 2, updatedBy: "operator",
         latestRelease: 1, desiredRelease: 1, liveRelease: 1, desiredStatus: "retired", configSchemaVersion: 1,
-        profile: null, gatewayClass: "builder", imageProfile: "builder", sizingTier: "s", gcpProject: null,
+        profile: null, gatewayClass: "isolated", imageProfile: "isolated", sizingTier: "s", gcpProject: null,
         gatewayContainerSecurityContext: null, serviceAccountName: null, serviceAccount: null, builderAccess: null,
         ownerUid: UID, builderSlug: "lin", modelBrokerLimits: null, preemption: null, coOwnerUids: [],
         allocation: { kind: "disposable-builder", schemaVersion: 1, leaseId: "operator-issued", generation: 1, claimedByUid: UID },

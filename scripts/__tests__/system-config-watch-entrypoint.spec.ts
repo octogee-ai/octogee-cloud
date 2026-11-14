@@ -19,7 +19,7 @@ describe("system-config-watch entrypoint planning", () => {
 
   it("runs only for isolated gateways with a user slug and canonical path", () => {
     expect(resolveSystemConfigWatchPlan({
-      GATEWAY_CLASS: "builder",
+      GATEWAY_CLASS: "isolated",
       ...withUserClaim({}, "alice"),
       OPENCLAW_CONFIG_PATH: "/home/node/.openclaw/system_config/openclaw.json",
     })).toEqual({
@@ -35,7 +35,7 @@ describe("system-config-watch entrypoint planning", () => {
       reason: "shared-gateway",
     });
     expect(() => resolveSystemConfigWatchPlan({
-      GATEWAY_CLASS: "builder",
+      GATEWAY_CLASS: "isolated",
       ...withUserClaim({}, "alice"),
       HOME: "/home/node",
     })).toThrow(/OPENCLAW_CONFIG_PATH/);
@@ -49,7 +49,7 @@ describe("system-config-watch entrypoint planning", () => {
 
     runSystemConfigWatch({
       env: {
-        GATEWAY_CLASS: "builder",
+        GATEWAY_CLASS: "isolated",
         ...withUserClaim({}, "alice"),
         OPENCLAW_CONFIG_PATH: "/home/node/.openclaw/system_config/openclaw.json",
       },
@@ -87,7 +87,7 @@ describe("system-config-watch entrypoint planning", () => {
 
     runSystemConfigWatch({
       env: {
-        GATEWAY_CLASS: "builder",
+        GATEWAY_CLASS: "isolated",
         ...withUserClaim({}, "alice"),
         OPENCLAW_CONFIG_PATH: configPath,
       },
@@ -121,7 +121,7 @@ describe("system-config-watch entrypoint planning", () => {
 
     runSystemConfigWatch({
       env: {
-        GATEWAY_CLASS: "builder",
+        GATEWAY_CLASS: "isolated",
         ...withUserClaim({}, "alice"),
         OPENCLAW_CONFIG_PATH: configPath,
       },
@@ -149,7 +149,7 @@ describe("system-config-watch entrypoint planning", () => {
 
     runSystemConfigWatch({
       env: {
-        GATEWAY_CLASS: "builder",
+        GATEWAY_CLASS: "isolated",
         ...withUserClaim({}, "alice"),
         OPENCLAW_CONFIG_PATH: configPath,
       },

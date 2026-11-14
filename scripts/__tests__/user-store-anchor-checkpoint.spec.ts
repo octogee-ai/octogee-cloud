@@ -36,7 +36,7 @@ it("records and reads back all five store families, then restores auxiliary iden
   expect(f.input.verifyAuxiliary).toHaveBeenCalledTimes(3);
   const target = await root();
   await runAgentAnchorRestore({
-    env: withUserClaim({ GATEWAY_CLASS: "builder", GATEWAY_RUNTIME_KIND: "cluster", GATEWAY_ID: "alice-source", OPENCLAW_STATE_DIR: target }, "alice"),
+    env: withUserClaim({ GATEWAY_CLASS: "isolated", GATEWAY_RUNTIME_KIND: "cluster", GATEWAY_ID: "alice-source", OPENCLAW_STATE_DIR: target }, "alice"),
     broker: f.broker, readConfig: () => config, verify: async () => {}, verifyState: async () => {}, verifyAuxiliary: async () => {}, initializeHost: async () => {}, log: () => {},
   });
   expect(await readLocalAuxiliaryAnchors(target)).toEqual(auxiliary);

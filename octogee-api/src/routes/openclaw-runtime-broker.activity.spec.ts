@@ -17,7 +17,7 @@ function harness(payloadPatch: Record<string, unknown> = {}, ownerGateway = gate
   const docs = new RecordingDocuments({
     'gatewayTickets/ticket': ticket,
     'users/owner': { provisioning: { openclaw: { gatewayId: ownerGateway } } },
-    [`gateways/${gatewayId}`]: { gatewayId, desiredRelease: 1, latestRelease: 1, liveRelease: 1, desiredStatus: 'running', configSchemaVersion: 1, profile: 'builder', gatewayClass: 'builder', imageProfile: 'builder', sizingTier: null, gcpProject: null, gatewayContainerSecurityContext: null, serviceAccountName: null, serviceAccount: null, builderAccess: { controlIdentity: 'per-user', controlUiEnabled: true }, ownerUid: 'owner', builderSlug: 'alice', modelBrokerLimits: null, preemption: null },
+    [`gateways/${gatewayId}`]: { gatewayId, desiredRelease: 1, latestRelease: 1, liveRelease: 1, desiredStatus: 'running', configSchemaVersion: 1, profile: 'isolated', gatewayClass: 'isolated', imageProfile: 'isolated', sizingTier: null, gcpProject: null, gatewayContainerSecurityContext: null, serviceAccountName: null, serviceAccount: null, builderAccess: { controlIdentity: 'per-user', controlUiEnabled: true }, ownerUid: 'owner', builderSlug: 'alice', modelBrokerLimits: null, preemption: null },
     [`glmGateways/${gatewayId}`]: { docKind: 'runtime', gatewayId, release: 1, lifecycle: 'serving', heartbeat: { internalUrl: 'ws://native.internal:18789' } },
   });
   const app = express(); app.use(express.json());

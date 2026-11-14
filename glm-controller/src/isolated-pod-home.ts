@@ -170,7 +170,7 @@ export async function observeIsolatedPodBlockers(deps: IsolatedPodBlockerObserve
   const roots = await deps.store.gateways.roots.getMany(runtimes.map((runtime) => runtime.gatewayId));
   for (const runtime of runtimes) {
     const root = roots.get(runtime.gatewayId);
-    if (root?.gatewayClass !== "builder" || root.desiredStatus !== "running") continue;
+    if (root?.gatewayClass !== "isolated" || root.desiredStatus !== "running") continue;
     let blocker: string | null;
     try {
       blocker = oneLine(await deps.readBlocker(runtime.gatewayId));

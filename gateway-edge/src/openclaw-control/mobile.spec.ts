@@ -216,8 +216,8 @@ async function harness() {
     env: {
       GATEWAY_ID: 'walter',
       GATEWAY_REVISION_ID: 'walter',
-      GATEWAY_CLASS: 'builder',
-      GATEWAY_PROFILE: 'builder',
+      GATEWAY_CLASS: 'isolated',
+      GATEWAY_PROFILE: 'isolated',
       OPENCLAW_CONTROL_IDENTITY: 'per-user',
       OPENCLAW_GATEWAY_URL: `http://127.0.0.1:${nativePort}`,
       API_PUBLIC_URL: 'https://api.octogee.com',

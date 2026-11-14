@@ -196,7 +196,7 @@ export async function assertGatewayRuntimeMutationUnfencedInStore(transaction, g
 export function moveHasNotBegun(operation, gatewayId) {
     return operation.kind === "migrate-user" && operation.status === "pending" && operation.startedAt === null &&
         operation.input?.toGatewayId === gatewayId && !operation.attempts && operation.steps.length === 0 &&
-        operation.customerMigrationV2 === undefined && operation.schedulerHandoff === undefined &&
+        operation.userMigrationV2 === undefined && operation.schedulerHandoff === undefined &&
         operation.cutoverCommittedAt === undefined && operation.sourceTransferExecution === undefined;
 }
 function activeMigrationConflict(gatewayId, operations) {
@@ -205,7 +205,7 @@ function activeMigrationConflict(gatewayId, operations) {
         kind: operation.kind,
         status: operation.status,
         input: operation.input,
-        customerMigrationV2: operation.customerMigrationV2,
+        userMigrationV2: operation.userMigrationV2,
     }))) !== null;
 }
 function inspectRetirementRuntime(input, root, runtime) {

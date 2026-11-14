@@ -639,7 +639,7 @@ function privateProjectAgentForImport(agent, keyed, cwd) {
 export async function applyOpenClawActivationManifest(manifest, opts) {
     const privateProjects = privateProjectWorkspaceAgentIds(manifest);
     const authInheritanceAnchor = opts.authInheritanceAnchor;
-    const reconcileAgent = opts.gatewayClass === "builder"
+    const reconcileAgent = opts.gatewayClass === "isolated"
         ? reconcileIsolatedGatewayAgentEntry
         : reconcileSharedGatewayAgentEntry;
     if (authInheritanceAnchor &&
@@ -654,7 +654,7 @@ export async function applyOpenClawActivationManifest(manifest, opts) {
         ...(normalizedAuthInheritanceAnchor
             ? { authInheritance: { agentId: normalizedAuthInheritanceAnchor.agentId } }
             : {}),
-        ...(opts.gatewayClass === "builder" ? { systemAgent: { agentId: manifest.agentId } } : {}),
+        ...(opts.gatewayClass === "isolated" ? { systemAgent: { agentId: manifest.agentId } } : {}),
     };
     const startedAt = Date.now();
     let routingActivationRequired = false;
@@ -669,7 +669,7 @@ export async function applyOpenClawActivationManifest(manifest, opts) {
                 const existing = currentActivationAgent(current, entry.agentId);
                 let agent = entry.agent;
                 if (privateProjects.has(entry.agentId)) {
-                    if (opts.gatewayClass === "builder" && existing?.sandbox !== undefined)
+                    if (opts.gatewayClass === "isolated" && existing?.sandbox !== undefined)
                         agent = { ...agent, sandbox: existing.sandbox };
                     const defaults = isRecord(agents?.defaults) ? agents.defaults : undefined;
                     const cwd = opts.projectCheckoutCwd?.(agent, current) ?? (defaults?.cwd && typeof agent.workspace === "string" ? agent.workspace : undefined);
@@ -712,7 +712,7 @@ export async function applyOpenClawActivationManifest(manifest, opts) {
                     mattermost: {
                         accounts: {
                             ...staleProjectAgentAccountNulls(current, manifest.slug, activationAgents.map((entry) => entry.accountId)),
-                            ...mattermostAccountEndpointsForTarget(current, Object.fromEntries(activationAgents.map((entry) => [entry.accountId, entry.mattermostAccount])), opts.gatewayClass !== "builder"),
+                            ...mattermostAccountEndpointsForTarget(current, Object.fromEntries(activationAgents.map((entry) => [entry.accountId, entry.mattermostAccount])), opts.gatewayClass !== "isolated"),
                         },
                     },
                 },

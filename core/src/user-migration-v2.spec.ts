@@ -26,7 +26,7 @@ function gatewayRootFence(
     latestRelease: release,
     desiredRelease: release,
     liveRelease: release,
-    gatewayClass: "builder",
+    gatewayClass: "isolated",
     ownerUid: "uid-1",
     builderSlug: "alice",
     configHash: gatewayId === "source" ? "1".repeat(64) : "2".repeat(64),
@@ -96,9 +96,9 @@ describe("userMigrationV2GatewayRootFence", () => {
     liveRelease: 1,
     desiredStatus: "running",
     configSchemaVersion: 1,
-    profile: "builder",
-    gatewayClass: "builder",
-    imageProfile: "builder",
+    profile: "isolated",
+    gatewayClass: "isolated",
+    imageProfile: "isolated",
     sizingTier: "l",
     gcpProject: null,
     gatewayContainerSecurityContext: null,
@@ -115,7 +115,7 @@ describe("userMigrationV2GatewayRootFence", () => {
 
   it("admits only Isolated-class roots, so every V2 target boots hold-capable and stages its schedules after cutover", () => {
     expect(userMigrationV2GatewayRootFence({ ...root([]), gatewayClass: "shared", profile: "standard", imageProfile: "standard" }, "source")).toBeNull();
-    expect(userMigrationV2GatewayRootFence(root([]), "source")).toMatchObject({ gatewayClass: "builder" });
+    expect(userMigrationV2GatewayRootFence(root([]), "source")).toMatchObject({ gatewayClass: "isolated" });
   });
 
   it("projects an empty retired co-owner mirror and rejects non-empty legacy authority", () => {

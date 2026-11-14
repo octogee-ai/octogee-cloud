@@ -73,7 +73,7 @@ export function snapshot(overrides: Partial<PlacementFixtureSnapshot> = {}): Pla
       },
       {
         gatewayId: "builder-alice",
-        gatewayClass: "builder",
+        gatewayClass: "isolated",
         ownerUid: "uid-alice",
         desiredStatus: "running",
         ready: true,

@@ -1,12 +1,12 @@
 import type { SizingTier } from "./sizing.js";
 export type GatewayDesiredStatus = "running" | "paused" | "draining" | "retired";
-export declare const GATEWAY_PROFILES: readonly ["standard", "builder"];
+export declare const GATEWAY_PROFILES: readonly ["standard", "isolated"];
 export type GatewayProfile = (typeof GATEWAY_PROFILES)[number];
-export declare const GATEWAY_CLASSES: readonly ["shared", "builder"];
+export declare const GATEWAY_CLASSES: readonly ["shared", "isolated"];
 export type GatewayClass = (typeof GATEWAY_CLASSES)[number];
-export declare const GATEWAY_IMAGE_PROFILES: readonly ["standard", "builder"];
+export declare const GATEWAY_IMAGE_PROFILES: readonly ["standard", "isolated"];
 export type GatewayImageProfile = (typeof GATEWAY_IMAGE_PROFILES)[number];
-export declare function dualReadGatewayClassValue<T>(value: T): T | "builder";
+export declare function dualReadGatewayClassValue<T>(value: T): T | "isolated";
 export declare function isIsolatedGatewayClassValue(value: unknown): boolean;
 export interface GatewayDesiredState {
     gatewayId: string;
@@ -508,7 +508,7 @@ export interface Operation {
     attemptHistory?: OperationAttemptRecord[];
     output?: Record<string, unknown>;
     progress?: MigrationProgressRecord[];
-    customerMigrationV2?: UserMigrationV2State;
+    userMigrationV2?: UserMigrationV2State;
     sourceTransferExecution?: SourceTransferExecution;
     schedulerHandoff?: SchedulerHandoffState;
     schedulerHandoffReleased?: boolean;
@@ -523,7 +523,7 @@ export interface UserMigrationV2GatewayRootFence {
     latestRelease: number;
     desiredRelease: number;
     liveRelease: number;
-    gatewayClass: "builder";
+    gatewayClass: "isolated";
     ownerUid: string;
     builderSlug: string;
     configHash: string;

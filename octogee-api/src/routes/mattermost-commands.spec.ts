@@ -28,7 +28,7 @@ function isolatedRoot(gatewayId: string, ownerUid: string, slug: string) {
   return {
     gatewayId, createdAt: 1, createdBy: "test", updatedAt: 1, updatedBy: "test",
     latestRelease: 2, desiredRelease: 2, liveRelease: 2, desiredStatus: "running", configSchemaVersion: 1,
-    profile: "builder", gatewayClass: "builder", imageProfile: "builder", sizingTier: null, gcpProject: null,
+    profile: "isolated", gatewayClass: "isolated", imageProfile: "isolated", sizingTier: null, gcpProject: null,
     gatewayContainerSecurityContext: null, serviceAccountName: null, serviceAccount: null,
     builderAccess: { controlUiEnabled: true }, ownerUid, builderSlug: slug,
     modelBrokerLimits: null, preemption: null, coOwnerUids: [],

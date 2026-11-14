@@ -3,8 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 import type { ClaimedUserIdentity, UserIdentity } from "../../shared/types/user-identity.js";
 import { userBootMode } from "../entrypoints/surge-openclaw-supervisor.js";
 
-const COMPUTER = { GATEWAY_CLASS: "builder", GATEWAY_RUNTIME_KIND: "gce-vm" };
-const POD = { GATEWAY_CLASS: "builder", GATEWAY_RUNTIME_KIND: "cluster" };
+const COMPUTER = { GATEWAY_CLASS: "isolated", GATEWAY_RUNTIME_KIND: "gce-vm" };
+const POD = { GATEWAY_CLASS: "isolated", GATEWAY_RUNTIME_KIND: "cluster" };
 
 function claimed(overrides: Partial<ClaimedUserIdentity> = {}): UserIdentity {
   return { gatewayId: "b-x", state: "claimed", ownerUid: "uid-bob", builderSlug: "bob", leaseId: "operator-bob-1", generation: 1, ...overrides };
@@ -43,7 +43,7 @@ describe("an isolated gateway's user boot mode", () => {
   it("boots without asking the broker when the gateway names no isolated runtime", async () => {
     const readIdentity = vi.fn(async () => claimed({ bootMode: "prelaunch" }));
 
-    await expect(userBootMode({ env: { GATEWAY_CLASS: "builder" }, readIdentity })).resolves.toEqual({ prelaunchBoot: false });
+    await expect(userBootMode({ env: { GATEWAY_CLASS: "isolated" }, readIdentity })).resolves.toEqual({ prelaunchBoot: false });
     expect(readIdentity).not.toHaveBeenCalled();
   });
 });

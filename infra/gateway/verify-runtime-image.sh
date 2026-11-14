@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-profile="${1:?image profile required: gateway or builder}"
+profile="${1:?image profile required: gateway or isolated}"
 runtime_root="${OPENCLAW_RUNTIME_DEPS_ROOT:-/opt/openclaw-runtime-deps/npm}"
 global_root="${NPM_GLOBAL_ROOT:-$(npm root -g)}"
 tool_bin="${OCTOGEE_TOOL_BIN_DIR:-/usr/local/bin}"
@@ -17,7 +17,7 @@ staged_plugin() {
 }
 
 case "$profile" in
-  gateway|builder) ;;
+  gateway|isolated) ;;
   *) fail "unknown image profile: $profile" ;;
 esac
 
@@ -39,7 +39,7 @@ test -x "$tool_bin/codex" || fail "$tool_bin/codex is not executable"
 test ! -e "$global_root/@sparticuz/chromium" || fail "@sparticuz/chromium must not be installed under $global_root"
 test -x "$chromium_bin" || fail "$chromium_bin is not executable"
 
-if [ "$profile" = builder ]; then
+if [ "$profile" = isolated ]; then
   for name in \
     OCTOGEE_BUILDER_TOOLCHAIN_LOCK_SHA256 \
     OCTOGEE_BUILDER_TOOLCHAIN_PACKAGE_LOCK_PATH \

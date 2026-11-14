@@ -32,11 +32,11 @@ function helmTemplate(setValues: Record<string, string> = {}): string {
     "--namespace=octogee-test",
   ];
   const merged = { ...REQUIRED_VALUES, ...setValues };
-  if (setValues.profile === "builder") {
-    merged.gatewayClass = "builder";
-    merged.imageProfile = "builder";
+  if (setValues.profile === "isolated") {
+    merged.gatewayClass = "isolated";
+    merged.imageProfile = "isolated";
   }
-  if (setValues.profile === "builder" && !setValues.runtimeKind) merged.runtimeKind = "gce-vm";
+  if (setValues.profile === "isolated" && !setValues.runtimeKind) merged.runtimeKind = "gce-vm";
   for (const [k, v] of Object.entries(merged)) {
     args.push("--set", `${k}=${v}`);
   }
@@ -110,14 +110,14 @@ describe("helm/octogee-gateway/ — sizing tier explicit override", () => {
 
   it("explicit sizingTier beats profile-default", () => {
     // both profiles default to small; force medium to prove explicit wins.
-    const out = helmTemplate({ profile: "builder", sizingTier: "m" });
+    const out = helmTemplate({ profile: "isolated", sizingTier: "m" });
     expectResourcesMatchTier(out, "m");
   });
 });
 
 describe("helm/octogee-gateway/ — sizing tier profile-default fallback", () => {
   it("User profile without sizingTier renders small (class default)", () => {
-    const out = helmTemplate({ profile: "builder" });
+    const out = helmTemplate({ profile: "isolated" });
     expectResourcesMatchTier(out, "s");
   });
 
@@ -132,7 +132,7 @@ describe("helm/octogee-gateway/ — sizing tier profile-default fallback", () =>
   });
 
   it("Builder-profile pod label is the resolved tier, not the bare profile string", () => {
-    const out = helmTemplate({ profile: "builder" });
+    const out = helmTemplate({ profile: "isolated" });
     const c = gatewayContainer(out);
     expect(c.podLabels.tier).toBe("s");
   });
@@ -199,7 +199,7 @@ describe("helm/octogee-gateway/ — invalid sizingTier rejected by schema", () =
 
 describe("User ephemeral storage admission", () => {
   it.each(["x11", "omarchy"])("keeps the %s working-set budget intact under Autopilot admission", (computerDesktop) => {
-    const deployment = parseAllDocuments(helmTemplate({ profile: "builder", computerDesktop }))
+    const deployment = parseAllDocuments(helmTemplate({ profile: "isolated", computerDesktop }))
       .map((document) => document.toJS())
       .find((document) => document?.kind === "Deployment");
     const pod = deployment.spec.template.spec;
@@ -218,7 +218,7 @@ describe("User ephemeral storage admission", () => {
 
 describe("User working-set partition", () => {
   it.each(["x11", "omarchy"])("bounds every disk-backed %s emptyDir and spends exactly the gateway's ephemeral limit", (computerDesktop) => {
-    const deployment = parseAllDocuments(helmTemplate({ profile: "builder", computerDesktop }))
+    const deployment = parseAllDocuments(helmTemplate({ profile: "isolated", computerDesktop }))
       .map((document) => document.toJS())
       .find((document) => document?.kind === "Deployment");
     const pod = deployment.spec.template.spec;

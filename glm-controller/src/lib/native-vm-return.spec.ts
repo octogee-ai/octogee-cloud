@@ -10,7 +10,7 @@ function harness() {
       docKind: "runtime", gatewayId: "native", release: 1, lifecycle: "serving",
       runtime: "gce-vm", vm: { instanceName: "computer", zone: "us-central1-a", instanceId: "vm-id" }, vmHome: {},
     },
-    "gateways/native": { gatewayId: "native", gatewayClass: "builder", ownerUid: "alice-id", builderSlug: "alice", desiredStatus: "running", desiredRelease: 1, latestRelease: 1 },
+    "gateways/native": { gatewayId: "native", gatewayClass: "isolated", ownerUid: "alice-id", builderSlug: "alice", desiredStatus: "running", desiredRelease: 1, latestRelease: 1 },
     "gateways/shared": { gatewayId: "shared", gatewayClass: "shared", desiredStatus: "running", desiredRelease: 1, latestRelease: 1 },
     "users/alice-id": { provisioning: { openclaw: { gatewayId: "native" } } },
     "glmOperations/return-1": { kind: "migrate-user", status: "running", startedAt: 900, input: { uid: "alice-id", fromGatewayId: "native", toGatewayId: "shared" } },
@@ -65,7 +65,7 @@ describe("native computer return checkpoint", () => {
     h.source.runtime = "kubernetes";
     expect(await prepareNativeVmReturn(h.deps, input)).toBeNull();
     h.source.runtime = "gce-vm";
-    h.target.gatewayClass = "builder";
+    h.target.gatewayClass = "isolated";
     expect(await prepareNativeVmReturn(h.deps, input)).toBeNull();
     h.target.gatewayClass = "shared";
     h.root.ownerUid = "bob";

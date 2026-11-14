@@ -77,7 +77,7 @@ it("keeps Shared Workshop configuration valid through both final config writers"
 
 it("marks retained user Workshop choices as current without replacing them", () => {
   const workshop = { enabled: false, config: { autonomous: { mode: "propose" } } };
-  const config = runPolicy("builder", {
+  const config = runPolicy("isolated", {
     meta: { migrations: { unrelated: true } },
     plugins: { entries: { "skill-workshop": workshop } },
   });
@@ -87,11 +87,11 @@ it("marks retained user Workshop choices as current without replacing them", () 
 
 it("keeps native Codex available in fresh user config without overriding a user opt-out", () => {
   const fresh = JSON.parse(readFileSync(path.join(repoRoot, "infra/gateway/openclaw.isolated.template.json"), "utf8"));
-  const out = runPolicy("builder", fresh);
+  const out = runPolicy("isolated", fresh);
   expect(out.plugins.entries.codex).toEqual({ enabled: true });
   expect(out.plugins.allow).toContain("codex");
   fresh.plugins.entries.codex = { enabled: false };
-  expect(runPolicy("builder", fresh).plugins.entries.codex).toEqual({ enabled: false });
+  expect(runPolicy("isolated", fresh).plugins.entries.codex).toEqual({ enabled: false });
 });
 
 it("applies the same policy to an isolated class as to builder and the shared policy to an unknown class", () => {
@@ -335,7 +335,7 @@ it("leaves PostgreSQL pointer files to the native SecretRef materializer", () =>
   } finally { db.close(); }
 });
 
-it.each(["shared", "builder"])("preserves only the scoped PostgreSQL connection ref through %s policy", (gatewayClass) => {
+it.each(["shared", "isolated"])("preserves only the scoped PostgreSQL connection ref through %s policy", (gatewayClass) => {
   const connection = { source: "env", provider: "default", id: "OPENCLAW_AGENT_STORE_DSN" };
   const database = { engine: "sqlite", families: { agent: { engine: "postgres" } }, postgres: { schemaPrefix: "octogee", connection } };
   const out = runPolicy(gatewayClass, {
@@ -347,7 +347,7 @@ it.each(["shared", "builder"])("preserves only the scoped PostgreSQL connection 
   expect(runPolicy(gatewayClass, out).database).toEqual(database);
 });
 
-it.each(["shared", "builder"])("canonicalizes an imported database SecretRef under %s policy", (gatewayClass) => {
+it.each(["shared", "isolated"])("canonicalizes an imported database SecretRef under %s policy", (gatewayClass) => {
   const out = runPolicy(gatewayClass, {
     database: { postgres: { connection: { source: "env", provider: "default", id: "INTERNAL_SERVICE_KEY" } } },
   });
@@ -415,7 +415,7 @@ describe("infra/gateway/apply-gateway-class-policy.mjs", () => {
   });
 
   it("clears a restored user allow list while preserving subscription model definitions", () => {
-    const out = runPolicy("builder", {
+    const out = runPolicy("isolated", {
       agents: { defaults: {
         modelPolicy: { allow: ["platform-openai/gpt-5.4-mini"] },
         models: { "openai-codex/gpt-6-astra": { alias: "my-astra" } },
@@ -709,7 +709,7 @@ describe("infra/gateway/apply-gateway-class-policy.mjs", () => {
     expect(shared.channels.mattermost.accounts[projectAccountId].dmPolicy).toBe("disabled");
     expect(shared.channels.mattermost.accounts[projectAccountId].allowFrom).toBeUndefined();
 
-    const user = runPolicy("builder", {
+    const user = runPolicy("isolated", {
       agents: {
         list: [{ id: "octogee-alice-coach" }, { id: "octogee-alice-proj-orbit-coach" }],
       },
@@ -738,7 +738,7 @@ describe("infra/gateway/apply-gateway-class-policy.mjs", () => {
 
   it.each([
     ["shared", { gatewayClass: "shared" as const }],
-    ["builder", { gatewayClass: "builder" as const, gatewayId: "alice-xs-12345678", apiOrigin: "https://api-test.octogee.com" }],
+    ["isolated", { gatewayClass: "isolated" as const, gatewayId: "alice-xs-12345678", apiOrigin: "https://api-test.octogee.com" }],
   ])("projects %s platform-agent Mattermost accounts identically at boot and in the core invariant", (gatewayClass, context) => {
     const owner = "a".repeat(26);
     const accounts = () => ({
@@ -773,8 +773,8 @@ describe("infra/gateway/apply-gateway-class-policy.mjs", () => {
     const invariantAccounts = ((invariant.channels as Record<string, unknown>).mattermost as Record<string, unknown>)
       .accounts as Record<string, Record<string, unknown>>;
     expect(boot.channels.mattermost.accounts).toEqual(invariantAccounts);
-    expect(invariantAccounts["alice-coach"].allowFrom).toEqual(gatewayClass === "builder" ? [owner] : undefined);
-    expect(invariantAccounts["alice-coach"].baseUrl).toBe(gatewayClass === "builder" ? "http://mm" : "${MM_URL}");
+    expect(invariantAccounts["alice-coach"].allowFrom).toEqual(gatewayClass === "isolated" ? [owner] : undefined);
+    expect(invariantAccounts["alice-coach"].baseUrl).toBe(gatewayClass === "isolated" ? "http://mm" : "${MM_URL}");
     if (gatewayClass === "shared") {
       expect(boot.channels.mattermost).not.toHaveProperty("baseUrl");
       expect((invariant.channels as Record<string, unknown>).mattermost).not.toHaveProperty("baseUrl");
@@ -808,7 +808,7 @@ describe("infra/gateway/apply-gateway-class-policy.mjs", () => {
 
   it("keeps user policy output compatible with durable config validation", () => {
     const context = {
-      gatewayClass: "builder" as const,
+      gatewayClass: "isolated" as const,
       gatewayId: "alice-xs-12345678",
       apiOrigin: "https://api-test.octogee.com",
     };
@@ -822,7 +822,7 @@ describe("infra/gateway/apply-gateway-class-policy.mjs", () => {
     };
     reconcilePlatformInvariants(config, context);
 
-    const out = runPolicy("builder", config);
+    const out = runPolicy("isolated", config);
     const violations = platformInvariantViolations(out, context);
 
     expect(violations.filter((path) =>
@@ -831,7 +831,7 @@ describe("infra/gateway/apply-gateway-class-policy.mjs", () => {
   });
 
   it("isolated class keeps the overlay at full power, adding only the platform capability surface and the tenant secret boundary", () => {
-    const out = runPolicy("builder", {
+    const out = runPolicy("isolated", {
       auth: {
         profiles: {
           "openai-codex:default": { provider: "openai-codex", mode: "oauth" },
@@ -1061,7 +1061,7 @@ describe("infra/gateway/apply-gateway-class-policy.mjs", () => {
   });
 
   it("converges the platform capability surface onto a legacy isolated gateway", () => {
-    const out = runPolicy("builder", {
+    const out = runPolicy("isolated", {
       tools: {
         profile: "research",
         allow: ["read", "exec"],
@@ -1096,7 +1096,7 @@ describe("infra/gateway/apply-gateway-class-policy.mjs", () => {
   });
 
   it("does not narrow a permissive user plugin allowlist while converging capabilities", () => {
-    const out = runPolicy("builder", { tools: { profile: "research" } });
+    const out = runPolicy("isolated", { tools: { profile: "research" } });
 
     expect(out.plugins.allow).toBeUndefined();
     expect(out.plugins.entries["octogee-board-tools"].enabled).toBe(true);
@@ -1105,7 +1105,7 @@ describe("infra/gateway/apply-gateway-class-policy.mjs", () => {
 
   it("keeps the platform plugins allowed when per-user control identity materializes an allowlist", () => {
     const out = runPolicyWithDir(
-      "builder",
+      "isolated",
       { plugins: { allow: ["mattermost"] } },
       undefined,
       { OPENCLAW_CONTROL_IDENTITY: "per-user", OPENCLAW_OWNER_UID: "uid-eggman" },
@@ -1124,7 +1124,7 @@ describe("infra/gateway/apply-gateway-class-policy.mjs", () => {
 
   it("does not invent a plugin allowlist under per-user control identity when the user had none", () => {
     const out = runPolicyWithDir(
-      "builder",
+      "isolated",
       { tools: { profile: "research" } },
       undefined,
       { OPENCLAW_CONTROL_IDENTITY: "per-user", OPENCLAW_OWNER_UID: "uid-eggman" },
@@ -1135,7 +1135,7 @@ describe("infra/gateway/apply-gateway-class-policy.mjs", () => {
   });
 
   it("respects a user's deliberate platform-plugin opt-out", () => {
-    const out = runPolicy("builder", {
+    const out = runPolicy("isolated", {
       plugins: { entries: { "octogee-board-tools": { enabled: false } } },
     });
 
@@ -1146,7 +1146,7 @@ describe("infra/gateway/apply-gateway-class-policy.mjs", () => {
   it("isolated class leaves user-owned runtime stores untouched", () => {
     const agentId = "octogee-alice-coach";
     const result = runPolicyWithDir(
-      "builder",
+      "isolated",
       {
         auth: {
           profiles: {
@@ -1214,7 +1214,7 @@ describe("infra/gateway/apply-gateway-class-policy.mjs", () => {
 
   it("isolated class does not materialize missing agent runtime stores", () => {
     const agentId = "octogee-alice-coach";
-    const result = runPolicyWithDir("builder", {
+    const result = runPolicyWithDir("isolated", {
       auth: {
         profiles: {
           "openai-codex:default": { provider: "openai-codex", mode: "oauth" },
@@ -1236,7 +1236,7 @@ describe("infra/gateway/apply-gateway-class-policy.mjs", () => {
 
   it("removes the retired Mattermost file install record from restored runtime state", () => {
     const result = runPolicyWithDir(
-      "builder",
+      "isolated",
       { plugins: { allow: ["mattermost"], entries: { mattermost: { enabled: true } } } },
       (dir) => {
         const stateDir = path.join(dir, "state");
@@ -1297,7 +1297,7 @@ describe("infra/gateway/apply-gateway-class-policy.mjs", () => {
 
   it("removes the archive-installed Codex override while preserving unrelated plugins", () => {
     const result = runPolicyWithDir(
-      "builder",
+      "isolated",
       { plugins: { allow: ["codex"], entries: { codex: { enabled: true } } } },
       (dir) => {
         const stateDir = path.join(dir, "state");
@@ -1355,7 +1355,7 @@ describe("infra/gateway/apply-gateway-class-policy.mjs", () => {
 
   it.each(["@openclaw/codex", "@openclaw/codex@2026.10.2"])("restores bundled Codex selection instead of the npm override %s", (spec) => {
     const result = runPolicyWithDir(
-      "builder",
+      "isolated",
       { plugins: { allow: ["codex"], entries: { codex: { enabled: true } } } },
       (dir) => {
         const stateDir = path.join(dir, "state");
@@ -2083,18 +2083,18 @@ describe("infra/gateway/apply-gateway-class-policy.mjs", () => {
   });
 
   it("defaults authenticated user Talk to platform OpenAI without replacing their chosen provider", () => {
-    const out = runPolicyWithDir("builder", {}, JEFE.setup, JEFE.env).config;
+    const out = runPolicyWithDir("isolated", {}, JEFE.setup, JEFE.env).config;
     expect(out.plugins.entries["octogee-voice-tools"]).toMatchObject({ enabled: true, config: brokerPluginConfig });
     expect(out.talk.realtime).toMatchObject({ provider: "octogee-openai", providers: { "octogee-openai": { model: "gpt-live-1" } }, brain: "agent-consult", transport: "gateway-relay" });
     const custom = { provider: "google", providers: { google: {} }, transport: "provider-websocket" };
-    const preserved = runPolicyWithDir("builder", { talk: { realtime: custom } }, JEFE.setup, JEFE.env).config;
+    const preserved = runPolicyWithDir("isolated", { talk: { realtime: custom } }, JEFE.setup, JEFE.env).config;
     expect(preserved.talk.realtime).toEqual(custom);
     const shared = runPolicy("shared", {});
     expect(shared.plugins.entries["octogee-voice-tools"]?.enabled).not.toBe(true);
   });
 
   it("restores platform voice broker wiring from an existing native plugin config", () => {
-    const out = runPolicyWithDir("builder", {
+    const out = runPolicyWithDir("isolated", {
       plugins: { entries: { "octogee-voice-tools": { config: {
         brokerUrl: "http://127.0.0.1:9999", tokenPath: "/home/node/user-file",
       } } } },
@@ -2106,7 +2106,7 @@ describe("infra/gateway/apply-gateway-class-policy.mjs", () => {
   });
 
   it("makes native presentation and narration reachable through an existing user allowlist", () => {
-    const out = runPolicyWithDir("builder", {
+    const out = runPolicyWithDir("isolated", {
       plugins: { allow: ["mattermost"] },
       tools: { profile: "coding" },
     }, JEFE.setup, JEFE.env).config;
@@ -2131,7 +2131,7 @@ describe("infra/gateway/apply-gateway-class-policy.mjs", () => {
       tools: { profile: "minimal", allow: ["read"], deny: ["screen", "talk_voice"] },
       agents: { entries: { "octogee-jefe-coach": { tools: { allow: ["read"], deny: ["talk_voice"] } } } },
     };
-    const out = runPolicyWithDir("builder", config, JEFE.setup, JEFE.env).config;
+    const out = runPolicyWithDir("isolated", config, JEFE.setup, JEFE.env).config;
 
     expect(out.plugins.enabled).toBe(false);
     expect(out.plugins.deny).toEqual(config.plugins.deny);
@@ -2145,7 +2145,7 @@ describe("infra/gateway/apply-gateway-class-policy.mjs", () => {
   });
 
   it("does not add native voice defaults to shared or operator-only gateways", () => {
-    for (const gatewayClass of ["builder", "shared"]) {
+    for (const gatewayClass of ["isolated", "shared"]) {
       const out = runPolicy(gatewayClass, {});
       expect(out.plugins.allow ?? []).not.toContain("talk-voice");
       expect(out.tools.alsoAllow ?? []).not.toContain("talk_voice");
@@ -2155,7 +2155,7 @@ describe("infra/gateway/apply-gateway-class-policy.mjs", () => {
 
   it("switches a per-user isolated gateway to trusted-proxy auth with authenticated identities for services and the owner", () => {
     const { config: out } = runPolicyWithDir(
-      "builder",
+      "isolated",
       { gateway: { auth: { mode: "token", token: "pod-token", rateLimit: { maxAttempts: 10 } } } },
       userClaim("uid-owner", "team-workspace").setup,
       userClaim("uid-owner", "team-workspace").env,
@@ -2186,7 +2186,7 @@ describe("infra/gateway/apply-gateway-class-policy.mjs", () => {
   });
 
   it("grants no owner identity scope or member agents without a user claim, whatever the environment says", () => {
-    const { config: out } = runPolicyWithDir("builder", {}, undefined, {
+    const { config: out } = runPolicyWithDir("isolated", {}, undefined, {
       OPENCLAW_CONTROL_IDENTITY: "per-user", GATEWAY_ID: "gw-test",
       GATEWAY_OWNER_UID: "uid-mallory", GATEWAY_BUILDER_SLUG: "mallory",
     });
@@ -2207,7 +2207,7 @@ describe("infra/gateway/apply-gateway-class-policy.mjs", () => {
         viewer: { sessions: { others: "view" }, agents: "*", scopes: ["operator.read"] },
       },
     };
-    const { config } = runPolicyWithDir("builder", { gateway: { roles: stale } }, JEFE.setup, JEFE.env);
+    const { config } = runPolicyWithDir("isolated", { gateway: { roles: stale } }, JEFE.setup, JEFE.env);
     const canonical = openClawOperatorRoles("jefe").definitions;
     expect(config.gateway.roles.definitions).toMatchObject(canonical);
     expect(config.gateway.roles.definitions.admin).toEqual(canonical.admin);
@@ -2216,7 +2216,7 @@ describe("infra/gateway/apply-gateway-class-policy.mjs", () => {
 
   it("keeps User-defined roles and the user's default across gateway restarts", () => {
     const roles = { default: "reader", definitions: { reader: { scopes: ["operator.read"], sessions: { others: "none" }, agents: "*" } } };
-    const { config } = runPolicyWithDir("builder", { gateway: { roles } }, JEFE.setup, JEFE.env);
+    const { config } = runPolicyWithDir("isolated", { gateway: { roles } }, JEFE.setup, JEFE.env);
     expect(config.gateway.roles).toEqual({
       default: "reader",
       definitions: { ...roles.definitions, ...openClawOperatorRoles("jefe").definitions },
@@ -2225,7 +2225,7 @@ describe("infra/gateway/apply-gateway-class-policy.mjs", () => {
 
   it("returns a isolated gateway to token auth when the control identity is not per-user", () => {
     const { config: out } = runPolicyWithDir(
-      "builder",
+      "isolated",
       {
         gateway: {
           auth: { mode: "trusted-proxy", trustedProxy: { userHeader: "x-octogee-user" } },

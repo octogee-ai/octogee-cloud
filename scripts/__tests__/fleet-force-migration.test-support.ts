@@ -25,7 +25,7 @@ export function forceMigrationHarness() {
       gatewayId: "builder-a", status: "complete", migration: { state: "preparing", phase: "waiting", operationId: "move-1", startedAt: 400 },
     } } }],
     ["gateways/builder-a/assignments/u1", forceMigrationAssignment("builder-a", "u1", "alice")],
-    ["gateways/builder-a", { gatewayId: "builder-a", gatewayClass: "builder", ownerUid: "u1", builderSlug: "alice", runtime: "cluster", desiredStatus: "draining", latestRelease: 1, desiredRelease: 1, liveRelease: 1 }],
+    ["gateways/builder-a", { gatewayId: "builder-a", gatewayClass: "isolated", ownerUid: "u1", builderSlug: "alice", runtime: "cluster", desiredStatus: "draining", latestRelease: 1, desiredRelease: 1, liveRelease: 1 }],
     ["gateways/shared-b", { gatewayId: "shared-b", gatewayClass: "shared", desiredStatus: "running", latestRelease: 1, desiredRelease: 1, liveRelease: 1 }],
   ]);
   const writes: Array<{ path: string; data: Record<string, unknown> }> = [];

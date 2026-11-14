@@ -455,8 +455,8 @@ if (process.env.NODE_ENV !== "test") {
     process.exit(1);
   }
 
-  const edgeGatewayClass = isIsolatedGatewayClassValue(process.env.GATEWAY_CLASS) ? "builder" : "shared";
-  if (edgeGatewayClass === "builder") {
+  const edgeGatewayClass = isIsolatedGatewayClassValue(process.env.GATEWAY_CLASS) ? "isolated" : "shared";
+  if (edgeGatewayClass === "isolated") {
     const identityStore = createUserIdentityStore({
       read: brokerUserIdentityReader(process.env),
       log: (msg) => logger.error(msg),

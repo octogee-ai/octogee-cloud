@@ -12,8 +12,8 @@ import {
 
 describe("shared type barrel", () => {
   it("re-exports public runtime helpers from the root shared entrypoint", () => {
-    expect(GATEWAY_CLASSES).toEqual(["shared", "builder"]);
-    expect(resolveGatewayClass({ gatewayClass: "builder" })).toBe("builder");
+    expect(GATEWAY_CLASSES).toEqual(["shared", "isolated"]);
+    expect(resolveGatewayClass({ gatewayClass: "isolated" })).toBe("isolated");
     expect(resolveSizingTier({ sizingTier: "m" }).tier).toBe("m");
     expect(modelCredentialEntryById("openai").displayName).toBe("OpenAI API key");
     expect(OPENCLAW_PROTOCOL_VERSION).toBe(4);

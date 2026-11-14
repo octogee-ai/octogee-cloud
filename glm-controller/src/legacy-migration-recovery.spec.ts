@@ -49,7 +49,7 @@ describe("released forward-only user activation recovery admission", () => {
   it.each(["released", "history-evicted", "held", "committed", "source-moved", "epoch-changed", "shared-target", "wrong-generation"] as const)("admits only the released target while the source still owns the activation: %s", async scenario => {
     const target = "alice-s-12345678", id = `builder-activate-${target}-g1`;
     const h = fixture(`mig-${id}:scheduler:1:claim:1000`, id);
-    Object.assign(h.operation.input, { source: "builder-activation-lease", builderSlug: "alice", toGatewayId: target });
+    Object.assign(h.operation.input, { source: "builder-activation-lease", userSlug: "alice", toGatewayId: target });
     Object.assign(h.operation.schedulerHandoff!, { toGatewayId: target, stageAfterCutover: true,
       forwardRecovery: { schemaVersion: 1, phase: "source-flushed", sourceEpoch: scenario === "epoch-changed" ? 3 : 4,
         ...(scenario === "held" ? {} : { targetReleased: true }) } });
@@ -57,7 +57,7 @@ describe("released forward-only user activation recovery admission", () => {
     h.records["users/alice"] = { provisioning: { openclaw: { gatewayId: scenario === "source-moved" ? target : "shared-a",
       migration: { state: "moving", phase: "transferring", startedAt: 1_000, operationId: id }, activationLease: { leaseId: "lease-one", generation: 1, status: "activating",
         sourceGatewayId: "shared-a", sourceAssignmentEpoch: 4, targetGatewayId: target } } } };
-    h.records[`gateways/${target}`] = { gatewayId: target, desiredRelease: 1, latestRelease: 1, desiredStatus: "running", gatewayClass: scenario === "shared-target" ? "shared" : "builder", ownerUid: "alice",
+    h.records[`gateways/${target}`] = { gatewayId: target, desiredRelease: 1, latestRelease: 1, desiredStatus: "running", gatewayClass: scenario === "shared-target" ? "shared" : "isolated", ownerUid: "alice",
       allocation: { kind: "disposable-builder", leaseId: "lease-one", generation: scenario === "wrong-generation" ? 2 : 1, claimedByUid: "alice" } };
     if (scenario === "history-evicted") Object.assign(h.operation, { attempts: 50, startedAt: 8_000, attemptHistory: [] });
     if (scenario === "committed") h.operation.cutoverCommittedAt = 2_000;
@@ -87,12 +87,12 @@ describe("failed preparation whose target unmount was never confirmed", () => {
       schedulerHandoffReleased: scenario !== "handoff-held",
       ...(scenario === "committed" ? { cutoverCommittedAt: 1_500 } : {}),
     });
-    Object.assign(h.operation.input, { source: scenario === "activation" ? "builder-activation-lease" : "operator-isolated-gateway", builderSlug: "alice", toGatewayId: target });
+    Object.assign(h.operation.input, { source: scenario === "activation" ? "builder-activation-lease" : "operator-isolated-gateway", userSlug: "alice", toGatewayId: target });
     Object.assign(h.operation.schedulerHandoff!, { toGatewayId: target, stageAfterCutover: true });
     h.records["users/alice"] = { provisioning: { openclaw: { gatewayId: scenario === "source-moved" ? "shared-b" : "shared-a",
       migration: { state: "preparing", phase: "preparing", startedAt: 1_000, operationId: scenario === "other-marker" ? "op-2" : "op-1" } } } };
     if (scenario !== "gone") {
-      h.records[`gateways/${target}`] = { gatewayId: target, desiredRelease: 1, latestRelease: 1, gatewayClass: "builder", ownerUid: "alice",
+      h.records[`gateways/${target}`] = { gatewayId: target, desiredRelease: 1, latestRelease: 1, gatewayClass: "isolated", ownerUid: "alice",
         desiredStatus: scenario === "running" ? "running" : "retired", retirementClaim: { operationId: retirementId, version: 1 } };
       h.records[`glmOperations/${retirementId}`] = { id: retirementId, kind: "retire-gateway", status: scenario === "retirement-failed" ? "failed" : "succeeded",
         createdBy: "test", createdAt: 2_100, input: { uid: "alice", gatewayId: target } };

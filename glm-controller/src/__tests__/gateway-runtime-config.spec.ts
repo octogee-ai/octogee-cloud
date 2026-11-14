@@ -7,8 +7,8 @@ function userConfig(overrides: Partial<GatewayMutableConfig> = {}): GatewayMutab
   return {
     configSchemaVersion: 1,
     profile: null,
-    gatewayClass: "builder",
-    imageProfile: "builder",
+    gatewayClass: "isolated",
+    imageProfile: "isolated",
     sizingTier: null,
     gcpProject: null,
     gatewayContainerSecurityContext: null,

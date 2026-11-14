@@ -17,13 +17,13 @@ const platformAccounts: UserAccountReader = {
   list: async () => new Map(),
 };
 
-function gatewayRoot(gatewayId: string, gatewayClass: "shared" | "builder"): Record<string, unknown> {
-  const isolated = gatewayClass === "builder";
+function gatewayRoot(gatewayId: string, gatewayClass: "shared" | "isolated"): Record<string, unknown> {
+  const isolated = gatewayClass === "isolated";
   return {
     gatewayId, createdAt: 1, createdBy: "test", updatedAt: 1, updatedBy: "test",
     latestRelease: 1, desiredRelease: 1, liveRelease: 1, desiredStatus: "running", configSchemaVersion: 1,
-    profile: isolated ? "builder" : null, gatewayClass,
-    imageProfile: isolated ? "builder" : "standard", sizingTier: null, gcpProject: null,
+    profile: isolated ? "isolated" : null, gatewayClass,
+    imageProfile: isolated ? "isolated" : "standard", sizingTier: null, gcpProject: null,
     gatewayContainerSecurityContext: null, serviceAccountName: null, serviceAccount: null, builderAccess: null,
     ownerUid: isolated ? "uid-lin" : null,
     builderSlug: isolated ? "lin" : null,
@@ -34,7 +34,7 @@ function gatewayRoot(gatewayId: string, gatewayClass: "shared" | "builder"): Rec
 function platform(gatewayId: "shared-1" | "lin") {
   return createDocumentFixtureStore({
     "gateways/shared-1": gatewayRoot("shared-1", "shared"),
-    "gateways/lin": gatewayRoot("lin", "builder"),
+    "gateways/lin": gatewayRoot("lin", "isolated"),
     "users/uid-lin": { username: "lin", provisioning: { openclaw: { gatewayId } } },
   });
 }

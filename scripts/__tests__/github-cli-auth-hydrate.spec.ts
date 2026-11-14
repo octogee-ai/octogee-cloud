@@ -27,7 +27,7 @@ describe("User GitHub CLI authentication", () => {
     env = withUserClaim({
       HOME: root,
       GH_CONFIG_DIR: path.dirname(hostsPath),
-      GATEWAY_CLASS: "builder",
+      GATEWAY_CLASS: "isolated",
       OPENCLAW_DIR: path.join(root, ".openclaw"),
       OCTOGEE_API_SA_TOKEN_PATH: path.join(root, "gateway-token"),
     }, "alice");

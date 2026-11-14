@@ -15,8 +15,8 @@ export interface FleetLiveObservation {
 
 export interface FleetGateway {
   gatewayId: string;
-  gatewayClass: "shared" | "builder";
-  imageProfile: "standard" | "builder";
+  gatewayClass: "shared" | "isolated";
+  imageProfile: "standard" | "isolated";
   addedBy: SharedGatewayAddedBy | null;
   desiredStatus: "running" | "paused" | "draining" | "retired";
   latestRelease: number;
@@ -47,7 +47,7 @@ export interface FleetSnapshot {
 
 export interface FleetTargetResult {
   gatewayId: string;
-  gatewayClass: "shared" | "builder";
+  gatewayClass: "shared" | "isolated";
   addedBy: SharedGatewayAddedBy | null;
   desiredStatus: FleetGateway["desiredStatus"];
   desiredRelease: number;
@@ -100,7 +100,7 @@ function matchesPayload(actual: ReleasePayload | null, expected: ReleasePayload)
 }
 
 export function expectedFleetImages(gateway: Pick<FleetGateway, "imageProfile">, payload: ReleasePayload): Record<string, string> {
-  const image = gateway.imageProfile === "builder" ? payload.profileImages && dualReadIsolatedProfileImage(payload.profileImages) : payload;
+  const image = gateway.imageProfile === "isolated" ? payload.profileImages && dualReadIsolatedProfileImage(payload.profileImages) : payload;
   if (!image || !payload.gatewayEdgeImage) throw new Error("complete gateway image family is required");
   return { gateway: `${image.imageRepository}:${image.imageTag}`, "gateway-edge": `${payload.gatewayEdgeImage.imageRepository}:${payload.gatewayEdgeImage.imageTag}` };
 }
@@ -130,7 +130,7 @@ export function matchesFleetPlatformRelease(record: PlatformReleaseRecord | null
 }
 
 function matchesGatewayPayload(gateway: FleetGateway, actual: ReleasePayload | null, options: FleetDeployOptions): boolean {
-  if (gateway.gatewayClass === "builder") return matchesPayload(actual, options.payload);
+  if (gateway.gatewayClass === "isolated") return matchesPayload(actual, options.payload);
   if (!actual || !isReleasePayload(actual) || !actual.profileImages || !actual.gatewayEdgeImage || !sourceTagMatches(actual.imageTag, options.sourceSha)) return false;
   const expected = retagPayload(options.payload, actual.imageTag.split("@")[0]);
   return matchesPayload(actual, expected);
@@ -209,7 +209,7 @@ function targetAssessment(gateway: FleetGateway, options: FleetDeployOptions, ti
   if (failed) return { ...result, status: "failed", reasons: [`rollout ${failed.id} failed: ${failed.error ?? "unknown error"}`] };
   if (!matchesGatewayPayload(gateway, gateway.desiredPayload, options)) result.reasons.push("desired image family differs from requested build");
   if (gateway.latestRelease !== gateway.desiredRelease) result.reasons.push("latest release is not yet activated");
-  if (gateway.desiredStatus === "paused" && gateway.gatewayClass === "builder") {
+  if (gateway.desiredStatus === "paused" && gateway.gatewayClass === "isolated") {
     if (result.reasons.length === 0) result.status = "paused-desired-only";
     return result;
   }
@@ -236,7 +236,7 @@ async function deployMissingUsers(snapshot: FleetSnapshot, options: FleetDeployO
   const { attempts, failures, deferred } = state;
   deferred.clear();
   for (const gateway of snapshot.gateways) {
-    if (gateway.gatewayClass !== "builder" || gateway.desiredStatus === "retired" || matchesPayload(gateway.latestPayload, options.payload) || attempts.has(gateway.gatewayId) || failures.has(gateway.gatewayId)) continue;
+    if (gateway.gatewayClass !== "isolated" || gateway.desiredStatus === "retired" || matchesPayload(gateway.latestPayload, options.payload) || attempts.has(gateway.gatewayId) || failures.has(gateway.gatewayId)) continue;
     try { attempts.set(gateway.gatewayId, await deps.deploy(gateway)); }
     catch (error) {
       if (error instanceof FleetDeploymentDeferredError) deferred.set(gateway.gatewayId, error.message);
@@ -260,7 +260,7 @@ function assessMissingTarget(previous: FleetTargetResult, snapshot: FleetSnapsho
   if (previous.status === "shared-retired" || previous.status === "retired-skipped") return previous;
   const retirement = snapshot.retirements.find((proof) => proof.gatewayId === previous.gatewayId && proof.completedAt >= timing.startedAt && proof.completedAt <= timing.now);
   if (!retirement) return { ...previous, status: "failed", reasons: ["gateway disappeared before retirement was verified"] };
-  if (previous.gatewayClass === "builder") return { ...previous, desiredStatus: "retired", status: "retired-skipped", reasons: [], observed: null, retirementOperationId: retirement.operationId };
+  if (previous.gatewayClass === "isolated") return { ...previous, desiredStatus: "retired", status: "retired-skipped", reasons: [], observed: null, retirementOperationId: retirement.operationId };
   const reasons: string[] = [];
   if (!fresh(retirement.live.observedAt, timing)) reasons.push("retired Shared member removal is not freshly observed");
   if (retirement.live.instances.length) reasons.push("retired Shared member still has live instances");

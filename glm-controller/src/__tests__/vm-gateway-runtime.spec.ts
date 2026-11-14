@@ -174,8 +174,8 @@ function harness(
 
 const upsertOpts = {
   namespace: "octogee-test", gatewayId: "b-x", imageRepository: "us-docker.pkg.dev/octogee/octogee/gateway", imageTag: "main.abc123",
-  chartPath: "/chart", builderIdentity: { ownerUid: "UidA", builderSlug: "mama" }, gatewayClass: "builder" as const, profile: "builder" as const,
-  imageProfile: "builder" as const, chartFingerprint: "cf", deploymentIntentFingerprint: "dif",
+  chartPath: "/chart", builderIdentity: { ownerUid: "UidA", builderSlug: "mama" }, gatewayClass: "isolated" as const, profile: "isolated" as const,
+  imageProfile: "isolated" as const, chartFingerprint: "cf", deploymentIntentFingerprint: "dif",
 };
 
 async function createVm(h: ReturnType<typeof harness>, opts: typeof upsertOpts = upsertOpts): Promise<void> {
@@ -1088,7 +1088,7 @@ describe("suspend parking", () => {
     const claimed = { operationId: "builder-return-b-x-g1", reason: "live source cleanup failed", claimedAt: 500 };
     const h = harness({
       "glmGateways/b-x": { docKind: "runtime", gatewayId: "b-x", runtime: "gce-vm", vm: { ...recorded }, vmStopOnPark: claimed },
-      "gateways/b-x": { gatewayClass: "builder", desiredStatus: "running" },
+      "gateways/b-x": { gatewayClass: "isolated", desiredStatus: "running" },
       "glmOperations/builder-return-b-x-g1": { kind: "migrate-user", status: "failed" },
     });
     await h.runtime.upsertInstance(upsertOpts);
@@ -1113,7 +1113,7 @@ describe("suspend parking", () => {
     const stopOnPark = { operationId: "builder-return-b-x-g2", reason: "live source cleanup failed: unmount refused" };
     const h = harness({
       "glmGateways/b-x": { docKind: "runtime", gatewayId: "b-x", runtime: "gce-vm", vm: { ...recorded }, vmStopOnPark: stopOnPark },
-      "gateways/b-x": { gatewayClass: "builder", desiredStatus: "paused" },
+      "gateways/b-x": { gatewayClass: "isolated", desiredStatus: "paused" },
       "glmOperations/builder-return-b-x-g2": { kind: "migrate-user", status: "running" },
     }, {
       describe: vi.fn(async () => current),
@@ -1130,7 +1130,7 @@ describe("suspend parking", () => {
     const stopOnPark = { operationId: "builder-return-b-x-g2", reason: "live source cleanup failed: unmount refused" };
     const h = harness({
       "glmGateways/b-x": { docKind: "runtime", gatewayId: "b-x", runtime: "gce-vm", vm: { ...recorded }, vmStopOnPark: stopOnPark },
-      "gateways/b-x": { gatewayClass: "builder", desiredStatus: "running" },
+      "gateways/b-x": { gatewayClass: "isolated", desiredStatus: "running" },
       "glmOperations/builder-return-b-x-g2": { kind: "migrate-user", status: "running" },
     });
     await h.runtime.upsertInstance(upsertOpts);
@@ -1141,7 +1141,7 @@ describe("suspend parking", () => {
     const h = harness({
       "glmGateways/b-x": { docKind: "runtime", gatewayId: "b-x", runtime: "gce-vm", vm: { ...recorded, status: "SUSPENDED", internalIp: null, stopReason: "operator" },
         vmStopOnPark: { operationId: "builder-return-b-x-g1", reason: "live source cleanup failed: abandoned" } },
-      "gateways/b-x": { gatewayClass: "builder", desiredStatus: "running" },
+      "gateways/b-x": { gatewayClass: "isolated", desiredStatus: "running" },
       "glmOperations/builder-return-b-x-g1": { kind: "migrate-user", status: "failed" },
     }, {
       describe: vi.fn(async () => running).mockResolvedValueOnce(suspended),
@@ -1768,7 +1768,7 @@ describe("runtime policy and stamping", () => {
     ["s", "e2-medium", 80, "pd-balanced", 10, "x11"], ["m", "e2-standard-2", 80, "pd-ssd", 50, "omarchy"], ["l", "e2-standard-4", 80, "pd-ssd", 100, "omarchy"],
   ] as const)("stamps new %s users as on-demand VMs with their tier's machine, boot disk, desktop and home", async (sizingTier, machineType, diskSizeGb, bootDiskType, homeDiskSizeGb, desktop) => {
     const { store, docs } = recordingStore({});
-    expect(await stampGatewayRuntime({ store, gatewayId: "b-new", initial: initialRuntime("b-new"), gatewayClass: "builder", sizingTier, vmSpec: spec, log: vi.fn() })).toBe("gce-vm");
+    expect(await stampGatewayRuntime({ store, gatewayId: "b-new", initial: initialRuntime("b-new"), gatewayClass: "isolated", sizingTier, vmSpec: spec, log: vi.fn() })).toBe("gce-vm");
     expect(docs["glmGateways/b-new"]).toEqual({ ...initialRuntimeDoc("b-new"), runtime: "gce-vm", vmSpec: { ...spec, machineType, diskSizeGb, bootDiskType, homeDiskSizeGb, provisioningModel: "STANDARD", desktop } });
   });
 
@@ -1780,7 +1780,7 @@ describe("runtime policy and stamping", () => {
     const { store, docs, writes } = recordingStore(existing ? { "glmGateways/b-x": existing } : {});
     const before = structuredClone(docs);
     const assertStorage = vi.fn(async () => { throw new Error("storage migration required"); });
-    await expect(stampGatewayRuntime({ store, gatewayId: "b-x", initial: initialRuntime("b-x"), gatewayClass: "builder", sizingTier, vmSpec: spec, assertStorage, log: vi.fn() })).rejects.toThrow("storage migration required");
+    await expect(stampGatewayRuntime({ store, gatewayId: "b-x", initial: initialRuntime("b-x"), gatewayClass: "isolated", sizingTier, vmSpec: spec, assertStorage, log: vi.fn() })).rejects.toThrow("storage migration required");
     expect(assertStorage).toHaveBeenCalledExactlyOnceWith(expectedRuntime);
     expect(writes).toEqual([]);
     expect(docs).toEqual(before);
@@ -1789,7 +1789,7 @@ describe("runtime policy and stamping", () => {
   it("preserves VM image configuration added while storage preflight is running", async () => {
     const { store, docs } = recordingStore({ "glmGateways/b-x": { runtime: "gce-vm", vmSpec: { ...spec, machineType: "e2-standard-2" } } });
     await stampGatewayRuntime({
-      store, gatewayId: "b-x", initial: initialRuntime("b-x"), gatewayClass: "builder", sizingTier: "l", vmSpec: spec, log: vi.fn(),
+      store, gatewayId: "b-x", initial: initialRuntime("b-x"), gatewayClass: "isolated", sizingTier: "l", vmSpec: spec, log: vi.fn(),
       assertStorage: async () => {
         await store.fleetRegistry.patch("b-x", { vmSpec: { ...spec, imageProject: "octogee-images", machineType: "e2-standard-2" } });
       },
@@ -1799,9 +1799,9 @@ describe("runtime policy and stamping", () => {
 
   it("updates desired VM capacity from persisted Pro to Team and back without changing runtime", async () => {
     const { store, docs } = recordingStore({ "glmGateways/b-x": { runtime: "gce-vm", vmSpec: { ...spec, machineType: "e2-standard-2" } } });
-    await stampGatewayRuntime({ store, gatewayId: "b-x", initial: initialRuntime("b-x"), gatewayClass: "builder", sizingTier: "l", vmSpec: spec, log: vi.fn() });
+    await stampGatewayRuntime({ store, gatewayId: "b-x", initial: initialRuntime("b-x"), gatewayClass: "isolated", sizingTier: "l", vmSpec: spec, log: vi.fn() });
     expect(docs["glmGateways/b-x"].vmSpec).toMatchObject({ machineType: "e2-standard-4", homeDiskSizeGb: 100 });
-    await stampGatewayRuntime({ store, gatewayId: "b-x", initial: initialRuntime("b-x"), gatewayClass: "builder", sizingTier: "m", vmSpec: spec, log: vi.fn() });
+    await stampGatewayRuntime({ store, gatewayId: "b-x", initial: initialRuntime("b-x"), gatewayClass: "isolated", sizingTier: "m", vmSpec: spec, log: vi.fn() });
     expect(docs["glmGateways/b-x"].vmSpec).toMatchObject({ machineType: "e2-standard-2", homeDiskSizeGb: 50 });
   });
 
@@ -1814,7 +1814,7 @@ describe("runtime policy and stamping", () => {
     });
     const log = vi.fn();
 
-    expect(await stampGatewayRuntime({ store, gatewayId: "b-x", initial: initialRuntime("b-x"), gatewayClass: "builder", sizingTier: "l", vmSpec: spec, log })).toBe("gce-vm");
+    expect(await stampGatewayRuntime({ store, gatewayId: "b-x", initial: initialRuntime("b-x"), gatewayClass: "isolated", sizingTier: "l", vmSpec: spec, log })).toBe("gce-vm");
 
     expect(docs["glmGateways/b-x"].vmSpec).toEqual(stamped);
     expect(writes).toEqual([]);
@@ -1825,21 +1825,21 @@ describe("runtime policy and stamping", () => {
     const { team: _removed, ...remaining } = FIXTURE_SIZING_PROFILES;
     const { store } = recordingStore({ "config/orchestrator": { sizingProfiles: remaining } });
 
-    await expect(stampGatewayRuntime({ store, gatewayId: "b-new", initial: initialRuntime("b-new"), gatewayClass: "builder", sizingTier: "l", vmSpec: spec, log: vi.fn() }))
+    await expect(stampGatewayRuntime({ store, gatewayId: "b-new", initial: initialRuntime("b-new"), gatewayClass: "isolated", sizingTier: "l", vmSpec: spec, log: vi.fn() }))
       .rejects.toThrow("No gateway VM policy for sizing tier l");
   });
 
   it("moves a persisted VM spec to its tier's desktop", async () => {
     const persisted = { ...spec, machineType: "e2-medium", diskSizeGb: 40, bootDiskType: "pd-balanced" as const, homeDiskSizeGb: 10, provisioningModel: "STANDARD" as const, desktop: "omarchy" as const };
     const { store, docs } = recordingStore({ "glmGateways/b-x": { runtime: "gce-vm", vmSpec: persisted } });
-    await stampGatewayRuntime({ store, gatewayId: "b-x", initial: initialRuntime("b-x"), gatewayClass: "builder", sizingTier: "s", vmSpec: spec, log: vi.fn() });
+    await stampGatewayRuntime({ store, gatewayId: "b-x", initial: initialRuntime("b-x"), gatewayClass: "isolated", sizingTier: "s", vmSpec: spec, log: vi.fn() });
     expect(docs["glmGateways/b-x"].vmSpec).toEqual({ ...persisted, desktop: "x11", diskSizeGb: 80 });
   });
 
   it("moves a persisted Spot VM spec to its tier's on-demand capacity", async () => {
     const persisted = { ...spec, machineType: "e2-standard-2", diskSizeGb: 50, homeDiskSizeGb: 50, provisioningModel: "SPOT" as const };
     const { store, docs } = recordingStore({ "glmGateways/b-x": { runtime: "gce-vm", vmSpec: persisted } });
-    await stampGatewayRuntime({ store, gatewayId: "b-x", initial: initialRuntime("b-x"), gatewayClass: "builder", sizingTier: "m", vmSpec: spec, log: vi.fn() });
+    await stampGatewayRuntime({ store, gatewayId: "b-x", initial: initialRuntime("b-x"), gatewayClass: "isolated", sizingTier: "m", vmSpec: spec, log: vi.fn() });
     expect(docs["glmGateways/b-x"].vmSpec).toEqual({ ...persisted, provisioningModel: "STANDARD", diskSizeGb: 80 });
   });
 
@@ -1851,7 +1851,7 @@ describe("runtime policy and stamping", () => {
   ] as const)("stamps a new gateway whose tier's profile is a pod as a cluster gateway with no VM spec, with %s", async (_label, vmSpec) => {
     const { store, docs } = recordingStore({ "config/orchestrator": { sizingProfiles: { ...FIXTURE_SIZING_PROFILES, pod: podProfile } } });
 
-    expect(await stampGatewayRuntime({ store, gatewayId: "b-pod", initial: initialRuntime("b-pod"), gatewayClass: "builder", sizingTier: "xs", vmSpec, log: vi.fn() })).toBe("cluster");
+    expect(await stampGatewayRuntime({ store, gatewayId: "b-pod", initial: initialRuntime("b-pod"), gatewayClass: "isolated", sizingTier: "xs", vmSpec, log: vi.fn() })).toBe("cluster");
 
     expect(docs["glmGateways/b-pod"]).toEqual({ ...initialRuntimeDoc("b-pod"), runtime: "cluster" });
   });
@@ -1863,7 +1863,7 @@ describe("runtime policy and stamping", () => {
       "config/orchestrator": { sizingProfiles: { pod: podProfile } },
     });
 
-    expect(await stampGatewayRuntime({ store, gatewayId: "b-x", initial: initialRuntime("b-x"), gatewayClass: "builder", sizingTier: "xs", vmSpec: spec, log: vi.fn() })).toBe("gce-vm");
+    expect(await stampGatewayRuntime({ store, gatewayId: "b-x", initial: initialRuntime("b-x"), gatewayClass: "isolated", sizingTier: "xs", vmSpec: spec, log: vi.fn() })).toBe("gce-vm");
 
     expect(docs["glmGateways/b-x"].vmSpec).toEqual(stamped);
     expect(writes).toEqual([]);
@@ -1878,20 +1878,20 @@ describe("runtime policy and stamping", () => {
 
   it("preserves an unstamped deployed cluster user when VMs become the new default", async () => {
     const { store, docs } = recordingStore({ "glmGateways/b-x": deployedCluster });
-    expect(await stampGatewayRuntime({ store, gatewayId: "b-x", initial: initialRuntime("b-x"), gatewayClass: "builder", sizingTier: "l", vmSpec: spec, log: vi.fn() })).toBe("cluster");
+    expect(await stampGatewayRuntime({ store, gatewayId: "b-x", initial: initialRuntime("b-x"), gatewayClass: "isolated", sizingTier: "l", vmSpec: spec, log: vi.fn() })).toBe("cluster");
     expect(docs["glmGateways/b-x"]).toEqual({ ...deployedCluster, release: 1, runtime: "cluster" });
   });
 
   it("preserves the deployed cluster identity even when its pod is stopped or missing", async () => {
     const previous = { ...deployedCluster, kubernetes: { status: "missing", totalPods: 0, readyPods: 0, observedAt: 130 } };
     const { store, docs } = recordingStore({ "glmGateways/b-x": previous });
-    expect(await stampGatewayRuntime({ store, gatewayId: "b-x", initial: initialRuntime("b-x"), gatewayClass: "builder", sizingTier: "l", vmSpec: spec, log: vi.fn() })).toBe("cluster");
+    expect(await stampGatewayRuntime({ store, gatewayId: "b-x", initial: initialRuntime("b-x"), gatewayClass: "isolated", sizingTier: "l", vmSpec: spec, log: vi.fn() })).toBe("cluster");
     expect(docs["glmGateways/b-x"].runtime).toBe("cluster");
   });
 
   it("chooses the VM default only before a new user has a deployed identity", async () => {
     const { store, docs } = recordingStore({ "glmGateways/b-x": { docKind: "runtime", gatewayId: "b-x", lifecycle: "provisioning", helm: { lastAppliedAt: null }, heartbeat: { status: "unknown" } } });
-    expect(await stampGatewayRuntime({ store, gatewayId: "b-x", initial: initialRuntime("b-x"), gatewayClass: "builder", sizingTier: "l", vmSpec: spec, log: vi.fn() })).toBe("gce-vm");
+    expect(await stampGatewayRuntime({ store, gatewayId: "b-x", initial: initialRuntime("b-x"), gatewayClass: "isolated", sizingTier: "l", vmSpec: spec, log: vi.fn() })).toBe("gce-vm");
     expect(docs["glmGateways/b-x"].runtime).toBe("gce-vm");
   });
 
@@ -1900,8 +1900,8 @@ describe("runtime policy and stamping", () => {
       "glmGateways/b-x": { ...deployedCluster, runtime: "cluster" },
       "glmGateways/b-vm": { runtime: "gce-vm", vm: recorded, heartbeat: { status: "ready", podName: "generic-vm-hostname" }, helm: { lastAppliedAt: 100, availableReplicas: 1 }, kubernetes: { status: "unknown", totalPods: 0 } },
     });
-    expect(await stampGatewayRuntime({ store, gatewayId: "b-x", initial: initialRuntime("b-x"), gatewayClass: "builder", sizingTier: "l", vmSpec: spec, log: vi.fn() })).toBe("cluster");
-    expect(await stampGatewayRuntime({ store, gatewayId: "b-vm", initial: initialRuntime("b-vm"), gatewayClass: "builder", sizingTier: "s", vmSpec: null, log: vi.fn() })).toBe("gce-vm");
+    expect(await stampGatewayRuntime({ store, gatewayId: "b-x", initial: initialRuntime("b-x"), gatewayClass: "isolated", sizingTier: "l", vmSpec: spec, log: vi.fn() })).toBe("cluster");
+    expect(await stampGatewayRuntime({ store, gatewayId: "b-vm", initial: initialRuntime("b-vm"), gatewayClass: "isolated", sizingTier: "s", vmSpec: null, log: vi.fn() })).toBe("gce-vm");
     expect(writes).toEqual([]);
   });
 
@@ -1913,20 +1913,20 @@ describe("runtime policy and stamping", () => {
     { ...deployedCluster, runtime: "unknown-backend" },
   ])("rejects contradictory or malformed runtime state before any write %j", async (existing) => {
     const { store, writes } = recordingStore({ "glmGateways/b-x": existing });
-    await expect(stampGatewayRuntime({ store, gatewayId: "b-x", initial: initialRuntime("b-x"), gatewayClass: "builder", sizingTier: "l", vmSpec: spec, log: vi.fn() })).rejects.toThrow(/runtime|conflict|unstamped/);
+    await expect(stampGatewayRuntime({ store, gatewayId: "b-x", initial: initialRuntime("b-x"), gatewayClass: "isolated", sizingTier: "l", vmSpec: spec, log: vi.fn() })).rejects.toThrow(/runtime|conflict|unstamped/);
     expect(writes).toEqual([]);
   });
 
   it("stamps a isolated gateway with the policy runtime once and never rewrites an existing runtime", async () => {
     const { store, docs, writes } = recordingStore({});
     const log = vi.fn();
-    expect(await stampGatewayRuntime({ store, gatewayId: "b-x", initial: initialRuntime("b-x"), gatewayClass: "builder", sizingTier: "l", vmSpec: spec, log })).toBe("gce-vm");
+    expect(await stampGatewayRuntime({ store, gatewayId: "b-x", initial: initialRuntime("b-x"), gatewayClass: "isolated", sizingTier: "l", vmSpec: spec, log })).toBe("gce-vm");
     expect(docs["glmGateways/b-x"]).toEqual({ ...initialRuntimeDoc("b-x"), runtime: "gce-vm", vmSpec: { ...spec, machineType: "e2-standard-4", diskSizeGb: 80, homeDiskSizeGb: 100, provisioningModel: "STANDARD" } });
-    expect(await stampGatewayRuntime({ store, gatewayId: "b-x", initial: initialRuntime("b-x"), gatewayClass: "builder", sizingTier: "s", vmSpec: null, log })).toBe("gce-vm");
+    expect(await stampGatewayRuntime({ store, gatewayId: "b-x", initial: initialRuntime("b-x"), gatewayClass: "isolated", sizingTier: "s", vmSpec: null, log })).toBe("gce-vm");
     expect(writes).toHaveLength(1);
     expect(await stampGatewayRuntime({ store, gatewayId: "shared-1", initial: initialRuntime("shared-1"), gatewayClass: "shared", sizingTier: "l", vmSpec: spec, log })).toBe("cluster");
     expect(docs["glmGateways/shared-1"]).toEqual({ ...initialRuntimeDoc("shared-1"), runtime: "cluster" });
-    await expect(stampGatewayRuntime({ store, gatewayId: "b-z", initial: initialRuntime("b-z"), gatewayClass: "builder", sizingTier: "l", vmSpec: null, log })).rejects.toThrow(/needs a vmSpec/);
+    await expect(stampGatewayRuntime({ store, gatewayId: "b-z", initial: initialRuntime("b-z"), gatewayClass: "isolated", sizingTier: "l", vmSpec: null, log })).rejects.toThrow(/needs a vmSpec/);
   });
 });
 
@@ -2286,7 +2286,7 @@ describe("idle VM storage coverage", () => {
       setProvisioningModel: vi.fn(async (_name, _zone, provisioningModel) => { computer = { ...computer, provisioningModel }; }),
       start: vi.fn(async () => { computer = { ...computer, status: "RUNNING" }; return { fellBackToStandard: false }; }),
     });
-    await stampGatewayRuntime({ store: h.store, gatewayId: "b-x", initial: initialRuntime("b-x"), gatewayClass: "builder", sizingTier: target, vmSpec: spec, log: h.log });
+    await stampGatewayRuntime({ store: h.store, gatewayId: "b-x", initial: initialRuntime("b-x"), gatewayClass: "isolated", sizingTier: target, vmSpec: spec, log: h.log });
     await h.runtime.upsertInstance({ ...upsertOpts, sizingTier: target });
     expect(h.vm.setMachineType).toHaveBeenCalledWith(VM, "us-west1-b", newType);
     expect(h.vm.setMachineType.mock.invocationCallOrder[0]).toBeLessThan(h.vm.start.mock.invocationCallOrder[0]);
@@ -2525,7 +2525,7 @@ describe("stopped retained-home boot replacement", () => {
     expect(h.vm.deleteRetainingHome).not.toHaveBeenCalled();
   });
   it("permits operator force recovery of a stopped VM while retaining its exact home", async () => {
-    const docs: Docs = { ...vmDoc(), "gateways/b-x": { ownerUid: "UidA", gatewayClass: "builder", desiredStatus: "paused" }, "gateways/shared-1": { gatewayId: "shared-1", gatewayClass: "shared", desiredStatus: "running", desiredRelease: 1, latestRelease: 1 }, "gateways/shared-1/assignments/UidA": { uid: "UidA", slug: "mama", gatewayId: "shared-1", source: "onboarding", state: "serving", epoch: 1 }, "users/UidA": { provisioning: { projectStorage: { nativeBoot: true }, openclaw: { gatewayId: "shared-1" }, computerRecovery: { operationId: "op-force", gatewayId: "b-x", instanceId: "4242", sharedGatewayId: "shared-1", assignmentEpoch: 1 } } } };
+    const docs: Docs = { ...vmDoc(), "gateways/b-x": { ownerUid: "UidA", gatewayClass: "isolated", desiredStatus: "paused" }, "gateways/shared-1": { gatewayId: "shared-1", gatewayClass: "shared", desiredStatus: "running", desiredRelease: 1, latestRelease: 1 }, "gateways/shared-1/assignments/UidA": { uid: "UidA", slug: "mama", gatewayId: "shared-1", source: "onboarding", state: "serving", epoch: 1 }, "users/UidA": { provisioning: { projectStorage: { nativeBoot: true }, openclaw: { gatewayId: "shared-1" }, computerRecovery: { operationId: "op-force", gatewayId: "b-x", instanceId: "4242", sharedGatewayId: "shared-1", assignmentEpoch: 1 } } } };
     delete docs["glmGateways/b-x"].vmBootRecovery;
     const h = harness(docs, { describe: vi.fn(async () => ownedStopped), readFamilyImage: vi.fn(async () => accepted) }, undefined, { "b-x": "paused" });
     await expect(h.runtime.replaceStoppedVm("b-x", "op-force", async () => {}, { forceOwnerUid: "UidA", expectedInstanceId: "4242" })).resolves.toMatchObject({ bootDeleted: true, force: true });
@@ -2538,7 +2538,7 @@ describe("stopped retained-home boot replacement", () => {
       { observed: { ...ownedStopped, instanceId: "foreign" }, owner: "UidA" },
       { observed: ownedStopped, owner: "another-owner" },
     ]) {
-      const h = harness({ ...vmDoc(), "gateways/b-x": { ownerUid: "UidA", gatewayClass: "builder", desiredStatus: "paused" }, "users/UidA": { provisioning: { openclaw: { gatewayId: "shared-1" }, computerRecovery: { operationId: "op-force", gatewayId: "b-x", instanceId: "4242", sharedGatewayId: "shared-1", assignmentEpoch: 1 } } }, "gateways/shared-1": { gatewayId: "shared-1", gatewayClass: "shared", desiredStatus: "running", desiredRelease: 1, latestRelease: 1 }, "gateways/shared-1/assignments/UidA": { uid: "UidA", slug: "mama", gatewayId: "shared-1", source: "onboarding", state: "serving", epoch: 1 } }, { describe: vi.fn(async () => observed) }, undefined, { "b-x": "paused" });
+      const h = harness({ ...vmDoc(), "gateways/b-x": { ownerUid: "UidA", gatewayClass: "isolated", desiredStatus: "paused" }, "users/UidA": { provisioning: { openclaw: { gatewayId: "shared-1" }, computerRecovery: { operationId: "op-force", gatewayId: "b-x", instanceId: "4242", sharedGatewayId: "shared-1", assignmentEpoch: 1 } } }, "gateways/shared-1": { gatewayId: "shared-1", gatewayClass: "shared", desiredStatus: "running", desiredRelease: 1, latestRelease: 1 }, "gateways/shared-1/assignments/UidA": { uid: "UidA", slug: "mama", gatewayId: "shared-1", source: "onboarding", state: "serving", epoch: 1 } }, { describe: vi.fn(async () => observed) }, undefined, { "b-x": "paused" });
       await expect(h.runtime.replaceStoppedVm("b-x", "op-force", async () => {}, { forceOwnerUid: owner, expectedInstanceId: "4242" })).rejects.toThrow();
       expect(h.vm.deleteRetainingHome).not.toHaveBeenCalled();
     }
@@ -2582,7 +2582,7 @@ describe("stopped retained-home boot replacement", () => {
     expect(h.vm.deleteRetainingHome).not.toHaveBeenCalled();
   });
   it("does not clear a different runtime that appears after force deletion", async () => {
-    const docs: Docs = { ...vmDoc(), "gateways/b-x": { ownerUid: "UidA", gatewayClass: "builder", desiredStatus: "paused" }, "gateways/shared-1": { gatewayId: "shared-1", gatewayClass: "shared", desiredStatus: "running", desiredRelease: 1, latestRelease: 1 }, "gateways/shared-1/assignments/UidA": { uid: "UidA", slug: "mama", gatewayId: "shared-1", source: "onboarding", state: "serving", epoch: 1 }, "users/UidA": { provisioning: { openclaw: { gatewayId: "shared-1" }, computerRecovery: { operationId: "op-force", gatewayId: "b-x", instanceId: "4242", sharedGatewayId: "shared-1", assignmentEpoch: 1 } } } };
+    const docs: Docs = { ...vmDoc(), "gateways/b-x": { ownerUid: "UidA", gatewayClass: "isolated", desiredStatus: "paused" }, "gateways/shared-1": { gatewayId: "shared-1", gatewayClass: "shared", desiredStatus: "running", desiredRelease: 1, latestRelease: 1 }, "gateways/shared-1/assignments/UidA": { uid: "UidA", slug: "mama", gatewayId: "shared-1", source: "onboarding", state: "serving", epoch: 1 }, "users/UidA": { provisioning: { openclaw: { gatewayId: "shared-1" }, computerRecovery: { operationId: "op-force", gatewayId: "b-x", instanceId: "4242", sharedGatewayId: "shared-1", assignmentEpoch: 1 } } } };
     const h = harness(docs, { describe: vi.fn(async () => ownedStopped), readFamilyImage: vi.fn(async () => accepted) }, undefined, { "b-x": "paused" });
     h.vm.deleteRetainingHome = vi.fn(async () => { h.docs["glmGateways/b-x"].vm = { instanceId: "new-instance" }; });
     await expect(h.runtime.replaceStoppedVm("b-x", "op-force", async () => {}, { forceOwnerUid: "UidA", expectedInstanceId: "4242" })).rejects.toThrow("runtime identity changed");
@@ -2590,7 +2590,7 @@ describe("stopped retained-home boot replacement", () => {
     expect(readPath(h.docs["users/UidA"], "provisioning.computerRecovery.operationId")).toBe("op-force");
   });
   it.each(["class", "status"])("does not clear a runtime after its gateway root changes %s following force deletion", async change => {
-    const docs: Docs = { ...vmDoc(), "gateways/b-x": { ownerUid: "UidA", gatewayClass: "builder", desiredStatus: "paused" }, "gateways/shared-1": { gatewayId: "shared-1", gatewayClass: "shared", desiredStatus: "running", desiredRelease: 1, latestRelease: 1 }, "gateways/shared-1/assignments/UidA": { uid: "UidA", slug: "mama", gatewayId: "shared-1", source: "onboarding", state: "serving", epoch: 1 }, "users/UidA": { provisioning: { openclaw: { gatewayId: "shared-1" }, computerRecovery: { operationId: "op-force", gatewayId: "b-x", instanceId: "4242", sharedGatewayId: "shared-1", assignmentEpoch: 1 } } } };
+    const docs: Docs = { ...vmDoc(), "gateways/b-x": { ownerUid: "UidA", gatewayClass: "isolated", desiredStatus: "paused" }, "gateways/shared-1": { gatewayId: "shared-1", gatewayClass: "shared", desiredStatus: "running", desiredRelease: 1, latestRelease: 1 }, "gateways/shared-1/assignments/UidA": { uid: "UidA", slug: "mama", gatewayId: "shared-1", source: "onboarding", state: "serving", epoch: 1 }, "users/UidA": { provisioning: { openclaw: { gatewayId: "shared-1" }, computerRecovery: { operationId: "op-force", gatewayId: "b-x", instanceId: "4242", sharedGatewayId: "shared-1", assignmentEpoch: 1 } } } };
     const h = harness(docs, { describe: vi.fn(async () => ownedStopped), readFamilyImage: vi.fn(async () => accepted) }, undefined, { "b-x": "paused" });
     h.vm.deleteRetainingHome = vi.fn(async () => { if (change === "class") h.docs["gateways/b-x"].gatewayClass = "shared"; else h.docs["gateways/b-x"].desiredStatus = "running"; });
     await expect(h.runtime.replaceStoppedVm("b-x", "op-force", async () => {}, { forceOwnerUid: "UidA", expectedInstanceId: "4242" })).rejects.toThrow("gateway identity changed");
@@ -2598,21 +2598,21 @@ describe("stopped retained-home boot replacement", () => {
     expect(readPath(h.docs["users/UidA"], "provisioning.computerRecovery.operationId")).toBe("op-force");
   });
   it("does not stop a suspended VM when its existing gateway root belongs to another owner", async () => {
-    const docs = { ...vmDoc(), "gateways/b-x": { ownerUid: "Other", gatewayClass: "builder", desiredStatus: "paused" }, "gateways/shared-1": { gatewayId: "shared-1", gatewayClass: "shared", desiredStatus: "running", desiredRelease: 1, latestRelease: 1 }, "gateways/shared-1/assignments/UidA": { uid: "UidA", slug: "mama", gatewayId: "shared-1", source: "onboarding", state: "serving", epoch: 1 }, "users/UidA": { provisioning: { openclaw: { gatewayId: "shared-1" }, computerRecovery: { operationId: "op-force", gatewayId: "b-x", instanceId: "4242", sharedGatewayId: "shared-1", assignmentEpoch: 1 } } } };
+    const docs = { ...vmDoc(), "gateways/b-x": { ownerUid: "Other", gatewayClass: "isolated", desiredStatus: "paused" }, "gateways/shared-1": { gatewayId: "shared-1", gatewayClass: "shared", desiredStatus: "running", desiredRelease: 1, latestRelease: 1 }, "gateways/shared-1/assignments/UidA": { uid: "UidA", slug: "mama", gatewayId: "shared-1", source: "onboarding", state: "serving", epoch: 1 }, "users/UidA": { provisioning: { openclaw: { gatewayId: "shared-1" }, computerRecovery: { operationId: "op-force", gatewayId: "b-x", instanceId: "4242", sharedGatewayId: "shared-1", assignmentEpoch: 1 } } } };
     const h = harness(docs, { describe: vi.fn(async () => ({ ...ownedStopped, status: "SUSPENDED" })) }, undefined, { "b-x": "paused" });
     await expect(h.runtime.replaceStoppedVm("b-x", "op-force", async () => {}, { forceOwnerUid: "UidA", expectedInstanceId: "4242" })).rejects.toThrow("gateway owner changed");
     expect(h.vm.stop).not.toHaveBeenCalled();
     expect(h.vm.deleteRetainingHome).not.toHaveBeenCalled();
   });
   it.each([2, 3])("keeps the boot when its gateway root changes owners at authority check %s", async changeAt => {
-    const docs: Docs = { ...vmDoc(), "gateways/b-x": { ownerUid: "UidA", gatewayClass: "builder", desiredStatus: "paused" }, "gateways/shared-1": { gatewayId: "shared-1", gatewayClass: "shared", desiredStatus: "running", desiredRelease: 1, latestRelease: 1 }, "gateways/shared-1/assignments/UidA": { uid: "UidA", slug: "mama", gatewayId: "shared-1", source: "onboarding", state: "serving", epoch: 1 }, "users/UidA": { provisioning: { openclaw: { gatewayId: "shared-1" }, computerRecovery: { operationId: "op-force", gatewayId: "b-x", instanceId: "4242", sharedGatewayId: "shared-1", assignmentEpoch: 1 } } } };
+    const docs: Docs = { ...vmDoc(), "gateways/b-x": { ownerUid: "UidA", gatewayClass: "isolated", desiredStatus: "paused" }, "gateways/shared-1": { gatewayId: "shared-1", gatewayClass: "shared", desiredStatus: "running", desiredRelease: 1, latestRelease: 1 }, "gateways/shared-1/assignments/UidA": { uid: "UidA", slug: "mama", gatewayId: "shared-1", source: "onboarding", state: "serving", epoch: 1 }, "users/UidA": { provisioning: { openclaw: { gatewayId: "shared-1" }, computerRecovery: { operationId: "op-force", gatewayId: "b-x", instanceId: "4242", sharedGatewayId: "shared-1", assignmentEpoch: 1 } } } };
     const h = harness(docs, { describe: vi.fn(async () => ownedStopped), readFamilyImage: vi.fn(async () => accepted) }, undefined, { "b-x": "paused" });
     let checks = 0;
     await expect(h.runtime.replaceStoppedVm("b-x", "op-force", async () => { if (++checks === changeAt) h.docs["gateways/b-x"].ownerUid = "Other"; }, { forceOwnerUid: "UidA", expectedInstanceId: "4242" })).rejects.toThrow("gateway owner changed");
     expect(h.vm.deleteRetainingHome).not.toHaveBeenCalled();
   });
   it.each(["missing", "status", "class"])("keeps the VM when its root is %s", async scenario => {
-    const root = { ownerUid: "UidA", gatewayClass: scenario === "class" ? "shared" : "builder", desiredStatus: scenario === "status" ? "running" : "paused" };
+    const root = { ownerUid: "UidA", gatewayClass: scenario === "class" ? "shared" : "isolated", desiredStatus: scenario === "status" ? "running" : "paused" };
     const docs: Docs = { ...vmDoc(), "gateways/shared-1": { gatewayId: "shared-1", gatewayClass: "shared", desiredStatus: "running", desiredRelease: 1, latestRelease: 1 }, "gateways/shared-1/assignments/UidA": { uid: "UidA", slug: "mama", gatewayId: "shared-1", source: "onboarding", state: "serving", epoch: 1 }, "users/UidA": { provisioning: { openclaw: { gatewayId: "shared-1" }, computerRecovery: { operationId: "op-force", gatewayId: "b-x", instanceId: "4242", sharedGatewayId: "shared-1", assignmentEpoch: 1 } } } };
     if (scenario !== "missing") docs["gateways/b-x"] = root;
     const h = harness(docs, { describe: vi.fn(async () => ownedStopped) }, undefined, { "b-x": "paused" });

@@ -47,7 +47,7 @@ export function userMigrationV2GatewayRootFence(value, gatewayId) {
         typeof root.liveRelease === "number",
         root.desiredRelease === root.liveRelease,
         typeof root.updatedAt === "number" && Number.isFinite(root.updatedAt),
-        root.gatewayClass === "builder",
+        root.gatewayClass === "isolated",
         typeof root.ownerUid === "string" && root.ownerUid.length > 0,
         typeof root.builderSlug === "string" && root.builderSlug.length > 0,
     ].every(Boolean);

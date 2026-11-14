@@ -24,7 +24,7 @@ function snapshot(
       {
         gatewayId: "builder-chris",
         desiredStatus: "running",
-        gatewayClass: "builder",
+        gatewayClass: "isolated",
         desiredRelease: 7,
         liveRelease: 7,
         desiredImageTag: "abc1234-oc2026.7.1",

@@ -1,11 +1,9 @@
 import { isReleasePayload, upgradeReleasePayloadSchema } from "@octogee/shared/types/gateway-releases";
-import { dualReadGatewayClassValue, isGatewayVmRuntimeBundle } from "@octogee/shared/types/glm";
+import { isGatewayVmRuntimeBundle } from "@octogee/shared/types/glm";
 import { parseAssignmentDoc } from "../../assignment-doc.js";
 import { DuplicateRecordError, MalformedRecordError } from "../errors.js";
 import { deleteRecord, equalsFence, insertRecord, oneOfFence, revisionFence, selectByKey, selectRecords, updateRecord, } from "./records.js";
-import { currentAssignmentSource, gatewayClassesStoredAs } from "./legacy-stored-names.js";
 import { SqlParameters } from "./sql.js";
-import { storedGatewayClassValue } from "./stored-gateway-class.js";
 import { column, columnFor, decodeRecord, decodeStored, isClearField, revisionOf } from "./values.js";
 const ALLOCATION_KIND = "disposable-builder";
 const ALLOCATION_SCHEMA_VERSION = 1;
@@ -113,32 +111,17 @@ function allocationColumns(gatewayId, allocation) {
     }
     return { allocationLeaseId: value.leaseId, allocationGeneration: value.generation, allocationClaimedByUid: value.claimedByUid };
 }
-function storedClassColumns(fields) {
-    const stored = { ...fields };
-    for (const name of ["profile", "gatewayClass", "imageProfile"]) {
-        if (Object.hasOwn(stored, name))
-            stored[name] = storedGatewayClassValue(stored[name]);
-    }
-    return stored;
-}
 function rootColumns(gatewayId, input) {
     const { allocation, preemption, ...fields } = input;
     if (preemption !== undefined && preemption !== null && !isClearField(preemption)) {
         throw new MalformedRecordError(rootKey(gatewayId), `preemption ${JSON.stringify(preemption)} is not null`);
     }
-    const columns = storedClassColumns(fields);
-    return allocation === undefined ? columns : { ...columns, ...allocationColumns(gatewayId, allocation) };
+    return allocation === undefined ? fields : { ...fields, ...allocationColumns(gatewayId, allocation) };
 }
 export function decodeGatewayRoot(row) {
     const { allocationLeaseId, allocationGeneration, allocationClaimedByUid, ...stored } = decodeStored(GATEWAYS_TABLE, row);
-    const root = {
-        ...stored,
-        profile: dualReadGatewayClassValue(stored.profile),
-        gatewayClass: dualReadGatewayClassValue(stored.gatewayClass),
-        imageProfile: dualReadGatewayClassValue(stored.imageProfile),
-    };
     if (allocationLeaseId === undefined)
-        return root;
+        return stored;
     const allocation = {
         kind: ALLOCATION_KIND,
         schemaVersion: ALLOCATION_SCHEMA_VERSION,
@@ -146,7 +129,7 @@ export function decodeGatewayRoot(row) {
         generation: allocationGeneration,
         claimedByUid: allocationClaimedByUid,
     };
-    return { ...root, allocation };
+    return { ...stored, allocation };
 }
 function decodeRelease(row) {
     const release = decodeRecord(GATEWAY_RELEASES_TABLE, row);
@@ -164,7 +147,7 @@ export function decodeGatewayAssignment(row) {
     const key = assignmentKey(stored.gatewayId, uid);
     let assignment;
     try {
-        assignment = parseAssignmentDoc(uid, { ...stored, source: currentAssignmentSource(stored.source) });
+        assignment = parseAssignmentDoc(uid, stored);
     }
     catch (error) {
         throw new MalformedRecordError(key, error instanceof Error ? error.message : String(error));
@@ -218,7 +201,7 @@ function createRootsRepository(session) {
             const parameters = new SqlParameters();
             const conditions = [];
             if (filter.gatewayClass !== undefined) {
-                conditions.push(`gateway_class = ANY(${parameters.add(gatewayClassesStoredAs(filter.gatewayClass), "text[]")})`);
+                conditions.push(`gateway_class = ${parameters.add(filter.gatewayClass, "text")}`);
             }
             if (filter.ownerUid !== undefined)
                 conditions.push(`owner_uid = ${parameters.add(filter.ownerUid, "text")}`);

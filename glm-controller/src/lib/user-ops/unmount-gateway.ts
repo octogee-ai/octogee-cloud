@@ -5,7 +5,7 @@ export type UnmountOutcome = "unmounted" | "skipped-no-live-pod";
 export interface GatewayUnmountTarget {
   gatewayId: string;
   revisionId: string;
-  profile: "standard" | "builder";
+  profile: "standard" | "isolated";
   runtime: GatewayRuntime;
 }
 

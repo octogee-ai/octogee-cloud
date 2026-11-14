@@ -661,7 +661,7 @@ function assertReplacementRoot(root: GatewayRoot | null, desired: string | null,
   if (desired === null && root) throw new Error("force replacement requires a valid retired gateway or an absent gateway root");
   if (!forceOwnerUid) return;
   if (!root && desired !== null) throw new Error("force replacement gateway disappeared");
-  if (root && (root.ownerUid !== forceOwnerUid || root.gatewayClass !== "builder" || root.desiredStatus !== desired)) throw new Error("force replacement gateway owner changed or status changed");
+  if (root && (root.ownerUid !== forceOwnerUid || root.gatewayClass !== "isolated" || root.desiredStatus !== desired)) throw new Error("force replacement gateway owner changed or status changed");
 }
 
 async function replacementRecord(deps: VmLifecycleDeps, gatewayId: string, desired: string | null, forceOwnerUid?: string): Promise<VmRecord> {
@@ -683,7 +683,7 @@ async function replacementRecord(deps: VmLifecycleDeps, gatewayId: string, desir
 async function clearForceReplacementRuntime(deps: VmLifecycleDeps, gatewayId: string, ownerUid: string, instanceId: string): Promise<boolean> {
   return deps.store.transaction({ label: "vm-computer.clear-force-replacement" }, async (tx) => {
     const [runtime, root] = await Promise.all([tx.fleetRegistry.get(gatewayId), tx.gateways.roots.get(gatewayId)]);
-    if (root && (root.ownerUid !== ownerUid || root.gatewayClass !== "builder" || !["paused", "retired"].includes(root.desiredStatus))) throw new Error("replacement gateway identity changed");
+    if (root && (root.ownerUid !== ownerUid || root.gatewayClass !== "isolated" || !["paused", "retired"].includes(root.desiredStatus))) throw new Error("replacement gateway identity changed");
     if (!runtime) return false;
     const runtimeOwner = runtime.vmInstance?.ownerUid;
     if ((runtime.vm != null && runtime.vm.instanceId !== instanceId) || (runtimeOwner != null && runtimeOwner !== ownerUid)) throw new Error("replacement runtime identity changed");

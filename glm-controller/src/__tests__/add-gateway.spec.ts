@@ -255,13 +255,13 @@ describe("createAddGatewayHandler — happy path", () => {
         gatewayId: "canary",
         revisionId: "canary",
         imageTag: "abc1234",
-        gatewayClass: "builder" as const,
+        gatewayClass: "isolated" as const,
       })),
     });
     const ctx = makeCtx();
 
     const result = await createAddGatewayHandler(deps)(
-      mkOp({ input: { gatewayId: "canary", imageTag: "abc1234", gatewayClass: "builder" } }),
+      mkOp({ input: { gatewayId: "canary", imageTag: "abc1234", gatewayClass: "isolated" } }),
       ctx,
     );
 
@@ -292,7 +292,7 @@ describe("createAddGatewayHandler — happy path", () => {
         gatewayId: "canary",
         revisionId: "canary",
         imageTag: "abc1234",
-        gatewayClass: "builder" as const,
+        gatewayClass: "isolated" as const,
       })),
     });
 

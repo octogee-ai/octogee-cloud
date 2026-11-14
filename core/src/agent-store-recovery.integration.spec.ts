@@ -42,7 +42,7 @@ describe.skipIf(!dsn)("claimed PostgreSQL source recovery", () => {
       expect((await admin.query("SELECT 1 FROM pg_namespace WHERE nspname = $1", [schema])).rows).toEqual([]);
       fixtureVerifiedFresh = true;
       shared = new pg.Client({ connectionString: await provision({ gatewayClass: "shared", gatewayId: sharedId, token: "synthetic-shared" }, async () => {}) });
-      source = new pg.Client({ connectionString: await provision({ gatewayClass: "builder", gatewayId: isolatedId, token: "synthetic-user", user }, async () => {}) });
+      source = new pg.Client({ connectionString: await provision({ gatewayClass: "isolated", gatewayId: isolatedId, token: "synthetic-user", user }, async () => {}) });
       await shared.connect(); await source.connect();
       await shared.query(`CREATE SCHEMA ${pg.escapeIdentifier(schema)}`);
       await shared.query(`CREATE TABLE ${table("schema_meta")} (meta_key TEXT, role TEXT, agent_id TEXT, store_id TEXT)`);
@@ -51,7 +51,7 @@ describe.skipIf(!dsn)("claimed PostgreSQL source recovery", () => {
       await shared.query(`INSERT INTO ${table("openclaw_schema_meta")} VALUES ('agent', $1)`, [storeId]);
       await shared.query(`CREATE TABLE ${table("session_nodes")} (session_key TEXT PRIMARY KEY, entry_json TEXT)`);
       await shared.query(`INSERT INTO ${table("session_nodes")} VALUES ('history', $1)`, [history]);
-      await transfer(user, "builder");
+      await transfer(user, "isolated");
       const before = await admin.query("SELECT n.oid, r.rolname FROM pg_namespace n JOIN pg_roles r ON r.oid = n.nspowner WHERE n.nspname = $1", [schema]);
       let current = true, checks = 0;
       const assertCurrent = vi.fn(async () => {
@@ -124,7 +124,7 @@ describe.skipIf(!dsn)("native return PostgreSQL source resume", () => {
       expect((await admin.query("SELECT 1 FROM pg_namespace WHERE nspname = $1", [schema])).rows).toEqual([]);
       fixtureVerifiedFresh = true;
       shared = new pg.Client({ connectionString: await provision({ gatewayClass: "shared", gatewayId: sharedId, token: "synthetic-shared" }, async () => {}) });
-      source = new pg.Client({ connectionString: await provision({ gatewayClass: "builder", gatewayId: sourceId, token: "synthetic-user", user }, async () => {}) });
+      source = new pg.Client({ connectionString: await provision({ gatewayClass: "isolated", gatewayId: sourceId, token: "synthetic-user", user }, async () => {}) });
       await shared.connect(); await source.connect();
       await shared.query(`CREATE SCHEMA ${pg.escapeIdentifier(schema)}`);
       await shared.query(`CREATE TABLE ${table("schema_meta")} (meta_key TEXT, role TEXT, agent_id TEXT, store_id TEXT)`);
@@ -137,7 +137,7 @@ describe.skipIf(!dsn)("native return PostgreSQL source resume", () => {
       expect((await shared.query(`SELECT store_id FROM ${table("schema_meta")}`)).rows).toEqual([{ store_id: storeId }]);
       const prepareAgentStores = vi.fn(async (gatewayId: string, slug: string) => {
         expect(gatewayId).toBe(sourceId); expect(slug).toBe(user.slug);
-        await transfer(user, "builder");
+        await transfer(user, "isolated");
       });
       const fetch: typeof globalThis.fetch = vi.fn(async () => {
         expect(prepareAgentStores).toHaveBeenCalledOnce();

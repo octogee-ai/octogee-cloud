@@ -325,7 +325,7 @@ function resolveSizingForResponse(
 }
 
 function normalizeGatewayProfile(profile: unknown): GatewayProfile {
-  return profile === "builder" ? "builder" : "standard";
+  return profile === "isolated" ? "isolated" : "standard";
 }
 
 function normalizeGatewayClass(doc: GlmDoc | undefined): GatewayClass {
@@ -429,7 +429,7 @@ interface AdminPlacementGatewaySummary {
 type AdminGatewayClass = "shared" | "isolated";
 
 function adminGatewayClass(gatewayClass: GatewayClass): AdminGatewayClass {
-  return gatewayClass === "builder" ? "isolated" : "shared";
+  return gatewayClass === "isolated" ? "isolated" : "shared";
 }
 
 function isAdminGatewayClass(value: unknown): value is AdminGatewayClass {
@@ -729,7 +729,7 @@ function accountLifecycleWarning(input: {
     (candidate) =>
       candidate.kind === "erase-user" && operationUid(candidate) === input.uid,
   );
-  const slug = resolveUserSlug(input.data) ?? asStringOrNull(operation?.input.builderSlug);
+  const slug = resolveUserSlug(input.data) ?? asStringOrNull(operation?.input.userSlug);
   const expiresAt = toMillis(lifecycle.eraseAfter);
   return {
     code: "account-deletion-pending",
@@ -1465,7 +1465,7 @@ async function mountedUsersBlockingRetirement(
   gatewayId: string,
   runtime: DurableGatewayRuntime,
 ): Promise<string[]> {
-  const parkedIsolated = runtime.root.desiredStatus === "paused" && runtime.root.gatewayClass === "builder" &&
+  const parkedIsolated = runtime.root.desiredStatus === "paused" && runtime.root.gatewayClass === "isolated" &&
     isGatewayRuntime((await store.fleetRegistry.get(gatewayId))?.runtime);
   return parkedIsolated ? [] : [...readMountedSlugs(runtime.heartbeat ?? undefined)];
 }
@@ -2541,7 +2541,7 @@ function validateAddGatewayProfile(
   return {
     ok: {
       ...(body.profile ? { profile: body.profile as GatewayProfile } : {}),
-      ...(body.gatewayClass ? { gatewayClass: body.gatewayClass === "isolated" ? "builder" as const : "shared" as const } : {}),
+      ...(body.gatewayClass ? { gatewayClass: body.gatewayClass === "isolated" ? "isolated" as const : "shared" as const } : {}),
       ...(body.imageProfile ? { imageProfile: body.imageProfile as GatewayImageProfile } : {}),
     },
   };
@@ -3369,7 +3369,7 @@ function buildDurableGatewayPatch(args: {
       },
     };
   }
-  if (args.current.gatewayClass === "builder" && args.body.sizingTier === "xs") {
+  if (args.current.gatewayClass === "isolated" && args.body.sizingTier === "xs") {
     return { error: { status: 400, body: { error: "User sizingTier must be s, m, or l" } } };
   }
   const configPatch = mutableConfigPatchFromBody(args.body);
@@ -3991,14 +3991,14 @@ function migrationLockRef(operation: OperationRecord): {
   kind: string;
   status: string;
   input: unknown;
-  customerMigrationV2: unknown;
+  userMigrationV2: unknown;
 } {
   return {
     id: operation.id,
     kind: operation.kind,
     status: operation.status,
     input: operation.input,
-    customerMigrationV2: operation.customerMigrationV2,
+    userMigrationV2: operation.userMigrationV2,
   };
 }
 
@@ -4374,7 +4374,7 @@ function rearmableUserReturnOperation(input: {
     operationInput.fromGatewayId === input.targetGatewayId,
     operationInput.source === "builder-activation-lease",
     typeof operationInput.toGatewayId === "string" && operationInput.toGatewayId.length > 0,
-    operation.customerMigrationV2 === undefined,
+    operation.userMigrationV2 === undefined,
   ].every(Boolean);
 }
 
@@ -4441,7 +4441,7 @@ function matchesUserReturnRetryState(input: {
       uid: input.uid,
       gatewayId: input.targetGatewayId,
     }),
-    input.state.target?.gatewayClass === "builder",
+    input.state.target?.gatewayClass === "isolated",
     disposableRuntimeMatchesTermination({
       target: input.state.target,
       uid: input.uid,
@@ -4514,7 +4514,7 @@ export async function readPlatformRuntimeConfig(store: PlatformStateStore): Prom
 
 async function setOperatorParkedIsolatedGatewayStatus(transaction: PlatformStateTransaction, gatewayId: string, input: { actor: string | undefined; uid: string; desiredStatus: "paused" | "running" }): Promise<{ dedicated: boolean; error?: string }> {
   const gateway = await transaction.gateways.roots.get(gatewayId);
-  if (gateway?.gatewayClass !== "builder") return { dedicated: false };
+  if (gateway?.gatewayClass !== "isolated") return { dedicated: false };
   if (gateway.ownerUid !== input.uid || gateway.desiredStatus === "retired" || gateway.runtimeRestartFence !== undefined || gateway.retirementClaim != null) {
     return { dedicated: true, error: "dedicated gateway ownership or runtime outcome must settle before changing parking" };
   }
@@ -5788,7 +5788,7 @@ router.get(
             createdBy,
             input: {
               uid,
-              ...(builderSlug ? { builderSlug } : {}),
+              ...(builderSlug ? { userSlug: builderSlug } : {}),
               ...(currentGatewayId ? { fromGatewayId: currentGatewayId } : {}),
               toGatewayId: body.to,
             },

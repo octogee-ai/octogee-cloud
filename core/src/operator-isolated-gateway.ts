@@ -106,7 +106,7 @@ function userRefusal(uid: string, user: Stored<PlatformUserRecord> | null): { re
 }
 
 async function ownedGatewayRefusal(reader: Reader, uid: string): Promise<{ refusal: OperatorIsolatedGatewayAnswer } | null> {
-  const owned = await reader.gateways.roots.list({ gatewayClass: "builder", ownerUid: uid });
+  const owned = await reader.gateways.roots.list({ gatewayClass: "isolated", ownerUid: uid });
   const current = owned.find((root) => root.desiredStatus !== "retired");
   if (current) {
     return refusal(409, "user-has-isolated-gateway", `user already has isolated gateway ${current.gatewayId}`, { uid, gatewayId: current.gatewayId });
@@ -179,8 +179,8 @@ export function operatorIsolatedGatewayConfig(input: {
   return {
     configSchemaVersion: 1,
     profile: null,
-    gatewayClass: "builder",
-    imageProfile: "builder",
+    gatewayClass: "isolated",
+    imageProfile: "isolated",
     sizingTier: input.sizingTier,
     gcpProject: null,
     gatewayContainerSecurityContext: null,
@@ -231,7 +231,7 @@ export async function giveOperatorIsolatedGateway(
       completedAt: null,
       input: {
         uid: plan.uid,
-        builderSlug: plan.slug,
+        userSlug: plan.slug,
         fromGatewayId: plan.sourceGatewayId,
         toGatewayId: gatewayId,
         source: OPERATOR_ISOLATED_GATEWAY_SOURCE,
@@ -254,7 +254,7 @@ export async function ownIsolatedGatewayTargetRefusal(
 ): Promise<OperatorIsolatedGatewayAnswer | null> {
   const root = await reader.gateways.roots.get(gatewayId);
   const allocation = root?.allocation;
-  if (root?.gatewayClass === "builder" && root.ownerUid === uid &&
+  if (root?.gatewayClass === "isolated" && root.ownerUid === uid &&
       allocation?.kind === ISOLATED_ALLOCATION_KIND && allocation.claimedByUid === uid) return null;
   return { status: 400, body: {
     code: "migration-target-not-own-isolated-gateway",
@@ -305,7 +305,7 @@ export async function movesTouchingGateway(
 ): Promise<{ waiting: string[]; blocking: string | null }> {
   const active = await reader.journal.operations.listByStatus(["pending", "running"]);
   const moves = active.filter((operation) => operation.kind === MIGRATE_USER_KIND &&
-    fleetOperationLockResources({ id: operation.id, kind: operation.kind, input: operation.input, customerMigrationV2: operation.customerMigrationV2 }).has(gatewayId));
+    fleetOperationLockResources({ id: operation.id, kind: operation.kind, input: operation.input, userMigrationV2: operation.userMigrationV2 }).has(gatewayId));
   const waiting = moves.filter((operation) => moveHasNotBegun(operation, gatewayId));
   const blocking = moves.find((operation) => !waiting.includes(operation));
   return { waiting: waiting.map((operation) => operation.id), blocking: blocking?.id ?? null };

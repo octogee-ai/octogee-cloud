@@ -15,7 +15,7 @@ async function fixture(retained = false) {
   await mkdir(join(root, "system_config"));
   const config = { agents: { entries: { "octogee-alice-coach": {} } }, database: { engine: "sqlite", families: {} as Record<string, { engine: string }> } };
   await writeFile(configPath, JSON.stringify(config));
-  const env = withUserClaim({ GATEWAY_CLASS: "builder", GATEWAY_ID: "alice-s-test", POD_UID: "source-pod", OPENCLAW_DIR: root, OPENCLAW_STATE_DIR: root, OPENCLAW_CONFIG_PATH: configPath }, "alice");
+  const env = withUserClaim({ GATEWAY_CLASS: "isolated", GATEWAY_ID: "alice-s-test", POD_UID: "source-pod", OPENCLAW_DIR: root, OPENCLAW_STATE_DIR: root, OPENCLAW_CONFIG_PATH: configPath }, "alice");
   const stores = new Map(families.map(f => [f, f === "state" ? join(root, "state/openclaw.sqlite") : f === "agent" ? join(root, "agents/octogee-alice-coach/agent/openclaw-agent.sqlite") : auxiliaryStorePath(root, f as "workboard")]));
   const select = async (family: string) => { const cfg = JSON.parse(await readFile(configPath, "utf8")); cfg.database.families[family] = { engine: "postgres" }; await writeFile(configPath, JSON.stringify(cfg)); };
   const run = vi.fn(async (args: string[]) => {

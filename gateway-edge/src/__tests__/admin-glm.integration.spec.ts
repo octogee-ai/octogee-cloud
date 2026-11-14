@@ -676,7 +676,7 @@ describe("Admin default placement", () => {
   it("projects policy target, assigned gateway, mounted gateway, and pointer drift separately", async () => {
     seedDurableGateway("gw-source", {
       imageTag: "oldsha1",
-      root: { profile: "builder", gatewayClass: "builder", imageProfile: "builder", ownerUid: "uid-bob", builderSlug: "bob" },
+      root: { profile: "isolated", gatewayClass: "isolated", imageProfile: "isolated", ownerUid: "uid-bob", builderSlug: "bob" },
       heartbeat: { status: "ready", mountedCustomers: ["alice"] },
     });
     seedDurableGateway("gw-target", {
@@ -881,7 +881,7 @@ describe("POST /api/admin/gateways — create durable state + op", () => {
       ownerUid: "uid-jack",
     });
     expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/profile.*standard.*builder/i);
+    expect(res.body.error).toMatch(/profile.*standard.*isolated/i);
     expect(provisionerCalls).toEqual([]);
     expect(gatewaysDocs.jack).toBeUndefined();
   });
@@ -1052,9 +1052,9 @@ describe("GET /api/admin/gateways — sizing enrichment", () => {
       heartbeat: { status: "ready", mountedCustomers: ["alice"] },
       root: {
         sizingTier: "l",
-        profile: "builder",
-        gatewayClass: "builder",
-        imageProfile: "builder",
+        profile: "isolated",
+        gatewayClass: "isolated",
+        imageProfile: "isolated",
         ownerUid: "uid-walter",
         builderSlug: "walter",
       },
@@ -1074,9 +1074,9 @@ describe("GET /api/admin/gateways — sizing enrichment", () => {
     seedDurableGateway("default", {
       heartbeat: { status: "ready", mountedCustomers: [] },
       root: {
-        profile: "builder",
-        gatewayClass: "builder",
-        imageProfile: "builder",
+        profile: "isolated",
+        gatewayClass: "isolated",
+        imageProfile: "isolated",
         ownerUid: "uid-default",
         builderSlug: "default",
       },
@@ -1112,9 +1112,9 @@ describe("GET /api/admin/gateways — sizing enrichment", () => {
     seedDurableGateway("walter", {
       heartbeat: { status: "ready", mountedCustomers: [] },
       root: {
-        gatewayClass: "builder",
-        profile: "builder",
-        imageProfile: "builder",
+        gatewayClass: "isolated",
+        profile: "isolated",
+        imageProfile: "isolated",
         ownerUid: "uid-walter",
         builderSlug: "walter",
         sizingTier: "m",
@@ -1143,9 +1143,9 @@ describe("GET /api/admin/gateways — sizing enrichment", () => {
     seedDurableGateway("dedicated", {
       heartbeat: { status: "ready", mountedCustomers: [] },
       root: {
-        gatewayClass: "builder",
-        profile: "builder",
-        imageProfile: "builder",
+        gatewayClass: "isolated",
+        profile: "isolated",
+        imageProfile: "isolated",
         ownerUid: "uid-dedicated",
         builderSlug: "dedicated",
         sizingTier: "m",
@@ -1514,7 +1514,7 @@ describe("POST /api/admin/users/:uid/migrate — start migration", () => {
       status: "pending",
       input: {
         uid: "uid-alice",
-        builderSlug: "alice",
+        userSlug: "alice",
         fromGatewayId: "default",
         toGatewayId: "canary",
       },
@@ -1860,9 +1860,9 @@ describe("POST /api/admin/users/:uid/assign — initial placement", () => {
     seedDurableGateway("gw-operator", {
       heartbeat: { status: "ready", mountedCustomers: [] },
       root: {
-        profile: "builder",
-        gatewayClass: "builder",
-        imageProfile: "builder",
+        profile: "isolated",
+        gatewayClass: "isolated",
+        imageProfile: "isolated",
         ownerUid: "uid-owner",
         builderSlug: "owner",
         builderAccess: {

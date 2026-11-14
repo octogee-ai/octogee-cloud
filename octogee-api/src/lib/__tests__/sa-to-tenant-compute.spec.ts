@@ -8,7 +8,7 @@ function durableGateway(gatewayId: string, overrides: Record<string, unknown> = 
     latestRelease: 1, desiredRelease: 1, liveRelease: 1,
     liveRevisionId: `${gatewayId}-r1`, trafficRevisionId: `${gatewayId}-r1`,
     desiredStatus: "running", roll: null, configSchemaVersion: 1,
-    profile: "builder", gatewayClass: "builder", imageProfile: "builder", sizingTier: null,
+    profile: "isolated", gatewayClass: "isolated", imageProfile: "isolated", sizingTier: null,
     gcpProject: null, gatewayContainerSecurityContext: null, serviceAccountName: null,
     serviceAccount: null, builderAccess: null, ownerUid: "UidA", builderSlug: "mama",
     modelBrokerLimits: null, preemption: null,

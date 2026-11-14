@@ -18,9 +18,9 @@ function fixture(scenario = 'success') {
   const events: string[] = []; let applied = scenario === 'post-helm-crash';
   const gatewayId = 'builder-a', operationId = 'builder-activate-builder-a-g1';
   const migrationId = `mig-${operationId}:scheduler:1:claim:1000`;
-  const gateway = { gatewayId, gatewayClass: 'builder', ownerUid: 'alice', builderSlug: 'alice', desiredStatus: 'running', liveRelease: 1, desiredRelease: 2, latestRelease: 2,
+  const gateway = { gatewayId, gatewayClass: 'isolated', ownerUid: 'alice', builderSlug: 'alice', desiredStatus: 'running', liveRelease: 1, desiredRelease: 2, latestRelease: 2,
     allocation: { kind: 'disposable-builder', leaseId: 'lease-a', generation: 1, claimedByUid: 'alice' } };
-  const recovery = { id: operationId, kind: 'migrate-user', status: 'pending', startedAt: null, input: { uid: 'alice', builderSlug: 'alice', source: 'builder-activation-lease', recoverSourceOnly: true, fromGatewayId: 'shared-a', toGatewayId: gatewayId },
+  const recovery = { id: operationId, kind: 'migrate-user', status: 'pending', startedAt: null, input: { uid: 'alice', userSlug: 'alice', source: 'builder-activation-lease', recoverSourceOnly: true, fromGatewayId: 'shared-a', toGatewayId: gatewayId },
     schedulerHandoff: { migrationId, uid: 'alice', slug: 'alice', fromGatewayId: 'shared-a', toGatewayId: gatewayId, stageAfterCutover: true, sourceRecovery: { migrationId, sourceEpoch: 7, steps: [{ name: 'quiesce-source', status: 'done' }] } } };
   const lease = { leaseId: 'lease-a', generation: 1, status: 'activating', sourceGatewayId: 'shared-a', sourceAssignmentEpoch: 7, targetGatewayId: gatewayId };
   const user = { username: 'alice', provisioning: { openclaw: { gatewayId: 'shared-a', slug: 'alice', activationLease: lease, migration: { state: 'moving', operationId, startedAt: 1000 } } } };

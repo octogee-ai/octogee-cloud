@@ -14,7 +14,7 @@ import { updateSystemConfigStatus } from "../lib/system-config-status.js";
 
 const dirs: string[] = [];
 const env = {
-  GATEWAY_CLASS: "builder",
+  GATEWAY_CLASS: "isolated",
   GATEWAY_ID: "walter",
   API_PUBLIC_URL: "https://api.octogee.com",
   GATEWAY_REVISION_ID: "walter-r12",
@@ -206,7 +206,7 @@ describe("system config adoption", () => {
       slug: "ceckert",
       sourcePath: h.sourcePath,
       openclawDir: h.openclawDir,
-      env: { ...env, GATEWAY_CLASS: "builder" },
+      env: { ...env, GATEWAY_CLASS: "isolated" },
       validateConfig,
       writeSecrets: vi.fn(),
       checkpoint: vi.fn(),

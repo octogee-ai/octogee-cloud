@@ -25,7 +25,7 @@ from:
 Default OFF. The chart only accepts `/32` endpoint CIDRs here.
 */}}
 {{- $apiCidrs := .Values.builderAccess.kubeApiServerEgressCidrs | default (list) -}}
-{{- $apiEgress := and (eq (include "octogee-gateway.dualReadGatewayClass" .) "builder") (gt (len $apiCidrs) 0) -}}
+{{- $apiEgress := and (eq (include "octogee-gateway.dualReadGatewayClass" .) "isolated") (gt (len $apiCidrs) 0) -}}
 {{- /* `ne … false`, not `| default true`: a bool `false` is the Go zero value,
        so `.Values.networkPolicy.enabled | default true` would override an
        explicit disable back to true. */}}

@@ -55,14 +55,14 @@ const SNAPSHOT: FleetBrokerUserSnapshot = {
 function gatewayRootFence(
   gatewayId: string,
   release = 1,
-): NonNullable<Operation["customerMigrationV2"]>["sourceRootFence"] {
+): NonNullable<Operation["userMigrationV2"]>["sourceRootFence"] {
   return {
     gatewayId,
     updatedAt: gatewayId === "gw-blue" ? 17 : 18,
     latestRelease: release,
     desiredRelease: release,
     liveRelease: release,
-    gatewayClass: "builder",
+    gatewayClass: "isolated",
     ownerUid: "uid-alice",
     builderSlug: "alice",
     configHash: gatewayId === "gw-blue" ? "7".repeat(64) : "8".repeat(64),
@@ -142,7 +142,7 @@ interface HarnessOptions {
 function mkDeps(options: HarnessOptions = {}) {
   const client = options.client ?? happyClient();
   const events: string[] = [];
-  const persisted: Array<NonNullable<Operation["customerMigrationV2"]>> = [];
+  const persisted: Array<NonNullable<Operation["userMigrationV2"]>> = [];
   const transfers = new Map<string, ScheduleTransferDoc>();
   const setMigrationPhase = vi.fn<NonNullable<MigrateUserDeps["setMigrationPhase"]>>(async () => undefined);
   const deps: MigrateUserDeps = {
@@ -228,7 +228,7 @@ function tickingClock(h: ReturnType<typeof mkDeps>): void {
 function freshUserFromSharedGateway(h: ReturnType<typeof mkDeps>, commits: Array<string | null>): void {
   tickingClock(h);
   vi.mocked(h.deps.resolveSourcePlacement).mockResolvedValue({ release: 1, gatewayClass: "shared" });
-  vi.mocked(h.deps.resolveTargetPlacement).mockResolvedValue({ ok: true, release: 2, gatewayClass: "builder" });
+  vi.mocked(h.deps.resolveTargetPlacement).mockResolvedValue({ ok: true, release: 2, gatewayClass: "isolated" });
   vi.mocked(h.client.flushGateway).mockImplementation(async ({ migrationId, slug }) => ({ migrationId, slug, ok: true, durationMs: 1, steps: [] }));
   const commitCutover = vi.mocked(h.deps.commitCutover).getMockImplementation()!;
   vi.mocked(h.deps.commitCutover).mockImplementation(async (commit) => {
@@ -330,7 +330,7 @@ describe("previous native return cleanup ownership", () => {
       return `http://${gatewayId}.fixture:3003`;
     });
     h.deps.resolveSourcePlacement = vi.fn(async () => { throw new Error("fixture forward boundary reached"); });
-    const operation = mkOp({ attempts: 21, input: { uid: "uid-alice", builderSlug: "alice", fromGatewayId: source, toGatewayId: scenario === "retargeted" ? "shared-new" : target, source: "builder-activation-lease" },
+    const operation = mkOp({ attempts: 21, input: { uid: "uid-alice", userSlug: "alice", fromGatewayId: source, toGatewayId: scenario === "retargeted" ? "shared-new" : target, source: "builder-activation-lease" },
       schedulerHandoff: { migrationId: "mig-op-1:scheduler:21:claim:1000", uid: "uid-alice", slug: "alice", fromGatewayId: source, toGatewayId: target } });
     const result = await createMigrateUserHandler(h.deps)(operation, h.ctx);
     if (scenario === "acknowledged" || scenario === "unready" || scenario === "retargeted") {
@@ -475,7 +475,7 @@ describe("abandoned Shared migration recovery", () => {
     const target = "alice-s-12345678";
     const id = `builder-activate-${target}-g1`;
     const request = mkOp({ id, status: "running", startedAt: 4_000, attempts: 1,
-      input: { uid: "uid-alice", builderSlug: "alice", fromGatewayId: "shared-blue", toGatewayId: target, source: "builder-activation-lease", recoverSourceOnly: true },
+      input: { uid: "uid-alice", userSlug: "alice", fromGatewayId: "shared-blue", toGatewayId: target, source: "builder-activation-lease", recoverSourceOnly: true },
       schedulerHandoff: { migrationId: `mig-${id}:scheduler:1:claim:1000`, fromGatewayId: "shared-blue", toGatewayId: target, uid: "uid-alice", slug: "alice", stageAfterCutover: true },
     });
     const sourceRecovery: NonNullable<NonNullable<Operation["schedulerHandoff"]>["sourceRecovery"]> = { migrationId: request.schedulerHandoff!.migrationId, sourceEpoch: 4, steps: [{ name: "quiesce-source", status: "done" }] };
@@ -516,7 +516,7 @@ describe("abandoned Shared migration recovery", () => {
     const h = mkDeps({ sourceGatewayId: "shared-blue" });
     const target = "alice-m-12345678", id = `builder-activate-${target}-g1`;
     const op = mkOp({ id, status: "running", startedAt: 4_000, attempts: 1,
-      input: { uid: "uid-alice", builderSlug: "alice", fromGatewayId: "shared-blue", toGatewayId: target, source: "builder-activation-lease", recoverSourceOnly: true },
+      input: { uid: "uid-alice", userSlug: "alice", fromGatewayId: "shared-blue", toGatewayId: target, source: "builder-activation-lease", recoverSourceOnly: true },
       schedulerHandoff: { migrationId: `mig-${id}:scheduler:1:claim:1000`, fromGatewayId: "shared-blue", toGatewayId: target,
         uid: "uid-alice", slug: "alice", stageAfterCutover: true },
     });
@@ -566,7 +566,7 @@ describe("abandoned Shared migration recovery", () => {
     const h = mkDeps({ sourceGatewayId: "shared-blue" });
     const target = "alice-m-12345678", id = `builder-activate-${target}-g1`;
     const op = mkOp({ id, status: "running", startedAt: 4_000, attempts: 1,
-      input: { uid: "uid-alice", builderSlug: "alice", fromGatewayId: "shared-blue", toGatewayId: target, source: "builder-activation-lease", recoverSourceOnly: true },
+      input: { uid: "uid-alice", userSlug: "alice", fromGatewayId: "shared-blue", toGatewayId: target, source: "builder-activation-lease", recoverSourceOnly: true },
       schedulerHandoff: { migrationId: `mig-${id}:scheduler:1:claim:1000`, fromGatewayId: "shared-blue", toGatewayId: target,
         uid: "uid-alice", slug: "alice", stageAfterCutover: true },
     });
@@ -832,8 +832,8 @@ describe("private project agent workspace rollout", () => {
     const source = wake ? "shared-blue" : "user-blue";
     const target = wake ? "user-green" : "shared-green";
     vi.mocked(h.deps.readUser).mockResolvedValue({ slug: "alice", currentGatewayId: source });
-    vi.mocked(h.deps.resolveSourcePlacement).mockResolvedValue({ release: 1, gatewayClass: wake ? "shared" : "builder" });
-    vi.mocked(h.deps.resolveTargetPlacement).mockResolvedValue({ ok: true, release: 2, gatewayClass: wake ? "builder" : "shared" });
+    vi.mocked(h.deps.resolveSourcePlacement).mockResolvedValue({ release: 1, gatewayClass: wake ? "shared" : "isolated" });
+    vi.mocked(h.deps.resolveTargetPlacement).mockResolvedValue({ ok: true, release: 2, gatewayClass: wake ? "isolated" : "shared" });
     const native = mockNativeReturn();
     if (!wake) vi.mocked(h.deps.prepareNativeVmReturn).mockResolvedValue(native);
     const readWorkspace = vi.fn(async (gatewayId: string): Promise<boolean | undefined> => gatewayId === source ? true : undefined);
@@ -928,7 +928,7 @@ describe("native VM return", () => {
   it("continues a validated Native forward recovery on its live source release", async () => {
     const h = mkDeps();
     const native = nativeReturn(h);
-    const sourceRoot = { gatewayClass: "builder", desiredStatus: "running" as const, desiredRelease: 2, liveRelease: 1 };
+    const sourceRoot = { gatewayClass: "isolated", desiredStatus: "running" as const, desiredRelease: 2, liveRelease: 1 };
     vi.mocked(h.deps.useDurableMigration).mockImplementation(async (_source, _target, retainedRelease) => {
       if (!migrationSourceReady(sourceRoot, retainedRelease)) throw new Error("source gateway not migration-ready");
       return false;
@@ -944,7 +944,7 @@ describe("native VM return", () => {
   it("retains the live Native source release before the forward checkpoint", async () => {
     const h = mkDeps();
     const native = nativeReturn(h);
-    const sourceRoot = { gatewayClass: "builder", desiredStatus: "running" as const, desiredRelease: 2, liveRelease: 1 };
+    const sourceRoot = { gatewayClass: "isolated", desiredStatus: "running" as const, desiredRelease: 2, liveRelease: 1 };
     vi.mocked(h.deps.useDurableMigration).mockImplementation(async (_source, _target, retainedRelease) => {
       if (!migrationSourceReady(sourceRoot, retainedRelease)) throw new Error("source gateway not migration-ready");
       return false;
@@ -959,7 +959,7 @@ describe("native VM return", () => {
 
   it("rejects an unconverged source for an ordinary migration", async () => {
     const h = mkDeps();
-    const sourceRoot = { gatewayClass: "builder", desiredStatus: "running" as const, desiredRelease: 2, liveRelease: 1 };
+    const sourceRoot = { gatewayClass: "isolated", desiredStatus: "running" as const, desiredRelease: 2, liveRelease: 1 };
     vi.mocked(h.deps.useDurableMigration).mockImplementation(async (_source, _target, retainedRelease) => {
       if (!migrationSourceReady(sourceRoot, retainedRelease)) throw new Error("source gateway not migration-ready");
       return false;
@@ -1485,7 +1485,7 @@ describe("native VM return", () => {
 
       for (const attempts of [4, 5]) {
         const op = mkOp({ id, origin: "automatic", attempts, cutoverCommittedAt: 100, input: {
-          uid: scope.uid, builderSlug: scope.slug, fromGatewayId: scope.fromGatewayId, toGatewayId: scope.gatewayId, source: "builder-activation-lease",
+          uid: scope.uid, userSlug: scope.slug, fromGatewayId: scope.fromGatewayId, toGatewayId: scope.gatewayId, source: "builder-activation-lease",
         } });
         const { ctx, steps } = createOperationContext({
           opId: id, assertActiveClaim: h.ctx.assertActiveClaim, persist: vi.fn(async () => undefined), log: vi.fn(),
@@ -1928,7 +1928,7 @@ describe("native VM return", () => {
 describe("migrate-customer — gateway VM activation", () => {
   it("moves the user's schedules onto the VM through the user's schedule transfer record", async () => {
     const h = mkDeps();
-    vi.mocked(h.deps.resolveTargetPlacement).mockResolvedValue({ ok: true, release: 2, gatewayClass: "builder" });
+    vi.mocked(h.deps.resolveTargetPlacement).mockResolvedValue({ ok: true, release: 2, gatewayClass: "isolated" });
 
     expect(await createMigrateUserHandler(h.deps)(mkOp({}), h.ctx)).toMatchObject({ success: true });
 
@@ -1945,7 +1945,7 @@ describe("migrate-customer — gateway VM activation", () => {
 
   it("converges the user's durable config on the source's accepted commit before verifying", async () => {
     const h = mkDeps();
-    vi.mocked(h.deps.resolveTargetPlacement).mockResolvedValue({ ok: true, release: 2, gatewayClass: "builder" });
+    vi.mocked(h.deps.resolveTargetPlacement).mockResolvedValue({ ok: true, release: 2, gatewayClass: "isolated" });
 
     expect(await createMigrateUserHandler(h.deps)(mkOp({}), h.ctx)).toMatchObject({ success: true });
 
@@ -1959,7 +1959,7 @@ describe("migrate-customer — gateway VM activation", () => {
   it("converges a user returning from a shared gateway on the user's own accepted commit", async () => {
     const h = mkDeps();
     vi.mocked(h.deps.resolveSourcePlacement).mockResolvedValue({ release: 1, gatewayClass: "shared" });
-    vi.mocked(h.deps.resolveTargetPlacement).mockResolvedValue({ ok: true, release: 2, gatewayClass: "builder" });
+    vi.mocked(h.deps.resolveTargetPlacement).mockResolvedValue({ ok: true, release: 2, gatewayClass: "isolated" });
     vi.mocked(h.client.flushGateway).mockImplementation(async ({ migrationId, slug }) => ({
       migrationId, slug, ok: true, durationMs: 1, steps: [],
     }));
@@ -2016,8 +2016,8 @@ describe("migrate-customer — gateway VM activation", () => {
 
   it("fails a User-to-User activation whose source flush proves no commit", async () => {
     const h = mkDeps();
-    vi.mocked(h.deps.resolveSourcePlacement).mockResolvedValue({ release: 1, gatewayClass: "builder" });
-    vi.mocked(h.deps.resolveTargetPlacement).mockResolvedValue({ ok: true, release: 2, gatewayClass: "builder" });
+    vi.mocked(h.deps.resolveSourcePlacement).mockResolvedValue({ release: 1, gatewayClass: "isolated" });
+    vi.mocked(h.deps.resolveTargetPlacement).mockResolvedValue({ ok: true, release: 2, gatewayClass: "isolated" });
     vi.mocked(h.client.flushGateway).mockImplementation(async ({ migrationId, slug }) => ({
       migrationId, slug, ok: true, durationMs: 1, steps: [],
     }));
@@ -2046,7 +2046,7 @@ describe("migrate-customer — User activation onto a held VM", () => {
 
   function heldActivation(options: { sourceGatewayId?: string } = {}) {
     const h = mkDeps(options);
-    vi.mocked(h.deps.resolveTargetPlacement).mockResolvedValue({ ok: true, release: 2, gatewayClass: "builder" });
+    vi.mocked(h.deps.resolveTargetPlacement).mockResolvedValue({ ok: true, release: 2, gatewayClass: "isolated" });
     const order: string[] = [];
     const schedules = vi.mocked(h.client.schedules).getMockImplementation()!;
     vi.mocked(h.client.schedules).mockImplementation(async (request) => {
@@ -2317,7 +2317,7 @@ describe("a returned VM's scheduler custody at the next activation", () => {
     const records: Record<string, Record<string, unknown>> = {
       "users/uid-alice": { username: "alice", provisioning: { openclaw: { slug: "alice", gatewayId: VM }, homeDisk } },
       [`gateways/${VM}`]: {
-        gatewayId: VM, gatewayClass: "builder", ownerUid: "uid-alice", builderSlug: "alice", desiredStatus: "running",
+        gatewayId: VM, gatewayClass: "isolated", ownerUid: "uid-alice", builderSlug: "alice", desiredStatus: "running",
         desiredRelease: 1, liveRelease: 1, latestRelease: 1,
       },
       [`glmGateways/${VM}`]: { docKind: "runtime", gatewayId: VM, release: 1, lifecycle: "serving", runtime: "gce-vm",
@@ -2396,7 +2396,7 @@ describe("a returned VM's scheduler custody at the next activation", () => {
     const h = mkDeps({ sourceGatewayId: SHARED });
     onCustody(h, custody, wrap);
     vi.mocked(h.deps.now).mockReturnValue(at);
-    vi.mocked(h.deps.resolveTargetPlacement).mockResolvedValue({ ok: true, release: 2, gatewayClass: "builder" });
+    vi.mocked(h.deps.resolveTargetPlacement).mockResolvedValue({ ok: true, release: 2, gatewayClass: "isolated" });
     vi.mocked(h.deps.commitCutover).mockImplementation(async () => {
       vi.mocked(h.deps.readUser).mockResolvedValue({ slug: "alice", currentGatewayId: VM });
     });
@@ -3201,7 +3201,7 @@ describe("migrate-customer — durable V2 migration", () => {
       expect(h.persisted.at(-1)).toMatchObject({ phase: "cutover" });
       expect(h.persisted.at(-1)?.schedulerStagedAt).toBeUndefined();
       vi.mocked(h.deps.retireNativeSchedulerBeforeStage).mockResolvedValue(undefined);
-      expect(await createMigrateUserHandler(h.deps)(mkOp({ customerMigrationV2: h.persisted.at(-1), cutoverCommittedAt: 5_000 }), h.ctx))
+      expect(await createMigrateUserHandler(h.deps)(mkOp({ userMigrationV2: h.persisted.at(-1), cutoverCommittedAt: 5_000 }), h.ctx))
         .toMatchObject({ success: true, rolledBack: false });
       expect(order.filter(value => value === "gw-green:stage")).toHaveLength(1);
       expect(order.filter(value => value === "cutover")).toHaveLength(1);
@@ -3246,7 +3246,7 @@ describe("migrate-customer — durable V2 migration", () => {
       targetRootFence: gatewayRootFence("gw-green", 2),
     };
 
-    const result = await handler(mkOp({ customerMigrationV2: state }), ctx);
+    const result = await handler(mkOp({ userMigrationV2: state }), ctx);
 
     expect(result).toMatchObject({ success: true, rolledBack: false });
     expect(client.calls).toEqual([
@@ -3280,7 +3280,7 @@ describe("migrate-customer — durable V2 migration", () => {
       targetRootFence: gatewayRootFence("gw-green", 2),
     };
 
-    const result = await handler(mkOp({ customerMigrationV2: state }), ctx);
+    const result = await handler(mkOp({ userMigrationV2: state }), ctx);
 
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/source placement changed/u);
@@ -3341,7 +3341,7 @@ describe("migrate-customer — durable V2 migration", () => {
     expect(client.calls.filter((call) => call.startsWith("unmount:"))).toEqual([]);
 
     const replay = await handler(mkOp({
-      customerMigrationV2: persisted.at(-1),
+      userMigrationV2: persisted.at(-1),
     }), ctx);
 
     expect(replay).toMatchObject({ success: true, rolledBack: false });
@@ -3388,12 +3388,12 @@ describe("migrate-customer — durable V2 migration", () => {
       targetRootFence: gatewayRootFence("gw-green", 2),
     };
 
-    await expect(handler(mkOp({ customerMigrationV2: state }), ctx)).resolves.toMatchObject({
+    await expect(handler(mkOp({ userMigrationV2: state }), ctx)).resolves.toMatchObject({
       success: true,
       rolledBack: false,
     });
     await expect(handler(mkOp({
-      customerMigrationV2: state,
+      userMigrationV2: state,
       input: { uid: "uid-alice", toGatewayId: "gw-other" },
     }), ctx)).resolves.toMatchObject({
       success: false,
@@ -3403,7 +3403,7 @@ describe("migrate-customer — durable V2 migration", () => {
 
   it("turns a cancellation request into a durable abort once transfer started", async () => {
     const { deps, client, events } = mkDeps({ durable: true });
-    const persisted: Array<NonNullable<Operation["customerMigrationV2"]>> = [];
+    const persisted: Array<NonNullable<Operation["userMigrationV2"]>> = [];
     let cancelRequested = false;
     const ctx: OperationContext = {
       persistSchedulerHandoff: vi.fn(async () => undefined),
@@ -3660,8 +3660,8 @@ describe("retained source cancellation", () => {
     const h=mkDeps({durable:true,sourceGatewayId:"shared-one"});
     h.ctx.assertActiveClaim=vi.fn(async()=>{throw new Error("operation claim changed");});
     h.deps.observeSourceTransfer=vi.fn(async()=>undefined);
-    const state={phase:"sourceQuiesced",operationId:"op-1",migrationId:"mig-op-1",uid:"uid-alice",slug:"alice",sourceGatewayId:"shared-one",sourceRelease:1,sourceEpoch:4,sourceAssignmentMode:"assigned",sourceRootFence:gatewayRootFence("shared-one"),targetGatewayId:"gw-green",targetRelease:2,targetRootFence:gatewayRootFence("gw-green",2)} as NonNullable<Operation["customerMigrationV2"]>;
-    await expect(createMigrateUserHandler(h.deps)(mkOp({input:{uid:"uid-alice",fromGatewayId:"shared-one",toGatewayId:"gw-green",sourceTransferMode:"retained-pod"},customerMigrationV2:state}),h.ctx)).rejects.toThrow("operation claim changed");
+    const state={phase:"sourceQuiesced",operationId:"op-1",migrationId:"mig-op-1",uid:"uid-alice",slug:"alice",sourceGatewayId:"shared-one",sourceRelease:1,sourceEpoch:4,sourceAssignmentMode:"assigned",sourceRootFence:gatewayRootFence("shared-one"),targetGatewayId:"gw-green",targetRelease:2,targetRootFence:gatewayRootFence("gw-green",2)} as NonNullable<Operation["userMigrationV2"]>;
+    await expect(createMigrateUserHandler(h.deps)(mkOp({input:{uid:"uid-alice",fromGatewayId:"shared-one",toGatewayId:"gw-green",sourceTransferMode:"retained-pod"},userMigrationV2:state}),h.ctx)).rejects.toThrow("operation claim changed");
     expect(h.client.resume).not.toHaveBeenCalled();
     expect(h.client.transferState).not.toHaveBeenCalled();
     expect(h.persisted).toEqual([]);
@@ -3671,8 +3671,8 @@ describe("retained source cancellation", () => {
     h.ctx.assertActiveClaim=vi.fn(async()=>{});
     h.deps.observeSourceTransfer=vi.fn(async()=>({status:"reserved"} as NonNullable<Operation["sourceTransferExecution"]>));
     h.ctx.cancellationRequested=vi.fn(async()=>true);
-    const state={phase:"sourceQuiesced",operationId:"op-1",migrationId:"mig-op-1",uid:"uid-alice",slug:"alice",sourceGatewayId:"shared-one",sourceRelease:1,sourceEpoch:4,sourceAssignmentMode:"assigned",sourceRootFence:gatewayRootFence("shared-one"),targetGatewayId:"gw-green",targetRelease:2,targetRootFence:gatewayRootFence("gw-green",2)} as NonNullable<Operation["customerMigrationV2"]>;
-    const result=await createMigrateUserHandler(h.deps)(mkOp({input:{uid:"uid-alice",fromGatewayId:"shared-one",toGatewayId:"gw-green",sourceTransferMode:"retained-pod"},customerMigrationV2:state}),h.ctx);
+    const state={phase:"sourceQuiesced",operationId:"op-1",migrationId:"mig-op-1",uid:"uid-alice",slug:"alice",sourceGatewayId:"shared-one",sourceRelease:1,sourceEpoch:4,sourceAssignmentMode:"assigned",sourceRootFence:gatewayRootFence("shared-one"),targetGatewayId:"gw-green",targetRelease:2,targetRootFence:gatewayRootFence("gw-green",2)} as NonNullable<Operation["userMigrationV2"]>;
+    const result=await createMigrateUserHandler(h.deps)(mkOp({input:{uid:"uid-alice",fromGatewayId:"shared-one",toGatewayId:"gw-green",sourceTransferMode:"retained-pod"},userMigrationV2:state}),h.ctx);
     expect(result).toMatchObject({success:false,rolledBack:false,error:expect.stringContaining("observation pending")});
     expect(h.client.resume).not.toHaveBeenCalled();expect(h.client.unmount).not.toHaveBeenCalled();expect(h.deps.setAssignmentState).not.toHaveBeenCalled();
     expect(h.persisted).toEqual([]);
@@ -3685,10 +3685,10 @@ describe("waiting for active user work", () => {
     const target = "alice-s-12345678";
     const first = mkOp({
       id: `builder-activate-${target}-g1`,
-      input: { uid: "uid-alice", builderSlug: "alice", fromGatewayId: "shared-blue", toGatewayId: target, source: "builder-activation-lease" },
+      input: { uid: "uid-alice", userSlug: "alice", fromGatewayId: "shared-blue", toGatewayId: target, source: "builder-activation-lease" },
     });
     vi.mocked(h.deps.resolveSourcePlacement).mockResolvedValue({ release: 1, epoch: 4, assignmentMode: "assigned", gatewayClass: "shared" });
-    vi.mocked(h.deps.resolveTargetPlacement).mockResolvedValue({ ok: true, release: 2, gatewayClass: "builder" });
+    vi.mocked(h.deps.resolveTargetPlacement).mockResolvedValue({ ok: true, release: 2, gatewayClass: "isolated" });
     const quiesce = vi.mocked(h.client.quiesce);
     if (step === "quiesce-source") {
       quiesce.mockImplementationOnce(quiesce.getMockImplementation()!);
@@ -3784,13 +3784,13 @@ describe("legacy migration forward recovery", () => {
     const h = mkDeps({ sourceGatewayId: "shared-blue" });
     const target = "alice-s-12345678", id = `builder-activate-${target}-g1`;
     const op = mkOp({ id, attempts: 1,
-      input: { uid: "uid-alice", builderSlug: "alice", fromGatewayId: "shared-blue", toGatewayId: target, source: "builder-activation-lease" },
+      input: { uid: "uid-alice", userSlug: "alice", fromGatewayId: "shared-blue", toGatewayId: target, source: "builder-activation-lease" },
       schedulerHandoff: { migrationId: `mig-${id}:scheduler:1:claim:1000`, uid: "uid-alice", slug: "alice",
         fromGatewayId: "shared-blue", toGatewayId: target, stageAfterCutover: true,
         forwardRecovery: { schemaVersion: 1, phase: "source-flushed", sourceEpoch: 4 } },
     });
     vi.mocked(h.deps.resolveSourcePlacement).mockResolvedValue({ release: 1, epoch: 4, assignmentMode: "assigned", gatewayClass: "shared" });
-    vi.mocked(h.deps.resolveTargetPlacement).mockResolvedValue({ ok: true, release: 2, gatewayClass: "builder" });
+    vi.mocked(h.deps.resolveTargetPlacement).mockResolvedValue({ ok: true, release: 2, gatewayClass: "isolated" });
     let saved: Operation["schedulerHandoff"];
     vi.mocked(h.ctx.persistSchedulerHandoff!).mockImplementation(async state => { saved = structuredClone(state); });
     const transfer = h.client.transferState;
@@ -3841,7 +3841,7 @@ describe("legacy migration forward recovery", () => {
     const target = "alice-s-12345678", id = `builder-activate-${target}-g1`;
     const migrationId = `mig-${id}:scheduler:1:claim:1000`;
     const op = mkOp({ id, attempts: 2, startedAt: 6_000,
-      input: { uid: "uid-alice", builderSlug: "alice", source: "builder-activation-lease", fromGatewayId: "shared-blue", toGatewayId: target, recoverSourceOnly: true },
+      input: { uid: "uid-alice", userSlug: "alice", source: "builder-activation-lease", fromGatewayId: "shared-blue", toGatewayId: target, recoverSourceOnly: true },
       schedulerHandoff: { migrationId, uid: "uid-alice", slug: "alice", fromGatewayId: "shared-blue", toGatewayId: target, stageAfterCutover: true,
         forwardRecovery: { schemaVersion: 1, phase: "source-flushed", sourceEpoch: 4, ...(scenario === "held" ? {} : { targetReleased: true }) },
         sourceRecovery: { migrationId, sourceEpoch: scenario === "epoch-changed" ? 5 : 4, steps: [{ name: "final-sync-state", status: "failed" }] } },
@@ -3971,8 +3971,8 @@ describe("source-owned user activation", () => {
   function activation() {
     const h = mkDeps({ sourceGatewayId: "shared-blue" });
     vi.mocked(h.deps.resolveSourcePlacement).mockResolvedValue({ release: 1, epoch: 4, assignmentMode: "assigned", gatewayClass: "shared" });
-    vi.mocked(h.deps.resolveTargetPlacement).mockResolvedValue({ ok: true, release: 2, gatewayClass: "builder" });
-    const operation = mkOp({ id: "builder-activate-gw-green-g1", input: { uid: "uid-alice", builderSlug: "alice", fromGatewayId: "shared-blue", toGatewayId: "gw-green", source: "builder-activation-lease" } });
+    vi.mocked(h.deps.resolveTargetPlacement).mockResolvedValue({ ok: true, release: 2, gatewayClass: "isolated" });
+    const operation = mkOp({ id: "builder-activate-gw-green-g1", input: { uid: "uid-alice", userSlug: "alice", fromGatewayId: "shared-blue", toGatewayId: "gw-green", source: "builder-activation-lease" } });
     return { ...h, operation };
   }
 
@@ -4018,7 +4018,7 @@ describe("the move an operator's give starts", () => {
   const sharedSource = () => {
     const h = mkDeps({ sourceGatewayId: "shared-blue" });
     vi.mocked(h.deps.resolveSourcePlacement).mockResolvedValue({ release: 1, epoch: 4, assignmentMode: "assigned", gatewayClass: "shared" });
-    vi.mocked(h.deps.resolveTargetPlacement).mockResolvedValue({ ok: true, release: 2, gatewayClass: "builder" });
+    vi.mocked(h.deps.resolveTargetPlacement).mockResolvedValue({ ok: true, release: 2, gatewayClass: "isolated" });
     h.deps.prepareMigrationAgentStores = vi.fn(async () => undefined);
     h.deps.clearMigrationPreparation = vi.fn(async () => undefined);
     h.deps.assertMigrationSourcePreparationAuthority = vi.fn(async () => { throw new Error(refused); });

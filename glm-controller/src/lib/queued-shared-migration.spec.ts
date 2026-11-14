@@ -6,7 +6,7 @@ function fixture(migrationId: string) {
   const error = "expected exactly one ready pod for transport=shared-a; found 0";
   const row = {
     kind: "migrate-user", status: "pending", startedAt: null, completedAt: null, attempts: 1, steps: [],
-    input: { uid: "alice", builderSlug: "alice", fromGatewayId: "shared-a", toGatewayId: "shared-b" },
+    input: { uid: "alice", userSlug: "alice", fromGatewayId: "shared-a", toGatewayId: "shared-b" },
     schedulerHandoff: { migrationId, uid: "alice", slug: "alice", fromGatewayId: "shared-a", toGatewayId: "shared-b" },
     attemptHistory: [{ attempt: 1, startedAt: 1_000, completedAt: 2_000, classification: "transient", error,
       steps: [{ name: "keys-sync-state", status: "failed", error }] }],

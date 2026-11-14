@@ -2,7 +2,6 @@ import { MANAGED_CHANNEL_INSTALLATION } from "../channel-identities.js";
 import { clearManagedChannelIdentity, linkChannelIdentity, managedExternalUserIdOf, managedOwnerIdOf } from "./channel-identities.js";
 import { isDeepStrictEqual } from "node:util";
 import type { AccountLifecycle } from "@octogee/shared/types/account-lifecycle";
-import { dualReadGatewayClassValue } from "@octogee/shared/types/glm";
 import type {
   ActivationLeaseFence,
   AdmitUserInput,
@@ -33,7 +32,6 @@ import type { OpaqueMap, Page, Stored, WatchFilters } from "../store.js";
 import { serverNow } from "./records.js";
 import type { PostgresSession } from "./session.js";
 import { SqlParameters, type Row } from "./sql.js";
-import { storedGatewayClassValue } from "./stored-gateway-class.js";
 import { column, containsServerNow, encodeColumn, isClearField, resolveJsonValue, revisionOf, type ColumnSpec } from "./values.js";
 import type { FilterKeys, PostgresWatchSource } from "./watch-sources.js";
 
@@ -260,7 +258,7 @@ function decodeGatewayMirror(fields: UserRow): IsolatedGatewayMirror | null {
   return present<IsolatedGatewayMirror>({
     gatewayId,
     gatewayAssignedAt: fields.optional("gateway_assigned_at"),
-    gatewayProfile: dualReadGatewayClassValue(fields.optional<IsolatedGatewayMirror["gatewayProfile"]>("gateway_profile")),
+    gatewayProfile: fields.optional<IsolatedGatewayMirror["gatewayProfile"]>("gateway_profile"),
     controlUiEnabled: fields.optional("control_ui_enabled"),
   });
 }
@@ -380,7 +378,7 @@ function patchAssignments(patch: UserPatch): Assignment[] {
 
 function encodeValue(spec: ColumnSpec, value: unknown, parameters: SqlParameters, now: number | undefined): string {
   if (value === null || isClearField(value)) return "NULL";
-  return encodeColumn(spec, spec === COLUMNS.gatewayProfile ? storedGatewayClassValue(value) : value, parameters, now);
+  return encodeColumn(spec, value, parameters, now);
 }
 
 async function resolveNow(session: PostgresSession, jsonValues: readonly unknown[]): Promise<number | undefined> {

@@ -1,7 +1,7 @@
 import type { AgentStoresRepository } from "@octogee/core/platform-state";
 
 type User = { uid: string; slug: string };
-type Gateway = { gatewayClass: "shared" | "builder"; ownerUid: string | null; builderSlug: string | null };
+type Gateway = { gatewayClass: "shared" | "isolated"; ownerUid: string | null; builderSlug: string | null };
 
 export interface AgentStoreHandoffAuthority {
   expectedUserUid: string;
@@ -17,7 +17,7 @@ function assertUserIdentity(user: User, slug: string, expectedUid?: string): voi
 }
 
 function assertGatewayOwner(gateway: Gateway, gatewayId: string, user: User): void {
-  if (gateway.gatewayClass === "builder" && (gateway.ownerUid !== user.uid || gateway.builderSlug !== user.slug)) {
+  if (gateway.gatewayClass === "isolated" && (gateway.ownerUid !== user.uid || gateway.builderSlug !== user.slug)) {
     throw new Error(`Agent-store handoff owner differs on Gateway ${gatewayId}`);
   }
   if (gateway.gatewayClass === "shared" && (gateway.ownerUid || gateway.builderSlug)) {
@@ -41,7 +41,7 @@ export function createMigrationAgentStorePreparer(deps: {
   readGateway(gatewayId: string): Promise<Gateway | null>;
   readUserBySlug(slug: string): Promise<User>;
   ensureCredentials(gatewayId: string): Promise<void>;
-  transferOwnership(user: User, target: "shared" | "builder", assertCurrent?: () => Promise<void>): Promise<void>;
+  transferOwnership(user: User, target: "shared" | "isolated", assertCurrent?: () => Promise<void>): Promise<void>;
 }): PrepareMigrationAgentStores {
   return async (gatewayId, slug, authority) => {
     if (authority && !authority.expectedUserUid) throw new Error("Agent-store handoff requires the claimed user identity");

@@ -179,7 +179,7 @@ interface GatewayRuntimeStampInput {
 }
 
 async function reconcileStampedVmSpec(input: GatewayRuntimeStampInput, data: Partial<FleetRegistryRecord>): Promise<void> {
-  if (data.runtime !== "gce-vm" || input.gatewayClass !== "builder" || !input.vmSpec) return;
+  if (data.runtime !== "gce-vm" || input.gatewayClass !== "isolated" || !input.vmSpec) return;
   const tier = input.sizingTier ?? "s";
   const policy = await findGatewayVmPolicy(input.store, tier);
   if (!policy) {
@@ -204,7 +204,7 @@ async function newGatewayVmPolicy(
   input: GatewayRuntimeStampInput,
   data: Partial<FleetRegistryRecord>,
 ): Promise<GatewayVmProfile | null> {
-  if (input.gatewayClass !== "builder" || hasObservedClusterPods(data) || hasPriorClusterDeployment(data, input.gatewayId)) return null;
+  if (input.gatewayClass !== "isolated" || hasObservedClusterPods(data) || hasPriorClusterDeployment(data, input.gatewayId)) return null;
   const policy = await resolveGatewayVmPolicy(input.store, input.sizingTier);
   return policy.runtime === "gce-vm" ? policy : null;
 }

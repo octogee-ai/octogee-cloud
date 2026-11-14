@@ -193,7 +193,7 @@ function migrationCustodyCurrent({ sourceRequest, sourceRoot, target, operationI
     assigned.uid === input.uid, assigned.slug === slug, assigned.gatewayId === sourceGatewayId, assigned.state === "quiescing",
     Number.isSafeInteger(assigned.epoch), assigned.epoch >= 0,
     cancelledImportCustodyCurrent(operation, slug, assigned.epoch),
-    migrationV2ImportCurrent(operation.customerMigrationV2, { operationId, migrationId, uid: input.uid, slug, sourceGatewayId, targetGatewayId, sourceEpoch: assigned.epoch }),
+    migrationV2ImportCurrent(operation.userMigrationV2, { operationId, migrationId, uid: input.uid, slug, sourceGatewayId, targetGatewayId, sourceEpoch: assigned.epoch }),
   ].every(Boolean);
 }
 
@@ -205,13 +205,13 @@ function userMigrationCustodyCurrent(
 }
 
 function cancelledImportCustodyCurrent(operation: StoredFields, slug: string, sourceEpoch: unknown): boolean {
-  if (operation.cancellationRequestedAt === undefined || operation.customerMigrationV2 !== undefined) return true;
+  if (operation.cancellationRequestedAt === undefined || operation.userMigrationV2 !== undefined) return true;
   const handoff = operation.schedulerHandoff;
   return handoff?.slug === slug && handoff.forwardRecovery?.sourceEpoch === sourceEpoch;
 }
 
 function sourceRecoveryIntentCurrent(operationId: string, operation: Record<string, unknown>, input: Record<string, unknown>, slug: string, sourceEpoch: unknown): boolean {
-  if (operation.schedulerHandoffReleased === true || input.builderSlug !== undefined && input.builderSlug !== slug) return false;
+  if (operation.schedulerHandoffReleased === true || input.userSlug !== undefined && input.userSlug !== slug) return false;
   if (input.recoverSourceOnly !== true) return true;
   const record = (value: unknown): Record<string, unknown> => value !== null && typeof value === "object" ? value as Record<string, unknown> : {};
   const handoff = record(operation.schedulerHandoff), recovery = record(handoff.sourceRecovery);

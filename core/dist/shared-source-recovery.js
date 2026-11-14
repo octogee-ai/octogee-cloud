@@ -80,7 +80,7 @@ function pristineOutbound(row, gatewayId, sourceUids) {
         row.attemptHistory === undefined || (Array.isArray(row.attemptHistory) && row.attemptHistory.length === 0),
         row.input?.fromGatewayId === gatewayId, sourceUids.has(row.input?.uid), typeof row.input?.toGatewayId === "string",
         Boolean(row.input?.toGatewayId), row.input?.toGatewayId !== gatewayId,
-        ["cancellationRequestedAt", "cutoverCommittedAt", "restoreAttempt", "schedulerHandoff", "customerMigrationV2", "sourceTransferExecution",
+        ["cancellationRequestedAt", "cutoverCommittedAt", "restoreAttempt", "schedulerHandoff", "userMigrationV2", "sourceTransferExecution",
             "firstStartedAt", "lastProgressAt", "resumeCount", "lastResumedAt", "error", "output", "rolledBack"]
             .every(key => row[key] === undefined)].every(Boolean);
 }

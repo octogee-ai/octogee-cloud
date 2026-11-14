@@ -30,7 +30,7 @@ describe("createGatewayModelKeySourceIssuer", () => {
 
     const result = await issuer.syncGatewayModelKeySource({
       gatewayId: "jack",
-      gatewayClass: "builder",
+      gatewayClass: "isolated",
       desiredStatus: "running",
     });
 
@@ -45,7 +45,7 @@ describe("createGatewayModelKeySourceIssuer", () => {
 
     const result = await issuer.syncGatewayModelKeySource({
       gatewayId: "jack",
-      gatewayClass: "builder",
+      gatewayClass: "isolated",
       desiredStatus: "running",
     });
 
@@ -71,7 +71,7 @@ describe("createGatewayModelKeySourceIssuer", () => {
 
     const result = await issuer.syncGatewayModelKeySource({
       gatewayId: "jack",
-      gatewayClass: "builder",
+      gatewayClass: "isolated",
       desiredStatus: "running",
       ownerUid: "uid-jack",
     });
@@ -99,7 +99,7 @@ describe("createGatewayModelKeySourceIssuer", () => {
     await expect(
       issuer.syncGatewayModelKeySource({
         gatewayId: "jack",
-        gatewayClass: "builder",
+        gatewayClass: "isolated",
         desiredStatus: "running",
       }),
     ).rejects.toThrow(/invalid or uncapped/);
@@ -124,7 +124,7 @@ describe("createGatewayModelKeySourceIssuer", () => {
 
     const result = await issuer.syncGatewayModelKeySource({
       gatewayId: "jack",
-      gatewayClass: "builder",
+      gatewayClass: "isolated",
       desiredStatus: "running",
     });
 
@@ -149,7 +149,7 @@ describe("createGatewayModelKeySourceIssuer", () => {
 
     const result = await issuer.syncGatewayModelKeySource({
       gatewayId: "walter",
-      gatewayClass: "builder",
+      gatewayClass: "isolated",
       desiredStatus: "running",
       ownerUid: "uid-walter",
     });

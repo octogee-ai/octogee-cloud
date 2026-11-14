@@ -49,5 +49,5 @@ export function resolveGatewayPrincipalAccess(input: {
 }
 
 export function workspacePermissionsEnabled(config: { gatewayClass?: string; builderAccess?: { controlIdentity?: string } | null }, owner: UserEntitlementInputs, now = new Date()): boolean {
-  return config.gatewayClass === "builder" && config.builderAccess?.controlIdentity === "per-user" && userEntitlements().sizingKey(owner, now) !== null;
+  return config.gatewayClass === "isolated" && config.builderAccess?.controlIdentity === "per-user" && userEntitlements().sizingKey(owner, now) !== null;
 }

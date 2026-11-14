@@ -5,7 +5,7 @@ import {
 } from "@octogee/shared/types/glm";
 
 export const PROFILE_IMAGE_NAME: Record<Exclude<GatewayProfile, "standard">, string> = {
-  builder: "octogee-gateway-builder",
+  isolated: "octogee-gateway-builder",
 };
 
 export function resolveGatewayImageRepository(

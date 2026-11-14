@@ -219,7 +219,7 @@ describe("findSerialConflict — shared migration/release-roll scope", () => {
         id: "migration",
         kind: "migrate-user",
         input: { toGatewayId: "target" },
-        customerMigrationV2: {
+        userMigrationV2: {
           sourceGatewayId: "source",
           sourceRevisionId: "source-r2",
           targetGatewayId: "target",
@@ -283,7 +283,7 @@ describe("decideOperationClaim", () => {
     const migrationId = 'mig-builder-activate-builder-a-g1:scheduler:1:claim:1000';
     const recovery = {
       id: 'builder-activate-builder-a-g1', kind: 'migrate-user', status: 'pending', createdAt: 1,
-      input: { uid: 'alice', builderSlug: 'alice', source: 'builder-activation-lease', fromGatewayId: 'shared-a', toGatewayId: 'builder-a', recoverSourceOnly: true },
+      input: { uid: 'alice', userSlug: 'alice', source: 'builder-activation-lease', fromGatewayId: 'shared-a', toGatewayId: 'builder-a', recoverSourceOnly: true },
       schedulerHandoff: { migrationId, fromGatewayId: 'shared-a', toGatewayId: 'builder-a', uid: 'alice', slug: 'alice', sourceRecovery: { migrationId, sourceEpoch: 7, steps: [],
         targetRollback: { operationId: 'builder-activate-builder-a-g1', migrationId, uid: 'alice', slug: 'alice', sourceGatewayId: 'shared-a', sourceEpoch: 7, targetGatewayId: 'builder-a', leaseId: 'lease-a', generation: 1, retainedPodUid: 'retained-r1', completedAt: 2000 } } },
     };
@@ -296,7 +296,7 @@ describe("decideOperationClaim", () => {
     { input: { source: 'continuous-placement-policy' } },
     { input: { recoverSourceOnly: false } },
     { input: { fromGatewayId: 'user-source' } },
-    { customerMigrationV2: { sourceGatewayId: 'shared-a' } },
+    { userMigrationV2: { sourceGatewayId: 'shared-a' } },
     { id: 'different-migration' },
   ])('keeps ordinary queue exclusion for an unqualified target-repair request: %j', patch => {
     const recovery = {

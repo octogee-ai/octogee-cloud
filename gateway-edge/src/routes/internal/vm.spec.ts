@@ -14,8 +14,8 @@ function configureIsolatedGatewayAuth() {
   const tokenPath = join(tokenDir, "token");
   writeFileSync(tokenPath, "projected-token\n");
   delete process.env.INTERNAL_SERVICE_KEY;
-  process.env.GATEWAY_CLASS = "builder";
-  process.env.GATEWAY_PROFILE = "builder";
+  process.env.GATEWAY_CLASS = "isolated";
+  process.env.GATEWAY_PROFILE = "isolated";
   process.env.GATEWAY_ID = "walter";
   process.env.K8S_NAMESPACE = "octogee-test";
   process.env.K8S_SERVICE_ACCOUNT_NAME = "octogee-gw-walter";

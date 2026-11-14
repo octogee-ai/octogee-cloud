@@ -23,7 +23,7 @@ function migrationOwnerUid(operation: OperationRecord): string | null {
 }
 
 function migrationNeedsCancellationRequest(operation: OperationRecord): boolean {
-  if (operation.status === "running" || operation.customerMigrationV2 !== undefined) return true;
+  if (operation.status === "running" || operation.userMigrationV2 !== undefined) return true;
   const handoff: unknown = operation.schedulerHandoff;
   if (isPlainRecord(handoff) && handoff.forwardRecovery !== undefined) return true;
   const output: unknown = operation.output;

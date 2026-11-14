@@ -7,7 +7,7 @@ export async function prepareGatewayRuntimeConfig<T extends GatewayMutableConfig
   gatewayId: string,
   resolveApiServerEgressCidrs: ApiServerEgressResolver,
 ): Promise<T> {
-  if (config.gatewayClass !== "builder") {
+  if (config.gatewayClass !== "isolated") {
     return config;
   }
   const isolatedAccess = config.builderAccess ?? {};

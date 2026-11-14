@@ -16,8 +16,8 @@ const REQUIRED_VALUES: Record<string, string> = {
 
 const ISOLATED_POD: Record<string, string> = {
   gatewayId: "gw-s-0a1b2c3d",
-  gatewayClass: "builder",
-  imageProfile: "builder",
+  gatewayClass: "isolated",
+  imageProfile: "isolated",
   sizingTier: "s",
   runtimeKind: "cluster",
   rollStrategy: "recreate",
@@ -154,7 +154,7 @@ describe("helm/octogee-gateway/ — isolated gateway as a Kubernetes pod", () =>
         const env = envOf(container(deployment, name));
         return { GATEWAY_CLASS: env.GATEWAY_CLASS, OPENCLAW_CONTROL_IDENTITY: env.OPENCLAW_CONTROL_IDENTITY };
       };
-      expect(identity(pod), name).toEqual({ GATEWAY_CLASS: "builder", OPENCLAW_CONTROL_IDENTITY: "per-user" });
+      expect(identity(pod), name).toEqual({ GATEWAY_CLASS: "isolated", OPENCLAW_CONTROL_IDENTITY: "per-user" });
       expect(identity(pod), name).toEqual(identity(vm));
     }
   });

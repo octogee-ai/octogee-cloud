@@ -29,7 +29,7 @@ function emptyConfig(): any {
 }
 
 describe("workspace identity bootstrap policy", () => {
-  it.each(["shared", "builder"])("preserves optional-file choices while leaving restored identity to its owner on %s", gatewayClass => {
+  it.each(["shared", "isolated"])("preserves optional-file choices while leaving restored identity to its owner on %s", gatewayClass => {
     const config = { agents: { defaults: { skipOptionalBootstrapFiles: ["USER.md"] } } };
     applyPreBootPatches(config, { GATEWAY_CLASS: gatewayClass });
     expect(config.agents.defaults.skipOptionalBootstrapFiles).toEqual(["USER.md", "IDENTITY.md"]);
@@ -81,7 +81,7 @@ describe("shared Mattermost routing safety", () => {
     const config: any = { agents: { list: [{ id: "octogee-ceckert-coach", default: true }] } };
 
     expect(
-      applySharedMattermostRoutingSafetyPatch(config, { GATEWAY_CLASS: "builder" }, vi.fn()),
+      applySharedMattermostRoutingSafetyPatch(config, { GATEWAY_CLASS: "isolated" }, vi.fn()),
     ).toBe(false);
     expect(config.agents.list).toEqual([{ id: "octogee-ceckert-coach", default: true }]);
   });
@@ -284,7 +284,7 @@ describe("shared Mattermost routing safety", () => {
 });
 
 describe("pre-boot config persistence", () => {
-  it.each(["shared", "builder"])("materializes shared channel memory without changing reply placement on %s gateways", (gatewayClass) => {
+  it.each(["shared", "isolated"])("materializes shared channel memory without changing reply placement on %s gateways", (gatewayClass) => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "preboot-thread-scope-"));
     const configPath = path.join(dir, "openclaw.json");
     const account = {
@@ -346,7 +346,7 @@ describe("pre-boot config persistence", () => {
 });
 
 describe("applyPreBootPatches — platform model catalog", () => {
-  it.each(["shared", "builder"])("declares env-owned broker transports before %s startup without global credentials", (gatewayClass) => {
+  it.each(["shared", "isolated"])("declares env-owned broker transports before %s startup without global credentials", (gatewayClass) => {
     const config: { models: { providers: Record<string, unknown> } } = { models: { providers: { "platform-openrouter": { apiKey: "foreign", models: [{ id: "foreign" }] } } } };
     applyPreBootPatches(config, { GATEWAY_CLASS: gatewayClass, OPENROUTER_BASE_URL: "https://broker.example/openrouter", PLATFORM_OPENAI_BASE_URL: "https://broker.example/openai" });
     expect(config.models.providers["platform-openrouter"]).toEqual({ baseUrl: "https://broker.example/openrouter", models: [] });
@@ -358,7 +358,7 @@ describe("applyPreBootPatches — platform model catalog", () => {
     const config: any = { agents: { defaults: { models: {} } } };
 
     const changed = applyPreBootPatches(config, {
-      GATEWAY_CLASS: "builder",
+      GATEWAY_CLASS: "isolated",
       OPENROUTER_BASE_URL: "http://llm-broker/v1",
       PLATFORM_OPENAI_BASE_URL: "http://llm-broker/v1",
     });
@@ -386,7 +386,7 @@ describe("applyPreBootPatches — platform model catalog", () => {
     const config: any = { agents: { defaults: { models: {} } } };
 
     applyPreBootPatches(config, {
-      GATEWAY_CLASS: "builder",
+      GATEWAY_CLASS: "isolated",
       PLATFORM_VERTEX_BASE_URL: "http://llm-broker",
     });
 
@@ -744,7 +744,7 @@ describe("applyPreBootPatches — Mattermost runtime", () => {
     expect(applyMattermostPreBootPatches(config, env, log)).toBe(false);
   });
 
-  it.each(["shared", "builder"])("fills missing streaming preferences on %s gateways without pinning account overrides", (gatewayClass) => {
+  it.each(["shared", "isolated"])("fills missing streaming preferences on %s gateways without pinning account overrides", (gatewayClass) => {
     const config: any = { channels: { mattermost: {
       streaming: { chunkMode: "newline", preview: { commandText: "status" } },
       accounts: { inherited: {}, custom: { streaming: { mode: "off", preview: { toolProgress: false } } } },
@@ -768,9 +768,9 @@ describe("applyPreBootPatches — Mattermost runtime", () => {
 
   it.each(["off", "partial", "progress", "block"])("preserves user streaming mode %s and disabled tool progress", (mode) => {
     const config: any = { channels: { mattermost: { streaming: { mode, preview: { toolProgress: false } } } } };
-    applyMattermostPreBootPatches(config, { GATEWAY_CLASS: "builder" }, vi.fn());
+    applyMattermostPreBootPatches(config, { GATEWAY_CLASS: "isolated" }, vi.fn());
     expect(config.channels.mattermost.streaming).toEqual({ mode, preview: { toolProgress: false } });
-    expect(applyMattermostPreBootPatches(config, { GATEWAY_CLASS: "builder" }, vi.fn())).toBe(false);
+    expect(applyMattermostPreBootPatches(config, { GATEWAY_CLASS: "isolated" }, vi.fn())).toBe(false);
   });
 
   it("removes unsupported fork settings while retaining native account policy and SecretRefs", () => {
@@ -936,7 +936,7 @@ describe("applyPreBootPatches — user overlay", () => {
     const before = structuredClone(config);
 
     expect(applyPreBootPatches(config, {
-      GATEWAY_CLASS: "builder",
+      GATEWAY_CLASS: "isolated",
       OPENROUTER_BASE_URL: "http://llm-broker/v1",
       PLATFORM_OPENAI_BASE_URL: "http://llm-broker/v1",
       ANTHROPIC_BASE_URL: "http://llm-broker",
@@ -1173,7 +1173,7 @@ describe("applyPreBootPatches — memory search embeddings", () => {
     };
 
     expect(applyPreBootPatches(config, {
-      GATEWAY_CLASS: "builder",
+      GATEWAY_CLASS: "isolated",
       OPENAI_EMBEDDINGS_ENABLED: "true",
     })).toBe(true);
     expect(config.agents.entries["octogee-keyed-coach"].memory.search).toMatchObject({
@@ -1199,7 +1199,7 @@ describe("applyPreBootPatches — memory search embeddings", () => {
     };
 
     const changed = applyPreBootPatches(config, {
-      GATEWAY_CLASS: "builder",
+      GATEWAY_CLASS: "isolated",
       OPENAI_EMBEDDINGS_ENABLED: "true",
     });
 
@@ -1228,7 +1228,7 @@ describe("applyPreBootPatches — memory search embeddings", () => {
     };
 
     applyPreBootPatches(config, {
-      GATEWAY_CLASS: "builder",
+      GATEWAY_CLASS: "isolated",
       OPENAI_EMBEDDINGS_ENABLED: "true",
       PLATFORM_OPENAI_BASE_URL: "https://llm-broker.internal.example/v1/",
       OPENAI_EMBEDDINGS_MODEL: "custom-embed-v1",
@@ -1275,7 +1275,7 @@ describe("applyMattermostPreBootPatches — non-object preservation", () => {
 });
 
 describe("shouldMaterializeAnthropicBrokerProfiles", () => {
-  it.each(["shared", "builder"])(
+  it.each(["shared", "isolated"])(
     "materializes per-agent broker-token profiles for %s gateways",
     (gatewayClass) => {
       expect(shouldMaterializeAnthropicBrokerProfiles({ GATEWAY_CLASS: gatewayClass })).toBe(true);
@@ -1308,7 +1308,7 @@ describe("materializeBrokerProfilesBeforeBoot", () => {
     const sweep = vi.fn(async () => sweepResult);
     const log = vi.fn();
 
-    await materializeBrokerProfilesBeforeBoot(config, { GATEWAY_CLASS: "builder" }, sweep, log);
+    await materializeBrokerProfilesBeforeBoot(config, { GATEWAY_CLASS: "isolated" }, sweep, log);
 
     expect(sweep).not.toHaveBeenCalled();
     expect(log).toHaveBeenCalledWith(expect.stringContaining("post-boot sweep"));
@@ -1391,9 +1391,9 @@ describe("applyPreBootPatches — no-change reporting", () => {
       plugins: { entries: {} },
       approvals: { plugin: { enabled: true, mode: "session" } },
     };
-    applyAgentStoreDatabasePatch(config, { GATEWAY_CLASS: "builder" });
+    applyAgentStoreDatabasePatch(config, { GATEWAY_CLASS: "isolated" });
     const changed = applyPreBootPatches(config, {
-      GATEWAY_CLASS: "builder",
+      GATEWAY_CLASS: "isolated",
       MM_URL: "https://mm.example",
     });
     expect(changed).toBe(false);
@@ -1590,7 +1590,7 @@ describe("applyTypingModeDefault — typing starts when the message arrives", ()
   });
 
   it("runs as part of the pre-boot patch set on every gateway class", () => {
-    for (const env of [{}, { GATEWAY_CLASS: "builder" }]) {
+    for (const env of [{}, { GATEWAY_CLASS: "isolated" }]) {
       const config: any = { agents: { defaults: {} } };
       expect(applyPreBootPatches(config, env)).toBe(true);
       expect(config.agents.defaults.typingMode).toBe("instant");
@@ -1615,7 +1615,7 @@ describe("applyVerboseDefault — native tool summaries stay out of chat", () =>
   });
 
   it("runs as part of the pre-boot patch set on every gateway class", () => {
-    for (const env of [{}, { GATEWAY_CLASS: "shared" }, { GATEWAY_CLASS: "builder" }]) {
+    for (const env of [{}, { GATEWAY_CLASS: "shared" }, { GATEWAY_CLASS: "isolated" }]) {
       const config: any = { agents: { defaults: { verboseDefault: "full" } } };
       expect(applyPreBootPatches(config, env)).toBe(true);
       expect(config.agents.defaults.verboseDefault).toBe("off");
@@ -1627,8 +1627,8 @@ const AGENT_STORE_POSTGRES = { schemaPrefix: "octogee", connection: { source: "e
 
 it.each([
   { GATEWAY_CLASS: "shared" },
-  { GATEWAY_CLASS: "builder", GATEWAY_RUNTIME_KIND: "cluster" },
-  { GATEWAY_CLASS: "builder", GATEWAY_RUNTIME_KIND: "gce-vm" },
+  { GATEWAY_CLASS: "isolated", GATEWAY_RUNTIME_KIND: "cluster" },
+  { GATEWAY_CLASS: "isolated", GATEWAY_RUNTIME_KIND: "gce-vm" },
 ])("selects PostgreSQL for every supported family on %o", env => {
   const config: any = { database: { engine: "postgres", families: Object.fromEntries(
     ["state", "agent", "workboard", "logbook", "team-reports"].map(family => [family, { engine: "postgres" }]),
@@ -1638,7 +1638,7 @@ it.each([
   expect(applyAgentStoreDatabasePatch(config, env, "anchor")).toBe(false);
 });
 
-it.each(["shared", "builder"])("refuses retained %s SQLite before changing engine selectors", gatewayClass => {
+it.each(["shared", "isolated"])("refuses retained %s SQLite before changing engine selectors", gatewayClass => {
   const config: any = { database: { engine: "sqlite", families: { agent: { engine: "postgres" } } } };
   const original = structuredClone(config);
   expect(() => applyAgentStoreDatabasePatch(config, { GATEWAY_CLASS: gatewayClass }, "sqlite"))
@@ -1648,7 +1648,7 @@ it.each(["shared", "builder"])("refuses retained %s SQLite before changing engin
 
 it("passes the observed local state through the pre-boot patch set", () => {
   const config: any = {};
-  expect(() => applyPreBootPatches(config, { GATEWAY_CLASS: "builder" }, () => {}, { stateStore: "sqlite" }))
+  expect(() => applyPreBootPatches(config, { GATEWAY_CLASS: "isolated" }, () => {}, { stateStore: "sqlite" }))
     .toThrow("Keep the Gateway stopped");
   expect(config).toEqual({});
 });
@@ -1656,7 +1656,7 @@ it("passes the observed local state through the pre-boot patch set", () => {
 it("does not flip an existing PostgreSQL host's remaining SQLite families", () => {
   const config: any = { database: { engine: "postgres", families: { workboard: { engine: "sqlite" } }, postgres: AGENT_STORE_POSTGRES } };
   const original = structuredClone(config);
-  expect(() => applyAgentStoreDatabasePatch(config, { GATEWAY_CLASS: "builder" }, "anchor"))
+  expect(() => applyAgentStoreDatabasePatch(config, { GATEWAY_CLASS: "isolated" }, "anchor"))
     .toThrow("database port --family workboard --to postgres");
   expect(config).toEqual(original);
 });
@@ -1669,7 +1669,7 @@ it.each(["state", "agent", "workboard", "logbook", "team-reports"])("refuses con
   expect(config).toEqual(original);
 });
 
-it.each(["shared", "builder"])("defaults a fresh %s config to PostgreSQL", gatewayClass => {
+it.each(["shared", "isolated"])("defaults a fresh %s config to PostgreSQL", gatewayClass => {
   const config: any = {};
   expect(applyAgentStoreDatabasePatch(config, { GATEWAY_CLASS: gatewayClass }, "absent")).toBe(true);
   expect(config.database).toEqual({ engine: "postgres", postgres: AGENT_STORE_POSTGRES });

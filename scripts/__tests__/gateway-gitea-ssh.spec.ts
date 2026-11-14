@@ -26,7 +26,7 @@ afterEach(() => homes.splice(0).forEach((home) => rmSync(home, { recursive: true
 
 describe("gateway Gitea SSH identity", () => {
   it("selects the user's key for an ordinary Git SSH connection", () => {
-    const config = configure("builder");
+    const config = configure("isolated");
     const effective = resolved(config, "gitea");
     expect(effective).toContain("hostname gitea.test.internal\n");
     expect(effective).toContain("port 2222\n");
@@ -36,7 +36,7 @@ describe("gateway Gitea SSH identity", () => {
   });
 
   it("does not offer the user key to other SSH hosts", () => {
-    expect(resolved(configure("builder"), "github.com")).not.toContain("customer-keys");
+    expect(resolved(configure("isolated"), "github.com")).not.toContain("customer-keys");
   });
 
   it("keeps shared gateways without a default user identity even when a slug is present", () => {
@@ -44,6 +44,6 @@ describe("gateway Gitea SSH identity", () => {
   });
 
   it.each(["", "../another-user", "sep091\nHost *"])("rejects an invalid user slug: %j", (slug) => {
-    expect(() => configure("builder", slug)).toThrow();
+    expect(() => configure("isolated", slug)).toThrow();
   });
 });

@@ -15,7 +15,7 @@ interface Root {
   desiredRelease: number;
   liveRelease: number | null;
   ownerUid: string | null;
-  gatewayClass: "shared" | "builder";
+  gatewayClass: "shared" | "isolated";
   desiredStatus: "running" | "paused" | "retired";
   allocation?: { kind: string; claimedByUid?: string; leaseId?: string; generation?: number };
   builderSlug?: string;
@@ -124,7 +124,7 @@ function harness(
 
 function retiredRoot(operationId: string): Root {
   return durableRoot("builder-alice", {
-    ownerUid: "uid-1", gatewayClass: "builder", desiredStatus: "retired",
+    ownerUid: "uid-1", gatewayClass: "isolated", desiredStatus: "retired",
     retirementVersion: 1, retirementClaim: { operationId, version: 1, phase: "claimed" },
   });
 }
@@ -146,7 +146,7 @@ function recoveredRoot(operationId: string): Root {
 function recoveryOperation(): OperationRow {
   return {
     kind: "recover-unreachable-disposable", status: "succeeded", gatewayId: "builder-alice",
-    input: { uid: "uid-1", builderSlug: "alice", gatewayId: "builder-alice", leaseId: "lease-1", generation: 1 },
+    input: { uid: "uid-1", userSlug: "alice", gatewayId: "builder-alice", leaseId: "lease-1", generation: 1 },
     recoveryReceipt: { schemaVersion: 1, pods: 0 },
   };
 }
@@ -232,7 +232,7 @@ describe("owned user gateway retirement", () => {
 
   it.each(["legacy operation", "receipt"])("refuses foreign or mismatched %s recovery identity", async (artifact) => {
     for (const change of [
-      { uid: "foreign" }, { gatewayId: "foreign" }, { builderSlug: "foreign" },
+      { uid: "foreign" }, { gatewayId: "foreign" }, { userSlug: "foreign" },
       { leaseId: "new-incarnation" }, { generation: 2 },
     ]) {
       const operationId = "placement-retire-owner-builder-alice";
@@ -305,7 +305,7 @@ describe("owned user gateway retirement", () => {
     const operationId = "placement-retire-owner-builder-alice";
     const roots = { "builder-alice": retiredRoot(operationId) };
     const operation = retirementOperation("succeeded");
-    operation.input = { ...operation.input as object, builderSlug: "alice" };
+    operation.input = { ...operation.input as object, userSlug: "alice" };
     const operations = { [operationId]: operation };
     const subcollections = { "gateways/builder-alice/releases": ["release-1"] };
     const { store, committed, hooks } = harness(roots, operations, {}, {}, [], subcollections);
@@ -542,7 +542,7 @@ describe("owned user gateway retirement", () => {
         kind: "migrate-user", status: "failed", rolledBack: false, schedulerHandoffReleased: false, cancelledByDeletionId,
         error: "user migration cancelled because the account was suspended",
         input: {
-          uid: "uid-1", builderSlug: "alice", fromGatewayId: "shared-a", toGatewayId: "builder-alice",
+          uid: "uid-1", userSlug: "alice", fromGatewayId: "shared-a", toGatewayId: "builder-alice",
           source: "builder-activation-lease", recoverSourceOnly: true,
         },
         schedulerHandoff: {
@@ -563,7 +563,7 @@ describe("owned user gateway retirement", () => {
   ])("pauses a running owned user whose %s, then retires it paused", async (_label, Refusal, reason) => {
     const roots: Record<string, Root> = {
       "builder-alice": durableRoot("builder-alice", {
-        ownerUid: "uid-1", gatewayClass: "builder", desiredStatus: "running",
+        ownerUid: "uid-1", gatewayClass: "isolated", desiredStatus: "running",
         allocation: { kind: "disposable-builder", claimedByUid: "uid-1", leaseId: "lease-1", generation: 1 },
       }),
     };
@@ -587,7 +587,7 @@ describe("owned user gateway retirement", () => {
   it("keeps a running owned user running when retirement is refused for another reason", async () => {
     const roots: Record<string, Root> = {
       "builder-alice": durableRoot("builder-alice", {
-        ownerUid: "uid-1", gatewayClass: "builder", desiredStatus: "running",
+        ownerUid: "uid-1", gatewayClass: "isolated", desiredStatus: "running",
         allocation: { kind: "disposable-builder", claimedByUid: "uid-1", leaseId: "lease-1", generation: 1 },
       }),
     };
@@ -607,7 +607,7 @@ describe("owned user gateway retirement", () => {
       default: durableRoot("default", { ownerUid: null, gatewayClass: "shared", desiredStatus: "running" }),
       "builder-alice": durableRoot("builder-alice", {
         ownerUid: "uid-1",
-        gatewayClass: "builder",
+        gatewayClass: "isolated",
         desiredStatus: "running",
         allocation: { kind: "disposable-builder", claimedByUid: "uid-1", leaseId: "lease-1", generation: 1 },
       }),
@@ -632,7 +632,7 @@ describe("owned user gateway retirement", () => {
     const { store } = harness({
       "builder-alice": durableRoot("builder-alice", {
         ownerUid: "uid-1",
-        gatewayClass: "builder",
+        gatewayClass: "isolated",
         desiredStatus: "running",
         allocation: { kind: "disposable-builder", claimedByUid: "uid-1", leaseId: "lease-1", generation: 1 },
       }),
@@ -656,7 +656,7 @@ describe("owned user gateway retirement", () => {
     const { store } = harness({
       "run-alice": durableRoot("run-alice", {
         ownerUid: "uid-1",
-        gatewayClass: "builder",
+        gatewayClass: "isolated",
         desiredStatus: "running",
         allocation: { kind: "disposable-builder", claimedByUid: "uid-1", leaseId: "lease-1", generation: 1 },
       }),
@@ -683,7 +683,7 @@ describe("owned user gateway retirement", () => {
       {
         "builder-alice": durableRoot("builder-alice", {
           ownerUid: "uid-1",
-          gatewayClass: "builder",
+          gatewayClass: "isolated",
           desiredStatus: "retired",
           retirementVersion: 1,
           retirementClaim: { operationId, version: 1, phase: "claimed" },
@@ -713,7 +713,7 @@ describe("owned user gateway retirement", () => {
       {
         "builder-alice": durableRoot("builder-alice", {
           ownerUid: "uid-1",
-          gatewayClass: "builder",
+          gatewayClass: "isolated",
           desiredStatus: "retired",
           retirementVersion: 1,
           retirementClaim: { operationId, version: 1, phase: "claimed" },
@@ -754,7 +754,7 @@ describe("owned user gateway retirement", () => {
     const { store } = harness({
       "legacy-user": durableRoot("legacy-user", {
         ownerUid: "uid-1",
-        gatewayClass: "builder",
+        gatewayClass: "isolated",
         desiredStatus: "running",
       }),
     });

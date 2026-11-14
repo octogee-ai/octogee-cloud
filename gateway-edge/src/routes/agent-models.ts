@@ -77,7 +77,7 @@ async function isIsolatedRuntime(req: Request): Promise<boolean> {
   const gatewayId = gatewayIdFromRequest(req);
   if (!gatewayId) return false;
   const authorization = await readGatewayAuthorizationInStore(platformStateStore, gatewayId);
-  return authorization?.kind === "durable" && authorization.config.gatewayClass === "builder";
+  return authorization?.kind === "durable" && authorization.config.gatewayClass === "isolated";
 }
 
 // The picker's live-flip path: persist the pick, then push the FULL selection

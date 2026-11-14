@@ -111,9 +111,9 @@ describe("buildInstancesMap", () => {
 
   it("never renders the user's owner identity into its instance values", () => {
     const map = buildInstancesMap([
-      mkDesired({ gatewayId: "jack", gatewayClass: "builder", builderSlug: "jack", ownerUid: "uid-jack" }),
+      mkDesired({ gatewayId: "jack", gatewayClass: "isolated", builderSlug: "jack", ownerUid: "uid-jack" }),
     ]);
-    expect(map.jack).toMatchObject({ gatewayClass: "builder" });
+    expect(map.jack).toMatchObject({ gatewayClass: "isolated" });
     expect(map.jack).not.toHaveProperty("builderSlug");
     expect(map.jack).not.toHaveProperty("ownerUid");
   });
@@ -144,17 +144,17 @@ describe("buildInstancesMap", () => {
 
   it("propagates the user profile onto the Helm instance value", () => {
     const map = buildInstancesMap([
-      mkDesired({ gatewayId: "walter", gatewayClass: "builder", imageProfile: "builder" }),
+      mkDesired({ gatewayId: "walter", gatewayClass: "isolated", imageProfile: "isolated" }),
     ]);
-    expect(map.walter.profile).toBe("builder");
+    expect(map.walter.profile).toBe("isolated");
   });
 
   it("defaults isolated gateways to a locked dedicated ServiceAccount and Control UI", () => {
     const map = buildInstancesMap([
       mkDesired({
         gatewayId: "walter",
-        gatewayClass: "builder",
-        imageProfile: "builder",
+        gatewayClass: "isolated",
+        imageProfile: "isolated",
       }),
     ]);
     expect(map.walter).toMatchObject({
@@ -169,7 +169,7 @@ describe("buildInstancesMap", () => {
 
   it("enables Control UI for an isolated gateway with a user owner", () => {
     const map = buildInstancesMap([
-      mkDesired({ gatewayId: "walter", gatewayClass: "builder", imageProfile: "builder", ownerUid: "uid-chris" }),
+      mkDesired({ gatewayId: "walter", gatewayClass: "isolated", imageProfile: "isolated", ownerUid: "uid-chris" }),
     ]);
     expect(map.walter.builderAccess).toMatchObject({
       controlUiEnabled: true,
@@ -180,8 +180,8 @@ describe("buildInstancesMap", () => {
     const map = buildInstancesMap([
       mkDesired({
         gatewayId: "hobby",
-        gatewayClass: "builder",
-        imageProfile: "builder",
+        gatewayClass: "isolated",
+        imageProfile: "isolated",
         ownerUid: "uid-hobby",
         builderAccess: {},
       }),
@@ -193,7 +193,7 @@ describe("buildInstancesMap", () => {
 
   it("enables runtime access for an owned isolated gateway without Operator Workload Identity", () => {
     const map = buildInstancesMap([
-      mkDesired({ gatewayId: "jack", gatewayClass: "builder", ownerUid: "uid-jack" }),
+      mkDesired({ gatewayId: "jack", gatewayClass: "isolated", ownerUid: "uid-jack" }),
     ]);
     expect(map.jack.builderAccess).toMatchObject({
       reason: "owned-runtime-gateway",
@@ -204,7 +204,7 @@ describe("buildInstancesMap", () => {
 
   it("injects resolved API-server egress CIDRs into an owned isolated gateway with Control UI", () => {
     const map = buildInstancesMap(
-      [mkDesired({ gatewayId: "walter", gatewayClass: "builder", imageProfile: "builder", ownerUid: "uid-chris" })],
+      [mkDesired({ gatewayId: "walter", gatewayClass: "isolated", imageProfile: "isolated", ownerUid: "uid-chris" })],
       undefined,
       ["10.128.0.2/32", "34.118.224.1/32"],
     );
@@ -223,8 +223,8 @@ describe("buildInstancesMap", () => {
       [
         mkDesired({
           gatewayId: "walter",
-          gatewayClass: "builder",
-          imageProfile: "builder",
+          gatewayClass: "isolated",
+          imageProfile: "isolated",
           ownerUid: "uid-chris",
           builderAccess: { controlUiEnabled: true, kubeApiServerEgressCidrs: ["10.128.0.2/32"] },
         }),
@@ -239,8 +239,8 @@ describe("buildInstancesMap", () => {
     const map = buildInstancesMap([
       mkDesired({
         gatewayId: "walter",
-        gatewayClass: "builder",
-        imageProfile: "builder",
+        gatewayClass: "isolated",
+        imageProfile: "isolated",
         serviceAccountName: "octogee-gateway",
       }),
     ]);
@@ -252,8 +252,8 @@ describe("buildInstancesMap", () => {
     const map = buildInstancesMap([
       mkDesired({
         gatewayId: "walter-canary-2026",
-        gatewayClass: "builder",
-        imageProfile: "builder",
+        gatewayClass: "isolated",
+        imageProfile: "isolated",
         ownerUid: "uid-chris",
         serviceAccountName: "octogee-gw-walter-canary-2026",
         serviceAccount: { create: true },
@@ -269,8 +269,8 @@ describe("buildInstancesMap", () => {
     const map = buildInstancesMap([
         mkDesired({
           gatewayId: "walter-canary-2026",
-          gatewayClass: "builder",
-          imageProfile: "builder",
+          gatewayClass: "isolated",
+          imageProfile: "isolated",
           serviceAccountName: "octogee-gw-walter-canary-2026",
           serviceAccount: { create: true },
         }),
@@ -282,8 +282,8 @@ describe("buildInstancesMap", () => {
     const map = buildInstancesMap([
       mkDesired({
         gatewayId: "walter",
-        gatewayClass: "builder",
-        imageProfile: "builder",
+        gatewayClass: "isolated",
+        imageProfile: "isolated",
         serviceAccountName: "octogee-gw-walter",
         serviceAccount: {
           create: true,
@@ -300,8 +300,8 @@ describe("buildInstancesMap", () => {
     const map = buildInstancesMap([
       mkDesired({
         gatewayId: "walter",
-        gatewayClass: "builder",
-        imageProfile: "builder",
+        gatewayClass: "isolated",
+        imageProfile: "isolated",
         serviceAccountName: "custom-user-ksa",
       }),
     ]);
@@ -334,7 +334,7 @@ describe("buildInstancesMap", () => {
 
   it("never carries a persistence knob in Helm values (emptyDir only)", () => {
     const map = buildInstancesMap([
-      mkDesired({ gatewayId: "walter", gatewayClass: "builder", imageProfile: "builder" }),
+      mkDesired({ gatewayId: "walter", gatewayClass: "isolated", imageProfile: "isolated" }),
     ]);
     expect("persistence" in map.walter).toBe(false);
   });
