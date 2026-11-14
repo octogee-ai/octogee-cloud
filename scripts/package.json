@@ -16,7 +16,6 @@
     "audit-coverage": "tsx ops/audit-coverage.ts",
     "verify-silent-post": "tsx ops/verify-silent-post.ts",
     "verify:mattermost-capability": "tsx ops/verify-mattermost-capability-artifact.ts",
-    "scope": "tsx ops/scope.ts",
     "audit-duplication": "node ops/audit-duplication.mjs",
     "gate": "tsx ci/factory-deny-list-scan.ts .."
   },

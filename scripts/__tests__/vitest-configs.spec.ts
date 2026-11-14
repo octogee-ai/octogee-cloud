@@ -60,8 +60,8 @@ describe("scripts vitest configs", () => {
     const inside = await unitExcludesOn("linux");
     const standalone = await unitExcludesOn("linux", { productCheckout: false });
 
-    expect(inside).not.toContain("__tests__/source-checkout-workflows.spec.ts");
-    expect(standalone).toEqual(expect.arrayContaining(["__tests__/source-checkout-workflows.spec.ts", "__tests__/scope-resolve.spec.ts"]));
+    expect(inside).not.toContain("__tests__/deploy-workflow-log-level.spec.ts");
+    expect(standalone).toEqual(expect.arrayContaining(["__tests__/deploy-workflow-log-level.spec.ts", "__tests__/platform-boundary.spec.ts"]));
   });
 
   it("runs specs that read this repository's commits only in its git checkout", async () => {

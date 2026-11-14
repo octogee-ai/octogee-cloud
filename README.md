@@ -55,8 +55,6 @@ and a domain. [See every account and tier](docs/getting-started.md#what-you-need
   cross-package platform specs.
 - [Legacy names](docs/legacy-names.md) lists the stored names that keep
   their spelling from before the platform was published.
-- `SHIP.md` shows the shape of the four commands that move a build to TEST, to
-  PROD, and to a single isolated gateway. Identities are placeholders.
 
 The Octogee product keeps its own private repository and builds on top of this
 one.

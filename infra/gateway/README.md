@@ -34,14 +34,9 @@ minimatch 11.0.4, and `npm audit` reports no advisories against its lock.
 
 ## Build
 
-Build main (`.github/workflows/build-main.yml`, running `scripts/ci/main.mjs`)
+Build main (`.github/workflows/build-main.yml`, running `scripts/ci/cloud-build.mjs`)
 builds the gateway image with its immutable input-keyed OpenClaw base, reusing
-the base when its artifacts are unchanged. To build committed main from the
-operator host:
-
-```bash
-npm run ci:build
-```
+the base when its artifacts are unchanged.
 
 ## Deploy
 
