@@ -26,6 +26,7 @@ const STANDALONE_PLATFORM_SPECS = [
 ];
 
 const GIT_CHECKOUT_SPECS = [
+  "__tests__/component-imports.spec.ts",
   "__tests__/publish-plugin.spec.ts",
 ];
 
