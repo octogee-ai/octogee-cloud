@@ -24,10 +24,11 @@ import {
 import { platformStateStore } from "./provisioner-platform-state.js";
 import { MissingRecordError } from "./platform-state/errors.js";
 import type { UserPatch } from "./platform-state/users.js";
+import type { PlatformStateStore } from "./platform-state/store.js";
 import { CREW_IDENTITY } from "./crew.js";
 import { workspaceRepoName } from "./gitea-naming.js";
 import { provisionMattermostUser } from "./mattermost.js";
-import type { ReadStoredMattermostNames } from "./mattermost/provision.js";
+import type { ProvisionMattermostUserInput, ReadStoredMattermostNames } from "./mattermost/provision.js";
 import type { ManagedChannelHost } from "./channel-host/types.js";
 import { writeTierTemplateFiles as writeTierTemplateFilesImpl } from "./tier-template-files.js";
 
@@ -252,25 +253,28 @@ export function buildRemoveUserConfig(
   return config;
 }
 
-export async function provisionMattermost(
-  ctx: ProvisioningContext,
-  channelHost: ManagedChannelHost,
-  projection: ProvisioningProjection,
-): Promise<MmUpdate> {
+export function provisionMattermostUserInput(ctx: ProvisioningContext): ProvisionMattermostUserInput {
   const data = ctx.userData as UserDataShape;
-  const vibe = data.onboarding?.vibe ?? null;
-  return provisionMattermostUser({
+  return {
     uid: ctx.uid,
     slug: ctx.slug,
     firstName: ctx.ownerName,
     email: data.email ?? "",
-    vibe,
+    vibe: data.onboarding?.vibe ?? null,
     lastName:
       data.lastName ||
       (data.displayName?.split(" ").slice(1).join(" ")) ||
       "",
     photoURL: data.photoURL || "",
-  }, channelHost, projection.storedMattermostNames);
+  };
+}
+
+export async function provisionMattermost(
+  ctx: ProvisioningContext,
+  channelHost: ManagedChannelHost,
+  projection: ProvisioningProjection,
+): Promise<MmUpdate> {
+  return provisionMattermostUser(provisionMattermostUserInput(ctx), channelHost, projection.storedMattermostNames);
 }
 
 export function upsertMattermostBindingByAgentAndPeer(
@@ -340,29 +344,32 @@ export const noProvisioningProjection: ProvisioningProjection = {
 
 
 
+type ProvisioningStore = Pick<PlatformStateStore, "transaction" | "workspaces">;
+
 export async function markProvisioningComplete(
   ctx: ProvisioningContext,
   mmUpdate: MmUpdate,
   allAgentIds: string[],
   projection: ProvisioningProjection,
+  store: ProvisioningStore = platformStateStore,
 ): Promise<void> {
-  await writeDefaultRole(ctx);
+  await writeDefaultRole(store, ctx);
   await projection.systemConfig(ctx);
-  await writeProvisionedUser(ctx, allAgentIds, mmUpdate);
+  await writeProvisionedUser(store, ctx, allAgentIds, mmUpdate);
   await projection.user(ctx, mmUpdate);
-  await writeWorkspaceRecord(ctx, mmUpdate);
+  await writeWorkspaceRecord(store, ctx, mmUpdate);
   await projection.workspace(ctx);
-  await seedWorkspaceChannels(ctx, mmUpdate, projection);
-  await seedWorkspaceOwner(ctx, mmUpdate);
-  if (await writeAgentIdentity(ctx, mmUpdate)) await projection.agent(ctx);
+  await seedWorkspaceChannels(store, ctx, mmUpdate, projection);
+  await seedWorkspaceOwner(store, ctx, mmUpdate);
+  if (await writeAgentIdentity(store, ctx, mmUpdate)) await projection.agent(ctx);
   await projection.workspaceEntry(ctx, allAgentIds);
 }
 
 const SERVER_NOW = { serverNow: true } as const;
 
 
-async function writeDefaultRole(ctx: ProvisioningContext): Promise<void> {
-  await platformStateStore.transaction({ label: "provisioning.default-role" }, async (transaction) => {
+async function writeDefaultRole(store: ProvisioningStore, ctx: ProvisioningContext): Promise<void> {
+  await store.transaction({ label: "provisioning.default-role" }, async (transaction) => {
     const user = await transaction.users.records.get(ctx.uid);
     if (user === null) throw new MissingRecordError({ aggregate: "builder", key: ctx.uid });
     if (user.role === null) await transaction.users.records.patch(ctx.uid, { role: "user" });
@@ -380,11 +387,12 @@ export function buildProvisionedUserPatch(ctx: ProvisioningContext, mmUpdate: Mm
 }
 
 async function writeProvisionedUser(
+  store: ProvisioningStore,
   ctx: ProvisioningContext,
   allAgentIds: string[],
   mmUpdate: MmUpdate,
 ): Promise<void> {
-  await platformStateStore.transaction({ label: "provisioning.complete" }, async (transaction) => {
+  await store.transaction({ label: "provisioning.complete" }, async (transaction) => {
     await transaction.users.records.patch(ctx.uid, buildProvisionedUserPatch(ctx, mmUpdate));
     if (allAgentIds.length > 0) await transaction.users.records.addAgents(ctx.uid, allAgentIds);
     await transaction.users.records.setActivatedAgents(ctx.uid, ["coach"]);
@@ -400,10 +408,10 @@ export function buildUserProductFields(ctx: ProvisioningContext, mmUpdate: MmUpd
   };
 }
 
-async function writeWorkspaceRecord(ctx: ProvisioningContext, mmUpdate: MmUpdate): Promise<void> {
+async function writeWorkspaceRecord(store: ProvisioningStore, ctx: ProvisioningContext, mmUpdate: MmUpdate): Promise<void> {
   const mattermostTeamId = (mmUpdate["mattermost.teamId"] as string | undefined) || null;
   const giteaFields = { giteaOrgName: ctx.slug, giteaRepoName: workspaceRepoName() };
-  await platformStateStore.transaction({ label: "provisioning.workspace" }, async (transaction) => {
+  await store.transaction({ label: "provisioning.workspace" }, async (transaction) => {
     if ((await transaction.workspaces.records.get(ctx.slug)) === null) {
       await transaction.workspaces.records.put({
         slug: ctx.slug,
@@ -426,15 +434,20 @@ async function writeWorkspaceRecord(ctx: ProvisioningContext, mmUpdate: MmUpdate
   });
 }
 
+interface SeededChannel {
+  channelId: "general" | "coach-dm";
+  mattermostChannelId: string;
+  name: string;
+}
+
 async function seedWorkspaceChannel(
+  store: ProvisioningStore,
   ctx: ProvisioningContext,
-  channelId: "general" | "coach-dm",
-  mattermostChannelId: string,
-  name: string,
+  { channelId, mattermostChannelId, name }: SeededChannel,
   projection: ProvisioningProjection,
 ): Promise<void> {
   const scope = { workspaceSlug: ctx.slug, projectSlug: null };
-  await platformStateStore.transaction({ label: "provisioning.channel" }, async (transaction) => {
+  await store.transaction({ label: "provisioning.channel" }, async (transaction) => {
     if ((await transaction.workspaces.channels.get(scope, channelId)) === null) {
       await transaction.workspaces.channels.put({
         scope,
@@ -453,23 +466,24 @@ async function seedWorkspaceChannel(
 }
 
 async function seedWorkspaceChannels(
+  store: ProvisioningStore,
   ctx: ProvisioningContext,
   mmUpdate: MmUpdate,
   projection: ProvisioningProjection,
 ): Promise<void> {
   const generalChannelId = mmUpdate["mattermost.generalChannelId"] as string | undefined;
-  if (generalChannelId) await seedWorkspaceChannel(ctx, "general", generalChannelId, "general", projection);
+  if (generalChannelId) await seedWorkspaceChannel(store, ctx, { channelId: "general", mattermostChannelId: generalChannelId, name: "general" }, projection);
 
   const coachDmChannelId = mmUpdate["mattermost.channelId"] as string | undefined;
   if (coachDmChannelId) {
     const name = (mmUpdate["mattermost.channelName"] as string | undefined) || "coach-dm";
-    await seedWorkspaceChannel(ctx, "coach-dm", coachDmChannelId, name, projection);
+    await seedWorkspaceChannel(store, ctx, { channelId: "coach-dm", mattermostChannelId: coachDmChannelId, name }, projection);
   }
 }
 
-async function seedWorkspaceOwner(ctx: ProvisioningContext, mmUpdate: MmUpdate): Promise<void> {
+async function seedWorkspaceOwner(store: ProvisioningStore, ctx: ProvisioningContext, mmUpdate: MmUpdate): Promise<void> {
   const mattermostUserId = (mmUpdate["mattermost.userId"] as string | undefined) ?? null;
-  await platformStateStore.transaction({ label: "provisioning.owner" }, async (transaction) => {
+  await store.transaction({ label: "provisioning.owner" }, async (transaction) => {
     if ((await transaction.workspaces.members.get(ctx.slug, ctx.uid)) !== null) return;
     await transaction.workspaces.members.put({
       workspaceSlug: ctx.slug,
@@ -481,10 +495,10 @@ async function seedWorkspaceOwner(ctx: ProvisioningContext, mmUpdate: MmUpdate):
   });
 }
 
-async function writeAgentIdentity(ctx: ProvisioningContext, mmUpdate: MmUpdate): Promise<boolean> {
+async function writeAgentIdentity(store: ProvisioningStore, ctx: ProvisioningContext, mmUpdate: MmUpdate): Promise<boolean> {
   const defaultAgentMmUserId = mmUpdate["mattermost.coachUserId"] as string | undefined;
   if (!defaultAgentMmUserId) return false;
-  await platformStateStore.workspaces.agentIdentities.put({
+  await store.workspaces.agentIdentities.put({
     uid: ctx.uid,
     mattermostUserId: defaultAgentMmUserId,
     at: SERVER_NOW,

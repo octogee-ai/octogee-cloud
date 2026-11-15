@@ -9,6 +9,7 @@ import { type SharedGatewayAddedBy } from "@octogee/shared/types/shared-gateway-
 import { type SizingTier } from "@octogee/shared/types/sizing";
 import { type GatewayPricingMode } from "@octogee/shared/types/cost-estimator";
 import { type UserAccounts, type UserSignInHosts } from "./admin-user-router.js";
+import { type AdminSharedPoolRouterDeps } from "./admin-shared-pool-router.js";
 import { type DurableGatewayRoot } from "./gateway-release-append.js";
 import { type NormalFleetMutationResult } from "./normal-fleet-mutation.js";
 import { type OperationAuditActionClaim } from "./operation-audit.js";
@@ -50,6 +51,7 @@ export interface GatewayPodDiagnostics {
 }
 export interface FleetRouterDeps {
     computerReplacementEnabled?: boolean;
+    provisioningReadiness?: AdminSharedPoolRouterDeps["provisioningReadiness"];
     accounts: UserAccountReader;
     store: PlatformStateStore;
     logger: FleetLogger;

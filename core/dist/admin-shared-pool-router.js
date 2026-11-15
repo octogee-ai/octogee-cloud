@@ -144,7 +144,7 @@ async function latestReleasePayloadHash(transaction, root) {
     const release = await transaction.gateways.releases.get(root.gatewayId, root.latestRelease);
     return release !== null && isReleasePayload(release.payload) ? releasePayloadHash(release.payload) : null;
 }
-function fleetStateUser(user) {
+function fleetStateUser(user, provisioningReadiness) {
     const { restoreFence, sourceTransferFence } = user.fences;
     return {
         uid: user.uid,
@@ -158,6 +158,7 @@ function fleetStateUser(user) {
             ...(restoreFence === undefined ? {} : { restoreFence }),
             ...(sourceTransferFence === undefined ? {} : { sourceTransferFence }),
         },
+        ...(provisioningReadiness === undefined ? {} : { provisioningReady: provisioningReadiness(user.uid) }),
     };
 }
 export async function readFleetState(store, input) {
@@ -188,7 +189,7 @@ export async function readFleetState(store, input) {
                 disposableGatewayIdleMs: config?.disposableGatewayIdleMs ?? null,
             },
             sharedPoolAutomation: automation,
-            users: users.map(fleetStateUser),
+            users: users.map((user) => fleetStateUser(user, input.provisioningReadiness)),
             gateways,
             latestReleasePayloadHashes: Object.fromEntries(sharedGateways.map((root, index) => [root.gatewayId, hashes[index] ?? null])),
             assignments,
@@ -314,6 +315,7 @@ export function addAdminSharedPoolRoutes(router, deps) {
                 platformArtifact: deps.platformArtifact,
                 controllerStartedAt: deps.controllerStartedAt,
                 now: now(),
+                provisioningReadiness: deps.provisioningReadiness,
             }));
         }
         catch (error) {

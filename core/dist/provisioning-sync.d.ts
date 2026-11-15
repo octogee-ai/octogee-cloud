@@ -1,0 +1,57 @@
+import type { ConditionStatus, UserProvisioning } from "@octogee/shared/types/provisioning-service";
+import type { PlatformStateStore } from "./platform-state/store.js";
+import { type ProvisioningServiceClient } from "./provisioning-service-client.js";
+import { type ProvisioningMirrorOutcome, type UserAccountDocuments } from "./provisioning-mirror.js";
+import type { ProvisioningProjection } from "./provisionSteps.js";
+export declare const PROVISIONING_SPEC_BACKFILL_KEY = "provisioning-service-spec-backfill";
+export declare const PROVISIONING_SYNC_CONCURRENCY = 4;
+export declare const PROVISIONING_SYNC_RETRY: {
+    readonly baseDelayMs: 5000;
+    readonly maxDelayMs: 600000;
+};
+export type SpecWriteOutcome = "created" | "changed" | "unchanged" | "not-admitted";
+export interface ProvisioningReadiness {
+    readonly status: ConditionStatus;
+    readonly reason: string;
+}
+export interface ProvisioningSyncCounters {
+    specWrites: Record<SpecWriteOutcome | "failed", number>;
+    mirrors: Record<ProvisioningMirrorOutcome | "failed", number>;
+    watchFailures: number;
+    watchConnected: boolean;
+}
+export interface ProvisioningSyncDeps {
+    readonly store: PlatformStateStore;
+    readonly client: ProvisioningServiceClient;
+    readonly documents: UserAccountDocuments;
+    readonly projection: ProvisioningProjection;
+    readonly proxyUrl: string | null;
+    readonly log: (message: string) => void;
+    readonly now?: () => number;
+    readonly random?: () => number;
+    readonly watchTimeoutSeconds?: number;
+    readonly retry?: {
+        readonly baseDelayMs: number;
+        readonly maxDelayMs: number;
+    };
+}
+export interface BackfillSummary {
+    readonly users: number;
+    readonly written: number;
+    readonly unchanged: number;
+}
+export interface ProvisioningSync {
+    readonly counters: ProvisioningSyncCounters;
+    readiness(uid: string): ProvisioningReadiness | null;
+    observed(uid: string): UserProvisioning | undefined;
+    markDirty(uid: string): void;
+    writeSpec(uid: string): Promise<SpecWriteOutcome>;
+    backfill(): Promise<BackfillSummary>;
+    snapshotLoaded(): Promise<void>;
+    start(): () => void;
+}
+export declare function runJournaledBackfill<T>(store: PlatformStateStore, run: () => Promise<T>, now?: () => number): Promise<{
+    journaled: boolean;
+    result: T;
+}>;
+export declare function createProvisioningSync(deps: ProvisioningSyncDeps): ProvisioningSync;

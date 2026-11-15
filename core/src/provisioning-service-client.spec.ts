@@ -1,0 +1,249 @@
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { UserProvisioning, UserProvisioningSpec } from "@octogee/shared/types/provisioning-service";
+import { startFakeProvisioningService, type FakeProvisioningService } from "./fixtures/provisioning-service-fake.js";
+import {
+  createProvisioningServiceClient,
+  provisioningServiceConfigFromEnvironment,
+  ProvisioningServiceError,
+  startProvisioningWatch,
+  type ProvisioningServiceClientOptions,
+  type ProvisioningServiceRequestOutcome,
+} from "./provisioning-service-client.js";
+
+const SPEC: UserProvisioningSpec = {
+  slug: "lin",
+  displayName: { first: "lin", last: "Wu" },
+  email: "lin@example.test",
+  avatarUrl: null,
+  chat: { teamDisplayName: "Lin's Workspace", defaultAgent: { enabled: true } },
+  git: { repositories: ["workspace", "project-coaches"], systemConfigRepository: true },
+  agentIds: ["octogee-lin-coach"],
+};
+
+let fake: FakeProvisioningService;
+let token: string;
+let outcomes: ProvisioningServiceRequestOutcome[];
+let sleeps: number[];
+
+function client(overrides: Partial<ProvisioningServiceClientOptions> = {}) {
+  return createProvisioningServiceClient({
+    baseUrl: fake.url,
+    tokenPath: "/var/run/secrets/provisioning-service/token",
+    readToken: async () => token,
+    sleep: async (ms) => {
+      sleeps.push(ms);
+    },
+    random: () => 0.5,
+    onRequest: (outcome) => outcomes.push(outcome),
+    ...overrides,
+  });
+}
+
+beforeEach(async () => {
+  fake = await startFakeProvisioningService({ tokens: ["token-1"] });
+  token = "token-1";
+  outcomes = [];
+  sleeps = [];
+});
+
+afterEach(async () => {
+  await fake.close();
+});
+
+describe("provisioning service configuration", () => {
+  it("is off when no service URL is set", () => {
+    expect(provisioningServiceConfigFromEnvironment({})).toBeNull();
+  });
+
+  it("refuses a service URL without a token path", () => {
+    expect(() => provisioningServiceConfigFromEnvironment({ PROVISIONING_SERVICE_URL: "http://svc" })).toThrow(/TOKEN_PATH/);
+  });
+
+  it("reads the URL and token path", () => {
+    expect(provisioningServiceConfigFromEnvironment({
+      PROVISIONING_SERVICE_URL: "http://svc",
+      PROVISIONING_SERVICE_TOKEN_PATH: "/token",
+    })).toEqual({ baseUrl: "http://svc", tokenPath: "/token" });
+  });
+});
+
+describe("provisioning service client", () => {
+  it("creates, leaves unchanged and changes a user's spec with the projected token", async () => {
+    const api = client();
+
+    const created = await api.putProvisioning("u 1", SPEC);
+    const unchanged = await api.putProvisioning("u 1", SPEC);
+    const changed = await api.putProvisioning("u 1", { ...SPEC, email: "new@example.test" });
+
+    expect([created.outcome, unchanged.outcome, changed.outcome]).toEqual(["created", "unchanged", "changed"]);
+    expect(changed.resource.generation).toBe(2);
+    expect(fake.requests[0]).toMatchObject({ method: "PUT", path: "/v1/users/u%201/provisioning", authorization: "Bearer token-1" });
+  });
+
+  it("sends expectedResourceVersion and surfaces precondition-failed without retrying", async () => {
+    const api = client();
+    await api.putProvisioning("u1", SPEC);
+
+    const error = await api.putProvisioning("u1", SPEC, { expectedResourceVersion: "999" }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ProvisioningServiceError);
+    expect(error).toMatchObject({ status: 409, code: "precondition-failed" });
+    expect(fake.requests.at(-1)?.body).toEqual({ spec: SPEC, expectedResourceVersion: "999" });
+    expect(sleeps).toEqual([]);
+  });
+
+  it("answers null for a user the service does not manage", async () => {
+    await expect(client().getProvisioning("nobody")).resolves.toBeNull();
+    await expect(client().getProvisioningEvents("nobody")).resolves.toBeNull();
+  });
+
+  it("long-polls a single resource with waitForGeneration", async () => {
+    const api = client();
+    await api.putProvisioning("u1", SPEC);
+
+    await api.getProvisioning("u1", { waitForGeneration: 1, timeoutSeconds: 5 });
+
+    expect(fake.requests.at(-1)?.query).toEqual({ waitForGeneration: "1", timeoutSeconds: "5" });
+  });
+
+  it("retries transient failures with backoff, honouring Retry-After", async () => {
+    fake.failNext(503, 1, 2);
+    fake.failNext(500);
+
+    await client().putProvisioning("u1", SPEC);
+
+    expect(sleeps).toEqual([2000, 1000]);
+    expect(outcomes).toEqual(["server-error", "server-error", "ok"]);
+  });
+
+  it("gives up after the configured attempts and reports the last error", async () => {
+    fake.failNext(503, 5);
+
+    await expect(client().putProvisioning("u1", SPEC)).rejects.toMatchObject({ status: 503, transient: true });
+    expect(outcomes).toEqual(["server-error", "server-error", "server-error", "server-error"]);
+  });
+
+  it("reports an unreachable service as a transient error", async () => {
+    await fake.close();
+    const api = client({ retry: { attempts: 2, baseDelayMs: 1, maxDelayMs: 1 } });
+
+    await expect(api.listProvisionings()).rejects.toMatchObject({ code: "unreachable", transient: true });
+    expect(outcomes).toEqual(["unreachable", "unreachable"]);
+    fake = await startFakeProvisioningService();
+  });
+
+  it("re-reads a rotated token when the service rejects the cached one", async () => {
+    const api = client();
+    await api.putProvisioning("u1", SPEC);
+    fake.acceptedTokens = new Set(["token-2"]);
+    token = "token-2";
+
+    await api.getProvisioning("u1");
+
+    expect(fake.requests.slice(-2).map((request) => request.authorization)).toEqual(["Bearer token-1", "Bearer token-2"]);
+  });
+
+  it("does not retry a request the service refuses", async () => {
+    fake.acceptedTokens = new Set(["other"]);
+
+    await expect(client().getProvisioning("u1")).rejects.toMatchObject({ status: 401, code: "unauthenticated" });
+    expect(sleeps).toEqual([]);
+  });
+
+  it("lists every page and returns the first page's resource version", async () => {
+    const api = client();
+    for (const uid of ["a", "b", "c"]) await api.putProvisioning(uid, SPEC);
+
+    const listed = await api.listAllProvisionings({ limit: 2 });
+
+    expect(listed.items.map((item) => item.uid)).toEqual(["a", "b", "c"]);
+    expect(listed.resourceVersion).toBe("3");
+  });
+
+  it("passes the ready filter through", async () => {
+    await client().listProvisionings({ ready: false });
+
+    expect(fake.requests.at(-1)?.query).toEqual({ ready: "false" });
+  });
+
+  it("sends the retry with its idempotency key", async () => {
+    const api = client();
+    await api.putProvisioning("u1", SPEC);
+
+    await api.retryProvisioning("u1", { expectedAttempts: 0 }, "key-1");
+
+    expect(fake.requests.at(-1)).toMatchObject({ method: "POST", path: "/v1/users/u1/provisioning/retry", idempotencyKey: "key-1", body: { expectedAttempts: 0 } });
+  });
+});
+
+describe("provisioning watch", () => {
+  it("lists, then watches from the list's version, and relists after the version expires", async () => {
+    const api = client();
+    await api.putProvisioning("a", SPEC);
+    const snapshots: string[][] = [];
+    const changes: string[][] = [];
+    let resolveSecondSnapshot: () => void = () => undefined;
+    const secondSnapshot = new Promise<void>((resolve) => {
+      resolveSecondSnapshot = resolve;
+    });
+
+    const watch = startProvisioningWatch(api, {
+      onSnapshot: async (items) => {
+        snapshots.push(items.map((item) => item.uid));
+        if (snapshots.length === 1) {
+          await api.putProvisioning("b", SPEC);
+        } else {
+          resolveSecondSnapshot();
+        }
+      },
+      onChanges: async (items: readonly UserProvisioning[]) => {
+        changes.push(items.map((item) => item.uid));
+        fake.expireBefore(100);
+      },
+      onError: (error) => {
+        throw error;
+      },
+    }, { timeoutSeconds: 1 });
+
+    await secondSnapshot;
+    watch.stop();
+    fake.expireBefore(0);
+    await api.putProvisioning("c", SPEC);
+    await watch.stopped;
+
+    expect(snapshots).toEqual([["a"], ["a", "b"]]);
+    expect(changes).toEqual([["b"]]);
+  });
+
+  it("backs off and reports while the service is unreachable", async () => {
+    const api = client({ retry: { attempts: 1, baseDelayMs: 1, maxDelayMs: 1 } });
+    fake.failNext(503, 2);
+    const failures: number[] = [];
+    let resolveSnapshot: () => void = () => undefined;
+    const snapshot = new Promise<void>((resolve) => {
+      resolveSnapshot = resolve;
+    });
+    const watchSleeps: number[] = [];
+
+    const watch = startProvisioningWatch(api, {
+      onSnapshot: async () => {
+        resolveSnapshot();
+      },
+      onChanges: async () => undefined,
+      onError: (_error, consecutive) => failures.push(consecutive),
+    }, {
+      timeoutSeconds: 1,
+      random: () => 0.5,
+      sleep: async (ms) => {
+        watchSleeps.push(ms);
+      },
+    });
+
+    await snapshot;
+    watch.stop();
+    await watch.stopped;
+
+    expect(failures).toEqual([1, 2]);
+    expect(watchSleeps).toEqual([1000, 2000]);
+  });
+});

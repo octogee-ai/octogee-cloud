@@ -1,7 +1,8 @@
 import { type ProductFields } from "@octogee/shared/types/user-entitlements";
 import type { MmUpdate } from "./user-lifecycle.js";
 import type { UserPatch } from "./platform-state/users.js";
-import type { ReadStoredMattermostNames } from "./mattermost/provision.js";
+import type { PlatformStateStore } from "./platform-state/store.js";
+import type { ProvisionMattermostUserInput, ReadStoredMattermostNames } from "./mattermost/provision.js";
 import type { ManagedChannelHost } from "./channel-host/types.js";
 export { listTierTemplateFiles, writeTierTemplateFiles, } from "./tier-template-files.js";
 export interface AgentBinding {
@@ -72,6 +73,7 @@ export declare function registerDefaultAgent(ctx: ProvisioningContext, config: O
 export declare function buildDefaultAgentEntry(ctx: ProvisioningContext): AgentEntry;
 export declare function buildDefaultAgentBindings(current: unknown, userDefaultAgentId: string, slug: string, mmUpdate: MmUpdate): AgentBinding[];
 export declare function buildRemoveUserConfig(current: OpenclawConfigShape & Record<string, unknown>, slug: string, agentId: string): OpenclawConfigShape & Record<string, unknown>;
+export declare function provisionMattermostUserInput(ctx: ProvisioningContext): ProvisionMattermostUserInput;
 export declare function provisionMattermost(ctx: ProvisioningContext, channelHost: ManagedChannelHost, projection: ProvisioningProjection): Promise<MmUpdate>;
 export declare function upsertMattermostBindingByAgentAndPeer(bindings: AgentBinding[], binding: AgentBinding & {
     match: {
@@ -91,6 +93,7 @@ export interface ProvisioningProjection {
     workspaceEntry(ctx: ProvisioningContext, allAgentIds: string[]): Promise<void>;
 }
 export declare const noProvisioningProjection: ProvisioningProjection;
-export declare function markProvisioningComplete(ctx: ProvisioningContext, mmUpdate: MmUpdate, allAgentIds: string[], projection: ProvisioningProjection): Promise<void>;
+type ProvisioningStore = Pick<PlatformStateStore, "transaction" | "workspaces">;
+export declare function markProvisioningComplete(ctx: ProvisioningContext, mmUpdate: MmUpdate, allAgentIds: string[], projection: ProvisioningProjection, store?: ProvisioningStore): Promise<void>;
 export declare function buildProvisionedUserPatch(ctx: ProvisioningContext, mmUpdate: MmUpdate): UserPatch;
 export declare function buildUserProductFields(ctx: ProvisioningContext, mmUpdate: MmUpdate): Record<string, unknown>;
