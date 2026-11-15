@@ -3,8 +3,8 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "target": "es2022",
-    "outDir": "dist",
-    "rootDir": "..",
+    "outDir": "dist/octogee-api",
+    "rootDir": ".",
     "strict": true,
     "esModuleInterop": true,
     "resolveJsonModule": true,
@@ -15,13 +15,11 @@
     "inlineSources": true
   },
   "include": [
-    "src/**/*.ts",
-    "../gateway-edge/src/**/*.ts"
+    "src/**/*.ts"
   ],
   "exclude": [
     "src/__tests__",
     "node_modules",
-    "dist",
-    "../gateway-edge/src/**/__tests__/**/*"
+    "dist"
   ]
 }

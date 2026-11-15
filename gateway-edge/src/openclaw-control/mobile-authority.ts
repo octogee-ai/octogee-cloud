@@ -14,7 +14,7 @@ import { openClawControlUpstreamBase } from './surface.js';
 import type { OpenClawControlSession } from '@octogee/core/http-candidates/openclaw-control/session';
 import type { MattermostControlChat } from '@octogee/core/http-candidates/openclaw-control/mattermost-chat';
 import type { WorkspaceServingResolver } from './workspace-serving.js';
-import { mobileRecord } from './mobile-proof.js';
+import { mobileRecord } from '@octogee/core/identity/mobile-proof';
 import { isIsolatedGatewayClassValue } from "@octogee/shared/types/glm";
 
 export type MobileBroker = (

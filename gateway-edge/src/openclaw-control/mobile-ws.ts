@@ -13,7 +13,7 @@ import { bridgeControlSocket, openClawControlUpstreamBase } from './surface.js';
 import { OpenClawControlSessionManager } from '@octogee/core/http-candidates/openclaw-control/session';
 import { OpenClawControlResourceLimiter, type OpenClawControlLease } from './limits.js';
 import { DesktopObserverTickets, bridgeDesktopObserver } from './desktop-stream.js';
-import { mobileRoute } from './mobile-proof.js';
+import { mobileRoute } from '@octogee/core/identity/mobile-proof';
 import { MobileGatewayAuthority, mobileSession } from './mobile-authority.js';
 import { MobileSocketTransport } from './mobile-transport.js';
 import { createMattermostControlChat } from '@octogee/core/http-candidates/openclaw-control/mattermost-chat';

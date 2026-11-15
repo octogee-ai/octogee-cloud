@@ -8,7 +8,7 @@ import { generateIdentity, signConnectDevice } from '@octogee/shared/types/devic
 import { WsUpgradeRouter } from '@octogee/core/ws/upgrade-router';
 import type { NativeMobileBinding } from '@octogee/shared/types/native-mobile';
 import { createMobileGateway } from './mobile.js';
-import { mobileDigest } from './mobile-proof.js';
+import { mobileDigest } from '@octogee/core/identity/mobile-proof';
 import { installTestUserIdentity } from '../__tests__/helpers/user-identity.js';
 
 const ID = '2b7d671e-180d-4dab-a486-5224ad783155';

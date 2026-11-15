@@ -17,7 +17,7 @@ import {
   mobileRoute,
   isMobileMediaResource,
   projectMobileDocument,
-} from './mobile-proof.js';
+} from '@octogee/core/identity/mobile-proof';
 
 export function createMobileHttpRouter(
   authority: MobileGatewayAuthority,

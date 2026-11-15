@@ -16,7 +16,7 @@ import {
   type GatewayOpenClawAuth,
 } from "@octogee/core/http-candidates/chat-proxy/openclaw/gateway-token";
 import { openUpstreamWithGatewayAuth } from "@octogee/core/http-candidates/chat-proxy/openclaw/authenticated-upstream";
-import { shouldForwardFrame, sanitizeActivityFrame } from "./openclaw/frame-filter.js";
+import { shouldForwardFrame, sanitizeActivityFrame } from "@octogee/core/channels/frame-filter";
 import {
   createGateState,
   evaluateInboundFrame,

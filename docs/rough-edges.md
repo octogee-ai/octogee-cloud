@@ -56,8 +56,6 @@ They are covered by tests and split as they are touched.
 
 - `core/` and `shared/` commit their built `dist/`, because the other packages
   install them as `file:` dependencies. Published packages would remove it.
-- `platform-api` imports `gateway-edge` source by relative path instead of
-  through a package.
 - There are no npm workspaces. Each package installs on its own, which keeps
   the packages independent and makes a change across them slow.
 

@@ -93,7 +93,7 @@ vi.mock('../../../../platform-api/src/chat-proxy/openclaw/gateway-resolver.js', 
   resolveGatewayUrl: async () => h.ctl.resolve(),
 }));
 
-vi.mock('../openclaw/frame-filter.js', () => ({
+vi.mock('@octogee/core/channels/frame-filter', () => ({
   ExpectedAgentIdError: h.ExpectedAgentIdError,
   deriveExpectedAgentId: () => h.ctl.deriveAgentId(),
   shouldForwardFrame: () => ({

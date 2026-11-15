@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { relative, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const platformRoot = resolve(import.meta.dirname, "../..");
@@ -16,15 +16,17 @@ const manifest = (name: string) => JSON.parse(readFileSync(resolve(platformRoot,
 };
 
 const tsconfig = (name: string) => JSON.parse(readFileSync(resolve(platformRoot, name, "tsconfig.json"), "utf8")) as {
-  compilerOptions: { rootDir: string };
+  compilerOptions: { rootDir: string; outDir: string };
   include: string[];
 };
 
-const emitRoot = (name: string) => resolve(platformRoot, name, tsconfig(name).compilerOptions.rootDir);
-
 const sourceRoots = (name: string) => tsconfig(name).include.map((pattern) => resolve(platformRoot, name, pattern.split("/**")[0]!));
 
-const sourceOf = (name: string, target: string) => resolve(emitRoot(name), target.replace(/^\.\/dist\//, "").replace(/\.(?:d\.ts|js)$/, ".ts"));
+const sourceOf = (name: string, target: string) => {
+  const { rootDir, outDir } = tsconfig(name).compilerOptions;
+  const built = relative(outDir, target.replace(/^\.\//, ""));
+  return resolve(platformRoot, name, rootDir, built.replace(/\.(?:d\.ts|js)$/, ".ts"));
+};
 
 describe.each(EXPORTING_PACKAGES)("%s package interface", (name) => {
   const { exports = {}, files = [] } = manifest(name);

@@ -87,7 +87,7 @@ jobs:
               npm run typecheck
               npm test
           - name: platform-api
-            installs: gateway-edge shared llm-broker platform-api
+            installs: shared llm-broker platform-api
             builds: llm-broker
             gateway-npm: true
             run: |

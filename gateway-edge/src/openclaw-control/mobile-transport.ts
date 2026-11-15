@@ -12,7 +12,7 @@ import {
   projectMobileHello,
   projectMobileSessionFrame,
   type MobileConnectProof,
-} from './mobile-proof.js';
+} from '@octogee/core/identity/mobile-proof';
 
 function operatorTokens(auth: Record<string, unknown>): NativeMobileBinding['httpTokens'] {
   const tokens = Array.isArray(auth.deviceTokens) ? [...auth.deviceTokens] : [];
