@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { projectAgentId } from "../../shared/types/identity.js";
-import type { FleetBrokerChannelBinding, FleetBrokerProjectAgent, FleetBrokerProjectAgentReadiness } from "../../shared/types/fleet-broker.js";
+import { projectAgentId } from "@octogee/shared/types/identity";
+import type { FleetBrokerChannelBinding, FleetBrokerProjectAgent, FleetBrokerProjectAgentReadiness } from "@octogee/shared/types/fleet-broker";
 import { activeAgentProjectIds } from "./openclaw-config-users.js";
 import { agentIdsFromConfig } from "./byosub-restore.js";
 

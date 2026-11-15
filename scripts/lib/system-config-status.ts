@@ -7,7 +7,7 @@ import {
   OPENCLAW_DASHBOARD_BRIDGE_PROTOCOL,
   OPENCLAW_DASHBOARD_BRIDGE_PROTOCOL_VERSION,
   type OpenClawDashboardBridgeProtocol,
-} from "../../shared/types/fleet-controller.js";
+} from "@octogee/shared/types/fleet-controller";
 
 export type SystemConfigState = "clean" | "dirty" | "syncing" | "error" | "unavailable";
 

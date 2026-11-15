@@ -45,6 +45,14 @@ install.sh, deploy/  the foundation installer: one stock OpenClaw gateway with c
 docs/              start at docs/getting-started.md
 ```
 
+Each component builds from its own directory plus the libraries it declares.
+Import `core`, `core-testing` and `shared` by package name (`@octogee/core/...`,
+`@octogee/core-testing/...`, `@octogee/shared/...`) through their `exports` maps, never by relative path,
+and never import another service component's files or package; specs under
+`tests/` follow the same rule and read other components' files as data.
+`scripts/__tests__/component-imports.spec.ts` enforces it, and
+`scripts/lib/component-imports.json` lists the imports that remain to remove.
+
 `core`, `core-testing` and `shared` commit their built `dist/`. Other packages
 install them as `file:` dependencies, so build and commit `dist/` with any
 change to their source. The OpenClaw build the gateway image uses is pinned in

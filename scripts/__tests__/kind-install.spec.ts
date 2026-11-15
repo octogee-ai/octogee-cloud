@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { parsePlatformModelConfig, resolveHouseModel } from "../../shared/types/platform-config.js";
+import { parsePlatformModelConfig, resolveHouseModel } from "@octogee/shared/types/platform-config";
 import { createStubHost, REPO_ROOT, type StubHost } from "./deploy/stub-host";
 
 const SCRIPT = join(REPO_ROOT, "scripts/ops/kind-install.sh");

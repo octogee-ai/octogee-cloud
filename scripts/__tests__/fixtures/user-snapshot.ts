@@ -1,4 +1,4 @@
-import type { FleetBrokerUserSnapshot } from "../../../shared/types/fleet-broker.js";
+import type { FleetBrokerUserSnapshot } from "@octogee/shared/types/fleet-broker";
 
 export function userSnapshot(over: Partial<FleetBrokerUserSnapshot> = {}): FleetBrokerUserSnapshot {
   return {

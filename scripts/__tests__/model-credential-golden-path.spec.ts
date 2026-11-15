@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   modelCredentialEntryById,
-} from "../../shared/types/model-credentials.js";
+} from "@octogee/shared/types/model-credentials";
 import {
   buildModelCredentialConfigForProvider,
   buildClaudeCliAuthProfilesStore,

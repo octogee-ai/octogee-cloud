@@ -5,7 +5,7 @@ import {
   userEntitlements,
   type UserEntitlementInputs,
   type UserEntitlementResolver,
-} from "../../../shared/types/user-entitlements.js";
+} from "@octogee/shared/types/user-entitlements";
 
 export const houseOnlyUserEntitlements: UserEntitlementResolver = {
   ...staticUserEntitlements,

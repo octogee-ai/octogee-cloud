@@ -1,5 +1,5 @@
 import * as path from 'node:path';
-import { isValidUsername } from '../../shared/types/identity.js';
+import { isValidUsername } from '@octogee/shared/types/identity';
 import { deferredProjectPlaceholderPaths } from './deferred-project-workspace.js';
 import { LIVE_AGENT_STORE_EXCLUDE_ARGS } from './agent-store-snapshot.js';
 import { SQLITE_CARRY_EXCLUDE_ARGS } from './agent-store-carry.js';

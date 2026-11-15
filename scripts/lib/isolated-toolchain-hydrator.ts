@@ -12,8 +12,8 @@ import {
   parseDeveloperToolchainStatusArtifact,
   type DeveloperToolchainStatus,
   type DeveloperToolchainStatusArtifact,
-} from "../../shared/types/developer-toolchain.js";
-import type { FleetBrokerNpmRegistryCredentials } from "../../shared/types/fleet-broker.js";
+} from "@octogee/shared/types/developer-toolchain";
+import type { FleetBrokerNpmRegistryCredentials } from "@octogee/shared/types/fleet-broker";
 import {
   enabledNpmPackages,
   parseIsolatedToolGroups,

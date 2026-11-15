@@ -5,7 +5,7 @@ const runtimeLogger = createServiceLogger("byosub-syncback-runner");
 
 import * as fs from "fs";
 import { pathToFileURL } from "node:url";
-import { parseAgentId } from "../../shared/types/identity.js";
+import { parseAgentId } from "@octogee/shared/types/identity";
 import { readAuthProfileStore, sharedAuthStoreUsable } from "../lib/auth-profile-store.js";
 import {
   agentIdsFromConfig,

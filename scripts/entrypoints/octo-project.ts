@@ -1,6 +1,6 @@
 import { statfs } from "node:fs/promises";
 import path from "node:path";
-import { isValidProjectId, isValidUsername } from "../../shared/types/identity.js";
+import { isValidProjectId, isValidUsername } from "@octogee/shared/types/identity";
 import { createFleetBrokerClient } from "../lib/fleet-broker-client.js";
 import { createBrokeredProjectBlobHydrator } from "../lib/project-blob-materialization.js";
 import { userClaimSlug } from "@octogee/shared/server/user-claim";

@@ -16,7 +16,7 @@ import {
   OPENCLAW_DASHBOARD_BRIDGE_PROTOCOL,
   OPENCLAW_DASHBOARD_BRIDGE_PROTOCOL_VERSION,
   type OpenClawDashboardBridgeCapability,
-} from "../../shared/types/fleet-controller.js";
+} from "@octogee/shared/types/fleet-controller";
 
 export interface SystemConfigRuntimeHealthOptions {
   openclawDir: string;

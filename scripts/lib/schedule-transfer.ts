@@ -7,7 +7,7 @@ import type {
   ScheduleSkip,
   ScheduleSnapshotResult,
   ScheduleTransferRequestBody,
-} from "../../shared/types/fleet-controller.js";
+} from "@octogee/shared/types/fleet-controller";
 import type { ScheduleTransferCronMethod } from "./gateway-rpc.js";
 import { schedulerHandoffAgentIds } from "./agent-roster-deletion.js";
 import { isRetryableSchedulerFailure, SchedulerRefusal } from "./scheduler-failure.js";

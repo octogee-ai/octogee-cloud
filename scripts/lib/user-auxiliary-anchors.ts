@@ -1,7 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { queryAgentStore, readPostgresAgentAnchor } from "@octogee/core/agent-postgres";
-import type { UserAuxiliaryFamily, FleetBrokerAuxiliaryAnchor } from "../../shared/types/fleet-broker.js";
+import type { UserAuxiliaryFamily, FleetBrokerAuxiliaryAnchor } from "@octogee/shared/types/fleet-broker";
 import { publishAnchor, assertUserStorePath } from "./postgres-anchor-file.js";
 
 const STORE_PATHS: Record<UserAuxiliaryFamily, string> = {

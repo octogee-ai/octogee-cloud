@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { readUserClaim, writeUserClaim, userClaimFromIdentity } from "@octogee/shared/server/user-claim";
-import type { UserIdentity } from "../../shared/types/user-identity.js";
+import type { UserIdentity } from "@octogee/shared/types/user-identity";
 import { FleetBrokerHttpError } from "../lib/fleet-broker-client.js";
 import {
   USER_IDENTITY_FATAL_EXIT,

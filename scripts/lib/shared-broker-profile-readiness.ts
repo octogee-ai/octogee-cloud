@@ -1,5 +1,5 @@
 import * as path from "node:path";
-import { parseAgentId } from "../../shared/types/identity.js";
+import { parseAgentId } from "@octogee/shared/types/identity";
 import type { DegradedSecretOwner } from "./gateway-rpc.js";
 import { configuredUserManagedProjectIds } from "./configured-user-project-agents.js";
 import { readMattermostAccountSecret } from "./mattermost-account-secrets.js";

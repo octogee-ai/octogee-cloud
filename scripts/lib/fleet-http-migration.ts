@@ -1,8 +1,8 @@
 import { projectAgentWorkspace } from "@octogee/core/project-agent-workspaces";
 import { assertSafeStagedSymlinks, RSYNC_DAEMON_SYMLINK_POLICY, STAGED_RSYNC_COPY_OPTIONS } from "./rsync-staged-symlinks.js";
 import { isDeepStrictEqual } from "node:util";
-import { projectCheckoutEnabled } from "../../shared/types/project.js";
-import { agentIdBelongsToSlug } from "../../shared/types/agent-models.js";
+import { projectCheckoutEnabled } from "@octogee/shared/types/project";
+import { agentIdBelongsToSlug } from "@octogee/shared/types/agent-models";
 import { updateVoiceMigration, type VoiceMigrationInput } from './voice-migration.js';
 import {
   clearMigrationStaging, prepareMigrationStaging, readLiveImportAdmission, writeLiveImportAdmission,
@@ -66,9 +66,9 @@ import {
   MIGRATION_VERIFY_DEFAULT_AGENT_ATTACH_IN_PROGRESS,
   MIGRATION_RSYNC_PORT_DEFAULT,
   SIGNATURE_HEADER,
-} from "../../shared/types/fleet-controller.js";
-import type { FleetBrokerAgentAnchor } from "../../shared/types/fleet-broker.js";
-import { isValidUsername, parseAgentId } from "../../shared/types/identity.js";
+} from "@octogee/shared/types/fleet-controller";
+import type { FleetBrokerAgentAnchor } from "@octogee/shared/types/fleet-broker";
+import { isValidUsername, parseAgentId } from "@octogee/shared/types/identity";
 import {
   findUnreadableStore,
   listSqliteStores,

@@ -12,7 +12,7 @@ import type { UserLifecycleAdapter } from "../lib/user-lifecycle.js";
 import {
   FLEET_STATE_PATH,
   SIGNATURE_HEADER,
-} from "../../shared/types/fleet-controller.js";
+} from "@octogee/shared/types/fleet-controller";
 import { stubUserClaim } from "./helpers/user-claim.js";
 
 const GATEWAY_ID = "builder-jack";

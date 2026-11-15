@@ -3,14 +3,14 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
-import { agentStoreRoutineFingerprint, agentStoreRoutinesQuery, agentStoreTriggerFingerprint, agentStoreTriggersQuery, agentStoreExpressionFingerprint, agentStoreExpressionsQuery } from "../../core/dist/agent-store-routines.js";
+import { agentStoreRoutineFingerprint, agentStoreRoutinesQuery, agentStoreTriggerFingerprint, agentStoreTriggersQuery, agentStoreExpressionFingerprint, agentStoreExpressionsQuery } from "./dist/agent-store-routines.js";
 
-const require = createRequire(new URL("../../core/package.json", import.meta.url));
+const require = createRequire(new URL("./package.json", import.meta.url));
 const { default: pg } = await import(require.resolve("pg"));
 const checkout = process.argv[2];
 const dsn = process.env.OCTOGEE_TEST_POSTGRES_DSN;
-if (!checkout || !dsn) throw new Error("Usage: OCTOGEE_TEST_POSTGRES_DSN=<disposable database> node scripts/ops/qualify-agent-store-routines.mjs <OpenClaw checkout>");
-const pin = JSON.parse(readFileSync(new URL("../../gateway/openclaw-tarball/current.json", import.meta.url), "utf8"));
+if (!checkout || !dsn) throw new Error("Usage: OCTOGEE_TEST_POSTGRES_DSN=<disposable database> node core/qualify-agent-store-routines.mjs <OpenClaw checkout>");
+const pin = JSON.parse(readFileSync(new URL("../gateway/openclaw-tarball/current.json", import.meta.url), "utf8"));
 const head = execFileSync("/usr/bin/git", ["-C", checkout, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
 const dirty = execFileSync("/usr/bin/git", ["-C", checkout, "status", "--porcelain"], { encoding: "utf8" }).trim();
 if (head !== pin.sourceSha || dirty) throw new Error("OpenClaw must be clean at the exact pinned source SHA");
@@ -59,7 +59,7 @@ try {
   await client.query("ROLLBACK");
   await client.end();
 }
-const output = new URL("../../core/src/agent-store-routines.json", import.meta.url);
+const output = new URL("./src/agent-store-routines.json", import.meta.url);
 const sorted = table => Object.fromEntries(Object.entries(table).sort(([a], [b]) => a.localeCompare(b)));
 writeFileSync(output, `${JSON.stringify({ sourceSha: pin.sourceSha, routines: sorted(routines), triggers: sorted(triggers), expressions: sorted(expressions) }, null, 2)}\n`);
 console.log(`Qualified ${Object.keys(routines).length} routine definitions from ${pin.sourceSha} into ${fileURLToPath(output)}`);
