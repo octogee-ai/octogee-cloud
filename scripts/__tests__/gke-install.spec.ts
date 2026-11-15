@@ -137,7 +137,7 @@ describe("gke-install.sh up", () => {
 
   describe("down", () => {
     const DOWN_GCLOUD = `case " $* " in
-  *" vpc-peerings list "*) [ -n "\${PRESENT:-}" ] && echo servicenetworking-googleapis-com ;;
+  *" vpc-peerings list "*) [ -n "\${PRESENT:-}" ] && echo "\${PEERING_NAME:-servicenetworking-googleapis-com}" ;;
   *" hmac list "*) echo GOOG1STUBACCESS ;;
   *" describe "*) [ -n "\${PRESENT:-}" ] || exit 1 ;;
   *" vpc-peerings delete "*)
@@ -187,10 +187,10 @@ esac`;
     const peeringRemovals = () => deletes().filter(call => call.includes(" compute networks peerings delete "));
 
     it("removes the network's own peering when Cloud SQL keeps the service networking connection, then the network", () => {
-      const result = down({ PRESENT: "1", PEERING_REFUSALS: "99" });
+      const result = down({ PRESENT: "1", PEERING_REFUSALS: "99", PEERING_NAME: "listed-peering" });
       expect(result.status).toBe(0);
       expect(peeringDeletes()).toHaveLength(1);
-      expect(peeringRemovals()).toEqual([expect.stringContaining("compute networks peerings delete servicenetworking-googleapis-com --network=octogee")]);
+      expect(peeringRemovals()).toEqual([expect.stringContaining("compute networks peerings delete listed-peering --network=octogee")]);
       expect(host.calls().some(call => /^sleep /.test(call))).toBe(false);
       expect(deletes().map(call => call.replace(/^gcloud KUBECONFIG=unset --project \S+ --quiet /, "").split(" ").slice(0, 3).join(" ")).slice(-4)).toEqual([
         "compute networks peerings", "compute addresses delete", "compute routers delete", "compute networks delete",

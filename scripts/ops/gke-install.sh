@@ -546,9 +546,9 @@ down() {
     done
     g iam service-accounts delete "$BLOB_EMAIL" >/dev/null
   fi
-  if [[ -n "$(g services vpc-peerings list --network="$NAME" --format='value(peering)' 2>/dev/null)" ]]; then
-    delete_sql_peering
-  fi
+  local peering
+  peering="$(g services vpc-peerings list --network="$NAME" --format='value(peering)' 2>/dev/null || true)"
+  [[ -z "$peering" ]] || delete_sql_peering "$peering"
   delete_present "$NAME-sql" compute addresses --global
   delete_present "$NAME" compute routers --region "$GCP_REGION"
   delete_present "$NAME" compute networks
@@ -556,7 +556,7 @@ down() {
 }
 
 delete_sql_peering() {
-  local output
+  local peering="$1" output
   if output="$(g services vpc-peerings delete --service=servicenetworking.googleapis.com --network="$NAME" 2>&1)"; then
     [[ -z "$output" ]] || printf '%s\n' "$output"
     return 0
@@ -566,7 +566,7 @@ delete_sql_peering() {
     die "could not delete the service networking connection of network $NAME"
   fi
   echo "  Cloud SQL still holds the service networking connection; removing the network's own peering"
-  g compute networks peerings delete servicenetworking-googleapis-com --network="$NAME"
+  g compute networks peerings delete "$peering" --network="$NAME"
 }
 
 delete_present() {
