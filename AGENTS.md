@@ -33,7 +33,8 @@ shared/            @octogee/shared: types and small server helpers
 fleet-controller/  the fleet controller and its Admin API: placement, migration, gateway rollout
 platform-api/      the platform API, plus the LLM broker and npm cache proxy apps
 gateway-edge/      sidecar in each gateway pod; also runs as the gateway router and the Mattermost callback router
-scripts/           gateway pod boot steps and provisioner (entrypoints/), operator tools (ops/), CI (ci/), specs (__tests__/)
+gateway-supervisor/ the gateway supervisor: everything the gateway image runs besides OpenClaw (boot steps, runners, the VM agent)
+scripts/           operator tools (ops/), CI (ci/), setup scripts, and the repository specs (__tests__/)
 gateway/           the gateway image: OpenClaw, its plugins (extensions/) and the pod entrypoint
 desktop/           the isolated gateway VM image
 vm-bridge/         the VM bridge image
@@ -91,7 +92,7 @@ checkout or copies the published ones.
 ## Testing
 
 - **Vitest only.** Specs sit beside their module or in the package's `__tests__/`.
-  Specs for `scripts/` live under `scripts/__tests__/`. Shell scripts are tested
+  Specs for `scripts/` and `gateway-supervisor/` live under their `__tests__/`. Shell scripts are tested
   against stubbed commands; see `scripts/__tests__/deploy/stub-host.ts`.
 - **PostgreSQL.** `node scripts/ci/core-postgres.mjs` starts a throwaway
   PostgreSQL 16 server and runs core's integration suite against it. It expects
@@ -102,9 +103,9 @@ checkout or copies the published ones.
 - **Coverage gaps.** `npm run --prefix scripts audit-coverage` follows the
   import graph, counting `.spec.ts` and `.test.ts` files and resolving the `@/`
   and `@shared` aliases. Never use a `*.spec.ts` glob, which flags false gaps.
-- **`scripts/` test gate.** Throwaway operator tooling is exempt, but shared
-  runtime code under `scripts/lib/` (for example `user-lifecycle`,
-  `provision-reconcile`, `git`, `config`) needs behavioral coverage. Blast radius
+- **Test gate.** Throwaway operator tooling in `scripts/` is exempt, but
+  runtime code under `gateway-supervisor/lib/` (for example `user-lifecycle`,
+  `fleet-provisioner`, `git`, `config`) needs behavioral coverage. Blast radius
   decides, not the directory.
 
 ## Workflow: keep it small
@@ -154,7 +155,7 @@ the operator asks for them or a current risk to users requires them.
   Google Secret Manager. Each agent has its own PostgreSQL store.
 - **Users.** `octogee-fleet user add` records a user and `user assign` places
   them on a gateway. The provisioner in the gateway pod,
-  `scripts/entrypoints/provisioner.ts`, then sets the user
+  `gateway-supervisor/entrypoints/provisioner.ts`, then sets the user
   up through the platform API's fleet broker, which holds the admin credentials:
   their Mattermost account, team, channels and agent bot, and their Gitea
   organization with a `workspace` repository.
@@ -185,4 +186,4 @@ the operator asks for them or a current risk to users requires them.
   pull requests, repository conventions and docs.
 - Code anchors: `platform-api/src/app.ts`, `gateway-edge/src/index.ts`,
   `fleet-controller/src/index.ts`, `fleet-controller/src/http-server.ts` (the Admin
-  API), `scripts/entrypoints/provisioner.ts` (the provisioner).
+  API), `gateway-supervisor/entrypoints/provisioner.ts` (the provisioner).
