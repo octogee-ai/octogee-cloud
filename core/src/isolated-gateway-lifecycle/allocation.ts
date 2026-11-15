@@ -410,13 +410,25 @@ async function readAllocationSource(
   return { release, artifact };
 }
 
-async function checkHomeReadiness(input: IsolatedGatewayAllocationDeps, request: AllocateIsolatedGatewayInput): Promise<void> {
+async function checkHomeReadiness(input: IsolatedGatewayAllocationDeps, request: AllocateIsolatedGatewayInput, gatewayId: string): Promise<void> {
   const sizingKeyRead = { store: input.store, readSizingKey: input.readSizingKey, uid: request.uid, now: input.now() };
   await withCurrentSizingKey(sizingKeyRead, ({ profile: sizingProfile }) => input.store.transaction(
     { label: "isolated-gateway.home-readiness", readOnly: true },
     async (transaction) => {
-      const user = await transaction.users.records.get(request.uid);
+      const [existingGateway, existingRelease, user] = await Promise.all([
+        transaction.gateways.roots.get(gatewayId),
+        transaction.gateways.releases.get(gatewayId, 1),
+        transaction.users.records.get(request.uid),
+      ]);
       if (!user) throw new IsolatedGatewayFenceError(`isolated gateway owner ${request.uid} is missing`);
+      if (existingAllocationCanReplay({
+        gatewayExists: existingGateway !== null,
+        gatewayData: existingGateway,
+        releaseExists: existingRelease !== null,
+        gatewayId,
+        request,
+        user,
+      })) return;
       input.requireHomeReady({ user, request, sizingProfile });
     },
   ));
@@ -428,8 +440,8 @@ export async function allocateIsolatedGateway(
   mode: LifecycleMode = "apply",
 ): Promise<IsolatedGatewayAllocation> {
   await checkPlacementOwner(input);
-  await checkHomeReadiness(input, request);
   const gatewayId = allocatedIsolatedGatewayId(request);
+  await checkHomeReadiness(input, request, gatewayId);
   const source = await readAllocationSource(input.store, request);
   if (request.parkedGateway) {
     const resumed = await resumeOrRetireParkedGateway(input, request, request.parkedGateway, source, mode);

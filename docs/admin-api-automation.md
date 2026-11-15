@@ -670,7 +670,7 @@ dry run, then, in one transaction, its
 root and first release (from the shared gateway's live artifact) and the
 lease moved to `provisioning` with the gateway as its target. The answer is
 `{uid, gatewayId, outcome: "allocated"}`. The gateway id is derived from the
-lease, so a repeat answers the same gateway.
+lease, so a repeat answers the same gateway, without checking the home again.
 
 While Kubernetes brings the gateway up, the lease reads `provisioning`; the
 caller advances it once the activation operation starts.

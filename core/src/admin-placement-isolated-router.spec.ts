@@ -466,6 +466,17 @@ describe("POST /users/:uid/isolated-gateway/allocate", () => {
     expect(isolatedRoots()).toEqual([`gateways/${first.body.gatewayId}`]);
   });
 
+  it("answers the committed allocation when repeated after the home record was replaced", async () => {
+    const first = await allocate().expect(200);
+    const stored = docs.get(`users/${OWNER}`)!;
+    docs.set(`users/${OWNER}`, { ...stored, provisioning: { ...(stored.provisioning as Data), homeMigration: { id: "home-copy-2", phase: "copying", tier: "default" } } });
+
+    const second = await allocate().expect(200);
+
+    expect(second.body).toEqual(first.body);
+    expect(isolatedRoots()).toEqual([`gateways/${first.body.gatewayId}`]);
+  });
+
   it("refreshes a lease whose source assignment moved and allocates nothing", async () => {
     docs.set(`gateways/shared-blue/assignments/${OWNER}`, sharedAssignment(5));
 
