@@ -116,6 +116,67 @@ running fleet controller started. This finishes an add whose worker stopped
 with a previous fleet controller; an add the running controller claimed stays
 with its worker.
 
+## Retired isolated gateways
+
+An isolated gateway allocated to a user keeps its record after its
+retirement until a client deletes it. The fleet controller never decides that
+on its own.
+
+### `GET /isolated-gateways/retired`
+
+One read-only transaction over every retired isolated gateway that carries an
+allocation:
+
+```json
+{
+  "gateways": [{
+    "gatewayId": "alice-xs-12345678",
+    "ownerUid": "uid-alice",
+    "allocationGeneration": 1,
+    "retirementOperation": { "id": "placement-retire-uid-alice-alice-xs-12345678-g1", "kind": "retire-gateway", "status": "succeeded", "placementRetirement": true, "failedRetryably": false },
+    "unreleasedHandoffOperationId": null,
+    "ownerGatewayId": "shared-a",
+    "activationLeases": [{ "uid": "uid-bob", "status": "parked" }]
+  }]
+}
+```
+
+`retirementOperation` is the operation that holds the retirement claim, or
+`null` when it is gone. `placementRetirement` says whether that is the
+placement retirement of this owner and generation, the only one the verbs
+below act on. `failedRetryably` is the fleet controller's own classification:
+the stuck-operation reaper failed it, or it failed only because the stopped
+gateway's agent-store database sessions were still draining.
+`unreleasedHandoffOperationId` names the activation or return operation of
+this generation whose scheduler handoff is not released. `ownerGatewayId` is
+the gateway the owner's record points at, and `activationLeases` lists every
+user whose activation lease targets the gateway, with its status. With no
+retired isolated gateway the read touches the gateway roots only.
+
+### `POST /isolated-gateways/<gateway>/retirement/rearm`
+
+```json
+{ "ownerUid": "uid-alice", "allocationGeneration": 1 }
+```
+
+Returns a placement retirement that failed retryably to `pending`, clearing
+its attempt, so the operation runner drives it again. In one transaction it
+checks that the gateway is retired, owned by `ownerUid`, an isolated
+allocation of `allocationGeneration`, that its retirement claim is the
+placement retirement and that operation exists, that the owner's record no
+longer points at the gateway, and that the operation failed retryably.
+
+### `POST /isolated-gateways/<gateway>/delete-retired`
+
+Same body. After the same checks, with the retirement `succeeded` and no
+unreleased scheduler handoff, it clears a failed activation preparation of
+that generation from the owner, deletes the gateway's recovery operation and
+receipt, and deletes the root with its releases, fenced on the
+`retirementVersion` it read. These are separate writes, as before the verb
+existed: a root whose retirement changed after the checks answers `409` and
+stays, and a failed write answers `500` and leaves the root for the next
+call. The retirement and activation journals stay.
+
 ## `PATCH /users/<id>/placement`
 
 `{"managedBy": "cowboy", "expectedGatewayId": "<gateway>"}` releases an

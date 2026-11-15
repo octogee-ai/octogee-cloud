@@ -81,6 +81,10 @@
       "types": "./dist/admin-fleet-router.d.ts",
       "default": "./dist/admin-fleet-router.js"
     },
+    "./admin-placement-router": {
+      "types": "./dist/admin-placement-router.d.ts",
+      "default": "./dist/admin-placement-router.js"
+    },
     "./admin-shared-pool-router": {
       "types": "./dist/admin-shared-pool-router.d.ts",
       "default": "./dist/admin-shared-pool-router.js"
