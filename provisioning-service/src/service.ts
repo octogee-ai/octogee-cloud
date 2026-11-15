@@ -9,14 +9,14 @@ import { createApp } from "./http/app.js";
 import type { Logger } from "./logger.js";
 import { Metrics } from "./metrics.js";
 import { ChangeNotifier } from "./store/change-notifier.js";
-import { migrate, openDatabase, type Database } from "./store/database.js";
+import { migrate, openDatabase, type Database, type DatabaseConnection } from "./store/database.js";
 import { PostgresCredentialStore } from "./store/postgres-credential-store.js";
 import { ProvisioningStore } from "./store/provisioning-store.js";
 import { WorkQueue, type QueueOptions } from "./worker/queue.js";
 import { Worker } from "./worker/worker.js";
 
 export interface ServiceOptions {
-  databaseUrl: string;
+  database: DatabaseConnection;
   databaseSchema: string;
   credentialKey: Buffer;
   reviewer: Reviewer;
@@ -47,12 +47,13 @@ export interface RunningService {
 }
 
 export async function startService(options: ServiceOptions): Promise<RunningService> {
-  const db = openDatabase({ url: options.databaseUrl, schema: options.databaseSchema });
-  await migrate(db);
+  const db = openDatabase({ connection: options.database, schema: options.databaseSchema, log: options.log });
+  const schema = await migrate(db);
+  if (schema.from !== schema.to) options.log.info("database schema upgraded", { schema: options.databaseSchema, ...schema });
   const store = new ProvisioningStore(db);
   const queue = new WorkQueue(db, { holder: options.replicaId, ...options.queue });
   const credentials = new PostgresCredentialStore(db, options.credentialKey);
-  const notifier = new ChangeNotifier(db, options.databaseUrl, options.log);
+  const notifier = new ChangeNotifier(db, options.log);
   await notifier.start();
   const metrics = new Metrics();
   const worker = new Worker({

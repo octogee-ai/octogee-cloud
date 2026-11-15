@@ -17,8 +17,9 @@ async function main(): Promise<void> {
     reviewerToken: async () => (await readFile(config.tokenReviewTokenFile, "utf8")).trim(),
     ...(ca ? { ca } : {}),
   });
+  if (config.hosts.kind === "real") throw new Error("PROVISIONING_HOST_ADAPTERS=real needs the chat and git host adapters, which this build does not include");
   const service = await startService({
-    databaseUrl: config.databaseUrl,
+    database: config.database,
     databaseSchema: config.databaseSchema,
     credentialKey: config.credentialKey,
     reviewer,
@@ -30,7 +31,7 @@ async function main(): Promise<void> {
     replicaId: config.replicaId,
     port: config.port,
   });
-  log.info("provisioning service listening", { port: config.port, hostAdapters: config.hostAdapters, replica: config.replicaId });
+  log.info("provisioning service listening", { port: config.port, hostAdapters: config.hosts.kind, replica: config.replicaId });
   const shutdown = (signal: string) => {
     log.info("provisioning service stopping", { signal });
     service.stop().then(() => process.exit(0), (error: unknown) => {

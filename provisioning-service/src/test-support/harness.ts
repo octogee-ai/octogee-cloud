@@ -70,7 +70,7 @@ export async function createHarness(options: Partial<Pick<ServiceOptions, "queue
   const git = options.git ?? new FakeGitHost();
   const log = capturingLogger();
   const service = await startService({
-    databaseUrl: dsn,
+    database: { connectionString: dsn },
     databaseSchema: schema,
     credentialKey: randomBytes(32),
     reviewer: options.reviewer ?? fakeReviewer,
