@@ -166,8 +166,10 @@ the operator asks for them or a current risk to users requires them.
   [the full platform on GKE](docs/gke.md), [the full platform on EKS](docs/eks.md),
   [running in the cloud](docs/running-in-the-cloud.md) and
   [requirements](docs/requirements.md).
-- [Why octogee-cloud](docs/why-octogee-cloud.md) and
-  [OpenClaw compatibility](docs/openclaw-compatibility.md).
+- [Architecture](docs/architecture.md),
+  [why octogee-cloud](docs/why-octogee-cloud.md),
+  [OpenClaw compatibility](docs/openclaw-compatibility.md) and
+  [known rough edges](docs/rough-edges.md).
 - The [handbook](docs/handbook/00-index.md) chapters on principles, testing,
   pull requests, repository conventions and docs.
 - Code anchors: `octogee-api/src/app.ts`, `gateway-edge/src/index.ts`,
