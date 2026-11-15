@@ -106,6 +106,9 @@ glm-controller:
       publicAppOrigins:
         - http://localhost:4322
       env:
+        FIREBASE_PROJECT_ID: eks
+        GCLOUD_PROJECT: eks
+        GCP_PROJECT_ID: eks
         APP_URL: http://localhost:4322
         API_PUBLIC_URL: http://localhost:3001
         SITE_URL: http://localhost:4321

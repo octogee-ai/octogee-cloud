@@ -2,6 +2,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { parse } from "yaml";
+import { REQUIRED_ENV } from "../../gateway-edge/src/lib/required-env";
 import { createStubHost, REPO_ROOT, type StubHost } from "./deploy/stub-host";
 
 const SCRIPT = join(REPO_ROOT, "scripts/ops/eks-install.sh");
@@ -244,6 +246,13 @@ describe("eks-install.sh", () => {
       expect(values.mattermost.db.host).toBe(`octogee.abc123.${REGION}.rds.amazonaws.com`);
       expect(values.networkPolicy.agentStorePostgresCidr).toBe("192.168.0.0/16");
       expect(values.projectRunner.apiServerEgressCidrs).toEqual(["192.168.10.20/32", "192.168.30.40/32"]);
+    });
+
+    it("gives each gateway's edge every variable gateway-edge requires, as the kind install does", () => {
+      for (const file of ["scripts/ops/eks/values.yaml", "scripts/ops/kind/values.yaml"]) {
+        const env = parse(readFileSync(join(REPO_ROOT, file), "utf8"))["glm-controller"].gatewayValues.gatewayEdge.env;
+        for (const key of REQUIRED_ENV) expect(env[key], `${file} ${key}`).toMatch(/\S/);
+      }
     });
 
     it("runs shared gateways at the m sizing tier unless SHARED_GATEWAY_TIER names another", () => {
