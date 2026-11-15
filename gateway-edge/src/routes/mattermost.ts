@@ -6,7 +6,7 @@ import { getWorkspaceMmContext } from "../lib/mattermost-context.js";
 import { readMattermostSecret } from "../lib/mattermost-secret.js";
 import { platformStateStore } from "../lib/platform-state.js";
 
-const router = Router();
+const router: Router = Router();
 
 const GATEWAY_ID_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 

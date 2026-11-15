@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const platformRoot = resolve(import.meta.dirname, "../..");
-const PUBLISHED_PACKAGES = ["gateway-edge", "llm-broker"];
+const PUBLISHED_PACKAGES = ["gateway-edge", "llm-broker", "octogee-api"];
 
 interface ExportTarget {
   types?: string;
@@ -15,10 +15,14 @@ const manifest = (name: string) => JSON.parse(readFileSync(resolve(platformRoot,
   exports?: Record<string, ExportTarget>;
 };
 
-const emitRoot = (name: string) => {
-  const { compilerOptions } = JSON.parse(readFileSync(resolve(platformRoot, name, "tsconfig.json"), "utf8")) as { compilerOptions: { rootDir: string } };
-  return resolve(platformRoot, name, compilerOptions.rootDir);
+const tsconfig = (name: string) => JSON.parse(readFileSync(resolve(platformRoot, name, "tsconfig.json"), "utf8")) as {
+  compilerOptions: { rootDir: string };
+  include: string[];
 };
+
+const emitRoot = (name: string) => resolve(platformRoot, name, tsconfig(name).compilerOptions.rootDir);
+
+const sourceRoots = (name: string) => tsconfig(name).include.map((pattern) => resolve(platformRoot, name, pattern.split("/**")[0]!));
 
 const sourceOf = (name: string, target: string) => resolve(emitRoot(name), target.replace(/^\.\/dist\//, "").replace(/\.(?:d\.ts|js)$/, ".ts"));
 
@@ -38,7 +42,7 @@ describe.each(PUBLISHED_PACKAGES)("%s package interface", (name) => {
       expect(target, entry).toEqual({ types: expect.stringMatching(/^\.\/dist\/.+\.d\.ts$/), default: expect.stringMatching(/^\.\/dist\/.+\.js$/) });
       expect(target.types!.replace(/\.d\.ts$/, ""), entry).toBe(target.default!.replace(/\.js$/, ""));
       const source = sourceOf(name, target.default!);
-      expect(source.startsWith(resolve(platformRoot, name, "src")), `${entry} must come from ${name}/src`).toBe(true);
+      expect(sourceRoots(name).some((root) => source.startsWith(`${root}/`)), `${entry} must come from a source root ${name} compiles`).toBe(true);
       expect(existsSync(source), `${entry} → ${source}`).toBe(true);
     }
   });

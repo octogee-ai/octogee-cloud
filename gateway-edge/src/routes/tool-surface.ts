@@ -251,7 +251,7 @@ export function createToolSurface(options: ToolSurfaceOptions = {}) {
   const tickets = createWsTicketStore<ToolSession>();
   const streamTickets = new Map<string, StreamGrant>();
   const mediaOwners = new Map<string, LiveToolSession>();
-  const router = Router({ mergeParams: true });
+  const router: Router = Router({ mergeParams: true });
   const headers = (uid: string) => ({ ...openClawProxyIdentityHeaders({ user: uid, clientAddress: podClientAddress() }), origin: openClawProxyOrigin(env) });
 
   function retireGrant(grant: StreamGrant): void {

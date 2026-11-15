@@ -4,7 +4,7 @@ import { mmApi } from "../../lib/mattermost.js";
 import { USERNAME_RE } from "@octogee/shared/types/identity";
 import { logger } from "../../middleware/logging.js";
 
-const router = Router();
+const router: Router = Router();
 
 const MM_TEAM_DISPLAY_NAME_MAX = 64;
 

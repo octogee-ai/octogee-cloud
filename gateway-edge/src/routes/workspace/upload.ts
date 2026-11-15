@@ -22,7 +22,7 @@ import {
 } from "./helpers.js";
 import { invalidateWorkspaceFileResponseCache } from "./file-response-cache.js";
 
-const router = Router();
+const router: Router = Router();
 
 async function uploadStorageLimitBytes(
   userData: Record<string, unknown> | undefined,

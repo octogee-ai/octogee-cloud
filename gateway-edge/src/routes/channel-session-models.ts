@@ -23,7 +23,7 @@ import { platformStateStore } from "../lib/platform-state.js";
 import { requireActiveAccount, requireAuthenticatedUid } from "../middleware/auth.js";
 import { logger } from "../middleware/logging.js";
 
-const router = Router();
+const router: Router = Router();
 const MATTERMOST_ID = /^[a-z0-9]{26}$/;
 const channelSessionModelRateLimit = rateLimit({
   windowMs: 60_000,

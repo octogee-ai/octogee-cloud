@@ -44,7 +44,7 @@ function validateRole(req: Request, res: Response<unknown, { role: string | null
 }
 
 export function createWorkspaceRolesRouter(deps = { resolveIdentity: resolveWorkspaceNativeIdentity, openClient: openNativeUserClient }) {
-  const router = Router({ mergeParams: true });
+  const router: Router = Router({ mergeParams: true });
   const roleRateLimit = (limit: number) => rateLimit({
     ...DEFAULT_RATE_LIMIT_OPTIONS,
     windowMs: 60_000,

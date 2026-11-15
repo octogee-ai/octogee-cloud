@@ -1,9 +1,3 @@
-FROM scratch AS overlay
-COPY octogee-api/src/main.ts /src/main.ts
-
-FROM scratch AS packed-package
-COPY octogee-api/.npmrc /.npmrc
-
 FROM node:26.13.0-slim@sha256:5adad64f9a1fca2d51972caa65983634c8a774eb300d72b20f7f2a0f60368072 AS platform-npm
 ARG NPM_VERSION=12.2.1
 RUN apt-get update && apt-get install -y --no-install-recommends patch && rm -rf /var/lib/apt/lists/*
@@ -13,16 +7,6 @@ RUN npm install --global npm@${NPM_VERSION} --ignore-scripts --no-audit --no-fun
     && node /tmp/npm-distribution.test.mjs /usr/local/lib/node_modules/npm \
     && test "$(npm --version)" = "$NPM_VERSION" \
     && test "$(npx --version)" = "$NPM_VERSION"
-
-FROM platform-npm AS packer
-COPY --from=packed-package / /packed-package/
-RUN mkdir -p /packed \
-    && if [ -f /packed-package/package.json ]; then \
-        destination="/packed/$(node -p 'require("/packed-package/package.json").name.split("/").pop()')" \
-        && mkdir -p "$destination" \
-        && cd /packed-package \
-        && npm pack --ignore-scripts --pack-destination "$destination"; \
-    fi
 
 FROM node:26.13.0-slim@sha256:5adad64f9a1fca2d51972caa65983634c8a774eb300d72b20f7f2a0f60368072 AS llm-broker-builder
 RUN rm -rf /usr/local/lib/node_modules/npm
@@ -77,27 +61,9 @@ RUN npm ci --prefix /gateway-edge --ignore-scripts
 COPY scripts/ops/sync-local-file-deps.mjs /scripts/ops/sync-local-file-deps.mjs
 COPY octogee-api/tsconfig.json ./
 COPY octogee-api/src/ ./src/
-COPY --from=overlay / ./
 COPY gateway-edge/src/ /gateway-edge/src/
 
 RUN npm run build
-
-# Project code runs only in this deliberately narrow image. It contains the
-# fixed runner wrapper, archive validator, npm, and JSZip—no API routes, core
-# runtime, cloud SDKs, platform credentials, or production dependency tree.
-FROM node:26.13.0-slim@sha256:5adad64f9a1fca2d51972caa65983634c8a774eb300d72b20f7f2a0f60368072 AS project-runner
-ARG OS_PACKAGE_REFRESH=2026-11-11
-RUN test -n "$OS_PACKAGE_REFRESH" && apt-get update && apt-get upgrade -y \
-    && rm -rf /var/lib/apt/lists/* /usr/local/lib/node_modules/npm
-COPY --from=platform-npm /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
-WORKDIR /runner
-COPY --from=overlay runner/package.json runner/package-lock.json ./
-RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
-COPY --from=builder /octogee-api/dist/octogee-api/src/project-runner.js ./dist/octogee-api/src/project-runner.js
-COPY --from=builder /octogee-api/dist/octogee-api/src/lib/project-runs/archive.js ./dist/octogee-api/src/lib/project-runs/archive.js
-COPY --from=builder /octogee-api/dist/octogee-api/src/lib/project-runs/contracts.js ./dist/octogee-api/src/lib/project-runs/contracts.js
-USER node
-ENTRYPOINT ["node", "dist/octogee-api/src/project-runner.js"]
 
 # ── Runtime stage ────────────────────────────────────────────────────
 FROM node:26.13.0-slim@sha256:5adad64f9a1fca2d51972caa65983634c8a774eb300d72b20f7f2a0f60368072
@@ -117,7 +83,6 @@ COPY octogee-api/.npmrc octogee-api/package.json octogee-api/package-lock.json* 
 RUN npm ci --omit=dev --ignore-scripts
 RUN npm rebuild better-sqlite3 --foreground-scripts \
     && node -e "const Database = require('better-sqlite3'); const db = new Database(':memory:'); db.close()"
-COPY --from=overlay node_modules* ./node_modules/
 
 # Runtime module resolution note: the BUILDER stage installs gateway-edge
 # deps at /gateway-edge/node_modules so tsc can resolve npm packages
@@ -129,7 +94,6 @@ COPY --from=overlay node_modules* ./node_modules/
 # gateway-edge's. No /gateway-edge install here (was previously dead
 # weight + a silent divergence trap if the two package.jsons drifted).
 COPY --from=builder /octogee-api/dist ./dist
-COPY --from=packer /packed/ ./
 
 # Bake the build SHA into the image so the boot banner can report it.
 # Passed by Cloud Build via --build-arg BUILD_SHA=$_IMAGE_TAG. Without

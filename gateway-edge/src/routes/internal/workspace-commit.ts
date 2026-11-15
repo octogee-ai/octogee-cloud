@@ -20,7 +20,7 @@ import { verifyWorkspaceCommitProofViaBroker } from "../../lib/workspace-commit-
 import { divertWorktreeBinaries } from "../../lib/binary-diversion.js";
 import type { WorkspaceBlobTarget } from "../../lib/workspace-blob.js";
 
-const router = Router();
+const router: Router = Router();
 
 const DEFAULT_MESSAGE = "agent: workspace commit";
 const MAX_MESSAGE_LEN = 5_000;

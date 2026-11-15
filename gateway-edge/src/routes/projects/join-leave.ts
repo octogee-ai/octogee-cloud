@@ -9,7 +9,7 @@ import { logger } from "../../middleware/logging.js";
 import { getWorkspaceMmContext } from "../../lib/mattermost-context.js";
 import { withProject, type ProjectCtx } from "../../lib/withProject.js";
 
-const router = Router();
+const router: Router = Router();
 
 interface ProjectActor {
   mmUserId: string | undefined;

@@ -57,7 +57,7 @@ import {
 
 import { connectorDisconnected } from "../lib/connector-disconnect.js";
 
-const router = Router();
+const router: Router = Router();
 const connectorAuthenticationLimit = rateLimit({
   windowMs: 60_000,
   limit: 1200,

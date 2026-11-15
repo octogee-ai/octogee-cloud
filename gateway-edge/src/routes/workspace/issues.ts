@@ -23,7 +23,7 @@ import {
 } from "../../lib/issue-assets.js";
 import { parseMultipart, UploadTooLargeError } from "./upload.js";
 
-const router = Router();
+const router: Router = Router();
 const MAX_TITLE = 250;
 const MAX_BODY = 65_536;
 const MAX_COMMENT = 65_536;

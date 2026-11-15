@@ -23,7 +23,7 @@ import {
   type UserAgentModelDefault,
 } from "@octogee/shared/types/platform-config";
 
-const router = Router();
+const router: Router = Router();
 
 function agentIdParam(req: Request): string {
   const value = req.params.agentId;

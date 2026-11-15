@@ -38,7 +38,7 @@ import {
 // defense-in-depth over octogee-api tenant enforcement: it blocks cross-tenant Gitea key
 // replacement / repo mutation before any admin call is attempted.
 
-const router = Router();
+const router: Router = Router();
 router.use(requireInternalServiceAuth);
 
 // Our Gitea repo names are fixed platform repos or project slugs. Keep the

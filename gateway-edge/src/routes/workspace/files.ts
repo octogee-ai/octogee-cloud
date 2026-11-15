@@ -33,7 +33,7 @@ import {
   workspaceFileCacheKey,
 } from "./file-response-cache.js";
 
-const router = Router();
+const router: Router = Router();
 
 export interface RepoContentEntry {
   name: string;

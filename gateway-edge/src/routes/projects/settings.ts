@@ -34,7 +34,7 @@ function requestedProjectSettings(body: unknown): RequestedSettings {
   return Object.keys(value).length === 0 ? { ok: false, error: "No settings to change" } : { ok: true, value };
 }
 
-const router = Router();
+const router: Router = Router();
 
 router.patch("/:wid/:pid/settings", strictRateLimit, async (req: Request, res: Response) => {
   const { wid, pid } = req.params as { wid: string; pid: string };

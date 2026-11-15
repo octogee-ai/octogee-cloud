@@ -3,7 +3,7 @@ import type { Response } from "express";
 import { withFileTarget, type FileTarget } from "../../lib/fileTarget.js";
 import { fetchPulseReport } from "../../lib/pulse-ingest.js";
 
-const router = Router();
+const router: Router = Router();
 
 function requireProject(target: FileTarget, res: Response): boolean {
   if (!target.projectSlug) {

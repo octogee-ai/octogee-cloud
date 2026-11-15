@@ -173,7 +173,7 @@ installDefaultUserEntitlements();
 // Keep createApp() as the legacy cluster harness for route tests; the module
 // entrypoint below explicitly boots the production sidecar surface.
 const surface = opts.surface ?? "cluster";
-const app = express();
+const app: Express = express();
 // client → GCLB (appends client-ip, lb-ip) → gateway-router → this app
 app.set("trust proxy", 2);
 

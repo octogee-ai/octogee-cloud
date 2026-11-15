@@ -7,7 +7,7 @@ import { workspaceGiteaOrg, projectRepoName } from "@octogee/core/gitea-naming";
 import { logger } from "../../middleware/logging.js";
 import { withProject, type ProjectCtx } from "../../lib/withProject.js";
 
-const router = Router();
+const router: Router = Router();
 
 interface GuestActor {
   mmUserId: string | undefined;

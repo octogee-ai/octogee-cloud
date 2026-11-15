@@ -8,7 +8,7 @@ import {
 } from "./billing/byot.js";
 import subscriptionRoutes from "./byosub.js";
 
-const router = Router();
+const router: Router = Router();
 
 router.post("/", authenticationFailureLimit, requireAuthenticatedUid, authenticatedRequestLimit(30), requireActiveAccount, saveModelCredentialKey);
 router.delete("/", authenticationFailureLimit, requireAuthenticatedUid, authenticatedRequestLimit(30), requireActiveAccount, deleteModelCredentialKey);

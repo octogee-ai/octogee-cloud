@@ -26,7 +26,7 @@ function validCommand(value: unknown): value is NativeConnectorCommand {
 }
 
 export function createInternalConnectorApprovalRouter() {
-  const router = Router({ mergeParams: true });
+  const router: Router = Router({ mergeParams: true });
   router.post("/", clientRequestLimit(1200, true), requireByotSyncInternalAuth, async (req, res, next) => {
     try {
       const command = req.body?.command;

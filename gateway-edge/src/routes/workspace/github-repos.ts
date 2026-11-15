@@ -4,7 +4,7 @@ import { requireAdmin } from "../../middleware/auth.js";
 import { githubListRepos } from "../../lib/github.js";
 import { readConnectorAccessToken } from "../../lib/connector-tokens.js";
 
-const router = Router();
+const router: Router = Router();
 
 router.get("/github/repos", authenticationFailureLimit, requireAdmin, authenticatedRequestLimit(60), async (req, res, next) => {
   try {

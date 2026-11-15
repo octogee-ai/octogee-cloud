@@ -19,7 +19,7 @@ import {
   validateWorkspacePath,
 } from "./helpers.js";
 
-const router = Router();
+const router: Router = Router();
 const MAX_ARCHIVE_BYTES = 200 * 1024 * 1024;
 const MAX_ENTRY_BYTES = 50 * 1024 * 1024;
 const MAX_ENTRIES = 10000;

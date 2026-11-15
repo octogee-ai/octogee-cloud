@@ -62,7 +62,7 @@ import {
 import { userEntitlements } from "@octogee/shared/types/user-entitlements";
 import { readGatewayAuthorizationInStore } from "@octogee/core/gateway-live-release";
 
-const router = Router();
+const router: Router = Router();
 const BYOSUB_PROVIDER_ORDER: ByosubProvider[] = ["openai", "anthropic"];
 
 type SubscriptionRuntimeState = "ready" | "paused" | "activating" | "shared" | "unavailable";

@@ -8,10 +8,11 @@
     "strict": true,
     "esModuleInterop": true,
     "resolveJsonModule": true,
-    "declaration": false,
+    "declaration": true,
     "sourceMap": true,
     "skipLibCheck": true,
-    "noUnusedLocals": false
+    "noUnusedLocals": false,
+    "inlineSources": true
   },
   "include": [
     "src/**/*.ts",
@@ -21,8 +22,6 @@
     "src/__tests__",
     "node_modules",
     "dist",
-    "../gateway-edge/src/**/__tests__/**/*",
-    "../gateway-edge/src/chat-proxy/**",
-    "../gateway-edge/src/index.ts"
+    "../gateway-edge/src/**/__tests__/**/*"
   ]
 }

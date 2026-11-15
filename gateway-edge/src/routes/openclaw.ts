@@ -7,7 +7,7 @@ import { resolveActivityConversation } from "../lib/activity-conversation.js";
 import { isMattermostPostId } from '@octogee/shared/types/mattermost-session-route';
 import { isValidGatewayId } from "@octogee/shared/types/glm";
 
-const router = Router();
+const router: Router = Router();
 
 function isMattermostActivitySelection(value: unknown): value is { channelId: string; threadRootPostId?: string } {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;

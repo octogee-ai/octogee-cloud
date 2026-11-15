@@ -113,11 +113,14 @@ describe("directory dependency repository contract", () => {
 
   it("copies each packed dependency and consumer npm config before Docker installs", () => {
     const api = dockerfile("octogee-api/Dockerfile");
-    for (const source of ["core", "shared"]) {
-      expectBefore(api, `COPY ${source}/package.json`, "RUN npm ci --ignore-scripts");
-      expectBefore(api, `COPY ${source}/dist`, "RUN npm ci --ignore-scripts");
+    for (const stage of ["llm-broker-builder", "builder"]) {
+      for (const source of ["core", "shared"]) {
+        expectBefore(dockerStage(api, stage), `COPY ${source}/package.json`, "RUN npm ci --ignore-scripts");
+        expectBefore(dockerStage(api, stage), `COPY ${source}/dist`, "RUN npm ci --ignore-scripts");
+      }
     }
-    expectBefore(api, "COPY octogee-api/.npmrc", "RUN npm ci --ignore-scripts");
+    expectBefore(dockerStage(api, "llm-broker-builder"), "COPY llm-broker/.npmrc", "RUN npm ci --ignore-scripts");
+    expectBefore(dockerStage(api, "builder"), "COPY octogee-api/.npmrc", "RUN npm ci --ignore-scripts");
     expectBefore(api, "COPY gateway-edge/.npmrc", "RUN npm ci --prefix /gateway-edge --ignore-scripts");
     const apiRuntimeInstall = "RUN npm ci --omit=dev --ignore-scripts\nRUN npm rebuild";
     for (const source of ["core", "shared"]) {
@@ -125,7 +128,8 @@ describe("directory dependency repository contract", () => {
       expectLastBefore(api, `COPY ${source}/dist`, apiRuntimeInstall);
     }
     expectLastBefore(api, "COPY octogee-api/.npmrc", apiRuntimeInstall);
-    expectBefore(api, "COPY --from=overlay runner/package.json","RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund");
+    expectBefore(dockerStage(api, "builder"), "COPY --from=llm-broker-package / /", "RUN npm ci --ignore-scripts\n");
+    expectLastBefore(api, "COPY --from=llm-broker-package / /", apiRuntimeInstall);
 
     const edge = dockerfile("gateway-edge/Dockerfile");
     for (const source of ["core", "shared"]) {
@@ -147,16 +151,8 @@ describe("directory dependency repository contract", () => {
     expectBefore(glm, "COPY glm-controller/.npmrc", "RUN npm ci");
   });
 
-  it("lands only the product overlay's packed libraries over the API runtime install", () => {
-    const api = dockerfile("octogee-api/Dockerfile");
-    const runtime = api.slice(api.lastIndexOf("\nFROM "));
-    const overlayLibraries = "COPY --from=overlay node_modules* ./node_modules/";
-    expectBefore(runtime, "RUN npm ci --omit=dev --ignore-scripts\nRUN npm rebuild", overlayLibraries);
-    expect(runtime.match(/^COPY --from=overlay .*$/gm)).toEqual([overlayLibraries]);
-  });
-
-  it("builds the API image without the product tree", () => {
-    expect(dockerfile("octogee-api/Dockerfile")).not.toMatch(/--from=product\b/);
+  it("builds the API image without the product tree or an overlay", () => {
+    expect(dockerfile("octogee-api/Dockerfile")).not.toMatch(/--from=(?:product|overlay)\b/);
   });
 
   it("installs gateway dependencies from manifests and overlays freshly packed internal packages", () => {

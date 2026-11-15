@@ -43,7 +43,7 @@ export function createVmPasskeysRouter(options: VmPasskeysRouterOptions) {
   const resolveAccess = options.resolveAccess ?? resolveNativeAdminAccess;
   const tickets = options.tickets ?? createWsTicketStore<PasskeySession>();
   const log = options.log ?? ((message, meta) => logger.warn(message, meta));
-  const router = Router({ mergeParams: true });
+  const router: Router = Router({ mergeParams: true });
 
   async function authorize(req: Request, res: Response): Promise<{ gatewayId: string; authorization: string | undefined } | null> {
     const gatewayId = (req.params as { gatewayId?: string }).gatewayId;

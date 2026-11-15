@@ -7,7 +7,7 @@ import { platformStateStore } from '../../lib/platform-state.js';
 import { isTalkVoiceId } from '@octogee/shared/types/voice';
 import { projectAgentConfigured } from '@octogee/shared/types/project';
 
-const router = Router();
+const router: Router = Router();
 
 router.put('/:wid/:pid/agent/voice', strictRateLimit, async (req: Request, res: Response) => {
   const { wid, pid } = req.params as { wid: string; pid: string };

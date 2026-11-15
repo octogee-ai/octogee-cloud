@@ -13,7 +13,7 @@ import { provisionProjectRepo } from "./provisioning.js";
 import { projectRepoName } from "@octogee/core/gitea-naming";
 import { provisionProjectAgent } from "../../lib/project-agent-service.js";
 
-const router = Router();
+const router: Router = Router();
 
 type WorkspaceMmContext = NonNullable<Awaited<ReturnType<typeof getWorkspaceMmContext>>>;
 type RetryMattermostContext = WorkspaceMmContext & {

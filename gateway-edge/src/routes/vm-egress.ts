@@ -44,7 +44,7 @@ export function createVmEgressRouter(options: VmEgressRouterOptions) {
   const tickets = options.tickets ?? createWsTicketStore<EgressSession>();
   const log = options.log ?? ((message, meta) => logger.warn(message, meta));
   const { service } = options;
-  const router = Router({ mergeParams: true });
+  const router: Router = Router({ mergeParams: true });
 
   async function authorize(req: Request, res: Response): Promise<{ gatewayId: string; authorization: string | undefined } | null> {
     const gatewayId = (req.params as { gatewayId?: string }).gatewayId;

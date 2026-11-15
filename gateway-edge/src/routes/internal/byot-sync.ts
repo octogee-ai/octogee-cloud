@@ -8,7 +8,7 @@ import {
 import { acquireSystemConfigMutationLease } from "@octogee/core/system-config-mutation-lease";
 import { requireByotSyncInternalAuth } from "../../middleware/byot-sync-auth.js";
 
-const router = Router();
+const router: Router = Router();
 
 export function createLeasedModelConfigWriter(
   deps: {

@@ -11,7 +11,7 @@ import {
   type SessionChannelActor,
 } from "../../lib/channel-service.js";
 
-const router = Router();
+const router: Router = Router();
 
 function actorFrom(req: Request): SessionChannelActor {
   return {

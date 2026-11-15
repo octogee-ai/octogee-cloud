@@ -9,7 +9,7 @@ export function createChannelAgentReadinessRouter(deps = {
   read: readChannelAgentReadiness,
   localGatewayId: () => process.env.GATEWAY_ID,
 }) {
-  const router = Router({ mergeParams: true });
+  const router: Router = Router({ mergeParams: true });
   router.get<{ gatewayId: string; channelId: string }>("/:channelId", clientRequestLimit(600), async (req, res) => {
     const gatewayId = req.params.gatewayId;
     const channelId = req.params.channelId;

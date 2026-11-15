@@ -17,7 +17,7 @@ import {
   type WorkspaceRemoteSyncState,
 } from "../../lib/workspace-git.js";
 
-const router = Router();
+const router: Router = Router();
 
 const MAX_SAVE_BYTES = 1024 * 1024;
 

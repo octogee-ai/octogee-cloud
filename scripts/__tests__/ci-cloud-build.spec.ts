@@ -86,15 +86,17 @@ describe("public platform image plan", () => {
     ["has no stage for it", (context: string) => `FROM node\nCOPY --from=${context} / /packed/\n`, "octogee-api needs build contexts outside the platform tree"],
   ])("builds an image without its product context only when its Dockerfile %s", (_case, dockerfile, refusal) => {
     const fixture = mkdtempSync(join(tmpdir(), "cloud-build-contexts-"));
+    const definition = IMAGE_BUILDS["octogee-api"];
+    IMAGE_BUILDS["octogee-api"] = { ...definition, contexts: { "packed-package": "packed" } };
     try {
-      const contexts = Object.keys(IMAGE_BUILDS["octogee-api"].contexts ?? {});
-      expect(contexts.length).toBeGreaterThan(0);
+      const contexts = ["packed-package"];
       mkdirSync(join(fixture, "octogee-api"));
       writeFileSync(join(fixture, "octogee-api/Dockerfile"), contexts.map(dockerfile).join(""));
       const build = () => plan({ root: fixture, images: ["octogee-api"] });
       if (refusal) expect(build).toThrow(`${refusal}: ${contexts.join(", ")}`);
       else expect(build().target["octogee-api"].contexts).toBeUndefined();
     } finally {
+      IMAGE_BUILDS["octogee-api"] = definition;
       rmSync(fixture, { recursive: true, force: true });
     }
   });

@@ -16,7 +16,7 @@ import {
   validateWorkspacePath,
 } from "./helpers.js";
 
-const router = Router();
+const router: Router = Router();
 const MAX_IMPORT_BLOB_BYTES = 10 * 1024 * 1024;
 const SKIP_IMPORT_PATHS = [/^\.git\//, /node_modules\//, /^\.DS_Store$/, /^__MACOSX\//];
 

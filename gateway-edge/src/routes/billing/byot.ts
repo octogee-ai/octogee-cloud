@@ -14,7 +14,7 @@ import { byotSecretName, credentialVersionFingerprint, keyFingerprintFor } from 
 import { triggerGatewayModelCredentialSync } from "../../lib/byot-sync-trigger.js";
 import { userEntitlements } from "@octogee/shared/types/user-entitlements";
 
-const router = Router();
+const router: Router = Router();
 
 interface CredentialBody {
   apiKey?: unknown;
