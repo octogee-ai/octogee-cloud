@@ -39,7 +39,7 @@ describe("platform chart release values", () => {
     expect(values.llmBroker.image).toEqual(values["octogee-api"].image);
     expect(values["gateway-edge"].image.digest).toBe(digest(3));
     expect(values.global.computer.bridge.image.digest).toBe(digest(6));
-    expect(values["provisioning-service"].image).toEqual({ repository: `${registry}/provisioning-service`, tag: "v0.2.0", digest: digest(7) });
+    expect(values.provisioningService.image).toEqual({ repository: `${registry}/provisioning-service`, tag: "v0.2.0", digest: digest(7) });
   });
 
   it("gives the fleet controller the release's gateway images by commit tag, the form gateway image tags take", () => {

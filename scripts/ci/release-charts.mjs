@@ -36,7 +36,7 @@ export function platformReleaseValues({ tag, manifest, openclawSourceSha }) {
     "octogee-api": { image: image("octogee-api") },
     llmBroker: { image: image("octogee-api") },
     [GATEWAY_EDGE]: { image: image(GATEWAY_EDGE) },
-    "provisioning-service": { image: image("provisioning-service") },
+    provisioningService: { image: image("provisioning-service") },
     "glm-controller": {
       image: image("glm-controller"),
       platformRelease: {

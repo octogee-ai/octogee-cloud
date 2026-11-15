@@ -389,6 +389,31 @@ llmBroker:
       cpu: 500m
       memory: 512Mi
 
+# ── provisioning-service ─────────────────────────────────────────────────────
+# Converges each user's chat host and git host resources. Requires
+# gatewayFleet.tokenReviewRbac.enabled and the Secrets named below; see
+# charts/octogee/README.md.
+provisioningService:
+  enabled: false
+  image:
+    repository: ghcr.io/octogee-ai/octogee-cloud/provisioning-service
+    tag: ""
+    digest: ""
+  replicas: 2
+  port: 8080
+  serviceAccountName: provisioning-service
+  databaseSecretName: provisioning-service-postgres
+  credentialKeySecretName: provisioning-service-credential-key
+  chatHostUrl: ""
+  gitHostUrl: ""
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 384Mi
+
 npmCacheProxy:
   enabled: true
   port: 3005
