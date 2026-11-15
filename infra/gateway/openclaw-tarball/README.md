@@ -206,8 +206,10 @@ selection and rollout follow [Handbook 21](../../../../docs/handbook/21-deploy-a
 
 OpenClaw main `081748ca26e21d519506fd262c909320e91d2d1d` was frozen at fetch time
 for independent qualification. The overlay is
-`ade4f47af298d39b58585c20193bd7b5bb947533` on
-`ceckert/openclaw:codex/gateway-refresh-20261113-2`.
+`2188985128c3be6af0a9fd32966d6668787ac783` on
+`ceckert/openclaw:codex/gateway-refresh-20261113-3`. It is the
+`codex/gateway-refresh-20261113-2` overlay plus one commit, described under
+[Detached agent admission descriptors](#detached-agent-admission-descriptors).
 
 The frozen tip's [push CI](https://github.com/openclaw/openclaw/actions/runs/43558852998)
 passed `security-fast` and skipped 42 jobs, including the build, native tests,
@@ -606,6 +608,29 @@ retained-worker regression passes. Open PRs
 [#197010](https://github.com/openclaw/openclaw/pull/197010) address pool sizing,
 idle connections, and separate migration behavior.
 
+### Detached agent admission descriptors
+
+Detach keeps the agent's database registered, and session registry maintenance
+still reads registered stores. After detach fenced the database and retired its
+admission descriptor, the maintenance turn's admission probe opened a new
+process-lifetime identity descriptor on it. The departed agent's deleted
+database then stayed open until the Gateway restarted, and a user's move back
+to that shared gateway failed with "agent database files are still held open".
+The overlay's probe no longer opens an identity descriptor for a path the
+reader registry has fenced as deleted. Worker operation admission still does:
+re-creating a returning PostgreSQL agent admits its engine anchor before the
+roster revives the fence, and refusing that admission fails the return. A
+gateway regression detaches an agent, runs session maintenance, lists the
+process's open descriptors, then re-creates the agent and reads its history. It
+found one descriptor on the detached database before the fix and none after.
+Open issue [#195523](https://github.com/openclaw/openclaw/issues/195523)
+reports the config-reload variant. Open PR
+[#196215](https://github.com/openclaw/openclaw/pull/196215) refuses every
+retention of a fenced path, which would also refuse that re-creation. Remove
+the overlay when the selected base keeps no descriptor for a detached agent,
+still re-admits a returning PostgreSQL agent, and the regression passes without
+the overlay.
+
 ### Detach and activation-abort integration
 
 Read-only deletion authority checks avoid write transactions while preserving live
@@ -666,10 +691,21 @@ permission, handoff and recovery controls pass.
 
 The full package build used pinned pnpm 12.15.0 and the frozen lockfile.
 Its build-info commit matches the clean source. The root and Mattermost
-archives were packed sequentially from that build. Hosted islands, platform
-Browser resources and the PostgreSQL routine catalog use the same source.
+archives were packed sequentially from that build. The Mattermost archive is
+byte-identical to the `ade4f47` one, so its object is reused. Hosted islands,
+platform Browser resources and the PostgreSQL routine catalog use the same source.
 
-Production typechecks, focused lint, generated config checks, the
+At `2188985`, the descriptor regression and 44 neighbouring admission,
+retention and detach tests pass. Both npm distribution control runs pass 24
+of 24, and the pin-roll spec passes from `e9c9cd30`. On kind, a user moved off
+a shared gateway on this build after a Coach turn leaves no descriptor under
+their agent directory once session maintenance has run. They return to the
+same gateway, and its pod is not restarted; `pre-sync-state` completes and
+the agent answers in the Coach channel. That cluster had no model key, so the
+answer was the model sign-in notice. A shared → isolated → shared round trip
+needs an amd64 host.
+
+The `ade4f47` base qualified as follows. Production typechecks, focused lint, generated config checks, the
 overlay-specific line-cap ratchet, 60 focused restoration and reload tests,
 and 25 PostgreSQL conformance tests passed. The supersession fixture was rerun
 after correcting three test-only lint diagnostics. Aggregate `pnpm check`
@@ -683,11 +719,11 @@ Published with generation-zero preconditions and verified by exact-generation SH
 
 | Object | Generation | SHA-256 |
 | --- | --- | --- |
-| `openclaw-fork-f379b36e.tgz` | `1794637001507682` | `f379b36e188cae532feacff59b93d8db4a15764d77287323584bf81b651f679d` |
+| `openclaw-fork-1f70c833.tgz` | `1794747402786233` | `1f70c833c60db718277c90937ddc5c3e23e86046a33da88a3ada735091f19258` |
 | `openclaw-mattermost-0d915e4e.tgz` | `1794637057599256` | `0d915e4eca767e1d519c2832ef91b3de154215ceec5c3a448518c7d4bcf0e288` |
 
 The GitHub release mirrors these exact objects under
-[`gateway-ade4f47`](https://github.com/ceckert/openclaw/releases/tag/gateway-ade4f47).
+[`gateway-2188985`](https://github.com/ceckert/openclaw/releases/tag/gateway-2188985).
 
 ### Upstream contributions
 
