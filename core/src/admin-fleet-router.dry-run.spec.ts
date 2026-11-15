@@ -263,6 +263,30 @@ describe("every changing route", () => {
     "POST /users/:uid/unassign": { method: "post", path: "/users/uid-ada/unassign" },
     "PATCH /users/:uid/placement": { method: "patch", path: "/users/uid-ada/placement", body: { managedBy: "operator", gatewayId: null } },
     "POST /users/:uid/vm/replace": { method: "post", path: "/users/uid-ada/vm/replace", body: {} },
+    "POST /shared-gateways": {
+      method: "post",
+      path: "/shared-gateways",
+      body: { gatewayId: "shared-cccccccccccc", reason: "scale-out", automationState: { expectedSequence: null, replacements: [] } },
+    },
+    "POST /shared-gateways/:id/desired-status": {
+      method: "post",
+      path: "/shared-gateways/shared-b/desired-status",
+      body: { decision: "begin-drain", expectedUpdatedAt: 1, automationState: { expectedSequence: null, replacements: [] } },
+    },
+    "POST /shared-gateways/:id/retire": {
+      method: "post",
+      path: "/shared-gateways/shared-b/retire",
+      body: { expectedAutomationSequence: null, expectedUpdatedAt: 1 },
+    },
+    "POST /shared-gateways/replacements/:sourceGatewayId/finish": {
+      method: "post",
+      path: "/shared-gateways/replacements/shared-a/finish",
+      body: { departedGatewayId: "shared-a", expectedAutomationSequence: 1 },
+    },
+    "POST /shared-gateways/:id/add-operations/:operationId/complete": {
+      method: "post",
+      path: "/shared-gateways/shared-b/add-operations/op-1/complete",
+    },
   };
 
   function changingRoutes(router: Router): string[] {

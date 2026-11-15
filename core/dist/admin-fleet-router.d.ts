@@ -64,6 +64,7 @@ export interface FleetRouterDeps {
     releaseEnvironment?: "test" | "prod" | null;
     releaseAuthority?: CentralReleaseAuthority;
     platformArtifact?: GatewayArtifact;
+    controllerStartedAt?: number;
     readGatewayPodDiagnostics?: (gatewayId: string) => Promise<GatewayPodDiagnostics>;
     readGatewayPodDiagnosticsBatch?: (gatewayIds: readonly string[]) => Promise<Record<string, GatewayPodDiagnostics>>;
     requestNativeReturnSourceRecovery?: (input: {
