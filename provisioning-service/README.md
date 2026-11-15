@@ -120,4 +120,17 @@ npm test
 
 Tests that need PostgreSQL read `OCTOGEE_TEST_POSTGRES_DSN` and are skipped
 without it. `node ../scripts/ci/provisioning-service-postgres.mjs` starts a
-private PostgreSQL 16 and runs them, as the checks workflow does.
+private PostgreSQL 16 and runs them and the conformance suite, as the checks
+workflow does.
+
+## Conformance suite
+
+`npm run conformance` tests an implementation from outside, over HTTP only. It
+starts a fake TokenReview endpoint, empties the database named by
+`PROVISIONING_CONFORMANCE_DSN` (it runs `DROP OWNED BY CURRENT_USER`, so give it
+a database and a non-superuser role of its own), and starts the implementation
+with `PROVISIONING_CONFORMANCE_COMMAND` (default: this package's `src/main.ts`).
+The implementation receives the settings in the environment table above, with
+`PROVISIONING_HOST_ADAPTERS=fake`, `PROVISIONING_DB_SSLMODE=disable` and
+`PROVISIONING_TOKEN_REVIEW_URL` pointing at the fake. A `resourceVersion`
+newer than the service has issued answers `410`, like an expired one.

@@ -8,7 +8,7 @@ import { join, resolve } from "node:path";
 import pg from "pg";
 import type { UserProvisioningSpec } from "@octogee/shared/types/provisioning-service";
 
-export const dsn = process.env.OCTOGEE_TEST_POSTGRES_DSN;
+export const dsn = process.env.PROVISIONING_CONFORMANCE_DSN;
 export const NAMESPACE = "conformance";
 const AUDIENCE = "provisioning-service";
 const REVIEWER_TOKEN = "conformance-reviewer";
@@ -65,6 +65,16 @@ function startTokenReview(): Promise<Server> {
   return new Promise((resolveServer) => server.listen(0, "127.0.0.1", () => resolveServer(server)));
 }
 
+async function emptyDatabase(): Promise<void> {
+  const client = new pg.Client({ connectionString: dsn });
+  await client.connect();
+  try {
+    await client.query("DROP OWNED BY CURRENT_USER CASCADE");
+  } finally {
+    await client.end();
+  }
+}
+
 async function freePort(): Promise<number> {
   const server = createServer();
   await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", () => resolveListen()));
@@ -88,11 +98,8 @@ export interface Implementation {
 }
 
 export async function startImplementation(options: { replicas?: number } = {}): Promise<Implementation> {
-  if (!dsn) throw new Error("OCTOGEE_TEST_POSTGRES_DSN is required");
-  const admin = new pg.Client({ connectionString: dsn });
-  await admin.connect();
-  const database = `conformance_${randomBytes(6).toString("hex")}`;
-  await admin.query(`CREATE DATABASE "${database}"`);
+  if (!dsn) throw new Error("PROVISIONING_CONFORMANCE_DSN is required");
+  await emptyDatabase();
   const tokenReview = await startTokenReview();
   const directory = mkdtempSync(join(tmpdir(), "provisioning-conformance-"));
   const tokenFile = join(directory, "reviewer-token");
@@ -102,7 +109,7 @@ export async function startImplementation(options: { replicas?: number } = {}): 
   const environment = {
     PROVISIONING_DB_HOST: socketHost ?? target.hostname,
     PROVISIONING_DB_PORT: target.port || "5432",
-    PROVISIONING_DB_NAME: database,
+    PROVISIONING_DB_NAME: target.pathname.slice(1),
     PROVISIONING_DB_USER: decodeURIComponent(target.username),
     PROVISIONING_DB_PASSWORD: decodeURIComponent(target.password) || "unused",
     PROVISIONING_DB_SSLMODE: "disable",
@@ -113,7 +120,7 @@ export async function startImplementation(options: { replicas?: number } = {}): 
     PROVISIONING_HOST_ADAPTERS: "fake",
   };
   const command = process.env.PROVISIONING_CONFORMANCE_COMMAND ?? DEFAULT_COMMAND;
-  const cwd = resolve(import.meta.dirname, "..");
+  const cwd = resolve(import.meta.dirname, "../..");
   const replicas: Replica[] = [];
 
   const startReplica = async (): Promise<Replica> => {
@@ -172,8 +179,7 @@ export async function startImplementation(options: { replicas?: number } = {}): 
         replica.process.kill("SIGTERM");
       })));
       await new Promise<void>((resolveClose) => tokenReview.close(() => resolveClose()));
-      await admin.query(`DROP DATABASE IF EXISTS "${database}" WITH (FORCE)`);
-      await admin.end();
+      await emptyDatabase();
       rmSync(directory, { recursive: true, force: true });
     },
   };

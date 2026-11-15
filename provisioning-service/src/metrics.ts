@@ -5,7 +5,9 @@ type Labels = Record<string, string>;
 function labelText(labels: Labels): string {
   const entries = Object.entries(labels);
   if (entries.length === 0) return "";
-  return `{${entries.map(([key, value]) => `${key}="${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n")}"`).join(",")}}`;
+  const escape = (value: string) => value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n");
+  const pairs = entries.map(([key, value]) => key + '="' + escape(value) + '"');
+  return "{" + pairs.join(",") + "}";
 }
 
 export interface WorkSnapshot {

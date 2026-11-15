@@ -28,11 +28,15 @@ export function runProvisioningServicePostgresChecks() {
     server("pg_ctl", ["-D", data, "-l", join(directory, "server.log"), "-w", "-t", "30", "start"]);
     started = true;
     const connection = ["-h", socket, "-U", "postgres", "-v", "ON_ERROR_STOP=1"];
-    run(join(bin, "psql"), [...connection, "-d", "postgres", "-c", "CREATE ROLE provisioning_ci LOGIN NOSUPERUSER CREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"]);
+    run(join(bin, "psql"), [...connection, "-d", "postgres", "-c", "CREATE ROLE provisioning_ci LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"]);
     run(join(bin, "createdb"), ["-h", socket, "-U", "postgres", "-O", "provisioning_ci", "provisioning_ci"]);
-    const dsn = new URL("postgresql://provisioning_ci@localhost/provisioning_ci");
-    dsn.searchParams.set("host", socket);
-    const env = { ...process.env, OCTOGEE_TEST_POSTGRES_DSN: dsn.href };
+    run(join(bin, "createdb"), ["-h", socket, "-U", "postgres", "-O", "provisioning_ci", "provisioning_conformance"]);
+    const dsn = (database) => {
+      const url = new URL(`postgresql://provisioning_ci@localhost/${database}`);
+      url.searchParams.set("host", socket);
+      return url.href;
+    };
+    const env = { ...process.env, OCTOGEE_TEST_POSTGRES_DSN: dsn("provisioning_ci"), PROVISIONING_CONFORMANCE_DSN: dsn("provisioning_conformance") };
     const failures = [];
     try { run("npm", ["test", "--", "--maxWorkers=1", "--no-file-parallelism"], { cwd: service, env }); }
     catch (error) { failures.push(`Provisioning service tests failed: ${error.message}`); }

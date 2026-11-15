@@ -114,7 +114,8 @@ export async function dropSchema(schema: string): Promise<void> {
   const client = new pg.Client({ connectionString: dsn });
   await client.connect();
   try {
-    await client.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+    await client.query("SELECT set_config('provisioning_test.schema', $1, false)", [schema]);
+    await client.query("DO $$ BEGIN EXECUTE format('DROP SCHEMA IF EXISTS %I CASCADE', current_setting('provisioning_test.schema')); END $$");
   } finally {
     await client.end();
   }
