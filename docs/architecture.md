@@ -16,15 +16,15 @@ reference behind them.
 
 | Service | Directory | Runs as | What it does |
 | --- | --- | --- | --- |
-| Fleet controller | `fleet-controller/` | Deployment `glm-controller` | Owns the fleet: which gateways exist, which user is on which, and every move between them. Serves the Admin API that [`octogee-fleet`](https://github.com/octogee-ai/octogee-fleet) calls. Installs gateways with Helm, and creates the virtual machine when an isolated gateway runs on one. Writes an operations-journal entry for every change it makes. |
+| Fleet controller | [`fleet-controller/`](../fleet-controller/README.md) | Deployment `glm-controller` | Owns the fleet: which gateways exist, which user is on which, and every move between them. Serves the Admin API that [`octogee-fleet`](https://github.com/octogee-ai/octogee-fleet) calls. Installs gateways with Helm, and creates the virtual machine when an isolated gateway runs on one. Writes an operations-journal entry for every change it makes. |
 | Platform API | `platform-api/` | Deployment `octogee-api` | Serves most HTTP routes. Its fleet broker holds the Mattermost and Gitea admin credentials and sets users up on behalf of a gateway. |
 | LLM broker | `llm-broker/` | Deployment `llm-broker`, from the `llm-broker` image | Holds the model provider keys and meters every call. An agent calls it with a credential the platform issued to that agent. |
 | npm cache proxy | `platform-api/` (`src/npm-cache-proxy.ts`) | Deployment `octogee-npm-cache-proxy` | An npm registry proxy with a cache. |
 | Edge | `gateway-edge/` | Container `gateway-edge` in each gateway pod; Deployments `gateway-router` and `mattermost-callback-router` | One codebase, three roles. As a sidecar in each gateway pod it serves the user's workspace files and proxies the Mattermost WebSocket. As the gateway router it sends `/g/<gatewayId>/*` to that gateway's sidecar. As the Mattermost callback router it receives Mattermost's callbacks. |
-| Gateway image | `gateway/` | Container `gateway` in each gateway pod, one Helm release of `charts/octogee-gateway` per gateway | OpenClaw, the provisioner, and the platform's OpenClaw extensions under `gateway/extensions/platform/`. [OpenClaw compatibility](openclaw-compatibility.md) lists the patches the OpenClaw build carries. |
-| Provisioner | `scripts/entrypoints/provisioner.ts` | A process in the `gateway` container | When a user is assigned to the gateway it creates their Mattermost account, team, channels and agent bot, and their Gitea organization and `workspace` repository, all through the platform API's fleet broker. |
-| Isolated gateway VM image | `desktop/` | A Google Cloud virtual machine | The virtual machine image for an isolated gateway that runs on a VM, which adds a desktop. Google Cloud only today. |
-| VM bridge | `vm-bridge/` | Deployment `octogee-vm-bridge` | A TCP proxy through which a gateway on a virtual machine reaches the platform API, the LLM broker, the npm cache proxy, Mattermost and Gitea. Installed only when `global.computer.enabled` is set. |
+| Gateway image | [`gateway/`](../gateway/README.md) | Container `gateway` in each gateway pod, one Helm release of `charts/octogee-gateway` per gateway | OpenClaw, the provisioner, and the platform's OpenClaw extensions under `gateway/extensions/platform/`. [OpenClaw compatibility](openclaw-compatibility.md) lists the patches the OpenClaw build carries. |
+| Provisioner | [`scripts/entrypoints/provisioner.ts`](../scripts/README.md#the-provisioner) | A process in the `gateway` container | When a user is assigned to the gateway it creates their Mattermost account, team, channels and agent bot, and their Gitea organization and `workspace` repository, all through the platform API's fleet broker. |
+| Isolated gateway VM image | [`desktop/`](../desktop/README.md) | A Google Cloud virtual machine | The virtual machine image for an isolated gateway that runs on a VM, which adds a desktop. Google Cloud only today. |
+| VM bridge | [`vm-bridge/`](../vm-bridge/README.md) | Deployment `octogee-vm-bridge` | A TCP proxy through which a gateway on a virtual machine reaches the platform API, the LLM broker, the npm cache proxy, Mattermost and Gitea. Installed only when `global.computer.enabled` is set. |
 
 The names under "Runs as" are what `kubectl` shows. Two of them,
 `glm-controller` and `octogee-api`, are from before the directories were
@@ -32,11 +32,19 @@ renamed, and the images, service accounts and chart values keys of those two
 services use them too. [Legacy names](legacy-names.md) lists every name that
 keeps an earlier spelling, and the directory names a v0.1.0 checkout has.
 
-`core/` and `shared/` are libraries the services share: platform state, the
-secret store, chat and git host adapters, and types. `charts/` holds the Helm
-charts: `octogee` for the platform, `octogee-gateway` for one gateway, and
-`monitoring`. `terraform/` holds the Google Cloud modules, and `install.sh`
-with `deploy/` is the foundation installer.
+Each linked directory has a README that says what the component is
+responsible for, how it runs, what it talks to, how it is configured and how
+to build and test it on its own.
+
+[`core/`](../core/README.md) and [`shared/`](../shared/README.md) are
+libraries the services share: platform state, the secret store, chat and git
+host adapters, and types. [`core-testing/`](../core-testing/README.md) holds
+the test helpers for code built on core. [`scripts/`](../scripts/README.md)
+holds the gateway's boot steps and the provisioner, operator tools and CI.
+`charts/` holds the Helm charts: `octogee` for the platform,
+`octogee-gateway` for one gateway, and `monitoring`. `terraform/` holds the
+Google Cloud modules, and `install.sh` with `deploy/` is the foundation
+installer.
 
 ## Two kinds of gateway
 

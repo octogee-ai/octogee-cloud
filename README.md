@@ -251,6 +251,11 @@ product builds on top.
   `desktop` and `vm-bridge`; with `charts`, `terraform`, `templates` and
   `scripts` beside them. `tests/` holds the
   cross-package platform specs.
+- `fleet-controller`, `gateway`, `desktop`, `vm-bridge`, `scripts` and the
+  libraries `core`, `core-testing` and `shared` each have a README: what the
+  component does and does not do, how it runs, what it talks to, its
+  configuration, and how to build and test it.
+  [Architecture](docs/architecture.md#services) links them.
 - [Legacy names](docs/legacy-names.md) lists the stored names that keep
   their spelling from before the platform was published.
 
