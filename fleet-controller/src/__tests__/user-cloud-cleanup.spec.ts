@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { MalformedRecordError } from "@octogee/core/platform-state";
+import { MalformedRecordError, type PlatformStateStore } from "@octogee/core/platform-state";
 import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { buildUserCloudCleanupDeps } from "../index.js";
 import type { ProductUserLifecycle, UserDataScope } from "../lib/user-ops/user-lifecycle-product.js";
@@ -121,3 +121,76 @@ describe("user erasure cleanup with a product", () => {
     expect(data.deleteSignIn).toHaveBeenCalledWith("uid-ada");
   });
 });
+
+describe("user erasure and the provisioning service", () => {
+  const chatSecret = (personalToken: string) => ({
+    kind: "builder-mattermost" as const, secretId: "mattermost", projectId: null, personalToken, mattermostUserId: "mm-ada", createdAt: 1, rotatedAt: null,
+  });
+
+  function racingStore(records: Map<string, Record<string, unknown>>, race: { before?: boolean; after?: boolean }): PlatformStateStore {
+    const store = createDocumentFixtureStore(records);
+    const users = new Proxy(store.users.records, {
+      get(target, property, receiver) {
+        if (property !== "delete") return Reflect.get(target, property, receiver);
+        return async (uid: string) => {
+          if (race.before) await store.secrets.put(uid, chatSecret("written-before-the-record-delete"));
+          await target.delete(uid);
+          if (race.after) await store.secrets.put(uid, chatSecret("written-after-the-record-delete"));
+        };
+      },
+    });
+    return new Proxy(store, {
+      get(target, property, receiver) {
+        if (property === "users") return { ...target.users, records: users };
+        return Reflect.get(target, property, receiver);
+      },
+    });
+  }
+
+  it("deletes the user's provisioning before it erases any record", async () => {
+    stubCleanupEnvironment("gcs");
+    const store = createDocumentFixtureStore(adaRecords());
+    const order: string[] = [];
+    const data = productData();
+    vi.mocked(data.eraseRecords).mockImplementation(async () => { order.push("product records"); });
+    const provisioning = { deleteProvisioning: vi.fn(async (uid: string) => { order.push(`provisioning ${uid}`); }) };
+
+    await buildUserCloudCleanupDeps(store, vi.fn(), undefined, withProductData(data), provisioning).eraseUserRecords(SCOPE);
+
+    expect(order).toEqual(["provisioning uid-ada", "product records"]);
+  });
+
+  it("erases nothing while the provisioning delete fails", async () => {
+    stubCleanupEnvironment("gcs");
+    const records = adaRecords();
+    const provisioning = { deleteProvisioning: vi.fn(async () => { throw new Error("provisioning service unreachable"); }) };
+
+    await expect(buildUserCloudCleanupDeps(createDocumentFixtureStore(records), vi.fn(), undefined, null, provisioning).eraseUserRecords(SCOPE))
+      .rejects.toThrow("provisioning service unreachable");
+
+    expect(records.has("users/uid-ada")).toBe(true);
+  });
+
+  it("leaves no chat secret row when a mirror write lands between the secret deletion and the record deletion", async () => {
+    stubCleanupEnvironment("gcs");
+    const records = adaRecords();
+    const store = racingStore(records, { before: true });
+
+    await buildUserCloudCleanupDeps(store, vi.fn(), undefined, null).eraseUserRecords(SCOPE);
+
+    await expect(store.secrets.list("uid-ada")).resolves.toEqual([]);
+    expect([...records.keys()].filter((path) => path.startsWith("users/uid-ada"))).toEqual([]);
+  });
+
+  it("deletes a chat secret row written after the record deletion as its last step", async () => {
+    stubCleanupEnvironment("gcs");
+    const records = adaRecords();
+    const store = racingStore(records, { after: true });
+
+    await buildUserCloudCleanupDeps(store, vi.fn(), undefined, null).eraseUserRecords(SCOPE);
+
+    await expect(store.secrets.list("uid-ada")).resolves.toEqual([]);
+    expect([...records.keys()].filter((path) => path.startsWith("users/uid-ada"))).toEqual([]);
+  });
+});
+

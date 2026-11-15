@@ -225,7 +225,7 @@ import {
   verifiedDeletionJobPatch,
 } from "./lib/user-ops/deletion-job.js";
 import { buildAnonymousOperationalArchive } from "./lib/user-ops/deletion-archive.js";
-import { eraseUserRecords, remainingUserRecords } from "./lib/user-ops/user-platform-state-erasure.js";
+import { eraseUserRecords, remainingUserRecords, type ErasureProvisioning } from "./lib/user-ops/user-platform-state-erasure.js";
 import type {
   ProductContext,
   ProductUserLifecycle,
@@ -2536,8 +2536,7 @@ async function createControllerRuntime(
   store: PlatformStateStore,
   createHostingCleanup: ControllerProduct["createHostingCleanup"],
   userLifecycle: ProductUserLifecycle | null,
-  accounts: UserAccountReader,
-  documents: UserDocuments,
+  { accounts, documents, provisioning }: { accounts: UserAccountReader; documents: UserDocuments; provisioning: ErasureProvisioning | null },
 ): Promise<ControllerRuntime> {
   const runKubectl: KubectlSubprocess = (args, opts) => spawnKubectl(args, opts);
   const authSecretEnsurer = createAuthSecretEnsurer({
@@ -2705,6 +2704,7 @@ async function createControllerRuntime(
     deleteHostingSites: createHostingCleanup?.(log),
     userLifecycle,
     accounts,
+    provisioning,
   });
 
   const deps: ControllerDeps = {
@@ -2793,8 +2793,15 @@ export async function main(product: ControllerProduct): Promise<void> {
   });
   const userLifecycle = createUserLifecycle(product, store);
   const { userAccounts, accounts, documents, userDirectory, adminUserDetail, policyInputs } = controllerUserSeams(product, store, log);
+  const provisioning = createProvisioningServiceRuntime({
+    env: process.env,
+    store,
+    documents,
+    projection: product.provisioningProjection,
+    log,
+  });
   const { deps, fleetControllerPrivateKey, chartFingerprint } =
-    await createControllerRuntime(store, product.createHostingCleanup, userLifecycle, accounts, documents);
+    await createControllerRuntime(store, product.createHostingCleanup, userLifecycle, { accounts, documents, provisioning: provisioning?.client ?? null });
 
   log(
     `[glm-controller] boot sha=${process.env.BUILD_SHA ?? "unknown"} oc=${process.env.OPENCLAW_VERSION ?? "n/a"} fork=${process.env.OPENCLAW_FORK_SHA ?? "n/a"} node=${process.version} — namespace=${NAMESPACE} gatewayChart=${GATEWAY_CHART} chartFingerprint=${chartFingerprint.slice(0, 12)} chartDriftPolicy=release-gated valuesFile=${GATEWAY_VALUES_FILE}`,
@@ -2839,13 +2846,6 @@ export async function main(product: ControllerProduct): Promise<void> {
     googleIdentityFromEnvironment(process.env),
     operatorKeyIdentityFromEnvironment(process.env),
   ].filter((provider): provider is IdentityProvider => provider != null));
-  const provisioning = createProvisioningServiceRuntime({
-    env: process.env,
-    store: deps.store,
-    documents,
-    projection: product.provisioningProjection,
-    log,
-  });
   setProvisioningMetricsSource(provisioning?.renderMetrics ?? null);
   const stoppers = startControllerBackgroundTasks({
     addProductAdminRoutes: product.addAdminRoutes,
@@ -3081,9 +3081,10 @@ async function buildHandlers(
     deleteHostingSites?: HostingCleanup;
     userLifecycle: ProductUserLifecycle | null;
     accounts: UserAccountReader;
+    provisioning: ErasureProvisioning | null;
   },
 ): Promise<OperationHandlers> {
-  const { privateKey, modelKeySourceIssuer, store, deleteHostingSites, userLifecycle, accounts } = fleetOps;
+  const { privateKey, modelKeySourceIssuer, store, deleteHostingSites, userLifecycle, accounts, provisioning } = fleetOps;
   if (!privateKey) {
     throw new Error(
       "FLEET_CONTROLLER_PRIVATE_KEY is not set — required for migrate-customer. Refusing to start with stub handlers.",
@@ -3471,7 +3472,7 @@ async function buildHandlers(
   });
 
   const { deprovisionUser, suspendUser, eraseUser } = buildUserRemovalHandlers({
-    documents, store, logFn, kubeOps, privateKey, deleteHostingSites, userLifecycle, accounts,
+    documents, store, logFn, kubeOps, privateKey, deleteHostingSites, userLifecycle, accounts, provisioning,
   });
 
   const restartGateway = createRestartGatewayHandler({
@@ -3679,6 +3680,7 @@ export interface UserRemovalOptions {
   deleteHostingSites?: HostingCleanup;
   userLifecycle: ProductUserLifecycle | null;
   accounts: UserAccountReader;
+  provisioning: ErasureProvisioning | null;
 }
 
 function userDataScope(cleanup: UserCleanupContext, currentOperationId: string): UserDataScope {
@@ -3692,8 +3694,8 @@ function userDataScope(cleanup: UserCleanupContext, currentOperationId: string):
   };
 }
 
-function buildEraseUserHandler({ documents, store, logFn, kubeOps, privateKey, deleteHostingSites, userLifecycle }: UserRemovalOptions) {
-  const cloudCleanup = buildUserCloudCleanupDeps(store, logFn, deleteHostingSites, userLifecycle);
+function buildEraseUserHandler({ documents, store, logFn, kubeOps, privateKey, deleteHostingSites, userLifecycle, provisioning }: UserRemovalOptions) {
+  const cloudCleanup = buildUserCloudCleanupDeps(store, logFn, deleteHostingSites, userLifecycle, provisioning);
   const clusterAbsent = async (gatewayId: string) => {
     if (!await retiredSharedGatewayRuntimeAbsent(kubeOps, NAMESPACE, gatewayId, deploymentNameForInstance(gatewayId))) return false;
     const pvc = await spawnKubectl(["-n", NAMESPACE, "get", `pvc/octogee-gateway-${gatewayId}-data`, "--ignore-not-found=true", "-o", "name"]);
@@ -3901,11 +3903,11 @@ function requireEnv(name: string, why: string): string {
   return value;
 }
 
-function buildDeprovisionUserHandler({ store, logFn, kubeOps, privateKey, deleteHostingSites, userLifecycle, accounts }: UserRemovalOptions) {
+function buildDeprovisionUserHandler({ store, logFn, kubeOps, privateKey, deleteHostingSites, userLifecycle, accounts, provisioning }: UserRemovalOptions) {
   return createDeprovisionUserHandler({
     loadCleanupContext: (uid) => loadUserCleanupContext({ store, accounts, product: userLifecycle }, uid),
     unmountFromGateway: createUserDeletionUnmount(store, privateKey, logFn, kubeOps),
-    cloudCleanup: buildUserCloudCleanupDeps(store, logFn, deleteHostingSites, userLifecycle),
+    cloudCleanup: buildUserCloudCleanupDeps(store, logFn, deleteHostingSites, userLifecycle, provisioning),
     now: () => Date.now(),
     log: logFn,
   });
@@ -3947,6 +3949,7 @@ export function buildUserCloudCleanupDeps(
   logFn: (msg: string) => void,
   deleteHostingSites: HostingCleanup | undefined,
   userLifecycle: ProductUserLifecycle | null,
+  provisioning: ErasureProvisioning | null = null,
 ): NukeCloudDeps & {
   channels: Pick<ManagedChannelHost, "erase" | "userExists">;
   remainingUserStorage: (uid: string, slug: string) => Promise<string[]>;
@@ -3978,7 +3981,7 @@ export function buildUserCloudCleanupDeps(
       await productData?.eraseStorage(scope);
     },
     remainingUserStorage: async (uid, slug) => s3 === undefined ? [] : s3.remaining(uid, slug),
-    eraseUserRecords: (scope) => eraseUserRecords(store, productData, scope),
+    eraseUserRecords: (scope) => eraseUserRecords(store, productData, scope, provisioning),
     deleteCredentialSecrets: async (secretNames: string[]) => {
       for (const secretName of secretNames) await deleteSecret(secretName);
     },

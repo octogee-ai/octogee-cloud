@@ -1,7 +1,10 @@
 import type { PlatformStateStore, PlatformStateTransaction } from "@octogee/core/platform-state";
+import type { ProvisioningServiceClient } from "@octogee/core/provisioning-service-client";
 import type { ProductUserData, UserDataScope } from "./user-lifecycle-product.js";
 
 const PLATFORM_WRITE_BATCH_SIZE = 400;
+
+export type ErasureProvisioning = Pick<ProvisioningServiceClient, "deleteProvisioning">;
 
 type PlatformWrite = (transaction: PlatformStateTransaction) => Promise<void>;
 
@@ -66,9 +69,11 @@ export async function eraseUserRecords(
   store: PlatformStateStore,
   product: Pick<ProductUserData, "eraseRecords"> | undefined,
   scope: UserDataScope,
+  provisioning: ErasureProvisioning | null = null,
 ): Promise<void> {
   const { uid, slug, currentOperationId } = scope;
   const writes = platformStateReferenceDeletes(await platformStateReferences(store, uid, currentOperationId));
+  await provisioning?.deleteProvisioning(uid);
   await product?.eraseRecords(scope);
   for (let offset = 0; offset < writes.length; offset += PLATFORM_WRITE_BATCH_SIZE) {
     const chunk = writes.slice(offset, offset + PLATFORM_WRITE_BATCH_SIZE);
@@ -80,6 +85,7 @@ export async function eraseUserRecords(
   await store.workspaces.agentIdentities.delete(uid);
   if (slug) await store.workspaces.records.delete(slug);
   await store.users.records.delete(uid);
+  for (const secret of await store.secrets.list(uid)) await store.secrets.delete(uid, secret.secretId);
 }
 
 export async function remainingUserRecords(
