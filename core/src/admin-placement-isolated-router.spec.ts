@@ -355,7 +355,7 @@ describe("POST /isolated-gateways/:id/retire-owned", () => {
     ["the lease identity", { leaseId: "lease-two" }],
     ["the authority fence", { authoritativeGatewayId: "shared-green", authoritativeLeaseStatus: "returning" }],
     ["the zero-workload receipt", { zeroWorkloadRecoveryOperationId: `builder-recover-${TARGET}-g1` }],
-    ["the telemetry fence", { telemetryFenceOperationId: "builder-return-unknown", telemetryFenceStatus: "succeeded" }],
+    ["the telemetry fence", { telemetryFenceOperationId: `builder-return-${TARGET}-g1`, telemetryFenceStatus: "succeeded" }],
   ])("refuses a dry run on %s, as the real call does, and claims nothing", async (_name, fence) => {
     seed({ [`users/${OWNER}`]: user("shared-blue", lease({ status: "parked" })), [`gateways/${TARGET}`]: isolatedRoot() });
 
@@ -366,6 +366,36 @@ describe("POST /isolated-gateways/:id/retire-owned", () => {
     expect(planned.body.reason).toBe(real.body.reason);
     expect(docs.get(`gateways/${TARGET}`)?.desiredStatus).toBe("paused");
     expect(docs.has(`glmOperations/${RETIREMENT}`)).toBe(false);
+  });
+
+  it("answers 400 and writes nothing when the telemetry fence names another user's finished operation", async () => {
+    seed({
+      [`users/${OWNER}`]: user("shared-blue", lease({ status: "parked" })),
+      [`gateways/${TARGET}`]: isolatedRoot(),
+      "glmOperations/return-bob": { ...migration({ uid: "uid-bob", fromGatewayId: "bob-xs-1", toGatewayId: "shared-blue" }), status: "succeeded", completedAt: 40_000 },
+    });
+
+    const res = await retire({ ...body, telemetryFenceOperationId: "return-bob", telemetryFenceStatus: "succeeded" }).expect(400);
+
+    expect(res.body.error).toContain(`operationId return-bob is not an operation of ${OWNER} on ${TARGET} generation 1`);
+    expect(docs.get(`gateways/${TARGET}`)?.desiredStatus).toBe("paused");
+    expect(docs.has(`glmOperations/${RETIREMENT}`)).toBe(false);
+    expect(audits()).toEqual([]);
+  });
+
+  it.each([
+    ["the canonical return operation", `builder-return-${TARGET}-g1`],
+    ["an adopted return migration of the user on the gateway", "return-9"],
+  ])("retires behind %s once it has finished", async (_name, operationId) => {
+    seed({
+      [`users/${OWNER}`]: user("shared-blue", lease({ status: "parked" })),
+      [`gateways/${TARGET}`]: isolatedRoot(),
+      [`glmOperations/${operationId}`]: { ...migration({ uid: OWNER, fromGatewayId: TARGET, toGatewayId: "shared-blue" }), status: "succeeded", completedAt: 40_000 },
+    });
+
+    await retire({ ...body, telemetryFenceOperationId: operationId, telemetryFenceStatus: "succeeded" }).expect(200);
+
+    expect(docs.get(`gateways/${TARGET}`)).toMatchObject({ desiredStatus: "retired", retirementClaim: { operationId: RETIREMENT } });
   });
 
   it("plans a dry run without claiming", async () => {

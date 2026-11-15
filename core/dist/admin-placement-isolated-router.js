@@ -418,6 +418,9 @@ export function addAdminPlacementIsolatedRoutes(router, deps) {
         if (root === null || root.ownerUid !== input.uid || !root.builderSlug) {
             throw new PreconditionFailed(`gateway ${input.gatewayId} is not owned by ${input.uid}`);
         }
+        if (input.telemetryFenceOperationId !== undefined) {
+            await assertLeaseOperationId(deps.store, { ...input, operationId: input.telemetryFenceOperationId });
+        }
         const request = { ...input, builderSlug: root.builderSlug };
         return journal({
             req,

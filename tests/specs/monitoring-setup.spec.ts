@@ -265,6 +265,7 @@ describe("monitoring setup", () => {
       "gateway-edge",
       "gitea",
       "glm-controller",
+      "provisioning-service",
     ]));
     expect(names).not.toContain("mattermost");
   });
