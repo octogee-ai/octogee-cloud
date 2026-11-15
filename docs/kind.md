@@ -100,8 +100,13 @@ Start from the latest release. Its commit always has images:
 git checkout "$(gh release view -R octogee-ai/octogee-cloud --json tagName --jq .tagName)"
 ```
 
-Until the first release is out, or to run newer code, check out `main`'s newest
-built commit instead. Build main publishes a commit's images about 15 minutes
+A release's guides match that release. Once you have checked out a tag,
+follow `docs/kind.md` in your checkout, not the copy on `main`. v0.1.0 came
+before the source directories were renamed, so
+[its directories have their earlier names](legacy-names.md#source-directories-in-v010).
+
+To run newer code than the latest release, check out `main`'s newest built
+commit instead. Build main publishes a commit's images about 15 minutes
 after it reaches `main`. A running build always finishes, and only the newest
 push waits behind it, so a commit pushed in between can end up with no images.
 This checks out the newest `main` commit whose Build main succeeded:
@@ -223,7 +228,9 @@ export OCTOGEE_FLEET_CONFIG="$STATE/fleet-config.json"
 ```
 
 The command line reaches the Admin API through a port-forward that must keep
-running. Open a second terminal, set the two variables there, and start it:
+running. The fleet controller serves the Admin API, and its Service is named
+`glm-controller`, a [name from before the rename](legacy-names.md#storage-and-images).
+Open a second terminal, set the two variables there, and start it:
 
 ```bash
 kubectl --kubeconfig="$STATE/kubeconfig" --context=kind-octogee -n octogee-local \
@@ -396,7 +403,8 @@ There are two kinds of token:
   The user then creates one under **Profile > Security > Personal Access
   Tokens**, and it lasts until they revoke it.
 
-Forward the API in a terminal of its own, then call it:
+Forward the API in a terminal of its own, then call it. Its Service keeps the
+earlier name `octogee-api`:
 
 ```bash
 kubectl --kubeconfig="$STATE/kubeconfig" --context=kind-octogee -n octogee-local \

@@ -47,3 +47,23 @@ Stored values that a rename can still reach, such as operation kinds, the
 gateway class and Admin API fields, are not on this page. They move to a
 neutral name over one release that reads both spellings, and the release after
 it stops reading the old one.
+
+## Source directories in v0.1.0
+
+The source directories were renamed after v0.1.0, so that each is named after
+the component it holds. A checkout of v0.1.0, and commits and links from before
+15 November 2026, use the earlier names:
+
+| In v0.1.0 | Now |
+| --- | --- |
+| `glm-controller/` | `fleet-controller/` |
+| `octogee-api/` | `platform-api/` |
+| `helm/` | `charts/` |
+| `infra/gateway/` | `gateway/` |
+| `infra/desktop/` | `desktop/` |
+| `infra/vm-bridge/` | `vm-bridge/` |
+| `infra/cloud-sql/` | `deploy/cloud-sql/` |
+| `scripts/entrypoints/fleet-controller.ts` | `scripts/entrypoints/provisioner.ts` |
+
+The guides and scripts in a checkout match that checkout. When you install a
+release, follow the guides at its tag.

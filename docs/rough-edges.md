@@ -94,8 +94,7 @@ call to the edge:
 - `gateway/` keeps `setup.sh`, `docker-compose.yml` and `.env.example`,
   a single-gateway Docker setup from before the platform existed. They
   describe Firebase and are not maintained.
-- Some image READMEs were written as working notes and link to
-  documents that are not in this repository:
+- Some image READMEs are still working notes, not documentation:
   `desktop/README.md`, `desktop/image/README.md` and
   `gateway/openclaw-tarball/README.md`.
 - Test fixtures use my own handle and the hosted service's hostnames.
