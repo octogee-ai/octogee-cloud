@@ -26,8 +26,6 @@
     "acceptance/",
     "artifact-worker/",
     "ops-agent/",
-    "platform/core/src/testing/firestore-store/",
-    "platform/core/dist/testing/firestore-store/",
     "functions/"
   ],
   "ratchet": [],

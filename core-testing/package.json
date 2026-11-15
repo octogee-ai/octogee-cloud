@@ -1,0 +1,113 @@
+{
+  "name": "@octogee/core-testing",
+  "version": "1.0.0",
+  "description": "Test helpers for code built on @octogee/core: an in-memory platform state store, scheduler custody fakes and Admin API route harnesses.",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    "./journal-store": {
+      "types": "./dist/journal-store.d.ts",
+      "default": "./dist/journal-store.js"
+    },
+    "./cron-custody": {
+      "types": "./dist/cron-custody.d.ts",
+      "default": "./dist/cron-custody.js"
+    },
+    "./firestore-user-accounts": {
+      "types": "./dist/firestore-user-accounts.d.ts",
+      "default": "./dist/firestore-user-accounts.js"
+    },
+    "./admin-dry-run-app": {
+      "types": "./dist/admin-dry-run-app.d.ts",
+      "default": "./dist/admin-dry-run-app.js"
+    },
+    "./admin-fleet-releases-app": {
+      "types": "./dist/admin-fleet-releases-app.d.ts",
+      "default": "./dist/admin-fleet-releases-app.js"
+    },
+    "./admin-fleet-route-app": {
+      "types": "./dist/admin-fleet-route-app.d.ts",
+      "default": "./dist/admin-fleet-route-app.js"
+    }
+  },
+  "typesVersions": {
+    "*": {
+      "journal-store": [
+        "dist/journal-store.d.ts"
+      ],
+      "cron-custody": [
+        "dist/cron-custody.d.ts"
+      ],
+      "firestore-user-accounts": [
+        "dist/firestore-user-accounts.d.ts"
+      ],
+      "admin-dry-run-app": [
+        "dist/admin-dry-run-app.d.ts"
+      ],
+      "admin-fleet-releases-app": [
+        "dist/admin-fleet-releases-app.d.ts"
+      ],
+      "admin-fleet-route-app": [
+        "dist/admin-fleet-route-app.d.ts"
+      ]
+    }
+  },
+  "scripts": {
+    "prebuild": "node ../scripts/ops/sync-local-file-deps.mjs --consumer .",
+    "build": "rm -rf dist && tsc -p tsconfig.json",
+    "pretypecheck": "node ../scripts/ops/sync-local-file-deps.mjs --consumer .",
+    "typecheck": "tsc --noEmit -p tsconfig.spec.json",
+    "pretest": "node ../scripts/ops/sync-local-file-deps.mjs --consumer .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@types/express": "^5.0.6",
+    "express": "^5.3.0"
+  },
+  "overrides": {
+    "brace-expansion@>=2.0.0 <3.0.0": "2.1.7",
+    "fast-xml-parser": "^5.10.1",
+    "qs": "^6.17.0",
+    "uuid": "^11.1.1",
+    "postcss": "8.5.25",
+    "rimraf@>=4.2.0 <6.1.4": "^6.1.4"
+  },
+  "devDependencies": {
+    "@octogee/core": "file:../core",
+    "@octogee/shared": "file:../shared",
+    "@types/supertest": "^7.2.1",
+    "firebase-admin": "^14.5.0",
+    "supertest": "^7.3.2",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.12"
+  },
+  "peerDependencies": {
+    "@octogee/core": "^1.0.0",
+    "@octogee/shared": "^1.0.0",
+    "@types/supertest": "^7.0.0",
+    "firebase-admin": "^14.0.0",
+    "supertest": "^7.0.0",
+    "vitest": "^4.0.0 || ^5.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@octogee/core": {
+      "optional": true
+    },
+    "@types/supertest": {
+      "optional": true
+    },
+    "firebase-admin": {
+      "optional": true
+    },
+    "supertest": {
+      "optional": true
+    },
+    "vitest": {
+      "optional": true
+    }
+  }
+}

@@ -1,7 +1,7 @@
 import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { UserCredentialRejected, type UserIdentityProvider } from "@octogee/core/user-identity-provider";
 
 const logged = vi.hoisted(() => ({ error: vi.fn(), warn: vi.fn(), info: vi.fn() }));

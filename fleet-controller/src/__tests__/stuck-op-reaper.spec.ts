@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import type { PlatformStateStore } from "@octogee/core/platform-state";
-import { createJournalFixtureStore, fixtureDocumentsAt, journalRowsAtPaths } from "@octogee/core/testing/journal-store";
+import { createJournalFixtureStore, fixtureDocumentsAt, journalRowsAtPaths } from "@octogee/core-testing/journal-store";
 import { MIGRATION_TRANSFER_LEASE_MS } from "@octogee/shared/types/fleet-controller";
 import type { Operation, OperationAttemptRecord, OperationStep, SchedulerHandoffState } from "@octogee/shared/types/glm";
 import { recoverControllerOrphanedOperations, runStuckOpReaperTick } from "../stuck-op-reaper.js";

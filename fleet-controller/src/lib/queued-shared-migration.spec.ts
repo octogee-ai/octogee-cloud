@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { queuedSharedMigrationOwnsSourceInStore } from "./queued-shared-migration.js";
 
 function fixture(migrationId: string) {

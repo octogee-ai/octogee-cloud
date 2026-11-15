@@ -2,6 +2,8 @@ node_modules/
 dist/
 !core/dist/
 !core/dist/**
+!core-testing/dist/
+!core-testing/dist/**
 !shared/dist/
 !shared/dist/**
 target/

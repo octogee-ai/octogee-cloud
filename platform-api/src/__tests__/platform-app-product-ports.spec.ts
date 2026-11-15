@@ -3,7 +3,7 @@ import { staticUserEntitlements } from "@octogee/shared/types/user-entitlements"
 import type { ProductRuntime } from "../app.js";
 
 vi.mock("../../../gateway-edge/src/lib/platform-state.js", async (importOriginal) => {
-  const { createDocumentFixtureStore } = await import("@octogee/core/testing/journal-store");
+  const { createDocumentFixtureStore } = await import("@octogee/core-testing/journal-store");
   return {
     ...(await importOriginal<typeof import("../../../gateway-edge/src/lib/platform-state.js")>()),
     platformStateStore: createDocumentFixtureStore(new Map()),

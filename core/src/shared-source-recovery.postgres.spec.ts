@@ -5,7 +5,7 @@ import { assertSharedSourceRecoveryPredecessor, readPostgresSourceAgentStores, r
 import { buildOperationAuditIntent, operationAuditMutationFingerprint } from "./operation-audit.js";
 import { MalformedRecordError } from "./platform-state/errors.js";
 import type { PlatformStateTransaction } from "./platform-state/store.js";
-import { createDocumentFixtureStore } from "./testing/journal-store.js";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 const identity: SourceRecoveryAssignment = { uid: "owner", slug: "livefixture", agentId: "octogee-livefixture-coach", assignmentEpoch: 7,
   assignment: { uid: "owner", slug: "livefixture", gatewayId: "shared-old", source: "onboarding", state: "serving", epoch: 7,
     createdAt: 1, updatedAt: 1, updatedByOperationId: null } };

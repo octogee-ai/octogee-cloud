@@ -18,7 +18,7 @@ const state: {
 } = { store: {} };
 
 vi.mock("@octogee/core/platform-state", async (importOriginal) => {
-  const { createJournalFixtureStore, fixtureDocumentsAt } = await import("@octogee/core/testing/journal-store");
+  const { createJournalFixtureStore, fixtureDocumentsAt } = await import("@octogee/core-testing/journal-store");
   const documents = () => fixtureDocumentsAt(state.store);
   return {
     ...(await importOriginal<typeof import("@octogee/core/platform-state")>()),

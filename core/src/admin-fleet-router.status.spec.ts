@@ -6,8 +6,8 @@ import { GATEWAY_UNREACHABLE_AFTER_MS } from "@octogee/shared/types/fleet-contro
 import { GLM_GATEWAYS_COLLECTION, GLM_OPERATIONS_COLLECTION } from "@octogee/shared/types/glm";
 
 import { addAdminFleetRoutes } from "./admin-fleet-router.js";
-import { createDocumentFixtureStore, FIXTURE_SIZING_PROFILES } from "./testing/journal-store.js";
-import { firestoreUserAccountReader } from "./testing/firestore-user-accounts.js";
+import { createDocumentFixtureStore, FIXTURE_SIZING_PROFILES } from "@octogee/core-testing/journal-store";
+import { firestoreUserAccountReader } from "@octogee/core-testing/firestore-user-accounts";
 
 type Row = Record<string, unknown>;
 type Seed = Record<string, Row>;

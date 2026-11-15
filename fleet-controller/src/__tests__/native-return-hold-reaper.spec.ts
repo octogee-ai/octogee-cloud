@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { MalformedRecordError } from "@octogee/core/platform-state";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { runNativeReturnHoldReaperTick } from "../native-return-hold-reaper.js";
 
 const NOW = 1_700_000_000_000;

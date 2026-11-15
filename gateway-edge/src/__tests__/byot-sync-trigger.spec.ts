@@ -14,7 +14,7 @@ vi.mock("../lib/internal-fetch", () => ({
 const { docs } = vi.hoisted(() => ({ docs: {} as Record<string, Record<string, unknown> | undefined> }));
 
 vi.mock("../lib/platform-state", async () => {
-  const { createDocumentFixtureStore } = await import("@octogee/core/testing/journal-store");
+  const { createDocumentFixtureStore } = await import("@octogee/core-testing/journal-store");
   return { platformStateStore: createDocumentFixtureStore(docs) };
 });
 

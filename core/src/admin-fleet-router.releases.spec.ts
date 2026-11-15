@@ -14,7 +14,7 @@ import {
   seedServingGateway,
   sharedPayload,
   userAuthRecord,
-} from "./testing/admin-fleet-releases-app.js";
+} from "@octogee/core-testing/admin-fleet-releases-app";
 import type {
   CentralReleaseAuthority,
   ReleaseDigestManifest,

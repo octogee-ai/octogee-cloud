@@ -9,7 +9,7 @@ import {
   OPERATION_QUEUE_DRAIN_MS_DEFAULT,
 } from "../index";
 import type { OperationHandler, OperationHandlers } from "../operation-router";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { MissingRecordError, type PlatformStateStore, type WatchEvent, type WatchListener } from "@octogee/core/platform-state";
 import { resumeOrphanedRunningOps } from "../resume-orphaned-ops.js";
 import { operationNeedsDurableRestartResume } from "../operation-retry.js";

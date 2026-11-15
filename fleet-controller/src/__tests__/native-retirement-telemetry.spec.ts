@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { MalformedRecordError } from "@octogee/core/platform-state";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { pausedIsolatedRetirementSourceFencedOff } from "../lib/native-retirement-telemetry.js";
 import type { GatewayVmDescription } from "../lib/compute-vm.js";
 

@@ -3,7 +3,7 @@ import request from "supertest";
 import { describe, expect, it } from "vitest";
 
 import { createTenantEnforcementMiddleware } from "../middleware/tenant-enforcement.js";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { createGatewayVmContextRoutes } from "./gateway-vm-context.js";
 
 function gatewayRoot() {

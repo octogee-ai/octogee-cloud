@@ -1,5 +1,5 @@
 import type { PlatformStateStore } from "@octogee/core/platform-state";
-import { createJournalFixtureStore, journalRowsAtPaths, type JournalFixtureOptions } from "@octogee/core/testing/journal-store";
+import { createJournalFixtureStore, journalRowsAtPaths, type JournalFixtureOptions } from "@octogee/core-testing/journal-store";
 
 const journalFixturesByDb = new WeakMap<object, { docs: Map<string, Record<string, unknown>>; options: JournalFixtureOptions }>();
 

@@ -2,7 +2,7 @@ import express from "express";
 import request from "supertest";
 import { describe, expect, it } from "vitest";
 import type { BoundTenant } from "../lib/sa-to-tenant.js";
-import { createJournalFixtureStore, fixtureDocumentsAt, journalRowsAtPaths } from "@octogee/core/testing/journal-store";
+import { createJournalFixtureStore, fixtureDocumentsAt, journalRowsAtPaths } from "@octogee/core-testing/journal-store";
 import { RecordingDocuments } from "../test-helpers/recording-documents.js";
 import { createFleetBrokerRoutes } from "./fleet-broker.js";
 

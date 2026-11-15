@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createJournalFixtureStore, fixtureDocumentsAt, journalRowsAtPaths } from "@octogee/core/testing/journal-store";
+import { createJournalFixtureStore, fixtureDocumentsAt, journalRowsAtPaths } from "@octogee/core-testing/journal-store";
 import { prepareNativeVmReturn, releaseNativeReturnSourceRecoveryHold } from "./native-vm-return.js";
 
 const input = { fromGatewayId: "native", toGatewayId: "shared", uid: "alice-id", slug: "alice", operationId: "return-1", claimedStartedAt: 900 };

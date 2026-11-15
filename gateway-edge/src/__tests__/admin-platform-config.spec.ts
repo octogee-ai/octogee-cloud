@@ -10,7 +10,7 @@ const queryDocs: Record<string, Array<{ id: string; data: Record<string, unknown
 const aggregateCalls: string[] = [];
 
 vi.mock("../lib/platform-state", async () => {
-  const { createDocumentFixtureStore } = await import("@octogee/core/testing/journal-store");
+  const { createDocumentFixtureStore } = await import("@octogee/core-testing/journal-store");
   return { platformStateStore: createDocumentFixtureStore(platformDocs) };
 });
 

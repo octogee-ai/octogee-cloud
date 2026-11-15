@@ -1,7 +1,7 @@
 import express from "express";
 import request from "supertest";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { createChannelReadinessAuthorizationBrokerRoutes } from "./channel-agent-readiness-authorization-broker.js";
 
 afterEach(() => vi.restoreAllMocks());

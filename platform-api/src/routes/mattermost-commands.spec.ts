@@ -2,7 +2,7 @@ import { generateKeyPairSync } from "node:crypto";
 import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import type { PlatformStateStore } from "@octogee/core/platform-state";
 import { signMattermostCommandRequest } from "../../../gateway-edge/src/agent-control-callback-router.js";
 import { RecordingDocuments } from "../test-helpers/recording-documents.js";

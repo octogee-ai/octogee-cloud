@@ -21,7 +21,7 @@ import {
   createJournalFixtureStore,
   fixtureDocumentsAt,
   type FixtureDocuments,
-} from "@octogee/core/testing/journal-store";
+} from "@octogee/core-testing/journal-store";
 import {
   createHttpServer,
   type HttpServerDeps,

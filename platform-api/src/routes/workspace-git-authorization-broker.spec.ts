@@ -2,7 +2,7 @@ import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PlatformStateStore } from "@octogee/core/platform-state";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 
 import { createWorkspaceGitAuthorizationBrokerRoutes } from "./workspace-git-authorization-broker.js";
 

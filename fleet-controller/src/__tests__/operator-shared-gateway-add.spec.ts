@@ -8,7 +8,7 @@ import {
   type ReleaseDigestManifest,
 } from "@octogee/core/artifact-registry";
 import type { GatewayArtifact } from "@octogee/core/gateway-live-release";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { noUserAccounts } from "@octogee/core/user-account";
 import { isReleasePayload, type ReleasePayload } from "@octogee/shared/types/gateway-releases";
 import { gatewayUpsertOptsFromRelease, type DurableGateway } from "../converge-gateway.js";

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PlatformStateStore, UserAccountRecord } from "@octogee/core/platform-state";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { controllerUserSeams, readMigrationUserSnapshot } from "../index.js";
 import { platformStateUserDocuments, userDocumentsSizingKeyReader, type UserDocuments } from "../user-documents.js";
 

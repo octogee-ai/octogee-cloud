@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { MalformedRecordError } from "@octogee/core/platform-state";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { resolveRedeemGatewayUrl } from "./openclaw-runtime-broker.js";
 
 const LEGACY_URL = "ws://retired-gateway.octogee-test.svc.cluster.local:18789";

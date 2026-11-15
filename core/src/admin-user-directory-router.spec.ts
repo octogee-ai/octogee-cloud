@@ -9,7 +9,7 @@ import {
   type AdminUserDirectoryRouterDeps,
 } from "./admin-user-directory-router.js";
 import { noUserAccounts } from "./user-account.js";
-import { createDocumentFixtureStore } from "./testing/journal-store.js";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 
 type DocData = Record<string, unknown>;
 type DocStore = Map<string, DocData>;

@@ -24,7 +24,7 @@ vi.mock("../model-credentials/provider-key-format.js", async (original) => ({
 vi.mock("../model-credentials/provider-probe.js", () => ({ probeProviderKey: async () => ({ ok: true }) }));
 vi.mock("../lib/byot-sync-trigger.js", () => ({ triggerGatewayModelCredentialSync: h.triggerSync }));
 
-const { createDocumentFixtureStore } = await import("@octogee/core/testing/journal-store");
+const { createDocumentFixtureStore } = await import("@octogee/core-testing/journal-store");
 const { saveModelCredentialKey, deleteModelCredentialKey } = await import("../routes/billing/byot.js");
 
 function app() {

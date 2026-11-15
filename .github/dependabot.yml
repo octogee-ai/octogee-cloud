@@ -5,6 +5,7 @@ updates:
       - /
       - /core
       - /core/src/templates/project-seeds/vite-static
+      - /core-testing
       - /gateway-edge
       - /fleet-controller
       - /gateway/extensions/platform/octogee-access-tools

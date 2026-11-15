@@ -83,7 +83,7 @@ const { records } = vi.hoisted(() => {
 });
 
 vi.mock("@octogee/core/platform-state", async (importOriginal) => {
-  const { createDocumentFixtureStore } = await import("@octogee/core/testing/journal-store");
+  const { createDocumentFixtureStore } = await import("@octogee/core-testing/journal-store");
   return {
     ...(await importOriginal<typeof import("@octogee/core/platform-state")>()),
     platformStateStoreFromEnvironment: () => createDocumentFixtureStore(records),

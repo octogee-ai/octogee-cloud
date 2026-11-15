@@ -28,6 +28,7 @@ lockfile, and installs, typechecks and tests on its own.
 
 ```
 core/              @octogee/core: shared runtime (platform state, secret store, chat and git hosts)
+core-testing/      @octogee/core-testing: test helpers for code built on core (in-memory platform state, route harnesses)
 shared/            @octogee/shared: types and small server helpers
 fleet-controller/  the fleet controller and its Admin API: placement, migration, gateway rollout
 platform-api/      the platform API, plus the LLM broker and npm cache proxy apps
@@ -44,7 +45,7 @@ install.sh, deploy/  the foundation installer: one stock OpenClaw gateway with c
 docs/              start at docs/getting-started.md
 ```
 
-`core` and `shared` commit their built `dist/`. Other packages
+`core`, `core-testing` and `shared` commit their built `dist/`. Other packages
 install them as `file:` dependencies, so build and commit `dist/` with any
 change to their source. The OpenClaw build the gateway image uses is pinned in
 `gateway/openclaw-tarball/current.json`.

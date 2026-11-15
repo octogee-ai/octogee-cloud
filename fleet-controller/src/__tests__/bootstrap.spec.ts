@@ -4,7 +4,7 @@ import {
   bootstrapGlmGateways,
   versionFromImageTag,
 } from "../index";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import type { AuthSecretEnsurer } from "../auth-secret-ensurer";
 import { createLoggingHelmRunner } from "../helm-runner";
 import { operationHandlers } from "./fixtures/operation-handlers";

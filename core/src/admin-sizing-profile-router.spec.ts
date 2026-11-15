@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { addAdminSizingProfileRoutes } from "./admin-sizing-profile-router.js";
 import { resolveIsolatedSizingProfile } from "./operator-isolated-gateway.js";
-import { createDocumentFixtureStore, FIXTURE_SIZING_PROFILES } from "./testing/journal-store.js";
+import { createDocumentFixtureStore, FIXTURE_SIZING_PROFILES } from "@octogee/core-testing/journal-store";
 
 type Row = Record<string, unknown>;
 

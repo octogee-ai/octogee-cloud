@@ -24,7 +24,7 @@ vi.mock("@octogee/shared/types/user-entitlements", () => ({
   userEntitlements: () => ({ policy: () => ({ modelAccess: "catalog" }), previousImageFields: () => ({}), pickInputs: () => ({}) }),
 }));
 
-const { createDocumentFixtureStore } = await import("@octogee/core/testing/journal-store");
+const { createDocumentFixtureStore } = await import("@octogee/core-testing/journal-store");
 const { default: routes } = await import("../routes/agent-models.js");
 const app = express();
 app.use(express.json());

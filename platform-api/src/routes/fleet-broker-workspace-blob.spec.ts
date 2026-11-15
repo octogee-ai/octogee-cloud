@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("../../../gateway-edge/src/lib/platform-state.js", async (importOriginal) => {
-  const { createDocumentFixtureStore } = await import("@octogee/core/testing/journal-store");
+  const { createDocumentFixtureStore } = await import("@octogee/core-testing/journal-store");
   return {
     ...(await importOriginal<typeof import("../../../gateway-edge/src/lib/platform-state.js")>()),
     platformStateStore: createDocumentFixtureStore(new Map()),
@@ -18,7 +18,7 @@ import { createTenantEnforcementMiddleware } from "../middleware/tenant-enforcem
 import { SIDECAR_BROKER_TOKEN_AUDIENCE, SIDECAR_BROKER_TOKEN_HEADER } from "@octogee/core/internal-fetch";
 import { storeWorkspaceBlob, WorkspaceStorageQuotaError } from "../../../gateway-edge/src/lib/workspace-blob.js";
 import { divertWorktreeBinaries } from "../../../gateway-edge/src/lib/binary-diversion.js";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { createFleetBrokerRoutes } from "./fleet-broker.js";
 import { MAX_UPLOAD_BYTES } from "../../../gateway-edge/src/routes/workspace/upload.js";
 

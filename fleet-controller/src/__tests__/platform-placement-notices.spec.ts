@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { createRepeatSquelch } from "@octogee/shared/server/repeat-squelch";
 import { logPlatformPlacementNotices, PLATFORM_PLACEMENT_NOTICE_REPEAT_MS } from "../platform-placement-notices.js";
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DuplicateRecordError } from "@octogee/core/platform-state";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 
 import {
   classifyTerminatedVm,

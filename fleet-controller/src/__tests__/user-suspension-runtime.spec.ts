@@ -6,7 +6,7 @@ import {
   fixtureDocumentsAt,
   journalRowsAtPaths,
   type FixtureDocuments,
-} from "@octogee/core/testing/journal-store";
+} from "@octogee/core-testing/journal-store";
 import {
   assertUserRestoreNotInProgress,
   cancelUserMigrationsForSuspension,

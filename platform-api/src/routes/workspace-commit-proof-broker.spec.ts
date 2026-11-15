@@ -2,7 +2,7 @@ import express, { type Express } from "express";
 import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
 import type { PlatformStateStore } from "@octogee/core/platform-state";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 
 import {
   WORKSPACE_COMMIT_PROOF_PATH,

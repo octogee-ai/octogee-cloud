@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { noUserAccounts } from "@octogee/core/user-account";
 import type { UserSuspensionDeps } from "../handlers/suspend-user.js";
 
