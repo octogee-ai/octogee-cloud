@@ -1,0 +1,345 @@
+import { createHash } from "node:crypto";
+import type pg from "pg";
+import {
+  GIT_KEY_CONDITION_TYPES,
+  USER_PROVISIONING_CONDITION_TYPES,
+  type GitKey,
+  type GitKeyConditionType,
+  type GitKeySpec,
+  type ProvisioningAttempt,
+  type ProvisioningCondition,
+  type ProvisioningConditionReason,
+  type ProvisioningWorkState,
+  type UserProvisioning,
+  type UserProvisioningConditionType,
+  type UserProvisioningListQuery,
+  type UserProvisioningOutputs,
+  type UserProvisioningSpec,
+} from "@octogee/shared/types/provisioning-service";
+import { ApiError } from "../http/errors.js";
+import { pendingConditions } from "../resources/conditions.js";
+import { sameJson } from "../resources/validate.js";
+import type { Database } from "./database.js";
+
+export const RETAINED_CHANGE_WINDOW_MS = 24 * 60 * 60 * 1_000;
+const IDEMPOTENCY_WINDOW = "24 hours";
+
+interface ProvisioningRow {
+  uid: string;
+  generation: number;
+  resource_version: string;
+  spec: UserProvisioningSpec;
+  observed_generation: number;
+  conditions: ProvisioningCondition<UserProvisioningConditionType>[];
+  outputs: Omit<UserProvisioningOutputs, "credentials">;
+  state: ProvisioningWorkState;
+  due_at: Date;
+  attempts: number;
+  last_attempt_at: Date | null;
+  lease_expires_at: Date | null;
+  credential_names: string[] | null;
+}
+
+interface GitKeyRow {
+  uid: string;
+  gateway_id: string;
+  generation: number;
+  resource_version: string;
+  public_key: string;
+  registered_public_key: string | null;
+  deletion_requested_at: Date | null;
+  observed_generation: number;
+  conditions: ProvisioningCondition<GitKeyConditionType>[];
+}
+
+export type WriteOutcome = "created" | "changed" | "unchanged";
+
+export interface PageResult {
+  items: UserProvisioning[];
+  resourceVersion: string;
+  nextPageToken?: string;
+}
+
+export type ChangesSince =
+  | { kind: "expired" }
+  | { kind: "changes"; items: UserProvisioning[]; resourceVersion: string };
+
+export type RetryOutcome =
+  | { kind: "retried"; resource: UserProvisioning }
+  | { kind: "replayed"; status: number; body: unknown };
+
+export function toResource(row: ProvisioningRow): UserProvisioning {
+  const dueShown = row.state === "queued" || row.state === "retrying" || row.state === "idle";
+  return {
+    uid: row.uid,
+    generation: row.generation,
+    resourceVersion: String(row.resource_version),
+    spec: row.spec,
+    status: {
+      observedGeneration: row.observed_generation,
+      conditions: row.conditions,
+      outputs: { ...row.outputs, credentials: [...(row.credential_names ?? [])].sort() as UserProvisioningOutputs["credentials"] },
+      work: {
+        state: row.state,
+        attempts: row.attempts,
+        nextAttemptAt: dueShown ? row.due_at.toISOString() : null,
+        lastAttemptAt: row.last_attempt_at ? row.last_attempt_at.toISOString() : null,
+      },
+    },
+  };
+}
+
+export function toGitKey(row: GitKeyRow): GitKey {
+  return {
+    uid: row.uid,
+    gatewayId: row.gateway_id,
+    generation: row.generation,
+    resourceVersion: String(row.resource_version),
+    deletionRequestedAt: row.deletion_requested_at ? row.deletion_requested_at.toISOString() : null,
+    spec: { publicKey: row.public_key },
+    status: { observedGeneration: row.observed_generation, conditions: row.conditions },
+  };
+}
+
+function encodePageToken(uid: string): string {
+  return Buffer.from(JSON.stringify({ after: uid })).toString("base64url");
+}
+
+function decodePageToken(token: string): string {
+  try {
+    const parsed = JSON.parse(Buffer.from(token, "base64url").toString("utf8")) as { after?: unknown };
+    if (typeof parsed.after === "string") return parsed.after;
+  } catch {
+    throw new ApiError(400, "invalid-request", "pageToken is not valid");
+  }
+  throw new ApiError(400, "invalid-request", "pageToken is not valid");
+}
+
+export class ProvisioningStore {
+  constructor(readonly db: Database) {}
+
+  private get selectResource(): string {
+    const t = this.db.table;
+    return `SELECT p.uid, p.generation, p.resource_version, p.spec, p.observed_generation, p.conditions, p.outputs,
+        w.state, w.due_at, w.attempts, w.last_attempt_at, w.lease_expires_at,
+        (SELECT array_agg(c.name ORDER BY c.name) FROM ${t("credentials")} c WHERE c.uid = p.uid) AS credential_names
+      FROM ${t("provisionings")} p JOIN ${t("provisioning_work")} w ON w.uid = p.uid`;
+  }
+
+  async readResource(client: pg.ClientBase, uid: string): Promise<UserProvisioning | null> {
+    const { rows } = await client.query<ProvisioningRow>(`${this.selectResource} WHERE p.uid = $1`, [uid]);
+    return rows[0] ? toResource(rows[0]) : null;
+  }
+
+  async get(uid: string): Promise<UserProvisioning | null> {
+    return this.readResource(this.db.pool as unknown as pg.ClientBase, uid);
+  }
+
+  async put(uid: string, spec: UserProvisioningSpec, expectedResourceVersion: string | undefined): Promise<{ outcome: WriteOutcome; resource: UserProvisioning }> {
+    const t = this.db.table;
+    return this.db.write(async (client, bumpVersion) => {
+      const { rows } = await client.query<{ resource_version: string; generation: number; spec: UserProvisioningSpec }>(
+        `SELECT resource_version, generation, spec FROM ${t("provisionings")} WHERE uid = $1 FOR UPDATE`, [uid]);
+      const current = rows[0];
+      if (expectedResourceVersion !== undefined && current?.resource_version !== expectedResourceVersion) {
+        throw new ApiError(409, "precondition-failed", "expectedResourceVersion no longer holds");
+      }
+      if (current && sameJson(current.spec, spec)) {
+        return { outcome: "unchanged" as const, resource: (await this.readResource(client, uid))! };
+      }
+      const version = await bumpVersion(uid);
+      if (!current) {
+        await client.query(
+          `INSERT INTO ${t("provisionings")} (uid, generation, resource_version, spec, conditions, outputs) VALUES ($1, 1, $2, $3, $4, '{}'::jsonb)`,
+          [uid, version.toString(), JSON.stringify(spec), JSON.stringify(pendingConditions(USER_PROVISIONING_CONDITION_TYPES, new Date()))]);
+        await client.query(`INSERT INTO ${t("provisioning_work")} (uid, state, due_at) VALUES ($1, 'queued', now())`, [uid]);
+        return { outcome: "created" as const, resource: (await this.readResource(client, uid))! };
+      }
+      await client.query(`UPDATE ${t("provisionings")} SET generation = generation + 1, resource_version = $2, spec = $3 WHERE uid = $1`,
+        [uid, version.toString(), JSON.stringify(spec)]);
+      await this.makeDue(client, uid);
+      return { outcome: "changed" as const, resource: (await this.readResource(client, uid))! };
+    });
+  }
+
+  private async makeDue(client: pg.ClientBase, uid: string): Promise<void> {
+    await client.query(
+      `UPDATE ${this.db.table("provisioning_work")}
+         SET dirty = (state = 'running'),
+             state = CASE WHEN state = 'running' THEN state ELSE 'queued' END,
+             attempts = CASE WHEN state = 'running' THEN attempts ELSE 0 END,
+             due_at = CASE WHEN state = 'running' THEN due_at ELSE now() END
+       WHERE uid = $1`, [uid]);
+  }
+
+  async delete(uid: string): Promise<void> {
+    const t = this.db.table;
+    await this.db.write(async (client) => {
+      const { rows } = await client.query<{ running: boolean }>(
+        `SELECT (w.state = 'running' AND w.lease_expires_at > now()) AS running
+           FROM ${t("provisionings")} p JOIN ${t("provisioning_work")} w ON w.uid = p.uid WHERE p.uid = $1 FOR UPDATE OF p`, [uid]);
+      if (!rows[0]) return;
+      if (rows[0].running) throw new ApiError(409, "work-running", "an attempt is running for this user; ask again when it finishes");
+      await client.query(`DELETE FROM ${t("provisionings")} WHERE uid = $1`, [uid]);
+    });
+  }
+
+  async retry(uid: string, expectedAttempts: number | undefined, idempotencyKey: string | undefined): Promise<RetryOutcome> {
+    const t = this.db.table;
+    const requestHash = createHash("sha256").update(JSON.stringify({ uid, expectedAttempts: expectedAttempts ?? null })).digest("hex");
+    return this.db.write(async (client, bumpVersion) => {
+      if (idempotencyKey !== undefined) {
+        await client.query(`DELETE FROM ${t("idempotency")} WHERE created_at < now() - interval '${IDEMPOTENCY_WINDOW}'`);
+        const { rows } = await client.query<{ request_hash: string; status: number; body: unknown }>(
+          `SELECT request_hash, status, body FROM ${t("idempotency")} WHERE key = $1`, [idempotencyKey]);
+        if (rows[0]) {
+          if (rows[0].request_hash !== requestHash) throw new ApiError(409, "idempotency-conflict", "this Idempotency-Key was used with a different request");
+          return { kind: "replayed" as const, status: rows[0].status, body: rows[0].body };
+        }
+      }
+      const { rows } = await client.query<{ state: ProvisioningWorkState; attempts: number }>(
+        `SELECT w.state, w.attempts FROM ${t("provisionings")} p JOIN ${t("provisioning_work")} w ON w.uid = p.uid WHERE p.uid = $1 FOR UPDATE OF p, w`, [uid]);
+      const work = rows[0];
+      if (!work) throw new ApiError(404, "not-found", "no provisioning for this user");
+      if (expectedAttempts !== undefined && work.attempts !== expectedAttempts) {
+        throw new ApiError(409, "precondition-failed", `expectedAttempts is ${expectedAttempts}; attempts is ${work.attempts}`);
+      }
+      if (work.state !== "parked" && work.state !== "retrying") {
+        throw new ApiError(409, "not-retryable", `work is ${work.state}; only parked or retrying work can be retried`);
+      }
+      const version = await bumpVersion(uid);
+      await client.query(
+        `UPDATE ${t("provisioning_work")} SET state = 'queued', due_at = now(), attempts = CASE WHEN state = 'parked' THEN 0 ELSE attempts END WHERE uid = $1`, [uid]);
+      await client.query(`UPDATE ${t("provisionings")} SET resource_version = $2 WHERE uid = $1`, [uid, version.toString()]);
+      const resource = (await this.readResource(client, uid))!;
+      if (idempotencyKey !== undefined) {
+        await client.query(`INSERT INTO ${t("idempotency")} (key, request_hash, status, body) VALUES ($1, $2, 202, $3)`,
+          [idempotencyKey, requestHash, JSON.stringify(resource)]);
+      }
+      return { kind: "retried" as const, resource };
+    });
+  }
+
+  async list(query: UserProvisioningListQuery): Promise<PageResult> {
+    const limit = Math.min(Math.max(query.limit ?? 100, 1), 500);
+    const where: string[] = [];
+    const params: unknown[] = [];
+    if (query.pageToken !== undefined) {
+      params.push(decodePageToken(query.pageToken));
+      where.push(`p.uid > $${params.length}`);
+    }
+    if (query.ready !== undefined) {
+      where.push(`${query.ready ? "" : "NOT "}EXISTS (SELECT 1 FROM jsonb_array_elements(p.conditions) c WHERE c->>'type' = 'Ready' AND c->>'status' = 'True')`);
+    }
+    if (query.reason !== undefined) {
+      params.push(query.reason);
+      where.push(`EXISTS (SELECT 1 FROM jsonb_array_elements(p.conditions) c WHERE c->>'reason' = $${params.length})`);
+    }
+    if (query.workState !== undefined) {
+      params.push(query.workState);
+      where.push(`w.state = $${params.length}`);
+    }
+    params.push(limit + 1);
+    return this.db.read(async (client) => {
+      const counter = await client.query<{ value: string }>(`SELECT value FROM ${this.db.table("counter")} WHERE id = 1`);
+      const { rows } = await client.query<ProvisioningRow>(
+        `${this.selectResource} ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY p.uid LIMIT $${params.length}`, params);
+      const page = rows.slice(0, limit).map(toResource);
+      return {
+        items: page,
+        resourceVersion: String(counter.rows[0].value),
+        ...(rows.length > limit ? { nextPageToken: encodePageToken(page[page.length - 1].uid) } : {}),
+      };
+    });
+  }
+
+  async changesSince(resourceVersion: bigint): Promise<ChangesSince> {
+    return this.db.read(async (client) => {
+      const counter = await client.query<{ value: string; pruned_through: string }>(
+        `SELECT value, pruned_through FROM ${this.db.table("counter")} WHERE id = 1`);
+      const current = BigInt(counter.rows[0].value);
+      if (resourceVersion < BigInt(counter.rows[0].pruned_through) || resourceVersion > current) return { kind: "expired" as const };
+      const { rows } = await client.query<ProvisioningRow>(
+        `${this.selectResource} WHERE p.resource_version > $1 ORDER BY p.resource_version`, [resourceVersion.toString()]);
+      return { kind: "changes" as const, items: rows.map(toResource), resourceVersion: current.toString() };
+    });
+  }
+
+  async pruneChangeLog(): Promise<number> {
+    const t = this.db.table;
+    return this.db.write(async (client) => {
+      const { rows } = await client.query<{ through: string | null; count: string }>(
+        `WITH gone AS (DELETE FROM ${t("version_log")} WHERE written_at < now() - make_interval(secs => $1) RETURNING version)
+         SELECT max(version) AS through, count(*) AS count FROM gone`, [RETAINED_CHANGE_WINDOW_MS / 1_000]);
+      if (rows[0].through !== null) {
+        await client.query(`UPDATE ${t("counter")} SET pruned_through = GREATEST(pruned_through, $1) WHERE id = 1`, [rows[0].through]);
+      }
+      return Number(rows[0].count);
+    });
+  }
+
+  async events(uid: string): Promise<ProvisioningAttempt[] | null> {
+    const t = this.db.table;
+    return this.db.read(async (client) => {
+      const exists = await client.query(`SELECT 1 FROM ${t("provisionings")} WHERE uid = $1`, [uid]);
+      if (exists.rowCount === 0) return null;
+      const { rows } = await client.query<{ generation: number; started_at: Date; finished_at: Date; result: ProvisioningAttempt["result"]; reason: ProvisioningConditionReason | null; steps: ProvisioningAttempt["steps"] }>(
+        `SELECT generation, started_at, finished_at, result, reason, steps FROM ${t("attempts")} WHERE uid = $1 ORDER BY id DESC LIMIT 50`, [uid]);
+      return rows.map((row) => ({
+        generation: row.generation,
+        startedAt: row.started_at.toISOString(),
+        finishedAt: row.finished_at.toISOString(),
+        durationMs: row.finished_at.getTime() - row.started_at.getTime(),
+        result: row.result,
+        ...(row.reason ? { reason: row.reason } : {}),
+        steps: row.steps,
+      }));
+    });
+  }
+
+  async putGitKey(uid: string, gatewayId: string, spec: GitKeySpec): Promise<{ outcome: WriteOutcome; key: GitKey }> {
+    const t = this.db.table;
+    return this.db.write(async (client, bumpVersion) => {
+      const owner = await client.query(`SELECT 1 FROM ${t("provisionings")} WHERE uid = $1 FOR UPDATE`, [uid]);
+      if (owner.rowCount === 0) throw new ApiError(404, "not-found", "no provisioning for this user");
+      const { rows } = await client.query<GitKeyRow>(`SELECT * FROM ${t("git_keys")} WHERE uid = $1 AND gateway_id = $2 FOR UPDATE`, [uid, gatewayId]);
+      const current = rows[0];
+      if (current && current.public_key === spec.publicKey && current.deletion_requested_at === null) {
+        return { outcome: "unchanged" as const, key: toGitKey(current) };
+      }
+      const keyVersion = await bumpVersion(uid);
+      const userVersion = await bumpVersion(uid);
+      let written: GitKeyRow;
+      if (!current) {
+        written = (await client.query<GitKeyRow>(
+          `INSERT INTO ${t("git_keys")} (uid, gateway_id, generation, resource_version, public_key, conditions) VALUES ($1, $2, 1, $3, $4, $5) RETURNING *`,
+          [uid, gatewayId, keyVersion.toString(), spec.publicKey, JSON.stringify(pendingConditions(GIT_KEY_CONDITION_TYPES, new Date()))])).rows[0];
+      } else {
+        written = (await client.query<GitKeyRow>(
+          `UPDATE ${t("git_keys")} SET generation = generation + 1, resource_version = $3, public_key = $4, deletion_requested_at = NULL
+            WHERE uid = $1 AND gateway_id = $2 RETURNING *`, [uid, gatewayId, keyVersion.toString(), spec.publicKey])).rows[0];
+      }
+      await client.query(`UPDATE ${t("provisionings")} SET resource_version = $2 WHERE uid = $1`, [uid, userVersion.toString()]);
+      await this.makeDue(client, uid);
+      return { outcome: current ? "changed" as const : "created" as const, key: toGitKey(written) };
+    });
+  }
+
+  async deleteGitKey(uid: string, gatewayId: string): Promise<void> {
+    const t = this.db.table;
+    await this.db.write(async (client, bumpVersion) => {
+      await client.query(`SELECT 1 FROM ${t("provisionings")} WHERE uid = $1 FOR UPDATE`, [uid]);
+      const { rows } = await client.query<GitKeyRow>(
+        `SELECT * FROM ${t("git_keys")} WHERE uid = $1 AND gateway_id = $2 FOR UPDATE`, [uid, gatewayId]);
+      if (!rows[0] || rows[0].deletion_requested_at !== null) return;
+      const keyVersion = await bumpVersion(uid);
+      const userVersion = await bumpVersion(uid);
+      await client.query(`UPDATE ${t("git_keys")} SET deletion_requested_at = now(), resource_version = $3 WHERE uid = $1 AND gateway_id = $2`,
+        [uid, gatewayId, keyVersion.toString()]);
+      await client.query(`UPDATE ${t("provisionings")} SET resource_version = $2 WHERE uid = $1`, [uid, userVersion.toString()]);
+      await this.makeDue(client, uid);
+    });
+  }
+}
+
+export type { GitKeyRow, ProvisioningRow };
