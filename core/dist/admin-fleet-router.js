@@ -3279,6 +3279,7 @@ export function addAdminFleetRoutes(router, deps) {
         platformArtifact: deps.platformArtifact,
         controllerStartedAt: deps.controllerStartedAt,
         journal: runAdminFleetMutation,
+        readGatewayKubernetes: deps.readGatewayKubernetes,
     });
     if (deps.placement)
         addAdminPlacementRoutes(router, { ...deps.placement, store, journal: runAdminFleetMutation });
