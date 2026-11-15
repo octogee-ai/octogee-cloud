@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import { createMattermostChatHost } from "../hosts/chat-host-mattermost.js";
 import { createGiteaGitHostAdapter } from "../hosts/git-host-gitea.js";
-import { FakeGiteaApi } from "../hosts/gitea-api.fake.js";
-import { FakeMattermostApi } from "../hosts/mattermost-api.fake.js";
+import { FakeGiteaApi } from "../hosts/__tests__/gitea-api.fake.js";
+import { FakeMattermostApi } from "../hosts/__tests__/mattermost-api.fake.js";
 import { formatReport, parseUsers, reportFails, verifyUser, type ExistingUser, type VerifySettings } from "./verify-existing.js";
 import { createWriteGuard } from "./write-guard.js";
 
