@@ -33,7 +33,7 @@ const mocks = vi.hoisted(() => {
   };
 });
 
-vi.mock("../lib/connector-tokens.js", () => ({
+vi.mock("@octogee/core/connectors/connector-tokens", () => ({
   readOwnerRuntimeConnectorAccessToken: mocks.readOwnerRuntimeConnectorAccessToken,
   readOwnerGithubProjectCloneAccess: mocks.readOwnerGithubProjectCloneAccess,
   ConnectorTokenReadError: mocks.ConnectorTokenReadError,
@@ -48,7 +48,7 @@ vi.mock("../middleware/gateway-internal-auth.js", () => ({
   requireGatewayInternalAuth: (_req: unknown, _res: unknown, next: () => void) => next(),
 }));
 
-vi.mock("../middleware/logging.js", () => ({
+vi.mock("@octogee/core/http/logging", () => ({
   logger: { error: mocks.error, warn: mocks.warn, info: mocks.info },
 }));
 
@@ -56,7 +56,7 @@ import { createInternalConnectorRoutes } from "../routes/internal/connectors.js"
 import {
   readOwnerGithubProjectCloneAccess,
   readOwnerRuntimeConnectorAccessToken,
-} from "../lib/connector-tokens.js";
+} from "@octogee/core/connectors/connector-tokens";
 import { cloneGithubProjectCheckout } from "../lib/github-project-clone.js";
 import { claimedTestUser, installTestUserIdentity } from "./helpers/user-identity.js";
 

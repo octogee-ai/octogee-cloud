@@ -170,6 +170,15 @@ describe("GET /fleet/state", () => {
     });
   });
 
+  it("answers each user's provisioning Ready reason in the users section", async () => {
+    records.set("users/uid-a", { username: "alice", onboardingStep: "complete" });
+    const readiness = (uid: string) => uid === "uid-a" ? { status: "True" as const, reason: "Converged" } : null;
+
+    const res = await request(app(readiness)).get("/fleet/state?sections=users").expect(200);
+
+    expect(res.body.users.map((user: Data) => user.provisioningReady)).toEqual([{ status: "True", reason: "Converged" }]);
+  });
+
   it("answers a malformed autoscaling dial as null instead of failing the read", async () => {
     records.set("config/orchestrator", { sharedGatewayAutoscaling: { enabled: true, buildersPerGateway: 1 } });
 

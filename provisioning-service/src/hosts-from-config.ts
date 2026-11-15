@@ -6,7 +6,13 @@ import type { GitHost } from "./hosts/git-host.js";
 import { createGiteaGitHostAdapter } from "./hosts/git-host-gitea.js";
 
 export function hostsFromConfig(hosts: HostAdapterConfig, log: HostLog, fetchImpl?: typeof fetch): { chat: ChatHost; git: GitHost } {
-  if (hosts.kind === "fake") return { chat: new FakeChatHost(), git: new FakeGitHost() };
+  if (hosts.kind === "fake") {
+    const chat = new FakeChatHost();
+    const git = new FakeGitHost();
+    chat.host.setDelay(hosts.delayMs);
+    git.host.setDelay(hosts.delayMs);
+    return { chat, git };
+  }
   const { settings } = hosts;
   return {
     chat: createMattermostChatHost({

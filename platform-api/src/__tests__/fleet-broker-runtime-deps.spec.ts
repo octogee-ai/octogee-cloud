@@ -4,15 +4,9 @@ import { fileURLToPath } from "node:url";
 import { builtinModules } from "node:module";
 import { describe, it, expect } from "vitest";
 
-// octogee-api compiles `gateway-edge/src/*` into its own dist and dynamically
-// imports some of it at request time (the fleet broker loads the project-create
-// and mattermost route services). A dynamically-imported module whose npm deps
-// octogee-api does not also declare resolves fine in tsc + mocked tests but
-// throws "Cannot find package" the first time the route runs in the container —
-// a latent 502, not a boot crash. This pins the invariant: every package the
-// broker can pull in at runtime must be a declared octogee-api dependency.
-// (`@octogee/*` imports are packed directory packages whose deps ship with them, so the
-// walk below follows only relative source and stops at bare package specifiers.)
+// The fleet broker dynamically imports some route services at request time.
+// Every package it can reach must be a declared octogee-api dependency, or the
+// first request in the container fails with "Cannot find package".
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const API_DIR = resolve(HERE, "..", "..");
@@ -96,7 +90,7 @@ function dynamicImportTargets(file: string): string[] {
 }
 
 describe("fleet-broker runtime deps are vendored by octogee-api", () => {
-  it("dynamically imports gateway-edge route services at runtime (guard is exercising something)", () => {
+  it("dynamically imports route services at runtime (guard is exercising something)", () => {
     expect(dynamicImportTargets(BROKER).length).toBeGreaterThan(0);
   });
 

@@ -32,14 +32,8 @@ function repoRole(kind: GitRepositoryKind): GitRepoRole {
   return { kind };
 }
 
-function hostMessage(json: unknown): string {
-  if (typeof json !== "object" || json === null) return "";
-  const { message } = json as { message?: unknown };
-  return typeof message === "string" ? ` (${message.slice(0, 200)})` : "";
-}
-
-function failure(operation: string, { status, json }: HostResponse): HostError {
-  return new HostError(hostErrorKindForStatus(status), `${operation}: ${status} from git host${hostMessage(json)}`);
+function failure(operation: string, { status }: HostResponse): HostError {
+  return new HostError(hostErrorKindForStatus(status), `${operation}: ${status} from git host`);
 }
 
 function isSuccess(status: number): boolean {
@@ -74,9 +68,9 @@ export function createGiteaGitHostAdapter(config: GiteaGitHostAdapterConfig): Gi
       return await body(host);
     } catch (error) {
       if (error instanceof HostError) throw error;
-      const detail = error instanceof Error ? error.message : String(error);
       if (observer.unreachable) throw new HostError("transient", `${operation}: git host unreachable`, { cause: error });
-      throw new HostError(hostErrorKindForStatus(observer.lastStatus ?? 500), `${operation}: ${detail}`, { cause: error });
+      const status = observer.lastStatus ?? 500;
+      throw new HostError(hostErrorKindForStatus(status), `${operation}: ${status} from git host`, { cause: error });
     }
   }
 

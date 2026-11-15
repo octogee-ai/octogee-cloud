@@ -63,52 +63,6 @@ spec:
           annotations:
             summary: "Gateway {{ $labels.pod }} is running on on-demand capacity"
             description: "An owner-bound regional Spot-first ComputeClass exhausted a Spot placement and activated its on-demand fallback. Service remains available and active migration returns the gateway to Spot when capacity permits."
-        - alert: SharedGatewayPoolDegraded
-          expr: |
-            (
-              count by (namespace) (
-                (kube_pod_status_ready{job="gmp-kube-state-metrics",namespace=~"__ENVIRONMENT_NAMESPACES__",condition="true"} == 1)
-                * on(namespace,pod) group_left()
-                kube_pod_labels{job="gmp-kube-state-metrics",namespace=~"__ENVIRONMENT_NAMESPACES__",label_gateway_class="shared"}
-              )
-              or on(namespace)
-              (0 * kube_namespace_created{job="gmp-kube-state-metrics",namespace=~"__ENVIRONMENT_NAMESPACES__"})
-            )
-            < on(namespace) group_left()
-            octogee_shared_pool_min_replicas{namespace=~"__ENVIRONMENT_NAMESPACES__"}
-          for: 2m
-          labels:
-            severity: critical
-          annotations:
-            summary: "Shared gateway pool is degraded in {{ $labels.namespace }}"
-            description: "Fewer Ready shared gateway pods than the environment's minReplicas floor (the fleet controller's octogee_shared_pool_min_replicas gauge) are available from the on-demand reliability floor. Each slot's minAvailable: 1 PDB protects its Ready gateway during voluntary disruption while AlwaysAllow permits eviction of an unhealthy stale pod. Inspect gateway pods, node capacity, and the shared pool scaler."
-        - alert: SharedGatewayZoneDiversityLost
-          expr: |
-            (
-              count by (namespace) (
-                count by (namespace, label_topology_kubernetes_io_zone) (
-                  (
-                    (kube_pod_status_ready{job="gmp-kube-state-metrics",namespace=~"__ENVIRONMENT_NAMESPACES__",condition="true"} == 1)
-                    * on(namespace,pod) group_left(node)
-                    kube_pod_info{job="gmp-kube-state-metrics",namespace=~"__ENVIRONMENT_NAMESPACES__",pod=~"octogee-gateway-.*"}
-                    * on(namespace,pod) group_left()
-                    kube_pod_labels{job="gmp-kube-state-metrics",namespace=~"__ENVIRONMENT_NAMESPACES__",label_gateway_class="shared"}
-                    * on(node) group_left(label_topology_kubernetes_io_zone)
-                    kube_node_labels{job="gmp-kube-state-metrics",label_topology_kubernetes_io_zone!=""}
-                  )
-                )
-              )
-              or on(namespace)
-              (0 * kube_namespace_created{job="gmp-kube-state-metrics",namespace=~"__ENVIRONMENT_NAMESPACES__"})
-            ) < 2
-            and on(namespace)
-            octogee_shared_pool_min_replicas{namespace=~"__ENVIRONMENT_NAMESPACES__"} >= 2
-          for: 5m
-          labels:
-            severity: warning
-          annotations:
-            summary: "Shared gateway pool lost zone diversity in {{ $labels.namespace }}"
-            description: "Ready shared gateway pods occupy fewer than two Central zones. Capacity remains available, but a zonal disruption can now remove the entire shared pool."
         - alert: SharedGatewayMaxCapacity
           expr: increase(glm_shared_gateway_max_capacity_total{namespace=~"__ENVIRONMENT_NAMESPACES__"}[5m]) > 0
           for: 0m

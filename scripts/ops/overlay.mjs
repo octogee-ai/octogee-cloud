@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 
-export const COMPOSITION_ROOTS = ["src/main.ts", "src/llm-broker.ts"];
+export const COMPOSITION_ROOTS = ["src/main.ts"];
 const BUILD_OUTPUTS = new Set(["node_modules", "dist"]);
 const UNLINKED = new Set([".git", ...BUILD_OUTPUTS]);
 const STANDALONE_MANIFEST = "package.json";

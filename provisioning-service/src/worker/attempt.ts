@@ -96,9 +96,12 @@ class Attempt {
   private readonly abort = new AbortController();
   private readonly outputs: StoredOutputs;
   private leaseLost = false;
+  private confirmedAt: number;
+  private deadline: NodeJS.Timeout | undefined;
 
   constructor(private readonly deps: AttemptDependencies, private readonly claim: Claim, private readonly snapshot: Snapshot) {
     this.outputs = structuredClone(snapshot.outputs);
+    this.confirmedAt = claim.claimedAt;
   }
 
   private get signal(): AbortSignal {
@@ -111,6 +114,7 @@ class Attempt {
 
   async run(): Promise<AttemptResult> {
     const heartbeat = setInterval(() => this.beat(), this.deps.heartbeatMs ?? HEARTBEAT_MS);
+    this.armDeadline();
     try {
       const [chat, git] = await Promise.all([this.chatBranch(), this.gitBranch()]);
       return await this.finish(chat, git);
@@ -119,16 +123,37 @@ class Attempt {
       return await this.recordLeaseLost();
     } finally {
       clearInterval(heartbeat);
+      clearTimeout(this.deadline);
       this.abort.abort();
     }
   }
 
+  private armDeadline(): void {
+    clearTimeout(this.deadline);
+    this.deadline = setTimeout(() => {
+      if (this.leaseLost) return;
+      this.deps.log.error("provisioning lease ran out without a confirmed heartbeat; attempt stopped", { uid: this.claim.uid, leaseMs: this.deps.queue.leaseMs });
+      this.loseLease();
+    }, Math.max(0, this.confirmedAt + this.deps.queue.leaseMs - Date.now()));
+  }
+
+  private loseLease(): void {
+    this.leaseLost = true;
+    clearTimeout(this.deadline);
+    this.abort.abort();
+  }
+
+  private leaseConfirmed(): boolean {
+    return !this.leaseLost && Date.now() - this.confirmedAt < this.deps.queue.leaseMs;
+  }
+
   private beat(): void {
+    const sentAt = Date.now();
     this.deps.queue.heartbeat(this.claim.uid, this.claim.leaseToken).then((held) => {
-      if (!held) {
-        this.leaseLost = true;
-        this.abort.abort();
-      }
+      if (!held) return this.loseLease();
+      if (this.leaseLost) return;
+      this.confirmedAt = Math.max(this.confirmedAt, sentAt);
+      this.armDeadline();
     }).catch((error: unknown) => this.deps.log.error("lease heartbeat failed", { uid: this.claim.uid, error: message(error) }));
   }
 
@@ -142,6 +167,7 @@ class Attempt {
   }
 
   private async hostCall<T>(host: "chat" | "git", operation: string, call: () => Promise<T>): Promise<T> {
+    if (!this.leaseConfirmed()) throw new LeaseLostError(this.claim.uid);
     const began = performance.now();
     try {
       const result = await call();
@@ -154,6 +180,7 @@ class Attempt {
   }
 
   private async step(name: ProvisioningStep, reason: ProvisioningConditionReason, body: () => Promise<string[] | void>): Promise<void> {
+    if (!this.leaseConfirmed()) throw new LeaseLostError(this.claim.uid);
     const began = performance.now();
     try {
       const warnings = await body();

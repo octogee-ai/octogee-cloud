@@ -3,7 +3,7 @@ import {
   isGatewayVmHomeCheckpoint,
   type GatewayVmHomeCheckpoint,
 } from "@octogee/shared/types/glm";
-import { gcsBucket } from "../../../gateway-edge/src/lib/gcs-bucket.js";
+import { gcsBucket } from "@octogee/core/workspace/gcs-bucket";
 
 export class VmHomeCheckpointError extends Error {
   constructor(

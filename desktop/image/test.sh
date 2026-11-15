@@ -4,6 +4,8 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=zones.sh
 source "$HERE/zones.sh"
+# shellcheck source=registry.sh
+source "$HERE/registry.sh"
 PROJECT=""
 ZONE="us-west1-b"
 FALLBACK_ZONES=""
@@ -26,7 +28,9 @@ Boots a VM from the image, waits for SSH (key delivered through instance
 metadata), checks the desktop session, drives Chromium through the control API,
 optionally stops and starts the VM to prove the home persists, prints a results
 block, and deletes the VM. --smoke checks boot health and baked image identities
-without the UI or restart suite.
+without the UI or restart suite. The baked images must be exactly
+OCTOGEE_DESKTOP_GATEWAY_IMAGE and OCTOGEE_DESKTOP_EDGE_IMAGE, both in
+OCTOGEE_DESKTOP_REGISTRY (default $DESKTOP_DEFAULT_REGISTRY).
 EOF
 }
 
@@ -48,6 +52,11 @@ while [[ $# -gt 0 ]]; do
 done
 [[ -n "$PROJECT" ]] || { usage >&2; exit 2; }
 [[ "$SMOKE:$STOP_START" != 1:1 ]] || { echo "--smoke and --stop-start are mutually exclusive" >&2; exit 2; }
+REGISTRY="$(desktop_registry)" || exit 2
+GATEWAY_IMAGE="${OCTOGEE_DESKTOP_GATEWAY_IMAGE:?immutable Builder gateway image is required}"
+desktop_registry_image octogee-gateway-builder "Builder gateway" "$GATEWAY_IMAGE" "$REGISTRY" || exit 2
+EDGE_IMAGE="${OCTOGEE_DESKTOP_EDGE_IMAGE:?immutable gateway-edge image is required}"
+desktop_registry_image gateway-edge "gateway-edge" "$EDGE_IMAGE" "$REGISTRY" || exit 2
 
 service_account_args=()
 [[ -z "$SERVICE_ACCOUNT" ]] || service_account_args=(--service-account "$SERVICE_ACCOUNT")
@@ -117,13 +126,13 @@ fi
 check_gateway_image() {
   local image
   image="$(vssh 'set -e; image="$(cat /etc/octogee-gateway-image)"; sudo docker image inspect "$image" >/dev/null; printf "%s\n" "$image"')" || { echo "could not verify gateway image preload" >&2; return 1; }
-  [[ "$image" =~ ^us-central1-docker\.pkg\.dev/octogee/octogee/octogee-gateway-builder@sha256:[a-f0-9]{64}$ && "$image" == "${OCTOGEE_DESKTOP_GATEWAY_IMAGE:?immutable Builder gateway image is required}" ]] || { echo "gateway image preload does not match the requested digest" >&2; return 1; }
+  [[ "$image" == "$GATEWAY_IMAGE" ]] || { echo "gateway image preload does not match the requested digest" >&2; return 1; }
 }
 check_gateway_image
 check_edge_image() {
   local image
   image="$(vssh 'set -e; image="$(cat /etc/octogee-gateway-edge-image)"; sudo docker image inspect "$image" >/dev/null; printf "%s\n" "$image"')" || { echo "could not verify gateway-edge image preload" >&2; return 1; }
-  [[ "$image" =~ ^us-central1-docker\.pkg\.dev/octogee/octogee/gateway-edge@sha256:[a-f0-9]{64}$ && "$image" == "${OCTOGEE_DESKTOP_EDGE_IMAGE:?immutable gateway-edge image is required}" ]] || { echo "gateway-edge image preload does not match the requested digest" >&2; return 1; }
+  [[ "$image" == "$EDGE_IMAGE" ]] || { echo "gateway-edge image preload does not match the requested digest" >&2; return 1; }
 }
 check_edge_image
 omarchy_versions="$(vssh 'set -eu; . /etc/octogee-computer.env; installed="$(omarchy version)"; test "$installed" = "$OMARCHY_VERSION"; printf "ISO=%s installed=%s\n" "$OMARCHY_ISO_VERSION" "$installed"')"

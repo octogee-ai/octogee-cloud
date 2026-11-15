@@ -4,6 +4,7 @@ import type { UserProvisioningSpec } from "@octogee/shared/types/provisioning-se
 import type { Reviewer } from "../auth/token-review.js";
 import { CALLER_ROLES } from "../config.js";
 import { FakeChatHost, FakeGitHost } from "../hosts/fake-hosts.js";
+import type { CallerLimits } from "../http/caller-limits.js";
 import type { Logger } from "../logger.js";
 import { startService, type RunningService, type ServiceOptions } from "../service.js";
 
@@ -16,6 +17,9 @@ export const TOKENS = {
   stranger: "token-stranger",
   otherNamespace: "token-other-namespace",
   invalid: "token-invalid",
+  keyWriterOnly: "token-key-writer-only",
+  readerOnly: "token-reader-only",
+  constructorName: "token-constructor",
 } as const;
 
 export const fakeReviewer: Reviewer = async (token) => {
@@ -23,6 +27,9 @@ export const fakeReviewer: Reviewer = async (token) => {
     case TOKENS.writer: return { authenticated: true, namespace: NAMESPACE, serviceAccount: "octogee-glm-controller" };
     case TOKENS.platformApi: return { authenticated: true, namespace: NAMESPACE, serviceAccount: "octogee-api" };
     case TOKENS.stranger: return { authenticated: true, namespace: NAMESPACE, serviceAccount: "octogee-gateway" };
+    case TOKENS.keyWriterOnly: return { authenticated: true, namespace: NAMESPACE, serviceAccount: "key-writer-only" };
+    case TOKENS.readerOnly: return { authenticated: true, namespace: NAMESPACE, serviceAccount: "reader-only" };
+    case TOKENS.constructorName: return { authenticated: true, namespace: NAMESPACE, serviceAccount: "constructor" };
     case TOKENS.otherNamespace: return { authenticated: true, namespace: "elsewhere", serviceAccount: "octogee-glm-controller" };
     default: return { authenticated: false };
   }
@@ -63,7 +70,7 @@ export interface Harness {
   dispose(): Promise<void>;
 }
 
-export async function createHarness(options: Partial<Pick<ServiceOptions, "queue" | "heartbeatMs" | "runWorker" | "concurrency">> & { schema?: string; chat?: FakeChatHost; git?: FakeGitHost; reviewer?: Reviewer } = {}): Promise<Harness> {
+export async function createHarness(options: Partial<Pick<ServiceOptions, "queue" | "heartbeatMs" | "runWorker" | "concurrency"> & { limits?: Partial<CallerLimits>; roleTable?: ServiceOptions["roleTable"] }> & { schema?: string; chat?: FakeChatHost; git?: FakeGitHost; reviewer?: Reviewer } = {}): Promise<Harness> {
   if (!dsn) throw new Error("OCTOGEE_TEST_POSTGRES_DSN is required");
   const schema = options.schema ?? `ps_test_${randomBytes(6).toString("hex")}`;
   const chat = options.chat ?? new FakeChatHost();
@@ -75,7 +82,7 @@ export async function createHarness(options: Partial<Pick<ServiceOptions, "queue
     credentialKey: randomBytes(32),
     reviewer: options.reviewer ?? fakeReviewer,
     callerNamespace: NAMESPACE,
-    roleTable: CALLER_ROLES,
+    roleTable: options.roleTable ?? CALLER_ROLES,
     chat,
     git,
     log,
@@ -85,6 +92,7 @@ export async function createHarness(options: Partial<Pick<ServiceOptions, "queue
     ...(options.queue ? { queue: options.queue } : {}),
     ...(options.heartbeatMs ? { heartbeatMs: options.heartbeatMs } : {}),
     ...(options.concurrency ? { concurrency: options.concurrency } : {}),
+    limits: { requestsPerMinute: 10_000, concurrentWaits: 100, ...options.limits },
     runWorker: options.runWorker ?? false,
   });
   return {

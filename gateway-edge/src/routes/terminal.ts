@@ -1,4 +1,4 @@
-import { authenticationFailureLimit, authenticatedRequestLimit } from "../middleware/authenticated-request-limit.js";
+import { authenticationFailureLimit, authenticatedRequestLimit } from "@octogee/core/http/authenticated-request-limit";
 import type { IncomingMessage } from "node:http";
 import { Router, type NextFunction, type Request, type Response } from "express";
 import { WebSocket, type RawData } from "ws";
@@ -7,8 +7,8 @@ import {
   type WsUpgradeRouter,
 } from "@octogee/core/ws/upgrade-router";
 import { isPerUserControlIdentity } from "@octogee/shared/types/openclaw-proxy-identity";
-import { requireAuthenticatedUid } from "../middleware/auth.js";
-import { logger } from "../middleware/logging.js";
+import { requireAuthenticatedUid } from "@octogee/core/http/auth";
+import { logger } from "@octogee/core/http/logging";
 import type { NativeAdminAccess, NativeAdminAccessOutcome } from "../lib/native-admin-access.js";
 import { WS_TICKET_TTL_MS, wsTicketFromPath, type WsTicketStore } from "../lib/ws-ticket-store.js";
 import {

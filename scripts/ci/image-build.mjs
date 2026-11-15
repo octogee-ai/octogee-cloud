@@ -4,13 +4,11 @@ import { join } from "node:path";
 export const PLATFORM_CONTEXT = "platform";
 export const PRODUCT_ROOT = "product";
 
-const API_OVERLAYS = { overlay: "platform-api", "gateway-edge-overlay": "gateway-edge" };
-
 export const IMAGE_BUILDS = {
   "glm-controller": { dockerfile: "platform/fleet-controller/Dockerfile", context: PLATFORM_CONTEXT, overlays: { overlay: "fleet-controller" } },
   "artifact-worker": { dockerfile: "artifact-worker/Dockerfile", context: "." },
-  "octogee-api": { dockerfile: "platform/platform-api/Dockerfile", context: PLATFORM_CONTEXT, overlays: API_OVERLAYS, contexts: { "packed-package": "obsidian-connect" } },
-  "octogee-project-runner": { dockerfile: "platform/platform-api/Dockerfile", context: PLATFORM_CONTEXT, target: "project-runner", overlays: API_OVERLAYS },
+  "octogee-api": { dockerfile: "platform/platform-api/Dockerfile", context: PLATFORM_CONTEXT },
+  "llm-broker": { dockerfile: "platform/llm-broker/Dockerfile", context: PLATFORM_CONTEXT },
   "octogee-ops-agent-runtime": { dockerfile: "ops-agent/Dockerfile", context: "." },
   "product-controller": { dockerfile: "product/controller/Dockerfile", context: "." },
 };
@@ -23,11 +21,11 @@ export const overlayContexts = (overlays = {}, cwd = process.cwd()) => Object.fr
     .map(([context, pkg]) => [context, `${PRODUCT_ROOT}/${pkg}`]),
 );
 
-export function imagePlan(name, { repository, sha }, cwd = process.cwd()) {
-  if (!IMAGE_BUILDS[name]) throw new Error(`Unknown image: ${name}`);
+export function imagePlan(name, { repository, sha, builds = IMAGE_BUILDS }, cwd = process.cwd()) {
+  if (!builds[name]) throw new Error(`Unknown image: ${name}`);
   if (!/^[a-f0-9]{40}$/.test(sha)) throw new Error("A full source SHA is required");
   if (!/^[a-z0-9.-]+\/[a-z0-9-]+\/[a-z0-9-]+$/.test(repository)) throw new Error("Invalid registry repository");
-  const { overlays, contexts, ...build } = IMAGE_BUILDS[name];
+  const { overlays, contexts, ...build } = builds[name];
   return {
     ...build, contexts: { ...contexts, ...(build.context === PLATFORM_CONTEXT ? productContext(cwd) : {}), ...overlayContexts(overlays, cwd) },
     name, repository, buildArgs: { BUILD_SHA: sha.slice(0, 7) },

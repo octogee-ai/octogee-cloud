@@ -5,7 +5,7 @@ import {
   type GatewayInternalAuthValidationOptions,
 } from "../lib/gateway-internal-auth.js";
 import type { Reviewer } from "../lib/kubernetes-token-review.js";
-import { logger } from "./logging.js";
+import { logger } from "@octogee/core/http/logging";
 
 let tokenReviewerForTests: Reviewer | null = null;
 

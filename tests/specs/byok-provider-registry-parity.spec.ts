@@ -10,14 +10,14 @@ import {
 import {
   SUPPORTED,
   CANONICAL_BASE_URL,
-} from "../../gateway-edge/src/model-credentials/provider-key-format.js";
+} from "../../platform-api/src/model-credentials/provider-key-format.js";
 
 // The BYOK provider list lives in three places that MUST agree, or a new
 // provider "works" in one layer and fails at runtime in another (exactly the
 // #1726 review finding). This pins them together so adding a provider to one
 // without the others fails CI:
 //   1. scripts/lib model-credential-materializer providers (api_key entries) — what byot-sync materializes
-//   2. gateway-edge provider-key-format SUPPORTED — what the static key route accepts + probes
+//   2. platform-api provider-key-format SUPPORTED — what the static key route accepts + probes
 //   3. scripts/secret-resolver.mjs BYOK_ID_RE — what the gateway resolver will resolve
 
 const repoRoot = path.resolve(__dirname, "../..");
@@ -66,7 +66,7 @@ function brokerRouteProviders(): string[] {
 describe("BYOK provider registry parity (scripts PROVIDERS ↔ route ↔ resolver)", () => {
   it("static provider projections are backed by the shared model credential catalog", async () => {
     expect(
-      readSrc("gateway-edge/src/model-credentials/provider-key-format.ts"),
+      readSrc("platform-api/src/model-credentials/provider-key-format.ts"),
     ).toContain("MODEL_CREDENTIAL_STATIC_PROVIDER_IDS");
     expect(
       readSrc("scripts/lib/model-credential-materializer.ts"),

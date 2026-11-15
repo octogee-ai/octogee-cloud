@@ -149,8 +149,14 @@ export interface UserProvisioningList {
   nextPageToken?: string;
 }
 
+export interface UserProvisioningDeletion {
+  uid: string;
+  resourceVersion: string;
+}
+
 export interface UserProvisioningWatchResponse {
   items: UserProvisioning[];
+  deleted?: UserProvisioningDeletion[];
   resourceVersion: string;
 }
 
@@ -166,6 +172,7 @@ export interface UserProvisioningWatchQuery {
   watch: true;
   resourceVersion: string;
   timeoutSeconds?: number;
+  limit?: number;
 }
 
 export const PROVISIONING_STEPS = [

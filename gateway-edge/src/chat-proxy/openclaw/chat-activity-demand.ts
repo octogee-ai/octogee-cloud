@@ -1,4 +1,4 @@
-import type { BridgeLog } from "../bridge-log.js";
+import type { BridgeLog } from "@octogee/core/http/bridge-log";
 import type { ChatActivityPayload } from "./mm-chat-activity-listener.js";
 import { CHAT_DEMAND_UNAVAILABLE, type ChatActivityReport, type OpenClawRuntimeBroker } from "./runtime-broker.js";
 

@@ -31,7 +31,8 @@ core/              @octogee/core: shared runtime (platform state, secret store, 
 core-testing/      @octogee/core-testing: test helpers for code built on core (in-memory platform state, route harnesses)
 shared/            @octogee/shared: types and small server helpers
 fleet-controller/  the fleet controller and its Admin API: placement, migration, gateway rollout
-platform-api/      the platform API, plus the LLM broker and npm cache proxy apps
+platform-api/      the platform API, plus the npm cache proxy app
+llm-broker/        @octogee/llm-broker: the model broker that holds provider keys and meters model calls
 gateway-edge/      sidecar in each gateway pod; also runs as the gateway router and the Mattermost callback router
 scripts/           gateway pod boot steps and provisioner (entrypoints/), operator tools (ops/), CI (ci/), specs (__tests__/)
 gateway/           the gateway image: OpenClaw, its plugins (extensions/) and the pod entrypoint
@@ -57,6 +58,10 @@ and never import another service component's files or package; specs under
 install them as `file:` dependencies, so build and commit `dist/` with any
 change to their source. The OpenClaw build the gateway image uses is pinned in
 `gateway/openclaw-tarball/current.json`.
+
+`gateway-edge` and `llm-broker` do not commit `dist/`. Their `exports` maps
+list every module another package may import. Build them before installing a
+package that depends on them.
 
 ## Build and test
 
@@ -132,8 +137,12 @@ the operator asks for them or a current risk to users requires them.
   gateway image (`octogee-gateway-builder`) is `linux/amd64` only; arm64
   clusters schedule it on amd64 nodes. It pushes them
   to `ghcr.io/octogee-ai/octogee-cloud/<image>`, tagged with the full and short
-  commit SHA, and keeps a manifest of every digest as a workflow artifact.
-  Building never deploys.
+  commit SHA, keeps a manifest of every digest as a workflow artifact, and
+  scans them. Its result depends only on that. Building never deploys.
+- **Kind smoke** (`.github/workflows/kind-smoke.yml`) runs after each
+  successful Build main push run, or by hand for one commit. It installs that
+  run's images on kind and runs the shared and isolated gateway smokes; it
+  never changes Build main's result. A release requires both.
 - Deploying a build is an operator step. [docs/running-in-the-cloud.md](docs/running-in-the-cloud.md)
   installs the charts, `octogee-fleet gateway deploy` moves one isolated gateway
   to a build, and every fleet change the controller makes writes an

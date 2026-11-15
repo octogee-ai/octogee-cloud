@@ -4,7 +4,7 @@ import { isSafeAgentId } from "@octogee/core/byosub-restore";
 import type { PlatformUserRecord, PlatformStateRepositories, Stored } from "@octogee/core/platform-state";
 import { parseAgentId } from "@octogee/shared/types/identity";
 
-import { userAllowsInteractiveAccess } from "./assigned-user.js";
+import { userAllowsInteractiveAccess } from "@octogee/core/assigned-user";
 import { verifyOwnerAutomationTurn } from "./openclaw-owner-turn.js";
 
 export const OWNER_AUTOMATIONS_PROOF_PATH = "/internal/owner-automations";

@@ -6,6 +6,7 @@ import type { Server } from "node:http";
 import { rateLimit } from "express-rate-limit";
 import { publicAppOriginsFromEnv } from "@octogee/core/public-app-origins";
 import { renderMetrics } from "./metrics.js";
+import { adminPlacementCapabilities } from "./admin-placement-capabilities.js";
 import type { UserAccounts, UserSignInHosts } from "@octogee/core/admin-user-router";
 import type { UserAccountReader } from "@octogee/core/user-account";
 import {
@@ -33,6 +34,7 @@ import {
   type AdminUserProductDetail,
 } from "@octogee/core/admin-user-directory-router";
 import { addAdminLogsRoutes } from "@octogee/core/admin-logs-router";
+import { readAdminGatewayKubernetes } from "./admin-kubernetes-observer.js";
 import { addAdminSizingProfileRoutes } from "@octogee/core/admin-sizing-profile-router";
 import type { LogEntriesSource } from "@octogee/core/fleet-logs";
 import {
@@ -366,6 +368,7 @@ export function createHttpServer(deps: HttpServerDeps): Express {
     releaseAuthority: deps.releaseAuthority,
     platformArtifact: deps.platformArtifact,
     controllerStartedAt: deps.controllerStartedAt,
+    readGatewayKubernetes: readAdminGatewayKubernetes,
     readGatewayPodDiagnostics: deps.readGatewayPodDiagnostics,
     readGatewayPodDiagnosticsBatch: deps.readGatewayPodDiagnosticsBatch,
     requestNativeReturnSourceRecovery: deps.requestNativeReturnSourceRecovery,
@@ -374,6 +377,7 @@ export function createHttpServer(deps: HttpServerDeps): Express {
     userAccounts: deps.userAccounts,
     userSignIn: deps.userSignIn,
     discoverDeletionProductContext: deps.discoverDeletionProductContext,
+    placement: adminPlacementCapabilities,
     provisioningReadiness: deps.provisioningReadiness,
   });
   addAdminProvisioningRoutes(adminRouter, {

@@ -21,6 +21,7 @@ import { AdminDryRunPlanned, admitAdminDryRunMarker, isAdminDryRun, refuseUnansw
 import { addAdminComputerRoutes } from "./admin-vm-router.js";
 import { addAdminUserRoutes } from "./admin-user-router.js";
 import { addAdminSharedPoolRoutes } from "./admin-shared-pool-router.js";
+import { addAdminPlacementRoutes } from "./admin-placement-router.js";
 import { GatewayRetirementConflictError, assertGatewayRuntimeMutationUnfencedInStore, isolatedRuntimeMutationFenced, claimGatewayRetirementInStore, } from "./gateway-retirement-claim.js";
 import { commitOperatorPlacement, planOperatorPlacement, SHARED_GATEWAY_MIRROR, } from "./operator-placement.js";
 import { appendGatewayRelease, asDurableGatewayRoot, InvalidGatewayRootError, StaleGatewayReleaseError, } from "./gateway-release-append.js";
@@ -3279,7 +3280,10 @@ export function addAdminFleetRoutes(router, deps) {
         controllerStartedAt: deps.controllerStartedAt,
         journal: runAdminFleetMutation,
         provisioningReadiness: deps.provisioningReadiness,
+        readGatewayKubernetes: deps.readGatewayKubernetes,
     });
+    if (deps.placement)
+        addAdminPlacementRoutes(router, { ...deps.placement, store, journal: runAdminFleetMutation });
     async function handleActiveUserDeletion(input) {
         const lifecycle = input.lifecycle;
         if (!userDeletionIsActive(lifecycle))

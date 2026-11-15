@@ -1,9 +1,9 @@
 import * as crypto from "node:crypto";
 
-import type { FundedBudgetInterruptionHandler } from "./model-broker-budget.js";
-import type { LiveOwnerGrantResolver, OwnerModelBrokerGrant } from "./model-broker-limits.js";
-import type { ModelBrokerRailRegistry, RailAllowanceResult } from "./model-broker-rails.js";
-import type { ModelBrokerUsageStore } from "./model-broker-usage.js";
+import type { FundedBudgetInterruptionHandler } from "@octogee/core/model-broker/budget";
+import type { LiveOwnerGrantResolver, OwnerModelBrokerGrant } from "@octogee/core/model-broker/limits";
+import type { ModelBrokerRailRegistry, RailAllowanceResult } from "@octogee/core/model-broker/rails";
+import type { ModelBrokerUsageStore } from "@octogee/core/model-broker/usage";
 import type {
   BraveSearchInput,
   BraveSearchOutput,
@@ -13,7 +13,7 @@ import type {
   TavilySearchOutput,
 } from "./web-provider-clients.js";
 import { WebProviderError } from "./web-provider-clients.js";
-import { WebResearchError } from "./web-research-error.js";
+import { WebResearchError } from "@octogee/core/model-broker/web-research-error";
 
 interface AttributedCall {
   gatewayId: string;

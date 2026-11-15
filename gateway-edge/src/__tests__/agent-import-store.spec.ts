@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createAgentImportStore } from "../lib/agent-import-store.js";
-import type { AgentImportRecord, StoredAgentImportPlan } from "../lib/agent-import-service.js";
+import type { AgentImportRecord, StoredAgentImportPlan } from "@octogee/core/http-candidates/agent-transfer/agent-import-service";
 
 const roots: string[] = [];
 

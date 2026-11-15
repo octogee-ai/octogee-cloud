@@ -2,6 +2,7 @@ import type { Router } from "express";
 import type { OperationStatus } from "@octogee/shared/types/glm";
 import type { AdminFleetMutationRunner } from "./admin-fleet-router.js";
 import { type GatewayArtifact, type GatewayMutableConfig } from "./gateway-live-release.js";
+import { type GatewayKubernetesReader } from "./fleet-state-sections.js";
 import type { ProvisioningReadiness } from "./provisioning-sync.js";
 import type { FleetRegistryRecord } from "./platform-state/fleet-registry.js";
 import type { GatewayRoot } from "./platform-state/gateways.js";
@@ -16,6 +17,7 @@ export interface AdminSharedPoolRouterDeps {
     journal: AdminFleetMutationRunner;
     now?: () => number;
     provisioningReadiness?: ((uid: string) => ProvisioningReadiness | null) | undefined;
+    readGatewayKubernetes?: GatewayKubernetesReader | undefined;
 }
 export declare function sharedSlotMutableConfig(): GatewayMutableConfig;
 export interface FleetStateUser {

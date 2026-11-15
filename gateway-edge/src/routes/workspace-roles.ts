@@ -1,11 +1,11 @@
-import { authenticationFailureLimit } from "../middleware/authenticated-request-limit.js";
+import { authenticationFailureLimit } from "@octogee/core/http/authenticated-request-limit";
 import { Router, type NextFunction, type Request, type Response } from "express";
 import { rateLimit } from "express-rate-limit";
-import { requireAuthenticatedUid } from "../middleware/auth.js";
-import { DEFAULT_RATE_LIMIT_OPTIONS } from "../middleware/security.js";
+import { requireAuthenticatedUid } from "@octogee/core/http/auth";
+import { DEFAULT_RATE_LIMIT_OPTIONS } from "@octogee/core/http/security";
 import { resolveWorkspaceNativeIdentity, WorkspaceNativeAccessError } from "../lib/workspace-native-access.js";
 import { openNativeUserClient } from "../openclaw-control/native-user-client.js";
-import { signedInProfile } from "../openclaw-control/proxy-identity.js";
+import { signedInProfile } from "@octogee/core/http-candidates/openclaw-control/proxy-identity";
 import { isIsolatedGatewayClassValue } from "@octogee/shared/types/glm";
 
 interface NativeProfile { id: string; role: string | null }
@@ -44,7 +44,7 @@ function validateRole(req: Request, res: Response<unknown, { role: string | null
 }
 
 export function createWorkspaceRolesRouter(deps = { resolveIdentity: resolveWorkspaceNativeIdentity, openClient: openNativeUserClient }) {
-  const router = Router({ mergeParams: true });
+  const router: Router = Router({ mergeParams: true });
   const roleRateLimit = (limit: number) => rateLimit({
     ...DEFAULT_RATE_LIMIT_OPTIONS,
     windowMs: 60_000,

@@ -4,9 +4,9 @@ import { Router, type Request } from 'express';
 import { WebSocket } from 'ws';
 import { WsUpgradeAuthorizationError, type WsUpgradeRouter } from '@octogee/core/ws/upgrade-router';
 import { openClawProxyIdentityHeaders, openClawProxyOrigin } from '@octogee/shared/types/openclaw-proxy-identity';
-import { requireAuthenticatedUid } from '../middleware/auth.js';
-import { authenticatedRequestLimit, authenticationFailureLimit } from '../middleware/authenticated-request-limit.js';
-import { logger } from '../middleware/logging.js';
+import { requireAuthenticatedUid } from '@octogee/core/http/auth';
+import { authenticatedRequestLimit, authenticationFailureLimit } from '@octogee/core/http/authenticated-request-limit';
+import { logger } from '@octogee/core/http/logging';
 import { resolveNativeAdminAccess } from '../lib/native-admin-access.js';
 import { resolveToolChannelForUid, resolveToolControlForUid, type ToolChannel, type ToolControl } from '../lib/tool-conversation.js';
 import { isMattermostPostId } from '@octogee/shared/types/mattermost-session-route';
@@ -15,11 +15,11 @@ import { createWsTicketStore, wsTicketFromPath } from '../lib/ws-ticket-store.js
 import { authorizeSession, monitorSessionAuthorization } from '../lib/ws-session-authorization.js';
 import { openNativeUserSocket } from '../openclaw-control/native-user-client.js';
 import { openClawControlUpstreamBase } from '../openclaw-control/surface.js';
-import { podClientAddress } from '../openclaw-control/proxy-identity.js';
+import { podClientAddress } from '@octogee/core/http-candidates/openclaw-control/proxy-identity';
 import { terminalAvailable } from './terminal.js';
 import { browserRecord, browserRequestParams, browserStreamPath } from './browser-policy.js';
 import { latestNativeBrowserTab } from '../vendor/openclaw-browser-resources/index.js';
-import { containsAsciiControlCharacter } from '../lib/text-validation.js';
+import { containsAsciiControlCharacter } from '@octogee/shared/types/text-validation';
 import { nativeBrowserResource, type NativeBrowserTab } from './tool-resources.js';
 import { desktopObserveParams, desktopStreamPath, desktopEnvironment, desktopNodeIdentity, readDesktopNodeIdentity, type DesktopEgressReport } from './tool-desktop.js';
 import { browserRpc, NativeBrowserError } from './browser-rpc.js';
@@ -251,7 +251,7 @@ export function createToolSurface(options: ToolSurfaceOptions = {}) {
   const tickets = createWsTicketStore<ToolSession>();
   const streamTickets = new Map<string, StreamGrant>();
   const mediaOwners = new Map<string, LiveToolSession>();
-  const router = Router({ mergeParams: true });
+  const router: Router = Router({ mergeParams: true });
   const headers = (uid: string) => ({ ...openClawProxyIdentityHeaders({ user: uid, clientAddress: podClientAddress() }), origin: openClawProxyOrigin(env) });
 
   function retireGrant(grant: StreamGrant): void {

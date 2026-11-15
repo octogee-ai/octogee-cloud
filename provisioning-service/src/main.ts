@@ -18,6 +18,7 @@ async function main(): Promise<void> {
     ...(ca ? { ca } : {}),
   });
   const hosts = hostsFromConfig(config.hosts, log);
+  if (config.hosts.kind === "fake") log.warn("provisioning service is using fake host adapters; for tests only");
   const service = await startService({
     database: config.database,
     databaseSchema: config.databaseSchema,
@@ -30,6 +31,8 @@ async function main(): Promise<void> {
     log,
     replicaId: config.replicaId,
     port: config.port,
+    limits: config.limits,
+    changeRetentionMs: config.changeRetentionSeconds * 1_000,
   });
   log.info("provisioning service listening", { port: config.port, hostAdapters: config.hosts.kind, replica: config.replicaId });
   const shutdown = (signal: string) => {

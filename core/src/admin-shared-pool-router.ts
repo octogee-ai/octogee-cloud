@@ -1,10 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Request, Response, Router } from "express";
-import {
-  isReleasePayload,
-  releasePayloadHash,
-  type ReleasePayload,
-} from "@octogee/shared/types/gateway-releases";
+import { isReleasePayload } from "@octogee/shared/types/gateway-releases";
 import { gatewayHeartbeatMatchesImageTag, isGatewayImageTag } from "@octogee/shared/types/image-tag";
 import type { GatewayDesiredStatus, OperationStatus } from "@octogee/shared/types/glm";
 import {
@@ -24,7 +20,15 @@ import {
   type GatewayMutableConfig,
 } from "./gateway-live-release.js";
 import { claimGatewayRetirementInStore, GatewayRetirementConflictError } from "./gateway-retirement-claim.js";
-import { InvalidSharedGatewayAutoscalingConfigError, readSharedGatewayAutoscalingConfigInStore } from "./shared-gateway-pool-read.js";
+import {
+  FLEET_STATE_SECTIONS_ERROR,
+  latestReleasePayloadHash,
+  parseFleetStateSections,
+  platformArtifactHash,
+  readFleetStateSections,
+  readSharedGatewayAutoscalingOrNull,
+  type GatewayKubernetesReader,
+} from "./fleet-state-sections.js";
 import { FleetMutationRefusedError } from "./normal-fleet-mutation.js";
 import { timestampMillis } from "./timestamps.js";
 import type { ProvisioningReadiness } from "./provisioning-sync.js";
@@ -46,6 +50,7 @@ export interface AdminSharedPoolRouterDeps {
   journal: AdminFleetMutationRunner;
   now?: () => number;
   provisioningReadiness?: ((uid: string) => ProvisioningReadiness | null) | undefined;
+  readGatewayKubernetes?: GatewayKubernetesReader | undefined;
 }
 
 class PreconditionFailed extends Error {}
@@ -194,12 +199,6 @@ function parseStatuses(raw: unknown): OperationStatus[] | null {
     : null;
 }
 
-async function latestReleasePayloadHash(transaction: PlatformStateTransaction, root: Stored<GatewayRoot>): Promise<string | null> {
-  if (!isNonNegativeInteger(root.latestRelease)) return null;
-  const release = await transaction.gateways.releases.get(root.gatewayId, root.latestRelease);
-  return release !== null && isReleasePayload(release.payload) ? releasePayloadHash(release.payload) : null;
-}
-
 export interface FleetStateUser {
   readonly uid: string;
   readonly slug: string | null;
@@ -249,17 +248,14 @@ export async function readFleetState(store: PlatformStateStore, input: {
       transaction.gateways.assignments.listAll(),
       transaction.fleetRegistry.list(),
       transaction.journal.operations.listByStatus(input.operationStatuses),
-      readSharedGatewayAutoscalingConfigInStore(transaction).catch((error: unknown) => {
-        if (error instanceof InvalidSharedGatewayAutoscalingConfigError) return null;
-        throw error;
-      }),
+      readSharedGatewayAutoscalingOrNull(transaction),
     ]);
     const sharedGateways = gateways.filter(isSharedPoolMemberRoot);
     const hashes = await Promise.all(sharedGateways.map((root) => latestReleasePayloadHash(transaction, root)));
     return {
       generatedAt: input.now,
       fleetControllerStartedAt: input.controllerStartedAt ?? null,
-      platformArtifactHash: input.platformArtifact ? releasePayloadHash({ ...input.platformArtifact } as ReleasePayload) : null,
+      platformArtifactHash: platformArtifactHash(input.platformArtifact),
       config: {
         sharedGatewayAutoscaling,
         sizingProfiles: config?.sizingProfiles ?? {},
@@ -407,6 +403,23 @@ export function addAdminSharedPoolRoutes(router: Router, deps: AdminSharedPoolRo
       const operationStatuses = parseStatuses(req.query.operationStatus);
       if (operationStatuses === null) {
         res.status(400).json({ error: `operationStatus must be a comma-separated list of ${OPERATION_STATUSES.join(", ")}` });
+        return;
+      }
+      if (req.query.sections !== undefined) {
+        const sections = parseFleetStateSections(req.query.sections);
+        if (sections === null) {
+          res.status(400).json({ error: FLEET_STATE_SECTIONS_ERROR });
+          return;
+        }
+        res.json(await readFleetStateSections(store, {
+          sections,
+          operationStatuses,
+          platformArtifact: deps.platformArtifact,
+          controllerStartedAt: deps.controllerStartedAt,
+          now: now(),
+          projectUser: (user) => fleetStateUser(user, deps.provisioningReadiness),
+          readGatewayKubernetes: deps.readGatewayKubernetes,
+        }));
         return;
       }
       res.json(await readFleetState(store, {
