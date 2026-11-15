@@ -26,6 +26,7 @@ const manifest = {
     "octogee-gateway": { digest: digest(4) },
     "octogee-gateway-builder": { digest: digest(5) },
     "vm-bridge": { digest: digest(6) },
+    "provisioning-service": { digest: digest(7) },
   },
 };
 const openclawSourceSha = "d".repeat(40);
@@ -39,6 +40,7 @@ describe("platform chart release values", () => {
     expect(values.llmBroker.image).toEqual({ repository: `${registry}/llm-broker`, tag: "v0.2.0", digest: digest(7) });
     expect(values["gateway-edge"].image.digest).toBe(digest(3));
     expect(values.global.computer.bridge.image.digest).toBe(digest(6));
+    expect(values.provisioningService.image).toEqual({ repository: `${registry}/provisioning-service`, tag: "v0.2.0", digest: digest(7) });
   });
 
   it("gives the fleet controller the release's gateway images by commit tag, the form gateway image tags take", () => {

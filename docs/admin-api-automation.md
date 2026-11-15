@@ -557,6 +557,10 @@ Optional fences: `leaseId`; `telemetryFenceOperationId` with
 `telemetryFenceStatus` (`succeeded` or `terminal-failure`);
 `authoritativeGatewayId` with `authoritativeLeaseStatus` (`provisioning`,
 `activating` or `returning`); `zeroWorkloadRecoveryOperationId`.
+`telemetryFenceOperationId` follows the operation id rule of the lease routes,
+for `ownerUid`, this gateway and `generation`: any other id answers `400` and
+writes nothing. The zero-workload receipt must be a succeeded recovery of
+this user, gateway, lease and generation.
 
 It claims the retirement and writes the placement retirement operation in one
 transaction, and answers `{gatewayId, operationId, retired: true}`. The
