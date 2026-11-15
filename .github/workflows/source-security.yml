@@ -8,7 +8,7 @@ on:
       - '**/*.Dockerfile'
       - '**/*.tf'
       - '**/*.tfvars'
-      - 'helm/**'
+      - 'charts/**'
       - 'scripts/ops/kind/**'
       - 'scripts/ci/install-security-tool.sh'
       - '**/package-lock.json'
@@ -81,7 +81,7 @@ jobs:
               --set-string "$image.image.tag=$tag" --set-string "$image.image.digest=$digest")
           done
           mkdir -p "$RUNNER_TEMP/rendered-helm"
-          helm template octogee helm/octogee --namespace octogee-local -f scripts/ops/kind/values.yaml "${args[@]}" \
+          helm template octogee charts/octogee --namespace octogee-local -f scripts/ops/kind/values.yaml "${args[@]}" \
             --set-string llmBroker.image.repository=registry.example/octogee-api \
             --set-string "llmBroker.image.tag=$tag" --set-string "llmBroker.image.digest=$digest" \
             --set-string "glm-controller.platformRelease.sourceSha=$(printf 'a%.0s' {1..40})" \
@@ -90,7 +90,7 @@ jobs:
             --set-string "glm-controller.platformRelease.builderImageTag=$tag@$digest" \
             --set-string glm-controller.platformRelease.gatewayEdgeImageRepository=registry.example/gateway-edge \
             --set-string "glm-controller.platformRelease.gatewayEdgeImageTag=$tag@$digest" > "$RUNNER_TEMP/rendered-helm/platform.yaml"
-          helm template octogee-gw-scan helm/octogee-gateway --namespace octogee-local \
+          helm template octogee-gw-scan charts/octogee-gateway --namespace octogee-local \
             --set-string gatewayId=scan --set-string "imageTag=$tag" \
             --set-string image.repository=registry.example/octogee-gateway \
             --set-string gatewayEdge.image.repository=registry.example/gateway-edge \

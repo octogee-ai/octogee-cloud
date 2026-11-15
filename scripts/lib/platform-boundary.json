@@ -1,18 +1,20 @@
 {
   "platformEntrypoints": [
-    "platform/octogee-api/src/app.ts",
-    "platform/octogee-api/src/llm-broker-app.ts",
-    "platform/octogee-api/src/llm-broker.ts",
-    "platform/octogee-api/src/npm-cache-proxy.ts",
-    "platform/octogee-api/src/main.ts",
+    "platform/platform-api/src/app.ts",
+    "platform/platform-api/src/llm-broker-app.ts",
+    "platform/platform-api/src/llm-broker.ts",
+    "platform/platform-api/src/npm-cache-proxy.ts",
+    "platform/platform-api/src/main.ts",
     "platform/gateway-edge/src/index.ts",
     "platform/gateway-edge/src/main.ts",
-    "platform/glm-controller/src/index.ts",
-    "platform/glm-controller/src/main.ts"
+    "platform/fleet-controller/src/index.ts",
+    "platform/fleet-controller/src/main.ts"
   ],
   "platformRoots": [
-    "platform/infra/",
-    "platform/helm/",
+    "platform/desktop/",
+    "platform/gateway/",
+    "platform/vm-bridge/",
+    "platform/charts/",
     "platform/scripts/",
     "platform/templates/",
     "platform/terraform/"

@@ -5,11 +5,11 @@ import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, expect, it } from "vitest";
 
-const desktop = fs.readFileSync(path.resolve(import.meta.dirname, "../../infra/gateway/hobby-desktop.sh"), "utf8");
+const desktop = fs.readFileSync(path.resolve(import.meta.dirname, "../../gateway/hobby-desktop.sh"), "utf8");
 const lifecycle = desktop.slice(desktop.includes("session_runtime=") ? desktop.indexOf("session_runtime=") : desktop.lastIndexOf("exec dbus-run-session"));
 
 it.each([[72, 0], [2, 1], [1, 1]])("stops the desktop for gateway exit %s with container exit %s", (gatewayStatus, expected) => {
-  const session = fs.readFileSync(path.resolve(import.meta.dirname, "../../infra/gateway/hobby-session.sh"), "utf8");
+  const session = fs.readFileSync(path.resolve(import.meta.dirname, "../../gateway/hobby-session.sh"), "utf8");
   const loop = session.slice(session.lastIndexOf("while true; do\n  exited=")).replace("[[ ! -v exited ]]", "[[ ${exited+x} != x ]]");
   const script = `gateway_pid=11; children=(11); browser_pid=22; panel_pid=33; reopen_pid=''; reopen_desk=0; restart_browser=0
 wait() { exited=11; return ${gatewayStatus}; }
@@ -112,7 +112,7 @@ it.each(["zero", "self", "bus", "foreign"] as const)("refuses a %s PID without s
 
 it.each(["exited", "signal-failed"] as const)("continues joining session children after %s during termination", async outcome => {
   const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "desktop-exit-race-"));
-  const session = fs.readFileSync(path.resolve(import.meta.dirname, "../../infra/gateway/hobby-session.sh"), "utf8");
+  const session = fs.readFileSync(path.resolve(import.meta.dirname, "../../gateway/hobby-session.sh"), "utf8");
   const cleanup = session.match(/^cleanup\(\) \{[\s\S]*?^\}/m)?.[0];
   if (!cleanup) throw new Error("session cleanup owner is missing");
   const shellQuote = (text: string) => "'" + text.replaceAll("'", "'\\''") + "'";

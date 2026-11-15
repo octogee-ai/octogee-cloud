@@ -4,13 +4,13 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const repo = path.resolve(import.meta.dirname, "../..");
-const entrypoint = fs.readFileSync(path.join(repo, "infra/gateway/entrypoint.sh"), "utf8");
+const entrypoint = fs.readFileSync(path.join(repo, "gateway/entrypoint.sh"), "utf8");
 const header = entrypoint.slice(0, entrypoint.indexOf("# Consistent ISO timestamp logging"));
 
 function boot(env: Record<string, string>) {
   const run = spawnSync("sh", ["-c", `${header}\nprintf '%s' "$GATEWAY_CLASS_EFFECTIVE"`], {
     encoding: "utf8",
-    env: { PATH: process.env.PATH, OCTOGEE_LIBEXEC_DIR: path.join(repo, "infra/gateway"), ...env },
+    env: { PATH: process.env.PATH, OCTOGEE_LIBEXEC_DIR: path.join(repo, "gateway"), ...env },
   });
   return { status: run.status, effectiveClass: run.stdout, stderr: run.stderr };
 }

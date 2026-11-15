@@ -1,0 +1,332 @@
+{{- $sharedIngressName := .Values.ingress.sharedName | default "" -}}
+{{- $apiIngressName := default (.Values.ingress.apiName | default "gateway-edge-ingress") $sharedIngressName -}}
+{{- $sourceSha := (.Values.platformRelease).sourceSha | default "" -}}
+{{- if not (regexMatch "^[a-f0-9]{40}$" $sourceSha) -}}
+{{- fail "glm-controller.platformRelease.sourceSha must be the selected full 40-character immutable build SHA" -}}
+{{- end -}}
+{{- $productPod := dict -}}
+{{- with .Files.Get "product/pod.yaml" -}}
+{{- $productPod = tpl . $ | fromYaml -}}
+{{- with $productPod.Error }}{{ fail (printf "product/pod.yaml: %s" .) }}{{ end -}}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: glm-controller
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: glm-controller
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: glm-controller
+  template:
+    metadata:
+      labels:
+        app: glm-controller
+      {{- if or .Values.deploymentTargets .Values.gatewayValues }}
+      annotations:
+        checksum/configuration: {{ list .Values.deploymentTargets .Values.gatewayValues | toJson | sha256sum | trunc 16 | quote }}
+      {{- end }}
+    spec:
+      {{- with (.Values.global).nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: glm-controller
+      automountServiceAccountToken: true
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: glm-controller
+          image: "{{ required "glm-controller.image.repository is required" .Values.image.repository }}:{{ required "glm-controller.image.tag is required" .Values.image.tag }}@{{ required "glm-controller.image.digest is required" .Values.image.digest }}"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_UID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.uid
+            - name: OPENCLAW_AGENT_STORE_ADMIN_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: agent-store-postgres
+                  key: admin-dsn
+            - name: OPENCLAW_AGENT_STORE_CLIENT_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: agent-store-postgres
+                  key: client-dsn
+            - name: LOG_LEVEL
+              value: {{ (.Values.global).logLevel | default "info" | quote }}
+            - name: LOG_KEEP_LONG_IDENTIFIERS
+              value: {{ (.Values.global).logKeepLongIdentifiers | default false | quote }}
+            {{- with (include "octogee.platformStateEnv" .) }}{{ . | nindent 12 }}{{ end }}
+            {{- include "octogee.runtimeSecretStoreEnv" . | nindent 12 }}
+            - name: K8S_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            {{- with .Values.fleetIdentity.googleClientId }}
+            - name: FLEET_GOOGLE_CLIENT_ID
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.fleetIdentity.operatorEmails }}
+            - name: FLEET_OPERATOR_EMAILS
+              value: {{ join "," . | quote }}
+            {{- end }}
+            {{- with .Values.fleetIdentity.operatorKeySecretName }}
+            - name: FLEET_OPERATOR_PUBLIC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ . | quote }}
+                  key: public-key
+            {{- end }}
+            - name: DEPLOYMENT_TARGET_ID
+              value: {{ required "global.deploymentTargetId is required" (.Values.global).deploymentTargetId | quote }}
+            - name: PUBLIC_APP_ORIGINS
+              value: {{ join "," (required "global.publicAppOrigins is required" (.Values.global).publicAppOrigins) | quote }}
+            # GATEWAY_CHART tells the controller where the standalone
+            # per-instance chart is baked in the image (Dockerfile copies
+            # charts/octogee-gateway/ → /charts/octogee-gateway). The
+            # reconciler installs `octogee-gw-<gatewayId>` releases
+            # off this chart. The umbrella `octogee` release is now
+            # written by CI, not by the controller, so HELM_RELEASE +
+            # HELM_CHART are no longer needed.
+            - name: GATEWAY_CHART
+              value: {{ .Values.gatewayChart | default "/charts/octogee-gateway" | quote }}
+            {{- if .Values.deploymentTargets }}
+            - name: OCTOGEE_DEPLOYMENT_TARGETS
+              value: /etc/octogee/configuration/deployment-targets.json
+            {{- end }}
+            {{- if .Values.gatewayValues }}
+            - name: GATEWAY_VALUES_FILE
+              value: /etc/octogee/configuration/gateway-values.yaml
+            {{- end }}
+            - name: GOOGLE_CLOUD_PROJECT
+              value: {{ required "global.deploymentProjectId is required" (.Values.global).deploymentProjectId | quote }}
+            - name: GCP_PROJECT_ID
+              value: {{ required "global.deploymentProjectId is required" (.Values.global).deploymentProjectId | quote }}
+            {{- if .Values.kmsKeyName }}
+            - name: OCTOGEE_KMS_KEY_NAME
+              value: {{ .Values.kmsKeyName | quote }}
+            {{- else }}
+            {{- with (.Values.global).encryptionRootKeySecretName }}
+            - name: ENCRYPTION_ROOT_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ . | quote }}
+                  key: root-key
+            {{- end }}
+            {{- end }}
+            {{- include "octogee.blobStoreEnv" . | nindent 12 }}
+            - name: GKE_WORKLOAD_IDENTITY_PROJECT
+              value: {{ required "glm-controller.workloadIdentityProject is required" .Values.workloadIdentityProject | quote }}
+            {{- $computer := (.Values.global).computer | default dict }}
+            {{- if $computer.enabled }}
+            - name: GATEWAY_BUILDER_DISPOSABLE_PARKING
+              value: {{ .Values.computerParking.disposable | quote }}
+            - name: GATEWAY_BUILDER_DISPOSABLE_STATE_CONTRACT
+              value: {{ .Values.computerParking.stateContract | quote }}
+            - name: GATEWAY_COMPUTE_PROJECT_ID
+              value: {{ required "global.computer.projectId is required" $computer.projectId | quote }}
+            - name: GATEWAY_VM_SPEC_JSON
+              value: {{ required "global.computer.vmSpec is required" $computer.vmSpec | toJson | quote }}
+            - name: GATEWAY_VM_KUBERNETES_API_HOST
+              value: {{ required "global.computer.kubernetesApiHost is required" $computer.kubernetesApiHost | quote }}
+            - name: GATEWAY_VM_BRIDGE_SERVICE
+              value: "octogee-vm-bridge"
+            - name: GATEWAY_VM_ROUTES_CONFIGMAP
+              value: "octogee-vm-routes"
+            {{- end }}
+            - name: FLEET_CONTROLLER_PRIVATE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: octogee-fleet-controller
+                  key: private-key
+            # Gitea + Mattermost admin credentials for cloud-side
+            # user cleanup (deprovision-customer op handler). Same
+            # secrets the gateway pod uses; glm-controller now needs
+            # them too because user lifecycle moved off the gateway.
+            - name: GIT_API_URL
+              value: {{ .Values.env.gitApiUrl | default (printf "http://octogee-gitea-http.%s.svc.cluster.local:3000/api/v1" .Release.Namespace) | quote }}
+            - name: GIT_ORG
+              value: {{ .Values.env.gitOrg | default "octogee" | quote }}
+            - name: GIT_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: gitea-token
+                  key: token
+            - name: GITEA_GATEWAY_KEY_GC_MODE
+              value: {{ required "glm-controller.giteaGatewayKeyGc.mode is required" (.Values.giteaGatewayKeyGc).mode | quote }}
+            - name: MM_URL
+              value: {{ .Values.env.mmUrl | default (printf "http://mattermost.%s.svc.cluster.local:8065" .Release.Namespace) | quote }}
+            - name: MM_ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: mattermost-gateway
+                  key: admin_token
+            {{- with $productPod.env }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+            {{- range $path, $_ := .Files.Glob "**/secret-env.yaml" }}
+            {{- range ($.Files.Get $path | fromYamlArray) }}
+            - name: {{ .envName }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .secretName }}
+                  key: {{ .secretKey }}
+                  optional: {{ .optional | default false }}
+            {{- end }}
+            {{- end }}
+            {{- if and .Values.posthog.host .Values.posthog.projectId }}
+            - name: POSTHOG_HOST
+              value: {{ .Values.posthog.host | quote }}
+            - name: POSTHOG_PROJECT_ID
+              value: {{ .Values.posthog.projectId | quote }}
+            # Required, not optional: erasure config is all-three-or-nothing, so a
+            # missing secret would ship a partial set and fail every erase-customer
+            # op on config instead of refusing to start.
+            - name: POSTHOG_PERSONAL_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.posthog.personalApiKeySecretName | quote }}
+                  key: {{ .Values.posthog.personalApiKeySecretKey | quote }}
+                  optional: false
+            {{- end }}
+            - name: HTTP_PORT
+              value: {{ .Values.http.port | quote }}
+            - name: DISPOSABLE_GATEWAY_IDLE_MS
+              value: {{ (.Values.disposableGateway).idleMs | default "900000" | quote }}
+            - name: DISPOSABLE_GATEWAY_IDLE_WARNING_MS
+              value: {{ (.Values.disposableGateway).idleWarningMs | default "300000" | quote }}
+            # Single source of truth: parent `.Values.global.fleetControllerPort`.
+            # The umbrella's gateway-fleet.yaml renders Service +
+            # BackendConfig + Ingress paths off the same value, so a
+            # change updates both consumers atomically (no drift between
+            # what the LB targets and what the fleet controller writes). Parentheses
+            # around `.Values.global` guard against nil when this
+            # subchart is rendered standalone (helm-glm-controller test
+            # cases don't merge umbrella values).
+            - name: FLEET_CONTROLLER_PORT
+              value: {{ (.Values.global).fleetControllerPort | default "3003" | quote }}
+            - name: GATEWAY_EDGE_INGRESS_NAME
+              value: {{ $apiIngressName | quote }}
+            - name: GATEWAY_EDGE_INGRESS_HOST
+              value: {{ .Values.ingress.apiHost | default "" | quote }}
+            - name: PREVIEW_INGRESS_HOST
+              value: {{ .Values.ingress.previewHost | default "" | quote }}
+            # The static base routing table the fleet controller merges with per-gateway paths;
+            # published by the umbrella's edge-routes-configmap.yaml.
+            - name: EDGE_ROUTES_CONFIGMAP
+              value: "octogee-edge-routes"
+            # Per-gateway auth-token Secret Manager rotation: when an
+            # admin clicks "Add Gateway", the handler calls
+            # provisionGatewayAuthSecret({gatewayServiceAccount}) and
+            # binds the generated SM secret to this GCP service account.
+            # Without this env, the request 500s with "GATEWAY_SERVICE_
+            # ACCOUNT not configured — admin cannot provision gateway
+            # auth-token secret". This is the gateway-POD consumer GSA
+            # (octogee-gateway), NOT the fleet controller's own gcpServiceAccount — the
+            # token secret must be readable by the gateway pod, and must
+            # never be bound to the control-plane identity.
+            - name: GATEWAY_SERVICE_ACCOUNT
+              value: {{ required "glm-controller.gatewayServiceAccount is required" .Values.gatewayServiceAccount | quote }}
+            {{- if (.Values.modelKeyIssuer).enabled }}
+            - name: GATEWAY_MODEL_KEY_ISSUER_URL
+              value: {{ (.Values.modelKeyIssuer).issueUrl | default (printf "http://octogee-api.%s.svc.cluster.local:3001/internal/model-keys/issue" .Release.Namespace) | quote }}
+            - name: GATEWAY_MODEL_KEY_REVOKE_URL
+              value: {{ (.Values.modelKeyIssuer).revokeUrl | default (printf "http://octogee-api.%s.svc.cluster.local:3001/internal/model-keys/revoke" .Release.Namespace) | quote }}
+            - name: GATEWAY_MODEL_KEY_ISSUER_TIMEOUT_MS
+              value: {{ (.Values.modelKeyIssuer).timeoutMs | default "10000" | quote }}
+            - name: GATEWAY_MODEL_KEY_ISSUER_BEARER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ (.Values.modelKeyIssuer).bearerSecretName | default "gateway-model-key-issuer" }}
+                  key: {{ (.Values.modelKeyIssuer).bearerSecretKey | default "bearer_token" }}
+            {{- end }}
+            - name: SHARED_POOL_MIN_REPLICAS
+              value: {{ required "glm-controller.sharedPool.minReplicas is required" (.Values.sharedPool).minReplicas | quote }}
+            - name: SHARED_POOL_MAX_REPLICAS
+              value: {{ required "glm-controller.sharedPool.maxReplicas is required" (.Values.sharedPool).maxReplicas | quote }}
+            - name: PLATFORM_GATEWAY_IMAGE_REPOSITORY
+              value: {{ required "glm-controller.platformRelease.gatewayImageRepository is required" (.Values.platformRelease).gatewayImageRepository | quote }}
+            - name: BUILD_SHA
+              value: {{ $sourceSha | quote }}
+            - name: PLATFORM_GATEWAY_IMAGE_TAG
+              value: {{ (.Values.platformRelease).gatewayImageTag | default "" | quote }}
+            - name: PLATFORM_GATEWAY_BUILDER_IMAGE_TAG
+              value: {{ (.Values.platformRelease).builderImageTag | default "" | quote }}
+            - name: PLATFORM_GATEWAY_EDGE_IMAGE_REPOSITORY
+              value: {{ required "glm-controller.platformRelease.gatewayEdgeImageRepository is required" (.Values.platformRelease).gatewayEdgeImageRepository | quote }}
+            - name: PLATFORM_GATEWAY_EDGE_IMAGE_TAG
+              value: {{ (.Values.platformRelease).gatewayEdgeImageTag | default "" | quote }}
+            - name: OPENCLAW_FORK_SHA
+              value: {{ (.Values.platformRelease).openclawSourceSha | default "" | quote }}
+          ports:
+            - containerPort: {{ .Values.http.port }}
+              name: http
+          # A reconcile pass holds the event loop for seconds at a time — a full
+          # convergence over the shared pool has been measured near 12s — so
+          # /healthz cannot answer inside kubelet's 1s default. At that default
+          # the liveness probe killed the fleet controller mid-reconcile every few minutes,
+          # abandoning whatever operation it had claimed: that is how a rollout
+          # sat "running" with no worker while migrations queued behind it.
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 30
+            timeoutSeconds: 15
+            failureThreshold: 5
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          {{- $configuration := or .Values.deploymentTargets .Values.gatewayValues }}
+          {{- if or $productPod.volumeMounts $configuration }}
+          volumeMounts:
+            {{- with $productPod.volumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+            {{- if $configuration }}
+            - name: configuration
+              mountPath: /etc/octogee/configuration
+              readOnly: true
+            {{- end }}
+          {{- end }}
+      {{- if or $productPod.volumes $configuration }}
+      volumes:
+        {{- with $productPod.volumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- if $configuration }}
+        - name: configuration
+          configMap:
+            name: glm-controller-configuration
+        {{- end }}
+      {{- end }}

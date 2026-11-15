@@ -6,7 +6,7 @@ import { expect, it } from "vitest";
 
 const root = path.resolve(import.meta.dirname, "../..");
 it.each([0, 124])("preserves flush exit %s and makes hook output visible in container logs", (status) => {
-  const rendered = execFileSync("helm", ["template", "audit", "helm/octogee-gateway", "--set", "gatewayId=audit", "--set", "image.repository=example/gateway", "--set", "gatewayEdge.image.repository=example/edge", "--set", "env.mmSiteUrl=https://example.test", "--set", "env.mmInternalUrl=http://mattermost:8065", "--set", "gatewayEdge.publicAppOrigins[0]=https://app-test.octogee.com"], { cwd: root, encoding: "utf8" });
+  const rendered = execFileSync("helm", ["template", "audit", "charts/octogee-gateway", "--set", "gatewayId=audit", "--set", "image.repository=example/gateway", "--set", "gatewayEdge.image.repository=example/edge", "--set", "env.mmSiteUrl=https://example.test", "--set", "env.mmInternalUrl=http://mattermost:8065", "--set", "gatewayEdge.publicAppOrigins[0]=https://app-test.octogee.com"], { cwd: root, encoding: "utf8" });
   const deployment = parseAllDocuments(rendered).map((doc) => doc.toJSON()).find((doc) => doc?.kind === "Deployment");
   const gateway = deployment.spec.template.spec.containers.find((container: { name: string }) => container.name === "gateway");
   const dir = mkdtempSync("/tmp/octogee-prestop-");

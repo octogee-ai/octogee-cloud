@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const root = resolve(__dirname, "../..");
-const dashboardsRoot = resolve(root, "helm/monitoring/dashboards");
+const dashboardsRoot = resolve(root, "charts/monitoring/dashboards");
 
 interface Target {
   expr?: string;

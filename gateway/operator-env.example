@@ -1,0 +1,35 @@
+# gateway/operator-env.example
+#
+# Operator-customization env file for owner-bound disposable runtimes.
+#
+# Copy this to /home/node/.openclaw/secrets/operator.env on a running
+# gateway (mode 600) only for temporary local credentials. It is emptyDir
+# convenience state and is not restored after a gateway replacement.
+#
+# Sourced by entrypoint.sh AFTER the platform K8s env block (so the
+# operator can override their own gateway if absolutely necessary, though
+# the intent is additive-only — don't override platform-critical things
+# like OPENCLAW_GATEWAY_TOKEN unless you know what you're doing). Sourced
+# before OpenClaw starts, so operator-defined values can resolve existing
+# environment references in the tracked config.
+#
+# See docs/architecture/GATEWAY-PLATFORM-SPEC.md
+# §Operator-class customization surface for the design rationale.
+#
+# Edit this file from the gateway only when necessary, then restart the
+# gateway process to pick it up. Credentials that must survive a roll belong
+# in the user credential store and enter config through SecretRefs.
+#
+# ── Examples ──────────────────────────────────────────────────────────
+#
+# Discord bot the operator drives from this gateway (referenced as
+# ${DISCORD_BENDER_TOKEN} in openclaw.json):
+# DISCORD_BENDER_TOKEN=...
+#
+# Personal Anthropic / OpenAI / xAI API keys the operator uses for
+# their own agent work (above and beyond the BYO-subscription OAuth flow):
+# PERSONAL_ANTHROPIC_API_KEY=...
+# PERSONAL_OPENAI_API_KEY=...
+#
+# Custom MCP server credential:
+# CUSTOM_MCP_SERVER_TOKEN=...

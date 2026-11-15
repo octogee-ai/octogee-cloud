@@ -37,7 +37,7 @@ case "$*" in
 esac
 `, { mode: 0o755 });
   writeFileSync(join(root, "curl"), '#!/bin/bash\necho \'[{"class":"chromium","title":"Example Domain"}]\'\n', { mode: 0o755 });
-  const result = spawnSync("bash", [resolve(__dirname, "../../infra/desktop/acceptance/native-computer.sh")], {
+  const result = spawnSync("bash", [resolve(__dirname, "../../desktop/acceptance/native-computer.sh")], {
     encoding: "utf8", timeout: 5000,
     env: { ...process.env, PATH: `${root}:${process.env.PATH}`, CALL_LOG: log, OPENCLAW_GATEWAY_TOKEN: "fixture", FAILURE: failure },
   });

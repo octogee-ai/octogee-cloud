@@ -204,7 +204,7 @@ describe('gateway-edge middleware stack', () => {
   });
 
   // Stripe-webhook raw-body middleware contract: tested in
-  // octogee-api/src/__tests__/billing-stripe.integration.spec.ts now
+  // platform-api/src/__tests__/billing-stripe.integration.spec.ts now
   // that /api/billing/webhook lives on octogee-api (gateway-edge no
   // longer mounts the billing router).
 });

@@ -11,7 +11,7 @@ export const PLATFORMS = ["linux/amd64", "linux/arm64"];
 export const SOURCE_REPOSITORY = "https://github.com/octogee-ai/octogee-cloud";
 export const CACHE_PREFIX = "octogee-cloud";
 
-const VM_BRIDGE = { dockerfile: "infra/vm-bridge/Dockerfile", args: {} };
+const VM_BRIDGE = { dockerfile: "vm-bridge/Dockerfile", args: {} };
 const GATEWAY_BASE = "octogee-gateway-base";
 const GATEWAY_SYSTEM = "octogee-gateway-system";
 const ISOLATED_BASE = "octogee-gateway-builder-base";
@@ -21,7 +21,7 @@ const uncached = [ISOLATED_BASE, ISOLATED_GATEWAY];
 const stageContexts = new Set(unpublished);
 const stagesOf = { "octogee-gateway": [GATEWAY_BASE, GATEWAY_SYSTEM], [ISOLATED_GATEWAY]: [GATEWAY_BASE, GATEWAY_SYSTEM, ISOLATED_BASE] };
 const placeholderBase = `inputs-${"0".repeat(64)}`;
-const ISOLATED_TOOLCHAIN = "infra/gateway/isolated-toolchain";
+const ISOLATED_TOOLCHAIN = "gateway/isolated-toolchain";
 
 const imagePlatforms = { [ISOLATED_GATEWAY]: ["linux/amd64"] };
 export const platformsOf = name => imagePlatforms[name] ?? PLATFORMS;
@@ -170,13 +170,15 @@ export function readDigestDirectory(directory) {
   return digests;
 }
 
+const SERVICE_SOURCE_DIRS = { "glm-controller": "fleet-controller", "gateway-edge": "gateway-edge", "octogee-api": "platform-api" };
 const SERVICE_PACKAGES = "glm-controller|gateway-edge|octogee-api";
+const sourceOf = path => path.replace(/^[^/]+/, directory => SERVICE_SOURCE_DIRS[directory]);
 const sourceRules = [
-  [new RegExp(`(?:^|/)(?:${SERVICE_PACKAGES})/dist/((?:${SERVICE_PACKAGES})/src/.+?)(?:\\.d\\.ts|\\.js\\.map|\\.js)$`), path => [`${path}.ts`, `${path}.tsx`]],
-  [new RegExp(`(?:^|/)((?:${SERVICE_PACKAGES})/src/.+)$`), path => [path]],
+  [new RegExp(`(?:^|/)(?:${SERVICE_PACKAGES})/dist/((?:${SERVICE_PACKAGES})/src/.+?)(?:\\.d\\.ts|\\.js\\.map|\\.js)$`), path => [`${sourceOf(path)}.ts`, `${sourceOf(path)}.tsx`]],
+  [new RegExp(`(?:^|/)((?:${SERVICE_PACKAGES})/src/.+)$`), path => [sourceOf(path)]],
   [/(?:^|\/)core\/dist\/(.+?)(?:\.d\.ts|\.js\.map|\.js)$/, path => [`core/src/${path}.ts`]],
   [/(?:^|\/)shared\/dist\/(.+?)(?:\.d\.ts|\.js\.map|\.js)$/, path => [`shared/${path}.ts`]],
-  [/^octogee\/extensions\/([^/]+)\//, extension => [`infra/gateway/extensions/platform/${extension}`]],
+  [/^octogee\/extensions\/([^/]+)\//, extension => [`gateway/extensions/platform/${extension}`]],
 ];
 
 export function productFindings(paths, exists) {

@@ -63,7 +63,7 @@ fi`);
 remaining="$(cat "${root}/bus-failures")"
 if [ "$remaining" -gt 0 ]; then echo $((remaining - 1)) > "${root}/bus-failures"; exit 1; fi`);
   }
-  const result = spawnSync("/bin/bash", ["-c", 'umask 022; exec /bin/bash "$1"', "desktop-node-test", resolve(__dirname, "../../infra/gateway/desktop-node.sh")], {
+  const result = spawnSync("/bin/bash", ["-c", 'umask 022; exec /bin/bash "$1"', "desktop-node-test", resolve(__dirname, "../../gateway/desktop-node.sh")], {
     encoding: "utf8", timeout: 15_000,
     env: { PATH: bin, HOME: root, XDG_RUNTIME_DIR: runtime, OCTOGEE_DESKTOP_NODE_NAME: "test-desktop", OCTOGEE_DESKTOP_NODE_IDENTITY_PATH: identityPath, OPENCLAW_GATEWAY_PASSWORD: "fixture" },
   });

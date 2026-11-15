@@ -24,8 +24,8 @@ const dependencyReport = platformDependencyReport(manifest, repoRoot);
 
 const fixtureManifest: PlatformBoundaryManifest = {
   platformEntrypoints: [],
-  platformRoots: ["platform/scripts/", "platform/infra/"],
-  productModules: ["product/", "platform/scripts/product/", "platform/infra/gateway/extensions/product/", "platform/shared/types/feature-flags.ts"],
+  platformRoots: ["platform/scripts/", "platform/gateway/"],
+  productModules: ["product/", "platform/scripts/product/", "platform/gateway/extensions/product/", "platform/shared/types/feature-flags.ts"],
   ratchet: [],
   referenceRatchet: [],
   dependencyRatchet: [],
@@ -33,8 +33,8 @@ const fixtureManifest: PlatformBoundaryManifest = {
 
 describe("platform boundary", () => {
   it("resolves relative, package and alias imports to repository sources, declared or not", () => {
-    const from = resolve(repoRoot, "platform/octogee-api/src/main.ts");
-    expect(resolveImport("./app.js", from, repoRoot)).toBe(resolve(repoRoot, "platform/octogee-api/src/app.ts"));
+    const from = resolve(repoRoot, "platform/platform-api/src/main.ts");
+    expect(resolveImport("./app.js", from, repoRoot)).toBe(resolve(repoRoot, "platform/platform-api/src/app.ts"));
     expect(resolveImport("@octogee/core/deployment-environment", from, repoRoot))
       .toBe(resolve(repoRoot, "platform/core/src/deployment-environment.ts"));
     expect(resolveImport("@octogee/shared/types/feature-flags", from, repoRoot))
@@ -71,7 +71,7 @@ describe("platform boundary", () => {
   });
 
   it("keeps the product composition roots out of the platform entrypoints", () => {
-    for (const root of ["product/octogee-api/src/index.ts", "product/octogee-api/src/product.ts", "product/octogee-api/src/main.ts", "product/gateway-edge/src/routes/product-cluster-routes.ts", "product/glm-controller/src/main.ts", "product/gateway-edge/src/main.ts", "functions/src/index.ts"]) {
+    for (const root of ["product/platform-api/src/index.ts", "product/platform-api/src/product.ts", "product/platform-api/src/main.ts", "product/gateway-edge/src/routes/product-cluster-routes.ts", "product/fleet-controller/src/main.ts", "product/gateway-edge/src/main.ts", "functions/src/index.ts"]) {
       expect(manifest.platformEntrypoints).not.toContain(root);
       expect(report.reached).not.toContain(root);
     }
@@ -91,15 +91,15 @@ describe("platform boundary", () => {
   });
 
   it("finds product paths a platform file names by repository path, platform path or parent-relative path", () => {
-    expect(productReferencesOf("platform/infra/gateway/Dockerfile", "COPY infra/gateway/extensions/product/ /octogee/extensions/\n", fixtureManifest, repoRoot))
-      .toEqual(["platform/infra/gateway/extensions/product/"]);
+    expect(productReferencesOf("platform/gateway/Dockerfile", "COPY gateway/extensions/product/ /octogee/extensions/\n", fixtureManifest, repoRoot))
+      .toEqual(["platform/gateway/extensions/product/"]);
     expect(productReferencesOf("platform/scripts/ci/run.mjs", "run('node', ['platform/scripts/product/ops/seed.ts'])\n", fixtureManifest, repoRoot))
       .toEqual(["platform/scripts/product/"]);
     expect(productReferencesOf("platform/scripts/ops/run.sh", 'node "$(dirname "$0")/../product/ops/seed.ts"\n', fixtureManifest, repoRoot))
       .toEqual(["platform/scripts/product/"]);
     expect(productReferencesOf("platform/scripts/setup.sh", "npm run --prefix scripts -- npx tsx product/ops/seed.ts\n", fixtureManifest, repoRoot))
       .toEqual(["platform/scripts/product/"]);
-    expect(productReferencesOf("platform/infra/gateway/run.sh", "npx tsx product/ops/seed.ts\n", fixtureManifest, repoRoot))
+    expect(productReferencesOf("platform/gateway/run.sh", "npx tsx product/ops/seed.ts\n", fixtureManifest, repoRoot))
       .toEqual([]);
     expect(productReferencesOf("platform/scripts/ops/run.sh", "see scripts/productive-notes.md, ../../product/x and /octogee/scripts/product/x\n", fixtureManifest, repoRoot))
       .toEqual([]);
@@ -110,7 +110,7 @@ describe("platform boundary", () => {
     ["a braced variable root", "platform/scripts/ops/run.sh", 'node "${REPO}/scripts/product/ops/a.ts"\n', "platform/scripts/product/"],
     ["a plain variable root", "platform/scripts/ops/run.sh", 'node "$REPO/scripts/product/ops/a.ts"\n', "platform/scripts/product/"],
     ["a command substitution root", "platform/scripts/ops/run.sh", 'node "$(git rev-parse --show-toplevel)/platform/scripts/product/ops/a.ts"\n', "platform/scripts/product/"],
-    ["a ./ Docker source", "platform/infra/gateway/Dockerfile", "COPY ./infra/gateway/extensions/product/ /x/\n", "platform/infra/gateway/extensions/product/"],
+    ["a ./ Docker source", "platform/gateway/Dockerfile", "COPY ./gateway/extensions/product/ /x/\n", "platform/gateway/extensions/product/"],
     ["a script-directory root", "platform/scripts/setup.sh", 'source "$SCRIPT_DIR/product/secrets.sh"\n', "platform/scripts/product/"],
     ["a ./ path from its platform root", "platform/scripts/setup.sh", "npx tsx ./product/ops/a.ts\n", "platform/scripts/product/"],
     ["a repository path climbed to from a directory", "platform/scripts/ops/run.ts", 'resolve(here, "../../scripts/product/ops/a.ts")\n', "platform/scripts/product/"],
@@ -129,8 +129,8 @@ describe("platform boundary", () => {
 
   it("treats tests and product paths under platform roots as outside the platform", () => {
     const files = platformFiles(manifest, repoRoot);
-    expect(files).toContain("platform/infra/gateway/Dockerfile");
-    expect(files.some((file) => file.startsWith("platform/infra/gateway/extensions/product/"))).toBe(false);
+    expect(files).toContain("platform/gateway/Dockerfile");
+    expect(files.some((file) => file.startsWith("platform/gateway/extensions/product/"))).toBe(false);
     expect(files.some((file) => file.includes("/__tests__/"))).toBe(false);
   });
 
@@ -147,8 +147,8 @@ describe("platform boundary", () => {
       dependencies: { "@octogee/core": "file:../core", "@octogee/product-core": "file:../../product/core", express: "^5.0.0" },
       devDependencies: { "@octogee/product-shared": "file:../../product/shared" },
     });
-    expect(outsideDependenciesOf("platform/glm-controller/package.json", manifestSource, repoRoot))
-      .toEqual(["platform/glm-controller/package.json -> @octogee/product-core", "platform/glm-controller/package.json -> @octogee/product-shared"]);
+    expect(outsideDependenciesOf("platform/fleet-controller/package.json", manifestSource, repoRoot))
+      .toEqual(["platform/fleet-controller/package.json -> @octogee/product-core", "platform/fleet-controller/package.json -> @octogee/product-shared"]);
     const lockSource = JSON.stringify({
       packages: {
         "": { dependencies: { "@octogee/product-core": "file:../../product/core" } },
@@ -159,8 +159,8 @@ describe("platform boundary", () => {
         "node_modules/express": { resolved: "https://registry.npmjs.org/express/-/express-5.0.0.tgz" },
       },
     });
-    expect(outsideDependenciesOf("platform/glm-controller/package-lock.json", lockSource, repoRoot))
-      .toEqual(["platform/glm-controller/package-lock.json -> @octogee/product-core", "platform/glm-controller/package-lock.json -> @octogee/product-shared"]);
+    expect(outsideDependenciesOf("platform/fleet-controller/package-lock.json", lockSource, repoRoot))
+      .toEqual(["platform/fleet-controller/package-lock.json -> @octogee/product-core", "platform/fleet-controller/package-lock.json -> @octogee/product-shared"]);
   });
 
   it("names every platform package dependency from outside platform/ in the dependency ratchet", () => {

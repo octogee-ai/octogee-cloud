@@ -54,7 +54,7 @@ secret_args=(--target="$TARGET_ID")
 [[ -n "$SECRET_MODE" ]] && secret_args+=("$SECRET_MODE")
 "$SCRIPT_DIR/setup-monitoring-secrets.sh" "${secret_args[@]}"
 
-DASHBOARD_CHECKSUM="$(node - "$REPO_DIR/helm/monitoring/dashboards" <<'NODE'
+DASHBOARD_CHECKSUM="$(node - "$REPO_DIR/charts/monitoring/dashboards" <<'NODE'
 const { createHash } = require("node:crypto");
 const { readdirSync, readFileSync } = require("node:fs");
 const path = require("node:path");
@@ -97,7 +97,7 @@ if $IAP_ENABLED; then
   helm_values+=(--set iap.enabled=true --set "iap.domain=$IAP_DOMAIN")
 fi
 
-helm upgrade --install grafana "$REPO_DIR/helm/monitoring" \
+helm upgrade --install grafana "$REPO_DIR/charts/monitoring" \
   --namespace monitoring \
   --create-namespace \
   --kube-context "$TARGET_KUBE_CONTEXT" \
@@ -111,7 +111,7 @@ kubectl wait --context "$TARGET_KUBE_CONTEXT" --namespace gke-gmp-system \
   --for=condition=Available deployment/rule-evaluator --timeout=5m >/dev/null
 
 kubectl patch operatorconfig config -n gmp-public --context "$TARGET_KUBE_CONTEXT" --type=merge \
-  --patch-file="$REPO_DIR/helm/monitoring/gmp-collection-filter.json" >/dev/null
+  --patch-file="$REPO_DIR/charts/monitoring/gmp-collection-filter.json" >/dev/null
 
 verify_args=(--target="$TARGET_ID")
 $IAP_ENABLED && verify_args+=(--iap)

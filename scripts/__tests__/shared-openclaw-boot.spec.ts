@@ -50,7 +50,7 @@ completeOpenClawDoctor:async()=>{},completeOpenClawBoot:async({openclawBuild})=>
   const installBuild = (commit: string) => fs.writeFile(path.join(root, "dist/build-info.json"), JSON.stringify({ commit }));
   await fs.mkdir(path.join(root, "dist"));
   await installBuild("a".repeat(40));
-  const entrypoint = await fs.readFile(path.join(repo, "infra/gateway/entrypoint.sh"), "utf8");
+  const entrypoint = await fs.readFile(path.join(repo, "gateway/entrypoint.sh"), "utf8");
   const start = entrypoint.indexOf('  "$TSX" /octogee/scripts/entrypoints/prepare-openclaw-sqlite-journals.ts');
   const end = entrypoint.indexOf('\nfi', start);
   expect(start).toBeGreaterThan(0); expect(end).toBeGreaterThan(start);

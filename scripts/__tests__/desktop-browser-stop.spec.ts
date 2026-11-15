@@ -4,7 +4,7 @@ import { promisify } from "node:util";
 import { expect, it } from "vitest";
 
 it("closes Chromium through CDP, tolerates absence, and surfaces discovery, protocol and timeout failures", async () => {
-  const script = resolve(__dirname, "../../infra/desktop/rootfs/usr/local/bin/octo-desktop-stop");
+  const script = resolve(__dirname, "../../desktop/rootfs/usr/local/bin/octo-desktop-stop");
   const { stdout } = await promisify(execFile)("python3", ["-c", `
 import io, json, runpy, sys, types
 from unittest.mock import Mock, patch

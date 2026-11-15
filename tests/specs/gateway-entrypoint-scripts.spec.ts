@@ -4,11 +4,11 @@ import path from "path";
 
 const platformRoot = path.resolve(__dirname, "../..");
 const entrypoint = readFileSync(
-  path.join(platformRoot, "infra/gateway/entrypoint.sh"),
+  path.join(platformRoot, "gateway/entrypoint.sh"),
   "utf8",
 );
 const dockerfile = readFileSync(
-  path.join(platformRoot, "infra/gateway/Dockerfile"),
+  path.join(platformRoot, "gateway/Dockerfile"),
   "utf8",
 );
 
@@ -23,10 +23,10 @@ function entrypointScripts(): string[] {
 }
 
 function entrypointInfraGatewayScripts(): string[] {
-  const re = /\/octogee\/infra\/gateway\/([A-Za-z0-9_.\-/]+\.(?:mjs|js|sh|json))\b/g;
+  const re = /\/octogee\/gateway\/([A-Za-z0-9_.\-/]+\.(?:mjs|js|sh|json))\b/g;
   const out = new Set<string>();
   for (const m of entrypoint.matchAll(re)) {
-    out.add(`infra/gateway/${m[1]}`);
+    out.add(`gateway/${m[1]}`);
   }
   return [...out].sort();
 }
@@ -48,8 +48,8 @@ function dockerCoverage(): { files: Set<string>; dirs: string[] } {
 function dockerInfraGatewayFiles(): Set<string> {
   const files = new Set<string>();
   for (const line of dockerfile.split("\n")) {
-    if (!/^\s*COPY\b/.test(line) || !line.includes("/octogee/infra/gateway")) continue;
-    for (const tok of line.match(/\binfra\/gateway\/[A-Za-z0-9_.\-/]+/g) ?? []) {
+    if (!/^\s*COPY\b/.test(line) || !line.includes("/octogee/gateway")) continue;
+    for (const tok of line.match(/\bgateway\/[A-Za-z0-9_.\-/]+/g) ?? []) {
       files.add(tok.replace(/\*$/, ""));
     }
   }
@@ -71,7 +71,7 @@ describe("gateway entrypoint ↔ Dockerfile coverage", () => {
     const uncovered = entrypointScripts().filter((p) => !covered(p));
     expect(
       uncovered,
-      `entrypoint.sh runs these but infra/gateway/Dockerfile never COPYs them ` +
+      `entrypoint.sh runs these but gateway/Dockerfile never COPYs them ` +
         `→ ERR_MODULE_NOT_FOUND crash-loop at boot: ${uncovered.join(", ")}`,
     ).toEqual([]);
   });
@@ -83,25 +83,25 @@ describe("gateway entrypoint ↔ Dockerfile coverage", () => {
     expect(missing, `entrypoint.sh references nonexistent scripts: ${missing.join(", ")}`).toEqual([]);
   });
 
-  it("standard-image infra/gateway scripts the entrypoint runs exist and are COPYed into the standard gateway image", () => {
+  it("standard-image gateway scripts the entrypoint runs exist and are COPYed into the standard gateway image", () => {
     const scripts = entrypointInfraGatewayScripts();
     const copied = dockerInfraGatewayFiles();
     const missing = scripts.filter((p) => !existsSync(path.join(platformRoot, p)));
     const isolatedBaseScripts = new Set([
-      "infra/gateway/stamp-claude-first-run.mjs",
+      "gateway/stamp-claude-first-run.mjs",
     ]);
     const uncopied = scripts.filter((p) => !isolatedBaseScripts.has(p) && !copied.has(p));
 
-    expect(missing, `entrypoint.sh references nonexistent infra/gateway files: ${missing.join(", ")}`).toEqual([]);
+    expect(missing, `entrypoint.sh references nonexistent gateway files: ${missing.join(", ")}`).toEqual([]);
     expect(
       uncopied,
-      `entrypoint.sh runs these but infra/gateway/Dockerfile never COPYs them: ${uncopied.join(", ")}`,
+      `entrypoint.sh runs these but gateway/Dockerfile never COPYs them: ${uncopied.join(", ")}`,
     ).toEqual([]);
   });
 
   it("installs the octogee config status and adoption helper in every isolated gateway image", () => {
-    expect(existsSync(path.join(platformRoot, "infra/gateway/octogee"))).toBe(true);
-    expect(dockerfile).toMatch(/COPY infra\/gateway\/octogee \/usr\/local\/bin\/octogee/);
+    expect(existsSync(path.join(platformRoot, "gateway/octogee"))).toBe(true);
+    expect(dockerfile).toMatch(/COPY gateway\/octogee \/usr\/local\/bin\/octogee/);
     expect(dockerfile).toMatch(/chmod 755[^\n]*\/usr\/local\/bin\/octogee/);
   });
 

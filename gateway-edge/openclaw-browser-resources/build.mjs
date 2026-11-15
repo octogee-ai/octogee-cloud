@@ -13,7 +13,7 @@ const expected = process.argv[3];
 if (!expected || !/^[0-9a-f]{40}$/.test(expected)) throw new Error('Usage: node gateway-edge/openclaw-browser-resources/build.mjs OPENCLAW_CHECKOUT FULL_SOURCE_SHA');
 const git = (...args) => execFileSync('/usr/bin/git', ['-C', source, ...args], { encoding: 'utf8' }).trim();
 if (git('rev-parse', 'HEAD') !== expected || git('status', '--porcelain', '--untracked-files=no')) throw new Error('OpenClaw must be clean at the exact source SHA');
-const current = JSON.parse(await readFile(path.join(root, 'infra/gateway/openclaw-tarball/current.json'), 'utf8'));
+const current = JSON.parse(await readFile(path.join(root, 'gateway/openclaw-tarball/current.json'), 'utf8'));
 if (current.sourceSha !== expected) process.stderr.write(`[browser-resources] current.json pins sourceSha ${current.sourceSha}; set it to ${expected} when the gateway objects come from this build\n`);
 
 const entry = 'ui/src/lib/chat/browser-tab-preview.ts';

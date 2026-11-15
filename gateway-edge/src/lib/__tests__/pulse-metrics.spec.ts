@@ -50,7 +50,7 @@ describe("isGeneratedPath (the noise filter)", () => {
     for (const p of [
       "app/package-lock.json",
       "yarn.lock",
-      "infra/gateway/openclaw-tarball/openclaw.tgz",
+      "gateway/openclaw-tarball/openclaw.tgz",
       "app/dist/index.js",
       "x.min.js",
       "a/b.js.map",

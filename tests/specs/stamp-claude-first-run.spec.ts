@@ -4,7 +4,7 @@ import { describe, expect, it, beforeEach } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, statSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { stampFirstRun, readClaudeVersion } from "../../infra/gateway/stamp-claude-first-run.mjs";
+import { stampFirstRun, readClaudeVersion } from "../../gateway/stamp-claude-first-run.mjs";
 
 function makeHome(): string {
   return mkdtempSync(path.join(tmpdir(), "stamp-claude-first-run-"));

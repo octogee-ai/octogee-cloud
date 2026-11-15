@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 
 const run = promisify(execFile);
-const script = resolve(import.meta.dirname, "../../../infra/desktop/image/rootfs/usr/local/bin/octo-home-disk");
+const script = resolve(import.meta.dirname, "../../../desktop/image/rootfs/usr/local/bin/octo-home-disk");
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))); });
 
@@ -76,7 +76,7 @@ describe("octo-home-disk", () => {
     const source = await readFile(script, "utf8");
     const selector = /OCTO_DESKTOP_WANTED:-(\/usr\/local\/bin\/[a-z-]+)\}/.exec(source)?.[1];
     expect(selector).toBe("/usr/local/bin/octo-desktop-wanted");
-    await expect(access(resolve(import.meta.dirname, "../../../infra/desktop/image/rootfs", `.${selector}`), constants.X_OK)).resolves.toBeUndefined();
+    await expect(access(resolve(import.meta.dirname, "../../../desktop/image/rootfs", `.${selector}`), constants.X_OK)).resolves.toBeUndefined();
   });
   it("keeps an X11 VM's login home on the boot disk and leaves the desktop home to its gateway", async () => {
     const h = await fixture({ probe: 0, fstype: "btrfs", desktopWanted: 1 });

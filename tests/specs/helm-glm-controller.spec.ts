@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import { parse, parseAllDocuments } from "yaml";
 
 const REPO_ROOT = path.resolve(__dirname, "../..");
-const CHART_PATH = path.join(REPO_ROOT, "helm/octogee/charts/glm-controller");
+const CHART_PATH = path.join(REPO_ROOT, "charts/octogee/charts/glm-controller");
 const REQUIRED_VALUES: Record<string, string> = {
   "global.ingressClassName": "gce",
   "global.deploymentTargetId": "test-central",

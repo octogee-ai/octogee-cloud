@@ -67,15 +67,15 @@ const workflowTools = [
 
 function readTemplate() {
   return JSON.parse(
-    readFileSync(path.join(repoRoot, "infra/gateway/openclaw.template.json"), "utf8"),
+    readFileSync(path.join(repoRoot, "gateway/openclaw.template.json"), "utf8"),
   );
 }
 
-describe("infra/gateway/openclaw.template.json — standard gateway exec-off posture", () => {
+describe("gateway/openclaw.template.json — standard gateway exec-off posture", () => {
   it("runs SecretRef resolution through a private runtime-owned executable", () => {
     const template = readTemplate();
     const provider = template.secrets.providers["gcp-secret-manager"];
-    const dockerfile = readFileSync(path.join(repoRoot, "infra/gateway/Dockerfile"), "utf8");
+    const dockerfile = readFileSync(path.join(repoRoot, "gateway/Dockerfile"), "utf8");
 
     expect(provider.command).toBe("/octogee/scripts/secret-resolver.mjs");
     expect(provider.args).toBeUndefined();

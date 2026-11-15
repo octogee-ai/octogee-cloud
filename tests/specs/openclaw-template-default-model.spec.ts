@@ -12,11 +12,11 @@ const DEFAULT_MODEL_REF = "platform-openrouter/z-ai/glm-5.2";
 
 function readTemplate() {
   return JSON.parse(
-    readFileSync(path.join(repoRoot, "infra/gateway/openclaw.template.json"), "utf8"),
+    readFileSync(path.join(repoRoot, "gateway/openclaw.template.json"), "utf8"),
   );
 }
 
-describe("infra/gateway/openclaw.template.json — platform default model", () => {
+describe("gateway/openclaw.template.json — platform default model", () => {
   it("does not assign the unauthenticated bootstrap agent a platform-funded model", () => {
     const template = readTemplate();
 

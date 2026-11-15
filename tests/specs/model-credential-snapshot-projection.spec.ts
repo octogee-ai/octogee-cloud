@@ -10,7 +10,7 @@ function readRepoFile(relativePath: string): string {
 
 describe("model credential snapshot projection", () => {
   it("keeps fleet broker snapshots on the shared user snapshot projection helper", () => {
-    const fleetBroker = readRepoFile("octogee-api/src/routes/fleet-broker.ts");
+    const fleetBroker = readRepoFile("platform-api/src/routes/fleet-broker.ts");
 
     expect(fleetBroker).toContain("readByotSnapshotProjection");
     expect(fleetBroker).not.toContain("function snapshotCredentialProjection");

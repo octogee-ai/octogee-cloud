@@ -30,7 +30,7 @@ it("sends only lifecycle actions through the private socket and surfaces systemd
 });
 
 it("waits for desktop start longer than the user manager and the home migration it starts may take", async () => {
-  const migration = await readFile(resolve(__dirname, "../../../infra/desktop/image/rootfs/etc/systemd/system/octo-home-migrate.service"), "utf8");
+  const migration = await readFile(resolve(__dirname, "../../../desktop/image/rootfs/etc/systemd/system/octo-home-migrate.service"), "utf8");
   const migrationMs = Number(/^TimeoutStartSec=(\d+)min$/mu.exec(migration)![1]) * 60_000;
   const userManagerDefaultStartMs = 90_000;
   expect(desktopActionTimeoutMs("start")).toBeGreaterThan(migrationMs + userManagerDefaultStartMs);
@@ -68,7 +68,7 @@ it.each([
   ["serves the Desk page, apps, launch, note and style endpoints", "test_desk.py"],
   ["keeps the host desktop off only for an X11 VM", "test_desktop_wanted.py"],
 ])("%s", async (_behavior, filename) => {
-  const script = resolve(__dirname, "../../../infra/desktop/image", filename);
+  const script = resolve(__dirname, "../../../desktop/image", filename);
   await expect(promisify(execFile)("python3", [script])).resolves.toMatchObject({
     stderr: expect.stringMatching(/Ran [1-9]\d* tests? in [^\n]+\n\nOK\s*$/),
   });

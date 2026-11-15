@@ -364,7 +364,7 @@ if ! kubectl get deployment mattermost -n "$K8S_NAMESPACE" >/dev/null 2>&1; then
   echo "  UMBRELLA_CHART=\$(./scripts/package-umbrella-chart.sh --output-dir \"\$UMBRELLA_CHART_DIR\")"
   echo "  helm upgrade --install octogee \"\$UMBRELLA_CHART\" \\"
   echo "    --server-side=true --force-conflicts \\"
-  echo "    -f helm/octogee/values.${ENV}.yaml \\"
+  echo "    -f charts/octogee/values.${ENV}.yaml \\"
   echo "    -f <(node core/dist/render-deployment-target-helm-values.js --target=$TARGET_ID) \\"
   echo "    -f \"\$RELEASE_VALUES_FILE\" \\"
   echo "    -n $K8S_NAMESPACE --create-namespace \\"

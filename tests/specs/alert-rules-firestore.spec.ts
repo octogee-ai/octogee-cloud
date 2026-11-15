@@ -22,7 +22,7 @@ let firestoreRules: Record<string, Rule>;
 
 beforeAll(() => {
   const doc = parse(
-    readFileSync(path.join(REPO_ROOT, "helm/monitoring/files/gmp-rules.yaml"), "utf8"),
+    readFileSync(path.join(REPO_ROOT, "charts/monitoring/files/gmp-rules.yaml"), "utf8"),
   ) as { spec: { groups: Group[] } };
   const group = doc.spec.groups.find((entry) => entry.name === "octogee.firestore");
   if (!group) throw new Error("octogee.firestore group missing");

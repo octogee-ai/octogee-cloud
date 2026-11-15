@@ -91,6 +91,6 @@ import graph from every entrypoint: a new outside import fails, and a ratchet
 entry that is no longer reached must be removed. That spec needs the embedding
 checkout, so it is skipped in this repository alone. Routes added by an
 embedding app enter through `createPlatformApp(opts)` in
-`octogee-api/src/app.ts` and the `productRoutes` option of
-`mountClusterRoutes` in `gateway-edge/src/routes/mount-cluster-routes.ts`; `octogee-api/src/main.ts` serves the platform API with no
+`platform-api/src/app.ts` and the `productRoutes` option of
+`mountClusterRoutes` in `gateway-edge/src/routes/mount-cluster-routes.ts`; `platform-api/src/main.ts` serves the platform API with no
 additions. `npm run gate` in `scripts/` keeps the embedding app's names out.

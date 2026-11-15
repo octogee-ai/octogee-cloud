@@ -1,7 +1,7 @@
 # @octogee/core
 
 Octogee's shared runtime library. Platform packages (`gateway-edge`,
-`octogee-api`, `glm-controller`, `scripts`) consume its built interface through
+`platform-api`, `fleet-controller`, `scripts`) consume its built interface through
 `@octogee/core/<module>`, never its source. That boundary keeps each package's
 install, typecheck, and test standalone.
 

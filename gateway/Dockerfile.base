@@ -1,0 +1,203 @@
+ARG OS_PACKAGE_REFRESH=2026-11-11
+
+FROM node:26.13.0-trixie-slim@sha256:5adad64f9a1fca2d51972caa65983634c8a774eb300d72b20f7f2a0f60368072 AS gateway-debian
+
+FROM gateway-debian AS gateway-debian-backports
+
+ARG OS_PACKAGE_REFRESH
+
+COPY gateway/debian-backports/CVE-2026-6653.patch gateway/debian-backports/CVE-2026-60002.patch /patches/
+COPY gateway/debian-backports/build.sh /tmp/build-debian-backports.sh
+RUN test -n "$OS_PACKAGE_REFRESH" && bash /tmp/build-debian-backports.sh
+
+FROM gateway-debian AS gateway-core-system
+
+ARG NPM_VERSION=12.2.1
+ARG OS_PACKAGE_REFRESH
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+RUN --mount=type=bind,from=gateway-debian-backports,source=/out,target=/backports,readonly \
+    test -n "$OS_PACKAGE_REFRESH" && apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
+    ca-certificates curl git jq rsync tar /backports/libxml2.deb /backports/openssh-client.deb \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY gateway/openclaw-tarball/npm-distribution.test.mjs /tmp/npm-distribution.test.mjs
+RUN --mount=type=bind,source=gateway/openclaw-tarball/npm-fork.tgz,target=/tmp/npm.tgz,readonly \
+    npm install --global /tmp/npm.tgz --ignore-scripts --no-audit --no-fund \
+    && test "$(npm --version)" = "$NPM_VERSION" \
+    && test "$(npx --version)" = "$NPM_VERSION" \
+    && node /tmp/npm-distribution.test.mjs "$(npm root --global)"/npm \
+    && rm /tmp/npm-distribution.test.mjs \
+    && npm cache clean --force \
+    && install -d -o node -g node /home/node/.npm
+
+ENV HOME=/home/node
+
+FROM gateway-core-system AS gateway-runtime-system
+
+ARG FD_VERSION=10.5.2
+ARG CLAUDE_CODE_VERSION=2.1.322
+ARG CODEX_VERSION=0.167.1
+
+RUN chmod 1777 /tmp && apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-pip python3-venv sqlite3 xxd \
+    bash-completion vim less ripgrep tree cloc \
+    wget unzip zip file bc \
+    ffmpeg imagemagick chromium fonts-liberation fonts-noto-color-emoji \
+    pandoc htop strace net-tools fzf \
+    btrfs-progs gettext-base libx11-6 libxi6 libxkbcommon0 \
+    tigervnc-standalone-server tigervnc-tools openbox tint2 sakura pcmanfm mousepad \
+    adwaita-icon-theme fonts-noto-core dbus-x11 at-spi2-core wmctrl x11-utils \
+    x11-xserver-utils xdotool libglib2.0-bin libgtk-3-bin \
+    && case "$(dpkg --print-architecture)" in \
+      amd64) FD_SHA256=342a9d1618c4340668cb7ad96d353064bf226ac403add80e587103975d5fa49c ;; \
+      arm64) FD_SHA256=5e42e06db345fe3b0b337c7efb2ec6b29eb2cf955e3826a152160940770c6db6 ;; \
+      *) echo "Unsupported fd architecture: $(dpkg --print-architecture)" >&2; exit 1 ;; \
+    esac \
+    && curl -fsSL "https://github.com/sharkdp/fd/releases/download/v${FD_VERSION}/fd_${FD_VERSION}_$(dpkg --print-architecture).deb" -o /tmp/fd.deb \
+    && echo "${FD_SHA256}  /tmp/fd.deb" | sha256sum -c - \
+    && dpkg -i /tmp/fd.deb \
+    && rm /tmp/fd.deb \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN sed -i 's|^Exec=/usr/bin/chromium %U$|Exec=/usr/local/bin/octo-desktop-browser --new-window %U|' /usr/share/applications/chromium.desktop \
+    && grep -qxF 'Exec=/usr/local/bin/octo-desktop-browser --new-window %U' /usr/share/applications/chromium.desktop
+
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+      | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg 2>/dev/null \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+      > /etc/apt/sources.list.d/github-cli.list \
+    && apt-get update && apt-get install -y --no-install-recommends gh \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip3 install --break-system-packages --no-cache-dir \
+    pyyaml beautifulsoup4 pandas matplotlib
+
+RUN npm install --global --ignore-scripts --no-audit --no-fund \
+      "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+      "@openai/codex@${CODEX_VERSION}" \
+    && node "$(npm root -g)/@anthropic-ai/claude-code/install.cjs" \
+    && claude --version | grep -F "$CLAUDE_CODE_VERSION" \
+    && npm cache clean --force \
+    && test "$(node -p "require('$(npm root -g)/@anthropic-ai/claude-code/package.json').version")" = "$CLAUDE_CODE_VERSION" \
+    && test "$(node -p "require('$(npm root -g)/@openai/codex/package.json').version")" = "$CODEX_VERSION"
+
+
+FROM gateway-runtime-system AS gateway-system
+
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+FROM gateway-core-system AS openclaw-installer
+
+COPY gateway/openclaw-tarball/openclaw-fork.tgz /tmp/openclaw-fork.tgz
+RUN set -e; \
+    npm install -g --strict-allow-scripts --allow-scripts=@google/genai,esbuild,protobufjs,file:/tmp/openclaw-fork.tgz /tmp/openclaw-fork.tgz; \
+    OPENCLAW_ROOT="$(npm root -g)/openclaw"; \
+    test ! -e "$OPENCLAW_ROOT/.openclaw-lifecycle-pending"; \
+    printf '%s\n' '{"plugins":{"entries":{"cua-computer":{"enabled":true}}}}' > /tmp/cua-driver-check.json; \
+    OPENCLAW_CONFIG_PATH=/tmp/cua-driver-check.json openclaw doctor --lint --only cua-computer/driver-artifacts; \
+    rm -f /tmp/cua-driver-check.json; \
+    OPENCLAW_CORE_VERSION="$(node -e 'const pkg = require(process.argv[1]); if (pkg.name !== "openclaw") process.exit(1); process.stdout.write(pkg.version);' "$OPENCLAW_ROOT/package.json")"; \
+    test -n "$OPENCLAW_CORE_VERSION"; \
+    openclaw --version; \
+    grep -RIl -F '"config.changed"' "$OPENCLAW_ROOT/dist" >/dev/null \
+      || { echo "FATAL: installed OpenClaw runtime does not publish config.changed"; exit 1; }; \
+    rm -f /tmp/openclaw-fork.tgz; \
+    npm cache clean --force
+
+FROM openclaw-installer AS openclaw-core-plugin-installer
+
+COPY gateway/verify-parallel-source-match.mjs /tmp/verify-parallel-source-match.mjs
+COPY gateway/openclaw-tarball/openclaw-mattermost-fork.tgz /tmp/openclaw-mattermost-fork.tgz
+RUN set -e; \
+    OPENCLAW_ROOT="$(npm root -g)/openclaw"; \
+    OPENCLAW_CORE_VERSION="$(node -e 'const pkg = require(process.argv[1]); process.stdout.write(pkg.version);' "$OPENCLAW_ROOT/package.json")"; \
+    OC_VENDOR="$OPENCLAW_ROOT/vendor"; \
+    test -f "$OC_VENDOR/openclaw-parallel-plugin.tgz"; \
+    PARALLEL_VENDORED="$(mktemp -d)"; \
+    tar -xzf "$OC_VENDOR/openclaw-parallel-plugin.tgz" -C "$PARALLEL_VENDORED"; \
+    PARALLEL_BUNDLED_DIR="$OPENCLAW_ROOT/dist/extensions/parallel"; \
+    test ! -e "$PARALLEL_BUNDLED_DIR"; \
+    cp -a "$PARALLEL_VENDORED/package" "$PARALLEL_BUNDLED_DIR"; \
+    node -e 'const fs = require("node:fs"); const file = process.argv[1]; const pkg = JSON.parse(fs.readFileSync(file, "utf8")); delete pkg.devDependencies; fs.writeFileSync(file, JSON.stringify(pkg) + "\n");' "$PARALLEL_BUNDLED_DIR/package.json"; \
+    npm install --prefix "$PARALLEL_BUNDLED_DIR" --omit=dev --include=optional --ignore-scripts --package-lock=false --no-audit --no-fund > /tmp/oc-plugin.log 2>&1 \
+      || { echo "FATAL: source-matched Parallel dependencies failed"; tail -n 20 /tmp/oc-plugin.log; exit 1; }; \
+    cp "$PARALLEL_VENDORED/package/package.json" "$PARALLEL_BUNDLED_DIR/package.json"; \
+    node -e 'const fs = require("node:fs"); const file = process.argv[1]; const pkg = JSON.parse(fs.readFileSync(file, "utf8")); pkg.openclaw ??= {}; pkg.openclaw.build = { ...pkg.openclaw.build, bundledDist: true }; fs.writeFileSync(file, JSON.stringify(pkg, null, 2) + "\n");' "$PARALLEL_BUNDLED_DIR/package.json"; \
+    test ! -e "$PARALLEL_BUNDLED_DIR/node_modules/openclaw"; \
+    PARALLEL_STATE="$(mktemp -d)"; \
+    OPENCLAW_STATE_DIR="$PARALLEL_STATE" openclaw plugins list --json > /tmp/oc-parallel-list.json 2>/tmp/oc-plugin.log \
+      || { echo "FATAL: bundled Parallel discovery failed"; tail -n 20 /tmp/oc-plugin.log; exit 1; }; \
+    node /tmp/verify-parallel-source-match.mjs "$PARALLEL_VENDORED/package" "$OPENCLAW_ROOT" /tmp/oc-parallel-list.json; \
+    rm -rf "$PARALLEL_VENDORED" "$PARALLEL_STATE"; \
+    rm -f /tmp/oc-parallel-list.json; \
+    MATTERMOST_STAGE="$(mktemp -d)"; \
+    tar -xzf /tmp/openclaw-mattermost-fork.tgz -C "$MATTERMOST_STAGE"; \
+    MATTERMOST_PACKAGE="$MATTERMOST_STAGE/package"; \
+    test -f "$MATTERMOST_PACKAGE/dist/index.js"; \
+    node -e 'const pkg = require(process.argv[1]); const version = process.argv[2]; if (pkg.name !== "@openclaw/mattermost" || pkg.version !== version) process.exit(1);' "$MATTERMOST_PACKAGE/package.json" "$OPENCLAW_CORE_VERSION"; \
+    MATTERMOST_BUNDLED_DIR="$OPENCLAW_ROOT/dist/extensions/mattermost"; \
+    rm -rf "$MATTERMOST_BUNDLED_DIR"; \
+    mkdir -p "$(dirname "$MATTERMOST_BUNDLED_DIR")"; \
+    cp -a "$MATTERMOST_PACKAGE" "$MATTERMOST_BUNDLED_DIR"; \
+    rm -rf "$MATTERMOST_STAGE"; \
+    rm -f /tmp/oc-plugin.log /tmp/openclaw-mattermost-fork.tgz; \
+    mkdir -p /opt/openclaw-runtime-deps/npm; \
+    chown -R node:node /opt/openclaw-runtime-deps; \
+    ! find /opt/openclaw-runtime-deps/npm -type d -path '*/node_modules/@openclaw/mattermost' | grep -q .; \
+    ! find /opt/openclaw-runtime-deps/npm -type d -path '*/node_modules/@openclaw/parallel-plugin' | grep -q .; \
+    ! find /opt/openclaw-runtime-deps/npm -type d -path '*/node_modules/@openclaw/codex' | grep -q .
+
+FROM openclaw-core-plugin-installer AS openclaw-full-plugin-installer
+
+COPY gateway/verify-codex-native-hook-runtime.mjs /tmp/verify-codex-native-hook-runtime.mjs
+COPY gateway/verify-codex-source-match.mjs /tmp/verify-codex-source-match.mjs
+RUN set -e; \
+    OPENCLAW_ROOT="$(npm root -g)/openclaw"; \
+    OC_VENDOR="$OPENCLAW_ROOT/vendor"; \
+    test -f "$OC_VENDOR/openclaw-codex.tgz"; \
+    CODEX_VENDORED="$(mktemp -d)"; \
+    tar -xzf "$OC_VENDOR/openclaw-codex.tgz" -C "$CODEX_VENDORED"; \
+    CODEX_BUNDLED_DIR="$OPENCLAW_ROOT/dist/extensions/codex"; \
+    test ! -e "$CODEX_BUNDLED_DIR"; \
+    cp -a "$CODEX_VENDORED/package" "$CODEX_BUNDLED_DIR"; \
+    node -e 'const fs = require("node:fs"); const file = process.argv[1]; const pkg = JSON.parse(fs.readFileSync(file, "utf8")); delete pkg.devDependencies; fs.writeFileSync(file, JSON.stringify(pkg) + "\n");' "$CODEX_BUNDLED_DIR/package.json"; \
+    npm install --prefix "$CODEX_BUNDLED_DIR" --omit=dev --include=optional --ignore-scripts --package-lock=false --no-audit --no-fund > /tmp/oc-plugin.log 2>&1 \
+      || { echo "FATAL: source-matched Codex dependencies failed"; tail -n 20 /tmp/oc-plugin.log; exit 1; }; \
+    cp "$CODEX_VENDORED/package/package.json" "$CODEX_BUNDLED_DIR/package.json"; \
+    test ! -e "$CODEX_BUNDLED_DIR/node_modules/openclaw"; \
+    OPENCLAW_STATE_DIR="$(mktemp -d)"; \
+    export OPENCLAW_STATE_DIR; \
+    openclaw plugins registry --refresh > /tmp/oc-plugin.log 2>&1 \
+      || { echo "FATAL: bundled plugin registry refresh failed"; tail -n 20 /tmp/oc-plugin.log; exit 1; }; \
+    openclaw plugins inspect codex --json > /tmp/oc-codex-inspect.json 2>/tmp/oc-plugin.log \
+      || { echo "FATAL: openclaw plugins inspect codex failed"; tail -n 20 /tmp/oc-plugin.log /tmp/oc-codex-inspect.json; exit 1; }; \
+    node /tmp/verify-codex-source-match.mjs "$CODEX_VENDORED/package" "$OPENCLAW_ROOT" /tmp/oc-codex-inspect.json; \
+    node /tmp/verify-codex-native-hook-runtime.mjs "$CODEX_BUNDLED_DIR/package.json"; \
+    ! find /opt/openclaw-runtime-deps/npm -type d -path '*/node_modules/@openclaw/codex' | grep -q .; \
+    rm -rf "$CODEX_VENDORED"; \
+    rm -rf "$OPENCLAW_STATE_DIR"; \
+    rm -f /tmp/oc-plugin.log /tmp/oc-codex-inspect.json; \
+    npm cache clean --force
+
+FROM gateway-runtime-system AS gateway-runtime
+
+COPY --from=openclaw-installer /usr/local/lib/node_modules/openclaw /usr/local/lib/node_modules/openclaw
+COPY --from=openclaw-core-plugin-installer /usr/local/lib/node_modules/openclaw/dist/extensions/mattermost /usr/local/lib/node_modules/openclaw/dist/extensions/mattermost
+COPY --from=openclaw-core-plugin-installer /usr/local/lib/node_modules/openclaw/dist/extensions/parallel /usr/local/lib/node_modules/openclaw/dist/extensions/parallel
+COPY --from=openclaw-full-plugin-installer /usr/local/lib/node_modules/openclaw/dist/extensions/codex /usr/local/lib/node_modules/openclaw/dist/extensions/codex
+COPY --from=openclaw-full-plugin-installer --chown=node:node /opt/openclaw-runtime-deps /opt/openclaw-runtime-deps
+RUN test "$(node -p "require('/usr/local/lib/node_modules/openclaw/package.json').bin.openclaw")" = "openclaw.mjs" \
+    && ln -s ../lib/node_modules/openclaw/openclaw.mjs /usr/local/bin/openclaw \
+    && openclaw --version \
+    && test -d /opt/openclaw-runtime-deps/npm \
+    && for plugin in mattermost parallel codex; do \
+      test -f "/usr/local/lib/node_modules/openclaw/dist/extensions/$plugin/package.json" \
+        || { echo "Missing bundled OpenClaw plugin: $plugin" >&2; exit 1; }; \
+    done \
+    && for package in mattermost parallel-plugin codex; do \
+      test -z "$(find /opt/openclaw-runtime-deps/npm -type d -path "*/node_modules/@openclaw/$package" -print -quit)" \
+        || { echo "Duplicate external runtime package: $package" >&2; exit 1; }; \
+    done

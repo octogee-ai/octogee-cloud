@@ -21,7 +21,7 @@ function verifyMonitoring(unowned = "") {
   roots.push(root);
   const scripts = join(root, "scripts");
   const bin = join(root, "bin");
-  const monitoring = join(root, "helm", "monitoring");
+  const monitoring = join(root, "charts", "monitoring");
   mkdirSync(join(scripts, "lib"), { recursive: true });
   mkdirSync(join(monitoring, "dashboards"), { recursive: true });
   mkdirSync(join(monitoring, "files"));

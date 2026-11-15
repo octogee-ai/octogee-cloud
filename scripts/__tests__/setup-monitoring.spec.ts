@@ -32,7 +32,7 @@ function createHarness(): {
   const bin = join(root, "bin");
   const log = join(root, "calls.log");
   mkdirSync(join(scripts, "lib"), { recursive: true });
-  const monitoring = join(root, "helm", "monitoring");
+  const monitoring = join(root, "charts", "monitoring");
   const dashboards = join(monitoring, "dashboards");
   mkdirSync(dashboards, { recursive: true });
   writeFileSync(join(dashboards, "smoke.json"), "{}\n");

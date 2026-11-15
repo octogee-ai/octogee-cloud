@@ -412,7 +412,7 @@ environment_values() {
   [[ "$service" =~ ^[0-9]+(\.[0-9]+){3}$ ]] || die "Found no address for the kubernetes service"
   cidrs="$(printf '%s\n%s\n' "$endpoints" "$service" | sort -u | sed 's|$|/32|' | paste -sd, -)"
   node --input-type=module - "$STATE/digests.json" "$PUBLISHED/" \
-    "$(node -p "require('$ROOT/infra/gateway/openclaw-tarball/current.json').sourceSha")" \
+    "$(node -p "require('$ROOT/gateway/openclaw-tarball/current.json').sourceSha")" \
     "$AWS_REGION" "$DB_HOST" "$VPC_CIDR" "$ASSETS_BUCKET" "$WORKSPACES_BUCKET" "$cidrs" "$SHARED_GATEWAY_TIER" > "$STATE/environment.yaml" <<'JS'
 import { readFileSync } from "node:fs";
 const [file, prefix, openclaw, region, databaseHost, vpcCidr, assets, workspaces, cidrs, sharedTier] = process.argv.slice(2);
@@ -616,7 +616,7 @@ SQL
 }
 
 install_chart() {
-  h upgrade --install octogee "$ROOT/helm/octogee" \
+  h upgrade --install octogee "$ROOT/charts/octogee" \
     -f "$ROOT/scripts/ops/eks/values.yaml" -f "$STATE/environment.yaml" \
     --set "gitea.gitea.config.database.PASSWD=$(cat "$STATE/secrets/gitea-password")" \
     --timeout=15m

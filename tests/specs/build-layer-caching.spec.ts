@@ -10,8 +10,8 @@ const read = (relativePath: string) => readFileSync(path.join(repoRoot, relative
 // busts the npm ci layer even with a working cache backend. All of these
 // already order correctly; this pins the invariant so it can't regress.
 const dockerfileOrderingTargets = [
-  { file: "octogee-api/Dockerfile", depsMarker: "RUN npm ci --ignore-scripts", sourceMarker: "COPY octogee-api/src/ ./src/" },
-  { file: "glm-controller/Dockerfile", depsMarker: "RUN npm ci", sourceMarker: "COPY glm-controller/src ./src" },
+  { file: "platform-api/Dockerfile", depsMarker: "RUN npm ci --ignore-scripts", sourceMarker: "COPY platform-api/src/ ./src/" },
+  { file: "fleet-controller/Dockerfile", depsMarker: "RUN npm ci", sourceMarker: "COPY fleet-controller/src ./src" },
   { file: "gateway-edge/Dockerfile", depsMarker: "RUN npm ci --ignore-scripts", sourceMarker: "COPY gateway-edge/src/ ./src/" },
 ];
 

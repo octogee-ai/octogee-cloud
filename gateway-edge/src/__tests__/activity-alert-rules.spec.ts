@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 describe("Activity sink alert rules", () => {
   const rules = readFileSync(
-    path.resolve(__dirname, "../../../helm/monitoring/files/gmp-rules.yaml"),
+    path.resolve(__dirname, "../../../charts/monitoring/files/gmp-rules.yaml"),
     "utf8",
   );
 

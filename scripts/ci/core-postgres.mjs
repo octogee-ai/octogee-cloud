@@ -44,7 +44,7 @@ export function runCorePostgresChecks() {
       AND (SELECT extversion FROM pg_extension WHERE extname = 'vector') = '0.8.7'
       FROM pg_roles WHERE rolname = current_user`], { env, encoding: "utf8", stdio: "pipe" });
     if (preflight.trim() !== "t") throw new Error("Core PostgreSQL CI requires a non-superuser CREATEROLE database owner and pgvector 0.8.7");
-    const { sourceSha } = JSON.parse(readFileSync(join(root, "infra/gateway/openclaw-tarball/current.json"), "utf8"));
+    const { sourceSha } = JSON.parse(readFileSync(join(root, "gateway/openclaw-tarball/current.json"), "utf8"));
     if (!/^[a-f0-9]{40}$/.test(sourceSha)) throw new Error("Invalid pinned Native source SHA");
     const checkout = join(directory, "native");
     run("git", ["init", "--quiet", checkout]);

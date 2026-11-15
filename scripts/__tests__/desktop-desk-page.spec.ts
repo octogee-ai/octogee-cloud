@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_AGENT_LOOK, characterSvg } from '@octogee/shared/types/agent-characters';
 
-const desktop = (path: string) => readFileSync(fileURLToPath(new URL(`../../infra/desktop/${path}`, import.meta.url)), 'utf8');
+const desktop = (path: string) => readFileSync(fileURLToPath(new URL(`../../desktop/${path}`, import.meta.url)), 'utf8');
 const DESK_URL = 'http://127.0.0.1:7777/desk';
 
 describe('the Desk page shipped on the desktop image', () => {

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-const entrypoint = readFileSync(path.resolve(import.meta.dirname, "../../infra/gateway/entrypoint.sh"), "utf8");
+const entrypoint = readFileSync(path.resolve(import.meta.dirname, "../../gateway/entrypoint.sh"), "utf8");
 const sshSetup = entrypoint.slice(entrypoint.indexOf('GIT_SSH_HOST="'), entrypoint.indexOf("# ── OpenClaw environment inputs"));
 const homes: string[] = [];
 
