@@ -4,7 +4,7 @@ import type { WebSocket } from 'ws';
 import { isResponseFrame } from '@octogee/shared/types/openclaw-wire-core';
 import { parseTalkClientMessage, resolveTalkSettings, TALK_PROTOCOL_VERSION, TALK_OUTPUT_SAMPLE_RATE, type ResolvedTalkSettings, type TalkClientMessage, type TalkServerEvent } from '@octogee/shared/types/voice';
 import { openNativeUserSocket, type NativeUserSocket } from '../openclaw-control/native-user-client.js';
-import { attachUpstreamRpcClient, type UpstreamRpcClient } from '../chat-proxy/openclaw/bridge-upstream-rpc.js';
+import { attachUpstreamRpcClient, type UpstreamRpcClient } from '@octogee/core/http-candidates/chat-proxy/openclaw/bridge-upstream-rpc';
 import { VOICE_ARCHIVE_ENTRIES_MAX, VOICE_ARCHIVE_ENTRY_TEXT_MAX, VOICE_ARCHIVE_TEXT_MAX, VOICE_ARCHIVE_TRANSCRIPT_ID_MAX, type VoiceArchiveEntry } from '@octogee/core/voice-conversation';
 
 const OPENAI_NATIVE_PROVIDER = 'octogee-openai';

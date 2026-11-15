@@ -49,7 +49,7 @@ function authHeader(uid: string): { Authorization: string } {
 
 describe("POST /api/g/:gatewayId/automations/rpc", () => {
   it("rejects an unauthenticated request at the sidecar mount", async () => {
-    const response = await request(createApp({ surface: "sidecar" }))
+    const response = await request(createApp())
       .post(`/api/g/${GATEWAY_ID}/automations/rpc`)
       .send({ method: "config.patch" });
 
@@ -63,7 +63,7 @@ describe("POST /api/g/:gatewayId/automations/rpc", () => {
       { status: 403, headers: { "content-type": "application/json" } },
     )));
 
-    const response = await request(createApp({ surface: "sidecar" }))
+    const response = await request(createApp())
       .post(`/api/g/${GATEWAY_ID}/automations/rpc`)
       .set(authorization)
       .send({ method: "config.patch" });
@@ -83,7 +83,7 @@ describe("POST /api/g/:gatewayId/automations/rpc", () => {
       { status: 200, headers: { "content-type": "application/json" } },
     )));
 
-    const response = await request(createApp({ surface: "sidecar" }))
+    const response = await request(createApp())
       .post(`/api/g/${GATEWAY_ID}/automations/rpc`)
       .set(authorization)
       .send({ method: "config.patch" });

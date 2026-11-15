@@ -1,13 +1,13 @@
-import { authenticationFailureLimit, authenticatedRequestLimit } from "../middleware/authenticated-request-limit.js";
+import { authenticationFailureLimit, authenticatedRequestLimit } from "@octogee/core/http/authenticated-request-limit";
 import { Router, Request, Response, NextFunction } from "express";
 
-import { requireAuthenticatedUid } from "../middleware/auth.js";
+import { requireAuthenticatedUid } from "@octogee/core/http/auth";
 import {
   userDefaultAgentId,
   gatewayClaudeSsoClient,
   gatewayDeviceAuthClient,
   brokerByosubFlow,
-} from "../lib/byosub.js";
+} from "@octogee/core/model-credentials/byosub";
 import {
   readByosubFlow,
   resolveByosubUserGateway,

@@ -56,16 +56,6 @@ describe("overlayTree", () => {
     expect(read(root, ".overlay/controller/src/main.ts")).toBe("void main(octogee);\n");
   });
 
-  it("lets the product replace the LLM broker entry", () => {
-    const root = tree({
-      "platform/controller/src/llm-broker.ts": "serve(platformBroker);\n",
-      "product/controller/src/llm-broker.ts": "serve(productBroker);\n",
-    });
-
-    expect(overlay(root).controller).toMatchObject({ replaced: ["src/llm-broker.ts"] });
-    expect(read(root, ".overlay/controller/src/llm-broker.ts")).toBe("serve(productBroker);\n");
-  });
-
   it("refuses a product file that shadows any other platform file", () => {
     const root = tree({
       "platform/controller/src/index.ts": "export const platform = 1;\n",

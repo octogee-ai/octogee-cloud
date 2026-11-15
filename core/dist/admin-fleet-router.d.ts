@@ -9,6 +9,7 @@ import { type SharedGatewayAddedBy } from "@octogee/shared/types/shared-gateway-
 import { type SizingTier } from "@octogee/shared/types/sizing";
 import { type GatewayPricingMode } from "@octogee/shared/types/cost-estimator";
 import { type UserAccounts, type UserSignInHosts } from "./admin-user-router.js";
+import type { GatewayKubernetesReader } from "./fleet-state-sections.js";
 import { type AdminPlacementCapabilities } from "./admin-placement-router.js";
 import { type AdminPlacementSharedCapabilities } from "./admin-placement-shared-router.js";
 import { type DurableGatewayRoot } from "./gateway-release-append.js";
@@ -67,6 +68,7 @@ export interface FleetRouterDeps {
     releaseAuthority?: CentralReleaseAuthority;
     platformArtifact?: GatewayArtifact;
     controllerStartedAt?: number;
+    readGatewayKubernetes?: GatewayKubernetesReader;
     readGatewayPodDiagnostics?: (gatewayId: string) => Promise<GatewayPodDiagnostics>;
     readGatewayPodDiagnosticsBatch?: (gatewayIds: readonly string[]) => Promise<Record<string, GatewayPodDiagnostics>>;
     requestNativeReturnSourceRecovery?: (input: {

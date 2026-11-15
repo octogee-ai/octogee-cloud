@@ -88,12 +88,7 @@ vi.mock('../openclaw/ws-origin.js', () => ({
   _resetWsOriginWarningForTests: () => {},
 }));
 
-vi.mock('../openclaw/gateway-resolver.js', () => ({
-  GatewayResolveError: h.GatewayResolveError,
-  resolveGatewayUrl: async () => h.ctl.resolve(),
-}));
-
-vi.mock('../openclaw/frame-filter.js', () => ({
+vi.mock('@octogee/core/channels/frame-filter', () => ({
   ExpectedAgentIdError: h.ExpectedAgentIdError,
   deriveExpectedAgentId: () => h.ctl.deriveAgentId(),
   shouldForwardFrame: () => ({
@@ -103,7 +98,7 @@ vi.mock('../openclaw/frame-filter.js', () => ({
   PER_USER_EVENTS: new Set<string>(),
 }));
 
-vi.mock('../openclaw/gateway-token.js', () => ({
+vi.mock('@octogee/core/http-candidates/chat-proxy/openclaw/gateway-token', () => ({
   GatewayTokenError: h.GatewayTokenError,
   fetchGatewayAuth: async ({ skipCache }: { skipCache?: boolean }) => ({
     source: 'legacy-token',
@@ -116,7 +111,7 @@ vi.mock('../openclaw/gateway-token.js', () => ({
   clearGatewayDeviceToken: async () => {},
 }));
 
-vi.mock('../openclaw/upstream.js', () => ({
+vi.mock('@octogee/core/http-candidates/chat-proxy/openclaw/upstream', () => ({
   OpenclawWireError: h.OpenclawWireError,
   openUpstream: async ({
     token,

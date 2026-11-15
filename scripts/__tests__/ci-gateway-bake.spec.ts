@@ -108,22 +108,21 @@ describe("gateway bake plan", () => {
     }
   });
 
-  it("passes the product overlay of gateway-edge and the product tree to the gateway images when they exist", () => {
+  it("passes the product tree to the gateway images and builds the platform gateway-edge image without it", () => {
     const root = mkdtempSync(join(tmpdir(), "gateway-bake-product-"));
-    mkdirSync(join(root, "product/gateway-edge"), { recursive: true });
+    mkdirSync(join(root, "product"), { recursive: true });
     const { target } = plan({ base: false, isolatedBase: false, images }, root);
-    expect(target["gateway-edge"].contexts).toEqual({ product: "product", overlay: "product/gateway-edge" });
+    expect(target["gateway-edge"]).toMatchObject({ context: "platform", dockerfile: "gateway-edge/Dockerfile" });
+    expect(target["gateway-edge"]).not.toHaveProperty("contexts");
     expect(target["octogee-gateway"].contexts).toMatchObject({ product: "product" });
     expect(target["octogee-gateway-builder"].contexts).toMatchObject({ product: "product" });
-    expect(plan({ base: false, isolatedBase: false, images }).target["gateway-edge"]).not.toHaveProperty("contexts");
   });
 
-  it("passes the product libraries to gateway-edge while the product tree exists", () => {
-    const root = mkdtempSync(join(tmpdir(), "gateway-bake-libraries-"));
-    mkdirSync(join(root, "product/core"), { recursive: true });
-    const { target } = plan({ base: true, isolatedBase: false, images }, root);
-    expect(target["gateway-edge"].contexts).toEqual({ product: "product" });
-    expect(target["octogee-gateway-base"]).not.toHaveProperty("contexts");
+  it("builds gateway-edge from the image definition the caller supplies", () => {
+    const edge = { dockerfile: "consumer/edge/Dockerfile", context: "." };
+    const { target } = gatewayBakePlan({ repository, sha, base, isolatedBase, toolchain, build: { base: false, isolatedBase: false, images }, edge }, platformOnly);
+    expect(target["gateway-edge"]).toMatchObject({ context: ".", dockerfile: "consumer/edge/Dockerfile", tags: [`${repository}/gateway-edge:${sha.slice(0, 7)}`] });
+    expect(target["octogee-gateway"]).toMatchObject({ context: "platform", dockerfile: "gateway/Dockerfile" });
   });
 
   it("is empty when everything is already published", () => {
@@ -145,14 +144,14 @@ describe("gateway bake plan", () => {
 
 describe("gateway image family build", () => {
   const short = sha.slice(0, 7);
-  const harness = ({ existing = [] as string[], reusable = [] as string[], bakeError = undefined as Error | undefined } = {}) => {
+  const harness = ({ existing = [] as string[], reusable = [] as string[], bakeError = undefined as Error | undefined, edge = undefined as { dockerfile: string; context?: string } | undefined } = {}) => {
     const calls: string[][] = [];
     const bakes: ReturnType<typeof gatewayBakePlan>[] = [];
     let clock = 0;
     return {
       calls,
       bakes,
-      run: () => buildGatewayImages({ repository, sha, base, isolatedBase, toolchain, root: platformOnly }, {
+      run: () => buildGatewayImages({ repository, sha, base, isolatedBase, toolchain, edge, root: platformOnly }, {
         exists: async (ref: string) => existing.includes(ref),
         script: async (file: string, args: string[]) => {
           calls.push([file, ...args]);
@@ -243,6 +242,13 @@ describe("gateway image family build", () => {
     expect(bakes[0].group.default.targets).toEqual(["gateway-edge"]);
     expect(bakes[0].target).not.toHaveProperty("octogee-gateway-system");
     expect(calls).not.toContainEqual(["prepare-base"]);
+  });
+
+  it("bakes gateway-edge from the caller's image definition", async () => {
+    const edge = { dockerfile: "consumer/edge/Dockerfile", context: "." };
+    const { bakes, run } = harness({ existing: [baseRef, isolatedBaseRef, ...images.slice(1).map(image => `${repository}/${image}:${sha}`)], edge });
+    await run();
+    expect(bakes[0].target["gateway-edge"]).toMatchObject(edge);
   });
 
   it("salts each gateway fingerprint with the base it runs on", async () => {

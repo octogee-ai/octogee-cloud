@@ -53,7 +53,7 @@ spec:
           imagePullPolicy: Always
           command:
             - node
-            - dist/octogee-api/src/llm-broker.js
+            - {{ required "llmBroker.entrypoint is required" .Values.llmBroker.entrypoint | quote }}
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:

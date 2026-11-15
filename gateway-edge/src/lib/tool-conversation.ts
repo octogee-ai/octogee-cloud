@@ -1,5 +1,5 @@
-import { trustedBrokerBaseUrl } from './automation-authorization-broker.js';
-import { internalFetch } from './internal-fetch.js';
+import { trustedBrokerBaseUrl } from '@octogee/core/internal-brokers/automation-authorization-broker';
+import { internalFetch } from '@octogee/core/internal-fetch';
 import { WorkspaceNativeAccessError } from './workspace-native-access.js';
 import { isMattermostPostId } from '@octogee/shared/types/mattermost-session-route';
 

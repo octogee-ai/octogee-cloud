@@ -8,12 +8,12 @@ import {
   resolveFileTarget,
   type FileTargetResult,
   type ResolveFileTargetOpts,
-} from "../../../gateway-edge/src/lib/fileTarget.js";
+} from "@octogee/core/workspace/fileTarget";
 import type {
   WorkspaceGitAuthorization,
   WorkspaceGitLane,
-} from "../../../gateway-edge/src/lib/workspace-git-authorization-broker.js";
-import { resolveCommitAuthor } from "../../../gateway-edge/src/routes/workspace/helpers.js";
+} from "@octogee/core/internal-brokers/workspace-git-authorization-broker";
+import { resolveCommitAuthor } from "@octogee/core/workspace/route-helpers";
 
 type GatewayBinding = Extract<Express.Request["boundTenant"], { kind: "gateway" }>;
 

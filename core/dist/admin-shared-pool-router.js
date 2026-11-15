@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { isReleasePayload, releasePayloadHash, } from "@octogee/shared/types/gateway-releases";
+import { isReleasePayload } from "@octogee/shared/types/gateway-releases";
 import { gatewayHeartbeatMatchesImageTag, isGatewayImageTag } from "@octogee/shared/types/image-tag";
 import { SHARED_POOL_SCALER_CREATOR, isSharedPoolMemberRoot, isSharedPoolSlotId, parseSharedPoolReplacements, sharedGatewayAddedBy, } from "@octogee/shared/types/shared-gateway-pool";
 import { GATEWAY_CONFIG_SCHEMA_VERSION, InitialGatewayReleaseConflictError, writeInitialGatewayReleaseInTransaction, } from "./gateway-live-release.js";
 import { claimGatewayRetirementInStore, GatewayRetirementConflictError } from "./gateway-retirement-claim.js";
-import { InvalidSharedGatewayAutoscalingConfigError, readSharedGatewayAutoscalingConfigInStore } from "./shared-gateway-pool-read.js";
+import { FLEET_STATE_SECTIONS_ERROR, latestReleasePayloadHash, parseFleetStateSections, platformArtifactHash, readFleetStateSections, readSharedGatewayAutoscalingOrNull, } from "./fleet-state-sections.js";
 import { FleetMutationRefusedError } from "./normal-fleet-mutation.js";
 import { timestampMillis } from "./timestamps.js";
 import { FenceMismatchError } from "./platform-state/errors.js";
@@ -138,12 +138,6 @@ function parseStatuses(raw) {
         ? statuses
         : null;
 }
-async function latestReleasePayloadHash(transaction, root) {
-    if (!isNonNegativeInteger(root.latestRelease))
-        return null;
-    const release = await transaction.gateways.releases.get(root.gatewayId, root.latestRelease);
-    return release !== null && isReleasePayload(release.payload) ? releasePayloadHash(release.payload) : null;
-}
 function fleetStateUser(user) {
     const { restoreFence, sourceTransferFence } = user.fences;
     return {
@@ -170,18 +164,14 @@ export async function readFleetState(store, input) {
             transaction.gateways.assignments.listAll(),
             transaction.fleetRegistry.list(),
             transaction.journal.operations.listByStatus(input.operationStatuses),
-            readSharedGatewayAutoscalingConfigInStore(transaction).catch((error) => {
-                if (error instanceof InvalidSharedGatewayAutoscalingConfigError)
-                    return null;
-                throw error;
-            }),
+            readSharedGatewayAutoscalingOrNull(transaction),
         ]);
         const sharedGateways = gateways.filter(isSharedPoolMemberRoot);
         const hashes = await Promise.all(sharedGateways.map((root) => latestReleasePayloadHash(transaction, root)));
         return {
             generatedAt: input.now,
             fleetControllerStartedAt: input.controllerStartedAt ?? null,
-            platformArtifactHash: input.platformArtifact ? releasePayloadHash({ ...input.platformArtifact }) : null,
+            platformArtifactHash: platformArtifactHash(input.platformArtifact),
             config: {
                 sharedGatewayAutoscaling,
                 sizingProfiles: config?.sizingProfiles ?? {},
@@ -307,6 +297,23 @@ export function addAdminSharedPoolRoutes(router, deps) {
             const operationStatuses = parseStatuses(req.query.operationStatus);
             if (operationStatuses === null) {
                 res.status(400).json({ error: `operationStatus must be a comma-separated list of ${OPERATION_STATUSES.join(", ")}` });
+                return;
+            }
+            if (req.query.sections !== undefined) {
+                const sections = parseFleetStateSections(req.query.sections);
+                if (sections === null) {
+                    res.status(400).json({ error: FLEET_STATE_SECTIONS_ERROR });
+                    return;
+                }
+                res.json(await readFleetStateSections(store, {
+                    sections,
+                    operationStatuses,
+                    platformArtifact: deps.platformArtifact,
+                    controllerStartedAt: deps.controllerStartedAt,
+                    now: now(),
+                    projectUser: fleetStateUser,
+                    readGatewayKubernetes: deps.readGatewayKubernetes,
+                }));
                 return;
             }
             res.json(await readFleetState(store, {

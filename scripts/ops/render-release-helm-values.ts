@@ -28,7 +28,7 @@ export async function renderReleaseHelmValues(sourceSha: string, authority?: Pic
     releaseImages: platformImages,
     global: { projectRunnerImage: image("platform", "octogee-project-runner") },
     "octogee-api": { image: image("platform", "octogee-api") },
-    llmBroker: { image: image("platform", "octogee-api") },
+    llmBroker: { image: image("platform", "llm-broker") },
     artifactWorker: { image: image("platform", "artifact-worker") },
     opsAgent: { image: image("platform", "octogee-ops-agent") },
     "gateway-edge": { image: edge },

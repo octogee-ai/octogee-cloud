@@ -1,7 +1,7 @@
 import { signingKey as ROUTER_KEY, verificationKey } from "../../../test-setup/signature-keys.js";
 import http from "node:http";
 import { afterEach, describe, expect, it } from "vitest";
-import { signAgentControlRouterRequest } from "../../../agent-control-callback-router.js";
+import { signAgentControlRouterRequest } from "@octogee/core/http-candidates/agent-control-callback-router";
 import { createMattermostInteractionProxyHandler } from "../mattermost-interaction-proxy.js";
 
 const servers: http.Server[] = [];

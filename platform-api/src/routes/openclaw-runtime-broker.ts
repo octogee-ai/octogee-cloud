@@ -3,7 +3,7 @@ import { isCanonicalWorkspaceMembership } from "@octogee/core/gateway-principal-
 import { notifyNativeFinalReply, parseFinalReply, ReplyBindingDeniedError, type FinalReplyIdentity, type FinalReplyTarget } from "@octogee/core/native-final-reply";
 import { readFinalReplyPost, verifyFinalReplyChannel } from "../lib/native-final-reply-mattermost.js";
 import type { FinalReplyNotifier } from "../lib/user-notifications.js";
-import { logger } from "../../../gateway-edge/src/middleware/logging.js";
+import { logger } from "@octogee/core/http/logging";
 import { createVoicePostingGrant } from "../lib/voice-posting-grant.js";
 import {
   resolveVoiceConversationContext,
@@ -11,7 +11,7 @@ import {
 } from "../lib/workspace-conversation.js";
 import { projectMemberExists } from "../lib/project-members.js";
 import { isMattermostPostId, parseChannelScopedMattermostSessionRoute } from '@octogee/shared/types/mattermost-session-route';
-import { resolveActivityConversation, type ActivityConversation } from '../../../gateway-edge/src/lib/activity-conversation.js';
+import { resolveActivityConversation, type ActivityConversation } from '@octogee/core/channels/activity-conversation';
 import { Router, type Request, type Response } from "express";
 import { accountAllowsInteractiveAccess } from "@octogee/shared/types/account-lifecycle";
 
@@ -52,7 +52,7 @@ import {
   PlatformStateActivityWriteReceiptStore,
   type ActivityReceiptClaimInput,
   type ActivityWriteReceiptStore,
-} from "../../../gateway-edge/src/chat-proxy/openclaw/activity-write-receipts.js";
+} from "@octogee/core/http-candidates/chat-proxy/openclaw/activity-write-receipts";
 type GatewayBinding = Extract<Express.Request["boundTenant"], { kind: "gateway" }>;
 
 export type SessionChannelPurposeReader = (channel: WorkspaceChannel) => Promise<string>;

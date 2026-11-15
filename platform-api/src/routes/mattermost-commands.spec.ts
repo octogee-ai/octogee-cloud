@@ -4,7 +4,7 @@ import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import type { PlatformStateStore } from "@octogee/core/platform-state";
-import { signMattermostCommandRequest } from "../../../gateway-edge/src/agent-control-callback-router.js";
+import { signMattermostCommandRequest } from "@octogee/core/http-candidates/agent-control-callback-router";
 import { RecordingDocuments } from "../test-helpers/recording-documents.js";
 import { createMattermostCommandRoutes } from "./mattermost-commands.js";
 import { createOpenClawControlBrokerRoutes } from "./openclaw-control-broker.js";

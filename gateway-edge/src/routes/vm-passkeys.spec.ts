@@ -6,7 +6,7 @@ import request from "supertest";
 import { WebSocket } from "ws";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WsUpgradeRouter } from "@octogee/core/ws/upgrade-router";
-vi.mock("../middleware/auth.js", () => ({ requireAuthenticatedUid: (req: { uid?: string }, _res: unknown, next: () => void) => { req.uid = "builder"; next(); } }));
+vi.mock("@octogee/core/http/auth", () => ({ requireAuthenticatedUid: (req: { uid?: string }, _res: unknown, next: () => void) => { req.uid = "builder"; next(); } }));
 import { createVmPasskeysRouter } from "./vm-passkeys.js";
 import { createPasskeyLinkHost } from "../webauthn/link-host.js";
 import { decodePasskeyMessage, encodePasskeyMessage, PASSKEY_CLOSE_REPLACED } from "../webauthn/protocol.js";

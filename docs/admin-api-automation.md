@@ -54,6 +54,70 @@ readable payload. Each user carries only `uid`, `slug`, `admitted`,
 `accountLifecycle`, `provisioning.status`, `gateway.gatewayId`,
 `openclaw.managedBy` and its restore and source-transfer fences.
 
+### Selecting sections
+
+`?sections=` names the sections to answer, comma-separated, from `config`,
+`sharedPoolAutomation`, `users`, `gateways`, `releases`, `assignments`,
+`runtimes`, `operations` and `migrations`. Without it the answer is the one
+above, unchanged. With it the answer always carries `generatedAt`,
+`fleetControllerStartedAt` and `sections` (the selection in the order listed
+here), then each selected section, all from one read-only transaction that
+reads only the records those sections need. An unknown or empty name, or a
+repeated `sections` parameter, answers `400`.
+
+```json
+{
+  "generatedAt": 1794268800000,
+  "fleetControllerStartedAt": 1794268000000,
+  "sections": ["users", "gateways", "releases", "migrations"],
+  "users": [],
+  "gateways": [],
+  "platformArtifactHash": "<hash>",
+  "latestReleasePayloadHashes": { "shared-a": "<hash>" },
+  "platformCurrentSharedGatewayIds": ["shared-a"],
+  "migrations": []
+}
+```
+
+- `config`, `sharedPoolAutomation`, `assignments`, `runtimes` and `operations`
+  are the fields of the same name above; `operations` still follows
+  `?operationStatus=`.
+- `users`: each user carries the fields above, plus what placement reads:
+  - `provisioning.startedAt`
+  - `openclaw.status`
+  - `gateway`: the full gateway mirror (`gatewayId`, `gatewayAssignedAt`,
+    `gatewayProfile`, `controlUiEnabled`), or `null`
+  - `activationLease`: the stored lease (`leaseId`, `generation`, `status`,
+    `targetGatewayId`, `sourceGatewayId`, `sourceAssignmentEpoch`,
+    `lastActiveAt`), or `null`
+  - `fences`: every fence the user holds (`restoreFence`,
+    `sourceTransferFence`, `computerRecovery`, `migration`,
+    `pendingNativeSchedulerRetirement`, `runtimeReset`)
+  - `home`: the user's home record (`computer`, `homeCheckpoint`, `homeDisk`,
+    `homeStorage`, `homeMigration`, `homeErasure`, `homeCapacity`,
+    `projectStorageNativeBoot`), each present only when stored
+- `gateways`: each gateway root, plus its Kubernetes reading:
+  ```json
+  {
+    "kubernetes": { "status": "ready", "totalPods": 1, "readyPods": 1, "ageMs": 30000 },
+    "kubernetesObservedAt": 1794268770000
+  }
+  ```
+  `status` is `ready`, `not-ready`, `missing` or `unknown`. The fleet
+  controller observes every gateway's pods and stores the result on the
+  runtime, rewriting it at least every two minutes. A stored observation older
+  than four minutes is reported as `unknown` with its `ageMs` and
+  `kubernetesObservedAt` kept, and its pod counts `null`. A gateway with no
+  runtime, no observation, a malformed one or one stamped in the future is
+  `unknown` with `ageMs` and `kubernetesObservedAt` `null`. The reading is never
+  inferred from anything else.
+- `releases`: `platformArtifactHash` and `latestReleasePayloadHashes` as
+  above, plus `platformCurrentSharedGatewayIds`, the shared gateways whose
+  latest release payload hash equals `platformArtifactHash` (empty when the
+  server has no platform artifact).
+- `migrations`: the `migrate-user` operations that are `pending` or
+  `running`, whatever `?operationStatus=` says.
+
 A refused precondition answers `409` and is logged as the warning
 `fleet mutation refused`, with its failed audit entry kept.
 

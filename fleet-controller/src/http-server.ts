@@ -32,6 +32,7 @@ import {
   type AdminUserProductDetail,
 } from "@octogee/core/admin-user-directory-router";
 import { addAdminLogsRoutes } from "@octogee/core/admin-logs-router";
+import { readAdminGatewayKubernetes } from "./admin-kubernetes-observer.js";
 import { addAdminSizingProfileRoutes } from "@octogee/core/admin-sizing-profile-router";
 import type { LogEntriesSource } from "@octogee/core/fleet-logs";
 import {
@@ -362,6 +363,7 @@ export function createHttpServer(deps: HttpServerDeps): Express {
     releaseAuthority: deps.releaseAuthority,
     platformArtifact: deps.platformArtifact,
     controllerStartedAt: deps.controllerStartedAt,
+    readGatewayKubernetes: readAdminGatewayKubernetes,
     readGatewayPodDiagnostics: deps.readGatewayPodDiagnostics,
     readGatewayPodDiagnosticsBatch: deps.readGatewayPodDiagnosticsBatch,
     requestNativeReturnSourceRecovery: deps.requestNativeReturnSourceRecovery,

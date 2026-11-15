@@ -1,6 +1,6 @@
 import type { PlatformStateRepositories } from "@octogee/core/platform-state";
 import { parseAgentId } from "@octogee/shared/types/identity";
-import { logger as defaultLogger } from "../../../gateway-edge/src/middleware/logging.js";
+import { logger as defaultLogger } from "@octogee/core/http/logging";
 import type { UserNotification, UserNotifier } from "../lib/user-notifications.js";
 import { findAssignedUserByAgentId } from "../routes/fleet-broker.js";
 import { normalizeTenantPolicyPath } from "../lib/tenant-route-policy.js";

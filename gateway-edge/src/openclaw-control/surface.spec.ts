@@ -24,15 +24,15 @@ import {
   openClawControlUpstreamPath,
   invariantContext,
 } from "./surface.js";
-import { OpenClawControlSessionManager } from "./session.js";
+import { OpenClawControlSessionManager } from "@octogee/core/http-candidates/openclaw-control/session";
 import { evaluateOpenClawControlRpc } from "./rpc-policy.js";
 const OPENCLAW_TEST_METHODS = ["health", "status", "config.get", "config.schema", "config.patch", "config.set", "config.apply", "agents.list", "models.list", "channels.status", "tools.catalog", "skills.status", "tools.invoke", "approval.history", "approval.get", "approval.resolve"];
 import { OpenClawControlResourceLimiter } from "./limits.js";
-import { dashboardAssetRateLimit } from "../middleware/security.js";
+import { dashboardAssetRateLimit } from "@octogee/core/http/security";
 import {
   createOpenClawControlAuthorizationCache,
   OpenClawControlBrokerError,
-} from "./broker.js";
+} from "@octogee/core/http-candidates/openclaw-control/broker";
 
 import { installTestUserIdentity } from "../__tests__/helpers/user-identity.js";
 

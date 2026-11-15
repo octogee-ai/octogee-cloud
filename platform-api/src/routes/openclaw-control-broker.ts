@@ -794,13 +794,13 @@ async function loadControlProfile(
 }
 
 interface MattermostBrokerDependencies {
-  authorize: typeof import("../../../gateway-edge/src/lib/channel-session-authorization.js").authorizeChannelCredentials;
-  listChannels: typeof import("../../../gateway-edge/src/lib/channel-session-authorization.js").listWorkspaceChannelCandidates;
+  authorize: typeof import("@octogee/core/channels/channel-session-authorization").authorizeChannelCredentials;
+  listChannels: typeof import("@octogee/core/channels/channel-session-authorization").listWorkspaceChannelCandidates;
 }
 
 const mattermostDefaults: MattermostBrokerDependencies = {
-  authorize: async (...args) => (await import("../../../gateway-edge/src/lib/channel-session-authorization.js")).authorizeChannelCredentials(...args),
-  listChannels: async (...args) => (await import("../../../gateway-edge/src/lib/channel-session-authorization.js")).listWorkspaceChannelCandidates(...args),
+  authorize: async (...args) => (await import("@octogee/core/channels/channel-session-authorization")).authorizeChannelCredentials(...args),
+  listChannels: async (...args) => (await import("@octogee/core/channels/channel-session-authorization")).listWorkspaceChannelCandidates(...args),
 };
 
 function validMattermostRequest(body: Record<string, unknown> | null, operation: "authorize" | "channels"): body is Record<string, unknown> {

@@ -3,14 +3,14 @@ import { isValidUsername } from "@octogee/shared/types/identity";
 import type { AgentImportWorkspacePolicy } from "@octogee/shared/types/agent-import";
 
 import type { AgentImportAuthorizationIntent } from "@octogee/shared/types/agent-import";
-import { internalFetch } from "./internal-fetch.js";
-import type { AgentImportManifestEntry } from "./agent-import-git.js";
+import { internalFetch } from "@octogee/core/internal-fetch";
+import type { AgentImportManifestEntry } from "@octogee/core/http-candidates/agent-transfer/agent-import-git";
 import type {
   AgentImportIdentity,
   AgentImportIdentitySnapshot,
   AgentImportRecord,
   StoredAgentImportPlan,
-} from "./agent-import-service.js";
+} from "@octogee/core/http-candidates/agent-transfer/agent-import-service";
 
 const IMPORT_ID_RE = /^[A-Za-z0-9_-]{1,160}$/;
 const DEFAULT_TIMEOUT_MS = 120_000;

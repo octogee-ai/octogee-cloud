@@ -1,7 +1,7 @@
 import { GoogleAuth } from "google-auth-library";
 
-import { internalFetch } from "../../gateway-edge/src/lib/internal-fetch.js";
-import { logger } from "../../gateway-edge/src/middleware/logging.js";
+import { internalFetch } from "@octogee/core/internal-fetch";
+import { logger } from "@octogee/core/http/logging";
 import {
   NPM_CACHE_CAPABILITY_AUDIENCE,
   type NpmCacheCapabilityAuthorization,

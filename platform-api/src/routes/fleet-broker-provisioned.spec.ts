@@ -3,7 +3,7 @@ import request from "supertest";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
-import { logger } from "../../../gateway-edge/src/middleware/logging.js";
+import { logger } from "@octogee/core/http/logging";
 import { RecordingDocuments } from "../test-helpers/recording-documents.js";
 import { createFleetBrokerRoutes, type ProvisionedUserReport } from "./fleet-broker.js";
 

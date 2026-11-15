@@ -1,10 +1,10 @@
 import express, { type RequestHandler } from "express";
 import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
-vi.mock("../../../gateway-edge/src/lib/platform-state.js", async (importOriginal) => {
+vi.mock("@octogee/core/identity/platform-state-store", async (importOriginal) => {
   const { createDocumentFixtureStore } = await import("@octogee/core-testing/journal-store");
   return {
-    ...(await importOriginal<typeof import("../../../gateway-edge/src/lib/platform-state.js")>()),
+    ...(await importOriginal<typeof import("@octogee/core/identity/platform-state-store")>()),
     platformStateStore: createDocumentFixtureStore(new Map()),
   };
 });
