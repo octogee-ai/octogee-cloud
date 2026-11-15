@@ -24,7 +24,7 @@ afterEach(() => {
 });
 
 async function loadModule() {
-  return await import("../../scripts/lib/byot-sync");
+  return await import("../../gateway-supervisor/lib/byot-sync");
 }
 
 function agentDirFor(slug: string): string {

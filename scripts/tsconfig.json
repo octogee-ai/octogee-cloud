@@ -12,6 +12,6 @@
       "@shared/*": ["../shared/*"]
     }
   },
-  "include": ["*.ts", "ci/**/*.ts", "entrypoints/**/*.ts", "lib/**/*.ts", "ops/**/*.ts", "src/**/*.ts", "../shared/types/identity.ts"],
+  "include": ["*.ts", "ci/**/*.ts", "lib/**/*.ts", "ops/**/*.ts", "src/**/*.ts", "../shared/types/identity.ts"],
   "exclude": ["node_modules", "dist", "**/seed-*.ts", "**/generate-*.ts", "**/setup-*.ts", "../shared/**/*.spec.ts"]
 }

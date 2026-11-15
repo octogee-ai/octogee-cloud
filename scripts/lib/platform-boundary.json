@@ -16,6 +16,7 @@
     "platform/vm-bridge/",
     "platform/charts/",
     "platform/scripts/",
+    "platform/gateway-supervisor/",
     "platform/templates/",
     "platform/terraform/"
   ],

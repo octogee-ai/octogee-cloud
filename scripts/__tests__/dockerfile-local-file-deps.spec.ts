@@ -38,7 +38,7 @@ describe("platform image Dockerfiles", () => {
     expect(installs.filter((dir) => dir === "platform-api")).toHaveLength(2);
     expect(installs.filter((dir) => dir === "gateway-edge")).toHaveLength(2);
     expect(installs.filter((dir) => dir === "llm-broker")).toHaveLength(2);
-    expect(installs).toEqual(expect.arrayContaining(["fleet-controller", "scripts", "shared"]));
+    expect(installs).toEqual(expect.arrayContaining(["fleet-controller", "gateway-supervisor", "shared"]));
   });
 
   it("re-includes every packed interface in the Docker build context", () => {
