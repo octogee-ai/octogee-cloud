@@ -5,7 +5,9 @@ import type { GatewayAssignment } from "../platform-state/gateways.js";
 import type { PlatformUserRecord } from "../platform-state/users.js";
 import type { PlatformStateStore } from "../platform-state/store.js";
 import { type AllocateIsolatedGatewayInput, type IsolatedLifecycleDeps, type LifecycleMode } from "./inputs.js";
+import type { HomeReadinessFence } from "./home-readiness.js";
 export interface IsolatedGatewayAllocationDeps extends IsolatedLifecycleDeps {
+    requireHomeReady: HomeReadinessFence;
     namespace: string;
     ensureAuthSecret(input: {
         namespace: string;

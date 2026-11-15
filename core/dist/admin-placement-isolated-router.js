@@ -2,7 +2,7 @@ import { projectGatewayDesiredRootForGateway } from "@octogee/shared/types/gatew
 import { builderActivateOperationId } from "@octogee/shared/types/isolated-operation-ids";
 import { isSizingTier } from "@octogee/shared/types/sizing";
 import { GatewayRetirementConflictError } from "./gateway-retirement-claim.js";
-import { IsolatedGatewayFenceError, PLACEMENT_RETIREMENT_REASONS, advanceActivationLease, allocateIsolatedGateway, checkUnreachableRecoveryFence, completeActivationLease, failActivationLease, leaseOperationIdBelongs, recoverUnreachableIsolatedGateway, refreshRequestedAllocation, requestSizingKeyTransition, unauditedLifecycleMutations, retireOwnedIsolatedGateway, } from "./isolated-gateway-lifecycle/index.js";
+import { IsolatedGatewayFenceError, PLACEMENT_RETIREMENT_REASONS, advanceActivationLease, allocateIsolatedGateway, checkUnreachableRecoveryFence, completeActivationLease, failActivationLease, leaseOperationIdBelongs, recoverUnreachableIsolatedGateway, refreshRequestedAllocation, requestSizingKeyTransition, requireStoredHomeReadiness, unauditedLifecycleMutations, retireOwnedIsolatedGateway, } from "./isolated-gateway-lifecycle/index.js";
 import { FleetMutationRefusedError } from "./normal-fleet-mutation.js";
 import { assertClientOwnsPlacementAutomation, placementOwnerRefusalBody } from "./placement-automation-owner.js";
 import { FenceMismatchError } from "./platform-state/errors.js";
@@ -419,6 +419,7 @@ export function addAdminPlacementIsolatedRoutes(router, deps) {
     });
     const allocationDeps = {
         ...lifecycle,
+        requireHomeReady: requireStoredHomeReadiness,
         namespace: deps.capabilities.namespace,
         ensureAuthSecret: deps.capabilities.ensureAuthSecret,
     };
@@ -461,6 +462,9 @@ export function addAdminPlacementIsolatedRoutes(router, deps) {
             target: { gatewayId: input.gatewayId, uid: input.uid },
             preActionStatus: { generation: input.generation, desiredStatus: root.desiredStatus },
             mutation: { kind: "recover-unreachable-isolated-gateway", authoritativeGatewayId: input.authoritativeGatewayId },
+            classifyResult: (result) => result.state === "waiting"
+                ? { outcome: "partial", partialOutcome: { summary: `waiting: ${result.reason}`, details: { state: "waiting", reason: result.reason, operationId: result.operationId } } }
+                : { outcome: "completed" },
             dryRunRefusal: async () => {
                 await checkUnreachableRecoveryFence(lifecycle, request);
                 return null;

@@ -16,6 +16,7 @@ import {
   recoverUnreachableIsolatedGateway,
   refreshRequestedAllocation,
   requestSizingKeyTransition,
+  requireStoredHomeReadiness,
   unauditedLifecycleMutations,
   retireOwnedIsolatedGateway,
   type AdvanceActivationLeaseInput,
@@ -464,6 +465,7 @@ export function addAdminPlacementIsolatedRoutes(router: Router, deps: AdminPlace
 
   const allocationDeps = {
     ...lifecycle,
+    requireHomeReady: requireStoredHomeReadiness,
     namespace: deps.capabilities.namespace,
     ensureAuthSecret: deps.capabilities.ensureAuthSecret,
   };
@@ -506,6 +508,9 @@ export function addAdminPlacementIsolatedRoutes(router: Router, deps: AdminPlace
       target: { gatewayId: input.gatewayId, uid: input.uid },
       preActionStatus: { generation: input.generation, desiredStatus: root.desiredStatus },
       mutation: { kind: "recover-unreachable-isolated-gateway", authoritativeGatewayId: input.authoritativeGatewayId },
+      classifyResult: (result) => result.state === "waiting"
+        ? { outcome: "partial", partialOutcome: { summary: `waiting: ${result.reason}`, details: { state: "waiting", reason: result.reason, operationId: result.operationId } } }
+        : { outcome: "completed" },
       dryRunRefusal: async () => {
         await checkUnreachableRecoveryFence(lifecycle, request);
         return null;

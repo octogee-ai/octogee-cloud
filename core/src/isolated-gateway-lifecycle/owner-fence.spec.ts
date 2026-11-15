@@ -10,6 +10,7 @@ import {
   refreshRequestedAllocation,
   requestSizingKeyTransition,
   retireOwnedIsolatedGateway,
+  requireStoredHomeReadiness,
 } from "./index.js";
 
 const TARGET = "alice-xs-12345678";
@@ -42,6 +43,7 @@ function harness(status: string, gatewayId: string) {
     log: vi.fn(),
     requireOwner: async () => { throw refusal; },
     mutations: auditedLifecycleMutations(store),
+    requireHomeReady: requireStoredHomeReadiness,
     namespace: "octogee-test",
     ensureAuthSecret,
     readGatewayPodDiagnostics,

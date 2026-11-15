@@ -214,6 +214,7 @@ async function resumeParkedIsolatedGateway(input, request, parked, source, mode)
         })) {
             throw new IsolatedGatewayFenceError(`isolated gateway demand fence changed for ${request.uid}`);
         }
+        input.requireHomeReady({ user, request, sizingProfile });
         if (mode === "plan")
             return;
         const now = input.now();
@@ -275,8 +276,18 @@ async function readAllocationSource(store, request) {
     }
     return { release, artifact };
 }
+async function checkHomeReadiness(input, request) {
+    const sizingKeyRead = { store: input.store, readSizingKey: input.readSizingKey, uid: request.uid, now: input.now() };
+    await withCurrentSizingKey(sizingKeyRead, ({ profile: sizingProfile }) => input.store.transaction({ label: "isolated-gateway.home-readiness", readOnly: true }, async (transaction) => {
+        const user = await transaction.users.records.get(request.uid);
+        if (!user)
+            throw new IsolatedGatewayFenceError(`isolated gateway owner ${request.uid} is missing`);
+        input.requireHomeReady({ user, request, sizingProfile });
+    }));
+}
 export async function allocateIsolatedGateway(input, request, mode = "apply") {
     await checkPlacementOwner(input);
+    await checkHomeReadiness(input, request);
     const gatewayId = allocatedIsolatedGatewayId(request);
     const source = await readAllocationSource(input.store, request);
     if (request.parkedGateway) {
@@ -330,6 +341,7 @@ export async function allocateIsolatedGateway(input, request, mode = "apply") {
         })) {
             throw new IsolatedGatewayFenceError(`isolated gateway demand fence changed for ${request.uid}`);
         }
+        input.requireHomeReady({ user, request, sizingProfile });
         if (mode === "plan")
             return;
         await writeInitialGatewayReleaseInTransaction(transaction, {

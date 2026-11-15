@@ -395,11 +395,16 @@ describe("POST /users/:uid/isolated-gateway/allocate", () => {
   const body = { leaseId: "lease-one", generation: 1, sourceGatewayId: "shared-blue", sourceAssignmentEpoch: 4, sizingKey: "default", sizingTier: "s" };
   const allocate = (payload: Data = body, query = "") => request(app()).post(`/users/${OWNER}/isolated-gateway/allocate${query}`).send(payload);
   const isolatedRoots = () => [...docs.keys()].filter((path) => /^gateways\/alice-[^/]+$/.test(path));
+  const preparedFor = { leaseId: "lease-one", generation: 1, sizingKey: "default" };
+  const withHome = (homeMigration: Data | null): Data => {
+    const record = user("shared-blue", requested);
+    return homeMigration ? { ...record, provisioning: { ...(record.provisioning as Data), homeMigration } } : record;
+  };
 
   beforeEach(() => {
     vi.mocked(capabilities.ensureAuthSecret).mockClear();
     seed({
-      [`users/${OWNER}`]: user("shared-blue", requested),
+      [`users/${OWNER}`]: withHome({ id: "home-copy-1", phase: "complete", tier: "default", preparedFor }),
       "gateways/shared-blue": sharedRoot(),
       "gateways/shared-blue/releases/3": { gatewayId: "shared-blue", release: 3, payload: releasePayload },
       [`gateways/shared-blue/assignments/${OWNER}`]: sharedAssignment(4),
@@ -437,11 +442,37 @@ describe("POST /users/:uid/isolated-gateway/allocate", () => {
   });
 
   it("answers precondition-failed and writes nothing when the lease is another lease", async () => {
+    docs.set(`users/${OWNER}`, withHome({ id: "home-copy-1", phase: "complete", tier: "default", preparedFor: { ...preparedFor, leaseId: "lease-two" } }));
+
     const res = await allocate({ ...body, leaseId: "lease-two" }).expect(409);
 
     expect(res.body).toMatchObject({ code: "precondition-failed", reason: `isolated gateway demand fence changed for ${OWNER}` });
     expect(storedLease().status).toBe("requested");
     expect(isolatedRoots()).toEqual([]);
+  });
+
+  it.each([
+    ["no home preparation is stored", null],
+    ["the home copy is still running", { id: "home-copy-1", phase: "copying", tier: "default", preparedFor }],
+    ["the home was prepared for another lease", { id: "home-copy-1", phase: "complete", tier: "default", preparedFor: { ...preparedFor, leaseId: "lease-zero" } }],
+    ["the home was prepared for another generation", { id: "home-copy-1", phase: "complete", tier: "default", preparedFor: { ...preparedFor, generation: 2 } }],
+    ["the home was prepared for another sizing key", { id: "home-copy-1", phase: "complete", tier: "pro", preparedFor: { ...preparedFor, sizingKey: "pro" } }],
+    ["a migration completed without a preparation record", { id: "home-copy-1", phase: "complete", tier: "default" }],
+  ])("refuses a VM-sized user, before any effect, when %s", async (_name, homeMigration) => {
+    docs.set(`users/${OWNER}`, withHome(homeMigration));
+    const before = structuredClone([...docs.entries()]);
+
+    for (const query of ["?dryRun=true", ""]) {
+      const res = await allocate(body, query).expect(409);
+      expect(res.body).toMatchObject({
+        code: "precondition-failed",
+        reason: `home for ${OWNER} is not prepared for lease lease-one generation 1 sizing key default`,
+      });
+    }
+
+    expect(capabilities.ensureAuthSecret).not.toHaveBeenCalled();
+    expect([...docs.entries()].filter(([path]) => !path.startsWith("glmOperations/audit-"))).toEqual(before);
+    expect(audits()).toEqual([expect.objectContaining({ what: "allocate isolated gateway", status: "failed" })]);
   });
 
   it("plans a dry run without creating the secret or the gateway", async () => {
@@ -525,6 +556,10 @@ describe("POST /isolated-gateways/:id/recover-unreachable", () => {
 
     expect(repeated.body).toEqual({ gatewayId: TARGET, state: "recovered", operationId: RECOVERY });
     expect(receipt()).toMatchObject({ status: "succeeded" });
+    expect(audits().map((audit) => [audit.outcome, audit.partialOutcome ?? null])).toEqual([
+      ["partial", { summary: `waiting: ${reason}`, details: { state: "waiting", reason, operationId: RECOVERY } }],
+      ["completed", null],
+    ]);
   });
 
   it("answers precondition-failed and leaves the reservation when the fence fails after reserving", async () => {

@@ -589,7 +589,20 @@ the current values onto the lease and answers
 `{uid, gatewayId: null, outcome: "refreshed"}`, allocating nothing; the
 caller reads the lease again and calls with the new values.
 
-Otherwise it allocates. A parked gateway of the same sizing key that runs
+Otherwise it checks the user's home. When the sizing key's profile runs the
+gateway on a virtual machine, allocation and resume both need a stored home
+preparation for this lease: the user's home migration record is `complete`
+and its `preparedFor` names the request's `leaseId`, `generation` and
+`sizingKey`. Without it the call answers `precondition-failed`, "home for
+<user> is not prepared for lease <lease> generation <n> sizing key <key>",
+before any Kubernetes effect, dry runs included. Nothing in this API writes
+that record yet: the home preparation verb comes later, so until then this
+route refuses every user whose profile needs a virtual machine home. The
+fleet controller's own pass prepares the home itself just before it
+allocates, and is not held to the stored record. Profiles that run as pods
+need no preparation.
+
+Then it allocates. A parked gateway of the same sizing key that runs
 the shared gateway's current artifact is resumed and the answer is
 `outcome: "resumed"`. A parked gateway that is obsolete is retired, with
 reason `parked-computer-replaced`, and a new gateway is allocated. A new
@@ -607,8 +620,13 @@ user lost interactive access or the isolated sizing profile, the shared
 gateway is not a running or draining pool member on a converged release, or
 its release changed, the assignment
 is not serving at that epoch, a parked gateway changed or could not be
-retired, or another gateway holds the derived id. A secret created before a
-refused transaction stays; the next allocation of that id reuses it.
+retired, another gateway holds the derived id, or the home is not prepared.
+
+Known limit, as in the fleet controller's own pass: the auth secret is created
+before the allocation transaction. When the lease or its generation changes
+between the two, the transaction refuses and the secret stays, orphaned under
+an id the next lease no longer derives. A repeat for the same lease reuses
+it.
 
 ### `POST /isolated-gateways/<gateway>/recover-unreachable`
 
@@ -641,7 +659,10 @@ status), the answer is `200`
 when pods remain it is the same with `reason: "pods-present"`. The
 reservation stays: the gateway stays paused and the operation pending. The
 caller repeats the same call later; the repeat re-checks the fences, keeps
-the same operation and observes again. A fence that fails at completion,
+the same operation and observes again. The journal entry of a waiting call
+has outcome `partial`, with `partialOutcome.summary` `waiting: <reason>` and
+the state, reason and operation id in `details`; a recovered call's entry is
+`completed`. A fence that fails at completion,
 after the reservation, answers `409` `precondition-failed` with the
 reservation left in place.
 
