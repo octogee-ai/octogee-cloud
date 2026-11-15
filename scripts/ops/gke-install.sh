@@ -546,9 +546,9 @@ down() {
     done
     g iam service-accounts delete "$BLOB_EMAIL" >/dev/null
   fi
-  if [[ -n "$(g services vpc-peerings list --network="$NAME" --format='value(peering)' 2>/dev/null)" ]]; then
-    delete_sql_peering
-  fi
+  local peering
+  peering="$(g services vpc-peerings list --network="$NAME" --format='value(peering)' 2>/dev/null || true)"
+  [[ -z "$peering" ]] || delete_sql_peering "$peering"
   delete_present "$NAME-sql" compute addresses --global
   delete_present "$NAME" compute routers --region "$GCP_REGION"
   delete_present "$NAME" compute networks
@@ -556,22 +556,22 @@ down() {
 }
 
 delete_sql_peering() {
-  local attempt output
-  for attempt in 0 1 2 3 4 5 6 7 8 9 10; do
-    if output="$(g services vpc-peerings delete --service=servicenetworking.googleapis.com --network="$NAME" 2>&1)"; then
-      [[ -z "$output" ]] || printf '%s\n' "$output"
-      return 0
+  local listed="$1" output own peering
+  if output="$(g services vpc-peerings delete --service=servicenetworking.googleapis.com --network="$NAME" 2>&1)"; then
+    [[ -z "$output" ]] || printf '%s\n' "$output"
+    return 0
+  fi
+  if [[ "$output" != *"still using this connection"* ]]; then
+    printf '%s\n' "$output" >&2
+    die "could not delete the service networking connection of network $NAME"
+  fi
+  echo "  Cloud SQL still holds the service networking connection; removing the network's own peering"
+  own="$(g compute networks describe "$NAME" --format='value(peerings[].name)' | tr ';' '\n')"
+  while IFS= read -r peering; do
+    if [[ -n "$peering" ]] && grep -qxF -- "$peering" <<<"$own"; then
+      g compute networks peerings delete "$peering" --network="$NAME"
     fi
-    if [[ "$output" != *"still using this connection"* ]]; then
-      printf '%s\n' "$output" >&2
-      die "could not delete the service networking connection of network $NAME"
-    fi
-    [[ "$attempt" -lt 10 ]] || break
-    echo "  Cloud SQL has not released the service networking connection yet; retrying in a minute"
-    sleep 60
-  done
-  printf '%s\n' "$output" >&2
-  die "Cloud SQL still holds the service networking connection of network $NAME after ten minutes; run down again later to delete it, its address range and the network"
+  done <<<"$listed"
 }
 
 delete_present() {
