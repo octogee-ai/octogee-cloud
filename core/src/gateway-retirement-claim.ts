@@ -50,6 +50,8 @@ interface ClaimGatewayRetirementInStoreInput {
   now: number;
   updatedBy: string;
   telemetryObservedAfter?: number;
+  ownerGuard?: (transaction: PlatformStateTransaction) => Promise<void>;
+  plan?: boolean;
   claimGuard?: (input: {
     transaction: PlatformStateTransaction;
     root: RetirableGateway;
@@ -337,7 +339,8 @@ function inspectRetirementRuntime(
 export async function claimGatewayRetirementInStore(
   input: ClaimGatewayRetirementInStoreInput,
 ): Promise<{ version: number }> {
-  return input.store.transaction({ label: "gateway-retirement.claim" }, async (transaction) => {
+  return input.store.transaction({ label: "gateway-retirement.claim", readOnly: input.plan === true }, async (transaction) => {
+    await input.ownerGuard?.(transaction);
     const [stored, activeOperations] = await Promise.all([
       transaction.gateways.roots.get(input.gatewayId),
       transaction.journal.operations.listByStatus(["pending", "running"]),
@@ -368,6 +371,7 @@ export async function claimGatewayRetirementInStore(
     await input.claimGuard?.({ transaction, root: rootData });
 
     const version = nextRetirementVersion(rootData.retirementVersion);
+    if (input.plan === true) return { version };
     const claim: RetirementClaim = {
       operationId: input.operationId,
       version,

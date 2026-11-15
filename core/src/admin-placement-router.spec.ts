@@ -255,6 +255,46 @@ describe("POST /isolated-gateways/:id/delete-retired", () => {
     expect(fleetEvents()).toEqual([]);
   });
 
+  it.each(["requested", "provisioning", "activating", "active", "returning"])(
+    "refuses while another user's %s activation lease targets the gateway",
+    async (status) => {
+      seed({
+        ...deletableSeed(),
+        "users/uid-bob": owner("shared-blue", { leaseId: "lease-b", generation: 1, status, targetGatewayId: GATEWAY }),
+      });
+
+      const res = await deleteRetired().expect(409);
+
+      expect(res.body).toEqual({ code: "precondition-failed", error: `user uid-bob holds a ${status} activation lease on ${GATEWAY}` });
+      expect(fleetEvents()).toEqual([]);
+    },
+  );
+
+  it("keeps the root when a live activation lease appears after the deletion verdict", async () => {
+    seed(deletableSeed());
+    const lease = owner("shared-blue", { leaseId: "lease-b", generation: 1, status: "requested", targetGatewayId: GATEWAY });
+    records.afterDelete = (path) => {
+      if (path === `gatewayRecoveryReceipts/${RECOVERY}`) records.set("users/uid-bob", lease);
+    };
+
+    const res = await deleteRetired().expect(409);
+
+    expect(res.body).toEqual({ code: "precondition-failed", error: `user uid-bob holds a requested activation lease on ${GATEWAY}` });
+    expect(records.has(`gateways/${GATEWAY}`)).toBe(true);
+    expect(records.has(`gateways/${GATEWAY}/releases/1`)).toBe(true);
+  });
+
+  it("deletes past a parked activation lease that targets the gateway", async () => {
+    seed({
+      ...deletableSeed(),
+      "users/uid-bob": owner("shared-blue", { leaseId: "lease-b", generation: 1, status: "parked", targetGatewayId: GATEWAY }),
+    });
+
+    await deleteRetired().expect(200);
+
+    expect(records.has(`gateways/${GATEWAY}`)).toBe(false);
+  });
+
   it("refuses when the root carries another allocation generation", async () => {
     seed({
       ...deletableSeed(),

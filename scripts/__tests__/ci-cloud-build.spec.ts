@@ -11,8 +11,8 @@ import { IMAGE_BUILDS } from "../ci/image-build.mjs";
 const root = fileURLToPath(new URL("../..", import.meta.url));
 const registry = "ghcr.io/octogee-ai/octogee-cloud";
 const sha = "a".repeat(40);
-const images = ["glm-controller", "octogee-api", "llm-broker", "gateway-edge", "octogee-gateway", "vm-bridge"];
-const amd64Images = ["glm-controller", "octogee-api", "llm-broker", "gateway-edge", "octogee-gateway", "octogee-gateway-builder", "vm-bridge"];
+const images = ["glm-controller", "octogee-api", "llm-broker", "gateway-edge", "octogee-gateway", "vm-bridge", "provisioning-service"];
+const amd64Images = ["glm-controller", "octogee-api", "llm-broker", "gateway-edge", "octogee-gateway", "octogee-gateway-builder", "vm-bridge", "provisioning-service"];
 const plan = (overrides: Record<string, unknown> = {}) =>
   cloudBakePlan({ registry, sha, platform: "linux/arm64", root, ...overrides });
 const fileSha256 = (path: string) => createHash("sha256").update(readFileSync(join(root, path))).digest("hex");
@@ -34,6 +34,7 @@ describe("public platform image plan", () => {
     }
     expect(target["glm-controller"].dockerfile).toBe("fleet-controller/Dockerfile");
     expect(target["vm-bridge"].dockerfile).toBe("vm-bridge/Dockerfile");
+    expect(target["provisioning-service"].dockerfile).toBe("provisioning-service/Dockerfile");
     expect(target["octogee-gateway-base"].output).toEqual(["type=cacheonly"]);
     expect(target["octogee-gateway-system"].output).toEqual(["type=cacheonly"]);
   });
@@ -317,6 +318,15 @@ describe("product tripwire", () => {
       "usr/local/lib/node_modules/openclaw/dist/product/x.js",
       "app/fleet-controller/dist/",
     ], exists)).toEqual([]);
+  });
+
+  it("traces the provisioning service's compiled modules back to its own source", () => {
+    const withService = (path: string) => exists(path) || path === "provisioning-service/src/main.ts";
+    expect(productFindings([
+      "app/provisioning-service/dist/src/main.js",
+      "app/provisioning-service/dist/src/main.js.map",
+      "app/provisioning-service/dist/src/product-offer.js",
+    ], withService)).toEqual(["app/provisioning-service/dist/src/product-offer.js"]);
   });
 
   it("flags compiled or copied modules with no platform source, product directories and product packages", () => {

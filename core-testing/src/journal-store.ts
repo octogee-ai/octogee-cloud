@@ -17,6 +17,7 @@ import {
 } from "@octogee/shared/types/glm";
 import { USER_DELETION_JOBS_COLLECTION } from "@octogee/shared/types/account-lifecycle";
 import { MODEL_BROKER_GATEWAY_POINTERS_COLLECTION, MODEL_BROKER_TOKENS_COLLECTION } from "@octogee/shared/types/model-broker-usage";
+import { requireSizingProfile, type GatewaySizingProfile } from "@octogee/shared/types/sizing-profile";
 import { placementReceiptDocId, type PlacementReceipt } from "@octogee/shared/types/placement-receipts";
 import { SCHEDULE_TRANSFERS_SUBCOLLECTION, type ScheduleTransferDoc } from "@octogee/shared/types/fleet-controller";
 import {
@@ -26,7 +27,6 @@ import {
   MalformedRecordError,
   MissingRecordError,
   UnsupportedOperationError,
-  requireSizingProfile,
   type ActivationLeaseFence,
   type AgentStoreRecord,
   type UserFence,
@@ -42,7 +42,6 @@ import {
   type UserRepositories,
   type GatewayFenceHolders,
   type ConfigRepositories,
-  type GatewaySizingProfile,
   type OrchestratorConfig,
   type PlatformConfigEntry,
   type PlatformConfigKey,

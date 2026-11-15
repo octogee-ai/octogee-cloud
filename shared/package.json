@@ -54,6 +54,14 @@
       "types": "./dist/types/gateway-control.d.ts",
       "default": "./dist/types/gateway-control.js"
     },
+    "./types/isolated-operation-ids": {
+      "types": "./dist/types/isolated-operation-ids.d.ts",
+      "default": "./dist/types/isolated-operation-ids.js"
+    },
+    "./types/sizing-profile": {
+      "types": "./dist/types/sizing-profile.d.ts",
+      "default": "./dist/types/sizing-profile.js"
+    },
     "./types/isolated-gateway-id": {
       "types": "./dist/types/isolated-gateway-id.d.ts",
       "default": "./dist/types/isolated-gateway-id.js"
@@ -182,6 +190,10 @@
       "types": "./dist/types/platform-config.d.ts",
       "default": "./dist/types/platform-config.js"
     },
+    "./types/provisioning-service": {
+      "types": "./dist/types/provisioning-service.d.ts",
+      "default": "./dist/types/provisioning-service.js"
+    },
     "./types/user-entitlements": {
       "types": "./dist/types/user-entitlements.d.ts",
       "default": "./dist/types/user-entitlements.js"
@@ -305,6 +317,12 @@
       "types/gateway-control": [
         "dist/types/gateway-control.d.ts"
       ],
+      "types/isolated-operation-ids": [
+        "dist/types/isolated-operation-ids.d.ts"
+      ],
+      "types/sizing-profile": [
+        "dist/types/sizing-profile.d.ts"
+      ],
       "types/isolated-gateway-id": [
         "dist/types/isolated-gateway-id.d.ts"
       ],
@@ -391,6 +409,9 @@
       ],
       "types/model-credentials": [
         "dist/types/model-credentials.d.ts"
+      ],
+      "types/provisioning-service": [
+        "dist/types/provisioning-service.d.ts"
       ],
       "types/secret-redaction": [
         "dist/types/secret-redaction.d.ts"

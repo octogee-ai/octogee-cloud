@@ -1,0 +1,608 @@
+import type { Request, Response, Router } from "express";
+import { projectGatewayDesiredRootForGateway } from "@octogee/shared/types/gateway-releases";
+import { builderActivateOperationId } from "@octogee/shared/types/isolated-operation-ids";
+import { isSizingTier } from "@octogee/shared/types/sizing";
+import type { AdminFleetMutationRunner } from "./admin-fleet-router.js";
+import { GatewayRetirementConflictError } from "./gateway-retirement-claim.js";
+import {
+  IsolatedGatewayFenceError,
+  PLACEMENT_RETIREMENT_REASONS,
+  advanceActivationLease,
+  allocateIsolatedGateway,
+  checkUnreachableRecoveryFence,
+  completeActivationLease,
+  failActivationLease,
+  leaseOperationIdBelongs,
+  recoverUnreachableIsolatedGateway,
+  refreshRequestedAllocation,
+  prepareIsolatedHome,
+  requestSizingKeyTransition,
+  requireStoredHomeReadiness,
+  unauditedLifecycleMutations,
+  retireOwnedIsolatedGateway,
+  type AdvanceActivationLeaseInput,
+  type AllocateIsolatedGatewayInput,
+  type AuthoritativeLeaseStatus,
+  type CompleteActivationLeaseInput,
+  type FailActivationLeaseInput,
+  type HomeCapabilitiesFactory,
+  type HomeEffect,
+  type HomePreparation,
+  type HomePreparationRequest,
+  type IsolatedLifecycleDeps,
+  type PlacementOwnerFence,
+  type PlacementRetirementReason,
+  type RecoverUnreachableIsolatedGatewayInput,
+  type RetireOwnedIsolatedGatewayInput,
+  type SizingKeyTransitionInput,
+} from "./isolated-gateway-lifecycle/index.js";
+import { FleetMutationPartialError, FleetMutationRefusedError, type NormalFleetMutationResult } from "./normal-fleet-mutation.js";
+import { assertClientOwnsPlacementAutomation, placementOwnerRefusalBody } from "./placement-automation-owner.js";
+import { FenceMismatchError } from "./platform-state/errors.js";
+import type { PlatformUserRecord } from "./platform-state/users.js";
+import type { PlatformStateStore, Stored } from "./platform-state/store.js";
+import { InitialGatewayReleaseConflictError } from "./gateway-live-release.js";
+import { SizingKeyChangedError, accountSizingKeyReader } from "./sizing-key.js";
+import type { UserAccountReader } from "./user-account.js";
+import type { PodObservation } from "./isolated-gateway-lifecycle/index.js";
+
+export interface AdminIsolatedCapabilities {
+  namespace: string;
+  home?: HomeCapabilitiesFactory;
+  ensureAuthSecret(input: { namespace: string; gatewayId: string }): Promise<unknown>;
+  readGatewayPodDiagnostics(gatewayId: string): Promise<PodObservation>;
+}
+
+export interface AdminPlacementIsolatedRouterDeps {
+  store: PlatformStateStore;
+  journal: AdminFleetMutationRunner;
+  accounts: Pick<UserAccountReader, "get">;
+  capabilities: AdminIsolatedCapabilities;
+  log(message: string): void;
+  warn(message: string): void;
+  now?: () => number;
+}
+
+class PreconditionFailed extends Error {}
+
+class InvalidRequest extends Error {}
+
+const requireClientOwner: PlacementOwnerFence = async (transaction) => {
+  await assertClientOwnsPlacementAutomation(transaction);
+};
+
+function isPrecondition(error: unknown): error is Error {
+  return error instanceof PreconditionFailed ||
+    error instanceof IsolatedGatewayFenceError ||
+    error instanceof GatewayRetirementConflictError ||
+    error instanceof FenceMismatchError ||
+    error instanceof SizingKeyChangedError ||
+    error instanceof InitialGatewayReleaseConflictError;
+}
+
+export function isolatedVerbRefusalBody(error: unknown): Record<string, unknown> | null {
+  const owner = placementOwnerRefusalBody(error);
+  if (owner !== null) return owner;
+  if (error instanceof FleetMutationRefusedError) return isolatedVerbRefusalBody(error.refusal);
+  if (isPrecondition(error)) return { code: "precondition-failed", reason: error.message, error: error.message };
+  return null;
+}
+
+function refusalsBelowError(journal: AdminFleetMutationRunner): AdminFleetMutationRunner {
+  return (input) => journal({
+    ...input,
+    action: async (claim) => {
+      try {
+        return await input.action(claim);
+      } catch (error) {
+        if (error instanceof FleetMutationRefusedError) throw error;
+        if (error instanceof Error && isolatedVerbRefusalBody(error) !== null) throw new FleetMutationRefusedError(error);
+        throw error;
+      }
+    },
+  });
+}
+
+async function settle<T>(res: Response, run: () => Promise<T>): Promise<void> {
+  try {
+    res.json(await run());
+  } catch (error) {
+    const body = isolatedVerbRefusalBody(error);
+    if (body === null) throw error;
+    res.status(409).json(body);
+  }
+}
+
+type Body = Record<string, unknown>;
+type Parsed<T> = T | { invalid: string };
+
+function bodyOf(req: Request): Body {
+  const body = req.body;
+  return body !== null && typeof body === "object" && !Array.isArray(body) ? body as Body : {};
+}
+
+function text(body: Body, key: string): string | null {
+  const value = body[key];
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function positiveInteger(body: Body, key: string): number | null {
+  const value = body[key];
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 1 ? value : null;
+}
+
+function invalid<T>(parsed: Parsed<T>): parsed is { invalid: string } {
+  return typeof parsed === "object" && parsed !== null && "invalid" in parsed;
+}
+
+function leaseIdentity(req: Request): Parsed<{ uid: string; leaseId: string; generation: number }> {
+  const body = bodyOf(req);
+  const leaseId = text(body, "leaseId");
+  const generation = positiveInteger(body, "generation");
+  if (!leaseId) return { invalid: "leaseId is required" };
+  if (generation === null) return { invalid: "generation must be a positive integer" };
+  return { uid: req.params.uid as string, leaseId, generation };
+}
+
+const ADVANCES: ReadonlyArray<[AdvanceActivationLeaseInput["fromStatus"], AdvanceActivationLeaseInput["toStatus"]]> = [
+  ["provisioning", "activating"],
+  ["provisioning", "active"],
+  ["activating", "active"],
+  ["active", "returning"],
+];
+
+function optionalOperationId(body: Body): Parsed<{ operationId?: string }> {
+  if (body.operationId === undefined) return {};
+  const operationId = text(body, "operationId");
+  return operationId ? { operationId } : { invalid: "operationId must be a non-empty string when given" };
+}
+
+function parseAdvance(req: Request): Parsed<AdvanceActivationLeaseInput> {
+  const identity = leaseIdentity(req);
+  if (invalid(identity)) return identity;
+  const body = bodyOf(req);
+  const step = ADVANCES.find(([from, to]) => body.fromStatus === from && body.toStatus === to);
+  if (!step) {
+    return { invalid: "fromStatus and toStatus must be provisioning->activating, provisioning->active, activating->active or active->returning" };
+  }
+  const given = optionalOperationId(body);
+  if (invalid(given)) return given;
+  return { ...identity, fromStatus: step[0], toStatus: step[1], ...given };
+}
+
+function parseComplete(req: Request): Parsed<CompleteActivationLeaseInput> {
+  const identity = leaseIdentity(req);
+  if (invalid(identity)) return identity;
+  const body = bodyOf(req);
+  const targetGatewayId = text(body, "targetGatewayId");
+  if (!targetGatewayId) return { invalid: "targetGatewayId is required" };
+  if (body.parked !== undefined && body.parked !== true) return { invalid: "parked must be true when given" };
+  return { ...identity, targetGatewayId, ...(body.parked === true ? { parked: true as const } : {}) };
+}
+
+function parseFail(req: Request): Parsed<FailActivationLeaseInput> {
+  const identity = leaseIdentity(req);
+  if (invalid(identity)) return identity;
+  const body = bodyOf(req);
+  const targetGatewayId = text(body, "targetGatewayId");
+  const message = text(body, "message");
+  if (!targetGatewayId) return { invalid: "targetGatewayId is required" };
+  if (!message) return { invalid: "message is required" };
+  const given = optionalOperationId(body);
+  if (invalid(given)) return given;
+  const operationId = given.operationId ?? builderActivateOperationId(targetGatewayId, identity.generation);
+  return { ...identity, targetGatewayId, operationId, message };
+}
+
+function parseSizingTransition(req: Request): Parsed<SizingKeyTransitionInput> {
+  const identity = leaseIdentity(req);
+  if (invalid(identity)) return identity;
+  const body = bodyOf(req);
+  const targetGatewayId = text(body, "targetGatewayId");
+  const sizingKey = text(body, "sizingKey");
+  if (!targetGatewayId) return { invalid: "targetGatewayId is required" };
+  if (!sizingKey) return { invalid: "sizingKey is required" };
+  return { ...identity, targetGatewayId, sizingKey };
+}
+
+const AUTHORITATIVE_STATUSES: readonly AuthoritativeLeaseStatus[] = ["provisioning", "activating", "returning"];
+
+type RetireRequest = Omit<RetireOwnedIsolatedGatewayInput, "builderSlug">;
+
+function parseRetire(req: Request): Parsed<RetireRequest> {
+  const body = bodyOf(req);
+  const uid = text(body, "ownerUid");
+  const generation = positiveInteger(body, "generation");
+  const reason = body.reason;
+  if (!uid) return { invalid: "ownerUid is required" };
+  if (generation === null) return { invalid: "generation must be a positive integer" };
+  if (!(PLACEMENT_RETIREMENT_REASONS as readonly unknown[]).includes(reason)) {
+    return { invalid: `reason must be one of ${PLACEMENT_RETIREMENT_REASONS.join(", ")}` };
+  }
+  const optional: Record<string, unknown> = {};
+  for (const key of ["leaseId", "telemetryFenceOperationId", "authoritativeGatewayId", "zeroWorkloadRecoveryOperationId"] as const) {
+    if (body[key] === undefined) continue;
+    const value = text(body, key);
+    if (!value) return { invalid: `${key} must be a non-empty string when given` };
+    optional[key] = value;
+  }
+  if (body.telemetryFenceStatus !== undefined) {
+    if (body.telemetryFenceStatus !== "succeeded" && body.telemetryFenceStatus !== "terminal-failure") {
+      return { invalid: "telemetryFenceStatus must be succeeded or terminal-failure" };
+    }
+    if (optional.telemetryFenceOperationId === undefined) return { invalid: "telemetryFenceStatus needs telemetryFenceOperationId" };
+    optional.telemetryFenceStatus = body.telemetryFenceStatus;
+  }
+  if (body.authoritativeLeaseStatus !== undefined) {
+    if (!(AUTHORITATIVE_STATUSES as readonly unknown[]).includes(body.authoritativeLeaseStatus)) {
+      return { invalid: "authoritativeLeaseStatus must be provisioning, activating or returning" };
+    }
+    if (optional.authoritativeGatewayId === undefined) return { invalid: "authoritativeLeaseStatus needs authoritativeGatewayId" };
+    optional.authoritativeLeaseStatus = body.authoritativeLeaseStatus;
+  }
+  return {
+    uid,
+    gatewayId: req.params.id as string,
+    generation,
+    reason: reason as PlacementRetirementReason,
+    ...optional,
+  } as RetireRequest;
+}
+
+function nonNegativeInteger(body: Body, key: string): number | null {
+  const value = body[key];
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+
+type AllocateRequest = Omit<AllocateIsolatedGatewayInput, "builderSlug">;
+
+function parseAllocate(req: Request): Parsed<AllocateRequest> {
+  const identity = leaseIdentity(req);
+  if (invalid(identity)) return identity;
+  const body = bodyOf(req);
+  const sourceGatewayId = text(body, "sourceGatewayId");
+  const sourceAssignmentEpoch = nonNegativeInteger(body, "sourceAssignmentEpoch");
+  const sizingKey = text(body, "sizingKey");
+  if (!sourceGatewayId) return { invalid: "sourceGatewayId is required" };
+  if (sourceAssignmentEpoch === null) return { invalid: "sourceAssignmentEpoch must be a non-negative integer" };
+  if (!sizingKey) return { invalid: "sizingKey is required" };
+  if (!isSizingTier(body.sizingTier)) return { invalid: "sizingTier must be s, m or l" };
+  const request: AllocateRequest = { ...identity, sourceGatewayId, sourceAssignmentEpoch, sizingKey, sizingTier: body.sizingTier };
+  if (body.parkedGateway === undefined) return request;
+  const parked = body.parkedGateway !== null && typeof body.parkedGateway === "object" ? body.parkedGateway as Body : {};
+  const gatewayId = text(parked, "gatewayId");
+  const generation = positiveInteger(parked, "generation");
+  if (!gatewayId || generation === null) return { invalid: "parkedGateway needs gatewayId and a positive integer generation" };
+  return { ...request, parkedGateway: { gatewayId, generation } };
+}
+
+function parseHomePreparation(req: Request): Parsed<HomePreparationRequest> {
+  const parsed = parseAllocate(req);
+  if (invalid(parsed)) return parsed;
+  if (bodyOf(req).parkedGateway !== undefined) return { invalid: "parkedGateway is not part of home preparation" };
+  const { uid, leaseId, generation, sourceGatewayId, sourceAssignmentEpoch, sizingKey, sizingTier } = parsed;
+  return { uid, leaseId, generation, sourceGatewayId, sourceAssignmentEpoch, sizingKey, sizingTier };
+}
+
+function classifyHomePreparation(result: HomePreparation & { effects: HomeEffect[] }): NormalFleetMutationResult {
+  const { effects, ...preparation } = result;
+  if (preparation.state === "ready" && effects.length === 0) return { outcome: "completed" };
+  const details = { ...preparation, effects };
+  if (preparation.state === "blocked") {
+    return { outcome: "failed", error: preparation.reason, partialOutcome: { summary: "blocked", details } };
+  }
+  if (preparation.state === "in-progress" && preparation.lastError) {
+    return { outcome: "failed", error: `compute unavailable at ${preparation.step}: ${preparation.lastError.code}`, partialOutcome: { summary: `in-progress: ${preparation.step}`, details } };
+  }
+  const summary = preparation.state === "ready" ? "ready" : `in-progress: ${preparation.step}`;
+  return { outcome: "partial", partialOutcome: { summary, details } };
+}
+
+type RecoverRequest = Omit<RecoverUnreachableIsolatedGatewayInput, "builderSlug">;
+
+function parseRecover(req: Request): Parsed<RecoverRequest> {
+  const body = bodyOf(req);
+  const uid = text(body, "ownerUid");
+  const leaseId = text(body, "leaseId");
+  const generation = positiveInteger(body, "generation");
+  const authoritativeGatewayId = text(body, "authoritativeGatewayId");
+  if (!uid) return { invalid: "ownerUid is required" };
+  if (!leaseId) return { invalid: "leaseId is required" };
+  if (generation === null) return { invalid: "generation must be a positive integer" };
+  if (!authoritativeGatewayId) return { invalid: "authoritativeGatewayId is required" };
+  if (body.sourceUnavailable !== undefined && body.sourceUnavailable !== true) return { invalid: "sourceUnavailable must be true when given" };
+  return {
+    uid,
+    gatewayId: req.params.id as string,
+    leaseId,
+    generation,
+    authoritativeGatewayId,
+    ...(body.sourceUnavailable === true ? { sourceUnavailable: true } : {}),
+  };
+}
+
+async function readOwner(store: PlatformStateStore, uid: string): Promise<Stored<PlatformUserRecord>> {
+  const user = await store.users.records.get(uid);
+  if (!user) throw new PreconditionFailed(`user ${uid} is missing`);
+  return user;
+}
+
+async function assertLeaseOperationId(
+  store: PlatformStateStore,
+  claim: { uid: string; gatewayId: string | null; generation: number; operationId: string },
+): Promise<void> {
+  const { gatewayId } = claim;
+  if (gatewayId === null) throw new InvalidRequest(`operationId ${claim.operationId} needs the lease's target gateway`);
+  if (await leaseOperationIdBelongs(store.journal.operations, { ...claim, gatewayId })) return;
+  throw new InvalidRequest(`operationId ${claim.operationId} is not an operation of ${claim.uid} on ${gatewayId} generation ${claim.generation}`);
+}
+
+function leaseOf(user: Stored<PlatformUserRecord>) {
+  if (!user.activationLease) throw new PreconditionFailed(`activation lease for ${user.uid} is missing`);
+  return user.activationLease;
+}
+
+type IsolatedVerb = <T>(path: string, parse: (req: Request) => Parsed<T>, run: (req: Request, input: T) => Promise<unknown>) => void;
+
+interface IsolatedRoutes {
+  deps: AdminPlacementIsolatedRouterDeps;
+  journal: ReturnType<typeof refusalsBelowError>;
+  lifecycle: IsolatedLifecycleDeps;
+  verb: IsolatedVerb;
+}
+
+export function addAdminPlacementIsolatedRoutes(router: Router, deps: AdminPlacementIsolatedRouterDeps): void {
+  const journal = refusalsBelowError(deps.journal);
+  const now = deps.now ?? Date.now;
+  const readSizingKey = accountSizingKeyReader(deps.accounts);
+  const lifecycle: IsolatedLifecycleDeps = {
+    store: deps.store,
+    readSizingKey,
+    requireOwner: requireClientOwner,
+    mutations: unauditedLifecycleMutations,
+    now,
+    log: deps.log,
+  };
+  const ownerCheck = () => deps.store.transaction(
+    { label: "admin.placement.isolated.owner", readOnly: true },
+    async (transaction) => { await requireClientOwner(transaction); },
+  );
+
+  const verb: IsolatedVerb = (path, parse, run) => {
+    router.post(path, async (req, res, next) => {
+      try {
+        const input = parse(req);
+        if (invalid(input)) {
+          res.status(400).json({ error: input.invalid });
+          return;
+        }
+        try {
+          await ownerCheck();
+        } catch (error) {
+          const refusal = placementOwnerRefusalBody(error);
+          if (refusal === null) throw error;
+          deps.warn(`[placement] ${req.method} ${req.path} refused before journaling: ${(error as Error).message}`);
+          res.status(409).json(refusal);
+          return;
+        }
+        await settle(res, () => run(req, input));
+      } catch (error) {
+        if (error instanceof InvalidRequest) {
+          res.status(400).json({ error: error.message });
+          return;
+        }
+        next(error);
+      }
+    });
+  };
+
+  const routes: IsolatedRoutes = { deps, journal, lifecycle, verb };
+  addLeaseVerbs(routes);
+  addIsolatedGatewayVerbs(routes);
+  addHomeVerbs(routes);
+}
+
+function addLeaseVerbs({ deps, journal, lifecycle, verb }: IsolatedRoutes): void {
+  verb("/users/:uid/activation-lease/advance", parseAdvance, async (req, input) => {
+    if (input.operationId !== undefined) {
+      const stored = await deps.store.users.records.get(input.uid);
+      const gatewayId = stored?.activationLease?.targetGatewayId;
+      await assertLeaseOperationId(deps.store, { ...input, operationId: input.operationId, gatewayId: typeof gatewayId === "string" ? gatewayId : null });
+    }
+    return journal({
+      req,
+      what: "advance user activation lease",
+      why: "placement automation advanced the lease",
+      target: { uid: input.uid },
+      preActionStatus: { leaseId: input.leaseId, generation: input.generation, status: input.fromStatus },
+      mutation: { kind: "advance-activation-lease", toStatus: input.toStatus, operationId: input.operationId ?? null },
+      dryRunRefusal: async () => {
+        await advanceActivationLease(lifecycle, input, "plan");
+        return null;
+      },
+      action: async () => {
+        await advanceActivationLease(lifecycle, input);
+        return { uid: input.uid, leaseId: input.leaseId, generation: input.generation, status: input.toStatus };
+      },
+    });
+  });
+
+  verb("/users/:uid/activation-lease/complete", parseComplete, (req, input) => journal({
+    req,
+    what: "complete user activation lease",
+    why: "the user returned from the isolated gateway",
+    target: { uid: input.uid, gatewayId: input.targetGatewayId },
+    preActionStatus: { leaseId: input.leaseId, generation: input.generation, status: "returning" },
+    mutation: { kind: "complete-activation-lease", parked: input.parked === true },
+    dryRunRefusal: async () => {
+      await completeActivationLease(lifecycle, input, "plan");
+      return null;
+    },
+    action: async () => {
+      await completeActivationLease(lifecycle, input);
+      const lease = leaseOf(await readOwner(deps.store, input.uid));
+      return { uid: input.uid, lease: { leaseId: lease.leaseId, generation: lease.generation, status: lease.status } };
+    },
+  }));
+
+  verb("/users/:uid/activation-lease/fail", parseFail, async (req, input) => {
+    await assertLeaseOperationId(deps.store, { ...input, gatewayId: input.targetGatewayId });
+    return journal({
+      req,
+      what: "fail user activation lease",
+      why: "the activation migration failed",
+      target: { uid: input.uid, gatewayId: input.targetGatewayId },
+      preActionStatus: { leaseId: input.leaseId, generation: input.generation },
+      mutation: { kind: "fail-activation-lease", operationId: input.operationId },
+      dryRunRefusal: async () => {
+        await failActivationLease(lifecycle, input, "plan");
+        return null;
+      },
+      action: async () => {
+        await failActivationLease(lifecycle, input);
+        return { uid: input.uid, leaseId: input.leaseId, generation: input.generation, status: "failed" };
+      },
+    });
+  });
+
+  verb("/users/:uid/activation-lease/sizing-transition", parseSizingTransition, (req, input) => journal({
+    req,
+    what: "request user sizing transition",
+    why: "the user's sizing profile changed while active",
+    target: { uid: input.uid, gatewayId: input.targetGatewayId },
+    preActionStatus: { leaseId: input.leaseId, generation: input.generation, status: "active" },
+    mutation: { kind: "request-sizing-transition", sizingKey: input.sizingKey },
+    dryRunRefusal: async () => {
+      await requestSizingKeyTransition(lifecycle, input, "plan");
+      return null;
+    },
+    action: async () => {
+      await requestSizingKeyTransition(lifecycle, input);
+      return { uid: input.uid, leaseId: input.leaseId, generation: input.generation, returnRequested: true };
+    },
+  }));
+}
+
+function addIsolatedGatewayVerbs({ deps, journal, lifecycle, verb }: IsolatedRoutes): void {
+  verb("/isolated-gateways/:id/retire-owned", parseRetire, async (req, input) => {
+    const root = projectGatewayDesiredRootForGateway(await deps.store.gateways.roots.get(input.gatewayId), input.gatewayId);
+    if (root === null || root.ownerUid !== input.uid || !root.builderSlug) {
+      throw new PreconditionFailed(`gateway ${input.gatewayId} is not owned by ${input.uid}`);
+    }
+    if (input.telemetryFenceOperationId !== undefined) {
+      await assertLeaseOperationId(deps.store, { ...input, operationId: input.telemetryFenceOperationId });
+    }
+    const request: RetireOwnedIsolatedGatewayInput = { ...input, builderSlug: root.builderSlug };
+    return journal({
+        req,
+        what: "retire owned isolated gateway",
+        why: `placement automation retires it: ${input.reason}`,
+        target: { gatewayId: input.gatewayId, uid: input.uid },
+        preActionStatus: { generation: input.generation, desiredStatus: root.desiredStatus },
+        mutation: { kind: "retire-owned-isolated-gateway", reason: input.reason, leaseId: input.leaseId ?? null },
+        dryRunRefusal: async () => {
+          const plan = await retireOwnedIsolatedGateway(lifecycle, request, "plan");
+          if (!plan.retired) throw new PreconditionFailed(plan.reason);
+          return null;
+        },
+        action: async () => {
+          const retirement = await retireOwnedIsolatedGateway(lifecycle, request);
+          if (!retirement.retired) throw new PreconditionFailed(retirement.reason);
+          return { gatewayId: input.gatewayId, operationId: retirement.operationId, retired: true };
+        },
+    });
+  });
+
+  const allocationDeps = {
+    ...lifecycle,
+    requireHomeReady: requireStoredHomeReadiness,
+    namespace: deps.capabilities.namespace,
+    ensureAuthSecret: deps.capabilities.ensureAuthSecret,
+  };
+
+  verb("/users/:uid/isolated-gateway/allocate", parseAllocate, async (req, input) => {
+    const builderSlug = (await readOwner(deps.store, input.uid)).slug;
+    if (!builderSlug) throw new PreconditionFailed(`user ${input.uid} has no slug`);
+    const request: AllocateIsolatedGatewayInput = { ...input, builderSlug };
+    return journal({
+      req,
+      what: "allocate isolated gateway",
+      why: "placement automation activates the user on an isolated gateway",
+      target: { uid: input.uid, gatewayId: input.parkedGateway?.gatewayId ?? null },
+      preActionStatus: { leaseId: input.leaseId, generation: input.generation, status: "requested" },
+      mutation: { kind: "allocate-isolated-gateway", sizingKey: input.sizingKey, sizingTier: input.sizingTier, sourceGatewayId: input.sourceGatewayId },
+      dryRunRefusal: async () => {
+        if (!await refreshRequestedAllocation(lifecycle, request, "plan")) await allocateIsolatedGateway(allocationDeps, request, "plan");
+        return null;
+      },
+      action: async () => {
+        if (await refreshRequestedAllocation(lifecycle, request)) {
+          return { uid: input.uid, gatewayId: null, outcome: "refreshed" };
+        }
+        const allocation = await allocateIsolatedGateway(allocationDeps, request);
+        return { uid: input.uid, ...allocation };
+      },
+    });
+  });
+
+  verb("/isolated-gateways/:id/recover-unreachable", parseRecover, async (req, input) => {
+    const root = projectGatewayDesiredRootForGateway(await deps.store.gateways.roots.get(input.gatewayId), input.gatewayId);
+    if (root === null || root.ownerUid !== input.uid || !root.builderSlug) {
+      throw new PreconditionFailed(`gateway ${input.gatewayId} is not owned by ${input.uid}`);
+    }
+    const request: RecoverUnreachableIsolatedGatewayInput = { ...input, builderSlug: root.builderSlug };
+    return journal({
+      req,
+      what: "recover unreachable isolated gateway",
+      why: "placement automation found the isolated gateway unreachable",
+      target: { gatewayId: input.gatewayId, uid: input.uid },
+      preActionStatus: { generation: input.generation, desiredStatus: root.desiredStatus },
+      mutation: { kind: "recover-unreachable-isolated-gateway", authoritativeGatewayId: input.authoritativeGatewayId },
+      classifyResult: (result) => result.state === "waiting"
+        ? { outcome: "partial", partialOutcome: { summary: `waiting: ${result.reason}`, details: { state: "waiting", reason: result.reason, operationId: result.operationId } } }
+        : { outcome: "completed" },
+      dryRunRefusal: async () => {
+        await checkUnreachableRecoveryFence(lifecycle, request);
+        return null;
+      },
+      action: async () => ({
+        gatewayId: input.gatewayId,
+        ...await recoverUnreachableIsolatedGateway({
+          ...lifecycle,
+          readGatewayPodDiagnostics: deps.capabilities.readGatewayPodDiagnostics,
+        }, request),
+      }),
+    });
+  });
+}
+
+function addHomeVerbs({ deps, journal, lifecycle, verb }: IsolatedRoutes): void {
+  const homeCapabilities = deps.capabilities.home;
+  if (!homeCapabilities) return;
+  verb("/users/:uid/home/prepare", parseHomePreparation, (req, input) => journal({
+    req,
+    what: "prepare user home",
+    why: "placement automation prepares the user's home before an isolated activation",
+    target: { uid: input.uid },
+    preActionStatus: { leaseId: input.leaseId, generation: input.generation, status: "requested" },
+    mutation: { kind: "prepare-user-home", sizingKey: input.sizingKey, sizingTier: input.sizingTier, sourceGatewayId: input.sourceGatewayId },
+    classifyResult: classifyHomePreparation,
+    dryRunRefusal: async () => {
+      await prepareIsolatedHome({ ...lifecycle, home: homeCapabilities(() => undefined) }, input, "plan");
+      return null;
+    },
+    action: async () => {
+      const effects: HomeEffect[] = [];
+      try {
+        const preparation = await prepareIsolatedHome({ ...lifecycle, home: homeCapabilities((effect) => effects.push(effect)) }, input);
+        return { uid: input.uid, ...preparation, effects };
+      } catch (error) {
+        if (!(error instanceof Error) || effects.length === 0) throw error;
+        if (isolatedVerbRefusalBody(error) !== null) {
+          throw new FleetMutationRefusedError(error, { summary: "refused after compute effects", details: { effects } });
+        }
+        throw new FleetMutationPartialError(error.message, { summary: "failed after compute effects", details: { effects } });
+      }
+    },
+  }));
+}

@@ -57,6 +57,8 @@ core-testing/node_modules
 core-testing/dist
 !core-testing/dist/
 !core-testing/dist/**
+provisioning-service/node_modules
+provisioning-service/dist
 
 # Template deps (each template may have its own node_modules)
 templates/*/node_modules

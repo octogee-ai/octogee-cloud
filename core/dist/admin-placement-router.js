@@ -1,10 +1,11 @@
 import { projectGatewayDesiredRootForGateway } from "@octogee/shared/types/gateway-releases";
 import { clearRetiredUserActivationPreparation } from "./fleet-state.js";
-import { builderActivateOperationId, builderReturnOperationId, isolatedRecoverOperationId, placementRetireOperationId, } from "./isolated-operation-ids.js";
+import { builderActivateOperationId, builderReturnOperationId, isolatedRecoverOperationId, placementRetireOperationId, } from "@octogee/shared/types/isolated-operation-ids";
 import { FleetMutationRefusedError } from "./normal-fleet-mutation.js";
 import { FenceMismatchError } from "./platform-state/errors.js";
 const ISOLATED_ALLOCATION_KIND = "disposable-builder";
 const RETIRE_GATEWAY_KIND = "retire-gateway";
+const LIVE_ACTIVATION_LEASE_STATUSES = new Set(["requested", "provisioning", "activating", "active", "returning"]);
 class PreconditionFailed extends Error {
 }
 function isRecord(value) {
@@ -109,6 +110,12 @@ async function rearmRetirement(deps, target) {
         return { gatewayId: target.gatewayId, operationId };
     });
 }
+async function assertNoLiveActivationLease(transaction, gatewayId) {
+    const leaseHolder = (await transaction.users.records.listAll()).find((user) => user.activationLease?.targetGatewayId === gatewayId && LIVE_ACTIVATION_LEASE_STATUSES.has(user.activationLease.status));
+    if (leaseHolder !== undefined) {
+        throw new PreconditionFailed(`user ${leaseHolder.uid} holds a ${leaseHolder.activationLease?.status} activation lease on ${gatewayId}`);
+    }
+}
 async function deleteRetiredRoot(deps, target) {
     const { store } = deps;
     const verdict = await store.transaction({ label: "admin.placement.delete-retired-verdict", readOnly: true }, async (transaction) => {
@@ -119,6 +126,7 @@ async function deleteRetiredRoot(deps, target) {
         const unreleased = unreleasedHandoff(deps, target, await transaction.journal.operations.getMany(handoffOperationIds(target)));
         if (unreleased !== null)
             throw new PreconditionFailed(`${unreleased} has an unreleased scheduler handoff`);
+        await assertNoLiveActivationLease(transaction, target.gatewayId);
         return retirement;
     });
     const preparationCleared = await clearRetiredUserActivationPreparation({ store }, {
@@ -132,9 +140,12 @@ async function deleteRetiredRoot(deps, target) {
         store.journal.operations.delete(recoverOperationId),
         store.journal.recoveryReceipts.delete(recoverOperationId),
     ]);
-    await store.gateways.roots.delete(target.gatewayId, {
-        retirementVersion: verdict.retirementVersion,
-        desiredStatus: ["retired"],
+    await store.transaction({ label: "admin.placement.delete-retired-root" }, async (transaction) => {
+        await assertNoLiveActivationLease(transaction, target.gatewayId);
+        await transaction.gateways.roots.delete(target.gatewayId, {
+            retirementVersion: verdict.retirementVersion,
+            desiredStatus: ["retired"],
+        });
     });
     return { gatewayId: target.gatewayId, deleted: true, preparationCleared };
 }

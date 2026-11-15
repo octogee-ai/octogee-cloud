@@ -3,9 +3,10 @@ import { isGatewayDesiredDoc, isGatewayRuntimeDoc, isReleasePayload, parsePlatfo
 import { gatewayVmRuntimeDocPath, isGatewayVmRuntimeBundle, isOperationAuditRecord, isOperationAuditRow, } from "@octogee/shared/types/glm";
 import { USER_DELETION_JOBS_COLLECTION } from "@octogee/shared/types/account-lifecycle";
 import { MODEL_BROKER_GATEWAY_POINTERS_COLLECTION, MODEL_BROKER_TOKENS_COLLECTION } from "@octogee/shared/types/model-broker-usage";
+import { requireSizingProfile } from "@octogee/shared/types/sizing-profile";
 import { placementReceiptDocId } from "@octogee/shared/types/placement-receipts";
 import { SCHEDULE_TRANSFERS_SUBCOLLECTION } from "@octogee/shared/types/fleet-controller";
-import { AlreadyExistsError, DuplicateRecordError, FenceMismatchError, MalformedRecordError, MissingRecordError, UnsupportedOperationError, requireSizingProfile, } from "@octogee/core/platform-state";
+import { AlreadyExistsError, DuplicateRecordError, FenceMismatchError, MalformedRecordError, MissingRecordError, UnsupportedOperationError, } from "@octogee/core/platform-state";
 import { ACTIVATED_AGENTS_PATH, ADMITTED_STEP, agentStoreFromData, agentStoreKeyOf, USER_ACTIVATION_LEASE_PATH, USER_FENCE_PATHS, SLUG_PATH, USER_MIRROR_PATHS, userPatchPaths, userRecordFromData, userRoleFromData, } from "@octogee/core/platform-state/documents/users";
 import { parseOrchestratorConfig, parsePlatformConfigValue, platformConfigEntryFromData } from "@octogee/core/platform-state/documents/config";
 import { SCALER_KEY, parseSharedPoolScalerState } from "@octogee/core/platform-state/documents/controller-state";

@@ -82,6 +82,14 @@ jobs:
               npm run build
               node ../scripts/ops/verify-committed-dist.mjs
               npm test
+          - name: provisioning-service
+            installs: provisioning-service
+            postgres: true
+            run: |
+              cd provisioning-service
+              npm audit --audit-level=moderate
+              npm run typecheck
+              node ../scripts/ci/provisioning-service-postgres.mjs
           - name: gateway-edge
             installs: shared gateway-edge
             run: |
