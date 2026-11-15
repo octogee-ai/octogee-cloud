@@ -434,12 +434,16 @@ async function writeWorkspaceRecord(store: ProvisioningStore, ctx: ProvisioningC
   });
 }
 
+interface SeededChannel {
+  channelId: "general" | "coach-dm";
+  mattermostChannelId: string;
+  name: string;
+}
+
 async function seedWorkspaceChannel(
   store: ProvisioningStore,
   ctx: ProvisioningContext,
-  channelId: "general" | "coach-dm",
-  mattermostChannelId: string,
-  name: string,
+  { channelId, mattermostChannelId, name }: SeededChannel,
   projection: ProvisioningProjection,
 ): Promise<void> {
   const scope = { workspaceSlug: ctx.slug, projectSlug: null };
@@ -468,12 +472,12 @@ async function seedWorkspaceChannels(
   projection: ProvisioningProjection,
 ): Promise<void> {
   const generalChannelId = mmUpdate["mattermost.generalChannelId"] as string | undefined;
-  if (generalChannelId) await seedWorkspaceChannel(store, ctx, "general", generalChannelId, "general", projection);
+  if (generalChannelId) await seedWorkspaceChannel(store, ctx, { channelId: "general", mattermostChannelId: generalChannelId, name: "general" }, projection);
 
   const coachDmChannelId = mmUpdate["mattermost.channelId"] as string | undefined;
   if (coachDmChannelId) {
     const name = (mmUpdate["mattermost.channelName"] as string | undefined) || "coach-dm";
-    await seedWorkspaceChannel(store, ctx, "coach-dm", coachDmChannelId, name, projection);
+    await seedWorkspaceChannel(store, ctx, { channelId: "coach-dm", mattermostChannelId: coachDmChannelId, name }, projection);
   }
 }
 

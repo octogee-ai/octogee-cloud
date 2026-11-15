@@ -25,34 +25,50 @@ function isNonNegativeInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
-function parseListQuery(query: Request["query"]): UserProvisioningListQuery | string {
-  const { ready, reason, workState, limit, pageToken } = query;
-  const parsed: { -readonly [K in keyof UserProvisioningListQuery]: UserProvisioningListQuery[K] } = {};
-  if (ready !== undefined) {
-    if (ready !== "true" && ready !== "false") return "ready must be true or false";
-    parsed.ready = ready === "true";
-  }
-  if (reason !== undefined) {
-    if (typeof reason !== "string" || !(PROVISIONING_CONDITION_REASONS as readonly string[]).includes(reason)) {
+type ListQuery = { -readonly [K in keyof UserProvisioningListQuery]: UserProvisioningListQuery[K] };
+type QueryValue = Request["query"][string];
+const LISTED_WORK_STATES = PROVISIONING_WORK_STATES.filter((state) => state !== "idle");
+
+const LIST_QUERY_PARSERS: Record<keyof ListQuery, (value: QueryValue, into: ListQuery) => string | null> = {
+  ready: (value, into) => {
+    if (value !== "true" && value !== "false") return "ready must be true or false";
+    into.ready = value === "true";
+    return null;
+  },
+  reason: (value, into) => {
+    if (typeof value !== "string" || !(PROVISIONING_CONDITION_REASONS as readonly string[]).includes(value)) {
       return `reason must be one of ${PROVISIONING_CONDITION_REASONS.join(", ")}`;
     }
-    parsed.reason = reason as ProvisioningConditionReason;
-  }
-  if (workState !== undefined) {
-    const states = PROVISIONING_WORK_STATES.filter((state) => state !== "idle");
-    if (typeof workState !== "string" || !(states as readonly string[]).includes(workState)) {
-      return `workState must be one of ${states.join(", ")}`;
+    into.reason = value as ProvisioningConditionReason;
+    return null;
+  },
+  workState: (value, into) => {
+    if (typeof value !== "string" || !(LISTED_WORK_STATES as readonly string[]).includes(value)) {
+      return `workState must be one of ${LISTED_WORK_STATES.join(", ")}`;
     }
-    parsed.workState = workState as NonNullable<UserProvisioningListQuery["workState"]>;
-  }
-  if (limit !== undefined) {
-    const value = Number(limit);
-    if (!Number.isSafeInteger(value) || value < 1 || value > 500) return "limit must be an integer from 1 to 500";
-    parsed.limit = value;
-  }
-  if (pageToken !== undefined) {
-    if (typeof pageToken !== "string" || pageToken === "") return "pageToken must be a non-empty string";
-    parsed.pageToken = pageToken;
+    into.workState = value as NonNullable<UserProvisioningListQuery["workState"]>;
+    return null;
+  },
+  limit: (value, into) => {
+    const limit = Number(value);
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) return "limit must be an integer from 1 to 500";
+    into.limit = limit;
+    return null;
+  },
+  pageToken: (value, into) => {
+    if (typeof value !== "string" || value === "") return "pageToken must be a non-empty string";
+    into.pageToken = value;
+    return null;
+  },
+};
+
+function parseListQuery(query: Request["query"]): UserProvisioningListQuery | string {
+  const parsed: ListQuery = {};
+  for (const [name, parse] of Object.entries(LIST_QUERY_PARSERS)) {
+    const value = query[name];
+    if (value === undefined) continue;
+    const error = parse(value, parsed);
+    if (error !== null) return error;
   }
   return parsed;
 }

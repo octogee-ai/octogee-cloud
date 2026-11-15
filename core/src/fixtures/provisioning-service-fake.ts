@@ -29,6 +29,8 @@ export interface FakeProvisioningService {
   close(): Promise<void>;
 }
 
+const FAKE_BASE = "https://provisioning-service.fake";
+
 const IDLE_STATUS: UserProvisioningStatus = {
   observedGeneration: 0,
   conditions: [],
@@ -79,9 +81,7 @@ export async function startFakeProvisioningService(options: { tokens?: string[] 
       .map(([, resource]) => resource);
   }
 
-  async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const url = new URL(req.url ?? "/", "http://fake");
-    const body = await readBody(req);
+  function record(req: IncomingMessage, url: URL, body: unknown): FakeProvisioningRequest {
     const recorded: FakeProvisioningRequest = {
       method: req.method ?? "GET",
       path: url.pathname,
@@ -91,77 +91,76 @@ export async function startFakeProvisioningService(options: { tokens?: string[] 
       body,
     };
     requests.push(recorded);
+    return recorded;
+  }
+
+  function refused(req: IncomingMessage, res: ServerResponse): boolean {
     const bearer = req.headers.authorization?.replace(/^Bearer /, "");
     if (bearer === undefined || !service.acceptedTokens.has(bearer)) {
       fail(res, 401, "unauthenticated", "token review failed");
-      return;
+      return true;
     }
     const failure = failures.shift();
-    if (failure) {
-      send(
-        res,
-        failure.status,
-        { code: failure.status === 429 ? "rate-limited" : "unavailable", error: "injected" },
-        failure.retryAfterSeconds === undefined ? {} : { "retry-after": String(failure.retryAfterSeconds) },
-      );
+    if (!failure) return false;
+    send(
+      res,
+      failure.status,
+      { code: failure.status === 429 ? "rate-limited" : "unavailable", error: "injected" },
+      failure.retryAfterSeconds === undefined ? {} : { "retry-after": String(failure.retryAfterSeconds) },
+    );
+    return true;
+  }
+
+  function retry(uid: string, existing: UserProvisioning, recorded: FakeProvisioningRequest, res: ServerResponse): void {
+    const expected = (recorded.body as { expectedAttempts?: number } | undefined)?.expectedAttempts;
+    if (expected !== undefined && expected !== existing.status.work.attempts) {
+      fail(res, 409, "precondition-failed", `attempts is ${existing.status.work.attempts}`);
       return;
     }
-    const userMatch = /^\/v1\/users\/([^/]+)\/provisioning(\/retry|\/events)?$/.exec(url.pathname);
-    if (url.pathname === "/v1/provisionings") {
-      await listOrWatch(url, res);
+    const key = recorded.idempotencyKey ?? "";
+    const answer = retries.get(key) ?? { uid, due: true };
+    retries.set(key, answer);
+    send(res, 202, answer);
+  }
+
+  function put(uid: string, existing: UserProvisioning | undefined, body: unknown, res: ServerResponse): void {
+    const write = body as { spec: UserProvisioningSpec; expectedResourceVersion?: string };
+    if (write.expectedResourceVersion !== undefined && write.expectedResourceVersion !== (existing?.resourceVersion ?? "")) {
+      fail(res, 409, "precondition-failed", "resource version moved");
       return;
     }
-    if (!userMatch) {
-      fail(res, 404, "not-found", "no such route");
+    if (!existing) {
+      send(res, 201, bump(uid, { uid, generation: 1, resourceVersion: "0", spec: write.spec, status: IDLE_STATUS }));
       return;
     }
-    const uid = decodeURIComponent(userMatch[1]);
-    const suffix = userMatch[2];
-    const existing = resources.get(uid);
-    if (suffix === "/events") {
-      if (!existing) return fail(res, 404, "not-found", "no provisioning");
-      send(res, 200, { items: events.get(uid) ?? [] });
-      return;
-    }
-    if (suffix === "/retry") {
-      if (!existing) return fail(res, 404, "not-found", "no provisioning");
-      const key = recorded.idempotencyKey ?? "";
-      const expected = (body as { expectedAttempts?: number } | undefined)?.expectedAttempts;
-      if (expected !== undefined && expected !== existing.status.work.attempts) {
-        return fail(res, 409, "precondition-failed", `attempts is ${existing.status.work.attempts}`);
-      }
-      const answer = retries.get(key) ?? { uid, due: true };
-      retries.set(key, answer);
-      send(res, 202, answer);
-      return;
-    }
-    if (req.method === "GET") {
-      if (!existing) return fail(res, 404, "not-found", "no provisioning");
+    if (JSON.stringify(existing.spec) === JSON.stringify(write.spec)) {
       send(res, 200, existing);
       return;
     }
-    if (req.method === "DELETE") {
+    send(res, 202, bump(uid, { ...existing, generation: existing.generation + 1, spec: write.spec }));
+  }
+
+  function user(uid: string, suffix: string | undefined, recorded: FakeProvisioningRequest, res: ServerResponse): void {
+    const existing = resources.get(uid);
+    if (recorded.method === "PUT" && suffix === undefined) return put(uid, existing, recorded.body, res);
+    if (recorded.method === "DELETE" && suffix === undefined) {
       resources.delete(uid);
-      send(res, 204);
-      return;
+      return send(res, 204);
     }
-    if (req.method === "PUT") {
-      const put = body as { spec: UserProvisioningSpec; expectedResourceVersion?: string };
-      if (put.expectedResourceVersion !== undefined && put.expectedResourceVersion !== (existing?.resourceVersion ?? "")) {
-        return fail(res, 409, "precondition-failed", "resource version moved");
-      }
-      if (!existing) {
-        send(res, 201, bump(uid, { uid, generation: 1, resourceVersion: "0", spec: put.spec, status: IDLE_STATUS }));
-        return;
-      }
-      if (JSON.stringify(existing.spec) === JSON.stringify(put.spec)) {
-        send(res, 200, existing);
-        return;
-      }
-      send(res, 202, bump(uid, { ...existing, generation: existing.generation + 1, spec: put.spec }));
-      return;
-    }
-    fail(res, 400, "invalid-request", "unsupported method");
+    if (!existing) return fail(res, 404, "not-found", "no provisioning");
+    if (suffix === "/events") return send(res, 200, { items: events.get(uid) ?? [] });
+    if (suffix === "/retry") return retry(uid, existing, recorded, res);
+    send(res, 200, existing);
+  }
+
+  async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const url = new URL(req.url ?? "/", FAKE_BASE);
+    const recorded = record(req, url, await readBody(req));
+    if (refused(req, res)) return;
+    if (url.pathname === "/v1/provisionings") return listOrWatch(url, res);
+    const userMatch = /^\/v1\/users\/([^/]+)\/provisioning(\/retry|\/events)?$/.exec(url.pathname);
+    if (!userMatch) return fail(res, 404, "not-found", "no such route");
+    user(decodeURIComponent(userMatch[1]), userMatch[2], recorded, res);
   }
 
   async function listOrWatch(url: URL, res: ServerResponse): Promise<void> {

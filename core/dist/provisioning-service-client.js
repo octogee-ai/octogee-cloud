@@ -5,6 +5,7 @@ export const PROVISIONING_SERVICE_TOKEN_PATH_ENV = "PROVISIONING_SERVICE_TOKEN_P
 const TOKEN_REFRESH_MS = 60_000;
 const REQUEST_TIMEOUT_MS = 30_000;
 const LONG_POLL_GRACE_MS = 15_000;
+const PUT_OUTCOMES = { 201: "created", 202: "changed" };
 export const DEFAULT_PROVISIONING_SERVICE_RETRY = {
     attempts: 4,
     baseDelayMs: 500,
@@ -157,8 +158,7 @@ export function createProvisioningServiceClient(options) {
                 path: userPath(uid),
                 body: { spec, ...(putOptions?.expectedResourceVersion === undefined ? {} : { expectedResourceVersion: putOptions.expectedResourceVersion }) },
             });
-            const outcome = response.status === 201 ? "created" : response.status === 202 ? "changed" : "unchanged";
-            return { outcome, resource: await json(response) };
+            return { outcome: PUT_OUTCOMES[response.status] ?? "unchanged", resource: await json(response) };
         },
         async getProvisioning(uid, getOptions) {
             const timeoutSeconds = getOptions?.timeoutSeconds;

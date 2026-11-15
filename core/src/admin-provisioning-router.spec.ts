@@ -129,7 +129,10 @@ describe("Admin API provisioning routes", () => {
   });
 
   it("rejects a malformed retry body", async () => {
-    await request(app()).post("/users/u1/provisioning/retry").send({ expectedAttempts: -1 }).expect(400);
+    const res = await request(app()).post("/users/u1/provisioning/retry").send({ expectedAttempts: -1 }).expect(400);
+
+    expect(res.body.code).toBe("invalid-request");
+    expect(fake.requests.some((entry) => entry.path.endsWith("/retry"))).toBe(false);
   });
 
   it("lists users that are not ready", async () => {

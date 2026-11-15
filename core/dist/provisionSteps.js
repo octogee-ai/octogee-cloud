@@ -260,7 +260,7 @@ async function writeWorkspaceRecord(store, ctx, mmUpdate) {
         });
     });
 }
-async function seedWorkspaceChannel(store, ctx, channelId, mattermostChannelId, name, projection) {
+async function seedWorkspaceChannel(store, ctx, { channelId, mattermostChannelId, name }, projection) {
     const scope = { workspaceSlug: ctx.slug, projectSlug: null };
     await store.transaction({ label: "provisioning.channel" }, async (transaction) => {
         if ((await transaction.workspaces.channels.get(scope, channelId)) === null) {
@@ -282,11 +282,11 @@ async function seedWorkspaceChannel(store, ctx, channelId, mattermostChannelId, 
 async function seedWorkspaceChannels(store, ctx, mmUpdate, projection) {
     const generalChannelId = mmUpdate["mattermost.generalChannelId"];
     if (generalChannelId)
-        await seedWorkspaceChannel(store, ctx, "general", generalChannelId, "general", projection);
+        await seedWorkspaceChannel(store, ctx, { channelId: "general", mattermostChannelId: generalChannelId, name: "general" }, projection);
     const coachDmChannelId = mmUpdate["mattermost.channelId"];
     if (coachDmChannelId) {
         const name = mmUpdate["mattermost.channelName"] || "coach-dm";
-        await seedWorkspaceChannel(store, ctx, "coach-dm", coachDmChannelId, name, projection);
+        await seedWorkspaceChannel(store, ctx, { channelId: "coach-dm", mattermostChannelId: coachDmChannelId, name }, projection);
     }
 }
 async function seedWorkspaceOwner(store, ctx, mmUpdate) {

@@ -34,15 +34,11 @@ export function mmUpdateFromChatOutputs(input) {
         ...(chat.agentBotUserId ? { "mattermost.coachUserId": chat.agentBotUserId } : {}),
     };
 }
-async function recordsMatch(store, resource, chat, slug) {
-    const scope = { workspaceSlug: slug, projectSlug: null };
-    const [user, workspace, general, agentChannel, owner, identity] = await Promise.all([
+async function userRecordsMatch(store, resource, chat, slug) {
+    const [user, workspace, owner] = await Promise.all([
         store.users.records.get(resource.uid),
         store.workspaces.records.get(slug),
-        store.workspaces.channels.get(scope, "general"),
-        chat.channels.agent ? store.workspaces.channels.get(scope, "coach-dm") : Promise.resolve(null),
         store.workspaces.members.get(slug, resource.uid),
-        chat.agentBotUserId ? store.workspaces.agentIdentities.get(resource.uid) : Promise.resolve(null),
     ]);
     if (user === null || workspace === null || owner === null)
         return false;
@@ -52,10 +48,23 @@ async function recordsMatch(store, resource, chat, slug) {
         user.openclaw.provisionedAt !== undefined &&
         resource.spec.agentIds.every((agentId) => agentIds.has(agentId)) &&
         workspace.ownerUid === resource.uid &&
-        workspace.mattermostTeamId === chat.teamId &&
-        general?.mattermostChannelId === chat.channels.general &&
-        (!chat.channels.agent || agentChannel?.mattermostChannelId === chat.channels.agent) &&
-        (!chat.agentBotUserId || identity?.mattermostUserId === chat.agentBotUserId));
+        workspace.mattermostTeamId === chat.teamId);
+}
+async function chatRecordsMatch(store, uid, chat, slug) {
+    const scope = { workspaceSlug: slug, projectSlug: null };
+    const agentChannelId = chat.channels.agent;
+    const agentBotUserId = chat.agentBotUserId;
+    const [general, agentChannel, identity] = await Promise.all([
+        store.workspaces.channels.get(scope, "general"),
+        agentChannelId ? store.workspaces.channels.get(scope, "coach-dm") : null,
+        agentBotUserId ? store.workspaces.agentIdentities.get(uid) : null,
+    ]);
+    return (general?.mattermostChannelId === chat.channels.general &&
+        (!agentChannelId || agentChannel?.mattermostChannelId === agentChannelId) &&
+        (!agentBotUserId || identity?.mattermostUserId === agentBotUserId));
+}
+async function recordsMatch(store, resource, chat, slug) {
+    return (await userRecordsMatch(store, resource, chat, slug)) && (await chatRecordsMatch(store, resource.uid, chat, slug));
 }
 export async function mirrorUserProvisioning(deps, resource) {
     const chat = chatReady(resource);
