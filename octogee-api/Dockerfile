@@ -1,9 +1,6 @@
 FROM scratch AS overlay
 COPY octogee-api/src/main.ts /src/main.ts
 
-FROM scratch AS gateway-edge-overlay
-COPY gateway-edge/src/index.ts /src/index.ts
-
 FROM scratch AS packed-package
 COPY octogee-api/.npmrc /.npmrc
 
@@ -62,7 +59,6 @@ COPY octogee-api/tsconfig.json ./
 COPY octogee-api/src/ ./src/
 COPY --from=overlay / ./
 COPY gateway-edge/src/ /gateway-edge/src/
-COPY --from=gateway-edge-overlay / /gateway-edge/
 
 RUN npm run build
 

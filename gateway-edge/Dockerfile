@@ -1,10 +1,3 @@
-# A product build replaces this stage with `--build-context overlay=<dir>`;
-# its files land over the package before tsc, and it may replace only src/main.ts.
-# The platform default carries its own main.ts so the overlay copy is cached by
-# content: an empty stage reuses whichever overlay layer the cache built last.
-FROM scratch AS overlay
-COPY gateway-edge/src/main.ts /src/main.ts
-
 FROM node:26.13.0-slim@sha256:5adad64f9a1fca2d51972caa65983634c8a774eb300d72b20f7f2a0f60368072 AS platform-npm
 ARG NPM_VERSION=12.2.1
 RUN apt-get update && apt-get install -y --no-install-recommends patch && rm -rf /var/lib/apt/lists/*
@@ -37,7 +30,6 @@ RUN npm ci --ignore-scripts
 COPY scripts/ops/sync-local-file-deps.mjs /scripts/ops/sync-local-file-deps.mjs
 COPY gateway-edge/tsconfig.json ./
 COPY gateway-edge/src/ ./src/
-COPY --from=overlay / ./
 # `npm run build` = tsc → tsc-alias → verify:no-alias-leakage. The
 # alias rewriter and post-build grep guard together prevent the
 # MODULE_NOT_FOUND @shared/* runtime failure. See README "Shared code".
@@ -75,7 +67,6 @@ COPY shared/package.json /shared/package.json
 COPY shared/dist /shared/dist
 COPY gateway-edge/.npmrc gateway-edge/package.json gateway-edge/package-lock.json* ./
 RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
-COPY --from=overlay / ./
 COPY --from=builder /gateway-edge/dist ./dist
 COPY gateway-edge/agent-import-gitleaks.toml ./agent-import-gitleaks.toml
 USER node

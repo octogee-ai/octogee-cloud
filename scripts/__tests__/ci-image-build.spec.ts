@@ -51,14 +51,14 @@ describe("runner image builds", () => {
     expect(args.at(-1)).toBe("platform");
   });
 
-  it("passes the product overlay of every platform package the API image compiles", () => {
+  it("passes the product overlay of the API package to the API images", () => {
     const root = mkdtempSync(resolve(tmpdir(), "image-plan-api-"));
     mkdirSync(resolve(root, "product/gateway-edge"), { recursive: true });
     expect(imagePlan("octogee-api", { repository, sha }, root).contexts)
-      .toEqual({ "packed-package": "obsidian-connect", product: "product", "gateway-edge-overlay": "product/gateway-edge" });
+      .toEqual({ "packed-package": "obsidian-connect", product: "product" });
     mkdirSync(resolve(root, "product/octogee-api"), { recursive: true });
     expect(imagePlan("octogee-project-runner", { repository, sha }, root).contexts).toEqual({
-      product: "product", overlay: "product/octogee-api", "gateway-edge-overlay": "product/gateway-edge",
+      product: "product", overlay: "product/octogee-api",
     });
   });
 

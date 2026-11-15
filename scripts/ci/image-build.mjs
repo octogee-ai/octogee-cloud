@@ -4,7 +4,7 @@ import { join } from "node:path";
 export const PLATFORM_CONTEXT = "platform";
 export const PRODUCT_ROOT = "product";
 
-const API_OVERLAYS = { overlay: "octogee-api", "gateway-edge-overlay": "gateway-edge" };
+const API_OVERLAYS = { overlay: "octogee-api" };
 
 export const IMAGE_BUILDS = {
   "glm-controller": { dockerfile: "platform/glm-controller/Dockerfile", context: PLATFORM_CONTEXT, overlays: { overlay: "glm-controller" } },
