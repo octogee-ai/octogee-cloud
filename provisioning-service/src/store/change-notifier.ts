@@ -10,10 +10,10 @@ export class ChangeNotifier {
   private stopped = false;
   private reconnectTimer: NodeJS.Timeout | null = null;
 
-  constructor(private readonly db: Database, private readonly databaseUrl: string, private readonly log: Logger) {}
+  constructor(private readonly db: Database, private readonly log: Logger) {}
 
   async start(): Promise<void> {
-    const client = new pg.Client({ connectionString: this.databaseUrl, application_name: "provisioning-service-listen" });
+    const client = new pg.Client({ ...this.db.connection, application_name: "provisioning-service-listen" });
     client.on("notification", () => this.wakeAll());
     client.on("error", (error) => {
       this.log.error("change listener connection failed; waiters fall back to polling", { error: error.message });
@@ -22,7 +22,7 @@ export class ChangeNotifier {
       this.scheduleReconnect();
     });
     await client.connect();
-    await client.query(`LISTEN "${this.db.changeChannel}"`);
+    await client.query("LISTEN provisioning_service_changes");
     this.client = client;
   }
 

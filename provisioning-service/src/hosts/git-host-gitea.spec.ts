@@ -6,7 +6,7 @@ import { placeholderEmail } from "@octogee/core/placeholder-email";
 import { PROJECT_AGENT_REPO } from "@octogee/shared/types/project";
 
 import { createGiteaGitHostAdapter } from "./git-host-gitea.js";
-import { FakeGiteaApi } from "./gitea-api.fake.js";
+import { FakeGiteaApi } from "./__tests__/gitea-api.fake.js";
 import { HostError } from "./host-error.js";
 
 const signal = () => new AbortController().signal;

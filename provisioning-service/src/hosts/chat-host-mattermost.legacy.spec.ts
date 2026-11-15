@@ -6,7 +6,7 @@ import { provisionMattermostUser } from "@octogee/core/mattermost/provision";
 import { computeWorkspaceDisplayName } from "@octogee/shared/types/display-names";
 
 import { createMattermostChatHost } from "./chat-host-mattermost.js";
-import { FakeMattermostApi } from "./mattermost-api.fake.js";
+import { FakeMattermostApi } from "./__tests__/mattermost-api.fake.js";
 
 const legacyStore = vi.hoisted(() => ({
   platformStateStore: {

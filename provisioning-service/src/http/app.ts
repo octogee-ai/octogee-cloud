@@ -34,27 +34,29 @@ export interface AppDependencies {
 
 const DEFAULT_WAIT_SECONDS = 30;
 const MAX_WAIT_SECONDS = 300;
+const WRITE_STATUS = { created: 201, changed: 202, unchanged: 200 } as const;
+const INVALID = "invalid-request";
 const WORK_STATE_FILTERS = new Set(["queued", "running", "retrying", "parked"]);
 
 function single(value: unknown, name: string): string | undefined {
   if (value === undefined) return undefined;
-  if (typeof value !== "string") throw new ApiError(400, "invalid-request", `${name} must be given once`);
+  if (typeof value !== "string") throw new ApiError(400, INVALID, `${name} must be given once`);
   return value;
 }
 
 function integer(value: unknown, name: string, min: number, max: number): number | undefined {
   const text = single(value, name);
   if (text === undefined) return undefined;
-  if (!/^\d+$/.test(text)) throw new ApiError(400, "invalid-request", `${name} must be a whole number`);
+  if (!/^\d+$/.test(text)) throw new ApiError(400, INVALID, `${name} must be a whole number`);
   const parsed = Number(text);
-  if (parsed < min || parsed > max) throw new ApiError(400, "invalid-request", `${name} must be between ${min} and ${max}`);
+  if (parsed < min || parsed > max) throw new ApiError(400, INVALID, `${name} must be between ${min} and ${max}`);
   return parsed;
 }
 
 function boolean(value: unknown, name: string): boolean | undefined {
   const text = single(value, name);
   if (text === undefined) return undefined;
-  if (text !== "true" && text !== "false") throw new ApiError(400, "invalid-request", `${name} must be true or false`);
+  if (text !== "true" && text !== "false") throw new ApiError(400, INVALID, `${name} must be true or false`);
   return text === "true";
 }
 
@@ -105,11 +107,11 @@ export function createApp(deps: AppDependencies): express.Express {
     const spec = parseUserProvisioningSpec(body.spec);
     const expected = body.expectedResourceVersion;
     if (expected !== undefined && (typeof expected !== "string" || !/^\d+$/.test(expected))) {
-      throw new ApiError(400, "invalid-request", "expectedResourceVersion must be a resource version string");
+      throw new ApiError(400, INVALID, "expectedResourceVersion must be a resource version string");
     }
     const { outcome, resource } = await deps.store.put(uid, spec, expected);
     deps.notifier.wakeAll();
-    response.status(outcome === "created" ? 201 : outcome === "changed" ? 202 : 200).json(resource);
+    response.status(WRITE_STATUS[outcome]).json(resource);
   });
 
   v1.get("/users/:uid/provisioning", requireRole("writer", "reader"), async (request, response) => {
@@ -143,10 +145,10 @@ export function createApp(deps: AppDependencies): express.Express {
     const body = (request.body ?? {}) as { expectedAttempts?: unknown };
     const expected = body.expectedAttempts;
     if (expected !== undefined && (typeof expected !== "number" || !Number.isInteger(expected) || expected < 0)) {
-      throw new ApiError(400, "invalid-request", "expectedAttempts must be a whole number");
+      throw new ApiError(400, INVALID, "expectedAttempts must be a whole number");
     }
     const key = request.header("idempotency-key");
-    if (key !== undefined && (key.length === 0 || key.length > 200)) throw new ApiError(400, "invalid-request", "Idempotency-Key must be 1 to 200 characters");
+    if (key !== undefined && (key.length === 0 || key.length > 200)) throw new ApiError(400, INVALID, "Idempotency-Key must be 1 to 200 characters");
     const outcome = await deps.store.retry(uid, expected, key);
     deps.notifier.wakeAll();
     if (outcome.kind === "replayed") response.status(outcome.status).json(outcome.body);
@@ -162,7 +164,7 @@ export function createApp(deps: AppDependencies): express.Express {
   v1.get("/provisionings", requireRole("writer", "reader"), async (request, response) => {
     if (boolean(request.query.watch, "watch")) {
       const from = single(request.query.resourceVersion, "resourceVersion");
-      if (from === undefined || !/^\d+$/.test(from)) throw new ApiError(400, "invalid-request", "watch needs resourceVersion");
+      if (from === undefined || !/^\d+$/.test(from)) throw new ApiError(400, INVALID, "watch needs resourceVersion");
       const until = deadline(request);
       const signal = closedSignal(request, response);
       for (;;) {
@@ -177,10 +179,10 @@ export function createApp(deps: AppDependencies): express.Express {
     }
     const reason = single(request.query.reason, "reason");
     if (reason !== undefined && !PROVISIONING_CONDITION_REASONS.includes(reason as ProvisioningConditionReason)) {
-      throw new ApiError(400, "invalid-request", "reason is not a known reason");
+      throw new ApiError(400, INVALID, "reason is not a known reason");
     }
     const workState = single(request.query.workState, "workState");
-    if (workState !== undefined && !WORK_STATE_FILTERS.has(workState)) throw new ApiError(400, "invalid-request", "workState is not a filterable state");
+    if (workState !== undefined && !WORK_STATE_FILTERS.has(workState)) throw new ApiError(400, INVALID, "workState is not a filterable state");
     const query: UserProvisioningListQuery = {
       ready: boolean(request.query.ready, "ready"),
       reason: reason as ProvisioningConditionReason | undefined,
@@ -197,7 +199,7 @@ export function createApp(deps: AppDependencies): express.Express {
     const spec = parseGitKeySpec(((request.body ?? {}) as { spec?: unknown }).spec);
     const { outcome, key } = await deps.store.putGitKey(uid, gatewayId, spec);
     deps.notifier.wakeAll();
-    response.status(outcome === "created" ? 201 : outcome === "changed" ? 202 : 200).json(key);
+    response.status(WRITE_STATUS[outcome]).json(key);
   });
 
   v1.delete("/users/:uid/git-keys/:gatewayId", requireRole("key-writer"), async (request, response) => {

@@ -40,11 +40,26 @@ account maps to roles through a fixed table:
 
 | Service account | Roles |
 | --- | --- |
-| fleet controller | `writer`: provisioning put, delete, read, list, watch, retry, events |
-| platform API | `key-writer`: git keys; `reader`: provisioning read, list, watch, events; `credential-reader`: credentials |
+| `octogee-glm-controller` (fleet controller) | `writer`: provisioning put, delete, read, list, watch, retry, events |
+| `octogee-api` (platform API) | `key-writer`: git keys; `reader`: provisioning read, list, watch, events; `credential-reader`: credentials |
 
-A failed review or wrong audience answers `401`; any other service account, or a
-route outside its roles, answers `403`.
+Only service accounts in `PROVISIONING_CALLER_NAMESPACE` are matched. A failed
+review or wrong audience answers `401`; any other service account, or a route
+outside its roles, answers `403`. The service's own service account needs
+permission to create TokenReviews.
+
+## Git keys
+
+Do not call `PUT /v1/users/{uid}/git-keys/{gatewayId}` until the key-title
+migration is decided. Keys registered by the earlier path carry another title.
+The service leaves a key with the same public key under a holder it does not
+manage untouched and reports `Registered=False` with reason `GitKeyFailed`.
+
+## Outputs
+
+`status.outputs.git` reports the repositories the service created or confirmed,
+with their clone and SSH URLs. It does not say that a gateway has pushed the
+workspace; that signal stays with the gateway.
 
 ## Work
 
@@ -56,6 +71,45 @@ terminal error or the twelfth transient failure parks the work until the spec
 changes or a retry is requested. Idle rows are resynced six hours after their
 last success.
 
+## Schema
+
+At startup each replica creates and upgrades its tables in one transaction
+holding a PostgreSQL advisory lock, so replicas starting together migrate once.
+Upgrades are numbered and applied in place; a build refuses to start on a schema
+newer than it knows.
+
+## Environment
+
+| Variable | Required | Secret | Meaning |
+| --- | --- | --- | --- |
+| `PROVISIONING_PORT` | no, `8080` | no | HTTP port |
+| `PROVISIONING_DB_HOST` | yes | no | PostgreSQL host |
+| `PROVISIONING_DB_PORT` | no, `5432` | no | PostgreSQL port |
+| `PROVISIONING_DB_NAME` | yes | no | database |
+| `PROVISIONING_DB_USER` | yes | no | database user |
+| `PROVISIONING_DB_PASSWORD` | yes | yes | database password |
+| `PROVISIONING_DB_SSLMODE` | yes | no | `disable`, `require` or `verify-full` |
+| `PROVISIONING_DB_CA_CERT` | no | no | PEM CA, `verify-full` only |
+| `PROVISIONING_DB_TLS_SERVER_IDENTITY` | no | no | server name to verify when the host is an address, `verify-full` only |
+| `PROVISIONING_DB_POOL_MAX` | no, `10` | no | connection pool size |
+| `PROVISIONING_DATABASE_SCHEMA` | no, `provisioning_service` | no | schema holding the service's tables |
+| `PROVISIONING_CALLER_NAMESPACE` | yes | no | namespace of the callers' service accounts |
+| `PROVISIONING_CREDENTIAL_KEY` | yes | yes | base64 of 32 bytes; encrypts issued credentials |
+| `PROVISIONING_TOKEN_REVIEW_URL` | no | no | TokenReview endpoint; defaults to the in-cluster API server |
+| `KUBERNETES_SERVICE_HOST`, `KUBERNETES_SERVICE_PORT_HTTPS` | when the URL above is unset | no | set by Kubernetes |
+| `PROVISIONING_TOKEN_REVIEW_TOKEN_FILE` | no, `/var/run/secrets/kubernetes-api/token` | file is | the service's own token for TokenReview |
+| `PROVISIONING_TOKEN_REVIEW_CA_FILE` | no, `/var/run/secrets/kubernetes-api/ca.crt` for https | no | API server CA |
+| `PROVISIONING_HOST_ADAPTERS` | yes | no | `real` in every deployment; `fake` only for tests |
+| `PROVISIONING_CHAT_HOST_URL` | with `real` | no | chat host base URL |
+| `PROVISIONING_CHAT_HOST_ADMIN_TOKEN` | with `real` | yes | chat host admin token |
+| `PROVISIONING_CHAT_HOST_ADMIN_USER_ID` | no | no | chat host admin user id |
+| `PROVISIONING_CHAT_CONTROL_COMMAND_URL` | with `real` | no | URL the team's control command calls |
+| `PROVISIONING_GIT_HOST_URL` | with `real` | no | git host API URL |
+| `PROVISIONING_GIT_HOST_ADMIN_TOKEN` | with `real` | yes | git host admin token |
+| `HOSTNAME` | no | no | replica identity for leases; set by Kubernetes |
+
+A missing required setting stops startup with an error naming it.
+
 ## Development
 
 ```bash
@@ -66,4 +120,17 @@ npm test
 
 Tests that need PostgreSQL read `OCTOGEE_TEST_POSTGRES_DSN` and are skipped
 without it. `node ../scripts/ci/provisioning-service-postgres.mjs` starts a
-private PostgreSQL 16 and runs them, as the checks workflow does.
+private PostgreSQL 16 and runs them and the conformance suite, as the checks
+workflow does.
+
+## Conformance suite
+
+`npm run conformance` tests an implementation from outside, over HTTP only. It
+starts a fake TokenReview endpoint, empties the database named by
+`PROVISIONING_CONFORMANCE_DSN` (it runs `DROP OWNED BY CURRENT_USER`, so give it
+a database and a non-superuser role of its own), and starts the implementation
+with `PROVISIONING_CONFORMANCE_COMMAND` (default: this package's `src/main.ts`).
+The implementation receives the settings in the environment table above, with
+`PROVISIONING_HOST_ADAPTERS=fake`, `PROVISIONING_DB_SSLMODE=disable` and
+`PROVISIONING_TOKEN_REVIEW_URL` pointing at the fake. A `resourceVersion`
+newer than the service has issued answers `410`, like an expired one.

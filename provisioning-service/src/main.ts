@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { PROVISIONING_SERVICE_AUDIENCE } from "@octogee/shared/types/provisioning-service";
 import { createTokenReviewer } from "./auth/token-review.js";
 import { CALLER_ROLES, loadConfig } from "./config.js";
-import { FakeChatHost, FakeGitHost } from "./hosts/fake-hosts.js";
+import { hostsFromConfig } from "./hosts-from-config.js";
 import { createLogger } from "./logger.js";
 import { startService } from "./service.js";
 
@@ -17,20 +17,21 @@ async function main(): Promise<void> {
     reviewerToken: async () => (await readFile(config.tokenReviewTokenFile, "utf8")).trim(),
     ...(ca ? { ca } : {}),
   });
+  const hosts = hostsFromConfig(config.hosts, log);
   const service = await startService({
-    databaseUrl: config.databaseUrl,
+    database: config.database,
     databaseSchema: config.databaseSchema,
     credentialKey: config.credentialKey,
     reviewer,
     callerNamespace: config.callerNamespace,
     roleTable: CALLER_ROLES,
-    chat: new FakeChatHost(),
-    git: new FakeGitHost(),
+    chat: hosts.chat,
+    git: hosts.git,
     log,
     replicaId: config.replicaId,
     port: config.port,
   });
-  log.info("provisioning service listening", { port: config.port, hostAdapters: config.hostAdapters, replica: config.replicaId });
+  log.info("provisioning service listening", { port: config.port, hostAdapters: config.hosts.kind, replica: config.replicaId });
   const shutdown = (signal: string) => {
     log.info("provisioning service stopping", { signal });
     service.stop().then(() => process.exit(0), (error: unknown) => {

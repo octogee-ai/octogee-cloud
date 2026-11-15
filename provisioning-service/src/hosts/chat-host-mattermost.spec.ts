@@ -14,7 +14,7 @@ import {
 import type { ChatUserInput } from "./chat-host.js";
 import { createMattermostChatHost, gravatarUrl } from "./chat-host-mattermost.js";
 import { HostError } from "./host-error.js";
-import { FakeMattermostApi } from "./mattermost-api.fake.js";
+import { FakeMattermostApi } from "./__tests__/mattermost-api.fake.js";
 
 const COMMAND_URL = "http://callback.invalid/internal/mattermost/commands/control-ui";
 const signal = () => new AbortController().signal;

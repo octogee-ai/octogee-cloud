@@ -167,7 +167,8 @@ class MattermostApi {
 
 function failure(operation: string, { status, json }: HostResponse): HostError {
   const id = errorId(json);
-  return new HostError(hostErrorKindForStatus(status), `${operation}: ${status} from chat host${id ? ` (${id})` : ""}`);
+  const detail = id ? ` (${id})` : "";
+  return new HostError(hostErrorKindForStatus(status), `${operation}: ${status} from chat host${detail}`);
 }
 
 async function createOrAdopt(
@@ -187,47 +188,96 @@ async function createOrAdopt(
   throw failure(operation, response);
 }
 
+async function fetchAndUploadAvatar(api: MattermostApi, fetchImpl: typeof fetch, userId: string, source: string, signal: AbortSignal): Promise<string | null> {
+  if (new URL(source).protocol !== "https:") return "avatar fetch: the image source is not an https url";
+  const image = await fetchImpl(source, { signal, redirect: "error" });
+  if (!image.ok) {
+    await image.body?.cancel();
+    return `avatar fetch: ${image.status} from image source`;
+  }
+  const bytes = await readCapped(image, AVATAR_MAX_BYTES);
+  if (!bytes) return `avatar fetch: the image is larger than ${AVATAR_MAX_BYTES} bytes`;
+  const contentType = image.headers.get("content-type") || "image/png";
+  const extension = contentType.includes("jpeg") || contentType.includes("jpg") ? ".jpg" : ".png";
+  const form = new FormData();
+  form.append("image", new Blob([bytes], { type: contentType }), `avatar${extension}`);
+  const uploaded = await api.send("upload avatar", "POST", `/users/${userId}/image`, signal, { body: form });
+  return uploaded.ok ? null : `avatar upload: ${uploaded.status} from chat host`;
+}
+
+async function uploadAvatar(api: MattermostApi, config: MattermostChatHostConfig, userId: string, input: ChatUserInput, signal: AbortSignal): Promise<string[]> {
+  const source = avatarSource(input);
+  if (!source) return [];
+  let warning: string | null;
+  try {
+    warning = await fetchAndUploadAvatar(api, config.fetch ?? fetch, userId, source, signal);
+  } catch (error) {
+    warning = `avatar upload: ${error instanceof Error ? error.message : String(error)}`;
+  }
+  if (warning === null) return [];
+  config.log.error("[provisioning] chat avatar upload failed", { uid: input.uid, chatUserId: userId, warning });
+  return [warning];
+}
+
+async function archiveDefaultChannel(api: MattermostApi, log: HostLog, teamId: string, name: string, signal: AbortSignal): Promise<void> {
+  const channel = await api.find("find default channel", `/teams/${teamId}/channels/name/${name}`, signal);
+  if (!channel || !isLive(channel)) return;
+  const response = await api.request("archive default channel", "DELETE", `/channels/${channel.id}`, signal);
+  if (response.status >= 200 && response.status < 300) {
+    log.info("[provisioning] default chat channel archived", { teamId, channel: name });
+    return;
+  }
+  if (response.status === 400 && errorId(response.json) === UNDELETABLE_CHANNEL_ERROR) return;
+  throw failure("archive default channel", response);
+}
+
+async function ensureControlCommand(api: MattermostApi, controlCommandUrl: string, teamId: string, signal: AbortSignal): Promise<void> {
+  const spec = controlUiCommandSpec(teamId, controlCommandUrl);
+  const desired = {
+    team_id: spec.teamId,
+    trigger: spec.trigger,
+    method: "P",
+    url: spec.url,
+    display_name: spec.displayName,
+    description: spec.description,
+    auto_complete: true,
+    auto_complete_desc: spec.autocompleteDescription,
+    auto_complete_hint: "",
+  };
+  const listed = await api.expect("list chat commands", "GET", `/commands?team_id=${encodeURIComponent(teamId)}&custom_only=true`, signal);
+  if (!Array.isArray(listed)) throw new HostError("transient", "list chat commands: chat host returned an invalid list");
+  const existing = listed.find((entry: unknown): entry is Record<string, unknown> & { id: string } =>
+    typeof entry === "object" && entry !== null &&
+    COMMAND_FIELDS.every((field) => typeof (entry as Record<string, unknown>)[field] === "string") &&
+    (entry as { trigger: string }).trigger === spec.trigger);
+  if (!existing) {
+    await api.expect("create chat command", "POST", "/commands", signal, desired);
+    return;
+  }
+  if (existing.url === spec.url && existing.method === "P") return;
+  await api.expect("update chat command", "PUT", `/commands/${existing.id}`, signal, { ...existing, ...desired });
+}
+
+async function findChannel(api: MattermostApi, log: HostLog, { teamId, name, knownId }: { teamId: string; name: string; knownId: string | undefined }, signal: AbortSignal): Promise<MmRecord | null> {
+  if (knownId) {
+    const known = await api.find("find chat channel", `/channels/${knownId}`, signal);
+    if (known && isLive(known) && known.team_id === teamId) return known;
+  }
+  const byName = await api.find("find chat channel", `/teams/${teamId}/channels/name/${name}?include_deleted=true`, signal);
+  if (!byName) return null;
+  if (isLive(byName)) return byName;
+  const restored = await api.expect("restore chat channel", "POST", `/channels/${byName.id}/restore`, signal);
+  if (!isRecord(restored)) throw new HostError("transient", "restore chat channel: chat host returned an invalid record");
+  log.info("[provisioning] archived chat channel restored", { teamId, channel: name });
+  return restored;
+}
+
 export function createMattermostChatHost(config: MattermostChatHostConfig): ChatHost {
   const api = new MattermostApi(config);
   const { log } = config;
 
   async function addMember(operation: string, path: string, body: Record<string, unknown>, signal: AbortSignal): Promise<void> {
     await api.expect(operation, "POST", path, signal, body);
-  }
-
-  async function uploadAvatar(userId: string, input: ChatUserInput, signal: AbortSignal): Promise<string[]> {
-    const source = avatarSource(input);
-    if (!source) return [];
-    const fetchImpl = config.fetch ?? fetch;
-    let warning: string;
-    try {
-      if (new URL(source).protocol !== "https:") {
-        warning = "avatar fetch: the image source is not an https url";
-      } else {
-        const image = await fetchImpl(source, { signal, redirect: "error" });
-        if (!image.ok) {
-          await image.body?.cancel();
-          warning = `avatar fetch: ${image.status} from image source`;
-        } else {
-          const bytes = await readCapped(image, AVATAR_MAX_BYTES);
-          if (!bytes) {
-            warning = `avatar fetch: the image is larger than ${AVATAR_MAX_BYTES} bytes`;
-          } else {
-            const contentType = image.headers.get("content-type") || "image/png";
-            const extension = contentType.includes("jpeg") || contentType.includes("jpg") ? ".jpg" : ".png";
-            const form = new FormData();
-            form.append("image", new Blob([bytes], { type: contentType }), `avatar${extension}`);
-            const uploaded = await api.send("upload avatar", "POST", `/users/${userId}/image`, signal, { body: form });
-            if (uploaded.ok) return [];
-            warning = `avatar upload: ${uploaded.status} from chat host`;
-          }
-        }
-      }
-    } catch (error) {
-      warning = `avatar upload: ${error instanceof Error ? error.message : String(error)}`;
-    }
-    log.error("[provisioning] chat avatar upload failed", { uid: input.uid, chatUserId: userId, warning });
-    return [warning];
   }
 
   async function findUserByName(username: string, signal: AbortSignal): Promise<MmRecord | null> {
@@ -271,7 +321,7 @@ export function createMattermostChatHost(config: MattermostChatHostConfig): Chat
       (json) => (isRecord(json) ? json : null),
     );
     if (!created) return { userId: user.id };
-    const warnings = await uploadAvatar(user.id, input, signal);
+    const warnings = await uploadAvatar(api, config, user.id, input, signal);
     return warnings.length > 0 ? { userId: user.id, warnings } : { userId: user.id };
   }
 
@@ -281,45 +331,6 @@ export function createMattermostChatHost(config: MattermostChatHostConfig): Chat
       if (known) return known;
     }
     return api.find("find chat team", `/teams/name/${encodeURIComponent(input.slug)}`, signal);
-  }
-
-  async function archiveDefaultChannel(teamId: string, name: string, signal: AbortSignal): Promise<void> {
-    const channel = await api.find("find default channel", `/teams/${teamId}/channels/name/${name}`, signal);
-    if (!channel || !isLive(channel)) return;
-    const response = await api.request("archive default channel", "DELETE", `/channels/${channel.id}`, signal);
-    if (response.status >= 200 && response.status < 300) {
-      log.info("[provisioning] default chat channel archived", { teamId, channel: name });
-      return;
-    }
-    if (response.status === 400 && errorId(response.json) === UNDELETABLE_CHANNEL_ERROR) return;
-    throw failure("archive default channel", response);
-  }
-
-  async function ensureControlCommand(teamId: string, signal: AbortSignal): Promise<void> {
-    const spec = controlUiCommandSpec(teamId, config.controlCommandUrl);
-    const desired = {
-      team_id: spec.teamId,
-      trigger: spec.trigger,
-      method: "P",
-      url: spec.url,
-      display_name: spec.displayName,
-      description: spec.description,
-      auto_complete: true,
-      auto_complete_desc: spec.autocompleteDescription,
-      auto_complete_hint: "",
-    };
-    const listed = await api.expect("list chat commands", "GET", `/commands?team_id=${encodeURIComponent(teamId)}&custom_only=true`, signal);
-    if (!Array.isArray(listed)) throw new HostError("transient", "list chat commands: chat host returned an invalid list");
-    const existing = listed.find((entry: unknown): entry is Record<string, unknown> & { id: string } =>
-      typeof entry === "object" && entry !== null &&
-      COMMAND_FIELDS.every((field) => typeof (entry as Record<string, unknown>)[field] === "string") &&
-      (entry as { trigger: string }).trigger === spec.trigger);
-    if (!existing) {
-      await api.expect("create chat command", "POST", "/commands", signal, desired);
-      return;
-    }
-    if (existing.url === spec.url && existing.method === "P") return;
-    await api.expect("update chat command", "PUT", `/commands/${existing.id}`, signal, { ...existing, ...desired });
   }
 
   async function ensureTeam(input: ChatTeamInput, signal: AbortSignal): Promise<{ teamId: string }> {
@@ -343,27 +354,13 @@ export function createMattermostChatHost(config: MattermostChatHostConfig): Chat
       roles: "team_admin team_user",
     }, signal);
     for (const name of DEFAULT_TEAM_CHANNELS_TO_ARCHIVE) {
-      await archiveDefaultChannel(teamId, name, signal);
+      await archiveDefaultChannel(api, log, teamId, name, signal);
     }
     if (config.adminUserId) {
       await addMember("add admin to chat team", `/teams/${teamId}/members`, { team_id: teamId, user_id: config.adminUserId }, signal);
     }
-    await ensureControlCommand(teamId, signal);
+    await ensureControlCommand(api, config.controlCommandUrl, teamId, signal);
     return { teamId };
-  }
-
-  async function findChannel(teamId: string, name: string, knownId: string | undefined, signal: AbortSignal): Promise<MmRecord | null> {
-    if (knownId) {
-      const known = await api.find("find chat channel", `/channels/${knownId}`, signal);
-      if (known && isLive(known) && known.team_id === teamId) return known;
-    }
-    const byName = await api.find("find chat channel", `/teams/${teamId}/channels/name/${name}?include_deleted=true`, signal);
-    if (!byName) return null;
-    if (isLive(byName)) return byName;
-    const restored = await api.expect("restore chat channel", "POST", `/channels/${byName.id}/restore`, signal);
-    if (!isRecord(restored)) throw new HostError("transient", "restore chat channel: chat host returned an invalid record");
-    log.info("[provisioning] archived chat channel restored", { teamId, channel: name });
-    return restored;
   }
 
   async function ensureChannel(
@@ -385,7 +382,7 @@ export function createMattermostChatHost(config: MattermostChatHostConfig): Chat
         purpose: `${ownerLabel}'s workspace — general discussion`,
         knownId: input.known?.general,
       };
-    let channel = await findChannel(input.teamId, spec.name, spec.knownId, signal);
+    let channel = await findChannel(api, log, { teamId: input.teamId, name: spec.name, knownId: spec.knownId }, signal);
     if (!channel) {
       ({ record: channel } = await createOrAdopt(
         "create chat channel",
@@ -396,7 +393,7 @@ export function createMattermostChatHost(config: MattermostChatHostConfig): Chat
           type: "P",
           purpose: spec.purpose,
         }),
-        () => findChannel(input.teamId, spec.name, undefined, signal),
+        () => findChannel(api, log, { teamId: input.teamId, name: spec.name, knownId: undefined }, signal),
         (json) => (isRecord(json) ? json : null),
       ));
     }

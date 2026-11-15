@@ -86,8 +86,9 @@ export function sameJson(left: unknown, right: unknown): boolean {
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
   if (value !== null && typeof value === "object") {
-    const entries = Object.entries(value as Record<string, unknown>).filter(([, field]) => field !== undefined).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-    return `{${entries.map(([key, field]) => `${JSON.stringify(key)}:${canonical(field)}`).join(",")}}`;
+    const entries = Object.entries(value as Record<string, unknown>).filter(([, field]) => field !== undefined).sort(([a], [b]) => a.localeCompare(b, "en"));
+    const members = entries.map(([key, field]) => JSON.stringify(key) + ":" + canonical(field));
+    return "{" + members.join(",") + "}";
   }
   return JSON.stringify(value);
 }
