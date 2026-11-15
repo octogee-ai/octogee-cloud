@@ -268,8 +268,26 @@ isolated gateway, and the agent answers in the same channel. The project moves
 too: ask its agent for another change, and after the move back `git pull` in
 your clone shows both saves.
 Return the user with `user migrate lin --to=shared-a --apply` and retire the
-isolated gateway with `gateway retire <id> --apply`, as in
+isolated gateway with `gateway retire <id> --apply`, where `ops inspect` of
+the migration names the id, as in
 [An isolated gateway](kind.md#an-isolated-gateway).
+
+## What this install does not do yet
+
+- **Changing a gateway's settings.** The fleet controller applies
+  `glm-controller.gatewayValues` when it renders a gateway's release, so a
+  change reaches only gateways added after it. Restarting the controller or
+  the gateway does not apply it. Add a new shared gateway, move its users to
+  it and retire the old one.
+- **Builds and deploys.** `builds ls`, `gateway deploy` and `gateway add
+  --sha` need immutable build manifests, which this install does not provide,
+  and the Admin API refuses them. Every gateway runs the platform's build:
+  the one `up --sha` installed.
+- **Logs.** `octogee-fleet logs` is not configured here; read gateway logs
+  with `kubectl logs`.
+- **Usage in `user broker`.** The LLM broker records every call in the
+  platform database, but `user broker` does not read those records yet and
+  reports no usage.
 
 ## Remove everything
 
