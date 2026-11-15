@@ -199,9 +199,13 @@ describe("POST /internal/fleet/set-mattermost-fields with the provisioning servi
   });
 
   it("still refuses a malformed update", async () => {
-    const { app } = fixture({ mattermostUserId: "mm-alice" });
+    const provisioning = legacyProvisioning();
+    const { app } = fixture({ provisioning, mattermostUserId: "mm-alice" });
 
-    await post(app, "set-mattermost-fields", { mmUpdate: "nope" }).expect(400);
+    const response = await post(app, "set-mattermost-fields", { mmUpdate: "nope" });
+
+    expect(response.status).toBe(400);
+    expect(provisioning.chat).not.toHaveBeenCalled();
   });
 
   it("completes provisioning itself without a provisioning service", async () => {
@@ -221,6 +225,24 @@ describe("POST /internal/fleet/set-agent-ids", () => {
     await post(app, "set-agent-ids", { agentIds: ["octogee-alice-coach"] }).expect(204);
 
     expect((await store.users.records.get("uid-alice"))?.agents.agentIds).toEqual(["octogee-alice-coach"]);
+  });
+});
+
+describe("the gateway's readiness and pushed signals", () => {
+  it.each([["with", legacyProvisioning()], ["without", null]] as const)("record the status and the repository URL %s the provisioning service", async (_mode, provisioning) => {
+    const { app, store } = fixture({ provisioning });
+
+    await post(app, "set-provisioning-status", { status: "complete" }).expect(204);
+    await post(app, "set-repo-url", { repoUrl: "ssh://git@git.example.test/alice/alice-workspace.git" }).expect(204);
+
+    const user = await store.users.records.get("uid-alice");
+    expect(user?.openclaw?.status).toBe("complete");
+    expect(user?.provisioning?.status).toBe("complete");
+    expect(user?.provisioning?.gitRepoUrl).toBe("ssh://git@git.example.test/alice/alice-workspace.git");
+    if (provisioning) {
+      expect(provisioning.chat).not.toHaveBeenCalled();
+      expect(provisioning.git).not.toHaveBeenCalled();
+    }
   });
 });
 

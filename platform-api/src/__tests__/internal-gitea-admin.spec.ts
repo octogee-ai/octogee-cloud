@@ -4,7 +4,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 import { gitHost } from "../lib/git-host.js";
 import { platformStateStore } from "@octogee/core/identity/platform-state-store";
-import giteaAdminRoutes from "../routes/internal/gitea-admin.js";
+import { createInternalGiteaAdminRoutes } from "../routes/internal/gitea-admin.js";
+import type { LegacyProvisioning } from "../lib/legacy-provisioning.js";
+import { logger } from "@octogee/core/http/logging";
 
 const mocks = vi.hoisted(() => ({
   docs: new Map<string, Record<string, unknown>>(),
@@ -44,6 +46,7 @@ vi.mock("../routes/projects/provisioning.js", () => ({
 function app(
   boundGatewayId: string | null = "walter",
   podGatewayId: string | null = "walter",
+  legacyProvisioning: LegacyProvisioning | null = null,
 ) {
   const a = express();
   a.use(express.json());
@@ -60,7 +63,7 @@ function app(
       next();
     });
   }
-  a.use("/internal/gitea", giteaAdminRoutes);
+  a.use("/internal/gitea", createInternalGiteaAdminRoutes({ legacyProvisioning }));
   return a;
 }
 
@@ -548,5 +551,87 @@ describe("internal gitea-admin route", () => {
     expect(gitHost().ensureRepo).not.toHaveBeenCalled();
     expect(gitHost().repoExists).not.toHaveBeenCalled();
     expect(gitHost().archiveRepo).not.toHaveBeenCalled();
+  });
+});
+
+describe("internal gitea-admin route with the provisioning service", () => {
+  function service(git: LegacyProvisioning["git"]): LegacyProvisioning {
+    return {
+      chat: vi.fn(async () => {
+        throw new Error("chat is not read by the git routes");
+      }),
+      git: vi.fn(git),
+      agentChatToken: vi.fn(async () => null),
+    };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.docs.clear();
+    assignUser("acme", "walter");
+  });
+
+  it.each([
+    ["ensure-org", null],
+    ["ensure-workspace-repo", "workspace"],
+    ["ensure-system-config-repo", "system-config"],
+    ["ensure-project-coach-repo", "project-coaches"],
+  ] as const)("%s answers 204 from the service's GitReady without touching the git host", async (route, repository) => {
+    const provisioning = service(async () => ({ ready: true, value: undefined }));
+
+    const res = await request(app("walter", "walter", provisioning)).post(`/internal/gitea/${route}`).send({ slug: "acme" });
+
+    expect(res.status).toBe(204);
+    expect(provisioning.git).toHaveBeenCalledExactlyOnceWith("uid-acme", repository);
+    expect(gitHost().ensureOwner).not.toHaveBeenCalled();
+    expect(gitHost().ensureRepo).not.toHaveBeenCalled();
+  });
+
+  it("answers 503 with Retry-After while git is not ready", async () => {
+    const provisioning = service(async () => ({ ready: false, reason: "GitRepositoryFailed", retryAfterSeconds: 12 }));
+
+    const res = await request(app("walter", "walter", provisioning)).post("/internal/gitea/ensure-workspace-repo").send({ slug: "acme" });
+
+    expect(res.status).toBe(503);
+    expect(res.headers["retry-after"]).toBe("12");
+    expect(res.body).toEqual({ error: "provisioning_pending", reason: "GitRepositoryFailed" });
+    expect(gitHost().ensureRepo).not.toHaveBeenCalled();
+  });
+
+  it("still refuses a user assigned to another gateway before asking the service", async () => {
+    const provisioning = service(async () => ({ ready: true, value: undefined }));
+
+    const res = await request(app("walter", "walter", provisioning)).post("/internal/gitea/ensure-org").send({ slug: "other" });
+
+    expect(res.status).toBe(403);
+    expect(provisioning.git).not.toHaveBeenCalled();
+  });
+
+  it("answers 503 and logs the slug when no user carries it", async () => {
+    const logged = vi.spyOn(logger, "error").mockImplementation(() => {});
+    vi.spyOn(platformStateStore.users.records, "listByGateway").mockResolvedValueOnce([
+      { uid: "uid-ghost", slug: "ghost" } as Awaited<ReturnType<typeof platformStateStore.users.records.listByGateway>>[number],
+    ]);
+    const provisioning = service(async () => ({ ready: true, value: undefined }));
+
+    const res = await request(app("walter", "walter", provisioning)).post("/internal/gitea/ensure-org").send({ slug: "ghost" });
+
+    expect(res.status).toBe(503);
+    expect(res.headers["retry-after"]).toBe("5");
+    expect(res.body).toEqual({ error: "provisioning_pending", reason: "NotProvisioned" });
+    expect(provisioning.git).not.toHaveBeenCalled();
+    expect(logged).toHaveBeenCalledWith(expect.stringContaining("no user"), expect.objectContaining({ slug: "ghost" }));
+  });
+
+  it("keeps the key and project repository routes on the git host", async () => {
+    const provisioning = service(async () => ({ ready: true, value: undefined }));
+    const server = request(app("walter", "walter", provisioning));
+
+    expect((await server.post("/internal/gitea/ensure-user").send({ slug: "acme", pubKey: "ssh-ed25519 AAA" })).status).toBe(204);
+    expect((await server.post("/internal/gitea/ensure-project-repo").send({ slug: "acme", projectName: "mygame" })).status).toBe(204);
+
+    expect(gitHost().registerKey).toHaveBeenCalledWith("acme", "ssh-ed25519 AAA", WALTER_KEY_OWNER);
+    expect(gitHost().ensureRepo).toHaveBeenCalledExactlyOnceWith("acme", { kind: "project", projectSlug: "mygame" });
+    expect(provisioning.git).not.toHaveBeenCalled();
   });
 });
