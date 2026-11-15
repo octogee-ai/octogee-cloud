@@ -1,6 +1,2 @@
-import cors from "cors";
-export declare const corsMiddleware: (req: cors.CorsRequest, res: {
-    statusCode?: number | undefined;
-    setHeader(key: string, value: string): any;
-    end(): any;
-}, next: (err?: any) => any) => void;
+import type { RequestHandler } from "express";
+export declare function createCorsMiddleware(allowedOrigins?: readonly string[]): RequestHandler;

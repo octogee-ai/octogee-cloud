@@ -2,7 +2,7 @@ import http from "node:http";
 import express, { Request, Response, type RequestHandler } from "express";
 import { Registry, collectDefaultMetrics, Counter, Histogram } from "prom-client";
 
-import { corsMiddleware } from "@octogee/core/http/cors";
+import { createCorsMiddleware } from "@octogee/core/http/cors";
 import { requestLogger, logger, setLogService } from "@octogee/core/http/logging";
 import { mattermostChannelHostFromEnv } from "@octogee/core/channel-host";
 import { createMattermostCommandRoutes } from "./routes/mattermost-commands.js";
@@ -514,7 +514,7 @@ export function createPlatformApp(opts: PlatformAppOptions = {}) {
   });
 
   app.use(helmetMiddleware);
-  app.use(corsMiddleware);
+  app.use(createCorsMiddleware());
   app.use(httpRequestMetrics);
 
   app.use(requestLogger);

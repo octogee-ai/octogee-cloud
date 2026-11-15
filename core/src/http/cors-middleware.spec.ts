@@ -1,17 +1,26 @@
 import express from "express";
 import request from "supertest";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-const { corsMiddleware } = await import("./cors.js");
+const { createCorsMiddleware } = await import("./cors.js");
 
 function corsApp() {
   const app = express();
-  app.use(corsMiddleware);
+  app.use(createCorsMiddleware());
   app.get("/probe", (_req, res) => res.json({ ok: true }));
   return app;
 }
 
 describe("corsMiddleware", () => {
+  it("reads the allowed origins when an app builds it, and refuses to build without them", () => {
+    vi.stubEnv("PUBLIC_APP_ORIGINS", "");
+    try {
+      expect(() => createCorsMiddleware()).toThrow(/PUBLIC_APP_ORIGINS/);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   const ORIGINAL_LOCAL = process.env.OCTOGEE_ALLOW_LOCAL_ORIGINS;
   afterEach(() => {
     if (ORIGINAL_LOCAL === undefined) delete process.env.OCTOGEE_ALLOW_LOCAL_ORIGINS;

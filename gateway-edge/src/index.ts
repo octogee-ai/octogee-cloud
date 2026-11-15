@@ -4,7 +4,7 @@ import { createChannelAgentReadinessRouter } from "./routes/channel-agent-readin
 import express, { Express, Request, RequestHandler, Response, Router } from "express";
 import http from "node:http";
 import { Registry, collectDefaultMetrics, Counter, Histogram } from "prom-client";
-import { corsMiddleware } from "@octogee/core/http/cors";
+import { createCorsMiddleware } from "@octogee/core/http/cors";
 import { requestLogger } from "@octogee/core/http/logging";
 import { errorHandler } from "@octogee/core/http/errors";
 import { logger } from "@octogee/core/http/logging";
@@ -198,7 +198,7 @@ const httpRequestTotal = new Counter({
 });
 
 app.use(helmetMiddleware);
-app.use(corsMiddleware);
+app.use(createCorsMiddleware());
 
 app.use((req, res, next) => {
   if (req.path === '/metrics') return next();
