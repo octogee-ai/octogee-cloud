@@ -148,8 +148,9 @@ the operator asks for them or a current risk to users requires them.
   their Mattermost account, team, channels and agent bot, and their Gitea
   organization with a `workspace` repository.
 - **Gateways.** Shared gateways are Kubernetes pods from `helm/octogee-gateway`,
-  under gVisor on a cloud cluster. Isolated gateways run only as Google Cloud
-  virtual machines today. The controller adds no gateway and moves no user on
+  under gVisor on a cloud cluster. An isolated gateway runs as a pod with its
+  own home claim, or on a Google Cloud virtual machine, which adds a desktop; a
+  sizing profile chooses. The controller adds no gateway and moves no user on
   its own; automation such as autoscaling or returning idle users belongs to a
   product built on top.
 - **Firebase.** No platform package installs `firebase-admin` or
