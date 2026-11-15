@@ -3,8 +3,8 @@
 The container image every gateway runs: OpenClaw, the provisioner that sets up
 the users assigned to the gateway, and the platform's OpenClaw extensions. A
 shared gateway and an isolated gateway run different builds of it.
-[Architecture](../../docs/architecture.md) shows where a gateway sits, and
-[OpenClaw compatibility](../../docs/openclaw-compatibility.md) lists the
+[Architecture](../docs/architecture.md) shows where a gateway sits, and
+[OpenClaw compatibility](../docs/openclaw-compatibility.md) lists the
 patches the OpenClaw build carries.
 
 ## Default configuration
@@ -34,9 +34,9 @@ the base when its artifacts are unchanged.
 
 ## Run it
 
-The fleet controller installs a gateway from the `helm/octogee-gateway` chart
+The fleet controller installs a gateway from the `charts/octogee-gateway` chart
 when an operator adds one; nobody installs that chart by hand.
-[The full platform on kind](../../docs/kind.md) builds this image from your
+[The full platform on kind](../docs/kind.md) builds this image from your
 checkout, or copies the published one, and adds a gateway with it.
 
 ## Key files
@@ -54,4 +54,4 @@ checkout, or copies the published one, and adds a gateway with it.
 
 `setup.sh`, `docker-compose.yml` and `.env.example` are a single-gateway Docker
 setup from before the platform existed. They are not maintained; see
-[Known rough edges](../../docs/rough-edges.md).
+[Known rough edges](../docs/rough-edges.md).
