@@ -27,7 +27,7 @@ Create these in the release namespace before enabling the service.
 | `user` | yes | a user that owns the service's schema |
 | `password` | yes | that user's password |
 | `sslmode` | yes | `disable`, `require` or `verify-full` |
-| `ca-cert` | no | PEM CA for `verify-full` |
+| `ca-cert` | no | the PEM text of the server's CA for `verify-full`; the image bakes no database CA |
 | `tls-server-identity` | no | expected server name for `verify-full` |
 
 `provisioning-service-credential-key` (`provisioningService.credentialKeySecretName`)

@@ -14,7 +14,6 @@ RUN test -n "$OS_PACKAGE_REFRESH" && apt-get update && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends tini \
     && rm -rf /var/lib/apt/lists/* /usr/local/lib/node_modules/npm
 COPY --from=platform-npm /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
-COPY deploy/cloud-sql/octogee-pg-server-ca.pem /etc/ssl/certs/octogee-postgres-ca.pem
 
 WORKDIR /app/provisioning-service
 COPY shared/package.json /app/shared/package.json
