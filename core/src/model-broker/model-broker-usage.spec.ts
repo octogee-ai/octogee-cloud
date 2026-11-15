@@ -436,10 +436,14 @@ describe("platform web usage charges", () => {
     });
 
     const modelKey = modelRollupKey("tavily/search-basic");
-    expect(store.rollups.get("uid-a")?.models[modelKey]).toMatchObject({
-      provider: "tavily",
-      model: "tavily/search-basic",
-      billingModel: "tavily/search-basic",
+    expect(store.rollups.get("uid-a")).toMatchObject({
+      models: {
+        [modelKey]: {
+          provider: "tavily",
+          model: "tavily/search-basic",
+          billingModel: "tavily/search-basic",
+        },
+      },
     });
   });
 });
@@ -598,7 +602,7 @@ describe("balance debits", () => {
     "refuses to record a price multiplier of %s",
     async (multiplier) => {
       const store = new InMemoryModelBrokerUsageStore();
-      await expect(store.recordUsage({ ...baseRecord, eventId: "bad", priceMultiplier: multiplier }))
+      await expect(store.recordUsage({ ...baseRecord, eventId: "bad", ownerUid: "uid-a", priceMultiplier: multiplier }))
         .rejects.toThrow(/price multiplier/);
       expect(store.events).toHaveLength(0);
     },
