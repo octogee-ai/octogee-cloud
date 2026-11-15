@@ -13,7 +13,7 @@
     "scripts/__tests__/openclaw-release.spec.ts -> gateway",
     "scripts/ops/operator-token.mjs -> core",
     "tests/specs/agent-conversation-wire.spec.ts -> shared",
-    "tests/specs/byok-provider-registry-parity.spec.ts -> gateway-edge",
+    "tests/specs/byok-provider-registry-parity.spec.ts -> platform-api",
     "tests/specs/byok-provider-registry-parity.spec.ts -> scripts",
     "tests/specs/byok-provider-registry-parity.spec.ts -> shared",
     "tests/specs/byot-sync-apply.spec.ts -> core",
