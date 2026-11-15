@@ -1,7 +1,6 @@
 # Agent VM spike — Omarchy desktop, headless
 
-Spike for [GATEWAY-VM-SPEC](../../docs/specs/GATEWAY-VM-SPEC.md) §7
-phase 1. Proves that the Omarchy userspace runs headless in a plain container on
+Phase 1 spike for the gateway VM design. Proves that the Omarchy userspace runs headless in a plain container on
 software rendering, that an agent can drive it by screenshot and input without
 any kernel device, and that a human can watch it through noVNC. Records the
 cost.

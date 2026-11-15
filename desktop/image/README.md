@@ -7,8 +7,7 @@ must remain available to the Agent and authenticated viewers while running.
 Reproducible build of the Builder gateway VM image: stock Omarchy from the
 pinned ISO, installed unattended, plus the desktop session, `vkms` + `vgem`
 for a display-less GCE guest, Docker for the gateway container, and a
-metadata-driven SSH key installer. Spec:
-[GATEWAY-VM-SPEC](../../../docs/specs/GATEWAY-VM-SPEC.md) §4 and §9.
+metadata-driven SSH key installer.
 
 ## Build
 
