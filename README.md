@@ -123,24 +123,23 @@ and a domain. [See every account and tier](docs/getting-started.md#what-you-need
 ### Inside a gateway
 
 ```mermaid
-flowchart LR
+flowchart TB
   mattermost[Mattermost]
   router[Gateway router]
 
   subgraph gateway["Gateway (a pod or a VM)"]
-    direction TB
     openclaw["OpenClaw gateway<br/>runs the agents"]
     extensions["Platform extensions<br/>access, broker, chat,<br/>web and workspace tools"]
-    provisioner[Provisioner]
     edge[Edge sidecar]
+    provisioner[Provisioner]
     openclaw --- extensions
   end
 
-  api[Platform API]
   broker[LLM broker]
   postgres[("PostgreSQL<br/>one schema per agent")]
+  api[Platform API]
 
-  mattermost <-->|"each agent's bot account"| openclaw
+  mattermost <-->|"each agent's<br/>bot account"| openclaw
   router -->|workspace files| edge
   openclaw -->|model calls| broker
   openclaw -->|agent state| postgres
@@ -164,10 +163,10 @@ sequenceDiagram
   participant Provider as Model provider
 
   User->>Mattermost: writes to their agent
-  Mattermost->>Gateway: delivers it to the agent's bot account
-  Gateway->>Broker: model call with the agent's own credential
-  Broker->>Broker: checks the credential and its owner, meters the call
-  Broker->>Provider: forwards it with the provider key
+  Mattermost->>Gateway: to the agent's bot account
+  Gateway->>Broker: model call with<br/>the agent's own credential
+  Broker->>Broker: checks the credential<br/>and its owner, meters the call
+  Broker->>Provider: forwards it with<br/>the provider key
   Provider-->>Broker: completion
   Broker-->>Gateway: completion
   Gateway->>Mattermost: the agent replies
@@ -183,19 +182,19 @@ is good for one agent and that the platform can revoke.
 sequenceDiagram
   actor Operator
   participant Controller as Fleet controller
-  participant Provisioner as Provisioner in the gateway
+  participant Provisioner as Provisioner<br/>in the gateway
   participant API as Platform API
-  participant Hosts as Mattermost and Gitea
+  participant Hosts as Mattermost<br/>and Gitea
 
   Operator->>Controller: octogee-fleet user add
   Controller->>Controller: records the user
   Operator->>Controller: octogee-fleet user assign
-  Controller->>Controller: records the assignment, journals it
-  Provisioner->>API: who is assigned to this gateway?
+  Controller->>Controller: records the assignment,<br/>journals it
+  Provisioner->>API: who is assigned<br/>to this gateway?
   API-->>Provisioner: the new user
   Provisioner->>API: set this user up
-  API->>Hosts: account, team, channels and agent bot,<br/>organization and workspace repository
-  Provisioner->>Provisioner: adds the user's agent to OpenClaw
+  API->>Hosts: account, team, channels,<br/>agent bot, organization,<br/>workspace repository
+  Provisioner->>Provisioner: adds the user's agent<br/>to OpenClaw
 ```
 
 Nothing happens until the operator assigns the user. The platform places
@@ -211,13 +210,13 @@ sequenceDiagram
   participant Target as Target gateway
 
   Operator->>Controller: octogee-fleet user migrate
-  Controller->>Target: creates it, if the move is to a new isolated gateway
-  Source->>Target: keys, then a first copy of the user's state
-  Controller->>Source: quiesce: stop serving this user
-  Controller->>Source: flush what is still in memory
+  Controller->>Target: creates it, if the move is<br/>to a new isolated gateway
+  Source->>Target: keys, then a first copy<br/>of the user's state
+  Controller->>Source: quiesce: stop serving<br/>this user
+  Controller->>Source: flush what is<br/>still in memory
   Source->>Target: final copy of what changed
-  Controller->>Target: verify the user's state arrived
-  Controller->>Controller: cut over: the assignment now names the target
+  Controller->>Target: verify the user's<br/>state arrived
+  Controller->>Controller: cut over: the assignment<br/>now names the target
   Target->>Target: serves the user
   Controller->>Source: unmount the user
 ```
