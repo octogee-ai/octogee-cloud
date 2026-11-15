@@ -12,6 +12,7 @@ import {
   type ProvisioningWorkState,
   type UserProvisioning,
   type UserProvisioningConditionType,
+  type UserProvisioningDeletion,
   type UserProvisioningListQuery,
   type UserProvisioningOutputs,
   type UserProvisioningSpec,
@@ -62,7 +63,7 @@ export interface PageResult {
 
 export type ChangesSince =
   | { kind: "expired" }
-  | { kind: "changes"; items: UserProvisioning[]; resourceVersion: string };
+  | { kind: "changes"; items: UserProvisioning[]; deleted: UserProvisioningDeletion[]; resourceVersion: string };
 
 export type RetryOutcome =
   | { kind: "retried"; resource: UserProvisioning }
@@ -187,13 +188,15 @@ export class ProvisioningStore {
 
   async delete(uid: string): Promise<void> {
     const t = this.db.table;
-    await this.db.write(async (client) => {
+    await this.db.write(async (client, bumpVersion) => {
       const { rows } = await client.query<{ running: boolean }>(
         `SELECT (w.state = 'running' AND w.lease_expires_at > now()) AS running
            FROM ${t("provisionings")} p JOIN ${t("provisioning_work")} w ON w.uid = p.uid WHERE p.uid = $1 FOR UPDATE OF p`, [uid]);
       if (!rows[0]) return;
       if (rows[0].running) throw new ApiError(409, "work-running", "an attempt is running for this user; ask again when it finishes");
       await client.query(`DELETE FROM ${t("provisionings")} WHERE uid = $1`, [uid]);
+      const version = await bumpVersion(uid);
+      await client.query(`INSERT INTO ${t("deletions")} (resource_version, uid) VALUES ($1, $2)`, [version.toString(), uid]);
     });
   }
 
@@ -272,11 +275,20 @@ export class ProvisioningStore {
         `SELECT value, pruned_through FROM ${this.db.table("counter")} WHERE id = 1`);
       const current = BigInt(counter.rows[0].value);
       if (resourceVersion < BigInt(counter.rows[0].pruned_through) || resourceVersion > current) return { kind: "expired" as const };
-      const { rows } = await client.query<ProvisioningRow>(
+      const live = await client.query<ProvisioningRow>(
         `${this.selectResource} WHERE p.resource_version > $1 ORDER BY p.resource_version LIMIT $2`, [resourceVersion.toString(), limit + 1]);
-      const items = rows.slice(0, limit).map(toResource);
-      const through = rows.length > limit ? items[items.length - 1].resourceVersion : current.toString();
-      return { kind: "changes" as const, items, resourceVersion: through };
+      const gone = await client.query<{ uid: string; resource_version: string }>(
+        `SELECT uid, resource_version FROM ${this.db.table("deletions")} WHERE resource_version > $1 ORDER BY resource_version LIMIT $2`,
+        [resourceVersion.toString(), limit + 1]);
+      const changes = [
+        ...live.rows.map((row) => ({ version: BigInt(row.resource_version), item: toResource(row) })),
+        ...gone.rows.map((row) => ({ version: BigInt(row.resource_version), deletion: { uid: row.uid, resourceVersion: String(row.resource_version) } })),
+      ].sort((a, b) => (a.version < b.version ? -1 : 1));
+      const page = changes.slice(0, limit);
+      const items = page.flatMap((change) => ("item" in change ? [change.item] : []));
+      const deleted = page.flatMap((change) => ("deletion" in change ? [change.deletion] : []));
+      const through = changes.length > limit ? page[page.length - 1].version.toString() : current.toString();
+      return { kind: "changes" as const, items, deleted, resourceVersion: through };
     });
   }
 
@@ -288,6 +300,7 @@ export class ProvisioningStore {
          SELECT max(version) AS through, count(*) AS count FROM gone`, [this.changeRetentionMs / 1_000]);
       if (rows[0].through !== null) {
         await client.query(`UPDATE ${t("counter")} SET pruned_through = GREATEST(pruned_through, $1) WHERE id = 1`, [rows[0].through]);
+        await client.query(`DELETE FROM ${t("deletions")} WHERE resource_version <= $1`, [rows[0].through]);
       }
       return Number(rows[0].count);
     });

@@ -13,9 +13,9 @@ The types are `@octogee/shared/types/provisioning-service`.
 | --- | --- | --- |
 | `PUT /v1/users/{uid}/provisioning` | Body `{ spec, expectedResourceVersion? }`. Creates or replaces the spec; `generation` grows only when the spec differs; work is enqueued in the same transaction. | `201` created, `202` changed, `200` unchanged; body is the `UserProvisioning` |
 | `GET /v1/users/{uid}/provisioning` | Read one. `?waitForGeneration=N&timeoutSeconds=T` holds until `status.observedGeneration >= N` or the work parks. | `200`, `404` |
-| `DELETE /v1/users/{uid}/provisioning` | Stops managing the user and its git keys. Deletes nothing in the chat or git host. | `204`, `409 work-running` |
+| `DELETE /v1/users/{uid}/provisioning` | Stops managing the user and its git keys, at a new resource version that the watch reports as a deletion. A waiter on the user answers `404`. Deletes nothing in the chat or git host. | `204`, `409 work-running` |
 | `GET /v1/provisionings` | List: `?ready=true\|false&reason=<Reason>&workState=queued\|running\|retrying\|parked&limit=&pageToken=`. Answers `{ items, resourceVersion, nextPageToken? }`. | `200` |
-| `GET /v1/provisionings?watch=true&resourceVersion=V&timeoutSeconds=T&limit=L` | Returns at once with the resources changed after `V`, oldest change first and at most `L` (default and maximum 500), or holds until one changes or the timeout passes. Answers `{ items, resourceVersion }`; ask again from the returned version, which is the last item's when the page was cut short. | `200`, `410 resource-version-expired` |
+| `GET /v1/provisionings?watch=true&resourceVersion=V&timeoutSeconds=T&limit=L` | Returns at once with the changes after `V`, oldest first and at most `L` (default and maximum 500), or holds until one happens or the timeout passes. Answers `{ items, deleted?, resourceVersion }`: `items` are the resources changed, `deleted` is `[{ uid, resourceVersion }]` for each user deleted, present only when there is one. Apply both in `resourceVersion` order, since a uid can be deleted and created again. Ask again from the returned version, which is the last change's when the page was cut short. | `200`, `410 resource-version-expired` |
 | `POST /v1/users/{uid}/provisioning/retry` | Body `{ expectedAttempts? }`. Makes parked or retrying work due now. Honours `Idempotency-Key` for 24 hours. | `202`, `409 precondition-failed`, `409 not-retryable`, `409 idempotency-conflict` |
 | `GET /v1/users/{uid}/provisioning/events` | The last 50 attempts, newest first, with each step's outcome, reason and duration. | `200`, `404` |
 | `PUT /v1/users/{uid}/git-keys/{gatewayId}` | Body `{ spec: { publicKey } }`. Authorizes the key on the user's git owner. | `201`, `202`, `200`; body is the `GitKey`; `404` when the user has no provisioning |
@@ -171,4 +171,6 @@ the fake; some cases also set the limits, the retention window or the fake host
 delay. `/metrics` must report `provisioning_leases_held`, the attempts this
 replica holds, and `provisioning_lease_expired_total`, the expired leases it took
 over; the replica case uses them to prove a takeover happened. A `resourceVersion`
-newer than the service has issued answers `410`, like an expired one.
+newer than the service has issued answers `410`, like an expired one. Deletion
+markers are kept as long as the change log, so a watch from before the retained
+window answers `410` and the caller lists again.

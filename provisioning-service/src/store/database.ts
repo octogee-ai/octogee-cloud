@@ -72,6 +72,11 @@ const MIGRATIONS: readonly ((table: (name: string) => string) => string)[] = [
       uid text NOT NULL,
       written_at timestamptz NOT NULL DEFAULT now()
     );
+    CREATE TABLE ${t("deletions")} (
+      resource_version bigint PRIMARY KEY,
+      uid text NOT NULL,
+      deleted_at timestamptz NOT NULL DEFAULT now()
+    );
     CREATE TABLE ${t("provisionings")} (
       uid text PRIMARY KEY,
       generation integer NOT NULL,

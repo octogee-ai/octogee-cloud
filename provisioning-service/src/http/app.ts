@@ -146,6 +146,7 @@ export function createApp(deps: AppDependencies): express.Express {
 
   v1.delete("/users/:uid/provisioning", requireRole("writer"), async (request, response) => {
     await deps.store.delete(uidOf(request));
+    deps.notifier.wakeAll();
     response.status(204).end();
   });
 
@@ -170,23 +171,30 @@ export function createApp(deps: AppDependencies): express.Express {
     response.json({ items } satisfies ProvisioningEventsResponse);
   });
 
-  v1.get("/provisionings", requireRole("writer", "reader"), waitLimit, async (request, response) => {
-    if (boolean(request.query.watch, "watch")) {
-      const from = single(request.query.resourceVersion, "resourceVersion");
-      if (from === undefined || !/^\d+$/.test(from)) throw new ApiError(400, INVALID, "watch needs resourceVersion");
-      const limit = integer(request.query.limit, "limit", 1, MAX_PAGE) ?? MAX_PAGE;
-      const until = deadline(request);
-      const signal = closedSignal(request, response);
-      for (;;) {
-        const changes = await deps.store.changesSince(BigInt(from), limit);
-        if (changes.kind === "expired") throw new ApiError(410, "resource-version-expired", "resourceVersion is outside the retained change window; list again");
-        if (changes.items.length > 0 || Date.now() >= until || signal.aborted) {
-          response.json({ items: changes.items, resourceVersion: changes.resourceVersion } satisfies UserProvisioningWatchResponse);
-          return;
-        }
-        await deps.notifier.wait(until - Date.now(), signal);
+  const watch = async (request: Request, response: Response): Promise<void> => {
+    const from = single(request.query.resourceVersion, "resourceVersion");
+    if (from === undefined || !/^\d+$/.test(from)) throw new ApiError(400, INVALID, "watch needs resourceVersion");
+    const limit = integer(request.query.limit, "limit", 1, MAX_PAGE) ?? MAX_PAGE;
+    const until = deadline(request);
+    const signal = closedSignal(request, response);
+    for (;;) {
+      const changes = await deps.store.changesSince(BigInt(from), limit);
+      if (changes.kind === "expired") throw new ApiError(410, "resource-version-expired", "resourceVersion is outside the retained change window; list again");
+      const changed = changes.items.length > 0 || changes.deleted.length > 0;
+      if (changed || Date.now() >= until || signal.aborted) {
+        response.json({
+          items: changes.items,
+          ...(changes.deleted.length > 0 ? { deleted: changes.deleted } : {}),
+          resourceVersion: changes.resourceVersion,
+        } satisfies UserProvisioningWatchResponse);
+        return;
       }
+      await deps.notifier.wait(until - Date.now(), signal);
     }
+  };
+
+  v1.get("/provisionings", requireRole("writer", "reader"), waitLimit, async (request, response) => {
+    if (boolean(request.query.watch, "watch")) return watch(request, response);
     const reason = single(request.query.reason, "reason");
     if (reason !== undefined && !PROVISIONING_CONDITION_REASONS.includes(reason as ProvisioningConditionReason)) {
       throw new ApiError(400, INVALID, "reason is not a known reason");
