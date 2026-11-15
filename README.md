@@ -82,7 +82,7 @@ from the images this repository publishes on a local kind cluster, see
 [The full platform on kind](docs/kind.md), or on GKE with Cloud SQL and Cloud
 Storage, see [The full platform on GKE](docs/gke.md). Start from the
 [latest release](https://github.com/octogee-ai/octogee-cloud/releases/latest),
-or from `main`'s newest commit whose Build main succeeded, as both guides
+or from `main`'s newest commit whose kind smokes passed, as both guides
 describe. A release publishes the images, the Helm charts and the
 `@octogee/core` and `@octogee/shared` npm packages at one version (see
 [Releasing](docs/releasing.md)). v0.1.0 came before the charts and packages

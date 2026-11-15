@@ -112,6 +112,7 @@ import {
 import { addAdminComputerRoutes } from "./admin-vm-router.js";
 import { addAdminUserRoutes, type UserAccounts, type UserSignInHosts } from "./admin-user-router.js";
 import { addAdminSharedPoolRoutes } from "./admin-shared-pool-router.js";
+import type { GatewayKubernetesReader } from "./fleet-state-sections.js";
 import { addAdminPlacementRoutes, type AdminPlacementCapabilities } from "./admin-placement-router.js";
 import {
   GatewayRetirementConflictError,
@@ -240,6 +241,7 @@ export interface FleetRouterDeps {
   releaseAuthority?: CentralReleaseAuthority;
   platformArtifact?: GatewayArtifact;
   controllerStartedAt?: number;
+  readGatewayKubernetes?: GatewayKubernetesReader;
   readGatewayPodDiagnostics?: (gatewayId: string) => Promise<GatewayPodDiagnostics>;
   readGatewayPodDiagnosticsBatch?: (
     gatewayIds: readonly string[],
@@ -4746,6 +4748,7 @@ export function addAdminFleetRoutes(
     platformArtifact: deps.platformArtifact,
     controllerStartedAt: deps.controllerStartedAt,
     journal: runAdminFleetMutation,
+    readGatewayKubernetes: deps.readGatewayKubernetes,
   });
   if (deps.placement) addAdminPlacementRoutes(router, { ...deps.placement, store, journal: runAdminFleetMutation });
 
