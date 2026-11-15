@@ -7,6 +7,7 @@ import type { Request, Response } from "express";
 import { EventEmitter } from "node:events";
 import * as fsSync from "node:fs";
 import fs from "node:fs/promises";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -37,6 +38,7 @@ import {
   type MigrationHandlerDeps,
 } from "../lib/fleet-http-migration.js";
 import { gatewayScopedJobId, signFleetRequest } from "../lib/fleet-signature.js";
+import { reserveLoopbackPort } from "../lib/migration-rsync-tls.js";
 import { liveImportAdmissionPath } from "../lib/migration-staging.js";
 import {
   MIGRATION_VERIFY_DEFAULT_AGENT_ATTACH_IN_PROGRESS,
@@ -2202,6 +2204,61 @@ describe("queued-rsync migration control handlers", () => {
     await abortHandler(abortReq, abortRes.res, vi.fn());
     expect(daemon.kill).toHaveBeenCalled();
     expect(closeTransport).toHaveBeenCalled();
+  });
+
+  it("releases the import port when the rsync daemon exits on its own, so the next migration can prepare", async () => {
+    const port = await reserveLoopbackPort();
+    const openMigrationTlsEndpoint = vi.fn(async ({ publicPort }: { publicPort: number }) => {
+      const server = net.createServer();
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(publicPort, () => resolve());
+      });
+      return {
+        certificatePem: TARGET_CERTIFICATE_PEM,
+        close: () => new Promise<void>((done) => server.close(() => done())),
+      };
+    });
+    const log = vi.fn();
+    const adapter = mkAdapter({ prepareImportDir: vi.fn(async () => "/openclaw"), markUserMigratingIn: vi.fn() });
+    const deps = mkDeps({ adapter, log, migrationRsyncPort: port, waitForRsyncReady: async () => undefined, openMigrationTlsEndpoint });
+    const prepare = async (migrationId: string) => {
+      const body: PrepareRsyncImportRequestBody = {
+        migrationId,
+        slug: "chris",
+        rpcPhase: "prepare-rsync-import",
+        mode: "pre",
+        transferUser: "migration",
+        transferKey: "a".repeat(64),
+        sourcePodIp: SOURCE_POD_IP,
+      };
+      const response = mkResponse();
+      await createPrepareRsyncImportHandler(deps)(
+        mkRequest(body, { signature: signForPod(migrationId, JSON.stringify(body)) }), response.res, vi.fn());
+      return { status: response.getStatus(), body: response.getBody() };
+    };
+    const firstDaemon = mkFakeChild();
+    spawnMock.mockReturnValueOnce(firstDaemon);
+    expect(await prepare("mig-daemon-lost")).toMatchObject({ status: 200 });
+
+    firstDaemon.signalCode = "SIGKILL";
+    firstDaemon.emit("exit", null, "SIGKILL");
+
+    spawnMock.mockReturnValueOnce(mkFakeChild());
+    const next = await prepare("mig-after-daemon-lost");
+
+    expect(next).toMatchObject({ status: 200, body: { port } });
+    expect(log).toHaveBeenCalledWith(
+      expect.stringMatching(/rsync daemon exited before its import finished .*migrationId=mig-daemon-lost/),
+      { status: "failed" },
+    );
+    const abortBody: AbortRsyncImportRequestBody = {
+      migrationId: "mig-after-daemon-lost", slug: "chris", rpcPhase: "abort-rsync-import", mode: "pre",
+    };
+    const abortResponse = mkResponse();
+    await createAbortRsyncImportHandler(deps)(
+      mkRequest(abortBody, { signature: signForPod(abortBody.migrationId, JSON.stringify(abortBody)) }), abortResponse.res, vi.fn());
+    expect(abortResponse.getStatus()).toBe(200);
   });
 
   it("reserves the surge target only for a configured user final import, before opening its session, and fails closed", async () => {

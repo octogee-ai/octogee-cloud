@@ -1252,6 +1252,7 @@ interface RSyncImportSession {
   secretsPath: string;
   child: ReturnType<typeof spawn>;
   transport: MigrationTlsEndpoint;
+  transportClosing?: boolean;
   baselineEntries?: string[];
 }
 
@@ -1527,6 +1528,7 @@ async function stopRsyncDaemon(child: ReturnType<typeof spawn>): Promise<void> {
 }
 
 async function stopRsyncTransfer(session: RSyncImportSession): Promise<void> {
+  session.transportClosing = true;
   await session.transport.close();
   await stopRsyncDaemon(session.child);
 }
@@ -1956,8 +1958,20 @@ export function createPrepareRsyncImportHandler(deps: MigrationHandlerDeps): Req
         baselineEntries,
       };
       rsyncImportSessions.set(key, session);
-      child.on("exit", () => {
+      child.on("exit", (code, signal) => {
         if (rsyncImportSessions.get(key) === session) rsyncImportSessions.delete(key);
+        if (session.transportClosing) return;
+        session.transportClosing = true;
+        log(
+          `[migration-rsync] 🔴 rsync daemon exited before its import finished code=${code} signal=${signal} migrationId=${body.migrationId} slug=${body.slug}; closing import port ${port}`,
+          { status: "failed" },
+        );
+        session.transport.close().catch((error: unknown) => {
+          log(
+            `[migration-rsync] 🔴 import port ${port} did not close migrationId=${body.migrationId} slug=${body.slug}: ${error instanceof Error ? error.message : String(error)}`,
+            { status: "failed" },
+          );
+        });
       });
       child.on("error", (err) => {
         log(

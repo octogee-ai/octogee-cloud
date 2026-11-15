@@ -36,6 +36,7 @@ const TRANSIENT_ERROR_PATTERNS: readonly RegExp[] = [
   /^restore recovery Kubernetes outcome is unresolved$/,
   /^restore recovery images are not ready; outcome remains fenced$/,
   /rsync import port \d+ is already serving migrationId=/,
+  /\/prepare-rsync-import\/\S+: 500 \{"error":"prepare-rsync-import failed","message":"listen EADDRINUSE: address already in use \S*:\d+"\}/,
   /\btimed?\s?out\b/i,
   /\bsocket closed before connect response\b/i,
   /\bis held for migration\b/i,
