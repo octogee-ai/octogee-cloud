@@ -58,7 +58,7 @@ const appError = (status: number, id: string) => json(status, { id, message: id,
 const notFound = () => appError(404, "app.not_found");
 
 export class FakeMattermostApi {
-  readonly baseUrl = "http://chat.invalid";
+  readonly baseUrl = "https://chat.invalid";
   readonly users = new Map<string, FakeMmUser>();
   readonly teams = new Map<string, FakeMmTeam>();
   readonly channels = new Map<string, FakeMmChannel>();
