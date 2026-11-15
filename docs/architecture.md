@@ -7,38 +7,10 @@ the picture below.
 
 ## The picture
 
-```mermaid
-flowchart TB
-  operator([Operator])
-  user([User])
-  provider([Model provider])
-
-  subgraph services[Platform services]
-    controller[Fleet controller<br/>and Admin API]
-    api[Platform API]
-    broker[LLM broker]
-  end
-
-  hosts[Mattermost and Gitea]
-
-  subgraph gateways[Gateways]
-    shared[Shared gateway<br/>many users, no host code]
-    isolated[Isolated gateway<br/>one user, full OpenClaw]
-  end
-
-  state[(PostgreSQL and<br/>object storage)]
-
-  operator -->|octogee-fleet| controller
-  user -->|chat and git| hosts
-  controller -->|adds, retires,<br/>moves users| gateways
-  hosts <-->|messages| gateways
-  gateways -->|sets up users| api
-  api -->|admin credentials| hosts
-  gateways -->|model calls| broker
-  broker --> provider
-  services --> state
-  gateways --> state
-```
+The [README](../README.md#the-platform-at-a-glance) has the diagrams: the
+platform at a glance, the inside of a gateway, and walkthroughs of a message,
+of adding a user and of moving a user between gateways. This page is the
+reference behind them.
 
 ## Services
 

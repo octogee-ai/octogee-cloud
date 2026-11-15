@@ -4,7 +4,7 @@
   "license": "MIT",
   "type": "module",
   "dependencies": {
-    "typebox": "^1.4.5"
+    "typebox": "^1.4.6"
   },
   "devDependencies": {
     "vitest": "^5.1.0"
