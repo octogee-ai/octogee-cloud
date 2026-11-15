@@ -35,7 +35,8 @@ export function authenticate(options: {
       return sendError(response, 503, "unavailable", "token review is unavailable");
     }
     if (!review.authenticated) return sendError(response, 401, "unauthenticated", "the token is not valid for this audience");
-    const roles = review.namespace === options.namespace ? options.roleTable[review.serviceAccount] : undefined;
+    const known = review.namespace === options.namespace && Object.hasOwn(options.roleTable, review.serviceAccount);
+    const roles = known ? options.roleTable[review.serviceAccount] : undefined;
     if (!roles) {
       options.log.warn("caller has no role", { namespace: review.namespace, serviceAccount: review.serviceAccount });
       return sendError(response, 403, "forbidden", "this service account has no role here");

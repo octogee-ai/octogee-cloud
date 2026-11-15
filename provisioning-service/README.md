@@ -49,7 +49,7 @@ account maps to roles through a fixed table:
 
 | Service account | Roles |
 | --- | --- |
-| `octogee-glm-controller` (fleet controller) | `writer`: provisioning put, delete, read, list, watch, retry, events |
+| `octogee-glm-controller` (fleet controller) | `writer`: provisioning put, delete, read, list, watch, retry, events; `credential-reader`: credentials, to copy issued chat tokens where the platform reads them |
 | `octogee-api` (platform API) | `key-writer`: git keys; `reader`: provisioning read, list, watch, events; `credential-reader`: credentials |
 
 Only service accounts in `PROVISIONING_CALLER_NAMESPACE` are matched. A failed

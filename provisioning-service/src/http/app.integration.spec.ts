@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createHarness, dsn, spec, TOKENS, untilSettled, type Harness } from "../__tests__/harness.js";
+import { CALLER_ROLES } from "../config.js";
 
 const KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA gateway-a";
 
@@ -22,7 +23,7 @@ describe.skipIf(!dsn)("the provisioning HTTP API", { timeout: 30_000 }, () => {
       expect((await harness.request("GET", "/v1/provisionings", { token: TOKENS.otherNamespace })).status).toBe(403);
     });
 
-    it("limits the platform API to git keys, reads and credentials, and the fleet controller to provisioning", async () => {
+    it("limits the platform API to git keys, reads and credentials, and the fleet controller to provisioning and credentials", async () => {
       const body = { spec: spec("lin") };
       expect((await harness.request("PUT", "/v1/users/u1/provisioning", { token: TOKENS.platformApi, body })).status).toBe(403);
       expect((await harness.request("PUT", "/v1/users/u1/provisioning", { body })).status).toBe(201);
@@ -31,7 +32,24 @@ describe.skipIf(!dsn)("the provisioning HTTP API", { timeout: 30_000 }, () => {
       expect((await harness.request("DELETE", "/v1/users/u1/provisioning", { token: TOKENS.platformApi })).status).toBe(403);
       expect((await harness.request("PUT", "/v1/users/u1/git-keys/gw-1", { body: { spec: { publicKey: KEY } } })).status).toBe(403);
       expect((await harness.request("PUT", "/v1/users/u1/git-keys/gw-1", { token: TOKENS.platformApi, body: { spec: { publicKey: KEY } } })).status).toBe(201);
-      expect((await harness.request("GET", "/v1/users/u1/credentials/user-chat-token")).status).toBe(403);
+      expect((await harness.request("GET", "/v1/users/u1/credentials/user-chat-token")).body.code).toBe("not-issued");
+      expect((await harness.request("GET", "/v1/users/u1/credentials/user-chat-token", { token: TOKENS.platformApi })).body.code).toBe("not-issued");
+    });
+
+    it("refuses credentials to a caller holding only key-writer or only reader", async () => {
+      const scoped = await createHarness({ roleTable: { ...CALLER_ROLES, "key-writer-only": ["key-writer"], "reader-only": ["reader"] } });
+      try {
+        expect((await scoped.request("PUT", "/v1/users/u1/provisioning", { body: { spec: spec("lin") } })).status).toBe(201);
+        expect((await scoped.request("GET", "/v1/users/u1/credentials/user-chat-token", { token: TOKENS.keyWriterOnly })).body.code).toBe("forbidden");
+        expect((await scoped.request("GET", "/v1/users/u1/credentials/user-chat-token", { token: TOKENS.readerOnly })).body.code).toBe("forbidden");
+        expect((await scoped.request("GET", "/v1/users/u1/provisioning", { token: TOKENS.readerOnly })).status).toBe(200);
+      } finally {
+        await scoped.dispose();
+      }
+    });
+
+    it("answers 403 to a service account whose name is an object property, such as constructor", async () => {
+      expect((await harness.request("GET", "/v1/provisionings", { token: TOKENS.constructorName })).body.code).toBe("forbidden");
     });
 
     it("answers 429 rate-limited with Retry-After once one caller exceeds its requests per minute, while other callers and probes go on", async () => {

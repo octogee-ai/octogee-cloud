@@ -29,7 +29,7 @@ export interface ServiceConfig {
 }
 
 export const CALLER_ROLES: Readonly<Record<string, readonly ProvisioningRole[]>> = {
-  "octogee-glm-controller": ["writer"],
+  "octogee-glm-controller": ["writer", "credential-reader"],
   "octogee-api": ["key-writer", "reader", "credential-reader"],
 };
 
