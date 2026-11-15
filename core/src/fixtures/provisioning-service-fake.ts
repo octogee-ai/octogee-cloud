@@ -48,8 +48,23 @@ function send(res: ServerResponse, status: number, body?: unknown, headers: Reco
   res.end(body === undefined ? undefined : JSON.stringify(body));
 }
 
-function fail(res: ServerResponse, status: number, code: ProvisioningErrorBody["code"], error: string): void {
-  send(res, status, { code, error } satisfies ProvisioningErrorBody);
+type FakeErrorCode = Extract<
+  ProvisioningErrorBody["code"],
+  "unauthenticated" | "precondition-failed" | "not-found" | "forbidden" | "not-issued" | "resource-version-expired" | "unavailable"
+>;
+
+const FAKE_ERROR_MESSAGES: Record<FakeErrorCode, string> = {
+  unauthenticated: "token review failed",
+  "precondition-failed": "the precondition no longer holds",
+  "not-found": "no such provisioning or route",
+  forbidden: "this caller lacks the credential-reader role",
+  "not-issued": "this credential has not been issued yet",
+  "resource-version-expired": "the resource version has expired",
+  unavailable: "the fake provisioning service failed",
+};
+
+function fail(res: ServerResponse, status: number, code: FakeErrorCode): void {
+  send(res, status, { code, error: FAKE_ERROR_MESSAGES[code] } satisfies ProvisioningErrorBody);
 }
 
 async function readBody(req: IncomingMessage): Promise<unknown> {
@@ -129,7 +144,7 @@ export async function startFakeProvisioningService(options: { tokens?: string[] 
   function refused(req: IncomingMessage, res: ServerResponse): boolean {
     const bearer = req.headers.authorization?.replace(/^Bearer /, "");
     if (bearer === undefined || !service.acceptedTokens.has(bearer)) {
-      fail(res, 401, "unauthenticated", "token review failed");
+      fail(res, 401, "unauthenticated");
       return true;
     }
     const failure = failures.shift();
@@ -146,7 +161,7 @@ export async function startFakeProvisioningService(options: { tokens?: string[] 
   function retry(uid: string, existing: UserProvisioning, recorded: FakeProvisioningRequest, res: ServerResponse): void {
     const expected = (recorded.body as { expectedAttempts?: number } | undefined)?.expectedAttempts;
     if (expected !== undefined && expected !== existing.status.work.attempts) {
-      fail(res, 409, "precondition-failed", `attempts is ${existing.status.work.attempts}`);
+      fail(res, 409, "precondition-failed");
       return;
     }
     const key = recorded.idempotencyKey ?? "";
@@ -158,7 +173,7 @@ export async function startFakeProvisioningService(options: { tokens?: string[] 
   function put(uid: string, existing: UserProvisioning | undefined, body: unknown, res: ServerResponse): void {
     const write = body as { spec: UserProvisioningSpec; expectedResourceVersion?: string };
     if (write.expectedResourceVersion !== undefined && write.expectedResourceVersion !== (existing?.resourceVersion ?? "")) {
-      fail(res, 409, "precondition-failed", "resource version moved");
+      fail(res, 409, "precondition-failed");
       return;
     }
     if (!existing) {
@@ -179,7 +194,7 @@ export async function startFakeProvisioningService(options: { tokens?: string[] 
       remove(uid);
       return send(res, 204);
     }
-    if (!existing) return fail(res, 404, "not-found", "no provisioning");
+    if (!existing) return fail(res, 404, "not-found");
     if (suffix === "/events") return send(res, 200, { items: events.get(uid) ?? [] });
     if (suffix === "/retry") return retry(uid, existing, recorded, res);
     send(res, 200, existing);
@@ -193,16 +208,16 @@ export async function startFakeProvisioningService(options: { tokens?: string[] 
     const credentialMatch = /^\/v1\/users\/([^/]+)\/credentials\/([^/]+)$/.exec(url.pathname);
     if (credentialMatch) return credential(decodeURIComponent(credentialMatch[1]), decodeURIComponent(credentialMatch[2]), res);
     const userMatch = /^\/v1\/users\/([^/]+)\/provisioning(\/retry|\/events)?$/.exec(url.pathname);
-    if (!userMatch) return fail(res, 404, "not-found", "no such route");
+    if (!userMatch) return fail(res, 404, "not-found");
     user(decodeURIComponent(userMatch[1]), userMatch[2], recorded, res);
   }
 
   function credential(uid: string, name: string, res: ServerResponse): void {
-    if (!service.credentialReader) return fail(res, 403, "forbidden", "this caller lacks the credential-reader role");
+    if (!service.credentialReader) return fail(res, 403, "forbidden");
     const issued = credentials.get(`${uid}/${name}`);
     if (issued) return send(res, 200, issued);
-    if (!resources.has(uid)) return fail(res, 404, "not-found", "no provisioning for this user");
-    fail(res, 409, "not-issued", "this credential has not been issued yet");
+    if (!resources.has(uid)) return fail(res, 404, "not-found");
+    fail(res, 409, "not-issued");
   }
 
   async function listOrWatch(url: URL, res: ServerResponse): Promise<void> {
@@ -221,7 +236,7 @@ export async function startFakeProvisioningService(options: { tokens?: string[] 
       return;
     }
     const since = Number(url.searchParams.get("resourceVersion"));
-    if (since < oldestRetained) return fail(res, 410, "resource-version-expired", "too old");
+    if (since < oldestRetained) return fail(res, 410, "resource-version-expired");
     const timeoutMs = Number(url.searchParams.get("timeoutSeconds") ?? "60") * 1000;
     const limit = Number(url.searchParams.get("limit") ?? "500");
     if (!changes.some((change) => change.version > since)) {
@@ -239,7 +254,10 @@ export async function startFakeProvisioningService(options: { tokens?: string[] 
   }
 
   const server: Server = createServer((req, res) => {
-    handle(req, res).catch((error: unknown) => fail(res, 500, "unavailable", String(error)));
+    handle(req, res).catch((error: unknown) => {
+      console.error("fake provisioning service handler failed", error);
+      fail(res, 500, "unavailable");
+    });
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const { port } = server.address() as AddressInfo;
