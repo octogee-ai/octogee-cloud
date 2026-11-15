@@ -16,6 +16,8 @@ RUN test -n "$OS_PACKAGE_REFRESH" && apt-get update && apt-get upgrade -y \
 COPY --from=platform-npm /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
 
 WORKDIR /app/provisioning-service
+COPY core/package.json /app/core/package.json
+COPY core/dist /app/core/dist
 COPY shared/package.json /app/shared/package.json
 COPY shared/dist /app/shared/dist
 
