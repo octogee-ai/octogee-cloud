@@ -6,7 +6,7 @@ import { pathToFileURL } from "node:url";
 import { IMAGE_BUILDS, PLATFORM_CONTEXT, imagePlan } from "./image-build.mjs";
 import { gatewayBakePlan } from "./gateway-bake.mjs";
 
-export const PLATFORM_IMAGES = ["glm-controller", "octogee-api", "gateway-edge", "octogee-gateway", "octogee-gateway-builder", "vm-bridge"];
+export const PLATFORM_IMAGES = ["glm-controller", "octogee-api", "gateway-edge", "octogee-gateway", "octogee-gateway-builder", "vm-bridge", "provisioning-service"];
 export const PLATFORMS = ["linux/amd64", "linux/arm64"];
 export const SOURCE_REPOSITORY = "https://github.com/octogee-ai/octogee-cloud";
 export const CACHE_PREFIX = "octogee-cloud";

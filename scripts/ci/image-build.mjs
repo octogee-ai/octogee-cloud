@@ -13,6 +13,7 @@ export const IMAGE_BUILDS = {
   "octogee-project-runner": { dockerfile: "platform/platform-api/Dockerfile", context: PLATFORM_CONTEXT, target: "project-runner", overlays: API_OVERLAYS },
   "octogee-ops-agent-runtime": { dockerfile: "ops-agent/Dockerfile", context: "." },
   "product-controller": { dockerfile: "product/controller/Dockerfile", context: "." },
+  "provisioning-service": { dockerfile: "platform/provisioning-service/Dockerfile", context: PLATFORM_CONTEXT },
 };
 
 export const productContext = (cwd = process.cwd()) => (existsSync(join(cwd, PRODUCT_ROOT)) ? { product: PRODUCT_ROOT } : {});

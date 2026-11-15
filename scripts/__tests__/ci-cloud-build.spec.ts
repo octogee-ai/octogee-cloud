@@ -11,8 +11,8 @@ import { IMAGE_BUILDS } from "../ci/image-build.mjs";
 const root = fileURLToPath(new URL("../..", import.meta.url));
 const registry = "ghcr.io/octogee-ai/octogee-cloud";
 const sha = "a".repeat(40);
-const images = ["glm-controller", "octogee-api", "gateway-edge", "octogee-gateway", "vm-bridge"];
-const amd64Images = ["glm-controller", "octogee-api", "gateway-edge", "octogee-gateway", "octogee-gateway-builder", "vm-bridge"];
+const images = ["glm-controller", "octogee-api", "gateway-edge", "octogee-gateway", "vm-bridge", "provisioning-service"];
+const amd64Images = ["glm-controller", "octogee-api", "gateway-edge", "octogee-gateway", "octogee-gateway-builder", "vm-bridge", "provisioning-service"];
 const plan = (overrides: Record<string, unknown> = {}) =>
   cloudBakePlan({ registry, sha, platform: "linux/arm64", root, ...overrides });
 const fileSha256 = (path: string) => createHash("sha256").update(readFileSync(join(root, path))).digest("hex");
@@ -34,6 +34,7 @@ describe("public platform image plan", () => {
     }
     expect(target["glm-controller"].dockerfile).toBe("fleet-controller/Dockerfile");
     expect(target["vm-bridge"].dockerfile).toBe("vm-bridge/Dockerfile");
+    expect(target["provisioning-service"].dockerfile).toBe("provisioning-service/Dockerfile");
     expect(target["octogee-gateway-base"].output).toEqual(["type=cacheonly"]);
     expect(target["octogee-gateway-system"].output).toEqual(["type=cacheonly"]);
   });
