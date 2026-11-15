@@ -1,6 +1,8 @@
 import { readFile } from "node:fs/promises";
 import {
   PROVISIONING_API_VERSION,
+  type ProvisioningCredential,
+  type ProvisioningCredentialName,
   type ProvisioningErrorCode,
   type ProvisioningEventsResponse,
   type RetryProvisioningRequest,
@@ -85,6 +87,7 @@ export interface ProvisioningServiceClient {
   watchProvisionings(options: WatchProvisioningsOptions): Promise<UserProvisioningWatchResponse>;
   retryProvisioning(uid: string, request: RetryProvisioningRequest, idempotencyKey: string): Promise<unknown>;
   getProvisioningEvents(uid: string): Promise<ProvisioningEventsResponse | null>;
+  getCredential(uid: string, name: ProvisioningCredentialName): Promise<ProvisioningCredential | null>;
 }
 
 export interface ProvisioningServiceConfig {
@@ -312,6 +315,20 @@ export function createProvisioningServiceClient(options: ProvisioningServiceClie
     async getProvisioningEvents(uid) {
       const response = await request({ method: "GET", path: `${userPath(uid)}/events`, allowNotFound: true });
       return response.status === 404 ? null : json<ProvisioningEventsResponse>(response);
+    },
+
+    async getCredential(uid, name) {
+      try {
+        const response = await request({
+          method: "GET",
+          path: `users/${encodeURIComponent(uid)}/credentials/${encodeURIComponent(name)}`,
+          allowNotFound: true,
+        });
+        return response.status === 404 ? null : json<ProvisioningCredential>(response);
+      } catch (error) {
+        if (error instanceof ProvisioningServiceError && error.code === "not-issued") return null;
+        throw error;
+      }
     },
   };
   return client;

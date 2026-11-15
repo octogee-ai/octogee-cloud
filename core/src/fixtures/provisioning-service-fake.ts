@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from "node:net";
 import type {
   ProvisioningAttempt,
+  ProvisioningCredential,
   ProvisioningErrorBody,
   UserProvisioning,
   UserProvisioningSpec,
@@ -26,6 +27,7 @@ export interface FakeProvisioningService {
   expireBefore(resourceVersion: number): void;
   setStatus(uid: string, status: Partial<UserProvisioningStatus>): UserProvisioning;
   setEvents(uid: string, items: ProvisioningAttempt[]): void;
+  setCredential(uid: string, credential: ProvisioningCredential): void;
   close(): Promise<void>;
 }
 
@@ -59,6 +61,7 @@ export async function startFakeProvisioningService(options: { tokens?: string[] 
   const resources = new Map<string, UserProvisioning>();
   const changedAt = new Map<string, number>();
   const events = new Map<string, ProvisioningAttempt[]>();
+  const credentials = new Map<string, ProvisioningCredential>();
   const retries = new Map<string, unknown>();
   const failures: Array<{ status: number; retryAfterSeconds?: number }> = [];
   const waiters = new Set<() => void>();
@@ -153,11 +156,20 @@ export async function startFakeProvisioningService(options: { tokens?: string[] 
     send(res, 200, existing);
   }
 
+  function credential(uid: string, name: string, res: ServerResponse): void {
+    const issued = credentials.get(`${uid}/${name}`);
+    if (issued) return send(res, 200, issued, { "cache-control": "no-store" });
+    if (!resources.has(uid)) return fail(res, 404, "not-found", "no provisioning for this user");
+    fail(res, 409, "not-issued", "this credential has not been issued yet");
+  }
+
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = new URL(req.url ?? "/", FAKE_BASE);
     const recorded = record(req, url, await readBody(req));
     if (refused(req, res)) return;
     if (url.pathname === "/v1/provisionings") return listOrWatch(url, res);
+    const credentialMatch = /^\/v1\/users\/([^/]+)\/credentials\/([^/]+)$/.exec(url.pathname);
+    if (credentialMatch) return credential(decodeURIComponent(credentialMatch[1]), decodeURIComponent(credentialMatch[2]), res);
     const userMatch = /^\/v1\/users\/([^/]+)\/provisioning(\/retry|\/events)?$/.exec(url.pathname);
     if (!userMatch) return fail(res, 404, "not-found", "no such route");
     user(decodeURIComponent(userMatch[1]), userMatch[2], recorded, res);
@@ -224,6 +236,9 @@ export async function startFakeProvisioningService(options: { tokens?: string[] 
     },
     setEvents(uid, items) {
       events.set(uid, items);
+    },
+    setCredential(uid, issued) {
+      credentials.set(`${uid}/${issued.name}`, issued);
     },
     async close() {
       for (const wake of [...waiters]) wake();

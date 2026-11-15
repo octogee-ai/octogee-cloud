@@ -16,6 +16,7 @@ export declare class ProvisioningMirrorError extends Error {
     readonly uid: string;
     constructor(uid: string, message: string);
 }
+export declare function chatReady(resource: UserProvisioning): ChatOutputs | null;
 export declare function mmUpdateFromChatOutputs(input: {
     slug: string;
     chat: ChatOutputs;

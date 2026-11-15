@@ -8,7 +8,7 @@ export class ProvisioningMirrorError extends Error {
         this.name = "ProvisioningMirrorError";
     }
 }
-function chatReady(resource) {
+export function chatReady(resource) {
     const condition = resource.status.conditions.find((candidate) => candidate.type === "ChatReady");
     const chat = resource.status.outputs.chat;
     if (condition?.status !== "True" || chat === undefined)

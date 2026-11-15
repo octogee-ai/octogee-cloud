@@ -224,6 +224,21 @@ export function createProvisioningServiceClient(options) {
             const response = await request({ method: "GET", path: `${userPath(uid)}/events`, allowNotFound: true });
             return response.status === 404 ? null : json(response);
         },
+        async getCredential(uid, name) {
+            try {
+                const response = await request({
+                    method: "GET",
+                    path: `users/${encodeURIComponent(uid)}/credentials/${encodeURIComponent(name)}`,
+                    allowNotFound: true,
+                });
+                return response.status === 404 ? null : json(response);
+            }
+            catch (error) {
+                if (error instanceof ProvisioningServiceError && error.code === "not-issued")
+                    return null;
+                throw error;
+            }
+        },
     };
     return client;
 }

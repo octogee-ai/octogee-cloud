@@ -28,7 +28,7 @@ export class ProvisioningMirrorError extends Error {
   }
 }
 
-function chatReady(resource: UserProvisioning): ChatOutputs | null {
+export function chatReady(resource: UserProvisioning): ChatOutputs | null {
   const condition = resource.status.conditions.find((candidate) => candidate.type === "ChatReady");
   const chat = resource.status.outputs.chat;
   if (condition?.status !== "True" || chat === undefined) return null;

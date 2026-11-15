@@ -562,6 +562,10 @@
       "types": "./dist/provisioning-sync.d.ts",
       "default": "./dist/provisioning-sync.js"
     },
+    "./provisioning-mirror": {
+      "types": "./dist/provisioning-mirror.d.ts",
+      "default": "./dist/provisioning-mirror.js"
+    },
     "./identity-provider": {
       "types": "./dist/identity-provider.d.ts",
       "default": "./dist/identity-provider.js"
