@@ -7,7 +7,7 @@ import type {
   UserProvisioning,
   UserProvisioningConditionType,
 } from "@octogee/shared/types/provisioning-service";
-import { ProvisioningServiceError } from "@octogee/core/provisioning-service-client";
+import { createProvisioningServiceClient, ProvisioningServiceError } from "@octogee/core/provisioning-service-client";
 import { logger } from "@octogee/core/http/logging";
 import { createLegacyProvisioning, legacyProvisioningFromEnvironment, type LegacyProvisioningClient } from "./legacy-provisioning.js";
 
@@ -196,6 +196,46 @@ describe("legacy provisioning adapter: credentials", () => {
     const { client } = fakeClient([], refusal);
 
     await expect(adapter(client).agentChatToken("uid-lin")).rejects.toBe(refusal);
+  });
+});
+
+describe("legacy provisioning requests", () => {
+  it("only ever reads from the provisioning service, whatever the user's state", async () => {
+    vi.spyOn(logger, "error").mockImplementation(() => {});
+    const methods: string[] = [];
+    const answers: Response[] = [
+      Response.json(resource({ generation: 2, observedGeneration: 1 })),
+      Response.json(resource({ generation: 2, observedGeneration: 1 })),
+      Response.json({ code: "not-found", error: "no provisioning for this user" }, { status: 404 }),
+      Response.json({ code: "unavailable", error: "down" }, { status: 503, headers: { "retry-after": "7" } }),
+      Response.json(resource({ conditions: [condition("GitReady", "False", "GitRepositoryFailed")] })),
+      Response.json({ code: "not-issued", error: "not issued" }, { status: 409 }),
+      Response.json({ code: "not-found", error: "no provisioning for this user" }, { status: 404 }),
+    ];
+    const fetch: typeof globalThis.fetch = async (input, init) => {
+      methods.push(init?.method ?? (input instanceof Request ? input.method : "GET"));
+      const answer = answers.shift();
+      if (!answer) throw new Error("no answer left");
+      return answer;
+    };
+    const client = createProvisioningServiceClient({
+      baseUrl: "http://provisioning.invalid",
+      tokenPath: "/token",
+      readToken: async () => "token",
+      fetch,
+      retry: { attempts: 1, baseDelayMs: 0, maxDelayMs: 0 },
+    });
+    const provisioning = adapter(client);
+
+    await provisioning.chat("uid-lin");
+    await provisioning.chat("uid-lin");
+    await provisioning.chat("uid-lin");
+    await provisioning.git("uid-lin", "workspace");
+    await provisioning.agentChatToken("uid-lin");
+    await provisioning.agentChatToken("uid-lin");
+
+    expect(answers).toEqual([]);
+    expect(new Set(methods)).toEqual(new Set(["GET"]));
   });
 });
 
