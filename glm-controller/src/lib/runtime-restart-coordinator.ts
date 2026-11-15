@@ -29,6 +29,12 @@ export async function acquireRuntimeRestart(store:PlatformStateStore,fence:Runti
 async function savedRuntimeRestart(store:PlatformStateStore,gatewayId:string):Promise<RuntimeRestartFence|undefined> {
   return (await store.gateways.roots.get(gatewayId))?.runtimeRestartFence as RuntimeRestartFence|undefined;
 }
+function observable(fence:RuntimeRestartFence|undefined):fence is RuntimeRestartFence {
+  return fence?.phase==='dispatched' || fence?.phase==='acknowledged';
+}
+function messageOf(error:unknown):string {
+  return error instanceof Error ? error.message : String(error);
+}
 export async function coordinateRuntimeRestart(
   store:PlatformStateStore,gatewayId:string,kind:RuntimeRestartFence['kind'],
   work:(fence:RuntimeRestartFence,save:(next:RuntimeRestartFence)=>Promise<void>)=>Promise<void>,
@@ -37,11 +43,11 @@ export async function coordinateRuntimeRestart(
   const attemptId=randomUUID();
   const saved=await savedRuntimeRestart(store,gatewayId);
   await runNormalFleetMutation(store,{
-    actor:'cowboy',forced:false,what:saved?.phase==='acknowledged'?'gateway-restart-observation':`gateway-${kind}-restart`,why:kind==='deployment'?'model-key secret changed':'operator requested process restart',
+    actor:'cowboy',forced:false,what:observable(saved)?'gateway-restart-observation':`gateway-${kind}-restart`,why:kind==='deployment'?'model-key secret changed':'operator requested process restart',
     target:{gatewayId},preActionStatus:saved?{restartAttemptId:saved.attemptId,phase:saved.phase}:{},mutation:{kind,attemptId},idempotencyKey:attemptId,
     action:async claim=>{
       const existing=await savedRuntimeRestart(store,gatewayId);
-      if(existing?.phase==='acknowledged') {
+      if(observable(existing)) {
         if(!observe || existing.gatewayId!==gatewayId)throw new Error('gateway restart observation unavailable');
         await observe(existing);
         await updateRuntimeRestart(store,existing,null);
@@ -55,6 +61,10 @@ export async function coordinateRuntimeRestart(
         await updateRuntimeRestart(store,current,null);
       } catch(error) {
         if(current.phase==='reserved')await updateRuntimeRestart(store,current,null);
+        if(current.phase!=='dispatched' || !observe)throw error;
+        const unresolved=await observe(current).then(()=>null,(observation:unknown)=>observation);
+        if(unresolved!==null)throw new Error(`${messageOf(error)}; ${messageOf(unresolved)}`,{cause:error});
+        await updateRuntimeRestart(store,current,null);
         throw error;
       }
     },

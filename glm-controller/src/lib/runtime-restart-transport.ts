@@ -1,14 +1,18 @@
 import type {PlatformStateStore} from '@octogee/core/platform-state';
-import type {KubectlSubprocess} from '../fleet-ingress.js';
+import type {KubectlSubprocess,KubectlSubprocessResult} from '../fleet-ingress.js';
 import {coordinateRuntimeRestart, type RuntimeRestartFence} from './runtime-restart-coordinator.js';
 import {runtimeRestartDriverSource} from './runtime-restart-driver.js';
 
 interface KubeObject {metadata:{uid:string;name:string;resourceVersion:string;generation?:number;deletionTimestamp?:string;annotations?:Record<string,string>;ownerReferences?:Array<{uid:string}>};spec?:{replicas?:number;template?:{metadata?:{annotations?:Record<string,string>}}};status?:{phase?:string;observedGeneration?:number;updatedReplicas?:number;readyReplicas?:number;availableReplicas?:number;conditions?:Array<{type:string;status:string}>}}
 interface Deps {store:PlatformStateStore;namespace:string;runKubectl:KubectlSubprocess;now?:()=>number;wait?:(ms:number)=>Promise<void>}
 const TOKEN='octogee.com/runtime-restart-attempt';
+function kubectlFailure(result:KubectlSubprocessResult):string {
+  const stderr=result.stderr.trim().slice(0,4096);
+  return stderr ? `exit ${result.code}: ${stderr}` : `exit ${result.code}`;
+}
 async function json(deps:Deps,args:string[]):Promise<KubeObject> {
   const result=await deps.runKubectl(['-n',deps.namespace,...args,'-o','json'],{timeoutMs:15_000});
-  if(result.code!==0)throw new Error('gateway restart Kubernetes observation unavailable');
+  if(result.code!==0)throw new Error(`gateway restart Kubernetes observation unavailable (${kubectlFailure(result)})`);
   return JSON.parse(result.stdout) as KubeObject;
 }
 async function list(deps:Deps,resource:string,gatewayId:string):Promise<KubeObject[]> {
@@ -27,7 +31,7 @@ export async function restartGatewayProcess(deps:Deps,gatewayId:string):Promise<
     const bound={...fence,target:{podName:pod.metadata.name,podUid:pod.metadata.uid}};await save(bound);
     await save({...bound,phase:'dispatched'});
     const result=await deps.runKubectl(['-n',deps.namespace,'exec',pod.metadata.name,'-c','gateway','-i','--','node','--input-type=commonjs','-',fence.attemptId],{stdin:runtimeRestartDriverSource(),timeoutMs:210_000});
-    if(result.code!==0)throw new Error('gateway process restart outcome is unresolved');
+    if(result.code!==0)throw new Error(`gateway process restart outcome is unresolved (${kubectlFailure(result)})`);
     const receipt=JSON.parse(result.stdout.trim()) as Record<string,unknown>;
     validateProcessRestartReceipt(receipt,fence.attemptId);
     const current=await json(deps,['get','pod',pod.metadata.name]);
@@ -82,7 +86,17 @@ export async function restartGatewayDeployment(deps:Deps,gatewayId:string):Promi
   },fence=>observeRuntimeRestart(deps,fence));
 }
 
+async function assertBoundPodEnded(deps:Deps,fence:RuntimeRestartFence):Promise<void> {
+  const target=fence.target;
+  if(typeof target?.podName!=='string' || typeof target.podUid!=='string')throw new Error('gateway restart bound pod unavailable');
+  const result=await deps.runKubectl(['-n',deps.namespace,'get','pod',target.podName,'--ignore-not-found','-o','json'],{timeoutMs:15_000});
+  if(result.code!==0)throw new Error(`gateway restart Kubernetes observation unavailable (${kubectlFailure(result)})`);
+  if(result.stdout.trim()==='')return;
+  const pod=JSON.parse(result.stdout) as KubeObject;
+  if(pod.metadata.uid===target.podUid && !['Succeeded','Failed'].includes(pod.status?.phase??''))throw new Error(`gateway process restart outcome is unresolved while its bound pod ${target.podName} still runs`);
+}
 export async function observeRuntimeRestart(deps:Deps,fence:RuntimeRestartFence):Promise<void> {
+  if(fence.kind==='process' && fence.phase==='dispatched')return assertBoundPodEnded(deps,fence);
   if(fence.phase!=='acknowledged')throw new Error('gateway restart dispatch is unresolved');
   if(fence.kind==='process') {
     validateProcessRestartReceipt(fence.acknowledgement,fence.attemptId);
