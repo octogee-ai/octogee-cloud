@@ -1,3 +1,4 @@
+import { runNormalFleetMutation } from "../normal-fleet-mutation.js";
 export const ISOLATED_GATEWAY_LIFECYCLE_ACTOR = "glm-controller-disposable-gateway";
 export const PLACEMENT_AUTOMATION_ACTOR = "glm-controller-placement-policy";
 export const ISOLATED_GATEWAY_ALLOCATION_KIND = "disposable-builder";
@@ -7,6 +8,13 @@ export class IsolatedGatewayFenceError extends Error {
         super(message);
         this.name = "IsolatedGatewayFenceError";
     }
+}
+export function auditedLifecycleMutations(store) {
+    return (mutation) => runNormalFleetMutation(store, { ...mutation, action: () => mutation.action() });
+}
+export const unauditedLifecycleMutations = (mutation) => mutation.action();
+export async function checkPlacementOwner(input) {
+    await input.store.transaction({ label: "isolated-gateway.owner-check", readOnly: true }, input.requireOwner);
 }
 export const PLACEMENT_RETIREMENT_REASONS = [
     "provisioning-timeout",

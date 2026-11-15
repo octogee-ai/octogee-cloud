@@ -1,6 +1,7 @@
 import { projectGatewayDesiredRootForGateway } from "@octogee/shared/types/gateway-releases";
+import { builderActivateOperationId } from "@octogee/shared/types/isolated-operation-ids";
 import { GatewayRetirementConflictError } from "./gateway-retirement-claim.js";
-import { IsolatedGatewayFenceError, PLACEMENT_RETIREMENT_REASONS, activationLeaseAdvanceAlreadyApplied, advanceActivationLease, completeActivationLease, failActivationLease, nextActivationLease, nextFailedActivationLease, nextSizingKeyTransitionLease, requestSizingKeyTransition, retireOwnedIsolatedGateway, } from "./isolated-gateway-lifecycle/index.js";
+import { IsolatedGatewayFenceError, PLACEMENT_RETIREMENT_REASONS, advanceActivationLease, completeActivationLease, failActivationLease, requestSizingKeyTransition, unauditedLifecycleMutations, retireOwnedIsolatedGateway, } from "./isolated-gateway-lifecycle/index.js";
 import { FleetMutationRefusedError } from "./normal-fleet-mutation.js";
 import { assertClientOwnsPlacementAutomation, placementOwnerRefusalBody } from "./placement-automation-owner.js";
 import { FenceMismatchError } from "./platform-state/errors.js";
@@ -93,10 +94,9 @@ function parseAdvance(req) {
     const step = ADVANCES.find(([from, to]) => body.fromStatus === from && body.toStatus === to);
     if (!step)
         return { invalid: "fromStatus and toStatus must be provisioning->activating, activating->active or active->returning" };
-    const operationId = text(body, "operationId");
-    if (step[1] !== "active" && !operationId)
-        return { invalid: `operationId is required to reach ${step[1]}` };
-    return { ...identity, fromStatus: step[0], toStatus: step[1], ...(operationId ? { operationId } : {}) };
+    if (body.operationId !== undefined)
+        return { invalid: "operationId is derived from the lease; omit it" };
+    return { ...identity, fromStatus: step[0], toStatus: step[1] };
 }
 function parseComplete(req) {
     const identity = leaseIdentity(req);
@@ -116,15 +116,14 @@ function parseFail(req) {
         return identity;
     const body = bodyOf(req);
     const targetGatewayId = text(body, "targetGatewayId");
-    const operationId = text(body, "operationId");
     const message = text(body, "message");
     if (!targetGatewayId)
         return { invalid: "targetGatewayId is required" };
-    if (!operationId)
-        return { invalid: "operationId is required" };
+    if (body.operationId !== undefined)
+        return { invalid: "operationId is derived from the lease; omit it" };
     if (!message)
         return { invalid: "message is required" };
-    return { ...identity, targetGatewayId, operationId, message };
+    return { ...identity, targetGatewayId, operationId: builderActivateOperationId(targetGatewayId, identity.generation), message };
 }
 function parseSizingTransition(req) {
     const identity = leaseIdentity(req);
@@ -204,6 +203,7 @@ export function addAdminPlacementIsolatedRoutes(router, deps) {
         store: deps.store,
         readSizingKey,
         requireOwner: requireClientOwner,
+        mutations: unauditedLifecycleMutations,
         now,
         log: deps.log,
     };
@@ -216,10 +216,18 @@ export function addAdminPlacementIsolatedRoutes(router, deps) {
                     res.status(400).json({ error: input.invalid });
                     return;
                 }
-                await settle(res, async () => {
+                try {
                     await ownerCheck();
-                    return run(req, input);
-                });
+                }
+                catch (error) {
+                    const refusal = placementOwnerRefusalBody(error);
+                    if (refusal === null)
+                        throw error;
+                    deps.warn(`[placement] ${req.method} ${req.path} refused before journaling: ${error.message}`);
+                    res.status(409).json(refusal);
+                    return;
+                }
+                await settle(res, () => run(req, input));
             }
             catch (error) {
                 next(error);
@@ -232,12 +240,9 @@ export function addAdminPlacementIsolatedRoutes(router, deps) {
         why: "placement automation advanced the lease",
         target: { uid: input.uid },
         preActionStatus: { leaseId: input.leaseId, generation: input.generation, status: input.fromStatus },
-        mutation: { kind: "advance-activation-lease", toStatus: input.toStatus, operationId: input.operationId ?? null },
+        mutation: { kind: "advance-activation-lease", toStatus: input.toStatus },
         dryRunRefusal: async () => {
-            const lease = leaseOf(await readOwner(deps.store, input.uid));
-            if (!nextActivationLease(lease, input, now()) && !activationLeaseAdvanceAlreadyApplied(lease, input)) {
-                throw new PreconditionFailed(`activation lease for ${input.uid} changed`);
-            }
+            await advanceActivationLease(lifecycle, input, "plan");
             return null;
         },
         action: async () => {
@@ -253,16 +258,7 @@ export function addAdminPlacementIsolatedRoutes(router, deps) {
         preActionStatus: { leaseId: input.leaseId, generation: input.generation, status: "returning" },
         mutation: { kind: "complete-activation-lease", parked: input.parked === true },
         dryRunRefusal: async () => {
-            const user = await readOwner(deps.store, input.uid);
-            const lease = leaseOf(user);
-            if (lease.leaseId !== input.leaseId || lease.generation !== input.generation || lease.status !== "returning" ||
-                lease.targetGatewayId !== input.targetGatewayId) {
-                throw new PreconditionFailed(`returning activation lease for ${input.uid} changed`);
-            }
-            const sourceGatewayId = user.gateway?.gatewayId ?? null;
-            if (!sourceGatewayId || sourceGatewayId === input.targetGatewayId) {
-                throw new PreconditionFailed(`User ${input.uid} has not returned from ${input.targetGatewayId}`);
-            }
+            await completeActivationLease(lifecycle, input, "plan");
             return null;
         },
         action: async () => {
@@ -279,11 +275,7 @@ export function addAdminPlacementIsolatedRoutes(router, deps) {
         preActionStatus: { leaseId: input.leaseId, generation: input.generation },
         mutation: { kind: "fail-activation-lease", operationId: input.operationId },
         dryRunRefusal: async () => {
-            const lease = leaseOf(await readOwner(deps.store, input.uid));
-            const alreadyFailed = lease.leaseId === input.leaseId && lease.generation === input.generation && lease.status === "failed";
-            if (!alreadyFailed && !nextFailedActivationLease(lease, input, now())) {
-                throw new PreconditionFailed(`activation lease for ${input.uid} changed before failure cleanup`);
-            }
+            await failActivationLease(lifecycle, input, "plan");
             return null;
         },
         action: async () => {
@@ -299,8 +291,7 @@ export function addAdminPlacementIsolatedRoutes(router, deps) {
         preActionStatus: { leaseId: input.leaseId, generation: input.generation, status: "active" },
         mutation: { kind: "request-sizing-transition", sizingKey: input.sizingKey },
         dryRunRefusal: async () => {
-            const user = await readOwner(deps.store, input.uid);
-            nextSizingKeyTransitionLease(user, await readSizingKey(input.uid, now()), input, now());
+            await requestSizingKeyTransition(lifecycle, input, "plan");
             return null;
         },
         action: async () => {
@@ -322,9 +313,9 @@ export function addAdminPlacementIsolatedRoutes(router, deps) {
             preActionStatus: { generation: input.generation, desiredStatus: root.desiredStatus },
             mutation: { kind: "retire-owned-isolated-gateway", reason: input.reason, leaseId: input.leaseId ?? null },
             dryRunRefusal: async () => {
-                if (root.desiredStatus === "retired" || root.allocation?.generation !== input.generation) {
-                    throw new PreconditionFailed(`gateway ${input.gatewayId} no longer matches isolated allocation for ${input.uid}`);
-                }
+                const plan = await retireOwnedIsolatedGateway(lifecycle, request, "plan");
+                if (!plan.retired)
+                    throw new PreconditionFailed(plan.reason);
                 return null;
             },
             action: async () => {

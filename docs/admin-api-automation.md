@@ -188,18 +188,26 @@ All of them are inert until placement automation belongs to the client. Each
 route first checks, read-only, that the placement automation owner is
 `client` and that the fleet controller has written its yield; otherwise it
 answers `409` with `"code": "placement-owner"` and writes nothing, dry runs
-included. The same check runs again inside the write transaction, so a
-change of owner between the two still refuses. The fleet controller's own
-placement policy runs the same functions with the opposite check: it acts
-while it owns placement, and while the client owns it with no yield written
-yet, and stops once the yield is written.
+included. That refusal is logged at warning level and not journaled, so a
+client that polls before the handover does not fill the journal. The same
+check runs again first inside every write transaction, and before any
+Kubernetes or Compute Engine effect, so a change of owner between the two
+still refuses; a refusal there is journaled as refused. The fleet
+controller's own placement policy runs the same functions with the opposite
+check: it acts while it owns placement, and while the client owns it with no
+yield written yet, and stops once the yield is written.
 
 Every route takes `dryRun` and `Idempotency-Key` as the contract describes,
-and journals under the caller. A route whose fence no longer holds answers
-`409` with `"code": "precondition-failed"` and a `reason`, writes nothing
-but the refused journal entry, and the caller reads the user again. A
-malformed body answers `400`. Repeating a call whose effect already applied
-answers `200` with the same body where the route says so.
+and writes one journal entry per call under the caller. A dry run evaluates
+every fence the real call does, reading only, and writes nothing. A route
+whose fence no longer holds answers `409` with `"code": "precondition-failed"`
+and a `reason`, writes nothing but the refused journal entry, and the caller
+reads the user again. A malformed body answers `400`. Repeating a call whose
+effect already applied answers `200` with the same body where the route says
+so. Repeating an `Idempotency-Key` follows the contract: `409` with the
+journal entry's id and status, not the first answer. A client treats that
+`409` with status `completed` as success and reads the user again for the
+result.
 
 The lease routes take `leaseId` and `generation`, the lease the caller read.
 
@@ -210,9 +218,11 @@ The lease routes take `leaseId` and `generation`, the lease the caller read.
 ```
 
 Moves the lease one step: `provisioning` to `activating`, `activating` to
-`active`, or `active` to `returning`. `operationId`, the activation or return
-operation, is required except to reach `active`. Reaching `active` records
-the wake duration once. Answers `{uid, leaseId, generation, status}`; a
+`active`, or `active` to `returning`. Reaching `activating` or `returning`
+records the canonical activation or return operation id for the lease's
+gateway and generation, `builder-activate-<gateway>-g<generation>` or
+`builder-return-<gateway>-g<generation>`; the body carries no `operationId`
+and one sent answers `400`. Reaching `active` records the wake duration once. Answers `{uid, leaseId, generation, status}`; a
 lease already at `toStatus` for the same operation answers the same.
 `precondition-failed` means the lease is another lease, another generation,
 or at neither status.
@@ -233,8 +243,9 @@ the lease is not that returning lease, or the user has not returned.
 
 ### `POST /users/<id>/activation-lease/fail`
 
-`{leaseId, generation, targetGatewayId, operationId, message}`. Marks the
-lease `failed` after its activation operation failed, recording `message`.
+`{leaseId, generation, targetGatewayId, message}`. Marks the lease `failed`
+after its activation operation failed, recording `message` against the
+canonical activation operation `builder-activate-<gateway>-g<generation>`.
 Answers `{uid, leaseId, generation, status: "failed"}`, also when the lease is
 already failed.
 

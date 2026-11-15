@@ -1,21 +1,26 @@
 import { randomUUID } from "node:crypto";
 import { accountAllowsInteractiveAccess } from "@octogee/shared/types/account-lifecycle";
-import { placementRetireOperationId } from "@octogee/shared/types/isolated-operation-ids";
+import {
+  builderActivateOperationId,
+  builderReturnOperationId,
+  placementRetireOperationId,
+} from "@octogee/shared/types/isolated-operation-ids";
 import type { PlacementReceipt, PlacementReceiptKind } from "@octogee/shared/types/placement-receipts";
 import { isolatedSizingTier, type GatewaySizingProfile } from "@octogee/shared/types/sizing-profile";
-import { runNormalFleetMutation } from "../normal-fleet-mutation.js";
 import { withCurrentSizingKey } from "../sizing-key.js";
 import type { GatewayAssignment } from "../platform-state/gateways.js";
 import type { PlatformUserRecord, UserActivationLease } from "../platform-state/users.js";
 import {
   ISOLATED_GATEWAY_LIFECYCLE_ACTOR,
   IsolatedGatewayFenceError,
+  checkPlacementOwner,
   fieldMap,
   readMillis,
   type AdvanceActivationLeaseInput,
   type CompleteActivationLeaseInput,
   type FailActivationLeaseInput,
   type IsolatedLifecycleDeps,
+  type LifecycleMode,
   type SizingKeyTransitionInput,
 } from "./inputs.js";
 
@@ -44,6 +49,22 @@ function activationLeaseTransitionPatch(
     };
   }
   return { activeAt: now };
+}
+
+export function canonicalAdvanceOperationId(
+  lease: UserActivationLease,
+  toStatus: AdvanceActivationLeaseInput["toStatus"],
+): string | undefined {
+  if (toStatus === "active" || typeof lease.targetGatewayId !== "string") return undefined;
+  return toStatus === "activating"
+    ? builderActivateOperationId(lease.targetGatewayId, lease.generation)
+    : builderReturnOperationId(lease.targetGatewayId, lease.generation);
+}
+
+function withCanonicalOperationId(lease: UserActivationLease, request: AdvanceActivationLeaseInput): AdvanceActivationLeaseInput {
+  if (request.operationId !== undefined) return request;
+  const operationId = canonicalAdvanceOperationId(lease, request.toStatus);
+  return operationId === undefined ? request : { ...request, operationId };
 }
 
 export function nextActivationLease(
@@ -305,15 +326,17 @@ function newHomeAdmitted(user: PlatformUserRecord, lease: UserActivationLease): 
 
 export async function advanceActivationLease(
   input: Pick<IsolatedLifecycleDeps, "store" | "now" | "requireOwner">,
-  request: AdvanceActivationLeaseInput,
+  given: AdvanceActivationLeaseInput,
+  mode: LifecycleMode = "apply",
 ): Promise<void> {
-  await input.store.transaction({ label: "disposable-gateway.advance-lease" }, async (transaction) => {
+  await input.store.transaction({ label: "disposable-gateway.advance-lease", readOnly: mode === "plan" }, async (transaction) => {
     await input.requireOwner(transaction);
-    const user = await transaction.users.records.get(request.uid);
+    const user = await transaction.users.records.get(given.uid);
     const lease = user?.activationLease ?? null;
     if (!user || !lease) {
-      throw new IsolatedGatewayFenceError(`activation lease for ${request.uid} is missing`);
+      throw new IsolatedGatewayFenceError(`activation lease for ${given.uid} is missing`);
     }
+    const request = withCanonicalOperationId(lease, given);
     const now = input.now();
     const next = nextActivationLease(lease, request, now);
     if (!next) {
@@ -322,6 +345,7 @@ export async function advanceActivationLease(
       }
       throw new IsolatedGatewayFenceError(`activation lease for ${request.uid} changed`);
     }
+    if (mode === "plan") return;
     const admitHome = request.toStatus === "active" && newHomeAdmitted(user, lease);
     if (request.toStatus === "active") {
       await transaction.users.placementReceipts.create(request.uid, buildPlacementReceipt({
@@ -347,10 +371,12 @@ export async function advanceActivationLease(
 export async function completeActivationLease(
   input: Pick<IsolatedLifecycleDeps, "store" | "readSizingKey" | "now" | "requireOwner"> & { leaseIdFactory?: () => string },
   request: CompleteActivationLeaseInput,
+  mode: LifecycleMode = "apply",
 ): Promise<void> {
   const nextLeaseId = (input.leaseIdFactory ?? randomUUID)();
+  await checkPlacementOwner(input);
   const sizingKeyRead = { store: input.store, readSizingKey: input.readSizingKey, uid: request.uid, now: input.now() };
-  await withCurrentSizingKey(sizingKeyRead, ({ sizingKey, profile: sizingProfile, assertCurrent }) => input.store.transaction({ label: "disposable-gateway.complete-lease" }, async (transaction) => {
+  await withCurrentSizingKey(sizingKeyRead, ({ sizingKey, profile: sizingProfile, assertCurrent }) => input.store.transaction({ label: "disposable-gateway.complete-lease", readOnly: mode === "plan" }, async (transaction) => {
     await input.requireOwner(transaction);
     const user = await transaction.users.records.get(request.uid);
     assertCurrent(user);
@@ -392,6 +418,7 @@ export async function completeActivationLease(
     if (!next) {
       throw new IsolatedGatewayFenceError(`returning activation lease for ${request.uid} is invalid`);
     }
+    if (mode === "plan") return;
     const now = input.now();
     await transaction.users.placementReceipts.create(request.uid, buildPlacementReceipt({
       kind: "returned",
@@ -417,8 +444,9 @@ export async function completeActivationLease(
 export async function failActivationLease(
   input: Pick<IsolatedLifecycleDeps, "store" | "now" | "requireOwner">,
   request: FailActivationLeaseInput,
+  mode: LifecycleMode = "apply",
 ): Promise<void> {
-  await input.store.transaction({ label: "disposable-gateway.fail-lease" }, async (transaction) => {
+  await input.store.transaction({ label: "disposable-gateway.fail-lease", readOnly: mode === "plan" }, async (transaction) => {
     await input.requireOwner(transaction);
     const user = await transaction.users.records.get(request.uid);
     const lease = user?.activationLease ?? null;
@@ -437,6 +465,7 @@ export async function failActivationLease(
       }
       throw new IsolatedGatewayFenceError(`activation lease for ${request.uid} changed before failure cleanup`);
     }
+    if (mode === "plan") return;
     await transaction.users.placementReceipts.create(request.uid, buildPlacementReceipt({
       kind: "activation-failed",
       uid: request.uid,
@@ -477,27 +506,35 @@ export function nextSizingKeyTransitionLease(
 }
 
 export async function requestSizingKeyTransition(
-  input: Pick<IsolatedLifecycleDeps, "store" | "readSizingKey" | "now" | "requireOwner">,
+  input: Pick<IsolatedLifecycleDeps, "store" | "readSizingKey" | "now" | "requireOwner" | "mutations">,
   request: SizingKeyTransitionInput,
+  mode: LifecycleMode = "apply",
 ): Promise<void> {
+  await checkPlacementOwner(input);
   const sizingProfile = await input.store.config.orchestrator.getSizingProfile(request.sizingKey);
   if (sizingProfile.isolation !== "isolated") throw new IsolatedGatewayFenceError("User tier requires an operator-selected VM policy");
   const vmProfile = sizingProfile.computer;
-  await runNormalFleetMutation(input.store, {
+  const transition = async () => {
+    const now = input.now();
+    const sizingKeyRead = { store: input.store, readSizingKey: input.readSizingKey, uid: request.uid, now };
+    await withCurrentSizingKey(sizingKeyRead, ({ sizingKey, assertCurrent }) => input.store.transaction({ label: "disposable-gateway.tier-transition", readOnly: mode === "plan" }, async (transaction) => {
+      await input.requireOwner(transaction);
+      const user = await transaction.users.records.get(request.uid);
+      assertCurrent(user);
+      if (!user) throw new IsolatedGatewayFenceError("User owner disappeared");
+      const lease = nextSizingKeyTransitionLease(user, sizingKey, request, now);
+      if (mode === "plan") return;
+      await transaction.users.records.setActivationLease(request.uid, lease, exactLeaseFence(lease, ["active"]));
+    }));
+  };
+  if (mode === "plan") {
+    await transition();
+    return;
+  }
+  await input.mutations({
     actor: ISOLATED_GATEWAY_LIFECYCLE_ACTOR, forced: false, what: "change-builder-tier", why: "Apply the current sizing profile while preserving home data",
     target: { uid: request.uid, gatewayId: request.targetGatewayId }, preActionStatus: { leaseId: request.leaseId, generation: request.generation },
     mutation: { tier: request.sizingKey, desiredHomeGiB: vmProfile.homeSizeGiB },
-    action: async () => {
-      const now = input.now();
-      const sizingKeyRead = { store: input.store, readSizingKey: input.readSizingKey, uid: request.uid, now };
-      await withCurrentSizingKey(sizingKeyRead, ({ sizingKey, assertCurrent }) => input.store.transaction({ label: "disposable-gateway.tier-transition" }, async (transaction) => {
-        await input.requireOwner(transaction);
-        const user = await transaction.users.records.get(request.uid);
-        assertCurrent(user);
-        if (!user) throw new IsolatedGatewayFenceError("User owner disappeared");
-        const lease = nextSizingKeyTransitionLease(user, sizingKey, request, now);
-        await transaction.users.records.setActivationLease(request.uid, lease, exactLeaseFence(lease, ["active"]));
-      }));
-    },
+    action: transition,
   });
 }

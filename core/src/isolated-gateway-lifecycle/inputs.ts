@@ -1,4 +1,5 @@
 import type { SizingTier } from "@octogee/shared/types/sizing";
+import { runNormalFleetMutation, type NormalFleetMutationInput } from "../normal-fleet-mutation.js";
 import type { SizingKeyReader } from "../sizing-key.js";
 import type { PlatformStateStore, PlatformStateTransaction } from "../platform-state/store.js";
 
@@ -16,12 +17,28 @@ export class IsolatedGatewayFenceError extends Error {
 
 export type PlacementOwnerFence = (transaction: PlatformStateTransaction) => Promise<void>;
 
+export type LifecycleMutation<T> = Omit<NormalFleetMutationInput<T>, "action"> & { action: () => Promise<T> };
+export type LifecycleMutationRunner = <T>(mutation: LifecycleMutation<T>) => Promise<T>;
+
+export function auditedLifecycleMutations(store: PlatformStateStore): LifecycleMutationRunner {
+  return (mutation) => runNormalFleetMutation(store, { ...mutation, action: () => mutation.action() });
+}
+
+export const unauditedLifecycleMutations: LifecycleMutationRunner = (mutation) => mutation.action();
+
+export type LifecycleMode = "apply" | "plan";
+
 export interface IsolatedLifecycleDeps {
   store: PlatformStateStore;
   readSizingKey: SizingKeyReader;
   requireOwner: PlacementOwnerFence;
+  mutations: LifecycleMutationRunner;
   now(): number;
   log(message: string): void;
+}
+
+export async function checkPlacementOwner(input: Pick<IsolatedLifecycleDeps, "store" | "requireOwner">): Promise<void> {
+  await input.store.transaction({ label: "isolated-gateway.owner-check", readOnly: true }, input.requireOwner);
 }
 
 export interface AllocateIsolatedGatewayInput {

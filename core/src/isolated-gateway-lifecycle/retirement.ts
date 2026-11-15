@@ -18,10 +18,12 @@ import {
   ISOLATED_GATEWAY_ALLOCATION_KIND,
   PLACEMENT_AUTOMATION_ACTOR,
   ROLLED_BACK_STATUS,
+  checkPlacementOwner,
   fieldMap,
   readMillis,
   type AuthoritativeLeaseStatus,
   type IsolatedLifecycleDeps,
+  type LifecycleMode,
   type RecoverUnreachableIsolatedGatewayInput,
   type RetireOwnedIsolatedGatewayInput,
 } from "./inputs.js";
@@ -204,20 +206,11 @@ function newRecoveryReceipt(
 }
 
 export async function checkUnreachableRecoveryFence(
-  input: Pick<RetirementDeps, "store" | "now">,
+  input: RetirementDeps,
   request: RecoverUnreachableIsolatedGatewayInput,
 ): Promise<string> {
   const operationId = isolatedRecoverOperationId(request.gatewayId, request.generation);
-  await input.store.transaction({ label: "placement-policy.recovery-check", readOnly: true }, async (transaction) => {
-    await exactRecoveryState(input.now, transaction, request);
-    const receipt = await transaction.journal.recoveryReceipts.get(operationId);
-    if (receipt !== null) {
-      assertPendingRecoveryReceiptMatches(receipt, request);
-      if (receipt.status !== "pending" && receipt.status !== "succeeded") {
-        throw new GatewayRetirementConflictError(`recovery operation ${operationId} ended with ${receipt.status}`);
-      }
-    }
-  });
+  await reserveUnreachableRecovery(input, request, operationId, "plan");
   return operationId;
 }
 
@@ -225,8 +218,9 @@ export async function reserveUnreachableRecovery(
   input: RetirementDeps,
   request: RecoverUnreachableIsolatedGatewayInput,
   operationId: string,
+  mode: LifecycleMode = "apply",
 ): Promise<void> {
-  await input.store.transaction({ label: "placement-policy.recovery-reserve" }, async (transaction) => {
+  await input.store.transaction({ label: "placement-policy.recovery-reserve", readOnly: mode === "plan" }, async (transaction) => {
     await input.requireOwner(transaction);
     const root = await exactRecoveryState(input.now, transaction, request);
     const receipt = await transaction.journal.recoveryReceipts.get(operationId);
@@ -238,6 +232,9 @@ export async function reserveUnreachableRecovery(
           `recovery operation ${operationId} ended with ${receipt.status}`,
         );
       }
+      if (mode === "plan") return;
+    } else if (mode === "plan") {
+      return;
     } else {
       await transaction.journal.recoveryReceipts.create(newRecoveryReceipt(operationId, request, input.now()));
     }
@@ -277,7 +274,7 @@ export async function completeUnreachableRecovery(
 }
 
 function observationUnknown(diagnostics: PodObservation): boolean {
-  return diagnostics.error !== undefined || diagnostics.status === "unknown";
+  return Boolean(diagnostics.error) || diagnostics.status === "unknown";
 }
 
 export async function recoverUnreachableIsolatedGateway(
@@ -428,12 +425,14 @@ async function readRetirementTelemetryFence(
 export async function retireOwnedIsolatedGateway(
   input: RetirementDeps,
   request: RetireOwnedIsolatedGatewayInput,
+  mode: LifecycleMode = "apply",
 ): Promise<OwnedGatewayRetirement> {
   const operationId = placementRetireOperationId(request.uid, request.gatewayId, request.generation);
   const blocked = (reason: string): OwnedGatewayRetirement => {
     input.log(`[placement-policy] retirement blocked for ${request.gatewayId}: ${reason}`);
     return { retired: false, operationId, reason };
   };
+  await checkPlacementOwner(input);
   const now = input.now();
   const telemetry = await readRetirementTelemetryFence(input, request);
   if (telemetry.blocked !== null) return blocked(telemetry.blocked);
@@ -462,8 +461,9 @@ export async function retireOwnedIsolatedGateway(
       now,
       updatedBy: PLACEMENT_AUTOMATION_ACTOR,
       ...(telemetry.observedAfter === undefined ? {} : { telemetryObservedAfter: telemetry.observedAfter }),
+      ownerGuard: input.requireOwner,
+      plan: mode === "plan",
       claimGuard: async ({ transaction, root }) => {
-        await input.requireOwner(transaction);
         const rootRecord = root as unknown as Record<string, unknown>;
         if (!retirementAllocationMatches(rootRecord, request)) {
           throw new GatewayRetirementConflictError(

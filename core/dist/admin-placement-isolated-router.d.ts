@@ -17,6 +17,7 @@ export interface AdminPlacementIsolatedRouterDeps {
     accounts: Pick<UserAccountReader, "get">;
     capabilities: AdminIsolatedCapabilities;
     log(message: string): void;
+    warn(message: string): void;
     now?: () => number;
 }
 export declare function isolatedVerbRefusalBody(error: unknown): Record<string, unknown> | null;

@@ -1,11 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { runNormalFleetMutation } from "../normal-fleet-mutation.js";
 import { createDocumentFixtureStore, FIXTURE_SIZING_PROFILES } from "@octogee/core-testing/journal-store";
-import { refreshRequestedAllocation } from "./index.js";
-
-vi.mock("../normal-fleet-mutation.js", () => ({
-  runNormalFleetMutation: vi.fn(async (_store, input) => input.action()),
-}));
+import { refreshRequestedAllocation, type LifecycleMutationRunner } from "./index.js";
 
 function fixture() {
   const request = { uid: "alice-id", builderSlug: "alice", leaseId: "lease-1", generation: 2,
@@ -32,11 +27,16 @@ function fixture() {
     return tier;
   });
   const writes = vi.spyOn(docs, "set");
+  const audited: string[] = [];
+  const mutations: LifecycleMutationRunner = (mutation) => {
+    audited.push(mutation.what);
+    return mutation.action();
+  };
   const lease = () => ((docs.get("users/alice-id")!.provisioning as typeof user.provisioning).openclaw.activationLease);
-  return { user, source, assignment, request, writes, lease, docs,
+  return { user, source, assignment, request, writes, lease, docs, audited,
     setRace: (fn: () => void) => { race = fn; },
     setTier: (next: string) => { tier = next; },
-    run: () => refreshRequestedAllocation({ store, readSizingKey, requireOwner: async () => undefined, now: () => 1000, log: vi.fn() }, request) };
+    run: () => refreshRequestedAllocation({ store, readSizingKey, requireOwner: async () => undefined, mutations, now: () => 1000, log: vi.fn() }, request) };
 }
 
 describe("requested isolated allocation refresh", () => {
@@ -45,7 +45,7 @@ describe("requested isolated allocation refresh", () => {
     await expect(h.run()).resolves.toBe(true);
     expect(h.lease()).toMatchObject({ leaseId: "lease-1", generation: 2, sourceGatewayId: "shared-new", sourceAssignmentEpoch: 5, status: "requested" });
     expect((h.docs.get("users/alice-id")!.provisioning as typeof h.user.provisioning).homeMigration).toEqual({ id: "verified-copy", phase: "copying" });
-    expect(runNormalFleetMutation).toHaveBeenCalled();
+    expect(h.audited).toEqual(["refresh-builder-allocation"]);
   });
   it("refreshes an assignment epoch on the same Shared gateway", async () => {
     const h = fixture(); h.request.sourceGatewayId = "shared-new"; h.user.provisioning.openclaw.activationLease.sourceGatewayId = "shared-new";

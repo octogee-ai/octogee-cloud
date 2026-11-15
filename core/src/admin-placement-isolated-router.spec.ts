@@ -14,6 +14,7 @@ const RETIREMENT = `placement-retire-${OWNER}-${TARGET}-g1`;
 const CLIENT_OWNS = { placementAutomationOwner: "client", placementAutomationYieldedAt: 1_000 };
 
 let docs = new Map<string, Data>();
+const warn = vi.fn();
 const capabilities: AdminIsolatedCapabilities = {
   namespace: "octogee-test",
   ensureAuthSecret: vi.fn(async () => undefined),
@@ -34,6 +35,7 @@ function app() {
     accounts: { get: async (uid) => ({ uid, username: "alice", email: null, displayName: null, lastActive: null, planInputs: {}, usage: {}, mattermostUsername: null }) as never },
     capabilities,
     log: vi.fn(),
+    warn,
     now: () => 50_000,
   });
   server.use(respondToAdminFleetMutationError);
@@ -105,6 +107,7 @@ describe("isolated verbs: owner fence", () => {
     expect(storedLease().status).toBe("activating");
     expect(receipts()).toEqual([]);
     expect(audits()).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining(`POST /users/${OWNER}/activation-lease/advance refused before journaling`));
   });
 
   it("answers placement-owner to a dry run as well", async () => {
@@ -159,10 +162,21 @@ describe("POST /users/:uid/activation-lease/advance", () => {
   });
 
   it.each([
+    ["provisioning", "activating", "activationOperationId", ACTIVATION],
+    ["active", "returning", "returnOperationId", `builder-return-${TARGET}-g1`],
+  ])("records the canonical operation id when advancing %s to %s", async (fromStatus, toStatus, field, operationId) => {
+    seed({ [`users/${OWNER}`]: user(TARGET, lease({ status: fromStatus, activationOperationId: undefined })) });
+
+    await advance({ leaseId: "lease-one", generation: 1, fromStatus, toStatus }).expect(200);
+
+    expect(storedLease()).toMatchObject({ status: toStatus, [field]: operationId });
+  });
+
+  it.each([
     [{ ...advanceBody, leaseId: "" }, "leaseId is required"],
     [{ ...advanceBody, generation: 0 }, "generation must be a positive integer"],
     [{ ...advanceBody, toStatus: "returning" }, "fromStatus and toStatus must be"],
-    [{ ...advanceBody, fromStatus: "provisioning", toStatus: "activating" }, "operationId is required to reach activating"],
+    [{ ...advanceBody, fromStatus: "provisioning", toStatus: "activating", operationId: "chosen-by-client" }, "operationId is derived from the lease; omit it"],
   ])("rejects a malformed request %#", async (body, error) => {
     const res = await advance(body).expect(400);
     expect(res.body.error).toContain(error);
@@ -193,7 +207,7 @@ describe("POST /users/:uid/activation-lease/complete", () => {
 
 describe("POST /users/:uid/activation-lease/fail", () => {
   const fail = (body: Data) => request(app()).post(`/users/${OWNER}/activation-lease/fail`).send(body);
-  const failure = { leaseId: "lease-one", generation: 1, targetGatewayId: TARGET, operationId: ACTIVATION, message: "target prepare failed" };
+  const failure = { leaseId: "lease-one", generation: 1, targetGatewayId: TARGET, message: "target prepare failed" };
 
   it("fails the exact lease once and answers the repeat as done", async () => {
     await fail(failure).expect(200).expect((res) => expect(res.body.status).toBe("failed"));
@@ -210,7 +224,7 @@ describe("POST /users/:uid/activation-lease/fail", () => {
 });
 
 describe("POST /users/:uid/activation-lease/sizing-transition", () => {
-  const transition = (body: Data) => request(app()).post(`/users/${OWNER}/activation-lease/sizing-transition`).send(body);
+  const transition = (body: Data, query = "") => request(app()).post(`/users/${OWNER}/activation-lease/sizing-transition${query}`).send(body);
 
   it("asks an active lease to return so the next one uses the current profile", async () => {
     seed({ [`users/${OWNER}`]: user(TARGET, lease({ status: "active" })) });
@@ -218,6 +232,25 @@ describe("POST /users/:uid/activation-lease/sizing-transition", () => {
     await transition({ leaseId: "lease-one", generation: 1, targetGatewayId: TARGET, sizingKey: "default" }).expect(200);
 
     expect(storedLease()).toMatchObject({ status: "active", returnReason: "tier-change", pendingDemand: { cause: "manual", eventKey: "tier:lease-one:1:default" } });
+  });
+
+  it("writes the verb's single journal entry", async () => {
+    seed({ [`users/${OWNER}`]: user(TARGET, lease({ status: "active" })) });
+
+    await transition({ leaseId: "lease-one", generation: 1, targetGatewayId: TARGET, sizingKey: "default" }).expect(200);
+
+    expect(audits()).toEqual([expect.objectContaining({ what: "request user sizing transition", status: "completed" })]);
+  });
+
+  it("refuses a dry run, as the real call does, when the sizing key's profile is not isolated", async () => {
+    seed({ [`users/${OWNER}`]: user(TARGET, lease({ status: "active" })) });
+    docs.set("config/orchestrator", { ...CLIENT_OWNS, sizingProfiles: { ...FIXTURE_SIZING_PROFILES, default: { isolation: "shared" } } });
+
+    for (const query of ["?dryRun=true", ""]) {
+      const res = await transition({ leaseId: "lease-one", generation: 1, targetGatewayId: TARGET, sizingKey: "default" }, query).expect(409);
+      expect(res.body.reason).toBe("User tier requires an operator-selected VM policy");
+    }
+    expect(storedLease().returnReason).toBeUndefined();
   });
 
   it("refuses a sizing key the user is not entitled to", async () => {
@@ -257,6 +290,23 @@ describe("POST /isolated-gateways/:id/retire-owned", () => {
   it("refuses a gateway owned by someone else", async () => {
     seed({ [`gateways/${TARGET}`]: isolatedRoot({ ownerUid: "uid-bob" }) });
     await retire(body).expect(409).expect((res) => expect(res.body.reason).toBe(`gateway ${TARGET} is not owned by ${OWNER}`));
+  });
+
+  it.each([
+    ["the lease identity", { leaseId: "lease-two" }],
+    ["the authority fence", { authoritativeGatewayId: "shared-green", authoritativeLeaseStatus: "returning" }],
+    ["the zero-workload receipt", { zeroWorkloadRecoveryOperationId: `builder-recover-${TARGET}-g1` }],
+    ["the telemetry fence", { telemetryFenceOperationId: "builder-return-unknown", telemetryFenceStatus: "succeeded" }],
+  ])("refuses a dry run on %s, as the real call does, and claims nothing", async (_name, fence) => {
+    seed({ [`users/${OWNER}`]: user("shared-blue", lease({ status: "parked" })), [`gateways/${TARGET}`]: isolatedRoot() });
+
+    const planned = await retire({ ...body, ...fence }, "?dryRun=true").expect(409);
+    const real = await retire({ ...body, ...fence }).expect(409);
+
+    expect(planned.body).toMatchObject({ code: "precondition-failed" });
+    expect(planned.body.reason).toBe(real.body.reason);
+    expect(docs.get(`gateways/${TARGET}`)?.desiredStatus).toBe("paused");
+    expect(docs.has(`glmOperations/${RETIREMENT}`)).toBe(false);
   });
 
   it("plans a dry run without claiming", async () => {

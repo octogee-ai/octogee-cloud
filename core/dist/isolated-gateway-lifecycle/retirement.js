@@ -3,7 +3,7 @@ import { projectGatewayDesiredRootForGateway } from "@octogee/shared/types/gatew
 import { isolatedRecoverOperationId, placementRetireOperationId, } from "@octogee/shared/types/isolated-operation-ids";
 import { GatewayRetirementConflictError, claimGatewayRetirementInStore, } from "../gateway-retirement-claim.js";
 import { FenceMismatchError } from "../platform-state/errors.js";
-import { ISOLATED_GATEWAY_ALLOCATION_KIND, PLACEMENT_AUTOMATION_ACTOR, ROLLED_BACK_STATUS, fieldMap, readMillis, } from "./inputs.js";
+import { ISOLATED_GATEWAY_ALLOCATION_KIND, PLACEMENT_AUTOMATION_ACTOR, ROLLED_BACK_STATUS, checkPlacementOwner, fieldMap, readMillis, } from "./inputs.js";
 function nonEmptyString(value) {
     return typeof value === "string" && value.length > 0 ? value : null;
 }
@@ -110,20 +110,11 @@ function newRecoveryReceipt(operationId, request, startedAt) {
 }
 export async function checkUnreachableRecoveryFence(input, request) {
     const operationId = isolatedRecoverOperationId(request.gatewayId, request.generation);
-    await input.store.transaction({ label: "placement-policy.recovery-check", readOnly: true }, async (transaction) => {
-        await exactRecoveryState(input.now, transaction, request);
-        const receipt = await transaction.journal.recoveryReceipts.get(operationId);
-        if (receipt !== null) {
-            assertPendingRecoveryReceiptMatches(receipt, request);
-            if (receipt.status !== "pending" && receipt.status !== "succeeded") {
-                throw new GatewayRetirementConflictError(`recovery operation ${operationId} ended with ${receipt.status}`);
-            }
-        }
-    });
+    await reserveUnreachableRecovery(input, request, operationId, "plan");
     return operationId;
 }
-export async function reserveUnreachableRecovery(input, request, operationId) {
-    await input.store.transaction({ label: "placement-policy.recovery-reserve" }, async (transaction) => {
+export async function reserveUnreachableRecovery(input, request, operationId, mode = "apply") {
+    await input.store.transaction({ label: "placement-policy.recovery-reserve", readOnly: mode === "plan" }, async (transaction) => {
         await input.requireOwner(transaction);
         const root = await exactRecoveryState(input.now, transaction, request);
         const receipt = await transaction.journal.recoveryReceipts.get(operationId);
@@ -134,6 +125,11 @@ export async function reserveUnreachableRecovery(input, request, operationId) {
             if (receipt.status !== "pending") {
                 throw new GatewayRetirementConflictError(`recovery operation ${operationId} ended with ${receipt.status}`);
             }
+            if (mode === "plan")
+                return;
+        }
+        else if (mode === "plan") {
+            return;
         }
         else {
             await transaction.journal.recoveryReceipts.create(newRecoveryReceipt(operationId, request, input.now()));
@@ -167,7 +163,7 @@ export async function completeUnreachableRecovery(input, request, operationId) {
     });
 }
 function observationUnknown(diagnostics) {
-    return diagnostics.error !== undefined || diagnostics.status === "unknown";
+    return Boolean(diagnostics.error) || diagnostics.status === "unknown";
 }
 export async function recoverUnreachableIsolatedGateway(input, request) {
     const operationId = isolatedRecoverOperationId(request.gatewayId, request.generation);
@@ -272,12 +268,13 @@ async function readRetirementTelemetryFence(input, request) {
     }
     return { blocked: null, observedAfter: completedAt };
 }
-export async function retireOwnedIsolatedGateway(input, request) {
+export async function retireOwnedIsolatedGateway(input, request, mode = "apply") {
     const operationId = placementRetireOperationId(request.uid, request.gatewayId, request.generation);
     const blocked = (reason) => {
         input.log(`[placement-policy] retirement blocked for ${request.gatewayId}: ${reason}`);
         return { retired: false, operationId, reason };
     };
+    await checkPlacementOwner(input);
     const now = input.now();
     const telemetry = await readRetirementTelemetryFence(input, request);
     if (telemetry.blocked !== null)
@@ -307,8 +304,9 @@ export async function retireOwnedIsolatedGateway(input, request) {
             now,
             updatedBy: PLACEMENT_AUTOMATION_ACTOR,
             ...(telemetry.observedAfter === undefined ? {} : { telemetryObservedAfter: telemetry.observedAfter }),
+            ownerGuard: input.requireOwner,
+            plan: mode === "plan",
             claimGuard: async ({ transaction, root }) => {
-                await input.requireOwner(transaction);
                 const rootRecord = root;
                 if (!retirementAllocationMatches(rootRecord, request)) {
                     throw new GatewayRetirementConflictError(`gateway ${request.gatewayId} no longer matches isolated allocation for ${request.uid}`);

@@ -94,6 +94,13 @@ describe("unreachable isolated gateway recovery", () => {
     expect(h.docs.get(`gatewayRecoveryReceipts/${RECOVERY}`)?.status).toBe("succeeded");
   });
 
+  it("treats an empty observation error as no error, as before", async () => {
+    const h = harness();
+    h.diagnostics.mockResolvedValueOnce({ status: "missing", totalPods: 0, error: "" });
+
+    await expect(recoverUnreachableIsolatedGateway(h.deps, h.request)).resolves.toEqual({ state: "recovered", operationId: RECOVERY });
+  });
+
   it("waits, with the reserve kept, when the observation itself throws", async () => {
     const h = harness();
     h.diagnostics.mockRejectedValueOnce(new Error("api server unavailable"));
