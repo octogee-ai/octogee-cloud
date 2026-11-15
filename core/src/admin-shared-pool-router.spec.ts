@@ -220,6 +220,7 @@ describe("POST /shared-gateways/:id/desired-status", () => {
 
 describe("POST /shared-gateways", () => {
   it("adds a running shared gateway on the platform build and enqueues its add operation", async () => {
+    seedMember("shared-aaaaaaaaaaaa");
     seedAutomationState(2);
 
     const res = await request(app()).post("/shared-gateways").send({
@@ -281,6 +282,21 @@ describe("POST /shared-gateways", () => {
     }).expect(409);
 
     expect(res.body.code).toBe("precondition-failed");
+    expect(records.has("gateways/shared-cccccccccccc")).toBe(false);
+  });
+
+  it("refuses a replacement of a gateway automation did not add", async () => {
+    seedAutomationState(3);
+
+    const res = await request(app()).post("/shared-gateways").send({
+      gatewayId: "shared-cccccccccccc",
+      reason: "platform-replacement",
+      replacesGatewayId: "shared-missing",
+      automationState: { expectedSequence: 3, replacements: [] },
+    });
+
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({ code: "precondition-failed", error: "gateway shared-missing does not exist" });
     expect(records.has("gateways/shared-cccccccccccc")).toBe(false);
   });
 

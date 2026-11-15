@@ -322,6 +322,9 @@ export function addAdminSharedPoolRoutes(router, deps) {
                 action: async () => store.transaction({ label: "admin.shared-pool.add" }, async (transaction) => {
                     const at = now();
                     await assertAutomationSequence(transaction, automationState.expectedSequence);
+                    if (typeof replacesGatewayId === "string") {
+                        automationMember(await transaction.gateways.roots.get(replacesGatewayId), replacesGatewayId);
+                    }
                     await writeInitialGatewayReleaseInTransaction(transaction, {
                         gatewayId,
                         createdBy: SHARED_POOL_SCALER_CREATOR,

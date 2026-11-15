@@ -61,8 +61,14 @@ enqueues its `add-gateway` operation.
 ```
 
 `reason` is `minimum-replicas`, `scale-out` or `platform-replacement`;
-`replacesGatewayId` goes with the last only. `gatewayId` is optional. Answers
-`202` with `gatewayId`, `operationId` and `automationSequence`.
+`replacesGatewayId` goes with the last only, and must name a shared gateway
+automation added. `gatewayId` is optional. Answers `202` with `gatewayId`,
+`operationId` and `automationSequence`.
+
+The platform does not cap how many shared gateways automation adds: the pool's
+floor and ceiling are the caller's policy. Each add advances the automation
+sequence, so concurrent or replayed adds from one read fail closed, but a client
+that keeps re-reading and adding grows the pool until its own ceiling stops it.
 
 ## `POST /shared-gateways/<gateway>/desired-status`
 
