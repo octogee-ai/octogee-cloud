@@ -11,7 +11,7 @@ import type {
   AgentImportConfigArtifacts,
   AgentImportWorkspacePolicy,
 } from "@octogee/shared/types/agent-import";
-import type { AgentImportService } from "../lib/agent-import-service.js";
+import type { AgentImportService } from "@octogee/core/http-candidates/agent-transfer/agent-import-service";
 import { DEFAULT_RATE_LIMIT_OPTIONS } from "@octogee/core/http/security";
 
 const MAX_ARCHIVE_BYTES = 32 * 1024 * 1024;

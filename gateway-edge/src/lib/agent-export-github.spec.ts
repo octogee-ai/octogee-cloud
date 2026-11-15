@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { agentExportGithub } from "./agent-export-github.js";
-import type { AgentExportRecord } from "./agent-export-service.js";
+import type { AgentExportRecord } from "@octogee/core/http-candidates/agent-transfer/agent-export-service";
 import { githubJson } from "@octogee/core/git-host/github";
 vi.mock("@octogee/core/git-host/github", () => ({ githubRepoUrl: (owner: string, repo: string, suffix: string) => `https://api.github.com/repos/${owner}/${repo}${suffix}`, githubJson: vi.fn() }));
 const old = "a".repeat(40), tree = "b".repeat(40), commit = "c".repeat(40), blob = "d".repeat(40);

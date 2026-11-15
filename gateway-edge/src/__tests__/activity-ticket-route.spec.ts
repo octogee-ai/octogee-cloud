@@ -3,7 +3,7 @@ import request from 'supertest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 const h = vi.hoisted(() => ({ authorize: vi.fn(), mint: vi.fn() }));
 vi.mock('@octogee/core/http/auth', () => ({ requireAuth: (req: { uid: string }, _res: unknown, next: () => void) => { req.uid = 'member'; next(); } }));
-vi.mock('../lib/activity-conversation.js', () => ({ resolveActivityConversation: h.authorize }));
+vi.mock('@octogee/core/channels/activity-conversation', () => ({ resolveActivityConversation: h.authorize }));
 vi.mock('../lib/gateway-ticket.js', () => ({ mintTicket: h.mint }));
 vi.mock("@octogee/core/platform-state", async (importOriginal) => {
   const { createDocumentFixtureStore } = await import("@octogee/core/testing/journal-store");

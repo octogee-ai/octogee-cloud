@@ -3,8 +3,8 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 
 import { acquireSystemConfigMutationLease } from "@octogee/core/system-config-mutation-lease";
-import { attachUpstreamRpcClient } from "../chat-proxy/openclaw/bridge-upstream-rpc.js";
-import { openAuthenticatedUpstream } from "../chat-proxy/openclaw/authenticated-upstream.js";
+import { attachUpstreamRpcClient } from "@octogee/core/http-candidates/chat-proxy/openclaw/bridge-upstream-rpc";
+import { openAuthenticatedUpstream } from "@octogee/core/http-candidates/chat-proxy/openclaw/authenticated-upstream";
 import type { AgentImportAuthorizationIntent } from "@octogee/shared/types/agent-import";
 import { agentImportBrokerBaseUrlFromEnv, createAgentImportStore } from "./agent-import-store.js";
 import {
@@ -13,8 +13,8 @@ import {
   compareAgentImportWorkspaces,
   inspectAgentImportRepository,
   rollbackAgentImportRepository,
-} from "./agent-import-git.js";
-import { cloneGithubAgentImportSource, extractLocalAgentImportArchive } from "./agent-import-source.js";
+} from "@octogee/core/http-candidates/agent-transfer/agent-import-git";
+import { cloneGithubAgentImportSource, extractLocalAgentImportArchive } from "@octogee/core/http-candidates/agent-transfer/agent-import-source";
 import {
   workspaceGitCommandArgs,
   workspaceGitEnvironment,
@@ -22,7 +22,7 @@ import {
 import {
   AgentImportService,
   type AgentImportDoctorResult,
-} from "./agent-import-service.js";
+} from "@octogee/core/http-candidates/agent-transfer/agent-import-service";
 
 type JsonObject = Record<string, unknown>;
 

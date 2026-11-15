@@ -25,14 +25,6 @@
       "types": "./dist/gateway-edge/src/index.d.ts",
       "default": "./dist/gateway-edge/src/index.js"
     },
-    "./gateway-edge/lib/activity-conversation": {
-      "types": "./dist/gateway-edge/src/lib/activity-conversation.d.ts",
-      "default": "./dist/gateway-edge/src/lib/activity-conversation.js"
-    },
-    "./gateway-edge/lib/agent-export-service": {
-      "types": "./dist/gateway-edge/src/lib/agent-export-service.d.ts",
-      "default": "./dist/gateway-edge/src/lib/agent-export-service.js"
-    },
     "./gateway-edge/lib/agent-identity": {
       "types": "./dist/gateway-edge/src/lib/agent-identity.d.ts",
       "default": "./dist/gateway-edge/src/lib/agent-identity.js"
@@ -52,14 +44,6 @@
     "./gateway-edge/lib/channel-lifecycle": {
       "types": "./dist/gateway-edge/src/lib/channel-lifecycle.d.ts",
       "default": "./dist/gateway-edge/src/lib/channel-lifecycle.js"
-    },
-    "./gateway-edge/lib/channel-session-authorization": {
-      "types": "./dist/gateway-edge/src/lib/channel-session-authorization.d.ts",
-      "default": "./dist/gateway-edge/src/lib/channel-session-authorization.js"
-    },
-    "./gateway-edge/lib/channel-session-model-control": {
-      "types": "./dist/gateway-edge/src/lib/channel-session-model-control.d.ts",
-      "default": "./dist/gateway-edge/src/lib/channel-session-model-control.js"
     },
     "./gateway-edge/lib/connect-state": {
       "types": "./dist/gateway-edge/src/lib/connect-state.d.ts",
@@ -177,17 +161,9 @@
       "types": "./dist/gateway-edge/src/model-credentials/provider-probe.d.ts",
       "default": "./dist/gateway-edge/src/model-credentials/provider-probe.js"
     },
-    "./gateway-edge/openclaw-control/broker": {
-      "types": "./dist/gateway-edge/src/openclaw-control/broker.d.ts",
-      "default": "./dist/gateway-edge/src/openclaw-control/broker.js"
-    },
     "./gateway-edge/openclaw-control/mobile-proof": {
       "types": "./dist/gateway-edge/src/openclaw-control/mobile-proof.d.ts",
       "default": "./dist/gateway-edge/src/openclaw-control/mobile-proof.js"
-    },
-    "./gateway-edge/openclaw-control/proxy-identity": {
-      "types": "./dist/gateway-edge/src/openclaw-control/proxy-identity.d.ts",
-      "default": "./dist/gateway-edge/src/openclaw-control/proxy-identity.js"
     },
     "./gateway-edge/routes/admin": {
       "types": "./dist/gateway-edge/src/routes/admin.d.ts",

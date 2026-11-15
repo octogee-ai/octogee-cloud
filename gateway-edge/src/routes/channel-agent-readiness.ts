@@ -1,8 +1,8 @@
 import { clientRequestLimit } from "@octogee/core/http/authenticated-request-limit";
 import { Router } from "express";
 import { logger } from "@octogee/core/http/logging";
-import { authorizeChannelAgentReadiness } from "../lib/channel-agent-readiness-authorization-broker.js";
-import { readChannelAgentReadiness, readinessFailureReason } from "../lib/channel-agent-readiness.js";
+import { authorizeChannelAgentReadiness } from "@octogee/core/http-candidates/channels/channel-agent-readiness-authorization-broker";
+import { readChannelAgentReadiness, readinessFailureReason } from "@octogee/core/http-candidates/channels/channel-agent-readiness";
 
 export function createChannelAgentReadinessRouter(deps = {
   authorize: authorizeChannelAgentReadiness,

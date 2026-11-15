@@ -3,7 +3,7 @@ import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
 import type { WorkspaceChannel } from "@octogee/core/platform-state";
 import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
-import { receiptDocumentId } from "../../../gateway-edge/src/chat-proxy/openclaw/activity-write-receipts.js";
+import { receiptDocumentId } from "@octogee/core/http-candidates/chat-proxy/openclaw/activity-write-receipts";
 import {
   createOpenClawRuntimeBrokerRoutes,
   type SessionChannelPurposeReader,

@@ -31,7 +31,7 @@ import {
 } from "./activity-sink.js";
 import {
   type ActivityWriteReceiptStore,
-} from "./activity-write-receipts.js";
+} from "@octogee/core/http-candidates/chat-proxy/openclaw/activity-write-receipts";
 import type { ActivityMattermostClient } from "./mm-client.js";
 
 const MAX_JSON_BYTES = 256 * 1024;

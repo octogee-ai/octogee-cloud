@@ -4,15 +4,15 @@ import { WebSocket } from 'ws';
 import type { NativeMobileBinding } from '@octogee/shared/types/native-mobile';
 import { sendWsRequest } from '@octogee/shared/types/openclaw-wire-core';
 import { isPerUserControlIdentity } from '@octogee/shared/types/openclaw-proxy-identity';
-import { postOpenClawControlBroker } from './broker.js';
+import { postOpenClawControlBroker } from '@octogee/core/http-candidates/openclaw-control/broker';
 import {
   createOpenClawControlProxyIdentity,
   openProxyIdentitySocket,
   type OpenClawControlProxyIdentity,
-} from './proxy-identity.js';
+} from '@octogee/core/http-candidates/openclaw-control/proxy-identity';
 import { openClawControlUpstreamBase } from './surface.js';
-import type { OpenClawControlSession } from './session.js';
-import type { MattermostControlChat } from './mattermost-chat.js';
+import type { OpenClawControlSession } from '@octogee/core/http-candidates/openclaw-control/session';
+import type { MattermostControlChat } from '@octogee/core/http-candidates/openclaw-control/mattermost-chat';
 import type { WorkspaceServingResolver } from './workspace-serving.js';
 import { mobileRecord } from './mobile-proof.js';
 import { isIsolatedGatewayClassValue } from "@octogee/shared/types/glm";

@@ -15,7 +15,7 @@ import { generateIdentity, signConnectDevice } from '@octogee/shared/types/devic
 import { sendWsRequest } from '@octogee/shared/types/openclaw-wire-core';
 import type { NativeMobileBinding } from '@octogee/shared/types/native-mobile';
 import { createMobileGateway } from './mobile.js';
-import { createOpenClawControlProxyIdentity, openProxyIdentitySocket } from './proxy-identity.js';
+import { createOpenClawControlProxyIdentity, openProxyIdentitySocket } from '@octogee/core/http-candidates/openclaw-control/proxy-identity';
 import { mobileDigest } from './mobile-proof.js';
 import { installTestUserIdentity } from '../__tests__/helpers/user-identity.js';
 

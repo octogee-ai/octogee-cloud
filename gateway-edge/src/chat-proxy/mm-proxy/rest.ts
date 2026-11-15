@@ -1,7 +1,7 @@
 import http from "node:http";
 import https from "node:https";
 import { URL } from "node:url";
-import type { BridgeLog } from "../bridge-log.js";
+import type { BridgeLog } from "@octogee/core/http/bridge-log";
 
 export interface MmRestCapture {
   status: number;

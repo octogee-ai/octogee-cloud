@@ -6,7 +6,7 @@ import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store"
 import { authorizeAgentExport, registerAgentExportBrokerRoutes } from "./agent-export-broker.js";
 import type { OwnerContext } from "./agent-import-broker.js";
 import { FeaturePolicy } from "../lib/feature-policy.js";
-import { agentExportApproval, type AgentExportRecord } from "../../../gateway-edge/src/lib/agent-export-service.js";
+import { agentExportApproval, type AgentExportRecord } from "@octogee/core/http-candidates/agent-transfer/agent-export-service";
 function fixture() {
   const owner: OwnerContext = { uid: "u1", slug: "alice", gatewayId: "shared-a", isAdmin: false, workspacePolicy: { preserveConvergedContextFiles: true } };
   const docs = new Map<string, any>([

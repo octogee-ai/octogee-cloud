@@ -6,14 +6,14 @@ import { accountAllowsInteractiveAccess } from "@octogee/shared/types/account-li
 import { isValidGatewayId, resolveGatewayClass } from "@octogee/shared/types/glm";
 import { userAssignedTo, ownerWorkspacePermissionsEnabled, withGatewayOwnerSizingKey } from "../../../gateway-edge/src/routes/user/gateways.js";
 import { isMattermostPostId } from '@octogee/shared/types/mattermost-session-route';
-import { ChannelSessionMattermostError } from '../../../gateway-edge/src/lib/channel-session-model-control.js';
+import { ChannelSessionMattermostError } from '@octogee/core/channels/channel-session-model-control';
 import { isValidProjectId, projectAgentId } from '@octogee/shared/types/identity';
 import { projectMemberExists } from './project-members.js';
 
 export interface WorkspaceConversationDeps {
   store: PlatformStateStore;
   readSizingKey: SizingKeyReader;
-  authorize?: typeof import("../../../gateway-edge/src/lib/channel-session-authorization.js").authorizeChannelCredentials;
+  authorize?: typeof import("@octogee/core/channels/channel-session-authorization").authorizeChannelCredentials;
   readChannel?: (token: string, channelId: string) => Promise<unknown>;
   readPost?: (token: string, postId: string) => Promise<unknown>;
   readMember?: (token: string, channelId: string, memberId: string) => Promise<unknown>;
@@ -78,7 +78,7 @@ async function resolveNativeConversationScope(deps: WorkspaceConversationDeps, c
   );
 }
 async function mattermostClient(token: string) {
-  const { createChannelSessionMattermostClient } = await import("../../../gateway-edge/src/lib/channel-session-model-control.js");
+  const { createChannelSessionMattermostClient } = await import("@octogee/core/channels/channel-session-model-control");
   return createChannelSessionMattermostClient({ baseUrl: process.env.MM_INTERNAL_URL ?? "", token });
 }
 async function readMattermostChannel(token: string, id: string): Promise<unknown> {
@@ -100,7 +100,7 @@ function channelAgentAllowed(target: { projectId?: string; agentId: string; work
 }
 async function resolveWorkspaceChannel(deps: WorkspaceConversationDeps, claim: { uid: string; channelId: string; gatewayId?: string }, voice = false) {
   if (!isMattermostPostId(claim.channelId)) return null;
-  const authorize = deps.authorize ?? (await import("../../../gateway-edge/src/lib/channel-session-authorization.js")).authorizeChannelCredentials;
+  const authorize = deps.authorize ?? (await import("@octogee/core/channels/channel-session-authorization")).authorizeChannelCredentials;
   const access = await authorize(claim.uid, claim.channelId, undefined, voice ? { voiceConversation: true } : { workspaceConversation: true });
   if (!access || access.forbidden || !channelAgentAllowed(access.target, voice)) return null;
   const { workspaceSlug, ownerUid, projectId } = access.target;

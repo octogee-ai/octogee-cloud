@@ -1,8 +1,8 @@
 import { clientRequestLimit } from "@octogee/core/http/authenticated-request-limit";
 import { Router } from "express";
 import { requireByotSyncInternalAuth } from "../../middleware/byot-sync-auth.js";
-import { openAuthenticatedUpstream } from "../../chat-proxy/openclaw/authenticated-upstream.js";
-import { attachUpstreamRpcClient } from "../../chat-proxy/openclaw/bridge-upstream-rpc.js";
+import { openAuthenticatedUpstream } from "@octogee/core/http-candidates/chat-proxy/openclaw/authenticated-upstream";
+import { attachUpstreamRpcClient } from "@octogee/core/http-candidates/chat-proxy/openclaw/bridge-upstream-rpc";
 import { openNativeUserClient } from "../../openclaw-control/native-user-client.js";
 import { resolveWorkspaceNativeIdentity } from "../../lib/workspace-native-access.js";
 import { NativeConnectorApprovalAccessError, runNativeConnectorApproval, type NativeConnectorCommand, type NativeApprovalClient } from "../../lib/native-connector-approval.js";

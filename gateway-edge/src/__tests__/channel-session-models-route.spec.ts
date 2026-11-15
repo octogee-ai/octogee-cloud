@@ -29,8 +29,8 @@ vi.mock("@octogee/core/identity/platform-state-store", async () => {
   h.store = createDocumentFixtureStore(h.docs);
   return { platformStateStore: h.store };
 });
-vi.mock("../lib/channel-session-model-control.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../lib/channel-session-model-control.js")>();
+vi.mock("@octogee/core/channels/channel-session-model-control", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@octogee/core/channels/channel-session-model-control")>();
   return {
     ...actual,
     createChannelSessionMattermostClient: () => ({
@@ -51,7 +51,7 @@ vi.mock("../lib/channel-session-model-control.js", async (importOriginal) => {
   };
 });
 
-const { ChannelSessionMattermostError } = await import("../lib/channel-session-model-control.js");
+const { ChannelSessionMattermostError } = await import("@octogee/core/channels/channel-session-model-control");
 const { default: routes } = await import("../routes/channel-session-models.js");
 
 const CHANNEL_LEDGER = { mattermost: { channelId: "c".repeat(26) } };

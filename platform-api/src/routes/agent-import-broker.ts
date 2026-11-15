@@ -22,11 +22,11 @@ import { userEntitlements } from "@octogee/shared/types/user-entitlements";
 import type { FeaturePolicy } from "@octogee/shared/types/feature-flags";
 import { isValidGatewayId } from "@octogee/shared/types/glm";
 import { isValidUsername } from "@octogee/shared/types/identity";
-import type { AgentImportManifestEntry } from "../../../gateway-edge/src/lib/agent-import-git.js";
+import type { AgentImportManifestEntry } from "@octogee/core/http-candidates/agent-transfer/agent-import-git";
 import type {
   AgentImportIdentity,
   AgentImportIdentitySnapshot,
-} from "../../../gateway-edge/src/lib/agent-import-service.js";
+} from "@octogee/core/http-candidates/agent-transfer/agent-import-service";
 
 const IMPORT_ID_RE = /^[A-Za-z0-9_-]{1,160}$/;
 const GITHUB_OWNER_RE = /^[A-Za-z0-9-]{1,39}$/;

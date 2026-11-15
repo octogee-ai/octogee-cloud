@@ -15,7 +15,7 @@ import { createWsTicketStore, wsTicketFromPath } from '../lib/ws-ticket-store.js
 import { authorizeSession, monitorSessionAuthorization } from '../lib/ws-session-authorization.js';
 import { openNativeUserSocket } from '../openclaw-control/native-user-client.js';
 import { openClawControlUpstreamBase } from '../openclaw-control/surface.js';
-import { podClientAddress } from '../openclaw-control/proxy-identity.js';
+import { podClientAddress } from '@octogee/core/http-candidates/openclaw-control/proxy-identity';
 import { terminalAvailable } from './terminal.js';
 import { browserRecord, browserRequestParams, browserStreamPath } from './browser-policy.js';
 import { latestNativeBrowserTab } from '../vendor/openclaw-browser-resources/index.js';

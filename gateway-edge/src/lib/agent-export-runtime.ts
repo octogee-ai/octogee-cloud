@@ -5,12 +5,12 @@ import path from "node:path";
 import { readMaterializedProjectAssets, readProjectAssetManifest } from "@octogee/core/project-asset-state";
 import { manifestObjectPath, parseManifest } from "@octogee/core/workspace-manifest";
 import { createAgentImportStore, agentImportBrokerBaseUrlFromEnv } from "./agent-import-store.js";
-import { scanAgentImportSecrets } from "./agent-import-git.js";
+import { scanAgentImportSecrets } from "@octogee/core/http-candidates/agent-transfer/agent-import-git";
 import { resolveUserDir, resolveProjectDir, workspaceMutationLeaseGitDir } from "@octogee/core/workspace/workspace-git";
 import { getManifestForQuota } from "@octogee/core/workspace/manifest";
 import { gcsBucket } from "@octogee/core/workspace/gcs-bucket";
-import { withinAgentExportDeadline, AgentExportService, type AgentExportSource, type AgentExportRecord } from "./agent-export-service.js";
-import { captureAgentExport, exportDigest, type AgentExportSnapshot } from "./agent-export-snapshot.js";
+import { withinAgentExportDeadline, AgentExportService, type AgentExportSource, type AgentExportRecord } from "@octogee/core/http-candidates/agent-transfer/agent-export-service";
+import { captureAgentExport, exportDigest, type AgentExportSnapshot } from "@octogee/core/http-candidates/agent-transfer/agent-export-snapshot";
 import { agentExportGithub } from "./agent-export-github.js";
 
 export function createAgentExportRuntime(input: { authorization: string; gatewayId: string }) {

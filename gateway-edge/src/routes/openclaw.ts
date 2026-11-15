@@ -3,7 +3,7 @@ import { Router, Request, Response, NextFunction } from "express";
 import { requireAuth } from "@octogee/core/http/auth";
 import { platformStateStore } from "@octogee/core/identity/platform-state-store";
 import { mintTicket } from "../lib/gateway-ticket.js";
-import { resolveActivityConversation } from "../lib/activity-conversation.js";
+import { resolveActivityConversation } from "@octogee/core/channels/activity-conversation";
 import { isMattermostPostId } from '@octogee/shared/types/mattermost-session-route';
 import { isValidGatewayId } from "@octogee/shared/types/glm";
 

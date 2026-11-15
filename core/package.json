@@ -789,6 +789,118 @@
     "./model-credentials/byot-sync-internal-auth": {
       "types": "./dist/model-credentials/byot-sync-internal-auth.d.ts",
       "default": "./dist/model-credentials/byot-sync-internal-auth.js"
+    },
+    "./http/bridge-log": {
+      "types": "./dist/http/bridge-log.d.ts",
+      "default": "./dist/http/bridge-log.js"
+    },
+    "./http-candidates/agent-control-callback-router": {
+      "types": "./dist/http-candidates/agent-control-callback-router.d.ts",
+      "default": "./dist/http-candidates/agent-control-callback-router.js"
+    },
+    "./http-candidates/workspace-commit-router": {
+      "types": "./dist/http-candidates/workspace-commit-router.d.ts",
+      "default": "./dist/http-candidates/workspace-commit-router.js"
+    },
+    "./channels/channel-session-authorization": {
+      "types": "./dist/channels/channel-session-authorization.d.ts",
+      "default": "./dist/channels/channel-session-authorization.js"
+    },
+    "./channels/channel-session-model-control": {
+      "types": "./dist/channels/channel-session-model-control.d.ts",
+      "default": "./dist/channels/channel-session-model-control.js"
+    },
+    "./http-candidates/chat-proxy/openclaw/activity-write-receipts": {
+      "types": "./dist/http-candidates/chat-proxy/openclaw/activity-write-receipts.d.ts",
+      "default": "./dist/http-candidates/chat-proxy/openclaw/activity-write-receipts.js"
+    },
+    "./http-candidates/chat-proxy/openclaw/authenticated-upstream": {
+      "types": "./dist/http-candidates/chat-proxy/openclaw/authenticated-upstream.d.ts",
+      "default": "./dist/http-candidates/chat-proxy/openclaw/authenticated-upstream.js"
+    },
+    "./http-candidates/chat-proxy/openclaw/bridge-upstream-rpc": {
+      "types": "./dist/http-candidates/chat-proxy/openclaw/bridge-upstream-rpc.d.ts",
+      "default": "./dist/http-candidates/chat-proxy/openclaw/bridge-upstream-rpc.js"
+    },
+    "./http-candidates/chat-proxy/openclaw/device-identity": {
+      "types": "./dist/http-candidates/chat-proxy/openclaw/device-identity.d.ts",
+      "default": "./dist/http-candidates/chat-proxy/openclaw/device-identity.js"
+    },
+    "./http-candidates/chat-proxy/openclaw/gateway-token-constants": {
+      "types": "./dist/http-candidates/chat-proxy/openclaw/gateway-token-constants.d.ts",
+      "default": "./dist/http-candidates/chat-proxy/openclaw/gateway-token-constants.js"
+    },
+    "./http-candidates/chat-proxy/openclaw/gateway-token": {
+      "types": "./dist/http-candidates/chat-proxy/openclaw/gateway-token.d.ts",
+      "default": "./dist/http-candidates/chat-proxy/openclaw/gateway-token.js"
+    },
+    "./http-candidates/chat-proxy/openclaw/upstream": {
+      "types": "./dist/http-candidates/chat-proxy/openclaw/upstream.d.ts",
+      "default": "./dist/http-candidates/chat-proxy/openclaw/upstream.js"
+    },
+    "./http-candidates/openclaw-control/broker": {
+      "types": "./dist/http-candidates/openclaw-control/broker.d.ts",
+      "default": "./dist/http-candidates/openclaw-control/broker.js"
+    },
+    "./http-candidates/openclaw-control/channel-membership-sync": {
+      "types": "./dist/http-candidates/openclaw-control/channel-membership-sync.d.ts",
+      "default": "./dist/http-candidates/openclaw-control/channel-membership-sync.js"
+    },
+    "./http-candidates/openclaw-control/mattermost-broker": {
+      "types": "./dist/http-candidates/openclaw-control/mattermost-broker.d.ts",
+      "default": "./dist/http-candidates/openclaw-control/mattermost-broker.js"
+    },
+    "./http-candidates/openclaw-control/mattermost-chat": {
+      "types": "./dist/http-candidates/openclaw-control/mattermost-chat.d.ts",
+      "default": "./dist/http-candidates/openclaw-control/mattermost-chat.js"
+    },
+    "./http-candidates/openclaw-control/mattermost-events": {
+      "types": "./dist/http-candidates/openclaw-control/mattermost-events.d.ts",
+      "default": "./dist/http-candidates/openclaw-control/mattermost-events.js"
+    },
+    "./http-candidates/openclaw-control/profile-appearance": {
+      "types": "./dist/http-candidates/openclaw-control/profile-appearance.d.ts",
+      "default": "./dist/http-candidates/openclaw-control/profile-appearance.js"
+    },
+    "./http-candidates/openclaw-control/proxy-identity": {
+      "types": "./dist/http-candidates/openclaw-control/proxy-identity.d.ts",
+      "default": "./dist/http-candidates/openclaw-control/proxy-identity.js"
+    },
+    "./http-candidates/openclaw-control/session": {
+      "types": "./dist/http-candidates/openclaw-control/session.d.ts",
+      "default": "./dist/http-candidates/openclaw-control/session.js"
+    },
+    "./http-candidates/agent-transfer/agent-export-service": {
+      "types": "./dist/http-candidates/agent-transfer/agent-export-service.d.ts",
+      "default": "./dist/http-candidates/agent-transfer/agent-export-service.js"
+    },
+    "./http-candidates/agent-transfer/agent-export-snapshot": {
+      "types": "./dist/http-candidates/agent-transfer/agent-export-snapshot.d.ts",
+      "default": "./dist/http-candidates/agent-transfer/agent-export-snapshot.js"
+    },
+    "./http-candidates/agent-transfer/agent-import-git": {
+      "types": "./dist/http-candidates/agent-transfer/agent-import-git.d.ts",
+      "default": "./dist/http-candidates/agent-transfer/agent-import-git.js"
+    },
+    "./http-candidates/agent-transfer/agent-import-service": {
+      "types": "./dist/http-candidates/agent-transfer/agent-import-service.d.ts",
+      "default": "./dist/http-candidates/agent-transfer/agent-import-service.js"
+    },
+    "./http-candidates/agent-transfer/agent-import-source": {
+      "types": "./dist/http-candidates/agent-transfer/agent-import-source.d.ts",
+      "default": "./dist/http-candidates/agent-transfer/agent-import-source.js"
+    },
+    "./http-candidates/channels/channel-agent-readiness-authorization-broker": {
+      "types": "./dist/http-candidates/channels/channel-agent-readiness-authorization-broker.d.ts",
+      "default": "./dist/http-candidates/channels/channel-agent-readiness-authorization-broker.js"
+    },
+    "./channels/activity-conversation": {
+      "types": "./dist/channels/activity-conversation.d.ts",
+      "default": "./dist/channels/activity-conversation.js"
+    },
+    "./http-candidates/channels/channel-agent-readiness": {
+      "types": "./dist/http-candidates/channels/channel-agent-readiness.d.ts",
+      "default": "./dist/http-candidates/channels/channel-agent-readiness.js"
     }
   },
   "typesVersions": {
@@ -1296,6 +1408,90 @@
       ],
       "model-credentials/byot-sync-internal-auth": [
         "dist/model-credentials/byot-sync-internal-auth.d.ts"
+      ],
+      "http/bridge-log": [
+        "dist/http/bridge-log.d.ts"
+      ],
+      "http-candidates/agent-control-callback-router": [
+        "dist/http-candidates/agent-control-callback-router.d.ts"
+      ],
+      "http-candidates/workspace-commit-router": [
+        "dist/http-candidates/workspace-commit-router.d.ts"
+      ],
+      "channels/channel-session-authorization": [
+        "dist/channels/channel-session-authorization.d.ts"
+      ],
+      "channels/channel-session-model-control": [
+        "dist/channels/channel-session-model-control.d.ts"
+      ],
+      "http-candidates/chat-proxy/openclaw/activity-write-receipts": [
+        "dist/http-candidates/chat-proxy/openclaw/activity-write-receipts.d.ts"
+      ],
+      "http-candidates/chat-proxy/openclaw/authenticated-upstream": [
+        "dist/http-candidates/chat-proxy/openclaw/authenticated-upstream.d.ts"
+      ],
+      "http-candidates/chat-proxy/openclaw/bridge-upstream-rpc": [
+        "dist/http-candidates/chat-proxy/openclaw/bridge-upstream-rpc.d.ts"
+      ],
+      "http-candidates/chat-proxy/openclaw/device-identity": [
+        "dist/http-candidates/chat-proxy/openclaw/device-identity.d.ts"
+      ],
+      "http-candidates/chat-proxy/openclaw/gateway-token-constants": [
+        "dist/http-candidates/chat-proxy/openclaw/gateway-token-constants.d.ts"
+      ],
+      "http-candidates/chat-proxy/openclaw/gateway-token": [
+        "dist/http-candidates/chat-proxy/openclaw/gateway-token.d.ts"
+      ],
+      "http-candidates/chat-proxy/openclaw/upstream": [
+        "dist/http-candidates/chat-proxy/openclaw/upstream.d.ts"
+      ],
+      "http-candidates/openclaw-control/broker": [
+        "dist/http-candidates/openclaw-control/broker.d.ts"
+      ],
+      "http-candidates/openclaw-control/channel-membership-sync": [
+        "dist/http-candidates/openclaw-control/channel-membership-sync.d.ts"
+      ],
+      "http-candidates/openclaw-control/mattermost-broker": [
+        "dist/http-candidates/openclaw-control/mattermost-broker.d.ts"
+      ],
+      "http-candidates/openclaw-control/mattermost-chat": [
+        "dist/http-candidates/openclaw-control/mattermost-chat.d.ts"
+      ],
+      "http-candidates/openclaw-control/mattermost-events": [
+        "dist/http-candidates/openclaw-control/mattermost-events.d.ts"
+      ],
+      "http-candidates/openclaw-control/profile-appearance": [
+        "dist/http-candidates/openclaw-control/profile-appearance.d.ts"
+      ],
+      "http-candidates/openclaw-control/proxy-identity": [
+        "dist/http-candidates/openclaw-control/proxy-identity.d.ts"
+      ],
+      "http-candidates/openclaw-control/session": [
+        "dist/http-candidates/openclaw-control/session.d.ts"
+      ],
+      "http-candidates/agent-transfer/agent-export-service": [
+        "dist/http-candidates/agent-transfer/agent-export-service.d.ts"
+      ],
+      "http-candidates/agent-transfer/agent-export-snapshot": [
+        "dist/http-candidates/agent-transfer/agent-export-snapshot.d.ts"
+      ],
+      "http-candidates/agent-transfer/agent-import-git": [
+        "dist/http-candidates/agent-transfer/agent-import-git.d.ts"
+      ],
+      "http-candidates/agent-transfer/agent-import-service": [
+        "dist/http-candidates/agent-transfer/agent-import-service.d.ts"
+      ],
+      "http-candidates/agent-transfer/agent-import-source": [
+        "dist/http-candidates/agent-transfer/agent-import-source.d.ts"
+      ],
+      "http-candidates/channels/channel-agent-readiness-authorization-broker": [
+        "dist/http-candidates/channels/channel-agent-readiness-authorization-broker.d.ts"
+      ],
+      "channels/activity-conversation": [
+        "dist/channels/activity-conversation.d.ts"
+      ],
+      "http-candidates/channels/channel-agent-readiness": [
+        "dist/http-candidates/channels/channel-agent-readiness.d.ts"
       ]
     }
   },
@@ -1317,6 +1513,7 @@
     "express-rate-limit": "^8.7.3",
     "google-auth-library": "^11.3.3",
     "helmet": "^8.3.0",
+    "jszip": "^3.10.2",
     "pg": "^8.23.1",
     "unique-names-generator": "^4.7.1",
     "ws": "^8.22.2"

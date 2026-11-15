@@ -14,11 +14,11 @@ import {
   parseNativeModelResult,
   pickCorrelatedAgentReply,
   type MattermostModelPost,
-} from "../lib/channel-session-model-control.js";
+} from "@octogee/core/channels/channel-session-model-control";
 import {
   authorizeChannel,
   type AuthorizedChannel,
-} from "../lib/channel-session-authorization.js";
+} from "@octogee/core/channels/channel-session-authorization";
 import { platformStateStore } from "@octogee/core/identity/platform-state-store";
 import { requireActiveAccount, requireAuthenticatedUid } from "@octogee/core/http/auth";
 import { logger } from "@octogee/core/http/logging";

@@ -22,7 +22,7 @@ import {
   resolveControlIdentityFromEnv,
 } from "@octogee/shared/types/openclaw-proxy-identity";
 
-import { fetchGatewayToken } from "../chat-proxy/openclaw/gateway-token.js";
+import { fetchGatewayToken } from "@octogee/core/http-candidates/chat-proxy/openclaw/gateway-token";
 import { logger } from "@octogee/core/http/logging";
 import { clientRequestLimit } from "@octogee/core/http/authenticated-request-limit";
 import { isDashboardAssetRequest } from "@octogee/shared/types/dashboard-asset-request";
@@ -33,7 +33,7 @@ import {
   openClawControlBrokerFailureKind,
   redeemOpenClawControlTicket,
   type OpenClawControlAuthorizationCache,
-} from "./broker.js";
+} from "@octogee/core/http-candidates/openclaw-control/broker";
 import {
   challengeNonce,
   rewriteTrustedOpenClawConnect,
@@ -43,7 +43,7 @@ import {
 import {
   createOpenClawControlProxyIdentity,
   type OpenClawControlProxyIdentity,
-} from "./proxy-identity.js";
+} from "@octogee/core/http-candidates/openclaw-control/proxy-identity";
 import {
   evaluateOpenClawControlRpc,
   openClawControlRpcCategory,
@@ -61,15 +61,15 @@ import {
   type OpenClawControlLease,
   type OpenClawControlResourceIdentity,
 } from "./limits.js";
-import { ChannelMembershipSyncError } from "./channel-membership-sync.js";
-import { OpenClawControlSessionManager, type OpenClawControlSession } from "./session.js";
+import { ChannelMembershipSyncError } from "@octogee/core/http-candidates/openclaw-control/channel-membership-sync";
+import { OpenClawControlSessionManager, type OpenClawControlSession } from "@octogee/core/http-candidates/openclaw-control/session";
 import { bridgeDesktopObserver, DesktopObserverTickets } from "./desktop-stream.js";
 import type { OpenClawControlMetrics, OpenClawControlMetricIdentity } from "./metrics.js";
 import {
   createMattermostControlChat,
   type MattermostChatPreparation,
   type MattermostControlChat,
-} from "./mattermost-chat.js";
+} from "@octogee/core/http-candidates/openclaw-control/mattermost-chat";
 import type { ClaimedUserIdentity } from "@octogee/shared/types/builder-identity";
 import { claimedUserIdentity } from "@octogee/core/identity/user-identity";
 import { isIsolatedGatewayClassValue } from "@octogee/shared/types/glm";

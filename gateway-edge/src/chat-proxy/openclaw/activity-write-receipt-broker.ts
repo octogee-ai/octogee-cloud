@@ -4,7 +4,7 @@ import type {
   ActivityReceiptClaimInput,
   ActivityWriteReceiptStore,
   ActivityWriteReceiptV1,
-} from "./activity-write-receipts.js";
+} from "@octogee/core/http-candidates/chat-proxy/openclaw/activity-write-receipts";
 
 export interface ActivityWriteReceiptBrokerPort {
   claimActivityWriteReceipt(

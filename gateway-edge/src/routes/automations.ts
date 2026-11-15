@@ -2,8 +2,8 @@ import { authenticatedRequestLimit } from "@octogee/core/http/authenticated-requ
 import { Router, type Request, type Response } from "express";
 import { isValidGatewayId } from "@octogee/shared/types/glm";
 import { AUTOMATION_OPENCLAW_CONNECT_TIMEOUT_MS, AUTOMATION_OPENCLAW_RPC_TIMEOUT_MS } from "@octogee/shared/types/automations";
-import { attachUpstreamRpcClient, type UpstreamRpcError } from "../chat-proxy/openclaw/bridge-upstream-rpc.js";
-import { openAuthenticatedUpstream } from "../chat-proxy/openclaw/authenticated-upstream.js";
+import { attachUpstreamRpcClient, type UpstreamRpcError } from "@octogee/core/http-candidates/chat-proxy/openclaw/bridge-upstream-rpc";
+import { openAuthenticatedUpstream } from "@octogee/core/http-candidates/chat-proxy/openclaw/authenticated-upstream";
 import { authorizeAutomationOwner, type AutomationAuthorizationOutcome } from "@octogee/core/internal-brokers/automation-authorization-broker";
 import { AutomationBrokerError, automationRecord, executeAutomation, type AutomationScope } from "./automation-native.js";
 

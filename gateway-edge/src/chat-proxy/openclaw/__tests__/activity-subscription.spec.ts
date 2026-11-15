@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { attachActivitySubscription } from '../activity-subscription.js';
 const rpc = vi.hoisted(() => ({ call: vi.fn(), dispose: vi.fn() }));
-vi.mock('../bridge-upstream-rpc.js', () => ({ attachUpstreamRpcClient: () => rpc }));
+vi.mock('@octogee/core/http-candidates/chat-proxy/openclaw/bridge-upstream-rpc', () => ({ attachUpstreamRpcClient: () => rpc }));
 const threadRootPostId = 'r'.repeat(26);
 const scope = { gatewayId: 'shared-123456789abc', ownerUid: 'owner', channelId: 'c'.repeat(26), threadRootPostId, expectedAgentId: 'octogee-alice-coach', sessionKey: `agent:octogee-alice-coach:mattermost:group:${'c'.repeat(26)}` };
 function setup(activityScope: typeof scope | Omit<typeof scope, 'threadRootPostId'> = scope) {

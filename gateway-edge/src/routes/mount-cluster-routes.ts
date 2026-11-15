@@ -31,7 +31,7 @@ import projectsAgentRoutes from "./projects/agent.js";
 import projectsRepoSourceRoutes from "./projects/repo-source.js";
 import projectsSettingsRoutes from "./projects/settings.js";
 
-import internalWorkspaceCommitRoutes from "./internal/workspace-commit.js";
+import internalWorkspaceCommitRoutes from "@octogee/core/http-candidates/workspace-commit-router";
 
 import { requireAuth } from "@octogee/core/http/auth";
 

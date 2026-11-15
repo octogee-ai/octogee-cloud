@@ -21,7 +21,7 @@ import { createByosubAuthRouter } from "./routes/byosub-auth.js";
 import internalAgentMessageRoutes from "./routes/internal/agent-message.js";
 import { createInternalConnectorApprovalRouter } from "./routes/internal/connector-approvals.js";
 
-import internalWorkspaceCommitRoutes from "./routes/internal/workspace-commit.js";
+import internalWorkspaceCommitRoutes from "@octogee/core/http-candidates/workspace-commit-router";
 import internalOwnerAutomationRoutes from "./routes/internal/owner-automations.js";
 import { createProjectPersistenceRouter } from "./routes/internal/project-persistence.js";
 import internalGiteaAdminRoutes from "./routes/internal/gitea-admin.js";
@@ -73,7 +73,7 @@ import {
 import {
   createOpenClawControlAuthorizationCache,
   type OpenClawControlAuthorizationCache,
-} from "./openclaw-control/broker.js";
+} from "@octogee/core/http-candidates/openclaw-control/broker";
 import { installGatewayEdgeUnhandledRejectionPolicy } from "./process-rejection-policy.js";
 import {
   attachTerminalWsRoute,
@@ -400,7 +400,7 @@ if (process.env.NODE_ENV !== "test") {
       })
     : undefined;
   if (gatewayEdgeMode() === "agent-control-router") {
-    const { createAgentControlCallbackRouter } = await import("./agent-control-callback-router.js");
+    const { createAgentControlCallbackRouter } = await import("@octogee/core/http-candidates/agent-control-callback-router");
     const namespace = process.env.K8S_NAMESPACE || "default";
     const router = createAgentControlCallbackRouter({
       namespace,

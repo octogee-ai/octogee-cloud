@@ -61,6 +61,25 @@ They are covered by tests and split as they are touched.
 - There are no npm workspaces. Each package installs on its own, which keeps
   the packages independent and makes a change across them slow.
 
+## Gateway code in core
+
+`core/src/http-candidates/` holds 24 modules that run against a gateway's
+OpenClaw runtime or its working tree. The gateway edge runs them for its own
+gateway. The platform API needs only part of them, and gets that part by
+importing the modules into its own process. Each should split, or become a
+call to the edge:
+
+| Module | What the platform API uses | What it should become |
+| --- | --- | --- |
+| `agent-control-callback-router` | `verifyMattermostCommandRequest` and `validAgentControlRouterPublicKey` in `routes/mattermost-commands.ts` | The command signature check moves to `core/src/mattermost/`; the router stays in the edge |
+| `agent-transfer/agent-export-service`, `agent-export-snapshot` | `agentExportApproval`, `exportDigest` and the export record types in `routes/agent-export-broker.ts` | The approval, digest and record types move to a contract module; exports run only behind the edge's `/api/g/<gatewayId>/agent-exports` |
+| `agent-transfer/agent-import-git`, `agent-import-service`, `agent-import-source` | The identity snapshot and the import manifest and identity types in `routes/agent-import-broker.ts` | The types and the identity snapshot move to a contract module; imports run only behind the edge's `/api/g/<gatewayId>/agent-imports` |
+| `channels/channel-agent-readiness-authorization-broker`, `channel-agent-readiness` | The `ChannelReadinessAuthorization` type in `routes/channel-agent-readiness-authorization-broker.ts` | The authorization contract stays in core; readiness checks against OpenClaw run only behind the edge's `/api/g/<gatewayId>/channel-agent-readiness` |
+| `chat-proxy/openclaw/activity-write-receipts` | The platform-state receipt store and its errors in `routes/openclaw-runtime-broker.ts` | The store and its errors move to `core/src/channels/`; the gateway half stays in the edge |
+| `chat-proxy/openclaw/authenticated-upstream`, `bridge-upstream-rpc`, `device-identity`, `gateway-token`, `gateway-token-constants`, `upstream` | Nothing directly; reached through `proxy-identity` and `channel-agent-readiness` | Edge only, once those two split |
+| `openclaw-control/proxy-identity`, `profile-appearance`, `session`, `broker`, `channel-membership-sync`, `mattermost-broker`, `mattermost-chat`, `mattermost-events` | The `OpenClawProfileAppearance` type in `lib/openclaw-profile-appearance.ts` | The type moves to `shared/types`; the control session stays in the edge |
+| `workspace-commit-router` | Mounted at `/internal/workspace` by the API's cluster routes, where it commits a checkout the API does not have | The API stops mounting it; commits run only on the edge's `/internal/workspace` |
+
 ## Leftovers from the hosted service
 
 - The gateway, edge and fleet controller images include the server

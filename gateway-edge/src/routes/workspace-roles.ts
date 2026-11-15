@@ -5,7 +5,7 @@ import { requireAuthenticatedUid } from "@octogee/core/http/auth";
 import { DEFAULT_RATE_LIMIT_OPTIONS } from "@octogee/core/http/security";
 import { resolveWorkspaceNativeIdentity, WorkspaceNativeAccessError } from "../lib/workspace-native-access.js";
 import { openNativeUserClient } from "../openclaw-control/native-user-client.js";
-import { signedInProfile } from "../openclaw-control/proxy-identity.js";
+import { signedInProfile } from "@octogee/core/http-candidates/openclaw-control/proxy-identity";
 import { isIsolatedGatewayClassValue } from "@octogee/shared/types/glm";
 
 interface NativeProfile { id: string; role: string | null }

@@ -12,7 +12,7 @@ const mocks = vi.hoisted(() => ({ broker: vi.fn(), manifest: vi.fn(), file: vi.f
 vi.mock("./agent-import-store.js", () => ({ agentImportBrokerBaseUrlFromEnv: () => "http://localhost", createAgentImportStore: () => ({ exportRequest: mocks.broker, readGithubToken: vi.fn(), listGithubSources: vi.fn() }) }));
 vi.mock("@octogee/core/workspace/manifest", () => ({ getManifestForQuota: mocks.manifest }));
 vi.mock("@octogee/core/workspace/gcs-bucket", () => ({ gcsBucket: () => ({ file: mocks.file }) }));
-vi.mock("./agent-import-git.js", () => ({ scanAgentImportSecrets: async () => [] }));
+vi.mock("@octogee/core/http-candidates/agent-transfer/agent-import-git", () => ({ scanAgentImportSecrets: async () => [] }));
 vi.mock("./agent-export-github.js", () => ({ agentExportGithub: () => ({ destination: async () => ({ owner: "alice", repo: "agent", branch: "main", head: "a".repeat(40), tree: "b".repeat(40), files: [] }) }) }));
 const roots: string[] = [];
 afterEach(async () => { vi.unstubAllEnvs(); for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });

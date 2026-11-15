@@ -11,7 +11,7 @@ import {
 } from "../lib/workspace-conversation.js";
 import { projectMemberExists } from "../lib/project-members.js";
 import { isMattermostPostId, parseChannelScopedMattermostSessionRoute } from '@octogee/shared/types/mattermost-session-route';
-import { resolveActivityConversation, type ActivityConversation } from '../../../gateway-edge/src/lib/activity-conversation.js';
+import { resolveActivityConversation, type ActivityConversation } from '@octogee/core/channels/activity-conversation';
 import { Router, type Request, type Response } from "express";
 import { accountAllowsInteractiveAccess } from "@octogee/shared/types/account-lifecycle";
 
@@ -52,7 +52,7 @@ import {
   PlatformStateActivityWriteReceiptStore,
   type ActivityReceiptClaimInput,
   type ActivityWriteReceiptStore,
-} from "../../../gateway-edge/src/chat-proxy/openclaw/activity-write-receipts.js";
+} from "@octogee/core/http-candidates/chat-proxy/openclaw/activity-write-receipts";
 type GatewayBinding = Extract<Express.Request["boundTenant"], { kind: "gateway" }>;
 
 export type SessionChannelPurposeReader = (channel: WorkspaceChannel) => Promise<string>;

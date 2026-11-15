@@ -1,6 +1,6 @@
 import { githubJson, githubRepoUrl } from "@octogee/core/git-host/github";
-import { withinAgentExportDeadline, type AgentExportDestination, type AgentExportRecord } from "./agent-export-service.js";
-import { MAX_AGENT_EXPORT_FILES, type AgentExportSnapshot } from "./agent-export-snapshot.js";
+import { withinAgentExportDeadline, type AgentExportDestination, type AgentExportRecord } from "@octogee/core/http-candidates/agent-transfer/agent-export-service";
+import { MAX_AGENT_EXPORT_FILES, type AgentExportSnapshot } from "@octogee/core/http-candidates/agent-transfer/agent-export-snapshot";
 const sha = (value: unknown): string => { if (typeof value !== "string" || !/^[a-f0-9]{40}$/u.test(value)) { throw new Error("GitHub returned invalid object identity"); } return value; };
 export function agentExportGithub(token: () => Promise<string>, deadline = AbortSignal.timeout(90_000)) {
   const request = async <T>(owner: string, repo: string, suffix: string, options: { method?: string; body?: unknown; beforeSend?: () => Promise<void> } = {}): Promise<T> => {
