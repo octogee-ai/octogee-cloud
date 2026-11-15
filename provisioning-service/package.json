@@ -1,0 +1,31 @@
+{
+  "name": "@octogee/provisioning-service",
+  "version": "1.0.0",
+  "description": "Converges each user's chat host and git host resources to the spec its callers write, behind a versioned internal HTTP API.",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "prebuild": "node ../scripts/ops/sync-local-file-deps.mjs --consumer .",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/src/main.js",
+    "pretypecheck": "node ../scripts/ops/sync-local-file-deps.mjs --consumer .",
+    "typecheck": "tsc --noEmit -p tsconfig.spec.json",
+    "pretest": "node ../scripts/ops/sync-local-file-deps.mjs --consumer .",
+    "test": "vitest run",
+    "conformance": "vitest run --config vitest.conformance.config.ts"
+  },
+  "dependencies": {
+    "@octogee/shared": "file:../shared",
+    "express": "^5.3.0",
+    "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.3.0",
+    "@types/pg": "^8.23.1",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.12"
+  }
+}
