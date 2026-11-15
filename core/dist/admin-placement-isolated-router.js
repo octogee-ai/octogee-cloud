@@ -308,7 +308,7 @@ export function addAdminPlacementIsolatedRoutes(router, deps) {
         log: deps.log,
     };
     const ownerCheck = () => deps.store.transaction({ label: "admin.placement.isolated.owner", readOnly: true }, async (transaction) => { await requireClientOwner(transaction); });
-    function verb(path, parse, run) {
+    const verb = (path, parse, run) => {
         router.post(path, async (req, res, next) => {
             try {
                 const input = parse(req);
@@ -337,7 +337,12 @@ export function addAdminPlacementIsolatedRoutes(router, deps) {
                 next(error);
             }
         });
-    }
+    };
+    const routes = { deps, journal, lifecycle, verb };
+    addLeaseVerbs(routes);
+    addIsolatedGatewayVerbs(routes);
+}
+function addLeaseVerbs({ deps, journal, lifecycle, verb }) {
     verb("/users/:uid/activation-lease/advance", parseAdvance, async (req, input) => {
         if (input.operationId !== undefined) {
             const stored = await deps.store.users.records.get(input.uid);
@@ -413,6 +418,8 @@ export function addAdminPlacementIsolatedRoutes(router, deps) {
             return { uid: input.uid, leaseId: input.leaseId, generation: input.generation, returnRequested: true };
         },
     }));
+}
+function addIsolatedGatewayVerbs({ deps, journal, lifecycle, verb }) {
     verb("/isolated-gateways/:id/retire-owned", parseRetire, async (req, input) => {
         const root = projectGatewayDesiredRootForGateway(await deps.store.gateways.roots.get(input.gatewayId), input.gatewayId);
         if (root === null || root.ownerUid !== input.uid || !root.builderSlug) {

@@ -341,6 +341,15 @@ function leaseOf(user: Stored<PlatformUserRecord>) {
   return user.activationLease;
 }
 
+type IsolatedVerb = <T>(path: string, parse: (req: Request) => Parsed<T>, run: (req: Request, input: T) => Promise<unknown>) => void;
+
+interface IsolatedRoutes {
+  deps: AdminPlacementIsolatedRouterDeps;
+  journal: ReturnType<typeof refusalsBelowError>;
+  lifecycle: IsolatedLifecycleDeps;
+  verb: IsolatedVerb;
+}
+
 export function addAdminPlacementIsolatedRoutes(router: Router, deps: AdminPlacementIsolatedRouterDeps): void {
   const journal = refusalsBelowError(deps.journal);
   const now = deps.now ?? Date.now;
@@ -358,7 +367,7 @@ export function addAdminPlacementIsolatedRoutes(router: Router, deps: AdminPlace
     async (transaction) => { await requireClientOwner(transaction); },
   );
 
-  function verb<T>(path: string, parse: (req: Request) => Parsed<T>, run: (req: Request, input: T) => Promise<unknown>): void {
+  const verb: IsolatedVerb = (path, parse, run) => {
     router.post(path, async (req, res, next) => {
       try {
         const input = parse(req);
@@ -384,8 +393,14 @@ export function addAdminPlacementIsolatedRoutes(router: Router, deps: AdminPlace
         next(error);
       }
     });
-  }
+  };
 
+  const routes: IsolatedRoutes = { deps, journal, lifecycle, verb };
+  addLeaseVerbs(routes);
+  addIsolatedGatewayVerbs(routes);
+}
+
+function addLeaseVerbs({ deps, journal, lifecycle, verb }: IsolatedRoutes): void {
   verb("/users/:uid/activation-lease/advance", parseAdvance, async (req, input) => {
     if (input.operationId !== undefined) {
       const stored = await deps.store.users.records.get(input.uid);
@@ -464,7 +479,9 @@ export function addAdminPlacementIsolatedRoutes(router: Router, deps: AdminPlace
       return { uid: input.uid, leaseId: input.leaseId, generation: input.generation, returnRequested: true };
     },
   }));
+}
 
+function addIsolatedGatewayVerbs({ deps, journal, lifecycle, verb }: IsolatedRoutes): void {
   verb("/isolated-gateways/:id/retire-owned", parseRetire, async (req, input) => {
     const root = projectGatewayDesiredRootForGateway(await deps.store.gateways.roots.get(input.gatewayId), input.gatewayId);
     if (root === null || root.ownerUid !== input.uid || !root.builderSlug) {
