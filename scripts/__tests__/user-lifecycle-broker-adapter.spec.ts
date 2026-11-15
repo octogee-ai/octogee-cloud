@@ -40,12 +40,13 @@ import { openClawRuntimeUpdateGuard } from "../lib/openclaw-runtime-update-guard
 import { clearUserClaim, stubUserClaim, withUserClaim } from "./helpers/user-claim.js";
 import { houseOnlyUserEntitlements, installUserEntitlementsForTest } from "./helpers/user-entitlements.js";
 import { mattermostAccountSecretRef } from "../lib/mattermost-account-secrets.js";
+import { readProjectRestoreReady } from "@octogee/core/project-asset-state";
 import { recordIsolatedNativeInitialState } from "../lib/isolated-native-initial-state.js";
 import { activationManifestTarPath, captureTargetWorkspaceIdentities, restoreTargetWorkspaceIdentities, captureSourceWorkspaceIdentities, writeActivationManifest, readActivationManifest as realReadActivationManifest } from "@octogee/core/migration-activation-manifest";
 import { createRestoreHandler } from "../lib/fleet-http-migration.js";
 import { gatewayScopedJobId, signFleetRequest } from "../lib/fleet-signature.js";
 import { FLEET_KEY_PAIR } from "./fixtures/fleet-keys.js";
-import type { Request, Response } from "express";
+import type { Request, Response as ExpressResponse } from "express";
 import { disableSystemConfigWatch, isSystemConfigWatchDisabled } from "../lib/system-config-watch-state.js";
 
 describe("migration manifest export runtime wait", () => {
@@ -1155,7 +1156,7 @@ describe("buildBrokeredLifecycleAdapter migration import activation", () => {
       const rawBody = JSON.stringify(body), signature = signFleetRequest(FLEET_KEY_PAIR.privateKey, gatewayScopedJobId(body.migrationId, "shared-source"), rawBody);
       const req = { header: () => signature, params: { gatewayId: "shared-source" }, rawBody } as unknown as Request;
       let status: number | undefined, payload: unknown;
-      const res = { status(code: number) { status = code; return this; }, json(value: unknown) { payload = value; return this; } } as unknown as Response;
+      const res = { status(code: number) { status = code; return this; }, json(value: unknown) { payload = value; return this; } } as unknown as ExpressResponse;
       await createRestoreHandler({ gatewayId: "shared-source", publicKey: FLEET_KEY_PAIR.publicKey, adapter, log: vi.fn() })(req, res, vi.fn());
       expect(status, JSON.stringify(payload)).toBe(200);
       expect(f.rpc.agentsCreate).toHaveBeenCalledOnce();
@@ -3990,10 +3991,16 @@ describe("buildBrokeredLifecycleAdapter add config patch", () => {
       channels: { mattermost: { accounts: { ...config.channels.mattermost.accounts, ...patch.channels?.mattermost?.accounts } } } };
       return { mode: "rpc", attempts: 1 };
     });
-    const client = mkClient({ userSnapshot: vi.fn(async () => latest) });
+    const workspaceManifestReadUrl = vi.fn(async () => ({ url: "https://signed.test/manifest", method: "GET" as const, gcsPath: "manifest", expiresAt: "later" }));
+    const client = mkClient({ userSnapshot: vi.fn(async () => latest), workspaceManifestReadUrl });
     const adapter = buildBrokeredLifecycleAdapter({ client, rpc, log: vi.fn(), isIsolatedGateway: () => preCutover === true, projectCheckoutScope: () => "workspace-and-projects" });
-    if (mode === "mount") await adapter.applyAddUserConfigPatch(initial, { _coachPersonalToken: "pat-1" }, preCutover ? { migrationId: "pre-cutover" } : undefined);
-    else await adapter.reconcileConfiguredUserProjectAgents!(initial);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 404 })));
+    try {
+      if (mode === "mount") await adapter.applyAddUserConfigPatch(initial, { _coachPersonalToken: "pat-1" }, preCutover ? { migrationId: "pre-cutover" } : undefined);
+      else await adapter.reconcileConfiguredUserProjectAgents!(initial);
+    } finally { vi.unstubAllGlobals(); }
+    if (preCutover) expect(await readProjectRestoreReady(checkout, "alice", projectId)).toBe(true);
+    else expect(workspaceManifestReadUrl).not.toHaveBeenCalled();
     expect(rpc.agentsCreate).toHaveBeenCalledWith({ name: agentId, workspace });
     if (source === "deferred GitHub") {
       expect(gitMocks.cloneProjectRepo).not.toHaveBeenCalled();

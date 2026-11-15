@@ -214,6 +214,40 @@ kubectl --kubeconfig="$STATE/kubeconfig" -n octogee port-forward svc/mattermost 
 Open the Coach channel (`lin-coach`) and send a message. The agent answers in
 the channel, usually within a few seconds.
 
+## A project
+
+A project gives the user a channel, a Gitea repository and an agent of its
+own. Create one through the platform API. Forward it in a terminal of its own:
+
+```bash
+kubectl --kubeconfig="$STATE/kubeconfig" -n octogee port-forward svc/octogee-api 3001:3001
+```
+
+Take a Mattermost session token for `lin` as in
+[Call the platform API as a user](kind.md#call-the-platform-api-as-a-user),
+then create the project:
+
+```bash
+curl -sS -H "authorization: Bearer $MM_TOKEN" -H 'content-type: application/json' \
+  -d '{"name":"Garden Planner","slug":"garden","tagline":"Plan a vegetable garden"}' \
+  http://localhost:3001/api/projects
+```
+
+The answer names the project's channel, `Garden Planner`
+(`lin-proj-garden-general`), and the repository is `lin/garden`. The project's
+agent joins the channel within about two minutes. Ask it there to write a
+file, for example `plan.md` with three vegetables to plant. The gateway saves
+the project to Gitea every 30 seconds. To check a save, forward Gitea and clone
+the repository with the username `ws-lin` and the git password:
+
+```bash
+kubectl --kubeconfig="$STATE/kubeconfig" -n octogee port-forward svc/octogee-gitea-http 3000:3000
+```
+
+```bash
+git clone http://localhost:3000/lin/garden.git && git -C garden log --oneline
+```
+
 ## An isolated gateway
 
 The `gateways` node pool runs isolated gateways too. Write a sizing profile
@@ -230,7 +264,9 @@ octogee-fleet --env=gke user migrate lin --to-isolated=pod-s --apply
 
 Gateways keep one pod per node, so the pool grows a node for the new gateway,
 and the move takes about ten minutes. `user inspect` then shows the user on the
-isolated gateway, and the agent answers in the same channel.
+isolated gateway, and the agent answers in the same channel. The project moves
+too: ask its agent for another change, and after the move back `git pull` in
+your clone shows both saves.
 Return the user with `user migrate lin --to=shared-a --apply` and retire the
 isolated gateway with `gateway retire <id> --apply`, where `ops inspect` of
 the migration names the id, as in

@@ -32,10 +32,12 @@ there, merge, and release a commit whose Build main ran with it.
 
 2. Follow [docs/gke.md](gke.md) end to end at that commit, on a fresh Google
    Cloud project: `up`, a shared gateway, a user whose agent answers in
-   Mattermost, a move to an isolated gateway and back, the isolated gateway's
-   retirement, and `down`. Whoever runs it reports the date and the commit to
-   the maintainer. If any step fails, fix it on `main` and start again from
-   step 1.
+   Mattermost, a project for that user with work saved in it, a move to an
+   isolated gateway, more work saved in the project there, the move back, a
+   check that both saves reached the project's Gitea repository, the isolated
+   gateway's retirement, and `down`. Whoever runs it reports the date and the
+   commit to the maintainer. If any step fails, fix it on `main` and start
+   again from step 1.
 3. Tag the commit with that run in the tag message, and push the tag:
 
    ```bash

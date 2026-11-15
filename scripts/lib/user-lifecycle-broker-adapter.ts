@@ -684,7 +684,7 @@ async function prepareBrokerProjectWorkspaces(ctx: BrokerCtx, snapshot: FleetBro
 }
 
 async function restoreUserProjectAssets(ctx: BrokerCtx, slug: string, project: string): Promise<void> {
-  if (!ctx.isIsolatedGateway() || !process.env.OCTOGEE_PROJECTS_MOUNT) return;
+  if (!ctx.isIsolatedGateway()) return;
   const projects = path.join(CUSTOMERS_DIR, slug, "projects");
   if (await readProjectRestoreReady(path.join(projects, project), slug, project)) return;
   await prepareUserProjectAssets({ projects, slug, project, hydrate: createBrokeredProjectBlobHydrator(ctx.client), log: ctx.log });
