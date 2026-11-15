@@ -88,15 +88,19 @@ wait_guest_down() {
 }
 
 preload_gateway_image() {
+  # shellcheck source=registry.sh
+  source "$PAYLOAD/registry.sh"
+  local registry
+  registry="$(desktop_registry)" || die "invalid gateway image registry"
   local image="${OCTOGEE_DESKTOP_GATEWAY_IMAGE:?immutable Builder gateway image is required}"
-  [[ "$image" =~ ^us-central1-docker\.pkg\.dev/octogee/octogee/octogee-gateway-builder@sha256:[a-f0-9]{64}$ ]] || die "invalid immutable Builder gateway image"
+  desktop_registry_image octogee-gateway-builder "Builder gateway" "$image" "$registry" || die "invalid immutable Builder gateway image"
   local edge="${OCTOGEE_DESKTOP_EDGE_IMAGE:?immutable gateway-edge image is required}"
-  [[ "$edge" =~ ^us-central1-docker\.pkg\.dev/octogee/octogee/gateway-edge@sha256:[a-f0-9]{64}$ ]] || die "invalid immutable gateway-edge image"
+  desktop_registry_image gateway-edge "gateway-edge" "$edge" "$registry" || die "invalid immutable gateway-edge image"
   guest_ssh 'sudo -n systemctl stop docker.service docker.socket' || die "gateway preload could not stop factory Docker"
   guest_ssh 'sudo -n bash -s -- --initialize-factory' < "$PAYLOAD/rootfs/usr/local/bin/octo-scratch-storage" || die "gateway preload could not bound disposable scratch"
   guest_ssh 'sudo -n systemctl start docker.service' || die "gateway preload could not start Docker"
   guest_ssh 'sudo -n install -D -m 0755 /dev/stdin /usr/local/bin/docker-credential-octogee' < "$PAYLOAD/rootfs/usr/local/bin/docker-credential-octogee" || die "gateway preload could not install the registry credential helper"
-  guest_ssh 'sudo -n install -D -m 0644 /dev/stdin /root/.docker/config.json' < "$PAYLOAD/rootfs/root/.docker/config.json" || die "gateway preload could not route the registry to its credential helper"
+  desktop_docker_config "$registry" | guest_ssh 'sudo -n install -D -m 0644 /dev/stdin /root/.docker/config.json' || die "gateway preload could not route the registry to its credential helper"
   if ! gcloud auth print-access-token | guest_ssh "sudo -n sh -c 'set -eu; export OCTOGEE_REGISTRY_TOKEN=\"\$(cat)\"; docker pull --quiet $image >/dev/null; docker pull --quiet $edge >/dev/null; docker image inspect $image $edge >/dev/null; printf \"%s\\n\" $image > /etc/octogee-gateway-image; printf \"%s\\n\" $edge > /etc/octogee-gateway-edge-image'"; then
     die "gateway preload failed"
   fi

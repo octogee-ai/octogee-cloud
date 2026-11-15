@@ -69,6 +69,7 @@ const TRANSIENT_ERROR_PATTERNS: readonly RegExp[] = [
   /system config mutation unavailable: writer-lock-busy/i,
   /fleet will retry/i,
   /gateway .* is not migration-ready/i,
+  /^source gateway \S+ has no durable placement$/,
   /\[migration-http\] local SSH public key is missing for /i,
   /\[migration-activation:[^\]]+\] source has no applied fingerprint; converge it before migration/i,
 ];
@@ -270,7 +271,8 @@ function isVmPreemptionFailure(error: string): boolean {
 }
 
 function isGatewayMigrationReadinessFailure(error: string): boolean {
-  return /gateway .* is not migration-ready/i.test(error);
+  return /gateway .* is not migration-ready/i.test(error) ||
+    /^source gateway \S+ has no durable placement$/.test(error);
 }
 
 function isLevelTriggeredContinuousPlacement(

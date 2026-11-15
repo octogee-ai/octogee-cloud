@@ -1,11 +1,11 @@
-import { clientRequestLimit } from "../../middleware/authenticated-request-limit.js";
+import { clientRequestLimit } from "@octogee/core/http/authenticated-request-limit";
 import { Router } from "express";
-import { requireByotSyncInternalAuth } from "../../middleware/byot-sync-auth.js";
-import { openAuthenticatedUpstream } from "../../chat-proxy/openclaw/authenticated-upstream.js";
-import { attachUpstreamRpcClient } from "../../chat-proxy/openclaw/bridge-upstream-rpc.js";
+import { requireByotSyncInternalAuth } from "@octogee/core/model-credentials/byot-sync-auth";
+import { openAuthenticatedUpstream } from "@octogee/core/http-candidates/chat-proxy/openclaw/authenticated-upstream";
+import { attachUpstreamRpcClient } from "@octogee/core/http-candidates/chat-proxy/openclaw/bridge-upstream-rpc";
 import { openNativeUserClient } from "../../openclaw-control/native-user-client.js";
 import { resolveWorkspaceNativeIdentity } from "../../lib/workspace-native-access.js";
-import { NativeConnectorApprovalAccessError, runNativeConnectorApproval, type NativeConnectorCommand, type NativeApprovalClient } from "../../lib/native-connector-approval.js";
+import { NativeConnectorApprovalAccessError, runNativeConnectorApproval, type NativeConnectorCommand, type NativeApprovalClient } from "@octogee/core/connectors/native-connector-approval";
 import { isIsolatedGatewayClassValue } from "@octogee/shared/types/glm";
 
 async function openService(): Promise<NativeApprovalClient> {
@@ -26,7 +26,7 @@ function validCommand(value: unknown): value is NativeConnectorCommand {
 }
 
 export function createInternalConnectorApprovalRouter() {
-  const router = Router({ mergeParams: true });
+  const router: Router = Router({ mergeParams: true });
   router.post("/", clientRequestLimit(1200, true), requireByotSyncInternalAuth, async (req, res, next) => {
     try {
       const command = req.body?.command;

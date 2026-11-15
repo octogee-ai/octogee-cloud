@@ -8,3 +8,4 @@ installUserEntitlements(staticUserEntitlements);
 for (const name of ["ANTHROPIC_BASE_URL", "OPENROUTER_BASE_URL", "PLATFORM_OPENAI_BASE_URL", "PLATFORM_VERTEX_BASE_URL"]) {
   delete process.env[name];
 }
+process.env.PUBLIC_APP_ORIGINS ||= "https://octogee.com,https://app.octogee.com";

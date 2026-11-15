@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const TEST_UID = "uid-tester5";
 
-vi.mock("../middleware/auth.js", () => ({
+vi.mock("@octogee/core/http/auth", () => ({
   requireAuthenticatedUid: (req: express.Request, _res: express.Response, next: express.NextFunction) => {
     (req as { uid?: string }).uid = TEST_UID;
     next();
@@ -32,7 +32,7 @@ const ssoStatus = vi.fn();
 const ssoSubmit = vi.fn();
 const deviceStart = vi.fn();
 const brokerByosubFlow = vi.fn();
-vi.mock("../lib/byosub.js", async (orig) => {
+vi.mock("@octogee/core/model-credentials/byosub", async (orig) => {
   const actual = (await orig()) as Record<string, unknown>;
   return {
     ...actual,
@@ -43,7 +43,7 @@ vi.mock("../lib/byosub.js", async (orig) => {
 });
 
 import { createByosubAuthRouter } from "../routes/byosub-auth.js";
-import { userDefaultAgentId } from "../lib/byosub.js";
+import { userDefaultAgentId } from "@octogee/core/model-credentials/byosub";
 
 const AGENT = userDefaultAgentId("tester5");
 

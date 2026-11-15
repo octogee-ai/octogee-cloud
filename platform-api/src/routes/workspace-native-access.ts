@@ -13,7 +13,7 @@ import {
   principalAccess,
   withGatewayOwnerSizingKey,
   workspaceScopeFor,
-} from "../../../gateway-edge/src/routes/user/gateways.js";
+} from "./user/gateways.js";
 
 const MOVING_ASSIGNMENT_STATES = new Set<unknown>(["quiescing", "migrating"]);
 

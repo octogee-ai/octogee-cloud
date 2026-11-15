@@ -1,7 +1,7 @@
 import express from "express";
 import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
-vi.mock("../middleware/logging.js", () => ({ logger: { error: vi.fn() } }));
+vi.mock("@octogee/core/http/logging", () => ({ logger: { error: vi.fn() } }));
 import { createChannelAgentReadinessRouter } from "./channel-agent-readiness.js";
 const channelId = "a".repeat(26);
 function setup() {

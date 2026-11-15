@@ -1,9 +1,9 @@
-import { authenticationFailureLimit, authenticatedRequestLimit } from "../middleware/authenticated-request-limit.js";
+import { authenticationFailureLimit, authenticatedRequestLimit } from "@octogee/core/http/authenticated-request-limit";
 import http from 'node:http';
 import { Router, type Request, type Response } from 'express';
 import type { NativeMobileBinding } from '@octogee/shared/types/native-mobile';
-import { requireAuth } from '../middleware/auth.js';
-import { logger } from '../middleware/logging.js';
+import { requireAuth } from '@octogee/core/http/auth';
+import { logger } from '@octogee/core/http/logging';
 import {
   isOpenClawControlHttpResource,
   openClawControlUpstreamBase,
@@ -17,7 +17,7 @@ import {
   mobileRoute,
   isMobileMediaResource,
   projectMobileDocument,
-} from './mobile-proof.js';
+} from '@octogee/core/identity/mobile-proof';
 
 export function createMobileHttpRouter(
   authority: MobileGatewayAuthority,

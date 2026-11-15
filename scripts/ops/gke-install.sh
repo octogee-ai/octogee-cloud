@@ -46,7 +46,7 @@ ASSETS_BUCKET="$GCP_PROJECT-$NAME-assets"
 WORKSPACES_BUCKET="$GCP_PROJECT-$NAME-workspaces"
 SHA="${SHA:-$(git -C "$ROOT" rev-parse HEAD)}"
 SHORT="${SHA:0:7}"
-IMAGES=(glm-controller octogee-api gateway-edge octogee-gateway octogee-gateway-builder)
+IMAGES=(glm-controller octogee-api llm-broker gateway-edge octogee-gateway octogee-gateway-builder)
 POSTGRES_CLIENT_IMAGE="pgvector/pgvector:0.8.7-pg16@sha256:484e838076e04939d27d3e176e91c86eea96236126023be8d3059761122e579f"
 
 g() { gcloud --project "$GCP_PROJECT" --quiet "$@"; }
@@ -203,7 +203,7 @@ console.log(JSON.stringify({
   networkPolicy: { agentStorePostgresCidr: `${databaseHost}/32` },
   projectRunner: { apiServerEgressCidrs: cidrs.split(",") },
   "octogee-api": { image: image("octogee-api") },
-  llmBroker: { image: image("octogee-api") },
+  llmBroker: { image: image("llm-broker") },
   "gateway-edge": { image: image("gateway-edge") },
   "glm-controller": {
     image: image("glm-controller"),

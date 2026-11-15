@@ -11,8 +11,8 @@ import { claimedTestUser, installTestUserIdentity } from "../../__tests__/helper
 
 const linuxTest = it.skipIf(process.platform !== "linux");
 
-vi.mock("../../lib/connector-tokens.js", () => ({ readOwnerRuntimeConnectorAccessToken: vi.fn() }));
-vi.mock("../../lib/workspace-blob.js", () => ({ storeWorkspaceBlob: vi.fn(async () => { throw new Error("unexpected binary upload in text checkpoint fixture"); }) }));
+vi.mock("@octogee/core/connectors/connector-tokens", () => ({ readOwnerRuntimeConnectorAccessToken: vi.fn() }));
+vi.mock("@octogee/core/workspace/workspace-blob", () => ({ storeWorkspaceBlob: vi.fn(async () => { throw new Error("unexpected binary upload in text checkpoint fixture"); }) }));
 
 vi.mock("node:child_process", async importOriginal => {
   const actual = await importOriginal<typeof import("node:child_process")>();

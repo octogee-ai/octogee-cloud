@@ -1,4 +1,4 @@
-import { authorizeChannel } from "../../../gateway-edge/src/lib/channel-session-authorization.js";
+import { authorizeChannel } from "@octogee/core/channels/channel-session-authorization";
 import type { PlatformStateRepositories } from "@octogee/core/platform-state";
 import { USERNAME_RE } from "@octogee/shared/types/identity";
 
