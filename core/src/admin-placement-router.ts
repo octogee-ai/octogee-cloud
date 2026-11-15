@@ -7,7 +7,7 @@ import {
   builderReturnOperationId,
   isolatedRecoverOperationId,
   placementRetireOperationId,
-} from "./isolated-operation-ids.js";
+} from "@octogee/shared/types/isolated-operation-ids";
 import { FleetMutationRefusedError } from "./normal-fleet-mutation.js";
 import { FenceMismatchError } from "./platform-state/errors.js";
 import type { GatewayRoot } from "./platform-state/gateways.js";

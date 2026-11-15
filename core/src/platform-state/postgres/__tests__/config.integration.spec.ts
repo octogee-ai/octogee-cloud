@@ -4,7 +4,7 @@ import {
   DEFAULT_PLATFORM_CONNECT_CONFIG,
   parsePlatformModelConfig,
 } from "@octogee/shared/types/platform-config";
-import type { GatewaySizingProfile } from "../../config.js";
+import type { GatewaySizingProfile } from "@octogee/shared/types/sizing-profile";
 import { FenceMismatchError, MalformedRecordError, MissingRecordError } from "../../errors.js";
 import type { Revision } from "../../store.js";
 import { createHarness, dsn, recordingListener, type PlatformStateHarness, type RecordingListener } from "./fixtures/harness.js";

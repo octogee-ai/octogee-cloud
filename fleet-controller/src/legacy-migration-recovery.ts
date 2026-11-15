@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
-import { isUserActivateOperationIdFor } from "@octogee/core/isolated-operation-ids";
+import { isUserActivateOperationIdFor } from "@octogee/shared/types/isolated-operation-ids";
 import { gatewayRetiredInStore, isolatedRuntimeMutationFenced } from "@octogee/core/gateway-retirement-claim";
 import type { PlatformUserRecord, GatewayAssignment, OperationPatch, PlatformStateStore, PlatformStateTransaction, Stored } from "@octogee/core/platform-state";
 import { readSchedulerMigrationIdentity, type Operation, type SchedulerHandoffState } from "@octogee/shared/types/glm";

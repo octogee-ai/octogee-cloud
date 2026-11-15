@@ -141,10 +141,6 @@
       "types": "./dist/sizing-key.d.ts",
       "default": "./dist/sizing-key.js"
     },
-    "./isolated-operation-ids": {
-      "types": "./dist/isolated-operation-ids.d.ts",
-      "default": "./dist/isolated-operation-ids.js"
-    },
     "./byosub-onboarding": {
       "types": "./dist/byosub-onboarding.d.ts",
       "default": "./dist/byosub-onboarding.js"
@@ -604,9 +600,6 @@
       ],
       "auth-profile-sqlite": [
         "dist/auth-profile-sqlite.d.ts"
-      ],
-      "isolated-operation-ids": [
-        "dist/isolated-operation-ids.d.ts"
       ],
       "sizing-key": [
         "dist/sizing-key.d.ts"

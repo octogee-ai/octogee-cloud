@@ -43,7 +43,7 @@ export declare function readFleetState(store: PlatformStateStore, input: {
     platformArtifactHash: string | null;
     config: {
         sharedGatewayAutoscaling: import("@octogee/shared/types/shared-gateway-pool").SharedGatewayAutoscalingConfig | null;
-        sizingProfiles: Readonly<Record<string, import("./platform-state/config.js").GatewaySizingProfile>>;
+        sizingProfiles: Readonly<Record<string, import("@octogee/shared/types/sizing-profile").GatewaySizingProfile>>;
         disposableGatewayIdleMs: number | null;
     };
     sharedPoolAutomation: Stored<import("./platform-state/controller-state.js").SharedPoolScalerState> | null;

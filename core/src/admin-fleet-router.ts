@@ -100,7 +100,7 @@ import { GATEWAY_UNREACHABLE_AFTER_MS, parseOpenClawProcessReport } from "@octog
 import {
   builderReturnOperationId,
   placementRetireOperationId,
-} from "./isolated-operation-ids.js";
+} from "@octogee/shared/types/isolated-operation-ids";
 import { withActorEmails } from "./admin-journal-actor.js";
 import {
   AdminDryRunPlanned,

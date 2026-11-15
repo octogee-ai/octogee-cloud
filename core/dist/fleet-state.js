@@ -5,7 +5,7 @@ import { accountAllowsInteractiveAccess } from "@octogee/shared/types/account-li
 import { readWorkspaceMigrationMarker } from "@octogee/shared/types/workspace-migration";
 import { userMigrationV2GatewayRootFenceEqual, userMigrationV2GatewayRootFenceMatches, } from "./user-migration-v2.js";
 import { withCurrentSizingKey, } from "./sizing-key.js";
-import { builderActivateOperationId } from "./isolated-operation-ids.js";
+import { builderActivateOperationId } from "@octogee/shared/types/isolated-operation-ids";
 import { gatewayAuthorizationFromRootDocument } from "./gateway-live-release.js";
 import { gatewayRetiredInStore } from "./gateway-retirement-claim.js";
 import { MalformedRecordError } from "./platform-state/index.js";

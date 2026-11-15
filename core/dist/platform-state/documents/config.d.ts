@@ -1,6 +1,7 @@
 import { type PlatformModelConfig } from "@octogee/shared/types/platform-config";
 import type { SizingTier } from "@octogee/shared/types/sizing";
-import { type GatewayComputerProfile, type GatewaySizingProfile, type OrchestratorConfig, type PlatformConfigEntry, type PlatformConfigKey, type PlatformConfigValues } from "../config.js";
+import { type GatewayComputerProfile, type GatewaySizingProfile } from "@octogee/shared/types/sizing-profile";
+import { type OrchestratorConfig, type PlatformConfigEntry, type PlatformConfigKey, type PlatformConfigValues } from "../config.js";
 import { type RecordKey } from "../errors.js";
 export declare function parseStoredPlatformModelConfig(value: unknown): PlatformModelConfig | null;
 export type PlatformConfigParsers = {
