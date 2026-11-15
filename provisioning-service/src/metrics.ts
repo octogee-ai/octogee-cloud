@@ -20,6 +20,7 @@ export class Metrics {
   private readonly attempts = new Map<string, { labels: Labels; value: number }>();
   private readonly hostCalls = new Map<string, { labels: Labels; sum: number; count: number }>();
   private leaseExpired = 0;
+  private leasesHeld = 0;
 
   attempt(result: string, reason: string): void {
     const labels = { result, reason };
@@ -27,6 +28,10 @@ export class Metrics {
     const entry = this.attempts.get(key) ?? { labels, value: 0 };
     entry.value += 1;
     this.attempts.set(key, entry);
+  }
+
+  setLeasesHeld(count: number): void {
+    this.leasesHeld = count;
   }
 
   leaseExpiredSeen(count = 1): void {
@@ -54,6 +59,8 @@ export class Metrics {
       ...[...this.attempts.values()].map((entry) => `provisioning_attempts_total${labelText(entry.labels)} ${entry.value}`),
       "# TYPE provisioning_lease_expired_total counter",
       `provisioning_lease_expired_total ${this.leaseExpired}`,
+      "# TYPE provisioning_leases_held gauge",
+      `provisioning_leases_held ${this.leasesHeld}`,
       "# TYPE provisioning_host_call_seconds summary",
       ...[...this.hostCalls.values()].flatMap((entry) => [
         `provisioning_host_call_seconds_sum${labelText(entry.labels)} ${entry.sum}`,

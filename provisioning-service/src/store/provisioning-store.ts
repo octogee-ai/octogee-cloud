@@ -21,7 +21,7 @@ import { pendingConditions } from "../resources/conditions.js";
 import { sameJson } from "../resources/validate.js";
 import type { Database } from "./database.js";
 
-export const RETAINED_CHANGE_WINDOW_MS = 24 * 60 * 60 * 1_000;
+export const DEFAULT_CHANGE_RETENTION_MS = 24 * 60 * 60 * 1_000;
 const IDEMPOTENCY_WINDOW = "24 hours";
 
 interface ProvisioningRow {
@@ -120,7 +120,7 @@ function decodePageToken(token: string): string {
 }
 
 export class ProvisioningStore {
-  constructor(readonly db: Database) {}
+  constructor(readonly db: Database, readonly changeRetentionMs: number = DEFAULT_CHANGE_RETENTION_MS) {}
 
   private get selectResource(): string {
     const t = this.db.table;
@@ -173,6 +173,15 @@ export class ProvisioningStore {
              state = CASE WHEN state = 'running' THEN state ELSE 'queued' END,
              attempts = CASE WHEN state = 'running' THEN attempts ELSE 0 END,
              due_at = CASE WHEN state = 'running' THEN due_at ELSE now() END
+       WHERE uid = $1`, [uid]);
+  }
+
+  private async makeKeyWorkDue(client: pg.ClientBase, uid: string): Promise<void> {
+    await client.query(
+      `UPDATE ${this.db.table("provisioning_work")}
+         SET dirty = dirty OR state = 'running',
+             state = CASE WHEN state IN ('running', 'parked') THEN state ELSE 'queued' END,
+             due_at = CASE WHEN state IN ('running', 'parked') THEN due_at ELSE now() END
        WHERE uid = $1`, [uid]);
   }
 
@@ -257,15 +266,17 @@ export class ProvisioningStore {
     });
   }
 
-  async changesSince(resourceVersion: bigint): Promise<ChangesSince> {
+  async changesSince(resourceVersion: bigint, limit: number): Promise<ChangesSince> {
     return this.db.read(async (client) => {
       const counter = await client.query<{ value: string; pruned_through: string }>(
         `SELECT value, pruned_through FROM ${this.db.table("counter")} WHERE id = 1`);
       const current = BigInt(counter.rows[0].value);
       if (resourceVersion < BigInt(counter.rows[0].pruned_through) || resourceVersion > current) return { kind: "expired" as const };
       const { rows } = await client.query<ProvisioningRow>(
-        `${this.selectResource} WHERE p.resource_version > $1 ORDER BY p.resource_version`, [resourceVersion.toString()]);
-      return { kind: "changes" as const, items: rows.map(toResource), resourceVersion: current.toString() };
+        `${this.selectResource} WHERE p.resource_version > $1 ORDER BY p.resource_version LIMIT $2`, [resourceVersion.toString(), limit + 1]);
+      const items = rows.slice(0, limit).map(toResource);
+      const through = rows.length > limit ? items[items.length - 1].resourceVersion : current.toString();
+      return { kind: "changes" as const, items, resourceVersion: through };
     });
   }
 
@@ -274,7 +285,7 @@ export class ProvisioningStore {
     return this.db.write(async (client) => {
       const { rows } = await client.query<{ through: string | null; count: string }>(
         `WITH gone AS (DELETE FROM ${t("version_log")} WHERE written_at < now() - make_interval(secs => $1) RETURNING version)
-         SELECT max(version) AS through, count(*) AS count FROM gone`, [RETAINED_CHANGE_WINDOW_MS / 1_000]);
+         SELECT max(version) AS through, count(*) AS count FROM gone`, [this.changeRetentionMs / 1_000]);
       if (rows[0].through !== null) {
         await client.query(`UPDATE ${t("counter")} SET pruned_through = GREATEST(pruned_through, $1) WHERE id = 1`, [rows[0].through]);
       }
@@ -324,7 +335,7 @@ export class ProvisioningStore {
             WHERE uid = $1 AND gateway_id = $2 RETURNING *`, [uid, gatewayId, keyVersion.toString(), spec.publicKey])).rows[0];
       }
       await client.query(`UPDATE ${t("provisionings")} SET resource_version = $2 WHERE uid = $1`, [uid, userVersion.toString()]);
-      await this.makeDue(client, uid);
+      await this.makeKeyWorkDue(client, uid);
       return { outcome: current ? "changed" as const : "created" as const, key: toGitKey(written) };
     });
   }
@@ -341,7 +352,7 @@ export class ProvisioningStore {
       await client.query(`UPDATE ${t("git_keys")} SET deletion_requested_at = now(), resource_version = $3 WHERE uid = $1 AND gateway_id = $2`,
         [uid, gatewayId, keyVersion.toString()]);
       await client.query(`UPDATE ${t("provisionings")} SET resource_version = $2 WHERE uid = $1`, [uid, userVersion.toString()]);
-      await this.makeDue(client, uid);
+      await this.makeKeyWorkDue(client, uid);
     });
   }
 }
