@@ -28,20 +28,21 @@ export class ProvisioningServiceError extends Error {
     }
 }
 export const PROVISIONING_WATCH_PAGE_LIMIT = 500;
+export function compareResourceVersions(left, right) {
+    const difference = BigInt(left) - BigInt(right);
+    if (difference === 0n)
+        return 0;
+    return difference < 0n ? -1 : 1;
+}
 function changeVersion(change) {
-    return BigInt(change.kind === "deleted" ? change.resourceVersion : change.resource.resourceVersion);
+    return change.kind === "deleted" ? change.resourceVersion : change.resource.resourceVersion;
 }
 export function orderedChanges(page) {
     const changes = [
         ...page.items.map((resource) => ({ kind: "upsert", resource })),
         ...(page.deleted ?? []).map((deletion) => ({ kind: "deleted", uid: deletion.uid, resourceVersion: deletion.resourceVersion })),
     ];
-    return changes.sort((left, right) => {
-        const difference = changeVersion(left) - changeVersion(right);
-        if (difference === 0n)
-            return 0;
-        return difference < 0n ? -1 : 1;
-    });
+    return changes.sort((left, right) => compareResourceVersions(changeVersion(left), changeVersion(right)));
 }
 export function provisioningServiceConfigFromEnvironment(env) {
     const baseUrl = env[PROVISIONING_SERVICE_URL_ENV]?.trim() ?? "";

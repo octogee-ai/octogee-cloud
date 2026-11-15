@@ -1,7 +1,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { installDefaultUserEntitlements } from "@octogee/shared/types/user-entitlements";
-import type { UserProvisioningStatus } from "@octogee/shared/types/provisioning-service";
+import type { UserProvisioning, UserProvisioningStatus } from "@octogee/shared/types/provisioning-service";
 import { startFakeProvisioningService, type FakeProvisioningService } from "./fixtures/provisioning-service-fake.js";
 import { operationAuditDocumentId } from "./operation-audit.js";
 import { MalformedRecordError } from "./platform-state/errors.js";
@@ -645,6 +645,45 @@ describe("removed users", () => {
     expect(outcome).toBe("user-missing");
     expect(await store().workspaces.records.get("lin")).toBeNull();
     expect(await store().workspaces.channels.get({ workspaceSlug: "lin", projectSlug: null }, "general")).toBeNull();
+  });
+});
+
+describe("resource versions", () => {
+  it("keeps the newer of two resource versions above 2^53 that differ by one when the older arrives second", async () => {
+    seedUser("u1", "lin");
+    const resource = (resourceVersion: string, email: string) => ({
+      uid: "u1",
+      generation: 1,
+      resourceVersion,
+      spec: { ...desiredUserProvisioningSpec("u1", ACCOUNTS.u1), email },
+      status: { observedGeneration: 0, conditions: [], outputs: { credentials: [] }, work: { state: "queued", attempts: 0, nextAttemptAt: null, lastAttemptAt: null } },
+    }) as UserProvisioning;
+    let watches = 0;
+    const stub = {
+      ...client(),
+      listAllProvisionings: async () => ({ items: [resource("9007199254740993", "newer@example.test")], resourceVersion: "9007199254740993" }),
+      watchProvisionings: async () => {
+        watches += 1;
+        if (watches === 1) return { items: [resource("9007199254740992", "older@example.test")], resourceVersion: "9007199254740994" };
+        return new Promise<never>(() => undefined);
+      },
+      putProvisioning: () => new Promise<never>(() => undefined),
+    };
+    const instance = createProvisioningSync({
+      store: store(),
+      client: stub,
+      documents: { account: async (uid) => ACCOUNTS[uid] },
+      projection: recordingProjection(),
+      proxyUrl: null,
+      log: (message) => logs.push(message),
+      retry: { baseDelayMs: 1, maxDelayMs: 2 },
+    });
+    stoppers.push(instance.start());
+
+    await until(() => watches >= 2);
+
+    expect(instance.observed("u1")?.resourceVersion).toBe("9007199254740993");
+    expect(instance.observed("u1")?.spec.email).toBe("newer@example.test");
   });
 });
 

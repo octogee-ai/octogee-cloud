@@ -10,6 +10,7 @@ import {
 import type { PlatformStateStore, WatchSubscription } from "./platform-state/store.js";
 import {
   backoffDelayMs,
+  compareResourceVersions,
   startProvisioningWatch,
   type ProvisioningServiceClient,
 } from "./provisioning-service-client.js";
@@ -105,7 +106,7 @@ class UnreadableUserError extends Error {
 }
 
 function newer(candidate: UserProvisioning, current: UserProvisioning | undefined): boolean {
-  return current === undefined || Number(candidate.resourceVersion) >= Number(current.resourceVersion);
+  return current === undefined || compareResourceVersions(candidate.resourceVersion, current.resourceVersion) >= 0;
 }
 
 function emptyCounters(): ProvisioningSyncCounters {
@@ -251,7 +252,7 @@ export function createProvisioningSync(deps: ProvisioningSyncDeps): Provisioning
 
   function forget(uid: string, resourceVersion: string): void {
     const seen = cache.get(uid);
-    if (seen === undefined || BigInt(seen.resourceVersion) > BigInt(resourceVersion)) return;
+    if (seen === undefined || compareResourceVersions(seen.resourceVersion, resourceVersion) > 0) return;
     cache.delete(uid);
     specs.enqueue(uid);
   }

@@ -90,8 +90,14 @@ export type ProvisioningChange =
   | { readonly kind: "upsert"; readonly resource: UserProvisioning }
   | { readonly kind: "deleted"; readonly uid: string; readonly resourceVersion: string };
 
-function changeVersion(change: ProvisioningChange): bigint {
-  return BigInt(change.kind === "deleted" ? change.resourceVersion : change.resource.resourceVersion);
+export function compareResourceVersions(left: string, right: string): number {
+  const difference = BigInt(left) - BigInt(right);
+  if (difference === 0n) return 0;
+  return difference < 0n ? -1 : 1;
+}
+
+function changeVersion(change: ProvisioningChange): string {
+  return change.kind === "deleted" ? change.resourceVersion : change.resource.resourceVersion;
 }
 
 export function orderedChanges(page: UserProvisioningWatchResponse): ProvisioningChange[] {
@@ -99,11 +105,7 @@ export function orderedChanges(page: UserProvisioningWatchResponse): Provisionin
     ...page.items.map((resource): ProvisioningChange => ({ kind: "upsert", resource })),
     ...(page.deleted ?? []).map((deletion): ProvisioningChange => ({ kind: "deleted", uid: deletion.uid, resourceVersion: deletion.resourceVersion })),
   ];
-  return changes.sort((left, right) => {
-    const difference = changeVersion(left) - changeVersion(right);
-    if (difference === 0n) return 0;
-    return difference < 0n ? -1 : 1;
-  });
+  return changes.sort((left, right) => compareResourceVersions(changeVersion(left), changeVersion(right)));
 }
 
 export interface ProvisioningServiceClient {

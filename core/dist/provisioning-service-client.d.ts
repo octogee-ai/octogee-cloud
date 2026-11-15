@@ -51,6 +51,7 @@ export type ProvisioningChange = {
     readonly uid: string;
     readonly resourceVersion: string;
 };
+export declare function compareResourceVersions(left: string, right: string): number;
 export declare function orderedChanges(page: UserProvisioningWatchResponse): ProvisioningChange[];
 export interface ProvisioningServiceClient {
     putProvisioning(uid: string, spec: UserProvisioningSpec, options?: {

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createKeyedRetryQueue } from "./keyed-retry-queue.js";
 import { operationAuditDocumentId, resumeOperationAuditAction, runWithOperationAuditIntent, } from "./operation-audit.js";
-import { backoffDelayMs, startProvisioningWatch, } from "./provisioning-service-client.js";
+import { backoffDelayMs, compareResourceVersions, startProvisioningWatch, } from "./provisioning-service-client.js";
 import { mirrorUserProvisioning, } from "./provisioning-mirror.js";
 import { desiredUserProvisioningSpec, sameProvisioningSpec } from "./provisioning-spec.js";
 export const PROVISIONING_SPEC_BACKFILL_KEY = "provisioning-service-spec-backfill";
@@ -23,7 +23,7 @@ class UnreadableUserError extends Error {
     }
 }
 function newer(candidate, current) {
-    return current === undefined || Number(candidate.resourceVersion) >= Number(current.resourceVersion);
+    return current === undefined || compareResourceVersions(candidate.resourceVersion, current.resourceVersion) >= 0;
 }
 function emptyCounters() {
     return {
@@ -151,7 +151,7 @@ export function createProvisioningSync(deps) {
     }
     function forget(uid, resourceVersion) {
         const seen = cache.get(uid);
-        if (seen === undefined || BigInt(seen.resourceVersion) > BigInt(resourceVersion))
+        if (seen === undefined || compareResourceVersions(seen.resourceVersion, resourceVersion) > 0)
             return;
         cache.delete(uid);
         specs.enqueue(uid);
