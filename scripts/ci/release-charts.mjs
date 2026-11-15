@@ -158,7 +158,7 @@ const helmShow = args => spawnSync(HELM, args, { encoding: "utf8" });
 export function chartVersionExists(name, version, show = helmShow) {
   const result = show(["show", "chart", `oci://${CHART_REGISTRY}/${name}`, "--version", version]);
   if (result.status === 0) return true;
-  if (/not found|manifest unknown/i.test(result.stderr ?? "")) return false;
+  if (/not found|manifest unknown|denied: requested access to the resource is denied/i.test(result.stderr ?? "")) return false;
   throw new Error(`helm show chart ${name} ${version} failed:\n${result.stderr}`);
 }
 

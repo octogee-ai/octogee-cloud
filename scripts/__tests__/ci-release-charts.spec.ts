@@ -110,6 +110,11 @@ describe("chart push", () => {
     { name: "octogee-gateway", version: "0.2.0", directory: "helm/octogee-gateway", archive: "/release/octogee-gateway-0.2.0.tgz" },
   ]));
 
+  it("treats a chart package GitHub has not created yet as unpublished, so the push that follows creates it or fails", () => {
+    const denied = 'Error: GET "https://ghcr.io/token?scope=repository%3Aoctogee-ai%2Foctogee-cloud%2Fcharts%2Foctogee%3Apull&service=ghcr.io": response status code 403: denied: requested access to the resource is denied';
+    expect(chartVersionExists("octogee", "0.2.0", () => ({ status: 1, stdout: "", stderr: denied }))).toBe(false);
+  });
+
   it("treats a missing chart version as unpublished and fails on any other registry error", () => {
     expect(chartVersionExists("octogee", "0.2.0", () => ({ status: 0, stdout: "name: octogee", stderr: "" }))).toBe(true);
     expect(chartVersionExists("octogee", "0.2.0", () => ({ status: 1, stdout: "", stderr: "Error: ghcr.io/octogee-ai/octogee-cloud/charts/octogee:0.2.0: not found" }))).toBe(false);
