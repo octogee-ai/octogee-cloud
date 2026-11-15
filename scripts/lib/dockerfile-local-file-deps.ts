@@ -49,7 +49,7 @@ function recordCopy(stage: Stage, args: string[], contextDir: string): void {
   for (const operand of operands) {
     const source = path.posix.normalize(operand.replace(/\*$/, "")).replace(/\/$/, "");
     const sourcePath = path.join(contextDir, source);
-    const isDirectory = existsSync(sourcePath) && statSync(sourcePath).isDirectory();
+    const isDirectory = path.posix.basename(source) === "dist" || (existsSync(sourcePath) && statSync(sourcePath).isDirectory());
     const container = isDirectory || !intoDirectory ? destinationPath : path.posix.join(destinationPath, path.posix.basename(source));
     stage.copies.push({ container, source });
   }
@@ -115,6 +115,11 @@ function localFileDeps(manifestPath: string, omitsDev: boolean): Array<[string, 
     .map(([name, spec]): [string, string, string] => [name, section, spec.slice("file:".length)]));
 }
 
+function publishesDist(manifestPath: string): boolean {
+  const files = (JSON.parse(readFileSync(manifestPath, "utf8")) as { files?: string[] }).files ?? [];
+  return files.some((file) => file.replace(/\/$/, "") === "dist");
+}
+
 function checkInstalls(command: string, stage: Stage, stageName: string, contextDir: string, result: DockerfileLocalFileDeps): void {
   for (const { segment, installDir, packs, omitsDev } of installsIn(command, stage.workdir)) {
     const manifestSource = providedSource(stage.copies, `${installDir}/package.json`);
@@ -124,7 +129,7 @@ function checkInstalls(command: string, stage: Stage, stageName: string, context
     for (const [name, section, target] of localFileDeps(path.join(contextDir, manifestSource), omitsDev)) {
       const sourceDir = path.posix.join(path.posix.dirname(manifestSource), target);
       const containerDir = path.posix.resolve(installDir, target);
-      const required = packs && existsSync(path.join(contextDir, sourceDir, "dist")) ? ["package.json", "dist"] : ["package.json"];
+      const required = packs && publishesDist(path.join(contextDir, sourceDir, "package.json")) ? ["package.json", "dist"] : ["package.json"];
       if (required.includes("dist") && !result.distDirs.includes(`${sourceDir}/dist`)) result.distDirs.push(`${sourceDir}/dist`);
       for (const file of required) {
         const container = `${containerDir}/${file}`;
