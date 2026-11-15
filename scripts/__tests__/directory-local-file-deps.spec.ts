@@ -11,6 +11,7 @@ import {
   fileDepLockOnlyArgs,
   inspectLocalFileDep,
   stageOverlayDependencies,
+  staleLocalFileDepLocks,
   syncLocalFileDeps,
 } from "../ops/sync-local-file-deps.mjs";
 
@@ -175,6 +176,26 @@ describe("directory local file dependencies", () => {
     expect(inspectLocalFileDep(dep).staleReasons).toEqual([
       "package-lock.json:dependencies",
     ]);
+  });
+
+  it("reports a consumer lock behind its producer without an install", () => {
+    const root = fixture();
+    const sourceDir = writePackage(root, "source", "@octogee/source");
+    writeConsumer(root);
+    expect(staleLocalFileDepLocks({ rootDir: root })).toEqual([]);
+
+    const sourcePackagePath = path.join(sourceDir, "package.json");
+    writeJson(sourcePackagePath, { ...readJson(sourcePackagePath), dependencies: { jszip: "^3.10.2" } });
+
+    expect(staleLocalFileDepLocks({ rootDir: root })).toEqual([{
+      consumer: "consumer",
+      packageName: "@octogee/source",
+      reasons: ["package-lock.json:dependencies"],
+    }]);
+  });
+
+  it("keeps every consumer lock in this repository current with its local file dependencies", () => {
+    expect(staleLocalFileDepLocks()).toEqual([]);
   });
 
   it("installs transitive runtime directory dependencies in the producer refresh transaction", () => {

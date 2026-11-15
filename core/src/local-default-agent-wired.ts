@@ -7,6 +7,7 @@ import {
   parseAgentId,
 } from "@octogee/shared/types/identity";
 import { PROJECT_AGENT_WORKSPACE_PARTS } from "@octogee/shared/types/project";
+import { isSqliteVolatileArtifactPath } from "./agent-store-inventory.js";
 
 // Mirrors userDefaultAgentId in fleet-http-migration.ts — the agent agent-id convention.
 // Inlined to keep this module node:fs-only (importable into gateway-edge + scripts alike).
@@ -464,15 +465,31 @@ function assertNoSymlinkPathPrefix(stateDir: string, relativePath: string): bool
 // Symlinks inside a portable tree ride the carry as symlinks (rsync -a) and are
 // digested by target, so a user workspace with node_modules/.bin stays
 // portable; only sockets, fifos, and devices are unrepresentable.
-function assertPortableStateTree(absolutePath: string, relativePath: string): void {
-  const stat = fs.lstatSync(absolutePath);
+function assertPortableStateTree(absolutePath: string, relativePath: string, stat = fs.lstatSync(absolutePath)): void {
   if (stat.isSymbolicLink()) return;
   if (!stat.isDirectory() && !stat.isFile()) {
     throw new Error(`configured user durable state path is not regular: ${relativePath}`);
   }
   if (!stat.isDirectory()) return;
   for (const entry of fs.readdirSync(absolutePath, { withFileTypes: true })) {
-    assertPortableStateTree(path.join(absolutePath, entry.name), `${relativePath}/${entry.name}`);
+    const childPath = path.join(absolutePath, entry.name);
+    const childStat = lstatUnlessVolatileEntryVanished(childPath, entry.name);
+    if (childStat !== null) assertPortableStateTree(childPath, `${relativePath}/${entry.name}`, childStat);
+  }
+}
+
+const SQLITE_SIDECAR_SHAPE = /\.sqlite-(?:wal|shm|journal)$/u;
+
+function isVolatileStateEntry(name: string): boolean {
+  return name.endsWith(".lock") || SQLITE_SIDECAR_SHAPE.test(name) || isSqliteVolatileArtifactPath(name);
+}
+
+function lstatUnlessVolatileEntryVanished(absolutePath: string, name: string): fs.Stats | null {
+  try {
+    return fs.lstatSync(absolutePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT" && isVolatileStateEntry(name)) return null;
+    throw error;
   }
 }
 

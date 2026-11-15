@@ -134,6 +134,26 @@ describe("verifiedDeletionCompletion", () => {
     })).toMatchObject({ status: "pending", attempts: 4 });
     expect(classifyOperationFailure("rsync import credentials rejected")).toBe("terminal");
   });
+  it("retries a user return whose target prepare found the rsync import port still bound", () => {
+    const error = '/prepare-rsync-import/shared-3d08c1838380: 500 {"error":"prepare-rsync-import failed","message":"listen EADDRINUSE: address already in use :::30873"}';
+    expect(classifyOperationFailure(error)).toBe("transient");
+    expect(buildOperationCompletionUpdate({
+      op: { id: "op-return", kind: "migrate-user", input: {}, startedAt: 1_000, attempts: 1 },
+      result: { success: false, rolledBack: true, steps: [], error }, steps: [], now: 2_000,
+    })).toMatchObject({
+      status: "pending",
+      attempts: 2,
+      nextAttemptAt: 2_000 + retryBackoffMs(2),
+      error: expect.stringMatching(/^attempt 2 failed \(transient\): \/prepare-rsync-import\/.*listen EADDRINUSE.* — retrying in \d+s$/),
+    });
+  });
+  it.each([
+    '/prepare-rsync-import/shared-a: 500 {"error":"prepare-rsync-import failed","message":"rsync daemon did not exit after SIGTERM and SIGKILL"}',
+    '/push-rsync-state/shared-a: 500 {"error":"push-rsync-state failed","message":"listen EADDRINUSE: address already in use :::30873"}',
+    "listen EADDRINUSE: address already in use :::3000",
+  ])("keeps other prepare failures and EADDRINUSE elsewhere terminal: %s", (error) => {
+    expect(classifyOperationFailure(error)).toBe("terminal");
+  });
   it.each([
     "/quiesce/user: 500 Agent alice-coach has not completed startup inspection and preparation. Inspection and writable admission continue after the Gateway listener binds.",
     "/quiesce/user: 500 agent alice-coach startup preparation was superseded",
