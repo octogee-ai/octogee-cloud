@@ -7,6 +7,9 @@ shared gateway and an isolated gateway run different builds of it.
 [OpenClaw compatibility](../docs/openclaw-compatibility.md) lists the
 patches the OpenClaw build carries.
 
+A gateway holds no admin credentials and no model provider keys. It asks the
+platform API's brokers and the LLM broker for what it needs, as itself.
+
 ## Default configuration
 
 Shared and isolated seeds, class policy, and generated agent entries must use the
@@ -32,12 +35,52 @@ Build main (`.github/workflows/build-main.yml`, running `scripts/ci/cloud-build.
 builds the gateway image with its immutable input-keyed OpenClaw base, reusing
 the base when its artifacts are unchanged.
 
+## Images
+
+| Image | What it is |
+| --- | --- |
+| `ghcr.io/octogee-ai/octogee-cloud/octogee-gateway` | The shared gateway build, from `Dockerfile` on `Dockerfile.base` |
+| `ghcr.io/octogee-ai/octogee-cloud/octogee-gateway-builder` | The isolated gateway build, which adds the toolchain from `Dockerfile.isolated-base`. `linux/amd64` only. The name is a [legacy name](../docs/legacy-names.md). |
+
 ## Run it
 
 The fleet controller installs a gateway from the `charts/octogee-gateway` chart
 when an operator adds one; nobody installs that chart by hand.
 [The full platform on kind](../docs/kind.md) builds this image from your
 checkout, or copies the published one, and adds a gateway with it.
+
+Each gateway is one Deployment from that chart, with a `gateway` container
+running this image and a `gateway-edge` sidecar. The chart's
+[`values.yaml`](../charts/octogee-gateway/values.yaml) documents what the fleet
+controller sets per gateway: the image, the gateway class, the sizing tier and
+the `env` block of service URLs. On an isolated gateway that runs on a
+virtual machine, the same containers run in Docker on the VM; see
+[`desktop/`](../desktop/README.md).
+
+## What it talks to
+
+| Peer | For |
+| --- | --- |
+| Mattermost | Each agent's bot account, over the Mattermost API and WebSocket |
+| The platform API | The provisioner's fleet broker calls, and the brokers behind the platform's OpenClaw extensions |
+| The LLM broker | Model calls, with the agent's own credential |
+| PostgreSQL | Each agent's store, with a login per gateway |
+| The fleet controller | It polls the provisioner on the fleet port, 3003 by default, and drives migrations through it |
+
+## Test
+
+Each extension under `extensions/platform/` is its own package:
+
+```bash
+cd gateway/extensions/platform/octogee-chat-tools
+npm ci
+npm test
+```
+
+The specs for `entrypoint.sh` and the other scripts here are in
+[`scripts/__tests__/`](../scripts/__tests__/). The image build runs
+`verify-extension-bundles.mjs` and `verify-config-templates.mjs` against what
+it built.
 
 ## Key files
 

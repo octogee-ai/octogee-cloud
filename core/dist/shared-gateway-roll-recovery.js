@@ -4,7 +4,7 @@ import { gatewayArtifactFromReleasePayload } from "./gateway-live-release.js";
 import { readSharedGatewayPoolConfigInStore } from "./shared-gateway-pool-read.js";
 import { FleetMutationIdempotencyError, runNormalFleetMutation, } from "./normal-fleet-mutation.js";
 const ACTOR = "glm-controller-placement-policy";
-function recoveryOperationId(input) {
+export function sharedRollRecoveryOperationId(input) {
     return `recover-shared-roll-${input.sourceGatewayId}-to-${input.targetGatewayId}-r${input.expectedDesiredRelease}-to-r${input.expectedLiveRelease}`;
 }
 function recoveryIdempotencyKey(input) {
@@ -91,25 +91,30 @@ function matchingRecoveryOperation(value, input, release) {
         detail.sourceRelease === input.expectedLiveRelease,
     ].every(Boolean);
 }
-function recoveryRollIsEligible(state, input) {
+function recoveryRollBlocker(state, input) {
     const { target, source, pool } = state;
-    if (!target || !source || !pool)
-        return false;
-    return [
-        pool.sharedGatewayIds.includes(input.sourceGatewayId),
-        pool.sharedGatewayIds.includes(input.targetGatewayId),
-        source.gatewayClass === "shared",
-        target.gatewayClass === "shared",
-        source.desiredStatus === "running",
-        target.desiredStatus === "running",
-        target.liveRelease === input.expectedLiveRelease,
-        target.desiredRelease === input.expectedDesiredRelease,
-        target.latestRelease === input.expectedDesiredRelease,
-        runtimeIsServingLiveRelease(state.runtime, input, state.now),
-        sourceHasFreshMissingKubernetesObservation(state.sourceRuntime, input, state.now),
-        targetRosterIsServing(state.assignments, state.runtime),
-        !activeMigrationTargetsGateway(state.operations, input.targetGatewayId),
-    ].every(Boolean);
+    if (!pool)
+        return "the shared gateway pool is not configured";
+    if (!source)
+        return `source ${input.sourceGatewayId} has no readable root`;
+    if (!target)
+        return `target ${input.targetGatewayId} has no readable root`;
+    const checks = [
+        [`source ${input.sourceGatewayId} is not in the shared gateway pool`, pool.sharedGatewayIds.includes(input.sourceGatewayId)],
+        [`target ${input.targetGatewayId} is not in the shared gateway pool`, pool.sharedGatewayIds.includes(input.targetGatewayId)],
+        [`source ${input.sourceGatewayId} is not a shared gateway`, source.gatewayClass === "shared"],
+        [`target ${input.targetGatewayId} is not a shared gateway`, target.gatewayClass === "shared"],
+        [`source ${input.sourceGatewayId} is not running`, source.desiredStatus === "running"],
+        [`target ${input.targetGatewayId} is not running`, target.desiredStatus === "running"],
+        [`target live release is ${target.liveRelease}, expected ${input.expectedLiveRelease}`, target.liveRelease === input.expectedLiveRelease],
+        [`target desired release is ${target.desiredRelease}, expected ${input.expectedDesiredRelease}`, target.desiredRelease === input.expectedDesiredRelease],
+        [`target latest release is ${target.latestRelease}, expected ${input.expectedDesiredRelease}`, target.latestRelease === input.expectedDesiredRelease],
+        [`target ${input.targetGatewayId} is not serving its live release`, runtimeIsServingLiveRelease(state.runtime, input, state.now)],
+        [`source ${input.sourceGatewayId} has no fresh missing Kubernetes observation`, sourceHasFreshMissingKubernetesObservation(state.sourceRuntime, input, state.now)],
+        [`target ${input.targetGatewayId} has an assignment it does not serve`, targetRosterIsServing(state.assignments, state.runtime)],
+        [`an active migration involves ${input.targetGatewayId}`, !activeMigrationTargetsGateway(state.operations, input.targetGatewayId)],
+    ];
+    return checks.find(([, holds]) => !holds)?.[0] ?? null;
 }
 function validReleasePayload(release) {
     const payload = release?.payload;
@@ -145,65 +150,76 @@ function recoveryRolloutOperation(input, operationId, release, payload, now) {
     };
 }
 async function appendRecoveryRollback(deps, input) {
-    const operationId = recoveryOperationId(input);
-    return deps.store.transaction({ label: "shared-gateway-roll-recovery.append" }, async (transaction) => {
-        const gatewayIds = [input.targetGatewayId, input.sourceGatewayId];
-        const [roots, runtimes, pool, operation, assignments, operations] = await Promise.all([
-            transaction.gateways.roots.getMany(gatewayIds),
-            transaction.fleetRegistry.getMany(gatewayIds),
-            readSharedGatewayPoolConfigInStore(transaction),
-            transaction.journal.operations.get(operationId),
-            transaction.gateways.assignments.list(input.targetGatewayId),
-            transaction.journal.operations.listByStatus(["pending", "running"]),
-        ]);
-        const state = {
-            target: gatewayRootOf(roots.get(input.targetGatewayId), input.targetGatewayId),
-            source: gatewayRootOf(roots.get(input.sourceGatewayId), input.sourceGatewayId),
-            pool,
-            runtime: gatewayRuntimeOf(runtimes.get(input.targetGatewayId)),
-            sourceRuntime: gatewayRuntimeOf(runtimes.get(input.sourceGatewayId)),
-            assignments,
-            operations,
-            now: deps.now(),
-        };
-        if (!state.target || !recoveryRollIsEligible(state, input)) {
-            return { kind: "not-eligible" };
-        }
-        const release = state.target.latestRelease + 1;
-        if (!isPositiveRelease(release)) {
-            throw new Error(`shared peer recovery release is invalid for ${input.targetGatewayId}`);
-        }
-        if (operation !== null) {
-            return matchingRecoveryOperation(operation, input, release)
-                ? { kind: "already-scheduled", release, operationId }
-                : { kind: "not-eligible" };
-        }
-        const [sourceRelease, replacementRelease] = await Promise.all([
-            transaction.gateways.releases.get(input.targetGatewayId, input.expectedLiveRelease),
-            transaction.gateways.releases.get(input.targetGatewayId, release),
-        ]);
-        if (replacementRelease !== null) {
-            throw new Error(`shared peer recovery release ${input.targetGatewayId}/r${release} already exists`);
-        }
-        const payload = validReleasePayload(sourceRelease);
-        if (!payload) {
-            throw new Error(`shared peer recovery source release ${input.targetGatewayId}/r${input.expectedLiveRelease} is invalid`);
-        }
-        await transaction.gateways.releases.append({
-            gatewayId: input.targetGatewayId,
-            expectedLatestRelease: state.target.latestRelease,
-            createdAt: state.now,
-            createdBy: ACTOR,
-            sourceRelease: input.expectedLiveRelease,
-            note: `shared peer recovery from ${input.sourceGatewayId}`,
-            payload,
-            payloadHash: releasePayloadHash(payload),
-            activate: false,
-            updatedBy: ACTOR,
-        });
-        await transaction.journal.operations.create(recoveryRolloutOperation(input, operationId, release, payload, state.now));
-        return { kind: "scheduled", release, operationId };
+    return deps.store.transaction({ label: "shared-gateway-roll-recovery.append" }, (transaction) => appendSharedRollRecoveryInTransaction(transaction, input, { now: deps.now() }));
+}
+function withObservedKubernetes(runtime, observation) {
+    if (runtime === null || observation === undefined)
+        return runtime;
+    return { ...runtime, kubernetes: observation };
+}
+export async function appendSharedRollRecoveryInTransaction(transaction, input, options) {
+    const operationId = sharedRollRecoveryOperationId(input);
+    const gatewayIds = [input.targetGatewayId, input.sourceGatewayId];
+    const [roots, runtimes, pool, operation, assignments, operations] = await Promise.all([
+        transaction.gateways.roots.getMany(gatewayIds),
+        transaction.fleetRegistry.getMany(gatewayIds),
+        readSharedGatewayPoolConfigInStore(transaction),
+        transaction.journal.operations.get(operationId),
+        transaction.gateways.assignments.list(input.targetGatewayId),
+        transaction.journal.operations.listByStatus(["pending", "running"]),
+    ]);
+    const state = {
+        target: gatewayRootOf(roots.get(input.targetGatewayId), input.targetGatewayId),
+        source: gatewayRootOf(roots.get(input.sourceGatewayId), input.sourceGatewayId),
+        pool,
+        runtime: gatewayRuntimeOf(runtimes.get(input.targetGatewayId)),
+        sourceRuntime: withObservedKubernetes(gatewayRuntimeOf(runtimes.get(input.sourceGatewayId)), options.sourceKubernetes),
+        assignments,
+        operations,
+        now: options.now,
+    };
+    const scheduledRelease = input.expectedDesiredRelease + 1;
+    if (operation !== null && matchingRecoveryOperation(operation, input, scheduledRelease)) {
+        return { kind: "already-scheduled", release: scheduledRelease, operationId };
+    }
+    const blocker = recoveryRollBlocker(state, input);
+    if (!state.target || blocker !== null) {
+        return { kind: "not-eligible", reason: blocker ?? `target ${input.targetGatewayId} has no readable root` };
+    }
+    const release = state.target.latestRelease + 1;
+    if (!isPositiveRelease(release)) {
+        throw new Error(`shared peer recovery release is invalid for ${input.targetGatewayId}`);
+    }
+    if (operation !== null) {
+        return matchingRecoveryOperation(operation, input, release)
+            ? { kind: "already-scheduled", release, operationId }
+            : { kind: "not-eligible", reason: `operation ${operationId} exists for another recovery` };
+    }
+    const [sourceRelease, replacementRelease] = await Promise.all([
+        transaction.gateways.releases.get(input.targetGatewayId, input.expectedLiveRelease),
+        transaction.gateways.releases.get(input.targetGatewayId, release),
+    ]);
+    if (replacementRelease !== null) {
+        throw new Error(`shared peer recovery release ${input.targetGatewayId}/r${release} already exists`);
+    }
+    const payload = validReleasePayload(sourceRelease);
+    if (!payload) {
+        throw new Error(`shared peer recovery source release ${input.targetGatewayId}/r${input.expectedLiveRelease} is invalid`);
+    }
+    await transaction.gateways.releases.append({
+        gatewayId: input.targetGatewayId,
+        expectedLatestRelease: state.target.latestRelease,
+        createdAt: state.now,
+        createdBy: ACTOR,
+        sourceRelease: input.expectedLiveRelease,
+        note: `shared peer recovery from ${input.sourceGatewayId}`,
+        payload,
+        payloadHash: releasePayloadHash(payload),
+        activate: false,
+        updatedBy: ACTOR,
     });
+    await transaction.journal.operations.create(recoveryRolloutOperation(input, operationId, release, payload, state.now));
+    return { kind: "scheduled", release, operationId };
 }
 export async function supersedeRollingSharedGatewayRoll(deps, input) {
     try {

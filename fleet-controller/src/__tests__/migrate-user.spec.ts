@@ -14,7 +14,9 @@ import {
   type ScheduleTransferDoc,
 } from "@octogee/shared/types/fleet-controller";
 import type { FleetBrokerUserSnapshot } from "@octogee/shared/types/fleet-broker";
-import { buildOperationCompletionUpdate, classifyOperationFailure, OPERATOR_ISOLATED_GATEWAY_WAIT_MS } from "../operation-retry";
+import { buildOperationCompletionUpdate, classifyOperationFailure, MAX_OPERATION_ATTEMPTS, OPERATOR_ISOLATED_GATEWAY_WAIT_MS } from "../operation-retry";
+import { markGatewayLive, resolveSourceRevision } from "../index.js";
+import type { DurableGateway } from "../converge-gateway.js";
 import { assertUserRestoreSettled, createOperationContext, PendingUserRestoreError } from "../operation-context";
 import { builderReturnOperationId } from "@octogee/shared/types/isolated-operation-ids";
 import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
@@ -4175,5 +4177,104 @@ describe("the move an operator's give starts", () => {
 
     expect(ready).toMatchObject({ success: true });
     expect(h.deps.commitCutover).toHaveBeenCalledOnce();
+  });
+});
+
+describe("a return requested right after its isolated gateway resumes", () => {
+  const absent = "source gateway gw-blue has no durable placement";
+
+  function resumedIsolatedGateway() {
+    const root = {
+      gatewayId: "gw-blue", createdAt: 1, createdBy: "test", updatedAt: 1, updatedBy: "test",
+      latestRelease: 1, desiredRelease: 1, liveRelease: 1, desiredStatus: "running",
+      configSchemaVersion: 1, profile: null, gatewayClass: "isolated", imageProfile: "isolated", sizingTier: "s",
+      gcpProject: null, gatewayContainerSecurityContext: null, serviceAccountName: null, serviceAccount: null,
+      builderAccess: null, ownerUid: "uid-alice", builderSlug: "alice", modelBrokerLimits: null, preemption: null,
+    };
+    const store = createDocumentFixtureStore({
+      "gateways/gw-blue": root,
+      "gateways/gw-blue/assignments/uid-alice": {
+        uid: "uid-alice", slug: "alice", gatewayId: "gw-blue", source: "migrate-user", state: "serving", epoch: 4,
+      },
+      "glmGateways/gw-blue": {
+        docKind: "runtime", gatewayId: "gw-blue", release: 1, lifecycle: "provisioning", runtime: "cluster",
+        createdAt: 1, createdByOperationId: null, helm: { replicas: 1, availableReplicas: 1 },
+        heartbeat: { status: "ready", lastHeartbeatAt: 4_900, mountedCustomers: ["alice"], migratingIn: [] },
+        lastError: { message: null, at: null },
+      },
+    });
+    const h = mkDeps();
+    h.deps.resolveSourcePlacement = async (uid, gatewayId) => {
+      const source = await resolveSourceRevision(store, uid, gatewayId);
+      return source && {
+        release: source.release, epoch: source.epoch, assignmentMode: source.assignmentMode,
+        ...(source.gatewayClass ? { gatewayClass: source.gatewayClass } : {}),
+      };
+    };
+    const markLive = () => markGatewayLive({ store, log: vi.fn() }, root as DurableGateway, {
+      imageRepository: "localhost:5001/octogee/octogee-gateway", imageTag: "build-1",
+      profileImages: { builder: { imageRepository: "localhost:5001/octogee/octogee-gateway-builder", imageTag: "build-1" } },
+    });
+    return { h, store, markLive };
+  }
+
+  function applied(op: Operation, patch: Record<string, unknown>): Operation {
+    const next: Record<string, unknown> = { ...op };
+    for (const [field, value] of Object.entries(patch)) {
+      if (value !== null && typeof value === "object" && (value as { clear?: unknown }).clear === true) delete next[field];
+      else next[field] = value;
+    }
+    return { ...(next as unknown as Operation), status: "running", startedAt: 4_000 };
+  }
+
+  const returnOp = () => mkOp({ id: "op-return", input: { uid: "uid-alice", fromGatewayId: "gw-blue", toGatewayId: "gw-green" } });
+
+  it("retries while the resumed gateway is not yet marked live, then returns the user", async () => {
+    const { h, store, markLive } = resumedIsolatedGateway();
+    const handler = createMigrateUserHandler(h.deps);
+    let op: Operation = returnOp();
+
+    const early = await handler(op, h.ctx);
+    const waiting = buildOperationCompletionUpdate({ op, result: early, steps: [...h.steps], now: 5_000 });
+
+    expect(early).toMatchObject({ success: false, error: absent });
+    expect(waiting).toMatchObject({
+      status: "pending", attempts: 1, nextAttemptAt: 35_000,
+      error: `attempt 1 failed (transient): ${absent} — retrying in 30s`,
+      attemptHistory: [expect.objectContaining({ attempt: 1, error: absent, classification: "transient" })],
+    });
+    expect(h.deps.commitCutover).not.toHaveBeenCalled();
+
+    await markLive();
+    expect(await store.fleetRegistry.get("gw-blue")).toMatchObject({ lifecycle: "serving" });
+    op = applied(op, waiting as Record<string, unknown>);
+
+    const retried = await handler(op, h.ctx);
+
+    expect(retried).toMatchObject({ success: true });
+    expect(h.deps.commitCutover).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      uid: "uid-alice", fromGatewayId: "gw-blue", toGatewayId: "gw-green",
+    }));
+    expect(buildOperationCompletionUpdate({ op, result: retried, steps: [], now: 36_000 })).toMatchObject({ status: "succeeded", attempts: 2 });
+  });
+
+  it("fails with the same message after the attempt cap when the gateway is never marked live", async () => {
+    const { h } = resumedIsolatedGateway();
+    const handler = createMigrateUserHandler(h.deps);
+    let op: Operation = returnOp();
+    let update: Record<string, unknown> = {};
+
+    for (let attempt = 1; attempt <= MAX_OPERATION_ATTEMPTS; attempt += 1) {
+      const result = await handler(op, h.ctx);
+      expect(result).toMatchObject({ success: false, error: absent });
+      update = buildOperationCompletionUpdate({ op, result, steps: [...h.steps], now: 5_000 * attempt }) as Record<string, unknown>;
+      op = applied(op, update);
+    }
+
+    expect(update).toMatchObject({ status: "failed", attempts: MAX_OPERATION_ATTEMPTS, error: absent });
+    expect(update.attemptHistory).toEqual([1, 2, 3].map((attempt) => expect.objectContaining({
+      attempt, error: absent, classification: "transient",
+    })));
+    expect(h.deps.commitCutover).not.toHaveBeenCalled();
   });
 });

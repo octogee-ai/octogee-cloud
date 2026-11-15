@@ -39,7 +39,8 @@ describe("coach is a MM bot — creation contract", () => {
     const defaultAgentIdx = src.indexOf("const defaultAgentUsername = `${slug}-coach`");
     const blockEnd = src.indexOf("if (!defaultAgentMmUser)", defaultAgentIdx);
     const block = src.slice(defaultAgentIdx, blockEnd);
-    expect(block).toMatch(/displayName:\s*"Octo"/);
+    expect(block).toMatch(/displayName:\s*DEFAULT_AGENT_BOT_DISPLAY_NAME,/);
+    expect(src).toContain('export const DEFAULT_AGENT_BOT_DISPLAY_NAME = "Octo";');
     expect(block).not.toMatch(/firstName:/);
     expect(block).not.toMatch(/nickname:/);
   });

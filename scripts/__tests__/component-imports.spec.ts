@@ -19,6 +19,11 @@ describe("component import boundary", () => {
     expect(report.newViolations, "import a library by its package name through its exports map; another service component's code is not importable").toEqual([]);
   });
 
+  it("gives the provisioning service no exception: it imports libraries only", () => {
+    expect(rules.exceptions.filter((entry) => entry.startsWith("provisioning-service/"))).toEqual([]);
+    expect(report.violations.filter((entry) => entry.startsWith("provisioning-service/"))).toEqual([]);
+  });
+
   it("keeps the exception list shrinking: every entry still occurs", () => {
     expect(report.staleExceptions, "these exceptions no longer occur; remove them from scripts/lib/component-imports.json").toEqual([]);
   });
