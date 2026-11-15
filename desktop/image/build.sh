@@ -4,6 +4,8 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=zones.sh
 source "$HERE/zones.sh"
+# shellcheck source=registry.sh
+source "$HERE/registry.sh"
 PROJECT=""
 ZONE="us-west1-b"
 FALLBACK_ZONES=""
@@ -30,6 +32,9 @@ usage() {
 usage: $0 --project <gcp-project> [--zone $ZONE] [--fallback-zones <zone,zone>] [--omarchy-version $OMARCHY_VERSION]
           [--bucket gs://...] [--builder-name $BUILDER] [--keep-builder] [--candidate] [--image-name <name>] [--service-account <email>]
        OCTOGEE_GCE_SSH_KEY=<ed25519 key> (default ~/.ssh/octogee_gce_ed25519, created if absent)
+       OCTOGEE_DESKTOP_REGISTRY=<host/repository> (default $DESKTOP_DEFAULT_REGISTRY)
+       OCTOGEE_DESKTOP_GATEWAY_IMAGE=<registry>/octogee-gateway-builder@sha256:<digest>
+       OCTOGEE_DESKTOP_EDGE_IMAGE=<registry>/gateway-edge@sha256:<digest>
 
 Builds the Octogee VM image (Omarchy + the desktop session + Docker) from
 the pinned Omarchy ISO with an unattended install inside a nested-virt GCE
@@ -57,10 +62,11 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 [[ -n "$PROJECT" ]] || { usage >&2; exit 2; }
+REGISTRY="$(desktop_registry)" || exit 2
 GATEWAY_IMAGE="${OCTOGEE_DESKTOP_GATEWAY_IMAGE:?immutable Builder gateway image is required}"
-[[ "$GATEWAY_IMAGE" =~ ^us-central1-docker\.pkg\.dev/octogee/octogee/octogee-gateway-builder@sha256:[a-f0-9]{64}$ ]] || { echo "invalid immutable Builder gateway image" >&2; exit 2; }
+desktop_registry_image octogee-gateway-builder "Builder gateway" "$GATEWAY_IMAGE" "$REGISTRY" || exit 2
 EDGE_IMAGE="${OCTOGEE_DESKTOP_EDGE_IMAGE:?immutable gateway-edge image is required}"
-[[ "$EDGE_IMAGE" =~ ^us-central1-docker\.pkg\.dev/octogee/octogee/gateway-edge@sha256:[a-f0-9]{64}$ ]] || { echo "invalid immutable gateway-edge image" >&2; exit 2; }
+desktop_registry_image gateway-edge "gateway-edge" "$EDGE_IMAGE" "$REGISTRY" || exit 2
 ISO_SHA256="$(iso_sha256_for "$OMARCHY_VERSION")"
 [[ -n "$ISO_SHA256" ]] || { echo "no pinned checksum for Omarchy $OMARCHY_VERSION; add it to iso_sha256_for" >&2; exit 2; }
 BUCKET="${BUCKET:-gs://${PROJECT}-octogee-computer-images}"
@@ -105,7 +111,7 @@ fi
 
 payload="$(mktemp -d)"
 trap 'rm -rf "$payload"' EXIT
-cp "$HERE/pipeline.sh" "$HERE/customize.sh" "$payload/"
+cp "$HERE/pipeline.sh" "$HERE/customize.sh" "$HERE/registry.sh" "$payload/"
 cp -R "$HERE/cidata" "$HERE/rootfs" "$payload/"
 cp -R "$HERE/../rootfs" "$payload/desktop-rootfs"
 COPYFILE_DISABLE=1 tar -C "$payload" -czf "$payload.tgz" .
@@ -130,7 +136,7 @@ gssh true || { echo "builder never answered ssh" >&2; exit 1; }
 
 gcloud compute scp --zone "$ZONE" --project "$PROJECT" --quiet --ssh-key-file "$SSH_KEY" "$payload.tgz" "imagebuilder@$BUILDER:~/image-payload.tgz" 2>/dev/null
 gssh "rm -rf ~/image-payload && mkdir -p ~/image-payload && tar -C ~/image-payload -xzf ~/image-payload.tgz && chmod +x ~/image-payload/*.sh"
-gssh "rm -f ~/pipeline.log; nohup env OCTOGEE_DESKTOP_GATEWAY_IMAGE='$GATEWAY_IMAGE' OCTOGEE_DESKTOP_EDGE_IMAGE='$EDGE_IMAGE' OMARCHY_VERSION='$OMARCHY_VERSION' OMARCHY_ISO_SHA256='$ISO_SHA256' IMAGE_NAME='$IMAGE_NAME' IMAGE_BUCKET='$BUCKET' IMAGE_DEVICE='/dev/disk/by-id/google-${IMAGE_DEVICE_NAME}' DISK_GB='$IMAGE_DISK_GB' ~/image-payload/pipeline.sh >~/pipeline.log 2>&1 </dev/null & echo \$! > ~/pipeline.pid; echo started"
+gssh "rm -f ~/pipeline.log; nohup env OCTOGEE_DESKTOP_REGISTRY='$REGISTRY' OCTOGEE_DESKTOP_GATEWAY_IMAGE='$GATEWAY_IMAGE' OCTOGEE_DESKTOP_EDGE_IMAGE='$EDGE_IMAGE' OMARCHY_VERSION='$OMARCHY_VERSION' OMARCHY_ISO_SHA256='$ISO_SHA256' IMAGE_NAME='$IMAGE_NAME' IMAGE_BUCKET='$BUCKET' IMAGE_DEVICE='/dev/disk/by-id/google-${IMAGE_DEVICE_NAME}' DISK_GB='$IMAGE_DISK_GB' ~/image-payload/pipeline.sh >~/pipeline.log 2>&1 </dev/null & echo \$! > ~/pipeline.pid; echo started"
 
 log "pipeline running on ${BUILDER}; log follows"
 seen=0

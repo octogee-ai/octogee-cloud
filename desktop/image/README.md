@@ -12,12 +12,25 @@ metadata-driven SSH key installer.
 ## Build
 
 ```bash
+export OCTOGEE_DESKTOP_REGISTRY=<your registry>   # default ghcr.io/octogee-ai/octogee-cloud
+export OCTOGEE_DESKTOP_GATEWAY_IMAGE="$OCTOGEE_DESKTOP_REGISTRY/octogee-gateway-builder@sha256:<digest>"
+export OCTOGEE_DESKTOP_EDGE_IMAGE="$OCTOGEE_DESKTOP_REGISTRY/gateway-edge@sha256:<digest>"
 desktop/image/build.sh --project <test-project>
 ```
 
+`OCTOGEE_DESKTOP_REGISTRY` names the one registry the image may preload
+from, as `host[:port]/repository`. It defaults to the public release registry.
+`build.sh`, `pipeline.sh` and `test.sh` accept only the two images above,
+pinned by digest, in exactly that registry. Any other image stops the build
+before a VM starts, and the error names both the image and the registry. A
+public registry pulls anonymously. The image's Docker credential helper
+(`rootfs/root/.docker/config.json`) hands the VM's Google access token only to
+`us-central1-docker.pkg.dev`, at build time and on the booted VM. A private
+registry on any other host gets no credentials, so pulls from it fail.
+
 1. Creates a nested-virt builder VM (`n2-standard-8`, Debian 12) with a second
    40 GB pd-ssd (`<builder>-image`, auto-deleted with the builder) that will
-   become the image, and uploads the payload: `pipeline.sh`, `customize.sh`, the `cidata` template, the
+   become the image, and uploads the payload: `pipeline.sh`, `customize.sh`, `registry.sh`, the `cidata` template, the
    guest overlay in `rootfs/`, and the shared session scripts from
    `../rootfs`.
 2. `pipeline.sh` (on the builder) downloads the ISO, verifies it against the
