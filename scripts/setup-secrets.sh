@@ -885,7 +885,7 @@ rm -f "$FLEET_PRIVATE_TMP" "$FLEET_PUBLIC_TMP" "$FLEET_DERIVED_PUBLIC_TMP"
 # Each stable shared gateway member and disposable gateway gets its own secret so
 # gateway-edge can route an assigned user without mixing tokens.
 #
-# Gateway IDs by env (match helm/octogee/values.{test,prod}.yaml):
+# Gateway IDs by env (match charts/octogee/values.{test,prod}.yaml):
 info "gateway-auth-token (Secret Manager, per-gatewayId)"
 case "$ENV" in
   prod|test|custom)
@@ -1074,7 +1074,7 @@ echo "    UMBRELLA_CHART_DIR=\$(mktemp -d)"
 echo "    UMBRELLA_CHART=\$(./scripts/package-umbrella-chart.sh --output-dir \"\$UMBRELLA_CHART_DIR\")"
 echo "    helm upgrade --install octogee \"\$UMBRELLA_CHART\" \\"
 echo "      --server-side=true --force-conflicts \\"
-echo "      -f helm/octogee/$VALUES_FILE \\"
+echo "      -f charts/octogee/$VALUES_FILE \\"
 echo "      -f <(node core/dist/render-deployment-target-helm-values.js --target=$TARGET_ID) \\"
 echo "      -f \"\$RELEASE_VALUES_FILE\" \\"
 echo "      -n $K8S_NAMESPACE \\"

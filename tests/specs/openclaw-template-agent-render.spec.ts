@@ -4,7 +4,7 @@ import path from "node:path";
 
 const repoRoot = path.resolve(__dirname, "../..");
 const templateRaw = readFileSync(
-  path.join(repoRoot, "infra/gateway/openclaw.template.json"),
+  path.join(repoRoot, "gateway/openclaw.template.json"),
   "utf8",
 );
 

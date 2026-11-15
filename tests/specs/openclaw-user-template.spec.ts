@@ -16,7 +16,7 @@ type Template = {
 } & Record<string, unknown>;
 
 function read(name: string): Template {
-  return JSON.parse(readFileSync(path.join(repoRoot, "infra/gateway", name), "utf8")) as Template;
+  return JSON.parse(readFileSync(path.join(repoRoot, "gateway", name), "utf8")) as Template;
 }
 
 const USER_OWNED_TOP_LEVEL = new Set([
@@ -29,7 +29,7 @@ const USER_OWNED_TOP_LEVEL = new Set([
   "gateway",
 ]);
 
-describe("infra/gateway/openclaw.isolated.template.json — the user seed boots on the slim runtime", () => {
+describe("gateway/openclaw.isolated.template.json — the user seed boots on the slim runtime", () => {
   const shared = read("openclaw.template.json");
   const user = read("openclaw.isolated.template.json");
 

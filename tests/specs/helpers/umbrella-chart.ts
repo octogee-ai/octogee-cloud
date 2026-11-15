@@ -5,7 +5,7 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 
 const REPO_ROOT = path.resolve(__dirname, "../../..");
-const UMBRELLA_PATH = path.join(REPO_ROOT, "helm/octogee");
+const UMBRELLA_PATH = path.join(REPO_ROOT, "charts/octogee");
 export const INSTALLATION_VALUES = path.join(REPO_ROOT, "scripts/ops/kind/values.yaml");
 const DIGEST = `sha256:${"0".repeat(64)}`;
 export const INSTALLATION_SETS: Record<string, string> = {

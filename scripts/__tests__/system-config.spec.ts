@@ -235,7 +235,7 @@ describe("system_config restore", () => {
   });
 
   it("does not force shared-class Google write approval into a new user system config", async () => {
-    templatePath = path.resolve(__dirname, "../../infra/gateway/openclaw.template.json");
+    templatePath = path.resolve(__dirname, "../../gateway/openclaw.template.json");
     vi.mocked(gitExec).mockImplementation((_cwd: string, argv: string[]) =>
       argv.join(" ") === "rev-parse --verify HEAD" ? null : "ok"
     );
@@ -257,7 +257,7 @@ describe("system_config restore", () => {
   });
 
   it("stamps the isolated platform shape onto a config seeded from the shared template", async () => {
-    templatePath = path.resolve(__dirname, "../../infra/gateway/openclaw.template.json");
+    templatePath = path.resolve(__dirname, "../../gateway/openclaw.template.json");
     vi.mocked(gitExec).mockImplementation((_cwd: string, argv: string[]) =>
       argv.join(" ") === "rev-parse --verify HEAD" ? null : "ok"
     );
@@ -299,7 +299,7 @@ describe("system_config restore", () => {
 
     await restoreSystemConfigForSlug("robert", {
       openclawDir,
-      templatePath: path.resolve(__dirname, "../../infra/gateway/openclaw.isolated.template.json"),
+      templatePath: path.resolve(__dirname, "../../gateway/openclaw.isolated.template.json"),
       env,
       log: () => {},
     });
@@ -339,7 +339,7 @@ describe("system_config restore", () => {
     const env = withUserClaim({ GATEWAY_CLASS: "isolated", GATEWAY_ID: "acme-user", API_PUBLIC_URL: "https://api.octogee.com" }, "acme");
     await restoreSystemConfigForSlug("acme", {
       openclawDir,
-      templatePath: path.resolve(__dirname, "../../infra/gateway/openclaw.isolated.template.json"),
+      templatePath: path.resolve(__dirname, "../../gateway/openclaw.isolated.template.json"),
       env,
       log: () => {},
     });
@@ -365,7 +365,7 @@ describe("system_config restore", () => {
       const env = withUserClaim({ GATEWAY_CLASS: "isolated", GATEWAY_ID: "acme-user", API_PUBLIC_URL: "https://api.octogee.com" }, "acme");
       await restoreSystemConfigForSlug("acme", {
         openclawDir,
-        templatePath: path.resolve(__dirname, "../../infra/gateway/openclaw.isolated.template.json"),
+        templatePath: path.resolve(__dirname, "../../gateway/openclaw.isolated.template.json"),
         env,
         log: () => {},
       });
@@ -408,7 +408,7 @@ describe("system_config restore", () => {
 
     await restoreSystemConfigForSlug("robert", {
       openclawDir,
-      templatePath: path.resolve(__dirname, "../../infra/gateway/openclaw.isolated.template.json"),
+      templatePath: path.resolve(__dirname, "../../gateway/openclaw.isolated.template.json"),
       env,
       log: () => {},
     });
@@ -498,7 +498,7 @@ describe("system_config restore", () => {
   });
 
   it("refuses to seed an isolated gateway that cannot resolve its own api origin", async () => {
-    templatePath = path.resolve(__dirname, "../../infra/gateway/openclaw.template.json");
+    templatePath = path.resolve(__dirname, "../../gateway/openclaw.template.json");
     vi.mocked(gitExec).mockImplementation((_cwd: string, argv: string[]) =>
       argv.join(" ") === "rev-parse --verify HEAD" ? null : "ok"
     );
@@ -512,7 +512,7 @@ describe("system_config restore", () => {
   });
 
   it("leaves a shared-class seeded config on the shared platform shape", async () => {
-    templatePath = path.resolve(__dirname, "../../infra/gateway/openclaw.template.json");
+    templatePath = path.resolve(__dirname, "../../gateway/openclaw.template.json");
     vi.mocked(gitExec).mockImplementation((_cwd: string, argv: string[]) =>
       argv.join(" ") === "rev-parse --verify HEAD" ? null : "ok"
     );

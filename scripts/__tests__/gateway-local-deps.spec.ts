@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { expect, it } from "vitest";
 
-const pack = resolve(import.meta.dirname, "../../infra/gateway/pack-local-deps.sh");
+const pack = resolve(import.meta.dirname, "../../gateway/pack-local-deps.sh");
 
 it("refreshes packed internal modules while retaining the dependency tree", () => {
   const root = mkdtempSync(join(tmpdir(), "gateway-local-deps-"));

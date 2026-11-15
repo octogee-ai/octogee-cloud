@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-const share = fileURLToPath(new URL('../../infra/desktop/rootfs/usr/share/omarchy/octo-desktop', import.meta.url));
+const share = fileURLToPath(new URL('../../desktop/rootfs/usr/share/omarchy/octo-desktop', import.meta.url));
 const plugins = join(share, 'plugins');
 const provenance = JSON.parse(readFileSync(join(plugins, 'provenance.json'), 'utf8')) as { plugins: Record<string, { repository: string; commit: string; license: string }> };
 const vendored = readdirSync(plugins, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort();

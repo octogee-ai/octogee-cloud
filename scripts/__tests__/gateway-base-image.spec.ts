@@ -72,9 +72,9 @@ function runInstructionContaining(dockerfile: string, needle: string): string {
 
 describe("gateway base image", () => {
   it("installs the controlled workstation over the gateway system before adding OpenClaw", () => {
-    const base = readRepoFile("infra/gateway/Dockerfile.base");
-    const isolatedBase = readRepoFile("infra/gateway/Dockerfile.isolated-base");
-    const userConfig = readRepoFile("infra/gateway/openclaw.isolated.template.json");
+    const base = readRepoFile("gateway/Dockerfile.base");
+    const isolatedBase = readRepoFile("gateway/Dockerfile.isolated-base");
+    const userConfig = readRepoFile("gateway/openclaw.isolated.template.json");
 
     expect(base).toMatch(/^FROM node:\d+\.\d+\.\d+-trixie-slim@sha256:[0-9a-f]{64} AS gateway-debian$/mu);
     expect(base).not.toContain("gateway-core-runtime");
@@ -85,9 +85,9 @@ describe("gateway base image", () => {
     expect(isolatedBase.indexOf("COPY --link --from=openclaw-runtime")).toBeGreaterThan(
       isolatedBase.indexOf("/tmp/isolated-toolchain-validation/ /opt/octogee/toolchains/image/"),
     );
-    expect(isolatedBase).toContain("infra/gateway/isolated-toolchain/package.json /octogee/toolchain/package.json");
-    expect(isolatedBase).toContain("infra/gateway/isolated-toolchain/package-lock.json /octogee/toolchain/package-lock.json");
-    expect(isolatedBase).toContain("infra/gateway/isolated-toolchain/groups.json /octogee/toolchain/groups.json");
+    expect(isolatedBase).toContain("gateway/isolated-toolchain/package.json /octogee/toolchain/package.json");
+    expect(isolatedBase).toContain("gateway/isolated-toolchain/package-lock.json /octogee/toolchain/package-lock.json");
+    expect(isolatedBase).toContain("gateway/isolated-toolchain/groups.json /octogee/toolchain/groups.json");
     expect(isolatedBase).toContain("OCTOGEE_BUILDER_TOOLCHAIN_LOCK_SHA256");
     expect(isolatedBase).toContain("OCTOGEE_BUILDER_TOOL_GROUPS_SHA256");
     expect(isolatedBase).toContain("DEBIAN_PACKAGES=");
@@ -99,7 +99,7 @@ describe("gateway base image", () => {
 
   it("keeps post-readiness hydration npm-only", () => {
     const hydrator = readRepoFile("scripts/lib/isolated-toolchain-hydrator.ts");
-    const isolatedBase = readRepoFile("infra/gateway/Dockerfile.isolated-base");
+    const isolatedBase = readRepoFile("gateway/Dockerfile.isolated-base");
 
     expect(hydrator).toContain('"ci",');
     expect(hydrator).toContain("--prefer-offline");
@@ -112,13 +112,13 @@ describe("gateway base image", () => {
 
   it("pins the post-readiness user tools and their npm integrity", () => {
     const packageJson = JSON.parse(
-      readRepoFile("infra/gateway/isolated-toolchain/package.json"),
+      readRepoFile("gateway/isolated-toolchain/package.json"),
     ) as {
       dependencies: Record<string, string>;
       allowScripts: Record<string, boolean>;
     };
     const packageLock = JSON.parse(
-      readRepoFile("infra/gateway/isolated-toolchain/package-lock.json"),
+      readRepoFile("gateway/isolated-toolchain/package-lock.json"),
     ) as { packages: Record<string, { version?: string; integrity?: string }> };
 
     expect(packageJson.dependencies).toEqual({
@@ -159,7 +159,7 @@ describe("gateway base image", () => {
       });
     }
 
-    const isolatedBase = readRepoFile("infra/gateway/Dockerfile.isolated-base");
+    const isolatedBase = readRepoFile("gateway/Dockerfile.isolated-base");
     expect(isolatedBase).toContain("npm ci --omit=dev --include=optional");
     expect(isolatedBase).toContain("node_modules/.bin/claude --version");
     expect(isolatedBase).toContain("node_modules/.bin/codex --version");
@@ -171,7 +171,7 @@ describe("gateway base image", () => {
   });
 
   it("keeps the OpenClaw launcher rooted beside its imported package files", () => {
-    const base = readRepoFile("infra/gateway/Dockerfile.base");
+    const base = readRepoFile("gateway/Dockerfile.base");
 
     expect(base).not.toContain(
       "COPY --from=openclaw-installer /usr/local/bin/openclaw /usr/local/bin/openclaw",
@@ -191,7 +191,7 @@ describe("gateway base image", () => {
   });
 
   it("ships the workstation packages in the shared gateway base image", () => {
-    const installed = installedAptPackages("infra/gateway/Dockerfile.base");
+    const installed = installedAptPackages("gateway/Dockerfile.base");
 
     expect([...installed]).toEqual(expect.arrayContaining([
       "curl", "jq", "python3", "git", "sqlite3",
@@ -201,9 +201,9 @@ describe("gateway base image", () => {
   });
 
   it("ships discovery binaries and disables runtime tool downloads", () => {
-    const installed = installedAptPackages("infra/gateway/Dockerfile.base");
-    const baseDockerfile = readRepoFile("infra/gateway/Dockerfile.base");
-    const dockerfile = readRepoFile("infra/gateway/Dockerfile");
+    const installed = installedAptPackages("gateway/Dockerfile.base");
+    const baseDockerfile = readRepoFile("gateway/Dockerfile.base");
+    const dockerfile = readRepoFile("gateway/Dockerfile");
 
     expect(installed.has("ripgrep")).toBe(true);
     expect(installed.has("fd-find")).toBe(false);
@@ -221,7 +221,7 @@ describe("gateway base image", () => {
   });
 
   it("leaves preinstalled Claude and Codex binaries intact for the standard image", () => {
-    const dockerfile = readRepoFile("infra/gateway/Dockerfile");
+    const dockerfile = readRepoFile("gateway/Dockerfile");
     const wrapperInstruction = runInstructionContaining(
       dockerfile,
       "ENABLE_BUILDER_TOOLCHAIN_WRAPPER",
@@ -239,7 +239,7 @@ describe("gateway base image", () => {
   });
 
   it("keeps boot-critical tools preinstalled in user final builds", () => {
-    const dockerfile = readRepoFile("infra/gateway/Dockerfile");
+    const dockerfile = readRepoFile("gateway/Dockerfile");
     const wrapperInstruction = runInstructionContaining(
       dockerfile,
       "ENABLE_BUILDER_TOOLCHAIN_WRAPPER",
@@ -261,20 +261,20 @@ describe("gateway base image", () => {
   });
 
   it("pins the npm runtime shared by core boot and post-readiness hydration", () => {
-    const dockerfile = readRepoFile("infra/gateway/Dockerfile.base");
+    const dockerfile = readRepoFile("gateway/Dockerfile.base");
     const install = runInstructionContaining(dockerfile, "npm install --global /tmp/npm.tgz");
     const npmUpgrade = dockerfile.indexOf(install);
 
     expect(npmUpgrade).toBeGreaterThan(dockerfile.indexOf("AS gateway-core-system"));
     expect(npmUpgrade).toBeLessThan(dockerfile.indexOf("AS gateway-runtime-system"));
-    expect(install).toContain("source=infra/gateway/openclaw-tarball/npm-fork.tgz,target=/tmp/npm.tgz,readonly");
+    expect(install).toContain("source=gateway/openclaw-tarball/npm-fork.tgz,target=/tmp/npm.tgz,readonly");
     expect(install).toContain('test "$(npm --version)" = "$NPM_VERSION"');
     expect(install).toContain('test "$(npx --version)" = "$NPM_VERSION"');
     expect(install).toContain("npm cache clean --force");
   });
 
   it("copies only staged OpenClaw runtime outputs into the shipped stage and verifies them at build time", () => {
-    const dockerfile = readRepoFile("infra/gateway/Dockerfile.base");
+    const dockerfile = readRepoFile("gateway/Dockerfile.base");
     const runtimeStage = dockerfile.slice(dockerfile.indexOf("FROM gateway-runtime-system AS gateway-runtime"));
 
     expect(dockerfile).toContain("FROM gateway-core-system AS openclaw-installer");
@@ -303,7 +303,7 @@ describe("gateway base image", () => {
   });
 
   it("does not retain package-manager caches in runtime install layers", () => {
-    const dockerfile = readRepoFile("infra/gateway/Dockerfile.base");
+    const dockerfile = readRepoFile("gateway/Dockerfile.base");
 
     expect(
       runInstructionContaining(dockerfile, "@anthropic-ai/claude-code"),
@@ -315,7 +315,7 @@ describe("gateway base image", () => {
   });
 
   it("copies the pruned dependencies and application payload into the gateway runtime", () => {
-    const dockerfile = readRepoFile("infra/gateway/Dockerfile");
+    const dockerfile = readRepoFile("gateway/Dockerfile");
     const runtimeStageMarker = "FROM ${RUNTIME_BASE_IMAGE} AS gateway-runtime";
     const runtimeStage = dockerfile.slice(dockerfile.indexOf(runtimeStageMarker));
     const runtimeInstructions = runtimeStage
@@ -334,10 +334,10 @@ describe("gateway base image", () => {
   });
 
   it("gates each final image on its required OpenClaw runtime plugin set", () => {
-    const dockerfile = readRepoFile("infra/gateway/Dockerfile");
+    const dockerfile = readRepoFile("gateway/Dockerfile");
 
     expect(dockerfile).toContain(
-      "COPY infra/gateway/verify-openclaw-runtime-deps.sh /usr/local/bin/verify-openclaw-runtime-deps",
+      "COPY gateway/verify-openclaw-runtime-deps.sh /usr/local/bin/verify-openclaw-runtime-deps",
     );
     expect(dockerfile).toContain(
       '/usr/local/bin/verify-openclaw-runtime-deps "$OPENCLAW_RUNTIME_PLUGINS"',
@@ -348,7 +348,7 @@ describe("gateway base image", () => {
   });
 
   it("bundles exact-source Codex with plugin-local dependencies and verifies native bundled trust", () => {
-    const dockerfile = readRepoFile("infra/gateway/Dockerfile.base");
+    const dockerfile = readRepoFile("gateway/Dockerfile.base");
 
     expect(dockerfile).toContain('"$OPENCLAW_ROOT/package.json"');
     expect(dockerfile).toContain('test -f "$OC_VENDOR/openclaw-codex.tgz"');
@@ -382,8 +382,8 @@ describe("gateway base image", () => {
   });
 
   it("proves the final isolated image retains its boot-critical payloads", () => {
-    const dockerfile = readRepoFile("infra/gateway/Dockerfile");
-    const gate = readRepoFile("infra/gateway/verify-runtime-image.sh");
+    const dockerfile = readRepoFile("gateway/Dockerfile");
+    const gate = readRepoFile("gateway/verify-runtime-image.sh");
 
     expect(dockerfile).toContain('RUN /usr/local/bin/verify-runtime-image "$IMAGE_PROFILE"');
     expect(gate).toContain('! staged_plugin parallel-plugin');

@@ -4,13 +4,26 @@
 [![Build main](https://github.com/octogee-ai/octogee-cloud/actions/workflows/build-main.yml/badge.svg?branch=main&event=push)](https://github.com/octogee-ai/octogee-cloud/actions/workflows/build-main.yml)
 [![MIT license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Octogee Cloud is the open platform under Octogee, the personal AI partner. It
-is the software factory that builds Octogee: the files my agents load at the
-start of every session, the checks they run before a change reaches `main`,
-and the commands that ship a build. You can read the factory yourself instead
-of taking my word for it.
+Octogee Cloud runs [OpenClaw](https://openclaw.ai) agents for many users on
+Kubernetes. Each user gets an agent, a Mattermost team for chat and a Gitea
+organization for git. A fleet controller places users on shared gateways,
+where people who do not know each other share one OpenClaw gateway and host
+code is denied, or on an isolated gateway of their own, and moves them between
+the two. Brokers hold the model keys and other credentials, so a gateway holds
+none.
 
-[How this differs from OpenClaw Enterprise](docs/why-octogee-cloud.md).
+It is the open platform under [Octogee](https://octogee.com), and it is also
+the software factory that builds it: the files my agents load at the start of
+every session, the checks they run before a change reaches `main`, and the
+commands that ship a build. You can read the factory yourself instead of
+taking my word for it.
+
+- [Architecture](docs/architecture.md): the services, where state lives, and
+  how a product builds on top.
+- [How this differs from OpenClaw Enterprise](docs/why-octogee-cloud.md): the
+  trust model.
+- [Known rough edges](docs/rough-edges.md): what I would change, said before
+  you find it.
 
 ## Run it
 
@@ -28,7 +41,9 @@ The full platform, with the fleet controller, users and shared gateways, runs
 from the images this repository publishes on a local kind cluster, see
 [The full platform on kind](docs/kind.md), or on GKE with Cloud SQL and Cloud
 Storage, see [The full platform on GKE](docs/gke.md). Start from the
-[latest release](https://github.com/octogee-ai/octogee-cloud/releases/latest);
+[latest release](https://github.com/octogee-ai/octogee-cloud/releases/latest),
+which publishes the images, the Helm charts and the `@octogee/core` and
+`@octogee/shared` npm packages at one version (see [Releasing](docs/releasing.md));
 until the first one is out, from `main`'s newest commit whose Build main
 succeeded, as both guides describe. Platform state is in PostgreSQL, and the
 platform needs no Firebase project. An EKS install with RDS and S3,
@@ -58,9 +73,9 @@ and a domain. [See every account and tier](docs/getting-started.md#what-you-need
 
 - `AGENTS.md` is the contract every agent loads.
 - `docs/handbook/` holds the Dev Workflow chapters of the handbook.
-- The platform packages: `core`, `shared`, the fleet controller
-  in `glm-controller`, `gateway-edge`, and `octogee-api`, with `infra`, `helm`,
-  `terraform`, `templates` and `scripts` beside them. `tests/` holds the
+- The platform packages: `core`, `shared`, `fleet-controller`, `gateway-edge`
+  and `platform-api`; the images in `gateway`, `desktop` and `vm-bridge`; with
+  `charts`, `terraform`, `templates` and `scripts` beside them. `tests/` holds the
   cross-package platform specs.
 - [Legacy names](docs/legacy-names.md) lists the stored names that keep
   their spelling from before the platform was published.
@@ -84,4 +99,4 @@ for lockfile, infrastructure, and workflow scans.
 
 ## License
 
-MIT, the same license as the monorepo. See `LICENSE`.
+MIT. See `LICENSE`.

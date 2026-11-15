@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import { parseAllDocuments } from "yaml";
 
 const REPO_ROOT = path.resolve(__dirname, "../..");
-const CHART_PATH = path.join(REPO_ROOT, "helm/octogee-gateway");
+const CHART_PATH = path.join(REPO_ROOT, "charts/octogee-gateway");
 
 beforeAll(() => {
   if (!fs.existsSync(CHART_PATH)) {
@@ -79,7 +79,7 @@ function gatewayContainerEnv(rendered: string): Array<{ name: string; value?: st
   return c.env ?? [];
 }
 
-describe("helm/octogee-gateway/ — revision-aware render (revisionId defaults to gatewayId)", () => {
+describe("charts/octogee-gateway/ — revision-aware render (revisionId defaults to gatewayId)", () => {
   it("names Deployment/Services by revisionId when revisionId is unset (== gatewayId)", () => {
     const out = helmTemplate();
     const dep = byKind(out, "Deployment")[0];
@@ -96,7 +96,7 @@ describe("helm/octogee-gateway/ — revision-aware render (revisionId defaults t
   });
 });
 
-describe("helm/octogee-gateway/ — revision-aware render (revisionId != gatewayId)", () => {
+describe("charts/octogee-gateway/ — revision-aware render (revisionId != gatewayId)", () => {
   const REVISION = { gatewayId: "default", revisionId: "default-r7" };
 
   it("names Deployment by revisionId", () => {
@@ -145,7 +145,7 @@ describe("helm/octogee-gateway/ — revision-aware render (revisionId != gateway
   });
 });
 
-describe("helm/octogee-gateway/ — KSA is out of the chart (the fleet controller owns it)", () => {
+describe("charts/octogee-gateway/ — KSA is out of the chart (the fleet controller owns it)", () => {
   it("never renders a ServiceAccount object (gateway-scoped KSA created by the fleet controller)", () => {
     expect(byKind(helmTemplate(), "ServiceAccount")).toHaveLength(0);
     expect(byKind(helmTemplate({ gatewayId: "default", revisionId: "default-r2" }), "ServiceAccount")).toHaveLength(0);
@@ -153,7 +153,7 @@ describe("helm/octogee-gateway/ — KSA is out of the chart (the fleet controlle
   });
 });
 
-describe("helm/octogee-gateway/ — roll strategy (GATEWAY-SIMPLE-ROLL-SPEC)", () => {
+describe("charts/octogee-gateway/ — roll strategy (GATEWAY-SIMPLE-ROLL-SPEC)", () => {
   interface StrategyDoc extends Doc {
     spec?: Doc["spec"] & {
       strategy?: {
@@ -184,7 +184,7 @@ describe("helm/octogee-gateway/ — roll strategy (GATEWAY-SIMPLE-ROLL-SPEC)", (
   });
 });
 
-describe("helm/octogee-gateway/ — persistence is deleted (Spot + emptyDir only)", () => {
+describe("charts/octogee-gateway/ — persistence is deleted (Spot + emptyDir only)", () => {
   it("never renders a PersistentVolumeClaim", () => {
     expect(byKind(helmTemplate(), "PersistentVolumeClaim")).toHaveLength(0);
     expect(byKind(helmTemplate({ "persistence.enabled": "true" }), "PersistentVolumeClaim")).toHaveLength(0);

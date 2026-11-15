@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import * as path from "node:path";
 import { parseAllDocuments } from "yaml";
 
-const CHART_PATH = path.resolve(__dirname, "../../helm/octogee-gateway");
+const CHART_PATH = path.resolve(__dirname, "../../charts/octogee-gateway");
 
 const REQUIRED_VALUES: Record<string, string> = {
   gatewayId: "replies",
@@ -45,7 +45,7 @@ function gatewayEnv(values: Record<string, string>): Record<string, string | und
   throw new Error("no gateway container rendered");
 }
 
-describe("helm/octogee-gateway/ — Mattermost reply and streaming modes", () => {
+describe("charts/octogee-gateway/ — Mattermost reply and streaming modes", () => {
   it.each([
     ["shared", {}],
     ["isolated", ISOLATED_VALUES],

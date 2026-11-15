@@ -23,7 +23,7 @@ const setupMonitoringIap = readFileSync(
 );
 
 function chart(path: string): string {
-  return readFileSync(resolve(root, "helm/monitoring", path), "utf8");
+  return readFileSync(resolve(root, "charts/monitoring", path), "utf8");
 }
 
 function renderedDeployment(name: string): Record<string, unknown> {
@@ -32,7 +32,7 @@ function renderedDeployment(name: string): Record<string, unknown> {
     [
       "template",
       "grafana",
-      resolve(root, "helm/monitoring"),
+      resolve(root, "charts/monitoring"),
       "--namespace",
       "monitoring",
     ],
@@ -55,9 +55,9 @@ describe("monitoring setup", () => {
     expect(chart("Chart.yaml")).toContain('version: "13.0.1"');
     expect(chart("Chart.yaml")).toContain('repository: "https://grafana-community.github.io/helm-charts"');
     expect(chart("Chart.lock")).toContain("grafana");
-    expect(readFileSync(resolve(root, "helm/monitoring/charts/grafana-13.0.1.tgz")).length).toBeGreaterThan(0);
+    expect(readFileSync(resolve(root, "charts/monitoring/charts/grafana-13.0.1.tgz")).length).toBeGreaterThan(0);
 
-    expect(setupMonitoring).toContain('helm upgrade --install grafana "$REPO_DIR/helm/monitoring"');
+    expect(setupMonitoring).toContain('helm upgrade --install grafana "$REPO_DIR/charts/monitoring"');
     expect(setupMonitoring).toContain("--take-ownership");
     expect(setupMonitoring).not.toContain("kubectl apply -f");
     expect(setupMonitoring).not.toContain("kubectl create configmap");
@@ -68,7 +68,7 @@ describe("monitoring setup", () => {
 
   it("recreates Grafana when the as-code dashboard set changes so deletions converge", () => {
     expect(setupMonitoring).toContain("DASHBOARD_CHECKSUM=");
-    expect(setupMonitoring).toContain("helm/monitoring/dashboards");
+    expect(setupMonitoring).toContain("charts/monitoring/dashboards");
     expect(setupMonitoring).toContain(
       'grafana.podAnnotations.octogee\\\\.ai/dashboard-checksum=$DASHBOARD_CHECKSUM',
     );
@@ -134,7 +134,7 @@ describe("monitoring setup", () => {
       [
         "template",
         "grafana",
-        resolve(root, "helm/monitoring"),
+        resolve(root, "charts/monitoring"),
         "--namespace",
         "monitoring",
       ],
@@ -205,7 +205,7 @@ describe("monitoring setup", () => {
       [
         "template",
         "grafana",
-        resolve(root, "helm/monitoring"),
+        resolve(root, "charts/monitoring"),
         "--namespace",
         "monitoring",
         "--set",
@@ -247,7 +247,7 @@ describe("monitoring setup", () => {
       [
         "template",
         "grafana",
-        resolve(root, "helm/monitoring"),
+        resolve(root, "charts/monitoring"),
         "--namespace",
         "monitoring",
       ],
@@ -280,7 +280,7 @@ describe("monitoring setup", () => {
 
   it("waits for the managed rule evaluator after Helm renders ClusterRules", () => {
     const release = setupMonitoring.indexOf(
-      'helm upgrade --install grafana "$REPO_DIR/helm/monitoring"',
+      'helm upgrade --install grafana "$REPO_DIR/charts/monitoring"',
     );
     const evaluatorWait = setupMonitoring.indexOf(
       "deployment/rule-evaluator",
@@ -300,7 +300,7 @@ describe("monitoring setup", () => {
     expect(setupMonitoring).toContain("--iap) IAP_ENABLED=true");
     expect(setupMonitoring).toContain("--set iap.enabled=true");
     expect(setupMonitoringIap).toContain('setup_args=(--target="$TARGET_ID" --iap)');
-    expect(setupMonitoringIap).not.toContain('helm upgrade grafana "$REPO_DIR/helm/monitoring"');
+    expect(setupMonitoringIap).not.toContain('helm upgrade grafana "$REPO_DIR/charts/monitoring"');
     expect(setupMonitoringIap).toContain('setup-monitoring.sh" "${setup_args[@]}"');
   });
 
@@ -326,7 +326,7 @@ describe("monitoring setup", () => {
       [
         "template",
         "grafana",
-        resolve(root, "helm/monitoring"),
+        resolve(root, "charts/monitoring"),
         "--namespace",
         "monitoring",
       ],

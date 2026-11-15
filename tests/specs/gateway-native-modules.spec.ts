@@ -6,7 +6,7 @@ const repoRoot = path.resolve(__dirname, "../..");
 const read = (relativePath: string) => readFileSync(path.join(repoRoot, relativePath), "utf8");
 const readJson = (relativePath: string) => JSON.parse(read(relativePath)) as Record<string, any>;
 
-const gatewayDockerfile = read("infra/gateway/Dockerfile");
+const gatewayDockerfile = read("gateway/Dockerfile");
 const scriptsNpmrc = read("scripts/.npmrc");
 const scriptsPackageJson = readJson("scripts/package.json");
 const scriptsLockfile = readJson("scripts/package-lock.json");
@@ -17,7 +17,7 @@ const scriptsLockfile = readJson("scripts/package-lock.json");
 // dependency installs opt out of install scripts outright.
 const npmTwelveServiceImages = [
   "gateway-edge/Dockerfile",
-  "glm-controller/Dockerfile",
+  "fleet-controller/Dockerfile",
 ];
 
 const SMOKE_CHECK_RUN = "RUN node /octogee/scripts/ops/verify-native-modules.mjs";
@@ -130,8 +130,8 @@ describe.each(npmTwelveServiceImages)("%s opts out of dependency install scripts
 });
 
 describe("octogee-api Obsidian Headless native dependency", () => {
-  const dockerfile = read("octogee-api/Dockerfile");
-  const packageJson = readJson("octogee-api/package.json");
+  const dockerfile = read("platform-api/Dockerfile");
+  const packageJson = readJson("platform-api/package.json");
 
   it("allows only the better-sqlite3 install script required by Obsidian Headless", () => {
     expect(packageJson.allowScripts).toEqual({

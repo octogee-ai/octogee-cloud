@@ -10,7 +10,7 @@ it('opts the disposable image provisioner into a full Omarchy package upgrade', 
   try {
     const probe = path.join(dir, 'invocation');
     writeFileSync(path.join(dir, 'pacman'), '#!/bin/sh\nprintf "%s\\n" "${OMARCHY_ALLOW_DIRECT_PACMAN:-}" "$@" > "$UPGRADE_PROBE"\nexit 42\n', { mode: 0o755 });
-    const source = readFileSync(path.resolve('../infra/desktop/image/customize.sh'), 'utf8');
+    const source = readFileSync(path.resolve('../desktop/image/customize.sh'), 'utf8');
     const script = path.join(dir, 'customize.sh');
     writeFileSync(script, source.replaceAll('/tmp/pacman.log', path.join(dir, 'pacman.log')));
     const result = spawnSync('bash', [script], {
@@ -53,7 +53,7 @@ function stageMigrationRun(dir: string) {
   for (const [name, body] of Object.entries(stubs)) {
     writeFileSync(path.join(dir, name), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
   }
-  const source = readFileSync(path.resolve('../infra/desktop/image/customize.sh'), 'utf8');
+  const source = readFileSync(path.resolve('../desktop/image/customize.sh'), 'utf8');
   const script = path.join(dir, 'customize.sh');
   writeFileSync(script, source.replaceAll('/tmp/pacman.log', path.join(dir, 'pacman.log')));
   const probes = {
@@ -114,7 +114,7 @@ it('refuses to migrate when the desktop user\'s session bus never appears', () =
 it.each(["4.5.0-2", "4.0.6-1", ""])("records the installed Omarchy version and refuses a stale or missing result (%s)", version => {
   const dir = mkdtempSync(path.join(tmpdir(), "vm-version-"));
   try {
-    const source = readFileSync(path.resolve("../infra/desktop/image/customize.sh"), "utf8");
+    const source = readFileSync(path.resolve("../desktop/image/customize.sh"), "utf8");
     const fn = source.match(/^record_image_identity\(\) \{[\s\S]*?^\}/m)?.[0] ?? "";
     const envFile = path.join(dir, "vm.env");
     const result = spawnSync("bash", ["-c", `${fn.replaceAll("/etc/octogee-computer.env", envFile)}

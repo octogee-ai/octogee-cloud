@@ -1,0 +1,168 @@
+ARG GATEWAY_BASE_IMAGE=octogee-gateway-base
+ARG GATEWAY_SYSTEM_IMAGE=${GATEWAY_BASE_IMAGE}
+FROM ${GATEWAY_BASE_IMAGE} AS openclaw-runtime
+
+FROM ${GATEWAY_SYSTEM_IMAGE} AS isolated-base-inputs
+
+USER node
+COPY --chown=node:node gateway/isolated-toolchain/groups.json /tmp/isolated-tool-groups.json
+COPY --chown=node:node gateway/isolated-toolchain/base-inputs.mjs /tmp/isolated-base-inputs.mjs
+RUN node /tmp/isolated-base-inputs.mjs < /tmp/isolated-tool-groups.json > /tmp/isolated-base-inputs.json
+
+FROM ${GATEWAY_SYSTEM_IMAGE} AS isolated-toolchain-validation
+
+ARG BUILDER_TOOLCHAIN_LOCK_SHA256
+ARG BUILDER_TOOL_GROUPS_SHA256
+
+USER root
+RUN mkdir -p /tmp/isolated-toolchain-validation \
+    && chown node:node /tmp/isolated-toolchain-validation
+COPY --chown=node:node gateway/isolated-toolchain/package.json /tmp/isolated-toolchain-validation/package.json
+COPY --chown=node:node gateway/isolated-toolchain/package-lock.json /tmp/isolated-toolchain-validation/package-lock.json
+COPY --chown=node:node gateway/isolated-toolchain/groups.json /tmp/isolated-toolchain-validation/groups.json
+
+USER node
+WORKDIR /tmp/isolated-toolchain-validation
+RUN set -eu; \
+    echo "$BUILDER_TOOLCHAIN_LOCK_SHA256  package-lock.json" | sha256sum -c -; \
+    echo "$BUILDER_TOOL_GROUPS_SHA256  groups.json" | sha256sum -c -; \
+    npm ci --omit=dev --include=optional --no-audit --no-fund --prefer-offline; \
+    CLAUDE_VERSION="$(node -p "require('./package.json').dependencies['@anthropic-ai/claude-code']")"; \
+    CODEX_VERSION="$(node -p "require('./package.json').dependencies['@openai/codex']")"; \
+    CHROMIUM_VERSION="$(node -p "require('./package.json').dependencies['@sparticuz/chromium']")"; \
+    node_modules/.bin/claude --version | grep -F "$CLAUDE_VERSION"; \
+    node_modules/.bin/codex --version | grep -F "$CODEX_VERSION"; \
+    test "$CHROMIUM_VERSION" = "$(node -p "require('./node_modules/@sparticuz/chromium/package.json').version")"; \
+    test -s node_modules/@sparticuz/chromium/bin/chromium.br; \
+    node_modules/.bin/firebase --version; \
+    node_modules/.bin/tsc --version; \
+    node_modules/.bin/tsx --version; \
+    node_modules/.bin/pnpm --version; \
+    node_modules/.bin/ncu --version; \
+    case "$(uname -m)" in x86_64) NATIVE_ARCH=x64 ;; aarch64) NATIVE_ARCH=arm64 ;; *) exit 1 ;; esac; \
+    test -x "node_modules/@anthropic-ai/claude-code-linux-$NATIVE_ARCH/claude"; \
+    test -d "node_modules/@openai/codex-linux-$NATIVE_ARCH"; \
+    if find node_modules/@anthropic-ai -mindepth 1 -maxdepth 1 -type d \
+      ! -name claude-code ! -name "claude-code-linux-$NATIVE_ARCH" | grep -q .; then \
+      echo "unexpected Anthropic platform payload" >&2; exit 1; \
+    fi; \
+    if find node_modules/@openai -mindepth 1 -maxdepth 1 -type d \
+      ! -name codex ! -name "codex-linux-$NATIVE_ARCH" | grep -q .; then \
+      echo "unexpected OpenAI platform payload" >&2; exit 1; \
+    fi; \
+    printf '%s\n' "$BUILDER_TOOLCHAIN_LOCK_SHA256" > /tmp/isolated-toolchain-verified
+
+USER root
+COPY gateway/isolated-toolchain/preinstall.mjs /tmp/isolated-toolchain-preinstall.mjs
+RUN node /tmp/isolated-toolchain-preinstall.mjs /tmp/isolated-toolchain-validation \
+    && chmod -R a+rX /tmp/isolated-toolchain-validation
+
+FROM ${GATEWAY_SYSTEM_IMAGE} AS isolated-base-system
+
+USER root
+COPY --from=isolated-base-inputs --chown=node:node /tmp/isolated-base-inputs.json /octogee/toolchain/base-inputs.json
+
+RUN set -eu; \
+    DEBIAN_PACKAGES="$(node -e 'const m=require("/octogee/toolchain/base-inputs.json"); process.stdout.write(m.groups.filter((g)=>g.enabled&&g.delivery==="base").flatMap((g)=>g.debianPackages||[]).join(" "))')"; \
+    PYTHON_PACKAGES="$(node -e 'const m=require("/octogee/toolchain/base-inputs.json"); process.stdout.write(m.pythonPackages.join(" "))')"; \
+    test -n "$DEBIAN_PACKAGES"; \
+    test -n "$PYTHON_PACKAGES"; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends $DEBIAN_PACKAGES; \
+    pip3 install --break-system-packages --no-cache-dir $PYTHON_PACKAGES; \
+    git lfs install --system; \
+    rm -rf /var/lib/apt/lists/*
+
+RUN set -eu; \
+    test "$(dpkg --print-architecture)" = amd64; \
+    GCLOUD_VERSION="$(node -e 'process.stdout.write(require("/octogee/toolchain/base-inputs.json").standaloneTools.gcloud.version)')"; \
+    GCLOUD_SHA256="$(node -e 'process.stdout.write(require("/octogee/toolchain/base-inputs.json").standaloneTools.gcloud.sha256)')"; \
+    GH_VERSION="$(node -e 'process.stdout.write(require("/octogee/toolchain/base-inputs.json").standaloneTools.gh.version)')"; \
+    HELM_VERSION="$(node -e 'process.stdout.write(require("/octogee/toolchain/base-inputs.json").standaloneTools.helm.version)')"; \
+    TERRAFORM_VERSION="$(node -e 'process.stdout.write(require("/octogee/toolchain/base-inputs.json").standaloneTools.terraform.version)')"; \
+    YQ_VERSION="$(node -e 'process.stdout.write(require("/octogee/toolchain/base-inputs.json").standaloneTools.yq.version)')"; \
+    curl -fsSL --retry 3 --retry-all-errors \
+      "https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-${GCLOUD_VERSION}-linux-x86_64.tar.gz" \
+      -o /tmp/gcloud.tgz; \
+    echo "${GCLOUD_SHA256}  /tmp/gcloud.tgz" | sha256sum -c -; \
+    tar -xzf /tmp/gcloud.tgz -C /usr/lib; \
+    /usr/lib/google-cloud-sdk/bin/gcloud components install kubectl gke-gcloud-auth-plugin --quiet; \
+    for command in bq gcloud gke-gcloud-auth-plugin gsutil kubectl; do \
+      ln -s "/usr/lib/google-cloud-sdk/bin/${command}" "/usr/local/bin/${command}"; \
+    done; \
+    GH_FILE="gh_${GH_VERSION}_linux_amd64.tar.gz"; \
+    GH_URL="https://github.com/cli/cli/releases/download/v${GH_VERSION}"; \
+    curl -fsSL --retry 3 --retry-all-errors "${GH_URL}/gh_${GH_VERSION}_checksums.txt" -o /tmp/gh-checksums; \
+    curl -fsSL --retry 3 --retry-all-errors "${GH_URL}/${GH_FILE}" -o "/tmp/${GH_FILE}"; \
+    (cd /tmp && grep "  ${GH_FILE}$" gh-checksums | sha256sum -c -); \
+    tar -xzf "/tmp/${GH_FILE}" -C /tmp; \
+    install -m 0755 "/tmp/gh_${GH_VERSION}_linux_amd64/bin/gh" /usr/local/bin/gh; \
+    HELM_FILE="helm-v${HELM_VERSION}-linux-amd64.tar.gz"; \
+    curl -fsSL --retry 3 --retry-all-errors "https://get.helm.sh/${HELM_FILE}" -o "/tmp/${HELM_FILE}"; \
+    curl -fsSL --retry 3 --retry-all-errors "https://get.helm.sh/${HELM_FILE}.sha256sum" -o /tmp/helm-sha256; \
+    echo "$(cut -d' ' -f1 /tmp/helm-sha256)  /tmp/${HELM_FILE}" | sha256sum -c -; \
+    tar -xzf "/tmp/${HELM_FILE}" -C /tmp; \
+    install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm; \
+    TERRAFORM_FILE="terraform_${TERRAFORM_VERSION}_linux_amd64.zip"; \
+    TERRAFORM_URL="https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}"; \
+    curl -fsSL --retry 3 --retry-all-errors "${TERRAFORM_URL}/terraform_${TERRAFORM_VERSION}_SHA256SUMS" -o /tmp/terraform-sha256; \
+    curl -fsSL --retry 3 --retry-all-errors "${TERRAFORM_URL}/${TERRAFORM_FILE}" -o "/tmp/${TERRAFORM_FILE}"; \
+    (cd /tmp && grep "  ${TERRAFORM_FILE}$" terraform-sha256 | sha256sum -c -); \
+    unzip -q "/tmp/${TERRAFORM_FILE}" -d /tmp/terraform; \
+    install -m 0755 /tmp/terraform/terraform /usr/local/bin/terraform; \
+    YQ_URL="https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}"; \
+    curl -fsSL --retry 3 --retry-all-errors "${YQ_URL}/yq_linux_amd64" -o /tmp/yq; \
+    curl -fsSL --retry 3 --retry-all-errors "${YQ_URL}/checksums" -o /tmp/yq-checksums; \
+    curl -fsSL --retry 3 --retry-all-errors "${YQ_URL}/checksums_hashes_order" -o /tmp/yq-order; \
+    YQ_SHA256_COLUMN="$(tr ' \t' '\n\n' < /tmp/yq-order | grep -nxF SHA-256 | head -1 | cut -d: -f1)"; \
+    test -n "$YQ_SHA256_COLUMN"; \
+    YQ_SHA256="$(awk -v column="$((YQ_SHA256_COLUMN+1))" '$1=="yq_linux_amd64"{print $column}' /tmp/yq-checksums)"; \
+    echo "${YQ_SHA256}  /tmp/yq" | sha256sum -c -; \
+    install -m 0755 /tmp/yq /usr/local/bin/yq; \
+    rm -rf /tmp/gcloud.tgz /tmp/gh-checksums "/tmp/${GH_FILE}" "/tmp/gh_${GH_VERSION}_linux_amd64" \
+      /tmp/helm-sha256 "/tmp/${HELM_FILE}" /tmp/linux-amd64 \
+      /tmp/terraform-sha256 "/tmp/${TERRAFORM_FILE}" /tmp/terraform \
+      /tmp/yq /tmp/yq-checksums /tmp/yq-order; \
+    BASE_COMMANDS="$(node -e 'const m=require("/octogee/toolchain/base-inputs.json"); process.stdout.write(m.groups.filter((g)=>g.enabled&&g.delivery==="base").flatMap((g)=>g.commands||[]).join(" "))')"; \
+    for command in $BASE_COMMANDS; do command -v "$command" >/dev/null; done; \
+    gcloud --version | grep -F "Google Cloud SDK ${GCLOUD_VERSION}"; \
+    gh --version | grep -F "gh version ${GH_VERSION}"; \
+    helm version --short | grep -F "v${HELM_VERSION}"; \
+    terraform version | grep -F "Terraform v${TERRAFORM_VERSION}"; \
+    yq --version | grep -F "version v${YQ_VERSION}"
+
+FROM isolated-base-system
+
+ARG BUILDER_TOOLCHAIN_LOCK_SHA256
+ARG BUILDER_TOOL_GROUPS_SHA256
+
+USER root
+
+COPY --chown=node:node gateway/isolated-toolchain/package.json /octogee/toolchain/package.json
+COPY --chown=node:node gateway/isolated-toolchain/package-lock.json /octogee/toolchain/package-lock.json
+COPY --chown=node:node gateway/isolated-toolchain/groups.json /octogee/toolchain/groups.json
+COPY --chown=node:node gateway/stamp-claude-first-run.mjs /octogee/gateway/stamp-claude-first-run.mjs
+COPY --from=isolated-toolchain-validation /tmp/isolated-toolchain-validation/ /opt/octogee/toolchains/image/
+COPY --from=isolated-toolchain-validation --chown=node:node /tmp/isolated-toolchain-verified /octogee/toolchain/.install-verified
+
+RUN test -n "$BUILDER_TOOLCHAIN_LOCK_SHA256" \
+    && test -n "$BUILDER_TOOL_GROUPS_SHA256" \
+    && echo "$BUILDER_TOOLCHAIN_LOCK_SHA256  /octogee/toolchain/package-lock.json" | sha256sum -c -
+RUN echo "$BUILDER_TOOL_GROUPS_SHA256  /octogee/toolchain/groups.json" | sha256sum -c -
+
+ENV OCTOGEE_BUILDER_PREINSTALLED_TOOLCHAIN=/opt/octogee/toolchains/image
+ENV OCTOGEE_BUILDER_TOOLCHAIN_ROOT=/work/cache/toolchains
+ENV OCTOGEE_BUILDER_TOOLCHAIN_PACKAGE_JSON_PATH=/octogee/toolchain/package.json
+ENV OCTOGEE_BUILDER_TOOLCHAIN_PACKAGE_LOCK_PATH=/octogee/toolchain/package-lock.json
+ENV OCTOGEE_BUILDER_TOOLCHAIN_LOCK_SHA256=${BUILDER_TOOLCHAIN_LOCK_SHA256}
+ENV OCTOGEE_BUILDER_TOOL_GROUPS_PATH=/octogee/toolchain/groups.json
+ENV OCTOGEE_BUILDER_TOOL_GROUPS_SHA256=${BUILDER_TOOL_GROUPS_SHA256}
+ENV OCTOGEE_BUILDER_NPM_PROXY_REGISTRY=https://us-central1-npm.pkg.dev/octogee/octogee-npm-cache/
+ENV OCTOGEE_BUILDER_NPM_FALLBACK_REGISTRY=https://registry.npmjs.org/
+
+COPY --link --from=openclaw-runtime /usr/local/lib/node_modules/openclaw /usr/local/lib/node_modules/openclaw
+COPY --link --from=openclaw-runtime --chown=1000:1000 /opt/openclaw-runtime-deps /opt/openclaw-runtime-deps
+RUN ln -sfn ../lib/node_modules/openclaw/openclaw.mjs /usr/local/bin/openclaw \
+    && openclaw --version
+
+USER node

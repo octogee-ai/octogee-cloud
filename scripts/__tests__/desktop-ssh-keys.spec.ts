@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 
-const script = fileURLToPath(new URL('../../infra/desktop/image/rootfs/usr/local/bin/octo-metadata-ssh-keys', import.meta.url));
+const script = fileURLToPath(new URL('../../desktop/image/rootfs/usr/local/bin/octo-metadata-ssh-keys', import.meta.url));
 const homes: string[] = [];
 const nativeDocker = process.env.OCTOGEE_NATIVE_DOCKER_TEST === '1';
 type Reply = { code: number; body: string };

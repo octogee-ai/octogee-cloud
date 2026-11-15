@@ -187,7 +187,7 @@ export default [
   {
     ignores: [
       ...ignores,
-      "infra/desktop/rootfs/usr/share/omarchy/octo-desktop/plugins/**",
+      "desktop/rootfs/usr/share/omarchy/octo-desktop/plugins/**",
       "tests/fixtures/**",
       "gateway-edge/src/vendor/openclaw-browser-resources/**"
     ]
@@ -195,7 +195,7 @@ export default [
   ...recommended,
   { files: ["**/*.{ts,mjs,js,cjs}"], ...nodeGlobals },
   {
-    files: ["infra/desktop/rootfs/usr/share/omarchy/octo-desktop/desk/**/*.js"],
+    files: ["desktop/rootfs/usr/share/omarchy/octo-desktop/desk/**/*.js"],
     languageOptions: { sourceType: "script", globals: { ...globals.browser } }
   },
   { files: ["scripts/ops/**/*.{ts,mjs,js}"], ...operatorTooling },

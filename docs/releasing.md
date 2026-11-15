@@ -3,7 +3,83 @@
 A release is an annotated `vX.Y.Z` tag on a `main` commit whose Build main run
 succeeded and on which the [GKE install guide](gke.md) was followed end to end.
 The [Release workflow](../.github/workflows/release.yml) turns the tag into a
-GitHub Release. Only a maintainer pushes release tags.
+GitHub Release, tags the images with the release version, and publishes the
+npm packages and Helm charts at that version. Only a maintainer pushes release
+tags.
+
+## What a release publishes
+
+A release `vX.Y.Z` publishes everything at one version:
+
+| What | Where | Version |
+| --- | --- | --- |
+| Images | `ghcr.io/octogee-ai/octogee-cloud/<image>` | tag `vX.Y.Z`, beside the commit SHA tags |
+| Charts | `oci://ghcr.io/octogee-ai/octogee-cloud/charts/<chart>` | chart version `X.Y.Z`, app version `vX.Y.Z` |
+| npm packages | `@octogee/<package>` on npmjs.com, with provenance | `X.Y.Z` |
+
+The charts are `octogee` (the platform), `octogee-gateway` (one gateway, which
+the fleet controller installs) and `octogee-monitoring`. The packages are
+`@octogee/shared` and `@octogee/core`.
+
+The version comes from the tag when the workflow runs; nothing in the
+repository records it. The workflow builds each package's `dist/` fresh from
+source, ignoring the committed copy, and rewrites its `package.json` for npm:
+the release version, every `@octogee/*` dependency pinned to that same
+version, and no `private`, scripts, development dependencies or `file:`
+dependencies. The `octogee` chart is stamped with the release's images: each
+platform service at `vX.Y.Z` and its index digest from Build main's image
+manifest, and the gateway images the fleet controller rolls out at the
+commit's short SHA and digest, the tag form gateway images take. The
+`octogee-gateway` chart defaults to the same gateway and gateway edge images.
+
+`scripts/ci/release-packages.mjs` and `scripts/ci/release-charts.mjs` do this,
+and each holds its published set as one list, `PUBLISHED_PACKAGES` and
+`PUBLISHED_CHARTS`. To publish another package, give it an `exports` map in
+which every entry names `types` and `default` under `./dist/`, `"files":
+["dist"]` and a license, and add its directory to `PUBLISHED_PACKAGES`. The
+`release-artifacts` check on every pull request packs each package as a
+release would, installs the tarballs into a scratch project outside the
+repository, imports every export and type-checks against them, runs `npm
+publish --dry-run`, then packages each chart and lints and renders it from the
+packaged archive.
+
+## Install a release by version
+
+```bash
+helm upgrade --install octogee oci://ghcr.io/octogee-ai/octogee-cloud/charts/octogee \
+  --version X.Y.Z -f your-values.yaml
+npm install @octogee/core@X.Y.Z @octogee/shared@X.Y.Z
+```
+
+The chart needs no image values: it runs the release's images by digest. The
+[GKE](gke.md) and [kind](kind.md) installers still run from a checkout, so for
+them check out the tag. `@octogee/core` takes `@octogee/shared` as a peer at
+the same version; its `testing/*` exports also need its optional peers
+`firebase-admin`, `supertest` and `vitest`.
+
+## One-time setup
+
+The packages publish from the `octogee` npm user account, which owns the
+`@octogee` scope. A user scope has one owner: other maintainers are added to
+each package one at a time, not to the scope.
+
+1. Signed in as `octogee` on npmjs.com, create a granular access token with
+   read and write access to the `@octogee` scope (packages and scopes, all
+   packages in the scope), with "bypass two-factor authentication" on.
+2. Store it as the `NPM_TOKEN` Actions secret of `octogee-ai/octogee-cloud`.
+3. After the first release has published each package, open each package's
+   settings on npmjs.com and add a trusted publisher: GitHub Actions,
+   organization `octogee-ai`, repository `octogee-cloud`, workflow
+   `release.yml`. Trusted publishing is set per package and only once the
+   package exists, so the first publish needs the token. Once every package
+   has a trusted publisher, delete the `NPM_TOKEN` secret and revoke the
+   token; the workflow publishes through trusted publishing when the secret is
+   absent. Packages carry provenance either way.
+4. After the first release has pushed the charts, open each chart package
+   under the organization's packages on GitHub (`octogee-cloud/charts/octogee`,
+   `octogee-cloud/charts/octogee-gateway`, `octogee-cloud/charts/octogee-monitoring`)
+   and change its visibility to public. GitHub creates a new container package
+   private. Do the same for any image package that is not public yet.
 
 ## Versions
 
@@ -60,8 +136,17 @@ there, merge, and release a commit whose Build main ran with it.
      date and commit of the GKE run, how to start from it, the octogee-fleet
      version, each image by index digest, what upgrading can promise, the
      changes since the last release, and Build main's `image-manifest.json`
-     attached.
+     attached;
+   - then, in two jobs of their own, publishes the npm packages and pushes the
+     charts.
 
 Build main keeps that manifest for 90 days, so release a commit within 90 days
-of its build. If the workflow stops, delete the tag, fix the cause and push the
-tag again. The workflow checks everything before it tags an image.
+of its build. If the release job stops, delete the tag, fix the cause and push
+the tag again. The workflow checks everything before it tags an image.
+
+The npm and chart jobs start only after the release exists, and a failure in
+either leaves the images and the release as they are. Without working npm
+credentials the npm job fails and says so. Fix the cause, then rerun the
+failed jobs from the workflow run: each job publishes only what is not
+published yet and skips the rest, and a rerun of the release job keeps the
+existing release.

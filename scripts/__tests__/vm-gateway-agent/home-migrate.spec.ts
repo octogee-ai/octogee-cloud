@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 
 const exec = promisify(execFile);
-const script = resolve(import.meta.dirname, "../../../infra/desktop/image/rootfs/usr/local/bin/octo-home-migrate");
+const script = resolve(import.meta.dirname, "../../../desktop/image/rootfs/usr/local/bin/octo-home-migrate");
 const machineId = "11111111222233334444555555555555";
 const directories: string[] = [];
 afterEach(async () => { await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true }))); });

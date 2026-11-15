@@ -16,7 +16,7 @@ const base = `inputs-${"b".repeat(64)}`;
 describe("runner image builds", () => {
   it("builds the isolated runner from its own Docker target", () => {
     const plan = imagePlan("octogee-project-runner", { repository, sha });
-    expect(plan.dockerfile).toBe("platform/octogee-api/Dockerfile");
+    expect(plan.dockerfile).toBe("platform/platform-api/Dockerfile");
     expect(plan.context).toBe("platform");
     expect(plan.target).toBe("project-runner");
     expect(plan.tag).toBe(`${repository}/octogee-project-runner:${sha.slice(0, 7)}`);
@@ -40,14 +40,14 @@ describe("runner image builds", () => {
     expect(imagePlan("glm-controller", { repository, sha }, platformOnly).contexts).toEqual({});
     expect(imagePlan("octogee-api", { repository, sha }, platformOnly).contexts).toEqual({ "packed-package": "obsidian-connect" });
     const withProduct = mkdtempSync(resolve(tmpdir(), "image-plan-product-"));
-    mkdirSync(resolve(withProduct, "product/glm-controller"), { recursive: true });
+    mkdirSync(resolve(withProduct, "product/fleet-controller"), { recursive: true });
     const plan = imagePlan("glm-controller", { repository, sha }, withProduct);
-    expect(plan.contexts).toEqual({ product: "product", overlay: "product/glm-controller" });
+    expect(plan.contexts).toEqual({ product: "product", overlay: "product/fleet-controller" });
     const run = vi.fn(async () => {});
     await buildImage(plan, { run, exists: async () => false });
     const args = run.mock.calls[0][1] as string[];
-    expect(args).toContain("--file=platform/glm-controller/Dockerfile");
-    expect(args).toContain("--build-context=overlay=product/glm-controller");
+    expect(args).toContain("--file=platform/fleet-controller/Dockerfile");
+    expect(args).toContain("--build-context=overlay=product/fleet-controller");
     expect(args.at(-1)).toBe("platform");
   });
 
@@ -56,9 +56,9 @@ describe("runner image builds", () => {
     mkdirSync(resolve(root, "product/gateway-edge"), { recursive: true });
     expect(imagePlan("octogee-api", { repository, sha }, root).contexts)
       .toEqual({ "packed-package": "obsidian-connect", product: "product", "gateway-edge-overlay": "product/gateway-edge" });
-    mkdirSync(resolve(root, "product/octogee-api"), { recursive: true });
+    mkdirSync(resolve(root, "product/platform-api"), { recursive: true });
     expect(imagePlan("octogee-project-runner", { repository, sha }, root).contexts).toEqual({
-      product: "product", overlay: "product/octogee-api", "gateway-edge-overlay": "product/gateway-edge",
+      product: "product", overlay: "product/platform-api", "gateway-edge-overlay": "product/gateway-edge",
     });
   });
 
@@ -179,34 +179,34 @@ describe("base image recipes", () => {
   it("keys the OpenClaw base on the build context and every file Dockerfile.base copies, not CI plumbing", () => {
     expect(gatewayBaseRecipe(repoRoot).sort()).toEqual([
       ".dockerignore",
-      "infra/gateway/Dockerfile.base",
-      "infra/gateway/debian-backports/CVE-2026-60002.patch",
-      "infra/gateway/debian-backports/CVE-2026-6653.patch",
-      "infra/gateway/debian-backports/build.sh",
-      "infra/gateway/openclaw-tarball/extract-npm.sh",
-      "infra/gateway/openclaw-tarball/npm-distribution.test.mjs",
-      "infra/gateway/verify-codex-native-hook-runtime.mjs",
-      "infra/gateway/verify-codex-source-match.mjs",
-      "infra/gateway/verify-parallel-source-match.mjs",
+      "gateway/Dockerfile.base",
+      "gateway/debian-backports/CVE-2026-60002.patch",
+      "gateway/debian-backports/CVE-2026-6653.patch",
+      "gateway/debian-backports/build.sh",
+      "gateway/openclaw-tarball/extract-npm.sh",
+      "gateway/openclaw-tarball/npm-distribution.test.mjs",
+      "gateway/verify-codex-native-hook-runtime.mjs",
+      "gateway/verify-codex-source-match.mjs",
+      "gateway/verify-parallel-source-match.mjs",
     ]);
   });
 
   it("keys the isolated base on every file Dockerfile.isolated-base copies, not CI plumbing", () => {
     expect(isolatedBaseRecipe(repoRoot).sort()).toEqual([
-      "infra/gateway/Dockerfile.isolated-base",
-      "infra/gateway/isolated-toolchain/base-inputs.mjs",
-      "infra/gateway/isolated-toolchain/groups.json",
-      "infra/gateway/isolated-toolchain/package-lock.json",
-      "infra/gateway/isolated-toolchain/package.json",
-      "infra/gateway/isolated-toolchain/preinstall.mjs",
-      "infra/gateway/stamp-claude-first-run.mjs",
+      "gateway/Dockerfile.isolated-base",
+      "gateway/isolated-toolchain/base-inputs.mjs",
+      "gateway/isolated-toolchain/groups.json",
+      "gateway/isolated-toolchain/package-lock.json",
+      "gateway/isolated-toolchain/package.json",
+      "gateway/isolated-toolchain/preinstall.mjs",
+      "gateway/stamp-claude-first-run.mjs",
     ]);
   });
 });
 
 it("stages the exact vendored npm bytes independently of the rest of the OpenClaw archive", () => {
   const cwd = mkdtempSync(resolve(tmpdir(), "octogee-gateway-npm-"));
-  const extractor = resolve(repoRoot, "infra/gateway/openclaw-tarball/extract-npm.sh");
+  const extractor = resolve(repoRoot, "gateway/openclaw-tarball/extract-npm.sh");
   try {
     mkdirSync(resolve(cwd, "package/vendor"), { recursive: true });
     writeFileSync(resolve(cwd, "package/vendor/npm.tgz"), Buffer.from([0x1f, 0x8b, 0x08, 0xff]));

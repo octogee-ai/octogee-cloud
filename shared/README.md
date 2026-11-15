@@ -1,5 +1,11 @@
 # @octogee/shared
 
+```bash
+npm install @octogee/shared@X.Y.Z
+```
+
+Each octogee-cloud release `vX.Y.Z` publishes this package at `X.Y.Z`.
+
 Octogee's shared type and runtime substrate (`types/` constants, tier and
 throttle helpers, wire protocol, and related values). It has two intentional
 consumption modes:

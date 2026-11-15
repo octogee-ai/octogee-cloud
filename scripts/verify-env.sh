@@ -150,10 +150,10 @@ esac
 # Custom namespaces need --namespace= and a different values file path.
 if [[ "$ENV" == "custom" ]]; then
   FIX_SUFFIX="--env=custom --namespace=$CUSTOM_NS"
-  HELM_VALUES_FILE="helm/octogee/values.$CUSTOM_NS.yaml"
+  HELM_VALUES_FILE="charts/octogee/values.$CUSTOM_NS.yaml"
 else
   FIX_SUFFIX="--env=$ENV$( [[ "$ENV" == "test" ]] && echo " --yes" || true )"
-  HELM_VALUES_FILE="helm/octogee/values.$ENV.yaml"
+  HELM_VALUES_FILE="charts/octogee/values.$ENV.yaml"
 fi
 
 gcloud container clusters get-credentials "$CLUSTER_NAME" \
@@ -521,7 +521,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const root = process.argv[2];
 const { parse } = require(path.join(root, 'scripts/node_modules/yaml'));
-const base = parse(fs.readFileSync(path.join(root, 'helm/octogee/values.yaml'), 'utf8'));
+const base = parse(fs.readFileSync(path.join(root, 'charts/octogee/values.yaml'), 'utf8'));
 const selected = parse(fs.readFileSync(path.resolve(root, process.argv[3]), 'utf8'));
 const override = selected?.gatewayFleet?.computeClass?.preferSpot;
 const policy = override === undefined ? base.gatewayFleet.computeClass.preferSpot : override;

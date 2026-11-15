@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const repoRoot = resolve(import.meta.dirname, "../..");
-const build = join(repoRoot, "infra/gateway/build-extensions.mjs");
+const build = join(repoRoot, "gateway/build-extensions.mjs");
 const esbuild = join(repoRoot, "scripts/node_modules/.bin/esbuild");
 
 describe("build-extensions.mjs", () => {

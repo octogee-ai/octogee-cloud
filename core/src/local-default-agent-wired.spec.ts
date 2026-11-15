@@ -193,7 +193,7 @@ describe("configuredUserPortableStatePlanFromConfig", () => {
 
   it("accepts the shipped user seed (empty roster + agents.defaults.workspace)", () => {
     const seed = JSON.parse(fs.readFileSync(
-      path.resolve(__dirname, "../../infra/gateway/openclaw.isolated.template.json"),
+      path.resolve(__dirname, "../../gateway/openclaw.isolated.template.json"),
       "utf8",
     )) as Parameters<typeof configuredUserPortableStatePlanFromConfig>[0];
 

@@ -10,7 +10,7 @@ type Template = {
 };
 
 function read(name: string): Template {
-  return JSON.parse(readFileSync(path.join(repoRoot, "infra/gateway", name), "utf8")) as Template;
+  return JSON.parse(readFileSync(path.join(repoRoot, "gateway", name), "utf8")) as Template;
 }
 
 describe("gateway templates — chat progress surface", () => {

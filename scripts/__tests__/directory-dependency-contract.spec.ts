@@ -12,10 +12,10 @@ const directoryDependencies = [
   ["../functions", "@octogee/test-helpers", "devDependencies", "file:../product/test-helpers"],
   ["gateway-edge", "@octogee/core", "dependencies", "file:../core"],
   ["gateway-edge", "@octogee/shared", "dependencies", "file:../shared"],
-  ["glm-controller", "@octogee/core", "dependencies", "file:../core"],
-  ["glm-controller", "@octogee/shared", "dependencies", "file:../shared"],
-  ["octogee-api", "@octogee/core", "dependencies", "file:../core"],
-  ["octogee-api", "@octogee/shared", "dependencies", "file:../shared"],
+  ["fleet-controller", "@octogee/core", "dependencies", "file:../core"],
+  ["fleet-controller", "@octogee/shared", "dependencies", "file:../shared"],
+  ["platform-api", "@octogee/core", "dependencies", "file:../core"],
+  ["platform-api", "@octogee/shared", "dependencies", "file:../shared"],
   ["scripts", "@octogee/core", "dependencies", "file:../core"],
   ["scripts", "@octogee/shared", "dependencies", "file:../shared"],
 ] as const;
@@ -69,8 +69,8 @@ describe("directory dependency repository contract", () => {
       "platform/core/.npmrc",
       "functions/.npmrc",
       "platform/gateway-edge/.npmrc",
-      "platform/glm-controller/.npmrc",
-      "platform/octogee-api/.npmrc",
+      "platform/fleet-controller/.npmrc",
+      "platform/platform-api/.npmrc",
       "platform/scripts/.npmrc",
     ]));
   });
@@ -80,7 +80,7 @@ describe("directory dependency repository contract", () => {
     expect(lines).toContain("min-release-age=7");
   });
 
-  it.each(["core", "../functions", "gateway-edge", "glm-controller", "octogee-api"])(
+  it.each(["core", "../functions", "gateway-edge", "fleet-controller", "platform-api"])(
     "%s enables locally linked packages with the release-age cooldown",
     (consumer) => {
       expect(fs.readFileSync(path.join(root, consumer, ".npmrc"), "utf8")).toBe(
@@ -99,8 +99,8 @@ describe("directory dependency repository contract", () => {
     ["core", "../scripts"],
     ["../functions", "../platform/scripts"],
     ["gateway-edge", "../scripts"],
-    ["glm-controller", "../scripts"],
-    ["octogee-api", "../scripts"],
+    ["fleet-controller", "../scripts"],
+    ["platform-api", "../scripts"],
     ["scripts", "../scripts"],
   ])(
     "%s refreshes packed dependencies before tests",
@@ -112,19 +112,19 @@ describe("directory dependency repository contract", () => {
   );
 
   it("copies each packed dependency and consumer npm config before Docker installs", () => {
-    const api = dockerfile("octogee-api/Dockerfile");
+    const api = dockerfile("platform-api/Dockerfile");
     for (const source of ["core", "shared"]) {
       expectBefore(api, `COPY ${source}/package.json`, "RUN npm ci --ignore-scripts");
       expectBefore(api, `COPY ${source}/dist`, "RUN npm ci --ignore-scripts");
     }
-    expectBefore(api, "COPY octogee-api/.npmrc", "RUN npm ci --ignore-scripts");
+    expectBefore(api, "COPY platform-api/.npmrc", "RUN npm ci --ignore-scripts");
     expectBefore(api, "COPY gateway-edge/.npmrc", "RUN npm ci --prefix /gateway-edge --ignore-scripts");
     const apiRuntimeInstall = "RUN npm ci --omit=dev --ignore-scripts\nRUN npm rebuild";
     for (const source of ["core", "shared"]) {
       expectLastBefore(api, `COPY ${source}/package.json`, apiRuntimeInstall);
       expectLastBefore(api, `COPY ${source}/dist`, apiRuntimeInstall);
     }
-    expectLastBefore(api, "COPY octogee-api/.npmrc", apiRuntimeInstall);
+    expectLastBefore(api, "COPY platform-api/.npmrc", apiRuntimeInstall);
     expectBefore(api, "COPY --from=overlay runner/package.json","RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund");
 
     const edge = dockerfile("gateway-edge/Dockerfile");
@@ -139,16 +139,16 @@ describe("directory dependency repository contract", () => {
     }
     expectLastBefore(edge, "COPY gateway-edge/.npmrc", "RUN npm ci --omit=dev");
 
-    const glm = dockerfile("glm-controller/Dockerfile");
+    const glm = dockerfile("fleet-controller/Dockerfile");
     for (const source of ["core", "shared"]) {
       expectBefore(glm, `COPY ${source}/package.json`, "RUN npm ci");
       expectBefore(glm, `COPY ${source}/dist`, "RUN npm ci");
     }
-    expectBefore(glm, "COPY glm-controller/.npmrc", "RUN npm ci");
+    expectBefore(glm, "COPY fleet-controller/.npmrc", "RUN npm ci");
   });
 
   it("lands only the product overlay's packed libraries over the API runtime install", () => {
-    const api = dockerfile("octogee-api/Dockerfile");
+    const api = dockerfile("platform-api/Dockerfile");
     const runtime = api.slice(api.lastIndexOf("\nFROM "));
     const overlayLibraries = "COPY --from=overlay node_modules* ./node_modules/";
     expectBefore(runtime, "RUN npm ci --omit=dev --ignore-scripts\nRUN npm rebuild", overlayLibraries);
@@ -156,11 +156,11 @@ describe("directory dependency repository contract", () => {
   });
 
   it("builds the API image without the product tree", () => {
-    expect(dockerfile("octogee-api/Dockerfile")).not.toMatch(/--from=product\b/);
+    expect(dockerfile("platform-api/Dockerfile")).not.toMatch(/--from=product\b/);
   });
 
   it("installs gateway dependencies from manifests and overlays freshly packed internal packages", () => {
-    const gateway = dockerfile("infra/gateway/Dockerfile");
+    const gateway = dockerfile("gateway/Dockerfile");
     const dependencies = dockerStage(gateway, "gateway-dependencies");
     const localPackages = dockerStage(gateway, "gateway-local-packages");
     const build = dockerStage(gateway, "gateway-build");

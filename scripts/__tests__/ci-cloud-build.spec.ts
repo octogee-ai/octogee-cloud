@@ -32,8 +32,8 @@ describe("public platform image plan", () => {
       });
       expect(target[name].tags).toBeUndefined();
     }
-    expect(target["glm-controller"].dockerfile).toBe("glm-controller/Dockerfile");
-    expect(target["vm-bridge"].dockerfile).toBe("infra/vm-bridge/Dockerfile");
+    expect(target["glm-controller"].dockerfile).toBe("fleet-controller/Dockerfile");
+    expect(target["vm-bridge"].dockerfile).toBe("vm-bridge/Dockerfile");
     expect(target["octogee-gateway-base"].output).toEqual(["type=cacheonly"]);
     expect(target["octogee-gateway-system"].output).toEqual(["type=cacheonly"]);
   });
@@ -42,7 +42,7 @@ describe("public platform image plan", () => {
     const { group, target } = plan({ platform: "linux/amd64" });
     expect(group.default.targets).toEqual(amd64Images);
     expect(target["octogee-gateway-builder"]).toMatchObject({
-      dockerfile: "infra/gateway/Dockerfile",
+      dockerfile: "gateway/Dockerfile",
       platforms: ["linux/amd64"],
       output: [`type=image,name=${registry}/octogee-gateway-builder,push-by-digest=true,name-canonical=true,push=true`],
       contexts: {
@@ -53,12 +53,12 @@ describe("public platform image plan", () => {
       args: { RUNTIME_BASE_IMAGE: "octogee-gateway-builder-base", IMAGE_PROFILE: "isolated" },
     });
     expect(target["octogee-gateway-builder-base"]).toMatchObject({
-      dockerfile: "infra/gateway/Dockerfile.isolated-base",
+      dockerfile: "gateway/Dockerfile.isolated-base",
       platforms: ["linux/amd64"],
       output: ["type=cacheonly"],
       args: {
-        BUILDER_TOOLCHAIN_LOCK_SHA256: fileSha256("infra/gateway/isolated-toolchain/package-lock.json"),
-        BUILDER_TOOL_GROUPS_SHA256: fileSha256("infra/gateway/isolated-toolchain/groups.json"),
+        BUILDER_TOOLCHAIN_LOCK_SHA256: fileSha256("gateway/isolated-toolchain/package-lock.json"),
+        BUILDER_TOOL_GROUPS_SHA256: fileSha256("gateway/isolated-toolchain/groups.json"),
       },
     });
     expect(target["octogee-gateway-builder-base"].tags).toBeUndefined();
@@ -89,8 +89,8 @@ describe("public platform image plan", () => {
     try {
       const contexts = Object.keys(IMAGE_BUILDS["octogee-api"].contexts ?? {});
       expect(contexts.length).toBeGreaterThan(0);
-      mkdirSync(join(fixture, "octogee-api"));
-      writeFileSync(join(fixture, "octogee-api/Dockerfile"), contexts.map(dockerfile).join(""));
+      mkdirSync(join(fixture, "platform-api"));
+      writeFileSync(join(fixture, "platform-api/Dockerfile"), contexts.map(dockerfile).join(""));
       const build = () => plan({ root: fixture, images: ["octogee-api"] });
       if (refusal) expect(build).toThrow(`${refusal}: ${contexts.join(", ")}`);
       else expect(build().target["octogee-api"].contexts).toBeUndefined();
@@ -297,38 +297,38 @@ describe("image file listing", () => {
 
 describe("product tripwire", () => {
   const source = new Set([
-    "glm-controller/src/main.ts", "glm-controller/src/lib/ops.ts", "core/src/identity-provider.ts", "shared/types/user.ts",
-    "gateway-edge/src/index.ts", "infra/gateway/extensions/platform/octogee-chat-tools",
+    "fleet-controller/src/main.ts", "fleet-controller/src/lib/ops.ts", "core/src/identity-provider.ts", "shared/types/user.ts",
+    "gateway-edge/src/index.ts", "gateway/extensions/platform/octogee-chat-tools",
   ]);
   const exists = (path: string) => source.has(path);
 
   it("passes files that come from the platform tree, system files and third-party packages", () => {
     expect(productFindings([
-      "app/glm-controller/src/main.ts",
-      "app/glm-controller/dist/glm-controller/src/main.js",
-      "app/glm-controller/dist/glm-controller/src/lib/ops.d.ts",
+      "app/fleet-controller/src/main.ts",
+      "app/fleet-controller/dist/fleet-controller/src/main.js",
+      "app/fleet-controller/dist/fleet-controller/src/lib/ops.d.ts",
       "octogee-api/dist/gateway-edge/src/index.js.map",
       "app/core/dist/identity-provider.js",
       "octogee/shared/dist/types/user.d.ts",
       "octogee/extensions/octogee-chat-tools/index.ts",
       "app/node_modules/express/index.js",
       "usr/local/lib/node_modules/openclaw/dist/product/x.js",
-      "app/glm-controller/dist/",
+      "app/fleet-controller/dist/",
     ], exists)).toEqual([]);
   });
 
   it("flags compiled or copied modules with no platform source, product directories and product packages", () => {
     expect(productFindings([
-      "app/glm-controller/dist/glm-controller/src/product-main.js",
-      "app/glm-controller/src/signup-offer.ts",
+      "app/fleet-controller/dist/fleet-controller/src/product-main.js",
+      "app/fleet-controller/src/signup-offer.ts",
       "app/core/dist/product-deletion-context.js",
       "octogee/scripts/product/lib/octogee-entitlements.ts",
       "octogee/extensions/octogee-board-tools/index.ts",
       "app/node_modules/@octogee/product-core/dist/index.js",
     ], exists)).toEqual([
       "app/core/dist/product-deletion-context.js",
-      "app/glm-controller/dist/glm-controller/src/product-main.js",
-      "app/glm-controller/src/signup-offer.ts",
+      "app/fleet-controller/dist/fleet-controller/src/product-main.js",
+      "app/fleet-controller/src/signup-offer.ts",
       "app/node_modules/@octogee/product-core/dist/index.js",
       "octogee/extensions/octogee-board-tools/index.ts",
       "octogee/scripts/product/lib/octogee-entitlements.ts",

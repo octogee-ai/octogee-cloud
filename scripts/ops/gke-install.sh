@@ -185,7 +185,7 @@ environment_values() {
   cidrs="$(api_server_cidrs | sed 's|$|/32|' | paste -sd, -)"
   [[ -n "$cidrs" ]] || die "Found no Kubernetes API server endpoint in the cluster"
   node --input-type=module - "$STATE/digests.json" "$PUBLISHED/" \
-    "$(node -p "require('$ROOT/infra/gateway/openclaw-tarball/current.json').sourceSha")" \
+    "$(node -p "require('$ROOT/gateway/openclaw-tarball/current.json').sourceSha")" \
     "$GCP_PROJECT" "$DB_HOST" "$ASSETS_BUCKET" "$WORKSPACES_BUCKET" "$cidrs" > "$STATE/environment.yaml" <<'JS'
 import { readFileSync } from "node:fs";
 const [file, prefix, openclaw, project, databaseHost, assets, workspaces, cidrs] = process.argv.slice(2);
@@ -394,7 +394,7 @@ SQL
 }
 
 install_chart() {
-  h upgrade --install octogee "$ROOT/helm/octogee" \
+  h upgrade --install octogee "$ROOT/charts/octogee" \
     -f "$ROOT/scripts/ops/gke/values.yaml" -f "$STATE/environment.yaml" \
     --set "gitea.gitea.config.database.PASSWD=$(cat "$STATE/secrets/gitea-password")" \
     --timeout=15m

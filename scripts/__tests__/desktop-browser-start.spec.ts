@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { DESKTOP_HOME_PATHS } from '../lib/vm-gateway-agent/home-checkpoint';
 
-const browser = fileURLToPath(new URL('../../infra/desktop/rootfs/usr/local/bin/octo-desktop-browser', import.meta.url));
+const browser = fileURLToPath(new URL('../../desktop/rootfs/usr/local/bin/octo-desktop-browser', import.meta.url));
 const temporaryHomes: string[] = [];
 const EGRESS_MODE_DIR = '.config/octogee';
 

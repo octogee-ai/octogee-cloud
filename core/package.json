@@ -1,7 +1,7 @@
 {
   "name": "@octogee/core",
   "version": "1.0.0",
-  "description": "Octogee shared runtime \u2014 consumers depend on its built interface, never its source.",
+  "description": "Octogee shared runtime — consumers depend on its built interface, never its source.",
   "private": true,
   "license": "MIT",
   "type": "module",
@@ -907,6 +907,9 @@
   },
   "dependencies": {
     "@google-cloud/secret-manager": "^7.2.0",
+    "@types/express": "^5.0.6",
+    "@types/pg": "^8.23.1",
+    "@types/ws": "^8.18.2",
     "express": "^5.3.0",
     "google-auth-library": "^11.3.3",
     "pg": "^8.23.1",
@@ -923,16 +926,31 @@
   },
   "devDependencies": {
     "@octogee/shared": "file:../shared",
-    "@types/express": "^5.0.6",
-    "@types/pg": "^8.23.1",
     "@types/supertest": "^7.2.1",
-    "@types/ws": "^8.18.2",
     "firebase-admin": "^14.5.0",
     "supertest": "^7.3.2",
     "typescript": "^7.0.2",
     "vitest": "^4.1.12"
   },
   "peerDependencies": {
-    "@octogee/shared": "^1.0.0"
+    "@octogee/shared": "^1.0.0",
+    "@types/supertest": "^7.0.0",
+    "firebase-admin": "^14.0.0",
+    "supertest": "^7.0.0",
+    "vitest": "^4.0.0 || ^5.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@types/supertest": {
+      "optional": true
+    },
+    "firebase-admin": {
+      "optional": true
+    },
+    "supertest": {
+      "optional": true
+    },
+    "vitest": {
+      "optional": true
+    }
   }
 }

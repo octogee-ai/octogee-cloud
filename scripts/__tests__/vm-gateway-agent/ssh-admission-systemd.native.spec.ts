@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 
 const exec = promisify(execFile);
 const container = process.env.OCTOGEE_NATIVE_SYSTEMD_CONTAINER;
-const dropIn = resolve(import.meta.dirname, "../../../infra/desktop/image/rootfs/etc/systemd/system/sshd.service.d/10-octogee-home-authorization.conf");
+const dropIn = resolve(import.meta.dirname, "../../../desktop/image/rootfs/etc/systemd/system/sshd.service.d/10-octogee-home-authorization.conf");
 
 describe.skipIf(!container)("native systemd SSH admission ordering and retry", () => {
   it("holds startup while current-key reconciliation fails and retries without opening a stale-key daemon", async () => {

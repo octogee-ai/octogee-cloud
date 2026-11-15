@@ -6,7 +6,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, expect, it } from "vitest";
 
 const root = path.resolve(import.meta.dirname, "../..");
-const entrypoint = fs.readFileSync(path.join(root, "infra/gateway/entrypoint.sh"), "utf8");
+const entrypoint = fs.readFileSync(path.join(root, "gateway/entrypoint.sh"), "utf8");
 const surge = fs.readFileSync(path.join(root, "scripts/entrypoints/surge-openclaw-supervisor.ts"), "utf8");
 const loader = path.join(root, "scripts/node_modules/tsx/dist/loader.mjs");
 const runner = path.join(root, "scripts/entrypoints/supervise-runner.ts");

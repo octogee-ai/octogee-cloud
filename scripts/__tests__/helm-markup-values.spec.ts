@@ -29,12 +29,12 @@ function expectMarkup(value: unknown): void {
 
 describe("markup multipliers live in environment values, not shared chart defaults", () => {
   it("keeps every markup out of the shared chart defaults", () => {
-    expect(values("helm/octogee/values.yaml").llmBroker?.prepaidCreditMarkupMultiplier).toBeUndefined();
-    const sharedApiEnv = apiEnv("helm/octogee/charts/octogee-api/values.yaml");
+    expect(values("charts/octogee/values.yaml").llmBroker?.prepaidCreditMarkupMultiplier).toBeUndefined();
+    const sharedApiEnv = apiEnv("charts/octogee/charts/octogee-api/values.yaml");
     for (const name of MARKUP_ENV_NAMES) expect(sharedApiEnv).not.toHaveProperty(name);
   });
 
-  it.each(["helm/octogee/values.custom.yaml.tpl"])(
+  it.each(["charts/octogee/values.custom.yaml.tpl"])(
     "%s sets the API and llm-broker markups",
     (path) => {
       const environment = values(path);

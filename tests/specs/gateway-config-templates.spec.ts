@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-const helper = resolve(import.meta.dirname, "../../infra/gateway/verify-config-templates.mjs");
+const helper = resolve(import.meta.dirname, "../../gateway/verify-config-templates.mjs");
 const roots: string[] = [];
 
 function fixture(user: Record<string, unknown> = {}) {
