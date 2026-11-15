@@ -522,6 +522,119 @@ describe("platform chat secrets", () => {
   });
 });
 
+describe("users being erased", () => {
+  const scheduledDeletion = { status: "deletion_scheduled" as const, deletionId: "d1", suspendedAt: 1, eraseAfter: 2 };
+
+  it("writes no spec after erasure deletes the provisioning, and nothing once the record is gone", async () => {
+    const instance = await chatReadyUser();
+    await store().users.records.patch("u1", { accountLifecycle: scheduledDeletion });
+
+    await expect(client().deleteProvisioning("u1")).resolves.toBe("deleted");
+    const putsAfterDelete = puts().length;
+    await until(() => instance.observed("u1") === undefined && instance.counters.specWrites["being-erased"] >= 1);
+    await instance.resync();
+    await until(() => instance.counters.specWrites["being-erased"] >= 2);
+    await store().users.records.delete("u1");
+    await emitBuilders([{ type: "removed", key: "u1" }]);
+    await instance.resync();
+    await until(() => instance.counters.deletes.deleted === 1);
+
+    expect(puts().length).toBe(putsAfterDelete);
+    expect(fake.resources.has("u1")).toBe(false);
+  });
+
+  it("keeps a removed hint from re-provisioning a user being erased", async () => {
+    const instance = await chatReadyUser();
+    await store().users.records.patch("u1", { accountLifecycle: scheduledDeletion });
+    await client().deleteProvisioning("u1");
+    await until(() => instance.observed("u1") === undefined);
+    const putsAfterDelete = puts().length;
+
+    await emitBuilders([{ type: "removed", key: "u1" }]);
+    await until(() => instance.counters.deletes.kept === 1);
+    await instance.resync();
+
+    expect(puts().length).toBe(putsAfterDelete);
+  });
+
+  it("re-writes no erased agent or workspace record while the user is being erased", async () => {
+    const instance = await chatReadyUser();
+    await store().users.records.patch("u1", { accountLifecycle: scheduledDeletion });
+    await store().workspaces.agentIdentities.delete("u1");
+    await store().workspaces.records.delete("lin");
+    projectionCalls = [];
+
+    fake.setStatus("u1", { observedGeneration: 2 });
+    await until(() => instance.counters.mirrors["being-erased"] >= 1);
+
+    expect(await store().workspaces.agentIdentities.get("u1")).toBeNull();
+    expect(await store().workspaces.records.get("lin")).toBeNull();
+    expect(projectionCalls).toEqual([]);
+  });
+});
+
+describe("chat accounts the platform already holds", () => {
+  const chatSecret = (secretId: string, kind: "builder-mattermost" | "coach-mattermost", mattermostUserId: string) =>
+    ({ kind, secretId, projectId: null, personalToken: `${secretId}-older-token`, mattermostUserId, createdAt: 1, rotatedAt: null });
+
+  async function chatReadyAgainstHeldAccounts(): Promise<ProvisioningSync> {
+    seedUser("u1", "lin");
+    const instance = started(sync());
+    await instance.snapshotLoaded();
+    await until(() => fake.resources.has("u1"));
+    fake.issueCredential("u1", "user-chat-token", USER_TOKEN);
+    fake.issueCredential("u1", "agent-chat-token", AGENT_TOKEN);
+    fake.setStatus("u1", CHAT_READY);
+    await until(() => instance.counters.mirrors["chat-id-mismatch"] >= 1);
+    return instance;
+  }
+
+  it("refuses when the user's platform chat secret belongs to another chat account and the record holds no id", async () => {
+    await store().secrets.put("u1", chatSecret("mattermost", "builder-mattermost", "mm-x"));
+
+    const instance = await chatReadyAgainstHeldAccounts();
+
+    expect((await store().users.records.get("u1"))?.mattermostUserId).toBeNull();
+    expect(await store().secrets.get("u1", "mattermost")).toMatchObject({ mattermostUserId: "mm-x", personalToken: "mattermost-older-token" });
+    expect(secretPuts).toEqual([]);
+    expect(projectionCalls).toEqual([]);
+    expect(instance.mirrorRefusals()).toEqual([expect.objectContaining({ uid: "u1", outcome: "chat-id-mismatch", reason: expect.stringContaining("mm-x") })]);
+  });
+
+  it("refuses when the agent's chat secret or identity belongs to another chat account", async () => {
+    await store().secrets.put("u1", chatSecret("coachMattermost", "coach-mattermost", "mm-other-bot"));
+
+    const instance = await chatReadyAgainstHeldAccounts();
+
+    expect((await store().users.records.get("u1"))?.mattermostUserId).toBeNull();
+    expect(await store().workspaces.agentIdentities.get("u1")).toBeNull();
+    expect(instance.mirrorRefusals()).toEqual([expect.objectContaining({ outcome: "chat-id-mismatch", reason: expect.stringContaining("mm-other-bot") })]);
+  });
+
+  it("refuses inside the write when another writer records a different chat account after the check", async () => {
+    seedUser("u1", "lin");
+    await client().putProvisioning("u1", desiredUserProvisioningSpec("u1", ACCOUNTS.u1));
+    fake.issueCredential("u1", "user-chat-token", USER_TOKEN);
+    fake.issueCredential("u1", "agent-chat-token", AGENT_TOKEN);
+    const resource = fake.setStatus("u1", CHAT_READY);
+    const racing: ProvisioningProjection = {
+      ...recordingProjection(),
+      systemConfig: async (ctx) => {
+        await store().users.records.patch(ctx.uid, { mattermostUserId: "mm-legacy" });
+      },
+    };
+
+    const outcome = await mirrorUserProvisioning(
+      { store: store(), client: client(), documents: { account: async (uid) => ACCOUNTS[uid] }, projection: racing, proxyUrl: null },
+      resource,
+    );
+
+    expect(outcome).toBe("chat-id-mismatch");
+    expect((await store().users.records.get("u1"))?.mattermostUserId).toBe("mm-legacy");
+    expect(await store().workspaces.records.get("lin")).toBeNull();
+  });
+});
+
 describe("removed users", () => {
   const deletesOf = (uid: string) => fake.requests.filter((request) => request.method === "DELETE" && request.path === `/v1/users/${uid}/provisioning`);
 
@@ -573,6 +686,19 @@ describe("removed users", () => {
     expect(deletesOf("u1")).toHaveLength(0);
     expect(fake.resources.has("u1")).toBe(true);
     expect(logs.some((line) => line.includes("❌ not deleting the provisioning of u1"))).toBe(true);
+  });
+
+  it("counts a removed user whose uid the service cannot name as nothing to delete, without retrying", async () => {
+    const instance = started(sync());
+    await instance.snapshotLoaded();
+
+    await emitBuilders([{ type: "removed", key: "lin@example.test" }]);
+    await until(() => instance.counters.deletes.unnameable === 1);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    expect(instance.counters.deletes.failed).toBe(0);
+    expect(instance.counters.deletes.unnameable).toBe(1);
+    expect(logs.filter((line) => line.includes("cannot name lin@example.test"))).toHaveLength(1);
   });
 
   it("keeps the provisioning of a user whose record exists again when the pending delete runs", async () => {

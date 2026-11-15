@@ -82,15 +82,21 @@ async function readCredential(deps: ChatSecretDeps, uid: string, name: Provision
 }
 
 async function writeWhenAbsent(deps: ChatSecretDeps, uid: string, row: UserSecretInput, token: string): Promise<void> {
+  const secretWriteFailed = (error: unknown) =>
+    new ProvisioningChatSecretError(uid, `could not write the ${row.secretId} platform secret of ${uid}: ${redacted(error, token)}`);
   try {
     await deps.store.transaction({ label: "provisioning-mirror-chat-secret" }, async (transaction) => {
       if ((await transaction.users.records.get(uid)) === null) throw new MissingRecordError({ aggregate: "builder", key: uid });
       if ((await transaction.secrets.get(uid, row.secretId)) !== null) return;
-      await transaction.secrets.put(uid, row);
+      try {
+        await transaction.secrets.put(uid, row);
+      } catch (error) {
+        throw secretWriteFailed(error);
+      }
     });
   } catch (error) {
-    if (error instanceof MissingRecordError) throw error;
-    throw new ProvisioningChatSecretError(uid, `could not write the ${row.secretId} platform secret of ${uid}: ${redacted(error, token)}`);
+    if (error instanceof Error && error.message.includes(token)) throw secretWriteFailed(error);
+    throw error;
   }
 }
 

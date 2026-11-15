@@ -69,11 +69,9 @@ export async function eraseUserRecords(
   store: PlatformStateStore,
   product: Pick<ProductUserData, "eraseRecords"> | undefined,
   scope: UserDataScope,
-  provisioning: ErasureProvisioning | null = null,
 ): Promise<void> {
   const { uid, slug, currentOperationId } = scope;
   const writes = platformStateReferenceDeletes(await platformStateReferences(store, uid, currentOperationId));
-  await provisioning?.deleteProvisioning(uid);
   await product?.eraseRecords(scope);
   for (let offset = 0; offset < writes.length; offset += PLATFORM_WRITE_BATCH_SIZE) {
     const chunk = writes.slice(offset, offset + PLATFORM_WRITE_BATCH_SIZE);

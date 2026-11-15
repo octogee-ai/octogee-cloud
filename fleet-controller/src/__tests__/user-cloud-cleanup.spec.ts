@@ -147,28 +147,23 @@ describe("user erasure and the provisioning service", () => {
     });
   }
 
-  it("deletes the user's provisioning before it erases any record", async () => {
-    stubCleanupEnvironment("gcs");
-    const store = createDocumentFixtureStore(adaRecords());
-    const order: string[] = [];
-    const data = productData();
-    vi.mocked(data.eraseRecords).mockImplementation(async () => { order.push("product records"); });
-    const provisioning = { deleteProvisioning: vi.fn(async (uid: string) => { order.push(`provisioning ${uid}`); }) };
-
-    await buildUserCloudCleanupDeps(store, vi.fn(), undefined, withProductData(data), provisioning).eraseUserRecords(SCOPE);
-
-    expect(order).toEqual(["provisioning uid-ada", "product records"]);
-  });
-
-  it("erases nothing while the provisioning delete fails", async () => {
+  it("hands erasure the provisioning delete and leaves it out of the record erasure", async () => {
     stubCleanupEnvironment("gcs");
     const records = adaRecords();
-    const provisioning = { deleteProvisioning: vi.fn(async () => { throw new Error("provisioning service unreachable"); }) };
+    const provisioning = { deleteProvisioning: vi.fn(async () => "deleted" as const) };
+    const deps = buildUserCloudCleanupDeps(createDocumentFixtureStore(records), vi.fn(), undefined, null, provisioning);
 
-    await expect(buildUserCloudCleanupDeps(createDocumentFixtureStore(records), vi.fn(), undefined, null, provisioning).eraseUserRecords(SCOPE))
-      .rejects.toThrow("provisioning service unreachable");
+    await expect(deps.deleteProvisioning?.("uid-ada")).resolves.toBe("deleted");
+    await deps.eraseUserRecords(SCOPE);
 
-    expect(records.has("users/uid-ada")).toBe(true);
+    expect(provisioning.deleteProvisioning).toHaveBeenCalledTimes(1);
+    expect(records.has("users/uid-ada")).toBe(false);
+  });
+
+  it("has no provisioning delete when no provisioning service is configured", () => {
+    stubCleanupEnvironment("gcs");
+
+    expect(buildUserCloudCleanupDeps(createDocumentFixtureStore({}), vi.fn(), undefined, null).deleteProvisioning).toBeUndefined();
   });
 
   it("leaves no chat secret row when a mirror write lands between the secret deletion and the record deletion", async () => {

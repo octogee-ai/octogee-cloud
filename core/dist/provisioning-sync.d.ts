@@ -10,14 +10,14 @@ export declare const PROVISIONING_SYNC_RETRY: {
     readonly maxDelayMs: 600000;
 };
 export declare const PROVISIONING_SYNC_RESYNC_MS: number;
-export type SpecWriteOutcome = "created" | "changed" | "unchanged" | "not-admitted";
+export type SpecWriteOutcome = "created" | "changed" | "unchanged" | "not-admitted" | "being-erased";
 export interface ProvisioningReadiness {
     readonly status: ConditionStatus;
     readonly reason: string;
 }
 export interface ProvisioningSyncCounters {
     specWrites: Record<SpecWriteOutcome | "failed", number>;
-    deletes: Record<"deleted" | "kept" | "unreadable" | "failed", number>;
+    deletes: Record<"deleted" | "kept" | "unreadable" | "unnameable" | "failed", number>;
     mirrors: Record<ProvisioningMirrorOutcome | "failed", number>;
     watchFailures: number;
     watchConnected: boolean;

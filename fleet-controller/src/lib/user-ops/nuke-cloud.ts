@@ -2,6 +2,7 @@
 
 import type { ManagedChannelHost } from "@octogee/core/channel-host";
 import type { ManagedGitHost } from "@octogee/core/git-host";
+import type { DeleteProvisioningOutcome } from "@octogee/core/provisioning-service-client";
 import { PROJECT_AGENT_REPO } from "@octogee/shared/types/project";
 import type { UserDataScope } from "./user-lifecycle-product.js";
 
@@ -20,6 +21,7 @@ export interface NukeCloudCtx extends UserDataScope {
 }
 
 export type NukeCloudStepKey =
+  | "provisioning"
   | "gitea"
   | "mattermost"
   | "storage"
@@ -42,6 +44,7 @@ export interface NukeCloudDeps {
   git: Pick<ManagedGitHost, "eraseOwner">;
   channels: Pick<ManagedChannelHost, "erase">;
 
+  deleteProvisioning?: (uid: string) => Promise<DeleteProvisioningOutcome>;
   eraseUserRecords: (scope: UserDataScope) => Promise<void>;
   deleteUserStorage: (scope: UserDataScope) => Promise<void>;
   deleteCredentialSecrets: (secretNames: string[]) => Promise<void>;
@@ -58,6 +61,16 @@ export async function nukeUserCloudSide(
 ): Promise<NukeCloudStepResult[]> {
   const log = deps.log ?? (() => undefined);
   const results: NukeCloudStepResult[] = [];
+
+  const deleteProvisioning = deps.deleteProvisioning;
+  if (deleteProvisioning) {
+    const provisioning = await runStep("provisioning", log, async () => {
+      const outcome = await deleteProvisioning(ctx.uid);
+      if (outcome === "unnameable") return `the provisioning service cannot name ${ctx.uid}; nothing to delete`;
+    });
+    if (!provisioning.ok) return [provisioning];
+    results.push(provisioning);
+  }
 
 if (!ctx.slug) {
   results.push({ key: "gitea", ok: true, skipped: true });

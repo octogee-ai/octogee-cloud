@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { createKeyedRetryQueue } from "./keyed-retry-queue.js";
 import { operationAuditDocumentId, resumeOperationAuditAction, runWithOperationAuditIntent, } from "./operation-audit.js";
 import { backoffDelayMs, compareResourceVersions, startProvisioningWatch, } from "./provisioning-service-client.js";
-import { mirrorUserProvisioning, } from "./provisioning-mirror.js";
+import { chatAccountMismatch, mirrorUserProvisioning, userBeingErased, } from "./provisioning-mirror.js";
 import { desiredUserProvisioningSpec, sameProvisioningSpec } from "./provisioning-spec.js";
 export const PROVISIONING_SPEC_BACKFILL_KEY = "provisioning-service-spec-backfill";
 export const PROVISIONING_SYNC_CONCURRENCY = 4;
@@ -27,8 +27,8 @@ function newer(candidate, current) {
 }
 function emptyCounters() {
     return {
-        specWrites: { created: 0, changed: 0, unchanged: 0, "not-admitted": 0, failed: 0 },
-        deletes: { deleted: 0, kept: 0, unreadable: 0, failed: 0 },
+        specWrites: { created: 0, changed: 0, unchanged: 0, "not-admitted": 0, "being-erased": 0, failed: 0 },
+        deletes: { deleted: 0, kept: 0, unreadable: 0, unnameable: 0, failed: 0 },
         mirrors: {
             written: 0,
             unchanged: 0,
@@ -36,6 +36,7 @@ function emptyCounters() {
             "credentials-not-issued": 0,
             "agent-not-ready": 0,
             "chat-id-mismatch": 0,
+            "being-erased": 0,
             "user-missing": 0,
             "slug-mismatch": 0,
             failed: 0,
@@ -77,8 +78,10 @@ export async function runJournaledBackfill(store, run, now = Date.now) {
 async function refusalReason(store, resource, outcome) {
     if (outcome === "slug-mismatch")
         return `its spec names slug ${resource.spec.slug}, which the user record does not carry`;
-    const held = (await store.users.records.get(resource.uid))?.mattermostUserId;
-    return `the user record holds chat user ${held}, the provisioning service reports chat user ${resource.status.outputs.chat?.userId}`;
+    const user = await store.users.records.get(resource.uid);
+    const chat = resource.status.outputs.chat;
+    const mismatch = user === null || chat === undefined ? null : await chatAccountMismatch(store, user, chat);
+    return mismatch ?? `a chat account the platform holds differs from the provisioning service's chat user ${chat?.userId}`;
 }
 function createProvisioningDeleter({ deps, cache, counters, specs, now, retryDelayMs }) {
     async function currentUser(uid) {
@@ -94,12 +97,17 @@ function createProvisioningDeleter({ deps, cache, counters, specs, now, retryDel
         if (user !== null) {
             counters.deletes.kept += 1;
             deps.log(`[provisioning] kept the provisioning of ${uid}: its user record exists`);
-            if (user.admitted)
+            if (user.admitted && !userBeingErased(user))
                 specs.enqueue(uid);
             return;
         }
-        await deps.client.deleteProvisioning(uid);
+        const outcome = await deps.client.deleteProvisioning(uid);
         cache.delete(uid);
+        if (outcome === "unnameable") {
+            counters.deletes.unnameable += 1;
+            deps.log(`[provisioning] ⚠ the provisioning service cannot name ${uid}, so it holds no provisioning of it to delete`);
+            return;
+        }
         counters.deletes.deleted += 1;
         deps.log(`[provisioning] deleted the provisioning of ${uid}, whose user record is gone`);
     }
@@ -134,6 +142,12 @@ function createProvisioningDeleter({ deps, cache, counters, specs, now, retryDel
     }
     return { deletes, deleteOrphans };
 }
+const MIRROR_NOTICES = {
+    written: (uid) => `[provisioning] mirrored chat and git results of ${uid}`,
+    "credentials-not-issued": (uid) => `[provisioning] not mirroring ${uid} yet: its chat credentials are not issued`,
+    "being-erased": (uid) => `[provisioning] not mirroring ${uid}: the user is being erased`,
+    "agent-not-ready": (uid) => `[provisioning] not mirroring ${uid} yet: its spec enables the default agent, which has no chat account`,
+};
 export function createProvisioningSync(deps) {
     const now = deps.now ?? Date.now;
     const random = deps.random ?? Math.random;
@@ -160,6 +174,8 @@ export function createProvisioningSync(deps) {
         const user = await deps.store.users.records.get(uid);
         if (user === null || !user.admitted || !user.slug)
             return "not-admitted";
+        if (userBeingErased(user))
+            return "being-erased";
         const data = await deps.documents.account(uid);
         if (data === undefined)
             throw new Error(`admitted user ${uid} has no account document`);
@@ -199,12 +215,9 @@ export function createProvisioningSync(deps) {
         counters.mirrors[outcome] += 1;
         if (outcome === "written" || outcome === "unchanged")
             refusals.delete(uid);
-        if (outcome === "written")
-            deps.log(`[provisioning] mirrored chat and git results of ${uid}`);
-        if (outcome === "credentials-not-issued")
-            deps.log(`[provisioning] not mirroring ${uid} yet: its chat credentials are not issued`);
-        if (outcome === "agent-not-ready")
-            deps.log(`[provisioning] not mirroring ${uid} yet: its spec enables the default agent, which has no chat account`);
+        const notice = MIRROR_NOTICES[outcome];
+        if (notice !== undefined)
+            deps.log(notice(uid));
         if (outcome === "chat-id-mismatch" || outcome === "slug-mismatch") {
             const reason = await refusalReason(deps.store, resource, outcome);
             refusals.set(uid, { uid, outcome, reason, since: refusals.get(uid)?.since ?? new Date(now()).toISOString() });

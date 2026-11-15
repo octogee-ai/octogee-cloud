@@ -1,6 +1,6 @@
 import { workspaceDefaultAgentChannelName } from "@octogee/shared/types/identity";
 import { MissingRecordError } from "./platform-state/errors.js";
-import { ensureChatSecrets } from "./provisioning-chat-secrets.js";
+import { AGENT_CHAT_SECRET_ID, ensureChatSecrets, USER_CHAT_SECRET_ID, } from "./provisioning-chat-secrets.js";
 import { buildProvisioningContext, markProvisioningComplete, } from "./provisionSteps.js";
 export class ProvisioningMirrorError extends Error {
     uid;
@@ -9,6 +9,64 @@ export class ProvisioningMirrorError extends Error {
         this.uid = uid;
         this.name = "ProvisioningMirrorError";
     }
+}
+class ProvisioningMirrorRefusal extends Error {
+    outcome;
+    uid;
+    constructor(outcome, uid) {
+        super(`refusing to mirror ${uid}: ${outcome}`);
+        this.outcome = outcome;
+        this.uid = uid;
+        this.name = "ProvisioningMirrorRefusal";
+    }
+}
+const ERASURE_STATUSES = new Set(["deletion_scheduled", "erasing"]);
+export function userBeingErased(user) {
+    return user.accountLifecycle !== null && ERASURE_STATUSES.has(user.accountLifecycle.status);
+}
+function heldChatUser(row) {
+    return row !== null && "mattermostUserId" in row && typeof row.mattermostUserId === "string" ? row.mattermostUserId : null;
+}
+export async function chatAccountMismatch(reader, user, chat) {
+    const reported = `the provisioning service reports chat user ${chat.userId}`;
+    if (user.mattermostUserId !== null && user.mattermostUserId !== chat.userId) {
+        return `the user record holds chat user ${user.mattermostUserId}, ${reported}`;
+    }
+    const [userSecret, agentSecret, identity] = await Promise.all([
+        reader.secrets.get(user.uid, USER_CHAT_SECRET_ID),
+        reader.secrets.get(user.uid, AGENT_CHAT_SECRET_ID),
+        reader.workspaces.agentIdentities.get(user.uid),
+    ]);
+    const userSecretHolder = heldChatUser(userSecret);
+    if (userSecretHolder !== null && userSecretHolder !== chat.userId) {
+        return `the ${USER_CHAT_SECRET_ID} platform secret belongs to chat user ${userSecretHolder}, ${reported}`;
+    }
+    const agent = chat.agentBotUserId;
+    if (!agent)
+        return null;
+    const agentReported = `the provisioning service reports agent chat user ${agent}`;
+    const agentSecretHolder = heldChatUser(agentSecret);
+    if (agentSecretHolder !== null && agentSecretHolder !== agent) {
+        return `the ${AGENT_CHAT_SECRET_ID} platform secret belongs to chat user ${agentSecretHolder}, ${agentReported}`;
+    }
+    const identityHolder = identity?.mattermostUserId ?? null;
+    if (identityHolder !== null && identityHolder !== agent) {
+        return `the agent identity holds chat user ${identityHolder}, ${agentReported}`;
+    }
+    return null;
+}
+function refusingStore(store, uid, chat) {
+    const transaction = (options, body) => store.transaction(options, async (tx) => {
+        const user = await tx.users.records.get(uid);
+        if (user !== null && userBeingErased(user))
+            throw new ProvisioningMirrorRefusal("being-erased", uid);
+        if (user !== null && (await chatAccountMismatch(tx, user, chat)) !== null)
+            throw new ProvisioningMirrorRefusal("chat-id-mismatch", uid);
+        return body(tx);
+    });
+    return new Proxy(store, {
+        get: (target, property, receiver) => property === "transaction" ? transaction : Reflect.get(target, property, receiver),
+    });
 }
 function chatReady(resource) {
     const condition = resource.status.conditions.find((candidate) => candidate.type === "ChatReady");
@@ -78,12 +136,16 @@ export async function mirrorUserProvisioning(deps, resource) {
     const slug = resource.spec.slug;
     if (user.slug !== slug)
         return "slug-mismatch";
-    if (user.mattermostUserId !== null && user.mattermostUserId !== chat.userId)
+    if (userBeingErased(user))
+        return "being-erased";
+    if ((await chatAccountMismatch(deps.store, user, chat)) !== null)
         return "chat-id-mismatch";
     try {
-        return await mirrorAdmittedUser(deps, resource, chat, slug);
+        return await mirrorAdmittedUser({ ...deps, store: refusingStore(deps.store, resource.uid, chat) }, resource, chat, slug);
     }
     catch (error) {
+        if (error instanceof ProvisioningMirrorRefusal)
+            return error.outcome;
         if (error instanceof MissingRecordError && error.record.aggregate === "builder" && error.record.key === resource.uid)
             return "user-missing";
         throw error;

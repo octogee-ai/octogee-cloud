@@ -3987,7 +3987,8 @@ export function buildUserCloudCleanupDeps(
       await productData?.eraseStorage(scope);
     },
     remainingUserStorage: async (uid, slug) => s3 === undefined ? [] : s3.remaining(uid, slug),
-    eraseUserRecords: (scope) => eraseUserRecords(store, productData, scope, provisioning),
+    eraseUserRecords: (scope) => eraseUserRecords(store, productData, scope),
+    ...(provisioning ? { deleteProvisioning: (uid: string) => provisioning.deleteProvisioning(uid) } : {}),
     deleteCredentialSecrets: async (secretNames: string[]) => {
       for (const secretName of secretNames) await deleteSecret(secretName);
     },
