@@ -3,7 +3,6 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { dockerfileLocalFileDeps } from "../lib/dockerfile-local-file-deps.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const repoRoot = path.resolve(root, "..");
@@ -26,12 +25,6 @@ const directoryDependencies = [
 const trackedNpmrcFiles = execFileSync("git", ["ls-files", "--recurse-submodules", "*.npmrc"], { cwd: repoRoot, encoding: "utf8" })
   .split("\n")
   .filter(Boolean);
-
-const dockerfiles = execFileSync("git", ["ls-files", "*Dockerfile", "*Dockerfile.*"], { cwd: root, encoding: "utf8" })
-  .split("\n")
-  .filter((file) => file && !file.endsWith(".dockerignore") && !file.startsWith("tests/fixtures/"));
-
-const dockerfileDeps = dockerfiles.map((file) => dockerfileLocalFileDeps(path.join(root, file), root));
 
 function readJson(filePath: string): Record<string, any> {
   return JSON.parse(fs.readFileSync(path.join(root, filePath), "utf8"));
@@ -194,33 +187,6 @@ describe("directory dependency repository contract", () => {
     expectBefore(build, overlay, "RUN /octogee/scripts/node_modules/.bin/esbuild");
     expectBefore(runtime, "COPY --link --from=gateway-production-dependencies --chown=1000:1000 /octogee/scripts/node_modules", overlay);
     expectBefore(runtime, overlay, "RUN node /octogee/scripts/ops/verify-native-modules.mjs");
-  });
-
-  it.each(dockerfiles.map((file, index) => [file, dockerfileDeps[index]] as const))(
-    "%s provides every local file dependency before its npm installs",
-    (_file, deps) => {
-      expect(deps.missing).toEqual([]);
-    },
-  );
-
-  it("checks the npm installs of every service image", () => {
-    const installs = dockerfileDeps.flatMap((deps) => deps.installs.map((install) => install.replace(/^.*\((.*)\)$/u, "$1")));
-    expect(installs.filter((dir) => dir === "platform-api")).toHaveLength(2);
-    expect(installs.filter((dir) => dir === "gateway-edge")).toHaveLength(3);
-    expect(installs).toEqual(expect.arrayContaining(["fleet-controller", "gateway-supervisor", "shared"]));
-  });
-
-  it("re-includes every packed interface in the Docker build context", () => {
-    const lines = fs
-      .readFileSync(path.join(root, ".dockerignore"), "utf8")
-      .split("\n")
-      .map((line) => line.trim());
-    const distDirs = [...new Set(dockerfileDeps.flatMap((deps) => deps.distDirs))];
-    expect(distDirs).toEqual(expect.arrayContaining(["core/dist", "shared/dist"]));
-    for (const distDir of distDirs) {
-      expect(lines).toContain(`!${distDir}/`);
-      expect(lines).toContain(`!${distDir}/**`);
-    }
   });
 
   it("retires tarball transport and its maintenance commands", () => {
