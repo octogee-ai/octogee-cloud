@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const internalFetch = vi.fn();
-vi.mock("../internal-fetch.js", () => ({
+vi.mock("@octogee/core/internal-fetch", () => ({
   internalFetch: (...args: unknown[]) => internalFetch(...args),
 }));
 

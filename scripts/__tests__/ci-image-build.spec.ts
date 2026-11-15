@@ -14,12 +14,11 @@ const sha = "a".repeat(40);
 const base = `inputs-${"b".repeat(64)}`;
 
 describe("runner image builds", () => {
-  it("builds the isolated runner from its own Docker target", () => {
-    const plan = imagePlan("octogee-project-runner", { repository, sha });
-    expect(plan.dockerfile).toBe("platform/platform-api/Dockerfile");
-    expect(plan.context).toBe("platform");
-    expect(plan.target).toBe("project-runner");
-    expect(plan.tag).toBe(`${repository}/octogee-project-runner:${sha.slice(0, 7)}`);
+  it("builds an image the caller defines from that definition", () => {
+    const builds = { "octogee-api": { dockerfile: "product/platform-api/Dockerfile", context: ".", contexts: { "packed-package": "obsidian-connect" } }, "project-runner": { dockerfile: "product/platform-api/Dockerfile", context: ".", target: "project-runner" } };
+    expect(imagePlan("octogee-api", { repository, sha, builds })).toMatchObject({ dockerfile: "product/platform-api/Dockerfile", context: ".", contexts: { "packed-package": "obsidian-connect" } });
+    expect(imagePlan("project-runner", { repository, sha, builds })).toMatchObject({ target: "project-runner", tag: `${repository}/project-runner:${sha.slice(0, 7)}` });
+    expect(() => imagePlan("glm-controller", { repository, sha, builds })).toThrow("Unknown image: glm-controller");
   });
 
   it("pushes with registry caching", async () => {
@@ -38,7 +37,7 @@ describe("runner image builds", () => {
   it("builds platform images from the platform context and passes their product overlay when it exists", async () => {
     const platformOnly = mkdtempSync(resolve(tmpdir(), "image-plan-"));
     expect(imagePlan("glm-controller", { repository, sha }, platformOnly).contexts).toEqual({});
-    expect(imagePlan("octogee-api", { repository, sha }, platformOnly).contexts).toEqual({ "packed-package": "obsidian-connect" });
+    expect(imagePlan("octogee-api", { repository, sha }, platformOnly).contexts).toEqual({});
     const withProduct = mkdtempSync(resolve(tmpdir(), "image-plan-product-"));
     mkdirSync(resolve(withProduct, "product/fleet-controller"), { recursive: true });
     const plan = imagePlan("glm-controller", { repository, sha }, withProduct);
@@ -49,17 +48,6 @@ describe("runner image builds", () => {
     expect(args).toContain("--file=platform/fleet-controller/Dockerfile");
     expect(args).toContain("--build-context=overlay=product/fleet-controller");
     expect(args.at(-1)).toBe("platform");
-  });
-
-  it("passes the product overlay of every platform package the API image compiles", () => {
-    const root = mkdtempSync(resolve(tmpdir(), "image-plan-api-"));
-    mkdirSync(resolve(root, "product/gateway-edge"), { recursive: true });
-    expect(imagePlan("octogee-api", { repository, sha }, root).contexts)
-      .toEqual({ "packed-package": "obsidian-connect", product: "product", "gateway-edge-overlay": "product/gateway-edge" });
-    mkdirSync(resolve(root, "product/platform-api"), { recursive: true });
-    expect(imagePlan("octogee-project-runner", { repository, sha }, root).contexts).toEqual({
-      product: "product", overlay: "product/platform-api", "gateway-edge-overlay": "product/gateway-edge",
-    });
   });
 
   it("gives each default overlay stage content so its build cache follows the overlay it copies", () => {
@@ -75,8 +63,7 @@ describe("runner image builds", () => {
     const root = mkdtempSync(resolve(tmpdir(), "image-plan-libraries-"));
     mkdirSync(resolve(root, "product/core"), { recursive: true });
     expect(imagePlan("glm-controller", { repository, sha }, root).contexts).toEqual({ product: "product" });
-    expect(imagePlan("octogee-api", { repository, sha }, root).contexts).toEqual({ "packed-package": "obsidian-connect", product: "product" });
-    expect(imagePlan("octogee-project-runner", { repository, sha }, root).contexts).toEqual({ product: "product" });
+    expect(imagePlan("octogee-api", { repository, sha }, root).contexts).toEqual({ product: "product" });
     expect(imagePlan("artifact-worker", { repository, sha }, root).contexts).toEqual({});
     expect(imagePlan("octogee-ops-agent-runtime", { repository, sha }, root).contexts).toEqual({});
   });

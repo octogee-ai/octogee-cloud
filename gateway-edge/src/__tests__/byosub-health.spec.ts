@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import express from "express";
 import request from "supertest";
-import { deriveByosubHealth } from "../lib/byosub.js";
+import { deriveByosubHealth } from "@octogee/core/model-credentials/byosub";
 import {
   createByosubHealthRouter,
   type ByosubHealthDeps,

@@ -1,6 +1,6 @@
 import { WebSocket } from 'ws';
-import type { ActivityConversation } from '../../lib/activity-conversation.js';
-import { attachUpstreamRpcClient } from './bridge-upstream-rpc.js';
+import type { ActivityConversation } from '@octogee/core/channels/activity-conversation';
+import { attachUpstreamRpcClient } from '@octogee/core/http-candidates/chat-proxy/openclaw/bridge-upstream-rpc';
 import type { OpenClawRuntimeBroker } from './runtime-broker.js';
 
 export function attachActivitySubscription(input: {

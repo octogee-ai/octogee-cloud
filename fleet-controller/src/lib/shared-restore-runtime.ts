@@ -4,6 +4,7 @@ import type { PlatformUserRecord, GatewayRoot, GatewayRuntimeRestartFenceValue, 
 import type { OperationContext } from '../operation-router.js';
 import type { KubectlSubprocess } from '../fleet-ingress.js';
 import { queuedSharedMigrationOwnsSourceInStore } from './queued-shared-migration.js';
+import { platformGatewayArtifactFromEnvironment } from '../platform-release.js';
 
 type RecordValue = UntypedRecord;
 interface Recovery { operationId: string; sourceSha: string; images: Record<string, string>; reauthorize?: RecordValue; supersede?: RecordValue }
@@ -30,11 +31,15 @@ function assertRecoveryBuild(op: Operation, input: RecordValue, sourceSha: strin
       typeof input.operationId !== 'string' || !input.operationId || input.operationId.includes('/') ||
       !/^[a-f0-9]{40}$/.test(input.sourceSha) || input.sourceSha !== sourceSha) throw new Error('restore recovery build identity is unavailable');
 }
-function assertRecoveryImages(images: RecordValue, sourceSha: string): void {
-  for (const [name, repository] of [['gateway', 'octogee-gateway'], ['gateway-edge', 'gateway-edge']]) {
-    const prefix = `us-central1-docker.pkg.dev/octogee/octogee/${repository}:${sourceSha.slice(0, 7)}`;
-    if (typeof images[name!] !== 'string' || !images[name!].startsWith(prefix) ||
-        !/^[a-z0-9._-]*@sha256:[a-f0-9]{64}$/.test(images[name!].slice(prefix.length))) throw new Error('restore recovery requires digest-addressed images from the deployed build');
+export interface RecoveryRelease { imageRepository: string; gatewayEdgeImage?: { imageRepository: string } }
+export function assertRecoveryImages(images: RecordValue, sourceSha: string, release: RecoveryRelease): void {
+  for (const [name, repository] of [['gateway', release.imageRepository], ['gateway-edge', release.gatewayEdgeImage?.imageRepository]] as const) {
+    const prefix = `${repository}:${sourceSha.slice(0, 7)}`;
+    const image: unknown = images[name];
+    if (typeof repository !== 'string' || typeof image !== 'string' || !image.startsWith(prefix) ||
+        !/^[a-z0-9._-]*@sha256:[a-f0-9]{64}$/.test(image.slice(prefix.length))) {
+      throw new Error(`restore recovery requires digest-addressed images from the deployed build: ${name} image ${String(image)} is not ${prefix}…@sha256:<digest>`);
+    }
   }
 }
 function assertRecoverySupersession(input: RecordValue, operationId: string): void {
@@ -42,11 +47,11 @@ function assertRecoverySupersession(input: RecordValue, operationId: string): vo
   if (input.supersede !== undefined && (typeof supersede.operationId !== 'string' ||
       !supersede.operationId || supersede.operationId.includes('/') || supersede.operationId === operationId)) throw new Error('restore recovery predecessor is invalid');
 }
-function recovery(op: Operation, sourceSha: string): Recovery {
+function recovery(op: Operation, sourceSha: string, release: RecoveryRelease): Recovery {
   const input = object(op.input.restoreRecovery);
   assertRecoveryBuild(op, input, sourceSha);
   const images = object(input.images);
-  assertRecoveryImages(images, sourceSha);
+  assertRecoveryImages(images, sourceSha, release);
   assertRecoverySupersession(input, op.id);
   if (Object.keys(images).length !== 2) throw new Error('restore recovery image surface is invalid');
   return input as Recovery;
@@ -204,7 +209,7 @@ async function assertRecoveryPredecessor(params: {
   const fence = object(existing); const target = object(fence.target);
   if (!recoveryPredecessorOperationMatches(previous, captured, op.input.gatewayId) ||
       !recoveryPredecessorFenceMatches({ fence, captured, gatewayId: op.input.gatewayId, operationId: input.operationId, pod })) throw new Error('failed restore recovery predecessor changed');
-  const prior = recovery(previous as Operation, previous.input.restoreRecovery?.sourceSha);
+  const prior = recovery(previous as Operation, previous.input.restoreRecovery?.sourceSha, platformGatewayArtifactFromEnvironment());
   if (prior.operationId !== input.operationId || !isDeepStrictEqual(prior.images, target.images) ||
       !isDeepStrictEqual(prior.reauthorize, input.reauthorize)) throw new Error('failed restore recovery custody changed');
   imagePatch(pod, fence, prior.images);
@@ -262,7 +267,7 @@ async function reauthorizeRestore(tx: PlatformStateTransaction, op: Operation, i
   await tx.journal.operations.patch(input.operationId, { restoreAttempt: intent });
 }
 export async function recoverSharedRestoreRuntime(deps: Deps, op: Operation, ctx: OperationContext): Promise<void> {
-  const input = recovery(op, deps.sourceSha); const gatewayId = op.input.gatewayId as string;
+  const input = recovery(op, deps.sourceSha, platformGatewayArtifactFromEnvironment()); const gatewayId = op.input.gatewayId as string;
   if (!ctx.assertActiveClaim) throw new Error('restore recovery operation claim is unavailable');
   await ctx.assertActiveClaim();
   const completed = object((await deps.store.journal.operations.get(op.id))?.restoreRuntimeRecovery);
@@ -301,4 +306,4 @@ export async function recoverSharedRestoreRuntime(deps: Deps, op: Operation, ctx
   await update(null);
 }
 
-export { existingOwnedPod, imagePatch, json, assertRecoveryImages };
+export { existingOwnedPod, imagePatch, json };

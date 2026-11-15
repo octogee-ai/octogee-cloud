@@ -1,6 +1,6 @@
-import { gcsBucket } from "../../../gateway-edge/src/lib/gcs-bucket.js";
-import { createGcsBlobStore } from "../../../gateway-edge/src/lib/gcs-blob-store.js";
-import type { BlobStore } from "../../../gateway-edge/src/lib/blob-store.js";
+import { gcsBucket } from "@octogee/core/workspace/gcs-bucket";
+import { createGcsBlobStore } from "@octogee/core/workspace/gcs-blob-store";
+import type { BlobStore } from "@octogee/core/workspace/blob-store";
 import { createS3BlobStore } from "./s3-blob-store.js";
 
 export const gcsBlobStore = createGcsBlobStore(gcsBucket);

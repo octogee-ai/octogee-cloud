@@ -1,6 +1,6 @@
 import { manifestObjectPath, parseManifest, type ManifestEntry } from "@octogee/core/workspace-manifest";
 import { isBlobObjectVersion, type FleetBrokerBlobSignedUrl } from "@octogee/shared/types/fleet-broker";
-import { projectBlobHydrationClient, workspaceBlobReadClient } from "./project-blob-upload.js";
+import { projectBlobHydrationClient, workspaceBlobReadClient } from "@octogee/core/workspace/project-blob-upload";
 
 interface Input {
   baseUrl: string;

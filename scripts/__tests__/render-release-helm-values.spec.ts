@@ -11,7 +11,7 @@ const manifest: ReleaseDigestManifest = {
   manifestDigest: digest, repository: "us-central1-docker.pkg.dev/octogee/octogee",
   surfaces: {
     gateway: Object.fromEntries(["gateway-edge", "octogee-gateway", "octogee-gateway-builder"].map(name => [name, digest])),
-    platform: Object.fromEntries(["glm-controller", "octogee-api", "artifact-worker", "octogee-ops-agent", "octogee-project-runner"].map(name => [name, digest])),
+    platform: Object.fromEntries(["glm-controller", "octogee-api", "llm-broker", "artifact-worker", "octogee-ops-agent", "octogee-project-runner"].map(name => [name, digest])),
   },
 };
 
@@ -29,6 +29,7 @@ describe("operator Helm release selection", () => {
     for (const key of ["octogee-api", "llmBroker", "artifactWorker", "opsAgent", "gateway-edge"]) {
       expect(values[key].image).toMatchObject({ tag: sourceSha.slice(0, 7), digest });
     }
+    expect(values.llmBroker.image.repository).toBe(`${manifest.repository}/llm-broker`);
     expect(values.global.projectRunnerImage).toMatchObject({ tag: sourceSha.slice(0, 7), digest });
   });
 

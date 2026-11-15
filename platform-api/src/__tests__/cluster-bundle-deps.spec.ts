@@ -1,11 +1,5 @@
-// octogee-api serves the gateway-edge cluster bundle from its OWN image:
-// gateway-edge sources compile into /octogee-api/dist/gateway-edge/** where only
-// platform-api/node_modules exists. In the repo layout, Node resolves a bundle
-// import from gateway-edge/node_modules (sibling walk-up), so tests and local
-// runs pass while the image crash-loops at boot — exactly how the #1460
-// connectors' @aws-sdk/client-sts took down the PROD rollout. This spec walks
-// the bundle's static import graph and pins: every external package the bundle
-// reaches must be installable from platform-api/package.json.
+// Every external package the cluster routes reach must be declared by
+// platform-api/package.json, the only install in the octogee-api image.
 import { describe, expect, it } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -13,7 +7,7 @@ import { isBuiltin } from "node:module";
 
 const API_ROOT = path.resolve(__dirname, "../..");
 const REPO_ROOT = path.resolve(API_ROOT, "..");
-const BUNDLE_ENTRY = path.join(REPO_ROOT, "gateway-edge/src/routes/mount-cluster-routes.ts");
+const BUNDLE_ENTRY = path.join(API_ROOT, "src/routes/mount-cluster-routes.ts");
 
 // Catches single-line, multi-line, and re-export forms; side-effect imports too.
 // Type-only imports are NOT filtered — over-reporting a types-only package errs

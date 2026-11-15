@@ -133,6 +133,7 @@ export interface UserProvisioningWatchQuery {
     watch: true;
     resourceVersion: string;
     timeoutSeconds?: number;
+    limit?: number;
 }
 export declare const PROVISIONING_STEPS: readonly ["chat-user", "chat-team", "chat-channels", "chat-agent", "user-chat-token", "git-owner", "git-repositories", "git-keys"];
 export type ProvisioningStep = (typeof PROVISIONING_STEPS)[number];

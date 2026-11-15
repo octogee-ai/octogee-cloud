@@ -1,5 +1,5 @@
 import { UserCredentialRejected, type UserDocument } from "@octogee/core/user-identity-provider";
-import { installUserIdentityProvider } from "../../middleware/auth.js";
+import { installUserIdentityProvider } from "@octogee/core/http/auth";
 
 export function installBearerUids(
   uidFor: (token: string) => Promise<string>,

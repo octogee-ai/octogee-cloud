@@ -1,8 +1,8 @@
 import { Router, type Request, type RequestHandler, type Response } from "express";
 import type { UserDocument } from "@octogee/core/user-identity-provider";
 
-import { requireAuthenticatedUid } from "../../../gateway-edge/src/middleware/auth.js";
-import { logger } from "../../../gateway-edge/src/middleware/logging.js";
+import { requireAuthenticatedUid } from "@octogee/core/http/auth";
+import { logger } from "@octogee/core/http/logging";
 import { brokerRequestLimit } from "../middleware/broker-request-limit.js";
 
 function boundGatewayId(req: Request): string | null {

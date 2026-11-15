@@ -1,5 +1,5 @@
 import type { WebSocket } from "ws";
-import type { BridgeLog } from "../bridge-log.js";
+import type { BridgeLog } from "@octogee/core/http/bridge-log";
 
 interface ChatActivityBase {
   defaultAgentMmUserId: string;

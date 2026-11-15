@@ -21,6 +21,7 @@ const manifest = {
   images: {
     "glm-controller": { digest: digest(1) },
     "octogee-api": { digest: digest(2) },
+    "llm-broker": { digest: digest(7) },
     "gateway-edge": { digest: digest(3) },
     "octogee-gateway": { digest: digest(4) },
     "octogee-gateway-builder": { digest: digest(5) },
@@ -36,7 +37,7 @@ describe("platform chart release values", () => {
   it("pins each platform service to its release tag and index digest", () => {
     expect(values["glm-controller"].image).toEqual({ repository: `${registry}/glm-controller`, tag: "v0.2.0", digest: digest(1) });
     expect(values["octogee-api"].image).toEqual({ repository: `${registry}/octogee-api`, tag: "v0.2.0", digest: digest(2) });
-    expect(values.llmBroker.image).toEqual(values["octogee-api"].image);
+    expect(values.llmBroker.image).toEqual({ repository: `${registry}/llm-broker`, tag: "v0.2.0", digest: digest(7) });
     expect(values["gateway-edge"].image.digest).toBe(digest(3));
     expect(values.global.computer.bridge.image.digest).toBe(digest(6));
     expect(values.provisioningService.image).toEqual({ repository: `${registry}/provisioning-service`, tag: "v0.2.0", digest: digest(7) });

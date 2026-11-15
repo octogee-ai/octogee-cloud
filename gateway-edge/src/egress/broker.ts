@@ -1,7 +1,7 @@
 import { isGatewayVmEgressState, type GatewayEgressMode, type GatewayVmEgressState } from "@octogee/shared/types/glm";
 import type { FleetBrokerVmEgress } from "@octogee/shared/types/fleet-broker";
-import { trustedBrokerBaseUrl } from "../lib/automation-authorization-broker.js";
-import { internalFetch } from "../lib/internal-fetch.js";
+import { trustedBrokerBaseUrl } from "@octogee/core/internal-brokers/automation-authorization-broker";
+import { internalFetch } from "@octogee/core/internal-fetch";
 import type { EgressStore } from "./service.js";
 
 export const COMPUTER_EGRESS_BROKER_PATH = "/internal/fleet/computer-egress";

@@ -292,6 +292,11 @@ describe("classifyOperationFailure", () => {
     ).toBe("transient");
   });
 
+  it("classifies a source with no durable placement yet as transient, and a target with none as terminal", () => {
+    expect(classifyOperationFailure("source gateway lin-s-35a838e1 has no durable placement")).toBe("transient");
+    expect(classifyOperationFailure("target gateway shared-a has no durable placement")).toBe("terminal");
+  });
+
   it("classifies a source with no converged configuration for the user as terminal", () => {
     expect(classifyOperationFailure(UNCONVERGED_SOURCE_ERROR)).toBe("terminal");
   });
@@ -878,6 +883,24 @@ describe("buildOperationCompletionUpdate", () => {
 
     expect(update.status).toBe("failed");
     expect(update.attempts).toBe(MAX_OPERATION_ATTEMPTS);
+  });
+
+  it("retries a user return whose source has no durable placement yet, and fails it with that message at the cap", () => {
+    const error = "source gateway run-alice has no durable placement";
+    const op = (attempts: number) => ({
+      id: "builder-return-run-alice-g1",
+      kind: "migrate-user" as const,
+      origin: "automatic",
+      input: { source: "builder-activation-lease", fromGatewayId: "run-alice" },
+      attempts,
+      attemptHistory: [],
+    });
+    const settle = (attempts: number) => buildOperationCompletionUpdate({
+      op: op(attempts), result: { steps: [], success: false, error }, steps: [], now,
+    });
+
+    expect(settle(0)).toMatchObject({ status: "pending", attempts: 1, nextAttemptAt: now + retryBackoffMs(1) });
+    expect(settle(MAX_OPERATION_ATTEMPTS - 1)).toMatchObject({ status: "failed", attempts: MAX_OPERATION_ATTEMPTS, error });
   });
 
   it("keeps deterministic continuous placement demand retryable without creating new operations", () => {

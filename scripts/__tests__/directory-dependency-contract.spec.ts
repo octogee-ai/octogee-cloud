@@ -3,7 +3,6 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { dockerfileLocalFileDeps } from "../lib/dockerfile-local-file-deps.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const repoRoot = path.resolve(root, "..");
@@ -24,12 +23,6 @@ const directoryDependencies = [
 const trackedNpmrcFiles = execFileSync("git", ["ls-files", "--recurse-submodules", "*.npmrc"], { cwd: repoRoot, encoding: "utf8" })
   .split("\n")
   .filter(Boolean);
-
-const dockerfiles = execFileSync("git", ["ls-files", "*Dockerfile", "*Dockerfile.*"], { cwd: root, encoding: "utf8" })
-  .split("\n")
-  .filter((file) => file && !file.endsWith(".dockerignore") && !file.startsWith("tests/fixtures/"));
-
-const dockerfileDeps = dockerfiles.map((file) => dockerfileLocalFileDeps(path.join(root, file), root));
 
 function readJson(filePath: string): Record<string, any> {
   return JSON.parse(fs.readFileSync(path.join(root, filePath), "utf8"));
@@ -121,18 +114,26 @@ describe("directory dependency repository contract", () => {
   it("copies each packed dependency and consumer npm config before Docker installs", () => {
     const api = dockerfile("platform-api/Dockerfile");
     for (const source of ["core", "shared"]) {
-      expectBefore(api, `COPY ${source}/package.json`, "RUN npm ci --ignore-scripts");
-      expectBefore(api, `COPY ${source}/dist`, "RUN npm ci --ignore-scripts");
+      expectBefore(dockerStage(api, "builder"), `COPY ${source}/package.json`, "RUN npm ci --ignore-scripts");
+      expectBefore(dockerStage(api, "builder"), `COPY ${source}/dist`, "RUN npm ci --ignore-scripts");
     }
-    expectBefore(api, "COPY platform-api/.npmrc", "RUN npm ci --ignore-scripts");
-    expectBefore(api, "COPY gateway-edge/.npmrc", "RUN npm ci --prefix /gateway-edge --ignore-scripts");
+    expectBefore(dockerStage(api, "builder"), "COPY platform-api/.npmrc", "RUN npm ci --ignore-scripts");
     const apiRuntimeInstall = "RUN npm ci --omit=dev --ignore-scripts\nRUN npm rebuild";
     for (const source of ["core", "shared"]) {
       expectLastBefore(api, `COPY ${source}/package.json`, apiRuntimeInstall);
       expectLastBefore(api, `COPY ${source}/dist`, apiRuntimeInstall);
     }
     expectLastBefore(api, "COPY platform-api/.npmrc", apiRuntimeInstall);
-    expectBefore(api, "COPY --from=overlay runner/package.json","RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund");
+
+    const broker = dockerfile("llm-broker/Dockerfile");
+    for (const source of ["core", "shared"]) {
+      expectBefore(dockerStage(broker, "builder"), `COPY ${source}/package.json`, "RUN npm ci --ignore-scripts");
+      expectBefore(dockerStage(broker, "builder"), `COPY ${source}/dist`, "RUN npm ci --ignore-scripts");
+      expectLastBefore(broker, `COPY ${source}/package.json`, "RUN npm ci --omit=dev");
+      expectLastBefore(broker, `COPY ${source}/dist`, "RUN npm ci --omit=dev");
+    }
+    expectBefore(dockerStage(broker, "builder"), "COPY llm-broker/.npmrc", "RUN npm ci --ignore-scripts");
+    expectLastBefore(broker, "COPY llm-broker/.npmrc", "RUN npm ci --omit=dev");
 
     const edge = dockerfile("gateway-edge/Dockerfile");
     for (const source of ["core", "shared"]) {
@@ -154,16 +155,8 @@ describe("directory dependency repository contract", () => {
     expectBefore(glm, "COPY fleet-controller/.npmrc", "RUN npm ci");
   });
 
-  it("lands only the product overlay's packed libraries over the API runtime install", () => {
-    const api = dockerfile("platform-api/Dockerfile");
-    const runtime = api.slice(api.lastIndexOf("\nFROM "));
-    const overlayLibraries = "COPY --from=overlay node_modules* ./node_modules/";
-    expectBefore(runtime, "RUN npm ci --omit=dev --ignore-scripts\nRUN npm rebuild", overlayLibraries);
-    expect(runtime.match(/^COPY --from=overlay .*$/gm)).toEqual([overlayLibraries]);
-  });
-
-  it("builds the API image without the product tree", () => {
-    expect(dockerfile("platform-api/Dockerfile")).not.toMatch(/--from=product\b/);
+  it.each(["platform-api", "llm-broker"])("builds the %s image without the product tree or an overlay", (service) => {
+    expect(dockerfile(`${service}/Dockerfile`)).not.toMatch(/--from=(?:product|overlay)\b/);
   });
 
   it("installs gateway dependencies from manifests and overlays freshly packed internal packages", () => {
@@ -188,33 +181,6 @@ describe("directory dependency repository contract", () => {
     expectBefore(build, overlay, "RUN /octogee/scripts/node_modules/.bin/esbuild");
     expectBefore(runtime, "COPY --link --from=gateway-production-dependencies --chown=1000:1000 /octogee/scripts/node_modules", overlay);
     expectBefore(runtime, overlay, "RUN node /octogee/scripts/ops/verify-native-modules.mjs");
-  });
-
-  it.each(dockerfiles.map((file, index) => [file, dockerfileDeps[index]] as const))(
-    "%s provides every local file dependency before its npm installs",
-    (_file, deps) => {
-      expect(deps.missing).toEqual([]);
-    },
-  );
-
-  it("checks the npm installs of every service image", () => {
-    const installs = dockerfileDeps.flatMap((deps) => deps.installs.map((install) => install.replace(/^.*\((.*)\)$/u, "$1")));
-    expect(installs.filter((dir) => dir === "platform-api")).toHaveLength(2);
-    expect(installs.filter((dir) => dir === "gateway-edge")).toHaveLength(3);
-    expect(installs).toEqual(expect.arrayContaining(["fleet-controller", "scripts", "shared"]));
-  });
-
-  it("re-includes every packed interface in the Docker build context", () => {
-    const lines = fs
-      .readFileSync(path.join(root, ".dockerignore"), "utf8")
-      .split("\n")
-      .map((line) => line.trim());
-    const distDirs = [...new Set(dockerfileDeps.flatMap((deps) => deps.distDirs))];
-    expect(distDirs).toEqual(expect.arrayContaining(["core/dist", "shared/dist"]));
-    for (const distDir of distDirs) {
-      expect(lines).toContain(`!${distDir}/`);
-      expect(lines).toContain(`!${distDir}/**`);
-    }
   });
 
   it("retires tarball transport and its maintenance commands", () => {

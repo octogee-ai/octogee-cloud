@@ -9,7 +9,7 @@ const registry = "ghcr.io/octogee-ai/octogee-cloud";
 const sha = "a".repeat(40);
 const arm = `sha256:${"1".repeat(64)}`;
 const amd = `sha256:${"2".repeat(64)}`;
-const images = ["glm-controller", "octogee-api", "gateway-edge", "octogee-gateway", "vm-bridge", "provisioning-service"];
+const images = ["glm-controller", "octogee-api", "llm-broker", "gateway-edge", "octogee-gateway", "vm-bridge", "provisioning-service"];
 const builder = "octogee-gateway-builder";
 const published = [...images, builder];
 let directory: string;
@@ -63,7 +63,7 @@ it("reports findings and produces an SBOM for every exact architecture digest", 
   expect(calls).toContain(`convert --format cyclonedx --output ${join(directory, "reports", "octogee-gateway.cdx.json")} ${join(directory, "reports", "octogee-gateway.trivy.json")}`);
   const summary = readFileSync(join(directory, "summary"), "utf8");
   expect(summary).toContain(`octogee-gateway@${arm}\` with VEX | 0 | 0 | 0 | 0 | 0 |`);
-  expect(readdirSync(join(directory, "reports"))).toHaveLength(14);
+  expect(readdirSync(join(directory, "reports"))).toHaveLength(16);
 });
 
 it("scans the isolated gateway image with the amd64 images", () => {
@@ -71,7 +71,7 @@ it("scans the isolated gateway image with the amd64 images", () => {
   expect(result.status, result.stderr).toBe(0);
   const calls = readFileSync(join(directory, "calls"), "utf8");
   for (const name of published) expect(calls).toContain(`${registry}/${name}@${amd}`);
-  expect(readdirSync(join(directory, "reports"))).toHaveLength(16);
+  expect(readdirSync(join(directory, "reports"))).toHaveLength(18);
 });
 
 it.each([

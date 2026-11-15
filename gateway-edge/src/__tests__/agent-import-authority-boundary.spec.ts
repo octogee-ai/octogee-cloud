@@ -13,8 +13,8 @@ describe("agent import sidecar authority boundary", () => {
     const index = source("src/index.ts");
     const runtime = source("src/lib/agent-import-runtime.ts");
     const store = source("src/lib/agent-import-store.ts");
-    const git = source("src/lib/agent-import-git.ts");
-    const importSource = source("src/lib/agent-import-source.ts");
+    const git = source("../core/src/http-candidates/agent-transfer/agent-import-git.ts");
+    const importSource = source("../core/src/http-candidates/agent-transfer/agent-import-source.ts");
     const dockerfile = source("Dockerfile");
 
     expect(index).toMatch(/agentImportsLocality\.use\(authenticationFailureLimit, requireAuthenticatedUid\)/);

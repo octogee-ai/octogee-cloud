@@ -1,4 +1,4 @@
-import { authenticatedRequestLimit } from "../middleware/authenticated-request-limit.js";
+import { authenticatedRequestLimit } from "@octogee/core/http/authenticated-request-limit";
 import { Router, type Response } from "express";
 import { isValidGatewayId } from "@octogee/shared/types/glm";
 import { createAgentExportRuntime } from "../lib/agent-export-runtime.js";
@@ -35,7 +35,7 @@ function handleExportError(error: unknown, res: Response): void {
   res.status(503).json({ error: "export_unavailable", message: "Export could not be confirmed. Check or retry this export before starting another preview." });
 }
 export function createAgentExportsRouter(deps = { createRuntime: createAgentExportRuntime, localGatewayId: () => process.env.GATEWAY_ID }) {
-  const router = Router({ mergeParams: true });
+  const router: Router = Router({ mergeParams: true });
   router.use((req, res, next) => {
     const gatewayId = req.params.gatewayId;
     const authorization = req.headers.authorization;

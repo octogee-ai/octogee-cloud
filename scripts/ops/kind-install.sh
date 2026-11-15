@@ -61,7 +61,7 @@ case "$(uname -m)" in
 esac
 ISOLATED_SKIPPED=false
 if [[ -z "$IMAGES" ]]; then
-  IMAGES="glm-controller,octogee-api,gateway-edge,octogee-gateway"
+  IMAGES="glm-controller,octogee-api,llm-broker,gateway-edge,octogee-gateway"
   if [[ "$PLATFORM" == linux/amd64 ]]; then IMAGES+=",octogee-gateway-builder"; else ISOLATED_SKIPPED=true; fi
 fi
 
@@ -187,7 +187,7 @@ const isolatedImage = images["octogee-gateway-builder"] ? "octogee-gateway-build
 console.log(JSON.stringify({
   ...(images["vm-bridge"] ? { global: { computer: { bridge: { image: image("vm-bridge") } } } } : {}),
   "octogee-api": { image: image("octogee-api"), ...(images["octogee-api"] ? {} : { replicas: 0 }) },
-  llmBroker: images["octogee-api"] ? { image: image("octogee-api") } : { enabled: false },
+  llmBroker: images["llm-broker"] ? { image: image("llm-broker") } : { enabled: false },
   "gateway-edge": { image: image("gateway-edge") },
   "glm-controller": {
     image: image("glm-controller"),

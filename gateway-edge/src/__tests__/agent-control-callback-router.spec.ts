@@ -7,7 +7,7 @@ import {
   signMattermostCommandRequest,
   verifyAgentControlRouterRequest,
   verifyMattermostCommandRequest,
-} from "../agent-control-callback-router.js";
+} from "@octogee/core/http-candidates/agent-control-callback-router";
 import { createVmRoutesResolver } from "../vm-routes.js";
 
 const servers: Array<ReturnType<typeof createServer>> = [];

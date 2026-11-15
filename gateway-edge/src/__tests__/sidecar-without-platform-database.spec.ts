@@ -16,7 +16,7 @@ describe("gateway-edge sidecar without platform database settings", () => {
   });
 
   it("fails loudly at the first platform-state use", async () => {
-    const { platformStateStore } = await import("../lib/platform-state.js");
+    const { platformStateStore } = await import("@octogee/core/identity/platform-state-store");
     expect(() => platformStateStore.users).toThrow(/PLATFORM_DB_\w+ is required/);
   });
 });
