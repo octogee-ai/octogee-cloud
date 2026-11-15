@@ -229,6 +229,18 @@ describe.skipIf(!dsn)("the provisioning HTTP API", { timeout: 30_000 }, () => {
       expect((await harness.request("GET", "/v1/provisionings?watch=true&resourceVersion=999999&timeoutSeconds=0")).status).toBe(410);
     });
 
+    it("pages a watch by limit, oldest change first, and continues from the returned version", async () => {
+      const from = (await harness.request("GET", "/v1/provisionings")).body.resourceVersion;
+      for (const uid of ["w1", "w2", "w3"]) await harness.request("PUT", `/v1/users/${uid}/provisioning`, { body: { spec: spec(uid) } });
+      const first = (await harness.request("GET", `/v1/provisionings?watch=true&resourceVersion=${from}&timeoutSeconds=0&limit=2`)).body;
+      expect(first.items.map((item: { uid: string }) => item.uid)).toEqual(["w1", "w2"]);
+      expect(first.resourceVersion).toBe(first.items[1].resourceVersion);
+      const rest = (await harness.request("GET", `/v1/provisionings?watch=true&resourceVersion=${first.resourceVersion}&timeoutSeconds=0&limit=2`)).body;
+      expect(rest.items.map((item: { uid: string }) => item.uid)).toEqual(["w3"]);
+      expect(rest.resourceVersion).toBe((await harness.request("GET", "/v1/provisionings")).body.resourceVersion);
+      expect((await harness.request("GET", `/v1/provisionings?watch=true&resourceVersion=${from}&timeoutSeconds=0&limit=501`)).status).toBe(400);
+    });
+
     it("assigns versions in commit order with no gap under concurrent writes", async () => {
       const from = (await harness.request("GET", "/v1/provisionings")).body.resourceVersion;
       await Promise.all(Array.from({ length: 40 }, (_, index) =>

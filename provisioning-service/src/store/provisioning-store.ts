@@ -266,15 +266,17 @@ export class ProvisioningStore {
     });
   }
 
-  async changesSince(resourceVersion: bigint): Promise<ChangesSince> {
+  async changesSince(resourceVersion: bigint, limit: number): Promise<ChangesSince> {
     return this.db.read(async (client) => {
       const counter = await client.query<{ value: string; pruned_through: string }>(
         `SELECT value, pruned_through FROM ${this.db.table("counter")} WHERE id = 1`);
       const current = BigInt(counter.rows[0].value);
       if (resourceVersion < BigInt(counter.rows[0].pruned_through) || resourceVersion > current) return { kind: "expired" as const };
       const { rows } = await client.query<ProvisioningRow>(
-        `${this.selectResource} WHERE p.resource_version > $1 ORDER BY p.resource_version`, [resourceVersion.toString()]);
-      return { kind: "changes" as const, items: rows.map(toResource), resourceVersion: current.toString() };
+        `${this.selectResource} WHERE p.resource_version > $1 ORDER BY p.resource_version LIMIT $2`, [resourceVersion.toString(), limit + 1]);
+      const items = rows.slice(0, limit).map(toResource);
+      const through = rows.length > limit ? items[items.length - 1].resourceVersion : current.toString();
+      return { kind: "changes" as const, items, resourceVersion: through };
     });
   }
 

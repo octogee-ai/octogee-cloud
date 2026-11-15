@@ -36,6 +36,7 @@ export interface AppDependencies {
 
 const DEFAULT_WAIT_SECONDS = 30;
 const MAX_WAIT_SECONDS = 300;
+const MAX_PAGE = 500;
 const WRITE_STATUS = { created: 201, changed: 202, unchanged: 200 } as const;
 const INVALID = "invalid-request";
 const WORK_STATE_FILTERS = new Set(["queued", "running", "retrying", "parked"]);
@@ -173,10 +174,11 @@ export function createApp(deps: AppDependencies): express.Express {
     if (boolean(request.query.watch, "watch")) {
       const from = single(request.query.resourceVersion, "resourceVersion");
       if (from === undefined || !/^\d+$/.test(from)) throw new ApiError(400, INVALID, "watch needs resourceVersion");
+      const limit = integer(request.query.limit, "limit", 1, MAX_PAGE) ?? MAX_PAGE;
       const until = deadline(request);
       const signal = closedSignal(request, response);
       for (;;) {
-        const changes = await deps.store.changesSince(BigInt(from));
+        const changes = await deps.store.changesSince(BigInt(from), limit);
         if (changes.kind === "expired") throw new ApiError(410, "resource-version-expired", "resourceVersion is outside the retained change window; list again");
         if (changes.items.length > 0 || Date.now() >= until || signal.aborted) {
           response.json({ items: changes.items, resourceVersion: changes.resourceVersion } satisfies UserProvisioningWatchResponse);
@@ -195,7 +197,7 @@ export function createApp(deps: AppDependencies): express.Express {
       ready: boolean(request.query.ready, "ready"),
       reason: reason as ProvisioningConditionReason | undefined,
       workState: workState as UserProvisioningListQuery["workState"],
-      limit: integer(request.query.limit, "limit", 1, 500),
+      limit: integer(request.query.limit, "limit", 1, MAX_PAGE),
       pageToken: single(request.query.pageToken, "pageToken"),
     };
     response.json(await deps.store.list(query));
