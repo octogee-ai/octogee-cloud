@@ -3,6 +3,7 @@ import request from "supertest";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { logger } from "../../../gateway-edge/src/middleware/logging.js";
 import { RecordingDocuments } from "../test-helpers/recording-documents.js";
 import { createFleetBrokerRoutes, type ProvisionedUserReport } from "./fleet-broker.js";
 
@@ -35,7 +36,7 @@ function report(server: express.Express, body: Record<string, unknown>) {
   return request(server).post("/internal/fleet/provisioned").send({ gatewayId: GATEWAY_ID, ...body });
 }
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe("POST /internal/fleet/provisioned", () => {
   it("hands the assigned user's report to the installed hook and answers 204", async () => {
@@ -68,6 +69,19 @@ describe("POST /internal/fleet/provisioned", () => {
     const response = await report(server, { uid: "uid-alice", first: true }).expect(502);
 
     expect(response.body).toEqual({ error: "ops alert was not delivered" });
+  });
+
+  it("logs the failed call's path and error when it answers 502", async () => {
+    const logged = vi.spyOn(logger, "error").mockImplementation(() => {});
+    const failure = new Error("ops alert was not delivered");
+    const { server } = fixture(async () => { throw failure; });
+
+    await report(server, { uid: "uid-alice", first: true }).expect(502);
+
+    expect(logged).toHaveBeenCalledWith("fleet broker call failed", {
+      path: "/internal/fleet/provisioned",
+      err: failure,
+    });
   });
 
   it.each([undefined, "true", 1, null])("refuses a report whose first flag is %s before the hook runs", async (first) => {
