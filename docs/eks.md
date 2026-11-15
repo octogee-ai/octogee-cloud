@@ -147,8 +147,13 @@ checkout. Start from the latest release. Its commit always has images:
 git checkout "$(gh release view -R octogee-ai/octogee-cloud --json tagName --jq .tagName)"
 ```
 
-Until the first release is out, or to run newer code, check out `main`'s newest
-built commit instead, as [the GKE guide](gke.md#install) describes:
+A release's guides match that release. Once you have checked out a tag,
+follow `docs/eks.md` in your checkout, not the copy on `main`. v0.1.0 came
+before the source directories were renamed, so
+[its directories have their earlier names](legacy-names.md#source-directories-in-v010).
+
+To run newer code than the latest release, check out `main`'s newest built
+commit instead, as [the GKE guide](gke.md#install) describes:
 
 ```bash
 git checkout "$(gh run list -R octogee-ai/octogee-cloud --workflow=build-main.yml --branch=main \
@@ -277,7 +282,8 @@ export OCTOGEE_FLEET_CONFIG="$STATE/fleet-config.json"
 
 The command line signs in with the operator key the script generated, through
 `scripts/ops/operator-token.mjs` in this checkout. Keep the Admin API forwarded
-in a second terminal:
+in a second terminal. The fleet controller serves it, and its Service is named
+`glm-controller`, a [name from before the rename](legacy-names.md#storage-and-images):
 
 ```bash
 kubectl --kubeconfig="$STATE/kubeconfig" --context="eks_${AWS_REGION}_octogee" -n octogee port-forward svc/glm-controller 18080:8080
