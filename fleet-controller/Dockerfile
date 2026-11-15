@@ -78,6 +78,8 @@ COPY core/package.json /app/core/package.json
 COPY core/dist /app/core/dist
 COPY shared/package.json /app/shared/package.json
 COPY shared/dist /app/shared/dist
+COPY core-testing/package.json /app/core-testing/package.json
+COPY core-testing/dist /app/core-testing/dist
 
 # Two-stage install: dev deps for the build (typescript), then prune to
 # runtime-only after `tsc` finishes. Avoids `npx tsc` falling back to a
