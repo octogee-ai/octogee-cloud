@@ -185,7 +185,8 @@ export OCTOGEE_FLEET_CONFIG="$STATE/fleet-config.json"
 
 The command line signs in with the operator key the script generated, through
 `scripts/ops/operator-token.mjs` in this checkout. Keep the Admin API forwarded
-in a second terminal:
+in a second terminal. The fleet controller serves it, and its Service is named
+`glm-controller`, a [name from before the rename](legacy-names.md#storage-and-images):
 
 ```bash
 kubectl --kubeconfig="$STATE/kubeconfig" -n octogee port-forward svc/glm-controller 18080:8080
@@ -223,7 +224,8 @@ the channel, usually within a few seconds.
 ## A project
 
 A project gives the user a channel, a Gitea repository and an agent of its
-own. Create one through the platform API. Forward it in a terminal of its own:
+own. Create one through the platform API. Forward it in a terminal of its own;
+its Service keeps the earlier name `octogee-api`:
 
 ```bash
 kubectl --kubeconfig="$STATE/kubeconfig" -n octogee port-forward svc/octogee-api 3001:3001

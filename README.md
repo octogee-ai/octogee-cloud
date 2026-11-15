@@ -99,7 +99,8 @@ session or personal access token; see
 
 Some features start switched off, among them agent import and export, the
 OpenClaw dashboard, project repository sources and voice. List the ones you
-want in the chart value `octogee-api.featureFlags.enabled`, using the keys in
+want in the chart value `octogee-api.featureFlags.enabled` (the platform API's
+values keep its earlier name), using the keys in
 [`shared/types/feature-flags.ts`](shared/types/feature-flags.ts). An unknown
 key stops the platform API at startup.
 
@@ -115,12 +116,18 @@ and a domain. [See every account and tier](docs/getting-started.md#what-you-need
 
 | Component | Directory | What it does |
 | --- | --- | --- |
-| Fleet controller | `glm-controller/` | Owns which gateways exist and which user is on which. Serves the Admin API, installs gateways with Helm, moves users, and journals every change. |
-| Platform API | `octogee-api/` | Serves most HTTP routes. Its fleet broker holds the Mattermost and Gitea admin credentials, and it issues each agent its model credential. |
-| LLM broker | `octogee-api/` | Holds the model provider keys and meters every call. |
+| Fleet controller | `fleet-controller/` | Owns which gateways exist and which user is on which. Serves the Admin API, installs gateways with Helm, moves users, and journals every change. |
+| Platform API | `platform-api/` | Serves most HTTP routes. Its fleet broker holds the Mattermost and Gitea admin credentials, and it issues each agent its model credential. |
+| LLM broker | `platform-api/` | Holds the model provider keys and meters every call. |
 | Edge | `gateway-edge/` | A sidecar in each gateway pod that serves the user's workspace files, and the gateway router that sends `/g/<gatewayId>/*` to the right sidecar. |
 | Provisioner | `scripts/` | Runs in every gateway. Sets up each user assigned to it: chat account, team, channels, agent bot, git organization and repository. |
-| Gateway image | `infra/gateway/` | OpenClaw, the provisioner and the platform's OpenClaw extensions. |
+| Gateway image | `gateway/` | OpenClaw, the provisioner and the platform's OpenClaw extensions. |
+
+In a cluster, the fleet controller and the platform API still run under their
+earlier names, `glm-controller` and `octogee-api`, so those are the names
+`kubectl` and the chart values show.
+[Architecture](docs/architecture.md#services) lists what every component runs
+as.
 
 ### Inside a gateway
 

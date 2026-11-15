@@ -277,7 +277,8 @@ export OCTOGEE_FLEET_CONFIG="$STATE/fleet-config.json"
 
 The command line signs in with the operator key the script generated, through
 `scripts/ops/operator-token.mjs` in this checkout. Keep the Admin API forwarded
-in a second terminal:
+in a second terminal. The fleet controller serves it, and its Service is named
+`glm-controller`, a [name from before the rename](legacy-names.md#storage-and-images):
 
 ```bash
 kubectl --kubeconfig="$STATE/kubeconfig" --context="eks_${AWS_REGION}_octogee" -n octogee port-forward svc/glm-controller 18080:8080

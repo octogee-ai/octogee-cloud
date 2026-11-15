@@ -223,7 +223,9 @@ export OCTOGEE_FLEET_CONFIG="$STATE/fleet-config.json"
 ```
 
 The command line reaches the Admin API through a port-forward that must keep
-running. Open a second terminal, set the two variables there, and start it:
+running. The fleet controller serves the Admin API, and its Service is named
+`glm-controller`, a [name from before the rename](legacy-names.md#storage-and-images).
+Open a second terminal, set the two variables there, and start it:
 
 ```bash
 kubectl --kubeconfig="$STATE/kubeconfig" --context=kind-octogee -n octogee-local \
@@ -396,7 +398,8 @@ There are two kinds of token:
   The user then creates one under **Profile > Security > Personal Access
   Tokens**, and it lasts until they revoke it.
 
-Forward the API in a terminal of its own, then call it:
+Forward the API in a terminal of its own, then call it. Its Service keeps the
+earlier name `octogee-api`:
 
 ```bash
 kubectl --kubeconfig="$STATE/kubeconfig" --context=kind-octogee -n octogee-local \
