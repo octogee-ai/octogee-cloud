@@ -1,15 +1,15 @@
-import { clientRequestLimit } from "../middleware/authenticated-request-limit.js";
+import { clientRequestLimit } from "@octogee/core/http/authenticated-request-limit";
 import { Router } from "express";
-import { logger } from "../middleware/logging.js";
-import { authorizeChannelAgentReadiness } from "../lib/channel-agent-readiness-authorization-broker.js";
-import { readChannelAgentReadiness, readinessFailureReason } from "../lib/channel-agent-readiness.js";
+import { logger } from "@octogee/core/http/logging";
+import { authorizeChannelAgentReadiness } from "@octogee/core/http-candidates/channels/channel-agent-readiness-authorization-broker";
+import { readChannelAgentReadiness, readinessFailureReason } from "@octogee/core/http-candidates/channels/channel-agent-readiness";
 
 export function createChannelAgentReadinessRouter(deps = {
   authorize: authorizeChannelAgentReadiness,
   read: readChannelAgentReadiness,
   localGatewayId: () => process.env.GATEWAY_ID,
 }) {
-  const router = Router({ mergeParams: true });
+  const router: Router = Router({ mergeParams: true });
   router.get<{ gatewayId: string; channelId: string }>("/:channelId", clientRequestLimit(600), async (req, res) => {
     const gatewayId = req.params.gatewayId;
     const channelId = req.params.channelId;

@@ -76,7 +76,7 @@ describe("gateway-edge sidecar surface", () => {
 
   it("does not expose legacy platform internal brokers on the sidecar app", async () => {
     process.env.INTERNAL_SERVICE_KEY = "surface-test-key";
-    const app = createApp({ surface: "sidecar" });
+    const app = createApp();
 
     expect(
       (
@@ -97,7 +97,7 @@ describe("gateway-edge sidecar surface", () => {
   });
 
   it("does not let locality auth middleware mask removed cluster APIs", async () => {
-    const app = createApp({ surface: "sidecar" });
+    const app = createApp();
 
     expect((await request(app).get("/api/workspace/files")).status).toBe(404);
     expect((await request(app).post("/api/byosub/capture").send({})).status).toBe(404);
@@ -106,7 +106,7 @@ describe("gateway-edge sidecar surface", () => {
   });
 
   it("keeps intended sidecar locality leaves mounted at the auth boundary", async () => {
-    const app = createApp({ surface: "sidecar" });
+    const app = createApp();
 
     expect((await request(app).get("/api/g/gw-walter/workspace/git/status")).status).toBe(401);
     expect((await request(app).get("/api/g/gw-walter/byosub/health")).status).toBe(401);
@@ -125,7 +125,7 @@ describe("gateway-edge sidecar surface", () => {
       headers: { "content-type": "application/json" },
     }));
     vi.stubGlobal("fetch", brokerFetch);
-    const app = createApp({ surface: "sidecar" });
+    const app = createApp();
 
     const res = await request(app)
       .get("/api/g/walter/workspace/git/status?slug=alice&project=orbit")
@@ -151,7 +151,7 @@ describe("gateway-edge sidecar surface", () => {
   });
 
   it("keeps workspace commits mounted but retires the in-pod project publisher", async () => {
-    const app = createApp({ surface: "sidecar" });
+    const app = createApp();
 
     const commit = await request(app)
       .post("/internal/workspace/commit")
@@ -165,27 +165,25 @@ describe("gateway-edge sidecar surface", () => {
     expect(publish.status).toBe(404);
   });
 
-  it("mounts the owner automation deputy on the sidecar alone", async () => {
+  it("mounts the owner automation deputy", async () => {
     const invalid = { agentId: "octogee-alice-coach", action: "save", params: {} };
-    const sidecar = await request(createApp({ surface: "sidecar" })).post("/internal/owner-automations").send(invalid);
+    const sidecar = await request(createApp()).post("/internal/owner-automations").send(invalid);
     expect(sidecar.status).toBe(400);
     expect(sidecar.body).toEqual({ error: "invalid_owner_automation" });
-    expect((await request(createApp({ surface: "cluster" })).post("/internal/owner-automations").send(invalid)).status).toBe(404);
   });
 
-  it("fronts the gateway VM's style and Desk note for the gateway's own identity only, on the sidecar alone", async () => {
+  it("fronts the gateway VM's style and Desk note for the gateway's own identity only", async () => {
     configureGatewayServiceAccountAuth();
-    const sidecar = createApp({ surface: "sidecar" });
+    const sidecar = createApp();
     expect((await request(sidecar).post("/internal/computer/style").send({ style: "familiar" })).status).toBe(401);
     const noVm = await request(sidecar).post("/internal/computer/desk/note").set("x-k8s-sa-token", "valid-ksa-token").send({ note: "hi" });
     expect(noVm.status).toBe(404);
     expect(noVm.body).toEqual({ error: "computer_unavailable" });
-    expect((await request(createApp({ surface: "cluster" })).post("/internal/computer/style").send({ style: "familiar" })).status).toBe(404);
   });
 
   it("requires valid gateway KSA auth on sidecar connector materialization", async () => {
     const reviewer = configureGatewayServiceAccountAuth();
-    const app = createApp({ surface: "sidecar" });
+    const app = createApp();
 
     const missing = await request(app).get("/internal/connectors/cloudflare/materialize");
     expect(missing.status).toBe(401);
@@ -199,18 +197,6 @@ describe("gateway-edge sidecar surface", () => {
     expect(invalid.body).toEqual({ error: "Invalid internal service key" });
     expect(reviewer).toHaveBeenCalledWith("invalid-ksa-token");
   });
-
-  it("does not mount connector materialization on the cluster surface", async () => {
-    const reviewer = configureGatewayServiceAccountAuth();
-    const app = createApp({ surface: "cluster" });
-
-    const res = await request(app)
-      .get("/internal/connectors/cloudflare/materialize")
-      .set("x-k8s-sa-token", "valid-ksa-token");
-
-    expect(res.status).toBe(404);
-    expect(reviewer).not.toHaveBeenCalled();
-  });
 });
 
 it("initializes bare platform entitlements when constructing the edge app", () => {
@@ -218,7 +204,7 @@ it("initializes bare platform entitlements when constructing the edge app", () =
   const slot = Symbol.for("octogee.userEntitlements");
   try {
     Reflect.deleteProperty(globalThis, slot);
-    createApp({ surface: "sidecar" });
+    createApp();
     expect(userEntitlements()).toBe(staticUserEntitlements);
   } finally {
     installUserEntitlements(previous);

@@ -2,9 +2,9 @@ import type { IncomingMessage } from "node:http";
 import { Router, type Request, type Response } from "express";
 import type { WebSocket } from "ws";
 import { WsUpgradeAuthorizationError, type WsUpgradeRouter } from "@octogee/core/ws/upgrade-router";
-import { requireAuthenticatedUid } from "../middleware/auth.js";
-import { authenticatedRequestLimit, authenticationFailureLimit } from "../middleware/authenticated-request-limit.js";
-import { logger } from "../middleware/logging.js";
+import { requireAuthenticatedUid } from "@octogee/core/http/auth";
+import { authenticatedRequestLimit, authenticationFailureLimit } from "@octogee/core/http/authenticated-request-limit";
+import { logger } from "@octogee/core/http/logging";
 import { resolveNativeAdminAccess, type NativeAdminAccessOutcome } from "../lib/native-admin-access.js";
 import { createWsTicketStore, wsTicketFromPath, type WsTicketStore } from "../lib/ws-ticket-store.js";
 import { authorizeSession, monitorSessionAuthorization } from "../lib/ws-session-authorization.js";
@@ -43,7 +43,7 @@ export function createVmPasskeysRouter(options: VmPasskeysRouterOptions) {
   const resolveAccess = options.resolveAccess ?? resolveNativeAdminAccess;
   const tickets = options.tickets ?? createWsTicketStore<PasskeySession>();
   const log = options.log ?? ((message, meta) => logger.warn(message, meta));
-  const router = Router({ mergeParams: true });
+  const router: Router = Router({ mergeParams: true });
 
   async function authorize(req: Request, res: Response): Promise<{ gatewayId: string; authorization: string | undefined } | null> {
     const gatewayId = (req.params as { gatewayId?: string }).gatewayId;

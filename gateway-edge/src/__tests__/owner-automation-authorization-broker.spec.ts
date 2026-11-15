@@ -6,8 +6,8 @@ const h = vi.hoisted(() => ({
   sidecarBrokerHeaders: vi.fn(),
 }));
 
-vi.mock("../lib/internal-fetch.js", () => ({ internalFetch: h.internalFetch }));
 vi.mock("@octogee/core/internal-fetch", () => ({
+  internalFetch: h.internalFetch,
   sidecarBrokerHeaders: h.sidecarBrokerHeaders,
 }));
 

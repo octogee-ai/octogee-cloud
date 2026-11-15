@@ -5,7 +5,7 @@ import { createOpenClawRuntimeBrokerRoutes } from './openclaw-runtime-broker.js'
 import { createDocumentFixtureStore } from '@octogee/core-testing/journal-store';
 import { RecordingDocuments } from '../test-helpers/recording-documents.js';
 const authorize = vi.hoisted(() => vi.fn());
-vi.mock('../../../gateway-edge/src/lib/activity-conversation.js', () => ({ resolveActivityConversation: authorize }));
+vi.mock('@octogee/core/channels/activity-conversation', () => ({ resolveActivityConversation: authorize }));
 const threadRootPostId = 'r'.repeat(26);
 const gatewayId = 'b-alice';
 const scope = { gatewayId, ownerUid: 'owner', channelId: 'c'.repeat(26), threadRootPostId, expectedAgentId: 'octogee-alice-proj-web', sessionKey: `agent:octogee-alice-proj-web:mattermost:group:${'c'.repeat(26)}` };

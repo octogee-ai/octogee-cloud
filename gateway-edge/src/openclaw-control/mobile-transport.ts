@@ -1,6 +1,6 @@
 import { WebSocket } from 'ws';
 import type { NativeMobileBinding } from '@octogee/shared/types/native-mobile';
-import { logger } from '../middleware/logging.js';
+import { logger } from '@octogee/core/http/logging';
 import type { MobileControlTransport } from './surface.js';
 import { DesktopObserverTickets } from './desktop-stream.js';
 import { MobileGatewayAuthority, mobileSession } from './mobile-authority.js';
@@ -12,7 +12,7 @@ import {
   projectMobileHello,
   projectMobileSessionFrame,
   type MobileConnectProof,
-} from './mobile-proof.js';
+} from '@octogee/core/identity/mobile-proof';
 
 function operatorTokens(auth: Record<string, unknown>): NativeMobileBinding['httpTokens'] {
   const tokens = Array.isArray(auth.deviceTokens) ? [...auth.deviceTokens] : [];

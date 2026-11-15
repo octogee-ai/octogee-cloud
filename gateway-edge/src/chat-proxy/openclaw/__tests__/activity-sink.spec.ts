@@ -14,7 +14,7 @@ import {
 import {
   InMemoryActivityWriteReceiptStore,
   type ActivityWriteReceiptStore,
-} from "../activity-write-receipts.js";
+} from "@octogee/core/http-candidates/chat-proxy/openclaw/activity-write-receipts";
 import type {
   ActivityMattermostClient,
   ActivityMattermostPost,

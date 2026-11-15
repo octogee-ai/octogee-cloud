@@ -7,7 +7,7 @@ const broker = vi.hoisted(() => ({
   workspaceManifestReadUrl: vi.fn(),
   blobMaterializationReadUrl: vi.fn(),
 }));
-vi.mock("./project-blob-upload.js", () => ({
+vi.mock("@octogee/core/workspace/project-blob-upload", () => ({
   workspaceBlobReadClient: () => broker,
   projectBlobHydrationClient: () => broker,
 }));

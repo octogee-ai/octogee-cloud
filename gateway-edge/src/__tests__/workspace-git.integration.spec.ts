@@ -7,16 +7,16 @@ import * as os from "node:os";
 
 const firestoreData = vi.hoisted(() => ({}) as Record<string, any>);
 
-vi.mock("../lib/platform-state.js", async () => {
+vi.mock("@octogee/core/identity/platform-state-store", async () => {
   const { createDocumentFixtureStore } = await import("@octogee/core-testing/journal-store");
   return { platformStateStore: createDocumentFixtureStore(firestoreData) };
 });
 
-vi.mock("../lib/workspace-git-authorization-broker.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../lib/workspace-git-authorization-broker.js")>();
-  const { resolveFileTarget } = await import("../lib/fileTarget.js");
-  const { resolveCanonicalWorkspaceSlug } = await import("../lib/canonical-workspace.js");
-  const { resolveCommitAuthor } = await import("../routes/workspace/helpers.js");
+vi.mock("@octogee/core/internal-brokers/workspace-git-authorization-broker", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@octogee/core/internal-brokers/workspace-git-authorization-broker")>();
+  const { resolveFileTarget } = await import("@octogee/core/workspace/fileTarget");
+  const { resolveCanonicalWorkspaceSlug } = await import("@octogee/core/workspace/canonical-workspace");
+  const { resolveCommitAuthor } = await import("@octogee/core/workspace/route-helpers");
   const { accountAllowsInteractiveAccess } = await import("@octogee/shared/types/account-lifecycle");
   const authorizeWorkspaceGit: typeof actual.authorizeWorkspaceGit = async (args) => {
     if (!args.authorization?.startsWith("Bearer ")) return { kind: "unauthenticated" };
@@ -48,12 +48,7 @@ vi.mock("../lib/workspace-git-authorization-broker.js", async (importOriginal) =
   return { ...actual, authorizeWorkspaceGit };
 });
 
-vi.mock("../lib/mattermost", () => ({
-  mmApi: vi.fn(),
-  MM_URL: "http://mattermost-test:8065",
-}));
-
-vi.mock("../lib/gitea", () => ({
+vi.mock("@octogee/core/git-host/gitea-client", () => ({
   giteaApi: vi.fn(),
   giteaApiAllowNotFound: vi.fn(),
   giteaApiAs: vi.fn(),
@@ -65,7 +60,7 @@ vi.mock("../lib/gitea", () => ({
 
 import { createApp } from "../index.js";
 import { acquireWorkspaceMutationLeaseSync } from "@octogee/core/workspace-mutation-lease";
-import { workspaceMutationLeaseGitDir } from "../lib/workspace-git.js";
+import { workspaceMutationLeaseGitDir } from "@octogee/core/workspace/workspace-git";
 import workspaceGitRoutes from "../routes/workspace/git.js";
 import { installDocumentUserAccounts } from "./helpers/user-accounts.js";
 

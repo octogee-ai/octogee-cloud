@@ -32,10 +32,9 @@ so that it calls the Admin API as `octogee-fleet` does.
   platform API (`platform-api/`) still publish images, Kubernetes deployments
   and service accounts named `glm-controller` and `octogee-api`, and stored
   records keep their names. [Legacy names](legacy-names.md) lists them.
-- Some services live inside another component's directory: the LLM broker and
-  the npm cache proxy in `platform-api/`, the gateway router and the
-  Mattermost callback router in `gateway-edge/`, and the VM agent in
-  `gateway-supervisor/`.
+- Some services live inside another component's directory: the npm cache
+  proxy in `platform-api/`, the gateway router and the Mattermost callback
+  router in `gateway-edge/`, and the VM agent in `gateway-supervisor/`.
 - `gateway-supervisor/` holds everything the gateway image runs besides
   OpenClaw: the gateway pod's boot steps and runners, and the VM agent, which
   runs as its own process on an isolated gateway's VM. The VM agent shares
@@ -63,13 +62,31 @@ They are covered by tests and split as they are touched.
 
 - `core/` and `shared/` commit their built `dist/`, because the other packages
   install them as `file:` dependencies. Published packages would remove it.
-- Some files still import another component's files by relative path: most of
-  them `platform-api` importing `gateway-edge` source, the rest specs under
-  `tests/` and a few scripts in `gateway/` and `desktop/` that run without an
-  installed package. `scripts/lib/component-imports.json` lists each one, and
-  the list may only shrink.
+- Some files still import another component's files by relative path: specs
+  under `tests/` and a few scripts in `gateway/` and `desktop/` that run
+  without an installed package. `scripts/lib/component-imports.json` lists
+  each one, and the list may only shrink.
 - There are no npm workspaces. Each package installs on its own, which keeps
   the packages independent and makes a change across them slow.
+
+## Gateway code in core
+
+`core/src/http-candidates/` holds 24 modules that run against a gateway's
+OpenClaw runtime or its working tree. The gateway edge runs them for its own
+gateway. The platform API needs only part of them, and gets that part by
+importing the modules into its own process. Each should split, or become a
+call to the edge:
+
+| Module | What the platform API uses | What it should become |
+| --- | --- | --- |
+| `agent-control-callback-router` | `verifyMattermostCommandRequest` and `validAgentControlRouterPublicKey` in `routes/mattermost-commands.ts` | The command signature check moves to `core/src/mattermost/`; the router stays in the edge |
+| `agent-transfer/agent-export-service`, `agent-export-snapshot` | `agentExportApproval`, `exportDigest` and the export record types in `routes/agent-export-broker.ts` | The approval, digest and record types move to a contract module; exports run only behind the edge's `/api/g/<gatewayId>/agent-exports` |
+| `agent-transfer/agent-import-git`, `agent-import-service`, `agent-import-source` | The identity snapshot and the import manifest and identity types in `routes/agent-import-broker.ts` | The types and the identity snapshot move to a contract module; imports run only behind the edge's `/api/g/<gatewayId>/agent-imports` |
+| `channels/channel-agent-readiness-authorization-broker`, `channel-agent-readiness` | The `ChannelReadinessAuthorization` type in `routes/channel-agent-readiness-authorization-broker.ts` | The authorization contract stays in core; readiness checks against OpenClaw run only behind the edge's `/api/g/<gatewayId>/channel-agent-readiness` |
+| `chat-proxy/openclaw/activity-write-receipts` | The platform-state receipt store and its errors in `routes/openclaw-runtime-broker.ts` | The store and its errors move to `core/src/channels/`; the gateway half stays in the edge |
+| `chat-proxy/openclaw/authenticated-upstream`, `bridge-upstream-rpc`, `device-identity`, `gateway-token`, `gateway-token-constants`, `upstream` | Nothing directly; reached through `proxy-identity` and `channel-agent-readiness` | Edge only, once those two split |
+| `openclaw-control/proxy-identity`, `profile-appearance`, `session`, `broker`, `channel-membership-sync`, `mattermost-broker`, `mattermost-chat`, `mattermost-events` | The `OpenClawProfileAppearance` type in `lib/openclaw-profile-appearance.ts` | The type moves to `shared/types`; the control session stays in the edge |
+| `workspace-commit-router` | Mounted at `/internal/workspace` by the API's cluster routes, where it commits a checkout the API does not have | The API stops mounting it; commits run only on the edge's `/internal/workspace` |
 
 ## Leftovers from the hosted service
 
@@ -95,6 +112,8 @@ The platform has run end to end on kind and on GKE. Beyond that:
 
 - An isolated gateway on a virtual machine, the kind with a desktop, needs
   Google Cloud.
+- A private registry that is not a Google registry gets no credentials on the
+  VM: the VM image only pulls from a public registry or a Google registry.
 - Operator sign-in is Google sign-in or a key-signed token.
 - The EKS guide has not run on a real AWS account.
 - There is no production install guide. The GKE install is a single zone with

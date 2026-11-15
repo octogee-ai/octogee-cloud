@@ -34,7 +34,7 @@ export function platformReleaseValues({ tag, manifest, openclawSourceSha }) {
   return {
     global: { computer: { bridge: { image: image("vm-bridge") } } },
     "octogee-api": { image: image("octogee-api") },
-    llmBroker: { image: image("octogee-api") },
+    llmBroker: { image: image("llm-broker") },
     [GATEWAY_EDGE]: { image: image(GATEWAY_EDGE) },
     "glm-controller": {
       image: image("glm-controller"),

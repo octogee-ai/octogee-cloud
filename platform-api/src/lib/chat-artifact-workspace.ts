@@ -1,6 +1,6 @@
 import type { PlatformStateRepositories } from "@octogee/core/platform-state";
 
-import { userAllowsInteractiveAccess } from "./assigned-user.js";
+import { userAllowsInteractiveAccess } from "@octogee/core/assigned-user";
 
 export async function resolveActiveArtifactWorkspaceSlug(
   store: Pick<PlatformStateRepositories, "users" | "workspaces">,

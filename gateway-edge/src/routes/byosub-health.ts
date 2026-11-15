@@ -1,12 +1,12 @@
 import { Router, Request, Response, NextFunction } from "express";
-import { authenticatedRequestLimit } from "../middleware/authenticated-request-limit.js";
+import { authenticatedRequestLimit } from "@octogee/core/http/authenticated-request-limit";
 import * as fs from "fs";
 import * as path from "path";
 import {
   userDefaultAgentId,
   deriveByosubHealth,
   isSafeGatewayId,
-} from "../lib/byosub.js";
+} from "@octogee/core/model-credentials/byosub";
 import {
   resolveByosubUserGateway,
   type ByosubGatewayAssignment,

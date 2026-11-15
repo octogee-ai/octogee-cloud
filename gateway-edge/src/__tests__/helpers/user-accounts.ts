@@ -1,5 +1,5 @@
 import { userAccountFromData, type UserAccount } from "@octogee/core/user-account";
-import { installUserAccounts } from "../../lib/user-accounts.js";
+import { installUserAccounts } from "@octogee/core/identity/user-accounts";
 
 export function installDocumentUserAccounts(read: (uid: string) => Record<string, unknown> | undefined): void {
   const get = async (uid: string): Promise<UserAccount | null> => {
