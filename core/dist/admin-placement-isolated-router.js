@@ -2,13 +2,15 @@ import { projectGatewayDesiredRootForGateway } from "@octogee/shared/types/gatew
 import { builderActivateOperationId } from "@octogee/shared/types/isolated-operation-ids";
 import { isSizingTier } from "@octogee/shared/types/sizing";
 import { GatewayRetirementConflictError } from "./gateway-retirement-claim.js";
-import { IsolatedGatewayFenceError, PLACEMENT_RETIREMENT_REASONS, advanceActivationLease, allocateIsolatedGateway, checkUnreachableRecoveryFence, completeActivationLease, failActivationLease, recoverUnreachableIsolatedGateway, refreshRequestedAllocation, requestSizingKeyTransition, unauditedLifecycleMutations, retireOwnedIsolatedGateway, } from "./isolated-gateway-lifecycle/index.js";
+import { IsolatedGatewayFenceError, PLACEMENT_RETIREMENT_REASONS, advanceActivationLease, allocateIsolatedGateway, checkUnreachableRecoveryFence, completeActivationLease, failActivationLease, leaseOperationIdBelongs, recoverUnreachableIsolatedGateway, refreshRequestedAllocation, requestSizingKeyTransition, unauditedLifecycleMutations, retireOwnedIsolatedGateway, } from "./isolated-gateway-lifecycle/index.js";
 import { FleetMutationRefusedError } from "./normal-fleet-mutation.js";
 import { assertClientOwnsPlacementAutomation, placementOwnerRefusalBody } from "./placement-automation-owner.js";
 import { FenceMismatchError } from "./platform-state/errors.js";
 import { InitialGatewayReleaseConflictError } from "./gateway-live-release.js";
 import { SizingKeyChangedError, accountSizingKeyReader } from "./sizing-key.js";
 class PreconditionFailed extends Error {
+}
+class InvalidRequest extends Error {
 }
 const requireClientOwner = async (transaction) => {
     await assertClientOwnsPlacementAutomation(transaction);
@@ -84,20 +86,29 @@ function leaseIdentity(req) {
 }
 const ADVANCES = [
     ["provisioning", "activating"],
+    ["provisioning", "active"],
     ["activating", "active"],
     ["active", "returning"],
 ];
+function optionalOperationId(body) {
+    if (body.operationId === undefined)
+        return {};
+    const operationId = text(body, "operationId");
+    return operationId ? { operationId } : { invalid: "operationId must be a non-empty string when given" };
+}
 function parseAdvance(req) {
     const identity = leaseIdentity(req);
     if (invalid(identity))
         return identity;
     const body = bodyOf(req);
     const step = ADVANCES.find(([from, to]) => body.fromStatus === from && body.toStatus === to);
-    if (!step)
-        return { invalid: "fromStatus and toStatus must be provisioning->activating, activating->active or active->returning" };
-    if (body.operationId !== undefined)
-        return { invalid: "operationId is derived from the lease; omit it" };
-    return { ...identity, fromStatus: step[0], toStatus: step[1] };
+    if (!step) {
+        return { invalid: "fromStatus and toStatus must be provisioning->activating, provisioning->active, activating->active or active->returning" };
+    }
+    const given = optionalOperationId(body);
+    if (invalid(given))
+        return given;
+    return { ...identity, fromStatus: step[0], toStatus: step[1], ...given };
 }
 function parseComplete(req) {
     const identity = leaseIdentity(req);
@@ -120,11 +131,13 @@ function parseFail(req) {
     const message = text(body, "message");
     if (!targetGatewayId)
         return { invalid: "targetGatewayId is required" };
-    if (body.operationId !== undefined)
-        return { invalid: "operationId is derived from the lease; omit it" };
     if (!message)
         return { invalid: "message is required" };
-    return { ...identity, targetGatewayId, operationId: builderActivateOperationId(targetGatewayId, identity.generation), message };
+    const given = optionalOperationId(body);
+    if (invalid(given))
+        return given;
+    const operationId = given.operationId ?? builderActivateOperationId(targetGatewayId, identity.generation);
+    return { ...identity, targetGatewayId, operationId, message };
 }
 function parseSizingTransition(req) {
     const identity = leaseIdentity(req);
@@ -246,6 +259,14 @@ async function readOwner(store, uid) {
         throw new PreconditionFailed(`user ${uid} is missing`);
     return user;
 }
+async function assertLeaseOperationId(store, claim) {
+    const { gatewayId } = claim;
+    if (gatewayId === null)
+        throw new InvalidRequest(`operationId ${claim.operationId} needs the lease's target gateway`);
+    if (await leaseOperationIdBelongs(store.journal.operations, { ...claim, gatewayId }))
+        return;
+    throw new InvalidRequest(`operationId ${claim.operationId} is not an operation of ${claim.uid} on ${gatewayId} generation ${claim.generation}`);
+}
 function leaseOf(user) {
     if (!user.activationLease)
         throw new PreconditionFailed(`activation lease for ${user.uid} is missing`);
@@ -286,26 +307,37 @@ export function addAdminPlacementIsolatedRoutes(router, deps) {
                 await settle(res, () => run(req, input));
             }
             catch (error) {
+                if (error instanceof InvalidRequest) {
+                    res.status(400).json({ error: error.message });
+                    return;
+                }
                 next(error);
             }
         });
     }
-    verb("/users/:uid/activation-lease/advance", parseAdvance, (req, input) => journal({
-        req,
-        what: "advance user activation lease",
-        why: "placement automation advanced the lease",
-        target: { uid: input.uid },
-        preActionStatus: { leaseId: input.leaseId, generation: input.generation, status: input.fromStatus },
-        mutation: { kind: "advance-activation-lease", toStatus: input.toStatus },
-        dryRunRefusal: async () => {
-            await advanceActivationLease(lifecycle, input, "plan");
-            return null;
-        },
-        action: async () => {
-            await advanceActivationLease(lifecycle, input);
-            return { uid: input.uid, leaseId: input.leaseId, generation: input.generation, status: input.toStatus };
-        },
-    }));
+    verb("/users/:uid/activation-lease/advance", parseAdvance, async (req, input) => {
+        if (input.operationId !== undefined) {
+            const stored = await deps.store.users.records.get(input.uid);
+            const gatewayId = stored?.activationLease?.targetGatewayId;
+            await assertLeaseOperationId(deps.store, { ...input, operationId: input.operationId, gatewayId: typeof gatewayId === "string" ? gatewayId : null });
+        }
+        return journal({
+            req,
+            what: "advance user activation lease",
+            why: "placement automation advanced the lease",
+            target: { uid: input.uid },
+            preActionStatus: { leaseId: input.leaseId, generation: input.generation, status: input.fromStatus },
+            mutation: { kind: "advance-activation-lease", toStatus: input.toStatus, operationId: input.operationId ?? null },
+            dryRunRefusal: async () => {
+                await advanceActivationLease(lifecycle, input, "plan");
+                return null;
+            },
+            action: async () => {
+                await advanceActivationLease(lifecycle, input);
+                return { uid: input.uid, leaseId: input.leaseId, generation: input.generation, status: input.toStatus };
+            },
+        });
+    });
     verb("/users/:uid/activation-lease/complete", parseComplete, (req, input) => journal({
         req,
         what: "complete user activation lease",
@@ -323,22 +355,25 @@ export function addAdminPlacementIsolatedRoutes(router, deps) {
             return { uid: input.uid, lease: { leaseId: lease.leaseId, generation: lease.generation, status: lease.status } };
         },
     }));
-    verb("/users/:uid/activation-lease/fail", parseFail, (req, input) => journal({
-        req,
-        what: "fail user activation lease",
-        why: "the activation migration failed",
-        target: { uid: input.uid, gatewayId: input.targetGatewayId },
-        preActionStatus: { leaseId: input.leaseId, generation: input.generation },
-        mutation: { kind: "fail-activation-lease", operationId: input.operationId },
-        dryRunRefusal: async () => {
-            await failActivationLease(lifecycle, input, "plan");
-            return null;
-        },
-        action: async () => {
-            await failActivationLease(lifecycle, input);
-            return { uid: input.uid, leaseId: input.leaseId, generation: input.generation, status: "failed" };
-        },
-    }));
+    verb("/users/:uid/activation-lease/fail", parseFail, async (req, input) => {
+        await assertLeaseOperationId(deps.store, { ...input, gatewayId: input.targetGatewayId });
+        return journal({
+            req,
+            what: "fail user activation lease",
+            why: "the activation migration failed",
+            target: { uid: input.uid, gatewayId: input.targetGatewayId },
+            preActionStatus: { leaseId: input.leaseId, generation: input.generation },
+            mutation: { kind: "fail-activation-lease", operationId: input.operationId },
+            dryRunRefusal: async () => {
+                await failActivationLease(lifecycle, input, "plan");
+                return null;
+            },
+            action: async () => {
+                await failActivationLease(lifecycle, input);
+                return { uid: input.uid, leaseId: input.leaseId, generation: input.generation, status: "failed" };
+            },
+        });
+    });
     verb("/users/:uid/activation-lease/sizing-transition", parseSizingTransition, (req, input) => journal({
         req,
         what: "request user sizing transition",

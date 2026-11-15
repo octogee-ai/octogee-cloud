@@ -4,6 +4,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createDocumentFixtureStore, FIXTURE_SIZING_PROFILES } from "@octogee/core-testing/journal-store";
 import { createAdminFleetMutationRunner, respondToAdminFleetMutationError } from "./admin-fleet-router.js";
 import { addAdminPlacementIsolatedRoutes, type AdminIsolatedCapabilities } from "./admin-placement-isolated-router.js";
+import {
+  advanceActivationLease,
+  completeActivationLease,
+  failActivationLease,
+  unauditedLifecycleMutations,
+  type IsolatedLifecycleDeps,
+} from "./isolated-gateway-lifecycle/index.js";
+import { assertClientOwnsPlacementAutomation } from "./placement-automation-owner.js";
+import { accountSizingKeyReader } from "./sizing-key.js";
 
 type Data = Record<string, unknown>;
 
@@ -14,6 +23,9 @@ const RETIREMENT = `placement-retire-${OWNER}-${TARGET}-g1`;
 const CLIENT_OWNS = { placementAutomationOwner: "client", placementAutomationYieldedAt: 1_000 };
 
 let docs = new Map<string, Data>();
+const accounts = {
+  get: async (uid: string) => ({ uid, username: "alice", email: null, displayName: null, lastActive: null, planInputs: {}, usage: {}, mattermostUsername: null }) as never,
+};
 const warn = vi.fn();
 const capabilities: AdminIsolatedCapabilities = {
   namespace: "octogee-test",
@@ -32,7 +44,7 @@ function app() {
   addAdminPlacementIsolatedRoutes(server, {
     store,
     journal: createAdminFleetMutationRunner(store),
-    accounts: { get: async (uid) => ({ uid, username: "alice", email: null, displayName: null, lastActive: null, planInputs: {}, usage: {}, mattermostUsername: null }) as never },
+    accounts,
     capabilities,
     log: vi.fn(),
     warn,
@@ -73,6 +85,10 @@ function seed(rows: Record<string, Data>, owner: Data | null = CLIENT_OWNS): voi
     ...(owner ? { "config/orchestrator": { ...owner, sizingProfiles: { ...FIXTURE_SIZING_PROFILES, default: FIXTURE_SIZING_PROFILES.hobby } } } : {}),
     ...rows,
   }));
+}
+
+function migration(input: Data): Data {
+  return { kind: "migrate-user", status: "running", createdBy: "test", createdAt: 1, startedAt: 2, completedAt: null, steps: [], inputUid: input.uid, input };
 }
 
 function storedLease(): Data {
@@ -164,7 +180,7 @@ describe("POST /users/:uid/activation-lease/advance", () => {
   it.each([
     ["provisioning", "activating", "activationOperationId", ACTIVATION],
     ["active", "returning", "returnOperationId", `builder-return-${TARGET}-g1`],
-  ])("records the canonical operation id when advancing %s to %s", async (fromStatus, toStatus, field, operationId) => {
+  ])("derives the canonical operation id when advancing %s to %s without one", async (fromStatus, toStatus, field, operationId) => {
     seed({ [`users/${OWNER}`]: user(TARGET, lease({ status: fromStatus, activationOperationId: undefined })) });
 
     await advance({ leaseId: "lease-one", generation: 1, fromStatus, toStatus }).expect(200);
@@ -176,10 +192,38 @@ describe("POST /users/:uid/activation-lease/advance", () => {
     [{ ...advanceBody, leaseId: "" }, "leaseId is required"],
     [{ ...advanceBody, generation: 0 }, "generation must be a positive integer"],
     [{ ...advanceBody, toStatus: "returning" }, "fromStatus and toStatus must be"],
-    [{ ...advanceBody, fromStatus: "provisioning", toStatus: "activating", operationId: "chosen-by-client" }, "operationId is derived from the lease; omit it"],
+    [{ ...advanceBody, fromStatus: "provisioning", toStatus: "activating", operationId: "" }, "operationId must be a non-empty string"],
   ])("rejects a malformed request %#", async (body, error) => {
     const res = await advance(body).expect(400);
     expect(res.body.error).toContain(error);
+  });
+
+  it.each([
+    ["an id that names no operation", "chosen-by-client"],
+    ["the canonical id of another generation", `builder-activate-${TARGET}-g2`],
+    ["the canonical id of another gateway", "builder-activate-other-gateway-g1"],
+    ["another user's operation", "migration-bob"],
+    ["the user's operation on another gateway", "migration-elsewhere"],
+  ])("answers 400 and journals nothing for %s", async (_name, operationId) => {
+    seed({
+      [`users/${OWNER}`]: user("shared-blue", lease({ status: "provisioning", activationOperationId: undefined })),
+      "glmOperations/migration-bob": migration({ uid: "uid-bob", fromGatewayId: "shared-blue", toGatewayId: TARGET }),
+      "glmOperations/migration-elsewhere": migration({ uid: OWNER, fromGatewayId: "shared-blue", toGatewayId: "shared-green" }),
+    });
+
+    const res = await advance({ leaseId: "lease-one", generation: 1, fromStatus: "provisioning", toStatus: "activating", operationId }).expect(400);
+
+    expect(res.body.error).toContain(`operationId ${operationId} is not an operation of ${OWNER} on ${TARGET}`);
+    expect(storedLease().status).toBe("provisioning");
+    expect(audits()).toEqual([]);
+  });
+
+  it("answers 400 for a given operation id when the lease has no target gateway", async () => {
+    seed({ [`users/${OWNER}`]: user("shared-blue", lease({ status: "provisioning", targetGatewayId: null, activationOperationId: undefined })) });
+
+    const res = await advance({ leaseId: "lease-one", generation: 1, fromStatus: "provisioning", toStatus: "activating", operationId: ACTIVATION }).expect(400);
+
+    expect(res.body.error).toContain("needs the lease's target gateway");
   });
 });
 
@@ -220,6 +264,14 @@ describe("POST /users/:uid/activation-lease/fail", () => {
     seed({ [`users/${OWNER}`]: user(TARGET, lease({ status: "active" })) });
     await fail(failure).expect(409).expect((res) => expect(res.body.code).toBe("precondition-failed"));
     expect(storedLease().status).toBe("active");
+  });
+
+  it("answers 400 and journals nothing for an operation id that is not the lease's", async () => {
+    const res = await fail({ ...failure, operationId: `builder-activate-${TARGET}-g2` }).expect(400);
+
+    expect(res.body.error).toContain(`is not an operation of ${OWNER} on ${TARGET} generation 1`);
+    expect(storedLease().status).toBe("activating");
+    expect(audits()).toEqual([]);
   });
 });
 
@@ -507,5 +559,83 @@ describe("POST /isolated-gateways/:id/recover-unreachable", () => {
     await recover().expect(409).expect((res) => expect(res.body.code).toBe("placement-owner"));
     expect(docs.get(`gateways/${TARGET}`)?.desiredStatus).toBe("running");
     expect(diagnostics).not.toHaveBeenCalled();
+  });
+});
+
+describe("the verbs express every in-process lease call", () => {
+  const RETURN = `builder-return-${TARGET}-g1`;
+  const RECOVERY = `builder-recover-${TARGET}-g1`;
+  type Verb = "advance" | "complete" | "fail";
+  interface CallSite { site: string; current: string; lease: Data; operations?: Record<string, Data>; verb: Verb; body: Data }
+
+  const provisioning = lease({ status: "provisioning", activationOperationId: undefined });
+  const active = lease({ status: "active", activeAt: 30_000 });
+  const returning = lease({ status: "returning", activeAt: 30_000, returnOperationId: RETURN });
+  const identity = { leaseId: "lease-one", generation: 1 };
+  const adoptedMove = { "glmOperations/move-in-7": migration({ uid: OWNER, fromGatewayId: "shared-blue", toGatewayId: TARGET }) };
+  const adoptedReturn = { "glmOperations/return-9": migration({ uid: OWNER, fromGatewayId: TARGET, toGatewayId: "shared-blue" }) };
+
+  const sites: CallSite[] = [
+    { site: "adopted move-in migration (policy :710)", current: "shared-blue", lease: provisioning, operations: adoptedMove, verb: "advance",
+      body: { ...identity, fromStatus: "provisioning", toStatus: "activating", operationId: "move-in-7" } },
+    { site: "enqueued move-in migration (policy :729)", current: "shared-blue", lease: provisioning, verb: "advance",
+      body: { ...identity, fromStatus: "provisioning", toStatus: "activating", operationId: ACTIVATION } },
+    { site: "already on the target while provisioning (policy :766)", current: TARGET, lease: provisioning, verb: "advance",
+      body: { ...identity, fromStatus: "provisioning", toStatus: "active" } },
+    { site: "activation cutover observed (policy :851)", current: TARGET, lease: lease(), verb: "advance",
+      body: { ...identity, fromStatus: "activating", toStatus: "active" } },
+    { site: "adopted return migration (policy :932)", current: TARGET, lease: active, operations: adoptedReturn, verb: "advance",
+      body: { ...identity, fromStatus: "active", toStatus: "returning", operationId: "return-9" } },
+    { site: "enqueued return migration (policy :963)", current: TARGET, lease: active, verb: "advance",
+      body: { ...identity, fromStatus: "active", toStatus: "returning", operationId: RETURN } },
+    { site: "completed return observed (policy :1025)", current: "shared-blue", lease: active, verb: "advance",
+      body: { ...identity, fromStatus: "active", toStatus: "returning", operationId: RETURN } },
+    { site: "unreachable target recovered (policy :517)", current: "shared-blue", lease: provisioning, verb: "fail",
+      body: { ...identity, targetGatewayId: TARGET, operationId: RECOVERY, message: "disposable gateway did not become reachable before timeout" } },
+    { site: "authorization ended (policy :624)", current: "shared-blue", lease: provisioning, verb: "fail",
+      body: { ...identity, targetGatewayId: TARGET, operationId: `builder-authorization-ended-${TARGET}`, message: "User authorization ended before activation cutover" } },
+    { site: "target retired before cutover (policy :776)", current: "shared-blue", lease: provisioning, verb: "fail",
+      body: { ...identity, targetGatewayId: TARGET, operationId: RETIREMENT, message: "disposable gateway retired before activation cutover completed" } },
+    { site: "activation migration failed (policy :896)", current: "shared-blue", lease: lease(), verb: "fail",
+      body: { ...identity, targetGatewayId: TARGET, operationId: ACTIVATION, message: "activation migration failed" } },
+    { site: "target already retired (policy :1181)", current: "shared-blue", lease: returning, verb: "complete",
+      body: { ...identity, targetGatewayId: TARGET } },
+    { site: "returned computer stays parked (policy :1190)", current: "shared-blue", lease: returning, verb: "complete",
+      body: { ...identity, targetGatewayId: TARGET, parked: true } },
+    { site: "unreachable target recovered on return (policy :1206)", current: "shared-blue", lease: returning, verb: "complete",
+      body: { ...identity, targetGatewayId: TARGET } },
+    { site: "target retired after return (policy :1252)", current: "shared-blue", lease: returning, verb: "complete",
+      body: { ...identity, targetGatewayId: TARGET } },
+  ];
+
+  function inProcess(verb: Verb, deps: IsolatedLifecycleDeps, body: Data): Promise<void> {
+    const call = { uid: OWNER, ...body } as never;
+    if (verb === "advance") return advanceActivationLease(deps, call);
+    if (verb === "fail") return failActivationLease(deps, call);
+    return completeActivationLease(deps, call);
+  }
+
+  function stored(rows: Map<string, Data>): [string, Data][] {
+    return [...rows.entries()].filter(([path]) => !path.startsWith("glmOperations/audit-")).sort(([a], [b]) => a.localeCompare(b));
+  }
+
+  it.each(sites)("$site stores what the in-process call stores", async ({ current, lease: seeded, operations, verb, body }) => {
+    seed({ [`users/${OWNER}`]: user(current, seeded), ...operations });
+    const twin = new Map(structuredClone([...docs.entries()]));
+    const twinStore = createDocumentFixtureStore(twin, { serializeTransactions: true });
+    const before = structuredClone(stored(twin));
+
+    await request(app()).post(`/users/${OWNER}/activation-lease/${verb}`).send(body).expect(200);
+    await inProcess(verb, {
+      store: twinStore,
+      readSizingKey: accountSizingKeyReader(accounts),
+      requireOwner: async (transaction) => { await assertClientOwnsPlacementAutomation(transaction); },
+      mutations: unauditedLifecycleMutations,
+      now: () => 50_000,
+      log: vi.fn(),
+    }, body);
+
+    expect(stored(docs)).toEqual(stored(twin));
+    expect(stored(docs)).not.toEqual(before);
   });
 });

@@ -429,7 +429,7 @@ export async function retireOwnedIsolatedGateway(
 ): Promise<OwnedGatewayRetirement> {
   const operationId = placementRetireOperationId(request.uid, request.gatewayId, request.generation);
   const blocked = (reason: string): OwnedGatewayRetirement => {
-    input.log(`[placement-policy] retirement blocked for ${request.gatewayId}: ${reason}`);
+    if (mode === "apply") input.log(`[placement-policy] retirement blocked for ${request.gatewayId}: ${reason}`);
     return { retired: false, operationId, reason };
   };
   await checkPlacementOwner(input);

@@ -210,6 +210,16 @@ journal entry's id and status, not the first answer. A client treats that
 result.
 
 The lease routes take `leaseId` and `generation`, the lease the caller read.
+`advance` and `fail` also take an optional `operationId`, the operation the
+step belongs to. It must be one of the canonical ids for the lease's gateway
+and generation (`builder-activate-<gateway>-g<generation>`,
+`builder-return-<gateway>-g<generation>`,
+`builder-recover-<gateway>-g<generation>` or
+`placement-retire-<user>-<gateway>-g<generation>`),
+`builder-authorization-ended-<gateway>`, or the id of a journal operation of
+that user on that gateway, such as a migration the caller adopted. Any other
+id answers `400` and writes nothing. The gateway is the lease's target for
+`advance` and `targetGatewayId` for `fail`.
 
 ### `POST /users/<id>/activation-lease/advance`
 
@@ -217,12 +227,14 @@ The lease routes take `leaseId` and `generation`, the lease the caller read.
 { "leaseId": "lease-1", "generation": 3, "fromStatus": "activating", "toStatus": "active" }
 ```
 
-Moves the lease one step: `provisioning` to `activating`, `activating` to
-`active`, or `active` to `returning`. Reaching `activating` or `returning`
-records the canonical activation or return operation id for the lease's
-gateway and generation, `builder-activate-<gateway>-g<generation>` or
-`builder-return-<gateway>-g<generation>`; the body carries no `operationId`
-and one sent answers `400`. Reaching `active` records the wake duration once. Answers `{uid, leaseId, generation, status}`; a
+Moves the lease one step: `provisioning` to `activating`, `provisioning` to
+`active` (the user already runs on the target), `activating` to `active`, or
+`active` to `returning`. Reaching `activating` or `returning` records the
+given `operationId` as the lease's activation or return operation; without
+one, it records the canonical id for the lease's gateway and generation,
+`builder-activate-<gateway>-g<generation>` or
+`builder-return-<gateway>-g<generation>`. Reaching `active` records the wake
+duration once. Answers `{uid, leaseId, generation, status}`; a
 lease already at `toStatus` for the same operation answers the same.
 `precondition-failed` means the lease is another lease, another generation,
 or at neither status.
@@ -243,9 +255,11 @@ the lease is not that returning lease, or the user has not returned.
 
 ### `POST /users/<id>/activation-lease/fail`
 
-`{leaseId, generation, targetGatewayId, message}`. Marks the lease `failed`
-after its activation operation failed, recording `message` against the
-canonical activation operation `builder-activate-<gateway>-g<generation>`.
+`{leaseId, generation, targetGatewayId, message, operationId?}`. Marks a
+`provisioning` or `activating` lease `failed`, recording `message` against
+`operationId`: the recovery, retirement, authorization-ended or activation
+operation that ended it. Without one, it records the canonical activation
+operation `builder-activate-<gateway>-g<generation>`.
 Answers `{uid, leaseId, generation, status: "failed"}`, also when the lease is
 already failed.
 
