@@ -12,7 +12,7 @@ import {
   normalizeAnthropicUsage,
   usageWindowStartMs,
   windowOwnerKey,
-} from "../usage.js";
+} from "./usage.js";
 
 function ledger(ownerUid: string) {
   return { collection: "balances", ownerUid };

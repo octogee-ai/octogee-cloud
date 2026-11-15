@@ -4,8 +4,8 @@ import { SecretNotFoundError } from "@octogee/core/secret-store";
 import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
 import { noUserAccounts, userAccountFromData, type UserAccountReader } from "@octogee/core/user-account";
 
-import { createModelBrokerTokenStore } from "../tokens.js";
-import { InMemoryModelBrokerUsageStore } from "../usage.js";
+import { createModelBrokerTokenStore } from "@octogee/core/model-broker/tokens";
+import { InMemoryModelBrokerUsageStore } from "@octogee/core/model-broker/usage";
 import { createPlatformLlmBrokerApp, type PlatformLlmBrokerSources } from "../platform-app.js";
 
 const NOW = 1_800_000_000_000;

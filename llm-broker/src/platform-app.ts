@@ -8,13 +8,13 @@ import {
   createCachedOwnerModelBrokerGrantResolver,
   envDefaultModelBrokerLimits,
   parseOptionalLimitNumber,
-} from "./limits.js";
+} from "@octogee/core/model-broker/limits";
 import { createModelBrokerOwnerAccessResolver } from "./owner-access.js";
 import { createModelBrokerProviderKeyResolver } from "./provider-keys.js";
-import { operatorRailRegistry } from "./rails.js";
-import { createModelBrokerTokenStore } from "./tokens.js";
-import type { ModelBrokerUsageStore } from "./usage.js";
-import { createCachedHouseModelResolver } from "./model-config.js";
+import { operatorRailRegistry } from "@octogee/core/model-broker/rails";
+import { createModelBrokerTokenStore } from "@octogee/core/model-broker/tokens";
+import type { ModelBrokerUsageStore } from "@octogee/core/model-broker/usage";
+import { createCachedHouseModelResolver } from "@octogee/core/model-broker/model-config";
 import { createVertexAccessTokenResolver, vertexProviderConfigFromEnv } from "./vertex.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;

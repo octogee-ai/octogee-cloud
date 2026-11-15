@@ -31,12 +31,12 @@ import {
   createModelBrokerTokenStore,
   type ModelBrokerProvider,
   type ModelBrokerTokenPurpose,
-} from "@octogee/llm-broker/tokens";
+} from "@octogee/core/model-broker/tokens";
 import {
   envDefaultModelBrokerLimits,
   resolveOwnerModelBrokerGrant,
-} from "@octogee/llm-broker/limits";
-import { operatorRailRegistry, type ModelBrokerRailRegistry } from "@octogee/llm-broker/rails";
+} from "@octogee/core/model-broker/limits";
+import { operatorRailRegistry, type ModelBrokerRailRegistry } from "@octogee/core/model-broker/rails";
 import {
   agentModelTokenIssueKey,
   createAgentModelTokenIssueCoordinator,
@@ -54,7 +54,7 @@ import {
   type OwnerWorkspaceTurnVerifier,
 } from "../lib/openclaw-owner-turn.js";
 import { NO_BROKER_RECORDS, type BrokerRecords } from "../lib/broker-records.js";
-import type { ModelBrokerUsageLedger } from "@octogee/llm-broker/usage";
+import type { ModelBrokerUsageLedger } from "@octogee/core/model-broker/usage";
 import type { FlowGatewayReader } from "../middleware/tenant-enforcement.js";
 import { logger } from "@octogee/core/http/logging";
 

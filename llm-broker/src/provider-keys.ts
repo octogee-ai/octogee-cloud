@@ -4,7 +4,7 @@ import { readGatewayAuthorizationInStore, type GatewayAuthorization } from "@oct
 import type {
   ModelBrokerProvider,
   ModelBrokerTokenRecord,
-} from "./tokens.js";
+} from "@octogee/core/model-broker/tokens";
 import { readSecret as defaultReadSecret } from "@octogee/core/secret-store";
 import { userAssignedToGateway } from "@octogee/core/assigned-user";
 

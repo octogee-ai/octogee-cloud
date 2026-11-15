@@ -1,9 +1,9 @@
-import type { UserAccountReader } from "@octogee/core/user-account";
+import type { UserAccountReader } from "../user-account.js";
 import {
   readGatewayAuthorizationInStore,
   type GatewayAuthorization,
   type GatewayRootReader,
-} from "@octogee/core/gateway-live-release";
+} from "../gateway-live-release.js";
 import {
   normalizeModelBrokerTokenLimits,
   normalizeModelBrokerTokenPolicy,

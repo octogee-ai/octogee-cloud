@@ -2,10 +2,10 @@ import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
 
 import { createLlmBrokerApp, type LlmBrokerAppDeps } from "../app.js";
-import { InMemoryModelBrokerTokenStore } from "../tokens.js";
-import { InMemoryModelBrokerUsageStore } from "../usage.js";
+import { InMemoryModelBrokerTokenStore } from "@octogee/core/model-broker/tokens";
+import { InMemoryModelBrokerUsageStore } from "@octogee/core/model-broker/usage";
 import { parseVertexModelPrices } from "../vertex.js";
-import { operatorRailRegistry } from "../rails.js";
+import { operatorRailRegistry } from "@octogee/core/model-broker/rails";
 
 const PRICES = parseVertexModelPrices({
   "claude-haiku-4-5@20251001": {

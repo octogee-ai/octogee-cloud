@@ -2,9 +2,9 @@ import request from "supertest";
 import { describe, expect, it, vi, type Mock } from "vitest";
 
 import { createLlmBrokerApp } from "../app.js";
-import { operatorRailRegistry } from "../rails.js";
-import { InMemoryModelBrokerTokenStore } from "../tokens.js";
-import { InMemoryModelBrokerUsageStore } from "../usage.js";
+import { operatorRailRegistry } from "@octogee/core/model-broker/rails";
+import { InMemoryModelBrokerTokenStore } from "@octogee/core/model-broker/tokens";
+import { InMemoryModelBrokerUsageStore } from "@octogee/core/model-broker/usage";
 
 const PLATFORM_KEY = "sk-ant-platform-upstream-failure";
 const PROMPT = "summarize the quarterly plan for the team";

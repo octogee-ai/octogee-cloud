@@ -9,7 +9,7 @@ import { platformStateUserAccountReader } from "@octogee/core/platform-state-use
 import { readSecret } from "@octogee/core/secret-store";
 import { createServiceLogger } from "@octogee/shared/server/service-logger";
 
-import { createLedgerModelBrokerUsageStore } from "./usage.js";
+import { createLedgerModelBrokerUsageStore } from "@octogee/core/model-broker/usage";
 import { createPlatformLlmBrokerApp } from "./platform-app.js";
 
 const logger = createServiceLogger("llm-broker");

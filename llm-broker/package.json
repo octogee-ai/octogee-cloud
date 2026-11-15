@@ -13,22 +13,6 @@
       "types": "./dist/app.d.ts",
       "default": "./dist/app.js"
     },
-    "./budget": {
-      "types": "./dist/budget.d.ts",
-      "default": "./dist/budget.js"
-    },
-    "./gate": {
-      "types": "./dist/gate.d.ts",
-      "default": "./dist/gate.js"
-    },
-    "./limits": {
-      "types": "./dist/limits.d.ts",
-      "default": "./dist/limits.js"
-    },
-    "./model-config": {
-      "types": "./dist/model-config.d.ts",
-      "default": "./dist/model-config.js"
-    },
     "./owner-access": {
       "types": "./dist/owner-access.d.ts",
       "default": "./dist/owner-access.js"
@@ -37,29 +21,9 @@
       "types": "./dist/provider-keys.d.ts",
       "default": "./dist/provider-keys.js"
     },
-    "./rails": {
-      "types": "./dist/rails.d.ts",
-      "default": "./dist/rails.js"
-    },
-    "./tokens": {
-      "types": "./dist/tokens.d.ts",
-      "default": "./dist/tokens.js"
-    },
-    "./usage": {
-      "types": "./dist/usage.d.ts",
-      "default": "./dist/usage.js"
-    },
-    "./usage-allowance": {
-      "types": "./dist/usage-allowance.d.ts",
-      "default": "./dist/usage-allowance.js"
-    },
     "./vertex": {
       "types": "./dist/vertex.d.ts",
       "default": "./dist/vertex.js"
-    },
-    "./web-research-error": {
-      "types": "./dist/web-research-error.d.ts",
-      "default": "./dist/web-research-error.js"
     }
   },
   "scripts": {

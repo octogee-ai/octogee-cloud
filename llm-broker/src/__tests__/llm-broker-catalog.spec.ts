@@ -5,8 +5,8 @@ import { createLlmBrokerApp } from "../app.js";
 import {
   InMemoryModelBrokerTokenStore,
   type ModelBrokerProvider,
-} from "../tokens.js";
-import { operatorRailRegistry } from "../rails.js";
+} from "@octogee/core/model-broker/tokens";
+import { operatorRailRegistry } from "@octogee/core/model-broker/rails";
 
 async function credential(store: InMemoryModelBrokerTokenStore, provider: ModelBrokerProvider, owner = "alice", purpose: "model" | "embeddings" = "model") {
   return store.issueToken({

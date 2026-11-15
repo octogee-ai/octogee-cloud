@@ -7,7 +7,7 @@ import {
   createAnthropicProviderKeyResolver,
   createModelBrokerProviderKeyResolver,
 } from "../provider-keys.js";
-import type { ModelBrokerTokenRecord } from "../tokens.js";
+import type { ModelBrokerTokenRecord } from "@octogee/core/model-broker/tokens";
 
 const record: ModelBrokerTokenRecord = {
   tokenHash: "hash",

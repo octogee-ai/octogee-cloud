@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { MalformedRecordError } from "@octogee/core/platform-state";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { MalformedRecordError } from "../platform-state/index.js";
+import { createDocumentFixtureStore } from "../testing/journal-store.js";
 
 import {
   createModelBrokerTokenStore,
   hashModelBrokerToken,
-} from "../tokens.js";
+} from "./tokens.js";
 
 const TOKEN = "ogk_jack_stored";
 

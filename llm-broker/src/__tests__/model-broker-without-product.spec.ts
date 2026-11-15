@@ -1,11 +1,10 @@
 import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
 
-import { createLlmBrokerApp } from "@octogee/llm-broker/app";
-import { operatorRailRegistry } from "@octogee/llm-broker/rails";
-import { InMemoryModelBrokerTokenStore } from "@octogee/llm-broker/tokens";
-import { InMemoryModelBrokerUsageStore } from "@octogee/llm-broker/usage";
-import { createWebResearchService } from "../lib/web-research-service.js";
+import { operatorRailRegistry } from "@octogee/core/model-broker/rails";
+import { InMemoryModelBrokerTokenStore } from "@octogee/core/model-broker/tokens";
+import { InMemoryModelBrokerUsageStore } from "@octogee/core/model-broker/usage";
+import { createLlmBrokerApp } from "../app.js";
 
 const NOW = 12_000;
 
@@ -43,28 +42,6 @@ describe("model broker with no product rails", () => {
     const gate = log.mock.calls.find(([message]) => message === "llm-broker gate")?.[1] as Record<string, unknown>;
     expect(gate).toMatchObject({ decision: "forward", rail: "operator" });
     expect(Object.keys(gate).filter((key) => /free|credit/i.test(key))).toEqual([]);
-  });
-
-  it("charges operator-rail web research at provider cost", async () => {
-    const usageStore = new InMemoryModelBrokerUsageStore();
-    const service = createWebResearchService({
-      rails: operatorRailRegistry(),
-      usageStore,
-      resolveGrant: async () => ({
-        limits: { spendWindowUsd: 1, spendWeekUsd: null, requestsPerMinute: null },
-        policy: { freeTier: false, houseFallback: true },
-        rail: "operator",
-        fundedBudget: null,
-      }),
-      braveSearch: async () => ({ provider: "brave" as const, requestId: "br-1", results: [] }),
-      now: () => NOW,
-      braveCostPerRequestUsd: 0.01,
-      tavilyCostPerCreditUsd: 0.008,
-    });
-
-    await service.search({ gatewayId: "jack", ownerUid: "uid-jack", agentId: "a", requestId: "r", provider: "brave", query: "q" });
-
-    expect(usageStore.events[0]).toMatchObject({ costUsd: 0.01, chargeUsd: 0.01 });
   });
 
   it("keeps no prepaid balance on the usage store", () => {

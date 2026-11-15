@@ -13,7 +13,7 @@ import {
   windowOwnerKey,
 } from "@octogee/shared/types/model-broker-usage";
 
-import type { ModelBrokerUsageLedger as PlatformUsageLedger } from "@octogee/core/model-broker-usage-ledger";
+import type { ModelBrokerUsageLedger as PlatformUsageLedger } from "../model-broker-usage-ledger.js";
 
 import {
   parseFundedBudgetLedger,

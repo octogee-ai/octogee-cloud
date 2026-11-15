@@ -80,7 +80,7 @@ import {
   createCachedHouseModelResolver,
   type UserAgentDefaultResolver,
   type HouseModelResolver,
-} from "@octogee/llm-broker/model-config";
+} from "@octogee/core/model-broker/model-config";
 import type {
   FleetBrokerAgentAnchor,
   FleetBrokerAuxiliaryAnchor,
@@ -135,12 +135,12 @@ import {
   podBelongsToGateway,
   type GatewayMutableConfig,
 } from "@octogee/core/gateway-live-release";
-import { createCachedOwnerModelBrokerGrantResolver } from "@octogee/llm-broker/limits";
-import { operatorRailRegistry, type ModelBrokerRailRegistry } from "@octogee/llm-broker/rails";
-import type { FundedBudgetInterruptionHandler } from "@octogee/llm-broker/budget";
+import { createCachedOwnerModelBrokerGrantResolver } from "@octogee/core/model-broker/limits";
+import { operatorRailRegistry, type ModelBrokerRailRegistry } from "@octogee/core/model-broker/rails";
+import type { FundedBudgetInterruptionHandler } from "@octogee/core/model-broker/budget";
 import { NO_BROKER_RECORDS, type BrokerRecords } from "../lib/broker-records.js";
 import { createWebResearchService, type WebResearchExtractInput, type WebResearchSearchInput } from "../lib/web-research-service.js";
-import { WebResearchError } from "@octogee/llm-broker/web-research-error";
+import { WebResearchError } from "@octogee/core/model-broker/web-research-error";
 import { createBraveSearchClient, createTavilyClient } from "../lib/web-provider-clients.js";
 import { isPublicIp } from "../lib/link-unfurl.js";
 import { recordRevisionSystemConfigStatus } from "../lib/revision-system-config-status.js";

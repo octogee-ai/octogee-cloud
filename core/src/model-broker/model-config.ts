@@ -1,4 +1,4 @@
-import type { PlatformConfigRepository } from "@octogee/core/platform-state";
+import type { PlatformConfigRepository } from "../platform-state/index.js";
 import {
   DEFAULT_HOUSE_MODEL_REF,
   userAgentModelDefaultFromDoc,

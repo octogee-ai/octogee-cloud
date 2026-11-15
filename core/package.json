@@ -901,6 +901,42 @@
     "./http-candidates/channels/channel-agent-readiness": {
       "types": "./dist/http-candidates/channels/channel-agent-readiness.d.ts",
       "default": "./dist/http-candidates/channels/channel-agent-readiness.js"
+    },
+    "./model-broker/budget": {
+      "types": "./dist/model-broker/budget.d.ts",
+      "default": "./dist/model-broker/budget.js"
+    },
+    "./model-broker/gate": {
+      "types": "./dist/model-broker/gate.d.ts",
+      "default": "./dist/model-broker/gate.js"
+    },
+    "./model-broker/limits": {
+      "types": "./dist/model-broker/limits.d.ts",
+      "default": "./dist/model-broker/limits.js"
+    },
+    "./model-broker/model-config": {
+      "types": "./dist/model-broker/model-config.d.ts",
+      "default": "./dist/model-broker/model-config.js"
+    },
+    "./model-broker/rails": {
+      "types": "./dist/model-broker/rails.d.ts",
+      "default": "./dist/model-broker/rails.js"
+    },
+    "./model-broker/tokens": {
+      "types": "./dist/model-broker/tokens.d.ts",
+      "default": "./dist/model-broker/tokens.js"
+    },
+    "./model-broker/usage-allowance": {
+      "types": "./dist/model-broker/usage-allowance.d.ts",
+      "default": "./dist/model-broker/usage-allowance.js"
+    },
+    "./model-broker/usage": {
+      "types": "./dist/model-broker/usage.d.ts",
+      "default": "./dist/model-broker/usage.js"
+    },
+    "./model-broker/web-research-error": {
+      "types": "./dist/model-broker/web-research-error.d.ts",
+      "default": "./dist/model-broker/web-research-error.js"
     }
   },
   "typesVersions": {
@@ -1492,6 +1528,33 @@
       ],
       "http-candidates/channels/channel-agent-readiness": [
         "dist/http-candidates/channels/channel-agent-readiness.d.ts"
+      ],
+      "model-broker/budget": [
+        "dist/model-broker/budget.d.ts"
+      ],
+      "model-broker/gate": [
+        "dist/model-broker/gate.d.ts"
+      ],
+      "model-broker/limits": [
+        "dist/model-broker/limits.d.ts"
+      ],
+      "model-broker/model-config": [
+        "dist/model-broker/model-config.d.ts"
+      ],
+      "model-broker/rails": [
+        "dist/model-broker/rails.d.ts"
+      ],
+      "model-broker/tokens": [
+        "dist/model-broker/tokens.d.ts"
+      ],
+      "model-broker/usage-allowance": [
+        "dist/model-broker/usage-allowance.d.ts"
+      ],
+      "model-broker/usage": [
+        "dist/model-broker/usage.d.ts"
+      ],
+      "model-broker/web-research-error": [
+        "dist/model-broker/web-research-error.d.ts"
       ]
     }
   },

@@ -5,8 +5,8 @@ import {
   parseFundedBudgetLedger,
   type FundedBudget,
   type FundedBudgetLedger,
-} from "../budget.js";
-import { InMemoryModelBrokerUsageStore } from "../usage.js";
+} from "./budget.js";
+import { InMemoryModelBrokerUsageStore } from "./usage.js";
 
 const budget: FundedBudget = {
   ownerUid: "uid-a",
