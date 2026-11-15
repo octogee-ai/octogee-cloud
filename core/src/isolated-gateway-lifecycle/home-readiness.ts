@@ -1,5 +1,6 @@
 import type { GatewaySizingProfile } from "@octogee/shared/types/sizing-profile";
 import type { PlatformUserRecord } from "../platform-state/users.js";
+import type { HomePreparedFor } from "./home.js";
 import { IsolatedGatewayFenceError, type AllocateIsolatedGatewayInput } from "./inputs.js";
 
 export interface HomeReadinessInput {
@@ -9,12 +10,6 @@ export interface HomeReadinessInput {
 }
 
 export type HomeReadinessFence = (input: HomeReadinessInput) => void;
-
-export interface HomePreparedFor {
-  leaseId: string;
-  generation: number;
-  sizingKey: string;
-}
 
 export function sizingProfileNeedsVmHome(profile: GatewaySizingProfile | null): boolean {
   return profile?.isolation === "isolated" && profile.computer.runtime === "gce-vm";

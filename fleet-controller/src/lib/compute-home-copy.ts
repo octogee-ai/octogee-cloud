@@ -1,30 +1,12 @@
 import type { ComputeRequest } from "./compute-vm.js";
 import { homeCopyStartupScript } from "./home-copy-worker.js";
-
-export interface CopyHomeDisk {
-  projectId: string; zone: string; name: string; id: string; sizeGb: number;
-  source: string; diskType: "pd-balanced" | "pd-ssd";
-}
-export interface HomeCopyInput {
-  operationId: string;
-  ownerUid: string;
-  source: CopyHomeDisk;
-  sourceLayout: "flat" | "portable";
-  targetZone: string;
-  desiredGiB: number;
-  subnetwork: string;
-}
-export type HomeCopyProgress = { status: "pending" } | { status: "copying"; usedBytes: number } |
-  { status: "ready"; usedBytes: number; filesystem: "btrfs"; proof: Record<string, string> };
-export class HomeCopyFailure extends Error {}
-
-export function homeCopyCapacity(input: { desiredGiB: number; sourceGiB: number; usedBytes: number }): number {
-  if (![10, 50, 100].includes(input.desiredGiB) || !Number.isSafeInteger(input.sourceGiB) || input.sourceGiB < 10 || !Number.isSafeInteger(input.usedBytes) || input.usedBytes < 0) throw new Error("invalid home copy capacity");
-  const needed = Math.ceil((input.usedBytes * 1.1 + 2 * 1024 ** 3) / 1024 ** 3);
-  const allocation = needed <= input.desiredGiB ? input.desiredGiB : Math.max(input.sourceGiB, input.desiredGiB);
-  if (needed > allocation) throw new Error("home copy needs more space than the retained allocation; source retained");
-  return allocation;
-}
+import {
+  HomeCopyFailure,
+  homeCopyCapacity,
+  type CopyHomeDisk,
+  type HomeCopyInput,
+  type HomeCopyProgress,
+} from "@octogee/core/isolated-gateway-lifecycle";
 
 export function readHomeCopyProgress(serial: string, operationId: string): HomeCopyProgress {
   let progress: HomeCopyProgress = { status: "pending" };
@@ -53,7 +35,7 @@ interface ComputeResource {
 interface HomeCopyDeps {
   request: ComputeRequest;
   projectId: string;
-  journal: <T>(what: string, input: HomeCopyInput, action: () => Promise<T>) => Promise<T>;
+  journal: <T>(what: string, input: HomeCopyInput, action: () => Promise<T>, resource: string) => Promise<T>;
 }
 class HomeCopyClient {
   constructor(private readonly deps: HomeCopyDeps) {}
@@ -77,7 +59,7 @@ class HomeCopyClient {
     await this.deps.journal(what, input, async () => {
       const result = await this.deps.request({ url, method, ...(body === undefined ? {} : { body }) });
       if (result.status >= 400) throw new Error(`${what}: HTTP ${result.status}`);
-    });
+    }, url);
   }
   validate(input: HomeCopyInput): void {
     if (input.source.projectId !== this.deps.projectId || !/^[a-z][a-z0-9-]{0,62}$/u.test(input.targetZone) || input.targetZone.slice(0, -2) !== input.source.zone.slice(0, -2) || !/^[a-z][a-z0-9-]{0,47}$/u.test(input.operationId) || !/^[a-z][a-z0-9-]{0,62}$/u.test(input.source.zone) || !/^[a-z][a-z0-9-]{0,62}$/u.test(input.source.name) ||
