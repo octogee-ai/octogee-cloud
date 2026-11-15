@@ -257,6 +257,10 @@
       "types": "./dist/fleet-state.d.ts",
       "default": "./dist/fleet-state.js"
     },
+    "./fleet-state-sections": {
+      "types": "./dist/fleet-state-sections.d.ts",
+      "default": "./dist/fleet-state-sections.js"
+    },
     "./shared-gateway-roll-recovery": {
       "types": "./dist/shared-gateway-roll-recovery.d.ts",
       "default": "./dist/shared-gateway-roll-recovery.js"
