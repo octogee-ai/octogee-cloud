@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { USERNAME_MAX_LENGTH, USERNAME_MIN_LENGTH, USERNAME_RE, parseAgentId, } from "@octogee/shared/types/identity";
 import { PROJECT_AGENT_WORKSPACE_PARTS } from "@octogee/shared/types/project";
+import { isSqliteVolatileArtifactPath } from "./agent-store-inventory.js";
 // Mirrors userDefaultAgentId in fleet-http-migration.ts — the agent agent-id convention.
 // Inlined to keep this module node:fs-only (importable into gateway-edge + scripts alike).
 const userDefaultAgentId = (slug) => `octogee-${slug}-coach`;
@@ -359,8 +360,7 @@ function assertNoSymlinkPathPrefix(stateDir, relativePath) {
 // Symlinks inside a portable tree ride the carry as symlinks (rsync -a) and are
 // digested by target, so a user workspace with node_modules/.bin stays
 // portable; only sockets, fifos, and devices are unrepresentable.
-function assertPortableStateTree(absolutePath, relativePath) {
-    const stat = fs.lstatSync(absolutePath);
+function assertPortableStateTree(absolutePath, relativePath, stat = fs.lstatSync(absolutePath)) {
     if (stat.isSymbolicLink())
         return;
     if (!stat.isDirectory() && !stat.isFile()) {
@@ -369,7 +369,24 @@ function assertPortableStateTree(absolutePath, relativePath) {
     if (!stat.isDirectory())
         return;
     for (const entry of fs.readdirSync(absolutePath, { withFileTypes: true })) {
-        assertPortableStateTree(path.join(absolutePath, entry.name), `${relativePath}/${entry.name}`);
+        const childPath = path.join(absolutePath, entry.name);
+        const childStat = lstatUnlessVolatileEntryVanished(childPath, entry.name);
+        if (childStat !== null)
+            assertPortableStateTree(childPath, `${relativePath}/${entry.name}`, childStat);
+    }
+}
+const SQLITE_SIDECAR_SHAPE = /\.sqlite-(?:wal|shm|journal)$/u;
+function isVolatileStateEntry(name) {
+    return name.endsWith(".lock") || SQLITE_SIDECAR_SHAPE.test(name) || isSqliteVolatileArtifactPath(name);
+}
+function lstatUnlessVolatileEntryVanished(absolutePath, name) {
+    try {
+        return fs.lstatSync(absolutePath);
+    }
+    catch (error) {
+        if (error.code === "ENOENT" && isVolatileStateEntry(name))
+            return null;
+        throw error;
     }
 }
 export function assertConfiguredUserPortableStatePlanOnDisk(stateDir, plan) {
