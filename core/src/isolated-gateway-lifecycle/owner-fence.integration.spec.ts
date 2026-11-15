@@ -2,10 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   PlacementOwnerRefusedError,
   assertClientOwnsPlacementAutomation,
-  clientOwnsPlacementAutomation,
-  readPlacementAutomationOwnership,
+  assertFleetControllerOwnsPlacementAutomation,
 } from "../placement-automation-owner.js";
-import type { PlatformStateTransaction } from "../platform-state/store.js";
 import { dsn } from "../platform-state/postgres/__tests__/fixtures/harness.js";
 import { NOW, useUserFixture } from "../platform-state/postgres/__tests__/fixtures/users.js";
 import { advanceActivationLease, type PlacementOwnerFence } from "./index.js";
@@ -16,9 +14,8 @@ const clientCaller: PlacementOwnerFence = async (transaction) => {
   await assertClientOwnsPlacementAutomation(transaction);
 };
 
-const inProcessCaller: PlacementOwnerFence = async (transaction: PlatformStateTransaction) => {
-  const ownership = await readPlacementAutomationOwnership(transaction);
-  if (clientOwnsPlacementAutomation(ownership)) throw new PlacementOwnerRefusedError(ownership);
+const inProcessCaller: PlacementOwnerFence = async (transaction) => {
+  await assertFleetControllerOwnsPlacementAutomation(transaction);
 };
 
 describe.skipIf(!dsn)("PostgreSQL isolated lifecycle: one owner acts at a time", () => {
@@ -66,9 +63,8 @@ describe.skipIf(!dsn)("PostgreSQL isolated lifecycle: one owner acts at a time",
 
   it("refuses the in-process caller once the fleet controller has yielded, and lets the client act", async () => {
     const store = await seed();
-    await store.config.orchestrator.patch({ placementAutomationOwner: "client" });
-    await store.config.orchestrator.patch({ placementAutomationYieldedAt: NOW });
-    await expect(advance(inProcessCaller)).rejects.toBeInstanceOf(PlacementOwnerRefusedError);
+    await store.config.orchestrator.patch({ placementAutomationOwner: "client", placementAutomationYieldedAt: NOW });
+    await expect(advance(inProcessCaller)).rejects.toMatchObject({ constructor: PlacementOwnerRefusedError, refused: "fleet-controller" });
     expect(await leaseStatus()).toBe("activating");
     await advance(clientCaller);
     expect(await leaseStatus()).toBe("active");

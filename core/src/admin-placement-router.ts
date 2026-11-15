@@ -17,6 +17,7 @@ import type { PlatformStateStore, PlatformStateTransaction, Stored } from "./pla
 
 const ISOLATED_ALLOCATION_KIND = "disposable-builder";
 const RETIRE_GATEWAY_KIND = "retire-gateway";
+const LIVE_ACTIVATION_LEASE_STATUSES: ReadonlySet<string> = new Set(["requested", "provisioning", "activating", "active", "returning"]);
 
 export interface AdminPlacementCapabilities {
   retirementFailedRetryably(operation: Stored<OperationRecord>, gatewayId: string): boolean;
@@ -161,6 +162,11 @@ async function deleteRetiredRoot(deps: AdminPlacementRouterDeps, target: Retired
     }
     const unreleased = unreleasedHandoff(deps, target, await transaction.journal.operations.getMany(handoffOperationIds(target)));
     if (unreleased !== null) throw new PreconditionFailed(`${unreleased} has an unreleased scheduler handoff`);
+    const leaseHolder = (await transaction.users.records.listAll()).find((user) =>
+      user.activationLease?.targetGatewayId === target.gatewayId && LIVE_ACTIVATION_LEASE_STATUSES.has(user.activationLease.status));
+    if (leaseHolder !== undefined) {
+      throw new PreconditionFailed(`user ${leaseHolder.uid} holds a ${leaseHolder.activationLease?.status} activation lease on ${target.gatewayId}`);
+    }
     return retirement;
   });
   const preparationCleared = await clearRetiredUserActivationPreparation({ store }, {

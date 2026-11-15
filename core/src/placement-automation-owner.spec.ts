@@ -4,6 +4,7 @@ import { FleetMutationRefusedError } from "./normal-fleet-mutation.js";
 import {
   PlacementOwnerRefusedError,
   assertClientOwnsPlacementAutomation,
+  assertFleetControllerOwnsPlacementAutomation,
   placementOwnerRefusalBody,
 } from "./placement-automation-owner.js";
 
@@ -52,9 +53,32 @@ describe("assertClientOwnsPlacementAutomation", () => {
   });
 });
 
+describe("assertFleetControllerOwnsPlacementAutomation", () => {
+  const assertFleetController = (orchestrator: Record<string, unknown> | null) =>
+    storeWith(orchestrator).transaction({ label: "test.placement-owner" }, (transaction) =>
+      assertFleetControllerOwnsPlacementAutomation(transaction));
+
+  it("admits the in-process pass by default and while the client has not been yielded to", async () => {
+    await expect(assertFleetController(null)).resolves.toEqual({ owner: "fleet-controller", yieldedAt: null });
+    await expect(assertFleetController({ placementAutomationOwner: "client" })).resolves.toEqual({ owner: "client", yieldedAt: null });
+  });
+
+  it("refuses the in-process pass once it has yielded to the client", async () => {
+    const error = await assertFleetController({ placementAutomationOwner: "client", placementAutomationYieldedAt: 1_000 })
+      .then(() => undefined, (refusal: unknown) => refusal);
+
+    expect(error).toBeInstanceOf(PlacementOwnerRefusedError);
+    expect((error as PlacementOwnerRefusedError).refused).toBe("fleet-controller");
+    expect(placementOwnerRefusalBody(error)).toEqual({
+      code: "placement-owner",
+      error: "the fleet controller has yielded placement automation to the client",
+    });
+  });
+});
+
 describe("placementOwnerRefusalBody", () => {
   it("reads a refusal wrapped by the fleet mutation journal", () => {
-    const wrapped = new FleetMutationRefusedError(new PlacementOwnerRefusedError({ owner: "fleet-controller", yieldedAt: null }));
+    const wrapped = new FleetMutationRefusedError(new PlacementOwnerRefusedError({ owner: "fleet-controller", yieldedAt: null }, "client"));
 
     expect(placementOwnerRefusalBody(wrapped)?.code).toBe("placement-owner");
   });
