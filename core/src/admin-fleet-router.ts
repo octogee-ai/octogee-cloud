@@ -111,7 +111,7 @@ import {
 } from "./admin-dry-run.js";
 import { addAdminComputerRoutes } from "./admin-vm-router.js";
 import { addAdminUserRoutes, type UserAccounts, type UserSignInHosts } from "./admin-user-router.js";
-import { addAdminSharedPoolRoutes } from "./admin-shared-pool-router.js";
+import { addAdminSharedPoolRoutes, type AdminSharedPoolRouterDeps } from "./admin-shared-pool-router.js";
 import {
   GatewayRetirementConflictError,
   assertGatewayRuntimeMutationUnfencedInStore,
@@ -224,6 +224,7 @@ export interface GatewayPodDiagnostics {
 
 export interface FleetRouterDeps {
   computerReplacementEnabled?: boolean;
+  provisioningReadiness?: AdminSharedPoolRouterDeps["provisioningReadiness"];
   accounts: UserAccountReader;
   store: PlatformStateStore;
   logger: FleetLogger;
@@ -4744,6 +4745,7 @@ export function addAdminFleetRoutes(
     platformArtifact: deps.platformArtifact,
     controllerStartedAt: deps.controllerStartedAt,
     journal: runAdminFleetMutation,
+    provisioningReadiness: deps.provisioningReadiness,
   });
 
   async function handleActiveUserDeletion(input: {

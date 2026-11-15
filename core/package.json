@@ -546,6 +546,18 @@
       "types": "./dist/admin-sizing-profile-router.d.ts",
       "default": "./dist/admin-sizing-profile-router.js"
     },
+    "./admin-provisioning-router": {
+      "types": "./dist/admin-provisioning-router.d.ts",
+      "default": "./dist/admin-provisioning-router.js"
+    },
+    "./provisioning-service-client": {
+      "types": "./dist/provisioning-service-client.d.ts",
+      "default": "./dist/provisioning-service-client.js"
+    },
+    "./provisioning-sync": {
+      "types": "./dist/provisioning-sync.d.ts",
+      "default": "./dist/provisioning-sync.js"
+    },
     "./identity-provider": {
       "types": "./dist/identity-provider.d.ts",
       "default": "./dist/identity-provider.js"
@@ -882,6 +894,15 @@
       ],
       "admin-sizing-profile-router": [
         "dist/admin-sizing-profile-router.d.ts"
+      ],
+      "admin-provisioning-router": [
+        "dist/admin-provisioning-router.d.ts"
+      ],
+      "provisioning-service-client": [
+        "dist/provisioning-service-client.d.ts"
+      ],
+      "provisioning-sync": [
+        "dist/provisioning-sync.d.ts"
       ],
       "identity-provider": [
         "dist/identity-provider.d.ts"

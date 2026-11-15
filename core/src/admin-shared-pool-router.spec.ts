@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { releasePayloadHash, type ReleasePayload } from "@octogee/shared/types/gateway-releases";
 import { SHARED_POOL_SCALER_CREATOR } from "@octogee/shared/types/shared-gateway-pool";
 import { createAdminFleetMutationRunner } from "./admin-fleet-router.js";
-import { addAdminSharedPoolRoutes } from "./admin-shared-pool-router.js";
+import { addAdminSharedPoolRoutes, type AdminSharedPoolRouterDeps } from "./admin-shared-pool-router.js";
 import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 
 type Data = Record<string, unknown>;
@@ -21,7 +21,7 @@ const PREVIOUS: ReleasePayload = {
   imageTag: `def5678@sha256:${"d".repeat(64)}`,
 };
 
-function app() {
+function app(provisioningReadiness?: AdminSharedPoolRouterDeps["provisioningReadiness"]) {
   const store = createDocumentFixtureStore(records, { serializeTransactions: true });
   const server = express();
   server.use(express.json());
@@ -35,6 +35,7 @@ function app() {
     controllerStartedAt: CONTROLLER_STARTED_AT,
     journal: createAdminFleetMutationRunner(store),
     now: () => NOW,
+    provisioningReadiness,
   });
   server.use((error: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     res.status(500).json({ error: error.message });
@@ -154,6 +155,19 @@ describe("GET /fleet/state", () => {
       fences: {},
     }]);
     expect(Object.keys(res.body.latestReleasePayloadHashes)).toEqual(["shared-aaaaaaaaaaaa"]);
+  });
+
+  it("answers each user's provisioning Ready reason when the provisioning service is configured", async () => {
+    records.set("users/uid-a", { username: "alice", onboardingStep: "complete" });
+    records.set("users/uid-b", { username: "bob", onboardingStep: "complete" });
+    const readiness = (uid: string) => uid === "uid-a" ? { status: "False" as const, reason: "GitNotReady" } : null;
+
+    const res = await request(app(readiness)).get("/fleet/state").expect(200);
+
+    expect(Object.fromEntries(res.body.users.map((user: Data) => [user.uid, user.provisioningReady]))).toEqual({
+      "uid-a": { status: "False", reason: "GitNotReady" },
+      "uid-b": null,
+    });
   });
 
   it("answers a malformed autoscaling dial as null instead of failing the read", async () => {

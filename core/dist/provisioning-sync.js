@@ -1,0 +1,218 @@
+import { randomUUID } from "node:crypto";
+import { createKeyedRetryQueue } from "./keyed-retry-queue.js";
+import { operationAuditDocumentId, resumeOperationAuditAction, runWithOperationAuditIntent, } from "./operation-audit.js";
+import { backoffDelayMs, startProvisioningWatch, } from "./provisioning-service-client.js";
+import { mirrorUserProvisioning, } from "./provisioning-mirror.js";
+import { desiredUserProvisioningSpec, sameProvisioningSpec } from "./provisioning-spec.js";
+export const PROVISIONING_SPEC_BACKFILL_KEY = "provisioning-service-spec-backfill";
+export const PROVISIONING_SYNC_CONCURRENCY = 4;
+export const PROVISIONING_SYNC_RETRY = { baseDelayMs: 5_000, maxDelayMs: 600_000 };
+const FLEET_CONTROLLER_ACTOR = "fleet-controller";
+function errorMessage(error) {
+    return error instanceof Error ? error.message : String(error);
+}
+function newer(candidate, current) {
+    return current === undefined || Number(candidate.resourceVersion) >= Number(current.resourceVersion);
+}
+function emptyCounters() {
+    return {
+        specWrites: { created: 0, changed: 0, unchanged: 0, "not-admitted": 0, failed: 0 },
+        mirrors: { written: 0, unchanged: 0, "chat-not-ready": 0, "user-missing": 0, "slug-mismatch": 0, failed: 0 },
+        watchFailures: 0,
+        watchConnected: false,
+    };
+}
+const BACKFILL_INTENT = {
+    actor: FLEET_CONTROLLER_ACTOR,
+    forced: false,
+    what: "write provisioning specs for admitted users",
+    why: "the provisioning service's first start with this fleet controller",
+    target: { users: "admitted" },
+    preActionStatus: {},
+    mutation: { kind: "provisioning-spec-backfill" },
+    idempotencyKey: PROVISIONING_SPEC_BACKFILL_KEY,
+};
+export async function runJournaledBackfill(store, run, now = Date.now) {
+    const auditId = operationAuditDocumentId(PROVISIONING_SPEC_BACKFILL_KEY);
+    const existing = await store.journal.audits.get(auditId);
+    if (existing !== null && existing.status !== "recorded" && existing.status !== "in-progress") {
+        return { journaled: false, result: await run() };
+    }
+    if (existing?.status === "in-progress" && typeof existing.actionClaimId === "string") {
+        const result = await resumeOperationAuditAction(store, {
+            auditId,
+            expectedClaimId: existing.actionClaimId,
+            recoveryClaimId: randomUUID(),
+            externalIdempotencyKey: auditId,
+            staleAfterMs: 1,
+            now,
+        }, run);
+        return { journaled: true, result };
+    }
+    const result = await runWithOperationAuditIntent(store, { ...BACKFILL_INTENT, now }, { claimId: randomUUID(), now }, run);
+    return { journaled: true, result };
+}
+export function createProvisioningSync(deps) {
+    const now = deps.now ?? Date.now;
+    const random = deps.random ?? Math.random;
+    const retry = deps.retry ?? PROVISIONING_SYNC_RETRY;
+    const retryDelayMs = (attempts) => backoffDelayMs(attempts, retry, random);
+    const cache = new Map();
+    const counters = emptyCounters();
+    let resolveSnapshot = () => undefined;
+    const snapshot = new Promise((resolve) => {
+        resolveSnapshot = resolve;
+    });
+    function remember(resource) {
+        if (newer(resource, cache.get(resource.uid)))
+            cache.set(resource.uid, resource);
+    }
+    async function writeSpec(uid) {
+        const user = await deps.store.users.records.get(uid);
+        if (user === null || !user.admitted || !user.slug)
+            return "not-admitted";
+        const data = await deps.documents.account(uid);
+        if (data === undefined)
+            throw new Error(`admitted user ${uid} has no account document`);
+        const spec = desiredUserProvisioningSpec(uid, data);
+        const seen = cache.get(uid);
+        if (seen !== undefined && sameProvisioningSpec(seen.spec, spec))
+            return "unchanged";
+        const written = await deps.client.putProvisioning(uid, spec);
+        remember(written.resource);
+        if (written.outcome !== "unchanged") {
+            deps.log(`[provisioning] ${written.outcome} the spec of ${uid} at generation ${written.resource.generation}`);
+        }
+        return written.outcome;
+    }
+    const lastWrite = new Map();
+    const specs = createKeyedRetryQueue({
+        concurrency: PROVISIONING_SYNC_CONCURRENCY,
+        now,
+        retryDelayMs,
+        process: async (uid) => {
+            const outcome = await writeSpec(uid);
+            counters.specWrites[outcome] += 1;
+            lastWrite.set(uid, outcome);
+        },
+        onError: (uid, error, attempts) => {
+            counters.specWrites.failed += 1;
+            deps.log(`[provisioning] ⚠ could not write the spec of ${uid} (attempt ${attempts}): ${errorMessage(error)}; retrying`);
+        },
+    });
+    const mirrors = createKeyedRetryQueue({
+        concurrency: PROVISIONING_SYNC_CONCURRENCY,
+        now,
+        retryDelayMs,
+        process: async (uid) => {
+            const resource = cache.get(uid);
+            if (resource === undefined)
+                return;
+            const outcome = await mirrorUserProvisioning(deps, resource);
+            counters.mirrors[outcome] += 1;
+            if (outcome === "written")
+                deps.log(`[provisioning] mirrored chat and git results of ${uid}`);
+            if (outcome === "slug-mismatch")
+                deps.log(`[provisioning] ⚠ not mirroring ${uid}: its spec names slug ${resource.spec.slug}, which the user record does not carry`);
+        },
+        onError: (uid, error, attempts) => {
+            counters.mirrors.failed += 1;
+            deps.log(`[provisioning] ⚠ could not mirror ${uid} (attempt ${attempts}): ${errorMessage(error)}; retrying`);
+        },
+    });
+    async function backfill() {
+        await snapshot;
+        const admitted = await deps.store.users.records.listAdmitted();
+        const uids = admitted.map((user) => user.uid);
+        for (const uid of uids) {
+            lastWrite.delete(uid);
+            specs.enqueue(uid);
+        }
+        await specs.settled(uids);
+        const outcomes = uids.map((uid) => lastWrite.get(uid));
+        return {
+            users: uids.length,
+            written: outcomes.filter((outcome) => outcome === "created" || outcome === "changed").length,
+            unchanged: outcomes.filter((outcome) => outcome === "unchanged").length,
+        };
+    }
+    function needsSpec(uid, slug) {
+        const seen = cache.get(uid);
+        return seen === undefined || seen.spec.slug !== slug;
+    }
+    function watchUsers() {
+        const onError = (error) => deps.log(`[provisioning] ⚠ user watch error: ${errorMessage(error)}`);
+        return [
+            deps.store.watch({ aggregate: "builders", filter: {} }, {
+                onEvent: (event) => {
+                    if (event.kind !== "changes")
+                        return;
+                    for (const { record } of event.changes) {
+                        if (record !== null && record.admitted && needsSpec(record.uid, record.slug))
+                            specs.enqueue(record.uid);
+                    }
+                },
+                onError,
+            }),
+            deps.store.watch({ aggregate: "assignments", filter: {} }, {
+                onEvent: (event) => {
+                    if (event.kind !== "changes")
+                        return;
+                    for (const { type, record } of event.changes) {
+                        if (type === "added" && record !== null && cache.get(record.uid) === undefined)
+                            specs.enqueue(record.uid);
+                    }
+                },
+                onError,
+            }),
+        ];
+    }
+    return {
+        counters,
+        readiness(uid) {
+            const ready = cache.get(uid)?.status.conditions.find((condition) => condition.type === "Ready");
+            return ready === undefined ? null : { status: ready.status, reason: ready.reason };
+        },
+        observed: (uid) => cache.get(uid),
+        markDirty: (uid) => specs.enqueue(uid),
+        writeSpec,
+        backfill,
+        snapshotLoaded: () => snapshot,
+        start() {
+            const watch = startProvisioningWatch(deps.client, {
+                onSnapshot: async (items) => {
+                    cache.clear();
+                    for (const item of items)
+                        remember(item);
+                    counters.watchConnected = true;
+                    resolveSnapshot();
+                    specs.open();
+                    mirrors.open();
+                    for (const item of items)
+                        mirrors.enqueue(item.uid);
+                },
+                onChanges: async (items) => {
+                    counters.watchConnected = true;
+                    for (const item of items) {
+                        remember(item);
+                        mirrors.enqueue(item.uid);
+                    }
+                },
+                onError: (error, consecutive) => {
+                    counters.watchFailures += 1;
+                    counters.watchConnected = false;
+                    deps.log(`[provisioning] ⚠ provisioning service watch failed (${consecutive} in a row): ${errorMessage(error)}; retrying with backoff`);
+                },
+            }, { ...(deps.watchTimeoutSeconds === undefined ? {} : { timeoutSeconds: deps.watchTimeoutSeconds }), random });
+            const subscriptions = watchUsers();
+            void runJournaledBackfill(deps.store, backfill, now).then(({ journaled, result }) => deps.log(`[provisioning] spec backfill finished${journaled ? " and journaled" : ""}: ${result.users} admitted users, ${result.written} written, ${result.unchanged} unchanged`), (error) => deps.log(`[provisioning] ❌ spec backfill failed: ${errorMessage(error)}; the next start resumes it`));
+            return () => {
+                watch.stop();
+                specs.stop();
+                mirrors.stop();
+                for (const subscription of subscriptions)
+                    void subscription.close();
+            };
+        },
+    };
+}

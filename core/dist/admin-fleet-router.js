@@ -3278,6 +3278,7 @@ export function addAdminFleetRoutes(router, deps) {
         platformArtifact: deps.platformArtifact,
         controllerStartedAt: deps.controllerStartedAt,
         journal: runAdminFleetMutation,
+        provisioningReadiness: deps.provisioningReadiness,
     });
     async function handleActiveUserDeletion(input) {
         const lifecycle = input.lifecycle;

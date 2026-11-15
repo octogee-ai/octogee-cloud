@@ -130,20 +130,22 @@ export function buildRemoveUserConfig(current, slug, agentId) {
     }
     return config;
 }
-export async function provisionMattermost(ctx, channelHost, projection) {
+export function provisionMattermostUserInput(ctx) {
     const data = ctx.userData;
-    const vibe = data.onboarding?.vibe ?? null;
-    return provisionMattermostUser({
+    return {
         uid: ctx.uid,
         slug: ctx.slug,
         firstName: ctx.ownerName,
         email: data.email ?? "",
-        vibe,
+        vibe: data.onboarding?.vibe ?? null,
         lastName: data.lastName ||
             (data.displayName?.split(" ").slice(1).join(" ")) ||
             "",
         photoURL: data.photoURL || "",
-    }, channelHost, projection.storedMattermostNames);
+    };
+}
+export async function provisionMattermost(ctx, channelHost, projection) {
+    return provisionMattermostUser(provisionMattermostUserInput(ctx), channelHost, projection.storedMattermostNames);
 }
 export function upsertMattermostBindingByAgentAndPeer(bindings, binding) {
     const idx = bindings.findIndex((b) => b.agentId === binding.agentId &&
@@ -187,22 +189,22 @@ export const noProvisioningProjection = {
     agent: async () => undefined,
     workspaceEntry: async () => undefined,
 };
-export async function markProvisioningComplete(ctx, mmUpdate, allAgentIds, projection) {
-    await writeDefaultRole(ctx);
+export async function markProvisioningComplete(ctx, mmUpdate, allAgentIds, projection, store = platformStateStore) {
+    await writeDefaultRole(store, ctx);
     await projection.systemConfig(ctx);
-    await writeProvisionedUser(ctx, allAgentIds, mmUpdate);
+    await writeProvisionedUser(store, ctx, allAgentIds, mmUpdate);
     await projection.user(ctx, mmUpdate);
-    await writeWorkspaceRecord(ctx, mmUpdate);
+    await writeWorkspaceRecord(store, ctx, mmUpdate);
     await projection.workspace(ctx);
-    await seedWorkspaceChannels(ctx, mmUpdate, projection);
-    await seedWorkspaceOwner(ctx, mmUpdate);
-    if (await writeAgentIdentity(ctx, mmUpdate))
+    await seedWorkspaceChannels(store, ctx, mmUpdate, projection);
+    await seedWorkspaceOwner(store, ctx, mmUpdate);
+    if (await writeAgentIdentity(store, ctx, mmUpdate))
         await projection.agent(ctx);
     await projection.workspaceEntry(ctx, allAgentIds);
 }
 const SERVER_NOW = { serverNow: true };
-async function writeDefaultRole(ctx) {
-    await platformStateStore.transaction({ label: "provisioning.default-role" }, async (transaction) => {
+async function writeDefaultRole(store, ctx) {
+    await store.transaction({ label: "provisioning.default-role" }, async (transaction) => {
         const user = await transaction.users.records.get(ctx.uid);
         if (user === null)
             throw new MissingRecordError({ aggregate: "builder", key: ctx.uid });
@@ -219,8 +221,8 @@ export function buildProvisionedUserPatch(ctx, mmUpdate) {
         openclaw: { version: "v1", customerDir: ctx.customerDir, provisionedAt: SERVER_NOW },
     };
 }
-async function writeProvisionedUser(ctx, allAgentIds, mmUpdate) {
-    await platformStateStore.transaction({ label: "provisioning.complete" }, async (transaction) => {
+async function writeProvisionedUser(store, ctx, allAgentIds, mmUpdate) {
+    await store.transaction({ label: "provisioning.complete" }, async (transaction) => {
         await transaction.users.records.patch(ctx.uid, buildProvisionedUserPatch(ctx, mmUpdate));
         if (allAgentIds.length > 0)
             await transaction.users.records.addAgents(ctx.uid, allAgentIds);
@@ -233,10 +235,10 @@ export function buildUserProductFields(ctx, mmUpdate) {
         ...Object.fromEntries(Object.entries(mmUpdate).filter(([key]) => key.startsWith("mattermost.") && key !== "mattermost.userId")),
     };
 }
-async function writeWorkspaceRecord(ctx, mmUpdate) {
+async function writeWorkspaceRecord(store, ctx, mmUpdate) {
     const mattermostTeamId = mmUpdate["mattermost.teamId"] || null;
     const giteaFields = { giteaOrgName: ctx.slug, giteaRepoName: workspaceRepoName() };
-    await platformStateStore.transaction({ label: "provisioning.workspace" }, async (transaction) => {
+    await store.transaction({ label: "provisioning.workspace" }, async (transaction) => {
         if ((await transaction.workspaces.records.get(ctx.slug)) === null) {
             await transaction.workspaces.records.put({
                 slug: ctx.slug,
@@ -258,9 +260,9 @@ async function writeWorkspaceRecord(ctx, mmUpdate) {
         });
     });
 }
-async function seedWorkspaceChannel(ctx, channelId, mattermostChannelId, name, projection) {
+async function seedWorkspaceChannel(store, ctx, channelId, mattermostChannelId, name, projection) {
     const scope = { workspaceSlug: ctx.slug, projectSlug: null };
-    await platformStateStore.transaction({ label: "provisioning.channel" }, async (transaction) => {
+    await store.transaction({ label: "provisioning.channel" }, async (transaction) => {
         if ((await transaction.workspaces.channels.get(scope, channelId)) === null) {
             await transaction.workspaces.channels.put({
                 scope,
@@ -277,19 +279,19 @@ async function seedWorkspaceChannel(ctx, channelId, mattermostChannelId, name, p
     });
     await projection.channel(ctx, channelId, name);
 }
-async function seedWorkspaceChannels(ctx, mmUpdate, projection) {
+async function seedWorkspaceChannels(store, ctx, mmUpdate, projection) {
     const generalChannelId = mmUpdate["mattermost.generalChannelId"];
     if (generalChannelId)
-        await seedWorkspaceChannel(ctx, "general", generalChannelId, "general", projection);
+        await seedWorkspaceChannel(store, ctx, "general", generalChannelId, "general", projection);
     const coachDmChannelId = mmUpdate["mattermost.channelId"];
     if (coachDmChannelId) {
         const name = mmUpdate["mattermost.channelName"] || "coach-dm";
-        await seedWorkspaceChannel(ctx, "coach-dm", coachDmChannelId, name, projection);
+        await seedWorkspaceChannel(store, ctx, "coach-dm", coachDmChannelId, name, projection);
     }
 }
-async function seedWorkspaceOwner(ctx, mmUpdate) {
+async function seedWorkspaceOwner(store, ctx, mmUpdate) {
     const mattermostUserId = mmUpdate["mattermost.userId"] ?? null;
-    await platformStateStore.transaction({ label: "provisioning.owner" }, async (transaction) => {
+    await store.transaction({ label: "provisioning.owner" }, async (transaction) => {
         if ((await transaction.workspaces.members.get(ctx.slug, ctx.uid)) !== null)
             return;
         await transaction.workspaces.members.put({
@@ -301,11 +303,11 @@ async function seedWorkspaceOwner(ctx, mmUpdate) {
         });
     });
 }
-async function writeAgentIdentity(ctx, mmUpdate) {
+async function writeAgentIdentity(store, ctx, mmUpdate) {
     const defaultAgentMmUserId = mmUpdate["mattermost.coachUserId"];
     if (!defaultAgentMmUserId)
         return false;
-    await platformStateStore.workspaces.agentIdentities.put({
+    await store.workspaces.agentIdentities.put({
         uid: ctx.uid,
         mattermostUserId: defaultAgentMmUserId,
         at: SERVER_NOW,
