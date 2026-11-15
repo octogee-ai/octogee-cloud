@@ -234,6 +234,11 @@ import type {
 } from "./lib/user-ops/user-lifecycle-product.js";
 import { createS3UserBlobErasure } from "./lib/user-ops/s3-blob-erasure.js";
 import { platformStateUserDocuments, userDocumentsSizingKeyReader, type UserDocuments } from "./user-documents.js";
+import {
+  createProvisioningServiceRuntime,
+  type ProvisioningProjectionFactory,
+  type ProvisioningServiceRuntime,
+} from "./provisioning-service-runtime.js";
 import { gatewayScopedJobId, signFleetRequest } from "@octogee/core/fleet-signature";
 import {
   readByotSnapshotProjection,
@@ -316,6 +321,7 @@ import {
 import {
   recordReconcile,
   recordVmDiskUsage,
+  setProvisioningMetricsSource,
 } from "./metrics.js";
 import { applyVmDiskDelivery, type VmDiskSample } from "./lib/vm-disk-usage.js";
 import { startDisruptionObserver } from "./disruption-observer.js";
@@ -2187,6 +2193,7 @@ interface ControllerBackgroundTasksDeps {
   fleetControllerPrivateKey: string;
   platformArtifact: GatewayArtifact;
   controllerStartedAt: number;
+  provisioning: ProvisioningServiceRuntime | null;
 }
 
 function placementUserHome(store: PlatformStateStore): PlacementProductDeps["userHome"] {
@@ -2223,6 +2230,7 @@ function startControllerBackgroundTasks({
   fleetControllerPrivateKey,
   platformArtifact,
   controllerStartedAt,
+  provisioning,
 }: ControllerBackgroundTasksDeps): ControllerStopper[] {
   if (!deps.kubeOps) {
     throw new Error("controller background tasks require Kubernetes operations");
@@ -2344,6 +2352,8 @@ function startControllerBackgroundTasks({
     ...CENTRAL_RELEASE_ROUTE_DEPS,
     platformArtifact,
     controllerStartedAt,
+    provisioning: provisioning?.client ?? null,
+    provisioningReadiness: provisioning?.sync.readiness,
     ...(httpKubeOps
       ? {
           readGatewayPodDiagnostics: (gatewayId: string) =>
@@ -2743,6 +2753,7 @@ export interface ControllerProduct {
     store: PlatformStateStore;
     log: (message: string) => void;
   }) => ControllerStopper;
+  provisioningProjection?: ProvisioningProjectionFactory;
 }
 
 export function controllerUserSeams(
@@ -2827,6 +2838,14 @@ export async function main(product: ControllerProduct): Promise<void> {
     googleIdentityFromEnvironment(process.env),
     operatorKeyIdentityFromEnvironment(process.env),
   ].filter((provider): provider is IdentityProvider => provider != null));
+  const provisioning = createProvisioningServiceRuntime({
+    env: process.env,
+    store: deps.store,
+    documents,
+    projection: product.provisioningProjection,
+    log,
+  });
+  setProvisioningMetricsSource(provisioning?.renderMetrics ?? null);
   const stoppers = startControllerBackgroundTasks({
     addProductAdminRoutes: product.addAdminRoutes,
     adminIdentity,
@@ -2844,7 +2863,9 @@ export async function main(product: ControllerProduct): Promise<void> {
     productAdminUserDetail: adminUserDetail,
     accounts,
     userDirectory,
+    provisioning,
   });
+  if (provisioning) stoppers.push(provisioning.start());
   stoppers.push(startSharedGatewayRetirementLoop({ store: deps.store, log }));
   if (product.startProjection) stoppers.push(product.startProjection({ store: deps.store, log }));
   const shutdown = createControllerShutdown(stoppers, log);
