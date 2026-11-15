@@ -1,6 +1,7 @@
 import { projectGatewayDesiredRootForGateway } from "@octogee/shared/types/gateway-releases";
+import { isSizingTier } from "@octogee/shared/types/sizing";
 import { GatewayRetirementConflictError } from "./gateway-retirement-claim.js";
-import { IsolatedGatewayFenceError, PLACEMENT_RETIREMENT_REASONS, activationLeaseAdvanceAlreadyApplied, advanceActivationLease, completeActivationLease, failActivationLease, nextActivationLease, nextFailedActivationLease, nextSizingKeyTransitionLease, requestSizingKeyTransition, retireOwnedIsolatedGateway, } from "./isolated-gateway-lifecycle/index.js";
+import { IsolatedGatewayFenceError, PLACEMENT_RETIREMENT_REASONS, activationLeaseAdvanceAlreadyApplied, advanceActivationLease, allocateIsolatedGateway, checkIsolatedAllocationFence, checkUnreachableRecoveryFence, completeActivationLease, failActivationLease, nextActivationLease, nextFailedActivationLease, nextSizingKeyTransitionLease, recoverUnreachableIsolatedGateway, refreshRequestedAllocation, requestSizingKeyTransition, retireOwnedIsolatedGateway, } from "./isolated-gateway-lifecycle/index.js";
 import { FleetMutationRefusedError } from "./normal-fleet-mutation.js";
 import { assertClientOwnsPlacementAutomation, placementOwnerRefusalBody } from "./placement-automation-owner.js";
 import { FenceMismatchError } from "./platform-state/errors.js";
@@ -185,6 +186,61 @@ function parseRetire(req) {
         ...optional,
     };
 }
+function nonNegativeInteger(body, key) {
+    const value = body[key];
+    return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+function parseAllocate(req) {
+    const identity = leaseIdentity(req);
+    if (invalid(identity))
+        return identity;
+    const body = bodyOf(req);
+    const sourceGatewayId = text(body, "sourceGatewayId");
+    const sourceAssignmentEpoch = nonNegativeInteger(body, "sourceAssignmentEpoch");
+    const sizingKey = text(body, "sizingKey");
+    if (!sourceGatewayId)
+        return { invalid: "sourceGatewayId is required" };
+    if (sourceAssignmentEpoch === null)
+        return { invalid: "sourceAssignmentEpoch must be a non-negative integer" };
+    if (!sizingKey)
+        return { invalid: "sizingKey is required" };
+    if (!isSizingTier(body.sizingTier))
+        return { invalid: "sizingTier must be s, m or l" };
+    const request = { ...identity, sourceGatewayId, sourceAssignmentEpoch, sizingKey, sizingTier: body.sizingTier };
+    if (body.parkedGateway === undefined)
+        return request;
+    const parked = body.parkedGateway !== null && typeof body.parkedGateway === "object" ? body.parkedGateway : {};
+    const gatewayId = text(parked, "gatewayId");
+    const generation = positiveInteger(parked, "generation");
+    if (!gatewayId || generation === null)
+        return { invalid: "parkedGateway needs gatewayId and a positive integer generation" };
+    return { ...request, parkedGateway: { gatewayId, generation } };
+}
+function parseRecover(req) {
+    const body = bodyOf(req);
+    const uid = text(body, "ownerUid");
+    const leaseId = text(body, "leaseId");
+    const generation = positiveInteger(body, "generation");
+    const authoritativeGatewayId = text(body, "authoritativeGatewayId");
+    if (!uid)
+        return { invalid: "ownerUid is required" };
+    if (!leaseId)
+        return { invalid: "leaseId is required" };
+    if (generation === null)
+        return { invalid: "generation must be a positive integer" };
+    if (!authoritativeGatewayId)
+        return { invalid: "authoritativeGatewayId is required" };
+    if (body.sourceUnavailable !== undefined && body.sourceUnavailable !== true)
+        return { invalid: "sourceUnavailable must be true when given" };
+    return {
+        uid,
+        gatewayId: req.params.id,
+        leaseId,
+        generation,
+        authoritativeGatewayId,
+        ...(body.sourceUnavailable === true ? { sourceUnavailable: true } : {}),
+    };
+}
 async function readOwner(store, uid) {
     const user = await store.users.records.get(uid);
     if (!user)
@@ -333,6 +389,61 @@ export function addAdminPlacementIsolatedRoutes(router, deps) {
                     throw new PreconditionFailed(retirement.reason);
                 return { gatewayId: input.gatewayId, operationId: retirement.operationId, retired: true };
             },
+        });
+    });
+    verb("/users/:uid/isolated-gateway/allocate", parseAllocate, async (req, input) => {
+        const builderSlug = (await readOwner(deps.store, input.uid)).slug;
+        if (!builderSlug)
+            throw new PreconditionFailed(`user ${input.uid} has no slug`);
+        const request = { ...input, builderSlug };
+        return journal({
+            req,
+            what: "allocate isolated gateway",
+            why: "placement automation activates the user on an isolated gateway",
+            target: { uid: input.uid, gatewayId: input.parkedGateway?.gatewayId ?? null },
+            preActionStatus: { leaseId: input.leaseId, generation: input.generation, status: "requested" },
+            mutation: { kind: "allocate-isolated-gateway", sizingKey: input.sizingKey, sizingTier: input.sizingTier, sourceGatewayId: input.sourceGatewayId },
+            dryRunRefusal: async () => {
+                await checkIsolatedAllocationFence(lifecycle, request);
+                return null;
+            },
+            action: async () => {
+                if (await refreshRequestedAllocation(lifecycle, request)) {
+                    return { uid: input.uid, gatewayId: null, outcome: "refreshed" };
+                }
+                const allocation = await allocateIsolatedGateway({
+                    ...lifecycle,
+                    namespace: deps.capabilities.namespace,
+                    ensureAuthSecret: deps.capabilities.ensureAuthSecret,
+                }, request);
+                return { uid: input.uid, ...allocation };
+            },
+        });
+    });
+    verb("/isolated-gateways/:id/recover-unreachable", parseRecover, async (req, input) => {
+        const root = projectGatewayDesiredRootForGateway(await deps.store.gateways.roots.get(input.gatewayId), input.gatewayId);
+        if (root === null || root.ownerUid !== input.uid || !root.builderSlug) {
+            throw new PreconditionFailed(`gateway ${input.gatewayId} is not owned by ${input.uid}`);
+        }
+        const request = { ...input, builderSlug: root.builderSlug };
+        return journal({
+            req,
+            what: "recover unreachable isolated gateway",
+            why: "placement automation found the isolated gateway unreachable",
+            target: { gatewayId: input.gatewayId, uid: input.uid },
+            preActionStatus: { generation: input.generation, desiredStatus: root.desiredStatus },
+            mutation: { kind: "recover-unreachable-isolated-gateway", authoritativeGatewayId: input.authoritativeGatewayId },
+            dryRunRefusal: async () => {
+                await checkUnreachableRecoveryFence(lifecycle, request);
+                return null;
+            },
+            action: async () => ({
+                gatewayId: input.gatewayId,
+                ...await recoverUnreachableIsolatedGateway({
+                    ...lifecycle,
+                    readGatewayPodDiagnostics: deps.capabilities.readGatewayPodDiagnostics,
+                }, request),
+            }),
         });
     });
 }

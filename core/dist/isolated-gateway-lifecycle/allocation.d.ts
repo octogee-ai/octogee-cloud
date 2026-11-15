@@ -31,4 +31,6 @@ type DesiredRoot = ReturnType<typeof projectGatewayDesiredRootForGateway>;
 export declare function gatewayRunsArtifact(store: PlatformStateStore, root: NonNullable<DesiredRoot>, artifact: unknown): Promise<boolean>;
 export declare function allocateIsolatedGateway(input: IsolatedGatewayAllocationDeps, request: AllocateIsolatedGatewayInput): Promise<IsolatedGatewayAllocation>;
 export declare function refreshRequestedAllocation(input: IsolatedLifecycleDeps, request: AllocateIsolatedGatewayInput): Promise<boolean>;
+export type IsolatedAllocationPlan = "allocate" | "refresh" | "replay";
+export declare function checkIsolatedAllocationFence(input: Pick<IsolatedLifecycleDeps, "store" | "readSizingKey" | "now">, request: AllocateIsolatedGatewayInput): Promise<IsolatedAllocationPlan>;
 export {};

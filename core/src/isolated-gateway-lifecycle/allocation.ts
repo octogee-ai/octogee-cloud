@@ -520,3 +520,48 @@ export async function refreshRequestedAllocation(
   });
   return true;
 }
+
+export type IsolatedAllocationPlan = "allocate" | "refresh" | "replay";
+
+export async function checkIsolatedAllocationFence(
+  input: Pick<IsolatedLifecycleDeps, "store" | "readSizingKey" | "now">,
+  request: AllocateIsolatedGatewayInput,
+): Promise<IsolatedAllocationPlan> {
+  return input.store.transaction({ label: "disposable-gateway.allocate-check", readOnly: true }, async (transaction) => {
+    const user = await transaction.users.records.get(request.uid);
+    if (!user) throw new IsolatedGatewayFenceError(`isolated gateway owner ${request.uid} is missing`);
+    const lease = user.activationLease;
+    const targets = [allocatedIsolatedGatewayId(request), request.parkedGateway?.gatewayId];
+    if (lease?.leaseId === request.leaseId && lease.generation === request.generation &&
+        lease.status === "provisioning" && typeof lease.targetGatewayId === "string" && targets.includes(lease.targetGatewayId)) {
+      return "replay";
+    }
+    const sizingKey = await input.readSizingKey(request.uid, input.now());
+    const sizingProfile = sizingKey === null ? null : await transaction.config.orchestrator.getSizingProfile(sizingKey);
+    if (sizingKey === null || sizingProfile?.isolation !== "isolated") {
+      throw new IsolatedGatewayFenceError("User tier no longer authorizes this allocation");
+    }
+    const sourceGatewayId = user.gateway?.gatewayId;
+    if (!sourceGatewayId) throw new IsolatedGatewayFenceError("Isolated allocation has no current source");
+    const [assignment, sourceRoot, pool] = await Promise.all([
+      transaction.gateways.assignments.get(sourceGatewayId, request.uid),
+      transaction.gateways.roots.get(sourceGatewayId),
+      readSharedGatewayPoolConfigInStore(transaction),
+    ]);
+    if (sizingKey !== request.sizingKey || sizingProfile.sizingTier !== request.sizingTier ||
+        sourceGatewayId !== request.sourceGatewayId || assignment?.epoch !== request.sourceAssignmentEpoch) {
+      return "refresh";
+    }
+    if (sharedSourceRelease(sourceRoot, sourceGatewayId) === null || !isolatedAllocationFenceAllows({
+      request,
+      configuredSharedGatewayIds: pool?.sharedGatewayIds ?? [],
+      user,
+      sizingKey,
+      sizingProfile,
+      assignment,
+    })) {
+      throw new IsolatedGatewayFenceError(`isolated gateway demand fence changed for ${request.uid}`);
+    }
+    return "allocate";
+  });
+}

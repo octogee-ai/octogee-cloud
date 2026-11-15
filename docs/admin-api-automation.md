@@ -275,6 +275,90 @@ means the gateway is not owned by `ownerUid`, is already retired, is another
 generation, a stated fence no longer matches, or a pending telemetry
 operation or another retirement claim blocks it; the `reason` says which.
 
+### `POST /users/<id>/isolated-gateway/allocate`
+
+```json
+{
+  "leaseId": "lease-1", "generation": 3,
+  "sourceGatewayId": "shared-blue", "sourceAssignmentEpoch": 4,
+  "sizingKey": "pro", "sizingTier": "m",
+  "parkedGateway": { "gatewayId": "alice-m-1a2b3c4d", "generation": 2 }
+}
+```
+
+Starts a `requested` lease on an isolated gateway. `sourceGatewayId` and
+`sourceAssignmentEpoch` are the shared gateway and serving assignment the
+caller read; `sizingKey` and `sizingTier` are the user's sizing key and its
+profile's tier. `parkedGateway`, when given, is the user's kept gateway.
+
+The fleet controller first reads the user's current sizing key, shared
+gateway and assignment epoch. When any differs from the request, it writes
+the current values onto the lease and answers
+`{uid, gatewayId: null, outcome: "refreshed"}`, allocating nothing; the
+caller reads the lease again and calls with the new values.
+
+Otherwise it allocates. A parked gateway of the same sizing key that runs
+the shared gateway's current artifact is resumed and the answer is
+`outcome: "resumed"`. A parked gateway that is obsolete is retired, with
+reason `parked-computer-replaced`, and a new gateway is allocated. A new
+gateway gets its Kubernetes auth secret first, then, in one transaction, its
+root and first release (from the shared gateway's live artifact) and the
+lease moved to `provisioning` with the gateway as its target. The answer is
+`{uid, gatewayId, outcome: "allocated"}`. The gateway id is derived from the
+lease, so a repeat answers the same gateway.
+
+While Kubernetes brings the gateway up, the lease reads `provisioning`; the
+caller advances it once the activation operation starts.
+`precondition-failed` means the lease is not that requested lease, the
+user lost interactive access or the isolated sizing profile, the shared
+gateway is not a running or draining pool member on a converged release, or
+its release changed, the assignment
+is not serving at that epoch, a parked gateway changed or could not be
+retired, or another gateway holds the derived id. A secret created before a
+refused transaction stays; the next allocation of that id reuses it.
+
+### `POST /isolated-gateways/<gateway>/recover-unreachable`
+
+```json
+{
+  "ownerUid": "uid-alice", "leaseId": "lease-1", "generation": 3,
+  "authoritativeGatewayId": "shared-blue", "sourceUnavailable": true
+}
+```
+
+Retires the runtime of an isolated gateway that stopped answering, after the
+user is back on `authoritativeGatewayId` with a serving assignment. Without
+`sourceUnavailable`, a gateway whose runtime is ready again is refused;
+with it, the lease must be `returning` for reason `source-unavailable`.
+
+It runs in three steps: reserve, observe, complete.
+
+1. **Reserve.** In one transaction the fleet controller checks the fences,
+   records the recovery operation `builder-recover-<gateway>-g<generation>`
+   as pending, and pauses the gateway. If a fence fails it answers `409`
+   `precondition-failed` and writes nothing.
+2. **Observe.** It reads the gateway's pods from Kubernetes.
+3. **Complete.** With no pods left, it marks the operation succeeded with a
+   zero-pod receipt and answers
+   `{gatewayId, state: "recovered", operationId}`.
+
+When the pods cannot be observed (the read failed or reported an unknown
+status), the answer is `200`
+`{gatewayId, state: "waiting", reason: "observation-unknown", operationId}`;
+when pods remain it is the same with `reason: "pods-present"`. The
+reservation stays: the gateway stays paused and the operation pending. The
+caller repeats the same call later; the repeat re-checks the fences, keeps
+the same operation and observes again. A fence that fails at completion,
+after the reservation, answers `409` `precondition-failed` with the
+reservation left in place.
+
+The fleet controller never answers `409` `observation-unknown`: it learns
+whether it can observe the pods only by reading them, which comes after the
+reservation. Without a pod reader it mounts none of these routes.
+
+A dry run checks the reservation fences read-only. It neither reserves nor
+reads the pods.
+
 ## `PATCH /users/<id>/placement`
 
 `{"managedBy": "cowboy", "expectedGatewayId": "<gateway>"}` releases an
