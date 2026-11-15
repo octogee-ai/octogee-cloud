@@ -5,11 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createModelCredentialSyncAuthHeaders } from "@octogee/core/model-credentials/byot-sync-internal-auth";
 
 const h = vi.hoisted(() => ({ run: vi.fn(), identity: vi.fn() }));
-vi.mock("../../lib/native-connector-approval.js", async importOriginal => ({
-  ...await importOriginal<typeof import("../../lib/native-connector-approval.js")>(), runNativeConnectorApproval: h.run,
+vi.mock("@octogee/core/connectors/native-connector-approval", async importOriginal => ({
+  ...await importOriginal<typeof import("@octogee/core/connectors/native-connector-approval")>(), runNativeConnectorApproval: h.run,
 }));
 vi.mock("../../lib/workspace-native-access.js", () => ({ resolveWorkspaceNativeIdentity: h.identity }));
-import { NativeConnectorApprovalAccessError } from "../../lib/native-connector-approval.js";
+import { NativeConnectorApprovalAccessError } from "@octogee/core/connectors/native-connector-approval";
 import { createInternalConnectorApprovalRouter } from "./connector-approvals.js";
 
 const keys = generateKeyPairSync("ed25519");

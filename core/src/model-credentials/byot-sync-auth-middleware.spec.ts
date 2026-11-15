@@ -1,9 +1,9 @@
-import { signingKey, verificationKey } from "../test-setup/signature-keys.js";
+import { signingKey, verificationKey } from "../fixtures/signature-keys.js";
 import express from "express";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createModelCredentialSyncAuthHeaders } from "@octogee/core/model-credentials/byot-sync-internal-auth";
+import { createModelCredentialSyncAuthHeaders } from "./byot-sync-internal-auth.js";
 
 const h = vi.hoisted(() => ({
   logger: {
@@ -13,9 +13,9 @@ const h = vi.hoisted(() => ({
   },
 }));
 
-vi.mock("@octogee/core/http/logging", () => ({ logger: h.logger }));
+vi.mock("../http/logging.js", () => ({ logger: h.logger }));
 
-const { requireByotSyncInternalAuth } = await import("../middleware/byot-sync-auth.js");
+const { requireByotSyncInternalAuth } = await import("./byot-sync-auth.js");
 
 const ENV_KEYS = ["INTERNAL_SERVICE_KEY", "BYOT_SYNC_INTERNAL_PUBLIC_KEY", "GATEWAY_ID"] as const;
 const originalEnv = Object.fromEntries(

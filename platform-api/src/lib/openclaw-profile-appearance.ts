@@ -1,6 +1,6 @@
 import sharp from "sharp";
 import type { PlatformStateRepositories } from "@octogee/core/platform-state";
-import { MM_URL } from "../../../gateway-edge/src/lib/mattermost.js";
+import { MM_URL } from "./mattermost.js";
 import type { OpenClawProfileAppearance } from "@octogee/core/http-candidates/openclaw-control/proxy-identity";
 
 const MAX_AVATAR_BYTES = 5 * 1024 * 1024;

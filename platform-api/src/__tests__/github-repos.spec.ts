@@ -20,7 +20,7 @@ vi.mock("@octogee/core/connectors/connector-tokens", () => ({
 
 const { platformStateStore } = await import("@octogee/core/identity/platform-state-store");
 const { installBearerUids } = await import("./helpers/user-bearer.js");
-const { createApp } = await import("../index.js");
+const { createPlatformApp } = await import("../app.js");
 
 const UID = "gh-repos-uid";
 const AUTHORIZATION = `Bearer token-${UID}`;
@@ -55,7 +55,7 @@ afterEach(() => {
 describe("GET /workspace/github/repos — mounted + caller's own connection", () => {
   it("403s a non-admin (route reachable, not 404)", async () => {
     await seed("user");
-    const r = await request(createApp())
+    const r = await request(createPlatformApp())
       .get("/api/workspace/github/repos")
       .set("Authorization", AUTHORIZATION);
     expect(r.status, r.text).toBe(403);
@@ -63,7 +63,7 @@ describe("GET /workspace/github/repos — mounted + caller's own connection", ()
 
   it("422 github_not_connected for an admin without a github connection", async () => {
     await seed("admin");
-    const r = await request(createApp())
+    const r = await request(createPlatformApp())
       .get("/api/workspace/github/repos")
       .set("Authorization", AUTHORIZATION);
     expect(r.status, r.text).toBe(422);
@@ -100,7 +100,7 @@ describe("GET /workspace/github/repos — mounted + caller's own connection", ()
       );
     }) as typeof fetch);
 
-    const r = await request(createApp())
+    const r = await request(createPlatformApp())
       .get("/api/workspace/github/repos")
       .set("Authorization", AUTHORIZATION);
 

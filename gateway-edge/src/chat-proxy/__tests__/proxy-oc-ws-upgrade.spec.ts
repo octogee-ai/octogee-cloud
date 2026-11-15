@@ -88,7 +88,7 @@ vi.mock('../openclaw/ws-origin.js', () => ({
   _resetWsOriginWarningForTests: () => {},
 }));
 
-vi.mock('../openclaw/gateway-resolver.js', () => ({
+vi.mock('../../../../platform-api/src/chat-proxy/openclaw/gateway-resolver.js', () => ({
   GatewayResolveError: h.GatewayResolveError,
   resolveGatewayUrl: async () => h.ctl.resolve(),
 }));

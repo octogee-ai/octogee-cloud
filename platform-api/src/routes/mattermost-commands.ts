@@ -10,7 +10,7 @@ import {
 import {
   mintOwnerControlUiLaunch,
   type OwnerControlUiLaunch,
-} from "../../../gateway-edge/src/routes/user/gateways.js";
+} from "./user/gateways.js";
 
 const MAX_COMMAND_BYTES = 16 * 1024;
 const MATTERMOST_ID = /^[a-z0-9]{26}$/;

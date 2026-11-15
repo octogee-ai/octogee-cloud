@@ -1,4 +1,4 @@
-import { mattermostUserIdentityProvider } from "../../gateway-edge/src/lib/mattermost-user-identity-provider.js";
+import { mattermostUserIdentityProvider } from "./lib/mattermost-user-identity-provider.js";
 import { platformStateStore } from "@octogee/core/identity/platform-state-store";
 import { installUserIdentityProvider } from "@octogee/core/http/auth";
 import { createPlatformApp } from "./app.js";

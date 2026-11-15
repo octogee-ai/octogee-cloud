@@ -2,7 +2,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({ activate: vi.fn(), deliver: vi.fn(), error: vi.fn() }));
 vi.mock("./project-agent-readiness.js", () => ({ completeProjectAgentActivations: h.activate }));
-vi.mock("../../../gateway-edge/src/lib/project-agent-onboarding.js", () => ({ deliverProjectAgentOnboarding: h.deliver }));
+vi.mock("./project-agent-onboarding.js", () => ({ deliverProjectAgentOnboarding: h.deliver }));
 vi.mock("@octogee/core/http/logging", () => ({ logger: { error: h.error } }));
 import { completeProjectAgentReadiness } from "./project-agent-readiness-delivery.js";
 

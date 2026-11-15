@@ -3,7 +3,7 @@ import { logger } from "@octogee/core/http/logging";
 import { Router, type Request, type Response } from "express";
 import type { PlatformStateRepositories } from "@octogee/core/platform-state";
 import { requireActiveAccount, requireAuthenticatedUid } from "@octogee/core/http/auth";
-import { forwardMmRest } from "../../../gateway-edge/src/chat-proxy/mm-proxy/rest.js";
+import { forwardMmRest } from "../chat-proxy/mm-proxy/rest.js";
 import type { CreatedPostObserver, ProductNotifications } from "../lib/user-notifications.js";
 
 const MM_INTERNAL_URL = process.env.MM_INTERNAL_URL || "";

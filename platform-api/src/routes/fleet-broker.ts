@@ -344,21 +344,21 @@ async function applyDefaultAgentLook(
 
 const defaultExecuteChatSearch: ExecuteChatSearch = async (identity, params) => {
   const { executeChatSearch } = await import(
-    "../../../gateway-edge/src/lib/chat-broker/execute.js"
+    "../lib/chat-broker/execute.js"
   );
   return executeChatSearch(identity, params);
 };
 
 const defaultExecuteChatHistory: ExecuteChatHistory = async (identity, params) => {
   const { executeChatHistory } = await import(
-    "../../../gateway-edge/src/lib/chat-broker/execute.js"
+    "../lib/chat-broker/execute.js"
   );
   return executeChatHistory(identity, params);
 };
 
 const defaultResolveChatIdentity: ResolveChatIdentity = async (deps, input) => {
   const { resolveChatIdentity } = await import(
-    "../../../gateway-edge/src/lib/chat-broker/resolve-pat.js"
+    "../lib/chat-broker/resolve-pat.js"
   );
   return resolveChatIdentity({ readAccount: deps.records.userDocuments.account, store: deps.store }, input);
 };
@@ -3699,7 +3699,7 @@ async function requireAssignedChatIdentity(
 
 async function respondChatBrokerError(res: Response, err: unknown): Promise<void> {
   const { chatBrokerErrorStatus } = await import(
-    "../../../gateway-edge/src/lib/chat-broker/execute.js"
+    "../lib/chat-broker/execute.js"
   );
   const { status, code } = chatBrokerErrorStatus(err);
   res.status(status).json({

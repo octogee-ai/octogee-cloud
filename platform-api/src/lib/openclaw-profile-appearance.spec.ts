@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
 
 const mocks = vi.hoisted(() => ({ fetch: vi.fn() }));
-vi.mock("../../../gateway-edge/src/lib/mattermost.js", () => ({ MM_URL: "http://mattermost.test" }));
+vi.mock("./mattermost.js", () => ({ MM_URL: "http://mattermost.test" }));
 import { loadOpenClawProfileAppearance, type UserProfileAppearance } from "./openclaw-profile-appearance.js";
 
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });

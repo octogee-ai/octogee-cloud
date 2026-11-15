@@ -24,7 +24,6 @@ import { createInternalConnectorApprovalRouter } from "./routes/internal/connect
 import internalWorkspaceCommitRoutes from "@octogee/core/http-candidates/workspace-commit-router";
 import internalOwnerAutomationRoutes from "./routes/internal/owner-automations.js";
 import { createProjectPersistenceRouter } from "./routes/internal/project-persistence.js";
-import internalGiteaAdminRoutes from "./routes/internal/gitea-admin.js";
 import internalByotSyncRoutes from "./routes/internal/byot-sync.js";
 import { createInternalConnectorRoutes } from "./routes/internal/connectors.js";
 import { createInternalVmRouter, resolveVmControlUrl } from "./routes/internal/vm.js";
@@ -32,10 +31,6 @@ import { createAgentImportsRouter } from "./routes/agent-imports.js";
 import { createAgentExportsRouter } from "./routes/agent-exports.js";
 import { createAgentImportRuntime, invokeLocalOpenClaw } from "./lib/agent-import-runtime.js";
 import { startDesktopNodePairing } from "./lib/desktop-node-pairing.js";
-import { mountClusterRoutes, type ClusterRouteTable } from "./routes/mount-cluster-routes.js";
-import { createProjectCreateRoutes } from "./routes/projects/create.js";
-import { createProjectRepoSourceRoutes } from "./routes/projects/repo-source.js";
-import type { FeaturePolicy } from "@octogee/shared/types/feature-flags";
 import { createGatewayRouter, type GatewayRouterSurface } from "./public-router.js";
 import { createVmRoutesResolver } from "./vm-routes.js";
 import { gatewayEdgeServiceName } from "@octogee/shared/types/gateway-releases";
@@ -149,30 +144,16 @@ async function loadChatProxyModule(): Promise<ChatProxyModule> {
   return chatProxyModulePromise;
 }
 
-export type GatewayEdgeSurface = "sidecar" | "cluster";
-
 // Filled once on revision-pod boot (installRollRosterGate); null everywhere
-// else (legacy pods, cluster surface, tests) — the slot then passes through.
+// else (legacy pods, tests) — the slot then passes through.
 let activeRollRosterGate: RequestHandler | null = null;
 
 export function installRollRosterGate(gate: RequestHandler): void {
   activeRollRosterGate = gate;
 }
 
-export interface CreateAppOptions {
-  surface?: GatewayEdgeSurface;
-  productRoutes?: ClusterRouteTable;
-  publicProjectRoutes?: readonly Router[];
-  // Route tests inject an enabling policy to exercise the workspace sharing
-  // paths; unset means the flag is off, which is what the pod surface wants.
-  featurePolicy?: FeaturePolicy;
-}
-
-export function createApp(opts: CreateAppOptions = {}) {
+export function createApp() {
 installDefaultUserEntitlements();
-// Keep createApp() as the legacy cluster harness for route tests; the module
-// entrypoint below explicitly boots the production sidecar surface.
-const surface = opts.surface ?? "cluster";
 const app: Express = express();
 // client → GCLB (appends client-ip, lb-ip) → gateway-router → this app
 app.set("trust proxy", 2);
@@ -180,7 +161,7 @@ app.set("trust proxy", 2);
 const metricsRegistry = new Registry();
 collectDefaultMetrics({ register: metricsRegistry });
 const openClawControlMetrics = createOpenClawControlMetrics(metricsRegistry);
-if (surface === "sidecar") activeOpenClawControlMetrics = openClawControlMetrics;
+activeOpenClawControlMetrics = openClawControlMetrics;
 
 const httpRequestDuration = new Histogram({
   name: 'http_request_duration_seconds',
@@ -243,22 +224,16 @@ app.use((req, res, next) =>
 );
 
 app.use("/api/g/:gatewayId/internal", internalByotSyncRoutes);
-if (surface === "sidecar") {
-  app.use("/api/g/:gatewayId/internal/connector-approvals", createInternalConnectorApprovalRouter());
-  app.use("/api/g/:gatewayId/internal/agent-message", internalAgentMessageRoutes);
-  app.use("/internal/workspace", internalWorkspaceCommitRoutes);
-  app.use("/internal/owner-automations", internalOwnerAutomationRoutes);
-  app.use("/internal/projects", createProjectPersistenceRouter());
-  app.use("/internal/connectors", createInternalConnectorRoutes());
-  app.use("/internal/computer", createInternalVmRouter({ controlUrl: vmControlUrl }));
-}
-
-if (surface === "cluster") {
-  mountClusterSurface(app, opts);
-}
+app.use("/api/g/:gatewayId/internal/connector-approvals", createInternalConnectorApprovalRouter());
+app.use("/api/g/:gatewayId/internal/agent-message", internalAgentMessageRoutes);
+app.use("/internal/workspace", internalWorkspaceCommitRoutes);
+app.use("/internal/owner-automations", internalOwnerAutomationRoutes);
+app.use("/internal/projects", createProjectPersistenceRouter());
+app.use("/internal/connectors", createInternalConnectorRoutes());
+app.use("/internal/computer", createInternalVmRouter({ controlUrl: vmControlUrl }));
 
 mountSidecarLocalitySurface(app, {
-  dashboardEnabled: surface === "sidecar" && process.env.OPENCLAW_DASHBOARD_BRIDGE_ENABLED === "true",
+  dashboardEnabled: process.env.OPENCLAW_DASHBOARD_BRIDGE_ENABLED === "true",
   openClawControlMetrics,
   openClawControlAuthorizationCache,
 });
@@ -266,26 +241,6 @@ mountSidecarLocalitySurface(app, {
 app.use(errorHandler);
 
 return app;
-}
-
-function mountClusterSurface(app: Express, opts: CreateAppOptions): void {
-  // Legacy in-process Gitea broker surface. The durable broker lives on octogee-api;
-  // the gateway-edge sidecar surface intentionally does not mount this.
-  app.use("/internal/gitea", internalGiteaAdminRoutes);
-
-  // mountClusterRoutes goes FIRST so the public /api/projects routes
-  // and explicit-auth sequencing aren't shadowed by the locality
-  // routers. Express tries handlers in mount order; locality routers are
-  // gateway-edge-only and only match their specific paths.
-  const featurePolicy = opts.featurePolicy;
-  mountClusterRoutes(app, {
-    ...(featurePolicy ? {
-      projectsCreateRoutes: createProjectCreateRoutes({ featurePolicy }),
-      projectsRepoSourceRoutes: createProjectRepoSourceRoutes({ featurePolicy }),
-    } : {}),
-    productRoutes: opts.productRoutes ?? [],
-    publicProjectRoutes: opts.publicProjectRoutes,
-  });
 }
 
 let nativeMobileGateway: ReturnType<typeof createMobileGateway> | undefined;
@@ -365,7 +320,7 @@ function mountSidecarLocalitySurface(app: Express, options: {
   app.use("/api/g/:gatewayId/byosub", createByosubAuthRouter());
 }
 
-const app = createApp({ surface: "sidecar" });
+const app = createApp();
 
 export function dispatchGatewayEdgeRequest(
   req: http.IncomingMessage,

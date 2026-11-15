@@ -4,7 +4,7 @@ import type { SizingKeyReader } from "@octogee/core/sizing-key";
 import type { PlatformUserRecord, PlatformStateRepositories, PlatformStateStore, Stored, WorkspaceProject } from "@octogee/core/platform-state";
 import { accountAllowsInteractiveAccess } from "@octogee/shared/types/account-lifecycle";
 import { isValidGatewayId, resolveGatewayClass } from "@octogee/shared/types/glm";
-import { userAssignedTo, ownerWorkspacePermissionsEnabled, withGatewayOwnerSizingKey } from "../../../gateway-edge/src/routes/user/gateways.js";
+import { userAssignedTo, ownerWorkspacePermissionsEnabled, withGatewayOwnerSizingKey } from "../routes/user/gateways.js";
 import { isMattermostPostId } from '@octogee/shared/types/mattermost-session-route';
 import { ChannelSessionMattermostError } from '@octogee/core/channels/channel-session-model-control';
 import { isValidProjectId, projectAgentId } from '@octogee/shared/types/identity';

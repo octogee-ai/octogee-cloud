@@ -4,15 +4,10 @@ import express from "express";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { signingKey, verificationKey } from "../test-setup/signature-keys.js";
 
-const { syncRuntime } = vi.hoisted(() => ({ syncRuntime: vi.fn(async () => undefined) }));
-
-vi.mock("@octogee/core/model-credential-sync-runtime", () => ({
-  syncModelCredentialsForUser: syncRuntime,
-  refreshModelCredentialRuntimeSessions: vi.fn(),
-}));
+const syncRuntime = vi.fn(async (_body: unknown) => undefined);
 
 const { postGatewayModelCredentialSync } = await import("../lib/byot-sync-trigger.js");
-const { default: syncRoutes } = await import("../routes/internal/byot-sync.js");
+const { requireByotSyncInternalAuth } = await import("@octogee/core/model-credentials/byot-sync-auth");
 const servers: Server[] = [];
 const otherKey = generateKeyPairSync("ed25519", {
   publicKeyEncoding: { type: "spki", format: "pem" },
@@ -59,7 +54,10 @@ async function syncReceiver() {
     received.push({ url: req.url, body: req.body, signature: req.get("x-byot-sync-signature") });
     next();
   });
-  app.use("/api/g/:gatewayId/internal", syncRoutes);
+  app.post("/api/g/:gatewayId/internal/model-credential-sync", requireByotSyncInternalAuth, async (req, res) => {
+    await syncRuntime(req.body);
+    res.json({ ok: true });
+  });
   const server = createServer(app);
   servers.push(server);
   await new Promise<void>((resolve, reject) => {
@@ -81,7 +79,7 @@ async function syncReceiver() {
   };
 }
 
-describe("model sync signatures across the platform trigger and runtime route", () => {
+describe("model sync signatures from the platform trigger through the gateway verifier", () => {
   it("delivers the enriched, JSON-serialized selection through real signing, transport and verification", async () => {
     const receiver = await syncReceiver();
     await expect(receiver.push()).resolves.toBeUndefined();
@@ -98,9 +96,7 @@ describe("model sync signatures across the platform trigger and runtime route", 
       builderAgentDefault: { primary: expect.any(String), fallbacks: expect.any(Array) },
     });
     expect(wire.body).not.toHaveProperty("systemConfig.byot.baseUrl");
-    expect(syncRuntime).toHaveBeenCalledExactlyOnceWith(wire.body, expect.objectContaining({
-      applyConfigPatch: expect.any(Function), refreshDefaultAgentRuntimeSessions: expect.any(Function),
-    }));
+    expect(syncRuntime).toHaveBeenCalledExactlyOnceWith(wire.body);
   });
 
   it.each([

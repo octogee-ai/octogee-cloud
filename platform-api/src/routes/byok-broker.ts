@@ -106,7 +106,7 @@ function parseByokApiKeyId(
 const AGENT_MODEL_TOKEN_TTL_SECONDS = 24 * 60 * 60;
 const AGENT_EMBEDDING_REQUESTS_PER_MINUTE = 60;
 
-// Mirrors gateway-edge/src/routes/byosub.ts: a byosub OAuth flow is short-lived.
+// Mirrors platform-api/src/routes/byosub.ts: a byosub OAuth flow is short-lived.
 const BYOSUB_FLOW_TTL_MS = 60 * 60 * 1000;
 // flowId is a crypto.randomUUID() minted in-pod (claude-sso/device-auth managers);
 // pin a path-safe shape so it cannot steer the subscription flow id elsewhere.

@@ -15,7 +15,7 @@ vi.mock("@octogee/core/workspace/manifest", () => ({
 }));
 
 const storeWorkspaceBlob = vi.fn();
-vi.mock("../lib/project-blob-edit.js", () => ({
+vi.mock("@octogee/core/workspace/project-blob-edit", () => ({
   storeUploadedWorkspaceBlob: (...args: unknown[]) => storeWorkspaceBlob(...args),
   WorkspaceStorageQuotaError: class WorkspaceStorageQuotaError extends Error {},
 }));

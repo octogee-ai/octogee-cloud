@@ -102,7 +102,7 @@ with its additions:
 | --- | --- | --- |
 | Fleet controller | `main(product)` in `fleet-controller/src/index.ts` | `ControllerProduct`: admin routes, user lifecycle steps, and the automation the platform leaves out, such as placement, scaling and returning idle users |
 | Platform API | `createPlatformApp({ product })` in `platform-api/src/app.ts` | `ProductExtension`: routes, entitlements, notifications and the LLM broker's commercial rails |
-| Edge | `createApp({ productRoutes })` in `gateway-edge/src/index.ts` | A route table |
+| Edge | `createApp()` in `gateway-edge/src/index.ts` | Nothing; the edge serves only its own gateway's routes |
 
 `scripts/ops/overlay.mjs` assembles the build. It copies the platform tree,
 adds the product's files beside the platform's, and refuses any product file

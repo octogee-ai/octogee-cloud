@@ -6,7 +6,7 @@ import {
   syncModelCredentialsForUser,
 } from "@octogee/core/model-credential-sync-runtime";
 import { acquireSystemConfigMutationLease } from "@octogee/core/system-config-mutation-lease";
-import { requireByotSyncInternalAuth } from "../../middleware/byot-sync-auth.js";
+import { requireByotSyncInternalAuth } from "@octogee/core/model-credentials/byot-sync-auth";
 
 const router: Router = Router();
 

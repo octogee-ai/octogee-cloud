@@ -39,8 +39,8 @@ describe("platform boundary", () => {
       .toBe(resolve(repoRoot, "platform/core/src/deployment-environment.ts"));
     expect(resolveImport("@octogee/shared/types/feature-flags", from, repoRoot))
       .toBe(resolve(repoRoot, "platform/shared/types/feature-flags.ts"));
-    expect(resolveImport("../../gateway-edge/src/routes/mount-cluster-routes.js", from, repoRoot))
-      .toBe(resolve(repoRoot, "platform/gateway-edge/src/routes/mount-cluster-routes.ts"));
+    expect(resolveImport("../../gateway-edge/src/index.js", from, repoRoot))
+      .toBe(resolve(repoRoot, "platform/gateway-edge/src/index.ts"));
     expect(resolveImport("@octogee/product-core/customer-hosting", from, repoRoot))
       .toBe(resolve(repoRoot, "product/core/src/customer-hosting.ts"));
     expect(resolveImport("@octogee/product-shared/types/billing", from, repoRoot))

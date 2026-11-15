@@ -45,7 +45,7 @@ vi.mock("@octogee/core/workspace/fileTarget", () => ({
 vi.mock("@octogee/core/workspace/manifest", () => ({
   removeFromManifest: (...args: unknown[]) => h.removeFromManifest(...args),
 }));
-vi.mock("../lib/project-blob-edit.js", () => ({
+vi.mock("@octogee/core/workspace/project-blob-edit", () => ({
   removeUploadedWorkspaceBlob: (...args: unknown[]) => h.removeWorkspaceBlob(...args),
 }));
 

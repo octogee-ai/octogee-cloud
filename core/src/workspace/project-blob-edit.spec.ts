@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vitest";
-import type { FileTarget } from "@octogee/core/workspace/fileTarget";
+import type { FileTarget } from "./fileTarget.js";
 import { commitLocalProjectAsset, editRemoteProjectAsset, storeUploadedWorkspaceBlob } from "./project-blob-edit.js";
 const target:FileTarget={slug:"alice",projectSlug:"demo",provider:"gitea",org:"octogee-alice",repoName:"alice-demo",gcsPrefix:"customers/alice/projects/demo",sudoUser:"ws-alice"};
 const asset={type:"blob" as const,gcsPath:`${target.gcsPrefix}/.objects/${"a".repeat(64)}`,sha256:"a".repeat(64),size:10,mimeType:"application/octet-stream",uploadedAt:"2026-10-08"};

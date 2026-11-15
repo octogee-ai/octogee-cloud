@@ -26,7 +26,6 @@ describe("octogee-api vitest configs", () => {
     ]);
     expect(cfg.test?.fileParallelism).toBe(false);
     expect(cfg.test?.testTimeout).toBe(15_000);
-    expect(cfg.test?.exclude).toContain("../gateway-edge/**");
   });
 });
 

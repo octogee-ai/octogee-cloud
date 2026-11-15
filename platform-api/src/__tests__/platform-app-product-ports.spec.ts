@@ -18,10 +18,10 @@ const { NO_BROKER_RECORDS } = await import("../lib/broker-records.js");
 const { NO_WORKSPACE_STORAGE_ACCOUNTING, installWorkspaceStorageAccounting, workspaceStorageAccounting } =
   await import("@octogee/shared/types/workspace-storage-quota");
 const { NO_PROJECT_AGENT_DELIVERY_INTENTS, installProjectAgentDeliveryIntents, projectAgentDeliveryIntents } =
-  await import("../../../gateway-edge/src/lib/project-agent-delivery-intents.js");
+  await import("../lib/project-agent-delivery-intents.js");
 const { userAccounts } = await import("@octogee/core/identity/user-accounts");
 const { NO_CONNECTOR_DISCONNECTED, connectorDisconnected, installConnectorDisconnected } =
-  await import("../../../gateway-edge/src/lib/connector-disconnect.js");
+  await import("../lib/connector-disconnect.js");
 const { noUserAccounts } = await import("@octogee/core/user-account");
 
 afterEach(() => {

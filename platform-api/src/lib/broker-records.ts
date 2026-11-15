@@ -1,7 +1,7 @@
 import type { PlatformStateStore } from "@octogee/core/platform-state";
 import { platformStateUserAccountReader, userAccountDocument } from "@octogee/core/platform-state-user-accounts";
 import { noUserAccounts, type UserAccountReader } from "@octogee/core/user-account";
-import { NO_AGENT_IDENTITY, type AgentIdentityRecords } from "../../../gateway-edge/src/lib/agent-identity.js";
+import { NO_AGENT_IDENTITY, type AgentIdentityRecords } from "./agent-identity.js";
 import type { FleetBrokerUsageData } from "@octogee/shared/types/fleet-broker";
 
 import { UNCONFIGURED_MODEL_BROKER_USAGE, type ModelBrokerUsageLedger } from "@octogee/core/model-broker/usage";

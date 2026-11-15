@@ -48,7 +48,7 @@ describe("fetchPulseReport", () => {
               number: 3,
               title: "Launch regression",
               body: "",
-              state: "closed",
+              state: "closed" as const,
               labels: ["bug"],
               assignees: [],
               author: "builder",

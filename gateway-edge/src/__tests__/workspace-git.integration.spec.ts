@@ -48,7 +48,7 @@ vi.mock("@octogee/core/internal-brokers/workspace-git-authorization-broker", asy
   return { ...actual, authorizeWorkspaceGit };
 });
 
-vi.mock("../lib/mattermost", () => ({
+vi.mock("../../../platform-api/src/lib/mattermost", () => ({
   mmApi: vi.fn(),
   MM_URL: "http://mattermost-test:8065",
 }));

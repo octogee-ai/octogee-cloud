@@ -4,7 +4,7 @@ import type { Request, Response, Router } from "express";
 import type { PlatformUserRecord, GatewayAssignment, PlatformStateStore, WorkspaceRecord } from "@octogee/core/platform-state";
 import { accountAllowsInteractiveAccess } from "@octogee/shared/types/account-lifecycle";
 import { isManifestPath } from "@octogee/core/workspace-manifest";
-import { parseMultipart, MAX_UPLOAD_BYTES, UploadTooLargeError } from "../../../gateway-edge/src/routes/workspace/upload.js";
+import { parseMultipart, MAX_UPLOAD_BYTES, UploadTooLargeError } from "./workspace/upload.js";
 import { validateFilePath } from "@octogee/shared/types/path-validation";
 import { pathHasReservedOrHiddenSegment } from "@octogee/core/workspace/route-helpers";
 import { WorkspaceStorageQuotaError, type storeWorkspaceBlobCentrally } from "@octogee/core/workspace/workspace-blob";

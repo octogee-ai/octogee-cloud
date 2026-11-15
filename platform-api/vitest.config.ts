@@ -19,10 +19,6 @@ export default defineConfig({
     exclude: [
       'dist/**',
       'node_modules/**',
-      // Don't run gateway-edge's own specs from here — gateway-edge
-      // is the owner of those. We pull in gateway-edge/src/ for route
-      // handler reuse only.
-      '../gateway-edge/**',
     ],
   },
 });

@@ -1,7 +1,7 @@
 import type { PlatformStateRepositories } from "@octogee/core/platform-state";
 import { gatewayModelCredentialSyncUrl } from "./byot-sync-trigger.js";
 import { createModelCredentialSyncAuthHeaders } from "@octogee/core/model-credentials/byot-sync-internal-auth";
-import { NativeConnectorApprovalAccessError, parseNativeApproval, type NativeConnectorCommand, type NativeApprovalSnapshot } from "./native-connector-approval.js";
+import { NativeConnectorApprovalAccessError, parseNativeApproval, type NativeConnectorCommand, type NativeApprovalSnapshot } from "@octogee/core/connectors/native-connector-approval";
 import { resolveGatewayAssignment, type GatewayResolverState } from "../chat-proxy/openclaw/gateway-resolver.js";
 import { parseAgentId } from "@octogee/shared/types/identity";
 

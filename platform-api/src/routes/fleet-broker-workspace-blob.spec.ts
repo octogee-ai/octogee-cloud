@@ -20,7 +20,7 @@ import { storeWorkspaceBlob, WorkspaceStorageQuotaError } from "@octogee/core/wo
 import { divertWorktreeBinaries } from "@octogee/core/workspace/binary-diversion";
 import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
 import { createFleetBrokerRoutes } from "./fleet-broker.js";
-import { MAX_UPLOAD_BYTES } from "../../../gateway-edge/src/routes/workspace/upload.js";
+import { MAX_UPLOAD_BYTES } from "./workspace/upload.js";
 
 class ReadOnlyDocuments extends Map<string, Record<string, unknown>> {
   constructor(private readonly docs: Record<string, Record<string, unknown>>) {

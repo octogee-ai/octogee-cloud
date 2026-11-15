@@ -1,4 +1,4 @@
-import { storeUploadedWorkspaceBlob as storeWorkspaceBlob } from "../../lib/project-blob-edit.js";
+import { storeUploadedWorkspaceBlob as storeWorkspaceBlob } from "@octogee/core/workspace/project-blob-edit";
 import { Router, Request, Response, NextFunction } from "express";
 import JSZip from "jszip";
 import { requestBlobStore, type BlobStore } from "@octogee/core/workspace/blob-store";

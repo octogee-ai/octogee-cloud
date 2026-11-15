@@ -7,7 +7,7 @@ import {
   isConnectorTokenBrokerable,
 } from "@octogee/core/connectors";
 import { getFreshAccessTokenFromStore } from "@octogee/core/connectors/connector-tokens";
-import { isSafeCanvasPath } from "../../../gateway-edge/src/lib/canvas-file.js";
+import { isSafeCanvasPath } from "../lib/canvas-file.js";
 import { decryptSecret } from "@octogee/core/connectors/kms";
 import type { OpaqueMap, PlatformStateRepositories, PlatformStateStore } from "@octogee/core/platform-state";
 import {

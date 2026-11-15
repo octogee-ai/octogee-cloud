@@ -13,137 +13,17 @@
       "types": "./dist/platform-api/src/app.d.ts",
       "default": "./dist/platform-api/src/app.js"
     },
+    "./chat-proxy/openclaw/gateway-resolver": {
+      "types": "./dist/platform-api/src/chat-proxy/openclaw/gateway-resolver.d.ts",
+      "default": "./dist/platform-api/src/chat-proxy/openclaw/gateway-resolver.js"
+    },
     "./gateway-edge/chat-proxy/openclaw/frame-filter": {
       "types": "./dist/gateway-edge/src/chat-proxy/openclaw/frame-filter.d.ts",
       "default": "./dist/gateway-edge/src/chat-proxy/openclaw/frame-filter.js"
     },
-    "./gateway-edge/chat-proxy/openclaw/gateway-resolver": {
-      "types": "./dist/gateway-edge/src/chat-proxy/openclaw/gateway-resolver.d.ts",
-      "default": "./dist/gateway-edge/src/chat-proxy/openclaw/gateway-resolver.js"
-    },
     "./gateway-edge/index": {
       "types": "./dist/gateway-edge/src/index.d.ts",
       "default": "./dist/gateway-edge/src/index.js"
-    },
-    "./gateway-edge/lib/agent-identity": {
-      "types": "./dist/gateway-edge/src/lib/agent-identity.d.ts",
-      "default": "./dist/gateway-edge/src/lib/agent-identity.js"
-    },
-    "./gateway-edge/lib/board-welcome": {
-      "types": "./dist/gateway-edge/src/lib/board-welcome.d.ts",
-      "default": "./dist/gateway-edge/src/lib/board-welcome.js"
-    },
-    "./gateway-edge/lib/byot-sync-trigger": {
-      "types": "./dist/gateway-edge/src/lib/byot-sync-trigger.d.ts",
-      "default": "./dist/gateway-edge/src/lib/byot-sync-trigger.js"
-    },
-    "./gateway-edge/lib/canvas-file": {
-      "types": "./dist/gateway-edge/src/lib/canvas-file.d.ts",
-      "default": "./dist/gateway-edge/src/lib/canvas-file.js"
-    },
-    "./gateway-edge/lib/channel-lifecycle": {
-      "types": "./dist/gateway-edge/src/lib/channel-lifecycle.d.ts",
-      "default": "./dist/gateway-edge/src/lib/channel-lifecycle.js"
-    },
-    "./gateway-edge/lib/connect-state": {
-      "types": "./dist/gateway-edge/src/lib/connect-state.d.ts",
-      "default": "./dist/gateway-edge/src/lib/connect-state.js"
-    },
-    "./gateway-edge/lib/connector-approval-client": {
-      "types": "./dist/gateway-edge/src/lib/connector-approval-client.d.ts",
-      "default": "./dist/gateway-edge/src/lib/connector-approval-client.js"
-    },
-    "./gateway-edge/lib/connector-disconnect": {
-      "types": "./dist/gateway-edge/src/lib/connector-disconnect.d.ts",
-      "default": "./dist/gateway-edge/src/lib/connector-disconnect.js"
-    },
-    "./gateway-edge/lib/connector-reviewer-access": {
-      "types": "./dist/gateway-edge/src/lib/connector-reviewer-access.d.ts",
-      "default": "./dist/gateway-edge/src/lib/connector-reviewer-access.js"
-    },
-    "./gateway-edge/lib/gateway-ticket": {
-      "types": "./dist/gateway-edge/src/lib/gateway-ticket.d.ts",
-      "default": "./dist/gateway-edge/src/lib/gateway-ticket.js"
-    },
-    "./gateway-edge/lib/git-host": {
-      "types": "./dist/gateway-edge/src/lib/git-host.d.ts",
-      "default": "./dist/gateway-edge/src/lib/git-host.js"
-    },
-    "./gateway-edge/lib/issue-assets": {
-      "types": "./dist/gateway-edge/src/lib/issue-assets.d.ts",
-      "default": "./dist/gateway-edge/src/lib/issue-assets.js"
-    },
-    "./gateway-edge/lib/issues": {
-      "types": "./dist/gateway-edge/src/lib/issues.d.ts",
-      "default": "./dist/gateway-edge/src/lib/issues.js"
-    },
-    "./gateway-edge/lib/issues-write": {
-      "types": "./dist/gateway-edge/src/lib/issues-write.d.ts",
-      "default": "./dist/gateway-edge/src/lib/issues-write.js"
-    },
-    "./gateway-edge/lib/mattermost": {
-      "types": "./dist/gateway-edge/src/lib/mattermost.d.ts",
-      "default": "./dist/gateway-edge/src/lib/mattermost.js"
-    },
-    "./gateway-edge/lib/mattermost-context": {
-      "types": "./dist/gateway-edge/src/lib/mattermost-context.d.ts",
-      "default": "./dist/gateway-edge/src/lib/mattermost-context.js"
-    },
-    "./gateway-edge/lib/native-connector-approval": {
-      "types": "./dist/gateway-edge/src/lib/native-connector-approval.d.ts",
-      "default": "./dist/gateway-edge/src/lib/native-connector-approval.js"
-    },
-    "./gateway-edge/lib/project-agent-delivery": {
-      "types": "./dist/gateway-edge/src/lib/project-agent-delivery.d.ts",
-      "default": "./dist/gateway-edge/src/lib/project-agent-delivery.js"
-    },
-    "./gateway-edge/lib/project-agent-delivery-intents": {
-      "types": "./dist/gateway-edge/src/lib/project-agent-delivery-intents.d.ts",
-      "default": "./dist/gateway-edge/src/lib/project-agent-delivery-intents.js"
-    },
-    "./gateway-edge/lib/project-agent-onboarding": {
-      "types": "./dist/gateway-edge/src/lib/project-agent-onboarding.d.ts",
-      "default": "./dist/gateway-edge/src/lib/project-agent-onboarding.js"
-    },
-    "./gateway-edge/lib/project-agent-service": {
-      "types": "./dist/gateway-edge/src/lib/project-agent-service.d.ts",
-      "default": "./dist/gateway-edge/src/lib/project-agent-service.js"
-    },
-    "./gateway-edge/lib/project-blob-edit": {
-      "types": "./dist/gateway-edge/src/lib/project-blob-edit.d.ts",
-      "default": "./dist/gateway-edge/src/lib/project-blob-edit.js"
-    },
-    "./gateway-edge/lib/project-create-service": {
-      "types": "./dist/gateway-edge/src/lib/project-create-service.d.ts",
-      "default": "./dist/gateway-edge/src/lib/project-create-service.js"
-    },
-    "./gateway-edge/lib/project-platform-state": {
-      "types": "./dist/gateway-edge/src/lib/project-platform-state.d.ts",
-      "default": "./dist/gateway-edge/src/lib/project-platform-state.js"
-    },
-    "./gateway-edge/lib/project-recipe": {
-      "types": "./dist/gateway-edge/src/lib/project-recipe.d.ts",
-      "default": "./dist/gateway-edge/src/lib/project-recipe.js"
-    },
-    "./gateway-edge/lib/projectId": {
-      "types": "./dist/gateway-edge/src/lib/projectId.d.ts",
-      "default": "./dist/gateway-edge/src/lib/projectId.js"
-    },
-    "./gateway-edge/lib/user-deletion-deps": {
-      "types": "./dist/gateway-edge/src/lib/user-deletion-deps.d.ts",
-      "default": "./dist/gateway-edge/src/lib/user-deletion-deps.js"
-    },
-    "./gateway-edge/lib/user-gateway": {
-      "types": "./dist/gateway-edge/src/lib/user-gateway.d.ts",
-      "default": "./dist/gateway-edge/src/lib/user-gateway.js"
-    },
-    "./gateway-edge/lib/withProject": {
-      "types": "./dist/gateway-edge/src/lib/withProject.d.ts",
-      "default": "./dist/gateway-edge/src/lib/withProject.js"
-    },
-    "./gateway-edge/lib/workspace-channel-membership": {
-      "types": "./dist/gateway-edge/src/lib/workspace-channel-membership.d.ts",
-      "default": "./dist/gateway-edge/src/lib/workspace-channel-membership.js"
     },
     "./gateway-edge/lib/workspace-native-access": {
       "types": "./dist/gateway-edge/src/lib/workspace-native-access.d.ts",
@@ -153,73 +33,21 @@
       "types": "./dist/gateway-edge/src/middleware/agent-message-auth.d.ts",
       "default": "./dist/gateway-edge/src/middleware/agent-message-auth.js"
     },
-    "./gateway-edge/model-credentials/anthropic-probe": {
-      "types": "./dist/gateway-edge/src/model-credentials/anthropic-probe.d.ts",
-      "default": "./dist/gateway-edge/src/model-credentials/anthropic-probe.js"
-    },
-    "./gateway-edge/model-credentials/provider-probe": {
-      "types": "./dist/gateway-edge/src/model-credentials/provider-probe.d.ts",
-      "default": "./dist/gateway-edge/src/model-credentials/provider-probe.js"
-    },
     "./gateway-edge/openclaw-control/mobile-proof": {
       "types": "./dist/gateway-edge/src/openclaw-control/mobile-proof.d.ts",
       "default": "./dist/gateway-edge/src/openclaw-control/mobile-proof.js"
-    },
-    "./gateway-edge/routes/admin": {
-      "types": "./dist/gateway-edge/src/routes/admin.d.ts",
-      "default": "./dist/gateway-edge/src/routes/admin.js"
-    },
-    "./gateway-edge/routes/agent-models": {
-      "types": "./dist/gateway-edge/src/routes/agent-models.d.ts",
-      "default": "./dist/gateway-edge/src/routes/agent-models.js"
-    },
-    "./gateway-edge/routes/billing/byot": {
-      "types": "./dist/gateway-edge/src/routes/billing/byot.d.ts",
-      "default": "./dist/gateway-edge/src/routes/billing/byot.js"
-    },
-    "./gateway-edge/routes/byosub": {
-      "types": "./dist/gateway-edge/src/routes/byosub.d.ts",
-      "default": "./dist/gateway-edge/src/routes/byosub.js"
-    },
-    "./gateway-edge/routes/connect": {
-      "types": "./dist/gateway-edge/src/routes/connect.d.ts",
-      "default": "./dist/gateway-edge/src/routes/connect.js"
     },
     "./gateway-edge/routes/internal/agent-message": {
       "types": "./dist/gateway-edge/src/routes/internal/agent-message.d.ts",
       "default": "./dist/gateway-edge/src/routes/internal/agent-message.js"
     },
-    "./gateway-edge/routes/mount-cluster-routes": {
-      "types": "./dist/gateway-edge/src/routes/mount-cluster-routes.d.ts",
-      "default": "./dist/gateway-edge/src/routes/mount-cluster-routes.js"
-    },
-    "./gateway-edge/routes/projects/join-leave": {
-      "types": "./dist/gateway-edge/src/routes/projects/join-leave.d.ts",
-      "default": "./dist/gateway-edge/src/routes/projects/join-leave.js"
-    },
-    "./gateway-edge/routes/projects/members": {
-      "types": "./dist/gateway-edge/src/routes/projects/members.d.ts",
-      "default": "./dist/gateway-edge/src/routes/projects/members.js"
-    },
-    "./gateway-edge/routes/projects/provisioning": {
-      "types": "./dist/gateway-edge/src/routes/projects/provisioning.d.ts",
-      "default": "./dist/gateway-edge/src/routes/projects/provisioning.js"
-    },
-    "./gateway-edge/routes/projects/repo-source": {
-      "types": "./dist/gateway-edge/src/routes/projects/repo-source.d.ts",
-      "default": "./dist/gateway-edge/src/routes/projects/repo-source.js"
-    },
-    "./gateway-edge/routes/user/gateways": {
-      "types": "./dist/gateway-edge/src/routes/user/gateways.d.ts",
-      "default": "./dist/gateway-edge/src/routes/user/gateways.js"
-    },
-    "./gateway-edge/routes/workspace/display-name": {
-      "types": "./dist/gateway-edge/src/routes/workspace/display-name.d.ts",
-      "default": "./dist/gateway-edge/src/routes/workspace/display-name.js"
-    },
     "./lib/active-workspace-project": {
       "types": "./dist/platform-api/src/lib/active-workspace-project.d.ts",
       "default": "./dist/platform-api/src/lib/active-workspace-project.js"
+    },
+    "./lib/agent-identity": {
+      "types": "./dist/platform-api/src/lib/agent-identity.d.ts",
+      "default": "./dist/platform-api/src/lib/agent-identity.js"
     },
     "./lib/agent-productivity/rate-limit": {
       "types": "./dist/platform-api/src/lib/agent-productivity/rate-limit.d.ts",
@@ -229,9 +57,25 @@
       "types": "./dist/platform-api/src/lib/avatar-render.d.ts",
       "default": "./dist/platform-api/src/lib/avatar-render.js"
     },
+    "./lib/board-welcome": {
+      "types": "./dist/platform-api/src/lib/board-welcome.d.ts",
+      "default": "./dist/platform-api/src/lib/board-welcome.js"
+    },
     "./lib/broker-records": {
       "types": "./dist/platform-api/src/lib/broker-records.d.ts",
       "default": "./dist/platform-api/src/lib/broker-records.js"
+    },
+    "./lib/byot-sync-trigger": {
+      "types": "./dist/platform-api/src/lib/byot-sync-trigger.d.ts",
+      "default": "./dist/platform-api/src/lib/byot-sync-trigger.js"
+    },
+    "./lib/canvas-file": {
+      "types": "./dist/platform-api/src/lib/canvas-file.d.ts",
+      "default": "./dist/platform-api/src/lib/canvas-file.js"
+    },
+    "./lib/channel-lifecycle": {
+      "types": "./dist/platform-api/src/lib/channel-lifecycle.d.ts",
+      "default": "./dist/platform-api/src/lib/channel-lifecycle.js"
     },
     "./lib/chat-artifact-registry": {
       "types": "./dist/platform-api/src/lib/chat-artifact-registry.d.ts",
@@ -241,6 +85,22 @@
       "types": "./dist/platform-api/src/lib/chat-artifacts.d.ts",
       "default": "./dist/platform-api/src/lib/chat-artifacts.js"
     },
+    "./lib/connect-state": {
+      "types": "./dist/platform-api/src/lib/connect-state.d.ts",
+      "default": "./dist/platform-api/src/lib/connect-state.js"
+    },
+    "./lib/connector-approval-client": {
+      "types": "./dist/platform-api/src/lib/connector-approval-client.d.ts",
+      "default": "./dist/platform-api/src/lib/connector-approval-client.js"
+    },
+    "./lib/connector-disconnect": {
+      "types": "./dist/platform-api/src/lib/connector-disconnect.d.ts",
+      "default": "./dist/platform-api/src/lib/connector-disconnect.js"
+    },
+    "./lib/connector-reviewer-access": {
+      "types": "./dist/platform-api/src/lib/connector-reviewer-access.d.ts",
+      "default": "./dist/platform-api/src/lib/connector-reviewer-access.js"
+    },
     "./lib/feature-policy": {
       "types": "./dist/platform-api/src/lib/feature-policy.d.ts",
       "default": "./dist/platform-api/src/lib/feature-policy.js"
@@ -249,9 +109,37 @@
       "types": "./dist/platform-api/src/lib/gateway-pod-revision.d.ts",
       "default": "./dist/platform-api/src/lib/gateway-pod-revision.js"
     },
+    "./lib/gateway-ticket": {
+      "types": "./dist/platform-api/src/lib/gateway-ticket.d.ts",
+      "default": "./dist/platform-api/src/lib/gateway-ticket.js"
+    },
+    "./lib/git-host": {
+      "types": "./dist/platform-api/src/lib/git-host.d.ts",
+      "default": "./dist/platform-api/src/lib/git-host.js"
+    },
+    "./lib/issue-assets": {
+      "types": "./dist/platform-api/src/lib/issue-assets.d.ts",
+      "default": "./dist/platform-api/src/lib/issue-assets.js"
+    },
+    "./lib/issues": {
+      "types": "./dist/platform-api/src/lib/issues.d.ts",
+      "default": "./dist/platform-api/src/lib/issues.js"
+    },
+    "./lib/issues-write": {
+      "types": "./dist/platform-api/src/lib/issues-write.d.ts",
+      "default": "./dist/platform-api/src/lib/issues-write.js"
+    },
     "./lib/link-unfurl": {
       "types": "./dist/platform-api/src/lib/link-unfurl.d.ts",
       "default": "./dist/platform-api/src/lib/link-unfurl.js"
+    },
+    "./lib/mattermost": {
+      "types": "./dist/platform-api/src/lib/mattermost.d.ts",
+      "default": "./dist/platform-api/src/lib/mattermost.js"
+    },
+    "./lib/mattermost-context": {
+      "types": "./dist/platform-api/src/lib/mattermost-context.d.ts",
+      "default": "./dist/platform-api/src/lib/mattermost-context.js"
     },
     "./lib/openclaw-owner-turn": {
       "types": "./dist/platform-api/src/lib/openclaw-owner-turn.d.ts",
@@ -261,9 +149,41 @@
       "types": "./dist/platform-api/src/lib/openclaw-profile-appearance.d.ts",
       "default": "./dist/platform-api/src/lib/openclaw-profile-appearance.js"
     },
+    "./lib/project-agent-delivery": {
+      "types": "./dist/platform-api/src/lib/project-agent-delivery.d.ts",
+      "default": "./dist/platform-api/src/lib/project-agent-delivery.js"
+    },
+    "./lib/project-agent-delivery-intents": {
+      "types": "./dist/platform-api/src/lib/project-agent-delivery-intents.d.ts",
+      "default": "./dist/platform-api/src/lib/project-agent-delivery-intents.js"
+    },
+    "./lib/project-agent-onboarding": {
+      "types": "./dist/platform-api/src/lib/project-agent-onboarding.d.ts",
+      "default": "./dist/platform-api/src/lib/project-agent-onboarding.js"
+    },
+    "./lib/project-agent-service": {
+      "types": "./dist/platform-api/src/lib/project-agent-service.d.ts",
+      "default": "./dist/platform-api/src/lib/project-agent-service.js"
+    },
+    "./lib/project-create-service": {
+      "types": "./dist/platform-api/src/lib/project-create-service.d.ts",
+      "default": "./dist/platform-api/src/lib/project-create-service.js"
+    },
     "./lib/project-members": {
       "types": "./dist/platform-api/src/lib/project-members.d.ts",
       "default": "./dist/platform-api/src/lib/project-members.js"
+    },
+    "./lib/project-platform-state": {
+      "types": "./dist/platform-api/src/lib/project-platform-state.d.ts",
+      "default": "./dist/platform-api/src/lib/project-platform-state.js"
+    },
+    "./lib/project-recipe": {
+      "types": "./dist/platform-api/src/lib/project-recipe.d.ts",
+      "default": "./dist/platform-api/src/lib/project-recipe.js"
+    },
+    "./lib/projectId": {
+      "types": "./dist/platform-api/src/lib/projectId.d.ts",
+      "default": "./dist/platform-api/src/lib/projectId.js"
     },
     "./lib/runtime-blob-store": {
       "types": "./dist/platform-api/src/lib/runtime-blob-store.d.ts",
@@ -272,6 +192,14 @@
     "./lib/token-review": {
       "types": "./dist/platform-api/src/lib/token-review.d.ts",
       "default": "./dist/platform-api/src/lib/token-review.js"
+    },
+    "./lib/user-deletion-deps": {
+      "types": "./dist/platform-api/src/lib/user-deletion-deps.d.ts",
+      "default": "./dist/platform-api/src/lib/user-deletion-deps.js"
+    },
+    "./lib/user-gateway": {
+      "types": "./dist/platform-api/src/lib/user-gateway.d.ts",
+      "default": "./dist/platform-api/src/lib/user-gateway.js"
     },
     "./lib/user-notifications": {
       "types": "./dist/platform-api/src/lib/user-notifications.d.ts",
@@ -285,6 +213,14 @@
       "types": "./dist/platform-api/src/lib/web-research-service.d.ts",
       "default": "./dist/platform-api/src/lib/web-research-service.js"
     },
+    "./lib/withProject": {
+      "types": "./dist/platform-api/src/lib/withProject.d.ts",
+      "default": "./dist/platform-api/src/lib/withProject.js"
+    },
+    "./lib/workspace-channel-membership": {
+      "types": "./dist/platform-api/src/lib/workspace-channel-membership.d.ts",
+      "default": "./dist/platform-api/src/lib/workspace-channel-membership.js"
+    },
     "./lib/workspace-conversation": {
       "types": "./dist/platform-api/src/lib/workspace-conversation.d.ts",
       "default": "./dist/platform-api/src/lib/workspace-conversation.js"
@@ -297,17 +233,45 @@
       "types": "./dist/platform-api/src/middleware/tenant-enforcement.d.ts",
       "default": "./dist/platform-api/src/middleware/tenant-enforcement.js"
     },
+    "./model-credentials/anthropic-probe": {
+      "types": "./dist/platform-api/src/model-credentials/anthropic-probe.d.ts",
+      "default": "./dist/platform-api/src/model-credentials/anthropic-probe.js"
+    },
+    "./model-credentials/provider-probe": {
+      "types": "./dist/platform-api/src/model-credentials/provider-probe.d.ts",
+      "default": "./dist/platform-api/src/model-credentials/provider-probe.js"
+    },
     "./npm-cache-proxy": {
       "types": "./dist/platform-api/src/npm-cache-proxy.d.ts",
       "default": "./dist/platform-api/src/npm-cache-proxy.js"
+    },
+    "./routes/admin": {
+      "types": "./dist/platform-api/src/routes/admin.d.ts",
+      "default": "./dist/platform-api/src/routes/admin.js"
     },
     "./routes/agent-import-broker": {
       "types": "./dist/platform-api/src/routes/agent-import-broker.d.ts",
       "default": "./dist/platform-api/src/routes/agent-import-broker.js"
     },
+    "./routes/agent-models": {
+      "types": "./dist/platform-api/src/routes/agent-models.d.ts",
+      "default": "./dist/platform-api/src/routes/agent-models.js"
+    },
+    "./routes/billing/byot": {
+      "types": "./dist/platform-api/src/routes/billing/byot.d.ts",
+      "default": "./dist/platform-api/src/routes/billing/byot.js"
+    },
     "./routes/byok-broker": {
       "types": "./dist/platform-api/src/routes/byok-broker.d.ts",
       "default": "./dist/platform-api/src/routes/byok-broker.js"
+    },
+    "./routes/byosub": {
+      "types": "./dist/platform-api/src/routes/byosub.d.ts",
+      "default": "./dist/platform-api/src/routes/byosub.js"
+    },
+    "./routes/connect": {
+      "types": "./dist/platform-api/src/routes/connect.d.ts",
+      "default": "./dist/platform-api/src/routes/connect.js"
     },
     "./routes/connector-token-broker": {
       "types": "./dist/platform-api/src/routes/connector-token-broker.d.ts",
@@ -321,6 +285,10 @@
       "types": "./dist/platform-api/src/routes/model-key-issuer.d.ts",
       "default": "./dist/platform-api/src/routes/model-key-issuer.js"
     },
+    "./routes/mount-cluster-routes": {
+      "types": "./dist/platform-api/src/routes/mount-cluster-routes.d.ts",
+      "default": "./dist/platform-api/src/routes/mount-cluster-routes.js"
+    },
     "./routes/openclaw-control-broker": {
       "types": "./dist/platform-api/src/routes/openclaw-control-broker.d.ts",
       "default": "./dist/platform-api/src/routes/openclaw-control-broker.js"
@@ -329,6 +297,26 @@
       "types": "./dist/platform-api/src/routes/openclaw-runtime-broker.d.ts",
       "default": "./dist/platform-api/src/routes/openclaw-runtime-broker.js"
     },
+    "./routes/projects/join-leave": {
+      "types": "./dist/platform-api/src/routes/projects/join-leave.d.ts",
+      "default": "./dist/platform-api/src/routes/projects/join-leave.js"
+    },
+    "./routes/projects/members": {
+      "types": "./dist/platform-api/src/routes/projects/members.d.ts",
+      "default": "./dist/platform-api/src/routes/projects/members.js"
+    },
+    "./routes/projects/provisioning": {
+      "types": "./dist/platform-api/src/routes/projects/provisioning.d.ts",
+      "default": "./dist/platform-api/src/routes/projects/provisioning.js"
+    },
+    "./routes/projects/repo-source": {
+      "types": "./dist/platform-api/src/routes/projects/repo-source.d.ts",
+      "default": "./dist/platform-api/src/routes/projects/repo-source.js"
+    },
+    "./routes/user/gateways": {
+      "types": "./dist/platform-api/src/routes/user/gateways.d.ts",
+      "default": "./dist/platform-api/src/routes/user/gateways.js"
+    },
     "./routes/voice-conversation": {
       "types": "./dist/platform-api/src/routes/voice-conversation.d.ts",
       "default": "./dist/platform-api/src/routes/voice-conversation.js"
@@ -336,6 +324,10 @@
     "./routes/workspace-native-access": {
       "types": "./dist/platform-api/src/routes/workspace-native-access.d.ts",
       "default": "./dist/platform-api/src/routes/workspace-native-access.js"
+    },
+    "./routes/workspace/display-name": {
+      "types": "./dist/platform-api/src/routes/workspace/display-name.d.ts",
+      "default": "./dist/platform-api/src/routes/workspace/display-name.js"
     },
     "./serve": {
       "types": "./dist/platform-api/src/serve.d.ts",
