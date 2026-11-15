@@ -334,6 +334,11 @@ answers in the same channel. Return the user with
 `gateway retire <id> --apply`, as in
 [An isolated gateway](kind.md#an-isolated-gateway).
 
+The gateway build fixes the cause of a return failing with "agent database
+files are still held open", but that fix has not yet been confirmed on EKS. If
+the return still fails that way, please report it. Then delete the `shared-a`
+pod, which restarts the agents of every user on it, and return the user again.
+
 ## Remove everything
 
 ```bash
