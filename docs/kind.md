@@ -109,11 +109,12 @@ To run newer code than the latest release, check out `main`'s newest built
 commit instead. Build main publishes a commit's images about 15 minutes
 after it reaches `main`. A running build always finishes, and only the newest
 push waits behind it, so a commit pushed in between can end up with no images.
-This checks out the newest `main` commit whose Build main succeeded:
+The Kind smoke workflow then installs those images on kind and runs both
+smoke tests. This checks out the newest `main` commit whose kind smokes passed:
 
 ```bash
-git checkout "$(gh run list -R octogee-ai/octogee-cloud --workflow=build-main.yml --branch=main \
-  --event=push --status=success --limit=1 --json headSha --jq '.[0].headSha')"
+git checkout "$(gh run list -R octogee-ai/octogee-cloud --workflow=kind-smoke.yml --event=workflow_run \
+  --status=success --limit=1 --json displayTitle --jq '.[0].displayTitle | ltrimstr("Kind smoke at ")')"
 ```
 
 ```bash
@@ -199,12 +200,12 @@ The fleet command line, [octogee-fleet](https://github.com/octogee-ai/octogee-fl
 talks to the Admin API. Install it with Go:
 
 ```bash
-go install "github.com/octogee-ai/octogee-fleet@$(sed -n 's/^  OCTOGEE_FLEET_VERSION: //p' .github/workflows/build-main.yml)"
+go install "github.com/octogee-ai/octogee-fleet@$(sed -n 's/^  OCTOGEE_FLEET_VERSION: //p' .github/workflows/kind-smoke.yml)"
 ```
 
-Run it from your checkout. It installs the octogee-fleet release that Build
-main tested that commit with, `OCTOGEE_FLEET_VERSION` in
-`.github/workflows/build-main.yml`, which a release's notes also name.
+Run it from your checkout. It installs the octogee-fleet release that the kind
+smokes tested that commit with, `OCTOGEE_FLEET_VERSION` in
+`.github/workflows/kind-smoke.yml`, which a release's notes also name.
 
 Go downloads the newer Go version the command line needs if yours is older, and
 puts the program in `$(go env GOPATH)/bin`, usually `~/go/bin`. Add that folder
@@ -541,11 +542,14 @@ tagged with the full and short commit SHA, and keeps an image manifest of every
 digest as a workflow artifact named `image-manifest-<sha>`. The manifest lists
 each image's platforms. A running image build always finishes; a newer push's
 image build waits behind it and replaces any that was already waiting. The
-smoke tests and scans that follow publication do not hold up the next build. A release adds its
+scans that follow publication do not hold up the next build, and a successful
+Build main run means its images were built, published and scanned. A release adds its
 `vX.Y.Z` tag to each image, attaches the manifest, and publishes the charts
 and npm packages at the same version, as [Releasing](releasing.md) describes. `kind-install.sh up --pull` installs
-these images. The post-build kind smoke test takes the amd64 digests directly
-from that run’s manifest and uses `octogee-fleet gateway ls` to query the new
+these images. After each successful Build main push run, the Kind smoke
+workflow (`.github/workflows/kind-smoke.yml`, its runs named `Kind smoke at
+<sha>`) tests them; its result never changes Build main's. Its first job takes
+the amd64 digests directly from that Build main run’s manifest and uses `octogee-fleet gateway ls` to query the new
 cluster’s Admin API. It then runs `kind-agent-round-trip.mjs` with Muse Ember on
 OpenRouter, so one user's agent replies through the LLM broker with a real
 provider key. A second job runs `kind-isolated-gateway.mjs` on its own cluster

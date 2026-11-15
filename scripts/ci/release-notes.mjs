@@ -26,7 +26,7 @@ export function releaseNotes({ tag, fleetVersion, manifest, gkeRun }) {
 
 octogee-cloud runs AI agents for many users on Kubernetes. Each user's agent is an OpenClaw agent on a shared gateway or on an isolated gateway of its own, and the user works with it through Mattermost for chat and Gitea for git. A fleet controller adds, moves and retires gateways when an operator asks, through its Admin API and the octogee-fleet command line, and an LLM broker holds the model provider keys. It needs a Kubernetes cluster, PostgreSQL 16, S3-compatible object storage and at least one model provider key; the install guides set these up on kind or on GKE. Not here yet: automatic placement and scaling. Nothing places, scales or moves users automatically, so the operator does each step. The Admin API and the Helm values are pre-1.0 and can change in any minor release. The GKE guide installs a single zone with no ingress, not a production setup.
 
-Build main published these images and passed both kind smoke tests at this commit, and [docs/gke.md](${SOURCE}/blob/${tag}/docs/gke.md) was followed end to end on a fresh Google Cloud project at ${gkeRun.commit} on ${gkeRun.date}.
+Build main published these images and the Kind smoke workflow passed both kind smoke tests on them at this commit, and [docs/gke.md](${SOURCE}/blob/${tag}/docs/gke.md) was followed end to end on a fresh Google Cloud project at ${gkeRun.commit} on ${gkeRun.date}.
 
 ## Start here
 

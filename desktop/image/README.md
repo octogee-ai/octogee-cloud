@@ -1,10 +1,10 @@
-# Octogee VM image
+# Isolated gateway VM image build
 
 Managed desktop sessions enable Omarchy's persistent stay-awake indicator
 before starting the compositor. The fleet controller owns parking; the passwordless desktop
-must remain available to the Agent and authenticated viewers while running.
+must remain available to the agent and authenticated viewers while running.
 
-Reproducible build of the Builder gateway VM image: stock Omarchy from the
+Reproducible build of the isolated gateway VM image: stock Omarchy from the
 pinned ISO, installed unattended, plus the desktop session, `vkms` + `vgem`
 for a display-less GCE guest, Docker for the gateway container, and a
 metadata-driven SSH key installer.
@@ -41,7 +41,7 @@ Google registry cannot be used.
    layout for `/dev/vda`, a throwaway build password, a one-build SSH key),
    and runs Omarchy's unattended install in QEMU/KVM directly onto the
    attached image disk.
-3. The factory preloads the release's digest-addressed Gateway Builder and gateway-edge
+3. The build preloads the digest-addressed isolated gateway and gateway-edge
    images into Docker on the boot disk, then verifies both are present.
    `customize.sh` (inside the guest, as root) installs the session packages,
    builds `wlrctl`, installs pinned noVNC and websockify, copies the overlay
@@ -62,7 +62,7 @@ Google registry cannot be used.
 The image carries no credentials: no password login, no authorized keys, no
 SSH host keys. `octo-metadata-ssh-keys.service` reconciles keys for `octo` from
 the instance or project `ssh-keys` metadata at boot, which is how `test.sh`
-gets in and how an operator gets in until the registration agent exists.
+and an operator get in.
 The timer removes revoked keys, honors `block-project-ssh-keys`, and filters
 expired [Google SSH metadata entries](https://docs.cloud.google.com/compute/docs/connect/add-ssh-keys).
 Active expiring keys also receive OpenSSH's `expiry-time` option, so expiration
@@ -77,7 +77,7 @@ python3 -m unittest desktop/image/test_acceptance.py
 ```
 
 Boots the newest image in the family (or `--image <name>`), waits for SSH,
-verifies every installed Octogee service executable with `systemd-analyze`,
+verifies every installed service executable with `systemd-analyze`,
 checks the modules, all five services (including the registration agent), and
 the root-growth oneshot's result,
 waits for the desktop to report a Chromium
@@ -93,7 +93,7 @@ and take over the desktop.
 
 ## Familiar desktop
 
-Every Builder's desktop starts in the **Familiar** style: windows float and
+Every isolated gateway's desktop starts in the **Familiar** style: windows float and
 overlap with traffic-light title bars (hyprbars, built in `customize.sh`
 against the image's Hyprland), a bottom dock, Super+Tab window switching, and
 the light `octogee` theme on the Quattro wallpaper (`*-quattro.*` from Tokyo Night; Omarchy renumbers its bundled backgrounds between releases). The stock Omarchy desktop
@@ -147,8 +147,8 @@ the grid with desktop-entry metadata (NoDisplay/Hidden, `Terminal=true`,
 only System/Settings/ConsoleOnly or absent are dropped; Omarchy web apps
 stay) and lists the dock's pinned apps first, then alphabetical. The page polls
 `GET /desk/state`, which reads `~/.config/octogee/desk.json` and `desk.svg`;
-the VM gateway agent writes both from the Builder's bootstrap payload (name,
-agent name, `agents/{uid}.look`), rendering the shared character drawing, and
+the VM gateway agent writes both from the gateway's bootstrap payload (name,
+agent name and look), rendering the shared character drawing, and
 keeps the stored `note`. Until the agent has written them the control API
 serves the shipped default drawing (`desk/character.svg`, pinned to the shared
 drawing by `scripts/__tests__/desktop-desk-page.spec.ts`) and the default note.
@@ -165,10 +165,8 @@ mixed with white). The gateway agent re-runs it on a look change only while the
 recorded style is Familiar and the current theme is still `octogee`; a plain
 `familiar` keeps the accent already installed.
 
-The Builder's time zone comes from their browser: the PWA sends
-`Intl.DateTimeFormat().resolvedOptions().timeZone` with the signup claim and
-backfills `users/{uid}.preferences.timeZone` on app load for existing
-users (Firestore rules keep it IANA-shaped; every consumer re-parses it).
+The user's time zone is the IANA zone in their platform record
+(`preferences.timeZone`), which a product sets; every consumer re-parses it.
 It rides the bootstrap `desk` field into `desk.json`, and the gateway agent
 sets the VM's system zone through `POST /timezone` on the control API
 (`timedatectl set-timezone`, validated against `/usr/share/zoneinfo`), only
@@ -200,7 +198,7 @@ and Chromium actually showing the Desk.
 | `octo-desktop.service` | as `octo`, on the user manager's session bus `/run/user/1000/bus` with AT-SPI running: Hyprland on the `vkms` output at 1440x900, wayvnc, noVNC over websockify, the control API, Chromium with its accessibility tree exposed; everything bound to 127.0.0.1 |
 | `octo-desktop-lifecycle.service` | root-only Unix socket for checkpoint freeze/thaw and restore stop/start of the desktop plus applications in `user@1000.service`; `stop-home` allows a full-home restore only behind a closed restore gate with the desktop, user manager and sshd inactive and no `octo` processes, and `start` refuses while the gate exists, then starts the user manager, `octo-home-migrate` and the desktop in that order, and sshd whether or not they started |
 | `octo-metadata-ssh-keys.service` | installs `octo:` keys from GCE metadata before sshd |
-| `octo-gateway-agent.service` | blocks the metadata server for uid 1000, polls instance metadata until `gateway-id`, `gateway-image`, and `octogee-api-url` are set, then pulls the gateway image with the VM's service account and runs the registration agent (`scripts/lib/vm-gateway-agent`) from that image against the host Docker socket, with the home disk mounted at `/srv/octogee` and no view of the boot disk's `/home/octo`. It wants `octo-home-migrate` without requiring it, so it still restarts after a failed migration; Docker keeps requiring the migration. A new image pull requires at least 16 GiB free on the Docker boot filesystem; an already-cached image can start below that threshold |
+| `octo-gateway-agent.service` | blocks the metadata server for uid 1000, polls instance metadata until `gateway-id`, `gateway-image`, and `octogee-api-url` are set, then pulls the gateway image with the VM's service account and runs the registration agent (`gateway-supervisor/lib/vm-gateway-agent`) from that image against the host Docker socket, with the home disk mounted at `/srv/octogee` and no view of the boot disk's `/home/octo`. It wants `octo-home-migrate` without requiring it, so it still restarts after a failed migration; Docker keeps requiring the migration. A new image pull requires at least 16 GiB free on the Docker boot filesystem; an already-cached image can start below that threshold |
 | `docker.service` | hosts the gateway and gateway-edge containers the agent manages |
 
 Power: `HandlePowerKey=poweroff`, so a GCE stop completes on the ACPI signal
@@ -236,7 +234,7 @@ sweeps the staging an interrupted attempt left on the home disk, and refuses a
 checkpoint the disk cannot hold twice, at error with reason
 `insufficient-space`, before downloading it; the archive is deleted as soon as
 it is extracted, and the agent retries a failed restore after one minute,
-doubling to thirty. Cowboy creates a checkpoint-restoring computer only from an
+doubling to thirty. The fleet controller creates a checkpoint-restoring computer only from an
 image labeled `home-restore=gated-v1`. A retained home never has the gate and
 boots as before.
 
@@ -295,71 +293,27 @@ geometry at 800×600 and 1024×768, restores 1440×900, and repeats after stop/s
 Missing resize support fails acceptance. The Python acceptance fixtures and
 candidate-family behavior run in the scripts CI suite.
 
-After acceptance, publication assigns that exact image to the environment's
-`octogee-computer` family. Record publication in the
-operations journal. Existing boot disks do not change when a family advances;
-The fleet controller moves a parked VM to the current image on its next boot. Replace
-a VM immediately with `fleet --env=test gw replace-computer <gateway-id> --apply` when requested. This checkpoints and restores home.
-New gateway VMs have 80 GiB boot disks. Enlarge an existing smaller boot disk
-and cold-start the VM to apply that capacity; a suspended VM does not
-run `octo-grow-root` until a cold boot.
-Check `fleet --help` before running an operator command.
+After acceptance, publish the image by assigning that exact image to the
+`octogee-computer` family of the project the VMs boot from, the
+`imageFamily` in the platform chart's `global.computer.vmSpec`. Existing boot
+disks do not change when a family advances; the fleet controller moves a
+stopped VM to the current image on its next boot. To replace a VM at once,
+call the Admin API's `POST /api/admin/gateways/<gateway-id>/vm/replace`; the
+replacement checkpoints the home and restores it onto the new VM. Enlarge a
+boot disk and cold-start the VM to apply the new capacity; a suspended VM does
+not run `octo-grow-root` until a cold boot.
 
-## CI/CD
+`test.sh --smoke` is the shorter check: boot health and the identities of the
+preloaded images, without the UI or the stop and start.
 
-The `desktop-image` job in `build-main.yml` calls these same build and acceptance
-scripts. A fingerprint covers the rootfs, ISO and tool pins, installer,
-acceptance scripts, build driver, and both runtime image digests. Unchanged inputs reuse the accepted GCE
-image; a cache miss builds a candidate without changing the image family,
-then runs a boot smoke check on a disposable VM: installed-version verification,
-both preloaded image digests, required services, home storage, and desktop health.
-UI, resize, and stop/start tests remain explicit operator qualification through
-`test.sh --stop-start`; they do not run in normal builds. The VM agent starts matching
-local immutable images without a registry request; an explicit later runtime
-update can fetch a missing image through the existing owner.
-Only successful acceptance creates an immutable descriptor in
-`gs://<test-project>-octogee-computer-images/accepted/`.
+## Automation
 
-The existing release manifest records `desktopImage`: project, image name,
-numeric GCE image ID, source SHA, input fingerprint, and acceptance version.
-Both cache reuse and publication verify the live image identity. Recreating an
-image under the same name fails that check. A retry can accept an existing
-candidate with matching inputs without rebuilding it.
-
-**Deploy platform build** (`release-environment.yml`) publishes the selected
-SHA's desktop image after its platform deploy succeeds; a release whose image
-is already the family image changes nothing. Publish
-the family alone (rollback or retry) with the Fleet CLI:
-
-```bash
-npm run --prefix scripts fleet -- --env=test desktop-image publish --sha=<full-main-sha>
-npm run --prefix scripts fleet -- --env=test desktop-image publish --sha=<full-main-sha> --apply
-```
-
-The first command previews the artifact and the planned change. The second
-journals publication and advances the TEST family. VMs retain their
-current disks until the fleet controller's next boot upgrade. Use the existing per-gateway
-`gw replace-computer` command for an explicitly selected VM.
-
-For PROD, select `--env=prod`: Fleet copies the tested image from TEST into the
-PROD image project, verifies the copy's source image ID, then publishes it.
-It does not rebuild. An older manifest can be selected to roll back the family.
-Manifests predating desktop artifacts cannot publish a desktop image, so a
-platform release of such a SHA fails at its desktop-image job.
-
-CI uses the existing GitHub WIF authentication. The TEST Terraform environment
-owns its temporary-compute permissions, dedicated builder service account, and
-image-bucket access. Release publication additionally needs image-family
-update and PROD image-copy permissions.
-The builder has a 60-minute deadline and acceptance a 15-minute deadline.
-CI VMs also have a two-hour GCE automatic deletion limit, independent of the
-runner. An always-running cleanup step deletes this run's temporary VMs; the next
-image job also removes abandoned CI VMs older than two hours. Operator builds
-are excluded from that cleanup.
+No workflow in this repository builds, tests or publishes the VM image; an
+operator runs `build.sh` and `test.sh`. `scripts/lib/desktop-image.mjs` validates the
+record of an accepted image (project, image name, numeric image ID, source
+SHA, input fingerprint and acceptance level) and checks that the live image
+still matches it.
 
 Image acceptance verifies the host desktop, browser input, resize, XWayland
 geometry, and reboot persistence. It does not start a paired OpenClaw agent;
 gateway container and node wiring remain covered by their existing tests.
-
-The accepted image `octogee-computer-4-0-2-20260907-1302` was published to TEST
-on 2026-09-07. Fresh-VM acceptance passed before and after stop/start.

@@ -65,6 +65,33 @@ Started by something else:
 `provisioner`, `byosub-syncback-runner` and `runner-metrics-exporter`, which
 `gateway/shared-auxiliary-runner.sh` runs.
 
+## The provisioner
+
+The provisioner runs in every gateway, started by
+[`gateway/entrypoint.sh`](../gateway/entrypoint.sh) under the runner
+supervisor (`entrypoints/supervise-runner.ts`). It reads which users are
+assigned to its gateway and sets each one up through the platform API's fleet
+broker: their Mattermost account, team, channels and agent bot, their Gitea
+organization and `workspace` repository, and their agent in OpenClaw. When the
+fleet controller tells it a user has left, it removes that user's local
+footprint.
+
+It holds no admin credentials and no database login. It calls the fleet
+broker at `FLEET_BROKER_URL`, by default the platform API's in-cluster
+Service, with the gateway's projected Kubernetes service account token, and
+the broker checks which gateway is asking and which users that gateway serves.
+
+It serves the gateway's fleet port, `FLEET_CONTROLLER_PORT` (3003 by default):
+health and readiness, the signed report of the users it serves that the fleet
+controller polls, and the routes the fleet controller drives a migration
+through (`registerMigrationRoutes` in
+[`lib/fleet-provisioner.ts`](lib/fleet-provisioner.ts)).
+
+`gateway/entrypoint.sh` supervises it under the runner name `fleet-controller`,
+and some log lines use that name, from before the provisioner and the fleet
+controller were separate. Other names that keep an earlier spelling are in
+[Legacy names](../docs/legacy-names.md).
+
 ## What it talks to
 
 - The platform API's fleet broker, for every user setup step that needs an
