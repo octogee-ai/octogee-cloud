@@ -40,7 +40,18 @@ export interface GetProvisioningOptions extends RequestSignalOptions {
 export interface WatchProvisioningsOptions {
     readonly resourceVersion: string;
     readonly timeoutSeconds?: number;
+    readonly limit?: number;
 }
+export declare const PROVISIONING_WATCH_PAGE_LIMIT = 500;
+export type ProvisioningChange = {
+    readonly kind: "upsert";
+    readonly resource: UserProvisioning;
+} | {
+    readonly kind: "deleted";
+    readonly uid: string;
+    readonly resourceVersion: string;
+};
+export declare function orderedChanges(page: UserProvisioningWatchResponse): ProvisioningChange[];
 export interface ProvisioningServiceClient {
     putProvisioning(uid: string, spec: UserProvisioningSpec, options?: {
         expectedResourceVersion?: string;
@@ -64,11 +75,12 @@ export declare function backoffDelayMs(attempt: number, policy: Pick<Provisionin
 export declare function createProvisioningServiceClient(options: ProvisioningServiceClientOptions): ProvisioningServiceClient;
 export interface ProvisioningWatchHandlers {
     onSnapshot(items: readonly UserProvisioning[]): Promise<void>;
-    onChanges(items: readonly UserProvisioning[]): Promise<void>;
+    onChanges(changes: readonly ProvisioningChange[]): Promise<void>;
     onError(error: unknown, consecutiveFailures: number): void;
 }
 export interface ProvisioningWatchOptions {
     readonly timeoutSeconds?: number;
+    readonly pageLimit?: number;
     readonly retry?: Pick<ProvisioningServiceRetryPolicy, "baseDelayMs" | "maxDelayMs">;
     readonly sleep?: (ms: number) => Promise<void>;
     readonly random?: () => number;

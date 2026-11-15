@@ -164,6 +164,12 @@ export async function runJournaledBackfill<T>(
   return { journaled: true, result };
 }
 
+async function refusalReason(store: PlatformStateStore, resource: UserProvisioning, outcome: MirrorRefusalOutcome): Promise<string> {
+  if (outcome === "slug-mismatch") return `its spec names slug ${resource.spec.slug}, which the user record does not carry`;
+  const held = (await store.users.records.get(resource.uid))?.mattermostUserId;
+  return `the user record holds chat user ${held}, the provisioning service reports chat user ${resource.status.outputs.chat?.userId}`;
+}
+
 interface DeleterInput {
   readonly deps: ProvisioningSyncDeps;
   readonly cache: Map<string, UserProvisioning>;
@@ -243,6 +249,13 @@ export function createProvisioningSync(deps: ProvisioningSyncDeps): Provisioning
     if (newer(resource, cache.get(resource.uid))) cache.set(resource.uid, resource);
   }
 
+  function forget(uid: string, resourceVersion: string): void {
+    const seen = cache.get(uid);
+    if (seen === undefined || BigInt(seen.resourceVersion) > BigInt(resourceVersion)) return;
+    cache.delete(uid);
+    specs.enqueue(uid);
+  }
+
   async function writeSpec(uid: string): Promise<SpecWriteOutcome> {
     const user = await deps.store.users.records.get(uid);
     if (user === null || !user.admitted || !user.slug) return "not-admitted";
@@ -281,12 +294,6 @@ export function createProvisioningSync(deps: ProvisioningSyncDeps): Provisioning
 
   const refusals = new Map<string, MirrorRefusal>();
 
-  async function refusalReason(resource: UserProvisioning, outcome: MirrorRefusalOutcome): Promise<string> {
-    if (outcome === "slug-mismatch") return `its spec names slug ${resource.spec.slug}, which the user record does not carry`;
-    const held = (await deps.store.users.records.get(resource.uid))?.mattermostUserId;
-    return `the user record holds chat user ${held}, the provisioning service reports chat user ${resource.status.outputs.chat?.userId}`;
-  }
-
   async function recordMirror(resource: UserProvisioning, outcome: ProvisioningMirrorOutcome): Promise<void> {
     const uid = resource.uid;
     counters.mirrors[outcome] += 1;
@@ -295,7 +302,7 @@ export function createProvisioningSync(deps: ProvisioningSyncDeps): Provisioning
     if (outcome === "credentials-not-issued") deps.log(`[provisioning] not mirroring ${uid} yet: its chat credentials are not issued`);
     if (outcome === "agent-not-ready") deps.log(`[provisioning] not mirroring ${uid} yet: its spec enables the default agent, which has no chat account`);
     if (outcome === "chat-id-mismatch" || outcome === "slug-mismatch") {
-      const reason = await refusalReason(resource, outcome);
+      const reason = await refusalReason(deps.store, resource, outcome);
       refusals.set(uid, { uid, outcome, reason, since: refusals.get(uid)?.since ?? new Date(now()).toISOString() });
       deps.log(`[provisioning] ❌ not mirroring ${uid}: ${reason}`);
     }
@@ -399,11 +406,15 @@ export function createProvisioningSync(deps: ProvisioningSyncDeps): Provisioning
           for (const item of items) mirrors.enqueue(item.uid);
           await deleteOrphans();
         },
-        onChanges: async (items) => {
+        onChanges: async (changes) => {
           counters.watchConnected = true;
-          for (const item of items) {
-            remember(item);
-            mirrors.enqueue(item.uid);
+          for (const change of changes) {
+            if (change.kind === "deleted") {
+              forget(change.uid, change.resourceVersion);
+              continue;
+            }
+            remember(change.resource);
+            mirrors.enqueue(change.resource.uid);
           }
         },
         onError: (error, consecutive) => {

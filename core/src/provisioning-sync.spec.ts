@@ -601,6 +601,29 @@ describe("removed users", () => {
     expect(fake.resources.get("u1")?.status.outputs.chat).toBeUndefined();
   });
 
+  it("forgets a provisioning the service deleted and sends a fresh spec for a user who is still admitted", async () => {
+    const instance = await chatReadyUser();
+    const putsBefore = puts().length;
+
+    await client().deleteProvisioning("u1");
+    await until(() => fake.resources.get("u1")?.generation === 1 && puts().length === putsBefore + 1);
+
+    expect(fake.resources.get("u1")?.status.outputs.chat).toBeUndefined();
+    expect(instance.observed("u1")?.status.outputs.chat).toBeUndefined();
+  });
+
+  it("forgets a deleted provisioning and writes nothing for a user who is gone", async () => {
+    const instance = await chatReadyUser();
+    records.delete("users/u1");
+
+    await client().deleteProvisioning("u1");
+    await until(() => instance.observed("u1") === undefined);
+    await instance.resync();
+
+    expect(fake.resources.has("u1")).toBe(false);
+    expect(deletesOf("u1")).toHaveLength(1);
+  });
+
   it("refuses to mirror a user whose record vanishes between the read and the write", async () => {
     seedUser("u1", "lin");
     await client().putProvisioning("u1", desiredUserProvisioningSpec("u1", ACCOUNTS.u1));

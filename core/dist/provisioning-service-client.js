@@ -27,6 +27,22 @@ export class ProvisioningServiceError extends Error {
         return this.code === "unreachable" || this.status === 429 || this.status >= 500;
     }
 }
+export const PROVISIONING_WATCH_PAGE_LIMIT = 500;
+function changeVersion(change) {
+    return BigInt(change.kind === "deleted" ? change.resourceVersion : change.resource.resourceVersion);
+}
+export function orderedChanges(page) {
+    const changes = [
+        ...page.items.map((resource) => ({ kind: "upsert", resource })),
+        ...(page.deleted ?? []).map((deletion) => ({ kind: "deleted", uid: deletion.uid, resourceVersion: deletion.resourceVersion })),
+    ];
+    return changes.sort((left, right) => {
+        const difference = changeVersion(left) - changeVersion(right);
+        if (difference === 0n)
+            return 0;
+        return difference < 0n ? -1 : 1;
+    });
+}
 export function provisioningServiceConfigFromEnvironment(env) {
     const baseUrl = env[PROVISIONING_SERVICE_URL_ENV]?.trim() ?? "";
     if (baseUrl === "")
@@ -241,7 +257,7 @@ export function createProvisioningServiceClient(options) {
             const response = await request({
                 method: "GET",
                 path: "provisionings",
-                query: { watch: true, resourceVersion: watchOptions.resourceVersion, timeoutSeconds },
+                query: { watch: true, resourceVersion: watchOptions.resourceVersion, timeoutSeconds, limit: watchOptions.limit ?? PROVISIONING_WATCH_PAGE_LIMIT },
                 timeoutMs: timeoutSeconds * 1000 + LONG_POLL_GRACE_MS,
             });
             return json(response);
@@ -294,11 +310,16 @@ export function startProvisioningWatch(client, handlers, options = {}) {
             await handlers.onSnapshot(listed.items);
             return { resourceVersion: listed.resourceVersion, watched: false };
         }
-        const changed = await client.watchProvisionings({ resourceVersion, timeoutSeconds: options.timeoutSeconds ?? 60 });
+        const changed = await client.watchProvisionings({
+            resourceVersion,
+            timeoutSeconds: options.timeoutSeconds ?? 60,
+            limit: options.pageLimit ?? PROVISIONING_WATCH_PAGE_LIMIT,
+        });
         if (stopping)
             return null;
-        if (changed.items.length > 0)
-            await handlers.onChanges(changed.items);
+        const changes = orderedChanges(changed);
+        if (changes.length > 0)
+            await handlers.onChanges(changes);
         return { resourceVersion: changed.resourceVersion, watched: true };
     }
     async function run() {

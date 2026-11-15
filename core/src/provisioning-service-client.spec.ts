@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { UserProvisioning, UserProvisioningSpec } from "@octogee/shared/types/provisioning-service";
+import type { UserProvisioningSpec } from "@octogee/shared/types/provisioning-service";
 import { startFakeProvisioningService, type FakeProvisioningService } from "./fixtures/provisioning-service-fake.js";
 import {
   createProvisioningServiceClient,
   provisioningServiceConfigFromEnvironment,
   ProvisioningServiceError,
   startProvisioningWatch,
+  type ProvisioningChange,
   type ProvisioningServiceClientOptions,
   type ProvisioningServiceRequestOutcome,
 } from "./provisioning-service-client.js";
@@ -19,6 +20,14 @@ const SPEC: UserProvisioningSpec = {
   git: { repositories: ["workspace", "project-coaches"], systemConfigRepository: true },
   agentIds: ["octogee-lin-coach"],
 };
+
+const describeChange = (change: ProvisioningChange) => change.kind === "deleted" ? `deleted ${change.uid}` : `upsert ${change.resource.uid}`;
+const versionOf = (change: ProvisioningChange) => change.kind === "deleted" ? change.resourceVersion : change.resource.resourceVersion;
+
+async function until(condition: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 200 && !condition(); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 10));
+  expect(condition()).toBe(true);
+}
 
 let fake: FakeProvisioningService;
 let token: string;
@@ -175,6 +184,16 @@ describe("provisioning service client", () => {
     expect(fake.requests.at(-1)).toMatchObject({ method: "POST", path: "/v1/users/u1/provisioning/retry", idempotencyKey: "key-1", body: { expectedAttempts: 0 } });
   });
 
+  it("waits out a rate limit with its capped Retry-After, then succeeds", async () => {
+    fake.failNext(429, 1, 3600);
+
+    await client().putProvisioning("u1", SPEC);
+
+    expect(sleeps).toEqual([10_000]);
+    expect(outcomes).toEqual(["client-error", "ok"]);
+    expect(fake.resources.has("u1")).toBe(true);
+  });
+
   it("caps a long Retry-After at the retry policy's maximum delay", async () => {
     fake.failNext(503, 1, 3600);
 
@@ -278,8 +297,8 @@ describe("provisioning watch", () => {
           resolveSecondSnapshot();
         }
       },
-      onChanges: async (items: readonly UserProvisioning[]) => {
-        changes.push(items.map((item) => item.uid));
+      onChanges: async (page: readonly ProvisioningChange[]) => {
+        changes.push(page.map(describeChange));
         fake.expireBefore(100);
       },
       onError: (error) => {
@@ -294,7 +313,57 @@ describe("provisioning watch", () => {
     await watch.stopped;
 
     expect(snapshots).toEqual([["a"], ["a", "b"]]);
-    expect(changes).toEqual([["b"]]);
+    expect(changes).toEqual([["upsert b"]]);
+  });
+
+  it("applies a page's deletions and changes in resource version order", async () => {
+    const api = client();
+    const pages: string[][] = [];
+    const watch = startProvisioningWatch(api, {
+      onSnapshot: async () => {
+        await api.putProvisioning("a", SPEC);
+        await api.deleteProvisioning("a");
+        await api.putProvisioning("a", SPEC);
+      },
+      onChanges: async (page) => {
+        pages.push(page.map((change) => `${describeChange(change)} ${versionOf(change)}`));
+      },
+      onError: (error) => {
+        throw error;
+      },
+    }, { timeoutSeconds: 1 });
+
+    await until(() => pages.length > 0);
+    watch.stop();
+    await api.putProvisioning("z", SPEC);
+    await watch.stopped;
+
+    expect(pages[0]).toEqual(["deleted a 2", "upsert a 3"]);
+  });
+
+  it("follows watch pages until it has caught up", async () => {
+    const api = client();
+    const seen: string[] = [];
+    const watch = startProvisioningWatch(api, {
+      onSnapshot: async () => {
+        for (const uid of ["a", "b", "c", "d", "e"]) await api.putProvisioning(uid, SPEC);
+      },
+      onChanges: async (page) => {
+        seen.push(...page.map(describeChange));
+      },
+      onError: (error) => {
+        throw error;
+      },
+    }, { timeoutSeconds: 1, pageLimit: 2 });
+
+    await until(() => seen.length === 5);
+    watch.stop();
+    await api.putProvisioning("z", SPEC);
+    await watch.stopped;
+
+    const watches = fake.requests.filter((request) => request.query.watch === "true");
+    expect(seen).toEqual(["upsert a", "upsert b", "upsert c", "upsert d", "upsert e"]);
+    expect(watches.slice(0, 3).map((request) => [request.query.limit, request.query.resourceVersion])).toEqual([["2", "0"], ["2", "2"], ["2", "4"]]);
   });
 
   it("backs off before relisting when the resource version keeps expiring", async () => {

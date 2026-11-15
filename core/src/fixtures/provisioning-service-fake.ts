@@ -8,6 +8,7 @@ import type {
   UserProvisioning,
   UserProvisioningSpec,
   UserProvisioningStatus,
+  UserProvisioningWatchResponse,
 } from "@octogee/shared/types/provisioning-service";
 
 export interface FakeProvisioningRequest {
@@ -58,10 +59,33 @@ async function readBody(req: IncomingMessage): Promise<unknown> {
   return text === "" ? undefined : JSON.parse(text);
 }
 
+interface FakeChange {
+  readonly version: number;
+  readonly uid: string;
+  readonly deleted: boolean;
+}
+
+function changePage(
+  state: { changes: readonly FakeChange[]; resources: ReadonlyMap<string, UserProvisioning>; counter: number },
+  since: number,
+  limit: number,
+): UserProvisioningWatchResponse {
+  const page = state.changes.filter((change) => change.version > since).slice(0, limit);
+  const items = page
+    .filter((change) => !change.deleted && state.resources.get(change.uid)?.resourceVersion === String(change.version))
+    .map((change) => state.resources.get(change.uid) as UserProvisioning);
+  const deleted = page.filter((change) => change.deleted).map((change) => ({ uid: change.uid, resourceVersion: String(change.version) }));
+  return {
+    items,
+    ...(deleted.length > 0 ? { deleted } : {}),
+    resourceVersion: String(page.at(-1)?.version ?? state.counter),
+  };
+}
+
 export async function startFakeProvisioningService(options: { tokens?: string[] } = {}): Promise<FakeProvisioningService> {
   const requests: FakeProvisioningRequest[] = [];
   const resources = new Map<string, UserProvisioning>();
-  const changedAt = new Map<string, number>();
+  const changes: FakeChange[] = [];
   const events = new Map<string, ProvisioningAttempt[]>();
   const retries = new Map<string, unknown>();
   const failures: Array<{ status: number; retryAfterSeconds?: number }> = [];
@@ -75,16 +99,19 @@ export async function startFakeProvisioningService(options: { tokens?: string[] 
     counter += 1;
     const next = { ...resource, resourceVersion: String(counter) };
     resources.set(uid, next);
-    changedAt.set(uid, counter);
+    changes.push({ version: counter, uid, deleted: false });
     for (const wake of [...waiters]) wake();
     return next;
   }
 
-  function changedAfter(version: number): UserProvisioning[] {
-    return [...resources.entries()]
-      .filter(([uid]) => (changedAt.get(uid) ?? 0) > version)
-      .map(([, resource]) => resource);
+  function remove(uid: string): void {
+    if (!resources.delete(uid)) return;
+    counter += 1;
+    changes.push({ version: counter, uid, deleted: true });
+    for (const wake of [...waiters]) wake();
   }
+
+
 
   function record(req: IncomingMessage, url: URL, body: unknown): FakeProvisioningRequest {
     const recorded: FakeProvisioningRequest = {
@@ -149,7 +176,7 @@ export async function startFakeProvisioningService(options: { tokens?: string[] 
     const existing = resources.get(uid);
     if (recorded.method === "PUT" && suffix === undefined) return put(uid, existing, recorded.body, res);
     if (recorded.method === "DELETE" && suffix === undefined) {
-      resources.delete(uid);
+      remove(uid);
       return send(res, 204);
     }
     if (!existing) return fail(res, 404, "not-found", "no provisioning");
@@ -196,7 +223,8 @@ export async function startFakeProvisioningService(options: { tokens?: string[] 
     const since = Number(url.searchParams.get("resourceVersion"));
     if (since < oldestRetained) return fail(res, 410, "resource-version-expired", "too old");
     const timeoutMs = Number(url.searchParams.get("timeoutSeconds") ?? "60") * 1000;
-    if (changedAfter(since).length === 0) {
+    const limit = Number(url.searchParams.get("limit") ?? "500");
+    if (!changes.some((change) => change.version > since)) {
       await new Promise<void>((resolve) => {
         const wake = () => {
           waiters.delete(wake);
@@ -207,7 +235,7 @@ export async function startFakeProvisioningService(options: { tokens?: string[] 
         waiters.add(wake);
       });
     }
-    send(res, 200, { items: changedAfter(since), resourceVersion: String(counter) });
+    send(res, 200, changePage({ changes, resources, counter }, since, limit));
   }
 
   const server: Server = createServer((req, res) => {

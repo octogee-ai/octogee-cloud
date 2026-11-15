@@ -81,6 +81,29 @@ export interface GetProvisioningOptions extends RequestSignalOptions {
 export interface WatchProvisioningsOptions {
   readonly resourceVersion: string;
   readonly timeoutSeconds?: number;
+  readonly limit?: number;
+}
+
+export const PROVISIONING_WATCH_PAGE_LIMIT = 500;
+
+export type ProvisioningChange =
+  | { readonly kind: "upsert"; readonly resource: UserProvisioning }
+  | { readonly kind: "deleted"; readonly uid: string; readonly resourceVersion: string };
+
+function changeVersion(change: ProvisioningChange): bigint {
+  return BigInt(change.kind === "deleted" ? change.resourceVersion : change.resource.resourceVersion);
+}
+
+export function orderedChanges(page: UserProvisioningWatchResponse): ProvisioningChange[] {
+  const changes: ProvisioningChange[] = [
+    ...page.items.map((resource): ProvisioningChange => ({ kind: "upsert", resource })),
+    ...(page.deleted ?? []).map((deletion): ProvisioningChange => ({ kind: "deleted", uid: deletion.uid, resourceVersion: deletion.resourceVersion })),
+  ];
+  return changes.sort((left, right) => {
+    const difference = changeVersion(left) - changeVersion(right);
+    if (difference === 0n) return 0;
+    return difference < 0n ? -1 : 1;
+  });
 }
 
 export interface ProvisioningServiceClient {
@@ -337,7 +360,7 @@ export function createProvisioningServiceClient(options: ProvisioningServiceClie
       const response = await request({
         method: "GET",
         path: "provisionings",
-        query: { watch: true, resourceVersion: watchOptions.resourceVersion, timeoutSeconds },
+        query: { watch: true, resourceVersion: watchOptions.resourceVersion, timeoutSeconds, limit: watchOptions.limit ?? PROVISIONING_WATCH_PAGE_LIMIT },
         timeoutMs: timeoutSeconds * 1000 + LONG_POLL_GRACE_MS,
       });
       return json<UserProvisioningWatchResponse>(response);
@@ -380,12 +403,13 @@ export function createProvisioningServiceClient(options: ProvisioningServiceClie
 
 export interface ProvisioningWatchHandlers {
   onSnapshot(items: readonly UserProvisioning[]): Promise<void>;
-  onChanges(items: readonly UserProvisioning[]): Promise<void>;
+  onChanges(changes: readonly ProvisioningChange[]): Promise<void>;
   onError(error: unknown, consecutiveFailures: number): void;
 }
 
 export interface ProvisioningWatchOptions {
   readonly timeoutSeconds?: number;
+  readonly pageLimit?: number;
   readonly retry?: Pick<ProvisioningServiceRetryPolicy, "baseDelayMs" | "maxDelayMs">;
   readonly sleep?: (ms: number) => Promise<void>;
   readonly random?: () => number;
@@ -410,9 +434,14 @@ export function startProvisioningWatch(
       await handlers.onSnapshot(listed.items);
       return { resourceVersion: listed.resourceVersion, watched: false };
     }
-    const changed = await client.watchProvisionings({ resourceVersion, timeoutSeconds: options.timeoutSeconds ?? 60 });
+    const changed = await client.watchProvisionings({
+      resourceVersion,
+      timeoutSeconds: options.timeoutSeconds ?? 60,
+      limit: options.pageLimit ?? PROVISIONING_WATCH_PAGE_LIMIT,
+    });
     if (stopping) return null;
-    if (changed.items.length > 0) await handlers.onChanges(changed.items);
+    const changes = orderedChanges(changed);
+    if (changes.length > 0) await handlers.onChanges(changes);
     return { resourceVersion: changed.resourceVersion, watched: true };
   }
 
