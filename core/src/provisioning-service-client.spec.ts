@@ -205,7 +205,7 @@ describe("provisioning service client", () => {
   it("sends any uid the platform admits as one encoded path segment", async () => {
     const api = client();
 
-    await api.getProvisioning("lin@example.test/x?y#z %");
+    await api.getProvisioning("lin@example.test/x?y#z %").catch(() => undefined);
     await api.getCredential("../provisionings", "user-chat-token").catch(() => undefined);
 
     expect(fake.requests.map((request) => request.path)).toEqual([
@@ -254,6 +254,19 @@ describe("provisioning service client", () => {
     await api.getProvisioning("u1");
 
     expect(seen.map((init) => init.redirect)).toEqual(["error"]);
+  });
+
+  it("answers deleted for a provisioning it removes or that was already gone", async () => {
+    const api = client();
+    await api.putProvisioning("u1", SPEC);
+
+    await expect(api.deleteProvisioning("u1")).resolves.toBe("deleted");
+    await expect(api.deleteProvisioning("u1")).resolves.toBe("deleted");
+  });
+
+  it("answers unnameable, not an error, for a uid the service cannot name", async () => {
+    await expect(client().deleteProvisioning("lin@example.test")).resolves.toBe("unnameable");
+    await expect(client().deleteProvisioning("..")).resolves.toBe("unnameable");
   });
 
   it("answers unexpected-response when an accepted retry has a body that is not JSON", async () => {

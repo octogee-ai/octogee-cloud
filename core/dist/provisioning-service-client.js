@@ -227,7 +227,17 @@ export function createProvisioningServiceClient(options) {
             return response.status === 404 ? null : json(response);
         },
         async deleteProvisioning(uid) {
-            await request({ method: "DELETE", path: userPath(uid), allowNotFound: true });
+            if (!isAddressableUid(uid))
+                return "unnameable";
+            try {
+                await request({ method: "DELETE", path: userPath(uid), allowNotFound: true });
+            }
+            catch (error) {
+                if (error instanceof ProvisioningServiceError && error.status === 400 && error.code === "invalid-request")
+                    return "unnameable";
+                throw error;
+            }
+            return "deleted";
         },
         async listProvisionings(query, listOptions) {
             const response = await request({

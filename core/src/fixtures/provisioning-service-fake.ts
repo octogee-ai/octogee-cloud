@@ -50,10 +50,11 @@ function send(res: ServerResponse, status: number, body?: unknown, headers: Reco
 
 type FakeErrorCode = Extract<
   ProvisioningErrorBody["code"],
-  "unauthenticated" | "precondition-failed" | "not-found" | "forbidden" | "not-issued" | "resource-version-expired" | "unavailable"
+  "invalid-request" | "unauthenticated" | "precondition-failed" | "not-found" | "forbidden" | "not-issued" | "resource-version-expired" | "unavailable"
 >;
 
 const FAKE_ERROR_MESSAGES: Record<FakeErrorCode, string> = {
+  "invalid-request": "uid is not a valid identifier",
   unauthenticated: "token review failed",
   "precondition-failed": "the precondition no longer holds",
   "not-found": "no such provisioning or route",
@@ -73,6 +74,8 @@ async function readBody(req: IncomingMessage): Promise<unknown> {
   const text = Buffer.concat(chunks).toString("utf8");
   return text === "" ? undefined : JSON.parse(text);
 }
+
+const SERVICE_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
 
 interface FakeChange {
   readonly version: number;
@@ -209,7 +212,9 @@ export async function startFakeProvisioningService(options: { tokens?: string[] 
     if (credentialMatch) return credential(decodeURIComponent(credentialMatch[1]), decodeURIComponent(credentialMatch[2]), res);
     const userMatch = /^\/v1\/users\/([^/]+)\/provisioning(\/retry|\/events)?$/.exec(url.pathname);
     if (!userMatch) return fail(res, 404, "not-found");
-    user(decodeURIComponent(userMatch[1]), userMatch[2], recorded, res);
+    const uid = decodeURIComponent(userMatch[1]);
+    if (!SERVICE_IDENTIFIER.test(uid)) return fail(res, 400, "invalid-request");
+    user(uid, userMatch[2], recorded, res);
   }
 
   function credential(uid: string, name: string, res: ServerResponse): void {

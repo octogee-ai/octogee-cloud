@@ -73,7 +73,7 @@ export function addAdminProvisioningRoutes(router, deps) {
     const respondToServiceError = (error, req, res, next) => {
         const serviceError = error instanceof FleetMutationRefusedError ? error.refusal : error;
         if (serviceError instanceof ProvisioningServiceError) {
-            if (serviceError.status === 409 || serviceError.status === 404) {
+            if (serviceError.status === 400 || serviceError.status === 404 || serviceError.status === 409) {
                 res.status(serviceError.status).json({ code: serviceError.code, error: serviceError.message });
                 return;
             }

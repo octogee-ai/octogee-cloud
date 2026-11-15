@@ -137,8 +137,10 @@ describe("Admin API provisioning routes", () => {
   });
 
   it("passes any uid the platform admits to the service as one path segment", async () => {
-    await request(app()).get("/users/..%2F..%2Fprovisionings/provisioning").expect(404);
-    await request(app()).get("/users/.hidden/provisioning").expect(404);
+    const refused = await request(app()).get("/users/..%2F..%2Fprovisionings/provisioning").expect(400);
+    await request(app()).get("/users/.hidden/provisioning").expect(400);
+
+    expect(refused.body.code).toBe("invalid-request");
 
     expect(fake.requests.filter((entry) => entry.method === "GET").map((entry) => entry.path)).toEqual(expect.arrayContaining([
       "/v1/users/..%2F..%2Fprovisionings/provisioning",

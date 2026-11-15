@@ -64,6 +64,8 @@ export class ProvisioningServiceError extends Error {
   }
 }
 
+export type DeleteProvisioningOutcome = "deleted" | "unnameable";
+
 export interface PutProvisioningResult {
   readonly outcome: "created" | "changed" | "unchanged";
   readonly resource: UserProvisioning;
@@ -111,7 +113,7 @@ export function orderedChanges(page: UserProvisioningWatchResponse): Provisionin
 export interface ProvisioningServiceClient {
   putProvisioning(uid: string, spec: UserProvisioningSpec, options?: { expectedResourceVersion?: string }): Promise<PutProvisioningResult>;
   getProvisioning(uid: string, options?: GetProvisioningOptions): Promise<UserProvisioning | null>;
-  deleteProvisioning(uid: string): Promise<void>;
+  deleteProvisioning(uid: string): Promise<DeleteProvisioningOutcome>;
   listProvisionings(query?: UserProvisioningListQuery, options?: RequestSignalOptions): Promise<UserProvisioningList>;
   listAllProvisionings(query?: Omit<UserProvisioningListQuery, "pageToken">): Promise<UserProvisioningWatchResponse>;
   watchProvisionings(options: WatchProvisioningsOptions): Promise<UserProvisioningWatchResponse>;
@@ -327,7 +329,14 @@ export function createProvisioningServiceClient(options: ProvisioningServiceClie
     },
 
     async deleteProvisioning(uid) {
-      await request({ method: "DELETE", path: userPath(uid), allowNotFound: true });
+      if (!isAddressableUid(uid)) return "unnameable";
+      try {
+        await request({ method: "DELETE", path: userPath(uid), allowNotFound: true });
+      } catch (error) {
+        if (error instanceof ProvisioningServiceError && error.status === 400 && error.code === "invalid-request") return "unnameable";
+        throw error;
+      }
+      return "deleted";
     },
 
     async listProvisionings(query, listOptions) {

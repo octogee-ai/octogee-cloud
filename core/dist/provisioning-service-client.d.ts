@@ -26,6 +26,7 @@ export declare class ProvisioningServiceError extends Error {
     constructor(status: number, code: ProvisioningErrorCode | "unreachable" | "unexpected-response" | "aborted", message: string, retryAfterMs?: number | null);
     get transient(): boolean;
 }
+export type DeleteProvisioningOutcome = "deleted" | "unnameable";
 export interface PutProvisioningResult {
     readonly outcome: "created" | "changed" | "unchanged";
     readonly resource: UserProvisioning;
@@ -58,7 +59,7 @@ export interface ProvisioningServiceClient {
         expectedResourceVersion?: string;
     }): Promise<PutProvisioningResult>;
     getProvisioning(uid: string, options?: GetProvisioningOptions): Promise<UserProvisioning | null>;
-    deleteProvisioning(uid: string): Promise<void>;
+    deleteProvisioning(uid: string): Promise<DeleteProvisioningOutcome>;
     listProvisionings(query?: UserProvisioningListQuery, options?: RequestSignalOptions): Promise<UserProvisioningList>;
     listAllProvisionings(query?: Omit<UserProvisioningListQuery, "pageToken">): Promise<UserProvisioningWatchResponse>;
     watchProvisionings(options: WatchProvisioningsOptions): Promise<UserProvisioningWatchResponse>;
