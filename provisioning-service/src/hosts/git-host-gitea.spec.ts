@@ -38,11 +38,11 @@ describe("Gitea git host adapter", () => {
     const agents = await host.ensureRepository({ owner, kind: "project-coaches" }, signal());
     const systemConfig = await host.ensureRepository({ owner, kind: "system-config" }, signal());
     expect(workspace).toEqual({
-      cloneUrl: `http://git.invalid/lin/${workspaceRepoName()}.git`,
+      cloneUrl: `https://git.invalid/lin/${workspaceRepoName()}.git`,
       sshUrl: `ssh://git@git.invalid/lin/${workspaceRepoName()}.git`,
     });
-    expect(agents.cloneUrl).toBe(`http://git.invalid/lin/${PROJECT_AGENT_REPO}.git`);
-    expect(systemConfig.cloneUrl).toBe(`http://git.invalid/lin/${systemConfigRepoName()}.git`);
+    expect(agents.cloneUrl).toBe(`https://git.invalid/lin/${PROJECT_AGENT_REPO}.git`);
+    expect(systemConfig.cloneUrl).toBe(`https://git.invalid/lin/${systemConfigRepoName()}.git`);
     expect([...api.repositories.keys()].sort()).toEqual(
       [`lin/${workspaceRepoName()}`, `lin/${PROJECT_AGENT_REPO}`, `lin/${systemConfigRepoName()}`].sort(),
     );

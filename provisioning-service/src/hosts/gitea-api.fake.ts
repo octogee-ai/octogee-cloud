@@ -21,7 +21,7 @@ const json = (status: number, body: unknown) =>
 const message = (status: number, text: string) => json(status, { message: text });
 
 export class FakeGiteaApi {
-  readonly apiBaseUrl = "http://git.invalid/api/v1";
+  readonly apiBaseUrl = "https://git.invalid/api/v1";
   readonly accounts = new Map<string, { email: string; visibility: string }>();
   readonly organizations = new Set<string>();
   readonly teams = new Map<number, { org: string; name: string; members: Set<string> }>();
@@ -77,7 +77,7 @@ export class FakeGiteaApi {
     return {
       name,
       full_name: `${owner}/${name}`,
-      clone_url: `http://git.invalid/${owner}/${name}.git`,
+      clone_url: `https://git.invalid/${owner}/${name}.git`,
       ssh_url: `ssh://git@git.invalid/${owner}/${name}.git`,
     };
   }
