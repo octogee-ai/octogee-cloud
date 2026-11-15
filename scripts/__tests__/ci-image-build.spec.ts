@@ -81,9 +81,12 @@ describe("runner image builds", () => {
     expect(imagePlan("octogee-ops-agent-runtime", { repository, sha }, root).contexts).toEqual({});
   });
 
-  it("builds product images from the repository root", () => {
-    const plan = imagePlan("artifact-worker", { repository, sha });
-    expect(plan.dockerfile).toBe("artifact-worker/Dockerfile");
+  it.each([
+    ["artifact-worker", "artifact-worker/Dockerfile"],
+    ["product-controller", "product/controller/Dockerfile"],
+  ])("builds the product image %s from the repository root", (image, dockerfile) => {
+    const plan = imagePlan(image, { repository, sha });
+    expect(plan.dockerfile).toBe(dockerfile);
     expect(plan.context).toBe(".");
   });
 
