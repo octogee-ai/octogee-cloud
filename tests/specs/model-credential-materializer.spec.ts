@@ -5,14 +5,14 @@ import { describe, expect, test } from "vitest";
 import {
   buildModelCredentialConfigForProvider,
   type ModelCredentialConfigInput,
-} from "../../scripts/lib/model-credential-materializer";
+} from "../../gateway-supervisor/lib/model-credential-materializer";
 
 const repoRoot = path.resolve(__dirname, "../..");
 
 // Source-inspection guards: a module/spec that moved into @octogee/core is read
-// from core/src; scripts/lib + scripts/__tests__ paths fall back to their origin.
+// from core/src; gateway-supervisor/lib + gateway-supervisor/__tests__ paths fall back to their origin.
 const readSrc = (rel: string) => {
-  const moved = rel.replace(/^scripts\/(lib|__tests__)\//, "core/src/");
+  const moved = rel.replace(/^gateway-supervisor\/(lib|__tests__)\//, "core/src/");
   const target = existsSync(path.join(repoRoot, moved)) ? moved : rel;
   return readFileSync(path.join(repoRoot, target), "utf8");
 };
@@ -91,7 +91,7 @@ describe("buildModelCredentialConfigForProvider", () => {
 
 describe("model credential materializer consumers", () => {
   test("model credential materializer owns the catalog-derived implementation", () => {
-    const src = readSrc("scripts/lib/model-credential-materializer.ts");
+    const src = readSrc("gateway-supervisor/lib/model-credential-materializer.ts");
 
     expect(src).toContain("MODEL_CREDENTIAL_CATALOG");
     expect(src).not.toContain('from "./byot-multi-provider-config.js"');
@@ -99,13 +99,13 @@ describe("model credential materializer consumers", () => {
 
   test("legacy BYOT materializer alias module is gone", () => {
     expect(
-      existsSync(path.join(repoRoot, "scripts/lib/byot-multi-provider-config.ts")),
+      existsSync(path.join(repoRoot, "gateway-supervisor/lib/byot-multi-provider-config.ts")),
     ).toBe(false);
   });
 
   test.each([
-    "scripts/lib/byot-sync.ts",
-    "scripts/lib/byot-sync-runtime.ts",
+    "gateway-supervisor/lib/byot-sync.ts",
+    "gateway-supervisor/lib/byot-sync-runtime.ts",
   ])("%s consumes the model credential materializer facade", (relativePath) => {
     const src = readSrc(relativePath);
     expect(src).toContain("./model-credential-materializer.js");
@@ -113,7 +113,7 @@ describe("model credential materializer consumers", () => {
   });
 
   test.each([
-    "scripts/lib/byosub-restore.ts",
+    "gateway-supervisor/lib/byosub-restore.ts",
   ])("%s consumes the model credential materializer facade", (relativePath) => {
     const src = readSrc(relativePath);
 
@@ -130,10 +130,10 @@ describe("model credential materializer consumers", () => {
 
   test.each([
     "tests/specs/byok-provider-registry-parity.spec.ts",
-    "scripts/__tests__/model-credential-golden-path.spec.ts",
-    "scripts/__tests__/byosub-restore.spec.ts",
-    "scripts/__tests__/codex-auth-health.spec.ts",
-    "scripts/__tests__/model-credential-materializer-parity.spec.ts",
+    "gateway-supervisor/__tests__/model-credential-golden-path.spec.ts",
+    "gateway-supervisor/__tests__/byosub-restore.spec.ts",
+    "gateway-supervisor/__tests__/codex-auth-health.spec.ts",
+    "gateway-supervisor/__tests__/model-credential-materializer-parity.spec.ts",
     "tests/specs/model-credential-materializer-shape.spec.ts",
   ])("%s tests through the model credential materializer facade", (relativePath) => {
     const src = readSrc(relativePath);

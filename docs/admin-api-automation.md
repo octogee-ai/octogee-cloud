@@ -571,6 +571,66 @@ means the gateway is not owned by `ownerUid`, is already retired, is another
 generation, a stated fence no longer matches, or a pending telemetry
 operation or another retirement claim blocks it; the `reason` says which.
 
+### `POST /users/<id>/home/prepare`
+
+```json
+{
+  "leaseId": "lease-1", "generation": 3,
+  "sourceGatewayId": "shared-blue", "sourceAssignmentEpoch": 4,
+  "sizingKey": "pro", "sizingTier": "m"
+}
+```
+
+Prepares the user's virtual machine home for a `requested` lease, one step
+per call. The body is the allocation body without `parkedGateway`. The fleet
+controller re-reads the user and checks that the lease, its generation,
+source gateway and epoch, the user's sizing key and tier, and the user's
+interactive access all still match; otherwise it answers
+`precondition-failed`, "home migration activation authority changed". The
+sizing key's profile must run the gateway on a virtual machine.
+
+Each call reads where the user's home is, then does at most the next step of
+its migration: start a copy into a disk of the profile's home size, poll the
+copy, retry a failed copy, keep the original, release the copy helper, or
+attach the verified copy to the user's stopped computer. The original disk is
+kept. The answer is `200` with one of:
+
+- `{uid, state: "ready", effects}`: the home is on a disk that fits the
+  profile, or the user has no home yet. The user's home migration record is
+  now `complete` with `preparedFor: {leaseId, generation, sizingKey}`, which
+  `allocate` checks. A record prepared for another lease, generation or
+  sizing key does not count; a new migration replaces it. A repeat after
+  `allocate` moved that same lease on (`provisioning` through `returning`)
+  answers `ready` from the record alone, without a Compute Engine call.
+- `{uid, state: "in-progress", step, effects}`: a step ran or is under way.
+  The caller calls again.
+- `{uid, state: "in-progress", step, lastError: {code}, effects}`: Compute
+  Engine was unavailable (`http-429`, `http-5xx` or a network error such as
+  `econnreset`) during `step`. Earlier steps stay committed; the caller calls
+  again later.
+- `{uid, state: "blocked", reason, attempts}`: three copies failed. The
+  original is kept and an operator repairs the home; repeating the call
+  answers the same.
+
+`effects` lists each Compute Engine change the call made, as
+`{name, resource}`. Every call writes one journal entry: `completed` for a
+ready call that changed nothing, `partial` for one that changed something or
+is in progress, with the answer and `effects` in `partialOutcome.details`, and
+`failed` for an unavailable Compute Engine or a blocked home. A fence or owner
+refusal after a Compute Engine change still answers `409`, and its failed
+entry lists the effects made before it. Any other error answers `500` and is
+journaled as failed, with the effects made before it; that includes a
+migration still under way for a user whose home disk is gone, which needs an
+operator.
+
+The owner check runs again before every Compute Engine call and first in
+every write. A dry run checks the fences against the stored record, makes no
+Compute Engine call and writes nothing.
+
+The fleet controller mounts this route only when it runs gateways on virtual
+machines; without that configuration, like the pod reader rule below, the
+route does not exist.
+
 ### `POST /users/<id>/isolated-gateway/allocate`
 
 ```json
@@ -599,12 +659,13 @@ preparation for this lease: the user's home migration record is `complete`
 and its `preparedFor` names the request's `leaseId`, `generation` and
 `sizingKey`. Without it the call answers `precondition-failed`, "home for
 <user> is not prepared for lease <lease> generation <n> sizing key <key>",
-before any Kubernetes effect, dry runs included. Nothing in this API writes
-that record yet: the home preparation verb comes later, so until then this
-route refuses every user whose profile needs a virtual machine home. The
-fleet controller's own pass prepares the home itself just before it
-allocates, and is not held to the stored record. Profiles that run as pods
-need no preparation.
+before any Kubernetes effect, dry runs included. `POST /users/<id>/home/prepare`
+writes that record; a fleet controller without it refuses every user whose
+profile needs a virtual machine home. A record the fleet controller's own pass
+wrote before the handover names no lease, so the client prepares the home
+once for its first lease. The fleet controller's own pass prepares the home
+itself just before it allocates, and is not held to the stored record.
+Profiles that run as pods need no preparation.
 
 Then it allocates. A parked gateway of the same sizing key that runs
 the shared gateway's current artifact is resumed and the answer is

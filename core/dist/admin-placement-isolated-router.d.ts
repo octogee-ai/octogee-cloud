@@ -1,10 +1,12 @@
 import type { Router } from "express";
 import type { AdminFleetMutationRunner } from "./admin-fleet-router.js";
+import { type HomeCapabilitiesFactory } from "./isolated-gateway-lifecycle/index.js";
 import type { PlatformStateStore } from "./platform-state/store.js";
 import type { UserAccountReader } from "./user-account.js";
 import type { PodObservation } from "./isolated-gateway-lifecycle/index.js";
 export interface AdminIsolatedCapabilities {
     namespace: string;
+    home?: HomeCapabilitiesFactory;
     ensureAuthSecret(input: {
         namespace: string;
         gatewayId: string;

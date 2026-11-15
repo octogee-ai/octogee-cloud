@@ -8,7 +8,7 @@ import { publicAppOriginsFromEnv } from "@octogee/core/public-app-origins";
 import { renderMetrics } from "./metrics.js";
 import { adminPlacementCapabilities } from "./admin-placement-capabilities.js";
 import { adminPlacementSharedCapabilities } from "./admin-placement-shared-capabilities.js";
-import { adminIsolatedCapabilities } from "./admin-isolated-capabilities.js";
+import { adminIsolatedCapabilities, type AdminUserHome } from "./admin-isolated-capabilities.js";
 import type { UserAccounts, UserSignInHosts } from "@octogee/core/admin-user-router";
 import type { UserAccountReader } from "@octogee/core/user-account";
 import {
@@ -106,6 +106,7 @@ export interface HttpServerDeps {
     gatewayIds: readonly string[],
   ) => Promise<Record<string, GatewayPodDiagnostics>>;
   requestNativeReturnSourceRecovery?: (input: { uid: string; operationId: string; requestedAt: number; requestedBy: string }) => Promise<boolean>;
+  userHome?: AdminUserHome;
   suspendAuthUser: (uid: string) => Promise<void>;
   revokeConnectorGrantsForUser: (uid: string) => Promise<void>;
   fleetEventListenerLingerMs?: number;
@@ -375,7 +376,12 @@ export function createHttpServer(deps: HttpServerDeps): Express {
     discoverDeletionProductContext: deps.discoverDeletionProductContext,
     placement: adminPlacementCapabilities,
     placementShared: adminPlacementSharedCapabilities(deps),
-    isolated: adminIsolatedCapabilities({ namespace: deps.logs.namespace, log: deps.log, readGatewayPodDiagnostics: deps.readGatewayPodDiagnostics }),
+    isolated: adminIsolatedCapabilities({
+      namespace: deps.logs.namespace,
+      log: deps.log,
+      readGatewayPodDiagnostics: deps.readGatewayPodDiagnostics,
+      ...(deps.userHome ? { userHome: deps.userHome } : {}),
+    }),
   });
   addAdminLogsRoutes(adminRouter, {
     source: deps.logs.source,

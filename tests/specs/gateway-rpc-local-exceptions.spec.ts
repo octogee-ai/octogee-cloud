@@ -5,9 +5,9 @@ import path from "node:path";
 const repoRoot = path.resolve(__dirname, "../..");
 
 // Source-inspection guards: a module/spec that moved into @octogee/core is read
-// from core/src; scripts/lib + scripts/__tests__ paths fall back to their origin.
+// from core/src; gateway-supervisor/lib + gateway-supervisor/__tests__ paths fall back to their origin.
 const readSrc = (rel: string) => {
-  const moved = rel.replace(/^scripts\/(lib|__tests__)\//, "core/src/");
+  const moved = rel.replace(/^gateway-supervisor\/(lib|__tests__)\//, "core/src/");
   const target = existsSync(path.join(repoRoot, moved)) ? moved : rel;
   return readFileSync(path.join(repoRoot, target), "utf8");
 };
@@ -23,10 +23,10 @@ function expectLocalGatewayRpcException(rel: string): void {
 
 describe("gateway-rpc local credential exceptions", () => {
   it("keeps the db-less fleet controller on the explicit local token bridge", () => {
-    expectLocalGatewayRpcException("scripts/entrypoints/provisioner.ts");
+    expectLocalGatewayRpcException("gateway-supervisor/entrypoints/provisioner.ts");
   });
 
   it("keeps config.patch helper on the explicit local token bridge", () => {
-    expectLocalGatewayRpcException("scripts/lib/apply-config-patch.ts");
+    expectLocalGatewayRpcException("gateway-supervisor/lib/apply-config-patch.ts");
   });
 });

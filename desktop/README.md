@@ -34,8 +34,8 @@ home disk at `/srv/octogee`, start Docker and the desktop, and start
 `octo-gateway-agent.service`. That service waits for the `gateway-id`,
 `gateway-image` and `octogee-api-url` metadata, pulls the gateway image with
 the VM's service account, and runs the VM gateway agent
-([`scripts/entrypoints/vm-gateway-agent.ts`](../scripts/entrypoints/vm-gateway-agent.ts),
-[`scripts/lib/vm-gateway-agent/`](../scripts/lib/vm-gateway-agent/)) from that
+([`gateway-supervisor/entrypoints/vm-gateway-agent.ts`](../gateway-supervisor/entrypoints/vm-gateway-agent.ts),
+[`gateway-supervisor/lib/vm-gateway-agent/`](../gateway-supervisor/lib/vm-gateway-agent/)) from that
 image against the host Docker socket. The agent runs the gateway and
 gateway-edge containers. [`image/README.md`](image/README.md#what-runs-on-the-vm-at-boot)
 lists every unit.

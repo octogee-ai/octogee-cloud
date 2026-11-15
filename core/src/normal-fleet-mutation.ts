@@ -56,7 +56,7 @@ export class FleetMutationPartialError extends Error {
 }
 
 export class FleetMutationRefusedError extends Error {
-  constructor(readonly refusal: Error) {
+  constructor(readonly refusal: Error, readonly partialOutcome?: OperationAuditPartialOutcome) {
     super(refusal.message);
     this.name = "FleetMutationRefusedError";
   }
@@ -70,6 +70,16 @@ export interface NormalFleetMutationInput<T> extends OperationAuditIntentInput {
 
 function failureMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function failedOutcomeDetails(error: unknown): Omit<Extract<NormalFleetMutationResult, { outcome: "failed" }>, "outcome" | "error"> {
+  if (error instanceof FleetMutationRefusedError) return error.partialOutcome ? { partialOutcome: error.partialOutcome } : {};
+  if (!(error instanceof FleetMutationPartialError)) return {};
+  return {
+    partialOutcome: error.partialOutcome,
+    ...(error.aliasOutcomes ? { aliasOutcomes: error.aliasOutcomes } : {}),
+    ...(error.releaseRollout ? { releaseRollout: error.releaseRollout } : {}),
+  };
 }
 
 function logMutationFinished(logged: Record<string, unknown>, outcome: NormalFleetMutationResult, durationMs: number): void {
@@ -106,16 +116,11 @@ export async function runNormalFleetMutation<T>(
     if (error instanceof FleetMutationRefusedError) logger.warn("fleet mutation refused", failed);
     else logger.error("fleet mutation failed", failed);
     try {
-      const partial = error instanceof FleetMutationPartialError ? error : null;
       await finishOperationAudit(store, audit.auditId, {
         expectedClaimId: claim.claimId,
         outcome: "failed",
         error: failureMessage(error),
-        ...(partial ? {
-          partialOutcome: partial.partialOutcome,
-          ...(partial.aliasOutcomes ? { aliasOutcomes: partial.aliasOutcomes } : {}),
-          ...(partial.releaseRollout ? { releaseRollout: partial.releaseRollout } : {}),
-        } : {}),
+        ...failedOutcomeDetails(error),
       });
     } catch (completionError) {
       throw new AggregateError(

@@ -1,8 +1,9 @@
 import type { PlatformStateStore } from "@octogee/core/platform-state";
-import type { UserHomeLocation, UserHomeMigrationDeps, UserHomeOwner } from "../user-home-migration.js";
+import type { UserHomeLocation, UserHomeOwner } from "@octogee/core/isolated-gateway-lifecycle";
+import type { UserHomeMigrationDeps } from "../user-home-migration.js";
 import type { ComputeRequest, GatewayVmClient } from "./compute-vm.js";
 import { PARKED_STATUSES, STOPPED_STATUSES } from "../vm-lifecycle.js";
-import type { CopyHomeDisk } from "./compute-home-copy.js";
+import type { CopyHomeDisk } from "@octogee/core/isolated-gateway-lifecycle";
 
 interface ComputeHomeResource {
   id?: string; sizeGb?: string; type?: string; users?: string[]; labels?: Record<string, string>; status?: string;
@@ -16,7 +17,7 @@ interface HomeProviderDeps {
   environment: string;
   request: ComputeRequest;
   vm: GatewayVmClient;
-  journal: <T>(what: string, uid: string, action: () => Promise<T>) => Promise<T>;
+  journal: <T>(what: string, uid: string, action: () => Promise<T>, resource: string) => Promise<T>;
 }
 type ObservedHomeDisk = CopyHomeDisk & { users?: string[]; ownerUid?: string };
 type LegacyVm = NonNullable<UserHomeOwner["computer"]>;
@@ -62,7 +63,7 @@ class UserHomeProvider {
   async stoppedOwnedVm(uid: string) {
     const owned = await this.ownedVm(uid, PARKED_STATUSES);
     if (owned?.status !== "SUSPENDED") return owned;
-    await this.deps.journal("stop-suspended-builder-computer", uid, () => this.deps.vm.stop(owned.name, owned.zone));
+    await this.deps.journal("stop-suspended-builder-computer", uid, () => this.deps.vm.stop(owned.name, owned.zone), `zones/${owned.zone}/instances/${owned.name}`);
     const stopped = await this.ownedVm(uid);
     if (stopped?.instanceId !== owned.instanceId) throw new Error("suspended owner VM changed while stopping for home migration");
     return stopped;
@@ -99,7 +100,7 @@ class UserHomeProvider {
         if (before.disk.id !== source.disk.id || before.disk.source !== source.disk.source) throw new Error("legacy home disk identity changed before retention");
         const retained = await this.deps.vm.retainHome(recorded.instanceName, recorded.zone, uid);
         if (retained.id !== source.disk.id || retained.source !== source.disk.source) throw new Error("legacy home disk identity changed during retention");
-      });
+      }, source.disk.source);
     }
     const confirmed = await this.legacySource(uid, recorded);
     if (confirmed.attached.autoDelete !== false || confirmed.disk.ownerUid !== uid.toLowerCase() ||
@@ -136,7 +137,7 @@ class UserHomeProvider {
     }
     const owner = await this.deps.store.users.records.get(uid);
     if (old.id !== owner?.home.homeDisk?.id || attached.autoDelete !== false) throw new Error("retained VM home identity changed");
-    await this.deps.journal("detach-retained-builder-home", uid, () => this.compute(`${url}/detachDisk?deviceName=octogee-home`, "POST"));
+    await this.deps.journal("detach-retained-builder-home", uid, () => this.compute(`${url}/detachDisk?deviceName=octogee-home`, "POST"), url);
     return false;
   }
   async adoptNative(uid: string, target: CopyHomeDisk): Promise<boolean> {
@@ -154,7 +155,7 @@ class UserHomeProvider {
     const attached = instance.disks?.find((entry) => entry.deviceName === "octogee-home" && !entry.boot);
     if (attached) return this.detachForAdoption(uid, target, attached, url);
     if (current.users?.length) throw new Error("verified home target is attached elsewhere");
-    await this.deps.journal("attach-verified-builder-home", uid, () => this.compute(`${url}/attachDisk`, "POST", { source: target.source, deviceName: "octogee-home", mode: "READ_WRITE", autoDelete: false }));
+    await this.deps.journal("attach-verified-builder-home", uid, () => this.compute(`${url}/attachDisk`, "POST", { source: target.source, deviceName: "octogee-home", mode: "READ_WRITE", autoDelete: false }), `${url} ${target.source}`);
     return false;
   }
   async adopt(input: Parameters<UserHomeMigrationDeps["adopt"]>[0]): Promise<boolean> {
@@ -178,7 +179,7 @@ class UserHomeProvider {
     const instance = await this.compute(url, "GET");
     const attached = instance.disks?.find(entry => entry.deviceName === "octogee-home" && !entry.boot);
     if (instance.id !== owned.instanceId || !attached || attached.autoDelete !== false || (await this.disk(attached.source)).id !== source.disk.id) throw new Error("retained home attachment changed before cleanup");
-    await this.deps.journal("detach-expired-builder-home", uid, () => this.compute(`${url}/detachDisk?deviceName=octogee-home`, "POST"));
+    await this.deps.journal("detach-expired-builder-home", uid, () => this.compute(`${url}/detachDisk?deviceName=octogee-home`, "POST"), url);
   }
   async remainingOwnerHomes(uid: string): Promise<string[]> {
     const filter = encodeURIComponent(`labels.octogee-owner-uid="${uid.toLowerCase()}"`);
@@ -192,7 +193,7 @@ class UserHomeProvider {
     const observed = await this.observedForRemoval(uid, source);
     if (!observed) return true;
     if (observed.users?.length) await this.detachForRemoval(uid, source, observed);
-    else await this.deps.journal("remove-retained-builder-home", uid, () => this.compute(`${this.base}/zones/${observed.zone}/disks/${observed.name}`, "DELETE"));
+    else await this.deps.journal("remove-retained-builder-home", uid, () => this.compute(`${this.base}/zones/${observed.zone}/disks/${observed.name}`, "DELETE"), `zones/${observed.zone}/disks/${observed.name}`);
     return false;
   }
 }

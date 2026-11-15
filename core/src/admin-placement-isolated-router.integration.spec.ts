@@ -10,11 +10,13 @@ import type { PlatformStateStore } from "./platform-state/store.js";
 import { FIXTURE_SIZING_PROFILES } from "@octogee/core-testing/journal-store";
 import {
   allocateIsolatedGateway,
+  prepareIsolatedHome,
   requireStoredHomeReadiness,
   unauditedLifecycleMutations,
   type AllocateIsolatedGatewayInput,
+  type HomeCapabilities,
 } from "./isolated-gateway-lifecycle/index.js";
-import { assertClientOwnsPlacementAutomation } from "./placement-automation-owner.js";
+import { assertClientOwnsPlacementAutomation, placementOwnerRefusalBody } from "./placement-automation-owner.js";
 
 const TARGET = "alice-xs-12345678";
 
@@ -331,5 +333,60 @@ describe.skipIf(!dsn)("PostgreSQL isolated allocation home readiness", () => {
     await fixture().records.patch("alice", { home: { homeMigration: { id: "home-copy-1", phase: "complete", tier: "hobby", preparedFor: { leaseId: "lease-one", generation: 1, sizingKey: "hobby" } } } });
     await expect(allocate(store, ensureAuthSecret)).rejects.toThrow("isolated gateway source shared-blue is unavailable");
     expect(ensureAuthSecret).not.toHaveBeenCalled();
+  });
+
+  function homeWithoutSource() {
+    return {
+      environment: "test", subnetwork: "subnet", nativeZones: ["us-central1-a"],
+      nativeZone: vi.fn(async () => null),
+      inventory: vi.fn(async () => null),
+      verifyStopped: vi.fn(async () => undefined),
+      copy: { advance: vi.fn(), release: vi.fn(async () => true), abort: vi.fn(async () => true) },
+      adopt: vi.fn(async () => true),
+      removeStoppedHome: vi.fn(async () => true),
+    } satisfies HomeCapabilities;
+  }
+
+  function prepare(store: PlatformStateStore, home: HomeCapabilities, overrides: Partial<AllocateIsolatedGatewayInput> = {}) {
+    return prepareIsolatedHome({
+      store,
+      readSizingKey: async () => "hobby",
+      requireOwner: async (transaction) => { await assertClientOwnsPlacementAutomation(transaction); },
+      home,
+      now: () => NOW + 5_000,
+      log: vi.fn(),
+    }, { ...request, ...overrides });
+  }
+
+  const homeMigration = async () => (await fixture().records.get("alice"))!.home?.homeMigration ?? null;
+
+  it("refuses home preparation before any Compute Engine call while the fleet controller owns placement", async () => {
+    const store = await seed();
+    await store.config.orchestrator.patch({ placementAutomationOwner: "fleet-controller", placementAutomationYieldedAt: null });
+    const home = homeWithoutSource();
+
+    const refusal = await prepare(store, home).catch((error: unknown) => error);
+    expect(placementOwnerRefusalBody(refusal)).toMatchObject({ code: "placement-owner" });
+    expect(home.inventory).not.toHaveBeenCalled();
+    expect(await homeMigration()).toBeNull();
+  });
+
+  it("refuses home preparation for a stale lease generation without writing", async () => {
+    const store = await seed();
+    const home = homeWithoutSource();
+
+    await expect(prepare(store, home, { generation: 2 })).rejects.toThrow("home migration activation authority changed");
+    expect(home.inventory).not.toHaveBeenCalled();
+    expect(await homeMigration()).toBeNull();
+  });
+
+  it("records the lease it prepared for, which then satisfies the allocation home fence", async () => {
+    const store = await seed();
+    const ensureAuthSecret = vi.fn(async () => undefined);
+
+    await expect(prepare(store, homeWithoutSource())).resolves.toEqual({ state: "ready" });
+
+    expect(await homeMigration()).toEqual({ phase: "complete", preparedFor: { leaseId: "lease-one", generation: 1, sizingKey: "hobby" } });
+    await expect(allocate(store, ensureAuthSecret)).rejects.toThrow("isolated gateway source shared-blue is unavailable");
   });
 });

@@ -63,7 +63,23 @@ the component it holds. A checkout of v0.1.0, and commits and links from before
 | `infra/desktop/` | `desktop/` |
 | `infra/vm-bridge/` | `vm-bridge/` |
 | `infra/cloud-sql/` | `deploy/cloud-sql/` |
-| `scripts/entrypoints/fleet-controller.ts` | `scripts/entrypoints/provisioner.ts` |
+| `scripts/entrypoints/fleet-controller.ts` | `gateway-supervisor/entrypoints/provisioner.ts` |
 
 The guides and scripts in a checkout match that checkout. When you install a
 release, follow the guides at its tag.
+
+## Paths inside the gateway image
+
+The gateway image's runtime is built from `gateway-supervisor/` but keeps its place in
+the image at `/octogee/scripts`. Consumers that can be older than the gateway
+image name paths under it, so these paths stay:
+
+| Path in the gateway image | Who names it | Why it stays |
+| --- | --- | --- |
+| `/octogee/scripts` (working directory) and `/octogee/scripts/entrypoints/vm-gateway-agent.ts` | `octo-gateway-agent` in the isolated gateway VM boot image | A retained or suspended VM boots an older boot image that pulls the new gateway image |
+| `/octogee/scripts/secret-resolver.mjs` | The VM runtime bundle the fleet controller renders, the `octogee-gateway` chart, `core` (BYOT sync), and `openclaw.json` on gateway homes | Isolated gateways keep running older images while the controller and chart move ahead, and homes keep their `openclaw.json` |
+| `/octogee/scripts/libexec/source-transfer-launcher.py` | The fleet controller's source transfer job, run inside the source gateway's image | The source gateway's image can be older than the controller |
+| `/octogee/scripts/package.json` | `core`'s gateway restart probe and `gateway/apply-gateway-class-policy.mjs`, as the anchor they resolve modules from | Only its location is read |
+| `/octogee/scripts/entrypoints/*.ts`, `/octogee/scripts/shared-runners/*.mjs` | `gateway/entrypoint.sh`, `gateway/shared-auxiliary-runner.sh` and the `octo-*` wrappers | They are built into the same image, but stay with the rest of the tree |
+| `/octogee/scripts/ops/migrate-user-stores.ts` | Operators, run with `kubectl exec` in a gateway pod | Operator runbooks name it |
+| `entrypoints/provisioner.ts` and its runner label `fleet-controller` | `gateway/entrypoint.sh` and `gateway/shared-auxiliary-runner.sh` | The runner heartbeat, its metrics and the logs carry the label, so it stays stable across releases |

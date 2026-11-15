@@ -36,7 +36,7 @@ setInterval(()=>{},1000);
   const hook = path.join(root, "boot-hook.mts");
   await fs.writeFile(hook, `
 import fs from 'node:fs';
-import {runOpenClawBootPhase} from ${JSON.stringify(path.join(repo, "scripts/entrypoints/openclaw-boot-sentinel.ts"))};
+import {runOpenClawBootPhase} from ${JSON.stringify(path.join(repo, "gateway-supervisor/entrypoints/openclaw-boot-sentinel.ts"))};
 const root=process.env.QUAL_BOOT_ROOT,file=root+'/sentinel';
 await runOpenClawBootPhase(process.argv[2],{log:()=>{},openclawBinary:root+'/openclaw',
 client:{claimOpenClawBoot:async()=>{fs.appendFileSync(root+'/order.log','claim\\n');return{action:'start'};},
@@ -44,7 +44,7 @@ completeOpenClawDoctor:async()=>{},completeOpenClawBoot:async({openclawBuild})=>
  fs.writeFileSync(root+'/healthy-build',openclawBuild);fs.appendFileSync(root+'/order.log','healthy\\n');}}});
 `);
   const tsx = path.join(root, "tsx");
-  await fs.writeFile(tsx, `#!/bin/sh\ncase "$1" in\n*prepare-openclaw-sqlite-journals.ts) exit 0;;\n*openclaw-boot-sentinel.ts) shift; exec ${quote(process.execPath)} --import ${quote(path.join(repo, "scripts/node_modules/tsx/dist/loader.mjs"))} ${quote(hook)} "$@";;\n*) exit 2;;\nesac\n`, { mode: 0o700 });
+  await fs.writeFile(tsx, `#!/bin/sh\ncase "$1" in\n*prepare-openclaw-sqlite-journals.ts) exit 0;;\n*openclaw-boot-sentinel.ts) shift; exec ${quote(process.execPath)} --import ${quote(path.join(repo, "gateway-supervisor/node_modules/tsx/dist/loader.mjs"))} ${quote(hook)} "$@";;\n*) exit 2;;\nesac\n`, { mode: 0o700 });
   await fs.writeFile(path.join(root, "openclaw"), `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(fakeCli)} "$@"\n`, { mode: 0o700 });
   await fs.writeFile(path.join(root, "curl"), '#!/bin/sh\ntest -f "$QUAL_BOOT_ROOT/healthy"\n', { mode: 0o700 });
   const installBuild = (commit: string) => fs.writeFile(path.join(root, "dist/build-info.json"), JSON.stringify({ commit }));
