@@ -31,7 +31,9 @@ Storage, see [The full platform on GKE](docs/gke.md). Start from the
 [latest release](https://github.com/octogee-ai/octogee-cloud/releases/latest);
 until the first one is out, from `main`'s newest commit whose Build main
 succeeded, as both guides describe. Platform state is in PostgreSQL, and the
-platform needs no Firebase project. On GKE, one install
+platform needs no Firebase project. An EKS install with RDS and S3,
+[The full platform on EKS](docs/eks.md), follows the GKE one but has not run on
+a real AWS account yet. On GKE, one install
 added a shared gateway and a user, answered in Mattermost, moved the user to an
 isolated gateway and back, and retired the isolated gateway. That install is a
 single zone with no ingress; there is no production install guide yet. Users on a shared

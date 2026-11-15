@@ -355,8 +355,8 @@ psql_pod() {
 }
 
 prepare_databases() {
-  psql_pod postgres < "$ROOT/scripts/ops/gke/databases.sql" >/dev/null
-  psql_pod octogee_agents < "$ROOT/scripts/ops/gke/agent-store.sql" >/dev/null
+  psql_pod postgres < "$ROOT/scripts/ops/postgres-databases.sql" >/dev/null
+  psql_pod octogee_agents < "$ROOT/scripts/ops/postgres-agent-store.sql" >/dev/null
 }
 
 platform_sql() {
