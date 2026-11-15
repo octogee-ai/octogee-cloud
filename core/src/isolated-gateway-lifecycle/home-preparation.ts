@@ -103,6 +103,10 @@ function preparedMatches(prepared: HomePreparedFor | undefined, wanted: HomePrep
   return prepared?.leaseId === wanted.leaseId && prepared.generation === wanted.generation && prepared.sizingKey === wanted.sizingKey;
 }
 
+function stepOf(state: UserHomeMigration): HomePreparationStep {
+  return state.phase === "blocked" || state.phase === "complete" ? "start" : state.phase;
+}
+
 class HomePreparationRun {
   private vmPolicy: GatewayVmProfile | null = null;
   private step: HomePreparationStep = "start";
@@ -349,19 +353,23 @@ class HomePreparationRun {
     };
   }
 
+  private recordedReady(state: UserHomeOwner["homeMigration"]): Promise<HomePreparation> | HomePreparation {
+    return state?.phase === "complete" && preparedMatches(state.preparedFor, this.preparedFor) ? { state: "ready" } : this.markPrepared();
+  }
+
   async reconcile(owner: UserHomeOwner): Promise<HomePreparation> {
     const state = owner.homeMigration;
-    if (isActiveHomeMigration(state) && state.phase !== "complete" && state.phase !== "blocked") this.step = state.phase;
+    const unfinished = isActiveHomeMigration(state) && state.phase !== "complete" ? state : null;
+    if (unfinished) this.step = stepOf(unfinished);
     await this.removeExpiredHome(owner.homeStorage);
     const source = await this.effect((home) => home.inventory(this.request.uid, owner));
-    if (!source && isActiveHomeMigration(state) && state.phase !== "complete") {
-      throw new Error(`home migration ${state.id} is ${state.phase} but ${this.request.uid} has no home disk`);
+    if (!source) {
+      if (unfinished) throw new Error(`home migration ${unfinished.id} is ${unfinished.phase} but ${this.request.uid} has no home disk`);
+      return this.recordedReady(state);
     }
-    if (!source || this.alreadyFits(state, source)) {
-      return state?.phase === "complete" && preparedMatches(state.preparedFor, this.preparedFor) ? { state: "ready" } : this.markPrepared();
-    }
-    const active = isActiveHomeMigration(state) && state.phase !== "complete" ? state : await this.start(source);
-    this.step = active.phase === "blocked" ? "start" : active.phase as HomePreparationStep;
+    if (this.alreadyFits(state, source)) return this.recordedReady(state);
+    const active = unfinished ?? await this.start(source);
+    this.step = stepOf(active);
     if (active.source.disk.id !== source.disk.id && active.phase !== "adopting") throw new Error("home migration source changed; original disks retained");
     if (active.tier !== this.request.sizingKey && active.phase !== "adopting") {
       await this.cancel(active);
