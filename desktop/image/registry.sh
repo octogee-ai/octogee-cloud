@@ -10,6 +10,15 @@ desktop_registry() {
   printf '%s\n' "$registry"
 }
 
+desktop_docker_config() {
+  local host="${1%%/*}"
+  if [[ "$host" =~ ^([a-z0-9-]+-docker\.pkg\.dev|([a-z]+\.)?gcr\.io)$ ]]; then
+    printf '{"credHelpers": {"%s": "octogee"}}\n' "$host"
+  else
+    printf '{}\n'
+  fi
+}
+
 desktop_registry_image() {
   local name="$1" label="$2" image="$3" registry="$4"
   if [[ ! "$image" =~ ^(.+)/${name}@sha256:[a-f0-9]{64}$ ]]; then
