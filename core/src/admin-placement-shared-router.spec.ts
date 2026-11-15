@@ -230,6 +230,42 @@ describe("POST /shared-gateways/:id/users/:uid/recover", () => {
     expect(res.body).toEqual({ operationId: RECOVERY, outcome: "committed", sourceKubernetesStatus: "missing" });
   });
 
+  it("refuses a source changed more recently than the caller's grace", async () => {
+    seed({ ...pool(), [`gateways/${SOURCE}`]: sharedRoot(SOURCE, { updatedAt: NOW - 1_000 }) });
+
+    const res = await recover(recoverBody({ sourceUnchangedForAtLeastMs: 60_000 })).expect(409);
+
+    expect(res.body).toEqual({ code: "precondition-failed", error: `shared source ${SOURCE} changed 1000 ms ago, less than 60000 ms` });
+    expect(fleetEvents()).toEqual([]);
+  });
+
+  it("recovers from a source unchanged for at least the caller's grace", async () => {
+    seed({ ...pool(), [`gateways/${SOURCE}`]: sharedRoot(SOURCE, { updatedAt: NOW - 1_000 }) });
+
+    const res = await recover(recoverBody({ sourceUnchangedForAtLeastMs: 1_000 })).expect(200);
+
+    expect(res.body.outcome).toBe("committed");
+  });
+
+  it("applies no grace of its own when the caller sends none", async () => {
+    seed({ ...pool(), [`gateways/${SOURCE}`]: sharedRoot(SOURCE, { updatedAt: NOW }) });
+
+    expect((await recover().expect(200)).body.outcome).toBe("committed");
+  });
+
+  it("answers observation-unknown for a source that does not run as pods", async () => {
+    const stale = { status: "ready", lastHeartbeatAt: NOW - 10 * 60_000, mountedCustomers: [] };
+    seed({ ...pool(), [`glmGateways/${SOURCE}`]: runtime(SOURCE, { runtime: "gce-vm", heartbeat: stale }) });
+
+    const res = await recover().expect(409);
+
+    expect(res.body).toEqual({
+      code: "observation-unknown",
+      error: `${SOURCE} runs as gce-vm, not as pods; its Kubernetes status is unknown`,
+    });
+    expect(fleetEvents()).toEqual([]);
+  });
+
   it("refuses a source in an active roll", async () => {
     seed({ ...pool(), [`gateways/${SOURCE}`]: sharedRoot(SOURCE, { latestRelease: 2, desiredRelease: 2 }) });
 
@@ -439,9 +475,10 @@ describe("POST /shared-gateways/:id/users/:uid/recover", () => {
       recover(recoverBody({ toGatewayId: SOURCE })),
       recover(recoverBody({ expectedSourceEpoch: -1 })),
       recover(recoverBody({ expectedTargetUsersAtMost: undefined })),
+      recover(recoverBody({ sourceUnchangedForAtLeastMs: -1 })),
     ]);
 
-    expect(responses.map((res) => res.status)).toEqual([400, 400, 400, 400]);
+    expect(responses.map((res) => res.status)).toEqual([400, 400, 400, 400, 400]);
     expect(records.events).toEqual([]);
   });
 });
@@ -586,6 +623,20 @@ describe("POST /shared-gateways/:id/roll-recovery", () => {
     const res = await rollRecovery().expect(409);
 
     expect(res.body).toEqual({ code: "observation-unknown", error: `the Kubernetes status of ${SOURCE} is unknown` });
+    expect(fleetEvents()).toEqual([]);
+  });
+
+  it("answers observation-unknown for a source that does not run as pods", async () => {
+    const rows = rollingSeed();
+    seed({ ...rows, [`glmGateways/${SOURCE}`]: { ...rows[`glmGateways/${SOURCE}`], runtime: "gce-vm" } });
+    observation = MISSING;
+
+    const res = await rollRecovery().expect(409);
+
+    expect(res.body).toEqual({
+      code: "observation-unknown",
+      error: `${SOURCE} runs as gce-vm, not as pods; its Kubernetes status is unknown`,
+    });
     expect(fleetEvents()).toEqual([]);
   });
 

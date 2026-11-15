@@ -3,8 +3,12 @@ import request from "supertest";
 import { describe, expect, it } from "vitest";
 import { createAdminFleetMutationRunner, respondToAdminFleetMutationError } from "./admin-fleet-router.js";
 import { addAdminPlacementSharedRoutes } from "./admin-placement-shared-router.js";
-import { continuousPlacementMigrationOperationId } from "./placement-migrations.js";
-import { dsn } from "./platform-state/postgres/__tests__/fixtures/harness.js";
+import {
+  continuousPlacementMigrationOperationId,
+  enqueuePlacementMigrationInTransaction,
+  isPlacementMigrationRefusal,
+} from "./placement-migrations.js";
+import { barrier, dsn } from "./platform-state/postgres/__tests__/fixtures/harness.js";
 import { NOW, useUserFixture, type UserFixture } from "./platform-state/postgres/__tests__/fixtures/users.js";
 import type { PlatformStateStore } from "./platform-state/store.js";
 
@@ -77,17 +81,31 @@ function reclaimingAfterOwnerCheck(store: PlatformStateStore): PlatformStateStor
 describe.skipIf(!dsn)("shared placement verbs on PostgreSQL", { timeout: 30_000 }, () => {
   const fixture = useUserFixture();
 
-  it("creates only one of two concurrent migrations for the same user", async () => {
+  it("lets only one of two migrations for the same user commit when both read before either writes", async () => {
     await seed(fixture());
-    const server = app(fixture().store);
-
-    const responses = await Promise.all(TARGETS.map((target) => enqueue(server, target)));
-
-    expect(responses.map((res) => res.status).sort()).toEqual([200, 409]);
-    expect(responses.find((res) => res.status === 409)?.body).toEqual({
-      code: "precondition-failed",
-      error: expect.stringMatching(new RegExp(`^user ${UID} already has pending migration `)),
+    const bothRead = barrier(2);
+    const attempts: number[] = [];
+    const context = {
+      now: NOW, platformArtifact: null, operationFailureIsTransient: () => false,
+      gatewayStartupUnavailable: () => false, sourceRecoveryForwardRetryable: () => false,
+    };
+    const enqueueTo = (toGatewayId: string) => fixture().store.transaction({ label: "test.enqueue" }, (transaction) => {
+      attempts.push(transaction.attempt);
+      return enqueuePlacementMigrationInTransaction(transaction, context, {
+        uid: UID, builderSlug: SLUG, fromGatewayId: SOURCE, toGatewayId,
+        source: "continuous-placement-policy", operationId: migrationId(toGatewayId),
+      }, async () => {
+        if (transaction.attempt === 1) await bothRead();
+      });
     });
+
+    const outcomes = await Promise.allSettled(TARGETS.map(enqueueTo));
+
+    expect(outcomes.map((outcome) => outcome.status).sort()).toEqual(["fulfilled", "rejected"]);
+    const refused = outcomes.find((outcome): outcome is PromiseRejectedResult => outcome.status === "rejected");
+    expect(isPlacementMigrationRefusal(refused?.reason)).toBe(true);
+    expect((refused?.reason as Error).message).toMatch(new RegExp(`^user ${UID} already has pending migration `));
+    expect(Math.max(...attempts)).toBe(2);
     const active = await fixture().store.journal.operations.listForUid(UID, { kind: "migrate-user", statuses: ["pending", "running"] });
     expect(active).toHaveLength(1);
   });

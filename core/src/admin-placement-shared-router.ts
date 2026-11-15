@@ -1,5 +1,6 @@
 import type { Request, Response, Router } from "express";
 import { GATEWAY_UNREACHABLE_AFTER_MS } from "@octogee/shared/types/fleet-controller";
+import { resolveGatewayRuntime } from "@octogee/shared/types/glm";
 import type { GatewayKubernetesObservation, ReleasePayload } from "@octogee/shared/types/gateway-releases";
 import type { AdminFleetMutationRunner } from "./admin-fleet-router.js";
 import {
@@ -181,8 +182,12 @@ function unavailableSourceBlocker(
   context: UnavailableGatewayRecoverySourceValidationContext,
   observation: GatewayKubernetesObservation,
   now: number,
+  unchangedForAtLeastMs: number | null,
 ): string | null {
   const gatewayId = context.sourceGatewayId;
+  if (context.sourceRuntime !== "cluster") {
+    throw new ObservationUnknown(`${gatewayId} runs as ${context.sourceRuntime}, not as pods; its Kubernetes status is unknown`);
+  }
   if (observation.status === "ready") return `source ${gatewayId} is observed ready by Kubernetes`;
   const heartbeatAt = context.sourceHeartbeatAt;
   if (heartbeatAt !== null && now - heartbeatAt <= GATEWAY_UNREACHABLE_AFTER_MS) {
@@ -192,7 +197,20 @@ function unavailableSourceBlocker(
     return `shared source ${gatewayId} still has Kubernetes pods; retaining assignments until it is missing`;
   }
   if (context.sourceDesiredRelease !== context.sourceLiveRelease) return `shared source ${gatewayId} is in an active roll`;
-  return null;
+  return unchangedForAtLeastMs === null ? null : recentChangeBlocker(context, now, unchangedForAtLeastMs);
+}
+
+function recentChangeBlocker(
+  context: UnavailableGatewayRecoverySourceValidationContext,
+  now: number,
+  unchangedForAtLeastMs: number,
+): string | null {
+  const gatewayId = context.sourceGatewayId;
+  if (context.sourceUpdatedAt === null) return `shared source ${gatewayId} has no recorded change time`;
+  const unchangedFor = now - context.sourceUpdatedAt;
+  return unchangedFor < unchangedForAtLeastMs
+    ? `shared source ${gatewayId} changed ${unchangedFor} ms ago, less than ${unchangedForAtLeastMs} ms`
+    : null;
 }
 
 interface Verb<T> {
@@ -242,14 +260,18 @@ function recoverSharedUserIntent(req: Request, deps: AdminPlacementSharedRouterD
   const toGatewayId = text(body, "toGatewayId");
   const expectedSourceEpoch = count(body, "expectedSourceEpoch", 0);
   const expectedTargetUsersAtMost = count(body, "expectedTargetUsersAtMost", 0);
+  const sourceUnchangedForAtLeastMs = body.sourceUnchangedForAtLeastMs === undefined ? null : count(body, "sourceUnchangedForAtLeastMs", 0);
   if (toGatewayId === fromGatewayId) throw new BadRequest("toGatewayId must differ from the source gateway");
   const operationId = `recover-shared-${uid}-${fromGatewayId}-${expectedSourceEpoch}`;
   return {
     what: "recover user from unavailable shared gateway",
     why: "the shared gateway is unavailable",
     target: { gatewayId: fromGatewayId, uid },
-    preActionStatus: { expectedSourceEpoch, toGatewayId, expectedTargetUsersAtMost },
-    mutation: { kind: "recover-shared-user", operationId, uid, fromGatewayId, toGatewayId, expectedSourceEpoch, expectedTargetUsersAtMost },
+    preActionStatus: { expectedSourceEpoch, toGatewayId, expectedTargetUsersAtMost, sourceUnchangedForAtLeastMs },
+    mutation: {
+      kind: "recover-shared-user", operationId, uid, fromGatewayId, toGatewayId, expectedSourceEpoch, expectedTargetUsersAtMost,
+      sourceUnchangedForAtLeastMs,
+    },
     label: "admin.placement.recover-shared-user",
     verb: async () => {
       const source = await observeSource(deps, fromGatewayId);
@@ -276,7 +298,7 @@ function recoverSharedUserIntent(req: Request, deps: AdminPlacementSharedRouterD
             },
             validateSource: async (context) => {
               const observation = knownObservation(source);
-              const blocker = unavailableSourceBlocker(context, observation, now);
+              const blocker = unavailableSourceBlocker(context, observation, now, sourceUnchangedForAtLeastMs);
               if (blocker !== null) throw new PreconditionFailed(blocker);
               sourceKubernetesStatus = observation.status;
             },
@@ -351,6 +373,15 @@ function supersedeRollingSharedGatewayIntent(req: Request, deps: AdminPlacementS
       return {
         label: "admin.placement.supersede-rolling-shared-gateway",
         apply: async (transaction, now) => {
+          const sourceRuntime = resolveGatewayRuntime((await transaction.fleetRegistry.get(input.sourceGatewayId))?.runtime);
+          if (sourceRuntime !== "cluster") {
+            const unknown = { ...sourceKubernetes, status: "unknown" as const };
+            const repeat = await appendSharedRollRecoveryInTransaction(transaction, input, { now, sourceKubernetes: unknown });
+            if (repeat.kind === "already-scheduled") return { ...repeat, sourceKubernetesStatus: unknown.status };
+            throw new ObservationUnknown(
+              `${input.sourceGatewayId} runs as ${sourceRuntime}, not as pods; its Kubernetes status is unknown`,
+            );
+          }
           const result = await appendSharedRollRecoveryInTransaction(transaction, input, { now, sourceKubernetes });
           if (result.kind === "not-eligible") throw new PreconditionFailed(result.reason);
           return { ...result, sourceKubernetesStatus: sourceKubernetes.status };

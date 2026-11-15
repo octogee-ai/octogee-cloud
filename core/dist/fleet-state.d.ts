@@ -1,4 +1,4 @@
-import { type UserMigrationV2GatewayRootFence } from "@octogee/shared/types/glm";
+import { type GatewayRuntime, type UserMigrationV2GatewayRootFence } from "@octogee/shared/types/glm";
 import { type AssignmentSource, type AssignmentState } from "@octogee/shared/types/gateway-releases";
 import type { FleetBrokerUserRestoreAuthority } from "@octogee/shared/types/fleet-broker";
 import { type WorkspaceMigrationPhase } from "@octogee/shared/types/workspace-migration";
@@ -129,6 +129,8 @@ export interface UnavailableGatewayRecoverySourceValidationContext {
     sourceDesiredRelease: number | null;
     sourceLiveRelease: number | null;
     sourceHeartbeatAt: number | null;
+    sourceUpdatedAt: number | null;
+    sourceRuntime: GatewayRuntime;
 }
 export interface UnavailableGatewayRecoveryTargetValidationContext {
     transaction: PlatformStateTransaction;

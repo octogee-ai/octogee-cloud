@@ -299,7 +299,7 @@ the repeat into a refusal.
 ### `POST /shared-gateways/<source>/users/<uid>/recover`
 
 ```json
-{ "slug": "alice", "toGatewayId": "shared-b", "expectedSourceEpoch": 3, "expectedTargetUsersAtMost": 9 }
+{ "slug": "alice", "toGatewayId": "shared-b", "expectedSourceEpoch": 3, "expectedTargetUsersAtMost": 9, "sourceUnchangedForAtLeastMs": 300000 }
 ```
 
 Recovers a user off an unavailable shared gateway onto a peer, keeping the
@@ -314,14 +314,17 @@ verb proceeds only when all of these hold:
 
 | Fact | Refusal when it does not hold |
 |---|---|
-| Kubernetes reports the source `missing` | `ready`: `precondition-failed`, "observed ready". `not-ready`: `precondition-failed`, "still has Kubernetes pods". No usable read: `observation-unknown`. |
+| Kubernetes reports the source `missing` | `ready`: `precondition-failed`, "observed ready". `not-ready`: `precondition-failed`, "still has Kubernetes pods". No usable read, or a source that does not run as pods (a virtual machine runtime): `observation-unknown`. |
 | The source's runtime heartbeat is not fresh (older than the gateway unreachable bound) | `precondition-failed`, "still has a fresh runtime heartbeat". |
 | No roll is active on the source (desired release equals live release) | `precondition-failed`, "is in an active roll". |
+| With `sourceUnchangedForAtLeastMs`: the source's root has not changed for at least that long (now minus its `updatedAt`) | `precondition-failed`, naming how long ago it changed. |
 
 These are the same fences the fleet controller's own pass applies. A dry run
-makes the same read and gives the same answers. One fence of that pass stays
-the client's decision: the grace period after a change to the source's root
-before it counts as unavailable. The client waits it out before it calls.
+makes the same read and gives the same answers. The grace period after a change
+to the source's root is the client's number: the platform holds none and
+applies none by default. The server measures it against the root's own
+`updatedAt`. A client that reproduces the fleet controller's pass sends its own
+grace, today the gateway unreachable bound, as `sourceUnchangedForAtLeastMs`.
 
 The verb also checks, in the same transaction, that:
 
@@ -366,7 +369,8 @@ Supersedes the roll of a shared peer when the roll has no live target and its
 source gateway is gone. After the owner check, the fleet controller reads the
 source's pods from Kubernetes itself, live, right before the transaction. The
 client's own view only tells it when to ask. A read that fails or returns no
-usable status answers `observation-unknown`. In the
+usable status, or a source that does not run as pods, answers
+`observation-unknown`. In the
 transaction, the verb checks that:
 
 - the source and the target are running shared pool members;

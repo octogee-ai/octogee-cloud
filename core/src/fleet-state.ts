@@ -1,6 +1,8 @@
 import { isDeepStrictEqual } from "node:util";
 import {
+  type GatewayRuntime,
   type UserMigrationV2GatewayRootFence,
+  resolveGatewayRuntime,
   resolveUserGatewayControlState,
   readSchedulerMigrationIdentity,
 } from "@octogee/shared/types/glm";
@@ -1162,6 +1164,8 @@ export interface UnavailableGatewayRecoverySourceValidationContext {
   sourceDesiredRelease: number | null;
   sourceLiveRelease: number | null;
   sourceHeartbeatAt: number | null;
+  sourceUpdatedAt: number | null;
+  sourceRuntime: GatewayRuntime;
 }
 
 export interface UnavailableGatewayRecoveryTargetValidationContext {
@@ -1487,6 +1491,8 @@ async function validateRecoverySource(
     sourceDesiredRelease: root?.desiredRelease ?? null,
     sourceLiveRelease: root?.liveRelease ?? null,
     sourceHeartbeatAt: isGatewayRuntimeDoc(runtime) ? millisFromUnknown(runtime.heartbeat.lastHeartbeatAt) : null,
+    sourceUpdatedAt: millisFromUnknown(root?.updatedAt),
+    sourceRuntime: resolveGatewayRuntime(sourceRuntime?.runtime),
   });
 }
 

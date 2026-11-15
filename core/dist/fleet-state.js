@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
-import { resolveUserGatewayControlState, readSchedulerMigrationIdentity, } from "@octogee/shared/types/glm";
+import { resolveGatewayRuntime, resolveUserGatewayControlState, readSchedulerMigrationIdentity, } from "@octogee/shared/types/glm";
 import { hasFreshReadyKubernetesObservation, isGatewayRuntimeDoc, projectGatewayDesiredRootForGateway, } from "@octogee/shared/types/gateway-releases";
 import { accountAllowsInteractiveAccess } from "@octogee/shared/types/account-lifecycle";
 import { readWorkspaceMigrationMarker } from "@octogee/shared/types/workspace-migration";
@@ -1097,6 +1097,8 @@ async function validateRecoverySource(tx, params, sourceRootData, sourceRuntime)
         sourceDesiredRelease: root?.desiredRelease ?? null,
         sourceLiveRelease: root?.liveRelease ?? null,
         sourceHeartbeatAt: isGatewayRuntimeDoc(runtime) ? millisFromUnknown(runtime.heartbeat.lastHeartbeatAt) : null,
+        sourceUpdatedAt: millisFromUnknown(root?.updatedAt),
+        sourceRuntime: resolveGatewayRuntime(sourceRuntime?.runtime),
     });
 }
 export async function commitUnavailableGatewayRecoveryAtomic(deps, params) {
