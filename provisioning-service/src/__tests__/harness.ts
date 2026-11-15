@@ -63,7 +63,7 @@ export interface Harness {
   dispose(): Promise<void>;
 }
 
-export async function createHarness(options: Partial<Pick<ServiceOptions, "queue" | "heartbeatMs" | "runWorker" | "concurrency">> & { schema?: string; chat?: FakeChatHost; git?: FakeGitHost; reviewer?: Reviewer } = {}): Promise<Harness> {
+export async function createHarness(options: Partial<Pick<ServiceOptions, "queue" | "heartbeatMs" | "runWorker" | "concurrency" | "requestsPerMinute">> & { schema?: string; chat?: FakeChatHost; git?: FakeGitHost; reviewer?: Reviewer } = {}): Promise<Harness> {
   if (!dsn) throw new Error("OCTOGEE_TEST_POSTGRES_DSN is required");
   const schema = options.schema ?? `ps_test_${randomBytes(6).toString("hex")}`;
   const chat = options.chat ?? new FakeChatHost();
@@ -85,6 +85,7 @@ export async function createHarness(options: Partial<Pick<ServiceOptions, "queue
     ...(options.queue ? { queue: options.queue } : {}),
     ...(options.heartbeatMs ? { heartbeatMs: options.heartbeatMs } : {}),
     ...(options.concurrency ? { concurrency: options.concurrency } : {}),
+    ...(options.requestsPerMinute ? { requestsPerMinute: options.requestsPerMinute } : {}),
     runWorker: options.runWorker ?? false,
   });
   return {

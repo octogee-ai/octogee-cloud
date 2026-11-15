@@ -1,4 +1,5 @@
 import express, { type NextFunction, type Request, type Response } from "express";
+import { rateLimit, type AugmentedRequest } from "express-rate-limit";
 import {
   PROVISIONING_CONDITION_REASONS,
   PROVISIONING_CREDENTIAL_NAMES,
@@ -30,6 +31,7 @@ export interface AppDependencies {
   roleTable: Parameters<typeof authenticate>[0]["roleTable"];
   metrics: Metrics;
   log: Logger;
+  requestsPerMinute: number;
 }
 
 const DEFAULT_WAIT_SECONDS = 30;
@@ -75,6 +77,18 @@ export function createApp(deps: AppDependencies): express.Express {
   const app = express();
   app.disable("x-powered-by");
   app.set("query parser", "extended");
+  app.use(rateLimit({
+    windowMs: 60_000,
+    limit: deps.requestsPerMinute,
+    standardHeaders: "draft-7",
+    legacyHeaders: false,
+    handler: (request, response) => {
+      const { rateLimit: state } = request as AugmentedRequest;
+      if (state.used === state.limit + 1) deps.log.warn("client exceeded its request limit", { client: request.ip, limit: state.limit, path: request.path });
+      response.setHeader("Retry-After", String(Math.max(1, Math.ceil(((state.resetTime?.getTime() ?? Date.now() + 60_000) - Date.now()) / 1_000))));
+      sendError(response, 429, "rate-limited", "too many requests; retry later");
+    },
+  }));
 
   app.get("/healthz", (_request, response) => {
     response.json({ ok: true });

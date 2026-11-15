@@ -34,6 +34,21 @@ describe.skipIf(!dsn)("the provisioning HTTP API", { timeout: 30_000 }, () => {
       expect((await harness.request("GET", "/v1/users/u1/credentials/user-chat-token")).status).toBe(403);
     });
 
+    it("answers 429 rate-limited with Retry-After once a client exceeds its requests per minute, on probes and the API alike", async () => {
+      const limited = await createHarness({ requestsPerMinute: 2 });
+      try {
+        expect((await limited.request("GET", "/readyz", { token: null })).status).toBe(200);
+        expect((await limited.request("GET", "/v1/provisionings")).status).toBe(200);
+        const refused = await limited.request("GET", "/readyz", { token: null });
+        expect(refused).toMatchObject({ status: 429, body: { code: "rate-limited", error: expect.any(String) } });
+        expect(Number(refused.headers.get("retry-after"))).toBeGreaterThan(0);
+        expect((await limited.request("GET", "/v1/provisionings")).status).toBe(429);
+        expect(limited.log.lines.filter((line) => line.level === "warn" && line.message === "client exceeded its request limit")).toHaveLength(1);
+      } finally {
+        await limited.dispose();
+      }
+    });
+
     it("answers 503 with Retry-After when the token review cannot be reached", async () => {
       const failing = await createHarness({ reviewer: async () => { throw new Error("connect ECONNREFUSED"); } });
       try {

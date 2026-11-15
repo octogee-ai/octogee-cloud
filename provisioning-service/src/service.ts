@@ -15,6 +15,8 @@ import { ProvisioningStore } from "./store/provisioning-store.js";
 import { WorkQueue, type QueueOptions } from "./worker/queue.js";
 import { Worker } from "./worker/worker.js";
 
+const DEFAULT_REQUESTS_PER_MINUTE = 3_000;
+
 export interface ServiceOptions {
   database: DatabaseConnection;
   databaseSchema: string;
@@ -32,6 +34,7 @@ export interface ServiceOptions {
   heartbeatMs?: number;
   concurrency?: number;
   runWorker?: boolean;
+  requestsPerMinute?: number;
 }
 
 export interface RunningService {
@@ -62,7 +65,7 @@ export async function startService(options: ServiceOptions): Promise<RunningServ
   }, options.concurrency);
   const app = createApp({
     store, queue, credentials, notifier, reviewer: options.reviewer, callerNamespace: options.callerNamespace,
-    roleTable: options.roleTable, metrics, log: options.log,
+    roleTable: options.roleTable, metrics, log: options.log, requestsPerMinute: options.requestsPerMinute ?? DEFAULT_REQUESTS_PER_MINUTE,
   });
   const server: Server = await new Promise((resolve, reject) => {
     const listening = app.listen(options.port, options.host ?? "0.0.0.0", (error?: Error) => (error ? reject(error) : resolve(listening)));

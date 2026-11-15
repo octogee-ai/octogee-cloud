@@ -30,7 +30,9 @@ condition types, reasons and fields they do not know. `status.work.state` is
 `queued`, `running`, `retrying`, `parked` or `idle`.
 
 Errors are `{ "code": "...", "error": "..." }` with a code from
-`PROVISIONING_ERROR_CODES`.
+`PROVISIONING_ERROR_CODES`. Each client address may make 3000 requests a minute
+across all routes; beyond that the service answers `429 rate-limited` with
+`Retry-After`.
 
 ## Authentication
 
