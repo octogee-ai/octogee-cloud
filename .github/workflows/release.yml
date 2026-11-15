@@ -44,17 +44,25 @@ jobs:
             --status=success --limit=1 --json databaseId --jq '.[0].databaseId // empty')"
           [[ -n "$run" ]] || { echo "::error::Build main has no successful run for $GITHUB_SHA; tag a main commit whose Build main succeeded"; exit 1; }
           echo "run=$run" >> "$GITHUB_OUTPUT"
-      - name: Check the octogee-fleet release Build main tested
+      - name: Check the kind smokes passed at the tagged commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh run list -R "$GITHUB_REPOSITORY" --workflow=kind-smoke.yml --limit=200 \
+            --json databaseId,displayTitle,status,conclusion > "$RUNNER_TEMP/kind-smoke-runs.json"
+          node scripts/ci/release-runs.mjs --sha="$GITHUB_SHA" --runs="$RUNNER_TEMP/kind-smoke-runs.json"
+      - name: Check the octogee-fleet release the kind smokes tested
         id: fleet
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          version="$(yq -r '.env.OCTOGEE_FLEET_VERSION' .github/workflows/build-main.yml)"
-          commit="$(yq -r '.env.OCTOGEE_FLEET_COMMIT' .github/workflows/build-main.yml)"
+          version="$(yq -r '.env.OCTOGEE_FLEET_VERSION' .github/workflows/kind-smoke.yml)"
+          commit="$(yq -r '.env.OCTOGEE_FLEET_COMMIT' .github/workflows/kind-smoke.yml)"
           tagged="$(gh api "repos/octogee-ai/octogee-fleet/commits/$version" --jq .sha)"
           [[ "$tagged" == "$commit" ]] \
-            || { echo "::error::octogee-fleet $version is $tagged, but Build main installs $commit"; exit 1; }
+            || { echo "::error::octogee-fleet $version is $tagged, but the kind smokes install $commit"; exit 1; }
           echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Download the image manifest
         env:

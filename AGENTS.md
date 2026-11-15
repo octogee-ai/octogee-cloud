@@ -132,8 +132,12 @@ the operator asks for them or a current risk to users requires them.
   gateway image (`octogee-gateway-builder`) is `linux/amd64` only; arm64
   clusters schedule it on amd64 nodes. It pushes them
   to `ghcr.io/octogee-ai/octogee-cloud/<image>`, tagged with the full and short
-  commit SHA, and keeps a manifest of every digest as a workflow artifact.
-  Building never deploys.
+  commit SHA, keeps a manifest of every digest as a workflow artifact, and
+  scans them. Its result depends only on that. Building never deploys.
+- **Kind smoke** (`.github/workflows/kind-smoke.yml`) runs after each
+  successful Build main push run, or by hand for one commit. It installs that
+  run's images on kind and runs the shared and isolated gateway smokes; it
+  never changes Build main's result. A release requires both.
 - Deploying a build is an operator step. [docs/running-in-the-cloud.md](docs/running-in-the-cloud.md)
   installs the charts, `octogee-fleet gateway deploy` moves one isolated gateway
   to a build, and every fleet change the controller makes writes an
