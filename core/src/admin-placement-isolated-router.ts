@@ -398,6 +398,7 @@ export function addAdminPlacementIsolatedRoutes(router: Router, deps: AdminPlace
   const routes: IsolatedRoutes = { deps, journal, lifecycle, verb };
   addLeaseVerbs(routes);
   addIsolatedGatewayVerbs(routes);
+  addHomeVerbs(routes);
 }
 
 function addLeaseVerbs({ deps, journal, lifecycle, verb }: IsolatedRoutes): void {
@@ -543,33 +544,6 @@ function addIsolatedGatewayVerbs({ deps, journal, lifecycle, verb }: IsolatedRou
     });
   });
 
-  const homeCapabilities = deps.capabilities.home;
-  if (homeCapabilities) {
-    verb("/users/:uid/home/prepare", parseHomePreparation, (req, input) => journal({
-      req,
-      what: "prepare user home",
-      why: "placement automation prepares the user's home before an isolated activation",
-      target: { uid: input.uid },
-      preActionStatus: { leaseId: input.leaseId, generation: input.generation, status: "requested" },
-      mutation: { kind: "prepare-user-home", sizingKey: input.sizingKey, sizingTier: input.sizingTier, sourceGatewayId: input.sourceGatewayId },
-      classifyResult: classifyHomePreparation,
-      dryRunRefusal: async () => {
-        await prepareIsolatedHome({ ...lifecycle, home: homeCapabilities(() => undefined) }, input, "plan");
-        return null;
-      },
-      action: async () => {
-        const effects: HomeEffect[] = [];
-        try {
-          const preparation = await prepareIsolatedHome({ ...lifecycle, home: homeCapabilities((effect) => effects.push(effect)) }, input);
-          return { uid: input.uid, ...preparation, effects };
-        } catch (error) {
-          if (!(error instanceof Error) || isolatedVerbRefusalBody(error) !== null || effects.length === 0) throw error;
-          throw new FleetMutationPartialError(error.message, { summary: "failed after compute effects", details: { effects } });
-        }
-      },
-    }));
-  }
-
   verb("/isolated-gateways/:id/recover-unreachable", parseRecover, async (req, input) => {
     const root = projectGatewayDesiredRootForGateway(await deps.store.gateways.roots.get(input.gatewayId), input.gatewayId);
     if (root === null || root.ownerUid !== input.uid || !root.builderSlug) {
@@ -599,4 +573,32 @@ function addIsolatedGatewayVerbs({ deps, journal, lifecycle, verb }: IsolatedRou
       }),
     });
   });
+}
+
+function addHomeVerbs({ deps, journal, lifecycle, verb }: IsolatedRoutes): void {
+  const homeCapabilities = deps.capabilities.home;
+  if (!homeCapabilities) return;
+  verb("/users/:uid/home/prepare", parseHomePreparation, (req, input) => journal({
+    req,
+    what: "prepare user home",
+    why: "placement automation prepares the user's home before an isolated activation",
+    target: { uid: input.uid },
+    preActionStatus: { leaseId: input.leaseId, generation: input.generation, status: "requested" },
+    mutation: { kind: "prepare-user-home", sizingKey: input.sizingKey, sizingTier: input.sizingTier, sourceGatewayId: input.sourceGatewayId },
+    classifyResult: classifyHomePreparation,
+    dryRunRefusal: async () => {
+      await prepareIsolatedHome({ ...lifecycle, home: homeCapabilities(() => undefined) }, input, "plan");
+      return null;
+    },
+    action: async () => {
+      const effects: HomeEffect[] = [];
+      try {
+        const preparation = await prepareIsolatedHome({ ...lifecycle, home: homeCapabilities((effect) => effects.push(effect)) }, input);
+        return { uid: input.uid, ...preparation, effects };
+      } catch (error) {
+        if (!(error instanceof Error) || isolatedVerbRefusalBody(error) !== null || effects.length === 0) throw error;
+        throw new FleetMutationPartialError(error.message, { summary: "failed after compute effects", details: { effects } });
+      }
+    },
+  }));
 }
