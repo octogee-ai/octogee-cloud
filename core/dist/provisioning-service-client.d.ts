@@ -7,7 +7,7 @@ export interface ProvisioningServiceRetryPolicy {
     readonly maxDelayMs: number;
 }
 export declare const DEFAULT_PROVISIONING_SERVICE_RETRY: ProvisioningServiceRetryPolicy;
-export type ProvisioningServiceRequestOutcome = "ok" | "client-error" | "server-error" | "unreachable";
+export type ProvisioningServiceRequestOutcome = "ok" | "client-error" | "server-error" | "unreachable" | "aborted";
 export interface ProvisioningServiceClientOptions {
     readonly baseUrl: string;
     readonly tokenPath: string;
@@ -21,16 +21,19 @@ export interface ProvisioningServiceClientOptions {
 }
 export declare class ProvisioningServiceError extends Error {
     readonly status: number;
-    readonly code: ProvisioningErrorCode | "unreachable" | "unexpected-response";
+    readonly code: ProvisioningErrorCode | "unreachable" | "unexpected-response" | "aborted";
     readonly retryAfterMs: number | null;
-    constructor(status: number, code: ProvisioningErrorCode | "unreachable" | "unexpected-response", message: string, retryAfterMs?: number | null);
+    constructor(status: number, code: ProvisioningErrorCode | "unreachable" | "unexpected-response" | "aborted", message: string, retryAfterMs?: number | null);
     get transient(): boolean;
 }
 export interface PutProvisioningResult {
     readonly outcome: "created" | "changed" | "unchanged";
     readonly resource: UserProvisioning;
 }
-export interface GetProvisioningOptions {
+export interface RequestSignalOptions {
+    readonly signal?: AbortSignal;
+}
+export interface GetProvisioningOptions extends RequestSignalOptions {
     readonly waitForGeneration?: number;
     readonly timeoutSeconds?: number;
 }
@@ -44,11 +47,11 @@ export interface ProvisioningServiceClient {
     }): Promise<PutProvisioningResult>;
     getProvisioning(uid: string, options?: GetProvisioningOptions): Promise<UserProvisioning | null>;
     deleteProvisioning(uid: string): Promise<void>;
-    listProvisionings(query?: UserProvisioningListQuery): Promise<UserProvisioningList>;
+    listProvisionings(query?: UserProvisioningListQuery, options?: RequestSignalOptions): Promise<UserProvisioningList>;
     listAllProvisionings(query?: Omit<UserProvisioningListQuery, "pageToken">): Promise<UserProvisioningWatchResponse>;
     watchProvisionings(options: WatchProvisioningsOptions): Promise<UserProvisioningWatchResponse>;
     retryProvisioning(uid: string, request: RetryProvisioningRequest, idempotencyKey: string): Promise<unknown>;
-    getProvisioningEvents(uid: string): Promise<ProvisioningEventsResponse | null>;
+    getProvisioningEvents(uid: string, options?: RequestSignalOptions): Promise<ProvisioningEventsResponse | null>;
     getCredential(uid: string, name: ProvisioningCredentialName): Promise<ProvisioningCredential | null>;
 }
 export interface ProvisioningServiceConfig {

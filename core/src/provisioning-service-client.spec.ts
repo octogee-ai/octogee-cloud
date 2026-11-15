@@ -203,6 +203,26 @@ describe("provisioning service client", () => {
     expect(fake.requests).toEqual([]);
   });
 
+  it("stops a request and its retries when the caller aborts", async () => {
+    let fetches = 0;
+    const api = client({
+      retry: { attempts: 5, baseDelayMs: 1, maxDelayMs: 1 },
+      fetch: (_url, init) => {
+        fetches += 1;
+        return new Promise((_resolve, reject) => init?.signal?.addEventListener("abort", () => reject(init.signal?.reason)));
+      },
+    });
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 20);
+
+    await expect(api.getProvisioning("u1", { signal: controller.signal })).rejects.toMatchObject({ code: "aborted" });
+    await expect(api.listProvisionings({}, { signal: controller.signal })).rejects.toMatchObject({ code: "aborted" });
+    await expect(api.getProvisioningEvents("u1", { signal: controller.signal })).rejects.toMatchObject({ code: "aborted" });
+
+    expect(fetches).toBe(1);
+    expect(sleeps).toEqual([]);
+  });
+
   it("refuses to follow redirects", async () => {
     const seen: RequestInit[] = [];
     const api = client({

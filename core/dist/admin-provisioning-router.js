@@ -6,11 +6,15 @@ const UNAVAILABLE = "this fleet controller has no provisioning service configure
 const SERVICE_FAILED = "the provisioning service did not answer; see the fleet controller log";
 export const ADMIN_PROVISIONING_READ_DEADLINE_MS = 5_000;
 function withDeadline(work, ms) {
+    const controller = new AbortController();
     let timer;
     const expired = new Promise((_resolve, reject) => {
-        timer = setTimeout(() => reject(new ProvisioningServiceError(0, "unreachable", `no answer within ${ms} ms`)), ms);
+        timer = setTimeout(() => {
+            reject(new ProvisioningServiceError(0, "unreachable", `no answer within ${ms} ms`));
+            controller.abort();
+        }, ms);
     });
-    return Promise.race([work, expired]).finally(() => clearTimeout(timer));
+    return Promise.race([work(controller.signal), expired]).finally(() => clearTimeout(timer));
 }
 function isNonNegativeInteger(value) {
     return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
@@ -99,7 +103,7 @@ export function addAdminProvisioningRoutes(router, deps) {
         if (uid === null)
             return;
         try {
-            const [provisioning, events] = await withDeadline(Promise.all([client.getProvisioning(uid), client.getProvisioningEvents(uid)]), deadline);
+            const [provisioning, events] = await withDeadline((signal) => Promise.all([client.getProvisioning(uid, { signal }), client.getProvisioningEvents(uid, { signal })]), deadline);
             if (provisioning === null) {
                 res.status(404).json({ code: "not-found", error: "the provisioning service does not manage this user", uid });
                 return;
@@ -142,7 +146,7 @@ export function addAdminProvisioningRoutes(router, deps) {
                     }
                 },
                 dryRunRefusal: async () => {
-                    const current = await withDeadline(client.getProvisioning(uid), deadline);
+                    const current = await withDeadline((signal) => client.getProvisioning(uid, { signal }), deadline);
                     if (current === null)
                         throw new ProvisioningServiceError(404, "not-found", "the provisioning service does not manage this user");
                     if (expectedAttempts !== undefined && current.status.work.attempts !== expectedAttempts) {
@@ -167,7 +171,7 @@ export function addAdminProvisioningRoutes(router, deps) {
             return;
         }
         try {
-            const listed = await withDeadline(client.listProvisionings(query), deadline);
+            const listed = await withDeadline((signal) => client.listProvisionings(query, { signal }), deadline);
             res.json({ ...listed, specWriteFailures: deps.sync?.specFailures() ?? [], mirrorRefusals: deps.sync?.mirrorRefusals() ?? [] });
         }
         catch (error) {

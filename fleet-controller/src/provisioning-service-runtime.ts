@@ -29,7 +29,7 @@ export interface ProvisioningServiceRuntimeInput {
   readonly log: (message: string) => void;
 }
 
-const REQUEST_OUTCOMES: readonly ProvisioningServiceRequestOutcome[] = ["ok", "client-error", "server-error", "unreachable"];
+const REQUEST_OUTCOMES: readonly ProvisioningServiceRequestOutcome[] = ["ok", "client-error", "server-error", "unreachable", "aborted"];
 
 function counterLines(name: string, help: string, label: string, values: Record<string, number>): string[] {
   return [

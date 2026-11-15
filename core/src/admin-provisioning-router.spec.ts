@@ -116,6 +116,26 @@ describe("Admin API provisioning routes", () => {
     expect(Date.now() - started).toBeLessThan(2_000);
   });
 
+  it("aborts the service requests it stops waiting for at the read deadline", async () => {
+    const signals: Array<AbortSignal | undefined> = [];
+    const hangUntilAborted = <T>(signal: AbortSignal | undefined) => {
+      signals.push(signal);
+      return new Promise<T>((_resolve, reject) => signal?.addEventListener("abort", () => reject(signal.reason)));
+    };
+    const hanging: AdminProvisioningClient = {
+      ...client,
+      getProvisioning: (_uid, options) => hangUntilAborted(options?.signal),
+      getProvisioningEvents: (_uid, options) => hangUntilAborted(options?.signal),
+      listProvisionings: (_query, options) => hangUntilAborted(options?.signal),
+    };
+
+    await request(app(true, { provisioning: hanging, readDeadlineMs: 50 })).get("/users/u1/provisioning").expect(503);
+    await request(app(true, { provisioning: hanging, readDeadlineMs: 50 })).get("/provisioning").expect(503);
+
+    expect(signals).toHaveLength(3);
+    expect(signals.every((signal) => signal?.aborted === true)).toBe(true);
+  });
+
   it("passes any uid the platform admits to the service as one path segment", async () => {
     await request(app()).get("/users/..%2F..%2Fprovisionings/provisioning").expect(404);
     await request(app()).get("/users/.hidden/provisioning").expect(404);

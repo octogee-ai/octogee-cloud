@@ -77,8 +77,8 @@ async function errorFromResponse(response) {
 function outcomeOf(error) {
     if (!(error instanceof ProvisioningServiceError))
         return "unreachable";
-    if (error.code === "unreachable")
-        return "unreachable";
+    if (error.code === "unreachable" || error.code === "aborted")
+        return error.code;
     return error.status >= 500 ? "server-error" : "client-error";
 }
 function credentialFrom(text, name) {
@@ -93,6 +93,9 @@ function credentialFrom(text, name) {
         throw new ProvisioningServiceError(200, "unexpected-response", `provisioning service answered a malformed ${name} credential`);
     }
     return { name, value: body.value, version: body.version };
+}
+function abortedError(input) {
+    return new ProvisioningServiceError(0, "aborted", `provisioning service ${input.method} ${input.path} was aborted by its caller`);
 }
 export function createProvisioningServiceClient(options) {
     const fetchImpl = options.fetch ?? fetch;
@@ -120,6 +123,10 @@ export function createProvisioningServiceClient(options) {
         }
         return url;
     }
+    function requestSignal(input) {
+        const timeout = AbortSignal.timeout(input.timeoutMs ?? REQUEST_TIMEOUT_MS);
+        return input.signal === undefined ? timeout : AbortSignal.any([input.signal, timeout]);
+    }
     async function once(input, forceTokenRead) {
         const bearer = await token(forceTokenRead);
         try {
@@ -133,10 +140,12 @@ export function createProvisioningServiceClient(options) {
                     ...input.headers,
                 },
                 ...(input.body === undefined ? {} : { body: JSON.stringify(input.body) }),
-                signal: AbortSignal.timeout(input.timeoutMs ?? REQUEST_TIMEOUT_MS),
+                signal: requestSignal(input),
             });
         }
         catch (error) {
+            if (input.signal?.aborted === true)
+                throw abortedError(input);
             throw new ProvisioningServiceError(0, "unreachable", `provisioning service ${input.method} ${input.path} failed: ${errorMessage(error)}`);
         }
     }
@@ -151,6 +160,8 @@ export function createProvisioningServiceClient(options) {
     async function request(input) {
         for (let attemptIndex = 0;; attemptIndex += 1) {
             try {
+                if (input.signal?.aborted === true)
+                    throw abortedError(input);
                 const response = await attempt(input);
                 options.onRequest?.("ok");
                 return response;
@@ -191,16 +202,18 @@ export function createProvisioningServiceClient(options) {
                 query: { waitForGeneration: getOptions?.waitForGeneration, timeoutSeconds },
                 ...(timeoutSeconds === undefined ? {} : { timeoutMs: timeoutSeconds * 1000 + LONG_POLL_GRACE_MS }),
                 allowNotFound: true,
+                ...(getOptions?.signal === undefined ? {} : { signal: getOptions.signal }),
             });
             return response.status === 404 ? null : json(response);
         },
         async deleteProvisioning(uid) {
             await request({ method: "DELETE", path: userPath(uid), allowNotFound: true });
         },
-        async listProvisionings(query) {
+        async listProvisionings(query, listOptions) {
             const response = await request({
                 method: "GET",
                 path: "provisionings",
+                ...(listOptions?.signal === undefined ? {} : { signal: listOptions.signal }),
                 query: {
                     ready: query?.ready,
                     reason: query?.reason,
@@ -243,8 +256,13 @@ export function createProvisioningServiceClient(options) {
             const text = await response.text();
             return text === "" ? {} : JSON.parse(text);
         },
-        async getProvisioningEvents(uid) {
-            const response = await request({ method: "GET", path: `${userPath(uid)}/events`, allowNotFound: true });
+        async getProvisioningEvents(uid, eventOptions) {
+            const response = await request({
+                method: "GET",
+                path: `${userPath(uid)}/events`,
+                allowNotFound: true,
+                ...(eventOptions?.signal === undefined ? {} : { signal: eventOptions.signal }),
+            });
             return response.status === 404 ? null : json(response);
         },
         async getCredential(uid, name) {
