@@ -10,7 +10,7 @@ export interface AuthorizedGitKey {
 export interface GitHost {
   ensureOwner(input: { slug: string; knownOwner?: string }, signal: AbortSignal): Promise<{ owner: string }>;
   ensureRepository(input: { owner: string; kind: GitRepositoryKind }, signal: AbortSignal): Promise<GitRepositoryOutput>;
-  listKeys(input: { owner: string }, signal: AbortSignal): Promise<AuthorizedGitKey[]>;
+  listKeys(input: { owner: string; holders: string[] }, signal: AbortSignal): Promise<AuthorizedGitKey[]>;
   registerKey(input: { owner: string; publicKey: string; holder: string }, signal: AbortSignal): Promise<void>;
   releaseKey(input: { owner: string; publicKey: string; holder: string }, signal: AbortSignal): Promise<void>;
 }
