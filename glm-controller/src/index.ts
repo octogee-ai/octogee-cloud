@@ -173,7 +173,7 @@ import {
 } from "@octogee/core/gateway-retirement-claim";
 import { createRetireGatewayHandler } from "./handlers/retire-gateway.js";
 import { readFileSync } from "node:fs";
-import { createGatewayServiceAccountTeardown } from "./lib/gateway-gsa.js";
+import { createGatewayServiceAccountTeardown, gatewaysHaveGoogleServiceAccounts } from "./lib/gateway-gsa.js";
 import { gatewayFleetBaseUrl, gatewayVmAddress } from "./lib/gateway-address.js";
 import { createVmReadinessProbe, createSurgeEndpointLister } from "./vm-endpoints.js";
 import {
@@ -3392,21 +3392,23 @@ async function buildHandlers(
         desiredStatus: "retired",
       });
     },
-    teardownGatewayServiceAccount: createGatewayServiceAccountTeardown({
-      projectId: requireEnv(
-        "GOOGLE_CLOUD_PROJECT",
-        "gateway service-account teardown must target this env's GCP project",
-      ),
-      log: logFn,
-      request: async ({ url, method }) => {
-        const auth = new GoogleAuth({
-          scopes: ["https://www.googleapis.com/auth/cloud-platform"],
-        });
-        const client = await auth.getClient();
-        const res = await client.request<unknown>({ url, method });
-        return { status: res.status };
-      },
-    }),
+    teardownGatewayServiceAccount: gatewaysHaveGoogleServiceAccounts(process.env.GKE_WORKLOAD_IDENTITY_PROJECT)
+      ? createGatewayServiceAccountTeardown({
+        projectId: requireEnv(
+          "GOOGLE_CLOUD_PROJECT",
+          "gateway service-account teardown must target this env's GCP project",
+        ),
+        log: logFn,
+        request: async ({ url, method }) => {
+          const auth = new GoogleAuth({
+            scopes: ["https://www.googleapis.com/auth/cloud-platform"],
+          });
+          const client = await auth.getClient();
+          const res = await client.request<unknown>({ url, method });
+          return { status: res.status };
+        },
+      })
+      : undefined,
     syncFleetIngress: fleetOps.syncFleetIngress,
     pollIntervalMs: 5_000,
     now: () => Date.now(),

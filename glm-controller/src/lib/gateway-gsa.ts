@@ -13,6 +13,10 @@ export function isolatedGatewayServiceAccountEmail(gatewayId: string, projectId:
   return `${isolatedGatewayServiceAccountName(gatewayId)}@${projectId}.iam.gserviceaccount.com`;
 }
 
+export function gatewaysHaveGoogleServiceAccounts(workloadIdentityProject: string | undefined): boolean {
+  return workloadIdentityProject?.trim() !== "none";
+}
+
 function statusOf(err: unknown): number | undefined {
   const e = err as { response?: { status?: number }; code?: number } | null;
   return e?.response?.status ?? e?.code;
