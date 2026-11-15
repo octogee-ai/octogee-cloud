@@ -28,43 +28,68 @@ describe('runtime restart positive completion proof',()=>{
 
 const BOUND_POD={podName:'octogee-gateway-gw-1-abc',podUid:'uid-bound'};
 type BoundPodState='running'|'gone'|'replaced'|'failed'|'unobservable';
+interface ProcessScenario {probe?:'healthy'|'forbidden';bootAfter?:string}
 function boundPodRead(state:BoundPodState):KubectlSubprocessResult {
  if(state==='gone')return {code:0,stdout:'',stderr:''};
  if(state==='unobservable')return {code:1,stdout:'',stderr:'Unable to connect to the server: i/o timeout'};
  const pod={metadata:{name:BOUND_POD.podName,uid:state==='replaced'?'uid-replacement':BOUND_POD.podUid,resourceVersion:'2'},status:{phase:state==='failed'?'Failed':'Running'}};
  return {code:0,stdout:JSON.stringify(pod),stderr:''};
 }
-function restartHarness(boundPod:BoundPodState,fence?:RuntimeRestartFence) {
+function restartHarness(boundPod:BoundPodState,fence?:RuntimeRestartFence,scenario:ProcessScenario={}) {
  const store=createDocumentFixtureStore({'gateways/gw-1':{gatewayId:'gw-1',gatewayClass:'isolated',desiredStatus:'running',liveRelease:1,desiredRelease:1,latestRelease:1,...(fence?{runtimeRestartFence:fence}:{})}});
- const calls:string[][]=[];
- const runKubectl:KubectlSubprocess=async args=>{
-  calls.push(args);
-  if(args.includes('exec'))return {code:1,stdout:'',stderr:'error: unable to upgrade connection: Forbidden'};
+ const restartDispatches:string[][]=[];
+ let restartSent=fence!==undefined;
+ const runKubectl:KubectlSubprocess=async(args,opts)=>{
+  if(args.includes('exec') && opts?.stdin?.includes('gateway.restart.request')) {
+   restartSent=true;restartDispatches.push(args);
+   return {code:1,stdout:'',stderr:'runtime restart unconfirmed\ncommand terminated with exit code 1'};
+  }
+  if(args.includes('exec')) {
+   if(scenario.probe==='forbidden')return {code:1,stdout:'',stderr:'error: unable to upgrade connection: Forbidden'};
+   const bootId=restartSent?(scenario.bootAfter??'boot-before'):'boot-before';
+   return {code:0,stdout:JSON.stringify({version:1,attemptId:args.at(-1),bootId,health:true}),stderr:''};
+  }
   if(args.includes('pods'))return {code:0,stdout:JSON.stringify({items:[{metadata:{name:BOUND_POD.podName,uid:BOUND_POD.podUid,resourceVersion:'1'},status:{phase:'Running'}}]}),stderr:''};
   return boundPodRead(boundPod);
  };
  const savedFence=async()=>(await store.gateways.roots.get('gw-1'))?.runtimeRestartFence;
  const migrationClaim=()=>assertMigrationRestartUnfenced(store,{uid:'user-1',fromGatewayId:'shared-b',toGatewayId:'gw-1'});
- return {store,calls,savedFence,migrationClaim,deps:{store,namespace:'octogee',runKubectl}};
+ return {store,restartDispatches,savedFence,migrationClaim,deps:{store,namespace:'octogee',runKubectl}};
 }
-const DISPATCHED:RuntimeRestartFence={attemptId:'attempt-1',auditId:'audit-1',gatewayId:'gw-1',kind:'process',startedAt:1,phase:'dispatched',target:BOUND_POD};
+const DISPATCHED:RuntimeRestartFence={attemptId:'attempt-1',auditId:'audit-1',gatewayId:'gw-1',kind:'process',startedAt:1,phase:'dispatched',target:{...BOUND_POD,beforeBootId:'boot-before'}};
+
+describe('a process restart whose gateway cannot be probed before dispatch',()=>{
+ it('clears the fence and reports why without dispatching the restart',async()=>{
+  const h=restartHarness('running',undefined,{probe:'forbidden'});
+  await expect(restartGatewayProcess(h.deps,'gw-1')).rejects.toThrow(/health unconfirmed.*unable to upgrade connection: Forbidden/);
+  expect(await h.savedFence()).toBeUndefined();
+  expect(h.restartDispatches).toEqual([]);
+  await expect(h.migrationClaim()).resolves.toBeUndefined();
+ });
+});
 
 describe('a process restart whose dispatch failed',()=>{
- it('keeps the fence and reports the restart driver stderr while the bound pod still runs',async()=>{
+ it('keeps the fence, with the boot it probed before dispatch, while the bound pod still runs that boot',async()=>{
   const h=restartHarness('running');
-  await expect(restartGatewayProcess(h.deps,'gw-1')).rejects.toThrow(/unable to upgrade connection: Forbidden.*bound pod octogee-gateway-gw-1-abc still runs/);
-  expect(await h.savedFence()).toMatchObject({phase:'dispatched',target:BOUND_POD});
+  await expect(restartGatewayProcess(h.deps,'gw-1')).rejects.toThrow(/runtime restart unconfirmed.*bound pod octogee-gateway-gw-1-abc still runs/s);
+  expect(await h.savedFence()).toMatchObject({phase:'dispatched',target:{...BOUND_POD,beforeBootId:'boot-before'}});
   await expect(h.migrationClaim()).rejects.toThrow('restart outcome is unresolved');
+ });
+ it('clears the fence when the gateway process came back under a new boot',async()=>{
+  const h=restartHarness('running',undefined,{bootAfter:'boot-after'});
+  await expect(restartGatewayProcess(h.deps,'gw-1')).rejects.toThrow('runtime restart unconfirmed');
+  expect(await h.savedFence()).toBeUndefined();
+  await expect(h.migrationClaim()).resolves.toBeUndefined();
  });
  it.each(['gone','replaced','failed'] as const)('clears the fence when the bound pod is %s',async boundPod=>{
   const h=restartHarness(boundPod);
-  await expect(restartGatewayProcess(h.deps,'gw-1')).rejects.toThrow('unable to upgrade connection: Forbidden');
+  await expect(restartGatewayProcess(h.deps,'gw-1')).rejects.toThrow('runtime restart unconfirmed');
   expect(await h.savedFence()).toBeUndefined();
   await expect(h.migrationClaim()).resolves.toBeUndefined();
  });
  it('keeps the fence and names the Kubernetes failure when the bound pod cannot be read',async()=>{
   const h=restartHarness('unobservable');
-  await expect(restartGatewayProcess(h.deps,'gw-1')).rejects.toThrow(/Forbidden.*observation unavailable.*i\/o timeout/);
+  await expect(restartGatewayProcess(h.deps,'gw-1')).rejects.toThrow(/runtime restart unconfirmed.*observation unavailable.*i\/o timeout/s);
   expect(await h.savedFence()).toMatchObject({phase:'dispatched'});
  });
 });
@@ -75,14 +100,26 @@ describe('a later restart of a gateway left with a dispatched process fence',()=
   await expect(h.migrationClaim()).rejects.toThrow('restart outcome is unresolved');
   await restartGatewayProcess(h.deps,'gw-1');
   expect(await h.savedFence()).toBeUndefined();
-  expect(h.calls.filter(args=>args.includes('exec'))).toEqual([]);
+  expect(h.restartDispatches).toEqual([]);
   await expect(h.migrationClaim()).resolves.toBeUndefined();
  });
- it('keeps the fence while the bound pod still runs',async()=>{
+ it('clears the fence without dispatching again when the gateway process runs a new boot',async()=>{
+  const h=restartHarness('running',DISPATCHED,{bootAfter:'boot-after'});
+  await restartGatewayProcess(h.deps,'gw-1');
+  expect(await h.savedFence()).toBeUndefined();
+  expect(h.restartDispatches).toEqual([]);
+ });
+ it('keeps the fence while the bound pod still runs the boot it had before dispatch',async()=>{
   const h=restartHarness('running',DISPATCHED);
   await expect(restartGatewayProcess(h.deps,'gw-1')).rejects.toThrow('bound pod octogee-gateway-gw-1-abc still runs');
   expect(await h.savedFence()).toEqual(DISPATCHED);
-  expect(h.calls.filter(args=>args.includes('exec'))).toEqual([]);
+  expect(h.restartDispatches).toEqual([]);
+ });
+ it('keeps the fence while the bound pod runs and no prior boot was recorded',async()=>{
+  const fence={...DISPATCHED,target:BOUND_POD};
+  const h=restartHarness('running',fence,{bootAfter:'boot-after'});
+  await expect(restartGatewayProcess(h.deps,'gw-1')).rejects.toThrow('bound pod octogee-gateway-gw-1-abc still runs');
+  expect(await h.savedFence()).toEqual(fence);
  });
  it('keeps a dispatched fence that names no bound pod',async()=>{
   const {target:_target,...unbound}=DISPATCHED;
