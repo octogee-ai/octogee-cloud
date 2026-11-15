@@ -1,6 +1,6 @@
 import { isValidCustomChannelName, RESERVED_USERNAMES, USERNAME_RE } from "@octogee/shared/types/identity";
 import { mmApi } from "./mattermost.js";
-import { platformStateStore } from "./platform-state.js";
+import { platformStateStore } from "@octogee/core/identity/platform-state-store";
 import { addActiveChannelMember, addChannelMember, removeChannelMember, verifiedPrimaryChannelIdFor } from "./channel-lifecycle.js";
 
 const MEMBER_PAGE_SIZE = 200;

@@ -1,5 +1,5 @@
 import type { WorkspaceChannelScope } from "@octogee/core/platform-state";
-import { installProjectPresentation, type PresentationDocument } from "../../lib/project-presentation.js";
+import { installProjectPresentation, type PresentationDocument } from "@octogee/core/identity/project-presentation";
 
 interface FakeDocument {
   get(): Promise<{ data(): unknown }>;

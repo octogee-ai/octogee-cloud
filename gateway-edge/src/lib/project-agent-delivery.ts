@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { OpaqueMap, PlatformStateTransaction, Stored, WorkspaceProject } from "@octogee/core/platform-state";
 import type { ProjectAgentConfig } from "@octogee/shared/types/project";
-import { platformStateStore } from "./platform-state.js";
+import { platformStateStore } from "@octogee/core/identity/platform-state-store";
 import { mmApi } from "./mattermost.js";
-import { projectPresentation } from "./project-presentation.js";
+import { projectPresentation } from "@octogee/core/identity/project-presentation";
 import {
   DeliveryIntentReplacedError,
   projectAgentDeliveryIntents,

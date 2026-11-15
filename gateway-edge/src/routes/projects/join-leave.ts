@@ -1,11 +1,11 @@
 import { Router, Request, Response } from "express";
-import { strictRateLimit } from "../../middleware/security.js";
-import { platformStateStore } from "../../lib/platform-state.js";
+import { strictRateLimit } from "@octogee/core/http/security";
+import { platformStateStore } from "@octogee/core/identity/platform-state-store";
 import { removeProjectMember, syncProjectMemberCount } from "../../lib/project-platform-state.js";
 import { mmApi } from "../../lib/mattermost.js";
-import { giteaApi } from "../../lib/gitea.js";
+import { giteaApi } from "@octogee/core/git-host/gitea-client";
 import { workspaceGiteaOrg, projectRepoName } from "@octogee/core/gitea-naming";
-import { logger } from "../../middleware/logging.js";
+import { logger } from "@octogee/core/http/logging";
 import { getWorkspaceMmContext } from "../../lib/mattermost-context.js";
 import { withProject, type ProjectCtx } from "../../lib/withProject.js";
 

@@ -6,7 +6,7 @@ import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store"
 vi.hoisted(() => {
   process.env.API_PUBLIC_URL = "https://api.octogee.test";
 });
-vi.mock("../../../gateway-edge/src/middleware/auth.js", () => ({
+vi.mock("@octogee/core/http/auth", () => ({
   requireActiveAccount: (_req: Request, _res: Response, next: NextFunction) => next(),
   requireAuthenticatedUid: (req: Request, _res: Response, next: NextFunction) => {
     req.uid = req.get("x-test-uid");

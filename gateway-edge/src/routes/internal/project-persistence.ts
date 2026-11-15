@@ -1,10 +1,10 @@
-import { clientRequestLimit } from "../../middleware/authenticated-request-limit.js";
+import { clientRequestLimit } from "@octogee/core/http/authenticated-request-limit";
 import { Router } from "express";
 import { createGatewayInternalAuth } from "../../middleware/gateway-internal-auth.js";
 import { persistUserProjects, persistSharedUserFiles } from "../../lib/project-persistence.js";
 import { isValidUsername } from "@octogee/shared/types/identity";
-import { logger } from "../../middleware/logging.js";
-import { claimedUserIdentity } from "../../lib/user-identity.js";
+import { logger } from "@octogee/core/http/logging";
+import { claimedUserIdentity } from "@octogee/core/identity/user-identity";
 import { isIsolatedGatewayClassValue } from "@octogee/shared/types/glm";
 
 export function createProjectPersistenceRouter(persist = persistUserProjects): Router {

@@ -61,8 +61,8 @@ import {
 } from "../lib/vm-home-checkpoint.js";
 import { Router, type Request, type Response } from "express";
 
-import { logger, redactRequestPath } from "../../../gateway-edge/src/middleware/logging.js";
-import { gcsBucket } from "../../../gateway-edge/src/lib/gcs-bucket.js";
+import { logger, redactRequestPath } from "@octogee/core/http/logging";
+import { gcsBucket } from "@octogee/core/workspace/gcs-bucket";
 import { parseAgentLook, type AgentLook } from "@octogee/shared/types/agent-look";
 import { parseTimeZone } from "@octogee/shared/types/time-zone";
 import { DEFAULT_AGENT_LOOK, characterSvg } from "@octogee/shared/types/agent-characters";

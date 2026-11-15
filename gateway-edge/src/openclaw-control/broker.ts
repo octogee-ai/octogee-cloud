@@ -1,4 +1,4 @@
-import { internalFetch } from "../lib/internal-fetch.js";
+import { internalFetch } from "@octogee/core/internal-fetch";
 
 export interface OpenClawControlRedemptionResponse {
   uid: string;

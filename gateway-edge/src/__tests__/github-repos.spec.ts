@@ -6,19 +6,19 @@ const h = vi.hoisted(() => ({
   readConnectorAccessToken: vi.fn(),
 }));
 
-vi.mock("../lib/platform-state.js", async (importOriginal) => {
+vi.mock("@octogee/core/identity/platform-state-store", async (importOriginal) => {
   const { createDocumentFixtureStore } = await import("@octogee/core/testing/journal-store");
   return {
-    ...(await importOriginal<typeof import("../lib/platform-state.js")>()),
+    ...(await importOriginal<typeof import("@octogee/core/identity/platform-state-store")>()),
     platformStateStore: createDocumentFixtureStore(h.documents),
   };
 });
 
-vi.mock("../lib/connector-tokens", () => ({
+vi.mock("@octogee/core/connectors/connector-tokens", () => ({
   readConnectorAccessToken: h.readConnectorAccessToken,
 }));
 
-const { platformStateStore } = await import("../lib/platform-state.js");
+const { platformStateStore } = await import("@octogee/core/identity/platform-state-store");
 const { installBearerUids } = await import("./helpers/user-bearer.js");
 const { createApp } = await import("../index.js");
 

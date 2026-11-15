@@ -4,12 +4,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({ documents: new Map<string, Record<string, unknown>>() }));
 
-vi.mock("../lib/platform-state.js", async () => {
+vi.mock("@octogee/core/identity/platform-state-store", async () => {
   const { createDocumentFixtureStore } = await import("@octogee/core/testing/journal-store");
   return { platformStateStore: createDocumentFixtureStore(h.documents) };
 });
 
-const { platformStateStore } = await import("../lib/platform-state.js");
+const { platformStateStore } = await import("@octogee/core/identity/platform-state-store");
 const { installBearerUids } = await import("./helpers/user-bearer.js");
 const { default: openclawRouter } = await import("../routes/openclaw.js");
 

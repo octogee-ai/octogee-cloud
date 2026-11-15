@@ -1,8 +1,8 @@
-import { authenticationFailureLimit } from "../middleware/authenticated-request-limit.js";
+import { authenticationFailureLimit } from "@octogee/core/http/authenticated-request-limit";
 import { Router, type NextFunction, type Request, type Response } from "express";
 import { rateLimit } from "express-rate-limit";
-import { requireAuthenticatedUid } from "../middleware/auth.js";
-import { DEFAULT_RATE_LIMIT_OPTIONS } from "../middleware/security.js";
+import { requireAuthenticatedUid } from "@octogee/core/http/auth";
+import { DEFAULT_RATE_LIMIT_OPTIONS } from "@octogee/core/http/security";
 import { resolveWorkspaceNativeIdentity, WorkspaceNativeAccessError } from "../lib/workspace-native-access.js";
 import { openNativeUserClient } from "../openclaw-control/native-user-client.js";
 import { signedInProfile } from "../openclaw-control/proxy-identity.js";

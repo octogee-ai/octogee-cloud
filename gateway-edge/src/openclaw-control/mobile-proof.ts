@@ -1,7 +1,7 @@
 import { createHash, createPublicKey, verify } from 'node:crypto';
 import { buildDeviceAuthPayloadV3 } from '@octogee/shared/types/device-identity';
 import { OPENCLAW_PROTOCOL_VERSION } from '@octogee/shared/types/openclaw-wire';
-import { containsAsciiControlCharacter } from '../lib/text-validation.js';
+import { containsAsciiControlCharacter } from '@octogee/shared/types/text-validation';
 
 export const MOBILE_ENROLLMENT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 export const mobileDigest = (value: string | Buffer): string =>

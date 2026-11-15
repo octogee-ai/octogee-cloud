@@ -1,7 +1,7 @@
 import http from "node:http";
 import type { Express } from "express";
-import { platformStateStore } from "../../gateway-edge/src/lib/platform-state.js";
-import { logger } from "../../gateway-edge/src/middleware/logging.js";
+import { platformStateStore } from "@octogee/core/identity/platform-state-store";
+import { logger } from "@octogee/core/http/logging";
 import { createGracefulShutdown } from "./lib/graceful-shutdown.js";
 import { mattermostChannelHostFromEnv } from "@octogee/core/channel-host";
 import { controlUiCommandUrl, convergeControlUiCommands } from "@octogee/core/mattermost/control-ui-command";

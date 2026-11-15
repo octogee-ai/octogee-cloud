@@ -249,6 +249,30 @@
     "./types/native-mobile": {
       "types": "./dist/types/native-mobile.d.ts",
       "default": "./dist/types/native-mobile.js"
+    },
+    "./types/dev-origins": {
+      "types": "./dist/types/dev-origins.d.ts",
+      "default": "./dist/types/dev-origins.js"
+    },
+    "./types/free-storage": {
+      "types": "./dist/types/free-storage.d.ts",
+      "default": "./dist/types/free-storage.js"
+    },
+    "./types/path-validation": {
+      "types": "./dist/types/path-validation.d.ts",
+      "default": "./dist/types/path-validation.js"
+    },
+    "./types/text-validation": {
+      "types": "./dist/types/text-validation.d.ts",
+      "default": "./dist/types/text-validation.js"
+    },
+    "./types/workspace-storage-quota": {
+      "types": "./dist/types/workspace-storage-quota.d.ts",
+      "default": "./dist/types/workspace-storage-quota.js"
+    },
+    "./types/dashboard-asset-request": {
+      "types": "./dist/types/dashboard-asset-request.d.ts",
+      "default": "./dist/types/dashboard-asset-request.js"
     }
   },
   "typesVersions": {

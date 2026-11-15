@@ -2,7 +2,7 @@ import { generateKeyPairSync } from "node:crypto";
 import express from "express";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createModelCredentialSyncAuthHeaders } from "../../lib/byot-sync-internal-auth.js";
+import { createModelCredentialSyncAuthHeaders } from "@octogee/core/model-credentials/byot-sync-internal-auth";
 
 const h = vi.hoisted(() => ({ run: vi.fn(), identity: vi.fn() }));
 vi.mock("../../lib/native-connector-approval.js", async importOriginal => ({

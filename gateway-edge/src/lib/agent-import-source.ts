@@ -18,7 +18,7 @@ import {
   WORKSPACE_GIT_HARDENING_PINS,
   workspaceGitCommandArgs,
   workspaceGitEnvironment,
-} from "./workspace-git.js";
+} from "@octogee/core/workspace/workspace-git";
 
 const OWNER_RE = /^[A-Za-z0-9-]{1,39}$/;
 const REPO_RE = /^[A-Za-z0-9._-]{1,100}$/;

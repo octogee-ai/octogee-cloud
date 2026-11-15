@@ -27,11 +27,11 @@ import {
   type PlatformConnectConfig,
 } from "@octogee/shared/types/platform-config";
 import { revokeProviderGrant } from "@octogee/core/connector-revocation";
-import { requireActiveAccount, requireAuthenticatedUid } from "../middleware/auth.js";
-import { DEFAULT_RATE_LIMIT_OPTIONS } from "../middleware/security.js";
-import { logger } from "../middleware/logging.js";
-import { platformStateStore } from "../lib/platform-state.js";
-import { encryptSecret, decryptSecret } from "../lib/kms.js";
+import { requireActiveAccount, requireAuthenticatedUid } from "@octogee/core/http/auth";
+import { DEFAULT_RATE_LIMIT_OPTIONS } from "@octogee/core/http/security";
+import { logger } from "@octogee/core/http/logging";
+import { platformStateStore } from "@octogee/core/identity/platform-state-store";
+import { encryptSecret, decryptSecret } from "@octogee/core/connectors/kms";
 import { sanitizeReturnUrl, buildOAuthRedirect } from "../lib/redirect-validation.js";
 import {
   MalformedPlatformConnectConfigError,
@@ -47,13 +47,13 @@ import {
   listConnectors,
   connectorRedirectUri,
   type ConnectorDef,
-} from "../lib/connectors/index.js";
+} from "@octogee/core/connectors";
 import {
   configuredEnvValue,
   readConnectorClientCreds,
   getFreshAccessToken,
   type ConnectorClientCreds,
-} from "../lib/connector-tokens.js";
+} from "@octogee/core/connectors/connector-tokens";
 
 import { connectorDisconnected } from "../lib/connector-disconnect.js";
 

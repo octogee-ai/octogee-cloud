@@ -11,11 +11,11 @@ const h = vi.hoisted(() => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-vi.mock("../middleware/auth.js", () => ({
+vi.mock("@octogee/core/http/auth", () => ({
   requireActiveAccount: (_req: unknown, _res: unknown, next: () => void) => next(),
   requireAuthenticatedUid: (_req: unknown, _res: unknown, next: () => void) => next(),
 }));
-vi.mock("../middleware/logging.js", () => ({ logger: h.logger }));
+vi.mock("@octogee/core/http/logging", () => ({ logger: h.logger }));
 vi.mock("../lib/gateway-ticket.js", async () => {
   const actual = await vi.importActual<typeof import("../lib/gateway-ticket.js")>("../lib/gateway-ticket.js");
   return { ...actual, mintTicket: (...args: unknown[]) => h.mintTicket(...args) };

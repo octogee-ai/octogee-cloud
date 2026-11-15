@@ -6,20 +6,20 @@ import {
   type FeatureSubject,
 } from "@octogee/shared/types/feature-flags";
 import type { ProjectRepoSource } from "@octogee/shared/types/index";
-import { strictRateLimit } from "../../middleware/security.js";
-import { platformStateStore } from "../../lib/platform-state.js";
-import { logger } from "../../middleware/logging.js";
+import { strictRateLimit } from "@octogee/core/http/security";
+import { platformStateStore } from "@octogee/core/identity/platform-state-store";
+import { logger } from "@octogee/core/http/logging";
 import { withProject } from "../../lib/withProject.js";
 import {
   ConnectorTokenReadError,
   readConnectorAccessToken,
-} from "../../lib/connector-tokens.js";
+} from "@octogee/core/connectors/connector-tokens";
 import {
   githubRepoApi,
   isValidGithubRepoSource,
   parseGithubRepoUrl,
   type GithubRepoSource,
-} from "../../lib/github.js";
+} from "@octogee/core/git-host/github";
 
 const PROJECT_REPO_SOURCE_FLAG = "release-project-repo-source" as const;
 

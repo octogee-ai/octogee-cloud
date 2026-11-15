@@ -2,7 +2,7 @@ import express from "express";
 import request from "supertest";
 import { expect, it, vi } from "vitest";
 
-vi.mock("../../middleware/auth.js", () => ({
+vi.mock("@octogee/core/http/auth", () => ({
   requireAuth: (req: express.Request, _res: express.Response, next: express.NextFunction) => {
     req.uid = req.get("authorization");
     next();

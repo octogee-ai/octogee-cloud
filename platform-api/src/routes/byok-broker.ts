@@ -56,7 +56,7 @@ import {
 import { NO_BROKER_RECORDS, type BrokerRecords } from "../lib/broker-records.js";
 import type { ModelBrokerUsageLedger } from "@octogee/llm-broker/usage";
 import type { FlowGatewayReader } from "../middleware/tenant-enforcement.js";
-import { logger } from "../../../gateway-edge/src/middleware/logging.js";
+import { logger } from "@octogee/core/http/logging";
 
 export function subscriptionFlowGatewayReader(users: Pick<UserRepositories, "subscriptionFlows">): FlowGatewayReader {
   return async (flowId) => (await users.subscriptionFlows.get(flowId))?.gatewayId ?? null;

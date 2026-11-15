@@ -3,14 +3,14 @@ import JSZip from "jszip";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../lib/platform-state", () => ({ platformStateStore: {} }));
-vi.mock("../lib/gcs-bucket", () => ({ gcsBucket: vi.fn() }));
+vi.mock("@octogee/core/identity/platform-state-store", () => ({ platformStateStore: {} }));
+vi.mock("@octogee/core/workspace/gcs-bucket", () => ({ gcsBucket: vi.fn() }));
 
-vi.mock("../lib/gitea", () => ({
+vi.mock("@octogee/core/git-host/gitea-client", () => ({
   giteaApiAsUser: vi.fn(),
 }));
 
-vi.mock("../lib/manifest", () => ({
+vi.mock("@octogee/core/workspace/manifest", () => ({
   removeFromManifest: vi.fn(),
 }));
 
@@ -26,9 +26,9 @@ import {
   type ZipEntryLike,
 } from "../routes/workspace/extract-zip.js";
 import extractZipRouter from "../routes/workspace/extract-zip.js";
-import { gcsBucket } from "../lib/gcs-bucket.js";
-import { giteaApiAsUser } from "../lib/gitea.js";
-import { removeFromManifest } from "../lib/manifest.js";
+import { gcsBucket } from "@octogee/core/workspace/gcs-bucket";
+import { giteaApiAsUser } from "@octogee/core/git-host/gitea-client";
+import { removeFromManifest } from "@octogee/core/workspace/manifest";
 
 function zipEntry(dir = false): ZipEntryLike {
   return {

@@ -5,16 +5,16 @@ import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store"
 import { UserCredentialRejected, type UserIdentityProvider } from "@octogee/core/user-identity-provider";
 
 const logged = vi.hoisted(() => ({ error: vi.fn(), warn: vi.fn(), info: vi.fn() }));
-vi.mock("../../../gateway-edge/src/middleware/logging.js", async (importOriginal) => ({
-  ...await importOriginal<typeof import("../../../gateway-edge/src/middleware/logging.js")>(),
+vi.mock("@octogee/core/http/logging", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@octogee/core/http/logging")>(),
   logger: logged,
 }));
 
-import { USER_IDENTITY_BROKER_PATH } from "../../../gateway-edge/src/lib/brokered-user-identity-provider.js";
+import { USER_IDENTITY_BROKER_PATH } from "@octogee/core/identity/brokered-user-identity-provider";
 import {
   installUserIdentityProvider,
   loadUserWithInstalledProvider,
-} from "../../../gateway-edge/src/middleware/auth.js";
+} from "@octogee/core/http/auth";
 import { SIDECAR_BROKER_ROUTES } from "../app.js";
 import { createTenantEnforcementMiddleware, NO_PRODUCT_TENANT_ROUTES } from "../middleware/tenant-enforcement.js";
 import { USER_IDENTITY_GATEWAY_REQUEST_LIMIT, userIdentityBrokerHandlers } from "./user-identity-broker.js";

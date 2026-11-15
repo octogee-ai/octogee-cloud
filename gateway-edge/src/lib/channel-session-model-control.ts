@@ -1,5 +1,5 @@
 import { isValidModelRef } from "@octogee/shared/types/agent-models";
-import { containsAsciiControlCharacter } from "./text-validation.js";
+import { containsAsciiControlCharacter } from "@octogee/shared/types/text-validation";
 
 const INTERNAL_HOST = /^mattermost\.[a-z0-9-]+\.svc\.cluster\.local$/;
 const MATTERMOST_ID = /^[a-z0-9]{26}$/;

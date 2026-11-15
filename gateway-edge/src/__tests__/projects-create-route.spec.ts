@@ -19,13 +19,13 @@ const h = vi.hoisted(() => ({
   },
 }));
 
-vi.mock("../middleware/security.js", () => ({
+vi.mock("@octogee/core/http/security", () => ({
   strictRateLimit: (_req: unknown, _res: unknown, next: () => void) => {
     next();
   },
 }));
 
-vi.mock("../lib/platform-state.js", async () => {
+vi.mock("@octogee/core/identity/platform-state-store", async () => {
   const { createDocumentFixtureStore } = await import("@octogee/core/testing/journal-store");
   return { platformStateStore: createDocumentFixtureStore(h.docs) };
 });
@@ -35,9 +35,9 @@ vi.mock("../lib/project-create-service.js", () => ({
   projectSlugAvailability: (slug: string) => h.projectSlugAvailability(slug),
 }));
 
-vi.mock("../lib/connector-tokens.js", async () => {
-  const actual = await vi.importActual<typeof import("../lib/connector-tokens.js")>(
-    "../lib/connector-tokens.js",
+vi.mock("@octogee/core/connectors/connector-tokens", async () => {
+  const actual = await vi.importActual<typeof import("@octogee/core/connectors/connector-tokens")>(
+    "@octogee/core/connectors/connector-tokens",
   );
   return {
     ...actual,
@@ -45,12 +45,12 @@ vi.mock("../lib/connector-tokens.js", async () => {
   };
 });
 
-vi.mock("../lib/github.js", async () => {
-  const actual = await vi.importActual<typeof import("../lib/github.js")>("../lib/github.js");
+vi.mock("@octogee/core/git-host/github", async () => {
+  const actual = await vi.importActual<typeof import("@octogee/core/git-host/github")>("@octogee/core/git-host/github");
   return { ...actual, githubRepoApi: (...args: unknown[]) => h.githubRepoApi(...args) };
 });
 
-vi.mock("../middleware/logging.js", () => ({
+vi.mock("@octogee/core/http/logging", () => ({
   logger: h.logger,
 }));
 

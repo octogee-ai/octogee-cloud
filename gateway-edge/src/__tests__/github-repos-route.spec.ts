@@ -7,18 +7,18 @@ const h = vi.hoisted(() => ({
   githubListRepos: vi.fn(),
 }));
 
-vi.mock("../middleware/auth.js", () => ({
+vi.mock("@octogee/core/http/auth", () => ({
   requireAdmin: (req: express.Request, _res: express.Response, next: express.NextFunction) => {
     req.uid = "u-admin";
     next();
   },
 }));
 
-vi.mock("../lib/connector-tokens.js", () => ({
+vi.mock("@octogee/core/connectors/connector-tokens", () => ({
   readConnectorAccessToken: h.readConnectorAccessToken,
 }));
 
-vi.mock("../lib/github.js", () => ({
+vi.mock("@octogee/core/git-host/github", () => ({
   githubListRepos: h.githubListRepos,
 }));
 

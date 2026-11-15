@@ -1,4 +1,4 @@
-import { clientRequestLimit } from "../../middleware/authenticated-request-limit.js";
+import { clientRequestLimit } from "@octogee/core/http/authenticated-request-limit";
 import { Router, Request, Response, NextFunction } from "express";
 import { applyConfigPatch } from "@octogee/core/apply-config-patch";
 import {

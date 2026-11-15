@@ -1,4 +1,4 @@
-import { githubJson, githubRepoUrl } from "./github.js";
+import { githubJson, githubRepoUrl } from "@octogee/core/git-host/github";
 import { withinAgentExportDeadline, type AgentExportDestination, type AgentExportRecord } from "./agent-export-service.js";
 import { MAX_AGENT_EXPORT_FILES, type AgentExportSnapshot } from "./agent-export-snapshot.js";
 const sha = (value: unknown): string => { if (typeof value !== "string" || !/^[a-f0-9]{40}$/u.test(value)) { throw new Error("GitHub returned invalid object identity"); } return value; };

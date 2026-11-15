@@ -1,4 +1,4 @@
-import { clientRequestLimit } from "../../middleware/authenticated-request-limit.js";
+import { clientRequestLimit } from "@octogee/core/http/authenticated-request-limit";
 import { PROJECT_AGENT_WORKSPACE_PARTS } from "@octogee/shared/types/project";
 import { Router, type Request, type Response } from "express";
 import {
@@ -8,17 +8,17 @@ import {
   isTrustedGithubUserCheckout,
   isSafeSlug,
   type WorkspaceGitError,
-} from "../../lib/workspace-git.js";
+} from "@octogee/core/workspace/workspace-git";
 import {
   ConnectorTokenReadError,
   readOwnerRuntimeConnectorAccessToken,
-} from "../../lib/connector-tokens.js";
+} from "@octogee/core/connectors/connector-tokens";
 import { isValidProjectId } from "@octogee/shared/types/identity";
-import { resolveCommitAuthor } from "../workspace/helpers.js";
-import { logger } from "../../middleware/logging.js";
-import { verifyWorkspaceCommitProofViaBroker } from "../../lib/workspace-commit-proof-broker.js";
-import { divertWorktreeBinaries } from "../../lib/binary-diversion.js";
-import type { WorkspaceBlobTarget } from "../../lib/workspace-blob.js";
+import { resolveCommitAuthor } from "@octogee/core/workspace/route-helpers";
+import { logger } from "@octogee/core/http/logging";
+import { verifyWorkspaceCommitProofViaBroker } from "@octogee/core/internal-brokers/workspace-commit-proof-broker";
+import { divertWorktreeBinaries } from "@octogee/core/workspace/binary-diversion";
+import type { WorkspaceBlobTarget } from "@octogee/core/workspace/workspace-blob";
 
 const router: Router = Router();
 

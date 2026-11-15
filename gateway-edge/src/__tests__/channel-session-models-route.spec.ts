@@ -15,16 +15,16 @@ const h = vi.hoisted(() => ({
   threadPosts: {} as Record<string, unknown>,
 }));
 
-vi.mock("../middleware/auth.js", () => ({
+vi.mock("@octogee/core/http/auth", () => ({
   requireActiveAccount: (_req: unknown, _res: unknown, next: () => void) => next(),
   requireAuthenticatedUid: (req: { uid?: string }, _res: unknown, next: () => void) => { req.uid = h.uid; next(); },
 }));
-vi.mock("../middleware/security.js", () => ({ strictRateLimit: (_req: unknown, _res: unknown, next: () => void) => next() }));
-vi.mock("../middleware/logging.js", () => ({
+vi.mock("@octogee/core/http/security", () => ({ strictRateLimit: (_req: unknown, _res: unknown, next: () => void) => next() }));
+vi.mock("@octogee/core/http/logging", () => ({
   logger: { error: (message: string, context: Record<string, unknown>) => h.logs.push({ message, context }) },
 }));
-vi.mock("../lib/workspace-resolution.js", () => ({ resolveWorkspaceUid: async () => "owner-uid" }));
-vi.mock("../lib/platform-state.js", async () => {
+vi.mock("@octogee/core/workspace/workspace-resolution", () => ({ resolveWorkspaceUid: async () => "owner-uid" }));
+vi.mock("@octogee/core/identity/platform-state-store", async () => {
   const { createDocumentFixtureStore } = await import("@octogee/core/testing/journal-store");
   h.store = createDocumentFixtureStore(h.docs);
   return { platformStateStore: h.store };

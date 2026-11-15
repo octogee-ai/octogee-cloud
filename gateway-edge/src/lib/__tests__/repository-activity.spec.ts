@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { FileTarget } from "../fileTarget.js";
+import type { FileTarget } from "@octogee/core/workspace/fileTarget";
 import {
   createRepositoryActivityApi,
   type RepositoryActivityApi,

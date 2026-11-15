@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import type { FileTarget } from "../fileTarget.js";
+import type { FileTarget } from "@octogee/core/workspace/fileTarget";
 import type { RepositoryActivityApi } from "../repository-activity.js";
 import { fetchPulseReport, weekRanges } from "../pulse-ingest.js";
 

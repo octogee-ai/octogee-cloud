@@ -1,7 +1,7 @@
 import { Router, type Request, type Response } from "express";
-import { strictRateLimit } from "../../middleware/security.js";
-import { logger } from "../../middleware/logging.js";
-import { platformStateStore } from "../../lib/platform-state.js";
+import { strictRateLimit } from "@octogee/core/http/security";
+import { logger } from "@octogee/core/http/logging";
+import { platformStateStore } from "@octogee/core/identity/platform-state-store";
 import { withProject } from "../../lib/withProject.js";
 
 const VISIBILITIES: ReadonlySet<unknown> = new Set(["private", "public", "unlisted"]);

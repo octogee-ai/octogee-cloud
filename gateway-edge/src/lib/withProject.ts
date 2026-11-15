@@ -1,8 +1,8 @@
 import type { Request, Response } from "express";
 import type { Project } from "@octogee/shared/types/index";
-import { userAccounts } from "./user-accounts.js";
-import { readProject } from "./firestoreReads.js";
-import { logger } from "../middleware/logging.js";
+import { userAccounts } from "@octogee/core/identity/user-accounts";
+import { readProject } from "@octogee/core/workspace/firestoreReads";
+import { logger } from "@octogee/core/http/logging";
 import { mapMattermostMembershipError } from "./channel-lifecycle.js";
 import { isValidProjectId, USERNAME_RE } from "@octogee/shared/types/identity";
 import { userEntitlements } from "@octogee/shared/types/user-entitlements";

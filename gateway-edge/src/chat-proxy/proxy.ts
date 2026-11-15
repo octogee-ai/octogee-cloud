@@ -25,7 +25,7 @@ import {
 import { isAllowedWsOrigin, warnIfWsOriginsMisconfigured } from "./openclaw/ws-origin.js";
 import { applyGatewayPrefixStripInPlace, stripGatewayPrefix } from "./gateway-prefix.js";
 import { createBridgeLog } from "./bridge-log.js";
-import { isAllowedLocalhostOrigin } from "../lib/dev-origins.js";
+import { isAllowedLocalhostOrigin } from "@octogee/shared/types/dev-origins";
 import {
   guardUpgradeRequest,
   mmRosterVerdictFor,
@@ -33,7 +33,7 @@ import {
   type RollRosterUpgradeGate,
   type UpgradeGateVerdict,
 } from "../roll-roster.js";
-import { logger } from "../middleware/logging.js";
+import { logger } from "@octogee/core/http/logging";
 import {
   defaultAgentWiredInParsedConfig,
   listLocalDefaultAgentWiredSlugs,

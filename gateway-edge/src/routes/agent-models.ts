@@ -1,8 +1,8 @@
-import { authenticatedRequestLimit, authenticationFailureLimit } from "../middleware/authenticated-request-limit.js";
+import { authenticatedRequestLimit, authenticationFailureLimit } from "@octogee/core/http/authenticated-request-limit";
 import { Router, Request, Response, NextFunction } from "express";
-import { requireActiveAccount, requireAuthenticatedUid } from "../middleware/auth.js";
-import { platformStateStore } from "../lib/platform-state.js";
-import { logger } from "../middleware/logging.js";
+import { requireActiveAccount, requireAuthenticatedUid } from "@octogee/core/http/auth";
+import { platformStateStore } from "@octogee/core/identity/platform-state-store";
+import { logger } from "@octogee/core/http/logging";
 import { triggerGatewayModelCredentialSync } from "../lib/byot-sync-trigger.js";
 import { readGatewayAuthorizationInStore } from "@octogee/core/gateway-live-release";
 import { byotSnapshotProjection, readAgentModelSelections } from "@octogee/core/user-snapshot-mapping";

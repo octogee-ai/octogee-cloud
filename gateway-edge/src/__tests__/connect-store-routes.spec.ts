@@ -7,17 +7,17 @@ const h = vi.hoisted(() => ({
   store: null as unknown as PlatformStateStore,
 }));
 
-vi.mock("../middleware/auth.js", () => ({
+vi.mock("@octogee/core/http/auth", () => ({
   requireAuthenticatedUid: (req: express.Request, _res: express.Response, next: express.NextFunction) => {
     Object.assign(req, { uid: req.header("x-test-uid") ?? "uid-ada" });
     next();
   },
   requireActiveAccount: (_req: express.Request, _res: express.Response, next: express.NextFunction) => next(),
 }));
-vi.mock("../lib/platform-state.js", () => ({
+vi.mock("@octogee/core/identity/platform-state-store", () => ({
   get platformStateStore() { return h.store; },
 }));
-vi.mock("../lib/kms.js", () => ({
+vi.mock("@octogee/core/connectors/kms", () => ({
   encryptSecret: async (plaintext: string) => `enc:${plaintext}`,
   decryptSecret: async (ciphertext: string) => ciphertext.replace(/^enc:/, ""),
 }));

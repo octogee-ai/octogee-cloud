@@ -33,7 +33,7 @@ import projectsSettingsRoutes from "./projects/settings.js";
 
 import internalWorkspaceCommitRoutes from "./internal/workspace-commit.js";
 
-import { requireAuth } from "../middleware/auth.js";
+import { requireAuth } from "@octogee/core/http/auth";
 
 export type ClusterRouteTable = readonly (readonly [string, RequestHandler | Router])[];
 

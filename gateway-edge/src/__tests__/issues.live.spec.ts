@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createIssue, listIssues, listLabels, moveIssue, NotAnIssueError } from "../lib/issues.js";
-import type { FileTarget } from "../lib/fileTarget.js";
+import type { FileTarget } from "@octogee/core/workspace/fileTarget";
 import type { WorkspaceIssue } from "../lib/issues-normalize.js";
 
 const RUN_LIVE = process.env.RUN_LIVE === "1";

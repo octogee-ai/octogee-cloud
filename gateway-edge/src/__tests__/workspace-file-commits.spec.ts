@@ -1,14 +1,14 @@
 import { describe, expect, it, vi, beforeEach, type Mock } from "vitest";
 
-vi.mock("../lib/platform-state", () => ({ platformStateStore: {} }));
-vi.mock("../lib/gcs-bucket", () => ({ gcsBucket: vi.fn() }));
-vi.mock("../lib/manifest", () => ({ getManifest: vi.fn() }));
-vi.mock("../lib/github", () => ({ isOversizeFile: vi.fn() }));
-vi.mock("../lib/fileTarget", () => ({ withFileTarget: vi.fn((handler) => handler) }));
-vi.mock("../middleware/logging", () => ({
+vi.mock("@octogee/core/identity/platform-state-store", () => ({ platformStateStore: {} }));
+vi.mock("@octogee/core/workspace/gcs-bucket", () => ({ gcsBucket: vi.fn() }));
+vi.mock("@octogee/core/workspace/manifest", () => ({ getManifest: vi.fn() }));
+vi.mock("@octogee/core/git-host/github", () => ({ isOversizeFile: vi.fn() }));
+vi.mock("@octogee/core/workspace/fileTarget", () => ({ withFileTarget: vi.fn((handler) => handler) }));
+vi.mock("@octogee/core/http/logging", () => ({
   logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
-vi.mock("../routes/workspace/helpers", () => ({
+vi.mock("@octogee/core/workspace/route-helpers", () => ({
   HIDDEN: new Set([".git"]),
   giteaSudoUser: vi.fn(() => "ws-alice"),
   isTargetDirectoryEntryReadable: vi.fn(() => true),
@@ -24,10 +24,10 @@ import {
   COMMIT_LOOKUP_ENTRY_LIMIT,
   workspaceFileCommitsResponse,
 } from "../routes/workspace/files.js";
-import { repoContentsApi, repoCommitsApi } from "../routes/workspace/helpers.js";
-import { getManifest } from "../lib/manifest.js";
-import { logger } from "../middleware/logging.js";
-import type { FileTarget } from "../lib/fileTarget.js";
+import { repoContentsApi, repoCommitsApi } from "@octogee/core/workspace/route-helpers";
+import { getManifest } from "@octogee/core/workspace/manifest";
+import { logger } from "@octogee/core/http/logging";
+import type { FileTarget } from "@octogee/core/workspace/fileTarget";
 
 const githubTarget: FileTarget = {
   slug: "bob",

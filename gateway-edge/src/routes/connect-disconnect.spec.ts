@@ -9,7 +9,7 @@ const h = vi.hoisted(() => ({
   revokeProviderGrant: vi.fn(async () => undefined),
 }));
 
-vi.mock("../middleware/auth.js", () => ({
+vi.mock("@octogee/core/http/auth", () => ({
   requireAuthenticatedUid: (req: Request, _res: Response, next: NextFunction) => {
     req.uid = "owner";
     next();
@@ -21,7 +21,7 @@ vi.mock("@octogee/core/connector-revocation", () => ({
   revokeProviderGrant: h.revokeProviderGrant,
 }));
 
-vi.mock("../lib/platform-state.js", () => ({
+vi.mock("@octogee/core/identity/platform-state-store", () => ({
   get platformStateStore() { return h.store; },
 }));
 

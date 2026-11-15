@@ -6,9 +6,9 @@ import { readMaterializedProjectAssets, readProjectAssetManifest } from "@octoge
 import { manifestObjectPath, parseManifest } from "@octogee/core/workspace-manifest";
 import { createAgentImportStore, agentImportBrokerBaseUrlFromEnv } from "./agent-import-store.js";
 import { scanAgentImportSecrets } from "./agent-import-git.js";
-import { resolveUserDir, resolveProjectDir, workspaceMutationLeaseGitDir } from "./workspace-git.js";
-import { getManifestForQuota } from "./manifest.js";
-import { gcsBucket } from "./gcs-bucket.js";
+import { resolveUserDir, resolveProjectDir, workspaceMutationLeaseGitDir } from "@octogee/core/workspace/workspace-git";
+import { getManifestForQuota } from "@octogee/core/workspace/manifest";
+import { gcsBucket } from "@octogee/core/workspace/gcs-bucket";
 import { withinAgentExportDeadline, AgentExportService, type AgentExportSource, type AgentExportRecord } from "./agent-export-service.js";
 import { captureAgentExport, exportDigest, type AgentExportSnapshot } from "./agent-export-snapshot.js";
 import { agentExportGithub } from "./agent-export-github.js";

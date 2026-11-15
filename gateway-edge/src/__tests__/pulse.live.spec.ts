@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { fetchPulseReport, fetchPulseWindow } from "../lib/pulse-ingest.js";
 import { computeDxCore4, pctDelta } from "../lib/pulse-metrics.js";
-import type { FileTarget } from "../lib/fileTarget.js";
+import type { FileTarget } from "@octogee/core/workspace/fileTarget";
 
 const RUN_LIVE = process.env.RUN_LIVE === "1";
 

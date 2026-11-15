@@ -1,4 +1,4 @@
-import { logger } from "../middleware/logging.js";
+import { logger } from "@octogee/core/http/logging";
 export type BridgeLogSeverity = "info" | "warn";
 
 export type BridgeLog = (message: string, severity?: BridgeLogSeverity) => void;

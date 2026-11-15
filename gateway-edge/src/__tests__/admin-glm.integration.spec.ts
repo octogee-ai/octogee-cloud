@@ -193,7 +193,7 @@ vi.mock("@octogee/core/artifact-registry", async (importOriginal) => ({
   },
 }));
 
-vi.mock("../middleware/auth", () => ({
+vi.mock("@octogee/core/http/auth", () => ({
 
   requireAdmin: (req: any, _res: any, next: any) => {
     req.uid = "admin-user";

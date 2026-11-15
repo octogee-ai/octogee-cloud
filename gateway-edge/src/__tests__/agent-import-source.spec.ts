@@ -13,7 +13,7 @@ import {
   githubAgentImportCloneEnvironment,
   githubAgentImportCloneUrl,
 } from "../lib/agent-import-source.js";
-import { workspaceGitEnvironment } from "../lib/workspace-git.js";
+import { workspaceGitEnvironment } from "@octogee/core/workspace/workspace-git";
 
 const roots: string[] = [];
 

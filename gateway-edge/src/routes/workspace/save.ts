@@ -1,21 +1,21 @@
 import { Router, type Request, type Response } from "express";
-import { withFileTarget, type FileTarget } from "../../lib/fileTarget.js";
-import { githubContentsApi, githubContentsPut } from "../../lib/github.js";
+import { withFileTarget, type FileTarget } from "@octogee/core/workspace/fileTarget";
+import { githubContentsApi, githubContentsPut } from "@octogee/core/git-host/github";
 import {
   isBrokeredWritablePath,
   isTextFile,
   resolveCommitAuthor,
   targetGiteaApi,
   validateEditableWorkspacePath,
-} from "./helpers.js";
-import { logger } from "../../middleware/logging.js";
-import { invalidateWorkspaceFileResponseCache } from "./file-response-cache.js";
+} from "@octogee/core/workspace/route-helpers";
+import { logger } from "@octogee/core/http/logging";
+import { invalidateWorkspaceFileResponseCache } from "@octogee/core/workspace/file-response-cache";
 import {
   resolveUserDir,
   resolveProjectDir,
   syncCleanWorkspaceToRemote,
   type WorkspaceRemoteSyncState,
-} from "../../lib/workspace-git.js";
+} from "@octogee/core/workspace/workspace-git";
 
 const router: Router = Router();
 

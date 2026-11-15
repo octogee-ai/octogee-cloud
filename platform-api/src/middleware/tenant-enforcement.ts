@@ -7,7 +7,7 @@ import { GATEWAY_BINDING_MISMATCH_REASON, RETIRED_VM_BINDING_DENIAL_REASON } fro
 import { hasRunningUserMigration } from "../lib/running-user-migration.js";
 import { normalizeTenantPolicyPath } from "../lib/tenant-route-policy.js";
 import type { UserNotifier } from "../lib/user-notifications.js";
-import { logger, redactRequestPath } from "../../../gateway-edge/src/middleware/logging.js";
+import { logger, redactRequestPath } from "@octogee/core/http/logging";
 import {
   createTenantDenialReporter,
   type TenantDenial,

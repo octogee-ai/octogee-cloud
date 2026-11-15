@@ -18,7 +18,7 @@ import { cloneGithubAgentImportSource, extractLocalAgentImportArchive } from "./
 import {
   workspaceGitCommandArgs,
   workspaceGitEnvironment,
-} from "./workspace-git.js";
+} from "@octogee/core/workspace/workspace-git";
 import {
   AgentImportService,
   type AgentImportDoctorResult,

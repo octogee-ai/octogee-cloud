@@ -1,8 +1,8 @@
 import { Router, Request, Response, NextFunction } from "express";
-import { platformStateStore } from "../../lib/platform-state.js";
+import { platformStateStore } from "@octogee/core/identity/platform-state-store";
 import { mmApi } from "../../lib/mattermost.js";
 import { USERNAME_RE } from "@octogee/shared/types/identity";
-import { logger } from "../../middleware/logging.js";
+import { logger } from "@octogee/core/http/logging";
 
 const router: Router = Router();
 

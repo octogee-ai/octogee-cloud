@@ -28,7 +28,7 @@ import { OpenClawControlSessionManager } from "./session.js";
 import { evaluateOpenClawControlRpc } from "./rpc-policy.js";
 const OPENCLAW_TEST_METHODS = ["health", "status", "config.get", "config.schema", "config.patch", "config.set", "config.apply", "agents.list", "models.list", "channels.status", "tools.catalog", "skills.status", "tools.invoke", "approval.history", "approval.get", "approval.resolve"];
 import { OpenClawControlResourceLimiter } from "./limits.js";
-import { dashboardAssetRateLimit } from "../middleware/security.js";
+import { dashboardAssetRateLimit } from "@octogee/core/http/security";
 import {
   createOpenClawControlAuthorizationCache,
   OpenClawControlBrokerError,

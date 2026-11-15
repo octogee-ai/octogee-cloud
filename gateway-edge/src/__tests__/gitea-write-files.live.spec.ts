@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from "vitest";
 
 import { gitHost } from "../lib/git-host.js";
-import { createProjectGiteaRepo, giteaWriteFiles } from "../lib/gitea.js";
+import { createProjectGiteaRepo, giteaWriteFiles } from "@octogee/core/git-host/gitea-client";
 
 // giteaWriteFiles drives Gitea's batch ChangeFiles endpoint (POST /repos/{org}/{repo}/contents),
 // which every unit spec mocks away — so its wire contract is only ever exercised here. No Gitea

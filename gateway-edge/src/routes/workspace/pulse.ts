@@ -1,6 +1,6 @@
 import { Router } from "express";
 import type { Response } from "express";
-import { withFileTarget, type FileTarget } from "../../lib/fileTarget.js";
+import { withFileTarget, type FileTarget } from "@octogee/core/workspace/fileTarget";
 import { fetchPulseReport } from "../../lib/pulse-ingest.js";
 
 const router: Router = Router();

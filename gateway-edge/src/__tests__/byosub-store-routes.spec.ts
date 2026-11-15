@@ -12,14 +12,14 @@ const h = vi.hoisted(() => ({
   errors: [] as unknown[],
 }));
 
-vi.mock("../middleware/auth.js", () => ({
+vi.mock("@octogee/core/http/auth", () => ({
   requireAuth: (req: express.Request, _res: express.Response, next: express.NextFunction) => {
     Object.assign(req, { uid: "uid-ada", user: { username: "ada" } });
     next();
   },
   requireInternalServiceAuth: (_req: express.Request, _res: express.Response, next: express.NextFunction) => next(),
 }));
-vi.mock("../lib/platform-state.js", () => ({
+vi.mock("@octogee/core/identity/platform-state-store", () => ({
   get platformStateStore() { return h.store; },
 }));
 vi.mock("@octogee/core/secret-store", () => ({

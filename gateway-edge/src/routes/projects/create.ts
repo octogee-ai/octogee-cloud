@@ -1,8 +1,8 @@
 import { Router, Request, Response } from "express";
 import type { FeaturePolicy } from "@octogee/shared/types/feature-flags";
-import { strictRateLimit } from "../../middleware/security.js";
-import { logger } from "../../middleware/logging.js";
-import { platformStateStore } from "../../lib/platform-state.js";
+import { strictRateLimit } from "@octogee/core/http/security";
+import { logger } from "@octogee/core/http/logging";
+import { platformStateStore } from "@octogee/core/identity/platform-state-store";
 import {
   createProjectForActor,
   projectSlugAvailability,

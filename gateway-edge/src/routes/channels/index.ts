@@ -1,6 +1,6 @@
 import { Router, Request, Response } from "express";
-import { strictRateLimit } from "../../middleware/security.js";
-import { logger } from "../../middleware/logging.js";
+import { strictRateLimit } from "@octogee/core/http/security";
+import { logger } from "@octogee/core/http/logging";
 import {
   archiveProjectSessionChannel,
   archiveSessionChannel,

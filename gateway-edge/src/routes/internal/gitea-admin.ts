@@ -16,10 +16,10 @@ import {
   workspaceRepoName,
 } from "@octogee/core/gitea-naming";
 import type { PlatformUserRecord } from "@octogee/core/platform-state";
-import { platformStateStore } from "../../lib/platform-state.js";
+import { platformStateStore } from "@octogee/core/identity/platform-state-store";
 import { gitHost } from "../../lib/git-host.js";
-import { requireInternalServiceAuth } from "../../middleware/auth.js";
-import { logger } from "../../middleware/logging.js";
+import { requireInternalServiceAuth } from "@octogee/core/http/auth";
+import { logger } from "@octogee/core/http/logging";
 import {
   deleteProjectGiteaRepo,
   ensureProjectGiteaRepo,

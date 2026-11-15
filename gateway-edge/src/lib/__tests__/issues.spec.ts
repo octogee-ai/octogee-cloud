@@ -1,16 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { FileTarget } from "../fileTarget.js";
+import type { FileTarget } from "@octogee/core/workspace/fileTarget";
 
 const h = vi.hoisted(() => ({
   gitea: vi.fn(),
   githubJson: vi.fn(),
 }));
 
-vi.mock("../gitea.js", () => ({
+vi.mock("@octogee/core/git-host/gitea-client", () => ({
   giteaApiAsUser: (...args: unknown[]) => h.gitea(...args),
 }));
 
-vi.mock("../github.js", () => ({
+vi.mock("@octogee/core/git-host/github", () => ({
   GITHUB_ISSUES_PER_PAGE: 100,
   githubIssuesApi: vi.fn(),
   githubLabelsApi: (..._args: unknown[]) => h.githubJson("GET", "/labels"),

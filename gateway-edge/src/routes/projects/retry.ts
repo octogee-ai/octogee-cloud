@@ -1,10 +1,10 @@
 import { Router, Request, Response } from "express";
-import { strictRateLimit } from "../../middleware/security.js";
-import { platformStateStore } from "../../lib/platform-state.js";
-import { projectPresentation } from "../../lib/project-presentation.js";
+import { strictRateLimit } from "@octogee/core/http/security";
+import { platformStateStore } from "@octogee/core/identity/platform-state-store";
+import { projectPresentation } from "@octogee/core/identity/project-presentation";
 import { mmApi } from "../../lib/mattermost.js";
 import { createFreshPrivateChannel } from "../../lib/mattermost-channel-name.js";
-import { logger } from "../../middleware/logging.js";
+import { logger } from "@octogee/core/http/logging";
 import { projectGeneralChannelName } from "@octogee/shared/types/identity";
 import { defaultProjectRecipe, isProjectRecipeId } from "@octogee/shared/types/project";
 import { getWorkspaceMmContext } from "../../lib/mattermost-context.js";

@@ -298,7 +298,7 @@ gatewayEdge:
     # `kms_creds_key_name`). Set per environment via values.{prod,
     # test}.yaml — gateway-edge fails loud at first integrations write
     # if missing (no silent plaintext fallback). See
-    # gateway-edge/src/lib/kms.ts.
+    # core/src/connectors/kms.ts.
     OCTOGEE_KMS_KEY_NAME: ""
   # Platform secrets (GITEA_TOKEN, MM_ADMIN_TOKEN, INTERNAL_SERVICE_KEY,
   # OAuth, Discord, email and billing keys, INVITE_SECRET, …) are intentionally NOT mounted on

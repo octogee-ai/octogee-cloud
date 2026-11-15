@@ -4,8 +4,8 @@ import {
   MODEL_CREDENTIAL_SYNC_TIMESTAMP_HEADER,
   isValidModelCredentialSyncSignature,
   validModelCredentialSyncPublicKey,
-} from "../lib/byot-sync-internal-auth.js";
-import { logger } from "./logging.js";
+} from "@octogee/core/model-credentials/byot-sync-internal-auth";
+import { logger } from "@octogee/core/http/logging";
 
 function readHeader(req: Request, name: string): string | undefined {
   const raw = req.headers[name.toLowerCase()];

@@ -1,6 +1,6 @@
 import { Router } from "express";
 import type { Request, Response } from "express";
-import { withFileTarget, type FileTarget } from "../../lib/fileTarget.js";
+import { withFileTarget, type FileTarget } from "@octogee/core/workspace/fileTarget";
 import {
   addComment,
   assertIssueExists,

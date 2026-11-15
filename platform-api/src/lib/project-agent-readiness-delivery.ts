@@ -1,6 +1,6 @@
 import { completeProjectAgentActivations } from "./project-agent-readiness.js";
 import { deliverProjectAgentOnboarding } from "../../../gateway-edge/src/lib/project-agent-onboarding.js";
-import { logger } from "../../../gateway-edge/src/middleware/logging.js";
+import { logger } from "@octogee/core/http/logging";
 
 export async function completeProjectAgentReadiness(
   store: Parameters<typeof completeProjectAgentActivations>[0],

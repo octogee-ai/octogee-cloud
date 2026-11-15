@@ -1,12 +1,12 @@
-import type { FileTarget } from "./fileTarget.js";
-import { giteaApiAsUser } from "./gitea.js";
+import type { FileTarget } from "@octogee/core/workspace/fileTarget";
+import { giteaApiAsUser } from "@octogee/core/git-host/gitea-client";
 import {
   githubIssuesApi,
   githubLabelsApi,
   githubJson,
   githubRepoUrl,
   GITHUB_ISSUES_PER_PAGE,
-} from "./github.js";
+} from "@octogee/core/git-host/github";
 import {
   isPullRequest,
   normalizeComment,
@@ -27,7 +27,7 @@ import {
   targetState,
   type ColumnKey,
 } from "./issues-write.js";
-import { logger } from "../middleware/logging.js";
+import { logger } from "@octogee/core/http/logging";
 
 const GITEA_ISSUES_LIMIT = 100;
 

@@ -1,7 +1,7 @@
 import { MalformedRecordError, type PlatformConfigRepository } from "@octogee/core/platform-state";
 import { DEFAULT_PLATFORM_CONNECT_CONFIG, type PlatformConnectConfig } from "@octogee/shared/types/platform-config";
-import { logger } from "../middleware/logging.js";
-import { platformStateStore } from "./platform-state.js";
+import { logger } from "@octogee/core/http/logging";
+import { platformStateStore } from "@octogee/core/identity/platform-state-store";
 
 export class MalformedPlatformConnectConfigError extends Error {
   constructor() {

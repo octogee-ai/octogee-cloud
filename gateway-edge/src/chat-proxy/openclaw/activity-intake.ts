@@ -1,4 +1,4 @@
-import { logger } from "../../middleware/logging.js";
+import { logger } from "@octogee/core/http/logging";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { open, unlink, type FileHandle } from "node:fs/promises";

@@ -1,6 +1,6 @@
 import { WebSocket } from 'ws';
 import type { NativeMobileBinding } from '@octogee/shared/types/native-mobile';
-import { logger } from '../middleware/logging.js';
+import { logger } from '@octogee/core/http/logging';
 import type { MobileControlTransport } from './surface.js';
 import { DesktopObserverTickets } from './desktop-stream.js';
 import { MobileGatewayAuthority, mobileSession } from './mobile-authority.js';

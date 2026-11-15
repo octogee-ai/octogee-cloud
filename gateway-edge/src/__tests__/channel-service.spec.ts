@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { installDocumentPresentation } from "./helpers/project-presentation.js";
-import { installProjectPresentation, NO_PROJECT_PRESENTATION } from "../lib/project-presentation.js";
+import { installProjectPresentation, NO_PROJECT_PRESENTATION } from "@octogee/core/identity/project-presentation";
 import { MalformedRecordError } from "@octogee/core/platform-state";
 
 type Write = {
@@ -46,12 +46,12 @@ function docRef(path: string) {
   };
 }
 
-vi.mock("../lib/platform-state.js", async () => {
+vi.mock("@octogee/core/identity/platform-state-store", async () => {
   const { createDocumentFixtureStore } = await import("@octogee/core/testing/journal-store");
   return { platformStateStore: createDocumentFixtureStore(h.docs) };
 });
 
-vi.mock("../middleware/logging.js", () => ({
+vi.mock("@octogee/core/http/logging", () => ({
   logger: h.logger,
 }));
 
@@ -80,7 +80,7 @@ const {
   archiveProjectSessionChannel,
   sessionChannelNameAvailability,
 } = await import("../lib/channel-service.js");
-const { platformStateStore } = await import("../lib/platform-state.js");
+const { platformStateStore } = await import("@octogee/core/identity/platform-state-store");
 
 installDocumentPresentation(docRef);
 

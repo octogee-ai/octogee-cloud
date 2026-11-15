@@ -3,7 +3,7 @@ import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store"
 import { connectorApprovalRpc, requestConnectorApproval } from "./connector-approval-client.js";
 
 vi.mock("./byot-sync-trigger.js", () => ({ gatewayModelCredentialSyncUrl: () => "http://gateway/model-credential-sync" }));
-vi.mock("./byot-sync-internal-auth.js", () => ({ createModelCredentialSyncAuthHeaders: () => ({}) }));
+vi.mock("@octogee/core/model-credentials/byot-sync-internal-auth", () => ({ createModelCredentialSyncAuthHeaders: () => ({}) }));
 afterEach(() => vi.unstubAllGlobals());
 
 function harness() {

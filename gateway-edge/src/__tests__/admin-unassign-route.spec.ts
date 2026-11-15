@@ -42,7 +42,7 @@ vi.mock("@octogee/core/platform-state", async (importOriginal) => {
   };
 });
 
-vi.mock("../middleware/auth", () => ({
+vi.mock("@octogee/core/http/auth", () => ({
   requireAdmin: (req: any, _res: any, next: any) => {
     req.user = { uid: "admin-user" };
     req.uid = "admin-user";

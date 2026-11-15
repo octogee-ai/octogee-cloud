@@ -1,13 +1,13 @@
 import { Router } from "express";
-import { gcsBucket } from "../../lib/gcs-bucket.js";
-import { validateFilePath } from "../../lib/path-validation.js";
-import { withFileTarget } from "../../lib/fileTarget.js";
-import { getManifest } from "../../lib/manifest.js";
-import { BLOB_SIGNED_URL_TTL_MS } from "../../lib/workspace-blob.js";
-import type { Manifest } from "../../lib/manifest.js";
+import { gcsBucket } from "@octogee/core/workspace/gcs-bucket";
+import { validateFilePath } from "@octogee/shared/types/path-validation";
+import { withFileTarget } from "@octogee/core/workspace/fileTarget";
+import { getManifest } from "@octogee/core/workspace/manifest";
+import { BLOB_SIGNED_URL_TTL_MS } from "@octogee/core/workspace/workspace-blob";
+import type { Manifest } from "@octogee/core/workspace/manifest";
 import { manifestObjectPath, parseManifest } from "@octogee/core/workspace-manifest";
-import { isOversizeFile } from "../../lib/github.js";
-import { logger } from "../../middleware/logging.js";
+import { isOversizeFile } from "@octogee/core/git-host/github";
+import { logger } from "@octogee/core/http/logging";
 import {
   HIDDEN,
   isCanvasDashboardDocumentPath,
@@ -22,7 +22,7 @@ import {
   repoDefaultBranch,
   repoTreeApi,
   type LastCommit,
-} from "./helpers.js";
+} from "@octogee/core/workspace/route-helpers";
 import {
   cachedWorkspaceFileResponse,
   clearWorkspaceFileResponseCache,
@@ -31,7 +31,7 @@ import {
   FILE_INDEX_CACHE_TTL_MS,
   FILE_LIST_CACHE_TTL_MS,
   workspaceFileCacheKey,
-} from "./file-response-cache.js";
+} from "@octogee/core/workspace/file-response-cache";
 
 const router: Router = Router();
 

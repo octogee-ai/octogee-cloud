@@ -6,7 +6,7 @@ const logger = vi.hoisted(() => ({
   warn: vi.fn(),
 }));
 
-vi.mock("../middleware/logging.js", () => ({ logger }));
+vi.mock("@octogee/core/http/logging", () => ({ logger }));
 
 const ENV_KEYS = ["MM_URL", "MM_ADMIN_TOKEN", "K8S_NAMESPACE"] as const;
 const originalEnv = Object.fromEntries(

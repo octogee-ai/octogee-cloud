@@ -1,7 +1,7 @@
-import { authenticatedRequestLimit, authenticationFailureLimit } from "../middleware/authenticated-request-limit.js";
+import { authenticatedRequestLimit, authenticationFailureLimit } from "@octogee/core/http/authenticated-request-limit";
 import { Router } from "express";
 
-import { requireActiveAccount, requireAuthenticatedUid } from "../middleware/auth.js";
+import { requireActiveAccount, requireAuthenticatedUid } from "@octogee/core/http/auth";
 import {
   deleteModelCredentialKey,
   saveModelCredentialKey,

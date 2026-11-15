@@ -23,9 +23,9 @@ import {
 } from "@octogee/shared/types/openclaw-proxy-identity";
 
 import { fetchGatewayToken } from "../chat-proxy/openclaw/gateway-token.js";
-import { logger } from "../middleware/logging.js";
-import { clientRequestLimit } from "../middleware/authenticated-request-limit.js";
-import { isDashboardAssetRequest } from "../middleware/dashboard-asset-request.js";
+import { logger } from "@octogee/core/http/logging";
+import { clientRequestLimit } from "@octogee/core/http/authenticated-request-limit";
+import { isDashboardAssetRequest } from "@octogee/shared/types/dashboard-asset-request";
 import { workspaceServingDenial, type WorkspaceServingResolver } from "./workspace-serving.js";
 import {
   authorizeOpenClawControlSession,
@@ -71,7 +71,7 @@ import {
   type MattermostControlChat,
 } from "./mattermost-chat.js";
 import type { ClaimedUserIdentity } from "@octogee/shared/types/builder-identity";
-import { claimedUserIdentity } from "../lib/user-identity.js";
+import { claimedUserIdentity } from "@octogee/core/identity/user-identity";
 import { isIsolatedGatewayClassValue } from "@octogee/shared/types/glm";
 
 const MAX_BROWSER_WS_FRAME_BYTES = 1_048_576;

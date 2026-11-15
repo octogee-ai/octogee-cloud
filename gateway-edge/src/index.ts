@@ -4,14 +4,14 @@ import { createChannelAgentReadinessRouter } from "./routes/channel-agent-readin
 import express, { Express, Request, RequestHandler, Response, Router } from "express";
 import http from "node:http";
 import { Registry, collectDefaultMetrics, Counter, Histogram } from "prom-client";
-import { corsMiddleware } from "./middleware/cors.js";
-import { requestLogger } from "./middleware/logging.js";
-import { errorHandler } from "./middleware/errors.js";
-import { logger } from "./middleware/logging.js";
-import { helmetMiddleware, dashboardAssetRateLimit } from "./middleware/security.js";
-import { requireAuthenticatedUid } from "./middleware/auth.js";
-import { authenticationFailureLimit } from "./middleware/authenticated-request-limit.js";
-import { installBodyParsers } from "./middleware/body-parsers.js";
+import { corsMiddleware } from "@octogee/core/http/cors";
+import { requestLogger } from "@octogee/core/http/logging";
+import { errorHandler } from "@octogee/core/http/errors";
+import { logger } from "@octogee/core/http/logging";
+import { helmetMiddleware, dashboardAssetRateLimit } from "@octogee/core/http/security";
+import { requireAuthenticatedUid } from "@octogee/core/http/auth";
+import { authenticationFailureLimit } from "@octogee/core/http/authenticated-request-limit";
+import { installBodyParsers } from "@octogee/core/http/body-parsers";
 
 import { mountApi } from "./routes/mount-api.js";
 import automationsRoutes from "./routes/automations.js";
@@ -54,7 +54,7 @@ import {
   claimedUserIdentity,
   createUserIdentityStore,
   installUserIdentityStore,
-} from "./lib/user-identity.js";
+} from "@octogee/core/identity/user-identity";
 import { chatProxyOwnsHttpPath } from "./chat-proxy/http-paths.js";
 import { stripGatewayPrefix } from "./chat-proxy/gateway-prefix.js";
 import { gatewayEdgeMode } from "./lib/gateway-edge-mode.js";

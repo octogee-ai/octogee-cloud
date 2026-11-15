@@ -6,7 +6,7 @@ import {
   type WsUpgradeContext,
 } from '@octogee/core/ws/upgrade-router';
 import type { NativeMobileBinding } from '@octogee/shared/types/native-mobile';
-import { logger } from '../middleware/logging.js';
+import { logger } from '@octogee/core/http/logging';
 import { fetchGatewayToken } from '../chat-proxy/openclaw/gateway-token.js';
 import { createOpenClawControlAuthorizationCache } from './broker.js';
 import { bridgeControlSocket, openClawControlUpstreamBase } from './surface.js';

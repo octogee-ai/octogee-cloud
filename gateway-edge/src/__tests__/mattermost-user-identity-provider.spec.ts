@@ -8,18 +8,18 @@ const h = vi.hoisted(() => ({
   accounts: new Map<string, Record<string, unknown>>(),
 }));
 
-vi.mock("../lib/platform-state.js", async () => {
+vi.mock("@octogee/core/identity/platform-state-store", async () => {
   const { createDocumentFixtureStore } = await import("@octogee/core/testing/journal-store");
   return { platformStateStore: createDocumentFixtureStore(h.docs) };
 });
-vi.mock("../middleware/logging", () => ({
+vi.mock("@octogee/core/http/logging", () => ({
   logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));
 
-const { installUserIdentityProvider, requireAdmin, requireAuth } = await import("../middleware/auth.js");
-const { authenticationFailureLimit } = await import("../middleware/authenticated-request-limit.js");
+const { installUserIdentityProvider, requireAdmin, requireAuth } = await import("@octogee/core/http/auth");
+const { authenticationFailureLimit } = await import("@octogee/core/http/authenticated-request-limit");
 const { mattermostUserIdentityProvider, platformStateUserLoader } = await import("../lib/mattermost-user-identity-provider.js");
-const { platformStateStore } = await import("../lib/platform-state.js");
+const { platformStateStore } = await import("@octogee/core/identity/platform-state-store");
 
 const MATTERMOST_URL = "http://mattermost.internal:8065";
 const LIN_SESSION = "abcdefghijklmnopqrstuvwxyz";

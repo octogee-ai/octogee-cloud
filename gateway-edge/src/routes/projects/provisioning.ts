@@ -4,8 +4,8 @@ import {
   giteaWriteFile,
   giteaWriteFiles,
   giteaWriteFilesIfAllAbsent,
-} from "../../lib/gitea.js";
-import { internalFetch } from "../../lib/internal-fetch.js";
+} from "@octogee/core/git-host/gitea-client";
+import { internalFetch } from "@octogee/core/internal-fetch";
 import { workspaceGiteaOrg, projectRepoName } from "@octogee/core/gitea-naming";
 import { renderReadmeTemplate } from "@octogee/core/templates/project-readmes";
 import {

@@ -9,13 +9,13 @@ import {
   classifyAgentImportArchivePath,
   type AgentImportWorkspacePolicy,
 } from "@octogee/shared/types/agent-import";
-import { getExtension, getMimeType, isTextFile } from "../routes/workspace/helpers.js";
+import { getExtension, getMimeType, isTextFile } from "@octogee/core/workspace/route-helpers";
 import {
   WORKSPACE_GIT_HARDENING_PINS,
   workspaceMutationLeaseGitDir,
   workspaceGitCommandArgs,
   workspaceGitEnvironment,
-} from "./workspace-git.js";
+} from "@octogee/core/workspace/workspace-git";
 
 const SHA_RE = /^[0-9a-f]{40}$/;
 const IMPORT_ID_RE = /^[A-Za-z0-9._-]{1,160}$/;

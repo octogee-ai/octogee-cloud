@@ -1,6 +1,6 @@
 import { Router, Request, Response, NextFunction } from "express";
-import { logger } from "../../middleware/logging.js";
-import { platformStateStore } from "../../lib/platform-state.js";
+import { logger } from "@octogee/core/http/logging";
+import { platformStateStore } from "@octogee/core/identity/platform-state-store";
 import type { ModelCredentialRecord } from "@octogee/core/platform-state";
 import {
   validateProviderKey,

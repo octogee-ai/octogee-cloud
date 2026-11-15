@@ -1,25 +1,25 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../lib/platform-state", () => ({ platformStateStore: {} }));
-vi.mock("../lib/gcs-bucket", () => ({ gcsBucket: vi.fn() }));
+vi.mock("@octogee/core/identity/platform-state-store", () => ({ platformStateStore: {} }));
+vi.mock("@octogee/core/workspace/gcs-bucket", () => ({ gcsBucket: vi.fn() }));
 
-vi.mock("../lib/manifest", async (importOriginal) => ({
-  ...await importOriginal<typeof import("../lib/manifest.js")>(),
+vi.mock("@octogee/core/workspace/manifest", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@octogee/core/workspace/manifest")>(),
   getManifest: vi.fn(async (prefix, bustCache, blobs) => {
-    if (blobs) return (await importOriginal<typeof import("../lib/manifest.js")>()).getManifest(prefix, bustCache, blobs);
+    if (blobs) return (await importOriginal<typeof import("@octogee/core/workspace/manifest")>()).getManifest(prefix, bustCache, blobs);
     return {};
   }),
 }));
 
-vi.mock("../lib/github", () => ({
+vi.mock("@octogee/core/git-host/github", () => ({
   isOversizeFile: vi.fn(),
 }));
 
-vi.mock("../lib/fileTarget", () => ({
+vi.mock("@octogee/core/workspace/fileTarget", () => ({
   withFileTarget: vi.fn((handler) => handler),
 }));
 
-vi.mock("../routes/workspace/helpers", () => ({
+vi.mock("@octogee/core/workspace/route-helpers", () => ({
   HIDDEN: new Set([".git"]),
   giteaSudoUser: vi.fn(() => "ws-alice"),
   isCanvasDashboardDocumentPath: vi.fn((path: string) => path === ".octogee/canvas.json"),
@@ -46,12 +46,12 @@ import {
   sortWorkspaceFiles,
   workspaceFilesResponse,
 } from "../routes/workspace/files.js";
-import { repoContentsApi, repoTreeApi } from "../routes/workspace/helpers.js";
-import { getManifest } from "../lib/manifest.js";
-import { gcsBucket } from "../lib/gcs-bucket.js";
-import type { Manifest } from "../lib/manifest.js";
-import type { BlobStore } from "../lib/blob-store.js";
-import type { FileTarget } from "../lib/fileTarget.js";
+import { repoContentsApi, repoTreeApi } from "@octogee/core/workspace/route-helpers";
+import { getManifest } from "@octogee/core/workspace/manifest";
+import { gcsBucket } from "@octogee/core/workspace/gcs-bucket";
+import type { Manifest } from "@octogee/core/workspace/manifest";
+import type { BlobStore } from "@octogee/core/workspace/blob-store";
+import type { FileTarget } from "@octogee/core/workspace/fileTarget";
 
 const giteaTarget: FileTarget = {
   slug: "alice",

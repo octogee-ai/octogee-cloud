@@ -5,12 +5,12 @@ const h = vi.hoisted(() => ({
   platform: new Map<string, Record<string, unknown>>(),
 }));
 
-vi.mock('../lib/platform-state.js', async () => {
+vi.mock('@octogee/core/identity/platform-state-store', async () => {
   const { createDocumentFixtureStore } = await import('@octogee/core/testing/journal-store');
   return { platformStateStore: createDocumentFixtureStore(h.platform) };
 });
 
-import { readProject } from '../lib/firestoreReads.js';
+import { readProject } from '@octogee/core/workspace/firestoreReads';
 import { installDocumentPresentation } from './helpers/project-presentation.js';
 
 installDocumentPresentation((path) => ({ get: async () => ({ data: () => h.product[path] }) }));

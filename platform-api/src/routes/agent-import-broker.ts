@@ -1,5 +1,5 @@
 import { brokerRequestLimit } from "../middleware/broker-request-limit.js";
-import type { BlobStore } from "../../../gateway-edge/src/lib/blob-store.js";
+import type { BlobStore } from "@octogee/core/workspace/blob-store";
 import { registerAgentExportBrokerRoutes } from "./agent-export-broker.js";
 import { Router, type NextFunction, type Request, type Response } from "express";
 import { randomUUID } from "node:crypto";

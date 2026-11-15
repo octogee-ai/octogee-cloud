@@ -2,10 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { staticUserEntitlements } from "@octogee/shared/types/user-entitlements";
 import type { ProductRuntime } from "../app.js";
 
-vi.mock("../../../gateway-edge/src/lib/platform-state.js", async (importOriginal) => {
+vi.mock("@octogee/core/identity/platform-state-store", async (importOriginal) => {
   const { createDocumentFixtureStore } = await import("@octogee/core/testing/journal-store");
   return {
-    ...(await importOriginal<typeof import("../../../gateway-edge/src/lib/platform-state.js")>()),
+    ...(await importOriginal<typeof import("@octogee/core/identity/platform-state-store")>()),
     platformStateStore: createDocumentFixtureStore(new Map()),
   };
 });
@@ -13,13 +13,13 @@ vi.mock("../../../gateway-edge/src/lib/platform-state.js", async (importOriginal
 const { createPlatformApp } = await import("../app.js");
 const { FeaturePolicy, configuredFeatureFlagProvider } = await import("../lib/feature-policy.js");
 const { NO_PROJECT_PRESENTATION, projectPresentation, installProjectPresentation } =
-  await import("../../../gateway-edge/src/lib/project-presentation.js");
+  await import("@octogee/core/identity/project-presentation");
 const { NO_BROKER_RECORDS } = await import("../lib/broker-records.js");
 const { NO_WORKSPACE_STORAGE_ACCOUNTING, installWorkspaceStorageAccounting, workspaceStorageAccounting } =
-  await import("../../../gateway-edge/src/lib/workspace-storage-quota.js");
+  await import("@octogee/shared/types/workspace-storage-quota");
 const { NO_PROJECT_AGENT_DELIVERY_INTENTS, installProjectAgentDeliveryIntents, projectAgentDeliveryIntents } =
   await import("../../../gateway-edge/src/lib/project-agent-delivery-intents.js");
-const { userAccounts } = await import("../../../gateway-edge/src/lib/user-accounts.js");
+const { userAccounts } = await import("@octogee/core/identity/user-accounts");
 const { NO_CONNECTOR_DISCONNECTED, connectorDisconnected, installConnectorDisconnected } =
   await import("../../../gateway-edge/src/lib/connector-disconnect.js");
 const { noUserAccounts } = await import("@octogee/core/user-account");

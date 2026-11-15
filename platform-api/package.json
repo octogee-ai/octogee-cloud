@@ -37,25 +37,13 @@
       "types": "./dist/gateway-edge/src/lib/agent-identity.d.ts",
       "default": "./dist/gateway-edge/src/lib/agent-identity.js"
     },
-    "./gateway-edge/lib/blob-store": {
-      "types": "./dist/gateway-edge/src/lib/blob-store.d.ts",
-      "default": "./dist/gateway-edge/src/lib/blob-store.js"
-    },
     "./gateway-edge/lib/board-welcome": {
       "types": "./dist/gateway-edge/src/lib/board-welcome.d.ts",
       "default": "./dist/gateway-edge/src/lib/board-welcome.js"
     },
-    "./gateway-edge/lib/byosub": {
-      "types": "./dist/gateway-edge/src/lib/byosub.d.ts",
-      "default": "./dist/gateway-edge/src/lib/byosub.js"
-    },
     "./gateway-edge/lib/byot-sync-trigger": {
       "types": "./dist/gateway-edge/src/lib/byot-sync-trigger.d.ts",
       "default": "./dist/gateway-edge/src/lib/byot-sync-trigger.js"
-    },
-    "./gateway-edge/lib/canonical-workspace": {
-      "types": "./dist/gateway-edge/src/lib/canonical-workspace.d.ts",
-      "default": "./dist/gateway-edge/src/lib/canonical-workspace.js"
     },
     "./gateway-edge/lib/canvas-file": {
       "types": "./dist/gateway-edge/src/lib/canvas-file.d.ts",
@@ -89,49 +77,13 @@
       "types": "./dist/gateway-edge/src/lib/connector-reviewer-access.d.ts",
       "default": "./dist/gateway-edge/src/lib/connector-reviewer-access.js"
     },
-    "./gateway-edge/lib/connector-tokens": {
-      "types": "./dist/gateway-edge/src/lib/connector-tokens.d.ts",
-      "default": "./dist/gateway-edge/src/lib/connector-tokens.js"
-    },
-    "./gateway-edge/lib/connectors/index": {
-      "types": "./dist/gateway-edge/src/lib/connectors/index.d.ts",
-      "default": "./dist/gateway-edge/src/lib/connectors/index.js"
-    },
-    "./gateway-edge/lib/fileTarget": {
-      "types": "./dist/gateway-edge/src/lib/fileTarget.d.ts",
-      "default": "./dist/gateway-edge/src/lib/fileTarget.js"
-    },
-    "./gateway-edge/lib/firestoreReads": {
-      "types": "./dist/gateway-edge/src/lib/firestoreReads.d.ts",
-      "default": "./dist/gateway-edge/src/lib/firestoreReads.js"
-    },
-    "./gateway-edge/lib/free-storage": {
-      "types": "./dist/gateway-edge/src/lib/free-storage.d.ts",
-      "default": "./dist/gateway-edge/src/lib/free-storage.js"
-    },
     "./gateway-edge/lib/gateway-ticket": {
       "types": "./dist/gateway-edge/src/lib/gateway-ticket.d.ts",
       "default": "./dist/gateway-edge/src/lib/gateway-ticket.js"
     },
-    "./gateway-edge/lib/gcs-bucket": {
-      "types": "./dist/gateway-edge/src/lib/gcs-bucket.d.ts",
-      "default": "./dist/gateway-edge/src/lib/gcs-bucket.js"
-    },
     "./gateway-edge/lib/git-host": {
       "types": "./dist/gateway-edge/src/lib/git-host.d.ts",
       "default": "./dist/gateway-edge/src/lib/git-host.js"
-    },
-    "./gateway-edge/lib/gitea": {
-      "types": "./dist/gateway-edge/src/lib/gitea.d.ts",
-      "default": "./dist/gateway-edge/src/lib/gitea.js"
-    },
-    "./gateway-edge/lib/github": {
-      "types": "./dist/gateway-edge/src/lib/github.d.ts",
-      "default": "./dist/gateway-edge/src/lib/github.js"
-    },
-    "./gateway-edge/lib/internal-fetch": {
-      "types": "./dist/gateway-edge/src/lib/internal-fetch.d.ts",
-      "default": "./dist/gateway-edge/src/lib/internal-fetch.js"
     },
     "./gateway-edge/lib/issue-assets": {
       "types": "./dist/gateway-edge/src/lib/issue-assets.d.ts",
@@ -145,14 +97,6 @@
       "types": "./dist/gateway-edge/src/lib/issues-write.d.ts",
       "default": "./dist/gateway-edge/src/lib/issues-write.js"
     },
-    "./gateway-edge/lib/kms": {
-      "types": "./dist/gateway-edge/src/lib/kms.d.ts",
-      "default": "./dist/gateway-edge/src/lib/kms.js"
-    },
-    "./gateway-edge/lib/manifest": {
-      "types": "./dist/gateway-edge/src/lib/manifest.d.ts",
-      "default": "./dist/gateway-edge/src/lib/manifest.js"
-    },
     "./gateway-edge/lib/mattermost": {
       "types": "./dist/gateway-edge/src/lib/mattermost.d.ts",
       "default": "./dist/gateway-edge/src/lib/mattermost.js"
@@ -161,25 +105,9 @@
       "types": "./dist/gateway-edge/src/lib/mattermost-context.d.ts",
       "default": "./dist/gateway-edge/src/lib/mattermost-context.js"
     },
-    "./gateway-edge/lib/mattermost-secret": {
-      "types": "./dist/gateway-edge/src/lib/mattermost-secret.d.ts",
-      "default": "./dist/gateway-edge/src/lib/mattermost-secret.js"
-    },
     "./gateway-edge/lib/native-connector-approval": {
       "types": "./dist/gateway-edge/src/lib/native-connector-approval.d.ts",
       "default": "./dist/gateway-edge/src/lib/native-connector-approval.js"
-    },
-    "./gateway-edge/lib/obsidian-headless": {
-      "types": "./dist/gateway-edge/src/lib/obsidian-headless.d.ts",
-      "default": "./dist/gateway-edge/src/lib/obsidian-headless.js"
-    },
-    "./gateway-edge/lib/platform-free-config": {
-      "types": "./dist/gateway-edge/src/lib/platform-free-config.d.ts",
-      "default": "./dist/gateway-edge/src/lib/platform-free-config.js"
-    },
-    "./gateway-edge/lib/platform-state": {
-      "types": "./dist/gateway-edge/src/lib/platform-state.d.ts",
-      "default": "./dist/gateway-edge/src/lib/platform-state.js"
     },
     "./gateway-edge/lib/project-agent-delivery": {
       "types": "./dist/gateway-edge/src/lib/project-agent-delivery.d.ts",
@@ -209,10 +137,6 @@
       "types": "./dist/gateway-edge/src/lib/project-platform-state.d.ts",
       "default": "./dist/gateway-edge/src/lib/project-platform-state.js"
     },
-    "./gateway-edge/lib/project-presentation": {
-      "types": "./dist/gateway-edge/src/lib/project-presentation.d.ts",
-      "default": "./dist/gateway-edge/src/lib/project-presentation.js"
-    },
     "./gateway-edge/lib/project-recipe": {
       "types": "./dist/gateway-edge/src/lib/project-recipe.d.ts",
       "default": "./dist/gateway-edge/src/lib/project-recipe.js"
@@ -220,10 +144,6 @@
     "./gateway-edge/lib/projectId": {
       "types": "./dist/gateway-edge/src/lib/projectId.d.ts",
       "default": "./dist/gateway-edge/src/lib/projectId.js"
-    },
-    "./gateway-edge/lib/user-accounts": {
-      "types": "./dist/gateway-edge/src/lib/user-accounts.d.ts",
-      "default": "./dist/gateway-edge/src/lib/user-accounts.js"
     },
     "./gateway-edge/lib/user-deletion-deps": {
       "types": "./dist/gateway-edge/src/lib/user-deletion-deps.d.ts",
@@ -233,17 +153,9 @@
       "types": "./dist/gateway-edge/src/lib/user-gateway.d.ts",
       "default": "./dist/gateway-edge/src/lib/user-gateway.js"
     },
-    "./gateway-edge/lib/user-platform-state": {
-      "types": "./dist/gateway-edge/src/lib/user-platform-state.d.ts",
-      "default": "./dist/gateway-edge/src/lib/user-platform-state.js"
-    },
     "./gateway-edge/lib/withProject": {
       "types": "./dist/gateway-edge/src/lib/withProject.d.ts",
       "default": "./dist/gateway-edge/src/lib/withProject.js"
-    },
-    "./gateway-edge/lib/workspace-blob": {
-      "types": "./dist/gateway-edge/src/lib/workspace-blob.d.ts",
-      "default": "./dist/gateway-edge/src/lib/workspace-blob.js"
     },
     "./gateway-edge/lib/workspace-channel-membership": {
       "types": "./dist/gateway-edge/src/lib/workspace-channel-membership.d.ts",
@@ -253,33 +165,9 @@
       "types": "./dist/gateway-edge/src/lib/workspace-native-access.d.ts",
       "default": "./dist/gateway-edge/src/lib/workspace-native-access.js"
     },
-    "./gateway-edge/lib/workspace-resolution": {
-      "types": "./dist/gateway-edge/src/lib/workspace-resolution.d.ts",
-      "default": "./dist/gateway-edge/src/lib/workspace-resolution.js"
-    },
-    "./gateway-edge/lib/workspace-storage-quota": {
-      "types": "./dist/gateway-edge/src/lib/workspace-storage-quota.d.ts",
-      "default": "./dist/gateway-edge/src/lib/workspace-storage-quota.js"
-    },
     "./gateway-edge/middleware/agent-message-auth": {
       "types": "./dist/gateway-edge/src/middleware/agent-message-auth.d.ts",
       "default": "./dist/gateway-edge/src/middleware/agent-message-auth.js"
-    },
-    "./gateway-edge/middleware/auth": {
-      "types": "./dist/gateway-edge/src/middleware/auth.d.ts",
-      "default": "./dist/gateway-edge/src/middleware/auth.js"
-    },
-    "./gateway-edge/middleware/authenticated-request-limit": {
-      "types": "./dist/gateway-edge/src/middleware/authenticated-request-limit.d.ts",
-      "default": "./dist/gateway-edge/src/middleware/authenticated-request-limit.js"
-    },
-    "./gateway-edge/middleware/logging": {
-      "types": "./dist/gateway-edge/src/middleware/logging.d.ts",
-      "default": "./dist/gateway-edge/src/middleware/logging.js"
-    },
-    "./gateway-edge/middleware/security": {
-      "types": "./dist/gateway-edge/src/middleware/security.d.ts",
-      "default": "./dist/gateway-edge/src/middleware/security.js"
     },
     "./gateway-edge/model-credentials/anthropic-probe": {
       "types": "./dist/gateway-edge/src/model-credentials/anthropic-probe.d.ts",
@@ -352,10 +240,6 @@
     "./gateway-edge/routes/workspace/display-name": {
       "types": "./dist/gateway-edge/src/routes/workspace/display-name.d.ts",
       "default": "./dist/gateway-edge/src/routes/workspace/display-name.js"
-    },
-    "./gateway-edge/routes/workspace/file-response-cache": {
-      "types": "./dist/gateway-edge/src/routes/workspace/file-response-cache.d.ts",
-      "default": "./dist/gateway-edge/src/routes/workspace/file-response-cache.js"
     },
     "./lib/active-workspace-project": {
       "types": "./dist/platform-api/src/lib/active-workspace-project.d.ts",

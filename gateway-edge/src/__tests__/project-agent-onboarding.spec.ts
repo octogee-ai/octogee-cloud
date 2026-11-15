@@ -12,15 +12,15 @@ function rewrite(path: string, value: unknown) {
   h.docs.set(path, structuredClone(value));
   h.versions.set(path, (h.versions.get(path) ?? 0) + 1);
 }
-vi.mock('../lib/platform-state.js', async () => {
+vi.mock('@octogee/core/identity/platform-state-store', async () => {
   const { createDocumentFixtureStore } = await import('@octogee/core/testing/journal-store');
   return { platformStateStore: createDocumentFixtureStore(h.docs) };
 });
 vi.mock('../lib/mattermost.js', () => ({ mmApi: h.mm, mmUploadAvatarBuffer: h.avatar }));
-vi.mock('../middleware/logging.js', () => ({ logger: { error: h.log, warn: h.warn } }));
-vi.mock('../lib/gitea.js', () => ({ giteaWriteFiles: h.seed }));
-vi.mock('../lib/fileTarget.js', () => ({ resolveFileTarget: async () => ({ ok: true, target: {} }) }));
-vi.mock('../lib/workspace-blob.js', () => ({ storeWorkspaceBlob: h.blob }));
+vi.mock('@octogee/core/http/logging', () => ({ logger: { error: h.log, warn: h.warn } }));
+vi.mock('@octogee/core/git-host/gitea-client', () => ({ giteaWriteFiles: h.seed }));
+vi.mock('@octogee/core/workspace/fileTarget', () => ({ resolveFileTarget: async () => ({ ok: true, target: {} }) }));
+vi.mock('@octogee/core/workspace/workspace-blob', () => ({ storeWorkspaceBlob: h.blob }));
 import { parseProjectHandoff, queueProjectHandoff, deliverProjectAgentOnboarding } from '../lib/project-agent-onboarding.js';
 import {
   DeliveryIntentReplacedError,
@@ -30,7 +30,7 @@ import {
   type ProjectAgentDeliveryIntents,
   type ProjectDeliveryTarget,
 } from '../lib/project-agent-delivery-intents.js';
-import { installProjectPresentation, NO_PROJECT_PRESENTATION } from '../lib/project-presentation.js';
+import { installProjectPresentation, NO_PROJECT_PRESENTATION } from '@octogee/core/identity/project-presentation';
 import { projectAgentSecretDocId } from '@octogee/core/mattermost/project-agent';
 const projectPath = 'workspaces/alice/projects/golf';
 function read(path: string) {
@@ -169,7 +169,7 @@ it('writes the handoff message on retry after the message write was interrupted'
   expect(h.docs.get(projectPath).agent.handoff).toEqual({ status: 'pending', generation: 2 });
 });
 it('keeps the newer handoff message when the older request finishes writing last', async () => {
-  const { platformStateStore } = await import('../lib/platform-state.js');
+  const { platformStateStore } = await import('@octogee/core/identity/platform-state-store');
   const commit = platformStateStore.transaction.bind(platformStateStore);
   const newer = { ...handoff, persona: 'Patient golf tutor', message: 'Newer task' };
   const transaction = vi.spyOn(platformStateStore, 'transaction').mockImplementationOnce(async (options: any, work: any) => {

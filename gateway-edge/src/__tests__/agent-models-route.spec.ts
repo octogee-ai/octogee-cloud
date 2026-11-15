@@ -9,14 +9,14 @@ const h = vi.hoisted(() => ({
   store: null as unknown as PlatformStateStore,
 }));
 
-vi.mock("../middleware/auth.js", () => ({
+vi.mock("@octogee/core/http/auth", () => ({
   requireAuthenticatedUid: (req: express.Request, _res: express.Response, next: express.NextFunction) => {
     Object.assign(req, { uid: "alice-uid", user: { username: "alice", provisioning: { openclaw: { gatewayId: "alice" } } } });
     next();
   },
   requireActiveAccount: (_req: express.Request, _res: express.Response, next: express.NextFunction) => next(),
 }));
-vi.mock("../lib/platform-state.js", () => ({
+vi.mock("@octogee/core/identity/platform-state-store", () => ({
   get platformStateStore() { return h.store; },
 }));
 vi.mock("../lib/byot-sync-trigger.js", () => ({ triggerGatewayModelCredentialSync: h.triggerSync }));

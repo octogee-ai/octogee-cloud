@@ -1,6 +1,6 @@
-import { clientRequestLimit } from "../middleware/authenticated-request-limit.js";
+import { clientRequestLimit } from "@octogee/core/http/authenticated-request-limit";
 import { Router } from "express";
-import { logger } from "../middleware/logging.js";
+import { logger } from "@octogee/core/http/logging";
 import { authorizeChannelAgentReadiness } from "../lib/channel-agent-readiness-authorization-broker.js";
 import { readChannelAgentReadiness, readinessFailureReason } from "../lib/channel-agent-readiness.js";
 

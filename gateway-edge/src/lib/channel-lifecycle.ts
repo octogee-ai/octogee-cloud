@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
 import type { WorkspaceChannelScope } from "@octogee/core/platform-state";
 import { mmApi } from "./mattermost.js";
-import { platformStateStore } from "./platform-state.js";
-import { projectPresentation } from "./project-presentation.js";
+import { platformStateStore } from "@octogee/core/identity/platform-state-store";
+import { projectPresentation } from "@octogee/core/identity/project-presentation";
 import { retiredChannelName } from "./mattermost-channel-name.js";
-import { logger } from "../middleware/logging.js";
+import { logger } from "@octogee/core/http/logging";
 import {
   CHANNEL_NAME_MAX_LENGTH,
   projectChannelName,

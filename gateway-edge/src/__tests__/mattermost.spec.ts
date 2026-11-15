@@ -16,7 +16,7 @@ const dbState = vi.hoisted(() => ({
   addCounter: 0,
 }));
 
-vi.mock("../middleware/auth", () => ({
+vi.mock("@octogee/core/http/auth", () => ({
   requireAuth: (req: Record<string, unknown>, _res: unknown, next: () => void) => {
     req.uid = authState.uid;
     req.user = authState.user;
@@ -28,7 +28,7 @@ vi.mock("../lib/mattermost-context", () => ({
   getWorkspaceMmContext: vi.fn(),
 }));
 
-vi.mock("../lib/platform-state.js", async () => {
+vi.mock("@octogee/core/identity/platform-state-store", async () => {
   const { createDocumentFixtureStore } = await import("@octogee/core/testing/journal-store");
   return { platformStateStore: createDocumentFixtureStore(dbState.docs) };
 });

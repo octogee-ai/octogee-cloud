@@ -23,12 +23,12 @@ function resetProjectGate(): void {
   });
 }
 
-vi.mock("../lib/platform-state.js", async () => {
+vi.mock("@octogee/core/identity/platform-state-store", async () => {
   const { createDocumentFixtureStore } = await import("@octogee/core/testing/journal-store");
   return { platformStateStore: createDocumentFixtureStore(h.documents) };
 });
 
-vi.mock("../lib/workspace-resolution.js", () => ({
+vi.mock("@octogee/core/workspace/workspace-resolution", () => ({
   resolveWorkspaceUid: async () => "owner-uid",
 }));
 
@@ -53,7 +53,7 @@ const {
   authorizeChannel,
   listWorkspaceChannelCandidates,
 } = await import("../lib/channel-session-authorization.js");
-const { platformStateStore } = await import("../lib/platform-state.js");
+const { platformStateStore } = await import("@octogee/core/identity/platform-state-store");
 
 const listChannels = platformStateStore.workspaces.channels.list;
 const findChannel = vi.spyOn(platformStateStore.workspaces.channels, "findByMattermostChannelId");

@@ -3,7 +3,7 @@ import express from "express";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createModelCredentialSyncAuthHeaders } from "../lib/byot-sync-internal-auth.js";
+import { createModelCredentialSyncAuthHeaders } from "@octogee/core/model-credentials/byot-sync-internal-auth";
 
 const h = vi.hoisted(() => ({
   logger: {
@@ -13,7 +13,7 @@ const h = vi.hoisted(() => ({
   },
 }));
 
-vi.mock("../middleware/logging.js", () => ({ logger: h.logger }));
+vi.mock("@octogee/core/http/logging", () => ({ logger: h.logger }));
 
 const { requireByotSyncInternalAuth } = await import("../middleware/byot-sync-auth.js");
 

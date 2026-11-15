@@ -2,6 +2,11 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
+    server: {
+      deps: {
+        inline: [/@octogee\/core/],
+      },
+    },
     setupFiles: ["./src/test-setup/deployment-targets.ts", "./src/test-setup/octogee-entitlements.ts", './src/test-setup/loopback-listen.ts', './src/test-setup/runtime-env.ts'],
     // Run files serially: under concurrent file execution the forks pool
     // intermittently drops a spec's own vi.mock, so specs that pass in

@@ -1,9 +1,9 @@
-import { internalFetch } from "./internal-fetch.js";
+import { internalFetch } from "@octogee/core/internal-fetch";
 import { isIPv4 } from "node:net";
-import { logger } from "../middleware/logging.js";
-import { platformStateStore } from "./platform-state.js";
-import { isSafeGatewayId } from "./byosub.js";
-import { createModelCredentialSyncAuthHeaders } from "./byot-sync-internal-auth.js";
+import { logger } from "@octogee/core/http/logging";
+import { platformStateStore } from "@octogee/core/identity/platform-state-store";
+import { isSafeGatewayId } from "@octogee/core/model-credentials/byosub";
+import { createModelCredentialSyncAuthHeaders } from "@octogee/core/model-credentials/byot-sync-internal-auth";
 import {
   DEFAULT_HOUSE_MODEL_REF,
   userAgentModelDefaultFromDoc,

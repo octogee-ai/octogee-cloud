@@ -1,20 +1,20 @@
 import { storeUploadedWorkspaceBlob as storeWorkspaceBlob } from "../../lib/project-blob-edit.js";
-import { requestBlobStore, type BlobStore } from "../../lib/blob-store.js";
+import { requestBlobStore, type BlobStore } from "@octogee/core/workspace/blob-store";
 import { Router, Request, Response, NextFunction } from "express";
-import { logger } from "../../middleware/logging.js";
-import { giteaApiAsUser } from "../../lib/gitea.js";
+import { logger } from "@octogee/core/http/logging";
+import { giteaApiAsUser } from "@octogee/core/git-host/gitea-client";
 import { workspaceGiteaOrg, workspaceRepoName } from "@octogee/core/gitea-naming";
 import {
   WorkspaceStorageQuotaError,
-} from "../../lib/workspace-blob.js";
-import type { FileTarget } from "../../lib/fileTarget.js";
+} from "@octogee/core/workspace/workspace-blob";
+import type { FileTarget } from "@octogee/core/workspace/fileTarget";
 import {
   ensureSlug,
   getExtension,
   getMimeType,
   isTextFile,
   validateWorkspacePath,
-} from "./helpers.js";
+} from "@octogee/core/workspace/route-helpers";
 
 const router: Router = Router();
 const MAX_IMPORT_BLOB_BYTES = 10 * 1024 * 1024;

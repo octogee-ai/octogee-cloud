@@ -10,11 +10,11 @@ const h = vi.hoisted(() => ({
   logger: { error: vi.fn(), info: vi.fn() },
 }));
 
-vi.mock("../middleware/security.js", () => ({
+vi.mock("@octogee/core/http/security", () => ({
   strictRateLimit: (_req: unknown, _res: unknown, next: () => void) => next(),
 }));
 
-vi.mock("../middleware/logging.js", () => ({ logger: h.logger }));
+vi.mock("@octogee/core/http/logging", () => ({ logger: h.logger }));
 
 vi.mock("../lib/project-agent-service.js", () => ({
   provisionProjectAgent: (...args: unknown[]) => h.provisionProjectAgent(...args),
@@ -26,7 +26,7 @@ vi.mock('../lib/withProject.js', () => ({ withProject: async (req: any, res: any
   h.beforeRun?.();
   await run({ project: { agent: {} } });
 } }));
-vi.mock('../lib/platform-state.js', async () => {
+vi.mock('@octogee/core/identity/platform-state-store', async () => {
   const { createDocumentFixtureStore } = await import('@octogee/core/testing/journal-store');
   return { platformStateStore: createDocumentFixtureStore(h.docs) };
 });

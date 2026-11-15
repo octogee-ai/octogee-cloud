@@ -4,5 +4,7 @@ export default defineConfig({
   test: {
     include: ["src/**/*.spec.ts"],
     setupFiles: ["./vitest.setup.ts"],
+    testTimeout: 60_000,
+    hookTimeout: 60_000,
   },
 });

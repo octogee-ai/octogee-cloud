@@ -1,7 +1,7 @@
 import type { PlatformUserRecord, UserAgentIdentity, WorkspaceChannel, WorkspaceRecord } from "@octogee/core/platform-state";
 import type { UserAccount } from "@octogee/core/user-account";
-import { platformStateStore } from "./platform-state.js";
-import { userAccounts } from "./user-accounts.js";
+import { platformStateStore } from "@octogee/core/identity/platform-state-store";
+import { userAccounts } from "@octogee/core/identity/user-accounts";
 
 export interface WorkspaceMmContext {
   ownerUid: string;

@@ -1,4 +1,4 @@
-import { containsAsciiControlCharacter } from "../../lib/text-validation.js";
+import { containsAsciiControlCharacter } from "@octogee/shared/types/text-validation";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024;

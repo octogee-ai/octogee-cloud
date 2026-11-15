@@ -12,11 +12,11 @@ const h = vi.hoisted(() => ({
   logger: { error: vi.fn(), info: vi.fn() },
 }));
 
-vi.mock("../middleware/security.js", () => ({
+vi.mock("@octogee/core/http/security", () => ({
   strictRateLimit: (_req: unknown, _res: unknown, next: () => void) => next(),
 }));
 
-vi.mock("../middleware/logging.js", () => ({
+vi.mock("@octogee/core/http/logging", () => ({
   logger: h.logger,
 }));
 

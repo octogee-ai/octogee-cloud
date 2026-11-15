@@ -1,26 +1,26 @@
 import { storeUploadedWorkspaceBlob as storeWorkspaceBlob } from "../../lib/project-blob-edit.js";
 import { Router, Request, Response, NextFunction } from "express";
 import Busboy from "busboy";
-import { requestBlobStore } from "../../lib/blob-store.js";
-import { gcsBucket } from "../../lib/gcs-bucket.js";
-import { readPlatformFreeConfig } from "../../lib/platform-free-config.js";
-import { validateFilePath } from "../../lib/path-validation.js";
-import { resolveFileTarget, withGiteaTarget, type FileTarget } from "../../lib/fileTarget.js";
+import { requestBlobStore } from "@octogee/core/workspace/blob-store";
+import { gcsBucket } from "@octogee/core/workspace/gcs-bucket";
+import { readPlatformFreeConfig } from "@octogee/core/workspace/platform-free-config";
+import { validateFilePath } from "@octogee/shared/types/path-validation";
+import { resolveFileTarget, withGiteaTarget, type FileTarget } from "@octogee/core/workspace/fileTarget";
 import {
   WorkspaceStorageQuotaError,
-} from "../../lib/workspace-blob.js";
-import { freeWorkspaceStorageLimitBytes } from "../../lib/free-storage.js";
+} from "@octogee/core/workspace/workspace-blob";
+import { freeWorkspaceStorageLimitBytes } from "@octogee/shared/types/free-storage";
 import {
   DEFAULT_PLATFORM_FREE_CONFIG,
 } from "@octogee/shared/types/platform-config";
-import { logger } from "../../middleware/logging.js";
+import { logger } from "@octogee/core/http/logging";
 import {
   targetGiteaApi,
   getExtension,
   getMimeType,
   pathHasReservedOrHiddenSegment,
-} from "./helpers.js";
-import { invalidateWorkspaceFileResponseCache } from "./file-response-cache.js";
+} from "@octogee/core/workspace/route-helpers";
+import { invalidateWorkspaceFileResponseCache } from "@octogee/core/workspace/file-response-cache";
 
 const router: Router = Router();
 

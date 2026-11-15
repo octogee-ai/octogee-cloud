@@ -30,19 +30,19 @@ const h = vi.hoisted(() => {
   };
 });
 
-vi.mock("../lib/gcs-bucket.js", () => ({
+vi.mock("@octogee/core/workspace/gcs-bucket", () => ({
   gcsBucket: () => ({
     file: (path: string) => h.bucketFile(path),
   }),
 }));
 
-vi.mock("../lib/fileTarget.js", () => ({
+vi.mock("@octogee/core/workspace/fileTarget", () => ({
   withGiteaTarget: (handler: express.RequestHandler) =>
     (req: express.Request, res: express.Response, next: express.NextFunction) =>
       handler(req, res, next, h.target),
 }));
 
-vi.mock("../lib/manifest.js", () => ({
+vi.mock("@octogee/core/workspace/manifest", () => ({
   removeFromManifest: (...args: unknown[]) => h.removeFromManifest(...args),
 }));
 vi.mock("../lib/project-blob-edit.js", () => ({

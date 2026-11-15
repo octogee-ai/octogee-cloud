@@ -7,7 +7,7 @@ import {
   projectMattermostControlMessages,
 } from "./mattermost-chat.js";
 import type { OpenClawControlSession } from "./session.js";
-import { logger } from "../middleware/logging.js";
+import { logger } from "@octogee/core/http/logging";
 
 const channelId = "c".repeat(26);
 const humanId = "h".repeat(26);

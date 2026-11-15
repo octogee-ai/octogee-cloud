@@ -6,11 +6,11 @@ const h = vi.hoisted(() => ({
   logger: { error: vi.fn(), info: vi.fn(), warn: vi.fn() },
 }));
 
-vi.mock("../lib/platform-state.js", async () => {
+vi.mock("@octogee/core/identity/platform-state-store", async () => {
   const { createDocumentFixtureStore } = await import("@octogee/core/testing/journal-store");
   return { platformStateStore: createDocumentFixtureStore(h.docs) };
 });
-vi.mock("../middleware/logging.js", () => ({ logger: h.logger }));
+vi.mock("@octogee/core/http/logging", () => ({ logger: h.logger }));
 vi.mock("../lib/mattermost.js", () => ({ mmApi: (...args: unknown[]) => h.mmApi(...args) }));
 vi.mock("../lib/mattermost-context.js", () => ({
   getWorkspaceMmContext: async () => ({ teamId: "team-1", userId: "owner-mm", coachUserId: "coach-mm" }),

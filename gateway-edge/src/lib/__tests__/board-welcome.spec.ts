@@ -9,7 +9,7 @@ vi.mock("../issues.js", () => ({
   createIssue: (...args: unknown[]) => h.createIssue(...args),
 }));
 
-vi.mock("../../middleware/logging.js", () => ({
+vi.mock("@octogee/core/http/logging", () => ({
   logger: { warn: (...args: unknown[]) => h.warn(...args), info: vi.fn(), error: vi.fn() },
 }));
 

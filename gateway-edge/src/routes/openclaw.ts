@@ -1,7 +1,7 @@
-import { authenticationFailureLimit, authenticatedRequestLimit } from "../middleware/authenticated-request-limit.js";
+import { authenticationFailureLimit, authenticatedRequestLimit } from "@octogee/core/http/authenticated-request-limit";
 import { Router, Request, Response, NextFunction } from "express";
-import { requireAuth } from "../middleware/auth.js";
-import { platformStateStore } from "../lib/platform-state.js";
+import { requireAuth } from "@octogee/core/http/auth";
+import { platformStateStore } from "@octogee/core/identity/platform-state-store";
 import { mintTicket } from "../lib/gateway-ticket.js";
 import { resolveActivityConversation } from "../lib/activity-conversation.js";
 import { isMattermostPostId } from '@octogee/shared/types/mattermost-session-route';

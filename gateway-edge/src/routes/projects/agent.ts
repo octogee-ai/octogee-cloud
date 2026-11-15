@@ -1,9 +1,9 @@
 import { Router, Request, Response } from "express";
-import { strictRateLimit } from "../../middleware/security.js";
-import { logger } from "../../middleware/logging.js";
+import { strictRateLimit } from "@octogee/core/http/security";
+import { logger } from "@octogee/core/http/logging";
 import { provisionProjectAgent } from "../../lib/project-agent-service.js";
 import { withProject } from '../../lib/withProject.js';
-import { platformStateStore } from '../../lib/platform-state.js';
+import { platformStateStore } from '@octogee/core/identity/platform-state-store';
 import { isTalkVoiceId } from '@octogee/shared/types/voice';
 import { projectAgentConfigured } from '@octogee/shared/types/project';
 

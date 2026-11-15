@@ -1,4 +1,4 @@
-import { clientRequestLimit } from "../../middleware/authenticated-request-limit.js";
+import { clientRequestLimit } from "@octogee/core/http/authenticated-request-limit";
 import { Router } from "express";
 import { requireByotSyncInternalAuth } from "../../middleware/byot-sync-auth.js";
 import { openAuthenticatedUpstream } from "../../chat-proxy/openclaw/authenticated-upstream.js";

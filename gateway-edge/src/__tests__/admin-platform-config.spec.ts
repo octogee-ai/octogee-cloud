@@ -9,12 +9,12 @@ const setCalls: Array<{ path: string; data: Record<string, unknown>; opts?: unkn
 const queryDocs: Record<string, Array<{ id: string; data: Record<string, unknown> }>> = {};
 const aggregateCalls: string[] = [];
 
-vi.mock("../lib/platform-state", async () => {
+vi.mock("@octogee/core/identity/platform-state-store", async () => {
   const { createDocumentFixtureStore } = await import("@octogee/core/testing/journal-store");
   return { platformStateStore: createDocumentFixtureStore(platformDocs) };
 });
 
-vi.mock("../middleware/auth", () => ({
+vi.mock("@octogee/core/http/auth", () => ({
   requireAdmin: (req: any, _res: any, next: any) => {
     req.uid = "admin-user";
     req.user = { uid: "admin-user" };

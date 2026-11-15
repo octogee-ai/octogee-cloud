@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { isBrokeredWritablePath } from "../routes/workspace/helpers.js";
+import { isBrokeredWritablePath } from "@octogee/core/workspace/route-helpers";
 import {
   syncSavedGiteaCheckout,
   validatedSaveRequest,

@@ -1,6 +1,6 @@
 import { Router } from "express";
-import { withGiteaTarget } from "../../lib/fileTarget.js";
-import { validateWorkspacePath } from "./helpers.js";
+import { withGiteaTarget } from "@octogee/core/workspace/fileTarget";
+import { validateWorkspacePath } from "@octogee/core/workspace/route-helpers";
 import { removeUploadedWorkspaceBlob as removeWorkspaceBlob } from "../../lib/project-blob-edit.js";
 
 const router: Router = Router();

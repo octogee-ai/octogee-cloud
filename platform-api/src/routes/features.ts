@@ -4,7 +4,7 @@ import {
   USER_VISIBLE_FEATURE_FLAG_KEYS,
   type FeatureSubject,
 } from "@octogee/shared/types/feature-flags";
-import { requireActiveAccount, requireAuthenticatedUid } from "../../../gateway-edge/src/middleware/auth.js";
+import { requireActiveAccount, requireAuthenticatedUid } from "@octogee/core/http/auth";
 import { FeaturePolicy } from "../lib/feature-policy.js";
 
 function subject(req: Request): FeatureSubject {

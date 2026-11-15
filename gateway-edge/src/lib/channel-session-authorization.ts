@@ -16,9 +16,9 @@ import {
   ChannelSessionMattermostError,
   createChannelSessionMattermostClient,
 } from "./channel-session-model-control.js";
-import { readMattermostSecret } from "./mattermost-secret.js";
-import { platformStateStore } from "./platform-state.js";
-import { resolveWorkspaceUid } from "./workspace-resolution.js";
+import { readMattermostSecret } from "@octogee/core/identity/mattermost-secret";
+import { platformStateStore } from "@octogee/core/identity/platform-state-store";
+import { resolveWorkspaceUid } from "@octogee/core/workspace/workspace-resolution";
 
 const MATTERMOST_ID = /^[a-z0-9]{26}$/;
 const MAX_WORKSPACE_CHANNEL_CANDIDATES = 512;

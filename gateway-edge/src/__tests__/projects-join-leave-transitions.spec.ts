@@ -15,17 +15,17 @@ const h = vi.hoisted(() => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-vi.mock("../middleware/security.js", () => ({
+vi.mock("@octogee/core/http/security", () => ({
   strictRateLimit: (_req: unknown, _res: unknown, next: () => void) => next(),
 }));
-vi.mock("../middleware/logging.js", () => ({ logger: h.logger }));
+vi.mock("@octogee/core/http/logging", () => ({ logger: h.logger }));
 const documentFake = (path: string) => ({
       get: async () => ({ data: () => h.docs.get(path) }),
       update: async (data: Record<string, unknown>) => {
         h.updates.push({ path, data });
       },
     });
-vi.mock("../lib/platform-state.js", async () => {
+vi.mock("@octogee/core/identity/platform-state-store", async () => {
   const { createDocumentFixtureStore } = await import("@octogee/core/testing/journal-store");
   return { platformStateStore: createDocumentFixtureStore(h.docs) };
 });
@@ -42,7 +42,7 @@ vi.mock("../lib/withProject.js", () => ({
   },
 }));
 vi.mock("../lib/mattermost.js", () => ({ mmApi: (...args: unknown[]) => h.mmApi(...args) }));
-vi.mock("../lib/gitea.js", () => ({ giteaApi: (...args: unknown[]) => h.giteaApi(...args) }));
+vi.mock("@octogee/core/git-host/gitea-client", () => ({ giteaApi: (...args: unknown[]) => h.giteaApi(...args) }));
 vi.mock("../lib/mattermost-context.js", () => ({
   getWorkspaceMmContext: async () => ({ teamId: "team-1" }),
 }));
@@ -55,7 +55,7 @@ vi.mock("../lib/channel-lifecycle.js", () => ({
 const { default: joinLeaveRoutes } = await import("../routes/projects/join-leave.js");
 
 installDocumentPresentation(documentFake);
-const { platformStateStore } = await import("../lib/platform-state.js");
+const { platformStateStore } = await import("@octogee/core/identity/platform-state-store");
 
 const PROJECT = "workspaces/mira/projects/orbit";
 const CHANNEL = `${PROJECT}/channels/general`;

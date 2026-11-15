@@ -1,7 +1,7 @@
 import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { NO_PROJECT_PRESENTATION, installProjectPresentation } from "../lib/project-presentation.js";
+import { NO_PROJECT_PRESENTATION, installProjectPresentation } from "@octogee/core/identity/project-presentation";
 
 type Project = Record<string, unknown>;
 type ProjectUpdate = Record<string, unknown>;
@@ -40,7 +40,7 @@ const h = vi.hoisted(() => ({
 const PROJECT = "workspaces/mira/projects/orbit";
 const GENERAL = `${PROJECT}/channels/general`;
 
-vi.mock("../middleware/security.js", () => ({
+vi.mock("@octogee/core/http/security", () => ({
   strictRateLimit: (_req: unknown, _res: unknown, next: () => void) => {
     next();
   },
@@ -66,7 +66,7 @@ vi.mock("../lib/withProject.js", () => ({
   },
 }));
 
-vi.mock("../lib/platform-state.js", async () => {
+vi.mock("@octogee/core/identity/platform-state-store", async () => {
   const { createDocumentFixtureStore } = await import("@octogee/core/testing/journal-store");
   const store = createDocumentFixtureStore(h.docs);
   const recordPatches = (projects: typeof store.workspaces.projects) => {
@@ -102,7 +102,7 @@ vi.mock("../lib/project-agent-service.js", () => ({
   provisionProjectAgent: (...args: unknown[]) => h.provisionProjectAgent(...args),
 }));
 
-vi.mock("../middleware/logging.js", () => ({
+vi.mock("@octogee/core/http/logging", () => ({
   logger: h.logger,
 }));
 

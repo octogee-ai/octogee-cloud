@@ -10,21 +10,9 @@
     "agent-import-gitleaks.toml"
   ],
   "exports": {
-    "./auth": {
-      "types": "./dist/gateway-edge/src/middleware/auth.d.ts",
-      "default": "./dist/gateway-edge/src/middleware/auth.js"
-    },
-    "./platform-state": {
-      "types": "./dist/gateway-edge/src/lib/platform-state.d.ts",
-      "default": "./dist/gateway-edge/src/lib/platform-state.js"
-    },
     "./server": {
       "types": "./dist/gateway-edge/src/index.d.ts",
       "default": "./dist/gateway-edge/src/index.js"
-    },
-    "./user-platform-state": {
-      "types": "./dist/gateway-edge/src/lib/user-platform-state.d.ts",
-      "default": "./dist/gateway-edge/src/lib/user-platform-state.js"
     }
   },
   "scripts": {

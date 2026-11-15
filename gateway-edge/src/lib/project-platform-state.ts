@@ -1,7 +1,7 @@
 import type { WorkspaceProject } from "@octogee/core/platform-state";
-import { platformStateStore } from "./platform-state.js";
-import { projectPresentation, type PendingProjectDeletion, type ProjectRepoProvider } from "./project-presentation.js";
-import { logger } from "../middleware/logging.js";
+import { platformStateStore } from "@octogee/core/identity/platform-state-store";
+import { projectPresentation, type PendingProjectDeletion, type ProjectRepoProvider } from "@octogee/core/identity/project-presentation";
+import { logger } from "@octogee/core/http/logging";
 
 const MEMBER_COUNT_SYNC_ATTEMPTS = 5;
 

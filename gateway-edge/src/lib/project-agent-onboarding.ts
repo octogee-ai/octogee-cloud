@@ -1,4 +1,4 @@
-import { logger } from "../middleware/logging.js";
+import { logger } from "@octogee/core/http/logging";
 import {
   claimProjectDelivery,
   beginDeliveryPost,
@@ -16,8 +16,8 @@ import {
   type ProjectDeliveryTarget,
   type QueuedProjectHandoff,
 } from "./project-agent-delivery-intents.js";
-import { platformStateStore } from "./platform-state.js";
-import { readMattermostSecret } from "./mattermost-secret.js";
+import { platformStateStore } from "@octogee/core/identity/platform-state-store";
+import { readMattermostSecret } from "@octogee/core/identity/mattermost-secret";
 import { mmApi } from "./mattermost.js";
 import { projectAgentMmUsername } from "@octogee/shared/types/identity";
 import { projectAgentConfigured } from "@octogee/shared/types/project";

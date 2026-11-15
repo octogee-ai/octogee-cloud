@@ -18,7 +18,7 @@ import {
 import type { OpenClawControlProxyIdentity } from "./proxy-identity.js";
 import type { OpenClawControlSession } from "./session.js";
 import { createBrokeredMattermostAccess } from "./mattermost-broker.js";
-import { logger } from "../middleware/logging.js";
+import { logger } from "@octogee/core/http/logging";
 
 const MAX_MESSAGE_BYTES = 128 * 1024;
 const MAX_HISTORY_POSTS = 20_000;

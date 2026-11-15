@@ -1,5 +1,5 @@
 import { Router, Request, Response, NextFunction } from "express";
-import { platformStateStore } from "../../lib/platform-state.js";
+import { platformStateStore } from "@octogee/core/identity/platform-state-store";
 import type { GatewayRoot, Stored } from "@octogee/core/platform-state";
 import {
   WORKSPACE_GATEWAY_STATUS_MAX_SLUGS,

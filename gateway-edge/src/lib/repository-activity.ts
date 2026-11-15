@@ -1,8 +1,8 @@
-import type { FileTarget } from "./fileTarget.js";
-import { giteaApiAsUser } from "./gitea.js";
-import { githubJson, githubRepoUrl } from "./github.js";
+import type { FileTarget } from "@octogee/core/workspace/fileTarget";
+import { giteaApiAsUser } from "@octogee/core/git-host/gitea-client";
+import { githubJson, githubRepoUrl } from "@octogee/core/git-host/github";
 import { isPullRequest, normalizeIssue, type WorkspaceIssue } from "./issues-normalize.js";
-import { logger } from "../middleware/logging.js";
+import { logger } from "@octogee/core/http/logging";
 
 const PAGE_SIZE = 100;
 const MAX_PAGES = 10;

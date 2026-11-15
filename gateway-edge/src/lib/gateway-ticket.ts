@@ -1,5 +1,5 @@
 import * as crypto from "crypto";
-import { platformStateStore } from "./platform-state.js";
+import { platformStateStore } from "@octogee/core/identity/platform-state-store";
 
 // Unified "mint centrally, manage at the gateway" ticket primitive. One
 // collection, purpose-scoped. See docs/specs/GATEWAY-ROUTING-PATTERN-SPEC.md.

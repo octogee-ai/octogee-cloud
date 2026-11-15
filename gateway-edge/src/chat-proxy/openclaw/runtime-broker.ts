@@ -1,5 +1,5 @@
 import { ReplyBindingDeniedError, type NativeFinalReply } from "@octogee/core/native-final-reply";
-import { internalFetch } from "../../lib/internal-fetch.js";
+import { internalFetch } from "@octogee/core/internal-fetch";
 import { sidecarBrokerHeaders } from "@octogee/core/internal-fetch";
 import type { ActivityConversation } from '../../lib/activity-conversation.js';
 import { isMattermostPostId, parseChannelScopedMattermostSessionRoute, parseMattermostSessionRoute } from '@octogee/shared/types/mattermost-session-route';

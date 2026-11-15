@@ -1,4 +1,4 @@
-import { authenticatedRequestLimit } from "../middleware/authenticated-request-limit.js";
+import { authenticatedRequestLimit } from "@octogee/core/http/authenticated-request-limit";
 import { Router, type Response } from "express";
 import { isValidGatewayId } from "@octogee/shared/types/glm";
 import { createAgentExportRuntime } from "../lib/agent-export-runtime.js";

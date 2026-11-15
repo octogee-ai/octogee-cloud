@@ -1,7 +1,7 @@
-import { platformStateStore } from "./platform-state.js";
-import { projectPresentation } from "./project-presentation.js";
+import { platformStateStore } from "@octogee/core/identity/platform-state-store";
+import { projectPresentation } from "@octogee/core/identity/project-presentation";
 import { projectAgentDeliveryIntents } from "./project-agent-delivery-intents.js";
-import { logger } from "../middleware/logging.js";
+import { logger } from "@octogee/core/http/logging";
 import { mmApi } from "./mattermost.js";
 import { ChannelNameInUseError, createFreshPrivateChannel } from "./mattermost-channel-name.js";
 import { getWorkspaceMmContext, type WorkspaceMmContext } from "./mattermost-context.js";
@@ -13,7 +13,7 @@ import {
 } from "@octogee/shared/types/identity";
 import { projectRepoName } from "@octogee/core/gitea-naming";
 import { deleteProjectRepo, provisionProjectRepoResult } from "../routes/projects/provisioning.js";
-import { isValidGithubRepoSource } from "./github.js";
+import { isValidGithubRepoSource } from "@octogee/core/git-host/github";
 import type { RepoSourceAccess } from "../routes/projects/repo-source.js";
 import { defaultProjectRecipe, type ProjectRecipeId } from "@octogee/shared/types/project";
 import { requestedProjectRecipe } from "./project-recipe.js";

@@ -1,7 +1,7 @@
 import { isValidGatewayId } from "@octogee/shared/types/glm";
 import { isValidProjectId, isValidUsername } from "@octogee/shared/types/identity";
 import { trustedBrokerBaseUrl } from "@octogee/core/trusted-broker-url";
-import { internalFetch } from "./internal-fetch.js";
+import { internalFetch } from "@octogee/core/internal-fetch";
 import type { ChannelAgentScope } from "./channel-agent-readiness.js";
 
 export const CHANNEL_READINESS_AUTHORIZATION_PATH = "/internal/channel-agent-readiness/authorize";

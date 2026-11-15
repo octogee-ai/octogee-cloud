@@ -1,7 +1,7 @@
 import { generateKeyPairSync } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { signAgentControlRouterRequest, verifyAgentControlRouterRequest } from "../agent-control-callback-router.js";
-import { createModelCredentialSyncAuthHeaders, isValidModelCredentialSyncSignature } from "../lib/byot-sync-internal-auth.js";
+import { createModelCredentialSyncAuthHeaders, isValidModelCredentialSyncSignature } from "@octogee/core/model-credentials/byot-sync-internal-auth";
 
 const { privateKey, publicKey } = generateKeyPairSync("ed25519", {
   privateKeyEncoding: { type: "pkcs8", format: "pem" },

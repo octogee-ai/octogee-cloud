@@ -1,4 +1,4 @@
-import { platformStateStore } from "./platform-state.js";
+import { platformStateStore } from "@octogee/core/identity/platform-state-store";
 import { isSafeAgentId } from "@octogee/core/byosub-restore";
 
 export interface ResolvedGateway {

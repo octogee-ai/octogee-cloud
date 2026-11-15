@@ -2,10 +2,10 @@ import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../lib/platform-state", () => ({ platformStateStore: {} }));
-vi.mock("../lib/gcs-bucket", () => ({ gcsBucket: vi.fn() }));
+vi.mock("@octogee/core/identity/platform-state-store", () => ({ platformStateStore: {} }));
+vi.mock("@octogee/core/workspace/gcs-bucket", () => ({ gcsBucket: vi.fn() }));
 
-vi.mock("../lib/gitea", () => ({
+vi.mock("@octogee/core/git-host/gitea-client", () => ({
   giteaApiAsUser: vi.fn(),
 }));
 
@@ -15,7 +15,7 @@ vi.mock("../lib/project-blob-edit.js", () => ({
   WorkspaceStorageQuotaError: class WorkspaceStorageQuotaError extends Error {},
 }));
 
-vi.mock("../middleware/logging.js", () => ({
+vi.mock("@octogee/core/http/logging", () => ({
   logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));
 
@@ -24,9 +24,9 @@ import importRepoRouter, {
   parseGitHubRepoUrl,
   validatedImportTargetDir,
 } from "../routes/workspace/import-repo.js";
-import { gcsBucket } from "../lib/gcs-bucket.js";
-import { giteaApiAsUser } from "../lib/gitea.js";
-import { logger } from "../middleware/logging.js";
+import { gcsBucket } from "@octogee/core/workspace/gcs-bucket";
+import { giteaApiAsUser } from "@octogee/core/git-host/gitea-client";
+import { logger } from "@octogee/core/http/logging";
 
 const mockFetch = vi.fn();
 const mockBlobSave = vi.fn();

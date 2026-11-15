@@ -1,8 +1,8 @@
-import { authenticationFailureLimit, authenticatedRequestLimit } from "../middleware/authenticated-request-limit.js";
+import { authenticationFailureLimit, authenticatedRequestLimit } from "@octogee/core/http/authenticated-request-limit";
 import { Router, type Request } from "express";
 import { MalformedRecordError } from "@octogee/core/platform-state";
-import { requireAdmin } from "../middleware/auth.js";
-import { logger } from "../middleware/logging.js";
+import { requireAdmin } from "@octogee/core/http/auth";
+import { logger } from "@octogee/core/http/logging";
 import { provisionGatewayAuthSecret } from "@octogee/core/secret-store";
 import {
   createCentralReleaseAuthority,
@@ -18,7 +18,7 @@ import {
 import type { UserAccountReader } from "@octogee/core/user-account";
 import { platformStateUserAccountReader } from "@octogee/core/platform-state-user-accounts";
 import { userDeletionDeps, type AuthUserSuspension } from "../lib/user-deletion-deps.js";
-import { platformStateStore } from "../lib/platform-state.js";
+import { platformStateStore } from "@octogee/core/identity/platform-state-store";
 import { MODEL_CATALOG } from "@octogee/shared/types/model-catalog";
 import { modelRefForCatalogEntry } from "@octogee/shared/types/agent-models";
 import {

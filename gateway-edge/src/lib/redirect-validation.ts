@@ -1,4 +1,4 @@
-import { isAllowedLocalhostHostname } from "./dev-origins.js";
+import { isAllowedLocalhostHostname } from "@octogee/shared/types/dev-origins";
 import { publicAppHostsFromEnv } from "@octogee/core/public-app-origins";
 
 const ALLOWED_HOSTS = new Set(publicAppHostsFromEnv());

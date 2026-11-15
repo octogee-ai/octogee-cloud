@@ -21,7 +21,7 @@ describe("vm-home checkpoint layout", () => {
 });
 
 const gcs = vi.hoisted(() => ({ gcsBucket: vi.fn() }));
-vi.mock("../../../gateway-edge/src/lib/gcs-bucket.js", () => gcs);
+vi.mock("@octogee/core/workspace/gcs-bucket", () => gcs);
 
 function checkpoint(name = "20260905T101500Z.tar.gz"): GatewayVmHomeCheckpoint {
   return { generation: "9007199254740995", name, size: 123, sha256: "a".repeat(64), instanceId: "123", completedAt: 1000 };

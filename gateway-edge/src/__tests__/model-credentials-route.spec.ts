@@ -8,7 +8,7 @@ const h = vi.hoisted(() => ({
   deleteModelCredentialKey: vi.fn(),
 }));
 
-vi.mock("../middleware/auth.js", () => ({
+vi.mock("@octogee/core/http/auth", () => ({
   requireActiveAccount: (_req: unknown, _res: unknown, next: () => void) => next(),
   requireAuthenticatedUid: (req: express.Request, res: express.Response, next: express.NextFunction) =>
     h.requireAuth(req, res, next),

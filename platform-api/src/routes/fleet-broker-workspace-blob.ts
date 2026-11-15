@@ -5,10 +5,10 @@ import type { PlatformUserRecord, GatewayAssignment, PlatformStateStore, Workspa
 import { accountAllowsInteractiveAccess } from "@octogee/shared/types/account-lifecycle";
 import { isManifestPath } from "@octogee/core/workspace-manifest";
 import { parseMultipart, MAX_UPLOAD_BYTES, UploadTooLargeError } from "../../../gateway-edge/src/routes/workspace/upload.js";
-import { validateFilePath } from "../../../gateway-edge/src/lib/path-validation.js";
-import { pathHasReservedOrHiddenSegment } from "../../../gateway-edge/src/routes/workspace/helpers.js";
-import { WorkspaceStorageQuotaError, type storeWorkspaceBlobCentrally } from "../../../gateway-edge/src/lib/workspace-blob.js";
-import { logger } from "../../../gateway-edge/src/middleware/logging.js";
+import { validateFilePath } from "@octogee/shared/types/path-validation";
+import { pathHasReservedOrHiddenSegment } from "@octogee/core/workspace/route-helpers";
+import { WorkspaceStorageQuotaError, type storeWorkspaceBlobCentrally } from "@octogee/core/workspace/workspace-blob";
+import { logger } from "@octogee/core/http/logging";
 import { workspaceGiteaOrg, workspaceRepoName } from "@octogee/core/gitea-naming";
 
 export type WorkspaceBlobStore = typeof storeWorkspaceBlobCentrally;
@@ -39,7 +39,7 @@ async function canonicalWorkspaceOwned(store: PlatformStateStore, scope: Assigne
 }
 
 const centralStore: WorkspaceBlobStore = async (target, path, bytes, mimeType, options) => {
-  const { storeWorkspaceBlobCentrally } = await import("../../../gateway-edge/src/lib/workspace-blob.js");
+  const { storeWorkspaceBlobCentrally } = await import("@octogee/core/workspace/workspace-blob");
   const blobStore = process.env.BLOB_STORE_BACKEND === "gcs" ? undefined : runtimeBlobStore();
   return storeWorkspaceBlobCentrally(target, path, bytes, mimeType, { ...options, blobStore });
 };

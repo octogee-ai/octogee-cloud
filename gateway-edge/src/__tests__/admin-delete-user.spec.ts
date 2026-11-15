@@ -105,7 +105,7 @@ vi.mock("@octogee/core/platform-state", async (importOriginal) => {
   };
 });
 
-vi.mock("../middleware/auth", () => ({
+vi.mock("@octogee/core/http/auth", () => ({
   requireAdmin: (req: any, _res: any, next: any) => {
     req.uid = "admin-uid";
     req.user = { email: "admin@octogee.com" };
@@ -117,7 +117,7 @@ vi.mock("../middleware/auth", () => ({
   },
 }));
 
-vi.mock("../middleware/logging", () => ({
+vi.mock("@octogee/core/http/logging", () => ({
   logger: {
     info: (msg: string) => loggedInfo.push(msg),
     warn: (msg: string) => loggedWarnings.push(msg),

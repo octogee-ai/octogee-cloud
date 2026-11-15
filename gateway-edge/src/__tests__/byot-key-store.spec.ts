@@ -10,7 +10,7 @@ const h = vi.hoisted(() => ({
   triggerSync: vi.fn(),
 }));
 
-vi.mock("../lib/platform-state.js", () => ({
+vi.mock("@octogee/core/identity/platform-state-store", () => ({
   get platformStateStore() { return h.store; },
 }));
 vi.mock("@octogee/core/secret-store", () => ({

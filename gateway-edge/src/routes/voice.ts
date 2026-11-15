@@ -1,4 +1,4 @@
-import { authenticatedRequestLimit, authenticationFailureLimit } from "../middleware/authenticated-request-limit.js";
+import { authenticatedRequestLimit, authenticationFailureLimit } from "@octogee/core/http/authenticated-request-limit";
 import { Router, type NextFunction, type Request, type Response } from "express";
 import { rateLimit } from "express-rate-limit";
 import {
@@ -12,9 +12,9 @@ import {
   isTalkVoiceId,
   type TalkVoiceCatalog,
 } from "@octogee/shared/types/voice";
-import { requireActiveAccount, requireAuthenticatedUid } from "../middleware/auth.js";
+import { requireActiveAccount, requireAuthenticatedUid } from "@octogee/core/http/auth";
 import { isMattermostPostId } from '@octogee/shared/types/mattermost-session-route';
-import { logger } from "../middleware/logging.js";
+import { logger } from "@octogee/core/http/logging";
 import {
   HourlyMintQuotaExceededError,
   TicketCapExceededError,

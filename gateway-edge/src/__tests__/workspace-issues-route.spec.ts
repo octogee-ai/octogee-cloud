@@ -1,7 +1,7 @@
 import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { FileTarget } from "../lib/fileTarget.js";
+import type { FileTarget } from "@octogee/core/workspace/fileTarget";
 
 const h = vi.hoisted(() => ({
   target: null as FileTarget | null,
@@ -19,7 +19,7 @@ const h = vi.hoisted(() => ({
   assertIssueExists: vi.fn(),
 }));
 
-vi.mock("../lib/fileTarget.js", () => ({
+vi.mock("@octogee/core/workspace/fileTarget", () => ({
   withFileTarget:
     (handler: (...args: unknown[]) => unknown) =>
     (req: unknown, res: unknown, next: unknown) =>

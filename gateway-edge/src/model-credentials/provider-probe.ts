@@ -1,7 +1,7 @@
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import { classifyHttp } from "./anthropic-probe.js";
-import { logger } from "../middleware/logging.js";
+import { logger } from "@octogee/core/http/logging";
 import { CANONICAL_BASE_URL, type Provider } from "./provider-key-format.js";
 
 export interface ProbeRequest {

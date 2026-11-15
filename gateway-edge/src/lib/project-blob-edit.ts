@@ -3,14 +3,14 @@ import { constants } from "node:fs";
 import { lstat, mkdir, open, rename, unlink } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { isManifestPath, manifestObjectPath, parseManifest, serializeManifest, type Manifest, type ManifestEntry } from "@octogee/core/workspace-manifest";
-import type { FileTarget } from "./fileTarget.js";
-import { giteaApiAsUserAllowNotFound } from "./gitea.js";
-import { getMimeType, getExtension, targetGiteaApi } from "../routes/workspace/helpers.js";
-import { getManifestForQuota, manifestStoreForBlobs } from "./manifest.js";
-import { storeWorkspaceBlob, removeWorkspaceBlob, type WorkspaceBlobOptions, type StoredWorkspaceBlob } from "./workspace-blob.js";
-import { commitAndPushWorkspace, resolveProjectDir } from "./workspace-git.js";
-import { divertWorktreeBinaries } from "./binary-diversion.js";
-import { projectAssetEntry, withProjectAssetManifest } from "./project-asset-manifest.js";
+import type { FileTarget } from "@octogee/core/workspace/fileTarget";
+import { giteaApiAsUserAllowNotFound } from "@octogee/core/git-host/gitea-client";
+import { getMimeType, getExtension, targetGiteaApi } from "@octogee/core/workspace/route-helpers";
+import { getManifestForQuota, manifestStoreForBlobs } from "@octogee/core/workspace/manifest";
+import { storeWorkspaceBlob, removeWorkspaceBlob, type WorkspaceBlobOptions, type StoredWorkspaceBlob } from "@octogee/core/workspace/workspace-blob";
+import { commitAndPushWorkspace, resolveProjectDir } from "@octogee/core/workspace/workspace-git";
+import { divertWorktreeBinaries } from "@octogee/core/workspace/binary-diversion";
+import { projectAssetEntry, withProjectAssetManifest } from "@octogee/core/workspace/project-asset-manifest";
 import { isIsolatedGatewayClassValue } from "@octogee/shared/types/glm";
 
 interface RemoteAssetDeps {

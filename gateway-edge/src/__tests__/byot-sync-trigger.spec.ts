@@ -6,19 +6,19 @@ import { join } from "node:path";
 
 const internalFetchSpy = vi.fn();
 
-vi.mock("../lib/internal-fetch", () => ({
+vi.mock("@octogee/core/internal-fetch", () => ({
   internalFetch: (url: string, init: RequestInit, opts: Record<string, unknown>) =>
     internalFetchSpy(url, init, opts),
 }));
 
 const { docs } = vi.hoisted(() => ({ docs: {} as Record<string, Record<string, unknown> | undefined> }));
 
-vi.mock("../lib/platform-state", async () => {
+vi.mock("@octogee/core/identity/platform-state-store", async () => {
   const { createDocumentFixtureStore } = await import("@octogee/core/testing/journal-store");
   return { platformStateStore: createDocumentFixtureStore(docs) };
 });
 
-const { platformStateStore } = await import("../lib/platform-state.js");
+const { platformStateStore } = await import("@octogee/core/identity/platform-state-store");
 const modelCredentialSyncTrigger = await import("../lib/byot-sync-trigger.js");
 
 function vmRuntime(gatewayId: string, vm: Record<string, unknown>): Record<string, unknown> {

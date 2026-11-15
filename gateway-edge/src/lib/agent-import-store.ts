@@ -3,7 +3,7 @@ import { isValidUsername } from "@octogee/shared/types/identity";
 import type { AgentImportWorkspacePolicy } from "@octogee/shared/types/agent-import";
 
 import type { AgentImportAuthorizationIntent } from "@octogee/shared/types/agent-import";
-import { internalFetch } from "./internal-fetch.js";
+import { internalFetch } from "@octogee/core/internal-fetch";
 import type { AgentImportManifestEntry } from "./agent-import-git.js";
 import type {
   AgentImportIdentity,

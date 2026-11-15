@@ -1,4 +1,4 @@
-import { logger } from "../middleware/logging.js";
+import { logger } from "@octogee/core/http/logging";
 
 const MM_URL =
   process.env.MM_URL ||

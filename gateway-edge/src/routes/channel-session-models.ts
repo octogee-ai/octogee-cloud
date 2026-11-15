@@ -1,4 +1,4 @@
-import { authenticatedRequestLimit, authenticationFailureLimit } from "../middleware/authenticated-request-limit.js";
+import { authenticatedRequestLimit, authenticationFailureLimit } from "@octogee/core/http/authenticated-request-limit";
 import { Router, type NextFunction, type Request, type Response } from "express";
 import rateLimit from "express-rate-limit";
 import { randomUUID } from "node:crypto";
@@ -19,9 +19,9 @@ import {
   authorizeChannel,
   type AuthorizedChannel,
 } from "../lib/channel-session-authorization.js";
-import { platformStateStore } from "../lib/platform-state.js";
-import { requireActiveAccount, requireAuthenticatedUid } from "../middleware/auth.js";
-import { logger } from "../middleware/logging.js";
+import { platformStateStore } from "@octogee/core/identity/platform-state-store";
+import { requireActiveAccount, requireAuthenticatedUid } from "@octogee/core/http/auth";
+import { logger } from "@octogee/core/http/logging";
 
 const router: Router = Router();
 const MATTERMOST_ID = /^[a-z0-9]{26}$/;

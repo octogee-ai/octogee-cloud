@@ -50,7 +50,7 @@ COPY --from=platform-npm /usr/local/lib/node_modules/npm /usr/local/lib/node_mod
 COPY deploy/cloud-sql/octogee-pg-server-ca.pem /etc/ssl/certs/octogee-postgres-ca.pem
 WORKDIR /gateway-edge
 # git + openssh-client are required for the Phase 6 working-tree
-# routes (`gateway-edge/src/lib/workspace-git.ts`). Without them
+# routes (`core/src/workspace/workspace-git.ts`). Without them
 # `spawn('git', …)` ENOENTs and `git push` over SSH has no transport.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \

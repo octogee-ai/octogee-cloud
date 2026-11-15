@@ -4,12 +4,12 @@ const { firestoreData } = vi.hoisted(() => ({
   firestoreData: {} as Record<string, Record<string, unknown>>,
 }));
 
-vi.mock('../lib/platform-state.js', async () => {
+vi.mock('@octogee/core/identity/platform-state-store', async () => {
   const { createDocumentFixtureStore } = await import('@octogee/core/testing/journal-store');
   return { platformStateStore: createDocumentFixtureStore(firestoreData) };
 });
 
-vi.mock('../lib/kms', () => ({
+vi.mock('@octogee/core/connectors/kms', () => ({
   decryptSecret: vi.fn(async (enc: string) => {
     if (!enc.startsWith('ENC:')) throw new Error('mock decrypt: bad ciphertext');
     return enc.slice(4);
@@ -17,11 +17,8 @@ vi.mock('../lib/kms', () => ({
   encryptSecret: vi.fn(async (plain: string) => `ENC:${plain}`),
 }));
 
-vi.mock('../lib/internal-fetch', () => ({
-  internalFetch: vi.fn(),
-}));
-
 vi.mock('@octogee/core/internal-fetch', () => ({
+  internalFetch: vi.fn(),
   gatewayCredentialHeaders: vi.fn(async () => ({
     'x-octogee-gateway-credential-token': 'credential-token',
   })),
@@ -37,10 +34,10 @@ import {
   readOwnerRuntimeConnectorAccessToken,
   readConnectorClientCreds,
   getFreshAccessToken,
-} from '../lib/connector-tokens.js';
-import { getConnector } from '../lib/connectors/index.js';
-import { decryptSecret } from '../lib/kms.js';
-import { internalFetch } from '../lib/internal-fetch.js';
+} from '@octogee/core/connectors/connector-tokens';
+import { getConnector } from '@octogee/core/connectors';
+import { decryptSecret } from '@octogee/core/connectors/kms';
+import { internalFetch } from '@octogee/core/internal-fetch';
 import { sidecarBrokerHeaders } from '@octogee/core/internal-fetch';
 import { MalformedRecordError } from '@octogee/core/platform-state';
 import { claimedTestUser, installTestUserIdentity } from "./helpers/user-identity.js";

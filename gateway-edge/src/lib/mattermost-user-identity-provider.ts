@@ -1,6 +1,6 @@
 import type { UserAccountsRepository, UserRecordsRepository } from "@octogee/core/platform-state";
 import { mattermostBearerVerifier, type UserIdentityProvider } from "@octogee/core/user-identity-provider";
-import { userDataWithUserState } from "./user-platform-state.js";
+import { userDataWithUserState } from "@octogee/core/identity/user-platform-state";
 
 export interface PlatformUserStore {
   readonly users: {

@@ -4,8 +4,8 @@
 // the target's GCS namespace (never in the repo or the workspace-file
 // manifest) and are served through short-lived signed URLs.
 import { randomUUID } from "node:crypto";
-import { gcsBucket } from "./gcs-bucket.js";
-import type { FileTarget } from "./fileTarget.js";
+import { gcsBucket } from "@octogee/core/workspace/gcs-bucket";
+import type { FileTarget } from "@octogee/core/workspace/fileTarget";
 
 export const MAX_ISSUE_ASSET_BYTES = 25 * 1024 * 1024;
 const SIGNED_URL_TTL_MS = 60 * 60 * 1000;

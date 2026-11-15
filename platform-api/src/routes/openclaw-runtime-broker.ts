@@ -3,7 +3,7 @@ import { isCanonicalWorkspaceMembership } from "@octogee/core/gateway-principal-
 import { notifyNativeFinalReply, parseFinalReply, ReplyBindingDeniedError, type FinalReplyIdentity, type FinalReplyTarget } from "@octogee/core/native-final-reply";
 import { readFinalReplyPost, verifyFinalReplyChannel } from "../lib/native-final-reply-mattermost.js";
 import type { FinalReplyNotifier } from "../lib/user-notifications.js";
-import { logger } from "../../../gateway-edge/src/middleware/logging.js";
+import { logger } from "@octogee/core/http/logging";
 import { createVoicePostingGrant } from "../lib/voice-posting-grant.js";
 import {
   resolveVoiceConversationContext,

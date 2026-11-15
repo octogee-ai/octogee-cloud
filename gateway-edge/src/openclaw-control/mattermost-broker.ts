@@ -7,7 +7,7 @@ import {
   ChannelSessionMattermostError,
   createChannelSessionMattermostClient,
 } from "../lib/channel-session-model-control.js";
-import { containsAsciiControlCharacter } from "../lib/text-validation.js";
+import { containsAsciiControlCharacter } from "@octogee/shared/types/text-validation";
 import { postOpenClawControlBroker } from "./broker.js";
 import type { OpenClawControlSession } from "./session.js";
 import { watchMattermostChannelEvents } from "./mattermost-events.js";

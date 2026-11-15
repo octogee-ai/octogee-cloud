@@ -28,7 +28,7 @@ const h = vi.hoisted(() => {
   };
 });
 
-vi.mock("../lib/workspace-git.js", () => ({
+vi.mock("@octogee/core/workspace/workspace-git", () => ({
   resolveUserDir: h.resolveUserDir,
   resolveProjectDir: h.resolveProjectDir,
   commitAndPushWorkspace: h.commitAndPushWorkspace,
@@ -36,24 +36,24 @@ vi.mock("../lib/workspace-git.js", () => ({
   isTrustedGithubUserCheckout: h.isTrustedGithubUserCheckout,
 }));
 
-vi.mock("../lib/connector-tokens.js", () => ({
+vi.mock("@octogee/core/connectors/connector-tokens", () => ({
   ConnectorTokenReadError: h.ConnectorTokenReadError,
   readOwnerRuntimeConnectorAccessToken: h.readOwnerRuntimeConnectorAccessToken,
 }));
 
-vi.mock("../routes/workspace/helpers.js", () => ({
+vi.mock("@octogee/core/workspace/route-helpers", () => ({
   resolveCommitAuthor: h.resolveCommitAuthor,
 }));
 
-vi.mock("../middleware/logging.js", () => ({
+vi.mock("@octogee/core/http/logging", () => ({
   logger: { warn: h.warn, error: h.error, info: h.info },
 }));
 
-vi.mock("../lib/workspace-commit-proof-broker.js", () => ({
+vi.mock("@octogee/core/internal-brokers/workspace-commit-proof-broker", () => ({
   verifyWorkspaceCommitProofViaBroker: h.verifyWorkspaceCommitProofViaBroker,
 }));
 
-vi.mock("../lib/binary-diversion.js", () => ({
+vi.mock("@octogee/core/workspace/binary-diversion", () => ({
   divertWorktreeBinaries: h.divertWorktreeBinaries,
 }));
 

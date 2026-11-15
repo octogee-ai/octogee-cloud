@@ -2,8 +2,8 @@ import { Router, Request, Response, NextFunction } from "express";
 import { randomUUID } from "node:crypto";
 import * as fs from "fs";
 import * as os from "os";
-import { requireAuth, requireInternalServiceAuth } from "../middleware/auth.js";
-import { platformStateStore } from "../lib/platform-state.js";
+import { requireAuth, requireInternalServiceAuth } from "@octogee/core/http/auth";
+import { platformStateStore } from "@octogee/core/identity/platform-state-store";
 import type {
   ModelCredentialInput,
   PlatformStateTransaction,
@@ -28,7 +28,7 @@ import {
   byosubConnectionView,
   isSafeGatewayId,
   type ByosubProvider,
-} from "../lib/byosub.js";
+} from "@octogee/core/model-credentials/byosub";
 import { resolveUserGateway, rosteredAgentIdsForSlug } from "../lib/user-gateway.js";
 import {
   claudeCliNativeCredentialsPath,
@@ -51,7 +51,7 @@ import {
   claudeCliRuntimeConfig,
   codexRuntimeConfig,
 } from "@octogee/core/model-credential-materializer";
-import { logger } from "../middleware/logging.js";
+import { logger } from "@octogee/core/http/logging";
 import {
   modelCredentialOAuthEntryByProviderId,
   modelCredentialOAuthEntryBySubscriptionProvider,

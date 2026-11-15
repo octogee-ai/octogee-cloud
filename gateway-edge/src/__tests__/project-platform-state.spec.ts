@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { installDocumentPresentation } from "./helpers/project-presentation.js";
-import { installProjectPresentation, NO_PROJECT_PRESENTATION } from "../lib/project-presentation.js";
+import { installProjectPresentation, NO_PROJECT_PRESENTATION } from "@octogee/core/identity/project-presentation";
 
 const h = vi.hoisted(() => ({
   docs: new Map<string, Record<string, unknown>>(),
@@ -19,7 +19,7 @@ const documentFake = (path: string) => ({
       },
     });
 
-vi.mock("../lib/platform-state.js", async () => {
+vi.mock("@octogee/core/identity/platform-state-store", async () => {
   const { createDocumentFixtureStore } = await import("@octogee/core/testing/journal-store");
   return { platformStateStore: createDocumentFixtureStore(h.docs) };
 });

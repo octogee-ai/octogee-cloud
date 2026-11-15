@@ -1,8 +1,8 @@
 import type { OpaqueMap, Stored, WorkspaceChannel, WorkspaceChannelScope } from "@octogee/core/platform-state";
-import { platformStateStore } from "./platform-state.js";
-import { projectPresentation } from "./project-presentation.js";
-import { readMattermostSecret } from "./mattermost-secret.js";
-import { logger } from "../middleware/logging.js";
+import { platformStateStore } from "@octogee/core/identity/platform-state-store";
+import { projectPresentation } from "@octogee/core/identity/project-presentation";
+import { readMattermostSecret } from "@octogee/core/identity/mattermost-secret";
+import { logger } from "@octogee/core/http/logging";
 import { mmApi } from "./mattermost.js";
 import { getWorkspaceMmContext } from "./mattermost-context.js";
 import { enrollWorkspaceChannelMembers } from "./workspace-channel-membership.js";

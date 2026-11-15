@@ -1,8 +1,8 @@
-import { authenticationFailureLimit, authenticatedRequestLimit } from "../../middleware/authenticated-request-limit.js";
+import { authenticationFailureLimit, authenticatedRequestLimit } from "@octogee/core/http/authenticated-request-limit";
 import { Router } from "express";
-import { requireAdmin } from "../../middleware/auth.js";
-import { githubListRepos } from "../../lib/github.js";
-import { readConnectorAccessToken } from "../../lib/connector-tokens.js";
+import { requireAdmin } from "@octogee/core/http/auth";
+import { githubListRepos } from "@octogee/core/git-host/github";
+import { readConnectorAccessToken } from "@octogee/core/connectors/connector-tokens";
 
 const router: Router = Router();
 
