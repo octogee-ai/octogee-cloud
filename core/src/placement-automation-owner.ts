@@ -20,13 +20,20 @@ export interface PlacementAutomationOwnership {
   readonly yieldedAt: number | null;
 }
 
+export type PlacementAutomationActor = "client" | "fleet-controller";
+
+function refusalMessage(ownership: PlacementAutomationOwnership, refused: PlacementAutomationActor): string {
+  if (refused === "fleet-controller") return "the fleet controller has yielded placement automation to the client";
+  return ownership.owner !== "client"
+    ? `placement automation is owned by ${ownership.owner}`
+    : "the fleet controller has not yielded placement automation";
+}
+
 export class PlacementOwnerRefusedError extends Error {
   readonly code = PLACEMENT_OWNER_REFUSAL_CODE;
 
-  constructor(readonly ownership: PlacementAutomationOwnership) {
-    super(ownership.owner !== "client"
-      ? `placement automation is owned by ${ownership.owner}`
-      : "the fleet controller has not yielded placement automation");
+  constructor(readonly ownership: PlacementAutomationOwnership, readonly refused: PlacementAutomationActor) {
+    super(refusalMessage(ownership, refused));
     this.name = "PlacementOwnerRefusedError";
   }
 }
@@ -44,6 +51,10 @@ export function clientOwnsPlacementAutomation(ownership: PlacementAutomationOwne
   return ownership.owner === "client" && ownership.yieldedAt !== null;
 }
 
+export function fleetControllerOwnsPlacementAutomation(ownership: PlacementAutomationOwnership): boolean {
+  return !clientOwnsPlacementAutomation(ownership);
+}
+
 export async function readPlacementAutomationOwnership(
   transaction: Pick<PlatformStateTransaction, "config">,
 ): Promise<PlacementAutomationOwnership> {
@@ -54,7 +65,15 @@ export async function assertClientOwnsPlacementAutomation(
   transaction: Pick<PlatformStateTransaction, "config">,
 ): Promise<PlacementAutomationOwnership> {
   const ownership = await readPlacementAutomationOwnership(transaction);
-  if (!clientOwnsPlacementAutomation(ownership)) throw new PlacementOwnerRefusedError(ownership);
+  if (!clientOwnsPlacementAutomation(ownership)) throw new PlacementOwnerRefusedError(ownership, "client");
+  return ownership;
+}
+
+export async function assertFleetControllerOwnsPlacementAutomation(
+  transaction: Pick<PlatformStateTransaction, "config">,
+): Promise<PlacementAutomationOwnership> {
+  const ownership = await readPlacementAutomationOwnership(transaction);
+  if (!fleetControllerOwnsPlacementAutomation(ownership)) throw new PlacementOwnerRefusedError(ownership, "fleet-controller");
   return ownership;
 }
 
