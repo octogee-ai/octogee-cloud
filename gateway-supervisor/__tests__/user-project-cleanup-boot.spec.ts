@@ -33,7 +33,7 @@ async function boot(gatewayClass: string, runtime: string, expectEmptyRemoved: b
     .split('mkdir -p "$HOME/.ssh"')[0]
     .replace("export OPENCLAW_DIR=/home/node/.openclaw", `export OPENCLAW_DIR='${state}'`)
     .replace(/BUILDER_SLUG=""\nif [^\n]*\n[\s\S]*?\nfi\n/u, "BUILDER_SLUG=alice\n")
-    .replaceAll("/octogee", repo);
+    .replace(/\/octogee(\/scripts)?/gu, (_, scripts: string | undefined) => (scripts ? path.join(repo, "gateway-supervisor") : repo));
   if (gatewayClass === "isolated") writeTestUserClaim(state, "alice");
   const reader = path.join(root, "reader.mjs");
   await writeFile(reader, `import assert from 'node:assert/strict';import fs from 'node:fs';assert.equal(fs.existsSync(process.env.OPENCLAW_DIR+'/customers/alice/projects/rvshare'),${!expectEmptyRemoved});console.log('runtime-reader-started');`);

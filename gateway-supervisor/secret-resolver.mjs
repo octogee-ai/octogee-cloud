@@ -56,7 +56,7 @@ import { readUserClaimFromEnv } from "@octogee/shared/server/user-claim";
 // resolver materializes byok-* keys through the octogee-api broker
 // (POST /internal/byok/api-key) instead of reaching Secret Manager directly.
 // KSA-authed via the gateway's projected token — same contract as
-// scripts/lib/internal-fetch.ts.
+// gateway-supervisor/lib/internal-fetch.ts.
 //
 // The DEFAULTS must work without the broker env: openclaw forwards only the
 // resolver's `passEnv` allowlist, and existing gateways preserve a pre-broker
@@ -139,7 +139,7 @@ function parseAgentScopedId(id, pattern) {
  *  exec-provider contract — see fork src/secrets/resolve.ts:452), so any
  *  new user becomes visible on the next spawn. No TOCTOU concern
  *  within a single resolver invocation. Same env var as the provisioner's
- *  AGENTS_DIR (scripts/lib/config.ts:18-19). */
+ *  AGENTS_DIR (gateway-supervisor/lib/config.ts:18-19). */
 function claimedUserSlug() {
   try {
     return readUserClaimFromEnv(process.env)?.builderSlug ?? null;

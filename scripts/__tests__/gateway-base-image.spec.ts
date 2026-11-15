@@ -98,7 +98,7 @@ describe("gateway base image", () => {
   });
 
   it("keeps post-readiness hydration npm-only", () => {
-    const hydrator = readRepoFile("scripts/lib/isolated-toolchain-hydrator.ts");
+    const hydrator = readRepoFile("gateway-supervisor/lib/isolated-toolchain-hydrator.ts");
     const isolatedBase = readRepoFile("gateway/Dockerfile.isolated-base");
 
     expect(hydrator).toContain('"ci",');

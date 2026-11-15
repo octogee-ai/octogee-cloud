@@ -12,8 +12,8 @@ const POLICY_AND_CREDENTIAL_SOURCES = [
   "platform-api/src/lib/sa-to-tenant.ts",
   "platform-api/src/routes/fleet-broker.ts",
   "platform-api/src/routes/byok-broker.ts",
-  "scripts/entrypoints/byosub-syncback-runner.ts",
-  "scripts/entrypoints/pre-boot-config.ts",
+  "gateway-supervisor/entrypoints/byosub-syncback-runner.ts",
+  "gateway-supervisor/entrypoints/pre-boot-config.ts",
 ] as const;
 
 describe("durable gateway authority boundary", () => {

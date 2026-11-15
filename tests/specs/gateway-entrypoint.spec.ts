@@ -12,7 +12,7 @@ const entrypoint = readFileSync(
   "utf8",
 );
 const fleetController = readFileSync(
-  path.join(repoRoot, "scripts/entrypoints/provisioner.ts"),
+  path.join(repoRoot, "gateway-supervisor/entrypoints/provisioner.ts"),
   "utf8",
 );
 const gatewayDeployment = readFileSync(
@@ -475,7 +475,7 @@ function runExitWhenOpenClawDies(input: { childExit: string; flushExit: number }
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
 }
 
-describe("scripts/entrypoints/provisioner.ts — db-less local persistence loops", () => {
+describe("gateway-supervisor/entrypoints/provisioner.ts — db-less local persistence loops", () => {
 
   it("keeps brokered GCS blob sync wired into the live gateway controller", () => {
     expect(fleetController).toMatch(/blobSyncAllWithOptions/);
@@ -491,7 +491,7 @@ describe("scripts/entrypoints/provisioner.ts — db-less local persistence loops
 
 describe("per-user control identity — pod token stays out of the OpenClaw process", () => {
   const supervisor = readFileSync(
-    path.join(repoRoot, "scripts/entrypoints/surge-openclaw-supervisor.ts"),
+    path.join(repoRoot, "gateway-supervisor/entrypoints/surge-openclaw-supervisor.ts"),
     "utf8",
   );
 

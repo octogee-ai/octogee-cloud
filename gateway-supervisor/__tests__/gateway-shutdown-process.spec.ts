@@ -7,9 +7,9 @@ import { afterEach, expect, it } from "vitest";
 
 const root = path.resolve(import.meta.dirname, "../..");
 const entrypoint = fs.readFileSync(path.join(root, "gateway/entrypoint.sh"), "utf8");
-const surge = fs.readFileSync(path.join(root, "scripts/entrypoints/surge-openclaw-supervisor.ts"), "utf8");
-const loader = path.join(root, "scripts/node_modules/tsx/dist/loader.mjs");
-const runner = path.join(root, "scripts/entrypoints/supervise-runner.ts");
+const surge = fs.readFileSync(path.join(root, "gateway-supervisor/entrypoints/surge-openclaw-supervisor.ts"), "utf8");
+const loader = path.join(root, "gateway-supervisor/node_modules/tsx/dist/loader.mjs");
+const runner = path.join(root, "gateway-supervisor/entrypoints/supervise-runner.ts");
 const shellQuote = (text: string) => "'" + text.replaceAll("'", "'\\''") + "'";
 const fixtures: Array<{ directory: string; child: ChildProcess; exited: Promise<number | null> }> = [];
 

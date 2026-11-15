@@ -7,7 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 COPY desktop/hobby /benchmark
 COPY desktop/acceptance /benchmark/desktop/acceptance
-COPY scripts/lib/openclaw-computer-browser.ts /benchmark/scripts/lib/openclaw-computer-browser.ts
+COPY gateway-supervisor/lib/openclaw-computer-browser.ts /benchmark/scripts/lib/openclaw-computer-browser.ts
 RUN chmod 755 /benchmark/*.sh
 USER node
 ENTRYPOINT ["/benchmark/start.sh"]

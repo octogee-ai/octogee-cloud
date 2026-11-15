@@ -53,7 +53,7 @@ describe("scripts vitest configs", () => {
     const darwin = await unitExcludesOn("darwin");
 
     expect(linux).toEqual([...configDefaults.exclude, "**/*.emulator.spec.ts", "__tests__/firebase-reach.spec.ts"]);
-    expect(darwin).toEqual(expect.arrayContaining([...linux, "__tests__/rsync-staged-symlinks.spec.ts"]));
+    expect(darwin).toEqual(expect.arrayContaining([...linux, "__tests__/native-computer-acceptance.spec.ts"]));
   });
 
   it("skips specs that read the product checkout only when the platform stands alone", async () => {

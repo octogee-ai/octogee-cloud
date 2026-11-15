@@ -18,6 +18,7 @@ updates:
       - /gateway/extensions/platform/octogee-workspace-tools
       - /gateway/isolated-toolchain
       - /platform-api
+      - /gateway-supervisor
       - /scripts
       - /shared
       - /tests

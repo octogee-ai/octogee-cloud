@@ -56,6 +56,14 @@ jobs:
               npx tsc --noEmit
               npm test
               npm run gate
+          - name: gateway-supervisor
+            installs: gateway-supervisor
+            gateway-npm: true
+            run: |
+              cd gateway-supervisor
+              npm audit --audit-level=moderate
+              npm run typecheck
+              npm test
           - name: core
             installs: core
             postgres: true
@@ -88,7 +96,7 @@ jobs:
               npm run typecheck
               npm test
           - name: tests
-            installs: scripts shared fleet-controller tests
+            installs: scripts gateway-supervisor shared fleet-controller tests
             helm: true
             run: |
               cd tests
