@@ -22,6 +22,10 @@ const WORKSPACES = `octogee-${ACCOUNT}-${REGION}-workspaces`;
 
 const AWS = `case " $* " in
   *" sts get-caller-identity "*) echo ${ACCOUNT} ;;
+  *" get-service-quota "*) echo "\${VCPU_QUOTA:-32.0}" ;;
+  *" describe-instance-types "*)
+    while [ "$1" != --instance-types ]; do shift; done; shift
+    while [ "$1" != --query ]; do case "$1" in *.2xlarge) printf '%s\\t8\\n' "$1" ;; *) printf '%s\\t4\\n' "$1" ;; esac; shift; done ;;
   *" describe-launch-templates "*) { [ -n "\${LT_EXISTS:-}" ] || [ -f "$HOME/lt-created" ]; } || exit 1; echo lt-0abc123 ;;
   *" create-launch-template "*) touch "$HOME/lt-created" ;;
   *" eks describe-cluster "*vpcId*) echo vpc-1 ;;
@@ -200,6 +204,18 @@ describe("eks-install.sh", () => {
       expect(result.status).toBe(1);
       expect(result.stderr).toContain(`Commit ${SHA} has no published images: its Build main run did not publish`);
       expect(host.calls().filter(call => call.startsWith("eksctl ") || / (create|put|authorize)-/.test(call))).toEqual([]);
+    });
+
+    it("stops before creating anything when the account may not run as many vCPUs as the nodes need", () => {
+      const result = up({ VCPU_QUOTA: "16.0", GATEWAY_INSTANCE_TYPE: "m6i.2xlarge" });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("The nodes need 24 vCPUs of standard instances, and this account may run 16 in us-west-2.");
+      expect(calls("aws", "describe-instance-types")[0]).toContain("--instance-types m6i.xlarge m6i.2xlarge --query");
+      expect(host.calls().filter(call => call.startsWith("eksctl ") || / (create|put|authorize)-/.test(call))).toEqual([]);
+    });
+
+    it("installs when the quota covers exactly what the nodes need", () => {
+      expect(up({ VCPU_QUOTA: "16.0" }).status).toBe(0);
     });
 
     it("stops before creating anything when no model provider key is exported or stored", () => {

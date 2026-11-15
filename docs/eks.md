@@ -67,6 +67,20 @@ state directory and in a Secret in the cluster.
 - A model provider key. OpenRouter is recommended;
   [Model provider keys](kind.md#model-provider-keys) says where to get each one
   and which models it gives agents.
+- Room for the nodes in your EC2 quota. The defaults need 16 vCPUs of
+  standard instances, and a new account may run only 5. `up` checks this
+  before it creates anything. See the quota, and ask for more:
+
+  ```bash
+  aws service-quotas get-service-quota --service-code ec2 --quota-code L-1216C47A --query Quota.Value
+  ```
+
+  ```bash
+  aws service-quotas request-service-quota-increase --service-code ec2 --quota-code L-1216C47A --desired-value 32
+  ```
+
+  Small increases are often approved within minutes; a new account can wait
+  longer.
 
 These are billable resources that run until you remove them. With the defaults
 below, the cluster runs four `m6i.xlarge` nodes: two for the platform and two

@@ -74,6 +74,25 @@ load_account() {
   WORKSPACES_BUCKET="$NAME-$ACCOUNT-$AWS_REGION-workspaces"
 }
 
+check_vcpu_quota() {
+  local types=("$INSTANCE_TYPE") type vcpus quota needed=0
+  [[ "$GATEWAY_INSTANCE_TYPE" == "$INSTANCE_TYPE" ]] || types+=("$GATEWAY_INSTANCE_TYPE")
+  for type in "${types[@]}"; do
+    [[ "$type" =~ ^[acdhimrtz][0-9] ]] || return 0
+  done
+  quota="$(a service-quotas get-service-quota --service-code ec2 --quota-code L-1216C47A --query Quota.Value --output text)"
+  [[ "$quota" =~ ^[0-9]+(\.[0-9]+)?$ ]] || die "Service Quotas did not report this account's vCPU quota for standard instances"
+  while read -r type vcpus; do
+    [[ "$type" == "$INSTANCE_TYPE" ]] && needed=$((needed + SYSTEM_NODES * vcpus))
+    [[ "$type" == "$GATEWAY_INSTANCE_TYPE" ]] && needed=$((needed + GATEWAY_NODES * vcpus))
+  done < <(a ec2 describe-instance-types --instance-types "${types[@]}" \
+    --query 'InstanceTypes[].[InstanceType,VCpuInfo.DefaultVCpus]' --output text)
+  [[ "$needed" -gt 0 ]] || die "EC2 did not report the vCPUs of ${types[*]}"
+  if [[ "${quota%.*}" -lt "$needed" ]]; then
+    die "The nodes need $needed vCPUs of standard instances, and this account may run ${quota%.*} in $AWS_REGION. Request an increase of quota L-1216C47A, Running On-Demand Standard instances, in Service Quotas; docs/eks.md#what-you-need shows how."
+  fi
+}
+
 secret_value() {
   local file="$STATE/secrets/$1"
   if [[ ! -s "$file" ]]; then
@@ -648,6 +667,7 @@ up() {
   require_tools
   load_account
   require_provider_key
+  check_vcpu_quota
   log "Images published at $SHORT"
   resolve_images
   log "Launch template for gateway nodes, with gVisor"
