@@ -720,8 +720,8 @@ describe("POST /users/:uid/home/prepare", () => {
   let home: ReturnType<typeof fakeHome>;
 
   function fakeHome() {
-    let record: (effect: HomeEffect) => void = () => undefined;
-    const effect = <T>(name: string, resource: string, value: T) => async () => { record({ name, resource }); return value; };
+    let record: ((effect: HomeEffect) => void) | null = null;
+    const effect = <T>(name: string, resource: string, value: T) => async () => { record?.({ name, resource }); return value; };
     const capabilities = {
       environment: "test", subnetwork: "subnet", nativeZones: ["us-central1-a"] as readonly string[],
       nativeZone: vi.fn(async (): Promise<string | null> => null),
@@ -753,7 +753,10 @@ describe("POST /users/:uid/home/prepare", () => {
   });
 
   it("is not mounted without the home capabilities", async () => {
-    await request(app()).post(`/users/${OWNER}/home/prepare`).send(body).expect(404);
+    const response = await request(app()).post(`/users/${OWNER}/home/prepare`).send(body);
+
+    expect(response.status).toBe(404);
+    expect(home.calls()).toBe(0);
   });
 
   it("answers placement-owner before any Compute Engine call", async () => {
