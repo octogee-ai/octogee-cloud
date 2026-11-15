@@ -2,7 +2,7 @@ name: Kind smoke
 run-name: Kind smoke at ${{ github.event.workflow_run.head_sha || inputs.sha }}
 
 on:
-  workflow_run:
+  workflow_run: # zizmor: ignore[dangerous-triggers]
     workflows: [Build main]
     types: [completed]
     branches: [main]
