@@ -32,6 +32,7 @@ export async function renderReleaseHelmValues(sourceSha: string, authority?: Pic
     artifactWorker: { image: image("platform", "artifact-worker") },
     opsAgent: { image: image("platform", "octogee-ops-agent") },
     "gateway-edge": { image: edge },
+    ...("provisioning-service" in manifest.surfaces.platform ? { provisioningService: { image: image("platform", "provisioning-service") } } : {}),
     "glm-controller": {
       image: image("platform", "glm-controller"),
       platformRelease: {
