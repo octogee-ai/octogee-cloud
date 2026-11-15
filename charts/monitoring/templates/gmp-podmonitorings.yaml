@@ -98,6 +98,6 @@ spec:
     matchLabels:
       app: provisioning-service
   endpoints:
-    - port: 8080
+    - port: http
       path: /metrics
       interval: 30s

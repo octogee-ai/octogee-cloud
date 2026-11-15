@@ -100,6 +100,17 @@ describe("the provisioning service in the platform chart", () => {
     expect(policy.spec.ingress[1].from[0].namespaceSelector.matchLabels).toEqual({ "kubernetes.io/metadata.name": "gke-gmp-system" });
   });
 
+  it("is scraped on the service's own port when that port is not the default", () => {
+    const main = container(chart.helmTemplate({ sets: { ...ENABLED, "provisioningService.port": "9090" } }));
+    const monitoring = spawnSync("helm", ["template", "grafana", path.resolve(__dirname, "../../charts/monitoring"), "-n", "monitoring"], { encoding: "utf-8" });
+    expect(monitoring.status, monitoring.stderr).toBe(0);
+    const scrape = resources(monitoring.stdout).find((resource) => resource.kind === "ClusterPodMonitoring" && resource.metadata.name === "provisioning-service")!;
+    const scraped = main.ports.find((port: { name: string }) => port.name === scrape.spec.endpoints[0].port);
+
+    expect(scrape.spec.selector.matchLabels).toEqual({ app: "provisioning-service" });
+    expect(scraped?.containerPort).toBe(9090);
+  });
+
   it("reaches public HTTPS but never link-local metadata under default deny", () => {
     const out = chart.helmTemplate({ sets: { ...ENABLED, ...DEFAULT_DENY } });
     const policy = parse(findDoc(out, "NetworkPolicy", "provisioning-service-egress")!) as Resource;
