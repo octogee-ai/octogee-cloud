@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-const packages = ["gateway-edge", "octogee-api"];
+const packages = ["gateway-edge", "platform-api"];
 
 describe("service Dockerfiles", () => {
   it.each(packages)("copies the local file-deps sync script before %s runs npm build", (packageDir) => {

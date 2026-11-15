@@ -40,7 +40,7 @@ describe("native VM bootstrap supervision", () => {
     for (const name of ["curl", "df", "docker", "iptables", "ufw"]) await writeFile(`${root}/bin/${name}`, mock, { mode: 0o755 });
     const assignment = { "gateway-id": "b-fixture", "gateway-image": "registry.invalid/gateway@sha256:old", "octogee-api-url": "https://api.invalid" };
     for (const [key, value] of Object.entries(assignment)) await writeFile(`${root}/${key}`, value);
-    const binaries = resolve(import.meta.dirname, "../../../infra/desktop/image/rootfs/usr/local/bin");
+    const binaries = resolve(import.meta.dirname, "../../../desktop/image/rootfs/usr/local/bin");
     const script = `${root}/bootstrap`;
     await writeFile(`${root}/bin/octo-gateway-firewall`, await readFile(`${binaries}/octo-gateway-firewall`), { mode: 0o755 });
     await writeFile(script, (await readFile(`${binaries}/octo-gateway-agent`, "utf8")).replace("/usr/local/bin/octo-gateway-firewall", `${root}/bin/octo-gateway-firewall`));
@@ -81,7 +81,7 @@ it.each(["omarchy", "x11"])("gives the %s agent the home disk's desktop-home, ne
   roots.push(root);
   await mkdir(`${root}/bin`);
   for (const name of ["curl", "df", "docker", "iptables", "ufw"]) await writeFile(`${root}/bin/${name}`, mock, { mode: 0o755 });
-  const binaries = resolve(import.meta.dirname, "../../../infra/desktop/image/rootfs/usr/local/bin");
+  const binaries = resolve(import.meta.dirname, "../../../desktop/image/rootfs/usr/local/bin");
   await writeFile(`${root}/bin/octo-gateway-firewall`, await readFile(`${binaries}/octo-gateway-firewall`), { mode: 0o755 });
   const script = `${root}/bootstrap`;
   await writeFile(script, (await readFile(`${binaries}/octo-gateway-agent`, "utf8")).replace("/usr/local/bin/octo-gateway-firewall", `${root}/bin/octo-gateway-firewall`));
@@ -111,7 +111,7 @@ it("prefetches before assignment, refreshes a changed image, and reuses it witho
   roots.push(root);
   await mkdir(`${root}/bin`);
   for (const name of ["curl", "df", "docker", "iptables", "ufw"]) await writeFile(`${root}/bin/${name}`, mock, { mode: 0o755 });
-  const binaries = resolve(import.meta.dirname, "../../../infra/desktop/image/rootfs/usr/local/bin");
+  const binaries = resolve(import.meta.dirname, "../../../desktop/image/rootfs/usr/local/bin");
   await writeFile(`${root}/bin/octo-gateway-firewall`, await readFile(`${binaries}/octo-gateway-firewall`), { mode: 0o755 });
   const script = `${root}/bootstrap`;
   await writeFile(script, (await readFile(`${binaries}/octo-gateway-agent`, "utf8")).replace("/usr/local/bin/octo-gateway-firewall", `${root}/bin/octo-gateway-firewall`));

@@ -44,21 +44,21 @@ flowchart TB
 
 | Service | Directory | What it does |
 | --- | --- | --- |
-| Fleet controller | `glm-controller/` | Owns the fleet: which gateways exist, which user is on which, and every move between them. Serves the Admin API that [`octogee-fleet`](https://github.com/octogee-ai/octogee-fleet) calls. Installs gateways with Helm, and creates the virtual machine when an isolated gateway runs on one. Writes an operations-journal entry for every change it makes. |
-| Platform API | `octogee-api/` | Serves most HTTP routes. Its fleet broker holds the Mattermost and Gitea admin credentials and sets users up on behalf of a gateway. |
-| LLM broker | `octogee-api/` (`src/llm-broker.ts`) | Holds the model provider keys and meters every call. An agent calls it with a credential the platform issued to that agent. Runs as its own deployment. |
-| npm cache proxy | `octogee-api/` (`src/npm-cache-proxy.ts`) | An npm registry proxy with a cache. Runs as its own deployment. |
+| Fleet controller | `fleet-controller/` | Owns the fleet: which gateways exist, which user is on which, and every move between them. Serves the Admin API that [`octogee-fleet`](https://github.com/octogee-ai/octogee-fleet) calls. Installs gateways with Helm, and creates the virtual machine when an isolated gateway runs on one. Writes an operations-journal entry for every change it makes. |
+| Platform API | `platform-api/` | Serves most HTTP routes. Its fleet broker holds the Mattermost and Gitea admin credentials and sets users up on behalf of a gateway. |
+| LLM broker | `platform-api/` (`src/llm-broker.ts`) | Holds the model provider keys and meters every call. An agent calls it with a credential the platform issued to that agent. Runs as its own deployment. |
+| npm cache proxy | `platform-api/` (`src/npm-cache-proxy.ts`) | An npm registry proxy with a cache. Runs as its own deployment. |
 | Edge | `gateway-edge/` | One codebase, three roles. As a sidecar in each gateway pod it serves the user's workspace files and proxies the Mattermost WebSocket. As the gateway router it sends `/g/<gatewayId>/*` to that gateway's sidecar. As the Mattermost callback router it receives Mattermost's callbacks. |
-| Provisioner | `scripts/entrypoints/fleet-controller.ts` | Runs inside the gateway pod. When a user is assigned to the gateway it creates their Mattermost account, team, channels and agent bot, and their Gitea organization and `workspace` repository, all through the platform API's fleet broker. |
-| Gateway image | `infra/gateway/` | OpenClaw, the provisioner, and the platform's OpenClaw extensions under `infra/gateway/extensions/platform/`. [OpenClaw compatibility](openclaw-compatibility.md) lists the patches the OpenClaw build carries. |
-| Isolated gateway VM image | `infra/desktop/` | The virtual machine image for an isolated gateway that runs on a VM, which adds a desktop. Google Cloud only today. |
+| Provisioner | `scripts/entrypoints/provisioner.ts` | Runs inside the gateway pod. When a user is assigned to the gateway it creates their Mattermost account, team, channels and agent bot, and their Gitea organization and `workspace` repository, all through the platform API's fleet broker. |
+| Gateway image | `gateway/` | OpenClaw, the provisioner, and the platform's OpenClaw extensions under `gateway/extensions/platform/`. [OpenClaw compatibility](openclaw-compatibility.md) lists the patches the OpenClaw build carries. |
+| Isolated gateway VM image | `desktop/` | The virtual machine image for an isolated gateway that runs on a VM, which adds a desktop. Google Cloud only today. |
 
 `core/` and `shared/` are libraries the services share: platform state, the
 secret store, chat and git host adapters, and types.
 
 ## Two kinds of gateway
 
-A **shared gateway** is a Kubernetes pod from the `helm/octogee-gateway` chart,
+A **shared gateway** is a Kubernetes pod from the `charts/octogee-gateway` chart,
 under gVisor on a cloud cluster. Many users share its one OpenClaw process, so
 their agents cannot run host code, and the gateway holds no credentials. Its
 users work through Mattermost and Gitea.
@@ -128,8 +128,8 @@ with its additions:
 
 | Service | Start function | What a product passes |
 | --- | --- | --- |
-| Fleet controller | `main(product)` in `glm-controller/src/index.ts` | `ControllerProduct`: admin routes, user lifecycle steps, and the automation the platform leaves out, such as placement, scaling and returning idle users |
-| Platform API | `createPlatformApp({ product })` in `octogee-api/src/app.ts` | `ProductExtension`: routes, entitlements, notifications and the LLM broker's commercial rails |
+| Fleet controller | `main(product)` in `fleet-controller/src/index.ts` | `ControllerProduct`: admin routes, user lifecycle steps, and the automation the platform leaves out, such as placement, scaling and returning idle users |
+| Platform API | `createPlatformApp({ product })` in `platform-api/src/app.ts` | `ProductExtension`: routes, entitlements, notifications and the LLM broker's commercial rails |
 | Edge | `createApp({ productRoutes })` in `gateway-edge/src/index.ts` | A route table |
 
 `scripts/ops/overlay.mjs` assembles the build. It copies the platform tree,

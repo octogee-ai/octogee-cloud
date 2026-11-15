@@ -106,8 +106,8 @@ describe("placeholder manifest", () => {
 describe("chart push", () => {
   const out = mkdtempSync(join(tmpdir(), "release-charts-"));
   writeFileSync(join(out, "charts.json"), JSON.stringify([
-    { name: "octogee", version: "0.2.0", directory: "helm/octogee", archive: "/release/octogee-0.2.0.tgz" },
-    { name: "octogee-gateway", version: "0.2.0", directory: "helm/octogee-gateway", archive: "/release/octogee-gateway-0.2.0.tgz" },
+    { name: "octogee", version: "0.2.0", directory: "charts/octogee", archive: "/release/octogee-0.2.0.tgz" },
+    { name: "octogee-gateway", version: "0.2.0", directory: "charts/octogee-gateway", archive: "/release/octogee-gateway-0.2.0.tgz" },
   ]));
 
   it("treats a chart package GitHub has not created yet as unpublished, so the push that follows creates it or fails", () => {

@@ -7,7 +7,7 @@ const read = (relativePath: string) =>
   readFileSync(path.join(repoRoot, relativePath), "utf8");
 
 describe("User boot base", () => {
-  const dockerfile = read("infra/gateway/Dockerfile.isolated-base");
+  const dockerfile = read("gateway/Dockerfile.isolated-base");
 
   it("inherits the full OpenClaw base and installs controlled groups without the operator image", () => {
     expect(dockerfile).toContain("ARG GATEWAY_BASE_IMAGE");
@@ -24,7 +24,7 @@ describe("User boot base", () => {
 
   it("bakes non-npm workstation groups while leaving npm payloads for hydration", () => {
     expect(dockerfile).toMatch(
-      /COPY[^\n]*stamp-claude-first-run\.mjs[^\n]*\/octogee\/infra\/gateway\/stamp-claude-first-run\.mjs/,
+      /COPY[^\n]*stamp-claude-first-run\.mjs[^\n]*\/octogee\/gateway\/stamp-claude-first-run\.mjs/,
     );
     expect(dockerfile).not.toContain("claude-wrapper.sh");
     expect(dockerfile).not.toContain("claude-real");

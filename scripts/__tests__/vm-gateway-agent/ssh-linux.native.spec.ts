@@ -5,7 +5,7 @@ import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 
 const exec = promisify(execFile);
-const source = resolve(import.meta.dirname, "../../../infra/desktop/image/rootfs");
+const source = resolve(import.meta.dirname, "../../../desktop/image/rootfs");
 const fixture = resolve(import.meta.dirname, "ssh-linux-fixture.py");
 const image = process.env.OCTOGEE_NATIVE_SSH_IMAGE;
 const native = process.env.OCTOGEE_NATIVE_DOCKER_TEST === "1" && !!image;

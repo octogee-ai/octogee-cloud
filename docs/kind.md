@@ -139,14 +139,14 @@ The script:
 4. with `--pull`, copies each published image for your machine's architecture
    into the local registry, keeping its digest, except `vm-bridge`;
 5. without `--pull`, downloads the pinned OpenClaw build, checks its sha256
-   against `infra/gateway/openclaw-tarball/current.json`, builds the platform
+   against `gateway/openclaw-tarball/current.json`, builds the platform
    images for your machine's architecture with a dedicated BuildKit builder,
    and pushes them to the local registry;
 6. generates every secret: database passwords, the secret store root key, the
    S3 keys, the fleet signing keys, the operator key, and the Mattermost and
    Gitea admin credentials, and stores each provider key you exported in a
    Secret of its own;
-7. installs PostgreSQL and SeaweedFS, then the Helm chart in `helm/octogee`;
+7. installs PostgreSQL and SeaweedFS, then the Helm chart in `charts/octogee`;
 8. points agents at models of a provider whose key it stores, described under
    [Agent models](#agent-models);
 9. creates the Mattermost admin, its access token and the `octogee` team, and

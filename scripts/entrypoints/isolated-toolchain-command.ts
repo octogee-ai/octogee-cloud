@@ -39,7 +39,7 @@ export async function runIsolatedToolchainCommand(
     }
   } else if (command === "claude") {
     const stamper = env.OCTOGEE_CLAUDE_FIRST_RUN_STAMPER
-      ?? "/octogee/infra/gateway/stamp-claude-first-run.mjs";
+      ?? "/octogee/gateway/stamp-claude-first-run.mjs";
     spawnSync(process.execPath, [stamper], {
       stdio: "ignore",
       env: { ...env, CLAUDE_BIN: executable },

@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { parseAllDocuments } from "yaml";
 
 const REPO_ROOT = path.resolve(__dirname, "../..");
-const CHART_PATH = path.join(REPO_ROOT, "helm/octogee-gateway");
+const CHART_PATH = path.join(REPO_ROOT, "charts/octogee-gateway");
 
 const REQUIRED_VALUES: Record<string, string> = {
   imageTag: "abc1234",
@@ -84,7 +84,7 @@ function envOf(entry: Container): Record<string, string | undefined> {
   return Object.fromEntries((entry.env ?? []).map((variable) => [variable.name, variable.value]));
 }
 
-describe("helm/octogee-gateway/ — isolated gateway as a Kubernetes pod", () => {
+describe("charts/octogee-gateway/ — isolated gateway as a Kubernetes pod", () => {
   it("mounts the home from the gateway's own claim, which the chart never creates", () => {
     const { deployment, kinds } = renderDeployment();
     expect(deployment.spec.template.spec.volumes).toContainEqual({
@@ -181,7 +181,7 @@ describe("helm/octogee-gateway/ — isolated gateway as a Kubernetes pod", () =>
   });
 });
 
-describe("helm/octogee-gateway/ — isolated pod placement", () => {
+describe("charts/octogee-gateway/ — isolated pod placement", () => {
   it("places the pod on an amd64 node, because the isolated image is built for linux/amd64 only", () => {
     expect(renderDeployment().deployment.spec.template.spec.nodeSelector).toEqual({ "kubernetes.io/arch": "amd64" });
   });

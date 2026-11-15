@@ -3,8 +3,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { createSurgeOpenClawProcessGate } from "../../scripts/lib/surge-openclaw-process-gate.js";
-import { reconcileSurgeUserHandoff, type SurgePod } from "../../glm-controller/src/surge-user-handoff.js";
-import { oldPod, targetPod, assignment, createSurgeHandoffHarness } from "../../glm-controller/src/__tests__/fixtures/surge-user-handoff.js";
+import { reconcileSurgeUserHandoff, type SurgePod } from "../../fleet-controller/src/surge-user-handoff.js";
+import { oldPod, targetPod, assignment, createSurgeHandoffHarness } from "../../fleet-controller/src/__tests__/fixtures/surge-user-handoff.js";
 
 const harness = (input: Parameters<typeof createSurgeHandoffHarness>[1] = {}) => createSurgeHandoffHarness(vi.fn, input);
 

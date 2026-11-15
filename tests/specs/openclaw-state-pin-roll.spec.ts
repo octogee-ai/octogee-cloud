@@ -11,7 +11,7 @@ const previousSha = process.env.OCTOGEE_TEST_OPENCLAW_PREVIOUS_SHA;
 const binary = process.env.OCTOGEE_TEST_OPENCLAW_BIN;
 const dsn = process.env.OCTOGEE_TEST_POSTGRES_DSN;
 const repo = path.resolve(import.meta.dirname, "../..");
-const sourceSha = JSON.parse(readFileSync(path.join(repo, "infra/gateway/openclaw-tarball/current.json"), "utf8")).sourceSha as string;
+const sourceSha = JSON.parse(readFileSync(path.join(repo, "gateway/openclaw-tarball/current.json"), "utf8")).sourceSha as string;
 
 describe.skipIf(!previous || !previousSha || !binary || !dsn)("OpenClaw pin roll over retained PostgreSQL state", () => {
   it("completes state the oldest retained pin created once, keeping its setup rows", async () => {
@@ -19,7 +19,7 @@ describe.skipIf(!previous || !previousSha || !binary || !dsn)("OpenClaw pin roll
     const state = path.join(home, ".openclaw");
     mkdirSync(state);
     const file = path.join(state, "openclaw.json");
-    const { database } = JSON.parse(readFileSync(path.join(repo, "infra/gateway/openclaw.isolated.template.json"), "utf8"));
+    const { database } = JSON.parse(readFileSync(path.join(repo, "gateway/openclaw.isolated.template.json"), "utf8"));
     const prefix = `pin_roll_${path.basename(home).slice(-6).toLowerCase()}`;
     const likePrefix = prefix.replaceAll("_", "\\_");
     database.postgres.schemaPrefix = prefix;

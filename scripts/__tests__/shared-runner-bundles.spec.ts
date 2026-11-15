@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 
 const SCRIPTS = resolve(import.meta.dirname, "..");
-const DOCKERFILE = resolve(SCRIPTS, "../infra/gateway/Dockerfile");
+const DOCKERFILE = resolve(SCRIPTS, "../gateway/Dockerfile");
 const IMAGE_SCRIPTS = "/octogee/scripts/";
 const IMAGE_ESBUILD = `${IMAGE_SCRIPTS}node_modules/.bin/esbuild`;
 const SHARED_RUNNERS_OUTDIR = `--outdir=${IMAGE_SCRIPTS}shared-runners`;
@@ -58,7 +58,7 @@ describe("shared runner bundles", () => {
 
   it("builds the shared runners the image starts", () => {
     expect(runners.map(output => output.entryPoint)).toEqual(expect.arrayContaining([
-      "entrypoints/fleet-controller.ts",
+      "entrypoints/provisioner.ts",
       "entrypoints/byosub-syncback-runner.ts",
     ]));
   });

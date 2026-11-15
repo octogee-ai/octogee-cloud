@@ -6,7 +6,7 @@ import * as path from "node:path";
 import { parse, parseAllDocuments, stringify } from "yaml";
 import { INSTALLATION_VALUES, useUmbrellaChart } from "./helpers/umbrella-chart";
 
-const GATEWAY_CHART = path.resolve(__dirname, "../../helm/octogee-gateway");
+const GATEWAY_CHART = path.resolve(__dirname, "../../charts/octogee-gateway");
 const GATEWAY_ID = "lin-s-f4c76bd3";
 
 interface LabelExpression {

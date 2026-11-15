@@ -16,7 +16,7 @@ const generator = async () =>
 
 describe("gateway-edge's vendored OpenClaw Browser resource projection", () => {
   it("was generated from the pinned OpenClaw source", () => {
-    expect(provenance.source).toBe(readJson("infra/gateway/openclaw-tarball/current.json").sourceSha);
+    expect(provenance.source).toBe(readJson("gateway/openclaw-tarball/current.json").sourceSha);
   });
 
   it("was generated from the generator and adapter files as committed", async () => {

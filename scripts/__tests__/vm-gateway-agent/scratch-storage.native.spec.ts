@@ -14,7 +14,7 @@ describe.skipIf(!container)("native disposable scratch filesystem", () => {
     const remote = `/opt/octogee-scratch-limit-${randomUUID()}`;
     const docker = async (...args: string[]) => exec("docker", ["exec", container!, ...args], { timeout: 30_000 });
     try {
-      const source = await readFile(resolve(import.meta.dirname, "../../../infra/desktop/image/rootfs/usr/local/bin/octo-scratch-storage"), "utf8");
+      const source = await readFile(resolve(import.meta.dirname, "../../../desktop/image/rootfs/usr/local/bin/octo-scratch-storage"), "utf8");
       await writeFile(join(directory, "storage"), source.replace("BYTES=8589934592", "BYTES=16777216"));
       await exec("docker", ["cp", directory, `${container}:${remote}`]);
       await docker("sh", "-c", `mkdir '${remote}/volumes'; printf factory > '${remote}/volumes/seed'; printf home > '${remote}/retained-home'`);

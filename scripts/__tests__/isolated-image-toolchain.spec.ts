@@ -20,7 +20,7 @@ async function fixture() {
   return { root, lock, groups };
 }
 function prepare(root: string, lock: string, groups: string) {
-  return execFileSync(process.execPath, [realpathSync(path.resolve("../infra/gateway/isolated-toolchain/preinstall.mjs")), root], {
+  return execFileSync(process.execPath, [realpathSync(path.resolve("../gateway/isolated-toolchain/preinstall.mjs")), root], {
     env: { ...process.env, BUILDER_TOOLCHAIN_LOCK_SHA256: lock, BUILDER_TOOL_GROUPS_SHA256: groups }, encoding: "utf8", stdio: "pipe",
   });
 }

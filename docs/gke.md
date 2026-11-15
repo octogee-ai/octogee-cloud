@@ -3,7 +3,7 @@
 This guide installs the whole platform in one Google Cloud project, from an
 empty project to an agent that replies in Mattermost. It uses only what this
 repository publishes: the images Build main pushes to GitHub's container
-registry, the Helm chart in `helm/octogee`, and the
+registry, the Helm chart in `charts/octogee`, and the
 [octogee-fleet](https://github.com/octogee-ai/octogee-fleet) command line. One
 script, `scripts/ops/gke-install.sh`, creates the cloud resources and installs
 the chart. For the same platform on your own machine, see

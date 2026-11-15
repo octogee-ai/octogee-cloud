@@ -90,8 +90,8 @@ esac
 # ── Required secrets ────────────────────────────────────────────────────────
 # These cause CreateContainerConfigError if missing (not marked optional).
 # Keep in sync with:
-#   helm/octogee/charts/gateway/templates/deployment.yaml
-#   helm/octogee/charts/gateway-edge/values.yaml
+#   charts/octogee/charts/gateway/templates/deployment.yaml
+#   charts/octogee/charts/gateway-edge/values.yaml
 REQUIRED_SECRETS=(
   "agent-store-postgres"
   "octogee-anthropic"       # setup/legacy only; gateway pods do not mount it

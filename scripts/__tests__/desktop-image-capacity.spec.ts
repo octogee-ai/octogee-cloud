@@ -24,7 +24,7 @@ function start(failures: number, error: string, advance = 1) {
     }
     sleep() { SECONDS=$((SECONDS + ADVANCE)); }
     start_instance_with_capacity_retry proof-vm --zone us-central1-b --project firebase-test --quiet
-  `], { encoding: 'utf8', env: { ...process.env, HELPER: path.resolve(__dirname, '../../infra/desktop/image/zones.sh'), COUNTER: counter, CALLS: calls, FAILURES: String(failures), FAILURE: error, ADVANCE: String(advance) } });
+  `], { encoding: 'utf8', env: { ...process.env, HELPER: path.resolve(__dirname, '../../desktop/image/zones.sh'), COUNTER: counter, CALLS: calls, FAILURES: String(failures), FAILURE: error, ADVANCE: String(advance) } });
   return { ...result, attempts: Number(readFileSync(counter, 'utf8')), calls: readFileSync(calls, 'utf8').trim().split('\n').filter(Boolean) };
 }
 it('retries transient capacity exhaustion on the same stopped VM and zone', () => {

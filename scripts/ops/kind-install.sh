@@ -125,13 +125,13 @@ EOF
 }
 
 stage_openclaw() {
-  local tarballs="$CONTEXT_DIR/infra/gateway/openclaw-tarball"
+  local tarballs="$CONTEXT_DIR/gateway/openclaw-tarball"
   if [[ -n "$OPENCLAW_DIR" ]]; then
-    node "$ROOT/infra/gateway/openclaw-tarball/fetch-release.mjs" --from="$OPENCLAW_DIR" --to="$tarballs"
+    node "$ROOT/gateway/openclaw-tarball/fetch-release.mjs" --from="$OPENCLAW_DIR" --to="$tarballs"
   else
-    node "$ROOT/infra/gateway/openclaw-tarball/fetch-release.mjs" --to="$tarballs"
+    node "$ROOT/gateway/openclaw-tarball/fetch-release.mjs" --to="$tarballs"
   fi
-  bash "$ROOT/infra/gateway/openclaw-tarball/extract-npm.sh" "$tarballs/openclaw-fork.tgz"
+  bash "$ROOT/gateway/openclaw-tarball/extract-npm.sh" "$tarballs/openclaw-fork.tgz"
 }
 
 ensure_builder() {
@@ -173,7 +173,7 @@ record_digests() {
 
 image_values() {
   node --input-type=module - "$STATE/digests.json" "$IMAGE_PREFIX" \
-    "$(node -p "require('$ROOT/infra/gateway/openclaw-tarball/current.json').sourceSha")" > "$STATE/images.yaml" <<'JS'
+    "$(node -p "require('$ROOT/gateway/openclaw-tarball/current.json').sourceSha")" > "$STATE/images.yaml" <<'JS'
 import { readFileSync } from "node:fs";
 const [file, prefix, openclaw] = process.argv.slice(2);
 const { sha, images } = JSON.parse(readFileSync(file, "utf8"));
@@ -361,7 +361,7 @@ install_infrastructure() {
 }
 
 install_chart() {
-  h upgrade --install octogee "$ROOT/helm/octogee" \
+  h upgrade --install octogee "$ROOT/charts/octogee" \
     -f "$ROOT/scripts/ops/kind/values.yaml" -f "$STATE/images.yaml" \
     --set "gitea.gitea.config.database.PASSWD=$(cat "$STATE/secrets/gitea-password")" \
     --timeout=10m

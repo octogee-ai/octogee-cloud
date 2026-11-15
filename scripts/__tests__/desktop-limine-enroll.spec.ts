@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 
-const enroll = fileURLToPath(new URL('../../infra/desktop/image/rootfs/usr/local/bin/octo-limine-enroll', import.meta.url));
+const enroll = fileURLToPath(new URL('../../desktop/image/rootfs/usr/local/bin/octo-limine-enroll', import.meta.url));
 const temporary: string[] = [];
 const CURRENT = 'e1263785717d485eadd546d029f57eec';
 const BUILD = '98ef3c4a73534d4c89f032d48ddb95fe';

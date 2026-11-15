@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 const repo = path.resolve(import.meta.dirname, "../..");
 const roots: string[] = [];
-const command = readFileSync(path.join(repo, "infra/gateway/entrypoint.sh"), "utf8")
+const command = readFileSync(path.join(repo, "gateway/entrypoint.sh"), "utf8")
   .split("\n").find(line => line.includes("beginWorkspaceIdentityBoot"))!;
 
 afterEach(() => {

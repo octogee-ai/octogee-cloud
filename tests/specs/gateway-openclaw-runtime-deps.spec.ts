@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-const verifier = resolve(import.meta.dirname, "../../infra/gateway/verify-openclaw-runtime-deps.sh");
+const verifier = resolve(import.meta.dirname, "../../gateway/verify-openclaw-runtime-deps.sh");
 const roots: string[] = [];
 
 function runtimeTree(packages: string[]): string {

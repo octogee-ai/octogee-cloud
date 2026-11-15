@@ -6,7 +6,7 @@ import { parseAllDocuments } from "yaml";
 import { TIER_PRESETS, SIZING_TIERS } from "../../shared/types/sizing.js";
 
 const REPO_ROOT = path.resolve(__dirname, "../..");
-const CHART_PATH = path.join(REPO_ROOT, "helm/octogee-gateway");
+const CHART_PATH = path.join(REPO_ROOT, "charts/octogee-gateway");
 
 beforeAll(() => {
   if (!fs.existsSync(CHART_PATH)) {
@@ -89,7 +89,7 @@ function expectNodejsMatchTier(rendered: string, tier: keyof typeof TIER_PRESETS
   expect(nodeOpts?.value, `NODE_OPTIONS for ${tier}`).toContain(`--max-old-space-size=${preset.nodejs.maxOldSpaceSizeMb}`);
 }
 
-describe("helm/octogee-gateway/ — sizing tier explicit override", () => {
+describe("charts/octogee-gateway/ — sizing tier explicit override", () => {
   for (const tier of SIZING_TIERS) {
     it(`renders gateway container resources matching the ${tier} preset`, () => {
       const out = helmTemplate({ sizingTier: tier });
@@ -115,7 +115,7 @@ describe("helm/octogee-gateway/ — sizing tier explicit override", () => {
   });
 });
 
-describe("helm/octogee-gateway/ — sizing tier profile-default fallback", () => {
+describe("charts/octogee-gateway/ — sizing tier profile-default fallback", () => {
   it("User profile without sizingTier renders small (class default)", () => {
     const out = helmTemplate({ profile: "isolated" });
     expectResourcesMatchTier(out, "s");
@@ -144,7 +144,7 @@ describe("helm/octogee-gateway/ — sizing tier profile-default fallback", () =>
   });
 });
 
-describe("helm/octogee-gateway/ — replicas knob (paused mode)", () => {
+describe("charts/octogee-gateway/ — replicas knob (paused mode)", () => {
   it("defaults to replicas: 1 when not set (running gateway)", () => {
     const out = helmTemplate();
     const docs = parseAllDocuments(out);
@@ -178,7 +178,7 @@ describe("helm/octogee-gateway/ — replicas knob (paused mode)", () => {
   });
 });
 
-describe("helm/octogee-gateway/ — invalid sizingTier rejected by schema", () => {
+describe("charts/octogee-gateway/ — invalid sizingTier rejected by schema", () => {
   it("fails to render when sizingTier is not in the SIZING_TIERS enum", () => {
     const args = [
       "template",

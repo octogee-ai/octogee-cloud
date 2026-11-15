@@ -90,7 +90,7 @@ while IFS= read -r rules_file; do
   [[ -n "$rules_name" ]] || { echo "No ClusterRules name in $rules_file" >&2; exit 1; }
   assert_release_ownership clusterrules "$rules_name"
   rules_count=$((rules_count + 1))
-done < <(find "$REPO_DIR/helm/monitoring" -path "$REPO_DIR/helm/monitoring/templates" -prune -o -type f -name gmp-rules.yaml -print | sort)
+done < <(find "$REPO_DIR/charts/monitoring" -path "$REPO_DIR/charts/monitoring/templates" -prune -o -type f -name gmp-rules.yaml -print | sort)
 [[ "$rules_count" -gt 0 ]] || { echo "No alert rule sources found" >&2; exit 1; }
 prod_namespace="$(octogee_deployment_target_field --environment=prod namespace)"
 test_namespace="$(octogee_deployment_target_field --environment=test namespace)"
@@ -174,7 +174,7 @@ while IFS= read -r json; do
   name="grafana-dash-$(basename "$json" .json | tr '[:upper:]_' '[:lower:]-')"
   assert_release_ownership configmap "$name" monitoring
   dashboard_count=$((dashboard_count + 1))
-done < <(find "$REPO_DIR/helm/monitoring/dashboards" -type f -name '*.json' -print | sort)
+done < <(find "$REPO_DIR/charts/monitoring/dashboards" -type f -name '*.json' -print | sort)
 [[ "$dashboard_count" -gt 0 ]] || { echo "No Grafana dashboard sources found" >&2; exit 1; }
 
 all_configmaps="$(kubectl get configmap --namespace monitoring --context "$TARGET_KUBE_CONTEXT" \
@@ -200,7 +200,7 @@ try {
 if (JSON.stringify(actual.collection?.filter?.matchOneOf) !== JSON.stringify(desired.collection.filter.matchOneOf)) {
   process.exit(1);
 }
-' "$REPO_DIR/helm/monitoring/gmp-collection-filter.json"; then
+' "$REPO_DIR/charts/monitoring/gmp-collection-filter.json"; then
   echo "gmp-public/config collection filter drifted" >&2
   exit 1
 fi

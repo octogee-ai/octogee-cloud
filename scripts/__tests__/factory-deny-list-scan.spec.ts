@@ -44,10 +44,10 @@ describe("factory deny-list scan", () => {
 
   it("skips test files and still reports the same text in the code beside them", () => {
     const denied = "project: octogee-test, a 14-day trial";
-    const root = tree({ "glm-controller/src/__tests__/reconcile.spec.ts": denied, "glm-controller/src/reconcile.ts": denied });
+    const root = tree({ "fleet-controller/src/__tests__/reconcile.spec.ts": denied, "fleet-controller/src/reconcile.ts": denied });
     expect(scanTree(root).hits).toEqual([
-      { file: "glm-controller/src/reconcile.ts", line: 1, rule: "TEST environment identity", text: "octogee-test" },
-      { file: "glm-controller/src/reconcile.ts", line: 1, rule: "trial", text: "trial" },
+      { file: "fleet-controller/src/reconcile.ts", line: 1, rule: "TEST environment identity", text: "octogee-test" },
+      { file: "fleet-controller/src/reconcile.ts", line: 1, rule: "trial", text: "trial" },
     ]);
   });
 });
@@ -370,7 +370,7 @@ describe("factory deny-list third-party author files", () => {
   const author = THIRD_PARTY_AUTHOR_FILES[0]!;
 
   it("lists third-party author files by exact path, never by pattern", () => {
-    expect(THIRD_PARTY_AUTHOR_FILES).toContain("infra/gateway/openclaw-tarball/npm-12.2.1.patch");
+    expect(THIRD_PARTY_AUTHOR_FILES).toContain("gateway/openclaw-tarball/npm-12.2.1.patch");
     for (const path of THIRD_PARTY_AUTHOR_FILES) expect(path).toMatch(/^[\w./-]+\.[a-z]+$/);
   });
 
@@ -416,14 +416,14 @@ describe("factory deny-list test files", () => {
   it.each([
     "scripts/__tests__/factory-deny-list-scan.spec.ts",
     "scripts/__tests__/source-transfer-launcher.test.py",
-    "glm-controller/src/__tests__/fixtures/placement-policy.ts",
+    "fleet-controller/src/__tests__/fixtures/placement-policy.ts",
     "core/src/fleet-signature.spec.ts",
-    "octogee-api/src/__tests__/byok-broker.emulator.spec.ts",
-    "infra/gateway/openclaw-tarball/npm-distribution.test.mjs",
+    "platform-api/src/__tests__/byok-broker.emulator.spec.ts",
+    "gateway/openclaw-tarball/npm-distribution.test.mjs",
     "gateway-edge/src/test-setup/public-app-origins.ts",
     "core/src/fixtures/fleet-keys.ts",
-    "infra/desktop/fixtures/computer-tool-acceptance.html",
-    "infra/desktop/image/test_firewall.py",
+    "desktop/fixtures/computer-tool-acceptance.html",
+    "desktop/image/test_firewall.py",
     "tests/vitest.config.ts",
   ])("classifies %s as a test file", path => {
     expect(isTestFile(path)).toBe(true);
@@ -432,15 +432,15 @@ describe("factory deny-list test files", () => {
   it.each([
     "terraform/environments/test/main.tf",
     "terraform/product/posthog/test/main.tf",
-    "helm/octogee/values.test.yaml",
-    "helm/octogee/templates/tests/test-mm-admin-token.yaml",
-    "octogee-api/src/test-helpers/fixture-accounts.ts",
+    "charts/octogee/values.test.yaml",
+    "charts/octogee/templates/tests/test-mm-admin-token.yaml",
+    "platform-api/src/test-helpers/fixture-accounts.ts",
     "core/src/testing/journal-store.ts",
     "scripts/ops/rebuild-test-env.sh",
     "scripts/ci/factory-deny-list-scan.ts",
-    "infra/desktop/acceptance/display-resize.py",
-    "infra/desktop/image/attest_boot.py",
-    "glm-controller/src/latest-release.ts",
+    "desktop/acceptance/display-resize.py",
+    "desktop/image/attest_boot.py",
+    "fleet-controller/src/latest-release.ts",
   ])("does not classify %s as a test file", path => {
     expect(isTestFile(path)).toBe(false);
   });

@@ -54,7 +54,7 @@ async function resolverGrammarProviders(): Promise<string[]> {
 }
 
 function brokerRouteProviders(): string[] {
-  const src = readSrc("octogee-api/src/routes/byok-broker.ts");
+  const src = readSrc("platform-api/src/routes/byok-broker.ts");
   if (src.includes("MODEL_CREDENTIAL_STATIC_PROVIDER_IDS")) {
     return catalogStaticProviders;
   }
@@ -72,7 +72,7 @@ describe("BYOK provider registry parity (scripts PROVIDERS ↔ route ↔ resolve
       readSrc("scripts/lib/model-credential-materializer.ts"),
     ).toContain("MODEL_CREDENTIAL_MATERIALIZER_PROVIDERS");
     expect(
-      readSrc("octogee-api/src/routes/byok-broker.ts"),
+      readSrc("platform-api/src/routes/byok-broker.ts"),
     ).toContain("MODEL_CREDENTIAL_STATIC_PROVIDER_IDS");
 
     const resolver = await import(

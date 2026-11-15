@@ -27,25 +27,27 @@ There are no npm workspaces. Each package has its own `package.json` and
 lockfile, and installs, typechecks and tests on its own.
 
 ```
-core/            @octogee/core: shared runtime (platform state, secret store, chat and git hosts)
-shared/          @octogee/shared: types and small server helpers
-glm-controller/  the fleet controller and its Admin API: placement, migration, gateway rollout
-octogee-api/     the platform API, plus the LLM broker and npm cache proxy apps
-gateway-edge/    sidecar in each gateway pod; also runs as the gateway router and the Mattermost callback router
-scripts/         gateway pod boot steps and provisioner (entrypoints/), operator tools (ops/), CI (ci/), specs (__tests__/)
-infra/           the gateway image (infra/gateway/), the isolated gateway VM image (infra/desktop/), vm-bridge
-helm/            octogee (the platform), octogee-gateway (one gateway), monitoring
-terraform/       Google Cloud modules
-templates/       starter files for new agents and their workspaces
-tests/           cross-package specs, such as the Helm chart specs
+core/              @octogee/core: shared runtime (platform state, secret store, chat and git hosts)
+shared/            @octogee/shared: types and small server helpers
+fleet-controller/  the fleet controller and its Admin API: placement, migration, gateway rollout
+platform-api/      the platform API, plus the LLM broker and npm cache proxy apps
+gateway-edge/      sidecar in each gateway pod; also runs as the gateway router and the Mattermost callback router
+scripts/           gateway pod boot steps and provisioner (entrypoints/), operator tools (ops/), CI (ci/), specs (__tests__/)
+gateway/           the gateway image: OpenClaw, its plugins (extensions/) and the pod entrypoint
+desktop/           the isolated gateway VM image
+vm-bridge/         the VM bridge image
+charts/            octogee (the platform), octogee-gateway (one gateway), monitoring
+terraform/         Google Cloud modules
+templates/         starter files for new agents and their workspaces
+tests/             cross-package specs, such as the Helm chart specs
 install.sh, deploy/  the foundation installer: one stock OpenClaw gateway with chat and git
-docs/            start at docs/getting-started.md
+docs/              start at docs/getting-started.md
 ```
 
 `core` and `shared` commit their built `dist/`. Other packages
 install them as `file:` dependencies, so build and commit `dist/` with any
 change to their source. The OpenClaw build the gateway image uses is pinned in
-`infra/gateway/openclaw-tarball/current.json`.
+`gateway/openclaw-tarball/current.json`.
 
 ## Build and test
 
@@ -130,7 +132,7 @@ the operator asks for them or a current risk to users requires them.
 
 ## Architecture
 
-- **HTTP.** The platform API (`octogee-api`) serves most routes. The gateway
+- **HTTP.** The platform API (`platform-api/`) serves most routes. The gateway
   router, `gateway-edge` in router mode, sends `/g/<gatewayId>/*` to that
   gateway's edge sidecar, which serves the user's workspace files and proxies
   the Mattermost WebSocket.
@@ -143,11 +145,11 @@ the operator asks for them or a current risk to users requires them.
   Google Secret Manager. Each agent has its own PostgreSQL store.
 - **Users.** `octogee-fleet user add` records a user and `user assign` places
   them on a gateway. The provisioner in the gateway pod,
-  `scripts/entrypoints/fleet-controller.ts` despite its name, then sets the user
+  `scripts/entrypoints/provisioner.ts`, then sets the user
   up through the platform API's fleet broker, which holds the admin credentials:
   their Mattermost account, team, channels and agent bot, and their Gitea
   organization with a `workspace` repository.
-- **Gateways.** Shared gateways are Kubernetes pods from `helm/octogee-gateway`,
+- **Gateways.** Shared gateways are Kubernetes pods from `charts/octogee-gateway`,
   under gVisor on a cloud cluster. An isolated gateway runs as a pod with its
   own home claim, or on a Google Cloud virtual machine, which adds a desktop; a
   sizing profile chooses. The controller adds no gateway and moves no user on
@@ -172,6 +174,6 @@ the operator asks for them or a current risk to users requires them.
   [known rough edges](docs/rough-edges.md).
 - The [handbook](docs/handbook/00-index.md) chapters on principles, testing,
   pull requests, repository conventions and docs.
-- Code anchors: `octogee-api/src/app.ts`, `gateway-edge/src/index.ts`,
-  `glm-controller/src/index.ts`, `glm-controller/src/http-server.ts` (the Admin
-  API), `scripts/entrypoints/fleet-controller.ts` (the provisioner).
+- Code anchors: `platform-api/src/app.ts`, `gateway-edge/src/index.ts`,
+  `fleet-controller/src/index.ts`, `fleet-controller/src/http-server.ts` (the Admin
+  API), `scripts/entrypoints/provisioner.ts` (the provisioner).

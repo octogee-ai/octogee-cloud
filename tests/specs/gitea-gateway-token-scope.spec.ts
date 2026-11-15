@@ -44,7 +44,7 @@ describe("canonical Gitea gateway token", () => {
       path.join(repoRoot, "scripts/lib/gitea-token-convergence.sh"),
       "utf8",
     );
-    const gatewayChart = readFileSync(path.join(repoRoot, "helm/octogee-gateway/values.yaml"), "utf8");
+    const gatewayChart = readFileSync(path.join(repoRoot, "charts/octogee-gateway/values.yaml"), "utf8");
 
     expect(convergence).toContain("octogee-api and glm-controller");
     expect(gatewayChart).toContain("Platform secrets (GITEA_TOKEN");

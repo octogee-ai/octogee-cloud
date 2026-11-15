@@ -25,7 +25,7 @@ function mattermostImage(rendered: string): string | undefined {
     ?.spec?.template?.spec?.containers?.find(({ name }) => name === "mattermost")?.image;
 }
 
-describe("helm/octogee/ — Mattermost image", () => {
+describe("charts/octogee/ — Mattermost image", () => {
   it("runs the stock Mattermost Team Edition release, pinned by version and amd64 digest, when an installation names no image", () => {
     expect(mattermostImage(chart.helmTemplate())).toBe(`${STOCK_REPOSITORY}:${STOCK_TAG}@${STOCK_AMD64_DIGEST}`);
   });

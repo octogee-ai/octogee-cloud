@@ -1090,7 +1090,7 @@ export async function reconcileSystemConfigSchema(
 // full-power user template; the shared template remains the explicit
 // override for tooling that seeds a shared-gateway-shaped config on purpose.
 export function defaultSystemConfigTemplatePath(env: NodeJS.ProcessEnv = process.env): string {
-  const gatewayDir = path.join(TEMPLATES_DIR, "..", "infra", "gateway");
+  const gatewayDir = path.join(TEMPLATES_DIR, "..", "gateway");
   return isIsolatedGatewayClassValue(env.GATEWAY_CLASS)
     ? path.join(gatewayDir, "openclaw.isolated.template.json")
     : path.join(gatewayDir, "openclaw.template.json");

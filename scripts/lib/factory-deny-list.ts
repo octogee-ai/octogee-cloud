@@ -18,14 +18,14 @@ export const VENDORED_FILES: readonly string[] = [
   "gateway-edge/src/vendor/openclaw-browser-resources/index.ts",
   "gateway-edge/src/vendor/openclaw-browser-resources/LICENSES.txt",
   "gateway-edge/src/vendor/openclaw-browser-resources/provenance.json",
-  "helm/monitoring/charts/grafana-13.0.1.tgz",
-  "helm/octogee/charts/gitea-12.7.0.tgz",
+  "charts/monitoring/charts/grafana-13.0.1.tgz",
+  "charts/octogee/charts/gitea-12.7.0.tgz",
 ];
 
 export const THIRD_PARTY_AUTHOR_FILES: readonly string[] = [
   "gateway-edge/src/vendor/openclaw-browser-resources/index.ts",
   "gateway-edge/src/vendor/openclaw-browser-resources/LICENSES.txt",
-  "infra/gateway/openclaw-tarball/npm-12.2.1.patch",
+  "gateway/openclaw-tarball/npm-12.2.1.patch",
 ];
 
 const PERSONAL_EMAIL_RULE = "personal email";

@@ -7,7 +7,7 @@ import { withUserClaim } from "./helpers/user-claim.js";
 
 const vmEnv = withUserClaim({ GATEWAY_CLASS: "isolated", GATEWAY_RUNTIME_KIND: "gce-vm" }, "owner");
 const template = (): Record<string, any> => JSON.parse(readFileSync(
-  new URL("../../infra/gateway/openclaw.isolated.template.json", import.meta.url), "utf8",
+  new URL("../../gateway/openclaw.isolated.template.json", import.meta.url), "utf8",
 ));
 
 describe("computer browser runtime", () => {

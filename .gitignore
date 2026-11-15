@@ -25,11 +25,11 @@ templates/*/node_modules/
 templates/*/.astro/
 templates/*/package-lock.json
 
-infra/chat-proxy/node_modules/
-infra/chat-proxy/dist/
-infra/gateway/openclaw-tarball/*.tgz
-infra/gateway/extensions/octogee-router/*.tgz
-helm/octogee/charts/*.tgz
+chat-proxy/node_modules/
+chat-proxy/dist/
+gateway/openclaw-tarball/*.tgz
+gateway/extensions/octogee-router/*.tgz
+charts/octogee/charts/*.tgz
 
 **/.terraform/
 terraform/**/modules/**/.terraform.lock.hcl

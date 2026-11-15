@@ -72,15 +72,15 @@ jobs:
               cd gateway-edge
               npm run typecheck
               npm test
-          - name: octogee-api
-            installs: gateway-edge shared octogee-api
+          - name: platform-api
+            installs: gateway-edge shared platform-api
             gateway-npm: true
             run: |
-              cd octogee-api
+              cd platform-api
               npm run typecheck
               npm test
           - name: tests
-            installs: scripts shared glm-controller tests
+            installs: scripts shared fleet-controller tests
             helm: true
             run: |
               cd tests
@@ -98,26 +98,26 @@ jobs:
               node scripts/ci/release-charts.mjs verify --tag=v0.0.0 --manifest="$RUNNER_TEMP/image-manifest.json" --out="$RUNNER_TEMP/charts"
           - name: libraries
             installs: >-
-              shared scripts glm-controller
-              infra/gateway/extensions/platform/octogee-access-tools
-              infra/gateway/extensions/platform/octogee-activity-tools
-              infra/gateway/extensions/platform/octogee-broker-tools
-              infra/gateway/extensions/platform/octogee-chat-tools
-              infra/gateway/extensions/platform/octogee-status-tools
-              infra/gateway/extensions/platform/octogee-voice-tools
-              infra/gateway/extensions/platform/octogee-web-tools
-              infra/gateway/extensions/platform/octogee-workspace-tools
+              shared scripts fleet-controller
+              gateway/extensions/platform/octogee-access-tools
+              gateway/extensions/platform/octogee-activity-tools
+              gateway/extensions/platform/octogee-broker-tools
+              gateway/extensions/platform/octogee-chat-tools
+              gateway/extensions/platform/octogee-status-tools
+              gateway/extensions/platform/octogee-voice-tools
+              gateway/extensions/platform/octogee-web-tools
+              gateway/extensions/platform/octogee-workspace-tools
             run: |
               (cd shared && npm run typecheck && npm run build && node ../scripts/ops/verify-committed-dist.mjs && npm test)
-              (cd glm-controller && npm run typecheck && npm test)
-              (cd infra/gateway/extensions/platform/octogee-access-tools && npm test)
-              (cd infra/gateway/extensions/platform/octogee-activity-tools && npm run typecheck && npm test)
-              (cd infra/gateway/extensions/platform/octogee-broker-tools && npm test)
-              (cd infra/gateway/extensions/platform/octogee-chat-tools && npm test)
-              (cd infra/gateway/extensions/platform/octogee-status-tools && npm test)
-              (cd infra/gateway/extensions/platform/octogee-voice-tools && npm test)
-              (cd infra/gateway/extensions/platform/octogee-web-tools && npm test)
-              (cd infra/gateway/extensions/platform/octogee-workspace-tools && npm test)
+              (cd fleet-controller && npm run typecheck && npm test)
+              (cd gateway/extensions/platform/octogee-access-tools && npm test)
+              (cd gateway/extensions/platform/octogee-activity-tools && npm run typecheck && npm test)
+              (cd gateway/extensions/platform/octogee-broker-tools && npm test)
+              (cd gateway/extensions/platform/octogee-chat-tools && npm test)
+              (cd gateway/extensions/platform/octogee-status-tools && npm test)
+              (cd gateway/extensions/platform/octogee-voice-tools && npm test)
+              (cd gateway/extensions/platform/octogee-web-tools && npm test)
+              (cd gateway/extensions/platform/octogee-workspace-tools && npm test)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -129,7 +129,7 @@ jobs:
           cache-dependency-path: "**/package-lock.json"
       - name: Use the gateway image's npm
         if: matrix.gateway-npm
-        run: npm install --global "npm@$(sed -n 's/^ARG NPM_VERSION=//p' infra/gateway/Dockerfile.base)" --no-audit --no-fund
+        run: npm install --global "npm@$(sed -n 's/^ARG NPM_VERSION=//p' gateway/Dockerfile.base)" --no-audit --no-fund
       - name: Install Helm 4.3.1
         if: matrix.helm
         run: |

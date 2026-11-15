@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { internalFetch } from "../lib/internal-fetch.js";
 import { createFleetBrokerClient } from "../lib/fleet-broker-client.js";
-import { createSharedAutosave } from "../entrypoints/fleet-controller.js";
+import { createSharedAutosave } from "../entrypoints/provisioner.js";
 import { createPreStopAllUsersFileFlush } from "../entrypoints/prestop-flush.js";
 
 vi.mock("../lib/internal-fetch.js", async (importOriginal) => ({

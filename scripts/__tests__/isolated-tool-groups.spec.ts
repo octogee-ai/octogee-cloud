@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { parseIsolatedToolGroups } from "../lib/isolated-tool-groups.js";
 
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
-const manifestPath = `${repoRoot}/infra/gateway/isolated-toolchain/groups.json`;
+const manifestPath = `${repoRoot}/gateway/isolated-toolchain/groups.json`;
 
 describe("User tool groups", () => {
   it("restores the complete pre-slim user workstation as named groups", () => {

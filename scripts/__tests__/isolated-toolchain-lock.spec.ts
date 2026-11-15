@@ -234,8 +234,8 @@ describe("User npm toolchain lock", () => {
 
   it("keeps the checked-in npm lock aligned with the enabled npm groups", async () => {
     const [lock, groups] = await Promise.all([
-      fs.readFile(path.resolve("..", "infra/gateway/isolated-toolchain/package-lock.json"), "utf8"),
-      fs.readFile(path.resolve("..", "infra/gateway/isolated-toolchain/groups.json"), "utf8"),
+      fs.readFile(path.resolve("..", "gateway/isolated-toolchain/package-lock.json"), "utf8"),
+      fs.readFile(path.resolve("..", "gateway/isolated-toolchain/groups.json"), "utf8"),
     ]);
 
     expect(() => parseIsolatedToolchainLock(

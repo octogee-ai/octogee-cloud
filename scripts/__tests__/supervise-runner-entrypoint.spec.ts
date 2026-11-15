@@ -3,10 +3,10 @@ import { parseSuperviseRunnerArgs, SUPERVISE_RUNNER_USAGE } from "../entrypoints
 
 describe("supervise-runner entrypoint", () => {
   it("parses the default runner command shape", () => {
-    expect(parseSuperviseRunnerArgs(["provisioner", "tsx", "entrypoints/fleet-controller.ts"])).toEqual({
+    expect(parseSuperviseRunnerArgs(["provisioner", "tsx", "entrypoints/provisioner.ts"])).toEqual({
       name: "provisioner",
       command: "tsx",
-      args: ["entrypoints/fleet-controller.ts"],
+      args: ["entrypoints/provisioner.ts"],
       restartDelayMs: undefined,
     });
   });

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-const gate = resolve(import.meta.dirname, "../../infra/gateway/verify-runtime-image.sh");
+const gate = resolve(import.meta.dirname, "../../gateway/verify-runtime-image.sh");
 const roots: string[] = [];
 
 type ImageShape = {

@@ -20,7 +20,7 @@ import {
   resolveFleetControllerEntrypointConfig,
   FLEET_CONTROLLER_MUTATION_CALL_TIMEOUT_MS,
   SYSTEM_CONFIG_MUTATION_LEASE_RETRY_DELAYS_MS,
-} from "../entrypoints/fleet-controller.js";
+} from "../entrypoints/provisioner.js";
 import { withUserClaim } from "./helpers/user-claim.js";
 
 describe("fleet-controller entrypoint config", () => {

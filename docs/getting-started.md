@@ -216,7 +216,7 @@ not need it.
 git clone https://github.com/octogee-ai/octogee-cloud.git
 ```
 
-There are no npm workspaces. Each package, such as `core`, `glm-controller` or
+There are no npm workspaces. Each package, such as `core`, `fleet-controller` or
 `scripts`, has its own `package.json` and lockfile, so install the one you work
 on. For `scripts`:
 

@@ -198,24 +198,24 @@ describe("deployment target consumers", () => {
   });
 
   it("keeps generated custom values and dependency inventory target-driven", () => {
-    const customValues = source("helm/octogee/values.custom.yaml.tpl");
+    const customValues = source("charts/octogee/values.custom.yaml.tpl");
     const inventory = source("scripts/lib/dependency-inventory.ts");
 
     expect(customValues).toContain("__TARGET_ID__");
     expect(customValues).toContain("__AR_REPOSITORY__");
-    expect(deploymentSettings("helm/octogee/values.custom.yaml.tpl")).not.toContain("us-central1");
+    expect(deploymentSettings("charts/octogee/values.custom.yaml.tpl")).not.toContain("us-central1");
     expect(inventory).toContain("@octogee/core/deployment-environment");
     expect(inventory).not.toContain("us-central1-docker.pkg.dev/octogee/octogee/");
   });
 
   it("keeps shared Helm defaults free of a legacy regional target", () => {
     for (const valuesFile of [
-      "helm/octogee/values.yaml",
-      "helm/octogee/charts/cloud-sql-proxy/values.yaml",
-      "helm/octogee/charts/gateway-edge/values.yaml",
-      "helm/octogee/charts/glm-controller/values.yaml",
-      "helm/octogee/charts/octogee-api/values.yaml",
-      "helm/octogee-gateway/values.yaml",
+      "charts/octogee/values.yaml",
+      "charts/octogee/charts/cloud-sql-proxy/values.yaml",
+      "charts/octogee/charts/gateway-edge/values.yaml",
+      "charts/octogee/charts/glm-controller/values.yaml",
+      "charts/octogee/charts/octogee-api/values.yaml",
+      "charts/octogee-gateway/values.yaml",
     ]) {
       const values = deploymentSettings(valuesFile);
       expect(values, valuesFile).not.toContain("us-central1");

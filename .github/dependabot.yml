@@ -6,17 +6,17 @@ updates:
       - /core
       - /core/src/templates/project-seeds/vite-static
       - /gateway-edge
-      - /glm-controller
-      - /infra/gateway/extensions/platform/octogee-access-tools
-      - /infra/gateway/extensions/platform/octogee-activity-tools
-      - /infra/gateway/extensions/platform/octogee-broker-tools
-      - /infra/gateway/extensions/platform/octogee-chat-tools
-      - /infra/gateway/extensions/platform/octogee-status-tools
-      - /infra/gateway/extensions/platform/octogee-voice-tools
-      - /infra/gateway/extensions/platform/octogee-web-tools
-      - /infra/gateway/extensions/platform/octogee-workspace-tools
-      - /infra/gateway/isolated-toolchain
-      - /octogee-api
+      - /fleet-controller
+      - /gateway/extensions/platform/octogee-access-tools
+      - /gateway/extensions/platform/octogee-activity-tools
+      - /gateway/extensions/platform/octogee-broker-tools
+      - /gateway/extensions/platform/octogee-chat-tools
+      - /gateway/extensions/platform/octogee-status-tools
+      - /gateway/extensions/platform/octogee-voice-tools
+      - /gateway/extensions/platform/octogee-web-tools
+      - /gateway/extensions/platform/octogee-workspace-tools
+      - /gateway/isolated-toolchain
+      - /platform-api
       - /scripts
       - /shared
       - /tests
