@@ -6,6 +6,9 @@ import type { Server } from "node:http";
 import { rateLimit } from "express-rate-limit";
 import { publicAppOriginsFromEnv } from "@octogee/core/public-app-origins";
 import { renderMetrics } from "./metrics.js";
+import { adminPlacementCapabilities } from "./admin-placement-capabilities.js";
+import { adminPlacementSharedCapabilities } from "./admin-placement-shared-capabilities.js";
+import { adminIsolatedCapabilities, type AdminUserHome } from "./admin-isolated-capabilities.js";
 import type { UserAccounts, UserSignInHosts } from "@octogee/core/admin-user-router";
 import type { UserAccountReader } from "@octogee/core/user-account";
 import {
@@ -33,6 +36,7 @@ import {
   type AdminUserProductDetail,
 } from "@octogee/core/admin-user-directory-router";
 import { addAdminLogsRoutes } from "@octogee/core/admin-logs-router";
+import { readAdminGatewayKubernetes } from "./admin-kubernetes-observer.js";
 import { addAdminSizingProfileRoutes } from "@octogee/core/admin-sizing-profile-router";
 import type { LogEntriesSource } from "@octogee/core/fleet-logs";
 import {
@@ -105,13 +109,14 @@ export interface HttpServerDeps {
     gatewayIds: readonly string[],
   ) => Promise<Record<string, GatewayPodDiagnostics>>;
   requestNativeReturnSourceRecovery?: (input: { uid: string; operationId: string; requestedAt: number; requestedBy: string }) => Promise<boolean>;
+  userHome?: AdminUserHome;
   suspendAuthUser: (uid: string) => Promise<void>;
   revokeConnectorGrantsForUser: (uid: string) => Promise<void>;
   fleetEventListenerLingerMs?: number;
   logs: { source: LogEntriesSource | null; namespace: string };
   provisioning?: AdminProvisioningClient | null;
   provisioningReadiness?: FleetRouterDeps["provisioningReadiness"];
-  provisioningSpecFailures?: AdminProvisioningRouterDeps["specFailures"];
+  provisioningSync?: AdminProvisioningRouterDeps["sync"];
 }
 
 function adaptLogger(log: (msg: string) => void): FleetLogger {
@@ -366,6 +371,7 @@ export function createHttpServer(deps: HttpServerDeps): Express {
     releaseAuthority: deps.releaseAuthority,
     platformArtifact: deps.platformArtifact,
     controllerStartedAt: deps.controllerStartedAt,
+    readGatewayKubernetes: readAdminGatewayKubernetes,
     readGatewayPodDiagnostics: deps.readGatewayPodDiagnostics,
     readGatewayPodDiagnosticsBatch: deps.readGatewayPodDiagnosticsBatch,
     requestNativeReturnSourceRecovery: deps.requestNativeReturnSourceRecovery,
@@ -374,13 +380,21 @@ export function createHttpServer(deps: HttpServerDeps): Express {
     userAccounts: deps.userAccounts,
     userSignIn: deps.userSignIn,
     discoverDeletionProductContext: deps.discoverDeletionProductContext,
+    placement: adminPlacementCapabilities,
+    placementShared: adminPlacementSharedCapabilities(deps),
+    isolated: adminIsolatedCapabilities({
+      namespace: deps.logs.namespace,
+      log: deps.log,
+      readGatewayPodDiagnostics: deps.readGatewayPodDiagnostics,
+      ...(deps.userHome ? { userHome: deps.userHome } : {}),
+    }),
     provisioningReadiness: deps.provisioningReadiness,
   });
   addAdminProvisioningRoutes(adminRouter, {
     provisioning: deps.provisioning ?? null,
     journal: createAdminFleetMutationRunner(deps.store),
     logger: adaptLogger(deps.log),
-    specFailures: deps.provisioningSpecFailures,
+    sync: deps.provisioningSync,
   });
   addAdminLogsRoutes(adminRouter, {
     source: deps.logs.source,

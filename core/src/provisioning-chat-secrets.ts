@@ -17,7 +17,7 @@ export interface ChatSecretDeps {
   readonly client: Pick<ProvisioningServiceClient, "getCredential">;
 }
 
-export type ChatSecretsOutcome = "present" | "credentials-not-issued";
+export type ChatSecretsOutcome = "present" | "credentials-not-issued" | "agent-not-ready";
 
 interface ChatSecretTarget {
   readonly secretId: string;
@@ -82,26 +82,33 @@ async function readCredential(deps: ChatSecretDeps, uid: string, name: Provision
 }
 
 async function writeWhenAbsent(deps: ChatSecretDeps, uid: string, row: UserSecretInput, token: string): Promise<void> {
+  const secretWriteFailed = (error: unknown) =>
+    new ProvisioningChatSecretError(uid, `could not write the ${row.secretId} platform secret of ${uid}: ${redacted(error, token)}`);
   try {
     await deps.store.transaction({ label: "provisioning-mirror-chat-secret" }, async (transaction) => {
       if ((await transaction.users.records.get(uid)) === null) throw new MissingRecordError({ aggregate: "builder", key: uid });
       if ((await transaction.secrets.get(uid, row.secretId)) !== null) return;
-      await transaction.secrets.put(uid, row);
+      try {
+        await transaction.secrets.put(uid, row);
+      } catch (error) {
+        throw secretWriteFailed(error);
+      }
     });
   } catch (error) {
-    if (error instanceof MissingRecordError) throw error;
-    throw new ProvisioningChatSecretError(uid, `could not write the ${row.secretId} platform secret of ${uid}: ${redacted(error, token)}`);
+    if (error instanceof Error && error.message.includes(token)) throw secretWriteFailed(error);
+    throw error;
   }
 }
 
 export async function ensureChatSecrets(deps: ChatSecretDeps, resource: UserProvisioning, chat: ChatOutputs): Promise<ChatSecretsOutcome> {
   const uid = resource.uid;
+  if (!credentialsIssued(resource)) return "credentials-not-issued";
+  if (resource.spec.chat.defaultAgent.enabled && !chat.agentBotUserId) return "agent-not-ready";
   const missing: ChatSecretTarget[] = [];
   for (const target of targetsOf(chat)) {
     if ((await deps.store.secrets.get(uid, target.secretId)) === null) missing.push(target);
   }
   if (missing.length === 0) return "present";
-  if (!credentialsIssued(resource)) return "credentials-not-issued";
   for (const target of missing) {
     const credential = await readCredential(deps, uid, target.credential);
     if (credential === null) return "credentials-not-issued";

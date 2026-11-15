@@ -18,6 +18,8 @@ const directoryDependencies = [
   ["platform-api", "@octogee/shared", "dependencies", "file:../shared"],
   ["scripts", "@octogee/core", "dependencies", "file:../core"],
   ["scripts", "@octogee/shared", "dependencies", "file:../shared"],
+  ["gateway-supervisor", "@octogee/core", "dependencies", "file:../core"],
+  ["gateway-supervisor", "@octogee/shared", "dependencies", "file:../shared"],
 ] as const;
 
 const trackedNpmrcFiles = execFileSync("git", ["ls-files", "--recurse-submodules", "*.npmrc"], { cwd: repoRoot, encoding: "utf8" })
@@ -72,6 +74,7 @@ describe("directory dependency repository contract", () => {
       "platform/fleet-controller/.npmrc",
       "platform/platform-api/.npmrc",
       "platform/scripts/.npmrc",
+      "platform/gateway-supervisor/.npmrc",
     ]));
   });
 
@@ -89,10 +92,12 @@ describe("directory dependency repository contract", () => {
     },
   );
 
-  it("scripts preserves strict install-script review with the release-age cooldown", () => {
-    expect(fs.readFileSync(path.join(root, "scripts", ".npmrc"), "utf8")).toBe(
-      "install-links=true\nmin-release-age=7\nstrict-allow-scripts=true\n",
-    );
+  it("scripts and the gateway supervisor preserve strict install-script review with the release-age cooldown", () => {
+    for (const consumer of ["scripts", "gateway-supervisor"]) {
+      expect(fs.readFileSync(path.join(root, consumer, ".npmrc"), "utf8")).toBe(
+        "install-links=true\nmin-release-age=7\nstrict-allow-scripts=true\n",
+      );
+    }
   });
 
   it.each([
@@ -102,6 +107,7 @@ describe("directory dependency repository contract", () => {
     ["fleet-controller", "../scripts"],
     ["platform-api", "../scripts"],
     ["scripts", "../scripts"],
+    ["gateway-supervisor", "../scripts"],
   ])(
     "%s refreshes packed dependencies before tests",
     (consumer, scripts) => {
@@ -175,7 +181,7 @@ describe("directory dependency repository contract", () => {
       expectBefore(localPackages, `COPY ${source}/package.json`, pack);
       expectBefore(localPackages, `COPY ${source}/dist`, pack);
     }
-    expectBefore(dependencies, "COPY --chown=node:node scripts/.npmrc", install);
+    expectBefore(dependencies, "COPY --chown=node:node gateway-supervisor/.npmrc", install);
     expectBefore(dependencies, "shared/package-lock.json", "cd /octogee/shared && npm ci");
     expectBefore(build, "COPY --from=gateway-dependencies /octogee /octogee", overlay);
     expectBefore(build, overlay, "RUN /octogee/scripts/node_modules/.bin/esbuild");

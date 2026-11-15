@@ -10,14 +10,14 @@ export declare const PROVISIONING_SYNC_RETRY: {
     readonly maxDelayMs: 600000;
 };
 export declare const PROVISIONING_SYNC_RESYNC_MS: number;
-export type SpecWriteOutcome = "created" | "changed" | "unchanged" | "not-admitted";
+export type SpecWriteOutcome = "created" | "changed" | "unchanged" | "not-admitted" | "being-erased";
 export interface ProvisioningReadiness {
     readonly status: ConditionStatus;
     readonly reason: string;
 }
 export interface ProvisioningSyncCounters {
     specWrites: Record<SpecWriteOutcome | "failed", number>;
-    deletes: Record<"deleted" | "failed", number>;
+    deletes: Record<"deleted" | "kept" | "unreadable" | "unnameable" | "failed", number>;
     mirrors: Record<ProvisioningMirrorOutcome | "failed", number>;
     watchFailures: number;
     watchConnected: boolean;
@@ -50,12 +50,20 @@ export interface SpecWriteFailure {
     readonly attempts: number;
     readonly since: string;
 }
+export type MirrorRefusalOutcome = Extract<ProvisioningMirrorOutcome, "chat-id-mismatch" | "slug-mismatch">;
+export interface MirrorRefusal {
+    readonly uid: string;
+    readonly outcome: MirrorRefusalOutcome;
+    readonly reason: string;
+    readonly since: string;
+}
 export interface ProvisioningSync {
     readonly counters: ProvisioningSyncCounters;
     readiness(uid: string): ProvisioningReadiness | null;
     observed(uid: string): UserProvisioning | undefined;
     markDirty(uid: string): void;
     specFailures(): readonly SpecWriteFailure[];
+    mirrorRefusals(): readonly MirrorRefusal[];
     resync(): Promise<void>;
     writeSpec(uid: string): Promise<SpecWriteOutcome>;
     backfill(): Promise<BackfillSummary>;

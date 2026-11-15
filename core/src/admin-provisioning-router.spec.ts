@@ -37,7 +37,10 @@ function app(configured = true, overrides: { provisioning?: AdminProvisioningCli
     provisioning: configured ? overrides.provisioning ?? client : null,
     journal: createAdminFleetMutationRunner(store),
     logger: { warn: (msg, meta) => warnings.push({ msg, meta }) },
-    specFailures: () => [{ uid: "u9", reason: "admitted user u9 has no account document", attempts: 3, since: "2026-11-15T18:00:00.000Z" }],
+    sync: {
+      specFailures: () => [{ uid: "u9", reason: "admitted user u9 has no account document", attempts: 3, since: "2026-11-15T18:00:00.000Z" }],
+      mirrorRefusals: () => [{ uid: "u7", outcome: "chat-id-mismatch", reason: "the user record holds chat user mm-a, the provisioning service reports chat user mm-b", since: "2026-11-15T18:00:00.000Z" }],
+    },
     ...(overrides.readDeadlineMs === undefined ? {} : { readDeadlineMs: overrides.readDeadlineMs }),
   });
   server.use((error: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
@@ -113,12 +116,44 @@ describe("Admin API provisioning routes", () => {
     expect(Date.now() - started).toBeLessThan(2_000);
   });
 
-  it("refuses a uid that is not a provisioning identifier", async () => {
-    const res = await request(app()).get("/users/..%2F..%2Fprovisionings/provisioning").expect(400);
-    await request(app()).post("/users/.hidden/provisioning/retry").send({}).expect(400);
+  it("aborts the service requests it stops waiting for at the read deadline", async () => {
+    const signals: Array<AbortSignal | undefined> = [];
+    const hangUntilAborted = <T>(signal: AbortSignal | undefined) => {
+      signals.push(signal);
+      return new Promise<T>((_resolve, reject) => signal?.addEventListener("abort", () => reject(signal.reason)));
+    };
+    const hanging: AdminProvisioningClient = {
+      ...client,
+      getProvisioning: (_uid, options) => hangUntilAborted(options?.signal),
+      getProvisioningEvents: (_uid, options) => hangUntilAborted(options?.signal),
+      listProvisionings: (_query, options) => hangUntilAborted(options?.signal),
+    };
+
+    await request(app(true, { provisioning: hanging, readDeadlineMs: 50 })).get("/users/u1/provisioning").expect(503);
+    await request(app(true, { provisioning: hanging, readDeadlineMs: 50 })).get("/provisioning").expect(503);
+
+    expect(signals).toHaveLength(3);
+    expect(signals.every((signal) => signal?.aborted === true)).toBe(true);
+  });
+
+  it("passes any uid the platform admits to the service as one path segment", async () => {
+    const refused = await request(app()).get("/users/..%2F..%2Fprovisionings/provisioning").expect(400);
+    await request(app()).get("/users/.hidden/provisioning").expect(400);
+
+    expect(refused.body.code).toBe("invalid-request");
+
+    expect(fake.requests.filter((entry) => entry.method === "GET").map((entry) => entry.path)).toEqual(expect.arrayContaining([
+      "/v1/users/..%2F..%2Fprovisionings/provisioning",
+      "/v1/users/.hidden/provisioning",
+    ]));
+  });
+
+  it("refuses a dot-segment uid before any request or journal entry", async () => {
+    const res = await request(app()).post("/users/%2E%2E/provisioning/retry").send({}).expect(400);
 
     expect(res.body.code).toBe("invalid-request");
     expect(fake.requests.filter((entry) => entry.method !== "PUT")).toEqual([]);
+    expect(audits()).toEqual([]);
   });
 
   it("journals a retry and passes the journal's idempotency key to the service", async () => {
@@ -140,6 +175,21 @@ describe("Admin API provisioning routes", () => {
 
     expect(res.body.code).toBe("precondition-failed");
     expect(audits()).toEqual([expect.objectContaining({ status: "failed" })]);
+  });
+
+  it("answers a classified 503 and logs unexpected-response when the service accepts a retry with a body that is not JSON", async () => {
+    const unreadable = createProvisioningServiceClient({
+      baseUrl: fake.url,
+      tokenPath: "/token",
+      readToken: async () => "token",
+      retry: { attempts: 1, baseDelayMs: 1, maxDelayMs: 1 },
+      fetch: async () => new Response("<html>accepted</html>", { status: 202 }),
+    });
+
+    const res = await request(app(true, { provisioning: unreadable })).post("/users/u1/provisioning/retry").send({}).expect(503);
+
+    expect(res.body).toEqual({ code: "unavailable", error: "the provisioning service did not answer; see the fleet controller log" });
+    expect(warnings).toEqual([expect.objectContaining({ meta: expect.objectContaining({ status: 202, code: "unexpected-response" }) })]);
   });
 
   it("plans a retry on dryRun without calling the service's retry or journaling", async () => {
@@ -168,6 +218,7 @@ describe("Admin API provisioning routes", () => {
 
     expect(res.body.items.map((item: Data) => item.uid)).toEqual(["u1"]);
     expect(res.body.specWriteFailures).toEqual([expect.objectContaining({ uid: "u9", reason: expect.stringContaining("no account document") })]);
+    expect(res.body.mirrorRefusals).toEqual([expect.objectContaining({ uid: "u7", outcome: "chat-id-mismatch", reason: expect.stringContaining("mm-b") })]);
     expect(fake.requests.at(-1)?.query).toEqual({ ready: "false" });
   });
 

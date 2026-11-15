@@ -19,7 +19,7 @@ export const PROVISIONING_SERVICE_TOKEN_PATH_ENV = "PROVISIONING_SERVICE_TOKEN_P
 const TOKEN_REFRESH_MS = 60_000;
 const REQUEST_TIMEOUT_MS = 30_000;
 const LONG_POLL_GRACE_MS = 15_000;
-const PROVISIONING_UID = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
+const UNADDRESSABLE_UIDS = new Set(["", ".", ".."]);
 const PUT_OUTCOMES: Readonly<Record<number, PutProvisioningResult["outcome"]>> = { 201: "created", 202: "changed" };
 
 export interface ProvisioningServiceRetryPolicy {
@@ -34,7 +34,7 @@ export const DEFAULT_PROVISIONING_SERVICE_RETRY: ProvisioningServiceRetryPolicy 
   maxDelayMs: 10_000,
 };
 
-export type ProvisioningServiceRequestOutcome = "ok" | "client-error" | "server-error" | "unreachable";
+export type ProvisioningServiceRequestOutcome = "ok" | "client-error" | "server-error" | "unreachable" | "aborted";
 
 export interface ProvisioningServiceClientOptions {
   readonly baseUrl: string;
@@ -51,7 +51,7 @@ export interface ProvisioningServiceClientOptions {
 export class ProvisioningServiceError extends Error {
   constructor(
     readonly status: number,
-    readonly code: ProvisioningErrorCode | "unreachable" | "unexpected-response",
+    readonly code: ProvisioningErrorCode | "unreachable" | "unexpected-response" | "aborted",
     message: string,
     readonly retryAfterMs: number | null = null,
   ) {
@@ -64,12 +64,18 @@ export class ProvisioningServiceError extends Error {
   }
 }
 
+export type DeleteProvisioningOutcome = "deleted" | "unnameable";
+
 export interface PutProvisioningResult {
   readonly outcome: "created" | "changed" | "unchanged";
   readonly resource: UserProvisioning;
 }
 
-export interface GetProvisioningOptions {
+export interface RequestSignalOptions {
+  readonly signal?: AbortSignal;
+}
+
+export interface GetProvisioningOptions extends RequestSignalOptions {
   readonly waitForGeneration?: number;
   readonly timeoutSeconds?: number;
 }
@@ -77,17 +83,42 @@ export interface GetProvisioningOptions {
 export interface WatchProvisioningsOptions {
   readonly resourceVersion: string;
   readonly timeoutSeconds?: number;
+  readonly limit?: number;
+}
+
+export const PROVISIONING_WATCH_PAGE_LIMIT = 500;
+
+export type ProvisioningChange =
+  | { readonly kind: "upsert"; readonly resource: UserProvisioning }
+  | { readonly kind: "deleted"; readonly uid: string; readonly resourceVersion: string };
+
+export function compareResourceVersions(left: string, right: string): number {
+  const difference = BigInt(left) - BigInt(right);
+  if (difference === 0n) return 0;
+  return difference < 0n ? -1 : 1;
+}
+
+function changeVersion(change: ProvisioningChange): string {
+  return change.kind === "deleted" ? change.resourceVersion : change.resource.resourceVersion;
+}
+
+export function orderedChanges(page: UserProvisioningWatchResponse): ProvisioningChange[] {
+  const changes: ProvisioningChange[] = [
+    ...page.items.map((resource): ProvisioningChange => ({ kind: "upsert", resource })),
+    ...(page.deleted ?? []).map((deletion): ProvisioningChange => ({ kind: "deleted", uid: deletion.uid, resourceVersion: deletion.resourceVersion })),
+  ];
+  return changes.sort((left, right) => compareResourceVersions(changeVersion(left), changeVersion(right)));
 }
 
 export interface ProvisioningServiceClient {
   putProvisioning(uid: string, spec: UserProvisioningSpec, options?: { expectedResourceVersion?: string }): Promise<PutProvisioningResult>;
   getProvisioning(uid: string, options?: GetProvisioningOptions): Promise<UserProvisioning | null>;
-  deleteProvisioning(uid: string): Promise<void>;
-  listProvisionings(query?: UserProvisioningListQuery): Promise<UserProvisioningList>;
+  deleteProvisioning(uid: string): Promise<DeleteProvisioningOutcome>;
+  listProvisionings(query?: UserProvisioningListQuery, options?: RequestSignalOptions): Promise<UserProvisioningList>;
   listAllProvisionings(query?: Omit<UserProvisioningListQuery, "pageToken">): Promise<UserProvisioningWatchResponse>;
   watchProvisionings(options: WatchProvisioningsOptions): Promise<UserProvisioningWatchResponse>;
   retryProvisioning(uid: string, request: RetryProvisioningRequest, idempotencyKey: string): Promise<unknown>;
-  getProvisioningEvents(uid: string): Promise<ProvisioningEventsResponse | null>;
+  getProvisioningEvents(uid: string, options?: RequestSignalOptions): Promise<ProvisioningEventsResponse | null>;
   getCredential(uid: string, name: ProvisioningCredentialName): Promise<ProvisioningCredential | null>;
 }
 
@@ -106,12 +137,12 @@ export function provisioningServiceConfigFromEnvironment(env: NodeJS.ProcessEnv)
   return { baseUrl, tokenPath };
 }
 
-export function isProvisioningUid(uid: string): boolean {
-  return PROVISIONING_UID.test(uid);
+export function isAddressableUid(uid: string): boolean {
+  return !UNADDRESSABLE_UIDS.has(uid);
 }
 
 function userSegment(uid: string): string {
-  if (!isProvisioningUid(uid)) throw new ProvisioningServiceError(400, "invalid-request", "uid is not a valid provisioning identifier");
+  if (!isAddressableUid(uid)) throw new ProvisioningServiceError(400, "invalid-request", "an empty or dot-segment uid cannot name a URL path segment");
   return encodeURIComponent(uid);
 }
 
@@ -154,7 +185,7 @@ async function errorFromResponse(response: Response): Promise<ProvisioningServic
 
 function outcomeOf(error: unknown): ProvisioningServiceRequestOutcome {
   if (!(error instanceof ProvisioningServiceError)) return "unreachable";
-  if (error.code === "unreachable") return "unreachable";
+  if (error.code === "unreachable" || error.code === "aborted") return error.code;
   return error.status >= 500 ? "server-error" : "client-error";
 }
 
@@ -179,6 +210,11 @@ interface RequestInput {
   readonly headers?: Record<string, string>;
   readonly timeoutMs?: number;
   readonly allowNotFound?: boolean;
+  readonly signal?: AbortSignal;
+}
+
+function abortedError(input: RequestInput): ProvisioningServiceError {
+  return new ProvisioningServiceError(0, "aborted", `provisioning service ${input.method} ${input.path} was aborted by its caller`);
 }
 
 export function createProvisioningServiceClient(options: ProvisioningServiceClientOptions): ProvisioningServiceClient {
@@ -207,6 +243,11 @@ export function createProvisioningServiceClient(options: ProvisioningServiceClie
     return url;
   }
 
+  function requestSignal(input: RequestInput): AbortSignal {
+    const timeout = AbortSignal.timeout(input.timeoutMs ?? REQUEST_TIMEOUT_MS);
+    return input.signal === undefined ? timeout : AbortSignal.any([input.signal, timeout]);
+  }
+
   async function once(input: RequestInput, forceTokenRead: boolean): Promise<Response> {
     const bearer = await token(forceTokenRead);
     try {
@@ -220,9 +261,10 @@ export function createProvisioningServiceClient(options: ProvisioningServiceClie
           ...input.headers,
         },
         ...(input.body === undefined ? {} : { body: JSON.stringify(input.body) }),
-        signal: AbortSignal.timeout(input.timeoutMs ?? REQUEST_TIMEOUT_MS),
+        signal: requestSignal(input),
       });
     } catch (error) {
+      if (input.signal?.aborted === true) throw abortedError(input);
       throw new ProvisioningServiceError(0, "unreachable", `provisioning service ${input.method} ${input.path} failed: ${errorMessage(error)}`);
     }
   }
@@ -237,6 +279,7 @@ export function createProvisioningServiceClient(options: ProvisioningServiceClie
   async function request(input: RequestInput): Promise<Response> {
     for (let attemptIndex = 0; ; attemptIndex += 1) {
       try {
+        if (input.signal?.aborted === true) throw abortedError(input);
         const response = await attempt(input);
         options.onRequest?.("ok");
         return response;
@@ -250,9 +293,11 @@ export function createProvisioningServiceClient(options: ProvisioningServiceClie
     }
   }
 
-  async function json<T>(response: Response): Promise<T> {
+  async function json<T>(response: Response, emptyBody?: T): Promise<T> {
+    const text = await response.text();
+    if (text === "" && emptyBody !== undefined) return emptyBody;
     try {
-      return (await response.json()) as T;
+      return JSON.parse(text) as T;
     } catch (error) {
       throw new ProvisioningServiceError(response.status, "unexpected-response", `provisioning service answered unreadable JSON: ${errorMessage(error)}`);
     }
@@ -278,18 +323,27 @@ export function createProvisioningServiceClient(options: ProvisioningServiceClie
         query: { waitForGeneration: getOptions?.waitForGeneration, timeoutSeconds },
         ...(timeoutSeconds === undefined ? {} : { timeoutMs: timeoutSeconds * 1000 + LONG_POLL_GRACE_MS }),
         allowNotFound: true,
+        ...(getOptions?.signal === undefined ? {} : { signal: getOptions.signal }),
       });
       return response.status === 404 ? null : json<UserProvisioning>(response);
     },
 
     async deleteProvisioning(uid) {
-      await request({ method: "DELETE", path: userPath(uid), allowNotFound: true });
+      if (!isAddressableUid(uid)) return "unnameable";
+      try {
+        await request({ method: "DELETE", path: userPath(uid), allowNotFound: true });
+      } catch (error) {
+        if (error instanceof ProvisioningServiceError && error.status === 400 && error.code === "invalid-request") return "unnameable";
+        throw error;
+      }
+      return "deleted";
     },
 
-    async listProvisionings(query) {
+    async listProvisionings(query, listOptions) {
       const response = await request({
         method: "GET",
         path: "provisionings",
+        ...(listOptions?.signal === undefined ? {} : { signal: listOptions.signal }),
         query: {
           ready: query?.ready,
           reason: query?.reason,
@@ -319,7 +373,7 @@ export function createProvisioningServiceClient(options: ProvisioningServiceClie
       const response = await request({
         method: "GET",
         path: "provisionings",
-        query: { watch: true, resourceVersion: watchOptions.resourceVersion, timeoutSeconds },
+        query: { watch: true, resourceVersion: watchOptions.resourceVersion, timeoutSeconds, limit: watchOptions.limit ?? PROVISIONING_WATCH_PAGE_LIMIT },
         timeoutMs: timeoutSeconds * 1000 + LONG_POLL_GRACE_MS,
       });
       return json<UserProvisioningWatchResponse>(response);
@@ -332,12 +386,16 @@ export function createProvisioningServiceClient(options: ProvisioningServiceClie
         body: retryRequest,
         headers: { "idempotency-key": idempotencyKey },
       });
-      const text = await response.text();
-      return text === "" ? {} : (JSON.parse(text) as unknown);
+      return json<unknown>(response, {});
     },
 
-    async getProvisioningEvents(uid) {
-      const response = await request({ method: "GET", path: `${userPath(uid)}/events`, allowNotFound: true });
+    async getProvisioningEvents(uid, eventOptions) {
+      const response = await request({
+        method: "GET",
+        path: `${userPath(uid)}/events`,
+        allowNotFound: true,
+        ...(eventOptions?.signal === undefined ? {} : { signal: eventOptions.signal }),
+      });
       return response.status === 404 ? null : json<ProvisioningEventsResponse>(response);
     },
 
@@ -357,12 +415,13 @@ export function createProvisioningServiceClient(options: ProvisioningServiceClie
 
 export interface ProvisioningWatchHandlers {
   onSnapshot(items: readonly UserProvisioning[]): Promise<void>;
-  onChanges(items: readonly UserProvisioning[]): Promise<void>;
+  onChanges(changes: readonly ProvisioningChange[]): Promise<void>;
   onError(error: unknown, consecutiveFailures: number): void;
 }
 
 export interface ProvisioningWatchOptions {
   readonly timeoutSeconds?: number;
+  readonly pageLimit?: number;
   readonly retry?: Pick<ProvisioningServiceRetryPolicy, "baseDelayMs" | "maxDelayMs">;
   readonly sleep?: (ms: number) => Promise<void>;
   readonly random?: () => number;
@@ -387,9 +446,14 @@ export function startProvisioningWatch(
       await handlers.onSnapshot(listed.items);
       return { resourceVersion: listed.resourceVersion, watched: false };
     }
-    const changed = await client.watchProvisionings({ resourceVersion, timeoutSeconds: options.timeoutSeconds ?? 60 });
+    const changed = await client.watchProvisionings({
+      resourceVersion,
+      timeoutSeconds: options.timeoutSeconds ?? 60,
+      limit: options.pageLimit ?? PROVISIONING_WATCH_PAGE_LIMIT,
+    });
     if (stopping) return null;
-    if (changed.items.length > 0) await handlers.onChanges(changed.items);
+    const changes = orderedChanges(changed);
+    if (changes.length > 0) await handlers.onChanges(changes);
     return { resourceVersion: changed.resourceVersion, watched: true };
   }
 

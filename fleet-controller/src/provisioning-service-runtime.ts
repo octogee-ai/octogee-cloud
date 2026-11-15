@@ -29,7 +29,7 @@ export interface ProvisioningServiceRuntimeInput {
   readonly log: (message: string) => void;
 }
 
-const REQUEST_OUTCOMES: readonly ProvisioningServiceRequestOutcome[] = ["ok", "client-error", "server-error", "unreachable"];
+const REQUEST_OUTCOMES: readonly ProvisioningServiceRequestOutcome[] = ["ok", "client-error", "server-error", "unreachable", "aborted"];
 
 function counterLines(name: string, help: string, label: string, values: Record<string, number>): string[] {
   return [
@@ -77,6 +77,9 @@ export function createProvisioningServiceRuntime(input: ProvisioningServiceRunti
       "# HELP glm_provisioning_spec_failing_users Admitted users whose spec write is failing and retrying.",
       "# TYPE glm_provisioning_spec_failing_users gauge",
       `glm_provisioning_spec_failing_users ${sync.specFailures().length}`,
+      "# HELP glm_provisioning_mirror_refused_users Users whose provisioning results the fleet controller refuses to mirror.",
+      "# TYPE glm_provisioning_mirror_refused_users gauge",
+      `glm_provisioning_mirror_refused_users ${sync.mirrorRefusals().length}`,
       "# HELP glm_provisioning_watch_failures_total Failed provisioning service watch requests.",
       "# TYPE glm_provisioning_watch_failures_total counter",
       `glm_provisioning_watch_failures_total ${sync.counters.watchFailures}`,

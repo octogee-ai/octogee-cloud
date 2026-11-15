@@ -5,7 +5,7 @@ export const PROVISIONING_SERVICE_TOKEN_PATH_ENV = "PROVISIONING_SERVICE_TOKEN_P
 const TOKEN_REFRESH_MS = 60_000;
 const REQUEST_TIMEOUT_MS = 30_000;
 const LONG_POLL_GRACE_MS = 15_000;
-const PROVISIONING_UID = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
+const UNADDRESSABLE_UIDS = new Set(["", ".", ".."]);
 const PUT_OUTCOMES = { 201: "created", 202: "changed" };
 export const DEFAULT_PROVISIONING_SERVICE_RETRY = {
     attempts: 4,
@@ -27,6 +27,23 @@ export class ProvisioningServiceError extends Error {
         return this.code === "unreachable" || this.status === 429 || this.status >= 500;
     }
 }
+export const PROVISIONING_WATCH_PAGE_LIMIT = 500;
+export function compareResourceVersions(left, right) {
+    const difference = BigInt(left) - BigInt(right);
+    if (difference === 0n)
+        return 0;
+    return difference < 0n ? -1 : 1;
+}
+function changeVersion(change) {
+    return change.kind === "deleted" ? change.resourceVersion : change.resource.resourceVersion;
+}
+export function orderedChanges(page) {
+    const changes = [
+        ...page.items.map((resource) => ({ kind: "upsert", resource })),
+        ...(page.deleted ?? []).map((deletion) => ({ kind: "deleted", uid: deletion.uid, resourceVersion: deletion.resourceVersion })),
+    ];
+    return changes.sort((left, right) => compareResourceVersions(changeVersion(left), changeVersion(right)));
+}
 export function provisioningServiceConfigFromEnvironment(env) {
     const baseUrl = env[PROVISIONING_SERVICE_URL_ENV]?.trim() ?? "";
     if (baseUrl === "")
@@ -37,12 +54,12 @@ export function provisioningServiceConfigFromEnvironment(env) {
     }
     return { baseUrl, tokenPath };
 }
-export function isProvisioningUid(uid) {
-    return PROVISIONING_UID.test(uid);
+export function isAddressableUid(uid) {
+    return !UNADDRESSABLE_UIDS.has(uid);
 }
 function userSegment(uid) {
-    if (!isProvisioningUid(uid))
-        throw new ProvisioningServiceError(400, "invalid-request", "uid is not a valid provisioning identifier");
+    if (!isAddressableUid(uid))
+        throw new ProvisioningServiceError(400, "invalid-request", "an empty or dot-segment uid cannot name a URL path segment");
     return encodeURIComponent(uid);
 }
 export function backoffDelayMs(attempt, policy, random) {
@@ -77,8 +94,8 @@ async function errorFromResponse(response) {
 function outcomeOf(error) {
     if (!(error instanceof ProvisioningServiceError))
         return "unreachable";
-    if (error.code === "unreachable")
-        return "unreachable";
+    if (error.code === "unreachable" || error.code === "aborted")
+        return error.code;
     return error.status >= 500 ? "server-error" : "client-error";
 }
 function credentialFrom(text, name) {
@@ -93,6 +110,9 @@ function credentialFrom(text, name) {
         throw new ProvisioningServiceError(200, "unexpected-response", `provisioning service answered a malformed ${name} credential`);
     }
     return { name, value: body.value, version: body.version };
+}
+function abortedError(input) {
+    return new ProvisioningServiceError(0, "aborted", `provisioning service ${input.method} ${input.path} was aborted by its caller`);
 }
 export function createProvisioningServiceClient(options) {
     const fetchImpl = options.fetch ?? fetch;
@@ -120,6 +140,10 @@ export function createProvisioningServiceClient(options) {
         }
         return url;
     }
+    function requestSignal(input) {
+        const timeout = AbortSignal.timeout(input.timeoutMs ?? REQUEST_TIMEOUT_MS);
+        return input.signal === undefined ? timeout : AbortSignal.any([input.signal, timeout]);
+    }
     async function once(input, forceTokenRead) {
         const bearer = await token(forceTokenRead);
         try {
@@ -133,10 +157,12 @@ export function createProvisioningServiceClient(options) {
                     ...input.headers,
                 },
                 ...(input.body === undefined ? {} : { body: JSON.stringify(input.body) }),
-                signal: AbortSignal.timeout(input.timeoutMs ?? REQUEST_TIMEOUT_MS),
+                signal: requestSignal(input),
             });
         }
         catch (error) {
+            if (input.signal?.aborted === true)
+                throw abortedError(input);
             throw new ProvisioningServiceError(0, "unreachable", `provisioning service ${input.method} ${input.path} failed: ${errorMessage(error)}`);
         }
     }
@@ -151,6 +177,8 @@ export function createProvisioningServiceClient(options) {
     async function request(input) {
         for (let attemptIndex = 0;; attemptIndex += 1) {
             try {
+                if (input.signal?.aborted === true)
+                    throw abortedError(input);
                 const response = await attempt(input);
                 options.onRequest?.("ok");
                 return response;
@@ -165,9 +193,12 @@ export function createProvisioningServiceClient(options) {
             }
         }
     }
-    async function json(response) {
+    async function json(response, emptyBody) {
+        const text = await response.text();
+        if (text === "" && emptyBody !== undefined)
+            return emptyBody;
         try {
-            return (await response.json());
+            return JSON.parse(text);
         }
         catch (error) {
             throw new ProvisioningServiceError(response.status, "unexpected-response", `provisioning service answered unreadable JSON: ${errorMessage(error)}`);
@@ -191,16 +222,28 @@ export function createProvisioningServiceClient(options) {
                 query: { waitForGeneration: getOptions?.waitForGeneration, timeoutSeconds },
                 ...(timeoutSeconds === undefined ? {} : { timeoutMs: timeoutSeconds * 1000 + LONG_POLL_GRACE_MS }),
                 allowNotFound: true,
+                ...(getOptions?.signal === undefined ? {} : { signal: getOptions.signal }),
             });
             return response.status === 404 ? null : json(response);
         },
         async deleteProvisioning(uid) {
-            await request({ method: "DELETE", path: userPath(uid), allowNotFound: true });
+            if (!isAddressableUid(uid))
+                return "unnameable";
+            try {
+                await request({ method: "DELETE", path: userPath(uid), allowNotFound: true });
+            }
+            catch (error) {
+                if (error instanceof ProvisioningServiceError && error.status === 400 && error.code === "invalid-request")
+                    return "unnameable";
+                throw error;
+            }
+            return "deleted";
         },
-        async listProvisionings(query) {
+        async listProvisionings(query, listOptions) {
             const response = await request({
                 method: "GET",
                 path: "provisionings",
+                ...(listOptions?.signal === undefined ? {} : { signal: listOptions.signal }),
                 query: {
                     ready: query?.ready,
                     reason: query?.reason,
@@ -228,7 +271,7 @@ export function createProvisioningServiceClient(options) {
             const response = await request({
                 method: "GET",
                 path: "provisionings",
-                query: { watch: true, resourceVersion: watchOptions.resourceVersion, timeoutSeconds },
+                query: { watch: true, resourceVersion: watchOptions.resourceVersion, timeoutSeconds, limit: watchOptions.limit ?? PROVISIONING_WATCH_PAGE_LIMIT },
                 timeoutMs: timeoutSeconds * 1000 + LONG_POLL_GRACE_MS,
             });
             return json(response);
@@ -240,11 +283,15 @@ export function createProvisioningServiceClient(options) {
                 body: retryRequest,
                 headers: { "idempotency-key": idempotencyKey },
             });
-            const text = await response.text();
-            return text === "" ? {} : JSON.parse(text);
+            return json(response, {});
         },
-        async getProvisioningEvents(uid) {
-            const response = await request({ method: "GET", path: `${userPath(uid)}/events`, allowNotFound: true });
+        async getProvisioningEvents(uid, eventOptions) {
+            const response = await request({
+                method: "GET",
+                path: `${userPath(uid)}/events`,
+                allowNotFound: true,
+                ...(eventOptions?.signal === undefined ? {} : { signal: eventOptions.signal }),
+            });
             return response.status === 404 ? null : json(response);
         },
         async getCredential(uid, name) {
@@ -276,11 +323,16 @@ export function startProvisioningWatch(client, handlers, options = {}) {
             await handlers.onSnapshot(listed.items);
             return { resourceVersion: listed.resourceVersion, watched: false };
         }
-        const changed = await client.watchProvisionings({ resourceVersion, timeoutSeconds: options.timeoutSeconds ?? 60 });
+        const changed = await client.watchProvisionings({
+            resourceVersion,
+            timeoutSeconds: options.timeoutSeconds ?? 60,
+            limit: options.pageLimit ?? PROVISIONING_WATCH_PAGE_LIMIT,
+        });
         if (stopping)
             return null;
-        if (changed.items.length > 0)
-            await handlers.onChanges(changed.items);
+        const changes = orderedChanges(changed);
+        if (changes.length > 0)
+            await handlers.onChanges(changes);
         return { resourceVersion: changed.resourceVersion, watched: true };
     }
     async function run() {

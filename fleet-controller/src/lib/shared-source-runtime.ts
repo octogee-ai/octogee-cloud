@@ -5,7 +5,8 @@ import type { Operation } from '@octogee/shared/types/glm';
 import { assertSharedSourceRecoveryUnchanged, assertSharedSourceRecoveryPredecessor, readSharedSourceRecoveryAuthority, type SharedSourceRecoveryAuthority, type SharedSourceRecoverySupersession } from '@octogee/core/shared-source-recovery';
 import type { GatewayRoot, GatewayRuntimeRestartFenceValue, PlatformStateTransaction, Stored, UntypedRecord } from '@octogee/core/platform-state';
 import type { OperationContext } from '../operation-router.js';
-import { assertRecoveryImages, existingOwnedPod, imagePatch, json, recoveredPodReady, type SharedPodRecoveryDeps } from './shared-restore-runtime.js';
+import { assertRecoveryImages, existingOwnedPod, imagePatch, json, recoveredPodReady, type RecoveryRelease, type SharedPodRecoveryDeps } from './shared-restore-runtime.js';
+import { platformGatewayArtifactFromEnvironment } from '../platform-release.js';
 import { captureSourceRecoveryWorkload, pinSourceRecoveryImages, resumeSourceRecoveryWorkload, type SourceRecoveryWorkload } from './shared-source-images.js';
 import { recordRecoveredGatewayReleaseInStore } from '@octogee/core/gateway-release-append';
 import { isReleasePayload, type ReleasePayload } from '@octogee/shared/types/gateway-releases';
@@ -14,13 +15,13 @@ type Row = UntypedRecord;
 type Deps = SharedPodRecoveryDeps;
 interface SourceRecovery extends SharedSourceRecoveryAuthority { sourceSha: string; images: Record<string, string>; payload?: ReleasePayload; supersede?: SharedSourceRecoverySupersession }
 const object = (value: unknown): Row => value && typeof value === 'object' && !Array.isArray(value) ? value as Row : {};
-function sourceRecovery(op: Operation, deployedSha: string): SourceRecovery {
+function sourceRecovery(op: Operation, deployedSha: string, release: RecoveryRelease): SourceRecovery {
   const input = object(op.input.sourceRecovery);
   if (op.kind !== 'restart-gateway' || typeof op.input.gatewayId !== 'string' || !op.input.gatewayId || op.input.gatewayId.includes('/') ||
     op.input.restoreRecovery !== undefined || input.sourceSha !== deployedSha || !/^[a-f0-9]{40}$/.test(input.sourceSha)) {
     throw new Error('source recovery build identity is unavailable');
   }
-  assertRecoveryImages(object(input.images), deployedSha);
+  assertRecoveryImages(object(input.images), deployedSha, release);
   if (Object.keys(object(input.images)).length !== 2) throw new Error('source recovery image surface is invalid');
   if (input.postgresAgentStores && (!isReleasePayload(input.payload) ||
       input.images.gateway !== `${input.payload.imageRepository}:${input.payload.imageTag}` ||
@@ -96,7 +97,7 @@ async function transferPredecessor(request: {
     row: object(prior), fence: predecessorFence, source: input });
   if (!isDeepStrictEqual(captured, supersede)) throw new Error('source recovery predecessor changed');
   const old = object(supersede.input.sourceRecovery);
-  assertRecoveryImages(object(old.images), old.sourceSha);
+  assertRecoveryImages(object(old.images), old.sourceSha, platformGatewayArtifactFromEnvironment());
   assertOwnedFence(supersede.fence, { ...op, id: supersede.operationId, input: supersede.input }, old as SourceRecovery, pod);
   if (input.postgresAgentStores && !isDeepStrictEqual(request.workload, supersede.fence.target?.workload)) {
     throw new Error('source recovery predecessor workload changed');
@@ -182,7 +183,7 @@ async function preflightNewPostgresSource(request: {
   if (currentPod.metadata?.uid !== pod.metadata.uid || currentPod.metadata.deletionTimestamp) throw new Error('source discovery Pod custody changed');
 }
 export async function recoverSharedSourceRuntime(deps: Deps, op: Operation, ctx: OperationContext): Promise<void> {
-  const input = sourceRecovery(op, deps.sourceSha), gatewayId = op.input.gatewayId as string;
+  const input = sourceRecovery(op, deps.sourceSha, platformGatewayArtifactFromEnvironment()), gatewayId = op.input.gatewayId as string;
   if (!ctx.assertActiveClaim) throw new Error('source recovery operation claim is unavailable');
   await ctx.assertActiveClaim();
   const prior = object((await deps.store.journal.operations.get(op.id))?.sourceRuntimeRecovery);

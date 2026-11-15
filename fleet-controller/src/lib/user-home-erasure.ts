@@ -1,6 +1,5 @@
 import type { UserHomeState, OpaqueMap, PlatformStateStore } from "@octogee/core/platform-state";
-import type { UserHomeLocation, UserHomeMigration, UserHomeStorage } from "../user-home-migration.js";
-import type { HomeCopyInput } from "./compute-home-copy.js";
+import type { HomeCopyInput, UserHomeLocation, UserHomeMigration, UserHomeStorage } from "@octogee/core/isolated-gateway-lifecycle";
 
 export async function eraseUserHomeMigrationStorage(deps: {
   store: PlatformStateStore;

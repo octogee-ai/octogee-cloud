@@ -4,7 +4,7 @@ import { chmod, chown, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "nod
 import { test } from "node:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createHomeFs } from "../../scripts/lib/vm-gateway-agent/home-fs.ts";
+import { createHomeFs } from "../../gateway-supervisor/lib/vm-gateway-agent/home-fs.ts";
 
 for (const archiveHasSsh of [false, true]) {
   test(`root restore creates writable private SSH directory; archived SSH=${archiveHasSsh}`, { skip: process.getuid?.() !== 0 }, async () => {

@@ -8,6 +8,7 @@ import type {
   UserProvisioning,
   UserProvisioningSpec,
   UserProvisioningStatus,
+  UserProvisioningWatchResponse,
 } from "@octogee/shared/types/provisioning-service";
 
 export interface FakeProvisioningRequest {
@@ -47,8 +48,24 @@ function send(res: ServerResponse, status: number, body?: unknown, headers: Reco
   res.end(body === undefined ? undefined : JSON.stringify(body));
 }
 
-function fail(res: ServerResponse, status: number, code: ProvisioningErrorBody["code"], error: string): void {
-  send(res, status, { code, error } satisfies ProvisioningErrorBody);
+type FakeErrorCode = Extract<
+  ProvisioningErrorBody["code"],
+  "invalid-request" | "unauthenticated" | "precondition-failed" | "not-found" | "forbidden" | "not-issued" | "resource-version-expired" | "unavailable"
+>;
+
+const FAKE_ERROR_MESSAGES: Record<FakeErrorCode, string> = {
+  "invalid-request": "uid is not a valid identifier",
+  unauthenticated: "token review failed",
+  "precondition-failed": "the precondition no longer holds",
+  "not-found": "no such provisioning or route",
+  forbidden: "this caller lacks the credential-reader role",
+  "not-issued": "this credential has not been issued yet",
+  "resource-version-expired": "the resource version has expired",
+  unavailable: "the fake provisioning service failed",
+};
+
+function fail(res: ServerResponse, status: number, code: FakeErrorCode): void {
+  send(res, status, { code, error: FAKE_ERROR_MESSAGES[code] } satisfies ProvisioningErrorBody);
 }
 
 async function readBody(req: IncomingMessage): Promise<unknown> {
@@ -58,10 +75,35 @@ async function readBody(req: IncomingMessage): Promise<unknown> {
   return text === "" ? undefined : JSON.parse(text);
 }
 
+const SERVICE_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
+
+interface FakeChange {
+  readonly version: number;
+  readonly uid: string;
+  readonly deleted: boolean;
+}
+
+function changePage(
+  state: { changes: readonly FakeChange[]; resources: ReadonlyMap<string, UserProvisioning>; counter: number },
+  since: number,
+  limit: number,
+): UserProvisioningWatchResponse {
+  const page = state.changes.filter((change) => change.version > since).slice(0, limit);
+  const items = page
+    .filter((change) => !change.deleted && state.resources.get(change.uid)?.resourceVersion === String(change.version))
+    .map((change) => state.resources.get(change.uid) as UserProvisioning);
+  const deleted = page.filter((change) => change.deleted).map((change) => ({ uid: change.uid, resourceVersion: String(change.version) }));
+  return {
+    items,
+    ...(deleted.length > 0 ? { deleted } : {}),
+    resourceVersion: String(page.at(-1)?.version ?? state.counter),
+  };
+}
+
 export async function startFakeProvisioningService(options: { tokens?: string[] } = {}): Promise<FakeProvisioningService> {
   const requests: FakeProvisioningRequest[] = [];
   const resources = new Map<string, UserProvisioning>();
-  const changedAt = new Map<string, number>();
+  const changes: FakeChange[] = [];
   const events = new Map<string, ProvisioningAttempt[]>();
   const retries = new Map<string, unknown>();
   const failures: Array<{ status: number; retryAfterSeconds?: number }> = [];
@@ -75,16 +117,19 @@ export async function startFakeProvisioningService(options: { tokens?: string[] 
     counter += 1;
     const next = { ...resource, resourceVersion: String(counter) };
     resources.set(uid, next);
-    changedAt.set(uid, counter);
+    changes.push({ version: counter, uid, deleted: false });
     for (const wake of [...waiters]) wake();
     return next;
   }
 
-  function changedAfter(version: number): UserProvisioning[] {
-    return [...resources.entries()]
-      .filter(([uid]) => (changedAt.get(uid) ?? 0) > version)
-      .map(([, resource]) => resource);
+  function remove(uid: string): void {
+    if (!resources.delete(uid)) return;
+    counter += 1;
+    changes.push({ version: counter, uid, deleted: true });
+    for (const wake of [...waiters]) wake();
   }
+
+
 
   function record(req: IncomingMessage, url: URL, body: unknown): FakeProvisioningRequest {
     const recorded: FakeProvisioningRequest = {
@@ -102,7 +147,7 @@ export async function startFakeProvisioningService(options: { tokens?: string[] 
   function refused(req: IncomingMessage, res: ServerResponse): boolean {
     const bearer = req.headers.authorization?.replace(/^Bearer /, "");
     if (bearer === undefined || !service.acceptedTokens.has(bearer)) {
-      fail(res, 401, "unauthenticated", "token review failed");
+      fail(res, 401, "unauthenticated");
       return true;
     }
     const failure = failures.shift();
@@ -119,7 +164,7 @@ export async function startFakeProvisioningService(options: { tokens?: string[] 
   function retry(uid: string, existing: UserProvisioning, recorded: FakeProvisioningRequest, res: ServerResponse): void {
     const expected = (recorded.body as { expectedAttempts?: number } | undefined)?.expectedAttempts;
     if (expected !== undefined && expected !== existing.status.work.attempts) {
-      fail(res, 409, "precondition-failed", `attempts is ${existing.status.work.attempts}`);
+      fail(res, 409, "precondition-failed");
       return;
     }
     const key = recorded.idempotencyKey ?? "";
@@ -131,7 +176,7 @@ export async function startFakeProvisioningService(options: { tokens?: string[] 
   function put(uid: string, existing: UserProvisioning | undefined, body: unknown, res: ServerResponse): void {
     const write = body as { spec: UserProvisioningSpec; expectedResourceVersion?: string };
     if (write.expectedResourceVersion !== undefined && write.expectedResourceVersion !== (existing?.resourceVersion ?? "")) {
-      fail(res, 409, "precondition-failed", "resource version moved");
+      fail(res, 409, "precondition-failed");
       return;
     }
     if (!existing) {
@@ -149,10 +194,10 @@ export async function startFakeProvisioningService(options: { tokens?: string[] 
     const existing = resources.get(uid);
     if (recorded.method === "PUT" && suffix === undefined) return put(uid, existing, recorded.body, res);
     if (recorded.method === "DELETE" && suffix === undefined) {
-      resources.delete(uid);
+      remove(uid);
       return send(res, 204);
     }
-    if (!existing) return fail(res, 404, "not-found", "no provisioning");
+    if (!existing) return fail(res, 404, "not-found");
     if (suffix === "/events") return send(res, 200, { items: events.get(uid) ?? [] });
     if (suffix === "/retry") return retry(uid, existing, recorded, res);
     send(res, 200, existing);
@@ -166,16 +211,18 @@ export async function startFakeProvisioningService(options: { tokens?: string[] 
     const credentialMatch = /^\/v1\/users\/([^/]+)\/credentials\/([^/]+)$/.exec(url.pathname);
     if (credentialMatch) return credential(decodeURIComponent(credentialMatch[1]), decodeURIComponent(credentialMatch[2]), res);
     const userMatch = /^\/v1\/users\/([^/]+)\/provisioning(\/retry|\/events)?$/.exec(url.pathname);
-    if (!userMatch) return fail(res, 404, "not-found", "no such route");
-    user(decodeURIComponent(userMatch[1]), userMatch[2], recorded, res);
+    if (!userMatch) return fail(res, 404, "not-found");
+    const uid = decodeURIComponent(userMatch[1]);
+    if (!SERVICE_IDENTIFIER.test(uid)) return fail(res, 400, "invalid-request");
+    user(uid, userMatch[2], recorded, res);
   }
 
   function credential(uid: string, name: string, res: ServerResponse): void {
-    if (!service.credentialReader) return fail(res, 403, "forbidden", "this caller lacks the credential-reader role");
+    if (!service.credentialReader) return fail(res, 403, "forbidden");
     const issued = credentials.get(`${uid}/${name}`);
     if (issued) return send(res, 200, issued);
-    if (!resources.has(uid)) return fail(res, 404, "not-found", "no provisioning for this user");
-    fail(res, 409, "not-issued", "this credential has not been issued yet");
+    if (!resources.has(uid)) return fail(res, 404, "not-found");
+    fail(res, 409, "not-issued");
   }
 
   async function listOrWatch(url: URL, res: ServerResponse): Promise<void> {
@@ -194,9 +241,10 @@ export async function startFakeProvisioningService(options: { tokens?: string[] 
       return;
     }
     const since = Number(url.searchParams.get("resourceVersion"));
-    if (since < oldestRetained) return fail(res, 410, "resource-version-expired", "too old");
+    if (since < oldestRetained) return fail(res, 410, "resource-version-expired");
     const timeoutMs = Number(url.searchParams.get("timeoutSeconds") ?? "60") * 1000;
-    if (changedAfter(since).length === 0) {
+    const limit = Number(url.searchParams.get("limit") ?? "500");
+    if (!changes.some((change) => change.version > since)) {
       await new Promise<void>((resolve) => {
         const wake = () => {
           waiters.delete(wake);
@@ -207,11 +255,14 @@ export async function startFakeProvisioningService(options: { tokens?: string[] 
         waiters.add(wake);
       });
     }
-    send(res, 200, { items: changedAfter(since), resourceVersion: String(counter) });
+    send(res, 200, changePage({ changes, resources, counter }, since, limit));
   }
 
   const server: Server = createServer((req, res) => {
-    handle(req, res).catch((error: unknown) => fail(res, 500, "unavailable", String(error)));
+    handle(req, res).catch((error: unknown) => {
+      console.error("fake provisioning service handler failed", error);
+      fail(res, 500, "unavailable");
+    });
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const { port } = server.address() as AddressInfo;

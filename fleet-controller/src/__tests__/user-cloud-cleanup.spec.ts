@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { MalformedRecordError } from "@octogee/core/platform-state";
+import { MalformedRecordError, type PlatformStateStore } from "@octogee/core/platform-state";
 import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { buildUserCloudCleanupDeps } from "../index.js";
 import type { ProductUserLifecycle, UserDataScope } from "../lib/user-ops/user-lifecycle-product.js";
@@ -121,3 +121,71 @@ describe("user erasure cleanup with a product", () => {
     expect(data.deleteSignIn).toHaveBeenCalledWith("uid-ada");
   });
 });
+
+describe("user erasure and the provisioning service", () => {
+  const chatSecret = (personalToken: string) => ({
+    kind: "builder-mattermost" as const, secretId: "mattermost", projectId: null, personalToken, mattermostUserId: "mm-ada", createdAt: 1, rotatedAt: null,
+  });
+
+  function racingStore(records: Map<string, Record<string, unknown>>, race: { before?: boolean; after?: boolean }): PlatformStateStore {
+    const store = createDocumentFixtureStore(records);
+    const users = new Proxy(store.users.records, {
+      get(target, property, receiver) {
+        if (property !== "delete") return Reflect.get(target, property, receiver);
+        return async (uid: string) => {
+          if (race.before) await store.secrets.put(uid, chatSecret("written-before-the-record-delete"));
+          await target.delete(uid);
+          if (race.after) await store.secrets.put(uid, chatSecret("written-after-the-record-delete"));
+        };
+      },
+    });
+    return new Proxy(store, {
+      get(target, property, receiver) {
+        if (property === "users") return { ...target.users, records: users };
+        return Reflect.get(target, property, receiver);
+      },
+    });
+  }
+
+  it("hands erasure the provisioning delete and leaves it out of the record erasure", async () => {
+    stubCleanupEnvironment("gcs");
+    const records = adaRecords();
+    const provisioning = { deleteProvisioning: vi.fn(async () => "deleted" as const) };
+    const deps = buildUserCloudCleanupDeps(createDocumentFixtureStore(records), vi.fn(), undefined, null, provisioning);
+
+    await expect(deps.deleteProvisioning?.("uid-ada")).resolves.toBe("deleted");
+    await deps.eraseUserRecords(SCOPE);
+
+    expect(provisioning.deleteProvisioning).toHaveBeenCalledTimes(1);
+    expect(records.has("users/uid-ada")).toBe(false);
+  });
+
+  it("has no provisioning delete when no provisioning service is configured", () => {
+    stubCleanupEnvironment("gcs");
+
+    expect(buildUserCloudCleanupDeps(createDocumentFixtureStore({}), vi.fn(), undefined, null).deleteProvisioning).toBeUndefined();
+  });
+
+  it("leaves no chat secret row when a mirror write lands between the secret deletion and the record deletion", async () => {
+    stubCleanupEnvironment("gcs");
+    const records = adaRecords();
+    const store = racingStore(records, { before: true });
+
+    await buildUserCloudCleanupDeps(store, vi.fn(), undefined, null).eraseUserRecords(SCOPE);
+
+    await expect(store.secrets.list("uid-ada")).resolves.toEqual([]);
+    expect([...records.keys()].filter((path) => path.startsWith("users/uid-ada"))).toEqual([]);
+  });
+
+  it("deletes a chat secret row written after the record deletion as its last step", async () => {
+    stubCleanupEnvironment("gcs");
+    const records = adaRecords();
+    const store = racingStore(records, { after: true });
+
+    await buildUserCloudCleanupDeps(store, vi.fn(), undefined, null).eraseUserRecords(SCOPE);
+
+    await expect(store.secrets.list("uid-ada")).resolves.toEqual([]);
+    expect([...records.keys()].filter((path) => path.startsWith("users/uid-ada"))).toEqual([]);
+  });
+});
+

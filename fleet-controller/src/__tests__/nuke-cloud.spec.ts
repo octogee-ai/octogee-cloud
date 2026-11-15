@@ -198,6 +198,43 @@ describe("nukeUserCloudSide — happy path", () => {
   });
 });
 
+describe("nukeUserCloudSide — provisioning", () => {
+  it("deletes the user's provisioning before it erases the git and chat accounts", async () => {
+    const order: string[] = [];
+    const deps = mkDeps({
+      deleteProvisioning: vi.fn(async () => { order.push("provisioning"); return "deleted" as const; }),
+      git: { eraseOwner: vi.fn(async () => { order.push("git"); }) },
+      channels: { erase: vi.fn(async () => { order.push("chat"); }) },
+    });
+
+    const results = await nukeUserCloudSide(mkCtx(), deps);
+
+    expect(order).toEqual(["provisioning", "git", "chat"]);
+    expect(results[0]).toEqual({ key: "provisioning", ok: true });
+  });
+
+  it("erases nothing else while the provisioning delete fails", async () => {
+    const deps = mkDeps({ deleteProvisioning: vi.fn(async () => { throw new Error("provisioning service unreachable"); }) });
+
+    const results = await nukeUserCloudSide(mkCtx(), deps);
+
+    expect(results).toEqual([{ key: "provisioning", ok: false, error: "provisioning service unreachable" }]);
+    expect(deps.git.eraseOwner).not.toHaveBeenCalled();
+    expect(deps.channels.erase).not.toHaveBeenCalled();
+    expect(deps.eraseUserRecords).not.toHaveBeenCalled();
+  });
+
+  it("carries on, loudly, when the provisioning service cannot name the uid", async () => {
+    const deps = mkDeps({ deleteProvisioning: vi.fn(async () => "unnameable" as const) });
+
+    const results = await nukeUserCloudSide(mkCtx(), deps);
+
+    expect(results[0]).toEqual({ key: "provisioning", ok: true, detail: "the provisioning service cannot name uid-alice; nothing to delete" });
+    expect(deps.git.eraseOwner).toHaveBeenCalled();
+    expect(deps.eraseUserRecords).toHaveBeenCalled();
+  });
+});
+
 describe("nukeUserCloudSide — partial failure", () => {
   it("continues subsequent steps when one fails; reports per-step error", async () => {
     const deps = mkDeps({

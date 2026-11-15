@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { createKeyedRetryQueue } from "./keyed-retry-queue.js";
 import { operationAuditDocumentId, resumeOperationAuditAction, runWithOperationAuditIntent, } from "./operation-audit.js";
-import { backoffDelayMs, startProvisioningWatch, } from "./provisioning-service-client.js";
-import { mirrorUserProvisioning, } from "./provisioning-mirror.js";
+import { backoffDelayMs, compareResourceVersions, startProvisioningWatch, } from "./provisioning-service-client.js";
+import { chatAccountMismatch, mirrorUserProvisioning, userBeingErased, } from "./provisioning-mirror.js";
 import { desiredUserProvisioningSpec, sameProvisioningSpec } from "./provisioning-spec.js";
 export const PROVISIONING_SPEC_BACKFILL_KEY = "provisioning-service-spec-backfill";
 export const PROVISIONING_SYNC_CONCURRENCY = 4;
@@ -12,14 +12,35 @@ const FLEET_CONTROLLER_ACTOR = "fleet-controller";
 function errorMessage(error) {
     return error instanceof Error ? error.message : String(error);
 }
+class UnreadableUserError extends Error {
+    uid;
+    cause;
+    constructor(uid, cause) {
+        super(`the user record of ${uid} could not be read: ${errorMessage(cause)}`);
+        this.uid = uid;
+        this.cause = cause;
+        this.name = "UnreadableUserError";
+    }
+}
 function newer(candidate, current) {
-    return current === undefined || Number(candidate.resourceVersion) >= Number(current.resourceVersion);
+    return current === undefined || compareResourceVersions(candidate.resourceVersion, current.resourceVersion) >= 0;
 }
 function emptyCounters() {
     return {
-        specWrites: { created: 0, changed: 0, unchanged: 0, "not-admitted": 0, failed: 0 },
-        deletes: { deleted: 0, failed: 0 },
-        mirrors: { written: 0, unchanged: 0, "chat-not-ready": 0, "credentials-not-issued": 0, "user-missing": 0, "slug-mismatch": 0, failed: 0 },
+        specWrites: { created: 0, changed: 0, unchanged: 0, "not-admitted": 0, "being-erased": 0, failed: 0 },
+        deletes: { deleted: 0, kept: 0, unreadable: 0, unnameable: 0, failed: 0 },
+        mirrors: {
+            written: 0,
+            unchanged: 0,
+            "chat-not-ready": 0,
+            "credentials-not-issued": 0,
+            "agent-not-ready": 0,
+            "chat-id-mismatch": 0,
+            "being-erased": 0,
+            "user-missing": 0,
+            "slug-mismatch": 0,
+            failed: 0,
+        },
         watchFailures: 0,
         watchConnected: false,
     };
@@ -54,6 +75,79 @@ export async function runJournaledBackfill(store, run, now = Date.now) {
     const result = await runWithOperationAuditIntent(store, { ...BACKFILL_INTENT, now }, { claimId: randomUUID(), now }, run);
     return { journaled: true, result };
 }
+async function refusalReason(store, resource, outcome) {
+    if (outcome === "slug-mismatch")
+        return `its spec names slug ${resource.spec.slug}, which the user record does not carry`;
+    const user = await store.users.records.get(resource.uid);
+    const chat = resource.status.outputs.chat;
+    const mismatch = user === null || chat === undefined ? null : await chatAccountMismatch(store, user, chat);
+    return mismatch ?? `a chat account the platform holds differs from the provisioning service's chat user ${chat?.userId}`;
+}
+function createProvisioningDeleter({ deps, cache, counters, specs, now, retryDelayMs }) {
+    async function currentUser(uid) {
+        try {
+            return await deps.store.users.records.get(uid);
+        }
+        catch (error) {
+            throw new UnreadableUserError(uid, error);
+        }
+    }
+    async function deleteResource(uid) {
+        const user = await currentUser(uid);
+        if (user !== null) {
+            counters.deletes.kept += 1;
+            deps.log(`[provisioning] kept the provisioning of ${uid}: its user record exists`);
+            if (user.admitted && !userBeingErased(user))
+                specs.enqueue(uid);
+            return;
+        }
+        const outcome = await deps.client.deleteProvisioning(uid);
+        cache.delete(uid);
+        if (outcome === "unnameable") {
+            counters.deletes.unnameable += 1;
+            deps.log(`[provisioning] ⚠ the provisioning service cannot name ${uid}, so it holds no provisioning of it to delete`);
+            return;
+        }
+        counters.deletes.deleted += 1;
+        deps.log(`[provisioning] deleted the provisioning of ${uid}, whose user record is gone`);
+    }
+    const deletes = createKeyedRetryQueue({
+        concurrency: PROVISIONING_SYNC_CONCURRENCY,
+        now,
+        retryDelayMs,
+        process: deleteResource,
+        onError: (uid, error, attempts) => {
+            if (error instanceof UnreadableUserError) {
+                counters.deletes.unreadable += 1;
+                deps.log(`[provisioning] ❌ not deleting the provisioning of ${uid} (check ${attempts}): ${error.message}; re-checking later`);
+                return;
+            }
+            counters.deletes.failed += 1;
+            deps.log(`[provisioning] ⚠ could not delete the provisioning of ${uid} (attempt ${attempts}): ${errorMessage(error)}; retrying`);
+        },
+    });
+    async function deleteOrphans() {
+        const uids = [...cache.keys()];
+        let users;
+        try {
+            users = await deps.store.users.records.getMany(uids);
+        }
+        catch (error) {
+            deps.log(`[provisioning] ⚠ could not read the user records behind ${uids.length} provisionings: ${errorMessage(error)}; checking each one`);
+            users = new Map();
+        }
+        for (const uid of uids)
+            if (!users.has(uid))
+                deletes.enqueue(uid);
+    }
+    return { deletes, deleteOrphans };
+}
+const MIRROR_NOTICES = {
+    written: (uid) => `[provisioning] mirrored chat and git results of ${uid}`,
+    "credentials-not-issued": (uid) => `[provisioning] not mirroring ${uid} yet: its chat credentials are not issued`,
+    "being-erased": (uid) => `[provisioning] not mirroring ${uid}: the user is being erased`,
+    "agent-not-ready": (uid) => `[provisioning] not mirroring ${uid} yet: its spec enables the default agent, which has no chat account`,
+};
 export function createProvisioningSync(deps) {
     const now = deps.now ?? Date.now;
     const random = deps.random ?? Math.random;
@@ -69,10 +163,19 @@ export function createProvisioningSync(deps) {
         if (newer(resource, cache.get(resource.uid)))
             cache.set(resource.uid, resource);
     }
+    function forget(uid, resourceVersion) {
+        const seen = cache.get(uid);
+        if (seen === undefined || compareResourceVersions(seen.resourceVersion, resourceVersion) > 0)
+            return;
+        cache.delete(uid);
+        specs.enqueue(uid);
+    }
     async function writeSpec(uid) {
         const user = await deps.store.users.records.get(uid);
         if (user === null || !user.admitted || !user.slug)
             return "not-admitted";
+        if (userBeingErased(user))
+            return "being-erased";
         const data = await deps.documents.account(uid);
         if (data === undefined)
             throw new Error(`admitted user ${uid} has no account document`);
@@ -106,6 +209,21 @@ export function createProvisioningSync(deps) {
             deps.log(`[provisioning] ⚠ could not write the spec of ${uid} (attempt ${attempts}): ${errorMessage(error)}; retrying`);
         },
     });
+    const refusals = new Map();
+    async function recordMirror(resource, outcome) {
+        const uid = resource.uid;
+        counters.mirrors[outcome] += 1;
+        if (outcome === "written" || outcome === "unchanged")
+            refusals.delete(uid);
+        const notice = MIRROR_NOTICES[outcome];
+        if (notice !== undefined)
+            deps.log(notice(uid));
+        if (outcome === "chat-id-mismatch" || outcome === "slug-mismatch") {
+            const reason = await refusalReason(deps.store, resource, outcome);
+            refusals.set(uid, { uid, outcome, reason, since: refusals.get(uid)?.since ?? new Date(now()).toISOString() });
+            deps.log(`[provisioning] ❌ not mirroring ${uid}: ${reason}`);
+        }
+    }
     const mirrors = createKeyedRetryQueue({
         concurrency: PROVISIONING_SYNC_CONCURRENCY,
         now,
@@ -114,46 +232,14 @@ export function createProvisioningSync(deps) {
             const resource = cache.get(uid);
             if (resource === undefined)
                 return;
-            const outcome = await mirrorUserProvisioning(deps, resource);
-            counters.mirrors[outcome] += 1;
-            if (outcome === "written")
-                deps.log(`[provisioning] mirrored chat and git results of ${uid}`);
-            if (outcome === "credentials-not-issued")
-                deps.log(`[provisioning] not mirroring ${uid} yet: its chat credentials are not issued and it has no platform chat secrets`);
-            if (outcome === "slug-mismatch")
-                deps.log(`[provisioning] ⚠ not mirroring ${uid}: its spec names slug ${resource.spec.slug}, which the user record does not carry`);
+            await recordMirror(resource, await mirrorUserProvisioning(deps, resource));
         },
         onError: (uid, error, attempts) => {
             counters.mirrors.failed += 1;
             deps.log(`[provisioning] ⚠ could not mirror ${uid} (attempt ${attempts}): ${errorMessage(error)}; retrying`);
         },
     });
-    async function deleteResource(uid) {
-        await deps.client.deleteProvisioning(uid);
-        cache.delete(uid);
-        counters.deletes.deleted += 1;
-        deps.log(`[provisioning] deleted the provisioning of ${uid}, whose user record is gone`);
-        const user = await deps.store.users.records.get(uid);
-        if (user !== null && user.admitted)
-            specs.enqueue(uid);
-    }
-    const deletes = createKeyedRetryQueue({
-        concurrency: PROVISIONING_SYNC_CONCURRENCY,
-        now,
-        retryDelayMs,
-        process: deleteResource,
-        onError: (uid, error, attempts) => {
-            counters.deletes.failed += 1;
-            deps.log(`[provisioning] ⚠ could not delete the provisioning of ${uid} (attempt ${attempts}): ${errorMessage(error)}; retrying`);
-        },
-    });
-    async function deleteOrphans() {
-        const uids = [...cache.keys()];
-        const users = await deps.store.users.records.getMany(uids);
-        for (const uid of uids)
-            if (!users.has(uid))
-                deletes.enqueue(uid);
-    }
+    const { deletes, deleteOrphans } = createProvisioningDeleter({ deps, cache, counters, specs, now, retryDelayMs });
     async function backfill() {
         await snapshot;
         const admitted = await deps.store.users.records.listAdmitted();
@@ -219,6 +305,7 @@ export function createProvisioningSync(deps) {
         observed: (uid) => cache.get(uid),
         markDirty: (uid) => specs.enqueue(uid),
         specFailures: () => [...failures.values()],
+        mirrorRefusals: () => [...refusals.values()],
         resync,
         writeSpec,
         backfill,
@@ -238,11 +325,15 @@ export function createProvisioningSync(deps) {
                         mirrors.enqueue(item.uid);
                     await deleteOrphans();
                 },
-                onChanges: async (items) => {
+                onChanges: async (changes) => {
                     counters.watchConnected = true;
-                    for (const item of items) {
-                        remember(item);
-                        mirrors.enqueue(item.uid);
+                    for (const change of changes) {
+                        if (change.kind === "deleted") {
+                            forget(change.uid, change.resourceVersion);
+                            continue;
+                        }
+                        remember(change.resource);
+                        mirrors.enqueue(change.resource.uid);
                     }
                 },
                 onError: (error, consecutive) => {

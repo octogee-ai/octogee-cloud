@@ -80,7 +80,7 @@ describe("gateway/openclaw.template.json — standard gateway exec-off posture",
     expect(provider.command).toBe("/octogee/scripts/secret-resolver.mjs");
     expect(provider.args).toBeUndefined();
     expect(dockerfile).toContain(
-      "COPY --chown=node:node scripts/secret-resolver.mjs /octogee/scripts/",
+      "COPY --chown=node:node gateway-supervisor/secret-resolver.mjs /octogee/scripts/",
     );
     expect(dockerfile).toContain(
       "/octogee/scripts/node_modules/.bin/esbuild /octogee/scripts/secret-resolver.mjs",

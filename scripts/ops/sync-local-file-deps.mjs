@@ -343,6 +343,22 @@ export function syncLocalFileDeps({
   return { staleCount, syncedConsumers };
 }
 
+export function staleLocalFileDepLocks({ rootDir = DEFAULT_ROOT } = {}) {
+  return discoverLocalFileDeps({ rootDir })
+    .filter((dep) => !dep.overlay)
+    .map(({ consumerDir, packageName, spec, sourceDir }) => ({
+      consumer: path.relative(rootDir, consumerDir),
+      packageName,
+      reasons: compareLockMetadata({
+        consumerDir,
+        packageName,
+        sourcePackageJson: readJson(path.join(sourceDir, "package.json")),
+        spec,
+      }),
+    }))
+    .filter(({ reasons }) => reasons.length > 0);
+}
+
 function compareLockMetadata({ consumerDir, packageName, sourcePackageJson, spec }) {
   const lockPath = path.join(consumerDir, "package-lock.json");
   if (!fs.existsSync(lockPath)) return ["package-lock.json:missing"];

@@ -7,8 +7,8 @@ import {
 } from "@octogee/shared/types/provisioning-service";
 import { respondToAdminFleetMutationError, type AdminFleetMutationRunner, type FleetLogger } from "./admin-fleet-router.js";
 import { FleetMutationRefusedError } from "./normal-fleet-mutation.js";
-import { isProvisioningUid, ProvisioningServiceError, type ProvisioningServiceClient } from "./provisioning-service-client.js";
-import type { SpecWriteFailure } from "./provisioning-sync.js";
+import { isAddressableUid, ProvisioningServiceError, type ProvisioningServiceClient } from "./provisioning-service-client.js";
+import type { ProvisioningSync } from "./provisioning-sync.js";
 
 export type AdminProvisioningClient = Pick<
   ProvisioningServiceClient,
@@ -19,7 +19,7 @@ export interface AdminProvisioningRouterDeps {
   readonly provisioning: AdminProvisioningClient | null;
   readonly journal: AdminFleetMutationRunner;
   readonly logger: Pick<FleetLogger, "warn">;
-  readonly specFailures?: () => readonly SpecWriteFailure[];
+  readonly sync?: Pick<ProvisioningSync, "specFailures" | "mirrorRefusals">;
   readonly readDeadlineMs?: number;
 }
 
@@ -27,12 +27,16 @@ const UNAVAILABLE = "this fleet controller has no provisioning service configure
 const SERVICE_FAILED = "the provisioning service did not answer; see the fleet controller log";
 export const ADMIN_PROVISIONING_READ_DEADLINE_MS = 5_000;
 
-function withDeadline<T>(work: Promise<T>, ms: number): Promise<T> {
+function withDeadline<T>(work: (signal: AbortSignal) => Promise<T>, ms: number): Promise<T> {
+  const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   const expired = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => reject(new ProvisioningServiceError(0, "unreachable", `no answer within ${ms} ms`)), ms);
+    timer = setTimeout(() => {
+      reject(new ProvisioningServiceError(0, "unreachable", `no answer within ${ms} ms`));
+      controller.abort();
+    }, ms);
   });
-  return Promise.race([work, expired]).finally(() => clearTimeout(timer));
+  return Promise.race([work(controller.signal), expired]).finally(() => clearTimeout(timer));
 }
 
 function isNonNegativeInteger(value: unknown): value is number {
@@ -94,7 +98,7 @@ export function addAdminProvisioningRoutes(router: Router, deps: AdminProvisioni
   const respondToServiceError = (error: unknown, req: Request, res: Response, next: NextFunction): void => {
     const serviceError = error instanceof FleetMutationRefusedError ? error.refusal : error;
     if (serviceError instanceof ProvisioningServiceError) {
-      if (serviceError.status === 409 || serviceError.status === 404) {
+      if (serviceError.status === 400 || serviceError.status === 404 || serviceError.status === 409) {
         res.status(serviceError.status).json({ code: serviceError.code, error: serviceError.message });
         return;
       }
@@ -107,8 +111,8 @@ export function addAdminProvisioningRoutes(router: Router, deps: AdminProvisioni
 
   const requireUid = (req: Request, res: Response): string | null => {
     const uid = req.params.uid as string;
-    if (isProvisioningUid(uid)) return uid;
-    res.status(400).json({ code: "invalid-request", error: "uid is not a valid provisioning identifier" });
+    if (isAddressableUid(uid)) return uid;
+    res.status(400).json({ code: "invalid-request", error: "an empty or dot-segment uid cannot name a URL path segment" });
     return null;
   };
 
@@ -123,7 +127,7 @@ export function addAdminProvisioningRoutes(router: Router, deps: AdminProvisioni
     const uid = requireUid(req, res);
     if (uid === null) return;
     try {
-      const [provisioning, events] = await withDeadline(Promise.all([client.getProvisioning(uid), client.getProvisioningEvents(uid)]), deadline);
+      const [provisioning, events] = await withDeadline((signal) => Promise.all([client.getProvisioning(uid, { signal }), client.getProvisioningEvents(uid, { signal })]), deadline);
       if (provisioning === null) {
         res.status(404).json({ code: "not-found", error: "the provisioning service does not manage this user", uid });
         return;
@@ -167,7 +171,7 @@ export function addAdminProvisioningRoutes(router: Router, deps: AdminProvisioni
           }
         },
         dryRunRefusal: async () => {
-          const current = await withDeadline(client.getProvisioning(uid), deadline);
+          const current = await withDeadline((signal) => client.getProvisioning(uid, { signal }), deadline);
           if (current === null) throw new ProvisioningServiceError(404, "not-found", "the provisioning service does not manage this user");
           if (expectedAttempts !== undefined && current.status.work.attempts !== expectedAttempts) {
             throw new ProvisioningServiceError(409, "precondition-failed", `attempts is ${current.status.work.attempts}, expected ${expectedAttempts}`);
@@ -190,8 +194,8 @@ export function addAdminProvisioningRoutes(router: Router, deps: AdminProvisioni
       return;
     }
     try {
-      const listed = await withDeadline(client.listProvisionings(query), deadline);
-      res.json({ ...listed, specWriteFailures: deps.specFailures?.() ?? [] });
+      const listed = await withDeadline((signal) => client.listProvisionings(query, { signal }), deadline);
+      res.json({ ...listed, specWriteFailures: deps.sync?.specFailures() ?? [], mirrorRefusals: deps.sync?.mirrorRefusals() ?? [] });
     } catch (error) {
       respondToServiceError(error, req, res, next);
     }

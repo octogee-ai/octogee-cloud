@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const SERVICES = ["platform-api", "gateway-edge", "llm-broker", "fleet-controller"] as const;
+const SERVICES = ["platform-api", "gateway-edge", "llm-broker", "fleet-controller", "provisioning-service"] as const;
 const cloudRoot = resolve(import.meta.dirname, "../..");
 
 type Manifest = Record<string, unknown>;

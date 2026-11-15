@@ -1,7 +1,7 @@
 # Releasing
 
 A release is an annotated `vX.Y.Z` tag on a `main` commit whose Build main run
-succeeded and on which the [GKE install guide](gke.md) was followed end to end.
+and Kind smoke run succeeded, and on which the [GKE install guide](gke.md) was followed end to end.
 The [Release workflow](../.github/workflows/release.yml) turns the tag into a
 GitHub Release, tags the images with the release version, and publishes the
 npm packages and Helm charts at that version. Only a maintainer pushes release
@@ -93,20 +93,21 @@ data survives: it can change Helm values and the Admin API, drop stored data,
 or need `down` and a fresh `up`. A patch release (`v0.1.1`) only fixes.
 
 Every release names the [octogee-fleet](https://github.com/octogee-ai/octogee-fleet)
-release that Build main tested it with, `OCTOGEE_FLEET_VERSION` in
-[build-main.yml](../.github/workflows/build-main.yml). To move to a newer
+release that the kind smokes tested it with, `OCTOGEE_FLEET_VERSION` in
+[kind-smoke.yml](../.github/workflows/kind-smoke.yml). To move to a newer
 octogee-fleet, set both `OCTOGEE_FLEET_VERSION` and `OCTOGEE_FLEET_COMMIT`
-there, merge, and release a commit whose Build main ran with it.
+there, merge, and release a commit whose kind smokes ran with it.
 
 ## Cut a release
 
-1. Pick the commit. It must be on `main`, and its Build main run must have
-   succeeded, which means its images are published and both kind smokes
-   passed with the pinned octogee-fleet. This prints the newest one:
+1. Pick the commit. It must be on `main`, its Build main run must have
+   succeeded, which means its images are published and scanned, and its Kind
+   smoke run must have succeeded, which means both kind smokes passed on those
+   images with the pinned octogee-fleet. This prints the newest one:
 
    ```bash
-   gh run list -R octogee-ai/octogee-cloud --workflow=build-main.yml --branch=main \
-     --event=push --status=success --limit=1 --json headSha --jq '.[0].headSha'
+   gh run list -R octogee-ai/octogee-cloud --workflow=kind-smoke.yml --event=workflow_run \
+     --status=success --limit=1 --json displayTitle --jq '.[0].displayTitle | ltrimstr("Kind smoke at ")'
    ```
 
 2. Follow [docs/gke.md](gke.md) end to end at that commit, on a fresh Google
@@ -131,6 +132,8 @@ there, merge, and release a commit whose Build main ran with it.
 
 4. The Release workflow then:
    - stops unless the commit is on `main` and has a successful Build main run;
+   - stops unless the commit has a successful Kind smoke run, naming the
+     workflow and the commit when it has none;
    - stops unless `OCTOGEE_FLEET_COMMIT` is the commit of `OCTOGEE_FLEET_VERSION`;
    - stops unless the tag is annotated and its message names a GKE install
      guide run at the tagged commit;

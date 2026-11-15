@@ -43,7 +43,7 @@ export class FakeGiteaApi {
     if (fault) {
       fault.times -= 1;
       if (fault.status === 0) throw new TypeError("fetch failed");
-      return message(fault.status, "injected");
+      return message(fault.status, "host echoed request content");
     }
     const body = typeof init?.body === "string" ? JSON.parse(init.body) as Record<string, unknown> : {};
     return this.route(method, path, url.searchParams, body);

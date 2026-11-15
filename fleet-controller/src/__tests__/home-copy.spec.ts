@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { homeCopyCapacity, readHomeCopyProgress } from "../lib/compute-home-copy.js";
+import { homeCopyCapacity, HomeCopyFailure, type HomeCopyInput } from "@octogee/core/isolated-gateway-lifecycle";
+import { readHomeCopyProgress } from "../lib/compute-home-copy.js";
 
 describe("verified home copy", () => {
   it("uses the smaller allowance only with headroom and otherwise retains the larger home", () => {
@@ -22,7 +23,7 @@ describe("verified home copy", () => {
   });
 });
 
-import { createHomeCopyClient, HomeCopyFailure, type HomeCopyInput } from "../lib/compute-home-copy.js";
+import { createHomeCopyClient } from "../lib/compute-home-copy.js";
 import { homeCopyStartupScript } from "../lib/home-copy-worker.js";
 import { vi } from "vitest";
 

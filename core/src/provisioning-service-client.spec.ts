@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { UserProvisioning, UserProvisioningSpec } from "@octogee/shared/types/provisioning-service";
+import type { UserProvisioningSpec } from "@octogee/shared/types/provisioning-service";
 import { startFakeProvisioningService, type FakeProvisioningService } from "./fixtures/provisioning-service-fake.js";
 import {
   createProvisioningServiceClient,
   provisioningServiceConfigFromEnvironment,
   ProvisioningServiceError,
   startProvisioningWatch,
+  type ProvisioningChange,
   type ProvisioningServiceClientOptions,
   type ProvisioningServiceRequestOutcome,
 } from "./provisioning-service-client.js";
@@ -19,6 +20,14 @@ const SPEC: UserProvisioningSpec = {
   git: { repositories: ["workspace", "project-coaches"], systemConfigRepository: true },
   agentIds: ["octogee-lin-coach"],
 };
+
+const describeChange = (change: ProvisioningChange) => change.kind === "deleted" ? `deleted ${change.uid}` : `upsert ${change.resource.uid}`;
+const versionOf = (change: ProvisioningChange) => change.kind === "deleted" ? change.resourceVersion : change.resource.resourceVersion;
+
+async function until(condition: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 200 && !condition(); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 10));
+  expect(condition()).toBe(true);
+}
 
 let fake: FakeProvisioningService;
 let token: string;
@@ -175,6 +184,16 @@ describe("provisioning service client", () => {
     expect(fake.requests.at(-1)).toMatchObject({ method: "POST", path: "/v1/users/u1/provisioning/retry", idempotencyKey: "key-1", body: { expectedAttempts: 0 } });
   });
 
+  it("waits out a rate limit with its capped Retry-After, then succeeds", async () => {
+    fake.failNext(429, 1, 3600);
+
+    await client().putProvisioning("u1", SPEC);
+
+    expect(sleeps).toEqual([10_000]);
+    expect(outcomes).toEqual(["client-error", "ok"]);
+    expect(fake.resources.has("u1")).toBe(true);
+  });
+
   it("caps a long Retry-After at the retry policy's maximum delay", async () => {
     fake.failNext(503, 1, 3600);
 
@@ -183,12 +202,44 @@ describe("provisioning service client", () => {
     expect(sleeps).toEqual([10_000]);
   });
 
-  it("refuses a uid that would leave the user's path, without a request", async () => {
+  it("sends any uid the platform admits as one encoded path segment", async () => {
+    const api = client();
+
+    await api.getProvisioning("lin@example.test/x?y#z %").catch(() => undefined);
+    await api.getCredential("../provisionings", "user-chat-token").catch(() => undefined);
+
+    expect(fake.requests.map((request) => request.path)).toEqual([
+      "/v1/users/lin%40example.test%2Fx%3Fy%23z%20%25/provisioning",
+      "/v1/users/..%2Fprovisionings/credentials/user-chat-token",
+    ]);
+  });
+
+  it("refuses only the dot segments a URL path cannot carry, without a request", async () => {
     const api = client();
 
     await expect(api.getProvisioning("..")).rejects.toMatchObject({ status: 400, code: "invalid-request" });
-    await expect(api.getCredential("../provisionings", "user-chat-token")).rejects.toMatchObject({ status: 400 });
+    await expect(api.getProvisioning(".")).rejects.toMatchObject({ status: 400, code: "invalid-request" });
     expect(fake.requests).toEqual([]);
+  });
+
+  it("stops a request and its retries when the caller aborts", async () => {
+    let fetches = 0;
+    const api = client({
+      retry: { attempts: 5, baseDelayMs: 1, maxDelayMs: 1 },
+      fetch: (_url, init) => {
+        fetches += 1;
+        return new Promise((_resolve, reject) => init?.signal?.addEventListener("abort", () => reject(init.signal?.reason)));
+      },
+    });
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 20);
+
+    await expect(api.getProvisioning("u1", { signal: controller.signal })).rejects.toMatchObject({ code: "aborted" });
+    await expect(api.listProvisionings({}, { signal: controller.signal })).rejects.toMatchObject({ code: "aborted" });
+    await expect(api.getProvisioningEvents("u1", { signal: controller.signal })).rejects.toMatchObject({ code: "aborted" });
+
+    expect(fetches).toBe(1);
+    expect(sleeps).toEqual([]);
   });
 
   it("refuses to follow redirects", async () => {
@@ -203,6 +254,25 @@ describe("provisioning service client", () => {
     await api.getProvisioning("u1");
 
     expect(seen.map((init) => init.redirect)).toEqual(["error"]);
+  });
+
+  it("answers deleted for a provisioning it removes or that was already gone", async () => {
+    const api = client();
+    await api.putProvisioning("u1", SPEC);
+
+    await expect(api.deleteProvisioning("u1")).resolves.toBe("deleted");
+    await expect(api.deleteProvisioning("u1")).resolves.toBe("deleted");
+  });
+
+  it("answers unnameable, not an error, for a uid the service cannot name", async () => {
+    await expect(client().deleteProvisioning("lin@example.test")).resolves.toBe("unnameable");
+    await expect(client().deleteProvisioning("..")).resolves.toBe("unnameable");
+  });
+
+  it("answers unexpected-response when an accepted retry has a body that is not JSON", async () => {
+    const api = client({ fetch: async () => new Response("<html>accepted</html>", { status: 202 }) });
+
+    await expect(api.retryProvisioning("u1", {}, "k1")).rejects.toMatchObject({ status: 202, code: "unexpected-response" });
   });
 
   it("reads an issued credential and answers null while it is not issued", async () => {
@@ -246,8 +316,8 @@ describe("provisioning watch", () => {
           resolveSecondSnapshot();
         }
       },
-      onChanges: async (items: readonly UserProvisioning[]) => {
-        changes.push(items.map((item) => item.uid));
+      onChanges: async (page: readonly ProvisioningChange[]) => {
+        changes.push(page.map(describeChange));
         fake.expireBefore(100);
       },
       onError: (error) => {
@@ -262,7 +332,57 @@ describe("provisioning watch", () => {
     await watch.stopped;
 
     expect(snapshots).toEqual([["a"], ["a", "b"]]);
-    expect(changes).toEqual([["b"]]);
+    expect(changes).toEqual([["upsert b"]]);
+  });
+
+  it("applies a page's deletions and changes in resource version order", async () => {
+    const api = client();
+    const pages: string[][] = [];
+    const watch = startProvisioningWatch(api, {
+      onSnapshot: async () => {
+        await api.putProvisioning("a", SPEC);
+        await api.deleteProvisioning("a");
+        await api.putProvisioning("a", SPEC);
+      },
+      onChanges: async (page) => {
+        pages.push(page.map((change) => `${describeChange(change)} ${versionOf(change)}`));
+      },
+      onError: (error) => {
+        throw error;
+      },
+    }, { timeoutSeconds: 1 });
+
+    await until(() => pages.length > 0);
+    watch.stop();
+    await api.putProvisioning("z", SPEC);
+    await watch.stopped;
+
+    expect(pages[0]).toEqual(["deleted a 2", "upsert a 3"]);
+  });
+
+  it("follows watch pages until it has caught up", async () => {
+    const api = client();
+    const seen: string[] = [];
+    const watch = startProvisioningWatch(api, {
+      onSnapshot: async () => {
+        for (const uid of ["a", "b", "c", "d", "e"]) await api.putProvisioning(uid, SPEC);
+      },
+      onChanges: async (page) => {
+        seen.push(...page.map(describeChange));
+      },
+      onError: (error) => {
+        throw error;
+      },
+    }, { timeoutSeconds: 1, pageLimit: 2 });
+
+    await until(() => seen.length === 5);
+    watch.stop();
+    await api.putProvisioning("z", SPEC);
+    await watch.stopped;
+
+    const watches = fake.requests.filter((request) => request.query.watch === "true");
+    expect(seen).toEqual(["upsert a", "upsert b", "upsert c", "upsert d", "upsert e"]);
+    expect(watches.slice(0, 3).map((request) => [request.query.limit, request.query.resourceVersion])).toEqual([["2", "0"], ["2", "2"], ["2", "4"]]);
   });
 
   it("backs off before relisting when the resource version keeps expiring", async () => {

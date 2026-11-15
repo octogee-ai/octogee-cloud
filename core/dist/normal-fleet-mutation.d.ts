@@ -30,7 +30,8 @@ export declare class FleetMutationPartialError extends Error {
 }
 export declare class FleetMutationRefusedError extends Error {
     readonly refusal: Error;
-    constructor(refusal: Error);
+    readonly partialOutcome?: OperationAuditPartialOutcome | undefined;
+    constructor(refusal: Error, partialOutcome?: OperationAuditPartialOutcome | undefined);
 }
 export interface NormalFleetMutationInput<T> extends OperationAuditIntentInput {
     claimId?: string;

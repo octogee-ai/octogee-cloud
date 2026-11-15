@@ -8,7 +8,7 @@ import {
   builderActivateOperationId,
   isolatedRecoverOperationId,
   builderReturnOperationId,
-} from "@octogee/core/isolated-operation-ids";
+} from "@octogee/shared/types/isolated-operation-ids";
 import type {
   GatewayRecoveryReceipt,
   GatewayRoot,

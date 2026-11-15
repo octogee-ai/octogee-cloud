@@ -34,9 +34,16 @@ so that it calls the Admin API as `octogee-fleet` does.
   records keep their names. [Legacy names](legacy-names.md) lists them.
 - Some services live inside another component's directory: the npm cache
   proxy in `platform-api/`, the gateway router and the Mattermost callback
-  router in `gateway-edge/`, and the provisioner in `scripts/`.
-- `scripts/` holds runtime code as well as scripts. The provisioner and the
-  gateway pod's boot steps are under `scripts/lib/` and `scripts/entrypoints/`.
+  router in `gateway-edge/`, and the VM agent in `gateway-supervisor/`.
+- `gateway-supervisor/` holds everything the gateway image runs besides
+  OpenClaw: the gateway pod's boot steps and runners, and the VM agent, which
+  runs as its own process on an isolated gateway's VM. The VM agent shares
+  `lib/surge-openclaw-process-gate.ts`, `lib/openclaw-computer-browser.ts` and
+  `lib/desk-identity.ts` with the rest; once those are in a library it can
+  become its own component.
+- The gateway image still installs that runtime at `/octogee/scripts`, because
+  older VM boot images and running releases name paths under it.
+  [Legacy names](legacy-names.md#paths-inside-the-gateway-image) lists them.
 - The isolated gateway image is published as `octogee-gateway-builder`, and a
   sizing profile calls the pod or VM a gateway runs on its `computer`.
 - Identifiers and test fixtures still use words from the product: `coach` for
@@ -48,7 +55,7 @@ so that it calls the Admin API as `octogee-fleet` does.
 
 A few files hold far too much: `core/src/admin-fleet-router.ts`,
 `platform-api/src/routes/fleet-broker.ts`, `fleet-controller/src/index.ts` and
-`scripts/lib/fleet-http-migration.ts` are each between 3,000 and 6,200 lines.
+`gateway-supervisor/lib/fleet-http-migration.ts` are each between 3,300 and 6,300 lines.
 They are covered by tests and split as they are touched.
 
 ## Packaging
@@ -94,8 +101,8 @@ call to the edge:
 - `gateway/` keeps `setup.sh`, `docker-compose.yml` and `.env.example`,
   a single-gateway Docker setup from before the platform existed. They
   describe Firebase and are not maintained.
-- Some image READMEs are still working notes, not documentation:
-  `desktop/README.md`, `desktop/image/README.md` and
+- Some image notes are still working notes, not documentation:
+  `desktop/docs/container-recipe.md`, `desktop/image/README.md` and
   `gateway/openclaw-tarball/README.md`.
 - Test fixtures use my own handle and the hosted service's hostnames.
 
@@ -105,6 +112,8 @@ The platform has run end to end on kind and on GKE. Beyond that:
 
 - An isolated gateway on a virtual machine, the kind with a desktop, needs
   Google Cloud.
+- A private registry that is not a Google registry gets no credentials on the
+  VM: the VM image only pulls from a public registry or a Google registry.
 - Operator sign-in is Google sign-in or a key-signed token.
 - The EKS guide has not run on a real AWS account.
 - There is no production install guide. The GKE install is a single zone with

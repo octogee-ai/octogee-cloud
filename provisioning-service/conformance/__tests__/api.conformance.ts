@@ -55,7 +55,7 @@ describe.skipIf(!dsn)("provisioning service conformance", { timeout: 120_000 }, 
       expectContractError(await implementation.request("POST", "/v1/users/auth-1/provisioning/retry", { token: TOKENS.platformApi, body: {} }), 403, "forbidden");
       expectContractError(await implementation.request("DELETE", "/v1/users/auth-1/provisioning", { token: TOKENS.platformApi }), 403, "forbidden");
       expectContractError(await implementation.request("PUT", "/v1/users/auth-1/git-keys/gw-1", { body: { spec: { publicKey: KEY } } }), 403, "forbidden");
-      expectContractError(await implementation.request("GET", "/v1/users/auth-1/credentials/user-chat-token"), 403, "forbidden");
+      expect((await implementation.request("GET", "/v1/users/auth-1/credentials/user-chat-token")).status).not.toBe(403);
     });
   });
 
@@ -227,6 +227,22 @@ describe.skipIf(!dsn)("provisioning service conformance", { timeout: 120_000 }, 
       writing = false;
       await watching;
       expect([...seen.keys()].sort()).toEqual([...uids].sort());
+    });
+
+    it("reports a deleted user in the watch, before a re-create of the same uid, and answers a waiter on it with 404", async () => {
+      expect((await put("gone-1", { spec: spec("gone-one") })).status).toBe(201);
+      const from = (await implementation.request("GET", "/v1/provisionings")).body.resourceVersion;
+      const waiting = implementation.request("GET", "/v1/users/gone-1/provisioning?waitForGeneration=99&timeoutSeconds=30");
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      const began = Date.now();
+      expect((await implementation.request("DELETE", "/v1/users/gone-1/provisioning")).status).toBe(204);
+      expectContractError(await waiting, 404, "not-found");
+      expect(Date.now() - began).toBeLessThan(5_000);
+      expect((await put("gone-1", { spec: spec("gone-one") })).status).toBe(201);
+      const watched = (await implementation.request("GET", `/v1/provisionings?watch=true&resourceVersion=${from}&timeoutSeconds=0`)).body;
+      expect(watched.deleted.map((entry: { uid: string }) => entry.uid)).toEqual(["gone-1"]);
+      const recreated = watched.items.find((item: { uid: string }) => item.uid === "gone-1");
+      expect(BigInt(watched.deleted[0].resourceVersion)).toBeLessThan(BigInt(recreated.resourceVersion));
     });
 
     it("answers 410 resource-version-expired for a version outside the retained window", async () => {

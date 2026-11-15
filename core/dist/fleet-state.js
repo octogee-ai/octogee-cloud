@@ -1,17 +1,23 @@
 import { isDeepStrictEqual } from "node:util";
-import { resolveUserGatewayControlState, readSchedulerMigrationIdentity, } from "@octogee/shared/types/glm";
+import { resolveGatewayRuntime, resolveUserGatewayControlState, readSchedulerMigrationIdentity, } from "@octogee/shared/types/glm";
 import { hasFreshReadyKubernetesObservation, isGatewayRuntimeDoc, projectGatewayDesiredRootForGateway, } from "@octogee/shared/types/gateway-releases";
 import { accountAllowsInteractiveAccess } from "@octogee/shared/types/account-lifecycle";
 import { readWorkspaceMigrationMarker } from "@octogee/shared/types/workspace-migration";
 import { userMigrationV2GatewayRootFenceEqual, userMigrationV2GatewayRootFenceMatches, } from "./user-migration-v2.js";
 import { withCurrentSizingKey, } from "./sizing-key.js";
-import { builderActivateOperationId } from "./isolated-operation-ids.js";
+import { builderActivateOperationId } from "@octogee/shared/types/isolated-operation-ids";
 import { gatewayAuthorizationFromRootDocument } from "./gateway-live-release.js";
 import { gatewayRetiredInStore } from "./gateway-retirement-claim.js";
 import { MalformedRecordError } from "./platform-state/index.js";
 const USER_ACTIVATION_LEASE_SOURCE = "builder-activation-lease";
 const MIGRATE_USER_OPERATION_KIND = "migrate-user";
 const CLEAR = { clear: true };
+export class FleetStatePreconditionError extends Error {
+    constructor(message) {
+        super(message);
+        this.name = "FleetStatePreconditionError";
+    }
+}
 function nowMs(deps) {
     return deps.now ? deps.now().getTime() : Date.now();
 }
@@ -44,9 +50,9 @@ function interactiveAccess(user) {
 }
 function assertRestoreUnfenced(user) {
     if (user?.fences.restoreFence !== undefined)
-        throw new Error("user restore outcome is unresolved");
+        throw new FleetStatePreconditionError("user restore outcome is unresolved");
     if (user?.fences.sourceTransferFence !== undefined)
-        throw new Error("user source transfer outcome is unresolved");
+        throw new FleetStatePreconditionError("user source transfer outcome is unresolved");
 }
 async function clearWorkspaceMigrationMarker(tx, user, uid) {
     await tx.users.records.setFence(uid, "migration", CLEAR, user?.fences.migration ?? "absent");
@@ -961,12 +967,12 @@ function assertRecoveryTargetReady(input) {
     const runtime = isGatewayRuntimeDoc(targetRuntimeData) ? targetRuntimeData : null;
     if (!recoveryTargetRootReady(root, params) ||
         !recoveryTargetRuntimeReady(runtime, root, params, now)) {
-        throw new Error(`recovery target runtime is not freshly ready: ${params.toGatewayId}`);
+        throw new FleetStatePreconditionError(`recovery target runtime is not freshly ready: ${params.toGatewayId}`);
     }
 }
 function assertRecoverySourceIdentity(root, user, sourceAssignment, params) {
     if (!root || !sourceAssignment) {
-        throw new Error("unavailable gateway recovery source changed before cutover");
+        throw new FleetStatePreconditionError("unavailable gateway recovery source changed before cutover");
     }
     const exact = [
         user?.gateway?.gatewayId === params.fromGatewayId,
@@ -977,7 +983,7 @@ function assertRecoverySourceIdentity(root, user, sourceAssignment, params) {
         sourceAssignment.epoch === params.expectedSourceEpoch,
     ].every(Boolean);
     if (!exact)
-        throw new Error("unavailable gateway recovery source changed before cutover");
+        throw new FleetStatePreconditionError("unavailable gateway recovery source changed before cutover");
 }
 function assertSharedRecoverySource(root, params) {
     const invalid = [
@@ -986,13 +992,13 @@ function assertSharedRecoverySource(root, params) {
         !params.sharedGatewayIds.includes(params.fromGatewayId),
     ].some(Boolean);
     if (invalid)
-        throw new Error("shared gateway recovery source is not an active pool member");
+        throw new FleetStatePreconditionError("shared gateway recovery source is not an active pool member");
 }
 function assertMissingDrainingSource(input) {
     const { sourceRootData: root, sourceRuntime, sourceAssignment, now, maxAgeMs } = input;
     const runtime = runtimeDocument(sourceRuntime);
     if (!root || !isGatewayRuntimeDoc(runtime) || runtime.kubernetes === undefined) {
-        throw new Error("draining Shared source is not confirmed missing");
+        throw new FleetStatePreconditionError("draining Shared source is not confirmed missing");
     }
     const observed = runtime.kubernetes;
     const heartbeat = millisFromUnknown(runtime.heartbeat.lastHeartbeatAt);
@@ -1005,7 +1011,7 @@ function assertMissingDrainingSource(input) {
         heartbeat !== null && now - heartbeat > maxAgeMs,
     ].every(Boolean);
     if (!safe)
-        throw new Error("draining Shared source is not confirmed missing");
+        throw new FleetStatePreconditionError("draining Shared source is not confirmed missing");
 }
 function assertRecoverySource(input) {
     const { params, sourceRootData, user, sourceAssignment } = input;
@@ -1043,7 +1049,7 @@ async function assertDrainingMigrationUnclaimed(tx, operation, params) {
         handoff.sourceRecovery === undefined,
     ].every(Boolean);
     if (!safe)
-        throw new Error("missing draining Shared source has unresolved migration custody");
+        throw new FleetStatePreconditionError("missing draining Shared source has unresolved migration custody");
     if (operation.schedulerHandoff === undefined || operation.schedulerHandoffReleased === true)
         return;
     const exactHandoff = handoff.uid === params.uid && handoff.slug === params.slug &&
@@ -1052,7 +1058,7 @@ async function assertDrainingMigrationUnclaimed(tx, operation, params) {
     if (handoff.scheduleTransfer !== true || typeof handoff.migrationId !== "string" || !exactHandoff ||
         !attemptsStoppedBeforeSharedTransfer(operation, params) ||
         await tx.users.scheduleTransfers.get(params.uid, handoff.migrationId) !== null) {
-        throw new Error("missing draining Shared source has unresolved scheduler custody");
+        throw new FleetStatePreconditionError("missing draining Shared source has unresolved scheduler custody");
     }
 }
 async function supersedeDrainingMigrations(tx, params, now) {
@@ -1080,7 +1086,27 @@ async function clearRecoveredSourceMount(tx, sourceRuntime, gatewayId, slug) {
         },
     });
 }
+async function validateRecoverySource(tx, params, sourceRootData, sourceRuntime) {
+    if (!params.validateSource)
+        return;
+    const root = projectGatewayDesiredRootForGateway(sourceRootData, params.fromGatewayId);
+    const runtime = runtimeDocument(sourceRuntime);
+    await params.validateSource({
+        transaction: tx,
+        sourceGatewayId: params.fromGatewayId,
+        sourceDesiredRelease: root?.desiredRelease ?? null,
+        sourceLiveRelease: root?.liveRelease ?? null,
+        sourceHeartbeatAt: isGatewayRuntimeDoc(runtime) ? millisFromUnknown(runtime.heartbeat.lastHeartbeatAt) : null,
+        sourceUpdatedAt: millisFromUnknown(root?.updatedAt),
+        sourceRuntime: resolveGatewayRuntime(sourceRuntime?.runtime),
+    });
+}
 export async function commitUnavailableGatewayRecoveryAtomic(deps, params) {
+    const now = nowMs(deps);
+    await deps.store.transaction({ label: "fleet-state.commitUnavailableGatewayRecoveryAtomic" }, (tx) => commitUnavailableGatewayRecoveryInTransaction(tx, params, now));
+    return { operationId: params.operationId };
+}
+export async function commitUnavailableGatewayRecoveryInTransaction(tx, params, now) {
     if (params.kind !== "recover-shared-customer") {
         throw new Error("User recovery requires its retained home; metadata-only recovery is forbidden");
     }
@@ -1090,98 +1116,96 @@ export async function commitUnavailableGatewayRecoveryAtomic(deps, params) {
         params.fromGatewayId === params.toGatewayId) {
         throw new Error("unavailable gateway recovery parameters are invalid");
     }
-    const now = nowMs(deps);
-    await deps.store.transaction({ label: "fleet-state.commitUnavailableGatewayRecoveryAtomic" }, async (tx) => {
-        const [operation, user, sourceRoot, targetRoot, sourceRuntime, targetRuntime, sourceAssignment, targetAssignment,] = await Promise.all([
-            tx.journal.operations.get(params.operationId),
-            tx.users.records.get(params.uid),
-            tx.gateways.roots.get(params.fromGatewayId),
-            tx.gateways.roots.get(params.toGatewayId),
-            tx.fleetRegistry.get(params.fromGatewayId),
-            tx.fleetRegistry.get(params.toGatewayId),
-            tx.gateways.assignments.get(params.fromGatewayId, params.uid),
-            tx.gateways.assignments.get(params.toGatewayId, params.uid),
-        ]);
-        assertRestoreUnfenced(user);
-        const targetRootData = withoutRevision(targetRoot);
-        if (recoveryAlreadyCommitted({
-            params,
-            operation: operationData(operation),
-            user,
-            targetRootData,
-            sourceAssignmentExists: sourceAssignment !== null,
-            targetAssignment,
-        })) {
-            return;
-        }
-        if (operation !== null) {
-            throw new Error(`recovery operation ${params.operationId} conflicts with current authority`);
-        }
-        const targetRuntimeData = runtimeDocument(targetRuntime);
-        assertRecoveryTargetReady({ params, targetRootData, targetRuntimeData, now });
-        if (!params.validateTarget) {
-            throw new Error("unavailable gateway recovery requires an atomic target admission fence");
-        }
-        await params.validateTarget({
-            transaction: tx,
-            targetGatewayId: params.toGatewayId,
-            targetRoot: targetRootData,
-            targetRuntime: targetRuntimeData,
-        });
-        assertRecoverySource({
-            params,
-            sourceRootData: withoutRevision(sourceRoot),
-            sourceRuntime,
-            user,
-            sourceAssignment,
-            now,
-        });
-        if (sourceRoot?.desiredStatus === "draining")
-            await supersedeDrainingMigrations(tx, params, now);
-        const controlState = resolveUserGatewayControlState(targetRootData, params.uid);
-        await clearRecoveredSourceMount(tx, sourceRuntime, params.fromGatewayId, params.slug);
-        await tx.users.records.setGatewayMirror(params.uid, {
-            gatewayId: params.toGatewayId,
-            gatewayAssignedAt: now,
-            gatewayProfile: controlState.gatewayProfile,
-            controlUiEnabled: controlState.controlUiEnabled,
-        }, { gatewayId: params.fromGatewayId });
-        await tx.users.records.setFence(params.uid, "migration", CLEAR);
-        await tx.gateways.assignments.put({
+    const [operation, user, sourceRoot, targetRoot, sourceRuntime, targetRuntime, sourceAssignment, targetAssignment,] = await Promise.all([
+        tx.journal.operations.get(params.operationId),
+        tx.users.records.get(params.uid),
+        tx.gateways.roots.get(params.fromGatewayId),
+        tx.gateways.roots.get(params.toGatewayId),
+        tx.fleetRegistry.get(params.fromGatewayId),
+        tx.fleetRegistry.get(params.toGatewayId),
+        tx.gateways.assignments.get(params.fromGatewayId, params.uid),
+        tx.gateways.assignments.get(params.toGatewayId, params.uid),
+    ]);
+    assertRestoreUnfenced(user);
+    const targetRootData = withoutRevision(targetRoot);
+    if (recoveryAlreadyCommitted({
+        params,
+        operation: operationData(operation),
+        user,
+        targetRootData,
+        sourceAssignmentExists: sourceAssignment !== null,
+        targetAssignment,
+    })) {
+        return "already-committed";
+    }
+    if (operation !== null) {
+        throw new FleetStatePreconditionError(`recovery operation ${params.operationId} conflicts with current authority`);
+    }
+    const targetRuntimeData = runtimeDocument(targetRuntime);
+    assertRecoveryTargetReady({ params, targetRootData, targetRuntimeData, now });
+    if (!params.validateTarget) {
+        throw new Error("unavailable gateway recovery requires an atomic target admission fence");
+    }
+    await params.validateTarget({
+        transaction: tx,
+        targetGatewayId: params.toGatewayId,
+        targetRoot: targetRootData,
+        targetRuntime: targetRuntimeData,
+    });
+    assertRecoverySource({
+        params,
+        sourceRootData: withoutRevision(sourceRoot),
+        sourceRuntime,
+        user,
+        sourceAssignment,
+        now,
+    });
+    await validateRecoverySource(tx, params, withoutRevision(sourceRoot), sourceRuntime);
+    if (sourceRoot?.desiredStatus === "draining")
+        await supersedeDrainingMigrations(tx, params, now);
+    const controlState = resolveUserGatewayControlState(targetRootData, params.uid);
+    await clearRecoveredSourceMount(tx, sourceRuntime, params.fromGatewayId, params.slug);
+    await tx.users.records.setGatewayMirror(params.uid, {
+        gatewayId: params.toGatewayId,
+        gatewayAssignedAt: now,
+        gatewayProfile: controlState.gatewayProfile,
+        controlUiEnabled: controlState.controlUiEnabled,
+    }, { gatewayId: params.fromGatewayId });
+    await tx.users.records.setFence(params.uid, "migration", CLEAR);
+    await tx.gateways.assignments.put({
+        uid: params.uid,
+        slug: params.slug,
+        gatewayId: params.toGatewayId,
+        source: "repair",
+        state: "serving",
+        epoch: params.expectedSourceEpoch + 1,
+        createdAt: now,
+        updatedAt: now,
+        updatedByOperationId: params.operationId,
+    });
+    await tx.gateways.assignments.delete(params.fromGatewayId, params.uid, { epoch: params.expectedSourceEpoch });
+    await tx.journal.operations.put({
+        id: params.operationId,
+        kind: MIGRATE_USER_OPERATION_KIND,
+        status: "succeeded",
+        origin: "automatic",
+        createdBy: "glm-controller-placement-policy",
+        createdAt: now,
+        startedAt: now,
+        completedAt: now,
+        input: {
             uid: params.uid,
             slug: params.slug,
-            gatewayId: params.toGatewayId,
-            source: "repair",
-            state: "serving",
-            epoch: params.expectedSourceEpoch + 1,
-            createdAt: now,
-            updatedAt: now,
-            updatedByOperationId: params.operationId,
-        });
-        await tx.gateways.assignments.delete(params.fromGatewayId, params.uid, { epoch: params.expectedSourceEpoch });
-        await tx.journal.operations.put({
-            id: params.operationId,
-            kind: MIGRATE_USER_OPERATION_KIND,
-            status: "succeeded",
-            origin: "automatic",
-            createdBy: "glm-controller-placement-policy",
-            createdAt: now,
-            startedAt: now,
-            completedAt: now,
-            input: {
-                uid: params.uid,
-                slug: params.slug,
-                recoveryKind: params.kind,
-                fromGatewayId: params.fromGatewayId,
-                toGatewayId: params.toGatewayId,
-                sourceEpoch: params.expectedSourceEpoch,
-            },
-            steps: [],
-            gatewayId: params.toGatewayId,
-            inputUid: params.uid,
-        });
+            recoveryKind: params.kind,
+            fromGatewayId: params.fromGatewayId,
+            toGatewayId: params.toGatewayId,
+            sourceEpoch: params.expectedSourceEpoch,
+        },
+        steps: [],
+        gatewayId: params.toGatewayId,
+        inputUid: params.uid,
     });
-    return { operationId: params.operationId };
+    return "committed";
 }
 function priorDisposableRecovery(input) {
     const { operation, params } = input;
@@ -1276,6 +1300,11 @@ function recoveredRuntimeResetUserStateIsExact(input) {
     ].every(Boolean);
 }
 export async function commitRecoveredDisposableRuntimeResetAtomic(deps, params) {
+    const now = nowMs(deps);
+    await deps.store.transaction({ label: "fleet-state.commitRecoveredDisposableRuntimeResetAtomic" }, (tx) => commitRecoveredDisposableRuntimeResetInTransaction(tx, params, now));
+    return { operationId: params.operationId };
+}
+export async function commitRecoveredDisposableRuntimeResetInTransaction(tx, params, now) {
     if (!params.operationId ||
         !params.previousRecoveryOperationId ||
         !params.sharedGatewayIds.includes(params.targetGatewayId) ||
@@ -1283,85 +1312,82 @@ export async function commitRecoveredDisposableRuntimeResetAtomic(deps, params) 
         params.expectedAssignmentEpoch < 1) {
         throw new Error("recovered disposable runtime reset parameters are invalid");
     }
-    const now = nowMs(deps);
-    await deps.store.transaction({ label: "fleet-state.commitRecoveredDisposableRuntimeResetAtomic" }, async (tx) => {
-        const [user, storedTargetRoot, storedTargetRuntime, assignment, previousOperation, operation,] = await Promise.all([
-            tx.users.records.get(params.uid),
-            tx.gateways.roots.get(params.targetGatewayId),
-            tx.fleetRegistry.get(params.targetGatewayId),
-            tx.gateways.assignments.get(params.targetGatewayId, params.uid),
-            tx.journal.operations.get(params.previousRecoveryOperationId),
-            tx.journal.operations.get(params.operationId),
-        ]);
-        assertRestoreUnfenced(user);
-        const targetRoot = projectGatewayDesiredRootForGateway(withoutRevision(storedTargetRoot), params.targetGatewayId);
-        const targetRuntimeData = runtimeDocument(storedTargetRuntime);
-        const targetRuntime = isGatewayRuntimeDoc(targetRuntimeData) ? targetRuntimeData : null;
-        const prior = priorDisposableRecovery({
-            operation: operationData(previousOperation),
-            params,
-        });
-        if (!prior)
-            throw new Error("previous disposable recovery fence changed");
-        const marker = recoveredRuntimeResetMarker({ params, prior, requestedAt: now });
-        if (operation !== null) {
-            if (recoveredRuntimeResetReplayIsExact({
-                params,
-                operation: recordOrEmpty(operation),
-                assignment,
-                runtimeReset: user?.fences.runtimeReset,
-                marker,
-            }))
-                return;
-            throw new Error(`recovered runtime reset ${params.operationId} conflicts with current state`);
-        }
-        const targetExact = recoveredRuntimeResetTargetIsReady({
-            params,
-            targetRoot,
-            targetRuntime,
-            now,
-        }) && recoveredRuntimeResetUserStateIsExact({
-            params,
-            user,
-            assignment,
-        });
-        if (!targetExact || assignment === null)
-            throw new Error("recovered disposable runtime reset fence changed");
-        await tx.users.records.setFence(params.uid, "runtimeReset", marker, "absent");
-        const { revision: _revision, ...current } = assignment;
-        await tx.gateways.assignments.put({
-            ...current,
-            epoch: params.expectedAssignmentEpoch + 1,
-            updatedAt: now,
-            updatedByOperationId: params.operationId,
-        });
-        await tx.journal.operations.put({
-            id: params.operationId,
-            kind: MIGRATE_USER_OPERATION_KIND,
-            status: "succeeded",
-            origin: "automatic",
-            createdBy: "glm-controller-placement-policy",
-            createdAt: now,
-            startedAt: now,
-            completedAt: now,
-            input: {
-                uid: params.uid,
-                slug: params.slug,
-                recoveryKind: "recover-disposable-customer-runtime-reset",
-                previousRecoveryOperationId: params.previousRecoveryOperationId,
-                targetGatewayId: params.targetGatewayId,
-                sourceEpoch: params.expectedAssignmentEpoch,
-                disposableLease: {
-                    leaseId: prior.leaseId,
-                    generation: prior.leaseGeneration,
-                },
-            },
-            steps: [],
-            gatewayId: params.targetGatewayId,
-            inputUid: params.uid,
-        });
+    const [user, storedTargetRoot, storedTargetRuntime, assignment, previousOperation, operation,] = await Promise.all([
+        tx.users.records.get(params.uid),
+        tx.gateways.roots.get(params.targetGatewayId),
+        tx.fleetRegistry.get(params.targetGatewayId),
+        tx.gateways.assignments.get(params.targetGatewayId, params.uid),
+        tx.journal.operations.get(params.previousRecoveryOperationId),
+        tx.journal.operations.get(params.operationId),
+    ]);
+    assertRestoreUnfenced(user);
+    const targetRoot = projectGatewayDesiredRootForGateway(withoutRevision(storedTargetRoot), params.targetGatewayId);
+    const targetRuntimeData = runtimeDocument(storedTargetRuntime);
+    const targetRuntime = isGatewayRuntimeDoc(targetRuntimeData) ? targetRuntimeData : null;
+    const prior = priorDisposableRecovery({
+        operation: operationData(previousOperation),
+        params,
     });
-    return { operationId: params.operationId };
+    if (!prior)
+        throw new FleetStatePreconditionError("previous disposable recovery fence changed");
+    const marker = recoveredRuntimeResetMarker({ params, prior, requestedAt: now });
+    if (operation !== null) {
+        if (recoveredRuntimeResetReplayIsExact({
+            params,
+            operation: recordOrEmpty(operation),
+            assignment,
+            runtimeReset: user?.fences.runtimeReset,
+            marker,
+        }))
+            return "already-committed";
+        throw new FleetStatePreconditionError(`recovered runtime reset ${params.operationId} conflicts with current state`);
+    }
+    const targetExact = recoveredRuntimeResetTargetIsReady({
+        params,
+        targetRoot,
+        targetRuntime,
+        now,
+    }) && recoveredRuntimeResetUserStateIsExact({
+        params,
+        user,
+        assignment,
+    });
+    if (!targetExact || assignment === null)
+        throw new FleetStatePreconditionError("recovered disposable runtime reset fence changed");
+    await tx.users.records.setFence(params.uid, "runtimeReset", marker, "absent");
+    const { revision: _revision, ...current } = assignment;
+    await tx.gateways.assignments.put({
+        ...current,
+        epoch: params.expectedAssignmentEpoch + 1,
+        updatedAt: now,
+        updatedByOperationId: params.operationId,
+    });
+    await tx.journal.operations.put({
+        id: params.operationId,
+        kind: MIGRATE_USER_OPERATION_KIND,
+        status: "succeeded",
+        origin: "automatic",
+        createdBy: "glm-controller-placement-policy",
+        createdAt: now,
+        startedAt: now,
+        completedAt: now,
+        input: {
+            uid: params.uid,
+            slug: params.slug,
+            recoveryKind: "recover-disposable-customer-runtime-reset",
+            previousRecoveryOperationId: params.previousRecoveryOperationId,
+            targetGatewayId: params.targetGatewayId,
+            sourceEpoch: params.expectedAssignmentEpoch,
+            disposableLease: {
+                leaseId: prior.leaseId,
+                generation: prior.leaseGeneration,
+            },
+        },
+        steps: [],
+        gatewayId: params.targetGatewayId,
+        inputUid: params.uid,
+    });
+    return "committed";
 }
 export async function markSharedSurgeForwardRecovery(deps, params) {
     await writeSharedSurgeForwardRecovery(deps, { ...params, receivingPodUid: params.targetPodUid });

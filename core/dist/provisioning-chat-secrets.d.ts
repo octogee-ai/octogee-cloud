@@ -8,7 +8,7 @@ export interface ChatSecretDeps {
     readonly store: Pick<PlatformStateStore, "secrets" | "transaction">;
     readonly client: Pick<ProvisioningServiceClient, "getCredential">;
 }
-export type ChatSecretsOutcome = "present" | "credentials-not-issued";
+export type ChatSecretsOutcome = "present" | "credentials-not-issued" | "agent-not-ready";
 interface ChatSecretTarget {
     readonly secretId: string;
     readonly kind: MattermostTokenSecret["kind"];

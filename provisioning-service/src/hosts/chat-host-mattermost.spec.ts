@@ -262,6 +262,8 @@ describe("Mattermost chat host adapter", () => {
     expect(error).toBeInstanceOf(HostError);
     expect(error).toMatchObject({ kind });
     expect(api.userByName("lin")).toBeUndefined();
+    expect((error as Error).message).toMatch(new RegExp(`: ${status} from chat host \\(fake\\.injected\\)$`));
+    expect((error as Error).message).not.toContain("echoed");
   });
 
   it("classes an unreachable chat host as transient", async () => {

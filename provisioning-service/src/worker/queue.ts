@@ -9,6 +9,7 @@ import type {
 } from "@octogee/shared/types/provisioning-service";
 import { LeaseLostError } from "../hosts/credential-store.js";
 import type { HostErrorKind } from "../hosts/host-error.js";
+import type { Logger } from "../logger.js";
 import type { Database } from "../store/database.js";
 
 export const LEASE_MS = 60_000;
@@ -28,6 +29,7 @@ export interface Claim {
   uid: string;
   leaseToken: string;
   takeover: boolean;
+  claimedAt: number;
 }
 
 export type AttemptOutcome =
@@ -48,6 +50,7 @@ export interface FinishResult {
 
 export interface QueueOptions {
   holder: string;
+  log: Logger;
   leaseMs?: number;
   resyncAfterMs?: number;
   random?: () => number;
@@ -67,16 +70,21 @@ export class WorkQueue {
   async claim(limit: number): Promise<Claim[]> {
     if (limit <= 0) return [];
     const t = this.db.table;
+    const claimedAt = Date.now();
     return this.db.write(async (client, bumpVersion) => {
-      const { rows } = await client.query<{ uid: string; state: ProvisioningWorkState }>(
-        `SELECT w.uid, w.state FROM ${t("provisioning_work")} w
+      const { rows } = await client.query<{ uid: string; state: ProvisioningWorkState; attempts: number; generation: number }>(
+        `SELECT w.uid, w.state, w.attempts, p.generation FROM ${t("provisioning_work")} w JOIN ${t("provisionings")} p ON p.uid = w.uid
           WHERE w.due_at <= now()
             AND (w.state IN ('queued', 'retrying', 'idle') OR (w.state = 'running' AND w.lease_expires_at < now()))
-          ORDER BY w.due_at LIMIT $1 FOR UPDATE SKIP LOCKED`, [limit]);
+          ORDER BY w.due_at LIMIT $1 FOR UPDATE OF w SKIP LOCKED`, [limit]);
       const claims: Claim[] = [];
       for (const row of rows) {
-        const leaseToken = randomUUID();
         const takeover = row.state === "running";
+        if (takeover && row.attempts + 1 >= MAX_TRANSIENT_ATTEMPTS) {
+          await this.parkUnfinished(client, row, await bumpVersion(row.uid));
+          continue;
+        }
+        const leaseToken = randomUUID();
         await client.query(
           `UPDATE ${t("provisioning_work")}
               SET state = 'running', lease_holder = $2, lease_token = $3, lease_expires_at = now() + make_interval(secs => $4),
@@ -84,10 +92,24 @@ export class WorkQueue {
             WHERE uid = $1`, [row.uid, this.options.holder, leaseToken, this.leaseMs / 1_000, takeover ? 1 : 0]);
         const version = await bumpVersion(row.uid);
         await client.query(`UPDATE ${t("provisionings")} SET resource_version = $2 WHERE uid = $1`, [row.uid, version.toString()]);
-        claims.push({ uid: row.uid, leaseToken, takeover });
+        claims.push({ uid: row.uid, leaseToken, takeover, claimedAt });
       }
       return claims;
     });
+  }
+
+  private async parkUnfinished(client: pg.PoolClient, row: { uid: string; attempts: number; generation: number }, version: bigint): Promise<void> {
+    const t = this.db.table;
+    const attempts = row.attempts + 1;
+    await client.query(
+      `UPDATE ${t("provisioning_work")}
+          SET state = 'parked', attempts = $2, dirty = false, lease_holder = NULL, lease_token = NULL, lease_expires_at = NULL,
+              last_error_reason = NULL, last_error_message = 'attempts repeatedly ended without finishing'
+        WHERE uid = $1`, [row.uid, attempts]);
+    await client.query(`UPDATE ${t("provisionings")} SET resource_version = $2 WHERE uid = $1`, [row.uid, version.toString()]);
+    const now = new Date().toISOString();
+    await this.recordAttempt(client, row.uid, { generation: row.generation, startedAt: now, finishedAt: now, result: "parked", steps: [] });
+    this.options.log.error("provisioning work parked at claim after repeated unfinished attempts", { uid: row.uid, attempts });
   }
 
   async heartbeat(uid: string, leaseToken: string): Promise<boolean> {

@@ -26,14 +26,27 @@ export class FleetMutationPartialError extends Error {
 }
 export class FleetMutationRefusedError extends Error {
     refusal;
-    constructor(refusal) {
+    partialOutcome;
+    constructor(refusal, partialOutcome) {
         super(refusal.message);
         this.refusal = refusal;
+        this.partialOutcome = partialOutcome;
         this.name = "FleetMutationRefusedError";
     }
 }
 function failureMessage(error) {
     return error instanceof Error ? error.message : String(error);
+}
+function failedOutcomeDetails(error) {
+    if (error instanceof FleetMutationRefusedError)
+        return error.partialOutcome ? { partialOutcome: error.partialOutcome } : {};
+    if (!(error instanceof FleetMutationPartialError))
+        return {};
+    return {
+        partialOutcome: error.partialOutcome,
+        ...(error.aliasOutcomes ? { aliasOutcomes: error.aliasOutcomes } : {}),
+        ...(error.releaseRollout ? { releaseRollout: error.releaseRollout } : {}),
+    };
 }
 function logMutationFinished(logged, outcome, durationMs) {
     const finished = { ...logged, outcome: outcome.outcome, durationMs };
@@ -70,16 +83,11 @@ export async function runNormalFleetMutation(store, input) {
         else
             logger.error("fleet mutation failed", failed);
         try {
-            const partial = error instanceof FleetMutationPartialError ? error : null;
             await finishOperationAudit(store, audit.auditId, {
                 expectedClaimId: claim.claimId,
                 outcome: "failed",
                 error: failureMessage(error),
-                ...(partial ? {
-                    partialOutcome: partial.partialOutcome,
-                    ...(partial.aliasOutcomes ? { aliasOutcomes: partial.aliasOutcomes } : {}),
-                    ...(partial.releaseRollout ? { releaseRollout: partial.releaseRollout } : {}),
-                } : {}),
+                ...failedOutcomeDetails(error),
             });
         }
         catch (completionError) {
