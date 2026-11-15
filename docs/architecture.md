@@ -18,7 +18,7 @@ reference behind them.
 | --- | --- | --- |
 | Fleet controller | `fleet-controller/` | Owns the fleet: which gateways exist, which user is on which, and every move between them. Serves the Admin API that [`octogee-fleet`](https://github.com/octogee-ai/octogee-fleet) calls. Installs gateways with Helm, and creates the virtual machine when an isolated gateway runs on one. Writes an operations-journal entry for every change it makes. |
 | Platform API | `platform-api/` | Serves most HTTP routes. Its fleet broker holds the Mattermost and Gitea admin credentials and sets users up on behalf of a gateway. |
-| LLM broker | `platform-api/` (`src/llm-broker.ts`) | Holds the model provider keys and meters every call. An agent calls it with a credential the platform issued to that agent. Runs as its own deployment. |
+| LLM broker | `llm-broker/` | Holds the model provider keys and meters every call. An agent calls it with a credential the platform issued to that agent. Runs as its own deployment from the `llm-broker` image. |
 | npm cache proxy | `platform-api/` (`src/npm-cache-proxy.ts`) | An npm registry proxy with a cache. Runs as its own deployment. |
 | Edge | `gateway-edge/` | One codebase, three roles. As a sidecar in each gateway pod it serves the user's workspace files and proxies the Mattermost WebSocket. As the gateway router it sends `/g/<gatewayId>/*` to that gateway's sidecar. As the Mattermost callback router it receives Mattermost's callbacks. |
 | Provisioner | `scripts/entrypoints/provisioner.ts` | Runs inside the gateway pod. When a user is assigned to the gateway it creates their Mattermost account, team, channels and agent bot, and their Gitea organization and `workspace` repository, all through the platform API's fleet broker. |
@@ -93,15 +93,15 @@ replace. In code they are these interfaces:
 The Octogee product is built on this repository, and anyone else can build one
 the same way.
 
-Each service has a composition root, `src/main.ts`, and the platform API has a
-second, `src/llm-broker.ts`. The platform's own roots start the service with no
-product. A product supplies its own roots, which call the same start function
+Each service has a composition root, `src/main.ts`. The platform's own roots
+start the service with no product. A product supplies its own roots, which call the same start function
 with its additions:
 
 | Service | Start function | What a product passes |
 | --- | --- | --- |
 | Fleet controller | `main(product)` in `fleet-controller/src/index.ts` | `ControllerProduct`: admin routes, user lifecycle steps, and the automation the platform leaves out, such as placement, scaling and returning idle users |
 | Platform API | `createPlatformApp({ product })` in `platform-api/src/app.ts` | `ProductExtension`: routes, entitlements, notifications and the LLM broker's commercial rails |
+| LLM broker | `createLlmBrokerApp()` in `llm-broker/src/app.ts` | A rail registry: how each call is gated, metered and charged |
 | Edge | `createApp()` in `gateway-edge/src/index.ts` | Nothing; the edge serves only its own gateway's routes |
 
 `scripts/ops/overlay.mjs` assembles the build. It copies the platform tree,

@@ -8,13 +8,8 @@ RUN npm install --global npm@${NPM_VERSION} --ignore-scripts --no-audit --no-fun
     && test "$(npm --version)" = "$NPM_VERSION" \
     && test "$(npx --version)" = "$NPM_VERSION"
 
-# Build context: repo root. gateway-edge
-# consumes packed internal directory dependencies — no sibling source is compiled.
-#
-# WORKDIR must be /gateway-edge (not /app) so that tsc's emit paths — which
-# mirror each source file's location relative to rootDir ("..", the container
-# root /) — produce dist/gateway-edge/src/main.js, matching package.json
-# main + CMD.
+# Build context: platform/. gateway-edge consumes packed internal directory
+# dependencies; no sibling source is compiled.
 FROM node:26.13.0-slim@sha256:5adad64f9a1fca2d51972caa65983634c8a774eb300d72b20f7f2a0f60368072 AS builder
 RUN rm -rf /usr/local/lib/node_modules/npm
 COPY --from=platform-npm /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm

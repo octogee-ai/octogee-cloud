@@ -117,7 +117,7 @@ and a domain. [See every account and tier](docs/getting-started.md#what-you-need
 | --- | --- | --- |
 | Fleet controller | `glm-controller/` | Owns which gateways exist and which user is on which. Serves the Admin API, installs gateways with Helm, moves users, and journals every change. |
 | Platform API | `octogee-api/` | Serves most HTTP routes. Its fleet broker holds the Mattermost and Gitea admin credentials, and it issues each agent its model credential. |
-| LLM broker | `octogee-api/` | Holds the model provider keys and meters every call. |
+| LLM broker | `llm-broker/` | Holds the model provider keys and meters every call. |
 | Edge | `gateway-edge/` | A sidecar in each gateway pod that serves the user's workspace files, and the gateway router that sends `/g/<gatewayId>/*` to the right sidecar. |
 | Provisioner | `scripts/` | Runs in every gateway. Sets up each user assigned to it: chat account, team, channels, agent bot, git organization and repository. |
 | Gateway image | `infra/gateway/` | OpenClaw, the provisioner and the platform's OpenClaw extensions. |

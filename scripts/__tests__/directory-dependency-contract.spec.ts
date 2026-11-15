@@ -113,23 +113,27 @@ describe("directory dependency repository contract", () => {
 
   it("copies each packed dependency and consumer npm config before Docker installs", () => {
     const api = dockerfile("platform-api/Dockerfile");
-    for (const stage of ["llm-broker-builder", "builder"]) {
-      for (const source of ["core", "shared"]) {
-        expectBefore(dockerStage(api, stage), `COPY ${source}/package.json`, "RUN npm ci --ignore-scripts");
-        expectBefore(dockerStage(api, stage), `COPY ${source}/dist`, "RUN npm ci --ignore-scripts");
-      }
+    for (const source of ["core", "shared"]) {
+      expectBefore(dockerStage(api, "builder"), `COPY ${source}/package.json`, "RUN npm ci --ignore-scripts");
+      expectBefore(dockerStage(api, "builder"), `COPY ${source}/dist`, "RUN npm ci --ignore-scripts");
     }
-    expectBefore(dockerStage(api, "llm-broker-builder"), "COPY llm-broker/.npmrc", "RUN npm ci --ignore-scripts");
     expectBefore(dockerStage(api, "builder"), "COPY platform-api/.npmrc", "RUN npm ci --ignore-scripts");
-    expectBefore(api, "COPY gateway-edge/.npmrc", "RUN npm ci --prefix /gateway-edge --ignore-scripts");
     const apiRuntimeInstall = "RUN npm ci --omit=dev --ignore-scripts\nRUN npm rebuild";
     for (const source of ["core", "shared"]) {
       expectLastBefore(api, `COPY ${source}/package.json`, apiRuntimeInstall);
       expectLastBefore(api, `COPY ${source}/dist`, apiRuntimeInstall);
     }
     expectLastBefore(api, "COPY platform-api/.npmrc", apiRuntimeInstall);
-    expectBefore(dockerStage(api, "builder"), "COPY --from=llm-broker-package / /", "RUN npm ci --ignore-scripts\n");
-    expectLastBefore(api, "COPY --from=llm-broker-package / /", apiRuntimeInstall);
+
+    const broker = dockerfile("llm-broker/Dockerfile");
+    for (const source of ["core", "shared"]) {
+      expectBefore(dockerStage(broker, "builder"), `COPY ${source}/package.json`, "RUN npm ci --ignore-scripts");
+      expectBefore(dockerStage(broker, "builder"), `COPY ${source}/dist`, "RUN npm ci --ignore-scripts");
+      expectLastBefore(broker, `COPY ${source}/package.json`, "RUN npm ci --omit=dev");
+      expectLastBefore(broker, `COPY ${source}/dist`, "RUN npm ci --omit=dev");
+    }
+    expectBefore(dockerStage(broker, "builder"), "COPY llm-broker/.npmrc", "RUN npm ci --ignore-scripts");
+    expectLastBefore(broker, "COPY llm-broker/.npmrc", "RUN npm ci --omit=dev");
 
     const edge = dockerfile("gateway-edge/Dockerfile");
     for (const source of ["core", "shared"]) {
@@ -151,8 +155,8 @@ describe("directory dependency repository contract", () => {
     expectBefore(glm, "COPY fleet-controller/.npmrc", "RUN npm ci");
   });
 
-  it("builds the API image without the product tree or an overlay", () => {
-    expect(dockerfile("platform-api/Dockerfile")).not.toMatch(/--from=(?:product|overlay)\b/);
+  it.each(["platform-api", "llm-broker"])("builds the %s image without the product tree or an overlay", (service) => {
+    expect(dockerfile(`${service}/Dockerfile`)).not.toMatch(/--from=(?:product|overlay)\b/);
   });
 
   it("installs gateway dependencies from manifests and overlays freshly packed internal packages", () => {

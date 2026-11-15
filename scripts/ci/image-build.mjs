@@ -8,6 +8,7 @@ export const IMAGE_BUILDS = {
   "glm-controller": { dockerfile: "platform/fleet-controller/Dockerfile", context: PLATFORM_CONTEXT, overlays: { overlay: "fleet-controller" } },
   "artifact-worker": { dockerfile: "artifact-worker/Dockerfile", context: "." },
   "octogee-api": { dockerfile: "platform/platform-api/Dockerfile", context: PLATFORM_CONTEXT },
+  "llm-broker": { dockerfile: "platform/llm-broker/Dockerfile", context: PLATFORM_CONTEXT },
   "octogee-ops-agent-runtime": { dockerfile: "ops-agent/Dockerfile", context: "." },
 };
 

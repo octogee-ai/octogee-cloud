@@ -32,10 +32,9 @@ so that it calls the Admin API as `octogee-fleet` does.
   platform API (`platform-api/`) still publish images, Kubernetes deployments
   and service accounts named `glm-controller` and `octogee-api`, and stored
   records keep their names. [Legacy names](legacy-names.md) lists them.
-- Some services live inside another component's directory: the LLM broker and
-  the npm cache proxy in `platform-api/`, the gateway router and the
-  Mattermost callback router in `gateway-edge/`, and the provisioner in
-  `scripts/`.
+- Some services live inside another component's directory: the npm cache
+  proxy in `platform-api/`, the gateway router and the Mattermost callback
+  router in `gateway-edge/`, and the provisioner in `scripts/`.
 - `scripts/` holds runtime code as well as scripts. The provisioner and the
   gateway pod's boot steps are under `scripts/lib/` and `scripts/entrypoints/`.
 - The isolated gateway image is published as `octogee-gateway-builder`, and a

@@ -29,11 +29,11 @@ function env(container: BrokerContainer, name: string): EnvVar | undefined {
 }
 
 describe("the LLM broker on a platform-only install", () => {
-  it("runs the platform broker entry from the octogee-api image", () => {
+  it("runs the platform broker entry from the llm-broker image", () => {
     const container = brokerContainer();
 
-    expect(container.image).toMatch(/^registry\.example\/octogee-api:aaaaaaa@sha256:/);
-    expect(container.command).toEqual(["node", "node_modules/@octogee/llm-broker/dist/main.js"]);
+    expect(container.image).toMatch(/^registry\.example\/llm-broker:aaaaaaa@sha256:/);
+    expect(container.command).toEqual(["node", "dist/main.js"]);
   });
 
   it.each([

@@ -11,11 +11,12 @@ its usage.
 
 `src/main.ts` is the operator composition root. It reads the platform state
 store and the usage ledger from PostgreSQL, registers the operator rail, and
-listens on `PORT` (default `3010`). The release runs it from the `octogee-api`
-image:
+listens on `PORT` (default `3010`). The release runs it from the `llm-broker`
+image, built by `llm-broker/Dockerfile` from this directory, `core` and
+`shared`:
 
 ```sh
-node node_modules/@octogee/llm-broker/dist/main.js
+node dist/main.js
 ```
 
 ```sh

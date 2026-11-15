@@ -350,7 +350,6 @@
     "@google-cloud/secret-manager": "^7.0.0",
     "@google-cloud/storage": "^8.4.0",
     "@octogee/core": "file:../core",
-    "@octogee/llm-broker": "file:../llm-broker",
     "@octogee/shared": "file:../shared",
     "busboy": "^1.6.0",
     "cors": "^2.8.6",
