@@ -50,10 +50,11 @@ which only isolated gateways provide. So octogee-cloud has a second class.
 
 An isolated gateway serves exactly one user. It is what OpenClaw's
 documentation calls a single-user gateway, and it is the same trust boundary
-OCE gives every Agent: full OpenClaw, host tools and the Control UI included, on
-a virtual machine that holds no platform credentials. Isolated gateways run only
-as Google Cloud virtual machines today. People the user invites are trusted the
-way a teammate is, exactly as upstream describes.
+OCE gives every Agent: full OpenClaw, host tools and the Control UI included. It
+runs as a Kubernetes pod with its own service account and home claim, or on a
+Google Cloud virtual machine that holds no platform credentials and adds a
+desktop. People the user invites are trusted the way a teammate is, exactly as
+upstream describes.
 
 The part that is specific to octogee-cloud is the movement. A user's agents,
 chat channels, repositories, agent stores and schedules are records the fleet
@@ -73,7 +74,7 @@ idle user back on a shared gateway, belong to a product built on top.
 | Tenant boundary | Namespace, identities and infrastructure around each gateway | Brokers and platform records outside the gateway, plus the no-host-code floor inside it |
 | Control plane | OpenClaw Control Plane, a service with IAM and audit in PostgreSQL | A fleet controller with placement, migration and an operations journal in PostgreSQL |
 | Operator interface | Console, `occ` CLI, HTTP API | A fleet command line over an Admin API; no web console |
-| Where gateways run | Compute drivers: Kubernetes, SSH hosts | Kubernetes pods for shared gateways; Google Cloud virtual machines for isolated ones |
+| Where gateways run | Compute drivers: Kubernetes, SSH hosts | Kubernetes pods for shared gateways; pods or Google Cloud virtual machines for isolated ones |
 | Chat and git for users | Not provided | Mattermost and Gitea, provisioned per user |
 | Model access | Provider credentials delivered to each Agent's gateway | A broker meters every call; gateways hold no model keys |
 | License | MIT | MIT |
