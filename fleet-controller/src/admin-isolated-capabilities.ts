@@ -2,6 +2,7 @@ import type { GatewayPodDiagnostics } from "@octogee/core/admin-fleet-router";
 import type { AdminIsolatedCapabilities } from "@octogee/core/admin-placement-isolated-router";
 import {
   HomeComputeUnavailableError,
+  HomeCopyFailure,
   type HomeCapabilities,
   type HomeCapabilitiesFactory,
 } from "@octogee/core/isolated-gateway-lifecycle";
@@ -46,6 +47,7 @@ function surfacingUnavailable<A extends unknown[], R>(call: (...args: A) => Prom
     try {
       return await call(...args);
     } catch (error) {
+      if (error instanceof HomeCopyFailure) throw error;
       const code = computeUnavailableCode(error);
       if (code === null) throw error;
       throw new HomeComputeUnavailableError(code, error instanceof Error ? error.message : String(error));

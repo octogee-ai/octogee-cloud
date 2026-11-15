@@ -599,7 +599,9 @@ kept. The answer is `200` with one of:
   profile, or the user has no home yet. The user's home migration record is
   now `complete` with `preparedFor: {leaseId, generation, sizingKey}`, which
   `allocate` checks. A record prepared for another lease, generation or
-  sizing key does not count; a new migration replaces it.
+  sizing key does not count; a new migration replaces it. A repeat after
+  `allocate` moved that same lease on (`provisioning` through `returning`)
+  answers `ready` from the record alone, without a Compute Engine call.
 - `{uid, state: "in-progress", step, effects}`: a step ran or is under way.
   The caller calls again.
 - `{uid, state: "in-progress", step, lastError: {code}, effects}`: Compute
@@ -614,8 +616,12 @@ kept. The answer is `200` with one of:
 `{name, resource}`. Every call writes one journal entry: `completed` for a
 ready call that changed nothing, `partial` for one that changed something or
 is in progress, with the answer and `effects` in `partialOutcome.details`, and
-`failed` for an unavailable Compute Engine or a blocked home. Any other error
-answers `500` and is journaled as failed, with the effects made before it.
+`failed` for an unavailable Compute Engine or a blocked home. A fence or owner
+refusal after a Compute Engine change still answers `409`, and its failed
+entry lists the effects made before it. Any other error answers `500` and is
+journaled as failed, with the effects made before it; that includes a
+migration still under way for a user whose home disk is gone, which needs an
+operator.
 
 The owner check runs again before every Compute Engine call and first in
 every write. A dry run checks the fences against the stored record, makes no

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { accountAllowsInteractiveAccess } from "@octogee/shared/types/account-lifecycle";
 import type { GatewayVmProfile } from "@octogee/shared/types/sizing-profile";
 import type { OpaqueMap, RecordPatch, Stored } from "../platform-state/store.js";
-import type { PlatformUserRecord, UserHomeState } from "../platform-state/users.js";
+import type { PlatformUserRecord, UserActivationLeaseStatus, UserHomeState } from "../platform-state/users.js";
 import { withCurrentSizingKey } from "../sizing-key.js";
 import {
   HomeCopyFailure,
@@ -76,6 +76,7 @@ const HOME_COPY_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 60_000;
 const EXPIRED_HOME_AFTER_MS = 7 * 24 * 60 * 60_000;
 const RECENT_RETAIN_MS = 24 * 60 * 60_000;
+const LEASE_STATUSES_AFTER_REQUEST: ReadonlySet<UserActivationLeaseStatus> = new Set(["provisioning", "activating", "active", "returning"]);
 
 export function assertHomePreparationAuthority(owner: PlatformUserRecord, sizingKey: string | null, request: HomePreparationRequest): void {
   const lease = owner.activationLease;
@@ -136,14 +137,29 @@ class HomePreparationRun {
       }));
   }
 
-  async readOwner(): Promise<Stored<PlatformUserRecord>> {
+  private readUser<T>(decide: (owner: Stored<PlatformUserRecord> | null, assertOwner: (owner: Stored<PlatformUserRecord> | null) => Stored<PlatformUserRecord>) => T): Promise<T> {
     return this.withCurrentTier(async (assertOwner) => this.deps.store.transaction(
       { label: "builder-home-migration.read", readOnly: true },
       async (tx) => {
         await this.deps.requireOwner(tx);
-        return assertOwner(await tx.users.records.get(this.request.uid));
+        return decide(await tx.users.records.get(this.request.uid), assertOwner);
       },
     ));
+  }
+
+  async readOwner(): Promise<Stored<PlatformUserRecord>> {
+    return this.readUser((owner, assertOwner) => assertOwner(owner));
+  }
+
+  async readOwnerUnlessPrepared(): Promise<Stored<PlatformUserRecord> | null> {
+    return this.readUser((owner, assertOwner) => owner && this.preparedAndAllocated(owner) ? null : assertOwner(owner));
+  }
+
+  private preparedAndAllocated(owner: PlatformUserRecord): boolean {
+    const state = userHomeOwner(owner).homeMigration;
+    const lease = owner.activationLease;
+    return state?.phase === "complete" && preparedMatches(state.preparedFor, this.preparedFor) &&
+      lease?.leaseId === this.request.leaseId && lease.generation === this.request.generation && LEASE_STATUSES_AFTER_REQUEST.has(lease.status);
   }
 
   private async effect<T>(run: (home: HomeCapabilities) => Promise<T>): Promise<T> {
@@ -333,13 +349,15 @@ class HomePreparationRun {
     };
   }
 
-  async reconcile(): Promise<HomePreparation> {
-    const owner = userHomeOwner(await this.readOwner());
+  async reconcile(owner: UserHomeOwner): Promise<HomePreparation> {
+    const state = owner.homeMigration;
+    if (isActiveHomeMigration(state) && state.phase !== "complete" && state.phase !== "blocked") this.step = state.phase;
     await this.removeExpiredHome(owner.homeStorage);
     const source = await this.effect((home) => home.inventory(this.request.uid, owner));
-    const state = owner.homeMigration;
+    if (!source && isActiveHomeMigration(state) && state.phase !== "complete") {
+      throw new Error(`home migration ${state.id} is ${state.phase} but ${this.request.uid} has no home disk`);
+    }
     if (!source || this.alreadyFits(state, source)) {
-      if (state && state.phase !== "complete") return { state: "ready" };
       return state?.phase === "complete" && preparedMatches(state.preparedFor, this.preparedFor) ? { state: "ready" } : this.markPrepared();
     }
     const active = isActiveHomeMigration(state) && state.phase !== "complete" ? state : await this.start(source);
@@ -373,10 +391,12 @@ export async function prepareIsolatedHome(
 ): Promise<HomePreparation> {
   await checkPlacementOwner(deps);
   const run = new HomePreparationRun(deps, request);
+  const owner = await run.readOwnerUnlessPrepared();
+  if (!owner) return { state: "ready" };
   await run.loadPolicy();
-  if (mode === "plan") return run.plan(userHomeOwner(await run.readOwner()));
+  if (mode === "plan") return run.plan(userHomeOwner(owner));
   try {
-    return await run.reconcile();
+    return await run.reconcile(userHomeOwner(owner));
   } catch (error) {
     if (!(error instanceof HomeComputeUnavailableError)) throw error;
     deps.log(`[home-migration] ${request.uid}: compute unavailable at ${run.currentStep} (${error.code}): ${error.message}`);

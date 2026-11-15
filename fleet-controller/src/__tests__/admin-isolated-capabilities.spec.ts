@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { HomeComputeUnavailableError, type HomeEffect } from "@octogee/core/isolated-gateway-lifecycle";
+import { HomeComputeUnavailableError, HomeCopyFailure, type HomeEffect } from "@octogee/core/isolated-gateway-lifecycle";
 import { adminIsolatedCapabilities, computeUnavailableCode, type AdminUserHome, type HomeServiceJournal } from "../admin-isolated-capabilities.js";
 
 describe("Admin API isolated gateway capabilities", () => {
@@ -102,6 +102,14 @@ describe("Admin API home capabilities", () => {
 
     expect(failure).toBeInstanceOf(HomeComputeUnavailableError);
     expect(failure).toMatchObject({ code });
+  });
+
+  it("keep a failed copy a copy failure even when its text names an HTTP status, so the attempt is counted", async () => {
+    const failure = new HomeCopyFailure("home copy worker failed: upload returned HTTP 503");
+    const { home } = userHome(async () => { throw failure; });
+    const capabilities = adminIsolatedCapabilities({ namespace: "octogee-test", log: vi.fn(), readGatewayPodDiagnostics: vi.fn(), userHome: home })!.home!(() => undefined);
+
+    await expect(capabilities.copy.advance(input)).rejects.toBe(failure);
   });
 
   it.each([

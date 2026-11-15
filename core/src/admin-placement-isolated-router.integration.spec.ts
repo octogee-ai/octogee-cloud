@@ -16,7 +16,7 @@ import {
   type AllocateIsolatedGatewayInput,
   type HomeCapabilities,
 } from "./isolated-gateway-lifecycle/index.js";
-import { assertClientOwnsPlacementAutomation } from "./placement-automation-owner.js";
+import { assertClientOwnsPlacementAutomation, placementOwnerRefusalBody } from "./placement-automation-owner.js";
 
 const TARGET = "alice-xs-12345678";
 
@@ -365,7 +365,8 @@ describe.skipIf(!dsn)("PostgreSQL isolated allocation home readiness", () => {
     await store.config.orchestrator.patch({ placementAutomationOwner: "fleet-controller", placementAutomationYieldedAt: null });
     const home = homeWithoutSource();
 
-    await expect(prepare(store, home)).rejects.toThrow();
+    const refusal = await prepare(store, home).catch((error: unknown) => error);
+    expect(placementOwnerRefusalBody(refusal)).toMatchObject({ code: "placement-owner" });
     expect(home.inventory).not.toHaveBeenCalled();
     expect(await homeMigration()).toBeNull();
   });

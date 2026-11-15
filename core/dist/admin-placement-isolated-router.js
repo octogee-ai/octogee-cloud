@@ -41,6 +41,8 @@ function refusalsBelowError(journal) {
                 return await input.action(claim);
             }
             catch (error) {
+                if (error instanceof FleetMutationRefusedError)
+                    throw error;
                 if (error instanceof Error && isolatedVerbRefusalBody(error) !== null)
                     throw new FleetMutationRefusedError(error);
                 throw error;
@@ -536,8 +538,11 @@ function addHomeVerbs({ deps, journal, lifecycle, verb }) {
                 return { uid: input.uid, ...preparation, effects };
             }
             catch (error) {
-                if (!(error instanceof Error) || isolatedVerbRefusalBody(error) !== null || effects.length === 0)
+                if (!(error instanceof Error) || effects.length === 0)
                     throw error;
+                if (isolatedVerbRefusalBody(error) !== null) {
+                    throw new FleetMutationRefusedError(error, { summary: "refused after compute effects", details: { effects } });
+                }
                 throw new FleetMutationPartialError(error.message, { summary: "failed after compute effects", details: { effects } });
             }
         },

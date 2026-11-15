@@ -95,6 +95,7 @@ function refusalsBelowError(journal: AdminFleetMutationRunner): AdminFleetMutati
       try {
         return await input.action(claim);
       } catch (error) {
+        if (error instanceof FleetMutationRefusedError) throw error;
         if (error instanceof Error && isolatedVerbRefusalBody(error) !== null) throw new FleetMutationRefusedError(error);
         throw error;
       }
@@ -596,7 +597,10 @@ function addHomeVerbs({ deps, journal, lifecycle, verb }: IsolatedRoutes): void 
         const preparation = await prepareIsolatedHome({ ...lifecycle, home: homeCapabilities((effect) => effects.push(effect)) }, input);
         return { uid: input.uid, ...preparation, effects };
       } catch (error) {
-        if (!(error instanceof Error) || isolatedVerbRefusalBody(error) !== null || effects.length === 0) throw error;
+        if (!(error instanceof Error) || effects.length === 0) throw error;
+        if (isolatedVerbRefusalBody(error) !== null) {
+          throw new FleetMutationRefusedError(error, { summary: "refused after compute effects", details: { effects } });
+        }
         throw new FleetMutationPartialError(error.message, { summary: "failed after compute effects", details: { effects } });
       }
     },

@@ -352,6 +352,54 @@ describe("isolated home preparation, as the Admin API runs it", () => {
     expect(h.home.copy.release).toHaveBeenCalledTimes(2);
   });
 
+  it("reports the stored step when Compute Engine is unavailable before the step runs", async () => {
+    const h = fixture();
+    await h.prepare();
+    h.home.inventory.mockRejectedValueOnce(new HomeComputeUnavailableError("http-503", "inventory: HTTP 503"));
+
+    await expect(h.prepare()).resolves.toEqual({ state: "in-progress", step: "releasing", lastError: { code: "http-503" } });
+  });
+
+  it("refuses an unfinished migration whose user has no home disk instead of answering ready", async () => {
+    const h = fixture();
+    await h.prepare();
+    const before = structuredClone(h.owner().provisioning.homeMigration);
+    h.home.inventory.mockResolvedValue(null);
+
+    await expect(h.prepare()).rejects.toThrow(`home migration ${before.id} is releasing but uid-alice has no home disk`);
+    expect(h.owner().provisioning.homeMigration).toEqual(before);
+  });
+
+  it("answers a repeat of a committed preparation ready after the lease moved on, without Compute Engine", async () => {
+    const h = fixture();
+    h.home.inventory.mockResolvedValue(null);
+    await expect(h.prepare()).resolves.toEqual({ state: "ready" });
+    Object.assign(h.owner().provisioning.openclaw.activationLease, { status: "provisioning", targetGatewayId: "alice-m-12345678" });
+    h.home.inventory.mockRejectedValue(new HomeComputeUnavailableError("http-503", "inventory: HTTP 503"));
+    const calls = computeCalls(h.home);
+
+    await expect(h.prepare()).resolves.toEqual({ state: "ready" });
+
+    expect(computeCalls(h.home)).toBe(calls);
+    expect(h.owner().provisioning.homeMigration).toEqual({ phase: "complete", preparedFor: { leaseId: "lease", generation: 2, sizingKey: "pro" } });
+  });
+
+  it("still refuses a moved lease the stored preparation does not name", async () => {
+    const h = fixture();
+    h.home.inventory.mockResolvedValue(null);
+    await h.prepare();
+    Object.assign(h.owner().provisioning.openclaw.activationLease, { status: "provisioning", targetGatewayId: "alice-m-12345678", generation: 3 });
+
+    await expect(prepareIsolatedHome(h.deps, { ...h.request, generation: 3 })).rejects.toThrow("home migration activation authority changed");
+  });
+
+  it("refuses an unknown sizing key as an authority change before reading its profile", async () => {
+    const h = fixture();
+
+    await expect(prepareIsolatedHome(h.deps, { ...h.request, sizingKey: "unknown" })).rejects.toThrow("home migration activation authority changed");
+    expect(computeCalls(h.home)).toBe(0);
+  });
+
   it("lets an error that leaves the state unknown through", async () => {
     const h = fixture();
     h.home.copy.advance.mockRejectedValueOnce(new Error("home copy target identity/capacity differs"));

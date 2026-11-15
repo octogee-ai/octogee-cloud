@@ -815,6 +815,25 @@ describe("POST /users/:uid/home/prepare", () => {
     expect(audits().at(-1)).toMatchObject({ status: "failed", error: "home copy target identity/capacity differs" });
   });
 
+  it("answers precondition-failed and journals the effects it performed when a fence fails after a Compute Engine effect", async () => {
+    await prepare().expect(200);
+    await prepare().expect(200);
+    const adopt = home.capabilities.adopt.getMockImplementation()!;
+    home.capabilities.adopt.mockImplementationOnce(async () => {
+      const result = await adopt();
+      storedLease().generation = 2;
+      return result;
+    });
+
+    const res = await prepare().expect(409);
+
+    expect(res.body).toMatchObject({ code: "precondition-failed", reason: "home migration activation authority changed" });
+    expect(audits().at(-1)).toMatchObject({
+      status: "failed",
+      partialOutcome: { summary: "refused after compute effects", details: { effects: [{ name: "attach-verified-builder-home", resource: "zones/us-central1-a/instances/alice-vm" }] } },
+    });
+  });
+
   it("answers blocked with the reason and attempts after three failed copies", async () => {
     docs.set(`users/${OWNER}`, { ...user("shared-blue", requested), provisioning: { ...(user("shared-blue", requested).provisioning as Data), homeMigration: {
       id: "home-copy-test-1", tier: "default", source, phase: "blocked", attempt: 3, error: "copy failed", startedAt: 1,

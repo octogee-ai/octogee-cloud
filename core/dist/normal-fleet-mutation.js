@@ -26,9 +26,11 @@ export class FleetMutationPartialError extends Error {
 }
 export class FleetMutationRefusedError extends Error {
     refusal;
-    constructor(refusal) {
+    partialOutcome;
+    constructor(refusal, partialOutcome) {
         super(refusal.message);
         this.refusal = refusal;
+        this.partialOutcome = partialOutcome;
         this.name = "FleetMutationRefusedError";
     }
 }
@@ -71,10 +73,12 @@ export async function runNormalFleetMutation(store, input) {
             logger.error("fleet mutation failed", failed);
         try {
             const partial = error instanceof FleetMutationPartialError ? error : null;
+            const refusedAfterEffects = error instanceof FleetMutationRefusedError ? error.partialOutcome : undefined;
             await finishOperationAudit(store, audit.auditId, {
                 expectedClaimId: claim.claimId,
                 outcome: "failed",
                 error: failureMessage(error),
+                ...(refusedAfterEffects ? { partialOutcome: refusedAfterEffects } : {}),
                 ...(partial ? {
                     partialOutcome: partial.partialOutcome,
                     ...(partial.aliasOutcomes ? { aliasOutcomes: partial.aliasOutcomes } : {}),
