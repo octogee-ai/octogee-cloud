@@ -178,6 +178,12 @@ spec:
                 secretKeyRef:
                   name: mattermost-gateway
                   key: admin_token
+            {{- with (.Values.provisioningService).url }}
+            - name: PROVISIONING_SERVICE_URL
+              value: {{ . | quote }}
+            - name: PROVISIONING_SERVICE_TOKEN_PATH
+              value: /var/run/secrets/provisioning-service/token
+            {{- end }}
             {{- with $productPod.env }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -304,7 +310,8 @@ spec:
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           {{- $configuration := or .Values.deploymentTargets .Values.gatewayValues }}
-          {{- if or $productPod.volumeMounts $configuration }}
+          {{- $provisioningService := (.Values.provisioningService).url }}
+          {{- if or $productPod.volumeMounts $configuration $provisioningService }}
           volumeMounts:
             {{- with $productPod.volumeMounts }}
             {{- toYaml . | nindent 12 }}
@@ -314,8 +321,13 @@ spec:
               mountPath: /etc/octogee/configuration
               readOnly: true
             {{- end }}
+            {{- if $provisioningService }}
+            - name: provisioning-service-token
+              mountPath: /var/run/secrets/provisioning-service
+              readOnly: true
+            {{- end }}
           {{- end }}
-      {{- if or $productPod.volumes $configuration }}
+      {{- if or $productPod.volumes $configuration $provisioningService }}
       volumes:
         {{- with $productPod.volumes }}
         {{- toYaml . | nindent 8 }}
@@ -324,5 +336,14 @@ spec:
         - name: configuration
           configMap:
             name: glm-controller-configuration
+        {{- end }}
+        {{- if $provisioningService }}
+        - name: provisioning-service-token
+          projected:
+            sources:
+              - serviceAccountToken:
+                  path: token
+                  audience: provisioning-service
+                  expirationSeconds: 3600
         {{- end }}
       {{- end }}
