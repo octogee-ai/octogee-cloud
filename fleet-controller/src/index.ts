@@ -301,6 +301,7 @@ import { CONNECTOR_OAUTH_REVOCATION_TARGETS } from "@octogee/shared/types/connec
 import { projectRepoSourceFromDoc } from "@octogee/shared/types/project";
 import { GoogleAuth } from "google-auth-library";
 import { startHttpServer, type ProductAdminRoutes } from "./http-server.js";
+import type { AdminUserHome, HomeServiceJournal } from "./admin-isolated-capabilities.js";
 import { createCloudLoggingSource } from "./cloud-logging-source.js";
 import { createConnectorSecretDecryptor } from "./connector-secret-decryption.js";
 import {
@@ -2189,6 +2190,10 @@ interface ControllerBackgroundTasksDeps {
   controllerStartedAt: number;
 }
 
+function adminUserHome(store: PlatformStateStore, spec: NonNullable<typeof GATEWAY_VM_SPEC>): AdminUserHome {
+  return { environment: VM_ENVIRONMENT, subnetwork: spec.subnetwork, nativeZones: spec.zones, services: (journal) => createUserHomeServices(store, log, journal) };
+}
+
 function placementUserHome(store: PlatformStateStore): PlacementProductDeps["userHome"] {
   if (!GATEWAY_VM_SPEC) return undefined;
   const homeServices = createUserHomeServices(store, log);
@@ -2353,6 +2358,7 @@ function startControllerBackgroundTasks({
         }
       : {}),
     requestNativeReturnSourceRecovery: deps.requestNativeReturnSourceRecovery,
+    ...(GATEWAY_VM_SPEC ? { userHome: adminUserHome(deps.store, GATEWAY_VM_SPEC) } : {}),
     logs: {
       source: ENVIRONMENT_SETTINGS.clusterProjectId
         ? createCloudLoggingSource(`projects/${ENVIRONMENT_SETTINGS.clusterProjectId}`)
@@ -3889,21 +3895,21 @@ function buildDeprovisionUserHandler({ store, logFn, kubeOps, privateKey, delete
   });
 }
 
-function createUserHomeServices(store: PlatformStateStore, log: (message: string) => void) {
+function createUserHomeServices(store: PlatformStateStore, log: (message: string) => void, journal?: HomeServiceJournal) {
   const homeCopyRequest: ComputeRequest = async ({ url, method, body }) => {
     const auth = new GoogleAuth({ scopes: ["https://www.googleapis.com/auth/cloud-platform"] });
     const client = await auth.getClient();
     const result = await client.request({ url, method, ...(body === undefined ? {} : { data: body }) });
     return { status: result.status, data: result.data };
   };
-  const homeJournal = <T>(what: string, uid: string, action: () => Promise<T>) => runNormalFleetMutation(store, {
+  const homeJournal: HomeServiceJournal = journal ?? (<T>(what: string, uid: string, action: () => Promise<T>) => runNormalFleetMutation(store, {
     actor: "cowboy", forced: false, what, why: "Migrate the user home without removing its verified source", target: { ownerUid: uid }, preActionStatus: {}, mutation: { action: what }, action,
-  });
+  }));
   const provider = createUserHomeProvider({ store, projectId: gatewayComputeProjectId(), environment: VM_ENVIRONMENT,
     request: homeCopyRequest, vm: createGatewayComputeClient(store, log), journal: homeJournal });
   return {
     provider,
-    copy: createHomeCopyClient({ request: homeCopyRequest, projectId: gatewayComputeProjectId(), journal: (what, input, action) => homeJournal(what, input.ownerUid, action) }),
+    copy: createHomeCopyClient({ request: homeCopyRequest, projectId: gatewayComputeProjectId(), journal: (what, input, action, resource) => homeJournal(what, input.ownerUid, action, resource) }),
   };
 }
 

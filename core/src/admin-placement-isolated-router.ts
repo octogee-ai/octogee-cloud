@@ -15,6 +15,7 @@ import {
   leaseOperationIdBelongs,
   recoverUnreachableIsolatedGateway,
   refreshRequestedAllocation,
+  prepareIsolatedHome,
   requestSizingKeyTransition,
   requireStoredHomeReadiness,
   unauditedLifecycleMutations,
@@ -24,6 +25,10 @@ import {
   type AuthoritativeLeaseStatus,
   type CompleteActivationLeaseInput,
   type FailActivationLeaseInput,
+  type HomeCapabilitiesFactory,
+  type HomeEffect,
+  type HomePreparation,
+  type HomePreparationRequest,
   type IsolatedLifecycleDeps,
   type PlacementOwnerFence,
   type PlacementRetirementReason,
@@ -31,7 +36,7 @@ import {
   type RetireOwnedIsolatedGatewayInput,
   type SizingKeyTransitionInput,
 } from "./isolated-gateway-lifecycle/index.js";
-import { FleetMutationRefusedError } from "./normal-fleet-mutation.js";
+import { FleetMutationPartialError, FleetMutationRefusedError, type NormalFleetMutationResult } from "./normal-fleet-mutation.js";
 import { assertClientOwnsPlacementAutomation, placementOwnerRefusalBody } from "./placement-automation-owner.js";
 import { FenceMismatchError } from "./platform-state/errors.js";
 import type { PlatformUserRecord } from "./platform-state/users.js";
@@ -43,6 +48,7 @@ import type { PodObservation } from "./isolated-gateway-lifecycle/index.js";
 
 export interface AdminIsolatedCapabilities {
   namespace: string;
+  home?: HomeCapabilitiesFactory;
   ensureAuthSecret(input: { namespace: string; gatewayId: string }): Promise<unknown>;
   readGatewayPodDiagnostics(gatewayId: string): Promise<PodObservation>;
 }
@@ -267,6 +273,28 @@ function parseAllocate(req: Request): Parsed<AllocateRequest> {
   const generation = positiveInteger(parked, "generation");
   if (!gatewayId || generation === null) return { invalid: "parkedGateway needs gatewayId and a positive integer generation" };
   return { ...request, parkedGateway: { gatewayId, generation } };
+}
+
+function parseHomePreparation(req: Request): Parsed<HomePreparationRequest> {
+  const parsed = parseAllocate(req);
+  if (invalid(parsed)) return parsed;
+  if (bodyOf(req).parkedGateway !== undefined) return { invalid: "parkedGateway is not part of home preparation" };
+  const { uid, leaseId, generation, sourceGatewayId, sourceAssignmentEpoch, sizingKey, sizingTier } = parsed;
+  return { uid, leaseId, generation, sourceGatewayId, sourceAssignmentEpoch, sizingKey, sizingTier };
+}
+
+function classifyHomePreparation(result: HomePreparation & { effects: HomeEffect[] }): NormalFleetMutationResult {
+  const { effects, ...preparation } = result;
+  if (preparation.state === "ready" && effects.length === 0) return { outcome: "completed" };
+  const details = { ...preparation, effects };
+  if (preparation.state === "blocked") {
+    return { outcome: "failed", error: preparation.reason, partialOutcome: { summary: "blocked", details } };
+  }
+  if (preparation.state === "in-progress" && preparation.lastError) {
+    return { outcome: "failed", error: `compute unavailable at ${preparation.step}: ${preparation.lastError.code}`, partialOutcome: { summary: `in-progress: ${preparation.step}`, details } };
+  }
+  const summary = preparation.state === "ready" ? "ready" : `in-progress: ${preparation.step}`;
+  return { outcome: "partial", partialOutcome: { summary, details } };
 }
 
 type RecoverRequest = Omit<RecoverUnreachableIsolatedGatewayInput, "builderSlug">;
@@ -494,6 +522,33 @@ export function addAdminPlacementIsolatedRoutes(router: Router, deps: AdminPlace
       },
     });
   });
+
+  const homeCapabilities = deps.capabilities.home;
+  if (homeCapabilities) {
+    verb("/users/:uid/home/prepare", parseHomePreparation, (req, input) => journal({
+      req,
+      what: "prepare user home",
+      why: "placement automation prepares the user's home before an isolated activation",
+      target: { uid: input.uid },
+      preActionStatus: { leaseId: input.leaseId, generation: input.generation, status: "requested" },
+      mutation: { kind: "prepare-user-home", sizingKey: input.sizingKey, sizingTier: input.sizingTier, sourceGatewayId: input.sourceGatewayId },
+      classifyResult: classifyHomePreparation,
+      dryRunRefusal: async () => {
+        await prepareIsolatedHome({ ...lifecycle, home: homeCapabilities(() => undefined) }, input, "plan");
+        return null;
+      },
+      action: async () => {
+        const effects: HomeEffect[] = [];
+        try {
+          const preparation = await prepareIsolatedHome({ ...lifecycle, home: homeCapabilities((effect) => effects.push(effect)) }, input);
+          return { uid: input.uid, ...preparation, effects };
+        } catch (error) {
+          if (!(error instanceof Error) || isolatedVerbRefusalBody(error) !== null || effects.length === 0) throw error;
+          throw new FleetMutationPartialError(error.message, { summary: "failed after compute effects", details: { effects } });
+        }
+      },
+    }));
+  }
 
   verb("/isolated-gateways/:id/recover-unreachable", parseRecover, async (req, input) => {
     const root = projectGatewayDesiredRootForGateway(await deps.store.gateways.roots.get(input.gatewayId), input.gatewayId);
