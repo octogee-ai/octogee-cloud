@@ -162,6 +162,16 @@ describe("owned isolated gateway retirement", () => {
     });
     expect(h.docs.get(`gateways/${GATEWAY}`)?.desiredStatus).toBe("paused");
     expect(h.docs.has(`glmOperations/${RETIREMENT}`)).toBe(false);
+    expect(h.log).toHaveBeenCalledWith(expect.stringContaining(`retirement blocked for ${GATEWAY}`));
+  });
+
+  it("plans a blocked retirement with the same reason and logs no block", async () => {
+    const h = harness(pausedRoot());
+
+    await expect(retireOwnedIsolatedGateway(h.deps, { ...retire, leaseId: "lease-two" }, "plan")).resolves.toMatchObject({
+      retired: false, reason: `gateway ${GATEWAY} no longer matches isolated allocation for uid-alice`,
+    });
+    expect(h.log).not.toHaveBeenCalled();
   });
 
   it("holds the retirement until the return operation it waits on has finished", async () => {

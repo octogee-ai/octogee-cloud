@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createAdminFleetMutationRunner, respondToAdminFleetMutationError } from "./admin-fleet-router.js";
 import { addAdminPlacementIsolatedRoutes } from "./admin-placement-isolated-router.js";
 import { initialGatewayReleaseDocuments } from "./gateway-live-release.js";
-import { dsn } from "./platform-state/postgres/__tests__/fixtures/harness.js";
+import { dsn, operation } from "./platform-state/postgres/__tests__/fixtures/harness.js";
 import { NOW, useUserFixture } from "./platform-state/postgres/__tests__/fixtures/users.js";
 import type { PlatformStateStore } from "./platform-state/store.js";
 
@@ -156,6 +156,19 @@ describe.skipIf(!dsn)("PostgreSQL isolated lease completion, failure and retirem
 
     await fail(store).expect(200);
     expect(await lease()).toMatchObject({ status: "failed", lastError: { operationId: `builder-activate-${TARGET}-g1` } });
+  });
+
+  it("fails under a journal operation of the user on the target, and answers 400 for another user's", async () => {
+    const store = await seed("activating");
+    await yieldToClient(store);
+    await store.journal.operations.create(operation({ id: "move-in-7", kind: "migrate-user", status: "failed", inputUid: "alice", input: { uid: "alice", fromGatewayId: "shared-blue", toGatewayId: TARGET } }));
+    await store.journal.operations.create(operation({ id: "move-bob", kind: "migrate-user", status: "failed", inputUid: "bob", input: { uid: "bob", fromGatewayId: "shared-blue", toGatewayId: TARGET } }));
+
+    await fail(store, { operationId: "move-bob" }).expect(400);
+    expect((await lease()).status).toBe("activating");
+
+    await fail(store, { operationId: "move-in-7" }).expect(200);
+    expect(await lease()).toMatchObject({ status: "failed", lastError: { operationId: "move-in-7" } });
   });
 
   it("retires the owned gateway only after the fleet controller yields and while the allocation matches", async () => {

@@ -9,6 +9,7 @@ import {
   advanceActivationLease,
   completeActivationLease,
   failActivationLease,
+  leaseOperationIdBelongs,
   requestSizingKeyTransition,
   unauditedLifecycleMutations,
   retireOwnedIsolatedGateway,
@@ -49,6 +50,8 @@ export interface AdminPlacementIsolatedRouterDeps {
 }
 
 class PreconditionFailed extends Error {}
+
+class InvalidRequest extends Error {}
 
 const requireClientOwner: PlacementOwnerFence = async (transaction) => {
   await assertClientOwnsPlacementAutomation(transaction);
@@ -128,18 +131,28 @@ function leaseIdentity(req: Request): Parsed<{ uid: string; leaseId: string; gen
 
 const ADVANCES: ReadonlyArray<[AdvanceActivationLeaseInput["fromStatus"], AdvanceActivationLeaseInput["toStatus"]]> = [
   ["provisioning", "activating"],
+  ["provisioning", "active"],
   ["activating", "active"],
   ["active", "returning"],
 ];
+
+function optionalOperationId(body: Body): Parsed<{ operationId?: string }> {
+  if (body.operationId === undefined) return {};
+  const operationId = text(body, "operationId");
+  return operationId ? { operationId } : { invalid: "operationId must be a non-empty string when given" };
+}
 
 function parseAdvance(req: Request): Parsed<AdvanceActivationLeaseInput> {
   const identity = leaseIdentity(req);
   if (invalid(identity)) return identity;
   const body = bodyOf(req);
   const step = ADVANCES.find(([from, to]) => body.fromStatus === from && body.toStatus === to);
-  if (!step) return { invalid: "fromStatus and toStatus must be provisioning->activating, activating->active or active->returning" };
-  if (body.operationId !== undefined) return { invalid: "operationId is derived from the lease; omit it" };
-  return { ...identity, fromStatus: step[0], toStatus: step[1] };
+  if (!step) {
+    return { invalid: "fromStatus and toStatus must be provisioning->activating, provisioning->active, activating->active or active->returning" };
+  }
+  const given = optionalOperationId(body);
+  if (invalid(given)) return given;
+  return { ...identity, fromStatus: step[0], toStatus: step[1], ...given };
 }
 
 function parseComplete(req: Request): Parsed<CompleteActivationLeaseInput> {
@@ -159,9 +172,11 @@ function parseFail(req: Request): Parsed<FailActivationLeaseInput> {
   const targetGatewayId = text(body, "targetGatewayId");
   const message = text(body, "message");
   if (!targetGatewayId) return { invalid: "targetGatewayId is required" };
-  if (body.operationId !== undefined) return { invalid: "operationId is derived from the lease; omit it" };
   if (!message) return { invalid: "message is required" };
-  return { ...identity, targetGatewayId, operationId: builderActivateOperationId(targetGatewayId, identity.generation), message };
+  const given = optionalOperationId(body);
+  if (invalid(given)) return given;
+  const operationId = given.operationId ?? builderActivateOperationId(targetGatewayId, identity.generation);
+  return { ...identity, targetGatewayId, operationId, message };
 }
 
 function parseSizingTransition(req: Request): Parsed<SizingKeyTransitionInput> {
@@ -225,6 +240,16 @@ async function readOwner(store: PlatformStateStore, uid: string): Promise<Stored
   return user;
 }
 
+async function assertLeaseOperationId(
+  store: PlatformStateStore,
+  claim: { uid: string; gatewayId: string | null; generation: number; operationId: string },
+): Promise<void> {
+  const { gatewayId } = claim;
+  if (gatewayId === null) throw new InvalidRequest(`operationId ${claim.operationId} needs the lease's target gateway`);
+  if (await leaseOperationIdBelongs(store.journal.operations, { ...claim, gatewayId })) return;
+  throw new InvalidRequest(`operationId ${claim.operationId} is not an operation of ${claim.uid} on ${gatewayId} generation ${claim.generation}`);
+}
+
 function leaseOf(user: Stored<PlatformUserRecord>) {
   if (!user.activationLease) throw new PreconditionFailed(`activation lease for ${user.uid} is missing`);
   return user.activationLease;
@@ -266,27 +291,38 @@ export function addAdminPlacementIsolatedRoutes(router: Router, deps: AdminPlace
         }
         await settle(res, () => run(req, input));
       } catch (error) {
+        if (error instanceof InvalidRequest) {
+          res.status(400).json({ error: error.message });
+          return;
+        }
         next(error);
       }
     });
   }
 
-  verb("/users/:uid/activation-lease/advance", parseAdvance, (req, input) => journal({
-    req,
-    what: "advance user activation lease",
-    why: "placement automation advanced the lease",
-    target: { uid: input.uid },
-    preActionStatus: { leaseId: input.leaseId, generation: input.generation, status: input.fromStatus },
-    mutation: { kind: "advance-activation-lease", toStatus: input.toStatus },
-    dryRunRefusal: async () => {
-      await advanceActivationLease(lifecycle, input, "plan");
-      return null;
-    },
-    action: async () => {
-      await advanceActivationLease(lifecycle, input);
-      return { uid: input.uid, leaseId: input.leaseId, generation: input.generation, status: input.toStatus };
-    },
-  }));
+  verb("/users/:uid/activation-lease/advance", parseAdvance, async (req, input) => {
+    if (input.operationId !== undefined) {
+      const stored = await deps.store.users.records.get(input.uid);
+      const gatewayId = stored?.activationLease?.targetGatewayId;
+      await assertLeaseOperationId(deps.store, { ...input, operationId: input.operationId, gatewayId: typeof gatewayId === "string" ? gatewayId : null });
+    }
+    return journal({
+      req,
+      what: "advance user activation lease",
+      why: "placement automation advanced the lease",
+      target: { uid: input.uid },
+      preActionStatus: { leaseId: input.leaseId, generation: input.generation, status: input.fromStatus },
+      mutation: { kind: "advance-activation-lease", toStatus: input.toStatus, operationId: input.operationId ?? null },
+      dryRunRefusal: async () => {
+        await advanceActivationLease(lifecycle, input, "plan");
+        return null;
+      },
+      action: async () => {
+        await advanceActivationLease(lifecycle, input);
+        return { uid: input.uid, leaseId: input.leaseId, generation: input.generation, status: input.toStatus };
+      },
+    });
+  });
 
   verb("/users/:uid/activation-lease/complete", parseComplete, (req, input) => journal({
     req,
@@ -306,22 +342,25 @@ export function addAdminPlacementIsolatedRoutes(router: Router, deps: AdminPlace
     },
   }));
 
-  verb("/users/:uid/activation-lease/fail", parseFail, (req, input) => journal({
-    req,
-    what: "fail user activation lease",
-    why: "the activation migration failed",
-    target: { uid: input.uid, gatewayId: input.targetGatewayId },
-    preActionStatus: { leaseId: input.leaseId, generation: input.generation },
-    mutation: { kind: "fail-activation-lease", operationId: input.operationId },
-    dryRunRefusal: async () => {
-      await failActivationLease(lifecycle, input, "plan");
-      return null;
-    },
-    action: async () => {
-      await failActivationLease(lifecycle, input);
-      return { uid: input.uid, leaseId: input.leaseId, generation: input.generation, status: "failed" };
-    },
-  }));
+  verb("/users/:uid/activation-lease/fail", parseFail, async (req, input) => {
+    await assertLeaseOperationId(deps.store, { ...input, gatewayId: input.targetGatewayId });
+    return journal({
+      req,
+      what: "fail user activation lease",
+      why: "the activation migration failed",
+      target: { uid: input.uid, gatewayId: input.targetGatewayId },
+      preActionStatus: { leaseId: input.leaseId, generation: input.generation },
+      mutation: { kind: "fail-activation-lease", operationId: input.operationId },
+      dryRunRefusal: async () => {
+        await failActivationLease(lifecycle, input, "plan");
+        return null;
+      },
+      action: async () => {
+        await failActivationLease(lifecycle, input);
+        return { uid: input.uid, leaseId: input.leaseId, generation: input.generation, status: "failed" };
+      },
+    });
+  });
 
   verb("/users/:uid/activation-lease/sizing-transition", parseSizingTransition, (req, input) => journal({
     req,
@@ -347,22 +386,22 @@ export function addAdminPlacementIsolatedRoutes(router: Router, deps: AdminPlace
     }
     const request: RetireOwnedIsolatedGatewayInput = { ...input, builderSlug: root.builderSlug };
     return journal({
-      req,
-      what: "retire owned isolated gateway",
-      why: `placement automation retires it: ${input.reason}`,
-      target: { gatewayId: input.gatewayId, uid: input.uid },
-      preActionStatus: { generation: input.generation, desiredStatus: root.desiredStatus },
-      mutation: { kind: "retire-owned-isolated-gateway", reason: input.reason, leaseId: input.leaseId ?? null },
-      dryRunRefusal: async () => {
-        const plan = await retireOwnedIsolatedGateway(lifecycle, request, "plan");
-        if (!plan.retired) throw new PreconditionFailed(plan.reason);
-        return null;
-      },
-      action: async () => {
-        const retirement = await retireOwnedIsolatedGateway(lifecycle, request);
-        if (!retirement.retired) throw new PreconditionFailed(retirement.reason);
-        return { gatewayId: input.gatewayId, operationId: retirement.operationId, retired: true };
-      },
+        req,
+        what: "retire owned isolated gateway",
+        why: `placement automation retires it: ${input.reason}`,
+        target: { gatewayId: input.gatewayId, uid: input.uid },
+        preActionStatus: { generation: input.generation, desiredStatus: root.desiredStatus },
+        mutation: { kind: "retire-owned-isolated-gateway", reason: input.reason, leaseId: input.leaseId ?? null },
+        dryRunRefusal: async () => {
+          const plan = await retireOwnedIsolatedGateway(lifecycle, request, "plan");
+          if (!plan.retired) throw new PreconditionFailed(plan.reason);
+          return null;
+        },
+        action: async () => {
+          const retirement = await retireOwnedIsolatedGateway(lifecycle, request);
+          if (!retirement.retired) throw new PreconditionFailed(retirement.reason);
+          return { gatewayId: input.gatewayId, operationId: retirement.operationId, retired: true };
+        },
     });
   });
 }
