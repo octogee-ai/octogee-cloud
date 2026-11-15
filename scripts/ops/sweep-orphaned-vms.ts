@@ -5,7 +5,7 @@ import { type PlatformStateStore } from "@octogee/core/platform-state";
 import { deploymentEnvironmentSettings } from "@octogee/core/deployment-environment";
 import { operatorPlatformStateStore } from "../lib/platform-state-store.js";
 
-import { GATEWAY_VM_INSTANCE_PREFIX } from "../../shared/types/glm.js";
+import { GATEWAY_VM_INSTANCE_PREFIX } from "@octogee/shared/types/glm";
 
 export interface SweepOrphanedVmsArgs {
   environment: "test" | "prod";

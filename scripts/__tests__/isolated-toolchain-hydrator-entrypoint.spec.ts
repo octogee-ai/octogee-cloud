@@ -3,7 +3,7 @@ import { once } from "node:events";
 import { setTimeout as delay } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
 
-import { RETIRED_VM_BINDING_DENIAL_REASON } from "../../shared/types/fleet-broker.js";
+import { RETIRED_VM_BINDING_DENIAL_REASON } from "@octogee/shared/types/fleet-broker";
 import {
   createUserNpmProxyCredentialsProvider,
   guardRetiredRuntimeBrokerClient,

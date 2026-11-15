@@ -2,7 +2,7 @@ import * as fs from "fs";
 import * as path from "path";
 
 import { log, CUSTOMERS_DIR } from "./config.js";
-import { isValidProjectId, isValidUsername } from "../../shared/types/identity.js";
+import { isValidProjectId, isValidUsername } from "@octogee/shared/types/identity";
 
 const OPENCLAW_WORKSPACE_MARKER_FILES = [
   "AGENTS.md",

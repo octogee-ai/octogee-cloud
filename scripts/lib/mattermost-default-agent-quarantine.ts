@@ -1,4 +1,4 @@
-import { CONFIG_PATCH_DEADLINE_MS } from "../../shared/types/fleet-controller.js";
+import { CONFIG_PATCH_DEADLINE_MS } from "@octogee/shared/types/fleet-controller";
 import {
   applyConfigPatch,
   userConfigReplacePaths,

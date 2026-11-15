@@ -119,11 +119,11 @@ describe("platform boundary", () => {
   });
 
   it("finds product modules a platform TypeScript file imports", () => {
-    expect(productReferencesOf("platform/scripts/ops/report.ts", 'import { FLAGS } from "../../shared/types/feature-flags.js";\n', fixtureManifest, repoRoot))
+    expect(productReferencesOf("platform/scripts/ops/report.ts", 'import { FLAGS } from "@octogee/shared/types/feature-flags";\n', fixtureManifest, repoRoot))
       .toEqual(["platform/shared/types/feature-flags.ts"]);
     expect(productReferencesOf("platform/scripts/ops/report.ts", 'import { TIERS } from "@octogee/product-shared/types/billing";\n', fixtureManifest, repoRoot))
       .toEqual(["product/"]);
-    expect(productReferencesOf("platform/scripts/ops/report.ts", 'import { glm } from "../../shared/types/glm.js";\n', fixtureManifest, repoRoot))
+    expect(productReferencesOf("platform/scripts/ops/report.ts", 'import { glm } from "@octogee/shared/types/glm";\n', fixtureManifest, repoRoot))
       .toEqual([]);
   });
 

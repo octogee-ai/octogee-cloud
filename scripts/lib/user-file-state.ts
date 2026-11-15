@@ -2,7 +2,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { isValidUsername } from "../../shared/types/identity.js";
+import { isValidUsername } from "@octogee/shared/types/identity";
 import { brokerTokenExpiryDirectory, removeBrokerTokenExpiriesForSlug } from "./broker-token-refresh.js";
 import { OPENCLAW_DIR } from "./config.js";
 import { clearMigratingInPin } from "./local-default-agent-wired.js";

@@ -2,9 +2,9 @@ import type {
   FleetBrokerAssignmentRosterEntry,
   FleetBrokerProjectRestore,
   FleetBrokerUserSnapshot,
-} from "../../shared/types/fleet-broker.js";
-import { projectCheckoutEnabled } from "../../shared/types/project.js";
-import { userEntitlements } from "../../shared/types/user-entitlements.js";
+} from "@octogee/shared/types/fleet-broker";
+import { projectCheckoutEnabled } from "@octogee/shared/types/project";
+import { userEntitlements } from "@octogee/shared/types/user-entitlements";
 import type { MountLane } from "./reconcile-loop.js";
 
 // A stable fingerprint of the fields of a user snapshot that shape what an ensure

@@ -2,8 +2,8 @@ import type {
   FleetBrokerConfiguredUserBootstrap,
   FleetBrokerConfiguredUserDesk,
   FleetBrokerConfiguredUserProjectCredential,
-} from "../../shared/types/fleet-broker.js";
-import { isValidProjectId, projectAgentId } from "../../shared/types/identity.js";
+} from "@octogee/shared/types/fleet-broker";
+import { isValidProjectId, projectAgentId } from "@octogee/shared/types/identity";
 import {
   createFleetBrokerClient,
   type FleetBrokerClient,

@@ -5,7 +5,7 @@ import {
   SIGNATURE_HEADER,
   type FleetStateRequestBody,
   type FleetStateResponse,
-} from "../../shared/types/fleet-controller.js";
+} from "@octogee/shared/types/fleet-controller";
 
 export interface FleetStateHandlerDeps {
   publicKey: string;

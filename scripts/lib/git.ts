@@ -18,7 +18,7 @@ import { acquireWorkspaceMutationLeaseSync } from "@octogee/core/workspace-mutat
 import { findUnsafeGitMetadataEntry, readGitMetadataText } from "@octogee/core/git-metadata";
 import type { ProjectRepoSource } from "@octogee/shared/types/project";
 import { isValidUsername } from "@octogee/shared/types/identity";
-import { ADD_USER_DEADLINE_MS } from "../../shared/types/fleet-controller.js";
+import { ADD_USER_DEADLINE_MS } from "@octogee/shared/types/fleet-controller";
 
 export function errMessage(err: unknown): string {
   if (err instanceof Error) return err.message;

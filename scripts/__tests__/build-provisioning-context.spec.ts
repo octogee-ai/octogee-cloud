@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as path from "path";
 import { buildProvisioningContext } from "@octogee/core/provisionSteps";
-import { staticUserEntitlements } from "../../shared/types/user-entitlements.js";
+import { staticUserEntitlements } from "@octogee/shared/types/user-entitlements";
 import { CUSTOMERS_DIR } from "../lib/config.js";
 import { installUserEntitlementsForTest, planUserEntitlements } from "./helpers/user-entitlements.js";
 

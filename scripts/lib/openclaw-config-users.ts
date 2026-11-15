@@ -1,6 +1,6 @@
-import { PROJECT_AGENT_WORKSPACE_PARTS, type ProjectAgentIdentity } from "../../shared/types/project.js";
-import { parseAgentId, projectAgentId } from "../../shared/types/identity.js";
-import { PLATFORM_MATTERMOST_BASE_URL } from "../../shared/types/openclaw-mattermost-accounts.js";
+import { PROJECT_AGENT_WORKSPACE_PARTS, type ProjectAgentIdentity } from "@octogee/shared/types/project";
+import { parseAgentId, projectAgentId } from "@octogee/shared/types/identity";
+import { PLATFORM_MATTERMOST_BASE_URL } from "@octogee/shared/types/openclaw-mattermost-accounts";
 import { platformOpenAiEmbeddingSecretId } from "@octogee/core/platform-embedding-refs";
 import { applyComputerBrowserAgentPolicy } from "./openclaw-computer-browser.js";
 import {

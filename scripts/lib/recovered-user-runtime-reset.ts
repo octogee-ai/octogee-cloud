@@ -4,8 +4,8 @@ import * as path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { assertNotHeldSync, matchFiles, PROC_ROOT, sqliteFamily } from "./held-files.js";
 
-import { agentIdBelongsToSlug } from "../../shared/types/agent-models.js";
-import { parseAgentId, workspaceDefaultAgentId } from "../../shared/types/identity.js";
+import { agentIdBelongsToSlug } from "@octogee/shared/types/agent-models";
+import { parseAgentId, workspaceDefaultAgentId } from "@octogee/shared/types/identity";
 
 const AGENT_DB_FILE = "openclaw-agent.sqlite";
 const DB_SIDECARS = ["", "-wal", "-shm"] as const;

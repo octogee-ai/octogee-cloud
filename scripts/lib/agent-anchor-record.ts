@@ -3,7 +3,7 @@ import { readLocalAuxiliaryAnchors } from "./user-auxiliary-anchors.js";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { queryAgentStore, readPostgresAgentAnchor } from "@octogee/core/agent-postgres";
-import type { FleetBrokerAgentAnchor, FleetBrokerGatewayStateAnchor, FleetBrokerAuxiliaryAnchor } from "../../shared/types/fleet-broker.js";
+import type { FleetBrokerAgentAnchor, FleetBrokerGatewayStateAnchor, FleetBrokerAuxiliaryAnchor } from "@octogee/shared/types/fleet-broker";
 import { localStateStorePath } from "./openclaw-state-store.js";
 import type { FleetBrokerClient } from "./fleet-broker-client.js";
 

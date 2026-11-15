@@ -2,7 +2,7 @@ import { constants } from "node:fs";
 import { cp, lstat, mkdir, open, readFile, readdir, rename, rm, rmdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { isValidProjectId, isValidUsername } from "../../shared/types/identity.js";
+import { isValidProjectId, isValidUsername } from "@octogee/shared/types/identity";
 import { loadAppliedFingerprints, saveAppliedFingerprints } from "./applied-fingerprint-store.js";
 
 async function clearProjectReadiness(projects: string): Promise<void> {

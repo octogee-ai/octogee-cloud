@@ -1,4 +1,4 @@
-import { agentIdBelongsToSlug } from "../../shared/types/agent-models.js";
+import { agentIdBelongsToSlug } from "@octogee/shared/types/agent-models";
 import { agentIdsFromConfig } from "./byosub-restore.js";
 import { log as defaultLog } from "./config.js";
 import { isAgentNotFoundRpcError, type GatewayRpcClient } from "./gateway-rpc.js";

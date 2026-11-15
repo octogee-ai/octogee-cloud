@@ -36,7 +36,7 @@ import {
 import { readInstalledOpenClawBuild } from "../lib/openclaw-installed-build.js";
 import { isPerUserControlIdentity } from "@octogee/shared/types/openclaw-proxy-identity";
 import { isIsolatedGatewayClassValue } from "@octogee/shared/types/glm";
-import type { ClaimedUserIdentity, UserIdentity } from "../../shared/types/user-identity.js";
+import type { ClaimedUserIdentity, UserIdentity } from "@octogee/shared/types/user-identity";
 
 const DEFAULT_HEALTH_TIMEOUT_MS = 600_000;
 const DEFAULT_STOP_GRACE_MS = 30_000;

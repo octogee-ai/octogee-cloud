@@ -1,12 +1,12 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-import { agentIdBelongsToSlug } from "../../shared/types/agent-models.js";
-import type { SchedulerMigrationResult } from "../../shared/types/fleet-controller.js";
+import { agentIdBelongsToSlug } from "@octogee/shared/types/agent-models";
+import type { SchedulerMigrationResult } from "@octogee/shared/types/fleet-controller";
 import {
   MIGRATION_QUIESCE_GRACE_MS,
   MIGRATION_QUIESCE_STOP_RECHECK_MS,
-} from "../../shared/types/workspace-migration.js";
+} from "@octogee/shared/types/workspace-migration";
 import { schedulerHandoffAgentIds } from "./agent-roster-deletion.js";
 import {
   type AgentSessionEntry,
