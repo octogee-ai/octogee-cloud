@@ -640,6 +640,19 @@ describe("POST /shared-gateways/:id/roll-recovery", () => {
     expect(fleetEvents()).toEqual([]);
   });
 
+  it("answers a repeat as already scheduled while the Kubernetes read fails", async () => {
+    seed(rollingSeed());
+    observation = MISSING;
+    await rollRecovery().expect(200);
+    const before = fleetEvents().length;
+    observeFailure = new Error("connection refused");
+
+    const res = await rollRecovery().set("Idempotency-Key", "retry-after-lost-response").expect(200);
+
+    expect(res.body).toMatchObject({ kind: "already-scheduled", release: 3, operationId: ROLL_OPERATION });
+    expect(fleetEvents()).toHaveLength(before);
+  });
+
   it("answers observation-unknown and changes nothing when the Kubernetes read fails", async () => {
     seed(rollingSeed());
     observeFailure = new Error("connection refused");

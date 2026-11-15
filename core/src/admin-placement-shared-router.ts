@@ -369,19 +369,19 @@ function supersedeRollingSharedGatewayIntent(req: Request, deps: AdminPlacementS
     mutation: { kind: "supersede-rolling-shared-gateway", ...input },
     label: "admin.placement.supersede-rolling-shared-gateway",
     verb: async () => {
-      const sourceKubernetes = knownObservation(await observeSource(deps, input.sourceGatewayId));
+      const source = await observeSource(deps, input.sourceGatewayId);
       return {
         label: "admin.placement.supersede-rolling-shared-gateway",
         apply: async (transaction, now) => {
           const sourceRuntime = resolveGatewayRuntime((await transaction.fleetRegistry.get(input.sourceGatewayId))?.runtime);
-          if (sourceRuntime !== "cluster") {
-            const unknown = { ...sourceKubernetes, status: "unknown" as const };
+          const unusable = unusableRollSource(source, input.sourceGatewayId, sourceRuntime);
+          if (unusable !== null) {
+            const unknown: GatewayKubernetesObservation = { status: "unknown", totalPods: 0, readyPods: 0, observedAt: now };
             const repeat = await appendSharedRollRecoveryInTransaction(transaction, input, { now, sourceKubernetes: unknown });
             if (repeat.kind === "already-scheduled") return { ...repeat, sourceKubernetesStatus: unknown.status };
-            throw new ObservationUnknown(
-              `${input.sourceGatewayId} runs as ${sourceRuntime}, not as pods; its Kubernetes status is unknown`,
-            );
+            throw new ObservationUnknown(unusable);
           }
+          const sourceKubernetes = knownObservation(source);
           const result = await appendSharedRollRecoveryInTransaction(transaction, input, { now, sourceKubernetes });
           if (result.kind === "not-eligible") throw new PreconditionFailed(result.reason);
           return { ...result, sourceKubernetesStatus: sourceKubernetes.status };
@@ -389,6 +389,12 @@ function supersedeRollingSharedGatewayIntent(req: Request, deps: AdminPlacementS
       };
     },
   };
+}
+
+function unusableRollSource(source: SourceObservation, gatewayId: string, runtime: string): string | null {
+  if (!source.known) return source.reason;
+  if (runtime !== "cluster") return `${gatewayId} runs as ${runtime}, not as pods; its Kubernetes status is unknown`;
+  return null;
 }
 
 function enqueuePlacementMigrationIntent(req: Request, deps: AdminPlacementSharedRouterDeps): RouteIntent<unknown> {

@@ -370,8 +370,8 @@ source gateway is gone. After the owner check, the fleet controller reads the
 source's pods from Kubernetes itself, live, right before the transaction. The
 client's own view only tells it when to ask. A read that fails or returns no
 usable status, or a source that does not run as pods, answers
-`observation-unknown`. In the
-transaction, the verb checks that:
+`observation-unknown`, except that a recovery already scheduled answers
+`already-scheduled` first. In the transaction, the verb checks that:
 
 - the source and the target are running shared pool members;
 - the target's live, desired and latest releases match;
