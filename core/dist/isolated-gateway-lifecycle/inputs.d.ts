@@ -1,4 +1,5 @@
 import type { SizingTier } from "@octogee/shared/types/sizing";
+import { type NormalFleetMutationInput } from "../normal-fleet-mutation.js";
 import type { SizingKeyReader } from "../sizing-key.js";
 import type { PlatformStateStore, PlatformStateTransaction } from "../platform-state/store.js";
 export declare const ISOLATED_GATEWAY_LIFECYCLE_ACTOR = "glm-controller-disposable-gateway";
@@ -9,13 +10,22 @@ export declare class IsolatedGatewayFenceError extends Error {
     constructor(message: string);
 }
 export type PlacementOwnerFence = (transaction: PlatformStateTransaction) => Promise<void>;
+export type LifecycleMutation<T> = Omit<NormalFleetMutationInput<T>, "action"> & {
+    action: () => Promise<T>;
+};
+export type LifecycleMutationRunner = <T>(mutation: LifecycleMutation<T>) => Promise<T>;
+export declare function auditedLifecycleMutations(store: PlatformStateStore): LifecycleMutationRunner;
+export declare const unauditedLifecycleMutations: LifecycleMutationRunner;
+export type LifecycleMode = "apply" | "plan";
 export interface IsolatedLifecycleDeps {
     store: PlatformStateStore;
     readSizingKey: SizingKeyReader;
     requireOwner: PlacementOwnerFence;
+    mutations: LifecycleMutationRunner;
     now(): number;
     log(message: string): void;
 }
+export declare function checkPlacementOwner(input: Pick<IsolatedLifecycleDeps, "store" | "requireOwner">): Promise<void>;
 export interface AllocateIsolatedGatewayInput {
     uid: string;
     builderSlug: string;

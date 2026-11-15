@@ -3284,7 +3284,7 @@ export function addAdminFleetRoutes(router, deps) {
     if (deps.placement)
         addAdminPlacementRoutes(router, { ...deps.placement, store, journal: runAdminFleetMutation });
     if (deps.isolated)
-        addAdminPlacementIsolatedRoutes(router, { store, journal: runAdminFleetMutation, accounts: deps.accounts, capabilities: deps.isolated, log: (message) => deps.logger.info(message) });
+        addAdminPlacementIsolatedRoutes(router, { store, journal: runAdminFleetMutation, accounts: deps.accounts, capabilities: deps.isolated, log: (message) => deps.logger.info(message), warn: (message) => deps.logger.warn(message) });
     async function handleActiveUserDeletion(input) {
         const lifecycle = input.lifecycle;
         if (!userDeletionIsActive(lifecycle))

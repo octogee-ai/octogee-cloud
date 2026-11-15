@@ -14,11 +14,9 @@ import {
   nextActivationLease,
   nextCompletedActivationLease,
   nextFailedActivationLease,
+  unauditedLifecycleMutations,
 } from "./index.js";
 
-vi.mock("../normal-fleet-mutation.js", () => ({
-  runNormalFleetMutation: vi.fn(async (_store: unknown, input: { action: () => Promise<unknown> }) => input.action()),
-}));
 
 const request = {
   uid: "uid-alice",
@@ -736,7 +734,7 @@ function allocationHarness(readSizingKey: () => Promise<"hobby" | "pro" | null> 
     "users/uid-alice": userData(),
   });
   const ensureAuthSecret = vi.fn(async (_input: unknown) => undefined);
-  const allocate = () => allocateIsolatedGateway({ store: h.state, readSizingKey, requireOwner, namespace: "test", log: vi.fn(), now: () => 2_000, ensureAuthSecret }, request);
+  const allocate = () => allocateIsolatedGateway({ store: h.state, readSizingKey, requireOwner, mutations: unauditedLifecycleMutations, namespace: "test", log: vi.fn(), now: () => 2_000, ensureAuthSecret }, request);
   return { ...h, ensureAuthSecret, allocate, run: async () => (await allocate()).gatewayId };
 }
 
@@ -801,7 +799,7 @@ describe("parked isolated gateway reuse", () => {
     h.docs.set("users/uid-alice", user);
     h.ensureAuthSecret.mockClear();
     const allocate = (parkedGateway = { gatewayId: parkedGatewayId, generation: 1 }) => allocateIsolatedGateway(
-      { store: h.state, readSizingKey: hobbyTier, requireOwner, namespace: "test", log: vi.fn(), now: () => 3_000, ensureAuthSecret: h.ensureAuthSecret },
+      { store: h.state, readSizingKey: hobbyTier, requireOwner, mutations: unauditedLifecycleMutations, namespace: "test", log: vi.fn(), now: () => 3_000, ensureAuthSecret: h.ensureAuthSecret },
       { ...nextRequest, parkedGateway },
     );
     const run = async (parkedGateway?: { gatewayId: string; generation: number }) => (await allocate(parkedGateway)).gatewayId;

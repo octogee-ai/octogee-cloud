@@ -4,7 +4,7 @@ import { type GatewaySizingProfile } from "@octogee/shared/types/sizing-profile"
 import type { GatewayAssignment } from "../platform-state/gateways.js";
 import type { PlatformUserRecord } from "../platform-state/users.js";
 import type { PlatformStateStore } from "../platform-state/store.js";
-import { type AllocateIsolatedGatewayInput, type IsolatedLifecycleDeps } from "./inputs.js";
+import { type AllocateIsolatedGatewayInput, type IsolatedLifecycleDeps, type LifecycleMode } from "./inputs.js";
 export interface IsolatedGatewayAllocationDeps extends IsolatedLifecycleDeps {
     namespace: string;
     ensureAuthSecret(input: {
@@ -29,8 +29,6 @@ export declare function isolatedAllocationFenceAllows(input: {
 export declare function sharedSourceRelease(value: unknown, gatewayId: string): number | null;
 type DesiredRoot = ReturnType<typeof projectGatewayDesiredRootForGateway>;
 export declare function gatewayRunsArtifact(store: PlatformStateStore, root: NonNullable<DesiredRoot>, artifact: unknown): Promise<boolean>;
-export declare function allocateIsolatedGateway(input: IsolatedGatewayAllocationDeps, request: AllocateIsolatedGatewayInput): Promise<IsolatedGatewayAllocation>;
-export declare function refreshRequestedAllocation(input: IsolatedLifecycleDeps, request: AllocateIsolatedGatewayInput): Promise<boolean>;
-export type IsolatedAllocationPlan = "allocate" | "refresh" | "replay";
-export declare function checkIsolatedAllocationFence(input: Pick<IsolatedLifecycleDeps, "store" | "readSizingKey" | "now">, request: AllocateIsolatedGatewayInput): Promise<IsolatedAllocationPlan>;
+export declare function allocateIsolatedGateway(input: IsolatedGatewayAllocationDeps, request: AllocateIsolatedGatewayInput, mode?: LifecycleMode): Promise<IsolatedGatewayAllocation>;
+export declare function refreshRequestedAllocation(input: IsolatedLifecycleDeps, request: AllocateIsolatedGatewayInput, mode?: LifecycleMode): Promise<boolean>;
 export {};

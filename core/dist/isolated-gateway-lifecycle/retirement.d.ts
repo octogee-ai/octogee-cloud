@@ -1,6 +1,6 @@
 import type { GatewayAssignment } from "../platform-state/gateways.js";
 import type { PlatformUserRecord } from "../platform-state/users.js";
-import { type AuthoritativeLeaseStatus, type IsolatedLifecycleDeps, type RecoverUnreachableIsolatedGatewayInput, type RetireOwnedIsolatedGatewayInput } from "./inputs.js";
+import { type AuthoritativeLeaseStatus, type IsolatedLifecycleDeps, type LifecycleMode, type RecoverUnreachableIsolatedGatewayInput, type RetireOwnedIsolatedGatewayInput } from "./inputs.js";
 type RetirementDeps = Pick<IsolatedLifecycleDeps, "store" | "now" | "log" | "requireOwner">;
 export type OwnedGatewayRetirement = {
     retired: true;
@@ -26,8 +26,8 @@ export type UnreachableRecovery = {
     reason: "observation-unknown" | "pods-present";
     operationId: string;
 };
-export declare function checkUnreachableRecoveryFence(input: Pick<RetirementDeps, "store" | "now">, request: RecoverUnreachableIsolatedGatewayInput): Promise<string>;
-export declare function reserveUnreachableRecovery(input: RetirementDeps, request: RecoverUnreachableIsolatedGatewayInput, operationId: string): Promise<void>;
+export declare function checkUnreachableRecoveryFence(input: RetirementDeps, request: RecoverUnreachableIsolatedGatewayInput): Promise<string>;
+export declare function reserveUnreachableRecovery(input: RetirementDeps, request: RecoverUnreachableIsolatedGatewayInput, operationId: string, mode?: LifecycleMode): Promise<void>;
 export declare function completeUnreachableRecovery(input: RetirementDeps, request: RecoverUnreachableIsolatedGatewayInput, operationId: string): Promise<void>;
 export declare function recoverUnreachableIsolatedGateway(input: UnreachableRecoveryDeps, request: RecoverUnreachableIsolatedGatewayInput): Promise<UnreachableRecovery>;
 interface RetirementAuthorityFenceInput {
@@ -41,5 +41,5 @@ interface RetirementAuthorityFenceInput {
     assignment: Pick<GatewayAssignment, "uid" | "gatewayId" | "state"> | null;
 }
 export declare function retirementAuthorityFenceAllows(input: RetirementAuthorityFenceInput): boolean;
-export declare function retireOwnedIsolatedGateway(input: RetirementDeps, request: RetireOwnedIsolatedGatewayInput): Promise<OwnedGatewayRetirement>;
+export declare function retireOwnedIsolatedGateway(input: RetirementDeps, request: RetireOwnedIsolatedGatewayInput, mode?: LifecycleMode): Promise<OwnedGatewayRetirement>;
 export {};
