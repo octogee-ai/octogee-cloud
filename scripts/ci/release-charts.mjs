@@ -9,7 +9,7 @@ import { releaseVersion } from "./release-packages.mjs";
 
 export const CHART_REGISTRY = "ghcr.io/octogee-ai/octogee-cloud/charts";
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
-const OPENCLAW_PIN = "infra/gateway/openclaw-tarball/current.json";
+const OPENCLAW_PIN = "gateway/openclaw-tarball/current.json";
 const DIGEST = /^sha256:[a-f0-9]{64}$/;
 const HELM = "helm";
 const GATEWAY_EDGE = "gateway-edge";
@@ -62,7 +62,7 @@ export function gatewayReleaseValues({ tag, manifest }) {
 
 export const PUBLISHED_CHARTS = [
   {
-    directory: "helm/octogee",
+    directory: "charts/octogee",
     releaseValues: platformReleaseValues,
     templateArgs: [
       "-f", "scripts/ops/kind/values.yaml", "-n", "octogee-local", "--set", "global.computer.enabled=true", "--set", "global.computer.cidr=10.8.0.0/16",
@@ -71,11 +71,11 @@ export const PUBLISHED_CHARTS = [
     ],
   },
   {
-    directory: "helm/octogee-gateway",
+    directory: "charts/octogee-gateway",
     releaseValues: gatewayReleaseValues,
     templateArgs: ["--set", "gatewayId=release-check", "--set", "env.mmSiteUrl=https://chat.example.com", "--set", "env.mmInternalUrl=http://mattermost:8065", "--set", "gatewayEdge.publicAppOrigins[0]=https://app.example.com"],
   },
-  { directory: "helm/monitoring", templateArgs: [] },
+  { directory: "charts/monitoring", templateArgs: [] },
 ];
 
 function leaves(values, path = []) {
