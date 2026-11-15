@@ -183,11 +183,23 @@ describe("provisioning service client", () => {
     expect(sleeps).toEqual([10_000]);
   });
 
-  it("refuses a uid that would leave the user's path, without a request", async () => {
+  it("sends any uid the platform admits as one encoded path segment", async () => {
+    const api = client();
+
+    await api.getProvisioning("lin@example.test/x?y#z %");
+    await api.getCredential("../provisionings", "user-chat-token").catch(() => undefined);
+
+    expect(fake.requests.map((request) => request.path)).toEqual([
+      "/v1/users/lin%40example.test%2Fx%3Fy%23z%20%25/provisioning",
+      "/v1/users/..%2Fprovisionings/credentials/user-chat-token",
+    ]);
+  });
+
+  it("refuses only the dot segments a URL path cannot carry, without a request", async () => {
     const api = client();
 
     await expect(api.getProvisioning("..")).rejects.toMatchObject({ status: 400, code: "invalid-request" });
-    await expect(api.getCredential("../provisionings", "user-chat-token")).rejects.toMatchObject({ status: 400 });
+    await expect(api.getProvisioning(".")).rejects.toMatchObject({ status: 400, code: "invalid-request" });
     expect(fake.requests).toEqual([]);
   });
 

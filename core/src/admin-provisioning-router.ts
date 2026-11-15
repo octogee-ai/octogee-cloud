@@ -7,7 +7,7 @@ import {
 } from "@octogee/shared/types/provisioning-service";
 import { respondToAdminFleetMutationError, type AdminFleetMutationRunner, type FleetLogger } from "./admin-fleet-router.js";
 import { FleetMutationRefusedError } from "./normal-fleet-mutation.js";
-import { isProvisioningUid, ProvisioningServiceError, type ProvisioningServiceClient } from "./provisioning-service-client.js";
+import { isAddressableUid, ProvisioningServiceError, type ProvisioningServiceClient } from "./provisioning-service-client.js";
 import type { ProvisioningSync } from "./provisioning-sync.js";
 
 export type AdminProvisioningClient = Pick<
@@ -107,8 +107,8 @@ export function addAdminProvisioningRoutes(router: Router, deps: AdminProvisioni
 
   const requireUid = (req: Request, res: Response): string | null => {
     const uid = req.params.uid as string;
-    if (isProvisioningUid(uid)) return uid;
-    res.status(400).json({ code: "invalid-request", error: "uid is not a valid provisioning identifier" });
+    if (isAddressableUid(uid)) return uid;
+    res.status(400).json({ code: "invalid-request", error: "an empty or dot-segment uid cannot name a URL path segment" });
     return null;
   };
 

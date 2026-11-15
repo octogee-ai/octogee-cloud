@@ -19,7 +19,7 @@ export const PROVISIONING_SERVICE_TOKEN_PATH_ENV = "PROVISIONING_SERVICE_TOKEN_P
 const TOKEN_REFRESH_MS = 60_000;
 const REQUEST_TIMEOUT_MS = 30_000;
 const LONG_POLL_GRACE_MS = 15_000;
-const PROVISIONING_UID = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
+const UNADDRESSABLE_UIDS = new Set(["", ".", ".."]);
 const PUT_OUTCOMES: Readonly<Record<number, PutProvisioningResult["outcome"]>> = { 201: "created", 202: "changed" };
 
 export interface ProvisioningServiceRetryPolicy {
@@ -106,12 +106,12 @@ export function provisioningServiceConfigFromEnvironment(env: NodeJS.ProcessEnv)
   return { baseUrl, tokenPath };
 }
 
-export function isProvisioningUid(uid: string): boolean {
-  return PROVISIONING_UID.test(uid);
+export function isAddressableUid(uid: string): boolean {
+  return !UNADDRESSABLE_UIDS.has(uid);
 }
 
 function userSegment(uid: string): string {
-  if (!isProvisioningUid(uid)) throw new ProvisioningServiceError(400, "invalid-request", "uid is not a valid provisioning identifier");
+  if (!isAddressableUid(uid)) throw new ProvisioningServiceError(400, "invalid-request", "an empty or dot-segment uid cannot name a URL path segment");
   return encodeURIComponent(uid);
 }
 

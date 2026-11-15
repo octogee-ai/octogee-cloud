@@ -1,7 +1,7 @@
 import { PROVISIONING_CONDITION_REASONS, PROVISIONING_WORK_STATES, } from "@octogee/shared/types/provisioning-service";
 import { respondToAdminFleetMutationError } from "./admin-fleet-router.js";
 import { FleetMutationRefusedError } from "./normal-fleet-mutation.js";
-import { isProvisioningUid, ProvisioningServiceError } from "./provisioning-service-client.js";
+import { isAddressableUid, ProvisioningServiceError } from "./provisioning-service-client.js";
 const UNAVAILABLE = "this fleet controller has no provisioning service configured";
 const SERVICE_FAILED = "the provisioning service did not answer; see the fleet controller log";
 export const ADMIN_PROVISIONING_READ_DEADLINE_MS = 5_000;
@@ -81,9 +81,9 @@ export function addAdminProvisioningRoutes(router, deps) {
     };
     const requireUid = (req, res) => {
         const uid = req.params.uid;
-        if (isProvisioningUid(uid))
+        if (isAddressableUid(uid))
             return uid;
-        res.status(400).json({ code: "invalid-request", error: "uid is not a valid provisioning identifier" });
+        res.status(400).json({ code: "invalid-request", error: "an empty or dot-segment uid cannot name a URL path segment" });
         return null;
     };
     const requireClient = (res) => {

@@ -116,12 +116,22 @@ describe("Admin API provisioning routes", () => {
     expect(Date.now() - started).toBeLessThan(2_000);
   });
 
-  it("refuses a uid that is not a provisioning identifier", async () => {
-    const res = await request(app()).get("/users/..%2F..%2Fprovisionings/provisioning").expect(400);
-    await request(app()).post("/users/.hidden/provisioning/retry").send({}).expect(400);
+  it("passes any uid the platform admits to the service as one path segment", async () => {
+    await request(app()).get("/users/..%2F..%2Fprovisionings/provisioning").expect(404);
+    await request(app()).get("/users/.hidden/provisioning").expect(404);
+
+    expect(fake.requests.filter((entry) => entry.method === "GET").map((entry) => entry.path)).toEqual(expect.arrayContaining([
+      "/v1/users/..%2F..%2Fprovisionings/provisioning",
+      "/v1/users/.hidden/provisioning",
+    ]));
+  });
+
+  it("refuses a dot-segment uid before any request or journal entry", async () => {
+    const res = await request(app()).post("/users/%2E%2E/provisioning/retry").send({}).expect(400);
 
     expect(res.body.code).toBe("invalid-request");
     expect(fake.requests.filter((entry) => entry.method !== "PUT")).toEqual([]);
+    expect(audits()).toEqual([]);
   });
 
   it("journals a retry and passes the journal's idempotency key to the service", async () => {
