@@ -88,11 +88,6 @@ vi.mock('../openclaw/ws-origin.js', () => ({
   _resetWsOriginWarningForTests: () => {},
 }));
 
-vi.mock('../../../../platform-api/src/chat-proxy/openclaw/gateway-resolver.js', () => ({
-  GatewayResolveError: h.GatewayResolveError,
-  resolveGatewayUrl: async () => h.ctl.resolve(),
-}));
-
 vi.mock('@octogee/core/channels/frame-filter', () => ({
   ExpectedAgentIdError: h.ExpectedAgentIdError,
   deriveExpectedAgentId: () => h.ctl.deriveAgentId(),
