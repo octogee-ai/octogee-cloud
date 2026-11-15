@@ -8,16 +8,38 @@ registry, the Helm chart in `helm/octogee`, and the
 script, `scripts/ops/eks-install.sh`, creates the cloud resources and installs
 the chart. It follows [The full platform on GKE](gke.md) step for step.
 
-**This install has not run on a real AWS account.** Its tests run `up` and
-`down` against stubbed `aws`, `eksctl`, `kubectl` and `helm`, and its flags were
-checked against each tool's documentation. The GKE install it follows has run
-end to end. A first real run still has to show that:
+This install has run end to end on a new AWS account, as
+[a small install](#a-small-install) grown to five gateway nodes. That run
+showed that:
 
 - the gateway nodes install gVisor at boot and containerd runs pods under it.
   `up` checks this before it creates the database: it starts a pod of runtime
   class `gvisor` and stops if the pod does not report the gVisor kernel;
 - eksctl accepts the gateway node group with the script's own launch template;
-- the VPC CNI enforces the chart's network policies.
+- the VPC CNI enforces the chart's network policies, and gateways reach the
+  Kubernetes API and the model providers through them;
+- a shared gateway serves about two minutes after `gateway add`, and a new
+  user is provisioned within a minute;
+- a move to a new isolated gateway takes about six minutes, most of it the new
+  gateway starting, and a move back to a shared gateway about two;
+- the agent answers in the Coach channel within about 15 seconds. With an
+  OpenRouter key it answered from the model on a shared gateway. On the
+  isolated gateway the run had only a key that was not valid, so the answer
+  was the provider's sign-in error, which shows the request reached the
+  provider;
+- `gateway retire` removes an empty isolated gateway in under 10 seconds.
+
+Two problems the run found are not fixed yet:
+
+- When `gateway restart` fails, the platform cannot tell whether the gateway
+  restarted, and it keeps the gateway locked. The gateway stops converging,
+  and it cannot be retired. Moves to or from it never start, and moves of
+  other users off the same shared gateway wait behind them. No command clears
+  the lock. On a test install, `down` and a new `up` start over.
+- A move back to the shared gateway a user left fails with "agent database
+  files are still held open", because that gateway still holds the user's
+  deleted agent database open. Delete the gateway's pod, which restarts the
+  agents of every user on it, then move the user again.
 
 Expect rough edges, and please report them.
 
@@ -147,8 +169,8 @@ scripts/ops/eks-install.sh up
 If your commit has no images, the script stops before it creates anything and
 says so.
 
-A first run should take 35 to 45 minutes, most of it the cluster and the
-database. The script:
+A first run takes about 35 minutes: about 20 for the cluster and 8 for the
+database. A later run takes about 3. The script:
 
 1. checks for a model provider key, exported or stored in the cluster;
 2. reads the `linux/amd64` digest of each image published for the commit,
@@ -315,7 +337,9 @@ octogee-fleet --env=eks user migrate lin --to-isolated=pod-s --apply
 answers in the same channel. Return the user with
 `user migrate lin --to=shared-a --apply` and retire the isolated gateway with
 `gateway retire <id> --apply`, as in
-[An isolated gateway](kind.md#an-isolated-gateway).
+[An isolated gateway](kind.md#an-isolated-gateway). If the return fails with
+"agent database files are still held open", delete the `shared-a` pod and
+return the user again, as the problems at the top of this guide describe.
 
 ## Remove everything
 
