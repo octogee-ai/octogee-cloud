@@ -16,7 +16,7 @@
     "@types/pg": "8.23.1",
     "@vitest/coverage-v8": "^5.1.0",
     "pg": "8.23.1",
-    "typebox": "^1.4.5",
+    "typebox": "^1.4.6",
     "typescript": "^7.0.2",
     "vitest": "^5.0.0",
     "yaml": "^2.9.1"

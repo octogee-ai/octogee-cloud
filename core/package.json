@@ -917,7 +917,7 @@
     "google-auth-library": "^11.3.3",
     "pg": "^8.23.1",
     "unique-names-generator": "^4.7.1",
-    "ws": "^8.22.1"
+    "ws": "^8.22.2"
   },
   "overrides": {
     "brace-expansion@>=2.0.0 <3.0.0": "2.1.7",

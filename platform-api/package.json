@@ -520,7 +520,7 @@
     "@aws-sdk/s3-request-presigner": "3.1164.0",
     "@google-cloud/kms": "^6.3.0",
     "@google-cloud/secret-manager": "^7.0.0",
-    "@google-cloud/storage": "^8.2.0",
+    "@google-cloud/storage": "^8.4.0",
     "@octogee/core": "file:../core",
     "@octogee/llm-broker": "file:../llm-broker",
     "@octogee/shared": "file:../shared",
