@@ -4,7 +4,7 @@ import { Agent, getGlobalDispatcher, setGlobalDispatcher } from "undici";
 import type {SourceTransferExecution} from "@octogee/shared/types/glm";
 import { describe, expect, it, vi } from "vitest";
 import type { PlatformStateStore } from "@octogee/core/platform-state";
-import { createJournalFixtureStore, journalRowsIn } from "@octogee/core/testing/journal-store";
+import { createJournalFixtureStore, journalRowsIn } from "@octogee/core-testing/journal-store";
 import { GLM_MIGRATION_TRANSFER_TASKS_COLLECTION } from "@octogee/shared/types/glm";
 import { FLEET_KEY_PAIR } from "./fixtures/fleet-keys.js";
 import { readTransferAttemptForCleanup } from "../lib/migration-transfer-lease.js";

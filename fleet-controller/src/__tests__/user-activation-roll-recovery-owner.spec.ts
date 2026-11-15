@@ -8,7 +8,7 @@ import { createSurgePodTransport, type SurgeControlRequest } from '../surge-user
 import { FLEET_KEY_PAIR } from './fixtures/fleet-keys.js';
 import { buildOperationCompletionUpdate, classifyOperationFailure } from '../operation-retry.js';
 import { rearmOwnedLegacyMigration } from '../legacy-migration-recovery.js';
-import { createDocumentFixtureStore } from '@octogee/core/testing/journal-store';
+import { createDocumentFixtureStore } from '@octogee/core-testing/journal-store';
 
 function runtimeDoc(fields: Record<string, unknown>): Record<string, unknown> {
   return { docKind: 'runtime', gatewayId: 'builder-a', lifecycle: 'serving', ...fields };

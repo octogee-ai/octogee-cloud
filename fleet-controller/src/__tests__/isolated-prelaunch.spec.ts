@@ -1,5 +1,5 @@
 import { isolatedBootMode } from "@octogee/core/isolated-prelaunch";
-import { createJournalFixtureStore, fixtureDocumentsAt, journalRowsAtPaths } from "@octogee/core/testing/journal-store";
+import { createJournalFixtureStore, fixtureDocumentsAt, journalRowsAtPaths } from "@octogee/core-testing/journal-store";
 import { describe, expect, it, vi } from "vitest";
 import type { GatewayRuntimeDoc, ReleasePayload } from "@octogee/shared/types/gateway-releases";
 import type { DurableGateway } from "../converge-gateway.js";

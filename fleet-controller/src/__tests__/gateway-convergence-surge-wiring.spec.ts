@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import type { GatewayRuntimeDoc, ReleasePayload } from "@octogee/shared/types/gateway-releases";
 import {
   refineGatewayConvergenceAction,

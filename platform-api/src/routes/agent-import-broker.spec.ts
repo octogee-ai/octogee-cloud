@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import express from "express";
 import request from "supertest";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import type { BlobStore } from "../../../gateway-edge/src/lib/blob-store.js";
 import { createAgentImportBrokerRoutes } from "./agent-import-broker.js";
 

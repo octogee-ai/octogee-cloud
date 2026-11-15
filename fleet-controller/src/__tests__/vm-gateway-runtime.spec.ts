@@ -2,7 +2,7 @@ import { createVmHomeClient } from "../lib/compute-home.js";
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi, type Mock } from "vitest";
 import { MissingRecordError, type FleetRegistryRecord } from "@octogee/core/platform-state";
-import { createDocumentFixtureStore, FIXTURE_SIZING_PROFILES } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore, FIXTURE_SIZING_PROFILES } from "@octogee/core-testing/journal-store";
 import type { GatewayVmSpec, HelmInstancesMap } from "@octogee/shared/types/glm";
 import type { CreateGatewayVmInput, CreateGatewayVmResult, GatewayVmClient, GatewayVmDescription } from "../lib/compute-vm";
 import { ComputeOperationError, GATEWAY_VM_ACCESS_SCOPES } from "../lib/compute-vm";

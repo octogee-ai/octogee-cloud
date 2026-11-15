@@ -1,7 +1,7 @@
 import { releasePayloadHash, type ReleasePayload } from "@octogee/shared/types/gateway-releases";
 import type { GatewayArtifact } from "@octogee/core/gateway-live-release";
 import type { PlatformStateStore } from "@octogee/core/platform-state";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 
 type Data = Record<string, unknown>;
 

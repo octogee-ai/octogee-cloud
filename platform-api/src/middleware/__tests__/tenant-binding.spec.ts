@@ -2,7 +2,7 @@ import express from "express";
 import { Registry } from "prom-client";
 import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import {
   K8S_SA_TOKEN_HEADER,
   createTenantBindingMetrics,

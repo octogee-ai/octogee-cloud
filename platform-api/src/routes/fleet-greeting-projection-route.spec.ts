@@ -2,7 +2,7 @@ import express from 'express';
 import request from 'supertest';
 import { describe, expect, it, vi } from 'vitest';
 import type { BoundTenant } from '../lib/sa-to-tenant.js';
-import { createDocumentFixtureStore } from '@octogee/core/testing/journal-store';
+import { createDocumentFixtureStore } from '@octogee/core-testing/journal-store';
 import { NO_BROKER_RECORDS, type BrokerRecords } from '../lib/broker-records.js';
 import { createFleetBrokerRoutes } from './fleet-broker.js';
 

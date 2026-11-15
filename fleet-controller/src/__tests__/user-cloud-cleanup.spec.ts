@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MalformedRecordError } from "@octogee/core/platform-state";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { buildUserCloudCleanupDeps } from "../index.js";
 import type { ProductUserLifecycle, UserDataScope } from "../lib/user-ops/user-lifecycle-product.js";
 import { remainingPlatformUserState } from "../lib/user-ops/user-platform-state-erasure.js";

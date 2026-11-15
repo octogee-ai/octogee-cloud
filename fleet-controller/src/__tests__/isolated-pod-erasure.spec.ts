@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { verifyGatewayRetirementClaimAtomic } from "@octogee/core/gateway-retirement-claim";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import type { Operation, OperationStep } from "@octogee/shared/types/glm";
 
 import { createRetireGatewayHandler } from "../handlers/retire-gateway.js";

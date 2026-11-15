@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { MalformedRecordError } from "@octogee/core/platform-state";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { readFleetLiveKeyHolders, readLiveGatewayKeyHolders } from "../gitea-gateway-key-gc.js";
 import type { GatewayPodDiagnostics } from "../lib/kube-ops.js";
 

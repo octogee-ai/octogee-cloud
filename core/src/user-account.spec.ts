@@ -1,6 +1,6 @@
 import { Timestamp, type Firestore } from "firebase-admin/firestore";
 import { describe, expect, it, vi } from "vitest";
-import { firestoreUserAccountReader } from "./testing/firestore-user-accounts.js";
+import { firestoreUserAccountReader } from "@octogee/core-testing/firestore-user-accounts";
 import { noUserAccounts, userAccountFromData } from "./user-account.js";
 
 describe("userAccountFromData", () => {

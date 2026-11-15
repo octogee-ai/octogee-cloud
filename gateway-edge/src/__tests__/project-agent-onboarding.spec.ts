@@ -13,7 +13,7 @@ function rewrite(path: string, value: unknown) {
   h.versions.set(path, (h.versions.get(path) ?? 0) + 1);
 }
 vi.mock('../lib/platform-state.js', async () => {
-  const { createDocumentFixtureStore } = await import('@octogee/core/testing/journal-store');
+  const { createDocumentFixtureStore } = await import('@octogee/core-testing/journal-store');
   return { platformStateStore: createDocumentFixtureStore(h.docs) };
 });
 vi.mock('../lib/mattermost.js', () => ({ mmApi: h.mm, mmUploadAvatarBuffer: h.avatar }));

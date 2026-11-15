@@ -2,7 +2,7 @@ import express, { type RequestHandler } from "express";
 import request from "supertest";
 import { describe, expect, it } from "vitest";
 
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { NO_BROKER_RECORDS, type BrokerRecords, type UsageEvent } from "../lib/broker-records.js";
 import { createFleetBrokerRoutes } from "./fleet-broker.js";
 

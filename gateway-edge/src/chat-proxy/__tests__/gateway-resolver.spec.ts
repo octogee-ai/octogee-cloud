@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { MalformedRecordError } from '@octogee/core/platform-state';
-import { createDocumentFixtureStore } from '@octogee/core/testing/journal-store';
+import { createDocumentFixtureStore } from '@octogee/core-testing/journal-store';
 import {
   resolveGatewayAssignment,
   resolveGatewayUrl,

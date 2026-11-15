@@ -1,4 +1,4 @@
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { describe, expect, it, vi } from "vitest";
 import type { UserNotification } from "../../lib/user-notifications.js";
 import {

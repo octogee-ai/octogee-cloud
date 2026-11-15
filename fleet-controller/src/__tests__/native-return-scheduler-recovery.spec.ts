@@ -1,4 +1,4 @@
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { MigrationRpcError } from "@octogee/core/fleet-migration-client";
 import { describe, expect, it, vi } from "vitest";
 import { createAbandonedNativeSchedulerRecovery, reportedAbandonedNativeScheduler } from "../lib/native-return-scheduler-recovery.js";

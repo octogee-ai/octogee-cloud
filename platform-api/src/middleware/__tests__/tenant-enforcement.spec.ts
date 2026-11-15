@@ -2,7 +2,7 @@ import express from "express";
 import { EventEmitter } from "node:events";
 import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import {
   createTenantEnforcementMiddleware,
   NO_PRODUCT_TENANT_ROUTES,

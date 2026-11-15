@@ -19,16 +19,16 @@ import {
   isolatedGatewayRoot,
   mkAdminFleetRouteApp,
   runtimeDoc,
-} from "./testing/admin-fleet-route-app.js";
+} from "@octogee/core-testing/admin-fleet-route-app";
 import {
   createJournalFixtureStore,
   journalRowsAtPaths,
   type FixtureDocuments,
-} from "./testing/journal-store.js";
+} from "@octogee/core-testing/journal-store";
 import type { PlatformStateTransaction } from "./platform-state/store.js";
 import { SPOT_PRICE_MULTIPLIER } from "@octogee/shared/types/cost-estimator";
 import { ACCOUNT_DELETION_RETENTION_MS } from "@octogee/shared/types/account-lifecycle";
-import { firestoreUserAccountReader } from "./testing/firestore-user-accounts.js";
+import { firestoreUserAccountReader } from "@octogee/core-testing/firestore-user-accounts";
 import { isPlainObject, type PlainObject } from "./platform-state/documents/secrets.js";
 
 function storedProvisioning(user: PlainObject | undefined): PlainObject {

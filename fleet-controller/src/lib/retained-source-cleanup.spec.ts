@@ -1,5 +1,5 @@
 import {describe,expect,it,vi} from 'vitest';
-import {createDocumentFixtureStore} from '@octogee/core/testing/journal-store';
+import {createDocumentFixtureStore} from '@octogee/core-testing/journal-store';
 import type {SourceTransferExecution} from '@octogee/shared/types/glm';
 import {FLEET_KEY_PAIR} from '../__tests__/fixtures/fleet-keys.js';
 import {abortRetainedSourceImport} from './migration-rsync-transfer.js';

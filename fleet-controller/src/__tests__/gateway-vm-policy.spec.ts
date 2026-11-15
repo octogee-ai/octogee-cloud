@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { FIXTURE_SIZING_PROFILES } from "@octogee/core/testing/journal-store";
+import { FIXTURE_SIZING_PROFILES } from "@octogee/core-testing/journal-store";
 import { resolveGatewayVmPolicy } from "../vm-gateway-runtime.js";
 
 function storeWith(sizingProfiles: Record<string, unknown>) {

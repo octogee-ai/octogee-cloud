@@ -36,7 +36,7 @@ vi.mock("@octogee/core/gateway-live-release", () => ({
 }));
 vi.mock("../lib/byot-sync-trigger.js", () => ({ triggerGatewayModelCredentialSync: h.triggerSync }));
 
-const { createDocumentFixtureStore } = await import("@octogee/core/testing/journal-store");
+const { createDocumentFixtureStore } = await import("@octogee/core-testing/journal-store");
 const { default: routes } = await import("../routes/byosub.js");
 const { codexRuntimeConfig } = await import("@octogee/core/model-credential-materializer");
 const { SubscriptionModelPinError } = await import("../lib/subscription-model-pins.js");

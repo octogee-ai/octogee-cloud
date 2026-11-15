@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { MigrationDrainPendingError } from "@octogee/core/fleet-migration-client";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { readSurgeAssignments } from "../surge-orphan-assignment.js";
 import { reconcileSurgeUserHandoff, assertSurgeAssignmentCoverage,
   type SurgeAssignment, type SurgePod, type SurgePodHealth, type SurgeUserHandoffDeps } from "../surge-user-handoff.js";

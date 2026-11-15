@@ -1,5 +1,5 @@
 import {describe,expect,it,vi} from 'vitest';
-import {createDocumentFixtureStore} from '@octogee/core/testing/journal-store';
+import {createDocumentFixtureStore} from '@octogee/core-testing/journal-store';
 import type {SourceTransferFence} from '@octogee/core/platform-state';
 import type {UserMigrationV2State,Operation,SourceTransferExecution} from '@octogee/shared/types/glm';
 import {createRetainedSourceTransfer} from './retained-source-transfer.js';

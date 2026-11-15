@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { resumeOrphanedRunningOps, type ResumeOrphanedOpsDeps } from "../resume-orphaned-ops.js";
 import type { Operation } from "@octogee/shared/types/glm";
 import { operationNeedsDurableUserMigrationV2Resume } from "../operation-retry.js";

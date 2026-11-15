@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { MigrationProgressRecord, Operation } from "@octogee/shared/types/glm";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { compactProgress, journalHandoffProgress, journalOperationProgress, type ProgressJournalDeps } from "./migration-progress-journal.js";
 
 const event: MigrationProgressRecord = {

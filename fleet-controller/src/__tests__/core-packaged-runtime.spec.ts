@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { commitCutoverAtomic, type CutoverDeps } from "@octogee/core/fleet-state";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import {
   GatewayRetirementConflictError,
   claimGatewayRetirementInStore,

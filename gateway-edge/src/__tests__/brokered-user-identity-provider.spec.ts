@@ -7,7 +7,7 @@ vi.mock("../middleware/logging", () => ({
   logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));
 vi.mock("../lib/platform-state.js", async () => {
-  const { createDocumentFixtureStore } = await import("@octogee/core/testing/journal-store");
+  const { createDocumentFixtureStore } = await import("@octogee/core-testing/journal-store");
   return { platformStateStore: createDocumentFixtureStore(new Map([["workspaces/ada", { id: "ada", ownerUid: "uid-ada" }]])) };
 });
 

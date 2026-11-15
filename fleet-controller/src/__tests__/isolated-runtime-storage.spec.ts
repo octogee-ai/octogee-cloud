@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { assertIsolatedRuntimeStorage } from "../isolated-runtime-storage.js";
 
 function fixture(runtime: "cluster" | "gce-vm") {

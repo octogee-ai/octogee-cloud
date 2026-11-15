@@ -17,7 +17,7 @@ import {
 } from "./gateway-live-release.js";
 import { releasePayloadHash } from "@octogee/shared/types/gateway-releases";
 import { MalformedRecordError } from "./platform-state/errors.js";
-import { createDocumentFixtureStore } from "./testing/journal-store.js";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 
 const POD_NAME = "octogee-gateway-walter-5bc5949d46-p946t";
 

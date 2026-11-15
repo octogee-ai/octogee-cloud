@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 
 import { disruptionObserverTest, startDisruptionObserver } from "../disruption-observer";
 import { renderMetrics, resetMetrics } from "../metrics";

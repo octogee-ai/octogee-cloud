@@ -5,7 +5,7 @@ import {
   type Stored,
   type WatchRecords,
 } from "@octogee/core/platform-state";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import {
   assignedSlugsFromUserMirror,
   createFleetInformer,

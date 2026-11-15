@@ -1,7 +1,7 @@
 import request from "supertest";
 import { describe, expect, it } from "vitest";
 
-import { FLEET, harness, send, type ChangingRequest, type Seed } from "./testing/admin-dry-run-app.js";
+import { FLEET, harness, send, type ChangingRequest, type Seed } from "@octogee/core-testing/admin-dry-run-app";
 
 const ADMITTED: Seed = {
   "users/uid-bo": { username: "bo", onboardingStep: "complete", provisioning: { status: "complete", openclaw: { slug: "bo" } } },

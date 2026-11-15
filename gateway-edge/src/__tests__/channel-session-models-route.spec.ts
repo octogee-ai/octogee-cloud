@@ -25,7 +25,7 @@ vi.mock("../middleware/logging.js", () => ({
 }));
 vi.mock("../lib/workspace-resolution.js", () => ({ resolveWorkspaceUid: async () => "owner-uid" }));
 vi.mock("../lib/platform-state.js", async () => {
-  const { createDocumentFixtureStore } = await import("@octogee/core/testing/journal-store");
+  const { createDocumentFixtureStore } = await import("@octogee/core-testing/journal-store");
   h.store = createDocumentFixtureStore(h.docs);
   return { platformStateStore: h.store };
 });

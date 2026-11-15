@@ -1,6 +1,6 @@
 import { createNativeReturnTargetRetirementVerifier } from "../lib/native-return-target-retirement.js";
 import { describe, expect, it, vi } from "vitest";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { isRetiredSharedGateway, retiredSharedGatewayRuntimeAbsent } from "../lib/user-ops/retired-shared-gateway.js";
 
 const gatewayId = "shared-9b3b204b1371";

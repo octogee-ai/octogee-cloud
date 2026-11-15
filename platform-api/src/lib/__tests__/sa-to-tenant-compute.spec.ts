@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { mapReviewToTenant } from "../sa-to-tenant.js";
 
 function durableGateway(gatewayId: string, overrides: Record<string, unknown> = {}): Record<string, unknown> {

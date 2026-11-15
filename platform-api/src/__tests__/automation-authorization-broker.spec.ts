@@ -1,7 +1,7 @@
 import express from "express";
 import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { Registry } from "prom-client";
 
 import { createAutomationAuthorizationBrokerRoutes } from "../routes/automation-authorization-broker.js";

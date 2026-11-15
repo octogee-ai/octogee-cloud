@@ -1,5 +1,5 @@
 import {describe,it,expect} from 'vitest';
-import {createDocumentFixtureStore} from '@octogee/core/testing/journal-store';
+import {createDocumentFixtureStore} from '@octogee/core-testing/journal-store';
 import type {KubectlSubprocess,KubectlSubprocessResult} from '../fleet-ingress.js';
 import {deploymentRestartComplete,restartGatewayDeployment,restartGatewayProcess,validateProcessRestartReceipt} from './runtime-restart-transport.js';
 import {assertMigrationRestartUnfenced,type RuntimeRestartFence} from './runtime-restart-coordinator.js';

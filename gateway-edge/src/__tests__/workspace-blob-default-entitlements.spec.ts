@@ -5,7 +5,7 @@ import type { FileTarget } from "../lib/fileTarget.js";
 const h = vi.hoisted(() => ({ updateManifest: vi.fn(), getManifestForQuota: vi.fn() }));
 
 vi.mock("../lib/platform-state.js", async () => {
-  const { createDocumentFixtureStore } = await import("@octogee/core/testing/journal-store");
+  const { createDocumentFixtureStore } = await import("@octogee/core-testing/journal-store");
   return {
     platformStateStore: createDocumentFixtureStore(new Map<string, Record<string, unknown>>([
       ["workspaces/alice", { id: "alice", ownerUid: "uid-alice" }],

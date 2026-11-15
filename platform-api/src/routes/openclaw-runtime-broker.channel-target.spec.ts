@@ -3,7 +3,7 @@ import request from "supertest";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { createOpenClawRuntimeBrokerRoutes } from "./openclaw-runtime-broker.js";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 
 let documents: Record<string, Record<string, unknown>> = {};
 

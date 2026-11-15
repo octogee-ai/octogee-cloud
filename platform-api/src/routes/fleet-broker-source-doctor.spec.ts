@@ -2,7 +2,7 @@ import express, { type RequestHandler } from "express";
 import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
 import { createOpenClawBootSentinelStore } from "../lib/openclaw-boot-sentinel.js";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { createFleetBrokerRoutes } from "./fleet-broker.js";
 const recoveryReads = vi.hoisted(() => ({ read: vi.fn() }));
 vi.mock("@octogee/core/shared-source-recovery", async original => ({
