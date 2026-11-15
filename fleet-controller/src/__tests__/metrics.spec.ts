@@ -6,7 +6,6 @@ import {
   recordDisruptionObservation,
   recordDisruptionSnapshot,
   recordReconcile,
-  recordSharedGatewayMaxCapacity,
   recordVmDiskUsage,
   renderMetrics,
   resetMetrics,
@@ -114,16 +113,5 @@ describe("glm-controller metrics", () => {
     expect(out).toContain("glm_disruption_gateway_pods 4");
     expect(out).toContain("glm_disruption_pending_gateway_pods 1");
     expect(out).toContain("glm_disruption_last_observed_timestamp_seconds 1700000000.000");
-  });
-
-  it("counts Shared gateway maximum-capacity observations and exposes the last bounded snapshot", () => {
-    recordSharedGatewayMaxCapacity({ assignmentCount: 15, hotMemberCount: 4 });
-    recordSharedGatewayMaxCapacity({ assignmentCount: 16.8, hotMemberCount: 4.9 });
-
-    const out = renderMetrics();
-
-    expect(out).toContain("glm_shared_gateway_max_capacity_total 2");
-    expect(out).toContain("glm_shared_gateway_assignment_count 16");
-    expect(out).toContain("glm_shared_gateway_hot_members 4");
   });
 });

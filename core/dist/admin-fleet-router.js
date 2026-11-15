@@ -20,6 +20,7 @@ import { withActorEmails } from "./admin-journal-actor.js";
 import { AdminDryRunPlanned, admitAdminDryRunMarker, isAdminDryRun, refuseUnansweredAdminDryRun, respondToAdminDryRun, } from "./admin-dry-run.js";
 import { addAdminComputerRoutes } from "./admin-vm-router.js";
 import { addAdminUserRoutes } from "./admin-user-router.js";
+import { addAdminSharedPoolRoutes } from "./admin-shared-pool-router.js";
 import { GatewayRetirementConflictError, assertGatewayRuntimeMutationUnfencedInStore, isolatedRuntimeMutationFenced, claimGatewayRetirementInStore, } from "./gateway-retirement-claim.js";
 import { commitOperatorPlacement, planOperatorPlacement, SHARED_GATEWAY_MIRROR, } from "./operator-placement.js";
 import { appendGatewayRelease, asDurableGatewayRoot, InvalidGatewayRootError, StaleGatewayReleaseError, } from "./gateway-release-append.js";
@@ -3174,6 +3175,20 @@ function sendOperatorPlacementRefusal(res, refusal, uid, gatewayId) {
     }
     res.status(refusal.reason === "gateway-not-shared" ? 400 : 409).json({ error: refusal.message, reason: refusal.reason, uid, gatewayId });
 }
+async function servingSharedReleaseBlocker(transaction, input) {
+    if (input.gatewayId !== input.expectedGatewayId)
+        return `user is on ${input.gatewayId ?? "no gateway"}, not ${input.expectedGatewayId}`;
+    const [root, assignment] = await Promise.all([
+        transaction.gateways.roots.get(input.gatewayId),
+        transaction.gateways.assignments.get(input.gatewayId, input.uid),
+    ]);
+    if (root?.gatewayClass !== "shared")
+        return "not on a shared gateway";
+    if (assignment?.state !== "serving")
+        return `assignment is ${assignment?.state ?? "missing"}`;
+    const operation = input.operations[0];
+    return operation ? `operation ${operation.id} is ${operation.status}` : null;
+}
 function userMountOf(userRecord) {
     return { currentGatewayId: userRecord?.gateway?.gatewayId ?? null, builderSlug: userRecord?.slug ?? null };
 }
@@ -3258,6 +3273,12 @@ export function addAdminFleetRoutes(router, deps) {
     router.use(admitAdminDryRunMarker);
     addAdminComputerRoutes(router, { store, replacementEnabled: deps.computerReplacementEnabled, journal: runAdminFleetMutation });
     addAdminUserRoutes(router, { store, accounts: deps.userAccounts, signIn: deps.userSignIn, journal: runAdminFleetMutation });
+    addAdminSharedPoolRoutes(router, {
+        store,
+        platformArtifact: deps.platformArtifact,
+        controllerStartedAt: deps.controllerStartedAt,
+        journal: runAdminFleetMutation,
+    });
     async function handleActiveUserDeletion(input) {
         const lifecycle = input.lifecycle;
         if (!userDeletionIsActive(lifecycle))
@@ -4179,19 +4200,32 @@ export function addAdminFleetRoutes(router, deps) {
             next(e);
         }
     });
+    function parsePlacementCommand(body) {
+        const command = (body ?? {});
+        const park = command.managedBy === "operator" && command.gatewayId === null;
+        const release = command.managedBy === "cowboy" && command.gatewayId === undefined;
+        if (!park && !release)
+            return { error: "choose operator with gatewayId=null to park, or cowboy to release" };
+        const expectedGatewayId = command.expectedGatewayId;
+        if (expectedGatewayId === undefined)
+            return { park, release, expectedGatewayId };
+        if (!release || typeof expectedGatewayId !== "string" || expectedGatewayId === "") {
+            return { error: "expectedGatewayId names the shared gateway a user is released on, and only with cowboy" };
+        }
+        return { park, release, expectedGatewayId };
+    }
     async function findInFlightMigrateOp(uid) {
         const operation = (await inFlightOperationsForUid(store, uid)).find(isInFlightUserMigration);
         return operation ? { id: operation.id } : null;
     }
     router.patch("/users/:uid/placement", async (req, res, next) => {
         try {
-            const command = (req.body ?? {});
-            const park = command.managedBy === "operator" && command.gatewayId === null;
-            const release = command.managedBy === "cowboy" && command.gatewayId === undefined;
-            if (!park && !release) {
-                res.status(400).json({ error: "choose operator with gatewayId=null to park, or cowboy to release" });
+            const command = parsePlacementCommand(req.body);
+            if ("error" in command) {
+                res.status(400).json({ error: command.error });
                 return;
             }
+            const { park, release, expectedGatewayId } = command;
             const uid = req.params.uid;
             const before = await store.users.records.get(uid);
             const outcome = await runAdminFleetMutation({
@@ -4217,6 +4251,11 @@ export function addAdminFleetRoutes(router, deps) {
                     if (inFlight)
                         return { status: 409, body: { error: "user migration is pending or running — cannot change placement", operationId: inFlight.id, uid } };
                     const gatewayId = userRecord.gateway?.gatewayId ?? null;
+                    if (typeof expectedGatewayId === "string") {
+                        const blocker = await servingSharedReleaseBlocker(transaction, { uid, gatewayId, expectedGatewayId, operations });
+                        if (blocker !== null)
+                            return { status: 409, body: { code: "precondition-failed", error: blocker, uid } };
+                    }
                     const gateway = await updateOperatorParkingGateway(transaction, { gatewayId, uid, actor: req.uid, park });
                     if (gateway.error)
                         return { status: 409, body: { error: gateway.error, uid } };

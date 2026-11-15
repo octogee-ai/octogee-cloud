@@ -1,5 +1,3 @@
-import { GATEWAY_CONFIG_SCHEMA_VERSION } from "@octogee/shared/types/gateway-mutable-config";
-import type { GatewayMutableConfig } from "@octogee/shared/types/gateway-mutable-config";
 import type { PlatformStateRepositories } from "@octogee/core/platform-state";
 import {
   isGatewayEdgeImage,
@@ -8,10 +6,6 @@ import {
   platformReleaseRecord,
 } from "@octogee/shared/types/gateway-releases";
 import { isGatewayImageTag } from "@octogee/shared/types/image-tag";
-import {
-  parseSharedPoolReplicaBounds,
-  type SharedPoolReplicaBounds,
-} from "@octogee/shared/types/shared-gateway-pool";
 import type { GatewayArtifact } from "@octogee/core/gateway-live-release";
 
 export type PlatformReleaseEnvironment = Record<string, string | undefined>;
@@ -77,37 +71,4 @@ export async function writePlatformReleaseRecord(input: {
     );
     throw error;
   }
-}
-
-export function sharedPoolReplicaBoundsFromEnvironment(
-  env: PlatformReleaseEnvironment = process.env,
-): SharedPoolReplicaBounds {
-  const bounds = parseSharedPoolReplicaBounds({
-    minReplicas: env.SHARED_POOL_MIN_REPLICAS,
-    maxReplicas: env.SHARED_POOL_MAX_REPLICAS,
-  });
-  if (bounds === null) {
-    throw new Error(
-      "SHARED_POOL_MIN_REPLICAS and SHARED_POOL_MAX_REPLICAS must be integers with 0 <= min <= max and max >= 1",
-    );
-  }
-  return bounds;
-}
-
-export function sharedSlotMutableConfig(): GatewayMutableConfig {
-  return {
-    configSchemaVersion: GATEWAY_CONFIG_SCHEMA_VERSION,
-    profile: null,
-    gatewayClass: "shared",
-    imageProfile: "standard",
-    sizingTier: null,
-    gcpProject: null,
-    gatewayContainerSecurityContext: null,
-    serviceAccountName: null,
-    serviceAccount: null,
-    builderAccess: null,
-    ownerUid: null,
-    builderSlug: null,
-    modelBrokerLimits: null,
-  };
 }

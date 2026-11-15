@@ -7,7 +7,6 @@ import {
 } from "@octogee/shared/types/gateway-releases";
 import {
   platformGatewayArtifactFromEnvironment,
-  sharedPoolReplicaBoundsFromEnvironment,
   writePlatformReleaseRecord,
 } from "../platform-release.js";
 
@@ -55,19 +54,6 @@ describe("platformGatewayArtifactFromEnvironment", () => {
     ["PLATFORM_GATEWAY_EDGE_IMAGE_REPOSITORY", `${REPOSITORY}/octogee-api`],
   ])("fails closed when %s is %j", (name, value) => {
     expect(() => platformGatewayArtifactFromEnvironment({ ...env, [name]: value })).toThrow();
-  });
-});
-
-describe("sharedPoolReplicaBoundsFromEnvironment", () => {
-  it("parses the environment floor and ceiling and rejects an inverted pair", () => {
-    expect(sharedPoolReplicaBoundsFromEnvironment({
-      SHARED_POOL_MIN_REPLICAS: "0",
-      SHARED_POOL_MAX_REPLICAS: "8",
-    })).toEqual({ minReplicas: 0, maxReplicas: 8 });
-    expect(() => sharedPoolReplicaBoundsFromEnvironment({
-      SHARED_POOL_MIN_REPLICAS: "3",
-      SHARED_POOL_MAX_REPLICAS: "2",
-    })).toThrow("SHARED_POOL_MIN_REPLICAS");
   });
 });
 

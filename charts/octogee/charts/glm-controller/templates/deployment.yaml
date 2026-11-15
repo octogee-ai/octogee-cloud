@@ -257,10 +257,6 @@ spec:
                   name: {{ (.Values.modelKeyIssuer).bearerSecretName | default "gateway-model-key-issuer" }}
                   key: {{ (.Values.modelKeyIssuer).bearerSecretKey | default "bearer_token" }}
             {{- end }}
-            - name: SHARED_POOL_MIN_REPLICAS
-              value: {{ required "glm-controller.sharedPool.minReplicas is required" (.Values.sharedPool).minReplicas | quote }}
-            - name: SHARED_POOL_MAX_REPLICAS
-              value: {{ required "glm-controller.sharedPool.maxReplicas is required" (.Values.sharedPool).maxReplicas | quote }}
             - name: PLATFORM_GATEWAY_IMAGE_REPOSITORY
               value: {{ required "glm-controller.platformRelease.gatewayImageRepository is required" (.Values.platformRelease).gatewayImageRepository | quote }}
             - name: BUILD_SHA

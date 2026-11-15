@@ -23,7 +23,9 @@ export async function renderReleaseHelmValues(sourceSha: string, authority?: Pic
     return { repository: `${manifest.repository}/${name}`, tag, digest };
   };
   const edge = image("gateway", "gateway-edge");
+  const platformImages = Object.fromEntries(Object.keys(manifest.surfaces.platform).sort().map((name) => [name, image("platform", name)]));
   return JSON.stringify({
+    releaseImages: platformImages,
     global: { projectRunnerImage: image("platform", "octogee-project-runner") },
     "octogee-api": { image: image("platform", "octogee-api") },
     llmBroker: { image: image("platform", "octogee-api") },
