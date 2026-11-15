@@ -11,7 +11,7 @@ USER root
 COPY --chown=node:node core/package.json /octogee/core/package.json
 COPY --chown=node:node core-testing/package.json /octogee/core-testing/package.json
 COPY --chown=node:node shared/package.json shared/package-lock.json /octogee/shared/
-COPY --chown=node:node scripts/.npmrc scripts/package.json scripts/package-lock.json /octogee/scripts/
+COPY --chown=node:node gateway-supervisor/.npmrc gateway-supervisor/package.json gateway-supervisor/package-lock.json /octogee/scripts/
 
 WORKDIR /octogee/scripts
 RUN npm install --no-audit --no-fund \
@@ -35,13 +35,13 @@ RUN bash /tmp/pack-local-deps.sh /octogee/core /packages/@octogee/core \
     && bash /tmp/pack-local-deps.sh /octogee/shared /packages/@octogee/shared
 
 # A product build replaces this stage with `--build-context product=<product dir>`: its
-# extensions and tier templates add to the platform's, its scripts/src/main.ts replaces the
+# extensions and tier templates add to the platform's, its gateway-supervisor/src/main.ts replaces the
 # platform composition root, and the libraries its overlay dependencies stage under
-# scripts/node_modules join the platform's. Without one, the platform stands in as its own product.
+# gateway-supervisor/node_modules join the platform's. Without one, the platform stands in as its own product.
 FROM scratch AS product
 COPY gateway/extensions/platform/ /gateway/extensions/
-COPY scripts/src/ /scripts/src/
-COPY --from=gateway-local-packages /packages/ /scripts/node_modules/
+COPY gateway-supervisor/src/ /gateway-supervisor/src/
+COPY --from=gateway-local-packages /packages/ /gateway-supervisor/node_modules/
 COPY templates/tiers/ /templates/tiers/
 
 FROM ${OPENCLAW_BASE_IMAGE} AS gateway-build
@@ -56,20 +56,20 @@ WORKDIR /octogee/scripts
 
 COPY --from=gateway-dependencies /octogee /octogee
 COPY --from=gateway-local-packages --chown=node:node /packages /octogee/scripts/node_modules
-COPY --chown=node:node --from=product scripts/node_modules/ /octogee/scripts/node_modules/
+COPY --chown=node:node --from=product gateway-supervisor/node_modules/ /octogee/scripts/node_modules/
 COPY --from=gateway-local-packages --chown=node:node /octogee/core/dist /octogee/core/dist
 COPY --chown=node:node shared/ /octogee/shared/
 
-COPY --chown=node:node scripts/entrypoints/ /octogee/scripts/entrypoints/
-COPY --chown=node:node scripts/libexec/ /octogee/scripts/libexec/
-COPY --chown=node:node scripts/secret-resolver.mjs /octogee/scripts/
-COPY --chown=node:node scripts/publish-gateway-token.mjs /octogee/scripts/
-COPY --chown=node:node scripts/tsconfig.json /octogee/scripts/
-COPY --chown=node:node scripts/lib/ /octogee/scripts/lib/
-COPY --chown=node:node scripts/src/ /octogee/scripts/src/
-COPY --chown=node:node --from=product scripts/src/ /octogee/scripts/src/
-COPY --chown=node:node scripts/ops/verify-native-modules.mjs /octogee/scripts/ops/
-COPY --chown=node:node scripts/ops/migrate-user-stores.ts /octogee/scripts/ops/
+COPY --chown=node:node gateway-supervisor/entrypoints/ /octogee/scripts/entrypoints/
+COPY --chown=node:node gateway-supervisor/libexec/ /octogee/scripts/libexec/
+COPY --chown=node:node gateway-supervisor/secret-resolver.mjs /octogee/scripts/
+COPY --chown=node:node gateway-supervisor/publish-gateway-token.mjs /octogee/scripts/
+COPY --chown=node:node gateway-supervisor/tsconfig.json /octogee/scripts/
+COPY --chown=node:node gateway-supervisor/lib/ /octogee/scripts/lib/
+COPY --chown=node:node gateway-supervisor/src/ /octogee/scripts/src/
+COPY --chown=node:node --from=product gateway-supervisor/src/ /octogee/scripts/src/
+COPY --chown=node:node gateway-supervisor/ops/verify-native-modules.mjs /octogee/scripts/ops/
+COPY --chown=node:node gateway-supervisor/ops/migrate-user-stores.ts /octogee/scripts/ops/
 RUN /octogee/scripts/node_modules/.bin/esbuild /octogee/scripts/secret-resolver.mjs \
       --bundle --platform=node --format=esm \
       --outfile=/tmp/octogee-secret-resolver.mjs \
@@ -133,7 +133,7 @@ USER root
 COPY --link --from=gateway-production-dependencies --chown=1000:1000 /octogee/scripts/node_modules /octogee/scripts/node_modules
 COPY --link --from=gateway-production-dependencies --chown=1000:1000 /octogee/shared/node_modules /octogee/shared/node_modules
 COPY --from=gateway-local-packages --chown=node:node /packages /octogee/scripts/node_modules
-COPY --chown=node:node --from=product scripts/node_modules/ /octogee/scripts/node_modules/
+COPY --chown=node:node --from=product gateway-supervisor/node_modules/ /octogee/scripts/node_modules/
 COPY --from=gateway-payload --chown=node:node /octogee/core /octogee/core
 COPY --from=gateway-payload --chown=node:node /octogee/scripts /octogee/scripts
 COPY --from=gateway-payload --chown=node:node /octogee/shared /octogee/shared

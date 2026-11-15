@@ -109,7 +109,8 @@ and redacted error when asking for help.
 | `gateway-edge/` | Express routes, middleware, chat and git integration | `gateway-edge/src/__tests__/*.spec.ts` (Vitest + supertest) |
 | `platform-api/` | platform API, npm cache proxy | `platform-api/src/__tests__/*.spec.ts` |
 | `llm-broker/` | LLM broker | `llm-broker/src/__tests__/*.spec.ts` |
-| `scripts/` | gateway pod boot steps, provisioner, operator tools | `scripts/__tests__/*.spec.ts` |
+| `gateway-supervisor/` | gateway pod boot steps, provisioner, VM agent | `gateway-supervisor/__tests__/*.spec.ts` |
+| `scripts/` | operator tools, CI | `scripts/__tests__/*.spec.ts` |
 | `tests/` | cross-package specs, such as the Helm chart specs | `tests/specs/**/*.spec.ts` |
 | plugins | each plugin's tools | `gateway/extensions/platform/<plugin>/` |
 

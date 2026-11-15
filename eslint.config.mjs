@@ -198,7 +198,7 @@ export default [
     files: ["desktop/rootfs/usr/share/omarchy/octo-desktop/desk/**/*.js"],
     languageOptions: { sourceType: "script", globals: { ...globals.browser } }
   },
-  { files: ["scripts/ops/**/*.{ts,mjs,js}"], ...operatorTooling },
+  { files: ["scripts/ops/**/*.{ts,mjs,js}", "gateway-supervisor/ops/**/*.{ts,mjs,js}"], ...operatorTooling },
   { files: [...testFilePatterns, "tests/**/*.ts"], ...testFiles },
   configFiles
 ];

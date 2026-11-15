@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { parseIsolatedToolGroups } from "../../scripts/lib/isolated-tool-groups";
+import { parseIsolatedToolGroups } from "../../gateway-supervisor/lib/isolated-tool-groups";
 
 const repoRoot = path.resolve(import.meta.dirname, "../..");
 const manifestPath = path.join(repoRoot, "gateway/isolated-toolchain/groups.json");

@@ -21,8 +21,10 @@ reference behind them.
 | LLM broker | `llm-broker/` | Deployment `llm-broker`, from the `llm-broker` image | Holds the model provider keys and meters every call. An agent calls it with a credential the platform issued to that agent. |
 | npm cache proxy | `platform-api/` (`src/npm-cache-proxy.ts`) | Deployment `octogee-npm-cache-proxy` | An npm registry proxy with a cache. |
 | Edge | `gateway-edge/` | Container `gateway-edge` in each gateway pod; Deployments `gateway-router` and `mattermost-callback-router` | One codebase, three roles. As a sidecar in each gateway pod it serves the user's workspace files and proxies the Mattermost WebSocket. As the gateway router it sends `/g/<gatewayId>/*` to that gateway's sidecar. As the Mattermost callback router it receives Mattermost's callbacks. |
-| Gateway image | [`gateway/`](../gateway/README.md) | Container `gateway` in each gateway pod, one Helm release of `charts/octogee-gateway` per gateway | OpenClaw, the provisioner, and the platform's OpenClaw extensions under `gateway/extensions/platform/`. [OpenClaw compatibility](openclaw-compatibility.md) lists the patches the OpenClaw build carries. |
-| Provisioner | [`scripts/entrypoints/provisioner.ts`](../scripts/README.md#the-provisioner) | A process in the `gateway` container | When a user is assigned to the gateway it creates their Mattermost account, team, channels and agent bot, and their Gitea organization and `workspace` repository, all through the platform API's fleet broker. |
+| Gateway image | [`gateway/`](../gateway/README.md) | Container `gateway` in each gateway pod, one Helm release of `charts/octogee-gateway` per gateway | OpenClaw, the gateway supervisor, and the platform's OpenClaw extensions under `gateway/extensions/platform/`. [OpenClaw compatibility](openclaw-compatibility.md) lists the patches the OpenClaw build carries. |
+| Gateway supervisor | [`gateway-supervisor/`](../gateway-supervisor/README.md) | Boot steps and runners in the `gateway` container, installed at `/octogee/scripts` | The pod's boot steps, the runners that supervise OpenClaw and set up each user, and the VM agent. Its README lists each entrypoint and what starts it. |
+| Provisioner | [`gateway-supervisor/entrypoints/provisioner.ts`](../gateway-supervisor/README.md#the-provisioner) | A process in the `gateway` container | When a user is assigned to the gateway it creates their Mattermost account, team, channels and agent bot, and their Gitea organization and `workspace` repository, all through the platform API's fleet broker. |
+| VM agent | [`gateway-supervisor/entrypoints/vm-gateway-agent.ts`](../gateway-supervisor/entrypoints/vm-gateway-agent.ts) | A container on an isolated gateway's virtual machine, run from the gateway image | Mounts the VM's home disk, starts the gateway container and reports to the platform API. |
 | Isolated gateway VM image | [`desktop/`](../desktop/README.md) | A Google Cloud virtual machine | The virtual machine image for an isolated gateway that runs on a VM, which adds a desktop. Google Cloud only today. |
 | VM bridge | [`vm-bridge/`](../vm-bridge/README.md) | Deployment `octogee-vm-bridge` | A TCP proxy through which a gateway on a virtual machine reaches the platform API, the LLM broker, the npm cache proxy, Mattermost and Gitea. Installed only when `global.computer.enabled` is set. |
 
@@ -40,7 +42,7 @@ to build and test it on its own.
 libraries the services share: platform state, the secret store, chat and git
 host adapters, and types. [`core-testing/`](../core-testing/README.md) holds
 the test helpers for code built on core. [`scripts/`](../scripts/README.md)
-holds the gateway's boot steps and the provisioner, operator tools and CI.
+holds operator tools and CI.
 `charts/` holds the Helm charts: `octogee` for the platform,
 `octogee-gateway` for one gateway, and `monitoring`. `terraform/` holds the
 Google Cloud modules, and `install.sh` with `deploy/` is the foundation

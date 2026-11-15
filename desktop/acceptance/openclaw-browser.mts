@@ -23,7 +23,7 @@ registerHooks({ resolve(specifier, context, nextResolve) {
   return nextResolve(specifier, specifier.startsWith("openclaw/") ? { ...context, parentURL: pathToFileURL(`${source}/package.json`).href } : context);
 } });
 const { setRuntimeConfigSnapshot } = await import(pathToFileURL(require.resolve("openclaw/plugin-sdk/runtime-config-snapshot")).href);
-const { applyOpenClawComputerBrowserConfig } = await import("../../scripts/lib/openclaw-computer-browser.ts");
+const { applyOpenClawComputerBrowserConfig } = await import("../../gateway-supervisor/lib/openclaw-computer-browser.ts");
 const config = {
   browser: { evaluateEnabled: true, ssrfPolicy: { dangerouslyAllowPrivateNetwork: true } },
   gateway: { mode: "local", port: 19989, nodes: { browser: { mode: "off" } } },

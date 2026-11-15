@@ -16,8 +16,8 @@ function entrypointScripts(): string[] {
   const re = /\/octogee\/scripts\/([A-Za-z0-9_.\-/]+\.(?:ts|mjs|js))\b/g;
   const out = new Set<string>();
   for (const m of entrypoint.matchAll(re)) {
-    const rel = `scripts/${m[1]}`;
-    if (!rel.startsWith("scripts/node_modules/")) out.add(rel);
+    const rel = `gateway-supervisor/${m[1]}`;
+    if (!rel.startsWith("gateway-supervisor/node_modules/")) out.add(rel);
   }
   return [...out].sort();
 }
@@ -37,7 +37,7 @@ function dockerCoverage(): { files: Set<string>; dirs: string[] } {
   for (const line of dockerfile.split("\n")) {
     if (!/^\s*COPY\b/.test(line) || !line.includes("/octogee/scripts")) continue;
     const before = line.slice(0, line.indexOf("/octogee/scripts"));
-    for (const tok of before.match(/\bscripts\/[A-Za-z0-9_.\-/]+/g) ?? []) {
+    for (const tok of before.match(/\bgateway-supervisor\/[A-Za-z0-9_.\-/]+/g) ?? []) {
       if (tok.endsWith("/")) dirs.push(tok);
       else files.add(tok.replace(/\*$/, ""));
     }
@@ -60,7 +60,7 @@ const { files, dirs } = dockerCoverage();
 const covered = (p: string) =>
   files.has(p) ||
   dirs.some((d) => p.startsWith(d)) ||
-  p.startsWith("scripts/node_modules/");
+  p.startsWith("gateway-supervisor/node_modules/");
 
 describe("gateway entrypoint ↔ Dockerfile coverage", () => {
   it("finds the entry scripts (sanity — regex still matches)", () => {

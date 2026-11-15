@@ -10,8 +10,7 @@ export type ProjectType =
   | 'event'
   | 'other';
 
-// How Preview and Publish run the project. The vocabulary is shared with
-// scripts/lib/project-recipes.ts, which owns each recipe's build contract.
+// How Preview and Publish run the project.
 export type ProjectRecipeId = 'static-site' | 'vite-static' | 'astro-static';
 export const PROJECT_RECIPE_IDS: readonly ProjectRecipeId[] = [
   'static-site',
