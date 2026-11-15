@@ -135,7 +135,7 @@ jobs:
             echo "::notice::No NPM_TOKEN secret is set; publishing through npm trusted publishing"
           fi
           node scripts/ci/release-packages.mjs publish --out="$RUNNER_TEMP/packages" \
-            || { echo "::error::npm refused the publish; docs/releasing.md says how to set up the NPM_TOKEN secret or trusted publishing, then rerun this job"; exit 1; }
+            || { echo "::error::npm publish failed; if the output above shows an authentication error, docs/releasing.md says how to set up the NPM_TOKEN secret or trusted publishing. Rerun this job once fixed"; exit 1; }
 
   charts:
     name: Helm charts
