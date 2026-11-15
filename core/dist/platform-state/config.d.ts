@@ -33,6 +33,10 @@ export declare function isGatewayPodProfile(value: unknown): value is GatewayPod
 export declare function isGatewaySizingProfile(value: unknown): value is GatewaySizingProfile;
 export declare function isolatedSizingTier(profile: GatewaySizingProfile | null): SizingTier | null;
 export declare function requireSizingProfile(profiles: Readonly<Record<string, GatewaySizingProfile>>, sizingKey: string): GatewaySizingProfile;
+export declare const PLACEMENT_AUTOMATION_OWNERS: readonly ["fleet-controller", "client"];
+export type PlacementAutomationOwner = (typeof PLACEMENT_AUTOMATION_OWNERS)[number];
+export declare const DEFAULT_PLACEMENT_AUTOMATION_OWNER: PlacementAutomationOwner;
+export declare function isPlacementAutomationOwner(value: unknown): value is PlacementAutomationOwner;
 export interface OrchestratorConfig {
     readonly sharedGatewayAutoscaling: SharedGatewayAutoscalingConfig | null;
     readonly sizingProfiles: Readonly<Record<string, GatewaySizingProfile>>;
@@ -40,6 +44,8 @@ export interface OrchestratorConfig {
     readonly disposableGatewayIdleMs: number | null;
     readonly placementUpdatedAt: number | null;
     readonly placementUpdatedBy: string | null;
+    readonly placementAutomationOwner: PlacementAutomationOwner;
+    readonly placementAutomationYieldedAt: number | null;
 }
 export type OrchestratorConfigPatch = RecordPatch<Omit<OrchestratorConfig, "sharedGatewayAutoscaling">> & {
     readonly sharedGatewayAutoscaling?: SharedGatewayAutoscalingConfig;

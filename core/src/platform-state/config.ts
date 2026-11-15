@@ -89,6 +89,14 @@ export function requireSizingProfile(
   return profile;
 }
 
+export const PLACEMENT_AUTOMATION_OWNERS = ["fleet-controller", "client"] as const;
+export type PlacementAutomationOwner = (typeof PLACEMENT_AUTOMATION_OWNERS)[number];
+export const DEFAULT_PLACEMENT_AUTOMATION_OWNER: PlacementAutomationOwner = "fleet-controller";
+
+export function isPlacementAutomationOwner(value: unknown): value is PlacementAutomationOwner {
+  return (PLACEMENT_AUTOMATION_OWNERS as readonly unknown[]).includes(value);
+}
+
 export interface OrchestratorConfig {
   readonly sharedGatewayAutoscaling: SharedGatewayAutoscalingConfig | null;
   readonly sizingProfiles: Readonly<Record<string, GatewaySizingProfile>>;
@@ -96,6 +104,8 @@ export interface OrchestratorConfig {
   readonly disposableGatewayIdleMs: number | null;
   readonly placementUpdatedAt: number | null;
   readonly placementUpdatedBy: string | null;
+  readonly placementAutomationOwner: PlacementAutomationOwner;
+  readonly placementAutomationYieldedAt: number | null;
 }
 
 export type OrchestratorConfigPatch = RecordPatch<Omit<OrchestratorConfig, "sharedGatewayAutoscaling">> & {

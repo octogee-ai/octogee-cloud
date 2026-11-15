@@ -1,0 +1,713 @@
+import { createHash } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
+import { agentIdBelongsToSlug } from "@octogee/shared/types/agent-models";
+import { GATEWAY_UNREACHABLE_AFTER_MS } from "@octogee/shared/types/fleet-controller";
+import { isReleasePayload, projectGatewayDesiredRootForGateway, releasePayloadHash, } from "@octogee/shared/types/gateway-releases";
+import { GatewayRetirementConflictError, isolatedRuntimeMutationFenced } from "./gateway-retirement-claim.js";
+import { isUserReturnOperationIdFor } from "./isolated-operation-ids.js";
+import { readSharedGatewayPoolConfigInStore } from "./shared-gateway-pool-read.js";
+export const PLACEMENT_MIGRATION_KIND = "migrate-user";
+export const PLACEMENT_MIGRATION_ACTOR = "glm-controller-placement-policy";
+export const CONTINUOUS_PLACEMENT_SOURCE = "continuous-placement-policy";
+export const ACTIVATION_LEASE_SOURCE = "builder-activation-lease";
+export const PLACEMENT_MIGRATION_SOURCES = [CONTINUOUS_PLACEMENT_SOURCE, ACTIVATION_LEASE_SOURCE];
+const ISOLATED_ALLOCATION_KIND = "disposable-builder";
+const ROLLED_BACK_STATUS = "rolled-back";
+const CLEAR = { clear: true };
+export class PlacementMigrationAuthorityError extends Error {
+    constructor(message) {
+        super(message);
+        this.name = "PlacementMigrationAuthorityError";
+    }
+}
+export class TerminalPlacementMigrationConflictError extends Error {
+    operationId;
+    status;
+    constructor(operationId, status) {
+        super(`migration operation ${operationId} ended with status ${status}`);
+        this.operationId = operationId;
+        this.status = status;
+        this.name = "TerminalPlacementMigrationConflictError";
+    }
+}
+export class HeldUserPlacementError extends GatewayRetirementConflictError {
+    uid;
+    constructor(uid) {
+        super(`user ${uid} is operator-managed`);
+        this.uid = uid;
+        this.name = "HeldUserPlacementError";
+    }
+}
+export class SharedDrainSupersededError extends Error {
+    fromGatewayId;
+    constructor(fromGatewayId, reason) {
+        super(`shared drain of ${fromGatewayId} no longer authorizes this migration: ${reason}`);
+        this.fromGatewayId = fromGatewayId;
+        this.name = "SharedDrainSupersededError";
+    }
+}
+export function isPlacementMigrationRefusal(error) {
+    return error instanceof PlacementMigrationAuthorityError ||
+        error instanceof TerminalPlacementMigrationConflictError ||
+        error instanceof HeldUserPlacementError ||
+        error instanceof SharedDrainSupersededError;
+}
+function record(value) {
+    return value !== null && typeof value === "object" && !Array.isArray(value) ? value : null;
+}
+function nonEmptyString(value) {
+    return typeof value === "string" && value.length > 0 ? value : null;
+}
+function positiveInteger(value) {
+    return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : null;
+}
+function millis(value) {
+    return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+export function continuousPlacementMigrationOperationId(input) {
+    if (!Number.isSafeInteger(input.sourceAssignmentEpoch) || input.sourceAssignmentEpoch < 0) {
+        throw new Error("continuous placement requires a non-negative source assignment epoch");
+    }
+    const digest = createHash("sha256")
+        .update(JSON.stringify([input.uid, input.builderSlug, input.fromGatewayId, input.toGatewayId, input.sourceAssignmentEpoch]))
+        .digest("hex")
+        .slice(0, 32);
+    return `placement-${digest}`;
+}
+function activationLeaseOf(value) {
+    const raw = record(value);
+    const leaseId = nonEmptyString(raw?.leaseId);
+    const generation = positiveInteger(raw?.generation);
+    const status = nonEmptyString(raw?.status);
+    if (!raw || !leaseId || !generation || !status)
+        return null;
+    return { raw, leaseId, generation, status, targetGatewayId: nonEmptyString(raw.targetGatewayId) };
+}
+function userGatewayId(userRecord) {
+    return nonEmptyString(userRecord?.gateway?.gatewayId);
+}
+function userMutationFenced(userRecord) {
+    return userRecord !== null && isolatedRuntimeMutationFenced(userRecord);
+}
+function isAutomaticRolledBackPlacement(data, request) {
+    return request.source === CONTINUOUS_PLACEMENT_SOURCE &&
+        data.status === "failed" &&
+        data.origin === "automatic" &&
+        data.createdBy === PLACEMENT_MIGRATION_ACTOR &&
+        data.rolledBack === true &&
+        data.userMigrationV2 === undefined &&
+        millis(data.completedAt) !== null;
+}
+function rolledBackTransientPlacementCanRearm(classifier, data, request) {
+    if (!isAutomaticRolledBackPlacement(data, request))
+        return false;
+    const error = typeof data.error === "string" ? data.error : null;
+    const attempts = positiveInteger(data.attempts);
+    const history = Array.isArray(data.attemptHistory) ? data.attemptHistory : null;
+    const lastAttempt = record(history?.at(-1));
+    return error !== null &&
+        classifier.operationFailureIsTransient(error) &&
+        attempts !== null &&
+        positiveInteger(lastAttempt?.attempt) === attempts &&
+        lastAttempt?.error === error;
+}
+function existingPlacementMigrationMatchesDemand(data, request) {
+    const operationInput = record(data.input);
+    return [
+        data.kind === PLACEMENT_MIGRATION_KIND,
+        operationInput?.uid === request.uid,
+        operationInput?.userSlug === request.builderSlug,
+        operationInput?.fromGatewayId === request.fromGatewayId,
+        operationInput?.toGatewayId === request.toGatewayId,
+        operationInput?.source === request.source,
+    ].every(Boolean);
+}
+function operatorRetriedUserReturnMatchesDemand(data, request) {
+    const operationInput = record(data.input);
+    return [
+        request.source === ACTIVATION_LEASE_SOURCE,
+        data.kind === PLACEMENT_MIGRATION_KIND,
+        data.status === "failed" || data.status === ROLLED_BACK_STATUS,
+        millis(data.retryRequestedAt) !== null,
+        operationInput?.uid === request.uid,
+        operationInput?.userSlug === request.builderSlug,
+        operationInput?.fromGatewayId === request.fromGatewayId,
+        operationInput?.source === request.source,
+    ].every(Boolean);
+}
+function placementMigrationIsNonTerminal(data) {
+    return ["pending", "running", "succeeded"].includes(data.status);
+}
+function startupFailedReturnMatchesDemand(classifier, data, request) {
+    const original = record(data.input);
+    return request.source === ACTIVATION_LEASE_SOURCE && data.kind === PLACEMENT_MIGRATION_KIND &&
+        data.status === "failed" && data.origin === "automatic" && data.createdBy === PLACEMENT_MIGRATION_ACTOR &&
+        data.userMigrationV2 === undefined && data.cutoverCommittedAt === undefined && data.cancellationRequestedAt === undefined &&
+        original?.uid === request.uid && original.userSlug === request.builderSlug &&
+        original.fromGatewayId === request.fromGatewayId && original.source === request.source &&
+        classifier.gatewayStartupUnavailable(typeof data.error === "string" ? data.error : undefined);
+}
+function sharedRevisionPreflightReturnRetryable(data, operationId) {
+    const original = record(data.input);
+    return [
+        data.kind === PLACEMENT_MIGRATION_KIND,
+        data.status === "failed",
+        data.origin === "automatic",
+        data.createdBy === PLACEMENT_MIGRATION_ACTOR,
+        original?.source === ACTIVATION_LEASE_SOURCE,
+        isUserReturnOperationIdFor(operationId, original?.fromGatewayId),
+        nonEmptyString(original?.toGatewayId) !== null,
+        data.gatewayId === original?.toGatewayId,
+        data.inputUid === original?.uid,
+        data.error === `placement rejected for ${original?.toGatewayId}: revision-not-ready`,
+        Array.isArray(data.steps) && data.steps.length === 0,
+        data.rolledBack === false,
+        data.userMigrationV2 === undefined,
+        data.cutoverCommittedAt === undefined,
+        data.cancellationRequestedAt === undefined,
+        data.sourceTransferExecution === undefined,
+        data.schedulerHandoffLost === undefined,
+        data.schedulerHandoffReleased !== false,
+        data.schedulerHandoff === undefined || data.schedulerHandoffReleased === true,
+        original?.recoverSourceOnly === undefined,
+    ].every(Boolean);
+}
+function sharedRevisionReturnMatchesDemand(data, request) {
+    const original = record(data.input);
+    return sharedRevisionPreflightReturnRetryable(data, request.operationId) &&
+        request.source === ACTIVATION_LEASE_SOURCE && original?.uid === request.uid &&
+        original.userSlug === request.builderSlug && original.fromGatewayId === request.fromGatewayId;
+}
+function preRpcAuthorityFailure(data, request) {
+    const steps = Array.isArray(data.steps) ? data.steps : [];
+    const step = record(steps[0]);
+    return request.source === CONTINUOUS_PLACEMENT_SOURCE && data.status === "failed" &&
+        data.origin === "automatic" && data.createdBy === PLACEMENT_MIGRATION_ACTOR &&
+        data.userMigrationV2 === undefined && data.cutoverCommittedAt === undefined && data.cancellationRequestedAt === undefined &&
+        data.error === "workspace migration phase authority changed" && steps.length === 1 &&
+        step?.name === "keys-sync-state" && step.status === "failed" && step.error === data.error;
+}
+function sourceOnlyRollbackCompleted(classifier, existing, request) {
+    const data = existing;
+    const steps = Array.isArray(data.steps) ? data.steps : [];
+    const step = record(steps[0]);
+    return isAutomaticRolledBackPlacement(data, request) && record(data.input)?.recoverSourceOnly === true &&
+        classifier.sourceRecoveryForwardRetryable(existing) &&
+        data.cutoverCommittedAt === undefined && data.cancellationRequestedAt === undefined && steps.length === 1 &&
+        step?.name === "recover-source" && step.status === "done";
+}
+function retrySourceAssignmentMatches(assignment, request) {
+    return assignment?.uid === request.uid && assignment.gatewayId === request.fromGatewayId &&
+        assignment.state === "serving" && Number.isSafeInteger(assignment.epoch) && assignment.epoch >= 0;
+}
+async function assertPreRpcRetryAuthority(transaction, userRecord, request) {
+    const [source, target] = await Promise.all([
+        transaction.gateways.assignments.get(request.fromGatewayId, request.uid),
+        transaction.gateways.assignments.get(request.toGatewayId, request.uid),
+    ]);
+    const exact = !userMutationFenced(userRecord) &&
+        userGatewayId(userRecord) === request.fromGatewayId &&
+        userRecord?.fences.migration === undefined && target === null &&
+        retrySourceAssignmentMatches(source, request) &&
+        continuousPlacementMigrationOperationId({ ...request, sourceAssignmentEpoch: source.epoch }) === request.operationId;
+    if (!exact || source === null)
+        throw new PlacementMigrationAuthorityError("workspace migration retry authority remains blocked");
+    return source;
+}
+function startupReturnLeaseMatches(userRecord, lease, request) {
+    return !userMutationFenced(userRecord) && userGatewayId(userRecord) === request.fromGatewayId &&
+        lease?.status === "returning" && lease.targetGatewayId === request.fromGatewayId && lease.raw.returnOperationId === request.operationId;
+}
+function startupReturnSourceMatches(root, lease, request) {
+    const allocation = root?.allocation;
+    return root?.gatewayClass === "isolated" && root.ownerUid === request.uid && root.desiredStatus !== "retired" &&
+        allocation?.kind === ISOLATED_ALLOCATION_KIND && allocation.claimedByUid === request.uid &&
+        allocation.leaseId === lease.leaseId && allocation.generation === lease.generation;
+}
+function sharedReturnTargetReady(root, runtime, request, now) {
+    if (!root || runtime === null)
+        return false;
+    const heartbeatAt = millis(runtime.heartbeat.lastHeartbeatAt);
+    return root.gatewayClass === "shared" && root.desiredStatus === "running" && root.liveRelease !== null &&
+        root.liveRelease === root.desiredRelease && runtime.gatewayId === request.toGatewayId && runtime.release === root.liveRelease &&
+        runtime.lifecycle === "serving" && runtime.heartbeat.status === "ready" &&
+        heartbeatAt !== null && heartbeatAt <= now && now - heartbeatAt <= GATEWAY_UNREACHABLE_AFTER_MS;
+}
+async function assertStartupReturnAuthority(context, transaction, userRecord, request) {
+    const [assignment, roots, runtime, pool, targetAssignment] = await Promise.all([
+        transaction.gateways.assignments.get(request.fromGatewayId, request.uid),
+        transaction.gateways.roots.getMany([request.fromGatewayId, request.toGatewayId]),
+        transaction.fleetRegistry.get(request.toGatewayId),
+        readSharedGatewayPoolConfigInStore(transaction),
+        transaction.gateways.assignments.get(request.toGatewayId, request.uid),
+    ]);
+    const source = roots.get(request.fromGatewayId) ?? null;
+    const target = roots.get(request.toGatewayId) ?? null;
+    const lease = activationLeaseOf(userRecord?.activationLease);
+    const sourceRoot = projectGatewayDesiredRootForGateway(source, request.fromGatewayId);
+    const targetRoot = projectGatewayDesiredRootForGateway(target, request.toGatewayId);
+    const exact = targetAssignment === null && startupReturnLeaseMatches(userRecord, lease, request) &&
+        startupReturnSourceMatches(sourceRoot, lease, request) && retrySourceAssignmentMatches(assignment, request) &&
+        pool?.sharedGatewayIds.includes(request.toGatewayId) && sharedReturnTargetReady(targetRoot, runtime, request, context.now);
+    if (!exact)
+        throw new PlacementMigrationAuthorityError("User startup return retry authority changed");
+    return { assignment, source, target };
+}
+async function assertSharedRevisionReturnAuthority(context, transaction, userRecord, request) {
+    const authority = await assertStartupReturnAuthority(context, transaction, userRecord, request);
+    const previousTargetAssignment = await transaction.gateways.assignments.get(request.previousTargetGatewayId, request.uid);
+    const rootsUnfenced = [authority.source, authority.target].every((root) => root?.runtimeRestartFence === undefined && root?.retirementClaim === undefined);
+    const exact = rootsUnfenced && authority.source?.desiredStatus === "running" &&
+        authority.assignment?.slug === request.builderSlug && userRecord?.fences.migration === undefined &&
+        previousTargetAssignment === null;
+    if (!exact)
+        throw new PlacementMigrationAuthorityError("User revision return retry authority changed");
+}
+function proofRows(value) {
+    return Array.isArray(value) && value.every((row) => record(row) !== null) ? value : [];
+}
+function capturedPostgresRosterMatches(source) {
+    const assignments = proofRows(source.assignments);
+    const stores = proofRows(source.postgresAgentStores);
+    return [
+        stores.length > 0,
+        assignments.length > 0,
+        stores.every((store) => {
+            const owner = assignments.find((row) => row.uid === store.uid);
+            return owner && store.slug === owner.slug && store.assignmentEpoch === owner.assignmentEpoch &&
+                typeof store.agentId === "string" && typeof owner.slug === "string" && agentIdBelongsToSlug(store.agentId, owner.slug) &&
+                typeof store.storeId === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(store.storeId) &&
+                typeof store.schema === "string" && /^[a-z_][a-z0-9_]{0,62}$/.test(store.schema);
+        }),
+        assignments.every((owner) => stores.some((store) => store.uid === owner.uid && store.agentId === owner.agentId)),
+        new Set(stores.map((store) => store.agentId)).size === stores.length,
+        new Set(stores.map((store) => store.storeId)).size === stores.length,
+        new Set(stores.map((store) => store.schema)).size === stores.length,
+    ].every(Boolean);
+}
+function completedPostgresDoctorMatches(input) {
+    const { source, completed, repairId } = input;
+    const doctor = record(completed.doctor) ?? {};
+    const expectedIds = proofRows(source.postgresAgentStores).map((store) => store.agentId).sort();
+    return [
+        Array.isArray(doctor.verifiedAgentIds) && isDeepStrictEqual([...doctor.verifiedAgentIds].sort(), expectedIds),
+        doctor.requestId === repairId,
+        Number.isSafeInteger(doctor.startedAt) && Number(doctor.startedAt) > 0,
+        Number.isSafeInteger(doctor.completedAt) && Number(doctor.completedAt) >= Number(doctor.startedAt) &&
+            Number(doctor.completedAt) <= Number(completed.completedAt),
+        typeof doctor.releaseKey === "string" && doctor.releaseKey.length > 0,
+    ].every(Boolean);
+}
+function completedPostgresImageMatches(source, completed) {
+    const doctor = record(completed.doctor) ?? {};
+    const installed = record(completed.installedImage) ?? {};
+    const images = record(source.images) ?? {};
+    const digest = typeof images.gateway === "string" ? /@(sha256:[a-f0-9]{64})$/.exec(images.gateway)?.[1] : undefined;
+    const bootId = record(completed.managementHealth)?.bootId;
+    return [
+        typeof completed.podUid === "string" && completed.podUid.length > 0 && installed.podUid === completed.podUid,
+        digest !== undefined && typeof installed.gatewayImageId === "string" && installed.gatewayImageId.endsWith("@" + digest),
+        Number.isSafeInteger(installed.verifiedAt) && Number(installed.verifiedAt) > 0 && Number(installed.verifiedAt) <= Number(doctor.startedAt),
+        typeof bootId === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(bootId),
+    ].every(Boolean);
+}
+export function repairedPlacementProofMatches(data, repair, request) {
+    const source = record(record(repair.input)?.sourceRecovery) ?? {};
+    const completed = record(repair.sourceRuntimeRecovery) ?? {};
+    const assignment = proofRows(source.assignments).find((row) => row.uid === request.uid);
+    return [
+        isAutomaticRolledBackPlacement(data, request),
+        data.cutoverCommittedAt === undefined,
+        repair.kind === "restart-gateway",
+        ["running", "succeeded"].includes(String(repair.status)),
+        repair.cancellationRequestedAt === undefined,
+        record(repair.input)?.gatewayId === request.fromGatewayId,
+        completed.gatewayId === request.fromGatewayId,
+        Number.isSafeInteger(repair.startedAt) && Number(repair.startedAt) >= Number(data.completedAt),
+        Number.isSafeInteger(completed.completedAt) && Number(completed.completedAt) >= Number(repair.startedAt),
+        assignment?.slug === request.builderSlug,
+        capturedPostgresRosterMatches(source),
+        typeof source.sourceSha === "string" && /^[a-f0-9]{40}$/.test(source.sourceSha),
+        source.sourceSha === completed.sourceSha,
+        isDeepStrictEqual(source.images, completed.images),
+        completedPostgresDoctorMatches({ source, completed, repairId: repair.id }),
+        completedPostgresImageMatches(source, completed),
+        record(completed.managementHealth)?.attemptId === repair.id,
+        record(completed.managementHealth)?.health === true,
+    ].every(Boolean);
+}
+async function assertCurrentRepairTarget(context, transaction, userRecord, request, sourceImage) {
+    const [target, runtime, pool] = await Promise.all([
+        transaction.gateways.roots.get(request.toGatewayId),
+        transaction.fleetRegistry.get(request.toGatewayId),
+        readSharedGatewayPoolConfigInStore(transaction),
+    ]);
+    const root = projectGatewayDesiredRootForGateway(target, request.toGatewayId);
+    const release = root?.liveRelease != null
+        ? await transaction.gateways.releases.get(request.toGatewayId, root.liveRelease)
+        : null;
+    const payload = release?.payload;
+    const artifact = context.platformArtifact;
+    const exact = [
+        sharedReturnTargetReady(root, runtime, request, context.now),
+        pool?.sharedGatewayIds.includes(request.toGatewayId),
+        target?.runtimeRestartFence === undefined,
+        target?.retirementClaim == null,
+        artifact !== null && isReleasePayload(payload) && releasePayloadHash(payload) === releasePayloadHash(artifact) &&
+            sourceImage.startsWith(payload.imageRepository + ":") && sourceImage.endsWith("@" + payload.imageTag.split("@")[1]),
+        userRecord?.slug === request.builderSlug,
+        userRecord?.openclaw.status === "complete",
+    ].every(Boolean);
+    if (!exact)
+        throw new PlacementMigrationAuthorityError("repaired source placement current target authority changed");
+}
+function postgresRepairSourceRootMatches(source, adopted, request) {
+    return [
+        Number.isSafeInteger(adopted.release),
+        Number(adopted.release) > 0,
+        typeof adopted.operationId === "string" && adopted.operationId.length > 0 && !adopted.operationId.includes("/"),
+        source.gatewayId === request.fromGatewayId,
+        source.gatewayClass === "shared",
+        source.ownerUid === null,
+        source.builderSlug === null,
+        ["running", "draining"].includes(String(source.desiredStatus)),
+        source.runtimeRestartFence === undefined,
+        source.retirementClaim == null,
+        source.latestRelease === adopted.release,
+        source.desiredRelease === adopted.release,
+        source.liveRelease === adopted.release,
+    ].every(Boolean);
+}
+function postgresRepairSourceRuntimeMatches(input) {
+    const { runtime, adopted, request, now } = input;
+    const heartbeat = record(runtime.heartbeat) ?? {};
+    const heartbeatAt = millis(heartbeat.lastHeartbeatAt);
+    return [
+        runtime.gatewayId === request.fromGatewayId,
+        runtime.release === adopted.release,
+        runtime.lifecycle === "serving",
+        heartbeat.status === "ready",
+        heartbeatAt !== null && heartbeatAt <= now && now - heartbeatAt <= GATEWAY_UNREACHABLE_AFTER_MS,
+    ].every(Boolean);
+}
+function postgresRepairSourcePayloadMatches(input) {
+    const { release, captured, runtime, adopted, request } = input;
+    const helm = record(runtime.helm) ?? {};
+    const payload = release.payload;
+    const expected = captured.payload;
+    return [
+        release.gatewayId === request.fromGatewayId && release.release === adopted.release,
+        isReleasePayload(payload) && isReleasePayload(expected) && release.payloadHash === releasePayloadHash(payload) &&
+            releasePayloadHash(payload) === releasePayloadHash(expected) && helm.imageRepository === payload.imageRepository &&
+            helm.imageTag === payload.imageTag,
+        isReleasePayload(payload) && record(captured.images)?.gateway === `${payload.imageRepository}:${payload.imageTag}`,
+    ].every(Boolean);
+}
+export function repairedPostgresSourceConverged(input) {
+    const { source, runtime, release, repair, request, now } = input;
+    const completed = record(repair.sourceRuntimeRecovery) ?? {};
+    const captured = record(record(repair.input)?.sourceRecovery) ?? {};
+    const adopted = record(completed.release) ?? {};
+    return [
+        postgresRepairSourceRootMatches(source, adopted, request),
+        postgresRepairSourceRuntimeMatches({ runtime, adopted, request, now }),
+        postgresRepairSourcePayloadMatches({ release, captured, runtime, adopted, request }),
+    ].every(Boolean);
+}
+async function assertCurrentPostgresRepairSource(context, transaction, repair, request) {
+    const completed = record(repair.sourceRuntimeRecovery) ?? {};
+    const adopted = record(completed.release) ?? {};
+    const adoptedRelease = positiveInteger(adopted.release);
+    const [source, runtime, release] = await Promise.all([
+        transaction.gateways.roots.get(request.fromGatewayId),
+        transaction.fleetRegistry.get(request.fromGatewayId),
+        adoptedRelease === null ? null : transaction.gateways.releases.get(request.fromGatewayId, adoptedRelease),
+    ]);
+    if (!projectGatewayDesiredRootForGateway(source, request.fromGatewayId) || runtime === null ||
+        !repairedPostgresSourceConverged({
+            source: source,
+            runtime: runtime,
+            release: (release ?? {}),
+            repair,
+            request,
+            now: context.now,
+        })) {
+        throw new SharedDrainSupersededError(request.fromGatewayId, "the repaired source release has not converged; retry placement after it is ready");
+    }
+}
+async function findRepairedSourcePlacement(context, transaction, userRecord, request, data) {
+    if (!isAutomaticRolledBackPlacement(data, request))
+        return false;
+    const candidates = await transaction.journal.operations.listByInputGateway(request.fromGatewayId);
+    const repair = candidates.map((operation) => operation)
+        .filter((row) => repairedPlacementProofMatches(data, row, request))
+        .sort((left, right) => Number(record(right.sourceRuntimeRecovery)?.completedAt) - Number(record(left.sourceRuntimeRecovery)?.completedAt))[0];
+    if (!repair)
+        return false;
+    const assignment = await assertPreRpcRetryAuthority(transaction, userRecord, request);
+    const captured = record(record(repair.input)?.sourceRecovery) ?? {};
+    const owner = proofRows(captured.assignments).find((row) => row.uid === request.uid);
+    if (assignment.epoch !== owner?.assignmentEpoch || assignment.slug !== request.builderSlug) {
+        throw new PlacementMigrationAuthorityError("source repair assignment changed");
+    }
+    const sourceImage = record(record(repair.sourceRuntimeRecovery)?.images)?.gateway;
+    if (typeof sourceImage !== "string")
+        throw new PlacementMigrationAuthorityError("source repair image receipt is unavailable");
+    await assertCurrentPostgresRepairSource(context, transaction, repair, request);
+    await assertCurrentRepairTarget(context, transaction, userRecord, request, sourceImage);
+    return true;
+}
+function rearmedPlacementMigrationPatch() {
+    return {
+        status: "pending",
+        startedAt: null,
+        completedAt: null,
+        steps: [],
+        error: CLEAR,
+        expireAt: CLEAR,
+        rolledBack: CLEAR,
+        output: CLEAR,
+        lastProgressAt: CLEAR,
+        waitingOn: CLEAR,
+        nextAttemptAt: CLEAR,
+    };
+}
+async function assertSharedDrainAuthority(transaction, request) {
+    const [roots, scaler] = await Promise.all([
+        transaction.gateways.roots.getMany([request.fromGatewayId, request.toGatewayId]),
+        transaction.controllerState.sharedPoolScaler.get(),
+    ]);
+    const source = roots.get(request.fromGatewayId);
+    const target = roots.get(request.toGatewayId);
+    if (source?.runtimeRestartFence !== undefined) {
+        throw new SharedDrainSupersededError(request.fromGatewayId, "the source runtime restart is unresolved");
+    }
+    if (source?.desiredStatus !== "draining") {
+        throw new SharedDrainSupersededError(request.fromGatewayId, "the source is no longer draining");
+    }
+    if (target?.desiredStatus !== "running") {
+        throw new SharedDrainSupersededError(request.fromGatewayId, `target ${request.toGatewayId} is no longer running`);
+    }
+    const pairedTargetGatewayId = (scaler?.replacements ?? [])
+        .find((replacement) => replacement.sourceGatewayId === request.fromGatewayId)?.targetGatewayId ?? null;
+    if (pairedTargetGatewayId !== request.sharedDrain.pairedTargetGatewayId) {
+        throw new SharedDrainSupersededError(request.fromGatewayId, "its replacement pairing changed");
+    }
+    if (pairedTargetGatewayId !== null && pairedTargetGatewayId !== request.toGatewayId) {
+        throw new SharedDrainSupersededError(request.fromGatewayId, `it is paired with ${pairedTargetGatewayId}`);
+    }
+}
+function supersededSharedDrainMoveCanRearm(data, request) {
+    return request.sharedDrain !== undefined &&
+        data.status === "failed" &&
+        record(data.supersededBy)?.kind === "builder-activation" &&
+        data.startedAt === null &&
+        data.attempts === undefined &&
+        data.cutoverCommittedAt === undefined &&
+        data.userMigrationV2 === undefined;
+}
+function operationInputWithout(operation, removed, overrides = {}) {
+    const next = { ...operation.input, ...overrides };
+    for (const field of removed)
+        delete next[field];
+    return next;
+}
+function nativeReturnRecoveryCompleted(operation) {
+    const recovery = record(operation.input.nativeReturnSourceRecovery);
+    return typeof recovery?.completedAt === "number" && recovery.completedAt > 0;
+}
+async function placementMigrationRearm(context, transaction, userRecord, request, existing) {
+    const data = existing;
+    const retarget = { input: operationInputWithout(existing, [], { toGatewayId: request.toGatewayId }), gatewayId: request.toGatewayId };
+    if (sharedRevisionReturnMatchesDemand(data, request)) {
+        await assertSharedRevisionReturnAuthority(context, transaction, userRecord, {
+            ...request,
+            previousTargetGatewayId: existing.input.toGatewayId,
+        });
+        return { ...rearmedPlacementMigrationPatch(), ...retarget };
+    }
+    if (startupFailedReturnMatchesDemand(context, data, request)) {
+        await assertStartupReturnAuthority(context, transaction, userRecord, request);
+        return { ...rearmedPlacementMigrationPatch(), ...retarget };
+    }
+    if (operatorRetriedUserReturnMatchesDemand(data, request)) {
+        const removed = nativeReturnRecoveryCompleted(existing) ? ["recoverSourceOnly", "nativeReturnSourceRecovery"] : [];
+        return {
+            ...rearmedPlacementMigrationPatch(),
+            input: operationInputWithout(existing, removed, { toGatewayId: request.toGatewayId }),
+            gatewayId: request.toGatewayId,
+            retryRequestedAt: CLEAR,
+            retryRequestedBy: CLEAR,
+        };
+    }
+    if (!existingPlacementMigrationMatchesDemand(data, request)) {
+        throw new PlacementMigrationAuthorityError(`migration operation ${request.operationId} does not match activation demand`);
+    }
+    if (placementMigrationIsNonTerminal(data))
+        return null;
+    if (supersededSharedDrainMoveCanRearm(data, request)) {
+        return { ...rearmedPlacementMigrationPatch(), supersededBy: CLEAR };
+    }
+    if (await findRepairedSourcePlacement(context, transaction, userRecord, request, data)) {
+        return rearmedPlacementMigrationPatch();
+    }
+    if (preRpcAuthorityFailure(data, request) || sourceOnlyRollbackCompleted(context, existing, request)) {
+        await assertPreRpcRetryAuthority(transaction, userRecord, request);
+        return {
+            ...rearmedPlacementMigrationPatch(),
+            schedulerHandoff: CLEAR,
+            schedulerHandoffReleased: CLEAR,
+            schedulerHandoffReleasedAt: CLEAR,
+            input: operationInputWithout(existing, ["recoverSourceOnly"]),
+        };
+    }
+    if (!rolledBackTransientPlacementCanRearm(context, data, request)) {
+        throw new TerminalPlacementMigrationConflictError(request.operationId, String(data.status));
+    }
+    return rearmedPlacementMigrationPatch();
+}
+async function assertNoOtherActivePlacementMigration(transaction, request) {
+    const active = await transaction.journal.operations.listForUid(request.uid, {
+        kind: PLACEMENT_MIGRATION_KIND, statuses: ["pending", "running"],
+    });
+    const other = active.find((operation) => operation.id !== request.operationId);
+    if (other !== undefined) {
+        throw new PlacementMigrationAuthorityError(`user ${request.uid} already has ${other.status} migration ${other.id}`);
+    }
+}
+export async function enqueuePlacementMigrationInTransaction(transaction, context, request, admit = async () => undefined) {
+    const userRecord = await transaction.users.records.get(request.uid);
+    if (userRecord?.openclaw.managedBy === "operator")
+        throw new HeldUserPlacementError(request.uid);
+    if (userRecord?.slug !== request.builderSlug) {
+        throw new PlacementMigrationAuthorityError(`slug ${request.builderSlug} does not match user ${request.uid}'s slug ${userRecord?.slug ?? "(none)"}`);
+    }
+    const sharedDrain = request.sharedDrain;
+    if (sharedDrain)
+        await assertSharedDrainAuthority(transaction, { ...request, sharedDrain });
+    const existing = await transaction.journal.operations.get(request.operationId);
+    if (existing === null) {
+        await assertNoOtherActivePlacementMigration(transaction, request);
+        await admit();
+        await transaction.journal.operations.create({
+            id: request.operationId,
+            kind: PLACEMENT_MIGRATION_KIND,
+            status: "pending",
+            origin: "automatic",
+            createdBy: PLACEMENT_MIGRATION_ACTOR,
+            createdAt: context.now,
+            startedAt: null,
+            completedAt: null,
+            input: {
+                uid: request.uid,
+                userSlug: request.builderSlug,
+                fromGatewayId: request.fromGatewayId,
+                toGatewayId: request.toGatewayId,
+                source: request.source,
+            },
+            steps: [],
+            gatewayId: request.toGatewayId,
+            inputUid: request.uid,
+        });
+        return "created";
+    }
+    const rearm = await placementMigrationRearm(context, transaction, userRecord, request, existing);
+    if (rearm === null)
+        return "already-enqueued";
+    await assertNoOtherActivePlacementMigration(transaction, request);
+    await admit();
+    await transaction.journal.operations.patch(request.operationId, rearm, {
+        status: [existing.status],
+        startedAt: existing.startedAt,
+    });
+    return "rearmed";
+}
+function sharedDrainMoveNeverClaimed(data) {
+    const history = data.attemptHistory;
+    return [
+        data.status === "pending",
+        data.startedAt === null,
+        data.firstStartedAt === undefined,
+        data.attempts === undefined,
+        data.resumeCount === undefined,
+        history === undefined || (Array.isArray(history) && history.length === 0),
+        Array.isArray(data.steps) && data.steps.length === 0,
+        data.cutoverCommittedAt === undefined,
+        data.userMigrationV2 === undefined,
+        data.cancellationRequestedAt === undefined,
+        data.sourceTransferExecution === undefined,
+        data.schedulerHandoff === undefined,
+    ].every(Boolean);
+}
+function neverClaimedSharedDrainMove(data, request) {
+    if (data === undefined)
+        return false;
+    const operationInput = record(data.input);
+    return [
+        data.kind === PLACEMENT_MIGRATION_KIND,
+        data.origin === "automatic",
+        data.createdBy === PLACEMENT_MIGRATION_ACTOR,
+        sharedDrainMoveNeverClaimed(data),
+        operationInput?.uid === request.uid,
+        operationInput?.userSlug === request.builderSlug,
+        operationInput?.fromGatewayId === request.fromGatewayId,
+        operationInput?.toGatewayId === request.toGatewayId,
+        operationInput?.source === CONTINUOUS_PLACEMENT_SOURCE,
+    ].every(Boolean);
+}
+function supersedingActivationLeaseHolds(userRecord, request) {
+    const lease = activationLeaseOf(userRecord?.activationLease);
+    return userGatewayId(userRecord) === request.fromGatewayId &&
+        lease?.leaseId === request.leaseId &&
+        lease.generation === request.generation &&
+        lease.status === "provisioning" &&
+        lease.targetGatewayId === request.targetGatewayId;
+}
+function sharedDrainMoveSupersededBy(operation, request) {
+    const supersededBy = record(operation?.supersededBy);
+    return operation?.status === "failed" &&
+        supersededBy?.kind === "builder-activation" &&
+        supersededBy.leaseId === request.leaseId &&
+        supersededBy.generation === request.generation &&
+        supersededBy.targetGatewayId === request.targetGatewayId &&
+        supersededBy.operationId === request.activationOperationId;
+}
+export async function supersedePendingSharedDrainMoveInTransaction(transaction, context, request) {
+    const [operation, userRecord, source] = await Promise.all([
+        transaction.journal.operations.get(request.operationId),
+        transaction.users.records.get(request.uid),
+        transaction.gateways.roots.get(request.fromGatewayId),
+    ]);
+    if (sharedDrainMoveSupersededBy(operation, request))
+        return { kind: "already-superseded" };
+    if (!neverClaimedSharedDrainMove(operation === null ? undefined : operation, request)) {
+        return { kind: "refused", reason: `operation ${request.operationId} is not a pending, never-claimed drain move of this user` };
+    }
+    if (!supersedingActivationLeaseHolds(userRecord, request)) {
+        return { kind: "refused", reason: `user ${request.uid} does not hold provisioning lease ${request.leaseId} generation ${request.generation} for ${request.targetGatewayId}` };
+    }
+    if (source?.desiredStatus !== "draining") {
+        return { kind: "refused", reason: `source ${request.fromGatewayId} is not draining` };
+    }
+    const now = context.now;
+    await transaction.journal.operations.patch(request.operationId, {
+        status: "failed",
+        completedAt: now,
+        expireAt: now + context.operationJournalRetentionMs,
+        rolledBack: false,
+        error: `superseded before claim by user activation lease ${request.leaseId} ` +
+            `generation ${request.generation} (operation ${request.activationOperationId})`,
+        supersededBy: {
+            kind: "builder-activation",
+            leaseId: request.leaseId,
+            generation: request.generation,
+            targetGatewayId: request.targetGatewayId,
+            operationId: request.activationOperationId,
+            at: now,
+        },
+        waitingOn: CLEAR,
+        nextAttemptAt: CLEAR,
+        queuedAt: CLEAR,
+    }, { status: ["pending"], startedAt: null });
+    return { kind: "superseded" };
+}

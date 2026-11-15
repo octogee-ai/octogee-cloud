@@ -85,6 +85,18 @@
       "types": "./dist/admin-placement-router.d.ts",
       "default": "./dist/admin-placement-router.js"
     },
+    "./admin-placement-shared-router": {
+      "types": "./dist/admin-placement-shared-router.d.ts",
+      "default": "./dist/admin-placement-shared-router.js"
+    },
+    "./placement-automation-owner": {
+      "types": "./dist/placement-automation-owner.d.ts",
+      "default": "./dist/placement-automation-owner.js"
+    },
+    "./placement-migrations": {
+      "types": "./dist/placement-migrations.d.ts",
+      "default": "./dist/placement-migrations.js"
+    },
     "./admin-shared-pool-router": {
       "types": "./dist/admin-shared-pool-router.d.ts",
       "default": "./dist/admin-shared-pool-router.js"

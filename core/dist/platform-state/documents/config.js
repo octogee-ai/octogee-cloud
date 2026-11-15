@@ -1,7 +1,7 @@
 import { createServiceLogger } from "@octogee/shared/server/service-logger";
 import { DEFAULT_HOUSE_MODEL_REF, DEFAULT_OPS_AGENT_MODEL_REF, DEFAULT_USER_AGENT_FALLBACK_MODEL_REF, DEFAULT_USER_AGENT_MODEL_REF, parsePlatformConnectConfig, parsePlatformFreeConfig, parsePlatformModelConfig } from "@octogee/shared/types/platform-config";
 import { parseSharedGatewayAutoscalingConfig } from "@octogee/shared/types/shared-gateway-pool";
-import { isGatewaySizingProfile } from "../config.js";
+import { DEFAULT_PLACEMENT_AUTOMATION_OWNER, isGatewaySizingProfile, isPlacementAutomationOwner } from "../config.js";
 import { MalformedRecordError } from "../errors.js";
 export function parseStoredPlatformModelConfig(value) {
     if (typeof value !== "object" || value === null || Array.isArray(value))
@@ -89,6 +89,8 @@ export function parseOrchestratorConfig(data) {
         disposableGatewayIdleMs: nullableField(data, "disposableGatewayIdleMs", isNonNegativeSafeInteger),
         placementUpdatedAt: nullableField(data, "placementUpdatedAt", isNumber),
         placementUpdatedBy: nullableField(data, "placementUpdatedBy", isString),
+        placementAutomationOwner: nullableField(data, "placementAutomationOwner", isPlacementAutomationOwner) ?? DEFAULT_PLACEMENT_AUTOMATION_OWNER,
+        placementAutomationYieldedAt: nullableField(data, "placementAutomationYieldedAt", isNumber),
     };
 }
 export function platformConfigEntryFromData(key, data) {

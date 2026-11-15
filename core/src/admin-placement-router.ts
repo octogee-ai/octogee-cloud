@@ -17,6 +17,7 @@ import type { PlatformStateStore, PlatformStateTransaction, Stored } from "./pla
 
 const ISOLATED_ALLOCATION_KIND = "disposable-builder";
 const RETIRE_GATEWAY_KIND = "retire-gateway";
+const LIVE_ACTIVATION_LEASE_STATUSES: ReadonlySet<string> = new Set(["requested", "provisioning", "activating", "active", "returning"]);
 
 export interface AdminPlacementCapabilities {
   retirementFailedRetryably(operation: Stored<OperationRecord>, gatewayId: string): boolean;
@@ -152,6 +153,14 @@ async function rearmRetirement(deps: AdminPlacementRouterDeps, target: RetiredIs
   });
 }
 
+async function assertNoLiveActivationLease(transaction: PlatformStateTransaction, gatewayId: string): Promise<void> {
+  const leaseHolder = (await transaction.users.records.listAll()).find((user) =>
+    user.activationLease?.targetGatewayId === gatewayId && LIVE_ACTIVATION_LEASE_STATUSES.has(user.activationLease.status));
+  if (leaseHolder !== undefined) {
+    throw new PreconditionFailed(`user ${leaseHolder.uid} holds a ${leaseHolder.activationLease?.status} activation lease on ${gatewayId}`);
+  }
+}
+
 async function deleteRetiredRoot(deps: AdminPlacementRouterDeps, target: RetiredIsolatedGatewayTarget) {
   const { store } = deps;
   const verdict = await store.transaction({ label: "admin.placement.delete-retired-verdict", readOnly: true }, async (transaction) => {
@@ -161,6 +170,7 @@ async function deleteRetiredRoot(deps: AdminPlacementRouterDeps, target: Retired
     }
     const unreleased = unreleasedHandoff(deps, target, await transaction.journal.operations.getMany(handoffOperationIds(target)));
     if (unreleased !== null) throw new PreconditionFailed(`${unreleased} has an unreleased scheduler handoff`);
+    await assertNoLiveActivationLease(transaction, target.gatewayId);
     return retirement;
   });
   const preparationCleared = await clearRetiredUserActivationPreparation({ store }, {
@@ -174,9 +184,12 @@ async function deleteRetiredRoot(deps: AdminPlacementRouterDeps, target: Retired
     store.journal.operations.delete(recoverOperationId),
     store.journal.recoveryReceipts.delete(recoverOperationId),
   ]);
-  await store.gateways.roots.delete(target.gatewayId, {
-    retirementVersion: verdict.retirementVersion,
-    desiredStatus: ["retired"],
+  await store.transaction({ label: "admin.placement.delete-retired-root" }, async (transaction) => {
+    await assertNoLiveActivationLease(transaction, target.gatewayId);
+    await transaction.gateways.roots.delete(target.gatewayId, {
+      retirementVersion: verdict.retirementVersion,
+      desiredStatus: ["retired"],
+    });
   });
   return { gatewayId: target.gatewayId, deleted: true, preparationCleared };
 }

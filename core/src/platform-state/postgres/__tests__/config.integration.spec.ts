@@ -4,6 +4,11 @@ import {
   DEFAULT_PLATFORM_CONNECT_CONFIG,
   parsePlatformModelConfig,
 } from "@octogee/shared/types/platform-config";
+import {
+  PlacementOwnerRefusedError,
+  assertClientOwnsPlacementAutomation,
+  assertFleetControllerOwnsPlacementAutomation,
+} from "../../../placement-automation-owner.js";
 import type { GatewaySizingProfile } from "../../config.js";
 import { FenceMismatchError, MalformedRecordError, MissingRecordError } from "../../errors.js";
 import type { Revision } from "../../store.js";
@@ -71,6 +76,8 @@ describe.skipIf(!dsn)("PostgreSQL config", { timeout: 30_000 }, () => {
         disposableGatewayIdleMs: null,
         placementUpdatedAt: null,
         placementUpdatedBy: null,
+        placementAutomationOwner: "fleet-controller",
+        placementAutomationYieldedAt: null,
         revision: expect.stringMatching(/^\d+$/),
       });
     });
@@ -86,6 +93,8 @@ describe.skipIf(!dsn)("PostgreSQL config", { timeout: 30_000 }, () => {
         disposableGatewayIdleMs: 0,
         placementUpdatedAt: NOW,
         placementUpdatedBy: "uid-admin",
+        placementAutomationOwner: "fleet-controller",
+        placementAutomationYieldedAt: null,
         revision: expect.any(String),
       });
 
@@ -143,6 +152,57 @@ describe.skipIf(!dsn)("PostgreSQL config", { timeout: 30_000 }, () => {
       expect(await failure(harness.query("UPDATE $schema.orchestrator_config SET shared_users_per_gateway = 1"))).toMatchObject({ code: "23514" });
       expect(await failure(harness.query("UPDATE $schema.orchestrator_config SET shared_autoscaling_enabled = NULL"))).toMatchObject({ code: "23514" });
       expect((await orchestrator().get())?.sharedGatewayAutoscaling).toEqual({ enabled: true, buildersPerGateway: 2 });
+    });
+
+    it("hands placement automation to the client and records the fleet controller's yield", async () => {
+      const fence = () => harness.store.transaction({ label: "test.placement-owner" }, (transaction) =>
+        assertClientOwnsPlacementAutomation(transaction));
+      expect(await failure(fence())).toBeInstanceOf(PlacementOwnerRefusedError);
+
+      await orchestrator().patch({ placementAutomationOwner: "client" });
+      expect(await orchestrator().get()).toMatchObject({ placementAutomationOwner: "client", placementAutomationYieldedAt: null });
+      expect(await failure(fence())).toBeInstanceOf(PlacementOwnerRefusedError);
+
+      const handed = await orchestrator().get();
+      await orchestrator().patch({ placementAutomationYieldedAt: NOW }, { revision: handed!.revision });
+      expect(await orchestrator().get()).toMatchObject({ placementAutomationOwner: "client", placementAutomationYieldedAt: NOW });
+      await expect(fence()).resolves.toEqual({ owner: "client", yieldedAt: NOW });
+
+      await orchestrator().patch({ placementAutomationOwner: "fleet-controller", placementAutomationYieldedAt: { clear: true } });
+      expect(await orchestrator().get()).toMatchObject({ placementAutomationOwner: "fleet-controller", placementAutomationYieldedAt: null });
+    });
+
+    it("admits exactly one of the client and the fleet controller except while the handoff awaits the yield", async () => {
+      const admitted = async () => {
+        const check = (assert: typeof assertClientOwnsPlacementAutomation) => harness.store
+          .transaction({ label: "test.placement-owner" }, (transaction) => assert(transaction))
+          .then(() => "admitted", (error: unknown) => {
+            expect(error).toBeInstanceOf(PlacementOwnerRefusedError);
+            return (error as PlacementOwnerRefusedError).message;
+          });
+        return {
+          client: await check(assertClientOwnsPlacementAutomation),
+          fleetController: await check(assertFleetControllerOwnsPlacementAutomation),
+        };
+      };
+
+      expect(await admitted()).toEqual({ client: "placement automation is owned by fleet-controller", fleetController: "admitted" });
+
+      await orchestrator().patch({ placementAutomationOwner: "client" });
+      expect(await admitted()).toEqual({ client: "the fleet controller has not yielded placement automation", fleetController: "admitted" });
+
+      const handed = await orchestrator().get();
+      await orchestrator().patch({ placementAutomationYieldedAt: NOW }, { revision: handed!.revision });
+      expect(await admitted()).toEqual({ client: "admitted", fleetController: "the fleet controller has yielded placement automation to the client" });
+    });
+
+    it("refuses a yield while the fleet controller owns placement automation, and an unknown owner", async () => {
+      expect(await failure(orchestrator().patch({ placementAutomationYieldedAt: NOW }))).toMatchObject({ code: "23514" });
+      await orchestrator().patch({ placementAutomationOwner: "client", placementAutomationYieldedAt: NOW });
+      expect(await failure(orchestrator().patch({ placementAutomationOwner: "fleet-controller" }))).toMatchObject({ code: "23514" });
+      expect(await failure(orchestrator().patch({ placementAutomationOwner: "operator" as never }))).toBeInstanceOf(MalformedRecordError);
+      expect(await failure(harness.query("UPDATE $schema.orchestrator_config SET placement_automation_owner = 'operator'"))).toMatchObject({ code: "23514" });
+      expect(await orchestrator().get()).toMatchObject({ placementAutomationOwner: "client", placementAutomationYieldedAt: NOW });
     });
 
     it("reads a stored sizing profile the shape check rejects as malformed", async () => {
