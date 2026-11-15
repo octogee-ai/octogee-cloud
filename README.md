@@ -25,6 +25,46 @@ taking my word for it.
 - [Known rough edges](docs/rough-edges.md): what I would change, said before
   you find it.
 
+## The platform at a glance
+
+```mermaid
+flowchart TB
+  operator([Operator])
+  user([User])
+  provider([Model provider])
+
+  subgraph services[Platform services]
+    controller[Fleet controller<br/>and Admin API]
+    api[Platform API]
+    broker[LLM broker]
+  end
+
+  hosts[Mattermost and Gitea]
+
+  subgraph gateways[Gateways]
+    shared[Shared gateway<br/>many users, no host code]
+    isolated[Isolated gateway<br/>one user, full OpenClaw]
+  end
+
+  state[(PostgreSQL and<br/>object storage)]
+
+  operator -->|octogee-fleet| controller
+  user -->|chat and git| hosts
+  controller -->|adds, retires,<br/>moves users| gateways
+  hosts <-->|messages| gateways
+  gateways -->|sets up users| api
+  api -->|admin credentials| hosts
+  gateways -->|model calls| broker
+  broker --> provider
+  services --> state
+  gateways --> state
+```
+
+An operator runs the fleet from the command line. Users never touch the
+platform directly: they talk to their agent in Mattermost and keep their work
+in Gitea. Gateways run the agents and hold no keys. [How it works](#how-it-works)
+has the components and three walkthroughs.
+
 ## Run it
 
 ```bash
@@ -66,6 +106,130 @@ key stops the platform API at startup.
 For `install.sh` on your own machine, one model key; Gemini's free tier works
 there, but not on the full platform. On Google Cloud, also a billing account
 and a domain. [See every account and tier](docs/getting-started.md#what-you-need-to-sign-up-for).
+
+## How it works
+
+### The components
+
+| Component | Directory | What it does |
+| --- | --- | --- |
+| Fleet controller | `glm-controller/` | Owns which gateways exist and which user is on which. Serves the Admin API, installs gateways with Helm, moves users, and journals every change. |
+| Platform API | `octogee-api/` | Serves most HTTP routes. Its fleet broker holds the Mattermost and Gitea admin credentials, and it issues each agent its model credential. |
+| LLM broker | `octogee-api/` | Holds the model provider keys and meters every call. |
+| Edge | `gateway-edge/` | A sidecar in each gateway pod that serves the user's workspace files, and the gateway router that sends `/g/<gatewayId>/*` to the right sidecar. |
+| Provisioner | `scripts/` | Runs in every gateway. Sets up each user assigned to it: chat account, team, channels, agent bot, git organization and repository. |
+| Gateway image | `infra/gateway/` | OpenClaw, the provisioner and the platform's OpenClaw extensions. |
+
+### Inside a gateway
+
+```mermaid
+flowchart LR
+  mattermost[Mattermost]
+  router[Gateway router]
+
+  subgraph gateway["Gateway (a pod or a VM)"]
+    direction TB
+    openclaw["OpenClaw gateway<br/>runs the agents"]
+    extensions["Platform extensions<br/>access, broker, chat,<br/>web and workspace tools"]
+    provisioner[Provisioner]
+    edge[Edge sidecar]
+    openclaw --- extensions
+  end
+
+  api[Platform API]
+  broker[LLM broker]
+  postgres[("PostgreSQL<br/>one schema per agent")]
+
+  mattermost <-->|"each agent's bot account"| openclaw
+  router -->|workspace files| edge
+  openclaw -->|model calls| broker
+  openclaw -->|agent state| postgres
+  extensions -->|tool calls| api
+  provisioner -->|"who is assigned here,<br/>and their set-up"| api
+```
+
+A gateway asks for everything and is trusted with nothing. Its calls are
+authenticated as that gateway, and the platform checks which gateway is asking
+and which user it serves before it answers. On a shared gateway the agents also cannot run host code, which is
+what lets people who do not know each other share one OpenClaw process.
+
+### A message, end to end
+
+```mermaid
+sequenceDiagram
+  actor User
+  participant Mattermost
+  participant Gateway as OpenClaw gateway
+  participant Broker as LLM broker
+  participant Provider as Model provider
+
+  User->>Mattermost: writes to their agent
+  Mattermost->>Gateway: delivers it to the agent's bot account
+  Gateway->>Broker: model call with the agent's own credential
+  Broker->>Broker: checks the credential and its owner, meters the call
+  Broker->>Provider: forwards it with the provider key
+  Provider-->>Broker: completion
+  Broker-->>Gateway: completion
+  Gateway->>Mattermost: the agent replies
+  Mattermost-->>User: reply
+```
+
+The provider key never leaves the broker. The gateway holds a credential that
+is good for one agent and that the platform can revoke.
+
+### Adding a user
+
+```mermaid
+sequenceDiagram
+  actor Operator
+  participant Controller as Fleet controller
+  participant Provisioner as Provisioner in the gateway
+  participant API as Platform API
+  participant Hosts as Mattermost and Gitea
+
+  Operator->>Controller: octogee-fleet user add
+  Controller->>Controller: records the user
+  Operator->>Controller: octogee-fleet user assign
+  Controller->>Controller: records the assignment, journals it
+  Provisioner->>API: who is assigned to this gateway?
+  API-->>Provisioner: the new user
+  Provisioner->>API: set this user up
+  API->>Hosts: account, team, channels and agent bot,<br/>organization and workspace repository
+  Provisioner->>Provisioner: adds the user's agent to OpenClaw
+```
+
+Nothing happens until the operator assigns the user. The platform places
+nobody by itself.
+
+### Moving a user between gateways
+
+```mermaid
+sequenceDiagram
+  actor Operator
+  participant Controller as Fleet controller
+  participant Source as Source gateway
+  participant Target as Target gateway
+
+  Operator->>Controller: octogee-fleet user migrate
+  Controller->>Target: creates it, if the move is to a new isolated gateway
+  Source->>Target: keys, then a first copy of the user's state
+  Controller->>Source: quiesce: stop serving this user
+  Controller->>Source: flush what is still in memory
+  Source->>Target: final copy of what changed
+  Controller->>Target: verify the user's state arrived
+  Controller->>Controller: cut over: the assignment now names the target
+  Target->>Target: serves the user
+  Controller->>Source: unmount the user
+```
+
+A user's agents, channels, repositories, agent stores and schedules are records
+the fleet controller owns, which is what makes the move possible. The source
+stops before the final copy, so one gateway serves the user at a time. Each
+phase is recorded, so an interrupted move continues from where it stopped.
+
+[Architecture](docs/architecture.md) goes further: where every kind of state
+lives, who authenticates how, the parts an install can replace, and how a
+product builds on top.
 
 ## What is here
 
