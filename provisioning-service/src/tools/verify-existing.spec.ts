@@ -110,6 +110,30 @@ describe("write guard", () => {
   });
 });
 
+describe("write guard methods", () => {
+  it("answers every method but GET and HEAD locally, whether the method is on the request or in the init", async () => {
+    const reached: string[] = [];
+    const base: typeof fetch = async (input, init) => {
+      const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+      reached.push(method.toUpperCase());
+      return new Response("{}", { status: 200 });
+    };
+    const guard = createWriteGuard(base, "chat");
+    const url = "https://chat.invalid/api/v4/users/u1/tokens";
+
+    for (const method of ["POST", "PUT", "PATCH", "DELETE", "post", "delete", "OPTIONS"]) {
+      await guard.fetch(url, { method });
+      await guard.fetch(new Request(url, { method }));
+      await guard.fetch(new URL(url), { method });
+    }
+    await guard.fetch(url);
+    await guard.fetch(new Request(url, { method: "HEAD" }));
+
+    expect(reached).toEqual(["GET", "HEAD"]);
+    expect(guard.writes).toHaveLength(21);
+  });
+});
+
 describe("verify-existing", () => {
   it("finds a fully provisioned user without would-creates, mismatches or writes reaching a host", async () => {
     const context = hosts();

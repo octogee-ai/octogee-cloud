@@ -80,7 +80,7 @@ export function createWriteGuard(base: typeof fetch, host: GuardedHost): WriteGu
   const refusalStatus = host === "chat" ? 400 : 422;
 
   const guarded: typeof fetch = async (input, init) => {
-    const method = (init?.method ?? "GET").toUpperCase();
+    const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
     if (method === "GET" || method === "HEAD") return base(input, init);
     const url = requestUrl(input);
     const prefix = url.pathname.match(API_PREFIX)?.[0] ?? "";
