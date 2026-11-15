@@ -5,7 +5,7 @@ import { FakeChatHost, FakeGitHost } from "./hosts/fake-hosts.js";
 import type { GitHost } from "./hosts/git-host.js";
 import { createGiteaGitHostAdapter } from "./hosts/git-host-gitea.js";
 
-export function hostsFromConfig(hosts: HostAdapterConfig, log: HostLog): { chat: ChatHost; git: GitHost } {
+export function hostsFromConfig(hosts: HostAdapterConfig, log: HostLog, fetchImpl?: typeof fetch): { chat: ChatHost; git: GitHost } {
   if (hosts.kind === "fake") return { chat: new FakeChatHost(), git: new FakeGitHost() };
   const { settings } = hosts;
   return {
@@ -15,7 +15,13 @@ export function hostsFromConfig(hosts: HostAdapterConfig, log: HostLog): { chat:
       adminUserId: settings.chatHostAdminUserId,
       controlCommandUrl: settings.chatControlCommandUrl,
       log,
+      ...(fetchImpl ? { fetch: fetchImpl } : {}),
     }),
-    git: createGiteaGitHostAdapter({ apiBaseUrl: settings.gitHostUrl, adminToken: settings.gitHostAdminToken, log }),
+    git: createGiteaGitHostAdapter({
+      apiBaseUrl: `${settings.gitHostUrl}/api/v1`,
+      adminToken: settings.gitHostAdminToken,
+      log,
+      ...(fetchImpl ? { fetch: fetchImpl } : {}),
+    }),
   };
 }
