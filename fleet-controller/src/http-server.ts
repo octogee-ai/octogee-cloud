@@ -6,6 +6,7 @@ import type { Server } from "node:http";
 import { rateLimit } from "express-rate-limit";
 import { publicAppOriginsFromEnv } from "@octogee/core/public-app-origins";
 import { renderMetrics } from "./metrics.js";
+import { adminPlacementCapabilities } from "./admin-placement-capabilities.js";
 import type { UserAccounts, UserSignInHosts } from "@octogee/core/admin-user-router";
 import type { UserAccountReader } from "@octogee/core/user-account";
 import {
@@ -368,6 +369,7 @@ export function createHttpServer(deps: HttpServerDeps): Express {
     userAccounts: deps.userAccounts,
     userSignIn: deps.userSignIn,
     discoverDeletionProductContext: deps.discoverDeletionProductContext,
+    placement: adminPlacementCapabilities,
   });
   addAdminLogsRoutes(adminRouter, {
     source: deps.logs.source,
