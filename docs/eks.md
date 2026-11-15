@@ -29,17 +29,12 @@ showed that:
   provider;
 - `gateway retire` removes an empty isolated gateway in under 10 seconds.
 
-Two problems the run found are not fixed yet:
-
-- When `gateway restart` fails, the platform cannot tell whether the gateway
-  restarted, and it keeps the gateway locked. The gateway stops converging,
-  and it cannot be retired. Moves to or from it never start, and moves of
-  other users off the same shared gateway wait behind them. No command clears
-  the lock. On a test install, `down` and a new `up` start over.
-- A move back to the shared gateway a user left fails with "agent database
-  files are still held open", because that gateway still holds the user's
-  deleted agent database open. Delete the gateway's pod, which restarts the
-  agents of every user on it, then move the user again.
+One problem the run found is not fixed yet. When `gateway restart` fails, the
+platform cannot tell whether the gateway restarted, and it keeps the gateway
+locked. The gateway stops converging, and it cannot be retired. Moves to or
+from it never start, and moves of other users off the same shared gateway wait
+behind them. No command clears the lock. On a test install, `down` and a new
+`up` start over.
 
 Expect rough edges, and please report them.
 
@@ -337,9 +332,7 @@ octogee-fleet --env=eks user migrate lin --to-isolated=pod-s --apply
 answers in the same channel. Return the user with
 `user migrate lin --to=shared-a --apply` and retire the isolated gateway with
 `gateway retire <id> --apply`, as in
-[An isolated gateway](kind.md#an-isolated-gateway). If the return fails with
-"agent database files are still held open", delete the `shared-a` pod and
-return the user again, as the problems at the top of this guide describe.
+[An isolated gateway](kind.md#an-isolated-gateway).
 
 ## Remove everything
 

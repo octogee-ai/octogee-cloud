@@ -10,10 +10,10 @@ The fleet features are a different matter: many users on shared gateways,
 isolated gateways, and moving a user between the two. The gateway image this
 repository builds for them runs a patched build: upstream OpenClaw `main` at
 commit [`081748ca`](https://github.com/openclaw/openclaw/commit/081748ca26e21d519506fd262c909320e91d2d1d)
-plus a public overlay of six commits, ending at
-[`ade4f47a`](https://github.com/ceckert/openclaw/commit/ade4f47af298d39b58585c20193bd7b5bb947533)
+plus a public overlay of seven commits, ending at
+[`21889851`](https://github.com/ceckert/openclaw/commit/2188985128c3be6af0a9fd32966d6668787ac783)
 in the fork `ceckert/openclaw`. Its packages are the release
-[`gateway-ade4f47`](https://github.com/ceckert/openclaw/releases/tag/gateway-ade4f47),
+[`gateway-2188985`](https://github.com/ceckert/openclaw/releases/tag/gateway-2188985),
 which `infra/gateway/openclaw-tarball/current.json` pins. We have not run the
 fleet features end to end on a stock release. The goal is to carry no patches.
 
@@ -31,12 +31,14 @@ image, most visibly when users move between gateways.
 ## What octogee-cloud needs from OpenClaw
 
 These families support features the platform itself depends on. States are as
-of 2026-11-14, for the overlay cut that day. "No pull request" means the fix
-exists only in the overlay.
+of 2026-11-14, for the overlay cut that day; the detached-database descriptor
+row is as of 2026-11-15. "No pull request" means the fix exists only in the
+overlay.
 
 | Capability | octogee-cloud feature | On stock OpenClaw | Upstream | The patch can go when |
 | --- | --- | --- | --- | --- |
 | Detach an agent and reattach it on another gateway, keeping its PostgreSQL store, identity and history | Moving a user between a shared and an isolated gateway | No public transfer that keeps store identity and history; a move would recreate the agent | [#178755](https://github.com/openclaw/openclaw/pull/178755), open, needs PostgreSQL reattachment work and review. Empty recreation of retained stores ([#188350](https://github.com/openclaw/openclaw/pull/188350)) and keeping a held store apart until it is restored ([#198180](https://github.com/openclaw/openclaw/pull/198180)) are now native, both merged | Native transfer keeps namespace, history and rollback custody |
+| Keep no descriptor on a detached agent's database | Moving a user back to a shared gateway they left | Session maintenance reopens the departed agent's database and holds it until restart, so the return can fail as "still held open" | Issue [#195523](https://github.com/openclaw/openclaw/issues/195523) (config-reload variant), open; [#196215](https://github.com/openclaw/openclaw/pull/196215), open, refuses every retention and would also refuse re-creating a returning PostgreSQL agent | The selected base keeps no descriptor for a detached agent and still re-admits a returning one |
 | Recreate an agent during a live import onto a reused home | Moving a user back to an isolated gateway | `agents.create` fails in config preflight when the retained store is replaced | No pull request | The selected base carries an equivalent fix |
 | Refuse to retire an agent while it has unfinished outbound deliveries | Pending deliveries survive a move | Queued replies can be lost or sent from the wrong gateway | No dedicated pull request; related fix [#163685](https://github.com/openclaw/openclaw/pull/163685) merged | Native detach and deletion fence the same queue |
 | Hand over scheduled jobs with hold, export, activation, rollback and drain | Schedules move once and only once | Plain cron create and delete; no two-gateway handoff | No pull request | Native migration offers equivalent activation, rollback and drain |
@@ -95,8 +97,8 @@ lives with two limits.
 ## How to check this yourself
 
 The overlay source is the branch
-[`codex/gateway-refresh-20261113-2`](https://github.com/ceckert/openclaw/tree/codex/gateway-refresh-20261113-2)
-on `ceckert/openclaw`, and the release tag `gateway-ade4f47` marks the same
+[`codex/gateway-refresh-20261113-3`](https://github.com/ceckert/openclaw/tree/codex/gateway-refresh-20261113-3)
+on `ceckert/openclaw`, and the release tag `gateway-2188985` marks the same
 commit. Diff it against the upstream base commit above to see every changed
 line. The tables are drawn from the build notes kept for each cut: a table of
 retained families with removal conditions, notes on individual fixes, and a
