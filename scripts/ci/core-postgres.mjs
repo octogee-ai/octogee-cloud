@@ -53,7 +53,7 @@ export function runCorePostgresChecks() {
     });
     run("git", ["-C", checkout, "checkout", "--detach", sourceSha]);
     run("corepack", ["pnpm", "--filter", ".", "install", "--frozen-lockfile", "--ignore-scripts"], { cwd: checkout, env });
-    run(process.execPath, [join(root, "scripts/ops/qualify-agent-store-routines.mjs"), checkout], { env });
+    run(process.execPath, [join(root, "core/qualify-agent-store-routines.mjs"), checkout], { env });
     const failures = [];
     try { run("git", ["diff", "--exit-code", "--", "core/src/agent-store-routines.json"]); }
     catch (error) { failures.push(`Qualified Native catalog drift: ${error.message}`); }
