@@ -31,25 +31,25 @@ import type {
   FleetBrokerProjectRestore,
   FleetBrokerAssignmentRosterEntry,
   FleetBrokerUserSnapshot,
-} from "../../shared/types/fleet-broker.js";
+} from "@octogee/shared/types/fleet-broker";
 import {
   DEFAULT_USER_AGENT_MODEL_REF,
   DEFAULT_HOUSE_MODEL_REF,
   parseUserAgentModelDefault,
   type UserAgentModelDefault,
-} from "../../shared/types/platform-config.js";
+} from "@octogee/shared/types/platform-config";
 import {
   USER_IMPORT_STARTUP_TIMEOUT_MS,
   CONFIG_PATCH_DEADLINE_MS,
   MIGRATING_IN_PIN_TTL_MS,
-} from "../../shared/types/fleet-controller.js";
+} from "@octogee/shared/types/fleet-controller";
 import {
   MIGRATION_QUIESCE_GRACE_MS,
   MIGRATION_QUIESCE_STOP_RECHECK_MS,
-} from "../../shared/types/workspace-migration.js";
-import { agentIdBelongsToSlug, catalogEntryForModelRef } from "../../shared/types/agent-models.js";
-import { projectCheckoutEnabled, projectRepoSourceFromDoc } from "../../shared/types/project.js";
-import { mattermostAccountEndpointsForTarget } from "../../shared/types/openclaw-mattermost-accounts.js";
+} from "@octogee/shared/types/workspace-migration";
+import { agentIdBelongsToSlug, catalogEntryForModelRef } from "@octogee/shared/types/agent-models";
+import { projectCheckoutEnabled, projectRepoSourceFromDoc } from "@octogee/shared/types/project";
+import { mattermostAccountEndpointsForTarget } from "@octogee/shared/types/openclaw-mattermost-accounts";
 import {
   applyConfigPatch,
   userAgentRosterPatch,

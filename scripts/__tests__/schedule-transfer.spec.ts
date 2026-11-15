@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { ScheduleRecord } from "../../shared/types/fleet-controller.js";
+import type { ScheduleRecord } from "@octogee/shared/types/fleet-controller";
 import { OpenclawWireError } from "../lib/gateway-rpc.js";
 import { checkSchedules, createScheduleTransfer, removeSchedules, restoreSchedules, snapshotSchedules } from "../lib/schedule-transfer.js";
 

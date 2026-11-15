@@ -2,8 +2,8 @@ import * as fs from 'node:fs';
 import * as fsp from 'node:fs/promises';
 import * as path from 'node:path';
 import { isIP } from 'node:net';
-import { agentIdBelongsToSlug } from '../../shared/types/agent-models.js';
-import { isValidUsername } from '../../shared/types/identity.js';
+import { agentIdBelongsToSlug } from '@octogee/shared/types/agent-models';
+import { isValidUsername } from '@octogee/shared/types/identity';
 import { isMigrationCertificatePem } from './migration-rsync-tls.js';
 import { isCodexDatabase, isCodexTemporaryDirectory } from './codex-store-snapshot.js';
 

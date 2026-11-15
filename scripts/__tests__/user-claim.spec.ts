@@ -8,7 +8,7 @@ import {
   readUserClaim,
   writeUserClaim,
 } from "@octogee/shared/server/user-claim";
-import type { ClaimedUserIdentity } from "../../shared/types/user-identity.js";
+import type { ClaimedUserIdentity } from "@octogee/shared/types/user-identity";
 import { configuredUserReport } from "../lib/user-claim.js";
 import { projectCheckoutScopeForRuntime } from "../lib/user-lifecycle-broker-adapter.js";
 import { markOwnedBootOverlayApplied } from "../entrypoints/user-claim.js";

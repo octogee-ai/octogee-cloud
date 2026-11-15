@@ -3,7 +3,7 @@ import { createBrokeredProjectBlobHydrator } from "../lib/project-blob-materiali
 import { persistUserProjects, persistSharedUserFiles, persistAssignedSharedUsers, startProjectAutosave } from "../lib/project-persistence.js";
 import { createServiceLogger } from "@octogee/shared/server/service-logger";
 const runtimeLogger = createServiceLogger("provisioner");
-import { CONFIG_RELOAD_DEADLINE_MS } from "../../shared/types/fleet-controller.js";
+import { CONFIG_RELOAD_DEADLINE_MS } from "@octogee/shared/types/fleet-controller";
 import {
   AGENT_PREFIX,
   AGENTS_DIR,

@@ -4,8 +4,8 @@ import { isolatedToolchainRoot } from "../lib/user-storage.js";
 import { pathToFileURL } from "node:url";
 import { userClaimSlug } from "@octogee/shared/server/user-claim";
 
-import type { DeveloperToolchainStatusArtifact } from "../../shared/types/developer-toolchain.js";
-import type { FleetBrokerNpmRegistryCredentials } from "../../shared/types/fleet-broker.js";
+import type { DeveloperToolchainStatusArtifact } from "@octogee/shared/types/developer-toolchain";
+import type { FleetBrokerNpmRegistryCredentials } from "@octogee/shared/types/fleet-broker";
 import {
   ISOLATED_TOOLCHAIN_RUNTIME_RETIRED,
   IsolatedToolchainHydrationError,

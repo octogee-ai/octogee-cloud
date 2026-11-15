@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { GATEWAY_CREDENTIAL_TOKEN_HEADER } from "@octogee/core/internal-fetch";
 import { internalFetch } from "../lib/internal-fetch.js";
-import { RETIRED_VM_BINDING_DENIAL_REASON } from "../../shared/types/fleet-broker.js";
+import { RETIRED_VM_BINDING_DENIAL_REASON } from "@octogee/shared/types/fleet-broker";
 import {
   createFleetBrokerClient,
   isRetiredVmBindingDenial,

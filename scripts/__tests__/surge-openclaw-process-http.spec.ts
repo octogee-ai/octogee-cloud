@@ -6,7 +6,7 @@ import {
   createResumeSurgeOpenClawHandler,
   createUnreserveSurgeOpenClawHandler,
 } from "../lib/surge-openclaw-process-http.js";
-import { SIGNATURE_HEADER } from "../../shared/types/fleet-controller.js";
+import { SIGNATURE_HEADER } from "@octogee/shared/types/fleet-controller";
 import { FLEET_KEY_PAIR } from "./fixtures/fleet-keys.js";
 
 const PRIVATE_KEY = FLEET_KEY_PAIR.privateKey;

@@ -49,8 +49,8 @@ import * as fs from "fs";
 import * as path from "path";
 import { randomUUID } from "crypto";
 import { pathToFileURL } from "url";
-import { isValidUsername, parseAgentId } from "../shared/dist/types/identity.js";
-import { readUserClaimFromEnv } from "../shared/dist/server/user-claim.js";
+import { isValidUsername, parseAgentId } from "@octogee/shared/types/identity";
+import { readUserClaimFromEnv } from "@octogee/shared/server/user-claim";
 
 // Cattle gateways are egress-blocked from the GCP metadata server, so this
 // resolver materializes byok-* keys through the octogee-api broker

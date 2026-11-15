@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-import { agentIdBelongsToSlug } from "../../shared/types/agent-models.js";
+import { agentIdBelongsToSlug } from "@octogee/shared/types/agent-models";
 import type { GatewayRpcClient } from "./gateway-rpc.js";
 
 export const BROKER_TOKEN_EXPIRY_DIRECTORY = "agent-model-token-expiry";

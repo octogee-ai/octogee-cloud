@@ -1,7 +1,7 @@
 import type { Request, RequestHandler, Response } from "express";
 
-import { isValidUsername } from "../../shared/types/identity.js";
-import { SIGNATURE_HEADER } from "../../shared/types/fleet-controller.js";
+import { isValidUsername } from "@octogee/shared/types/identity";
+import { SIGNATURE_HEADER } from "@octogee/shared/types/fleet-controller";
 import { gatewayScopedJobId, verifyFleetRequest } from "./fleet-signature.js";
 import { rejectMisaddressedGateway } from "./fleet-gateway-path.js";
 import type {

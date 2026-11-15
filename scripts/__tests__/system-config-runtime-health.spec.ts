@@ -16,7 +16,7 @@ import {
   OPENCLAW_DASHBOARD_BRIDGE_CAPABILITY_FILE,
   OPENCLAW_DASHBOARD_BRIDGE_PROTOCOL,
   OPENCLAW_DASHBOARD_BRIDGE_PROTOCOL_VERSION,
-} from "../../shared/types/fleet-controller.js";
+} from "@octogee/shared/types/fleet-controller";
 
 const dirs: string[] = [];
 

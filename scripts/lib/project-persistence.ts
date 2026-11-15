@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { isValidUsername } from "../../shared/types/identity.js";
+import { isValidUsername } from "@octogee/shared/types/identity";
 import { userClaimSlug } from "@octogee/shared/server/user-claim";
 
 interface PersistenceClientDeps {
