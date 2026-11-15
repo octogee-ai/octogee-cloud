@@ -49,7 +49,7 @@ so that it calls the Admin API as `octogee-fleet` does.
 
 A few files hold far too much: `core/src/admin-fleet-router.ts`,
 `platform-api/src/routes/fleet-broker.ts`, `fleet-controller/src/index.ts` and
-`scripts/lib/fleet-http-migration.ts` are each between 3,000 and 6,200 lines.
+`scripts/lib/fleet-http-migration.ts` are each between 3,300 and 6,300 lines.
 They are covered by tests and split as they are touched.
 
 ## Packaging
@@ -77,9 +77,11 @@ They are covered by tests and split as they are touched.
 - `gateway/` keeps `setup.sh`, `docker-compose.yml` and `.env.example`,
   a single-gateway Docker setup from before the platform existed. They
   describe Firebase and are not maintained.
-- Some image READMEs are still working notes, not documentation:
-  `desktop/README.md`, `desktop/image/README.md` and
+- Some image notes are still working notes, not documentation:
+  `desktop/docs/container-recipe.md`, `desktop/image/README.md` and
   `gateway/openclaw-tarball/README.md`.
+- `desktop/image/build.sh` accepts the gateway images it preloads only from
+  the hosted service's Artifact Registry repository.
 - Test fixtures use my own handle and the hosted service's hostnames.
 
 ## Google Cloud first
