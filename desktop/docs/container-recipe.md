@@ -1,6 +1,11 @@
-# Agent VM spike — Omarchy desktop, headless
+# Container recipe and spike notes
 
-Phase 1 spike for the gateway VM design. Proves that the Omarchy userspace runs headless in a plain container on
+Working notes from the spike that led to the isolated gateway VM image, and
+the Docker recipe it left behind. The [component README](../README.md) says
+what `desktop/` is today; [`image/README.md`](../image/README.md) covers the VM
+image build.
+
+The spike proved that the Omarchy userspace runs headless in a plain container on
 software rendering, that an agent can drive it by screenshot and input without
 any kernel device, and that a human can watch it through noVNC. Records the
 cost.
@@ -27,7 +32,7 @@ allocator. Docker Desktop's VM has no `/dev/dri` and no `vkms` module; COS
 nodes and gVisor expose no DRM device either.
 
 Consequence: a container on a GPU-less node cannot host Omarchy. A VM with
-virtio-gpu can, which is the direction recorded in the spec (§4.1). This recipe
+virtio-gpu can, which is the direction the VM image took. This recipe
 stays useful on any host that has `/dev/dri`.
 
 Everything else in the pipeline is compositor-agnostic (wlr-screencopy,
@@ -91,7 +96,7 @@ OCTO_COMPOSITOR=labwc ./measure.sh
 
 wayvnc runs with `--render-cursor` because the headless output has no hardware
 cursor plane. The websockify/noVNC endpoint remains an operator diagnostic;
-Octogee's PWA uses the OpenClaw Control UI Browser and Desktop panels.
+Users see the desktop through the OpenClaw Control UI Browser and Desktop panels.
 
 wayvnc 0.10.1's own `--websocket` listener segfaults as soon as noVNC connects
 (labwc + pixman, under Rosetta; not retested on x86_64), so websockify fronts
@@ -115,7 +120,7 @@ Native pairing approval grants it, and the node sets `desktop.host.enabled=true`
 `managed=false`, and port `5901`. The existing local pairing loop approves the
 node's expanded manifest on reconnection.
 
-Gateway VMs use OpenClaw's `full` tool profile, without an Octogee node-command
+Gateway VMs use OpenClaw's `full` tool profile, without a platform node-command
 deny list. The same loopback pairing approves shell, files, MCP and local
 inference as well as the desktop. Native file-transfer commands are explicitly
 opted in and their plugin is loaded; `octogee-desktop` asks on an unapproved
@@ -162,7 +167,7 @@ an agent with unrestricted exec from reaching the VM's loopback services.
 `acceptance/openclaw-browser.mts` runs the real OpenClaw browser implementation,
 opens a local fixture, types and clicks through snapshot references, evaluates
 the result, and records both the tool screenshot and the desktop capture.
-Run it in an isolated VM's network namespace with the Octogee worktree
+Run it in an isolated VM's network namespace with a checkout of this repository
 and an installed OpenClaw source checkout available:
 
 ```bash
@@ -210,7 +215,7 @@ Chromium window in `get_accessibility_tree` and accessibility elements from
 Gateway VM's gateway container:
 
 ```bash
-gcloud compute ssh <instance> --project octogee --zone us-central1-a --tunnel-through-iap \
+gcloud compute ssh <instance> --project <project> --zone <zone> --tunnel-through-iap \
   --command 'sudo docker exec -i octogee-gateway bash -s' < desktop/acceptance/native-computer.sh
 ```
 
@@ -219,7 +224,7 @@ verifies only the observation routes; this script is the input acceptance.
 
 ## Control API
 
-Observation endpoints for gateway-edge and the PWA viewer. Agent input does not
+Observation endpoints for gateway-edge and the desktop viewer. Agent input does not
 pass through here: the `desktop-node` container (gateway image, OpenClaw
 `cua-computer` node host) runs inside this Wayland session and fulfils the
 agent's built-in `computer` tool.
@@ -279,7 +284,7 @@ The installed disk was converted to raw, patched while loop-mounted
 (`modules-load.d` for `vkms` + `vgem`, serial console on the kernel cmdline,
 `resume=` and quiet flags dropped), packaged as `disk.raw` in a tarball and
 registered with `gcloud compute images create --guest-os-features=UEFI_COMPATIBLE`
-as `omarchy-spike-v1` (family `omarchy-spike`) in the TEST project. It boots
+as `omarchy-spike-v1` (family `omarchy-spike`) in a test project. It boots
 Limine from the ESP fallback loader, gets DHCP from NetworkManager, and
 answers SSH about 6 s after `instances create` returns. `systemd-analyze`:
 2.0 s firmware + 12.5 s loader + 0.9 s kernel + 4.7 s userspace; the loader
@@ -299,16 +304,13 @@ Arch kernel Omarchy ships, and are absent from Debian's cloud and full
 kernels, which is why the container-on-Debian path stays closed. The Omarchy
 guest was installed unattended from the ISO with a `cidata` drive.
 
-The installed disk (`omarchy.qcow2`), OVMF vars, the QEMU driver script, the
-guest test script, logs and screenshots are preserved at
-the TEST project's `agent-computer-spike` bucket for the GCE image import. The
-reproducible build that replaced this manual path lives in
-[`image/`](image/README.md).
+The reproducible build that replaced this manual path lives in
+[`image/`](../image/README.md).
 
 The Apple Silicon row is under x86_64 emulation; the GCE row is native and is
 the number to plan with (a 4 CPU / 4 GiB container on an 8 vCPU host that was
 also running a QEMU install at the time). Input verified: click, `ctrl+l`, typed URL, Return changed
-the Chromium title from octogee.com to "Example Domain". A 150 ms settle before
+the Chromium title to "Example Domain". A 150 ms settle before
 the first key is required or the first keystroke after a focus change is lost
 (`KEYBOARD_SETTLE_MS` in the control API).
 
