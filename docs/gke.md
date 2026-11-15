@@ -233,16 +233,21 @@ curl -sS -H "authorization: Bearer $MM_TOKEN" -H 'content-type: application/json
   http://localhost:3001/api/projects
 ```
 
-The answer names the project's channel, `Garden Planner`
-(`lin-proj-garden-general`), and the repository is `lin/garden`. The project's
-agent joins the channel within about two minutes. Ask it there to write a
-file, for example `plan.md` with three vegetables to plant. The gateway saves
-the project to Gitea every 30 seconds. To check a save, forward Gitea and clone
-the repository with the username `ws-lin` and the git password:
+The project's channel is `Garden Planner` (`lin-proj-garden-general`), and
+the repository is `lin/garden`. The project's agent appears in the channel at
+once but starts listening about two minutes later, and it does not answer a
+message sent before then, so wait two minutes before you write to it. Ask it
+to write a file, for example `plan.md` with three vegetables to plant. The
+gateway saves the project to Gitea every 30 seconds. To check a save, forward
+Gitea:
 
 ```bash
 kubectl --kubeconfig="$STATE/kubeconfig" -n octogee port-forward svc/octogee-gitea-http 3000:3000
 ```
+
+Gitea refuses the issued git password until it is changed. Sign in once at
+<http://localhost:3000> as `ws-lin` with that password and set a new one, then
+clone the repository with the new password:
 
 ```bash
 git clone http://localhost:3000/lin/garden.git && git -C garden log --oneline
@@ -297,12 +302,12 @@ scripts/ops/gke-install.sh down
 
 This deletes the namespace, the cluster, the database, both buckets, the blob
 store service account and its keys, the network and its NAT, and the state
-directory. The data goes with them. Cloud SQL can hold the network's service
-networking connection for a while after the database is deleted. While Service
-Networking reports that the connection is still in use, `down` retries once a
-minute for ten minutes; any other error stops it at once with the gcloud error.
-If the connection is still held, `down` stops and keeps the state directory;
-run it again later, and it skips what is already gone.
+directory. The data goes with them. Cloud SQL can keep the network's service
+networking connection in use long after the database is deleted. When Service
+Networking reports that, `down` removes the network's own side of the peering
+and goes on to delete the address range, the router and the network; any other
+error stops it at once with the gcloud error. A stopped `down` keeps the state
+directory; run it again, and it skips what is already gone.
 If the project exists only for the
 platform, deleting the project removes everything at once:
 

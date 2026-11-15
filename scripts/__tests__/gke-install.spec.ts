@@ -184,22 +184,25 @@ esac`;
 
     const peeringDeletes = () => deletes().filter(call => call.includes("vpc-peerings delete"));
 
-    it("waits for a just-deleted Cloud SQL instance to release the service networking connection", () => {
-      const result = down({ PRESENT: "1", PEERING_REFUSALS: "3" });
+    const peeringRemovals = () => deletes().filter(call => call.includes(" compute networks peerings delete "));
+
+    it("removes the network's own peering when Cloud SQL keeps the service networking connection, then the network", () => {
+      const result = down({ PRESENT: "1", PEERING_REFUSALS: "99" });
       expect(result.status).toBe(0);
-      expect(result.stdout).toContain("Cloud SQL has not released the service networking connection yet");
-      expect(peeringDeletes()).toHaveLength(4);
-      expect(deletes().some(call => call.includes("networks delete"))).toBe(true);
+      expect(peeringDeletes()).toHaveLength(1);
+      expect(peeringRemovals()).toEqual([expect.stringContaining("compute networks peerings delete servicenetworking-googleapis-com --network=octogee")]);
+      expect(host.calls().some(call => /^sleep /.test(call))).toBe(false);
+      expect(deletes().map(call => call.replace(/^gcloud KUBECONFIG=unset --project \S+ --quiet /, "").split(" ").slice(0, 3).join(" ")).slice(-4)).toEqual([
+        "compute networks peerings", "compute addresses delete", "compute routers delete", "compute networks delete",
+      ]);
       expect(existsSync(join(state, PROJECT))).toBe(false);
     });
 
-    it("stops with a re-run hint when Cloud SQL keeps the connection, keeping the network and local secrets", () => {
-      const result = down({ PRESENT: "1", PEERING_REFUSALS: "99" });
+    it("stops with gcloud's error when the network's own peering cannot be removed, keeping the network and local secrets", () => {
+      const result = down({ PRESENT: "1", PEERING_REFUSALS: "99", FAIL_DELETE: "peerings" });
       expect(result.status).not.toBe(0);
-      expect(result.stderr).toContain("run down again later");
-      expect(peeringDeletes()).toHaveLength(11);
-      expect(host.calls().filter(call => call.startsWith("sleep ") && call.endsWith(" 60"))).toHaveLength(10);
-      expect(deletes().some(call => call.includes("networks delete"))).toBe(false);
+      expect(result.stderr).toContain("deletion refused");
+      expect(deletes().some(call => call.includes("networks delete octogee"))).toBe(false);
       expect(readFileSync(join(state, PROJECT, "secrets", "postgres-password"), "utf8")).toBe("kept");
     });
 
@@ -207,7 +210,7 @@ esac`;
       const result = down({ PRESENT: "1", PEERING_ERROR: "PERMISSION_DENIED: servicenetworking.services.deleteConnection" });
       expect(result.status).not.toBe(0);
       expect(result.stderr).toContain("PERMISSION_DENIED: servicenetworking.services.deleteConnection");
-      expect(result.stderr).not.toContain("Cloud SQL still holds");
+      expect(peeringRemovals()).toEqual([]);
       expect(peeringDeletes()).toHaveLength(1);
       expect(host.calls().some(call => /^sleep /.test(call))).toBe(false);
       expect(deletes().some(call => call.includes("networks delete"))).toBe(false);
