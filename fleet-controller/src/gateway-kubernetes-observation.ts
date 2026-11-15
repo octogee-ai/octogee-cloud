@@ -1,6 +1,6 @@
 import { createServiceLogger } from "@octogee/shared/server/service-logger";
 import { resolveGatewayRuntime } from "@octogee/shared/types/glm";
-import type { GatewayKubernetesObservation } from "@octogee/shared/types/gateway-releases";
+import type { GatewayKubernetesObservation, GatewayKubernetesStatus } from "@octogee/shared/types/gateway-releases";
 import {
   GATEWAY_POD_REPLACEMENT_SCHEMA,
   isGatewayPodPlacement,
@@ -23,8 +23,6 @@ function record(value: unknown): Record<string, unknown> | null {
     ? value as Record<string, unknown>
     : null;
 }
-
-export type GatewayKubernetesStatus = "ready" | "not-ready" | "missing" | "unknown";
 
 export interface GatewayPodDiagnostics {
   status: string;

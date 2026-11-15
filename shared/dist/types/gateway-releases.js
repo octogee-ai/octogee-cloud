@@ -110,6 +110,10 @@ function hasReleasePayloadIdentity(value) {
 export function isAssignmentState(value) {
     return value === "serving" || value === "quiescing" || value === "migrating";
 }
+export const GATEWAY_KUBERNETES_STATUSES = ["ready", "not-ready", "missing", "unknown"];
+export function isGatewayKubernetesStatus(value) {
+    return typeof value === "string" && GATEWAY_KUBERNETES_STATUSES.includes(value);
+}
 export function hasFreshReadyKubernetesObservation(runtime, nowMs, maxAgeMs) {
     const observation = runtime.kubernetes;
     return observation?.status === "ready" &&

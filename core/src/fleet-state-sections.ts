@@ -1,7 +1,7 @@
 import {
   isReleasePayload,
   releasePayloadHash,
-  type GatewayKubernetesObservation,
+  type GatewayKubernetesReading,
   type ReleasePayload,
 } from "@octogee/shared/types/gateway-releases";
 import type { OperationKind, OperationStatus } from "@octogee/shared/types/glm";
@@ -31,16 +31,6 @@ export const FLEET_STATE_SECTIONS_ERROR = `sections must be a comma-separated li
 
 const MIGRATE_USER: OperationKind = "migrate-user";
 const ACTIVE_MIGRATION_STATUSES = ["pending", "running"] as const satisfies readonly OperationStatus[];
-
-export interface GatewayKubernetesReading {
-  readonly kubernetes: {
-    readonly status: GatewayKubernetesObservation["status"];
-    readonly totalPods: number | null;
-    readonly readyPods: number | null;
-    readonly ageMs: number | null;
-  };
-  readonly kubernetesObservedAt: number | null;
-}
 
 export type GatewayKubernetesReader = (runtime: Stored<FleetRegistryRecord> | null, now: number) => GatewayKubernetesReading;
 

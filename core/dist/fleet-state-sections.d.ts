@@ -1,4 +1,4 @@
-import { type GatewayKubernetesObservation } from "@octogee/shared/types/gateway-releases";
+import { type GatewayKubernetesReading } from "@octogee/shared/types/gateway-releases";
 import type { OperationStatus } from "@octogee/shared/types/glm";
 import type { GatewayArtifact } from "./gateway-live-release.js";
 import type { FleetRegistryRecord } from "./platform-state/fleet-registry.js";
@@ -8,15 +8,6 @@ import type { PlatformStateStore, PlatformStateTransaction, Stored } from "./pla
 export declare const FLEET_STATE_SECTIONS: readonly ["config", "sharedPoolAutomation", "users", "gateways", "releases", "assignments", "runtimes", "operations", "migrations"];
 export type FleetStateSection = (typeof FLEET_STATE_SECTIONS)[number];
 export declare const FLEET_STATE_SECTIONS_ERROR: string;
-export interface GatewayKubernetesReading {
-    readonly kubernetes: {
-        readonly status: GatewayKubernetesObservation["status"];
-        readonly totalPods: number | null;
-        readonly readyPods: number | null;
-        readonly ageMs: number | null;
-    };
-    readonly kubernetesObservedAt: number | null;
-}
 export type GatewayKubernetesReader = (runtime: Stored<FleetRegistryRecord> | null, now: number) => GatewayKubernetesReading;
 export declare const UNKNOWN_GATEWAY_KUBERNETES: GatewayKubernetesReading;
 export declare function parseFleetStateSections(raw: unknown): FleetStateSection[] | null;
