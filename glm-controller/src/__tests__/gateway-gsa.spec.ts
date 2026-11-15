@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import {
   isolatedGatewayServiceAccountEmail,
   createGatewayServiceAccountTeardown,
+  gatewaysHaveGoogleServiceAccounts,
 } from "../lib/gateway-gsa";
 
 describe("isolatedGatewayServiceAccountEmail", () => {
@@ -60,5 +61,16 @@ describe("createGatewayServiceAccountTeardown — best-effort, idempotent", () =
       log: vi.fn(),
     });
     await expect(teardown("x")).rejects.toThrow(/permission denied/);
+  });
+});
+
+describe("gatewaysHaveGoogleServiceAccounts", () => {
+  it("is false on an install that binds gateways to no Workload Identity project, as kind, GKE and EKS installs do", () => {
+    expect(gatewaysHaveGoogleServiceAccounts("none")).toBe(false);
+    expect(gatewaysHaveGoogleServiceAccounts(" none ")).toBe(false);
+  });
+
+  it("is true where gateways bind a Workload Identity project", () => {
+    expect(gatewaysHaveGoogleServiceAccounts("octogee")).toBe(true);
   });
 });
