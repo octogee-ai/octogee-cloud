@@ -178,6 +178,39 @@ spec:
           annotations:
             summary: "The fleet controller has not completed a successful reconcile in >10m"
             description: "glm-controller reconcile success is stale. Gateway desired state may not be reaching Kubernetes; check glm-controller logs and /metrics."
+    - name: octogee.provisioning
+      rules:
+        - alert: ProvisioningWorkParked
+          expr: max by (namespace) (provisioning_work{namespace=~"__ENVIRONMENT_NAMESPACES__",state="parked"}) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $value }} provisionings are parked in {{ $labels.namespace }}"
+            description: "The provisioning service stopped retrying these users after a failure it will not retry on its own. List them with GET /v1/provisionings?workState=parked, read each user's events, fix the cause, then POST /v1/users/{uid}/provisioning/retry."
+        - alert: ProvisioningWorkOverdue
+          expr: max by (namespace) (provisioning_oldest_due_seconds{namespace=~"__ENVIRONMENT_NAMESPACES__"}) > 600
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Provisioning work in {{ $labels.namespace }} has waited over 10 minutes"
+            description: "The oldest due provisioning has not been picked up for over 10 minutes. Check that provisioning-service pods are ready, their PostgreSQL connection, and chat and git host latency in provisioning_host_call_seconds."
+        - alert: ProvisioningGenerationLag
+          expr: max by (namespace) (provisioning_generation_lag_seconds{namespace=~"__ENVIRONMENT_NAMESPACES__"}) > 900
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "A provisioning in {{ $labels.namespace }} has not reached its latest generation in 15 minutes"
+            description: "A user's provisioning spec changed over 15 minutes ago and the service has not observed it. New users may be stuck before their workspace exists. Check provisioning-service logs and parked or retrying work."
+        - alert: ProvisioningLeaseExpired
+          expr: sum by (namespace) (increase(provisioning_lease_expired_total{namespace=~"__ENVIRONMENT_NAMESPACES__"}[10m])) > 0
+          labels:
+            severity: warning
+          annotations:
+            summary: "A provisioning attempt lost its lease in {{ $labels.namespace }}"
+            description: "A provisioning-service worker held work past its lease, so another replica took it over. Look for a restarted or stalled provisioning-service pod and slow chat or git host calls."
     - name: octogee.mattermost
       rules:
         - alert: MattermostDown
