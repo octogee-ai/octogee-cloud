@@ -113,6 +113,7 @@ import { addAdminComputerRoutes } from "./admin-vm-router.js";
 import { addAdminUserRoutes, type UserAccounts, type UserSignInHosts } from "./admin-user-router.js";
 import { addAdminSharedPoolRoutes } from "./admin-shared-pool-router.js";
 import { addAdminPlacementRoutes, type AdminPlacementCapabilities } from "./admin-placement-router.js";
+import { addAdminPlacementIsolatedRoutes, type AdminIsolatedCapabilities } from "./admin-placement-isolated-router.js";
 import {
   GatewayRetirementConflictError,
   assertGatewayRuntimeMutationUnfencedInStore,
@@ -252,6 +253,7 @@ export interface FleetRouterDeps {
   userSignIn?: UserSignInHosts;
   discoverDeletionProductContext?: DeletionProductContextDiscovery;
   placement?: AdminPlacementCapabilities;
+  isolated?: AdminIsolatedCapabilities;
 }
 
 export type DeletionProductContextDiscovery = (uid: string) => Promise<OpaqueMap>;
@@ -4748,6 +4750,7 @@ export function addAdminFleetRoutes(
     journal: runAdminFleetMutation,
   });
   if (deps.placement) addAdminPlacementRoutes(router, { ...deps.placement, store, journal: runAdminFleetMutation });
+  if (deps.isolated) addAdminPlacementIsolatedRoutes(router, { store, journal: runAdminFleetMutation, accounts: deps.accounts, capabilities: deps.isolated, log: (message) => deps.logger.info(message) });
 
   async function handleActiveUserDeletion(input: {
     req: Request;

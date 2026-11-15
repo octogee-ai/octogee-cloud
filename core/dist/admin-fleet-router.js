@@ -22,6 +22,7 @@ import { addAdminComputerRoutes } from "./admin-vm-router.js";
 import { addAdminUserRoutes } from "./admin-user-router.js";
 import { addAdminSharedPoolRoutes } from "./admin-shared-pool-router.js";
 import { addAdminPlacementRoutes } from "./admin-placement-router.js";
+import { addAdminPlacementIsolatedRoutes } from "./admin-placement-isolated-router.js";
 import { GatewayRetirementConflictError, assertGatewayRuntimeMutationUnfencedInStore, isolatedRuntimeMutationFenced, claimGatewayRetirementInStore, } from "./gateway-retirement-claim.js";
 import { commitOperatorPlacement, planOperatorPlacement, SHARED_GATEWAY_MIRROR, } from "./operator-placement.js";
 import { appendGatewayRelease, asDurableGatewayRoot, InvalidGatewayRootError, StaleGatewayReleaseError, } from "./gateway-release-append.js";
@@ -3282,6 +3283,8 @@ export function addAdminFleetRoutes(router, deps) {
     });
     if (deps.placement)
         addAdminPlacementRoutes(router, { ...deps.placement, store, journal: runAdminFleetMutation });
+    if (deps.isolated)
+        addAdminPlacementIsolatedRoutes(router, { store, journal: runAdminFleetMutation, accounts: deps.accounts, capabilities: deps.isolated, log: (message) => deps.logger.info(message) });
     async function handleActiveUserDeletion(input) {
         const lifecycle = input.lifecycle;
         if (!userDeletionIsActive(lifecycle))

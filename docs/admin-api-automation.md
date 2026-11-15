@@ -177,6 +177,104 @@ existed: a root whose retirement changed after the checks answers `409` and
 stays, and a failed write answers `500` and leaves the root for the next
 call. The retirement and activation journals stay.
 
+## Isolated gateway lifecycle
+
+These routes move a user's activation lease and retire the user's isolated
+gateway. The caller decides when. The fleet controller re-reads the user and
+the gateway, checks the fence the caller states, and performs the write and
+any Kubernetes effect in one place.
+
+All of them are inert until placement automation belongs to the client. Each
+route first checks, read-only, that the placement automation owner is
+`client` and that the fleet controller has written its yield; otherwise it
+answers `409` with `"code": "placement-owner"` and writes nothing, dry runs
+included. The same check runs again inside the write transaction, so a
+change of owner between the two still refuses. The fleet controller's own
+placement policy runs the same functions with the opposite check: it acts
+while it owns placement, and while the client owns it with no yield written
+yet, and stops once the yield is written.
+
+Every route takes `dryRun` and `Idempotency-Key` as the contract describes,
+and journals under the caller. A route whose fence no longer holds answers
+`409` with `"code": "precondition-failed"` and a `reason`, writes nothing
+but the refused journal entry, and the caller reads the user again. A
+malformed body answers `400`. Repeating a call whose effect already applied
+answers `200` with the same body where the route says so.
+
+The lease routes take `leaseId` and `generation`, the lease the caller read.
+
+### `POST /users/<id>/activation-lease/advance`
+
+```json
+{ "leaseId": "lease-1", "generation": 3, "fromStatus": "activating", "toStatus": "active" }
+```
+
+Moves the lease one step: `provisioning` to `activating`, `activating` to
+`active`, or `active` to `returning`. `operationId`, the activation or return
+operation, is required except to reach `active`. Reaching `active` records
+the wake duration once. Answers `{uid, leaseId, generation, status}`; a
+lease already at `toStatus` for the same operation answers the same.
+`precondition-failed` means the lease is another lease, another generation,
+or at neither status.
+
+### `POST /users/<id>/activation-lease/complete`
+
+`{leaseId, generation, targetGatewayId, parked?}`. Closes a `returning` lease
+once the user's record points away from `targetGatewayId`, and writes the
+user's return receipt. `parked: true` says the gateway is kept for the next
+activation, so the receipt names no retirement operation; otherwise it names
+the placement retirement the caller starts with `retire-owned`. With demand
+pending on the lease, and the user still entitled and on a serving shared
+assignment, the next lease is a `requested` lease of the next generation;
+otherwise the lease becomes `parked`, with a code saying why when demand was
+dropped. Answers the lease now stored,
+`{uid, lease: {leaseId, generation, status}}`. `precondition-failed` means
+the lease is not that returning lease, or the user has not returned.
+
+### `POST /users/<id>/activation-lease/fail`
+
+`{leaseId, generation, targetGatewayId, operationId, message}`. Marks the
+lease `failed` after its activation operation failed, recording `message`.
+Answers `{uid, leaseId, generation, status: "failed"}`, also when the lease is
+already failed.
+
+### `POST /users/<id>/activation-lease/sizing-transition`
+
+`{leaseId, generation, targetGatewayId, sizingKey}`. For an `active` lease on
+`targetGatewayId`, records a return request on the lease (reason
+`tier-change`) so the user's next activation uses the sizing profile of
+`sizingKey`. The fleet controller reads the user's sizing key itself;
+`sizingKey` is the new key the caller saw. Answers
+`{uid, leaseId, generation, returnRequested: true}`. The lease stays `active`
+with the request on it until the caller returns the user by advancing it to
+`returning`. `precondition-failed` means the lease changed, the user is no
+longer on that gateway or no longer has interactive access, the user's
+current key differs from `sizingKey`, or that key's profile is not isolated.
+
+### `POST /isolated-gateways/<gateway>/retire-owned`
+
+```json
+{ "ownerUid": "uid-alice", "generation": 3, "reason": "builder-returned" }
+```
+
+Retires an isolated gateway owned by `ownerUid` at allocation `generation`.
+`reason` is one of `provisioning-timeout`, `provisioning-target-paused`,
+`builder-authorization-ended`, `activation-failed`, `builder-returned`,
+`operator-terminated`, `parked-computer-replaced` or `owned-gateway-not-kept`.
+Optional fences: `leaseId`; `telemetryFenceOperationId` with
+`telemetryFenceStatus` (`succeeded` or `terminal-failure`);
+`authoritativeGatewayId` with `authoritativeLeaseStatus` (`provisioning`,
+`activating` or `returning`); `zeroWorkloadRecoveryOperationId`.
+
+It claims the retirement and writes the placement retirement operation in one
+transaction, and answers `{gatewayId, operationId, retired: true}`. The
+operation runner then drains and deletes the gateway; while it runs, the
+gateway reads as `retired` with that retirement claim, and
+`GET /isolated-gateways/retired` shows its progress. `precondition-failed`
+means the gateway is not owned by `ownerUid`, is already retired, is another
+generation, a stated fence no longer matches, or a pending telemetry
+operation or another retirement claim blocks it; the `reason` says which.
+
 ## `PATCH /users/<id>/placement`
 
 `{"managedBy": "cowboy", "expectedGatewayId": "<gateway>"}` releases an

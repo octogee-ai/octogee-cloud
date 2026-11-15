@@ -10,6 +10,7 @@ import { type SizingTier } from "@octogee/shared/types/sizing";
 import { type GatewayPricingMode } from "@octogee/shared/types/cost-estimator";
 import { type UserAccounts, type UserSignInHosts } from "./admin-user-router.js";
 import { type AdminPlacementCapabilities } from "./admin-placement-router.js";
+import { type AdminIsolatedCapabilities } from "./admin-placement-isolated-router.js";
 import { type DurableGatewayRoot } from "./gateway-release-append.js";
 import { type NormalFleetMutationResult } from "./normal-fleet-mutation.js";
 import { type OperationAuditActionClaim } from "./operation-audit.js";
@@ -80,6 +81,7 @@ export interface FleetRouterDeps {
     userSignIn?: UserSignInHosts;
     discoverDeletionProductContext?: DeletionProductContextDiscovery;
     placement?: AdminPlacementCapabilities;
+    isolated?: AdminIsolatedCapabilities;
 }
 export type DeletionProductContextDiscovery = (uid: string) => Promise<OpaqueMap>;
 export type ActorRequest = Request & {
