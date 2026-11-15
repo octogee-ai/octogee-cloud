@@ -1,0 +1,376 @@
+import { GATEWAY_UNREACHABLE_AFTER_MS } from "@octogee/shared/types/fleet-controller";
+import { FleetStatePreconditionError, commitRecoveredDisposableRuntimeResetInTransaction, commitUnavailableGatewayRecoveryInTransaction, } from "./fleet-state.js";
+import { isUserActivateOperationIdFor, isUserReturnOperationIdFor } from "./isolated-operation-ids.js";
+import { FleetMutationRefusedError } from "./normal-fleet-mutation.js";
+import { assertClientOwnsPlacementAutomation, placementOwnerRefusalBody } from "./placement-automation-owner.js";
+import { CONTINUOUS_PLACEMENT_SOURCE, PLACEMENT_MIGRATION_KIND, PLACEMENT_MIGRATION_SOURCES, continuousPlacementMigrationOperationId, enqueuePlacementMigrationInTransaction, isPlacementMigrationRefusal, supersedePendingSharedDrainMoveInTransaction, } from "./placement-migrations.js";
+import { FenceMismatchError } from "./platform-state/errors.js";
+import { readSharedGatewayPoolConfigInStore } from "./shared-gateway-pool-read.js";
+import { appendSharedRollRecoveryInTransaction } from "./shared-gateway-roll-recovery.js";
+class PreconditionFailed extends Error {
+}
+class ObservationUnknown extends Error {
+}
+class Rehearsed extends Error {
+}
+function refusalBody(error) {
+    if (error instanceof FleetMutationRefusedError)
+        return refusalBody(error.refusal);
+    const owner = placementOwnerRefusalBody(error);
+    if (owner !== null)
+        return owner;
+    if (error instanceof ObservationUnknown)
+        return { code: "observation-unknown", error: error.message };
+    if (error instanceof PreconditionFailed ||
+        error instanceof FenceMismatchError ||
+        error instanceof FleetStatePreconditionError ||
+        isPlacementMigrationRefusal(error)) {
+        return { code: "precondition-failed", error: error.message };
+    }
+    return null;
+}
+function refusalsBelowError(journal) {
+    return (input) => journal({
+        ...input,
+        action: async (claim) => {
+            try {
+                return await input.action(claim);
+            }
+            catch (error) {
+                if (error instanceof Error && refusalBody(error) !== null)
+                    throw new FleetMutationRefusedError(error);
+                throw error;
+            }
+        },
+    });
+}
+async function settle(res, run) {
+    try {
+        res.json(await run());
+    }
+    catch (error) {
+        const body = refusalBody(error);
+        if (body === null)
+            throw error;
+        res.status(409).json(body);
+    }
+}
+function bodyOf(req) {
+    const body = req.body;
+    return body !== null && typeof body === "object" && !Array.isArray(body) ? body : {};
+}
+function text(body, field) {
+    const value = body[field];
+    if (typeof value !== "string" || value === "")
+        throw new BadRequest(`${field} is required`);
+    return value;
+}
+function count(body, field, minimum) {
+    const value = body[field];
+    if (typeof value !== "number" || !Number.isSafeInteger(value) || value < minimum) {
+        throw new BadRequest(`${field} must be an integer of at least ${minimum}`);
+    }
+    return value;
+}
+class BadRequest extends Error {
+}
+async function targetUsersBlocker(transaction, targetGatewayId, uid, atMost) {
+    const [assignments, active] = await Promise.all([
+        transaction.gateways.assignments.list(targetGatewayId),
+        transaction.journal.operations.listByStatus(["pending", "running"]),
+    ]);
+    const users = new Set(assignments.map((assignment) => assignment.uid));
+    for (const operation of active) {
+        const inbound = operation.kind === PLACEMENT_MIGRATION_KIND && operation.input.toGatewayId === targetGatewayId;
+        if (inbound && typeof operation.input.uid === "string")
+            users.add(operation.input.uid);
+    }
+    users.delete(uid);
+    return users.size > atMost
+        ? `target ${targetGatewayId} has ${users.size} other users assigned or arriving, expected at most ${atMost}`
+        : null;
+}
+async function assertTargetUsersAtMost(transaction, targetGatewayId, uid, atMost) {
+    const blocker = await targetUsersBlocker(transaction, targetGatewayId, uid, atMost);
+    if (blocker !== null)
+        throw new PreconditionFailed(blocker);
+}
+async function sharedGatewayIdsIn(transaction) {
+    const pool = await readSharedGatewayPoolConfigInStore(transaction);
+    if (pool === null)
+        throw new PreconditionFailed("the shared gateway pool is not configured");
+    return [...pool.sharedGatewayIds];
+}
+function ownedTransaction(store, verb, now) {
+    return store.transaction({ label: verb.label }, async (transaction) => {
+        await assertClientOwnsPlacementAutomation(transaction);
+        return verb.apply(transaction, now);
+    });
+}
+async function rehearse(store, verb, now) {
+    try {
+        await ownedTransaction(store, { label: `${verb.label}.dry-run`, apply: async (transaction, at) => {
+                await verb.apply(transaction, at);
+                throw new Rehearsed("dry run rolls back");
+            } }, now);
+    }
+    catch (error) {
+        if (error instanceof Rehearsed)
+            return null;
+        throw error;
+    }
+    throw new Error(`${verb.label} dry run committed`);
+}
+function recoverSharedUserIntent(req) {
+    const body = bodyOf(req);
+    const fromGatewayId = req.params.id;
+    const uid = req.params.uid;
+    const slug = text(body, "slug");
+    const toGatewayId = text(body, "toGatewayId");
+    const expectedSourceEpoch = count(body, "expectedSourceEpoch", 0);
+    const expectedTargetUsersAtMost = count(body, "expectedTargetUsersAtMost", 0);
+    if (toGatewayId === fromGatewayId)
+        throw new BadRequest("toGatewayId must differ from the source gateway");
+    const operationId = `recover-shared-${uid}-${fromGatewayId}-${expectedSourceEpoch}`;
+    return {
+        what: "recover user from unavailable shared gateway",
+        why: "the shared gateway is unavailable",
+        target: { gatewayId: fromGatewayId, uid },
+        preActionStatus: { expectedSourceEpoch, toGatewayId, expectedTargetUsersAtMost },
+        mutation: { kind: "recover-shared-user", operationId, uid, fromGatewayId, toGatewayId, expectedSourceEpoch, expectedTargetUsersAtMost },
+        verb: async () => ({
+            label: "admin.placement.recover-shared-user",
+            apply: async (transaction, now) => {
+                const sharedGatewayIds = await sharedGatewayIdsIn(transaction);
+                await assertTargetUsersAtMost(transaction, toGatewayId, uid, expectedTargetUsersAtMost);
+                const outcome = await commitUnavailableGatewayRecoveryInTransaction(transaction, {
+                    operationId,
+                    kind: "recover-shared-customer",
+                    uid,
+                    slug,
+                    fromGatewayId,
+                    toGatewayId,
+                    expectedSourceEpoch,
+                    sharedGatewayIds,
+                    targetHeartbeatMaxAgeMs: GATEWAY_UNREACHABLE_AFTER_MS,
+                    validateTarget: async ({ targetGatewayId }) => {
+                        if (!sharedGatewayIds.includes(targetGatewayId)) {
+                            throw new PreconditionFailed(`target ${targetGatewayId} is not in the shared gateway pool`);
+                        }
+                    },
+                }, now);
+                return { operationId, outcome };
+            },
+        }),
+    };
+}
+function resetRecoveredRuntimeIntent(req) {
+    const body = bodyOf(req);
+    const uid = req.params.uid;
+    const slug = text(body, "slug");
+    const targetGatewayId = text(body, "targetGatewayId");
+    const previousRecoveryOperationId = text(body, "previousRecoveryOperationId");
+    const expectedAssignmentEpoch = count(body, "expectedAssignmentEpoch", 1);
+    const operationId = `recover-disposable-reset-${uid}-${targetGatewayId}-${expectedAssignmentEpoch}`;
+    return {
+        what: "reset recovered isolated runtime",
+        why: "the user was recovered onto a shared gateway from an isolated gateway",
+        target: { gatewayId: targetGatewayId, uid },
+        preActionStatus: { expectedAssignmentEpoch, previousRecoveryOperationId },
+        mutation: { kind: "reset-recovered-runtime", operationId, uid, targetGatewayId, expectedAssignmentEpoch, previousRecoveryOperationId },
+        verb: async () => ({
+            label: "admin.placement.reset-recovered-runtime",
+            apply: async (transaction, now) => {
+                const sharedGatewayIds = await sharedGatewayIdsIn(transaction);
+                if (!sharedGatewayIds.includes(targetGatewayId)) {
+                    throw new PreconditionFailed(`target ${targetGatewayId} is not in the shared gateway pool`);
+                }
+                const outcome = await commitRecoveredDisposableRuntimeResetInTransaction(transaction, {
+                    operationId,
+                    previousRecoveryOperationId,
+                    uid,
+                    slug,
+                    targetGatewayId,
+                    expectedAssignmentEpoch,
+                    sharedGatewayIds,
+                    targetHeartbeatMaxAgeMs: GATEWAY_UNREACHABLE_AFTER_MS,
+                }, now);
+                return { operationId, outcome };
+            },
+        }),
+    };
+}
+function supersedeRollingSharedGatewayIntent(req, deps) {
+    const body = bodyOf(req);
+    const input = {
+        sourceGatewayId: req.params.id,
+        targetGatewayId: text(body, "targetGatewayId"),
+        expectedLiveRelease: count(body, "expectedLiveRelease", 1),
+        expectedDesiredRelease: count(body, "expectedDesiredRelease", 1),
+    };
+    if (input.targetGatewayId === input.sourceGatewayId)
+        throw new BadRequest("targetGatewayId must differ from the source gateway");
+    return {
+        what: "supersede rolling shared gateway",
+        why: "shared gateway recovery",
+        target: { gatewayId: input.targetGatewayId },
+        preActionStatus: {
+            sourceGatewayId: input.sourceGatewayId,
+            expectedLiveRelease: input.expectedLiveRelease,
+            expectedDesiredRelease: input.expectedDesiredRelease,
+        },
+        mutation: { kind: "supersede-rolling-shared-gateway", ...input },
+        verb: async () => {
+            const sourceKubernetes = await deps.observeGatewayKubernetes(input.sourceGatewayId);
+            if (sourceKubernetes === null || sourceKubernetes.status === "unknown") {
+                throw new ObservationUnknown(`the Kubernetes status of ${input.sourceGatewayId} is unknown`);
+            }
+            return {
+                label: "admin.placement.supersede-rolling-shared-gateway",
+                apply: async (transaction, now) => {
+                    const result = await appendSharedRollRecoveryInTransaction(transaction, input, { now, sourceKubernetes });
+                    if (result.kind === "not-eligible")
+                        throw new PreconditionFailed(result.reason);
+                    return { ...result, sourceKubernetesStatus: sourceKubernetes.status };
+                },
+            };
+        },
+    };
+}
+function enqueuePlacementMigrationIntent(req, deps) {
+    const body = bodyOf(req);
+    const source = body.source;
+    if (!PLACEMENT_MIGRATION_SOURCES.includes(source)) {
+        throw new BadRequest(`source must be one of ${PLACEMENT_MIGRATION_SOURCES.join(", ")}`);
+    }
+    const request = {
+        uid: req.params.uid,
+        builderSlug: text(body, "slug"),
+        fromGatewayId: text(body, "fromGatewayId"),
+        toGatewayId: text(body, "toGatewayId"),
+        source: source,
+        operationId: text(body, "operationId"),
+    };
+    if (request.fromGatewayId === request.toGatewayId)
+        throw new BadRequest("toGatewayId must differ from fromGatewayId");
+    const drain = body.sharedDrain;
+    if (drain !== undefined) {
+        const paired = drain !== null && typeof drain === "object" ? drain.pairedTargetGatewayId : undefined;
+        if (request.source !== CONTINUOUS_PLACEMENT_SOURCE || (paired !== null && (typeof paired !== "string" || paired === ""))) {
+            throw new BadRequest("sharedDrain must be { pairedTargetGatewayId: string | null } on a continuous placement");
+        }
+        request.sharedDrain = { pairedTargetGatewayId: paired };
+    }
+    if (request.source !== CONTINUOUS_PLACEMENT_SOURCE &&
+        !isUserActivateOperationIdFor(request.operationId, request.toGatewayId) &&
+        !isUserReturnOperationIdFor(request.operationId, request.fromGatewayId)) {
+        throw new BadRequest("an activation lease migration must use its activation or return operation id");
+    }
+    const expectedTargetUsersAtMost = count(body, "expectedTargetUsersAtMost", 0);
+    return {
+        what: "enqueue placement migration",
+        why: request.sharedDrain ? "the source shared gateway is draining" : `placement automation (${request.source})`,
+        target: { gatewayId: request.toGatewayId, uid: request.uid },
+        preActionStatus: { fromGatewayId: request.fromGatewayId, expectedTargetUsersAtMost },
+        mutation: { kind: "enqueue-placement-migration", ...request, expectedTargetUsersAtMost },
+        verb: async () => ({
+            label: "admin.placement.enqueue-migration",
+            apply: async (transaction, now) => {
+                await assertTargetUsersAtMost(transaction, request.toGatewayId, request.uid, expectedTargetUsersAtMost);
+                if (request.source === CONTINUOUS_PLACEMENT_SOURCE && await transaction.journal.operations.get(request.operationId) === null) {
+                    const assignment = await transaction.gateways.assignments.get(request.fromGatewayId, request.uid);
+                    const expected = assignment === null ? null : continuousPlacementMigrationOperationId({ ...request, sourceAssignmentEpoch: assignment.epoch });
+                    if (expected !== request.operationId) {
+                        throw new PreconditionFailed(`operation ${request.operationId} does not match the user's current assignment on ${request.fromGatewayId}`);
+                    }
+                }
+                const outcome = await enqueuePlacementMigrationInTransaction(transaction, {
+                    now,
+                    platformArtifact: deps.platformArtifact,
+                    operationFailureIsTransient: deps.operationFailureIsTransient,
+                    gatewayStartupUnavailable: deps.gatewayStartupUnavailable,
+                    sourceRecoveryForwardRetryable: deps.sourceRecoveryForwardRetryable,
+                }, request);
+                return { operationId: request.operationId, outcome };
+            },
+        }),
+    };
+}
+function supersedeSharedDrainMoveIntent(req, deps) {
+    const body = bodyOf(req);
+    const request = {
+        operationId: req.params.operationId,
+        uid: text(body, "uid"),
+        builderSlug: text(body, "slug"),
+        fromGatewayId: text(body, "fromGatewayId"),
+        toGatewayId: text(body, "toGatewayId"),
+        leaseId: text(body, "leaseId"),
+        generation: count(body, "generation", 1),
+        targetGatewayId: text(body, "targetGatewayId"),
+        activationOperationId: text(body, "activationOperationId"),
+    };
+    return {
+        what: "supersede pending shared drain move",
+        why: `activation lease ${request.leaseId} generation ${request.generation} moves the user to ${request.targetGatewayId}`,
+        target: { gatewayId: request.fromGatewayId, uid: request.uid },
+        preActionStatus: { status: "pending", leaseId: request.leaseId, generation: request.generation },
+        mutation: { kind: "supersede-shared-drain-move", ...request },
+        verb: async () => ({
+            label: "admin.placement.supersede-shared-drain-move",
+            apply: async (transaction, now) => {
+                const outcome = await supersedePendingSharedDrainMoveInTransaction(transaction, {
+                    now,
+                    operationJournalRetentionMs: deps.operationJournalRetentionMs,
+                }, request);
+                if (outcome.kind === "refused")
+                    throw new PreconditionFailed(outcome.reason);
+                return { operationId: request.operationId, outcome: outcome.kind };
+            },
+        }),
+    };
+}
+function mountVerb(router, deps, path, intent) {
+    const journal = refusalsBelowError(deps.journal);
+    const clock = deps.now ?? Date.now;
+    router.post(path, async (req, res, next) => {
+        try {
+            let parsed;
+            try {
+                parsed = intent(req, deps);
+            }
+            catch (error) {
+                if (!(error instanceof BadRequest))
+                    throw error;
+                res.status(400).json({ error: error.message });
+                return;
+            }
+            const prepared = async () => ({ verb: await parsed.verb(), now: clock() });
+            await settle(res, () => journal({
+                req,
+                what: parsed.what,
+                why: parsed.why,
+                target: parsed.target,
+                preActionStatus: parsed.preActionStatus,
+                mutation: parsed.mutation,
+                dryRunRefusal: async () => {
+                    const { verb, now } = await prepared();
+                    return rehearse(deps.store, verb, now);
+                },
+                action: async () => {
+                    const { verb, now } = await prepared();
+                    return ownedTransaction(deps.store, verb, now);
+                },
+            }));
+        }
+        catch (error) {
+            next(error);
+        }
+    });
+}
+export function addAdminPlacementSharedRoutes(router, deps) {
+    mountVerb(router, deps, "/shared-gateways/:id/users/:uid/recover", recoverSharedUserIntent);
+    mountVerb(router, deps, "/users/:uid/runtime-reset", resetRecoveredRuntimeIntent);
+    mountVerb(router, deps, "/shared-gateways/:id/roll-recovery", supersedeRollingSharedGatewayIntent);
+    mountVerb(router, deps, "/users/:uid/placement-migrations", enqueuePlacementMigrationIntent);
+    mountVerb(router, deps, "/placement-migrations/:operationId/supersede", supersedeSharedDrainMoveIntent);
+}

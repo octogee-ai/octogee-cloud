@@ -168,14 +168,180 @@ longer points at the gateway, and that the operation failed retryably.
 
 ### `POST /isolated-gateways/<gateway>/delete-retired`
 
-Same body. After the same checks, with the retirement `succeeded` and no
-unreleased scheduler handoff, it clears a failed activation preparation of
+Same body. After the same checks, with the retirement `succeeded`, no
+unreleased scheduler handoff, and no user holding a `requested`,
+`provisioning`, `activating`, `active` or `returning` activation lease on the
+gateway, it clears a failed activation preparation of
 that generation from the owner, deletes the gateway's recovery operation and
 receipt, and deletes the root with its releases, fenced on the
 `retirementVersion` it read. These are separate writes, as before the verb
 existed: a root whose retirement changed after the checks answers `409` and
 stays, and a failed write answers `500` and leaves the root for the next
 call. The retirement and activation journals stay.
+
+## Placement automation
+
+These verbs carry out the placement steps for users who already have an
+assignment, and the shared pool steps. The client decides which step to take
+and when. Each verb checks its facts again inside the transaction that writes
+it, and uses the operation id and `createdBy` that the fleet controller's own
+pass uses. A repeat, whether from the client or from the fleet controller's
+pass, is therefore answered with `already-committed`, `already-enqueued`,
+`already-scheduled` or `already-superseded` and writes nothing new.
+
+### Who may act
+
+The orchestrator config holds `placementAutomationOwner`. It is
+`fleet-controller` by default, or `client`. It also holds
+`placementAutomationYieldedAt`, which the fleet controller writes when it sees
+`client` and stops its own pass. Every verb below checks both fields in its
+write transaction. Unless the owner is `client` and the yield is written, the
+verb answers `409 {"code": "placement-owner"}` and writes nothing. Until the
+switch is flipped, every verb answers this way. The client keeps reading
+`/fleet/state` and acts only after it sees the yield. A yield can only be
+stored while the owner is `client`, so handing placement back to the fleet
+controller clears the yield in the same write.
+
+### What a 409 means
+
+| `code` | Meaning | What the client does |
+|---|---|---|
+| `placement-owner` | The client does not own placement, or the fleet controller has not yielded. | It does not act. It reads the switch and the yield again on its next tick. |
+| `precondition-failed` | A fact the client acted on has changed, such as an epoch, a release, the pool, a lease or the target's load. `error` names it. | It logs the refusal and decides again from a fresh read on its next tick. It never retries within the same tick. |
+| `observation-unknown` | The fleet controller could not read the gateway's Kubernetes status. Nothing changed. | It tries again on a later tick. |
+
+A `409` that carries `auditId` and no `code` is an `Idempotency-Key` replay. It
+answers with the audit of the earlier call instead of acting twice. With
+`?dryRun=true`, a verb runs its whole transaction and then rolls it back. It
+answers with the plan, or with the same `409` the real call would give.
+
+### Target load
+
+`expectedTargetUsersAtMost` is the client's own cap for the target gateway; the
+platform holds no capacity number. The verb counts the distinct users on the
+target other than the user being moved. A user counts if they have an
+assignment on the target or a pending or running `migrate-user` operation
+toward it. The verb answers `precondition-failed` when that count exceeds the
+cap. To leave room for the user being moved, a client with a cap of `N` sends
+`N - 1`.
+
+### `POST /shared-gateways/<source>/users/<uid>/recover`
+
+```json
+{ "slug": "alice", "toGatewayId": "shared-b", "expectedSourceEpoch": 3, "expectedTargetUsersAtMost": 9 }
+```
+
+Recovers a user off an unavailable shared gateway onto a peer, keeping the
+user's home. Operation `recover-shared-<uid>-<source>-<epoch>`. In one
+transaction, the verb checks that:
+
+- the source assignment is serving at `expectedSourceEpoch`;
+- the target is in the shared pool, running its live release, serving, ready,
+  and has a fresh heartbeat and a fresh ready Kubernetes observation;
+- the target load is within the cap;
+- the user has no unresolved restore or source transfer;
+- a draining source is confirmed missing and its pending moves are unclaimed.
+
+It then moves the assignment to the target at epoch `+1` and records a
+succeeded `migrate-user` operation. Answers
+`{"operationId", "outcome": "committed" | "already-committed"}`.
+
+### `POST /users/<uid>/runtime-reset`
+
+```json
+{ "slug": "alice", "targetGatewayId": "shared-b", "expectedAssignmentEpoch": 4, "previousRecoveryOperationId": "recover-disposable-..." }
+```
+
+Resets the runtime of a user who was recovered from an isolated gateway onto a
+shared gateway. Operation
+`recover-disposable-reset-<uid>-<target>-<epoch>`. The verb checks that:
+
+- the previous recovery operation is the succeeded isolated recovery that left
+  this assignment;
+- the assignment is a serving repair at `expectedAssignmentEpoch`;
+- no reset is pending;
+- the target is in the pool and freshly serving, and does not mount the user.
+
+It then writes the pending reset marker on the user and bumps the assignment
+epoch. Answers `{"operationId", "outcome"}`.
+
+### `POST /shared-gateways/<source>/roll-recovery`
+
+```json
+{ "targetGatewayId": "shared-b", "expectedLiveRelease": 1, "expectedDesiredRelease": 2 }
+```
+
+Supersedes the roll of a shared peer when the roll has no live target and its
+source gateway is gone. The fleet controller reads the source's Kubernetes
+status itself, right before the transaction. The client's own view only tells
+it when to ask. An unknown status answers `observation-unknown`. In the
+transaction, the verb checks that:
+
+- the source and the target are running shared pool members;
+- the target's live, desired and latest releases match;
+- the target serves its live release and every assignment on it;
+- no migration involves the target;
+- the source's status is `missing` and fresh.
+
+It then appends a release that copies the live one and creates a `rollout`
+operation, `recover-shared-roll-<source>-to-<target>-r<desired>-to-r<live>`.
+Answers `{"kind": "scheduled" | "already-scheduled", "release", "operationId", "sourceKubernetesStatus"}`.
+
+### `POST /users/<uid>/placement-migrations`
+
+```json
+{
+  "slug": "alice", "fromGatewayId": "shared-a", "toGatewayId": "shared-b",
+  "source": "continuous-placement-policy", "operationId": "placement-<digest>",
+  "sharedDrain": { "pairedTargetGatewayId": null }, "expectedTargetUsersAtMost": 9
+}
+```
+
+Enqueues a `migrate-user` operation, which the operation runner drives. There
+are three cases:
+
+- **Placement:** `source: "continuous-placement-policy"` without `sharedDrain`.
+- **Drain:** `continuous-placement-policy` with `sharedDrain`.
+- **Activation or return:** `source: "builder-activation-lease"`. Its
+  `operationId` must be the activation operation of `toGatewayId` or the
+  return operation of `fromGatewayId`, or the verb answers `400`.
+
+A new continuous operation's id must be the digest of the user, slug, source,
+target and the user's current source assignment epoch. Any other id answers
+`precondition-failed`. The verb also checks, in the same transaction, that:
+
+- the target load is within the cap;
+- no operator holds the user;
+- for a drain, the source is still draining and its replacement pairing is
+  unchanged.
+
+When the operation exists, the verb does one of three things:
+
+- A pending, running or succeeded operation is left as it is.
+- A failed operation is re-armed only in the cases the fleet controller's pass
+  re-arms: a transient rollback, a pre-RPC authority failure, a completed
+  source-only rollback, a repaired source, a startup or revision-not-ready
+  return, an operator retry, or a drain move superseded by an activation.
+- Any other ending answers `precondition-failed`.
+
+Answers `{"operationId", "outcome": "created" | "rearmed" | "already-enqueued"}`.
+
+### `POST /placement-migrations/<operation>/supersede`
+
+```json
+{
+  "uid": "uid-alice", "slug": "alice", "fromGatewayId": "shared-a", "toGatewayId": "shared-b",
+  "leaseId": "lease-one", "generation": 1, "targetGatewayId": "alice-xs-1", "activationOperationId": "builder-activate-alice-xs-1-g1"
+}
+```
+
+Fails a pending drain move that the operation runner never claimed, so that
+the user's activation can proceed in its place. The verb checks that the
+operation is that never-claimed move, that the user still holds the
+`provisioning` lease of that id and generation toward `targetGatewayId`, and
+that the source is still draining. It marks the move failed and
+`supersededBy` the activation. Answers
+`{"operationId", "outcome": "superseded" | "already-superseded"}`.
 
 ## `PATCH /users/<id>/placement`
 

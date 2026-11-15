@@ -12,6 +12,9 @@ export interface FleetStateDeps {
 export interface CutoverDeps extends FleetStateDeps {
     readSizingKey: SizingKeyReader;
 }
+export declare class FleetStatePreconditionError extends Error {
+    constructor(message: string);
+}
 export declare function setWorkspaceMigrationPhase(deps: FleetStateDeps, params: {
     uid: string;
     sourceGatewayId: string;
@@ -128,6 +131,7 @@ export interface UnavailableGatewayRecoveryTargetValidationContext {
 export declare function commitUnavailableGatewayRecoveryAtomic(deps: FleetStateDeps, params: UnavailableGatewayRecoveryParams): Promise<{
     operationId: string;
 }>;
+export declare function commitUnavailableGatewayRecoveryInTransaction(tx: PlatformStateTransaction, params: UnavailableGatewayRecoveryParams, now: number): Promise<"committed" | "already-committed">;
 export interface RecoveredDisposableRuntimeResetParams {
     operationId: string;
     previousRecoveryOperationId: string;
@@ -141,6 +145,7 @@ export interface RecoveredDisposableRuntimeResetParams {
 export declare function commitRecoveredDisposableRuntimeResetAtomic(deps: FleetStateDeps, params: RecoveredDisposableRuntimeResetParams): Promise<{
     operationId: string;
 }>;
+export declare function commitRecoveredDisposableRuntimeResetInTransaction(tx: PlatformStateTransaction, params: RecoveredDisposableRuntimeResetParams, now: number): Promise<"committed" | "already-committed">;
 export interface MarkAssignmentStateParams {
     gatewayId: string;
     uid: string;
