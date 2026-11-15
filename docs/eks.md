@@ -181,9 +181,11 @@ state in `~/.local/state/octogee-eks/<account>-<region>`: the kubeconfig, the
 eksctl configuration, the generated secrets and the image digests. Set
 `OCTOGEE_EKS_STATE` to keep it elsewhere.
 
-The network policy that lets the project runner reach the Kubernetes API names
-the API server's addresses. EKS can change them when it upgrades the control
-plane; run `up` again after an upgrade.
+The network policy that lets gateways and the project runner reach the
+Kubernetes API names the API server's addresses and the address of the
+`kubernetes` service, because the VPC CNI applies policies before a service
+address is translated. EKS can change the API server's addresses when it
+upgrades the control plane; run `up` again after an upgrade.
 
 | Setting | Default | Effect |
 | --- | --- | --- |

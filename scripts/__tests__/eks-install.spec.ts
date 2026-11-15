@@ -57,6 +57,7 @@ const KUBECTL = `case " $* " in
   *" run sandbox-check-"*) [ -z "\${SANDBOX_STUCK:-}" ] || exit 1; echo "\${SANDBOX_DMESG-[    0.000000] Starting gVisor...}" ;;
   *" get events "*"involvedObject.name=sandbox-check-"*) printf '%s\\n' 'Failed to create pod sandbox: no runtime for "runsc" is configured' ;;
   *" get endpointslice "*) echo 192.168.10.20; echo 192.168.30.40 ;;
+  *" get service kubernetes "*) printf 10.100.0.1 ;;
   *"%{http_code}"*) echo 200 ;;
   *"jsonpath={.data."*) printf 'c3R1Yg==' ;;
   *" team search "*) echo '"name": "octogee"' ;;
@@ -245,7 +246,7 @@ describe("eks-install.sh", () => {
       });
       expect(values.mattermost.db.host).toBe(`octogee.abc123.${REGION}.rds.amazonaws.com`);
       expect(values.networkPolicy.agentStorePostgresCidr).toBe("192.168.0.0/16");
-      expect(values.projectRunner.apiServerEgressCidrs).toEqual(["192.168.10.20/32", "192.168.30.40/32"]);
+      expect(values.projectRunner.apiServerEgressCidrs).toEqual(["10.100.0.1/32", "192.168.10.20/32", "192.168.30.40/32"]);
     });
 
     it("gives each gateway's edge every variable gateway-edge requires, as the kind install does", () => {

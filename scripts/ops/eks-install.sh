@@ -403,15 +403,14 @@ resolve_images() {
   node "$ROOT/scripts/ci/cloud-build.mjs" resolve "${options[@]}" > "$STATE/digests.json"
 }
 
-api_server_cidrs() {
-  kc -n default get endpointslice -l kubernetes.io/service-name=kubernetes \
-    -o jsonpath='{range .items[*].endpoints[*]}{.addresses[0]}{"\n"}{end}' | sort -u
-}
-
 environment_values() {
-  local cidrs
-  cidrs="$(api_server_cidrs | sed 's|$|/32|' | paste -sd, -)"
-  [[ -n "$cidrs" ]] || die "Found no Kubernetes API server endpoint in the cluster"
+  local endpoints service cidrs
+  endpoints="$(kc -n default get endpointslice -l kubernetes.io/service-name=kubernetes \
+    -o jsonpath='{range .items[*].endpoints[*]}{.addresses[0]}{"\n"}{end}')"
+  [[ -n "$endpoints" ]] || die "Found no Kubernetes API server endpoint in the cluster"
+  service="$(kc -n default get service kubernetes -o jsonpath='{.spec.clusterIP}')"
+  [[ "$service" =~ ^[0-9]+(\.[0-9]+){3}$ ]] || die "Found no address for the kubernetes service"
+  cidrs="$(printf '%s\n%s\n' "$endpoints" "$service" | sort -u | sed 's|$|/32|' | paste -sd, -)"
   node --input-type=module - "$STATE/digests.json" "$PUBLISHED/" \
     "$(node -p "require('$ROOT/infra/gateway/openclaw-tarball/current.json').sourceSha")" \
     "$AWS_REGION" "$DB_HOST" "$VPC_CIDR" "$ASSETS_BUCKET" "$WORKSPACES_BUCKET" "$cidrs" "$SHARED_GATEWAY_TIER" > "$STATE/environment.yaml" <<'JS'
