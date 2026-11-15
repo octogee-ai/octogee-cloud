@@ -17,7 +17,7 @@ export interface ProvisioningReadiness {
 }
 export interface ProvisioningSyncCounters {
     specWrites: Record<SpecWriteOutcome | "failed", number>;
-    deletes: Record<"deleted" | "failed", number>;
+    deletes: Record<"deleted" | "kept" | "unreadable" | "failed", number>;
     mirrors: Record<ProvisioningMirrorOutcome | "failed", number>;
     watchFailures: number;
     watchConnected: boolean;

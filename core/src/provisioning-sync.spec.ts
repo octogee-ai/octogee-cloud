@@ -4,6 +4,7 @@ import { installDefaultUserEntitlements } from "@octogee/shared/types/user-entit
 import type { UserProvisioningStatus } from "@octogee/shared/types/provisioning-service";
 import { startFakeProvisioningService, type FakeProvisioningService } from "./fixtures/provisioning-service-fake.js";
 import { operationAuditDocumentId } from "./operation-audit.js";
+import { MalformedRecordError } from "./platform-state/errors.js";
 import type { PlatformStateStore } from "./platform-state/store.js";
 import { createProvisioningServiceClient } from "./provisioning-service-client.js";
 import { mirrorUserProvisioning } from "./provisioning-mirror.js";
@@ -50,6 +51,7 @@ let logs: string[];
 let secretPuts: UserSecretInput[];
 let watchers: Array<{ aggregate: string; listener: { onEvent: (event: unknown) => void } }>;
 let secretPutFailure: boolean;
+let unreadableUsers: Set<string>;
 const stoppers: Array<() => void> = [];
 
 function seedUser(uid: string, slug: string, admitted = true): void {
@@ -84,6 +86,31 @@ function store(): PlatformStateStore {
         return (request: { aggregate: string }, listener: { onEvent: (event: unknown) => void }) => {
           watchers.push({ aggregate: request.aggregate, listener });
           return { closed: Promise.resolve(), close: async () => undefined };
+        };
+      }
+      if (property === "users") {
+        const users = target.users;
+        const unreadable = (uid: string) => new MalformedRecordError({ aggregate: "builder", key: uid }, "does not decode");
+        return {
+          ...users,
+          records: new Proxy(users.records, {
+            get(recordsTarget, method, recordsReceiver) {
+              if (method === "get") {
+                return async (uid: string) => {
+                  if (unreadableUsers.has(uid)) throw unreadable(uid);
+                  return recordsTarget.get(uid);
+                };
+              }
+              if (method === "getMany") {
+                return async (uids: readonly string[]) => {
+                  const bad = uids.find((uid) => unreadableUsers.has(uid));
+                  if (bad !== undefined) throw unreadable(bad);
+                  return recordsTarget.getMany(uids);
+                };
+              }
+              return Reflect.get(recordsTarget, method, recordsReceiver);
+            },
+          }),
         };
       }
       if (property === "transaction") {
@@ -180,6 +207,7 @@ beforeEach(async () => {
   logs = [];
   secretPuts = [];
   secretPutFailure = false;
+  unreadableUsers = new Set();
   watchers = [];
 });
 
@@ -491,6 +519,31 @@ describe("removed users", () => {
     await until(() => instance.counters.deletes.deleted === 1);
 
     expect(fake.resources.has("u1")).toBe(false);
+  });
+
+  it("never deletes the provisioning of a user whose record cannot be decoded, and keeps re-checking", async () => {
+    const instance = await chatReadyUser();
+    unreadableUsers.add("u1");
+
+    await emitBuilders([{ type: "removed", key: "u1" }]);
+    await until(() => instance.counters.deletes.unreadable >= 2);
+    await instance.resync();
+
+    expect(deletesOf("u1")).toHaveLength(0);
+    expect(fake.resources.has("u1")).toBe(true);
+    expect(logs.some((line) => line.includes("❌ not deleting the provisioning of u1"))).toBe(true);
+  });
+
+  it("keeps the provisioning of a user whose record exists again when the pending delete runs", async () => {
+    const instance = await chatReadyUser();
+    fake.failNext(503, 2);
+
+    await deleteUser("u1");
+    seedUser("u1", "lin");
+    await until(() => instance.counters.deletes.kept === 1);
+
+    expect(deletesOf("u1")).toHaveLength(0);
+    expect(fake.resources.has("u1")).toBe(true);
   });
 
   it("sends a fresh spec when the same uid is admitted again with the same slug", async () => {
