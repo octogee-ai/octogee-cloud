@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { LeaseLostError } from "../hosts/credential-store.js";
-import { createHarness, dsn, spec, type Harness } from "../test-support/harness.js";
+import { createHarness, dsn, spec, type Harness } from "../__tests__/harness.js";
 import { MAX_TRANSIENT_ATTEMPTS, WorkQueue, backoffMs, type FinishInput } from "./queue.js";
 
 const FAILED: FinishInput["outcome"] = { kind: "failed", errorKind: "transient", reason: "ChatUserFailed", message: "503 from chat host" };

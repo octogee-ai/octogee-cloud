@@ -136,7 +136,9 @@ export class WorkQueue {
       await client.query(
         `UPDATE ${t("provisionings")} SET resource_version = $2, observed_generation = $3, conditions = $4 WHERE uid = $1`,
         [uid, version.toString(), input.generation, JSON.stringify(input.conditions)]);
-      const result = input.outcome.kind === "succeeded" ? "succeeded" : next.state === "parked" ? "parked" : "failed";
+      let result: ProvisioningAttempt["result"] = "failed";
+      if (input.outcome.kind === "succeeded") result = "succeeded";
+      else if (next.state === "parked") result = "parked";
       await this.recordAttempt(client, uid, { ...input.attempt, result });
       return { state: next.state, attempts: next.attempts };
     });

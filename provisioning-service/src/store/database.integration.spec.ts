@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
-import { capturingLogger, dropSchema, dsn } from "../test-support/harness.js";
+import { capturingLogger, dropSchema, dsn } from "../__tests__/harness.js";
 import { migrate, openDatabase, type Database } from "./database.js";
 
 describe.skipIf(!dsn)("schema migration", { timeout: 30_000 }, () => {

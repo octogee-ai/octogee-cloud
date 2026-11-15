@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createHarness, dsn, spec, TOKENS, untilSettled, type Harness } from "../test-support/harness.js";
+import { createHarness, dsn, spec, TOKENS, untilSettled, type Harness } from "../__tests__/harness.js";
 
 const KEY_A = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA gateway-a";
 const KEY_B = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB gateway-a";
@@ -117,6 +117,20 @@ describe.skipIf(!dsn)("a provisioning attempt", { timeout: 30_000 }, () => {
     expect(harness.git.keys.get("lin")).toEqual([]);
     const { rowCount } = await harness.service.db.pool.query(`SELECT 1 FROM ${harness.service.db.table("git_keys")}`);
     expect(rowCount).toBe(0);
+  });
+
+  it("leaves a key registered under a holder it does not manage untouched and does not fail the attempt", async () => {
+    await harness.request("PUT", "/v1/users/u1/provisioning", { body: { spec: spec("lin") } });
+    harness.git.owners.add("lin");
+    harness.git.keys.set("lin", [{ publicKey: KEY_A, holder: "gateway-a/pod-1" }]);
+    await harness.request("PUT", "/v1/users/u1/git-keys/gateway-a", { token: TOKENS.platformApi, body: { spec: { publicKey: KEY_A } } });
+    await untilSettled(harness);
+
+    expect(harness.git.keys.get("lin")).toEqual([{ publicKey: KEY_A, holder: "gateway-a/pod-1" }]);
+    expect(harness.git.host.calls.filter((call) => call.operation === "registerKey" || call.operation === "releaseKey")).toEqual([]);
+    const key = await harness.request("PUT", "/v1/users/u1/git-keys/gateway-a", { token: TOKENS.platformApi, body: { spec: { publicKey: KEY_A } } });
+    expect(key.body.status.conditions[0]).toMatchObject({ type: "Registered", status: "False", reason: "GitKeyFailed" });
+    expect((await provisioned("u1")).status.work.state).toBe("idle");
   });
 
   it("parks on a terminal host error and makes no further host call until a retry", async () => {

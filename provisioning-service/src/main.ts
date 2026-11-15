@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { PROVISIONING_SERVICE_AUDIENCE } from "@octogee/shared/types/provisioning-service";
 import { createTokenReviewer } from "./auth/token-review.js";
 import { CALLER_ROLES, loadConfig } from "./config.js";
-import { FakeChatHost, FakeGitHost } from "./hosts/fake-hosts.js";
+import { hostsFromConfig } from "./hosts-from-config.js";
 import { createLogger } from "./logger.js";
 import { startService } from "./service.js";
 
@@ -17,7 +17,7 @@ async function main(): Promise<void> {
     reviewerToken: async () => (await readFile(config.tokenReviewTokenFile, "utf8")).trim(),
     ...(ca ? { ca } : {}),
   });
-  if (config.hosts.kind === "real") throw new Error("PROVISIONING_HOST_ADAPTERS=real needs the chat and git host adapters, which this build does not include");
+  const hosts = hostsFromConfig(config.hosts, log);
   const service = await startService({
     database: config.database,
     databaseSchema: config.databaseSchema,
@@ -25,8 +25,8 @@ async function main(): Promise<void> {
     reviewer,
     callerNamespace: config.callerNamespace,
     roleTable: CALLER_ROLES,
-    chat: new FakeChatHost(),
-    git: new FakeGitHost(),
+    chat: hosts.chat,
+    git: hosts.git,
     log,
     replicaId: config.replicaId,
     port: config.port,

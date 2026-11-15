@@ -101,6 +101,10 @@ export function toGitKey(row: GitKeyRow): GitKey {
   };
 }
 
+function whereClause(conditions: string[]): string {
+  return conditions.length ? "WHERE " + conditions.join(" AND ") : "";
+}
+
 function encodePageToken(uid: string): string {
   return Buffer.from(JSON.stringify({ after: uid })).toString("base64url");
 }
@@ -243,7 +247,7 @@ export class ProvisioningStore {
     return this.db.read(async (client) => {
       const counter = await client.query<{ value: string }>(`SELECT value FROM ${this.db.table("counter")} WHERE id = 1`);
       const { rows } = await client.query<ProvisioningRow>(
-        `${this.selectResource} ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY p.uid LIMIT $${params.length}`, params);
+        `${this.selectResource} ${whereClause(where)} ORDER BY p.uid LIMIT $${params.length}`, params);
       const page = rows.slice(0, limit).map(toResource);
       return {
         items: page,

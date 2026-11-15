@@ -1,13 +1,11 @@
 import pg from "pg";
 
-export type Queryable = Pick<pg.PoolClient, "query">;
 
 export interface Database {
   pool: pg.Pool;
   connection: DatabaseConnection;
   schema: string;
   table(name: string): string;
-  changeChannel: string;
   write<T>(work: (client: pg.PoolClient, bumpVersion: (uid: string) => Promise<bigint>) => Promise<T>): Promise<T>;
   read<T>(work: (client: pg.PoolClient) => Promise<T>): Promise<T>;
   close(): Promise<void>;
@@ -20,7 +18,6 @@ export function openDatabase(options: { connection: DatabaseConnection; schema: 
   pool.on("error", (error) => options.log.error("database connection failed", { error: error.message }));
   const quoted = `"${options.schema}"`;
   const table = (name: string) => `${quoted}."${name}"`;
-  const changeChannel = `${options.schema}_changes`;
 
   async function transaction<T>(isolation: string, work: (client: pg.PoolClient) => Promise<T>): Promise<T> {
     const client = await pool.connect();
@@ -42,7 +39,6 @@ export function openDatabase(options: { connection: DatabaseConnection; schema: 
     connection: options.connection,
     schema: options.schema,
     table,
-    changeChannel,
     write: (work) => transaction("READ COMMITTED", async (client) => {
       await client.query(`SELECT value FROM ${table("counter")} WHERE id = 1 FOR UPDATE`);
       let notified = false;
@@ -51,7 +47,7 @@ export function openDatabase(options: { connection: DatabaseConnection; schema: 
         const version = BigInt(rows[0].value);
         await client.query(`INSERT INTO ${table("version_log")} (version, uid) VALUES ($1, $2)`, [version.toString(), uid]);
         if (!notified) {
-          await client.query("SELECT pg_notify($1, '')", [changeChannel]);
+          await client.query("SELECT pg_notify('provisioning_service_changes', '')");
           notified = true;
         }
         return version;
