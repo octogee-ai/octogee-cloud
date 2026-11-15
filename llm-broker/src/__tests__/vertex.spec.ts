@@ -8,7 +8,7 @@ import {
   translateVertexMessagesRequest,
   vertexProviderConfigFromEnv,
   vertexUpstreamUrl,
-} from "./vertex-provider.js";
+} from "../vertex.js";
 
 const PRICES_JSON = JSON.stringify({
   "claude-haiku-4-5@20251001": {

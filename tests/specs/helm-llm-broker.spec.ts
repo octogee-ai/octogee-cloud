@@ -33,7 +33,7 @@ describe("the LLM broker on a platform-only install", () => {
     const container = brokerContainer();
 
     expect(container.image).toMatch(/^registry\.example\/octogee-api:aaaaaaa@sha256:/);
-    expect(container.command).toEqual(["node", "dist/octogee-api/src/llm-broker.js"]);
+    expect(container.command).toEqual(["node", "node_modules/@octogee/llm-broker/dist/main.js"]);
   });
 
   it.each([

@@ -1,12 +1,12 @@
 import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
 import { modelCatalogForProvider } from "@octogee/shared/types/model-catalog";
-import { createLlmBrokerApp } from "../llm-broker-app.js";
+import { createLlmBrokerApp } from "../app.js";
 import {
   InMemoryModelBrokerTokenStore,
   type ModelBrokerProvider,
-} from "../lib/model-broker-tokens.js";
-import { operatorRailRegistry } from "../lib/model-broker-rails.js";
+} from "../tokens.js";
+import { operatorRailRegistry } from "../rails.js";
 
 async function credential(store: InMemoryModelBrokerTokenStore, provider: ModelBrokerProvider, owner = "alice", purpose: "model" | "embeddings" = "model") {
   return store.issueToken({

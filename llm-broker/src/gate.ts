@@ -1,7 +1,7 @@
-import type { FundedBudgetInterruption } from "./model-broker-budget.js";
-import type { OwnerModelBrokerGrant } from "./model-broker-limits.js";
-import type { ModelBrokerUsageStore } from "./model-broker-usage.js";
-import { readPlatformSpendState } from "./platform-usage-allowance.js";
+import type { FundedBudgetInterruption } from "./budget.js";
+import type { OwnerModelBrokerGrant } from "./limits.js";
+import type { ModelBrokerUsageStore } from "./usage.js";
+import { readPlatformSpendState } from "./usage-allowance.js";
 
 export interface GateDecisionAllowed {
   allowed: true;

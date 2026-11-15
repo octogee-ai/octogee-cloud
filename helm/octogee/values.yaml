@@ -311,12 +311,14 @@ projectRunner:
 # and accepts only per-gateway broker tokens from exec-capable isolated pods.
 # It runs from the octogee-api image for now so the platform release carries one
 # singleton image tag; split to a separate image only when traffic/load demands.
+# entrypoint is the broker composition root inside that image.
 llmBroker:
   enabled: true
   image:
     repository: ghcr.io/octogee-ai/octogee-cloud/octogee-api
     tag: ""
     digest: ""
+  entrypoint: node_modules/@octogee/llm-broker/dist/main.js
   replicas: 2
   port: 3010
   serviceAccountName: llm-broker

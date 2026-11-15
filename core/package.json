@@ -113,6 +113,10 @@
       "types": "./dist/artifact-registry.d.ts",
       "default": "./dist/artifact-registry.js"
     },
+    "./assigned-user": {
+      "types": "./dist/assigned-user.d.ts",
+      "default": "./dist/assigned-user.js"
+    },
     "./assignment-doc": {
       "types": "./dist/assignment-doc.d.ts",
       "default": "./dist/assignment-doc.js"
@@ -590,6 +594,9 @@
       ],
       "artifact-registry": [
         "dist/artifact-registry.d.ts"
+      ],
+      "assigned-user": [
+        "dist/assigned-user.d.ts"
       ],
       "assignment-doc": [
         "dist/assignment-doc.d.ts"

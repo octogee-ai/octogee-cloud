@@ -1,4 +1,4 @@
-import type { ModelBrokerUsageStore } from "./model-broker-usage.js";
+import type { ModelBrokerUsageStore } from "./usage.js";
 
 export function meterExhausted(spendUsd: number | null, budgetUsd: number | null): boolean {
   return spendUsd !== null && budgetUsd !== null && spendUsd >= budgetUsd;

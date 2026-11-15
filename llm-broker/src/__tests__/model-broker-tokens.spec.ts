@@ -7,7 +7,7 @@ import { MODEL_BROKER_TOKENS_COLLECTION } from "@octogee/shared/types/model-brok
 import {
   createModelBrokerTokenStore,
   hashModelBrokerToken,
-} from "../lib/model-broker-tokens.js";
+} from "../tokens.js";
 const gatewayTokenInput = {
   gatewayId: "jack",
   ownerUid: "uid-jack",

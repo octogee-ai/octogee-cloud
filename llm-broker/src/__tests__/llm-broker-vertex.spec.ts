@@ -1,11 +1,11 @@
 import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
 
-import { createLlmBrokerApp, type LlmBrokerAppDeps } from "../llm-broker-app.js";
-import { InMemoryModelBrokerTokenStore } from "../lib/model-broker-tokens.js";
-import { InMemoryModelBrokerUsageStore } from "../lib/model-broker-usage.js";
-import { parseVertexModelPrices } from "../lib/vertex-provider.js";
-import { operatorRailRegistry } from "../lib/model-broker-rails.js";
+import { createLlmBrokerApp, type LlmBrokerAppDeps } from "../app.js";
+import { InMemoryModelBrokerTokenStore } from "../tokens.js";
+import { InMemoryModelBrokerUsageStore } from "../usage.js";
+import { parseVertexModelPrices } from "../vertex.js";
+import { operatorRailRegistry } from "../rails.js";
 
 const PRICES = parseVertexModelPrices({
   "claude-haiku-4-5@20251001": {

@@ -5,7 +5,7 @@ import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store"
 import {
   createModelBrokerTokenStore,
   hashModelBrokerToken,
-} from "../lib/model-broker-tokens.js";
+} from "../tokens.js";
 
 const TOKEN = "ogk_jack_stored";
 

@@ -12,7 +12,7 @@ import {
   normalizeAnthropicUsage,
   usageWindowStartMs,
   windowOwnerKey,
-} from "../lib/model-broker-usage.js";
+} from "../usage.js";
 
 function ledger(ownerUid: string) {
   return { collection: "balances", ownerUid };

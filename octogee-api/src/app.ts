@@ -43,8 +43,8 @@ import { createVoiceConversationRoutes } from "./routes/voice-conversation.js";
 import { createToolConversationRoutes, createWorkspaceNativeAccessRoutes } from "./routes/workspace-native-access.js";
 import { createAgentImportBrokerRoutes } from "./routes/agent-import-broker.js";
 import { createModelKeyIssuerRoutes } from "./routes/model-key-issuer.js";
-import type { FundedBudgetInterruption } from "./lib/model-broker-budget.js";
-import { operatorRailRegistry, type ModelBrokerRailRegistry } from "./lib/model-broker-rails.js";
+import type { FundedBudgetInterruption } from "@octogee/llm-broker/budget";
+import { operatorRailRegistry, type ModelBrokerRailRegistry } from "@octogee/llm-broker/rails";
 import { platformStateBrokerRecords, type BrokerRecords } from "./lib/broker-records.js";
 import { createFeatureRoutes } from "./routes/features.js";
 import type { ProductNotifications } from "./lib/user-notifications.js";
@@ -129,7 +129,7 @@ import {
   SIDECAR_BROKER_TOKEN_AUDIENCE,
   SIDECAR_BROKER_TOKEN_HEADER,
 } from "@octogee/core/internal-fetch";
-import { createModelBrokerTokenStore, type ModelBrokerTokenStore } from "./lib/model-broker-tokens.js";
+import { createModelBrokerTokenStore, type ModelBrokerTokenStore } from "@octogee/llm-broker/tokens";
 import { normalizeTenantPolicyPath } from "./lib/tenant-route-policy.js";
 
 

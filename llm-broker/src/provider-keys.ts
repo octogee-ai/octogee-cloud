@@ -4,9 +4,9 @@ import { readGatewayAuthorizationInStore, type GatewayAuthorization } from "@oct
 import type {
   ModelBrokerProvider,
   ModelBrokerTokenRecord,
-} from "./model-broker-tokens.js";
+} from "./tokens.js";
 import { readSecret as defaultReadSecret } from "@octogee/core/secret-store";
-import { userAssignedToGateway } from "./assigned-user.js";
+import { userAssignedToGateway } from "@octogee/core/assigned-user";
 
 export type ModelBrokerProviderKeySource = "platform" | "owner_model_credential";
 

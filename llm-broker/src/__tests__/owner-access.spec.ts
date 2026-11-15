@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { MalformedRecordError } from "@octogee/core/platform-state";
 import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
 
-import { createModelBrokerOwnerAccessResolver } from "./model-broker-owner-access.js";
+import { createModelBrokerOwnerAccessResolver } from "../owner-access.js";
 
 function durableGateway(gatewayId: string, ownerUid: string | null): Record<string, unknown> {
   return {

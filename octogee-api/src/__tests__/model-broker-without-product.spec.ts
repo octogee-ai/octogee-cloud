@@ -1,10 +1,10 @@
 import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
 
-import { createLlmBrokerApp } from "../llm-broker-app.js";
-import { operatorRailRegistry } from "../lib/model-broker-rails.js";
-import { InMemoryModelBrokerTokenStore } from "../lib/model-broker-tokens.js";
-import { InMemoryModelBrokerUsageStore } from "../lib/model-broker-usage.js";
+import { createLlmBrokerApp } from "@octogee/llm-broker/app";
+import { operatorRailRegistry } from "@octogee/llm-broker/rails";
+import { InMemoryModelBrokerTokenStore } from "@octogee/llm-broker/tokens";
+import { InMemoryModelBrokerUsageStore } from "@octogee/llm-broker/usage";
 import { createWebResearchService } from "../lib/web-research-service.js";
 
 const NOW = 12_000;

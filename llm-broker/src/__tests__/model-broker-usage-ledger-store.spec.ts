@@ -6,7 +6,7 @@ import type {
 } from "@octogee/core/model-broker-usage-ledger";
 import { rateWindowStartMs, usageWindowStartMs, weekWindowStartMs } from "@octogee/shared/types/model-broker-usage";
 
-import { createLedgerModelBrokerUsageStore, usageExpiresAt, type ModelBrokerUsageRecordInput } from "../lib/model-broker-usage.js";
+import { createLedgerModelBrokerUsageStore, usageExpiresAt, type ModelBrokerUsageRecordInput } from "../usage.js";
 
 const NOW = 1_800_000_123_456;
 

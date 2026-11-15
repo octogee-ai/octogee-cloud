@@ -31,18 +31,18 @@ import {
   createModelBrokerTokenStore,
   type ModelBrokerProvider,
   type ModelBrokerTokenPurpose,
-} from "../lib/model-broker-tokens.js";
+} from "@octogee/llm-broker/tokens";
 import {
   envDefaultModelBrokerLimits,
   resolveOwnerModelBrokerGrant,
-} from "../lib/model-broker-limits.js";
-import { operatorRailRegistry, type ModelBrokerRailRegistry } from "../lib/model-broker-rails.js";
+} from "@octogee/llm-broker/limits";
+import { operatorRailRegistry, type ModelBrokerRailRegistry } from "@octogee/llm-broker/rails";
 import {
   agentModelTokenIssueKey,
   createAgentModelTokenIssueCoordinator,
 } from "../lib/agent-model-token-issue-coordinator.js";
 import { findRunningOutboundMigrationUserByAgentId } from "../lib/agent-model-token-migration-admission.js";
-import { userAllowsInteractiveAccess, requireUserAccount } from "../lib/assigned-user.js";
+import { userAllowsInteractiveAccess, requireUserAccount } from "@octogee/core/assigned-user";
 import {
   configuredUserSlugCredentialBootstrapAllowed,
   findAssignedOrInboundMigratingOrConfiguredUserByAgentId,
@@ -54,7 +54,7 @@ import {
   type OwnerWorkspaceTurnVerifier,
 } from "../lib/openclaw-owner-turn.js";
 import { NO_BROKER_RECORDS, type BrokerRecords } from "../lib/broker-records.js";
-import type { ModelBrokerUsageLedger } from "../lib/model-broker-usage.js";
+import type { ModelBrokerUsageLedger } from "@octogee/llm-broker/usage";
 import type { FlowGatewayReader } from "../middleware/tenant-enforcement.js";
 import { logger } from "../../../gateway-edge/src/middleware/logging.js";
 

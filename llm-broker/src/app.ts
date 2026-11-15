@@ -7,18 +7,18 @@ import type {
   ModelBrokerProviderKeyResolver,
   ModelBrokerProviderKey,
   ModelBrokerProviderKeySource,
-} from "./lib/model-broker-provider-keys.js";
+} from "./provider-keys.js";
 import type {
   ModelBrokerProvider,
   ModelBrokerTokenLookup,
   ModelBrokerTokenRecord,
   ModelBrokerTokenStore,
-} from "./lib/model-broker-tokens.js";
-import type { FundedBudgetInterruptionHandler } from "./lib/model-broker-budget.js";
+} from "./tokens.js";
+import type { FundedBudgetInterruptionHandler } from "./budget.js";
 import type {
   LiveOwnerGrantResolver,
   OwnerModelBrokerGrant,
-} from "./lib/model-broker-limits.js";
+} from "./limits.js";
 import {
   estimateModelBrokerCost,
   isUnknownAnthropicPricingModel,
@@ -30,7 +30,7 @@ import {
   type AnthropicCacheWriteTtl,
   type AnthropicTokenUsage,
   type ModelBrokerUsageStore,
-} from "./lib/model-broker-usage.js";
+} from "./usage.js";
 import type { ResolvedHouseModel } from "@octogee/shared/types/platform-config";
 import {
   spendWindowGate,
@@ -39,15 +39,15 @@ import {
   type GateDecisionAllowed,
   type GateDecisionDenied,
   type RailGateContext,
-} from "./lib/model-broker-gate.js";
+} from "./gate.js";
 import {
   CHARGE_AT_COST,
   type ModelBrokerRail,
   type ModelBrokerRailRegistry,
   type RailCharge,
   type RailMeter,
-} from "./lib/model-broker-rails.js";
-import type { ModelBrokerOwnerAccessResolver } from "./lib/model-broker-owner-access.js";
+} from "./rails.js";
+import type { ModelBrokerOwnerAccessResolver } from "./owner-access.js";
 import { modelCatalogForProvider } from "@octogee/shared/types/model-catalog";
 import {
   VertexRequestError,
@@ -56,7 +56,7 @@ import {
   vertexUpstreamUrl,
   type VertexModelPriceTable,
   type VertexProviderConfig,
-} from "./lib/vertex-provider.js";
+} from "./vertex.js";
 
 export interface VertexBrokerConfig extends VertexProviderConfig {
   accessToken: () => Promise<string>;

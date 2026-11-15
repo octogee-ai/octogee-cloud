@@ -19,7 +19,7 @@ import {
   parseFundedBudgetLedger,
   type FundedBudgetLedger,
   type FundedBudgetLedgerRef,
-} from "./model-broker-budget.js";
+} from "./budget.js";
 
 export type ModelBrokerUsageProvider =
   | "anthropic"

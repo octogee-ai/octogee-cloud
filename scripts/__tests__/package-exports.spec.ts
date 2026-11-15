@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const platformRoot = resolve(import.meta.dirname, "../..");
-const PUBLISHED_PACKAGES = ["gateway-edge"];
+const PUBLISHED_PACKAGES = ["gateway-edge", "llm-broker"];
 
 interface ExportTarget {
   types?: string;
@@ -15,7 +15,12 @@ const manifest = (name: string) => JSON.parse(readFileSync(resolve(platformRoot,
   exports?: Record<string, ExportTarget>;
 };
 
-const sourceOf = (name: string, target: string) => resolve(platformRoot, name, "..", target.replace(/^\.\/dist\//, "").replace(/\.(?:d\.ts|js)$/, ".ts"));
+const emitRoot = (name: string) => {
+  const { compilerOptions } = JSON.parse(readFileSync(resolve(platformRoot, name, "tsconfig.json"), "utf8")) as { compilerOptions: { rootDir: string } };
+  return resolve(platformRoot, name, compilerOptions.rootDir);
+};
+
+const sourceOf = (name: string, target: string) => resolve(emitRoot(name), target.replace(/^\.\/dist\//, "").replace(/\.(?:d\.ts|js)$/, ".ts"));
 
 describe.each(PUBLISHED_PACKAGES)("%s package interface", (name) => {
   const { exports = {}, files = [] } = manifest(name);

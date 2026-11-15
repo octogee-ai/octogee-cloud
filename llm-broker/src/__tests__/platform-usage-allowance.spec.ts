@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   meterExhausted,
   readPlatformSpendState,
-} from "../lib/platform-usage-allowance.js";
+} from "../usage-allowance.js";
 
 describe("shared platform usage allowance reader", () => {
   it("gates on user charge while preserving old cost-only window documents", async () => {

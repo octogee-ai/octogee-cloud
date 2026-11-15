@@ -1,4 +1,4 @@
-import { operatorRailRegistry, type ModelBrokerRailRegistry } from "../lib/model-broker-rails.js";
+import { operatorRailRegistry, type ModelBrokerRailRegistry } from "@octogee/llm-broker/rails";
 import * as crypto from "node:crypto";
 import { rateLimit } from "express-rate-limit";
 import { Router, type Request, type Response } from "express";
@@ -6,12 +6,12 @@ import { Router, type Request, type Response } from "express";
 import type {
   ModelBrokerTokenLimits,
   ModelBrokerTokenStore,
-} from "../lib/model-broker-tokens.js";
+} from "@octogee/llm-broker/tokens";
 import {
   envDefaultModelBrokerLimits,
   resolveOwnerModelBrokerGrant,
   type ModelBrokerGrantReaders,
-} from "../lib/model-broker-limits.js";
+} from "@octogee/llm-broker/limits";
 import {
   GATEWAY_ID_REQUIREMENT,
 } from "@octogee/shared/types/glm";

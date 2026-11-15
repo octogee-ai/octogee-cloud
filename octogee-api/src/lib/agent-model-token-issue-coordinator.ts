@@ -1,7 +1,7 @@
 import type {
   ModelBrokerProvider,
   ModelBrokerTokenPurpose,
-} from "./model-broker-tokens.js";
+} from "@octogee/llm-broker/tokens";
 
 export const AGENT_MODEL_TOKEN_ISSUE_CONCURRENCY = 6;
 export const AGENT_MODEL_TOKEN_RESPONSE_CACHE_TTL_MS = 60_000;

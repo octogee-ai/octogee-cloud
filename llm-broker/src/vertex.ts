@@ -1,7 +1,7 @@
 import { GoogleAuth } from "google-auth-library";
 import { modelCatalogEntryFor } from "@octogee/shared/types/model-catalog";
 
-import type { AnthropicCacheWriteTtl, AnthropicTokenUsage } from "./model-broker-usage.js";
+import type { AnthropicCacheWriteTtl, AnthropicTokenUsage } from "./usage.js";
 
 export const VERTEX_ENABLED_ENV = "PLATFORM_VERTEX_ENABLED";
 export const VERTEX_PROJECT_ID_ENV = "PLATFORM_VERTEX_PROJECT_ID";

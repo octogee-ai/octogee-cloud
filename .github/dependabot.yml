@@ -16,6 +16,7 @@ updates:
       - /infra/gateway/extensions/platform/octogee-web-tools
       - /infra/gateway/extensions/platform/octogee-workspace-tools
       - /infra/gateway/isolated-toolchain
+      - /llm-broker
       - /octogee-api
       - /scripts
       - /shared

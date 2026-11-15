@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { OwnerModelBrokerGrant } from "../lib/model-broker-limits.js";
+import type { OwnerModelBrokerGrant } from "../limits.js";
 import {
   CHARGE_AT_COST,
   createModelBrokerRailRegistry,
@@ -9,9 +9,9 @@ import {
   requireSpendWindowAllowance,
   UnknownModelBrokerRailError,
   type ModelBrokerRail,
-} from "../lib/model-broker-rails.js";
-import { InMemoryModelBrokerUsageStore } from "../lib/model-broker-usage.js";
-import { WebResearchError } from "../lib/web-research-error.js";
+} from "../rails.js";
+import { InMemoryModelBrokerUsageStore } from "../usage.js";
+import { WebResearchError } from "../web-research-error.js";
 
 function grant(overrides: Partial<OwnerModelBrokerGrant> = {}): OwnerModelBrokerGrant {
   return {

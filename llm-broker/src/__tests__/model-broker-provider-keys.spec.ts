@@ -6,8 +6,8 @@ import {
   configuredAnthropicModelCredentialResolution,
   createAnthropicProviderKeyResolver,
   createModelBrokerProviderKeyResolver,
-} from "../lib/model-broker-provider-keys.js";
-import type { ModelBrokerTokenRecord } from "../lib/model-broker-tokens.js";
+} from "../provider-keys.js";
+import type { ModelBrokerTokenRecord } from "../tokens.js";
 
 const record: ModelBrokerTokenRecord = {
   tokenHash: "hash",

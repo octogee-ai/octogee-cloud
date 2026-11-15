@@ -4,7 +4,7 @@ import type { PlatformStateRepositories } from "@octogee/core/platform-state";
 
 import { isValidGatewayId } from "@octogee/shared/types/glm";
 import { isValidUsername } from "@octogee/shared/types/identity";
-import { userAllowsInteractiveAccess } from "../lib/assigned-user.js";
+import { userAllowsInteractiveAccess } from "@octogee/core/assigned-user";
 
 type GatewayBinding = Extract<Express.Request["boundTenant"], { kind: "gateway" }>;
 

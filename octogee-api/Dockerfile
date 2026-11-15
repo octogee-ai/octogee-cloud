@@ -24,6 +24,25 @@ RUN mkdir -p /packed \
         && npm pack --ignore-scripts --pack-destination "$destination"; \
     fi
 
+FROM node:26.13.0-slim@sha256:5adad64f9a1fca2d51972caa65983634c8a774eb300d72b20f7f2a0f60368072 AS llm-broker-builder
+RUN rm -rf /usr/local/lib/node_modules/npm
+COPY --from=platform-npm /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
+WORKDIR /llm-broker
+COPY core/package.json /core/package.json
+COPY core/dist /core/dist
+COPY shared/package.json /shared/package.json
+COPY shared/dist /shared/dist
+COPY llm-broker/.npmrc llm-broker/package.json llm-broker/package-lock.json ./
+RUN npm ci --ignore-scripts
+COPY scripts/ops/sync-local-file-deps.mjs /scripts/ops/sync-local-file-deps.mjs
+COPY llm-broker/tsconfig.json ./
+COPY llm-broker/src/ ./src/
+RUN npm run build
+
+FROM scratch AS llm-broker-package
+COPY --from=llm-broker-builder /llm-broker/package.json /llm-broker/package.json
+COPY --from=llm-broker-builder /llm-broker/dist /llm-broker/dist
+
 # Build context: platform/.
 #
 # octogee-api compiles gateway-edge/src/* in addition to its own src/ —
@@ -45,6 +64,7 @@ COPY core/package.json /core/package.json
 COPY core/dist /core/dist
 COPY shared/package.json /shared/package.json
 COPY shared/dist /shared/dist
+COPY --from=llm-broker-package / /
 COPY octogee-api/.npmrc octogee-api/package.json octogee-api/package-lock.json* ./
 RUN npm ci --ignore-scripts
 
@@ -92,6 +112,7 @@ COPY core/package.json /core/package.json
 COPY core/dist /core/dist
 COPY shared/package.json /shared/package.json
 COPY shared/dist /shared/dist
+COPY --from=llm-broker-package / /
 COPY octogee-api/.npmrc octogee-api/package.json octogee-api/package-lock.json* ./
 RUN npm ci --omit=dev --ignore-scripts
 RUN npm rebuild better-sqlite3 --foreground-scripts \

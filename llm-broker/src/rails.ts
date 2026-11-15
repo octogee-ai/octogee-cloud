@@ -8,11 +8,11 @@ import type {
   FundedBudget,
   FundedBudgetInterruptionHandler,
   FundedBudgetLedger,
-} from "./model-broker-budget.js";
-import type { DegradeOutcome, GateDecisionAllowed, RailGateContext, SpendBudgets } from "./model-broker-gate.js";
-import type { OwnerModelBrokerGrant } from "./model-broker-limits.js";
-import type { BalanceLedgerRef, ModelBrokerUsageStore } from "./model-broker-usage.js";
-import { readPlatformSpendState } from "./platform-usage-allowance.js";
+} from "./budget.js";
+import type { DegradeOutcome, GateDecisionAllowed, RailGateContext, SpendBudgets } from "./gate.js";
+import type { OwnerModelBrokerGrant } from "./limits.js";
+import type { BalanceLedgerRef, ModelBrokerUsageStore } from "./usage.js";
+import { readPlatformSpendState } from "./usage-allowance.js";
 import { WebResearchError } from "./web-research-error.js";
 
 export interface OwnerRailProfile {

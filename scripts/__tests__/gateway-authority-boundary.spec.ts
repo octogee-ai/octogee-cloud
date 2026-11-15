@@ -8,7 +8,7 @@ const LEGACY_RUNTIME_COLLECTION = /(?:collection\(["']glmGateways["']\)|GLM_GATE
 const POLICY_AND_CREDENTIAL_SOURCES = [
   "gateway-edge/src/routes/byosub-health.ts",
   "gateway-edge/src/routes/byosub.ts",
-  "octogee-api/src/lib/model-broker-limits.ts",
+  "llm-broker/src/limits.ts",
   "octogee-api/src/lib/sa-to-tenant.ts",
   "octogee-api/src/routes/fleet-broker.ts",
   "octogee-api/src/routes/byok-broker.ts",

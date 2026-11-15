@@ -1,0 +1,117 @@
+{
+  "name": "@octogee/llm-broker",
+  "version": "1.0.0",
+  "description": "Cluster model broker \u2014 exchanges per-gateway broker tokens for metered upstream model calls",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    "./app": {
+      "types": "./dist/app.d.ts",
+      "default": "./dist/app.js"
+    },
+    "./budget": {
+      "types": "./dist/budget.d.ts",
+      "default": "./dist/budget.js"
+    },
+    "./gate": {
+      "types": "./dist/gate.d.ts",
+      "default": "./dist/gate.js"
+    },
+    "./limits": {
+      "types": "./dist/limits.d.ts",
+      "default": "./dist/limits.js"
+    },
+    "./model-config": {
+      "types": "./dist/model-config.d.ts",
+      "default": "./dist/model-config.js"
+    },
+    "./owner-access": {
+      "types": "./dist/owner-access.d.ts",
+      "default": "./dist/owner-access.js"
+    },
+    "./provider-keys": {
+      "types": "./dist/provider-keys.d.ts",
+      "default": "./dist/provider-keys.js"
+    },
+    "./rails": {
+      "types": "./dist/rails.d.ts",
+      "default": "./dist/rails.js"
+    },
+    "./tokens": {
+      "types": "./dist/tokens.d.ts",
+      "default": "./dist/tokens.js"
+    },
+    "./usage": {
+      "types": "./dist/usage.d.ts",
+      "default": "./dist/usage.js"
+    },
+    "./usage-allowance": {
+      "types": "./dist/usage-allowance.d.ts",
+      "default": "./dist/usage-allowance.js"
+    },
+    "./vertex": {
+      "types": "./dist/vertex.d.ts",
+      "default": "./dist/vertex.js"
+    },
+    "./web-research-error": {
+      "types": "./dist/web-research-error.d.ts",
+      "default": "./dist/web-research-error.js"
+    }
+  },
+  "scripts": {
+    "prebuild": "node ../scripts/ops/sync-local-file-deps.mjs --consumer .",
+    "build": "rm -rf dist && tsc -p tsconfig.json",
+    "start": "node dist/main.js",
+    "pretest": "node ../scripts/ops/sync-local-file-deps.mjs --consumer .",
+    "test": "vitest run",
+    "pretypecheck": "node ../scripts/ops/sync-local-file-deps.mjs --consumer .",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "dependencies": {
+    "@octogee/core": "file:../core",
+    "@octogee/shared": "file:../shared",
+    "express": "^5.3.0",
+    "express-rate-limit": "^8.7.3",
+    "google-auth-library": "^11.0.2"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.3.0",
+    "@types/supertest": "^7.2.1",
+    "supertest": "^7.2.2",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.0"
+  },
+  "overrides": {
+    "@modelcontextprotocol/sdk": {
+      "@hono/node-server": "2.1.6",
+      "hono": "^4.13.11"
+    },
+    "@protobufjs/utf8": "^1.1.1",
+    "@tootallnate/once": "^3.0.1",
+    "brace-expansion@<2.0.0": "1.1.21",
+    "brace-expansion@>=2.0.0 <3.0.0": "2.1.7",
+    "brace-expansion@>=5.0.0 <6.0.0": "5.0.12",
+    "fast-xml-builder": "^1.1.7",
+    "fast-uri": "^3.1.6",
+    "glob": "14.0.3",
+    "ip-address": "^10.2.1",
+    "qs": "^6.17.0",
+    "protobufjs": "^7.6.3",
+    "re2": "1.26.1",
+    "uuid": "^14.0.0",
+    "js-yaml": "^4.3.1",
+    "@opentelemetry/core": "^2.8.0",
+    "esbuild": "^0.28.1",
+    "postcss": "8.5.25",
+    "undici@<7.0.0": "^6.28.0",
+    "basic-ftp": "^6.2.1"
+  }
+}

@@ -3,19 +3,19 @@ import type { PlatformStateStore } from "@octogee/core/platform-state";
 import type { UserAccountReader } from "@octogee/core/user-account";
 import { installUserEntitlements, staticUserEntitlements } from "@octogee/shared/types/user-entitlements";
 
-import { createLlmBrokerApp } from "./llm-broker-app.js";
+import { createLlmBrokerApp } from "./app.js";
 import {
   createCachedOwnerModelBrokerGrantResolver,
   envDefaultModelBrokerLimits,
   parseOptionalLimitNumber,
-} from "./lib/model-broker-limits.js";
-import { createModelBrokerOwnerAccessResolver } from "./lib/model-broker-owner-access.js";
-import { createModelBrokerProviderKeyResolver } from "./lib/model-broker-provider-keys.js";
-import { operatorRailRegistry } from "./lib/model-broker-rails.js";
-import { createModelBrokerTokenStore } from "./lib/model-broker-tokens.js";
-import type { ModelBrokerUsageStore } from "./lib/model-broker-usage.js";
-import { createCachedHouseModelResolver } from "./lib/platform-model-config.js";
-import { createVertexAccessTokenResolver, vertexProviderConfigFromEnv } from "./lib/vertex-provider.js";
+} from "./limits.js";
+import { createModelBrokerOwnerAccessResolver } from "./owner-access.js";
+import { createModelBrokerProviderKeyResolver } from "./provider-keys.js";
+import { operatorRailRegistry } from "./rails.js";
+import { createModelBrokerTokenStore } from "./tokens.js";
+import type { ModelBrokerUsageStore } from "./usage.js";
+import { createCachedHouseModelResolver } from "./model-config.js";
+import { createVertexAccessTokenResolver, vertexProviderConfigFromEnv } from "./vertex.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 

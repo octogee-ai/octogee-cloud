@@ -4,7 +4,7 @@ import { noUserAccounts, type UserAccountReader } from "@octogee/core/user-accou
 import { NO_AGENT_IDENTITY, type AgentIdentityRecords } from "../../../gateway-edge/src/lib/agent-identity.js";
 import type { FleetBrokerUsageData } from "@octogee/shared/types/fleet-broker";
 
-import { UNCONFIGURED_MODEL_BROKER_USAGE, type ModelBrokerUsageLedger } from "./model-broker-usage.js";
+import { UNCONFIGURED_MODEL_BROKER_USAGE, type ModelBrokerUsageLedger } from "@octogee/llm-broker/usage";
 
 type Document = Record<string, unknown>;
 

@@ -9,9 +9,9 @@ import {
   normalizeModelBrokerTokenPolicy,
   type ModelBrokerTokenLimits,
   type ModelBrokerTokenPolicy,
-} from "./model-broker-tokens.js";
-import type { FundedBudget } from "./model-broker-budget.js";
-import type { ModelBrokerRailRegistry, OwnerRailProfile } from "./model-broker-rails.js";
+} from "./tokens.js";
+import type { FundedBudget } from "./budget.js";
+import type { ModelBrokerRailRegistry, OwnerRailProfile } from "./rails.js";
 
 export interface OwnerModelBrokerGrant {
   limits: ModelBrokerTokenLimits;
