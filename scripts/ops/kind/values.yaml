@@ -85,9 +85,6 @@ glm-controller:
   gcpServiceAccount: ""
   gatewayServiceAccount: none
   workloadIdentityProject: none
-  sharedPool:
-    minReplicas: 1
-    maxReplicas: 1
   resources:
     requests:
       cpu: 100m

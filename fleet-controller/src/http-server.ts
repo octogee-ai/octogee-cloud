@@ -96,6 +96,7 @@ export interface HttpServerDeps {
   releaseEnvironment?: "test" | "prod" | null;
   releaseAuthority?: CentralReleaseAuthority;
   platformArtifact?: GatewayArtifact;
+  controllerStartedAt?: number;
   readGatewayPodDiagnostics?: (gatewayId: string) => Promise<GatewayPodDiagnostics>;
   readGatewayPodDiagnosticsBatch?: (
     gatewayIds: readonly string[],
@@ -358,6 +359,7 @@ export function createHttpServer(deps: HttpServerDeps): Express {
     releaseEnvironment: deps.releaseEnvironment,
     releaseAuthority: deps.releaseAuthority,
     platformArtifact: deps.platformArtifact,
+    controllerStartedAt: deps.controllerStartedAt,
     readGatewayPodDiagnostics: deps.readGatewayPodDiagnostics,
     readGatewayPodDiagnosticsBatch: deps.readGatewayPodDiagnosticsBatch,
     requestNativeReturnSourceRecovery: deps.requestNativeReturnSourceRecovery,

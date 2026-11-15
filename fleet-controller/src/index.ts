@@ -337,7 +337,7 @@ import {
 import { startHelmRecoverySweeper } from "./helm-recovery-sweeper.js";
 import { resumeOrphanedRunningOps } from "./resume-orphaned-ops.js";
 import { computeChartFingerprint } from "./chart-fingerprint.js";
-import { startSharedGatewayLoop, type SharedGatewayAutomation, type SharedGatewayAutomationLoop, type SharedGatewayProductFactory } from "./shared-gateway-automation.js";
+import { startSharedGatewayRetirementLoop } from "./shared-gateway-retirement-loop.js";
 import { startPlacement, type PlacementProductDeps, type PlacementProductFactory } from "./placement-product.js";
 import {
   platformGatewayArtifactFromEnvironment,
@@ -2189,31 +2189,6 @@ interface ControllerBackgroundTasksDeps {
   controllerStartedAt: number;
 }
 
-export function createSharedGatewayAutomation(
-  factory: SharedGatewayProductFactory | undefined,
-  store: PlatformStateStore,
-  platformArtifact: GatewayArtifact,
-): SharedGatewayAutomation | null {
-  if (!factory) {
-    log(
-      `[glm-controller] shared gateways: platform only, platformImage=${platformArtifact.imageTag}; no shared gateway is added, retired, replaced or drained automatically, and no user is placed or moved automatically; place each new user with user assign`,
-    );
-    return null;
-  }
-  log("[glm-controller] shared gateways: product automation installed");
-  return factory({ store, platformArtifact, log });
-}
-
-async function installSharedGatewayAutomation(
-  factory: SharedGatewayProductFactory | undefined,
-  store: PlatformStateStore,
-  platformArtifact: GatewayArtifact,
-): Promise<{ startLoop(): SharedGatewayAutomationLoop | null }> {
-  const automation = createSharedGatewayAutomation(factory, store, platformArtifact);
-  await automation?.recoverInterruptedAdds();
-  return { startLoop: () => automation?.start() ?? null };
-}
-
 function placementUserHome(store: PlatformStateStore): PlacementProductDeps["userHome"] {
   if (!GATEWAY_VM_SPEC) return undefined;
   const homeServices = createUserHomeServices(store, log);
@@ -2368,6 +2343,7 @@ function startControllerBackgroundTasks({
     listGatewayBuilds,
     ...CENTRAL_RELEASE_ROUTE_DEPS,
     platformArtifact,
+    controllerStartedAt,
     ...(httpKubeOps
       ? {
           readGatewayPodDiagnostics: (gatewayId: string) =>
@@ -2763,7 +2739,6 @@ export interface ControllerProduct {
   adminIdentity?: IdentityProvider;
   userPolicyInputs?: (store: PlatformStateStore, log: (message: string) => void) => UserPolicyInputsSource;
   placement?: PlacementProductFactory;
-  sharedGateways?: SharedGatewayProductFactory;
   startProjection?: (deps: {
     store: PlatformStateStore;
     log: (message: string) => void;
@@ -2821,7 +2796,6 @@ export async function main(product: ControllerProduct): Promise<void> {
     now: () => Date.now(),
     log,
   });
-  const sharedGateways = await installSharedGatewayAutomation(product.sharedGateways, deps.store, platformArtifact);
 
   // Resume any op the previous instance left `running` when it exited mid-op (a
   // deploy/restart redeploys this single-replica controller routinely). Re-driving
@@ -2871,7 +2845,7 @@ export async function main(product: ControllerProduct): Promise<void> {
     accounts,
     userDirectory,
   });
-  stoppers.push(startSharedGatewayLoop({ store: deps.store, log, automation: sharedGateways.startLoop() }));
+  stoppers.push(startSharedGatewayRetirementLoop({ store: deps.store, log }));
   if (product.startProjection) stoppers.push(product.startProjection({ store: deps.store, log }));
   const shutdown = createControllerShutdown(stoppers, log);
   process.on("SIGTERM", shutdown);

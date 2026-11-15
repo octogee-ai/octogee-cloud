@@ -28,6 +28,10 @@ export declare class FleetMutationPartialError extends Error {
     readonly releaseRollout?: OperationAuditReleaseRolloutLinkage | undefined;
     constructor(message: string, partialOutcome: OperationAuditPartialOutcome, aliasOutcomes?: OperationAuditAliasOutcome[] | undefined, releaseRollout?: OperationAuditReleaseRolloutLinkage | undefined);
 }
+export declare class FleetMutationRefusedError extends Error {
+    readonly refusal: Error;
+    constructor(refusal: Error);
+}
 export interface NormalFleetMutationInput<T> extends OperationAuditIntentInput {
     claimId?: string;
     action: (claim: OperationAuditActionClaim) => Promise<T>;
