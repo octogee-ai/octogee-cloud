@@ -182,6 +182,10 @@
       "types": "./dist/types/platform-config.d.ts",
       "default": "./dist/types/platform-config.js"
     },
+    "./types/provisioning-service": {
+      "types": "./dist/types/provisioning-service.d.ts",
+      "default": "./dist/types/provisioning-service.js"
+    },
     "./types/user-entitlements": {
       "types": "./dist/types/user-entitlements.d.ts",
       "default": "./dist/types/user-entitlements.js"
@@ -367,6 +371,9 @@
       ],
       "types/model-credentials": [
         "dist/types/model-credentials.d.ts"
+      ],
+      "types/provisioning-service": [
+        "dist/types/provisioning-service.d.ts"
       ],
       "types/secret-redaction": [
         "dist/types/secret-redaction.d.ts"
