@@ -2,7 +2,7 @@ import { brokerRequestLimit } from "../middleware/broker-request-limit.js";
 import { Router, type Request, type Response } from "express";
 import type { PlatformStateRepositories } from "@octogee/core/platform-state";
 
-import { logger } from "../../../gateway-edge/src/middleware/logging.js";
+import { logger } from "@octogee/core/http/logging";
 import {
   createProductivityRateLimiter,
   type ProductivityRateLimiter,

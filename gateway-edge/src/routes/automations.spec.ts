@@ -1,7 +1,7 @@
 import express from "express";
 import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
-import type { UpstreamRpcClient } from "../chat-proxy/openclaw/bridge-upstream-rpc.js";
+import type { UpstreamRpcClient } from "@octogee/core/http-candidates/chat-proxy/openclaw/bridge-upstream-rpc";
 import { createAutomationsRouter, invokeLocalOpenClaw, NativeAutomationError, type LocalAutomationOpenClawDeps } from "./automations.js";
 
 const AGENT = "octogee-alice-coach";

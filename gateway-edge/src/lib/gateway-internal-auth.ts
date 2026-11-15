@@ -1,4 +1,4 @@
-import { logger } from "../middleware/logging.js";
+import { logger } from "@octogee/core/http/logging";
 import * as crypto from "crypto";
 import { readFileSync } from "node:fs";
 import { isIsolatedGatewayClassValue, isolatedGatewayServiceAccountName } from "@octogee/shared/types/glm";

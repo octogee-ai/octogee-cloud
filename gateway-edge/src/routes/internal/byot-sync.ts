@@ -1,4 +1,4 @@
-import { clientRequestLimit } from "../../middleware/authenticated-request-limit.js";
+import { clientRequestLimit } from "@octogee/core/http/authenticated-request-limit";
 import { Router, Request, Response, NextFunction } from "express";
 import { applyConfigPatch } from "@octogee/core/apply-config-patch";
 import {
@@ -6,9 +6,9 @@ import {
   syncModelCredentialsForUser,
 } from "@octogee/core/model-credential-sync-runtime";
 import { acquireSystemConfigMutationLease } from "@octogee/core/system-config-mutation-lease";
-import { requireByotSyncInternalAuth } from "../../middleware/byot-sync-auth.js";
+import { requireByotSyncInternalAuth } from "@octogee/core/model-credentials/byot-sync-auth";
 
-const router = Router();
+const router: Router = Router();
 
 export function createLeasedModelConfigWriter(
   deps: {

@@ -109,7 +109,7 @@ describe("POST /api/g/:gatewayId/internal/byot-sync", () => {
   });
 
   it("rejects unauthenticated calls before sync", async () => {
-    const res = await request(createApp({ surface: "sidecar" }))
+    const res = await request(createApp())
       .post(PRIMARY_SYNC_PATH)
       .send(userData);
     expect(res.status).toBe(401);
@@ -124,7 +124,7 @@ describe("POST /api/g/:gatewayId/internal/byot-sync", () => {
 
   it("validates the sync payload", async () => {
     const body = { byotActive: true };
-    const res = await request(createApp({ surface: "sidecar" }))
+    const res = await request(createApp())
       .post(PRIMARY_SYNC_PATH)
       .set(byotSyncHeaders(body))
       .send(body);
@@ -141,7 +141,7 @@ describe("POST /api/g/:gatewayId/internal/byot-sync", () => {
     ["plan inputs that are an array", { ...userData, planInputs: [] }],
     ["null plan inputs", { ...userData, planInputs: null }],
   ])("refuses %s instead of syncing the user as having no plan", async (_label, body) => {
-    const res = await request(createApp({ surface: "sidecar" }))
+    const res = await request(createApp())
       .post(PRIMARY_SYNC_PATH)
       .set(byotSyncHeaders(body))
       .send(body);
@@ -154,7 +154,7 @@ describe("POST /api/g/:gatewayId/internal/byot-sync", () => {
 
   it("accepts an empty plan input bag from a sender that knows no plan", async () => {
     const body = { ...userData, planInputs: {} };
-    const res = await request(createApp({ surface: "sidecar" }))
+    const res = await request(createApp())
       .post(PRIMARY_SYNC_PATH)
       .set(byotSyncHeaders(body))
       .send(body);
@@ -164,7 +164,7 @@ describe("POST /api/g/:gatewayId/internal/byot-sync", () => {
   });
 
   it("runs model config writes under the shared system-config lease", async () => {
-    const res = await request(createApp({ surface: "sidecar" }))
+    const res = await request(createApp())
       .post(PRIMARY_SYNC_PATH)
       .set(byotSyncHeaders(userData))
       .send(userData);
@@ -230,7 +230,7 @@ describe("POST /api/g/:gatewayId/internal/byot-sync", () => {
   });
 
   it("keeps the legacy BYOT sync route as an authenticated alias", async () => {
-    const res = await request(createApp({ surface: "sidecar" }))
+    const res = await request(createApp())
       .post(LEGACY_SYNC_PATH)
       .set(byotSyncHeaders(userData))
       .send(userData);
@@ -256,7 +256,7 @@ describe("POST /api/g/:gatewayId/internal/byot-sync", () => {
       },
     };
 
-    const res = await request(createApp({ surface: "sidecar" }))
+    const res = await request(createApp())
       .post(PRIMARY_SYNC_PATH)
       .set(byotSyncHeaders(body))
       .send(body);
@@ -271,7 +271,7 @@ describe("POST /api/g/:gatewayId/internal/byot-sync", () => {
   it("rejects projected service-account tokens without the BYOT sync signature", async () => {
     process.env.GATEWAY_PROFILE = "standard";
 
-    const res = await request(createApp({ surface: "sidecar" }))
+    const res = await request(createApp())
       .post(PRIMARY_SYNC_PATH)
       .set("X-K8s-SA-Token", "octogee-api-jwt")
       .send(userData);
@@ -282,7 +282,7 @@ describe("POST /api/g/:gatewayId/internal/byot-sync", () => {
 
   it("rejects stale BYOT sync signatures", async () => {
     const staleTimestamp = `${Date.now() - 10 * 60 * 1000}`;
-    const res = await request(createApp({ surface: "sidecar" }))
+    const res = await request(createApp())
       .post(PRIMARY_SYNC_PATH)
       .set(byotSyncHeaders(userData, signingKey, staleTimestamp))
       .send(userData);
@@ -293,7 +293,7 @@ describe("POST /api/g/:gatewayId/internal/byot-sync", () => {
 
   it("surfaces sync failures to the internal caller", async () => {
     syncModelCredentialsForUserSpy.mockRejectedValueOnce(new Error("config.patch failed"));
-    const res = await request(createApp({ surface: "sidecar" }))
+    const res = await request(createApp())
       .post(PRIMARY_SYNC_PATH)
       .set(byotSyncHeaders(userData))
       .send(userData);

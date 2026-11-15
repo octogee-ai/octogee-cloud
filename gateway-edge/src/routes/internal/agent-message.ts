@@ -1,4 +1,4 @@
-import { clientRequestLimit } from "../../middleware/authenticated-request-limit.js";
+import { clientRequestLimit } from "@octogee/core/http/authenticated-request-limit";
 import { assertWorkspaceIdentityReady } from "@octogee/core/openclaw-workspace-bootstrap";
 import { Router, type NextFunction, type Request, type Response } from "express";
 import { parseAgentId } from "@octogee/shared/types/identity";
@@ -10,7 +10,7 @@ import {
 } from "@octogee/shared/types/openclaw-proxy-identity";
 
 import { requireAgentMessageAuth } from "../../middleware/agent-message-auth.js";
-import { logger } from "../../middleware/logging.js";
+import { logger } from "@octogee/core/http/logging";
 
 const OPENCLAW_URL = "http://127.0.0.1:18789";
 const MESSAGE_TIMEOUT_MS = 15_000;

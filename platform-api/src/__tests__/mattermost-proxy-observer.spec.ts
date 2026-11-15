@@ -6,7 +6,7 @@ const forward = vi.hoisted(() => {
   process.env.MM_INTERNAL_URL = "http://mattermost.test";
   return vi.fn();
 });
-vi.mock("../../../gateway-edge/src/chat-proxy/mm-proxy/rest.js", () => ({ forwardMmRest: forward }));
+vi.mock("../chat-proxy/mm-proxy/rest.js", () => ({ forwardMmRest: forward }));
 
 import { createMmRestProxyHandler } from "../routes/mattermost-proxy.js";
 

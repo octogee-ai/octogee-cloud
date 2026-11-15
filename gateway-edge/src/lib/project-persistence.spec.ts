@@ -6,7 +6,7 @@ import { persistUserProjects } from "./project-persistence.js";
 import { writeProjectRestoreReady } from "@octogee/core/project-asset-state";
 import type { FleetBrokerProjectRestore } from "@octogee/shared/types/fleet-broker";
 
-vi.mock("./connector-tokens.js", () => ({ readOwnerRuntimeConnectorAccessToken: vi.fn() }));
+vi.mock("@octogee/core/connectors/connector-tokens", () => ({ readOwnerRuntimeConnectorAccessToken: vi.fn() }));
 
 let root: string;
 function deps() {

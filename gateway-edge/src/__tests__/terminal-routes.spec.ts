@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { uidForBearer } = vi.hoisted(() => ({ uidForBearer: vi.fn<(token: string) => Promise<string>>() }));
 
-vi.mock("../middleware/logging", () => ({
+vi.mock("@octogee/core/http/logging", () => ({
   logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));
 
@@ -345,7 +345,7 @@ describe("terminal websocket relay", () => {
         socket.end("HTTP/1.1 404 Not Found\r\n\r\n");
       }
     });
-    await new Promise<void>((resolve) => edge.listen(0, resolve));
+    await new Promise<void>((resolve) => edge.listen(0, "127.0.0.1", resolve));
     edgeUrl = `ws://127.0.0.1:${(edge.address() as AddressInfo).port}`;
   });
 

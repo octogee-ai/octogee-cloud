@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createWebSocketStream, WebSocket } from "ws";
-import type { OpenClawControlSession } from "./session.js";
+import type { OpenClawControlSession } from "@octogee/core/http-candidates/openclaw-control/session";
 
 type Binding = Pick<OpenClawControlSession, "sessionId" | "gatewayId" | "revisionId">;
 type Ticket = Binding & { path: string; expiresAt: number };

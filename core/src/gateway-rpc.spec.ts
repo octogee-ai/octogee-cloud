@@ -56,7 +56,7 @@ interface MockServerHandle {
 }
 
 async function startMockGateway(): Promise<MockServerHandle> {
-  const wss = new WebSocketServer({ port: 0 });
+  const wss = new WebSocketServer({ port: 0, host: "127.0.0.1" });
   const handlers = new Map<string, RpcHandler>();
   const counts = new Map<string, number>();
   let connectHandler: ((params: unknown) => { ok: true; payload: unknown } | { ok: false; error: { code: string; message: string } }) | null = null;

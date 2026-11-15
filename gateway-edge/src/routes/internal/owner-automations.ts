@@ -1,7 +1,7 @@
-import { clientRequestLimit } from "../../middleware/authenticated-request-limit.js";
+import { clientRequestLimit } from "@octogee/core/http/authenticated-request-limit";
 import { Router, type Request, type Response } from "express";
 
-import { logger } from "../../middleware/logging.js";
+import { logger } from "@octogee/core/http/logging";
 import {
   authorizeOwnerAutomationViaBroker,
   type OwnerAutomationAuthorizationOutcome,

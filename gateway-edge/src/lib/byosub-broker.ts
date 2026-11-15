@@ -1,6 +1,6 @@
 import { isValidGatewayId } from "@octogee/shared/types/glm";
 
-import { internalFetch } from "./internal-fetch.js";
+import { internalFetch } from "@octogee/core/internal-fetch";
 
 export interface ByosubGatewayAssignment {
   slug: string;

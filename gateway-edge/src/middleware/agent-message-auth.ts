@@ -6,7 +6,7 @@ import {
   type ReviewResult,
   type Reviewer,
 } from "../lib/kubernetes-token-review.js";
-import { logger } from "./logging.js";
+import { logger } from "@octogee/core/http/logging";
 
 const API_SERVICE_ACCOUNT = "octogee-api";
 const K8S_SA_TOKEN_HEADER = "x-k8s-sa-token";

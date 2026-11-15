@@ -1,4 +1,4 @@
-import { containsAsciiControlCharacter } from '../lib/text-validation.js';
+import { containsAsciiControlCharacter } from '@octogee/shared/types/text-validation';
 export function browserRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }

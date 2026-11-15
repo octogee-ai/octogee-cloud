@@ -4,7 +4,7 @@ import {
   ListObjectVersionsCommand, S3Client, UploadPartCommand, type CompletedPart,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import type { BlobMetadata, BlobStore } from "../../../gateway-edge/src/lib/blob-store.js";
+import type { BlobMetadata, BlobStore } from "@octogee/core/workspace/blob-store";
 
 interface Options {
   bucket: string;

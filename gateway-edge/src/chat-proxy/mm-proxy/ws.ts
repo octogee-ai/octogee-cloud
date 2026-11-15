@@ -1,6 +1,6 @@
 import type { RawData, WebSocket } from "ws";
 import type { UpgradeGateVerdict } from "../../roll-roster.js";
-import type { BridgeLog } from "../bridge-log.js";
+import type { BridgeLog } from "@octogee/core/http/bridge-log";
 
 // Close code signalling the client to reconnect (same signal the OC WS bridge
 // uses for gatewayId changes); on reconnect the flipped Service selector /

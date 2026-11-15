@@ -2,8 +2,8 @@ import type { Request } from "express";
 import { sidecarBrokerHeaders } from "@octogee/core/internal-fetch";
 import { isValidUsername } from "@octogee/shared/types/identity";
 
-import { automationAuthorizationBrokerBaseUrlFromEnv } from "./automation-authorization-broker.js";
-import { internalFetch } from "./internal-fetch.js";
+import { automationAuthorizationBrokerBaseUrlFromEnv } from "@octogee/core/internal-brokers/automation-authorization-broker";
+import { internalFetch } from "@octogee/core/internal-fetch";
 import type { OwnerAutomationTenant } from "../routes/owner-automation-jobs.js";
 
 const PROOF_TIMESTAMP_HEADER = "x-octogee-agent-proof-timestamp";

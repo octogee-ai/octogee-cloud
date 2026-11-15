@@ -2,7 +2,7 @@ import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { WorkspaceGitAuthorizationOutcome } from "../lib/workspace-git-authorization-broker.js";
+import type { WorkspaceGitAuthorizationOutcome } from "@octogee/core/internal-brokers/workspace-git-authorization-broker";
 
 const h = vi.hoisted(() => ({
   authorize: vi.fn(),
@@ -14,7 +14,7 @@ const h = vi.hoisted(() => ({
   runWorkspaceGitMutation: vi.fn(),
 }));
 
-vi.mock("../lib/workspace-git.js", () => ({
+vi.mock("@octogee/core/workspace/workspace-git", () => ({
   gitBranches: vi.fn(),
   gitCheckout: vi.fn(),
   gitCommit: (...args: unknown[]) => h.gitCommit(...args),
@@ -28,7 +28,7 @@ vi.mock("../lib/workspace-git.js", () => ({
   runWorkspaceGitMutation: (...args: unknown[]) => h.runWorkspaceGitMutation(...args),
 }));
 
-vi.mock("../middleware/logging.js", () => ({
+vi.mock("@octogee/core/http/logging", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
