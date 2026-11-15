@@ -68,6 +68,14 @@ spec:
               value: {{ (.Values.global).logLevel | default "info" | quote }}
             - name: PROVISIONING_PORT
               value: {{ $service.port | quote }}
+            {{- with $service.callerRequestsPerMinute }}
+            - name: PROVISIONING_CALLER_REQUESTS_PER_MINUTE
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with $service.callerConcurrentWaits }}
+            - name: PROVISIONING_CALLER_CONCURRENT_WAITS
+              value: {{ . | quote }}
+            {{- end }}
             - name: PROVISIONING_CALLER_NAMESPACE
               valueFrom:
                 fieldRef:

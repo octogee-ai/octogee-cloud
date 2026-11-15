@@ -45,6 +45,13 @@ The service also reads `admin_token` (and `admin_user_id` when present) from
 `mattermost-gateway`, and `token` from `gitea-token`, which the chat and git
 hosts already use.
 
+### Limits
+
+Each caller service account may send `provisioningService.callerRequestsPerMinute`
+requests a minute (service default 3000) and hold
+`provisioningService.callerConcurrentWaits` waits and watches open (default 100).
+Leave them empty to use the defaults.
+
 ### Schema
 
 There is no migration Job. Each replica creates and upgrades the service's

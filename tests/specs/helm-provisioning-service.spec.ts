@@ -88,6 +88,18 @@ describe("the provisioning service in the platform chart", () => {
       .toBe("http://mattermost-callback-router.octogee-local.svc.cluster.local:3001/internal/mattermost/commands/control-ui");
   });
 
+  it("leaves the per-caller limits to the service unless an operator sets them, and never allows fake adapters", () => {
+    const names = (sets: Record<string, string>) => (container(chart.helmTemplate({ sets })).env as Array<{ name: string; value?: string }>);
+    const defaults = names(ENABLED).map((entry) => entry.name);
+    expect(defaults).not.toContain("PROVISIONING_CALLER_REQUESTS_PER_MINUTE");
+    expect(defaults).not.toContain("PROVISIONING_CALLER_CONCURRENT_WAITS");
+    expect(defaults).not.toContain("PROVISIONING_ALLOW_FAKE_HOST_ADAPTERS");
+
+    const tuned = names({ ...ENABLED, "provisioningService.callerRequestsPerMinute": "6000", "provisioningService.callerConcurrentWaits": "200" });
+    expect(tuned).toContainEqual({ name: "PROVISIONING_CALLER_REQUESTS_PER_MINUTE", value: "6000" });
+    expect(tuned).toContainEqual({ name: "PROVISIONING_CALLER_CONCURRENT_WAITS", value: "200" });
+  });
+
   it("refuses to render without the namespace TokenReview grant its callers' authentication needs", () => {
     expect(() => chart.helmTemplate({ sets: { ...ENABLED, "gatewayFleet.tokenReviewRbac.enabled": "false" } }))
       .toThrow(/requires gatewayFleet.tokenReviewRbac.enabled/);

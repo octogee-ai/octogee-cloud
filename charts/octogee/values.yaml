@@ -406,6 +406,8 @@ provisioningService:
   credentialKeySecretName: provisioning-service-credential-key
   chatHostUrl: ""
   gitHostUrl: ""
+  callerRequestsPerMinute: ""
+  callerConcurrentWaits: ""
   resources:
     requests:
       cpu: 50m
