@@ -138,7 +138,7 @@ suites. Run the import-graph audit instead:
 
 ```bash
 npm run --prefix scripts audit-coverage                 # whole repo, 120d churn
-npm run --prefix scripts audit-coverage -- --since=90d --top=30 glm-controller
+npm run --prefix scripts audit-coverage -- --since=90d --top=30 fleet-controller
 ```
 
 It ranks modules by churn × size and flags only those with **no test importing
