@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { releaseAssets, stageRelease } from "../../infra/gateway/openclaw-tarball/fetch-release.mjs";
+import { releaseAssets, stageRelease } from "../../gateway/openclaw-tarball/fetch-release.mjs";
 
 const bytes = (text: string) => Buffer.from(text);
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");

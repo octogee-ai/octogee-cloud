@@ -44,19 +44,19 @@ export function gatewayBakePlan({ repository, sha, base, isolatedBase, toolchain
   const runtimeArgs = { OPENCLAW_RUNTIME_PLUGINS: "mattermost,parallel-plugin,codex", ...systemArg };
   const candidates = {
     [BASE]: build.base && {
-      ...common, ...cached(BASE), dockerfile: "infra/gateway/Dockerfile.base", target: "gateway-runtime", tags: [baseRef[BASE]],
+      ...common, ...cached(BASE), dockerfile: "gateway/Dockerfile.base", target: "gateway-runtime", tags: [baseRef[BASE]],
     },
     [ISOLATED_BASE]: build.isolatedBase && {
-      ...common, ...cached(ISOLATED_BASE), dockerfile: "infra/gateway/Dockerfile.isolated-base", tags: [baseRef[ISOLATED_BASE]],
+      ...common, ...cached(ISOLATED_BASE), dockerfile: "gateway/Dockerfile.isolated-base", tags: [baseRef[ISOLATED_BASE]],
       contexts: { [BASE]: from(BASE), ...systemContext },
       args: { ...systemArg, BUILDER_TOOLCHAIN_LOCK_SHA256: toolchain.lockSha256, BUILDER_TOOL_GROUPS_SHA256: toolchain.groupsSha256 },
     },
     "gateway-edge": build.images.includes("gateway-edge") && image("gateway-edge", edge),
     "octogee-gateway": build.images.includes("octogee-gateway") && image("octogee-gateway", {
-      dockerfile: "infra/gateway/Dockerfile", contexts: { [BASE]: from(BASE), ...systemContext, ...product }, args: runtimeArgs,
+      dockerfile: "gateway/Dockerfile", contexts: { [BASE]: from(BASE), ...systemContext, ...product }, args: runtimeArgs,
     }),
     "octogee-gateway-builder": build.images.includes("octogee-gateway-builder") && image("octogee-gateway-builder", {
-      dockerfile: "infra/gateway/Dockerfile", contexts: { [BASE]: from(BASE), [ISOLATED_BASE]: from(ISOLATED_BASE), ...systemContext, ...product },
+      dockerfile: "gateway/Dockerfile", contexts: { [BASE]: from(BASE), [ISOLATED_BASE]: from(ISOLATED_BASE), ...systemContext, ...product },
       args: { ...runtimeArgs, RUNTIME_BASE_IMAGE: ISOLATED_BASE, IMAGE_PROFILE: "isolated" },
     }),
   };
@@ -64,7 +64,7 @@ export function gatewayBakePlan({ repository, sha, base, isolatedBase, toolchain
   const targets = Object.keys(target);
   if (Object.values(target).some(definition => definition.contexts?.[SYSTEM])) {
     target[SYSTEM] = {
-      ...common, ...cached(SYSTEM), dockerfile: "infra/gateway/Dockerfile.base", target: "gateway-system", output: ["type=cacheonly"],
+      ...common, ...cached(SYSTEM), dockerfile: "gateway/Dockerfile.base", target: "gateway-system", output: ["type=cacheonly"],
     };
   }
   return { group: { default: { targets } }, target };

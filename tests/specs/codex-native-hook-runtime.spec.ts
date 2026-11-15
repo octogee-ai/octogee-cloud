@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-const verifier = path.resolve(import.meta.dirname, "../../infra/gateway/verify-codex-native-hook-runtime.mjs");
+const verifier = path.resolve(import.meta.dirname, "../../gateway/verify-codex-native-hook-runtime.mjs");
 const roots: string[] = [];
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });

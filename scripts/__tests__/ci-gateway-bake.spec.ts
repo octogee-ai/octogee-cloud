@@ -21,10 +21,10 @@ describe("gateway bake plan", () => {
     const { group, target } = plan({ base: true, isolatedBase: true, images });
     expect(group.default.targets.sort()).toEqual([...images, "octogee-gateway-base", "octogee-gateway-builder-base"].sort());
     expect(target["octogee-gateway-base"]).toMatchObject({
-      dockerfile: "infra/gateway/Dockerfile.base", target: "gateway-runtime", tags: [baseRef],
+      dockerfile: "gateway/Dockerfile.base", target: "gateway-runtime", tags: [baseRef],
     });
     expect(target["octogee-gateway-builder-base"]).toMatchObject({
-      dockerfile: "infra/gateway/Dockerfile.isolated-base", tags: [isolatedBaseRef],
+      dockerfile: "gateway/Dockerfile.isolated-base", tags: [isolatedBaseRef],
       contexts: {
         "octogee-gateway-base": "target:octogee-gateway-base",
         "octogee-gateway-system": "target:octogee-gateway-system",
@@ -32,7 +32,7 @@ describe("gateway bake plan", () => {
       args: { BUILDER_TOOLCHAIN_LOCK_SHA256: toolchain.lockSha256, BUILDER_TOOL_GROUPS_SHA256: toolchain.groupsSha256 },
     });
     expect(target["octogee-gateway-system"]).toMatchObject({
-      dockerfile: "infra/gateway/Dockerfile.base", target: "gateway-system", output: ["type=cacheonly"],
+      dockerfile: "gateway/Dockerfile.base", target: "gateway-system", output: ["type=cacheonly"],
     });
     expect(target["octogee-gateway-system"]).not.toHaveProperty("tags");
     expect(target["octogee-gateway"].contexts).toEqual({
@@ -122,7 +122,7 @@ describe("gateway bake plan", () => {
     const edge = { dockerfile: "consumer/edge/Dockerfile", context: "." };
     const { target } = gatewayBakePlan({ repository, sha, base, isolatedBase, toolchain, build: { base: false, isolatedBase: false, images }, edge }, platformOnly);
     expect(target["gateway-edge"]).toMatchObject({ context: ".", dockerfile: "consumer/edge/Dockerfile", tags: [`${repository}/gateway-edge:${sha.slice(0, 7)}`] });
-    expect(target["octogee-gateway"]).toMatchObject({ context: "platform", dockerfile: "infra/gateway/Dockerfile" });
+    expect(target["octogee-gateway"]).toMatchObject({ context: "platform", dockerfile: "gateway/Dockerfile" });
   });
 
   it("is empty when everything is already published", () => {

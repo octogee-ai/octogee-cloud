@@ -28,7 +28,7 @@ command -v helm >/dev/null 2>&1 || { echo "helm is required" >&2; exit 1; }
 
 mkdir -p "$OUTPUT_DIR"
 OUTPUT_DIR="$(cd "$OUTPUT_DIR" && pwd -P)"
-helm package "$REPO_DIR/helm/octogee" --destination "$OUTPUT_DIR" >&2
+helm package "$REPO_DIR/charts/octogee" --destination "$OUTPUT_DIR" >&2
 
 ARCHIVE="$OUTPUT_DIR/octogee-0.1.0.tgz"
 [[ -f "$ARCHIVE" ]] || { echo "helm did not produce $ARCHIVE" >&2; exit 1; }

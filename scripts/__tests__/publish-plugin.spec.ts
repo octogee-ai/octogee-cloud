@@ -5,9 +5,9 @@ import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const repoRoot = resolve(import.meta.dirname, "../..");
-const publish = join(repoRoot, "infra/gateway/publish-plugin.sh");
+const publish = join(repoRoot, "gateway/publish-plugin.sh");
 const plugin = "octogee-broker-tools";
-const sourcePath = `infra/gateway/extensions/platform/${plugin}`;
+const sourcePath = `gateway/extensions/platform/${plugin}`;
 const committed = (file: string) =>
   JSON.parse(execFileSync("git", ["-C", repoRoot, "show", `HEAD:${sourcePath}/${file}`], { encoding: "utf8" }));
 

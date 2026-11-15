@@ -10,7 +10,7 @@ const { default: pg } = await import(require.resolve("pg"));
 const checkout = process.argv[2];
 const dsn = process.env.OCTOGEE_TEST_POSTGRES_DSN;
 if (!checkout || !dsn) throw new Error("Usage: OCTOGEE_TEST_POSTGRES_DSN=<disposable database> node scripts/ops/qualify-agent-store-routines.mjs <OpenClaw checkout>");
-const pin = JSON.parse(readFileSync(new URL("../../infra/gateway/openclaw-tarball/current.json", import.meta.url), "utf8"));
+const pin = JSON.parse(readFileSync(new URL("../../gateway/openclaw-tarball/current.json", import.meta.url), "utf8"));
 const head = execFileSync("/usr/bin/git", ["-C", checkout, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
 const dirty = execFileSync("/usr/bin/git", ["-C", checkout, "status", "--porcelain"], { encoding: "utf8" }).trim();
 if (head !== pin.sourceSha || dirty) throw new Error("OpenClaw must be clean at the exact pinned source SHA");

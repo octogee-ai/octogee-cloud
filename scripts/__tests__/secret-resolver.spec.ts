@@ -607,7 +607,7 @@ describe("resolveOne — brokered byok materialization (unit, injected deps)", (
     it("keeps the whole per-id budget inside the provider's configured timeoutMs", () => {
       const template = JSON.parse(
         fs.readFileSync(
-          path.join(__dirname, "../../infra/gateway/openclaw.template.json"),
+          path.join(__dirname, "../../gateway/openclaw.template.json"),
           "utf8",
         ),
       ) as { secrets: { providers: Record<string, { timeoutMs?: number }> } };
@@ -624,7 +624,7 @@ describe("resolveOne — brokered byok materialization (unit, injected deps)", (
     it("keeps an 84-ref shared roster inside the provider timeout", () => {
       const template = JSON.parse(
         fs.readFileSync(
-          path.join(__dirname, "../../infra/gateway/openclaw.template.json"),
+          path.join(__dirname, "../../gateway/openclaw.template.json"),
           "utf8",
         ),
       ) as { secrets: { providers: Record<string, { timeoutMs?: number }> } };

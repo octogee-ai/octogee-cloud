@@ -4,10 +4,10 @@ import { reachableSources } from "./platform-boundary.js";
 
 export const FIREBASE_REACH_ENTRYPOINTS = [
   "gateway-edge/src/main.ts",
-  "glm-controller/src/main.ts",
+  "fleet-controller/src/main.ts",
   "llm-broker/src/main.ts",
-  "octogee-api/src/main.ts",
-  "octogee-api/src/npm-cache-proxy.ts",
+  "platform-api/src/main.ts",
+  "platform-api/src/npm-cache-proxy.ts",
 ];
 
 const STATEMENT_SPECIFIER_RE = /\bfrom\s*["']([^"']+)["']/gu;

@@ -27,7 +27,7 @@ function provisionPlaceholders(): Map<string, string> {
 }
 
 function renderCustomValues(variables: Record<string, string>): Record<string, unknown> {
-  let rendered = readFileSync(resolve(repoRoot, "helm/octogee/values.custom.yaml.tpl"), "utf8");
+  let rendered = readFileSync(resolve(repoRoot, "charts/octogee/values.custom.yaml.tpl"), "utf8");
   for (const [placeholder, variable] of provisionPlaceholders()) {
     rendered = rendered.replaceAll(placeholder, variables[variable] ?? "fixture");
   }
@@ -36,7 +36,7 @@ function renderCustomValues(variables: Record<string, string>): Record<string, u
 
 describe("browser origins reach runtime pods from the environment values", () => {
   it("provision-namespace renders every custom values placeholder", () => {
-    const template = readFileSync(resolve(repoRoot, "helm/octogee/values.custom.yaml.tpl"), "utf8");
+    const template = readFileSync(resolve(repoRoot, "charts/octogee/values.custom.yaml.tpl"), "utf8");
     const used = new Set(template.match(/__[A-Z][A-Z_]*__/g));
     expect([...used].filter((placeholder) => !provisionPlaceholders().has(placeholder))).toEqual([]);
   });
@@ -67,7 +67,7 @@ describe("browser origins reach runtime pods from the environment values", () =>
   });
 
   it("shared chart defaults carry no origins", () => {
-    expect(platformOrigins("helm/octogee/values.yaml")).toBeUndefined();
-    expect(gatewayOrigins("helm/octogee-gateway/values.yaml")).toBeUndefined();
+    expect(platformOrigins("charts/octogee/values.yaml")).toBeUndefined();
+    expect(gatewayOrigins("charts/octogee-gateway/values.yaml")).toBeUndefined();
   });
 });

@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 
-const rootfs = fileURLToPath(new URL('../../infra/desktop/rootfs', import.meta.url));
+const rootfs = fileURLToPath(new URL('../../desktop/rootfs', import.meta.url));
 const style = join(rootfs, 'usr/local/bin/octo-desktop-style');
 const temporary: string[] = [];
 

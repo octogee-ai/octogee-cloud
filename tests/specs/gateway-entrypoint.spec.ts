@@ -8,23 +8,23 @@ import path from "node:path";
 
 const repoRoot = path.resolve(__dirname, "../..");
 const entrypoint = readFileSync(
-  path.join(repoRoot, "infra/gateway/entrypoint.sh"),
+  path.join(repoRoot, "gateway/entrypoint.sh"),
   "utf8",
 );
 const fleetController = readFileSync(
-  path.join(repoRoot, "scripts/entrypoints/fleet-controller.ts"),
+  path.join(repoRoot, "scripts/entrypoints/provisioner.ts"),
   "utf8",
 );
 const gatewayDeployment = readFileSync(
-  path.join(repoRoot, "helm/octogee-gateway/templates/deployment.yaml"),
+  path.join(repoRoot, "charts/octogee-gateway/templates/deployment.yaml"),
   "utf8",
 );
 const gatewayValues = readFileSync(
-  path.join(repoRoot, "helm/octogee-gateway/values.yaml"),
+  path.join(repoRoot, "charts/octogee-gateway/values.yaml"),
   "utf8",
 );
 
-describe("infra/gateway/entrypoint.sh — no permanent platform persona", () => {
+describe("gateway/entrypoint.sh — no permanent platform persona", () => {
   it("does not bootstrap a bot, PAT, operator agent id, or ops workspace", () => {
     expect(entrypoint).not.toMatch(/bootstrap-mac-ops|MAC_OPS|MM_BOT_USERNAME/);
     expect(entrypoint).not.toMatch(/OPERATOR_AGENT_(?:ID|SLUG)|octogee-ops-/);
@@ -84,14 +84,14 @@ describe("Gateway startup state authority", () => {
     const configPath = "/home/node/.openclaw/system_config/openclaw.json";
     const run = spawnSync("sh", ["-c", `${setup}\n"$1" -e 'process.stdout.write(JSON.stringify({state:process.env.OPENCLAW_STATE_DIR,config:process.env.OPENCLAW_CONFIG_PATH}))'`, "_", process.execPath], {
       encoding: "utf8",
-      env: { ...process.env, OCTOGEE_LIBEXEC_DIR: path.join(repoRoot, "infra/gateway"), GATEWAY_CLASS: "isolated", GATEWAY_RUNTIME_KIND: "", OPENCLAW_STATE_DIR: inheritedState, OPENCLAW_CONFIG_PATH: configPath },
+      env: { ...process.env, OCTOGEE_LIBEXEC_DIR: path.join(repoRoot, "gateway"), GATEWAY_CLASS: "isolated", GATEWAY_RUNTIME_KIND: "", OPENCLAW_STATE_DIR: inheritedState, OPENCLAW_CONFIG_PATH: configPath },
     });
     expect(run.status, run.stderr).toBe(0);
     expect(JSON.parse(run.stdout)).toEqual({ state: "/home/node/.openclaw", config: configPath });
   });
 });
 
-describe("infra/gateway/entrypoint.sh — identity-pure boot (GATEWAY-SIMPLE-ROLL-SPEC)", () => {
+describe("gateway/entrypoint.sh — identity-pure boot (GATEWAY-SIMPLE-ROLL-SPEC)", () => {
   it("consults no roll, fleet, or boot-transaction state anywhere in boot", () => {
     expect(entrypoint).not.toMatch(/system-config-roll-boot/);
     expect(entrypoint).not.toMatch(/system-config-boot-transaction/);
@@ -311,7 +311,7 @@ describe("infra/gateway/entrypoint.sh — identity-pure boot (GATEWAY-SIMPLE-ROL
   });
 });
 
-describe("infra/gateway/entrypoint.sh — isolated-only user runtime", () => {
+describe("gateway/entrypoint.sh — isolated-only user runtime", () => {
   it("rejects retired user gateway classes and profiles", () => {
     expect(entrypoint).toMatch(/shared\|isolated/);
     expect(entrypoint).toMatch(/GATEWAY_CLASS must be shared or isolated/);
@@ -340,7 +340,7 @@ describe("infra/gateway/entrypoint.sh — isolated-only user runtime", () => {
   });
 });
 
-describe("infra/gateway/entrypoint.sh — supervised in-pod runners + metrics", () => {
+describe("gateway/entrypoint.sh — supervised in-pod runners + metrics", () => {
   it("routes only non-code auxiliary runners through supervise-runner on user gateways", () => {
     const runners: Record<string, string> = {
       "fleet-controller": "5000",
@@ -401,7 +401,7 @@ describe("infra/gateway/entrypoint.sh — supervised in-pod runners + metrics", 
   });
 });
 
-describe("infra/gateway/entrypoint.sh — a dead OpenClaw process exits the shared container", () => {
+describe("gateway/entrypoint.sh — a dead OpenClaw process exits the shared container", () => {
   it("waits on the OpenClaw PID after the runners start and leaves isolated pods on the supervisor", () => {
     const tail = entrypoint.slice(entrypoint.indexOf("supervise_runner byosub-syncback"));
     expect(tail).toMatch(/if \[ "\$GATEWAY_CLASS_EFFECTIVE" = "shared" \]; then\s+exit_when_openclaw_dies "\$OPENCLAW_PID"\s+else\s+wait\s+fi/);
@@ -475,7 +475,7 @@ function runExitWhenOpenClawDies(input: { childExit: string; flushExit: number }
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
 }
 
-describe("scripts/entrypoints/fleet-controller.ts — db-less local persistence loops", () => {
+describe("scripts/entrypoints/provisioner.ts — db-less local persistence loops", () => {
 
   it("keeps brokered GCS blob sync wired into the live gateway controller", () => {
     expect(fleetController).toMatch(/blobSyncAllWithOptions/);

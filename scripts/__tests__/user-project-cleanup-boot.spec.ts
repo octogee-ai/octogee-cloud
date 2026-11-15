@@ -29,7 +29,7 @@ beforeEach(async () => {
 afterEach(async () => { await rm(root, { recursive: true, force: true }); });
 
 async function boot(gatewayClass: string, runtime: string, expectEmptyRemoved: boolean) {
-  const prefix = (await readFile(path.join(repo, "infra/gateway/entrypoint.sh"), "utf8"))
+  const prefix = (await readFile(path.join(repo, "gateway/entrypoint.sh"), "utf8"))
     .split('mkdir -p "$HOME/.ssh"')[0]
     .replace("export OPENCLAW_DIR=/home/node/.openclaw", `export OPENCLAW_DIR='${state}'`)
     .replace(/BUILDER_SLUG=""\nif [^\n]*\n[\s\S]*?\nfi\n/u, "BUILDER_SLUG=alice\n")
@@ -39,7 +39,7 @@ async function boot(gatewayClass: string, runtime: string, expectEmptyRemoved: b
   await writeFile(reader, `import assert from 'node:assert/strict';import fs from 'node:fs';assert.equal(fs.existsSync(process.env.OPENCLAW_DIR+'/customers/alice/projects/rvshare'),${!expectEmptyRemoved});console.log('runtime-reader-started');`);
   return spawnSync("sh", ["-s"], {
     input: `${prefix}\nnode '${reader}'\n`, encoding: "utf8",
-    env: { ...process.env, OCTOGEE_LIBEXEC_DIR: path.join(repo, "infra/gateway"), HOME: root, GATEWAY_CLASS: gatewayClass, GATEWAY_RUNTIME_KIND: runtime, GATEWAY_ID: TEST_CLAIM_GATEWAY_ID },
+    env: { ...process.env, OCTOGEE_LIBEXEC_DIR: path.join(repo, "gateway"), HOME: root, GATEWAY_CLASS: gatewayClass, GATEWAY_RUNTIME_KIND: runtime, GATEWAY_ID: TEST_CLAIM_GATEWAY_ID },
   });
 }
 

@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-const installer = path.resolve(__dirname, "../../infra/gateway/install-cua-skills.mjs");
-const vendored = path.resolve(__dirname, "../../infra/gateway/cua-skills");
+const installer = path.resolve(__dirname, "../../gateway/install-cua-skills.mjs");
+const vendored = path.resolve(__dirname, "../../gateway/cua-skills");
 const roots: string[] = [];
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });

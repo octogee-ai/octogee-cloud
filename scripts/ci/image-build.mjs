@@ -5,9 +5,9 @@ export const PLATFORM_CONTEXT = "platform";
 export const PRODUCT_ROOT = "product";
 
 export const IMAGE_BUILDS = {
-  "glm-controller": { dockerfile: "platform/glm-controller/Dockerfile", context: PLATFORM_CONTEXT, overlays: { overlay: "glm-controller" } },
+  "glm-controller": { dockerfile: "platform/fleet-controller/Dockerfile", context: PLATFORM_CONTEXT, overlays: { overlay: "fleet-controller" } },
   "artifact-worker": { dockerfile: "artifact-worker/Dockerfile", context: "." },
-  "octogee-api": { dockerfile: "platform/octogee-api/Dockerfile", context: PLATFORM_CONTEXT },
+  "octogee-api": { dockerfile: "platform/platform-api/Dockerfile", context: PLATFORM_CONTEXT },
   "octogee-ops-agent-runtime": { dockerfile: "ops-agent/Dockerfile", context: "." },
 };
 
@@ -81,9 +81,9 @@ const copiedFiles = (dockerfile, context) => readFileSync(join(context, dockerfi
   .flatMap(line => line.split(/\s+/).slice(1).filter(token => !token.startsWith("--")).slice(0, -1));
 
 const recipe = (dockerfile, context) => [...new Set([dockerfile, ...copiedFiles(dockerfile, context)])]
-  .filter(file => !(file.startsWith("infra/gateway/openclaw-tarball/") && file.endsWith(".tgz")));
+  .filter(file => !(file.startsWith("gateway/openclaw-tarball/") && file.endsWith(".tgz")));
 
 export const gatewayBaseRecipe = (context = PLATFORM_CONTEXT) => [
-  ".dockerignore", "infra/gateway/openclaw-tarball/extract-npm.sh", ...recipe("infra/gateway/Dockerfile.base", context),
+  ".dockerignore", "gateway/openclaw-tarball/extract-npm.sh", ...recipe("gateway/Dockerfile.base", context),
 ];
-export const isolatedBaseRecipe = (context = PLATFORM_CONTEXT) => recipe("infra/gateway/Dockerfile.isolated-base", context);
+export const isolatedBaseRecipe = (context = PLATFORM_CONTEXT) => recipe("gateway/Dockerfile.isolated-base", context);

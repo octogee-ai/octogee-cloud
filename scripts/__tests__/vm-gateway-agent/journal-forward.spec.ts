@@ -5,7 +5,7 @@ import { JOURNAL_FORWARDED_UNITS, ensureJournalForward, planJournalForward } fro
 import { runningSpec, specVersion } from "../../lib/vm-gateway-agent/plan.js";
 import type { DockerEngine } from "../../lib/vm-gateway-agent/docker-engine.js";
 
-const UNIT_DIR = join(__dirname, "../../../infra/desktop/image/rootfs/etc/systemd/system");
+const UNIT_DIR = join(__dirname, "../../../desktop/image/rootfs/etc/systemd/system");
 
 interface FakeContainer { config: Record<string, unknown>; running: boolean }
 

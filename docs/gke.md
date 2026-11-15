@@ -3,7 +3,7 @@
 This guide installs the whole platform in one Google Cloud project, from an
 empty project to an agent that replies in Mattermost. It uses only what this
 repository publishes: the images Build main pushes to GitHub's container
-registry, the Helm chart in `helm/octogee`, and the
+registry, the Helm chart in `charts/octogee`, and the
 [octogee-fleet](https://github.com/octogee-ai/octogee-fleet) command line. One
 script, `scripts/ops/gke-install.sh`, creates the cloud resources and installs
 the chart. For the same platform on your own machine, see
@@ -89,6 +89,12 @@ checkout. Start from the latest release. Its commit always has images:
 ```bash
 git checkout "$(gh release view -R octogee-ai/octogee-cloud --json tagName --jq .tagName)"
 ```
+
+A release also publishes the chart at its version, with its images set, as
+`oci://ghcr.io/octogee-ai/octogee-cloud/charts/octogee`; the script installs
+the same chart from your checkout of the tag.
+[Releasing](releasing.md#install-a-release-by-version) shows how to install
+the published chart, images and npm packages by version.
 
 Until the first release is out, or to run newer code, check out `main`'s newest
 built commit instead. Build main publishes a commit's images about 15 minutes

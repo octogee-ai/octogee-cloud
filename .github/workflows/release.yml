@@ -91,5 +91,86 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "$TAG already has a release; keeping it"
+            exit 0
+          fi
           gh release create "$TAG" -R "$GITHUB_REPOSITORY" --verify-tag --title="$TAG" \
             --notes-file="$RUNNER_TEMP/notes.md" --generate-notes "$RUNNER_TEMP/release/image-manifest.json"
+
+  packages:
+    name: npm packages
+    needs: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
+        with:
+          node-version: 24.22.1
+      - name: Install what each package builds with
+        run: |
+          set -euo pipefail
+          for directory in $(node --input-type=module -e 'import { PUBLISHED_PACKAGES } from "./scripts/ci/release-packages.mjs"; console.log(PUBLISHED_PACKAGES.join(" "))'); do
+            npm ci --prefix "$directory" --no-audit --no-fund
+          done
+      - name: Build and pack each package at the release version
+        run: node scripts/ci/release-packages.mjs pack --tag="$TAG" --out="$RUNNER_TEMP/packages"
+      - name: Install the packed packages into a scratch project and import every export
+        run: node scripts/ci/release-packages.mjs verify --out="$RUNNER_TEMP/packages"
+      - name: Publish what npm does not have yet
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$NPM_TOKEN" ]]; then
+            printf '//registry.npmjs.org/:_authToken=%s\n' "$NPM_TOKEN" > "$RUNNER_TEMP/npmrc"
+            export NPM_CONFIG_USERCONFIG="$RUNNER_TEMP/npmrc"
+          else
+            echo "::notice::No NPM_TOKEN secret is set; publishing through npm trusted publishing"
+          fi
+          node scripts/ci/release-packages.mjs publish --out="$RUNNER_TEMP/packages" \
+            || { echo "::error::npm publish failed; if the output above shows an authentication error, docs/releasing.md says how to set up the NPM_TOKEN secret or trusted publishing. Rerun this job once fixed"; exit 1; }
+
+  charts:
+    name: Helm charts
+    needs: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
+        with:
+          node-version: 24.22.1
+      - run: npm ci --prefix scripts --no-audit --no-fund
+      - name: Install Helm 4.3.1
+        run: |
+          curl -fsSL --retry 5 --retry-all-errors -o "$RUNNER_TEMP/helm.tar.gz" https://get.helm.sh/helm-v4.3.1-linux-amd64.tar.gz
+          echo "0403a88ae20913d11b10a2467b50087721fea7581736da6b9d3992f5357fe54b  $RUNNER_TEMP/helm.tar.gz" | sha256sum -c -
+          sudo tar -xzf "$RUNNER_TEMP/helm.tar.gz" -C /usr/local/bin --strip-components=1 linux-amd64/helm
+      - name: Download the release's image manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download "$TAG" -R "$GITHUB_REPOSITORY" --pattern=image-manifest.json --dir="$RUNNER_TEMP/release"
+      - name: Package each chart at the release version with the release's images
+        run: |
+          set -euo pipefail
+          node scripts/ci/release-charts.mjs package --tag="$TAG" --manifest="$RUNNER_TEMP/release/image-manifest.json" --out="$RUNNER_TEMP/charts"
+          node scripts/ci/release-charts.mjs verify --tag="$TAG" --manifest="$RUNNER_TEMP/release/image-manifest.json" --out="$RUNNER_TEMP/charts"
+      - name: Push what the registry does not have yet
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          helm registry login ghcr.io --username="$GITHUB_ACTOR" --password-stdin <<< "$GH_TOKEN"
+          node scripts/ci/release-charts.mjs publish --out="$RUNNER_TEMP/charts"

@@ -1,7 +1,7 @@
 FROM node:26.13.0-slim@sha256:5adad64f9a1fca2d51972caa65983634c8a774eb300d72b20f7f2a0f60368072 AS platform-npm
 ARG NPM_VERSION=12.2.1
 RUN apt-get update && apt-get install -y --no-install-recommends patch && rm -rf /var/lib/apt/lists/*
-COPY infra/gateway/openclaw-tarball/npm-12.2.1.patch infra/gateway/openclaw-tarball/npm-distribution.test.mjs /tmp/
+COPY gateway/openclaw-tarball/npm-12.2.1.patch gateway/openclaw-tarball/npm-distribution.test.mjs /tmp/
 RUN npm install --global npm@${NPM_VERSION} --ignore-scripts --no-audit --no-fund \
     && patch --batch --forward --directory=/usr/local/lib/node_modules/npm -p1 < /tmp/npm-12.2.1.patch \
     && node /tmp/npm-distribution.test.mjs /usr/local/lib/node_modules/npm \
@@ -47,7 +47,7 @@ ARG OS_PACKAGE_REFRESH=2026-11-11
 RUN test -n "$OS_PACKAGE_REFRESH" && apt-get update && apt-get upgrade -y \
     && rm -rf /var/lib/apt/lists/* /usr/local/lib/node_modules/npm
 COPY --from=platform-npm /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
-COPY infra/cloud-sql/octogee-pg-server-ca.pem /etc/ssl/certs/octogee-postgres-ca.pem
+COPY deploy/cloud-sql/octogee-pg-server-ca.pem /etc/ssl/certs/octogee-postgres-ca.pem
 WORKDIR /gateway-edge
 # git + openssh-client are required for the Phase 6 working-tree
 # routes (`gateway-edge/src/lib/workspace-git.ts`). Without them

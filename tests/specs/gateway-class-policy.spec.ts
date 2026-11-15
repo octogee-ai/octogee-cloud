@@ -15,7 +15,7 @@ import { platformModelRefs } from "../../shared/dist/types/agent-models.js";
 import { openClawOperatorRoles } from "../../shared/dist/types/openclaw-proxy-identity.js";
 
 const repoRoot = path.resolve(__dirname, "../..");
-const script = path.join(repoRoot, "infra/gateway/apply-gateway-class-policy.mjs");
+const script = path.join(repoRoot, "gateway/apply-gateway-class-policy.mjs");
 const workflowTools = [...USER_WORKFLOW_TOOLS];
 const userStructuredTools = [
   "automations",
@@ -63,7 +63,7 @@ const disabledCodexPlugin = {
 };
 
 it("keeps Shared Workshop configuration valid through both final config writers", () => {
-  const template = JSON.parse(readFileSync(path.join(repoRoot, "infra/gateway/openclaw.template.json"), "utf8"));
+  const template = JSON.parse(readFileSync(path.join(repoRoot, "gateway/openclaw.template.json"), "utf8"));
   const config = runPolicy("shared", template);
   const workshop = { enabled: true, config: { autonomous: { mode: "off" } } };
   expect(config).not.toHaveProperty("skills.workshop");
@@ -86,7 +86,7 @@ it("marks retained user Workshop choices as current without replacing them", () 
 });
 
 it("keeps native Codex available in fresh user config without overriding a user opt-out", () => {
-  const fresh = JSON.parse(readFileSync(path.join(repoRoot, "infra/gateway/openclaw.isolated.template.json"), "utf8"));
+  const fresh = JSON.parse(readFileSync(path.join(repoRoot, "gateway/openclaw.isolated.template.json"), "utf8"));
   const out = runPolicy("isolated", fresh);
   expect(out.plugins.entries.codex).toEqual({ enabled: true });
   expect(out.plugins.allow).toContain("codex");
@@ -96,7 +96,7 @@ it("keeps native Codex available in fresh user config without overriding a user 
 
 it("applies the same policy to an isolated class as to builder and the shared policy to an unknown class", () => {
   const policy = (gatewayClass: string) => {
-    const fresh = JSON.parse(readFileSync(path.join(repoRoot, "infra/gateway/openclaw.isolated.template.json"), "utf8"));
+    const fresh = JSON.parse(readFileSync(path.join(repoRoot, "gateway/openclaw.isolated.template.json"), "utf8"));
     const { config, dir } = runPolicyWithDir(gatewayClass, fresh);
     return JSON.parse(JSON.stringify(config).replaceAll(dir, "<openclaw-dir>"));
   };
@@ -354,7 +354,7 @@ it.each(["shared", "isolated"])("canonicalizes an imported database SecretRef un
   expect(out.database.postgres.connection).toEqual({ source: "env", provider: "default", id: "OPENCLAW_AGENT_STORE_DSN" });
 });
 
-describe("infra/gateway/apply-gateway-class-policy.mjs", () => {
+describe("gateway/apply-gateway-class-policy.mjs", () => {
   it("keeps the boot workflow and project policies identical to the runtime invariants", () => {
     const result = spawnSync("node", ["--input-type=module", "-e", `import { OCTOGEE_WORKFLOW_TOOLS } from ${JSON.stringify(script)}; console.log(JSON.stringify(OCTOGEE_WORKFLOW_TOOLS));`], { encoding: "utf8" });
     expect(result.status).toBe(0);

@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { INSTALLATION_SETS, INSTALLATION_VALUES } from "./helpers/umbrella-chart";
 
 const REPO_ROOT = path.resolve(__dirname, "../..");
-const UMBRELLA_PATH = path.join(REPO_ROOT, "helm/octogee");
+const UMBRELLA_PATH = path.join(REPO_ROOT, "charts/octogee");
 const PACKAGE_SCRIPT = path.join(REPO_ROOT, "scripts/package-umbrella-chart.sh");
 const INTERNAL_CHARTS = [
   "cloud-sql-proxy",
@@ -114,7 +114,7 @@ describe("umbrella dependency resolution", () => {
       }
       if (!/\.(?:md|sh|ya?ml)$/.test(candidate)) return;
       const source = fs.readFileSync(candidate, "utf8");
-      if (/helm upgrade(?: --install)? octogee (?:\.\/)?(?:platform\/)?helm\/octogee/.test(source)) {
+      if (/helm upgrade(?: --install)? octogee (?:\.\/)?(?:platform\/)?charts\/octogee/.test(source)) {
         offenders.push(path.relative(REPO_ROOT, candidate));
       }
     };

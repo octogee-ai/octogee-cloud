@@ -23,7 +23,7 @@ function expectLocalGatewayRpcException(rel: string): void {
 
 describe("gateway-rpc local credential exceptions", () => {
   it("keeps the db-less fleet controller on the explicit local token bridge", () => {
-    expectLocalGatewayRpcException("scripts/entrypoints/fleet-controller.ts");
+    expectLocalGatewayRpcException("scripts/entrypoints/provisioner.ts");
   });
 
   it("keeps config.patch helper on the explicit local token bridge", () => {

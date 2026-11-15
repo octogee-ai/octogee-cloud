@@ -1,0 +1,15 @@
+{{- if .Values.edgeIngress.enabled }}
+# Base routing table for octogee-edge-ingress, published for the fleet controller
+# (glm-controller) to read. The fleet controller merges these with the per-gateway locality
+# paths and is the sole writer of the Ingress's atomic .spec.rules — see the
+# octogee.edgeBaseRoutes helper and fleet-controller/src/fleet-ingress.ts.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: octogee-edge-routes
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "octogee.labels" . | nindent 4 }}
+data:
+  routes.json: {{ include "octogee.edgeBaseRoutes" . | fromYamlArray | toJson | quote }}
+{{- end }}

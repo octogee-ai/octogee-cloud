@@ -19,7 +19,7 @@ describe.skipIf(!container)("native retained-home service admission", () => {
     const docker = async (...args: string[]) => exec("docker", ["exec", container!, ...args], { timeout: 10_000 });
     let installed = false;
     try {
-      const dropIn = resolve(import.meta.dirname, `../../../infra/desktop/image/rootfs/etc/systemd/system/${service}.d/10-octogee-home.conf`);
+      const dropIn = resolve(import.meta.dirname, `../../../desktop/image/rootfs/etc/systemd/system/${service}.d/10-octogee-home.conf`);
       await writeFile(join(directory, "admission.conf"), (await readFile(dropIn, "utf8")).replaceAll(service === "docker.service" ? "octo-home-migrate.service" : "octo-home-disk.service", homeUnit));
       await writeFile(join(directory, "actor.service"), `[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/bin/sh -c 'printf written > ${remote}/fallback-write'\n`);
       await writeFile(join(directory, "home.service"), `[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=${post ? "/bin/true\nExecStartPost=/bin/false" : "/bin/false"}\n`);
@@ -49,7 +49,7 @@ describe.skipIf(!container)("native retained-home service admission", () => {
     const remote = `/opt/${id}`;
     const names = { home: `${id}-home.service`, user: `${id}-user.service`, migration: `${id}-migration.service`, runtime: `${id}-runtime.service` };
     const docker = async (...args: string[]) => exec("docker", ["exec", container!, ...args], { timeout: 10_000 });
-    const units = resolve(import.meta.dirname, "../../../infra/desktop/image/rootfs/etc/systemd/system");
+    const units = resolve(import.meta.dirname, "../../../desktop/image/rootfs/etc/systemd/system");
     const map = (text: string) => text.replaceAll("octo-home-disk.service", names.home).replaceAll("user@1000.service", names.user)
       .replaceAll("octo-home-migrate.service", names.migration).replaceAll("docker.service", names.runtime);
     try {
@@ -90,7 +90,7 @@ describe.skipIf(!container)("native retained-home service admission", () => {
 
   describe("checkpoint restore gate", () => {
     const GATE = "/srv/octogee/home-restore.gate";
-    const units = resolve(import.meta.dirname, "../../../infra/desktop/image/rootfs/etc/systemd/system");
+    const units = resolve(import.meta.dirname, "../../../desktop/image/rootfs/etc/systemd/system");
     const unitSection = (text: string) => text.split("\n[Service]")[0];
 
     async function bootFixture(gated: boolean) {

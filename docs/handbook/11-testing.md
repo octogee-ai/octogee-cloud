@@ -41,9 +41,9 @@ Do not copy another contributor's `node_modules` into your checkout.
 Use the owning package's test script so its setup and exclusions apply:
 
 ```bash
-npm ci --prefix glm-controller
-npm test --prefix glm-controller -- src/__tests__/converge-gateway.spec.ts
-npm run typecheck --prefix glm-controller
+npm ci --prefix fleet-controller
+npm test --prefix fleet-controller -- src/__tests__/converge-gateway.spec.ts
+npm run typecheck --prefix fleet-controller
 ```
 
 Not every package has the same scripts; read its `package.json`. The scripts
@@ -66,10 +66,10 @@ The **Checks** workflow runs on every pull request and push to `main`:
   - `core`: typecheck, build, the committed `dist/` check, `npm test`, then
     `node ../scripts/ci/core-postgres.mjs` against a throwaway PostgreSQL 16
     server with pgvector.
-  - `gateway-edge`, `octogee-api` and `tests`: typecheck and `npm test`.
+  - `gateway-edge`, `platform-api` and `tests`: typecheck and `npm test`.
   - `libraries`: `shared` (typecheck, build, the committed `dist/` check,
-    test), `glm-controller` (typecheck and test), and the plugins under
-    `infra/gateway/extensions/platform/`.
+    test), `fleet-controller` (typecheck and test), and the plugins under
+    `gateway/extensions/platform/`.
 - **checks** passes only when both of the above pass.
 
 Branch protection on `main` requires `checks`, `dco` (every commit signed off)
@@ -105,12 +105,12 @@ and redacted error when asking for help.
 | Package | Covers | Location |
 |---|---|---|
 | `core/` | platform state, secret store, chat and git hosts | `core/src/**/*.spec.ts` |
-| `glm-controller/` | placement, migration, gateway rollout, Admin API | `glm-controller/src/**/*.spec.ts` |
+| `fleet-controller/` | placement, migration, gateway rollout, Admin API | `fleet-controller/src/**/*.spec.ts` |
 | `gateway-edge/` | Express routes, middleware, chat and git integration | `gateway-edge/src/__tests__/*.spec.ts` (Vitest + supertest) |
-| `octogee-api/` | platform API, LLM broker, npm cache proxy | `octogee-api/src/__tests__/*.spec.ts` |
+| `platform-api/` | platform API, LLM broker, npm cache proxy | `platform-api/src/__tests__/*.spec.ts` |
 | `scripts/` | gateway pod boot steps, provisioner, operator tools | `scripts/__tests__/*.spec.ts` |
 | `tests/` | cross-package specs, such as the Helm chart specs | `tests/specs/**/*.spec.ts` |
-| plugins | each plugin's tools | `infra/gateway/extensions/platform/<plugin>/` |
+| plugins | each plugin's tools | `gateway/extensions/platform/<plugin>/` |
 
 **Specs live with the module they test.** A spec under `tests/` that imports from
 a sibling package's `lib/` passes Vitest locally but breaks that package's `tsc`

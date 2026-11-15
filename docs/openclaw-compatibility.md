@@ -14,7 +14,7 @@ plus a public overlay of seven commits, ending at
 [`21889851`](https://github.com/ceckert/openclaw/commit/2188985128c3be6af0a9fd32966d6668787ac783)
 in the fork `ceckert/openclaw`. Its packages are the release
 [`gateway-2188985`](https://github.com/ceckert/openclaw/releases/tag/gateway-2188985),
-which `infra/gateway/openclaw-tarball/current.json` pins. We have not run the
+which `gateway/openclaw-tarball/current.json` pins. We have not run the
 fleet features end to end on a stock release. The goal is to carry no patches.
 
 Every recut starts from the question "does upstream already do this?". A patch
@@ -103,7 +103,7 @@ commit. Diff it against the upstream base commit above to see every changed
 line. The tables are drawn from the build notes kept for each cut: a table of
 retained families with removal conditions, notes on individual fixes, and a
 list of open contributions. The current cut's notes are in
-`infra/gateway/openclaw-tarball/README.md`. Pull request states come from the GitHub API on the date
+`gateway/openclaw-tarball/README.md`. Pull request states come from the GitHub API on the date
 above. We decided "platform needs it" by matching each family to the
 platform's architecture and security documents.
 

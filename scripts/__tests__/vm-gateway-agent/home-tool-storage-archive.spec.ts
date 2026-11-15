@@ -172,7 +172,7 @@ def command(argv, **kwargs):
             target.write_text('restored custom version')
     return types.SimpleNamespace(stdout='')
 module['reconcile_boot'](home, tools, cache, run=command, processes=lambda uid: [])`;
-        execFileSync("python3", ["-c", script, path.resolve(__dirname, "../../../infra/desktop/image/rootfs/usr/local/bin/octo-desktop-tool-storage"), live, tools, `${root}/cache`]);
+        execFileSync("python3", ["-c", script, path.resolve(__dirname, "../../../desktop/image/rootfs/usr/local/bin/octo-desktop-tool-storage"), live, tools, `${root}/cache`]);
       }
       if (action === "start") {
         expect(await readFile(`${tools}/installs/node/99.0.0/bin/node`, "utf8")).toBe("restored custom version");
