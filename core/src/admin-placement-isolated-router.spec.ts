@@ -403,6 +403,241 @@ describe("POST /isolated-gateways/:id/retire-owned", () => {
   });
 });
 
+function sharedRoot(): Data {
+  return {
+    gatewayId: "shared-blue", createdAt: 1, createdBy: "test", updatedAt: 1, updatedBy: "test", latestRelease: 3, desiredRelease: 3,
+    liveRelease: 3, desiredStatus: "running", configSchemaVersion: 1, profile: "standard", gatewayClass: "shared", imageProfile: "standard",
+    sizingTier: null, gcpProject: null, gatewayContainerSecurityContext: null, serviceAccountName: null, serviceAccount: null,
+    builderAccess: null, ownerUid: null, builderSlug: null, modelBrokerLimits: null, allocation: null,
+  };
+}
+
+const sharedAssignment = (epoch: number): Data =>
+  ({ uid: OWNER, slug: "alice", gatewayId: "shared-blue", source: "onboarding", state: "serving", epoch, createdAt: 1, updatedAt: 1 });
+
+describe("POST /users/:uid/isolated-gateway/allocate", () => {
+  const releasePayload = {
+    imageRepository: "registry/images/octogee-gateway", imageTag: `abc1234@sha256:${"a".repeat(64)}`,
+    profileImages: { builder: { imageRepository: "registry/images/octogee-gateway-builder", imageTag: `abc1234@sha256:${"b".repeat(64)}` } },
+    gatewayEdgeImage: { imageRepository: "registry/images/gateway-edge", imageTag: `abc1234@sha256:${"c".repeat(64)}` },
+  };
+  const requested = lease({ status: "requested", targetGatewayId: undefined, activationOperationId: undefined });
+  const body = { leaseId: "lease-one", generation: 1, sourceGatewayId: "shared-blue", sourceAssignmentEpoch: 4, sizingKey: "default", sizingTier: "s" };
+  const allocate = (payload: Data = body, query = "") => request(app()).post(`/users/${OWNER}/isolated-gateway/allocate${query}`).send(payload);
+  const isolatedRoots = () => [...docs.keys()].filter((path) => /^gateways\/alice-[^/]+$/.test(path));
+  const preparedFor = { leaseId: "lease-one", generation: 1, sizingKey: "default" };
+  const withHome = (homeMigration: Data | null): Data => {
+    const record = user("shared-blue", requested);
+    return homeMigration ? { ...record, provisioning: { ...(record.provisioning as Data), homeMigration } } : record;
+  };
+
+  beforeEach(() => {
+    vi.mocked(capabilities.ensureAuthSecret).mockClear();
+    seed({
+      [`users/${OWNER}`]: withHome({ id: "home-copy-1", phase: "complete", tier: "default", preparedFor }),
+      "gateways/shared-blue": sharedRoot(),
+      "gateways/shared-blue/releases/3": { gatewayId: "shared-blue", release: 3, payload: releasePayload },
+      [`gateways/shared-blue/assignments/${OWNER}`]: sharedAssignment(4),
+    });
+  });
+
+  it("creates the auth secret, writes the isolated gateway and moves the lease to provisioning", async () => {
+    const res = await allocate().expect(200);
+
+    expect(res.body).toEqual({ uid: OWNER, gatewayId: expect.stringMatching(/^alice-/), outcome: "allocated" });
+    const gatewayId = res.body.gatewayId as string;
+    expect(capabilities.ensureAuthSecret).toHaveBeenCalledWith({ namespace: "octogee-test", gatewayId });
+    expect(docs.get(`gateways/${gatewayId}`)).toMatchObject({ gatewayClass: "isolated", ownerUid: OWNER, desiredStatus: "running" });
+    expect(storedLease()).toMatchObject({ status: "provisioning", targetGatewayId: gatewayId });
+  });
+
+  it("answers the same allocation when repeated", async () => {
+    const first = await allocate().expect(200);
+    const second = await allocate().expect(200);
+
+    expect(second.body).toEqual(first.body);
+    expect(isolatedRoots()).toEqual([`gateways/${first.body.gatewayId}`]);
+  });
+
+  it("answers the committed allocation when repeated after the home record was replaced", async () => {
+    const first = await allocate().expect(200);
+    const stored = docs.get(`users/${OWNER}`)!;
+    docs.set(`users/${OWNER}`, { ...stored, provisioning: { ...(stored.provisioning as Data), homeMigration: { id: "home-copy-2", phase: "copying", tier: "default" } } });
+
+    const second = await allocate().expect(200);
+
+    expect(second.body).toEqual(first.body);
+    expect(isolatedRoots()).toEqual([`gateways/${first.body.gatewayId}`]);
+  });
+
+  it("refreshes a lease whose source assignment moved and allocates nothing", async () => {
+    docs.set(`gateways/shared-blue/assignments/${OWNER}`, sharedAssignment(5));
+
+    const res = await allocate().expect(200);
+
+    expect(res.body).toEqual({ uid: OWNER, gatewayId: null, outcome: "refreshed" });
+    expect(storedLease()).toMatchObject({ status: "requested", sourceAssignmentEpoch: 5 });
+    expect(audits()).toEqual([expect.objectContaining({ what: "allocate isolated gateway", status: "completed" })]);
+    expect(isolatedRoots()).toEqual([]);
+    expect(capabilities.ensureAuthSecret).not.toHaveBeenCalled();
+  });
+
+  it("answers precondition-failed and writes nothing when the lease is another lease", async () => {
+    docs.set(`users/${OWNER}`, withHome({ id: "home-copy-1", phase: "complete", tier: "default", preparedFor: { ...preparedFor, leaseId: "lease-two" } }));
+
+    const res = await allocate({ ...body, leaseId: "lease-two" }).expect(409);
+
+    expect(res.body).toMatchObject({ code: "precondition-failed", reason: `isolated gateway demand fence changed for ${OWNER}` });
+    expect(storedLease().status).toBe("requested");
+    expect(isolatedRoots()).toEqual([]);
+  });
+
+  it.each([
+    ["no home preparation is stored", null],
+    ["the home copy is still running", { id: "home-copy-1", phase: "copying", tier: "default", preparedFor }],
+    ["the home was prepared for another lease", { id: "home-copy-1", phase: "complete", tier: "default", preparedFor: { ...preparedFor, leaseId: "lease-zero" } }],
+    ["the home was prepared for another generation", { id: "home-copy-1", phase: "complete", tier: "default", preparedFor: { ...preparedFor, generation: 2 } }],
+    ["the home was prepared for another sizing key", { id: "home-copy-1", phase: "complete", tier: "pro", preparedFor: { ...preparedFor, sizingKey: "pro" } }],
+    ["a migration completed without a preparation record", { id: "home-copy-1", phase: "complete", tier: "default" }],
+  ])("refuses a VM-sized user, before any effect, when %s", async (_name, homeMigration) => {
+    docs.set(`users/${OWNER}`, withHome(homeMigration));
+    const before = structuredClone([...docs.entries()]);
+
+    for (const query of ["?dryRun=true", ""]) {
+      const res = await allocate(body, query).expect(409);
+      expect(res.body).toMatchObject({
+        code: "precondition-failed",
+        reason: `home for ${OWNER} is not prepared for lease lease-one generation 1 sizing key default`,
+      });
+    }
+
+    expect(capabilities.ensureAuthSecret).not.toHaveBeenCalled();
+    expect([...docs.entries()].filter(([path]) => !path.startsWith("glmOperations/audit-"))).toEqual(before);
+    expect(audits()).toEqual([expect.objectContaining({ what: "allocate isolated gateway", status: "failed" })]);
+  });
+
+  it("plans a dry run without creating the secret or the gateway", async () => {
+    await allocate(body, "?dryRun=true").expect(200).expect((res) => expect(res.body.dryRun).toBe(true));
+
+    expect(capabilities.ensureAuthSecret).not.toHaveBeenCalled();
+    expect(isolatedRoots()).toEqual([]);
+  });
+
+  it("plans a dry run of a repeat after the allocation committed", async () => {
+    await allocate().expect(200);
+    await allocate(body, "?dryRun=true").expect(200).expect((res) => expect(res.body.dryRun).toBe(true));
+  });
+
+  it("refuses a dry run the fence would refuse", async () => {
+    await allocate({ ...body, leaseId: "lease-two" }, "?dryRun=true").expect(409)
+      .expect((res) => expect(res.body.code).toBe("precondition-failed"));
+  });
+
+  it("answers placement-owner before the fleet controller yields", async () => {
+    seed({ [`users/${OWNER}`]: user("shared-blue", requested) }, { placementAutomationOwner: "client", placementAutomationYieldedAt: null });
+    await allocate().expect(409).expect((res) => expect(res.body.code).toBe("placement-owner"));
+    expect(capabilities.ensureAuthSecret).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unknown sizing tier", async () => {
+    const res = await allocate({ ...body, sizingTier: "xl" }).expect(400);
+    expect(res.body.error).toBe("sizingTier must be s, m or l");
+  });
+});
+
+describe("POST /isolated-gateways/:id/recover-unreachable", () => {
+  const RECOVERY = `builder-recover-${TARGET}-g1`;
+  const body = { ownerUid: OWNER, leaseId: "lease-one", generation: 1, authoritativeGatewayId: "shared-blue", sourceUnavailable: true };
+  const recover = (payload: Data = body, query = "") =>
+    request(app()).post(`/isolated-gateways/${TARGET}/recover-unreachable${query}`).send(payload);
+  const diagnostics = vi.mocked(capabilities.readGatewayPodDiagnostics);
+  const receipt = () => docs.get(`gatewayRecoveryReceipts/${RECOVERY}`) ?? null;
+
+  beforeEach(() => {
+    diagnostics.mockReset();
+    diagnostics.mockResolvedValue({ status: "missing", totalPods: 0 });
+    seed({
+      [`users/${OWNER}`]: user("shared-blue", lease({ status: "returning", returnReason: "source-unavailable" })),
+      [`gateways/${TARGET}`]: isolatedRoot({ desiredStatus: "running" }),
+      [`gateways/shared-blue/assignments/${OWNER}`]: sharedAssignment(4),
+    });
+  });
+
+  it("pauses the gateway and records the recovery once no pods remain", async () => {
+    const res = await recover().expect(200);
+
+    expect(res.body).toEqual({ gatewayId: TARGET, state: "recovered", operationId: RECOVERY });
+    expect(docs.get(`gateways/${TARGET}`)?.desiredStatus).toBe("paused");
+    expect(receipt()).toMatchObject({ status: "succeeded", recoveryReceipt: { schemaVersion: 1, pods: 0 } });
+  });
+
+  it("answers precondition-failed and writes nothing when the reservation fence fails", async () => {
+    const res = await recover({ ...body, authoritativeGatewayId: "shared-green" }).expect(409);
+
+    expect(res.body).toMatchObject({ code: "precondition-failed", reason: `User ${OWNER} is no longer authoritative on shared-green` });
+    expect(docs.get(`gateways/${TARGET}`)?.desiredStatus).toBe("running");
+    expect(receipt()).toBeNull();
+    expect(diagnostics).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["the pods cannot be observed", async () => ({ status: "unknown", totalPods: 0 }), "observation-unknown"],
+    ["the diagnostics read fails", async () => { throw new Error("kubectl timed out"); }, "observation-unknown"],
+    ["pods remain", async () => ({ status: "running", totalPods: 1 }), "pods-present"],
+  ])("keeps the reservation and answers waiting when %s, then recovers on the repeat call", async (_name, read, reason) => {
+    diagnostics.mockImplementationOnce(read as never);
+
+    const waiting = await recover().expect(200);
+
+    expect(waiting.body).toEqual({ gatewayId: TARGET, state: "waiting", reason, operationId: RECOVERY });
+    expect(docs.get(`gateways/${TARGET}`)?.desiredStatus).toBe("paused");
+    expect(receipt()).toMatchObject({ status: "pending" });
+
+    const repeated = await recover().expect(200);
+
+    expect(repeated.body).toEqual({ gatewayId: TARGET, state: "recovered", operationId: RECOVERY });
+    expect(receipt()).toMatchObject({ status: "succeeded" });
+    expect(audits().map((audit) => [audit.outcome, audit.partialOutcome ?? null])).toEqual([
+      ["partial", { summary: `waiting: ${reason}`, details: { state: "waiting", reason, operationId: RECOVERY } }],
+      ["completed", null],
+    ]);
+  });
+
+  it("answers precondition-failed and leaves the reservation when the fence fails after reserving", async () => {
+    diagnostics.mockImplementationOnce(async () => {
+      docs.set(`gateways/shared-blue/assignments/${OWNER}`, { ...sharedAssignment(4), state: "migrating" });
+      return { status: "missing", totalPods: 0 };
+    });
+
+    const res = await recover().expect(409);
+
+    expect(res.body).toMatchObject({ code: "precondition-failed", reason: `User ${OWNER} is no longer authoritative on shared-blue` });
+    expect(docs.get(`gateways/${TARGET}`)?.desiredStatus).toBe("paused");
+    expect(receipt()).toMatchObject({ status: "pending" });
+  });
+
+  it("plans a dry run without reserving or reading the pods", async () => {
+    await recover(body, "?dryRun=true").expect(200).expect((res) => expect(res.body.dryRun).toBe(true));
+
+    expect(docs.get(`gateways/${TARGET}`)?.desiredStatus).toBe("running");
+    expect(receipt()).toBeNull();
+    expect(diagnostics).not.toHaveBeenCalled();
+  });
+
+  it("refuses a dry run the reservation fence would refuse", async () => {
+    await recover({ ...body, authoritativeGatewayId: "shared-green" }, "?dryRun=true").expect(409)
+      .expect((res) => expect(res.body.code).toBe("precondition-failed"));
+    expect(receipt()).toBeNull();
+  });
+
+  it("answers placement-owner and does not reserve before the fleet controller yields", async () => {
+    seed({ [`gateways/${TARGET}`]: isolatedRoot({ desiredStatus: "running" }) }, null);
+    await recover().expect(409).expect((res) => expect(res.body.code).toBe("placement-owner"));
+    expect(docs.get(`gateways/${TARGET}`)?.desiredStatus).toBe("running");
+    expect(diagnostics).not.toHaveBeenCalled();
+  });
+});
+
 describe("the verbs express every in-process lease call", () => {
   const RETURN = `builder-return-${TARGET}-g1`;
   const RECOVERY = `builder-recover-${TARGET}-g1`;

@@ -2,17 +2,25 @@ import express from "express";
 import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
 import { createAdminFleetMutationRunner, respondToAdminFleetMutationError } from "./admin-fleet-router.js";
-import { addAdminPlacementIsolatedRoutes } from "./admin-placement-isolated-router.js";
+import { addAdminPlacementIsolatedRoutes, type AdminIsolatedCapabilities } from "./admin-placement-isolated-router.js";
 import { initialGatewayReleaseDocuments } from "./gateway-live-release.js";
 import { dsn, operation } from "./platform-state/postgres/__tests__/fixtures/harness.js";
 import { NOW, useUserFixture } from "./platform-state/postgres/__tests__/fixtures/users.js";
 import type { PlatformStateStore } from "./platform-state/store.js";
+import { FIXTURE_SIZING_PROFILES } from "@octogee/core-testing/journal-store";
+import {
+  allocateIsolatedGateway,
+  requireStoredHomeReadiness,
+  unauditedLifecycleMutations,
+  type AllocateIsolatedGatewayInput,
+} from "./isolated-gateway-lifecycle/index.js";
+import { assertClientOwnsPlacementAutomation } from "./placement-automation-owner.js";
 
 const TARGET = "alice-xs-12345678";
 
 const warn = vi.fn();
 
-function app(store: PlatformStateStore) {
+function app(store: PlatformStateStore, readGatewayPodDiagnostics: AdminIsolatedCapabilities["readGatewayPodDiagnostics"] = vi.fn()) {
   const server = express();
   server.use(express.json());
   server.use((req, _res, next) => {
@@ -23,7 +31,7 @@ function app(store: PlatformStateStore) {
     store,
     journal: createAdminFleetMutationRunner(store),
     accounts: { get: async () => null },
-    capabilities: { namespace: "octogee-test", ensureAuthSecret: vi.fn(), readGatewayPodDiagnostics: vi.fn() },
+    capabilities: { namespace: "octogee-test", ensureAuthSecret: vi.fn(), readGatewayPodDiagnostics },
     log: vi.fn(),
     warn,
     now: () => NOW + 5_000,
@@ -201,5 +209,127 @@ describe.skipIf(!dsn)("PostgreSQL isolated lease completion, failure and retirem
 
     await retire(store, { telemetryFenceOperationId: RETURN, telemetryFenceStatus: "succeeded" }).expect(200);
     expect(await store.gateways.roots.get(TARGET)).toMatchObject({ desiredStatus: "retired", retirementClaim: { operationId: RETIREMENT } });
+  });
+});
+
+describe.skipIf(!dsn)("PostgreSQL unreachable isolated gateway recovery", () => {
+  const fixture = useUserFixture();
+  const RECOVERY = `builder-recover-${TARGET}-g1`;
+  const body = { ownerUid: "alice", leaseId: "lease-one", generation: 1, authoritativeGatewayId: "shared-blue", sourceUnavailable: true };
+
+  async function seed() {
+    const { records, admitted, place, store } = fixture();
+    await records.create({ uid: "alice", createdAt: NOW });
+    await admitted("alice");
+    await place("alice", "shared-blue");
+    const { gatewayDoc, releaseDoc } = initialGatewayReleaseDocuments({
+      gatewayId: TARGET,
+      config: {
+        configSchemaVersion: 1, profile: null, gatewayClass: "isolated", imageProfile: "isolated", sizingTier: "s", gcpProject: null,
+        gatewayContainerSecurityContext: null, serviceAccountName: null, serviceAccount: null, builderAccess: null,
+        ownerUid: "alice", builderSlug: "alice", modelBrokerLimits: null,
+      },
+      artifact: { imageRepository: "registry/images/octogee-gateway", imageTag: "753c212" },
+      createdBy: "test",
+      now: NOW,
+      desiredStatus: "running",
+    });
+    await store.transaction({ label: "seed isolated gateway" }, async (tx) => {
+      await tx.gateways.roots.create({
+        ...gatewayDoc,
+        allocation: { kind: "disposable-builder", schemaVersion: 1, leaseId: "lease-one", generation: 1, claimedByUid: "alice" },
+      });
+      await tx.gateways.releases.createInitial(releaseDoc);
+    });
+    await records.setActivationLease("alice", {
+      leaseId: "lease-one", generation: 1, status: "returning", targetGatewayId: TARGET, returnReason: "source-unavailable",
+      sourceGatewayId: "shared-blue", sourceAssignmentEpoch: 0, requestedAt: NOW,
+    }, { leaseId: null, generation: null });
+    await store.config.orchestrator.patch({ placementAutomationOwner: "client", placementAutomationYieldedAt: NOW });
+    return store;
+  }
+
+  const desiredStatus = async () => (await fixture().store.gateways.roots.get(TARGET))!.desiredStatus;
+  const receipt = () => fixture().store.journal.recoveryReceipts.get(RECOVERY);
+
+  it("keeps the reservation while the pods cannot be observed and completes it on the repeat call", async () => {
+    const store = await seed();
+    const diagnostics = vi.fn()
+      .mockRejectedValueOnce(new Error("kubectl timed out"))
+      .mockResolvedValueOnce({ status: "missing", totalPods: 0 });
+
+    const waiting = await request(app(store, diagnostics)).post(`/isolated-gateways/${TARGET}/recover-unreachable`).send(body).expect(200);
+
+    expect(waiting.body).toEqual({ gatewayId: TARGET, state: "waiting", reason: "observation-unknown", operationId: RECOVERY });
+    expect(await desiredStatus()).toBe("paused");
+    expect(await receipt()).toMatchObject({ status: "pending", kind: "recover-unreachable-disposable" });
+
+    const recovered = await request(app(store, diagnostics)).post(`/isolated-gateways/${TARGET}/recover-unreachable`).send(body).expect(200);
+
+    expect(recovered.body).toEqual({ gatewayId: TARGET, state: "recovered", operationId: RECOVERY });
+    expect(await receipt()).toMatchObject({ status: "succeeded", recoveryReceipt: { schemaVersion: 1, pods: 0 } });
+  });
+
+  it("writes nothing when the reservation fence fails", async () => {
+    const store = await seed();
+    const diagnostics = vi.fn();
+
+    await request(app(store, diagnostics)).post(`/isolated-gateways/${TARGET}/recover-unreachable`)
+      .send({ ...body, authoritativeGatewayId: "shared-green" }).expect(409)
+      .expect((res) => expect(res.body.code).toBe("precondition-failed"));
+
+    expect(await desiredStatus()).toBe("running");
+    expect(await receipt()).toBeNull();
+    expect(diagnostics).not.toHaveBeenCalled();
+  });
+});
+
+describe.skipIf(!dsn)("PostgreSQL isolated allocation home readiness", () => {
+  const fixture = useUserFixture();
+  const request = {
+    uid: "alice", builderSlug: "alice", leaseId: "lease-one", generation: 1, sourceGatewayId: "shared-blue",
+    sourceAssignmentEpoch: 0, sizingKey: "hobby", sizingTier: "s",
+  } as AllocateIsolatedGatewayInput;
+
+  async function seed() {
+    const { records, admitted, place, store } = fixture();
+    await records.create({ uid: "alice", createdAt: NOW });
+    await admitted("alice");
+    await place("alice", "shared-blue");
+    await records.setActivationLease("alice", {
+      leaseId: "lease-one", generation: 1, status: "requested", sourceGatewayId: "shared-blue", sourceAssignmentEpoch: 0,
+      entitlementTier: "hobby", sizingTier: "s", requestedAt: NOW,
+    }, { leaseId: null, generation: null });
+    await store.config.orchestrator.patch({ sizingProfiles: FIXTURE_SIZING_PROFILES, placementAutomationOwner: "client", placementAutomationYieldedAt: NOW });
+    return store;
+  }
+
+  function allocate(store: PlatformStateStore, ensureAuthSecret = vi.fn(async () => undefined)) {
+    return allocateIsolatedGateway({
+      store,
+      readSizingKey: async () => "hobby",
+      requireOwner: async (transaction) => { await assertClientOwnsPlacementAutomation(transaction); },
+      requireHomeReady: requireStoredHomeReadiness,
+      mutations: unauditedLifecycleMutations,
+      namespace: "octogee-test",
+      ensureAuthSecret,
+      now: () => NOW + 5_000,
+      log: vi.fn(),
+    }, request);
+  }
+
+  it("refuses a VM-sized user before the auth secret until the stored preparation names the lease", async () => {
+    const store = await seed();
+    const ensureAuthSecret = vi.fn(async () => undefined);
+
+    await expect(allocate(store, ensureAuthSecret)).rejects.toThrow("home for alice is not prepared for lease lease-one generation 1 sizing key hobby");
+    expect(ensureAuthSecret).not.toHaveBeenCalled();
+
+    await fixture().records.patch("alice", { home: { homeMigration: { id: "home-copy-1", phase: "complete", tier: "hobby", preparedFor: { leaseId: "lease-one", generation: 2, sizingKey: "hobby" } } } });
+    await expect(allocate(store, ensureAuthSecret)).rejects.toThrow("home for alice is not prepared");
+
+    await fixture().records.patch("alice", { home: { homeMigration: { id: "home-copy-1", phase: "complete", tier: "hobby", preparedFor: { leaseId: "lease-one", generation: 1, sizingKey: "hobby" } } } });
+    await expect(allocate(store, ensureAuthSecret)).rejects.toThrow("isolated gateway source shared-blue is unavailable");
+    expect(ensureAuthSecret).not.toHaveBeenCalled();
   });
 });
