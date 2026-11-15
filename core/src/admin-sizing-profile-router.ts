@@ -8,8 +8,7 @@ import {
   respondToAdminFleetMutationError,
 } from "./admin-fleet-router.js";
 import { hasComputerShape } from "./operator-isolated-gateway.js";
-import type { GatewayComputerProfile, GatewaySizingProfile } from "./platform-state/config.js";
-import { isGatewaySizingProfile } from "./platform-state/config.js";
+import { isGatewaySizingProfile, type GatewayComputerProfile, type GatewaySizingProfile } from "@octogee/shared/types/sizing-profile";
 import type { PlatformStateStore } from "./platform-state/store.js";
 
 const SIZING_PROFILE_NAME = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;

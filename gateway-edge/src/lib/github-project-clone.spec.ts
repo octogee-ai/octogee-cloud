@@ -5,7 +5,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { acquireWorkspaceMutationLeaseSync } from "@octogee/core/workspace-mutation-lease";
-import { workspaceMutationLeaseGitDir } from "./workspace-git.js";
+import { workspaceMutationLeaseGitDir } from "@octogee/core/workspace/workspace-git";
 import {
   cloneGithubProjectCheckout,
   githubCloneCredentialEnv,

@@ -6,7 +6,7 @@ import { pathToFileURL } from "node:url";
 import { IMAGE_BUILDS, PLATFORM_CONTEXT, imagePlan } from "./image-build.mjs";
 import { gatewayBakePlan } from "./gateway-bake.mjs";
 
-export const PLATFORM_IMAGES = ["glm-controller", "octogee-api", "gateway-edge", "octogee-gateway", "octogee-gateway-builder", "vm-bridge"];
+export const PLATFORM_IMAGES = ["glm-controller", "octogee-api", "llm-broker", "gateway-edge", "octogee-gateway", "octogee-gateway-builder", "vm-bridge", "provisioning-service"];
 export const PLATFORMS = ["linux/amd64", "linux/arm64"];
 export const SOURCE_REPOSITORY = "https://github.com/octogee-ai/octogee-cloud";
 export const CACHE_PREFIX = "octogee-cloud";
@@ -170,12 +170,14 @@ export function readDigestDirectory(directory) {
   return digests;
 }
 
-const SERVICE_SOURCE_DIRS = { "fleet-controller": "fleet-controller", "gateway-edge": "gateway-edge", "octogee-api": "platform-api" };
-const SERVICE_PACKAGES = "fleet-controller|gateway-edge|octogee-api";
+const SERVICE_SOURCE_DIRS = { "fleet-controller": "fleet-controller", "gateway-edge": "gateway-edge", "llm-broker": "llm-broker", "octogee-api": "platform-api" };
+const SERVICE_PACKAGES = "fleet-controller|gateway-edge|llm-broker|octogee-api";
 const sourceOf = path => path.replace(/^[^/]+/, directory => SERVICE_SOURCE_DIRS[directory]);
 const sourceRules = [
   [new RegExp(`(?:^|/)(?:${SERVICE_PACKAGES})/dist/((?:${SERVICE_PACKAGES})/src/.+?)(?:\\.d\\.ts|\\.js\\.map|\\.js)$`), path => [`${sourceOf(path)}.ts`, `${sourceOf(path)}.tsx`]],
   [new RegExp(`(?:^|/)((?:${SERVICE_PACKAGES})/src/.+)$`), path => [sourceOf(path)]],
+  [/(?:^|\/)llm-broker\/dist\/(.+?)(?:\.d\.ts|\.js\.map|\.js)$/, path => [`llm-broker/src/${path}.ts`]],
+  [/(?:^|\/)provisioning-service\/dist\/(src\/.+?)(?:\.d\.ts|\.js\.map|\.js)$/, path => [`provisioning-service/${path}.ts`]],
   [/(?:^|\/)core\/dist\/(.+?)(?:\.d\.ts|\.js\.map|\.js)$/, path => [`core/src/${path}.ts`]],
   [/(?:^|\/)shared\/dist\/(.+?)(?:\.d\.ts|\.js\.map|\.js)$/, path => [`shared/${path}.ts`]],
   [/^octogee\/extensions\/([^/]+)\//, extension => [`gateway/extensions/platform/${extension}`]],

@@ -56,6 +56,14 @@ jobs:
               npx tsc --noEmit
               npm test
               npm run gate
+          - name: gateway-supervisor
+            installs: gateway-supervisor
+            gateway-npm: true
+            run: |
+              cd gateway-supervisor
+              npm audit --audit-level=moderate
+              npm run typecheck
+              npm test
           - name: core
             installs: core
             postgres: true
@@ -88,15 +96,22 @@ jobs:
               cd gateway-edge
               npm run typecheck
               npm test
+          - name: llm-broker
+            installs: llm-broker
+            run: |
+              cd llm-broker
+              npm run typecheck
+              npm test
           - name: platform-api
-            installs: gateway-edge shared platform-api
+            installs: shared llm-broker platform-api
+            builds: llm-broker
             gateway-npm: true
             run: |
               cd platform-api
               npm run typecheck
               npm test
           - name: tests
-            installs: scripts shared fleet-controller tests
+            installs: scripts gateway-supervisor shared fleet-controller tests
             helm: true
             run: |
               cd tests
@@ -167,9 +182,13 @@ jobs:
       - name: Install dependencies
         env:
           INSTALLS: ${{ matrix.installs }}
+          BUILDS: ${{ matrix.builds }}
         run: |
           for directory in $INSTALLS; do
             npm ci --prefix "$directory" --no-audit --no-fund
+            case " $BUILDS " in
+              *" $directory "*) npm run build --prefix "$directory" ;;
+            esac
           done
       - name: Typecheck and test
         run: ${{ matrix.run }}

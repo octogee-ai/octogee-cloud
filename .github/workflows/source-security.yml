@@ -82,7 +82,7 @@ jobs:
           done
           mkdir -p "$RUNNER_TEMP/rendered-helm"
           helm template octogee charts/octogee --namespace octogee-local -f scripts/ops/kind/values.yaml "${args[@]}" \
-            --set-string llmBroker.image.repository=registry.example/octogee-api \
+            --set-string llmBroker.image.repository=registry.example/llm-broker \
             --set-string "llmBroker.image.tag=$tag" --set-string "llmBroker.image.digest=$digest" \
             --set-string "glm-controller.platformRelease.sourceSha=$(printf 'a%.0s' {1..40})" \
             --set-string glm-controller.platformRelease.gatewayImageRepository=registry.example/octogee-gateway \

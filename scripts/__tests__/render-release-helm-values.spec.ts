@@ -11,7 +11,7 @@ const manifest: ReleaseDigestManifest = {
   manifestDigest: digest, repository: "us-central1-docker.pkg.dev/octogee/octogee",
   surfaces: {
     gateway: Object.fromEntries(["gateway-edge", "octogee-gateway", "octogee-gateway-builder"].map(name => [name, digest])),
-    platform: Object.fromEntries(["glm-controller", "octogee-api", "artifact-worker", "octogee-ops-agent", "octogee-project-runner"].map(name => [name, digest])),
+    platform: Object.fromEntries(["glm-controller", "octogee-api", "llm-broker", "artifact-worker", "octogee-ops-agent", "octogee-project-runner"].map(name => [name, digest])),
   },
 };
 
@@ -29,6 +29,7 @@ describe("operator Helm release selection", () => {
     for (const key of ["octogee-api", "llmBroker", "artifactWorker", "opsAgent", "gateway-edge"]) {
       expect(values[key].image).toMatchObject({ tag: sourceSha.slice(0, 7), digest });
     }
+    expect(values.llmBroker.image.repository).toBe(`${manifest.repository}/llm-broker`);
     expect(values.global.projectRunnerImage).toMatchObject({ tag: sourceSha.slice(0, 7), digest });
   });
 
@@ -40,6 +41,17 @@ describe("operator Helm release selection", () => {
     expect(values.releaseImages.automation).toEqual({
       repository: `${manifest.repository}/automation`, tag: sourceSha.slice(0, 7), digest: `sha256:${"f".repeat(64)}`,
     });
+  });
+
+  it("pins the provisioning service to the selected family only when that family built it", async () => {
+    const withService = structuredClone(manifest);
+    withService.surfaces.platform["provisioning-service"] = `sha256:${"f".repeat(64)}`;
+    const values = JSON.parse(await renderReleaseHelmValues(sourceSha, { resolveManifest: async () => withService }));
+    expect(values.provisioningService.image).toEqual({
+      repository: `${manifest.repository}/provisioning-service`, tag: sourceSha.slice(0, 7), digest: `sha256:${"f".repeat(64)}`,
+    });
+    const without = JSON.parse(await renderReleaseHelmValues(sourceSha, { resolveManifest: async () => manifest }));
+    expect(without.provisioningService).toBeUndefined();
   });
 
   it("gives Shared allocation the exact canonical family used by user deployment", async () => {

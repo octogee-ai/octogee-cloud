@@ -1,4 +1,4 @@
-import { builderActivateOperationId } from "./isolated-operation-ids.js";
+import { builderActivateOperationId } from "@octogee/shared/types/isolated-operation-ids";
 import { isOperatorIssuedAllocation } from "./operator-isolated-gateway.js";
 import { accountAllowsInteractiveAccess } from "@octogee/shared/types/account-lifecycle";
 import type { GatewayDoc } from "@octogee/shared/types/gateway-releases";

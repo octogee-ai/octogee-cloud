@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createHarness, dsn, spec, TOKENS, untilSettled, type Harness } from "../__tests__/harness.js";
+import { CALLER_ROLES } from "../config.js";
 
 const KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA gateway-a";
 
@@ -22,7 +23,7 @@ describe.skipIf(!dsn)("the provisioning HTTP API", { timeout: 30_000 }, () => {
       expect((await harness.request("GET", "/v1/provisionings", { token: TOKENS.otherNamespace })).status).toBe(403);
     });
 
-    it("limits the platform API to git keys, reads and credentials, and the fleet controller to provisioning", async () => {
+    it("limits the platform API to git keys, reads and credentials, and the fleet controller to provisioning and credentials", async () => {
       const body = { spec: spec("lin") };
       expect((await harness.request("PUT", "/v1/users/u1/provisioning", { token: TOKENS.platformApi, body })).status).toBe(403);
       expect((await harness.request("PUT", "/v1/users/u1/provisioning", { body })).status).toBe(201);
@@ -31,7 +32,86 @@ describe.skipIf(!dsn)("the provisioning HTTP API", { timeout: 30_000 }, () => {
       expect((await harness.request("DELETE", "/v1/users/u1/provisioning", { token: TOKENS.platformApi })).status).toBe(403);
       expect((await harness.request("PUT", "/v1/users/u1/git-keys/gw-1", { body: { spec: { publicKey: KEY } } })).status).toBe(403);
       expect((await harness.request("PUT", "/v1/users/u1/git-keys/gw-1", { token: TOKENS.platformApi, body: { spec: { publicKey: KEY } } })).status).toBe(201);
-      expect((await harness.request("GET", "/v1/users/u1/credentials/user-chat-token")).status).toBe(403);
+      expect((await harness.request("GET", "/v1/users/u1/credentials/user-chat-token")).body.code).toBe("not-issued");
+      expect((await harness.request("GET", "/v1/users/u1/credentials/user-chat-token", { token: TOKENS.platformApi })).body.code).toBe("not-issued");
+    });
+
+    it("refuses credentials to a caller holding only key-writer or only reader", async () => {
+      const scoped = await createHarness({ roleTable: { ...CALLER_ROLES, "key-writer-only": ["key-writer"], "reader-only": ["reader"] } });
+      try {
+        expect((await scoped.request("PUT", "/v1/users/u1/provisioning", { body: { spec: spec("lin") } })).status).toBe(201);
+        expect((await scoped.request("GET", "/v1/users/u1/credentials/user-chat-token", { token: TOKENS.keyWriterOnly })).body.code).toBe("forbidden");
+        expect((await scoped.request("GET", "/v1/users/u1/credentials/user-chat-token", { token: TOKENS.readerOnly })).body.code).toBe("forbidden");
+        expect((await scoped.request("GET", "/v1/users/u1/provisioning", { token: TOKENS.readerOnly })).status).toBe(200);
+      } finally {
+        await scoped.dispose();
+      }
+    });
+
+    it("answers 403 to a service account whose name is an object property, such as constructor", async () => {
+      expect((await harness.request("GET", "/v1/provisionings", { token: TOKENS.constructorName })).body.code).toBe("forbidden");
+    });
+
+    it("answers 429 rate-limited with Retry-After once one caller exceeds its requests per minute, while other callers and probes go on", async () => {
+      const limited = await createHarness({ limits: { requestsPerMinute: 2 } });
+      try {
+        expect((await limited.request("GET", "/v1/provisionings")).status).toBe(200);
+        expect((await limited.request("GET", "/v1/provisionings")).status).toBe(200);
+        const refused = await limited.request("GET", "/v1/provisionings");
+        expect(refused).toMatchObject({ status: 429, body: { code: "rate-limited", error: expect.any(String) } });
+        expect(Number(refused.headers.get("retry-after"))).toBeGreaterThan(0);
+        expect((await limited.request("GET", "/v1/provisionings")).status).toBe(429);
+        expect((await limited.request("GET", "/v1/provisionings", { token: TOKENS.platformApi })).status).toBe(200);
+        for (const path of ["/healthz", "/readyz", "/metrics", "/readyz"]) {
+          expect((await fetch(`${limited.service.url}${path}`)).status).toBe(200);
+        }
+        const warnings = limited.log.lines.filter((line) => line.message === "caller exceeded its request limit");
+        expect(warnings).toEqual([expect.objectContaining({ level: "warn", fields: expect.objectContaining({ serviceAccount: "octogee-glm-controller" }) })]);
+      } finally {
+        await limited.dispose();
+      }
+    });
+
+    it("writes nothing for a request refused by the rate limit", async () => {
+      const limited = await createHarness({ limits: { requestsPerMinute: 1 } });
+      try {
+        expect((await limited.request("GET", "/v1/provisionings")).status).toBe(200);
+        expect((await limited.request("PUT", "/v1/users/u1/provisioning", { body: { spec: spec("lin") } })).status).toBe(429);
+        expect((await limited.request("GET", "/v1/users/u1/provisioning", { token: TOKENS.platformApi })).status).toBe(404);
+      } finally {
+        await limited.dispose();
+      }
+    });
+
+    it("bounds each caller's held waits and watches, and frees the slot when the held request ends", async () => {
+      const limited = await createHarness({ limits: { concurrentWaits: 1 } });
+      const held = new AbortController();
+      try {
+        expect((await limited.request("PUT", "/v1/users/u1/provisioning", { body: { spec: spec("lin") } })).status).toBe(201);
+        const holding = fetch(`${limited.service.url}/v1/users/u1/provisioning?waitForGeneration=1&timeoutSeconds=30`, {
+          headers: { authorization: `Bearer ${TOKENS.writer}` }, signal: held.signal,
+        }).catch((error: unknown) => error);
+        let second = await limited.request("GET", "/v1/provisionings?watch=true&resourceVersion=0&timeoutSeconds=0");
+        for (let tries = 0; second.status !== 429 && tries < 50; tries += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          second = await limited.request("GET", "/v1/provisionings?watch=true&resourceVersion=0&timeoutSeconds=0");
+        }
+        expect(second).toMatchObject({ status: 429, body: { code: "rate-limited" } });
+        expect(second.headers.get("retry-after")).toBe("1");
+        expect((await limited.request("GET", "/v1/users/u1/provisioning")).status).toBe(200);
+        expect((await limited.request("GET", "/v1/users/u1/provisioning?waitForGeneration=1&timeoutSeconds=0", { token: TOKENS.platformApi })).status).toBe(200);
+        held.abort();
+        await holding;
+        let freed = await limited.request("GET", "/v1/users/u1/provisioning?waitForGeneration=1&timeoutSeconds=0");
+        for (let tries = 0; freed.status !== 200 && tries < 50; tries += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          freed = await limited.request("GET", "/v1/users/u1/provisioning?waitForGeneration=1&timeoutSeconds=0");
+        }
+        expect(freed.status).toBe(200);
+      } finally {
+        held.abort();
+        await limited.dispose();
+      }
     });
 
     it("answers 503 with Retry-After when the token review cannot be reached", async () => {
@@ -53,6 +133,23 @@ describe.skipIf(!dsn)("the provisioning HTTP API", { timeout: 30_000 }, () => {
       const text = await metrics.text();
       expect(text).toContain('provisioning_work{state="queued"} 0');
       expect(text).toContain("provisioning_generation_lag_seconds");
+    });
+
+    it("answers readiness and metrics from the last background check, which reports a failed database check as not ready", async () => {
+      await harness.request("PUT", "/v1/users/u1/provisioning", { body: { spec: spec("lin") } });
+      await harness.service.probes.refresh();
+      expect(await (await fetch(`${harness.service.url}/metrics`)).text()).toContain('provisioning_work{state="queued"} 1');
+      const query = harness.service.db.pool.query.bind(harness.service.db.pool);
+      harness.service.db.pool.query = (async () => { throw new Error("connection refused"); }) as unknown as typeof harness.service.db.pool.query;
+      try {
+        await harness.service.probes.refresh();
+        expect((await fetch(`${harness.service.url}/readyz`)).status).toBe(503);
+        expect(harness.log.lines.some((line) => line.level === "error" && line.message === "readiness check failed")).toBe(true);
+      } finally {
+        harness.service.db.pool.query = query;
+      }
+      await harness.service.probes.refresh();
+      expect((await fetch(`${harness.service.url}/readyz`)).status).toBe(200);
     });
   });
 
@@ -147,6 +244,61 @@ describe.skipIf(!dsn)("the provisioning HTTP API", { timeout: 30_000 }, () => {
       expect(expired.status).toBe(410);
       expect(expired.body.code).toBe("resource-version-expired");
       expect((await harness.request("GET", "/v1/provisionings?watch=true&resourceVersion=999999&timeoutSeconds=0")).status).toBe(410);
+    });
+
+    it("pages a watch by limit, oldest change first, and continues from the returned version", async () => {
+      const from = (await harness.request("GET", "/v1/provisionings")).body.resourceVersion;
+      for (const uid of ["w1", "w2", "w3"]) await harness.request("PUT", `/v1/users/${uid}/provisioning`, { body: { spec: spec(uid) } });
+      const first = (await harness.request("GET", `/v1/provisionings?watch=true&resourceVersion=${from}&timeoutSeconds=0&limit=2`)).body;
+      expect(first.items.map((item: { uid: string }) => item.uid)).toEqual(["w1", "w2"]);
+      expect(first.resourceVersion).toBe(first.items[1].resourceVersion);
+      const rest = (await harness.request("GET", `/v1/provisionings?watch=true&resourceVersion=${first.resourceVersion}&timeoutSeconds=0&limit=2`)).body;
+      expect(rest.items.map((item: { uid: string }) => item.uid)).toEqual(["w3"]);
+      expect(rest.resourceVersion).toBe((await harness.request("GET", "/v1/provisionings")).body.resourceVersion);
+      expect((await harness.request("GET", `/v1/provisionings?watch=true&resourceVersion=${from}&timeoutSeconds=0&limit=501`)).status).toBe(400);
+    });
+
+    it("reports a delete in the watch after the version it was given, and a re-create after it, in version order", async () => {
+      await harness.request("PUT", "/v1/users/d1/provisioning", { body: { spec: spec("d1") } });
+      const from = (await harness.request("GET", "/v1/provisionings")).body.resourceVersion;
+      expect((await harness.request("DELETE", "/v1/users/d1/provisioning")).status).toBe(204);
+      const deleted = (await harness.request("GET", `/v1/provisionings?watch=true&resourceVersion=${from}&timeoutSeconds=0`)).body;
+      expect(deleted.items).toEqual([]);
+      expect(deleted.deleted).toEqual([{ uid: "d1", resourceVersion: deleted.resourceVersion }]);
+      expect(BigInt(deleted.resourceVersion)).toBeGreaterThan(BigInt(from));
+
+      await harness.request("PUT", "/v1/users/d1/provisioning", { body: { spec: spec("d1") } });
+      const both = (await harness.request("GET", `/v1/provisionings?watch=true&resourceVersion=${from}&timeoutSeconds=0`)).body;
+      expect(both.deleted.map((entry: { uid: string }) => entry.uid)).toEqual(["d1"]);
+      expect(both.items.map((item: { uid: string }) => item.uid)).toEqual(["d1"]);
+      expect(BigInt(both.deleted[0].resourceVersion)).toBeLessThan(BigInt(both.items[0].resourceVersion));
+
+      const firstOnly = (await harness.request("GET", `/v1/provisionings?watch=true&resourceVersion=${from}&timeoutSeconds=0&limit=1`)).body;
+      expect(firstOnly).toEqual({ items: [], deleted: [both.deleted[0]], resourceVersion: both.deleted[0].resourceVersion });
+    });
+
+    it("wakes a held watch and answers a held waitForGeneration with 404 as soon as the user is deleted", async () => {
+      await harness.request("PUT", "/v1/users/d2/provisioning", { body: { spec: spec("d2") } });
+      const from = (await harness.request("GET", "/v1/provisionings")).body.resourceVersion;
+      const began = Date.now();
+      const waiting = harness.request("GET", "/v1/users/d2/provisioning?waitForGeneration=1&timeoutSeconds=30");
+      const watching = harness.request("GET", `/v1/provisionings?watch=true&resourceVersion=${from}&timeoutSeconds=30`);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      await harness.request("DELETE", "/v1/users/d2/provisioning");
+      const [waited, watched] = await Promise.all([waiting, watching]);
+      expect(Date.now() - began).toBeLessThan(1_500);
+      expect(waited).toMatchObject({ status: 404, body: { code: "not-found" } });
+      expect(watched.body.deleted.map((entry: { uid: string }) => entry.uid)).toEqual(["d2"]);
+    });
+
+    it("prunes deletion markers with the change log, and answers 410 for a version before the retained window", async () => {
+      await harness.request("PUT", "/v1/users/d3/provisioning", { body: { spec: spec("d3") } });
+      const from = (await harness.request("GET", "/v1/provisionings")).body.resourceVersion;
+      await harness.request("DELETE", "/v1/users/d3/provisioning");
+      await harness.service.db.pool.query(`UPDATE ${harness.service.db.table("version_log")} SET written_at = now() - interval '25 hours'`);
+      await harness.service.store.pruneChangeLog();
+      expect((await harness.service.db.pool.query(`SELECT count(*)::int AS count FROM ${harness.service.db.table("deletions")}`)).rows[0].count).toBe(0);
+      expect((await harness.request("GET", `/v1/provisionings?watch=true&resourceVersion=${from}&timeoutSeconds=0`)).status).toBe(410);
     });
 
     it("assigns versions in commit order with no gap under concurrent writes", async () => {

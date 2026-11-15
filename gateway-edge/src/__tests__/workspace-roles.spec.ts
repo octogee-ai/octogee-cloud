@@ -1,7 +1,7 @@
 import express from "express";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-vi.mock("../middleware/auth.js", () => ({ requireAuthenticatedUid: (req: { uid?: string }, _res: unknown, next: () => void) => { req.uid = "caller"; next(); } }));
+vi.mock("@octogee/core/http/auth", () => ({ requireAuthenticatedUid: (req: { uid?: string }, _res: unknown, next: () => void) => { req.uid = "caller"; next(); } }));
 import { WorkspaceNativeAccessError } from "../lib/workspace-native-access.js";
 import { createWorkspaceRolesRouter } from "../routes/workspace-roles.js";
 

@@ -2,7 +2,7 @@ import { describe, test, expect } from "vitest";
 import {
   buildModelCredentialConfigForProvider,
   type ModelCredentialConfigInput,
-} from "../../scripts/lib/model-credential-materializer";
+} from "../../gateway-supervisor/lib/model-credential-materializer";
 
 describe("buildModelCredentialConfigForProvider — anthropic (Phase 1 shape preserved)", () => {
   test("emits auth-profiles.json with anthropic:default + provider + keyRef", () => {

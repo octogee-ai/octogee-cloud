@@ -61,8 +61,8 @@ import {
 } from "../lib/vm-home-checkpoint.js";
 import { Router, type Request, type Response } from "express";
 
-import { logger, redactRequestPath } from "../../../gateway-edge/src/middleware/logging.js";
-import { gcsBucket } from "../../../gateway-edge/src/lib/gcs-bucket.js";
+import { logger, redactRequestPath } from "@octogee/core/http/logging";
+import { gcsBucket } from "@octogee/core/workspace/gcs-bucket";
 import { parseAgentLook, type AgentLook } from "@octogee/shared/types/agent-look";
 import { parseTimeZone } from "@octogee/shared/types/time-zone";
 import { DEFAULT_AGENT_LOOK, characterSvg } from "@octogee/shared/types/agent-characters";
@@ -80,7 +80,7 @@ import {
   createCachedHouseModelResolver,
   type UserAgentDefaultResolver,
   type HouseModelResolver,
-} from "../lib/platform-model-config.js";
+} from "@octogee/core/model-broker/model-config";
 import type {
   FleetBrokerAgentAnchor,
   FleetBrokerAuxiliaryAnchor,
@@ -135,12 +135,12 @@ import {
   podBelongsToGateway,
   type GatewayMutableConfig,
 } from "@octogee/core/gateway-live-release";
-import { createCachedOwnerModelBrokerGrantResolver } from "../lib/model-broker-limits.js";
-import { operatorRailRegistry, type ModelBrokerRailRegistry } from "../lib/model-broker-rails.js";
-import type { FundedBudgetInterruptionHandler } from "../lib/model-broker-budget.js";
+import { createCachedOwnerModelBrokerGrantResolver } from "@octogee/core/model-broker/limits";
+import { operatorRailRegistry, type ModelBrokerRailRegistry } from "@octogee/core/model-broker/rails";
+import type { FundedBudgetInterruptionHandler } from "@octogee/core/model-broker/budget";
 import { NO_BROKER_RECORDS, type BrokerRecords } from "../lib/broker-records.js";
 import { createWebResearchService, type WebResearchExtractInput, type WebResearchSearchInput } from "../lib/web-research-service.js";
-import { WebResearchError } from "../lib/web-research-error.js";
+import { WebResearchError } from "@octogee/core/model-broker/web-research-error";
 import { createBraveSearchClient, createTavilyClient } from "../lib/web-provider-clients.js";
 import { isPublicIp } from "../lib/link-unfurl.js";
 import { recordRevisionSystemConfigStatus } from "../lib/revision-system-config-status.js";
@@ -344,21 +344,21 @@ async function applyDefaultAgentLook(
 
 const defaultExecuteChatSearch: ExecuteChatSearch = async (identity, params) => {
   const { executeChatSearch } = await import(
-    "../../../gateway-edge/src/lib/chat-broker/execute.js"
+    "../lib/chat-broker/execute.js"
   );
   return executeChatSearch(identity, params);
 };
 
 const defaultExecuteChatHistory: ExecuteChatHistory = async (identity, params) => {
   const { executeChatHistory } = await import(
-    "../../../gateway-edge/src/lib/chat-broker/execute.js"
+    "../lib/chat-broker/execute.js"
   );
   return executeChatHistory(identity, params);
 };
 
 const defaultResolveChatIdentity: ResolveChatIdentity = async (deps, input) => {
   const { resolveChatIdentity } = await import(
-    "../../../gateway-edge/src/lib/chat-broker/resolve-pat.js"
+    "../lib/chat-broker/resolve-pat.js"
   );
   return resolveChatIdentity({ readAccount: deps.records.userDocuments.account, store: deps.store }, input);
 };
@@ -3699,7 +3699,7 @@ async function requireAssignedChatIdentity(
 
 async function respondChatBrokerError(res: Response, err: unknown): Promise<void> {
   const { chatBrokerErrorStatus } = await import(
-    "../../../gateway-edge/src/lib/chat-broker/execute.js"
+    "../lib/chat-broker/execute.js"
   );
   const { status, code } = chatBrokerErrorStatus(err);
   res.status(status).json({

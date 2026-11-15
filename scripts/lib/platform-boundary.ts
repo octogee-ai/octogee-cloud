@@ -127,7 +127,9 @@ function resolveLocalPackageImport(specifier: string, fromFile: string, repoRoot
   if (!packageDir) return null;
   const built = readPackageManifest(packageDir).exports?.[`./${match[2]}`]?.default?.replace(/^\.\/dist\//u, "");
   if (built === undefined) return null;
-  return resolveSourceFile(join(packageDir, "src", built)) ?? resolveSourceFile(join(packageDir, built));
+  return resolveSourceFile(join(packageDir, "src", built))
+    ?? resolveSourceFile(join(packageDir, built))
+    ?? resolveSourceFile(join(dirname(packageDir), built));
 }
 
 export function resolveImport(specifier: string, fromFile: string, repoRoot: string, platformDir = PLATFORM_DIR): string | null {

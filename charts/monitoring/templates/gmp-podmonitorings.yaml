@@ -86,3 +86,18 @@ spec:
     - port: 8080
       path: /metrics
       interval: 30s
+---
+apiVersion: monitoring.googleapis.com/v1
+kind: ClusterPodMonitoring
+metadata:
+  name: provisioning-service
+  labels:
+    {{- include "octogee-monitoring.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      app: provisioning-service
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s

@@ -17,7 +17,9 @@ updates:
       - /gateway/extensions/platform/octogee-web-tools
       - /gateway/extensions/platform/octogee-workspace-tools
       - /gateway/isolated-toolchain
+      - /llm-broker
       - /platform-api
+      - /gateway-supervisor
       - /scripts
       - /shared
       - /tests

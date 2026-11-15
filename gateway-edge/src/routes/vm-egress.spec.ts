@@ -7,7 +7,7 @@ import { WebSocket } from "ws";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WsUpgradeRouter } from "@octogee/core/ws/upgrade-router";
 import type { GatewayEgressMode, GatewayVmEgressState } from "@octogee/shared/types/glm";
-vi.mock("../middleware/auth.js", () => ({ requireAuthenticatedUid: (req: { uid?: string }, _res: unknown, next: () => void) => { req.uid = "builder"; next(); } }));
+vi.mock("@octogee/core/http/auth", () => ({ requireAuthenticatedUid: (req: { uid?: string }, _res: unknown, next: () => void) => { req.uid = "builder"; next(); } }));
 import { createVmEgressRouter } from "./vm-egress.js";
 import { createVmEgressService, type VmEgressService, type EgressStore } from "../egress/service.js";
 import { createEgressTunnelHost } from "../egress/tunnel-host.js";

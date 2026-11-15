@@ -1,4 +1,5 @@
-import { type GatewaySizingProfile, type PlatformStateStore } from "@octogee/core/platform-state";
+import { type GatewaySizingProfile } from "@octogee/shared/types/sizing-profile";
+import { type PlatformStateStore } from "@octogee/core/platform-state";
 export interface JournalRows {
     get(id: string): Record<string, unknown> | undefined;
     set(id: string, row: Record<string, unknown>): void;

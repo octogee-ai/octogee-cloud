@@ -2,6 +2,7 @@ import type { Router } from "express";
 import type { OperationStatus } from "@octogee/shared/types/glm";
 import type { AdminFleetMutationRunner } from "./admin-fleet-router.js";
 import { type GatewayArtifact, type GatewayMutableConfig } from "./gateway-live-release.js";
+import { type GatewayKubernetesReader } from "./fleet-state-sections.js";
 import type { FleetRegistryRecord } from "./platform-state/fleet-registry.js";
 import type { GatewayRoot } from "./platform-state/gateways.js";
 import type { OperationRecord } from "./platform-state/operations.js";
@@ -14,6 +15,7 @@ export interface AdminSharedPoolRouterDeps {
     controllerStartedAt?: number | undefined;
     journal: AdminFleetMutationRunner;
     now?: () => number;
+    readGatewayKubernetes?: GatewayKubernetesReader | undefined;
 }
 export declare function sharedSlotMutableConfig(): GatewayMutableConfig;
 export interface FleetStateUser {
@@ -43,7 +45,7 @@ export declare function readFleetState(store: PlatformStateStore, input: {
     platformArtifactHash: string | null;
     config: {
         sharedGatewayAutoscaling: import("@octogee/shared/types/shared-gateway-pool").SharedGatewayAutoscalingConfig | null;
-        sizingProfiles: Readonly<Record<string, import("./platform-state/config.js").GatewaySizingProfile>>;
+        sizingProfiles: Readonly<Record<string, import("@octogee/shared/types/sizing-profile").GatewaySizingProfile>>;
         disposableGatewayIdleMs: number | null;
     };
     sharedPoolAutomation: Stored<import("./platform-state/controller-state.js").SharedPoolScalerState> | null;

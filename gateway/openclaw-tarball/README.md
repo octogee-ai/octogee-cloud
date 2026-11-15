@@ -657,7 +657,7 @@ the unmarked write refusal and verifies Workshop survives Doctor plus reconcilia
 It uses `OCTOGEE_TEST_OPENCLAW_BIN`, `OCTOGEE_TEST_OPENCLAW_NPM`,
 `OCTOGEE_TEST_OPENCLAW_EXTENSIONS` and a disposable `OCTOGEE_TEST_POSTGRES_DSN`.
 The installed-runtime comparison and active-chat abort replay use
-`scripts/ops/prove-agent-detach.ts` and `scripts/ops/prove-activation-abort.ts`.
+`gateway-supervisor/ops/prove-agent-detach.ts` and `gateway-supervisor/ops/prove-activation-abort.ts`.
 The raw results and aggregates, which are not published in this repository,
 record two alternating baseline/candidate pairs against Mattermost 12.0.1 and
 PostgreSQL 17, with 5 ms database delay in each direction during detach only.

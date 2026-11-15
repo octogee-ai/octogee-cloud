@@ -8,7 +8,7 @@ import { createStubHost, REPO_ROOT, type StubHost } from "./deploy/stub-host";
 
 const SCRIPT = join(REPO_ROOT, "scripts/ops/kind-install.sh");
 const REGISTRY = "ghcr.io/octogee-ai/octogee-cloud";
-const IMAGES = ["glm-controller", "octogee-api", "gateway-edge", "octogee-gateway"];
+const IMAGES = ["glm-controller", "octogee-api", "llm-broker", "gateway-edge", "octogee-gateway"];
 const AMD64_IMAGES = [...IMAGES, "octogee-gateway-builder"];
 const PUBLISHED = "b".repeat(40);
 const CHECKOUT = "c".repeat(40);
@@ -126,7 +126,7 @@ describe("kind-install.sh", () => {
     expect(json("digests.json").images["glm-controller"]).toBe(`sha256:${"3".repeat(64)}`);
     const values = json("images.yaml");
     expect(values["glm-controller"].image.digest).toBe(`sha256:${"3".repeat(64)}`);
-    expect(values["glm-controller"].platformRelease.builderImageTag).toBe(`ccccccc@sha256:${"7".repeat(64)}`);
+    expect(values["glm-controller"].platformRelease.builderImageTag).toBe(`ccccccc@sha256:${"8".repeat(64)}`);
     expect(values.global).toBeUndefined();
   });
 
@@ -136,7 +136,7 @@ describe("kind-install.sh", () => {
     expect(result.status, result.stderr).toBe(0);
     expect(copies()).toEqual(extra.map((name, index) =>
       `docker KUBECONFIG=unset buildx imagetools create --prefer-index=false --tag=localhost:5001/octogee/${name}:ccccccc ${REGISTRY}/${name}@sha256:${String(index + 3).repeat(64)}`));
-    expect(json("images.yaml").global.computer.bridge.image).toEqual({ repository: "localhost:5001/octogee/vm-bridge", tag: "ccccccc", digest: `sha256:${"7".repeat(64)}` });
+    expect(json("images.yaml").global.computer.bridge.image).toEqual({ repository: "localhost:5001/octogee/vm-bridge", tag: "ccccccc", digest: `sha256:${"8".repeat(64)}` });
   });
 
   it("refuses the isolated gateway image on an arm64 host before copying any image", () => {
@@ -180,10 +180,10 @@ describe("kind-install.sh", () => {
     expect(json("digests.json").platform).toBe("linux/amd64");
   });
 
-  it("runs the LLM broker from the octogee-api image", () => {
+  it("runs the LLM broker from its own image", () => {
     expect(run(["up", "--pull", `--sha=${PUBLISHED}`]).status).toBe(0);
     expect(json("images.yaml").llmBroker).toEqual({
-      image: { repository: "localhost:5001/octogee/octogee-api", tag: "bbbbbbb", digest: ARM64 },
+      image: { repository: "localhost:5001/octogee/llm-broker", tag: "bbbbbbb", digest: ARM64 },
     });
   });
 

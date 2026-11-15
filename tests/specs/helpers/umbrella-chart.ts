@@ -16,7 +16,7 @@ export const INSTALLATION_SETS: Record<string, string> = {
       [`${chart}.image.digest`, DIGEST],
     ]),
   ),
-  "llmBroker.image.repository": "registry.example/octogee-api",
+  "llmBroker.image.repository": "registry.example/llm-broker",
   "llmBroker.image.tag": "aaaaaaa",
   "llmBroker.image.digest": DIGEST,
   "glm-controller.platformRelease.sourceSha": "a".repeat(40),

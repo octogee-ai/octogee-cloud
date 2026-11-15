@@ -84,7 +84,7 @@ export class FakeMattermostApi {
     if (fault) {
       fault.times -= 1;
       if (fault.status === 0) throw new TypeError("fetch failed");
-      return appError(fault.status, "fake.injected");
+      return json(fault.status, { id: "fake.injected", message: "host echoed request content", status_code: fault.status });
     }
     const body = typeof init?.body === "string" ? JSON.parse(init.body) as Record<string, unknown> : {};
     return this.route(method, path, url.searchParams, body);

@@ -102,6 +102,17 @@ describe("Gitea git host adapter", () => {
     await expect(host.ensureOwner({ slug: "lin" }, signal())).rejects.toMatchObject({ kind: "terminal" });
   });
 
+  it("reports the git host's status and never its response text, on direct and shared-library calls", async () => {
+    const { api, host } = setup();
+    api.fail("POST", /^\/admin\/users$/, 503);
+    const direct = await host.ensureOwner({ slug: "lin" }, signal()).then(() => new Error("resolved"), (caught: unknown) => caught as Error);
+    expect(direct.message).toMatch(/: 503 from git host$/);
+    api.fail("PUT", /^\/teams\/\d+\/members\//, 502, 2);
+    const shared = await host.ensureOwner({ slug: "lin" }, signal()).then(() => new Error("resolved"), (caught: unknown) => caught as Error);
+    expect(shared.message).toMatch(/: 502 from git host$/);
+    expect(`${direct.message} ${shared.message}`).not.toContain("echoed");
+  });
+
   it("classes an unreachable git host as transient", async () => {
     const { api, host } = setup();
     api.fail("GET", /^\/repos\//, 0);

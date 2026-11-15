@@ -1,4 +1,4 @@
-import { type UserMigrationV2GatewayRootFence } from "@octogee/shared/types/glm";
+import { type GatewayRuntime, type UserMigrationV2GatewayRootFence } from "@octogee/shared/types/glm";
 import { type AssignmentSource, type AssignmentState } from "@octogee/shared/types/gateway-releases";
 import type { FleetBrokerUserRestoreAuthority } from "@octogee/shared/types/fleet-broker";
 import { type WorkspaceMigrationPhase } from "@octogee/shared/types/workspace-migration";
@@ -11,6 +11,9 @@ export interface FleetStateDeps {
 }
 export interface CutoverDeps extends FleetStateDeps {
     readSizingKey: SizingKeyReader;
+}
+export declare class FleetStatePreconditionError extends Error {
+    constructor(message: string);
 }
 export declare function setWorkspaceMigrationPhase(deps: FleetStateDeps, params: {
     uid: string;
@@ -118,6 +121,16 @@ export interface UnavailableGatewayRecoveryParams {
     sharedGatewayIds: readonly string[];
     targetHeartbeatMaxAgeMs: number;
     validateTarget?: (context: UnavailableGatewayRecoveryTargetValidationContext) => Promise<void>;
+    validateSource?: (context: UnavailableGatewayRecoverySourceValidationContext) => Promise<void>;
+}
+export interface UnavailableGatewayRecoverySourceValidationContext {
+    transaction: PlatformStateTransaction;
+    sourceGatewayId: string;
+    sourceDesiredRelease: number | null;
+    sourceLiveRelease: number | null;
+    sourceHeartbeatAt: number | null;
+    sourceUpdatedAt: number | null;
+    sourceRuntime: GatewayRuntime;
 }
 export interface UnavailableGatewayRecoveryTargetValidationContext {
     transaction: PlatformStateTransaction;
@@ -128,6 +141,7 @@ export interface UnavailableGatewayRecoveryTargetValidationContext {
 export declare function commitUnavailableGatewayRecoveryAtomic(deps: FleetStateDeps, params: UnavailableGatewayRecoveryParams): Promise<{
     operationId: string;
 }>;
+export declare function commitUnavailableGatewayRecoveryInTransaction(tx: PlatformStateTransaction, params: UnavailableGatewayRecoveryParams, now: number): Promise<"committed" | "already-committed">;
 export interface RecoveredDisposableRuntimeResetParams {
     operationId: string;
     previousRecoveryOperationId: string;
@@ -141,6 +155,7 @@ export interface RecoveredDisposableRuntimeResetParams {
 export declare function commitRecoveredDisposableRuntimeResetAtomic(deps: FleetStateDeps, params: RecoveredDisposableRuntimeResetParams): Promise<{
     operationId: string;
 }>;
+export declare function commitRecoveredDisposableRuntimeResetInTransaction(tx: PlatformStateTransaction, params: RecoveredDisposableRuntimeResetParams, now: number): Promise<"committed" | "already-committed">;
 export interface MarkAssignmentStateParams {
     gatewayId: string;
     uid: string;

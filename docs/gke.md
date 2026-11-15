@@ -105,11 +105,12 @@ To run newer code than the latest release, check out `main`'s newest built
 commit instead. Build main publishes a commit's images about 15 minutes
 after it reaches `main`. A running build always finishes, and only the newest
 push waits behind it, so a commit pushed in between can end up with no images.
-This checks out the newest `main` commit whose Build main succeeded:
+The Kind smoke workflow then installs those images on kind and runs both
+smoke tests. This checks out the newest `main` commit whose kind smokes passed:
 
 ```bash
-git checkout "$(gh run list -R octogee-ai/octogee-cloud --workflow=build-main.yml --branch=main \
-  --event=push --status=success --limit=1 --json headSha --jq '.[0].headSha')"
+git checkout "$(gh run list -R octogee-ai/octogee-cloud --workflow=kind-smoke.yml --event=workflow_run \
+  --status=success --limit=1 --json displayTitle --jq '.[0].displayTitle | ltrimstr("Kind smoke at ")')"
 ```
 
 Then run the script:
@@ -172,12 +173,12 @@ secrets and the image digests. Set `OCTOGEE_GKE_STATE` to keep it elsewhere.
 Install the command line:
 
 ```bash
-go install "github.com/octogee-ai/octogee-fleet@$(sed -n 's/^  OCTOGEE_FLEET_VERSION: //p' .github/workflows/build-main.yml)"
+go install "github.com/octogee-ai/octogee-fleet@$(sed -n 's/^  OCTOGEE_FLEET_VERSION: //p' .github/workflows/kind-smoke.yml)"
 ```
 
-Run it from your checkout. It installs the octogee-fleet release that Build
-main tested that commit with, `OCTOGEE_FLEET_VERSION` in
-`.github/workflows/build-main.yml`, which a release's notes also name.
+Run it from your checkout. It installs the octogee-fleet release that the kind
+smokes tested that commit with, `OCTOGEE_FLEET_VERSION` in
+`.github/workflows/kind-smoke.yml`, which a release's notes also name.
 
 `up` ends by printing the variables to set in every terminal you use for the
 cluster, and the port-forward the command line needs. With the default

@@ -7,7 +7,7 @@ const dockerfile = fs.readFileSync(path.join(__dirname, "../../gateway/Dockerfil
 describe("gateway image secret resolver permissions", () => {
   it("keeps the resolver executable private and owned by the OpenClaw runtime user", () => {
     expect(dockerfile).toContain(
-      "COPY --chown=node:node scripts/secret-resolver.mjs /octogee/scripts/",
+      "COPY --chown=node:node gateway-supervisor/secret-resolver.mjs /octogee/scripts/",
     );
     expect(dockerfile).toContain(
       "/octogee/scripts/node_modules/.bin/esbuild /octogee/scripts/secret-resolver.mjs",

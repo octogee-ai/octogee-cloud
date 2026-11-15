@@ -1,7 +1,19 @@
-import { afterAll, afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+
+const lstatHook = vi.hoisted(() => ({ beforeLstat: null as ((target: string) => void) | null }));
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...actual,
+    lstatSync: ((target: fs.PathLike, options?: fs.StatSyncOptions) => {
+      lstatHook.beforeLstat?.(String(target));
+      return actual.lstatSync(target, options);
+    }) as typeof actual.lstatSync,
+  };
+});
 
 import {
   _resetMigratingInProcessPinsForTests,
@@ -329,6 +341,40 @@ describe("assertConfiguredUserPortableStatePlanOnDisk", () => {
     fs.mkdirSync(path.join(stateDir, "memory/octogee-ceckert-coach.sqlite"));
 
     expect(() => assertConfiguredUserPortableStatePlanOnDisk(stateDir, plan)).toThrow(/is not a file/);
+  });
+
+  describe("an entry removed between listing its directory and reading it", () => {
+    afterEach(() => { lstatHook.beforeLstat = null; });
+
+    function removeBeforeLstat(stateDir: string, relativePath: string): void {
+      const absolutePath = path.join(stateDir, relativePath);
+      fs.writeFileSync(absolutePath, "");
+      lstatHook.beforeLstat = (target) => {
+        if (target === absolutePath) fs.rmSync(absolutePath, { force: true });
+      };
+    }
+
+    it.each([
+      "agents/octogee-ceckert-coach/agent/openclaw-agent.sqlite.plugin-model-catalog.lock",
+      "agents/octogee-ceckert-coach/agent/openclaw-agent.sqlite-journal",
+      "agents/octogee-ceckert-coach/agent/openclaw-agent.sqlite.tmp-0f8fad5b-d9cb-469f-a165-70867728950e",
+    ])("passes when the removed entry is a lock or SQLite volatile file: %s", (relativePath) => {
+      const stateDir = seededStateDir();
+      removeBeforeLstat(stateDir, relativePath);
+
+      expect(() => assertConfiguredUserPortableStatePlanOnDisk(stateDir, plan)).not.toThrow();
+    });
+
+    it.each([
+      "agents/octogee-ceckert-coach/agent/models.json",
+      "agents/octogee-ceckert-coach/sessions/session-1.jsonl",
+      "customers/ceckert/workspace/notes.md",
+    ])("still fails when the removed entry is user data: %s", (relativePath) => {
+      const stateDir = seededStateDir();
+      removeBeforeLstat(stateDir, relativePath);
+
+      expect(() => assertConfiguredUserPortableStatePlanOnDisk(stateDir, plan)).toThrow(/ENOENT/);
+    });
   });
 });
 

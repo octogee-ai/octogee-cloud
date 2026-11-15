@@ -1,6 +1,6 @@
 import type { PlatformStateRepositories } from "@octogee/core/platform-state";
 import type { GatewayRuntime } from "@octogee/shared/types/glm";
-import { userHomeOwner } from "./user-home-migration.js";
+import { userHomeOwner } from "@octogee/core/isolated-gateway-lifecycle";
 
 interface IsolatedRuntimeStorageInput {
   store: Pick<PlatformStateRepositories, "users">;

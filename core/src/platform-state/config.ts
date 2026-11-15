@@ -3,90 +3,16 @@ import type {
   PlatformFreeConfig,
   PlatformModelConfig,
 } from "@octogee/shared/types/platform-config";
-import {
-  GATEWAY_VM_PROVISIONING_MODELS,
-  isGatewayVmBootDiskType,
-  isGatewayVmDesktop,
-  type GatewayRuntime,
-  type GatewayVmBootDiskType,
-  type GatewayVmDesktop,
-  type GatewayVmProvisioningModel,
-} from "@octogee/shared/types/glm";
 import type { SharedGatewayAutoscalingConfig } from "@octogee/shared/types/shared-gateway-pool";
-import { isSizingTier, type SizingTier } from "@octogee/shared/types/sizing";
+import type { GatewaySizingProfile } from "@octogee/shared/types/sizing-profile";
 import type { OpaqueMap, RecordPatch, Revision, Stored, TimeInput } from "./store.js";
 
-export type GatewayIsolation = "shared" | "isolated";
+export const PLACEMENT_AUTOMATION_OWNERS = ["fleet-controller", "client"] as const;
+export type PlacementAutomationOwner = (typeof PLACEMENT_AUTOMATION_OWNERS)[number];
+export const DEFAULT_PLACEMENT_AUTOMATION_OWNER: PlacementAutomationOwner = "fleet-controller";
 
-export interface GatewayVmProfile {
-  readonly runtime: Extract<GatewayRuntime, "gce-vm">;
-  readonly desktop: GatewayVmDesktop;
-  readonly machineType: string | null;
-  readonly provisioningModel: GatewayVmProvisioningModel | null;
-  readonly bootDisk: { readonly sizeGb: number; readonly type: GatewayVmBootDiskType } | null;
-  readonly homeSizeGiB: number;
-}
-
-export interface GatewayPodProfile {
-  readonly runtime: Extract<GatewayRuntime, "cluster">;
-  readonly homeSizeGiB: number;
-}
-
-export type GatewayComputerProfile = GatewayVmProfile | GatewayPodProfile;
-
-export type GatewaySizingProfile =
-  | { readonly isolation: "shared" }
-  | {
-      readonly isolation: "isolated";
-      readonly sizingTier: SizingTier;
-      readonly computer: GatewayComputerProfile;
-      readonly fallbackStorageGb: number | null;
-    };
-
-function isFieldMap(value: unknown): value is Readonly<Record<string, unknown>> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
-export function isGatewayVmProfile(value: unknown): value is GatewayVmProfile {
-  if (!isFieldMap(value)) return false;
-  const { runtime, desktop, machineType, provisioningModel, bootDisk, homeSizeGiB } = value;
-  return (
-    runtime === "gce-vm" &&
-    isGatewayVmDesktop(desktop) &&
-    (machineType === null || typeof machineType === "string") &&
-    (provisioningModel === null || (GATEWAY_VM_PROVISIONING_MODELS as readonly unknown[]).includes(provisioningModel)) &&
-    (bootDisk === null ||
-      (isFieldMap(bootDisk) && typeof bootDisk.sizeGb === "number" && isGatewayVmBootDiskType(bootDisk.type))) &&
-    typeof homeSizeGiB === "number"
-  );
-}
-
-export function isGatewayPodProfile(value: unknown): value is GatewayPodProfile {
-  return isFieldMap(value) && value.runtime === "cluster" && typeof value.homeSizeGiB === "number";
-}
-
-export function isGatewaySizingProfile(value: unknown): value is GatewaySizingProfile {
-  if (!isFieldMap(value)) return false;
-  if (value.isolation === "shared") return true;
-  return (
-    value.isolation === "isolated" &&
-    isSizingTier(value.sizingTier) &&
-    (isGatewayVmProfile(value.computer) || isGatewayPodProfile(value.computer)) &&
-    (value.fallbackStorageGb === null || typeof value.fallbackStorageGb === "number")
-  );
-}
-
-export function isolatedSizingTier(profile: GatewaySizingProfile | null): SizingTier | null {
-  return profile?.isolation === "isolated" ? profile.sizingTier : null;
-}
-
-export function requireSizingProfile(
-  profiles: Readonly<Record<string, GatewaySizingProfile>>,
-  sizingKey: string,
-): GatewaySizingProfile {
-  const profile = profiles[sizingKey];
-  if (!profile) throw new Error(`gateway sizing profile is not configured: ${sizingKey}`);
-  return profile;
+export function isPlacementAutomationOwner(value: unknown): value is PlacementAutomationOwner {
+  return (PLACEMENT_AUTOMATION_OWNERS as readonly unknown[]).includes(value);
 }
 
 export interface OrchestratorConfig {
@@ -96,6 +22,8 @@ export interface OrchestratorConfig {
   readonly disposableGatewayIdleMs: number | null;
   readonly placementUpdatedAt: number | null;
   readonly placementUpdatedBy: string | null;
+  readonly placementAutomationOwner: PlacementAutomationOwner;
+  readonly placementAutomationYieldedAt: number | null;
 }
 
 export type OrchestratorConfigPatch = RecordPatch<Omit<OrchestratorConfig, "sharedGatewayAutoscaling">> & {

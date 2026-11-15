@@ -1,7 +1,7 @@
 import { createHash, createHmac, generateKeyPairSync } from "node:crypto";
 import http, { type IncomingHttpHeaders, type Server } from "node:http";
 import { afterEach, describe, expect, it } from "vitest";
-import { createAgentControlCallbackRouter } from "../agent-control-callback-router.js";
+import { createAgentControlCallbackRouter } from "@octogee/core/http-candidates/agent-control-callback-router";
 import { applyGatewayPrefixStripInPlace } from "../chat-proxy/gateway-prefix.js";
 import { createMattermostInteractionProxyHandler } from "../chat-proxy/openclaw/mattermost-interaction-proxy.js";
 import { signingKey, verificationKey } from "../test-setup/signature-keys.js";

@@ -1,10 +1,3 @@
-# A product build replaces this stage with `--build-context overlay=<dir>`;
-# its files land over the package before tsc, and it may replace only src/main.ts.
-# The platform default carries its own main.ts so the overlay copy is cached by
-# content: an empty stage reuses whichever overlay layer the cache built last.
-FROM scratch AS overlay
-COPY gateway-edge/src/main.ts /src/main.ts
-
 FROM node:26.13.0-slim@sha256:5adad64f9a1fca2d51972caa65983634c8a774eb300d72b20f7f2a0f60368072 AS platform-npm
 ARG NPM_VERSION=12.2.1
 RUN apt-get update && apt-get install -y --no-install-recommends patch && rm -rf /var/lib/apt/lists/*
@@ -15,13 +8,8 @@ RUN npm install --global npm@${NPM_VERSION} --ignore-scripts --no-audit --no-fun
     && test "$(npm --version)" = "$NPM_VERSION" \
     && test "$(npx --version)" = "$NPM_VERSION"
 
-# Build context: repo root. gateway-edge
-# consumes packed internal directory dependencies — no sibling source is compiled.
-#
-# WORKDIR must be /gateway-edge (not /app) so that tsc's emit paths — which
-# mirror each source file's location relative to rootDir ("..", the container
-# root /) — produce dist/gateway-edge/src/main.js, matching package.json
-# main + CMD.
+# Build context: platform/. gateway-edge consumes packed internal directory
+# dependencies; no sibling source is compiled.
 FROM node:26.13.0-slim@sha256:5adad64f9a1fca2d51972caa65983634c8a774eb300d72b20f7f2a0f60368072 AS builder
 RUN rm -rf /usr/local/lib/node_modules/npm
 COPY --from=platform-npm /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
@@ -39,7 +27,6 @@ RUN npm ci --ignore-scripts
 COPY scripts/ops/sync-local-file-deps.mjs /scripts/ops/sync-local-file-deps.mjs
 COPY gateway-edge/tsconfig.json ./
 COPY gateway-edge/src/ ./src/
-COPY --from=overlay / ./
 # `npm run build` = tsc → tsc-alias → verify:no-alias-leakage. The
 # alias rewriter and post-build grep guard together prevent the
 # MODULE_NOT_FOUND @shared/* runtime failure. See README "Shared code".
@@ -60,7 +47,7 @@ COPY --from=platform-npm /usr/local/lib/node_modules/npm /usr/local/lib/node_mod
 COPY deploy/cloud-sql/octogee-pg-server-ca.pem /etc/ssl/certs/octogee-postgres-ca.pem
 WORKDIR /gateway-edge
 # git + openssh-client are required for the Phase 6 working-tree
-# routes (`gateway-edge/src/lib/workspace-git.ts`). Without them
+# routes (`core/src/workspace/workspace-git.ts`). Without them
 # `spawn('git', …)` ENOENTs and `git push` over SSH has no transport.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
@@ -77,7 +64,6 @@ COPY shared/package.json /shared/package.json
 COPY shared/dist /shared/dist
 COPY gateway-edge/.npmrc gateway-edge/package.json gateway-edge/package-lock.json* ./
 RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
-COPY --from=overlay / ./
 COPY --from=builder /gateway-edge/dist ./dist
 COPY gateway-edge/agent-import-gitleaks.toml ./agent-import-gitleaks.toml
 USER node

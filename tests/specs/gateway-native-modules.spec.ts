@@ -7,9 +7,9 @@ const read = (relativePath: string) => readFileSync(path.join(repoRoot, relative
 const readJson = (relativePath: string) => JSON.parse(read(relativePath)) as Record<string, any>;
 
 const gatewayDockerfile = read("gateway/Dockerfile");
-const scriptsNpmrc = read("scripts/.npmrc");
-const scriptsPackageJson = readJson("scripts/package.json");
-const scriptsLockfile = readJson("scripts/package-lock.json");
+const scriptsNpmrc = read("gateway-supervisor/.npmrc");
+const scriptsPackageJson = readJson("gateway-supervisor/package.json");
+const scriptsLockfile = readJson("gateway-supervisor/package-lock.json");
 
 // #2721 pinned npm 12 into every service image. npm 12 blocks a dependency's
 // install scripts unless a policy covers it, so each of these images is on the
@@ -22,7 +22,7 @@ const npmTwelveServiceImages = [
 
 const SMOKE_CHECK_RUN = "RUN node /octogee/scripts/ops/verify-native-modules.mjs";
 const SMOKE_CHECK_COPY =
-  "COPY --chown=node:node scripts/ops/verify-native-modules.mjs /octogee/scripts/ops/";
+  "COPY --chown=node:node gateway-supervisor/ops/verify-native-modules.mjs /octogee/scripts/ops/";
 const SCRIPTS_INSTALL = "RUN npm install --no-audit --no-fund";
 const SCRIPTS_PRUNE = "npm prune --omit=dev";
 
@@ -35,7 +35,7 @@ const installScriptPackages = Object.entries(scriptsLockfile.packages as Record<
   .map(([key]) => key.slice(key.lastIndexOf("node_modules/") + "node_modules/".length))
   .sort();
 
-describe("scripts/ install-script policy (npm 12 allowScripts)", () => {
+describe("gateway-supervisor/ install-script policy (npm 12 allowScripts)", () => {
   // Native modules are explicit so a future image dependency gets a loader
   // check rather than relying on its install step alone.
   it("records an explicit decision for each declared native dependency", () => {
@@ -53,7 +53,7 @@ describe("scripts/ install-script policy (npm 12 allowScripts)", () => {
     for (const name of installScriptPackages) {
       expect(
         scriptsPackageJson.allowScripts[name],
-        `scripts/package.json allowScripts is missing an entry for "${name}" — decide true (its install script is required) or false (deliberately skipped)`,
+        `gateway-supervisor/package.json allowScripts is missing an entry for "${name}" — decide true (its install script is required) or false (deliberately skipped)`,
       ).toBeTypeOf("boolean");
     }
   });
@@ -72,7 +72,7 @@ describe("scripts/ install-script policy (npm 12 allowScripts)", () => {
 });
 
 describe("gateway image validates declared native modules", () => {
-  it("keeps install scripts enabled for the provisioner install", () => {
+  it("keeps install scripts enabled for the gateway supervisor install", () => {
     expect(gatewayDockerfile).toContain(SCRIPTS_INSTALL);
     const installLine = gatewayDockerfile
       .split("\n")

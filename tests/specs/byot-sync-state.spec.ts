@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { deriveDesiredByotState } from "../../scripts/lib/byot-sync";
+import { deriveDesiredByotState } from "../../gateway-supervisor/lib/byot-sync";
 
 describe("deriveDesiredByotState", () => {
   test("enabled when byotActive + complete + username present (defaults to anthropic)", () => {

@@ -1,14 +1,14 @@
 {
   "platformEntrypoints": [
     "platform/platform-api/src/app.ts",
-    "platform/platform-api/src/llm-broker-app.ts",
-    "platform/platform-api/src/llm-broker.ts",
     "platform/platform-api/src/npm-cache-proxy.ts",
     "platform/platform-api/src/main.ts",
     "platform/gateway-edge/src/index.ts",
     "platform/gateway-edge/src/main.ts",
     "platform/fleet-controller/src/index.ts",
-    "platform/fleet-controller/src/main.ts"
+    "platform/fleet-controller/src/main.ts",
+    "platform/llm-broker/src/app.ts",
+    "platform/llm-broker/src/main.ts"
   ],
   "platformRoots": [
     "platform/desktop/",
@@ -16,6 +16,7 @@
     "platform/vm-bridge/",
     "platform/charts/",
     "platform/scripts/",
+    "platform/gateway-supervisor/",
     "platform/templates/",
     "platform/terraform/"
   ],

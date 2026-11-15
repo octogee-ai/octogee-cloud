@@ -6,6 +6,7 @@ import subprocess
 import tempfile
 import unittest
 
+REGISTRY = 'registry.example/operator'
 
 class FailureEvidenceTests(unittest.TestCase):
     def run_failure(self, started=True, running=True, upload_fails=False):
@@ -102,7 +103,8 @@ echo "DISK=$DISK"
 
 
 class GatewayPreloadTests(unittest.TestCase):
-    def preload(self, fail=False, customize=False, scratch_fail=False):
+    def preload(self, fail=False, customize=False, scratch_fail=False, registry=REGISTRY, image_registry=None):
+        image_registry = image_registry or registry
         functions = Path(__file__).with_name('pipeline.sh').read_text().split('mkdir -p "$WORK"', 1)[0]
         with tempfile.TemporaryDirectory() as directory:
             result = subprocess.run(['bash', '-c', functions + r'''
@@ -133,8 +135,9 @@ echo PRELOAD_DONE
 '''], env={**os.environ, 'OMARCHY_VERSION': 'fixture', 'OMARCHY_ISO_SHA256': 'fixture',
                     'IMAGE_NAME': 'candidate', 'IMAGE_BUCKET': 'gs://fixture', 'DISK_GB': '40',
                     'IMAGE_DEVICE': '/dev/fixture', 'EVIDENCE_WORK': directory, 'TEST_PAYLOAD': str(Path(__file__).resolve().parent),
-                    'OCTOGEE_DESKTOP_EDGE_IMAGE': 'us-central1-docker.pkg.dev/octogee/octogee/gateway-edge@sha256:' + 'b' * 64,
-                    'OCTOGEE_DESKTOP_GATEWAY_IMAGE': 'us-central1-docker.pkg.dev/octogee/octogee/octogee-gateway-builder@sha256:' + 'a' * 64,
+                    'OCTOGEE_DESKTOP_REGISTRY': registry,
+                    'OCTOGEE_DESKTOP_EDGE_IMAGE': f'{image_registry}/gateway-edge@sha256:' + 'b' * 64,
+                    'OCTOGEE_DESKTOP_GATEWAY_IMAGE': f'{image_registry}/octogee-gateway-builder@sha256:' + 'a' * 64,
                     'TEST_SCRATCH_FAIL': str(int(scratch_fail)), 'TEST_FAIL': str(int(fail)), 'TEST_CUSTOMIZE': str(int(customize))}, capture_output=True, text=True, timeout=10)
             commands = (Path(directory) / 'commands').read_text() if (Path(directory) / 'commands').exists() else ''
             token = (Path(directory) / 'pull-input').read_text() if (Path(directory) / 'pull-input').exists() else ''
@@ -148,10 +151,10 @@ echo PRELOAD_DONE
         self.assertIn('systemctl start docker.service', commands)
         self.assertLess(commands.index('install -D -m 0755 /dev/stdin /usr/local/bin/docker-credential-octogee'), commands.index('docker pull'))
         self.assertLess(commands.index('install -D -m 0644 /dev/stdin /root/.docker/config.json'), commands.index('docker pull'))
-        self.assertEqual(json.loads(config), {'credHelpers': {'us-central1-docker.pkg.dev': 'octogee'}})
+        self.assertEqual(config, '{}\n')
         self.assertIn('export OCTOGEE_REGISTRY_TOKEN="$(cat)";', commands)
         self.assertIn('octogee-gateway-builder@sha256:' + 'a' * 64, commands)
-        self.assertIn('docker pull --quiet us-central1-docker.pkg.dev/octogee/octogee/gateway-edge@sha256:' + 'b' * 64, commands)
+        self.assertIn(f'docker pull --quiet {REGISTRY}/gateway-edge@sha256:' + 'b' * 64, commands)
         self.assertIn('/etc/octogee-gateway-edge-image', commands)
         self.assertIn('docker image inspect', commands)
         self.assertIn('/etc/octogee-gateway-image', commands)
@@ -165,10 +168,25 @@ echo PRELOAD_DONE
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn('PRELOAD_DONE', result.stdout)
         self.assertIn('bash /tmp/customize/customize.sh', commands)
-        self.assertIn('docker pull --quiet us-central1-docker.pkg.dev/octogee/octogee/gateway-edge@sha256:' + 'b' * 64, commands)
+        self.assertIn(f'docker pull --quiet {REGISTRY}/gateway-edge@sha256:' + 'b' * 64, commands)
         self.assertIn('/etc/octogee-gateway-edge-image', commands)
         self.assertIn('docker image inspect', commands)
         self.assertEqual(token, 'fixture-access-token')
+
+    def test_google_registry_routes_its_host_to_the_credential_helper(self):
+        result, commands, token, config = self.preload(registry='us-central1-docker.pkg.dev/example/images')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(config, '{"credHelpers": {"us-central1-docker.pkg.dev": "octogee"}}\n')
+        self.assertLess(commands.index('install -D -m 0644 /dev/stdin /root/.docker/config.json'), commands.index('docker pull'))
+        self.assertEqual(token, 'fixture-access-token')
+
+    def test_preload_refuses_an_image_outside_the_configured_registry(self):
+        result, commands, token, _ = self.preload(image_registry='registry.example/other')
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(f'Builder gateway image registry.example/other/octogee-gateway-builder@sha256:{"a" * 64} is not in the configured registry {REGISTRY}', result.stderr)
+        self.assertIn('invalid immutable Builder gateway image', result.stdout)
+        self.assertEqual(commands, '')
+        self.assertEqual(token, '')
 
     def test_unbounded_scratch_blocks_docker_and_preload(self):
         result, commands, token, _ = self.preload(scratch_fail=True)

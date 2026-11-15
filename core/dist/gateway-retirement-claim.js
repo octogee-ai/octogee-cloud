@@ -231,7 +231,8 @@ function inspectRetirementRuntime(input, root, runtime) {
     return inspection.liveRuntimeIdentity;
 }
 export async function claimGatewayRetirementInStore(input) {
-    return input.store.transaction({ label: "gateway-retirement.claim" }, async (transaction) => {
+    return input.store.transaction({ label: "gateway-retirement.claim", readOnly: input.plan === true }, async (transaction) => {
+        await input.ownerGuard?.(transaction);
         const [stored, activeOperations] = await Promise.all([
             transaction.gateways.roots.get(input.gatewayId),
             transaction.journal.operations.listByStatus(["pending", "running"]),
@@ -251,6 +252,8 @@ export async function claimGatewayRetirementInStore(input) {
         }
         await input.claimGuard?.({ transaction, root: rootData });
         const version = nextRetirementVersion(rootData.retirementVersion);
+        if (input.plan === true)
+            return { version };
         const claim = {
             operationId: input.operationId,
             version,

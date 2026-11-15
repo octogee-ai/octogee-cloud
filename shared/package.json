@@ -54,6 +54,14 @@
       "types": "./dist/types/gateway-control.d.ts",
       "default": "./dist/types/gateway-control.js"
     },
+    "./types/isolated-operation-ids": {
+      "types": "./dist/types/isolated-operation-ids.d.ts",
+      "default": "./dist/types/isolated-operation-ids.js"
+    },
+    "./types/sizing-profile": {
+      "types": "./dist/types/sizing-profile.d.ts",
+      "default": "./dist/types/sizing-profile.js"
+    },
     "./types/isolated-gateway-id": {
       "types": "./dist/types/isolated-gateway-id.d.ts",
       "default": "./dist/types/isolated-gateway-id.js"
@@ -257,6 +265,30 @@
     "./types/native-mobile": {
       "types": "./dist/types/native-mobile.d.ts",
       "default": "./dist/types/native-mobile.js"
+    },
+    "./types/dev-origins": {
+      "types": "./dist/types/dev-origins.d.ts",
+      "default": "./dist/types/dev-origins.js"
+    },
+    "./types/free-storage": {
+      "types": "./dist/types/free-storage.d.ts",
+      "default": "./dist/types/free-storage.js"
+    },
+    "./types/path-validation": {
+      "types": "./dist/types/path-validation.d.ts",
+      "default": "./dist/types/path-validation.js"
+    },
+    "./types/text-validation": {
+      "types": "./dist/types/text-validation.d.ts",
+      "default": "./dist/types/text-validation.js"
+    },
+    "./types/workspace-storage-quota": {
+      "types": "./dist/types/workspace-storage-quota.d.ts",
+      "default": "./dist/types/workspace-storage-quota.js"
+    },
+    "./types/dashboard-asset-request": {
+      "types": "./dist/types/dashboard-asset-request.d.ts",
+      "default": "./dist/types/dashboard-asset-request.js"
     }
   },
   "typesVersions": {
@@ -284,6 +316,12 @@
       ],
       "types/gateway-control": [
         "dist/types/gateway-control.d.ts"
+      ],
+      "types/isolated-operation-ids": [
+        "dist/types/isolated-operation-ids.d.ts"
+      ],
+      "types/sizing-profile": [
+        "dist/types/sizing-profile.d.ts"
       ],
       "types/isolated-gateway-id": [
         "dist/types/isolated-gateway-id.d.ts"

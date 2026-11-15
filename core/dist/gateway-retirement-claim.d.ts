@@ -22,6 +22,8 @@ interface ClaimGatewayRetirementInStoreInput {
     now: number;
     updatedBy: string;
     telemetryObservedAfter?: number;
+    ownerGuard?: (transaction: PlatformStateTransaction) => Promise<void>;
+    plan?: boolean;
     claimGuard?: (input: {
         transaction: PlatformStateTransaction;
         root: RetirableGateway;

@@ -5,7 +5,7 @@ import { reachableSources } from "./platform-boundary.js";
 export const FIREBASE_REACH_ENTRYPOINTS = [
   "gateway-edge/src/main.ts",
   "fleet-controller/src/main.ts",
-  "platform-api/src/llm-broker.ts",
+  "llm-broker/src/main.ts",
   "platform-api/src/main.ts",
   "platform-api/src/npm-cache-proxy.ts",
 ];

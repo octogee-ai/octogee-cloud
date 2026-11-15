@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const fetchInternal = vi.hoisted(() => vi.fn());
-vi.mock("./internal-fetch.js", () => ({ internalFetch: fetchInternal }));
+vi.mock("@octogee/core/internal-fetch", () => ({ internalFetch: fetchInternal }));
 import { resolveWorkspaceNativeIdentity } from "./workspace-native-access.js";
 
 const args = {

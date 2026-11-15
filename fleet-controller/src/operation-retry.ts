@@ -1,4 +1,4 @@
-import { isUserActivateOperationIdFor, isUserReturnOperationIdFor } from "@octogee/core/isolated-operation-ids";
+import { isUserActivateOperationIdFor, isUserReturnOperationIdFor } from "@octogee/shared/types/isolated-operation-ids";
 import { OPERATOR_ISOLATED_GATEWAY_SOURCE } from "@octogee/core/operator-isolated-gateway";
 import { sourceTransferBlocksRelease } from './lib/source-transfer-execution.js';
 import type { SourceTransferExecution } from '@octogee/shared/types/glm';
@@ -36,6 +36,7 @@ const TRANSIENT_ERROR_PATTERNS: readonly RegExp[] = [
   /^restore recovery Kubernetes outcome is unresolved$/,
   /^restore recovery images are not ready; outcome remains fenced$/,
   /rsync import port \d+ is already serving migrationId=/,
+  /\/prepare-rsync-import\/\S+: 500 \{"error":"prepare-rsync-import failed","message":"listen EADDRINUSE: address already in use \S*:\d+"\}/,
   /\btimed?\s?out\b/i,
   /\bsocket closed before connect response\b/i,
   /\bis held for migration\b/i,
@@ -69,6 +70,7 @@ const TRANSIENT_ERROR_PATTERNS: readonly RegExp[] = [
   /system config mutation unavailable: writer-lock-busy/i,
   /fleet will retry/i,
   /gateway .* is not migration-ready/i,
+  /^source gateway \S+ has no durable placement$/,
   /\[migration-http\] local SSH public key is missing for /i,
   /\[migration-activation:[^\]]+\] source has no applied fingerprint; converge it before migration/i,
 ];
@@ -270,7 +272,8 @@ function isVmPreemptionFailure(error: string): boolean {
 }
 
 function isGatewayMigrationReadinessFailure(error: string): boolean {
-  return /gateway .* is not migration-ready/i.test(error);
+  return /gateway .* is not migration-ready/i.test(error) ||
+    /^source gateway \S+ has no durable placement$/.test(error);
 }
 
 function isLevelTriggeredContinuousPlacement(

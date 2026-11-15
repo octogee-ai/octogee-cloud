@@ -1,6 +1,6 @@
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import { URL } from "node:url";
-import { validAgentControlRouterPublicKey, verifyAgentControlRouterRequest } from "../../agent-control-callback-router.js";
+import { validAgentControlRouterPublicKey, verifyAgentControlRouterRequest } from "@octogee/core/http-candidates/agent-control-callback-router";
 
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_RESPONSE_BYTES = 64 * 1024;
