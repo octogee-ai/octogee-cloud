@@ -186,4 +186,20 @@ describe.skipIf(!dsn)("PostgreSQL isolated lease completion, failure and retirem
     expect(await store.gateways.roots.get(TARGET)).toMatchObject({ desiredStatus: "retired", retirementClaim: { operationId: RETIREMENT } });
     expect(await store.journal.operations.get(RETIREMENT)).toMatchObject({ kind: "retire-gateway", input: { reason: "builder-returned" } });
   });
+
+  it("answers 400 for a telemetry fence on another user's finished operation, and retires behind the user's own return", async () => {
+    const store = await seed("parked");
+    await yieldToClient(store);
+    const RETURN = `builder-return-${TARGET}-g1`;
+    const finished = { kind: "migrate-user" as const, status: "succeeded" as const, startedAt: NOW, completedAt: NOW + 1_000 };
+    await store.journal.operations.create(operation({ ...finished, id: "return-bob", inputUid: "bob", input: { uid: "bob", fromGatewayId: "bob-xs-1", toGatewayId: "shared-blue" } }));
+    await store.journal.operations.create(operation({ ...finished, id: RETURN, inputUid: "alice", input: { uid: "alice", fromGatewayId: TARGET, toGatewayId: "shared-blue" } }));
+
+    await retire(store, { telemetryFenceOperationId: "return-bob", telemetryFenceStatus: "succeeded" }).expect(400);
+    expect((await store.gateways.roots.get(TARGET))!.desiredStatus).toBe("paused");
+    expect(await store.journal.operations.get(RETIREMENT)).toBeNull();
+
+    await retire(store, { telemetryFenceOperationId: RETURN, telemetryFenceStatus: "succeeded" }).expect(200);
+    expect(await store.gateways.roots.get(TARGET)).toMatchObject({ desiredStatus: "retired", retirementClaim: { operationId: RETIREMENT } });
+  });
 });
