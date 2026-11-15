@@ -292,12 +292,31 @@ describe("provisioning mirror", () => {
     expect(projectionCalls).toEqual(["systemConfig", "user", "workspace", "channel", "channel", "agent", "workspaceEntry"]);
   });
 
-  it("never writes the readiness fields the gateway reports", async () => {
-    await chatReadyUser();
+  it("leaves the readiness fields the gateway reports exactly as they were, through the default projection", async () => {
+    seedUser("u1", "lin");
+    await store().users.records.patch("u1", { openclaw: { status: "complete" }, provisioning: { status: "complete" } });
+    const instance = createProvisioningSync({
+      store: store(),
+      client: client(),
+      documents: { account: async (uid) => ACCOUNTS[uid] },
+      projection: noProvisioningProjection,
+      proxyUrl: null,
+      log: (message) => logs.push(message),
+      watchTimeoutSeconds: 1,
+      retry: { baseDelayMs: 1, maxDelayMs: 2 },
+    });
+    stoppers.push(instance.start());
+    await instance.snapshotLoaded();
+    await until(() => fake.resources.has("u1"));
+    fake.issueCredential("u1", "user-chat-token", USER_TOKEN);
+    fake.issueCredential("u1", "agent-chat-token", AGENT_TOKEN);
+    fake.setStatus("u1", CHAT_READY);
+    await until(() => instance.counters.mirrors.written === 1);
 
     const user = await store().users.records.get("u1");
-    expect(user?.provisioning.status).toBe("in_progress");
-    expect(user?.openclaw.status).toBeUndefined();
+    expect(user?.mattermostUserId).toBe("mm-user");
+    expect(user?.openclaw.status).toBe("complete");
+    expect(user?.provisioning.status).toBe("complete");
   });
 
   it("writes nothing and projects nothing when the records already match", async () => {

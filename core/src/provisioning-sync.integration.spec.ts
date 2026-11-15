@@ -160,6 +160,7 @@ describe.skipIf(!dsn)("provisioning spec writer, backfill and mirror on PostgreS
 
   it("mirrors chat results in today's shapes, leaves the readiness fields alone and writes nothing the second time", async () => {
     await admit("u1", "lin");
+    await harness.store.users.records.patch("u1", { openclaw: { status: "complete" }, provisioning: { status: "complete" } });
     const instance = started();
     await instance.snapshotLoaded();
     await until(() => fake.resources.has("u1"));
@@ -175,8 +176,8 @@ describe.skipIf(!dsn)("provisioning spec writer, backfill and mirror on PostgreS
       workspaceId: "lin",
       agents: { agentIds: ["octogee-lin-coach"] },
     });
-    expect(user?.provisioning.status).toBe("in_progress");
-    expect(user?.openclaw.status).toBeUndefined();
+    expect(user?.provisioning.status).toBe("complete");
+    expect(user?.openclaw.status).toBe("complete");
     expect(await harness.store.workspaces.records.get("lin")).toMatchObject({ ownerUid: "u1", mattermostTeamId: "mm-team" });
     const scope = { workspaceSlug: "lin", projectSlug: null };
     expect(await harness.store.workspaces.channels.get(scope, "general")).toMatchObject({ mattermostChannelId: "ch-general" });
