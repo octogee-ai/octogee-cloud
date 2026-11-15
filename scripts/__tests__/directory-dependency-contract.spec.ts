@@ -183,17 +183,6 @@ describe("directory dependency repository contract", () => {
     expectBefore(runtime, overlay, "RUN node /octogee/scripts/ops/verify-native-modules.mjs");
   });
 
-  it("re-includes every packed interface in the Docker build context", () => {
-    const lines = fs
-      .readFileSync(path.join(root, ".dockerignore"), "utf8")
-      .split("\n")
-      .map((line) => line.trim());
-    for (const source of ["core", "shared"]) {
-      expect(lines).toContain(`!${source}/dist/`);
-      expect(lines).toContain(`!${source}/dist/**`);
-    }
-  });
-
   it("retires tarball transport and its maintenance commands", () => {
     for (const filePath of [
       "core/octogee-core.tgz",

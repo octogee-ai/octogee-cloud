@@ -305,7 +305,9 @@ kernels, which is why the container-on-Debian path stays closed. The Omarchy
 guest was installed unattended from the ISO with a `cidata` drive.
 
 The reproducible build that replaced this manual path lives in
-[`image/`](../image/README.md).
+[`image/`](../image/README.md). It preloads the isolated gateway and gateway-edge
+images from the registry you name in `OCTOGEE_DESKTOP_REGISTRY` (default
+`ghcr.io/octogee-ai/octogee-cloud`).
 
 The Apple Silicon row is under x86_64 emulation; the GCE row is native and is
 the number to plan with (a 4 CPU / 4 GiB container on an 8 vCPU host that was

@@ -9,6 +9,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 USER root
 
 COPY --chown=node:node core/package.json /octogee/core/package.json
+COPY --chown=node:node core-testing/package.json /octogee/core-testing/package.json
 COPY --chown=node:node shared/package.json shared/package-lock.json /octogee/shared/
 COPY --chown=node:node scripts/.npmrc scripts/package.json scripts/package-lock.json /octogee/scripts/
 

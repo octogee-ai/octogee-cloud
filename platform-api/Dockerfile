@@ -49,6 +49,8 @@ COPY core/package.json /core/package.json
 COPY core/dist /core/dist
 COPY shared/package.json /shared/package.json
 COPY shared/dist /shared/dist
+COPY core-testing/package.json /core-testing/package.json
+COPY core-testing/dist /core-testing/dist
 COPY platform-api/.npmrc platform-api/package.json platform-api/package-lock.json* ./
 RUN npm ci --ignore-scripts
 

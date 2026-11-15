@@ -80,8 +80,6 @@ They are covered by tests and split as they are touched.
 - Some image notes are still working notes, not documentation:
   `desktop/docs/container-recipe.md`, `desktop/image/README.md` and
   `gateway/openclaw-tarball/README.md`.
-- `desktop/image/build.sh` accepts the gateway images it preloads only from
-  the hosted service's Artifact Registry repository.
 - Test fixtures use my own handle and the hosted service's hostnames.
 
 ## Google Cloud first
@@ -90,6 +88,8 @@ The platform has run end to end on kind and on GKE. Beyond that:
 
 - An isolated gateway on a virtual machine, the kind with a desktop, needs
   Google Cloud.
+- A private registry that is not a Google registry gets no credentials on the
+  VM: the VM image only pulls from a public registry or a Google registry.
 - Operator sign-in is Google sign-in or a key-signed token.
 - The EKS guide has not run on a real AWS account.
 - There is no production install guide. The GKE install is a single zone with

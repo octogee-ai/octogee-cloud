@@ -75,9 +75,10 @@ desktop/image/test.sh --project <project> --image <candidate-name> --stop-start
 
 `build.sh` needs the isolated gateway and gateway-edge images by digest in
 `OCTOGEE_DESKTOP_GATEWAY_IMAGE` and `OCTOGEE_DESKTOP_EDGE_IMAGE`, and preloads
-them onto the boot disk. It accepts only references to one hard-coded Artifact
-Registry repository, the hosted service's, so building for another registry
-means changing the check at the top of `build.sh`.
+them onto the boot disk. They must come from the registry named in
+`OCTOGEE_DESKTOP_REGISTRY` (default `ghcr.io/octogee-ai/octogee-cloud`). The VM
+gets credentials only for a Google registry; any other registry must be public
+([Known rough edges](../docs/rough-edges.md#google-cloud-first)).
 [`image/README.md`](image/README.md) covers the build
 steps, the pins, acceptance and publication to the image family.
 

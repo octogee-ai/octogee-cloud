@@ -20,6 +20,8 @@ if args[:3] == ['compute', 'instances', 'create'] and os.environ.get('BUILD_CASE
 if 'ssh' in args and 'tail -n' in args[-1]: print('PIPELINE_DONE')
 if 'ssh' in args and 'cat ~/image-build/omarchy-version' in args[-1]: print('4.5.0-2')
 '''
+DEFAULT_REGISTRY = 'ghcr.io/octogee-ai/octogee-cloud'
+REGISTRY = 'registry.example/operator'
 
 
 class CandidateBuildTests(unittest.TestCase):
@@ -28,12 +30,90 @@ class CandidateBuildTests(unittest.TestCase):
         gcloud.write_text(MOCK_GCLOUD)
         gcloud.chmod(0o755)
 
-    def run_build(self, root, extra_args, case='success', run_id='manual'):
+    def run_build(self, root, extra_args, case='success', run_id='manual', registry=REGISTRY, image_registry=None):
         key = root / 'key'
         key.touch()
         (root / "key.pub").write_text("ssh-ed25519 fixture")
+        image_registry = image_registry or registry or DEFAULT_REGISTRY
+        env = {**os.environ, 'PATH': f'{root}:{os.environ["PATH"]}', 'OCTOGEE_GCE_SSH_KEY': str(key), 'BUILD_CALLS': str(root / 'calls'), 'OCTOGEE_IMAGE_RUN_ID': run_id, 'BUILD_CASE': case,
+               'OCTOGEE_DESKTOP_EDGE_IMAGE': f'{image_registry}/gateway-edge@sha256:' + 'b' * 64, 'OCTOGEE_DESKTOP_GATEWAY_IMAGE': f'{image_registry}/octogee-gateway-builder@sha256:' + 'a' * 64}
+        env.pop('OCTOGEE_DESKTOP_REGISTRY', None)
+        if registry is not None:
+            env['OCTOGEE_DESKTOP_REGISTRY'] = registry
         return subprocess.run(['bash', str(Path(__file__).with_name('build.sh')), '--project', 'fixture', *extra_args],
-            env={**os.environ, 'PATH': f'{root}:{os.environ["PATH"]}', 'OCTOGEE_GCE_SSH_KEY': str(key), 'BUILD_CALLS': str(root / 'calls'), 'OCTOGEE_IMAGE_RUN_ID': run_id, 'BUILD_CASE': case, 'OCTOGEE_DESKTOP_EDGE_IMAGE': 'us-central1-docker.pkg.dev/octogee/octogee/gateway-edge@sha256:' + 'b' * 64, 'OCTOGEE_DESKTOP_GATEWAY_IMAGE': 'us-central1-docker.pkg.dev/octogee/octogee/octogee-gateway-builder@sha256:' + 'a' * 64}, capture_output=True, text=True, timeout=10)
+            env=env, capture_output=True, text=True, timeout=10)
+
+    def calls(self, root):
+        path = root / 'calls'
+        return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+
+    def pipeline_command(self, root):
+        return next(args for args in self.calls(root) if 'ssh' in args and 'pipeline.sh' in args[-1])[-1]
+
+    def test_default_registry_is_the_public_release_registry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.write_gcloud(root)
+            result = self.run_build(root, [], registry=None)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            pipeline = self.pipeline_command(root)
+            self.assertIn(f"OCTOGEE_DESKTOP_REGISTRY='{DEFAULT_REGISTRY}'", pipeline)
+            self.assertIn(f"OCTOGEE_DESKTOP_GATEWAY_IMAGE='{DEFAULT_REGISTRY}/octogee-gateway-builder@sha256:" + 'a' * 64 + "'", pipeline)
+
+    def test_default_registry_refuses_images_from_any_other_registry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.write_gcloud(root)
+            result = self.run_build(root, [], registry=None, image_registry=REGISTRY)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn(f'Builder gateway image {REGISTRY}/octogee-gateway-builder@sha256:{"a" * 64} is not in the configured registry {DEFAULT_REGISTRY} (OCTOGEE_DESKTOP_REGISTRY)', result.stderr)
+            self.assertEqual(self.calls(root), [])
+
+    def test_configured_registry_accepts_only_its_own_digest_pinned_images(self):
+        refused = {
+            'other registry': 'registry.example/other',
+            'longer repository name': REGISTRY + '-other',
+            'nested repository': REGISTRY + '/nested',
+            'parent repository': 'registry.example',
+        }
+        for label, image_registry in refused.items():
+            with self.subTest(label), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self.write_gcloud(root)
+                result = self.run_build(root, [], image_registry=image_registry)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn(f'Builder gateway image {image_registry}/octogee-gateway-builder@sha256:{"a" * 64} is not in the configured registry {REGISTRY} (OCTOGEE_DESKTOP_REGISTRY)', result.stderr)
+                self.assertEqual(self.calls(root), [])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.write_gcloud(root)
+            result = self.run_build(root, [])
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn(f"OCTOGEE_DESKTOP_REGISTRY='{REGISTRY}'", self.pipeline_command(root))
+
+    def test_tag_addressed_images_are_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.write_gcloud(root)
+            key = root / 'key'
+            key.touch()
+            result = subprocess.run(['bash', str(Path(__file__).with_name('build.sh')), '--project', 'fixture'],
+                env={**os.environ, 'PATH': f'{root}:{os.environ["PATH"]}', 'OCTOGEE_GCE_SSH_KEY': str(key), 'BUILD_CALLS': str(root / 'calls'),
+                     'OCTOGEE_DESKTOP_REGISTRY': REGISTRY, 'OCTOGEE_DESKTOP_GATEWAY_IMAGE': f'{REGISTRY}/octogee-gateway-builder:latest',
+                     'OCTOGEE_DESKTOP_EDGE_IMAGE': f'{REGISTRY}/gateway-edge@sha256:' + 'b' * 64}, capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn('is not an immutable digest-pinned image', result.stderr)
+            self.assertEqual(self.calls(root), [])
+
+    def test_malformed_registry_is_refused(self):
+        for registry in ['https://registry.example/operator', 'registry.example', 'Registry.Example/operator', 'registry.example/operator/', "registry.example/op'erator"]:
+            with self.subTest(registry), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self.write_gcloud(root)
+                result = self.run_build(root, [], registry=registry, image_registry=REGISTRY)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn('invalid OCTOGEE_DESKTOP_REGISTRY', result.stderr)
+                self.assertEqual(self.calls(root), [])
 
     def test_exhausted_zone_falls_back_and_addresses_the_builder_there(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -84,7 +164,7 @@ class CandidateBuildTests(unittest.TestCase):
             pipeline = next(args for args in calls if 'ssh' in args and 'pipeline.sh' in args[-1])[-1]
             self.assertIn("IMAGE_DEVICE='/dev/disk/by-id/google-octogee-image'", pipeline)
             self.assertIn("DISK_GB='40'", pipeline)
-            self.assertIn("OCTOGEE_DESKTOP_GATEWAY_IMAGE='us-central1-docker.pkg.dev/octogee/octogee/octogee-gateway-builder@sha256:" + "a" * 64 + "'", pipeline)
+            self.assertIn(f"OCTOGEE_DESKTOP_GATEWAY_IMAGE='{REGISTRY}/octogee-gateway-builder@sha256:" + "a" * 64 + "'", pipeline)
             stop = calls.index(['compute', 'instances', 'stop', 'builder-x', '--zone', 'us-central1-b', '--project', 'fixture', '--quiet'])
             registration = next(i for i, args in enumerate(calls) if args[:3] == ['compute', 'images', 'create'])
             self.assertLess(stop, registration)
