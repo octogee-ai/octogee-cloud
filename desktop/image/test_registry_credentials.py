@@ -8,7 +8,13 @@ import unittest
 ROOTFS = Path(__file__).parent / 'rootfs'
 HELPER = ROOTFS / 'usr/local/bin/docker-credential-octogee'
 AGENT = ROOTFS / 'usr/local/bin/octo-gateway-agent'
-IMAGE = 'us-central1-docker.pkg.dev/octogee/octogee/octogee-gateway-builder@sha256:' + 'a' * 64
+REGISTRY_SCRIPT = Path(__file__).with_name('registry.sh')
+IMAGE = 'us-central1-docker.pkg.dev/example/images/octogee-gateway-builder@sha256:' + 'a' * 64
+
+
+def render_docker_config(registry):
+    return subprocess.run(['bash', '-c', 'set -eu; source "$1"; desktop_docker_config "$2"', 'render', str(REGISTRY_SCRIPT), registry],
+                          capture_output=True, text=True)
 
 
 def helper(action, token=None, server='us-central1-docker.pkg.dev'):
@@ -19,11 +25,30 @@ def helper(action, token=None, server='us-central1-docker.pkg.dev'):
 
 
 class CredentialHelperTests(unittest.TestCase):
-    def test_rootfs_docker_config_routes_artifact_registry_to_the_shipped_helper(self):
-        config = json.loads((ROOTFS / 'root/.docker/config.json').read_text())
-        self.assertEqual(config, {'credHelpers': {'us-central1-docker.pkg.dev': 'octogee'}})
-        self.assertEqual(HELPER.name, 'docker-credential-' + config['credHelpers']['us-central1-docker.pkg.dev'])
+    def test_artifact_registry_config_is_byte_identical_to_the_retained_images_config(self):
+        result = render_docker_config('us-central1-docker.pkg.dev/example/images')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, '{"credHelpers": {"us-central1-docker.pkg.dev": "octogee"}}\n')
+        self.assertEqual(HELPER.name, 'docker-credential-' + json.loads(result.stdout)['credHelpers']['us-central1-docker.pkg.dev'])
         self.assertTrue(os.access(HELPER, os.X_OK))
+
+    def test_other_google_registry_hosts_route_to_the_shipped_helper(self):
+        for registry, host in [('europe-west1-docker.pkg.dev/example/images', 'europe-west1-docker.pkg.dev'),
+                               ('gcr.io/example', 'gcr.io'), ('eu.gcr.io/example', 'eu.gcr.io')]:
+            with self.subTest(registry):
+                result = render_docker_config(registry)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, '{"credHelpers": {"%s": "octogee"}}\n' % host)
+
+    def test_other_registry_hosts_get_no_credential_helper(self):
+        for registry in ['ghcr.io/example/images', 'registry.example:5000/operator', 'docker.pkg.dev.example/images', 'evilgcr.io/example']:
+            with self.subTest(registry):
+                result = render_docker_config(registry)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, '{}\n')
+
+    def test_the_image_overlay_ships_no_static_docker_config(self):
+        self.assertFalse((ROOTFS / 'root/.docker/config.json').exists())
 
     def test_get_answers_with_the_token_handed_to_the_pull(self):
         result = helper('get', token='fixture"quoted\\slashed')

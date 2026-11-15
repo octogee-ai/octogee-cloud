@@ -88,10 +88,8 @@ The platform has run end to end on kind and on GKE. Beyond that:
 
 - An isolated gateway on a virtual machine, the kind with a desktop, needs
   Google Cloud.
-- The VM image's Docker credential helper only covers
-  `us-central1-docker.pkg.dev`. A VM image can preload gateway images from any
-  registry you name with `OCTOGEE_DESKTOP_REGISTRY`, but a private registry on
-  another host gets no credentials, at build time or on the booted VM.
+- A private registry that is not a Google registry gets no credentials on the
+  VM: the VM image only pulls from a public registry or a Google registry.
 - Operator sign-in is Google sign-in or a key-signed token.
 - The EKS guide has not run on a real AWS account.
 - There is no production install guide. The GKE install is a single zone with
