@@ -5,6 +5,7 @@ import { SHARED_POOL_SCALER_CREATOR, isSharedPoolMemberRoot, isSharedPoolSlotId,
 import { GATEWAY_CONFIG_SCHEMA_VERSION, InitialGatewayReleaseConflictError, writeInitialGatewayReleaseInTransaction, } from "./gateway-live-release.js";
 import { claimGatewayRetirementInStore, GatewayRetirementConflictError } from "./gateway-retirement-claim.js";
 import { InvalidSharedGatewayAutoscalingConfigError, readSharedGatewayAutoscalingConfigInStore } from "./shared-gateway-pool-read.js";
+import { FleetMutationRefusedError } from "./normal-fleet-mutation.js";
 import { timestampMillis } from "./timestamps.js";
 import { FenceMismatchError } from "./platform-state/errors.js";
 export const SHARED_POOL_AUTOMATION_SOURCE = "shared-pool-scaler";
@@ -104,6 +105,8 @@ async function assertAssignmentCount(transaction, gatewayId, expected) {
     }
 }
 function preconditionBody(error) {
+    if (error instanceof FleetMutationRefusedError)
+        return preconditionBody(error.refusal);
     if (error instanceof PreconditionFailed || error instanceof FenceMismatchError || error instanceof InitialGatewayReleaseConflictError) {
         return { code: "precondition-failed", error: error.message };
     }
@@ -141,6 +144,22 @@ async function latestReleasePayloadHash(transaction, root) {
     const release = await transaction.gateways.releases.get(root.gatewayId, root.latestRelease);
     return release !== null && isReleasePayload(release.payload) ? releasePayloadHash(release.payload) : null;
 }
+function fleetStateUser(user) {
+    const { restoreFence, sourceTransferFence } = user.fences;
+    return {
+        uid: user.uid,
+        slug: user.slug,
+        admitted: user.admitted,
+        accountLifecycle: user.accountLifecycle,
+        provisioning: user.provisioning.status === undefined ? {} : { status: user.provisioning.status },
+        gateway: user.gateway === null ? null : { gatewayId: user.gateway.gatewayId },
+        openclaw: user.openclaw.managedBy === undefined ? {} : { managedBy: user.openclaw.managedBy },
+        fences: {
+            ...(restoreFence === undefined ? {} : { restoreFence }),
+            ...(sourceTransferFence === undefined ? {} : { sourceTransferFence }),
+        },
+    };
+}
 export async function readFleetState(store, input) {
     return store.transaction({ label: "admin.fleet.state", readOnly: true }, async (transaction) => {
         const [config, automation, users, gateways, assignments, runtimes, operations, sharedGatewayAutoscaling] = await Promise.all([
@@ -157,7 +176,8 @@ export async function readFleetState(store, input) {
                 throw error;
             }),
         ]);
-        const hashes = await Promise.all(gateways.map((root) => latestReleasePayloadHash(transaction, root)));
+        const sharedGateways = gateways.filter(isSharedPoolMemberRoot);
+        const hashes = await Promise.all(sharedGateways.map((root) => latestReleasePayloadHash(transaction, root)));
         return {
             generatedAt: input.now,
             fleetControllerStartedAt: input.controllerStartedAt ?? null,
@@ -168,9 +188,9 @@ export async function readFleetState(store, input) {
                 disposableGatewayIdleMs: config?.disposableGatewayIdleMs ?? null,
             },
             sharedPoolAutomation: automation,
-            users,
+            users: users.map(fleetStateUser),
             gateways,
-            latestReleasePayloadHashes: Object.fromEntries(gateways.map((root, index) => [root.gatewayId, hashes[index] ?? null])),
+            latestReleasePayloadHashes: Object.fromEntries(sharedGateways.map((root, index) => [root.gatewayId, hashes[index] ?? null])),
             assignments,
             runtimes,
             operations,
@@ -259,12 +279,28 @@ async function finishReplacement(transaction, input) {
     }, { actionSequence: expectedAutomationSequence });
     return { sourceGatewayId, automationSequence: expectedAutomationSequence + 1 };
 }
+function refusalsBelowError(journal) {
+    return (input) => journal({
+        ...input,
+        action: async (claim) => {
+            try {
+                return await input.action(claim);
+            }
+            catch (error) {
+                if (error instanceof Error && preconditionBody(error) !== null)
+                    throw new FleetMutationRefusedError(error);
+                throw error;
+            }
+        },
+    });
+}
 function newSharedGatewayId() {
     return `shared-${randomUUID().replaceAll("-", "").slice(0, 12)}`;
 }
 // eslint-disable-next-line max-lines-per-function -- one mount point for the shared gateway automation verbs
 export function addAdminSharedPoolRoutes(router, deps) {
-    const { store, journal } = deps;
+    const { store } = deps;
+    const journal = refusalsBelowError(deps.journal);
     const now = deps.now ?? Date.now;
     router.get("/fleet/state", async (req, res, next) => {
         try {

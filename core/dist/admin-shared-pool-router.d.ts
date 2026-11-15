@@ -5,6 +5,7 @@ import { type GatewayArtifact, type GatewayMutableConfig } from "./gateway-live-
 import type { FleetRegistryRecord } from "./platform-state/fleet-registry.js";
 import type { GatewayRoot } from "./platform-state/gateways.js";
 import type { OperationRecord } from "./platform-state/operations.js";
+import type { PlatformUserRecord } from "./platform-state/users.js";
 import type { PlatformStateStore, Stored } from "./platform-state/store.js";
 export declare const SHARED_POOL_AUTOMATION_SOURCE = "shared-pool-scaler";
 export interface AdminSharedPoolRouterDeps {
@@ -15,6 +16,22 @@ export interface AdminSharedPoolRouterDeps {
     now?: () => number;
 }
 export declare function sharedSlotMutableConfig(): GatewayMutableConfig;
+export interface FleetStateUser {
+    readonly uid: string;
+    readonly slug: string | null;
+    readonly admitted: boolean;
+    readonly accountLifecycle: PlatformUserRecord["accountLifecycle"];
+    readonly provisioning: {
+        readonly status?: string;
+    };
+    readonly gateway: {
+        readonly gatewayId: string;
+    } | null;
+    readonly openclaw: {
+        readonly managedBy?: "cowboy" | "operator";
+    };
+    readonly fences: Pick<PlatformUserRecord["fences"], "restoreFence" | "sourceTransferFence">;
+}
 export declare function readFleetState(store: PlatformStateStore, input: {
     operationStatuses: readonly OperationStatus[];
     platformArtifact?: GatewayArtifact | undefined;
@@ -30,7 +47,7 @@ export declare function readFleetState(store: PlatformStateStore, input: {
         disposableGatewayIdleMs: number | null;
     };
     sharedPoolAutomation: Stored<import("./platform-state/controller-state.js").SharedPoolScalerState> | null;
-    users: readonly Stored<import("./platform-state/users.js").PlatformUserRecord>[];
+    users: FleetStateUser[];
     gateways: readonly Stored<GatewayRoot>[];
     latestReleasePayloadHashes: {
         [k: string]: string | null;

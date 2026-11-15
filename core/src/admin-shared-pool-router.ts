@@ -25,11 +25,13 @@ import {
 } from "./gateway-live-release.js";
 import { claimGatewayRetirementInStore, GatewayRetirementConflictError } from "./gateway-retirement-claim.js";
 import { InvalidSharedGatewayAutoscalingConfigError, readSharedGatewayAutoscalingConfigInStore } from "./shared-gateway-pool-read.js";
+import { FleetMutationRefusedError } from "./normal-fleet-mutation.js";
 import { timestampMillis } from "./timestamps.js";
 import { FenceMismatchError } from "./platform-state/errors.js";
 import type { FleetRegistryRecord } from "./platform-state/fleet-registry.js";
 import type { GatewayRoot } from "./platform-state/gateways.js";
 import type { OperationRecord } from "./platform-state/operations.js";
+import type { PlatformUserRecord } from "./platform-state/users.js";
 import type { PlatformStateStore, PlatformStateTransaction, Stored } from "./platform-state/store.js";
 
 export const SHARED_POOL_AUTOMATION_SOURCE = "shared-pool-scaler";
@@ -159,6 +161,7 @@ async function assertAssignmentCount(transaction: PlatformStateTransaction, gate
 }
 
 function preconditionBody(error: unknown): Record<string, unknown> | null {
+  if (error instanceof FleetMutationRefusedError) return preconditionBody(error.refusal);
   if (error instanceof PreconditionFailed || error instanceof FenceMismatchError || error instanceof InitialGatewayReleaseConflictError) {
     return { code: "precondition-failed", error: error.message };
   }
@@ -195,6 +198,34 @@ async function latestReleasePayloadHash(transaction: PlatformStateTransaction, r
   return release !== null && isReleasePayload(release.payload) ? releasePayloadHash(release.payload) : null;
 }
 
+export interface FleetStateUser {
+  readonly uid: string;
+  readonly slug: string | null;
+  readonly admitted: boolean;
+  readonly accountLifecycle: PlatformUserRecord["accountLifecycle"];
+  readonly provisioning: { readonly status?: string };
+  readonly gateway: { readonly gatewayId: string } | null;
+  readonly openclaw: { readonly managedBy?: "cowboy" | "operator" };
+  readonly fences: Pick<PlatformUserRecord["fences"], "restoreFence" | "sourceTransferFence">;
+}
+
+function fleetStateUser(user: PlatformUserRecord): FleetStateUser {
+  const { restoreFence, sourceTransferFence } = user.fences;
+  return {
+    uid: user.uid,
+    slug: user.slug,
+    admitted: user.admitted,
+    accountLifecycle: user.accountLifecycle,
+    provisioning: user.provisioning.status === undefined ? {} : { status: user.provisioning.status },
+    gateway: user.gateway === null ? null : { gatewayId: user.gateway.gatewayId },
+    openclaw: user.openclaw.managedBy === undefined ? {} : { managedBy: user.openclaw.managedBy },
+    fences: {
+      ...(restoreFence === undefined ? {} : { restoreFence }),
+      ...(sourceTransferFence === undefined ? {} : { sourceTransferFence }),
+    },
+  };
+}
+
 export async function readFleetState(store: PlatformStateStore, input: {
   operationStatuses: readonly OperationStatus[];
   platformArtifact?: GatewayArtifact | undefined;
@@ -215,7 +246,8 @@ export async function readFleetState(store: PlatformStateStore, input: {
         throw error;
       }),
     ]);
-    const hashes = await Promise.all(gateways.map((root) => latestReleasePayloadHash(transaction, root)));
+    const sharedGateways = gateways.filter(isSharedPoolMemberRoot);
+    const hashes = await Promise.all(sharedGateways.map((root) => latestReleasePayloadHash(transaction, root)));
     return {
       generatedAt: input.now,
       fleetControllerStartedAt: input.controllerStartedAt ?? null,
@@ -226,9 +258,9 @@ export async function readFleetState(store: PlatformStateStore, input: {
         disposableGatewayIdleMs: config?.disposableGatewayIdleMs ?? null,
       },
       sharedPoolAutomation: automation,
-      users,
+      users: users.map(fleetStateUser),
       gateways,
-      latestReleasePayloadHashes: Object.fromEntries(gateways.map((root, index) => [root.gatewayId, hashes[index] ?? null])),
+      latestReleasePayloadHashes: Object.fromEntries(sharedGateways.map((root, index) => [root.gatewayId, hashes[index] ?? null])),
       assignments,
       runtimes,
       operations,
@@ -338,13 +370,28 @@ async function finishReplacement(
   return { sourceGatewayId, automationSequence: expectedAutomationSequence + 1 };
 }
 
+function refusalsBelowError(journal: AdminFleetMutationRunner): AdminFleetMutationRunner {
+  return (input) => journal({
+    ...input,
+    action: async (claim) => {
+      try {
+        return await input.action(claim);
+      } catch (error) {
+        if (error instanceof Error && preconditionBody(error) !== null) throw new FleetMutationRefusedError(error);
+        throw error;
+      }
+    },
+  });
+}
+
 function newSharedGatewayId(): string {
   return `shared-${randomUUID().replaceAll("-", "").slice(0, 12)}`;
 }
 
 // eslint-disable-next-line max-lines-per-function -- one mount point for the shared gateway automation verbs
 export function addAdminSharedPoolRoutes(router: Router, deps: AdminSharedPoolRouterDeps): void {
-  const { store, journal } = deps;
+  const { store } = deps;
+  const journal = refusalsBelowError(deps.journal);
   const now = deps.now ?? Date.now;
 
   router.get("/fleet/state", async (req, res, next) => {

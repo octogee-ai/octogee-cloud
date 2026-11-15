@@ -1,6 +1,6 @@
 import express from "express";
 import request from "supertest";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { releasePayloadHash, type ReleasePayload } from "@octogee/shared/types/gateway-releases";
 import { SHARED_POOL_SCALER_CREATOR } from "@octogee/shared/types/shared-gateway-pool";
 import { createAdminFleetMutationRunner } from "./admin-fleet-router.js";
@@ -130,6 +130,32 @@ describe("GET /fleet/state", () => {
     expect(res.body.operations.map((operation: Data) => operation.id)).toEqual(["pending-op"]);
   });
 
+  it("answers each user with only the placement fields and reads release hashes for shared gateways only", async () => {
+    seedMember("shared-aaaaaaaaaaaa");
+    seedMember("gw-isolated", { gatewayClass: "isolated", profile: "builder", ownerUid: "uid-a" });
+    records.set("users/uid-a", {
+      username: "alice",
+      onboardingStep: "complete",
+      mattermostUserId: "mm-1",
+      accountLifecycle: { status: "active" },
+      provisioning: { status: "complete", gitRepoUrl: "https://git.example/alice", openclaw: { gatewayId: "gw-isolated", slug: "alice", managedBy: "operator", greeting: { sent: true } } },
+    });
+
+    const res = await request(app()).get("/fleet/state").expect(200);
+
+    expect(res.body.users).toEqual([{
+      uid: "uid-a",
+      slug: "alice",
+      admitted: true,
+      accountLifecycle: { status: "active" },
+      provisioning: { status: "complete" },
+      gateway: { gatewayId: "gw-isolated" },
+      openclaw: { managedBy: "operator" },
+      fences: {},
+    }]);
+    expect(Object.keys(res.body.latestReleasePayloadHashes)).toEqual(["shared-aaaaaaaaaaaa"]);
+  });
+
   it("answers a malformed autoscaling dial as null instead of failing the read", async () => {
     records.set("config/orchestrator", { sharedGatewayAutoscaling: { enabled: true, buildersPerGateway: 1 } });
 
@@ -196,6 +222,25 @@ describe("POST /shared-gateways/:id/desired-status", () => {
     expect(records.get("gateways/shared-aaaaaaaaaaaa")).toEqual(before);
     expect(records.has("glmOperations/shared-pool-scale-00000004")).toBe(false);
     expect(audits()).toEqual([expect.objectContaining({ status: "failed" })]);
+  });
+
+  it("logs a refused precondition as a warning, not an error, and keeps its failed audit", async () => {
+    seedMember("shared-aaaaaaaaaaaa");
+    seedAutomationState(2);
+    const warnings = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await send({}).expect(409);
+
+      const refused = warnings.mock.calls.map(([line]) => JSON.parse(String(line)) as Data)
+        .find((line) => line.message === "fleet mutation refused");
+      expect(refused).toMatchObject({ severity: "WARNING", error: expect.stringContaining("automation sequence is 2") });
+      expect(errors).not.toHaveBeenCalled();
+      expect(audits()).toEqual([expect.objectContaining({ status: "failed" })]);
+    } finally {
+      warnings.mockRestore();
+      errors.mockRestore();
+    }
   });
 
   it("refuses a shared gateway an operator added", async () => {
