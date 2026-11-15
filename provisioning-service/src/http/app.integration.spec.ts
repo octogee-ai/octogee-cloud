@@ -134,6 +134,23 @@ describe.skipIf(!dsn)("the provisioning HTTP API", { timeout: 30_000 }, () => {
       expect(text).toContain('provisioning_work{state="queued"} 0');
       expect(text).toContain("provisioning_generation_lag_seconds");
     });
+
+    it("answers readiness and metrics from the last background check, which reports a failed database check as not ready", async () => {
+      await harness.request("PUT", "/v1/users/u1/provisioning", { body: { spec: spec("lin") } });
+      await harness.service.probes.refresh();
+      expect(await (await fetch(`${harness.service.url}/metrics`)).text()).toContain('provisioning_work{state="queued"} 1');
+      const query = harness.service.db.pool.query.bind(harness.service.db.pool);
+      harness.service.db.pool.query = (async () => { throw new Error("connection refused"); }) as unknown as typeof harness.service.db.pool.query;
+      try {
+        await harness.service.probes.refresh();
+        expect((await fetch(`${harness.service.url}/readyz`)).status).toBe(503);
+        expect(harness.log.lines.some((line) => line.level === "error" && line.message === "readiness check failed")).toBe(true);
+      } finally {
+        harness.service.db.pool.query = query;
+      }
+      await harness.service.probes.refresh();
+      expect((await fetch(`${harness.service.url}/readyz`)).status).toBe(200);
+    });
   });
 
   describe("PUT and GET provisioning", () => {

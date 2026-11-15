@@ -6,6 +6,7 @@ import type { ChatHost } from "./hosts/chat-host.js";
 import type { CredentialStore } from "./hosts/credential-store.js";
 import type { GitHost } from "./hosts/git-host.js";
 import { createApp } from "./http/app.js";
+import { ProbeState } from "./http/probes.js";
 import type { CallerLimits } from "./http/caller-limits.js";
 import type { Logger } from "./logger.js";
 import { Metrics } from "./metrics.js";
@@ -41,6 +42,7 @@ export interface RunningService {
   db: Database;
   store: ProvisioningStore;
   queue: WorkQueue;
+  probes: ProbeState;
   credentials: CredentialStore;
   worker: Worker;
   notifier: ChangeNotifier;
@@ -63,9 +65,12 @@ export async function startService(options: ServiceOptions): Promise<RunningServ
     db, queue, credentials, chat: options.chat, git: options.git, metrics, log: options.log, notifier, store,
     ...(options.heartbeatMs ? { heartbeatMs: options.heartbeatMs } : {}),
   }, options.concurrency);
+  const probes = new ProbeState(db, queue, options.log);
+  await probes.refresh();
+  probes.start();
   const app = createApp({
     store, queue, credentials, notifier, reviewer: options.reviewer, callerNamespace: options.callerNamespace,
-    roleTable: options.roleTable, metrics, log: options.log, limits: options.limits,
+    roleTable: options.roleTable, metrics, log: options.log, limits: options.limits, probes,
   });
   const server: Server = await new Promise((resolve, reject) => {
     const listening = app.listen(options.port, options.host ?? "0.0.0.0", (error?: Error) => (error ? reject(error) : resolve(listening)));
@@ -73,9 +78,10 @@ export async function startService(options: ServiceOptions): Promise<RunningServ
   if (options.runWorker !== false) worker.start();
   const address = server.address() as AddressInfo;
   return {
-    db, store, queue, credentials, worker, notifier, metrics,
+    db, store, queue, credentials, worker, notifier, metrics, probes,
     url: `http://127.0.0.1:${address.port}`,
     async stop() {
+      probes.stop();
       server.closeAllConnections();
       await new Promise<void>((resolve) => server.close(() => resolve()));
       await worker.stop();

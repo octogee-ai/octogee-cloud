@@ -21,7 +21,7 @@ The types are `@octogee/shared/types/provisioning-service`.
 | `PUT /v1/users/{uid}/git-keys/{gatewayId}` | Body `{ spec: { publicKey } }`. Authorizes the key on the user's git owner. | `201`, `202`, `200`; body is the `GitKey`; `404` when the user has no provisioning |
 | `DELETE /v1/users/{uid}/git-keys/{gatewayId}` | Releases the key. | `202` |
 | `GET /v1/users/{uid}/credentials/{name}` | `{ name, value, version }`, `Cache-Control: no-store`. Names: `agent-chat-token`, `user-chat-token`. | `200`, `404`, `409 not-issued` |
-| `GET /healthz`, `/readyz`, `/metrics` | Unauthenticated, no tenant data. | |
+| `GET /healthz`, `/readyz`, `/metrics` | Unauthenticated, no tenant data. `/readyz` and `/metrics` answer from a database check and work snapshot each replica takes every 5 seconds. | `200`, `503` |
 
 A write is done when `status.observedGeneration >= generation` and the `Ready`
 condition is `True`. Conditions: `ChatReady`, `GitReady`, `CredentialsIssued`,

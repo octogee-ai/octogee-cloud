@@ -20,6 +20,7 @@ import type { ProvisioningStore } from "../store/provisioning-store.js";
 import type { WorkQueue } from "../worker/queue.js";
 import { callerRequestLimit, callerWaitLimit, type CallerLimits } from "./caller-limits.js";
 import { ApiError, sendError } from "./errors.js";
+import type { ProbeState } from "./probes.js";
 
 export interface AppDependencies {
   store: ProvisioningStore;
@@ -32,6 +33,7 @@ export interface AppDependencies {
   metrics: Metrics;
   log: Logger;
   limits: CallerLimits;
+  probes: ProbeState;
 }
 
 const DEFAULT_WAIT_SECONDS = 30;
@@ -83,18 +85,16 @@ export function createApp(deps: AppDependencies): express.Express {
     response.json({ ok: true });
   });
 
-  app.get("/readyz", async (_request, response) => {
-    try {
-      await deps.store.db.pool.query("SELECT 1");
-      response.json({ ok: true });
-    } catch (error) {
-      deps.log.error("readiness check failed", { error: error instanceof Error ? error.message : String(error) });
-      response.status(503).json({ ok: false });
-    }
+  app.get("/readyz", (_request, response) => {
+    response.status(deps.probes.ready ? 200 : 503).json({ ok: deps.probes.ready });
   });
 
-  app.get("/metrics", async (_request, response) => {
-    const snapshot = await deps.queue.snapshot();
+  app.get("/metrics", (_request, response) => {
+    const { snapshot } = deps.probes;
+    if (!snapshot) {
+      response.status(503).type("text/plain").send("# no work snapshot yet\n");
+      return;
+    }
     response.type("text/plain; version=0.0.4").send(deps.metrics.render(snapshot));
   });
 
