@@ -38,13 +38,6 @@ deploymentTargets: {}
 # gatewayValuesFile inside the baked chart. Empty uses that file.
 gatewayValues: {}
 
-# Shared pool bounds. The fleet controller mints `shared-N` slots on demand between these,
-# from the platform release image below. Per-environment values set the floor:
-# TEST 1 (0 allowed), PROD 2.
-sharedPool:
-  minReplicas: 1
-  maxReplicas: 8
-
 # The gateway and gateway-edge images every shared slot converges to. The
 # platform release (Deploy platform) sets the digest-qualified tags from the
 # deployed build's immutable manifest; the fleet controller rolls each slot with surge.

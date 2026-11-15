@@ -11,12 +11,6 @@ let vmDiskUsage: VmDiskUsageSample[] = [];
 const configRoll = new Map<string, number>();
 const disruptionObservations = new Map<string, number>();
 let disruptionLastObservedMs: number | null = null;
-let sharedGatewayMaxCapacity = 0;
-let sharedGatewayCapacitySnapshot = {
-  assignmentCount: 0,
-  hotMemberCount: 0,
-};
-let sharedPoolReplicaBounds = { minReplicas: 0, maxReplicas: 0 };
 let disruptionSnapshot = {
   spotNodes: 0,
   onDemandNodes: 0,
@@ -64,11 +58,6 @@ export interface DisruptionSnapshotSample {
   now?: number;
 }
 
-export interface SharedGatewayMaxCapacitySample {
-  assignmentCount: number;
-  hotMemberCount: number;
-}
-
 export function recordReconcile(result: "ok" | "fail", now: number = Date.now()): void {
   if (result === "ok") {
     reconcileOk += 1;
@@ -87,11 +76,6 @@ export function resetMetrics(): void {
   configRoll.clear();
   disruptionObservations.clear();
   disruptionLastObservedMs = null;
-  sharedGatewayMaxCapacity = 0;
-  sharedGatewayCapacitySnapshot = {
-    assignmentCount: 0,
-    hotMemberCount: 0,
-  };
   disruptionSnapshot = {
     spotNodes: 0,
     onDemandNodes: 0,
@@ -146,23 +130,6 @@ export function recordDisruptionSnapshot(sample: DisruptionSnapshotSample): void
     pendingGatewayPods: Math.max(0, Math.trunc(sample.pendingGatewayPods)),
   };
   disruptionLastObservedMs = sample.now ?? Date.now();
-}
-
-export function recordSharedPoolReplicaBounds(bounds: { minReplicas: number; maxReplicas: number }): void {
-  sharedPoolReplicaBounds = {
-    minReplicas: Math.max(0, Math.trunc(bounds.minReplicas)),
-    maxReplicas: Math.max(0, Math.trunc(bounds.maxReplicas)),
-  };
-}
-
-export function recordSharedGatewayMaxCapacity(
-  sample: SharedGatewayMaxCapacitySample,
-): void {
-  sharedGatewayMaxCapacity += 1;
-  sharedGatewayCapacitySnapshot = {
-    assignmentCount: Math.max(0, Math.trunc(sample.assignmentCount)),
-    hotMemberCount: Math.max(0, Math.trunc(sample.hotMemberCount)),
-  };
 }
 
 export function renderMetrics(): string {
@@ -224,21 +191,6 @@ export function renderMetrics(): string {
     "# HELP glm_disruption_pending_gateway_pods Current Pending gateway pods observed by the disruption observer.",
     "# TYPE glm_disruption_pending_gateway_pods gauge",
     `glm_disruption_pending_gateway_pods ${disruptionSnapshot.pendingGatewayPods}`,
-    "# HELP octogee_shared_pool_min_replicas The shared pool floor the fleet controller converges to for this environment.",
-    "# TYPE octogee_shared_pool_min_replicas gauge",
-    `octogee_shared_pool_min_replicas ${sharedPoolReplicaBounds.minReplicas}`,
-    "# HELP octogee_shared_pool_max_replicas The shared pool ceiling the fleet controller will mint slots up to for this environment.",
-    "# TYPE octogee_shared_pool_max_replicas gauge",
-    `octogee_shared_pool_max_replicas ${sharedPoolReplicaBounds.maxReplicas}`,
-    "# HELP glm_shared_gateway_max_capacity_total Shared pool scaler observations at the replica ceiling.",
-    "# TYPE glm_shared_gateway_max_capacity_total counter",
-    `glm_shared_gateway_max_capacity_total ${sharedGatewayMaxCapacity}`,
-    "# HELP glm_shared_gateway_assignment_count Assigned users observed when the Shared gateway most recently reached maximum capacity.",
-    "# TYPE glm_shared_gateway_assignment_count gauge",
-    `glm_shared_gateway_assignment_count ${sharedGatewayCapacitySnapshot.assignmentCount}`,
-    "# HELP glm_shared_gateway_hot_members Running Shared gateway members observed when the pool most recently reached maximum capacity.",
-    "# TYPE glm_shared_gateway_hot_members gauge",
-    `glm_shared_gateway_hot_members ${sharedGatewayCapacitySnapshot.hotMemberCount}`,
     "",
   ].join("\n");
 }
