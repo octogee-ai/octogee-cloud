@@ -282,14 +282,19 @@ EOF
 }
 
 check_sandbox() {
-  local output
-  output="$(k run "sandbox-check-$(random_hex 4)" --rm -i --quiet --restart=Never --pod-running-timeout=5m \
+  local pod output
+  pod="sandbox-check-$(random_hex 4)"
+  if ! output="$(k run "$pod" --rm -i --quiet --restart=Never --pod-running-timeout=5m \
     --image="$POSTGRES_CLIENT_IMAGE" --overrides="$(node -e '
       const image = process.argv[1];
       console.log(JSON.stringify({ spec: { runtimeClassName: "gvisor", containers: [{
         name: "check", image, stdin: true, stdinOnce: true, command: ["dmesg"],
       }] } }));
-    ' "$POSTGRES_CLIENT_IMAGE")" < /dev/null)" || die "A pod with runtime class gvisor did not run on the gateway nodes"
+    ' "$POSTGRES_CLIENT_IMAGE")" < /dev/null)"; then
+    k get events --field-selector "involvedObject.name=$pod" --sort-by=.lastTimestamp \
+      -o jsonpath='{.items[-1:].message}{"\n"}' >&2
+    die "A pod with runtime class gvisor did not run on the gateway nodes. Fix the cause, then replace the gateway nodes as docs/eks.md#change-the-gateway-nodes describes"
+  fi
   [[ "$output" == *gVisor* ]] \
     || die "A pod with runtime class gvisor did not report the gVisor kernel; the gateway nodes do not sandbox gateways"
   echo "Gateway nodes run pods under gVisor"

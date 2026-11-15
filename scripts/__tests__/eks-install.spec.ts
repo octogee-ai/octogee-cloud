@@ -48,7 +48,8 @@ const AWS = `case " $* " in
 esac`;
 
 const KUBECTL = `case " $* " in
-  *" run sandbox-check-"*) echo "\${SANDBOX_DMESG-[    0.000000] Starting gVisor...}" ;;
+  *" run sandbox-check-"*) [ -z "\${SANDBOX_STUCK:-}" ] || exit 1; echo "\${SANDBOX_DMESG-[    0.000000] Starting gVisor...}" ;;
+  *" get events "*"involvedObject.name=sandbox-check-"*) printf '%s\\n' 'Failed to create pod sandbox: no runtime for "runsc" is configured' ;;
   *" get endpointslice "*) echo 192.168.10.20; echo 192.168.30.40 ;;
   *"%{http_code}"*) echo 200 ;;
   *"jsonpath={.data."*) printf 'c3R1Yg==' ;;
@@ -161,6 +162,15 @@ describe("eks-install.sh", () => {
       expect(runtimeClass).toMatch(/- key: octogee\.io\/sandbox\n\s+operator: Equal\n\s+value: gvisor\n\s+effect: NoSchedule/);
       expect(applied()).toMatch(/name: gp3\n\s+annotations:\n\s+storageclass\.kubernetes\.io\/is-default-class: "true"/);
       expect(applied()).toContain(`encrypted: "true"`);
+    });
+
+    it("says why a gvisor pod did not start and how to replace the gateway nodes", () => {
+      const result = up({ SANDBOX_STUCK: "1" });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('no runtime for "runsc" is configured');
+      expect(result.stderr).toContain("A pod with runtime class gvisor did not run on the gateway nodes");
+      expect(result.stderr).toContain("docs/eks.md#change-the-gateway-nodes");
+      expect(calls("aws", "create-db-instance")).toEqual([]);
     });
 
     it("stops before creating the database when a gvisor pod does not report the gVisor kernel", () => {
