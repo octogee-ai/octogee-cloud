@@ -24,6 +24,7 @@ import type { ProvisioningProjection } from "./provisionSteps.js";
 export const PROVISIONING_SPEC_BACKFILL_KEY = "provisioning-service-spec-backfill";
 export const PROVISIONING_SYNC_CONCURRENCY = 4;
 export const PROVISIONING_SYNC_RETRY = { baseDelayMs: 5_000, maxDelayMs: 600_000 } as const;
+export const PROVISIONING_SYNC_RESYNC_MS = 10 * 60_000;
 const FLEET_CONTROLLER_ACTOR = "fleet-controller";
 
 export type SpecWriteOutcome = "created" | "changed" | "unchanged" | "not-admitted";
@@ -35,6 +36,7 @@ export interface ProvisioningReadiness {
 
 export interface ProvisioningSyncCounters {
   specWrites: Record<SpecWriteOutcome | "failed", number>;
+  deletes: Record<"deleted" | "failed", number>;
   mirrors: Record<ProvisioningMirrorOutcome | "failed", number>;
   watchFailures: number;
   watchConnected: boolean;
@@ -51,12 +53,21 @@ export interface ProvisioningSyncDeps {
   readonly random?: () => number;
   readonly watchTimeoutSeconds?: number;
   readonly retry?: { readonly baseDelayMs: number; readonly maxDelayMs: number };
+  readonly resyncMs?: number;
 }
 
 export interface BackfillSummary {
   readonly users: number;
   readonly written: number;
   readonly unchanged: number;
+  readonly failed: number;
+}
+
+export interface SpecWriteFailure {
+  readonly uid: string;
+  readonly reason: string;
+  readonly attempts: number;
+  readonly since: string;
 }
 
 export interface ProvisioningSync {
@@ -64,6 +75,8 @@ export interface ProvisioningSync {
   readiness(uid: string): ProvisioningReadiness | null;
   observed(uid: string): UserProvisioning | undefined;
   markDirty(uid: string): void;
+  specFailures(): readonly SpecWriteFailure[];
+  resync(): Promise<void>;
   writeSpec(uid: string): Promise<SpecWriteOutcome>;
   backfill(): Promise<BackfillSummary>;
   snapshotLoaded(): Promise<void>;
@@ -81,7 +94,8 @@ function newer(candidate: UserProvisioning, current: UserProvisioning | undefine
 function emptyCounters(): ProvisioningSyncCounters {
   return {
     specWrites: { created: 0, changed: 0, unchanged: 0, "not-admitted": 0, failed: 0 },
-    mirrors: { written: 0, unchanged: 0, "chat-not-ready": 0, "user-missing": 0, "slug-mismatch": 0, failed: 0 },
+    deletes: { deleted: 0, failed: 0 },
+    mirrors: { written: 0, unchanged: 0, "chat-not-ready": 0, "credentials-not-issued": 0, "user-missing": 0, "slug-mismatch": 0, failed: 0 },
     watchFailures: 0,
     watchConnected: false,
   };
@@ -155,7 +169,8 @@ export function createProvisioningSync(deps: ProvisioningSyncDeps): Provisioning
     return written.outcome;
   }
 
-  const lastWrite = new Map<string, SpecWriteOutcome>();
+  const lastWrite = new Map<string, SpecWriteOutcome | "failed">();
+  const failures = new Map<string, SpecWriteFailure>();
   const specs: KeyedRetryQueue = createKeyedRetryQueue({
     concurrency: PROVISIONING_SYNC_CONCURRENCY,
     now,
@@ -164,9 +179,12 @@ export function createProvisioningSync(deps: ProvisioningSyncDeps): Provisioning
       const outcome = await writeSpec(uid);
       counters.specWrites[outcome] += 1;
       lastWrite.set(uid, outcome);
+      failures.delete(uid);
     },
     onError: (uid, error, attempts) => {
       counters.specWrites.failed += 1;
+      lastWrite.set(uid, "failed");
+      failures.set(uid, { uid, reason: errorMessage(error), attempts, since: failures.get(uid)?.since ?? new Date(now()).toISOString() });
       deps.log(`[provisioning] ⚠ could not write the spec of ${uid} (attempt ${attempts}): ${errorMessage(error)}; retrying`);
     },
   });
@@ -181,6 +199,7 @@ export function createProvisioningSync(deps: ProvisioningSyncDeps): Provisioning
       const outcome = await mirrorUserProvisioning(deps, resource);
       counters.mirrors[outcome] += 1;
       if (outcome === "written") deps.log(`[provisioning] mirrored chat and git results of ${uid}`);
+      if (outcome === "credentials-not-issued") deps.log(`[provisioning] not mirroring ${uid} yet: its chat credentials are not issued and it has no platform chat secrets`);
       if (outcome === "slug-mismatch") deps.log(`[provisioning] ⚠ not mirroring ${uid}: its spec names slug ${resource.spec.slug}, which the user record does not carry`);
     },
     onError: (uid, error, attempts) => {
@@ -188,6 +207,32 @@ export function createProvisioningSync(deps: ProvisioningSyncDeps): Provisioning
       deps.log(`[provisioning] ⚠ could not mirror ${uid} (attempt ${attempts}): ${errorMessage(error)}; retrying`);
     },
   });
+
+  async function deleteResource(uid: string): Promise<void> {
+    await deps.client.deleteProvisioning(uid);
+    cache.delete(uid);
+    counters.deletes.deleted += 1;
+    deps.log(`[provisioning] deleted the provisioning of ${uid}, whose user record is gone`);
+    const user = await deps.store.users.records.get(uid);
+    if (user !== null && user.admitted) specs.enqueue(uid);
+  }
+
+  const deletes: KeyedRetryQueue = createKeyedRetryQueue({
+    concurrency: PROVISIONING_SYNC_CONCURRENCY,
+    now,
+    retryDelayMs,
+    process: deleteResource,
+    onError: (uid, error, attempts) => {
+      counters.deletes.failed += 1;
+      deps.log(`[provisioning] ⚠ could not delete the provisioning of ${uid} (attempt ${attempts}): ${errorMessage(error)}; retrying`);
+    },
+  });
+
+  async function deleteOrphans(): Promise<void> {
+    const uids = [...cache.keys()];
+    const users = await deps.store.users.records.getMany(uids);
+    for (const uid of uids) if (!users.has(uid)) deletes.enqueue(uid);
+  }
 
   async function backfill(): Promise<BackfillSummary> {
     await snapshot;
@@ -197,13 +242,20 @@ export function createProvisioningSync(deps: ProvisioningSyncDeps): Provisioning
       lastWrite.delete(uid);
       specs.enqueue(uid);
     }
-    await specs.settled(uids);
+    await specs.attempted(uids);
     const outcomes = uids.map((uid) => lastWrite.get(uid));
     return {
       users: uids.length,
       written: outcomes.filter((outcome) => outcome === "created" || outcome === "changed").length,
       unchanged: outcomes.filter((outcome) => outcome === "unchanged").length,
+      failed: outcomes.filter((outcome) => outcome === "failed").length,
     };
+  }
+
+  async function resync(): Promise<void> {
+    await snapshot;
+    for (const user of await deps.store.users.records.listAdmitted()) specs.enqueue(user.uid);
+    await deleteOrphans();
   }
 
   function needsSpec(uid: string, slug: string | null): boolean {
@@ -217,8 +269,9 @@ export function createProvisioningSync(deps: ProvisioningSyncDeps): Provisioning
       deps.store.watch({ aggregate: "builders", filter: {} }, {
         onEvent: (event) => {
           if (event.kind !== "changes") return;
-          for (const { record } of event.changes) {
-            if (record !== null && record.admitted && needsSpec(record.uid, record.slug)) specs.enqueue(record.uid);
+          for (const { type, key, record } of event.changes) {
+            if (type === "removed") deletes.enqueue(key);
+            else if (record !== null && record.admitted && needsSpec(record.uid, record.slug)) specs.enqueue(record.uid);
           }
         },
         onError,
@@ -243,6 +296,8 @@ export function createProvisioningSync(deps: ProvisioningSyncDeps): Provisioning
     },
     observed: (uid) => cache.get(uid),
     markDirty: (uid) => specs.enqueue(uid),
+    specFailures: () => [...failures.values()],
+    resync,
     writeSpec,
     backfill,
     snapshotLoaded: () => snapshot,
@@ -255,7 +310,9 @@ export function createProvisioningSync(deps: ProvisioningSyncDeps): Provisioning
           resolveSnapshot();
           specs.open();
           mirrors.open();
+          deletes.open();
           for (const item of items) mirrors.enqueue(item.uid);
+          await deleteOrphans();
         },
         onChanges: async (items) => {
           counters.watchConnected = true;
@@ -273,14 +330,20 @@ export function createProvisioningSync(deps: ProvisioningSyncDeps): Provisioning
       const subscriptions = watchUsers();
       void runJournaledBackfill(deps.store, backfill, now).then(
         ({ journaled, result }) => deps.log(
-          `[provisioning] spec backfill finished${journaled ? " and journaled" : ""}: ${result.users} admitted users, ${result.written} written, ${result.unchanged} unchanged`,
+          `[provisioning] spec backfill finished${journaled ? " and journaled" : ""}: ${result.users} admitted users, ${result.written} written, ${result.unchanged} unchanged, ${result.failed} failed and retrying`,
         ),
         (error: unknown) => deps.log(`[provisioning] ❌ spec backfill failed: ${errorMessage(error)}; the next start resumes it`),
       );
+      const resyncTimer = setInterval(() => {
+        resync().catch((error: unknown) => deps.log(`[provisioning] ⚠ periodic resync failed: ${errorMessage(error)}; the next one retries`));
+      }, deps.resyncMs ?? PROVISIONING_SYNC_RESYNC_MS);
+      resyncTimer.unref?.();
       return () => {
+        clearInterval(resyncTimer);
         watch.stop();
         specs.stop();
         mirrors.stop();
+        deletes.stop();
         for (const subscription of subscriptions) void subscription.close();
       };
     },

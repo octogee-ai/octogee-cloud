@@ -56,6 +56,7 @@ export interface ProvisioningServiceConfig {
     readonly tokenPath: string;
 }
 export declare function provisioningServiceConfigFromEnvironment(env: NodeJS.ProcessEnv): ProvisioningServiceConfig | null;
+export declare function isProvisioningUid(uid: string): boolean;
 export declare function backoffDelayMs(attempt: number, policy: Pick<ProvisioningServiceRetryPolicy, "baseDelayMs" | "maxDelayMs">, random: () => number): number;
 export declare function createProvisioningServiceClient(options: ProvisioningServiceClientOptions): ProvisioningServiceClient;
 export interface ProvisioningWatchHandlers {

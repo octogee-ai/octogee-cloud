@@ -5,7 +5,7 @@ import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store"
 import type { UserProvisioningSpec } from "@octogee/shared/types/provisioning-service";
 import { startFakeProvisioningService, type FakeProvisioningService } from "./fixtures/provisioning-service-fake.js";
 import { createAdminFleetMutationRunner } from "./admin-fleet-router.js";
-import { addAdminProvisioningRoutes } from "./admin-provisioning-router.js";
+import { addAdminProvisioningRoutes, type AdminProvisioningClient } from "./admin-provisioning-router.js";
 import { createProvisioningServiceClient, type ProvisioningServiceClient } from "./provisioning-service-client.js";
 
 type Data = Record<string, unknown>;
@@ -23,8 +23,9 @@ const SPEC: UserProvisioningSpec = {
 let records: Map<string, Data>;
 let fake: FakeProvisioningService;
 let client: ProvisioningServiceClient;
+let warnings: Array<{ msg: string; meta?: Record<string, unknown> }>;
 
-function app(configured = true) {
+function app(configured = true, overrides: { provisioning?: AdminProvisioningClient; readDeadlineMs?: number } = {}) {
   const store = createDocumentFixtureStore(records, { serializeTransactions: true });
   const server = express();
   server.use(express.json());
@@ -33,8 +34,11 @@ function app(configured = true) {
     next();
   });
   addAdminProvisioningRoutes(server, {
-    provisioning: configured ? client : null,
+    provisioning: configured ? overrides.provisioning ?? client : null,
     journal: createAdminFleetMutationRunner(store),
+    logger: { warn: (msg, meta) => warnings.push({ msg, meta }) },
+    specFailures: () => [{ uid: "u9", reason: "admitted user u9 has no account document", attempts: 3, since: "2026-11-15T18:00:00.000Z" }],
+    ...(overrides.readDeadlineMs === undefined ? {} : { readDeadlineMs: overrides.readDeadlineMs }),
   });
   server.use((error: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     res.status(500).json({ error: error.message });
@@ -46,6 +50,7 @@ const audits = () => [...records.entries()].filter(([path]) => path.startsWith("
 
 beforeEach(async () => {
   records = new Map();
+  warnings = [];
   fake = await startFakeProvisioningService();
   client = createProvisioningServiceClient({
     baseUrl: fake.url,
@@ -85,12 +90,35 @@ describe("Admin API provisioning routes", () => {
     expect(res.body.code).toBe("not-found");
   });
 
-  it("answers 503 when the service is unreachable", async () => {
+  it("answers 503 with a fixed message when the service fails, and logs the detail", async () => {
     fake.failNext(503, 2);
 
     const res = await request(app()).get("/users/u1/provisioning").expect(503);
 
-    expect(res.body.code).toBe("unavailable");
+    expect(res.body).toEqual({ code: "unavailable", error: "the provisioning service did not answer; see the fleet controller log" });
+    expect(warnings).toEqual([expect.objectContaining({ meta: expect.objectContaining({ status: 503, error: "injected" }) })]);
+  });
+
+  it("answers 503 within the read deadline when the service hangs", async () => {
+    const hanging: AdminProvisioningClient = {
+      ...client,
+      getProvisioning: () => new Promise(() => undefined),
+      listProvisionings: () => new Promise(() => undefined),
+    };
+    const started = Date.now();
+
+    await request(app(true, { provisioning: hanging, readDeadlineMs: 50 })).get("/users/u1/provisioning").expect(503);
+    await request(app(true, { provisioning: hanging, readDeadlineMs: 50 })).get("/provisioning").expect(503);
+
+    expect(Date.now() - started).toBeLessThan(2_000);
+  });
+
+  it("refuses a uid that is not a provisioning identifier", async () => {
+    const res = await request(app()).get("/users/..%2F..%2Fprovisionings/provisioning").expect(400);
+    await request(app()).post("/users/.hidden/provisioning/retry").send({}).expect(400);
+
+    expect(res.body.code).toBe("invalid-request");
+    expect(fake.requests.filter((entry) => entry.method !== "PUT")).toEqual([]);
   });
 
   it("journals a retry and passes the journal's idempotency key to the service", async () => {
@@ -139,6 +167,7 @@ describe("Admin API provisioning routes", () => {
     const res = await request(app()).get("/provisioning?ready=false").expect(200);
 
     expect(res.body.items.map((item: Data) => item.uid)).toEqual(["u1"]);
+    expect(res.body.specWriteFailures).toEqual([expect.objectContaining({ uid: "u9", reason: expect.stringContaining("no account document") })]);
     expect(fake.requests.at(-1)?.query).toEqual({ ready: "false" });
   });
 

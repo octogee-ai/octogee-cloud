@@ -3,6 +3,7 @@ import type { AddressInfo } from "node:net";
 import type {
   ProvisioningAttempt,
   ProvisioningCredential,
+  ProvisioningCredentialName,
   ProvisioningErrorBody,
   UserProvisioning,
   UserProvisioningSpec,
@@ -27,7 +28,8 @@ export interface FakeProvisioningService {
   expireBefore(resourceVersion: number): void;
   setStatus(uid: string, status: Partial<UserProvisioningStatus>): UserProvisioning;
   setEvents(uid: string, items: ProvisioningAttempt[]): void;
-  setCredential(uid: string, credential: ProvisioningCredential): void;
+  issueCredential(uid: string, name: ProvisioningCredentialName, value: string): void;
+  credentialReader: boolean;
   close(): Promise<void>;
 }
 
@@ -61,13 +63,13 @@ export async function startFakeProvisioningService(options: { tokens?: string[] 
   const resources = new Map<string, UserProvisioning>();
   const changedAt = new Map<string, number>();
   const events = new Map<string, ProvisioningAttempt[]>();
-  const credentials = new Map<string, ProvisioningCredential>();
   const retries = new Map<string, unknown>();
   const failures: Array<{ status: number; retryAfterSeconds?: number }> = [];
   const waiters = new Set<() => void>();
   let counter = 0;
   let oldestRetained = 0;
-  const service = { acceptedTokens: new Set(options.tokens ?? ["token"]) };
+  const credentials = new Map<string, ProvisioningCredential>();
+  const service = { acceptedTokens: new Set(options.tokens ?? ["token"]), credentialReader: true };
 
   function bump(uid: string, resource: UserProvisioning): UserProvisioning {
     counter += 1;
@@ -156,13 +158,6 @@ export async function startFakeProvisioningService(options: { tokens?: string[] 
     send(res, 200, existing);
   }
 
-  function credential(uid: string, name: string, res: ServerResponse): void {
-    const issued = credentials.get(`${uid}/${name}`);
-    if (issued) return send(res, 200, issued, { "cache-control": "no-store" });
-    if (!resources.has(uid)) return fail(res, 404, "not-found", "no provisioning for this user");
-    fail(res, 409, "not-issued", "this credential has not been issued yet");
-  }
-
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = new URL(req.url ?? "/", FAKE_BASE);
     const recorded = record(req, url, await readBody(req));
@@ -173,6 +168,14 @@ export async function startFakeProvisioningService(options: { tokens?: string[] 
     const userMatch = /^\/v1\/users\/([^/]+)\/provisioning(\/retry|\/events)?$/.exec(url.pathname);
     if (!userMatch) return fail(res, 404, "not-found", "no such route");
     user(decodeURIComponent(userMatch[1]), userMatch[2], recorded, res);
+  }
+
+  function credential(uid: string, name: string, res: ServerResponse): void {
+    if (!service.credentialReader) return fail(res, 403, "forbidden", "this caller lacks the credential-reader role");
+    const issued = credentials.get(`${uid}/${name}`);
+    if (issued) return send(res, 200, issued);
+    if (!resources.has(uid)) return fail(res, 404, "not-found", "no provisioning for this user");
+    fail(res, 409, "not-issued", "this credential has not been issued yet");
   }
 
   async function listOrWatch(url: URL, res: ServerResponse): Promise<void> {
@@ -237,8 +240,15 @@ export async function startFakeProvisioningService(options: { tokens?: string[] 
     setEvents(uid, items) {
       events.set(uid, items);
     },
-    setCredential(uid, issued) {
-      credentials.set(`${uid}/${issued.name}`, issued);
+    issueCredential(uid, name, value) {
+      const previous = credentials.get(`${uid}/${name}`);
+      credentials.set(`${uid}/${name}`, { name, value, version: (previous?.version ?? 0) + 1 });
+    },
+    get credentialReader() {
+      return service.credentialReader;
+    },
+    set credentialReader(allowed: boolean) {
+      service.credentialReader = allowed;
     },
     async close() {
       for (const wake of [...waiters]) wake();

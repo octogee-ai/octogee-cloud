@@ -11,6 +11,7 @@ export interface KeyedRetryQueue {
   open(): void;
   stop(): void;
   settled(keys: readonly string[]): Promise<void>;
+  attempted(keys: readonly string[]): Promise<void>;
   pendingCount(): number;
 }
 
@@ -23,6 +24,7 @@ export function createKeyedRetryQueue(options: KeyedRetryQueueOptions): KeyedRet
   const now = options.now ?? Date.now;
   const pending = new Map<string, Entry>();
   const running = new Set<string>();
+  const runs = new Map<string, number>();
   const listeners = new Set<() => void>();
   let opened = false;
   let stopped = false;
@@ -73,18 +75,32 @@ export function createKeyedRetryQueue(options: KeyedRetryQueueOptions): KeyedRet
       await options.process(key);
     } catch (error) {
       options.onError(key, error, attempts + 1);
-      if (!pending.has(key)) pending.set(key, { attempts: attempts + 1, dueAt: now() + options.retryDelayMs(attempts) });
+      pending.set(key, { attempts: attempts + 1, dueAt: now() + options.retryDelayMs(attempts) });
     } finally {
       running.delete(key);
+      runs.set(key, (runs.get(key) ?? 0) + 1);
       notify();
       schedule();
     }
   }
 
+  function until(condition: () => boolean): Promise<void> {
+    const done = () => stopped || condition();
+    if (done()) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      const listener = () => {
+        if (!done()) return;
+        listeners.delete(listener);
+        resolve();
+      };
+      listeners.add(listener);
+    });
+  }
+
   return {
     enqueue(key) {
-      if (stopped) return;
-      pending.set(key, { attempts: pending.get(key)?.attempts ?? 0, dueAt: now() });
+      if (stopped || pending.has(key)) return;
+      pending.set(key, { attempts: 0, dueAt: now() });
       schedule();
     },
     open() {
@@ -98,16 +114,11 @@ export function createKeyedRetryQueue(options: KeyedRetryQueueOptions): KeyedRet
       notify();
     },
     settled(keys) {
-      const done = () => stopped || keys.every((key) => !pending.has(key) && !running.has(key));
-      if (done()) return Promise.resolve();
-      return new Promise<void>((resolve) => {
-        const listener = () => {
-          if (!done()) return;
-          listeners.delete(listener);
-          resolve();
-        };
-        listeners.add(listener);
-      });
+      return until(() => keys.every((key) => !pending.has(key) && !running.has(key)));
+    },
+    attempted(keys) {
+      const before = new Map(keys.map((key) => [key, runs.get(key) ?? 0]));
+      return until(() => keys.every((key) => (runs.get(key) ?? 0) > (before.get(key) ?? 0)));
     },
     pendingCount() {
       return pending.size + running.size;

@@ -10,6 +10,7 @@ export interface KeyedRetryQueue {
     open(): void;
     stop(): void;
     settled(keys: readonly string[]): Promise<void>;
+    attempted(keys: readonly string[]): Promise<void>;
     pendingCount(): number;
 }
 export declare function createKeyedRetryQueue(options: KeyedRetryQueueOptions): KeyedRetryQueue;

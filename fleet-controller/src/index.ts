@@ -2354,6 +2354,7 @@ function startControllerBackgroundTasks({
     controllerStartedAt,
     provisioning: provisioning?.client ?? null,
     provisioningReadiness: provisioning?.sync.readiness,
+    provisioningSpecFailures: provisioning?.sync.specFailures,
     ...(httpKubeOps
       ? {
           readGatewayPodDiagnostics: (gatewayId: string) =>

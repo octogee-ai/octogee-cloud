@@ -1,3 +1,4 @@
+import type { SecretsRepository } from "../platform-state/secrets.js";
 import type { ManagedChannelHost } from "../channel-host/types.js";
 export declare const DEFAULT_TEAM_CHANNELS_TO_ARCHIVE: readonly ["town-square", "off-topic", "general"];
 export declare const DEFAULT_AGENT_BOT_DISPLAY_NAME = "Octo";
@@ -15,4 +16,5 @@ export interface ProvisionMattermostUserInput {
     lastName?: string;
     photoURL?: string;
 }
+export declare function persistUserToken(secrets: Pick<SecretsRepository, "put">, uid: string, userMmUserId: string, token: string | null): Promise<void>;
 export declare function provisionMattermostUser(input: ProvisionMattermostUserInput, host: ManagedChannelHost, readStoredNames: ReadStoredMattermostNames): Promise<Record<string, unknown>>;

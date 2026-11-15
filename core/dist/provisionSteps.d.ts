@@ -93,7 +93,7 @@ export interface ProvisioningProjection {
     workspaceEntry(ctx: ProvisioningContext, allAgentIds: string[]): Promise<void>;
 }
 export declare const noProvisioningProjection: ProvisioningProjection;
-type ProvisioningStore = Pick<PlatformStateStore, "transaction" | "workspaces">;
+type ProvisioningStore = Pick<PlatformStateStore, "transaction">;
 export declare function markProvisioningComplete(ctx: ProvisioningContext, mmUpdate: MmUpdate, allAgentIds: string[], projection: ProvisioningProjection, store?: ProvisioningStore): Promise<void>;
 export declare function buildProvisionedUserPatch(ctx: ProvisioningContext, mmUpdate: MmUpdate): UserPatch;
 export declare function buildUserProductFields(ctx: ProvisioningContext, mmUpdate: MmUpdate): Record<string, unknown>;

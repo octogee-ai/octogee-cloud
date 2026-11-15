@@ -9,6 +9,7 @@ export declare const PROVISIONING_SYNC_RETRY: {
     readonly baseDelayMs: 5000;
     readonly maxDelayMs: 600000;
 };
+export declare const PROVISIONING_SYNC_RESYNC_MS: number;
 export type SpecWriteOutcome = "created" | "changed" | "unchanged" | "not-admitted";
 export interface ProvisioningReadiness {
     readonly status: ConditionStatus;
@@ -16,6 +17,7 @@ export interface ProvisioningReadiness {
 }
 export interface ProvisioningSyncCounters {
     specWrites: Record<SpecWriteOutcome | "failed", number>;
+    deletes: Record<"deleted" | "failed", number>;
     mirrors: Record<ProvisioningMirrorOutcome | "failed", number>;
     watchFailures: number;
     watchConnected: boolean;
@@ -34,17 +36,27 @@ export interface ProvisioningSyncDeps {
         readonly baseDelayMs: number;
         readonly maxDelayMs: number;
     };
+    readonly resyncMs?: number;
 }
 export interface BackfillSummary {
     readonly users: number;
     readonly written: number;
     readonly unchanged: number;
+    readonly failed: number;
+}
+export interface SpecWriteFailure {
+    readonly uid: string;
+    readonly reason: string;
+    readonly attempts: number;
+    readonly since: string;
 }
 export interface ProvisioningSync {
     readonly counters: ProvisioningSyncCounters;
     readiness(uid: string): ProvisioningReadiness | null;
     observed(uid: string): UserProvisioning | undefined;
     markDirty(uid: string): void;
+    specFailures(): readonly SpecWriteFailure[];
+    resync(): Promise<void>;
     writeSpec(uid: string): Promise<SpecWriteOutcome>;
     backfill(): Promise<BackfillSummary>;
     snapshotLoaded(): Promise<void>;

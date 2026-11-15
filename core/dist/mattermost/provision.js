@@ -187,9 +187,9 @@ async function createChannelWithMembers(host, spec, memberIds) {
     }
     return channel.id;
 }
-async function persistUserToken(uid, userMmUserId, token) {
+export async function persistUserToken(secrets, uid, userMmUserId, token) {
     if (token) {
-        await platformStateStore.secrets.put(uid, {
+        await secrets.put(uid, {
             kind: "builder-mattermost",
             secretId: "mattermost",
             projectId: null,
@@ -304,7 +304,7 @@ export async function provisionMattermostUser(input, host, readStoredNames) {
         const { coachChannelId, defaultAgentChannelName, generalChannelId } = channels;
         const userToken = await host.issueToken(mmUser.id, USER_PAT_DESCRIPTION);
         log(`[mattermost] ✅ provisioned: ${slug} (${mmUser.id}), channel: ${coachChannelId} (#${defaultAgentChannelName})`);
-        await persistUserToken(uid, mmUser.id, userToken);
+        await persistUserToken(platformStateStore.secrets, uid, mmUser.id, userToken);
         const defaultAgent = await createDefaultAgentBot(host, {
             uid,
             slug,

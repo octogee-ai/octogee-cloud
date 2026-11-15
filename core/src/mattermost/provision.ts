@@ -1,6 +1,7 @@
 import * as crypto from "crypto";
 import { log } from "../config.js";
 import { platformStateStore } from "../provisioner-platform-state.js";
+import type { SecretsRepository } from "../platform-state/secrets.js";
 import type { ServerNow } from "../platform-state/store.js";
 import {
   workspaceGeneralChannelName,
@@ -272,9 +273,14 @@ async function createChannelWithMembers(
   return channel.id;
 }
 
-async function persistUserToken(uid: string, userMmUserId: string, token: string | null): Promise<void> {
+export async function persistUserToken(
+  secrets: Pick<SecretsRepository, "put">,
+  uid: string,
+  userMmUserId: string,
+  token: string | null,
+): Promise<void> {
   if (token) {
-    await platformStateStore.secrets.put(uid, {
+    await secrets.put(uid, {
       kind: "builder-mattermost",
       secretId: "mattermost",
       projectId: null,
@@ -439,7 +445,7 @@ export async function provisionMattermostUser(
 
     const userToken = await host.issueToken(mmUser.id, USER_PAT_DESCRIPTION);
     log(`[mattermost] ✅ provisioned: ${slug} (${mmUser.id}), channel: ${coachChannelId} (#${defaultAgentChannelName})`);
-    await persistUserToken(uid, mmUser.id, userToken);
+    await persistUserToken(platformStateStore.secrets, uid, mmUser.id, userToken);
 
     const defaultAgent = await createDefaultAgentBot(host, {
       uid,
