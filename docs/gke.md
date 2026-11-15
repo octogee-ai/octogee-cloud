@@ -249,11 +249,6 @@ the migration names the id, as in
   the one `up --sha` installed.
 - **Logs.** `octogee-fleet logs` is not configured here; read gateway logs
   with `kubectl logs`.
-- **Projects on an isolated gateway.** An isolated gateway whose computer is
-  a pod does not mark a moved user's projects as restored, so it refuses to
-  save them: project work stays on the gateway, and moving the user off it
-  fails at `flush-source` with `project restore is incomplete`. Keep users who
-  have projects on a shared gateway until this is fixed.
 - **Usage in `user broker`.** The LLM broker records every call in the
   platform database, but `user broker` does not read those records yet and
   reports no usage.
