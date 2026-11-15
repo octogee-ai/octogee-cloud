@@ -1375,6 +1375,15 @@ CREATE TRIGGER connect_flows_revision BEFORE UPDATE ON connect_flows
   FOR EACH ROW EXECUTE FUNCTION bump_revision();
 `;
 
+const PLACEMENT_AUTOMATION_OWNER = String.raw`
+ALTER TABLE orchestrator_config
+  ADD COLUMN placement_automation_owner text NOT NULL DEFAULT 'fleet-controller'
+    CHECK (placement_automation_owner IN ('fleet-controller', 'client')),
+  ADD COLUMN placement_automation_yielded_at bigint,
+  ADD CONSTRAINT orchestrator_config_placement_yield_check
+    CHECK (placement_automation_yielded_at IS NULL OR placement_automation_owner = 'client');
+`;
+
 export const PLATFORM_STATE_MIGRATIONS: readonly PlatformStateMigration[] = [
   { version: 1, name: "core-schema", sql: CORE_SCHEMA },
   { version: 2, name: "change-feed", sql: CHANGE_FEED },
@@ -1396,4 +1405,5 @@ export const PLATFORM_STATE_MIGRATIONS: readonly PlatformStateMigration[] = [
   { version: 18, name: "model-settings", sql: MODEL_SETTINGS },
   { version: 19, name: "model-credentials", sql: MODEL_CREDENTIALS },
   { version: 20, name: "connector-integrations", sql: CONNECTOR_INTEGRATIONS },
+  { version: 21, name: "placement-automation-owner", sql: PLACEMENT_AUTOMATION_OWNER },
 ];
