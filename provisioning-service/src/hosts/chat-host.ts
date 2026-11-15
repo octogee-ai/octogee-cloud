@@ -1,4 +1,5 @@
 export interface ChatUserInput {
+  uid: string;
   slug: string;
   email: string;
   displayName: { first: string; last: string };
@@ -15,6 +16,7 @@ export interface ChatTeamInput {
 
 export interface ChatChannelsInput {
   slug: string;
+  ownerFirstName: string;
   teamId: string;
   userId: string;
   agentChannel: boolean;
@@ -28,6 +30,7 @@ export interface ChatChannels {
 
 export interface ChatAgentInput {
   slug: string;
+  ownerFirstName: string;
   teamId: string;
   generalChannelId?: string;
   agentChannelId?: string;
