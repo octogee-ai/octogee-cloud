@@ -29,7 +29,9 @@ const AWS = `case " $* " in
   *" describe-launch-templates "*Tags*) echo "\${LT_GVISOR:-20261109.0}" ;;
   *" describe-launch-template-versions "*) echo "\${LT_TYPE:-m6i.xlarge}" ;;
   *" describe-launch-templates "*) { [ -n "\${LT_EXISTS:-}" ] || [ -f "$HOME/lt-created" ]; } || exit 1; echo lt-0abc123 ;;
-  *" eks describe-nodegroup "*) echo "\${SYSTEM_TYPE:-m6i.xlarge}" ;;
+  *" eks list-nodegroups "*) echo "\${NODEGROUPS-system gateways}" ;;
+  *" eks describe-nodegroup "*)
+    case " \${NODEGROUPS-system gateways} " in *" system "*) echo "\${SYSTEM_TYPE:-m6i.xlarge}" ;; *) echo ResourceNotFoundException >&2; exit 254 ;; esac ;;
   *" create-launch-template "*) touch "$HOME/lt-created" ;;
   *" eks describe-cluster "*vpcId*) echo vpc-1 ;;
   *" eks describe-cluster "*clusterSecurityGroupId*) echo sg-cluster ;;
@@ -142,6 +144,12 @@ describe("eks-install.sh", () => {
       expect(result.status).toBe(1);
       expect(result.stderr).toContain("Node group system runs m6i.large nodes, not m6i.xlarge");
       expect(host.calls().filter(call => call.startsWith("eksctl "))).toEqual([]);
+    });
+
+    it("creates the node groups of a cluster whose first run stopped before making them", () => {
+      expect(up({ CLUSTER_EXISTS: "1", LT_EXISTS: "1", NODEGROUPS: "" }).status).toBe(0);
+      expect(calls("aws", "describe-nodegroup")).toEqual([]);
+      expect(calls("eksctl", "create nodegroup")).toHaveLength(1);
     });
 
     it("registers the gvisor runtime class on the gateway nodes and makes encrypted gp3 the default storage class", () => {

@@ -235,11 +235,14 @@ ensure_cluster() {
     log "EKS cluster $NAME in $AWS_REGION (about 20 minutes)"
     eksctl create cluster -f "$STATE/eksctl.yaml" --write-kubeconfig=false
   else
-    local system_type
-    system_type="$(a eks describe-nodegroup --cluster-name "$NAME" --nodegroup-name system \
-      --query 'nodegroup.instanceTypes[0]' --output text)"
-    [[ "$system_type" == "$INSTANCE_TYPE" ]] \
-      || die "Node group system runs $system_type nodes, not $INSTANCE_TYPE; eks-install.sh does not replace existing system nodes"
+    local groups system_type
+    groups="$(a eks list-nodegroups --cluster-name "$NAME" --query nodegroups --output text)"
+    if [[ " ${groups//$'\t'/ } " == *" system "* ]]; then
+      system_type="$(a eks describe-nodegroup --cluster-name "$NAME" --nodegroup-name system \
+        --query 'nodegroup.instanceTypes[0]' --output text)"
+      [[ "$system_type" == "$INSTANCE_TYPE" ]] \
+        || die "Node group system runs $system_type nodes, not $INSTANCE_TYPE; eks-install.sh does not replace existing system nodes"
+    fi
     eksctl create nodegroup -f "$STATE/eksctl.yaml"
     eksctl scale nodegroup --cluster "$NAME" --region "$AWS_REGION" --name system \
       --nodes "$SYSTEM_NODES" --nodes-min "$SYSTEM_NODES" --nodes-max "$SYSTEM_NODES"
