@@ -266,6 +266,7 @@ describe("POST /isolated-gateways/:id/retire-owned", () => {
   });
 
   it("rejects an unknown reason", async () => {
-    await retire({ ...body, reason: "because" }).expect(400);
+    const res = await retire({ ...body, reason: "because" }).expect(400);
+    expect(res.body.error).toMatch(/^reason must be one of /);
   });
 });
