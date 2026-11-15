@@ -1,3 +1,4 @@
+import { MissingRecordError } from "./platform-state/errors.js";
 import { ProvisioningServiceError } from "./provisioning-service-client.js";
 export const USER_CHAT_SECRET_ID = "mattermost";
 export const AGENT_CHAT_SECRET_ID = "coachMattermost";
@@ -57,12 +58,16 @@ async function readCredential(deps, uid, name) {
 async function writeWhenAbsent(deps, uid, row, token) {
     try {
         await deps.store.transaction({ label: "provisioning-mirror-chat-secret" }, async (transaction) => {
+            if ((await transaction.users.records.get(uid)) === null)
+                throw new MissingRecordError({ aggregate: "builder", key: uid });
             if ((await transaction.secrets.get(uid, row.secretId)) !== null)
                 return;
             await transaction.secrets.put(uid, row);
         });
     }
     catch (error) {
+        if (error instanceof MissingRecordError)
+            throw error;
         throw new ProvisioningChatSecretError(uid, `could not write the ${row.secretId} platform secret of ${uid}: ${redacted(error, token)}`);
     }
 }

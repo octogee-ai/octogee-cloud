@@ -185,7 +185,7 @@ export function createProvisioningServiceClient(options) {
             return response.status === 404 ? null : json(response);
         },
         async deleteProvisioning(uid) {
-            await request({ method: "DELETE", path: userPath(uid) });
+            await request({ method: "DELETE", path: userPath(uid), allowNotFound: true });
         },
         async listProvisionings(query) {
             const response = await request({

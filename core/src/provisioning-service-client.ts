@@ -272,7 +272,7 @@ export function createProvisioningServiceClient(options: ProvisioningServiceClie
     },
 
     async deleteProvisioning(uid) {
-      await request({ method: "DELETE", path: userPath(uid) });
+      await request({ method: "DELETE", path: userPath(uid), allowNotFound: true });
     },
 
     async listProvisionings(query) {

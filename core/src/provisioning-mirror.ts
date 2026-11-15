@@ -1,5 +1,6 @@
 import { workspaceDefaultAgentChannelName } from "@octogee/shared/types/identity";
 import type { ChatOutputs, UserProvisioning } from "@octogee/shared/types/provisioning-service";
+import { MissingRecordError } from "./platform-state/errors.js";
 import type { PlatformStateStore } from "./platform-state/store.js";
 import { ensureChatSecrets, type ChatSecretDeps } from "./provisioning-chat-secrets.js";
 import {
@@ -131,6 +132,20 @@ export async function mirrorUserProvisioning(
   if (user === null) return "user-missing";
   const slug = resource.spec.slug;
   if (user.slug !== slug) return "slug-mismatch";
+  try {
+    return await mirrorAdmittedUser(deps, resource, chat, slug);
+  } catch (error) {
+    if (error instanceof MissingRecordError && error.record.aggregate === "builder" && error.record.key === resource.uid) return "user-missing";
+    throw error;
+  }
+}
+
+async function mirrorAdmittedUser(
+  deps: ProvisioningMirrorDeps,
+  resource: UserProvisioning,
+  chat: ChatOutputs,
+  slug: string,
+): Promise<ProvisioningMirrorOutcome> {
   if ((await ensureChatSecrets(deps, resource, chat)) === "credentials-not-issued") return "credentials-not-issued";
   if (await recordsMatch(deps.store, resource, chat, slug)) return "unchanged";
   const userData = await deps.documents.account(resource.uid);

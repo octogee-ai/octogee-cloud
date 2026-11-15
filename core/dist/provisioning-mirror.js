@@ -1,4 +1,5 @@
 import { workspaceDefaultAgentChannelName } from "@octogee/shared/types/identity";
+import { MissingRecordError } from "./platform-state/errors.js";
 import { ensureChatSecrets } from "./provisioning-chat-secrets.js";
 import { buildProvisioningContext, markProvisioningComplete, } from "./provisionSteps.js";
 export class ProvisioningMirrorError extends Error {
@@ -77,6 +78,16 @@ export async function mirrorUserProvisioning(deps, resource) {
     const slug = resource.spec.slug;
     if (user.slug !== slug)
         return "slug-mismatch";
+    try {
+        return await mirrorAdmittedUser(deps, resource, chat, slug);
+    }
+    catch (error) {
+        if (error instanceof MissingRecordError && error.record.aggregate === "builder" && error.record.key === resource.uid)
+            return "user-missing";
+        throw error;
+    }
+}
+async function mirrorAdmittedUser(deps, resource, chat, slug) {
     if ((await ensureChatSecrets(deps, resource, chat)) === "credentials-not-issued")
         return "credentials-not-issued";
     if (await recordsMatch(deps.store, resource, chat, slug))

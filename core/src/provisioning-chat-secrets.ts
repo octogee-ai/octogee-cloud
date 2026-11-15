@@ -5,6 +5,7 @@ import type {
   UserProvisioning,
 } from "@octogee/shared/types/provisioning-service";
 import type { MattermostTokenSecret, UserSecretInput } from "./platform-state/secrets.js";
+import { MissingRecordError } from "./platform-state/errors.js";
 import type { PlatformStateStore } from "./platform-state/store.js";
 import { ProvisioningServiceError, type ProvisioningServiceClient } from "./provisioning-service-client.js";
 
@@ -83,10 +84,12 @@ async function readCredential(deps: ChatSecretDeps, uid: string, name: Provision
 async function writeWhenAbsent(deps: ChatSecretDeps, uid: string, row: UserSecretInput, token: string): Promise<void> {
   try {
     await deps.store.transaction({ label: "provisioning-mirror-chat-secret" }, async (transaction) => {
+      if ((await transaction.users.records.get(uid)) === null) throw new MissingRecordError({ aggregate: "builder", key: uid });
       if ((await transaction.secrets.get(uid, row.secretId)) !== null) return;
       await transaction.secrets.put(uid, row);
     });
   } catch (error) {
+    if (error instanceof MissingRecordError) throw error;
     throw new ProvisioningChatSecretError(uid, `could not write the ${row.secretId} platform secret of ${uid}: ${redacted(error, token)}`);
   }
 }

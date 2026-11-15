@@ -48,6 +48,7 @@ let projectionCalls: string[];
 let transactions: string[];
 let logs: string[];
 let secretPuts: UserSecretInput[];
+let watchers: Array<{ aggregate: string; listener: { onEvent: (event: unknown) => void } }>;
 let secretPutFailure: boolean;
 const stoppers: Array<() => void> = [];
 
@@ -79,7 +80,12 @@ function store(): PlatformStateStore {
   });
   return new Proxy(fixture, {
     get(target, property, receiver) {
-      if (property === "watch") return () => ({ closed: Promise.resolve(), close: async () => undefined });
+      if (property === "watch") {
+        return (request: { aggregate: string }, listener: { onEvent: (event: unknown) => void }) => {
+          watchers.push({ aggregate: request.aggregate, listener });
+          return { closed: Promise.resolve(), close: async () => undefined };
+        };
+      }
       if (property === "transaction") {
         return (options: Parameters<PlatformStateStore["transaction"]>[0], body: Parameters<PlatformStateStore["transaction"]>[1]) =>
           target.transaction(options, (transaction) => body(recordingSecrets(transaction)));
@@ -143,6 +149,22 @@ async function chatReadyUser(): Promise<ProvisioningSync> {
   return instance;
 }
 
+async function emitBuilders(changes: Array<{ type: "added" | "modified" | "removed"; key: string }>): Promise<void> {
+  const fixture = store();
+  const resolved = await Promise.all(changes.map(async (change) => ({
+    ...change,
+    record: change.type === "removed" ? null : await fixture.users.records.get(change.key),
+  })));
+  for (const watcher of watchers.filter((candidate) => candidate.aggregate === "builders")) {
+    watcher.listener.onEvent({ kind: "changes", changes: resolved, cursor: "c" });
+  }
+}
+
+async function deleteUser(uid: string): Promise<void> {
+  await store().users.records.delete(uid);
+  await emitBuilders([{ type: "removed", key: uid }]);
+}
+
 const puts = () => fake.requests.filter((request) => request.method === "PUT");
 const audit = () => records.get(`glmOperations/${operationAuditDocumentId(PROVISIONING_SPEC_BACKFILL_KEY)}`);
 
@@ -158,6 +180,7 @@ beforeEach(async () => {
   logs = [];
   secretPuts = [];
   secretPutFailure = false;
+  watchers = [];
 });
 
 afterEach(async () => {
@@ -410,3 +433,124 @@ describe("platform chat secrets", () => {
     expect(leakedTokens()).toEqual([]);
   });
 });
+
+describe("removed users", () => {
+  const deletesOf = (uid: string) => fake.requests.filter((request) => request.method === "DELETE" && request.path === `/v1/users/${uid}/provisioning`);
+
+  it("deletes the provisioning of a removed user and writes no spec for it afterwards", async () => {
+    const instance = await chatReadyUser();
+
+    await deleteUser("u1");
+    await until(() => instance.counters.deletes.deleted === 1);
+    const putsAfterDelete = puts().length;
+    await instance.resync();
+
+    expect(fake.resources.has("u1")).toBe(false);
+    expect(deletesOf("u1")).toHaveLength(1);
+    expect(puts().length).toBe(putsAfterDelete);
+    expect(instance.observed("u1")).toBeUndefined();
+  });
+
+  it("retries the delete until the service confirms it", async () => {
+    const instance = await chatReadyUser();
+    fake.failNext(503, 4);
+
+    await deleteUser("u1");
+    await until(() => instance.counters.deletes.deleted === 1);
+
+    expect(instance.counters.deletes.failed).toBeGreaterThan(0);
+    expect(fake.resources.has("u1")).toBe(false);
+  });
+
+  it("deletes a provisioning whose user was removed while the fleet controller was down", async () => {
+    seedUser("u1", "lin");
+    await client().putProvisioning("u1", desiredUserProvisioningSpec("u1", ACCOUNTS.u1));
+    records.delete("users/u1");
+
+    const instance = started(sync());
+    await instance.snapshotLoaded();
+    await until(() => instance.counters.deletes.deleted === 1);
+
+    expect(fake.resources.has("u1")).toBe(false);
+  });
+
+  it("sends a fresh spec when the same uid is admitted again with the same slug", async () => {
+    const instance = await chatReadyUser();
+    await deleteUser("u1");
+    await until(() => instance.counters.deletes.deleted === 1);
+    const putsBefore = puts().length;
+
+    seedUser("u1", "lin");
+    await emitBuilders([{ type: "added", key: "u1" }]);
+    await until(() => fake.resources.has("u1"));
+
+    expect(puts().length).toBe(putsBefore + 1);
+    expect(fake.resources.get("u1")?.status.outputs.chat).toBeUndefined();
+  });
+
+  it("refuses to mirror a user whose record vanishes between the read and the write", async () => {
+    seedUser("u1", "lin");
+    await client().putProvisioning("u1", desiredUserProvisioningSpec("u1", ACCOUNTS.u1));
+    fake.issueCredential("u1", "user-chat-token", USER_TOKEN);
+    fake.issueCredential("u1", "agent-chat-token", AGENT_TOKEN);
+    const resource = fake.setStatus("u1", CHAT_READY);
+    const vanishing: ProvisioningProjection = {
+      ...recordingProjection(),
+      user: async (ctx) => {
+        records.delete(`users/${ctx.uid}`);
+      },
+    };
+
+    const outcome = await mirrorUserProvisioning(
+      { store: store(), client: client(), documents: { account: async (uid) => ACCOUNTS[uid] }, projection: vanishing, proxyUrl: null },
+      resource,
+    );
+
+    expect(outcome).toBe("user-missing");
+    expect(await store().workspaces.records.get("lin")).toBeNull();
+    expect(await store().workspaces.channels.get({ workspaceSlug: "lin", projectSlug: null }, "general")).toBeNull();
+  });
+});
+
+describe("resync and backfill completion", () => {
+  it("sends a changed name on the periodic resync without a restart, and writes nothing when it is unchanged", async () => {
+    seedUser("u1", "lin");
+    const accounts: Record<string, Data> = { ...ACCOUNTS, u1: { ...ACCOUNTS.u1 } };
+    const instance = createProvisioningSync({
+      store: store(),
+      client: client(),
+      documents: { account: async (uid) => accounts[uid] },
+      projection: recordingProjection(),
+      proxyUrl: null,
+      log: (message) => logs.push(message),
+      watchTimeoutSeconds: 1,
+      retry: { baseDelayMs: 1, maxDelayMs: 2 },
+      resyncMs: 20,
+    });
+    stoppers.push(instance.start());
+    await instance.snapshotLoaded();
+    await until(() => fake.resources.has("u1"));
+    await until(() => instance.counters.specWrites.unchanged >= 2);
+    const putsWhileEqual = puts().length;
+
+    accounts.u1.email = "lin.wu@example.test";
+    await until(() => fake.resources.get("u1")?.spec.email === "lin.wu@example.test");
+
+    expect(putsWhileEqual).toBe(1);
+    expect(fake.resources.get("u1")?.generation).toBe(2);
+  });
+
+  it("completes the backfill when one user can never succeed, and reports that user", async () => {
+    seedUser("u1", "lin");
+    seedUser("u9", "nouser");
+
+    const instance = started(sync());
+    await instance.snapshotLoaded();
+    await until(() => audit()?.status === "completed");
+
+    expect(fake.resources.has("u1")).toBe(true);
+    expect(logs.some((line) => line.includes("2 admitted users, 1 written, 0 unchanged, 1 failed and retrying"))).toBe(true);
+    expect(instance.specFailures()).toEqual([expect.objectContaining({ uid: "u9", reason: expect.stringContaining("no account document") })]);
+  });
+});
+
