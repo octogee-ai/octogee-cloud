@@ -77,6 +77,17 @@ describe("glm-controller chart", () => {
     expect(migration).toContain("key: migration-password");
   });
 
+  it("runs the migration from the directory the image and the package's start script build into", () => {
+    const migration = findDoc(helmTemplate({}), "Job", "platform-state-migrate");
+    const dockerfile = fs.readFileSync(path.join(REPO_ROOT, "fleet-controller/Dockerfile"), "utf8");
+    const start = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "fleet-controller/package.json"), "utf8")).scripts.start;
+
+    expect(start).toBe("node dist/fleet-controller/src/main.js");
+    expect(dockerfile).toContain("WORKDIR /app/fleet-controller\n");
+    expect(dockerfile).toContain('"node", "dist/fleet-controller/src/main.js"]');
+    expect(migration).toContain("dist/fleet-controller/src/platform-state-migrate.js");
+  });
+
   it("keeps GCE disposal off independently of runtime selection and renders the reviewed contract", () => {
     const vm = {
       "global.computer.enabled": "true",

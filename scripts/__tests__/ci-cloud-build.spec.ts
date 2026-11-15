@@ -304,31 +304,31 @@ describe("product tripwire", () => {
 
   it("passes files that come from the platform tree, system files and third-party packages", () => {
     expect(productFindings([
-      "app/glm-controller/src/main.ts",
-      "app/glm-controller/dist/glm-controller/src/main.js",
-      "app/glm-controller/dist/glm-controller/src/lib/ops.d.ts",
+      "app/fleet-controller/src/main.ts",
+      "app/fleet-controller/dist/fleet-controller/src/main.js",
+      "app/fleet-controller/dist/fleet-controller/src/lib/ops.d.ts",
       "octogee-api/dist/gateway-edge/src/index.js.map",
       "app/core/dist/identity-provider.js",
       "octogee/shared/dist/types/user.d.ts",
       "octogee/extensions/octogee-chat-tools/index.ts",
       "app/node_modules/express/index.js",
       "usr/local/lib/node_modules/openclaw/dist/product/x.js",
-      "app/glm-controller/dist/",
+      "app/fleet-controller/dist/",
     ], exists)).toEqual([]);
   });
 
   it("flags compiled or copied modules with no platform source, product directories and product packages", () => {
     expect(productFindings([
-      "app/glm-controller/dist/glm-controller/src/product-main.js",
-      "app/glm-controller/src/signup-offer.ts",
+      "app/fleet-controller/dist/fleet-controller/src/product-main.js",
+      "app/fleet-controller/src/signup-offer.ts",
       "app/core/dist/product-deletion-context.js",
       "octogee/scripts/product/lib/octogee-entitlements.ts",
       "octogee/extensions/octogee-board-tools/index.ts",
       "app/node_modules/@octogee/product-core/dist/index.js",
     ], exists)).toEqual([
       "app/core/dist/product-deletion-context.js",
-      "app/glm-controller/dist/glm-controller/src/product-main.js",
-      "app/glm-controller/src/signup-offer.ts",
+      "app/fleet-controller/dist/fleet-controller/src/product-main.js",
+      "app/fleet-controller/src/signup-offer.ts",
       "app/node_modules/@octogee/product-core/dist/index.js",
       "octogee/extensions/octogee-board-tools/index.ts",
       "octogee/scripts/product/lib/octogee-entitlements.ts",

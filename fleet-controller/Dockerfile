@@ -69,9 +69,8 @@ RUN apt-get update \
 
 # Build context must be the repo root: `docker build -f
 # fleet-controller/Dockerfile .` from the repo root. tsconfig rootDir: ".."
-# emits dist/<WORKDIR name>/src/, so the image keeps dist/glm-controller/src/,
-# the path the ENTRYPOINT below and the chart's job commands name.
-WORKDIR /app/glm-controller
+# emits dist/fleet-controller/src/ (matches the ENTRYPOINT below).
+WORKDIR /app/fleet-controller
 
 # Packed internal directory dependencies must exist at the declared sibling paths
 # before npm ci. Single-stage, so they remain available for runtime resolution.
@@ -113,4 +112,4 @@ COPY --from=product charts/octogee/values*.yaml         /charts/octogee/
 COPY --from=product charts/octogee-gateway/values*.yaml /charts/octogee-gateway/
 
 USER 1000:1000
-ENTRYPOINT ["/usr/bin/tini", "--", "node", "dist/glm-controller/src/main.js"]
+ENTRYPOINT ["/usr/bin/tini", "--", "node", "dist/fleet-controller/src/main.js"]

@@ -31,7 +31,7 @@ spec:
       containers:
         - name: platform-state-migrate
           image: "{{ required "glm-controller.image.repository is required" .Values.image.repository }}:{{ required "glm-controller.image.tag is required" .Values.image.tag }}@{{ required "glm-controller.image.digest is required" .Values.image.digest }}"
-          command: ["/usr/bin/tini", "--", "node", "dist/glm-controller/src/platform-state-migrate.js"]
+          command: ["/usr/bin/tini", "--", "node", "dist/fleet-controller/src/platform-state-migrate.js"]
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:

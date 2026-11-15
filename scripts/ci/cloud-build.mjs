@@ -170,8 +170,8 @@ export function readDigestDirectory(directory) {
   return digests;
 }
 
-const SERVICE_SOURCE_DIRS = { "glm-controller": "fleet-controller", "gateway-edge": "gateway-edge", "octogee-api": "platform-api" };
-const SERVICE_PACKAGES = "glm-controller|gateway-edge|octogee-api";
+const SERVICE_SOURCE_DIRS = { "fleet-controller": "fleet-controller", "gateway-edge": "gateway-edge", "octogee-api": "platform-api" };
+const SERVICE_PACKAGES = "fleet-controller|gateway-edge|octogee-api";
 const sourceOf = path => path.replace(/^[^/]+/, directory => SERVICE_SOURCE_DIRS[directory]);
 const sourceRules = [
   [new RegExp(`(?:^|/)(?:${SERVICE_PACKAGES})/dist/((?:${SERVICE_PACKAGES})/src/.+?)(?:\\.d\\.ts|\\.js\\.map|\\.js)$`), path => [`${sourceOf(path)}.ts`, `${sourceOf(path)}.tsx`]],

@@ -39,7 +39,7 @@ not on this page.
 | `customers/{slug}/` | Object storage prefix for a user's files, home checkpoints and runtime state | All user data in object storage lives under it |
 | `octogee-gateway-builder`, `octogee-gateway-builder-base` | Artifact Registry paths of the isolated gateway image | Recorded releases and the build manifests of past builds pin these paths |
 | `glm-controller`, `octogee-api` | Image names, Kubernetes deployments, service accounts, Helm subcharts and log prefixes of the fleet controller (built from `fleet-controller/`) and the platform API (built from `platform-api/`) | Recorded releases, the image manifests of past builds, cluster role bindings and Workload Identity bindings name them |
-| `/app/glm-controller`, `dist/glm-controller/src/`, `/octogee-api`, `dist/octogee-api/src/` | Paths inside the fleet controller and platform API images | Chart commands of running releases name them |
+| `/octogee-api`, `dist/octogee-api/src/` | Paths inside the platform API image | Chart commands of running releases name them |
 
 ## Names that are renamed instead
 
