@@ -9,7 +9,7 @@ import {
   commitUnavailableGatewayRecoveryInTransaction,
   type UnavailableGatewayRecoverySourceValidationContext,
 } from "./fleet-state.js";
-import { isUserActivateOperationIdFor, isUserReturnOperationIdFor } from "./isolated-operation-ids.js";
+import { isUserActivateOperationIdFor, isUserReturnOperationIdFor } from "@octogee/shared/types/isolated-operation-ids";
 import { FleetMutationRefusedError } from "./normal-fleet-mutation.js";
 import { assertClientOwnsPlacementAutomation, placementOwnerRefusalBody } from "./placement-automation-owner.js";
 import {

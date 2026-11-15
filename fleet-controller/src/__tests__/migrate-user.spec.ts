@@ -18,7 +18,7 @@ import { buildOperationCompletionUpdate, classifyOperationFailure, MAX_OPERATION
 import { markGatewayLive, resolveSourceRevision } from "../index.js";
 import type { DurableGateway } from "../converge-gateway.js";
 import { assertUserRestoreSettled, createOperationContext, PendingUserRestoreError } from "../operation-context";
-import { builderReturnOperationId } from "@octogee/core/isolated-operation-ids";
+import { builderReturnOperationId } from "@octogee/shared/types/isolated-operation-ids";
 import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import type { NativeReturnPark, NativeSourcePark } from "../lib/native-vm-return";
 import { retireNativeSchedulerBeforeStage } from "../lib/native-scheduler-retirement";

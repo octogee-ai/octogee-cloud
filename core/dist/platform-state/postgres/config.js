@@ -1,6 +1,7 @@
 import { parsePlatformConnectConfig, parsePlatformFreeConfig, parsePlatformModelConfig } from "@octogee/shared/types/platform-config";
 import { parseSharedGatewayAutoscalingConfig } from "@octogee/shared/types/shared-gateway-pool";
-import { isGatewaySizingProfile, isPlacementAutomationOwner, } from "../config.js";
+import { isGatewaySizingProfile } from "@octogee/shared/types/sizing-profile";
+import { isPlacementAutomationOwner, } from "../config.js";
 import { MalformedRecordError, MissingRecordError } from "../errors.js";
 import { upsertRecord } from "./fleet-registry.js";
 import { deleteRecord, insertRecord, revisionFence, selectByKey, updateRecord } from "./records.js";

@@ -16,7 +16,7 @@ import {
 } from "./gateway-live-release.js";
 import { fleetOperationLockResources } from "./fleet-operation-lock.js";
 import { isolatedRuntimeMutationFenced, moveHasNotBegun } from "./gateway-retirement-claim.js";
-import type { GatewaySizingProfile } from "./platform-state/config.js";
+import type { GatewaySizingProfile } from "@octogee/shared/types/sizing-profile";
 import type { GatewayRoot } from "./platform-state/gateways.js";
 import type { PlatformStateRepositories, PlatformStateStore, Stored } from "./platform-state/store.js";
 import type { PlatformUserRecord } from "./platform-state/users.js";

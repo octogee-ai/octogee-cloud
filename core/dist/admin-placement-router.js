@@ -1,6 +1,6 @@
 import { projectGatewayDesiredRootForGateway } from "@octogee/shared/types/gateway-releases";
 import { clearRetiredUserActivationPreparation } from "./fleet-state.js";
-import { builderActivateOperationId, builderReturnOperationId, isolatedRecoverOperationId, placementRetireOperationId, } from "./isolated-operation-ids.js";
+import { builderActivateOperationId, builderReturnOperationId, isolatedRecoverOperationId, placementRetireOperationId, } from "@octogee/shared/types/isolated-operation-ids";
 import { FleetMutationRefusedError } from "./normal-fleet-mutation.js";
 import { FenceMismatchError } from "./platform-state/errors.js";
 const ISOLATED_ALLOCATION_KIND = "disposable-builder";

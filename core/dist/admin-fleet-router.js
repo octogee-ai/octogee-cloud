@@ -15,7 +15,7 @@ import { readSharedGatewayPoolConfigInStore, } from "./shared-gateway-pool-read.
 import { SIZING_TIERS, resolveSizingTier, } from "@octogee/shared/types/sizing";
 import { GCE_E2_SPOT_PRICE_MULTIPLIER, SPOT_PRICE_MULTIPLIER, estimateGatewayMonthlyCost, estimateVmGatewayMonthlyCost, } from "@octogee/shared/types/cost-estimator";
 import { GATEWAY_UNREACHABLE_AFTER_MS, parseOpenClawProcessReport } from "@octogee/shared/types/fleet-controller";
-import { builderReturnOperationId, placementRetireOperationId, } from "./isolated-operation-ids.js";
+import { builderReturnOperationId, placementRetireOperationId, } from "@octogee/shared/types/isolated-operation-ids";
 import { withActorEmails } from "./admin-journal-actor.js";
 import { AdminDryRunPlanned, admitAdminDryRunMarker, isAdminDryRun, refuseUnansweredAdminDryRun, respondToAdminDryRun, } from "./admin-dry-run.js";
 import { addAdminComputerRoutes } from "./admin-vm-router.js";
@@ -23,6 +23,7 @@ import { addAdminUserRoutes } from "./admin-user-router.js";
 import { addAdminSharedPoolRoutes } from "./admin-shared-pool-router.js";
 import { addAdminPlacementRoutes } from "./admin-placement-router.js";
 import { addAdminPlacementSharedRoutes } from "./admin-placement-shared-router.js";
+import { addAdminPlacementIsolatedRoutes } from "./admin-placement-isolated-router.js";
 import { GatewayRetirementConflictError, assertGatewayRuntimeMutationUnfencedInStore, isolatedRuntimeMutationFenced, claimGatewayRetirementInStore, } from "./gateway-retirement-claim.js";
 import { commitOperatorPlacement, planOperatorPlacement, SHARED_GATEWAY_MIRROR, } from "./operator-placement.js";
 import { appendGatewayRelease, asDurableGatewayRoot, InvalidGatewayRootError, StaleGatewayReleaseError, } from "./gateway-release-append.js";
@@ -3286,6 +3287,8 @@ export function addAdminFleetRoutes(router, deps) {
         addAdminPlacementRoutes(router, { ...deps.placement, store, journal: runAdminFleetMutation });
     if (deps.placementShared)
         addAdminPlacementSharedRoutes(router, { ...deps.placementShared, store, journal: runAdminFleetMutation });
+    if (deps.isolated)
+        addAdminPlacementIsolatedRoutes(router, { store, journal: runAdminFleetMutation, accounts: deps.accounts, capabilities: deps.isolated, log: (message) => deps.logger.info(message), warn: (message) => deps.logger.warn(message) });
     async function handleActiveUserDeletion(input) {
         const lifecycle = input.lifecycle;
         if (!userDeletionIsActive(lifecycle))

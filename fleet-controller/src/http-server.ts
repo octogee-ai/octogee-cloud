@@ -8,6 +8,7 @@ import { publicAppOriginsFromEnv } from "@octogee/core/public-app-origins";
 import { renderMetrics } from "./metrics.js";
 import { adminPlacementCapabilities } from "./admin-placement-capabilities.js";
 import { adminPlacementSharedCapabilities } from "./admin-placement-shared-capabilities.js";
+import { adminIsolatedCapabilities } from "./admin-isolated-capabilities.js";
 import type { UserAccounts, UserSignInHosts } from "@octogee/core/admin-user-router";
 import type { UserAccountReader } from "@octogee/core/user-account";
 import {
@@ -374,6 +375,7 @@ export function createHttpServer(deps: HttpServerDeps): Express {
     discoverDeletionProductContext: deps.discoverDeletionProductContext,
     placement: adminPlacementCapabilities,
     placementShared: adminPlacementSharedCapabilities(deps),
+    isolated: adminIsolatedCapabilities({ namespace: deps.logs.namespace, log: deps.log, readGatewayPodDiagnostics: deps.readGatewayPodDiagnostics }),
   });
   addAdminLogsRoutes(adminRouter, {
     source: deps.logs.source,

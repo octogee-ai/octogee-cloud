@@ -1,7 +1,7 @@
 import { GATEWAY_UNREACHABLE_AFTER_MS } from "@octogee/shared/types/fleet-controller";
 import { resolveGatewayRuntime } from "@octogee/shared/types/glm";
 import { FleetStatePreconditionError, commitRecoveredDisposableRuntimeResetInTransaction, commitUnavailableGatewayRecoveryInTransaction, } from "./fleet-state.js";
-import { isUserActivateOperationIdFor, isUserReturnOperationIdFor } from "./isolated-operation-ids.js";
+import { isUserActivateOperationIdFor, isUserReturnOperationIdFor } from "@octogee/shared/types/isolated-operation-ids";
 import { FleetMutationRefusedError } from "./normal-fleet-mutation.js";
 import { assertClientOwnsPlacementAutomation, placementOwnerRefusalBody } from "./placement-automation-owner.js";
 import { CONTINUOUS_PLACEMENT_SOURCE, PLACEMENT_MIGRATION_KIND, PLACEMENT_MIGRATION_SOURCES, continuousPlacementMigrationOperationId, enqueuePlacementMigrationInTransaction, isPlacementMigrationRefusal, supersedePendingSharedDrainMoveInTransaction, } from "./placement-migrations.js";

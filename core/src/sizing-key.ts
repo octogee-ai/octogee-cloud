@@ -1,5 +1,5 @@
 import { userEntitlements } from "@octogee/shared/types/user-entitlements";
-import type { GatewaySizingProfile } from "./platform-state/config.js";
+import type { GatewaySizingProfile } from "@octogee/shared/types/sizing-profile";
 import type { PlatformUserRecord } from "./platform-state/users.js";
 import type { PlatformStateStore, Stored } from "./platform-state/store.js";
 import type { UserAccountReader } from "./user-account.js";

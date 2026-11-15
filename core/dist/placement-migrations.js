@@ -4,7 +4,7 @@ import { agentIdBelongsToSlug } from "@octogee/shared/types/agent-models";
 import { GATEWAY_UNREACHABLE_AFTER_MS } from "@octogee/shared/types/fleet-controller";
 import { isReleasePayload, projectGatewayDesiredRootForGateway, releasePayloadHash, } from "@octogee/shared/types/gateway-releases";
 import { GatewayRetirementConflictError, isolatedRuntimeMutationFenced } from "./gateway-retirement-claim.js";
-import { isUserReturnOperationIdFor } from "./isolated-operation-ids.js";
+import { isUserReturnOperationIdFor } from "@octogee/shared/types/isolated-operation-ids";
 import { readSharedGatewayPoolConfigInStore } from "./shared-gateway-pool-read.js";
 export const PLACEMENT_MIGRATION_KIND = "migrate-user";
 export const PLACEMENT_MIGRATION_ACTOR = "glm-controller-placement-policy";

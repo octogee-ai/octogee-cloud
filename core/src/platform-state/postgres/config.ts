@@ -1,11 +1,10 @@
 import { parsePlatformConnectConfig, parsePlatformFreeConfig, parsePlatformModelConfig } from "@octogee/shared/types/platform-config";
 import { parseSharedGatewayAutoscalingConfig } from "@octogee/shared/types/shared-gateway-pool";
+import { isGatewaySizingProfile, type GatewaySizingProfile } from "@octogee/shared/types/sizing-profile";
 import {
-  isGatewaySizingProfile,
   isPlacementAutomationOwner,
   type ConfigRecord,
   type ConfigRepositories,
-  type GatewaySizingProfile,
   type MattermostAdminIdentity,
   type OrchestratorConfig,
   type OrchestratorConfigPatch,

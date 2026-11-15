@@ -9,7 +9,7 @@ import {
   type ReleasePayload,
 } from "@octogee/shared/types/gateway-releases";
 import { GatewayRetirementConflictError, isolatedRuntimeMutationFenced } from "./gateway-retirement-claim.js";
-import { isUserReturnOperationIdFor } from "./isolated-operation-ids.js";
+import { isUserReturnOperationIdFor } from "@octogee/shared/types/isolated-operation-ids";
 import type { FleetRegistryRecord } from "./platform-state/fleet-registry.js";
 import type { GatewayAssignment } from "./platform-state/gateways.js";
 import type { OperationPatch, OperationRecord } from "./platform-state/operations.js";

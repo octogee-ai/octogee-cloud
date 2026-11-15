@@ -3,7 +3,7 @@ import { Router } from "express";
 import { admitAdminDryRunMarker } from "./admin-dry-run.js";
 import { ADMIN_FLEET_REQUEST_REASON, createAdminFleetMutationRunner, respondToAdminFleetMutationError, } from "./admin-fleet-router.js";
 import { hasComputerShape } from "./operator-isolated-gateway.js";
-import { isGatewaySizingProfile } from "./platform-state/config.js";
+import { isGatewaySizingProfile } from "@octogee/shared/types/sizing-profile";
 const SIZING_PROFILE_NAME = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const SET_SIZING_PROFILE_TRANSACTION = "admin.sizing-profiles.set";
 function refusal(status, code, error, extra = {}) {

@@ -1,6 +1,5 @@
 export type * from "./users.js";
 export type * from "./config.js";
-export { isolatedSizingTier, requireSizingProfile } from "./config.js";
 export { seedSizingProfiles } from "./documents/config.js";
 export type * from "./controller-state.js";
 export type * from "./errors.js";

@@ -26,7 +26,7 @@ import {
   type SizingKeyReader,
   type CurrentSizingKey,
 } from "./sizing-key.js";
-import { builderActivateOperationId } from "./isolated-operation-ids.js";
+import { builderActivateOperationId } from "@octogee/shared/types/isolated-operation-ids";
 import { gatewayAuthorizationFromRootDocument } from "./gateway-live-release.js";
 import { gatewayRetiredInStore } from "./gateway-retirement-claim.js";
 import { MalformedRecordError } from "./platform-state/index.js";
