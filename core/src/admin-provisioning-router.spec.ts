@@ -175,6 +175,21 @@ describe("Admin API provisioning routes", () => {
     expect(audits()).toEqual([expect.objectContaining({ status: "failed" })]);
   });
 
+  it("answers a classified 503 and logs unexpected-response when the service accepts a retry with a body that is not JSON", async () => {
+    const unreadable = createProvisioningServiceClient({
+      baseUrl: fake.url,
+      tokenPath: "/token",
+      readToken: async () => "token",
+      retry: { attempts: 1, baseDelayMs: 1, maxDelayMs: 1 },
+      fetch: async () => new Response("<html>accepted</html>", { status: 202 }),
+    });
+
+    const res = await request(app(true, { provisioning: unreadable })).post("/users/u1/provisioning/retry").send({}).expect(503);
+
+    expect(res.body).toEqual({ code: "unavailable", error: "the provisioning service did not answer; see the fleet controller log" });
+    expect(warnings).toEqual([expect.objectContaining({ meta: expect.objectContaining({ status: 202, code: "unexpected-response" }) })]);
+  });
+
   it("plans a retry on dryRun without calling the service's retry or journaling", async () => {
     const res = await request(app()).post("/users/u1/provisioning/retry?dryRun=true").send({ expectedAttempts: 0 }).expect(200);
 

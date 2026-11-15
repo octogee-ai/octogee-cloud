@@ -256,6 +256,12 @@ describe("provisioning service client", () => {
     expect(seen.map((init) => init.redirect)).toEqual(["error"]);
   });
 
+  it("answers unexpected-response when an accepted retry has a body that is not JSON", async () => {
+    const api = client({ fetch: async () => new Response("<html>accepted</html>", { status: 202 }) });
+
+    await expect(api.retryProvisioning("u1", {}, "k1")).rejects.toMatchObject({ status: 202, code: "unexpected-response" });
+  });
+
   it("reads an issued credential and answers null while it is not issued", async () => {
     const api = client();
     await api.putProvisioning("u1", SPEC);

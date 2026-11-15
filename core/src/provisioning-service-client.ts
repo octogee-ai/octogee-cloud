@@ -289,9 +289,11 @@ export function createProvisioningServiceClient(options: ProvisioningServiceClie
     }
   }
 
-  async function json<T>(response: Response): Promise<T> {
+  async function json<T>(response: Response, emptyBody?: T): Promise<T> {
+    const text = await response.text();
+    if (text === "" && emptyBody !== undefined) return emptyBody;
     try {
-      return (await response.json()) as T;
+      return JSON.parse(text) as T;
     } catch (error) {
       throw new ProvisioningServiceError(response.status, "unexpected-response", `provisioning service answered unreadable JSON: ${errorMessage(error)}`);
     }
@@ -373,8 +375,7 @@ export function createProvisioningServiceClient(options: ProvisioningServiceClie
         body: retryRequest,
         headers: { "idempotency-key": idempotencyKey },
       });
-      const text = await response.text();
-      return text === "" ? {} : (JSON.parse(text) as unknown);
+      return json<unknown>(response, {});
     },
 
     async getProvisioningEvents(uid, eventOptions) {
