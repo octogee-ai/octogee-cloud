@@ -50,12 +50,20 @@ export interface SpecWriteFailure {
     readonly attempts: number;
     readonly since: string;
 }
+export type MirrorRefusalOutcome = Extract<ProvisioningMirrorOutcome, "chat-id-mismatch" | "slug-mismatch">;
+export interface MirrorRefusal {
+    readonly uid: string;
+    readonly outcome: MirrorRefusalOutcome;
+    readonly reason: string;
+    readonly since: string;
+}
 export interface ProvisioningSync {
     readonly counters: ProvisioningSyncCounters;
     readiness(uid: string): ProvisioningReadiness | null;
     observed(uid: string): UserProvisioning | undefined;
     markDirty(uid: string): void;
     specFailures(): readonly SpecWriteFailure[];
+    mirrorRefusals(): readonly MirrorRefusal[];
     resync(): Promise<void>;
     writeSpec(uid: string): Promise<SpecWriteOutcome>;
     backfill(): Promise<BackfillSummary>;

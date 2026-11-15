@@ -78,6 +78,8 @@ export async function mirrorUserProvisioning(deps, resource) {
     const slug = resource.spec.slug;
     if (user.slug !== slug)
         return "slug-mismatch";
+    if (user.mattermostUserId !== null && user.mattermostUserId !== chat.userId)
+        return "chat-id-mismatch";
     try {
         return await mirrorAdmittedUser(deps, resource, chat, slug);
     }
@@ -88,8 +90,9 @@ export async function mirrorUserProvisioning(deps, resource) {
     }
 }
 async function mirrorAdmittedUser(deps, resource, chat, slug) {
-    if ((await ensureChatSecrets(deps, resource, chat)) === "credentials-not-issued")
-        return "credentials-not-issued";
+    const secrets = await ensureChatSecrets(deps, resource, chat);
+    if (secrets !== "present")
+        return secrets;
     if (await recordsMatch(deps.store, resource, chat, slug))
         return "unchanged";
     const userData = await deps.documents.account(resource.uid);

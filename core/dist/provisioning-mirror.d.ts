@@ -13,7 +13,7 @@ export interface ProvisioningMirrorDeps {
     readonly projection: ProvisioningProjection;
     readonly proxyUrl: string | null;
 }
-export type ProvisioningMirrorOutcome = "written" | "unchanged" | "chat-not-ready" | "credentials-not-issued" | "user-missing" | "slug-mismatch";
+export type ProvisioningMirrorOutcome = "written" | "unchanged" | "chat-not-ready" | "credentials-not-issued" | "agent-not-ready" | "chat-id-mismatch" | "user-missing" | "slug-mismatch";
 export declare class ProvisioningMirrorError extends Error {
     readonly uid: string;
     constructor(uid: string, message: string);

@@ -168,7 +168,7 @@ export function addAdminProvisioningRoutes(router, deps) {
         }
         try {
             const listed = await withDeadline(client.listProvisionings(query), deadline);
-            res.json({ ...listed, specWriteFailures: deps.specFailures?.() ?? [] });
+            res.json({ ...listed, specWriteFailures: deps.sync?.specFailures() ?? [], mirrorRefusals: deps.sync?.mirrorRefusals() ?? [] });
         }
         catch (error) {
             respondToServiceError(error, req, res, next);

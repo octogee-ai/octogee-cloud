@@ -73,6 +73,10 @@ async function writeWhenAbsent(deps, uid, row, token) {
 }
 export async function ensureChatSecrets(deps, resource, chat) {
     const uid = resource.uid;
+    if (!credentialsIssued(resource))
+        return "credentials-not-issued";
+    if (resource.spec.chat.defaultAgent.enabled && !chat.agentBotUserId)
+        return "agent-not-ready";
     const missing = [];
     for (const target of targetsOf(chat)) {
         if ((await deps.store.secrets.get(uid, target.secretId)) === null)
@@ -80,8 +84,6 @@ export async function ensureChatSecrets(deps, resource, chat) {
     }
     if (missing.length === 0)
         return "present";
-    if (!credentialsIssued(resource))
-        return "credentials-not-issued";
     for (const target of missing) {
         const credential = await readCredential(deps, uid, target.credential);
         if (credential === null)

@@ -70,12 +70,22 @@ export interface SpecWriteFailure {
   readonly since: string;
 }
 
+export type MirrorRefusalOutcome = Extract<ProvisioningMirrorOutcome, "chat-id-mismatch" | "slug-mismatch">;
+
+export interface MirrorRefusal {
+  readonly uid: string;
+  readonly outcome: MirrorRefusalOutcome;
+  readonly reason: string;
+  readonly since: string;
+}
+
 export interface ProvisioningSync {
   readonly counters: ProvisioningSyncCounters;
   readiness(uid: string): ProvisioningReadiness | null;
   observed(uid: string): UserProvisioning | undefined;
   markDirty(uid: string): void;
   specFailures(): readonly SpecWriteFailure[];
+  mirrorRefusals(): readonly MirrorRefusal[];
   resync(): Promise<void>;
   writeSpec(uid: string): Promise<SpecWriteOutcome>;
   backfill(): Promise<BackfillSummary>;
@@ -102,7 +112,17 @@ function emptyCounters(): ProvisioningSyncCounters {
   return {
     specWrites: { created: 0, changed: 0, unchanged: 0, "not-admitted": 0, failed: 0 },
     deletes: { deleted: 0, kept: 0, unreadable: 0, failed: 0 },
-    mirrors: { written: 0, unchanged: 0, "chat-not-ready": 0, "credentials-not-issued": 0, "user-missing": 0, "slug-mismatch": 0, failed: 0 },
+    mirrors: {
+      written: 0,
+      unchanged: 0,
+      "chat-not-ready": 0,
+      "credentials-not-issued": 0,
+      "agent-not-ready": 0,
+      "chat-id-mismatch": 0,
+      "user-missing": 0,
+      "slug-mismatch": 0,
+      failed: 0,
+    },
     watchFailures: 0,
     watchConnected: false,
   };
@@ -259,6 +279,28 @@ export function createProvisioningSync(deps: ProvisioningSyncDeps): Provisioning
     },
   });
 
+  const refusals = new Map<string, MirrorRefusal>();
+
+  async function refusalReason(resource: UserProvisioning, outcome: MirrorRefusalOutcome): Promise<string> {
+    if (outcome === "slug-mismatch") return `its spec names slug ${resource.spec.slug}, which the user record does not carry`;
+    const held = (await deps.store.users.records.get(resource.uid))?.mattermostUserId;
+    return `the user record holds chat user ${held}, the provisioning service reports chat user ${resource.status.outputs.chat?.userId}`;
+  }
+
+  async function recordMirror(resource: UserProvisioning, outcome: ProvisioningMirrorOutcome): Promise<void> {
+    const uid = resource.uid;
+    counters.mirrors[outcome] += 1;
+    if (outcome === "written" || outcome === "unchanged") refusals.delete(uid);
+    if (outcome === "written") deps.log(`[provisioning] mirrored chat and git results of ${uid}`);
+    if (outcome === "credentials-not-issued") deps.log(`[provisioning] not mirroring ${uid} yet: its chat credentials are not issued`);
+    if (outcome === "agent-not-ready") deps.log(`[provisioning] not mirroring ${uid} yet: its spec enables the default agent, which has no chat account`);
+    if (outcome === "chat-id-mismatch" || outcome === "slug-mismatch") {
+      const reason = await refusalReason(resource, outcome);
+      refusals.set(uid, { uid, outcome, reason, since: refusals.get(uid)?.since ?? new Date(now()).toISOString() });
+      deps.log(`[provisioning] ❌ not mirroring ${uid}: ${reason}`);
+    }
+  }
+
   const mirrors: KeyedRetryQueue = createKeyedRetryQueue({
     concurrency: PROVISIONING_SYNC_CONCURRENCY,
     now,
@@ -266,11 +308,7 @@ export function createProvisioningSync(deps: ProvisioningSyncDeps): Provisioning
     process: async (uid) => {
       const resource = cache.get(uid);
       if (resource === undefined) return;
-      const outcome = await mirrorUserProvisioning(deps, resource);
-      counters.mirrors[outcome] += 1;
-      if (outcome === "written") deps.log(`[provisioning] mirrored chat and git results of ${uid}`);
-      if (outcome === "credentials-not-issued") deps.log(`[provisioning] not mirroring ${uid} yet: its chat credentials are not issued and it has no platform chat secrets`);
-      if (outcome === "slug-mismatch") deps.log(`[provisioning] ⚠ not mirroring ${uid}: its spec names slug ${resource.spec.slug}, which the user record does not carry`);
+      await recordMirror(resource, await mirrorUserProvisioning(deps, resource));
     },
     onError: (uid, error, attempts) => {
       counters.mirrors.failed += 1;
@@ -343,6 +381,7 @@ export function createProvisioningSync(deps: ProvisioningSyncDeps): Provisioning
     observed: (uid) => cache.get(uid),
     markDirty: (uid) => specs.enqueue(uid),
     specFailures: () => [...failures.values()],
+    mirrorRefusals: () => [...refusals.values()],
     resync,
     writeSpec,
     backfill,

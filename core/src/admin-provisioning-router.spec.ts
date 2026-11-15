@@ -37,7 +37,10 @@ function app(configured = true, overrides: { provisioning?: AdminProvisioningCli
     provisioning: configured ? overrides.provisioning ?? client : null,
     journal: createAdminFleetMutationRunner(store),
     logger: { warn: (msg, meta) => warnings.push({ msg, meta }) },
-    specFailures: () => [{ uid: "u9", reason: "admitted user u9 has no account document", attempts: 3, since: "2026-11-15T18:00:00.000Z" }],
+    sync: {
+      specFailures: () => [{ uid: "u9", reason: "admitted user u9 has no account document", attempts: 3, since: "2026-11-15T18:00:00.000Z" }],
+      mirrorRefusals: () => [{ uid: "u7", outcome: "chat-id-mismatch", reason: "the user record holds chat user mm-a, the provisioning service reports chat user mm-b", since: "2026-11-15T18:00:00.000Z" }],
+    },
     ...(overrides.readDeadlineMs === undefined ? {} : { readDeadlineMs: overrides.readDeadlineMs }),
   });
   server.use((error: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
@@ -168,6 +171,7 @@ describe("Admin API provisioning routes", () => {
 
     expect(res.body.items.map((item: Data) => item.uid)).toEqual(["u1"]);
     expect(res.body.specWriteFailures).toEqual([expect.objectContaining({ uid: "u9", reason: expect.stringContaining("no account document") })]);
+    expect(res.body.mirrorRefusals).toEqual([expect.objectContaining({ uid: "u7", outcome: "chat-id-mismatch", reason: expect.stringContaining("mm-b") })]);
     expect(fake.requests.at(-1)?.query).toEqual({ ready: "false" });
   });
 

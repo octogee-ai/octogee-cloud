@@ -17,7 +17,7 @@ export interface ChatSecretDeps {
   readonly client: Pick<ProvisioningServiceClient, "getCredential">;
 }
 
-export type ChatSecretsOutcome = "present" | "credentials-not-issued";
+export type ChatSecretsOutcome = "present" | "credentials-not-issued" | "agent-not-ready";
 
 interface ChatSecretTarget {
   readonly secretId: string;
@@ -96,12 +96,13 @@ async function writeWhenAbsent(deps: ChatSecretDeps, uid: string, row: UserSecre
 
 export async function ensureChatSecrets(deps: ChatSecretDeps, resource: UserProvisioning, chat: ChatOutputs): Promise<ChatSecretsOutcome> {
   const uid = resource.uid;
+  if (!credentialsIssued(resource)) return "credentials-not-issued";
+  if (resource.spec.chat.defaultAgent.enabled && !chat.agentBotUserId) return "agent-not-ready";
   const missing: ChatSecretTarget[] = [];
   for (const target of targetsOf(chat)) {
     if ((await deps.store.secrets.get(uid, target.secretId)) === null) missing.push(target);
   }
   if (missing.length === 0) return "present";
-  if (!credentialsIssued(resource)) return "credentials-not-issued";
   for (const target of missing) {
     const credential = await readCredential(deps, uid, target.credential);
     if (credential === null) return "credentials-not-issued";

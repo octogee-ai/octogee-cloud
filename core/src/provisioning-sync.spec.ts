@@ -452,6 +452,47 @@ describe("platform chat secrets", () => {
     expect(projectionCalls).toEqual([]);
   });
 
+  it("mirrors no ids while the credentials are not issued, even when both platform secrets already exist", async () => {
+    await store().secrets.put("u1", { kind: "builder-mattermost", secretId: "mattermost", projectId: null, personalToken: "older-user-token", mattermostUserId: "mm-user", createdAt: 1, rotatedAt: null });
+    await store().secrets.put("u1", { kind: "coach-mattermost", secretId: "coachMattermost", projectId: null, personalToken: "older-agent-token", mattermostUserId: "mm-bot", createdAt: 1, rotatedAt: null });
+    const instance = await chatReadyWithoutWaiting(false);
+    fake.setStatus("u1", { ...CHAT_READY, conditions: CHAT_READY.conditions!.map((condition) =>
+      condition.type === "CredentialsIssued" ? { ...condition, status: "False", reason: "CredentialsNotIssued" } : condition) });
+    await until(() => instance.counters.mirrors["credentials-not-issued"] >= 1);
+
+    expect((await store().users.records.get("u1"))?.mattermostUserId).toBeNull();
+    expect(projectionCalls).toEqual([]);
+  });
+
+  it("mirrors nothing while the default agent the spec enables has no chat account", async () => {
+    const instance = await chatReadyWithoutWaiting();
+    const { agentBotUserId: _agentBotUserId, ...chatWithoutAgent } = CHAT_READY.outputs!.chat!;
+    fake.setStatus("u1", { ...CHAT_READY, outputs: { ...CHAT_READY.outputs!, chat: chatWithoutAgent } });
+    await until(() => instance.counters.mirrors["agent-not-ready"] >= 1);
+
+    expect(secretPuts).toEqual([]);
+    expect((await store().users.records.get("u1"))?.mattermostUserId).toBeNull();
+    expect(projectionCalls).toEqual([]);
+  });
+
+  it("mirrors nothing and reports the user when the service names a different chat account than the user record holds", async () => {
+    records.set("users/u1", { username: "lin", onboardingStep: "complete", provisioning: { status: "in_progress" }, mattermost: { userId: "mm-earlier" } });
+    const instance = started(sync());
+    await instance.snapshotLoaded();
+    await until(() => fake.resources.has("u1"));
+    fake.issueCredential("u1", "user-chat-token", USER_TOKEN);
+    fake.issueCredential("u1", "agent-chat-token", AGENT_TOKEN);
+    fake.setStatus("u1", CHAT_READY);
+    await until(() => instance.counters.mirrors["chat-id-mismatch"] >= 1);
+
+    expect(secretPuts).toEqual([]);
+    expect(fake.requests.some((request) => request.path.includes("/credentials/"))).toBe(false);
+    expect((await store().users.records.get("u1"))?.mattermostUserId).toBe("mm-earlier");
+    expect(projectionCalls).toEqual([]);
+    expect(logs.some((line) => line.includes("❌ not mirroring u1") && line.includes("mm-earlier") && line.includes("mm-user"))).toBe(true);
+    expect(instance.mirrorRefusals()).toEqual([expect.objectContaining({ uid: "u1", outcome: "chat-id-mismatch", reason: expect.stringContaining("mm-earlier") })]);
+  });
+
   it("leaves the user record untouched and logs no token when a secret write fails", async () => {
     secretPutFailure = true;
     const instance = await chatReadyWithoutWaiting();

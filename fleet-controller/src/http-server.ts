@@ -111,7 +111,7 @@ export interface HttpServerDeps {
   logs: { source: LogEntriesSource | null; namespace: string };
   provisioning?: AdminProvisioningClient | null;
   provisioningReadiness?: FleetRouterDeps["provisioningReadiness"];
-  provisioningSpecFailures?: AdminProvisioningRouterDeps["specFailures"];
+  provisioningSync?: AdminProvisioningRouterDeps["sync"];
 }
 
 function adaptLogger(log: (msg: string) => void): FleetLogger {
@@ -380,7 +380,7 @@ export function createHttpServer(deps: HttpServerDeps): Express {
     provisioning: deps.provisioning ?? null,
     journal: createAdminFleetMutationRunner(deps.store),
     logger: adaptLogger(deps.log),
-    specFailures: deps.provisioningSpecFailures,
+    sync: deps.provisioningSync,
   });
   addAdminLogsRoutes(adminRouter, {
     source: deps.logs.source,

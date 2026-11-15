@@ -49,6 +49,9 @@ describe("provisioning service runtime", () => {
     expect(logs).toEqual([expect.stringContaining("provisioning service: on at http://provisioning-service; product projection installed")]);
     expect(renderMetrics()).toContain('glm_provisioning_service_requests_total{outcome="unreachable"} 0');
     expect(renderMetrics()).toContain("glm_provisioning_watch_connected 0");
+    expect(renderMetrics()).toContain('glm_provisioning_mirrors_total{outcome="chat-id-mismatch"} 0');
+    expect(renderMetrics()).toContain('glm_provisioning_deletes_total{outcome="unreadable"} 0');
+    expect(renderMetrics()).toContain("glm_provisioning_mirror_refused_users 0");
     resetMetrics();
     expect(renderMetrics()).not.toContain("glm_provisioning");
   });
