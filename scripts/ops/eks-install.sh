@@ -305,7 +305,7 @@ database_security_group() {
 }
 
 ensure_database_network() {
-  local vpc subnets=()
+  local vpc cluster_group rule subnets=()
   vpc="$(cluster_field vpcId)"
   VPC_CIDR="$(a ec2 describe-vpcs --vpc-ids "$vpc" --query 'Vpcs[0].CidrBlock' --output text)"
   [[ "$VPC_CIDR" =~ ^[0-9.]+/[0-9]+$ ]] || die "EC2 did not report the CIDR of VPC $vpc"
@@ -313,8 +313,14 @@ ensure_database_network() {
   if [[ -z "$DB_SECURITY_GROUP" || "$DB_SECURITY_GROUP" == None ]]; then
     DB_SECURITY_GROUP="$(a ec2 create-security-group --group-name "$DB_SECURITY_GROUP_NAME" \
       --description "PostgreSQL from the $NAME cluster" --vpc-id "$vpc" --query GroupId --output text)"
+  fi
+  cluster_group="$(cluster_field clusterSecurityGroupId)"
+  rule="$(a ec2 describe-security-group-rules --filters "Name=group-id,Values=$DB_SECURITY_GROUP" \
+    --query "SecurityGroupRules[?!IsEgress && FromPort==\`5432\` && ToPort==\`5432\` && ReferencedGroupInfo.GroupId=='$cluster_group'] | [0].SecurityGroupRuleId" \
+    --output text)"
+  if [[ -z "$rule" || "$rule" == None ]]; then
     a ec2 authorize-security-group-ingress --group-id "$DB_SECURITY_GROUP" --protocol tcp --port 5432 \
-      --source-group "$(cluster_field clusterSecurityGroupId)" >/dev/null
+      --source-group "$cluster_group" >/dev/null
   fi
   if ! a rds describe-db-subnet-groups --db-subnet-group-name "$NAME" >/dev/null 2>&1; then
     read -ra subnets <<<"$(a ec2 describe-subnets \

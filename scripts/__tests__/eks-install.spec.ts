@@ -37,7 +37,8 @@ const AWS = `case " $* " in
   *" eks describe-cluster "*clusterSecurityGroupId*) echo sg-cluster ;;
   *" eks describe-cluster "*) [ -n "\${CLUSTER_EXISTS:-}" ] || exit 1 ;;
   *" describe-vpcs "*) echo 192.168.0.0/16 ;;
-  *" describe-security-groups "*) echo None ;;
+  *" describe-security-groups "*) if [ -n "\${DB_GROUP_EXISTS:-}" ]; then echo sg-database; else echo None; fi ;;
+  *" describe-security-group-rules "*) echo "\${DB_RULE:-None}" ;;
   *" create-security-group "*) echo sg-database ;;
   *" describe-subnets "*) printf 'subnet-a\\tsubnet-b\\n' ;;
   *" rds describe-db-instances "*--query*) echo octogee.abc123.${REGION}.rds.amazonaws.com ;;
@@ -177,6 +178,19 @@ describe("eks-install.sh", () => {
       for (const flag of ["--engine postgres --engine-version 16", "--vpc-security-group-ids sg-database", "--no-publicly-accessible", "--storage-encrypted", "--backup-retention-period 7"]) {
         expect(database).toContain(flag);
       }
+    });
+
+    it("adds the database's ingress rule on a rerun when a first run made the security group without it", () => {
+      expect(up({ CLUSTER_EXISTS: "1", LT_EXISTS: "1", DB_GROUP_EXISTS: "1" }).status).toBe(0);
+      expect(calls("aws", "create-security-group")).toEqual([]);
+      expect(calls("aws", "authorize-security-group-ingress")).toHaveLength(1);
+      expect(calls("aws", "authorize-security-group-ingress")[0]).toContain("--group-id sg-database --protocol tcp --port 5432 --source-group sg-cluster");
+    });
+
+    it("leaves the database's ingress rule alone when it exists", () => {
+      expect(up({ CLUSTER_EXISTS: "1", LT_EXISTS: "1", DB_GROUP_EXISTS: "1", DB_RULE: "sgr-0abc" }).status).toBe(0);
+      expect(calls("aws", "authorize-security-group-ingress")).toEqual([]);
+      expect(calls("aws", "describe-security-group-rules")[0]).toContain("Name=group-id,Values=sg-database");
     });
 
     it("lets the blob store user use the objects of both buckets and read their versioning, and nothing else", () => {
