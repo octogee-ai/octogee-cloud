@@ -14,8 +14,8 @@ import { isolatedRuntimeMutationFenced } from "@octogee/core/gateway-retirement-
 import { parseAgentId, workspaceDefaultAgentId, projectAgentId } from "@octogee/shared/types/identity";
 import { accountAllowsInteractiveAccess } from "@octogee/shared/types/account-lifecycle";
 import type { AgentImportBrokerDeps, OwnerContext } from "./agent-import-broker.js";
-import { agentExportApproval, type AgentExportRecord, type AgentExportSource } from "../../../gateway-edge/src/lib/agent-export-service.js";
-import { exportDigest } from "../../../gateway-edge/src/lib/agent-export-snapshot.js";
+import { agentExportApproval, type AgentExportRecord, type AgentExportSource } from "@octogee/core/http-candidates/agent-transfer/agent-export-service";
+import { exportDigest } from "@octogee/core/http-candidates/agent-transfer/agent-export-snapshot";
 const EXPORT_RECORD_TTL_MS = 25 * 60 * 60_000;
 const fail = (message: string): never => { throw Object.assign(new Error(message), { status: 409, code: "export_not_available" }); };
 function interactiveUser(user: PlatformUserRecord | null): user is PlatformUserRecord {

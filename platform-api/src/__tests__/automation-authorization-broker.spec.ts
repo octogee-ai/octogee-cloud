@@ -14,9 +14,9 @@ import { brokerRequestLimit } from "../middleware/broker-request-limit.js";
 import { authenticationFailureLimit } from "../middleware/authenticated-request-limit.js";
 import { createTenantEnforcementMiddleware } from "../middleware/tenant-enforcement.js";
 import type { Reviewer } from "../lib/token-review.js";
-import { requireAuthenticatedUid } from "../../../gateway-edge/src/middleware/auth.js";
+import { requireAuthenticatedUid } from "@octogee/core/http/auth";
 
-vi.mock("../../../gateway-edge/src/middleware/auth.js", () => ({
+vi.mock("@octogee/core/http/auth", () => ({
   requireAuthenticatedUid: (
     req: express.Request,
     res: express.Response,

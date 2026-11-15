@@ -121,7 +121,7 @@ and a domain. [See every account and tier](docs/getting-started.md#what-you-need
 | --- | --- | --- |
 | Fleet controller | `fleet-controller/` | Owns which gateways exist and which user is on which. Serves the Admin API, installs gateways with Helm, moves users, and journals every change. |
 | Platform API | `platform-api/` | Serves most HTTP routes. Its fleet broker holds the Mattermost and Gitea admin credentials, and it issues each agent its model credential. |
-| LLM broker | `platform-api/` | Holds the model provider keys and meters every call. |
+| LLM broker | `llm-broker/` | Holds the model provider keys and meters every call. |
 | Edge | `gateway-edge/` | A sidecar in each gateway pod that serves the user's workspace files, and the gateway router that sends `/g/<gatewayId>/*` to the right sidecar. |
 | Provisioner | `scripts/` | Runs in every gateway. Sets up each user assigned to it: chat account, team, channels, agent bot, git organization and repository. |
 | Gateway image | `gateway/` | OpenClaw, the provisioner and the platform's OpenClaw extensions. |
@@ -246,10 +246,16 @@ product builds on top.
 
 - `AGENTS.md` is the contract every agent loads.
 - `docs/handbook/` holds the Dev Workflow chapters of the handbook.
-- The platform packages: `core`, `shared`, `fleet-controller`, `gateway-edge`
-  and `platform-api`; the images in `gateway`, `desktop` and `vm-bridge`; with
-  `charts`, `terraform`, `templates` and `scripts` beside them. `tests/` holds the
+- The platform packages: `core`, `shared`, `fleet-controller`, `gateway-edge`,
+  `platform-api` and the model broker in `llm-broker`; the images in `gateway`,
+  `desktop` and `vm-bridge`; with `charts`, `terraform`, `templates` and
+  `scripts` beside them. `tests/` holds the
   cross-package platform specs.
+- `fleet-controller`, `gateway`, `desktop`, `vm-bridge`, `scripts` and the
+  libraries `core`, `core-testing` and `shared` each have a README: what the
+  component does and does not do, how it runs, what it talks to, its
+  configuration, and how to build and test it.
+  [Architecture](docs/architecture.md#services) links them.
 - [Legacy names](docs/legacy-names.md) lists the stored names that keep
   their spelling from before the platform was published.
 

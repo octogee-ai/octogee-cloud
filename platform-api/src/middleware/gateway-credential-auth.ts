@@ -4,8 +4,8 @@ import {
   GATEWAY_CREDENTIAL_TOKEN_AUDIENCE,
   GATEWAY_CREDENTIAL_TOKEN_HEADER,
 } from "@octogee/core/internal-fetch";
-import { isWellFormedServiceAccountJwt } from "../../../gateway-edge/src/middleware/security.js";
-import { logger as defaultLogger } from "../../../gateway-edge/src/middleware/logging.js";
+import { isWellFormedServiceAccountJwt } from "@octogee/core/http/security";
+import { logger as defaultLogger } from "@octogee/core/http/logging";
 import { mapReviewToTenant, type BoundTenant } from "../lib/sa-to-tenant.js";
 import type { ReviewResult, Reviewer } from "../lib/token-review.js";
 

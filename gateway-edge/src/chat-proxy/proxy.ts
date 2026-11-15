@@ -6,7 +6,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import { Registry, Counter, Gauge } from "prom-client";
 import { WsUpgradeRouter } from "@octogee/core/ws/upgrade-router";
 import { publicAppOriginsFromEnv } from "@octogee/core/public-app-origins";
-import { OpenclawWireError } from "./openclaw/upstream.js";
+import { OpenclawWireError } from "@octogee/core/http-candidates/chat-proxy/openclaw/upstream";
 import { attachActivitySubscription } from './openclaw/activity-subscription.js';
 import {
   clearGatewayDeviceToken,
@@ -14,9 +14,9 @@ import {
   invalidateGatewayToken,
   GatewayTokenError,
   type GatewayOpenClawAuth,
-} from "./openclaw/gateway-token.js";
-import { openUpstreamWithGatewayAuth } from "./openclaw/authenticated-upstream.js";
-import { shouldForwardFrame, sanitizeActivityFrame } from "./openclaw/frame-filter.js";
+} from "@octogee/core/http-candidates/chat-proxy/openclaw/gateway-token";
+import { openUpstreamWithGatewayAuth } from "@octogee/core/http-candidates/chat-proxy/openclaw/authenticated-upstream";
+import { shouldForwardFrame, sanitizeActivityFrame } from "@octogee/core/channels/frame-filter";
 import {
   createGateState,
   evaluateInboundFrame,
@@ -24,8 +24,8 @@ import {
 } from "./openclaw/inbound-gate.js";
 import { isAllowedWsOrigin, warnIfWsOriginsMisconfigured } from "./openclaw/ws-origin.js";
 import { applyGatewayPrefixStripInPlace, stripGatewayPrefix } from "./gateway-prefix.js";
-import { createBridgeLog } from "./bridge-log.js";
-import { isAllowedLocalhostOrigin } from "../lib/dev-origins.js";
+import { createBridgeLog } from "@octogee/core/http/bridge-log";
+import { isAllowedLocalhostOrigin } from "@octogee/shared/types/dev-origins";
 import {
   guardUpgradeRequest,
   mmRosterVerdictFor,
@@ -33,7 +33,7 @@ import {
   type RollRosterUpgradeGate,
   type UpgradeGateVerdict,
 } from "../roll-roster.js";
-import { logger } from "../middleware/logging.js";
+import { logger } from "@octogee/core/http/logging";
 import {
   defaultAgentWiredInParsedConfig,
   listLocalDefaultAgentWiredSlugs,

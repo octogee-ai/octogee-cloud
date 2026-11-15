@@ -1,6 +1,6 @@
-import { authenticatedRequestLimit } from "../middleware/authenticated-request-limit.js";
+import { authenticatedRequestLimit } from "@octogee/core/http/authenticated-request-limit";
 import { Router, type NextFunction, type Request, type Response } from "express";
-import { logger } from "../middleware/logging.js";
+import { logger } from "@octogee/core/http/logging";
 import type { NativeAdminAccess, NativeAdminAccessOutcome } from "../lib/native-admin-access.js";
 import type { CdpCookie, CdpCookieOutcome, CdpCookiePartitionKey } from "../lib/cdp-cookies.js";
 

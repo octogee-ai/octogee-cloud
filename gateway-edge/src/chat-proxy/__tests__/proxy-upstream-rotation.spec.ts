@@ -37,7 +37,7 @@ const h = vi.hoisted(() => {
   return { ctl, OpenclawWireError, GatewayTokenError };
 });
 
-vi.mock('../openclaw/gateway-token.js', () => ({
+vi.mock('@octogee/core/http-candidates/chat-proxy/openclaw/gateway-token', () => ({
   GatewayTokenError: h.GatewayTokenError,
   fetchGatewayAuth: h.ctl.fetchAuth,
   invalidateGatewayToken: (gatewayId: string) => {
@@ -49,7 +49,7 @@ vi.mock('../openclaw/gateway-token.js', () => ({
   persistGatewayDeviceToken: async () => {},
 }));
 
-vi.mock('../openclaw/upstream.js', () => ({
+vi.mock('@octogee/core/http-candidates/chat-proxy/openclaw/upstream', () => ({
   OpenclawWireError: h.OpenclawWireError,
   openUpstream: h.ctl.openUpstream,
   requestDevicePairBootstrapToken: h.ctl.requestBootstrap,

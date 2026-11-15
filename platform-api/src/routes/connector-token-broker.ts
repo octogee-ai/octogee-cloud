@@ -5,17 +5,17 @@ import {
   getConnector,
   isConnectorAgentRuntimeTokenMaterializable,
   isConnectorTokenBrokerable,
-} from "../../../gateway-edge/src/lib/connectors/index.js";
-import { getFreshAccessTokenFromStore } from "../../../gateway-edge/src/lib/connector-tokens.js";
-import { isSafeCanvasPath } from "../../../gateway-edge/src/lib/canvas-file.js";
-import { decryptSecret } from "../../../gateway-edge/src/lib/kms.js";
+} from "@octogee/core/connectors";
+import { getFreshAccessTokenFromStore } from "@octogee/core/connectors/connector-tokens";
+import { isSafeCanvasPath } from "../lib/canvas-file.js";
+import { decryptSecret } from "@octogee/core/connectors/kms";
 import type { OpaqueMap, PlatformStateRepositories, PlatformStateStore } from "@octogee/core/platform-state";
 import {
   podBelongsToGateway,
   readServingGatewayAuthorization,
 } from "@octogee/core/gateway-live-release";
 import { gatewayVmPodName, resolveGatewayRuntime } from "@octogee/shared/types/glm";
-import { logger } from "../../../gateway-edge/src/middleware/logging.js";
+import { logger } from "@octogee/core/http/logging";
 import { configuredUserPreparationAllowed } from "../lib/user-preparation.js";
 import { readVmRuntimeObservation } from "../lib/vm-runtime-observation.js";
 import { projectMemberExists } from "../lib/project-members.js";

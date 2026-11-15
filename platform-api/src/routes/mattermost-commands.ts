@@ -6,11 +6,11 @@ import { OPENCLAW_CONTROL_TICKET_TTL_MS } from "@octogee/core/openclaw-control-t
 import {
   validAgentControlRouterPublicKey,
   verifyMattermostCommandRequest,
-} from "../../../gateway-edge/src/agent-control-callback-router.js";
+} from "@octogee/core/http-candidates/agent-control-callback-router";
 import {
   mintOwnerControlUiLaunch,
   type OwnerControlUiLaunch,
-} from "../../../gateway-edge/src/routes/user/gateways.js";
+} from "./user/gateways.js";
 
 const MAX_COMMAND_BYTES = 16 * 1024;
 const MATTERMOST_ID = /^[a-z0-9]{26}$/;

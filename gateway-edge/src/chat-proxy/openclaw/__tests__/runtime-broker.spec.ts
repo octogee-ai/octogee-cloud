@@ -9,7 +9,7 @@ import { SIDECAR_BROKER_TOKEN_HEADER } from "@octogee/core/internal-fetch";
 import {
   ActivityReceiptConflictError,
   ActivityReceiptLeaseError,
-} from "../activity-write-receipts.js";
+} from "@octogee/core/http-candidates/chat-proxy/openclaw/activity-write-receipts";
 
 const threadRootPostId = 'r'.repeat(26);
 function brokerWithRedeemStatus(

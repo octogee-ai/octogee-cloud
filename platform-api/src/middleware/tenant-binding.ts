@@ -1,6 +1,6 @@
 import type { NextFunction, Request, Response } from "express";
 import { Counter, type Registry } from "prom-client";
-import { isWellFormedServiceAccountJwt } from "../../../gateway-edge/src/middleware/security.js";
+import { isWellFormedServiceAccountJwt } from "@octogee/core/http/security";
 import {
   mapReviewToTenant,
   type BoundTenant,
@@ -13,7 +13,7 @@ import {
   type Reviewer,
   type ReviewResult,
 } from "../lib/token-review.js";
-import { logger as defaultLogger } from "../../../gateway-edge/src/middleware/logging.js";
+import { logger as defaultLogger } from "@octogee/core/http/logging";
 import { gatewayVmPodName } from "@octogee/shared/types/glm";
 
 declare global {

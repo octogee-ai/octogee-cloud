@@ -11,8 +11,8 @@ import { IMAGE_BUILDS } from "../ci/image-build.mjs";
 const root = fileURLToPath(new URL("../..", import.meta.url));
 const registry = "ghcr.io/octogee-ai/octogee-cloud";
 const sha = "a".repeat(40);
-const images = ["glm-controller", "octogee-api", "gateway-edge", "octogee-gateway", "vm-bridge"];
-const amd64Images = ["glm-controller", "octogee-api", "gateway-edge", "octogee-gateway", "octogee-gateway-builder", "vm-bridge"];
+const images = ["glm-controller", "octogee-api", "llm-broker", "gateway-edge", "octogee-gateway", "vm-bridge"];
+const amd64Images = ["glm-controller", "octogee-api", "llm-broker", "gateway-edge", "octogee-gateway", "octogee-gateway-builder", "vm-bridge"];
 const plan = (overrides: Record<string, unknown> = {}) =>
   cloudBakePlan({ registry, sha, platform: "linux/arm64", root, ...overrides });
 const fileSha256 = (path: string) => createHash("sha256").update(readFileSync(join(root, path))).digest("hex");
@@ -86,15 +86,17 @@ describe("public platform image plan", () => {
     ["has no stage for it", (context: string) => `FROM node\nCOPY --from=${context} / /packed/\n`, "octogee-api needs build contexts outside the platform tree"],
   ])("builds an image without its product context only when its Dockerfile %s", (_case, dockerfile, refusal) => {
     const fixture = mkdtempSync(join(tmpdir(), "cloud-build-contexts-"));
+    const definition = IMAGE_BUILDS["octogee-api"];
+    IMAGE_BUILDS["octogee-api"] = { ...definition, contexts: { "packed-package": "packed" } };
     try {
-      const contexts = Object.keys(IMAGE_BUILDS["octogee-api"].contexts ?? {});
-      expect(contexts.length).toBeGreaterThan(0);
+      const contexts = ["packed-package"];
       mkdirSync(join(fixture, "platform-api"));
       writeFileSync(join(fixture, "platform-api/Dockerfile"), contexts.map(dockerfile).join(""));
       const build = () => plan({ root: fixture, images: ["octogee-api"] });
       if (refusal) expect(build).toThrow(`${refusal}: ${contexts.join(", ")}`);
       else expect(build().target["octogee-api"].contexts).toBeUndefined();
     } finally {
+      IMAGE_BUILDS["octogee-api"] = definition;
       rmSync(fixture, { recursive: true, force: true });
     }
   });
@@ -160,7 +162,7 @@ describe("public platform image manifest", () => {
 
   it("indexes the isolated gateway image from its amd64 digest alone", () => {
     const builder = mergeCommands({ registry, sha, digests }).find(command => command.includes(`--tag=${registry}/octogee-gateway-builder:${sha}`));
-    expect(builder?.slice(5)).toEqual([`${registry}/octogee-gateway-builder@${digest(4)}`]);
+    expect(builder?.slice(5)).toEqual([`${registry}/octogee-gateway-builder@${digest(5)}`]);
     const { "octogee-gateway-builder": _missing, ...amd64 } = digests["linux/amd64"];
     expect(() => mergeCommands({ registry, sha, digests: { ...digests, "linux/amd64": amd64 } }))
       .toThrow("Missing linux/amd64 digest for octogee-gateway-builder");
@@ -172,9 +174,9 @@ describe("public platform image manifest", () => {
     expect(Object.keys(manifest.images)).toEqual(amd64Images);
     expect(manifest.images["vm-bridge"]).toEqual({
       image: `${registry}/vm-bridge@${digest(9)}`, tag: `${registry}/vm-bridge:${sha}`, digest: digest(9),
-      platforms: { "linux/amd64": digest(5), "linux/arm64": digest(11) },
+      platforms: { "linux/amd64": digest(6), "linux/arm64": digest(12) },
     });
-    expect(manifest.images["octogee-gateway-builder"].platforms).toEqual({ "linux/amd64": digest(4) });
+    expect(manifest.images["octogee-gateway-builder"].platforms).toEqual({ "linux/amd64": digest(5) });
     expect(() => imageManifest({ registry, sha, digests, indexes: {} })).toThrow("No index digest");
   });
 

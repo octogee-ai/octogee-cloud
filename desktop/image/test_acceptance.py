@@ -4,8 +4,9 @@ import subprocess
 import tempfile
 import unittest
 
+REGISTRY = 'registry.example/operator'
 
-MOCK = r'''#!/usr/bin/env python3
+MOCK =r'''#!/usr/bin/env python3
 import json, os, pathlib, socket, struct, sys
 name = pathlib.Path(sys.argv[0]).name
 args = sys.argv[1:]
@@ -77,13 +78,13 @@ elif name == 'ssh':
         print('display resize verified: 1440x900')
     elif '/etc/octogee-gateway-edge-image' in command:
         if case == 'edge-cache-missing' or (case == 'edge-cache-lost-after-reboot' and pathlib.Path(os.environ['ACCEPTANCE_MARKER']).exists()): sys.exit(1)
-        print('us-central1-docker.pkg.dev/octogee/octogee/gateway-edge@sha256:' + ('c' if case == 'edge-cache-wrong' else 'b') * 64)
+        print('registry.example/operator/gateway-edge@sha256:' + ('c' if case == 'edge-cache-wrong' else 'b') * 64)
     elif '/etc/octogee-computer.env' in command:
         if case == 'installed-version-mismatch': sys.exit(1)
         print('ISO=4.5.0 installed=4.5.0-2')
     elif '/etc/octogee-gateway-image' in command:
         if case == 'gateway-cache-missing' or (case == 'gateway-cache-lost-after-reboot' and pathlib.Path(os.environ['ACCEPTANCE_MARKER']).exists()): sys.exit(1)
-        print('us-central1-docker.pkg.dev/octogee/octogee/octogee-gateway-builder@sha256:' + ('b' if case == 'gateway-cache-wrong' else 'a') * 64)
+        print('registry.example/operator/octogee-gateway-builder@sha256:' + ('b' if case == 'gateway-cache-wrong' else 'a') * 64)
     elif 'cat /etc/octogee-computer-image' in command: print('fixture-image')
     elif 'systemd-analyze verify' in command:
         if case == 'nonexecutable-agent':
@@ -117,7 +118,7 @@ elif name == 'ssh':
 
 
 class ImageAcceptanceTests(unittest.TestCase):
-    def run_acceptance(self, case, ci=False, expected_zone='us-central1-a', smoke=False):
+    def run_acceptance(self, case, ci=False, expected_zone='us-central1-a', smoke=False, image_registry=REGISTRY):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             for name in ('gcloud', 'scp', 'ssh'):
@@ -128,7 +129,8 @@ class ImageAcceptanceTests(unittest.TestCase):
                 ['bash', str(Path(__file__).with_name('test.sh')), '--project', 'fixture', *(['--smoke'] if smoke else ['--stop-start']), '--zone', 'us-central1-a', '--fallback-zones', 'us-central1-b,us-central1-c'],
                 env={**os.environ, 'PATH': f'{root}:{os.environ["PATH"]}',
                      'ACCEPTANCE_CASE': case, 'OCTOGEE_IMAGE_RUN_ID': '123-1' if ci else 'manual', 'ACCEPTANCE_MARKER': str(root / 'marker'),
-                     'ACCEPTANCE_EXPECTED_ZONE': expected_zone, 'OCTOGEE_DESKTOP_EDGE_IMAGE': 'us-central1-docker.pkg.dev/octogee/octogee/gateway-edge@sha256:' + 'b' * 64, 'OCTOGEE_DESKTOP_GATEWAY_IMAGE': 'us-central1-docker.pkg.dev/octogee/octogee/octogee-gateway-builder@sha256:' + 'a' * 64},
+                     'ACCEPTANCE_EXPECTED_ZONE': expected_zone, 'OCTOGEE_DESKTOP_REGISTRY': REGISTRY,
+                     'OCTOGEE_DESKTOP_EDGE_IMAGE': f'{image_registry}/gateway-edge@sha256:' + 'b' * 64, 'OCTOGEE_DESKTOP_GATEWAY_IMAGE': f'{image_registry}/octogee-gateway-builder@sha256:' + 'a' * 64},
                 capture_output=True, text=True, timeout=15,
             )
             if case == 'ssh-new-connection-timeout' and result.returncode == 0:
@@ -202,6 +204,12 @@ class ImageAcceptanceTests(unittest.TestCase):
     def test_ci_vm_has_independent_cloud_deletion_deadline(self):
         result = self.run_acceptance('success', ci=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_images_outside_the_configured_registry_are_refused_before_a_vm_boots(self):
+        result = self.run_acceptance('create-failed', image_registry='registry.example/other')
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn(f'Builder gateway image registry.example/other/octogee-gateway-builder@sha256:{"a" * 64} is not in the configured registry {REGISTRY}', result.stderr)
+        self.assertNotIn('permission denied', result.stderr)
 
     def test_exhausted_zone_falls_back_and_addresses_the_vm_there(self):
         result = self.run_acceptance('zone-exhausted', expected_zone='us-central1-b')

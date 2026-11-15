@@ -1,4 +1,4 @@
-import { PER_USER_EVENTS } from './frame-filter.js';
+import { PER_USER_EVENTS } from '@octogee/core/channels/frame-filter';
 
 export interface GateState {
   expectedAgentId: string;

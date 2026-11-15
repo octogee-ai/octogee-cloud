@@ -9,7 +9,7 @@ const m = vi.hoisted(() => ({
   info: vi.fn(),
 }));
 
-vi.mock("../middleware/logging.js", () => ({
+vi.mock("@octogee/core/http/logging", () => ({
   logger: {
     info: (...args: unknown[]) => m.info(...args),
   },

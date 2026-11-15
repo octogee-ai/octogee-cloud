@@ -4,11 +4,11 @@ import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { commitLocalProjectAsset, editRemoteProjectAsset } from "./project-blob-edit.js";
-import type { FileTarget } from "./fileTarget.js";
+import { commitLocalProjectAsset, editRemoteProjectAsset } from "@octogee/core/workspace/project-blob-edit";
+import type { FileTarget } from "@octogee/core/workspace/fileTarget";
 import { persistUserProjects } from "./project-persistence.js";
-import { commitAndPushWorkspace, gitStatus, resolveProjectDir } from "./workspace-git.js";
-import { divertWorktreeBinaries } from "./binary-diversion.js";
+import { commitAndPushWorkspace, gitStatus, resolveProjectDir } from "@octogee/core/workspace/workspace-git";
+import { divertWorktreeBinaries } from "@octogee/core/workspace/binary-diversion";
 import { createBrokeredProjectBlobHydrator, prepareUserProjectAssets } from "@octogee/core/project-blob-materialization";
 import { readProjectRestoreReady, writeProjectRestoreReady, withMaterializedProjectAssets } from "@octogee/core/project-asset-state";
 const linuxTest = it.skipIf(process.platform !== "linux");

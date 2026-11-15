@@ -1,0 +1,10 @@
+import type { FileTarget } from "./fileTarget.js";
+export declare const FILE_LIST_CACHE_TTL_MS = 30000;
+export declare const FILE_CONTENT_CACHE_TTL_MS = 30000;
+export declare const FILE_COMMIT_CACHE_TTL_MS: number;
+export declare const FILE_INDEX_CACHE_TTL_MS: number;
+export declare function workspaceFileTargetCacheKey(target: FileTarget): string;
+export declare function workspaceFileCacheKey(kind: "list" | "file" | "commit" | "index", target: FileTarget, path: string, ref?: string): string;
+export declare function cachedWorkspaceFileResponse<T>(key: string, ttlMs: number, load: () => Promise<T>, forceRefresh?: boolean): Promise<T>;
+export declare function invalidateWorkspaceFileResponseCache(target: FileTarget): void;
+export declare function clearWorkspaceFileResponseCache(): void;

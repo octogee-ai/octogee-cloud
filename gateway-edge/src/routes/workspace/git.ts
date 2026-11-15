@@ -7,7 +7,7 @@ import {
   type WorkspaceGitAuthorizationOutcome,
   type WorkspaceGitAuthorizationRequest,
   type WorkspaceGitLane,
-} from "../../lib/workspace-git-authorization-broker.js";
+} from "@octogee/core/internal-brokers/workspace-git-authorization-broker";
 import {
   gitBranches,
   gitCheckout,
@@ -21,9 +21,9 @@ import {
   resolveProjectDir,
   runWorkspaceGitMutation,
   type WorkspaceGitError,
-} from "../../lib/workspace-git.js";
-import { logger } from "../../middleware/logging.js";
-import { DEFAULT_RATE_LIMIT_OPTIONS } from "../../middleware/security.js";
+} from "@octogee/core/workspace/workspace-git";
+import { logger } from "@octogee/core/http/logging";
+import { DEFAULT_RATE_LIMIT_OPTIONS } from "@octogee/core/http/security";
 
 export interface WorkspaceGitRouterDeps {
   authorize(request: WorkspaceGitAuthorizationRequest): Promise<WorkspaceGitAuthorizationOutcome>;

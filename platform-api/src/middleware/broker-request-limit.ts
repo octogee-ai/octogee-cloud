@@ -1,6 +1,6 @@
 import { rateLimit, type AugmentedRequest } from "express-rate-limit";
 
-import { logger } from "../../../gateway-edge/src/middleware/logging.js";
+import { logger } from "@octogee/core/http/logging";
 
 export function brokerRequestLimit(limit: number, scope: "gateway" | "user" = "gateway") {
   return rateLimit({

@@ -2,8 +2,8 @@ import { brokerRequestLimit } from "../middleware/broker-request-limit.js";
 import { Router, type Request, type Response } from "express";
 import type { PlatformStateRepositories } from "@octogee/core/platform-state";
 import { isValidGatewayId } from "@octogee/shared/types/glm";
-import { authorizeChannel, type AuthorizedChannel } from "../../../gateway-edge/src/lib/channel-session-authorization.js";
-import type { ChannelReadinessAuthorization } from "../../../gateway-edge/src/lib/channel-agent-readiness-authorization-broker.js";
+import { authorizeChannel, type AuthorizedChannel } from "@octogee/core/channels/channel-session-authorization";
+import type { ChannelReadinessAuthorization } from "@octogee/core/http-candidates/channels/channel-agent-readiness-authorization-broker";
 
 export interface ChannelReadinessAuthorizationBrokerDeps {
   store: Pick<PlatformStateRepositories, "users">;
