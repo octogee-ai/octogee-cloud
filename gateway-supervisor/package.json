@@ -29,16 +29,13 @@
     "google-auth-library": "^11.0.2",
     "picocolors": "1.1.1",
     "tsx": "^4.23.15",
-    "ws": "^8.21.3",
     "yaml": "^2.9.1"
   },
   "devDependencies": {
-    "@octogee/core-testing": "file:../core-testing",
     "@types/express": "^5.0.6",
     "@types/node": "^26.3.0",
     "@types/pg": "8.23.1",
     "@types/supertest": "^7.2.1",
-    "@types/ws": "^8.18.1",
     "pg": "8.23.1",
     "supertest": "^7.2.2",
     "typescript": "^7.0.2",
