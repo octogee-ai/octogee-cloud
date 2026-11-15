@@ -102,24 +102,45 @@ async function sharedGatewayIdsIn(transaction) {
     return [...pool.sharedGatewayIds];
 }
 const OBSERVED_STATUSES = ["ready", "not-ready", "missing"];
-function usableObservation(observation, now, maxAgeMs) {
-    if (typeof observation !== "object")
-        return false;
-    if (!OBSERVED_STATUSES.includes(observation.status))
-        return false;
-    if (!Number.isSafeInteger(observation.totalPods) || !Number.isSafeInteger(observation.readyPods))
-        return false;
-    if (!Number.isSafeInteger(observation.observedAt))
-        return false;
-    return observation.observedAt <= now && now - observation.observedAt <= maxAgeMs;
+function usableObservation(observation) {
+    return observation !== null &&
+        typeof observation === "object" &&
+        OBSERVED_STATUSES.includes(observation.status) &&
+        Number.isSafeInteger(observation.totalPods) &&
+        Number.isSafeInteger(observation.readyPods);
 }
-async function observeKnownKubernetes(deps, gatewayId) {
-    const observation = await deps.observeGatewayKubernetes(gatewayId);
-    const now = (deps.now ?? Date.now)();
-    if (observation === null || !usableObservation(observation, now, deps.kubernetesObservationMaxAgeMs)) {
-        throw new ObservationUnknown(`the Kubernetes status of ${gatewayId} is unknown`);
+async function observeSource(deps, gatewayId) {
+    const unknown = `the Kubernetes status of ${gatewayId} is unknown`;
+    try {
+        const observation = await deps.observeGatewayKubernetes(gatewayId);
+        return usableObservation(observation) ? { known: true, observation } : { known: false, reason: unknown };
     }
-    return observation;
+    catch (error) {
+        return { known: false, reason: `${unknown}: ${error instanceof Error ? error.message : String(error)}` };
+    }
+}
+function knownObservation(source) {
+    if (!source.known)
+        throw new ObservationUnknown(source.reason);
+    return source.observation;
+}
+function unavailableSourceBlocker(context, observation, now) {
+    const gatewayId = context.sourceGatewayId;
+    if (observation.status === "ready")
+        return `source ${gatewayId} is observed ready by Kubernetes`;
+    const heartbeatAt = context.sourceHeartbeatAt;
+    if (heartbeatAt !== null && now - heartbeatAt <= GATEWAY_UNREACHABLE_AFTER_MS) {
+        return `source ${gatewayId} still has a fresh runtime heartbeat while Kubernetes reports ${observation.status}`;
+    }
+    if (observation.status === "not-ready") {
+        return `shared source ${gatewayId} still has Kubernetes pods; retaining assignments until it is missing`;
+    }
+    if (context.sourceDesiredRelease !== context.sourceLiveRelease)
+        return `shared source ${gatewayId} is in an active roll`;
+    return null;
+}
+async function assertClientOwnsBeforeReading(store, label) {
+    await store.transaction({ label: `${label}.owner`, readOnly: true }, assertClientOwnsPlacementAutomation);
 }
 function ownedTransaction(store, verb, now) {
     return store.transaction({ label: verb.label }, async (transaction) => {
@@ -158,16 +179,14 @@ function recoverSharedUserIntent(req, deps) {
         target: { gatewayId: fromGatewayId, uid },
         preActionStatus: { expectedSourceEpoch, toGatewayId, expectedTargetUsersAtMost },
         mutation: { kind: "recover-shared-user", operationId, uid, fromGatewayId, toGatewayId, expectedSourceEpoch, expectedTargetUsersAtMost },
+        label: "admin.placement.recover-shared-user",
         verb: async () => {
-            const sourceKubernetes = await observeKnownKubernetes(deps, fromGatewayId);
-            if (sourceKubernetes.status === "ready") {
-                throw new PreconditionFailed(`source ${fromGatewayId} is observed ready by Kubernetes`);
-            }
+            const source = await observeSource(deps, fromGatewayId);
             return {
                 label: "admin.placement.recover-shared-user",
                 apply: async (transaction, now) => {
                     const sharedGatewayIds = await sharedGatewayIdsIn(transaction);
-                    await assertTargetUsersAtMost(transaction, toGatewayId, uid, expectedTargetUsersAtMost);
+                    let sourceKubernetesStatus = null;
                     const outcome = await commitUnavailableGatewayRecoveryInTransaction(transaction, {
                         operationId,
                         kind: "recover-shared-customer",
@@ -182,9 +201,17 @@ function recoverSharedUserIntent(req, deps) {
                             if (!sharedGatewayIds.includes(targetGatewayId)) {
                                 throw new PreconditionFailed(`target ${targetGatewayId} is not in the shared gateway pool`);
                             }
+                            await assertTargetUsersAtMost(transaction, targetGatewayId, uid, expectedTargetUsersAtMost);
+                        },
+                        validateSource: async (context) => {
+                            const observation = knownObservation(source);
+                            const blocker = unavailableSourceBlocker(context, observation, now);
+                            if (blocker !== null)
+                                throw new PreconditionFailed(blocker);
+                            sourceKubernetesStatus = observation.status;
                         },
                     }, now);
-                    return { operationId, outcome, sourceKubernetesStatus: sourceKubernetes.status };
+                    return { operationId, outcome, ...(sourceKubernetesStatus === null ? {} : { sourceKubernetesStatus }) };
                 },
             };
         },
@@ -204,6 +231,7 @@ function resetRecoveredRuntimeIntent(req) {
         target: { gatewayId: targetGatewayId, uid },
         preActionStatus: { expectedAssignmentEpoch, previousRecoveryOperationId },
         mutation: { kind: "reset-recovered-runtime", operationId, uid, targetGatewayId, expectedAssignmentEpoch, previousRecoveryOperationId },
+        label: "admin.placement.reset-recovered-runtime",
         verb: async () => ({
             label: "admin.placement.reset-recovered-runtime",
             apply: async (transaction, now) => {
@@ -246,8 +274,9 @@ function supersedeRollingSharedGatewayIntent(req, deps) {
             expectedDesiredRelease: input.expectedDesiredRelease,
         },
         mutation: { kind: "supersede-rolling-shared-gateway", ...input },
+        label: "admin.placement.supersede-rolling-shared-gateway",
         verb: async () => {
-            const sourceKubernetes = await observeKnownKubernetes(deps, input.sourceGatewayId);
+            const sourceKubernetes = knownObservation(await observeSource(deps, input.sourceGatewayId));
             return {
                 label: "admin.placement.supersede-rolling-shared-gateway",
                 apply: async (transaction, now) => {
@@ -296,10 +325,10 @@ function enqueuePlacementMigrationIntent(req, deps) {
         target: { gatewayId: request.toGatewayId, uid: request.uid },
         preActionStatus: { fromGatewayId: request.fromGatewayId, expectedTargetUsersAtMost },
         mutation: { kind: "enqueue-placement-migration", ...request, expectedTargetUsersAtMost },
+        label: "admin.placement.enqueue-migration",
         verb: async () => ({
             label: "admin.placement.enqueue-migration",
             apply: async (transaction, now) => {
-                await assertTargetUsersAtMost(transaction, request.toGatewayId, request.uid, expectedTargetUsersAtMost);
                 if (request.source === CONTINUOUS_PLACEMENT_SOURCE && await transaction.journal.operations.get(request.operationId) === null) {
                     const assignment = await transaction.gateways.assignments.get(request.fromGatewayId, request.uid);
                     const expected = assignment === null ? null : continuousPlacementMigrationOperationId({ ...request, sourceAssignmentEpoch: assignment.epoch });
@@ -313,7 +342,7 @@ function enqueuePlacementMigrationIntent(req, deps) {
                     operationFailureIsTransient: deps.operationFailureIsTransient,
                     gatewayStartupUnavailable: deps.gatewayStartupUnavailable,
                     sourceRecoveryForwardRetryable: deps.sourceRecoveryForwardRetryable,
-                }, request);
+                }, request, () => assertTargetUsersAtMost(transaction, request.toGatewayId, request.uid, expectedTargetUsersAtMost));
                 return { operationId: request.operationId, outcome };
             },
         }),
@@ -338,6 +367,7 @@ function supersedeSharedDrainMoveIntent(req, deps) {
         target: { gatewayId: request.fromGatewayId, uid: request.uid },
         preActionStatus: { status: "pending", leaseId: request.leaseId, generation: request.generation },
         mutation: { kind: "supersede-shared-drain-move", ...request },
+        label: "admin.placement.supersede-shared-drain-move",
         verb: async () => ({
             label: "admin.placement.supersede-shared-drain-move",
             apply: async (transaction, now) => {
@@ -367,7 +397,10 @@ function mountVerb(router, deps, path, intent) {
                 res.status(400).json({ error: error.message });
                 return;
             }
-            const prepared = async () => ({ verb: await parsed.verb(), now: clock() });
+            const prepared = async () => {
+                await assertClientOwnsBeforeReading(deps.store, parsed.label);
+                return { verb: await parsed.verb(), now: clock() };
+            };
             await settle(res, () => journal({
                 req,
                 what: parsed.what,

@@ -175,7 +175,9 @@ gateway, it clears a failed activation preparation of
 that generation from the owner, deletes the gateway's recovery operation and
 receipt, and deletes the root with its releases, fenced on the
 `retirementVersion` it read. These are separate writes, as before the verb
-existed: a root whose retirement changed after the checks answers `409` and
+existed. The root delete runs in its own transaction, which checks again that
+no user holds a live activation lease on the gateway. A root whose retirement
+changed after the checks, or that a live lease now targets, answers `409` and
 stays, and a failed write answers `500` and leaves the root for the next
 call. The retirement and activation journals stay.
 
@@ -198,7 +200,10 @@ The orchestrator config holds `placementAutomationOwner`. It is
 write transaction. Unless the owner is `client` and the yield is written, the
 verb answers `409 {"code": "placement-owner"}` and writes nothing. Until the
 switch is flipped, every verb answers this way. The client keeps reading
-`/fleet/state` and acts only after it sees the yield. A yield can only be
+`/fleet/state` and acts only after it sees the yield. Each verb also checks the
+owner in a read-only transaction before it reads Kubernetes or anything else,
+so while the fleet controller owns placement no verb makes a Kubernetes call.
+A yield can only be
 stored while the owner is `client`, so handing placement back to the fleet
 controller clears the yield in the same write.
 
@@ -208,7 +213,7 @@ controller clears the yield in the same write.
 |---|---|---|
 | `placement-owner` | The client does not own placement, or the fleet controller has not yielded. | It does not act. It reads the switch and the yield again on its next tick. |
 | `precondition-failed` | A fact the client acted on has changed, such as an epoch, a release, the pool, a lease or the target's load. `error` names it. | It logs the refusal and decides again from a fresh read on its next tick. It never retries within the same tick. |
-| `observation-unknown` | The fleet controller has no usable Kubernetes observation of the gateway: none, an unknown status, a malformed one, or one older than twice the observer's refresh interval. Nothing changed. | It tries again on a later tick. |
+| `observation-unknown` | The fleet controller's live read of the gateway's pods failed, or returned no status, an `unknown` status or a malformed one. `error` names the read failure when there was one. Nothing changed. | It tries again on a later tick. |
 
 A `409` that carries `auditId` and no `code` is an `Idempotency-Key` replay. It
 answers with the audit of the earlier call instead of acting twice. With
@@ -223,7 +228,9 @@ target other than the user being moved. A user counts if they have an
 assignment on the target or a pending or running `migrate-user` operation
 toward it. The verb answers `precondition-failed` when that count exceeds the
 cap. To leave room for the user being moved, a client with a cap of `N` sends
-`N - 1`.
+`N - 1`. A repeat of a step that already took effect is answered `already-*`
+before the load is counted, so a target that filled since then does not turn
+the repeat into a refusal.
 
 ### `POST /shared-gateways/<source>/users/<uid>/recover`
 
@@ -234,22 +241,25 @@ cap. To leave room for the user being moved, a client with a cap of `N` sends
 Recovers a user off an unavailable shared gateway onto a peer, keeping the
 user's home. Operation `recover-shared-<uid>-<source>-<epoch>`.
 
-The client's view that the source is unavailable is advisory. Right before the
-transaction, the fleet controller reads the source's Kubernetes status itself
-and answers one of three ways:
+The client's view that the source is unavailable is advisory. After the owner
+check and before the transaction, the fleet controller reads the source's pods
+from Kubernetes itself: a live read made for this call, not a cached
+observation. In the transaction, a recovery that already committed answers
+`already-committed` first, whatever the source looks like now. Otherwise the
+verb proceeds only when all of these hold:
 
-| Source observation | Answer |
+| Fact | Refusal when it does not hold |
 |---|---|
-| `not-ready` or `missing`, and fresh | The verb goes on to the checks below. |
-| `ready` | `precondition-failed`, naming the status. Nothing changes, however the other checks stand. |
-| none, `unknown`, malformed, or older than twice the observer's refresh interval | `observation-unknown`. Nothing changes. |
+| Kubernetes reports the source `missing` | `ready`: `precondition-failed`, "observed ready". `not-ready`: `precondition-failed`, "still has Kubernetes pods". No usable read: `observation-unknown`. |
+| The source's runtime heartbeat is not fresh (older than the gateway unreachable bound) | `precondition-failed`, "still has a fresh runtime heartbeat". |
+| No roll is active on the source (desired release equals live release) | `precondition-failed`, "is in an active roll". |
 
-A dry run makes the same read and gives the same answers. The server refuses
-only a source that is observably healthy or unknown. Any grace period before an
-unhealthy gateway counts as unavailable stays the client's decision: the client
-waits it out before it calls.
+These are the same fences the fleet controller's own pass applies. A dry run
+makes the same read and gives the same answers. One fence of that pass stays
+the client's decision: the grace period after a change to the source's root
+before it counts as unavailable. The client waits it out before it calls.
 
-In one transaction, the verb then checks that:
+The verb also checks, in the same transaction, that:
 
 - the source assignment is serving at `expectedSourceEpoch`;
 - the target is in the shared pool, running its live release, serving, ready,
@@ -260,7 +270,8 @@ In one transaction, the verb then checks that:
 
 It then moves the assignment to the target at epoch `+1` and records a
 succeeded `migrate-user` operation. Answers
-`{"operationId", "outcome": "committed" | "already-committed", "sourceKubernetesStatus"}`.
+`{"operationId", "outcome": "committed", "sourceKubernetesStatus"}`, or
+`{"operationId", "outcome": "already-committed"}` for a repeat.
 
 ### `POST /users/<uid>/runtime-reset`
 
@@ -288,10 +299,10 @@ epoch. Answers `{"operationId", "outcome"}`.
 ```
 
 Supersedes the roll of a shared peer when the roll has no live target and its
-source gateway is gone. The fleet controller reads the source's Kubernetes
-status itself, right before the transaction. The client's own view only tells
-it when to ask. An observation that is not usable, as defined for
-`observation-unknown` above, answers `observation-unknown`. In the
+source gateway is gone. After the owner check, the fleet controller reads the
+source's pods from Kubernetes itself, live, right before the transaction. The
+client's own view only tells it when to ask. A read that fails or returns no
+usable status answers `observation-unknown`. In the
 transaction, the verb checks that:
 
 - the source and the target are running shared pool members;
@@ -327,6 +338,9 @@ A new continuous operation's id must be the digest of the user, slug, source,
 target and the user's current source assignment epoch. Any other id answers
 `precondition-failed`. The verb also checks, in the same transaction, that:
 
+- `slug` is the slug on the user's record;
+- the user has no other pending or running `migrate-user` operation, or the
+  verb answers `precondition-failed` naming it;
 - the target load is within the cap;
 - no operator holds the user;
 - for a drain, the source is still draining and its replacement pairing is
@@ -341,7 +355,9 @@ When the operation exists, the verb does one of three things:
   return, an operator retry, or a drain move superseded by an activation.
 - Any other ending answers `precondition-failed`.
 
-Answers `{"operationId", "outcome": "created" | "rearmed" | "already-enqueued"}`.
+A pending or running operation of the same id is answered `already-enqueued`
+before the other-migration and load checks. Answers
+`{"operationId", "outcome": "created" | "rearmed" | "already-enqueued"}`.
 
 ### `POST /placement-migrations/<operation>/supersede`
 

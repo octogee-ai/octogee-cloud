@@ -1153,6 +1153,15 @@ export interface UnavailableGatewayRecoveryParams {
   sharedGatewayIds: readonly string[];
   targetHeartbeatMaxAgeMs: number;
   validateTarget?: (context: UnavailableGatewayRecoveryTargetValidationContext) => Promise<void>;
+  validateSource?: (context: UnavailableGatewayRecoverySourceValidationContext) => Promise<void>;
+}
+
+export interface UnavailableGatewayRecoverySourceValidationContext {
+  transaction: PlatformStateTransaction;
+  sourceGatewayId: string;
+  sourceDesiredRelease: number | null;
+  sourceLiveRelease: number | null;
+  sourceHeartbeatAt: number | null;
 }
 
 export interface UnavailableGatewayRecoveryTargetValidationContext {
@@ -1463,6 +1472,24 @@ async function clearRecoveredSourceMount(
   });
 }
 
+async function validateRecoverySource(
+  tx: PlatformStateTransaction,
+  params: UnavailableGatewayRecoveryParams,
+  sourceRootData: Data | undefined,
+  sourceRuntime: Stored<FleetRegistryRecord> | null,
+): Promise<void> {
+  if (!params.validateSource) return;
+  const root = projectGatewayDesiredRootForGateway(sourceRootData, params.fromGatewayId);
+  const runtime = runtimeDocument(sourceRuntime);
+  await params.validateSource({
+    transaction: tx,
+    sourceGatewayId: params.fromGatewayId,
+    sourceDesiredRelease: root?.desiredRelease ?? null,
+    sourceLiveRelease: root?.liveRelease ?? null,
+    sourceHeartbeatAt: isGatewayRuntimeDoc(runtime) ? millisFromUnknown(runtime.heartbeat.lastHeartbeatAt) : null,
+  });
+}
+
 export async function commitUnavailableGatewayRecoveryAtomic(
   deps: FleetStateDeps,
   params: UnavailableGatewayRecoveryParams,
@@ -1542,6 +1569,7 @@ export async function commitUnavailableGatewayRecoveryInTransaction(
     sourceAssignment,
     now,
   });
+  await validateRecoverySource(tx, params, withoutRevision(sourceRoot), sourceRuntime);
   if (sourceRoot?.desiredStatus === "draining") await supersedeDrainingMigrations(tx, params, now);
   const controlState = resolveUserGatewayControlState(targetRootData, params.uid);
   await clearRecoveredSourceMount(tx, sourceRuntime, params.fromGatewayId, params.slug);

@@ -18,18 +18,24 @@ const TARGET = "shared-b";
 const OWNED = { placementAutomationOwner: "client", placementAutomationYieldedAt: NOW - 60_000 };
 const PAYLOAD = { imageRepository: "registry.example/gateway", imageTag: "abc1234" };
 
-const OBSERVATION_MAX_AGE_MS = 240_000;
 const MISSING: GatewayKubernetesObservation = { status: "missing", totalPods: 0, readyPods: 0, observedAt: NOW - 1_000 };
 const NOT_READY: GatewayKubernetesObservation = { status: "not-ready", totalPods: 1, readyPods: 0, observedAt: NOW - 1_000 };
 const READY: GatewayKubernetesObservation = { status: "ready", totalPods: 1, readyPods: 1, observedAt: NOW - 1_000 };
 
 let observation: GatewayKubernetesObservation | null = null;
+let observeFailure: Error | null = null;
+let observed: string[] = [];
+let duringObservation: () => void = () => undefined;
 
 const capabilities: AdminPlacementSharedCapabilities = {
-  observeGatewayKubernetes: async () => observation,
+  observeGatewayKubernetes: async (gatewayId) => {
+    observed.push(gatewayId);
+    duringObservation();
+    if (observeFailure !== null) throw observeFailure;
+    return observation;
+  },
   platformArtifact: PAYLOAD,
   operationJournalRetentionMs: 1_000,
-  kubernetesObservationMaxAgeMs: OBSERVATION_MAX_AGE_MS,
   operationFailureIsTransient: (error) => error.startsWith("transient:"),
   gatewayStartupUnavailable: (error) => error === "gateway starting; retry shortly",
   sourceRecoveryForwardRetryable: () => false,
@@ -153,6 +159,9 @@ function audits(): Data[] {
 
 beforeEach(() => {
   observation = null;
+  observeFailure = null;
+  observed = [];
+  duringObservation = () => undefined;
   seed({});
 });
 
@@ -164,8 +173,6 @@ const recover = (body: Data = recoverBody(), query = "") =>
 const UNUSABLE_OBSERVATIONS: [string, GatewayKubernetesObservation | null][] = [
   ["absent", null],
   ["unknown", { status: "unknown", totalPods: 0, readyPods: 0, observedAt: NOW }],
-  ["older than the freshness bound", { ...MISSING, observedAt: NOW - OBSERVATION_MAX_AGE_MS - 1 }],
-  ["from the future", { ...MISSING, observedAt: NOW + 1 }],
   ["of an unrecognised status", { ...MISSING, status: "gone" } as unknown as GatewayKubernetesObservation],
   ["without pod counts", { ...MISSING, totalPods: "0" } as unknown as GatewayKubernetesObservation],
 ];
@@ -189,14 +196,94 @@ describe("POST /shared-gateways/:id/users/:uid/recover", () => {
     expect(audits()).toEqual([expect.objectContaining({ status: "completed" })]);
   });
 
-  it("recovers from a source the server observes as not ready", async () => {
+  it("refuses a source the server observes as not ready, because it still has pods", async () => {
     seed(pool());
     observation = NOT_READY;
 
+    const res = await recover().expect(409);
+
+    expect(res.body).toEqual({
+      code: "precondition-failed",
+      error: `shared source ${SOURCE} still has Kubernetes pods; retaining assignments until it is missing`,
+    });
+    expect(fleetEvents()).toEqual([]);
+  });
+
+  it("refuses a missing source that still has a fresh runtime heartbeat", async () => {
+    seed({ ...pool(), [`glmGateways/${SOURCE}`]: runtime(SOURCE, { kubernetes: MISSING }) });
+
+    const res = await recover().expect(409);
+
+    expect(res.body).toEqual({
+      code: "precondition-failed",
+      error: `source ${SOURCE} still has a fresh runtime heartbeat while Kubernetes reports missing`,
+    });
+    expect(fleetEvents()).toEqual([]);
+  });
+
+  it("recovers from a missing source whose runtime heartbeat has gone stale", async () => {
+    const stale = { status: "ready", lastHeartbeatAt: NOW - 10 * 60_000, mountedCustomers: [] };
+    seed({ ...pool(), [`glmGateways/${SOURCE}`]: runtime(SOURCE, { heartbeat: stale, kubernetes: MISSING }) });
+
     const res = await recover().expect(200);
 
-    expect(res.body).toEqual({ operationId: RECOVERY, outcome: "committed", sourceKubernetesStatus: "not-ready" });
-    expect(records.get(`gateways/${TARGET}/assignments/${UID}`)).toMatchObject({ updatedByOperationId: RECOVERY });
+    expect(res.body).toEqual({ operationId: RECOVERY, outcome: "committed", sourceKubernetesStatus: "missing" });
+  });
+
+  it("refuses a source in an active roll", async () => {
+    seed({ ...pool(), [`gateways/${SOURCE}`]: sharedRoot(SOURCE, { latestRelease: 2, desiredRelease: 2 }) });
+
+    const res = await recover().expect(409);
+
+    expect(res.body).toEqual({ code: "precondition-failed", error: `shared source ${SOURCE} is in an active roll` });
+    expect(fleetEvents()).toEqual([]);
+  });
+
+  it("answers observation-unknown and writes nothing when the Kubernetes read fails", async () => {
+    seed(pool());
+    observeFailure = new Error("pods is forbidden");
+
+    const res = await recover().expect(409);
+
+    expect(res.body).toEqual({ code: "observation-unknown", error: `the Kubernetes status of ${SOURCE} is unknown: pods is forbidden` });
+    expect(fleetEvents()).toEqual([]);
+    expect(audits()).toEqual([expect.objectContaining({ status: "failed" })]);
+  });
+
+  it("answers placement-owner without reading Kubernetes while the fleet controller owns placement", async () => {
+    const rows = pool();
+    delete rows["config/orchestrator"];
+    seed(rows);
+    observeFailure = new Error("must not be read");
+
+    const res = await recover().expect(409);
+
+    expect(res.body.code).toBe("placement-owner");
+    expect(observed).toEqual([]);
+  });
+
+  it("answers placement-owner and writes nothing when the owner changes between the first check and the write", async () => {
+    seed(pool());
+    duringObservation = () => records.set("config/orchestrator", { placementAutomationOwner: "fleet-controller" });
+
+    const res = await recover().expect(409);
+
+    expect(res.body.code).toBe("placement-owner");
+    expect(observed).toEqual([SOURCE]);
+    expect(records.has(`gateways/${SOURCE}/assignments/${UID}`)).toBe(true);
+    expect(records.has(`glmOperations/${RECOVERY}`)).toBe(false);
+  });
+
+  it("answers a repeat as already committed after the source came back and the target filled", async () => {
+    seed(pool());
+    await recover().expect(200);
+    observation = READY;
+    records.set(`gateways/${TARGET}/assignments/uid-bob`, assignment(TARGET, "uid-bob"));
+    records.set(`gateways/${TARGET}/assignments/uid-carol`, assignment(TARGET, "uid-carol"));
+
+    const res = await recover(recoverBody({ expectedTargetUsersAtMost: 0 })).expect(200);
+
+    expect(res.body).toEqual({ operationId: RECOVERY, outcome: "already-committed" });
   });
 
   it("never recovers from a source the server observes as ready, even when every other fence holds", async () => {
@@ -238,7 +325,7 @@ describe("POST /shared-gateways/:id/users/:uid/recover", () => {
 
     const res = await recover().expect(200);
 
-    expect(res.body).toEqual({ operationId: RECOVERY, outcome: "already-committed", sourceKubernetesStatus: "missing" });
+    expect(res.body).toEqual({ operationId: RECOVERY, outcome: "already-committed" });
     expect(fleetEvents()).toHaveLength(before);
   });
 
@@ -502,14 +589,23 @@ describe("POST /shared-gateways/:id/roll-recovery", () => {
     expect(fleetEvents()).toEqual([]);
   });
 
-  it("answers observation-unknown when the server's observation is older than the freshness bound", async () => {
+  it("answers observation-unknown and changes nothing when the Kubernetes read fails", async () => {
     seed(rollingSeed());
-    observation = { ...MISSING, observedAt: NOW - OBSERVATION_MAX_AGE_MS - 1 };
+    observeFailure = new Error("connection refused");
 
     const res = await rollRecovery().expect(409);
 
-    expect(res.body.code).toBe("observation-unknown");
+    expect(res.body).toEqual({ code: "observation-unknown", error: `the Kubernetes status of ${SOURCE} is unknown: connection refused` });
     expect(fleetEvents()).toEqual([]);
+  });
+
+  it("answers placement-owner without reading Kubernetes while the fleet controller owns placement", async () => {
+    const rows = rollingSeed();
+    delete rows["config/orchestrator"];
+    seed(rows);
+
+    expect((await rollRecovery().expect(409)).body.code).toBe("placement-owner");
+    expect(observed).toEqual([]);
   });
 
   it("refuses when the target's releases moved", async () => {
@@ -545,6 +641,10 @@ const PLACEMENT = continuousPlacementMigrationOperationId({ uid: UID, builderSlu
 const enqueueBody = (overrides: Data = {}) => ({
   slug: SLUG, fromGatewayId: SOURCE, toGatewayId: TARGET, source: "continuous-placement-policy", operationId: PLACEMENT,
   expectedTargetUsersAtMost: 5, ...overrides,
+});
+const OTHER_TARGET = "shared-c";
+const OTHER_PLACEMENT = continuousPlacementMigrationOperationId({
+  uid: UID, builderSlug: SLUG, fromGatewayId: SOURCE, toGatewayId: OTHER_TARGET, sourceAssignmentEpoch: 3,
 });
 const enqueue = (body: Data = enqueueBody(), query = "") => request(app()).post(`/users/${UID}/placement-migrations${query}`).send(body);
 
@@ -613,6 +713,52 @@ describe("POST /users/:uid/placement-migrations", () => {
 
     expect(res.body.error).toBe(`operation ${PLACEMENT} does not match the user's current assignment on ${SOURCE}`);
     expect(fleetEvents()).toEqual([]);
+  });
+
+  it("refuses while the user has another pending migration, naming it", async () => {
+    seed({
+      ...pool(),
+      "glmOperations/placement-earlier": {
+        kind: "migrate-user", status: "pending", inputUid: UID, input: { uid: UID, toGatewayId: OTHER_TARGET, fromGatewayId: SOURCE }, steps: [],
+      },
+    });
+
+    const res = await enqueue().expect(409);
+
+    expect(res.body).toEqual({ code: "precondition-failed", error: `user ${UID} already has pending migration placement-earlier` });
+    expect(fleetEvents()).toEqual([]);
+  });
+
+  it("creates only one of two concurrent migrations for the same user", async () => {
+    seed({ ...pool(), [`gateways/${OTHER_TARGET}`]: sharedRoot(OTHER_TARGET) });
+
+    const responses = await Promise.all([enqueue(), enqueue(enqueueBody({ toGatewayId: OTHER_TARGET, operationId: OTHER_PLACEMENT }))]);
+
+    expect(responses.map((res) => res.status).sort()).toEqual([200, 409]);
+    const refused = responses.find((res) => res.status === 409);
+    expect(refused?.body.error).toMatch(new RegExp(`^user ${UID} already has pending migration `));
+    const created = [PLACEMENT, OTHER_PLACEMENT].filter((id) => records.has(`glmOperations/${id}`));
+    expect(created).toHaveLength(1);
+  });
+
+  it("refuses a slug that does not match the user's record", async () => {
+    seed(pool());
+    const wrong = continuousPlacementMigrationOperationId({ uid: UID, builderSlug: "mallory", fromGatewayId: SOURCE, toGatewayId: TARGET, sourceAssignmentEpoch: 3 });
+
+    const res = await enqueue(enqueueBody({ slug: "mallory", operationId: wrong })).expect(409);
+
+    expect(res.body).toEqual({ code: "precondition-failed", error: `slug mallory does not match user ${UID}'s slug ${SLUG}` });
+    expect(fleetEvents()).toEqual([]);
+  });
+
+  it("answers a repeat as already enqueued after the target filled", async () => {
+    seed(pool());
+    await enqueue().expect(200);
+    records.set(`gateways/${TARGET}/assignments/uid-bob`, assignment(TARGET, "uid-bob"));
+
+    const res = await enqueue(enqueueBody({ expectedTargetUsersAtMost: 0 })).expect(200);
+
+    expect(res.body).toEqual({ operationId: PLACEMENT, outcome: "already-enqueued" });
   });
 
   it("refuses when the target is at the caller's cap", async () => {

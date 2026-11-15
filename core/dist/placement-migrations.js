@@ -566,15 +566,29 @@ async function placementMigrationRearm(context, transaction, userRecord, request
     }
     return rearmedPlacementMigrationPatch();
 }
-export async function enqueuePlacementMigrationInTransaction(transaction, context, request) {
+async function assertNoOtherActivePlacementMigration(transaction, request) {
+    const active = await transaction.journal.operations.listForUid(request.uid, {
+        kind: PLACEMENT_MIGRATION_KIND, statuses: ["pending", "running"],
+    });
+    const other = active.find((operation) => operation.id !== request.operationId);
+    if (other !== undefined) {
+        throw new PlacementMigrationAuthorityError(`user ${request.uid} already has ${other.status} migration ${other.id}`);
+    }
+}
+export async function enqueuePlacementMigrationInTransaction(transaction, context, request, admit = async () => undefined) {
     const userRecord = await transaction.users.records.get(request.uid);
     if (userRecord?.openclaw.managedBy === "operator")
         throw new HeldUserPlacementError(request.uid);
+    if (userRecord?.slug !== request.builderSlug) {
+        throw new PlacementMigrationAuthorityError(`slug ${request.builderSlug} does not match user ${request.uid}'s slug ${userRecord?.slug ?? "(none)"}`);
+    }
     const sharedDrain = request.sharedDrain;
     if (sharedDrain)
         await assertSharedDrainAuthority(transaction, { ...request, sharedDrain });
     const existing = await transaction.journal.operations.get(request.operationId);
     if (existing === null) {
+        await assertNoOtherActivePlacementMigration(transaction, request);
+        await admit();
         await transaction.journal.operations.create({
             id: request.operationId,
             kind: PLACEMENT_MIGRATION_KIND,
@@ -600,6 +614,8 @@ export async function enqueuePlacementMigrationInTransaction(transaction, contex
     const rearm = await placementMigrationRearm(context, transaction, userRecord, request, existing);
     if (rearm === null)
         return "already-enqueued";
+    await assertNoOtherActivePlacementMigration(transaction, request);
+    await admit();
     await transaction.journal.operations.patch(request.operationId, rearm, {
         status: [existing.status],
         startedAt: existing.startedAt,

@@ -1,7 +1,7 @@
 import type { AdminPlacementSharedCapabilities } from "@octogee/core/admin-placement-shared-router";
 import type { GatewayArtifact } from "@octogee/core/gateway-live-release";
 import type { Operation } from "@octogee/shared/types/glm";
-import { gatewayKubernetesStatus, KUBERNETES_OBSERVATION_REFRESH_MS, type GatewayPodDiagnostics } from "./gateway-kubernetes-observation.js";
+import { gatewayKubernetesStatus, type GatewayPodDiagnostics } from "./gateway-kubernetes-observation.js";
 import { sourceRecoveryForwardRetryable } from "./legacy-migration-recovery.js";
 import { classifyOperationFailure, isGatewayStartupUnavailable, OPERATION_JOURNAL_RETENTION_MS } from "./operation-retry.js";
 
@@ -29,7 +29,6 @@ export function adminPlacementSharedCapabilities(
     },
     platformArtifact: deps.platformArtifact ?? null,
     operationJournalRetentionMs: OPERATION_JOURNAL_RETENTION_MS,
-    kubernetesObservationMaxAgeMs: 2 * KUBERNETES_OBSERVATION_REFRESH_MS,
     operationFailureIsTransient: (error) => classifyOperationFailure(error) === "transient",
     gatewayStartupUnavailable: isGatewayStartupUnavailable,
     sourceRecoveryForwardRetryable: (operation) => sourceRecoveryForwardRetryable(operation as unknown as Partial<Operation>),

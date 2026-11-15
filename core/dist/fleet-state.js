@@ -1086,6 +1086,19 @@ async function clearRecoveredSourceMount(tx, sourceRuntime, gatewayId, slug) {
         },
     });
 }
+async function validateRecoverySource(tx, params, sourceRootData, sourceRuntime) {
+    if (!params.validateSource)
+        return;
+    const root = projectGatewayDesiredRootForGateway(sourceRootData, params.fromGatewayId);
+    const runtime = runtimeDocument(sourceRuntime);
+    await params.validateSource({
+        transaction: tx,
+        sourceGatewayId: params.fromGatewayId,
+        sourceDesiredRelease: root?.desiredRelease ?? null,
+        sourceLiveRelease: root?.liveRelease ?? null,
+        sourceHeartbeatAt: isGatewayRuntimeDoc(runtime) ? millisFromUnknown(runtime.heartbeat.lastHeartbeatAt) : null,
+    });
+}
 export async function commitUnavailableGatewayRecoveryAtomic(deps, params) {
     const now = nowMs(deps);
     await deps.store.transaction({ label: "fleet-state.commitUnavailableGatewayRecoveryAtomic" }, (tx) => commitUnavailableGatewayRecoveryInTransaction(tx, params, now));
@@ -1145,6 +1158,7 @@ export async function commitUnavailableGatewayRecoveryInTransaction(tx, params, 
         sourceAssignment,
         now,
     });
+    await validateRecoverySource(tx, params, withoutRevision(sourceRoot), sourceRuntime);
     if (sourceRoot?.desiredStatus === "draining")
         await supersedeDrainingMigrations(tx, params, now);
     const controlState = resolveUserGatewayControlState(targetRootData, params.uid);

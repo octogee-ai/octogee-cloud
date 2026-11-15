@@ -121,6 +121,14 @@ export interface UnavailableGatewayRecoveryParams {
     sharedGatewayIds: readonly string[];
     targetHeartbeatMaxAgeMs: number;
     validateTarget?: (context: UnavailableGatewayRecoveryTargetValidationContext) => Promise<void>;
+    validateSource?: (context: UnavailableGatewayRecoverySourceValidationContext) => Promise<void>;
+}
+export interface UnavailableGatewayRecoverySourceValidationContext {
+    transaction: PlatformStateTransaction;
+    sourceGatewayId: string;
+    sourceDesiredRelease: number | null;
+    sourceLiveRelease: number | null;
+    sourceHeartbeatAt: number | null;
 }
 export interface UnavailableGatewayRecoveryTargetValidationContext {
     transaction: PlatformStateTransaction;

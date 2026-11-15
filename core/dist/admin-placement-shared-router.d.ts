@@ -7,7 +7,6 @@ export interface AdminPlacementSharedCapabilities extends PlacementMigrationClas
     observeGatewayKubernetes(gatewayId: string): Promise<GatewayKubernetesObservation | null>;
     platformArtifact: ReleasePayload | null;
     operationJournalRetentionMs: number;
-    kubernetesObservationMaxAgeMs: number;
 }
 export interface AdminPlacementSharedRouterDeps extends AdminPlacementSharedCapabilities {
     store: PlatformStateStore;
