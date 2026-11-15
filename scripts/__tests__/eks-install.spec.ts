@@ -187,6 +187,13 @@ describe("eks-install.sh", () => {
       expect(values.projectRunner.apiServerEgressCidrs).toEqual(["192.168.10.20/32", "192.168.30.40/32"]);
     });
 
+    it("runs shared gateways at the m sizing tier unless SHARED_GATEWAY_TIER names another", () => {
+      expect(up().status).toBe(0);
+      expect(JSON.parse(installed("environment.yaml"))["glm-controller"].gatewayValues).toEqual({ classDefaults: { shared: "m" } });
+      expect(up({ SHARED_GATEWAY_TIER: "s" }).status).toBe(0);
+      expect(JSON.parse(installed("environment.yaml"))["glm-controller"].gatewayValues).toEqual({ classDefaults: { shared: "s" } });
+    });
+
     it("resizes the node groups of an existing cluster instead of creating it", () => {
       expect(up({ CLUSTER_EXISTS: "1", LT_EXISTS: "1", GATEWAY_NODES: "3" }).status).toBe(0);
       expect(calls("eksctl", "create cluster")).toEqual([]);
@@ -228,6 +235,7 @@ describe("eks-install.sh", () => {
     it("rejects a node count or gVisor release it cannot use before calling AWS", () => {
       expect(up({ GATEWAY_NODES: "0" }).stderr).toContain("GATEWAY_NODES must be a whole number of nodes");
       expect(up({ GVISOR_RELEASE: "main" }).stderr).toContain("GVISOR_RELEASE must be latest or a gVisor release");
+      expect(up({ SHARED_GATEWAY_TIER: "xl" }).stderr).toContain("SHARED_GATEWAY_TIER must be s, m or l");
       expect(host.calls().filter(call => call.startsWith("aws "))).toEqual([]);
     });
   });

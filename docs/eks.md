@@ -80,7 +80,7 @@ state directory and in a Secret in the cluster.
   ```
 
   Small increases are often approved within minutes; a new account can wait
-  longer.
+  longer. Until then, [a small install](#a-small-install) fits in 4 vCPUs.
 
 These are billable resources that run until you remove them. With the defaults
 below, the cluster runs four `m6i.xlarge` nodes: two for the platform and two
@@ -185,11 +185,25 @@ plane; run `up` again after an upgrade.
 | `SYSTEM_NODES` | `2` | Nodes in the `system` group. |
 | `GATEWAY_NODES` | `2` | Nodes in the `gateways` group, one for each gateway. |
 | `DB_CLASS` | `db.t4g.medium` | RDS instance class. |
+| `SHARED_GATEWAY_TIER` | `m` | Sizing tier of shared gateways. `s`, 1 CPU and 4 GiB, fits a 2-vCPU gateway node. |
 | `GVISOR_RELEASE` | `latest` | gVisor release the gateway nodes install, such as `20251110.0`. Applies when the launch template is created. |
 
 The node groups do not scale on their own. Gateways keep one pod per node, so
 `GATEWAY_NODES` must be at least the number of gateways you run. To change a
 group's size, run `up` again with the new count.
+
+### A small install
+
+A new account's 5 vCPUs fit one 2-vCPU node for the platform and one for a
+shared gateway at the `s` tier:
+
+```bash
+INSTANCE_TYPE=m6i.large GATEWAY_INSTANCE_TYPE=m6i.large SYSTEM_NODES=1 GATEWAY_NODES=1 \
+  SHARED_GATEWAY_TIER=s scripts/ops/eks-install.sh up
+```
+
+An isolated gateway needs a gateway node of its own. Once the quota allows
+it, run `up` again with `GATEWAY_NODES=2` and the same other settings.
 
 | Flag | Effect |
 | --- | --- |

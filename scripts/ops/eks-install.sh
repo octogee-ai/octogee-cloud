@@ -33,9 +33,11 @@ SYSTEM_NODES="${SYSTEM_NODES:-2}"
 GATEWAY_NODES="${GATEWAY_NODES:-2}"
 DB_CLASS="${DB_CLASS:-db.t4g.medium}"
 GVISOR_RELEASE="${GVISOR_RELEASE:-latest}"
+SHARED_GATEWAY_TIER="${SHARED_GATEWAY_TIER:-m}"
 [[ -n "$AWS_REGION" ]] || die "Set AWS_REGION to the AWS region to install into"
 [[ "$SYSTEM_NODES" =~ ^[1-9][0-9]*$ ]] || die "SYSTEM_NODES must be a whole number of nodes"
 [[ "$GATEWAY_NODES" =~ ^[1-9][0-9]*$ ]] || die "GATEWAY_NODES must be a whole number of nodes"
+[[ "$SHARED_GATEWAY_TIER" =~ ^(s|m|l)$ ]] || die "SHARED_GATEWAY_TIER must be s, m or l"
 [[ "$GVISOR_RELEASE" =~ ^(latest|[0-9]{8}(\.[0-9]+)?)$ ]] || die "GVISOR_RELEASE must be latest or a gVisor release such as 20251110.0"
 
 KUBE_CONTEXT="eks_${AWS_REGION}_${NAME}"
@@ -377,9 +379,9 @@ environment_values() {
   [[ -n "$cidrs" ]] || die "Found no Kubernetes API server endpoint in the cluster"
   node --input-type=module - "$STATE/digests.json" "$PUBLISHED/" \
     "$(node -p "require('$ROOT/infra/gateway/openclaw-tarball/current.json').sourceSha")" \
-    "$AWS_REGION" "$DB_HOST" "$VPC_CIDR" "$ASSETS_BUCKET" "$WORKSPACES_BUCKET" "$cidrs" > "$STATE/environment.yaml" <<'JS'
+    "$AWS_REGION" "$DB_HOST" "$VPC_CIDR" "$ASSETS_BUCKET" "$WORKSPACES_BUCKET" "$cidrs" "$SHARED_GATEWAY_TIER" > "$STATE/environment.yaml" <<'JS'
 import { readFileSync } from "node:fs";
-const [file, prefix, openclaw, region, databaseHost, vpcCidr, assets, workspaces, cidrs] = process.argv.slice(2);
+const [file, prefix, openclaw, region, databaseHost, vpcCidr, assets, workspaces, cidrs, sharedTier] = process.argv.slice(2);
 const { sha, images } = JSON.parse(readFileSync(file, "utf8"));
 const tag = sha.slice(0, 7);
 const image = name => ({ repository: `${prefix}${name}`, tag, digest: images[name] });
@@ -396,6 +398,7 @@ console.log(JSON.stringify({
   "gateway-edge": { image: image("gateway-edge") },
   "glm-controller": {
     image: image("glm-controller"),
+    gatewayValues: { classDefaults: { shared: sharedTier } },
     platformRelease: {
       sourceSha: sha,
       gatewayImageRepository: `${prefix}octogee-gateway`,
