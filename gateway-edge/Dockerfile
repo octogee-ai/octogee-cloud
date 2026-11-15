@@ -31,6 +31,8 @@ COPY core/package.json /core/package.json
 COPY core/dist /core/dist
 COPY shared/package.json /shared/package.json
 COPY shared/dist /shared/dist
+COPY core-testing/package.json /core-testing/package.json
+COPY core-testing/dist /core-testing/dist
 COPY gateway-edge/.npmrc gateway-edge/package.json gateway-edge/package-lock.json* ./
 RUN npm ci --ignore-scripts
 
