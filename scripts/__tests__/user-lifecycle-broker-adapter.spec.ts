@@ -40,6 +40,7 @@ import { openClawRuntimeUpdateGuard } from "../lib/openclaw-runtime-update-guard
 import { clearUserClaim, stubUserClaim, withUserClaim } from "./helpers/user-claim.js";
 import { houseOnlyUserEntitlements, installUserEntitlementsForTest } from "./helpers/user-entitlements.js";
 import { mattermostAccountSecretRef } from "../lib/mattermost-account-secrets.js";
+import { readProjectRestoreReady } from "@octogee/core/project-asset-state";
 import { recordIsolatedNativeInitialState } from "../lib/isolated-native-initial-state.js";
 import { activationManifestTarPath, captureTargetWorkspaceIdentities, restoreTargetWorkspaceIdentities, captureSourceWorkspaceIdentities, writeActivationManifest, readActivationManifest as realReadActivationManifest } from "@octogee/core/migration-activation-manifest";
 import { createRestoreHandler } from "../lib/fleet-http-migration.js";
@@ -3990,10 +3991,16 @@ describe("buildBrokeredLifecycleAdapter add config patch", () => {
       channels: { mattermost: { accounts: { ...config.channels.mattermost.accounts, ...patch.channels?.mattermost?.accounts } } } };
       return { mode: "rpc", attempts: 1 };
     });
-    const client = mkClient({ userSnapshot: vi.fn(async () => latest) });
+    const workspaceManifestReadUrl = vi.fn(async () => ({ url: "https://signed.test/manifest", method: "GET" as const, gcsPath: "manifest", expiresAt: "later" }));
+    const client = mkClient({ userSnapshot: vi.fn(async () => latest), workspaceManifestReadUrl });
     const adapter = buildBrokeredLifecycleAdapter({ client, rpc, log: vi.fn(), isIsolatedGateway: () => preCutover === true, projectCheckoutScope: () => "workspace-and-projects" });
-    if (mode === "mount") await adapter.applyAddUserConfigPatch(initial, { _coachPersonalToken: "pat-1" }, preCutover ? { migrationId: "pre-cutover" } : undefined);
-    else await adapter.reconcileConfiguredUserProjectAgents!(initial);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 404 })));
+    try {
+      if (mode === "mount") await adapter.applyAddUserConfigPatch(initial, { _coachPersonalToken: "pat-1" }, preCutover ? { migrationId: "pre-cutover" } : undefined);
+      else await adapter.reconcileConfiguredUserProjectAgents!(initial);
+    } finally { vi.unstubAllGlobals(); }
+    if (preCutover) expect(await readProjectRestoreReady(checkout, "alice", projectId)).toBe(true);
+    else expect(workspaceManifestReadUrl).not.toHaveBeenCalled();
     expect(rpc.agentsCreate).toHaveBeenCalledWith({ name: agentId, workspace });
     if (source === "deferred GitHub") {
       expect(gitMocks.cloneProjectRepo).not.toHaveBeenCalled();

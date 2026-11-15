@@ -652,6 +652,42 @@ describe("GitHub checkouts brokered through gateway-edge", () => {
       expect(await readProjectRestoreReady(dest, SLUG, "demo")).toBe(true);
     });
 
+    it("restores and marks a project ready on an isolated gateway whose computer is a pod", async () => {
+      delete process.env.OCTOGEE_PROJECTS_MOUNT;
+      const dest = path.join(paths.users, SLUG, "projects", "demo");
+      const { adapter, manifestRead } = restoringAdapter();
+
+      await expect(adapter.cloneProjectRepo(SLUG, "demo", null, { repoSource })).resolves.toBe(true);
+
+      expect(manifestRead).toHaveBeenCalled();
+      expect(await readProjectRestoreReady(dest, SLUG, "demo")).toBe(true);
+    });
+
+    it("restores a checkout that reached an isolated gateway without its restore marker", async () => {
+      delete process.env.OCTOGEE_PROJECTS_MOUNT;
+      const dest = path.join(paths.users, SLUG, "projects", "demo");
+      let isolated = false;
+      const { adapter } = restoringAdapter(() => isolated);
+      await expect(adapter.cloneProjectRepo(SLUG, "demo", null, { repoSource })).resolves.toBe(true);
+      expect(await readProjectRestoreReady(dest, SLUG, "demo")).toBe(false);
+      isolated = true;
+
+      await expect(adapter.cloneProjectRepo(SLUG, "demo", null, { repoSource, refreshRemote: true, gitExec: localGitExec })).resolves.toBe(true);
+
+      expect(await readProjectRestoreReady(dest, SLUG, "demo")).toBe(true);
+    });
+
+    it("fails the attach when an isolated gateway whose computer is a pod cannot restore a project", async () => {
+      delete process.env.OCTOGEE_PROJECTS_MOUNT;
+      const dest = path.join(paths.users, SLUG, "projects", "demo");
+      const { adapter, manifestRead } = restoringAdapter();
+      manifestRead.mockRejectedValue(new Error("fleet broker manifest read failed"));
+
+      await expect(adapter.cloneProjectRepo(SLUG, "demo", null, { repoSource })).rejects.toThrow("fleet broker manifest read failed");
+
+      expect(await readProjectRestoreReady(dest, SLUG, "demo")).toBe(false);
+    });
+
     it.each(["022", "077"])("refreshes an unchanged prepared checkout without repeating hydration under umask %s", async mask => {
       const umask = Number.parseInt(mask, 8);
       const previousUmask = process.umask(umask);
