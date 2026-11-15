@@ -21,7 +21,7 @@ import { pendingConditions } from "../resources/conditions.js";
 import { sameJson } from "../resources/validate.js";
 import type { Database } from "./database.js";
 
-export const RETAINED_CHANGE_WINDOW_MS = 24 * 60 * 60 * 1_000;
+export const DEFAULT_CHANGE_RETENTION_MS = 24 * 60 * 60 * 1_000;
 const IDEMPOTENCY_WINDOW = "24 hours";
 
 interface ProvisioningRow {
@@ -120,7 +120,7 @@ function decodePageToken(token: string): string {
 }
 
 export class ProvisioningStore {
-  constructor(readonly db: Database) {}
+  constructor(readonly db: Database, readonly changeRetentionMs: number = DEFAULT_CHANGE_RETENTION_MS) {}
 
   private get selectResource(): string {
     const t = this.db.table;
@@ -285,7 +285,7 @@ export class ProvisioningStore {
     return this.db.write(async (client) => {
       const { rows } = await client.query<{ through: string | null; count: string }>(
         `WITH gone AS (DELETE FROM ${t("version_log")} WHERE written_at < now() - make_interval(secs => $1) RETURNING version)
-         SELECT max(version) AS through, count(*) AS count FROM gone`, [RETAINED_CHANGE_WINDOW_MS / 1_000]);
+         SELECT max(version) AS through, count(*) AS count FROM gone`, [this.changeRetentionMs / 1_000]);
       if (rows[0].through !== null) {
         await client.query(`UPDATE ${t("counter")} SET pruned_through = GREATEST(pruned_through, $1) WHERE id = 1`, [rows[0].through]);
       }

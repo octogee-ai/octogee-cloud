@@ -118,6 +118,7 @@ export async function startImplementation(options: { replicas?: number; environm
     PROVISIONING_TOKEN_REVIEW_URL: `http://127.0.0.1:${(tokenReview.address() as AddressInfo).port}/apis/authentication.k8s.io/v1/tokenreviews`,
     PROVISIONING_TOKEN_REVIEW_TOKEN_FILE: tokenFile,
     PROVISIONING_HOST_ADAPTERS: "fake",
+    PROVISIONING_ALLOW_FAKE_HOST_ADAPTERS: "for-tests-only",
     ...options.environment,
   };
   const command = process.env.PROVISIONING_CONFORMANCE_COMMAND ?? DEFAULT_COMMAND;

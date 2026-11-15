@@ -15,7 +15,7 @@ The types are `@octogee/shared/types/provisioning-service`.
 | `GET /v1/users/{uid}/provisioning` | Read one. `?waitForGeneration=N&timeoutSeconds=T` holds until `status.observedGeneration >= N` or the work parks. | `200`, `404` |
 | `DELETE /v1/users/{uid}/provisioning` | Stops managing the user and its git keys. Deletes nothing in the chat or git host. | `204`, `409 work-running` |
 | `GET /v1/provisionings` | List: `?ready=true\|false&reason=<Reason>&workState=queued\|running\|retrying\|parked&limit=&pageToken=`. Answers `{ items, resourceVersion, nextPageToken? }`. | `200` |
-| `GET /v1/provisionings?watch=true&resourceVersion=V&timeoutSeconds=T` | Returns at once with every resource changed after `V`, or holds until one changes or the timeout passes. Answers `{ items, resourceVersion }`; ask again from the returned version. | `200`, `410 resource-version-expired` |
+| `GET /v1/provisionings?watch=true&resourceVersion=V&timeoutSeconds=T&limit=L` | Returns at once with the resources changed after `V`, oldest change first and at most `L` (default and maximum 500), or holds until one changes or the timeout passes. Answers `{ items, resourceVersion }`; ask again from the returned version, which is the last item's when the page was cut short. | `200`, `410 resource-version-expired` |
 | `POST /v1/users/{uid}/provisioning/retry` | Body `{ expectedAttempts? }`. Makes parked or retrying work due now. Honours `Idempotency-Key` for 24 hours. | `202`, `409 precondition-failed`, `409 not-retryable`, `409 idempotency-conflict` |
 | `GET /v1/users/{uid}/provisioning/events` | The last 50 attempts, newest first, with each step's outcome, reason and duration. | `200`, `404` |
 | `PUT /v1/users/{uid}/git-keys/{gatewayId}` | Body `{ spec: { publicKey } }`. Authorizes the key on the user's git owner. | `201`, `202`, `200`; body is the `GitKey`; `404` when the user has no provisioning |
@@ -64,6 +64,13 @@ migration is decided. Keys registered by the earlier path carry another title.
 The service leaves a key with the same public key under a holder it does not
 manage untouched and reports `Registered=False` with reason `GitKeyFailed`.
 
+## Chat accounts
+
+The chat host adapter adopts an existing chat account found by username or by
+email, as the earlier provisioning path did. The service assumes the email in a
+spec is verified by the caller; if a platform admits unverified emails, adoption
+by email would let one user take over another's chat account.
+
 ## Outputs
 
 `status.outputs.git` reports the repositories the service created or confirmed,
@@ -74,11 +81,24 @@ workspace; that signal stays with the gateway.
 
 One queue row per user in the service's own PostgreSQL schema. A spec or key
 write makes the row due; workers claim due rows with leases, so any number of
-replicas share the work and at most one attempt per user runs at a time. A
-failed attempt retries after `min(5 s * 2^attempts, 10 min)` with jitter; a
-terminal error or the twelfth transient failure parks the work until the spec
-changes or a retry is requested. Idle rows are resynced six hours after their
-last success.
+replicas share the work and at most one attempt per user runs at a time. An
+attempt stops calling hosts once its lease has gone a full lease period without
+a confirmed heartbeat. A failed attempt retries after
+`min(5 s * 2^attempts, 10 min)` with jitter; a terminal error, the twelfth
+transient failure, or a twelfth attempt that ended without finishing parks the
+work until the spec changes or a retry is requested. A key write leaves parked
+work parked. Idle rows are resynced six hours after their last success.
+
+## Known limits
+
+- A token issued by the chat host but not stored, because the attempt lost its
+  lease or the write failed, stays valid on the chat host; nothing revokes it.
+- A stored token is not checked against the chat host again on resync.
+- The conformance suite runs the implementation with in-process fake host
+  adapters, so it cannot yet assert host resource counts, account adoption, host
+  fault injection, the absence of overlapping host calls for one user, or
+  resync. The package's own tests cover these against the fakes; running the
+  real adapters against HTTP fake hosts is follow-up work.
 
 ## Schema
 
@@ -110,7 +130,10 @@ newer than it knows.
 | `PROVISIONING_TOKEN_REVIEW_CA_FILE` | no, `/var/run/secrets/kubernetes-api/ca.crt` for https | no | API server CA |
 | `PROVISIONING_CALLER_REQUESTS_PER_MINUTE` | no, `3000` | no | `/v1` requests a minute per caller service account |
 | `PROVISIONING_CALLER_CONCURRENT_WAITS` | no, `100` | no | held wait and watch requests per caller service account |
+| `PROVISIONING_CHANGE_RETENTION_SECONDS` | no, `86400` | no | how long watch can resume from an old `resourceVersion` |
 | `PROVISIONING_HOST_ADAPTERS` | yes | no | `real` in every deployment; `fake` only for tests |
+| `PROVISIONING_ALLOW_FAKE_HOST_ADAPTERS` | with `fake` | no | must be `for-tests-only`, or `fake` refuses to start |
+| `PROVISIONING_FAKE_HOST_DELAY_MS` | no, `0` | no | delay of each fake host call, for tests |
 | `PROVISIONING_CHAT_HOST_URL` | with `real` | no | chat host base URL |
 | `PROVISIONING_CHAT_HOST_ADMIN_TOKEN` | with `real` | yes | chat host admin token |
 | `PROVISIONING_CHAT_HOST_ADMIN_USER_ID` | no | no | chat host admin user id |
@@ -142,6 +165,10 @@ starts a fake TokenReview endpoint, empties the database named by
 a database and a non-superuser role of its own), and starts the implementation
 with `PROVISIONING_CONFORMANCE_COMMAND` (default: this package's `src/main.ts`).
 The implementation receives the settings in the environment table above, with
-`PROVISIONING_HOST_ADAPTERS=fake`, `PROVISIONING_DB_SSLMODE=disable` and
-`PROVISIONING_TOKEN_REVIEW_URL` pointing at the fake. A `resourceVersion`
+`PROVISIONING_HOST_ADAPTERS=fake`, `PROVISIONING_ALLOW_FAKE_HOST_ADAPTERS=for-tests-only`,
+`PROVISIONING_DB_SSLMODE=disable` and `PROVISIONING_TOKEN_REVIEW_URL` pointing at
+the fake; some cases also set the limits, the retention window or the fake host
+delay. `/metrics` must report `provisioning_leases_held`, the attempts this
+replica holds, and `provisioning_lease_expired_total`, the expired leases it took
+over; the replica case uses them to prove a takeover happened. A `resourceVersion`
 newer than the service has issued answers `410`, like an expired one.

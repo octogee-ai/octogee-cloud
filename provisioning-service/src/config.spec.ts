@@ -65,9 +65,19 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ ...BASE })).toThrow("PROVISIONING_HOST_ADAPTERS");
   });
 
-  it("uses the fakes only when asked for them by name, and rejects any other adapter value", () => {
-    expect(loadConfig({ ...BASE, PROVISIONING_HOST_ADAPTERS: "fake" }).hosts).toEqual({ kind: "fake" });
+  it("refuses the fake host adapters unless the test-only consent is also set, and rejects any other adapter value", () => {
+    expect(() => loadConfig({ ...BASE, PROVISIONING_HOST_ADAPTERS: "fake" })).toThrow("PROVISIONING_ALLOW_FAKE_HOST_ADAPTERS=for-tests-only");
+    expect(() => loadConfig({ ...BASE, PROVISIONING_HOST_ADAPTERS: "fake", PROVISIONING_ALLOW_FAKE_HOST_ADAPTERS: "yes" })).toThrow("PROVISIONING_ALLOW_FAKE_HOST_ADAPTERS");
+    const consent = { ...BASE, PROVISIONING_HOST_ADAPTERS: "fake", PROVISIONING_ALLOW_FAKE_HOST_ADAPTERS: "for-tests-only" };
+    expect(loadConfig(consent).hosts).toEqual({ kind: "fake", delayMs: 0 });
+    expect(loadConfig({ ...consent, PROVISIONING_FAKE_HOST_DELAY_MS: "200" }).hosts).toEqual({ kind: "fake", delayMs: 200 });
     expect(() => loadConfig({ ...BASE, PROVISIONING_HOST_ADAPTERS: "mattermost" })).toThrow("PROVISIONING_HOST_ADAPTERS");
+  });
+
+  it("keeps changes for a day unless PROVISIONING_CHANGE_RETENTION_SECONDS says otherwise", () => {
+    expect(loadConfig({ ...BASE, ...REAL }).changeRetentionSeconds).toBe(86_400);
+    expect(loadConfig({ ...BASE, ...REAL, PROVISIONING_CHANGE_RETENTION_SECONDS: "2" }).changeRetentionSeconds).toBe(2);
+    expect(() => loadConfig({ ...BASE, ...REAL, PROVISIONING_CHANGE_RETENTION_SECONDS: "0" })).toThrow("PROVISIONING_CHANGE_RETENTION_SECONDS");
   });
 
   it("rejects a credential key that is not 32 bytes and a schema that is not an identifier", () => {

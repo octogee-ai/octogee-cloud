@@ -21,7 +21,7 @@ describe("hostsFromConfig", () => {
     const real = hostsFromConfig({ kind: "real", settings: SETTINGS }, log);
     expect(real.chat).not.toBeInstanceOf(FakeChatHost);
     expect(real.git).not.toBeInstanceOf(FakeGitHost);
-    const fake = hostsFromConfig({ kind: "fake" }, log);
+    const fake = hostsFromConfig({ kind: "fake", delayMs: 0 }, log);
     expect(fake.chat).toBeInstanceOf(FakeChatHost);
     expect(fake.git).toBeInstanceOf(FakeGitHost);
   });

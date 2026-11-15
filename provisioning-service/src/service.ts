@@ -34,6 +34,7 @@ export interface ServiceOptions {
   concurrency?: number;
   runWorker?: boolean;
   limits: CallerLimits;
+  changeRetentionMs?: number;
 }
 
 export interface RunningService {
@@ -52,7 +53,7 @@ export async function startService(options: ServiceOptions): Promise<RunningServ
   const db = openDatabase({ connection: options.database, schema: options.databaseSchema, log: options.log });
   const schema = await migrate(db);
   if (schema.from !== schema.to) options.log.info("database schema upgraded", { schema: options.databaseSchema, ...schema });
-  const store = new ProvisioningStore(db);
+  const store = new ProvisioningStore(db, options.changeRetentionMs);
   const queue = new WorkQueue(db, { holder: options.replicaId, log: options.log, ...options.queue });
   const credentials = new PostgresCredentialStore(db, options.credentialKey);
   const notifier = new ChangeNotifier(db, options.log);

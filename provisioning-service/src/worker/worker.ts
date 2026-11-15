@@ -40,11 +40,13 @@ export class Worker {
         })
         .finally(() => {
           this.running.delete(attempt);
+          this.deps.metrics.setLeasesHeld(this.running.size);
           this.deps.notifier.wakeAll();
         });
       this.running.add(attempt);
     }
-    if (Date.now() - this.lastPrune > PRUNE_INTERVAL_MS) {
+    this.deps.metrics.setLeasesHeld(this.running.size);
+    if (Date.now() - this.lastPrune > Math.min(PRUNE_INTERVAL_MS, this.deps.store.changeRetentionMs / 2)) {
       this.lastPrune = Date.now();
       const pruned = await this.deps.store.pruneChangeLog();
       if (pruned > 0) this.deps.log.info("pruned the change log", { pruned });

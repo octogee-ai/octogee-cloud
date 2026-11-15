@@ -12,7 +12,9 @@ export interface RealHostSettings {
   gitHostAdminToken: string;
 }
 
-export type HostAdapterConfig = { kind: "fake" } | { kind: "real"; settings: RealHostSettings };
+export type HostAdapterConfig = { kind: "fake"; delayMs: number } | { kind: "real"; settings: RealHostSettings };
+
+export const FAKE_HOST_ADAPTERS_CONSENT = "for-tests-only";
 
 export interface ServiceConfig {
   port: number;
@@ -26,6 +28,7 @@ export interface ServiceConfig {
   hosts: HostAdapterConfig;
   replicaId: string;
   limits: CallerLimits;
+  changeRetentionSeconds: number;
 }
 
 export const CALLER_ROLES: Readonly<Record<string, readonly ProvisioningRole[]>> = {
@@ -61,16 +64,25 @@ function url(env: NodeJS.ProcessEnv, name: string): string {
   return value.slice(0, end);
 }
 
-function positiveInteger(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
+function wholeNumber(env: NodeJS.ProcessEnv, name: string, fallback: number, min: number): number {
   const text = optional(env, name);
   if (text === null) return fallback;
-  if (!/^\d+$/.test(text) || Number(text) < 1) throw new Error(`${name} must be a whole number of at least 1`);
+  if (!/^\d+$/.test(text) || Number(text) < min) throw new Error(`${name} must be a whole number of at least ${min}`);
   return Number(text);
+}
+
+function positiveInteger(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
+  return wholeNumber(env, name, fallback, 1);
 }
 
 function hostAdapters(env: NodeJS.ProcessEnv): HostAdapterConfig {
   const kind = required(env, "PROVISIONING_HOST_ADAPTERS");
-  if (kind === "fake") return { kind: "fake" };
+  if (kind === "fake") {
+    if (optional(env, "PROVISIONING_ALLOW_FAKE_HOST_ADAPTERS") !== FAKE_HOST_ADAPTERS_CONSENT) {
+      throw new Error(`PROVISIONING_HOST_ADAPTERS=fake is for tests only; it also needs PROVISIONING_ALLOW_FAKE_HOST_ADAPTERS=${FAKE_HOST_ADAPTERS_CONSENT}`);
+    }
+    return { kind: "fake", delayMs: wholeNumber(env, "PROVISIONING_FAKE_HOST_DELAY_MS", 0, 0) };
+  }
   if (kind !== "real") throw new Error(`PROVISIONING_HOST_ADAPTERS must be "real" or "fake", not "${kind}"`);
   return {
     kind: "real",
@@ -111,5 +123,6 @@ export function loadConfig(env: NodeJS.ProcessEnv): ServiceConfig {
       requestsPerMinute: positiveInteger(env, "PROVISIONING_CALLER_REQUESTS_PER_MINUTE", 3_000),
       concurrentWaits: positiveInteger(env, "PROVISIONING_CALLER_CONCURRENT_WAITS", 100),
     },
+    changeRetentionSeconds: positiveInteger(env, "PROVISIONING_CHANGE_RETENTION_SECONDS", 86_400),
   };
 }
