@@ -63,10 +63,11 @@ export class FakeMattermostApi {
   readonly teams = new Map<string, FakeMmTeam>();
   readonly channels = new Map<string, FakeMmChannel>();
   readonly commands = new Map<string, FakeMmCommand>();
-  readonly tokens: { userId: string; description: string; token: string }[] = [];
+  readonly tokens: { id: string; userId: string; description: string; token: string }[] = [];
   readonly avatars = new Map<string, number>();
   readonly requests: FakeMmRequest[] = [];
-  readonly imageSources = new Map<string, { status: number; contentType: string }>();
+  readonly imageSources = new Map<string, { status: number; contentType: string; bytes?: number }>();
+  readonly imageRequests: string[] = [];
   undeletableChannels = new Set(["town-square"]);
   private readonly faults: Fault[] = [];
   private nextId = 1;
@@ -143,9 +144,10 @@ export class FakeMattermostApi {
   }
 
   private image(href: string): Response {
+    this.imageRequests.push(href);
     const source = this.imageSources.get(href);
     if (!source) return new Response("missing", { status: 404 });
-    return new Response(new Uint8Array([1, 2, 3]), { status: source.status, headers: { "Content-Type": source.contentType } });
+    return new Response(new Uint8Array(source.bytes ?? 3), { status: source.status, headers: { "Content-Type": source.contentType } });
   }
 
   private userJson(user: FakeMmUser) {
@@ -208,11 +210,20 @@ export class FakeMattermostApi {
       this.avatars.set(match[1], (this.avatars.get(match[1]) ?? 0) + 1);
       return json(200, { status: "OK" });
     }
+    if (method === "POST" && path === "/users/tokens/revoke") {
+      const index = this.tokens.findIndex((token) => token.id === body.token_id);
+      if (index < 0) return notFound();
+      this.tokens.splice(index, 1);
+      return json(200, { status: "OK" });
+    }
+    if ((match = path.match(/^\/users\/([^/]+)\/tokens$/)) && method === "GET") {
+      return json(200, this.tokens.filter((token) => token.userId === match![1]).map(({ id, userId, description }) => ({ id, user_id: userId, description })));
+    }
     if ((match = path.match(/^\/users\/([^/]+)\/tokens$/)) && method === "POST") {
       if (!this.users.has(match[1])) return notFound();
-      const token = { userId: match[1], description: String(body.description), token: this.id("secret-token-") };
+      const token = { id: this.id("token"), userId: match[1], description: String(body.description), token: this.id("secret-token-") };
       this.tokens.push(token);
-      return json(200, { id: this.id("token"), user_id: match[1], token: token.token, description: token.description });
+      return json(200, { id: token.id, user_id: match[1], token: token.token, description: token.description });
     }
     if ((match = path.match(/^\/users\/([^/]+)$/)) && method === "GET") {
       const user = this.users.get(match[1]);
@@ -226,7 +237,7 @@ export class FakeMattermostApi {
       const team = this.teams.get(match[1]);
       const userId = String(body.user_id);
       if (!team || !this.users.has(userId)) return notFound();
-      team.members.set(userId, typeof body.roles === "string" ? body.roles : "team_user");
+      team.members.set(userId, team.members.get(userId) ?? "team_user");
       return json(201, { team_id: team.id, user_id: userId });
     }
     if ((match = path.match(/^\/teams\/([^/]+)\/channels\/name\/([^/]+)$/)) && method === "GET") {

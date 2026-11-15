@@ -1,4 +1,6 @@
 import type { ManagedChannelHost } from "../channel-host/types.js";
+export declare const DEFAULT_TEAM_CHANNELS_TO_ARCHIVE: readonly ["town-square", "off-topic", "general"];
+export declare const DEFAULT_AGENT_BOT_DISPLAY_NAME = "Octo";
 export interface StoredMattermostNames {
     readonly username: string | null;
     readonly coachChannelName: string | null;

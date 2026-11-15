@@ -4,6 +4,7 @@ import { agentChannelPurpose } from "@octogee/core/mattermost/agent-channel-purp
 import { userChannelMembers, type UserChannelKind } from "@octogee/core/mattermost/channel-members";
 import { controlUiCommandSpec } from "@octogee/core/mattermost/control-ui-command";
 import { DEFAULT_AGENT_PAT_DESCRIPTION } from "@octogee/core/mattermost/default-agent-pat";
+import { DEFAULT_AGENT_BOT_DISPLAY_NAME, DEFAULT_TEAM_CHANNELS_TO_ARCHIVE } from "@octogee/core/mattermost/provision";
 import { USER_PAT_DESCRIPTION } from "@octogee/core/mattermost/user-pat";
 import { isPlaceholderEmail, placeholderEmail } from "@octogee/core/placeholder-email";
 import { WORKSPACE_CHANNEL_DISPLAY_NAMES } from "@octogee/shared/types/display-names";
@@ -38,8 +39,7 @@ export interface MattermostChatHostConfig {
   fetch?: typeof fetch;
 }
 
-export const DEFAULT_TEAM_CHANNELS_TO_ARCHIVE = ["town-square", "off-topic", "general"] as const;
-export const AGENT_BOT_DISPLAY_NAME = "Octo";
+export const AVATAR_MAX_BYTES = 5 * 1024 * 1024;
 const UNDELETABLE_CHANNEL_ERROR = "api.channel.delete_channel.cannot.app_error";
 const PASSWORD_CHARACTERS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%";
 const COMMAND_FIELDS = ["id", "team_id", "trigger", "url", "method", "token"] as const;
@@ -90,6 +90,35 @@ function avatarSource(input: ChatUserInput): string | null {
   if (input.avatarUrl) return input.avatarUrl;
   if (input.email && !isPlaceholderEmail(input.email)) return gravatarUrl(input.email);
   return null;
+}
+
+async function readCapped(response: Response, limit: number): Promise<Uint8Array<ArrayBuffer> | null> {
+  const declared = Number(response.headers.get("content-length") ?? "0");
+  if (declared > limit) {
+    await response.body?.cancel();
+    return null;
+  }
+  const reader = response.body?.getReader();
+  if (!reader) return new Uint8Array();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > limit) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
 }
 
 class MattermostApi {
@@ -172,17 +201,27 @@ export function createMattermostChatHost(config: MattermostChatHostConfig): Chat
     const fetchImpl = config.fetch ?? fetch;
     let warning: string;
     try {
-      const image = await fetchImpl(source, { signal, redirect: "follow" });
-      if (image.ok) {
-        const contentType = image.headers.get("content-type") || "image/png";
-        const extension = contentType.includes("jpeg") || contentType.includes("jpg") ? ".jpg" : ".png";
-        const form = new FormData();
-        form.append("image", new Blob([await image.arrayBuffer()], { type: contentType }), `avatar${extension}`);
-        const uploaded = await api.send("upload avatar", "POST", `/users/${userId}/image`, signal, { body: form });
-        if (uploaded.ok) return [];
-        warning = `avatar upload: ${uploaded.status} from chat host`;
+      if (new URL(source).protocol !== "https:") {
+        warning = "avatar fetch: the image source is not an https url";
       } else {
-        warning = `avatar fetch: ${image.status} from image source`;
+        const image = await fetchImpl(source, { signal, redirect: "error" });
+        if (!image.ok) {
+          await image.body?.cancel();
+          warning = `avatar fetch: ${image.status} from image source`;
+        } else {
+          const bytes = await readCapped(image, AVATAR_MAX_BYTES);
+          if (!bytes) {
+            warning = `avatar fetch: the image is larger than ${AVATAR_MAX_BYTES} bytes`;
+          } else {
+            const contentType = image.headers.get("content-type") || "image/png";
+            const extension = contentType.includes("jpeg") || contentType.includes("jpg") ? ".jpg" : ".png";
+            const form = new FormData();
+            form.append("image", new Blob([bytes], { type: contentType }), `avatar${extension}`);
+            const uploaded = await api.send("upload avatar", "POST", `/users/${userId}/image`, signal, { body: form });
+            if (uploaded.ok) return [];
+            warning = `avatar upload: ${uploaded.status} from chat host`;
+          }
+        }
       }
     } catch (error) {
       warning = `avatar upload: ${error instanceof Error ? error.message : String(error)}`;
@@ -215,23 +254,23 @@ export function createMattermostChatHost(config: MattermostChatHostConfig): Chat
       const known = await api.find("find chat user", `/users/${input.knownUserId}`, signal);
       if (known) return { userId: known.id };
     }
-    let user = await findUserByName(input.slug, signal);
-    if (!user) {
-      ({ record: user } = await createOrAdopt(
-        "create chat user",
-        () => api.request("create chat user", "POST", "/users", signal, {
-          email: accountEmail(input),
-          username: input.slug,
-          password: generatePassword(),
-          first_name: input.displayName.first,
-          last_name: input.displayName.last,
-          nickname: input.displayName.first || input.slug,
-          roles: "system_user",
-        }),
-        async () => (await findUserByName(input.slug, signal)) ?? adoptUserByEmail(input, signal),
-        (json) => (isRecord(json) ? json : null),
-      ));
-    }
+    const found = await findUserByName(input.slug, signal);
+    if (found) return { userId: found.id };
+    const { record: user, created } = await createOrAdopt(
+      "create chat user",
+      () => api.request("create chat user", "POST", "/users", signal, {
+        email: accountEmail(input),
+        username: input.slug,
+        password: generatePassword(),
+        first_name: input.displayName.first,
+        last_name: input.displayName.last,
+        nickname: input.displayName.first || input.slug,
+        roles: "system_user",
+      }),
+      async () => (await findUserByName(input.slug, signal)) ?? adoptUserByEmail(input, signal),
+      (json) => (isRecord(json) ? json : null),
+    );
+    if (!created) return { userId: user.id };
     const warnings = await uploadAvatar(user.id, input, signal);
     return warnings.length > 0 ? { userId: user.id, warnings } : { userId: user.id };
   }
@@ -394,7 +433,7 @@ export function createMattermostChatHost(config: MattermostChatHostConfig): Chat
         "create agent bot",
         () => api.request("create agent bot", "POST", "/bots", signal, {
           username,
-          display_name: AGENT_BOT_DISPLAY_NAME,
+          display_name: DEFAULT_AGENT_BOT_DISPLAY_NAME,
           description: `Coach for ${input.ownerFirstName || input.slug}`,
         }),
         () => findUserByName(username, signal),

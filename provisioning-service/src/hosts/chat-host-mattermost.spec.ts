@@ -71,7 +71,7 @@ describe("Mattermost chat host adapter", () => {
 
     const team = api.teams.get(teamId)!;
     expect(team).toMatchObject({ name: "lin", display_name: "Lin's Workshop", type: "I" });
-    expect(team.members.get(userId)).toBe("team_admin team_user");
+    expect(team.members.get(userId)).toBe("team_user");
     expect(team.members.has(admin.id)).toBe(true);
     expect(team.members.has(botUserId)).toBe(true);
     expect(api.channelByName(teamId, "off-topic")?.delete_at).toBeGreaterThan(0);
@@ -141,6 +141,8 @@ describe("Mattermost chat host adapter", () => {
     api.imageSources.set("https://images.invalid/lin.png", { status: 200, contentType: "image/png" });
     await expect(host.ensureUser(userInput({ knownUserId: "user-deleted" }), signal())).resolves.toEqual({ userId: existing.id });
     expect(api.count("POST", /^\/users$/)).toBe(0);
+    expect(api.imageRequests).toEqual([]);
+    expect(api.count("POST", /\/image$/)).toBe(0);
   });
 
   it("adopts a deactivated account found by username as it is, without reactivating it", async () => {
@@ -150,6 +152,7 @@ describe("Mattermost chat host adapter", () => {
     await expect(host.ensureUser(userInput(), signal())).resolves.toEqual({ userId: existing.id });
     expect(existing.delete_at).toBe(1);
     expect(api.count("PUT", /\/active$/)).toBe(0);
+    expect(api.count("POST", /\/image$/)).toBe(0);
   });
 
   it("reactivates and renames an account held by the same email under another username", async () => {
@@ -158,6 +161,7 @@ describe("Mattermost chat host adapter", () => {
     api.imageSources.set("https://images.invalid/lin.png", { status: 200, contentType: "image/png" });
     await expect(host.ensureUser(userInput(), signal())).resolves.toEqual({ userId: existing.id });
     expect(existing).toMatchObject({ username: "lin", first_name: "Lin", last_name: "Wu", delete_at: 0 });
+    expect(api.count("POST", /\/image$/)).toBe(0);
   });
 
   it("settles two concurrent creates of the same account, team, channel and bot as one resource each", async () => {
@@ -169,6 +173,7 @@ describe("Mattermost chat host adapter", () => {
     expect(users[0].userId).toBe(users[1].userId);
     expect([...api.users.values()].filter((user) => user.username === "lin")).toHaveLength(1);
     expect(api.requests.filter((request) => request.method === "POST" && request.path === "/users")).toHaveLength(2);
+    expect(api.count("POST", /\/image$/)).toBe(1);
 
     const userId = users[0].userId;
     const teams = await Promise.all([1, 2].map(() => host.ensureTeam({ slug: "lin", displayName: "Lin", userId }, signal())));
@@ -219,6 +224,22 @@ describe("Mattermost chat host adapter", () => {
     const { userId } = await host.ensureUser(userInput({ email: "", avatarUrl: null }), signal());
     expect(api.users.get(userId)?.email).toBe(placeholderEmail("u_123"));
     expect(api.avatars.has(userId)).toBe(false);
+  });
+
+  it("refuses an avatar source that is not https without fetching it", async () => {
+    const { api, host, logs } = setup();
+    const result = await host.ensureUser(userInput({ avatarUrl: "http://images.invalid/lin.png" }), signal());
+    expect(result.warnings).toEqual(["avatar fetch: the image source is not an https url"]);
+    expect(api.imageRequests).toEqual([]);
+    expect(logs).toContainEqual(expect.objectContaining({ level: "error", fields: expect.objectContaining({ uid: "u_123" }) }));
+  });
+
+  it("refuses an avatar image larger than five megabytes", async () => {
+    const { api, host } = setup();
+    api.imageSources.set("https://images.invalid/lin.png", { status: 200, contentType: "image/png", bytes: 5 * 1024 * 1024 + 1 });
+    const result = await host.ensureUser(userInput(), signal());
+    expect(result.warnings).toEqual([`avatar fetch: the image is larger than ${5 * 1024 * 1024} bytes`]);
+    expect(api.count("POST", /\/image$/)).toBe(0);
   });
 
   it("uses the email's avatar image when the spec carries no avatar url", async () => {
@@ -273,8 +294,8 @@ describe("Mattermost chat host adapter", () => {
     const agentToken = await host.issueAgentToken({ botUserId }, signal());
     const userToken = await host.issueUserToken({ userId }, signal());
     expect(api.tokens).toEqual([
-      { userId: botUserId, description: DEFAULT_AGENT_PAT_DESCRIPTION, token: agentToken.token },
-      { userId, description: USER_PAT_DESCRIPTION, token: userToken.token },
+      expect.objectContaining({ userId: botUserId, description: DEFAULT_AGENT_PAT_DESCRIPTION, token: agentToken.token }),
+      expect.objectContaining({ userId, description: USER_PAT_DESCRIPTION, token: userToken.token }),
     ]);
     const logged = JSON.stringify(logs);
     expect(logged).not.toContain(agentToken.token);
