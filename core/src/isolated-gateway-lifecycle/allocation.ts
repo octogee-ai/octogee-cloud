@@ -270,6 +270,25 @@ function provisioningLease(lease: UserActivationLease, targetGatewayId: string, 
   return { ...lease, status: "provisioning", targetGatewayId, provisionedAt: now };
 }
 
+function assertParkedRootResumable(input: {
+  stored: unknown;
+  runtime: { readonly runtime?: unknown } | null;
+  request: AllocateIsolatedGatewayInput;
+  parked: ParkedGateway;
+  liveRelease: number;
+}): NonNullable<DesiredRoot> {
+  const { parked } = input;
+  const root = projectGatewayDesiredRootForGateway(input.stored, parked.gatewayId);
+  if (!input.stored || !parkedRootMatches(root, input.request, parked) || root!.liveRelease !== input.liveRelease ||
+      !rootOnLiveRelease(root!)) {
+    throw new IsolatedGatewayFenceError(`parked gateway ${parked.gatewayId} changed before resuming`);
+  }
+  if (input.runtime?.runtime !== "gce-vm") {
+    throw new IsolatedGatewayFenceError(`parked gateway ${parked.gatewayId} is not a VM runtime`);
+  }
+  return root!;
+}
+
 async function resumeParkedIsolatedGateway(
   input: IsolatedLifecycleDeps,
   request: AllocateIsolatedGatewayInput,
@@ -289,14 +308,7 @@ async function resumeParkedIsolatedGateway(
       ]);
       assertCurrent(user);
       const stored = roots.get(parked.gatewayId) ?? null;
-      const root = projectGatewayDesiredRootForGateway(stored, parked.gatewayId);
-      if (!stored || !parkedRootMatches(root, request, parked) || root!.liveRelease !== source.liveRelease ||
-          !rootOnLiveRelease(root!)) {
-        throw new IsolatedGatewayFenceError(`parked gateway ${parked.gatewayId} changed before resuming`);
-      }
-      if (runtime?.runtime !== "gce-vm") {
-        throw new IsolatedGatewayFenceError(`parked gateway ${parked.gatewayId} is not a VM runtime`);
-      }
+      const root = assertParkedRootResumable({ stored, runtime, request, parked, liveRelease: source.liveRelease });
       if (sharedSourceRelease(roots.get(request.sourceGatewayId), request.sourceGatewayId) !== source.release) {
         throw new IsolatedGatewayFenceError(`isolated gateway source ${request.sourceGatewayId} changed`);
       }
@@ -316,10 +328,10 @@ async function resumeParkedIsolatedGateway(
       const now = input.now();
       await transaction.gateways.roots.patch(parked.gatewayId, {
         desiredStatus: "running",
-        allocation: { ...root!.allocation!, leaseId: request.leaseId, generation: request.generation },
+        allocation: { ...root.allocation!, leaseId: request.leaseId, generation: request.generation },
         updatedAt: now,
         updatedBy: ISOLATED_GATEWAY_LIFECYCLE_ACTOR,
-      }, { revision: stored.revision });
+      }, { revision: stored!.revision });
       await transaction.users.records.setActivationLease(
         request.uid,
         provisioningLease(lease, parked.gatewayId, now),
@@ -479,6 +491,21 @@ export async function allocateIsolatedGateway(
   return { gatewayId, outcome: "allocated" };
 }
 
+function refreshFenceHolds(input: {
+  current: PlatformUserRecord;
+  lease: UserActivationLease;
+  assigned: GatewayAssignment;
+  root: unknown;
+  request: AllocateIsolatedGatewayInput;
+  sourceGatewayId: string;
+}): boolean {
+  const { current, request, sourceGatewayId } = input;
+  return userAllowsInteractiveAccess(current) && allocationLeaseMatches(request, input.lease) &&
+    current.gateway?.gatewayId === sourceGatewayId && current.fences.migration === undefined &&
+    current.slug === request.builderSlug && sharedSourceRelease(input.root, sourceGatewayId) !== null &&
+    refreshedSourceAssignmentMatches(input.assigned, request, sourceGatewayId);
+}
+
 function refreshedSourceAssignmentMatches(
   assigned: GatewayAssignment,
   request: AllocateIsolatedGatewayInput,
@@ -516,10 +543,8 @@ export async function refreshRequestedAllocation(
         ]);
         assertCurrent(current);
         const lease = current?.activationLease ?? null;
-        if (!current || !userAllowsInteractiveAccess(current) || !lease || !allocationLeaseMatches(request, lease) ||
-            currentSizingKey !== sizingKey || current.gateway?.gatewayId !== sourceGatewayId || current.fences.migration !== undefined ||
-            current.slug !== request.builderSlug || sharedSourceRelease(root, sourceGatewayId) === null ||
-            !assigned || !refreshedSourceAssignmentMatches(assigned, request, sourceGatewayId)) {
+        if (!current || !lease || !assigned || currentSizingKey !== sizingKey ||
+            !refreshFenceHolds({ current, lease, assigned, root, request, sourceGatewayId })) {
           throw new IsolatedGatewayFenceError("Isolated allocation changed before refreshing its source or tier");
         }
         if (mode === "plan") return;
