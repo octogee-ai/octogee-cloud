@@ -139,6 +139,7 @@ describe("gke-install.sh up", () => {
     const DOWN_GCLOUD = `case " $* " in
   *" vpc-peerings list "*) [ -n "\${PRESENT:-}" ] && echo "\${PEERING_NAME:-servicenetworking-googleapis-com}" ;;
   *" hmac list "*) echo GOOG1STUBACCESS ;;
+  *" compute networks describe "*--format*) [ -n "\${PRESENT:-}" ] || exit 1; echo "\${NETWORK_PEERINGS-servicenetworking-googleapis-com}" ;;
   *" describe "*) [ -n "\${PRESENT:-}" ] || exit 1 ;;
   *" vpc-peerings delete "*)
     if [ -n "\${PEERING_ERROR:-}" ]; then echo "stub: \${PEERING_ERROR}" >&2; exit 1; fi
@@ -187,7 +188,7 @@ esac`;
     const peeringRemovals = () => deletes().filter(call => call.includes(" compute networks peerings delete "));
 
     it("removes the network's own peering when Cloud SQL keeps the service networking connection, then the network", () => {
-      const result = down({ PRESENT: "1", PEERING_REFUSALS: "99", PEERING_NAME: "listed-peering" });
+      const result = down({ PRESENT: "1", PEERING_REFUSALS: "99", PEERING_NAME: "listed-peering", NETWORK_PEERINGS: "other-peering;listed-peering" });
       expect(result.status).toBe(0);
       expect(peeringDeletes()).toHaveLength(1);
       expect(peeringRemovals()).toEqual([expect.stringContaining("compute networks peerings delete listed-peering --network=octogee")]);
@@ -196,6 +197,25 @@ esac`;
         "compute networks peerings", "compute addresses delete", "compute routers delete", "compute networks delete",
       ]);
       expect(existsSync(join(state, PROJECT))).toBe(false);
+    });
+
+    it("goes on to the address range, router and network on a rerun after the network's own peering is already gone", () => {
+      const result = down({ PRESENT: "1", PEERING_REFUSALS: "99", NETWORK_PEERINGS: "" });
+      expect(result.status).toBe(0);
+      expect(peeringRemovals()).toEqual([]);
+      expect(deletes().map(call => call.replace(/^gcloud KUBECONFIG=unset --project \S+ --quiet /, "").split(" ").slice(0, 3).join(" ")).slice(-3)).toEqual([
+        "compute addresses delete", "compute routers delete", "compute networks delete",
+      ]);
+      expect(existsSync(join(state, PROJECT))).toBe(false);
+    });
+
+    it("removes each listed peering that the network still has", () => {
+      const result = down({ PRESENT: "1", PEERING_REFUSALS: "99", PEERING_NAME: "first-peering\nsecond-peering", NETWORK_PEERINGS: "first-peering;second-peering" });
+      expect(result.status).toBe(0);
+      expect(peeringRemovals()).toEqual([
+        expect.stringContaining("compute networks peerings delete first-peering --network=octogee"),
+        expect.stringContaining("compute networks peerings delete second-peering --network=octogee"),
+      ]);
     });
 
     it("stops with gcloud's error when the network's own peering cannot be removed, keeping the network and local secrets", () => {

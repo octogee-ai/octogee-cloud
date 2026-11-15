@@ -556,7 +556,7 @@ down() {
 }
 
 delete_sql_peering() {
-  local peering="$1" output
+  local listed="$1" output own peering
   if output="$(g services vpc-peerings delete --service=servicenetworking.googleapis.com --network="$NAME" 2>&1)"; then
     [[ -z "$output" ]] || printf '%s\n' "$output"
     return 0
@@ -566,7 +566,12 @@ delete_sql_peering() {
     die "could not delete the service networking connection of network $NAME"
   fi
   echo "  Cloud SQL still holds the service networking connection; removing the network's own peering"
-  g compute networks peerings delete "$peering" --network="$NAME"
+  own="$(g compute networks describe "$NAME" --format='value(peerings[].name)' | tr ';' '\n')"
+  while IFS= read -r peering; do
+    if [[ -n "$peering" ]] && grep -qxF -- "$peering" <<<"$own"; then
+      g compute networks peerings delete "$peering" --network="$NAME"
+    fi
+  done <<<"$listed"
 }
 
 delete_present() {
