@@ -27,11 +27,12 @@ const CHAT_READY: Partial<UserProvisioningStatus> = {
   observedGeneration: 1,
   conditions: [
     { type: "ChatReady", status: "True", reason: "Converged", message: "", lastTransitionTime: "2026-11-15T18:00:00Z", observedGeneration: 1 },
+    { type: "CredentialsIssued", status: "True", reason: "Converged", message: "", lastTransitionTime: "2026-11-15T18:00:00Z", observedGeneration: 1 },
     { type: "Ready", status: "False", reason: "GitNotReady", message: "", lastTransitionTime: "2026-11-15T18:00:00Z", observedGeneration: 1 },
   ],
   outputs: {
     chat: { userId: "mm-user", teamId: "mm-team", channels: { general: "ch-general", agent: "ch-agent" }, agentBotUserId: "mm-bot" },
-    credentials: [],
+    credentials: ["agent-chat-token", "user-chat-token"],
   },
 };
 
@@ -57,15 +58,17 @@ describe.skipIf(!dsn)("provisioning spec writer, backfill and mirror on PostgreS
     };
   }
 
+  const client = () => createProvisioningServiceClient({
+    baseUrl: fake.url,
+    tokenPath: "/token",
+    readToken: async () => "token",
+    retry: { attempts: 2, baseDelayMs: 1, maxDelayMs: 1 },
+  });
+
   function started(): ProvisioningSync {
     const instance = createProvisioningSync({
       store: harness.store,
-      client: createProvisioningServiceClient({
-        baseUrl: fake.url,
-        tokenPath: "/token",
-        readToken: async () => "token",
-        retry: { attempts: 2, baseDelayMs: 1, maxDelayMs: 1 },
-      }),
+      client: client(),
       documents: { account: async (uid) => ACCOUNTS[uid] },
       projection: recordingProjection(),
       proxyUrl: null,
@@ -161,6 +164,8 @@ describe.skipIf(!dsn)("provisioning spec writer, backfill and mirror on PostgreS
     await instance.snapshotLoaded();
     await until(() => fake.resources.has("u1"));
 
+    fake.issueCredential("u1", "user-chat-token", "user-token-pg");
+    fake.issueCredential("u1", "agent-chat-token", "agent-token-pg");
     fake.setStatus("u1", CHAT_READY);
     await until(() => instance.counters.mirrors.written === 1);
 
@@ -178,10 +183,12 @@ describe.skipIf(!dsn)("provisioning spec writer, backfill and mirror on PostgreS
     expect(await harness.store.workspaces.channels.get(scope, "coach-dm")).toMatchObject({ mattermostChannelId: "ch-agent" });
     expect(await harness.store.workspaces.agentIdentities.get("u1")).toMatchObject({ mattermostUserId: "mm-bot" });
     expect(projectionCalls).toEqual(["systemConfig", "user", "workspace", "channel", "channel", "agent", "workspaceEntry"]);
+    expect(await harness.store.secrets.get("u1", "mattermost")).toMatchObject({ kind: "builder-mattermost", personalToken: "user-token-pg", mattermostUserId: "mm-user", projectId: null, rotatedAt: null });
+    expect(await harness.store.secrets.get("u1", "coachMattermost")).toMatchObject({ kind: "coach-mattermost", personalToken: "agent-token-pg", mattermostUserId: "mm-bot" });
 
     projectionCalls = [];
     const again = await mirrorUserProvisioning(
-      { store: harness.store, documents: { account: async (uid) => ACCOUNTS[uid] }, projection: recordingProjection(), proxyUrl: null },
+      { store: harness.store, client: client(), documents: { account: async (uid) => ACCOUNTS[uid] }, projection: recordingProjection(), proxyUrl: null },
       fake.resources.get("u1")!,
     );
 

@@ -1,4 +1,4 @@
-import { type ProvisioningErrorCode, type ProvisioningEventsResponse, type RetryProvisioningRequest, type UserProvisioning, type UserProvisioningList, type UserProvisioningListQuery, type UserProvisioningSpec, type UserProvisioningWatchResponse } from "@octogee/shared/types/provisioning-service";
+import { type ProvisioningCredential, type ProvisioningCredentialName, type ProvisioningErrorCode, type ProvisioningEventsResponse, type RetryProvisioningRequest, type UserProvisioning, type UserProvisioningList, type UserProvisioningListQuery, type UserProvisioningSpec, type UserProvisioningWatchResponse } from "@octogee/shared/types/provisioning-service";
 export declare const PROVISIONING_SERVICE_URL_ENV = "PROVISIONING_SERVICE_URL";
 export declare const PROVISIONING_SERVICE_TOKEN_PATH_ENV = "PROVISIONING_SERVICE_TOKEN_PATH";
 export interface ProvisioningServiceRetryPolicy {
@@ -49,6 +49,7 @@ export interface ProvisioningServiceClient {
     watchProvisionings(options: WatchProvisioningsOptions): Promise<UserProvisioningWatchResponse>;
     retryProvisioning(uid: string, request: RetryProvisioningRequest, idempotencyKey: string): Promise<unknown>;
     getProvisioningEvents(uid: string): Promise<ProvisioningEventsResponse | null>;
+    getCredential(uid: string, name: ProvisioningCredentialName): Promise<ProvisioningCredential | null>;
 }
 export interface ProvisioningServiceConfig {
     readonly baseUrl: string;

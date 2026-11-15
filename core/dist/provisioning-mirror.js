@@ -1,4 +1,5 @@
 import { workspaceDefaultAgentChannelName } from "@octogee/shared/types/identity";
+import { ensureChatSecrets } from "./provisioning-chat-secrets.js";
 import { buildProvisioningContext, markProvisioningComplete, } from "./provisionSteps.js";
 export class ProvisioningMirrorError extends Error {
     uid;
@@ -76,6 +77,8 @@ export async function mirrorUserProvisioning(deps, resource) {
     const slug = resource.spec.slug;
     if (user.slug !== slug)
         return "slug-mismatch";
+    if ((await ensureChatSecrets(deps, resource, chat)) === "credentials-not-issued")
+        return "credentials-not-issued";
     if (await recordsMatch(deps.store, resource, chat, slug))
         return "unchanged";
     const userData = await deps.documents.account(resource.uid);

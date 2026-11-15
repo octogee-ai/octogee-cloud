@@ -174,6 +174,26 @@ describe("provisioning service client", () => {
 
     expect(fake.requests.at(-1)).toMatchObject({ method: "POST", path: "/v1/users/u1/provisioning/retry", idempotencyKey: "key-1", body: { expectedAttempts: 0 } });
   });
+
+  it("reads an issued credential and answers null while it is not issued", async () => {
+    const api = client();
+    await api.putProvisioning("u1", SPEC);
+
+    await expect(api.getCredential("u1", "user-chat-token")).resolves.toBeNull();
+    fake.issueCredential("u1", "user-chat-token", "user-token-1");
+
+    await expect(api.getCredential("u1", "user-chat-token")).resolves.toEqual({ name: "user-chat-token", value: "user-token-1", version: 1 });
+    expect(fake.requests.at(-1)?.path).toBe("/v1/users/u1/credentials/user-chat-token");
+  });
+
+  it("surfaces a refused credential read as a 403 without retrying", async () => {
+    const api = client();
+    await api.putProvisioning("u1", SPEC);
+    fake.credentialReader = false;
+
+    await expect(api.getCredential("u1", "agent-chat-token")).rejects.toMatchObject({ status: 403, code: "forbidden", transient: false });
+    expect(sleeps).toEqual([]);
+  });
 });
 
 describe("provisioning watch", () => {

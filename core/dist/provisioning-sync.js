@@ -17,7 +17,7 @@ function newer(candidate, current) {
 function emptyCounters() {
     return {
         specWrites: { created: 0, changed: 0, unchanged: 0, "not-admitted": 0, failed: 0 },
-        mirrors: { written: 0, unchanged: 0, "chat-not-ready": 0, "user-missing": 0, "slug-mismatch": 0, failed: 0 },
+        mirrors: { written: 0, unchanged: 0, "chat-not-ready": 0, "credentials-not-issued": 0, "user-missing": 0, "slug-mismatch": 0, failed: 0 },
         watchFailures: 0,
         watchConnected: false,
     };
@@ -112,6 +112,8 @@ export function createProvisioningSync(deps) {
             counters.mirrors[outcome] += 1;
             if (outcome === "written")
                 deps.log(`[provisioning] mirrored chat and git results of ${uid}`);
+            if (outcome === "credentials-not-issued")
+                deps.log(`[provisioning] not mirroring ${uid} yet: its chat credentials are not issued and it has no platform chat secrets`);
             if (outcome === "slug-mismatch")
                 deps.log(`[provisioning] ⚠ not mirroring ${uid}: its spec names slug ${resource.spec.slug}, which the user record does not carry`);
         },

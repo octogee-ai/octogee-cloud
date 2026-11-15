@@ -2,6 +2,8 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from "node:net";
 import type {
   ProvisioningAttempt,
+  ProvisioningCredential,
+  ProvisioningCredentialName,
   ProvisioningErrorBody,
   UserProvisioning,
   UserProvisioningSpec,
@@ -26,6 +28,8 @@ export interface FakeProvisioningService {
   expireBefore(resourceVersion: number): void;
   setStatus(uid: string, status: Partial<UserProvisioningStatus>): UserProvisioning;
   setEvents(uid: string, items: ProvisioningAttempt[]): void;
+  issueCredential(uid: string, name: ProvisioningCredentialName, value: string): void;
+  credentialReader: boolean;
   close(): Promise<void>;
 }
 
@@ -64,7 +68,8 @@ export async function startFakeProvisioningService(options: { tokens?: string[] 
   const waiters = new Set<() => void>();
   let counter = 0;
   let oldestRetained = 0;
-  const service = { acceptedTokens: new Set(options.tokens ?? ["token"]) };
+  const credentials = new Map<string, ProvisioningCredential>();
+  const service = { acceptedTokens: new Set(options.tokens ?? ["token"]), credentialReader: true };
 
   function bump(uid: string, resource: UserProvisioning): UserProvisioning {
     counter += 1;
@@ -158,9 +163,19 @@ export async function startFakeProvisioningService(options: { tokens?: string[] 
     const recorded = record(req, url, await readBody(req));
     if (refused(req, res)) return;
     if (url.pathname === "/v1/provisionings") return listOrWatch(url, res);
+    const credentialMatch = /^\/v1\/users\/([^/]+)\/credentials\/([^/]+)$/.exec(url.pathname);
+    if (credentialMatch) return credential(decodeURIComponent(credentialMatch[1]), decodeURIComponent(credentialMatch[2]), res);
     const userMatch = /^\/v1\/users\/([^/]+)\/provisioning(\/retry|\/events)?$/.exec(url.pathname);
     if (!userMatch) return fail(res, 404, "not-found", "no such route");
     user(decodeURIComponent(userMatch[1]), userMatch[2], recorded, res);
+  }
+
+  function credential(uid: string, name: string, res: ServerResponse): void {
+    if (!service.credentialReader) return fail(res, 403, "forbidden", "this caller lacks the credential-reader role");
+    const issued = credentials.get(`${uid}/${name}`);
+    if (issued) return send(res, 200, issued);
+    if (!resources.has(uid)) return fail(res, 404, "not-found", "no provisioning for this user");
+    fail(res, 409, "not-issued", "this credential has not been issued yet");
   }
 
   async function listOrWatch(url: URL, res: ServerResponse): Promise<void> {
@@ -224,6 +239,16 @@ export async function startFakeProvisioningService(options: { tokens?: string[] 
     },
     setEvents(uid, items) {
       events.set(uid, items);
+    },
+    issueCredential(uid, name, value) {
+      const previous = credentials.get(`${uid}/${name}`);
+      credentials.set(`${uid}/${name}`, { name, value, version: (previous?.version ?? 0) + 1 });
+    },
+    get credentialReader() {
+      return service.credentialReader;
+    },
+    set credentialReader(allowed: boolean) {
+      service.credentialReader = allowed;
     },
     async close() {
       for (const wake of [...waiters]) wake();

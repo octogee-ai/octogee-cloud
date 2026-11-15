@@ -1,6 +1,8 @@
 import { readFile } from "node:fs/promises";
 import {
   PROVISIONING_API_VERSION,
+  type ProvisioningCredential,
+  type ProvisioningCredentialName,
   type ProvisioningErrorCode,
   type ProvisioningEventsResponse,
   type RetryProvisioningRequest,
@@ -85,6 +87,7 @@ export interface ProvisioningServiceClient {
   watchProvisionings(options: WatchProvisioningsOptions): Promise<UserProvisioningWatchResponse>;
   retryProvisioning(uid: string, request: RetryProvisioningRequest, idempotencyKey: string): Promise<unknown>;
   getProvisioningEvents(uid: string): Promise<ProvisioningEventsResponse | null>;
+  getCredential(uid: string, name: ProvisioningCredentialName): Promise<ProvisioningCredential | null>;
 }
 
 export interface ProvisioningServiceConfig {
@@ -143,6 +146,19 @@ function outcomeOf(error: unknown): ProvisioningServiceRequestOutcome {
   if (!(error instanceof ProvisioningServiceError)) return "unreachable";
   if (error.code === "unreachable") return "unreachable";
   return error.status >= 500 ? "server-error" : "client-error";
+}
+
+function credentialFrom(text: string, name: ProvisioningCredentialName): ProvisioningCredential {
+  let body: unknown;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    throw new ProvisioningServiceError(200, "unexpected-response", `provisioning service answered an unreadable ${name} credential`);
+  }
+  if (!isRecord(body) || body.name !== name || typeof body.value !== "string" || body.value === "" || typeof body.version !== "number") {
+    throw new ProvisioningServiceError(200, "unexpected-response", `provisioning service answered a malformed ${name} credential`);
+  }
+  return { name, value: body.value, version: body.version };
 }
 
 interface RequestInput {
@@ -312,6 +328,17 @@ export function createProvisioningServiceClient(options: ProvisioningServiceClie
     async getProvisioningEvents(uid) {
       const response = await request({ method: "GET", path: `${userPath(uid)}/events`, allowNotFound: true });
       return response.status === 404 ? null : json<ProvisioningEventsResponse>(response);
+    },
+
+    async getCredential(uid, name) {
+      let response: Response;
+      try {
+        response = await request({ method: "GET", path: `users/${encodeURIComponent(uid)}/credentials/${encodeURIComponent(name)}` });
+      } catch (error) {
+        if (error instanceof ProvisioningServiceError && error.status === 409 && error.code === "not-issued") return null;
+        throw error;
+      }
+      return credentialFrom(await response.text(), name);
     },
   };
   return client;

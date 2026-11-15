@@ -15,6 +15,9 @@ import {
   type ProvisioningSync,
 } from "./provisioning-sync.js";
 import { noProvisioningProjection, type ProvisioningProjection } from "./provisionSteps.js";
+import { mintAndPersistDefaultAgentToken } from "./mattermost/default-agent-pat.js";
+import { persistUserToken } from "./mattermost/provision.js";
+import type { UserSecretInput } from "./platform-state/secrets.js";
 
 type Data = Record<string, unknown>;
 
@@ -27,19 +30,25 @@ const CHAT_READY: Partial<UserProvisioningStatus> = {
   observedGeneration: 1,
   conditions: [
     { type: "ChatReady", status: "True", reason: "Converged", message: "", lastTransitionTime: "2026-11-15T18:00:00Z", observedGeneration: 1 },
+    { type: "CredentialsIssued", status: "True", reason: "Converged", message: "", lastTransitionTime: "2026-11-15T18:00:00Z", observedGeneration: 1 },
     { type: "Ready", status: "False", reason: "GitNotReady", message: "", lastTransitionTime: "2026-11-15T18:00:00Z", observedGeneration: 1 },
   ],
   outputs: {
     chat: { userId: "mm-user", teamId: "mm-team", channels: { general: "ch-general", agent: "ch-agent" }, agentBotUserId: "mm-bot" },
-    credentials: [],
+    credentials: ["agent-chat-token", "user-chat-token"],
   },
 };
+
+const USER_TOKEN = "user-token-6f1d8a";
+const AGENT_TOKEN = "agent-token-93c2b7";
 
 let records: Map<string, Data>;
 let fake: FakeProvisioningService;
 let projectionCalls: string[];
 let transactions: string[];
 let logs: string[];
+let secretPuts: UserSecretInput[];
+let secretPutFailure: boolean;
 const stoppers: Array<() => void> = [];
 
 function seedUser(uid: string, slug: string, admitted = true): void {
@@ -55,12 +64,33 @@ function store(): PlatformStateStore {
     serializeTransactions: true,
     beforeTransaction: (label) => transactions.push(label),
   });
+  const recordingSecrets = (transaction: Parameters<Parameters<PlatformStateStore["transaction"]>[1]>[0]) => new Proxy(transaction, {
+    get(target, property, receiver) {
+      if (property !== "secrets") return Reflect.get(target, property, receiver);
+      return {
+        ...target.secrets,
+        put: async (uid: string, row: UserSecretInput) => {
+          if (secretPutFailure) throw new Error(`database refused row ${JSON.stringify(row)}`);
+          secretPuts.push(row);
+          await target.secrets.put(uid, row);
+        },
+      };
+    },
+  });
   return new Proxy(fixture, {
     get(target, property, receiver) {
       if (property === "watch") return () => ({ closed: Promise.resolve(), close: async () => undefined });
+      if (property === "transaction") {
+        return (options: Parameters<PlatformStateStore["transaction"]>[0], body: Parameters<PlatformStateStore["transaction"]>[1]) =>
+          target.transaction(options, (transaction) => body(recordingSecrets(transaction)));
+      }
       return Reflect.get(target, property, receiver);
     },
   });
+}
+
+function client() {
+  return createProvisioningServiceClient({ baseUrl: fake.url, tokenPath: "/token", readToken: async () => "token", retry: { attempts: 2, baseDelayMs: 1, maxDelayMs: 1 } });
 }
 
 function recordingProjection(): ProvisioningProjection {
@@ -81,7 +111,7 @@ function recordingProjection(): ProvisioningProjection {
 function sync(): ProvisioningSync {
   return createProvisioningSync({
     store: store(),
-    client: createProvisioningServiceClient({ baseUrl: fake.url, tokenPath: "/token", readToken: async () => "token", retry: { attempts: 2, baseDelayMs: 1, maxDelayMs: 1 } }),
+    client: client(),
     documents: { account: async (uid) => ACCOUNTS[uid] },
     projection: recordingProjection(),
     proxyUrl: null,
@@ -101,6 +131,18 @@ async function until(condition: () => boolean): Promise<void> {
   expect(condition()).toBe(true);
 }
 
+async function chatReadyUser(): Promise<ProvisioningSync> {
+  seedUser("u1", "lin");
+  const instance = started(sync());
+  await instance.snapshotLoaded();
+  await until(() => fake.resources.has("u1"));
+  fake.issueCredential("u1", "user-chat-token", USER_TOKEN);
+  fake.issueCredential("u1", "agent-chat-token", AGENT_TOKEN);
+  fake.setStatus("u1", CHAT_READY);
+  await until(() => instance.counters.mirrors.written === 1);
+  return instance;
+}
+
 const puts = () => fake.requests.filter((request) => request.method === "PUT");
 const audit = () => records.get(`glmOperations/${operationAuditDocumentId(PROVISIONING_SPEC_BACKFILL_KEY)}`);
 
@@ -114,6 +156,8 @@ beforeEach(async () => {
   projectionCalls = [];
   transactions = [];
   logs = [];
+  secretPuts = [];
+  secretPutFailure = false;
 });
 
 afterEach(async () => {
@@ -208,15 +252,6 @@ describe("spec backfill", () => {
 });
 
 describe("provisioning mirror", () => {
-  async function chatReadyUser(): Promise<ProvisioningSync> {
-    seedUser("u1", "lin");
-    const instance = started(sync());
-    await instance.snapshotLoaded();
-    await until(() => fake.resources.has("u1"));
-    fake.setStatus("u1", CHAT_READY);
-    await until(() => instance.counters.mirrors.written === 1);
-    return instance;
-  }
 
   it("mirrors chat results into the user and workspace records in today's shapes and calls the product projection", async () => {
     await chatReadyUser();
@@ -248,8 +283,11 @@ describe("provisioning mirror", () => {
     projectionCalls = [];
     transactions = [];
 
+    const requestsBefore = fake.requests.length;
+
     const outcome = await mirrorUserProvisioning({
       store: store(),
+      client: client(),
       documents: { account: async (uid) => ACCOUNTS[uid] },
       projection: recordingProjection(),
       proxyUrl: null,
@@ -258,6 +296,7 @@ describe("provisioning mirror", () => {
     expect(outcome).toBe("unchanged");
     expect(projectionCalls).toEqual([]);
     expect(transactions).toEqual([]);
+    expect(fake.requests.slice(requestsBefore)).toEqual([]);
   });
 
   it("waits for ChatReady before mirroring", async () => {
@@ -276,5 +315,98 @@ describe("provisioning mirror", () => {
 
     expect(instance.readiness("u1")).toEqual({ status: "False", reason: "GitNotReady" });
     expect(instance.readiness("unknown")).toBeNull();
+  });
+});
+
+describe("platform chat secrets", () => {
+  const secretRow = (secretId: string) => records.get(`users/u1/secrets/${secretId}`);
+
+  async function chatReadyWithoutWaiting(credentialsIssued = true): Promise<ProvisioningSync> {
+    seedUser("u1", "lin");
+    const instance = started(sync());
+    await instance.snapshotLoaded();
+    await until(() => fake.resources.has("u1"));
+    if (credentialsIssued) {
+      fake.issueCredential("u1", "user-chat-token", USER_TOKEN);
+      fake.issueCredential("u1", "agent-chat-token", AGENT_TOKEN);
+    }
+    return instance;
+  }
+
+  const leakedTokens = () => logs.filter((line) => line.includes(USER_TOKEN) || line.includes(AGENT_TOKEN));
+
+  it("writes both secrets in exactly the rows the legacy chat provisioning writes", async () => {
+    const legacy: UserSecretInput[] = [];
+    const legacySecrets = { put: async (_uid: string, row: UserSecretInput) => { legacy.push(row); } };
+    await persistUserToken(legacySecrets, "u1", "mm-user", USER_TOKEN);
+    await mintAndPersistDefaultAgentToken(
+      { channelHost: { revokeTokens: async () => [], issueToken: async () => AGENT_TOKEN }, secrets: legacySecrets, now: () => ({ serverNow: true }) },
+      "u1",
+      "mm-bot",
+    );
+
+    await chatReadyUser();
+
+    expect(secretPuts).toEqual(legacy);
+  });
+
+  it("writes the secrets before any mirrored record", async () => {
+    const instance = await chatReadyWithoutWaiting();
+    transactions = [];
+    fake.setStatus("u1", CHAT_READY);
+    await until(() => instance.counters.mirrors.written === 1);
+
+    expect(transactions.slice(0, 2)).toEqual(["provisioning-mirror-chat-secret", "provisioning-mirror-chat-secret"]);
+    expect(transactions.length).toBeGreaterThan(2);
+  });
+
+  it("never overwrites a platform secret that already exists", async () => {
+    await store().secrets.put("u1", { kind: "builder-mattermost", secretId: "mattermost", projectId: null, personalToken: "older-user-token", mattermostUserId: "mm-user", createdAt: 1, rotatedAt: null });
+    await store().secrets.put("u1", { kind: "coach-mattermost", secretId: "coachMattermost", projectId: null, personalToken: "older-agent-token", mattermostUserId: "mm-bot", createdAt: 1, rotatedAt: null });
+
+    await chatReadyUser();
+
+    expect(secretRow("mattermost")).toMatchObject({ personalToken: "older-user-token" });
+    expect(secretRow("coachMattermost")).toMatchObject({ personalToken: "older-agent-token" });
+    expect(fake.requests.some((request) => request.path.includes("/credentials/"))).toBe(false);
+    expect(secretPuts).toEqual([]);
+  });
+
+  it("mirrors nothing while the credentials are not issued", async () => {
+    const instance = await chatReadyWithoutWaiting(false);
+    fake.setStatus("u1", { ...CHAT_READY, conditions: CHAT_READY.conditions!.map((condition) =>
+      condition.type === "CredentialsIssued" ? { ...condition, status: "False", reason: "CredentialsNotIssued" } : condition) });
+    await until(() => instance.counters.mirrors["credentials-not-issued"] >= 1);
+
+    expect((await store().users.records.get("u1"))?.mattermostUserId).toBeNull();
+    expect(projectionCalls).toEqual([]);
+  });
+
+  it("leaves the user record untouched and logs no token when a secret write fails", async () => {
+    secretPutFailure = true;
+    const instance = await chatReadyWithoutWaiting();
+    fake.setStatus("u1", CHAT_READY);
+    await until(() => instance.counters.mirrors.failed >= 2);
+
+    expect((await store().users.records.get("u1"))?.mattermostUserId).toBeNull();
+    expect(await store().workspaces.records.get("lin")).toBeNull();
+    expect(projectionCalls).toEqual([]);
+    expect(logs.some((line) => line.includes("could not write the mattermost platform secret of u1"))).toBe(true);
+    expect(leakedTokens()).toEqual([]);
+  });
+
+  it("retries with backoff while the service refuses the credential read, then mirrors", async () => {
+    fake.credentialReader = false;
+    const instance = await chatReadyWithoutWaiting();
+    fake.setStatus("u1", CHAT_READY);
+    await until(() => instance.counters.mirrors.failed >= 2);
+
+    expect((await store().users.records.get("u1"))?.mattermostUserId).toBeNull();
+    expect(logs.some((line) => line.includes("needs the credential-reader role"))).toBe(true);
+
+    fake.credentialReader = true;
+    await until(() => instance.counters.mirrors.written === 1);
+    expect(secretRow("mattermost")).toMatchObject({ personalToken: USER_TOKEN });
+    expect(leakedTokens()).toEqual([]);
   });
 });

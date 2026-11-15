@@ -1,6 +1,7 @@
 import { workspaceDefaultAgentChannelName } from "@octogee/shared/types/identity";
 import type { ChatOutputs, UserProvisioning } from "@octogee/shared/types/provisioning-service";
 import type { PlatformStateStore } from "./platform-state/store.js";
+import { ensureChatSecrets, type ChatSecretDeps } from "./provisioning-chat-secrets.js";
 import {
   buildProvisioningContext,
   markProvisioningComplete,
@@ -13,13 +14,20 @@ export interface UserAccountDocuments {
 }
 
 export interface ProvisioningMirrorDeps {
-  readonly store: Pick<PlatformStateStore, "transaction" | "users" | "workspaces">;
+  readonly store: Pick<PlatformStateStore, "transaction" | "users" | "workspaces" | "secrets">;
+  readonly client: ChatSecretDeps["client"];
   readonly documents: UserAccountDocuments;
   readonly projection: ProvisioningProjection;
   readonly proxyUrl: string | null;
 }
 
-export type ProvisioningMirrorOutcome = "written" | "unchanged" | "chat-not-ready" | "user-missing" | "slug-mismatch";
+export type ProvisioningMirrorOutcome =
+  | "written"
+  | "unchanged"
+  | "chat-not-ready"
+  | "credentials-not-issued"
+  | "user-missing"
+  | "slug-mismatch";
 
 export class ProvisioningMirrorError extends Error {
   constructor(readonly uid: string, message: string) {
@@ -123,6 +131,7 @@ export async function mirrorUserProvisioning(
   if (user === null) return "user-missing";
   const slug = resource.spec.slug;
   if (user.slug !== slug) return "slug-mismatch";
+  if ((await ensureChatSecrets(deps, resource, chat)) === "credentials-not-issued") return "credentials-not-issued";
   if (await recordsMatch(deps.store, resource, chat, slug)) return "unchanged";
   const userData = await deps.documents.account(resource.uid);
   if (userData === undefined) {

@@ -72,6 +72,19 @@ function outcomeOf(error) {
         return "unreachable";
     return error.status >= 500 ? "server-error" : "client-error";
 }
+function credentialFrom(text, name) {
+    let body;
+    try {
+        body = JSON.parse(text);
+    }
+    catch {
+        throw new ProvisioningServiceError(200, "unexpected-response", `provisioning service answered an unreadable ${name} credential`);
+    }
+    if (!isRecord(body) || body.name !== name || typeof body.value !== "string" || body.value === "" || typeof body.version !== "number") {
+        throw new ProvisioningServiceError(200, "unexpected-response", `provisioning service answered a malformed ${name} credential`);
+    }
+    return { name, value: body.value, version: body.version };
+}
 export function createProvisioningServiceClient(options) {
     const fetchImpl = options.fetch ?? fetch;
     const readToken = options.readToken ?? (async (path) => (await readFile(path, "utf8")).trim());
@@ -223,6 +236,18 @@ export function createProvisioningServiceClient(options) {
         async getProvisioningEvents(uid) {
             const response = await request({ method: "GET", path: `${userPath(uid)}/events`, allowNotFound: true });
             return response.status === 404 ? null : json(response);
+        },
+        async getCredential(uid, name) {
+            let response;
+            try {
+                response = await request({ method: "GET", path: `users/${encodeURIComponent(uid)}/credentials/${encodeURIComponent(name)}` });
+            }
+            catch (error) {
+                if (error instanceof ProvisioningServiceError && error.status === 409 && error.code === "not-issued")
+                    return null;
+                throw error;
+            }
+            return credentialFrom(await response.text(), name);
         },
     };
     return client;
