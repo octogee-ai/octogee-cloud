@@ -90,14 +90,19 @@ checkout. Start from the latest release. Its commit always has images:
 git checkout "$(gh release view -R octogee-ai/octogee-cloud --json tagName --jq .tagName)"
 ```
 
-A release also publishes the chart at its version, with its images set, as
-`oci://ghcr.io/octogee-ai/octogee-cloud/charts/octogee`; the script installs
-the same chart from your checkout of the tag.
+A release after v0.1.0 also publishes the chart at its version, with its
+images set, as `oci://ghcr.io/octogee-ai/octogee-cloud/charts/octogee`; the
+script installs the same chart from your checkout of the tag.
 [Releasing](releasing.md#install-a-release-by-version) shows how to install
 the published chart, images and npm packages by version.
 
-Until the first release is out, or to run newer code, check out `main`'s newest
-built commit instead. Build main publishes a commit's images about 15 minutes
+A release's guides match that release. Once you have checked out a tag,
+follow `docs/gke.md` in your checkout, not the copy on `main`. v0.1.0 came
+before the source directories were renamed, so
+[its directories have their earlier names](legacy-names.md#source-directories-in-v010).
+
+To run newer code than the latest release, check out `main`'s newest built
+commit instead. Build main publishes a commit's images about 15 minutes
 after it reaches `main`. A running build always finishes, and only the newest
 push waits behind it, so a commit pushed in between can end up with no images.
 This checks out the newest `main` commit whose Build main succeeded:

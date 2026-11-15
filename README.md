@@ -82,10 +82,13 @@ from the images this repository publishes on a local kind cluster, see
 [The full platform on kind](docs/kind.md), or on GKE with Cloud SQL and Cloud
 Storage, see [The full platform on GKE](docs/gke.md). Start from the
 [latest release](https://github.com/octogee-ai/octogee-cloud/releases/latest),
-which publishes the images, the Helm charts and the `@octogee/core` and
-`@octogee/shared` npm packages at one version (see [Releasing](docs/releasing.md));
-until the first one is out, from `main`'s newest commit whose Build main
-succeeded, as both guides describe. Platform state is in PostgreSQL, and the
+or from `main`'s newest commit whose Build main succeeded, as both guides
+describe. A release publishes the images, the Helm charts and the
+`@octogee/core` and `@octogee/shared` npm packages at one version (see
+[Releasing](docs/releasing.md)). v0.1.0 came before the charts and packages
+were published and before the source directories were renamed: it has images
+only, and [its directories have their earlier names](docs/legacy-names.md#source-directories-in-v010).
+Platform state is in PostgreSQL, and the
 platform needs no Firebase project. An EKS install with RDS and S3,
 [The full platform on EKS](docs/eks.md), follows the GKE one but has not run on
 a real AWS account yet. On GKE, one install
