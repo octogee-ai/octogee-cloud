@@ -5,7 +5,7 @@ import type { WorkspaceProject } from "@octogee/core/platform-state";
 import { isolatedBootMode } from "@octogee/core/isolated-prelaunch";
 import { noProvisioningProjection, type ProvisioningProjection } from "@octogee/core/provisionSteps";
 import { mmUpdateFromChatOutputs } from "@octogee/core/provisioning-mirror";
-import type { LegacyProvisioning, ProvisioningWait } from "../lib/legacy-provisioning.js";
+import { respondProvisioningPending, type LegacyProvisioning, type ProvisioningWait } from "../lib/legacy-provisioning.js";
 import { sharedAgentAnchorMigrationScope, sharedAssignedSourceSurgeAnchorScope } from "../lib/shared-agent-anchor-migration.js";
 import { installWorkspaceBlobBrokerRoute, type WorkspaceBlobStore } from "./fleet-broker-workspace-blob.js";
 import { readUserRestoreAuthoritySnapshot } from "@octogee/core/fleet-state";
@@ -346,13 +346,6 @@ async function applyDefaultAgentLook(
   }
 }
 
-function respondProvisioningPending(
-  res: Response,
-  wait: { reason: string; retryAfterSeconds: number },
-): void {
-  res.set("Retry-After", String(wait.retryAfterSeconds)).status(503).json({ error: "provisioning_pending", reason: wait.reason });
-}
-
 async function serviceMattermostUpdate(
   uid: string,
   legacyProvisioning: LegacyProvisioning,
@@ -362,19 +355,16 @@ async function serviceMattermostUpdate(
   if (!wait.ready) return wait;
   const { slug, chat } = wait.value;
   const stored = await (deps.provisioningProjection ?? noProvisioningProjection).storedMattermostNames(uid, slug);
-  const agentChatToken =
-    (await defaultAgentMattermostSecret(deps.store, uid))?.personalToken ?? (await legacyProvisioning.agentChatToken(uid));
-  if (!agentChatToken) {
-    logger.error("[fleet-broker] the user's agent chat token is not issued", { uid });
-    return { ready: false, reason: "CredentialsNotIssued", retryAfterSeconds: 5 };
-  }
+  const platformToken = (await defaultAgentMattermostSecret(deps.store, uid))?.personalToken;
+  const agentChatToken = platformToken ? { ready: true as const, value: platformToken } : await legacyProvisioning.agentChatToken(uid);
+  if (!agentChatToken.ready) return agentChatToken;
   const mmUpdate = mmUpdateFromChatOutputs({
     slug,
     chat,
     agentChannelName: stored.coachChannelName ?? workspaceDefaultAgentChannelName(slug),
     proxyUrl: process.env.API_PUBLIC_URL || "",
   });
-  return { ready: true, value: { ...mmUpdate, _coachPersonalToken: agentChatToken } };
+  return { ready: true, value: { ...mmUpdate, _coachPersonalToken: agentChatToken.value } };
 }
 
 async function mirroredChat(
@@ -384,9 +374,12 @@ async function mirroredChat(
 ): Promise<ProvisioningWait<void>> {
   const wait = await legacyProvisioning.chat(uid);
   if (!wait.ready) return wait;
-  if (mattermostUserId !== wait.value.chat.userId) {
-    return { ready: false, reason: "WaitingForMirror", retryAfterSeconds: 5 };
+  const reported = wait.value.chat.userId;
+  if (mattermostUserId && mattermostUserId !== reported) {
+    logger.error("legacy provisioning: the user record holds another chat account than the service reports", { uid, recorded: mattermostUserId, reported });
+    return { ready: false, reason: "ChatAccountMismatch", retryAfterSeconds: 5 };
   }
+  if (mattermostUserId !== reported) return { ready: false, reason: "WaitingForMirror", retryAfterSeconds: 5 };
   return { ready: true, value: undefined };
 }
 
@@ -3038,7 +3031,7 @@ function installProvisioningRoutes(
       await runBrokered(res, async () => {
         const answer = await serviceMattermostUpdate(assigned.uid, legacyProvisioning, deps);
         if (!answer.ready) {
-          respondProvisioningPending(res, answer);
+          respondProvisioningPending(res, { route: "provision-mattermost", uid: assigned.uid }, answer);
           return;
         }
         res.json({ mmUpdate: answer.value });
@@ -3067,7 +3060,7 @@ function installProvisioningRoutes(
       await runBrokered(res, async () => {
         const answer = await mirroredChat(assigned.uid, assigned.userRecord.mattermostUserId, legacyProvisioning);
         if (!answer.ready) {
-          respondProvisioningPending(res, answer);
+          respondProvisioningPending(res, { route: "set-mattermost-fields", uid: assigned.uid }, answer);
           return;
         }
         res.status(204).end();

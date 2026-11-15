@@ -561,7 +561,9 @@ describe("internal gitea-admin route with the provisioning service", () => {
         throw new Error("chat is not read by the git routes");
       }),
       git: vi.fn(git),
-      agentChatToken: vi.fn(async () => null),
+      agentChatToken: vi.fn(async () => {
+        throw new Error("the agent chat token is not read by the git routes");
+      }),
     };
   }
 
@@ -596,6 +598,17 @@ describe("internal gitea-admin route with the provisioning service", () => {
     expect(res.headers["retry-after"]).toBe("12");
     expect(res.body).toEqual({ error: "provisioning_pending", reason: "GitRepositoryFailed" });
     expect(gitHost().ensureRepo).not.toHaveBeenCalled();
+  });
+
+  it("logs the uid, the route and the reason of a not-ready answer", async () => {
+    const warned = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    const provisioning = service(async () => ({ ready: false, reason: "GitRepositoryFailed", retryAfterSeconds: 12 }));
+
+    await request(app("walter", "walter", provisioning)).post("/internal/gitea/ensure-workspace-repo").send({ slug: "acme" }).expect(503);
+
+    expect(warned).toHaveBeenCalledWith("legacy provisioning: answering not ready", {
+      route: "ensure-workspace-repo", uid: "uid-acme", reason: "GitRepositoryFailed", retryAfterSeconds: 12,
+    });
   });
 
   it("still refuses a user assigned to another gateway before asking the service", async () => {

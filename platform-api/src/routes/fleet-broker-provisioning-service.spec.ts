@@ -3,6 +3,7 @@ import request from "supertest";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
+import { logger } from "@octogee/core/http/logging";
 import { workspaceDefaultAgentChannelName } from "@octogee/shared/types/identity";
 import { NO_BROKER_RECORDS, type BrokerRecords } from "../lib/broker-records.js";
 import type { LegacyProvisioning, ProvisioningWait } from "../lib/legacy-provisioning.js";
@@ -17,7 +18,7 @@ function legacyProvisioning(overrides: Partial<LegacyProvisioning> = {}): Legacy
   return {
     chat: vi.fn(async () => READY_CHAT),
     git: vi.fn(async () => ({ ready: true as const, value: undefined })),
-    agentChatToken: vi.fn(async () => "service-agent-token"),
+    agentChatToken: vi.fn(async () => ({ ready: true as const, value: "service-agent-token" })),
     ...overrides,
   };
 }
@@ -125,12 +126,38 @@ describe("POST /internal/fleet/provision-mattermost with the provisioning servic
   });
 
   it("answers 503 until an agent token exists in either place", async () => {
-    const { app } = fixture({ provisioning: legacyProvisioning({ agentChatToken: vi.fn(async () => null) }) });
+    const { app } = fixture({
+      provisioning: legacyProvisioning({ agentChatToken: vi.fn(async () => ({ ready: false as const, reason: "CredentialsNotIssued", retryAfterSeconds: 5 })) }),
+    });
 
     const response = await post(app, "provision-mattermost").expect(503);
 
     expect(response.headers["retry-after"]).toBe("5");
     expect(response.body).toEqual({ error: "provisioning_pending", reason: "CredentialsNotIssued" });
+  });
+
+  it("answers 503 with the service's Retry-After when the agent token read finds the service unavailable", async () => {
+    const { app } = fixture({
+      provisioning: legacyProvisioning({ agentChatToken: vi.fn(async () => ({ ready: false as const, reason: "ProvisioningServiceUnavailable", retryAfterSeconds: 30 })) }),
+    });
+
+    const response = await post(app, "provision-mattermost").expect(503);
+
+    expect(response.headers["retry-after"]).toBe("30");
+    expect(response.body).toEqual({ error: "provisioning_pending", reason: "ProvisioningServiceUnavailable" });
+  });
+
+  it("logs the uid, the route and the reason of every not-ready answer", async () => {
+    const warned = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    const { app } = fixture({
+      provisioning: legacyProvisioning({ chat: vi.fn(async () => ({ ready: false as const, reason: "ChatTeamFailed", retryAfterSeconds: 42 })) }),
+    });
+
+    await post(app, "provision-mattermost").expect(503);
+
+    expect(warned).toHaveBeenCalledWith("legacy provisioning: answering not ready", {
+      route: "provision-mattermost", uid: "uid-alice", reason: "ChatTeamFailed", retryAfterSeconds: 42,
+    });
   });
 
   it("answers 503 with Retry-After while chat is not ready", async () => {
@@ -184,6 +211,19 @@ describe("POST /internal/fleet/set-mattermost-fields with the provisioning servi
     const response = await post(app, "set-mattermost-fields", { mmUpdate }).expect(503);
 
     expect(response.body).toEqual({ error: "provisioning_pending", reason: "WaitingForMirror" });
+  });
+
+  it("answers 503 and logs both ids when the user record holds another chat account than the service reports", async () => {
+    const logged = vi.spyOn(logger, "error").mockImplementation(() => {});
+    const { app, documents } = fixture({ mattermostUserId: "mm-other" });
+
+    const response = await post(app, "set-mattermost-fields", { mmUpdate }).expect(503);
+
+    expect(response.body).toEqual({ error: "provisioning_pending", reason: "ChatAccountMismatch" });
+    expect(logged).toHaveBeenCalledWith("legacy provisioning: the user record holds another chat account than the service reports", {
+      uid: "uid-alice", recorded: "mm-other", reported: "mm-alice",
+    });
+    expect(documents.writes).toEqual([]);
   });
 
   it("answers 503 while chat is not ready", async () => {

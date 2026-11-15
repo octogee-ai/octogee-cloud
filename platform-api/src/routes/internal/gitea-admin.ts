@@ -25,7 +25,7 @@ import {
   ensureProjectGiteaRepo,
   ProjectRepoProvisioningError,
 } from "../projects/provisioning.js";
-import type { LegacyGitRepository, LegacyProvisioning } from "../../lib/legacy-provisioning.js";
+import { respondProvisioningPending, type LegacyGitRepository, type LegacyProvisioning } from "../../lib/legacy-provisioning.js";
 
 // Gitea ADMIN broker for the in-pod provisioner. The provisioner runs in the OpenClaw
 // openclaw container and no longer holds the admin token; it calls octogee-api with its
@@ -225,13 +225,10 @@ async function broker(res: Response, op: string, fn: () => Promise<void>): Promi
   }
 }
 
-function respondProvisioningPending(res: Response, wait: { reason: string; retryAfterSeconds: number }): void {
-  res.set("Retry-After", String(wait.retryAfterSeconds)).status(503).json({ error: "provisioning_pending", reason: wait.reason });
-}
-
 async function awaitServiceGit(
   res: Response,
   legacyProvisioning: LegacyProvisioning,
+  route: string,
   slug: string,
   repository: LegacyGitRepository | null,
 ): Promise<void> {
@@ -239,12 +236,12 @@ async function awaitServiceGit(
     const user = await platformStateStore.users.records.findBySlug(slug);
     if (!user) {
       logger.error("internal/gitea: no user carries the slug", { slug });
-      respondProvisioningPending(res, { reason: "NotProvisioned", retryAfterSeconds: 5 });
+      respondProvisioningPending(res, { route, slug }, { reason: "NotProvisioned", retryAfterSeconds: 5 });
       return;
     }
     const wait = await legacyProvisioning.git(user.uid, repository);
     if (!wait.ready) {
-      respondProvisioningPending(res, wait);
+      respondProvisioningPending(res, { route, uid: user.uid }, wait);
       return;
     }
     res.status(204).end();
@@ -273,7 +270,7 @@ function userGitHandler(route: UserGitRoute, legacyProvisioning: LegacyProvision
     if (!validSlug(res, slug)) return;
     if (!(await requireUserAccess(req, res, slug))) return;
     if (legacyProvisioning) {
-      await awaitServiceGit(res, legacyProvisioning, slug, route.repository);
+      await awaitServiceGit(res, legacyProvisioning, route.op, slug, route.repository);
       return;
     }
     await broker(res, route.op, () => route.ensure(slug));

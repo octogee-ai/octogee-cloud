@@ -48,7 +48,7 @@ function resource(overrides: {
   };
 }
 
-function fakeClient(answers: Array<UserProvisioning | null | Error>, credential: ProvisioningCredential | null = null) {
+function fakeClient(answers: Array<UserProvisioning | null | Error>, credential: ProvisioningCredential | null | Error = null) {
   const calls: Array<{ uid: string; options: unknown }> = [];
   const client: LegacyProvisioningClient = {
     getProvisioning: vi.fn(async (uid, options) => {
@@ -57,7 +57,10 @@ function fakeClient(answers: Array<UserProvisioning | null | Error>, credential:
       if (answer instanceof Error) throw answer;
       return answer ?? null;
     }),
-    getCredential: vi.fn(async () => credential),
+    getCredential: vi.fn(async () => {
+      if (credential instanceof Error) throw credential;
+      return credential;
+    }),
   };
   return { client, calls };
 }
@@ -167,14 +170,32 @@ describe("legacy provisioning adapter: credentials", () => {
   it("reads the service's agent chat token", async () => {
     const { client } = fakeClient([], { name: "agent-chat-token", value: "agent-token", version: 1 });
 
-    await expect(adapter(client).agentChatToken("uid-lin")).resolves.toBe("agent-token");
+    await expect(adapter(client).agentChatToken("uid-lin")).resolves.toEqual({ ready: true, value: "agent-token" });
     expect(client.getCredential).toHaveBeenCalledWith("uid-lin", "agent-chat-token");
   });
 
-  it("answers null before the service has issued it", async () => {
+  it("is not ready and logs the uid before the service has issued it", async () => {
+    const logged = vi.spyOn(logger, "error").mockImplementation(() => {});
     const { client } = fakeClient([], null);
 
-    await expect(adapter(client).agentChatToken("uid-lin")).resolves.toBeNull();
+    await expect(adapter(client).agentChatToken("uid-lin")).resolves.toEqual({ ready: false, reason: "CredentialsNotIssued", retryAfterSeconds: 5 });
+    expect(logged).toHaveBeenCalledWith("legacy provisioning: the user's agent chat token is not issued", { uid: "uid-lin" });
+  });
+
+  it("is not ready for a user the service has no resource for, apart from an outage", async () => {
+    vi.spyOn(logger, "error").mockImplementation(() => {});
+    const missing = fakeClient([], new ProvisioningServiceError(404, "not-found", "no provisioning for this user"));
+    const outage = fakeClient([], new ProvisioningServiceError(503, "unavailable", "down", 30_000));
+
+    await expect(adapter(missing.client).agentChatToken("uid-lin")).resolves.toEqual({ ready: false, reason: "NotProvisioned", retryAfterSeconds: 5 });
+    await expect(adapter(outage.client).agentChatToken("uid-lin")).resolves.toEqual({ ready: false, reason: "ProvisioningServiceUnavailable", retryAfterSeconds: 30 });
+  });
+
+  it("throws a refusal from the service", async () => {
+    const refusal = new ProvisioningServiceError(403, "forbidden", "role");
+    const { client } = fakeClient([], refusal);
+
+    await expect(adapter(client).agentChatToken("uid-lin")).rejects.toBe(refusal);
   });
 });
 

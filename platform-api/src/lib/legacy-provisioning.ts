@@ -1,3 +1,4 @@
+import type { Response } from "express";
 import type {
   ChatOutputs,
   GitRepositoryRole,
@@ -26,7 +27,7 @@ export type LegacyGitRepository = GitRepositoryRole | "system-config";
 export interface LegacyProvisioning {
   chat(uid: string): Promise<ProvisioningWait<{ slug: string; chat: ChatOutputs }>>;
   git(uid: string, repository: LegacyGitRepository | null): Promise<ProvisioningWait<void>>;
-  agentChatToken(uid: string): Promise<string | null>;
+  agentChatToken(uid: string): Promise<ProvisioningWait<string>>;
 }
 
 export type LegacyProvisioningClient = Pick<ProvisioningServiceClient, "getProvisioning" | "getCredential">;
@@ -39,6 +40,36 @@ export interface LegacyProvisioningDeps {
 
 function clampSeconds(seconds: number): number {
   return Math.min(Math.max(Math.ceil(seconds), 1), MAX_RETRY_AFTER_SECONDS);
+}
+
+export interface NotReadyAnswer {
+  readonly route: string;
+  readonly uid?: string;
+  readonly slug?: string;
+}
+
+export function respondProvisioningPending(
+  res: Response,
+  answer: NotReadyAnswer,
+  wait: { reason: string; retryAfterSeconds: number },
+): void {
+  logger.warn("legacy provisioning: answering not ready", { ...answer, reason: wait.reason, retryAfterSeconds: wait.retryAfterSeconds });
+  res.set("Retry-After", String(wait.retryAfterSeconds)).status(503).json({ error: "provisioning_pending", reason: wait.reason });
+}
+
+function unavailable(uid: string, error: unknown): ProvisioningWait<never> {
+  if (!(error instanceof ProvisioningServiceError) || !error.transient) throw error;
+  logger.error("legacy provisioning: the provisioning service is unavailable", { uid, err: error });
+  return {
+    ready: false,
+    reason: "ProvisioningServiceUnavailable",
+    retryAfterSeconds: error.retryAfterMs === null ? DEFAULT_RETRY_AFTER_SECONDS : clampSeconds(error.retryAfterMs / 1000),
+  };
+}
+
+function notProvisioned(uid: string): ProvisioningWait<never> {
+  logger.error("legacy provisioning: no provisioning resource exists for the user", { uid });
+  return { ready: false, reason: "NotProvisioned", retryAfterSeconds: DEFAULT_RETRY_AFTER_SECONDS };
 }
 
 export function createLegacyProvisioning(deps: LegacyProvisioningDeps): LegacyProvisioning {
@@ -61,21 +92,10 @@ export function createLegacyProvisioning(deps: LegacyProvisioningDeps): LegacyPr
       if (resource !== null && resource.status.observedGeneration < resource.generation) {
         resource = await deps.client.getProvisioning(uid, { waitForGeneration: resource.generation, timeoutSeconds: longPollSeconds });
       }
-      if (resource === null) {
-        logger.error("legacy provisioning: no provisioning resource exists for the user", { uid });
-        return { wait: notReady("NotProvisioned", null) };
-      }
+      if (resource === null) return { wait: notProvisioned(uid) };
       return { resource };
     } catch (error) {
-      if (!(error instanceof ProvisioningServiceError) || !error.transient) throw error;
-      logger.error("legacy provisioning: the provisioning service is unavailable", { uid, err: error });
-      return {
-        wait: {
-          ready: false,
-          reason: "ProvisioningServiceUnavailable",
-          retryAfterSeconds: error.retryAfterMs === null ? DEFAULT_RETRY_AFTER_SECONDS : clampSeconds(error.retryAfterMs / 1000),
-        },
-      };
+      return { wait: unavailable(uid, error) };
     }
   }
 
@@ -120,7 +140,18 @@ export function createLegacyProvisioning(deps: LegacyProvisioningDeps): LegacyPr
     },
 
     async agentChatToken(uid) {
-      return (await deps.client.getCredential(uid, "agent-chat-token"))?.value ?? null;
+      let credential: Awaited<ReturnType<LegacyProvisioningClient["getCredential"]>>;
+      try {
+        credential = await deps.client.getCredential(uid, "agent-chat-token");
+      } catch (error) {
+        if (error instanceof ProvisioningServiceError && error.status === 404) return notProvisioned(uid);
+        return unavailable(uid, error);
+      }
+      if (credential === null) {
+        logger.error("legacy provisioning: the user's agent chat token is not issued", { uid });
+        return { ready: false, reason: "CredentialsNotIssued", retryAfterSeconds: DEFAULT_RETRY_AFTER_SECONDS };
+      }
+      return { ready: true, value: credential.value };
     },
   };
 }
