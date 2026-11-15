@@ -52,8 +52,10 @@ describe("platform image Dockerfiles", () => {
   });
 });
 
+const FROM_BUILDER = "FROM node:26 AS builder";
+
 const BUILDER = [
-  "FROM node:26 AS builder",
+  FROM_BUILDER,
   "WORKDIR /lib/widget",
   "COPY lib/widget/package.json lib/widget/package-lock.json ./",
   "RUN npm ci",
@@ -125,6 +127,54 @@ describe("local packages built in a stage", () => {
       `${NEEDS}: lib/widget/package.json at /lib/widget/package.json`,
       `${NEEDS}: lib/widget/dist at /lib/widget/dist`,
     ]);
+  });
+
+  it.each([
+    ["no build step", [
+      FROM_BUILDER, "WORKDIR /lib/widget",
+      "COPY lib/widget/package.json ./", "COPY lib/widget/src/ ./src/",
+    ]],
+    ["a build that ran before the sources were copied", [
+      FROM_BUILDER, "WORKDIR /lib/widget",
+      "COPY lib/widget/package.json ./", "RUN npm run build", "COPY lib/widget/src/ ./src/",
+    ]],
+    ["a typecheck that emits nothing", [
+      FROM_BUILDER, "WORKDIR /lib/widget",
+      "COPY lib/widget/package.json ./", "COPY lib/widget/src/ ./src/", "RUN npx tsc -p tsconfig.json --noEmit",
+    ]],
+    ["a build of another directory", [
+      FROM_BUILDER, "WORKDIR /lib/widget",
+      "COPY lib/widget/package.json ./", "COPY lib/widget/src/ ./src/", "RUN cd /elsewhere && npm run build",
+    ]],
+  ])("reports a dist missing when the stage copied the package's manifest with %s", (_case, stage) => {
+    const deps = scan([...stage, ...consumer(
+      "COPY --from=builder /lib/widget/package.json /lib/widget/",
+      "COPY --from=builder /lib/widget/dist /lib/widget/dist",
+    )]);
+
+    expect(deps.missing).toEqual([`${NEEDS}: lib/widget/dist at /lib/widget/dist`]);
+    expect(deps.distDirs).toEqual(["lib/widget/dist"]);
+  });
+
+  it.each([
+    ["npm run build in the package directory", ["WORKDIR /lib/widget", "RUN npm run build"]],
+    ["npm run build with a prefix", ["WORKDIR /", "RUN npm run build --prefix lib/widget"]],
+    ["npm --prefix before run build", ["WORKDIR /", "RUN npm --prefix /lib/widget run build"]],
+    ["npx tsc after cd", ["WORKDIR /", "RUN cd /lib/widget && npx tsc -p tsconfig.json"]],
+    ["tsc --build with a project path", ["WORKDIR /", "RUN node_modules/.bin/tsc --build /lib/widget/tsconfig.json"]],
+    ["plain npx tsc", ["WORKDIR /lib/widget", "RUN npx tsc"]],
+  ])("accepts a dist built with %s", (_case, build) => {
+    const deps = scan([
+      FROM_BUILDER, "WORKDIR /lib/widget",
+      "COPY lib/widget/package.json ./", "COPY lib/widget/src/ ./src/",
+      ...build,
+      ...consumer(
+        "COPY --from=builder /lib/widget/package.json /lib/widget/",
+        "COPY --from=builder /lib/widget/dist /lib/widget/dist",
+      ),
+    ]);
+
+    expect(deps.missing).toEqual([]);
   });
 
   it("ignores a copy from an outside build context or image", () => {

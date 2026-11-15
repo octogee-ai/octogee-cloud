@@ -19,7 +19,11 @@ interface CopyEntry extends Provided {
 interface Stage {
   workdir: string;
   copies: CopyEntry[];
+  built: string[];
 }
+
+const MANIFEST = "package.json";
+const PACKAGE_FILES = new Set([MANIFEST, "package-lock.json", ".npmrc"]);
 
 const INSTALL_SECTIONS = ["dependencies", "optionalDependencies", "devDependencies"] as const;
 
@@ -52,9 +56,46 @@ function providedSource(copies: CopyEntry[], container: string): string | undefi
 function fromStage(from: Stage, stagePath: string): Provided | undefined {
   const copied = provided(from.copies, stagePath);
   if (copied) return copied;
-  const manifest = provided(from.copies, path.posix.join(path.posix.dirname(stagePath), "package.json"));
+  const packageDir = path.posix.dirname(stagePath);
+  if (!from.built.includes(packageDir)) return undefined;
+  const manifest = provided(from.copies, path.posix.join(packageDir, MANIFEST));
   if (!manifest || manifest.builtInStage) return undefined;
   return { source: path.posix.join(path.posix.dirname(manifest.source), path.posix.basename(stagePath)), builtInStage: true };
+}
+
+function runsNpmBuild(words: string[]): boolean {
+  const npm = words.indexOf("npm");
+  if (npm < 0) return false;
+  let index = npm + 1;
+  if (words[index]?.startsWith("--prefix")) index += words[index].includes("=") ? 1 : 2;
+  return (words[index] === "run" || words[index] === "run-script") && words[index + 1] === "build";
+}
+
+function buildDirIn(segment: string, cwd: string): string | undefined {
+  const prefix = segment.match(/--prefix[=\s]+(\S+)/);
+  if (runsNpmBuild(segment.split(/\s+/))) return prefix ? path.posix.resolve(cwd, prefix[1]) : cwd;
+  if (!/(?:^|\s|\/)tsc(?:\s|$)/.test(segment) || /\s--(?:noEmit|version|help)\b/.test(segment)) return undefined;
+  const project = segment.match(/\s(?:-p|--project|-b|--build)[=\s]+(?!-)(\S+)/);
+  if (!project) return cwd;
+  const target = path.posix.resolve(cwd, project[1]);
+  return target.endsWith(".json") ? path.posix.dirname(target) : target;
+}
+
+function hasSources(stage: Stage, packageDir: string): boolean {
+  return stage.copies.some((copy) => !copy.builtInStage && copy.container.startsWith(`${packageDir}/`)
+    && !PACKAGE_FILES.has(path.posix.relative(packageDir, copy.container)));
+}
+
+function recordBuilds(command: string, stage: Stage): void {
+  let cwd = stage.workdir;
+  for (const segment of command.split(/&&|;/).map((part) => part.trim())) {
+    const cd = segment.match(/^cd\s+(\S+)$/);
+    if (cd) cwd = path.posix.resolve(cwd, cd[1]);
+    const packageDir = buildDirIn(segment, cwd);
+    if (packageDir === undefined || stage.built.includes(packageDir)) continue;
+    const manifest = provided(stage.copies, `${packageDir}/package.json`);
+    if (manifest && !manifest.builtInStage && hasSources(stage, packageDir)) stage.built.push(packageDir);
+  }
 }
 
 function recordCopy(stage: Stage, args: string[], contextDir: string, stages: ReadonlyMap<string, Stage>): void {
@@ -85,7 +126,7 @@ function isDirectoryCopy(named: string, source: Provided, contextDir: string): b
 export function dockerfileLocalFileDeps(dockerfilePath: string, contextDir: string): DockerfileLocalFileDeps {
   const result: DockerfileLocalFileDeps = { installs: [], missing: [], distDirs: [] };
   const stages = new Map<string, Stage>();
-  let stage: Stage = { workdir: "/", copies: [] };
+  let stage: Stage = { workdir: "/", copies: [], built: [] };
   let stageName = "";
 
   for (const line of logicalLines(readFileSync(dockerfilePath, "utf8"))) {
@@ -94,7 +135,9 @@ export function dockerfileLocalFileDeps(dockerfilePath: string, contextDir: stri
     if (keyword === "FROM") {
       const operands = args.filter((arg) => !arg.startsWith("--"));
       const parent = stages.get(operands[0]);
-      stage = parent ? { workdir: parent.workdir, copies: [...parent.copies] } : { workdir: "/", copies: [] };
+      stage = parent
+        ? { workdir: parent.workdir, copies: [...parent.copies], built: [...parent.built] }
+        : { workdir: "/", copies: [], built: [] };
       stageName = operands[2] ?? operands[0];
       stages.set(stageName, stage);
     } else if (keyword === "WORKDIR") {
@@ -103,6 +146,7 @@ export function dockerfileLocalFileDeps(dockerfilePath: string, contextDir: stri
       recordCopy(stage, args, contextDir, stages);
     } else if (keyword === "RUN") {
       checkInstalls(args.join(" "), stage, stageName, contextDir, result);
+      recordBuilds(args.join(" "), stage);
     }
   }
   return result;
@@ -156,7 +200,7 @@ function checkInstalls(command: string, stage: Stage, stageName: string, context
     for (const [name, section, target] of localFileDeps(path.join(contextDir, manifestSource), omitsDev)) {
       const sourceDir = path.posix.join(path.posix.dirname(manifestSource), target);
       const containerDir = path.posix.resolve(installDir, target);
-      const required = packs && publishesDist(path.join(contextDir, sourceDir, "package.json")) ? ["package.json", "dist"] : ["package.json"];
+      const required = packs && publishesDist(path.join(contextDir, sourceDir, MANIFEST)) ? [MANIFEST, "dist"] : [MANIFEST];
       const builtDist = provided(stage.copies, `${containerDir}/dist`)?.builtInStage === true;
       if (required.includes("dist") && !builtDist && !result.distDirs.includes(`${sourceDir}/dist`)) result.distDirs.push(`${sourceDir}/dist`);
       for (const file of required) {
