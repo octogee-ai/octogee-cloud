@@ -8,53 +8,36 @@ the picture below.
 ## The picture
 
 ```mermaid
-flowchart LR
+flowchart TB
   operator([Operator])
   user([User])
   provider([Model provider])
 
-  subgraph cluster[Kubernetes cluster]
+  subgraph services[Platform services]
     controller[Fleet controller<br/>and Admin API]
     api[Platform API]
     broker[LLM broker]
-    router[Gateway router]
-    mattermost[Mattermost]
-    gitea[Gitea]
-    subgraph shared[Shared gateway pod, gVisor]
-      openclaw1[OpenClaw gateway]
-      edge1[Edge sidecar]
-      provisioner1[Provisioner]
-    end
   end
 
-  subgraph vm[Isolated gateway, one user, pod or VM]
-    openclaw2[OpenClaw gateway]
-    edge2[Edge sidecar]
+  hosts[Mattermost and Gitea]
+
+  subgraph gateways[Gateways]
+    shared[Shared gateway<br/>many users, no host code]
+    isolated[Isolated gateway<br/>one user, full OpenClaw]
   end
 
-  state[(PostgreSQL)]
-  blobs[(Object storage)]
+  state[(PostgreSQL and<br/>object storage)]
 
   operator -->|octogee-fleet| controller
-  user --> mattermost
-  user --> gitea
-  user -->|Control UI| router
-  router --> edge1
-  router --> edge2
-  controller -->|installs with Helm| shared
-  controller -->|installs or creates| vm
-  mattermost <--> openclaw1
-  mattermost <--> openclaw2
-  openclaw1 --> broker
-  openclaw2 --> broker
+  user -->|chat and git| hosts
+  controller -->|adds, retires,<br/>moves users| gateways
+  hosts <-->|messages| gateways
+  gateways -->|sets up users| api
+  api -->|admin credentials| hosts
+  gateways -->|model calls| broker
   broker --> provider
-  provisioner1 --> api
-  api --> mattermost
-  api --> gitea
-  controller --> state
-  api --> state
-  openclaw1 --> state
-  edge1 --> blobs
+  services --> state
+  gateways --> state
 ```
 
 ## Services
