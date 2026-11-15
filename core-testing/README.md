@@ -10,8 +10,9 @@ takes `@octogee/core` and `@octogee/shared` at the same version as peers.
 Test helpers for code built on `@octogee/core`. Platform packages
 (`gateway-edge`, `platform-api`, `fleet-controller`, `scripts`) and core's own
 specs import them as `@octogee/core-testing/<module>`. None of it is runtime
-code: it is a development dependency only, no image copies it, and
-`@octogee/core` declares no test framework because of it.
+code: it is a development dependency only, and `@octogee/core` declares no
+test framework because of it. Image builds copy it only so that `npm ci`
+resolves the dev dependencies of the package they install.
 
 | Module | What it gives a spec | Optional peers it needs |
 | --- | --- | --- |

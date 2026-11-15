@@ -3,7 +3,8 @@
 Working notes from the spike that led to the isolated gateway VM image, and
 the Docker recipe it left behind. The [component README](../README.md) says
 what `desktop/` is today; [`image/README.md`](../image/README.md) covers the VM
-image build.
+image build. Paths below that do not start with `desktop/` are relative
+to it.
 
 The spike proved that the Omarchy userspace runs headless in a plain container on
 software rendering, that an agent can drive it by screenshot and input without
