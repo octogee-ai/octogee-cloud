@@ -71,13 +71,13 @@ describe("provisioning service client", () => {
   it("creates, leaves unchanged and changes a user's spec with the projected token", async () => {
     const api = client();
 
-    const created = await api.putProvisioning("u 1", SPEC);
-    const unchanged = await api.putProvisioning("u 1", SPEC);
-    const changed = await api.putProvisioning("u 1", { ...SPEC, email: "new@example.test" });
+    const created = await api.putProvisioning("u1", SPEC);
+    const unchanged = await api.putProvisioning("u1", SPEC);
+    const changed = await api.putProvisioning("u1", { ...SPEC, email: "new@example.test" });
 
     expect([created.outcome, unchanged.outcome, changed.outcome]).toEqual(["created", "unchanged", "changed"]);
     expect(changed.resource.generation).toBe(2);
-    expect(fake.requests[0]).toMatchObject({ method: "PUT", path: "/v1/users/u%201/provisioning", authorization: "Bearer token-1" });
+    expect(fake.requests[0]).toMatchObject({ method: "PUT", path: "/v1/users/u1/provisioning", authorization: "Bearer token-1" });
   });
 
   it("sends expectedResourceVersion and surfaces precondition-failed without retrying", async () => {
@@ -175,6 +175,36 @@ describe("provisioning service client", () => {
     expect(fake.requests.at(-1)).toMatchObject({ method: "POST", path: "/v1/users/u1/provisioning/retry", idempotencyKey: "key-1", body: { expectedAttempts: 0 } });
   });
 
+  it("caps a long Retry-After at the retry policy's maximum delay", async () => {
+    fake.failNext(503, 1, 3600);
+
+    await client().putProvisioning("u1", SPEC);
+
+    expect(sleeps).toEqual([10_000]);
+  });
+
+  it("refuses a uid that would leave the user's path, without a request", async () => {
+    const api = client();
+
+    await expect(api.getProvisioning("..")).rejects.toMatchObject({ status: 400, code: "invalid-request" });
+    await expect(api.getCredential("../provisionings", "user-chat-token")).rejects.toMatchObject({ status: 400 });
+    expect(fake.requests).toEqual([]);
+  });
+
+  it("refuses to follow redirects", async () => {
+    const seen: RequestInit[] = [];
+    const api = client({
+      fetch: async (url, init) => {
+        seen.push(init ?? {});
+        return fetch(url, init);
+      },
+    });
+
+    await api.getProvisioning("u1");
+
+    expect(seen.map((init) => init.redirect)).toEqual(["error"]);
+  });
+
   it("reads an issued credential and answers null while it is not issued", async () => {
     const api = client();
     await api.putProvisioning("u1", SPEC);
@@ -233,6 +263,36 @@ describe("provisioning watch", () => {
 
     expect(snapshots).toEqual([["a"], ["a", "b"]]);
     expect(changes).toEqual([["b"]]);
+  });
+
+  it("backs off before relisting when the resource version keeps expiring", async () => {
+    const watchSleeps: number[] = [];
+    let lists = 0;
+    const expiring = {
+      listAllProvisionings: async () => {
+        lists += 1;
+        if (lists === 4) watch.stop();
+        return { items: [], resourceVersion: "1" };
+      },
+      watchProvisionings: async () => {
+        throw new ProvisioningServiceError(410, "resource-version-expired", "too old");
+      },
+    };
+
+    const watch = startProvisioningWatch(expiring, {
+      onSnapshot: async () => undefined,
+      onChanges: async () => undefined,
+      onError: () => undefined,
+    }, {
+      random: () => 0.5,
+      retry: { baseDelayMs: 100, maxDelayMs: 1_000 },
+      sleep: async (ms) => {
+        watchSleeps.push(ms);
+      },
+    });
+    await watch.stopped;
+
+    expect(watchSleeps).toEqual([100, 200]);
   });
 
   it("backs off and reports while the service is unreachable", async () => {

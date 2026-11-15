@@ -5,6 +5,7 @@ export const PROVISIONING_SERVICE_TOKEN_PATH_ENV = "PROVISIONING_SERVICE_TOKEN_P
 const TOKEN_REFRESH_MS = 60_000;
 const REQUEST_TIMEOUT_MS = 30_000;
 const LONG_POLL_GRACE_MS = 15_000;
+const PROVISIONING_UID = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
 const PUT_OUTCOMES = { 201: "created", 202: "changed" };
 export const DEFAULT_PROVISIONING_SERVICE_RETRY = {
     attempts: 4,
@@ -35,6 +36,14 @@ export function provisioningServiceConfigFromEnvironment(env) {
         throw new Error(`${PROVISIONING_SERVICE_URL_ENV} is set but ${PROVISIONING_SERVICE_TOKEN_PATH_ENV} is not`);
     }
     return { baseUrl, tokenPath };
+}
+export function isProvisioningUid(uid) {
+    return PROVISIONING_UID.test(uid);
+}
+function userSegment(uid) {
+    if (!isProvisioningUid(uid))
+        throw new ProvisioningServiceError(400, "invalid-request", "uid is not a valid provisioning identifier");
+    return encodeURIComponent(uid);
 }
 export function backoffDelayMs(attempt, policy, random) {
     const capped = Math.min(policy.baseDelayMs * 2 ** attempt, policy.maxDelayMs);
@@ -116,6 +125,7 @@ export function createProvisioningServiceClient(options) {
         try {
             return await fetchImpl(urlOf(input), {
                 method: input.method,
+                redirect: "error",
                 headers: {
                     authorization: `Bearer ${bearer}`,
                     accept: "application/json",
@@ -150,8 +160,8 @@ export function createProvisioningServiceClient(options) {
                 const transient = error instanceof ProvisioningServiceError && error.transient;
                 if (!transient || attemptIndex + 1 >= retry.attempts)
                     throw error;
-                const hinted = error.retryAfterMs;
-                await sleep(hinted ?? backoffDelayMs(attemptIndex, retry, random));
+                const delay = error.retryAfterMs ?? backoffDelayMs(attemptIndex, retry, random);
+                await sleep(Math.min(delay, retry.maxDelayMs));
             }
         }
     }
@@ -163,7 +173,7 @@ export function createProvisioningServiceClient(options) {
             throw new ProvisioningServiceError(response.status, "unexpected-response", `provisioning service answered unreadable JSON: ${errorMessage(error)}`);
         }
     }
-    const userPath = (uid) => `users/${encodeURIComponent(uid)}/provisioning`;
+    const userPath = (uid) => `users/${userSegment(uid)}/provisioning`;
     const client = {
         async putProvisioning(uid, spec, putOptions) {
             const response = await request({
@@ -240,7 +250,7 @@ export function createProvisioningServiceClient(options) {
         async getCredential(uid, name) {
             let response;
             try {
-                response = await request({ method: "GET", path: `users/${encodeURIComponent(uid)}/credentials/${encodeURIComponent(name)}` });
+                response = await request({ method: "GET", path: `users/${userSegment(uid)}/credentials/${encodeURIComponent(name)}` });
             }
             catch (error) {
                 if (error instanceof ProvisioningServiceError && error.status === 409 && error.code === "not-issued")
@@ -258,31 +268,41 @@ export function startProvisioningWatch(client, handlers, options = {}) {
     const random = options.random ?? Math.random;
     const retry = options.retry ?? PROVISIONING_WATCH_RETRY;
     let stopping = false;
+    async function step(resourceVersion) {
+        if (resourceVersion === null) {
+            const listed = await client.listAllProvisionings();
+            if (stopping)
+                return null;
+            await handlers.onSnapshot(listed.items);
+            return { resourceVersion: listed.resourceVersion, watched: false };
+        }
+        const changed = await client.watchProvisionings({ resourceVersion, timeoutSeconds: options.timeoutSeconds ?? 60 });
+        if (stopping)
+            return null;
+        if (changed.items.length > 0)
+            await handlers.onChanges(changed.items);
+        return { resourceVersion: changed.resourceVersion, watched: true };
+    }
     async function run() {
         let resourceVersion = null;
         let failures = 0;
+        let expiries = 0;
         while (!stopping) {
             try {
-                if (resourceVersion === null) {
-                    const listed = await client.listAllProvisionings();
-                    if (stopping)
-                        return;
-                    await handlers.onSnapshot(listed.items);
-                    resourceVersion = listed.resourceVersion;
-                }
-                else {
-                    const changed = await client.watchProvisionings({ resourceVersion, timeoutSeconds: options.timeoutSeconds ?? 60 });
-                    if (stopping)
-                        return;
-                    if (changed.items.length > 0)
-                        await handlers.onChanges(changed.items);
-                    resourceVersion = changed.resourceVersion;
-                }
+                const next = await step(resourceVersion);
+                if (next === null)
+                    return;
+                resourceVersion = next.resourceVersion;
+                if (next.watched)
+                    expiries = 0;
                 failures = 0;
             }
             catch (error) {
                 if (error instanceof ProvisioningServiceError && error.code === "resource-version-expired") {
                     resourceVersion = null;
+                    expiries += 1;
+                    if (expiries > 1)
+                        await sleep(backoffDelayMs(expiries - 2, retry, random));
                     continue;
                 }
                 failures += 1;

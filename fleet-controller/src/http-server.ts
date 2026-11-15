@@ -15,7 +15,7 @@ import {
   type FleetRouterDeps,
   type GatewayPodDiagnostics,
 } from "@octogee/core/admin-fleet-router";
-import { addAdminProvisioningRoutes, type AdminProvisioningClient } from "@octogee/core/admin-provisioning-router";
+import { addAdminProvisioningRoutes, type AdminProvisioningClient, type AdminProvisioningRouterDeps } from "@octogee/core/admin-provisioning-router";
 import type { CentralReleaseAuthority } from "@octogee/core/artifact-registry";
 import type {
   PlatformStateStore,
@@ -111,6 +111,7 @@ export interface HttpServerDeps {
   logs: { source: LogEntriesSource | null; namespace: string };
   provisioning?: AdminProvisioningClient | null;
   provisioningReadiness?: FleetRouterDeps["provisioningReadiness"];
+  provisioningSpecFailures?: AdminProvisioningRouterDeps["specFailures"];
 }
 
 function adaptLogger(log: (msg: string) => void): FleetLogger {
@@ -378,6 +379,8 @@ export function createHttpServer(deps: HttpServerDeps): Express {
   addAdminProvisioningRoutes(adminRouter, {
     provisioning: deps.provisioning ?? null,
     journal: createAdminFleetMutationRunner(deps.store),
+    logger: adaptLogger(deps.log),
+    specFailures: deps.provisioningSpecFailures,
   });
   addAdminLogsRoutes(adminRouter, {
     source: deps.logs.source,
