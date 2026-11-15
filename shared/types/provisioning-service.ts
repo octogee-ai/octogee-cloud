@@ -166,6 +166,7 @@ export interface UserProvisioningWatchQuery {
   watch: true;
   resourceVersion: string;
   timeoutSeconds?: number;
+  limit?: number;
 }
 
 export const PROVISIONING_STEPS = [
