@@ -22,7 +22,7 @@ export class ChangeNotifier {
       this.scheduleReconnect();
     });
     await client.connect();
-    await client.query(`LISTEN "${this.db.changeChannel}"`);
+    await client.query("LISTEN provisioning_service_changes");
     this.client = client;
   }
 

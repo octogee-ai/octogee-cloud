@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createHarness, dsn, spec, TOKENS, untilSettled, type Harness } from "../test-support/harness.js";
+import { createHarness, dsn, spec, TOKENS, untilSettled, type Harness } from "../__tests__/harness.js";
 
 const KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA gateway-a";
 

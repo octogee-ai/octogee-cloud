@@ -10,6 +10,8 @@ import { USER_PAT_DESCRIPTION } from "./user-pat.js";
 import { mmUploadAvatar } from "./avatars.js";
 import { controlUiCommandSpec, controlUiCommandUrl } from "./control-ui-command.js";
 import { isPlaceholderEmail, placeholderEmail } from "../placeholder-email.js";
+export const DEFAULT_TEAM_CHANNELS_TO_ARCHIVE = ["town-square", "off-topic", "general"];
+export const DEFAULT_AGENT_BOT_DISPLAY_NAME = "Octo";
 async function backfillDefaultAgentIdentity(host, uid, slug) {
     const defaultAgentSecret = await platformStateStore.secrets.get(uid, "coachMattermost");
     if (defaultAgentSecret !== null) {
@@ -134,7 +136,7 @@ async function createOrFindTeam(host, slug, firstName, vibe) {
 async function setupWorkspaceTeam(host, opts) {
     const { teamId, slug, userMmUserId, adminUserId } = opts;
     await host.addMember({ teamId }, userMmUserId, "team_admin team_user");
-    for (const defaultName of ["town-square", "off-topic", "general"]) {
+    for (const defaultName of DEFAULT_TEAM_CHANNELS_TO_ARCHIVE) {
         try {
             const archivedId = await host.archiveChannel({ teamId, name: defaultName });
             if (archivedId) {
@@ -206,7 +208,7 @@ async function createDefaultAgentBot(host, input) {
     const defaultAgentUsername = `${slug}-coach`;
     const defaultAgentMmUser = await host.ensureBot({
         username: defaultAgentUsername,
-        displayName: "Octo",
+        displayName: DEFAULT_AGENT_BOT_DISPLAY_NAME,
         description: `Coach for ${firstName || slug}`,
     });
     if (!defaultAgentMmUser) {

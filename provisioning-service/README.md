@@ -48,6 +48,13 @@ review or wrong audience answers `401`; any other service account, or a route
 outside its roles, answers `403`. The service's own service account needs
 permission to create TokenReviews.
 
+## Git keys
+
+Do not call `PUT /v1/users/{uid}/git-keys/{gatewayId}` until the key-title
+migration is decided. Keys registered by the earlier path carry another title.
+The service leaves a key with the same public key under a holder it does not
+manage untouched and reports `Registered=False` with reason `GitKeyFailed`.
+
 ## Outputs
 
 `status.outputs.git` reports the repositories the service created or confirmed,
@@ -113,4 +120,17 @@ npm test
 
 Tests that need PostgreSQL read `OCTOGEE_TEST_POSTGRES_DSN` and are skipped
 without it. `node ../scripts/ci/provisioning-service-postgres.mjs` starts a
-private PostgreSQL 16 and runs them, as the checks workflow does.
+private PostgreSQL 16 and runs them and the conformance suite, as the checks
+workflow does.
+
+## Conformance suite
+
+`npm run conformance` tests an implementation from outside, over HTTP only. It
+starts a fake TokenReview endpoint, empties the database named by
+`PROVISIONING_CONFORMANCE_DSN` (it runs `DROP OWNED BY CURRENT_USER`, so give it
+a database and a non-superuser role of its own), and starts the implementation
+with `PROVISIONING_CONFORMANCE_COMMAND` (default: this package's `src/main.ts`).
+The implementation receives the settings in the environment table above, with
+`PROVISIONING_HOST_ADAPTERS=fake`, `PROVISIONING_DB_SSLMODE=disable` and
+`PROVISIONING_TOKEN_REVIEW_URL` pointing at the fake. A `resourceVersion`
+newer than the service has issued answers `410`, like an expired one.

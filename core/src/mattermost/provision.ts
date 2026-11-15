@@ -19,6 +19,9 @@ import { mmUploadAvatar } from "./avatars.js";
 import { controlUiCommandSpec, controlUiCommandUrl } from "./control-ui-command.js";
 import { isPlaceholderEmail, placeholderEmail } from "../placeholder-email.js";
 
+export const DEFAULT_TEAM_CHANNELS_TO_ARCHIVE = ["town-square", "off-topic", "general"] as const;
+export const DEFAULT_AGENT_BOT_DISPLAY_NAME = "Octo";
+
 export interface StoredMattermostNames {
   readonly username: string | null;
   readonly coachChannelName: string | null;
@@ -213,7 +216,7 @@ async function setupWorkspaceTeam(host: ManagedChannelHost, opts: {
 
   await host.addMember({ teamId }, userMmUserId, "team_admin team_user");
 
-  for (const defaultName of ["town-square", "off-topic", "general"]) {
+  for (const defaultName of DEFAULT_TEAM_CHANNELS_TO_ARCHIVE) {
     try {
       const archivedId = await host.archiveChannel({ teamId, name: defaultName });
       if (archivedId) {
@@ -298,7 +301,7 @@ async function createDefaultAgentBot(host: ManagedChannelHost, input: {
   const defaultAgentUsername = `${slug}-coach`;
   const defaultAgentMmUser = await host.ensureBot({
     username: defaultAgentUsername,
-    displayName: "Octo",
+    displayName: DEFAULT_AGENT_BOT_DISPLAY_NAME,
     description: `Coach for ${firstName || slug}`,
   });
   if (!defaultAgentMmUser) {

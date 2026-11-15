@@ -54,7 +54,9 @@ function url(env: NodeJS.ProcessEnv, name: string): string {
     throw new Error(`${name} must be a URL`);
   }
   if (parsed.protocol !== "https:" && parsed.protocol !== "http:") throw new Error(`${name} must be an http or https URL`);
-  return value.replace(/\/+$/, "");
+  let end = value.length;
+  while (end > 0 && value[end - 1] === "/") end -= 1;
+  return value.slice(0, end);
 }
 
 function hostAdapters(env: NodeJS.ProcessEnv): HostAdapterConfig {

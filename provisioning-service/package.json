@@ -16,6 +16,7 @@
     "conformance": "vitest run --config vitest.conformance.config.ts"
   },
   "dependencies": {
+    "@octogee/core": "file:../core",
     "@octogee/shared": "file:../shared",
     "express": "^5.3.0",
     "pg": "^8.23.1"
