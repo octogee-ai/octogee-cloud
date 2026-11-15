@@ -42,6 +42,17 @@ describe("operator Helm release selection", () => {
     });
   });
 
+  it("pins the provisioning service to the selected family only when that family built it", async () => {
+    const withService = structuredClone(manifest);
+    withService.surfaces.platform["provisioning-service"] = `sha256:${"f".repeat(64)}`;
+    const values = JSON.parse(await renderReleaseHelmValues(sourceSha, { resolveManifest: async () => withService }));
+    expect(values.provisioningService.image).toEqual({
+      repository: `${manifest.repository}/provisioning-service`, tag: sourceSha.slice(0, 7), digest: `sha256:${"f".repeat(64)}`,
+    });
+    const without = JSON.parse(await renderReleaseHelmValues(sourceSha, { resolveManifest: async () => manifest }));
+    expect(without.provisioningService).toBeUndefined();
+  });
+
   it("gives Shared allocation the exact canonical family used by user deployment", async () => {
     const selected = structuredClone(manifest);
     selected.surfaces.gateway["octogee-gateway-builder"] = `sha256:${"d".repeat(64)}`;
