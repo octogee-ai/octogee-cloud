@@ -86,6 +86,16 @@ jobs:
               cd tests
               npm run typecheck
               npm test
+          - name: release-artifacts
+            installs: shared core scripts
+            helm: true
+            run: |
+              node scripts/ci/release-packages.mjs pack --tag=v0.0.0 --out="$RUNNER_TEMP/packages"
+              node scripts/ci/release-packages.mjs verify --out="$RUNNER_TEMP/packages"
+              node scripts/ci/release-packages.mjs publish --dry-run --out="$RUNNER_TEMP/packages"
+              node scripts/ci/release-charts.mjs placeholder-manifest > "$RUNNER_TEMP/image-manifest.json"
+              node scripts/ci/release-charts.mjs package --tag=v0.0.0 --manifest="$RUNNER_TEMP/image-manifest.json" --out="$RUNNER_TEMP/charts"
+              node scripts/ci/release-charts.mjs verify --tag=v0.0.0 --manifest="$RUNNER_TEMP/image-manifest.json" --out="$RUNNER_TEMP/charts"
           - name: libraries
             installs: >-
               shared scripts glm-controller

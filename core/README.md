@@ -1,5 +1,13 @@
 # @octogee/core
 
+```bash
+npm install @octogee/core@X.Y.Z @octogee/shared@X.Y.Z
+```
+
+Each octogee-cloud release `vX.Y.Z` publishes this package at `X.Y.Z`; install
+`@octogee/shared` at the same version. The `testing/*` exports also need the
+optional peers `firebase-admin`, `supertest` and `vitest`.
+
 Octogee's shared runtime library. Platform packages (`gateway-edge`,
 `octogee-api`, `glm-controller`, `scripts`) consume its built interface through
 `@octogee/core/<module>`, never its source. That boundary keeps each package's

@@ -534,8 +534,8 @@ digest as a workflow artifact named `image-manifest-<sha>`. The manifest lists
 each image's platforms. A running image build always finishes; a newer push's
 image build waits behind it and replaces any that was already waiting. The
 smoke tests and scans that follow publication do not hold up the next build. A release adds its
-`vX.Y.Z` tag to each image and attaches the manifest, as
-[Releasing](releasing.md) describes. `kind-install.sh up --pull` installs
+`vX.Y.Z` tag to each image, attaches the manifest, and publishes the charts
+and npm packages at the same version, as [Releasing](releasing.md) describes. `kind-install.sh up --pull` installs
 these images. The post-build kind smoke test takes the amd64 digests directly
 from that run’s manifest and uses `octogee-fleet gateway ls` to query the new
 cluster’s Admin API. It then runs `kind-agent-round-trip.mjs` with Muse Ember on

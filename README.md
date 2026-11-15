@@ -41,7 +41,9 @@ The full platform, with the fleet controller, users and shared gateways, runs
 from the images this repository publishes on a local kind cluster, see
 [The full platform on kind](docs/kind.md), or on GKE with Cloud SQL and Cloud
 Storage, see [The full platform on GKE](docs/gke.md). Start from the
-[latest release](https://github.com/octogee-ai/octogee-cloud/releases/latest);
+[latest release](https://github.com/octogee-ai/octogee-cloud/releases/latest),
+which publishes the images, the Helm charts and the `@octogee/core` and
+`@octogee/shared` npm packages at one version (see [Releasing](docs/releasing.md));
 until the first one is out, from `main`'s newest commit whose Build main
 succeeded, as both guides describe. Platform state is in PostgreSQL, and the
 platform needs no Firebase project. An EKS install with RDS and S3,

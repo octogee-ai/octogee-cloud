@@ -263,7 +263,7 @@ export interface ChangingRequest {
   body?: Record<string, unknown>;
 }
 
-export function send(app: express.Express, call: ChangingRequest, dryRun: boolean) {
+export function send(app: express.Express, call: ChangingRequest, dryRun: boolean): request.Test {
   const separator = call.path.includes("?") ? "&" : "?";
   const target = dryRun ? `${call.path}${separator}dryRun=true` : call.path;
   const pending = request(app)[call.method](target);
