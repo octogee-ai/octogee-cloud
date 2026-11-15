@@ -1,6 +1,6 @@
 import type {PlatformStateStore} from '@octogee/core/platform-state';
 import type {KubectlSubprocess,KubectlSubprocessResult} from '../fleet-ingress.js';
-import {coordinateRuntimeRestart, type RuntimeRestartFence} from './runtime-restart-coordinator.js';
+import {coordinateRuntimeRestart, type RuntimeRestartFence, type RuntimeRestartObservation} from './runtime-restart-coordinator.js';
 import {runtimeRestartDriverSource} from './runtime-restart-driver.js';
 
 interface KubeObject {metadata:{uid:string;name:string;resourceVersion:string;generation?:number;deletionTimestamp?:string;annotations?:Record<string,string>;ownerReferences?:Array<{uid:string}>};spec?:{replicas?:number;template?:{metadata?:{annotations?:Record<string,string>}}};status?:{phase?:string;observedGeneration?:number;updatedReplicas?:number;readyReplicas?:number;availableReplicas?:number;conditions?:Array<{type:string;status:string}>}}
@@ -14,6 +14,11 @@ async function json(deps:Deps,args:string[]):Promise<KubeObject> {
   const result=await deps.runKubectl(['-n',deps.namespace,...args,'-o','json'],{timeoutMs:15_000});
   if(result.code!==0)throw new Error(`gateway restart Kubernetes observation unavailable (${kubectlFailure(result)})`);
   return JSON.parse(result.stdout) as KubeObject;
+}
+async function optionalJson(deps:Deps,args:string[]):Promise<KubeObject|null> {
+  const result=await deps.runKubectl(['-n',deps.namespace,...args,'--ignore-not-found','-o','json'],{timeoutMs:15_000});
+  if(result.code!==0)throw new Error(`gateway restart Kubernetes observation unavailable (${kubectlFailure(result)})`);
+  return result.stdout.trim()==='' ? null : JSON.parse(result.stdout) as KubeObject;
 }
 async function list(deps:Deps,resource:string,gatewayId:string):Promise<KubeObject[]> {
   const result=await json(deps,['get',resource,'-l',`gateway-instance=${gatewayId}`]);
@@ -74,7 +79,7 @@ export async function restartGatewayDeployment(deps:Deps,gatewayId:string):Promi
     const name=`octogee-gateway-${gatewayId}`;
     const [deployment,pods]=await Promise.all([json(deps,['get','deployment',name]),list(deps,'pods',gatewayId)]);
     validateDeployment(deployment);
-    const bound={...fence,target:{deploymentName:name,deploymentUid:deployment.metadata.uid,beforeGeneration:deployment.metadata.generation!,oldPodUids:pods.map(pod=>pod.metadata.uid)}};
+    const bound={...fence,target:{deploymentName:name,deploymentUid:deployment.metadata.uid,beforeGeneration:deployment.metadata.generation!,beforeResourceVersion:deployment.metadata.resourceVersion,oldPodUids:pods.map(pod=>pod.metadata.uid)}};
     await save(bound);
     const annotations={...deployment.spec?.template?.metadata?.annotations,[TOKEN]:fence.attemptId};
     const patch=[{op:'test',path:'/metadata/uid',value:deployment.metadata.uid},{op:'test',path:'/metadata/resourceVersion',value:deployment.metadata.resourceVersion},{op:'add',path:'/spec/template/metadata/annotations',value:annotations}];
@@ -89,14 +94,25 @@ export async function restartGatewayDeployment(deps:Deps,gatewayId:string):Promi
 async function assertBoundPodEnded(deps:Deps,fence:RuntimeRestartFence):Promise<void> {
   const target=fence.target;
   if(typeof target?.podName!=='string' || typeof target.podUid!=='string')throw new Error('gateway restart bound pod unavailable');
-  const result=await deps.runKubectl(['-n',deps.namespace,'get','pod',target.podName,'--ignore-not-found','-o','json'],{timeoutMs:15_000});
-  if(result.code!==0)throw new Error(`gateway restart Kubernetes observation unavailable (${kubectlFailure(result)})`);
-  if(result.stdout.trim()==='')return;
-  const pod=JSON.parse(result.stdout) as KubeObject;
-  if(pod.metadata.uid===target.podUid && !['Succeeded','Failed'].includes(pod.status?.phase??''))throw new Error(`gateway process restart outcome is unresolved while its bound pod ${target.podName} still runs`);
+  const pod=await optionalJson(deps,['get','pod',target.podName]);
+  if(pod && pod.metadata.uid===target.podUid && !['Succeeded','Failed'].includes(pod.status?.phase??''))throw new Error(`gateway process restart outcome is unresolved while its bound pod ${target.podName} still runs`);
 }
-export async function observeRuntimeRestart(deps:Deps,fence:RuntimeRestartFence):Promise<void> {
-  if(fence.kind==='process' && fence.phase==='dispatched')return assertBoundPodEnded(deps,fence);
+async function observeDispatchedDeployment(deps:Deps,fence:RuntimeRestartFence):Promise<RuntimeRestartObservation> {
+  const target=fence.target;
+  if(typeof target?.deploymentName!=='string' || typeof target.deploymentUid!=='string' || typeof target.beforeResourceVersion!=='string')throw new Error('gateway restart bound deployment unavailable');
+  const deployment=await optionalJson(deps,['get','deployment',target.deploymentName]);
+  if(!deployment || deployment.metadata.uid!==target.deploymentUid)return 'completed';
+  if(deployment.spec?.template?.metadata?.annotations?.[TOKEN]===fence.attemptId) {
+    validateDeployment(deployment);
+    await waitForDeployment(deps,target.deploymentName,fence.gatewayId,{...fence,phase:'acknowledged',acknowledgement:{generation:deployment.metadata.generation!}});
+    return 'completed';
+  }
+  if(deployment.metadata.resourceVersion===target.beforeResourceVersion)throw new Error(`gateway deployment restart outcome is unresolved while deployment ${target.deploymentName} is unchanged`);
+  return 'abandoned';
+}
+export async function observeRuntimeRestart(deps:Deps,fence:RuntimeRestartFence):Promise<RuntimeRestartObservation> {
+  if(fence.kind==='process' && fence.phase==='dispatched'){await assertBoundPodEnded(deps,fence);return 'completed';}
+  if(fence.kind==='deployment' && fence.phase==='dispatched')return observeDispatchedDeployment(deps,fence);
   if(fence.phase!=='acknowledged')throw new Error('gateway restart dispatch is unresolved');
   if(fence.kind==='process') {
     validateProcessRestartReceipt(fence.acknowledgement,fence.attemptId);
@@ -104,8 +120,9 @@ export async function observeRuntimeRestart(deps:Deps,fence:RuntimeRestartFence)
     if(typeof target?.podName!=='string' || typeof target.podUid!=='string')throw new Error('gateway restart bound pod unavailable');
     const pod=await json(deps,['get','pod',target.podName]);
     if(pod.metadata.uid!==target.podUid || pod.metadata.deletionTimestamp)throw new Error('gateway restarted pod identity changed');
-    return;
+    return 'completed';
   }
   if(fence.kind!=='deployment' || typeof fence.target?.deploymentName!=='string')throw new Error('gateway restart kind unavailable');
   await waitForDeployment(deps,fence.target.deploymentName,fence.gatewayId,fence);
+  return 'completed';
 }

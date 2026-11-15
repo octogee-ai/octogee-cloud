@@ -1,7 +1,7 @@
 import {describe,it,expect} from 'vitest';
 import {createDocumentFixtureStore} from '@octogee/core/testing/journal-store';
 import type {KubectlSubprocess,KubectlSubprocessResult} from '../fleet-ingress.js';
-import {deploymentRestartComplete,restartGatewayProcess,validateProcessRestartReceipt} from './runtime-restart-transport.js';
+import {deploymentRestartComplete,restartGatewayDeployment,restartGatewayProcess,validateProcessRestartReceipt} from './runtime-restart-transport.js';
 import {assertMigrationRestartUnfenced,type RuntimeRestartFence} from './runtime-restart-coordinator.js';
 
 describe('runtime restart positive completion proof',()=>{
@@ -89,5 +89,82 @@ describe('a later restart of a gateway left with a dispatched process fence',()=
   const h=restartHarness('gone',unbound);
   await expect(restartGatewayProcess(h.deps,'gw-1')).rejects.toThrow('bound pod unavailable');
   expect(await h.savedFence()).toEqual(unbound);
+ });
+});
+
+const DEPLOYMENT='octogee-gateway-gw-1';
+const TOKEN_KEY='octogee.com/runtime-restart-attempt';
+type DeploymentAfter='gone'|'replaced'|'applied'|'moved'|'unchanged'|'unobservable';
+function deploymentHarness(after:DeploymentAfter,fence?:RuntimeRestartFence) {
+ const store=createDocumentFixtureStore({'gateways/gw-1':{gatewayId:'gw-1',gatewayClass:'shared',desiredStatus:'running',liveRelease:1,desiredRelease:1,latestRelease:1,...(fence?{runtimeRestartFence:fence}:{})}});
+ const calls:string[][]=[];
+ let patchSent=fence!==undefined;
+ const before={metadata:{name:DEPLOYMENT,uid:'deployment-uid',resourceVersion:'10',generation:3},spec:{replicas:1,template:{metadata:{annotations:{}}}},status:{observedGeneration:3,updatedReplicas:1,readyReplicas:1,availableReplicas:1}};
+ const ok=(value:unknown):KubectlSubprocessResult=>({code:0,stdout:JSON.stringify(value),stderr:''});
+ const runKubectl:KubectlSubprocess=async args=>{
+  calls.push(args);
+  const savedAttempt=String((await store.gateways.roots.get('gw-1'))?.runtimeRestartFence?.attemptId??fence?.attemptId??'');
+  const applied={metadata:{name:DEPLOYMENT,uid:'deployment-uid',resourceVersion:'12',generation:4},spec:{replicas:1,template:{metadata:{annotations:{[TOKEN_KEY]:savedAttempt}}}},status:{observedGeneration:4,updatedReplicas:1,readyReplicas:1,availableReplicas:1}};
+  if(args.includes('patch')){patchSent=true;return {code:1,stdout:'',stderr:'The request is invalid: the server rejected our request due to an error in our request'};}
+  if(args.includes('replicasets'))return ok({items:[{metadata:{name:'rs',uid:'rs-uid',resourceVersion:'1',ownerReferences:[{uid:'deployment-uid'}]}}]});
+  if(args.includes('pods'))return ok({items:patchSent&&after==='applied'
+   ?[{metadata:{name:'new-pod',uid:'new-pod-uid',resourceVersion:'1',annotations:{[TOKEN_KEY]:savedAttempt},ownerReferences:[{uid:'rs-uid'}]},status:{conditions:[{type:'Ready',status:'True'}]}}]
+   :[{metadata:{name:'old-pod',uid:'old-pod-uid',resourceVersion:'1'}}]});
+  if(!patchSent)return ok(before);
+  if(after==='unobservable')return {code:1,stdout:'',stderr:'Unable to connect to the server: i/o timeout'};
+  if(after==='gone')return {code:0,stdout:'',stderr:''};
+  if(after==='replaced')return ok({...before,metadata:{...before.metadata,uid:'replacement-uid'}});
+  if(after==='applied')return ok(applied);
+  if(after==='moved')return ok({...before,metadata:{...before.metadata,resourceVersion:'11'}});
+  return ok(before);
+ };
+ const savedFence=async()=>(await store.gateways.roots.get('gw-1'))?.runtimeRestartFence;
+ return {store,calls,savedFence,deps:{store,namespace:'octogee',runKubectl,now:(()=>{let t=0;return()=>t++;})(),wait:async()=>{}}};
+}
+const DISPATCHED_DEPLOYMENT:RuntimeRestartFence={attemptId:'attempt-2',auditId:'audit-2',gatewayId:'gw-1',kind:'deployment',startedAt:1,phase:'dispatched',
+ target:{deploymentName:DEPLOYMENT,deploymentUid:'deployment-uid',beforeGeneration:3,beforeResourceVersion:'10',oldPodUids:['old-pod-uid']}};
+
+describe('a deployment restart whose patch failed',()=>{
+ it.each(['gone','replaced','applied','moved'] as const)('clears the fence when the deployment is %s',async after=>{
+  const h=deploymentHarness(after);
+  await expect(restartGatewayDeployment(h.deps,'gw-1')).rejects.toThrow('server rejected our request');
+  expect(await h.savedFence()).toBeUndefined();
+ });
+ it('keeps the fence while the deployment is unchanged since the guarded patch',async()=>{
+  const h=deploymentHarness('unchanged');
+  await expect(restartGatewayDeployment(h.deps,'gw-1')).rejects.toThrow(/server rejected our request.*deployment octogee-gateway-gw-1 is unchanged/);
+  expect(await h.savedFence()).toMatchObject({phase:'dispatched',target:{beforeResourceVersion:'10'}});
+ });
+ it('keeps the fence when the deployment cannot be read',async()=>{
+  const h=deploymentHarness('unobservable');
+  await expect(restartGatewayDeployment(h.deps,'gw-1')).rejects.toThrow(/server rejected our request.*i\/o timeout/);
+  expect(await h.savedFence()).toMatchObject({phase:'dispatched'});
+ });
+});
+
+describe('a later restart of a gateway left with a dispatched deployment fence',()=>{
+ it.each(['gone','replaced','applied'] as const)('clears the fence as complete when the deployment is %s',async after=>{
+  const h=deploymentHarness(after,DISPATCHED_DEPLOYMENT);
+  await restartGatewayProcess(h.deps,'gw-1');
+  expect(await h.savedFence()).toBeUndefined();
+  expect(h.calls.filter(args=>args.includes('patch')||args.includes('exec'))).toEqual([]);
+ });
+ it('clears the fence but reports that the restart never took effect when the guarded patch can no longer apply',async()=>{
+  const h=deploymentHarness('moved',DISPATCHED_DEPLOYMENT);
+  await expect(restartGatewayProcess(h.deps,'gw-1')).rejects.toThrow('restart attempt-2 never took effect');
+  expect(await h.savedFence()).toBeUndefined();
+  expect(h.calls.filter(args=>args.includes('patch')||args.includes('exec'))).toEqual([]);
+ });
+ it('keeps the fence while the deployment is unchanged',async()=>{
+  const h=deploymentHarness('unchanged',DISPATCHED_DEPLOYMENT);
+  await expect(restartGatewayProcess(h.deps,'gw-1')).rejects.toThrow('deployment octogee-gateway-gw-1 is unchanged');
+  expect(await h.savedFence()).toEqual(DISPATCHED_DEPLOYMENT);
+ });
+ it('keeps a dispatched fence that names no guarded resource version',async()=>{
+  const {beforeResourceVersion:_version,...target}=DISPATCHED_DEPLOYMENT.target!;
+  const fence={...DISPATCHED_DEPLOYMENT,target};
+  const h=deploymentHarness('moved',fence);
+  await expect(restartGatewayProcess(h.deps,'gw-1')).rejects.toThrow('bound deployment unavailable');
+  expect(await h.savedFence()).toEqual(fence);
  });
 });

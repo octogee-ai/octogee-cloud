@@ -7,6 +7,8 @@ import { runNormalFleetMutation } from '@octogee/core/normal-fleet-mutation';
 import type { PlatformStateRepositories, PlatformStateStore } from '@octogee/core/platform-state';
 import { runGatewayRuntimeExclusive } from './gateway-runtime-mutation.js';
 
+export type RuntimeRestartObservation = 'completed' | 'abandoned';
+
 export async function assertMigrationRestartUnfenced(state:Pick<PlatformStateRepositories,'gateways'|'users'>,input:Record<string,unknown>):Promise<void> {
   const ids=[...new Set([input.fromGatewayId,input.toGatewayId].filter((id):id is string=>typeof id==='string'))];
   const uid = typeof input.uid === 'string' && input.uid && !input.uid.includes('/') ? input.uid : null;
@@ -38,7 +40,7 @@ function messageOf(error:unknown):string {
 export async function coordinateRuntimeRestart(
   store:PlatformStateStore,gatewayId:string,kind:RuntimeRestartFence['kind'],
   work:(fence:RuntimeRestartFence,save:(next:RuntimeRestartFence)=>Promise<void>)=>Promise<void>,
-  observe?:(fence:RuntimeRestartFence)=>Promise<void>,
+  observe?:(fence:RuntimeRestartFence)=>Promise<RuntimeRestartObservation>,
 ):Promise<void> {
   const attemptId=randomUUID();
   const saved=await savedRuntimeRestart(store,gatewayId);
@@ -49,8 +51,9 @@ export async function coordinateRuntimeRestart(
       const existing=await savedRuntimeRestart(store,gatewayId);
       if(observable(existing)) {
         if(!observe || existing.gatewayId!==gatewayId)throw new Error('gateway restart observation unavailable');
-        await observe(existing);
+        const observation=await observe(existing);
         await updateRuntimeRestart(store,existing,null);
+        if(observation==='abandoned')throw new Error(`gateway ${existing.kind} restart ${existing.attemptId} never took effect; its fence is cleared`);
         return;
       }
       let current:RuntimeRestartFence={attemptId,auditId:claim.auditId,gatewayId,kind,startedAt:Date.now(),phase:'reserved'};
