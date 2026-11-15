@@ -52,4 +52,4 @@ export interface ChangingRequest {
     path: string;
     body?: Record<string, unknown>;
 }
-export declare function send(app: express.Express, call: ChangingRequest, dryRun: boolean): request.SuperTestStatic.Test;
+export declare function send(app: express.Express, call: ChangingRequest, dryRun: boolean): request.Test;
