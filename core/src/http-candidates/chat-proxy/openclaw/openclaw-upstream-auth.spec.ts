@@ -46,7 +46,7 @@ async function withMockGateway<T>(
     setupResult?: (url: string) => Record<string, unknown>;
   } = {},
 ): Promise<T> {
-  const wss = new WebSocketServer({ port: 0 });
+  const wss = new WebSocketServer({ port: 0, host: "127.0.0.1" });
   const captured = { params: null as any, setupParams: null as any, upgradeHeaders: null as any };
   let gatewayUrl = "";
 

@@ -345,7 +345,7 @@ describe("terminal websocket relay", () => {
         socket.end("HTTP/1.1 404 Not Found\r\n\r\n");
       }
     });
-    await new Promise<void>((resolve) => edge.listen(0, resolve));
+    await new Promise<void>((resolve) => edge.listen(0, "127.0.0.1", resolve));
     edgeUrl = `ws://127.0.0.1:${(edge.address() as AddressInfo).port}`;
   });
 

@@ -33,7 +33,7 @@ function depsForTest(): AuthenticatedUpstreamDeps {
 
 describe("openAuthenticatedUpstream", () => {
   it("completes the shared-token setup RPC and bootstrap reconnect over the real wire client", async () => {
-    const wss = new WebSocketServer({ port: 0 });
+    const wss = new WebSocketServer({ port: 0, host: "127.0.0.1" });
     const connectAuth: unknown[] = [];
     const connectScopes: unknown[] = [];
     const fullAccessPairingScopes = [
@@ -154,7 +154,7 @@ describe("openAuthenticatedUpstream", () => {
   });
 
   it("rejects a setup response that omits the required full-access profile", async () => {
-    const wss = new WebSocketServer({ port: 0 });
+    const wss = new WebSocketServer({ port: 0, host: "127.0.0.1" });
     wss.on("connection", (ws: ServerWebSocket) => {
       ws.on("message", (raw) => {
         const frame = JSON.parse(raw.toString());

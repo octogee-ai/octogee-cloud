@@ -11,7 +11,7 @@ afterEach(async () => {
   }
 });
 async function fixture() {
-  const server = new WebSocketServer({ port: 0 });
+  const server = new WebSocketServer({ port: 0, host: "127.0.0.1" });
   servers.push(server);
   await new Promise<void>((resolve) => server.once("listening", resolve));
   const address = server.address() as { port: number };
