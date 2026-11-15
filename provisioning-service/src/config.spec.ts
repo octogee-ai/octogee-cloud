@@ -22,6 +22,21 @@ const REAL = {
 };
 
 describe("loadConfig", () => {
+  it("defaults the per-caller limits and reads them when set", () => {
+    expect(loadConfig({ ...BASE, ...REAL }).limits).toEqual({ requestsPerMinute: 3_000, concurrentWaits: 100 });
+    const set = loadConfig({ ...BASE, ...REAL, PROVISIONING_CALLER_REQUESTS_PER_MINUTE: "50", PROVISIONING_CALLER_CONCURRENT_WAITS: "4" });
+    expect(set.limits).toEqual({ requestsPerMinute: 50, concurrentWaits: 4 });
+  });
+
+  it.each([
+    ["PROVISIONING_CALLER_REQUESTS_PER_MINUTE", "0"],
+    ["PROVISIONING_CALLER_REQUESTS_PER_MINUTE", "1.5"],
+    ["PROVISIONING_CALLER_CONCURRENT_WAITS", "-1"],
+    ["PROVISIONING_CALLER_CONCURRENT_WAITS", "many"],
+  ])("refuses to start with %s=%s", (name, value) => {
+    expect(() => loadConfig({ ...BASE, ...REAL, [name]: value })).toThrow(name);
+  });
+
   it("reads the real host settings and the in-cluster TokenReview defaults", () => {
     const config = loadConfig({ ...BASE, ...REAL });
     expect(config.hosts).toEqual({

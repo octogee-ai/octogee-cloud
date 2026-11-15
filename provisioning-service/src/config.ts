@@ -1,6 +1,7 @@
 import type { ProvisioningRole } from "@octogee/shared/types/provisioning-service";
 import { databaseConnection, databaseSettingsFromEnvironment } from "./store/database-settings.js";
 import type { DatabaseConnection } from "./store/database.js";
+import type { CallerLimits } from "./http/caller-limits.js";
 
 export interface RealHostSettings {
   chatHostUrl: string;
@@ -24,6 +25,7 @@ export interface ServiceConfig {
   credentialKey: Buffer;
   hosts: HostAdapterConfig;
   replicaId: string;
+  limits: CallerLimits;
 }
 
 export const CALLER_ROLES: Readonly<Record<string, readonly ProvisioningRole[]>> = {
@@ -57,6 +59,13 @@ function url(env: NodeJS.ProcessEnv, name: string): string {
   let end = value.length;
   while (end > 0 && value[end - 1] === "/") end -= 1;
   return value.slice(0, end);
+}
+
+function positiveInteger(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
+  const text = optional(env, name);
+  if (text === null) return fallback;
+  if (!/^\d+$/.test(text) || Number(text) < 1) throw new Error(`${name} must be a whole number of at least 1`);
+  return Number(text);
 }
 
 function hostAdapters(env: NodeJS.ProcessEnv): HostAdapterConfig {
@@ -98,5 +107,9 @@ export function loadConfig(env: NodeJS.ProcessEnv): ServiceConfig {
     credentialKey,
     hosts: hostAdapters(env),
     replicaId: optional(env, "HOSTNAME") ?? `replica-${process.pid}`,
+    limits: {
+      requestsPerMinute: positiveInteger(env, "PROVISIONING_CALLER_REQUESTS_PER_MINUTE", 3_000),
+      concurrentWaits: positiveInteger(env, "PROVISIONING_CALLER_CONCURRENT_WAITS", 100),
+    },
   };
 }

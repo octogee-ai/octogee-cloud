@@ -34,17 +34,64 @@ describe.skipIf(!dsn)("the provisioning HTTP API", { timeout: 30_000 }, () => {
       expect((await harness.request("GET", "/v1/users/u1/credentials/user-chat-token")).status).toBe(403);
     });
 
-    it("answers 429 rate-limited with Retry-After once a client exceeds its requests per minute, on probes and the API alike", async () => {
-      const limited = await createHarness({ requestsPerMinute: 2 });
+    it("answers 429 rate-limited with Retry-After once one caller exceeds its requests per minute, while other callers and probes go on", async () => {
+      const limited = await createHarness({ limits: { requestsPerMinute: 2 } });
       try {
-        expect((await limited.request("GET", "/readyz", { token: null })).status).toBe(200);
         expect((await limited.request("GET", "/v1/provisionings")).status).toBe(200);
-        const refused = await limited.request("GET", "/readyz", { token: null });
+        expect((await limited.request("GET", "/v1/provisionings")).status).toBe(200);
+        const refused = await limited.request("GET", "/v1/provisionings");
         expect(refused).toMatchObject({ status: 429, body: { code: "rate-limited", error: expect.any(String) } });
         expect(Number(refused.headers.get("retry-after"))).toBeGreaterThan(0);
         expect((await limited.request("GET", "/v1/provisionings")).status).toBe(429);
-        expect(limited.log.lines.filter((line) => line.level === "warn" && line.message === "client exceeded its request limit")).toHaveLength(1);
+        expect((await limited.request("GET", "/v1/provisionings", { token: TOKENS.platformApi })).status).toBe(200);
+        for (const path of ["/healthz", "/readyz", "/metrics", "/readyz"]) {
+          expect((await fetch(`${limited.service.url}${path}`)).status).toBe(200);
+        }
+        const warnings = limited.log.lines.filter((line) => line.message === "caller exceeded its request limit");
+        expect(warnings).toEqual([expect.objectContaining({ level: "warn", fields: expect.objectContaining({ serviceAccount: "octogee-glm-controller" }) })]);
       } finally {
+        await limited.dispose();
+      }
+    });
+
+    it("writes nothing for a request refused by the rate limit", async () => {
+      const limited = await createHarness({ limits: { requestsPerMinute: 1 } });
+      try {
+        expect((await limited.request("GET", "/v1/provisionings")).status).toBe(200);
+        expect((await limited.request("PUT", "/v1/users/u1/provisioning", { body: { spec: spec("lin") } })).status).toBe(429);
+        expect((await limited.request("GET", "/v1/users/u1/provisioning", { token: TOKENS.platformApi })).status).toBe(404);
+      } finally {
+        await limited.dispose();
+      }
+    });
+
+    it("bounds each caller's held waits and watches, and frees the slot when the held request ends", async () => {
+      const limited = await createHarness({ limits: { concurrentWaits: 1 } });
+      const held = new AbortController();
+      try {
+        expect((await limited.request("PUT", "/v1/users/u1/provisioning", { body: { spec: spec("lin") } })).status).toBe(201);
+        const holding = fetch(`${limited.service.url}/v1/users/u1/provisioning?waitForGeneration=1&timeoutSeconds=30`, {
+          headers: { authorization: `Bearer ${TOKENS.writer}` }, signal: held.signal,
+        }).catch((error: unknown) => error);
+        let second = await limited.request("GET", "/v1/provisionings?watch=true&resourceVersion=0&timeoutSeconds=0");
+        for (let tries = 0; second.status !== 429 && tries < 50; tries += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          second = await limited.request("GET", "/v1/provisionings?watch=true&resourceVersion=0&timeoutSeconds=0");
+        }
+        expect(second).toMatchObject({ status: 429, body: { code: "rate-limited" } });
+        expect(second.headers.get("retry-after")).toBe("1");
+        expect((await limited.request("GET", "/v1/users/u1/provisioning")).status).toBe(200);
+        expect((await limited.request("GET", "/v1/users/u1/provisioning?waitForGeneration=1&timeoutSeconds=0", { token: TOKENS.platformApi })).status).toBe(200);
+        held.abort();
+        await holding;
+        let freed = await limited.request("GET", "/v1/users/u1/provisioning?waitForGeneration=1&timeoutSeconds=0");
+        for (let tries = 0; freed.status !== 200 && tries < 50; tries += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          freed = await limited.request("GET", "/v1/users/u1/provisioning?waitForGeneration=1&timeoutSeconds=0");
+        }
+        expect(freed.status).toBe(200);
+      } finally {
+        held.abort();
         await limited.dispose();
       }
     });

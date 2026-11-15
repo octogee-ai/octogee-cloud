@@ -4,6 +4,7 @@ import type { UserProvisioningSpec } from "@octogee/shared/types/provisioning-se
 import type { Reviewer } from "../auth/token-review.js";
 import { CALLER_ROLES } from "../config.js";
 import { FakeChatHost, FakeGitHost } from "../hosts/fake-hosts.js";
+import type { CallerLimits } from "../http/caller-limits.js";
 import type { Logger } from "../logger.js";
 import { startService, type RunningService, type ServiceOptions } from "../service.js";
 
@@ -63,7 +64,7 @@ export interface Harness {
   dispose(): Promise<void>;
 }
 
-export async function createHarness(options: Partial<Pick<ServiceOptions, "queue" | "heartbeatMs" | "runWorker" | "concurrency" | "requestsPerMinute">> & { schema?: string; chat?: FakeChatHost; git?: FakeGitHost; reviewer?: Reviewer } = {}): Promise<Harness> {
+export async function createHarness(options: Partial<Pick<ServiceOptions, "queue" | "heartbeatMs" | "runWorker" | "concurrency"> & { limits?: Partial<CallerLimits> }> & { schema?: string; chat?: FakeChatHost; git?: FakeGitHost; reviewer?: Reviewer } = {}): Promise<Harness> {
   if (!dsn) throw new Error("OCTOGEE_TEST_POSTGRES_DSN is required");
   const schema = options.schema ?? `ps_test_${randomBytes(6).toString("hex")}`;
   const chat = options.chat ?? new FakeChatHost();
@@ -85,7 +86,7 @@ export async function createHarness(options: Partial<Pick<ServiceOptions, "queue
     ...(options.queue ? { queue: options.queue } : {}),
     ...(options.heartbeatMs ? { heartbeatMs: options.heartbeatMs } : {}),
     ...(options.concurrency ? { concurrency: options.concurrency } : {}),
-    ...(options.requestsPerMinute ? { requestsPerMinute: options.requestsPerMinute } : {}),
+    limits: { requestsPerMinute: 10_000, concurrentWaits: 100, ...options.limits },
     runWorker: options.runWorker ?? false,
   });
   return {

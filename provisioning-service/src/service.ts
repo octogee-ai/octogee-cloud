@@ -6,6 +6,7 @@ import type { ChatHost } from "./hosts/chat-host.js";
 import type { CredentialStore } from "./hosts/credential-store.js";
 import type { GitHost } from "./hosts/git-host.js";
 import { createApp } from "./http/app.js";
+import type { CallerLimits } from "./http/caller-limits.js";
 import type { Logger } from "./logger.js";
 import { Metrics } from "./metrics.js";
 import { ChangeNotifier } from "./store/change-notifier.js";
@@ -14,8 +15,6 @@ import { PostgresCredentialStore } from "./store/postgres-credential-store.js";
 import { ProvisioningStore } from "./store/provisioning-store.js";
 import { WorkQueue, type QueueOptions } from "./worker/queue.js";
 import { Worker } from "./worker/worker.js";
-
-const DEFAULT_REQUESTS_PER_MINUTE = 3_000;
 
 export interface ServiceOptions {
   database: DatabaseConnection;
@@ -34,7 +33,7 @@ export interface ServiceOptions {
   heartbeatMs?: number;
   concurrency?: number;
   runWorker?: boolean;
-  requestsPerMinute?: number;
+  limits: CallerLimits;
 }
 
 export interface RunningService {
@@ -65,7 +64,7 @@ export async function startService(options: ServiceOptions): Promise<RunningServ
   }, options.concurrency);
   const app = createApp({
     store, queue, credentials, notifier, reviewer: options.reviewer, callerNamespace: options.callerNamespace,
-    roleTable: options.roleTable, metrics, log: options.log, requestsPerMinute: options.requestsPerMinute ?? DEFAULT_REQUESTS_PER_MINUTE,
+    roleTable: options.roleTable, metrics, log: options.log, limits: options.limits,
   });
   const server: Server = await new Promise((resolve, reject) => {
     const listening = app.listen(options.port, options.host ?? "0.0.0.0", (error?: Error) => (error ? reject(error) : resolve(listening)));

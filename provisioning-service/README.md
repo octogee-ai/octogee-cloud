@@ -30,9 +30,16 @@ condition types, reasons and fields they do not know. `status.work.state` is
 `queued`, `running`, `retrying`, `parked` or `idle`.
 
 Errors are `{ "code": "...", "error": "..." }` with a code from
-`PROVISIONING_ERROR_CODES`. Each client address may make 3000 requests a minute
-across all routes; beyond that the service answers `429 rate-limited` with
-`Retry-After`.
+`PROVISIONING_ERROR_CODES`.
+
+## Limits
+
+Each authenticated caller, keyed by its reviewed service account, may make
+`PROVISIONING_CALLER_REQUESTS_PER_MINUTE` requests a minute to `/v1` and may hold
+`PROVISIONING_CALLER_CONCURRENT_WAITS` requests open at once with
+`waitForGeneration` or `watch=true`. A request beyond either limit does nothing
+and answers `429 rate-limited` with `Retry-After`. `/healthz`, `/readyz` and
+`/metrics` are not limited.
 
 ## Authentication
 
@@ -101,6 +108,8 @@ newer than it knows.
 | `KUBERNETES_SERVICE_HOST`, `KUBERNETES_SERVICE_PORT_HTTPS` | when the URL above is unset | no | set by Kubernetes |
 | `PROVISIONING_TOKEN_REVIEW_TOKEN_FILE` | no, `/var/run/secrets/kubernetes-api/token` | file is | the service's own token for TokenReview |
 | `PROVISIONING_TOKEN_REVIEW_CA_FILE` | no, `/var/run/secrets/kubernetes-api/ca.crt` for https | no | API server CA |
+| `PROVISIONING_CALLER_REQUESTS_PER_MINUTE` | no, `3000` | no | `/v1` requests a minute per caller service account |
+| `PROVISIONING_CALLER_CONCURRENT_WAITS` | no, `100` | no | held wait and watch requests per caller service account |
 | `PROVISIONING_HOST_ADAPTERS` | yes | no | `real` in every deployment; `fake` only for tests |
 | `PROVISIONING_CHAT_HOST_URL` | with `real` | no | chat host base URL |
 | `PROVISIONING_CHAT_HOST_ADMIN_TOKEN` | with `real` | yes | chat host admin token |

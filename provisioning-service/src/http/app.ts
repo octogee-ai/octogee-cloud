@@ -1,5 +1,4 @@
 import express, { type NextFunction, type Request, type Response } from "express";
-import { rateLimit, type AugmentedRequest } from "express-rate-limit";
 import {
   PROVISIONING_CONDITION_REASONS,
   PROVISIONING_CREDENTIAL_NAMES,
@@ -19,6 +18,7 @@ import { parseGitKeySpec, parseUserProvisioningSpec, validIdentifier } from "../
 import type { ChangeNotifier } from "../store/change-notifier.js";
 import type { ProvisioningStore } from "../store/provisioning-store.js";
 import type { WorkQueue } from "../worker/queue.js";
+import { callerRequestLimit, callerWaitLimit, type CallerLimits } from "./caller-limits.js";
 import { ApiError, sendError } from "./errors.js";
 
 export interface AppDependencies {
@@ -31,7 +31,7 @@ export interface AppDependencies {
   roleTable: Parameters<typeof authenticate>[0]["roleTable"];
   metrics: Metrics;
   log: Logger;
-  requestsPerMinute: number;
+  limits: CallerLimits;
 }
 
 const DEFAULT_WAIT_SECONDS = 30;
@@ -77,18 +77,6 @@ export function createApp(deps: AppDependencies): express.Express {
   const app = express();
   app.disable("x-powered-by");
   app.set("query parser", "extended");
-  app.use(rateLimit({
-    windowMs: 60_000,
-    limit: deps.requestsPerMinute,
-    standardHeaders: "draft-7",
-    legacyHeaders: false,
-    handler: (request, response) => {
-      const { rateLimit: state } = request as AugmentedRequest;
-      if (state.used === state.limit + 1) deps.log.warn("client exceeded its request limit", { client: request.ip, limit: state.limit, path: request.path });
-      response.setHeader("Retry-After", String(Math.max(1, Math.ceil(((state.resetTime?.getTime() ?? Date.now() + 60_000) - Date.now()) / 1_000))));
-      sendError(response, 429, "rate-limited", "too many requests; retry later");
-    },
-  }));
 
   app.get("/healthz", (_request, response) => {
     response.json({ ok: true });
@@ -111,7 +99,13 @@ export function createApp(deps: AppDependencies): express.Express {
 
   const v1 = express.Router();
   v1.use(authenticate({ reviewer: deps.reviewer, namespace: deps.callerNamespace, roleTable: deps.roleTable, log: deps.log }));
+  v1.use(callerRequestLimit({ requestsPerMinute: deps.limits.requestsPerMinute, log: deps.log }));
   v1.use(express.json({ limit: "64kb" }));
+  const waitLimit = callerWaitLimit({
+    concurrentWaits: deps.limits.concurrentWaits,
+    log: deps.log,
+    holds: (request) => request.query.waitForGeneration !== undefined || request.query.watch === "true",
+  });
 
   const uidOf = (request: Request) => validIdentifier(String(request.params.uid), "uid");
 
@@ -128,7 +122,7 @@ export function createApp(deps: AppDependencies): express.Express {
     response.status(WRITE_STATUS[outcome]).json(resource);
   });
 
-  v1.get("/users/:uid/provisioning", requireRole("writer", "reader"), async (request, response) => {
+  v1.get("/users/:uid/provisioning", requireRole("writer", "reader"), waitLimit, async (request, response) => {
     const uid = uidOf(request);
     const waitFor = integer(request.query.waitForGeneration, "waitForGeneration", 1, Number.MAX_SAFE_INTEGER);
     const until = waitFor === undefined ? 0 : deadline(request);
@@ -175,7 +169,7 @@ export function createApp(deps: AppDependencies): express.Express {
     response.json({ items } satisfies ProvisioningEventsResponse);
   });
 
-  v1.get("/provisionings", requireRole("writer", "reader"), async (request, response) => {
+  v1.get("/provisionings", requireRole("writer", "reader"), waitLimit, async (request, response) => {
     if (boolean(request.query.watch, "watch")) {
       const from = single(request.query.resourceVersion, "resourceVersion");
       if (from === undefined || !/^\d+$/.test(from)) throw new ApiError(400, INVALID, "watch needs resourceVersion");

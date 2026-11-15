@@ -30,6 +30,7 @@ async function main(): Promise<void> {
     log,
     replicaId: config.replicaId,
     port: config.port,
+    limits: config.limits,
   });
   log.info("provisioning service listening", { port: config.port, hostAdapters: config.hosts.kind, replica: config.replicaId });
   const shutdown = (signal: string) => {
