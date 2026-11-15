@@ -1,3 +1,3 @@
-import { installDefaultUserEntitlements } from "../../shared/types/user-entitlements.js";
+import { installDefaultUserEntitlements } from "@octogee/shared/types/user-entitlements";
 
 installDefaultUserEntitlements();

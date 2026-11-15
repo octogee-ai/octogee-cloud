@@ -4,7 +4,7 @@ import { createUnmountHandler } from "../lib/fleet-http-migration.js";
 import { evictLocalUser } from "../lib/fleet-provisioner.js";
 import type { UserLifecycleAdapter, RemoveUserResult } from "../lib/user-lifecycle.js";
 import { gatewayScopedJobId, signFleetRequest } from "../lib/fleet-signature.js";
-import { SIGNATURE_HEADER } from "../../shared/types/fleet-controller.js";
+import { SIGNATURE_HEADER } from "@octogee/shared/types/fleet-controller";
 import { FLEET_KEY_PAIR } from "./fixtures/fleet-keys.js";
 
 const GATEWAY_ID = "gw-a";

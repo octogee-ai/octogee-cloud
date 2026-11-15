@@ -10,7 +10,7 @@ import {
   FLEET_STATE_PATH,
   SIGNATURE_HEADER,
   type FleetStateResponse,
-} from "../../shared/types/fleet-controller.js";
+} from "@octogee/shared/types/fleet-controller";
 
 function ed25519Pair(): { privateKey: string; publicKey: string } {
   const pair = generateKeyPairSync("ed25519");

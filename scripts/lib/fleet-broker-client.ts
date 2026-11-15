@@ -19,18 +19,18 @@ import type {
   FleetBrokerProvisioningStatus,
   FleetBrokerUsageData,
   FleetBrokerUserSnapshot,
-} from "../../shared/types/fleet-broker.js";
-import { isAssignmentState } from "../../shared/types/gateway-releases.js";
+} from "@octogee/shared/types/fleet-broker";
+import { isAssignmentState } from "@octogee/shared/types/gateway-releases";
 import {
   USER_IDENTITY_ROUTE,
   parseUserIdentity,
   type UserIdentity,
-} from "../../shared/types/user-identity.js";
-import { RETIRED_VM_BINDING_DENIAL_REASON } from "../../shared/types/fleet-broker.js";
+} from "@octogee/shared/types/user-identity";
+import { RETIRED_VM_BINDING_DENIAL_REASON } from "@octogee/shared/types/fleet-broker";
 import { internalFetch } from "./internal-fetch.js";
 import { gatewayCredentialHeaders as defaultGatewayCredentialHeaders } from "@octogee/core/internal-fetch";
 import type { SystemConfigObservedStatus } from "./system-config-status.js";
-import type { DeveloperToolchainStatus } from "../../shared/types/developer-toolchain.js";
+import type { DeveloperToolchainStatus } from "@octogee/shared/types/developer-toolchain";
 
 function baseUrl(): string {
   if (process.env.FLEET_BROKER_URL) return process.env.FLEET_BROKER_URL;

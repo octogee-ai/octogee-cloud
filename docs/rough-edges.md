@@ -55,6 +55,10 @@ They are covered by tests and split as they are touched.
 
 - `core/` and `shared/` commit their built `dist/`, because the other packages
   install them as `file:` dependencies. Published packages would remove it.
+- Some files still import another component's files by relative path: specs
+  under `tests/` and a few scripts in `gateway/` and `desktop/` that run
+  without an installed package. `scripts/lib/component-imports.json` lists
+  each one, and the list may only shrink.
 - There are no npm workspaces. Each package installs on its own, which keeps
   the packages independent and makes a change across them slow.
 

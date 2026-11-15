@@ -1,7 +1,7 @@
 import * as path from "node:path";
 import { readPostgresAgentAnchor } from "@octogee/core/agent-postgres";
 import type { LogContext } from "@octogee/shared/server/service-logger";
-import { parseAgentId } from "../../shared/types/identity.js";
+import { parseAgentId } from "@octogee/shared/types/identity";
 import type { PreparedAgentStore } from "./agent-store-snapshot.js";
 import { runOpenClaw, type OpenClawCommand, type OpenClawCommandResult } from "./openclaw-cli.js";
 import { captureCarriedAgentRosterFailure, type CarriedAgentDiagnosticIdentity } from "./carried-agent-diagnostics.js";

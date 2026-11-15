@@ -2494,6 +2494,38 @@ describe("account deletion revokes connector grants at the provider first", () =
     expect(storedOpenclaw(remaining.u1).managedBy).toBe("cowboy");
   });
 
+  describe("release with an expected shared gateway", () => {
+    const held = { username: "alice", provisioning: { status: "complete", openclaw: { gatewayId: "shared-1", managedBy: "operator", status: "complete" } } };
+    const serving = { uid: "u1", slug: "alice", gatewayId: "shared-1", source: "repair", state: "serving", epoch: 3 };
+    const sharedRoot = { "gateways/shared-1": durableGatewayRoot("shared-1") };
+
+    it("releases a user serving on that shared gateway with nothing in flight", async () => {
+      const { app, remaining } = makeDeleteApp({ u1: held }, { ...sharedRoot, "gateways/shared-1/assignments/u1": serving });
+      await request(app).patch("/users/u1/placement").send({ managedBy: "cowboy", expectedGatewayId: "shared-1" }).expect(200);
+      expect(storedOpenclaw(remaining.u1).managedBy).toBe("cowboy");
+    });
+
+    it.each([
+      ["the user is on another gateway", { "gateways/shared-1/assignments/u1": serving }, "shared-2"],
+      ["the assignment is not serving", { "gateways/shared-1/assignments/u1": { ...serving, state: "quiescing" } }, "shared-1"],
+      ["an operation is in flight", {
+        "gateways/shared-1/assignments/u1": serving,
+        "glmOperations/op-1": { kind: "retire-gateway", status: "pending", inputUid: "u1", input: { uid: "u1" } },
+      }, "shared-1"],
+    ])("keeps the hold when %s", async (_name, docs, expectedGatewayId) => {
+      const { app, remaining } = makeDeleteApp({ u1: held }, { ...sharedRoot, ...docs });
+      const response = await request(app).patch("/users/u1/placement").send({ managedBy: "cowboy", expectedGatewayId });
+      expect(response.status).toBe(409);
+      expect(response.body.code).toBe("precondition-failed");
+      expect(storedOpenclaw(remaining.u1).managedBy).toBe("operator");
+    });
+
+    it("refuses an expected gateway on a park", async () => {
+      const { app } = makeDeleteApp({ u1: held });
+      await request(app).patch("/users/u1/placement").send({ managedBy: "operator", gatewayId: null, expectedGatewayId: "shared-1" }).expect(400);
+    });
+  });
+
   it("releases an old provisioned parked user through the current placement eligibility gate", async () => {
     const { app, remaining } = makeDeleteApp({ u1: { username: "alice", provisioning: { openclaw: { managedBy: "operator", status: "complete" } } } });
     await request(app).patch("/users/u1/placement").send({ managedBy: "cowboy" }).expect(200);

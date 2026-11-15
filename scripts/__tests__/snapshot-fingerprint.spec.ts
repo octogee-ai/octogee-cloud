@@ -3,8 +3,8 @@ import {
   desiredUsers,
   snapshotConfigFingerprint,
 } from "../lib/snapshot-fingerprint.js";
-import type { FleetBrokerUserSnapshot } from "../../shared/types/fleet-broker.js";
-import { staticUserEntitlements } from "../../shared/types/user-entitlements.js";
+import type { FleetBrokerUserSnapshot } from "@octogee/shared/types/fleet-broker";
+import { staticUserEntitlements } from "@octogee/shared/types/user-entitlements";
 import { userSnapshot as snap } from "./fixtures/user-snapshot.js";
 import { installUserEntitlementsForTest, planUserEntitlements } from "./helpers/user-entitlements.js";
 

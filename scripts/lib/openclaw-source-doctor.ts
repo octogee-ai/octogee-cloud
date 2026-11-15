@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import * as fsSync from "node:fs";
 import { createHash } from "node:crypto";
 import { writeOpenClawConfig } from "@octogee/core/config";
-import { mattermostAccountIdForAgentId } from "../../shared/types/identity.js";
+import { mattermostAccountIdForAgentId } from "@octogee/shared/types/identity";
 import * as path from "node:path";
 import * as os from "node:os";
 import { DatabaseSync } from "node:sqlite";

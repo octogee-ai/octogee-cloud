@@ -25,7 +25,7 @@ vi.mock("../lib/git.js", async (importOriginal) => {
 const { buildBrokeredLifecycleAdapter } = await import("../lib/user-lifecycle-broker-adapter.js");
 const { CUSTOMERS_DIR } = await import("../lib/config.js");
 import type { FleetBrokerClient } from "../lib/fleet-broker-client.js";
-import type { FleetBrokerProjectRestore, FleetBrokerUserSnapshot } from "../../shared/types/fleet-broker.js";
+import type { FleetBrokerProjectRestore, FleetBrokerUserSnapshot } from "@octogee/shared/types/fleet-broker";
 import type { GatewayRpcClient } from "../lib/gateway-rpc.js";
 
 const GITHUB_REPO_SOURCE = { provider: "github", owner: "octogee-ai", repo: "demo" } as const;

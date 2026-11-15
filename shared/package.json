@@ -62,6 +62,10 @@
       "types": "./dist/types/user-identity.d.ts",
       "default": "./dist/types/user-identity.js"
     },
+    "./types/user-identity": {
+      "types": "./dist/types/user-identity.d.ts",
+      "default": "./dist/types/user-identity.js"
+    },
     "./types/placement-receipts": {
       "types": "./dist/types/placement-receipts.d.ts",
       "default": "./dist/types/placement-receipts.js"
@@ -305,6 +309,9 @@
         "dist/types/isolated-gateway-id.d.ts"
       ],
       "types/builder-identity": [
+        "dist/types/user-identity.d.ts"
+      ],
+      "types/user-identity": [
         "dist/types/user-identity.d.ts"
       ],
       "types/placement-receipts": [

@@ -153,7 +153,7 @@ exact overlay branch; use `--force-with-lease` only when rewriting a previously
 published branch.
 
 After changing the source pin, regenerate `core/src/agent-store-routines.json`
-with `scripts/ops/qualify-agent-store-routines.mjs` against disposable PostgreSQL
+with `core/qualify-agent-store-routines.mjs` against disposable PostgreSQL
 16 with pgvector 0.8.7, then rebuild `core/`.
 
 gateway-edge's Browser resource projection ships from the same source.

@@ -1,0 +1,40 @@
+{
+  "libraries": [
+    "core",
+    "core-testing",
+    "shared"
+  ],
+  "exceptions": [
+    "desktop/acceptance/openclaw-browser.mts -> scripts",
+    "desktop/acceptance/openclaw-browser.mts -> shared",
+    "desktop/image/test_home_fs_ownership.mjs -> scripts",
+    "gateway/apply-gateway-class-policy.mjs -> shared",
+    "scripts/__tests__/eks-install.spec.ts -> gateway-edge",
+    "scripts/__tests__/openclaw-release.spec.ts -> gateway",
+    "scripts/ops/operator-token.mjs -> core",
+    "tests/specs/agent-conversation-wire.spec.ts -> shared",
+    "tests/specs/byok-provider-registry-parity.spec.ts -> gateway-edge",
+    "tests/specs/byok-provider-registry-parity.spec.ts -> scripts",
+    "tests/specs/byok-provider-registry-parity.spec.ts -> shared",
+    "tests/specs/byot-sync-apply.spec.ts -> core",
+    "tests/specs/byot-sync-apply.spec.ts -> scripts",
+    "tests/specs/byot-sync-state.spec.ts -> scripts",
+    "tests/specs/dependency-update-coverage.spec.ts -> scripts",
+    "tests/specs/gateway-class-policy.spec.ts -> core",
+    "tests/specs/gateway-class-policy.spec.ts -> shared",
+    "tests/specs/helm-octogee-gateway-sizing.spec.ts -> shared",
+    "tests/specs/isolated-base-inputs.spec.ts -> scripts",
+    "tests/specs/model-credential-materializer-shape.spec.ts -> scripts",
+    "tests/specs/model-credential-materializer.spec.ts -> scripts",
+    "tests/specs/openclaw-user-template.spec.ts -> core",
+    "tests/specs/openclaw-wire-core.spec.ts -> shared",
+    "tests/specs/openclaw-workshop-native.spec.ts -> core",
+    "tests/specs/osv-scanner-ignore-policy.spec.ts -> scripts",
+    "tests/specs/stamp-claude-first-run.spec.ts -> gateway",
+    "tests/specs/surge-terminal-target-recovery.spec.ts -> fleet-controller",
+    "tests/specs/surge-terminal-target-recovery.spec.ts -> scripts",
+    "tests/specs/surge-terminal-target-recovery.spec.ts -> shared",
+    "tests/specs/usage-log-line.spec.ts -> core",
+    "tests/test-setup/user-entitlements.ts -> shared"
+  ]
+}

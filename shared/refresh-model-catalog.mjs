@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { readFile, writeFile } from "node:fs/promises";
-import { parseOpenRouterCatalog } from "../../shared/types/openrouter-catalog.ts";
+import { parseOpenRouterCatalog } from "./types/openrouter-catalog.ts";
 
 const source = "https://openrouter.ai/api/v1/models?supported_parameters=tools";
 const inputFile = process.argv[2];
@@ -11,7 +11,7 @@ const payload = inputFile
     return response.json();
   });
 const entries = parseOpenRouterCatalog(payload);
-const output = new URL("../../shared/types/openrouter-model-catalog.generated.ts", import.meta.url);
+const output = new URL("./types/openrouter-model-catalog.generated.ts", import.meta.url);
 await writeFile(output, [
   'import type { ModelCatalogEntry } from "./model-catalog.js";',
   "",

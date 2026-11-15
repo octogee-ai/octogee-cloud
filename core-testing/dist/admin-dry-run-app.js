@@ -201,6 +201,8 @@ export function harness(seed = FLEET, install = {}) {
         listGatewayBuilds: vi.fn(async () => []),
         releaseEnvironment: "test",
         releaseAuthority,
+        platformArtifact: { imageRepository: "registry.example/gateway", imageTag: `abc1234@sha256:${"a".repeat(64)}` },
+        controllerStartedAt: 0,
         provisionGatewayAuthSecret: effects.provisionGatewayAuthSecret,
         suspendAuthUser: effects.suspendAuthUser,
         revokeConnectorGrantsForUser: effects.revokeConnectorGrantsForUser,

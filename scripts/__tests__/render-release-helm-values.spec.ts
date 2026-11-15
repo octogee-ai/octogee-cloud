@@ -33,6 +33,16 @@ describe("operator Helm release selection", () => {
     expect(values.global.projectRunnerImage).toMatchObject({ tag: sourceSha.slice(0, 7), digest });
   });
 
+  it("offers every platform image of the selected family to the chart by name", async () => {
+    const selected = structuredClone(manifest);
+    selected.surfaces.platform["automation"] = `sha256:${"f".repeat(64)}`;
+    const values = JSON.parse(await renderReleaseHelmValues(sourceSha, { resolveManifest: async () => selected }));
+    expect(Object.keys(values.releaseImages)).toEqual(Object.keys(selected.surfaces.platform).sort());
+    expect(values.releaseImages.automation).toEqual({
+      repository: `${manifest.repository}/automation`, tag: sourceSha.slice(0, 7), digest: `sha256:${"f".repeat(64)}`,
+    });
+  });
+
   it("gives Shared allocation the exact canonical family used by user deployment", async () => {
     const selected = structuredClone(manifest);
     selected.surfaces.gateway["octogee-gateway-builder"] = `sha256:${"d".repeat(64)}`;

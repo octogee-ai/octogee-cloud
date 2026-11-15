@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { ClaimedUserIdentity, UserIdentity } from "../../shared/types/user-identity.js";
+import type { ClaimedUserIdentity, UserIdentity } from "@octogee/shared/types/user-identity";
 import { userAuthorityReaders, userBootMode } from "../entrypoints/surge-openclaw-supervisor.js";
 
 const COMPUTER = { GATEWAY_CLASS: "isolated", GATEWAY_RUNTIME_KIND: "gce-vm" };

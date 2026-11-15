@@ -66,9 +66,6 @@ glm-controller:
   gcpServiceAccount: ""
   gatewayServiceAccount: none
   workloadIdentityProject: none
-  sharedPool:
-    minReplicas: 1
-    maxReplicas: 1
   deploymentTargets:
     schemaVersion: 1
     activeTargets:

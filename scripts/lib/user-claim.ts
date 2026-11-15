@@ -1,5 +1,5 @@
 import { DEFAULT_OPENCLAW_DIR, readUserClaim } from "@octogee/shared/server/user-claim";
-import type { ConfiguredUserReport } from "../../shared/types/fleet-controller.js";
+import type { ConfiguredUserReport } from "@octogee/shared/types/fleet-controller";
 import { isIsolatedGatewayClassValue } from "@octogee/shared/types/glm";
 
 export function configuredUserReport(env: NodeJS.ProcessEnv = process.env): ConfiguredUserReport | null {

@@ -5,8 +5,8 @@ import {
   userClaimFromIdentity,
   writeUserClaim,
 } from "@octogee/shared/server/user-claim";
-import type { UserIdentity } from "../../shared/types/user-identity.js";
-import { GATEWAY_BINDING_MISMATCH_REASON } from "../../shared/types/fleet-broker.js";
+import type { UserIdentity } from "@octogee/shared/types/user-identity";
+import { GATEWAY_BINDING_MISMATCH_REASON } from "@octogee/shared/types/fleet-broker";
 import { createFleetBrokerClient, FleetBrokerHttpError } from "../lib/fleet-broker-client.js";
 
 export const USER_IDENTITY_FATAL_EXIT = 2;

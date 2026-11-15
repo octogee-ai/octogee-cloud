@@ -69,7 +69,8 @@ describe("scripts vitest configs", () => {
     const overlay = await unitExcludesOn("linux", { gitCheckout: false });
 
     expect(checkout).not.toContain("__tests__/publish-plugin.spec.ts");
-    expect(overlay).toEqual([...checkout, "__tests__/publish-plugin.spec.ts"]);
+    expect(checkout).not.toContain("__tests__/component-imports.spec.ts");
+    expect(overlay).toEqual([...checkout, "__tests__/component-imports.spec.ts", "__tests__/publish-plugin.spec.ts"]);
   });
 
   it("runs the platform's Firebase reach ratchet only when the platform stands alone", async () => {

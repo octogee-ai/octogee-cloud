@@ -160,14 +160,13 @@ gcloud container clusters get-credentials "$CLUSTER_NAME" \
   --region "$TARGET_REGION" --project "$CLUSTER_PROJECT" 2>/dev/null || true
 kubectl config use-context "$K8S_CONTEXT" >/dev/null 2>&1 || true
 
-# The shared pool is unnamed: the fleet controller mints `shared-N` slots on demand and the
-# floor lives on its Deployment as SHARED_POOL_MIN_REPLICAS. Every Ready slot is
-# an equivalent probe target; the first one drives the single-gateway checks.
+# The shared pool is unnamed: automation adds `shared-N` slots through the Admin API, so the
+# caller supplies the pool floor as SHARED_POOL_MIN_REPLICAS. Every Ready slot is an
+# equivalent probe target; the first one drives the single-gateway checks.
 GW_DEPLOYMENTS=$(kubectl get deploy -n "$NAMESPACE" --context "$K8S_CONTEXT" \
   -l "app.kubernetes.io/name=octogee-gateway" -o json 2>/dev/null || echo '{"items":[]}')
 SHARED_GW_LIST=$(octogee_list_shared_gateway_deployments <<< "$GW_DEPLOYMENTS" 2>/dev/null || echo "")
-SHARED_POOL_MIN_REPLICAS=$(kubectl get deployment glm-controller -n "$NAMESPACE" --context "$K8S_CONTEXT" \
-  -o jsonpath='{.spec.template.spec.containers[*].env[?(@.name=="SHARED_POOL_MIN_REPLICAS")].value}' 2>/dev/null || echo "")
+SHARED_POOL_MIN_REPLICAS="${SHARED_POOL_MIN_REPLICAS:-}"
 GW_DEPLOYMENT=""
 GW_INSTANCE_ID=""
 SHARED_GW_READY_COUNT=0
@@ -420,13 +419,13 @@ while IFS=$'\t' read -r SHARED_GW_NAME SHARED_GW_INSTANCE SHARED_GW_READY SHARED
 done <<< "$SHARED_GW_LIST"
 
 if [[ -z "$SHARED_POOL_MIN_REPLICAS" ]]; then
-  warn "SHARED_POOL_MIN_REPLICAS not found on the glm-controller Deployment; skipping the shared pool floor check"
+  warn "SHARED_POOL_MIN_REPLICAS is not set; skipping the shared pool floor check"
 elif [[ "$SHARED_GW_READY_COUNT" -ge "$SHARED_POOL_MIN_REPLICAS" ]]; then
   pass "shared pool has $SHARED_GW_READY_COUNT Ready slot(s) of $SHARED_GW_TOTAL (minReplicas=$SHARED_POOL_MIN_REPLICAS)"
 else
   fail "shared pool has $SHARED_GW_READY_COUNT Ready slot(s), below minReplicas=$SHARED_POOL_MIN_REPLICAS"
   if $FIX; then
-    echo -e "  ${YELLOW}FIX:${NC} kubectl logs deployment/glm-controller -n $NAMESPACE --tail=50    # check the shared pool scaler"
+    echo -e "  ${YELLOW}FIX:${NC} check the automation that adds shared gateways through the Admin API"
   fi
 fi
 

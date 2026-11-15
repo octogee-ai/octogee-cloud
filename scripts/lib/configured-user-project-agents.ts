@@ -1,5 +1,5 @@
-import { PROJECT_AGENT_WORKSPACE_PARTS } from "../../shared/types/project.js";
-import { isValidProjectId, projectAgentId } from "../../shared/types/identity.js";
+import { PROJECT_AGENT_WORKSPACE_PARTS } from "@octogee/shared/types/project";
+import { isValidProjectId, projectAgentId } from "@octogee/shared/types/identity";
 import { userAgentRosterPatch, userConfigReplacePaths } from "./apply-config-patch.js";
 import { buildUserBindings, type BindingChannelInput } from "./openclaw-config-users.js";
 import { mattermostAccountSecretRef } from "./mattermost-account-secrets.js";

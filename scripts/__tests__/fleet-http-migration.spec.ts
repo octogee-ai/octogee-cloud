@@ -52,7 +52,7 @@ import {
   type PrepareRsyncImportRequestBody,
   type PushRsyncStateRequestBody,
   type CompleteSurgeHandoffRequestBody,
-} from "../../shared/types/fleet-controller.js";
+} from "@octogee/shared/types/fleet-controller";
 import type { UserLifecycleAdapter } from "../lib/user-lifecycle.js";
 import type { ConfiguredUserPortableStatePlan } from "../lib/local-default-agent-wired.js";
 import {

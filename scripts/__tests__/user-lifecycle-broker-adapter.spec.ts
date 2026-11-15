@@ -25,15 +25,15 @@ import {
   platformOpenAiEmbeddingMemorySearch,
   platformOpenAiEmbeddingSecretId,
 } from "../lib/openclaw-config-users.js";
-import type { FleetBrokerUserSnapshot } from "../../shared/types/fleet-broker.js";
+import type { FleetBrokerUserSnapshot } from "@octogee/shared/types/fleet-broker";
 import { snapshotConfigFingerprint } from "../lib/snapshot-fingerprint.js";
 import {
   applyConfigPatch as realApplyConfigPatch,
   mergePatchValueAlreadyApplied,
 } from "@octogee/core/apply-config-patch";
 import { applyAgentModelOverrides, userOauthRuntimeConfigPatch, platformModelAllowlistPatch } from "@octogee/core/byot-sync-runtime";
-import { canonicalUserModelDefinition } from "../../shared/types/agent-models.js";
-import { DEFAULT_USER_AGENT_MODEL_REF } from "../../shared/types/platform-config.js";
+import { canonicalUserModelDefinition } from "@octogee/shared/types/agent-models";
+import { DEFAULT_USER_AGENT_MODEL_REF } from "@octogee/shared/types/platform-config";
 import { _resetBrokerProfileLogStateForTests, createReconcileConvergenceHooks, finalizeConvergedMount, materializeDeferredBrokerProfiles } from "../lib/fleet-provisioner.js";
 import { saveAppliedFingerprints } from "../lib/applied-fingerprint-store.js";
 import { openClawRuntimeUpdateGuard } from "../lib/openclaw-runtime-update-guard.js";

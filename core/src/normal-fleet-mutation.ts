@@ -55,6 +55,13 @@ export class FleetMutationPartialError extends Error {
   }
 }
 
+export class FleetMutationRefusedError extends Error {
+  constructor(readonly refusal: Error) {
+    super(refusal.message);
+    this.name = "FleetMutationRefusedError";
+  }
+}
+
 export interface NormalFleetMutationInput<T> extends OperationAuditIntentInput {
   claimId?: string;
   action: (claim: OperationAuditActionClaim) => Promise<T>;
@@ -95,7 +102,9 @@ export async function runNormalFleetMutation<T>(
     result = await action(claim);
     outcome = classifyResult?.(result) ?? { outcome: "completed" };
   } catch (error) {
-    logger.error("fleet mutation failed", { ...logged, error: failureMessage(error), durationMs: Date.now() - startedAt });
+    const failed = { ...logged, error: failureMessage(error), durationMs: Date.now() - startedAt };
+    if (error instanceof FleetMutationRefusedError) logger.warn("fleet mutation refused", failed);
+    else logger.error("fleet mutation failed", failed);
     try {
       const partial = error instanceof FleetMutationPartialError ? error : null;
       await finishOperationAudit(store, audit.auditId, {

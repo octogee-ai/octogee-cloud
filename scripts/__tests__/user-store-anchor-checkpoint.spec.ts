@@ -7,7 +7,7 @@ import { landAuxiliaryAnchors, readLocalAuxiliaryAnchors } from "../lib/user-aux
 import { createAgentAnchorReporter, landAgentAnchors, landGatewayStateAnchor } from "../lib/agent-anchor-record.js";
 import { runAgentAnchorRestore } from "../entrypoints/agent-anchor-restore.js";
 import { withUserClaim } from "./helpers/user-claim.js";
-import type { FleetBrokerAgentAnchors, FleetBrokerAuxiliaryAnchor } from "../../shared/types/fleet-broker.js";
+import type { FleetBrokerAgentAnchors, FleetBrokerAuxiliaryAnchor } from "@octogee/shared/types/fleet-broker";
 
 const roots: string[] = [];
 async function root() { const dir = await fs.mkdtemp(path.join(tmpdir(), "user-anchor-record-")); roots.push(dir); return dir; }

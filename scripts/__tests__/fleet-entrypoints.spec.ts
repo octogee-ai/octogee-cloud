@@ -2,11 +2,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import type { FleetBrokerAssignmentRosterEntry, FleetBrokerUserSnapshot } from "../../shared/types/fleet-broker.js";
+import type { FleetBrokerAssignmentRosterEntry, FleetBrokerUserSnapshot } from "@octogee/shared/types/fleet-broker";
 import type { DesiredUser } from "../lib/snapshot-fingerprint.js";
 import { userEnsureRetryReady } from "../lib/fleet-provisioner.js";
 import { reconcileFleet, _resetReconcileInFlightForTests } from "../lib/reconcile-loop.js";
-import { CONFIG_RELOAD_DEADLINE_MS } from "../../shared/types/fleet-controller.js";
+import { CONFIG_RELOAD_DEADLINE_MS } from "@octogee/shared/types/fleet-controller";
 import { acquireSystemConfigMutationLease } from "@octogee/core/system-config-mutation-lease";
 import {
   createAssignedUserReader,

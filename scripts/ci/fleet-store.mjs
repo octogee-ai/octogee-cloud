@@ -1,7 +1,7 @@
 import { execFile, spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { promisify } from 'node:util';
-import { deploymentEnvironmentSettings } from '../../core/dist/deployment-environment.js';
+import { deploymentEnvironmentSettings } from '@octogee/core/deployment-environment';
 
 const exec = promisify(execFile);
 

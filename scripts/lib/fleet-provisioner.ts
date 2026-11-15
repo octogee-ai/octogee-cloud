@@ -34,7 +34,7 @@ import {
   type FleetStateResponse,
   type FlushGatewayResponse,
   type OpenClawProcessReport,
-} from "../../shared/types/fleet-controller.js";
+} from "@octogee/shared/types/fleet-controller";
 import { createFleetStateHandler } from "./fleet-state-http.js";
 import {
   createActivateImportHandler,
@@ -113,7 +113,7 @@ import {
   probeOpenClawHealth,
 } from "./system-config-runtime-health.js";
 import { prepareIsolatedPrelaunchConfig } from "./system-config.js";
-import type { FleetBrokerUserSnapshot } from "../../shared/types/fleet-broker.js";
+import type { FleetBrokerUserSnapshot } from "@octogee/shared/types/fleet-broker";
 import {
   resetRecoveredUserRuntime,
   type RecoveredUserRuntimeResetResult,

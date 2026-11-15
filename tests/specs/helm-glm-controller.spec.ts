@@ -19,8 +19,6 @@ const REQUIRED_VALUES: Record<string, string> = {
   "platformRelease.builderImageTag": "abc1234@sha256:" + "c".repeat(64),
   "platformRelease.gatewayEdgeImageRepository": "registry.example/gateway-edge",
   "platformRelease.gatewayEdgeImageTag": "abc1234@sha256:" + "b".repeat(64),
-  "sharedPool.minReplicas": "1",
-  "sharedPool.maxReplicas": "8",
   gatewayServiceAccount: "octogee-gateway@octogee-test.iam.gserviceaccount.com",
   workloadIdentityProject: "octogee",
   kmsKeyName: "projects/octogee-test/locations/us-central1/keyRings/octogee-creds/cryptoKeys/integrations-at-rest",

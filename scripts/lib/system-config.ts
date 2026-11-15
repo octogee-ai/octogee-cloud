@@ -12,8 +12,8 @@ import * as path from "path";
 
 import { acquireSystemConfigSyncLeaseSync } from "@octogee/core/system-config-mutation-lease";
 
-import { isValidUsername, parseAgentId, workspaceDefaultAgentId } from "../../shared/types/identity.js";
-import { DEFAULT_USER_AGENT_MODEL_REF } from "../../shared/types/platform-config.js";
+import { isValidUsername, parseAgentId, workspaceDefaultAgentId } from "@octogee/shared/types/identity";
+import { DEFAULT_USER_AGENT_MODEL_REF } from "@octogee/shared/types/platform-config";
 import { SAFE_DEFAULT_AGENT_ID, buildSafeDefaultAgent } from "./openclaw-config-users.js";
 import {
   log as defaultLog,
