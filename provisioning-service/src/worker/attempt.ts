@@ -242,6 +242,11 @@ export async function runAttempt(deps: AttemptDependencies, claim: Claim): Promi
               [claim.uid, key.gateway_id, key.generation]));
           continue;
         }
+        if (!has(key.public_key, key.gateway_id) && present.some((existing) => existing.publicKey === key.public_key && existing.holder === null)) {
+          log.warn("git key is registered under a holder this service does not manage; left unchanged", { uid: claim.uid, gatewayId: key.gateway_id });
+          await writeKeyStatus(key, { type: "Registered", status: "False", reason: "GitKeyFailed", message: "registered under a holder this service does not manage; left unchanged" }, key.registered_public_key);
+          continue;
+        }
         if (!has(key.public_key, key.gateway_id)) {
           await hostCall("git", "registerKey", () => deps.git.registerKey({ owner, publicKey: key.public_key, holder: key.gateway_id }, signal));
         }

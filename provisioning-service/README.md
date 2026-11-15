@@ -48,6 +48,13 @@ review or wrong audience answers `401`; any other service account, or a route
 outside its roles, answers `403`. The service's own service account needs
 permission to create TokenReviews.
 
+## Git keys
+
+Do not call `PUT /v1/users/{uid}/git-keys/{gatewayId}` until the key-title
+migration is decided. Keys registered by the earlier path carry another title.
+The service leaves a key with the same public key under a holder it does not
+manage untouched and reports `Registered=False` with reason `GitKeyFailed`.
+
 ## Outputs
 
 `status.outputs.git` reports the repositories the service created or confirmed,
