@@ -1,6 +1,7 @@
 import { parsePlatformConnectConfig, parsePlatformFreeConfig, parsePlatformModelConfig } from "@octogee/shared/types/platform-config";
 import { parseSharedGatewayAutoscalingConfig } from "@octogee/shared/types/shared-gateway-pool";
 import { isGatewaySizingProfile } from "@octogee/shared/types/sizing-profile";
+import { isPlacementAutomationOwner, } from "../config.js";
 import { MalformedRecordError, MissingRecordError } from "../errors.js";
 import { upsertRecord } from "./fleet-registry.js";
 import { deleteRecord, insertRecord, revisionFence, selectByKey, updateRecord } from "./records.js";
@@ -20,6 +21,8 @@ const ORCHESTRATOR_TABLE = {
         column("disposableGatewayIdleMs", "bigint", { nullAs: "null" }),
         column("placementUpdatedAt", "bigint", { nullAs: "null" }),
         column("placementUpdatedBy", "text", { nullAs: "null" }),
+        column("placementAutomationOwner", "text"),
+        column("placementAutomationYieldedAt", "bigint", { nullAs: "null" }),
         column("sizingProfiles", "jsonb"),
     ],
     immutableFields: ["id"],
@@ -83,6 +86,9 @@ function orchestratorColumns(patch) {
     }
     if (fields.sizingProfiles !== undefined)
         assertSizingProfiles(fields.sizingProfiles);
+    if (fields.placementAutomationOwner !== undefined && !isPlacementAutomationOwner(fields.placementAutomationOwner)) {
+        throw new MalformedRecordError(ORCHESTRATOR_KEY, `placementAutomationOwner ${JSON.stringify(fields.placementAutomationOwner)} is invalid`);
+    }
     const idleMs = fields.disposableGatewayIdleMs;
     if (typeof idleMs === "number" && !isNonNegativeSafeInteger(idleMs)) {
         throw new MalformedRecordError(ORCHESTRATOR_KEY, `disposableGatewayIdleMs ${idleMs} is not a nonnegative safe integer`);
@@ -97,6 +103,9 @@ function decodeOrchestratorConfig(row) {
     const sharedGatewayAutoscaling = parseSharedGatewayAutoscalingConfig(stored);
     if (sharedGatewayAutoscaling === null) {
         throw new MalformedRecordError(ORCHESTRATOR_KEY, `sharedGatewayAutoscaling ${JSON.stringify(stored)} is invalid`);
+    }
+    if (!isPlacementAutomationOwner(fields.placementAutomationOwner)) {
+        throw new MalformedRecordError(ORCHESTRATOR_KEY, `placementAutomationOwner ${JSON.stringify(fields.placementAutomationOwner)} is invalid`);
     }
     return { ...fields, sharedGatewayAutoscaling, sizingProfiles: assertSizingProfiles(sizingProfiles) };
 }

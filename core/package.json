@@ -85,6 +85,10 @@
       "types": "./dist/admin-placement-router.d.ts",
       "default": "./dist/admin-placement-router.js"
     },
+    "./placement-automation-owner": {
+      "types": "./dist/placement-automation-owner.d.ts",
+      "default": "./dist/placement-automation-owner.js"
+    },
     "./admin-shared-pool-router": {
       "types": "./dist/admin-shared-pool-router.d.ts",
       "default": "./dist/admin-shared-pool-router.js"

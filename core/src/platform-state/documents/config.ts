@@ -3,7 +3,7 @@ import { DEFAULT_HOUSE_MODEL_REF, DEFAULT_OPS_AGENT_MODEL_REF, DEFAULT_USER_AGEN
 import { parseSharedGatewayAutoscalingConfig } from "@octogee/shared/types/shared-gateway-pool";
 import type { SizingTier } from "@octogee/shared/types/sizing";
 import { isGatewaySizingProfile, type GatewayComputerProfile, type GatewaySizingProfile } from "@octogee/shared/types/sizing-profile";
-import { type OrchestratorConfig, type PlatformConfigEntry, type PlatformConfigKey, type PlatformConfigValues } from "../config.js";
+import { DEFAULT_PLACEMENT_AUTOMATION_OWNER, isPlacementAutomationOwner, type OrchestratorConfig, type PlatformConfigEntry, type PlatformConfigKey, type PlatformConfigValues } from "../config.js";
 import { MalformedRecordError, type RecordKey } from "../errors.js";
 
 export function parseStoredPlatformModelConfig(value: unknown): PlatformModelConfig | null {
@@ -109,6 +109,8 @@ export function parseOrchestratorConfig(data: PlainMap): OrchestratorConfig {
     disposableGatewayIdleMs: nullableField(data, "disposableGatewayIdleMs", isNonNegativeSafeInteger),
     placementUpdatedAt: nullableField(data, "placementUpdatedAt", isNumber),
     placementUpdatedBy: nullableField(data, "placementUpdatedBy", isString),
+    placementAutomationOwner: nullableField(data, "placementAutomationOwner", isPlacementAutomationOwner) ?? DEFAULT_PLACEMENT_AUTOMATION_OWNER,
+    placementAutomationYieldedAt: nullableField(data, "placementAutomationYieldedAt", isNumber),
   };
 }
 

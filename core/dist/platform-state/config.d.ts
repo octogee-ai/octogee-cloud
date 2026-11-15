@@ -2,6 +2,10 @@ import type { PlatformConnectConfig, PlatformFreeConfig, PlatformModelConfig } f
 import type { SharedGatewayAutoscalingConfig } from "@octogee/shared/types/shared-gateway-pool";
 import type { GatewaySizingProfile } from "@octogee/shared/types/sizing-profile";
 import type { OpaqueMap, RecordPatch, Revision, Stored, TimeInput } from "./store.js";
+export declare const PLACEMENT_AUTOMATION_OWNERS: readonly ["fleet-controller", "client"];
+export type PlacementAutomationOwner = (typeof PLACEMENT_AUTOMATION_OWNERS)[number];
+export declare const DEFAULT_PLACEMENT_AUTOMATION_OWNER: PlacementAutomationOwner;
+export declare function isPlacementAutomationOwner(value: unknown): value is PlacementAutomationOwner;
 export interface OrchestratorConfig {
     readonly sharedGatewayAutoscaling: SharedGatewayAutoscalingConfig | null;
     readonly sizingProfiles: Readonly<Record<string, GatewaySizingProfile>>;
@@ -9,6 +13,8 @@ export interface OrchestratorConfig {
     readonly disposableGatewayIdleMs: number | null;
     readonly placementUpdatedAt: number | null;
     readonly placementUpdatedBy: string | null;
+    readonly placementAutomationOwner: PlacementAutomationOwner;
+    readonly placementAutomationYieldedAt: number | null;
 }
 export type OrchestratorConfigPatch = RecordPatch<Omit<OrchestratorConfig, "sharedGatewayAutoscaling">> & {
     readonly sharedGatewayAutoscaling?: SharedGatewayAutoscalingConfig;
