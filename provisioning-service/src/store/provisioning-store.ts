@@ -176,6 +176,15 @@ export class ProvisioningStore {
        WHERE uid = $1`, [uid]);
   }
 
+  private async makeKeyWorkDue(client: pg.ClientBase, uid: string): Promise<void> {
+    await client.query(
+      `UPDATE ${this.db.table("provisioning_work")}
+         SET dirty = dirty OR state = 'running',
+             state = CASE WHEN state IN ('running', 'parked') THEN state ELSE 'queued' END,
+             due_at = CASE WHEN state IN ('running', 'parked') THEN due_at ELSE now() END
+       WHERE uid = $1`, [uid]);
+  }
+
   async delete(uid: string): Promise<void> {
     const t = this.db.table;
     await this.db.write(async (client) => {
@@ -324,7 +333,7 @@ export class ProvisioningStore {
             WHERE uid = $1 AND gateway_id = $2 RETURNING *`, [uid, gatewayId, keyVersion.toString(), spec.publicKey])).rows[0];
       }
       await client.query(`UPDATE ${t("provisionings")} SET resource_version = $2 WHERE uid = $1`, [uid, userVersion.toString()]);
-      await this.makeDue(client, uid);
+      await this.makeKeyWorkDue(client, uid);
       return { outcome: current ? "changed" as const : "created" as const, key: toGitKey(written) };
     });
   }
@@ -341,7 +350,7 @@ export class ProvisioningStore {
       await client.query(`UPDATE ${t("git_keys")} SET deletion_requested_at = now(), resource_version = $3 WHERE uid = $1 AND gateway_id = $2`,
         [uid, gatewayId, keyVersion.toString()]);
       await client.query(`UPDATE ${t("provisionings")} SET resource_version = $2 WHERE uid = $1`, [uid, userVersion.toString()]);
-      await this.makeDue(client, uid);
+      await this.makeKeyWorkDue(client, uid);
     });
   }
 }

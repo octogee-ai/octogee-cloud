@@ -29,7 +29,7 @@ export interface ServiceOptions {
   replicaId: string;
   port: number;
   host?: string;
-  queue?: Omit<QueueOptions, "holder">;
+  queue?: Omit<QueueOptions, "holder" | "log">;
   heartbeatMs?: number;
   concurrency?: number;
   runWorker?: boolean;
@@ -53,7 +53,7 @@ export async function startService(options: ServiceOptions): Promise<RunningServ
   const schema = await migrate(db);
   if (schema.from !== schema.to) options.log.info("database schema upgraded", { schema: options.databaseSchema, ...schema });
   const store = new ProvisioningStore(db);
-  const queue = new WorkQueue(db, { holder: options.replicaId, ...options.queue });
+  const queue = new WorkQueue(db, { holder: options.replicaId, log: options.log, ...options.queue });
   const credentials = new PostgresCredentialStore(db, options.credentialKey);
   const notifier = new ChangeNotifier(db, options.log);
   await notifier.start();
