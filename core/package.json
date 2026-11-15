@@ -21,33 +21,33 @@
       "types": "./dist/platform-state/documents/users.d.ts",
       "default": "./dist/platform-state/documents/users.js"
     },
-    "./testing/journal-store": {
-      "types": "./dist/testing/journal-store.d.ts",
-      "default": "./dist/testing/journal-store.js"
+    "./platform-state/documents/controller-state": {
+      "types": "./dist/platform-state/documents/controller-state.d.ts",
+      "default": "./dist/platform-state/documents/controller-state.js"
     },
-    "./testing/cron-custody": {
-      "types": "./dist/testing/cron-custody.d.ts",
-      "default": "./dist/testing/cron-custody.js"
+    "./platform-state/documents/fences": {
+      "types": "./dist/platform-state/documents/fences.d.ts",
+      "default": "./dist/platform-state/documents/fences.js"
     },
-    "./testing/firestore-user-accounts": {
-      "types": "./dist/testing/firestore-user-accounts.d.ts",
-      "default": "./dist/testing/firestore-user-accounts.js"
+    "./platform-state/documents/gateways": {
+      "types": "./dist/platform-state/documents/gateways.d.ts",
+      "default": "./dist/platform-state/documents/gateways.js"
     },
-    "./testing/firestore-store": {
-      "types": "./dist/testing/firestore-store/store.d.ts",
-      "default": "./dist/testing/firestore-store/store.js"
+    "./platform-state/documents/jobs": {
+      "types": "./dist/platform-state/documents/jobs.d.ts",
+      "default": "./dist/platform-state/documents/jobs.js"
     },
-    "./testing/admin-dry-run-app": {
-      "types": "./dist/testing/admin-dry-run-app.d.ts",
-      "default": "./dist/testing/admin-dry-run-app.js"
+    "./platform-state/documents/migration-tasks": {
+      "types": "./dist/platform-state/documents/migration-tasks.d.ts",
+      "default": "./dist/platform-state/documents/migration-tasks.js"
     },
-    "./testing/admin-fleet-releases-app": {
-      "types": "./dist/testing/admin-fleet-releases-app.d.ts",
-      "default": "./dist/testing/admin-fleet-releases-app.js"
+    "./platform-state/documents/secrets": {
+      "types": "./dist/platform-state/documents/secrets.d.ts",
+      "default": "./dist/platform-state/documents/secrets.js"
     },
-    "./testing/admin-fleet-route-app": {
-      "types": "./dist/testing/admin-fleet-route-app.d.ts",
-      "default": "./dist/testing/admin-fleet-route-app.js"
+    "./platform-state/documents/workspaces": {
+      "types": "./dist/platform-state/documents/workspaces.d.ts",
+      "default": "./dist/platform-state/documents/workspaces.js"
     },
     "./project-agent-workspaces": {
       "types": "./dist/project-agent-workspaces.d.ts",
@@ -1614,6 +1614,7 @@
     "@aws-sdk/client-sts": "^3.1164.0",
     "@google-cloud/kms": "^6.3.0",
     "@google-cloud/storage": "^8.4.0",
+    "@octogee/core-testing": "file:../core-testing",
     "@octogee/shared": "file:../shared",
     "@types/cors": "^2.8.19",
     "@types/supertest": "^7.2.1",
@@ -1628,11 +1629,7 @@
     "@google-cloud/kms": "^6.3.0",
     "@google-cloud/storage": "^8.4.0",
     "@octogee/shared": "^1.0.0",
-    "@types/supertest": "^7.0.0",
-    "firebase-admin": "^14.0.0",
-    "sharp": "^0.35.5",
-    "supertest": "^7.0.0",
-    "vitest": "^4.0.0 || ^5.0.0"
+    "sharp": "^0.35.5"
   },
   "peerDependenciesMeta": {
     "@aws-sdk/client-sts": {
@@ -1644,19 +1641,7 @@
     "@google-cloud/storage": {
       "optional": true
     },
-    "@types/supertest": {
-      "optional": true
-    },
-    "firebase-admin": {
-      "optional": true
-    },
     "sharp": {
-      "optional": true
-    },
-    "supertest": {
-      "optional": true
-    },
-    "vitest": {
       "optional": true
     }
   }

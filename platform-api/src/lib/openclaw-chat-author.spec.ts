@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DuplicateRecordError } from "@octogee/core/platform-state";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 const mocks = vi.hoisted(() => ({ authorize: vi.fn(), getJson: vi.fn() }));
 vi.mock("@octogee/core/channels/channel-session-authorization", () => ({ authorizeChannel: mocks.authorize }));
 import { resolveOpenClawChatAuthor } from "./openclaw-chat-author.js";

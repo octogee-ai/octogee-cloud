@@ -64,6 +64,39 @@ function packageManifests(dir: string): string[] {
   });
 }
 
+const TEST_ONLY_PACKAGES = new Set(["@types/supertest", "firebase-admin", "firebase-functions", "supertest", "vitest"]);
+const UNBUILT_SOURCE_RE = /(?:\.(?:spec|test)\.ts|\/fixtures\/.*)$/u;
+
+const packageOf = (specifier: string): string =>
+  specifier.split("/").slice(0, specifier.startsWith("@") ? 2 : 1).join("/");
+
+function builtSources(dir: string, root: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) return builtSources(path, root);
+    const file = relative(root, path).split(sep).join("/");
+    return entry.name.endsWith(".ts") && !UNBUILT_SOURCE_RE.test(file) ? [file] : [];
+  });
+}
+
+export function coreTestOnlyDependencies(cloudRoot: string): string[] {
+  const root = realpathSync(cloudRoot);
+  const manifest = JSON.parse(readFileSync(join(root, "core/package.json"), "utf8")) as PackageManifest & { exports?: Record<string, unknown> };
+  const declared = INSTALLED_SECTIONS.flatMap((section) => Object.keys(manifest[section] ?? {})
+    .filter((name) => TEST_ONLY_PACKAGES.has(name))
+    .map((name) => `core/package.json ${section}.${name}`));
+  const exported = Object.keys(manifest.exports ?? {})
+    .filter((subpath) => subpath.startsWith("./testing/"))
+    .map((subpath) => `core/package.json exports ${subpath}`);
+  const imported = builtSources(join(root, "core/src"), root).flatMap((file) => {
+    const source = readFileSync(join(root, file), "utf8");
+    const packages = new Set([STATEMENT_SPECIFIER_RE, SIDE_EFFECT_SPECIFIER_RE, DYNAMIC_SPECIFIER_RE]
+      .flatMap((pattern) => Array.from(source.matchAll(pattern), (match) => packageOf(match[1]!))));
+    return [...packages].filter((name) => TEST_ONLY_PACKAGES.has(name)).map((name) => `${file} imports ${name}`);
+  });
+  return [...declared, ...exported, ...imported].sort();
+}
+
 export function firebaseRuntimeDependencies(cloudRoot: string): string[] {
   const root = realpathSync(cloudRoot);
   return packageManifests(root).flatMap((path) => {

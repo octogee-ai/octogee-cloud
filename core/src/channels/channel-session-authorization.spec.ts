@@ -24,7 +24,7 @@ function resetProjectGate(): void {
 }
 
 vi.mock("../identity/platform-state-store.js", async () => {
-  const { createDocumentFixtureStore } = await import("../testing/journal-store.js");
+  const { createDocumentFixtureStore } = await import("@octogee/core-testing/journal-store");
   return { platformStateStore: createDocumentFixtureStore(h.documents) };
 });
 

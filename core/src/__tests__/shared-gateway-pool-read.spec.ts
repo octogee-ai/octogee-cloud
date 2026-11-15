@@ -7,7 +7,7 @@ import {
   InvalidSharedGatewayAutoscalingConfigError,
   readSharedGatewayAutoscalingConfigInStore,
 } from "../shared-gateway-pool-read.js";
-import { createDocumentFixtureStore } from "../testing/journal-store.js";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 
 describe("readSharedGatewayAutoscalingConfigInStore", () => {
   it("reads the operator autoscaling dial", async () => {

@@ -25,7 +25,7 @@ vi.mock("@octogee/core/identity/platform-state-store", () => ({
   get platformStateStore() { return h.store; },
 }));
 
-const { createDocumentFixtureStore } = await import("@octogee/core/testing/journal-store");
+const { createDocumentFixtureStore } = await import("@octogee/core-testing/journal-store");
 const { default: connectRoutes } = await import("./connect.js");
 const { NO_CONNECTOR_DISCONNECTED, installConnectorDisconnected } = await import("../lib/connector-disconnect.js");
 

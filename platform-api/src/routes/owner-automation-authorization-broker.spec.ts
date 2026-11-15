@@ -2,7 +2,7 @@ import express, { type Express } from "express";
 import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
 import type { PlatformUserRecord, PlatformStateRepositories, Stored } from "@octogee/core/platform-state";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 
 import { createProductivityRateLimiter } from "../lib/agent-productivity/rate-limit.js";
 import {

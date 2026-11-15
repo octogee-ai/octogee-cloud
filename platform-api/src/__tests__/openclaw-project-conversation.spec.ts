@@ -2,7 +2,7 @@ import express from "express";
 import request from "supertest";
 import { expect, it } from "vitest";
 import { createOpenClawRuntimeBrokerRoutes } from "../routes/openclaw-runtime-broker.js";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 
 const OWNER = "a".repeat(26);
 const MEMBER = "b".repeat(26);

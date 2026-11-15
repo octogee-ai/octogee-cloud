@@ -78,12 +78,12 @@ describe("platform boundary", () => {
   });
 
   it("keeps the Firestore test store on the product side and out of non-test files", () => {
-    expect(isProductModule("platform/core/src/testing/firestore-store/store.ts", manifest.productModules)).toBe(true);
-    expect(isProductModule("platform/core/dist/testing/firestore-store/store.js", manifest.productModules)).toBe(true);
+    expect(isProductModule("product/core/src/testing/firestore-store/store.ts", manifest.productModules)).toBe(true);
+    expect(isProductModule("product/core/dist/testing/firestore-store/store.js", manifest.productModules)).toBe(true);
     expect(platformFiles(manifest, repoRoot).filter((file) => file.includes("testing/firestore-store"))).toEqual([]);
     expect([...reachableSources(manifest.platformEntrypoints, repoRoot)].filter((file) => file.includes("testing/firestore-store"))).toEqual([]);
     const isTestFile = (file: string) =>
-      /\.spec\.ts$/.test(file) || file.includes("/test-setup/") || file.startsWith("platform/core/src/testing/firestore-store/");
+      /\.spec\.ts$/.test(file) || file.includes("/test-setup/") || file.startsWith("product/core/src/testing/firestore-store/");
     const importers = execFileSync("git", ["grep", "--recurse-submodules", "-l", "testing/firestore-store", "--", "*.ts", ":!*/dist/*"], { cwd: repoRoot, encoding: "utf8" })
       .split("\n")
       .filter((file) => file !== "" && /["']([^"']*testing\/firestore-store[^"']*)["']/.test(readFileSync(resolve(repoRoot, file), "utf8")));

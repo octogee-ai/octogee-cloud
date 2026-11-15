@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import type { Operation } from "@octogee/shared/types/glm";
 import {
   attemptNeverHeldSource,

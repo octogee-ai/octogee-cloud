@@ -1,7 +1,7 @@
 import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
 import { SecretNotFoundError } from "@octogee/core/secret-store";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { noUserAccounts, userAccountFromData, type UserAccountReader } from "@octogee/core/user-account";
 
 import { createModelBrokerTokenStore } from "@octogee/core/model-broker/tokens";

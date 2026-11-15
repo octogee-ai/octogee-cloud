@@ -2,7 +2,7 @@ import express from "express";
 import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
 import type { WorkspaceChannel } from "@octogee/core/platform-state";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { receiptDocumentId } from "@octogee/core/http-candidates/chat-proxy/openclaw/activity-write-receipts";
 import {
   createOpenClawRuntimeBrokerRoutes,

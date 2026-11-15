@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { MissingRecordError } from "@octogee/core/platform-state";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { CRASH_LOOP_EVICTION_BUDGET, claimCrashLoopEviction, crashLoopEvictionDecision } from "../surge-crashloop-eviction.js";
 
 const pod = { uid: "t", name: "gateway-new", podIP: "10.0.0.2", ready: false, terminating: false, crashLooping: true };

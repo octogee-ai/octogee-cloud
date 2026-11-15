@@ -435,7 +435,7 @@ describe("factory deny-list test files", () => {
     "charts/octogee/values.test.yaml",
     "charts/octogee/templates/tests/test-mm-admin-token.yaml",
     "platform-api/src/test-helpers/fixture-accounts.ts",
-    "core/src/testing/journal-store.ts",
+    "core-testing/src/journal-store.ts",
     "scripts/ops/rebuild-test-env.sh",
     "scripts/ci/factory-deny-list-scan.ts",
     "desktop/acceptance/display-resize.py",

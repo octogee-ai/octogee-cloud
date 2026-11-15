@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { firebaseReach, firebaseRuntimeDependencies, runtimeSpecifiers } from "../lib/firebase-reach.js";
+import { coreTestOnlyDependencies, firebaseReach, firebaseRuntimeDependencies, runtimeSpecifiers } from "../lib/firebase-reach.js";
 
 const cloudRoot = resolve(import.meta.dirname, "../..");
 
@@ -13,6 +13,10 @@ describe("Firebase gate", () => {
 
   it("lets no platform package install Firebase at runtime", () => {
     expect(firebaseRuntimeDependencies(cloudRoot), "these package.json entries install Firebase for platform consumers; a spec that needs it lists it under devDependencies").toEqual([]);
+  });
+
+  it("keeps test frameworks and Firebase out of what @octogee/core builds and declares", () => {
+    expect(coreTestOnlyDependencies(cloudRoot), "test helpers belong in @octogee/core-testing; core's specs list these under devDependencies").toEqual([]);
   });
 });
 
@@ -75,6 +79,31 @@ describe("fixture trees", () => {
       "api/src/dynamic.ts",
       "api/src/functions.ts",
       "api/src/uses-admin.ts",
+    ]);
+  });
+
+  it("lists test-only packages that core declares, exports for or imports from built source", () => {
+    const fixture = tree({
+      "core/package.json": JSON.stringify({
+        exports: { "./config": {}, "./testing/journal-store": {} },
+        dependencies: { express: "^5.0.0" },
+        devDependencies: { vitest: "^4.0.0" },
+        peerDependencies: { supertest: "^7.0.0", "firebase-admin": "^14.0.0" },
+        peerDependenciesMeta: { "firebase-admin": { optional: true } },
+      }),
+      "core/src/config.ts": 'import type { Firestore } from "firebase-admin/firestore";\nexport type Db = Firestore;',
+      "core/src/helpers.ts": 'export const load = () => import("vitest");',
+      "core/src/plain.ts": 'import express from "express";\nexport const app = express();',
+      "core/src/config.spec.ts": 'import { it } from "vitest";',
+      "core/src/fixtures/users.ts": 'import { beforeEach } from "vitest";',
+    });
+
+    expect(coreTestOnlyDependencies(fixture)).toEqual([
+      "core/package.json exports ./testing/journal-store",
+      "core/package.json peerDependencies.firebase-admin",
+      "core/package.json peerDependencies.supertest",
+      "core/src/config.ts imports firebase-admin",
+      "core/src/helpers.ts imports vitest",
     ]);
   });
 

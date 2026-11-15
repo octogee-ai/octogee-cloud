@@ -5,7 +5,7 @@ import request from "supertest";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { WebSocket, WebSocketServer } from "ws";
 import { createTenantEnforcementMiddleware } from "../middleware/tenant-enforcement.js";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { encodeWav } from "./audio-format.js";
 import type { VoiceRelayConfig } from "./config.js";
 import {

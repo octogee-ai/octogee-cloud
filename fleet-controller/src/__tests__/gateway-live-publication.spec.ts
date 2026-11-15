@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createJournalFixtureStore, fixtureDocumentsAt, journalRowsAtPaths } from "@octogee/core/testing/journal-store";
+import { createJournalFixtureStore, fixtureDocumentsAt, journalRowsAtPaths } from "@octogee/core-testing/journal-store";
 import type { DurableGateway } from "../converge-gateway.js";
 import { markGatewayLive } from "../index.js";
 

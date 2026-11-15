@@ -2,7 +2,7 @@ import express from "express";
 import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
 vi.mock("@octogee/core/identity/platform-state-store", async (importOriginal) => {
-  const { createDocumentFixtureStore } = await import("@octogee/core/testing/journal-store");
+  const { createDocumentFixtureStore } = await import("@octogee/core-testing/journal-store");
   return {
     ...(await importOriginal<typeof import("@octogee/core/identity/platform-state-store")>()),
     platformStateStore: createDocumentFixtureStore(new Map()),
@@ -13,7 +13,7 @@ import { GATEWAY_CREDENTIAL_ROUTES } from "../app.js";
 import { createGatewayCredentialAuth } from "../middleware/gateway-credential-auth.js";
 import { createTenantEnforcementMiddleware } from "../middleware/tenant-enforcement.js";
 import { gatewayVmPodName } from "@octogee/shared/types/glm";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { createFleetBrokerRoutes } from "./fleet-broker.js";
 
 function harness(metadata: Record<string, unknown> = { generation: "17", size: "3", md5Hash: "kAFQmDzST7DWlj99KOF/cg==" }) {

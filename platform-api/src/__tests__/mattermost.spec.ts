@@ -29,7 +29,7 @@ vi.mock("../lib/mattermost-context", () => ({
 }));
 
 vi.mock("@octogee/core/identity/platform-state-store", async () => {
-  const { createDocumentFixtureStore } = await import("@octogee/core/testing/journal-store");
+  const { createDocumentFixtureStore } = await import("@octogee/core-testing/journal-store");
   return { platformStateStore: createDocumentFixtureStore(dbState.docs) };
 });
 

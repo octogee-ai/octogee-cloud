@@ -1,5 +1,5 @@
 import type { UserPatch } from "@octogee/core/platform-state";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 
 const records = new Map<string, Record<string, unknown>>();
 

@@ -1,7 +1,7 @@
 import type { Request } from "express";
 import { describe, expect, it, vi } from "vitest";
 import { DuplicateRecordError, MalformedRecordError } from "@octogee/core/platform-state";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 
 import { createGoogleTurnVerifier, type OwnerTurnUser } from "./openclaw-owner-turn.js";
 

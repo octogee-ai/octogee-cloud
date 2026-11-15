@@ -4,7 +4,7 @@ import { describe, it, expect, vi } from "vitest";
 import { userAccountFromData, type UserAccountReader } from "@octogee/core/user-account";
 import type { IdentityProvider } from "@octogee/core/identity-provider";
 import type { PlatformStateStore } from "@octogee/core/platform-state";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { createRequireAdmin } from "../middleware/auth";
 
 interface Seed {

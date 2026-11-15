@@ -13,7 +13,7 @@ import {
 import { MalformedRecordError } from "./platform-state/errors.js";
 import type { Revision } from "./platform-state/store.js";
 import type { ModelCredentialRecord } from "./platform-state/users.js";
-import { createDocumentFixtureStore } from "./testing/journal-store.js";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 
 describe("deriveSlug", () => {
   it("prefers provisioning.openclaw.slug, falls back to username", () => {

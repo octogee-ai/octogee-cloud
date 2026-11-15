@@ -2,7 +2,7 @@ import express from 'express';
 import request from 'supertest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createOpenClawRuntimeBrokerRoutes } from './openclaw-runtime-broker.js';
-import { createDocumentFixtureStore } from '@octogee/core/testing/journal-store';
+import { createDocumentFixtureStore } from '@octogee/core-testing/journal-store';
 import { RecordingDocuments } from '../test-helpers/recording-documents.js';
 const authorize = vi.hoisted(() => vi.fn());
 vi.mock('@octogee/core/channels/activity-conversation', () => ({ resolveActivityConversation: authorize }));

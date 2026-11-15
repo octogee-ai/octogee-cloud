@@ -26,7 +26,7 @@ vi.mock("@octogee/core/http/security", () => ({
 }));
 
 vi.mock("@octogee/core/identity/platform-state-store", async () => {
-  const { createDocumentFixtureStore } = await import("@octogee/core/testing/journal-store");
+  const { createDocumentFixtureStore } = await import("@octogee/core-testing/journal-store");
   return { platformStateStore: createDocumentFixtureStore(h.docs) };
 });
 

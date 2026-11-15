@@ -17,8 +17,8 @@ import {
   sourceRecoveryFleet,
   type ChangingRequest,
   type Seed,
-} from "./testing/admin-dry-run-app.js";
-import { FIXTURE_SIZING_PROFILES } from "./testing/journal-store.js";
+} from "@octogee/core-testing/admin-dry-run-app";
+import { FIXTURE_SIZING_PROFILES } from "@octogee/core-testing/journal-store";
 
 function unisolatedUserFleet(): Seed {
   return {

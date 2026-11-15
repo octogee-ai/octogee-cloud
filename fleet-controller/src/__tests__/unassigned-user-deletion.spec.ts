@@ -5,7 +5,7 @@ import { addAdminFleetRoutes } from "@octogee/core/admin-fleet-router";
 import type { AgentStoreErasureCustody } from "@octogee/core/agent-store-credentials";
 import type { OpaqueMap } from "@octogee/core/platform-state";
 import { userAccountFromData, type UserAccountReader } from "@octogee/core/user-account";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import type { Operation, OperationStep } from "@octogee/shared/types/glm";
 import type { UserCleanupContext } from "../handlers/deprovision-user.js";
 import { createEraseUserHandler, type EraseUserDeps } from "../handlers/erase-user.js";

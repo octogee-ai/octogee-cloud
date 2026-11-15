@@ -3,7 +3,7 @@
 import { describe, it, expect } from "vitest";
 import { userAccountFromData, type UserAccountReader } from "@octogee/core/user-account";
 import { MalformedRecordError } from "@octogee/core/platform-state";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { loadUserCleanupContext, type ContextDeps } from "../lib/user-ops/cleanup-context";
 
 function agentImportDoc(uid: string, importId: string): Record<string, unknown> {

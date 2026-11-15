@@ -11,7 +11,7 @@ import { FLEET_KEY_PAIR } from "./fixtures/fleet-keys.js";
 import { stubInformer } from "./fixtures/fleet-informer-stub.js";
 import { createScriptedWatches, storeWithScriptedWatches } from "./fixtures/scripted-watches.js";
 import { createFleetInformer } from "../fleet-informer.js";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { MalformedRecordError, type FleetRegistryRecord } from "@octogee/core/platform-state";
 
 const WALTER_RUNTIME = { docKind: "runtime", gatewayId: "walter", release: 2, lifecycle: "serving" };

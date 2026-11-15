@@ -106,7 +106,7 @@ function commandOperation(): Record<string, unknown> | undefined {
 }
 
 vi.mock("@octogee/core/platform-state", async (importOriginal) => {
-  const { createJournalFixtureStore } = await import("@octogee/core/testing/journal-store");
+  const { createJournalFixtureStore } = await import("@octogee/core-testing/journal-store");
   return {
     ...(await importOriginal<typeof import("@octogee/core/platform-state")>()),
     platformStateStoreFromEnvironment: () => createJournalFixtureStore(

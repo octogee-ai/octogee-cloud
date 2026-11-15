@@ -7,7 +7,7 @@ const { mockDocs } = vi.hoisted(() => ({
 }));
 
 vi.mock("../identity/platform-state-store.js", async () => {
-  const { createDocumentFixtureStore } = await import("../testing/journal-store.js");
+  const { createDocumentFixtureStore } = await import("@octogee/core-testing/journal-store");
   return { platformStateStore: createDocumentFixtureStore(mockDocs as Map<string, Record<string, unknown>>) };
 });
 vi.mock('./logging', () => ({

@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vitest";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { eraseUserHomeMigrationStorage } from "../lib/user-home-erasure.js";
 function fixture(){
  const source={runtime:"gce-vm",layout:"flat",disk:{id:"100"}};

@@ -25,7 +25,7 @@ vi.mock("@octogee/core/http/logging", () => ({
 }));
 vi.mock("@octogee/core/workspace/workspace-resolution", () => ({ resolveWorkspaceUid: async () => "owner-uid" }));
 vi.mock("@octogee/core/identity/platform-state-store", async () => {
-  const { createDocumentFixtureStore } = await import("@octogee/core/testing/journal-store");
+  const { createDocumentFixtureStore } = await import("@octogee/core-testing/journal-store");
   h.store = createDocumentFixtureStore(h.docs);
   return { platformStateStore: h.store };
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { clearHomeCheckpointRequest } from "../lib/home-checkpoint.js";
 
 const runtime = (vmHome?: Record<string, unknown>) => ({

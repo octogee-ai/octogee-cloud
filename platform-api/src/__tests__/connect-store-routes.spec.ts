@@ -27,7 +27,7 @@ process.env.GITHUB_CLIENT_ID = "gh-client";
 process.env.GITHUB_CLIENT_SECRET = "gh-secret";
 process.env.APP_URL = "https://app.example.test";
 
-const { createDocumentFixtureStore } = await import("@octogee/core/testing/journal-store");
+const { createDocumentFixtureStore } = await import("@octogee/core-testing/journal-store");
 const { default: routes } = await import("../routes/connect.js");
 
 function app() {

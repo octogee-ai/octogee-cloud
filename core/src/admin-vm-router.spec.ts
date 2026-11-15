@@ -2,7 +2,7 @@ import express from "express";
 import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
 import { addAdminFleetRoutes } from "./admin-fleet-router.js";
-import { createJournalFixtureStore, fixtureDocumentsAt, journalRowsAtPaths } from "./testing/journal-store.js";
+import { createJournalFixtureStore, fixtureDocumentsAt, journalRowsAtPaths } from "@octogee/core-testing/journal-store";
 import { noUserAccounts } from "./user-account.js";
 
 const GATEWAY = "b-fixture";

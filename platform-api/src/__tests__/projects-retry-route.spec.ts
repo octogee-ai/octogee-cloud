@@ -67,7 +67,7 @@ vi.mock("../lib/withProject.js", () => ({
 }));
 
 vi.mock("@octogee/core/identity/platform-state-store", async () => {
-  const { createDocumentFixtureStore } = await import("@octogee/core/testing/journal-store");
+  const { createDocumentFixtureStore } = await import("@octogee/core-testing/journal-store");
   const store = createDocumentFixtureStore(h.docs);
   const recordPatches = (projects: typeof store.workspaces.projects) => {
     const patchProject = projects.patch;

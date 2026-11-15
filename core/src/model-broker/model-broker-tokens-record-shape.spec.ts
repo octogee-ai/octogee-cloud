@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { MalformedRecordError } from "../platform-state/index.js";
-import { createDocumentFixtureStore } from "../testing/journal-store.js";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 
 import {
   createModelBrokerTokenStore,

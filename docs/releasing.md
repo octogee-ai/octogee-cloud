@@ -19,7 +19,7 @@ A release `vX.Y.Z` publishes everything at one version:
 
 The charts are `octogee` (the platform), `octogee-gateway` (one gateway, which
 the fleet controller installs) and `octogee-monitoring`. The packages are
-`@octogee/shared` and `@octogee/core`.
+`@octogee/shared`, `@octogee/core` and `@octogee/core-testing`.
 
 The version comes from the tag when the workflow runs; nothing in the
 repository records it. The workflow builds each package's `dist/` fresh from
@@ -49,13 +49,16 @@ packaged archive.
 helm upgrade --install octogee oci://ghcr.io/octogee-ai/octogee-cloud/charts/octogee \
   --version X.Y.Z -f your-values.yaml
 npm install @octogee/core@X.Y.Z @octogee/shared@X.Y.Z
+npm install --save-dev @octogee/core-testing@X.Y.Z
 ```
 
 The chart needs no image values: it runs the release's images by digest. The
 [GKE](gke.md) and [kind](kind.md) installers still run from a checkout, so for
 them check out the tag. `@octogee/core` takes `@octogee/shared` as a peer at
-the same version; its `testing/*` exports also need its optional peers
-`firebase-admin`, `supertest` and `vitest`.
+the same version. `@octogee/core-testing` holds the test helpers and takes
+`@octogee/core` and `@octogee/shared` at the same version; its route
+harnesses also need its optional peers `supertest`, `vitest` and
+`firebase-admin`.
 
 ## One-time setup
 

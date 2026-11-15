@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { connectorApprovalRpc, requestConnectorApproval } from "./connector-approval-client.js";
 
 vi.mock("./byot-sync-trigger.js", () => ({ gatewayModelCredentialSyncUrl: () => "http://gateway/model-credential-sync" }));

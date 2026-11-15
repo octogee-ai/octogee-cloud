@@ -1,7 +1,7 @@
 import request from "supertest";
 import { describe, expect, it } from "vitest";
 import { platformReleaseRecord, releasePayloadHash, type ReleasePayload } from "@octogee/shared/types/gateway-releases";
-import { durableGatewayRoot, mkAdminFleetRouteApp } from "./testing/admin-fleet-route-app.js";
+import { durableGatewayRoot, mkAdminFleetRouteApp } from "@octogee/core-testing/admin-fleet-route-app";
 
 describe("users per shared gateway is the product's", () => {
   const config = { defaultGatewayId: "shared-a", sharedGatewayAutoscaling: { enabled: true, buildersPerGateway: 4 } };

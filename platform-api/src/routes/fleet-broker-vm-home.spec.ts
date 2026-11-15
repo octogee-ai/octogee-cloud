@@ -5,7 +5,7 @@ import { VM_HOME_CHECKPOINT_KEEP, VM_HOME_CHECKPOINT_MAX_BYTES, type GatewayVmHo
 import { gcsBlobStore } from "../lib/runtime-blob-store.js";
 import { VmHomeCheckpointError, type VmHomeStore } from "../lib/vm-home-checkpoint.js";
 import type { BoundTenant } from "../lib/sa-to-tenant.js";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { RecordingDocuments } from "../test-helpers/recording-documents.js";
 import { createFleetBrokerRoutes } from "./fleet-broker.js";
 

@@ -6,7 +6,7 @@ import {
   type ConnectorRevocationDeps,
   type ConnectorRevocationTarget,
 } from "./connector-revocation.js";
-import { createDocumentFixtureStore } from "./testing/journal-store.js";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 
 const google: ConnectorRevocationTarget = {
   connectorId: "google",

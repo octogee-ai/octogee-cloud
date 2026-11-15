@@ -6,7 +6,7 @@ vi.mock('@octogee/core/http/auth', () => ({ requireAuth: (req: { uid: string }, 
 vi.mock('@octogee/core/channels/activity-conversation', () => ({ resolveActivityConversation: h.authorize }));
 vi.mock('../lib/gateway-ticket.js', () => ({ mintTicket: h.mint }));
 vi.mock("@octogee/core/platform-state", async (importOriginal) => {
-  const { createDocumentFixtureStore } = await import("@octogee/core/testing/journal-store");
+  const { createDocumentFixtureStore } = await import("@octogee/core-testing/journal-store");
   return {
     ...(await importOriginal<typeof import("@octogee/core/platform-state")>()),
     platformStateStoreFromEnvironment: () => createDocumentFixtureStore(new Map()),

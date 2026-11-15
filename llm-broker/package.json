@@ -46,6 +46,7 @@
     "google-auth-library": "^11.0.2"
   },
   "devDependencies": {
+    "@octogee/core-testing": "file:../core-testing",
     "@types/express": "^5.0.6",
     "@types/node": "^26.3.0",
     "@types/supertest": "^7.2.1",

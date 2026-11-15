@@ -19,7 +19,7 @@ import {
   type Stored,
   type WatchChange,
 } from "@octogee/core/platform-state";
-import { createJournalFixtureStore, journalRowsIn, type FixtureDocuments } from "@octogee/core/testing/journal-store";
+import { createJournalFixtureStore, journalRowsIn, type FixtureDocuments } from "@octogee/core-testing/journal-store";
 import { VmCreationPendingError, FinalHomeCheckpointPendingError } from "../vm-lifecycle";
 import { runGatewayRuntimeExclusive } from "../lib/gateway-runtime-mutation";
 import { reconcileSurgeUserHandoff } from "../surge-user-handoff";

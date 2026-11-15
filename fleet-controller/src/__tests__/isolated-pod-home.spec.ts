@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { FIXTURE_SIZING_PROFILES, createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { FIXTURE_SIZING_PROFILES, createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 
 import type { KubectlSubprocess } from "../fleet-ingress.js";
 import {

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import type { FleetInformer } from "../fleet-informer.js";
 import type { GatewayPodDiagnostics } from "../gateway-kubernetes-observation.js";
 import { startPlacement, type PlacementProductDeps } from "../placement-product.js";

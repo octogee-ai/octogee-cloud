@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { publishPlatformGatewayReady } from "../index.js";
 
 const runtime = (heartbeat: Record<string, unknown>) => ({

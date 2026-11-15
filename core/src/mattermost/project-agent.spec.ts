@@ -5,7 +5,7 @@ import {
   projectAgentSecretDocId,
   retireProjectAgentBot,
 } from "./project-agent.js";
-import { createDocumentFixtureStore } from "../testing/journal-store.js";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 
 const SECRET_PATH = "users/uid-1/secrets/projectAgentMattermost-orbit";
 

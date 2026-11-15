@@ -66,6 +66,14 @@ jobs:
               node ../scripts/ops/verify-committed-dist.mjs
               npm test
               node ../scripts/ci/core-postgres.mjs
+          - name: core-testing
+            installs: core-testing
+            run: |
+              cd core-testing
+              npm run typecheck
+              npm run build
+              node ../scripts/ops/verify-committed-dist.mjs
+              npm test
           - name: gateway-edge
             installs: shared gateway-edge
             run: |
@@ -94,7 +102,7 @@ jobs:
               npm run typecheck
               npm test
           - name: release-artifacts
-            installs: shared core scripts
+            installs: shared core core-testing scripts
             helm: true
             run: |
               node scripts/ci/release-packages.mjs pack --tag=v0.0.0 --out="$RUNNER_TEMP/packages"

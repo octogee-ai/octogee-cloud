@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { UserErasureBlockedError, createUserAgentStoreErasure, preserveUserGatewayRetirement } from "../lib/user-ops/agent-store-erasure.js";
 import { AgentStoreErasureRetainedLoginError, type AgentStoreErasureCustody } from "@octogee/core/agent-store-credentials";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 
 function root(gatewayId: string, fields: Record<string, unknown>): Record<string, unknown> {
   return { gatewayId, latestRelease: 1, desiredRelease: 1, liveRelease: 1, ...fields };

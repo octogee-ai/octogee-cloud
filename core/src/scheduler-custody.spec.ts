@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { MigrationRpcError, type MigrationClient } from "./fleet-migration-client.js";
 import { releaseSchedulerCustody, type SchedulerCustodyOwner } from "./scheduler-custody.js";
-import { createCronCustodyGateways, type CronCustodyGateways } from "./testing/cron-custody.js";
+import { createCronCustodyGateways, type CronCustodyGateways } from "@octogee/core-testing/cron-custody";
 
 const VM = "alice-vm", COACH = "octogee-alice-coach";
 const RETURN = "builder-return-alice-vm-g1", RETURN_HOLD = `mig-${RETURN}:scheduler:1:claim:100`;

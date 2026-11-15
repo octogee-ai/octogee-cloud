@@ -6,7 +6,7 @@ import {
 } from "@octogee/core/gateway-retirement-claim";
 
 import type { PlatformStateTransaction } from "@octogee/core/platform-state";
-import { createJournalFixtureStore, journalRowsIn, type FixtureDocuments } from "@octogee/core/testing/journal-store";
+import { createJournalFixtureStore, journalRowsIn, type FixtureDocuments } from "@octogee/core-testing/journal-store";
 import { ensureOwnedGatewaysRetired } from "../lib/user-ops/user-gateway-retirement.js";
 
 interface Root {

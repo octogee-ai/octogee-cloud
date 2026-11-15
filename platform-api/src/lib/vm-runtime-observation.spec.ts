@@ -1,4 +1,4 @@
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { expect, it } from "vitest";
 import { VM_DISK_OBSERVATION_REFRESH_MS, recordVmDiskObservation, recordVmHomeCheckpoint } from "./vm-runtime-observation.js";
 

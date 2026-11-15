@@ -27,7 +27,7 @@ vi.mock('../lib/withProject.js', () => ({ withProject: async (req: any, res: any
   await run({ project: { agent: {} } });
 } }));
 vi.mock('@octogee/core/identity/platform-state-store', async () => {
-  const { createDocumentFixtureStore } = await import('@octogee/core/testing/journal-store');
+  const { createDocumentFixtureStore } = await import('@octogee/core-testing/journal-store');
   return { platformStateStore: createDocumentFixtureStore(h.docs) };
 });
 const { default: agentRouter } = await import("../routes/projects/agent.js");

@@ -9,7 +9,7 @@ import {
   markAssignmentState,
   setWorkspaceMigrationPhase,
 } from "./fleet-state.js";
-import { createDocumentFixtureStore, FIXTURE_SIZING_PROFILES } from "./testing/journal-store.js";
+import { createDocumentFixtureStore, FIXTURE_SIZING_PROFILES } from "@octogee/core-testing/journal-store";
 
 type Row = Record<string, unknown>;
 const UID = "uid-lin", SLUG = "lin", SHARED = "shared-a", TARGET = "lin-s-0a1b2c3d", OP = "op-give-1", STARTED = 1_000;

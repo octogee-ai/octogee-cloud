@@ -6,7 +6,7 @@ import { GLM_GATEWAYS_COLLECTION, GLM_OPERATIONS_COLLECTION } from "@octogee/sha
 
 import { addAdminFleetRoutes } from "./admin-fleet-router.js";
 import { isOperatorIssuedAllocation, OPERATOR_ISOLATED_GATEWAY_SOURCE } from "./operator-isolated-gateway.js";
-import { createDocumentFixtureStore, FIXTURE_SIZING_PROFILES } from "./testing/journal-store.js";
+import { createDocumentFixtureStore, FIXTURE_SIZING_PROFILES } from "@octogee/core-testing/journal-store";
 import { noUserAccounts } from "./user-account.js";
 
 type Row = Record<string, unknown>;

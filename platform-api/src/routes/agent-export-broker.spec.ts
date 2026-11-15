@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import express from "express";
 import request from "supertest";
 import { MalformedRecordError } from "@octogee/core/platform-state";
-import { createDocumentFixtureStore } from "@octogee/core/testing/journal-store";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { authorizeAgentExport, registerAgentExportBrokerRoutes } from "./agent-export-broker.js";
 import type { OwnerContext } from "./agent-import-broker.js";
 import { FeaturePolicy } from "../lib/feature-policy.js";

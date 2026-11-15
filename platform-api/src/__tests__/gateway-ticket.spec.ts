@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const h = vi.hoisted(() => ({ documents: new Map<string, Record<string, unknown>>() }));
 
 vi.mock("@octogee/core/identity/platform-state-store", async () => {
-  const { createDocumentFixtureStore } = await import("@octogee/core/testing/journal-store");
+  const { createDocumentFixtureStore } = await import("@octogee/core-testing/journal-store");
   return { platformStateStore: createDocumentFixtureStore(h.documents, { serializeTransactions: true }) };
 });
 
