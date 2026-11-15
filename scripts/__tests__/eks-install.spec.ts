@@ -26,7 +26,10 @@ const AWS = `case " $* " in
   *" describe-instance-types "*)
     while [ "$1" != --instance-types ]; do shift; done; shift
     while [ "$1" != --query ]; do case "$1" in *.2xlarge) printf '%s\\t8\\n' "$1" ;; *) printf '%s\\t4\\n' "$1" ;; esac; shift; done ;;
+  *" describe-launch-templates "*Tags*) echo "\${LT_GVISOR:-20261109.0}" ;;
+  *" describe-launch-template-versions "*) echo "\${LT_TYPE:-m6i.xlarge}" ;;
   *" describe-launch-templates "*) { [ -n "\${LT_EXISTS:-}" ] || [ -f "$HOME/lt-created" ]; } || exit 1; echo lt-0abc123 ;;
+  *" eks describe-nodegroup "*) echo "\${SYSTEM_TYPE:-m6i.xlarge}" ;;
   *" create-launch-template "*) touch "$HOME/lt-created" ;;
   *" eks describe-cluster "*vpcId*) echo vpc-1 ;;
   *" eks describe-cluster "*clusterSecurityGroupId*) echo sg-cluster ;;
@@ -108,17 +111,37 @@ describe("eks-install.sh", () => {
       expect(gateways).not.toContain("instanceType");
     });
 
-    it("installs gVisor on gateway nodes at boot and keeps their pods away from the instance metadata service", () => {
-      expect(up({ GVISOR_RELEASE: "20251110.0" }).status).toBe(0);
+    it("installs the pinned gVisor release on gateway nodes at boot and keeps their pods away from the instance metadata service", () => {
+      expect(up().status).toBe(0);
       const template = JSON.parse(installed("gateway-launch-template.json"));
       expect(template.InstanceType).toBe("m6i.xlarge");
       expect(template.MetadataOptions).toEqual({ HttpEndpoint: "enabled", HttpTokens: "required", HttpPutResponseHopLimit: 1 });
       const userData = Buffer.from(template.UserData, "base64").toString("utf8");
-      expect(userData).toContain("https://storage.googleapis.com/gvisor/releases/release/20251110.0/$(uname -m)");
-      expect(userData).toContain("sha512sum -c runsc.sha512 containerd-shim-runsc-v1.sha512");
+      expect(userData).toContain(`curl -fsSLo gvisor.tar.bz2 "https://storage.googleapis.com/gvisor/releases/release/20261109.0/$(uname -m)/gvisor.tar.bz2"`);
+      expect(userData).toContain("x86_64) sum=1a6b8f74c37b4931ef473f67ec1f601690855bedc52ac709f2fac965c69677aa0426ef44598d8eee1aed72cfdb9df87a2a5f352cb3348880fc61a7732bc10f2a ;;");
+      expect(userData).toContain('echo "$sum  gvisor.tar.bz2" | sha512sum -c -');
+      expect(userData).not.toContain(".sha512");
+      expect(userData).toContain("tar -xjf gvisor.tar.bz2 -C /usr/local/bin");
       expect(userData).toContain("cat >> /etc/containerd/config.toml");
       expect(userData).toContain(`[plugins."$plugin".containerd.runtimes.runsc]\nruntime_type = "io.containerd.runsc.v1"`);
       expect(calls("aws", "create-launch-template")[0]).toContain(`file://${join(state, INSTALL, "gateway-launch-template.json")}`);
+      expect(calls("aws", "create-launch-template")[0]).toContain("Tags=[{Key=octogee.io/gvisor-release,Value=20261109.0}]");
+    });
+
+    it("stops before changing the cluster when the gateway launch template was made with other settings", () => {
+      for (const [env, made] of [[{ LT_TYPE: "m6i.large" }, "m6i.large gateway nodes with gVisor 20261109.0"], [{ LT_GVISOR: "None" }, "m6i.xlarge gateway nodes with gVisor None"]] as const) {
+        const result = up({ CLUSTER_EXISTS: "1", LT_EXISTS: "1", ...env });
+        expect(result.status).toBe(1);
+        expect(result.stderr).toContain(`Launch template octogee-gateways makes ${made}, not m6i.xlarge with gVisor 20261109.0.`);
+      }
+      expect(host.calls().filter(call => call.startsWith("eksctl ") || / (create|put|authorize)-/.test(call))).toEqual([]);
+    });
+
+    it("stops before changing the node groups when the system nodes are of another instance type", () => {
+      const result = up({ CLUSTER_EXISTS: "1", LT_EXISTS: "1", SYSTEM_TYPE: "m6i.large" });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("Node group system runs m6i.large nodes, not m6i.xlarge");
+      expect(host.calls().filter(call => call.startsWith("eksctl "))).toEqual([]);
     });
 
     it("registers the gvisor runtime class on the gateway nodes and makes encrypted gp3 the default storage class", () => {
@@ -232,9 +255,8 @@ describe("eks-install.sh", () => {
       expect(host.calls().filter(call => call.startsWith("eksctl ") || / (create|put|authorize)-/.test(call))).toEqual([]);
     });
 
-    it("rejects a node count or gVisor release it cannot use before calling AWS", () => {
+    it("rejects a node count or shared gateway tier it cannot use before calling AWS", () => {
       expect(up({ GATEWAY_NODES: "0" }).stderr).toContain("GATEWAY_NODES must be a whole number of nodes");
-      expect(up({ GVISOR_RELEASE: "main" }).stderr).toContain("GVISOR_RELEASE must be latest or a gVisor release");
       expect(up({ SHARED_GATEWAY_TIER: "xl" }).stderr).toContain("SHARED_GATEWAY_TIER must be s, m or l");
       expect(host.calls().filter(call => call.startsWith("aws "))).toEqual([]);
     });

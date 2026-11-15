@@ -32,13 +32,11 @@ GATEWAY_INSTANCE_TYPE="${GATEWAY_INSTANCE_TYPE:-m6i.xlarge}"
 SYSTEM_NODES="${SYSTEM_NODES:-2}"
 GATEWAY_NODES="${GATEWAY_NODES:-2}"
 DB_CLASS="${DB_CLASS:-db.t4g.medium}"
-GVISOR_RELEASE="${GVISOR_RELEASE:-latest}"
 SHARED_GATEWAY_TIER="${SHARED_GATEWAY_TIER:-m}"
 [[ -n "$AWS_REGION" ]] || die "Set AWS_REGION to the AWS region to install into"
 [[ "$SYSTEM_NODES" =~ ^[1-9][0-9]*$ ]] || die "SYSTEM_NODES must be a whole number of nodes"
 [[ "$GATEWAY_NODES" =~ ^[1-9][0-9]*$ ]] || die "GATEWAY_NODES must be a whole number of nodes"
 [[ "$SHARED_GATEWAY_TIER" =~ ^(s|m|l)$ ]] || die "SHARED_GATEWAY_TIER must be s, m or l"
-[[ "$GVISOR_RELEASE" =~ ^(latest|[0-9]{8}(\.[0-9]+)?)$ ]] || die "GVISOR_RELEASE must be latest or a gVisor release such as 20251110.0"
 
 KUBE_CONTEXT="eks_${AWS_REGION}_${NAME}"
 PUBLISHED="ghcr.io/octogee-ai/octogee-cloud"
@@ -47,6 +45,10 @@ DB_INSTANCE="$NAME"
 DB_SECURITY_GROUP_NAME="$NAME-database"
 BLOB_USER="$NAME-blob-store"
 LAUNCH_TEMPLATE="$NAME-gateways"
+GVISOR_RELEASE=20261109.0
+GVISOR_SHA512_X86_64=1a6b8f74c37b4931ef473f67ec1f601690855bedc52ac709f2fac965c69677aa0426ef44598d8eee1aed72cfdb9df87a2a5f352cb3348880fc61a7732bc10f2a
+GVISOR_SHA512_AARCH64=411f2d6f7f98a93643725ce9933ff67a7f96f884c2317be3e2b579b976ceb54065bd1d4292a9d61de38da1940ef21b7e41070127874086b7992fb7b5e7a85897
+GVISOR_TAG="octogee.io/gvisor-release"
 SANDBOX_LABEL="octogee.io/sandbox"
 SHA="${SHA:-$(git -C "$ROOT" rev-parse HEAD)}"
 SHORT="${SHA:0:7}"
@@ -114,12 +116,16 @@ Content-Type: text/x-shellscript; charset="us-ascii"
 
 #!/bin/bash
 set -euo pipefail
-url=https://storage.googleapis.com/gvisor/releases/release/$GVISOR_RELEASE/\$(uname -m)
+case "\$(uname -m)" in
+  x86_64) sum=$GVISOR_SHA512_X86_64 ;;
+  aarch64) sum=$GVISOR_SHA512_AARCH64 ;;
+  *) echo "gVisor $GVISOR_RELEASE has no checksum here for \$(uname -m)" >&2; exit 1 ;;
+esac
 cd "\$(mktemp -d)"
-curl -fsSL --remote-name-all "\$url/runsc" "\$url/runsc.sha512" \\
-  "\$url/containerd-shim-runsc-v1" "\$url/containerd-shim-runsc-v1.sha512"
-sha512sum -c runsc.sha512 containerd-shim-runsc-v1.sha512
-install -m 0755 runsc containerd-shim-runsc-v1 /usr/local/bin/
+curl -fsSLo gvisor.tar.bz2 "https://storage.googleapis.com/gvisor/releases/release/$GVISOR_RELEASE/\$(uname -m)/gvisor.tar.bz2"
+echo "\$sum  gvisor.tar.bz2" | sha512sum -c -
+command -v bzip2 >/dev/null || dnf install -y bzip2
+tar -xjf gvisor.tar.bz2 -C /usr/local/bin
 plugin=io.containerd.grpc.v1.cri
 if grep -Eq '^version *= *3' /etc/containerd/config.toml; then plugin=io.containerd.cri.v1.runtime; fi
 cat >> /etc/containerd/config.toml <<RUNSC
@@ -137,10 +143,23 @@ launch_template_id() {
     --query 'LaunchTemplates[0].LaunchTemplateId' --output text 2>/dev/null
 }
 
+check_launch_template() {
+  local release type
+  release="$(a ec2 describe-launch-templates --launch-template-names "$LAUNCH_TEMPLATE" \
+    --query "LaunchTemplates[0].Tags[?Key=='$GVISOR_TAG'].Value | [0]" --output text)"
+  type="$(a ec2 describe-launch-template-versions --launch-template-name "$LAUNCH_TEMPLATE" --versions 1 \
+    --query 'LaunchTemplateVersions[0].LaunchTemplateData.InstanceType' --output text)"
+  if [[ "$release" != "$GVISOR_RELEASE" || "$type" != "$GATEWAY_INSTANCE_TYPE" ]]; then
+    die "Launch template $LAUNCH_TEMPLATE makes $type gateway nodes with gVisor $release, not $GATEWAY_INSTANCE_TYPE with gVisor $GVISOR_RELEASE. Replace the gateway nodes as docs/eks.md#change-the-gateway-nodes describes."
+  fi
+}
+
 ensure_launch_template() {
   mkdir -p "$STATE"
   chmod 700 "$STATE"
-  if ! launch_template_id >/dev/null; then
+  if launch_template_id >/dev/null; then
+    check_launch_template
+  else
     gateway_user_data > "$STATE/gateway-user-data.mime"
     node -e '
       const { readFileSync, writeFileSync } = require("node:fs");
@@ -153,7 +172,8 @@ ensure_launch_template() {
       }, null, 2) + "\n");
     ' "$STATE/gateway-user-data.mime" "$GATEWAY_INSTANCE_TYPE" "$STATE/gateway-launch-template.json"
     a ec2 create-launch-template --launch-template-name "$LAUNCH_TEMPLATE" \
-      --launch-template-data "file://$STATE/gateway-launch-template.json" >/dev/null
+      --launch-template-data "file://$STATE/gateway-launch-template.json" \
+      --tag-specifications "ResourceType=launch-template,Tags=[{Key=$GVISOR_TAG,Value=$GVISOR_RELEASE}]" >/dev/null
   fi
   LAUNCH_TEMPLATE_ID="$(launch_template_id)"
   [[ "$LAUNCH_TEMPLATE_ID" =~ ^lt-[0-9a-f]+$ ]] || die "EC2 did not report an ID for launch template $LAUNCH_TEMPLATE"
@@ -215,6 +235,11 @@ ensure_cluster() {
     log "EKS cluster $NAME in $AWS_REGION (about 20 minutes)"
     eksctl create cluster -f "$STATE/eksctl.yaml" --write-kubeconfig=false
   else
+    local system_type
+    system_type="$(a eks describe-nodegroup --cluster-name "$NAME" --nodegroup-name system \
+      --query 'nodegroup.instanceTypes[0]' --output text)"
+    [[ "$system_type" == "$INSTANCE_TYPE" ]] \
+      || die "Node group system runs $system_type nodes, not $INSTANCE_TYPE; eks-install.sh does not replace existing system nodes"
     eksctl create nodegroup -f "$STATE/eksctl.yaml"
     eksctl scale nodegroup --cluster "$NAME" --region "$AWS_REGION" --name system \
       --nodes "$SYSTEM_NODES" --nodes-min "$SYSTEM_NODES" --nodes-max "$SYSTEM_NODES"

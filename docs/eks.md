@@ -41,13 +41,21 @@ sets it up by default; nothing else is exposed to the internet. You reach
 Mattermost, Gitea and the Admin API through `kubectl port-forward`, as on kind.
 
 RDS for PostgreSQL 16 takes encrypted connections only (`rds.force_ssl` is on by
-default), but, as on GKE, no client verifies the server's certificate.
+default), but no client verifies the server's certificate: Mattermost and Gitea
+connect with `sslmode=require`, the platform with `require`, and the agent
+stores with `no-verify`. Something that could answer on the database's address
+inside the VPC could stand in for it. Giving each client RDS's certificate
+bundle to verify against would close that; the platform already takes
+`verify-full` with a CA, but this install does not set it up yet.
 
 EKS has no managed gVisor, so the script makes its own node group for it. A
-launch template gives the gateway nodes a boot script that downloads `runsc`
-and its containerd shim from gVisor's release bucket, checks their SHA-512
-sums, and adds a `runsc` runtime to containerd's configuration before
-containerd starts. The `gvisor` runtime class schedules pods onto those nodes.
+launch template gives the gateway nodes a boot script that downloads one
+pinned gVisor release from gVisor's release bucket, checks it against the
+SHA-512 sum committed in the script, unpacks `runsc` and its containerd shim,
+and adds a `runsc` runtime to containerd's configuration before containerd
+starts. The `gvisor` runtime class schedules pods onto those nodes. A newer
+gVisor comes with a newer checkout of this repository and
+[new gateway nodes](#change-the-gateway-nodes).
 
 The platform's S3 client signs with a static access key, so the blob store uses
 an IAM user, `octogee-blob-store`, whose policy allows the objects of the two
@@ -180,13 +188,12 @@ plane; run `up` again after an upgrade.
 | Setting | Default | Effect |
 | --- | --- | --- |
 | `AWS_REGION` | none | The region to install into. Required. |
-| `INSTANCE_TYPE` | `m6i.xlarge` | System nodes. Applies when the node group is created. |
-| `GATEWAY_INSTANCE_TYPE` | `m6i.xlarge` | Gateway nodes, one gateway each. Applies when the launch template is created. A shared gateway defaults to the `m` sizing tier, 2 CPUs and 8 GiB, and an isolated gateway to `s`, 1 CPU and 4 GiB. The `l` tier, 4 CPUs and 16 GiB, needs a larger instance type. |
+| `INSTANCE_TYPE` | `m6i.xlarge` | System nodes. Applies when the node group is created; `up` stops if the existing group runs another type. |
+| `GATEWAY_INSTANCE_TYPE` | `m6i.xlarge` | Gateway nodes, one gateway each. Applies when the launch template is created; `up` stops if the existing template makes another type. A shared gateway defaults to the `m` sizing tier, 2 CPUs and 8 GiB, and an isolated gateway to `s`, 1 CPU and 4 GiB. The `l` tier, 4 CPUs and 16 GiB, needs a larger instance type. |
 | `SYSTEM_NODES` | `2` | Nodes in the `system` group. |
 | `GATEWAY_NODES` | `2` | Nodes in the `gateways` group, one for each gateway. |
 | `DB_CLASS` | `db.t4g.medium` | RDS instance class. |
 | `SHARED_GATEWAY_TIER` | `m` | Sizing tier of shared gateways. `s`, 1 CPU and 4 GiB, fits a 2-vCPU gateway node. |
-| `GVISOR_RELEASE` | `latest` | gVisor release the gateway nodes install, such as `20251110.0`. Applies when the launch template is created. |
 
 The node groups do not scale on their own. Gateways keep one pod per node, so
 `GATEWAY_NODES` must be at least the number of gateways you run. To change a
@@ -209,6 +216,25 @@ it, run `up` again with `GATEWAY_NODES=2` and the same other settings.
 | --- | --- |
 | `--sha=<sha>` | Install the images published for this full commit SHA. The default is the checkout's commit. |
 | `--manifest=<file>` | Take the image digests from an extracted Build main `image-manifest-<sha>` artifact instead of the registry. |
+
+### Change the gateway nodes
+
+The launch template is made once, and `up` stops when it was made for another
+gateway instance type or gVisor release than the checkout's. To change either,
+delete the gateway node group and the template, then run `up` again, which
+makes both anew. The gateways on those nodes stop until the new nodes are up:
+
+```bash
+eksctl delete nodegroup --cluster octogee --region "$AWS_REGION" --name gateways --wait
+```
+
+```bash
+aws ec2 delete-launch-template --launch-template-name octogee-gateways
+```
+
+```bash
+scripts/ops/eks-install.sh up
+```
 
 ## Operate the fleet
 
