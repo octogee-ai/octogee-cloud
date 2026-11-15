@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-export const PUBLISHED_PACKAGES = ["shared", "core"];
+export const PUBLISHED_PACKAGES = ["shared", "core", "core-testing"];
 export const SOURCE_REPOSITORY = "https://github.com/octogee-ai/octogee-cloud";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
