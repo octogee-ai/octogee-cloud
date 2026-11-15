@@ -1,7 +1,7 @@
 import type { GatewayMutableConfig } from "@octogee/shared/types/gateway-mutable-config";
 import type { SizingTier } from "@octogee/shared/types/sizing";
 import { type GatewayArtifact } from "./gateway-live-release.js";
-import type { GatewaySizingProfile } from "./platform-state/config.js";
+import type { GatewaySizingProfile } from "@octogee/shared/types/sizing-profile";
 import type { PlatformStateRepositories, PlatformStateStore } from "./platform-state/store.js";
 export declare const OPERATOR_ISOLATED_GATEWAY_SOURCE = "operator-isolated-gateway";
 export declare function operatorAllocationId(): string;

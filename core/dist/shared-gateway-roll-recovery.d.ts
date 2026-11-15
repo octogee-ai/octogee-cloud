@@ -1,4 +1,5 @@
-import type { PlatformStateStore } from "./platform-state/store.js";
+import { type GatewayKubernetesObservation } from "@octogee/shared/types/gateway-releases";
+import type { PlatformStateStore, PlatformStateTransaction } from "./platform-state/store.js";
 export interface SupersedeRollingSharedGatewayRollInput {
     sourceGatewayId: string;
     targetGatewayId: string;
@@ -16,9 +17,15 @@ export type SupersedeRollingSharedGatewayRollResult = {
     operationId: string;
 } | {
     kind: "not-eligible";
+    reason: string;
 };
 export interface SharedGatewayRollRecoveryDeps {
     store: PlatformStateStore;
     now: () => number;
 }
+export declare function sharedRollRecoveryOperationId(input: SupersedeRollingSharedGatewayRollInput): string;
+export declare function appendSharedRollRecoveryInTransaction(transaction: PlatformStateTransaction, input: SupersedeRollingSharedGatewayRollInput, options: {
+    now: number;
+    sourceKubernetes?: GatewayKubernetesObservation;
+}): Promise<SupersedeRollingSharedGatewayRollResult>;
 export declare function supersedeRollingSharedGatewayRoll(deps: SharedGatewayRollRecoveryDeps, input: SupersedeRollingSharedGatewayRollInput): Promise<SupersedeRollingSharedGatewayRollResult>;

@@ -2,10 +2,9 @@ import { isDeepStrictEqual } from "node:util";
 import {
   type PlatformUserRecord,
   type FleetRegistryRecord,
-  type GatewayComputerProfile,
-  type GatewayVmProfile,
   type PlatformStateStore,
 } from "@octogee/core/platform-state";
+import type { GatewayComputerProfile, GatewayVmProfile } from "@octogee/shared/types/sizing-profile";
 import type { SizingTier } from "@octogee/shared/types/sizing";
 import {
   isGatewayRuntime,

@@ -100,7 +100,7 @@ import { GATEWAY_UNREACHABLE_AFTER_MS, parseOpenClawProcessReport } from "@octog
 import {
   builderReturnOperationId,
   placementRetireOperationId,
-} from "./isolated-operation-ids.js";
+} from "@octogee/shared/types/isolated-operation-ids";
 import { withActorEmails } from "./admin-journal-actor.js";
 import {
   AdminDryRunPlanned,
@@ -114,6 +114,8 @@ import { addAdminUserRoutes, type UserAccounts, type UserSignInHosts } from "./a
 import { addAdminSharedPoolRoutes, type AdminSharedPoolRouterDeps } from "./admin-shared-pool-router.js";
 import type { GatewayKubernetesReader } from "./fleet-state-sections.js";
 import { addAdminPlacementRoutes, type AdminPlacementCapabilities } from "./admin-placement-router.js";
+import { addAdminPlacementSharedRoutes, type AdminPlacementSharedCapabilities } from "./admin-placement-shared-router.js";
+import { addAdminPlacementIsolatedRoutes, type AdminIsolatedCapabilities } from "./admin-placement-isolated-router.js";
 import {
   GatewayRetirementConflictError,
   assertGatewayRuntimeMutationUnfencedInStore,
@@ -255,6 +257,8 @@ export interface FleetRouterDeps {
   userSignIn?: UserSignInHosts;
   discoverDeletionProductContext?: DeletionProductContextDiscovery;
   placement?: AdminPlacementCapabilities;
+  placementShared?: AdminPlacementSharedCapabilities;
+  isolated?: AdminIsolatedCapabilities;
 }
 
 export type DeletionProductContextDiscovery = (uid: string) => Promise<OpaqueMap>;
@@ -4753,6 +4757,8 @@ export function addAdminFleetRoutes(
     readGatewayKubernetes: deps.readGatewayKubernetes,
   });
   if (deps.placement) addAdminPlacementRoutes(router, { ...deps.placement, store, journal: runAdminFleetMutation });
+  if (deps.placementShared) addAdminPlacementSharedRoutes(router, { ...deps.placementShared, store, journal: runAdminFleetMutation });
+  if (deps.isolated) addAdminPlacementIsolatedRoutes(router, { store, journal: runAdminFleetMutation, accounts: deps.accounts, capabilities: deps.isolated, log: (message) => deps.logger.info(message), warn: (message) => deps.logger.warn(message) });
 
   async function handleActiveUserDeletion(input: {
     req: Request;
