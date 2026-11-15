@@ -69,6 +69,7 @@ export const PUBLISHED_CHARTS = [
       "-f", "scripts/ops/kind/values.yaml", "-n", "octogee-local", "--set", "global.computer.enabled=true", "--set", "global.computer.cidr=10.8.0.0/16",
       "--set", "global.computer.projectId=example", "--set", "global.computer.serviceAccountEmail=vm@example.iam.gserviceaccount.com",
       "--set", "global.computer.kubernetesApiHost=10.0.0.1", "--set", "global.computer.vmSpec.machineType=n2-standard-2",
+      "--set", "provisioningService.enabled=true",
     ],
   },
   {
