@@ -118,8 +118,13 @@ export interface UserProvisioningList {
     resourceVersion: string;
     nextPageToken?: string;
 }
+export interface UserProvisioningDeletion {
+    uid: string;
+    resourceVersion: string;
+}
 export interface UserProvisioningWatchResponse {
     items: UserProvisioning[];
+    deleted?: UserProvisioningDeletion[];
     resourceVersion: string;
 }
 export interface UserProvisioningListQuery {

@@ -142,8 +142,20 @@ export interface GatewayRuntimeDoc {
         at: number | null;
     };
 }
+export declare const GATEWAY_KUBERNETES_STATUSES: readonly ["ready", "not-ready", "missing", "unknown"];
+export type GatewayKubernetesStatus = (typeof GATEWAY_KUBERNETES_STATUSES)[number];
+export declare function isGatewayKubernetesStatus(value: unknown): value is GatewayKubernetesStatus;
+export interface GatewayKubernetesReading {
+    readonly kubernetes: {
+        readonly status: GatewayKubernetesStatus;
+        readonly totalPods: number | null;
+        readonly readyPods: number | null;
+        readonly ageMs: number | null;
+    };
+    readonly kubernetesObservedAt: number | null;
+}
 export interface GatewayKubernetesObservation {
-    status: "ready" | "not-ready" | "missing" | "unknown";
+    status: GatewayKubernetesStatus;
     totalPods: number;
     readyPods: number;
     observedAt: number;

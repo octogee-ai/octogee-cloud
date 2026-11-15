@@ -258,6 +258,49 @@ describe.skipIf(!dsn)("the provisioning HTTP API", { timeout: 30_000 }, () => {
       expect((await harness.request("GET", `/v1/provisionings?watch=true&resourceVersion=${from}&timeoutSeconds=0&limit=501`)).status).toBe(400);
     });
 
+    it("reports a delete in the watch after the version it was given, and a re-create after it, in version order", async () => {
+      await harness.request("PUT", "/v1/users/d1/provisioning", { body: { spec: spec("d1") } });
+      const from = (await harness.request("GET", "/v1/provisionings")).body.resourceVersion;
+      expect((await harness.request("DELETE", "/v1/users/d1/provisioning")).status).toBe(204);
+      const deleted = (await harness.request("GET", `/v1/provisionings?watch=true&resourceVersion=${from}&timeoutSeconds=0`)).body;
+      expect(deleted.items).toEqual([]);
+      expect(deleted.deleted).toEqual([{ uid: "d1", resourceVersion: deleted.resourceVersion }]);
+      expect(BigInt(deleted.resourceVersion)).toBeGreaterThan(BigInt(from));
+
+      await harness.request("PUT", "/v1/users/d1/provisioning", { body: { spec: spec("d1") } });
+      const both = (await harness.request("GET", `/v1/provisionings?watch=true&resourceVersion=${from}&timeoutSeconds=0`)).body;
+      expect(both.deleted.map((entry: { uid: string }) => entry.uid)).toEqual(["d1"]);
+      expect(both.items.map((item: { uid: string }) => item.uid)).toEqual(["d1"]);
+      expect(BigInt(both.deleted[0].resourceVersion)).toBeLessThan(BigInt(both.items[0].resourceVersion));
+
+      const firstOnly = (await harness.request("GET", `/v1/provisionings?watch=true&resourceVersion=${from}&timeoutSeconds=0&limit=1`)).body;
+      expect(firstOnly).toEqual({ items: [], deleted: [both.deleted[0]], resourceVersion: both.deleted[0].resourceVersion });
+    });
+
+    it("wakes a held watch and answers a held waitForGeneration with 404 as soon as the user is deleted", async () => {
+      await harness.request("PUT", "/v1/users/d2/provisioning", { body: { spec: spec("d2") } });
+      const from = (await harness.request("GET", "/v1/provisionings")).body.resourceVersion;
+      const began = Date.now();
+      const waiting = harness.request("GET", "/v1/users/d2/provisioning?waitForGeneration=1&timeoutSeconds=30");
+      const watching = harness.request("GET", `/v1/provisionings?watch=true&resourceVersion=${from}&timeoutSeconds=30`);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      await harness.request("DELETE", "/v1/users/d2/provisioning");
+      const [waited, watched] = await Promise.all([waiting, watching]);
+      expect(Date.now() - began).toBeLessThan(1_500);
+      expect(waited).toMatchObject({ status: 404, body: { code: "not-found" } });
+      expect(watched.body.deleted.map((entry: { uid: string }) => entry.uid)).toEqual(["d2"]);
+    });
+
+    it("prunes deletion markers with the change log, and answers 410 for a version before the retained window", async () => {
+      await harness.request("PUT", "/v1/users/d3/provisioning", { body: { spec: spec("d3") } });
+      const from = (await harness.request("GET", "/v1/provisionings")).body.resourceVersion;
+      await harness.request("DELETE", "/v1/users/d3/provisioning");
+      await harness.service.db.pool.query(`UPDATE ${harness.service.db.table("version_log")} SET written_at = now() - interval '25 hours'`);
+      await harness.service.store.pruneChangeLog();
+      expect((await harness.service.db.pool.query(`SELECT count(*)::int AS count FROM ${harness.service.db.table("deletions")}`)).rows[0].count).toBe(0);
+      expect((await harness.request("GET", `/v1/provisionings?watch=true&resourceVersion=${from}&timeoutSeconds=0`)).status).toBe(410);
+    });
+
     it("assigns versions in commit order with no gap under concurrent writes", async () => {
       const from = (await harness.request("GET", "/v1/provisionings")).body.resourceVersion;
       await Promise.all(Array.from({ length: 40 }, (_, index) =>
