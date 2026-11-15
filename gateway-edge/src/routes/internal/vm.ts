@@ -1,7 +1,7 @@
-import { clientRequestLimit } from "../../middleware/authenticated-request-limit.js";
+import { clientRequestLimit } from "@octogee/core/http/authenticated-request-limit";
 import { Router, type Response } from "express";
 import { requireGatewayInternalAuth } from "../../middleware/gateway-internal-auth.js";
-import { logger } from "../../middleware/logging.js";
+import { logger } from "@octogee/core/http/logging";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
 const STYLES = new Set(["familiar", "omarchy"]);

@@ -1,5 +1,5 @@
 import type { UserIdentity } from "@octogee/shared/types/builder-identity";
-import { installUserIdentityStore } from "../../lib/user-identity.js";
+import { installUserIdentityStore } from "@octogee/core/identity/user-identity";
 
 export function installTestUserIdentity(identity: UserIdentity | null): void {
   installUserIdentityStore({ current: () => identity, start: () => () => undefined });

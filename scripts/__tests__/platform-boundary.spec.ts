@@ -39,8 +39,8 @@ describe("platform boundary", () => {
       .toBe(resolve(repoRoot, "platform/core/src/deployment-environment.ts"));
     expect(resolveImport("@octogee/shared/types/feature-flags", from, repoRoot))
       .toBe(resolve(repoRoot, "platform/shared/types/feature-flags.ts"));
-    expect(resolveImport("../../gateway-edge/src/routes/mount-cluster-routes.js", from, repoRoot))
-      .toBe(resolve(repoRoot, "platform/gateway-edge/src/routes/mount-cluster-routes.ts"));
+    expect(resolveImport("../../gateway-edge/src/index.js", from, repoRoot))
+      .toBe(resolve(repoRoot, "platform/gateway-edge/src/index.ts"));
     expect(resolveImport("@octogee/product-core/customer-hosting", from, repoRoot))
       .toBe(resolve(repoRoot, "product/core/src/customer-hosting.ts"));
     expect(resolveImport("@octogee/product-shared/types/billing", from, repoRoot))
@@ -71,7 +71,7 @@ describe("platform boundary", () => {
   });
 
   it("keeps the product composition roots out of the platform entrypoints", () => {
-    for (const root of ["product/platform-api/src/index.ts", "product/platform-api/src/product.ts", "product/platform-api/src/main.ts", "product/gateway-edge/src/routes/product-cluster-routes.ts", "product/fleet-controller/src/main.ts", "product/gateway-edge/src/main.ts", "functions/src/index.ts"]) {
+    for (const root of ["product/platform-api/src/index.ts", "product/platform-api/src/product.ts", "product/platform-api/src/main.ts", "product/platform-api/src/cluster/routes/product-cluster-routes.ts", "product/fleet-controller/src/main.ts", "product/gateway-edge/src/main.ts", "functions/src/index.ts"]) {
       expect(manifest.platformEntrypoints).not.toContain(root);
       expect(report.reached).not.toContain(root);
     }

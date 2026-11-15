@@ -140,7 +140,7 @@ async function finishTurn(deps: WorkspaceConversationDeps, gatewayId: string, re
 }
 async function createTurnPost(deps: WorkspaceConversationDeps, token: string, context: { channelId: string; threadRootPostId: string; callerMmUserId: string }, request: VoiceTurnRequest): Promise<VoiceTurnPost> {
   const createPost = deps.createPost ?? (async (credential, body) => {
-    const { createChannelSessionMattermostClient } = await import('../../../gateway-edge/src/lib/channel-session-model-control.js');
+    const { createChannelSessionMattermostClient } = await import('@octogee/core/channels/channel-session-model-control');
     return createChannelSessionMattermostClient({ baseUrl: process.env.MM_INTERNAL_URL ?? '', token: credential }).postJson(['posts'], body);
   });
   const props = { octogee: { kind: VOICE_TURN_POST_KIND, turnId: request.turnId }, ...(request.ingressToken === undefined ? {} : { openclaw_consult_ingress: request.ingressToken }) };
@@ -158,7 +158,7 @@ export async function postWorkspaceVoiceTurn(deps: WorkspaceConversationDeps, ga
   try {
     let createPost = deps.createPost;
     if (!createPost) {
-      const { createChannelSessionMattermostClient } = await import('../../../gateway-edge/src/lib/channel-session-model-control.js');
+      const { createChannelSessionMattermostClient } = await import('@octogee/core/channels/channel-session-model-control');
       createPost = (credential, body) => createChannelSessionMattermostClient({ baseUrl: process.env.MM_INTERNAL_URL ?? '', token: credential }).postJson(['posts'], body);
     }
     const fresh = await authorizeGrant(deps, initial);
@@ -240,7 +240,7 @@ export async function startWorkspaceVoiceConversation(deps: WorkspaceConversatio
     props: { octogee: { kind: 'voice-conversation', participantMmUserId: resolved.context.callerMmUserId } } };
   let createPost = deps.createPost;
   if (!createPost) {
-    const { createChannelSessionMattermostClient } = await import('../../../gateway-edge/src/lib/channel-session-model-control.js');
+    const { createChannelSessionMattermostClient } = await import('@octogee/core/channels/channel-session-model-control');
     const client = createChannelSessionMattermostClient({ baseUrl: process.env.MM_INTERNAL_URL ?? '', token: coachToken });
     createPost = (_credential, post) => client.postJson(['posts'], post);
   }
@@ -262,7 +262,7 @@ export async function archiveWorkspaceVoiceCall(deps: WorkspaceConversationDeps,
   const { defaultAgentMmUserId, coachToken } = await conversationAgentCredential(deps, initial.ownerUid, initial.agentId);
   let createPost = deps.createPost;
   if (!createPost) {
-    const { createChannelSessionMattermostClient } = await import('../../../gateway-edge/src/lib/channel-session-model-control.js');
+    const { createChannelSessionMattermostClient } = await import('@octogee/core/channels/channel-session-model-control');
     const client = createChannelSessionMattermostClient({ baseUrl: process.env.MM_INTERNAL_URL ?? '', token: coachToken });
     createPost = (_credential, body) => client.postJson(['posts'], body);
   }

@@ -80,8 +80,15 @@ jobs:
               cd gateway-edge
               npm run typecheck
               npm test
+          - name: llm-broker
+            installs: llm-broker
+            run: |
+              cd llm-broker
+              npm run typecheck
+              npm test
           - name: platform-api
-            installs: gateway-edge shared platform-api
+            installs: shared llm-broker platform-api
+            builds: llm-broker
             gateway-npm: true
             run: |
               cd platform-api
@@ -159,9 +166,13 @@ jobs:
       - name: Install dependencies
         env:
           INSTALLS: ${{ matrix.installs }}
+          BUILDS: ${{ matrix.builds }}
         run: |
           for directory in $INSTALLS; do
             npm ci --prefix "$directory" --no-audit --no-fund
+            case " $BUILDS " in
+              *" $directory "*) npm run build --prefix "$directory" ;;
+            esac
           done
       - name: Typecheck and test
         run: ${{ matrix.run }}

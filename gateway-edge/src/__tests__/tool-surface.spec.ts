@@ -10,7 +10,7 @@ import { WebSocket, WebSocketServer } from 'ws';
 import { WsUpgradeRouter } from '@octogee/core/ws/upgrade-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const h = vi.hoisted(() => ({ uidFor: vi.fn(async (token: string) => (token === 'other' ? 'other' : 'owner')) }));
-vi.mock('../middleware/logging.js', () => ({ logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn() } }));
+vi.mock('@octogee/core/http/logging', () => ({ logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn() } }));
 import { createToolSurface } from '../routes/tool-surface.js';
 import { applyGatewayPrefixStripInPlace } from '../chat-proxy/gateway-prefix.js';
 import type { NativeAdminAccessOutcome } from '../lib/native-admin-access.js';

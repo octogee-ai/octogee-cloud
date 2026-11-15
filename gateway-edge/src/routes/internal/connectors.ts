@@ -1,16 +1,16 @@
 import { Router, type Request, type Response } from "express";
 import { rateLimit } from "express-rate-limit";
 
-import { isConnectorAgentRuntimeTokenMaterializable } from "../../lib/connectors/index.js";
+import { isConnectorAgentRuntimeTokenMaterializable } from "@octogee/core/connectors";
 import {
   ConnectorTokenReadError,
   readOwnerGithubProjectCloneAccess,
   readOwnerRuntimeConnectorAccessToken,
-} from "../../lib/connector-tokens.js";
+} from "@octogee/core/connectors/connector-tokens";
 import { cloneGithubProjectCheckout } from "../../lib/github-project-clone.js";
-import { logger } from "../../middleware/logging.js";
+import { logger } from "@octogee/core/http/logging";
 import { requireGatewayInternalAuth } from "../../middleware/gateway-internal-auth.js";
-import { claimedUserIdentity } from "../../lib/user-identity.js";
+import { claimedUserIdentity } from "@octogee/core/identity/user-identity";
 import { isIsolatedGatewayClassValue } from "@octogee/shared/types/glm";
 
 

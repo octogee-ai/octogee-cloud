@@ -3,7 +3,7 @@ import {
   assertMattermostId,
   createMattermostInternalHttpClient,
   MattermostInternalHttpError,
-} from "../../../gateway-edge/src/chat-proxy/openclaw/mattermost-http.js";
+} from "../chat-proxy/openclaw/mattermost-http.js";
 import {
   ArtifactAccessDeniedError,
   type ArtifactAccessAuthorizer,

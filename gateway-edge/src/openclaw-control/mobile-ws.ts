@@ -6,17 +6,17 @@ import {
   type WsUpgradeContext,
 } from '@octogee/core/ws/upgrade-router';
 import type { NativeMobileBinding } from '@octogee/shared/types/native-mobile';
-import { logger } from '../middleware/logging.js';
-import { fetchGatewayToken } from '../chat-proxy/openclaw/gateway-token.js';
-import { createOpenClawControlAuthorizationCache } from './broker.js';
+import { logger } from '@octogee/core/http/logging';
+import { fetchGatewayToken } from '@octogee/core/http-candidates/chat-proxy/openclaw/gateway-token';
+import { createOpenClawControlAuthorizationCache } from '@octogee/core/http-candidates/openclaw-control/broker';
 import { bridgeControlSocket, openClawControlUpstreamBase } from './surface.js';
-import { OpenClawControlSessionManager } from './session.js';
+import { OpenClawControlSessionManager } from '@octogee/core/http-candidates/openclaw-control/session';
 import { OpenClawControlResourceLimiter, type OpenClawControlLease } from './limits.js';
 import { DesktopObserverTickets, bridgeDesktopObserver } from './desktop-stream.js';
-import { mobileRoute } from './mobile-proof.js';
+import { mobileRoute } from '@octogee/core/identity/mobile-proof';
 import { MobileGatewayAuthority, mobileSession } from './mobile-authority.js';
 import { MobileSocketTransport } from './mobile-transport.js';
-import { createMattermostControlChat } from './mattermost-chat.js';
+import { createMattermostControlChat } from '@octogee/core/http-candidates/openclaw-control/mattermost-chat';
 
 class MobileCandidates {
   private readonly enrollments = new Map<string, number>();

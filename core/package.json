@@ -1,7 +1,7 @@
 {
   "name": "@octogee/core",
   "version": "1.0.0",
-  "description": "Octogee shared runtime — consumers depend on its built interface, never its source.",
+  "description": "Octogee shared runtime \u2014 consumers depend on its built interface, never its source.",
   "private": true,
   "license": "MIT",
   "type": "module",
@@ -132,6 +132,10 @@
     "./artifact-registry": {
       "types": "./dist/artifact-registry.d.ts",
       "default": "./dist/artifact-registry.js"
+    },
+    "./assigned-user": {
+      "types": "./dist/assigned-user.d.ts",
+      "default": "./dist/assigned-user.js"
     },
     "./assignment-doc": {
       "types": "./dist/assignment-doc.d.ts",
@@ -573,6 +577,402 @@
     "./placeholder-email": {
       "types": "./dist/placeholder-email.d.ts",
       "default": "./dist/placeholder-email.js"
+    },
+    "./http/auth": {
+      "types": "./dist/http/auth.d.ts",
+      "default": "./dist/http/auth.js"
+    },
+    "./http/authenticated-request-limit": {
+      "types": "./dist/http/authenticated-request-limit.d.ts",
+      "default": "./dist/http/authenticated-request-limit.js"
+    },
+    "./http/body-parsers": {
+      "types": "./dist/http/body-parsers.d.ts",
+      "default": "./dist/http/body-parsers.js"
+    },
+    "./http/cors": {
+      "types": "./dist/http/cors.d.ts",
+      "default": "./dist/http/cors.js"
+    },
+    "./http/dashboard-asset-rate-limit": {
+      "types": "./dist/http/dashboard-asset-rate-limit.d.ts",
+      "default": "./dist/http/dashboard-asset-rate-limit.js"
+    },
+    "./http/errors": {
+      "types": "./dist/http/errors.d.ts",
+      "default": "./dist/http/errors.js"
+    },
+    "./http/logging": {
+      "types": "./dist/http/logging.d.ts",
+      "default": "./dist/http/logging.js"
+    },
+    "./http/security": {
+      "types": "./dist/http/security.d.ts",
+      "default": "./dist/http/security.js"
+    },
+    "./identity/platform-state-store": {
+      "types": "./dist/identity/platform-state-store.d.ts",
+      "default": "./dist/identity/platform-state-store.js"
+    },
+    "./identity/user-accounts": {
+      "types": "./dist/identity/user-accounts.d.ts",
+      "default": "./dist/identity/user-accounts.js"
+    },
+    "./identity/user-identity": {
+      "types": "./dist/identity/user-identity.d.ts",
+      "default": "./dist/identity/user-identity.js"
+    },
+    "./identity/user-platform-state": {
+      "types": "./dist/identity/user-platform-state.d.ts",
+      "default": "./dist/identity/user-platform-state.js"
+    },
+    "./identity/brokered-user-identity-provider": {
+      "types": "./dist/identity/brokered-user-identity-provider.d.ts",
+      "default": "./dist/identity/brokered-user-identity-provider.js"
+    },
+    "./identity/mattermost-secret": {
+      "types": "./dist/identity/mattermost-secret.d.ts",
+      "default": "./dist/identity/mattermost-secret.js"
+    },
+    "./identity/project-presentation": {
+      "types": "./dist/identity/project-presentation.d.ts",
+      "default": "./dist/identity/project-presentation.js"
+    },
+    "./connectors/github": {
+      "types": "./dist/connectors/github.d.ts",
+      "default": "./dist/connectors/github.js"
+    },
+    "./connectors": {
+      "types": "./dist/connectors/index.d.ts",
+      "default": "./dist/connectors/index.js"
+    },
+    "./connectors/obsidian": {
+      "types": "./dist/connectors/obsidian.d.ts",
+      "default": "./dist/connectors/obsidian.js"
+    },
+    "./connectors/azure": {
+      "types": "./dist/connectors/azure.d.ts",
+      "default": "./dist/connectors/azure.js"
+    },
+    "./connectors/def": {
+      "types": "./dist/connectors/def.d.ts",
+      "default": "./dist/connectors/def.js"
+    },
+    "./connectors/microsoft": {
+      "types": "./dist/connectors/microsoft.d.ts",
+      "default": "./dist/connectors/microsoft.js"
+    },
+    "./connectors/gcp": {
+      "types": "./dist/connectors/gcp.d.ts",
+      "default": "./dist/connectors/gcp.js"
+    },
+    "./connectors/cloudflare": {
+      "types": "./dist/connectors/cloudflare.d.ts",
+      "default": "./dist/connectors/cloudflare.js"
+    },
+    "./connectors/gemini": {
+      "types": "./dist/connectors/gemini.d.ts",
+      "default": "./dist/connectors/gemini.js"
+    },
+    "./connectors/netlify": {
+      "types": "./dist/connectors/netlify.d.ts",
+      "default": "./dist/connectors/netlify.js"
+    },
+    "./connectors/vercel": {
+      "types": "./dist/connectors/vercel.d.ts",
+      "default": "./dist/connectors/vercel.js"
+    },
+    "./connectors/npm": {
+      "types": "./dist/connectors/npm.d.ts",
+      "default": "./dist/connectors/npm.js"
+    },
+    "./connectors/docker": {
+      "types": "./dist/connectors/docker.d.ts",
+      "default": "./dist/connectors/docker.js"
+    },
+    "./connectors/google": {
+      "types": "./dist/connectors/google.d.ts",
+      "default": "./dist/connectors/google.js"
+    },
+    "./connectors/aws": {
+      "types": "./dist/connectors/aws.d.ts",
+      "default": "./dist/connectors/aws.js"
+    },
+    "./connectors/connector-tokens": {
+      "types": "./dist/connectors/connector-tokens.d.ts",
+      "default": "./dist/connectors/connector-tokens.js"
+    },
+    "./connectors/kms": {
+      "types": "./dist/connectors/kms.d.ts",
+      "default": "./dist/connectors/kms.js"
+    },
+    "./connectors/obsidian-headless": {
+      "types": "./dist/connectors/obsidian-headless.d.ts",
+      "default": "./dist/connectors/obsidian-headless.js"
+    },
+    "./workspace/blob-store": {
+      "types": "./dist/workspace/blob-store.d.ts",
+      "default": "./dist/workspace/blob-store.js"
+    },
+    "./workspace/gcs-blob-store": {
+      "types": "./dist/workspace/gcs-blob-store.d.ts",
+      "default": "./dist/workspace/gcs-blob-store.js"
+    },
+    "./workspace/gcs-bucket": {
+      "types": "./dist/workspace/gcs-bucket.d.ts",
+      "default": "./dist/workspace/gcs-bucket.js"
+    },
+    "./workspace/binary-diversion": {
+      "types": "./dist/workspace/binary-diversion.d.ts",
+      "default": "./dist/workspace/binary-diversion.js"
+    },
+    "./workspace/manifest": {
+      "types": "./dist/workspace/manifest.d.ts",
+      "default": "./dist/workspace/manifest.js"
+    },
+    "./workspace/fileTarget": {
+      "types": "./dist/workspace/fileTarget.d.ts",
+      "default": "./dist/workspace/fileTarget.js"
+    },
+    "./workspace/firestoreReads": {
+      "types": "./dist/workspace/firestoreReads.d.ts",
+      "default": "./dist/workspace/firestoreReads.js"
+    },
+    "./workspace/platform-free-config": {
+      "types": "./dist/workspace/platform-free-config.d.ts",
+      "default": "./dist/workspace/platform-free-config.js"
+    },
+    "./workspace/project-asset-manifest": {
+      "types": "./dist/workspace/project-asset-manifest.d.ts",
+      "default": "./dist/workspace/project-asset-manifest.js"
+    },
+    "./workspace/project-blob-upload": {
+      "types": "./dist/workspace/project-blob-upload.d.ts",
+      "default": "./dist/workspace/project-blob-upload.js"
+    },
+    "./workspace/workspace-blob": {
+      "types": "./dist/workspace/workspace-blob.d.ts",
+      "default": "./dist/workspace/workspace-blob.js"
+    },
+    "./workspace/workspace-git": {
+      "types": "./dist/workspace/workspace-git.d.ts",
+      "default": "./dist/workspace/workspace-git.js"
+    },
+    "./workspace/workspace-manifest-conflict": {
+      "types": "./dist/workspace/workspace-manifest-conflict.d.ts",
+      "default": "./dist/workspace/workspace-manifest-conflict.js"
+    },
+    "./workspace/workspace-resolution": {
+      "types": "./dist/workspace/workspace-resolution.d.ts",
+      "default": "./dist/workspace/workspace-resolution.js"
+    },
+    "./workspace/canonical-workspace": {
+      "types": "./dist/workspace/canonical-workspace.d.ts",
+      "default": "./dist/workspace/canonical-workspace.js"
+    },
+    "./workspace/file-response-cache": {
+      "types": "./dist/workspace/file-response-cache.d.ts",
+      "default": "./dist/workspace/file-response-cache.js"
+    },
+    "./workspace/route-helpers": {
+      "types": "./dist/workspace/route-helpers.d.ts",
+      "default": "./dist/workspace/route-helpers.js"
+    },
+    "./git-host/gitea-client": {
+      "types": "./dist/git-host/gitea-client.d.ts",
+      "default": "./dist/git-host/gitea-client.js"
+    },
+    "./git-host/github": {
+      "types": "./dist/git-host/github.d.ts",
+      "default": "./dist/git-host/github.js"
+    },
+    "./internal-brokers/automation-authorization-broker": {
+      "types": "./dist/internal-brokers/automation-authorization-broker.d.ts",
+      "default": "./dist/internal-brokers/automation-authorization-broker.js"
+    },
+    "./internal-brokers/workspace-commit-proof-broker": {
+      "types": "./dist/internal-brokers/workspace-commit-proof-broker.d.ts",
+      "default": "./dist/internal-brokers/workspace-commit-proof-broker.js"
+    },
+    "./internal-brokers/workspace-git-authorization-broker": {
+      "types": "./dist/internal-brokers/workspace-git-authorization-broker.d.ts",
+      "default": "./dist/internal-brokers/workspace-git-authorization-broker.js"
+    },
+    "./model-credentials/byosub": {
+      "types": "./dist/model-credentials/byosub.d.ts",
+      "default": "./dist/model-credentials/byosub.js"
+    },
+    "./model-credentials/byot-sync-internal-auth": {
+      "types": "./dist/model-credentials/byot-sync-internal-auth.d.ts",
+      "default": "./dist/model-credentials/byot-sync-internal-auth.js"
+    },
+    "./http/bridge-log": {
+      "types": "./dist/http/bridge-log.d.ts",
+      "default": "./dist/http/bridge-log.js"
+    },
+    "./http-candidates/agent-control-callback-router": {
+      "types": "./dist/http-candidates/agent-control-callback-router.d.ts",
+      "default": "./dist/http-candidates/agent-control-callback-router.js"
+    },
+    "./http-candidates/workspace-commit-router": {
+      "types": "./dist/http-candidates/workspace-commit-router.d.ts",
+      "default": "./dist/http-candidates/workspace-commit-router.js"
+    },
+    "./channels/channel-session-authorization": {
+      "types": "./dist/channels/channel-session-authorization.d.ts",
+      "default": "./dist/channels/channel-session-authorization.js"
+    },
+    "./channels/channel-session-model-control": {
+      "types": "./dist/channels/channel-session-model-control.d.ts",
+      "default": "./dist/channels/channel-session-model-control.js"
+    },
+    "./http-candidates/chat-proxy/openclaw/activity-write-receipts": {
+      "types": "./dist/http-candidates/chat-proxy/openclaw/activity-write-receipts.d.ts",
+      "default": "./dist/http-candidates/chat-proxy/openclaw/activity-write-receipts.js"
+    },
+    "./http-candidates/chat-proxy/openclaw/authenticated-upstream": {
+      "types": "./dist/http-candidates/chat-proxy/openclaw/authenticated-upstream.d.ts",
+      "default": "./dist/http-candidates/chat-proxy/openclaw/authenticated-upstream.js"
+    },
+    "./http-candidates/chat-proxy/openclaw/bridge-upstream-rpc": {
+      "types": "./dist/http-candidates/chat-proxy/openclaw/bridge-upstream-rpc.d.ts",
+      "default": "./dist/http-candidates/chat-proxy/openclaw/bridge-upstream-rpc.js"
+    },
+    "./http-candidates/chat-proxy/openclaw/device-identity": {
+      "types": "./dist/http-candidates/chat-proxy/openclaw/device-identity.d.ts",
+      "default": "./dist/http-candidates/chat-proxy/openclaw/device-identity.js"
+    },
+    "./http-candidates/chat-proxy/openclaw/gateway-token-constants": {
+      "types": "./dist/http-candidates/chat-proxy/openclaw/gateway-token-constants.d.ts",
+      "default": "./dist/http-candidates/chat-proxy/openclaw/gateway-token-constants.js"
+    },
+    "./http-candidates/chat-proxy/openclaw/gateway-token": {
+      "types": "./dist/http-candidates/chat-proxy/openclaw/gateway-token.d.ts",
+      "default": "./dist/http-candidates/chat-proxy/openclaw/gateway-token.js"
+    },
+    "./http-candidates/chat-proxy/openclaw/upstream": {
+      "types": "./dist/http-candidates/chat-proxy/openclaw/upstream.d.ts",
+      "default": "./dist/http-candidates/chat-proxy/openclaw/upstream.js"
+    },
+    "./http-candidates/openclaw-control/broker": {
+      "types": "./dist/http-candidates/openclaw-control/broker.d.ts",
+      "default": "./dist/http-candidates/openclaw-control/broker.js"
+    },
+    "./http-candidates/openclaw-control/channel-membership-sync": {
+      "types": "./dist/http-candidates/openclaw-control/channel-membership-sync.d.ts",
+      "default": "./dist/http-candidates/openclaw-control/channel-membership-sync.js"
+    },
+    "./http-candidates/openclaw-control/mattermost-broker": {
+      "types": "./dist/http-candidates/openclaw-control/mattermost-broker.d.ts",
+      "default": "./dist/http-candidates/openclaw-control/mattermost-broker.js"
+    },
+    "./http-candidates/openclaw-control/mattermost-chat": {
+      "types": "./dist/http-candidates/openclaw-control/mattermost-chat.d.ts",
+      "default": "./dist/http-candidates/openclaw-control/mattermost-chat.js"
+    },
+    "./http-candidates/openclaw-control/mattermost-events": {
+      "types": "./dist/http-candidates/openclaw-control/mattermost-events.d.ts",
+      "default": "./dist/http-candidates/openclaw-control/mattermost-events.js"
+    },
+    "./http-candidates/openclaw-control/profile-appearance": {
+      "types": "./dist/http-candidates/openclaw-control/profile-appearance.d.ts",
+      "default": "./dist/http-candidates/openclaw-control/profile-appearance.js"
+    },
+    "./http-candidates/openclaw-control/proxy-identity": {
+      "types": "./dist/http-candidates/openclaw-control/proxy-identity.d.ts",
+      "default": "./dist/http-candidates/openclaw-control/proxy-identity.js"
+    },
+    "./http-candidates/openclaw-control/session": {
+      "types": "./dist/http-candidates/openclaw-control/session.d.ts",
+      "default": "./dist/http-candidates/openclaw-control/session.js"
+    },
+    "./http-candidates/agent-transfer/agent-export-service": {
+      "types": "./dist/http-candidates/agent-transfer/agent-export-service.d.ts",
+      "default": "./dist/http-candidates/agent-transfer/agent-export-service.js"
+    },
+    "./http-candidates/agent-transfer/agent-export-snapshot": {
+      "types": "./dist/http-candidates/agent-transfer/agent-export-snapshot.d.ts",
+      "default": "./dist/http-candidates/agent-transfer/agent-export-snapshot.js"
+    },
+    "./http-candidates/agent-transfer/agent-import-git": {
+      "types": "./dist/http-candidates/agent-transfer/agent-import-git.d.ts",
+      "default": "./dist/http-candidates/agent-transfer/agent-import-git.js"
+    },
+    "./http-candidates/agent-transfer/agent-import-service": {
+      "types": "./dist/http-candidates/agent-transfer/agent-import-service.d.ts",
+      "default": "./dist/http-candidates/agent-transfer/agent-import-service.js"
+    },
+    "./http-candidates/agent-transfer/agent-import-source": {
+      "types": "./dist/http-candidates/agent-transfer/agent-import-source.d.ts",
+      "default": "./dist/http-candidates/agent-transfer/agent-import-source.js"
+    },
+    "./http-candidates/channels/channel-agent-readiness-authorization-broker": {
+      "types": "./dist/http-candidates/channels/channel-agent-readiness-authorization-broker.d.ts",
+      "default": "./dist/http-candidates/channels/channel-agent-readiness-authorization-broker.js"
+    },
+    "./channels/activity-conversation": {
+      "types": "./dist/channels/activity-conversation.d.ts",
+      "default": "./dist/channels/activity-conversation.js"
+    },
+    "./http-candidates/channels/channel-agent-readiness": {
+      "types": "./dist/http-candidates/channels/channel-agent-readiness.d.ts",
+      "default": "./dist/http-candidates/channels/channel-agent-readiness.js"
+    },
+    "./model-broker/budget": {
+      "types": "./dist/model-broker/budget.d.ts",
+      "default": "./dist/model-broker/budget.js"
+    },
+    "./model-broker/gate": {
+      "types": "./dist/model-broker/gate.d.ts",
+      "default": "./dist/model-broker/gate.js"
+    },
+    "./model-broker/limits": {
+      "types": "./dist/model-broker/limits.d.ts",
+      "default": "./dist/model-broker/limits.js"
+    },
+    "./model-broker/model-config": {
+      "types": "./dist/model-broker/model-config.d.ts",
+      "default": "./dist/model-broker/model-config.js"
+    },
+    "./model-broker/rails": {
+      "types": "./dist/model-broker/rails.d.ts",
+      "default": "./dist/model-broker/rails.js"
+    },
+    "./model-broker/tokens": {
+      "types": "./dist/model-broker/tokens.d.ts",
+      "default": "./dist/model-broker/tokens.js"
+    },
+    "./model-broker/usage-allowance": {
+      "types": "./dist/model-broker/usage-allowance.d.ts",
+      "default": "./dist/model-broker/usage-allowance.js"
+    },
+    "./model-broker/usage": {
+      "types": "./dist/model-broker/usage.d.ts",
+      "default": "./dist/model-broker/usage.js"
+    },
+    "./model-broker/web-research-error": {
+      "types": "./dist/model-broker/web-research-error.d.ts",
+      "default": "./dist/model-broker/web-research-error.js"
+    },
+    "./connectors/native-connector-approval": {
+      "types": "./dist/connectors/native-connector-approval.d.ts",
+      "default": "./dist/connectors/native-connector-approval.js"
+    },
+    "./workspace/project-blob-edit": {
+      "types": "./dist/workspace/project-blob-edit.d.ts",
+      "default": "./dist/workspace/project-blob-edit.js"
+    },
+    "./model-credentials/byot-sync-auth": {
+      "types": "./dist/model-credentials/byot-sync-auth.d.ts",
+      "default": "./dist/model-credentials/byot-sync-auth.js"
+    },
+    "./channels/frame-filter": {
+      "types": "./dist/channels/frame-filter.d.ts",
+      "default": "./dist/channels/frame-filter.js"
+    },
+    "./identity/mobile-proof": {
+      "types": "./dist/identity/mobile-proof.d.ts",
+      "default": "./dist/identity/mobile-proof.js"
     }
   },
   "typesVersions": {
@@ -606,6 +1006,9 @@
       ],
       "artifact-registry": [
         "dist/artifact-registry.d.ts"
+      ],
+      "assigned-user": [
+        "dist/assigned-user.d.ts"
       ],
       "assignment-doc": [
         "dist/assignment-doc.d.ts"
@@ -903,6 +1306,297 @@
       ],
       "placeholder-email": [
         "dist/placeholder-email.d.ts"
+      ],
+      "http/auth": [
+        "dist/http/auth.d.ts"
+      ],
+      "http/authenticated-request-limit": [
+        "dist/http/authenticated-request-limit.d.ts"
+      ],
+      "http/body-parsers": [
+        "dist/http/body-parsers.d.ts"
+      ],
+      "http/cors": [
+        "dist/http/cors.d.ts"
+      ],
+      "http/dashboard-asset-rate-limit": [
+        "dist/http/dashboard-asset-rate-limit.d.ts"
+      ],
+      "http/errors": [
+        "dist/http/errors.d.ts"
+      ],
+      "http/logging": [
+        "dist/http/logging.d.ts"
+      ],
+      "http/security": [
+        "dist/http/security.d.ts"
+      ],
+      "identity/platform-state-store": [
+        "dist/identity/platform-state-store.d.ts"
+      ],
+      "identity/user-accounts": [
+        "dist/identity/user-accounts.d.ts"
+      ],
+      "identity/user-identity": [
+        "dist/identity/user-identity.d.ts"
+      ],
+      "identity/user-platform-state": [
+        "dist/identity/user-platform-state.d.ts"
+      ],
+      "identity/brokered-user-identity-provider": [
+        "dist/identity/brokered-user-identity-provider.d.ts"
+      ],
+      "identity/mattermost-secret": [
+        "dist/identity/mattermost-secret.d.ts"
+      ],
+      "identity/project-presentation": [
+        "dist/identity/project-presentation.d.ts"
+      ],
+      "connectors/github": [
+        "dist/connectors/github.d.ts"
+      ],
+      "connectors": [
+        "dist/connectors/index.d.ts"
+      ],
+      "connectors/obsidian": [
+        "dist/connectors/obsidian.d.ts"
+      ],
+      "connectors/azure": [
+        "dist/connectors/azure.d.ts"
+      ],
+      "connectors/def": [
+        "dist/connectors/def.d.ts"
+      ],
+      "connectors/microsoft": [
+        "dist/connectors/microsoft.d.ts"
+      ],
+      "connectors/gcp": [
+        "dist/connectors/gcp.d.ts"
+      ],
+      "connectors/cloudflare": [
+        "dist/connectors/cloudflare.d.ts"
+      ],
+      "connectors/gemini": [
+        "dist/connectors/gemini.d.ts"
+      ],
+      "connectors/netlify": [
+        "dist/connectors/netlify.d.ts"
+      ],
+      "connectors/vercel": [
+        "dist/connectors/vercel.d.ts"
+      ],
+      "connectors/npm": [
+        "dist/connectors/npm.d.ts"
+      ],
+      "connectors/docker": [
+        "dist/connectors/docker.d.ts"
+      ],
+      "connectors/google": [
+        "dist/connectors/google.d.ts"
+      ],
+      "connectors/aws": [
+        "dist/connectors/aws.d.ts"
+      ],
+      "connectors/connector-tokens": [
+        "dist/connectors/connector-tokens.d.ts"
+      ],
+      "connectors/kms": [
+        "dist/connectors/kms.d.ts"
+      ],
+      "connectors/obsidian-headless": [
+        "dist/connectors/obsidian-headless.d.ts"
+      ],
+      "workspace/blob-store": [
+        "dist/workspace/blob-store.d.ts"
+      ],
+      "workspace/gcs-blob-store": [
+        "dist/workspace/gcs-blob-store.d.ts"
+      ],
+      "workspace/gcs-bucket": [
+        "dist/workspace/gcs-bucket.d.ts"
+      ],
+      "workspace/binary-diversion": [
+        "dist/workspace/binary-diversion.d.ts"
+      ],
+      "workspace/manifest": [
+        "dist/workspace/manifest.d.ts"
+      ],
+      "workspace/fileTarget": [
+        "dist/workspace/fileTarget.d.ts"
+      ],
+      "workspace/firestoreReads": [
+        "dist/workspace/firestoreReads.d.ts"
+      ],
+      "workspace/platform-free-config": [
+        "dist/workspace/platform-free-config.d.ts"
+      ],
+      "workspace/project-asset-manifest": [
+        "dist/workspace/project-asset-manifest.d.ts"
+      ],
+      "workspace/project-blob-upload": [
+        "dist/workspace/project-blob-upload.d.ts"
+      ],
+      "workspace/workspace-blob": [
+        "dist/workspace/workspace-blob.d.ts"
+      ],
+      "workspace/workspace-git": [
+        "dist/workspace/workspace-git.d.ts"
+      ],
+      "workspace/workspace-manifest-conflict": [
+        "dist/workspace/workspace-manifest-conflict.d.ts"
+      ],
+      "workspace/workspace-resolution": [
+        "dist/workspace/workspace-resolution.d.ts"
+      ],
+      "workspace/canonical-workspace": [
+        "dist/workspace/canonical-workspace.d.ts"
+      ],
+      "workspace/file-response-cache": [
+        "dist/workspace/file-response-cache.d.ts"
+      ],
+      "workspace/route-helpers": [
+        "dist/workspace/route-helpers.d.ts"
+      ],
+      "git-host/gitea-client": [
+        "dist/git-host/gitea-client.d.ts"
+      ],
+      "git-host/github": [
+        "dist/git-host/github.d.ts"
+      ],
+      "internal-brokers/automation-authorization-broker": [
+        "dist/internal-brokers/automation-authorization-broker.d.ts"
+      ],
+      "internal-brokers/workspace-commit-proof-broker": [
+        "dist/internal-brokers/workspace-commit-proof-broker.d.ts"
+      ],
+      "internal-brokers/workspace-git-authorization-broker": [
+        "dist/internal-brokers/workspace-git-authorization-broker.d.ts"
+      ],
+      "model-credentials/byosub": [
+        "dist/model-credentials/byosub.d.ts"
+      ],
+      "model-credentials/byot-sync-internal-auth": [
+        "dist/model-credentials/byot-sync-internal-auth.d.ts"
+      ],
+      "http/bridge-log": [
+        "dist/http/bridge-log.d.ts"
+      ],
+      "http-candidates/agent-control-callback-router": [
+        "dist/http-candidates/agent-control-callback-router.d.ts"
+      ],
+      "http-candidates/workspace-commit-router": [
+        "dist/http-candidates/workspace-commit-router.d.ts"
+      ],
+      "channels/channel-session-authorization": [
+        "dist/channels/channel-session-authorization.d.ts"
+      ],
+      "channels/channel-session-model-control": [
+        "dist/channels/channel-session-model-control.d.ts"
+      ],
+      "http-candidates/chat-proxy/openclaw/activity-write-receipts": [
+        "dist/http-candidates/chat-proxy/openclaw/activity-write-receipts.d.ts"
+      ],
+      "http-candidates/chat-proxy/openclaw/authenticated-upstream": [
+        "dist/http-candidates/chat-proxy/openclaw/authenticated-upstream.d.ts"
+      ],
+      "http-candidates/chat-proxy/openclaw/bridge-upstream-rpc": [
+        "dist/http-candidates/chat-proxy/openclaw/bridge-upstream-rpc.d.ts"
+      ],
+      "http-candidates/chat-proxy/openclaw/device-identity": [
+        "dist/http-candidates/chat-proxy/openclaw/device-identity.d.ts"
+      ],
+      "http-candidates/chat-proxy/openclaw/gateway-token-constants": [
+        "dist/http-candidates/chat-proxy/openclaw/gateway-token-constants.d.ts"
+      ],
+      "http-candidates/chat-proxy/openclaw/gateway-token": [
+        "dist/http-candidates/chat-proxy/openclaw/gateway-token.d.ts"
+      ],
+      "http-candidates/chat-proxy/openclaw/upstream": [
+        "dist/http-candidates/chat-proxy/openclaw/upstream.d.ts"
+      ],
+      "http-candidates/openclaw-control/broker": [
+        "dist/http-candidates/openclaw-control/broker.d.ts"
+      ],
+      "http-candidates/openclaw-control/channel-membership-sync": [
+        "dist/http-candidates/openclaw-control/channel-membership-sync.d.ts"
+      ],
+      "http-candidates/openclaw-control/mattermost-broker": [
+        "dist/http-candidates/openclaw-control/mattermost-broker.d.ts"
+      ],
+      "http-candidates/openclaw-control/mattermost-chat": [
+        "dist/http-candidates/openclaw-control/mattermost-chat.d.ts"
+      ],
+      "http-candidates/openclaw-control/mattermost-events": [
+        "dist/http-candidates/openclaw-control/mattermost-events.d.ts"
+      ],
+      "http-candidates/openclaw-control/profile-appearance": [
+        "dist/http-candidates/openclaw-control/profile-appearance.d.ts"
+      ],
+      "http-candidates/openclaw-control/proxy-identity": [
+        "dist/http-candidates/openclaw-control/proxy-identity.d.ts"
+      ],
+      "http-candidates/openclaw-control/session": [
+        "dist/http-candidates/openclaw-control/session.d.ts"
+      ],
+      "http-candidates/agent-transfer/agent-export-service": [
+        "dist/http-candidates/agent-transfer/agent-export-service.d.ts"
+      ],
+      "http-candidates/agent-transfer/agent-export-snapshot": [
+        "dist/http-candidates/agent-transfer/agent-export-snapshot.d.ts"
+      ],
+      "http-candidates/agent-transfer/agent-import-git": [
+        "dist/http-candidates/agent-transfer/agent-import-git.d.ts"
+      ],
+      "http-candidates/agent-transfer/agent-import-service": [
+        "dist/http-candidates/agent-transfer/agent-import-service.d.ts"
+      ],
+      "http-candidates/agent-transfer/agent-import-source": [
+        "dist/http-candidates/agent-transfer/agent-import-source.d.ts"
+      ],
+      "http-candidates/channels/channel-agent-readiness-authorization-broker": [
+        "dist/http-candidates/channels/channel-agent-readiness-authorization-broker.d.ts"
+      ],
+      "channels/activity-conversation": [
+        "dist/channels/activity-conversation.d.ts"
+      ],
+      "http-candidates/channels/channel-agent-readiness": [
+        "dist/http-candidates/channels/channel-agent-readiness.d.ts"
+      ],
+      "model-broker/budget": [
+        "dist/model-broker/budget.d.ts"
+      ],
+      "model-broker/gate": [
+        "dist/model-broker/gate.d.ts"
+      ],
+      "model-broker/limits": [
+        "dist/model-broker/limits.d.ts"
+      ],
+      "model-broker/model-config": [
+        "dist/model-broker/model-config.d.ts"
+      ],
+      "model-broker/rails": [
+        "dist/model-broker/rails.d.ts"
+      ],
+      "model-broker/tokens": [
+        "dist/model-broker/tokens.d.ts"
+      ],
+      "model-broker/usage-allowance": [
+        "dist/model-broker/usage-allowance.d.ts"
+      ],
+      "model-broker/usage": [
+        "dist/model-broker/usage.d.ts"
+      ],
+      "model-broker/web-research-error": [
+        "dist/model-broker/web-research-error.d.ts"
+      ],
+      "connectors/native-connector-approval": [
+        "dist/connectors/native-connector-approval.d.ts"
+      ],
+      "workspace/project-blob-edit": [
+        "dist/workspace/project-blob-edit.d.ts"
+      ],
+      "model-credentials/byot-sync-auth": [
+        "dist/model-credentials/byot-sync-auth.d.ts"
       ]
     }
   },
@@ -919,8 +1613,12 @@
     "@types/express": "^5.0.6",
     "@types/pg": "^8.23.1",
     "@types/ws": "^8.18.2",
+    "cors": "^2.8.6",
     "express": "^5.3.0",
+    "express-rate-limit": "^8.7.3",
     "google-auth-library": "^11.3.3",
+    "helmet": "^8.3.0",
+    "jszip": "^3.10.2",
     "pg": "^8.23.1",
     "unique-names-generator": "^4.7.1",
     "ws": "^8.22.2"
@@ -934,15 +1632,38 @@
     "rimraf@>=4.2.0 <6.1.4": "^6.1.4"
   },
   "devDependencies": {
+    "@aws-sdk/client-sts": "^3.1164.0",
+    "@google-cloud/kms": "^6.3.0",
+    "@google-cloud/storage": "^8.4.0",
     "@octogee/core-testing": "file:../core-testing",
     "@octogee/shared": "file:../shared",
+    "@types/cors": "^2.8.19",
     "@types/supertest": "^7.2.1",
     "firebase-admin": "^14.5.0",
+    "sharp": "^0.35.5",
     "supertest": "^7.3.2",
     "typescript": "^7.0.2",
     "vitest": "^4.1.12"
   },
   "peerDependencies": {
-    "@octogee/shared": "^1.0.0"
+    "@aws-sdk/client-sts": "^3.1164.0",
+    "@google-cloud/kms": "^6.3.0",
+    "@google-cloud/storage": "^8.4.0",
+    "@octogee/shared": "^1.0.0",
+    "sharp": "^0.35.5"
+  },
+  "peerDependenciesMeta": {
+    "@aws-sdk/client-sts": {
+      "optional": true
+    },
+    "@google-cloud/kms": {
+      "optional": true
+    },
+    "@google-cloud/storage": {
+      "optional": true
+    },
+    "sharp": {
+      "optional": true
+    }
   }
 }

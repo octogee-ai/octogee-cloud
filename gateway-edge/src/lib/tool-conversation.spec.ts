@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 const h = vi.hoisted(() => ({ fetch: vi.fn() }));
-vi.mock('./internal-fetch.js', () => ({ internalFetch: h.fetch }));
+vi.mock('@octogee/core/internal-fetch', () => ({ internalFetch: h.fetch }));
 import { resolveToolConversationForUid, resolveToolChannelForUid, resolveToolControlForUid } from './tool-conversation.js';
 const channelId = 'a'.repeat(26);
 const threadRootPostId = 'r'.repeat(26);

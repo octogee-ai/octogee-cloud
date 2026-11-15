@@ -4,10 +4,10 @@ import { OPENCLAW_EDGE_SERVICE_IDENTITY, openClawDeviceSubject, openClawProxyIde
 import { WebSocket } from "ws";
 import { isMattermostPostId, parseChannelScopedMattermostSessionRoute } from "@octogee/shared/types/mattermost-session-route";
 import { resolveToolConversationForUid, resolveToolChannelForUid } from '../lib/tool-conversation.js';
-import { attachUpstreamRpcClient } from "../chat-proxy/openclaw/bridge-upstream-rpc.js";
-import { openProxyIdentitySocket, podClientAddress, signedInProfile } from "./proxy-identity.js";
+import { attachUpstreamRpcClient } from "@octogee/core/http-candidates/chat-proxy/openclaw/bridge-upstream-rpc";
+import { openProxyIdentitySocket, podClientAddress, signedInProfile } from "@octogee/core/http-candidates/openclaw-control/proxy-identity";
 import { openClawControlUpstreamBase } from "./surface.js";
-import { synchronizeChannelMembership } from "./channel-membership-sync.js";
+import { synchronizeChannelMembership } from "@octogee/core/http-candidates/openclaw-control/channel-membership-sync";
 import { resolveVoiceConversation } from '@octogee/core/voice-conversation';
 import { isIsolatedGatewayClassValue } from "@octogee/shared/types/glm";
 

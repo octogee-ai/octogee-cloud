@@ -5,7 +5,16 @@
   "private": true,
   "license": "MIT",
   "type": "module",
-  "main": "dist/gateway-edge/src/main.js",
+  "files": [
+    "dist",
+    "agent-import-gitleaks.toml"
+  ],
+  "exports": {
+    "./server": {
+      "types": "./dist/gateway-edge/src/index.d.ts",
+      "default": "./dist/gateway-edge/src/index.js"
+    }
+  },
   "scripts": {
     "prebuild": "node ../scripts/ops/sync-local-file-deps.mjs --consumer .",
     "build": "tsc && tsc-alias -p tsconfig.json && npm run verify:no-alias-leakage",

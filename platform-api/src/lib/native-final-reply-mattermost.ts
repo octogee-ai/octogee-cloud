@@ -1,5 +1,5 @@
 import { ReplyBindingDeniedError, type FinalReplyIdentity, type FinalReplyPost, type FinalReplyTarget } from "@octogee/core/native-final-reply";
-import { createMattermostInternalHttpClient, MattermostInternalHttpError } from "../../../gateway-edge/src/chat-proxy/openclaw/mattermost-http.js";
+import { createMattermostInternalHttpClient, MattermostInternalHttpError } from "../chat-proxy/openclaw/mattermost-http.js";
 
 async function read(identity: FinalReplyIdentity, path: string[], query?: Record<string, string>): Promise<unknown> {
   const client = createMattermostInternalHttpClient({ baseUrl: process.env.MM_INTERNAL_URL ?? "", token: identity.coachToken, requireToken: true });

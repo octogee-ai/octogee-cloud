@@ -1,5 +1,5 @@
 import { isAssignmentState } from "@octogee/shared/types/gateway-releases";
-import { internalFetch, type InternalFetchOptions } from "./lib/internal-fetch.js";
+import { internalFetch, type InternalFetchOptions } from "@octogee/core/internal-fetch";
 import type { RosterDocSnapshot } from "./roll-roster.js";
 
 type BrokerFetcher = (

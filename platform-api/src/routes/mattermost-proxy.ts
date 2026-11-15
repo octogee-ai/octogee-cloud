@@ -1,9 +1,9 @@
 import { authenticatedRequestLimit, authenticationFailureLimit } from "../middleware/authenticated-request-limit.js";
-import { logger } from "../../../gateway-edge/src/middleware/logging.js";
+import { logger } from "@octogee/core/http/logging";
 import { Router, type Request, type Response } from "express";
 import type { PlatformStateRepositories } from "@octogee/core/platform-state";
-import { requireActiveAccount, requireAuthenticatedUid } from "../../../gateway-edge/src/middleware/auth.js";
-import { forwardMmRest } from "../../../gateway-edge/src/chat-proxy/mm-proxy/rest.js";
+import { requireActiveAccount, requireAuthenticatedUid } from "@octogee/core/http/auth";
+import { forwardMmRest } from "../chat-proxy/mm-proxy/rest.js";
 import type { CreatedPostObserver, ProductNotifications } from "../lib/user-notifications.js";
 
 const MM_INTERNAL_URL = process.env.MM_INTERNAL_URL || "";

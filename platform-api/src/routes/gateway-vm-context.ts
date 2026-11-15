@@ -5,7 +5,7 @@ import type { PlatformUserRecord, PlatformStateRepositories, Stored } from "@oct
 import { resolveGatewayClass } from "@octogee/shared/types/glm";
 import { parseAgentId, mattermostAccountIdForAgentId } from "@octogee/shared/types/identity";
 import { isSafeAgentId } from "@octogee/core/byosub-restore";
-import { userAssignedToGateway } from "../lib/assigned-user.js";
+import { userAssignedToGateway } from "@octogee/core/assigned-user";
 import { findAssignedUserByAgentId } from "./fleet-broker.js";
 
 const FORBIDDEN = { error: "forbidden" } as const;

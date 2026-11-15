@@ -10,7 +10,7 @@ import {
   workspaceMutationLeaseGitDir,
   WORKSPACE_GIT_HARDENING_ENV,
   WORKSPACE_GIT_HARDENING_PINS,
-} from "./workspace-git.js";
+} from "@octogee/core/workspace/workspace-git";
 
 const GIT_BINARY = "/usr/bin/git";
 const GITHUB_OWNER_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;

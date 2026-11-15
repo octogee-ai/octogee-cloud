@@ -2,17 +2,17 @@ import http from "node:http";
 import express, { Request, Response, type RequestHandler } from "express";
 import { Registry, collectDefaultMetrics, Counter, Histogram } from "prom-client";
 
-import { corsMiddleware } from "../../gateway-edge/src/middleware/cors.js";
-import { requestLogger, logger, setLogService } from "../../gateway-edge/src/middleware/logging.js";
+import { createCorsMiddleware } from "@octogee/core/http/cors";
+import { requestLogger, logger, setLogService } from "@octogee/core/http/logging";
 import { mattermostChannelHostFromEnv } from "@octogee/core/channel-host";
 import { createMattermostCommandRoutes } from "./routes/mattermost-commands.js";
 
-import { errorHandler } from "../../gateway-edge/src/middleware/errors.js";
-import { helmetMiddleware } from "../../gateway-edge/src/middleware/security.js";
+import { errorHandler } from "@octogee/core/http/errors";
+import { helmetMiddleware } from "@octogee/core/http/security";
 
 import { runtimeBlobStore } from "./lib/runtime-blob-store.js";
-import { mountClusterRoutes, type ClusterRouteTable } from "../../gateway-edge/src/routes/mount-cluster-routes.js";
-import { createAdminRoutes, type ProductAdminRoutes } from "../../gateway-edge/src/routes/admin.js";
+import { mountClusterRoutes, type ClusterRouteTable } from "./routes/mount-cluster-routes.js";
+import { createAdminRoutes, type ProductAdminRoutes } from "./routes/admin.js";
 import type { DeletionProductContextDiscovery } from "@octogee/core/admin-fleet-router";
 import type { AdminUserDirectorySource, AdminUserProductDetail } from "@octogee/core/admin-user-directory-router";
 import type { UserAccountReader } from "@octogee/core/user-account";
@@ -23,8 +23,8 @@ import {
   staticUserEntitlements,
   type UserEntitlementResolver,
 } from "@octogee/shared/types/user-entitlements";
-import internalGiteaAdminRoutes from "../../gateway-edge/src/routes/internal/gitea-admin.js";
-import { installBodyParsers } from "../../gateway-edge/src/middleware/body-parsers.js";
+import internalGiteaAdminRoutes from "./routes/internal/gitea-admin.js";
+import { installBodyParsers } from "@octogee/core/http/body-parsers";
 import { createMattermostMintRoutes, createMmRestProxyHandler } from "./routes/mattermost-proxy.js";
 import { createOpenClawRuntimeBrokerRoutes, type SessionChannelPurposeReader } from "./routes/openclaw-runtime-broker.js";
 import { createConnectorTokenBrokerRoutes, type PublicCanvasFileReader } from "./routes/connector-token-broker.js";
@@ -37,24 +37,24 @@ import { createOpenClawControlBrokerRoutes } from "./routes/openclaw-control-bro
 import { createAutomationAuthorizationBrokerRoutes } from "./routes/automation-authorization-broker.js";
 import { createWorkspaceGitAuthorizationBrokerRoutes } from "./routes/workspace-git-authorization-broker.js";
 import { userIdentityBrokerHandlers } from "./routes/user-identity-broker.js";
-import { USER_IDENTITY_BROKER_PATH } from "../../gateway-edge/src/lib/brokered-user-identity-provider.js";
+import { USER_IDENTITY_BROKER_PATH } from "@octogee/core/identity/brokered-user-identity-provider";
 import { createChannelReadinessAuthorizationBrokerRoutes } from "./routes/channel-agent-readiness-authorization-broker.js";
 import { createVoiceConversationRoutes } from "./routes/voice-conversation.js";
 import { createToolConversationRoutes, createWorkspaceNativeAccessRoutes } from "./routes/workspace-native-access.js";
 import { createAgentImportBrokerRoutes } from "./routes/agent-import-broker.js";
 import { createModelKeyIssuerRoutes } from "./routes/model-key-issuer.js";
-import type { FundedBudgetInterruption } from "./lib/model-broker-budget.js";
-import { operatorRailRegistry, type ModelBrokerRailRegistry } from "./lib/model-broker-rails.js";
+import type { FundedBudgetInterruption } from "@octogee/core/model-broker/budget";
+import { operatorRailRegistry, type ModelBrokerRailRegistry } from "@octogee/core/model-broker/rails";
 import { platformStateBrokerRecords, type BrokerRecords } from "./lib/broker-records.js";
 import { createFeatureRoutes } from "./routes/features.js";
 import type { ProductNotifications } from "./lib/user-notifications.js";
 import { FeaturePolicy, configuredFeatureFlagProvider } from "./lib/feature-policy.js";
-import { createIsolatedGatewayRoutes } from "../../gateway-edge/src/routes/user/gateways.js";
-import { createProjectCreateRoutes } from "../../gateway-edge/src/routes/projects/create.js";
-import { createProjectRepoSourceRoutes } from "../../gateway-edge/src/routes/projects/repo-source.js";
+import { createIsolatedGatewayRoutes } from "./routes/user/gateways.js";
+import { createProjectCreateRoutes } from "./routes/projects/create.js";
+import { createProjectRepoSourceRoutes } from "./routes/projects/repo-source.js";
 import { startWorkspaceVoiceConversation } from "./lib/voice-posting-grant.js";
 import { resolveVoiceChannel } from './lib/workspace-conversation.js';
-import { createVoiceRoutes } from "../../gateway-edge/src/routes/voice.js";
+import { createVoiceRoutes } from "./routes/voice.js";
 import {
   createChatArtifactRoutes,
   createChatArtifactWorkerRoutes,
@@ -67,27 +67,27 @@ import {
   createMattermostArtifactSourceReader,
 } from "./lib/chat-artifact-adapters.js";
 import { resolveActiveArtifactWorkspaceSlug } from "./lib/chat-artifact-workspace.js";
-import { gcsBucket } from "../../gateway-edge/src/lib/gcs-bucket.js";
-import { installProjectPresentation, NO_PROJECT_PRESENTATION, type ProjectPresentation } from "../../gateway-edge/src/lib/project-presentation.js";
+import { gcsBucket } from "@octogee/core/workspace/gcs-bucket";
+import { installProjectPresentation, NO_PROJECT_PRESENTATION, type ProjectPresentation } from "@octogee/core/identity/project-presentation";
 import {
   installProjectAgentDeliveryIntents,
   NO_PROJECT_AGENT_DELIVERY_INTENTS,
   type ProjectAgentDeliveryIntents,
-} from "../../gateway-edge/src/lib/project-agent-delivery-intents.js";
-import { installUserAccounts, readSizingKey } from "../../gateway-edge/src/lib/user-accounts.js";
-import { installAgentIdentity } from "../../gateway-edge/src/lib/agent-identity.js";
-import type { AuthUserSuspension } from "../../gateway-edge/src/lib/user-deletion-deps.js";
+} from "./lib/project-agent-delivery-intents.js";
+import { installUserAccounts, readSizingKey } from "@octogee/core/identity/user-accounts";
+import { installAgentIdentity } from "./lib/agent-identity.js";
+import type { AuthUserSuspension } from "./lib/user-deletion-deps.js";
 import type { UserProfileAppearanceSource } from "./lib/openclaw-profile-appearance.js";
-import { installConnectorDisconnected, NO_CONNECTOR_DISCONNECTED, type ConnectorDisconnected } from "../../gateway-edge/src/lib/connector-disconnect.js";
-import { installWorkspaceStorageAccounting, NO_WORKSPACE_STORAGE_ACCOUNTING, type WorkspaceStorageAccounting } from "../../gateway-edge/src/lib/workspace-storage-quota.js";
+import { installConnectorDisconnected, NO_CONNECTOR_DISCONNECTED, type ConnectorDisconnected } from "./lib/connector-disconnect.js";
+import { installWorkspaceStorageAccounting, NO_WORKSPACE_STORAGE_ACCOUNTING, type WorkspaceStorageAccounting } from "@octogee/shared/types/workspace-storage-quota";
 import { noUserAccounts } from "@octogee/core/user-account";
-import { platformStateStore } from "../../gateway-edge/src/lib/platform-state.js";
+import { platformStateStore } from "@octogee/core/identity/platform-state-store";
 import {
   ConnectorTokenReadError,
   getFreshAccessTokenFromStore,
-} from "../../gateway-edge/src/lib/connector-tokens.js";
-import { getConnector } from "../../gateway-edge/src/lib/connectors/index.js";
-import { githubListRepos, githubRepoApi } from "../../gateway-edge/src/lib/github.js";
+} from "@octogee/core/connectors/connector-tokens";
+import { getConnector } from "@octogee/core/connectors";
+import { githubListRepos, githubRepoApi } from "@octogee/core/git-host/github";
 import { authenticationFailureLimit } from "./middleware/authenticated-request-limit.js";
 import { brokerRequestLimit } from "./middleware/broker-request-limit.js";
 import {
@@ -95,7 +95,7 @@ import {
   requireActiveAccount,
   requireAuth,
   requireAuthenticatedUid,
-} from "../../gateway-edge/src/middleware/auth.js";
+} from "@octogee/core/http/auth";
 import {
   IN_CLUSTER_IDENTITY_CA_PATH,
   IN_CLUSTER_IDENTITY_TOKEN_PATH,
@@ -129,7 +129,7 @@ import {
   SIDECAR_BROKER_TOKEN_AUDIENCE,
   SIDECAR_BROKER_TOKEN_HEADER,
 } from "@octogee/core/internal-fetch";
-import { createModelBrokerTokenStore, type ModelBrokerTokenStore } from "./lib/model-broker-tokens.js";
+import { createModelBrokerTokenStore, type ModelBrokerTokenStore } from "@octogee/core/model-broker/tokens";
 import { normalizeTenantPolicyPath } from "./lib/tenant-route-policy.js";
 
 
@@ -514,7 +514,7 @@ export function createPlatformApp(opts: PlatformAppOptions = {}) {
   });
 
   app.use(helmetMiddleware);
-  app.use(corsMiddleware);
+  app.use(createCorsMiddleware());
   app.use(httpRequestMetrics);
 
   app.use(requestLogger);

@@ -20,6 +20,7 @@ describe("platform image Dockerfiles", () => {
       "gateway-edge/Dockerfile",
       "gateway/Dockerfile",
       "gateway/Dockerfile.base",
+      "llm-broker/Dockerfile",
       "platform-api/Dockerfile",
     ]));
   });
@@ -34,7 +35,8 @@ describe("platform image Dockerfiles", () => {
   it("checks the npm installs of every service image", () => {
     const installs = dockerfileDeps.flatMap((deps) => deps.installs.map((install) => install.replace(/^.*\((.*)\)$/u, "$1")));
     expect(installs.filter((dir) => dir === "platform-api")).toHaveLength(2);
-    expect(installs.filter((dir) => dir === "gateway-edge")).toHaveLength(3);
+    expect(installs.filter((dir) => dir === "gateway-edge")).toHaveLength(2);
+    expect(installs.filter((dir) => dir === "llm-broker")).toHaveLength(2);
     expect(installs).toEqual(expect.arrayContaining(["fleet-controller", "scripts", "shared"]));
   });
 

@@ -31,18 +31,18 @@ import {
   createModelBrokerTokenStore,
   type ModelBrokerProvider,
   type ModelBrokerTokenPurpose,
-} from "../lib/model-broker-tokens.js";
+} from "@octogee/core/model-broker/tokens";
 import {
   envDefaultModelBrokerLimits,
   resolveOwnerModelBrokerGrant,
-} from "../lib/model-broker-limits.js";
-import { operatorRailRegistry, type ModelBrokerRailRegistry } from "../lib/model-broker-rails.js";
+} from "@octogee/core/model-broker/limits";
+import { operatorRailRegistry, type ModelBrokerRailRegistry } from "@octogee/core/model-broker/rails";
 import {
   agentModelTokenIssueKey,
   createAgentModelTokenIssueCoordinator,
 } from "../lib/agent-model-token-issue-coordinator.js";
 import { findRunningOutboundMigrationUserByAgentId } from "../lib/agent-model-token-migration-admission.js";
-import { userAllowsInteractiveAccess, requireUserAccount } from "../lib/assigned-user.js";
+import { userAllowsInteractiveAccess, requireUserAccount } from "@octogee/core/assigned-user";
 import {
   configuredUserSlugCredentialBootstrapAllowed,
   findAssignedOrInboundMigratingOrConfiguredUserByAgentId,
@@ -54,9 +54,9 @@ import {
   type OwnerWorkspaceTurnVerifier,
 } from "../lib/openclaw-owner-turn.js";
 import { NO_BROKER_RECORDS, type BrokerRecords } from "../lib/broker-records.js";
-import type { ModelBrokerUsageLedger } from "../lib/model-broker-usage.js";
+import type { ModelBrokerUsageLedger } from "@octogee/core/model-broker/usage";
 import type { FlowGatewayReader } from "../middleware/tenant-enforcement.js";
-import { logger } from "../../../gateway-edge/src/middleware/logging.js";
+import { logger } from "@octogee/core/http/logging";
 
 export function subscriptionFlowGatewayReader(users: Pick<UserRepositories, "subscriptionFlows">): FlowGatewayReader {
   return async (flowId) => (await users.subscriptionFlows.get(flowId))?.gatewayId ?? null;
@@ -106,7 +106,7 @@ function parseByokApiKeyId(
 const AGENT_MODEL_TOKEN_TTL_SECONDS = 24 * 60 * 60;
 const AGENT_EMBEDDING_REQUESTS_PER_MINUTE = 60;
 
-// Mirrors gateway-edge/src/routes/byosub.ts: a byosub OAuth flow is short-lived.
+// Mirrors platform-api/src/routes/byosub.ts: a byosub OAuth flow is short-lived.
 const BYOSUB_FLOW_TTL_MS = 60 * 60 * 1000;
 // flowId is a crypto.randomUUID() minted in-pod (claude-sso/device-auth managers);
 // pin a path-safe shape so it cannot steer the subscription flow id elsewhere.

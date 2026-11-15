@@ -6,10 +6,10 @@ const mocks = vi.hoisted(() => ({
   authorize: vi.fn(),
   read: vi.fn(),
 }));
-vi.mock("../middleware/auth.js", () => { throw new Error("Gateway sidecar must not verify Firebase through Firestore"); });
-vi.mock("../lib/channel-agent-readiness-authorization-broker.js", () => ({ authorizeChannelAgentReadiness: mocks.authorize }));
-vi.mock("../lib/channel-agent-readiness.js", () => ({ readChannelAgentReadiness: mocks.read }));
-vi.mock("../middleware/logging.js", () => ({ logger: { error: vi.fn() } }));
+vi.mock("@octogee/core/http/auth", () => { throw new Error("Gateway sidecar must not verify Firebase through Firestore"); });
+vi.mock("@octogee/core/http-candidates/channels/channel-agent-readiness-authorization-broker", () => ({ authorizeChannelAgentReadiness: mocks.authorize }));
+vi.mock("@octogee/core/http-candidates/channels/channel-agent-readiness", () => ({ readChannelAgentReadiness: mocks.read }));
+vi.mock("@octogee/core/http/logging", () => ({ logger: { error: vi.fn() } }));
 
 import { createChannelAgentReadinessRouter } from "./channel-agent-readiness.js";
 
