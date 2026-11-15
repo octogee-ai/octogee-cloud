@@ -46,7 +46,7 @@ import { activationManifestTarPath, captureTargetWorkspaceIdentities, restoreTar
 import { createRestoreHandler } from "../lib/fleet-http-migration.js";
 import { gatewayScopedJobId, signFleetRequest } from "../lib/fleet-signature.js";
 import { FLEET_KEY_PAIR } from "./fixtures/fleet-keys.js";
-import type { Request, Response } from "express";
+import type { Request, Response as ExpressResponse } from "express";
 import { disableSystemConfigWatch, isSystemConfigWatchDisabled } from "../lib/system-config-watch-state.js";
 
 describe("migration manifest export runtime wait", () => {
@@ -1156,7 +1156,7 @@ describe("buildBrokeredLifecycleAdapter migration import activation", () => {
       const rawBody = JSON.stringify(body), signature = signFleetRequest(FLEET_KEY_PAIR.privateKey, gatewayScopedJobId(body.migrationId, "shared-source"), rawBody);
       const req = { header: () => signature, params: { gatewayId: "shared-source" }, rawBody } as unknown as Request;
       let status: number | undefined, payload: unknown;
-      const res = { status(code: number) { status = code; return this; }, json(value: unknown) { payload = value; return this; } } as unknown as Response;
+      const res = { status(code: number) { status = code; return this; }, json(value: unknown) { payload = value; return this; } } as unknown as ExpressResponse;
       await createRestoreHandler({ gatewayId: "shared-source", publicKey: FLEET_KEY_PAIR.publicKey, adapter, log: vi.fn() })(req, res, vi.fn());
       expect(status, JSON.stringify(payload)).toBe(200);
       expect(f.rpc.agentsCreate).toHaveBeenCalledOnce();
