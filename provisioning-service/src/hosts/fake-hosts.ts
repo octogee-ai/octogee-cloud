@@ -147,8 +147,11 @@ export class FakeGitHost implements GitHost {
     });
   }
 
-  listKeys(input: { owner: string }, signal: AbortSignal): Promise<AuthorizedGitKey[]> {
-    return this.host.call("listKeys", input.owner, signal, () => [...(this.keys.get(input.owner) ?? [])]);
+  listKeys(input: { owner: string; holders: string[] }, signal: AbortSignal): Promise<AuthorizedGitKey[]> {
+    return this.host.call("listKeys", input.owner, signal, () => (this.keys.get(input.owner) ?? []).map((key) => ({
+      publicKey: key.publicKey,
+      holder: key.holder !== null && input.holders.includes(key.holder) ? key.holder : null,
+    })));
   }
 
   registerKey(input: { owner: string; publicKey: string; holder: string }, signal: AbortSignal): Promise<void> {

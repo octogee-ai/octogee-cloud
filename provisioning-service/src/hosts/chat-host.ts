@@ -29,6 +29,7 @@ export interface ChatChannels {
 export interface ChatAgentInput {
   slug: string;
   teamId: string;
+  generalChannelId?: string;
   agentChannelId?: string;
   knownBotUserId?: string;
 }
@@ -38,7 +39,7 @@ export interface IssuedToken {
 }
 
 export interface ChatHost {
-  ensureUser(input: ChatUserInput, signal: AbortSignal): Promise<{ userId: string }>;
+  ensureUser(input: ChatUserInput, signal: AbortSignal): Promise<{ userId: string; warnings?: string[] }>;
   ensureTeam(input: ChatTeamInput, signal: AbortSignal): Promise<{ teamId: string }>;
   ensureChannels(input: ChatChannelsInput, signal: AbortSignal): Promise<ChatChannels>;
   ensureAgentBot(input: ChatAgentInput, signal: AbortSignal): Promise<{ botUserId: string }>;
