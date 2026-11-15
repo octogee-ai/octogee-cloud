@@ -22,7 +22,8 @@ export const REFUSED_ERROR_ID = "readonly.refused";
 const API_PREFIX = /^\/api\/v\d+/;
 
 function requestUrl(input: Parameters<typeof fetch>[0]): URL {
-  return new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+  if (typeof input === "string") return new URL(input);
+  return new URL(input instanceof URL ? input.href : input.url);
 }
 
 function bodyFields(init: RequestInit | undefined): Record<string, unknown> {
