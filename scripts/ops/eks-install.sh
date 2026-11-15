@@ -47,7 +47,6 @@ BLOB_USER="$NAME-blob-store"
 LAUNCH_TEMPLATE="$NAME-gateways"
 GVISOR_RELEASE=20261109.0
 GVISOR_SHA512_X86_64=1a6b8f74c37b4931ef473f67ec1f601690855bedc52ac709f2fac965c69677aa0426ef44598d8eee1aed72cfdb9df87a2a5f352cb3348880fc61a7732bc10f2a
-GVISOR_SHA512_AARCH64=411f2d6f7f98a93643725ce9933ff67a7f96f884c2317be3e2b579b976ceb54065bd1d4292a9d61de38da1940ef21b7e41070127874086b7992fb7b5e7a85897
 GVISOR_TAG="octogee.io/gvisor-release"
 SANDBOX_LABEL="octogee.io/sandbox"
 SHA="${SHA:-$(git -C "$ROOT" rev-parse HEAD)}"
@@ -78,20 +77,22 @@ load_account() {
   WORKSPACES_BUCKET="$NAME-$ACCOUNT-$AWS_REGION-workspaces"
 }
 
-check_vcpu_quota() {
-  local types=("$INSTANCE_TYPE") type vcpus quota needed=0
+check_instance_types() {
+  local types=("$INSTANCE_TYPE") type vcpus architectures quota needed=0
   [[ "$GATEWAY_INSTANCE_TYPE" == "$INSTANCE_TYPE" ]] || types+=("$GATEWAY_INSTANCE_TYPE")
+  while read -r type vcpus architectures; do
+    [[ ",$architectures," == *,x86_64,* ]] \
+      || die "$type is not an x86_64 instance type, and the published images are linux/amd64 only"
+    [[ "$type" == "$INSTANCE_TYPE" ]] && needed=$((needed + SYSTEM_NODES * vcpus))
+    [[ "$type" == "$GATEWAY_INSTANCE_TYPE" ]] && needed=$((needed + GATEWAY_NODES * vcpus))
+  done < <(a ec2 describe-instance-types --instance-types "${types[@]}" \
+    --query "InstanceTypes[].[InstanceType,VCpuInfo.DefaultVCpus,join(',',ProcessorInfo.SupportedArchitectures)]" --output text)
+  [[ "$needed" -gt 0 ]] || die "EC2 did not report the vCPUs of ${types[*]}"
   for type in "${types[@]}"; do
     [[ "$type" =~ ^[acdhimrtz][0-9] ]] || return 0
   done
   quota="$(a service-quotas get-service-quota --service-code ec2 --quota-code L-1216C47A --query Quota.Value --output text)"
   [[ "$quota" =~ ^[0-9]+(\.[0-9]+)?$ ]] || die "Service Quotas did not report this account's vCPU quota for standard instances"
-  while read -r type vcpus; do
-    [[ "$type" == "$INSTANCE_TYPE" ]] && needed=$((needed + SYSTEM_NODES * vcpus))
-    [[ "$type" == "$GATEWAY_INSTANCE_TYPE" ]] && needed=$((needed + GATEWAY_NODES * vcpus))
-  done < <(a ec2 describe-instance-types --instance-types "${types[@]}" \
-    --query 'InstanceTypes[].[InstanceType,VCpuInfo.DefaultVCpus]' --output text)
-  [[ "$needed" -gt 0 ]] || die "EC2 did not report the vCPUs of ${types[*]}"
   if [[ "${quota%.*}" -lt "$needed" ]]; then
     die "The nodes need $needed vCPUs of standard instances, and this account may run ${quota%.*} in $AWS_REGION. Request an increase of quota L-1216C47A, Running On-Demand Standard instances, in Service Quotas; docs/eks.md#what-you-need shows how."
   fi
@@ -116,14 +117,9 @@ Content-Type: text/x-shellscript; charset="us-ascii"
 
 #!/bin/bash
 set -euo pipefail
-case "\$(uname -m)" in
-  x86_64) sum=$GVISOR_SHA512_X86_64 ;;
-  aarch64) sum=$GVISOR_SHA512_AARCH64 ;;
-  *) echo "gVisor $GVISOR_RELEASE has no checksum here for \$(uname -m)" >&2; exit 1 ;;
-esac
 cd "\$(mktemp -d)"
-curl -fsSLo gvisor.tar.bz2 "https://storage.googleapis.com/gvisor/releases/release/$GVISOR_RELEASE/\$(uname -m)/gvisor.tar.bz2"
-echo "\$sum  gvisor.tar.bz2" | sha512sum -c -
+curl -fsSLo gvisor.tar.bz2 "https://storage.googleapis.com/gvisor/releases/release/$GVISOR_RELEASE/x86_64/gvisor.tar.bz2"
+echo "$GVISOR_SHA512_X86_64  gvisor.tar.bz2" | sha512sum -c -
 command -v bzip2 >/dev/null || dnf install -y bzip2
 tar -xjf gvisor.tar.bz2 -C /usr/local/bin
 plugin=io.containerd.grpc.v1.cri
@@ -709,7 +705,7 @@ up() {
   require_tools
   load_account
   require_provider_key
-  check_vcpu_quota
+  check_instance_types
   log "Images published at $SHORT"
   resolve_images
   log "Launch template for gateway nodes, with gVisor"

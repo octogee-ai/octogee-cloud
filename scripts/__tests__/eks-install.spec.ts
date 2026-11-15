@@ -25,7 +25,11 @@ const AWS = `case " $* " in
   *" get-service-quota "*) echo "\${VCPU_QUOTA:-32.0}" ;;
   *" describe-instance-types "*)
     while [ "$1" != --instance-types ]; do shift; done; shift
-    while [ "$1" != --query ]; do case "$1" in *.2xlarge) printf '%s\\t8\\n' "$1" ;; *) printf '%s\\t4\\n' "$1" ;; esac; shift; done ;;
+    while [ "$1" != --query ]; do case "$1" in
+      *g.*) printf '%s\\t4\\tarm64\\n' "$1" ;;
+      *.2xlarge) printf '%s\\t8\\ti386,x86_64\\n' "$1" ;;
+      *) printf '%s\\t4\\ti386,x86_64\\n' "$1" ;;
+    esac; shift; done ;;
   *" describe-launch-templates "*Tags*) echo "\${LT_GVISOR:-20261109.0}" ;;
   *" describe-launch-template-versions "*) echo "\${LT_TYPE:-m6i.xlarge}" ;;
   *" describe-launch-templates "*) { [ -n "\${LT_EXISTS:-}" ] || [ -f "$HOME/lt-created" ]; } || exit 1; echo lt-0abc123 ;;
@@ -121,9 +125,9 @@ describe("eks-install.sh", () => {
       expect(template.InstanceType).toBe("m6i.xlarge");
       expect(template.MetadataOptions).toEqual({ HttpEndpoint: "enabled", HttpTokens: "required", HttpPutResponseHopLimit: 1 });
       const userData = Buffer.from(template.UserData, "base64").toString("utf8");
-      expect(userData).toContain(`curl -fsSLo gvisor.tar.bz2 "https://storage.googleapis.com/gvisor/releases/release/20261109.0/$(uname -m)/gvisor.tar.bz2"`);
-      expect(userData).toContain("x86_64) sum=1a6b8f74c37b4931ef473f67ec1f601690855bedc52ac709f2fac965c69677aa0426ef44598d8eee1aed72cfdb9df87a2a5f352cb3348880fc61a7732bc10f2a ;;");
-      expect(userData).toContain('echo "$sum  gvisor.tar.bz2" | sha512sum -c -');
+      expect(userData).toContain(`curl -fsSLo gvisor.tar.bz2 "https://storage.googleapis.com/gvisor/releases/release/20261109.0/x86_64/gvisor.tar.bz2"`);
+      expect(userData).toContain('echo "1a6b8f74c37b4931ef473f67ec1f601690855bedc52ac709f2fac965c69677aa0426ef44598d8eee1aed72cfdb9df87a2a5f352cb3348880fc61a7732bc10f2a  gvisor.tar.bz2" | sha512sum -c -');
+      expect(userData).not.toContain("aarch64");
       expect(userData).not.toContain(".sha512");
       expect(userData).toContain("tar -xjf gvisor.tar.bz2 -C /usr/local/bin");
       expect(userData).toContain("cat >> /etc/containerd/config.toml");
@@ -273,6 +277,15 @@ describe("eks-install.sh", () => {
       expect(result.status).toBe(1);
       expect(result.stderr).toContain("The nodes need 24 vCPUs of standard instances, and this account may run 16 in us-west-2.");
       expect(calls("aws", "describe-instance-types")[0]).toContain("--instance-types m6i.xlarge m6i.2xlarge --query");
+      expect(host.calls().filter(call => call.startsWith("eksctl ") || / (create|put|authorize)-/.test(call))).toEqual([]);
+    });
+
+    it("stops before creating anything when a node type is not x86_64, since the images are linux/amd64", () => {
+      for (const env of [{ GATEWAY_INSTANCE_TYPE: "m7g.xlarge" }, { INSTANCE_TYPE: "m7g.xlarge" }]) {
+        const result = up(env);
+        expect(result.status).toBe(1);
+        expect(result.stderr).toContain("m7g.xlarge is not an x86_64 instance type, and the published images are linux/amd64 only");
+      }
       expect(host.calls().filter(call => call.startsWith("eksctl ") || / (create|put|authorize)-/.test(call))).toEqual([]);
     });
 

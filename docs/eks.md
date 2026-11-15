@@ -188,8 +188,8 @@ plane; run `up` again after an upgrade.
 | Setting | Default | Effect |
 | --- | --- | --- |
 | `AWS_REGION` | none | The region to install into. Required. |
-| `INSTANCE_TYPE` | `m6i.xlarge` | System nodes. Applies when the node group is created; `up` stops if the existing group runs another type. |
-| `GATEWAY_INSTANCE_TYPE` | `m6i.xlarge` | Gateway nodes, one gateway each. Applies when the launch template is created; `up` stops if the existing template makes another type. A shared gateway defaults to the `m` sizing tier, 2 CPUs and 8 GiB, and an isolated gateway to `s`, 1 CPU and 4 GiB. The `l` tier, 4 CPUs and 16 GiB, needs a larger instance type. |
+| `INSTANCE_TYPE` | `m6i.xlarge` | System nodes, of an x86_64 type: the images are `linux/amd64` only. Applies when the node group is created; `up` stops if the existing group runs another type. |
+| `GATEWAY_INSTANCE_TYPE` | `m6i.xlarge` | Gateway nodes, one gateway each, of an x86_64 type. Applies when the launch template is created; `up` stops if the existing template makes another type. A shared gateway defaults to the `m` sizing tier, 2 CPUs and 8 GiB, and an isolated gateway to `s`, 1 CPU and 4 GiB. The `l` tier, 4 CPUs and 16 GiB, needs a larger instance type. |
 | `SYSTEM_NODES` | `2` | Nodes in the `system` group. |
 | `GATEWAY_NODES` | `2` | Nodes in the `gateways` group, one for each gateway. |
 | `DB_CLASS` | `db.t4g.medium` | RDS instance class. |
