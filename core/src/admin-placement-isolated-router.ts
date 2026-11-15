@@ -1,29 +1,42 @@
 import type { Request, Response, Router } from "express";
 import { projectGatewayDesiredRootForGateway } from "@octogee/shared/types/gateway-releases";
 import { builderActivateOperationId } from "@octogee/shared/types/isolated-operation-ids";
+import { isSizingTier } from "@octogee/shared/types/sizing";
 import type { AdminFleetMutationRunner } from "./admin-fleet-router.js";
 import { GatewayRetirementConflictError } from "./gateway-retirement-claim.js";
 import {
   IsolatedGatewayFenceError,
   PLACEMENT_RETIREMENT_REASONS,
   advanceActivationLease,
+  allocateIsolatedGateway,
+  checkUnreachableRecoveryFence,
   completeActivationLease,
   failActivationLease,
   leaseOperationIdBelongs,
+  recoverUnreachableIsolatedGateway,
+  refreshRequestedAllocation,
+  prepareIsolatedHome,
   requestSizingKeyTransition,
+  requireStoredHomeReadiness,
   unauditedLifecycleMutations,
   retireOwnedIsolatedGateway,
   type AdvanceActivationLeaseInput,
+  type AllocateIsolatedGatewayInput,
   type AuthoritativeLeaseStatus,
   type CompleteActivationLeaseInput,
   type FailActivationLeaseInput,
+  type HomeCapabilitiesFactory,
+  type HomeEffect,
+  type HomePreparation,
+  type HomePreparationRequest,
   type IsolatedLifecycleDeps,
   type PlacementOwnerFence,
   type PlacementRetirementReason,
+  type RecoverUnreachableIsolatedGatewayInput,
   type RetireOwnedIsolatedGatewayInput,
   type SizingKeyTransitionInput,
 } from "./isolated-gateway-lifecycle/index.js";
-import { FleetMutationRefusedError } from "./normal-fleet-mutation.js";
+import { FleetMutationPartialError, FleetMutationRefusedError, type NormalFleetMutationResult } from "./normal-fleet-mutation.js";
 import { assertClientOwnsPlacementAutomation, placementOwnerRefusalBody } from "./placement-automation-owner.js";
 import { FenceMismatchError } from "./platform-state/errors.js";
 import type { PlatformUserRecord } from "./platform-state/users.js";
@@ -35,6 +48,7 @@ import type { PodObservation } from "./isolated-gateway-lifecycle/index.js";
 
 export interface AdminIsolatedCapabilities {
   namespace: string;
+  home?: HomeCapabilitiesFactory;
   ensureAuthSecret(input: { namespace: string; gatewayId: string }): Promise<unknown>;
   readGatewayPodDiagnostics(gatewayId: string): Promise<PodObservation>;
 }
@@ -81,6 +95,7 @@ function refusalsBelowError(journal: AdminFleetMutationRunner): AdminFleetMutati
       try {
         return await input.action(claim);
       } catch (error) {
+        if (error instanceof FleetMutationRefusedError) throw error;
         if (error instanceof Error && isolatedVerbRefusalBody(error) !== null) throw new FleetMutationRefusedError(error);
         throw error;
       }
@@ -234,6 +249,78 @@ function parseRetire(req: Request): Parsed<RetireRequest> {
   } as RetireRequest;
 }
 
+function nonNegativeInteger(body: Body, key: string): number | null {
+  const value = body[key];
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+
+type AllocateRequest = Omit<AllocateIsolatedGatewayInput, "builderSlug">;
+
+function parseAllocate(req: Request): Parsed<AllocateRequest> {
+  const identity = leaseIdentity(req);
+  if (invalid(identity)) return identity;
+  const body = bodyOf(req);
+  const sourceGatewayId = text(body, "sourceGatewayId");
+  const sourceAssignmentEpoch = nonNegativeInteger(body, "sourceAssignmentEpoch");
+  const sizingKey = text(body, "sizingKey");
+  if (!sourceGatewayId) return { invalid: "sourceGatewayId is required" };
+  if (sourceAssignmentEpoch === null) return { invalid: "sourceAssignmentEpoch must be a non-negative integer" };
+  if (!sizingKey) return { invalid: "sizingKey is required" };
+  if (!isSizingTier(body.sizingTier)) return { invalid: "sizingTier must be s, m or l" };
+  const request: AllocateRequest = { ...identity, sourceGatewayId, sourceAssignmentEpoch, sizingKey, sizingTier: body.sizingTier };
+  if (body.parkedGateway === undefined) return request;
+  const parked = body.parkedGateway !== null && typeof body.parkedGateway === "object" ? body.parkedGateway as Body : {};
+  const gatewayId = text(parked, "gatewayId");
+  const generation = positiveInteger(parked, "generation");
+  if (!gatewayId || generation === null) return { invalid: "parkedGateway needs gatewayId and a positive integer generation" };
+  return { ...request, parkedGateway: { gatewayId, generation } };
+}
+
+function parseHomePreparation(req: Request): Parsed<HomePreparationRequest> {
+  const parsed = parseAllocate(req);
+  if (invalid(parsed)) return parsed;
+  if (bodyOf(req).parkedGateway !== undefined) return { invalid: "parkedGateway is not part of home preparation" };
+  const { uid, leaseId, generation, sourceGatewayId, sourceAssignmentEpoch, sizingKey, sizingTier } = parsed;
+  return { uid, leaseId, generation, sourceGatewayId, sourceAssignmentEpoch, sizingKey, sizingTier };
+}
+
+function classifyHomePreparation(result: HomePreparation & { effects: HomeEffect[] }): NormalFleetMutationResult {
+  const { effects, ...preparation } = result;
+  if (preparation.state === "ready" && effects.length === 0) return { outcome: "completed" };
+  const details = { ...preparation, effects };
+  if (preparation.state === "blocked") {
+    return { outcome: "failed", error: preparation.reason, partialOutcome: { summary: "blocked", details } };
+  }
+  if (preparation.state === "in-progress" && preparation.lastError) {
+    return { outcome: "failed", error: `compute unavailable at ${preparation.step}: ${preparation.lastError.code}`, partialOutcome: { summary: `in-progress: ${preparation.step}`, details } };
+  }
+  const summary = preparation.state === "ready" ? "ready" : `in-progress: ${preparation.step}`;
+  return { outcome: "partial", partialOutcome: { summary, details } };
+}
+
+type RecoverRequest = Omit<RecoverUnreachableIsolatedGatewayInput, "builderSlug">;
+
+function parseRecover(req: Request): Parsed<RecoverRequest> {
+  const body = bodyOf(req);
+  const uid = text(body, "ownerUid");
+  const leaseId = text(body, "leaseId");
+  const generation = positiveInteger(body, "generation");
+  const authoritativeGatewayId = text(body, "authoritativeGatewayId");
+  if (!uid) return { invalid: "ownerUid is required" };
+  if (!leaseId) return { invalid: "leaseId is required" };
+  if (generation === null) return { invalid: "generation must be a positive integer" };
+  if (!authoritativeGatewayId) return { invalid: "authoritativeGatewayId is required" };
+  if (body.sourceUnavailable !== undefined && body.sourceUnavailable !== true) return { invalid: "sourceUnavailable must be true when given" };
+  return {
+    uid,
+    gatewayId: req.params.id as string,
+    leaseId,
+    generation,
+    authoritativeGatewayId,
+    ...(body.sourceUnavailable === true ? { sourceUnavailable: true } : {}),
+  };
+}
+
 async function readOwner(store: PlatformStateStore, uid: string): Promise<Stored<PlatformUserRecord>> {
   const user = await store.users.records.get(uid);
   if (!user) throw new PreconditionFailed(`user ${uid} is missing`);
@@ -255,6 +342,15 @@ function leaseOf(user: Stored<PlatformUserRecord>) {
   return user.activationLease;
 }
 
+type IsolatedVerb = <T>(path: string, parse: (req: Request) => Parsed<T>, run: (req: Request, input: T) => Promise<unknown>) => void;
+
+interface IsolatedRoutes {
+  deps: AdminPlacementIsolatedRouterDeps;
+  journal: ReturnType<typeof refusalsBelowError>;
+  lifecycle: IsolatedLifecycleDeps;
+  verb: IsolatedVerb;
+}
+
 export function addAdminPlacementIsolatedRoutes(router: Router, deps: AdminPlacementIsolatedRouterDeps): void {
   const journal = refusalsBelowError(deps.journal);
   const now = deps.now ?? Date.now;
@@ -272,7 +368,7 @@ export function addAdminPlacementIsolatedRoutes(router: Router, deps: AdminPlace
     async (transaction) => { await requireClientOwner(transaction); },
   );
 
-  function verb<T>(path: string, parse: (req: Request) => Parsed<T>, run: (req: Request, input: T) => Promise<unknown>): void {
+  const verb: IsolatedVerb = (path, parse, run) => {
     router.post(path, async (req, res, next) => {
       try {
         const input = parse(req);
@@ -298,8 +394,15 @@ export function addAdminPlacementIsolatedRoutes(router: Router, deps: AdminPlace
         next(error);
       }
     });
-  }
+  };
 
+  const routes: IsolatedRoutes = { deps, journal, lifecycle, verb };
+  addLeaseVerbs(routes);
+  addIsolatedGatewayVerbs(routes);
+  addHomeVerbs(routes);
+}
+
+function addLeaseVerbs({ deps, journal, lifecycle, verb }: IsolatedRoutes): void {
   verb("/users/:uid/activation-lease/advance", parseAdvance, async (req, input) => {
     if (input.operationId !== undefined) {
       const stored = await deps.store.users.records.get(input.uid);
@@ -378,7 +481,9 @@ export function addAdminPlacementIsolatedRoutes(router: Router, deps: AdminPlace
       return { uid: input.uid, leaseId: input.leaseId, generation: input.generation, returnRequested: true };
     },
   }));
+}
 
+function addIsolatedGatewayVerbs({ deps, journal, lifecycle, verb }: IsolatedRoutes): void {
   verb("/isolated-gateways/:id/retire-owned", parseRetire, async (req, input) => {
     const root = projectGatewayDesiredRootForGateway(await deps.store.gateways.roots.get(input.gatewayId), input.gatewayId);
     if (root === null || root.ownerUid !== input.uid || !root.builderSlug) {
@@ -407,4 +512,97 @@ export function addAdminPlacementIsolatedRoutes(router: Router, deps: AdminPlace
         },
     });
   });
+
+  const allocationDeps = {
+    ...lifecycle,
+    requireHomeReady: requireStoredHomeReadiness,
+    namespace: deps.capabilities.namespace,
+    ensureAuthSecret: deps.capabilities.ensureAuthSecret,
+  };
+
+  verb("/users/:uid/isolated-gateway/allocate", parseAllocate, async (req, input) => {
+    const builderSlug = (await readOwner(deps.store, input.uid)).slug;
+    if (!builderSlug) throw new PreconditionFailed(`user ${input.uid} has no slug`);
+    const request: AllocateIsolatedGatewayInput = { ...input, builderSlug };
+    return journal({
+      req,
+      what: "allocate isolated gateway",
+      why: "placement automation activates the user on an isolated gateway",
+      target: { uid: input.uid, gatewayId: input.parkedGateway?.gatewayId ?? null },
+      preActionStatus: { leaseId: input.leaseId, generation: input.generation, status: "requested" },
+      mutation: { kind: "allocate-isolated-gateway", sizingKey: input.sizingKey, sizingTier: input.sizingTier, sourceGatewayId: input.sourceGatewayId },
+      dryRunRefusal: async () => {
+        if (!await refreshRequestedAllocation(lifecycle, request, "plan")) await allocateIsolatedGateway(allocationDeps, request, "plan");
+        return null;
+      },
+      action: async () => {
+        if (await refreshRequestedAllocation(lifecycle, request)) {
+          return { uid: input.uid, gatewayId: null, outcome: "refreshed" };
+        }
+        const allocation = await allocateIsolatedGateway(allocationDeps, request);
+        return { uid: input.uid, ...allocation };
+      },
+    });
+  });
+
+  verb("/isolated-gateways/:id/recover-unreachable", parseRecover, async (req, input) => {
+    const root = projectGatewayDesiredRootForGateway(await deps.store.gateways.roots.get(input.gatewayId), input.gatewayId);
+    if (root === null || root.ownerUid !== input.uid || !root.builderSlug) {
+      throw new PreconditionFailed(`gateway ${input.gatewayId} is not owned by ${input.uid}`);
+    }
+    const request: RecoverUnreachableIsolatedGatewayInput = { ...input, builderSlug: root.builderSlug };
+    return journal({
+      req,
+      what: "recover unreachable isolated gateway",
+      why: "placement automation found the isolated gateway unreachable",
+      target: { gatewayId: input.gatewayId, uid: input.uid },
+      preActionStatus: { generation: input.generation, desiredStatus: root.desiredStatus },
+      mutation: { kind: "recover-unreachable-isolated-gateway", authoritativeGatewayId: input.authoritativeGatewayId },
+      classifyResult: (result) => result.state === "waiting"
+        ? { outcome: "partial", partialOutcome: { summary: `waiting: ${result.reason}`, details: { state: "waiting", reason: result.reason, operationId: result.operationId } } }
+        : { outcome: "completed" },
+      dryRunRefusal: async () => {
+        await checkUnreachableRecoveryFence(lifecycle, request);
+        return null;
+      },
+      action: async () => ({
+        gatewayId: input.gatewayId,
+        ...await recoverUnreachableIsolatedGateway({
+          ...lifecycle,
+          readGatewayPodDiagnostics: deps.capabilities.readGatewayPodDiagnostics,
+        }, request),
+      }),
+    });
+  });
+}
+
+function addHomeVerbs({ deps, journal, lifecycle, verb }: IsolatedRoutes): void {
+  const homeCapabilities = deps.capabilities.home;
+  if (!homeCapabilities) return;
+  verb("/users/:uid/home/prepare", parseHomePreparation, (req, input) => journal({
+    req,
+    what: "prepare user home",
+    why: "placement automation prepares the user's home before an isolated activation",
+    target: { uid: input.uid },
+    preActionStatus: { leaseId: input.leaseId, generation: input.generation, status: "requested" },
+    mutation: { kind: "prepare-user-home", sizingKey: input.sizingKey, sizingTier: input.sizingTier, sourceGatewayId: input.sourceGatewayId },
+    classifyResult: classifyHomePreparation,
+    dryRunRefusal: async () => {
+      await prepareIsolatedHome({ ...lifecycle, home: homeCapabilities(() => undefined) }, input, "plan");
+      return null;
+    },
+    action: async () => {
+      const effects: HomeEffect[] = [];
+      try {
+        const preparation = await prepareIsolatedHome({ ...lifecycle, home: homeCapabilities((effect) => effects.push(effect)) }, input);
+        return { uid: input.uid, ...preparation, effects };
+      } catch (error) {
+        if (!(error instanceof Error) || effects.length === 0) throw error;
+        if (isolatedVerbRefusalBody(error) !== null) {
+          throw new FleetMutationRefusedError(error, { summary: "refused after compute effects", details: { effects } });
+        }
+        throw new FleetMutationPartialError(error.message, { summary: "failed after compute effects", details: { effects } });
+      }
+    },
+  }));
 }

@@ -13,6 +13,13 @@ import {
 } from "./isolated-gateway-lifecycle/index.js";
 import { assertClientOwnsPlacementAutomation } from "./placement-automation-owner.js";
 import { accountSizingKeyReader } from "./sizing-key.js";
+import {
+  HomeComputeUnavailableError,
+  type HomeCapabilities,
+  type HomeCapabilitiesFactory,
+  type HomeEffect,
+  type UserHomeLocation,
+} from "./isolated-gateway-lifecycle/index.js";
 
 type Data = Record<string, unknown>;
 
@@ -33,7 +40,7 @@ const capabilities: AdminIsolatedCapabilities = {
   readGatewayPodDiagnostics: vi.fn(async () => ({ status: "missing", totalPods: 0 })),
 };
 
-function app() {
+function app(extra: Partial<AdminIsolatedCapabilities> = {}) {
   const store = createDocumentFixtureStore(docs, { serializeTransactions: true });
   const server = express();
   server.use(express.json());
@@ -45,7 +52,7 @@ function app() {
     store,
     journal: createAdminFleetMutationRunner(store),
     accounts,
-    capabilities,
+    capabilities: { ...capabilities, ...extra },
     log: vi.fn(),
     warn,
     now: () => 50_000,
@@ -403,6 +410,241 @@ describe("POST /isolated-gateways/:id/retire-owned", () => {
   });
 });
 
+function sharedRoot(): Data {
+  return {
+    gatewayId: "shared-blue", createdAt: 1, createdBy: "test", updatedAt: 1, updatedBy: "test", latestRelease: 3, desiredRelease: 3,
+    liveRelease: 3, desiredStatus: "running", configSchemaVersion: 1, profile: "standard", gatewayClass: "shared", imageProfile: "standard",
+    sizingTier: null, gcpProject: null, gatewayContainerSecurityContext: null, serviceAccountName: null, serviceAccount: null,
+    builderAccess: null, ownerUid: null, builderSlug: null, modelBrokerLimits: null, allocation: null,
+  };
+}
+
+const sharedAssignment = (epoch: number): Data =>
+  ({ uid: OWNER, slug: "alice", gatewayId: "shared-blue", source: "onboarding", state: "serving", epoch, createdAt: 1, updatedAt: 1 });
+
+describe("POST /users/:uid/isolated-gateway/allocate", () => {
+  const releasePayload = {
+    imageRepository: "registry/images/octogee-gateway", imageTag: `abc1234@sha256:${"a".repeat(64)}`,
+    profileImages: { builder: { imageRepository: "registry/images/octogee-gateway-builder", imageTag: `abc1234@sha256:${"b".repeat(64)}` } },
+    gatewayEdgeImage: { imageRepository: "registry/images/gateway-edge", imageTag: `abc1234@sha256:${"c".repeat(64)}` },
+  };
+  const requested = lease({ status: "requested", targetGatewayId: undefined, activationOperationId: undefined });
+  const body = { leaseId: "lease-one", generation: 1, sourceGatewayId: "shared-blue", sourceAssignmentEpoch: 4, sizingKey: "default", sizingTier: "s" };
+  const allocate = (payload: Data = body, query = "") => request(app()).post(`/users/${OWNER}/isolated-gateway/allocate${query}`).send(payload);
+  const isolatedRoots = () => [...docs.keys()].filter((path) => /^gateways\/alice-[^/]+$/.test(path));
+  const preparedFor = { leaseId: "lease-one", generation: 1, sizingKey: "default" };
+  const withHome = (homeMigration: Data | null): Data => {
+    const record = user("shared-blue", requested);
+    return homeMigration ? { ...record, provisioning: { ...(record.provisioning as Data), homeMigration } } : record;
+  };
+
+  beforeEach(() => {
+    vi.mocked(capabilities.ensureAuthSecret).mockClear();
+    seed({
+      [`users/${OWNER}`]: withHome({ id: "home-copy-1", phase: "complete", tier: "default", preparedFor }),
+      "gateways/shared-blue": sharedRoot(),
+      "gateways/shared-blue/releases/3": { gatewayId: "shared-blue", release: 3, payload: releasePayload },
+      [`gateways/shared-blue/assignments/${OWNER}`]: sharedAssignment(4),
+    });
+  });
+
+  it("creates the auth secret, writes the isolated gateway and moves the lease to provisioning", async () => {
+    const res = await allocate().expect(200);
+
+    expect(res.body).toEqual({ uid: OWNER, gatewayId: expect.stringMatching(/^alice-/), outcome: "allocated" });
+    const gatewayId = res.body.gatewayId as string;
+    expect(capabilities.ensureAuthSecret).toHaveBeenCalledWith({ namespace: "octogee-test", gatewayId });
+    expect(docs.get(`gateways/${gatewayId}`)).toMatchObject({ gatewayClass: "isolated", ownerUid: OWNER, desiredStatus: "running" });
+    expect(storedLease()).toMatchObject({ status: "provisioning", targetGatewayId: gatewayId });
+  });
+
+  it("answers the same allocation when repeated", async () => {
+    const first = await allocate().expect(200);
+    const second = await allocate().expect(200);
+
+    expect(second.body).toEqual(first.body);
+    expect(isolatedRoots()).toEqual([`gateways/${first.body.gatewayId}`]);
+  });
+
+  it("answers the committed allocation when repeated after the home record was replaced", async () => {
+    const first = await allocate().expect(200);
+    const stored = docs.get(`users/${OWNER}`)!;
+    docs.set(`users/${OWNER}`, { ...stored, provisioning: { ...(stored.provisioning as Data), homeMigration: { id: "home-copy-2", phase: "copying", tier: "default" } } });
+
+    const second = await allocate().expect(200);
+
+    expect(second.body).toEqual(first.body);
+    expect(isolatedRoots()).toEqual([`gateways/${first.body.gatewayId}`]);
+  });
+
+  it("refreshes a lease whose source assignment moved and allocates nothing", async () => {
+    docs.set(`gateways/shared-blue/assignments/${OWNER}`, sharedAssignment(5));
+
+    const res = await allocate().expect(200);
+
+    expect(res.body).toEqual({ uid: OWNER, gatewayId: null, outcome: "refreshed" });
+    expect(storedLease()).toMatchObject({ status: "requested", sourceAssignmentEpoch: 5 });
+    expect(audits()).toEqual([expect.objectContaining({ what: "allocate isolated gateway", status: "completed" })]);
+    expect(isolatedRoots()).toEqual([]);
+    expect(capabilities.ensureAuthSecret).not.toHaveBeenCalled();
+  });
+
+  it("answers precondition-failed and writes nothing when the lease is another lease", async () => {
+    docs.set(`users/${OWNER}`, withHome({ id: "home-copy-1", phase: "complete", tier: "default", preparedFor: { ...preparedFor, leaseId: "lease-two" } }));
+
+    const res = await allocate({ ...body, leaseId: "lease-two" }).expect(409);
+
+    expect(res.body).toMatchObject({ code: "precondition-failed", reason: `isolated gateway demand fence changed for ${OWNER}` });
+    expect(storedLease().status).toBe("requested");
+    expect(isolatedRoots()).toEqual([]);
+  });
+
+  it.each([
+    ["no home preparation is stored", null],
+    ["the home copy is still running", { id: "home-copy-1", phase: "copying", tier: "default", preparedFor }],
+    ["the home was prepared for another lease", { id: "home-copy-1", phase: "complete", tier: "default", preparedFor: { ...preparedFor, leaseId: "lease-zero" } }],
+    ["the home was prepared for another generation", { id: "home-copy-1", phase: "complete", tier: "default", preparedFor: { ...preparedFor, generation: 2 } }],
+    ["the home was prepared for another sizing key", { id: "home-copy-1", phase: "complete", tier: "pro", preparedFor: { ...preparedFor, sizingKey: "pro" } }],
+    ["a migration completed without a preparation record", { id: "home-copy-1", phase: "complete", tier: "default" }],
+  ])("refuses a VM-sized user, before any effect, when %s", async (_name, homeMigration) => {
+    docs.set(`users/${OWNER}`, withHome(homeMigration));
+    const before = structuredClone([...docs.entries()]);
+
+    for (const query of ["?dryRun=true", ""]) {
+      const res = await allocate(body, query).expect(409);
+      expect(res.body).toMatchObject({
+        code: "precondition-failed",
+        reason: `home for ${OWNER} is not prepared for lease lease-one generation 1 sizing key default`,
+      });
+    }
+
+    expect(capabilities.ensureAuthSecret).not.toHaveBeenCalled();
+    expect([...docs.entries()].filter(([path]) => !path.startsWith("glmOperations/audit-"))).toEqual(before);
+    expect(audits()).toEqual([expect.objectContaining({ what: "allocate isolated gateway", status: "failed" })]);
+  });
+
+  it("plans a dry run without creating the secret or the gateway", async () => {
+    await allocate(body, "?dryRun=true").expect(200).expect((res) => expect(res.body.dryRun).toBe(true));
+
+    expect(capabilities.ensureAuthSecret).not.toHaveBeenCalled();
+    expect(isolatedRoots()).toEqual([]);
+  });
+
+  it("plans a dry run of a repeat after the allocation committed", async () => {
+    await allocate().expect(200);
+    await allocate(body, "?dryRun=true").expect(200).expect((res) => expect(res.body.dryRun).toBe(true));
+  });
+
+  it("refuses a dry run the fence would refuse", async () => {
+    await allocate({ ...body, leaseId: "lease-two" }, "?dryRun=true").expect(409)
+      .expect((res) => expect(res.body.code).toBe("precondition-failed"));
+  });
+
+  it("answers placement-owner before the fleet controller yields", async () => {
+    seed({ [`users/${OWNER}`]: user("shared-blue", requested) }, { placementAutomationOwner: "client", placementAutomationYieldedAt: null });
+    await allocate().expect(409).expect((res) => expect(res.body.code).toBe("placement-owner"));
+    expect(capabilities.ensureAuthSecret).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unknown sizing tier", async () => {
+    const res = await allocate({ ...body, sizingTier: "xl" }).expect(400);
+    expect(res.body.error).toBe("sizingTier must be s, m or l");
+  });
+});
+
+describe("POST /isolated-gateways/:id/recover-unreachable", () => {
+  const RECOVERY = `builder-recover-${TARGET}-g1`;
+  const body = { ownerUid: OWNER, leaseId: "lease-one", generation: 1, authoritativeGatewayId: "shared-blue", sourceUnavailable: true };
+  const recover = (payload: Data = body, query = "") =>
+    request(app()).post(`/isolated-gateways/${TARGET}/recover-unreachable${query}`).send(payload);
+  const diagnostics = vi.mocked(capabilities.readGatewayPodDiagnostics);
+  const receipt = () => docs.get(`gatewayRecoveryReceipts/${RECOVERY}`) ?? null;
+
+  beforeEach(() => {
+    diagnostics.mockReset();
+    diagnostics.mockResolvedValue({ status: "missing", totalPods: 0 });
+    seed({
+      [`users/${OWNER}`]: user("shared-blue", lease({ status: "returning", returnReason: "source-unavailable" })),
+      [`gateways/${TARGET}`]: isolatedRoot({ desiredStatus: "running" }),
+      [`gateways/shared-blue/assignments/${OWNER}`]: sharedAssignment(4),
+    });
+  });
+
+  it("pauses the gateway and records the recovery once no pods remain", async () => {
+    const res = await recover().expect(200);
+
+    expect(res.body).toEqual({ gatewayId: TARGET, state: "recovered", operationId: RECOVERY });
+    expect(docs.get(`gateways/${TARGET}`)?.desiredStatus).toBe("paused");
+    expect(receipt()).toMatchObject({ status: "succeeded", recoveryReceipt: { schemaVersion: 1, pods: 0 } });
+  });
+
+  it("answers precondition-failed and writes nothing when the reservation fence fails", async () => {
+    const res = await recover({ ...body, authoritativeGatewayId: "shared-green" }).expect(409);
+
+    expect(res.body).toMatchObject({ code: "precondition-failed", reason: `User ${OWNER} is no longer authoritative on shared-green` });
+    expect(docs.get(`gateways/${TARGET}`)?.desiredStatus).toBe("running");
+    expect(receipt()).toBeNull();
+    expect(diagnostics).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["the pods cannot be observed", async () => ({ status: "unknown", totalPods: 0 }), "observation-unknown"],
+    ["the diagnostics read fails", async () => { throw new Error("kubectl timed out"); }, "observation-unknown"],
+    ["pods remain", async () => ({ status: "running", totalPods: 1 }), "pods-present"],
+  ])("keeps the reservation and answers waiting when %s, then recovers on the repeat call", async (_name, read, reason) => {
+    diagnostics.mockImplementationOnce(read as never);
+
+    const waiting = await recover().expect(200);
+
+    expect(waiting.body).toEqual({ gatewayId: TARGET, state: "waiting", reason, operationId: RECOVERY });
+    expect(docs.get(`gateways/${TARGET}`)?.desiredStatus).toBe("paused");
+    expect(receipt()).toMatchObject({ status: "pending" });
+
+    const repeated = await recover().expect(200);
+
+    expect(repeated.body).toEqual({ gatewayId: TARGET, state: "recovered", operationId: RECOVERY });
+    expect(receipt()).toMatchObject({ status: "succeeded" });
+    expect(audits().map((audit) => [audit.outcome, audit.partialOutcome ?? null])).toEqual([
+      ["partial", { summary: `waiting: ${reason}`, details: { state: "waiting", reason, operationId: RECOVERY } }],
+      ["completed", null],
+    ]);
+  });
+
+  it("answers precondition-failed and leaves the reservation when the fence fails after reserving", async () => {
+    diagnostics.mockImplementationOnce(async () => {
+      docs.set(`gateways/shared-blue/assignments/${OWNER}`, { ...sharedAssignment(4), state: "migrating" });
+      return { status: "missing", totalPods: 0 };
+    });
+
+    const res = await recover().expect(409);
+
+    expect(res.body).toMatchObject({ code: "precondition-failed", reason: `User ${OWNER} is no longer authoritative on shared-blue` });
+    expect(docs.get(`gateways/${TARGET}`)?.desiredStatus).toBe("paused");
+    expect(receipt()).toMatchObject({ status: "pending" });
+  });
+
+  it("plans a dry run without reserving or reading the pods", async () => {
+    await recover(body, "?dryRun=true").expect(200).expect((res) => expect(res.body.dryRun).toBe(true));
+
+    expect(docs.get(`gateways/${TARGET}`)?.desiredStatus).toBe("running");
+    expect(receipt()).toBeNull();
+    expect(diagnostics).not.toHaveBeenCalled();
+  });
+
+  it("refuses a dry run the reservation fence would refuse", async () => {
+    await recover({ ...body, authoritativeGatewayId: "shared-green" }, "?dryRun=true").expect(409)
+      .expect((res) => expect(res.body.code).toBe("precondition-failed"));
+    expect(receipt()).toBeNull();
+  });
+
+  it("answers placement-owner and does not reserve before the fleet controller yields", async () => {
+    seed({ [`gateways/${TARGET}`]: isolatedRoot({ desiredStatus: "running" }) }, null);
+    await recover().expect(409).expect((res) => expect(res.body.code).toBe("placement-owner"));
+    expect(docs.get(`gateways/${TARGET}`)?.desiredStatus).toBe("running");
+    expect(diagnostics).not.toHaveBeenCalled();
+  });
+});
+
 describe("the verbs express every in-process lease call", () => {
   const RETURN = `builder-return-${TARGET}-g1`;
   const RECOVERY = `builder-recover-${TARGET}-g1`;
@@ -478,5 +720,152 @@ describe("the verbs express every in-process lease call", () => {
 
     expect(stored(docs)).toEqual(stored(twin));
     expect(stored(docs)).not.toEqual(before);
+  });
+});
+
+describe("POST /users/:uid/home/prepare", () => {
+  const source = { runtime: "gce-vm" as const, layout: "portable" as const, disk: { projectId: "octogee-test", zone: "us-central1-a", name: "old-home", source: "projects/octogee-test/zones/us-central1-a/disks/old-home", id: "100", sizeGb: 100, diskType: "pd-balanced" as const } };
+  const target = { ...source.disk, name: "new-home", id: "200", sizeGb: 10, source: "projects/octogee-test/zones/us-central1-a/disks/new-home" };
+  const body = { leaseId: "lease-one", generation: 1, sourceGatewayId: "shared-blue", sourceAssignmentEpoch: 4, sizingKey: "default", sizingTier: "s" };
+  const requested = lease({ status: "requested", targetGatewayId: undefined, activationOperationId: undefined });
+  let home: ReturnType<typeof fakeHome>;
+
+  function fakeHome() {
+    let record: ((effect: HomeEffect) => void) | null = null;
+    const effect = <T>(name: string, resource: string, value: T) => async () => { record?.({ name, resource }); return value; };
+    const capabilities = {
+      environment: "test", subnetwork: "subnet", nativeZones: ["us-central1-a"] as readonly string[],
+      nativeZone: vi.fn(async (): Promise<string | null> => null),
+      inventory: vi.fn(async (): Promise<UserHomeLocation | null> =>
+        ((docs.get(`users/${OWNER}`)!.provisioning as Data).homeStorage as UserHomeLocation | undefined) ?? source),
+      verifyStopped: vi.fn(async () => undefined),
+      copy: {
+        advance: vi.fn(effect("start-builder-home-copy", "zones/us-central1-a/instances/home-copy", {
+          progress: { status: "ready" as const, filesystem: "btrfs" as const, usedBytes: 1024, proof: { "volumes/data": "a".repeat(64), "desktop-home": "b".repeat(64) } }, target,
+        }) as HomeCapabilities["copy"]["advance"]),
+        release: vi.fn(effect("remove-home-copy-helper", "zones/us-central1-a/instances/home-copy", true)),
+        abort: vi.fn(async () => true),
+      },
+      adopt: vi.fn(effect("attach-verified-builder-home", "zones/us-central1-a/instances/alice-vm", true)),
+      removeStoppedHome: vi.fn(async () => true),
+    };
+    const calls = () => [capabilities.nativeZone, capabilities.inventory, capabilities.verifyStopped, capabilities.copy.advance, capabilities.copy.release,
+      capabilities.copy.abort, capabilities.adopt, capabilities.removeStoppedHome].reduce((total, call) => total + call.mock.calls.length, 0);
+    const factory: HomeCapabilitiesFactory = (recorder) => { record = recorder; return capabilities; };
+    return { capabilities, calls, factory };
+  }
+
+  const prepare = (payload: Data = body, query = "") => request(app({ home: home.factory })).post(`/users/${OWNER}/home/prepare${query}`).send(payload);
+  const homeMigration = () => ((docs.get(`users/${OWNER}`)!.provisioning as Data).homeMigration ?? null) as Data | null;
+
+  beforeEach(() => {
+    home = fakeHome();
+    seed({ [`users/${OWNER}`]: user("shared-blue", requested) });
+  });
+
+  it("is not mounted without the home capabilities", async () => {
+    const response = await request(app()).post(`/users/${OWNER}/home/prepare`).send(body);
+
+    expect(response.status).toBe(404);
+    expect(home.calls()).toBe(0);
+  });
+
+  it("answers placement-owner before any Compute Engine call", async () => {
+    seed({ [`users/${OWNER}`]: user("shared-blue", requested) }, null);
+    await prepare().expect(409).expect((res) => expect(res.body.code).toBe("placement-owner"));
+    expect(home.calls()).toBe(0);
+    expect(audits()).toEqual([]);
+  });
+
+  it("advances one step per call, journaling the step and its effects, until the home is ready for the lease", async () => {
+    const first = await prepare().expect(200);
+    expect(first.body).toEqual({ uid: OWNER, state: "in-progress", step: "releasing", effects: [{ name: "start-builder-home-copy", resource: "zones/us-central1-a/instances/home-copy" }] });
+    await prepare().expect(200).expect((res) => expect(res.body).toMatchObject({ state: "in-progress", step: "adopting" }));
+    await prepare().expect(200).expect((res) => expect(res.body).toMatchObject({ state: "ready", effects: [{ name: "attach-verified-builder-home" }] }));
+    await prepare().expect(200).expect((res) => expect(res.body).toEqual({ uid: OWNER, state: "ready", effects: [] }));
+
+    expect(homeMigration()).toMatchObject({ phase: "complete", preparedFor: { leaseId: "lease-one", generation: 1, sizingKey: "default" } });
+    expect(audits().map((audit) => [audit.outcome, (audit.partialOutcome as Data | undefined)?.summary ?? null])).toEqual([
+      ["partial", "in-progress: releasing"],
+      ["partial", "in-progress: adopting"],
+      ["partial", "ready"],
+      ["completed", null],
+    ]);
+    expect((audits()[0]!.partialOutcome as Data).details).toMatchObject({ step: "releasing", effects: [{ name: "start-builder-home-copy" }] });
+  });
+
+  it("answers in-progress with the error code, journaled as failed, when Compute Engine is unavailable", async () => {
+    await prepare().expect(200);
+    home.capabilities.copy.release.mockRejectedValueOnce(new HomeComputeUnavailableError("http-503", "remove-home-copy-helper: HTTP 503"));
+
+    const res = await prepare().expect(200);
+
+    expect(res.body).toEqual({ uid: OWNER, state: "in-progress", step: "releasing", lastError: { code: "http-503" }, effects: [] });
+    expect(homeMigration()).toMatchObject({ phase: "releasing" });
+    expect(audits().at(-1)).toMatchObject({ status: "failed", error: "compute unavailable at releasing: http-503" });
+  });
+
+  it("answers 500, journaled as failed with the effects it performed, when the state it left is unknown", async () => {
+    home.capabilities.copy.advance.mockImplementationOnce(async () => {
+      throw new Error("home copy target identity/capacity differs");
+    });
+
+    await prepare().expect(500);
+
+    expect(audits().at(-1)).toMatchObject({ status: "failed", error: "home copy target identity/capacity differs" });
+  });
+
+  it("answers precondition-failed and journals the effects it performed when a fence fails after a Compute Engine effect", async () => {
+    await prepare().expect(200);
+    await prepare().expect(200);
+    const adopt = home.capabilities.adopt.getMockImplementation()!;
+    home.capabilities.adopt.mockImplementationOnce(async () => {
+      const result = await adopt();
+      storedLease().generation = 2;
+      return result;
+    });
+
+    const res = await prepare().expect(409);
+
+    expect(res.body).toMatchObject({ code: "precondition-failed", reason: "home migration activation authority changed" });
+    expect(audits().at(-1)).toMatchObject({
+      status: "failed",
+      partialOutcome: { summary: "refused after compute effects", details: { effects: [{ name: "attach-verified-builder-home", resource: "zones/us-central1-a/instances/alice-vm" }] } },
+    });
+  });
+
+  it("answers blocked with the reason and attempts after three failed copies", async () => {
+    docs.set(`users/${OWNER}`, { ...user("shared-blue", requested), provisioning: { ...(user("shared-blue", requested).provisioning as Data), homeMigration: {
+      id: "home-copy-test-1", tier: "default", source, phase: "blocked", attempt: 3, error: "copy failed", startedAt: 1,
+      copy: { operationId: "home-copy-test-1", ownerUid: OWNER, source: source.disk, sourceLayout: "portable", targetZone: "us-central1-a", desiredGiB: 10, subnetwork: "subnet" },
+    } } });
+
+    const res = await prepare().expect(200);
+
+    expect(res.body).toMatchObject({ state: "blocked", attempts: 3, reason: expect.stringContaining("three failed copies") });
+    expect(audits().at(-1)).toMatchObject({ status: "failed" });
+  });
+
+  it("plans a dry run without any Compute Engine call, and refuses one whose lease moved", async () => {
+    await prepare(body, "?dryRun=true").expect(200).expect((res) => expect(res.body.dryRun).toBe(true));
+    await prepare({ ...body, generation: 2 }, "?dryRun=true").expect(409).expect((res) => expect(res.body.code).toBe("precondition-failed"));
+    expect(home.calls()).toBe(0);
+    expect(homeMigration()).toBeNull();
+  });
+
+  it("lets allocation through the home fence once prepare answered ready for the lease", async () => {
+    home.capabilities.inventory.mockResolvedValue(null);
+    docs.set("gateways/shared-blue", sharedRoot());
+    docs.set("gateways/shared-blue/releases/3", { gatewayId: "shared-blue", release: 3, payload: {
+      imageRepository: "registry/images/octogee-gateway", imageTag: `abc1234@sha256:${"a".repeat(64)}`,
+      profileImages: { builder: { imageRepository: "registry/images/octogee-gateway-builder", imageTag: `abc1234@sha256:${"b".repeat(64)}` } },
+      gatewayEdgeImage: { imageRepository: "registry/images/gateway-edge", imageTag: `abc1234@sha256:${"c".repeat(64)}` },
+    } });
+    docs.set(`gateways/shared-blue/assignments/${OWNER}`, sharedAssignment(4));
+    const allocate = () => request(app({ home: home.factory })).post(`/users/${OWNER}/isolated-gateway/allocate`).send(body);
+
+    await allocate().expect(409).expect((res) => expect(res.body.reason).toContain("is not prepared"));
+    await prepare().expect(200).expect((res) => expect(res.body.state).toBe("ready"));
+    await allocate().expect(200).expect((res) => expect(res.body.outcome).toBe("allocated"));
   });
 });

@@ -571,6 +571,173 @@ means the gateway is not owned by `ownerUid`, is already retired, is another
 generation, a stated fence no longer matches, or a pending telemetry
 operation or another retirement claim blocks it; the `reason` says which.
 
+### `POST /users/<id>/home/prepare`
+
+```json
+{
+  "leaseId": "lease-1", "generation": 3,
+  "sourceGatewayId": "shared-blue", "sourceAssignmentEpoch": 4,
+  "sizingKey": "pro", "sizingTier": "m"
+}
+```
+
+Prepares the user's virtual machine home for a `requested` lease, one step
+per call. The body is the allocation body without `parkedGateway`. The fleet
+controller re-reads the user and checks that the lease, its generation,
+source gateway and epoch, the user's sizing key and tier, and the user's
+interactive access all still match; otherwise it answers
+`precondition-failed`, "home migration activation authority changed". The
+sizing key's profile must run the gateway on a virtual machine.
+
+Each call reads where the user's home is, then does at most the next step of
+its migration: start a copy into a disk of the profile's home size, poll the
+copy, retry a failed copy, keep the original, release the copy helper, or
+attach the verified copy to the user's stopped computer. The original disk is
+kept. The answer is `200` with one of:
+
+- `{uid, state: "ready", effects}`: the home is on a disk that fits the
+  profile, or the user has no home yet. The user's home migration record is
+  now `complete` with `preparedFor: {leaseId, generation, sizingKey}`, which
+  `allocate` checks. A record prepared for another lease, generation or
+  sizing key does not count; a new migration replaces it. A repeat after
+  `allocate` moved that same lease on (`provisioning` through `returning`)
+  answers `ready` from the record alone, without a Compute Engine call.
+- `{uid, state: "in-progress", step, effects}`: a step ran or is under way.
+  The caller calls again.
+- `{uid, state: "in-progress", step, lastError: {code}, effects}`: Compute
+  Engine was unavailable (`http-429`, `http-5xx` or a network error such as
+  `econnreset`) during `step`. Earlier steps stay committed; the caller calls
+  again later.
+- `{uid, state: "blocked", reason, attempts}`: three copies failed. The
+  original is kept and an operator repairs the home; repeating the call
+  answers the same.
+
+`effects` lists each Compute Engine change the call made, as
+`{name, resource}`. Every call writes one journal entry: `completed` for a
+ready call that changed nothing, `partial` for one that changed something or
+is in progress, with the answer and `effects` in `partialOutcome.details`, and
+`failed` for an unavailable Compute Engine or a blocked home. A fence or owner
+refusal after a Compute Engine change still answers `409`, and its failed
+entry lists the effects made before it. Any other error answers `500` and is
+journaled as failed, with the effects made before it; that includes a
+migration still under way for a user whose home disk is gone, which needs an
+operator.
+
+The owner check runs again before every Compute Engine call and first in
+every write. A dry run checks the fences against the stored record, makes no
+Compute Engine call and writes nothing.
+
+The fleet controller mounts this route only when it runs gateways on virtual
+machines; without that configuration, like the pod reader rule below, the
+route does not exist.
+
+### `POST /users/<id>/isolated-gateway/allocate`
+
+```json
+{
+  "leaseId": "lease-1", "generation": 3,
+  "sourceGatewayId": "shared-blue", "sourceAssignmentEpoch": 4,
+  "sizingKey": "pro", "sizingTier": "m",
+  "parkedGateway": { "gatewayId": "alice-m-1a2b3c4d", "generation": 2 }
+}
+```
+
+Starts a `requested` lease on an isolated gateway. `sourceGatewayId` and
+`sourceAssignmentEpoch` are the shared gateway and serving assignment the
+caller read; `sizingKey` and `sizingTier` are the user's sizing key and its
+profile's tier. `parkedGateway`, when given, is the user's kept gateway.
+
+The fleet controller first reads the user's current sizing key, shared
+gateway and assignment epoch. When any differs from the request, it writes
+the current values onto the lease and answers
+`{uid, gatewayId: null, outcome: "refreshed"}`, allocating nothing; the
+caller reads the lease again and calls with the new values.
+
+Otherwise it checks the user's home. When the sizing key's profile runs the
+gateway on a virtual machine, allocation and resume both need a stored home
+preparation for this lease: the user's home migration record is `complete`
+and its `preparedFor` names the request's `leaseId`, `generation` and
+`sizingKey`. Without it the call answers `precondition-failed`, "home for
+<user> is not prepared for lease <lease> generation <n> sizing key <key>",
+before any Kubernetes effect, dry runs included. `POST /users/<id>/home/prepare`
+writes that record; a fleet controller without it refuses every user whose
+profile needs a virtual machine home. A record the fleet controller's own pass
+wrote before the handover names no lease, so the client prepares the home
+once for its first lease. The fleet controller's own pass prepares the home
+itself just before it allocates, and is not held to the stored record.
+Profiles that run as pods need no preparation.
+
+Then it allocates. A parked gateway of the same sizing key that runs
+the shared gateway's current artifact is resumed and the answer is
+`outcome: "resumed"`. A parked gateway that is obsolete is retired, with
+reason `parked-computer-replaced`, and a new gateway is allocated. A new
+gateway gets its Kubernetes auth secret, after the owner check and never in a
+dry run, then, in one transaction, its
+root and first release (from the shared gateway's live artifact) and the
+lease moved to `provisioning` with the gateway as its target. The answer is
+`{uid, gatewayId, outcome: "allocated"}`. The gateway id is derived from the
+lease, so a repeat answers the same gateway, without checking the home again.
+
+While Kubernetes brings the gateway up, the lease reads `provisioning`; the
+caller advances it once the activation operation starts.
+`precondition-failed` means the lease is not that requested lease, the
+user lost interactive access or the isolated sizing profile, the shared
+gateway is not a running or draining pool member on a converged release, or
+its release changed, the assignment
+is not serving at that epoch, a parked gateway changed or could not be
+retired, another gateway holds the derived id, or the home is not prepared.
+
+Known limit, as in the fleet controller's own pass: the auth secret is created
+before the allocation transaction. When the lease or its generation changes
+between the two, the transaction refuses and the secret stays, orphaned under
+an id the next lease no longer derives. A repeat for the same lease reuses
+it.
+
+### `POST /isolated-gateways/<gateway>/recover-unreachable`
+
+```json
+{
+  "ownerUid": "uid-alice", "leaseId": "lease-1", "generation": 3,
+  "authoritativeGatewayId": "shared-blue", "sourceUnavailable": true
+}
+```
+
+Retires the runtime of an isolated gateway that stopped answering, after the
+user is back on `authoritativeGatewayId` with a serving assignment. Without
+`sourceUnavailable`, a gateway whose runtime is ready again is refused;
+with it, the lease must be `returning` for reason `source-unavailable`.
+
+It runs in three steps: reserve, observe, complete.
+
+1. **Reserve.** In one transaction the fleet controller checks the fences,
+   records the recovery operation `builder-recover-<gateway>-g<generation>`
+   as pending, and pauses the gateway. If a fence fails it answers `409`
+   `precondition-failed` and writes nothing.
+2. **Observe.** It reads the gateway's pods from Kubernetes.
+3. **Complete.** With no pods left, it marks the operation succeeded with a
+   zero-pod receipt and answers
+   `{gatewayId, state: "recovered", operationId}`.
+
+When the pods cannot be observed (the read failed or reported an unknown
+status), the answer is `200`
+`{gatewayId, state: "waiting", reason: "observation-unknown", operationId}`;
+when pods remain it is the same with `reason: "pods-present"`. The
+reservation stays: the gateway stays paused and the operation pending. The
+caller repeats the same call later; the repeat re-checks the fences, keeps
+the same operation and observes again. The journal entry of a waiting call
+has outcome `partial`, with `partialOutcome.summary` `waiting: <reason>` and
+the state, reason and operation id in `details`; a recovered call's entry is
+`completed`. A fence that fails at completion,
+after the reservation, answers `409` `precondition-failed` with the
+reservation left in place.
+
+The fleet controller never answers `409` `observation-unknown`: it learns
+whether it can observe the pods only by reading them, which comes after the
+reservation. Without a pod reader it mounts none of these routes.
+
+A dry run runs the reservation transaction read-only, owner check included.
+It neither reserves nor reads the pods.
+
 ## `PATCH /users/<id>/placement`
 
 `{"managedBy": "cowboy", "expectedGatewayId": "<gateway>"}` releases an
