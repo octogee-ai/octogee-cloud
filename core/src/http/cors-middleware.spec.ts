@@ -12,6 +12,12 @@ function corsApp() {
 }
 
 describe("corsMiddleware", () => {
+  const ORIGINAL_LOCAL = process.env.OCTOGEE_ALLOW_LOCAL_ORIGINS;
+  afterEach(() => {
+    if (ORIGINAL_LOCAL === undefined) delete process.env.OCTOGEE_ALLOW_LOCAL_ORIGINS;
+    else process.env.OCTOGEE_ALLOW_LOCAL_ORIGINS = ORIGINAL_LOCAL;
+  });
+
   it("reads the allowed origins when an app builds it, and refuses to build without them", () => {
     vi.stubEnv("PUBLIC_APP_ORIGINS", "");
     try {
@@ -19,12 +25,6 @@ describe("corsMiddleware", () => {
     } finally {
       vi.unstubAllEnvs();
     }
-  });
-
-  const ORIGINAL_LOCAL = process.env.OCTOGEE_ALLOW_LOCAL_ORIGINS;
-  afterEach(() => {
-    if (ORIGINAL_LOCAL === undefined) delete process.env.OCTOGEE_ALLOW_LOCAL_ORIGINS;
-    else process.env.OCTOGEE_ALLOW_LOCAL_ORIGINS = ORIGINAL_LOCAL;
   });
 
   it("allows Octogee app origins regardless of the local-origins flag", async () => {
