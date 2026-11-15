@@ -4,6 +4,7 @@ import { defaultAgentChannelPurpose } from "@octogee/core/mattermost/agent-chann
 import { controlUiCommandSpec } from "@octogee/core/mattermost/control-ui-command";
 import { DEFAULT_AGENT_PAT_DESCRIPTION } from "@octogee/core/mattermost/default-agent-pat";
 import { USER_PAT_DESCRIPTION } from "@octogee/core/mattermost/user-pat";
+import { placeholderEmail } from "@octogee/core/placeholder-email";
 import {
   workspaceDefaultAgentChannelName,
   workspaceDefaultAgentMmUsername,
@@ -37,6 +38,7 @@ function setup() {
 }
 
 const userInput = (overrides: Partial<ChatUserInput> = {}): ChatUserInput => ({
+  uid: "u_123",
   slug: "lin",
   email: "lin@example.com",
   displayName: { first: "Lin", last: "Wu" },
@@ -49,9 +51,9 @@ async function converge(context: ReturnType<typeof setup>) {
   api.imageSources.set("https://images.invalid/lin.png", { status: 200, contentType: "image/png" });
   const { userId } = await host.ensureUser(userInput(), signal());
   const { teamId } = await host.ensureTeam({ slug: "lin", displayName: "Lin's Workshop", userId }, signal());
-  const channels = await host.ensureChannels({ slug: "lin", teamId, userId, agentChannel: true }, signal());
+  const channels = await host.ensureChannels({ slug: "lin", ownerFirstName: "Lin", teamId, userId, agentChannel: true }, signal());
   const { botUserId } = await host.ensureAgentBot(
-    { slug: "lin", teamId, agentChannelId: channels.agent, generalChannelId: channels.general },
+    { slug: "lin", ownerFirstName: "Lin", teamId, agentChannelId: channels.agent, generalChannelId: channels.general },
     signal(),
   );
   return { userId, teamId, channels, botUserId };
@@ -81,14 +83,15 @@ describe("Mattermost chat host adapter", () => {
 
     const agent = api.channels.get(channels.agent!)!;
     expect(agent).toMatchObject({ name: workspaceDefaultAgentChannelName("lin"), type: "P", display_name: "Coach" });
-    expect(agent.purpose).toBe(defaultAgentChannelPurpose("lin"));
+    expect(agent.purpose).toBe(defaultAgentChannelPurpose("Lin"));
     expect([...agent.members].sort()).toEqual([userId, admin.id, botUserId].sort());
     const general = api.channels.get(channels.general)!;
     expect(general).toMatchObject({ name: workspaceGeneralChannelName("lin"), type: "P", display_name: "General" });
     expect([...general.members].sort()).toEqual([userId, admin.id, botUserId].sort());
 
     const bot = api.users.get(botUserId)!;
-    expect(bot).toMatchObject({ username: workspaceDefaultAgentMmUsername("lin"), is_bot: true, first_name: "Octo" });
+    expect(bot).toMatchObject({ username: workspaceDefaultAgentMmUsername("lin"), is_bot: true, first_name: "Octo", bot_description: "Coach for Lin" });
+    expect(general.purpose).toBe("Lin's workspace — general discussion");
   });
 
   it("asks the chat host for exactly the names the legacy provisioning path uses", async () => {
@@ -121,9 +124,9 @@ describe("Mattermost chat host adapter", () => {
 
     await host.ensureUser(userInput({ knownUserId: first.userId }), signal());
     await host.ensureTeam({ slug: "lin", displayName: "Lin's Workshop", userId: first.userId, knownTeamId: first.teamId }, signal());
-    await host.ensureChannels({ slug: "lin", teamId: first.teamId, userId: first.userId, agentChannel: true, known: first.channels }, signal());
+    await host.ensureChannels({ slug: "lin", ownerFirstName: "Lin", teamId: first.teamId, userId: first.userId, agentChannel: true, known: first.channels }, signal());
     await host.ensureAgentBot(
-      { slug: "lin", teamId: first.teamId, agentChannelId: first.channels.agent, generalChannelId: first.channels.general, knownBotUserId: first.botUserId },
+      { slug: "lin", ownerFirstName: "Lin", teamId: first.teamId, agentChannelId: first.channels.agent, generalChannelId: first.channels.general, knownBotUserId: first.botUserId },
       signal(),
     );
 
@@ -173,11 +176,11 @@ describe("Mattermost chat host adapter", () => {
     expect([...api.teams.values()].filter((team) => team.name === "lin")).toHaveLength(1);
 
     const teamId = teams[0].teamId;
-    const channels = await Promise.all([1, 2].map(() => host.ensureChannels({ slug: "lin", teamId, userId, agentChannel: true }, signal())));
+    const channels = await Promise.all([1, 2].map(() => host.ensureChannels({ slug: "lin", ownerFirstName: "Lin", teamId, userId, agentChannel: true }, signal())));
     expect(channels[0]).toEqual(channels[1]);
     expect([...api.channels.values()].filter((channel) => channel.name.startsWith("lin-"))).toHaveLength(2);
 
-    const bots = await Promise.all([1, 2].map(() => host.ensureAgentBot({ slug: "lin", teamId }, signal())));
+    const bots = await Promise.all([1, 2].map(() => host.ensureAgentBot({ slug: "lin", ownerFirstName: "Lin", teamId }, signal())));
     expect(bots[0].botUserId).toBe(bots[1].botUserId);
     expect([...api.users.values()].filter((user) => user.username === "lin-coach")).toHaveLength(1);
   });
@@ -187,7 +190,7 @@ describe("Mattermost chat host adapter", () => {
     const user = api.addUser({ username: "lin" });
     const team = api.addTeam("lin");
     const archived = api.addChannel(team.id, "lin-coach", { delete_at: 5, type: "P" });
-    const channels = await host.ensureChannels({ slug: "lin", teamId: team.id, userId: user.id, agentChannel: true }, signal());
+    const channels = await host.ensureChannels({ slug: "lin", ownerFirstName: "Lin", teamId: team.id, userId: user.id, agentChannel: true }, signal());
     expect(channels.agent).toBe(archived.id);
     expect(archived.delete_at).toBe(0);
   });
@@ -209,6 +212,13 @@ describe("Mattermost chat host adapter", () => {
     const result = await host.ensureUser(userInput(), signal());
     expect(result.warnings).toEqual(["avatar upload: 413 from chat host"]);
     expect(logs).toContainEqual(expect.objectContaining({ level: "error", message: "[provisioning] chat avatar upload failed" }));
+  });
+
+  it("gives an account with no email the placeholder address of its uid and uploads no avatar", async () => {
+    const { api, host } = setup();
+    const { userId } = await host.ensureUser(userInput({ email: "", avatarUrl: null }), signal());
+    expect(api.users.get(userId)?.email).toBe(placeholderEmail("u_123"));
+    expect(api.avatars.has(userId)).toBe(false);
   });
 
   it("uses the email's avatar image when the spec carries no avatar url", async () => {
@@ -252,7 +262,7 @@ describe("Mattermost chat host adapter", () => {
     const user = api.addUser({ username: "lin" });
     const team = api.addTeam("lin");
     api.fail("POST", /\/members$/, 500);
-    await expect(host.ensureChannels({ slug: "lin", teamId: team.id, userId: user.id, agentChannel: false }, signal()))
+    await expect(host.ensureChannels({ slug: "lin", ownerFirstName: "Lin", teamId: team.id, userId: user.id, agentChannel: false }, signal()))
       .rejects.toMatchObject({ kind: "transient" });
   });
 

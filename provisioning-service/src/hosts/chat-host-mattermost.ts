@@ -5,7 +5,7 @@ import { userChannelMembers, type UserChannelKind } from "@octogee/core/mattermo
 import { controlUiCommandSpec } from "@octogee/core/mattermost/control-ui-command";
 import { DEFAULT_AGENT_PAT_DESCRIPTION } from "@octogee/core/mattermost/default-agent-pat";
 import { USER_PAT_DESCRIPTION } from "@octogee/core/mattermost/user-pat";
-import { isPlaceholderEmail } from "@octogee/core/placeholder-email";
+import { isPlaceholderEmail, placeholderEmail } from "@octogee/core/placeholder-email";
 import { WORKSPACE_CHANNEL_DISPLAY_NAMES } from "@octogee/shared/types/display-names";
 import {
   workspaceDefaultAgentChannelName,
@@ -80,6 +80,10 @@ export function gravatarUrl(email: string): string {
   // eslint-disable-next-line sonarjs/hashing -- the avatar service addresses images by md5(email)
   const hash = createHash("md5").update(email.toLowerCase().trim()).digest("hex");
   return `https://gravatar.com/avatar/${hash}?d=identicon&s=200`;
+}
+
+function accountEmail(input: ChatUserInput): string {
+  return input.email || placeholderEmail(input.uid);
 }
 
 function avatarSource(input: ChatUserInput): string | null {
@@ -183,7 +187,7 @@ export function createMattermostChatHost(config: MattermostChatHostConfig): Chat
     } catch (error) {
       warning = `avatar upload: ${error instanceof Error ? error.message : String(error)}`;
     }
-    log.error("[provisioning] chat avatar upload failed", { slug: input.slug, chatUserId: userId, warning });
+    log.error("[provisioning] chat avatar upload failed", { uid: input.uid, chatUserId: userId, warning });
     return [warning];
   }
 
@@ -192,7 +196,7 @@ export function createMattermostChatHost(config: MattermostChatHostConfig): Chat
   }
 
   async function adoptUserByEmail(input: ChatUserInput, signal: AbortSignal): Promise<MmRecord | null> {
-    const user = await api.find("find chat user by email", `/users/email/${encodeURIComponent(input.email)}`, signal);
+    const user = await api.find("find chat user by email", `/users/email/${encodeURIComponent(accountEmail(input))}`, signal);
     if (!user) return null;
     if (!isLive(user)) {
       await api.expect("reactivate chat user", "PUT", `/users/${user.id}/active`, signal, { active: true });
@@ -202,7 +206,7 @@ export function createMattermostChatHost(config: MattermostChatHostConfig): Chat
       first_name: input.displayName.first,
       last_name: input.displayName.last,
     });
-    log.info("[provisioning] chat user adopted by email", { slug: input.slug, chatUserId: user.id });
+    log.info("[provisioning] chat user adopted by email", { uid: input.uid, chatUserId: user.id });
     return user;
   }
 
@@ -216,7 +220,7 @@ export function createMattermostChatHost(config: MattermostChatHostConfig): Chat
       ({ record: user } = await createOrAdopt(
         "create chat user",
         () => api.request("create chat user", "POST", "/users", signal, {
-          email: input.email,
+          email: accountEmail(input),
           username: input.slug,
           password: generatePassword(),
           first_name: input.displayName.first,
@@ -328,7 +332,7 @@ export function createMattermostChatHost(config: MattermostChatHostConfig): Chat
     kind: Extract<UserChannelKind, "coach" | "general">,
     signal: AbortSignal,
   ): Promise<string> {
-    const ownerLabel = input.slug;
+    const ownerLabel = input.ownerFirstName || input.slug;
     const spec = kind === "coach"
       ? {
         name: workspaceDefaultAgentChannelName(input.slug),
@@ -391,7 +395,7 @@ export function createMattermostChatHost(config: MattermostChatHostConfig): Chat
         () => api.request("create agent bot", "POST", "/bots", signal, {
           username,
           display_name: AGENT_BOT_DISPLAY_NAME,
-          description: `Coach for ${input.slug}`,
+          description: `Coach for ${input.ownerFirstName || input.slug}`,
         }),
         () => findUserByName(username, signal),
         (json) => {
