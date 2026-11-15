@@ -208,7 +208,7 @@ controller clears the yield in the same write.
 |---|---|---|
 | `placement-owner` | The client does not own placement, or the fleet controller has not yielded. | It does not act. It reads the switch and the yield again on its next tick. |
 | `precondition-failed` | A fact the client acted on has changed, such as an epoch, a release, the pool, a lease or the target's load. `error` names it. | It logs the refusal and decides again from a fresh read on its next tick. It never retries within the same tick. |
-| `observation-unknown` | The fleet controller could not read the gateway's Kubernetes status. Nothing changed. | It tries again on a later tick. |
+| `observation-unknown` | The fleet controller has no usable Kubernetes observation of the gateway: none, an unknown status, a malformed one, or one older than twice the observer's refresh interval. Nothing changed. | It tries again on a later tick. |
 
 A `409` that carries `auditId` and no `code` is an `Idempotency-Key` replay. It
 answers with the audit of the earlier call instead of acting twice. With
@@ -232,8 +232,24 @@ cap. To leave room for the user being moved, a client with a cap of `N` sends
 ```
 
 Recovers a user off an unavailable shared gateway onto a peer, keeping the
-user's home. Operation `recover-shared-<uid>-<source>-<epoch>`. In one
-transaction, the verb checks that:
+user's home. Operation `recover-shared-<uid>-<source>-<epoch>`.
+
+The client's view that the source is unavailable is advisory. Right before the
+transaction, the fleet controller reads the source's Kubernetes status itself
+and answers one of three ways:
+
+| Source observation | Answer |
+|---|---|
+| `not-ready` or `missing`, and fresh | The verb goes on to the checks below. |
+| `ready` | `precondition-failed`, naming the status. Nothing changes, however the other checks stand. |
+| none, `unknown`, malformed, or older than twice the observer's refresh interval | `observation-unknown`. Nothing changes. |
+
+A dry run makes the same read and gives the same answers. The server refuses
+only a source that is observably healthy or unknown. Any grace period before an
+unhealthy gateway counts as unavailable stays the client's decision: the client
+waits it out before it calls.
+
+In one transaction, the verb then checks that:
 
 - the source assignment is serving at `expectedSourceEpoch`;
 - the target is in the shared pool, running its live release, serving, ready,
@@ -244,7 +260,7 @@ transaction, the verb checks that:
 
 It then moves the assignment to the target at epoch `+1` and records a
 succeeded `migrate-user` operation. Answers
-`{"operationId", "outcome": "committed" | "already-committed"}`.
+`{"operationId", "outcome": "committed" | "already-committed", "sourceKubernetesStatus"}`.
 
 ### `POST /users/<uid>/runtime-reset`
 
@@ -274,7 +290,8 @@ epoch. Answers `{"operationId", "outcome"}`.
 Supersedes the roll of a shared peer when the roll has no live target and its
 source gateway is gone. The fleet controller reads the source's Kubernetes
 status itself, right before the transaction. The client's own view only tells
-it when to ask. An unknown status answers `observation-unknown`. In the
+it when to ask. An observation that is not usable, as defined for
+`observation-unknown` above, answers `observation-unknown`. In the
 transaction, the verb checks that:
 
 - the source and the target are running shared pool members;

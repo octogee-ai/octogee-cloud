@@ -18,12 +18,18 @@ const TARGET = "shared-b";
 const OWNED = { placementAutomationOwner: "client", placementAutomationYieldedAt: NOW - 60_000 };
 const PAYLOAD = { imageRepository: "registry.example/gateway", imageTag: "abc1234" };
 
+const OBSERVATION_MAX_AGE_MS = 240_000;
+const MISSING: GatewayKubernetesObservation = { status: "missing", totalPods: 0, readyPods: 0, observedAt: NOW - 1_000 };
+const NOT_READY: GatewayKubernetesObservation = { status: "not-ready", totalPods: 1, readyPods: 0, observedAt: NOW - 1_000 };
+const READY: GatewayKubernetesObservation = { status: "ready", totalPods: 1, readyPods: 1, observedAt: NOW - 1_000 };
+
 let observation: GatewayKubernetesObservation | null = null;
 
 const capabilities: AdminPlacementSharedCapabilities = {
   observeGatewayKubernetes: async () => observation,
   platformArtifact: PAYLOAD,
   operationJournalRetentionMs: 1_000,
+  kubernetesObservationMaxAgeMs: OBSERVATION_MAX_AGE_MS,
   operationFailureIsTransient: (error) => error.startsWith("transient:"),
   gatewayStartupUnavailable: (error) => error === "gateway starting; retry shortly",
   sourceRecoveryForwardRetryable: () => false,
@@ -155,19 +161,74 @@ const recoverBody = (overrides: Data = {}) => ({ slug: SLUG, toGatewayId: TARGET
 const recover = (body: Data = recoverBody(), query = "") =>
   request(app()).post(`/shared-gateways/${SOURCE}/users/${UID}/recover${query}`).send(body);
 
+const UNUSABLE_OBSERVATIONS: [string, GatewayKubernetesObservation | null][] = [
+  ["absent", null],
+  ["unknown", { status: "unknown", totalPods: 0, readyPods: 0, observedAt: NOW }],
+  ["older than the freshness bound", { ...MISSING, observedAt: NOW - OBSERVATION_MAX_AGE_MS - 1 }],
+  ["from the future", { ...MISSING, observedAt: NOW + 1 }],
+  ["of an unrecognised status", { ...MISSING, status: "gone" } as unknown as GatewayKubernetesObservation],
+  ["without pod counts", { ...MISSING, totalPods: "0" } as unknown as GatewayKubernetesObservation],
+];
+
 describe("POST /shared-gateways/:id/users/:uid/recover", () => {
+  beforeEach(() => {
+    observation = MISSING;
+  });
+
   it("moves the user's assignment to the target under the same operation id the in-process pass uses", async () => {
     seed(pool());
 
     const res = await recover().expect(200);
 
-    expect(res.body).toEqual({ operationId: RECOVERY, outcome: "committed" });
+    expect(res.body).toEqual({ operationId: RECOVERY, outcome: "committed", sourceKubernetesStatus: "missing" });
     expect(records.has(`gateways/${SOURCE}/assignments/${UID}`)).toBe(false);
     expect(records.get(`gateways/${TARGET}/assignments/${UID}`)).toMatchObject({ epoch: 4, source: "repair", updatedByOperationId: RECOVERY });
     expect(records.get(`glmOperations/${RECOVERY}`)).toMatchObject({
       kind: "migrate-user", status: "succeeded", createdBy: "glm-controller-placement-policy",
     });
     expect(audits()).toEqual([expect.objectContaining({ status: "completed" })]);
+  });
+
+  it("recovers from a source the server observes as not ready", async () => {
+    seed(pool());
+    observation = NOT_READY;
+
+    const res = await recover().expect(200);
+
+    expect(res.body).toEqual({ operationId: RECOVERY, outcome: "committed", sourceKubernetesStatus: "not-ready" });
+    expect(records.get(`gateways/${TARGET}/assignments/${UID}`)).toMatchObject({ updatedByOperationId: RECOVERY });
+  });
+
+  it("never recovers from a source the server observes as ready, even when every other fence holds", async () => {
+    seed(pool());
+    observation = READY;
+
+    const res = await recover().expect(409);
+
+    expect(res.body).toEqual({ code: "precondition-failed", error: `source ${SOURCE} is observed ready by Kubernetes` });
+    expect(fleetEvents()).toEqual([]);
+    expect(records.has(`gateways/${SOURCE}/assignments/${UID}`)).toBe(true);
+  });
+
+  it.each(UNUSABLE_OBSERVATIONS)("answers observation-unknown and writes nothing when the source observation is %s", async (_, unusable) => {
+    seed(pool());
+    observation = unusable;
+
+    const res = await recover().expect(409);
+
+    expect(res.body).toEqual({ code: "observation-unknown", error: `the Kubernetes status of ${SOURCE} is unknown` });
+    expect(fleetEvents()).toEqual([]);
+  });
+
+  it("answers a dry run with the same Kubernetes refusals, writing nothing", async () => {
+    seed(pool());
+    observation = READY;
+    const ready = await recover(recoverBody(), "?dryRun=true").expect(409);
+    observation = null;
+    const unknown = await recover(recoverBody(), "?dryRun=true").expect(409);
+
+    expect([ready.body.code, unknown.body.code]).toEqual(["precondition-failed", "observation-unknown"]);
+    expect(records.events).toEqual([]);
   });
 
   it("answers a repeat after the commit as already committed and writes nothing", async () => {
@@ -177,7 +238,7 @@ describe("POST /shared-gateways/:id/users/:uid/recover", () => {
 
     const res = await recover().expect(200);
 
-    expect(res.body).toEqual({ operationId: RECOVERY, outcome: "already-committed" });
+    expect(res.body).toEqual({ operationId: RECOVERY, outcome: "already-committed", sourceKubernetesStatus: "missing" });
     expect(fleetEvents()).toHaveLength(before);
   });
 
@@ -385,7 +446,6 @@ const ROLL_BODY = { targetGatewayId: TARGET, expectedLiveRelease: 1, expectedDes
 const ROLL_OPERATION = `recover-shared-roll-${SOURCE}-to-${TARGET}-r2-to-r1`;
 const rollRecovery = (body: Data = ROLL_BODY, query = "") =>
   request(app()).post(`/shared-gateways/${SOURCE}/roll-recovery${query}`).send(body);
-const MISSING: GatewayKubernetesObservation = { status: "missing", totalPods: 0, readyPods: 0, observedAt: NOW - 1_000 };
 
 function rollingSeed(): Record<string, Data> {
   return {
@@ -439,6 +499,16 @@ describe("POST /shared-gateways/:id/roll-recovery", () => {
     const res = await rollRecovery().expect(409);
 
     expect(res.body).toEqual({ code: "observation-unknown", error: `the Kubernetes status of ${SOURCE} is unknown` });
+    expect(fleetEvents()).toEqual([]);
+  });
+
+  it("answers observation-unknown when the server's observation is older than the freshness bound", async () => {
+    seed(rollingSeed());
+    observation = { ...MISSING, observedAt: NOW - OBSERVATION_MAX_AGE_MS - 1 };
+
+    const res = await rollRecovery().expect(409);
+
+    expect(res.body.code).toBe("observation-unknown");
     expect(fleetEvents()).toEqual([]);
   });
 

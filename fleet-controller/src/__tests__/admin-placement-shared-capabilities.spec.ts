@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { adminPlacementSharedCapabilities } from "../admin-placement-shared-capabilities.js";
-import type { GatewayPodDiagnostics } from "../gateway-kubernetes-observation.js";
+import { KUBERNETES_OBSERVATION_REFRESH_MS, type GatewayPodDiagnostics } from "../gateway-kubernetes-observation.js";
 
 const NOW = 1_762_500_000_000;
 
@@ -44,5 +44,11 @@ describe("adminPlacementSharedCapabilities", () => {
     expect(capabilities.gatewayStartupUnavailable("gateway starting; retry shortly")).toBe(true);
     expect(capabilities.gatewayStartupUnavailable("target rejected the workspace")).toBe(false);
     expect(capabilities.platformArtifact).toBeNull();
+  });
+
+  it("treats an observation as usable for twice the observer's refresh interval", () => {
+    const { capabilities } = capabilitiesReading({ status: "ok", totalPods: 1, readyPods: 1 });
+
+    expect(capabilities.kubernetesObservationMaxAgeMs).toBe(2 * KUBERNETES_OBSERVATION_REFRESH_MS);
   });
 });

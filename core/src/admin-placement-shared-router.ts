@@ -32,6 +32,7 @@ export interface AdminPlacementSharedCapabilities extends PlacementMigrationClas
   observeGatewayKubernetes(gatewayId: string): Promise<GatewayKubernetesObservation | null>;
   platformArtifact: ReleasePayload | null;
   operationJournalRetentionMs: number;
+  kubernetesObservationMaxAgeMs: number;
 }
 
 export interface AdminPlacementSharedRouterDeps extends AdminPlacementSharedCapabilities {
@@ -147,6 +148,28 @@ async function sharedGatewayIdsIn(transaction: PlatformStateTransaction): Promis
   return [...pool.sharedGatewayIds];
 }
 
+const OBSERVED_STATUSES: readonly string[] = ["ready", "not-ready", "missing"];
+
+function usableObservation(observation: GatewayKubernetesObservation, now: number, maxAgeMs: number): boolean {
+  if (typeof observation !== "object") return false;
+  if (!OBSERVED_STATUSES.includes(observation.status)) return false;
+  if (!Number.isSafeInteger(observation.totalPods) || !Number.isSafeInteger(observation.readyPods)) return false;
+  if (!Number.isSafeInteger(observation.observedAt)) return false;
+  return observation.observedAt <= now && now - observation.observedAt <= maxAgeMs;
+}
+
+async function observeKnownKubernetes(
+  deps: AdminPlacementSharedRouterDeps,
+  gatewayId: string,
+): Promise<GatewayKubernetesObservation> {
+  const observation = await deps.observeGatewayKubernetes(gatewayId);
+  const now = (deps.now ?? Date.now)();
+  if (observation === null || !usableObservation(observation, now, deps.kubernetesObservationMaxAgeMs)) {
+    throw new ObservationUnknown(`the Kubernetes status of ${gatewayId} is unknown`);
+  }
+  return observation;
+}
+
 interface Verb<T> {
   label: string;
   apply: (transaction: PlatformStateTransaction, now: number) => Promise<T>;
@@ -181,7 +204,7 @@ interface RouteIntent<T> {
   verb: () => Promise<Verb<T>>;
 }
 
-function recoverSharedUserIntent(req: Request): RouteIntent<unknown> {
+function recoverSharedUserIntent(req: Request, deps: AdminPlacementSharedRouterDeps): RouteIntent<unknown> {
   const body = bodyOf(req);
   const fromGatewayId = req.params.id as string;
   const uid = req.params.uid as string;
@@ -197,30 +220,36 @@ function recoverSharedUserIntent(req: Request): RouteIntent<unknown> {
     target: { gatewayId: fromGatewayId, uid },
     preActionStatus: { expectedSourceEpoch, toGatewayId, expectedTargetUsersAtMost },
     mutation: { kind: "recover-shared-user", operationId, uid, fromGatewayId, toGatewayId, expectedSourceEpoch, expectedTargetUsersAtMost },
-    verb: async () => ({
-      label: "admin.placement.recover-shared-user",
-      apply: async (transaction, now) => {
-        const sharedGatewayIds = await sharedGatewayIdsIn(transaction);
-        await assertTargetUsersAtMost(transaction, toGatewayId, uid, expectedTargetUsersAtMost);
-        const outcome = await commitUnavailableGatewayRecoveryInTransaction(transaction, {
-          operationId,
-          kind: "recover-shared-customer",
-          uid,
-          slug,
-          fromGatewayId,
-          toGatewayId,
-          expectedSourceEpoch,
-          sharedGatewayIds,
-          targetHeartbeatMaxAgeMs: GATEWAY_UNREACHABLE_AFTER_MS,
-          validateTarget: async ({ targetGatewayId }) => {
-            if (!sharedGatewayIds.includes(targetGatewayId)) {
-              throw new PreconditionFailed(`target ${targetGatewayId} is not in the shared gateway pool`);
-            }
-          },
-        }, now);
-        return { operationId, outcome };
-      },
-    }),
+    verb: async () => {
+      const sourceKubernetes = await observeKnownKubernetes(deps, fromGatewayId);
+      if (sourceKubernetes.status === "ready") {
+        throw new PreconditionFailed(`source ${fromGatewayId} is observed ready by Kubernetes`);
+      }
+      return {
+        label: "admin.placement.recover-shared-user",
+        apply: async (transaction, now) => {
+          const sharedGatewayIds = await sharedGatewayIdsIn(transaction);
+          await assertTargetUsersAtMost(transaction, toGatewayId, uid, expectedTargetUsersAtMost);
+          const outcome = await commitUnavailableGatewayRecoveryInTransaction(transaction, {
+            operationId,
+            kind: "recover-shared-customer",
+            uid,
+            slug,
+            fromGatewayId,
+            toGatewayId,
+            expectedSourceEpoch,
+            sharedGatewayIds,
+            targetHeartbeatMaxAgeMs: GATEWAY_UNREACHABLE_AFTER_MS,
+            validateTarget: async ({ targetGatewayId }) => {
+              if (!sharedGatewayIds.includes(targetGatewayId)) {
+                throw new PreconditionFailed(`target ${targetGatewayId} is not in the shared gateway pool`);
+              }
+            },
+          }, now);
+          return { operationId, outcome, sourceKubernetesStatus: sourceKubernetes.status };
+        },
+      };
+    },
   };
 }
 
@@ -281,10 +310,7 @@ function supersedeRollingSharedGatewayIntent(req: Request, deps: AdminPlacementS
     },
     mutation: { kind: "supersede-rolling-shared-gateway", ...input },
     verb: async () => {
-      const sourceKubernetes = await deps.observeGatewayKubernetes(input.sourceGatewayId);
-      if (sourceKubernetes === null || sourceKubernetes.status === "unknown") {
-        throw new ObservationUnknown(`the Kubernetes status of ${input.sourceGatewayId} is unknown`);
-      }
+      const sourceKubernetes = await observeKnownKubernetes(deps, input.sourceGatewayId);
       return {
         label: "admin.placement.supersede-rolling-shared-gateway",
         apply: async (transaction, now) => {
