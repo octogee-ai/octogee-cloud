@@ -84,6 +84,24 @@ describe("releasing git key holders that are gone", () => {
     expect(harness.keys.releaseGitKeyHolder).not.toHaveBeenCalled();
   });
 
+  it("starts a reappeared holder's minimum absence again when it goes missing later", async () => {
+    const harness = setup();
+
+    await harness.pass();
+    harness.advance(MIN_ABSENCE_MS);
+    harness.setLive(["shared-0/pod-live", "shared-0/pod-gone"]);
+    await harness.pass();
+    harness.setLive(["shared-0/pod-live"]);
+    await harness.pass();
+    harness.advance(60_000);
+    await harness.pass();
+    expect(harness.keys.releaseGitKeyHolder).not.toHaveBeenCalled();
+
+    harness.advance(MIN_ABSENCE_MS);
+    await harness.pass();
+    expect(harness.keys.releaseGitKeyHolder.mock.calls).toEqual([["shared-0/pod-gone"]]);
+  });
+
   it("releases nothing and lists no holders when the live set cannot be read completely, and does not count that pass", async () => {
     const harness = setup();
 

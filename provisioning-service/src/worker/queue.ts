@@ -10,6 +10,7 @@ import type {
 import { LeaseLostError } from "../hosts/credential-store.js";
 import type { HostErrorKind } from "../hosts/host-error.js";
 import type { Logger } from "../logger.js";
+import type { WorkSnapshot } from "../metrics.js";
 import type { Database } from "../store/database.js";
 
 export const LEASE_MS = 60_000;
@@ -97,9 +98,11 @@ export class WorkQueue {
     const t = this.db.table;
     const { rows } = await client.query<{ uid: string }>(
       `SELECT w.uid FROM ${t("provisioning_work")} w JOIN ${t("provisionings")} p ON p.uid = w.uid
-        WHERE w.state = 'parked' AND EXISTS (
-          SELECT 1 FROM ${t("git_keys")} k WHERE k.uid = w.uid AND (k.retry_after IS NULL OR k.retry_after <= now())
-            AND (k.deletion_requested_at IS NOT NULL OR (k.put_sequence > k.attempted_put_sequence AND p.outputs->'git'->>'owner' IS NOT NULL)))
+        WHERE w.state = 'parked' AND (
+          EXISTS (SELECT 1 FROM ${t("git_keys")} k WHERE k.uid = w.uid AND (k.retry_after IS NULL OR k.retry_after <= now())
+            AND (k.deletion_requested_at IS NOT NULL OR k.put_sequence > k.observed_put_sequence))
+          OR (w.due_at <= now() AND p.outputs->'git'->>'owner' IS NOT NULL
+            AND EXISTS (SELECT 1 FROM ${t("git_keys")} k WHERE k.uid = w.uid AND k.deletion_requested_at IS NULL)))
         ORDER BY w.uid LIMIT $1 FOR UPDATE OF w SKIP LOCKED`, [limit]);
     const claims: Claim[] = [];
     for (const row of rows) {
@@ -126,11 +129,13 @@ export class WorkQueue {
   async finishParkedKeys(uid: string, leaseToken: string): Promise<FinishResult> {
     const t = this.db.table;
     return this.fenced(uid, leaseToken, async (client, bumpVersion) => {
+      const observeAfterMs = Math.min(this.resyncAfterMs, await this.nextKeyRetryMs(client, uid) ?? this.resyncAfterMs);
       const { rows } = await client.query<{ state: ProvisioningWorkState; attempts: number }>(
         `UPDATE ${t("provisioning_work")}
             SET state = CASE WHEN dirty THEN 'queued' ELSE 'parked' END, attempts = CASE WHEN dirty THEN 0 ELSE attempts END,
-                due_at = now(), dirty = false, keys_only = false, lease_holder = NULL, lease_token = NULL, lease_expires_at = NULL
-          WHERE uid = $1 RETURNING state, attempts`, [uid]);
+                due_at = CASE WHEN dirty THEN now() ELSE now() + make_interval(secs => $2) END,
+                dirty = false, keys_only = false, lease_holder = NULL, lease_token = NULL, lease_expires_at = NULL
+          WHERE uid = $1 RETURNING state, attempts`, [uid, observeAfterMs / 1_000]);
       const version = await bumpVersion();
       await client.query(`UPDATE ${t("provisionings")} SET resource_version = $2 WHERE uid = $1`, [uid, version.toString()]);
       return rows[0];
@@ -230,7 +235,7 @@ export class WorkQueue {
       `DELETE FROM ${t("attempts")} WHERE uid = $1 AND id NOT IN (SELECT id FROM ${t("attempts")} WHERE uid = $1 ORDER BY id DESC LIMIT 50)`, [uid]);
   }
 
-  async snapshot(): Promise<{ states: Record<ProvisioningWorkState, number>; oldestDueSeconds: number; generationLagSeconds: number; expiredLeases: number }> {
+  async snapshot(): Promise<WorkSnapshot & { expiredLeases: number }> {
     const t = this.db.table;
     const { rows } = await this.db.pool.query<{ state: ProvisioningWorkState; count: string }>(
       `SELECT state, count(*) AS count FROM ${t("provisioning_work")} GROUP BY state`);
@@ -243,6 +248,12 @@ export class WorkQueue {
             WHERE p.observed_generation < p.generation) AS lag,
          (SELECT count(*) FROM ${t("provisioning_work")} WHERE state = 'running' AND lease_expires_at < now()) AS expired`);
     const row = aggregate.rows[0];
-    return { states, oldestDueSeconds: row.oldest_due ?? 0, generationLagSeconds: row.lag ?? 0, expiredLeases: Number(row.expired) };
+    const keys = await this.db.pool.query<{ status: string; reason: string; count: string }>(
+      `SELECT c->>'status' AS status, c->>'reason' AS reason, count(*) AS count
+         FROM ${t("git_keys")} k CROSS JOIN LATERAL jsonb_array_elements(k.conditions) c
+        WHERE k.deletion_requested_at IS NULL AND c->>'type' = 'Registered'
+        GROUP BY 1, 2 ORDER BY 1, 2`);
+    const gitKeys = keys.rows.map((key) => ({ status: key.status, reason: key.reason, count: Number(key.count) }));
+    return { states, gitKeys, oldestDueSeconds: row.oldest_due ?? 0, generationLagSeconds: row.lag ?? 0, expiredLeases: Number(row.expired) };
   }
 }

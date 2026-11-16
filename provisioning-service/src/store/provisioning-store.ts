@@ -59,7 +59,6 @@ interface GitKeyRow {
   retry_after: Date | null;
   put_sequence: number;
   observed_put_sequence: number;
-  attempted_put_sequence: number;
 }
 
 export type WriteOutcome = "created" | "changed" | "unchanged";

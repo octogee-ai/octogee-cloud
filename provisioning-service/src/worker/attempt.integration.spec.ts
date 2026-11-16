@@ -3,6 +3,7 @@ import { createHarness, dsn, spec, TOKENS, untilSettled, type Harness } from "..
 
 const KEY_A = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA gateway-a";
 const KEY_B = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB gateway-a";
+const KEY_C = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC gateway-a";
 
 describe.skipIf(!dsn)("a provisioning attempt", { timeout: 30_000 }, () => {
   let harness: Harness;
@@ -123,7 +124,7 @@ describe.skipIf(!dsn)("a provisioning attempt", { timeout: 30_000 }, () => {
     await harness.request("PUT", "/v1/users/u1/provisioning", { body: { spec: spec("lin") } });
     await harness.request("PUT", "/v1/users/u2/provisioning", { body: { spec: spec("mei") } });
     await harness.request("PUT", "/v1/users/u1/git-keys/gateway-a%2Fpod-a", { token: TOKENS.platformApi, body: { spec: { publicKey: KEY_A } } });
-    await harness.request("PUT", "/v1/users/u2/git-keys/gateway-a%2Fpod-c", { token: TOKENS.platformApi, body: { spec: { publicKey: KEY_A } } });
+    await harness.request("PUT", "/v1/users/u2/git-keys/gateway-a%2Fpod-c", { token: TOKENS.platformApi, body: { spec: { publicKey: KEY_C } } });
     await harness.request("PUT", "/v1/users/u1/git-keys/gateway-b%2Fpod-b", { token: TOKENS.platformApi, body: { spec: { publicKey: KEY_B } } });
     await untilSettled(harness);
 
@@ -464,6 +465,154 @@ describe.skipIf(!dsn)("a provisioning attempt", { timeout: 30_000 }, () => {
     expect(registered(await readKey("u1", "gateway-a/pod-a"), put.body.putSequence)).toBe(true);
   });
 
+  const table = (name: string) => harness.service.db.table(name);
+  const parkUser = () => harness.service.db.pool.query(`UPDATE ${table("provisioning_work")} SET state = 'parked', attempts = 12, last_error_reason = 'ChatUserFailed' WHERE uid = 'u1'`);
+  const backoffPasses = () => harness.service.db.pool.query(
+    `UPDATE ${table("git_keys")} SET retry_after = now() - interval '1 second' WHERE retry_after IS NOT NULL; UPDATE ${table("provisioning_work")} SET due_at = now() - interval '1 second'`);
+
+  it("reports a row it wrote registered as held elsewhere when a later row of the same attempt adopted its key", async () => {
+    await harness.request("PUT", "/v1/users/u1/provisioning", { body: { spec: spec("lin") } });
+    await putKey("u1", "gateway-a/pod-a", KEY_A);
+    await putKey("u1", "gateway-a/pod-b", KEY_A);
+    await untilSettled(harness);
+
+    expect(harness.git.keys.get("lin")).toEqual([{ publicKey: KEY_A, holder: "gateway-a/pod-b" }]);
+    expect(condition(await readKey("u1", "gateway-a/pod-a"))).toMatchObject({ status: "False", reason: "GitKeyHeldElsewhere" });
+    expect(condition(await readKey("u1", "gateway-a/pod-b"))).toMatchObject({ status: "True" });
+  });
+
+  it("refuses a put for a parked user whose git account does not exist yet, once, with GitNotReady", async () => {
+    harness.git.host.failNext("ensureOwner", "terminal");
+    await harness.request("PUT", "/v1/users/u1/provisioning", { body: { spec: spec("lin") } });
+    await untilSettled(harness);
+    expect((await provisioned("u1")).status.work.state).toBe("parked");
+
+    const put = await putKey("u1", "gateway-a/pod-a", KEY_A);
+    await untilSettled(harness);
+
+    const key = await readKey("u1", "gateway-a/pod-a");
+    expect(condition(key)).toMatchObject({ status: "False", reason: "GitNotReady" });
+    expect(key.status.observedPutSequence).toBe(put.body.putSequence);
+    expect(harness.log.lines.some((line) => line.message.startsWith("the user's git account does not exist yet"))).toBe(true);
+    expect(await harness.service.worker.tick()).toBe(0);
+    await harness.service.db.pool.query(`UPDATE ${table("provisioning_work")} SET due_at = now() - interval '1 second'`);
+    expect(await harness.service.worker.tick()).toBe(0);
+  });
+
+  it("does not advance the observed put sequence when registering the put key fails transiently, in its register or its host listing", async () => {
+    await harness.request("PUT", "/v1/users/u1/provisioning", { body: { spec: spec("lin") } });
+    await untilSettled(harness);
+    harness.git.host.failNext("registerKey", "transient");
+    const first = await putKey("u1", "gateway-a/pod-a", KEY_A);
+    await untilSettled(harness);
+    expect((await readKey("u1", "gateway-a/pod-a")).status.observedPutSequence).toBeLessThan(first.body.putSequence);
+
+    harness.git.host.failNext("listKeys", "transient");
+    const second = await putKey("u1", "gateway-a/pod-b", KEY_B);
+    await untilSettled(harness);
+    expect((await readKey("u1", "gateway-a/pod-b")).status.observedPutSequence).toBeLessThan(second.body.putSequence);
+  });
+
+  it("keeps a parked pass's put that landed during the pass due when the pass's register fails", async () => {
+    await harness.request("PUT", "/v1/users/u1/provisioning", { body: { spec: spec("lin") } });
+    await untilSettled(harness);
+    await parkUser();
+    harness.git.host.failNext("registerKey", "transient");
+    const list = harness.git.listKeys.bind(harness.git);
+    let late: number | null = null;
+    vi.spyOn(harness.git, "listKeys").mockImplementation(async (...args) => {
+      const listed = await list(...args);
+      if (late === null) late = (await putKey("u1", "gateway-a/pod-a", KEY_A)).body.putSequence;
+      return listed;
+    });
+
+    await putKey("u1", "gateway-a/pod-a", KEY_A);
+    await untilSettled(harness);
+
+    expect(harness.git.keys.get("lin")).toEqual([{ publicKey: KEY_A, holder: "gateway-a/pod-a" }]);
+    expect(registered(await readKey("u1", "gateway-a/pod-a"), late!)).toBe(true);
+  });
+
+  it("observes a parked user's registered row and reports a key deleted from the git host", async () => {
+    await harness.request("PUT", "/v1/users/u1/provisioning", { body: { spec: spec("lin") } });
+    await putKey("u1", "gateway-a/pod-a", KEY_A);
+    await untilSettled(harness);
+    await parkUser();
+    harness.git.keys.set("lin", []);
+
+    await harness.service.db.pool.query(`UPDATE ${table("provisioning_work")} SET due_at = now() - interval '1 second'`);
+    await untilSettled(harness);
+
+    expect(condition(await readKey("u1", "gateway-a/pod-a"))).toMatchObject({ status: "False", reason: "GitKeyNotOnHost" });
+    expect(harness.git.keys.get("lin")).toEqual([]);
+    expect((await provisioned("u1")).status.work).toMatchObject({ state: "parked", attempts: 12 });
+  });
+
+  it("logs a mismatch at warning when first seen and at error once it survives a second observation", async () => {
+    await harness.request("PUT", "/v1/users/u1/provisioning", { body: { spec: spec("lin") } });
+    await putKey("u1", "gateway-a/pod-a", KEY_A);
+    await untilSettled(harness);
+    harness.git.keys.set("lin", []);
+    const mismatches = (level: string) => harness.log.lines.filter((line) => line.level === level && line.message.startsWith("the git host does not hold the row's key under its title")).length;
+
+    await backoffPasses();
+    await untilSettled(harness);
+    expect([mismatches("warn"), mismatches("error")]).toEqual([1, 0]);
+
+    await backoffPasses();
+    await untilSettled(harness);
+    expect([mismatches("warn"), mismatches("error")]).toEqual([1, 1]);
+  });
+
+  it("counts git key rows by registered status and reason in its metrics, so a mismatch can alert", async () => {
+    await harness.request("PUT", "/v1/users/u1/provisioning", { body: { spec: spec("lin") } });
+    await putKey("u1", "gateway-a/pod-a", KEY_A);
+    await putKey("u1", "gateway-a/pod-b", KEY_B);
+    await untilSettled(harness);
+    harness.git.keys.set("lin", [{ publicKey: KEY_B, holder: "gateway-a/pod-b" }]);
+    await backoffPasses();
+    await untilSettled(harness);
+
+    await harness.service.probes.refresh();
+    const text = await (await fetch(`${harness.service.url}/metrics`)).text();
+
+    expect(text).toContain('provisioning_git_keys{status="False",reason="GitKeyNotOnHost"} 1');
+    expect(text).toContain('provisioning_git_keys{status="True",reason="Converged"} 1');
+  });
+
+  it("caps the refusal backoff however many refusals a row has", async () => {
+    harness.git.owners.add("ada");
+    harness.git.keys.set("ada", [{ publicKey: KEY_A, holder: "gateway-x/pod-1" }]);
+    await harness.request("PUT", "/v1/users/u1/provisioning", { body: { spec: spec("lin") } });
+    await putKey("u1", "gateway-a/pod-a", KEY_A);
+    await untilSettled(harness);
+    await harness.service.db.pool.query(`UPDATE ${table("git_keys")} SET refusals = 5000`);
+
+    await backoffPasses();
+    await untilSettled(harness);
+
+    const key = await readKey("u1", "gateway-a/pod-a");
+    expect(Date.parse(key.status.nextAttemptAt) - Date.now()).toBeGreaterThan(5 * 60 * 60_000);
+    expect(Date.parse(key.status.nextAttemptAt) - Date.now()).toBeLessThanOrEqual(6 * 60 * 60_000);
+  });
+
+  it("leaves the old key a pod registered again under its title after a refused key change when the row reconciles without a put", async () => {
+    await harness.request("PUT", "/v1/users/u1/provisioning", { body: { spec: spec("lin") } });
+    await putKey("u1", "gateway-a/pod-a", KEY_A);
+    await untilSettled(harness);
+    harness.git.owners.add("ada");
+    harness.git.keys.set("ada", [{ publicKey: KEY_B, holder: "gateway-x/pod-1" }]);
+    await putKey("u1", "gateway-a/pod-a", KEY_B);
+    await untilSettled(harness);
+    expect(condition(await readKey("u1", "gateway-a/pod-a"))).toMatchObject({ status: "False", reason: "GitKeyHeldElsewhere" });
+    harness.git.keys.set("lin", [{ publicKey: KEY_A, holder: "gateway-a/pod-a" }]);
+
+    await backoffPasses();
+    await untilSettled(harness);
+
+    expect(harness.git.keys.get("lin")).toEqual([{ publicKey: KEY_A, holder: "gateway-a/pod-a" }]);
+  });
+
   it("never adopts a public key another user's account holds", async () => {
     await harness.request("PUT", "/v1/users/u1/provisioning", { body: { spec: spec("lin") } });
     harness.git.owners.add("ada");
@@ -510,13 +659,19 @@ describe.skipIf(!dsn)("a provisioning attempt", { timeout: 30_000 }, () => {
 
   it("fails the attempt on a terminal git host error other than a key held elsewhere, such as a refused admin token", async () => {
     await harness.request("PUT", "/v1/users/u1/provisioning", { body: { spec: spec("lin") } });
-    harness.git.host.failNext("registerKey", "terminal");
-    await harness.request("PUT", "/v1/users/u1/git-keys/gateway-a%2Fpod-a", { token: TOKENS.platformApi, body: { spec: { publicKey: KEY_A } } });
+    harness.git.host.failNext("registerKey", "terminal", 2);
+    const put = await putKey("u1", "gateway-a/pod-a", KEY_A);
     await untilSettled(harness);
 
     expect((await provisioned("u1")).status.work.state).toBe("parked");
     const { rows } = await harness.service.db.pool.query(`SELECT refusals, retry_after, conditions FROM ${harness.service.db.table("git_keys")}`);
-    expect(rows).toEqual([{ refusals: 0, retry_after: null, conditions: [expect.objectContaining({ status: "False", reason: "GitKeyFailed" })] }]);
+    expect(rows).toEqual([{ refusals: 1, retry_after: expect.any(Date), conditions: [expect.objectContaining({ status: "Unknown", reason: "GitKeyFailed", message: expect.stringContaining("registration failed") })] }]);
+
+    await harness.service.db.pool.query(`UPDATE ${harness.service.db.table("git_keys")} SET retry_after = now()`);
+    await untilSettled(harness);
+    expect(harness.git.keys.get("lin")).toEqual([{ publicKey: KEY_A, holder: "gateway-a/pod-a" }]);
+    expect(registered(await readKey("u1", "gateway-a/pod-a"), put.body.putSequence)).toBe(true);
+    expect((await provisioned("u1")).status.work.state).toBe("parked");
   });
 
   it("reads a refused key again when its backoff passes, without any put, and registers it only at its gateway's next put", async () => {
@@ -549,7 +704,7 @@ describe.skipIf(!dsn)("a provisioning attempt", { timeout: 30_000 }, () => {
     await backoffPasses();
     await untilSettled(harness);
     expect(registers()).toBe(1);
-    expect(await keyCondition("u1", "gateway-a", KEY_A)).toMatchObject({ status: "False", reason: "GitKeyNotOnHost" });
+    expect(await keyCondition("u1", "gateway-a", KEY_A)).toMatchObject({ status: "False", reason: "GitKeyHeldElsewhere" });
     await untilSettled(harness);
     expect(registers()).toBe(2);
     expect(harness.git.keys.get("lin")).toEqual([{ publicKey: KEY_A, holder: "gateway-a/pod-a" }]);
