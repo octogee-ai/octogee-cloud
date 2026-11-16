@@ -5,23 +5,26 @@ import { GatewayRetirementConflictError } from "./gateway-retirement-claim.js";
 import { IsolatedGatewayFenceError, PLACEMENT_RETIREMENT_REASONS, advanceActivationLease, allocateIsolatedGateway, checkUnreachableRecoveryFence, completeActivationLease, failActivationLease, leaseOperationIdBelongs, recoverUnreachableIsolatedGateway, refreshRequestedAllocation, prepareIsolatedHome, requestSizingKeyTransition, requireStoredHomeReadiness, unauditedLifecycleMutations, retireOwnedIsolatedGateway, } from "./isolated-gateway-lifecycle/index.js";
 import { FleetMutationPartialError, FleetMutationRefusedError } from "./normal-fleet-mutation.js";
 import { assertClientOwnsPlacementAutomation, placementOwnerRefusalBody } from "./placement-automation-owner.js";
+import { PlacementPreconditionFailed } from "./placement-refusal.js";
 import { FenceMismatchError } from "./platform-state/errors.js";
 import { InitialGatewayReleaseConflictError } from "./gateway-live-release.js";
 import { SizingKeyChangedError, accountSizingKeyReader } from "./sizing-key.js";
-class PreconditionFailed extends Error {
-}
 class InvalidRequest extends Error {
 }
 const requireClientOwner = async (transaction) => {
     await assertClientOwnsPlacementAutomation(transaction);
 };
-function isPrecondition(error) {
-    return error instanceof PreconditionFailed ||
-        error instanceof IsolatedGatewayFenceError ||
-        error instanceof GatewayRetirementConflictError ||
-        error instanceof FenceMismatchError ||
-        error instanceof SizingKeyChangedError ||
-        error instanceof InitialGatewayReleaseConflictError;
+const REFUSAL_REASONS = [
+    [IsolatedGatewayFenceError, "isolated-fence"],
+    [GatewayRetirementConflictError, "retirement-conflict"],
+    [FenceMismatchError, "fence-mismatch"],
+    [SizingKeyChangedError, "sizing-key-changed"],
+    [InitialGatewayReleaseConflictError, "initial-release-conflict"],
+];
+function refusalReason(error) {
+    if (error instanceof PlacementPreconditionFailed)
+        return error.reasonCode;
+    return REFUSAL_REASONS.find(([type]) => error instanceof type)?.[1] ?? null;
 }
 export function isolatedVerbRefusalBody(error) {
     const owner = placementOwnerRefusalBody(error);
@@ -29,9 +32,11 @@ export function isolatedVerbRefusalBody(error) {
         return owner;
     if (error instanceof FleetMutationRefusedError)
         return isolatedVerbRefusalBody(error.refusal);
-    if (isPrecondition(error))
-        return { code: "precondition-failed", reason: error.message, error: error.message };
-    return null;
+    const reasonCode = refusalReason(error);
+    if (reasonCode === null)
+        return null;
+    const message = error.message;
+    return { code: "precondition-failed", reason: message, error: message, reasonCode };
 }
 function refusalsBelowError(journal) {
     return (input) => journal({
@@ -281,7 +286,7 @@ function parseRecover(req) {
 async function readOwner(store, uid) {
     const user = await store.users.records.get(uid);
     if (!user)
-        throw new PreconditionFailed(`user ${uid} is missing`);
+        throw new PlacementPreconditionFailed("user-missing", `user ${uid} is missing`);
     return user;
 }
 async function assertLeaseOperationId(store, claim) {
@@ -294,7 +299,7 @@ async function assertLeaseOperationId(store, claim) {
 }
 function leaseOf(user) {
     if (!user.activationLease)
-        throw new PreconditionFailed(`activation lease for ${user.uid} is missing`);
+        throw new PlacementPreconditionFailed("lease-missing", `activation lease for ${user.uid} is missing`);
     return user.activationLease;
 }
 export function addAdminPlacementIsolatedRoutes(router, deps) {
@@ -308,6 +313,7 @@ export function addAdminPlacementIsolatedRoutes(router, deps) {
         mutations: unauditedLifecycleMutations,
         now,
         log: deps.log,
+        sourceRecoveryPending: deps.capabilities.sourceRecoveryPending,
     };
     const ownerCheck = () => deps.store.transaction({ label: "admin.placement.isolated.owner", readOnly: true }, async (transaction) => { await requireClientOwner(transaction); });
     const verb = (path, parse, run) => {
@@ -426,7 +432,7 @@ function addIsolatedGatewayVerbs({ deps, journal, lifecycle, verb }) {
     verb("/isolated-gateways/:id/retire-owned", parseRetire, async (req, input) => {
         const root = projectGatewayDesiredRootForGateway(await deps.store.gateways.roots.get(input.gatewayId), input.gatewayId);
         if (root === null || root.ownerUid !== input.uid || !root.builderSlug) {
-            throw new PreconditionFailed(`gateway ${input.gatewayId} is not owned by ${input.uid}`);
+            throw new PlacementPreconditionFailed("gateway-not-owned", `gateway ${input.gatewayId} is not owned by ${input.uid}`);
         }
         if (input.telemetryFenceOperationId !== undefined) {
             await assertLeaseOperationId(deps.store, { ...input, operationId: input.telemetryFenceOperationId });
@@ -442,13 +448,13 @@ function addIsolatedGatewayVerbs({ deps, journal, lifecycle, verb }) {
             dryRunRefusal: async () => {
                 const plan = await retireOwnedIsolatedGateway(lifecycle, request, "plan");
                 if (!plan.retired)
-                    throw new PreconditionFailed(plan.reason);
+                    throw new PlacementPreconditionFailed("retirement-blocked", plan.reason);
                 return null;
             },
             action: async () => {
                 const retirement = await retireOwnedIsolatedGateway(lifecycle, request);
                 if (!retirement.retired)
-                    throw new PreconditionFailed(retirement.reason);
+                    throw new PlacementPreconditionFailed("retirement-blocked", retirement.reason);
                 return { gatewayId: input.gatewayId, operationId: retirement.operationId, retired: true };
             },
         });
@@ -462,7 +468,7 @@ function addIsolatedGatewayVerbs({ deps, journal, lifecycle, verb }) {
     verb("/users/:uid/isolated-gateway/allocate", parseAllocate, async (req, input) => {
         const builderSlug = (await readOwner(deps.store, input.uid)).slug;
         if (!builderSlug)
-            throw new PreconditionFailed(`user ${input.uid} has no slug`);
+            throw new PlacementPreconditionFailed("user-slug-missing", `user ${input.uid} has no slug`);
         const request = { ...input, builderSlug };
         return journal({
             req,
@@ -488,7 +494,7 @@ function addIsolatedGatewayVerbs({ deps, journal, lifecycle, verb }) {
     verb("/isolated-gateways/:id/recover-unreachable", parseRecover, async (req, input) => {
         const root = projectGatewayDesiredRootForGateway(await deps.store.gateways.roots.get(input.gatewayId), input.gatewayId);
         if (root === null || root.ownerUid !== input.uid || !root.builderSlug) {
-            throw new PreconditionFailed(`gateway ${input.gatewayId} is not owned by ${input.uid}`);
+            throw new PlacementPreconditionFailed("gateway-not-owned", `gateway ${input.gatewayId} is not owned by ${input.uid}`);
         }
         const request = { ...input, builderSlug: root.builderSlug };
         return journal({

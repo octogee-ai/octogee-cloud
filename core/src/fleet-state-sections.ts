@@ -12,6 +12,7 @@ import { placementAutomationState } from "./placement-automation-handoff.js";
 import { InvalidSharedGatewayAutoscalingConfigError, readSharedGatewayAutoscalingConfigInStore } from "./shared-gateway-pool-read.js";
 import type { FleetRegistryRecord } from "./platform-state/fleet-registry.js";
 import type { GatewayRoot } from "./platform-state/gateways.js";
+import type { OperationRecord } from "./platform-state/operations.js";
 import type { PlatformUserRecord } from "./platform-state/users.js";
 import type { PlatformStateStore, PlatformStateTransaction, Stored } from "./platform-state/store.js";
 
@@ -94,6 +95,17 @@ export interface FleetStateSectionsInput<User extends { readonly provisioning: o
   readonly now: number;
   readonly projectUser: (user: PlatformUserRecord) => User;
   readonly readGatewayKubernetes?: GatewayKubernetesReader | undefined;
+  readonly sourceRecoveryPending?: SourceRecoveryPendingReader | undefined;
+}
+
+export type SourceRecoveryPendingReader = (operation: Stored<OperationRecord>) => boolean;
+
+export function withSourceRecoveryPending<T extends Stored<OperationRecord>>(
+  operation: T,
+  sourceRecoveryPending: SourceRecoveryPendingReader | undefined,
+): T | (T & { sourceRecoveryPending: boolean }) {
+  if (sourceRecoveryPending === undefined || operation.kind !== MIGRATE_USER) return operation;
+  return { ...operation, sourceRecoveryPending: sourceRecoveryPending(operation) };
 }
 
 function once<T>(load: () => Promise<T>): () => Promise<T> {
@@ -154,7 +166,10 @@ export async function readFleetStateSections<User extends { readonly provisionin
       assignments: async () => ({ assignments: await transaction.gateways.assignments.listAll() }),
       runtimes: async () => ({ runtimes: await runtimes() }),
       operations: async () => ({ operations: await transaction.journal.operations.listByStatus(input.operationStatuses) }),
-      migrations: async () => ({ migrations: await transaction.journal.operations.listByKind(MIGRATE_USER, ACTIVE_MIGRATION_STATUSES) }),
+      migrations: async () => {
+        const migrations = await transaction.journal.operations.listByKind(MIGRATE_USER, ACTIVE_MIGRATION_STATUSES);
+        return { migrations: migrations.map((operation) => withSourceRecoveryPending(operation, input.sourceRecoveryPending)) };
+      },
       placementAutomation: async () => ({ placementAutomation: placementAutomationState(await readPlacementAutomationOwnership(transaction)) }),
     };
 

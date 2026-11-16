@@ -98,6 +98,37 @@ describe("released forward-only user activation recovery admission", () => {
   });
 });
 
+describe("failed activation whose source recovery cannot be re-armed", () => {
+  const target = "alice-s-12345678", id = `builder-activate-${target}-g1`;
+  function heldActivation(rolledBack: boolean) {
+    const h = fixture(`mig-${id}:scheduler:1:claim:1000`, id);
+    Object.assign(h.operation.input, { source: "builder-activation-lease", userSlug: "alice", toGatewayId: target });
+    Object.assign(h.operation.schedulerHandoff!, { toGatewayId: target, stageAfterCutover: true,
+      forwardRecovery: { schemaVersion: 1, phase: "source-flushed", sourceEpoch: 4 } });
+    h.operation.steps = [{ name: "final-sync-state", status: "failed", error: "target unreachable" }];
+    if (rolledBack) h.operation.rolledBack = true;
+    const logs: string[] = [];
+    const store = createDocumentFixtureStore(h.records);
+    const sweep = () => recoverFailedLegacyMigrations({ store, log: (line) => logs.push(line), now: () => 3_000 });
+    return { ...h, logs, sweep };
+  }
+
+  it("warns once, not on every sweep, while the verdict stays held", async () => {
+    const h = heldActivation(false);
+    await h.sweep();
+    await h.sweep();
+    expect(h.stored()).toBeUndefined();
+    expect(h.logs).toEqual([`[migration-recovery] ⚠ ${id} failed while holding its source and its source recovery cannot be re-armed; ` +
+      `sourceRecoveryPending stays true and isolated placement verbs for ${target} answer source-recovery-pending`]);
+  });
+
+  it("stays quiet once the activation is rolled back", async () => {
+    const h = heldActivation(true);
+    await h.sweep();
+    expect(h.logs).toEqual([]);
+  });
+});
+
 describe("failed preparation whose target unmount was never confirmed", () => {
   const target = "alice-xs-12345678";
   const retirementId = `placement-retire-alice-${target}-g1`;

@@ -116,7 +116,110 @@ repeated `sections` parameter, answers `400`.
   latest release payload hash equals `platformArtifactHash` (empty when the
   server has no platform artifact).
 - `migrations`: the `migrate-user` operations that are `pending` or
-  `running`, whatever `?operationStatus=` says.
+  `running`, whatever `?operationStatus=` says. Each carries
+  `sourceRecoveryPending` (see [Source recovery](#source-recovery)).
+
+### Source recovery
+
+`sourceRecoveryPending` is `true` while the operation runner still owns the
+source side of a `migrate-user` operation: it may yet resume, roll back or
+recover the user on the source gateway, so the target must not be retired and
+the lease must not be failed. It is derived from the stored operation alone,
+by the same function the fleet controller's own placement pass reads. It is
+`true` when either holds:
+
+- the operation is the activation operation of an activation lease
+  (`builder-activate-<gateway>-g<generation>`, source
+  `builder-activation-lease`, from a shared gateway, scheduler handoff staged
+  after cutover), with no cutover committed, not rolled back, and `pending`,
+  `running`, or `failed` after an attempt that held, or may have held, the
+  source (a source-only recovery, a forward recovery checkpoint, or attempt
+  evidence that is missing or includes `quiesce-source`);
+- or the operation is `pending`, `running` or `failed` with a complete
+  scheduler handoff that has not been released (`schedulerHandoffReleased`
+  is `false`).
+
+The `migrations` section lists only `pending` and `running` operations. A
+failed activation still recovering its source is read with
+`GET /operations/<id>` or `GET /operations/lookup`, which carry the same
+field on every `migrate-user` operation, in every status.
+
+**For client authors:** an absent `sourceRecoveryPending` means unknown, and
+the client withholds the cleanup it guards, exactly as for `true`. Only an
+explicit `false` lets it proceed. An older server does not send the field.
+
+The read can be stale, so the verbs check it again inside their own
+transaction, against the activation operation
+`builder-activate-<gateway>-g<generation>` of the lease or allocation they
+act on. The check is deliberately stricter than the fleet controller's own
+placement pass, which holds off only its cleanup of a failed activation: the
+verbs refuse every reason.
+
+- `activation-lease/fail` whose `operationId` is that activation operation is
+  refused whenever its source recovery is pending.
+- `retire-owned` with any reason (including the `parked-computer-replaced`
+  retirement that `allocate` makes of an obsolete parked gateway) is refused
+  while the activation is `failed` and its source recovery is pending. While
+  the activation is `pending` or `running`, first attempt or re-armed
+  recovery, `retire-owned` is refused earlier by the in-flight migration
+  fence, with `reasonCode` `retirement-blocked` (`user migration is in
+  flight for gateway <gateway>`).
+- `activation-lease/fail` for another cause and `recover-unreachable` are
+  refused while the activation's source recovery is pending and the
+  activation is `failed`, or is a re-armed source-only recovery
+  (`recoverSourceOnly`) that is `pending` or `running`: that recovery could
+  still be paused under it. While a first attempt is `pending` or `running`
+  they are admitted.
+
+A refusal answers `409` `precondition-failed` with `reasonCode`
+`source-recovery-pending`, dry runs included.
+
+#### A failed activation that cannot recover
+
+For a failed activation, `sourceRecoveryPending` clears only when the
+operation is rolled back, commits its cutover, moves to the v2 migration
+record, or is re-armed and that recovery finishes. The scheduler release loop
+skips these operations, and the fleet controller re-arms one only while it
+still owns the source and the target still matches the lease. A failed
+activation that can no longer be re-armed keeps the verdict `true`, and every
+verb above stays refused for that gateway and generation.
+
+The fleet controller logs this once per operation revision, at warning
+level:
+
+```text
+[migration-recovery] ⚠ <operation> failed while holding its source and its source recovery cannot be re-armed; sourceRecoveryPending stays true and isolated placement verbs for <gateway> answer source-recovery-pending
+```
+
+`GET /operations/<operation>` shows it as a `failed` `migrate-user`
+operation with `sourceRecoveryPending: true`. The escape is an operator
+retirement of the gateway, `DELETE /gateways/<gateway>`, which does not run
+this check. The Admin API has no route that marks an operation rolled back.
+
+## Operation reads
+
+`GET /operations/<id>` answers `{operation}` or `404`. `GET /operations/lookup`
+reads up to 200 operations in one request, named as a comma-separated `ids`:
+
+```
+GET /operations/lookup?ids=builder-activate-alice-xs-12345678-g3,builder-return-alice-xs-12345678-g3
+```
+
+It answers `{operations, missing, generatedAt}`: `operations` holds each
+operation that exists, in the order asked, in the shape `GET /operations/<id>`
+answers, with `actorEmail` resolved in one account lookup for the batch;
+`missing` lists the ids with no operation. It reads operations only, not
+audit records. `ids` must be given once and hold 1 to 200 distinct non-empty
+ids. Otherwise the call answers `400` with an `error` naming the problem:
+`ids` missing, given twice, empty or holding an empty id, repeating an id, or
+holding more than 200. It counts as one request against the per-caller limit
+of 300 requests a minute.
+
+The request line and headers together must fit the server's 16 KiB header
+limit (the Node.js default); a longer request is refused with `431` before
+the route runs. The bound of 200 assumes ids of about 45 characters, the
+length of the activation and return operation ids, about 9 KiB of query. A
+client asking for longer ids sends fewer per request.
 
 A refused precondition answers `409` and is logged as the warning
 `fleet mutation refused`, with its failed audit entry kept.
@@ -337,8 +440,41 @@ the installed in-process pass does not call the gate and cannot yield.
 | `code` | Meaning | What the client does |
 |---|---|---|
 | `placement-owner` | The client does not own placement, or the fleet controller has not yielded. | It does not act. It reads the switch and the yield again on its next tick. |
-| `precondition-failed` | A fact the client acted on has changed, such as an epoch, a release, the pool, a lease or the target's load. `error` names it. | It logs the refusal and decides again from a fresh read on its next tick. It never retries within the same tick. |
+| `precondition-failed` | A fact the client acted on has changed, such as an epoch, a release, the pool, a lease or the target's load. `error` names it for people; `reasonCode` names the cause for machines. | It logs the refusal and decides again from a fresh read on its next tick. It never retries within the same tick. |
 | `observation-unknown` | The fleet controller's live read of the gateway's pods failed, or returned no status, an `unknown` status or a malformed one. `error` names the read failure when there was one. Nothing changed. | It tries again on a later tick. |
+
+Every `precondition-failed` from a placement verb carries `reasonCode`, one
+of the values below; a new cause gets a new value. `error` stays the
+human-readable message, and the isolated verbs keep it in `reason` too. A
+client treats an absent `reasonCode` as an unclassified refusal. The values
+are a contract: `core/src/placement-refusal.spec.ts` pins them and checks
+this table against them.
+
+| `reasonCode` | Cause | Verbs |
+|---|---|---|
+| `migration-terminal` | The migration operation ended and cannot be re-armed. | `placement-migrations` |
+| `user-held` | An operator holds the user. | `placement-migrations` |
+| `shared-drain-superseded` | The shared drain no longer authorizes the migration. | `placement-migrations` |
+| `migration-authority` | Another placement authority check failed, such as another pending migration of the user or a slug mismatch. | `placement-migrations` |
+| `target-capacity` | The target has more users assigned or arriving than `expectedTargetUsersAtMost`. | `recover`, `placement-migrations` |
+| `shared-pool-unconfigured` | The shared gateway pool is not configured. | shared verbs |
+| `target-not-shared` | The target is not in the shared gateway pool. | `recover`, `runtime-reset` |
+| `source-not-proven-unavailable` | The source is ready, has a fresh heartbeat, still has pods, is in an active roll, or changed too recently. | `recover` |
+| `assignment-changed` | The operation id does not match the user's current source assignment. | `placement-migrations` |
+| `roll-not-eligible` | The roll recovery is not eligible. | `roll-recovery` |
+| `drain-move-not-supersedable` | The drain move cannot be superseded. | `supersede` |
+| `fleet-state-changed` | A fleet state fence changed, such as a source epoch, a target heartbeat or a previous recovery. | `recover`, `runtime-reset` |
+| `fence-mismatch` | A stored record changed under the verb's fence. | all |
+| `source-recovery-pending` | The activation operation is still recovering its source. | `retire-owned`, `activation-lease/fail`, `recover-unreachable`, `isolated-gateway/allocate` |
+| `user-missing` | The user does not exist. | isolated verbs |
+| `user-slug-missing` | The user has no slug. | `isolated-gateway/allocate` |
+| `lease-missing` | The user has no activation lease. | `activation-lease/complete` |
+| `gateway-not-owned` | The gateway is not owned by the user. | `retire-owned`, `recover-unreachable` |
+| `retirement-blocked` | A retirement fence failed; `error` says which. | `retire-owned` |
+| `isolated-fence` | A lease or isolated gateway fence changed. | isolated verbs |
+| `retirement-conflict` | A retirement claim or an in-flight migration blocks the change. | isolated verbs |
+| `sizing-key-changed` | The user's sizing key changed during the call. | isolated verbs |
+| `initial-release-conflict` | The gateway's initial release conflicts. | `isolated-gateway/allocate` |
 
 A `409` that carries `auditId` and no `code` is an `Idempotency-Key` replay. It
 answers with the audit of the earlier call instead of acting twice. With
@@ -589,7 +725,12 @@ the lease is not that returning lease, or the user has not returned.
 operation that ended it. Without one, it records the canonical activation
 operation `builder-activate-<gateway>-g<generation>`.
 Answers `{uid, leaseId, generation, status: "failed"}`, also when the lease is
-already failed.
+already failed. It refuses with `reasonCode` `source-recovery-pending` and
+leaves the lease unchanged while the lease's activation operation still
+recovers its source: always when `operationId` is that activation operation,
+and for any other `operationId` when the activation has `failed` or is a
+`pending` or `running` source-only recovery (see
+[Source recovery](#source-recovery)).
 
 ### `POST /users/<id>/activation-lease/sizing-transition`
 
@@ -631,6 +772,12 @@ gateway reads as `retired` with that retirement claim, and
 means the gateway is not owned by `ownerUid`, is already retired, is another
 generation, a stated fence no longer matches, or a pending telemetry
 operation or another retirement claim blocks it; the `reason` says which.
+It also refuses with `reasonCode` `source-recovery-pending`, for every
+reason, while the activation operation
+`builder-activate-<gateway>-g<generation>` has `failed` and still recovers
+its source. While that activation is `pending` or `running`, the in-flight
+migration fence refuses first with `retirement-blocked` (see
+[Source recovery](#source-recovery)).
 
 ### `POST /users/<id>/home/prepare`
 
@@ -731,7 +878,10 @@ Profiles that run as pods need no preparation.
 Then it allocates. A parked gateway of the same sizing key that runs
 the shared gateway's current artifact is resumed and the answer is
 `outcome: "resumed"`. A parked gateway that is obsolete is retired, with
-reason `parked-computer-replaced`, and a new gateway is allocated. A new
+reason `parked-computer-replaced`, and a new gateway is allocated. That
+retirement is refused with `reasonCode` `source-recovery-pending` while the
+parked gateway's own activation still recovers its source (see
+[Source recovery](#source-recovery)). A new
 gateway gets its Kubernetes auth secret, after the owner check and never in a
 dry run, then, in one transaction, its
 root and first release (from the shared gateway's live artifact) and the
@@ -773,7 +923,11 @@ It runs in three steps: reserve, observe, complete.
 1. **Reserve.** In one transaction the fleet controller checks the fences,
    records the recovery operation `builder-recover-<gateway>-g<generation>`
    as pending, and pauses the gateway. If a fence fails it answers `409`
-   `precondition-failed` and writes nothing.
+   `precondition-failed` and writes nothing. That includes a failed
+   activation of this gateway and generation, or a `pending` or `running`
+   source-only recovery of it, whose source recovery is pending
+   (`reasonCode` `source-recovery-pending`); the check runs again when
+   completing.
 2. **Observe.** It reads the gateway's pods from Kubernetes.
 3. **Complete.** With no pods left, it marks the operation succeeded with a
    zero-pod receipt and answers

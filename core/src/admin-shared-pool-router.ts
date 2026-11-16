@@ -28,6 +28,7 @@ import {
   readFleetStateSections,
   readSharedGatewayAutoscalingOrNull,
   type GatewayKubernetesReader,
+  type SourceRecoveryPendingReader,
 } from "./fleet-state-sections.js";
 import { FleetMutationRefusedError } from "./normal-fleet-mutation.js";
 import { timestampMillis } from "./timestamps.js";
@@ -51,6 +52,7 @@ export interface AdminSharedPoolRouterDeps {
   now?: () => number;
   provisioningReadiness?: ((uid: string) => ProvisioningReadiness | null) | undefined;
   readGatewayKubernetes?: GatewayKubernetesReader | undefined;
+  sourceRecoveryPending?: SourceRecoveryPendingReader | undefined;
 }
 
 class PreconditionFailed extends Error {}
@@ -419,6 +421,7 @@ export function addAdminSharedPoolRoutes(router: Router, deps: AdminSharedPoolRo
           now: now(),
           projectUser: (user) => fleetStateUser(user, deps.provisioningReadiness),
           readGatewayKubernetes: deps.readGatewayKubernetes,
+          sourceRecoveryPending: deps.sourceRecoveryPending,
         }));
         return;
       }

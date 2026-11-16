@@ -1,4 +1,6 @@
+import { builderActivateOperationId } from "@octogee/shared/types/isolated-operation-ids";
 import { runNormalFleetMutation } from "../normal-fleet-mutation.js";
+import { SourceRecoveryPendingError } from "../placement-refusal.js";
 export const ISOLATED_GATEWAY_LIFECYCLE_ACTOR = "glm-controller-disposable-gateway";
 export const PLACEMENT_AUTOMATION_ACTOR = "glm-controller-placement-policy";
 export const ISOLATED_GATEWAY_ALLOCATION_KIND = "disposable-builder";
@@ -15,6 +17,15 @@ export function auditedLifecycleMutations(store) {
 export const unauditedLifecycleMutations = (mutation) => mutation.action();
 export async function checkPlacementOwner(input) {
     await input.store.transaction({ label: "isolated-gateway.owner-check", readOnly: true }, input.requireOwner);
+}
+export async function assertActivationSourceRecoveryReleased(input, transaction, fence) {
+    const operationId = builderActivateOperationId(fence.targetGatewayId, fence.generation);
+    const operation = await transaction.journal.operations.get(operationId);
+    if (operation === null || !input.sourceRecoveryPending(operation))
+        return;
+    const recoveringFailedActivation = operation.status === "failed" || operation.input?.recoverSourceOnly === true;
+    if (fence.failedActivationCleanup || recoveringFailedActivation)
+        throw new SourceRecoveryPendingError(operationId);
 }
 export const PLACEMENT_RETIREMENT_REASONS = [
     "provisioning-timeout",

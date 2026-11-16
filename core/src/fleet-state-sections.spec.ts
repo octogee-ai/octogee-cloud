@@ -6,7 +6,7 @@ import { SHARED_POOL_SCALER_CREATOR } from "@octogee/shared/types/shared-gateway
 import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { createAdminFleetMutationRunner } from "./admin-fleet-router.js";
 import { addAdminSharedPoolRoutes, readFleetState } from "./admin-shared-pool-router.js";
-import type { GatewayKubernetesReader } from "./fleet-state-sections.js";
+import type { GatewayKubernetesReader, SourceRecoveryPendingReader } from "./fleet-state-sections.js";
 import type { PlatformStateStore } from "./platform-state/store.js";
 
 type Data = Record<string, unknown>;
@@ -25,7 +25,7 @@ function store(): PlatformStateStore {
   return createDocumentFixtureStore(records, { serializeTransactions: true });
 }
 
-function app(options: { platformStore?: PlatformStateStore; readGatewayKubernetes?: GatewayKubernetesReader } = {}) {
+function app(options: { platformStore?: PlatformStateStore; readGatewayKubernetes?: GatewayKubernetesReader; sourceRecoveryPending?: SourceRecoveryPendingReader } = {}) {
   const platformStore = options.platformStore ?? store();
   const server = express();
   server.use(express.json());
@@ -36,6 +36,7 @@ function app(options: { platformStore?: PlatformStateStore; readGatewayKubernete
     journal: createAdminFleetMutationRunner(platformStore),
     now: () => NOW,
     ...(options.readGatewayKubernetes ? { readGatewayKubernetes: options.readGatewayKubernetes } : {}),
+    ...(options.sourceRecoveryPending ? { sourceRecoveryPending: options.sourceRecoveryPending } : {}),
   });
   server.use((error: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     res.status(500).json({ error: error.message });
@@ -251,6 +252,24 @@ describe("GET /fleet/state sections", () => {
 
     expect(res.body.migrations.map((operation: Data) => operation.id).sort()).toEqual(["migrate-pending", "migrate-running"]);
     expect(res.body.operations.map((operation: Data) => operation.id)).toEqual(["migrate-done"]);
+  });
+
+  it("marks each active migration with the source recovery verdict of the injected reader", async () => {
+    seedFleet();
+    const sourceRecoveryPending = vi.fn((operation: { id: string }) => operation.id === "migrate-running");
+
+    const res = await request(app({ sourceRecoveryPending })).get("/fleet/state?sections=migrations").expect(200);
+
+    expect(Object.fromEntries(res.body.migrations.map((operation: Data) => [operation.id, operation.sourceRecoveryPending])))
+      .toEqual({ "migrate-pending": false, "migrate-running": true });
+  });
+
+  it("leaves the source recovery verdict absent when no reader is injected", async () => {
+    seedFleet();
+
+    const res = await request(app()).get("/fleet/state?sections=migrations").expect(200);
+
+    expect(res.body.migrations.every((operation: Data) => !("sourceRecoveryPending" in operation))).toBe(true);
   });
 
   it("reads only the records its sections need", async () => {

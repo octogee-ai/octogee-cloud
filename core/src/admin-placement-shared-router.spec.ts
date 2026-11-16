@@ -205,6 +205,7 @@ describe("POST /shared-gateways/:id/users/:uid/recover", () => {
     expect(res.body).toEqual({
       code: "precondition-failed",
       error: `shared source ${SOURCE} still has Kubernetes pods; retaining assignments until it is missing`,
+      reasonCode: "source-not-proven-unavailable",
     });
     expect(fleetEvents()).toEqual([]);
   });
@@ -217,6 +218,7 @@ describe("POST /shared-gateways/:id/users/:uid/recover", () => {
     expect(res.body).toEqual({
       code: "precondition-failed",
       error: `source ${SOURCE} still has a fresh runtime heartbeat while Kubernetes reports missing`,
+      reasonCode: "source-not-proven-unavailable",
     });
     expect(fleetEvents()).toEqual([]);
   });
@@ -235,7 +237,7 @@ describe("POST /shared-gateways/:id/users/:uid/recover", () => {
 
     const res = await recover(recoverBody({ sourceUnchangedForAtLeastMs: 60_000 })).expect(409);
 
-    expect(res.body).toEqual({ code: "precondition-failed", error: `shared source ${SOURCE} changed 1000 ms ago, less than 60000 ms` });
+    expect(res.body).toEqual({ code: "precondition-failed", error: `shared source ${SOURCE} changed 1000 ms ago, less than 60000 ms`, reasonCode: "source-not-proven-unavailable" });
     expect(fleetEvents()).toEqual([]);
   });
 
@@ -271,7 +273,7 @@ describe("POST /shared-gateways/:id/users/:uid/recover", () => {
 
     const res = await recover().expect(409);
 
-    expect(res.body).toEqual({ code: "precondition-failed", error: `shared source ${SOURCE} is in an active roll` });
+    expect(res.body).toEqual({ code: "precondition-failed", error: `shared source ${SOURCE} is in an active roll`, reasonCode: "source-not-proven-unavailable" });
     expect(fleetEvents()).toEqual([]);
   });
 
@@ -328,7 +330,7 @@ describe("POST /shared-gateways/:id/users/:uid/recover", () => {
 
     const res = await recover().expect(409);
 
-    expect(res.body).toEqual({ code: "precondition-failed", error: `source ${SOURCE} is observed ready by Kubernetes` });
+    expect(res.body).toEqual({ code: "precondition-failed", error: `source ${SOURCE} is observed ready by Kubernetes`, reasonCode: "source-not-proven-unavailable" });
     expect(fleetEvents()).toEqual([]);
     expect(records.has(`gateways/${SOURCE}/assignments/${UID}`)).toBe(true);
   });
@@ -397,6 +399,7 @@ describe("POST /shared-gateways/:id/users/:uid/recover", () => {
     expect(res.body).toEqual({
       code: "precondition-failed",
       error: `target ${TARGET} has 2 other users assigned or arriving, expected at most 1`,
+      reasonCode: "target-capacity",
     });
     expect(fleetEvents()).toEqual([]);
   });
@@ -419,7 +422,7 @@ describe("POST /shared-gateways/:id/users/:uid/recover", () => {
 
     const res = await recover(recoverBody({ expectedSourceEpoch: 2 })).expect(409);
 
-    expect(res.body).toEqual({ code: "precondition-failed", error: "unavailable gateway recovery source changed before cutover" });
+    expect(res.body).toEqual({ code: "precondition-failed", error: "unavailable gateway recovery source changed before cutover", reasonCode: "fleet-state-changed" });
     expect(fleetEvents()).toEqual([]);
   });
 
@@ -428,7 +431,7 @@ describe("POST /shared-gateways/:id/users/:uid/recover", () => {
 
     const res = await recover().expect(409);
 
-    expect(res.body).toEqual({ code: "precondition-failed", error: `recovery target runtime is not freshly ready: ${TARGET}` });
+    expect(res.body).toEqual({ code: "precondition-failed", error: `recovery target runtime is not freshly ready: ${TARGET}`, reasonCode: "fleet-state-changed" });
   });
 
   it("refuses a target outside the shared gateway pool", async () => {
@@ -547,7 +550,7 @@ describe("POST /users/:uid/runtime-reset", () => {
 
     const res = await reset(resetBody({ expectedAssignmentEpoch: 5 })).expect(409);
 
-    expect(res.body).toEqual({ code: "precondition-failed", error: "previous disposable recovery fence changed" });
+    expect(res.body).toEqual({ code: "precondition-failed", error: "previous disposable recovery fence changed", reasonCode: "fleet-state-changed" });
     expect(fleetEvents()).toEqual([]);
   });
 
@@ -612,7 +615,7 @@ describe("POST /shared-gateways/:id/roll-recovery", () => {
 
     const res = await rollRecovery().expect(409);
 
-    expect(res.body).toEqual({ code: "precondition-failed", error: `source ${SOURCE} has no fresh missing Kubernetes observation` });
+    expect(res.body).toEqual({ code: "precondition-failed", error: `source ${SOURCE} has no fresh missing Kubernetes observation`, reasonCode: "roll-not-eligible" });
     expect(fleetEvents()).toEqual([]);
   });
 
@@ -678,7 +681,7 @@ describe("POST /shared-gateways/:id/roll-recovery", () => {
 
     const res = await rollRecovery({ ...ROLL_BODY, expectedDesiredRelease: 3 }).expect(409);
 
-    expect(res.body).toEqual({ code: "precondition-failed", error: "target desired release is 2, expected 3" });
+    expect(res.body).toEqual({ code: "precondition-failed", error: "target desired release is 2, expected 3", reasonCode: "roll-not-eligible" });
   });
 
   it("is refused with placement-owner by default", async () => {
@@ -767,7 +770,7 @@ describe("POST /users/:uid/placement-migrations", () => {
 
     const res = await enqueue().expect(409);
 
-    expect(res.body).toEqual({ code: "precondition-failed", error: `migration operation ${PLACEMENT} ended with status failed` });
+    expect(res.body).toEqual({ code: "precondition-failed", error: `migration operation ${PLACEMENT} ended with status failed`, reasonCode: "migration-terminal" });
   });
 
   it("refuses an operation id that does not match the user's current source assignment", async () => {
@@ -789,7 +792,7 @@ describe("POST /users/:uid/placement-migrations", () => {
 
     const res = await enqueue().expect(409);
 
-    expect(res.body).toEqual({ code: "precondition-failed", error: `user ${UID} already has pending migration placement-earlier` });
+    expect(res.body).toEqual({ code: "precondition-failed", error: `user ${UID} already has pending migration placement-earlier`, reasonCode: "migration-authority" });
     expect(fleetEvents()).toEqual([]);
   });
 
@@ -811,7 +814,7 @@ describe("POST /users/:uid/placement-migrations", () => {
 
     const res = await enqueue(enqueueBody({ slug: "mallory", operationId: wrong })).expect(409);
 
-    expect(res.body).toEqual({ code: "precondition-failed", error: `slug mallory does not match user ${UID}'s slug ${SLUG}` });
+    expect(res.body).toEqual({ code: "precondition-failed", error: `slug mallory does not match user ${UID}'s slug ${SLUG}`, reasonCode: "migration-authority" });
     expect(fleetEvents()).toEqual([]);
   });
 
@@ -839,7 +842,7 @@ describe("POST /users/:uid/placement-migrations", () => {
 
     const res = await enqueue().expect(409);
 
-    expect(res.body).toEqual({ code: "precondition-failed", error: `user ${UID} is operator-managed` });
+    expect(res.body).toEqual({ code: "precondition-failed", error: `user ${UID} is operator-managed`, reasonCode: "user-held" });
   });
 
   it("refuses a drain move once the source is no longer draining", async () => {
@@ -847,7 +850,11 @@ describe("POST /users/:uid/placement-migrations", () => {
 
     const res = await enqueue(enqueueBody({ sharedDrain: { pairedTargetGatewayId: null } })).expect(409);
 
-    expect(res.body.error).toBe(`shared drain of ${SOURCE} no longer authorizes this migration: the source is no longer draining`);
+    expect(res.body).toEqual({
+      code: "precondition-failed",
+      error: `shared drain of ${SOURCE} no longer authorizes this migration: the source is no longer draining`,
+      reasonCode: "shared-drain-superseded",
+    });
   });
 
   it("creates a drain move while the source drains", async () => {
@@ -951,7 +958,7 @@ describe("POST /placement-migrations/:operationId/supersede", () => {
 
     const res = await supersede().expect(409);
 
-    expect(res.body).toEqual({ code: "precondition-failed", error: `operation ${DRAIN_MOVE} is not a pending, never-claimed drain move of this user` });
+    expect(res.body).toEqual({ code: "precondition-failed", error: `operation ${DRAIN_MOVE} is not a pending, never-claimed drain move of this user`, reasonCode: "drain-move-not-supersedable" });
     expect(fleetEvents()).toEqual([]);
   });
 

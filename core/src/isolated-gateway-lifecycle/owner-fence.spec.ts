@@ -41,6 +41,7 @@ function harness(status: string, gatewayId: string) {
     readSizingKey: async () => "hobby",
     now: () => 5_000,
     log: vi.fn(),
+    sourceRecoveryPending: () => false,
     requireOwner: async () => { throw refusal; },
     mutations: auditedLifecycleMutations(store),
     requireHomeReady: requireStoredHomeReadiness,
