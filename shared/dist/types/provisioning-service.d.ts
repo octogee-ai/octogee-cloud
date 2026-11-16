@@ -170,5 +170,5 @@ export interface ProvisioningErrorBody {
     code: ProvisioningErrorCode;
     error: string;
 }
-export declare const PROVISIONING_ROLES: readonly ["writer", "key-writer", "reader", "credential-reader"];
+export declare const PROVISIONING_ROLES: readonly ["writer", "key-writer", "key-retirer", "reader", "credential-reader"];
 export type ProvisioningRole = (typeof PROVISIONING_ROLES)[number];

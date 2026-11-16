@@ -20,6 +20,7 @@ The types are `@octogee/shared/types/provisioning-service`.
 | `GET /v1/users/{uid}/provisioning/events` | The last 50 attempts, newest first, with each step's outcome, reason and duration. | `200`, `404` |
 | `PUT /v1/users/{uid}/git-keys/{gatewayId}` | Body `{ spec: { publicKey } }`. Authorizes the key on the user's git owner. | `201`, `202`, `200`; body is the `GitKey`; `404` when the user has no provisioning |
 | `DELETE /v1/users/{uid}/git-keys/{gatewayId}` | Releases the key. Optional body `{ expectedPublicKey }` releases it only while the row still holds that key. | `202`, `409 precondition-failed` when the row holds another key |
+| `DELETE /v1/gateways/{gatewayId}/git-keys` | Releases every user's key for a retired gateway. | `202`; body `{ remaining }`, the gateway's rows not yet released from the git host |
 | `GET /v1/users/{uid}/credentials/{name}` | `{ name, value, version }`, `Cache-Control: no-store`. Names: `agent-chat-token`, `user-chat-token`. | `200`, `404`, `409 not-issued` |
 | `GET /healthz`, `/readyz`, `/metrics` | Unauthenticated, no tenant data. `/readyz` and `/metrics` answer from a database check and work snapshot each replica takes every 5 seconds. | `200`, `503` |
 
@@ -49,7 +50,7 @@ account maps to roles through a fixed table:
 
 | Service account | Roles |
 | --- | --- |
-| `octogee-glm-controller` (fleet controller) | `writer`: provisioning put, delete, read, list, watch, retry, events; `credential-reader`: credentials, to copy issued chat tokens where the platform reads them |
+| `octogee-glm-controller` (fleet controller) | `writer`: provisioning put, delete, read, list, watch, retry, events; `key-retirer`: a retired gateway's git keys; `credential-reader`: credentials, to copy issued chat tokens where the platform reads them |
 | `octogee-api` (platform API) | `key-writer`: git keys; `reader`: provisioning read, list, watch, events; `credential-reader`: credentials |
 
 Only service accounts in `PROVISIONING_CALLER_NAMESPACE` are matched. A failed

@@ -119,6 +119,26 @@ describe.skipIf(!dsn)("a provisioning attempt", { timeout: 30_000 }, () => {
     expect(rowCount).toBe(0);
   });
 
+  it("releases every user's key for a retired gateway, keeps other gateways' keys, and answers how many rows remain", async () => {
+    await harness.request("PUT", "/v1/users/u1/provisioning", { body: { spec: spec("lin") } });
+    await harness.request("PUT", "/v1/users/u2/provisioning", { body: { spec: spec("mei") } });
+    await harness.request("PUT", "/v1/users/u1/git-keys/gateway-a", { token: TOKENS.platformApi, body: { spec: { publicKey: KEY_A } } });
+    await harness.request("PUT", "/v1/users/u2/git-keys/gateway-a", { token: TOKENS.platformApi, body: { spec: { publicKey: KEY_A } } });
+    await harness.request("PUT", "/v1/users/u1/git-keys/gateway-b", { token: TOKENS.platformApi, body: { spec: { publicKey: KEY_B } } });
+    await untilSettled(harness);
+
+    const retired = await harness.request("DELETE", "/v1/gateways/gateway-a/git-keys", { token: TOKENS.writer });
+
+    expect(retired.status).toBe(202);
+    expect(retired.body).toEqual({ remaining: 2 });
+    await untilSettled(harness);
+    expect(harness.git.keys.get("lin")).toEqual([{ publicKey: KEY_B, holder: "gateway-b" }]);
+    expect(harness.git.keys.get("mei")).toEqual([]);
+    expect((await harness.request("DELETE", "/v1/gateways/gateway-a/git-keys", { token: TOKENS.writer })).body).toEqual({ remaining: 0 });
+    const { rows } = await harness.service.db.pool.query(`SELECT uid, gateway_id FROM ${harness.service.db.table("git_keys")}`);
+    expect(rows).toEqual([{ uid: "u1", gateway_id: "gateway-b" }]);
+  });
+
   async function keyCondition(uid: string, gatewayId: string, publicKey: string) {
     const key = await harness.request("PUT", `/v1/users/${uid}/git-keys/${gatewayId}`, { token: TOKENS.platformApi, body: { spec: { publicKey } } });
     return key.body.status.conditions.find((condition: { type: string }) => condition.type === "Registered");

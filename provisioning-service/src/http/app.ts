@@ -228,6 +228,13 @@ export function createApp(deps: AppDependencies): express.Express {
     response.status(202).end();
   });
 
+  v1.delete("/gateways/:gatewayId/git-keys", requireRole("key-retirer"), async (request, response) => {
+    const gatewayId = validIdentifier(String(request.params.gatewayId), "gatewayId");
+    const released = await deps.store.deleteGatewayGitKeys(gatewayId);
+    deps.notifier.wakeAll();
+    response.status(202).json(released);
+  });
+
   v1.get("/users/:uid/credentials/:name", requireRole("credential-reader"), async (request, response) => {
     const uid = uidOf(request);
     const name = String(request.params.name);
