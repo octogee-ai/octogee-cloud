@@ -20,6 +20,7 @@ export const PROVISIONING_CONDITION_REASONS = [
   "GitOwnerFailed",
   "GitRepositoryFailed",
   "GitKeyFailed",
+  "GitKeyHeldElsewhere",
   "ChatNotReady",
   "GitNotReady",
   "CredentialsNotIssued",
@@ -117,6 +118,7 @@ export interface GitKeySpec {
 export interface GitKeyStatus {
   observedGeneration: number;
   conditions: ProvisioningCondition<GitKeyConditionType>[];
+  nextAttemptAt: string | null;
 }
 
 export interface GitKey {

@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { PROJECT_AGENT_REPO } from "@octogee/shared/types/project";
-import { GATEWAY_KEY_TITLE, gatewayKeyTitle as ownerGatewayKeyTitle, giteaUsername, isManagedGatewayKeyTitle, projectRepoName, systemConfigRepoName, workspaceGiteaOrg, workspaceRepoName, } from "../gitea-naming.js";
+import { GATEWAY_KEY_TITLE, gatewayKeyTitle as ownerGatewayKeyTitle, giteaUsername, isManagedGatewayKeyTitle, publicKeyIdentity, projectRepoName, systemConfigRepoName, workspaceGiteaOrg, workspaceRepoName, } from "../gitea-naming.js";
 import { placeholderEmail } from "../placeholder-email.js";
 import { GITEA_PAGE_SIZE, createGiteaKeyAdminClient, runGiteaKeySweep } from "./gitea-key-sweep.js";
 const BUILDERS_TEAM = "builders";
@@ -63,9 +63,6 @@ function repoCreation(workspaceSlug, role) {
                 },
             };
     }
-}
-function publicKeyIdentity(pubKey) {
-    return pubKey.trim().split(/\s+/u).slice(0, 2).join(" ");
 }
 function publicKeysMatch(left, right) {
     return typeof left === "string" && publicKeyIdentity(left) === publicKeyIdentity(right);

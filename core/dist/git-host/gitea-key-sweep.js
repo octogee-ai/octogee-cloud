@@ -1,10 +1,7 @@
-import { GATEWAY_KEY_TITLE, gatewayKeyTitle, giteaUsername, isManagedGatewayKeyTitle, } from "../gitea-naming.js";
+import { GATEWAY_KEY_TITLE, gatewayKeyTitle, giteaUsername, isManagedGatewayKeyTitle, publicKeyIdentity, } from "../gitea-naming.js";
 export const GITEA_PAGE_SIZE = 50;
 function emptyTotals() {
     return { managed: 0, live: 0, legacy: 0, young: 0, stale: 0, deleted: 0, legacyStale: 0, legacyDeleted: 0 };
-}
-function publicKeyIdentity(pubKey) {
-    return pubKey.trim().split(/\s+/u).slice(0, 2).join(" ");
 }
 function classifyKey(key, liveTitles, cutoff) {
     if (!isManagedGatewayKeyTitle(key.title))

@@ -1,12 +1,16 @@
 export type HostErrorKind = "transient" | "terminal";
 
+export type HostErrorCode = "key-held-elsewhere";
+
 export class HostError extends Error {
   readonly kind: HostErrorKind;
+  readonly code: HostErrorCode | undefined;
 
-  constructor(kind: HostErrorKind, message: string, options?: { cause?: unknown }) {
+  constructor(kind: HostErrorKind, message: string, options?: { cause?: unknown; code?: HostErrorCode }) {
     super(message, options);
     this.name = "HostError";
     this.kind = kind;
+    this.code = options?.code;
   }
 }
 
