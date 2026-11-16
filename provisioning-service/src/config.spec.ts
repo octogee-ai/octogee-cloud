@@ -69,9 +69,17 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ ...BASE, PROVISIONING_HOST_ADAPTERS: "fake" })).toThrow("PROVISIONING_ALLOW_FAKE_HOST_ADAPTERS=for-tests-only");
     expect(() => loadConfig({ ...BASE, PROVISIONING_HOST_ADAPTERS: "fake", PROVISIONING_ALLOW_FAKE_HOST_ADAPTERS: "yes" })).toThrow("PROVISIONING_ALLOW_FAKE_HOST_ADAPTERS");
     const consent = { ...BASE, PROVISIONING_HOST_ADAPTERS: "fake", PROVISIONING_ALLOW_FAKE_HOST_ADAPTERS: "for-tests-only" };
-    expect(loadConfig(consent).hosts).toEqual({ kind: "fake", delayMs: 0 });
-    expect(loadConfig({ ...consent, PROVISIONING_FAKE_HOST_DELAY_MS: "200" }).hosts).toEqual({ kind: "fake", delayMs: 200 });
+    expect(loadConfig(consent).hosts).toEqual({ kind: "fake", delayMs: 0, gitKeys: {} });
+    expect(loadConfig({ ...consent, PROVISIONING_FAKE_HOST_DELAY_MS: "200" }).hosts).toEqual({ kind: "fake", delayMs: 200, gitKeys: {} });
     expect(() => loadConfig({ ...BASE, PROVISIONING_HOST_ADAPTERS: "mattermost" })).toThrow("PROVISIONING_HOST_ADAPTERS");
+  });
+
+  it("seeds the fake git host's keys from PROVISIONING_FAKE_GIT_KEYS and refuses a malformed seed", () => {
+    const consent = { ...BASE, PROVISIONING_HOST_ADAPTERS: "fake", PROVISIONING_ALLOW_FAKE_HOST_ADAPTERS: "for-tests-only" };
+    const seed = { lin: [{ publicKey: "ssh-ed25519 AAAA gateway", holder: "gw-1/pod-1" }] };
+    expect(loadConfig({ ...consent, PROVISIONING_FAKE_GIT_KEYS: JSON.stringify(seed) }).hosts).toEqual({ kind: "fake", delayMs: 0, gitKeys: seed });
+    expect(() => loadConfig({ ...consent, PROVISIONING_FAKE_GIT_KEYS: "[1]" })).toThrow("PROVISIONING_FAKE_GIT_KEYS");
+    expect(() => loadConfig({ ...consent, PROVISIONING_FAKE_GIT_KEYS: JSON.stringify({ lin: [{ holder: "x" }] }) })).toThrow("PROVISIONING_FAKE_GIT_KEYS");
   });
 
   it("keeps changes for a day unless PROVISIONING_CHANGE_RETENTION_SECONDS says otherwise", () => {

@@ -138,7 +138,7 @@ export class FakeGiteaApi {
       if (!this.accounts.has(match[1])) return message(404, "not found");
       const identity = String(body.key).trim().split(/\s+/u).slice(0, 2).join(" ");
       const taken = [...this.keys.values()].flat().some((key) => key.key.trim().split(/\s+/u).slice(0, 2).join(" ") === identity);
-      if (taken) return message(422, "key already exists");
+      if (taken) return message(422, "Key content has been used as non-deploy key");
       return json(201, this.addKey(match[1], String(body.title), String(body.key)));
     }
     if ((match = path.match(/^\/admin\/users\/([^/]+)\/keys\/(\d+)$/)) && method === "DELETE") {

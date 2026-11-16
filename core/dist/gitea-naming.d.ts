@@ -9,3 +9,4 @@ export declare const GATEWAY_KEY_TITLE = "octogee-gateway";
 export declare function gatewayKeyOwnerId(gatewayId: string, podName: string): string;
 export declare function gatewayKeyTitle(identity: string): string;
 export declare function isManagedGatewayKeyTitle(title: string): boolean;
+export declare function publicKeyIdentity(publicKey: string): string;

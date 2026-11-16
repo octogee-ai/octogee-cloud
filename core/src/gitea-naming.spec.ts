@@ -11,6 +11,7 @@ import {
   gatewayKeyOwnerId,
   gatewayKeyTitle,
   isManagedGatewayKeyTitle,
+  publicKeyIdentity,
 } from "./gitea-naming.js";
 
 describe("gitea-naming", () => {
@@ -57,5 +58,13 @@ describe("gateway SSH key titles", () => {
     expect(isManagedGatewayKeyTitle(gatewayKeyTitle("g/p"))).toBe(true);
     expect(isManagedGatewayKeyTitle("my laptop")).toBe(false);
     expect(isManagedGatewayKeyTitle("octogee-gatewayish")).toBe(false);
+  });
+});
+
+describe("public key identity", () => {
+  it("is the key type and material, whatever the comment and spacing", () => {
+    expect(publicKeyIdentity("  ssh-ed25519   AAAAlin   lin@gateway one \n")).toBe("ssh-ed25519 AAAAlin");
+    expect(publicKeyIdentity("ssh-ed25519 AAAAlin")).toBe(publicKeyIdentity("ssh-ed25519 AAAAlin other comment"));
+    expect(publicKeyIdentity("ssh-ed25519 AAAAlin")).not.toBe(publicKeyIdentity("ssh-rsa AAAAlin"));
   });
 });

@@ -11,6 +11,10 @@ export function hostsFromConfig(hosts: HostAdapterConfig, log: HostLog, fetchImp
     const git = new FakeGitHost();
     chat.host.setDelay(hosts.delayMs);
     git.host.setDelay(hosts.delayMs);
+    for (const [owner, keys] of Object.entries(hosts.gitKeys)) {
+      git.owners.add(owner);
+      git.keys.set(owner, keys.map((key) => ({ ...key })));
+    }
     return { chat, git };
   }
   const { settings } = hosts;
