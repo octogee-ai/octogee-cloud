@@ -377,7 +377,7 @@ describe("legacy provisioning adapter: git key", () => {
   it("answers the last failure the service recorded when no attempt has processed the put inside the budget", async () => {
     const logged = vi.spyOn(logger, "error").mockImplementation(() => {});
     const retrying = resource({ work: { state: "retrying", attempts: 3, nextAttemptAt: new Date(NOW + 90_000).toISOString(), lastAttemptAt: null } });
-    const { client, keyPuts } = fakeClient([IDLE, retrying], null, [PUT], [
+    const { client, keyPuts } = fakeClient([retrying], null, [PUT], [
       gitKey({ putSequence: 4, observedPutSequence: 3, registered: "False", reason: "GitKeyFailed", message: "503 from git host" }),
     ]);
     const { provisioning, sleeps, budget: route } = clockedAdapter(client);
@@ -428,33 +428,42 @@ describe("legacy provisioning adapter: git key", () => {
     expect(sleeps.length).toBeGreaterThan(0);
   });
 
-  it("answers at once, with the service's reason, when the user's work is parked without a git account and so will not process the put", async () => {
+  it("refuses with the service's own reason when its key pass refuses a parked user's put for want of a git account", async () => {
     const logged = vi.spyOn(logger, "error").mockImplementation(() => {});
     const parked = resource({
       conditions: [condition("Ready", "False", "GitOwnerFailed")],
       work: { state: "parked", attempts: 9, nextAttemptAt: null, lastAttemptAt: null },
     });
-    const { client, keyPuts, keyGets } = fakeClient([parked], null, [PUT], [gitKey({ putSequence: 4, observedPutSequence: 3, registered: "True" })]);
+    const nextAttemptAt = new Date(NOW + 60_000).toISOString();
+    const { client, calls, keyPuts, keyGets } = fakeClient([parked, parked], null, [PUT], [
+      gitKey({ putSequence: 4, observedPutSequence: 4, registered: "False", reason: "GitNotReady", message: "the user's git account does not exist yet", nextAttemptAt }),
+    ]);
     const { provisioning, sleeps, budget: route } = clockedAdapter(client);
 
-    await expect(call(provisioning, route())).resolves.toEqual({ ready: false, reason: "GitOwnerFailed", retryAfterSeconds: 5, refused: true });
+    await expect(call(provisioning, route())).resolves.toEqual({ ready: false, reason: "GitNotReady", retryAfterSeconds: 58, refused: true });
 
     expect(keyPuts).toHaveLength(1);
-    expect(keyGets).toHaveLength(0);
-    expect(sleeps).toEqual([]);
-    expect(logged).toHaveBeenCalledWith("legacy provisioning: the user's provisioning is parked", { uid: "uid-lin", reason: "GitOwnerFailed" });
+    expect(keyGets).toHaveLength(1);
+    expect(sleeps).toEqual([2_000]);
+    expect(calls).toEqual([]);
+    expect(logged).toHaveBeenCalledWith("legacy provisioning: the provisioning service has not registered the gateway's git key", {
+      uid: "uid-lin", holder: "walter/octogee-gateway-walter-0", reason: "GitNotReady", message: "the user's git account does not exist yet",
+    });
   });
 
-  it("answers the service's reason when the work parks while the key is awaited", async () => {
+  it("does not predict the service's answer for parked work: it waits for the key pass and answers a failure a retry can finish when the budget ends", async () => {
     vi.spyOn(logger, "error").mockImplementation(() => {});
     const parked = resource({
       conditions: [condition("Ready", "False", "ChatUserFailed")],
       work: { state: "parked", attempts: 9, nextAttemptAt: null, lastAttemptAt: null },
     });
-    const { client } = fakeClient([IDLE, parked], null, [PUT], [gitKey({ putSequence: 4, observedPutSequence: 3 })]);
-    const { provisioning, budget: route } = clockedAdapter(client);
+    const { client, calls } = fakeClient([parked], null, [PUT], [gitKey({ putSequence: 4, observedPutSequence: 3 })]);
+    const { provisioning, sleeps, budget: route } = clockedAdapter(client);
 
-    await expect(call(provisioning, route())).resolves.toEqual({ ready: false, reason: "ChatUserFailed", retryAfterSeconds: 5, refused: true });
+    await expect(call(provisioning, route())).resolves.toEqual({ ready: false, reason: "GitKeyPutNotObserved", retryAfterSeconds: 5 });
+
+    expect(sleeps.length).toBeGreaterThan(1);
+    expect(calls).toHaveLength(1);
   });
 
   it("names a key an attempt processed without a registration condition", async () => {

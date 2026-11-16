@@ -121,48 +121,71 @@ export function gitKeyServiceContract(user: { uid: string; slug: string }, git: 
     return released ? unique : unique.filter((value) => !sameKey(value, row.key.spec.publicKey));
   }
 
-  async function reconcile(holder: string, row: Row): Promise<void> {
+  let hostWrites = 0;
+  const managed = () => git.held().filter((existing) => isManagedGatewayKeyTitle(existing.title));
+  const holds = (holder: string, publicKey: string) =>
+    managed().some((existing) => sameKey(existing.key, publicKey) && existing.title === gatewayKeyTitle(holder));
+  const putPending = (row: Row) => row.key.putSequence > row.key.status.observedPutSequence;
+
+  function refuse(row: Row, reason: ProvisioningConditionReason, message: string): void {
     const { key } = row;
-    const sequence = key.putSequence;
-    const managed = () => git.held().filter((existing) => isManagedGatewayKeyTitle(existing.title));
-    const has = (publicKey: string) => managed().some((existing) => sameKey(existing.key, publicKey) && existing.title === gatewayKeyTitle(holder));
-    for (const stale of staleKeys(row).filter(has)) git.deleteTitled(holder, stale);
-    if (key.deletionRequestedAt !== null) {
-      rows.delete(holder);
-      return;
+    key.status = { ...key.status, observedGeneration: key.generation, observedPutSequence: key.putSequence,
+      nextAttemptAt: new Date(Date.parse(NOW) + 120_000).toISOString(),
+      conditions: [condition("False", reason, message, key.generation)] };
+    row.backingOff = true;
+  }
+
+  async function reconcile(holder: string, row: Row): Promise<boolean> {
+    const { key } = row;
+    const pending = putPending(row);
+    const released = key.deletionRequestedAt !== null;
+    for (const stale of pending || released ? staleKeys(row).filter((publicKey) => holds(holder, publicKey)) : []) {
+      git.deleteTitled(holder, stale);
+      hostWrites += 1;
     }
-    const registered = () => {
-      key.status = { ...key.status, observedGeneration: key.generation, observedPutSequence: Math.max(key.status.observedPutSequence, sequence), nextAttemptAt: null,
+    if (released) {
+      rows.delete(holder);
+      return false;
+    }
+    const registered = (): true => {
+      key.status = { ...key.status, observedGeneration: key.generation, observedPutSequence: key.putSequence, nextAttemptAt: null,
         conditions: [condition("True", "Converged", "", key.generation)] };
       row.registeredPublicKey = key.spec.publicKey;
       row.backingOff = false;
+      return true;
     };
-    if (has(key.spec.publicKey)) return registered();
-    if (row.backingOff) return;
-    const putPending = key.putSequence > key.status.observedPutSequence;
-    const notRegistered = (reason: ProvisioningConditionReason, message: string) => {
-      key.status = { ...key.status, observedGeneration: key.generation, conditions: [condition("False", reason, message, key.generation)] };
-    };
-    const refused = (reason: ProvisioningConditionReason, message: string) => {
-      key.status = { ...key.status, observedGeneration: key.generation, observedPutSequence: Math.max(key.status.observedPutSequence, sequence),
-        nextAttemptAt: new Date(Date.parse(NOW) + 120_000).toISOString(),
-        conditions: [condition("False", reason, message, key.generation)] };
-      row.backingOff = true;
-    };
+    if (holds(holder, key.spec.publicKey)) return registered();
+    if (row.backingOff) return false;
     const elsewhere = managed().some((existing) => sameKey(existing.key, key.spec.publicKey) && existing.title !== gatewayKeyTitle(holder));
-    if (elsewhere && !putPending) return refused("GitKeyHeldElsewhere", "the key is held under another managed title; it is taken only while its gateway puts it");
-    if (!putPending) {
-      return managed().some((existing) => existing.title === gatewayKeyTitle(holder))
-        ? refused("GitKeyReplacedOnHost", "the git host holds a different key under this holder's title; the service writes the key only when its gateway puts it")
-        : refused("GitKeyNotOnHost", "the git host holds no key under this holder's title; the service writes the key only when its gateway puts it");
+    if (!pending) {
+      if (elsewhere) refuse(row, "GitKeyHeldElsewhere", "the key is held under another managed title; it is taken only while its gateway puts it");
+      else if (managed().some((existing) => existing.title === gatewayKeyTitle(holder))) refuse(row, "GitKeyReplacedOnHost", "the git host holds a different key under this holder's title; the service writes the key only when its gateway puts it");
+      else refuse(row, "GitKeyNotOnHost", "the git host holds no key under this holder's title; the service writes the key only when its gateway puts it");
+      return false;
     }
     if (registrationFailure !== null) {
-      const failure = registrationFailure;
+      key.status = { ...key.status, observedGeneration: key.generation, conditions: [condition("False", "GitKeyFailed", registrationFailure, key.generation)] };
       registrationFailure = null;
-      return notRegistered("GitKeyFailed", failure);
+      return false;
     }
     await git.host.registerKey(user.slug, key.spec.publicKey, holder);
-    registered();
+    hostWrites += 1;
+    return registered();
+  }
+
+  function settleWithoutGitAccount(holder: string, row: Row): void {
+    if (row.key.deletionRequestedAt !== null) rows.delete(holder);
+    else if (!row.backingOff && putPending(row)) refuse(row, "GitNotReady", "the user's git account does not exist yet; put the key again once provisioning has created it");
+  }
+
+  async function reconcileAll(): Promise<void> {
+    const registered: Array<{ holder: string; row: Row; writes: number }> = [];
+    for (const [holder, row] of [...rows]) {
+      if (await reconcile(holder, row)) registered.push({ holder, row, writes: hostWrites });
+    }
+    for (const { holder, row } of registered.filter((entry) => hostWrites > entry.writes)) {
+      if (!holds(holder, row.key.spec.publicKey)) refuse(row, "GitKeyHeldElsewhere", "another holder of this user took the key later in the same attempt");
+    }
   }
 
   const client: LegacyProvisioningClient = {
@@ -210,12 +233,11 @@ export function gitKeyServiceContract(user: { uid: string; slug: string }, git: 
     puts,
     async attempt() {
       attempts += 1;
-      for (const [holder, row] of [...rows]) {
-        const released = row.key.deletionRequestedAt !== null;
-        const putPending = row.key.putSequence > row.key.status.observedPutSequence;
-        if (parked !== null && !released && !(parked.gitAccount && putPending)) continue;
-        await reconcile(holder, row);
+      if (parked !== null && !parked.gitAccount) {
+        for (const [holder, row] of [...rows]) settleWithoutGitAccount(holder, row);
+        return;
       }
+      await reconcileAll();
     },
     releaseHolder(holder) {
       const row = rows.get(holder);

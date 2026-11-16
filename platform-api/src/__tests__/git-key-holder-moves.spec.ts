@@ -49,10 +49,17 @@ function assign(gatewayId: string): void {
   state.docs.set(`users/${USER.uid}`, { username: USER.slug, provisioning: { openclaw: { slug: USER.slug, gatewayId } } });
 }
 
-function platform(git: FakeGitHost, service: GitKeyServiceContract | null) {
+function seedInboundMove(toGatewayId: string): void {
+  state.docs.set("glmOperations/op-1", {
+    kind: "migrate-user", status: "running", gatewayId: toGatewayId, inputUid: USER.uid, input: { uid: USER.uid, toGatewayId },
+    createdBy: "admin", createdAt: 1, updatedAt: 1,
+  });
+}
+
+function platform(git: FakeGitHost, service: GitKeyServiceContract | null, sleep?: () => Promise<void>) {
   const legacyProvisioning = service === null
     ? null
-    : createLegacyProvisioning({ client: service.client, sleep: () => service.attempt() });
+    : createLegacyProvisioning({ client: service.client, sleep: sleep ?? (() => service.attempt()) });
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -71,9 +78,12 @@ function platform(git: FakeGitHost, service: GitKeyServiceContract | null) {
       await call(p, "/internal/fleet/git-key", { uid: USER.uid, publicKey }).expect(204);
       p.disk.marker = p.holder;
     },
-    async register(p: Pod) {
+    registration(p: Pod) {
       const marked = p.disk.marker === null ? {} : { serviceHolder: p.disk.marker };
-      const answer = await call(p, "/internal/gitea/ensure-user", { slug: USER.slug, pubKey: p.disk.key, ...marked });
+      return call(p, "/internal/gitea/ensure-user", { slug: USER.slug, pubKey: p.disk.key, ...marked });
+    },
+    async register(p: Pod) {
+      const answer = await thisBuild.registration(p);
       expect([200, 204]).toContain(answer.status);
       if (answer.body?.registeredOn === "git-host") p.disk.marker = null;
     },
@@ -300,7 +310,39 @@ describe("git keys across moves and rolls, through the platform's routes and ada
     expect(service.row(serving.holder)).toMatchObject({ putSequence: 2, status: { observedPutSequence: 2, conditions: [{ status: "True" }] } });
   });
 
-  it("refuses a mount with the service's reason while the user's work is parked without a git account, registering nothing", async () => {
+  it("answers the pod whose put lost to another pod's put for the same key that the key is held elsewhere, and registers it at that pod's next put", async () => {
+    const { git, service, thisBuild } = setup();
+    assign("shared-blue");
+    seedInboundMove("shared-green");
+    const source = pod("shared-blue", "octogee-gateway-shared-blue-5bc59-a1b2c");
+    await thisBuild.serviceMount(source);
+    const carried = source.disk.key;
+    const target = pod("shared-green", "octogee-gateway-shared-green-7d8e9-f3g4h", { key: carried, marker: null });
+    target.disk.marker = target.holder;
+
+    const attemptOnceBothPutsArePending = async () => {
+      while (service.puts.length < 3) await new Promise((resolve) => setImmediate(resolve));
+      await service.attempt();
+    };
+    const racing = platform(git, service, attemptOnceBothPutsArePending).thisBuild;
+
+    const [resumed, activated] = await Promise.all([racing.registration(source), racing.registration(target)]);
+
+    expect(activated.status).toBe(204);
+    expect(resumed.status).toBe(503);
+    expect(resumed.body).toEqual({ error: "provisioning_pending", reason: "GitKeyHeldElsewhere" });
+    expect(git.titled(target.holder)).toEqual([carried]);
+    expect(git.titled(source.holder)).toEqual([]);
+    expect(source.disk.marker).toBe(source.holder);
+
+    await thisBuild.register(source);
+
+    expect(git.titled(source.holder)).toEqual([carried]);
+    expect(hostKeys(git)).toEqual([carried]);
+    expect(service.row(target.holder)?.status.conditions[0]).toMatchObject({ status: "False", reason: "GitKeyHeldElsewhere" });
+  });
+
+  it("refuses a mount with the service's own reason while the user's work is parked without a git account, registering nothing", async () => {
     const { git, service } = setup();
     assign("shared-blue");
     service.park("GitOwnerFailed", { gitAccount: false });
@@ -318,7 +360,7 @@ describe("git keys across moves and rolls, through the platform's routes and ada
 
     const answer = await request(app).post("/internal/fleet/git-key").send({ uid: USER.uid, publicKey: serving.disk.key }).expect(422);
 
-    expect(answer.body).toEqual({ error: "provisioning_refused", reason: "GitOwnerFailed" });
+    expect(answer.body).toEqual({ error: "provisioning_refused", reason: "GitNotReady" });
     expect(hostKeys(git)).toEqual([]);
   });
 });

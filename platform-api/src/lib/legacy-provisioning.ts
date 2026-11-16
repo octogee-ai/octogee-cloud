@@ -113,6 +113,8 @@ function notProvisioned(uid: string): ProvisioningWait<never> {
   return { ready: false, reason: "NotProvisioned", retryAfterSeconds: DEFAULT_RETRY_AFTER_SECONDS };
 }
 
+const KEY_REFUSALS_NO_RETRY_FINISHES: ReadonlySet<string> = new Set(["GitNotReady"]);
+
 function registeredCondition(key: GitKey) {
   return key.status.observedGeneration >= key.generation
     ? key.status.conditions.find((candidate) => candidate.type === "Registered") ?? null
@@ -146,6 +148,7 @@ export function createLegacyProvisioning(deps: LegacyProvisioningDeps): LegacyPr
       ready: false,
       reason: registered.reason,
       retryAfterSeconds: Number.isFinite(due) && due > 0 ? clampSeconds(due / 1000) : DEFAULT_RETRY_AFTER_SECONDS,
+      ...(KEY_REFUSALS_NO_RETRY_FINISHES.has(registered.reason) ? { refused: true as const } : {}),
     };
   }
 
@@ -178,16 +181,6 @@ export function createLegacyProvisioning(deps: LegacyProvisioningDeps): LegacyPr
     return notReady(reason, resource);
   }
 
-  function parkedWithoutGitAccount(resource: UserProvisioning): boolean {
-    return resource.status.work.state === "parked" && resource.status.outputs.git?.owner === undefined;
-  }
-
-  async function workThatNeverRegistersKeys(uid: string, budget: RouteBudget): Promise<ProvisioningWait<never> | null> {
-    const read = await current(uid, budget, false);
-    if ("wait" in read) return read.wait;
-    return parkedWithoutGitAccount(read.resource) ? pending(uid, read.resource, "Ready") : null;
-  }
-
   async function putNotRegistered(key: GitKey, sequence: number, budget: RouteBudget): Promise<ProvisioningWait<never>> {
     if (key.status.observedPutSequence >= sequence) {
       const reason = key.status.observedGeneration < key.generation ? "GenerationNotObserved" : "RegisteredUnknown";
@@ -196,7 +189,6 @@ export function createLegacyProvisioning(deps: LegacyProvisioningDeps): LegacyPr
     const read = await current(key.uid, budget, false);
     if ("wait" in read) return read.wait;
     const { work } = read.resource.status;
-    if (parkedWithoutGitAccount(read.resource)) return pending(key.uid, read.resource, "Ready");
     const recorded = key.status.conditions.find((candidate) => candidate.type === "Registered");
     const reason = recorded !== undefined && recorded.status !== "True" ? recorded.reason : "GitKeyPutNotObserved";
     logger.error("legacy provisioning: no attempt has processed the gateway's git key put inside the route's budget", {
@@ -266,8 +258,6 @@ export function createLegacyProvisioning(deps: LegacyProvisioningDeps): LegacyPr
         return unavailable(uid, error);
       }
       const sequence = key.putSequence;
-      const refusal = await workThatNeverRegistersKeys(uid, budget);
-      if (refusal !== null) return refusal;
       for (;;) {
         if (key.status.observedPutSequence >= sequence) {
           const registered = registeredCondition(key);
