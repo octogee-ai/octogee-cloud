@@ -146,8 +146,8 @@ function fail(op: string, { status, json }: AdminResponse): never {
 interface GiteaAdmin {
   readonly config: GiteaGitHostConfig;
   log(message: string): void;
-  send(method: string, path: string, body?: unknown): Promise<Response>;
-  request(method: string, path: string, body?: unknown): Promise<AdminResponse>;
+  send(method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<Response>;
+  request(method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<AdminResponse>;
 }
 
 function pinnedHostOf(apiBaseUrl: string): string {
@@ -174,7 +174,7 @@ function createGiteaAdmin(config: GiteaGitHostConfig): GiteaAdmin {
   const fetchImpl: typeof fetch = (input, init) => (config.fetch ?? fetch)(input, init);
   const pinnedHost = pinnedHostOf(config.apiBaseUrl);
 
-  async function send(method: string, path: string, body?: unknown): Promise<Response> {
+  async function send(method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<Response> {
     const url = `${config.apiBaseUrl}${path}`;
     assertPinnedHost(url, pinnedHost);
     return fetchImpl(url, {
@@ -185,6 +185,7 @@ function createGiteaAdmin(config: GiteaGitHostConfig): GiteaAdmin {
         ...(body ? { "Content-Type": "application/json" } : {}),
       },
       ...(body ? { body: JSON.stringify(body) } : {}),
+      ...(signal ? { signal } : {}),
     });
   }
 
@@ -192,8 +193,8 @@ function createGiteaAdmin(config: GiteaGitHostConfig): GiteaAdmin {
     config,
     log: config.log ?? (() => undefined),
     send,
-    async request(method, path, body) {
-      const resp = await send(method, path, body);
+    async request(method, path, body, signal) {
+      const resp = await send(method, path, body, signal);
       const json =
         resp.status === 204 || resp.status === 304 ? null : await resp.json().catch(() => null);
       return { status: resp.status, json };
@@ -216,12 +217,14 @@ async function tolerantDelete(
   throw new Error(`gitea ${operation} failed: ${resp.status} ${body.slice(0, 200)}`);
 }
 
-async function readUserKeys(api: GiteaAdmin, username: string): Promise<GiteaPublicKey[]> {
+async function readUserKeys(api: GiteaAdmin, username: string, signal?: AbortSignal): Promise<GiteaPublicKey[]> {
   const keys: GiteaPublicKey[] = [];
   for (let page = 1; ; page += 1) {
     const response = await api.request(
       "GET",
       `/users/${username}/keys?limit=${GITEA_PAGE_SIZE}&page=${page}`,
+      undefined,
+      signal,
     );
     if (page === 1 && response.status === 404) return [];
     if (!ok(response.status)) fail("list-keys", response);
@@ -239,8 +242,9 @@ async function hasManagedKey(
   username: string,
   pubKey: string,
   title?: string,
+  signal?: AbortSignal,
 ): Promise<boolean> {
-  return (await readUserKeys(api, username)).some(
+  return (await readUserKeys(api, username, signal)).some(
     (key) =>
       isManagedGatewayKey(key) &&
       (title === undefined || key.title === title) &&
@@ -486,8 +490,8 @@ export function createGiteaGitHost(config: GiteaGitHostConfig): GiteaGitHost {
     registerKeyUnlessHeld: (workspaceSlug, pubKey, keyOwnerId) =>
       registerGatewayKey(api, workspaceSlug, pubKey, keyOwnerId, false),
 
-    holdsKey: (workspaceSlug, pubKey, keyOwnerId) =>
-      hasManagedKey(api, giteaUsername(workspaceSlug), pubKey, gatewayKeyTitle(pubKey, keyOwnerId)),
+    holdsKey: (workspaceSlug, pubKey, keyOwnerId, signal) =>
+      hasManagedKey(api, giteaUsername(workspaceSlug), pubKey, gatewayKeyTitle(pubKey, keyOwnerId), signal),
 
     async listKeys(workspaceSlug) {
       return (await readUserKeys(api, giteaUsername(workspaceSlug)))

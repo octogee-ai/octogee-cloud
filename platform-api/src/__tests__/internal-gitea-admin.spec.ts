@@ -616,7 +616,7 @@ describe("internal gitea-admin ensure-user for a key the calling pod already hol
   const OWN_TITLE = gatewayKeyTitle(WALTER_KEY_OWNER);
   const OTHER_POD_TITLE = gatewayKeyTitle("walter/octogee-gateway-walter-5bc5949d46-other");
 
-  type GitHostKeys = ReadonlyArray<{ title: string; key: string }> | "no-account" | "unreadable";
+  type GitHostKeys = ReadonlyArray<{ title: string; key: string }> | "no-account" | "unreadable" | "unanswered";
 
   function gitHostHolding(keys: GitHostKeys): string[] {
     const requests: string[] = [];
@@ -627,6 +627,11 @@ describe("internal gitea-admin ensure-user for a key the calling pod already hol
       if (method !== "GET" || path !== "/users/ws-acme/keys") throw new Error(`unexpected git host request ${method} ${path}`);
       if (keys === "no-account") return Response.json({ message: "user does not exist" }, { status: 404 });
       if (keys === "unreadable") return Response.json({ message: "database is locked" }, { status: 500 });
+      if (keys === "unanswered") {
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+        });
+      }
       return Response.json(keys.map((held, index) => ({ id: index + 1, ...held })));
     };
     vi.mocked(gitHost().holdsKey).mockImplementation(
@@ -724,6 +729,21 @@ describe("internal gitea-admin ensure-user for a key the calling pod already hol
     expectNothingRegistered();
   });
 
+  it("refuses a pod the user is not assigned to before reading the key, even when that pod's title carries it", async () => {
+    assignUser("acme", "shared-1");
+    const requests = gitHostHolding([{ title: OWN_TITLE, key: KEY }]);
+    const provisioning = serviceWithoutTheUser();
+
+    const res = await ensureUser(provisioning);
+
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({ error: "slug is not assigned to this gateway" });
+    expect(gitHost().holdsKey).not.toHaveBeenCalled();
+    expect(requests).toEqual([]);
+    expect(provisioning.git).not.toHaveBeenCalled();
+    expectNothingRegistered();
+  });
+
   it.each<[string, GitHostKeys]>([
     ["the pod's title carries different key material", [{ title: OWN_TITLE, key: "ssh-ed25519 AAAAOTHER octogee-acme@gateway" }]],
     ["the key is registered under another pod's title", [{ title: OTHER_POD_TITLE, key: KEY }]],
@@ -770,6 +790,27 @@ describe("internal gitea-admin ensure-user for a key the calling pod already hol
     );
     expect(provisioning.git).toHaveBeenCalledOnce();
     expect(gitHost().registerKey).toHaveBeenCalledExactlyOnceWith("acme", KEY, WALTER_KEY_OWNER);
+  });
+
+  it("stops waiting for a git host that does not answer the key listing, logs it and answers the service's 503", async () => {
+    const requests = gitHostHolding("unanswered");
+    const timeout = AbortSignal.timeout.bind(AbortSignal);
+    const bound = vi.spyOn(AbortSignal, "timeout").mockImplementationOnce(() => timeout(1));
+    const provisioning = serviceWithoutTheUser();
+
+    const res = await ensureUser(provisioning);
+
+    expect(res.status).toBe(503);
+    expect(res.headers["retry-after"]).toBe("5");
+    expect(res.body).toEqual({ error: "provisioning_pending", reason: "NotProvisioned" });
+    expect(bound.mock.calls[0]).toEqual([5_000]);
+    expect(requests).toEqual(["GET /users/ws-acme/keys"]);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("could not read"),
+      expect.objectContaining({ slug: "acme", holder: WALTER_KEY_OWNER, err: expect.objectContaining({ name: "TimeoutError" }) }),
+    );
+    expect(provisioning.git).toHaveBeenCalledOnce();
+    expectNothingRegistered();
   });
 
   it("registers without reading the key first when the provisioning service is not configured", async () => {

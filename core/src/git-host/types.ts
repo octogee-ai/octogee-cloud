@@ -74,7 +74,7 @@ export interface GitKeySweepResult {
 export interface GitHostSshKeys {
   registerKey(workspaceSlug: string, publicKey: string, holder?: string): Promise<void>;
   registerKeyUnlessHeld(workspaceSlug: string, publicKey: string, holder: string): Promise<void>;
-  holdsKey(workspaceSlug: string, publicKey: string, holder: string): Promise<boolean>;
+  holdsKey(workspaceSlug: string, publicKey: string, holder: string, signal?: AbortSignal): Promise<boolean>;
   listKeys(workspaceSlug: string): Promise<string[]>;
   releaseKey(workspaceSlug: string, publicKey: string, holder?: string): Promise<void>;
   sweepKeys(input: GitKeySweepInput, state: GitKeySweepState): Promise<GitKeySweepResult>;

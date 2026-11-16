@@ -383,6 +383,19 @@ describe("createGiteaGitHost — managed Gitea admin operations", () => {
 
       await expect(host.holdsKey("acme", key, holder)).rejects.toThrow(/list-keys failed: 500/);
     });
+
+    it("sends the caller's signal with the key listing and rejects with its reason when it aborts", async () => {
+      const controller = new AbortController();
+      fetchMock.mockImplementationOnce((_url: string, init?: RequestInit) => new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+      }));
+
+      const held = host.holdsKey("acme", key, holder, controller.signal);
+      controller.abort(new DOMException("the key listing took too long", "TimeoutError"));
+
+      await expect(held).rejects.toThrow("the key listing took too long");
+      expect(fetchMock.mock.calls[0][1].signal).toBe(controller.signal);
+    });
   });
 
   describe("listKeys and primaryKey", () => {

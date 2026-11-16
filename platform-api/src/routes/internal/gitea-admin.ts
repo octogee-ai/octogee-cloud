@@ -225,10 +225,12 @@ async function broker(res: Response, op: string, fn: () => Promise<void>): Promi
   }
 }
 
+const HELD_KEY_READ_TIMEOUT_MS = 5_000;
+
 async function answeredForKeyAlreadyHeld(res: Response, slug: string, pubKey: string, holder: string): Promise<boolean> {
   let held: boolean;
   try {
-    held = await gitHost().holdsKey(slug, pubKey, holder);
+    held = await gitHost().holdsKey(slug, pubKey, holder, AbortSignal.timeout(HELD_KEY_READ_TIMEOUT_MS));
   } catch (err) {
     logger.warn("internal/gitea ensure-user could not read the user's keys on the git host, so the provisioning service is asked first", { err, slug, holder });
     return false;
