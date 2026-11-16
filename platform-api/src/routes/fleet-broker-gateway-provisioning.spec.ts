@@ -348,6 +348,18 @@ describe("POST /internal/fleet/git-key", () => {
     expect(logged).toHaveBeenCalledWith(expect.stringContaining("only a shared gateway holds a git key row"), { gatewayId: GATEWAY_ID, holder: HOLDER, uid: "uid-alice" });
   });
 
+  it("answers 502 without asking the provisioning service when the caller's gateway class cannot be read", async () => {
+    const logged = vi.spyOn(logger, "error").mockImplementation(() => {});
+    const { app, store, provisioning } = fixture();
+    vi.spyOn(store.gateways.roots, "get").mockRejectedValueOnce(new Error("the platform store is unavailable"));
+
+    const response = await post(app, "git-key", { publicKey: PUBLIC_KEY }).expect(502);
+
+    expect(response.body).toEqual({ error: "the platform store is unavailable" });
+    expect(provisioning?.gitKey).not.toHaveBeenCalled();
+    expect(logged).toHaveBeenCalledWith("fleet broker call failed", expect.objectContaining({ err: expect.any(Error) }));
+  });
+
   it("refuses a caller whose token binds no pod, since the pod holds the key", async () => {
     const { app, provisioning } = fixture({ podName: null });
 
@@ -478,6 +490,18 @@ describe("POST /internal/fleet/git-key/release", () => {
 
     expect(provisioning?.releaseGitKey).not.toHaveBeenCalled();
     expect(logged).toHaveBeenCalledWith(expect.stringContaining("only a shared gateway holds a git key row"), { gatewayId: GATEWAY_ID, holder: HOLDER });
+  });
+
+  it("answers 502 without asking the provisioning service when the caller's gateway class cannot be read", async () => {
+    const logged = vi.spyOn(logger, "error").mockImplementation(() => {});
+    const { app, store, provisioning } = fixture();
+    vi.spyOn(store.gateways.roots, "get").mockRejectedValueOnce(new Error("the platform store is unavailable"));
+
+    const response = await release(app, { publicKey: PUBLIC_KEY }).expect(502);
+
+    expect(response.body).toEqual({ error: "the platform store is unavailable" });
+    expect(provisioning?.releaseGitKey).not.toHaveBeenCalled();
+    expect(logged).toHaveBeenCalledWith("fleet broker call failed", expect.objectContaining({ err: expect.any(Error) }));
   });
 
   it("refuses a caller whose token binds no pod", async () => {

@@ -27,7 +27,7 @@ vi.mock("../lib/config.js", () => ({
 
 const { log } = await import("../lib/config.js");
 const { prepareServiceGitKey, generateUserSshKey, readLocalUserPubKey } = await import("../lib/git.js");
-const { brokeredGitHost } = await import("../lib/gitea-admin-broker-client.js");
+const { brokeredGitHost, KeyRegistrationRefused } = await import("../lib/gitea-admin-broker-client.js");
 const { internalFetch } = await import("../lib/internal-fetch.js");
 const {
   createGitKeyResync,
@@ -365,6 +365,37 @@ describe("periodic git key resync for mounted users", () => {
     await expect(running).resolves.toBe("ran");
     expect(host.registrations).toHaveLength(1);
     expect(logged.failures).toEqual([]);
+  });
+
+  it("checks only its own registrations: a mount's registrations sent while a pass waits are neither held back nor silenced", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    const host = gitHostBehindThePlatform();
+    serviceHeldKey("lin");
+    const adaKey = generateUserSshKey("ada");
+    const meiKey = serviceHeldKey("mei");
+    host.pending.set("lin", "GitKeyPutNotObserved");
+    host.refusals.set("mei", "GitOwnerFailed");
+    const state = { mounted: ["lin"] };
+    const { pass } = resyncFor(() => state.mounted);
+
+    const running = pass();
+    await vi.waitFor(() => expect(host.registrations).toHaveLength(1));
+    state.mounted = [];
+    const direct = brokeredGitHost.registerKey("ada", adaKey);
+    const marked = brokeredGitHost.registerKey("mei", meiKey);
+
+    await expect(direct).resolves.toBeUndefined();
+    await expect(marked).rejects.toBeInstanceOf(KeyRegistrationRefused);
+    await vi.advanceTimersByTimeAsync(60_000);
+    await expect(running).resolves.toBe("ran");
+
+    expect(host.registrations).toEqual([
+      { slug: "lin", pubKey: expect.any(String), serviceHolder: HOLDER },
+      { slug: "ada", pubKey: adaKey },
+      { slug: "mei", pubKey: meiKey, serviceHolder: HOLDER },
+    ]);
+    expect(logged.failures).toEqual([expect.stringMatching(/mei: the platform refused to register this pod's key \(reason GitOwnerFailed\)/)]);
+    expect(logged.lines).toContainEqual(expect.stringMatching(/lin: the user was unmounted since its keys were listed/));
   });
 
   it("leaves a key directory whose public key cannot be read as it is, and logs it", async () => {

@@ -1495,6 +1495,21 @@ describe("internal gitea-admin route with the provisioning service", () => {
       expect(logged).toHaveBeenCalledWith(expect.stringContaining("only a shared gateway holds a git key row"), { slug: "acme", keyOwner: WALTER_KEY_OWNER, gatewayId: "walter" });
     });
 
+    it("answers 502 and writes nothing when the calling gateway's class cannot be read, for a marker naming its own pod", async () => {
+      const logged = vi.spyOn(logger, "error").mockImplementation(() => {});
+      vi.spyOn(platformStateStore.gateways.roots, "get").mockRejectedValueOnce(new Error("the platform store is unavailable"));
+      const provisioning = service(async () => ({ ready: true, value: undefined }));
+
+      const res = await request(app("walter", "walter", provisioning)).post("/internal/gitea/ensure-user").send({ slug: "acme", pubKey: KEY, serviceHolder: WALTER_KEY_OWNER });
+
+      expect(res.status).toBe(502);
+      expect(res.body).toEqual({ error: "gateway class lookup failed" });
+      expect(provisioning.gitKey).not.toHaveBeenCalled();
+      expect(provisioning.git).not.toHaveBeenCalled();
+      expectNoKeyTouched();
+      expect(logged).toHaveBeenCalledWith(expect.stringContaining("could not read the calling gateway's class"), expect.objectContaining({ slug: "acme", gatewayId: "walter" }));
+    });
+
     it("answers the service's reason while the row is not registered", async () => {
       const provisioning = service(async () => ({ ready: true, value: undefined }), async () => ({ ready: false, reason: "GenerationNotObserved", retryAfterSeconds: 5 }));
 
