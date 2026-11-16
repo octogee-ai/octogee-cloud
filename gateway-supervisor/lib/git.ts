@@ -572,13 +572,19 @@ export function generateUserSshKey(slug: string): string {
     return fs.readFileSync(pubPath, "utf-8").trim();
   }
 
+  const pubKey = generateKeyPair(keyDir, slug);
+  log(`[git] SSH keypair generated for ${slug}`);
+  return pubKey;
+}
+
+function generateKeyPair(keyDir: string, slug: string): string {
+  const keyPath = path.join(keyDir, "id_ed25519");
+  const pubPath = keyPath + ".pub";
   fs.mkdirSync(keyDir, { recursive: true });
   execFileSync("/usr/bin/ssh-keygen", ["-t", "ed25519", "-N", "", "-f", keyPath, "-C", `octogee-${slug}@gateway`, "-q"], {
     stdio: "pipe",
   });
   restrictUserSshKeyModes(keyDir, keyPath, pubPath);
-
-  log(`[git] SSH keypair generated for ${slug}`);
   return fs.readFileSync(pubPath, "utf-8").trim();
 }
 
@@ -595,17 +601,43 @@ export async function deleteUserSshKey(slug: string): Promise<void> {
   await fs.promises.rm(keyDir, { recursive: true, force: true });
 }
 
-export function generateServiceGitKey(slug: string, gatewayId: string): string {
+export interface PreparedServiceGitKey {
+  publicKey: string;
+  registered: () => void;
+}
+
+const STAGED_KEY_DIR = "staged";
+
+export function prepareServiceGitKey(slug: string, holder: string): PreparedServiceGitKey {
   if (!isValidUsername(slug)) throw new Error("Invalid SSH key owner");
-  if (!gatewayId) throw new Error("A service git key needs the gateway id");
+  if (!holder) throw new Error("A service git key needs the holder");
   const keyDir = path.join(CUSTOMER_KEYS_DIR, slug);
-  if (serviceGitKeyHolder(slug) !== gatewayId) {
-    if (fs.existsSync(keyDir)) log(`[git] ${slug}: generating a key for registration through the provisioning service at this gateway`);
+  const keyPath = path.join(keyDir, "id_ed25519");
+  const onDisk = fs.existsSync(keyPath) ? readLocalUserPubKey(slug) : null;
+  const marker = serviceGitKeyHolder(slug);
+  if (onDisk === null) {
     fs.rmSync(keyDir, { recursive: true, force: true });
+    const publicKey = generateKeyPair(keyDir, slug);
+    log(`[git] ${slug}: generated a key for registration through the provisioning service`);
+    return { publicKey, registered: () => recordServiceGitKeyHolder(slug, holder) };
   }
-  const pubKey = generateUserSshKey(slug);
-  recordServiceGitKeyHolder(slug, gatewayId);
-  return pubKey;
+  if (marker === null || marker === holder) {
+    restrictUserSshKeyModes(keyDir, keyPath, `${keyPath}.pub`);
+    return { publicKey: onDisk, registered: () => recordServiceGitKeyHolder(slug, holder) };
+  }
+  const stagedDir = path.join(keyDir, STAGED_KEY_DIR);
+  fs.rmSync(stagedDir, { recursive: true, force: true });
+  const publicKey = generateKeyPair(stagedDir, slug);
+  log(`[git] ${slug}: the key on disk is registered for another holder; staged a key for this one`);
+  return {
+    publicKey,
+    registered: () => {
+      fs.renameSync(path.join(stagedDir, "id_ed25519"), keyPath);
+      fs.renameSync(path.join(stagedDir, "id_ed25519.pub"), `${keyPath}.pub`);
+      fs.rmSync(stagedDir, { recursive: true, force: true });
+      recordServiceGitKeyHolder(slug, holder);
+    },
+  };
 }
 
 export function readLocalUserPubKey(slug: string): string | null {

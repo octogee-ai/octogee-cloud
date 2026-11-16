@@ -3209,6 +3209,8 @@ describe("lifecycle log identity", () => {
   });
 });
 
+const HOLDER = "gw-test/octogee-gateway-gw-test-5bc59-p946t";
+
 describe("addUserToGateway — through the provisioning service", () => {
   const READY: ServiceProvisioningAnswer = { ready: true };
   const pending = (reason: string, retryAfterMs = 5_000): ServiceProvisioningAnswer => ({ ready: false, reason, retryAfterMs });
@@ -3231,7 +3233,7 @@ describe("addUserToGateway — through the provisioning service", () => {
       serviceGitKey: vi.fn(() => {
         state.calls.push("service:gitKey");
         state.disk.sshKey = true;
-        return "ssh-service-pubkey";
+        return { publicKey: "ssh-service-pubkey", registered: () => state.calls.push("service:keyRegistered") };
       }),
       holdsServiceGitKey: () => options.holdsServiceGitKey ?? true,
       registerGitKey: vi.fn(async () => {
@@ -3240,6 +3242,7 @@ describe("addUserToGateway — through the provisioning service", () => {
       }),
       releaseGitKey: vi.fn(async () => {
         state.calls.push("service:releaseGitKey");
+        return "released" as const;
       }),
       sleep: async (ms) => {
         sleeps.push(ms);
@@ -3278,7 +3281,7 @@ describe("addUserToGateway — through the provisioning service", () => {
   });
 
   it("waits for chat and git, registers its own key through the service and performs no chat or git side effect", async () => {
-    const state = makeState(snap({ provisionedBy: "service", mattermostUserId: "mm-user" }), emptyDisk());
+    const state = makeState(snap({ provisionedBy: "service", gitKeyHolder: HOLDER, mattermostUserId: "mm-user" }), emptyDisk());
     const { adapter, initPaths, loads } = withService(state);
 
     const result = await addUserToGateway(adapter, "uid-test");
@@ -3287,6 +3290,8 @@ describe("addUserToGateway — through the provisioning service", () => {
     expect(state.calls.indexOf("service:readiness")).toBeLessThan(state.calls.indexOf("service:registerGitKey"));
     expect(state.calls.indexOf("service:registerGitKey")).toBeLessThan(state.calls.indexOf("initWorkspaceRepoFromExistingDir"));
     expect(initPaths).toEqual(["service"]);
+    expect(adapter.provisioningService?.serviceGitKey).toHaveBeenCalledWith("test", HOLDER);
+    expect(state.calls.indexOf("service:registerGitKey")).toBeLessThan(state.calls.indexOf("service:keyRegistered"));
     expect(loads).toContainEqual({ refresh: true });
     expect(state.calls).toContain("applyAddUserConfigPatch");
     expect(state.calls).toContain("provisionDefaultAgentAutomation");
@@ -3296,7 +3301,7 @@ describe("addUserToGateway — through the provisioning service", () => {
   });
 
   it("re-mounts a user with a workspace already on disk without asking for any repository", async () => {
-    const state = makeState(mountedSnapshot({ provisionedBy: "service" }), mountedDisk());
+    const state = makeState(mountedSnapshot({ provisionedBy: "service", gitKeyHolder: HOLDER }), mountedDisk());
     const { adapter, service } = withService(state);
 
     await addUserToGateway(adapter, "uid-test");
@@ -3307,7 +3312,7 @@ describe("addUserToGateway — through the provisioning service", () => {
   });
 
   it("logs each reason it waits for, backs off, and continues once the service is ready", async () => {
-    const state = makeState(snap({ provisionedBy: "service", mattermostUserId: "mm-user" }), emptyDisk());
+    const state = makeState(snap({ provisionedBy: "service", gitKeyHolder: HOLDER, mattermostUserId: "mm-user" }), emptyDisk());
     const answers = [pending("ChatTeamFailed", 0), pending("GitRepositoryFailed", 7_000), READY];
     const { adapter, sleeps } = withService(state, { readiness: () => answers.shift()! });
 
@@ -3320,7 +3325,7 @@ describe("addUserToGateway — through the provisioning service", () => {
   });
 
   it("caps a long Retry-After so a recovered service is noticed", async () => {
-    const state = makeState(snap({ provisionedBy: "service", mattermostUserId: "mm-user" }), emptyDisk());
+    const state = makeState(snap({ provisionedBy: "service", gitKeyHolder: HOLDER, mattermostUserId: "mm-user" }), emptyDisk());
     const answers = [pending("ProvisioningServiceUnavailable", 300_000), READY];
     const { adapter, sleeps } = withService(state, { readiness: () => answers.shift()! });
 
@@ -3330,7 +3335,7 @@ describe("addUserToGateway — through the provisioning service", () => {
   });
 
   it("fails the mount with the last reason once the wait exceeds its bound, before any key, checkout or config patch", async () => {
-    const state = makeState(snap({ provisionedBy: "service" }), emptyDisk());
+    const state = makeState(snap({ provisionedBy: "service", gitKeyHolder: HOLDER }), emptyDisk());
     const { adapter, sleeps } = withService(state, { readiness: () => pending("GitOwnerFailed") });
 
     await expect(addUserToGateway(adapter, "uid-test")).rejects.toThrow(
@@ -3345,11 +3350,11 @@ describe("addUserToGateway — through the provisioning service", () => {
   });
 
   it("fails the mount when the service does not register the key within its bound", async () => {
-    const state = makeState(snap({ provisionedBy: "service", mattermostUserId: "mm-user" }), emptyDisk());
+    const state = makeState(snap({ provisionedBy: "service", gitKeyHolder: HOLDER, mattermostUserId: "mm-user" }), emptyDisk());
     const { adapter, service } = withService(state, { registerGitKey: () => pending("GitKeyFailed") });
 
     await expect(addUserToGateway(adapter, "uid-test")).rejects.toThrow(
-      /gave up waiting for the provisioning service to register this gateway's git key .*last reason GitKeyFailed/,
+      /gave up waiting for the provisioning service to register this pod's git key .*last reason GitKeyFailed/,
     );
 
     expect(vi.mocked(service.registerGitKey).mock.calls.length).toBeGreaterThan(1);
@@ -3357,7 +3362,7 @@ describe("addUserToGateway — through the provisioning service", () => {
   });
 
   it("fails the mount at once and logs an error when the platform refuses the user", async () => {
-    const state = makeState(snap({ provisionedBy: "service" }), emptyDisk());
+    const state = makeState(snap({ provisionedBy: "service", gitKeyHolder: HOLDER }), emptyDisk());
     const { adapter, service, sleeps } = withService(state, {
       readiness: () => ({ ready: false, refused: true, reason: "UserBeingErased" }),
     });
@@ -3372,20 +3377,27 @@ describe("addUserToGateway — through the provisioning service", () => {
     expect(state.calls).not.toContain("service:registerGitKey");
   });
 
-  it("fails the mount at once when the platform refuses this gateway's git key", async () => {
+  it("records no holder for a key the service did not register within its bound", async () => {
+    const state = makeState(snap({ provisionedBy: "service", gitKeyHolder: HOLDER, mattermostUserId: "mm-user" }), emptyDisk());
+    const { adapter } = withService(state, { registerGitKey: () => pending("GitKeyHeldElsewhere", 120_000) });
+
+    await expect(addUserToGateway(adapter, "uid-test")).rejects.toThrow(/GitKeyHeldElsewhere/);
+
+    expect(state.calls).not.toContain("service:keyRegistered");
+  });
+
+  it("fails the mount before any key when the snapshot names no holder for this pod", async () => {
     const state = makeState(snap({ provisionedBy: "service", mattermostUserId: "mm-user" }), emptyDisk());
-    const { adapter, service } = withService(state, {
-      registerGitKey: () => ({ ready: false, refused: true, reason: "GitKeyHeldElsewhere" }),
-    });
+    const { adapter, service } = withService(state);
 
-    await expect(addUserToGateway(adapter, "uid-test")).rejects.toThrow(/reason GitKeyHeldElsewhere/);
+    await expect(addUserToGateway(adapter, "uid-test")).rejects.toThrow("names no git key holder");
 
-    expect(service.registerGitKey).toHaveBeenCalledOnce();
-    expect(state.calls).not.toContain("applyAddUserConfigPatch");
+    expect(service.serviceGitKey).not.toHaveBeenCalled();
+    expect(service.registerGitKey).not.toHaveBeenCalled();
   });
 
   it("stops waiting when the mount is aborted", async () => {
-    const state = makeState(snap({ provisionedBy: "service" }), emptyDisk());
+    const state = makeState(snap({ provisionedBy: "service", gitKeyHolder: HOLDER }), emptyDisk());
     const { adapter, service } = withService(state, { readiness: () => pending("ChatUserFailed") });
     delete service.sleep;
     delete service.now;
@@ -3408,7 +3420,7 @@ describe("addUserToGateway — through the provisioning service", () => {
   });
 
   it("refuses a service-provisioned user on a gateway without a provisioning service adapter", async () => {
-    const state = makeState(snap({ provisionedBy: "service" }), emptyDisk());
+    const state = makeState(snap({ provisionedBy: "service", gitKeyHolder: HOLDER }), emptyDisk());
 
     await expect(addUserToGateway(makeAdapter(state), "uid-test")).rejects.toThrow("has no provisioning service adapter");
     for (const call of LEGACY_REMOTE_CALLS) expect(state.calls).not.toContain(call);
@@ -3416,40 +3428,57 @@ describe("addUserToGateway — through the provisioning service", () => {
 });
 
 describe("removeUserFromGateway — through the provisioning service", () => {
-  function serviceRemoval(holds: boolean, snapshot: Partial<UserSnapshot> = { provisionedBy: "service" }) {
+  function serviceRemoval(
+    holds: boolean,
+    snapshot: Partial<UserSnapshot> = { provisionedBy: "service", gitKeyHolder: HOLDER },
+    outcome: "released" | "not-configured" = "released",
+  ) {
     const state = makeState(mountedSnapshot(snapshot), mountedDisk());
     const adapter = makeAdapter(state);
     const releaseGitKey = vi.fn(async () => {
       state.calls.push("service:releaseGitKey");
+      return outcome;
     });
+    const holdsServiceGitKey = vi.fn(() => holds);
     adapter.provisioningService = {
       readiness: async () => ({ ready: true }),
-      serviceGitKey: () => "ssh-pubkey",
-      holdsServiceGitKey: () => holds,
+      serviceGitKey: () => ({ publicKey: "ssh-pubkey", registered: () => {} }),
+      holdsServiceGitKey,
       registerGitKey: async () => ({ ready: true }),
       releaseGitKey,
     };
-    return { state, adapter, releaseGitKey };
+    return { state, adapter, releaseGitKey, holdsServiceGitKey };
   }
 
   it("releases a key it registered through the service with the service, naming the key it releases", async () => {
-    const { state, adapter, releaseGitKey } = serviceRemoval(true);
+    const { state, adapter, releaseGitKey, holdsServiceGitKey } = serviceRemoval(true);
 
     const result = await removeUserFromGateway(adapter, "uid-test");
 
+    expect(holdsServiceGitKey).toHaveBeenCalledWith("test", HOLDER);
     expect(releaseGitKey).toHaveBeenCalledWith("uid-test", "ssh-pubkey");
     expect(state.calls.some((call) => call.startsWith("releaseKey:"))).toBe(false);
     expect(state.calls).toContain("deleteUserSshKey");
     expect(result.steps).toContain("release-gitea-key");
   });
 
-  it("releases through the service whenever this gateway's marker holds the key, even when the snapshot no longer says service", async () => {
-    const { state, adapter, releaseGitKey } = serviceRemoval(true, {});
+  it("releases through the service whenever the marker holds the key, even when the snapshot no longer says service", async () => {
+    const { state, adapter, releaseGitKey, holdsServiceGitKey } = serviceRemoval(true, {});
 
     await removeUserFromGateway(adapter, "uid-test");
 
+    expect(holdsServiceGitKey).toHaveBeenCalledWith("test", undefined);
     expect(releaseGitKey).toHaveBeenCalledWith("uid-test", "ssh-pubkey");
     expect(state.calls.some((call) => call.startsWith("releaseKey:"))).toBe(false);
+  });
+
+  it("releases the key on the git host by its key material once the service has been switched off", async () => {
+    const { state, adapter, releaseGitKey } = serviceRemoval(true, {}, "not-configured");
+
+    await removeUserFromGateway(adapter, "uid-test");
+
+    expect(releaseGitKey).toHaveBeenCalledOnce();
+    expect(state.calls.indexOf("service:releaseGitKey")).toBeLessThan(state.calls.indexOf("releaseKey:ssh-pubkey"));
   });
 
   it("releases a key registered before the service the way it was registered", async () => {

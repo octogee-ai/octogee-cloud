@@ -43,6 +43,7 @@ export interface UserSnapshot {
   // catalog agent with no explicit pick converges to at mount-time reassert.
   builderAgentDefault?: { primary: string; fallbacks: string[] };
   provisionedBy?: "service";
+  gitKeyHolder?: string;
   systemConfig?: {
     byot?: { provider?: string; baseUrl?: string; model?: string };
     agentModels?: AgentModelSelections;
@@ -94,12 +95,17 @@ export type ServiceProvisioningAnswer =
   | { readonly ready: false; readonly reason: string; readonly retryAfterMs: number }
   | { readonly ready: false; readonly refused: true; readonly reason: string };
 
+export interface ServiceGitKey {
+  publicKey: string;
+  registered: () => void;
+}
+
 export interface ServiceProvisioningAdapter {
   readiness: (uid: string) => Promise<ServiceProvisioningAnswer>;
-  serviceGitKey: (slug: string) => string;
-  holdsServiceGitKey: (slug: string) => boolean;
+  serviceGitKey: (slug: string, holder: string) => ServiceGitKey;
+  holdsServiceGitKey: (slug: string, holder: string | undefined) => boolean;
   registerGitKey: (uid: string, publicKey: string) => Promise<ServiceProvisioningAnswer>;
-  releaseGitKey: (uid: string, publicKey: string) => Promise<void>;
+  releaseGitKey: (uid: string, publicKey: string) => Promise<"released" | "not-configured">;
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   now?: () => number;
 }
@@ -1028,17 +1034,21 @@ async function awaitServiceProvisioning(
 async function ensureServiceGitKey(
   adapter: UserLifecycleAdapter,
   service: ServiceProvisioningAdapter,
-  uid: string,
-  slug: string,
+  snapshot: UserSnapshot,
   signal: AbortSignal | undefined,
 ): Promise<AddUserStep[]> {
-  const publicKey = service.serviceGitKey(slug);
+  const { uid, slug, gitKeyHolder } = snapshot;
+  if (!gitKeyHolder) {
+    return failServiceWait(adapter, `[add:${slug}] the snapshot names no git key holder for this pod, so the service cannot register its key`);
+  }
+  const key = service.serviceGitKey(slug, gitKeyHolder);
   await waitForServiceProvisioning(
     adapter,
     service,
-    { slug, what: "the provisioning service to register this gateway's git key", boundMs: SERVICE_GIT_KEY_WAIT_MS, signal },
-    () => service.registerGitKey(uid, publicKey),
+    { slug, what: "the provisioning service to register this pod's git key", boundMs: SERVICE_GIT_KEY_WAIT_MS, signal },
+    () => service.registerGitKey(uid, key.publicKey),
   );
+  key.registered();
   return ["ssh-key"];
 }
 
@@ -1088,7 +1098,7 @@ async function provisionWorkspace(
   const { slug, uid } = snapshot;
   const steps: AddUserStep[] = [];
   steps.push(...(through
-    ? await ensureServiceGitKey(adapter, through.service, uid, slug, through.signal)
+    ? await ensureServiceGitKey(adapter, through.service, snapshot, through.signal)
     : await ensureSshKeyAndGitea(adapter, slug)));
   markStep("workspace-repo");
   steps.push(...(through
@@ -1649,8 +1659,12 @@ async function releaseUnmountedGiteaKey(
   if (pubKey === null) return false;
   const service = adapter.provisioningService;
   try {
-    if (service?.holdsServiceGitKey(slug)) await service.releaseGitKey(snapshot.uid, pubKey);
-    else await adapter.gitHost.releaseKey(slug, pubKey);
+    if (!service?.holdsServiceGitKey(slug, snapshot.gitKeyHolder)) {
+      await adapter.gitHost.releaseKey(slug, pubKey);
+    } else if (await service.releaseGitKey(snapshot.uid, pubKey) === "not-configured") {
+      adapter.log(`[remove:${slug}] the platform no longer provisions through the service; releasing the key on the git host by its key material`);
+      await adapter.gitHost.releaseKey(slug, pubKey);
+    }
   } catch (err) {
     adapter.log(
       `⚠ [remove:${slug}] Gitea key release failed; local keypair kept for the preStop release: ${String(err)}`,

@@ -29,6 +29,7 @@ export interface UserSnapshot {
         fallbacks: string[];
     };
     provisionedBy?: "service";
+    gitKeyHolder?: string;
     systemConfig?: {
         byot?: {
             provider?: string;
@@ -87,12 +88,16 @@ export type ServiceProvisioningAnswer = {
     readonly refused: true;
     readonly reason: string;
 };
+export interface ServiceGitKey {
+    publicKey: string;
+    registered: () => void;
+}
 export interface ServiceProvisioningAdapter {
     readiness: (uid: string) => Promise<ServiceProvisioningAnswer>;
-    serviceGitKey: (slug: string) => string;
-    holdsServiceGitKey: (slug: string) => boolean;
+    serviceGitKey: (slug: string, holder: string) => ServiceGitKey;
+    holdsServiceGitKey: (slug: string, holder: string | undefined) => boolean;
     registerGitKey: (uid: string, publicKey: string) => Promise<ServiceProvisioningAnswer>;
-    releaseGitKey: (uid: string, publicKey: string) => Promise<void>;
+    releaseGitKey: (uid: string, publicKey: string) => Promise<"released" | "not-configured">;
     sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
     now?: () => number;
 }

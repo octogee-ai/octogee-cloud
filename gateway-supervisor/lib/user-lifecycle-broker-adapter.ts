@@ -105,7 +105,7 @@ import {
   userRepositoryHasCanonicalRemote,
   userSshKeyPath,
   deleteUserSshKey,
-  generateServiceGitKey,
+  prepareServiceGitKey,
   generateUserSshKey,
   initWorkspaceRepo,
   projectCheckoutMatchesSource,
@@ -564,21 +564,20 @@ function toUserSnapshot(snapshot: FleetBrokerUserSnapshot): UserSnapshot {
     builderAgentDefault: snapshot.builderAgentDefault,
     systemConfig: snapshot.systemConfig,
     ...(snapshot.provisionedBy === "service" ? { provisionedBy: "service" as const } : {}),
+    ...(snapshot.gitKeyHolder ? { gitKeyHolder: snapshot.gitKeyHolder } : {}),
   };
 }
 
 export function brokeredServiceProvisioning(
   client: Pick<FleetBrokerClient, "provisioningReadiness" | "registerGitKey" | "releaseGitKey">,
-  gatewayId: string | undefined,
 ): ServiceProvisioningAdapter {
-  const holder = (): string => {
-    if (!gatewayId) throw new Error("GATEWAY_ID is not set; a key registered through the provisioning service needs this gateway's id");
-    return gatewayId;
-  };
   return {
     readiness: (uid) => client.provisioningReadiness(uid),
-    serviceGitKey: (slug) => generateServiceGitKey(slug, holder()),
-    holdsServiceGitKey: (slug) => gatewayId !== undefined && gatewayId !== "" && serviceGitKeyHolder(slug) === gatewayId,
+    serviceGitKey: (slug, holder) => prepareServiceGitKey(slug, holder),
+    holdsServiceGitKey: (slug, holder) => {
+      const marker = serviceGitKeyHolder(slug);
+      return marker !== null && (holder === undefined || marker === holder);
+    },
     registerGitKey: (uid, publicKey) => client.registerGitKey(uid, publicKey),
     releaseGitKey: (uid, publicKey) => client.releaseGitKey(uid, publicKey),
   };
@@ -2579,7 +2578,7 @@ export function buildBrokeredLifecycleAdapter(
     initWorkspaceRepoFromExistingDir: (userCtx, provisioningPath) => provisioningPath === "service"
       ? initWorkspaceRepo(userCtx.customerDir, userCtx.slug, { ensureWorkspaceRepo: null, prepareRepository: setRepoSshCommand })
       : initWorkspaceRepo(userCtx.customerDir, userCtx.slug),
-    provisioningService: brokeredServiceProvisioning(opts.client, process.env.GATEWAY_ID?.trim()),
+    provisioningService: brokeredServiceProvisioning(opts.client),
     hasUserSshKey: (slug) => fs.existsSync(userSshKeyPath(slug)),
     generateUserSshKey,
     gitHost: brokeredGitHost,

@@ -193,7 +193,7 @@ export interface FleetBrokerClient {
   assertOpenClawDoctor(input: { releaseKey: string; requestId: string }): Promise<void>;
   provisioningReadiness(uid: string): Promise<ServiceProvisioningAnswer>;
   registerGitKey(uid: string, publicKey: string): Promise<ServiceProvisioningAnswer>;
-  releaseGitKey(uid: string, publicKey: string): Promise<void>;
+  releaseGitKey(uid: string, publicKey: string): Promise<"released" | "not-configured">;
 }
 
 export async function resolveGithubTokenForSlug(
@@ -236,13 +236,29 @@ async function serviceProvisioningAnswer(path: string, body: unknown): Promise<S
   };
 }
 
+async function releaseServiceGitKey(uid: string, publicKey: string): Promise<"released" | "not-configured"> {
+  const path = "/internal/fleet/git-key/release";
+  const resp = await internalFetch(`${baseUrl()}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ uid, publicKey }),
+  });
+  if (resp.ok) return "released";
+  if (resp.status === 409) {
+    const text = await resp.text().catch(() => "");
+    if (text.includes("provisioning_service_not_configured")) return "not-configured";
+    throw new FleetBrokerHttpError(`fleet-broker POST ${path} → 409 ${text.slice(0, 300)}`, 409, null);
+  }
+  throw await brokerHttpError(path, resp);
+}
+
 function serviceProvisioningClient(
   gatewayId: string,
 ): Pick<FleetBrokerClient, "provisioningReadiness" | "registerGitKey" | "releaseGitKey"> {
   return {
     provisioningReadiness: (uid) => serviceProvisioningAnswer("/internal/fleet/provisioning-readiness", { gatewayId, uid }),
-    registerGitKey: (uid, publicKey) => serviceProvisioningAnswer("/internal/fleet/git-key", { gatewayId, uid, publicKey }),
-    releaseGitKey: (uid, publicKey) => postNoContent("/internal/fleet/git-key/release", { gatewayId, uid, publicKey }),
+    registerGitKey: (uid, publicKey) => serviceProvisioningAnswer("/internal/fleet/git-key", { uid, publicKey }),
+    releaseGitKey: releaseServiceGitKey,
   };
 }
 

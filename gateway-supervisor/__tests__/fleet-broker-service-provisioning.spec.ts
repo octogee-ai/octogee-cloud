@@ -68,7 +68,7 @@ describe("fleet broker provisioning service routes", () => {
     await expect(client().registerGitKey("uid-lin", "ssh-ed25519 AAAA")).resolves.toEqual({ ready: false, reason: "GenerationNotObserved", retryAfterMs: 5_000 });
     expect(internalFetch).toHaveBeenCalledWith(
       "http://broker/internal/fleet/git-key",
-      expect.objectContaining({ body: JSON.stringify({ gatewayId: "shared-blue", uid: "uid-lin", publicKey: "ssh-ed25519 AAAA" }) }),
+      expect.objectContaining({ body: JSON.stringify({ uid: "uid-lin", publicKey: "ssh-ed25519 AAAA" }) }),
     );
   });
 
@@ -77,10 +77,21 @@ describe("fleet broker provisioning service routes", () => {
     await client().releaseGitKey("uid-lin", "ssh-ed25519 AAAA");
     expect(internalFetch).toHaveBeenCalledWith(
       "http://broker/internal/fleet/git-key/release",
-      expect.objectContaining({ body: JSON.stringify({ gatewayId: "shared-blue", uid: "uid-lin", publicKey: "ssh-ed25519 AAAA" }) }),
+      expect.objectContaining({ body: JSON.stringify({ uid: "uid-lin", publicKey: "ssh-ed25519 AAAA" }) }),
     );
 
     vi.mocked(internalFetch).mockResolvedValueOnce(new Response("down", { status: 502 }));
     await expect(client().releaseGitKey("uid-lin", "ssh-ed25519 AAAA")).rejects.toMatchObject({ status: 502 });
+  });
+
+  it("answers released on 204 and not-configured when the platform no longer runs the service", async () => {
+    vi.mocked(internalFetch).mockResolvedValueOnce(new Response(null, { status: 204 }));
+    await expect(client().releaseGitKey("uid-lin", "ssh-ed25519 AAAA")).resolves.toBe("released");
+
+    vi.mocked(internalFetch).mockResolvedValueOnce(Response.json({ error: "provisioning_service_not_configured" }, { status: 409 }));
+    await expect(client().releaseGitKey("uid-lin", "ssh-ed25519 AAAA")).resolves.toBe("not-configured");
+
+    vi.mocked(internalFetch).mockResolvedValueOnce(Response.json({ error: "conflict" }, { status: 409 }));
+    await expect(client().releaseGitKey("uid-lin", "ssh-ed25519 AAAA")).rejects.toMatchObject({ status: 409 });
   });
 });

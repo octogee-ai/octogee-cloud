@@ -20,61 +20,83 @@ vi.mock("../lib/config.js", () => ({
   AGENTS_DIR: path.join(TEST_ROOT, "agents"),
 }));
 
-const { generateServiceGitKey, generateUserSshKey, readLocalUserPubKey } = await import("../lib/git.js");
-const { serviceGitKeyHolder } = await import("../lib/service-git-key-holder.js");
+const { prepareServiceGitKey, generateUserSshKey, readLocalUserPubKey } = await import("../lib/git.js");
+const { serviceGitKeyHolder, recordServiceGitKeyHolder } = await import("../lib/service-git-key-holder.js");
 const { brokeredGitHost } = await import("../lib/gitea-admin-broker-client.js");
+
+const HOLDER = "shared-blue/octogee-gateway-shared-blue-5bc59-p946t";
+const OTHER_HOLDER = "isolated-lin/octogee-gateway-isolated-lin-0";
 
 afterEach(() => fs.rmSync(KEYS_DIR, { recursive: true, force: true }));
 
-describe("generateServiceGitKey", () => {
-  it("generates a key for a user without one and records this gateway as its holder", () => {
-    const publicKey = generateServiceGitKey("lin", "shared-blue");
+describe("prepareServiceGitKey", () => {
+  it("generates a key for a user without one and records the holder once it is registered", () => {
+    const key = prepareServiceGitKey("lin", HOLDER);
 
-    expect(publicKey).toMatch(/^ssh-ed25519 /);
-    expect(readLocalUserPubKey("lin")).toBe(publicKey);
-    expect(serviceGitKeyHolder("lin")).toBe("shared-blue");
+    expect(key.publicKey).toMatch(/^ssh-ed25519 /);
+    expect(readLocalUserPubKey("lin")).toBe(key.publicKey);
+    expect(serviceGitKeyHolder("lin")).toBeNull();
+    key.registered();
+    expect(serviceGitKeyHolder("lin")).toBe(HOLDER);
     expect(fs.statSync(path.join(KEYS_DIR, "lin", "id_ed25519")).mode & 0o777).toBe(0o600);
   });
 
-  it("keeps the key it generated for this gateway", () => {
-    const first = generateServiceGitKey("lin", "shared-blue");
+  it("registers the key already on disk for this holder again", () => {
+    const first = prepareServiceGitKey("lin", HOLDER);
+    first.registered();
 
-    expect(generateServiceGitKey("lin", "shared-blue")).toBe(first);
+    expect(prepareServiceGitKey("lin", HOLDER).publicKey).toBe(first.publicKey);
   });
 
-  it("replaces a key registered before the service with one generated for this gateway", () => {
+  it("registers a key this pod registered the legacy way, without generating another", () => {
     const legacy = generateUserSshKey("lin");
 
-    const publicKey = generateServiceGitKey("lin", "shared-blue");
+    const key = prepareServiceGitKey("lin", HOLDER);
 
-    expect(publicKey).not.toBe(legacy);
-    expect(serviceGitKeyHolder("lin")).toBe("shared-blue");
+    expect(key.publicKey).toBe(legacy);
+    key.registered();
+    expect(readLocalUserPubKey("lin")).toBe(legacy);
+    expect(serviceGitKeyHolder("lin")).toBe(HOLDER);
   });
 
-  it("replaces a key generated for another gateway, as one carried in by a move", () => {
-    const carried = generateServiceGitKey("lin", "isolated-lin");
+  it("keeps a key registered for another holder in place until the replacement for this holder is registered", () => {
+    const carried = generateUserSshKey("lin");
+    recordServiceGitKeyHolder("lin", OTHER_HOLDER);
 
-    const publicKey = generateServiceGitKey("lin", "shared-blue");
+    const key = prepareServiceGitKey("lin", HOLDER);
 
-    expect(publicKey).not.toBe(carried);
-    expect(serviceGitKeyHolder("lin")).toBe("shared-blue");
+    expect(key.publicKey).not.toBe(carried);
+    expect(readLocalUserPubKey("lin")).toBe(carried);
+    expect(serviceGitKeyHolder("lin")).toBe(OTHER_HOLDER);
+    key.registered();
+    expect(readLocalUserPubKey("lin")).toBe(key.publicKey);
+    expect(serviceGitKeyHolder("lin")).toBe(HOLDER);
+    expect(fs.readdirSync(path.join(KEYS_DIR, "lin")).sort()).toEqual(["id_ed25519", "id_ed25519.pub", "service-holder"]);
   });
 
-  it("refuses to generate without a gateway id", () => {
-    expect(() => generateServiceGitKey("lin", "")).toThrow("needs the gateway id");
+  it("regenerates a key directory that holds no usable key", () => {
+    fs.mkdirSync(path.join(KEYS_DIR, "lin"), { recursive: true });
+    fs.writeFileSync(path.join(KEYS_DIR, "lin", "id_ed25519.pub"), "ssh-ed25519 AAAA orphan");
+
+    const key = prepareServiceGitKey("lin", HOLDER);
+
+    expect(key.publicKey).not.toBe("ssh-ed25519 AAAA orphan");
+    expect(readLocalUserPubKey("lin")).toBe(key.publicKey);
+  });
+
+  it("refuses to prepare a key without a holder", () => {
+    expect(() => prepareServiceGitKey("lin", "")).toThrow("needs the holder");
     expect(fs.existsSync(path.join(KEYS_DIR, "lin"))).toBe(false);
   });
 });
 
 describe("a key registered the legacy way", () => {
-  it("is no longer held for the service, so the user's next service mount here registers a fresh key", async () => {
-    const registeredThroughService = generateServiceGitKey("lin", "shared-blue");
+  it("is no longer held for the service", async () => {
+    const key = prepareServiceGitKey("lin", HOLDER);
+    key.registered();
 
-    await brokeredGitHost.registerKey("lin", registeredThroughService);
+    await brokeredGitHost.registerKey("lin", key.publicKey);
 
     expect(serviceGitKeyHolder("lin")).toBeNull();
-    const next = generateServiceGitKey("lin", "shared-blue");
-    expect(next).not.toBe(registeredThroughService);
-    expect(serviceGitKeyHolder("lin")).toBe("shared-blue");
   });
 });

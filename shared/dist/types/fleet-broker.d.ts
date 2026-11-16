@@ -270,6 +270,7 @@ export interface FleetBrokerUserSnapshot {
     coachMmUserId: string | null;
     coachIdentity?: FleetBrokerDefaultAgentIdentity;
     provisionedBy?: "service";
+    gitKeyHolder?: string;
     byotActive?: boolean;
     systemConfig?: {
         byot?: {
