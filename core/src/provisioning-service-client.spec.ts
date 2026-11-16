@@ -287,6 +287,40 @@ describe("provisioning service client", () => {
     expect(fake.requests.at(-1)?.path).toBe("/v1/users/u1/credentials/user-chat-token");
   });
 
+  it("puts a gateway's git key and reports whether the service created, changed or kept it", async () => {
+    const api = client();
+    await api.putProvisioning("u1", SPEC);
+
+    const created = await api.putGitKey("u1", "gateway-a", { publicKey: "ssh-ed25519 AAAA one" });
+    const unchanged = await api.putGitKey("u1", "gateway-a", { publicKey: "ssh-ed25519 AAAA one" });
+    const changed = await api.putGitKey("u1", "gateway-a", { publicKey: "ssh-ed25519 BBBB two" });
+
+    expect([created.outcome, unchanged.outcome, changed.outcome]).toEqual(["created", "unchanged", "changed"]);
+    expect(changed.key).toMatchObject({ uid: "u1", gatewayId: "gateway-a", generation: 2, spec: { publicKey: "ssh-ed25519 BBBB two" } });
+    expect(fake.requests.at(-1)).toMatchObject({
+      method: "PUT",
+      path: "/v1/users/u1/git-keys/gateway-a",
+      authorization: "Bearer token-1",
+      body: { spec: { publicKey: "ssh-ed25519 BBBB two" } },
+    });
+  });
+
+  it("surfaces a git key put for a user the service does not manage as a 404", async () => {
+    await expect(client().putGitKey("nobody", "gateway-a", { publicKey: "ssh-ed25519 AAAA one" }))
+      .rejects.toMatchObject({ status: 404, code: "not-found", transient: false });
+  });
+
+  it("stops a git key put when the caller aborts", async () => {
+    const api = client({
+      fetch: (_url, init) => new Promise((_resolve, reject) => init?.signal?.addEventListener("abort", () => reject(init.signal?.reason))),
+    });
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 20);
+
+    await expect(api.putGitKey("u1", "gateway-a", { publicKey: "ssh-ed25519 AAAA one" }, { signal: controller.signal }))
+      .rejects.toMatchObject({ code: "aborted" });
+  });
+
   it("surfaces a refused credential read as a 403 without retrying", async () => {
     const api = client();
     await api.putProvisioning("u1", SPEC);

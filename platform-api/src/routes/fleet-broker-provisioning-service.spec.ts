@@ -46,6 +46,9 @@ function legacyProvisioning(overrides: Partial<LegacyProvisioning> = {}): Legacy
     chat: vi.fn(async () => READY_CHAT),
     git: vi.fn(async () => ({ ready: true as const, value: undefined })),
     agentChatToken: vi.fn(async () => ({ ready: true as const, value: "service-agent-token" })),
+    gitKey: vi.fn(async () => {
+      throw new Error("the fleet broker routes put no git key");
+    }),
     ...overrides,
   };
 }

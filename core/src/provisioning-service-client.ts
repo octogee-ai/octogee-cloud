@@ -1,6 +1,8 @@
 import { readFile } from "node:fs/promises";
 import {
   PROVISIONING_API_VERSION,
+  type GitKey,
+  type GitKeySpec,
   type ProvisioningCredential,
   type ProvisioningCredentialName,
   type ProvisioningErrorCode,
@@ -71,6 +73,11 @@ export interface PutProvisioningResult {
   readonly resource: UserProvisioning;
 }
 
+export interface PutGitKeyResult {
+  readonly outcome: "created" | "changed" | "unchanged";
+  readonly key: GitKey;
+}
+
 export interface RequestSignalOptions {
   readonly signal?: AbortSignal;
 }
@@ -120,6 +127,7 @@ export interface ProvisioningServiceClient {
   retryProvisioning(uid: string, request: RetryProvisioningRequest, idempotencyKey: string): Promise<unknown>;
   getProvisioningEvents(uid: string, options?: RequestSignalOptions): Promise<ProvisioningEventsResponse | null>;
   getCredential(uid: string, name: ProvisioningCredentialName, options?: RequestSignalOptions): Promise<ProvisioningCredential | null>;
+  putGitKey(uid: string, gatewayId: string, spec: GitKeySpec, options?: RequestSignalOptions): Promise<PutGitKeyResult>;
 }
 
 export interface ProvisioningServiceConfig {
@@ -412,6 +420,16 @@ export function createProvisioningServiceClient(options: ProvisioningServiceClie
         throw error;
       }
       return credentialFrom(await response.text(), name);
+    },
+
+    async putGitKey(uid, gatewayId, spec, keyOptions) {
+      const response = await request({
+        method: "PUT",
+        path: `users/${userSegment(uid)}/git-keys/${encodeURIComponent(gatewayId)}`,
+        body: { spec },
+        ...(keyOptions?.signal === undefined ? {} : { signal: keyOptions.signal }),
+      });
+      return { outcome: PUT_OUTCOMES[response.status] ?? "unchanged", key: await json<GitKey>(response) };
     },
   };
   return client;

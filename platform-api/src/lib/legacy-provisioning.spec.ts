@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type {
+  GitKey,
   ProvisioningCondition,
   ProvisioningConditionReason,
   ProvisioningCredential,
@@ -55,8 +56,32 @@ function resource(overrides: {
   };
 }
 
-function fakeClient(answers: Array<UserProvisioning | null | Error>, credential: ProvisioningCredential | null | Error = null) {
+function gitKey(overrides: { generation?: number; observedGeneration?: number; registered?: "True" | "False"; reason?: ProvisioningConditionReason; message?: string } = {}): GitKey {
+  const generation = overrides.generation ?? 1;
+  return {
+    uid: "uid-lin",
+    gatewayId: "walter",
+    generation,
+    resourceVersion: "9",
+    deletionRequestedAt: null,
+    spec: { publicKey: "ssh-ed25519 AAAA lin" },
+    status: {
+      observedGeneration: overrides.observedGeneration ?? generation,
+      conditions: overrides.registered === undefined ? [] : [{
+        type: "Registered",
+        status: overrides.registered,
+        reason: overrides.reason ?? (overrides.registered === "True" ? "Converged" : "GitKeyFailed"),
+        message: overrides.message ?? "",
+        lastTransitionTime: "2026-11-15T17:59:00Z",
+        observedGeneration: overrides.observedGeneration ?? generation,
+      }],
+    },
+  };
+}
+
+function fakeClient(answers: Array<UserProvisioning | null | Error>, credential: ProvisioningCredential | null | Error = null, keys: Array<GitKey | Error> = []) {
   const calls: Array<{ uid: string; options: unknown }> = [];
+  const keyPuts: Array<{ uid: string; gatewayId: string; spec: unknown; options: unknown }> = [];
   const client: LegacyProvisioningClient = {
     getProvisioning: vi.fn(async (uid, options) => {
       calls.push({ uid, options });
@@ -68,8 +93,15 @@ function fakeClient(answers: Array<UserProvisioning | null | Error>, credential:
       if (credential instanceof Error) throw credential;
       return credential;
     }),
+    putGitKey: vi.fn(async (uid, gatewayId, spec, options) => {
+      keyPuts.push({ uid, gatewayId, spec, options });
+      const answer = keys.length > 1 ? keys.shift() : keys[0];
+      if (answer === undefined) throw new Error("no git key answer left");
+      if (answer instanceof Error) throw answer;
+      return { outcome: "unchanged" as const, key: answer };
+    }),
   };
-  return { client, calls };
+  return { client, calls, keyPuts };
 }
 
 const SIGNAL = new AbortController().signal;
@@ -212,8 +244,85 @@ describe("legacy provisioning adapter: credentials", () => {
   });
 });
 
+describe("legacy provisioning adapter: git key", () => {
+  function clockedAdapter(client: LegacyProvisioningClient) {
+    let clock = NOW;
+    const sleeps: number[] = [];
+    const provisioning = createLegacyProvisioning({
+      client,
+      now: () => clock,
+      longPollSeconds: 10,
+      sleep: async (ms) => {
+        sleeps.push(ms);
+        clock += ms;
+      },
+    });
+    return { provisioning, sleeps, budget: () => routeBudget(LEGACY_ROUTE_DEADLINE_MS, () => clock) };
+  }
+
+  it("puts the gateway's key and is ready once the service reports it registered for the key's current generation", async () => {
+    const { client, keyPuts } = fakeClient([], null, [
+      gitKey({ generation: 2, observedGeneration: 1, registered: "True" }),
+      gitKey({ generation: 2, observedGeneration: 2, registered: "True" }),
+    ]);
+    const { provisioning, sleeps, budget: route } = clockedAdapter(client);
+
+    await expect(provisioning.gitKey("uid-lin", "walter", "ssh-ed25519 AAAA lin", route())).resolves.toEqual({ ready: true, value: undefined });
+
+    expect(keyPuts.map(({ uid, gatewayId, spec }) => ({ uid, gatewayId, spec }))).toEqual([
+      { uid: "uid-lin", gatewayId: "walter", spec: { publicKey: "ssh-ed25519 AAAA lin" } },
+      { uid: "uid-lin", gatewayId: "walter", spec: { publicKey: "ssh-ed25519 AAAA lin" } },
+    ]);
+    expect(sleeps).toEqual([2_000]);
+  });
+
+  it("stops waiting inside the route's budget and logs the service's refusal to register the key", async () => {
+    const logged = vi.spyOn(logger, "error").mockImplementation(() => {});
+    const { client, keyPuts } = fakeClient([], null, [gitKey({ registered: "False", reason: "GitKeyFailed", message: "422 from git host" })]);
+    const { provisioning, sleeps, budget: route } = clockedAdapter(client);
+
+    await expect(provisioning.gitKey("uid-lin", "walter", "ssh-ed25519 AAAA lin", route()))
+      .resolves.toEqual({ ready: false, reason: "GitKeyFailed", retryAfterSeconds: 5 });
+
+    expect(sleeps.reduce((total, ms) => total + ms, 0)).toBeLessThanOrEqual(LEGACY_ROUTE_DEADLINE_MS - 10_000);
+    expect(keyPuts.length).toBe(sleeps.length + 1);
+    expect(logged).toHaveBeenCalledWith("legacy provisioning: the provisioning service has not registered the gateway's git key", {
+      uid: "uid-lin",
+      gatewayId: "walter",
+      reason: "GitKeyFailed",
+      message: "422 from git host",
+    });
+  });
+
+  it("is not ready while the service has not observed the key's generation", async () => {
+    const { client } = fakeClient([], null, [gitKey({ generation: 1, observedGeneration: 0 })]);
+    const { provisioning, budget: route } = clockedAdapter(client);
+
+    await expect(provisioning.gitKey("uid-lin", "walter", "ssh-ed25519 AAAA lin", route()))
+      .resolves.toEqual({ ready: false, reason: "GenerationNotObserved", retryAfterSeconds: 5 });
+  });
+
+  it("is not ready for a user the service has no resource for, apart from an outage", async () => {
+    vi.spyOn(logger, "error").mockImplementation(() => {});
+    const missing = fakeClient([], null, [new ProvisioningServiceError(404, "not-found", "no provisioning for this user")]);
+    const down = fakeClient([], null, [new ProvisioningServiceError(503, "unavailable", "down", 7_000)]);
+
+    await expect(clockedAdapter(missing.client).provisioning.gitKey("uid-lin", "walter", "ssh-ed25519 AAAA lin", budget()))
+      .resolves.toEqual({ ready: false, reason: "NotProvisioned", retryAfterSeconds: 5 });
+    await expect(clockedAdapter(down.client).provisioning.gitKey("uid-lin", "walter", "ssh-ed25519 AAAA lin", budget()))
+      .resolves.toEqual({ ready: false, reason: "ProvisioningServiceUnavailable", retryAfterSeconds: 7 });
+  });
+
+  it("throws a refusal from the service", async () => {
+    const refusal = new ProvisioningServiceError(403, "forbidden", "this caller lacks the key-writer role");
+    const { client } = fakeClient([], null, [refusal]);
+
+    await expect(clockedAdapter(client).provisioning.gitKey("uid-lin", "walter", "ssh-ed25519 AAAA lin", budget())).rejects.toBe(refusal);
+  });
+});
+
 describe("legacy provisioning requests", () => {
-  it("only ever reads from the provisioning service, whatever the user's state", async () => {
+  it("only ever reads from the provisioning service, apart from putting the gateway's own git key", async () => {
     vi.spyOn(logger, "error").mockImplementation(() => {});
     const methods: string[] = [];
     const answers: Response[] = [
@@ -224,9 +333,11 @@ describe("legacy provisioning requests", () => {
       Response.json(resource({ conditions: [condition("GitReady", "False", "GitRepositoryFailed")] })),
       Response.json({ code: "not-issued", error: "not issued" }, { status: 409 }),
       Response.json({ code: "not-found", error: "no provisioning for this user" }, { status: 404 }),
+      Response.json(gitKey({ registered: "True" })),
     ];
     const fetch: typeof globalThis.fetch = async (input, init) => {
-      methods.push(init?.method ?? (input instanceof Request ? input.method : "GET"));
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      methods.push(`${init?.method ?? (input instanceof Request ? input.method : "GET")} ${url.pathname.replace(/^\/v1\/users\/[^/]+\//, "users/{uid}/")}`);
       const answer = answers.shift();
       if (!answer) throw new Error("no answer left");
       return answer;
@@ -246,9 +357,14 @@ describe("legacy provisioning requests", () => {
     await provisioning.git("uid-lin", "workspace", budget());
     await provisioning.agentChatToken("uid-lin", budget());
     await provisioning.agentChatToken("uid-lin", budget());
+    await provisioning.gitKey("uid-lin", "walter", "ssh-ed25519 AAAA lin", budget());
 
     expect(answers).toEqual([]);
-    expect(new Set(methods)).toEqual(new Set(["GET"]));
+    expect(new Set(methods)).toEqual(new Set([
+      "GET users/{uid}/provisioning",
+      "GET users/{uid}/credentials/agent-chat-token",
+      "PUT users/{uid}/git-keys/walter",
+    ]));
   });
 });
 

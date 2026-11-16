@@ -5,7 +5,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { gitHost } from "../lib/git-host.js";
 import { platformStateStore } from "@octogee/core/identity/platform-state-store";
 import { createInternalGiteaAdminRoutes } from "../routes/internal/gitea-admin.js";
-import type { LegacyProvisioning } from "../lib/legacy-provisioning.js";
+import { createLegacyProvisioning, type LegacyProvisioning, type LegacyProvisioningClient } from "../lib/legacy-provisioning.js";
+import type { GitKey } from "@octogee/shared/types/provisioning-service";
 import { logger } from "@octogee/core/http/logging";
 
 const mocks = vi.hoisted(() => ({
@@ -555,7 +556,10 @@ describe("internal gitea-admin route", () => {
 });
 
 describe("internal gitea-admin route with the provisioning service", () => {
-  function service(git: LegacyProvisioning["git"]): LegacyProvisioning {
+  function service(
+    git: LegacyProvisioning["git"],
+    gitKey: LegacyProvisioning["gitKey"] = async () => ({ ready: true, value: undefined }),
+  ): LegacyProvisioning {
     return {
       chat: vi.fn(async () => {
         throw new Error("chat is not read by the git routes");
@@ -564,7 +568,14 @@ describe("internal gitea-admin route with the provisioning service", () => {
       agentChatToken: vi.fn(async () => {
         throw new Error("the agent chat token is not read by the git routes");
       }),
+      gitKey: vi.fn(gitKey),
     };
+  }
+
+  function expectNoKeyTouched() {
+    expect(gitHost().registerKey).not.toHaveBeenCalled();
+    expect(gitHost().registerKeyUnlessHeld).not.toHaveBeenCalled();
+    expect(gitHost().releaseKey).not.toHaveBeenCalled();
   }
 
   beforeEach(() => {
@@ -636,15 +647,78 @@ describe("internal gitea-admin route with the provisioning service", () => {
     expect(logged).toHaveBeenCalledWith(expect.stringContaining("no user"), expect.objectContaining({ slug: "ghost" }));
   });
 
-  it("keeps the key and project repository routes on the git host", async () => {
+  it("keeps the project repository route on the git host", async () => {
     const provisioning = service(async () => ({ ready: true, value: undefined }));
-    const server = request(app("walter", "walter", provisioning));
 
-    expect((await server.post("/internal/gitea/ensure-user").send({ slug: "acme", pubKey: "ssh-ed25519 AAA" })).status).toBe(204);
-    expect((await server.post("/internal/gitea/ensure-project-repo").send({ slug: "acme", projectName: "mygame" })).status).toBe(204);
+    expect((await request(app("walter", "walter", provisioning)).post("/internal/gitea/ensure-project-repo").send({ slug: "acme", projectName: "mygame" })).status).toBe(204);
 
-    expect(gitHost().registerKey).toHaveBeenCalledWith("acme", "ssh-ed25519 AAA", WALTER_KEY_OWNER);
     expect(gitHost().ensureRepo).toHaveBeenCalledExactlyOnceWith("acme", { kind: "project", projectSlug: "mygame" });
     expect(provisioning.git).not.toHaveBeenCalled();
+  });
+
+  it("ensure-user puts the serving gateway's key through the service and answers 204 once it is registered", async () => {
+    const provisioning = service(async () => ({ ready: true, value: undefined }));
+
+    const res = await request(app("walter", "walter", provisioning)).post("/internal/gitea/ensure-user").send({ slug: "acme", pubKey: "ssh-ed25519 AAA lin\n" });
+
+    expect(res.status).toBe(204);
+    expect(provisioning.gitKey).toHaveBeenCalledExactlyOnceWith("uid-acme", "walter", "ssh-ed25519 AAA lin", expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    expectNoKeyTouched();
+    expect(gitHost().ensureOwner).not.toHaveBeenCalled();
+  });
+
+  it("ensure-user answers 503 with the service's reason while the key is not registered", async () => {
+    const provisioning = service(async () => ({ ready: true, value: undefined }), async () => ({ ready: false, reason: "GitKeyFailed", retryAfterSeconds: 5 }));
+
+    const res = await request(app("walter", "walter", provisioning)).post("/internal/gitea/ensure-user").send({ slug: "acme", pubKey: "ssh-ed25519 AAA" });
+
+    expect(res.status).toBe(503);
+    expect(res.headers["retry-after"]).toBe("5");
+    expect(res.body).toEqual({ error: "provisioning_pending", reason: "GitKeyFailed" });
+    expectNoKeyTouched();
+  });
+
+  it("ensure-user leaves a user another gateway serves alone on a standby gateway, and logs it", async () => {
+    const info = vi.spyOn(logger, "info").mockImplementation(() => {});
+    assignUser("acme", "shared-1");
+    mocks.docs.set("gateways/walter", isolatedGateway());
+    const provisioning = service(async () => ({ ready: true, value: undefined }));
+
+    const res = await request(app("walter", "walter", provisioning)).post("/internal/gitea/ensure-user").send({ slug: "acme", pubKey: "ssh-ed25519 AAA" });
+
+    expect(res.status).toBe(204);
+    expect(provisioning.gitKey).not.toHaveBeenCalled();
+    expectNoKeyTouched();
+    expect(info).toHaveBeenCalledWith("internal/gitea ensure-user: a standby gateway registers no key for a user another gateway serves", { gatewayId: "walter", uid: "uid-acme" });
+  });
+
+  it("re-mounts an existing user whose key carries a legacy pod title, ending registered with one key under the gateway", async () => {
+    const key = "ssh-ed25519 AAAA lin";
+    const hostKeys = [{ publicKey: key, holder: WALTER_KEY_OWNER }];
+    let row: GitKey | null = null;
+    const worker = () => {
+      if (row === null || row.status.observedGeneration >= row.generation) return;
+      const kept = hostKeys.filter((held) => held.publicKey !== row!.spec.publicKey);
+      hostKeys.splice(0, hostKeys.length, ...kept, { publicKey: row.spec.publicKey, holder: row.gatewayId });
+      row = { ...row, status: { observedGeneration: row.generation, conditions: [{
+        type: "Registered", status: "True", reason: "Converged", message: "", lastTransitionTime: "2026-11-15T18:00:00Z", observedGeneration: row.generation,
+      }] } };
+    };
+    const client: LegacyProvisioningClient = {
+      getProvisioning: vi.fn(async () => null),
+      getCredential: vi.fn(async () => null),
+      putGitKey: vi.fn(async (uid, gatewayId, spec) => {
+        row ??= { uid, gatewayId, generation: 1, resourceVersion: "1", deletionRequestedAt: null, spec, status: { observedGeneration: 0, conditions: [] } };
+        return { outcome: "unchanged" as const, key: row };
+      }),
+    };
+    const provisioning = createLegacyProvisioning({ client, sleep: async () => worker() });
+
+    const res = await request(app("walter", "walter", provisioning)).post("/internal/gitea/ensure-user").send({ slug: "acme", pubKey: key });
+
+    expect(res.status).toBe(204);
+    expect(hostKeys).toEqual([{ publicKey: key, holder: "walter" }]);
+    expect(row).toMatchObject({ status: { observedGeneration: 1, conditions: [{ type: "Registered", status: "True" }] } });
+    expectNoKeyTouched();
   });
 });

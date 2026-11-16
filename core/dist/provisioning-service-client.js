@@ -310,6 +310,15 @@ export function createProvisioningServiceClient(options) {
             }
             return credentialFrom(await response.text(), name);
         },
+        async putGitKey(uid, gatewayId, spec, keyOptions) {
+            const response = await request({
+                method: "PUT",
+                path: `users/${userSegment(uid)}/git-keys/${encodeURIComponent(gatewayId)}`,
+                body: { spec },
+                ...(keyOptions?.signal === undefined ? {} : { signal: keyOptions.signal }),
+            });
+            return { outcome: PUT_OUTCOMES[response.status] ?? "unchanged", key: await json(response) };
+        },
     };
     return client;
 }
