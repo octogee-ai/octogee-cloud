@@ -105,12 +105,11 @@ function keyRegistered(key: GitKey): boolean {
     key.status.conditions.some((candidate) => candidate.type === "Registered" && candidate.status === "True");
 }
 
-const SERVICE_KEY_HELD_ELSEWHERE = "registered under a holder this service does not manage";
 
 function keyHeldElsewhere(key: GitKey): boolean {
   if (key.status.observedGeneration < key.generation) return false;
   const registered = key.status.conditions.find((candidate) => candidate.type === "Registered");
-  return registered?.status === "False" && registered.message.startsWith(SERVICE_KEY_HELD_ELSEWHERE);
+  return registered?.status === "False" && registered.reason === "GitKeyHeldElsewhere";
 }
 
 function keyPending(key: GitKey): ProvisioningWait<never> {

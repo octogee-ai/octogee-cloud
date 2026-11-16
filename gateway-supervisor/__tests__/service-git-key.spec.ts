@@ -42,7 +42,7 @@ describe("generateServiceGitKey", () => {
     expect(generateServiceGitKey("lin", "shared-blue")).toBe(first);
   });
 
-  it("replaces a key registered before the service, which the service will not adopt", () => {
+  it("replaces a key registered before the service with one generated for this gateway", () => {
     const legacy = generateUserSshKey("lin");
 
     const publicKey = generateServiceGitKey("lin", "shared-blue");

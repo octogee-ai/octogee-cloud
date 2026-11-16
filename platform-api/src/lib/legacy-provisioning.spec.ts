@@ -75,6 +75,7 @@ function gitKey(overrides: { generation?: number; observedGeneration?: number; r
         lastTransitionTime: "2026-11-15T17:59:00Z",
         observedGeneration: overrides.observedGeneration ?? generation,
       }],
+      nextAttemptAt: null,
     },
   };
 }
@@ -316,7 +317,7 @@ describe("legacy provisioning adapter: git key", () => {
 
   it("refuses at once a key the service will not register because another holder has it", async () => {
     vi.spyOn(logger, "error").mockImplementation(() => {});
-    const heldElsewhere = gitKey({ registered: "False", reason: "GitKeyFailed", message: "registered under a holder this service does not manage; left unchanged" });
+    const heldElsewhere = gitKey({ registered: "False", reason: "GitKeyHeldElsewhere", message: "key is already in use; next attempt after 2026-11-16T01:00:00.000Z" });
     const { client, keyPuts } = fakeClient([], null, [heldElsewhere]);
     const { provisioning, sleeps, budget: route } = clockedAdapter(client);
 
