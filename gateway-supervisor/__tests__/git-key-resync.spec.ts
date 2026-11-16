@@ -40,7 +40,7 @@ const {
 } = await import("../lib/git-key-resync.js");
 
 const { pendingCloneAppliedFingerprint } = await import("../lib/pending-clone-fingerprint.js");
-const { clearPreStopStarted, markPreStopStarted, podPreStopMarker, preStopStarted } = await import("../lib/prestop-marker.js");
+const { clearLeftoverPreStopMarker, clearPreStopStarted, markPreStopStarted, podPreStopMarker, preStopStarted } = await import("../lib/prestop-marker.js");
 
 const HOLDER = "shared-blue/octogee-gateway-shared-blue-5bc59-p946t";
 
@@ -56,6 +56,7 @@ function gitHostBehindThePlatform() {
   const registrations: Registration[] = [];
   const unlistable = new Set<string>();
   const refusals = new Map<string, string>();
+  const pending = new Map<string, string>();
   let holdListing: Promise<void> | null = null;
   vi.mocked(internalFetch).mockImplementation(async (input, init) => {
     const url = new URL(String(input));
@@ -73,6 +74,8 @@ function gitHostBehindThePlatform() {
       registrations.push(body);
       const refusal = refusals.get(body.slug);
       if (refusal !== undefined) return Response.json({ error: "provisioning_refused", reason: refusal }, { status: 422 });
+      const waiting = pending.get(body.slug);
+      if (waiting !== undefined) return Response.json({ error: "provisioning_pending", reason: waiting }, { status: 503, headers: { "retry-after": "1" } });
       keys.set(body.slug, [...(keys.get(body.slug) ?? []), body.pubKey]);
       return new Response(null, { status: 204 });
     }
@@ -84,6 +87,7 @@ function gitHostBehindThePlatform() {
     registrations,
     unlistable,
     refusals,
+    pending,
     holdListings() {
       let release!: () => void;
       holdListing = new Promise<void>((resolve) => { release = resolve; });
@@ -95,11 +99,11 @@ function gitHostBehindThePlatform() {
   };
 }
 
-function resyncFor(mounted: string[], settled: (slug: string) => boolean = () => true, podStopping: () => boolean = () => false) {
+function resyncFor(mounted: string[] | (() => string[]), settled: (slug: string) => boolean = () => true, podStopping: () => boolean = () => false) {
   const giveUpUserGitKey = vi.fn(async () => {});
   const pass = createGitKeyResync({
     adapter: { readLocalUserPubKey, giveUpUserGitKey, gitHost: brokeredGitHost, log },
-    mountedUsers: () => mounted,
+    mountedUsers: typeof mounted === "function" ? mounted : () => mounted,
     settled,
     podStopping,
     log,
@@ -176,13 +180,12 @@ describe("periodic git key resync for mounted users", () => {
     const host = gitHostBehindThePlatform();
     generateUserSshKey("lin");
     generateUserSshKey("ada");
-    generateUserSshKey("mei");
     const roster = {
-      ensureAllowed: new Map([["lin", false], ["ada", true], ["mei", true]]),
-      desiredFingerprints: new Map([["lin", "fp-1"], ["ada", "fp-1"], ["mei", "fp-1"]]),
-      appliedFingerprints: new Map([["lin", "fp-1"], ["ada", "fp-1"], ["mei", "fp-1"]]),
+      ensureAllowed: new Map([["lin", false], ["ada", true]]),
+      desiredFingerprints: new Map([["lin", "fp-1"], ["ada", "fp-1"]]),
+      appliedFingerprints: new Map([["lin", "fp-1"], ["ada", "fp-1"]]),
     };
-    const { pass } = resyncFor(["lin", "ada", "mei"], settledInRoster(roster, (slug) => slug === "mei"));
+    const { pass } = resyncFor(["lin", "ada"], settledInRoster(roster));
 
     await pass();
 
@@ -323,6 +326,47 @@ describe("periodic git key resync for mounted users", () => {
     expect(host.registrations.map(({ slug }) => slug)).toEqual(["ada"]);
   });
 
+  it.each([
+    ["stops being settled, as when it starts quiescing for a move", (state: { settled: boolean }) => { state.settled = false; }],
+    ["is unmounted", (state: { mounted: string[] }) => { state.mounted = []; }],
+    ["is on a pod whose prestop flush starts", (state: { stopping: boolean }) => { state.stopping = true; }],
+  ])("registers nothing for a user who %s between the listing and the registration", async (_case, change) => {
+    const host = gitHostBehindThePlatform();
+    serviceHeldKey("lin");
+    const state = { settled: true, mounted: ["lin"], stopping: false };
+    const release = host.holdListings();
+    const { pass } = resyncFor(() => state.mounted, () => state.settled, () => state.stopping);
+
+    const running = pass();
+    await vi.waitFor(() => expect(host.requests).toEqual(["list lin"]));
+    change(state);
+    release();
+
+    await expect(running).resolves.toBe("ran");
+    expect(host.requests).toEqual(["list lin"]);
+    expect(host.registrations).toEqual([]);
+    expect(logged.failures).toEqual([]);
+    expect(logged.lines).toContainEqual(expect.stringMatching(/lin: .*since its keys were listed, so its key is not registered/));
+  });
+
+  it("stops asking the platform again for a key the service has not registered yet once the user is unmounted during the wait", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    const host = gitHostBehindThePlatform();
+    serviceHeldKey("lin");
+    host.pending.set("lin", "GitKeyPutNotObserved");
+    const state = { mounted: ["lin"] };
+    const { pass } = resyncFor(() => state.mounted);
+
+    const running = pass();
+    await vi.waitFor(() => expect(host.registrations).toHaveLength(1));
+    state.mounted = [];
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    await expect(running).resolves.toBe("ran");
+    expect(host.registrations).toHaveLength(1);
+    expect(logged.failures).toEqual([]);
+  });
+
   it("leaves a key directory whose public key cannot be read as it is, and logs it", async () => {
     const host = gitHostBehindThePlatform();
     generateUserSshKey("lin");
@@ -356,29 +400,29 @@ describe("periodic git key resync for mounted users", () => {
 });
 
 describe("the pod's git key resync", () => {
-  it("removes a prestop marker left by an earlier container, then resyncs the roster's settled users after the pod's jitter", async () => {
+  const podId = "octogee-gateway-shared-blue-5bc59-p946t";
+  const roster = () => ({
+    ensureAllowed: new Map([["ada", true], ["lin", false]]),
+    desiredFingerprints: new Map([["ada", "fp-1"], ["lin", "fp-1"]]),
+    appliedFingerprints: new Map([["ada", "fp-1"], ["lin", "fp-1"]]),
+  });
+  const startForPod = (marker: { file: string; podId: string }) => startGitKeyResyncForPod({
+    adapter: { readLocalUserPubKey, giveUpUserGitKey: vi.fn(async () => {}), gitHost: brokeredGitHost, log },
+    mountedUsers: () => ["ada", "lin"],
+    roster: roster(),
+    marker,
+  });
+
+  it("resyncs the roster's settled users after the pod's jitter, and stands down once the prestop flush marks its start", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "setInterval", "clearTimeout", "clearInterval"] });
     const host = gitHostBehindThePlatform();
     generateUserSshKey("ada");
     generateUserSshKey("lin");
-    const podId = "octogee-gateway-shared-blue-5bc59-p946t";
-    const marker = { file: path.join(TEST_ROOT, "prestop-left-behind"), podId };
-    markPreStopStarted(marker);
+    const marker = { file: path.join(TEST_ROOT, "prestop-of-this-pod"), podId };
 
-    const stop = startGitKeyResyncForPod({
-      adapter: { readLocalUserPubKey, giveUpUserGitKey: vi.fn(async () => {}), gitHost: brokeredGitHost, log, userMigratingIn: () => false },
-      mountedUsers: () => ["ada", "lin"],
-      roster: {
-        ensureAllowed: new Map([["ada", true], ["lin", false]]),
-        desiredFingerprints: new Map([["ada", "fp-1"], ["lin", "fp-1"]]),
-        appliedFingerprints: new Map([["ada", "fp-1"], ["lin", "fp-1"]]),
-      },
-      marker,
-    });
+    const stop = startForPod(marker);
 
-    expect(preStopStarted(marker)).toBe(false);
     expect(host.requests).toEqual([]);
-
     await vi.advanceTimersByTimeAsync(gitKeyResyncJitterMs(podId, GIT_KEY_RESYNC_INTERVAL_MS));
     await vi.waitFor(() => expect(host.registrations.map(({ slug }) => slug)).toEqual(["ada"]));
 
@@ -390,12 +434,67 @@ describe("the pod's git key resync", () => {
     stop();
     clearPreStopStarted(marker);
   });
+
+  it("keeps a marker the prestop flush wrote before the resync started, and resyncs nothing", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "setInterval", "clearTimeout", "clearInterval"] });
+    const host = gitHostBehindThePlatform();
+    generateUserSshKey("ada");
+    const marker = { file: path.join(TEST_ROOT, "prestop-before-the-resync"), podId };
+    markPreStopStarted(marker);
+
+    const stop = startForPod(marker);
+    await vi.advanceTimersByTimeAsync(GIT_KEY_RESYNC_INTERVAL_MS * 2);
+
+    expect(preStopStarted(marker)).toBe(true);
+    expect(host.requests).toEqual([]);
+    stop();
+    clearPreStopStarted(marker);
+  });
+
+  it("treats a marker it cannot read as a pod that is stopping: it resyncs nothing and logs the failure", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "setInterval", "clearTimeout", "clearInterval"] });
+    const host = gitHostBehindThePlatform();
+    generateUserSshKey("ada");
+    const marker = { file: path.join(TEST_ROOT, "prestop-unreadable"), podId };
+    fs.mkdirSync(marker.file);
+
+    const stop = startForPod(marker);
+    await vi.advanceTimersByTimeAsync(GIT_KEY_RESYNC_INTERVAL_MS);
+
+    expect(host.requests).toEqual([]);
+    expect(logged.failures).toContainEqual(expect.stringContaining("the prestop marker could not be read, so no key is resynced"));
+    stop();
+    fs.rmSync(marker.file, { recursive: true });
+  });
+});
+
+describe("a prestop marker left by an earlier container", () => {
+  it("is removed when the supervisor process starts", () => {
+    const marker = { file: path.join(TEST_ROOT, "prestop-left-behind"), podId: "pod-a" };
+    markPreStopStarted(marker);
+
+    clearLeftoverPreStopMarker(marker);
+
+    expect(preStopStarted(marker)).toBe(false);
+    expect(logged.failures).toEqual([]);
+  });
+
+  it("is logged as a failure when it cannot be removed, and the pod then counts as stopping", () => {
+    const marker = { file: path.join(TEST_ROOT, "prestop-not-removable"), podId: "pod-a" };
+    fs.mkdirSync(marker.file);
+
+    expect(() => clearLeftoverPreStopMarker(marker)).not.toThrow();
+
+    expect(logged.failures).toEqual([expect.stringContaining("could not be removed, so no key is resynced on this pod")]);
+    expect(() => preStopStarted(marker)).toThrow();
+    fs.rmSync(marker.file, { recursive: true });
+  });
 });
 
 describe("settledForGitKeyResync", () => {
-  const settled = { ensureAllowed: true, desiredFingerprint: "fp-1", appliedFingerprint: "fp-1", migratingIn: false };
+  const settled = { ensureAllowed: true, desiredFingerprint: "fp-1", appliedFingerprint: "fp-1" };
 
-  it("accepts a user who is assigned, not quiescing, converged and not arriving in a move", () => {
+  it("accepts a user who is assigned, not quiescing and converged", () => {
     expect(settledForGitKeyResync(settled)).toBe(true);
   });
 
@@ -409,7 +508,6 @@ describe("settledForGitKeyResync", () => {
     ["is not in the desired roster", { ...settled, desiredFingerprint: undefined }],
     ["is still being mounted or re-attached", { ...settled, appliedFingerprint: "fp-0" }],
     ["has no applied state yet", { ...settled, appliedFingerprint: undefined }],
-    ["is arriving in a move", { ...settled, migratingIn: true }],
   ])("refuses a user who %s", (_case, state) => {
     expect(settledForGitKeyResync(state)).toBe(false);
   });
@@ -420,7 +518,7 @@ describe("git key resync schedule", () => {
     vi.useFakeTimers();
     const pass = vi.fn(async () => "ran" as const);
 
-    const stop = startGitKeyResync(pass, { intervalMs: GIT_KEY_RESYNC_INTERVAL_MS, jitterMs: 90_000 });
+    const stop = startGitKeyResync(pass, { intervalMs: GIT_KEY_RESYNC_INTERVAL_MS, jitterMs: 90_000 }, log);
 
     await vi.advanceTimersByTimeAsync(89_999);
     expect(pass).not.toHaveBeenCalled();
@@ -434,11 +532,26 @@ describe("git key resync schedule", () => {
     expect(pass).toHaveBeenCalledTimes(2);
   });
 
+  it("logs a pass that rejects at error level and runs the next one", async () => {
+    vi.useFakeTimers();
+    const pass = vi.fn(async (): Promise<"ran"> => "ran").mockRejectedValueOnce(new Error("the roster could not be read"));
+
+    const stop = startGitKeyResync(pass, { intervalMs: GIT_KEY_RESYNC_INTERVAL_MS, jitterMs: 0 }, log);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(logged.failures).toEqual([expect.stringContaining("the roster could not be read")]);
+
+    await vi.advanceTimersByTimeAsync(GIT_KEY_RESYNC_INTERVAL_MS);
+    expect(pass).toHaveBeenCalledTimes(2);
+    expect(logged.failures).toHaveLength(1);
+    stop();
+  });
+
   it("stops before the first pass when stopped inside the jitter", async () => {
     vi.useFakeTimers();
     const pass = vi.fn(async () => "ran" as const);
 
-    startGitKeyResync(pass, { intervalMs: GIT_KEY_RESYNC_INTERVAL_MS, jitterMs: 90_000 })();
+    startGitKeyResync(pass, { intervalMs: GIT_KEY_RESYNC_INTERVAL_MS, jitterMs: 90_000 }, log)();
     await vi.advanceTimersByTimeAsync(GIT_KEY_RESYNC_INTERVAL_MS);
 
     expect(pass).not.toHaveBeenCalled();

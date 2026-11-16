@@ -155,7 +155,7 @@ export function announcePreStopToSupervisor(mark: () => void = () => markPreStop
   }
 }
 
-async function main(): Promise<void> {
+export async function main(): Promise<void> {
   announcePreStopToSupervisor();
   const { builderSlug, gatewayClass, gatewayId } = resolvePreStopFlushConfig();
   const brokerClient = createFleetBrokerClient(gatewayId);

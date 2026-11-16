@@ -2,9 +2,9 @@ import { createHash } from "node:crypto";
 
 import { resyncSshKeyIfDrifted, type UserLifecycleAdapter } from "@octogee/core/user-lifecycle";
 
-import { KeyRegistrationRefused, withQuietRefusals } from "./gitea-admin-broker-client.js";
+import { KeyRegistrationRefused, withResyncRegistration } from "./gitea-admin-broker-client.js";
 import { pendingCloneOnlyStale } from "./pending-clone-fingerprint.js";
-import { clearPreStopStarted, preStopStarted, type PreStopMarker } from "./prestop-marker.js";
+import { preStopStarted, type PreStopMarker } from "./prestop-marker.js";
 
 export const GIT_KEY_RESYNC_INTERVAL_MS = 10 * 60_000;
 
@@ -22,15 +22,13 @@ export interface GitKeyResyncUserState {
   ensureAllowed: boolean;
   desiredFingerprint: string | undefined;
   appliedFingerprint: string | undefined;
-  migratingIn: boolean;
 }
 
 export function settledForGitKeyResync(state: GitKeyResyncUserState): boolean {
   const { desiredFingerprint: desired, appliedFingerprint: applied } = state;
   return state.ensureAllowed &&
     desired !== undefined &&
-    (desired === applied || pendingCloneOnlyStale(applied, desired)) &&
-    !state.migratingIn;
+    (desired === applied || pendingCloneOnlyStale(applied, desired));
 }
 
 export interface GitKeyResyncRoster {
@@ -39,12 +37,11 @@ export interface GitKeyResyncRoster {
   appliedFingerprints: ReadonlyMap<string, string>;
 }
 
-export function settledInRoster(roster: GitKeyResyncRoster, migratingIn: ((slug: string) => boolean) | undefined): (slug: string) => boolean {
+export function settledInRoster(roster: GitKeyResyncRoster): (slug: string) => boolean {
   return (slug) => settledForGitKeyResync({
     ensureAllowed: roster.ensureAllowed.get(slug) === true,
     desiredFingerprint: roster.desiredFingerprints.get(slug),
     appliedFingerprint: roster.appliedFingerprints.get(slug),
-    migratingIn: migratingIn?.(slug) === true,
   });
 }
 
@@ -56,11 +53,19 @@ function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+class KeyResyncStoodDown extends Error {}
+
 export function createGitKeyResync(deps: GitKeyResyncDeps): GitKeyResyncPass {
   const { adapter } = deps;
   const refusals = new Map<string, string>();
   let running = false;
   const failed = (message: string): void => deps.log(`[git-key-resync] ${message}`, { status: "failed" });
+
+  function standDownUnlessStillServing(slug: string): void {
+    if (deps.podStopping()) throw new KeyResyncStoodDown("the pod's prestop flush started");
+    if (!deps.mountedUsers().includes(slug)) throw new KeyResyncStoodDown("the user was unmounted");
+    if (!deps.settled(slug)) throw new KeyResyncStoodDown("the user stopped being settled here");
+  }
 
   async function resyncUser(slug: string): Promise<void> {
     if (adapter.readLocalUserPubKey(slug) === null) {
@@ -69,10 +74,14 @@ export function createGitKeyResync(deps: GitKeyResyncDeps): GitKeyResyncPass {
       return;
     }
     try {
-      const steps = await withQuietRefusals(() => resyncSshKeyIfDrifted(adapter, slug, false));
+      const steps = await withResyncRegistration(() => standDownUnlessStillServing(slug), () => resyncSshKeyIfDrifted(adapter, slug, false));
       refusals.delete(slug);
       if (steps.length > 0) deps.log(`[git-key-resync] ${slug}: the key was missing on the git host and is registered again`);
     } catch (error) {
+      if (error instanceof KeyResyncStoodDown) {
+        deps.log(`[git-key-resync] ${slug}: ${error.message} since its keys were listed, so its key is not registered`);
+        return;
+      }
       if (!(error instanceof KeyRegistrationRefused)) {
         refusals.delete(slug);
         failed(`${slug}: the key resync failed and is tried again on the next pass: ${describe(error)}`);
@@ -123,9 +132,11 @@ export function createGitKeyResync(deps: GitKeyResyncDeps): GitKeyResyncPass {
   };
 }
 
-export function startGitKeyResync(pass: GitKeyResyncPass, schedule: { intervalMs: number; jitterMs: number }): () => void {
+export function startGitKeyResync(pass: GitKeyResyncPass, schedule: { intervalMs: number; jitterMs: number }, log: GitKeyResyncDeps["log"]): () => void {
   let interval: NodeJS.Timeout | null = null;
-  const tick = (): void => { void pass(); };
+  const tick = (): void => {
+    pass().catch((error: unknown) => log(`[git-key-resync] a pass failed and the next one runs on schedule: ${describe(error)}`, { status: "failed" }));
+  };
   const first = setTimeout(() => {
     tick();
     interval = setInterval(tick, schedule.intervalMs);
@@ -139,7 +150,7 @@ export function startGitKeyResync(pass: GitKeyResyncPass, schedule: { intervalMs
 }
 
 export interface PodGitKeyResync {
-  adapter: GitKeyResyncDeps["adapter"] & Pick<UserLifecycleAdapter, "userMigratingIn">;
+  adapter: GitKeyResyncDeps["adapter"];
   mountedUsers: () => readonly string[];
   roster: GitKeyResyncRoster;
   marker: PreStopMarker;
@@ -148,18 +159,10 @@ export interface PodGitKeyResync {
 
 export function startGitKeyResyncForPod(input: PodGitKeyResync): () => void {
   const { adapter, marker, intervalMs = GIT_KEY_RESYNC_INTERVAL_MS } = input;
-  try {
-    clearPreStopStarted(marker);
-  } catch (error) {
-    adapter.log(
-      `[git-key-resync] a prestop marker left by an earlier container could not be removed, so no key is resynced on this pod: ${describe(error)}`,
-      { status: "failed" },
-    );
-  }
   const pass = createGitKeyResync({
     adapter,
     mountedUsers: input.mountedUsers,
-    settled: settledInRoster(input.roster, adapter.userMigratingIn),
+    settled: settledInRoster(input.roster),
     podStopping: () => {
       try {
         return preStopStarted(marker);
@@ -170,5 +173,5 @@ export function startGitKeyResyncForPod(input: PodGitKeyResync): () => void {
     },
     log: adapter.log,
   });
-  return startGitKeyResync(pass, { intervalMs, jitterMs: gitKeyResyncJitterMs(marker.podId, intervalMs) });
+  return startGitKeyResync(pass, { intervalMs, jitterMs: gitKeyResyncJitterMs(marker.podId, intervalMs) }, adapter.log);
 }

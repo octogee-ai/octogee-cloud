@@ -17,7 +17,7 @@ import { OPENCLAW_DIR, readOpenClawConfig } from "./config.js";
 import { readActivationManifest } from "./migration-activation-manifest.js";
 import { withUserRemoval } from "./user-removal-exclusion.js";
 import { startGitKeyResyncForPod, type GitKeyResyncRoster } from "./git-key-resync.js";
-import { podPreStopMarker } from "./prestop-marker.js";
+import { clearLeftoverPreStopMarker, podPreStopMarker, type PreStopMarker } from "./prestop-marker.js";
 import {
   materializeBrokerProfilesForAgents,
   openAiCatalogInputForBaseUrl,
@@ -1568,10 +1568,11 @@ async function mountUserWithPublication(input: {
   }
 }
 
-function withGitKeyResync(
+export function withGitKeyResync(
   startReconcile: () => () => void,
   adapter: UserLifecycleAdapter,
   roster: GitKeyResyncRoster | null,
+  marker: PreStopMarker,
 ): () => () => void {
   if (roster === null) return startReconcile;
   return () => {
@@ -1580,7 +1581,7 @@ function withGitKeyResync(
       adapter,
       mountedUsers: () => getMountObservedSlugs(adapter),
       roster,
-      marker: podPreStopMarker(),
+      marker,
     });
     return () => {
       stopKeyResync();
@@ -1792,7 +1793,7 @@ function startMaybeReconcileLoop(params: {
       invalidateConfigRemovedSlug, onLocalStateRemoved,
     }),
   });
-  const start = withGitKeyResync(startReconcile, wrappedAdapter, userSource ? { ensureAllowed, desiredFingerprints: desiredFp, appliedFingerprints: appliedFp } : null);
+  const start = withGitKeyResync(startReconcile, wrappedAdapter, userSource ? { ensureAllowed, desiredFingerprints: desiredFp, appliedFingerprints: appliedFp } : null, podPreStopMarker(opts.openclawDir));
   return startAfterSurgeReadiness({
     released: surgeReadiness.released,
     start,
@@ -2600,6 +2601,7 @@ export function createIsolatedSurgeGateWiring(input: IsolatedSurgeGateWiringOpti
 export async function startFleetController(
   opts: StartFleetOptions,
 ): Promise<StartedFleetController> {
+  clearLeftoverPreStopMarker(podPreStopMarker(opts.openclawDir));
   const caps = resolveFleetCapabilities({
     localReconcile: opts.localReconcile,
     hasBrokeredRoster: !!opts.readDesiredSlugs || !!opts.readDesiredUsers,

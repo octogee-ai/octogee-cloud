@@ -68,15 +68,19 @@ export class KeyRegistrationRefused extends Error {
   }
 }
 
-const refusalsLoggedByCaller = new AsyncLocalStorage<true>();
+interface ResyncRegistration {
+  beforeEachSend: () => void;
+}
 
-export function withQuietRefusals<T>(work: () => Promise<T>): Promise<T> {
-  return refusalsLoggedByCaller.run(true, work);
+const resyncRegistration = new AsyncLocalStorage<ResyncRegistration>();
+
+export function withResyncRegistration<T>(beforeEachSend: () => void, work: () => Promise<T>): Promise<T> {
+  return resyncRegistration.run({ beforeEachSend }, work);
 }
 
 function refuseRegistration(slug: string, reason: string): never {
   const refusal = new KeyRegistrationRefused(`[git] ${slug}: the platform refused to register this pod's key (reason ${reason}); no retry can finish it`, reason);
-  if (refusalsLoggedByCaller.getStore() !== true) log(refusal.message, { status: "failed" });
+  if (resyncRegistration.getStore() === undefined) log(refusal.message, { status: "failed" });
   throw refusal;
 }
 
@@ -99,6 +103,7 @@ async function postServiceHeldKey(body: { slug: string; pubKey: string; serviceH
   const path = "/internal/gitea/ensure-user";
   const startedAt = Date.now();
   for (let round = 0; ; round += 1) {
+    resyncRegistration.getStore()?.beforeEachSend();
     const resp = await requestServiceHeldKey(path, body, SERVICE_HELD_KEY_WAIT_MS - (Date.now() - startedAt));
     if (resp.ok) return resp.status === 204 ? {} : (await resp.json()) as { registeredOn?: unknown };
     if (resp.status !== 503 && resp.status !== 422) {
@@ -149,6 +154,7 @@ export const brokeredGitHost: BrokeredGitHost = {
   async registerKey(slug, pubKey) {
     const serviceHolder = serviceGitKeyHolder(slug);
     if (serviceHolder === null) {
+      resyncRegistration.getStore()?.beforeEachSend();
       await postVoid("/internal/gitea/ensure-user", { slug, pubKey });
       return;
     }

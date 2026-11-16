@@ -1,4 +1,7 @@
 import { generateKeyPairSync } from "node:crypto";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { gatewayScopedJobId, signFleetRequest } from "../lib/fleet-signature.js";
@@ -78,6 +81,19 @@ describe("fleet controller port surface", () => {
     expect(body.rsyncAttemptFencing).toBe(true);
     expect(body.podUid).toBe("pod-uid-1");
     expect(JSON.stringify(body)).not.toContain(GATEWAY_ID);
+  });
+
+  it("removes a prestop marker an earlier container of this pod left, before it serves anything", async () => {
+    const openclawDir = fs.mkdtempSync(path.join(os.tmpdir(), "octogee-fleet-surface-"));
+    const marker = path.join(openclawDir, "prestop-started");
+    fs.writeFileSync(marker, "pod-uid-1\n");
+    try {
+      controller = await startFleetController({ ...controllerOpts(), openclawDir });
+
+      expect(fs.existsSync(marker)).toBe(false);
+    } finally {
+      fs.rmSync(openclawDir, { recursive: true, force: true });
+    }
   });
 
   it.each([
