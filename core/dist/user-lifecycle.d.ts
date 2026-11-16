@@ -28,6 +28,7 @@ export interface UserSnapshot {
         primary: string;
         fallbacks: string[];
     };
+    provisioning?: "service";
     systemConfig?: {
         byot?: {
             provider?: string;
@@ -74,10 +75,30 @@ export interface UserContext {
     userData: Record<string, unknown>;
 }
 export type MmUpdate = Record<string, unknown>;
+export type ProvisioningPath = "gateway" | "service";
+export type ServiceProvisioningAnswer = {
+    readonly ready: true;
+} | {
+    readonly ready: false;
+    readonly reason: string;
+    readonly retryAfterMs: number;
+};
+export interface ServiceProvisioningAdapter {
+    readiness: (uid: string) => Promise<ServiceProvisioningAnswer>;
+    serviceGitKey: (slug: string) => string;
+    holdsServiceGitKey: (slug: string) => boolean;
+    registerGitKey: (uid: string, publicKey: string) => Promise<ServiceProvisioningAnswer>;
+    releaseGitKey: (uid: string) => Promise<void>;
+    sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
+    now?: () => number;
+}
+export declare const SERVICE_PROVISIONING_WAIT_MS = 90000;
+export declare const SERVICE_GIT_KEY_WAIT_MS = 60000;
 export interface UserLifecycleAdapter {
     log: (msg: string, fields?: {
         status: "failed";
     }) => void;
+    provisioningService?: ServiceProvisioningAdapter;
     isIsolatedGateway?: () => boolean;
     /** True when this gateway is the configured disposable isolated for this exact slug. */
     isConfiguredUser?: (slug: string) => boolean;
@@ -152,7 +173,7 @@ export interface UserLifecycleAdapter {
     removePartialWorkspace: (slug: string) => Promise<void>;
     deleteDepartedUserState: (slug: string) => Promise<void>;
     cloneWorkspaceRepo: (slug: string, repoUrl: string) => Promise<boolean>;
-    initWorkspaceRepoFromExistingDir: (ctx: UserContext) => Promise<string | null>;
+    initWorkspaceRepoFromExistingDir: (ctx: UserContext, path?: ProvisioningPath) => Promise<string | null>;
     hasUserSshKey: (slug: string) => boolean;
     generateUserSshKey: (slug: string) => string;
     gitHost: Pick<ManagedGitHost, "registerKey" | "listKeys" | "releaseKey" | "ensureOwner" | "ensureRepo">;
@@ -287,7 +308,7 @@ export declare class ConcurrentMountError extends Error {
 }
 export declare function _resetInFlightUidsForTests(): void;
 export declare function _inFlightUidsHasForTests(uid: string): boolean;
-export type MountStep = "load-snapshot" | "ssh-key" | "claim-slot" | "workspace-repo" | "byos-restore" | "mattermost" | "config-patch" | "reassert-converged" | "verify-channel-ready" | "blob-sync" | "project-clones" | "finalize" | "report-provisioned";
+export type MountStep = "load-snapshot" | "await-provisioning" | "ssh-key" | "claim-slot" | "workspace-repo" | "byos-restore" | "mattermost" | "config-patch" | "reassert-converged" | "verify-channel-ready" | "blob-sync" | "project-clones" | "finalize" | "report-provisioned";
 export type MarkStep = (step: MountStep) => void;
 export interface AddUserOptions {
     verifyTimeoutMs?: number;
