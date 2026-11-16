@@ -9,16 +9,12 @@ are the cloud foundation installations. For user placement, shared gateways,
 and the model broker, follow the full platform guides for
 [kind](kind.md), [GKE](gke.md), or [EKS](eks.md).
 
-## Tested installations
+## Example installations
 
-On November 16, 2026, disposable GKE and EKS installations passed the database,
-object-storage, HTTPS, and gateway checks. On both, an operator signed in to
-Mattermost and Gitea, created and read back a committed file, and received an
-agent reply using Meta Muse Ember through OpenRouter with maximum reasoning.
-The GKE run used the zonal evaluation settings below; EKS used the default
-three-node configuration and Multi-AZ RDS. These foundation runs used
-`a087072e46e9791a5394adfbdd8a2d947f3d7b49` with this guide's installer changes;
-they are separate from the full-platform runs recorded in the GKE and EKS guides.
+These screenshots show the foundation running on GKE and EKS. Both
+installations served chat, Git commits, and agent replies using Meta Muse Ember
+through OpenRouter with maximum reasoning. GKE used the single-zone settings
+below; EKS used the default three-node configuration and Multi-AZ RDS.
 
 [![GKE workloads with gateway, Gitea, Mattermost, and Traefik ready](images/gke-workloads.png)](images/gke-workloads.png)
 
@@ -27,8 +23,7 @@ job. Click the image to enlarge it.
 
 [![AWS EKS console showing the disposable cluster active](images/eks-cluster.png)](images/eks-cluster.png)
 
-EKS: the cluster is active. Application readiness and the user flows above were
-checked through Kubernetes and the public HTTPS endpoints.
+EKS: an active cluster hosting the foundation.
 
 ## What gets created
 
@@ -44,12 +39,11 @@ checked through Kubernetes and the public HTTPS endpoints.
 
 The databases have deletion protection on.
 
-Mattermost, Gitea and the OpenClaw gateway have no managed equivalent on the
-default path, so they run in your cluster. Their databases are on the managed
+Mattermost, Gitea, and the OpenClaw gateway run in your cluster. Their databases are on managed
 PostgreSQL, and their files are on your provider's persistent disks.
 
-Mattermost Team Edition runs one replica and stops creating accounts at 250
-activated users across the server. Bots do not count.
+Mattermost Team Edition runs one replica and supports 250 activated users
+across the server, plus bot accounts.
 
 ## Before you start
 
