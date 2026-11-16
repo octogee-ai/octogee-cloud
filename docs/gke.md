@@ -291,7 +291,7 @@ isolated gateway with `gateway retire <id> --apply`, where `ops inspect` of
 the migration names the id, as in
 [An isolated gateway](kind.md#an-isolated-gateway).
 
-## What this install does not do yet
+## Install limits
 
 - **Changing a gateway's settings.** The fleet controller applies
   `glm-controller.gatewayValues` when it renders a gateway's release, so a
@@ -304,9 +304,6 @@ the migration names the id, as in
   the one `up --sha` installed.
 - **Logs.** `octogee-fleet logs` is not configured here; read gateway logs
   with `kubectl logs`.
-- **Usage in `user broker`.** The LLM broker records every call in the
-  platform database, but `user broker` does not read those records yet and
-  reports no usage.
 
 ## Remove everything
 

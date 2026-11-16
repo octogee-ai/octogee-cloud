@@ -70,11 +70,12 @@ Started by something else:
 The provisioner runs in every gateway, started by
 [`gateway/entrypoint.sh`](../gateway/entrypoint.sh) under the runner
 supervisor (`entrypoints/supervise-runner.ts`). It reads which users are
-assigned to its gateway and sets each one up through the platform API's fleet
-broker: their Mattermost account, team, channels and agent bot, their Gitea
-organization and `workspace` repository, and their agent in OpenClaw. When the
-fleet controller tells it a user has left, it removes that user's local
-footprint.
+assigned to its gateway, retrieves their provisioning data through the
+platform API's fleet broker, registers its pod's Git key and mounts the user
+in OpenClaw. The [provisioning service](../provisioning-service/README.md)
+creates chat and Git resources when enabled. On other installations the
+provisioner requests that setup through the fleet broker. When the fleet
+controller tells it a user has left, it removes their local footprint.
 
 It holds no admin credentials and no database login. It calls the fleet
 broker at `FLEET_BROKER_URL`, by default the platform API's in-cluster
@@ -94,9 +95,9 @@ controller were separate. Other names that keep an earlier spelling are in
 
 ## What it talks to
 
-- The platform API's fleet broker, for every user setup step that needs an
-  admin credential: Mattermost accounts, teams, channels and agent bots, Gitea
-  organizations and repositories, object storage and secrets.
+- The platform API's fleet broker for assignments, chat credentials, Git key
+  registration, object storage and secrets. When the provisioning service is
+  disabled, the broker also handles chat and Git resource setup.
 - OpenClaw on the same gateway, over its local RPC port and its files under
   `~/.openclaw`.
 - The gateway's home volume: user directories, markers, locks, journals and

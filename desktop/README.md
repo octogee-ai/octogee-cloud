@@ -10,8 +10,8 @@ watch it through the OpenClaw Control UI.
 It is not a container image and Build main does not build it. It holds no
 platform code of its own beyond the desktop session: the gateway that runs on
 the VM is the isolated gateway image from [`gateway/`](../gateway/README.md),
-pulled and started by an agent that ships inside that image. Only Google Cloud
-can run it today; see [Known rough edges](../docs/rough-edges.md#google-cloud-first).
+pulled and started by an agent that ships inside that image. The VM image runs
+on Google Compute Engine.
 
 ## What is here
 
@@ -77,8 +77,8 @@ desktop/image/test.sh --project <project> --image <candidate-name> --stop-start
 `OCTOGEE_DESKTOP_GATEWAY_IMAGE` and `OCTOGEE_DESKTOP_EDGE_IMAGE`, and preloads
 them onto the boot disk. They must come from the registry named in
 `OCTOGEE_DESKTOP_REGISTRY` (default `ghcr.io/octogee-ai/octogee-cloud`). The VM
-gets credentials only for a Google registry; any other registry must be public
-([Known rough edges](../docs/rough-edges.md#google-cloud-first)).
+gets credentials only for a Google registry. Other registries must allow
+anonymous pulls.
 [`image/README.md`](image/README.md) covers the build
 steps, the pins, acceptance and publication to the image family.
 

@@ -22,8 +22,8 @@ taking my word for it.
   how a product builds on top.
 - [How this differs from OpenClaw Enterprise](docs/why-octogee-cloud.md): the
   trust model.
-- [Known rough edges](docs/rough-edges.md): what I would change, said before
-  you find it.
+- [Admin API automation](docs/admin-api-automation.md): how a client drives
+  fleet placement and recovery.
 
 ## The platform at a glance
 
@@ -36,6 +36,7 @@ flowchart TB
   subgraph services[Platform services]
     controller[Fleet controller<br/>and Admin API]
     api[Platform API]
+    provisioning[Provisioning service<br/>when enabled]
     broker[LLM broker]
   end
 
@@ -52,8 +53,10 @@ flowchart TB
   user -->|chat and git| hosts
   controller -->|adds, retires,<br/>moves users| gateways
   hosts <-->|messages| gateways
-  gateways -->|sets up users| api
-  api -->|admin credentials| hosts
+  gateways -->|mount data and per-pod Git keys| api
+  controller -->|writes provisioning specs| provisioning
+  api -->|reads credentials and registers Git keys| provisioning
+  provisioning -->|reconciles accounts and resources| hosts
   gateways -->|model calls| broker
   broker --> provider
   services --> state
@@ -84,14 +87,13 @@ Storage, see [The full platform on GKE](docs/gke.md). Start from the
 [latest release](https://github.com/octogee-ai/octogee-cloud/releases/latest),
 or from `main`'s newest commit whose kind smokes passed, as both guides
 describe. A release publishes the images, the Helm charts and the
-`@octogee/core` and `@octogee/shared` npm packages at one version (see
+`@octogee/core`, `@octogee/shared` and `@octogee/core-testing` npm packages at one version (see
 [Releasing](docs/releasing.md)). v0.1.0 came before the charts and packages
 were published and before the source directories were renamed: it has images
 only, and [its directories have their earlier names](docs/legacy-names.md#source-directories-in-v010).
-Platform state is in PostgreSQL, and the
-platform needs no Firebase project. An EKS install with RDS and S3,
-[The full platform on EKS](docs/eks.md), follows the GKE one but has not run on
-a real AWS account yet. On GKE, one install
+Platform state is in PostgreSQL. The full platform also ran on a fresh AWS
+account with RDS and S3. [The full platform on EKS](docs/eks.md) records what
+the run verified and its install limits. On GKE, one install
 added a shared gateway and a user, answered in Mattermost, moved the user to an
 isolated gateway and back, and retired the isolated gateway. That install is a
 single zone with no ingress; there is no production install guide yet. Users on a shared
@@ -120,10 +122,11 @@ and a domain. [See every account and tier](docs/getting-started.md#what-you-need
 | Component | Directory | What it does |
 | --- | --- | --- |
 | Fleet controller | `fleet-controller/` | Owns which gateways exist and which user is on which. Serves the Admin API, installs gateways with Helm, moves users, and journals every change. |
-| Platform API | `platform-api/` | Serves most HTTP routes. Its fleet broker holds the Mattermost and Gitea admin credentials, and it issues each agent its model credential. |
+| Platform API | `platform-api/` | Serves most HTTP routes, brokers gateway credentials and registers the serving pod's Git key. |
+| Provisioning service | [`provisioning-service/`](provisioning-service/README.md) | Converges each user's chat and Git resources, adopts recorded bot identities, issues chat credentials, and tracks each serving pod's Git key. |
 | LLM broker | `llm-broker/` | Holds the model provider keys and meters every call. |
 | Edge | `gateway-edge/` | A sidecar in each gateway pod that serves the user's workspace files, and the gateway router that sends `/g/<gatewayId>/*` to the right sidecar. |
-| Provisioner | `gateway-supervisor/` | Runs in every gateway. Sets up each user assigned to it: chat account, team, channels, agent bot, git organization and repository. |
+| Provisioner | `gateway-supervisor/` | Runs in every gateway. Mounts users assigned to the gateway, configures their agents and reports readiness. Installs without the provisioning service use it to set up chat and Git through the platform API. |
 | Gateway image | `gateway/` | OpenClaw, the provisioner and the platform's OpenClaw extensions. |
 
 In a cluster, the fleet controller and the platform API still run under their
@@ -190,10 +193,14 @@ is good for one agent and that the platform can revoke.
 
 ### Adding a user
 
+With the provisioning service enabled, the fleet controller writes the user's
+desired resources when it admits the user and assigns a serving gateway.
+
 ```mermaid
 sequenceDiagram
   actor Operator
   participant Controller as Fleet controller
+  participant Service as Provisioning service
   participant Provisioner as Provisioner<br/>in the gateway
   participant API as Platform API
   participant Hosts as Mattermost<br/>and Gitea
@@ -202,15 +209,17 @@ sequenceDiagram
   Controller->>Controller: records the user
   Operator->>Controller: octogee-fleet user assign
   Controller->>Controller: records the assignment,<br/>journals it
+  Controller->>Service: writes desired chat and Git resources
+  Service->>Hosts: reconciles accounts, channels,<br/>agent bot and repositories
   Provisioner->>API: who is assigned<br/>to this gateway?
-  API-->>Provisioner: the new user
-  Provisioner->>API: set this user up
-  API->>Hosts: account, team, channels,<br/>agent bot, organization,<br/>workspace repository
+  API-->>Provisioner: assignments
+  Provisioner->>API: get credentials and register the pod's Git key
+  API->>Service: reads provisioning results and registers the key
   Provisioner->>Provisioner: adds the user's agent<br/>to OpenClaw
 ```
 
-Nothing happens until the operator assigns the user. The platform places
-nobody by itself.
+An operator can assign the user manually. A product can drive placement and
+migrations through the [Admin API](docs/admin-api-automation.md).
 
 ### Moving a user between gateways
 

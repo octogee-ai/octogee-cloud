@@ -24,13 +24,13 @@ The types are `@octogee/shared/types/provisioning-service`.
 | `GET /v1/git-key-holders` | Lists every holder with live rows. | `200`; body `{ holders: [{ holder, gatewayId }] }` |
 | `DELETE /v1/git-key-holders/{holder}` | Releases every user's key for one holder that is gone. | `202`; body `{ remaining }`, the holder's rows not yet released from the git host |
 | `DELETE /v1/gateways/{gatewayId}/git-keys` | Releases every user's key for every holder of a retired gateway. | `202`; body `{ remaining }`, the gateway's rows not yet released from the git host |
+| `GET /v1/users/{uid}/credentials/{name}` | `{ name, value, version }`, `Cache-Control: no-store`. Names: `agent-chat-token`, `user-chat-token`. | `200`, `404`, `409 not-issued` |
+| `GET /healthz`, `/readyz`, `/metrics` | Unauthenticated, no tenant data. `/readyz` and `/metrics` answer from a database check and work snapshot each replica takes every 5 seconds. | `200`, `503` |
 
 A holder is one gateway pod: `<gatewayId>/<podName>`, URL-encoded as one path
 segment. Each pod holds its own key, so two pods of one gateway, as during a
 surge roll, hold two keys at once. A holder that is not a gateway id and a pod
 name is refused with `400`.
-| `GET /v1/users/{uid}/credentials/{name}` | `{ name, value, version }`, `Cache-Control: no-store`. Names: `agent-chat-token`, `user-chat-token`. | `200`, `404`, `409 not-issued` |
-| `GET /healthz`, `/readyz`, `/metrics` | Unauthenticated, no tenant data. `/readyz` and `/metrics` answer from a database check and work snapshot each replica takes every 5 seconds. | `200`, `503` |
 
 A write is done when `status.observedGeneration >= generation` and the `Ready`
 condition is `True`. Conditions: `ChatReady`, `GitReady`, `CredentialsIssued`,
@@ -73,11 +73,11 @@ permission to create TokenReviews.
 
 ## Git keys
 
-No caller puts or deletes a GitKey yet. A row is keyed by user and gateway id,
-but a shared gateway rolls with a surge, so for a while two pods of one gateway
-each hold their own key for the same user. Until the row's holder is a pod, the
-platform API registers and releases each pod's key directly on the git host,
-under a title per pod, after the service reports the user's git side ready.
+The platform API puts and releases keys for gateways that use the provisioning
+service. Rows are keyed by user and pod holder. The fleet controller releases
+rows for vanished holders and retired gateways. The API also supports the
+direct Git-host path for gateways using the earlier provisioning path and for
+re-registering a key the same pod already holds during migration rollback.
 
 Keys registered by the earlier path carry another title. When a GitKey is put
 and the user's own git account already holds the identical public key under
@@ -170,6 +170,12 @@ The chat host adapter adopts an existing chat account found by username or by
 email, as the earlier provisioning path did. The service assumes the email in a
 spec is verified by the caller; if a platform admits unverified emails, adoption
 by email would let one user take over another's chat account.
+
+When the platform already records a default-agent bot, the fleet controller
+sends its ID in `spec.chat.defaultAgent.existingBotUserId`. The service adopts
+that active bot and returns its ID in `status.outputs.chat.agentBotUserId`.
+A stale or conflicting recorded ID fails provisioning. When no ID is
+recorded, the service looks up or creates the bot by its default username.
 
 ## Outputs
 

@@ -1,9 +1,7 @@
 # Architecture
 
 What runs, who talks to whom, where state lives, and how a product builds on
-top. [Why octogee-cloud](why-octogee-cloud.md) covers the trust model this
-serves, and [Known rough edges](rough-edges.md) lists what does not yet match
-the picture below.
+top. [Why octogee-cloud](why-octogee-cloud.md) covers the trust model.
 
 ## The picture
 
@@ -17,13 +15,14 @@ reference behind them.
 | Service | Directory | Runs as | What it does |
 | --- | --- | --- | --- |
 | Fleet controller | [`fleet-controller/`](../fleet-controller/README.md) | Deployment `glm-controller` | Owns the fleet: which gateways exist, which user is on which, and every move between them. Serves the Admin API that [`octogee-fleet`](https://github.com/octogee-ai/octogee-fleet) calls. Installs gateways with Helm, and creates the virtual machine when an isolated gateway runs on one. Writes an operations-journal entry for every change it makes. |
-| Platform API | `platform-api/` | Deployment `octogee-api` | Serves most HTTP routes. Its fleet broker holds the Mattermost and Gitea admin credentials and sets users up on behalf of a gateway. |
+| Platform API | `platform-api/` | Deployment `octogee-api` | Serves most HTTP routes and brokers chat credentials and per-pod Git keys for gateways. |
+| Provisioning service | [`provisioning-service/`](../provisioning-service/README.md) | Deployment `provisioning-service`, when enabled | Reconciles chat and Git resources from specs written by the fleet controller. Adopts an existing bot by its recorded ID, issues chat credentials and manages per-pod Git keys. |
 | LLM broker | `llm-broker/` | Deployment `llm-broker`, from the `llm-broker` image | Holds the model provider keys and meters every call. An agent calls it with a credential the platform issued to that agent. |
 | npm cache proxy | `platform-api/` (`src/npm-cache-proxy.ts`) | Deployment `octogee-npm-cache-proxy` | An npm registry proxy with a cache. |
 | Edge | `gateway-edge/` | Container `gateway-edge` in each gateway pod; Deployments `gateway-router` and `mattermost-callback-router` | One codebase, three roles. As a sidecar in each gateway pod it serves the user's workspace files and proxies the Mattermost WebSocket. As the gateway router it sends `/g/<gatewayId>/*` to that gateway's sidecar. As the Mattermost callback router it receives Mattermost's callbacks. |
 | Gateway image | [`gateway/`](../gateway/README.md) | Container `gateway` in each gateway pod, one Helm release of `charts/octogee-gateway` per gateway | OpenClaw, the gateway supervisor, and the platform's OpenClaw extensions under `gateway/extensions/platform/`. [OpenClaw compatibility](openclaw-compatibility.md) lists the patches the OpenClaw build carries. |
 | Gateway supervisor | [`gateway-supervisor/`](../gateway-supervisor/README.md) | Boot steps and runners in the `gateway` container, installed at `/octogee/scripts` | The pod's boot steps, the runners that supervise OpenClaw and set up each user, and the VM agent. Its README lists each entrypoint and what starts it. |
-| Provisioner | [`gateway-supervisor/entrypoints/provisioner.ts`](../gateway-supervisor/README.md#the-provisioner) | A process in the `gateway` container | When a user is assigned to the gateway it creates their Mattermost account, team, channels and agent bot, and their Gitea organization and `workspace` repository, all through the platform API's fleet broker. |
+| Provisioner | [`gateway-supervisor/entrypoints/provisioner.ts`](../gateway-supervisor/README.md#the-provisioner) | A process in the `gateway` container | Mounts assigned users, configures OpenClaw and registers each pod's Git key through the platform API. When the provisioning service is disabled, it also requests chat and Git setup through the fleet broker. |
 | VM agent | [`gateway-supervisor/entrypoints/vm-gateway-agent.ts`](../gateway-supervisor/entrypoints/vm-gateway-agent.ts) | A container on an isolated gateway's virtual machine, run from the gateway image | Mounts the VM's home disk, starts the gateway container and reports to the platform API. |
 | Isolated gateway VM image | [`desktop/`](../desktop/README.md) | A Google Cloud virtual machine | The virtual machine image for an isolated gateway that runs on a VM, which adds a desktop. Google Cloud only today. |
 | VM bridge | [`vm-bridge/`](../vm-bridge/README.md) | Deployment `octogee-vm-bridge` | A TCP proxy through which a gateway on a virtual machine reaches the platform API, the LLM broker, the npm cache proxy, Mattermost and Gitea. Installed only when `global.computer.enabled` is set. |
@@ -64,10 +63,9 @@ A user's agents, channels, repositories, agent stores and schedules are records
 the fleet controller owns, so it can move a user from one gateway to another.
 Fences ensure one gateway serves the user at a time.
 
-The controller acts only when an operator asks. It adds no gateway, places no
-user and moves no user by itself. It does keep a gateway an operator created at
-its desired state, for example by recreating a virtual machine after a
-preemption.
+Operators and product automation can use the controller's Admin API to
+allocate gateways and move users. The controller reconciles each gateway to
+its desired state, including recreating a preempted virtual machine.
 
 ## Where state lives
 
@@ -75,6 +73,7 @@ preemption.
 | --- | --- |
 | Users, gateways, assignments, operations journal, platform configuration | PostgreSQL, through `PlatformStateStore` in `core/src/platform-state/` |
 | Secrets the platform creates | Encrypted rows in PostgreSQL under the root key, or Google Secret Manager |
+| Provisioning specs, work, encrypted chat credentials and Git key holders | The provisioning service's PostgreSQL schema |
 | Each agent's store | Its own PostgreSQL schema. Database logins are per gateway. |
 | Users' files and home checkpoints | S3-compatible object storage |
 | Chat history | Mattermost's own database |
@@ -119,7 +118,7 @@ with its additions:
 
 | Service | Start function | What a product passes |
 | --- | --- | --- |
-| Fleet controller | `main(product)` in `fleet-controller/src/index.ts` | `ControllerProduct`: admin routes, user lifecycle steps, and the automation the platform leaves out, such as placement, scaling and returning idle users |
+| Fleet controller | `main(product)` in `fleet-controller/src/index.ts` | `ControllerProduct`: admin routes, user lifecycle steps and optional in-process automation hooks |
 | Platform API | `createPlatformApp({ product })` in `platform-api/src/app.ts` | `ProductExtension`: routes, entitlements, notifications and the LLM broker's commercial rails |
 | LLM broker | `createLlmBrokerApp()` in `llm-broker/src/app.ts` | A rail registry: how each call is gated, metered and charged |
 | Edge | `createApp()` in `gateway-edge/src/index.ts` | Nothing; the edge serves only its own gateway's routes |
@@ -128,6 +127,10 @@ with its additions:
 adds the product's files beside the platform's, and refuses any product file
 that would replace a platform file other than a composition root.
 
-These interfaces are in-process and have no version yet. They change when the
-platform needs them to, and a product pins a commit of this repository.
-[Known rough edges](rough-edges.md) says what would fix that.
+The overlay's in-process interfaces track the platform commit the product
+pins. Releases publish versioned libraries, images and charts. See
+[Releasing](releasing.md) for the published package list.
+
+Placement automation can run in a separate process and call the controller's
+[Admin API](admin-api-automation.md). The placement owner gates the in-process
+pass and the external client so they cannot both make placement decisions.

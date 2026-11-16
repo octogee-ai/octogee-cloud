@@ -190,7 +190,7 @@ the operator asks for them or a current risk to users requires them.
 - [Architecture](docs/architecture.md),
   [why octogee-cloud](docs/why-octogee-cloud.md),
   [OpenClaw compatibility](docs/openclaw-compatibility.md) and
-  [known rough edges](docs/rough-edges.md).
+  [provisioning service](provisioning-service/README.md).
 - The [handbook](docs/handbook/00-index.md) chapters on principles, testing,
   pull requests, repository conventions and docs.
 - Code anchors: `platform-api/src/app.ts`, `gateway-edge/src/index.ts`,

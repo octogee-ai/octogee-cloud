@@ -15,8 +15,10 @@ preemption.
 
 It is not responsible for:
 
-- setting a user up in Mattermost and Gitea; the provisioner in the gateway
-  does that through the platform API's fleet broker;
+- creating a user's resources in Mattermost and Gitea. The controller writes
+  the user's desired spec to the [provisioning service](../provisioning-service/README.md)
+  when enabled. The gateway provisioner uses the fleet broker on installations
+  that leave the service disabled;
 - deciding when to add, drain or retire a shared gateway; a product or an
   Admin API client decides, see [Admin API routes for automation](../docs/admin-api-automation.md);
 - serving users, agents or model calls.
@@ -94,6 +96,7 @@ An operator identity is one of:
 | Each gateway | HTTP to the gateway pod's fleet port (3003 by default), signed with the controller's key | The gateway's report of the users it serves, unmounting a user who left, and the steps of a migration |
 | Google Compute Engine | REST | Virtual machines and home disks of isolated gateways that run on a VM |
 | Platform API | HTTP to `/internal/model-keys/issue` and `/internal/model-keys/revoke` | A model credential for each gateway |
+| Provisioning service | HTTP with a projected Kubernetes service account token | Writes user specs, reads results and retires Git key holders |
 | Mattermost and Gitea | Their admin APIs | Cleanup when a user is erased, and the Gitea SSH key sweep |
 | Secret Manager or the PostgreSQL secret store | `@octogee/core` | Secrets the controller creates for gateways |
 | Cloud KMS | `@google-cloud/kms`, when `OCTOGEE_KMS_KEY_NAME` is set | Decrypting stored connector secrets |
@@ -162,6 +165,3 @@ by the Helm specs under `tests/specs/`.
 | `src/vm-lifecycle.ts`, `src/lib/compute-vm.ts` | Isolated gateways on virtual machines |
 | `src/gateway-heartbeat-poller.ts` | Reading each gateway's fleet report |
 | `src/middleware/auth.ts` | Operator authentication |
-
-`src/index.ts` is one of the large files [Known rough edges](../docs/rough-edges.md#large-files)
-lists.

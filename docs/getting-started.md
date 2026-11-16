@@ -22,8 +22,8 @@ three installers.
 - `scripts/ops/gke-install.sh` installs the same platform on GKE, with Cloud
   SQL and Cloud Storage, from the published images. See
   [The full platform on GKE](gke.md).
-- `scripts/ops/eks-install.sh` installs it on EKS, with RDS and S3. It has not
-  run on a real AWS account yet. See [The full platform on EKS](eks.md).
+- `scripts/ops/eks-install.sh` installs it on EKS, with RDS and S3.
+  [The full platform on EKS](eks.md) records the fresh-account run.
 
 On the full platform, users on a shared gateway reach their agent through
 Mattermost and Gitea. The OpenClaw Control UI is for users on an isolated

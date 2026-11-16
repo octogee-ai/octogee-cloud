@@ -96,5 +96,5 @@ it built.
 | `extensions/platform/` | The platform's OpenClaw extensions |
 
 `setup.sh`, `docker-compose.yml` and `.env.example` are a single-gateway Docker
-setup from before the platform existed. They are not maintained; see
-[Known rough edges](../docs/rough-edges.md).
+setup from before the platform existed. For a maintained local setup, see
+[Getting started](../docs/getting-started.md).

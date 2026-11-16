@@ -7,6 +7,13 @@ their chat credentials. It is off by default; set `provisioningService.enabled:
 true` with an image to run it. While it is off the chart renders exactly what it
 rendered before the service existed.
 
+Set both `glm-controller.provisioningService.url` and
+`octogee-api.provisioningService.url` to the service's in-cluster HTTP URL
+to use it for provisioning, for example
+`http://provisioning-service.<namespace>.svc.cluster.local:8080` at the
+default port. The controller writes specs and mirrors results. The API
+reads those results and manages per-pod Git keys through the service.
+
 It runs two replicas behind a cluster-internal Service. Only the fleet
 controller and the platform API may call it, and they authenticate with
 projected service account tokens it checks through TokenReview. Enabling it
