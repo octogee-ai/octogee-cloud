@@ -1,6 +1,6 @@
 import type { ConditionStatus, UserProvisioning } from "@octogee/shared/types/provisioning-service";
 import type { PlatformStateStore } from "./platform-state/store.js";
-import { type ProvisioningServiceClient } from "./provisioning-service-client.js";
+import { type DeleteProvisioningOutcome, type ProvisioningServiceClient } from "./provisioning-service-client.js";
 import { type ProvisioningMirrorOutcome, type UserAccountDocuments } from "./provisioning-mirror.js";
 import type { ProvisioningProjection } from "./provisionSteps.js";
 export declare const PROVISIONING_SPEC_BACKFILL_KEY = "provisioning-service-spec-backfill";
@@ -62,6 +62,7 @@ export interface ProvisioningSync {
     readiness(uid: string): ProvisioningReadiness | null;
     observed(uid: string): UserProvisioning | undefined;
     markDirty(uid: string): void;
+    deleteProvisioning(uid: string): Promise<DeleteProvisioningOutcome>;
     specFailures(): readonly SpecWriteFailure[];
     mirrorRefusals(): readonly MirrorRefusal[];
     resync(): Promise<void>;
@@ -74,4 +75,5 @@ export declare function runJournaledBackfill<T>(store: PlatformStateStore, run: 
     journaled: boolean;
     result: T;
 }>;
+export declare function markCloudTeardown(store: Pick<PlatformStateStore, "transaction">, uid: string): Promise<"marked" | "absent">;
 export declare function createProvisioningSync(deps: ProvisioningSyncDeps): ProvisioningSync;

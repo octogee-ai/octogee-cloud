@@ -3,7 +3,7 @@ import { resolveGatewayRuntime } from "@octogee/shared/types/glm";
 import { FleetStatePreconditionError, commitRecoveredDisposableRuntimeResetInTransaction, commitUnavailableGatewayRecoveryInTransaction, } from "./fleet-state.js";
 import { isUserActivateOperationIdFor, isUserReturnOperationIdFor } from "@octogee/shared/types/isolated-operation-ids";
 import { FleetMutationRefusedError } from "./normal-fleet-mutation.js";
-import { assertClientOwnsPlacementAutomation, placementOwnerRefusalBody } from "./placement-automation-owner.js";
+import { assertClientOwnsPlacementAutomation, placementOwnerRefusalBody, requireClientPlacementOwner } from "./placement-automation-owner.js";
 import { CONTINUOUS_PLACEMENT_SOURCE, PLACEMENT_MIGRATION_KIND, PLACEMENT_MIGRATION_SOURCES, continuousPlacementMigrationOperationId, enqueuePlacementMigrationInTransaction, isPlacementMigrationRefusal, supersedePendingSharedDrainMoveInTransaction, } from "./placement-migrations.js";
 import { FenceMismatchError } from "./platform-state/errors.js";
 import { readSharedGatewayPoolConfigInStore } from "./shared-gateway-pool-read.js";
@@ -205,6 +205,7 @@ function recoverSharedUserIntent(req, deps) {
                     const sharedGatewayIds = await sharedGatewayIdsIn(transaction);
                     let sourceKubernetesStatus = null;
                     const outcome = await commitUnavailableGatewayRecoveryInTransaction(transaction, {
+                        requireOwner: requireClientPlacementOwner,
                         operationId,
                         kind: "recover-shared-customer",
                         uid,
@@ -257,6 +258,7 @@ function resetRecoveredRuntimeIntent(req) {
                     throw new PreconditionFailed(`target ${targetGatewayId} is not in the shared gateway pool`);
                 }
                 const outcome = await commitRecoveredDisposableRuntimeResetInTransaction(transaction, {
+                    requireOwner: requireClientPlacementOwner,
                     operationId,
                     previousRecoveryOperationId,
                     uid,
@@ -301,13 +303,13 @@ function supersedeRollingSharedGatewayIntent(req, deps) {
                     const unusable = unusableRollSource(source, input.sourceGatewayId, sourceRuntime);
                     if (unusable !== null) {
                         const unknown = { status: "unknown", totalPods: 0, readyPods: 0, observedAt: now };
-                        const repeat = await appendSharedRollRecoveryInTransaction(transaction, input, { now, sourceKubernetes: unknown });
+                        const repeat = await appendSharedRollRecoveryInTransaction(transaction, input, { now, requireOwner: requireClientPlacementOwner, sourceKubernetes: unknown });
                         if (repeat.kind === "already-scheduled")
                             return { ...repeat, sourceKubernetesStatus: unknown.status };
                         throw new ObservationUnknown(unusable);
                     }
                     const sourceKubernetes = knownObservation(source);
-                    const result = await appendSharedRollRecoveryInTransaction(transaction, input, { now, sourceKubernetes });
+                    const result = await appendSharedRollRecoveryInTransaction(transaction, input, { now, requireOwner: requireClientPlacementOwner, sourceKubernetes });
                     if (result.kind === "not-eligible")
                         throw new PreconditionFailed(result.reason);
                     return { ...result, sourceKubernetesStatus: sourceKubernetes.status };
@@ -371,6 +373,7 @@ function enqueuePlacementMigrationIntent(req, deps) {
                     }
                 }
                 const outcome = await enqueuePlacementMigrationInTransaction(transaction, {
+                    requireOwner: requireClientPlacementOwner,
                     now,
                     platformArtifact: deps.platformArtifact,
                     operationFailureIsTransient: deps.operationFailureIsTransient,
@@ -406,6 +409,7 @@ function supersedeSharedDrainMoveIntent(req, deps) {
             label: "admin.placement.supersede-shared-drain-move",
             apply: async (transaction, now) => {
                 const outcome = await supersedePendingSharedDrainMoveInTransaction(transaction, {
+                    requireOwner: requireClientPlacementOwner,
                     now,
                     operationJournalRetentionMs: deps.operationJournalRetentionMs,
                 }, request);

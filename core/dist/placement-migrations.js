@@ -576,6 +576,7 @@ async function assertNoOtherActivePlacementMigration(transaction, request) {
     }
 }
 export async function enqueuePlacementMigrationInTransaction(transaction, context, request, admit = async () => undefined) {
+    await context.requireOwner(transaction);
     const userRecord = await transaction.users.records.get(request.uid);
     if (userRecord?.openclaw.managedBy === "operator")
         throw new HeldUserPlacementError(request.uid);
@@ -673,6 +674,7 @@ function sharedDrainMoveSupersededBy(operation, request) {
         supersededBy.operationId === request.activationOperationId;
 }
 export async function supersedePendingSharedDrainMoveInTransaction(transaction, context, request) {
+    await context.requireOwner(transaction);
     const [operation, userRecord, source] = await Promise.all([
         transaction.journal.operations.get(request.operationId),
         transaction.users.records.get(request.uid),

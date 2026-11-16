@@ -19,6 +19,9 @@ export declare function fleetControllerOwnsPlacementAutomation(ownership: Placem
 export declare function readPlacementAutomationOwnership(transaction: Pick<PlatformStateTransaction, "config">): Promise<PlacementAutomationOwnership>;
 export declare function assertClientOwnsPlacementAutomation(transaction: Pick<PlatformStateTransaction, "config">): Promise<PlacementAutomationOwnership>;
 export declare function assertFleetControllerOwnsPlacementAutomation(transaction: Pick<PlatformStateTransaction, "config">): Promise<PlacementAutomationOwnership>;
+export type PlacementOwnerFence = (transaction: PlatformStateTransaction) => Promise<void>;
+export declare const requireClientPlacementOwner: PlacementOwnerFence;
+export declare const requireFleetControllerPlacementOwner: PlacementOwnerFence;
 export declare function placementOwnerRefusalBody(error: unknown): {
     code: typeof PLACEMENT_OWNER_REFUSAL_CODE;
     error: string;

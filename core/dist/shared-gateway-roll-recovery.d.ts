@@ -1,4 +1,5 @@
 import { type GatewayKubernetesObservation } from "@octogee/shared/types/gateway-releases";
+import { type PlacementOwnerFence } from "./placement-automation-owner.js";
 import type { PlatformStateStore, PlatformStateTransaction } from "./platform-state/store.js";
 export interface SupersedeRollingSharedGatewayRollInput {
     sourceGatewayId: string;
@@ -26,6 +27,7 @@ export interface SharedGatewayRollRecoveryDeps {
 export declare function sharedRollRecoveryOperationId(input: SupersedeRollingSharedGatewayRollInput): string;
 export declare function appendSharedRollRecoveryInTransaction(transaction: PlatformStateTransaction, input: SupersedeRollingSharedGatewayRollInput, options: {
     now: number;
+    requireOwner: PlacementOwnerFence;
     sourceKubernetes?: GatewayKubernetesObservation;
 }): Promise<SupersedeRollingSharedGatewayRollResult>;
 export declare function supersedeRollingSharedGatewayRoll(deps: SharedGatewayRollRecoveryDeps, input: SupersedeRollingSharedGatewayRollInput): Promise<SupersedeRollingSharedGatewayRollResult>;

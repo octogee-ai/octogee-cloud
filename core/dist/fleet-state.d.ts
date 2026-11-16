@@ -3,6 +3,7 @@ import { type AssignmentSource, type AssignmentState } from "@octogee/shared/typ
 import type { FleetBrokerUserRestoreAuthority } from "@octogee/shared/types/fleet-broker";
 import { type WorkspaceMigrationPhase } from "@octogee/shared/types/workspace-migration";
 import { type SizingKeyReader } from "./sizing-key.js";
+import { type PlacementOwnerFence } from "./placement-automation-owner.js";
 import type { PlatformStateStore, PlatformStateTransaction } from "./platform-state/index.js";
 export interface FleetStateDeps {
     store: PlatformStateStore;
@@ -111,6 +112,7 @@ export declare function legacyForwardRecoveryMatches(operationId: string, input:
 export declare function migrationCancellationDeferred(operation: Record<string, unknown>, operationId: string): boolean;
 export declare function commitCutoverAtomic(deps: CutoverDeps, params: CutoverCommitParams): Promise<void>;
 export interface UnavailableGatewayRecoveryParams {
+    requireOwner: PlacementOwnerFence;
     operationId: string;
     kind: "recover-shared-customer";
     uid: string;
@@ -138,11 +140,12 @@ export interface UnavailableGatewayRecoveryTargetValidationContext {
     targetRoot: Record<string, unknown>;
     targetRuntime: Record<string, unknown>;
 }
-export declare function commitUnavailableGatewayRecoveryAtomic(deps: FleetStateDeps, params: UnavailableGatewayRecoveryParams): Promise<{
+export declare function commitUnavailableGatewayRecoveryAtomic(deps: FleetStateDeps, params: Omit<UnavailableGatewayRecoveryParams, "requireOwner">): Promise<{
     operationId: string;
 }>;
 export declare function commitUnavailableGatewayRecoveryInTransaction(tx: PlatformStateTransaction, params: UnavailableGatewayRecoveryParams, now: number): Promise<"committed" | "already-committed">;
 export interface RecoveredDisposableRuntimeResetParams {
+    requireOwner: PlacementOwnerFence;
     operationId: string;
     previousRecoveryOperationId: string;
     uid: string;
@@ -152,7 +155,7 @@ export interface RecoveredDisposableRuntimeResetParams {
     sharedGatewayIds: readonly string[];
     targetHeartbeatMaxAgeMs: number;
 }
-export declare function commitRecoveredDisposableRuntimeResetAtomic(deps: FleetStateDeps, params: RecoveredDisposableRuntimeResetParams): Promise<{
+export declare function commitRecoveredDisposableRuntimeResetAtomic(deps: FleetStateDeps, params: Omit<RecoveredDisposableRuntimeResetParams, "requireOwner">): Promise<{
     operationId: string;
 }>;
 export declare function commitRecoveredDisposableRuntimeResetInTransaction(tx: PlatformStateTransaction, params: RecoveredDisposableRuntimeResetParams, now: number): Promise<"committed" | "already-committed">;

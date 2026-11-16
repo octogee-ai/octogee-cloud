@@ -8,6 +8,7 @@ import {
   releasePayloadHash,
   type ReleasePayload,
 } from "@octogee/shared/types/gateway-releases";
+import type { PlacementOwnerFence } from "./placement-automation-owner.js";
 import { GatewayRetirementConflictError, isolatedRuntimeMutationFenced } from "./gateway-retirement-claim.js";
 import { isUserReturnOperationIdFor } from "@octogee/shared/types/isolated-operation-ids";
 import type { FleetRegistryRecord } from "./platform-state/fleet-registry.js";
@@ -35,6 +36,7 @@ export interface PlacementMigrationClassifier {
 }
 
 export interface PlacementMigrationEnqueueContext extends PlacementMigrationClassifier {
+  requireOwner: PlacementOwnerFence;
   now: number;
   platformArtifact: ReleasePayload | null;
 }
@@ -774,6 +776,7 @@ export async function enqueuePlacementMigrationInTransaction(
   request: EnqueuePlacementMigrationRequest,
   admit: () => Promise<void> = async () => undefined,
 ): Promise<EnqueuePlacementMigrationOutcome> {
+  await context.requireOwner(transaction);
   const userRecord = await transaction.users.records.get(request.uid);
   if (userRecord?.openclaw.managedBy === "operator") throw new HeldUserPlacementError(request.uid);
   if (userRecord?.slug !== request.builderSlug) {
@@ -878,9 +881,10 @@ export type SupersedePendingSharedDrainMoveOutcome =
 
 export async function supersedePendingSharedDrainMoveInTransaction(
   transaction: PlatformStateTransaction,
-  context: { now: number; operationJournalRetentionMs: number },
+  context: { requireOwner: PlacementOwnerFence; now: number; operationJournalRetentionMs: number },
   request: SupersedePendingSharedDrainMoveRequest,
 ): Promise<SupersedePendingSharedDrainMoveOutcome> {
+  await context.requireOwner(transaction);
   const [operation, userRecord, source] = await Promise.all([
     transaction.journal.operations.get(request.operationId),
     transaction.users.records.get(request.uid),
