@@ -594,6 +594,29 @@ export async function deleteUserSshKey(slug: string): Promise<void> {
   await fs.promises.rm(keyDir, { recursive: true, force: true });
 }
 
+const SERVICE_KEY_HOLDER_FILE = "service-holder";
+
+export function serviceGitKeyHolder(slug: string): string | null {
+  try {
+    return fs.readFileSync(path.join(CUSTOMER_KEYS_DIR, slug, SERVICE_KEY_HOLDER_FILE), "utf-8").trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+export function generateServiceGitKey(slug: string, gatewayId: string): string {
+  if (!isValidUsername(slug)) throw new Error("Invalid SSH key owner");
+  if (!gatewayId) throw new Error("A service git key needs the gateway id");
+  const keyDir = path.join(CUSTOMER_KEYS_DIR, slug);
+  if (serviceGitKeyHolder(slug) !== gatewayId) {
+    if (fs.existsSync(keyDir)) log(`[git] ${slug}: generating a key for registration through the provisioning service at this gateway`);
+    fs.rmSync(keyDir, { recursive: true, force: true });
+  }
+  const pubKey = generateUserSshKey(slug);
+  fs.writeFileSync(path.join(keyDir, SERVICE_KEY_HOLDER_FILE), `${gatewayId}\n`, { mode: 0o600 });
+  return pubKey;
+}
+
 export function readLocalUserPubKey(slug: string): string | null {
   const pubPath = path.join(CUSTOMER_KEYS_DIR, slug, "id_ed25519.pub");
   try {
@@ -1642,7 +1665,7 @@ export function adoptProjectClone(cloneDir: string, dest: string): void {
 }
 
 interface InitWorkspaceRepoDeps {
-  ensureWorkspaceRepo: (slug: string) => Promise<void>;
+  ensureWorkspaceRepo: ((slug: string) => Promise<void>) | null;
   prepareRepository: (repoDir: string, slug: string) => void;
   workspaceRemoteUrl?: (slug: string) => string;
 }
@@ -1747,7 +1770,7 @@ export async function initWorkspaceRepo(
   seedFileAtomically(welcomeDest, welcome.content, 0o644);
 
   try {
-    await deps.ensureWorkspaceRepo(slug);
+    await deps.ensureWorkspaceRepo?.(slug);
   } catch (err) {
     log(`⚠ [git] Failed to create repo ${org}/${repoName}: ${errMessage(err)}`);
     return null;

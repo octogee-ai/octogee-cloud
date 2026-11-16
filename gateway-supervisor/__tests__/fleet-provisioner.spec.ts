@@ -2738,7 +2738,7 @@ describe("in-pod gateway heartbeat", () => {
       startedAt: 42,
     });
 
-    expect(probe).toEqual({ status: "ready", podUid: "pod-uid-1", startedAt: 42, rsyncAttemptFencing: true });
+    expect(probe).toEqual({ status: "ready", podUid: "pod-uid-1", startedAt: 42, rsyncAttemptFencing: true, provisioning: "service" });
   });
 });
 

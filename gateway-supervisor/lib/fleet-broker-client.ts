@@ -31,6 +31,7 @@ import { internalFetch } from "./internal-fetch.js";
 import { gatewayCredentialHeaders as defaultGatewayCredentialHeaders } from "@octogee/core/internal-fetch";
 import type { SystemConfigObservedStatus } from "./system-config-status.js";
 import type { DeveloperToolchainStatus } from "@octogee/shared/types/developer-toolchain";
+import type { ServiceProvisioningAnswer } from "@octogee/core/user-lifecycle";
 
 function baseUrl(): string {
   if (process.env.FLEET_BROKER_URL) return process.env.FLEET_BROKER_URL;
@@ -190,6 +191,9 @@ export interface FleetBrokerClient {
   completeOpenClawBoot(input: { releaseKey: string; openclawBuild?: string }): Promise<void>;
   completeOpenClawDoctor(input: { releaseKey: string; requestId: string; verifiedAgentIds: string[] }): Promise<void>;
   assertOpenClawDoctor(input: { releaseKey: string; requestId: string }): Promise<void>;
+  provisioningReadiness(uid: string): Promise<ServiceProvisioningAnswer>;
+  registerGitKey(uid: string, publicKey: string): Promise<ServiceProvisioningAnswer>;
+  releaseGitKey(uid: string): Promise<void>;
 }
 
 export async function resolveGithubTokenForSlug(
@@ -198,6 +202,41 @@ export async function resolveGithubTokenForSlug(
 ): Promise<string | null> {
   const uid = await client.uidForSlug(slug);
   return uid ? client.githubTokenForSync(uid) : null;
+}
+
+const DEFAULT_PENDING_RETRY_MS = 5_000;
+
+async function serviceProvisioningAnswer(path: string, body: unknown): Promise<ServiceProvisioningAnswer> {
+  const resp = await internalFetch(`${baseUrl()}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (resp.ok) return { ready: true };
+  if (resp.status !== 503) throw await brokerHttpError(path, resp);
+  const text = await resp.text().catch(() => "");
+  let reason: unknown;
+  try {
+    reason = (JSON.parse(text) as { reason?: unknown } | null)?.reason;
+  } catch {
+    reason = undefined;
+  }
+  const seconds = Number(resp.headers.get("retry-after"));
+  return {
+    ready: false,
+    reason: typeof reason === "string" && reason ? reason : `fleet-broker POST ${path} answered 503 without a reason`,
+    retryAfterMs: Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : DEFAULT_PENDING_RETRY_MS,
+  };
+}
+
+function serviceProvisioningClient(
+  gatewayId: string,
+): Pick<FleetBrokerClient, "provisioningReadiness" | "registerGitKey" | "releaseGitKey"> {
+  return {
+    provisioningReadiness: (uid) => serviceProvisioningAnswer("/internal/fleet/provisioning-readiness", { gatewayId, uid }),
+    registerGitKey: (uid, publicKey) => serviceProvisioningAnswer("/internal/fleet/git-key", { gatewayId, uid, publicKey }),
+    releaseGitKey: (uid) => postNoContent("/internal/fleet/git-key/release", { gatewayId, uid }),
+  };
 }
 
 export interface FleetBrokerClientOptions {
@@ -402,6 +441,7 @@ export function createFleetBrokerClient(
     ?? defaultGatewayCredentialHeaders;
   return {
     ...npmRegistryCredentialClient(gatewayId, gatewayCredentialHeaders),
+    ...serviceProvisioningClient(gatewayId),
     builderIdentity: (opts) => readUserIdentity(gatewayId, gatewayCredentialHeaders, opts),
     watchAssignments: (wake, log) => watchFleetAssignments({
       url: `${baseUrl()}/internal/fleet/assignment-watch`,

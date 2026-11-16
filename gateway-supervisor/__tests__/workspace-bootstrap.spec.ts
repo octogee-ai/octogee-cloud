@@ -84,6 +84,24 @@ describe("fresh workspace bootstrap", () => {
       .toBe(`gitdir: ${path.join(TEST_ROOT, "git-metadata", slug, "workspace.git")}\n`);
   });
 
+  it("pushes into a repository the provisioning service created without asking for it", async () => {
+    const slug = "aug09";
+    const defaultAgentDir = path.join(CUSTOMERS_DIR, slug);
+    const remote = path.join(remoteRoot, "workspace.git");
+    fs.mkdirSync(defaultAgentDir, { recursive: true });
+    git(remoteRoot, ["init", "--bare", "--initial-branch=main", remote]);
+
+    const result = await initWorkspaceRepo(defaultAgentDir, slug, {
+      ensureWorkspaceRepo: null,
+      workspaceRemoteUrl: () => remote,
+      prepareRepository: prepareFrom(remote),
+    });
+
+    expect(result).not.toBeNull();
+    expect(git(remote, ["--git-dir", remote, "log", "-1", "--format=%s"]))
+      .toBe("initial workspace skeleton");
+  });
+
   it("leaves an unreachable canonical repository retryable without partial metadata", async () => {
     const slug = "aug09";
     const defaultAgentDir = path.join(CUSTOMERS_DIR, slug);

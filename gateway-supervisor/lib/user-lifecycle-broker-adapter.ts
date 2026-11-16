@@ -78,6 +78,7 @@ import {
   type ProjectCloneOptions,
   type ProjectCloneTarget,
   type RemoveUserResult,
+  type ServiceProvisioningAdapter,
   type UserSnapshot,
 } from "./user-lifecycle.js";
 
@@ -104,11 +105,13 @@ import {
   userRepositoryHasCanonicalRemote,
   userSshKeyPath,
   deleteUserSshKey,
+  generateServiceGitKey,
   generateUserSshKey,
   initWorkspaceRepo,
   projectCheckoutMatchesSource,
   readLocalUserPubKey,
   removePartialWorkspace,
+  serviceGitKeyHolder,
   setRepoSshCommand,
 } from "./git.js";
 import { brokeredGitHost } from "./gitea-admin-broker-client.js";
@@ -560,6 +563,24 @@ function toUserSnapshot(snapshot: FleetBrokerUserSnapshot): UserSnapshot {
     freeTierModelRef: snapshot.freeTierModelRef,
     builderAgentDefault: snapshot.builderAgentDefault,
     systemConfig: snapshot.systemConfig,
+    ...(snapshot.provisionedBy === "service" ? { provisionedBy: "service" as const } : {}),
+  };
+}
+
+export function brokeredServiceProvisioning(
+  client: Pick<FleetBrokerClient, "provisioningReadiness" | "registerGitKey" | "releaseGitKey">,
+  gatewayId: string | undefined,
+): ServiceProvisioningAdapter {
+  const holder = (): string => {
+    if (!gatewayId) throw new Error("GATEWAY_ID is not set; a key registered through the provisioning service needs this gateway's id");
+    return gatewayId;
+  };
+  return {
+    readiness: (uid) => client.provisioningReadiness(uid),
+    serviceGitKey: (slug) => generateServiceGitKey(slug, holder()),
+    holdsServiceGitKey: (slug) => gatewayId !== undefined && gatewayId !== "" && serviceGitKeyHolder(slug) === gatewayId,
+    registerGitKey: (uid, publicKey) => client.registerGitKey(uid, publicKey),
+    releaseGitKey: (uid) => client.releaseGitKey(uid),
   };
 }
 
@@ -2555,7 +2576,10 @@ export function buildBrokeredLifecycleAdapter(
     removePartialWorkspace,
     deleteDepartedUserState: (slug) => removeDepartedUserFileState(slug, { log: opts.log }),
     cloneWorkspaceRepo,
-    initWorkspaceRepoFromExistingDir: (userCtx) => initWorkspaceRepo(userCtx.customerDir, userCtx.slug),
+    initWorkspaceRepoFromExistingDir: (userCtx, provisioningPath) => provisioningPath === "service"
+      ? initWorkspaceRepo(userCtx.customerDir, userCtx.slug, { ensureWorkspaceRepo: null, prepareRepository: setRepoSshCommand })
+      : initWorkspaceRepo(userCtx.customerDir, userCtx.slug),
+    provisioningService: brokeredServiceProvisioning(opts.client, process.env.GATEWAY_ID?.trim()),
     hasUserSshKey: (slug) => fs.existsSync(userSshKeyPath(slug)),
     generateUserSshKey,
     gitHost: brokeredGitHost,
