@@ -32,6 +32,9 @@ export interface PutProvisioningResult {
     readonly resource: UserProvisioning;
 }
 export type DeleteGitKeyOutcome = "deleted" | "superseded";
+export interface GatewayGitKeysRelease {
+    readonly remaining: number;
+}
 export interface PutGitKeyResult {
     readonly outcome: "created" | "changed" | "unchanged";
     readonly key: GitKey;
@@ -75,6 +78,7 @@ export interface ProvisioningServiceClient {
     deleteGitKey(uid: string, gatewayId: string, options: {
         expectedPublicKey: string;
     } & RequestSignalOptions): Promise<DeleteGitKeyOutcome>;
+    releaseGatewayGitKeys(gatewayId: string, options?: RequestSignalOptions): Promise<GatewayGitKeysRelease>;
 }
 export interface ProvisioningServiceConfig {
     readonly baseUrl: string;

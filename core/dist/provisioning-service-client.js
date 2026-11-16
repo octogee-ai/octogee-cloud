@@ -336,6 +336,14 @@ export function createProvisioningServiceClient(options) {
             return { outcome: PUT_OUTCOMES[response.status] ?? "unchanged", key: await json(response) };
         },
         deleteGitKey: (uid, gatewayId, keyOptions) => deleteGitKey(request, uid, gatewayId, keyOptions),
+        async releaseGatewayGitKeys(gatewayId, keyOptions) {
+            const response = await request({
+                method: "DELETE",
+                path: `gateways/${encodeURIComponent(gatewayId)}/git-keys`,
+                ...(keyOptions?.signal === undefined ? {} : { signal: keyOptions.signal }),
+            });
+            return json(response);
+        },
     };
     return client;
 }

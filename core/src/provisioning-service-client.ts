@@ -75,6 +75,10 @@ export interface PutProvisioningResult {
 
 export type DeleteGitKeyOutcome = "deleted" | "superseded";
 
+export interface GatewayGitKeysRelease {
+  readonly remaining: number;
+}
+
 export interface PutGitKeyResult {
   readonly outcome: "created" | "changed" | "unchanged";
   readonly key: GitKey;
@@ -131,6 +135,7 @@ export interface ProvisioningServiceClient {
   getCredential(uid: string, name: ProvisioningCredentialName, options?: RequestSignalOptions): Promise<ProvisioningCredential | null>;
   putGitKey(uid: string, gatewayId: string, spec: GitKeySpec, options?: RequestSignalOptions): Promise<PutGitKeyResult>;
   deleteGitKey(uid: string, gatewayId: string, options: { expectedPublicKey: string } & RequestSignalOptions): Promise<DeleteGitKeyOutcome>;
+  releaseGatewayGitKeys(gatewayId: string, options?: RequestSignalOptions): Promise<GatewayGitKeysRelease>;
 }
 
 export interface ProvisioningServiceConfig {
@@ -456,6 +461,15 @@ export function createProvisioningServiceClient(options: ProvisioningServiceClie
     },
 
     deleteGitKey: (uid, gatewayId, keyOptions) => deleteGitKey(request, uid, gatewayId, keyOptions),
+
+    async releaseGatewayGitKeys(gatewayId, keyOptions) {
+      const response = await request({
+        method: "DELETE",
+        path: `gateways/${encodeURIComponent(gatewayId)}/git-keys`,
+        ...(keyOptions?.signal === undefined ? {} : { signal: keyOptions.signal }),
+      });
+      return json<GatewayGitKeysRelease>(response);
+    },
   };
   return client;
 }
