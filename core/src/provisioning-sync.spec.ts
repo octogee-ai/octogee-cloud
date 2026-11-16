@@ -11,6 +11,7 @@ import { mirrorUserProvisioning } from "./provisioning-mirror.js";
 import { desiredUserProvisioningSpec } from "./provisioning-spec.js";
 import {
   createProvisioningSync,
+  markCloudTeardown,
   PROVISIONING_SPEC_BACKFILL_KEY,
   PROVISIONING_SYNC_RESYNC_MS,
   runJournaledBackfill,
@@ -520,6 +521,42 @@ describe("platform chat secrets", () => {
     await until(() => instance.counters.mirrors.written === 1);
     expect(secretRow("mattermost")).toMatchObject({ personalToken: USER_TOKEN });
     expect(leakedTokens()).toEqual([]);
+  });
+});
+
+describe("a cloud teardown of a user not scheduled for deletion", () => {
+  it("writes no spec while the teardown runs or after it, until the user is explicitly re-admitted", async () => {
+    const instance = await chatReadyUser();
+    const putsBefore = puts().length;
+
+    await markCloudTeardown(store(), "u1");
+    await expect(client().deleteProvisioning("u1")).resolves.toBe("deleted");
+    await until(() => instance.observed("u1") === undefined && instance.counters.specWrites["being-erased"] >= 1);
+    await emitBuilders([{ type: "modified", key: "u1" }]);
+    await instance.resync();
+    await until(() => instance.counters.specWrites["being-erased"] >= 2);
+    const putsDuringTeardown = puts().length;
+
+    await store().users.records.patch("u1", { accountLifecycle: { status: "active" } });
+    await emitBuilders([{ type: "modified", key: "u1" }]);
+    await until(() => fake.resources.has("u1"));
+
+    expect(putsDuringTeardown).toBe(putsBefore);
+    expect(puts()).toHaveLength(putsBefore + 1);
+  });
+
+  it("keeps a scheduled deletion's id and erase time when it marks the teardown", async () => {
+    seedUser("u1", "lin");
+    const scheduled = { status: "deletion_scheduled" as const, deletionId: "d1", suspendedAt: 1, eraseAfter: 2 };
+    await store().users.records.patch("u1", { accountLifecycle: scheduled });
+
+    await markCloudTeardown(store(), "u1");
+
+    expect((await store().users.records.get("u1"))?.accountLifecycle).toEqual({ ...scheduled, status: "erasing" });
+  });
+
+  it("marks nothing for a user whose record is already gone", async () => {
+    await expect(markCloudTeardown(store(), "u-gone")).resolves.toBe("absent");
   });
 });
 

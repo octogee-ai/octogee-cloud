@@ -142,6 +142,15 @@ function createProvisioningDeleter({ deps, cache, counters, specs, now, retryDel
     }
     return { deletes, deleteOrphans };
 }
+export async function markCloudTeardown(store, uid) {
+    return store.transaction({ label: "user-cloud-teardown.mark" }, async (transaction) => {
+        const user = await transaction.users.records.get(uid);
+        if (user === null)
+            return "absent";
+        await transaction.users.records.patch(uid, { accountLifecycle: { ...user.accountLifecycle, status: "erasing" } });
+        return "marked";
+    });
+}
 const MIRROR_NOTICES = {
     written: (uid) => `[provisioning] mirrored chat and git results of ${uid}`,
     "credentials-not-issued": (uid) => `[provisioning] not mirroring ${uid} yet: its chat credentials are not issued`,
