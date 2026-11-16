@@ -870,8 +870,15 @@ function accountLifecycleWarning(input: {
     slug: slug ?? undefined,
     ...(operation ? { operationId: operation.id } : {}),
     ...(expiresAt !== null ? { expiresAt } : {}),
-    message: `${slug ?? "unresolved-user"} (${input.uid}) is ${lifecycle.status === "erasing" ? "being deleted" : "scheduled for deletion"}`,
+    message: `${slug ?? "unresolved-user"} (${input.uid}) ${lifecycleWarningState(lifecycle)}`,
   };
+}
+
+function lifecycleWarningState(lifecycle: Record<string, unknown>): string {
+  if (lifecycle.status !== "erasing") return "is scheduled for deletion";
+  return lifecycle.deletionId === undefined
+    ? "was left erasing by a stopped cloud teardown; retry its deprovision-user operation"
+    : "is being deleted";
 }
 
 function accountLifecycleWarnings(
@@ -3755,7 +3762,7 @@ async function accelerateScheduledUserErasure(opts: {
 
 type UserDeletionAdmission =
   | { kind: "not-found" }
-  | { kind: "conflict"; runtimeFenced: boolean; deletionId: string | null; operationId: string | null }
+  | { kind: "conflict"; runtimeFenced: boolean; deletionId: string | null; operationId: string | null; reason?: string }
   | {
       kind: "created";
       deletionId: string;
@@ -3779,6 +3786,9 @@ function isUserDeletionConflict(operation: OperationRecord): boolean {
     (operation.status === "pending" || operation.status === "running");
 }
 
+const STOPPED_TEARDOWN_REFUSAL =
+  "a cloud teardown of this user stopped part way and left it erasing; retry its deprovision-user operation to finish it";
+
 async function userDeletionConflict(
   transaction: PlatformStateTransaction,
   userRecord: Stored<PlatformUserRecord>,
@@ -3788,11 +3798,13 @@ async function userDeletionConflict(
   }
   const lifecycle = userRecord.accountLifecycle;
   if (lifecycle?.status === "deletion_scheduled" || lifecycle?.status === "erasing") {
+    const deletionId = asStringOrNull(lifecycle.deletionId);
     return {
       kind: "conflict",
       runtimeFenced: false,
-      deletionId: asStringOrNull(lifecycle.deletionId),
+      deletionId,
       operationId: null,
+      ...(lifecycle.status === "erasing" && deletionId === null ? { reason: STOPPED_TEARDOWN_REFUSAL } : {}),
     };
   }
   const inFlight = await inFlightOperationsForUid(transaction, userRecord.uid);
@@ -3895,7 +3907,7 @@ function classifyUserDeletion(
     return { outcome: "failed", error: "User not found" };
   }
   if (result.kind === "conflict") {
-    return { outcome: "failed", error: "Cleanup already in progress" };
+    return { outcome: "failed", error: result.reason ?? "Cleanup already in progress" };
   }
   if (result.kind !== "partial") return { outcome: "completed" };
   const summary = result.failedStep === "suspend-auth"
@@ -3929,7 +3941,7 @@ function respondToUserDeletionAdmission(
   }
   if (admission.kind === "conflict") {
     res.status(409).json({
-      error: "Cleanup already in progress",
+      error: admission.reason ?? "Cleanup already in progress",
       ...(admission.deletionId ? { deletionId: admission.deletionId } : {}),
       ...(admission.operationId ? { operationId: admission.operationId } : {}),
     });
@@ -4772,7 +4784,7 @@ export function addAdminFleetRoutes(
     const lifecycleStatus = lifecycle.status;
     if (!userDeletionCanAccelerate(lifecycleStatus, input.eraseNow)) {
       input.res.status(409).json({
-        error: "Cleanup already in progress",
+        error: lifecycleStatus === "erasing" && lifecycle.deletionId === undefined ? STOPPED_TEARDOWN_REFUSAL : "Cleanup already in progress",
         deletionId: lifecycle.deletionId ?? null,
       });
       return true;
