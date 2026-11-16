@@ -30,4 +30,19 @@ describe.skipIf(!dsn)("schema migration", { timeout: 30_000 }, () => {
     await db.pool.query(`UPDATE ${db.table("schema_version")} SET version = $1`, [to + 1]);
     await expect(migrate(db)).rejects.toThrow(`schema version ${to + 1} is newer than this build knows`);
   });
+
+  it("refuses to move to keys held per pod while any git key row exists, and changes nothing", async () => {
+    const db = open();
+    await migrate(db);
+    await db.pool.query(`ALTER TABLE ${db.table("git_keys")} DROP CONSTRAINT git_keys_pkey, DROP COLUMN holder, ADD PRIMARY KEY (uid, gateway_id)`);
+    await db.pool.query(`UPDATE ${db.table("schema_version")} SET version = 2`);
+    await db.pool.query(
+      `INSERT INTO ${db.table("provisionings")} (uid, generation, resource_version, spec, outputs, conditions) VALUES ('u1', 1, 1, '{}', '{}', '[]')`);
+    await db.pool.query(
+      `INSERT INTO ${db.table("git_keys")} (uid, gateway_id, generation, resource_version, public_key, conditions) VALUES ('u1', 'gateway-a', 1, 1, 'ssh-ed25519 AAAA', '[]')`);
+
+    await expect(migrate(db)).rejects.toThrow("cannot migrate existing git key rows");
+    expect((await db.pool.query(`SELECT version FROM ${db.table("schema_version")}`)).rows[0].version).toBe(2);
+    expect((await db.pool.query(`SELECT count(*)::int AS rows FROM ${db.table("git_keys")}`)).rows[0].rows).toBe(1);
+  });
 });

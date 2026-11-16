@@ -2221,6 +2221,7 @@ const GITEA_GATEWAY_KEY_GC_INTERVAL_MS = 60_000;
 const GITEA_GATEWAY_KEY_GC_MAX_CALLS_PER_TICK = 480;
 const GITEA_GATEWAY_KEY_GC_MIN_CALL_INTERVAL_MS = 100;
 const GITEA_GATEWAY_KEY_GC_GRACE_MS = 10 * 60 * 1000;
+const DEAD_GIT_KEY_HOLDER_MIN_ABSENCE_MS = 10 * 60 * 1000;
 
 function releasingDeadKeyHolders(
   read: () => Promise<GitKeyHolders>,
@@ -2229,7 +2230,7 @@ function releasingDeadKeyHolders(
   log: (message: string) => void,
 ): () => Promise<GitKeyHolders> {
   if (provisioning === null) return read;
-  return readLiveKeyHoldersReleasingDead(read, { keys: provisioning.client, mode, graceMs: GITEA_GATEWAY_KEY_GC_GRACE_MS, now: () => Date.now(), log });
+  return readLiveKeyHoldersReleasingDead(read, { keys: provisioning.client, mode, minAbsenceMs: DEAD_GIT_KEY_HOLDER_MIN_ABSENCE_MS, now: () => Date.now(), log });
 }
 
 function startControllerBackgroundTasks({

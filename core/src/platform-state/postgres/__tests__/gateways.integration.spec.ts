@@ -22,7 +22,7 @@ const WAIT = { timeout: 20_000, interval: 20 };
 const ALLOCATION = { kind: "disposable-builder", schemaVersion: 1, leaseId: "lease-1", generation: 3, claimedByUid: "uid-ceckert" } as const;
 
 async function released(gatewayId: string): Promise<GitKeysReleasedProof> {
-  const release = await releaseGitKeysBeforeRootDelete(null, gatewayId);
+  const release = await releaseGitKeysBeforeRootDelete({ client: null, log: () => undefined }, gatewayId);
   if (release.outcome !== "released") throw new Error(release.reason);
   return release.proof;
 }

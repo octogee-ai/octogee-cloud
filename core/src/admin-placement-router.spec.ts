@@ -53,7 +53,7 @@ function app() {
     (req as express.Request & { uid?: string }).uid = "automation@example.iam.gserviceaccount.com";
     next();
   });
-  addAdminPlacementRoutes(server, { ...capabilities, gatewayGitKeys, store, journal: createAdminFleetMutationRunner(store) });
+  addAdminPlacementRoutes(server, { ...capabilities, gatewayGitKeys: { client: gatewayGitKeys, log: () => undefined }, store, journal: createAdminFleetMutationRunner(store) });
   server.use(respondToAdminFleetMutationError);
   server.use((error: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     res.status(500).json({ error: error.message });
@@ -506,6 +506,6 @@ describe("addAdminFleetRoutes", () => {
   }
 
   it("mounts the placement routes when the fleet controller passes its capabilities", async () => {
-    await request(fleetApp({ ...capabilities, gatewayGitKeys: null })).get("/isolated-gateways/retired").expect(200, { gateways: [] });
+    await request(fleetApp({ ...capabilities, gatewayGitKeys: { client: null, log: () => undefined } })).get("/isolated-gateways/retired").expect(200, { gateways: [] });
   });
 });

@@ -12,6 +12,7 @@ export const DEFAULT_PROVISIONING_SERVICE_RETRY = {
     baseDelayMs: 500,
     maxDelayMs: 10_000,
 };
+const UNEXPECTED_RESPONSE = "unexpected-response";
 export class ProvisioningServiceError extends Error {
     status;
     code;
@@ -87,7 +88,7 @@ async function errorFromResponse(response) {
     catch {
         body = null;
     }
-    const code = isRecord(body) && typeof body.code === "string" ? body.code : "unexpected-response";
+    const code = isRecord(body) && typeof body.code === "string" ? body.code : UNEXPECTED_RESPONSE;
     const message = isRecord(body) && typeof body.error === "string" ? body.error : `provisioning service answered ${response.status}`;
     return new ProvisioningServiceError(response.status, code, message, retryAfterMs(response.headers.get("retry-after")));
 }
@@ -98,16 +99,23 @@ function outcomeOf(error) {
         return error.code;
     return error.status >= 500 ? "server-error" : "client-error";
 }
+function gitKeyRelease(body) {
+    const remaining = isRecord(body) ? body.remaining : undefined;
+    if (typeof remaining !== "number" || !Number.isInteger(remaining) || remaining < 0) {
+        throw new ProvisioningServiceError(200, UNEXPECTED_RESPONSE, "provisioning service answered a git key release without a count of remaining rows");
+    }
+    return { remaining };
+}
 function credentialFrom(text, name) {
     let body;
     try {
         body = JSON.parse(text);
     }
     catch {
-        throw new ProvisioningServiceError(200, "unexpected-response", `provisioning service answered an unreadable ${name} credential`);
+        throw new ProvisioningServiceError(200, UNEXPECTED_RESPONSE, `provisioning service answered an unreadable ${name} credential`);
     }
     if (!isRecord(body) || body.name !== name || typeof body.value !== "string" || body.value === "" || typeof body.version !== "number") {
-        throw new ProvisioningServiceError(200, "unexpected-response", `provisioning service answered a malformed ${name} credential`);
+        throw new ProvisioningServiceError(200, UNEXPECTED_RESPONSE, `provisioning service answered a malformed ${name} credential`);
     }
     return { name, value: body.value, version: body.version };
 }
@@ -122,7 +130,7 @@ async function json(response, emptyBody) {
         return JSON.parse(text);
     }
     catch (error) {
-        throw new ProvisioningServiceError(response.status, "unexpected-response", `provisioning service answered unreadable JSON: ${errorMessage(error)}`);
+        throw new ProvisioningServiceError(response.status, UNEXPECTED_RESPONSE, `provisioning service answered unreadable JSON: ${errorMessage(error)}`);
     }
 }
 function gitKeyMethods(request) {
@@ -171,7 +179,7 @@ function gitKeyMethods(request) {
                 path: `git-key-holders/${encodeURIComponent(holder)}`,
                 ...(keyOptions?.signal === undefined ? {} : { signal: keyOptions.signal }),
             });
-            return json(response);
+            return gitKeyRelease(await json(response));
         },
         async releaseGatewayGitKeys(gatewayId, keyOptions) {
             const response = await request({
@@ -179,7 +187,7 @@ function gitKeyMethods(request) {
                 path: `gateways/${encodeURIComponent(gatewayId)}/git-keys`,
                 ...(keyOptions?.signal === undefined ? {} : { signal: keyOptions.signal }),
             });
-            return json(response);
+            return gitKeyRelease(await json(response));
         },
     };
 }

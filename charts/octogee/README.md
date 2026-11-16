@@ -13,6 +13,11 @@ projected service account tokens it checks through TokenReview. Enabling it
 therefore requires `gatewayFleet.tokenReviewRbac.enabled`; the chart refuses to
 render without that grant.
 
+The service gives each caller its roles by service account name. The chart
+passes it the names the two caller Deployments run as: `glm-controller` for the
+fleet controller and `octogee-api.serviceAccountName` for the platform API. A
+caller under any other service account is answered `403`.
+
 ### Secrets
 
 Create these in the release namespace before enabling the service.

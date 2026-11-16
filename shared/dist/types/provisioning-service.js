@@ -14,6 +14,8 @@ export const PROVISIONING_CONDITION_REASONS = [
     "GitRepositoryFailed",
     "GitKeyFailed",
     "GitKeyHeldElsewhere",
+    "GitKeyNotOnHost",
+    "GitKeyReplacedOnHost",
     "ChatNotReady",
     "GitNotReady",
     "CredentialsNotIssued",

@@ -26,7 +26,7 @@ const placement: AdminPlacementCapabilities = {
   retirementFailedRetryably: () => false,
   schedulerHandoffAwaitingRelease: (stored) => (stored as unknown as Row).schedulerHandoffReleased === false,
   rearmedRetirementPatch: {},
-  gatewayGitKeys: null,
+  gatewayGitKeys: { client: null, log: () => undefined },
 };
 
 function harness(options: { placement?: AdminPlacementCapabilities } = {}) {

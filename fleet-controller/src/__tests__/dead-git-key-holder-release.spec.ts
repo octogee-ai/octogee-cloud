@@ -3,8 +3,10 @@ import type { GitKeyHolderSummary } from "@octogee/shared/types/provisioning-ser
 import { readLiveKeyHoldersReleasingDead } from "../gitea-gateway-key-gc.js";
 
 function summary(holder: string): GitKeyHolderSummary {
-  return { holder, gatewayId: holder.slice(0, holder.indexOf("/")), rows: 1, newestUpdatedAt: "2026-11-15T18:00:00.000Z" };
+  return { holder, gatewayId: holder.slice(0, holder.indexOf("/")), };
 }
+
+const MIN_ABSENCE_MS = 10 * 60_000;
 
 function setup(options: { mode?: "enforce" | "dry-run"; listed?: string[] } = {}) {
   let now = Date.parse("2026-11-15T18:00:00Z");
@@ -19,7 +21,7 @@ function setup(options: { mode?: "enforce" | "dry-run"; listed?: string[] } = {}
   const read = readLiveKeyHoldersReleasingDead(async () => {
     if (liveRead === "failed") throw new Error("gateway pod liveness is unknown for shared-0: pods not found");
     return { owners: new Set(live) };
-  }, { keys, mode: options.mode ?? "enforce", graceMs: 10 * 60_000, now: () => now, log: (message) => logs.push(message) });
+  }, { keys, mode: options.mode ?? "enforce", minAbsenceMs: MIN_ABSENCE_MS, now: () => now, log: (message) => logs.push(message) });
   return {
     keys,
     logs,
@@ -42,13 +44,31 @@ describe("releasing git key holders that are gone", () => {
     expect(harness.logs.some((line) => line.includes("shared-0/pod-gone") && line.includes("absent"))).toBe(true);
   });
 
-  it("releases a holder missing from two consecutive complete live sets, and never a live one", async () => {
+  it("releases a holder missing from two complete live sets once it has been absent for the minimum time, and never a live one", async () => {
     const harness = setup();
 
     await harness.pass();
+    harness.advance(MIN_ABSENCE_MS - 60_000);
+    await harness.pass();
+    await harness.pass();
+    expect(harness.keys.releaseGitKeyHolder).not.toHaveBeenCalled();
+
     harness.advance(60_000);
     await harness.pass();
+    expect(harness.keys.releaseGitKeyHolder.mock.calls).toEqual([["shared-0/pod-gone"]]);
+  });
 
+  it("keeps a holder absent for the minimum time until a second complete pass finds it absent", async () => {
+    const harness = setup();
+
+    await harness.pass();
+    harness.failLiveRead();
+    harness.advance(MIN_ABSENCE_MS + 60_000);
+    await harness.pass();
+    expect(harness.keys.releaseGitKeyHolder).not.toHaveBeenCalled();
+
+    harness.restoreLiveRead();
+    await harness.pass();
     expect(harness.keys.releaseGitKeyHolder.mock.calls).toEqual([["shared-0/pod-gone"]]);
   });
 
@@ -77,20 +97,8 @@ describe("releasing git key holders that are gone", () => {
     expect(harness.logs.some((line) => line.includes("releases no git key holder") && line.includes("liveness is unknown"))).toBe(true);
 
     harness.restoreLiveRead();
+    harness.advance(MIN_ABSENCE_MS);
     await harness.pass();
-    expect(harness.keys.releaseGitKeyHolder.mock.calls).toEqual([["shared-0/pod-gone"]]);
-  });
-
-  it("releases a holder absent past the grace period even when a pass in between could not read the live set", async () => {
-    const harness = setup();
-
-    await harness.pass();
-    harness.failLiveRead();
-    harness.advance(11 * 60_000);
-    await harness.pass();
-    harness.restoreLiveRead();
-    await harness.pass();
-
     expect(harness.keys.releaseGitKeyHolder.mock.calls).toEqual([["shared-0/pod-gone"]]);
   });
 
@@ -108,6 +116,7 @@ describe("releasing git key holders that are gone", () => {
     harness.keys.releaseGitKeyHolder.mockRejectedValueOnce(new Error("502 bad gateway"));
 
     await harness.pass();
+    harness.advance(MIN_ABSENCE_MS);
     await harness.pass();
     await harness.pass();
 
@@ -119,6 +128,7 @@ describe("releasing git key holders that are gone", () => {
     const harness = setup({ mode: "dry-run" });
 
     await harness.pass();
+    harness.advance(MIN_ABSENCE_MS);
     await harness.pass();
 
     expect(harness.keys.releaseGitKeyHolder).not.toHaveBeenCalled();
