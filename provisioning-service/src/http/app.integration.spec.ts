@@ -364,6 +364,18 @@ describe.skipIf(!dsn)("the provisioning HTTP API", { timeout: 30_000 }, () => {
       expect((await harness.request("DELETE", "/v1/users/u1/git-keys/gw-1", { token: TOKENS.platformApi, body: { expectedPublicKey: "not a key" } })).status).toBe(400);
     });
 
+    it("releases a git key by its key material, whatever comment the release carries", async () => {
+      await harness.request("PUT", "/v1/users/u1/provisioning", { body: { spec: spec("lin") } });
+      await harness.request("PUT", "/v1/users/u1/git-keys/gw-1", { token: TOKENS.platformApi, body: { spec: { publicKey: KEY } } });
+
+      const released = await harness.request("DELETE", "/v1/users/u1/git-keys/gw-1", { token: TOKENS.platformApi, body: { expectedPublicKey: KEY.replace("gateway-a", "renamed-on-the-pod") } });
+
+      expect(released.status).toBe(202);
+      const reRegistered = await harness.request("PUT", "/v1/users/u1/git-keys/gw-1", { token: TOKENS.platformApi, body: { spec: { publicKey: KEY } } });
+      expect(reRegistered.status).toBe(202);
+      expect(reRegistered.body.generation).toBe(2);
+    });
+
     it("answers credentials with 404 for an unknown user or name, 409 before issue and the value with no-store after", async () => {
       expect((await harness.request("GET", "/v1/users/nobody/credentials/user-chat-token", { token: TOKENS.platformApi })).status).toBe(404);
       await harness.request("PUT", "/v1/users/u1/provisioning", { body: { spec: spec("lin") } });

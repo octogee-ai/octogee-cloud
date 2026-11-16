@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type pg from "pg";
+import { publicKeyIdentity } from "@octogee/core/gitea-naming";
 import {
   GIT_KEY_CONDITION_TYPES,
   USER_PROVISIONING_CONDITION_TYPES,
@@ -378,7 +379,7 @@ export class ProvisioningStore {
       const { rows } = await client.query<GitKeyRow>(
         `SELECT * FROM ${t("git_keys")} WHERE uid = $1 AND gateway_id = $2 FOR UPDATE`, [uid, gatewayId]);
       if (!rows[0] || rows[0].deletion_requested_at !== null) return;
-      if (expectedPublicKey !== null && rows[0].public_key !== expectedPublicKey) {
+      if (expectedPublicKey !== null && publicKeyIdentity(rows[0].public_key) !== publicKeyIdentity(expectedPublicKey)) {
         throw new ApiError(409, "precondition-failed", "the git key now holds another public key");
       }
       const keyVersion = await bumpVersion(uid);
