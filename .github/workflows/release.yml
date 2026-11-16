@@ -3,23 +3,31 @@ name: Release
 on:
   push:
     tags: ['v[0-9]+.[0-9]+.[0-9]+']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing annotated release tag
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.tag || github.ref_name }}
 
 env:
   REGISTRY: ghcr.io/octogee-ai/octogee-cloud
-  TAG: ${{ github.ref_name }}
+  TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
   release:
     name: Release
-    if: github.repository == 'octogee-ai/octogee-cloud'
+    if: github.repository == 'octogee-ai/octogee-cloud' && (github.event_name == 'push' || github.ref == 'refs/heads/main')
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    outputs:
+      sha: ${{ steps.build.outputs.sha }}
     permissions:
       actions: read
       contents: write
@@ -38,28 +46,41 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          git merge-base --is-ancestor "$GITHUB_SHA" origin/main \
-            || { echo "::error::$TAG is at $GITHUB_SHA, which is not on main"; exit 1; }
-          run="$(gh run list -R "$GITHUB_REPOSITORY" --workflow=build-main.yml --commit="$GITHUB_SHA" --event=push \
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+            || { echo "::error::Expected a release tag such as v0.2.0"; exit 1; }
+          ref="refs/tags/$TAG"
+          [[ "$(git cat-file -t "$ref")" == tag ]] \
+            || { echo "::error::Expected an existing annotated tag: $TAG"; exit 1; }
+          sha="$(git rev-parse --verify "$ref^{commit}")"
+          [[ "$GITHUB_EVENT_NAME" != push || "$sha" == "$GITHUB_SHA" ]] \
+            || { echo "::error::$TAG moved after the push"; exit 1; }
+          git merge-base --is-ancestor "$sha" origin/main \
+            || { echo "::error::$TAG is at $sha, which is not on main"; exit 1; }
+          run="$(gh run list -R "$GITHUB_REPOSITORY" --workflow=build-main.yml --commit="$sha" --event=push \
             --status=success --limit=1 --json databaseId --jq '.[0].databaseId // empty')"
-          [[ -n "$run" ]] || { echo "::error::Build main has no successful run for $GITHUB_SHA; tag a main commit whose Build main succeeded"; exit 1; }
+          [[ -n "$run" ]] || { echo "::error::Build main has no successful run for $sha"; exit 1; }
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "run=$run" >> "$GITHUB_OUTPUT"
       - name: Check the kind smokes passed at the tagged commit
         env:
           GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ steps.build.outputs.sha }}
         run: |
           set -euo pipefail
           gh run list -R "$GITHUB_REPOSITORY" --workflow=kind-smoke.yml --limit=200 \
             --json databaseId,displayTitle,status,conclusion > "$RUNNER_TEMP/kind-smoke-runs.json"
-          node scripts/ci/release-runs.mjs --sha="$GITHUB_SHA" --runs="$RUNNER_TEMP/kind-smoke-runs.json"
+          node scripts/ci/release-runs.mjs --sha="$SOURCE_SHA" --runs="$RUNNER_TEMP/kind-smoke-runs.json"
       - name: Check the octogee-fleet release the kind smokes tested
         id: fleet
         env:
           GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ steps.build.outputs.sha }}
         run: |
           set -euo pipefail
-          version="$(yq -r '.env.OCTOGEE_FLEET_VERSION' .github/workflows/kind-smoke.yml)"
-          commit="$(yq -r '.env.OCTOGEE_FLEET_COMMIT' .github/workflows/kind-smoke.yml)"
+          smoke_workflow="$RUNNER_TEMP/release-kind-smoke.yml"
+          git show "$SOURCE_SHA:.github/workflows/kind-smoke.yml" > "$smoke_workflow"
+          version="$(yq -r '.env.OCTOGEE_FLEET_VERSION' "$smoke_workflow")"
+          commit="$(yq -r '.env.OCTOGEE_FLEET_COMMIT' "$smoke_workflow")"
           tagged="$(gh api "repos/octogee-ai/octogee-fleet/commits/$version" --jq .sha)"
           [[ "$tagged" == "$commit" ]] \
             || { echo "::error::octogee-fleet $version is $tagged, but the kind smokes install $commit"; exit 1; }
@@ -68,18 +89,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RUN: ${{ steps.build.outputs.run }}
-        run: gh run download "$RUN" -R "$GITHUB_REPOSITORY" --name="image-manifest-$GITHUB_SHA" --dir="$RUNNER_TEMP/release"
+          SOURCE_SHA: ${{ steps.build.outputs.sha }}
+        run: |
+          set -euo pipefail
+          gh run download "$RUN" -R "$GITHUB_REPOSITORY" --name="image-manifest-$SOURCE_SHA" --dir="$RUNNER_TEMP/release"
+          jq -e --arg sha "$SOURCE_SHA" '.sha == $sha' "$RUNNER_TEMP/release/image-manifest.json" > /dev/null
       - name: Write the release notes from the tag message
         env:
-          GH_TOKEN: ${{ github.token }}
           FLEET: ${{ steps.fleet.outputs.version }}
         run: |
           set -euo pipefail
-          ref="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq '.object.type + " " + .object.sha')"
-          type="${ref%% *}" object="${ref#* }"
-          [[ "$type" == tag ]] \
-            || { echo "::error::$TAG is a lightweight tag; push an annotated tag whose message names the GKE install guide run"; exit 1; }
-          gh api "repos/$GITHUB_REPOSITORY/git/tags/$object" --jq .message > "$RUNNER_TEMP/tag-message"
+          git for-each-ref --format='%(contents)' "refs/tags/$TAG" > "$RUNNER_TEMP/tag-message"
           node scripts/ci/release-notes.mjs --tag="$TAG" --fleet="$FLEET" \
             --manifest="$RUNNER_TEMP/release/image-manifest.json" --tag-message="$RUNNER_TEMP/tag-message" > "$RUNNER_TEMP/notes.md"
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
@@ -117,6 +137,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.release.outputs.sha }}
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
@@ -156,6 +177,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.release.outputs.sha }}
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:

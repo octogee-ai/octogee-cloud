@@ -110,45 +110,41 @@ there, merge, and release a commit whose kind smokes ran with it.
      --status=success --limit=1 --json displayTitle --jq '.[0].displayTitle | ltrimstr("Kind smoke at ")'
    ```
 
-2. Follow [docs/gke.md](gke.md) end to end at that commit, on a fresh Google
-   Cloud project: `up`, a shared gateway, a user whose agent answers in
-   Mattermost, a project for that user with work saved in it, a move to an
-   isolated gateway, more work saved in the project there, the move back, a
-   check that both saves reached the project's Gitea repository, the isolated
-   gateway's retirement, and `down`. Whoever runs it reports the date and the
-   commit to the maintainer. If any step fails, fix it on `main` and start
-   again from step 1.
-3. Tag the commit with that run in the tag message, and push the tag:
+2. Create and push an annotated tag at that commit:
 
    ```bash
-   git tag -a v0.1.0 <commit> -m v0.1.0 -m "GKE install guide: 2026-11-15 <commit>"
-   git push origin v0.1.0
+   git tag -a v0.2.0 <commit> -m v0.2.0
+   git push origin v0.2.0
    ```
 
-   The maintainer who pushes the tag records the GKE run in its message, and
-   that message is the only record. The release notes print it,
-   and the workflow refuses a tag whose message names no run, or names a run at
-   another commit.
+   When [the GKE install guide](gke.md) has also run end to end at the tagged
+   commit, include `GKE install guide: YYYY-MM-DD <full-commit>` on a
+   separate line in the tag message. The release notes include that result
+   when recorded.
 
-4. The Release workflow then:
+3. The Release workflow then:
    - stops unless the commit is on `main` and has a successful Build main run;
    - stops unless the commit has a successful Kind smoke run, naming the
      workflow and the commit when it has none;
    - stops unless `OCTOGEE_FLEET_COMMIT` is the commit of `OCTOGEE_FLEET_VERSION`;
-   - stops unless the tag is annotated and its message names a GKE install
-     guide run at the tagged commit;
+   - checks that the tag is annotated and that the published image manifest
+     and any recorded GKE run refer to the tagged commit;
    - adds the release tag to each image, beside its commit tags;
-   - creates the release, with what the platform does and does not do yet, the
-     date and commit of the GKE run, how to start from it, the octogee-fleet
-     version, each image by index digest, what upgrading can promise, the
-     changes since the last release, and Build main's `image-manifest.json`
-     attached;
+   - creates the release with install and upgrade instructions, the fleet CLI
+     version, each image's index digest, verification results, and the
+     Build main `image-manifest.json` attachment;
    - then, in two jobs of their own, publishes the npm packages and pushes the
      charts.
 
-Build main keeps that manifest for 90 days, so release a commit within 90 days
-of its build. If the release job stops, delete the tag, fix the cause and push
-the tag again. The workflow checks everything before it tags an image.
+Build main keeps the manifest for 90 days. After fixing a failed release
+job, dispatch the current workflow against the existing tag:
+
+```bash
+gh workflow run release.yml -R octogee-ai/octogee-cloud --ref main -f tag=v0.2.0
+```
+
+The workflow validates the tag again and builds every package and chart from
+the tagged commit.
 
 The npm and chart jobs start only after the release exists, and a failure in
 either leaves the images and the release as they are. Without working npm
