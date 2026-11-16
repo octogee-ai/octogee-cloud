@@ -1120,7 +1120,7 @@ async function loadAndPrepareForMount(
   uid: string,
   usersDir: string,
 ): Promise<{ snapshot: UserSnapshot; ctx: UserContext; newUser: boolean }> {
-  const snapshot = await adapter.loadUserSnapshot(uid);
+  const snapshot = await adapter.loadUserSnapshot(uid, { refresh: true });
   if (!snapshot) {
     throw new Error(`[add:${uid}] user doc not found in Firestore`);
   }

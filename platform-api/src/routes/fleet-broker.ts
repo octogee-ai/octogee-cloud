@@ -525,10 +525,11 @@ async function servedThroughService(uid: string, legacyProvisioning: LegacyProvi
 async function snapshotProvisioning(
   uid: string,
   bound: GatewayBinding,
+  gateway: GatewayRoot | undefined,
   deps: ResolvedFleetBrokerRouteDeps,
 ): Promise<{ gitKeyHolder?: string; provisionedBy?: "service" }> {
   const { legacyProvisioning } = deps;
-  if (legacyProvisioning === null) return {};
+  if (legacyProvisioning === null || gateway?.gatewayClass !== "shared") return {};
   const holder = gitKeyHolder(bound);
   if (holder === null) {
     logger.warn("user-snapshot: the caller's token binds no pod, so the gateway takes its own path for this mount", { uid, gatewayId: bound.gatewayId });
@@ -2194,7 +2195,7 @@ function installSnapshotRoutes(
       res.status(404).json({ error: "not_found" });
       return;
     }
-    res.json({ user: { ...snapshot, ...(await snapshotProvisioning(uid, bound, deps)) } });
+    res.json({ user: { ...snapshot, ...(await snapshotProvisioning(uid, bound, gatewayData, deps)) } });
   });
 
   router.post("/reconcile-project-coach-membership", async (req, res) => {

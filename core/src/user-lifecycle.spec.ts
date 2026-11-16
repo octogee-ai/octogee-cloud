@@ -1661,6 +1661,15 @@ const adapter = makeAdapter(state);
     expect(state.disk.sshKey).toBe(false);
   });
 
+  it("fails the mount with the give-up failure, and not with a promise to regenerate, when an unreadable key cannot be given up", async () => {
+    const state = makeState(snap({ status: "complete", repoUrl: "http://gitea/octogee/test-workspace", mattermostUserId: "mm-user" }), mountedDisk());
+    const adapter = makeAdapter(state);
+    adapter.readLocalUserPubKey = () => null;
+    adapter.giveUpUserGitKey = async () => { throw new Error("key directory could not be removed"); };
+
+    await expect(addUserToGateway(adapter, "uid-test")).rejects.toThrow("key directory could not be removed");
+  });
+
   it("fails the mount with the registration error and says loudly that the key it could not give up stays", async () => {
     const state = makeState(snap({ status: "complete", repoUrl: "http://gitea/octogee/test-workspace", mattermostUserId: "mm-user" }), emptyDisk());
     state.giteaRegisterShouldFail = true;
@@ -3300,6 +3309,23 @@ describe("addUserToGateway — through the provisioning service", () => {
     expect(state.writes).toContainEqual({ field: "provisioning.openclaw.status", value: "complete" });
     expect(result.steps).toEqual(expect.arrayContaining(["ssh-key", "init-workspace-repo", "config-patch", "mark-complete"]));
     expect(result.steps).not.toContain("mattermost-provision");
+  });
+
+  it("decides the path from a fresh snapshot, so a cached one that predates the platform's answer still takes the service path", async () => {
+    const state = makeState(snap({ status: "", provisionedBy: "service", gitKeyHolder: HOLDER, mattermostUserId: "mm-user" }), emptyDisk());
+    const { adapter, loads } = withService(state);
+    const seededByReconcile = { ...state.user!, provisionedBy: undefined, gitKeyHolder: undefined };
+    adapter.loadUserSnapshot = async (_uid, options) => {
+      loads.push(options);
+      return options?.refresh ? state.user : seededByReconcile;
+    };
+
+    await addUserToGateway(adapter, "uid-test");
+
+    expect(loads[0]).toEqual({ refresh: true });
+    expect(state.calls).toContain("service:readiness");
+    expect(state.calls).toContain("service:registerGitKey");
+    expect(state.calls).not.toContain("registerKey");
   });
 
   it("re-mounts a user with a workspace already on disk without asking for any repository", async () => {

@@ -3035,6 +3035,24 @@ describe("buildBrokeredLifecycleAdapter template files", () => {
   });
 });
 
+describe("buildBrokeredLifecycleAdapter snapshot the reconcile seeded", () => {
+  it("answers a mount's fresh read from the platform, with the service path and holder the seeded roster entry lacks", async () => {
+    const holder = "shared-blue/octogee-gateway-shared-blue-5bc59-p946t";
+    const seeded = aliceSnapshot();
+    const userSnapshot = vi.fn(async () => ({ ...aliceSnapshot(), provisionedBy: "service" as const, gitKeyHolder: holder }));
+    const adapter = buildBrokeredLifecycleAdapter({ client: mkClient({ userSnapshot }), rpc: mkGatewayRpc(), log: vi.fn() });
+    adapter.seedUserSnapshotForMigration!(seeded);
+
+    const cached = await adapter.loadUserSnapshot(seeded.uid);
+    expect(cached?.provisionedBy).toBeUndefined();
+    expect(userSnapshot).not.toHaveBeenCalled();
+
+    const fresh = await adapter.loadUserSnapshot(seeded.uid, { refresh: true });
+    expect(fresh).toMatchObject({ provisionedBy: "service", gitKeyHolder: holder });
+    expect(userSnapshot).toHaveBeenCalledExactlyOnceWith(seeded.uid);
+  });
+});
+
 describe("buildBrokeredLifecycleAdapter git key give-up", () => {
   const PUBLIC_KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAliceGatewayKey octogee-alice@gateway";
   const HOLDER = "shared-blue/octogee-gateway-shared-blue-5bc59-p946t";

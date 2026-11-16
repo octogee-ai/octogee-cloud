@@ -505,7 +505,7 @@ async function provisionWorkspace(adapter, snapshot, ctx, markStep, through) {
     return { steps, projectClones, byos };
 }
 async function loadAndPrepareForMount(adapter, uid, usersDir) {
-    const snapshot = await adapter.loadUserSnapshot(uid);
+    const snapshot = await adapter.loadUserSnapshot(uid, { refresh: true });
     if (!snapshot) {
         throw new Error(`[add:${uid}] user doc not found in Firestore`);
     }

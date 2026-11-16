@@ -61,7 +61,17 @@ function legacyProvisioning(overrides: Partial<LegacyProvisioning> = {}): Legacy
   };
 }
 
+function gatewayRoot(gatewayId: string, gatewayClass: "shared" | "isolated") {
+  return {
+    gatewayId, createdAt: 1, createdBy: "admin", updatedAt: 2, updatedBy: "admin", latestRelease: 2, desiredRelease: 2, liveRelease: 1,
+    desiredStatus: "running", configSchemaVersion: 1, profile: gatewayClass, gatewayClass, imageProfile: gatewayClass, sizingTier: null, gcpProject: null,
+    gatewayContainerSecurityContext: null, serviceAccountName: `octogee-gw-${gatewayId}`, serviceAccount: null, builderAccess: null,
+    ownerUid: gatewayClass === "isolated" ? "uid-alice" : null, builderSlug: gatewayClass === "isolated" ? "alice" : null, modelBrokerLimits: null, preemption: null,
+  };
+}
+
 interface Options {
+  gatewayClass?: "shared" | "isolated" | null;
   provisioning?: LegacyProvisioning | null;
   assignedTo?: string;
   boundGatewayId?: string;
@@ -74,6 +84,7 @@ function fixture(options: Options = {}) {
       username: "alice",
       provisioning: { openclaw: { gatewayId: options.assignedTo ?? GATEWAY_ID, slug: "alice" } },
     },
+    ...(options.gatewayClass === null ? {} : { [`gateways/${GATEWAY_ID}`]: gatewayRoot(GATEWAY_ID, options.gatewayClass ?? "shared") }),
   });
   const store = createDocumentFixtureStore(documents);
   const records: BrokerRecords = {
@@ -137,6 +148,21 @@ describe("POST /internal/fleet/user-snapshot", () => {
     expect(provisioning?.chat).toHaveBeenCalledWith("uid-alice", expect.objectContaining({ signal: expect.any(AbortSignal) }), { longPoll: false });
     const budget = vi.mocked(provisioning!.chat).mock.calls[0][1];
     expect(budget.remainingMs()).toBeLessThanOrEqual(3_000);
+  });
+
+  it.each([
+    ["an isolated gateway", "isolated" as const],
+    ["a gateway the platform has no root for", null],
+  ])("names no holder and no service path for %s, however complete the user's mirror is", async (_name, gatewayClass) => {
+    const { app, store, provisioning } = fixture({ gatewayClass });
+    await mirrorFully(store);
+
+    const response = await post(app, "user-snapshot").expect(200);
+
+    expect(response.body.user.slug).toBe("alice");
+    expect(response.body.user).not.toHaveProperty("provisionedBy");
+    expect(response.body.user).not.toHaveProperty("gitKeyHolder");
+    expect(provisioning?.chat).not.toHaveBeenCalled();
   });
 
   it("leaves a user whose mirror is not complete on the gateway's own path", async () => {
