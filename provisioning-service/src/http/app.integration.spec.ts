@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createHarness, dsn, spec, TOKENS, untilSettled, type Harness } from "../__tests__/harness.js";
-import { CALLER_ROLES } from "../config.js";
+import { CALLERS, createHarness, dsn, ROLE_TABLE, spec, TOKENS, untilSettled, type Harness } from "../__tests__/harness.js";
 
 const KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA gateway-a";
 
@@ -37,7 +36,7 @@ describe.skipIf(!dsn)("the provisioning HTTP API", { timeout: 30_000 }, () => {
     });
 
     it("refuses credentials to a caller holding only key-writer or only reader", async () => {
-      const scoped = await createHarness({ roleTable: { ...CALLER_ROLES, "key-writer-only": ["key-writer"], "reader-only": ["reader"] } });
+      const scoped = await createHarness({ roleTable: { ...ROLE_TABLE, "key-writer-only": ["key-writer"], "reader-only": ["reader"] } });
       try {
         expect((await scoped.request("PUT", "/v1/users/u1/provisioning", { body: { spec: spec("lin") } })).status).toBe(201);
         expect((await scoped.request("GET", "/v1/users/u1/credentials/user-chat-token", { token: TOKENS.keyWriterOnly })).body.code).toBe("forbidden");
@@ -66,7 +65,7 @@ describe.skipIf(!dsn)("the provisioning HTTP API", { timeout: 30_000 }, () => {
           expect((await fetch(`${limited.service.url}${path}`)).status).toBe(200);
         }
         const warnings = limited.log.lines.filter((line) => line.message === "caller exceeded its request limit");
-        expect(warnings).toEqual([expect.objectContaining({ level: "warn", fields: expect.objectContaining({ serviceAccount: "octogee-glm-controller" }) })]);
+        expect(warnings).toEqual([expect.objectContaining({ level: "warn", fields: expect.objectContaining({ serviceAccount: CALLERS.fleetController }) })]);
       } finally {
         await limited.dispose();
       }

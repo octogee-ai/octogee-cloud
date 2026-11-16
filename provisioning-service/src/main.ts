@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { PROVISIONING_SERVICE_AUDIENCE } from "@octogee/shared/types/provisioning-service";
 import { createTokenReviewer } from "./auth/token-review.js";
-import { CALLER_ROLES, loadConfig } from "./config.js";
+import { loadConfig } from "./config.js";
 import { hostsFromConfig } from "./hosts-from-config.js";
 import { createLogger } from "./logger.js";
 import { startService } from "./service.js";
@@ -25,7 +25,7 @@ async function main(): Promise<void> {
     credentialKey: config.credentialKey,
     reviewer,
     callerNamespace: config.callerNamespace,
-    roleTable: CALLER_ROLES,
+    roleTable: config.callerRoles,
     chat: hosts.chat,
     git: hosts.git,
     log,

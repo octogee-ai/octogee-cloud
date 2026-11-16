@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import pg from "pg";
 import type { UserProvisioningSpec } from "@octogee/shared/types/provisioning-service";
 import type { Reviewer } from "../auth/token-review.js";
-import { CALLER_ROLES } from "../config.js";
+import { callerRoleTable } from "../config.js";
 import { FakeChatHost, FakeGitHost } from "../hosts/fake-hosts.js";
 import type { CallerLimits } from "../http/caller-limits.js";
 import type { Logger } from "../logger.js";
@@ -10,6 +10,8 @@ import { startService, type RunningService, type ServiceOptions } from "../servi
 
 export const dsn = process.env.OCTOGEE_TEST_POSTGRES_DSN;
 export const NAMESPACE = "platform";
+export const CALLERS = { fleetController: "glm-controller", platformApi: "octogee-api" } as const;
+export const ROLE_TABLE = callerRoleTable(CALLERS);
 
 export const TOKENS = {
   writer: "token-fleet-controller",
@@ -24,13 +26,13 @@ export const TOKENS = {
 
 export const fakeReviewer: Reviewer = async (token) => {
   switch (token) {
-    case TOKENS.writer: return { authenticated: true, namespace: NAMESPACE, serviceAccount: "octogee-glm-controller" };
-    case TOKENS.platformApi: return { authenticated: true, namespace: NAMESPACE, serviceAccount: "octogee-api" };
+    case TOKENS.writer: return { authenticated: true, namespace: NAMESPACE, serviceAccount: CALLERS.fleetController };
+    case TOKENS.platformApi: return { authenticated: true, namespace: NAMESPACE, serviceAccount: CALLERS.platformApi };
     case TOKENS.stranger: return { authenticated: true, namespace: NAMESPACE, serviceAccount: "octogee-gateway" };
     case TOKENS.keyWriterOnly: return { authenticated: true, namespace: NAMESPACE, serviceAccount: "key-writer-only" };
     case TOKENS.readerOnly: return { authenticated: true, namespace: NAMESPACE, serviceAccount: "reader-only" };
     case TOKENS.constructorName: return { authenticated: true, namespace: NAMESPACE, serviceAccount: "constructor" };
-    case TOKENS.otherNamespace: return { authenticated: true, namespace: "elsewhere", serviceAccount: "octogee-glm-controller" };
+    case TOKENS.otherNamespace: return { authenticated: true, namespace: "elsewhere", serviceAccount: CALLERS.fleetController };
     default: return { authenticated: false };
   }
 };
@@ -82,7 +84,7 @@ export async function createHarness(options: Partial<Pick<ServiceOptions, "queue
     credentialKey: randomBytes(32),
     reviewer: options.reviewer ?? fakeReviewer,
     callerNamespace: NAMESPACE,
-    roleTable: options.roleTable ?? CALLER_ROLES,
+    roleTable: options.roleTable ?? ROLE_TABLE,
     chat,
     git,
     log,

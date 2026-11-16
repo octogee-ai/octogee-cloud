@@ -8,6 +8,8 @@ const BASE = {
   PROVISIONING_DB_PASSWORD: "database-password",
   PROVISIONING_DB_SSLMODE: "verify-full",
   PROVISIONING_CALLER_NAMESPACE: "platform",
+  PROVISIONING_FLEET_CONTROLLER_SERVICE_ACCOUNT: "fleet-controller-account",
+  PROVISIONING_PLATFORM_API_SERVICE_ACCOUNT: "platform-api-account",
   PROVISIONING_CREDENTIAL_KEY: Buffer.alloc(32, 7).toString("base64"),
   KUBERNETES_SERVICE_HOST: "10.0.0.1",
 };
@@ -80,6 +82,18 @@ describe("loadConfig", () => {
     expect(loadConfig({ ...consent, PROVISIONING_FAKE_GIT_KEYS: JSON.stringify(seed) }).hosts).toEqual({ kind: "fake", delayMs: 0, gitKeys: seed });
     expect(() => loadConfig({ ...consent, PROVISIONING_FAKE_GIT_KEYS: "[1]" })).toThrow("PROVISIONING_FAKE_GIT_KEYS");
     expect(() => loadConfig({ ...consent, PROVISIONING_FAKE_GIT_KEYS: JSON.stringify({ lin: [{ holder: "x" }] }) })).toThrow("PROVISIONING_FAKE_GIT_KEYS");
+  });
+
+  it("gives the fleet controller's and the platform API's roles to the service accounts the environment names", () => {
+    expect(loadConfig({ ...BASE, ...REAL }).callerRoles).toEqual({
+      "fleet-controller-account": ["writer", "credential-reader"],
+      "platform-api-account": ["key-writer", "reader", "credential-reader"],
+    });
+  });
+
+  it("refuses to start when both callers are given the same service account", () => {
+    expect(() => loadConfig({ ...BASE, ...REAL, PROVISIONING_PLATFORM_API_SERVICE_ACCOUNT: "fleet-controller-account" }))
+      .toThrow("PROVISIONING_FLEET_CONTROLLER_SERVICE_ACCOUNT and PROVISIONING_PLATFORM_API_SERVICE_ACCOUNT must name different service accounts");
   });
 
   it("keeps changes for a day unless PROVISIONING_CHANGE_RETENTION_SECONDS says otherwise", () => {
