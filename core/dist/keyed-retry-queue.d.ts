@@ -7,6 +7,7 @@ export interface KeyedRetryQueueOptions {
 }
 export interface KeyedRetryQueue {
     enqueue(key: string): void;
+    exclusive<T>(key: string, body: () => Promise<T>): Promise<T>;
     open(): void;
     stop(): void;
     settled(keys: readonly string[]): Promise<void>;

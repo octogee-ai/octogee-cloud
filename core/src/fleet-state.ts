@@ -29,6 +29,7 @@ import {
 import { builderActivateOperationId } from "@octogee/shared/types/isolated-operation-ids";
 import { gatewayAuthorizationFromRootDocument } from "./gateway-live-release.js";
 import { gatewayRetiredInStore } from "./gateway-retirement-claim.js";
+import { requireFleetControllerPlacementOwner, type PlacementOwnerFence } from "./placement-automation-owner.js";
 import { MalformedRecordError } from "./platform-state/index.js";
 import type {
   ActivationLeaseFence,
@@ -1145,6 +1146,7 @@ async function updateAssignment(
 }
 
 export interface UnavailableGatewayRecoveryParams {
+  requireOwner: PlacementOwnerFence;
   operationId: string;
   kind: "recover-shared-customer";
   uid: string;
@@ -1498,11 +1500,11 @@ async function validateRecoverySource(
 
 export async function commitUnavailableGatewayRecoveryAtomic(
   deps: FleetStateDeps,
-  params: UnavailableGatewayRecoveryParams,
+  params: Omit<UnavailableGatewayRecoveryParams, "requireOwner">,
 ): Promise<{ operationId: string }> {
   const now = nowMs(deps);
   await deps.store.transaction({ label: "fleet-state.commitUnavailableGatewayRecoveryAtomic" }, (tx) =>
-    commitUnavailableGatewayRecoveryInTransaction(tx, params, now));
+    commitUnavailableGatewayRecoveryInTransaction(tx, { ...params, requireOwner: requireFleetControllerPlacementOwner }, now));
   return { operationId: params.operationId };
 }
 
@@ -1511,6 +1513,7 @@ export async function commitUnavailableGatewayRecoveryInTransaction(
   params: UnavailableGatewayRecoveryParams,
   now: number,
 ): Promise<"committed" | "already-committed"> {
+  await params.requireOwner(tx);
   if (params.kind !== "recover-shared-customer") {
     throw new Error("User recovery requires its retained home; metadata-only recovery is forbidden");
   }
@@ -1623,6 +1626,7 @@ export async function commitUnavailableGatewayRecoveryInTransaction(
 }
 
 export interface RecoveredDisposableRuntimeResetParams {
+  requireOwner: PlacementOwnerFence;
   operationId: string;
   previousRecoveryOperationId: string;
   uid: string;
@@ -1763,11 +1767,11 @@ function recoveredRuntimeResetUserStateIsExact(input: {
 
 export async function commitRecoveredDisposableRuntimeResetAtomic(
   deps: FleetStateDeps,
-  params: RecoveredDisposableRuntimeResetParams,
+  params: Omit<RecoveredDisposableRuntimeResetParams, "requireOwner">,
 ): Promise<{ operationId: string }> {
   const now = nowMs(deps);
   await deps.store.transaction({ label: "fleet-state.commitRecoveredDisposableRuntimeResetAtomic" }, (tx) =>
-    commitRecoveredDisposableRuntimeResetInTransaction(tx, params, now));
+    commitRecoveredDisposableRuntimeResetInTransaction(tx, { ...params, requireOwner: requireFleetControllerPlacementOwner }, now));
   return { operationId: params.operationId };
 }
 
@@ -1776,6 +1780,7 @@ export async function commitRecoveredDisposableRuntimeResetInTransaction(
   params: RecoveredDisposableRuntimeResetParams,
   now: number,
 ): Promise<"committed" | "already-committed"> {
+  await params.requireOwner(tx);
   if (
     !params.operationId ||
     !params.previousRecoveryOperationId ||

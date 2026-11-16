@@ -1,10 +1,10 @@
 import type { PlatformStateStore, PlatformStateTransaction } from "@octogee/core/platform-state";
-import type { ProvisioningServiceClient } from "@octogee/core/provisioning-service-client";
+import type { ProvisioningSync } from "@octogee/core/provisioning-sync";
 import type { ProductUserData, UserDataScope } from "./user-lifecycle-product.js";
 
 const PLATFORM_WRITE_BATCH_SIZE = 400;
 
-export type ErasureProvisioning = Pick<ProvisioningServiceClient, "deleteProvisioning">;
+export type ErasureProvisioning = Pick<ProvisioningSync, "deleteProvisioning">;
 
 type PlatformWrite = (transaction: PlatformStateTransaction) => Promise<void>;
 

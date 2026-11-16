@@ -8,6 +8,7 @@ import {
   enqueuePlacementMigrationInTransaction,
   isPlacementMigrationRefusal,
 } from "./placement-migrations.js";
+import { requireClientPlacementOwner } from "./placement-automation-owner.js";
 import { barrier, dsn } from "./platform-state/postgres/__tests__/fixtures/harness.js";
 import { NOW, useUserFixture, type UserFixture } from "./platform-state/postgres/__tests__/fixtures/users.js";
 import type { PlatformStateStore } from "./platform-state/store.js";
@@ -86,7 +87,7 @@ describe.skipIf(!dsn)("shared placement verbs on PostgreSQL", { timeout: 30_000 
     const bothRead = barrier(2);
     const attempts: number[] = [];
     const context = {
-      now: NOW, platformArtifact: null, operationFailureIsTransient: () => false,
+      requireOwner: requireClientPlacementOwner, now: NOW, platformArtifact: null, operationFailureIsTransient: () => false,
       gatewayStartupUnavailable: () => false, sourceRecoveryForwardRetryable: () => false,
     };
     const enqueueTo = (toGatewayId: string) => fixture().store.transaction({ label: "test.enqueue" }, (transaction) => {

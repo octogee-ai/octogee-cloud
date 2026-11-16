@@ -80,12 +80,36 @@ export function createKeyedRetryQueue(options) {
             listeners.add(listener);
         });
     }
+    function released(key) {
+        return new Promise((resolve) => {
+            const listener = () => {
+                if (running.has(key))
+                    return;
+                listeners.delete(listener);
+                resolve();
+            };
+            listeners.add(listener);
+        });
+    }
     return {
         enqueue(key) {
             if (stopped || pending.has(key))
                 return;
             pending.set(key, { attempts: 0, dueAt: now() });
             schedule();
+        },
+        async exclusive(key, body) {
+            while (running.has(key))
+                await released(key);
+            running.add(key);
+            try {
+                return await body();
+            }
+            finally {
+                running.delete(key);
+                notify();
+                schedule();
+            }
         },
         open() {
             opened = true;

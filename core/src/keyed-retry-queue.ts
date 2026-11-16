@@ -8,6 +8,7 @@ export interface KeyedRetryQueueOptions {
 
 export interface KeyedRetryQueue {
   enqueue(key: string): void;
+  exclusive<T>(key: string, body: () => Promise<T>): Promise<T>;
   open(): void;
   stop(): void;
   settled(keys: readonly string[]): Promise<void>;
@@ -97,11 +98,33 @@ export function createKeyedRetryQueue(options: KeyedRetryQueueOptions): KeyedRet
     });
   }
 
+  function released(key: string): Promise<void> {
+    return new Promise<void>((resolve) => {
+      const listener = () => {
+        if (running.has(key)) return;
+        listeners.delete(listener);
+        resolve();
+      };
+      listeners.add(listener);
+    });
+  }
+
   return {
     enqueue(key) {
       if (stopped || pending.has(key)) return;
       pending.set(key, { attempts: 0, dueAt: now() });
       schedule();
+    },
+    async exclusive(key, body) {
+      while (running.has(key)) await released(key);
+      running.add(key);
+      try {
+        return await body();
+      } finally {
+        running.delete(key);
+        notify();
+        schedule();
+      }
     },
     open() {
       opened = true;

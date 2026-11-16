@@ -97,6 +97,10 @@
       "types": "./dist/admin-placement-isolated-router.d.ts",
       "default": "./dist/admin-placement-isolated-router.js"
     },
+    "./placement-automation-handoff": {
+      "types": "./dist/placement-automation-handoff.d.ts",
+      "default": "./dist/placement-automation-handoff.js"
+    },
     "./placement-automation-owner": {
       "types": "./dist/placement-automation-owner.d.ts",
       "default": "./dist/placement-automation-owner.js"

@@ -346,6 +346,7 @@ import { startHelmRecoverySweeper } from "./helm-recovery-sweeper.js";
 import { resumeOrphanedRunningOps } from "./resume-orphaned-ops.js";
 import { computeChartFingerprint } from "./chart-fingerprint.js";
 import { startSharedGatewayRetirementLoop } from "./shared-gateway-retirement-loop.js";
+import { createPlacementAutomationGate } from "@octogee/core/placement-automation-handoff";
 import { startPlacement, type PlacementProductDeps, type PlacementProductFactory } from "./placement-product.js";
 import {
   platformGatewayArtifactFromEnvironment,
@@ -2325,6 +2326,12 @@ function startControllerBackgroundTasks({
   const userHome = placement ? placementUserHome(deps.store) : undefined;
   const stopPlacement = startPlacement(placement, {
     store: deps.store,
+    placementAutomation: createPlacementAutomationGate({
+      store: deps.store,
+      now: () => Date.now(),
+      log,
+      warn: (message) => logger.warn(message),
+    }),
     informer,
     policyInputs,
     readSizingKey,
@@ -2332,6 +2339,7 @@ function startControllerBackgroundTasks({
     platformArtifact,
     now: () => Date.now(),
     log,
+    error: (message) => logger.error(message),
     debug: (message) => logger.debug(message),
     ensureAuthSecret: deps.ensureGatewayAuthSecret,
     readGatewayPodDiagnostics: deps.kubeOps.readGatewayPodDiagnostics,
@@ -2808,7 +2816,7 @@ export async function main(product: ControllerProduct): Promise<void> {
     log,
   });
   const { deps, fleetControllerPrivateKey, chartFingerprint } =
-    await createControllerRuntime(store, product.createHostingCleanup, userLifecycle, { accounts, documents, provisioning: provisioning?.client ?? null });
+    await createControllerRuntime(store, product.createHostingCleanup, userLifecycle, { accounts, documents, provisioning: provisioning?.sync ?? null });
 
   log(
     `[glm-controller] boot sha=${process.env.BUILD_SHA ?? "unknown"} oc=${process.env.OPENCLAW_VERSION ?? "n/a"} fork=${process.env.OPENCLAW_FORK_SHA ?? "n/a"} node=${process.version} — namespace=${NAMESPACE} gatewayChart=${GATEWAY_CHART} chartFingerprint=${chartFingerprint.slice(0, 12)} chartDriftPolicy=release-gated valuesFile=${GATEWAY_VALUES_FILE}`,
