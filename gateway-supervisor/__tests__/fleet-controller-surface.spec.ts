@@ -102,7 +102,7 @@ describe("fleet controller port surface", () => {
     const openclawDir = fs.mkdtempSync(path.join(os.tmpdir(), "octogee-fleet-surface-"));
     const marker = path.join(openclawDir, "prestop-started");
     fs.writeFileSync(marker, "pod-uid-1\n");
-    const leftoverSeenAtFirstWait: boolean[] = [];
+    const liveMarkerWrites: string[] = [];
     const opts = { ...controllerOpts(), openclawDir };
     opts.adapter = {
       isIsolatedGateway: () => true,
@@ -116,9 +116,13 @@ describe("fleet controller port surface", () => {
     } as unknown as UserLifecycleAdapter;
     opts.surgeOpenClawProcessGate = {
       status: async () => {
-        if (leftoverSeenAtFirstWait.length === 0) {
-          leftoverSeenAtFirstWait.push(fs.existsSync(marker));
-          fs.writeFileSync(marker, "pod-uid-1\n");
+        if (liveMarkerWrites.length === 0) {
+          try {
+            fs.writeFileSync(marker, "pod-uid-1\n", { flag: "wx" });
+            liveMarkerWrites.push("written");
+          } catch (error) {
+            liveMarkerWrites.push((error as NodeJS.ErrnoException).code ?? String(error));
+          }
         }
         return { version: 1, podUid: "pod-uid-1", role: "normal", mode: "permitted", phase: "running" };
       },
@@ -126,7 +130,7 @@ describe("fleet controller port surface", () => {
     try {
       controller = await startFleetController(opts);
 
-      expect(leftoverSeenAtFirstWait).toEqual([false]);
+      expect(liveMarkerWrites).toEqual(["written"]);
       expect(fs.readFileSync(marker, "utf8")).toBe("pod-uid-1\n");
     } finally {
       fs.rmSync(openclawDir, { recursive: true, force: true });
