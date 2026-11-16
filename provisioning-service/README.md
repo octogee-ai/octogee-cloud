@@ -128,11 +128,18 @@ one that starts while `putSequence` is above `observedPutSequence`. A reconcile
 without a new put only reads the host and reports. When the host does not hold
 the row's key under its title, it records `Registered=False` with reason
 `GitKeyNotOnHost`, or `GitKeyReplacedOnHost` when a different key is there,
-logs a warning and leaves the host alone; the gateway's next put registers the
-key again. A deleted row's release is the one write without a put.
+logs a warning (an error once the same mismatch is seen a second time) and
+leaves the host alone; the gateway's next put registers the key again. A row
+refused as held elsewhere keeps that reason while nothing under its title
+changes. Releasing a row marked for deletion is the one write without a put; a
+reconcile without a put never releases an old key under the row's title either.
+Within one attempt, a row written registered whose key a later row then took is
+written `GitKeyHeldElsewhere` before the attempt ends. `provisioning_git_keys`
+counts key rows by `Registered` status and reason, and the
+`ProvisioningGitKeyNotOnHost` alert fires on mismatched rows.
 
 A refused or mismatched key backs off per row: 1 minute, doubling to at most 6
-hours, shown as `status.nextAttemptAt`. The user's work is scheduled for that
+hours (the exponent stops at 20 refusals), shown as `status.nextAttemptAt`. The user's work is scheduled for that
 time, and the key is read again then. A put resets the backoff and is tried at
 once.
 
@@ -166,10 +173,13 @@ work until the spec changes or a retry is requested. A key write leaves parked
 work parked. Idle rows are resynced six hours after their last success.
 
 Git keys keep converging while the user's work is parked. A key pass claims the
-parked row under a lease when a key is marked for release, or when a key has a
-put no attempt has tried yet and the user's git account exists. It releases the
-marked keys, registers the put ones, and returns the row to parked with its
-attempts, running no other step. A put that marked a running attempt dirty is
+parked row under a lease when a key is marked for release or has a put not yet
+observed, and also on the resync schedule (or the earliest key backoff) to
+observe the user's registered rows when the git account exists. It releases the
+marked keys, registers the put ones, reports host mismatches as above, and
+returns the row to parked with its attempts, running no other step. A put for a
+user whose git account does not exist yet is refused once with `GitNotReady`
+and logged. A put that marked a running attempt dirty is
 therefore still processed when that attempt's lease expires on its last
 attempt. A release or register that fails is recorded on that key's row
 (`Registered=Unknown`, reason `GitKeyFailed`), logged at error level and retried
@@ -177,7 +187,23 @@ after the key backoff; a released row stays until a release succeeds. A retry
 requested during the pass queues the work once the pass ends.
 
 Schema v3 keys git keys by holder. It refuses to migrate a database that holds
-any git key row; such rows must be released first.
+any git key row: the new replica fails to start and the old replicas keep
+serving; such rows must be released first. A v2 build cannot start against a v3
+schema ("schema version 3 is newer than this build knows (2)"). To roll back,
+scale the v3 replicas to zero, run the following in the service's schema, then
+deploy the previous build. It drops every git key row; the keys stay on the git
+host until their gateways or the key sweep remove them.
+
+```sql
+BEGIN;
+DELETE FROM git_keys;
+DROP INDEX git_keys_by_holder, git_keys_by_gateway, git_keys_pending_release;
+ALTER TABLE git_keys DROP CONSTRAINT git_keys_pkey, DROP COLUMN holder,
+  DROP COLUMN put_sequence, DROP COLUMN observed_put_sequence, ADD PRIMARY KEY (uid, gateway_id);
+ALTER TABLE provisioning_work DROP COLUMN keys_only;
+UPDATE schema_version SET version = 2;
+COMMIT;
+```
 
 ## Known limits
 

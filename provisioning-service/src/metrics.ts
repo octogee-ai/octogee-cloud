@@ -1,4 +1,4 @@
-import type { ProvisioningWorkState } from "@octogee/shared/types/provisioning-service";
+import { PROVISIONING_CONDITION_REASONS, type ProvisioningWorkState } from "@octogee/shared/types/provisioning-service";
 
 type Labels = Record<string, string>;
 
@@ -10,8 +10,25 @@ function labelText(labels: Labels): string {
   return "{" + pairs.join(",") + "}";
 }
 
+export interface GitKeyRowCount {
+  status: string;
+  reason: string;
+  count: number;
+}
+
+const KEY_STATUSES: ReadonlySet<string> = new Set(["True", "False", "Unknown"]);
+const KEY_REASONS: ReadonlySet<string> = new Set(PROVISIONING_CONDITION_REASONS);
+
+function boundedKeyLabels(row: GitKeyRowCount): Labels {
+  return {
+    status: KEY_STATUSES.has(row.status) ? row.status : "Unrecognized",
+    reason: KEY_REASONS.has(row.reason) ? row.reason : "Unrecognized",
+  };
+}
+
 export interface WorkSnapshot {
   states: Record<ProvisioningWorkState, number>;
+  gitKeys: GitKeyRowCount[];
   oldestDueSeconds: number;
   generationLagSeconds: number;
 }
@@ -51,6 +68,8 @@ export class Metrics {
     const lines: string[] = [
       "# TYPE provisioning_work gauge",
       ...Object.entries(snapshot.states).map(([state, count]) => `provisioning_work${labelText({ state })} ${count}`),
+      "# TYPE provisioning_git_keys gauge",
+      ...snapshot.gitKeys.map((row) => `provisioning_git_keys${labelText(boundedKeyLabels(row))} ${row.count}`),
       "# TYPE provisioning_oldest_due_seconds gauge",
       `provisioning_oldest_due_seconds ${snapshot.oldestDueSeconds}`,
       "# TYPE provisioning_generation_lag_seconds gauge",

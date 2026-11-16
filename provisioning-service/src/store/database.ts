@@ -162,8 +162,7 @@ const MIGRATIONS: readonly ((table: (name: string) => string) => string)[] = [
     CREATE INDEX git_keys_by_gateway ON ${t("git_keys")} (gateway_id);
     CREATE INDEX git_keys_pending_release ON ${t("git_keys")} (uid) WHERE deletion_requested_at IS NOT NULL;
     ALTER TABLE ${t("provisioning_work")} ADD COLUMN keys_only boolean NOT NULL DEFAULT false;
-    ALTER TABLE ${t("git_keys")} ADD COLUMN put_sequence integer NOT NULL DEFAULT 0, ADD COLUMN observed_put_sequence integer NOT NULL DEFAULT 0,
-      ADD COLUMN attempted_put_sequence integer NOT NULL DEFAULT 0;
+    ALTER TABLE ${t("git_keys")} ADD COLUMN put_sequence integer NOT NULL DEFAULT 0, ADD COLUMN observed_put_sequence integer NOT NULL DEFAULT 0;
   `,
 ];
 
