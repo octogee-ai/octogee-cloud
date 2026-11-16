@@ -371,13 +371,16 @@ export class ProvisioningStore {
     });
   }
 
-  async deleteGitKey(uid: string, gatewayId: string): Promise<void> {
+  async deleteGitKey(uid: string, gatewayId: string, expectedPublicKey: string | null): Promise<void> {
     const t = this.db.table;
     await this.db.write(async (client, bumpVersion) => {
       await client.query(`SELECT 1 FROM ${t("provisionings")} WHERE uid = $1 FOR UPDATE`, [uid]);
       const { rows } = await client.query<GitKeyRow>(
         `SELECT * FROM ${t("git_keys")} WHERE uid = $1 AND gateway_id = $2 FOR UPDATE`, [uid, gatewayId]);
       if (!rows[0] || rows[0].deletion_requested_at !== null) return;
+      if (expectedPublicKey !== null && rows[0].public_key !== expectedPublicKey) {
+        throw new ApiError(409, "precondition-failed", "the git key now holds another public key");
+      }
       const keyVersion = await bumpVersion(uid);
       const userVersion = await bumpVersion(uid);
       await client.query(`UPDATE ${t("git_keys")} SET deletion_requested_at = now(), resource_version = $3 WHERE uid = $1 AND gateway_id = $2`,
