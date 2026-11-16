@@ -191,6 +191,53 @@ describe.skipIf(!dsn)("a provisioning attempt", { timeout: 30_000 }, () => {
     expect(events[0]).toMatchObject({ result: "parked", reason: "GitKeyFailed" });
   });
 
+  it("fails the attempt on a terminal git host error other than a key held elsewhere, such as a refused admin token", async () => {
+    await harness.request("PUT", "/v1/users/u1/provisioning", { body: { spec: spec("lin") } });
+    harness.git.host.failNext("registerKey", "terminal");
+    await harness.request("PUT", "/v1/users/u1/git-keys/gateway-a", { token: TOKENS.platformApi, body: { spec: { publicKey: KEY_A } } });
+    await untilSettled(harness);
+
+    expect((await provisioned("u1")).status.work.state).toBe("parked");
+    const { rows } = await harness.service.db.pool.query(`SELECT refusals, retry_after, conditions FROM ${harness.service.db.table("git_keys")}`);
+    expect(rows).toEqual([{ refusals: 0, retry_after: null, conditions: [expect.objectContaining({ status: "False", reason: "GitKeyFailed" })] }]);
+  });
+
+  it("attempts a refused key again when its backoff passes, without any put", async () => {
+    harness.git.owners.add("ada");
+    harness.git.keys.set("ada", [{ publicKey: KEY_A, holder: "gateway-x/pod-1" }]);
+    const registers = () => harness.git.host.calls.filter((call) => call.operation === "registerKey").length;
+    const table = (name: string) => harness.service.db.table(name);
+    const schedule = async () => (await harness.service.db.pool.query(
+      `SELECT k.retry_after, w.due_at, w.state FROM ${table("git_keys")} k JOIN ${table("provisioning_work")} w USING (uid)`)).rows[0];
+    const backoffPasses = () => harness.service.db.pool.query(
+      `UPDATE ${table("git_keys")} SET retry_after = now() - interval '1 second'; UPDATE ${table("provisioning_work")} SET due_at = now() - interval '1 second'`);
+    await harness.request("PUT", "/v1/users/u1/provisioning", { body: { spec: spec("lin") } });
+    await harness.request("PUT", "/v1/users/u1/git-keys/gateway-a", { token: TOKENS.platformApi, body: { spec: { publicKey: KEY_A } } });
+    await untilSettled(harness);
+
+    const first = await schedule();
+    expect(first.state).toBe("idle");
+    expect(first.due_at).toEqual(first.retry_after);
+    await untilSettled(harness);
+    expect(registers()).toBe(1);
+
+    await backoffPasses();
+    await untilSettled(harness);
+    expect(registers()).toBe(2);
+    const second = await schedule();
+    expect(second.due_at).toEqual(second.retry_after);
+    expect(second.retry_after.getTime() - Date.now()).toBeGreaterThan(90_000);
+
+    harness.git.keys.set("ada", []);
+    await backoffPasses();
+    await untilSettled(harness);
+    expect(registers()).toBe(3);
+    expect(harness.git.keys.get("lin")).toEqual([{ publicKey: KEY_A, holder: "gateway-a" }]);
+    const settled = await schedule();
+    expect(settled.retry_after).toBeNull();
+    expect(settled.due_at.getTime() - Date.now()).toBeGreaterThan(60 * 60_000);
+  });
+
   it("puts the refusal of a key in the attempt's git-keys step", async () => {
     harness.git.owners.add("ada");
     harness.git.keys.set("ada", [{ publicKey: KEY_A, holder: "gateway-x/pod-1" }]);

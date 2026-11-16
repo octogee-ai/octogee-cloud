@@ -39,8 +39,10 @@ interface Snapshot {
   spec: UserProvisioningSpec;
   outputs: StoredOutputs;
   conditions: ProvisioningCondition<UserProvisioningConditionType>[];
-  keys: GitKeyRow[];
+  keys: SnapshotKey[];
 }
+
+type SnapshotKey = GitKeyRow & { backing_off: boolean };
 
 interface Failure {
   reason: ProvisioningConditionReason;
@@ -369,7 +371,7 @@ class Attempt {
     return refused;
   }
 
-  private async reconcileKey(owner: string, key: GitKeyRow, present: AuthorizedGitKey[]): Promise<void> {
+  private async reconcileKey(owner: string, key: SnapshotKey, present: AuthorizedGitKey[]): Promise<void> {
     const sameKey = (left: string, right: string) => publicKeyIdentity(left) === publicKeyIdentity(right);
     const has = (publicKey: string) => present.some((existing) => sameKey(existing.publicKey, publicKey) && existing.holder === key.gateway_id);
     for (const publicKey of staleKeys(key).filter(has)) {
@@ -385,14 +387,14 @@ class Attempt {
       await this.writeKeyStatus(key, { type: "Registered", status: "True", reason: "Converged" }, key.public_key);
       return;
     }
-    if (key.retry_after !== null && key.retry_after.getTime() > Date.now()) return;
+    if (key.backing_off) return;
     if (present.some((existing) => sameKey(existing.publicKey, key.public_key) && existing.holder === null)) {
       this.deps.log.info("adopting the identical git key the user's account holds under a title this service does not manage", { uid: this.claim.uid, gatewayId: key.gateway_id });
     }
     try {
       await this.hostCall("git", "registerKey", () => this.deps.git.registerKey({ owner, publicKey: key.public_key, holder: key.gateway_id }, this.signal));
     } catch (error) {
-      if (error instanceof HostError && error.kind === "terminal") throw new KeyRefused(error);
+      if (error instanceof HostError && error.code === "key-held-elsewhere") throw new KeyRefused(error);
       throw error;
     }
     await this.writeKeyStatus(key, { type: "Registered", status: "True", reason: "Converged" }, key.public_key);
@@ -407,7 +409,7 @@ class Attempt {
           WHERE uid = $1 AND gateway_id = $2 AND generation = $3 RETURNING retry_after`,
         [this.claim.uid, key.gateway_id, key.generation, KEY_REFUSAL_BACKOFF_MS, KEY_REFUSAL_MAX_BACKOFF_MS]);
       const nextAttemptAt = rows[0]?.retry_after.toISOString() ?? null;
-      const reason = error.code === "key-held-elsewhere" ? "GitKeyHeldElsewhere" : "GitKeyFailed";
+      const reason = "GitKeyHeldElsewhere";
       const conditions = applyConditions(key.conditions, [{ type: "Registered", status: "False", reason, message: `${message(error)}; next attempt after ${nextAttemptAt}` }], key.generation, new Date());
       await client.query(
         `UPDATE ${this.deps.db.table("git_keys")} SET conditions = $4, observed_generation = $3, resource_version = $5
@@ -480,6 +482,7 @@ export async function runAttempt(deps: AttemptDependencies, claim: Claim): Promi
   const loaded = await deps.db.pool.query<Omit<Snapshot, "keys">>(
     `SELECT generation, spec, outputs, conditions FROM ${t("provisionings")} WHERE uid = $1`, [claim.uid]);
   if (!loaded.rows[0]) return { state: "gone" };
-  const keys = await deps.db.pool.query<GitKeyRow>(`SELECT * FROM ${t("git_keys")} WHERE uid = $1 ORDER BY gateway_id`, [claim.uid]);
+  const keys = await deps.db.pool.query<SnapshotKey>(
+    `SELECT *, (retry_after IS NOT NULL AND retry_after > now()) AS backing_off FROM ${t("git_keys")} WHERE uid = $1 ORDER BY gateway_id`, [claim.uid]);
   return new Attempt(deps, claim, { ...loaded.rows[0], keys: keys.rows }).run();
 }
