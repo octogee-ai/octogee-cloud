@@ -12,6 +12,7 @@ import { desiredUserProvisioningSpec } from "./provisioning-spec.js";
 import {
   createProvisioningSync,
   PROVISIONING_SPEC_BACKFILL_KEY,
+  PROVISIONING_SYNC_RESYNC_MS,
   runJournaledBackfill,
   type ProvisioningSync,
 } from "./provisioning-sync.js";
@@ -839,6 +840,35 @@ describe("resync and backfill completion", () => {
 
     expect(putsWhileEqual).toBe(1);
     expect(fake.resources.get("u1")?.generation).toBe(2);
+  });
+
+  it("leaves an account-document change for the resync, which runs every ten minutes and writes it once", async () => {
+    seedUser("u1", "lin");
+    const accounts: Record<string, Data> = { ...ACCOUNTS, u1: { ...ACCOUNTS.u1 } };
+    const instance = createProvisioningSync({
+      store: store(),
+      client: client(),
+      documents: { account: async (uid) => accounts[uid] },
+      projection: recordingProjection(),
+      proxyUrl: null,
+      log: (message) => logs.push(message),
+      watchTimeoutSeconds: 1,
+      retry: { baseDelayMs: 1, maxDelayMs: 2 },
+    });
+    stoppers.push(instance.start());
+    await instance.snapshotLoaded();
+    await until(() => fake.resources.has("u1"));
+
+    accounts.u1.email = "lin.wu@example.test";
+    await emitBuilders([{ type: "modified", key: "u1" }]);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const putsBeforeResync = puts().length;
+    await instance.resync();
+    await until(() => fake.resources.get("u1")?.spec.email === "lin.wu@example.test");
+
+    expect(PROVISIONING_SYNC_RESYNC_MS).toBe(10 * 60_000);
+    expect(putsBeforeResync).toBe(1);
+    expect(puts()).toHaveLength(2);
   });
 
   it("completes the backfill when one user can never succeed, and reports that user", async () => {
