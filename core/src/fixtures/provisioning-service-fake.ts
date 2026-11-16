@@ -118,7 +118,7 @@ function createFakeGitKeys(nextVersion: () => number) {
         resourceVersion: String(nextVersion()),
         deletionRequestedAt: null,
         spec,
-        status: existing?.status ?? { observedGeneration: 0, conditions: [] },
+        status: existing?.status ?? { observedGeneration: 0, conditions: [], nextAttemptAt: null },
       };
       keys.set(`${uid}/${gatewayId}`, key);
       return { status: existing ? 202 : 201, key };
