@@ -12,6 +12,8 @@ export const dsn = process.env.PROVISIONING_CONFORMANCE_DSN;
 export const NAMESPACE = "conformance";
 const AUDIENCE = "provisioning-service";
 const REVIEWER_TOKEN = "conformance-reviewer";
+const FLEET_CONTROLLER_SERVICE_ACCOUNT = "glm-controller";
+const PLATFORM_API_SERVICE_ACCOUNT = "octogee-api";
 const DEFAULT_COMMAND = `${JSON.stringify(process.execPath)} --import tsx src/main.ts`;
 
 export const TOKENS = {
@@ -23,11 +25,11 @@ export const TOKENS = {
 } as const;
 
 const IDENTITIES: Record<string, { username: string; audiences: string[] }> = {
-  [TOKENS.writer]: { username: `system:serviceaccount:${NAMESPACE}:octogee-glm-controller`, audiences: [AUDIENCE] },
-  [TOKENS.platformApi]: { username: `system:serviceaccount:${NAMESPACE}:octogee-api`, audiences: [AUDIENCE] },
+  [TOKENS.writer]: { username: `system:serviceaccount:${NAMESPACE}:${FLEET_CONTROLLER_SERVICE_ACCOUNT}`, audiences: [AUDIENCE] },
+  [TOKENS.platformApi]: { username: `system:serviceaccount:${NAMESPACE}:${PLATFORM_API_SERVICE_ACCOUNT}`, audiences: [AUDIENCE] },
   [TOKENS.stranger]: { username: `system:serviceaccount:${NAMESPACE}:octogee-gateway`, audiences: [AUDIENCE] },
-  [TOKENS.otherNamespace]: { username: "system:serviceaccount:elsewhere:octogee-glm-controller", audiences: [AUDIENCE] },
-  [TOKENS.wrongAudience]: { username: `system:serviceaccount:${NAMESPACE}:octogee-glm-controller`, audiences: ["another-audience"] },
+  [TOKENS.otherNamespace]: { username: `system:serviceaccount:elsewhere:${FLEET_CONTROLLER_SERVICE_ACCOUNT}`, audiences: [AUDIENCE] },
+  [TOKENS.wrongAudience]: { username: `system:serviceaccount:${NAMESPACE}:${FLEET_CONTROLLER_SERVICE_ACCOUNT}`, audiences: ["another-audience"] },
 };
 
 export function spec(slug: string, overrides: Partial<UserProvisioningSpec> = {}): UserProvisioningSpec {
@@ -114,6 +116,8 @@ export async function startImplementation(options: { replicas?: number; environm
     PROVISIONING_DB_PASSWORD: decodeURIComponent(target.password) || "unused",
     PROVISIONING_DB_SSLMODE: "disable",
     PROVISIONING_CALLER_NAMESPACE: NAMESPACE,
+    PROVISIONING_FLEET_CONTROLLER_SERVICE_ACCOUNT: FLEET_CONTROLLER_SERVICE_ACCOUNT,
+    PROVISIONING_PLATFORM_API_SERVICE_ACCOUNT: PLATFORM_API_SERVICE_ACCOUNT,
     PROVISIONING_CREDENTIAL_KEY: randomBytes(32).toString("base64"),
     PROVISIONING_TOKEN_REVIEW_URL: `http://127.0.0.1:${(tokenReview.address() as AddressInfo).port}/apis/authentication.k8s.io/v1/tokenreviews`,
     PROVISIONING_TOKEN_REVIEW_TOKEN_FILE: tokenFile,
