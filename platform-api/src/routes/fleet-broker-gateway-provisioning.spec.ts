@@ -10,11 +10,13 @@ import { workspaceDefaultAgentChannelName } from "@octogee/shared/types/identity
 import { installDefaultUserEntitlements } from "@octogee/shared/types/user-entitlements";
 import type { ChatOutputs, UserProvisioning } from "@octogee/shared/types/provisioning-service";
 import { NO_BROKER_RECORDS, type BrokerRecords } from "../lib/broker-records.js";
-import type { LegacyProvisioning } from "../lib/legacy-provisioning.js";
+import { createLegacyProvisioning, type LegacyProvisioning } from "../lib/legacy-provisioning.js";
 import { RecordingDocuments } from "../test-helpers/recording-documents.js";
 import { createFleetBrokerRoutes } from "./fleet-broker.js";
 
 const GATEWAY_ID = "shared-blue";
+const POD_NAME = "octogee-gateway-shared-blue-5bc59-p946t";
+const HOLDER = `${GATEWAY_ID}/${POD_NAME}`;
 const PUBLIC_KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGatewayKey octogee-alice@gateway";
 const CHAT: ChatOutputs = { userId: "mm-alice", teamId: "team-alice", channels: { general: "ch-general", agent: "ch-agent" }, agentBotUserId: "bot-alice" };
 const NO_AGENT_CHAT: ChatOutputs = { userId: "mm-alice", teamId: "team-alice", channels: { general: "ch-general" } };
@@ -63,6 +65,7 @@ interface Options {
   provisioning?: LegacyProvisioning | null;
   assignedTo?: string;
   boundGatewayId?: string;
+  podName?: string | null;
 }
 
 function fixture(options: Options = {}) {
@@ -81,7 +84,8 @@ function fixture(options: Options = {}) {
   const app = express();
   app.use(express.json());
   app.use(((req, _res, next) => {
-    req.boundTenant = { kind: "gateway", gatewayId: options.boundGatewayId ?? GATEWAY_ID, tokenSource: "ksa" } as never;
+    const podName = options.podName === undefined ? POD_NAME : options.podName;
+    req.boundTenant = { kind: "gateway", gatewayId: options.boundGatewayId ?? GATEWAY_ID, tokenSource: "ksa", ...(podName === null ? {} : { podName }) } as never;
     next();
   }) as RequestHandler);
   app.use("/internal/fleet", createFleetBrokerRoutes({ store, records, legacyProvisioning: provisioning }));
@@ -123,20 +127,68 @@ afterEach(() => {
 });
 
 describe("POST /internal/fleet/user-snapshot", () => {
-  it("tells the gateway to mount through the provisioning service when the platform is configured with it", async () => {
-    const { app } = fixture();
+  it("tells the gateway to mount a fully mirrored user through the service, under the holder its token names", async () => {
+    const { app, store, provisioning } = fixture();
+    await mirrorFully(store);
 
     const response = await post(app, "user-snapshot").expect(200);
 
-    expect(response.body.user.provisionedBy).toBe("service");
+    expect(response.body.user).toMatchObject({ provisionedBy: "service", gitKeyHolder: HOLDER });
+    expect(provisioning?.chat).toHaveBeenCalledWith("uid-alice", expect.objectContaining({ signal: expect.any(AbortSignal) }), { longPoll: false });
   });
 
-  it("leaves the gateway on its own provisioning path without the service", async () => {
-    const { app } = fixture({ provisioning: null });
+  it("leaves a user whose mirror is not complete on the gateway's own path", async () => {
+    const { app, store } = fixture();
+    await mirrorChatAccountTokenAndAgentChannel(store);
 
     const response = await post(app, "user-snapshot").expect(200);
 
     expect(response.body.user).not.toHaveProperty("provisionedBy");
+    expect(response.body.user.gitKeyHolder).toBe(HOLDER);
+  });
+
+  it("leaves a user the service has no resource for on the gateway's own path", async () => {
+    const { app, store } = fixture({
+      provisioning: legacyProvisioning({ chat: vi.fn(async () => ({ ready: false as const, reason: "NotProvisioned", retryAfterSeconds: 5 })) }),
+    });
+    await mirrorFully(store);
+
+    const response = await post(app, "user-snapshot").expect(200);
+
+    expect(response.body.user).not.toHaveProperty("provisionedBy");
+  });
+
+  it("leaves the user on the gateway's own path and logs an error when the service cannot be read", async () => {
+    const logged = vi.spyOn(logger, "error").mockImplementation(() => {});
+    const failure = new Error("provisioning service down");
+    const { app, store } = fixture({ provisioning: legacyProvisioning({ chat: vi.fn(async () => { throw failure; }) }) });
+    await mirrorFully(store);
+
+    const response = await post(app, "user-snapshot").expect(200);
+
+    expect(response.body.user).not.toHaveProperty("provisionedBy");
+    expect(logged).toHaveBeenCalledWith(expect.stringContaining("user-snapshot"), expect.objectContaining({ err: failure, uid: "uid-alice" }));
+  });
+
+  it("names no holder and no service path for a caller whose token binds no pod", async () => {
+    const { app, store, provisioning } = fixture({ podName: null });
+    await mirrorFully(store);
+
+    const response = await post(app, "user-snapshot").expect(200);
+
+    expect(response.body.user).not.toHaveProperty("provisionedBy");
+    expect(response.body.user).not.toHaveProperty("gitKeyHolder");
+    expect(provisioning?.chat).not.toHaveBeenCalled();
+  });
+
+  it("leaves the gateway on its own provisioning path without the service", async () => {
+    const { app, store } = fixture({ provisioning: null });
+    await mirrorFully(store);
+
+    const response = await post(app, "user-snapshot").expect(200);
+
+    expect(response.body.user).not.toHaveProperty("provisionedBy");
+    expect(response.body.user).not.toHaveProperty("gitKeyHolder");
   });
 });
 
@@ -249,7 +301,15 @@ describe("POST /internal/fleet/git-key", () => {
 
     await post(app, "git-key", { publicKey: `${PUBLIC_KEY}\n` }).expect(204);
 
-    expect(provisioning?.gitKey).toHaveBeenCalledWith("uid-alice", GATEWAY_ID, PUBLIC_KEY, expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    expect(provisioning?.gitKey).toHaveBeenCalledWith("uid-alice", HOLDER, PUBLIC_KEY, expect.objectContaining({ signal: expect.any(AbortSignal) }));
+  });
+
+  it("refuses a caller whose token binds no pod, since the pod holds the key", async () => {
+    const { app, provisioning } = fixture({ podName: null });
+
+    await post(app, "git-key", { publicKey: PUBLIC_KEY }).expect(403);
+
+    expect(provisioning?.gitKey).not.toHaveBeenCalled();
   });
 
   it("never takes the gateway id from the body", async () => {
@@ -287,18 +347,33 @@ describe("POST /internal/fleet/git-key", () => {
     expect(response.headers["retry-after"]).toBe("7");
   });
 
-  it("answers 422 and logs an error when the service refuses the key as held elsewhere", async () => {
-    const logged = vi.spyOn(logger, "error").mockImplementation(() => {});
-    const { app } = fixture({
-      provisioning: legacyProvisioning({
-        gitKey: vi.fn(async () => ({ ready: false as const, reason: "GitKeyHeldElsewhere", retryAfterSeconds: 5, refused: true as const })),
-      }),
+  it("answers 503 with Retry-After until the service's next attempt for a key held elsewhere", async () => {
+    vi.spyOn(logger, "error").mockImplementation(() => {});
+    vi.spyOn(logger, "warn").mockImplementation(() => {});
+    const nextAttemptAt = new Date(Date.now() + 120_000).toISOString();
+    const provisioning = createLegacyProvisioning({
+      client: {
+        getProvisioning: vi.fn(async () => null),
+        getCredential: vi.fn(async () => null),
+        deleteGitKey: vi.fn(async () => "deleted" as const),
+        putGitKey: vi.fn(async (uid: string, holder: string, spec: { publicKey: string }) => ({
+          outcome: "unchanged" as const,
+          key: {
+            uid, gatewayId: holder, generation: 1, resourceVersion: "2", deletionRequestedAt: null, spec,
+            status: { observedGeneration: 1, nextAttemptAt, conditions: [{
+              type: "Registered" as const, status: "False" as const, reason: "GitKeyHeldElsewhere" as const, message: "422 from git host",
+              lastTransitionTime: "2026-11-16T10:00:00Z", observedGeneration: 1,
+            }] },
+          },
+        })),
+      },
     });
+    const { app } = fixture({ provisioning });
 
-    const response = await post(app, "git-key", { publicKey: PUBLIC_KEY }).expect(422);
+    const response = await post(app, "git-key", { publicKey: PUBLIC_KEY }).expect(503);
 
-    expect(response.body).toEqual({ error: "provisioning_refused", reason: "GitKeyHeldElsewhere" });
-    expect(logged).toHaveBeenCalledWith(expect.stringContaining("refusing"), expect.objectContaining({ route: "git-key", reason: "GitKeyHeldElsewhere" }));
+    expect(response.body).toEqual({ error: "provisioning_pending", reason: "GitKeyHeldElsewhere" });
+    expect(Number(response.headers["retry-after"])).toBeGreaterThanOrEqual(119);
   });
 
   it("answers 409 without the service", async () => {
@@ -317,7 +392,15 @@ describe("POST /internal/fleet/git-key/release", () => {
 
     await post(app, "git-key/release", { publicKey: PUBLIC_KEY }).expect(204);
 
-    expect(provisioning?.releaseGitKey).toHaveBeenCalledWith("uid-alice", GATEWAY_ID, PUBLIC_KEY, expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    expect(provisioning?.releaseGitKey).toHaveBeenCalledWith("uid-alice", HOLDER, PUBLIC_KEY, expect.objectContaining({ signal: expect.any(AbortSignal) }));
+  });
+
+  it("refuses a caller whose token binds no pod", async () => {
+    const { app, provisioning } = fixture({ podName: null });
+
+    await post(app, "git-key/release", { publicKey: PUBLIC_KEY }).expect(403);
+
+    expect(provisioning?.releaseGitKey).not.toHaveBeenCalled();
   });
 
   it("leaves a newer registration in place when the release races it", async () => {
@@ -326,7 +409,7 @@ describe("POST /internal/fleet/git-key/release", () => {
 
     await post(app, "git-key/release", { publicKey: PUBLIC_KEY }).expect(204);
 
-    expect(logged).toHaveBeenCalledWith(expect.stringContaining("newer registration"), { uid: "uid-alice", gatewayId: GATEWAY_ID });
+    expect(logged).toHaveBeenCalledWith(expect.stringContaining("newer registration"), { uid: "uid-alice", holder: HOLDER });
   });
 
   it("refuses a release without the public key it releases", async () => {
