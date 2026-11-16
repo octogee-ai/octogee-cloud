@@ -117,6 +117,7 @@ import { addAdminPlacementOwnerRoutes } from "./admin-placement-owner-router.js"
 import { addAdminPlacementRoutes, type AdminPlacementCapabilities } from "./admin-placement-router.js";
 import { addAdminPlacementSharedRoutes, type AdminPlacementSharedCapabilities } from "./admin-placement-shared-router.js";
 import { addAdminPlacementIsolatedRoutes, type AdminIsolatedCapabilities } from "./admin-placement-isolated-router.js";
+import { addAdminStrandedSourceRoutes, type AdminStrandedSourceCapabilities } from "./admin-stranded-source-router.js";
 import {
   GatewayRetirementConflictError,
   assertGatewayRuntimeMutationUnfencedInStore,
@@ -260,6 +261,7 @@ export interface FleetRouterDeps {
   placement?: AdminPlacementCapabilities;
   placementShared?: AdminPlacementSharedCapabilities;
   isolated?: AdminIsolatedCapabilities;
+  strandedSource?: AdminStrandedSourceCapabilities;
 }
 
 export type DeletionProductContextDiscovery = (uid: string) => Promise<OpaqueMap>;
@@ -4796,6 +4798,7 @@ export function addAdminFleetRoutes(
   if (deps.placement) addAdminPlacementRoutes(router, { ...deps.placement, store, journal: runAdminFleetMutation });
   if (deps.placementShared) addAdminPlacementSharedRoutes(router, { ...deps.placementShared, store, journal: runAdminFleetMutation });
   if (deps.isolated) addAdminPlacementIsolatedRoutes(router, { store, journal: runAdminFleetMutation, accounts: deps.accounts, capabilities: deps.isolated, log: (message) => deps.logger.info(message), warn: (message) => deps.logger.warn(message) });
+  if (deps.strandedSource) addAdminStrandedSourceRoutes(router, { ...deps.strandedSource, store, journal: runAdminFleetMutation, log: (message) => logger.info(message) });
 
   async function handleActiveUserDeletion(input: {
     req: Request;

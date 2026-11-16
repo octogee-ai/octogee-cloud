@@ -281,6 +281,14 @@
       "types": "./dist/fleet-state.d.ts",
       "default": "./dist/fleet-state.js"
     },
+    "./placement-refusal": {
+      "types": "./dist/placement-refusal.d.ts",
+      "default": "./dist/placement-refusal.js"
+    },
+    "./stranded-source-restore": {
+      "types": "./dist/stranded-source-restore.d.ts",
+      "default": "./dist/stranded-source-restore.js"
+    },
     "./fleet-state-sections": {
       "types": "./dist/fleet-state-sections.d.ts",
       "default": "./dist/fleet-state-sections.js"

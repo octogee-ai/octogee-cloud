@@ -194,4 +194,5 @@ export declare function rebindSharedSurgeForwardRecovery(deps: FleetStateDeps, p
     receivingPodUid: string;
 }): Promise<void>;
 export declare function markAssignmentState(deps: FleetStateDeps, params: MarkAssignmentStateParams): Promise<void>;
+export declare function markAssignmentStateInTransaction(tx: PlatformStateTransaction, params: MarkAssignmentStateParams, now: number): Promise<void>;
 export {};

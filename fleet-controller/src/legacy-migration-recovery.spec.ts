@@ -50,6 +50,23 @@ describe("claimed scheduler recovery evidence", () => {
   });
 });
 
+describe("the failed moves handed on to the stranded source pass", () => {
+  it("leave out a move this sweep re-armed, which is no longer failed", async () => {
+    const h = fixture("mig-op-1:scheduler:1:claim:1000");
+    h.records["glmOperations/op-2"] = { ...h.operation, id: "op-2", error: "target refused the restore", input: { uid: "bo", fromGatewayId: "shared-a", toGatewayId: "shared-b" } } as unknown as Record<string, unknown>;
+    const handed: string[][] = [];
+
+    await recoverFailedLegacyMigrations({
+      store: createDocumentFixtureStore(h.records), log: () => undefined, now: () => 3_000,
+      restoreStrandedSources: (failed) => { handed.push(failed.map((operation) => operation.id)); },
+    });
+
+    expect(h.records["glmOperations/op-1"]).toMatchObject({ status: "pending" });
+    expect(h.records["glmOperations/op-2"]).toMatchObject({ status: "failed" });
+    expect(handed).toEqual([["op-2"]]);
+  });
+});
+
 describe("forward retry after source recovery", () => {
   const claimed = (steps: Operation["steps"]) => {
     const { operation } = fixture("mig-op-1:scheduler:1:claim:1000");

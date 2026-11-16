@@ -6,6 +6,7 @@ import { readSchedulerMigrationIdentity, type Operation, type SchedulerHandoffSt
 import { readWorkspaceMigrationMarker } from "@octogee/shared/types/workspace-migration";
 import { retiredTargetSourceRecovery, userActivationRecoveryTargetMatches } from "@octogee/core/fleet-state";
 import { classifyOperationFailure, retryBackoffMs } from "./operation-retry.js";
+import type { StartStrandedSourceRetry } from "./stranded-source-retry.js";
 
 function handoffAttemptEvidence(operation: Partial<Operation>) {
   const handoff = operation.schedulerHandoff;
@@ -329,12 +330,16 @@ function reportUnrecoverableActivation(deps: { store: PlatformStateStore; log: (
     `sourceRecoveryPending stays true and isolated placement verbs for ${String(operation.input.toGatewayId)} answer source-recovery-pending`);
 }
 
-export async function recoverFailedLegacyMigrations(deps: { store: PlatformStateStore; log: (message: string) => void; now: () => number }): Promise<void> {
+export async function recoverFailedLegacyMigrations(deps: {
+  store: PlatformStateStore; log: (message: string) => void; now: () => number; restoreStrandedSources?: StartStrandedSourceRetry;
+}): Promise<void> {
   const failed = await deps.store.journal.operations.listByStatus(["failed"]);
+  const rearmedIds = new Set<string>();
   for (const operation of failed) {
     try {
       const rearmed = await rearmOwnedLegacyMigration({ store: deps.store, operationId: operation.id, now: deps.now(), admitted: failedRecoveryAdmitted });
       if (rearmed) {
+        rearmedIds.add(operation.id);
         deps.log(`[migration-recovery] queued native source recovery for ${operation.id}; assignment and marker remain held`);
         continue;
       }
@@ -347,4 +352,5 @@ export async function recoverFailedLegacyMigrations(deps: { store: PlatformState
       deps.log(`[migration-recovery] ${operation.id} recovery admission failed: ${String(error)}`);
     }
   }
+  deps.restoreStrandedSources?.(failed.filter((operation) => !rearmedIds.has(operation.id)));
 }

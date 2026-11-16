@@ -5,6 +5,7 @@ import { MIGRATION_TRANSFER_LEASE_MS } from "@octogee/shared/types/fleet-control
 import { operationNeedsDurableRestartResume } from "./operation-retry.js";
 import { MIGRATE_USER_KIND, RETIRE_GATEWAY_KIND } from "./operation-kinds.js";
 import { rearmOwnedLegacyMigration, recoverFailedLegacyMigrations } from "./legacy-migration-recovery.js";
+import type { StartStrandedSourceRetry } from "./stranded-source-retry.js";
 
 export const REAPED_OPERATION_ERROR_PREFIX = "reaped: ";
 
@@ -18,6 +19,7 @@ export interface StuckOpReaperDeps {
   now: () => number;
   stalenessMs: number;
   controllerStartedAt?: number;
+  restoreStrandedSources?: StartStrandedSourceRetry;
 }
 
 export interface StuckOpReaperResult {

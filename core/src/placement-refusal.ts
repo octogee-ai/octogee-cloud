@@ -22,6 +22,12 @@ export const PLACEMENT_REFUSAL_REASONS = [
   "retirement-conflict",
   "sizing-key-changed",
   "initial-release-conflict",
+  "source-not-stranded",
+  "migration-in-flight",
+  "rollback-not-proven",
+  "account-not-active",
+  "source-gateway-retired",
+  "source-gateway-paused",
 ] as const;
 
 export type PlacementRefusalReason = (typeof PLACEMENT_REFUSAL_REASONS)[number];

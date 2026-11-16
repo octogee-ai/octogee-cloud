@@ -266,6 +266,7 @@ import {
   type IdentityProvider,
 } from "@octogee/core/identity-provider";
 import { createMigrationClient } from "@octogee/core/fleet-migration-client";
+import { strandedSourceGatewayCalls } from "@octogee/core/stranded-source-restore";
 import {
   userMigrationV2GatewayRootFence,
   isUserMigrationV2Transition,
@@ -336,6 +337,7 @@ import {
   type MirrorDelivery,
 } from "./fleet-informer.js";
 import { recoverControllerOrphanedOperations, startStuckOpReaper } from "./stuck-op-reaper.js";
+import { createStrandedSourceRetry } from "./stranded-source-retry.js";
 import { claimCrashLoopEviction } from "./surge-crashloop-eviction.js";
 import { startNativeReturnHoldReaper } from "./native-return-hold-reaper.js";
 import {
@@ -419,6 +421,10 @@ const GATEWAY_HEARTBEAT_POLL_MS = 15_000;
 const GATEWAY_HEALTH_TIMEOUT_MS = 5_000;
 export const ADD_GATEWAY_DEPLOYMENT_READY_TIMEOUT_MS = 30 * 60_000;
 const HTTP_PORT = parseInt(process.env.HTTP_PORT ?? "8080", 10);
+
+function migrationIdForOperation(operationId: string): string {
+  return `mig-${operationId}`;
+}
 
 // Lets out-of-loop callers (the roll arm's pacing, the rollout op handler)
 // nudge the reconciler without holding a reference to its closure; installed by
@@ -2263,6 +2269,8 @@ function startControllerBackgroundTasks({
     buildGatewayHeartbeatPollerDeps(deps.store, log, fleetControllerPrivateKey, informer),
     GATEWAY_HEARTBEAT_POLL_MS,
   );
+  const migrationClient = createMigrationClientUser(deps.store, fleetControllerPrivateKey, log);
+  const strandedSourceGateway = buildStrandedSourceGateway(deps.store, migrationClient);
   const stopStuckOpReaper = startStuckOpReaper({
     store: deps.store,
     log,
@@ -2270,8 +2278,8 @@ function startControllerBackgroundTasks({
     stalenessMs: 15 * 60 * 1000,
     now: () => Date.now(),
     controllerStartedAt,
+    restoreStrandedSources: createStrandedSourceRetry({ store: deps.store, ...strandedSourceGateway, log, now: () => Date.now() }).start,
   });
-  const migrationClient = createMigrationClientUser(deps.store, fleetControllerPrivateKey, log);
   const stopSchedulerHandoffRelease = startSchedulerHandoffRelease({
     store: deps.store,
     log,
@@ -2394,6 +2402,7 @@ function startControllerBackgroundTasks({
         }
       : {}),
     requestNativeReturnSourceRecovery: deps.requestNativeReturnSourceRecovery,
+    strandedSource: strandedSourceGateway,
     ...(GATEWAY_VM_SPEC ? { userHome: adminUserHome(deps.store, GATEWAY_VM_SPEC) } : {}),
     logs: {
       source: ENVIRONMENT_SETTINGS.clusterProjectId
@@ -2932,6 +2941,19 @@ async function cleanupRetainedSource(store: PlatformStateStore, privateKey:strin
   await abortRetainedSourceImport({store,namespace:NAMESPACE,privateKey,fleetControllerPort:FLEET_CONTROLLER_PORT,resolveGatewayUrl:()=>'',resolveGatewayVm:transportId=>readGatewayVmAddress(store,transportId),retainedSource:retainedSourceRunner(store,context)}, {migrationId:context.state.migrationId,slug:context.state.slug,toGatewayId:context.state.targetGatewayId});
 }
 
+function buildStrandedSourceGateway(store: PlatformStateStore, client: ReturnType<typeof createMigrationClientUser>) {
+  return strandedSourceGatewayCalls({
+    store,
+    clientFor: async (gatewayId) => {
+      const url = await resolveGatewayFleetUrl(store, gatewayId);
+      return client(() => url);
+    },
+    migrationIdFor: migrationIdForOperation,
+    log,
+    now: () => Date.now(),
+  });
+}
+
 function createMigrationClientUser(
   store: PlatformStateStore,
   privateKey: string,
@@ -3375,7 +3397,7 @@ async function buildHandlers(
       }
       return instanceName;
     },
-    genMigrationId: (operationId) => `mig-${operationId}`,
+    genMigrationId: migrationIdForOperation,
     now: () => Date.now(),
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     log: logFn,
