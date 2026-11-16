@@ -276,6 +276,23 @@ const MIRROR_NOTICES: Partial<Record<ProvisioningMirrorOutcome, (uid: string) =>
   "agent-not-ready": (uid) => `[provisioning] not mirroring ${uid} yet: its spec enables the default agent, which has no chat account`,
 };
 
+async function readDesiredProvisioningSpec(
+  deps: Pick<ProvisioningSyncDeps, "documents" | "store">,
+  uid: string,
+  cache: ReadonlyMap<string, UserProvisioning>,
+) {
+  const [data, identity] = await Promise.all([
+    deps.documents.account(uid),
+    deps.store.workspaces.agentIdentities.get(uid),
+  ]);
+  if (data === undefined) throw new Error(`admitted user ${uid} has no account document`);
+  const seen = cache.get(uid);
+  const recordedBotUserId = identity?.mattermostUserId ?? undefined;
+  const alreadyProvisioned = seen?.status.outputs.chat?.agentBotUserId === recordedBotUserId
+    && seen?.spec.chat.defaultAgent.existingBotUserId === undefined;
+  return desiredUserProvisioningSpec(uid, data, alreadyProvisioned ? undefined : recordedBotUserId);
+}
+
 export function createProvisioningSync(deps: ProvisioningSyncDeps): ProvisioningSync {
   const now = deps.now ?? Date.now;
   const random = deps.random ?? Math.random;
@@ -303,16 +320,8 @@ export function createProvisioningSync(deps: ProvisioningSyncDeps): Provisioning
     const user = await deps.store.users.records.get(uid);
     if (user === null || !user.admitted || !user.slug) return "not-admitted";
     if (userBeingErased(user)) return "being-erased";
-    const [data, identity] = await Promise.all([
-      deps.documents.account(uid),
-      deps.store.workspaces.agentIdentities.get(uid),
-    ]);
-    if (data === undefined) throw new Error(`admitted user ${uid} has no account document`);
+    const spec = await readDesiredProvisioningSpec(deps, uid, cache);
     const seen = cache.get(uid);
-    const recordedBotUserId = identity?.mattermostUserId ?? undefined;
-    const alreadyProvisioned = seen?.status.outputs.chat?.agentBotUserId === recordedBotUserId
-      && seen?.spec.chat.defaultAgent.existingBotUserId === undefined;
-    const spec = desiredUserProvisioningSpec(uid, data, alreadyProvisioned ? undefined : recordedBotUserId);
     if (seen !== undefined && sameProvisioningSpec(seen.spec, spec)) return "unchanged";
     const written = await deps.client.putProvisioning(uid, spec);
     remember(written.resource);
