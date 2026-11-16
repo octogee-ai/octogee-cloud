@@ -143,15 +143,19 @@ export function gitKeyServiceContract(user: { uid: string; slug: string }, git: 
     const notRegistered = (reason: ProvisioningConditionReason, message: string) => {
       key.status = { ...key.status, observedGeneration: key.generation, conditions: [condition("False", reason, message, key.generation)] };
     };
-    const elsewhere = managed().some((existing) => sameKey(existing.key, key.spec.publicKey) && existing.title !== gatewayKeyTitle(holder));
-    if (elsewhere && !putPending) {
+    const refused = (reason: ProvisioningConditionReason, message: string) => {
       key.status = { ...key.status, observedGeneration: key.generation, observedPutSequence: Math.max(key.status.observedPutSequence, sequence),
         nextAttemptAt: new Date(Date.parse(NOW) + 120_000).toISOString(),
-        conditions: [condition("False", "GitKeyHeldElsewhere", "the key is held under another managed title; it is taken only while its gateway puts it", key.generation)] };
+        conditions: [condition("False", reason, message, key.generation)] };
       row.backingOff = true;
-      return;
+    };
+    const elsewhere = managed().some((existing) => sameKey(existing.key, key.spec.publicKey) && existing.title !== gatewayKeyTitle(holder));
+    if (elsewhere && !putPending) return refused("GitKeyHeldElsewhere", "the key is held under another managed title; it is taken only while its gateway puts it");
+    if (!putPending) {
+      return managed().some((existing) => existing.title === gatewayKeyTitle(holder))
+        ? refused("GitKeyReplacedOnHost", "the git host holds a different key under this holder's title; the service writes the key only when its gateway puts it")
+        : refused("GitKeyNotOnHost", "the git host holds no key under this holder's title; the service writes the key only when its gateway puts it");
     }
-    if (!putPending) return notRegistered("GitKeyFailed", "the key is not on the git host under this holder's title; it is written only in an attempt that follows a put");
     if (registrationFailure !== null) {
       const failure = registrationFailure;
       registrationFailure = null;

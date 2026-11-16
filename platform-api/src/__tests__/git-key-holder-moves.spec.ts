@@ -240,7 +240,30 @@ describe("git keys across moves and rolls, through the platform's routes and ada
 
     expect(git.titled(serving.holder)).toEqual([serving.disk.key]);
     expect(hostKeys(git)).toEqual([serving.disk.key]);
-    expect(service.row(serving.holder)?.status.conditions[0]).toMatchObject({ status: "False" });
+    expect(service.row(serving.holder)?.status.conditions[0]).toMatchObject({ status: "False", reason: "GitKeyReplacedOnHost" });
+  });
+
+  it("reports a key that left the git host behind its row without writing it back, and registers it again at the pod's next put", async () => {
+    const { git, service, thisBuild } = setup();
+    assign("shared-blue");
+    const serving = pod("shared-blue", "octogee-gateway-shared-blue-5bc59-a1b2c");
+    await thisBuild.serviceMount(serving);
+    const registered = serving.disk.key;
+    git.deleteTitled(serving.holder, registered!);
+
+    await service.attempt();
+    await service.attempt();
+
+    expect(hostKeys(git)).toEqual([]);
+    expect(service.row(serving.holder)).toMatchObject({ putSequence: 1, status: { conditions: [{ status: "False", reason: "GitKeyNotOnHost" }] } });
+    expect(service.row(serving.holder)?.status.nextAttemptAt).not.toBeNull();
+
+    await thisBuild.register(serving);
+
+    expect(serving.disk.marker).toBe(serving.holder);
+    expect(git.titled(serving.holder)).toEqual([registered]);
+    expect(service.puts).toEqual([serving.holder, serving.holder]);
+    expect(service.row(serving.holder)).toMatchObject({ putSequence: 2, status: { observedPutSequence: 2, conditions: [{ status: "True" }] } });
   });
 
   it("waits through a registration attempt that failed without processing the put, and puts only once", async () => {
