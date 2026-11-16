@@ -1,4 +1,5 @@
 {{- if .Values.opsAgent.enabled }}
+{{- $image := printf "%s:%s@%s" (required "opsAgent.image.repository is required" .Values.opsAgent.image.repository) (required "opsAgent.image.tag is required" .Values.opsAgent.image.tag) (required "opsAgent.image.digest is required" .Values.opsAgent.image.digest) }}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -43,9 +44,21 @@ spec:
         fsGroup: 1000
         seccompProfile:
           type: RuntimeDefault
+      initContainers:
+        - name: prepare-tmp
+          image: {{ $image | quote }}
+          command: ["/bin/sh", "-ec", "mkdir -p /tmp-volume/private && chmod 0700 /tmp-volume/private"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp-volume
       containers:
         - name: ops-agent
-          image: "{{ required "opsAgent.image.repository is required" .Values.opsAgent.image.repository }}:{{ required "opsAgent.image.tag is required" .Values.opsAgent.image.tag }}@{{ required "opsAgent.image.digest is required" .Values.opsAgent.image.digest }}"
+          image: {{ $image | quote }}
           imagePullPolicy: Always
           securityContext:
             allowPrivilegeEscalation: false
@@ -103,6 +116,7 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+              subPath: private
             - name: openclaw-state
               mountPath: /home/node/.openclaw
       volumes:
