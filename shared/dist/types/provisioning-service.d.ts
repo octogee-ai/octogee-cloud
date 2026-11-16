@@ -33,6 +33,7 @@ export interface UserProvisioningSpec {
         teamDisplayName: string;
         defaultAgent: {
             enabled: boolean;
+            existingBotUserId?: string;
         };
     };
     git: {

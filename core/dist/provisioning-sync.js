@@ -190,11 +190,17 @@ export function createProvisioningSync(deps) {
             return "not-admitted";
         if (userBeingErased(user))
             return "being-erased";
-        const data = await deps.documents.account(uid);
+        const [data, identity] = await Promise.all([
+            deps.documents.account(uid),
+            deps.store.workspaces.agentIdentities.get(uid),
+        ]);
         if (data === undefined)
             throw new Error(`admitted user ${uid} has no account document`);
-        const spec = desiredUserProvisioningSpec(uid, data);
         const seen = cache.get(uid);
+        const recordedBotUserId = identity?.mattermostUserId ?? undefined;
+        const alreadyProvisioned = seen?.status.outputs.chat?.agentBotUserId === recordedBotUserId
+            && seen?.spec.chat.defaultAgent.existingBotUserId === undefined;
+        const spec = desiredUserProvisioningSpec(uid, data, alreadyProvisioned ? undefined : recordedBotUserId);
         if (seen !== undefined && sameProvisioningSpec(seen.spec, spec))
             return "unchanged";
         const written = await deps.client.putProvisioning(uid, spec);

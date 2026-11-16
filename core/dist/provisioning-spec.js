@@ -3,7 +3,7 @@ import { buildProvisioningContext, provisionMattermostUserInput } from "./provis
 export function defaultAgentId(slug) {
     return `octogee-${slug}-coach`;
 }
-export function desiredUserProvisioningSpec(uid, userData) {
+export function desiredUserProvisioningSpec(uid, userData, existingBotUserId) {
     const input = provisionMattermostUserInput(buildProvisioningContext(uid, userData));
     return {
         slug: input.slug,
@@ -12,7 +12,7 @@ export function desiredUserProvisioningSpec(uid, userData) {
         avatarUrl: input.photoURL ? input.photoURL : null,
         chat: {
             teamDisplayName: computeWorkspaceDisplayName({ slug: input.slug, firstName: input.firstName, vibe: input.vibe ?? null }),
-            defaultAgent: { enabled: true },
+            defaultAgent: { enabled: true, ...(existingBotUserId === undefined ? {} : { existingBotUserId }) },
         },
         git: { repositories: ["workspace", "project-coaches"], systemConfigRepository: true },
         agentIds: [defaultAgentId(input.slug)],

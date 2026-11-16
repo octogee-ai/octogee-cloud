@@ -424,7 +424,15 @@ export function createMattermostChatHost(config: MattermostChatHostConfig): Chat
 
   async function ensureAgentBot(input: ChatAgentInput, signal: AbortSignal): Promise<{ botUserId: string }> {
     const username = workspaceDefaultAgentMmUsername(input.slug);
-    let bot = await findBot(username, input.knownBotUserId, signal);
+    let bot: MmRecord | null;
+    if (input.existingBotUserId !== undefined) {
+      bot = await api.find("find recorded agent bot", `/users/${encodeURIComponent(input.existingBotUserId)}`, signal);
+      if (bot?.id !== input.existingBotUserId || bot.is_bot !== true || !isLive(bot)) {
+        throw new HostError("terminal", "recorded agent bot is missing or inactive, or the account is not a bot");
+      }
+    } else {
+      bot = await findBot(username, input.knownBotUserId, signal);
+    }
     if (!bot) {
       ({ record: bot } = await createOrAdopt(
         "create agent bot",

@@ -36,6 +36,29 @@ describe.skipIf(!dsn)("a provisioning attempt", { timeout: 30_000 }, () => {
     expect([harness.git.owners.size, harness.git.repositories.size]).toEqual([1, 3]);
   });
 
+  it("carries a recorded bot ID from the first HTTP spec through credential issuance", async () => {
+    const botUserId = "existing-bot-id";
+    harness.chat.bots.set("lin", { id: botUserId });
+    const ensureBot = vi.spyOn(harness.chat, "ensureAgentBot");
+    const original = spec("lin");
+    const desired = { ...original, chat: { ...original.chat, defaultAgent: { enabled: true, existingBotUserId: botUserId } } };
+
+    const written = await harness.request("PUT", "/v1/users/u1/provisioning", { body: { spec: desired } });
+    expect(written.body.spec.chat.defaultAgent).toEqual(desired.chat.defaultAgent);
+    await untilSettled(harness);
+
+    expect(ensureBot).toHaveBeenCalledWith(expect.objectContaining({ existingBotUserId: botUserId }), expect.any(AbortSignal));
+    expect((await provisioned("u1")).status.outputs.chat.agentBotUserId).toBe(botUserId);
+    expect(harness.chat.tokens.filter((token) => token.ownerId === botUserId)).toHaveLength(1);
+
+    const conflicting = { ...desired, chat: { ...desired.chat, defaultAgent: { enabled: true, existingBotUserId: "different-bot-id" } } };
+    await harness.request("PUT", "/v1/users/u1/provisioning", { body: { spec: conflicting } });
+    await untilSettled(harness);
+    expect(ensureBot).toHaveBeenCalledTimes(1);
+    expect((await provisioned("u1")).status.conditions.find((condition: { type: string }) => condition.type === "ChatReady"))
+      .toMatchObject({ status: "False", reason: "ChatAgentFailed" });
+  });
+
   it("issues a token only when the credential store holds none for that name, so a resync issues nothing", async () => {
     await harness.request("PUT", "/v1/users/u1/provisioning", { body: { spec: spec("lin") } });
     await untilSettled(harness);

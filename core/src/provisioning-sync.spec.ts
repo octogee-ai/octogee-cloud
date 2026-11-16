@@ -237,6 +237,15 @@ describe("desired provisioning spec", () => {
 });
 
 describe("spec backfill", () => {
+  it("supplies the platform's recorded agent bot ID on the first provisioning write", async () => {
+    seedUser("u1", "lin");
+    await store().workspaces.agentIdentities.put({ uid: "u1", mattermostUserId: "mm-legacy-bot", at: Date.now() });
+
+    await expect(sync().writeSpec("u1")).resolves.toBe("created");
+
+    expect(fake.resources.get("u1")?.spec.chat.defaultAgent).toEqual({ enabled: true, existingBotUserId: "mm-legacy-bot" });
+  });
+
   it("writes a spec for every admitted user on the first start and journals it once", async () => {
     seedUser("u1", "lin");
     seedUser("u2", "ada");

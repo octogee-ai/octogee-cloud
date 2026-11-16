@@ -94,6 +94,33 @@ describe("Mattermost chat host adapter", () => {
     expect(general.purpose).toBe("Lin's workspace — general discussion");
   });
 
+  it("adopts the recorded bot by ID even when its username differs from the default", async () => {
+    const { api, host } = setup();
+    const owner = api.addUser({ username: "lin" });
+    const existing = api.addUser({ username: "legacy-coach", is_bot: true });
+    const { teamId } = await host.ensureTeam({ slug: "lin", displayName: "Lin's Workshop", userId: owner.id }, signal());
+
+    await expect(host.ensureAgentBot({ slug: "lin", ownerFirstName: "Lin", teamId, existingBotUserId: existing.id }, signal()))
+      .resolves.toEqual({ botUserId: existing.id });
+
+    expect(api.users.get(existing.id)?.username).toBe("legacy-coach");
+    expect(api.teams.get(teamId)?.members.has(existing.id)).toBe(true);
+    expect(api.count("POST", /^\/bots$/)).toBe(0);
+    expect(api.count("GET", /^\/users\/username\/lin-coach$/)).toBe(0);
+  });
+
+  it.each(["missing", "inactive", "human"])("refuses a recorded bot ID that is %s without creating a replacement", async (kind) => {
+    const { api, host } = setup();
+    const existing = api.addUser({ username: "legacy-coach", is_bot: kind !== "human", delete_at: kind === "inactive" ? 1 : 0 });
+    if (kind === "missing") api.users.delete(existing.id);
+
+    await expect(host.ensureAgentBot({ slug: "lin", ownerFirstName: "Lin", teamId: "team", existingBotUserId: existing.id }, signal()))
+      .rejects.toThrow("recorded agent bot is missing or inactive");
+
+    expect(api.count("POST", /^\/bots$/)).toBe(0);
+    expect(api.count("GET", /^\/users\/username\/lin-coach$/)).toBe(0);
+  });
+
   it("asks the chat host for exactly the names the legacy provisioning path uses", async () => {
     const context = setup();
     const { teamId } = await converge(context);

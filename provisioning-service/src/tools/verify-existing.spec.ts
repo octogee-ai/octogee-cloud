@@ -160,6 +160,19 @@ describe("verify-existing", () => {
     expect(report.runs.map((run) => run.run)).toEqual(["stored ids", "no ids"]);
   });
 
+  it("uses the recorded bot ID during discovery when the username is legacy", async () => {
+    const context = hosts();
+    const user = await provision(context);
+    const bot = context.chatApi.users.get(user.stored!.agentBotUserId!)!;
+    bot.username = "legacy-coach";
+
+    const report = await verifyUser(user, context.settings, signal());
+
+    expect(reportFails(report)).toBe(false);
+    expect(report.runs.map((run) => run.found["agent bot"])).toEqual([bot.id, bot.id]);
+    expect(nonGet(context.chatApi.requests)).toEqual([]);
+  });
+
   it("reports a missing team and the channels behind it as would-create and fails", async () => {
     const context = hosts();
     const user = await provision(context);

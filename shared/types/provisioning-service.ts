@@ -54,7 +54,7 @@ export interface UserProvisioningSpec {
   avatarUrl: string | null;
   chat: {
     teamDisplayName: string;
-    defaultAgent: { enabled: boolean };
+    defaultAgent: { enabled: boolean; existingBotUserId?: string };
   };
   git: {
     repositories: GitRepositoryRole[];
