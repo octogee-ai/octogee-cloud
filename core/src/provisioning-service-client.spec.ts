@@ -287,6 +287,29 @@ describe("provisioning service client", () => {
     expect(fake.requests.at(-1)?.path).toBe("/v1/users/u1/credentials/user-chat-token");
   });
 
+  it("registers a gateway's git key on the user's path and answers the key", async () => {
+    const api = client();
+    await api.putProvisioning("u1", SPEC);
+
+    const key = await api.putGitKey("u1", "shared-blue", "ssh-ed25519 AAAAkey");
+
+    expect(key).toMatchObject({ uid: "u1", gatewayId: "shared-blue", spec: { publicKey: "ssh-ed25519 AAAAkey" } });
+    expect(fake.requests.at(-1)).toMatchObject({ method: "PUT", path: "/v1/users/u1/git-keys/shared-blue", body: { spec: { publicKey: "ssh-ed25519 AAAAkey" } } });
+    await expect(api.putGitKey("nobody", "shared-blue", "ssh-ed25519 AAAAkey")).rejects.toMatchObject({ status: 404, code: "not-found" });
+  });
+
+  it("releases a git key only while it still holds the expected public key, and answers superseded otherwise", async () => {
+    const api = client();
+    await api.putProvisioning("u1", SPEC);
+    await api.putGitKey("u1", "shared-blue", "ssh-ed25519 AAAAold");
+    await api.putGitKey("u1", "shared-blue", "ssh-ed25519 AAAAnew");
+
+    await expect(api.deleteGitKey("u1", "shared-blue", { expectedPublicKey: "ssh-ed25519 AAAAold" })).resolves.toBe("superseded");
+    expect(fake.requests.at(-1)).toMatchObject({ method: "DELETE", path: "/v1/users/u1/git-keys/shared-blue", body: { expectedPublicKey: "ssh-ed25519 AAAAold" } });
+    await expect(api.deleteGitKey("u1", "shared-blue", { expectedPublicKey: "ssh-ed25519 AAAAnew" })).resolves.toBe("deleted");
+    expect(sleeps).toEqual([]);
+  });
+
   it("surfaces a refused credential read as a 403 without retrying", async () => {
     const api = client();
     await api.putProvisioning("u1", SPEC);

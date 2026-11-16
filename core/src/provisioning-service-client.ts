@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import {
   PROVISIONING_API_VERSION,
+  type GitKey,
   type ProvisioningCredential,
   type ProvisioningCredentialName,
   type ProvisioningErrorCode,
@@ -65,6 +66,7 @@ export class ProvisioningServiceError extends Error {
 }
 
 export type DeleteProvisioningOutcome = "deleted" | "unnameable";
+export type DeleteGitKeyOutcome = "deleted" | "superseded";
 
 export interface PutProvisioningResult {
   readonly outcome: "created" | "changed" | "unchanged";
@@ -120,6 +122,8 @@ export interface ProvisioningServiceClient {
   retryProvisioning(uid: string, request: RetryProvisioningRequest, idempotencyKey: string): Promise<unknown>;
   getProvisioningEvents(uid: string, options?: RequestSignalOptions): Promise<ProvisioningEventsResponse | null>;
   getCredential(uid: string, name: ProvisioningCredentialName, options?: RequestSignalOptions): Promise<ProvisioningCredential | null>;
+  putGitKey(uid: string, gatewayId: string, publicKey: string, options?: RequestSignalOptions): Promise<GitKey>;
+  deleteGitKey(uid: string, gatewayId: string, options: { expectedPublicKey: string } & RequestSignalOptions): Promise<DeleteGitKeyOutcome>;
 }
 
 export interface ProvisioningServiceConfig {
@@ -304,6 +308,7 @@ export function createProvisioningServiceClient(options: ProvisioningServiceClie
   }
 
   const userPath = (uid: string) => `users/${userSegment(uid)}/provisioning`;
+  const gitKeyPath = (uid: string, gatewayId: string) => `users/${userSegment(uid)}/git-keys/${encodeURIComponent(gatewayId)}`;
 
   const client: ProvisioningServiceClient = {
     async putProvisioning(uid, spec, putOptions) {
@@ -412,6 +417,31 @@ export function createProvisioningServiceClient(options: ProvisioningServiceClie
         throw error;
       }
       return credentialFrom(await response.text(), name);
+    },
+
+    async putGitKey(uid, gatewayId, publicKey, keyOptions) {
+      const response = await request({
+        method: "PUT",
+        path: gitKeyPath(uid, gatewayId),
+        body: { spec: { publicKey } },
+        ...(keyOptions?.signal === undefined ? {} : { signal: keyOptions.signal }),
+      });
+      return json<GitKey>(response);
+    },
+
+    async deleteGitKey(uid, gatewayId, keyOptions) {
+      try {
+        await request({
+          method: "DELETE",
+          path: gitKeyPath(uid, gatewayId),
+          body: { expectedPublicKey: keyOptions.expectedPublicKey },
+          ...(keyOptions.signal === undefined ? {} : { signal: keyOptions.signal }),
+        });
+      } catch (error) {
+        if (error instanceof ProvisioningServiceError && error.status === 409 && error.code === "precondition-failed") return "superseded";
+        throw error;
+      }
+      return "deleted";
     },
   };
   return client;

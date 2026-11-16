@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import type {
+  GitKey,
   ProvisioningAttempt,
   ProvisioningCredential,
   ProvisioningCredentialName,
@@ -111,6 +112,7 @@ export async function startFakeProvisioningService(options: { tokens?: string[] 
   let counter = 0;
   let oldestRetained = 0;
   const credentials = new Map<string, ProvisioningCredential>();
+  const gitKeys = new Map<string, GitKey>();
   const service = { acceptedTokens: new Set(options.tokens ?? ["token"]), credentialReader: true };
 
   function bump(uid: string, resource: UserProvisioning): UserProvisioning {
@@ -210,11 +212,40 @@ export async function startFakeProvisioningService(options: { tokens?: string[] 
     if (url.pathname === "/v1/provisionings") return listOrWatch(url, res);
     const credentialMatch = /^\/v1\/users\/([^/]+)\/credentials\/([^/]+)$/.exec(url.pathname);
     if (credentialMatch) return credential(decodeURIComponent(credentialMatch[1]), decodeURIComponent(credentialMatch[2]), res);
+    const keyMatch = /^\/v1\/users\/([^/]+)\/git-keys\/([^/]+)$/.exec(url.pathname);
+    if (keyMatch) return gitKey(decodeURIComponent(keyMatch[1]), decodeURIComponent(keyMatch[2]), recorded, res);
     const userMatch = /^\/v1\/users\/([^/]+)\/provisioning(\/retry|\/events)?$/.exec(url.pathname);
     if (!userMatch) return fail(res, 404, "not-found");
     const uid = decodeURIComponent(userMatch[1]);
     if (!SERVICE_IDENTIFIER.test(uid)) return fail(res, 400, "invalid-request");
     user(uid, userMatch[2], recorded, res);
+  }
+
+  function gitKey(uid: string, gatewayId: string, recorded: FakeProvisioningRequest, res: ServerResponse): void {
+    const id = `${uid}/${gatewayId}`;
+    const existing = gitKeys.get(id);
+    if (recorded.method === "DELETE") {
+      const expected = (recorded.body as { expectedPublicKey?: string } | undefined)?.expectedPublicKey;
+      if (existing && expected !== undefined && existing.spec.publicKey !== expected) return fail(res, 409, "precondition-failed");
+      gitKeys.delete(id);
+      return send(res, 202);
+    }
+    if (!resources.has(uid)) return fail(res, 404, "not-found");
+    const publicKey = (recorded.body as { spec: { publicKey: string } }).spec.publicKey;
+    if (existing?.spec.publicKey === publicKey) return send(res, 200, existing);
+    counter += 1;
+    const generation = (existing?.generation ?? 0) + 1;
+    const key: GitKey = {
+      uid,
+      gatewayId,
+      generation,
+      resourceVersion: String(counter),
+      deletionRequestedAt: null,
+      spec: { publicKey },
+      status: { observedGeneration: 0, conditions: [] },
+    };
+    gitKeys.set(id, key);
+    send(res, existing ? 202 : 201, key);
   }
 
   function credential(uid: string, name: string, res: ServerResponse): void {

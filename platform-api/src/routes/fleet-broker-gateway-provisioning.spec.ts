@@ -84,8 +84,8 @@ function gitKey(overrides: { publicKey?: string; generation?: number; observedGe
 
 function gitKeys(overrides: Partial<ProvisioningGitKeys> = {}): ProvisioningGitKeys {
   return {
-    put: vi.fn(async () => gitKey()),
-    delete: vi.fn(async () => undefined),
+    putGitKey: vi.fn(async () => gitKey()),
+    deleteGitKey: vi.fn(async () => "deleted" as const),
     ...overrides,
   };
 }
@@ -280,7 +280,7 @@ describe("POST /internal/fleet/git-key", () => {
 
     await post(app, "git-key", { publicKey: `${PUBLIC_KEY}\n` }).expect(204);
 
-    expect(keys?.put).toHaveBeenCalledWith("uid-alice", GATEWAY_ID, PUBLIC_KEY);
+    expect(keys?.putGitKey).toHaveBeenCalledWith("uid-alice", GATEWAY_ID, PUBLIC_KEY);
   });
 
   it("never takes the gateway id from the body", async () => {
@@ -288,7 +288,7 @@ describe("POST /internal/fleet/git-key", () => {
 
     await post(app, "git-key", { publicKey: PUBLIC_KEY, gatewayId: "shared-green" }).expect(403);
 
-    expect(keys?.put).not.toHaveBeenCalled();
+    expect(keys?.putGitKey).not.toHaveBeenCalled();
   });
 
   it("refuses a user assigned to another gateway", async () => {
@@ -296,7 +296,7 @@ describe("POST /internal/fleet/git-key", () => {
 
     await post(app, "git-key", { publicKey: PUBLIC_KEY }).expect(403);
 
-    expect(keys?.put).not.toHaveBeenCalled();
+    expect(keys?.putGitKey).not.toHaveBeenCalled();
   });
 
   it("refuses a body that is not one public key line", async () => {
@@ -304,7 +304,7 @@ describe("POST /internal/fleet/git-key", () => {
 
     await post(app, "git-key", { publicKey: "-----BEGIN OPENSSH PRIVATE KEY-----" }).expect(400);
 
-    expect(keys?.put).not.toHaveBeenCalled();
+    expect(keys?.putGitKey).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -312,7 +312,7 @@ describe("POST /internal/fleet/git-key", () => {
     ["the service reports the key not registered", gitKey({ registered: "False", reason: "GitKeyFailed" }), "GitKeyFailed"],
     ["the row now holds another key", gitKey({ publicKey: "ssh-ed25519 AAAAother" }), "GitKeyReplaced"],
   ] as const)("answers 503 with the reason while %s", async (_case, key, reason) => {
-    const { app } = fixture({ keys: gitKeys({ put: vi.fn(async () => key) }) });
+    const { app } = fixture({ keys: gitKeys({ putGitKey: vi.fn(async () => key) }) });
 
     const response = await post(app, "git-key", { publicKey: PUBLIC_KEY }).expect(503);
 
@@ -322,7 +322,7 @@ describe("POST /internal/fleet/git-key", () => {
   it("answers 422 and logs an error when the service refuses the key as held elsewhere", async () => {
     const logged = vi.spyOn(logger, "error").mockImplementation(() => {});
     const refused = gitKey({ registered: "False", reason: "GitKeyFailed", message: "registered under a holder this service does not manage; left unchanged" });
-    const { app } = fixture({ keys: gitKeys({ put: vi.fn(async () => refused) }) });
+    const { app } = fixture({ keys: gitKeys({ putGitKey: vi.fn(async () => refused) }) });
 
     const response = await post(app, "git-key", { publicKey: PUBLIC_KEY }).expect(422);
 
@@ -333,7 +333,7 @@ describe("POST /internal/fleet/git-key", () => {
   it("answers 503 with the service's Retry-After while it is unavailable", async () => {
     vi.spyOn(logger, "error").mockImplementation(() => {});
     const { app } = fixture({
-      keys: gitKeys({ put: vi.fn(async () => { throw new ProvisioningServiceError(503, "unavailable" as never, "down", 30_000); }) }),
+      keys: gitKeys({ putGitKey: vi.fn(async () => { throw new ProvisioningServiceError(503, "unavailable" as never, "down", 30_000); }) }),
     });
 
     const response = await post(app, "git-key", { publicKey: PUBLIC_KEY }).expect(503);
@@ -345,7 +345,7 @@ describe("POST /internal/fleet/git-key", () => {
   it("answers 503 NotProvisioned for a user the service has no resource for", async () => {
     vi.spyOn(logger, "error").mockImplementation(() => {});
     const { app } = fixture({
-      keys: gitKeys({ put: vi.fn(async () => { throw new ProvisioningServiceError(404, "not-found", "no provisioning for this user"); }) }),
+      keys: gitKeys({ putGitKey: vi.fn(async () => { throw new ProvisioningServiceError(404, "not-found", "no provisioning for this user"); }) }),
     });
 
     const response = await post(app, "git-key", { publicKey: PUBLIC_KEY }).expect(503);
@@ -364,27 +364,44 @@ describe("POST /internal/fleet/git-key", () => {
 });
 
 describe("POST /internal/fleet/git-key/release", () => {
-  it("deletes only the caller's own gateway key, also after the user moved away", async () => {
+  it("releases only the caller's own gateway key while it holds the caller's public key, also after the user moved away", async () => {
     const { app, keys } = fixture({ assignedTo: "shared-green" });
 
-    await post(app, "git-key/release").expect(204);
+    await post(app, "git-key/release", { publicKey: PUBLIC_KEY }).expect(204);
 
-    expect(keys?.delete).toHaveBeenCalledWith("uid-alice", GATEWAY_ID);
+    expect(keys?.deleteGitKey).toHaveBeenCalledWith("uid-alice", GATEWAY_ID, { expectedPublicKey: PUBLIC_KEY });
+  });
+
+  it("leaves a newer registration in place when the release races it", async () => {
+    const logged = vi.spyOn(logger, "info").mockImplementation(() => {});
+    const { app } = fixture({ keys: gitKeys({ deleteGitKey: vi.fn(async () => "superseded" as const) }) });
+
+    await post(app, "git-key/release", { publicKey: PUBLIC_KEY }).expect(204);
+
+    expect(logged).toHaveBeenCalledWith(expect.stringContaining("newer registration"), { uid: "uid-alice", gatewayId: GATEWAY_ID });
+  });
+
+  it("refuses a release without the public key it releases", async () => {
+    const { app, keys } = fixture();
+
+    await post(app, "git-key/release").expect(400);
+
+    expect(keys?.deleteGitKey).not.toHaveBeenCalled();
   });
 
   it("refuses a gateway id in the body that is not the caller's", async () => {
     const { app, keys } = fixture();
 
-    await post(app, "git-key/release", { gatewayId: "shared-green" }).expect(403);
+    await post(app, "git-key/release", { gatewayId: "shared-green", publicKey: PUBLIC_KEY }).expect(403);
 
-    expect(keys?.delete).not.toHaveBeenCalled();
+    expect(keys?.deleteGitKey).not.toHaveBeenCalled();
   });
 
   it("answers 404 for a uid that names no user", async () => {
     const { app, keys } = fixture();
 
-    await request(app).post("/internal/fleet/git-key/release").send({ uid: "uid-nobody" }).expect(404);
+    await request(app).post("/internal/fleet/git-key/release").send({ uid: "uid-nobody", publicKey: PUBLIC_KEY }).expect(404);
 
-    expect(keys?.delete).not.toHaveBeenCalled();
+    expect(keys?.deleteGitKey).not.toHaveBeenCalled();
   });
 });

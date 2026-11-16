@@ -431,7 +431,7 @@ async function registerServiceGitKey(
 ): Promise<ProvisioningWait<void>> {
   let key: GitKey;
   try {
-    key = await gitKeys.put(uid, gatewayId, publicKey);
+    key = await gitKeys.putGitKey(uid, gatewayId, publicKey);
   } catch (error) {
     if (!(error instanceof ProvisioningServiceError)) throw error;
     if (error.status === 404) {
@@ -515,6 +515,11 @@ function installServiceProvisioningRoutes(router: Router, deps: ResolvedFleetBro
       res.status(400).json({ error: "uid_required" });
       return;
     }
+    const publicKey = objectBody(req).publicKey;
+    if (!isSshPublicKeyLine(publicKey)) {
+      res.status(400).json({ error: "invalid_public_key" });
+      return;
+    }
     const { provisioningGitKeys } = deps;
     if (!serviceRouteConfigured(res, "git-key/release", provisioningGitKeys)) return;
     await runBrokered(res, async () => {
@@ -522,7 +527,10 @@ function installServiceProvisioningRoutes(router: Router, deps: ResolvedFleetBro
         res.status(404).json({ error: "not_found" });
         return;
       }
-      await provisioningGitKeys.delete(uid, bound.gatewayId);
+      const outcome = await provisioningGitKeys.deleteGitKey(uid, bound.gatewayId, { expectedPublicKey: publicKey.trim() });
+      if (outcome === "superseded") {
+        logger.info("gateway git key release: the row holds a newer registration, which stays", { uid, gatewayId: bound.gatewayId });
+      }
       res.status(204).end();
     });
   });

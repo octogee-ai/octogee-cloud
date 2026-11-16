@@ -1,4 +1,4 @@
-import { type ProvisioningCredential, type ProvisioningCredentialName, type ProvisioningErrorCode, type ProvisioningEventsResponse, type RetryProvisioningRequest, type UserProvisioning, type UserProvisioningList, type UserProvisioningListQuery, type UserProvisioningSpec, type UserProvisioningWatchResponse } from "@octogee/shared/types/provisioning-service";
+import { type GitKey, type ProvisioningCredential, type ProvisioningCredentialName, type ProvisioningErrorCode, type ProvisioningEventsResponse, type RetryProvisioningRequest, type UserProvisioning, type UserProvisioningList, type UserProvisioningListQuery, type UserProvisioningSpec, type UserProvisioningWatchResponse } from "@octogee/shared/types/provisioning-service";
 export declare const PROVISIONING_SERVICE_URL_ENV = "PROVISIONING_SERVICE_URL";
 export declare const PROVISIONING_SERVICE_TOKEN_PATH_ENV = "PROVISIONING_SERVICE_TOKEN_PATH";
 export interface ProvisioningServiceRetryPolicy {
@@ -27,6 +27,7 @@ export declare class ProvisioningServiceError extends Error {
     get transient(): boolean;
 }
 export type DeleteProvisioningOutcome = "deleted" | "unnameable";
+export type DeleteGitKeyOutcome = "deleted" | "superseded";
 export interface PutProvisioningResult {
     readonly outcome: "created" | "changed" | "unchanged";
     readonly resource: UserProvisioning;
@@ -66,6 +67,10 @@ export interface ProvisioningServiceClient {
     retryProvisioning(uid: string, request: RetryProvisioningRequest, idempotencyKey: string): Promise<unknown>;
     getProvisioningEvents(uid: string, options?: RequestSignalOptions): Promise<ProvisioningEventsResponse | null>;
     getCredential(uid: string, name: ProvisioningCredentialName, options?: RequestSignalOptions): Promise<ProvisioningCredential | null>;
+    putGitKey(uid: string, gatewayId: string, publicKey: string, options?: RequestSignalOptions): Promise<GitKey>;
+    deleteGitKey(uid: string, gatewayId: string, options: {
+        expectedPublicKey: string;
+    } & RequestSignalOptions): Promise<DeleteGitKeyOutcome>;
 }
 export interface ProvisioningServiceConfig {
     readonly baseUrl: string;
