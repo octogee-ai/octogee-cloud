@@ -708,7 +708,7 @@ describe("internal gitea-admin route with the provisioning service", () => {
       getProvisioning: vi.fn(async () => null),
       getCredential: vi.fn(async () => null),
       putGitKey: vi.fn(async (uid, gatewayId, spec) => {
-        row ??= { uid, gatewayId, generation: 1, resourceVersion: "1", deletionRequestedAt: null, spec, status: { observedGeneration: 0, conditions: [] } };
+        row ??= { uid, gatewayId, generation: 1, resourceVersion: "1", deletionRequestedAt: null, spec, status: { observedGeneration: 0, conditions: [], nextAttemptAt: null } };
         return { outcome: "unchanged" as const, key: row };
       }),
     };

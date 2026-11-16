@@ -100,31 +100,10 @@ function notProvisioned(uid: string): ProvisioningWait<never> {
   return { ready: false, reason: "NotProvisioned", retryAfterSeconds: DEFAULT_RETRY_AFTER_SECONDS };
 }
 
-function keyRegistered(key: GitKey): boolean {
-  return key.status.observedGeneration >= key.generation &&
-    key.status.conditions.some((candidate) => candidate.type === "Registered" && candidate.status === "True");
-}
-
-
-function keyHeldElsewhere(key: GitKey): boolean {
-  if (key.status.observedGeneration < key.generation) return false;
-  const registered = key.status.conditions.find((candidate) => candidate.type === "Registered");
-  return registered?.status === "False" && registered.reason === "GitKeyHeldElsewhere";
-}
-
-function keyPending(key: GitKey): ProvisioningWait<never> {
-  if (key.status.observedGeneration < key.generation) {
-    return { ready: false, reason: "GenerationNotObserved", retryAfterSeconds: DEFAULT_RETRY_AFTER_SECONDS };
-  }
-  const registered = key.status.conditions.find((candidate) => candidate.type === "Registered");
-  const reason = registered?.reason ?? "RegisteredUnknown";
-  logger.error("legacy provisioning: the provisioning service has not registered the gateway's git key", {
-    uid: key.uid,
-    gatewayId: key.gatewayId,
-    reason,
-    message: registered?.message ?? "",
-  });
-  return { ready: false, reason, retryAfterSeconds: DEFAULT_RETRY_AFTER_SECONDS };
+function registeredCondition(key: GitKey) {
+  return key.status.observedGeneration >= key.generation
+    ? key.status.conditions.find((candidate) => candidate.type === "Registered") ?? null
+    : null;
 }
 
 export function createLegacyProvisioning(deps: LegacyProvisioningDeps): LegacyProvisioning {
@@ -138,6 +117,21 @@ export function createLegacyProvisioning(deps: LegacyProvisioningDeps): LegacyPr
     return {
       ready: false,
       reason,
+      retryAfterSeconds: Number.isFinite(due) && due > 0 ? clampSeconds(due / 1000) : DEFAULT_RETRY_AFTER_SECONDS,
+    };
+  }
+
+  function keyNotRegistered(key: GitKey, registered: NonNullable<ReturnType<typeof registeredCondition>>): ProvisioningWait<never> {
+    logger.error("legacy provisioning: the provisioning service has not registered the gateway's git key", {
+      uid: key.uid,
+      gatewayId: key.gatewayId,
+      reason: registered.reason,
+      message: registered.message,
+    });
+    const due = key.status.nextAttemptAt === null ? Number.NaN : Date.parse(key.status.nextAttemptAt) - now();
+    return {
+      ready: false,
+      reason: registered.reason,
       retryAfterSeconds: Number.isFinite(due) && due > 0 ? clampSeconds(due / 1000) : DEFAULT_RETRY_AFTER_SECONDS,
     };
   }
@@ -226,12 +220,13 @@ export function createLegacyProvisioning(deps: LegacyProvisioningDeps): LegacyPr
           if (error instanceof ProvisioningServiceError && error.status === 404) return notProvisioned(uid);
           return unavailable(uid, error);
         }
-        if (keyRegistered(key)) return { ready: true, value: undefined };
-        if (keyHeldElsewhere(key)) {
-          logger.error("legacy provisioning: the service will not register the gateway's git key, which another holder has", { uid, gatewayId });
-          return { ready: false, reason: "GitKeyHeldElsewhere", retryAfterSeconds: DEFAULT_RETRY_AFTER_SECONDS, refused: true };
+        const registered = registeredCondition(key);
+        if (registered?.status === "True") return { ready: true, value: undefined };
+        if (registered !== null) return keyNotRegistered(key, registered);
+        if (budget.remainingMs() - GIT_KEY_POLL_MS < RESERVED_AFTER_LONG_POLL_MS) {
+          const reason = key.status.observedGeneration < key.generation ? "GenerationNotObserved" : "RegisteredUnknown";
+          return { ready: false, reason, retryAfterSeconds: DEFAULT_RETRY_AFTER_SECONDS };
         }
-        if (budget.remainingMs() - GIT_KEY_POLL_MS < RESERVED_AFTER_LONG_POLL_MS) return keyPending(key);
         await sleep(GIT_KEY_POLL_MS);
       }
     },
