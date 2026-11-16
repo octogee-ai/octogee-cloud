@@ -202,23 +202,41 @@ Run focused artifact/base-image tests, evaluate feedback and wait for final-head
 CI. After merge, Build main produces images, not a deployment. Environment
 selection and rollout are a separate operator step.
 
-## Current overlay for the November 13 Gateway refresh
+## Current overlay for the November 16 Gateway refresh
 
-OpenClaw main `081748ca26e21d519506fd262c909320e91d2d1d` was frozen at fetch time
+OpenClaw main `ec025eba2df15ab949239fa17dfd99ac4286b50c` was frozen at fetch time
 for independent qualification. The overlay is
-`2188985128c3be6af0a9fd32966d6668787ac783` on
-`ceckert/openclaw:codex/gateway-refresh-20261113-3`. It is the
-`codex/gateway-refresh-20261113-2` overlay plus one commit, described under
-[Detached agent admission descriptors](#detached-agent-admission-descriptors).
+`72836edc9da0bf50443f9f429c02779d74d051dd` on
+`ceckert/openclaw:codex/gateway-refresh-20261116`.
 
-The frozen tip's [push CI](https://github.com/openclaw/openclaw/actions/runs/43558852998)
-passed `security-fast` and skipped 42 jobs, including the build, native tests,
-Control UI and PostgreSQL conformance. The latest successful
+The frozen tip's [push CI](https://github.com/openclaw/openclaw/actions/runs/43928652222)
+passed `security-fast` and skipped the build, native tests, Control UI and
+PostgreSQL conformance. Its [scheduled full CI](https://github.com/openclaw/openclaw/actions/runs/43929212396)
+passed all three PostgreSQL conformance shards. Of 164 jobs, 136 passed,
+14 failed, 12 were skipped, and the build and macOS Swift packages were
+canceled. Failures include Control UI E2E, dependency checks, Node tests
+and the published driver update. The latest successful
 [scheduled full CI](https://github.com/openclaw/openclaw/actions/runs/43129347832)
 ran on `cda0b61ac4d23fb0a5fa5530e37f9e74ce3face5` with 151 passing jobs. Its 11
 skips were Control UI i18n, check planning, shared SDK declarations, Node 24
 compatibility, Android and iOS screenshots and release E2E, iOS screenshot
 evidence, PR failure reporting and release child evidence sealing.
+
+Native #197510 owns database admission descriptors. The overlay places its
+detached-store probe guard at that owner. A queued asynchronous probe could
+recreate a descriptor after an accepted detach. The matching live creation
+claim can admit the preserved store for reattachment. Native #200066 defers PostgreSQL schema
+initialization. The pre-deferral repair declares the missing column to that
+schema owner and leaves schema versions to upstream.
+Native #199591 owns the tool-repeat guard. The overlay retains the live
+execution check across its approval handoff. Native #198428 owns Mattermost
+media admission. The overlay keeps grouped sends using that boundary.
+Cron migration already rejects jobs that carry runtime or host authority.
+The overlay removes the redundant authority reconciliation from portable-job
+restore and relies on native cascading cleanup when replacing a declaration.
+The overlay keeps Gateway broker startup lazy on constrained hosts through
+its own startup module. The frozen tip's mixed static and dynamic import of
+the shared broker host was fatal to the native package build.
 
 Native [#198180](https://github.com/openclaw/openclaw/pull/198180) owns held-store
 path selection and offline schema migration. The duplicate path selector is
@@ -391,9 +409,9 @@ schema 39 shapes through its native migration and the installed pin-roll passes.
 
 The source is rebased onto that exact tip. Previously adopted session-list,
 retained-PG creation, Talk initialization/consult and Doctor auth-alias fixes
-remain native; their fork copies are not restored. Native schemas remain
-canonical (GLOBAL 39 and AGENT 41). Native #193682 owns the AGENT 40 to 41
-upgrade and its active transcript facts. Native inbound-context composition,
+remain native. Native schemas remain canonical (GLOBAL 40 and AGENT 42).
+Native #193682 owns the AGENT 40 to 41 upgrade and its active transcript facts.
+Native inbound-context composition,
 bot-loop protection, worker ownership and backup source-artifact preservation
 remain.
 
@@ -687,41 +705,34 @@ permission, handoff and recovery controls pass.
 
 ### Qualification and publication
 
-The full package build used pinned pnpm 12.15.0 and the frozen lockfile.
-Its build-info commit matches the clean source. The root and Mattermost
-archives were packed sequentially from that build. The Mattermost archive is
-byte-identical to the `ade4f47` one, so its object is reused. Hosted islands,
-platform Browser resources and the PostgreSQL routine catalog use the same source.
+The full package build used Node 24.22.2, pinned pnpm 12.15.0 and the frozen
+lockfile. Its build-info commit matches the clean source. The root and Mattermost
+archives were packed sequentially from that build. Hosted islands, platform
+Browser resources and the PostgreSQL routine catalog use the same source.
 
-At `2188985`, the descriptor regression and 44 neighbouring admission,
-retention and detach tests pass. Both npm distribution control runs pass 24
-of 24, and the pin-roll spec passes from `e9c9cd30`. On kind, a user moved off
-a shared gateway on this build after a Coach turn leaves no descriptor under
-their agent directory once session maintenance has run. They return to the
-same gateway, and its pod is not restarted; `pre-sync-state` completes and
-the agent answers in the Coach channel. That cluster had no model key, so the
-answer was the model sign-in notice. A shared → isolated → shared round trip
-needs an amd64 host.
+Production typechecks, the overlay-specific line-cap ratchet and generated
+channel config checks passed. The exact source passed 31 detach and worker
+admission tests and 13 PostgreSQL conformance tests. The isolated Gateway
+detach replay closed the old SQLite descriptor and let the matching creation
+claim restore the agent and read its history. Aggregate `pnpm check` was
+stopped after its package-lock generator stalled.
 
-The `ade4f47` base qualified as follows. Production typechecks, focused lint, generated config checks, the
-overlay-specific line-cap ratchet, 60 focused restoration and reload tests,
-and 25 PostgreSQL conformance tests passed. The supersession fixture was rerun
-after correcting three test-only lint diagnostics. Aggregate `pnpm check`
-reached full-tree lint. Thirty max-lines diagnostics reproduced on the
-frozen native core, and two more were in byte-identical upstream extension
-tests. The overlay-specific growth ratchet passed against the frozen tip.
-The full build reported Control UI budget warnings. Package, pin-roll and complete-image qualification are tracked on
-the refresh PR.
+The tarball integrity check and both npm distribution control runs passed,
+including the independent global installation. The native AMD64
+`full-plugin-installer` target verified the installed bundled companions,
+registry and Codex hooks. The non-superuser PostgreSQL pin-roll passed from
+`e9c9cd30`, the oldest retained pin.
 
-Published with generation-zero preconditions and verified by exact-generation SHA-256 readback.
+Published with generation-zero preconditions and verified by exact-generation
+SHA-256 readback.
 
 | Object | Generation | SHA-256 |
 | --- | --- | --- |
-| `openclaw-fork-1f70c833.tgz` | `1794747402786233` | `1f70c833c60db718277c90937ddc5c3e23e86046a33da88a3ada735091f19258` |
-| `openclaw-mattermost-0d915e4e.tgz` | `1794637057599256` | `0d915e4eca767e1d519c2832ef91b3de154215ceec5c3a448518c7d4bcf0e288` |
+| `openclaw-fork-d1b80574.tgz` | `1794860901653714` | `d1b8057474e02277050cd88caf7cf2ad5f028868c4c261a2b45234c2bbce8ebf` |
+| `openclaw-mattermost-8e55e60d.tgz` | `1794860917248896` | `8e55e60dd0219f8b96dd428eab74dab999a46310fe76b5af1031fd447dd6c259` |
 
-The GitHub release mirrors these exact objects under
-[`gateway-2188985`](https://github.com/ceckert/openclaw/releases/tag/gateway-2188985).
+The verified GitHub release mirrors these exact objects under
+[`gateway-72836ed`](https://github.com/ceckert/openclaw/releases/tag/gateway-72836ed).
 
 ### Upstream contributions
 
@@ -729,13 +740,14 @@ The frozen-tip review found no open overlay contribution fully superseded by
 its native restoration, deletion-latency or config-publication changes.
 The Talk fixes (#189036 and #189418) still cover worker-backed consult control
 and owner steering. The agent-removal latency change (#191463) still covers
-its own deletion-authority path. #193596 is ready for review and #193875 includes a CI lint fix.
+its own deletion-authority path. #193596 is open with its refreshed head waiting
+for maintainer CI approval. #193875 includes a CI lint fix.
 #186891 and #186893 were refreshed and have disposable Gateway and Mattermost
 evidence. #193636 remains a draft pending the public CLI option decision.
 #167431 needs maintainer security approval and a reload-contract decision.
 #178755 was refreshed and still needs PostgreSQL reattachment and maintainer
-review. The bootstrap-deferral fix is proposed as #197425, which keeps schema
-39. GitHub lists the schema-40 alternative (#197010) as closed without merge.
+review. The bootstrap-deferral fix is proposed as #197425 and adds no schema
+version. GitHub lists the schema-40 alternative (#197010) as closed without merge.
 
 ## Native CUA desktop discovery
 
