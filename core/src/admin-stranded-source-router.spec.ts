@@ -7,7 +7,7 @@ import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store"
 import { addAdminFleetRoutes, createAdminFleetMutationRunner, respondToAdminFleetMutationError } from "./admin-fleet-router.js";
 import { addAdminStrandedSourceRoutes } from "./admin-stranded-source-router.js";
 import { MigrationRpcError, MigrationTransportError } from "./fleet-migration-client.js";
-import type { SchedulesRestored } from "./stranded-source-restore.js";
+import type { ScheduleTransferRestored } from "./stranded-source-restore.js";
 import { noUserAccounts } from "./user-account.js";
 
 type Row = Record<string, unknown>;
@@ -66,7 +66,7 @@ function withoutAudits(records: Records): string {
 
 interface Gateway {
   resume?: () => Promise<void>;
-  schedules?: () => Promise<SchedulesRestored>;
+  schedules?: () => Promise<ScheduleTransferRestored>;
   beforeTransaction?: (label: string) => void;
 }
 
@@ -133,7 +133,7 @@ describe("POST /users/:uid/restore-serving", () => {
     expect(records.get(ASSIGNMENT)).toMatchObject({ state: "serving" });
     expect(audits(records)).toEqual([expect.objectContaining({
       id: res.body.operationId, status: "completed", outcome: "partial",
-      partialOutcome: { summary: `${SLUG} serves again on ${SOURCE}; its schedules were not restored`, details: { schedulesRestored: false } },
+      partialOutcome: { summary: `${SLUG} serves again on ${SOURCE}; its schedules were not restored`, details: { schedulesRestored: false, sourceDraining: false } },
     })]);
   });
 
@@ -150,6 +150,27 @@ describe("POST /users/:uid/restore-serving", () => {
     const res = await request(harness(records).app).post(PATH).expect(200);
 
     expect(res.body).toMatchObject({ state: "serving", sourceDraining: true });
+    expect(audits(records)).toEqual([expect.objectContaining({
+      status: "completed", outcome: "partial",
+      partialOutcome: {
+        summary: `${SLUG} serves again on ${SOURCE}; the gateway is draining and the user needs an operator move`,
+        details: { schedulesRestored: "none", sourceDraining: true },
+      },
+    })]);
+  });
+
+  it("answers unknown schedules, journaled as a partial outcome, when the move failed at its quiesce and stored no transfer", async () => {
+    const records = stranded();
+    const steps = (records.get(OPERATION)!.steps as Row[]).filter((step) => step.name !== "flush-source")
+      .map((step) => (step.name === "quiesce-source" ? { name: "quiesce-source", status: "failed", error: "snapshot answered 500" } : step));
+    patch(records, OPERATION, { steps });
+
+    const res = await request(harness(records).app).post(PATH).expect(200);
+
+    expect(res.body).toMatchObject({ state: "serving", schedulesRestored: "unknown" });
+    expect(audits(records)).toEqual([expect.objectContaining({
+      outcome: "partial", partialOutcome: expect.objectContaining({ details: { schedulesRestored: "unknown", sourceDraining: false } }),
+    })]);
   });
 
   it("acts only on the source it journaled: a source that changed after the journal entry is refused without resuming", async () => {
@@ -199,6 +220,7 @@ describe("POST /users/:uid/restore-serving", () => {
     }), "fleet-state-changed"],
     ["the account is suspended", (r) => patch(r, USER, { accountLifecycle: { status: "suspended", suspendedAt: 1_700 } }), "account-not-active"],
     ["the source gateway is retired", (r) => patch(r, ROOT, { desiredStatus: "retired" }), "source-gateway-retired"],
+    ["the source gateway is paused", (r) => patch(r, ROOT, { desiredStatus: "paused" }), "source-gateway-paused"],
   ])("answers 409 with the reason and changes nothing when %s", async (_name, violate, reasonCode) => {
     const records = stranded();
     violate(records);

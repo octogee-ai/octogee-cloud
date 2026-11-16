@@ -31,6 +31,7 @@ const NOT_PROVEN: PlacementRefusalReason = "rollback-not-proven";
 const STATE_CHANGED: PlacementRefusalReason = "fleet-state-changed";
 const ACCOUNT_NOT_ACTIVE: PlacementRefusalReason = "account-not-active";
 const SOURCE_RETIRED: PlacementRefusalReason = "source-gateway-retired";
+const SOURCE_PAUSED: PlacementRefusalReason = "source-gateway-paused";
 
 export interface StrandedSource {
   uid: string;
@@ -42,7 +43,8 @@ export interface StrandedSource {
   targetGatewayId: string;
 }
 
-export type SchedulesRestored = boolean | "none";
+export type ScheduleTransferRestored = boolean | "none";
+export type SchedulesRestored = ScheduleTransferRestored | "unknown";
 
 export interface StrandedSourceRestored {
   uid: string;
@@ -56,7 +58,7 @@ export interface StrandedSourceRestored {
 }
 
 export type ResumeSourceIngress = (input: { operationId: string; gatewayId: string; slug: string }) => Promise<void>;
-export type RestoreSourceSchedules = (input: { uid: string; operationId: string; gatewayId: string; slug: string }) => Promise<SchedulesRestored>;
+export type RestoreSourceSchedules = (input: { uid: string; operationId: string; gatewayId: string; slug: string }) => Promise<ScheduleTransferRestored>;
 
 export interface StrandedSourceGatewayCalls {
   resumeSourceIngress: ResumeSourceIngress;
@@ -113,12 +115,15 @@ function rollbackLeftSourceClosed(steps: readonly OperationStep[]): boolean {
 function gatewayRefusal(root: Stored<GatewayRoot> | null, stranded: Stored<GatewayAssignment>): Refusal | null {
   if (root === null) return [SOURCE_RETIRED, `gateway ${stranded.gatewayId} has no root; its ingress cannot be resumed`];
   if (root.desiredStatus === "retired") return [SOURCE_RETIRED, `gateway ${stranded.gatewayId} is retired; its ingress cannot be resumed`];
+  if (root.desiredStatus === "paused") return [SOURCE_PAUSED, `gateway ${stranded.gatewayId} is paused; its ingress cannot be resumed until it runs again`];
   return null;
 }
 
 function earlierAttempts(operation: Stored<OperationRecord>): readonly OperationAttemptRecord[] {
   const history = operation.attemptHistory ?? [];
-  return history.at(-1)?.attempt === operation.attempts ? history.slice(0, -1) : history;
+  const last = history.at(-1);
+  const recordsLastClaim = last !== undefined && last.attempt === operation.attempts && last.startedAt === operation.startedAt;
+  return recordsLastClaim ? history.slice(0, -1) : history;
 }
 
 function leftRollbackUnfinished(attempt: OperationAttemptRecord): boolean {
@@ -216,6 +221,7 @@ function quiescingAssignment(uid: string, assignments: readonly Stored<GatewayAs
 interface InspectedSource {
   source: StrandedSource;
   sourceDraining: boolean;
+  failedStep: string;
 }
 
 async function inspectStrandedSource(tx: PlatformStateTransaction, uid: string): Promise<InspectedSource> {
@@ -248,11 +254,16 @@ async function inspectStrandedSource(tx: PlatformStateTransaction, uid: string):
       targetGatewayId: moveInput(operation as Stored<OperationRecord>).toGatewayId as string,
     },
     sourceDraining: (root as Stored<GatewayRoot>).desiredStatus === "draining",
+    failedStep: (operation as Stored<OperationRecord>).steps.at(-3)!.name,
   };
 }
 
-export function readStrandedSource(store: PlatformStateStore, uid: string): Promise<StrandedSource> {
-  return store.transaction({ label: "stranded-source.read", readOnly: true }, async (tx) => (await inspectStrandedSource(tx, uid)).source);
+function inspect(store: PlatformStateStore, uid: string): Promise<InspectedSource> {
+  return store.transaction({ label: "stranded-source.read", readOnly: true }, (tx) => inspectStrandedSource(tx, uid));
+}
+
+export async function readStrandedSource(store: PlatformStateStore, uid: string): Promise<StrandedSource> {
+  return (await inspect(store, uid)).source;
 }
 
 async function markSourceServing(deps: StrandedSourceRestoreDeps, source: StrandedSource): Promise<InspectedSource> {
@@ -279,7 +290,7 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-async function restoreSchedules(deps: StrandedSourceRestoreDeps, source: StrandedSource): Promise<SchedulesRestored> {
+async function restoreSchedules(deps: StrandedSourceRestoreDeps, { source, failedStep }: InspectedSource): Promise<SchedulesRestored> {
   const { uid, slug, gatewayId, operationId } = source;
   const unrestored = (reason: string): false => {
     deps.log(
@@ -288,12 +299,21 @@ async function restoreSchedules(deps: StrandedSourceRestoreDeps, source: Strande
     );
     return false;
   };
+  let restored: ScheduleTransferRestored;
   try {
-    const restored = await deps.restoreSourceSchedules({ uid, operationId, gatewayId, slug });
-    return restored === false ? unrestored("the gateway did not restore every schedule") : restored;
+    restored = await deps.restoreSourceSchedules({ uid, operationId, gatewayId, slug });
   } catch (error) {
     return unrestored(errorText(error));
   }
+  if (restored === false) return unrestored("the gateway did not restore every schedule");
+  if (restored === "none" && failedStep === SOURCE_HELD_STEP) {
+    deps.log(
+      `[stranded-source] ⚠ operation ${operationId} failed at ${SOURCE_HELD_STEP} and stored no schedule transfer for uid=${uid} slug=${slug}; ` +
+      `its schedule snapshot may have left schedules disabled on ${gatewayId}, and nothing records which`,
+    );
+    return "unknown";
+  }
+  return restored;
 }
 
 export async function restoreStrandedSourceServing(
@@ -301,7 +321,8 @@ export async function restoreStrandedSourceServing(
   expected: StrandedSource,
 ): Promise<StrandedSourceRestored> {
   const { uid, slug, gatewayId, operationId, targetGatewayId } = expected;
-  const source = await readStrandedSource(deps.store, uid);
+  const inspected = await inspect(deps.store, uid);
+  const { source } = inspected;
   if (!isDeepStrictEqual(source, expected)) {
     refuse([STATE_CHANGED, `the quiescing assignment of ${uid} is no longer the one on ${gatewayId} left by operation ${operationId}`]);
   }
@@ -312,7 +333,7 @@ export async function restoreStrandedSourceServing(
     deps.log(`[stranded-source] ❌ ${failure.message}; uid=${uid} stays quiescing under operation ${operationId}`);
     throw failure;
   }
-  const schedulesRestored = await restoreSchedules(deps, source);
+  const schedulesRestored = await restoreSchedules(deps, inspected);
   let sourceDraining: boolean;
   try {
     ({ sourceDraining } = await markSourceServing(deps, source));
@@ -331,15 +352,18 @@ export async function restoreStrandedSourceServing(
 }
 
 export function strandedSourceRestoreOutcome(
-  restored: Pick<StrandedSourceRestored, "slug" | "gatewayId" | "schedulesRestored">,
+  restored: Pick<StrandedSourceRestored, "slug" | "gatewayId" | "schedulesRestored" | "sourceDraining">,
 ): NormalFleetMutationResult {
-  if (restored.schedulesRestored !== false) return { outcome: "completed" };
+  const { slug, gatewayId, schedulesRestored, sourceDraining } = restored;
+  const left = [
+    ...(schedulesRestored === false ? ["its schedules were not restored"] : []),
+    ...(schedulesRestored === "unknown" ? ["its schedules may be disabled there"] : []),
+    ...(sourceDraining ? ["the gateway is draining and the user needs an operator move"] : []),
+  ];
+  if (left.length === 0) return { outcome: "completed" };
   return {
     outcome: "partial",
-    partialOutcome: {
-      summary: `${restored.slug} serves again on ${restored.gatewayId}; its schedules were not restored`,
-      details: { schedulesRestored: false },
-    },
+    partialOutcome: { summary: `${slug} serves again on ${gatewayId}; ${left.join("; ")}`, details: { schedulesRestored, sourceDraining } },
   };
 }
 

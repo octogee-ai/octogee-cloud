@@ -480,6 +480,7 @@ this table against them.
 | `rollback-not-proven` | The failed move committed its cutover, holds forward state, its recorded steps do not show the target unmounted and only the source ingress left to resume, or an earlier attempt did not finish its rollback. | `restore-serving` |
 | `account-not-active` | The user's account is suspended, scheduled for deletion or being erased, so the user is not served. | `restore-serving` |
 | `source-gateway-retired` | The source gateway has no root or its desired status is `retired`; its ingress cannot be resumed. | `restore-serving` |
+| `source-gateway-paused` | The source gateway's desired status is `paused`; its ingress cannot be resumed until the gateway runs again. | `restore-serving` |
 
 A `409` that carries `auditId` and no `code` is an `Idempotency-Key` replay. It
 answers with the audit of the earlier call instead of acting twice. With
@@ -993,7 +994,12 @@ transaction and again in the transaction that writes:
 - Every earlier attempt of the operation that its attempt history records
   finished its rollback: none has a `rollback:` step that is not `done`, and
   none reached `final-sync-state` without `rollback:resume-ingress` `done`.
-- The source gateway has a root and its desired status is not `retired`.
+  The last history entry counts as the attempt that failed only when it
+  carries the operation's attempt number and claim time; after a reaped
+  attempt, which records no history, every entry is an earlier attempt.
+- The source gateway has a root whose desired status is `running` or
+  `draining`. A `paused` gateway is refused with `source-gateway-paused`, a
+  `retired` or missing one with `source-gateway-retired`.
 - The user's account is active.
 - The assignment has no forward recovery marker. The user has no restore
   fence and no source transfer fence, and the user's migration fence names that
@@ -1017,23 +1023,40 @@ The answer is
 `operationId` is the journal audit of the repair and `failedMoveId` the
 operation of the failed move.
 
-- `schedulesRestored` is `"none"` when the move stored no schedule transfer,
-  `true` when the transfer is restored on the source (by this call or already
-  by the move's rollback), and `false` when the restore failed. A failed
-  schedule restore does not hold the repair back: the user serves again, the
-  failure is logged as an error, and the journal audit ends `completed` with
-  outcome `partial` and a `partialOutcome` that says so. The schedule transfer
-  stays stored under the user, unrestored, with its failures.
+- `schedulesRestored` has four values:
+
+  | Value | Meaning |
+  |---|---|
+  | `true` | The move's schedule transfer is restored on the source, by this call or already by the move's rollback. |
+  | `false` | The transfer is stored and restoring it failed. It stays stored under the user, unrestored, with its failures. |
+  | `"none"` | The move failed at `flush-source` and stored no transfer. Its schedule snapshot had finished by then, and a finished snapshot of a move between gateways always stores a transfer, so this value is not expected. |
+  | `"unknown"` | The move failed at `quiesce-source` and stored no transfer. That step is the quiesce call followed by the schedule snapshot, and the snapshot disables each schedule before it answers, so a failure inside it can leave schedules disabled on the source with no record of which. |
+
+  Neither `false` nor `"unknown"` holds the repair back: the user serves
+  again. `false` is logged as an error and `"unknown"` as a warning.
 - `sourceDraining` is `true` when the source gateway's desired status is
   `draining`. The user then serves again on a gateway that is being emptied,
   and the failed move stays terminal: a placement request for the same source,
   target and assignment epoch names the same operation and is refused with
   `migration-terminal`. Move the user with an operator move.
 
+The journal audit of a repair ends `completed`. Its outcome is `partial`, with
+a `partialOutcome` whose `details` are `{schedulesRestored, sourceDraining}`,
+when `schedulesRestored` is `false` or `"unknown"` or `sourceDraining` is
+`true`; otherwise it is `completed`.
+
+The call answers after the gateway calls it makes: a resume and, when a
+transfer is stored, a schedule restore, each with a 60 second timeout. A
+request can therefore take about two minutes. The fleet controller's HTTP
+server sets no response timeout. The charts route `/api/admin/users/*` to the
+fleet controller and set a backend timeout only for a Google Cloud load
+balancer: the fleet controller's `backendConfig.timeoutSec`, 3600 seconds by
+default. With another ingress class the proxy's own timeout applies.
+
 | Answer | Meaning |
 |---|---|
 | `404` | The user does not exist. Nothing is journaled. |
-| `409` `precondition-failed` | A check above does not hold; `reasonCode` is `source-not-stranded`, `migration-in-flight`, `rollback-not-proven`, `fleet-state-changed`, `account-not-active`, `source-gateway-retired` or `user-missing`. No record changed. A repeat after a repair answers `source-not-stranded`. |
+| `409` `precondition-failed` | A check above does not hold; `reasonCode` is `source-not-stranded`, `migration-in-flight`, `rollback-not-proven`, `fleet-state-changed`, `account-not-active`, `source-gateway-retired`, `source-gateway-paused` or `user-missing`. No record changed. A repeat after a repair answers `source-not-stranded`. |
 | `502` `source-resume-failed` | The source gateway answered the resume with an error. No record changed. |
 | `503` `source-resume-failed` | The source gateway could not be reached. No record changed. |
 
@@ -1053,22 +1076,56 @@ key.
 
 The fleet controller also makes this repair itself. Once a minute its stuck
 operation reaper starts a pass over the failed moves whose rollback reached
-the source ingress. The pass applies the same checks and journals each repair
-as an audit of its own under the actor `fleet-controller`. It runs beside the
-reaper and does not hold it. One pass runs at a time and starts at most five
-resumes, the moves that have waited longest first, so a gateway that does not
-answer costs a pass at most five resume timeouts.
+the source ingress, leaving out any move it re-armed in that tick. The pass
+applies the same checks and journals each repair as an audit of its own under
+the actor `fleet-controller`. It runs beside the reaper and does not hold it.
 
+- One pass runs at a time and starts at most five repairs, the moves that have
+  waited longest first. Each repair can hold for a 60 second resume and a 60
+  second schedule restore, so a pass ends within about ten minutes. A user on
+  a healthy gateway who is listed behind n untried users on a gateway that
+  does not answer waits ceil(n / 5) passes.
+- When a tick finds a pass that has run for 15 minutes, it logs an error, and
+  again every further 15 minutes. It never starts a second pass.
 - After a failed resume it waits one minute, then twice as long each time up
   to 30 minutes, and stops after 12 attempts for that operation until the
   fleet controller restarts. It logs every failed attempt.
 - A refusal that can pass later (`migration-in-flight`, `fleet-state-changed`,
-  `account-not-active`) is checked again on the same schedule, without a limit
-  and without calling the gateway. It is logged once when the wait starts and
-  once when it ends.
+  `account-not-active`, `source-gateway-paused`) is checked again on the same
+  schedule, without a limit and without calling the gateway. It is logged once
+  when the wait starts and once when it ends.
 - Any other refusal is logged once and not checked again until the operation
   changes.
+- A move that leaves the failed list is forgotten; if it fails again it
+  starts a new count.
 
 The pass makes no placement decision and does not take the placement owner
 fence: it only completes the rollback the failed move began. This route stays
 available throughout.
+
+Known limits:
+
+- A move that failed at `final-sync-state` or later is not repaired, by this
+  route or by the pass.
+- For a move whose source is not a shared gateway, a failed rollback can be
+  retried, so a later attempt may already have handed the agent stores back
+  after an earlier attempt left them with the target. The attempt history
+  rule still refuses such a move, because the history does not show the
+  recovery. That user has no repair verb; the remaining operator action is to
+  suspend the account.
+- After `schedulesRestored` `false` or `"unknown"`, a repeat of this route
+  answers `source-not-stranded`, and nothing in the platform restores the
+  schedules later. No Admin API route reads or restores a schedule transfer.
+  For `false`, the transfer stays in platform state under the user with the
+  migration id `mig-<failedMoveId>`; it holds each schedule's job definition
+  and agent, and its `restoreFailures`. Restoring by hand means reading that
+  record and creating those jobs again in the agent's scheduler on the source
+  gateway. For `"unknown"` there is no record; a schedule the snapshot
+  disabled is still on the source gateway and is enabled again by hand in the
+  agent's scheduler.
+- After the repair of an activation move, the failed operation still counts
+  as recovering its source, and isolated gateway verbs for its target keep
+  answering `source-recovery-pending`. That clears when the fleet controller
+  re-arms the operation as a source-only recovery and it completes, which the
+  repaired state still allows, or when the failed operation leaves the journal
+  30 days after it failed.

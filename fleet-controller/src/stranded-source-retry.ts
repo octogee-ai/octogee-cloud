@@ -13,11 +13,13 @@ export const STRANDED_SOURCE_RESTORE_ATTEMPTS = 12;
 export const STRANDED_SOURCE_RESUMES_PER_PASS = 5;
 const FIRST_BACKOFF_MS = 60_000;
 const LONGEST_BACKOFF_MS = 30 * 60_000;
+const HUNG_PASS_REPORT_MS = 15 * 60_000;
 const ACTOR = "fleet-controller";
 const REFUSALS_THAT_CAN_PASS_LATER: ReadonlySet<PlacementRefusalReason> = new Set([
   "fleet-state-changed",
   "migration-in-flight",
   "account-not-active",
+  "source-gateway-paused",
 ]);
 
 export interface StrandedSourceRetryDeps extends StrandedSourceGatewayCalls {
@@ -193,9 +195,25 @@ export function createStrandedSourceRetry(deps: StrandedSourceRetryDeps): Strand
   };
 
   let running: Promise<void> | null = null;
+  let passStartedAt = 0;
+  let hungReportedAt = 0;
+  const reportHungPass = (): void => {
+    const now = deps.now();
+    if (now - Math.max(passStartedAt, hungReportedAt) < HUNG_PASS_REPORT_MS) return;
+    hungReportedAt = now;
+    deps.log(
+      `[stranded-source] ❌ the pass over failed moves has run for ${Math.round((now - passStartedAt) / 60_000)} minutes without ending; ` +
+      `no other pass starts until it does`,
+    );
+  };
   return {
     start: (failed) => {
-      if (running !== null) return;
+      if (running !== null) {
+        reportHungPass();
+        return;
+      }
+      passStartedAt = deps.now();
+      hungReportedAt = 0;
       running = pass(failed)
         .catch((error: unknown) => deps.log(`[stranded-source] ❌ the pass over failed moves stopped: ${errorMessage(error)}`))
         .finally(() => { running = null; });

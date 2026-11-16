@@ -10,7 +10,8 @@ export interface StrandedSource {
     operationId: string;
     targetGatewayId: string;
 }
-export type SchedulesRestored = boolean | "none";
+export type ScheduleTransferRestored = boolean | "none";
+export type SchedulesRestored = ScheduleTransferRestored | "unknown";
 export interface StrandedSourceRestored {
     uid: string;
     slug: string;
@@ -31,7 +32,7 @@ export type RestoreSourceSchedules = (input: {
     operationId: string;
     gatewayId: string;
     slug: string;
-}) => Promise<SchedulesRestored>;
+}) => Promise<ScheduleTransferRestored>;
 export interface StrandedSourceGatewayCalls {
     resumeSourceIngress: ResumeSourceIngress;
     restoreSourceSchedules: RestoreSourceSchedules;
@@ -49,7 +50,7 @@ export declare class StrandedSourceResumeFailed extends Error {
 }
 export declare function readStrandedSource(store: PlatformStateStore, uid: string): Promise<StrandedSource>;
 export declare function restoreStrandedSourceServing(deps: StrandedSourceRestoreDeps, expected: StrandedSource): Promise<StrandedSourceRestored>;
-export declare function strandedSourceRestoreOutcome(restored: Pick<StrandedSourceRestored, "slug" | "gatewayId" | "schedulesRestored">): NormalFleetMutationResult;
+export declare function strandedSourceRestoreOutcome(restored: Pick<StrandedSourceRestored, "slug" | "gatewayId" | "schedulesRestored" | "sourceDraining">): NormalFleetMutationResult;
 export interface StrandedSourceGatewayDeps {
     store: PlatformStateStore;
     clientFor: (gatewayId: string) => Promise<MigrationClient>;

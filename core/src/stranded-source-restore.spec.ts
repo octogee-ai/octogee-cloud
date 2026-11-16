@@ -12,7 +12,7 @@ import {
   restoreStrandedSourceServing,
   strandedSourceGatewayCalls,
   strandedSourceRestoreOutcome,
-  type SchedulesRestored,
+  type ScheduleTransferRestored,
 } from "./stranded-source-restore.js";
 
 type Row = Record<string, unknown>;
@@ -78,7 +78,7 @@ function openclaw(records: Records): Row {
 function harness(
   records: Records,
   resume: () => Promise<void> = async () => undefined,
-  schedules: () => Promise<SchedulesRestored> = async () => "none",
+  schedules: () => Promise<ScheduleTransferRestored> = async () => "none",
 ) {
   const resumeSourceIngress = vi.fn(resume);
   const restoreSourceSchedules = vi.fn(schedules);
@@ -144,14 +144,17 @@ describe("a source left closed by a move whose rollback could not resume its ing
   });
 
   it.each<[string, Row]>([
-    ["only its last attempt is recorded", { attempts: 1, attemptHistory: [{ attempt: 1, steps: steps(INCIDENT) }] }],
+    ["only its last attempt is recorded", { attempts: 1, attemptHistory: [{ attempt: 1, startedAt: 1_000, steps: steps(INCIDENT) }] }],
     ["an earlier attempt failed before it held the source", { attempts: 2, attemptHistory: [
-      { attempt: 1, steps: steps([["keys-sync-state", "failed"], ["rollback:unmount-target", "done"]]) },
-      { attempt: 2, steps: steps(INCIDENT) },
+      { attempt: 1, startedAt: 400, steps: steps([["keys-sync-state", "failed"], ["rollback:unmount-target", "done"]]) },
+      { attempt: 2, startedAt: 1_000, steps: steps(INCIDENT) },
     ] }],
     ["an earlier attempt reached the final copy and finished its rollback", { attempts: 2, attemptHistory: [
-      { attempt: 1, steps: steps([...QUIESCED, ["flush-source", "done"], ["final-sync-state", "failed"], ["rollback:unmount-target", "done"], ["rollback:resume-ingress", "done"]]) },
-      { attempt: 2, steps: steps(INCIDENT) },
+      { attempt: 1, startedAt: 400, steps: steps([...QUIESCED, ["flush-source", "done"], ["final-sync-state", "failed"], ["rollback:unmount-target", "done"], ["rollback:resume-ingress", "done"]]) },
+      { attempt: 2, startedAt: 1_000, steps: steps(INCIDENT) },
+    ] }],
+    ["its last attempt was reaped unrecorded after an attempt that finished its rollback", { attempts: 1, error: "reaped: controller restarted mid-op", attemptHistory: [
+      { attempt: 1, startedAt: 400, steps: steps([...QUIESCED, ["flush-source", "done"], ["final-sync-state", "failed"], ["rollback:unmount-target", "done"], ["rollback:resume-ingress", "done"]]) },
     ] }],
   ])("also restores the source of a move when %s", async (_name, attempts) => {
     const records = stranded();
@@ -248,18 +251,22 @@ describe("a precondition that does not hold", () => {
     ["the target check failed", (r) => patch(r, OPERATION, { steps: steps([...QUIESCED, ["flush-source", "done"], ["final-sync-state", "done"],
       ["verify-target", "failed"], ...ROLLBACK_LEFT_SOURCE_CLOSED]) }), "rollback-not-proven", "recorded steps"],
     ["an earlier attempt left a rollback step failed", (r) => patch(r, OPERATION, { attempts: 2, attemptHistory: [
-      { attempt: 1, steps: steps([...QUIESCED, ["flush-source", "failed"], ["rollback:unmount-target", "done"], ["rollback:resume-ingress", "failed"]]) },
-      { attempt: 2, steps: steps(INCIDENT) },
+      { attempt: 1, startedAt: 400, steps: steps([...QUIESCED, ["flush-source", "failed"], ["rollback:unmount-target", "done"], ["rollback:resume-ingress", "failed"]]) },
+      { attempt: 2, startedAt: 1_000, steps: steps(INCIDENT) },
     ] }), "rollback-not-proven", "an earlier attempt"],
+    ["its last attempt was reaped unrecorded after an attempt that reached the final copy and did not resume the source", (r) => patch(r, OPERATION, {
+      attempts: 1, error: "reaped: controller restarted mid-op", attemptHistory: [
+        { attempt: 1, startedAt: 400, steps: steps([...QUIESCED, ["flush-source", "done"], ["final-sync-state", "failed"], ["rollback:unmount-target", "done"], ["rollback:resume-ingress", "failed"]]) },
+      ] }), "rollback-not-proven", "an earlier attempt"],
     ["an earlier attempt reached the final copy and never resumed the source", (r) => patch(r, OPERATION, { attempts: 2, attemptHistory: [
-      { attempt: 1, steps: steps([...QUIESCED, ["flush-source", "done"], ["final-sync-state", "running"]]) },
-      { attempt: 2, steps: steps(INCIDENT) },
+      { attempt: 1, startedAt: 400, steps: steps([...QUIESCED, ["flush-source", "done"], ["final-sync-state", "running"]]) },
+      { attempt: 2, startedAt: 1_000, steps: steps(INCIDENT) },
     ] }), "rollback-not-proven", "an earlier attempt"],
     ["an earlier attempt is recorded without its steps", (r) => patch(r, OPERATION, { attempts: 2, attemptHistory: [
-      { attempt: 1 }, { attempt: 2, steps: steps(INCIDENT) },
+      { attempt: 1, startedAt: 400 }, { attempt: 2, startedAt: 1_000, steps: steps(INCIDENT) },
     ] }), "rollback-not-proven", "an earlier attempt"],
     ["the last recorded attempt is not the one that failed and its rollback is unfinished", (r) => patch(r, OPERATION, { attempts: 3, attemptHistory: [
-      { attempt: 2, steps: steps(INCIDENT) },
+      { attempt: 2, startedAt: 1_000, steps: steps(INCIDENT) },
     ] }), "rollback-not-proven", "an earlier attempt"],
     ["the rollback never reached the ingress", (r) => patch(r, OPERATION, { steps: steps([...QUIESCED, ["flush-source", "failed"], ["rollback:unmount-target", "done"]]) }),
       "rollback-not-proven", "recorded steps"],
@@ -276,6 +283,7 @@ describe("a precondition that does not hold", () => {
     ["the steps are not recorded", (r) => patch(r, OPERATION, { steps: [] }), "rollback-not-proven", "recorded steps"],
     ["the source gateway has no root", (r) => { r.delete(ROOT); }, "source-gateway-retired", `gateway ${SOURCE} has no root`],
     ["the source gateway is retired", (r) => patch(r, ROOT, { desiredStatus: "retired" }), "source-gateway-retired", `gateway ${SOURCE} is retired`],
+    ["the source gateway is paused", (r) => patch(r, ROOT, { desiredStatus: "paused" }), "source-gateway-paused", `gateway ${SOURCE} is paused`],
     ["the account is suspended", (r) => patch(r, USER, { accountLifecycle: { status: "suspended", suspendedAt: 1_700 } }), "account-not-active", "account is suspended"],
     ["the account is scheduled for deletion", (r) => patch(r, USER, { accountLifecycle: { status: "deletion_scheduled", deletionId: "del-1", eraseAfter: 9_000 } }),
       "account-not-active", "account is deletion_scheduled"],
@@ -375,14 +383,46 @@ describe("the schedules the failed move took off the source", () => {
     expect(strandedSourceRestoreOutcome(restored)).toEqual({ outcome: "completed" });
   });
 
-  it("are reported as none when the move snapshotted nothing", async () => {
-    const restored = await harness(stranded()).restore();
+  it("are reported as none when the move got past its quiesce and stored no transfer", async () => {
+    const h = harness(stranded());
+
+    const restored = await h.restore();
 
     expect(restored.schedulesRestored).toBe("none");
     expect(strandedSourceRestoreOutcome(restored)).toEqual({ outcome: "completed" });
+    expect(h.log).not.toHaveBeenCalledWith(expect.stringContaining("schedule"));
   });
 
-  it.each<[string, () => Promise<SchedulesRestored>, string]>([
+  const QUIESCE_FAILED: Step[] = [...QUIESCED.slice(0, 3), ["quiesce-source", "failed"], ...ROLLBACK_LEFT_SOURCE_CLOSED];
+
+  it("are reported as unknown when the quiesce itself failed and stored no transfer: its snapshot may have disabled them", async () => {
+    const records = stranded();
+    patch(records, OPERATION, { steps: steps(QUIESCE_FAILED) });
+    const h = harness(records);
+
+    const restored = await h.restore();
+
+    expect(restored).toMatchObject({ state: "serving", schedulesRestored: "unknown" });
+    expect(h.log).toHaveBeenCalledWith(
+      `[stranded-source] ⚠ operation ${OP} failed at quiesce-source and stored no schedule transfer for uid=${UID} slug=${SLUG}; ` +
+      `its schedule snapshot may have left schedules disabled on ${SOURCE}, and nothing records which`,
+    );
+    expect(strandedSourceRestoreOutcome(restored)).toEqual({
+      outcome: "partial",
+      partialOutcome: { summary: `${SLUG} serves again on ${SOURCE}; its schedules may be disabled there`, details: { schedulesRestored: "unknown", sourceDraining: false } },
+    });
+  });
+
+  it("are reported as restored when the failed quiesce did store its transfer", async () => {
+    const records = stranded();
+    patch(records, OPERATION, { steps: steps(QUIESCE_FAILED) });
+
+    const restored = await harness(records, async () => undefined, async () => true).restore();
+
+    expect(restored.schedulesRestored).toBe(true);
+  });
+
+  it.each<[string, () => Promise<ScheduleTransferRestored>, string]>([
     ["the gateway does not restore them", async () => false, "the gateway did not restore every schedule"],
     ["the restore throws", async () => { throw new Error("schedule transfer store unavailable"); }, "schedule transfer store unavailable"],
   ])("do not hold the repair back when %s: the user serves, and the loss is logged and reported", async (_name, schedules, reason) => {
@@ -399,7 +439,7 @@ describe("the schedules the failed move took off the source", () => {
     );
     expect(strandedSourceRestoreOutcome(restored)).toEqual({
       outcome: "partial",
-      partialOutcome: { summary: `${SLUG} serves again on ${SOURCE}; its schedules were not restored`, details: { schedulesRestored: false } },
+      partialOutcome: { summary: `${SLUG} serves again on ${SOURCE}; its schedules were not restored`, details: { schedulesRestored: false, sourceDraining: false } },
     });
   });
 
@@ -495,6 +535,13 @@ describe("a source restored on a gateway that is draining", () => {
     const restored = await h.restore();
 
     expect(restored).toMatchObject({ state: "serving", sourceDraining: true });
+    expect(strandedSourceRestoreOutcome(restored)).toEqual({
+      outcome: "partial",
+      partialOutcome: {
+        summary: `${SLUG} serves again on ${SOURCE}; the gateway is draining and the user needs an operator move`,
+        details: { schedulesRestored: "none", sourceDraining: true },
+      },
+    });
     expect(records.get(ASSIGNMENT)).toMatchObject({ state: "serving" });
     expect(h.log).toHaveBeenCalledWith(
       `[stranded-source] ⚠ uid=${UID} slug=${SLUG} serves again on ${SOURCE}, which is draining; ` +

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { MigrationRpcError } from "@octogee/core/fleet-migration-client";
 import type { OperationRecord, Stored } from "@octogee/core/platform-state";
-import type { SchedulesRestored } from "@octogee/core/stranded-source-restore";
+import type { ScheduleTransferRestored } from "@octogee/core/stranded-source-restore";
 import { runStuckOpReaperTick } from "./stuck-op-reaper.js";
 import {
   STRANDED_SOURCE_RESTORE_ATTEMPTS,
@@ -76,8 +76,10 @@ function patchOpenclaw(records: Records, fields: Row): void {
 
 function harness(records: Records, gatewayDown = true) {
   const clock = { now: 10 * MINUTE };
-  const gateway: { down: boolean; hold: Promise<void> | null; schedules: SchedulesRestored; duringResume: (() => void) | null } =
-    { down: gatewayDown, hold: null, schedules: "none", duringResume: null };
+  const gateway: {
+    down: boolean; hold: Promise<void> | null; schedules: ScheduleTransferRestored; duringResume: (() => void) | null;
+    beforeTransaction: ((label: string) => void) | null;
+  } = { down: gatewayDown, hold: null, schedules: "none", duringResume: null, beforeTransaction: null };
   const logs: string[] = [];
   const transactions: string[] = [];
   const resumeSourceIngress = vi.fn(async (_input: { operationId: string; gatewayId: string; slug: string }) => {
@@ -86,7 +88,10 @@ function harness(records: Records, gatewayDown = true) {
     if (gateway.down) throw new MigrationRpcError("/resume/shared-a failed: 500 resume failed", { status: 500 });
   });
   const restoreSourceSchedules = vi.fn(async () => gateway.schedules);
-  const store = createDocumentFixtureStore(records, { serializeTransactions: true, beforeTransaction: (label) => { transactions.push(label); } });
+  const store = createDocumentFixtureStore(records, { serializeTransactions: true, beforeTransaction: (label) => {
+    transactions.push(label);
+    gateway.beforeTransaction?.(label);
+  } });
   const retry = createStrandedSourceRetry({ store, resumeSourceIngress, restoreSourceSchedules, log: (line) => logs.push(line), now: () => clock.now });
   const tick = () => runStuckOpReaperTick({ store, log: (line) => logs.push(line), now: () => clock.now, stalenessMs: 15 * MINUTE, restoreStrandedSources: retry.start });
   const pass = async () => {
@@ -170,6 +175,9 @@ describe("the pass over failed operations, for a move that left its source close
     ["a restore of the user is unresolved", `user ${UID} restore outcome is unresolved`,
       (r) => patchOpenclaw(r, { restoreFence: { operationId: "restore-1" } }),
       (r) => patchOpenclaw(r, { restoreFence: undefined })],
+    ["the source gateway is paused", `gateway ${SOURCE} is paused; its ingress cannot be resumed until it runs again`,
+      (r) => patch(r, ROOT, { desiredStatus: "paused" }),
+      (r) => patch(r, ROOT, { desiredStatus: "running" })],
     ["the account is suspended", `user ${UID} account is suspended; it is not served`,
       (r) => patch(r, USER, { accountLifecycle: { status: "suspended", suspendedAt: 1_700 } }),
       (r) => patch(r, USER, { accountLifecycle: { status: "active" } })],
@@ -202,6 +210,61 @@ describe("the pass over failed operations, for a move that left its source close
     expect(h.resumeSourceIngress).toHaveBeenCalledTimes(1);
     expect(records.get(ASSIGNMENT)).toMatchObject({ state: "serving" });
     expect(h.retryLogs()).toEqual([waiting, `[stranded-source] ${OP} no longer waits: its checks pass, restoring ${SLUG} on ${SOURCE}`]);
+  });
+
+  it("keeps checking a wait past the attempt limit, which counts failed resumes only", async () => {
+    const records = stranded();
+    patchOpenclaw(records, { restoreFence: { operationId: "restore-1" } });
+    const h = harness(records, false);
+
+    for (let minute = 0; minute <= 400; minute += 1) {
+      h.clock.now = 10 * MINUTE + minute * MINUTE;
+      await h.pass();
+    }
+
+    expect(h.checks()).toBeGreaterThan(STRANDED_SOURCE_RESTORE_ATTEMPTS);
+    expect(h.resumeSourceIngress).not.toHaveBeenCalled();
+
+    patchOpenclaw(records, { restoreFence: undefined });
+    h.clock.now += 31 * MINUTE;
+    await h.pass();
+
+    expect(h.resumeSourceIngress).toHaveBeenCalledTimes(1);
+    expect(records.get(ASSIGNMENT)).toMatchObject({ state: "serving" });
+  });
+
+  it("acts only on the source it journaled: a source that changed after the journal entry is not resumed", async () => {
+    const records = stranded();
+    const h = harness(records, false);
+    h.gateway.beforeTransaction = (label) => {
+      if (label === "operation-audit.claim") patch(records, ASSIGNMENT, { updatedAt: 1_600 });
+    };
+
+    await h.pass();
+
+    expect(h.resumeSourceIngress).not.toHaveBeenCalled();
+    expect(records.get(ASSIGNMENT)).toMatchObject({ state: "quiescing" });
+    expect(audits(records).map((audit) => [audit.status, audit.error])).toEqual([
+      ["failed", `the quiescing assignment of ${UID} is no longer the one on ${SOURCE} left by operation ${OP}`],
+    ]);
+  });
+
+  it("forgets a move that leaves the failed list, so a later failure of it starts a new count at once", async () => {
+    const records = stranded();
+    const h = harness(records);
+    await h.pass();
+    expect(h.retryLogs()).toEqual([expect.stringContaining("(attempt 1/12, operation op-move-1)")]);
+
+    patch(records, OPERATION, { status: "pending" });
+    await h.pass();
+    patch(records, OPERATION, { status: "failed" });
+    await h.pass();
+
+    expect(h.resumeSourceIngress).toHaveBeenCalledTimes(2);
+    expect(h.retryLogs()).toEqual([
+      expect.stringContaining("(attempt 1/12, operation op-move-1)"),
+      expect.stringContaining("(attempt 1/12, operation op-move-1)"),
+    ]);
   });
 
   it("says once when a wait ends in a refusal that cannot pass later", async () => {
@@ -319,7 +382,7 @@ describe("the pass over failed operations, for a move that left its source close
     expect(h.restoreSourceSchedules.mock.calls).toEqual([[{ uid: UID, operationId: OP, gatewayId: SOURCE, slug: SLUG }]]);
     expect(records.get(ASSIGNMENT)).toMatchObject({ state: "serving" });
     expect(audits(records).map((audit) => [audit.status, audit.outcome, audit.partialOutcome])).toEqual([
-      ["completed", "partial", { summary: `${SLUG} serves again on ${SOURCE}; its schedules were not restored`, details: { schedulesRestored: false } }],
+      ["completed", "partial", { summary: `${SLUG} serves again on ${SOURCE}; its schedules were not restored`, details: { schedulesRestored: false, sourceDraining: false } }],
     ]);
     expect(h.logs).toContainEqual(expect.stringContaining("❌ the schedules operation op-move-1 took off shared-a were not restored"));
   });
@@ -426,6 +489,48 @@ describe("the pass over failed operations and the reaper tick that starts it", (
 
     expect(records.get(ASSIGNMENT)).toMatchObject({ state: "serving" });
     expect(h.retryLogs()).toEqual([expect.stringMatching(/^\[stranded-source\] ❌ op-unreadable could not be checked for a stranded source: /)]);
+  });
+
+  it("logs a list it cannot walk and is ready for the next one", async () => {
+    const records = stranded();
+    const h = harness(records, false);
+
+    h.retry.start([null as unknown as Stored<OperationRecord>]);
+    await h.retry.idle();
+
+    expect(h.logs).toEqual([expect.stringMatching(/^\[stranded-source\] ❌ the pass over failed moves stopped: /)]);
+
+    await h.pass();
+
+    expect(records.get(ASSIGNMENT)).toMatchObject({ state: "serving" });
+  });
+
+  it("says every 15 minutes that a pass has not ended, and starts no other", async () => {
+    const records = stranded();
+    const h = harness(records, false);
+    let release = () => {};
+    h.gateway.hold = new Promise<void>((resolve) => { release = resolve; });
+    const start = h.clock.now;
+    const hung = (minutes: number) =>
+      `[stranded-source] ❌ the pass over failed moves has run for ${minutes} minutes without ending; no other pass starts until it does`;
+
+    await h.tick();
+    await vi.waitFor(() => expect(h.resumeSourceIngress).toHaveBeenCalledTimes(1));
+    const logged: string[][] = [];
+    for (const minute of [14, 15, 16, 29, 30, 31]) {
+      h.clock.now = start + minute * MINUTE;
+      await h.tick();
+      logged.push([...h.logs]);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(logged).toEqual([[], [hung(15)], [hung(15)], [hung(15)], [hung(15), hung(30)], [hung(15), hung(30)]]);
+    expect(h.resumeSourceIngress).toHaveBeenCalledTimes(1);
+
+    release();
+    await h.retry.idle();
+
+    expect(records.get(ASSIGNMENT)).toMatchObject({ state: "serving" });
   });
 
   it("names a source on a retired gateway once and never calls the gateway", async () => {

@@ -13,6 +13,7 @@ describe("placement refusal reasons", () => {
       "source-recovery-pending", "user-missing", "user-slug-missing", "lease-missing", "gateway-not-owned",
       "retirement-blocked", "isolated-fence", "retirement-conflict", "sizing-key-changed", "initial-release-conflict",
       "source-not-stranded", "migration-in-flight", "rollback-not-proven", "account-not-active", "source-gateway-retired",
+      "source-gateway-paused",
     ]);
   });
 

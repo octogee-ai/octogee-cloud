@@ -334,10 +334,12 @@ export async function recoverFailedLegacyMigrations(deps: {
   store: PlatformStateStore; log: (message: string) => void; now: () => number; restoreStrandedSources?: StartStrandedSourceRetry;
 }): Promise<void> {
   const failed = await deps.store.journal.operations.listByStatus(["failed"]);
+  const rearmedIds = new Set<string>();
   for (const operation of failed) {
     try {
       const rearmed = await rearmOwnedLegacyMigration({ store: deps.store, operationId: operation.id, now: deps.now(), admitted: failedRecoveryAdmitted });
       if (rearmed) {
+        rearmedIds.add(operation.id);
         deps.log(`[migration-recovery] queued native source recovery for ${operation.id}; assignment and marker remain held`);
         continue;
       }
@@ -350,5 +352,5 @@ export async function recoverFailedLegacyMigrations(deps: {
       deps.log(`[migration-recovery] ${operation.id} recovery admission failed: ${String(error)}`);
     }
   }
-  deps.restoreStrandedSources?.(failed);
+  deps.restoreStrandedSources?.(failed.filter((operation) => !rearmedIds.has(operation.id)));
 }

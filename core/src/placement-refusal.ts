@@ -27,6 +27,7 @@ export const PLACEMENT_REFUSAL_REASONS = [
   "rollback-not-proven",
   "account-not-active",
   "source-gateway-retired",
+  "source-gateway-paused",
 ] as const;
 
 export type PlacementRefusalReason = (typeof PLACEMENT_REFUSAL_REASONS)[number];
