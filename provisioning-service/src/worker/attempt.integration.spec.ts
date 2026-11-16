@@ -231,8 +231,41 @@ describe.skipIf(!dsn)("a provisioning attempt", { timeout: 30_000 }, () => {
     await untilSettled(harness);
 
     expect(harness.git.keys.get("lin")).toEqual([{ publicKey: KEY_A, holder: "gateway-a/pod-a" }]);
-    expect(await keyCondition("u1", "gateway-a", KEY_A)).toMatchObject({ status: "True", reason: "Converged", observedGeneration: 1 });
     expect((await provisioned("u1")).status.work.state).toBe("idle");
+    expect(await keyCondition("u1", "gateway-a", KEY_A)).toMatchObject({ status: "True", reason: "Converged", observedGeneration: 1 });
+  });
+
+  it("keeps a moved key with the previous build's pod when the source row reconciles, and the source's release leaves only that key", async () => {
+    await harness.request("PUT", "/v1/users/u1/provisioning", { body: { spec: spec("lin") } });
+    await harness.request("PUT", "/v1/users/u1/git-keys/gateway-a%2Fpod-a", { token: TOKENS.platformApi, body: { spec: { publicKey: KEY_A } } });
+    await untilSettled(harness);
+    expect(harness.git.keys.get("lin")).toEqual([{ publicKey: KEY_A, holder: "gateway-a/pod-a" }]);
+    harness.git.keys.set("lin", [{ publicKey: KEY_A, holder: "gateway-b/pod-previous" }]);
+
+    await harness.request("PUT", "/v1/users/u1/git-keys/gateway-c%2Fpod-c", { token: TOKENS.platformApi, body: { spec: { publicKey: KEY_B } } });
+    await untilSettled(harness);
+
+    expect(harness.git.keys.get("lin")).toEqual([{ publicKey: KEY_A, holder: "gateway-b/pod-previous" }, { publicKey: KEY_B, holder: "gateway-c/pod-c" }]);
+    const { rows } = await harness.service.db.pool.query(`SELECT conditions FROM ${harness.service.db.table("git_keys")} WHERE uid = 'u1' AND holder = 'gateway-a/pod-a'`);
+    expect(rows[0].conditions).toContainEqual(expect.objectContaining({ type: "Registered", status: "False", reason: "GitKeyHeldElsewhere" }));
+
+    await harness.request("DELETE", "/v1/users/u1/git-keys/gateway-a%2Fpod-a", { token: TOKENS.platformApi });
+    await untilSettled(harness);
+
+    expect(harness.git.keys.get("lin")).toEqual([{ publicKey: KEY_A, holder: "gateway-b/pod-previous" }, { publicKey: KEY_B, holder: "gateway-c/pod-c" }]);
+  });
+
+  it("takes the key from the previous build's pod when this build's pod puts it, leaving one key under the new holder", async () => {
+    await harness.request("PUT", "/v1/users/u1/provisioning", { body: { spec: spec("lin") } });
+    await harness.request("PUT", "/v1/users/u1/git-keys/gateway-a%2Fpod-a", { token: TOKENS.platformApi, body: { spec: { publicKey: KEY_A } } });
+    await untilSettled(harness);
+    harness.git.keys.set("lin", [{ publicKey: KEY_A, holder: "gateway-b/pod-previous" }]);
+
+    await harness.request("PUT", "/v1/users/u1/git-keys/gateway-a%2Fpod-a", { token: TOKENS.platformApi, body: { spec: { publicKey: KEY_A } } });
+    await untilSettled(harness);
+
+    expect(harness.git.keys.get("lin")).toEqual([{ publicKey: KEY_A, holder: "gateway-a/pod-a" }]);
+    expect(await keyCondition("u1", "gateway-a", KEY_A)).toMatchObject({ status: "True", reason: "Converged" });
   });
 
   it("adds a different public key beside an unmanaged one and leaves that one alone", async () => {

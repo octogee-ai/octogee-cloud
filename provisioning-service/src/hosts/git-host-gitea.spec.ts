@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { giteaNaming } from "@octogee/core/git-host";
-import { gatewayKeyOwnerId, gatewayKeyTitle, giteaUsername, systemConfigRepoName, workspaceRepoName } from "@octogee/core/gitea-naming";
+import { gatewayKeyOwnerId, gatewayKeyTitle, giteaUsername, publicKeyIdentity, systemConfigRepoName, workspaceRepoName } from "@octogee/core/gitea-naming";
 import { placeholderEmail } from "@octogee/core/placeholder-email";
 import { PROJECT_AGENT_REPO } from "@octogee/shared/types/project";
 
@@ -150,6 +150,22 @@ describe("Gitea git host adapter", () => {
     await expect(host.listKeys({ owner: "lin", holders: ["gw-1", "gw-2"] }, signal())).resolves.toEqual([{ publicKey: KEY, holder: "gw-2" }]);
     await host.releaseKey({ owner: "lin", publicKey: KEY, holder: "gw-2" }, signal());
     expect(api.keys.get(giteaUsername("lin"))).toEqual([]);
+  });
+
+  it("releases only the key under its own holder's title and never another title holding the same key material", async () => {
+    const { api, host } = setup();
+    await host.ensureOwner({ slug: "lin" }, signal());
+    const username = giteaUsername("lin");
+    api.addKey(username, gatewayKeyTitle("gw-1/pod-target"), KEY);
+    api.addKey(username, "octogee-gateway", KEY);
+    api.addKey(username, gatewayKeyTitle(publicKeyIdentity(KEY)), KEY);
+    api.addKey(username, gatewayKeyTitle("gw-1/pod-source"), KEY);
+
+    await host.releaseKey({ owner: "lin", publicKey: KEY, holder: "gw-1/pod-source" }, signal());
+
+    expect(api.keys.get(username)?.map((key) => key.title)).toEqual([
+      gatewayKeyTitle("gw-1/pod-target"), "octogee-gateway", gatewayKeyTitle(publicKeyIdentity(KEY)),
+    ]);
   });
 
   it("returns an empty key list for an owner whose account does not exist yet", async () => {

@@ -74,12 +74,22 @@ platform API registers and releases each pod's key directly on the git host,
 under a title per pod, after the service reports the user's git side ready.
 
 Keys registered by the earlier path carry another title. When a GitKey is put
-and the user's own git account already holds the identical public key under a
-managed title the service does not know, the service adopts it: it removes that
-key and registers the same key under its own title for the gateway, restoring
-the removed key if the registration fails. A different public key is added
-beside it, and that key is left alone. Keys are compared by type and key
-material, never by comment.
+and the user's own git account already holds the identical public key under
+another managed title, whether the earlier path's or another holder's, the
+service adopts it on the attempt that follows the put: it removes that key and
+registers the same key under its own holder's title, restoring the removed key
+if the registration fails. Adoption happens only for a put. An attempt that
+reconciles a row nobody put since finds its key under another managed title,
+leaves that key alone and reports `Registered=False` with reason
+`GitKeyHeldElsewhere` and the key backoff, so a key a pod on another build
+claimed stays with that pod. Every put, an unchanged one included, makes idle
+work due, so a gateway that mounts again takes its key back. A different public
+key is added beside it, and that key is left alone. Keys are compared by type
+and key material, never by comment.
+
+Releasing a row deletes only a key under that row's own title. It never deletes
+a key by its material alone, so a key another holder or the earlier path holds
+stays registered.
 
 A key another user's account holds, or one on the user's own account under a
 title outside the managed prefix (added by hand), is never adopted. The git
@@ -94,9 +104,7 @@ A key held elsewhere backs off per row: 1 minute, doubling to at most 6 hours,
 shown as `status.nextAttemptAt`. The service owns the retry: the user's work is
 scheduled for that time, and the key is tried again then without any put. Until
 then an unchanged put queues no work and the worker does not try the key; a
-put with a different key resets the backoff and is tried at once. Putting an
-unchanged key whose row is not registered and has no backoff queues idle work,
-so a row an earlier build refused is retried once on the gateway's next put.
+put with a different key resets the backoff and is tried at once.
 
 With `PROVISIONING_HOST_ADAPTERS=fake`, `PROVISIONING_FAKE_GIT_KEYS` seeds the
 fake git host with keys, as JSON mapping each owner to `{ publicKey, holder }`

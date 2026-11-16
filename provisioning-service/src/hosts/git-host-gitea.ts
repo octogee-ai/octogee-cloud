@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 
 import { createGiteaGitHost, giteaNaming, type GiteaGitHost, type GitRepoRole } from "@octogee/core/git-host";
-import { gatewayKeyTitle, giteaUsername, isManagedGatewayKeyTitle } from "@octogee/core/gitea-naming";
+import { gatewayKeyTitle, giteaUsername, isManagedGatewayKeyTitle, publicKeyIdentity } from "@octogee/core/gitea-naming";
 import { placeholderEmail } from "@octogee/core/placeholder-email";
 import type { GitRepositoryOutput } from "@octogee/shared/types/provisioning-service";
 
@@ -142,16 +142,16 @@ export function createGiteaGitHostAdapter(config: GiteaGitHostAdapterConfig): Gi
     return { cloneUrl, sshUrl };
   }
 
-  async function readKeys(owner: string, signal: AbortSignal): Promise<{ key: string; title: string }[]> {
+  async function readKeys(owner: string, signal: AbortSignal): Promise<{ id: unknown; key: string; title: string }[]> {
     const username = encodeURIComponent(giteaUsername(owner));
-    const keys: { key: string; title: string }[] = [];
+    const keys: { id: unknown; key: string; title: string }[] = [];
     for (let page = 1; ; page += 1) {
       const response = await request("list git keys", "GET", `/users/${username}/keys?limit=${KEY_PAGE_SIZE}&page=${page}`, signal);
       if (page === 1 && response.status === 404) return [];
       if (response.status !== 200) throw failure("list git keys", response);
       if (!Array.isArray(response.json)) throw new HostError("transient", "list git keys: git host returned an invalid list");
-      for (const entry of response.json as { key?: unknown; title?: unknown }[]) {
-        if (typeof entry?.key === "string" && typeof entry.title === "string") keys.push({ key: entry.key, title: entry.title });
+      for (const entry of response.json as { id?: unknown; key?: unknown; title?: unknown }[]) {
+        if (typeof entry?.key === "string" && typeof entry.title === "string") keys.push({ id: entry.id, key: entry.key, title: entry.title });
       }
       if (response.json.length < KEY_PAGE_SIZE) return keys;
     }
@@ -199,7 +199,16 @@ export function createGiteaGitHostAdapter(config: GiteaGitHostAdapterConfig): Gi
       }
     },
 
-    releaseKey: ({ owner, publicKey, holder }, signal) =>
-      withCoreHost("release git key", signal, (host) => host.releaseKey(owner, publicKey, holder)),
+    async releaseKey({ owner, publicKey, holder }, signal) {
+      const title = gatewayKeyTitle(holder);
+      const identity = publicKeyIdentity(publicKey);
+      const username = encodeURIComponent(giteaUsername(owner));
+      for (const key of await readKeys(owner, signal)) {
+        if (key.title !== title || publicKeyIdentity(key.key) !== identity) continue;
+        if (typeof key.id !== "number") throw new HostError("transient", "release git key: git host listed the key without its id");
+        const deleted = await request("release git key", "DELETE", `/admin/users/${username}/keys/${key.id}`, signal);
+        if (deleted.status !== 404 && !isSuccess(deleted.status)) throw failure("release git key", deleted);
+      }
+    },
   };
 }
