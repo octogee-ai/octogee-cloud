@@ -362,8 +362,9 @@ async function ensureServiceHeldKey(
     await registerOnGitHostInstead(res, key);
     return;
   }
-  if (serviceHolder !== keyOwner) {
-    logger.info("internal/gitea ensure-user: the gateway's marker names another pod, so this pod's key is registered on the git host", { slug, keyOwner, serviceHolder });
+  if (serviceHolder !== keyOwner || access !== "serving") {
+    logger.info("internal/gitea ensure-user: the key is registered on the git host, since the gateway's marker names another pod or this pod is on standby", { slug, keyOwner, serviceHolder, access });
+    if (!(await awaitServiceGitReady(res, legacyProvisioning, slug))) return;
     await registerOnGitHostInstead(res, key);
     return;
   }

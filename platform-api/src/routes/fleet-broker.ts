@@ -508,9 +508,11 @@ function requireGitKeyHolder(bound: GatewayBinding, res: Response): string | nul
   return holder;
 }
 
+const SNAPSHOT_SERVICE_READ_MS = 3_000;
+
 async function servedThroughService(uid: string, legacyProvisioning: LegacyProvisioning, store: PlatformStateRepositories): Promise<boolean> {
   try {
-    const chat = await legacyProvisioning.chat(uid, routeBudget(), { longPoll: false });
+    const chat = await legacyProvisioning.chat(uid, routeBudget(SNAPSHOT_SERVICE_READ_MS), { longPoll: false });
     if (!chat.ready) return false;
     return (await mirroredState(store, chat.value.resource, chat.value.chat)).state === "mirrored";
   } catch (err) {
@@ -524,9 +526,13 @@ async function snapshotProvisioning(
   bound: GatewayBinding,
   deps: ResolvedFleetBrokerRouteDeps,
 ): Promise<{ gitKeyHolder?: string; provisionedBy?: "service" }> {
-  const holder = gitKeyHolder(bound);
   const { legacyProvisioning } = deps;
-  if (holder === null || legacyProvisioning === null) return {};
+  if (legacyProvisioning === null) return {};
+  const holder = gitKeyHolder(bound);
+  if (holder === null) {
+    logger.warn("user-snapshot: the caller's token binds no pod, so the gateway takes its own path for this mount", { uid, gatewayId: bound.gatewayId });
+    return {};
+  }
   const service = await servedThroughService(uid, legacyProvisioning, deps.store);
   return service ? { gitKeyHolder: holder, provisionedBy: "service" } : { gitKeyHolder: holder };
 }

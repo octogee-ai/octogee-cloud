@@ -135,6 +135,8 @@ describe("POST /internal/fleet/user-snapshot", () => {
 
     expect(response.body.user).toMatchObject({ provisionedBy: "service", gitKeyHolder: HOLDER });
     expect(provisioning?.chat).toHaveBeenCalledWith("uid-alice", expect.objectContaining({ signal: expect.any(AbortSignal) }), { longPoll: false });
+    const budget = vi.mocked(provisioning!.chat).mock.calls[0][1];
+    expect(budget.remainingMs()).toBeLessThanOrEqual(3_000);
   });
 
   it("leaves a user whose mirror is not complete on the gateway's own path", async () => {
@@ -170,7 +172,8 @@ describe("POST /internal/fleet/user-snapshot", () => {
     expect(logged).toHaveBeenCalledWith(expect.stringContaining("user-snapshot"), expect.objectContaining({ err: failure, uid: "uid-alice" }));
   });
 
-  it("names no holder and no service path for a caller whose token binds no pod", async () => {
+  it("names no holder and no service path for a caller whose token binds no pod, and logs it", async () => {
+    const warned = vi.spyOn(logger, "warn").mockImplementation(() => {});
     const { app, store, provisioning } = fixture({ podName: null });
     await mirrorFully(store);
 
@@ -179,6 +182,7 @@ describe("POST /internal/fleet/user-snapshot", () => {
     expect(response.body.user).not.toHaveProperty("provisionedBy");
     expect(response.body.user).not.toHaveProperty("gitKeyHolder");
     expect(provisioning?.chat).not.toHaveBeenCalled();
+    expect(warned).toHaveBeenCalledWith(expect.stringContaining("binds no pod"), { uid: "uid-alice", gatewayId: GATEWAY_ID });
   });
 
   it("leaves the gateway on its own provisioning path without the service", async () => {

@@ -850,6 +850,30 @@ describe("internal gitea-admin route with the provisioning service", () => {
       expect(logged).toHaveBeenCalledWith(expect.stringContaining("binds no pod"), expect.objectContaining({ slug: "acme" }));
     });
 
+    it("waits for the user's git side before registering on the git host for a marker naming another pod", async () => {
+      const provisioning = service(async () => ({ ready: false, reason: "NotProvisioned", retryAfterSeconds: 5 }));
+
+      const res = await request(app("walter", "walter", provisioning)).post("/internal/gitea/ensure-user").send({ slug: "acme", pubKey: KEY, serviceHolder: "walter/octogee-gateway-walter-old-pod" });
+
+      expect(res.status).toBe(503);
+      expect(res.body).toEqual({ error: "provisioning_pending", reason: "NotProvisioned" });
+      expectNoKeyTouched();
+    });
+
+    it("keeps a standby pod off the service row, registering only a key no other gateway holds", async () => {
+      assignUser("acme", "shared-1");
+      mocks.docs.set("gateways/walter", isolatedGateway());
+      const provisioning = service(async () => ({ ready: true, value: undefined }));
+
+      const res = await request(app("walter", "walter", provisioning)).post("/internal/gitea/ensure-user").send({ slug: "acme", pubKey: KEY, serviceHolder: WALTER_KEY_OWNER });
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ registeredOn: "git-host" });
+      expect(gitHost().registerKeyUnlessHeld).toHaveBeenCalledExactlyOnceWith("acme", KEY, WALTER_KEY_OWNER);
+      expect(gitHost().registerKey).not.toHaveBeenCalled();
+      expect(provisioning.gitKey).not.toHaveBeenCalled();
+    });
+
     it("registers on the git host and tells the gateway to drop its marker when the marker names another pod", async () => {
       const provisioning = service(async () => ({ ready: true, value: undefined }));
 
