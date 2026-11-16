@@ -50,6 +50,12 @@ describe("fleet broker provisioning service routes", () => {
     });
   });
 
+  it("reads a 422 provisioning_refused as a refusal no retry can finish", async () => {
+    vi.mocked(internalFetch).mockResolvedValueOnce(new Response(JSON.stringify({ error: "provisioning_refused", reason: "UserBeingErased" }), { status: 422 }));
+
+    await expect(client().provisioningReadiness("uid-lin")).resolves.toEqual({ ready: false, refused: true, reason: "UserBeingErased" });
+  });
+
   it("throws any other refusal", async () => {
     vi.mocked(internalFetch).mockResolvedValueOnce(new Response(JSON.stringify({ error: "forbidden" }), { status: 403 }));
 

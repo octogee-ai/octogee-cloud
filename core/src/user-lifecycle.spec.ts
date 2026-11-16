@@ -3338,6 +3338,7 @@ describe("addUserToGateway — through the provisioning service", () => {
     );
 
     expect(sleeps.reduce((sum, ms) => sum + ms, 0)).toBeLessThanOrEqual(90_000);
+    expect(state.errorLogs).toContainEqual(expect.stringContaining("gave up waiting for the provisioning service to report chat and git ready"));
     expect(state.calls).not.toContain("service:registerGitKey");
     expect(state.calls).not.toContain("applyAddUserConfigPatch");
     expect(state.writes).not.toContainEqual({ field: "provisioning.openclaw.status", value: "complete" });
@@ -3352,6 +3353,34 @@ describe("addUserToGateway — through the provisioning service", () => {
     );
 
     expect(vi.mocked(service.registerGitKey).mock.calls.length).toBeGreaterThan(1);
+    expect(state.calls).not.toContain("applyAddUserConfigPatch");
+  });
+
+  it("fails the mount at once and logs an error when the platform refuses the user", async () => {
+    const state = makeState(snap({ provisionedBy: "service" }), emptyDisk());
+    const { adapter, service, sleeps } = withService(state, {
+      readiness: () => ({ ready: false, refused: true, reason: "UserBeingErased" }),
+    });
+
+    await expect(addUserToGateway(adapter, "uid-test")).rejects.toThrow(
+      /the platform refused the mount while waiting for the provisioning service to report chat and git ready \(reason UserBeingErased\); no retry can finish this mount/,
+    );
+
+    expect(service.readiness).toHaveBeenCalledOnce();
+    expect(sleeps).toEqual([]);
+    expect(state.errorLogs).toContainEqual(expect.stringContaining("reason UserBeingErased"));
+    expect(state.calls).not.toContain("service:registerGitKey");
+  });
+
+  it("fails the mount at once when the platform refuses this gateway's git key", async () => {
+    const state = makeState(snap({ provisionedBy: "service", mattermostUserId: "mm-user" }), emptyDisk());
+    const { adapter, service } = withService(state, {
+      registerGitKey: () => ({ ready: false, refused: true, reason: "GitKeyHeldElsewhere" }),
+    });
+
+    await expect(addUserToGateway(adapter, "uid-test")).rejects.toThrow(/reason GitKeyHeldElsewhere/);
+
+    expect(service.registerGitKey).toHaveBeenCalledOnce();
     expect(state.calls).not.toContain("applyAddUserConfigPatch");
   });
 

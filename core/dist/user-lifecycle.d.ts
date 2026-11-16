@@ -82,6 +82,10 @@ export type ServiceProvisioningAnswer = {
     readonly ready: false;
     readonly reason: string;
     readonly retryAfterMs: number;
+} | {
+    readonly ready: false;
+    readonly refused: true;
+    readonly reason: string;
 };
 export interface ServiceProvisioningAdapter {
     readiness: (uid: string) => Promise<ServiceProvisioningAnswer>;

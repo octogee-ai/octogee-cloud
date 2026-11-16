@@ -213,18 +213,25 @@ async function serviceProvisioningAnswer(path: string, body: unknown): Promise<S
     body: JSON.stringify(body),
   });
   if (resp.ok) return { ready: true };
-  if (resp.status !== 503) throw await brokerHttpError(path, resp);
+  if (resp.status !== 503 && resp.status !== 422) throw await brokerHttpError(path, resp);
   const text = await resp.text().catch(() => "");
-  let reason: unknown;
+  let answer: { error?: unknown; reason?: unknown } | null = null;
   try {
-    reason = (JSON.parse(text) as { reason?: unknown } | null)?.reason;
+    answer = JSON.parse(text) as { error?: unknown; reason?: unknown } | null;
   } catch {
-    reason = undefined;
+    answer = null;
+  }
+  const reason = typeof answer?.reason === "string" && answer.reason
+    ? answer.reason
+    : `fleet-broker POST ${path} answered ${resp.status} without a reason`;
+  if (resp.status === 422) {
+    if (answer?.error !== "provisioning_refused") throw new FleetBrokerHttpError(`fleet-broker POST ${path} → 422 ${text.slice(0, 300)}`, 422, null);
+    return { ready: false, refused: true, reason };
   }
   const seconds = Number(resp.headers.get("retry-after"));
   return {
     ready: false,
-    reason: typeof reason === "string" && reason ? reason : `fleet-broker POST ${path} answered 503 without a reason`,
+    reason,
     retryAfterMs: Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : DEFAULT_PENDING_RETRY_MS,
   };
 }

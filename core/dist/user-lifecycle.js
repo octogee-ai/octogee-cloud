@@ -414,6 +414,10 @@ function abortableSleep(ms, signal) {
         signal?.addEventListener("abort", onAbort, { once: true });
     });
 }
+function failServiceWait(adapter, message) {
+    adapter.log(message, { status: "failed" });
+    throw new Error(message);
+}
 async function waitForServiceProvisioning(adapter, service, wait, probe) {
     const now = service.now ?? Date.now;
     const sleep = service.sleep ?? abortableSleep;
@@ -426,10 +430,13 @@ async function waitForServiceProvisioning(adapter, service, wait, probe) {
                 adapter.log(`[add:${wait.slug}] ${wait.what}: ready after ${waited}ms`);
             return;
         }
+        if ("refused" in answer) {
+            return failServiceWait(adapter, `[add:${wait.slug}] the platform refused the mount while waiting for ${wait.what} (reason ${answer.reason}); no retry can finish this mount`);
+        }
         const backoff = SERVICE_POLL_MIN_MS * 2 ** Math.min(round, 4);
         const delay = Math.min(Math.max(answer.retryAfterMs, backoff), SERVICE_POLL_MAX_MS);
         if (waited + delay > wait.boundMs) {
-            throw new Error(`[add:${wait.slug}] gave up waiting for ${wait.what} after ${waited}ms (bound ${wait.boundMs}ms, last reason ${answer.reason}); failing the mount, the mount retry takes over`);
+            return failServiceWait(adapter, `[add:${wait.slug}] gave up waiting for ${wait.what} after ${waited}ms (bound ${wait.boundMs}ms, last reason ${answer.reason}); failing the mount, the mount retry takes over`);
         }
         adapter.log(`[add:${wait.slug}] waiting for ${wait.what} (reason ${answer.reason}, next check in ${delay}ms, waited ${waited}ms)`);
         await sleep(delay, wait.signal);
