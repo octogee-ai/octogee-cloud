@@ -5,13 +5,27 @@ import {
   type OperationRecord,
   type PlatformStateStore,
 } from "@octogee/core/platform-state";
+import type { RetiredGatewayKeyRelease } from "./gitea-gateway-key-gc.js";
 import { isRetryableUninstallFailure } from "./helm-runner.js";
 import { isAgentStoreRetirementSessionDrain } from "./operation-retry.js";
 import { isReapedOperationError, REARMED_RETIRE_OPERATION } from "./stuck-op-reaper.js";
 
 export interface SharedGatewayRetirementSweepDeps {
   store: PlatformStateStore;
+  retiredGatewayKeys: RetiredGatewayKeyRelease | null;
   log(message: string): void;
+}
+
+async function gitKeysReleased(deps: SharedGatewayRetirementSweepDeps, gatewayId: string): Promise<boolean> {
+  if (deps.retiredGatewayKeys === null) return true;
+  try {
+    const { remaining } = await deps.retiredGatewayKeys.releaseGatewayGitKeys(gatewayId);
+    if (remaining === 0) return true;
+    deps.log(`[shared-pool-scaler] kept retired slot ${gatewayId}: the provisioning service still holds ${remaining} of its git key rows`);
+  } catch (error) {
+    deps.log(`[shared-pool-scaler] ⚠ kept retired slot ${gatewayId}: releasing its git keys failed — ${error instanceof Error ? error.message : String(error)}`);
+  }
+  return false;
 }
 
 type RetiredSlotVerdict = "delete" | "rearm" | "skip";
@@ -77,6 +91,7 @@ export async function sweepRetiredSharedGateways(deps: SharedGatewayRetirementSw
       continue;
     }
     if (verdict !== "delete") continue;
+    if (!(await gitKeysReleased(deps, candidate.gatewayId))) continue;
     try {
       await deps.store.gateways.roots.delete(candidate.gatewayId, { desiredStatus: ["retired"], retirementVersion });
     } catch (error) {

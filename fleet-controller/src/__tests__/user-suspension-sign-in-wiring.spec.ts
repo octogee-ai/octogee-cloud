@@ -25,6 +25,7 @@ function builtSuspensionDeps(): UserSuspensionDeps {
     userLifecycle: null,
     accounts: noUserAccounts,
     provisioning: null,
+    retiredGatewayKeys: null,
   });
   return captured.suspend.at(-1) as UserSuspensionDeps;
 }

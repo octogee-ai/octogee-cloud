@@ -23,7 +23,7 @@ describe("startSharedGatewayRetirementLoop", () => {
     try {
       const records = new Map<string, Record<string, unknown>>();
       retiredOperatorGateway(records, "failed");
-      const stop = startSharedGatewayRetirementLoop({ store: createDocumentFixtureStore(records), log: vi.fn() });
+      const stop = startSharedGatewayRetirementLoop({ store: createDocumentFixtureStore(records), retiredGatewayKeys: null, log: vi.fn() });
 
       await vi.advanceTimersByTimeAsync(0);
       expect(records.get("glmOperations/operator-retire-1")?.status).toBe("pending");
@@ -44,7 +44,7 @@ describe("startSharedGatewayRetirementLoop", () => {
       const store = createDocumentFixtureStore(new Map());
       const log = vi.fn();
       const list = vi.spyOn(store.gateways.roots, "list").mockRejectedValueOnce(new Error("store unreachable"));
-      const stop = startSharedGatewayRetirementLoop({ store, log });
+      const stop = startSharedGatewayRetirementLoop({ store, retiredGatewayKeys: null, log });
       await vi.advanceTimersByTimeAsync(30_000);
       stop();
       expect(log).toHaveBeenCalledWith("[glm-controller] ⚠ shared gateway retirement sweep failed: store unreachable");

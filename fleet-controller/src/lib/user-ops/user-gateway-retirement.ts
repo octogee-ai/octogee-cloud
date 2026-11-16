@@ -18,6 +18,7 @@ import type {
   PlatformStateTransaction,
   Stored,
 } from "@octogee/core/platform-state";
+import type { RetiredGatewayKeyRelease } from "../../gitea-gateway-key-gc.js";
 import { schedulerHandoffAwaitingRelease } from "../../scheduler-handoff-release.js";
 
 export type OwnedGatewayRetirementOutcome =
@@ -32,6 +33,7 @@ export interface OwnedGatewayRetirementInput {
   now: number;
   claimRetirement?: typeof claimGatewayRetirementInStore;
   preserveRetirementProof?: (proof: UserGatewayRetirementProof) => Promise<void>;
+  gitKeys?: { client: RetiredGatewayKeyRelease; log: (message: string) => void } | null;
 }
 
 export interface UserGatewayRetirementProof {
@@ -204,6 +206,7 @@ async function finishCompletedGatewayRetirement(
     canFinish,
   );
   if (!cleanup) return true;
+  if (!(await gatewayGitKeysReleased(input, gatewayId))) return true;
   if (proof) await input.preserveRetirementProof!(proof);
   await input.store.gateways.roots.deleteChildren(gatewayId);
   return input.store.transaction({ label: "customer-deletion.owned-gateway-retirement.finish" }, async (transaction) => {
@@ -215,6 +218,19 @@ async function finishCompletedGatewayRetirement(
     if (current.recoveryReceiptId !== null) await transaction.journal.recoveryReceipts.delete(current.recoveryReceiptId);
     return false;
   });
+}
+
+async function gatewayGitKeysReleased(input: OwnedGatewayRetirementInput, gatewayId: string): Promise<boolean> {
+  const gitKeys = input.gitKeys ?? null;
+  if (gitKeys === null) return true;
+  try {
+    const { remaining } = await gitKeys.client.releaseGatewayGitKeys(gatewayId);
+    if (remaining === 0) return true;
+    gitKeys.log(`[customer-deletion] kept retired gateway ${gatewayId}: the provisioning service still holds ${remaining} of its git key rows`);
+  } catch (error) {
+    gitKeys.log(`[customer-deletion] ⚠ kept retired gateway ${gatewayId}: releasing its git keys failed — ${error instanceof Error ? error.message : String(error)}`);
+  }
+  return false;
 }
 
 function unchangedRetirementClaim(

@@ -341,6 +341,7 @@ import {
   parseGiteaGatewayKeyGcMode,
   readFleetLiveKeyHolders,
   startGiteaGatewayKeyGc,
+  type RetiredGatewayKeyRelease,
 } from "./gitea-gateway-key-gc.js";
 import { startHelmRecoverySweeper } from "./helm-recovery-sweeper.js";
 import { resumeOrphanedRunningOps } from "./resume-orphaned-ops.js";
@@ -2549,11 +2550,22 @@ function agentStoreDsns(): { adminDsn: string; clientDsn: string } {
   };
 }
 
+interface ControllerRuntimeSeams {
+  accounts: UserAccountReader;
+  documents: UserDocuments;
+  provisioning: ErasureProvisioning | null;
+  retiredGatewayKeys: RetiredGatewayKeyRelease | null;
+}
+
+function provisioningSeams(runtime: ProvisioningServiceRuntime | null): Pick<ControllerRuntimeSeams, "provisioning" | "retiredGatewayKeys"> {
+  return { provisioning: runtime?.sync ?? null, retiredGatewayKeys: runtime?.client ?? null };
+}
+
 async function createControllerRuntime(
   store: PlatformStateStore,
   createHostingCleanup: ControllerProduct["createHostingCleanup"],
   userLifecycle: ProductUserLifecycle | null,
-  { accounts, documents, provisioning }: { accounts: UserAccountReader; documents: UserDocuments; provisioning: ErasureProvisioning | null },
+  { accounts, documents, provisioning, retiredGatewayKeys }: ControllerRuntimeSeams,
 ): Promise<ControllerRuntime> {
   const runKubectl: KubectlSubprocess = (args, opts) => spawnKubectl(args, opts);
   const authSecretEnsurer = createAuthSecretEnsurer({
@@ -2722,6 +2734,7 @@ async function createControllerRuntime(
     userLifecycle,
     accounts,
     provisioning,
+    retiredGatewayKeys,
   });
 
   const deps: ControllerDeps = {
@@ -2818,7 +2831,7 @@ export async function main(product: ControllerProduct): Promise<void> {
     log,
   });
   const { deps, fleetControllerPrivateKey, chartFingerprint } =
-    await createControllerRuntime(store, product.createHostingCleanup, userLifecycle, { accounts, documents, provisioning: provisioning?.sync ?? null });
+    await createControllerRuntime(store, product.createHostingCleanup, userLifecycle, { accounts, documents, ...provisioningSeams(provisioning) });
 
   log(
     `[glm-controller] boot sha=${process.env.BUILD_SHA ?? "unknown"} oc=${process.env.OPENCLAW_VERSION ?? "n/a"} fork=${process.env.OPENCLAW_FORK_SHA ?? "n/a"} node=${process.version} — namespace=${NAMESPACE} gatewayChart=${GATEWAY_CHART} chartFingerprint=${chartFingerprint.slice(0, 12)} chartDriftPolicy=release-gated valuesFile=${GATEWAY_VALUES_FILE}`,
@@ -2884,7 +2897,7 @@ export async function main(product: ControllerProduct): Promise<void> {
     provisioning,
   });
   if (provisioning) stoppers.push(provisioning.start());
-  stoppers.push(startSharedGatewayRetirementLoop({ store: deps.store, log }));
+  stoppers.push(startSharedGatewayRetirementLoop({ store: deps.store, retiredGatewayKeys: provisioning?.client ?? null, log }));
   if (product.startProjection) stoppers.push(product.startProjection({ store: deps.store, log }));
   const shutdown = createControllerShutdown(stoppers, log);
   process.on("SIGTERM", shutdown);
@@ -3099,9 +3112,10 @@ async function buildHandlers(
     userLifecycle: ProductUserLifecycle | null;
     accounts: UserAccountReader;
     provisioning: ErasureProvisioning | null;
+    retiredGatewayKeys: RetiredGatewayKeyRelease | null;
   },
 ): Promise<OperationHandlers> {
-  const { privateKey, modelKeySourceIssuer, store, deleteHostingSites, userLifecycle, accounts, provisioning } = fleetOps;
+  const { privateKey, modelKeySourceIssuer, store, deleteHostingSites, userLifecycle, accounts, provisioning, retiredGatewayKeys } = fleetOps;
   if (!privateKey) {
     throw new Error(
       "FLEET_CONTROLLER_PRIVATE_KEY is not set — required for migrate-customer. Refusing to start with stub handlers.",
@@ -3489,7 +3503,7 @@ async function buildHandlers(
   });
 
   const { deprovisionUser, suspendUser, eraseUser } = buildUserRemovalHandlers({
-    documents, store, logFn, kubeOps, privateKey, deleteHostingSites, userLifecycle, accounts, provisioning,
+    documents, store, logFn, kubeOps, privateKey, deleteHostingSites, userLifecycle, accounts, provisioning, retiredGatewayKeys,
   });
 
   const restartGateway = createRestartGatewayHandler({
@@ -3698,6 +3712,11 @@ export interface UserRemovalOptions {
   userLifecycle: ProductUserLifecycle | null;
   accounts: UserAccountReader;
   provisioning: ErasureProvisioning | null;
+  retiredGatewayKeys: RetiredGatewayKeyRelease | null;
+}
+
+function ownedGatewayGitKeys(retiredGatewayKeys: RetiredGatewayKeyRelease | null, logFn: (message: string) => void) {
+  return retiredGatewayKeys === null ? null : { client: retiredGatewayKeys, log: logFn };
 }
 
 function userDataScope(cleanup: UserCleanupContext, currentOperationId: string): UserDataScope {
@@ -3711,7 +3730,7 @@ function userDataScope(cleanup: UserCleanupContext, currentOperationId: string):
   };
 }
 
-function buildEraseUserHandler({ documents, store, logFn, kubeOps, privateKey, deleteHostingSites, userLifecycle, provisioning }: UserRemovalOptions) {
+function buildEraseUserHandler({ documents, store, logFn, kubeOps, privateKey, deleteHostingSites, userLifecycle, provisioning, retiredGatewayKeys }: UserRemovalOptions) {
   const cloudCleanup = buildUserCloudCleanupDeps(store, logFn, deleteHostingSites, userLifecycle, provisioning);
   const clusterAbsent = async (gatewayId: string) => {
     if (!await retiredSharedGatewayRuntimeAbsent(kubeOps, NAMESPACE, gatewayId, deploymentNameForInstance(gatewayId))) return false;
@@ -3778,6 +3797,7 @@ function buildEraseUserHandler({ documents, store, logFn, kubeOps, privateKey, d
         deletionId,
         now: Date.now(),
         preserveRetirementProof: proof => preserveUserGatewayRetirement(store, cleanup.uid, deletionId, proof),
+        gitKeys: ownedGatewayGitKeys(retiredGatewayKeys, logFn),
       }),
     findUndrainedArtifactIds: async (artifactIds) =>
       userLifecycle === null ? [] : userLifecycle.data.undrainedArtifactIds(artifactIds),
@@ -3811,7 +3831,7 @@ function buildEraseUserHandler({ documents, store, logFn, kubeOps, privateKey, d
   });
 }
 
-function buildSuspendUserHandler({ store, privateKey, logFn, kubeOps, userLifecycle, accounts }: UserRemovalOptions) {
+function buildSuspendUserHandler({ store, privateKey, logFn, kubeOps, userLifecycle, accounts, retiredGatewayKeys }: UserRemovalOptions) {
   const decryptConnectorSecret = createConnectorSecretDecryptor();
   const signIn = buildUserSignInHosts(logFn);
   return createSuspendUserHandler({
@@ -3864,6 +3884,7 @@ function buildSuspendUserHandler({ store, privateKey, logFn, kubeOps, userLifecy
         deletionId,
         now: Date.now(),
         preserveRetirementProof: proof => preserveUserGatewayRetirement(store, uid, deletionId, proof),
+        gitKeys: ownedGatewayGitKeys(retiredGatewayKeys, logFn),
       }),
     markSuspended: (deletionId) => markSuspendedAndReleaseErasure(store, deletionId, Date.now()),
     product: userLifecycle?.suspension,
