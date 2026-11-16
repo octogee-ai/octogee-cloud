@@ -7,6 +7,7 @@ import { rateLimit } from "express-rate-limit";
 import { publicAppOriginsFromEnv } from "@octogee/core/public-app-origins";
 import { renderMetrics } from "./metrics.js";
 import { adminPlacementCapabilities } from "./admin-placement-capabilities.js";
+import type { GatewayGitKeyRelease } from "@octogee/core/gateway-root-deletion";
 import { adminPlacementSharedCapabilities } from "./admin-placement-shared-capabilities.js";
 import { adminIsolatedCapabilities, type AdminUserHome } from "./admin-isolated-capabilities.js";
 import type { UserAccounts, UserSignInHosts } from "@octogee/core/admin-user-router";
@@ -115,6 +116,7 @@ export interface HttpServerDeps {
   fleetEventListenerLingerMs?: number;
   logs: { source: LogEntriesSource | null; namespace: string };
   provisioning?: AdminProvisioningClient | null;
+  gatewayGitKeys: GatewayGitKeyRelease | null;
   provisioningReadiness?: FleetRouterDeps["provisioningReadiness"];
   provisioningSync?: AdminProvisioningRouterDeps["sync"];
 }
@@ -380,7 +382,7 @@ export function createHttpServer(deps: HttpServerDeps): Express {
     userAccounts: deps.userAccounts,
     userSignIn: deps.userSignIn,
     discoverDeletionProductContext: deps.discoverDeletionProductContext,
-    placement: adminPlacementCapabilities,
+    placement: { ...adminPlacementCapabilities, gatewayGitKeys: deps.gatewayGitKeys },
     placementShared: adminPlacementSharedCapabilities(deps),
     isolated: adminIsolatedCapabilities({
       namespace: deps.logs.namespace,

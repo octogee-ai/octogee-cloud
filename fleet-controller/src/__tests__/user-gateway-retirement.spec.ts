@@ -773,3 +773,70 @@ describe("owned user gateway retirement", () => {
     }));
   });
 });
+
+describe("owned user gateway retirement and the gateway's git keys", () => {
+  const OPERATION_ID = "delete-retire-delete-1-builder-alice";
+
+  function retiredAlice() {
+    const roots: Record<string, Root> = { "builder-alice": retiredRoot(OPERATION_ID) };
+    const operations: Record<string, OperationRow> = { [OPERATION_ID]: { ...retirementOperation("succeeded"), completedAt: 90 } };
+    return { roots, operations, ...harness(roots, operations) };
+  }
+
+  function gitKeys(answer: () => Promise<{ remaining: number }>) {
+    return { client: { releaseGatewayGitKeys: vi.fn(answer) }, log: vi.fn() };
+  }
+
+  it("releases the gateway's git keys before deleting the root, and finishes once none remain", async () => {
+    const { roots, store } = retiredAlice();
+    const keys = gitKeys(async () => ({ remaining: 0 }));
+
+    await expect(ensureOwnedGatewaysRetired({ store, uid: "uid-1", deletionId: "delete-1", now: 100, gitKeys: keys })).resolves.toBe("retired");
+
+    expect(keys.client.releaseGatewayGitKeys).toHaveBeenCalledExactlyOnceWith("builder-alice");
+    expect(roots).toEqual({});
+  });
+
+  it("stays pending and keeps the root and its retirement while the service still holds the gateway's rows", async () => {
+    const { roots, operations, store } = retiredAlice();
+    const keys = gitKeys(async () => ({ remaining: 2 }));
+
+    await expect(ensureOwnedGatewaysRetired({ store, uid: "uid-1", deletionId: "delete-1", now: 100, gitKeys: keys })).resolves.toBe("retirement-pending");
+
+    expect(roots["builder-alice"]?.desiredStatus).toBe("retired");
+    expect(operations[OPERATION_ID]).toBeDefined();
+    expect(keys.log).toHaveBeenCalledExactlyOnceWith("[customer-deletion] ⚠ kept retired gateway builder-alice: the provisioning service still holds 2 git key rows for builder-alice");
+  });
+
+  it("stays pending when the release fails, logs it, and finishes on a later pass", async () => {
+    const { roots, store } = retiredAlice();
+    const keys = gitKeys(async () => ({ remaining: 0 }));
+    keys.client.releaseGatewayGitKeys.mockRejectedValueOnce(new Error("provisioning service unavailable"));
+
+    await expect(ensureOwnedGatewaysRetired({ store, uid: "uid-1", deletionId: "delete-1", now: 100, gitKeys: keys })).resolves.toBe("retirement-pending");
+    expect(roots["builder-alice"]).toBeDefined();
+    expect(keys.log).toHaveBeenCalledExactlyOnceWith("[customer-deletion] ⚠ kept retired gateway builder-alice: releasing the git keys of builder-alice failed: provisioning service unavailable");
+
+    await expect(ensureOwnedGatewaysRetired({ store, uid: "uid-1", deletionId: "delete-1", now: 100, gitKeys: keys })).resolves.toBe("retired");
+    expect(roots).toEqual({});
+  });
+
+  it("asks for no release while the gateway's retirement is unfinished", async () => {
+    const roots: Record<string, Root> = { "builder-alice": retiredRoot(OPERATION_ID) };
+    const operations: Record<string, OperationRow> = { [OPERATION_ID]: retirementOperation("running") };
+    const { store } = harness(roots, operations);
+    const keys = gitKeys(async () => ({ remaining: 0 }));
+
+    await expect(ensureOwnedGatewaysRetired({ store, uid: "uid-1", deletionId: "delete-1", now: 100, gitKeys: keys })).resolves.toBe("retirement-pending");
+
+    expect(keys.client.releaseGatewayGitKeys).not.toHaveBeenCalled();
+  });
+
+  it("finishes without a release request when no provisioning service is configured", async () => {
+    const { roots, store } = retiredAlice();
+
+    await expect(ensureOwnedGatewaysRetired({ store, uid: "uid-1", deletionId: "delete-1", now: 100, gitKeys: { client: null, log: vi.fn() } })).resolves.toBe("retired");
+
+    expect(roots).toEqual({});
+  });
+});

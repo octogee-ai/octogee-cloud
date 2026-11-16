@@ -61,12 +61,15 @@ function gitKey(overrides: { generation?: number; observedGeneration?: number; r
   return {
     uid: "uid-lin",
     gatewayId: "walter",
+    holder: "walter/octogee-gateway-walter-0",
     generation,
     resourceVersion: "9",
     deletionRequestedAt: null,
+    putSequence: 1,
     spec: { publicKey: "ssh-ed25519 AAAA lin" },
     status: {
       observedGeneration: overrides.observedGeneration ?? generation,
+      observedPutSequence: 1,
       nextAttemptAt: overrides.nextAttemptAt ?? null,
       conditions: overrides.registered === undefined ? [] : [{
         type: "Registered",

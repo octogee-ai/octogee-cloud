@@ -65,15 +65,13 @@ describe("readLiveGatewayKeyHolders", () => {
 
     expect(readBatch).toHaveBeenCalledWith(["builder-jack", "shared-0"]);
     expect([...owners].sort()).toEqual([
-      "builder-jack",
       "builder-jack/octogee-gateway-builder-jack-vm-123456789",
-      "shared-0",
       "shared-0/octogee-gateway-shared-0-a-1",
       "shared-0/octogee-gateway-shared-0-b-2",
     ]);
   });
 
-  it("keeps every known gateway's own id live, including a gateway with no pod, because the provisioning service holds keys under it", async () => {
+  it("names no gateway's own id as a live holder, so a gateway with no pod and no VM holds nothing", async () => {
     const { owners } = await readLiveGatewayKeyHolders({
       gateways: [root("builder-paused")],
       fleetRegistry: [],
@@ -81,7 +79,7 @@ describe("readLiveGatewayKeyHolders", () => {
         Object.fromEntries(gatewayIds.map((id) => [id, diagnostics([], "missing")])),
     });
 
-    expect([...owners]).toEqual(["builder-paused"]);
+    expect([...owners]).toEqual([]);
   });
 
   it("fails closed when a direct read meets a revision runtime document named for another gateway", async () => {
@@ -112,7 +110,7 @@ describe("readLiveGatewayKeyHolders", () => {
         Object.fromEntries(gatewayIds.map((id) => [id, diagnostics([], "missing")])),
     });
 
-    expect([...owners].sort()).toEqual(["builder-jack", "builder-jack/octogee-gateway-builder-jack-vm-123456789"]);
+    expect([...owners].sort()).toEqual(["builder-jack/octogee-gateway-builder-jack-vm-123456789"]);
     expect(list).not.toHaveBeenCalled();
   });
 
@@ -127,7 +125,7 @@ describe("readLiveGatewayKeyHolders", () => {
   });
 });
 
-describe("the key sweep and the provisioning service's adopted keys", () => {
+describe("the key sweep and gateway ids", () => {
   const GRACE_MS = 10 * 60_000;
   const API = "http://gitea.test/api/v1";
 
@@ -166,23 +164,23 @@ describe("the key sweep and the provisioning service's adopted keys", () => {
     return createGiteaGitHost({ apiBaseUrl: API, token: () => "admin-token", fetch: fetchImpl as typeof fetch });
   }
 
-  it("keeps a key adopted under a known gateway's own id past the grace period, and still sweeps a key held for a gateway that is gone", async () => {
+  it("sweeps a key titled for a gateway's own id once past the grace period, and keeps the key of a live pod", async () => {
     let now = Date.parse("2026-11-15T18:00:00Z");
     const old = new Date(now - 30 * 24 * 3_600_000).toISOString();
+    const pod = "octogee-gateway-walter-5bc5949d46-p946t";
     const keys: StoredKey[] = [
-      { id: 1, title: gatewayKeyTitle(gatewayKeyOwnerId("walter", "octogee-gateway-walter-5bc5949d46-p946t")), key: "ssh-ed25519 AAAAlin lin@gateway", created_at: old },
-      { id: 2, title: gatewayKeyTitle("gone"), key: "ssh-ed25519 AAAAgone lin@gone", created_at: old },
+      { id: 1, title: gatewayKeyTitle(gatewayKeyOwnerId("walter", pod)), key: "ssh-ed25519 AAAAlin lin@gateway", created_at: old },
+      { id: 2, title: gatewayKeyTitle("walter"), key: "ssh-ed25519 AAAAold lin@walter", created_at: old },
     ];
     const host = fakeGitea(() => now, keys);
-
-    await host.registerKey("lin", "ssh-ed25519 AAAAlin lin@gateway", "walter");
     now += GRACE_MS + 60_000;
+
     await host.sweepKeys({
       readLiveKeyHolders: () => readLiveGatewayKeyHolders({
         gateways: [root("walter")],
         fleetRegistry: [],
         readGatewayPodDiagnosticsBatch: async (gatewayIds) =>
-          Object.fromEntries(gatewayIds.map((id) => [id, diagnostics([], "missing")])),
+          Object.fromEntries(gatewayIds.map((id) => [id, diagnostics([pod])])),
       }),
       mode: "enforce",
       maxCallsPerTick: 100,
@@ -193,8 +191,6 @@ describe("the key sweep and the provisioning service's adopted keys", () => {
       log: () => {},
     }, createGitKeySweepState());
 
-    expect(keys.map(({ title, key }) => ({ title, key }))).toEqual([
-      { title: gatewayKeyTitle("walter"), key: "ssh-ed25519 AAAAlin lin@gateway" },
-    ]);
+    expect(keys.map(({ title }) => title)).toEqual([gatewayKeyTitle(gatewayKeyOwnerId("walter", pod))]);
   });
 });

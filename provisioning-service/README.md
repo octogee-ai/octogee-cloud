@@ -18,8 +18,17 @@ The types are `@octogee/shared/types/provisioning-service`.
 | `GET /v1/provisionings?watch=true&resourceVersion=V&timeoutSeconds=T&limit=L` | Returns at once with the changes after `V`, oldest first and at most `L` (default and maximum 500), or holds until one happens or the timeout passes. Answers `{ items, deleted?, resourceVersion }`: `items` are the resources changed, `deleted` is `[{ uid, resourceVersion }]` for each user deleted, present only when there is one. Apply both in `resourceVersion` order, since a uid can be deleted and created again. Ask again from the returned version, which is the last change's when the page was cut short. | `200`, `410 resource-version-expired` |
 | `POST /v1/users/{uid}/provisioning/retry` | Body `{ expectedAttempts? }`. Makes parked or retrying work due now. Honours `Idempotency-Key` for 24 hours. | `202`, `409 precondition-failed`, `409 not-retryable`, `409 idempotency-conflict` |
 | `GET /v1/users/{uid}/provisioning/events` | The last 50 attempts, newest first, with each step's outcome, reason and duration. | `200`, `404` |
-| `PUT /v1/users/{uid}/git-keys/{gatewayId}` | Body `{ spec: { publicKey } }`. Authorizes the key on the user's git owner. | `201`, `202`, `200`; body is the `GitKey`; `404` when the user has no provisioning |
-| `DELETE /v1/users/{uid}/git-keys/{gatewayId}` | Releases the key. Optional body `{ expectedPublicKey }` releases it only while the row still holds that key. | `202`, `409 precondition-failed` when the row holds another key |
+| `PUT /v1/users/{uid}/git-keys/{holder}` | Body `{ spec: { publicKey } }`. Authorizes the key on the user's git owner. | `201`, `202`, `200`; body is the `GitKey`; `404` when the user has no provisioning |
+| `GET /v1/users/{uid}/git-keys/{holder}` | Reads the key. | `200`; body is the `GitKey`; `404` when there is none |
+| `DELETE /v1/users/{uid}/git-keys/{holder}` | Releases the key. Optional body `{ expectedPublicKey }` releases it only while the row still holds that key, compared by key material. | `202`, `409 precondition-failed` when the row holds another key |
+| `GET /v1/git-key-holders` | Lists every holder with live rows. | `200`; body `{ holders: [{ holder, gatewayId, rows, newestUpdatedAt }] }` |
+| `DELETE /v1/git-key-holders/{holder}` | Releases every user's key for one holder that is gone. | `202`; body `{ remaining }`, the holder's rows not yet released from the git host |
+| `DELETE /v1/gateways/{gatewayId}/git-keys` | Releases every user's key for every holder of a retired gateway. | `202`; body `{ remaining }`, the gateway's rows not yet released from the git host |
+
+A holder is one gateway pod: `<gatewayId>/<podName>`, URL-encoded as one path
+segment. Each pod holds its own key, so two pods of one gateway, as during a
+surge roll, hold two keys at once. A holder that is not a gateway id and a pod
+name is refused with `400`.
 | `GET /v1/users/{uid}/credentials/{name}` | `{ name, value, version }`, `Cache-Control: no-store`. Names: `agent-chat-token`, `user-chat-token`. | `200`, `404`, `409 not-issued` |
 | `GET /healthz`, `/readyz`, `/metrics` | Unauthenticated, no tenant data. `/readyz` and `/metrics` answer from a database check and work snapshot each replica takes every 5 seconds. | `200`, `503` |
 
@@ -49,7 +58,7 @@ account maps to roles through a fixed table:
 
 | Service account | Roles |
 | --- | --- |
-| `octogee-glm-controller` (fleet controller) | `writer`: provisioning put, delete, read, list, watch, retry, events; `credential-reader`: credentials, to copy issued chat tokens where the platform reads them |
+| `octogee-glm-controller` (fleet controller) | `writer`: provisioning put, delete, read, list, watch, retry, events; `key-retirer`: list git key holders and release a gone holder's or a retired gateway's git keys; `credential-reader`: credentials, to copy issued chat tokens where the platform reads them |
 | `octogee-api` (platform API) | `key-writer`: git keys; `reader`: provisioning read, list, watch, events; `credential-reader`: credentials |
 
 Only service accounts in `PROVISIONING_CALLER_NAMESPACE` are matched. A failed
@@ -66,12 +75,33 @@ platform API registers and releases each pod's key directly on the git host,
 under a title per pod, after the service reports the user's git side ready.
 
 Keys registered by the earlier path carry another title. When a GitKey is put
-and the user's own git account already holds the identical public key under a
-managed title the service does not know, the service adopts it: it removes that
-key and registers the same key under its own title for the gateway, restoring
-the removed key if the registration fails. A different public key is added
-beside it, and that key is left alone. Keys are compared by type and key
-material, never by comment.
+and the user's own git account already holds the identical public key under
+another managed title, whether the earlier path's or another holder's, the
+service adopts it on an attempt that follows the put: it removes that key and
+registers the same key under its own holder's title, restoring the removed key
+if the registration fails. A different public key is added beside it, and that
+key is left alone. Keys are compared by type and key material, never by
+comment.
+
+Every put of a row, an unchanged one included, increments the row's
+`putSequence`, which the put answers, clears the row's backoff and makes the
+user's work due: idle or retrying work is queued at once, and running work runs
+again when it finishes. Parked work stays parked; its puts are processed once
+the work is retried or its spec changes. `status.observedPutSequence` is the
+highest put sequence an attempt that started after that put has processed: it
+registered the key, finding it on the git host under the holder's title or
+registering it there, or recorded a refusal. A transient failure leaves it
+unchanged. An attempt adopts only while `putSequence` is above
+`observedPutSequence` at its start. An attempt with nothing new to observe that
+finds its key under another managed title leaves that key alone and reports
+`Registered=False` with reason `GitKeyHeldElsewhere` and the key backoff, so a
+key a pod on another build claimed stays with that pod. A caller treats its key
+as registered only when `Registered=True` and `observedPutSequence` is at least
+the sequence its put returned.
+
+Releasing a row deletes only a key under that row's own title. It never deletes
+a key by its material alone, so a key another holder or the earlier path holds
+stays registered.
 
 A key another user's account holds, or one on the user's own account under a
 title outside the managed prefix (added by hand), is never adopted. The git
@@ -84,11 +114,8 @@ fails the attempt as before, so it is retried or parked.
 
 A key held elsewhere backs off per row: 1 minute, doubling to at most 6 hours,
 shown as `status.nextAttemptAt`. The service owns the retry: the user's work is
-scheduled for that time, and the key is tried again then without any put. Until
-then an unchanged put queues no work and the worker does not try the key; a
-put with a different key resets the backoff and is tried at once. Putting an
-unchanged key whose row is not registered and has no backoff queues idle work,
-so a row an earlier build refused is retried once on the gateway's next put.
+scheduled for that time, and the key is tried again then without any put. A put
+resets the backoff and is tried at once.
 
 With `PROVISIONING_HOST_ADAPTERS=fake`, `PROVISIONING_FAKE_GIT_KEYS` seeds the
 fake git host with keys, as JSON mapping each owner to `{ publicKey, holder }`
@@ -118,6 +145,14 @@ a confirmed heartbeat. A failed attempt retries after
 transient failure, or a twelfth attempt that ended without finishing parks the
 work until the spec changes or a retry is requested. A key write leaves parked
 work parked. Idle rows are resynced six hours after their last success.
+
+A key marked for release is released even while the user's work is parked. A
+release pass claims the parked row under a lease, releases only the marked keys
+and returns the row to parked with its attempts, running no other step. A
+release that fails is recorded on that key's row (`Registered=Unknown`, reason
+`GitKeyFailed`), logged at error level and retried after the key backoff; the
+row stays until a release succeeds. A retry requested during the pass queues
+the work once the pass ends.
 
 ## Known limits
 

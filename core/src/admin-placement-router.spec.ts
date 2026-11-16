@@ -16,7 +16,7 @@ const ACTIVATION = `builder-activate-${GATEWAY}-g1`;
 const TARGET = { ownerUid: OWNER, allocationGeneration: 1 };
 const REAPED = "reaped: op exceeded 15m running budget";
 
-const capabilities: AdminPlacementCapabilities = {
+const capabilities: Omit<AdminPlacementCapabilities, "gatewayGitKeys"> = {
   retirementFailedRetryably: (operation, gatewayId) =>
     operation.status === "failed" && typeof operation.error === "string" &&
     (operation.error.startsWith("reaped: ") || operation.error.endsWith(`Gateway ${gatewayId} still has database sessions`)),
@@ -53,7 +53,7 @@ function app() {
     (req as express.Request & { uid?: string }).uid = "automation@example.iam.gserviceaccount.com";
     next();
   });
-  addAdminPlacementRoutes(server, { ...capabilities, store, journal: createAdminFleetMutationRunner(store) });
+  addAdminPlacementRoutes(server, { ...capabilities, gatewayGitKeys, store, journal: createAdminFleetMutationRunner(store) });
   server.use(respondToAdminFleetMutationError);
   server.use((error: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     res.status(500).json({ error: error.message });
@@ -122,7 +122,12 @@ function audits(): Data[] {
 const deleteRetired = (body: Data = TARGET) => request(app()).post(`/isolated-gateways/${GATEWAY}/delete-retired`).send(body);
 const rearm = (body: Data = TARGET) => request(app()).post(`/isolated-gateways/${GATEWAY}/retirement/rearm`).send(body);
 
-beforeEach(() => seed({}));
+let gatewayGitKeys: { releaseGatewayGitKeys: (gatewayId: string) => Promise<{ remaining: number }> } | null = null;
+
+beforeEach(() => {
+  seed({});
+  gatewayGitKeys = { releaseGatewayGitKeys: async () => ({ remaining: 0 }) };
+});
 
 describe("GET /isolated-gateways/retired", () => {
   it("reports the facts the sweep decides on for each retired isolated gateway", async () => {
@@ -203,6 +208,37 @@ describe("POST /isolated-gateways/:id/delete-retired", () => {
     expect(records.get(`glmOperations/${RETIREMENT}`)).toEqual(completedRetirement);
     expect(records.get(`glmOperations/${ACTIVATION}`)).toEqual(activation);
     expect(audits()).toEqual([expect.objectContaining({ status: "completed", mutation: expect.objectContaining({ kind: "delete-retired-gateway" }) })]);
+  });
+
+  it("answers 412 and keeps the root and its recovery residue while the provisioning service holds git key rows for the gateway", async () => {
+    seed(deletableSeed());
+    const released: string[] = [];
+    gatewayGitKeys = { releaseGatewayGitKeys: async (gatewayId) => { released.push(gatewayId); return { remaining: 2 }; } };
+
+    const res = await deleteRetired().expect(412);
+
+    expect(released).toEqual([GATEWAY]);
+    expect(res.body).toEqual({ code: "precondition-failed", error: `the provisioning service still holds 2 git key rows for ${GATEWAY}` });
+    expect(fleetEvents()).toEqual([]);
+  });
+
+  it("answers 412 and keeps the root when releasing the gateway's git keys fails", async () => {
+    seed(deletableSeed());
+    gatewayGitKeys = { releaseGatewayGitKeys: async () => { throw new Error("503 unavailable"); } };
+
+    const res = await deleteRetired().expect(412);
+
+    expect(res.body.error).toBe(`releasing the git keys of ${GATEWAY} failed: 503 unavailable`);
+    expect(records.has(`gateways/${GATEWAY}`)).toBe(true);
+  });
+
+  it("deletes the root without a release request when no provisioning service is configured", async () => {
+    seed(deletableSeed());
+    gatewayGitKeys = null;
+
+    await deleteRetired().expect(200);
+
+    expect(records.has(`gateways/${GATEWAY}`)).toBe(false);
   });
 
   it("keeps the root when its retirement changed after the deletion verdict", async () => {
@@ -470,6 +506,6 @@ describe("addAdminFleetRoutes", () => {
   }
 
   it("mounts the placement routes when the fleet controller passes its capabilities", async () => {
-    await request(fleetApp(capabilities)).get("/isolated-gateways/retired").expect(200, { gateways: [] });
+    await request(fleetApp({ ...capabilities, gatewayGitKeys: null })).get("/isolated-gateways/retired").expect(200, { gateways: [] });
   });
 });

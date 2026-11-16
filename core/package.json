@@ -582,6 +582,10 @@
       "types": "./dist/admin-provisioning-router.d.ts",
       "default": "./dist/admin-provisioning-router.js"
     },
+    "./gateway-root-deletion": {
+      "types": "./dist/gateway-root-deletion.d.ts",
+      "default": "./dist/gateway-root-deletion.js"
+    },
     "./provisioning-service-client": {
       "types": "./dist/provisioning-service-client.d.ts",
       "default": "./dist/provisioning-service-client.js"

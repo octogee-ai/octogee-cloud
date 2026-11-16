@@ -23,6 +23,7 @@ function builtSuspensionDeps(): UserSuspensionDeps {
     kubeOps: {} as never,
     privateKey: "private-key",
     userLifecycle: null,
+    gatewayGitKeys: null,
     accounts: noUserAccounts,
     provisioning: null,
   });

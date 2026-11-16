@@ -3,7 +3,7 @@ import { isAgentStoreRetirementSessionDrain } from "./operation-retry.js";
 import { schedulerHandoffAwaitingRelease } from "./scheduler-handoff-release.js";
 import { isReapedOperationError, REARMED_RETIRE_OPERATION } from "./stuck-op-reaper.js";
 
-export const adminPlacementCapabilities: AdminPlacementCapabilities = {
+export const adminPlacementCapabilities: Omit<AdminPlacementCapabilities, "gatewayGitKeys"> = {
   retirementFailedRetryably: (operation, gatewayId) =>
     operation.status === "failed" &&
     (isReapedOperationError(operation.error) || isAgentStoreRetirementSessionDrain(operation.error, gatewayId)),
