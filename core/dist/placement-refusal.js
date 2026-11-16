@@ -22,6 +22,9 @@ export const PLACEMENT_REFUSAL_REASONS = [
     "retirement-conflict",
     "sizing-key-changed",
     "initial-release-conflict",
+    "source-not-stranded",
+    "migration-in-flight",
+    "rollback-not-proven",
 ];
 export class PlacementPreconditionFailed extends Error {
     reasonCode;

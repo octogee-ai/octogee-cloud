@@ -1950,28 +1950,34 @@ export async function markAssignmentState(
   params: MarkAssignmentStateParams,
 ): Promise<void> {
   const now = nowMs(deps);
-  await deps.store.transaction({ label: "fleet-state.markAssignmentState" }, async (tx) => {
-    const user = await tx.users.records.get(params.uid);
-    assertRestoreUnfenced(user);
-    const assignment = await tx.gateways.assignments.get(params.gatewayId, params.uid);
-    if (assignment === null) {
-      if (params.expected?.updatedAt !== undefined) throw new Error("source assignment changed before roster state update");
-      if (!params.createIfMissing) return;
-      await createMissingAssignment(tx, user, params, now);
-      return;
-    }
-    assertAssignmentStateUpdateMatches(assignment, params);
-    assertSharedSurgeForwardStateUpdate(assignment, params);
-    const updatesClock = params.updatedByOperationId || params.expected?.updatedAt !== undefined;
-    const updatedAt = nextAssignmentStateClock(now, updatesClock ? assignment.updatedAt : undefined);
-    await tx.gateways.assignments.patch(params.gatewayId, params.uid, {
-      state: params.state,
-      ...(updatesClock ? { updatedAt } : {}),
-      ...(params.updatedByOperationId ? { updatedByOperationId: params.updatedByOperationId } : {}),
-      ...(params.clearSharedSurgeForwardRecovery ? { sharedSurgeForwardRecovery: CLEAR } : {}),
-    }, { epoch: assignment.epoch, updatedAt: assignment.updatedAt });
-    await writeWorkspaceMigrationMarkerForState(tx, user, params, updatedAt);
-  });
+  await deps.store.transaction({ label: "fleet-state.markAssignmentState" }, (tx) => markAssignmentStateInTransaction(tx, params, now));
+}
+
+export async function markAssignmentStateInTransaction(
+  tx: PlatformStateTransaction,
+  params: MarkAssignmentStateParams,
+  now: number,
+): Promise<void> {
+  const user = await tx.users.records.get(params.uid);
+  assertRestoreUnfenced(user);
+  const assignment = await tx.gateways.assignments.get(params.gatewayId, params.uid);
+  if (assignment === null) {
+    if (params.expected?.updatedAt !== undefined) throw new Error("source assignment changed before roster state update");
+    if (!params.createIfMissing) return;
+    await createMissingAssignment(tx, user, params, now);
+    return;
+  }
+  assertAssignmentStateUpdateMatches(assignment, params);
+  assertSharedSurgeForwardStateUpdate(assignment, params);
+  const updatesClock = params.updatedByOperationId || params.expected?.updatedAt !== undefined;
+  const updatedAt = nextAssignmentStateClock(now, updatesClock ? assignment.updatedAt : undefined);
+  await tx.gateways.assignments.patch(params.gatewayId, params.uid, {
+    state: params.state,
+    ...(updatesClock ? { updatedAt } : {}),
+    ...(params.updatedByOperationId ? { updatedByOperationId: params.updatedByOperationId } : {}),
+    ...(params.clearSharedSurgeForwardRecovery ? { sharedSurgeForwardRecovery: CLEAR } : {}),
+  }, { epoch: assignment.epoch, updatedAt: assignment.updatedAt });
+  await writeWorkspaceMigrationMarkerForState(tx, user, params, updatedAt);
 }
 
 function assertSharedSurgeForwardStateUpdate(assignment: Assignment, params: MarkAssignmentStateParams): void {

@@ -463,10 +463,10 @@ this table against them.
 | `assignment-changed` | The operation id does not match the user's current source assignment. | `placement-migrations` |
 | `roll-not-eligible` | The roll recovery is not eligible. | `roll-recovery` |
 | `drain-move-not-supersedable` | The drain move cannot be superseded. | `supersede` |
-| `fleet-state-changed` | A fleet state fence changed, such as a source epoch, a target heartbeat or a previous recovery. | `recover`, `runtime-reset` |
+| `fleet-state-changed` | A fleet state fence changed, such as a source epoch, a target heartbeat or a previous recovery. | `recover`, `runtime-reset`, `restore-serving` |
 | `fence-mismatch` | A stored record changed under the verb's fence. | all |
 | `source-recovery-pending` | The activation operation is still recovering its source. | `retire-owned`, `activation-lease/fail`, `recover-unreachable`, `isolated-gateway/allocate` |
-| `user-missing` | The user does not exist. | isolated verbs |
+| `user-missing` | The user does not exist. | isolated verbs, `restore-serving` |
 | `user-slug-missing` | The user has no slug. | `isolated-gateway/allocate` |
 | `lease-missing` | The user has no activation lease. | `activation-lease/complete` |
 | `gateway-not-owned` | The gateway is not owned by the user. | `retire-owned`, `recover-unreachable` |
@@ -475,6 +475,9 @@ this table against them.
 | `retirement-conflict` | A retirement claim or an in-flight migration blocks the change. | isolated verbs |
 | `sizing-key-changed` | The user's sizing key changed during the call. | isolated verbs |
 | `initial-release-conflict` | The gateway's initial release conflicts. | `isolated-gateway/allocate` |
+| `source-not-stranded` | The user has no quiescing assignment left by a failed move of that user out of that gateway. | `restore-serving` |
+| `migration-in-flight` | The move that closed the source is pending or running again, or another operation for the user or for the source gateway is pending or running. | `restore-serving` |
+| `rollback-not-proven` | The failed move committed its cutover, holds forward state, or its recorded steps do not show the target unmounted and only the source ingress left to resume. | `restore-serving` |
 
 A `409` that carries `auditId` and no `code` is an `Idempotency-Key` replay. It
 answers with the audit of the earlier call instead of acting twice. With
@@ -958,3 +961,63 @@ It neither reserves nor reads the pods.
 `{"managedBy": "cowboy", "expectedGatewayId": "<gateway>"}` releases an
 operator hold only while the user is on that shared gateway with a serving
 assignment and no operation in flight.
+
+## `POST /users/<uid>/restore-serving`
+
+No body. Finishes the rollback of a failed move that unmounted its target but
+could not resume the user's ingress on the source gateway. Such a move ends
+`failed` and leaves the user's assignment `quiescing` and the user's migration
+fence naming the failed operation, so the user gets no answer and a new move
+is refused. This route works whoever owns placement, and only on a fleet
+controller: a host that cannot call a gateway does not mount it.
+
+It restores the source only when all of this holds, checked in one read-only
+transaction and again in the transaction that writes:
+
+- The user has exactly one assignment. It is `quiescing` on the gateway the
+  user is assigned to, carries the user's slug, and names the operation that
+  closed it.
+- That operation is a `migrate-user` of this user out of this gateway and is
+  `failed`. It has no committed cutover, no forward migration state, no forward
+  recovery checkpoint, no source transfer and no cancellation request, and it
+  is not a source-only recovery.
+- The operation's recorded steps end with one failed step, then
+  `rollback:unmount-target` `done`, then `rollback:resume-ingress` `failed` or
+  `done`. The failed step is `quiesce-source`, `flush-source`,
+  `final-sync-state` or `verify-target`, every step before it is `done`,
+  `quiesce-source` appears once and no step repeats.
+- The assignment has no forward recovery marker. The user has no restore
+  fence and no source transfer fence, and the user's migration fence names that
+  operation or is absent.
+- No other operation for the user, and no operation on the source gateway, is
+  `pending` or `running`.
+
+It then asks the source gateway to resume the user's ingress, the call the
+move's own rollback makes. Only when the gateway confirms does it mark the
+assignment `serving` under the failed operation, which clears the migration
+fence. The answer is
+`{uid, slug, gatewayId, targetGatewayId, state: "serving", failedMoveId, operationId}`;
+`operationId` is the journal audit of the repair and `failedMoveId` the
+operation of the failed move.
+
+| Answer | Meaning |
+|---|---|
+| `404` | The user does not exist. Nothing is journaled. |
+| `409` `precondition-failed` | A check above does not hold; `reasonCode` is `source-not-stranded`, `migration-in-flight`, `rollback-not-proven`, `fleet-state-changed` or `user-missing`. No record changed. A repeat after a repair answers `source-not-stranded`. |
+| `502` `source-resume-failed` | The source gateway answered the resume with an error. No record changed. |
+| `503` `source-resume-failed` | The source gateway could not be reached. No record changed. |
+
+A refusal found before the resume is not journaled. A failed resume, and a
+refusal found at the write after the gateway resumed, are journaled as a
+failed audit. In that last case the gateway has resumed the ingress while the
+assignment stays `quiescing`; the call can be repeated once the cause is gone. With `?dryRun=true` the route runs the read-only check and
+answers the plan or the same `409`; it does not call the gateway.
+
+The fleet controller also makes this repair itself. Its pass over failed
+operations, once a minute, tries it for a failed move whose rollback reached
+the source ingress, under the same checks and with a journal audit of its own
+under the actor `fleet-controller`. After a failed resume it waits one minute,
+then twice as long each time up to 30 minutes, and stops after 12 attempts
+for that operation until the fleet controller restarts. It logs every failed
+attempt, and once why a quiescing source does not pass the checks. This route
+stays available throughout.

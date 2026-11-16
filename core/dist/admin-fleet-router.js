@@ -26,6 +26,7 @@ import { addAdminPlacementOwnerRoutes } from "./admin-placement-owner-router.js"
 import { addAdminPlacementRoutes } from "./admin-placement-router.js";
 import { addAdminPlacementSharedRoutes } from "./admin-placement-shared-router.js";
 import { addAdminPlacementIsolatedRoutes } from "./admin-placement-isolated-router.js";
+import { addAdminStrandedSourceRoutes } from "./admin-stranded-source-router.js";
 import { GatewayRetirementConflictError, assertGatewayRuntimeMutationUnfencedInStore, isolatedRuntimeMutationFenced, claimGatewayRetirementInStore, } from "./gateway-retirement-claim.js";
 import { commitOperatorPlacement, planOperatorPlacement, SHARED_GATEWAY_MIRROR, } from "./operator-placement.js";
 import { appendGatewayRelease, asDurableGatewayRoot, InvalidGatewayRootError, StaleGatewayReleaseError, } from "./gateway-release-append.js";
@@ -3325,6 +3326,8 @@ export function addAdminFleetRoutes(router, deps) {
         addAdminPlacementSharedRoutes(router, { ...deps.placementShared, store, journal: runAdminFleetMutation });
     if (deps.isolated)
         addAdminPlacementIsolatedRoutes(router, { store, journal: runAdminFleetMutation, accounts: deps.accounts, capabilities: deps.isolated, log: (message) => deps.logger.info(message), warn: (message) => deps.logger.warn(message) });
+    if (deps.strandedSource)
+        addAdminStrandedSourceRoutes(router, { ...deps.strandedSource, store, journal: runAdminFleetMutation, log: (message) => logger.info(message) });
     async function handleActiveUserDeletion(input) {
         const lifecycle = input.lifecycle;
         if (!userDeletionIsActive(lifecycle))

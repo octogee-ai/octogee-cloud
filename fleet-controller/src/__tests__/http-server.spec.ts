@@ -944,6 +944,21 @@ describe("createHttpServer — admin gateway routes", () => {
     expect(res.body.error).toContain("not configured");
   });
 
+  it("serves the stranded source repair only to admins, and only when the controller can resume a gateway's ingress", async () => {
+    const path = "/api/admin/users/ghost/restore-serving";
+    const resumeSourceIngress = vi.fn(async () => undefined);
+    const app = createHttpServer(buildDeps(store, { resumeSourceIngress }));
+
+    await request(app).post(path).expect(401);
+    await request(app).post(path).set("Authorization", "Bearer user-token").expect(403);
+    const reached = await request(app).post(path).set("Authorization", "Bearer admin-token").expect(404);
+    expect(reached.body).toEqual({ error: "user not found", uid: "ghost" });
+
+    const unmounted = await request(createHttpServer(buildDeps(store))).post(path).set("Authorization", "Bearer admin-token").expect(404);
+    expect(unmounted.body).not.toEqual(reached.body);
+    expect(resumeSourceIngress).not.toHaveBeenCalled();
+  });
+
   it("serves sizing profiles to admins and answers a dry run of a write ahead of the fleet routes' refusal", async () => {
     const app = createHttpServer(buildDeps(store));
     const profile = { isolation: "shared" };

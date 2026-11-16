@@ -20,6 +20,7 @@ import {
 } from "@octogee/core/admin-fleet-router";
 import { addAdminProvisioningRoutes, type AdminProvisioningClient, type AdminProvisioningRouterDeps } from "@octogee/core/admin-provisioning-router";
 import type { CentralReleaseAuthority } from "@octogee/core/artifact-registry";
+import type { ResumeSourceIngress } from "@octogee/core/stranded-source-restore";
 import type {
   PlatformStateStore,
   WatchAggregate,
@@ -109,6 +110,7 @@ export interface HttpServerDeps {
     gatewayIds: readonly string[],
   ) => Promise<Record<string, GatewayPodDiagnostics>>;
   requestNativeReturnSourceRecovery?: (input: { uid: string; operationId: string; requestedAt: number; requestedBy: string }) => Promise<boolean>;
+  resumeSourceIngress?: ResumeSourceIngress;
   userHome?: AdminUserHome;
   suspendAuthUser: (uid: string) => Promise<void>;
   revokeConnectorGrantsForUser: (uid: string) => Promise<void>;
@@ -389,6 +391,7 @@ export function createHttpServer(deps: HttpServerDeps): Express {
       ...(deps.userHome ? { userHome: deps.userHome } : {}),
     }),
     provisioningReadiness: deps.provisioningReadiness,
+    ...(deps.resumeSourceIngress ? { strandedSource: { resumeSourceIngress: deps.resumeSourceIngress } } : {}),
   });
   addAdminProvisioningRoutes(adminRouter, {
     provisioning: deps.provisioning ?? null,
