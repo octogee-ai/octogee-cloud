@@ -110,7 +110,7 @@ function assertPinnedHost(url, pinnedHost) {
 function createGiteaAdmin(config) {
     const fetchImpl = (input, init) => (config.fetch ?? fetch)(input, init);
     const pinnedHost = pinnedHostOf(config.apiBaseUrl);
-    async function send(method, path, body) {
+    async function send(method, path, body, signal) {
         const url = `${config.apiBaseUrl}${path}`;
         assertPinnedHost(url, pinnedHost);
         return fetchImpl(url, {
@@ -121,14 +121,15 @@ function createGiteaAdmin(config) {
                 ...(body ? { "Content-Type": "application/json" } : {}),
             },
             ...(body ? { body: JSON.stringify(body) } : {}),
+            ...(signal ? { signal } : {}),
         });
     }
     return {
         config,
         log: config.log ?? (() => undefined),
         send,
-        async request(method, path, body) {
-            const resp = await send(method, path, body);
+        async request(method, path, body, signal) {
+            const resp = await send(method, path, body, signal);
             const json = resp.status === 204 || resp.status === 304 ? null : await resp.json().catch(() => null);
             return { status: resp.status, json };
         },
@@ -143,10 +144,10 @@ async function tolerantDelete(api, path, label, operation) {
     const body = await resp.text().catch(() => "");
     throw new Error(`gitea ${operation} failed: ${resp.status} ${body.slice(0, 200)}`);
 }
-async function readUserKeys(api, username) {
+async function readUserKeys(api, username, signal) {
     const keys = [];
     for (let page = 1;; page += 1) {
-        const response = await api.request("GET", `/users/${username}/keys?limit=${GITEA_PAGE_SIZE}&page=${page}`);
+        const response = await api.request("GET", `/users/${username}/keys?limit=${GITEA_PAGE_SIZE}&page=${page}`, undefined, signal);
         if (page === 1 && response.status === 404)
             return [];
         if (!ok(response.status))
@@ -160,8 +161,8 @@ async function readUserKeys(api, username) {
             return keys;
     }
 }
-async function hasManagedKey(api, username, pubKey, title) {
-    return (await readUserKeys(api, username)).some((key) => isManagedGatewayKey(key) &&
+async function hasManagedKey(api, username, pubKey, title, signal) {
+    return (await readUserKeys(api, username, signal)).some((key) => isManagedGatewayKey(key) &&
         (title === undefined || key.title === title) &&
         publicKeysMatch(key.key, pubKey));
 }
@@ -340,6 +341,7 @@ export function createGiteaGitHost(config) {
         naming: giteaNaming,
         registerKey: (workspaceSlug, pubKey, keyOwnerId) => registerGatewayKey(api, workspaceSlug, pubKey, keyOwnerId, true),
         registerKeyUnlessHeld: (workspaceSlug, pubKey, keyOwnerId) => registerGatewayKey(api, workspaceSlug, pubKey, keyOwnerId, false),
+        holdsKey: (workspaceSlug, pubKey, keyOwnerId, signal) => hasManagedKey(api, giteaUsername(workspaceSlug), pubKey, gatewayKeyTitle(pubKey, keyOwnerId), signal),
         async listKeys(workspaceSlug) {
             return (await readUserKeys(api, giteaUsername(workspaceSlug)))
                 .filter(isManagedGatewayKey)
