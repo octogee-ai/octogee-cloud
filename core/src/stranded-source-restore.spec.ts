@@ -1,14 +1,18 @@
 import { describe, expect, it, vi } from "vitest";
+import { SCHEDULE_TRANSFERS_SUBCOLLECTION } from "@octogee/shared/types/fleet-controller";
 import { GLM_OPERATIONS_COLLECTION } from "@octogee/shared/types/glm";
 import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 
-import { MigrationRpcError, MigrationTransportError } from "./fleet-migration-client.js";
+import { MigrationRpcError, MigrationTransportError, type MigrationClient } from "./fleet-migration-client.js";
 import { setWorkspaceMigrationPhase } from "./fleet-state.js";
 import { PlacementPreconditionFailed } from "./placement-refusal.js";
 import {
   StrandedSourceResumeFailed,
   readStrandedSource,
   restoreStrandedSourceServing,
+  strandedSourceGatewayCalls,
+  strandedSourceRestoreOutcome,
+  type SchedulesRestored,
 } from "./stranded-source-restore.js";
 
 type Row = Record<string, unknown>;
@@ -19,6 +23,8 @@ const UID = "uid-ada", SLUG = "ada", SOURCE = "shared-a", TARGET = "shared-b", O
 const ASSIGNMENT = `gateways/${SOURCE}/assignments/${UID}`;
 const USER = `users/${UID}`;
 const OPERATION = `${GLM_OPERATIONS_COLLECTION}/${OP}`;
+const ROOT = `gateways/${SOURCE}`;
+const TRANSFER = `users/${UID}/${SCHEDULE_TRANSFERS_SUBCOLLECTION}/mig-${OP}`;
 const QUIESCED: Step[] = [["keys-sync-state", "done"], ["pre-sync-state", "done"], ["wait-for-active-work", "done"], ["quiesce-source", "done"]];
 const ROLLBACK_LEFT_SOURCE_CLOSED: Step[] = [["rollback:unmount-target", "done"], ["rollback:resume-ingress", "failed"]];
 const INCIDENT: Step[] = [...QUIESCED, ["flush-source", "failed"], ...ROLLBACK_LEFT_SOURCE_CLOSED];
@@ -39,6 +45,7 @@ function move(id: string, fields: Row = {}): Row {
 function stranded(): Records {
   return new Map<string, Row>(Object.entries({
     "config/orchestrator": { defaultGatewayId: SOURCE, sharedGatewayIds: [SOURCE, TARGET] },
+    [ROOT]: { gatewayId: SOURCE, desiredRelease: 1, latestRelease: 1, desiredStatus: "running" },
     [ASSIGNMENT]: {
       uid: UID, slug: SLUG, gatewayId: SOURCE, source: "onboarding", state: "quiescing", epoch: 3,
       createdAt: 1, updatedAt: 1_500, updatedByOperationId: OP,
@@ -68,12 +75,18 @@ function openclaw(records: Records): Row {
   return (records.get(USER)!.provisioning as { openclaw: Row }).openclaw;
 }
 
-function harness(records: Records, resume: () => Promise<void> = async () => undefined) {
+function harness(
+  records: Records,
+  resume: () => Promise<void> = async () => undefined,
+  schedules: () => Promise<SchedulesRestored> = async () => "none",
+) {
   const resumeSourceIngress = vi.fn(resume);
+  const restoreSourceSchedules = vi.fn(schedules);
   const log = vi.fn();
   const store = createDocumentFixtureStore(records, { serializeTransactions: true });
-  const deps = { store, resumeSourceIngress, log, now: () => new Date(5_000) };
-  return { deps, store, resumeSourceIngress, log, restore: () => restoreStrandedSourceServing(deps, { uid: UID }) };
+  const deps = { store, resumeSourceIngress, restoreSourceSchedules, log, now: () => new Date(5_000) };
+  const restore = async () => restoreStrandedSourceServing(deps, await readStrandedSource(store, UID));
+  return { deps, store, resumeSourceIngress, restoreSourceSchedules, log, restore };
 }
 
 function snapshot(records: Records): string {
@@ -98,7 +111,10 @@ describe("a source left closed by a move whose rollback could not resume its ing
     expect(openclaw(records).migration).toBeUndefined();
     expect(openclaw(records).gatewayId).toBe(SOURCE);
     expect(records.get(OPERATION)).toEqual(stranded().get(OPERATION));
-    expect(restored).toEqual({ uid: UID, slug: SLUG, gatewayId: SOURCE, operationId: OP, targetGatewayId: TARGET, state: "serving" });
+    expect(restored).toEqual({
+      uid: UID, slug: SLUG, gatewayId: SOURCE, operationId: OP, targetGatewayId: TARGET, state: "serving",
+      schedulesRestored: "none", sourceDraining: false,
+    });
   });
 
   it("writes the serving state only after the ingress resumed", async () => {
@@ -115,8 +131,6 @@ describe("a source left closed by a move whose rollback could not resume its ing
 
   it.each<[string, Step[]]>([
     ["the quiesce itself failed", [...QUIESCED.slice(0, 3), ["quiesce-source", "failed"], ...ROLLBACK_LEFT_SOURCE_CLOSED]],
-    ["the final copy failed", [...QUIESCED, ["flush-source", "done"], ["final-sync-state", "failed"], ...ROLLBACK_LEFT_SOURCE_CLOSED]],
-    ["the target check failed", [...QUIESCED, ["flush-source", "done"], ["final-sync-state", "done"], ["verify-target", "failed"], ...ROLLBACK_LEFT_SOURCE_CLOSED]],
     ["the ingress resumed but the serving write was lost", [...QUIESCED, ["flush-source", "failed"], ["rollback:unmount-target", "done"], ["rollback:resume-ingress", "done"]]],
   ])("also restores the source when %s", async (_name, shape) => {
     const records = stranded();
@@ -126,6 +140,26 @@ describe("a source left closed by a move whose rollback could not resume its ing
     await h.restore();
 
     expect(h.resumeSourceIngress).toHaveBeenCalledTimes(1);
+    expect(records.get(ASSIGNMENT)).toMatchObject({ state: "serving" });
+  });
+
+  it.each<[string, Row]>([
+    ["only its last attempt is recorded", { attempts: 1, attemptHistory: [{ attempt: 1, steps: steps(INCIDENT) }] }],
+    ["an earlier attempt failed before it held the source", { attempts: 2, attemptHistory: [
+      { attempt: 1, steps: steps([["keys-sync-state", "failed"], ["rollback:unmount-target", "done"]]) },
+      { attempt: 2, steps: steps(INCIDENT) },
+    ] }],
+    ["an earlier attempt reached the final copy and finished its rollback", { attempts: 2, attemptHistory: [
+      { attempt: 1, steps: steps([...QUIESCED, ["flush-source", "done"], ["final-sync-state", "failed"], ["rollback:unmount-target", "done"], ["rollback:resume-ingress", "done"]]) },
+      { attempt: 2, steps: steps(INCIDENT) },
+    ] }],
+  ])("also restores the source of a move when %s", async (_name, attempts) => {
+    const records = stranded();
+    patch(records, OPERATION, attempts);
+    const h = harness(records);
+
+    await h.restore();
+
     expect(records.get(ASSIGNMENT)).toMatchObject({ state: "serving" });
   });
 
@@ -162,6 +196,10 @@ describe("a precondition that does not hold", () => {
     ["the assignment names no operation", (r) => patch(r, ASSIGNMENT, { updatedByOperationId: null }), "source-not-stranded", "names no operation"],
     ["the assignment is owned by an operation that is not a user move", (r) => patch(r, OPERATION, { kind: "rollout", input: { gatewayId: SOURCE } }),
       "source-not-stranded", "is not a user move"],
+    ["the assignment is owned by an operation of another kind for the same user", (r) => patch(r, OPERATION, { kind: "restart-user" }),
+      "source-not-stranded", "is not a user move"],
+    ["the owning move names another user under the same slug", (r) => patch(r, OPERATION, { input: { uid: "uid-bo", userSlug: SLUG, fromGatewayId: SOURCE, toGatewayId: TARGET } }),
+      "source-not-stranded", "is not a user move"],
     ["the assignment is owned by another user's move", (r) => patch(r, OPERATION, { input: { uid: "uid-bo", userSlug: "bo", fromGatewayId: SOURCE, toGatewayId: TARGET } }),
       "source-not-stranded", "is not a user move"],
     ["the owning move left another gateway", (r) => patch(r, OPERATION, { input: { uid: UID, userSlug: SLUG, fromGatewayId: "shared-c", toGatewayId: TARGET } }),
@@ -186,6 +224,7 @@ describe("a precondition that does not hold", () => {
       schedulerHandoff: { migrationId: `mig-${OP}:scheduler:1:claim:1000`, uid: UID, slug: SLUG, fromGatewayId: SOURCE, toGatewayId: TARGET,
         forwardRecovery: { schemaVersion: 1, phase: "source-flushed", sourceEpoch: 3 } },
     }), "rollback-not-proven", "forward"],
+    ["the move holds a source transfer", (r) => patch(r, OPERATION, { sourceTransferExecution: { attempt: 1 } }), "rollback-not-proven", "holds a source transfer"],
     ["a cancellation is pending", (r) => patch(r, OPERATION, { cancellationRequestedAt: 1_800 }), "rollback-not-proven", "cancellation"],
     ["the move is a source-only recovery", (r) => patch(r, OPERATION, { input: { uid: UID, userSlug: SLUG, fromGatewayId: SOURCE, toGatewayId: TARGET, recoverSourceOnly: true } }),
       "rollback-not-proven", "source-only recovery"],
@@ -193,6 +232,35 @@ describe("a precondition that does not hold", () => {
       "rollback-not-proven", "forward recovery marker"],
     ["the target was not confirmed unmounted", (r) => patch(r, OPERATION, { steps: steps([...QUIESCED, ["flush-source", "failed"], ["rollback:unmount-target", "failed"]]) }),
       "rollback-not-proven", "recorded steps"],
+    ["the target unmount failed and the ingress resume was still tried", (r) => patch(r, OPERATION, { steps: steps([...QUIESCED, ["flush-source", "failed"],
+      ["rollback:unmount-target", "failed"], ["rollback:resume-ingress", "failed"]]) }), "rollback-not-proven", "recorded steps"],
+    ["no step failed before the rollback", (r) => patch(r, OPERATION, { steps: steps([...QUIESCED, ["flush-source", "done"], ...ROLLBACK_LEFT_SOURCE_CLOSED]) }),
+      "rollback-not-proven", "recorded steps"],
+    ["a step before the failed one did not finish", (r) => patch(r, OPERATION, { steps: steps([["keys-sync-state", "done"], ["pre-sync-state", "running"],
+      ["wait-for-active-work", "done"], ["quiesce-source", "done"], ["flush-source", "failed"], ...ROLLBACK_LEFT_SOURCE_CLOSED]) }), "rollback-not-proven", "recorded steps"],
+    ["a rollback step precedes the failed one", (r) => patch(r, OPERATION, { steps: steps([...QUIESCED, ["rollback:cutover-firestore", "done"],
+      ["flush-source", "failed"], ...ROLLBACK_LEFT_SOURCE_CLOSED]) }), "rollback-not-proven", "recorded steps"],
+    ["the flush failed with no quiesce recorded", (r) => patch(r, OPERATION, { steps: steps([...QUIESCED.slice(0, 3), ["flush-source", "failed"], ...ROLLBACK_LEFT_SOURCE_CLOSED]) }),
+      "rollback-not-proven", "recorded steps"],
+    ["an earlier step is recorded twice", (r) => patch(r, OPERATION, { steps: steps([["keys-sync-state", "done"], ...INCIDENT]) }), "rollback-not-proven", "recorded steps"],
+    ["the final copy failed, after which the rollback hands the stores to the target", (r) => patch(r, OPERATION, { steps: steps([...QUIESCED, ["flush-source", "done"],
+      ["final-sync-state", "failed"], ...ROLLBACK_LEFT_SOURCE_CLOSED]) }), "rollback-not-proven", "recorded steps"],
+    ["the target check failed", (r) => patch(r, OPERATION, { steps: steps([...QUIESCED, ["flush-source", "done"], ["final-sync-state", "done"],
+      ["verify-target", "failed"], ...ROLLBACK_LEFT_SOURCE_CLOSED]) }), "rollback-not-proven", "recorded steps"],
+    ["an earlier attempt left a rollback step failed", (r) => patch(r, OPERATION, { attempts: 2, attemptHistory: [
+      { attempt: 1, steps: steps([...QUIESCED, ["flush-source", "failed"], ["rollback:unmount-target", "done"], ["rollback:resume-ingress", "failed"]]) },
+      { attempt: 2, steps: steps(INCIDENT) },
+    ] }), "rollback-not-proven", "an earlier attempt"],
+    ["an earlier attempt reached the final copy and never resumed the source", (r) => patch(r, OPERATION, { attempts: 2, attemptHistory: [
+      { attempt: 1, steps: steps([...QUIESCED, ["flush-source", "done"], ["final-sync-state", "running"]]) },
+      { attempt: 2, steps: steps(INCIDENT) },
+    ] }), "rollback-not-proven", "an earlier attempt"],
+    ["an earlier attempt is recorded without its steps", (r) => patch(r, OPERATION, { attempts: 2, attemptHistory: [
+      { attempt: 1 }, { attempt: 2, steps: steps(INCIDENT) },
+    ] }), "rollback-not-proven", "an earlier attempt"],
+    ["the last recorded attempt is not the one that failed and its rollback is unfinished", (r) => patch(r, OPERATION, { attempts: 3, attemptHistory: [
+      { attempt: 2, steps: steps(INCIDENT) },
+    ] }), "rollback-not-proven", "an earlier attempt"],
     ["the rollback never reached the ingress", (r) => patch(r, OPERATION, { steps: steps([...QUIESCED, ["flush-source", "failed"], ["rollback:unmount-target", "done"]]) }),
       "rollback-not-proven", "recorded steps"],
     ["the ingress resume was still running", (r) => patch(r, OPERATION, { steps: steps([...QUIESCED, ["flush-source", "failed"], ["rollback:unmount-target", "done"], ["rollback:resume-ingress", "running"]]) }),
@@ -206,6 +274,15 @@ describe("a precondition that does not hold", () => {
       "rollback-not-proven", "recorded steps"],
     ["a step repeats", (r) => patch(r, OPERATION, { steps: steps([...INCIDENT, ["rollback:resume-ingress", "failed"]]) }), "rollback-not-proven", "recorded steps"],
     ["the steps are not recorded", (r) => patch(r, OPERATION, { steps: [] }), "rollback-not-proven", "recorded steps"],
+    ["the source gateway has no root", (r) => { r.delete(ROOT); }, "source-gateway-retired", `gateway ${SOURCE} has no root`],
+    ["the source gateway is retired", (r) => patch(r, ROOT, { desiredStatus: "retired" }), "source-gateway-retired", `gateway ${SOURCE} is retired`],
+    ["the account is suspended", (r) => patch(r, USER, { accountLifecycle: { status: "suspended", suspendedAt: 1_700 } }), "account-not-active", "account is suspended"],
+    ["the account is scheduled for deletion", (r) => patch(r, USER, { accountLifecycle: { status: "deletion_scheduled", deletionId: "del-1", eraseAfter: 9_000 } }),
+      "account-not-active", "account is deletion_scheduled"],
+    ["the account is being erased", (r) => patch(r, USER, { accountLifecycle: { status: "erasing", deletionId: "del-1" } }), "account-not-active", "account is erasing"],
+    ["the user is quiescing on two gateways", (r) => r.set(`gateways/${TARGET}/assignments/${UID}`, {
+      uid: UID, slug: SLUG, gatewayId: TARGET, source: "migrate-user", state: "quiescing", epoch: 4, createdAt: 1_900, updatedAt: 1_900, updatedByOperationId: OP,
+    }), "fleet-state-changed", `is quiescing on ${SOURCE}, ${TARGET}`],
     ["the user moved to the target", (r) => patchOpenclaw(r, { gatewayId: TARGET }), "fleet-state-changed", `is assigned to ${TARGET}`],
     ["the user holds an assignment on the target", (r) => r.set(`gateways/${TARGET}/assignments/${UID}`, {
       uid: UID, slug: SLUG, gatewayId: TARGET, source: "migrate-user", state: "serving", epoch: 4, createdAt: 1_900, updatedAt: 1_900, updatedByOperationId: OP,
@@ -253,6 +330,184 @@ describe("a precondition that does not hold", () => {
       uid: UID, slug: SLUG, gatewayId: SOURCE, epoch: 3, assignmentUpdatedAt: 1_500, operationId: OP, targetGatewayId: TARGET,
     });
     expect(snapshot(records)).toBe(before);
+  });
+});
+
+describe("a repair started for a source that has changed since the caller read it", () => {
+  it.each<[string, (records: Records) => void]>([
+    ["the assignment was rewritten", (r) => patch(r, ASSIGNMENT, { updatedAt: 1_600 })],
+    ["another failed move now holds the source", (r) => {
+      patch(r, ASSIGNMENT, { updatedByOperationId: "op-move-2", updatedAt: 1_700 });
+      patchOpenclaw(r, { migration: { state: "moving", phase: "transferring", operationId: "op-move-2", startedAt: 1_650 } });
+      r.set(`${GLM_OPERATIONS_COLLECTION}/op-move-2`, move("op-move-2"));
+    }],
+  ])("refuses without resuming when %s", async (_name, change) => {
+    const records = stranded();
+    const h = harness(records);
+    const journaled = await readStrandedSource(h.store, UID);
+    change(records);
+    const before = snapshot(records);
+
+    const refused = await refusal(restoreStrandedSourceServing(h.deps, journaled));
+
+    expect(refused.reasonCode).toBe("fleet-state-changed");
+    expect(refused.message).toContain(`no longer the one on ${SOURCE} left by operation ${OP}`);
+    expect(h.resumeSourceIngress).not.toHaveBeenCalled();
+    expect(snapshot(records)).toBe(before);
+  });
+});
+
+describe("the schedules the failed move took off the source", () => {
+  it("are restored after the ingress resumed and before the user serves again", async () => {
+    const records = stranded();
+    const order: string[] = [];
+    const h = harness(
+      records,
+      async () => { order.push("resume"); },
+      async () => { order.push(`schedules while ${String(records.get(ASSIGNMENT)!.state)}`); return true; },
+    );
+
+    const restored = await h.restore();
+
+    expect(order).toEqual(["resume", "schedules while quiescing"]);
+    expect(h.restoreSourceSchedules.mock.calls).toEqual([[{ uid: UID, operationId: OP, gatewayId: SOURCE, slug: SLUG }]]);
+    expect(restored).toMatchObject({ state: "serving", schedulesRestored: true });
+    expect(strandedSourceRestoreOutcome(restored)).toEqual({ outcome: "completed" });
+  });
+
+  it("are reported as none when the move snapshotted nothing", async () => {
+    const restored = await harness(stranded()).restore();
+
+    expect(restored.schedulesRestored).toBe("none");
+    expect(strandedSourceRestoreOutcome(restored)).toEqual({ outcome: "completed" });
+  });
+
+  it.each<[string, () => Promise<SchedulesRestored>, string]>([
+    ["the gateway does not restore them", async () => false, "the gateway did not restore every schedule"],
+    ["the restore throws", async () => { throw new Error("schedule transfer store unavailable"); }, "schedule transfer store unavailable"],
+  ])("do not hold the repair back when %s: the user serves, and the loss is logged and reported", async (_name, schedules, reason) => {
+    const records = stranded();
+    const h = harness(records, async () => undefined, schedules);
+
+    const restored = await h.restore();
+
+    expect(records.get(ASSIGNMENT)).toMatchObject({ state: "serving" });
+    expect(openclaw(records).migration).toBeUndefined();
+    expect(restored).toMatchObject({ state: "serving", schedulesRestored: false });
+    expect(h.log).toHaveBeenCalledWith(
+      `[stranded-source] ❌ the schedules operation ${OP} took off ${SOURCE} were not restored for uid=${UID} slug=${SLUG}: ${reason}; the source is restored without them`,
+    );
+    expect(strandedSourceRestoreOutcome(restored)).toEqual({
+      outcome: "partial",
+      partialOutcome: { summary: `${SLUG} serves again on ${SOURCE}; its schedules were not restored`, details: { schedulesRestored: false } },
+    });
+  });
+
+  it("are not touched when the ingress does not resume", async () => {
+    const h = harness(stranded(), async () => { throw new MigrationTransportError("/resume/shared-a transport failed: connect ECONNREFUSED"); });
+
+    await expect(h.restore()).rejects.toBeInstanceOf(StrandedSourceResumeFailed);
+
+    expect(h.restoreSourceSchedules).not.toHaveBeenCalled();
+  });
+});
+
+describe("the calls the repair makes to the source gateway", () => {
+  const RECORDS = [{ sourceJobId: "job-1", agentId: `${SLUG}-main`, job: { name: "daily digest" } }];
+  const transfer = (fields: Row = {}): Row => ({
+    migrationId: `mig-${OP}`, slug: SLUG, sourceGatewayId: SOURCE, targetGatewayId: TARGET, records: RECORDS, skipped: [], snapshotAt: 1_400, ...fields,
+  });
+
+  function gateway(records: Records, restore: () => Promise<unknown> = async () => ({ created: 1, existing: 0, failed: [] })) {
+    const resume = vi.fn(async () => undefined);
+    const schedules = vi.fn(restore);
+    const clientFor = vi.fn(async () => ({ resume, schedules }) as unknown as MigrationClient);
+    const log = vi.fn();
+    const calls = strandedSourceGatewayCalls({
+      store: createDocumentFixtureStore(records), clientFor, migrationIdFor: (operationId) => `mig-${operationId}`, log, now: () => 5_000,
+    });
+    const restoreSchedules = () => calls.restoreSourceSchedules({ uid: UID, operationId: OP, gatewayId: SOURCE, slug: SLUG });
+    return { calls, resume, schedules, clientFor, log, restoreSchedules };
+  }
+
+  it("resume the ingress under the failed move's migration id", async () => {
+    const g = gateway(stranded());
+
+    await g.calls.resumeSourceIngress({ operationId: OP, gatewayId: SOURCE, slug: SLUG });
+
+    expect(g.clientFor.mock.calls).toEqual([[SOURCE]]);
+    expect(g.resume.mock.calls).toEqual([[{ migrationId: `mig-${OP}`, gatewayId: SOURCE, slug: SLUG }]]);
+  });
+
+  it("answer none without calling the gateway when the move stored no schedule transfer", async () => {
+    const g = gateway(stranded());
+
+    await expect(g.restoreSchedules()).resolves.toBe("none");
+
+    expect(g.clientFor).not.toHaveBeenCalled();
+  });
+
+  it("restore an unrestored transfer on the source and record it restored", async () => {
+    const records = stranded();
+    records.set(TRANSFER, transfer());
+    const g = gateway(records);
+
+    await expect(g.restoreSchedules()).resolves.toBe(true);
+
+    expect(g.schedules.mock.calls).toEqual([[{ migrationId: `mig-${OP}`, slug: SLUG, gatewayId: SOURCE, op: "restore", records: RECORDS }]]);
+    expect(records.get(TRANSFER)).toMatchObject({ restoredTo: SOURCE, restoredAt: 5_000, restoreAttemptedTo: SOURCE, restoreFailures: [] });
+  });
+
+  it("answer true without calling the gateway when the rollback already restored the transfer", async () => {
+    const records = stranded();
+    records.set(TRANSFER, transfer({ restoreAttemptedTo: SOURCE, restoreAttemptedAt: 1_900, restoreFailures: [], restoredTo: SOURCE, restoredAt: 1_900 }));
+    const g = gateway(records);
+
+    await expect(g.restoreSchedules()).resolves.toBe(true);
+
+    expect(g.clientFor).not.toHaveBeenCalled();
+  });
+
+  it.each<[string, () => Promise<unknown>, string]>([
+    ["the gateway fails the restore call", async () => { throw new MigrationRpcError("/schedules/shared-a failed: 500 scheduler down", { status: 500 }); }, "500 scheduler down"],
+    ["the gateway restores only some schedules", async () => ({
+      created: 0, existing: 0, failed: [{ name: "daily digest", agentId: `${SLUG}-main`, sourceJobId: "job-1", error: "agent not loaded", retryable: true }],
+    }), "agent not loaded"],
+  ])("answer false and leave the transfer unrestored when %s", async (_name, restore, error) => {
+    const records = stranded();
+    records.set(TRANSFER, transfer());
+    const g = gateway(records, restore);
+
+    await expect(g.restoreSchedules()).resolves.toBe(false);
+
+    const stored = records.get(TRANSFER)!;
+    expect(stored.restoredTo).toBeUndefined();
+    expect(stored).toMatchObject({ restoreAttemptedTo: SOURCE, restoreFailures: [expect.objectContaining({ name: "daily digest", error: expect.stringContaining(error) })] });
+  });
+});
+
+describe("a source restored on a gateway that is draining", () => {
+  it("serves the user, reports the drain and warns that an operator must move the user", async () => {
+    const records = stranded();
+    patch(records, ROOT, { desiredStatus: "draining" });
+    const h = harness(records);
+
+    const restored = await h.restore();
+
+    expect(restored).toMatchObject({ state: "serving", sourceDraining: true });
+    expect(records.get(ASSIGNMENT)).toMatchObject({ state: "serving" });
+    expect(h.log).toHaveBeenCalledWith(
+      `[stranded-source] ⚠ uid=${UID} slug=${SLUG} serves again on ${SOURCE}, which is draining; ` +
+      `operation ${OP} stays failed and is not re-armed, so the user needs an operator move off ${SOURCE}`,
+    );
+  });
+
+  it("does not warn on a gateway that is running", async () => {
+    const h = harness(stranded());
+
+    await h.restore();
+
+    expect(h.log).not.toHaveBeenCalledWith(expect.stringContaining("draining"));
   });
 });
 

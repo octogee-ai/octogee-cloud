@@ -12,7 +12,7 @@ describe("placement refusal reasons", () => {
       "roll-not-eligible", "drain-move-not-supersedable", "fleet-state-changed", "fence-mismatch",
       "source-recovery-pending", "user-missing", "user-slug-missing", "lease-missing", "gateway-not-owned",
       "retirement-blocked", "isolated-fence", "retirement-conflict", "sizing-key-changed", "initial-release-conflict",
-      "source-not-stranded", "migration-in-flight", "rollback-not-proven",
+      "source-not-stranded", "migration-in-flight", "rollback-not-proven", "account-not-active", "source-gateway-retired",
     ]);
   });
 

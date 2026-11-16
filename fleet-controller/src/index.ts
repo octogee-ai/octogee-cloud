@@ -265,7 +265,7 @@ import {
   type IdentityProvider,
 } from "@octogee/core/identity-provider";
 import { createMigrationClient } from "@octogee/core/fleet-migration-client";
-import type { ResumeSourceIngress } from "@octogee/core/stranded-source-restore";
+import { strandedSourceGatewayCalls } from "@octogee/core/stranded-source-restore";
 import {
   userMigrationV2GatewayRootFence,
   isUserMigrationV2Transition,
@@ -2257,10 +2257,7 @@ function startControllerBackgroundTasks({
     GATEWAY_HEARTBEAT_POLL_MS,
   );
   const migrationClient = createMigrationClientUser(deps.store, fleetControllerPrivateKey, log);
-  const resumeSourceIngress: ResumeSourceIngress = async ({ operationId, gatewayId, slug }) => {
-    const url = await resolveGatewayFleetUrl(deps.store, gatewayId);
-    await migrationClient(() => url).resume({ migrationId: migrationIdForOperation(operationId), gatewayId, slug });
-  };
+  const strandedSourceGateway = buildStrandedSourceGateway(deps.store, migrationClient);
   const stopStuckOpReaper = startStuckOpReaper({
     store: deps.store,
     log,
@@ -2268,7 +2265,7 @@ function startControllerBackgroundTasks({
     stalenessMs: 15 * 60 * 1000,
     now: () => Date.now(),
     controllerStartedAt,
-    restoreStrandedSources: createStrandedSourceRetry({ store: deps.store, resumeSourceIngress, log, now: () => Date.now() }),
+    restoreStrandedSources: createStrandedSourceRetry({ store: deps.store, ...strandedSourceGateway, log, now: () => Date.now() }).start,
   });
   const stopSchedulerHandoffRelease = startSchedulerHandoffRelease({
     store: deps.store,
@@ -2389,7 +2386,7 @@ function startControllerBackgroundTasks({
         }
       : {}),
     requestNativeReturnSourceRecovery: deps.requestNativeReturnSourceRecovery,
-    resumeSourceIngress,
+    strandedSource: strandedSourceGateway,
     ...(GATEWAY_VM_SPEC ? { userHome: adminUserHome(deps.store, GATEWAY_VM_SPEC) } : {}),
     logs: {
       source: ENVIRONMENT_SETTINGS.clusterProjectId
@@ -2914,6 +2911,19 @@ function retainedSourceRunner(store: PlatformStateStore, context: RetainedSource
 
 async function cleanupRetainedSource(store: PlatformStateStore, privateKey:string, context:RetainedSourceContext): Promise<void> {
   await abortRetainedSourceImport({store,namespace:NAMESPACE,privateKey,fleetControllerPort:FLEET_CONTROLLER_PORT,resolveGatewayUrl:()=>'',resolveGatewayVm:transportId=>readGatewayVmAddress(store,transportId),retainedSource:retainedSourceRunner(store,context)}, {migrationId:context.state.migrationId,slug:context.state.slug,toGatewayId:context.state.targetGatewayId});
+}
+
+function buildStrandedSourceGateway(store: PlatformStateStore, client: ReturnType<typeof createMigrationClientUser>) {
+  return strandedSourceGatewayCalls({
+    store,
+    clientFor: async (gatewayId) => {
+      const url = await resolveGatewayFleetUrl(store, gatewayId);
+      return client(() => url);
+    },
+    migrationIdFor: migrationIdForOperation,
+    log,
+    now: () => Date.now(),
+  });
 }
 
 function createMigrationClientUser(

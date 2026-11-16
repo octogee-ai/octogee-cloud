@@ -477,7 +477,9 @@ this table against them.
 | `initial-release-conflict` | The gateway's initial release conflicts. | `isolated-gateway/allocate` |
 | `source-not-stranded` | The user has no quiescing assignment left by a failed move of that user out of that gateway. | `restore-serving` |
 | `migration-in-flight` | The move that closed the source is pending or running again, or another operation for the user or for the source gateway is pending or running. | `restore-serving` |
-| `rollback-not-proven` | The failed move committed its cutover, holds forward state, or its recorded steps do not show the target unmounted and only the source ingress left to resume. | `restore-serving` |
+| `rollback-not-proven` | The failed move committed its cutover, holds forward state, its recorded steps do not show the target unmounted and only the source ingress left to resume, or an earlier attempt did not finish its rollback. | `restore-serving` |
+| `account-not-active` | The user's account is suspended, scheduled for deletion or being erased, so the user is not served. | `restore-serving` |
+| `source-gateway-retired` | The source gateway has no root or its desired status is `retired`; its ingress cannot be resumed. | `restore-serving` |
 
 A `409` that carries `auditId` and no `code` is an `Idempotency-Key` replay. It
 answers with the audit of the earlier call instead of acting twice. With
@@ -983,41 +985,90 @@ transaction and again in the transaction that writes:
   is not a source-only recovery.
 - The operation's recorded steps end with one failed step, then
   `rollback:unmount-target` `done`, then `rollback:resume-ingress` `failed` or
-  `done`. The failed step is `quiesce-source`, `flush-source`,
-  `final-sync-state` or `verify-target`, every step before it is `done`,
-  `quiesce-source` appears once and no step repeats.
+  `done`. The failed step is `quiesce-source` or `flush-source`, every step
+  before it is `done`, `quiesce-source` appears once and no step repeats. A
+  move that failed at `final-sync-state` or later is refused: from the final
+  copy on, the user's agent stores can belong to the target's database role,
+  and only the move's own rollback hands them back.
+- Every earlier attempt of the operation that its attempt history records
+  finished its rollback: none has a `rollback:` step that is not `done`, and
+  none reached `final-sync-state` without `rollback:resume-ingress` `done`.
+- The source gateway has a root and its desired status is not `retired`.
+- The user's account is active.
 - The assignment has no forward recovery marker. The user has no restore
   fence and no source transfer fence, and the user's migration fence names that
   operation or is absent.
 - No other operation for the user, and no operation on the source gateway, is
   `pending` or `running`.
 
-It then asks the source gateway to resume the user's ingress, the call the
-move's own rollback makes. Only when the gateway confirms does it mark the
-assignment `serving` under the failed operation, which clears the migration
-fence. The answer is
-`{uid, slug, gatewayId, targetGatewayId, state: "serving", failedMoveId, operationId}`;
+It then asks the source gateway to resume the user's ingress under the failed
+move's migration id. This is the gateway's `/resume` call alone. It does not
+hand database ownership of the user's agent stores back to the source, which
+is why only failures before the final copy are admitted. When the gateway
+confirms, the route restores the schedules the move took off the source at
+`quiesce-source`, if the move stored a schedule transfer that is not yet
+restored. Then it marks the assignment `serving` under the failed operation,
+which clears the migration fence. The route acts on the source it read before
+it journaled; if that source has changed by the time it acts, it refuses with
+`fleet-state-changed` and does not call the gateway.
+
+The answer is
+`{uid, slug, gatewayId, targetGatewayId, state: "serving", failedMoveId, operationId, schedulesRestored, sourceDraining}`.
 `operationId` is the journal audit of the repair and `failedMoveId` the
 operation of the failed move.
+
+- `schedulesRestored` is `"none"` when the move stored no schedule transfer,
+  `true` when the transfer is restored on the source (by this call or already
+  by the move's rollback), and `false` when the restore failed. A failed
+  schedule restore does not hold the repair back: the user serves again, the
+  failure is logged as an error, and the journal audit ends `completed` with
+  outcome `partial` and a `partialOutcome` that says so. The schedule transfer
+  stays stored under the user, unrestored, with its failures.
+- `sourceDraining` is `true` when the source gateway's desired status is
+  `draining`. The user then serves again on a gateway that is being emptied,
+  and the failed move stays terminal: a placement request for the same source,
+  target and assignment epoch names the same operation and is refused with
+  `migration-terminal`. Move the user with an operator move.
 
 | Answer | Meaning |
 |---|---|
 | `404` | The user does not exist. Nothing is journaled. |
-| `409` `precondition-failed` | A check above does not hold; `reasonCode` is `source-not-stranded`, `migration-in-flight`, `rollback-not-proven`, `fleet-state-changed` or `user-missing`. No record changed. A repeat after a repair answers `source-not-stranded`. |
+| `409` `precondition-failed` | A check above does not hold; `reasonCode` is `source-not-stranded`, `migration-in-flight`, `rollback-not-proven`, `fleet-state-changed`, `account-not-active`, `source-gateway-retired` or `user-missing`. No record changed. A repeat after a repair answers `source-not-stranded`. |
 | `502` `source-resume-failed` | The source gateway answered the resume with an error. No record changed. |
 | `503` `source-resume-failed` | The source gateway could not be reached. No record changed. |
 
-A refusal found before the resume is not journaled. A failed resume, and a
-refusal found at the write after the gateway resumed, are journaled as a
-failed audit. In that last case the gateway has resumed the ingress while the
-assignment stays `quiescing`; the call can be repeated once the cause is gone. With `?dryRun=true` the route runs the read-only check and
-answers the plan or the same `409`; it does not call the gateway.
+A refusal found before the journal entry is not journaled. A failed resume,
+and a refusal found after the journal entry, are journaled as a failed audit.
+A refusal at the write comes after the gateway resumed the ingress, so the
+ingress is open while the assignment stays `quiescing`; the call can be
+repeated once the cause is gone. With `?dryRun=true` the route runs the
+read-only check and answers the plan or the same `409`; it does not call the
+gateway.
 
-The fleet controller also makes this repair itself. Its pass over failed
-operations, once a minute, tries it for a failed move whose rollback reached
-the source ingress, under the same checks and with a journal audit of its own
-under the actor `fleet-controller`. After a failed resume it waits one minute,
-then twice as long each time up to 30 minutes, and stops after 12 attempts
-for that operation until the fleet controller restarts. It logs every failed
-attempt, and once why a quiescing source does not pass the checks. This route
-stays available throughout.
+An `Idempotency-Key` identifies one attempt, not the repair. Once an attempt
+is journaled, a repeat with the same key answers `409` with that attempt's
+audit, every time, and never calls the gateway again. That holds after a `502`
+or `503` too. To try again, send the call without the header or with a new
+key.
+
+The fleet controller also makes this repair itself. Once a minute its stuck
+operation reaper starts a pass over the failed moves whose rollback reached
+the source ingress. The pass applies the same checks and journals each repair
+as an audit of its own under the actor `fleet-controller`. It runs beside the
+reaper and does not hold it. One pass runs at a time and starts at most five
+resumes, the moves that have waited longest first, so a gateway that does not
+answer costs a pass at most five resume timeouts.
+
+- After a failed resume it waits one minute, then twice as long each time up
+  to 30 minutes, and stops after 12 attempts for that operation until the
+  fleet controller restarts. It logs every failed attempt.
+- A refusal that can pass later (`migration-in-flight`, `fleet-state-changed`,
+  `account-not-active`) is checked again on the same schedule, without a limit
+  and without calling the gateway. It is logged once when the wait starts and
+  once when it ends.
+- Any other refusal is logged once and not checked again until the operation
+  changes.
+
+The pass makes no placement decision and does not take the placement owner
+fence: it only completes the rollback the failed move began. This route stays
+available throughout.

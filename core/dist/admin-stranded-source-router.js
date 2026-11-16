@@ -1,6 +1,6 @@
 import { FleetMutationRefusedError } from "./normal-fleet-mutation.js";
 import { PlacementPreconditionFailed } from "./placement-refusal.js";
-import { StrandedSourceResumeFailed, readStrandedSource, restoreStrandedSourceServing, } from "./stranded-source-restore.js";
+import { StrandedSourceResumeFailed, readStrandedSource, restoreStrandedSourceServing, strandedSourceRestoreOutcome, } from "./stranded-source-restore.js";
 const GATEWAY_ANSWERED_WITH_ERROR = 502;
 const GATEWAY_UNREACHABLE = 503;
 function refusalOf(error) {
@@ -14,6 +14,7 @@ export function addAdminStrandedSourceRoutes(router, deps) {
     const restoreDeps = {
         store,
         resumeSourceIngress: deps.resumeSourceIngress,
+        restoreSourceSchedules: deps.restoreSourceSchedules,
         log: deps.log,
         ...(clock ? { now: () => new Date(clock()) } : {}),
     };
@@ -35,7 +36,7 @@ export function addAdminStrandedSourceRoutes(router, deps) {
                 mutation: { kind: "restore-source-serving", uid, gatewayId, failedMoveId },
                 action: async (claim) => {
                     try {
-                        const { operationId: restoredFrom, ...serving } = await restoreStrandedSourceServing(restoreDeps, { uid });
+                        const { operationId: restoredFrom, ...serving } = await restoreStrandedSourceServing(restoreDeps, source);
                         return { ...serving, failedMoveId: restoredFrom, operationId: claim.auditId };
                     }
                     catch (error) {
@@ -44,6 +45,7 @@ export function addAdminStrandedSourceRoutes(router, deps) {
                         throw error;
                     }
                 },
+                classifyResult: strandedSourceRestoreOutcome,
             });
             res.json(restored);
         }

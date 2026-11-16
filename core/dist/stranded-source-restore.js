@@ -1,6 +1,8 @@
 import { isDeepStrictEqual } from "node:util";
+import { accountAllowsInteractiveAccess } from "@octogee/shared/types/account-lifecycle";
 import { readWorkspaceMigrationMarker } from "@octogee/shared/types/workspace-migration";
 import { MigrationRpcError } from "./fleet-migration-client.js";
+import { restoreScheduleTransfer } from "./fleet-migration-runner.js";
 import { markAssignmentStateInTransaction } from "./fleet-state.js";
 import { PlacementPreconditionFailed } from "./placement-refusal.js";
 const MIGRATE_USER_KIND = "migrate-user";
@@ -8,16 +10,14 @@ const SOURCE_HELD_STEP = "quiesce-source";
 const TARGET_UNMOUNTED_STEP = "rollback:unmount-target";
 const INGRESS_RESUMED_STEP = "rollback:resume-ingress";
 const ROLLBACK_STEP_PREFIX = "rollback:";
-const FAILURES_ROLLED_BACK_BEFORE_CUTOVER = new Set([
-    SOURCE_HELD_STEP,
-    "flush-source",
-    "final-sync-state",
-    "verify-target",
-]);
+const STORE_HANDOFF_STEP = "final-sync-state";
+const FAILURES_BEFORE_STORE_HANDOFF = new Set([SOURCE_HELD_STEP, "flush-source"]);
 const NOT_STRANDED = "source-not-stranded";
 const IN_FLIGHT = "migration-in-flight";
 const NOT_PROVEN = "rollback-not-proven";
 const STATE_CHANGED = "fleet-state-changed";
+const ACCOUNT_NOT_ACTIVE = "account-not-active";
+const SOURCE_RETIRED = "source-gateway-retired";
 export class StrandedSourceResumeFailed extends Error {
     gatewayId;
     operationId;
@@ -46,17 +46,38 @@ function rollbackLeftSourceClosed(steps) {
     return [
         unmount.name === TARGET_UNMOUNTED_STEP && unmount.status === "done",
         resume.name === INGRESS_RESUMED_STEP && (resume.status === "failed" || resume.status === "done"),
-        failed.status === "failed" && FAILURES_ROLLED_BACK_BEFORE_CUTOVER.has(failed.name),
+        failed.status === "failed" && FAILURES_BEFORE_STORE_HANDOFF.has(failed.name),
         completed.every((step) => step.status === "done" && !step.name.startsWith(ROLLBACK_STEP_PREFIX)),
         steps.filter((step) => step.name === SOURCE_HELD_STEP).length === 1,
         new Set(steps.map((step) => step.name)).size === steps.length,
     ].every(Boolean);
+}
+function gatewayRefusal(root, stranded) {
+    if (root === null)
+        return [SOURCE_RETIRED, `gateway ${stranded.gatewayId} has no root; its ingress cannot be resumed`];
+    if (root.desiredStatus === "retired")
+        return [SOURCE_RETIRED, `gateway ${stranded.gatewayId} is retired; its ingress cannot be resumed`];
+    return null;
+}
+function earlierAttempts(operation) {
+    const history = operation.attemptHistory ?? [];
+    return history.at(-1)?.attempt === operation.attempts ? history.slice(0, -1) : history;
+}
+function leftRollbackUnfinished(attempt) {
+    if (!Array.isArray(attempt.steps))
+        return true;
+    const rollback = attempt.steps.filter((step) => step.name.startsWith(ROLLBACK_STEP_PREFIX));
+    const handedStoresOff = attempt.steps.some((step) => step.name === STORE_HANDOFF_STEP);
+    return rollback.some((step) => step.status !== "done") ||
+        handedStoresOff && !rollback.some((step) => step.name === INGRESS_RESUMED_STEP);
 }
 function userRefusal(user, stranded, others) {
     const { uid } = user;
     const marker = readWorkspaceMigrationMarker({ migration: user.fences.migration });
     const fenceOwner = marker?.operationId ?? "no operation";
     return firstRefusal([
+        [!accountAllowsInteractiveAccess({ accountLifecycle: user.accountLifecycle ?? undefined }), ACCOUNT_NOT_ACTIVE,
+            `user ${uid} account is ${user.accountLifecycle?.status ?? "not active"}; it is not served`],
         [user.fences.restoreFence !== undefined, STATE_CHANGED, `user ${uid} restore outcome is unresolved`],
         [user.fences.sourceTransferFence !== undefined, STATE_CHANGED, `user ${uid} source transfer outcome is unresolved`],
         [user.gateway?.gatewayId !== stranded.gatewayId, STATE_CHANGED,
@@ -104,6 +125,7 @@ function forwardStateRefusal(operation, stranded) {
             `the assignment of ${stranded.uid} on ${stranded.gatewayId} carries a forward recovery marker`],
         [!Array.isArray(operation.steps) || !rollbackLeftSourceClosed(operation.steps), NOT_PROVEN,
             `the recorded steps of operation ${id} do not show its target unmounted and its source ingress left to resume`],
+        [earlierAttempts(operation).some(leftRollbackUnfinished), NOT_PROVEN, `an earlier attempt of operation ${id} did not finish its rollback`],
     ]);
 }
 function inFlightRefusal(active, stranded) {
@@ -126,7 +148,7 @@ function quiescingAssignment(uid, assignments) {
     }
     return stranded;
 }
-export async function strandedSourceInTransaction(tx, uid) {
+async function inspectStrandedSource(tx, uid) {
     const [user, assignments] = await Promise.all([
         tx.users.records.get(uid),
         tx.gateways.assignments.listForUid(uid),
@@ -135,34 +157,39 @@ export async function strandedSourceInTransaction(tx, uid) {
         refuse(["user-missing", `user ${uid} does not exist`]);
     const stranded = quiescingAssignment(uid, assignments);
     const operationId = stranded.updatedByOperationId;
-    const [operation, active] = await Promise.all([
+    const [operation, active, root] = await Promise.all([
         tx.journal.operations.get(operationId),
         tx.journal.operations.listByStatus(["pending", "running"]),
+        tx.gateways.roots.get(stranded.gatewayId),
     ]);
     const refusal = ownerRefusal(operation, stranded)
         ?? forwardStateRefusal(operation, stranded)
+        ?? gatewayRefusal(root, stranded)
         ?? userRefusal(user, stranded, assignments.filter((assignment) => assignment !== stranded))
         ?? inFlightRefusal(active.filter((candidate) => candidate.id !== operationId), stranded);
     if (refusal !== null)
         refuse(refusal);
     return {
-        uid,
-        slug: stranded.slug,
-        gatewayId: stranded.gatewayId,
-        epoch: stranded.epoch,
-        assignmentUpdatedAt: stranded.updatedAt,
-        operationId,
-        targetGatewayId: moveInput(operation).toGatewayId,
+        source: {
+            uid,
+            slug: stranded.slug,
+            gatewayId: stranded.gatewayId,
+            epoch: stranded.epoch,
+            assignmentUpdatedAt: stranded.updatedAt,
+            operationId,
+            targetGatewayId: moveInput(operation).toGatewayId,
+        },
+        sourceDraining: root.desiredStatus === "draining",
     };
 }
 export function readStrandedSource(store, uid) {
-    return store.transaction({ label: "stranded-source.read", readOnly: true }, (tx) => strandedSourceInTransaction(tx, uid));
+    return store.transaction({ label: "stranded-source.read", readOnly: true }, async (tx) => (await inspectStrandedSource(tx, uid)).source);
 }
 async function markSourceServing(deps, source) {
     const now = deps.now ? deps.now().getTime() : Date.now();
-    await deps.store.transaction({ label: "stranded-source.restore-serving" }, async (tx) => {
-        const current = await strandedSourceInTransaction(tx, source.uid);
-        if (!isDeepStrictEqual(current, source)) {
+    return deps.store.transaction({ label: "stranded-source.restore-serving" }, async (tx) => {
+        const current = await inspectStrandedSource(tx, source.uid);
+        if (!isDeepStrictEqual(current.source, source)) {
             refuse([STATE_CHANGED, `the quiescing assignment of ${source.uid} on ${source.gatewayId} changed while its ingress resumed`]);
         }
         await markAssignmentStateInTransaction(tx, {
@@ -174,11 +201,33 @@ async function markSourceServing(deps, source) {
             updatedByOperationId: source.operationId,
             expected: { state: "quiescing", updatedByOperationId: source.operationId, updatedAt: source.assignmentUpdatedAt },
         }, now);
+        return current;
     });
 }
-export async function restoreStrandedSourceServing(deps, input) {
-    const source = await readStrandedSource(deps.store, input.uid);
-    const { uid, slug, gatewayId, operationId, targetGatewayId } = source;
+function errorText(error) {
+    return error instanceof Error ? error.message : String(error);
+}
+async function restoreSchedules(deps, source) {
+    const { uid, slug, gatewayId, operationId } = source;
+    const unrestored = (reason) => {
+        deps.log(`[stranded-source] ❌ the schedules operation ${operationId} took off ${gatewayId} were not restored for uid=${uid} slug=${slug}: ${reason}; ` +
+            `the source is restored without them`);
+        return false;
+    };
+    try {
+        const restored = await deps.restoreSourceSchedules({ uid, operationId, gatewayId, slug });
+        return restored === false ? unrestored("the gateway did not restore every schedule") : restored;
+    }
+    catch (error) {
+        return unrestored(errorText(error));
+    }
+}
+export async function restoreStrandedSourceServing(deps, expected) {
+    const { uid, slug, gatewayId, operationId, targetGatewayId } = expected;
+    const source = await readStrandedSource(deps.store, uid);
+    if (!isDeepStrictEqual(source, expected)) {
+        refuse([STATE_CHANGED, `the quiescing assignment of ${uid} is no longer the one on ${gatewayId} left by operation ${operationId}`]);
+    }
     try {
         await deps.resumeSourceIngress({ operationId, gatewayId, slug });
     }
@@ -187,14 +236,54 @@ export async function restoreStrandedSourceServing(deps, input) {
         deps.log(`[stranded-source] ❌ ${failure.message}; uid=${uid} stays quiescing under operation ${operationId}`);
         throw failure;
     }
+    const schedulesRestored = await restoreSchedules(deps, source);
+    let sourceDraining;
     try {
-        await markSourceServing(deps, source);
+        ({ sourceDraining } = await markSourceServing(deps, source));
     }
     catch (error) {
-        const reason = error instanceof Error ? error.message : String(error);
-        deps.log(`[stranded-source] ❌ source ingress on ${gatewayId} resumed but the assignment was not restored for uid=${uid} slug=${slug}: ${reason}`);
+        deps.log(`[stranded-source] ❌ source ingress on ${gatewayId} resumed but the assignment was not restored for uid=${uid} slug=${slug}: ${errorText(error)}`);
         throw error;
     }
     deps.log(`[stranded-source] restored serving for uid=${uid} slug=${slug} on ${gatewayId} after operation ${operationId} left it quiescing`);
-    return { uid, slug, gatewayId, operationId, targetGatewayId, state: "serving" };
+    if (sourceDraining) {
+        deps.log(`[stranded-source] ⚠ uid=${uid} slug=${slug} serves again on ${gatewayId}, which is draining; ` +
+            `operation ${operationId} stays failed and is not re-armed, so the user needs an operator move off ${gatewayId}`);
+    }
+    return { uid, slug, gatewayId, operationId, targetGatewayId, state: "serving", schedulesRestored, sourceDraining };
+}
+export function strandedSourceRestoreOutcome(restored) {
+    if (restored.schedulesRestored !== false)
+        return { outcome: "completed" };
+    return {
+        outcome: "partial",
+        partialOutcome: {
+            summary: `${restored.slug} serves again on ${restored.gatewayId}; its schedules were not restored`,
+            details: { schedulesRestored: false },
+        },
+    };
+}
+export function strandedSourceGatewayCalls(deps) {
+    return {
+        resumeSourceIngress: async ({ operationId, gatewayId, slug }) => {
+            const client = await deps.clientFor(gatewayId);
+            await client.resume({ migrationId: deps.migrationIdFor(operationId), gatewayId, slug });
+        },
+        restoreSourceSchedules: async ({ uid, operationId, gatewayId, slug }) => {
+            const migrationId = deps.migrationIdFor(operationId);
+            const transfer = await deps.store.users.scheduleTransfers.get(uid, migrationId);
+            if (transfer === null)
+                return "none";
+            if (transfer.restoredTo !== undefined)
+                return true;
+            const failures = await restoreScheduleTransfer({
+                client: await deps.clientFor(gatewayId),
+                log: deps.log,
+                ...(deps.now ? { now: deps.now } : {}),
+                readScheduleTransfer: async () => transfer,
+                recordScheduleRestore: (id, restore) => deps.store.users.scheduleTransfers.patch(uid, id, restore),
+            }, { migrationId, slug, gatewayId, doc: transfer });
+            return failures.length === 0;
+        },
+    };
 }

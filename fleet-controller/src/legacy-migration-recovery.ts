@@ -6,7 +6,7 @@ import { readSchedulerMigrationIdentity, type Operation, type SchedulerHandoffSt
 import { readWorkspaceMigrationMarker } from "@octogee/shared/types/workspace-migration";
 import { retiredTargetSourceRecovery, userActivationRecoveryTargetMatches } from "@octogee/core/fleet-state";
 import { classifyOperationFailure, retryBackoffMs } from "./operation-retry.js";
-import type { StrandedSourceRetry } from "./stranded-source-retry.js";
+import type { StartStrandedSourceRetry } from "./stranded-source-retry.js";
 
 function handoffAttemptEvidence(operation: Partial<Operation>) {
   const handoff = operation.schedulerHandoff;
@@ -331,7 +331,7 @@ function reportUnrecoverableActivation(deps: { store: PlatformStateStore; log: (
 }
 
 export async function recoverFailedLegacyMigrations(deps: {
-  store: PlatformStateStore; log: (message: string) => void; now: () => number; restoreStrandedSources?: StrandedSourceRetry;
+  store: PlatformStateStore; log: (message: string) => void; now: () => number; restoreStrandedSources?: StartStrandedSourceRetry;
 }): Promise<void> {
   const failed = await deps.store.journal.operations.listByStatus(["failed"]);
   for (const operation of failed) {
@@ -350,5 +350,5 @@ export async function recoverFailedLegacyMigrations(deps: {
       deps.log(`[migration-recovery] ${operation.id} recovery admission failed: ${String(error)}`);
     }
   }
-  await deps.restoreStrandedSources?.(failed);
+  deps.restoreStrandedSources?.(failed);
 }

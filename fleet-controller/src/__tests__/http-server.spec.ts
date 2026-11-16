@@ -947,7 +947,7 @@ describe("createHttpServer — admin gateway routes", () => {
   it("serves the stranded source repair only to admins, and only when the controller can resume a gateway's ingress", async () => {
     const path = "/api/admin/users/ghost/restore-serving";
     const resumeSourceIngress = vi.fn(async () => undefined);
-    const app = createHttpServer(buildDeps(store, { resumeSourceIngress }));
+    const app = createHttpServer(buildDeps(store, { strandedSource: { resumeSourceIngress, restoreSourceSchedules: async () => "none" } }));
 
     await request(app).post(path).expect(401);
     await request(app).post(path).set("Authorization", "Bearer user-token").expect(403);

@@ -7,12 +7,11 @@ import {
   StrandedSourceResumeFailed,
   readStrandedSource,
   restoreStrandedSourceServing,
-  type ResumeSourceIngress,
+  strandedSourceRestoreOutcome,
+  type StrandedSourceGatewayCalls,
 } from "./stranded-source-restore.js";
 
-export interface AdminStrandedSourceCapabilities {
-  resumeSourceIngress: ResumeSourceIngress;
-}
+export type AdminStrandedSourceCapabilities = StrandedSourceGatewayCalls;
 
 export interface AdminStrandedSourceRouterDeps extends AdminStrandedSourceCapabilities {
   store: PlatformStateStore;
@@ -35,6 +34,7 @@ export function addAdminStrandedSourceRoutes(router: Router, deps: AdminStranded
   const restoreDeps = {
     store,
     resumeSourceIngress: deps.resumeSourceIngress,
+    restoreSourceSchedules: deps.restoreSourceSchedules,
     log: deps.log,
     ...(clock ? { now: () => new Date(clock()) } : {}),
   };
@@ -57,13 +57,14 @@ export function addAdminStrandedSourceRoutes(router: Router, deps: AdminStranded
         mutation: { kind: "restore-source-serving", uid, gatewayId, failedMoveId },
         action: async (claim) => {
           try {
-            const { operationId: restoredFrom, ...serving } = await restoreStrandedSourceServing(restoreDeps, { uid });
+            const { operationId: restoredFrom, ...serving } = await restoreStrandedSourceServing(restoreDeps, source);
             return { ...serving, failedMoveId: restoredFrom, operationId: claim.auditId };
           } catch (error) {
             if (error instanceof PlacementPreconditionFailed) throw new FleetMutationRefusedError(error);
             throw error;
           }
         },
+        classifyResult: strandedSourceRestoreOutcome,
       });
       res.json(restored);
     } catch (error) {

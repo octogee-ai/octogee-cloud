@@ -25,6 +25,8 @@ export const PLACEMENT_REFUSAL_REASONS = [
     "source-not-stranded",
     "migration-in-flight",
     "rollback-not-proven",
+    "account-not-active",
+    "source-gateway-retired",
 ];
 export class PlacementPreconditionFailed extends Error {
     reasonCode;
