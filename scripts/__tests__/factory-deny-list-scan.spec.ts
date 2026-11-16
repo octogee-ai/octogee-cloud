@@ -21,6 +21,15 @@ function tree(files: Record<string, string>): string {
 }
 
 describe("factory deny-list scan", () => {
+  it("skips binary image bytes and scans text image content", () => {
+    const root = tree({ "docs/chart.svg": "<svg><text>costs $5</text></svg>" });
+    writeFileSync(join(root, "docs/screenshot.png"), Buffer.concat([Buffer.from([137, 80, 78, 71, 0]), Buffer.from("costs $5")]));
+    expect(scanTree(root)).toEqual({
+      files: 1,
+      hits: [{ file: "docs/chart.svg", line: 1, rule: "price", text: "$5" }],
+    });
+  });
+
   it("reports a clean tree, skipping node_modules, .git, and the deny list module itself", () => {
     const root = tree({
       "README.md": "clean",

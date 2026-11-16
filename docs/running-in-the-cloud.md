@@ -1,23 +1,34 @@
 # Running the foundation in the cloud
 
-`install.sh --target=gcp` and `--target=aws` install the foundation on your
-cloud provider's managed services: Kubernetes, PostgreSQL, object storage,
-Traefik, Gitea, Mattermost and one stock OpenClaw gateway. The installer does
-not run a database or object store in your cluster on this path.
+Install one OpenClaw gateway, Mattermost, and Gitea on Google Kubernetes Engine
+(GKE) or Amazon Elastic Kubernetes Service (EKS). The installer connects them
+to managed PostgreSQL and object storage, then configures HTTPS for chat and Git.
 
-**This is not the full platform.** These targets do not install the fleet
-controller, the platform API, the gateway edge or the LLM broker, so there are
-no users, shared gateways or isolated gateways to manage. The gateway is the
-stock `ghcr.io/openclaw/openclaw` image, and it holds the model keys you export
-in its own environment. The full platform runs on a local kind cluster, see
-[The full platform on kind](kind.md), on GKE, see
-[The full platform on GKE](gke.md), or on EKS, see
-[The full platform on EKS](eks.md).
+Use `install.sh --target=gcp` for Google Cloud or `--target=aws` for AWS. These
+are the cloud foundation installations. For user placement, shared gateways,
+and the model broker, follow the full platform guides for
+[kind](kind.md), [GKE](gke.md), or [EKS](eks.md).
 
-**The foundation has not run on a real cloud account either.** The Google
-Cloud and AWS recipes pass their tests against stubbed provider command-line
-tools, and their flags were checked against each provider's own tool. Expect to
-find rough edges on a first real run, and please report them.
+## Tested installations
+
+On November 16, 2026, disposable GKE and EKS installations passed the database,
+object-storage, HTTPS, and gateway checks. On both, an operator signed in to
+Mattermost and Gitea, created and read back a committed file, and received an
+agent reply using Meta Muse Ember through OpenRouter with maximum reasoning.
+The GKE run used the zonal evaluation settings below; EKS used the default
+three-node configuration and Multi-AZ RDS. These foundation runs used
+`a087072e46e9791a5394adfbdd8a2d947f3d7b49` with this guide's installer changes;
+they are separate from the full-platform runs recorded in the GKE and EKS guides.
+
+[![GKE workloads with gateway, Gitea, Mattermost, and Traefik ready](images/gke-workloads.png)](images/gke-workloads.png)
+
+GKE: the foundation's four deployments are ready. `database-setup` is a completed
+job. Click the image to enlarge it.
+
+[![AWS EKS console showing the disposable cluster active](images/eks-cluster.png)](images/eks-cluster.png)
+
+EKS: the cluster is active. Application readiness and the user flows above were
+checked through Kubernetes and the public HTTPS endpoints.
 
 ## What gets created
 
@@ -51,55 +62,88 @@ activated users across the server. Bots do not count.
 These are billable resources that run until you remove them. Check your
 provider's pricing first.
 
-## Start small on the welcome credit
+## Start with a single zone
 
-The defaults are sized for an install you depend on: nodes in three zones and
-a highly available database. They use up Google Cloud's welcome credit quickly. For a first
-install, use one zone and a smaller database:
+The Google Cloud defaults use nodes across three zones and a highly available
+database. For a disposable evaluation, select one zone and a smaller database:
 
 ```bash
 export GCP_ZONE=us-central1-a SQL_AVAILABILITY=ZONAL SQL_TIER=db-custom-1-3840
 ```
 
-You get one node that can grow to three and a database with no standby. The
-free tier covers the fee for a zonal cluster, but not the node, the database or
-the network. If that zone goes down, so does your install, so move to the
-defaults before you depend on it.
+This starts one node, scales to three, and uses a database without a standby.
+The regional defaults distribute resources across zones for availability.
+See Google's [zonal cluster guide](https://cloud.google.com/kubernetes-engine/docs/how-to/creating-a-zonal-cluster)
+for the cluster configuration and [billing documentation](https://cloud.google.com/free/docs/free-cloud-features)
+for credit eligibility and usage limits.
 
 ## Install on Google Cloud
 
-Sign in first:
+Use a dedicated project for an evaluation so you can remove all its resources
+together. Sign in and choose a globally unique project ID:
 
 ```bash
 gcloud auth login
+export GCP_PROJECT=your-evaluation-project
+export GCP_REGION=us-central1
+export CLUSTER_NAME=octogee-evaluation
+gcloud projects create "${GCP_PROJECT}"
 ```
 
-Then run the installer. It asks for anything you have not set.
+List the billing accounts you can use, then link the project to your chosen
+account. Replace `YOUR-BILLING-ACCOUNT-ID` with its ID:
 
 ```bash
-export GCP_PROJECT=your-project-id GCP_REGION=us-central1 DOMAIN=platform.your-company.com ACME_EMAIL=your-email-address
+gcloud billing accounts list
+gcloud billing projects link "${GCP_PROJECT}" --billing-account=YOUR-BILLING-ACCOUNT-ID
 ```
 
+Set the domain and certificate-contact email, and export a
+[model provider key](getting-started.md#model-access). Choose a subdomain
+reserved for this installation:
+
 ```bash
-curl -fsSL https://raw.githubusercontent.com/octogee-ai/octogee-cloud/main/install.sh | bash -s -- --target=gcp
+export DOMAIN=evaluation.example.com ACME_EMAIL=ops@example.com
 ```
+
+Download the installer, review it, and run it:
+
+```bash
+curl -fsSLo install.sh https://raw.githubusercontent.com/octogee-ai/octogee-cloud/main/install.sh
+# Review install.sh before running it.
+bash install.sh --target=gcp
+```
+
+The installer connects to GKE through its DNS endpoint using your Google Cloud
+identity. Nodes keep private addresses. See Google's
+[control-plane access guide](https://cloud.google.com/kubernetes-engine/docs/how-to/latest/network-isolation)
+for the IAM permissions used by this connection.
 
 ## Install on AWS
 
 Sign in first:
 
 ```bash
-aws configure sso
+aws configure sso --profile octogee-evaluation
+aws sso login --profile octogee-evaluation
+export AWS_PROFILE=octogee-evaluation
 ```
 
-Then run the installer.
+Confirm the account, choose a resource name reserved for this installation,
+and export a [model provider key](getting-started.md#model-access):
 
 ```bash
-export AWS_REGION=us-east-1 DOMAIN=platform.your-company.com ACME_EMAIL=your-email-address
+aws sts get-caller-identity
+export AWS_REGION=us-east-1 CLUSTER_NAME=octogee-evaluation
+export DOMAIN=evaluation.example.com ACME_EMAIL=ops@example.com
 ```
 
+Download the installer, review it, and run it:
+
 ```bash
-curl -fsSL https://raw.githubusercontent.com/octogee-ai/octogee-cloud/main/install.sh | bash -s -- --target=aws
+curl -fsSLo install.sh https://raw.githubusercontent.com/octogee-ai/octogee-cloud/main/install.sh
+# Review install.sh before running it.
+bash install.sh --target=aws
 ```
 
 ## Finish the install
@@ -108,10 +152,13 @@ An install takes 30 to 45 minutes. It ends by printing your load balancer's
 address.
 
 1. Create DNS records for `chat.` and `git.` under your domain, pointing at that
-   address. Use an A record for an IP address and a CNAME for a hostname.
+   address. Use an A record for an IP address and a CNAME for a hostname. In
+   Cloudflare, select **DNS only** for these records so the installer can
+   verify HTTPS directly against the load balancer.
 2. Wait a few minutes for the certificates. Plain HTTP stays closed to the apps.
 3. Run the checks, then get the admin password. Use `aws` in place of `gcp` on
-   AWS. Run these from the checkout, with `DOMAIN` still set.
+   AWS. Run these from the checkout printed by the installer, with `DOMAIN`
+   still set. A downloaded installer creates `~/octogee-cloud` by default.
 
    ```bash
    ./deploy/cloud/check.sh gcp
@@ -127,6 +174,10 @@ Any of `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY` or
 `OPENROUTER_API_KEY` exported in your shell is copied into the cluster. The
 installer lists them before you confirm. To add one later, set it and run the
 same provider script again. It is safe to repeat.
+
+To reproduce the model setup shown here, export `OPENROUTER_API_KEY`,
+`AGENT_MODEL=openrouter/meta/muse-ember`, and `AGENT_THINKING=max` before running
+the installer. See [model-key setup](getting-started.md#what-you-need-to-sign-up-for).
 
 ```bash
 ./deploy/cloud/gcp.sh
@@ -162,60 +213,75 @@ to copy. These are not written yet:
 | Azure | AKS | Azure Database for PostgreSQL | Azure Blob has no S3 API, so use an S3-compatible store elsewhere |
 | DigitalOcean | DOKS | Managed PostgreSQL | Spaces |
 
-## Remove it
+## Remove a disposable installation
 
-Deleting these destroys your data. Remove the load balancer first so that
-deleting the cluster does not strand it.
+These steps delete the installation and its data. Use the same project,
+profile, region, and `CLUSTER_NAME` you chose when installing. Remove the two
+DNS records after cleanup so they no longer point to released addresses.
 
-**Google Cloud:**
+### Google Cloud
 
-```bash
-helm --kubeconfig ~/.kube/octogee-cloud-gcp -n octogee-cloud uninstall traefik
-```
-
-```bash
-gcloud sql instances patch octogee-cloud --no-deletion-protection --project "${GCP_PROJECT}"
-```
+For the dedicated evaluation project created above, delete the project:
 
 ```bash
-gcloud sql instances delete octogee-cloud --project "${GCP_PROJECT}"
+gcloud projects delete "${GCP_PROJECT}"
 ```
+
+This schedules the project and its resources for deletion. Use this command
+only for a project dedicated to the installation. Review its resources in the
+Google Cloud console before confirming deletion.
+
+### AWS
+
+Keep `AWS_PROFILE`, `AWS_REGION`, and `CLUSTER_NAME` exported in this terminal.
+First remove the Kubernetes namespace and wait for its load balancer and
+persistent volumes to be released, following the
+[AWS cluster deletion guidance](https://docs.aws.amazon.com/eks/latest/userguide/delete-cluster.html):
 
 ```bash
-gcloud container clusters delete octogee-cloud --region "${GCP_REGION}" --project "${GCP_PROJECT}"
+kubectl --kubeconfig ~/.kube/octogee-cloud-aws delete namespace octogee-cloud --wait=true --timeout=10m
 ```
 
-If you installed in one zone, use `--zone "${GCP_ZONE}"` in place of `--region`.
+Remove the disposable database without retaining a final snapshot:
 
 ```bash
-gcloud storage rm -r "gs://${GCP_PROJECT}-octogee-cloud" --project "${GCP_PROJECT}"
+aws rds modify-db-instance --db-instance-identifier "${CLUSTER_NAME}" --no-deletion-protection --apply-immediately
+aws rds wait db-instance-available --db-instance-identifier "${CLUSTER_NAME}"
+aws rds delete-db-instance --db-instance-identifier "${CLUSTER_NAME}" --skip-final-snapshot
+aws rds wait db-instance-deleted --db-instance-identifier "${CLUSTER_NAME}"
 ```
 
-Then remove the `octogee-cloud` Cloud NAT, router and network, and the
-`octogee-cloud-files` service account.
-
-**AWS:**
+Remove the database's subnet group and security group before deleting the
+cluster's network:
 
 ```bash
-helm --kubeconfig ~/.kube/octogee-cloud-aws -n octogee-cloud uninstall traefik
+VPC_ID=$(aws eks describe-cluster --name "${CLUSTER_NAME}" --query cluster.resourcesVpcConfig.vpcId --output text)
+DB_SECURITY_GROUP=$(aws ec2 describe-security-groups --filters "Name=vpc-id,Values=${VPC_ID}" "Name=group-name,Values=${CLUSTER_NAME}-database" --query 'SecurityGroups[0].GroupId' --output text)
+aws rds delete-db-subnet-group --db-subnet-group-name "${CLUSTER_NAME}"
+aws ec2 delete-security-group --group-id "${DB_SECURITY_GROUP}"
+eksctl delete cluster --name "${CLUSTER_NAME}" --region "${AWS_REGION}" --wait
 ```
+
+Remove the bucket and the storage user's keys and policy:
 
 ```bash
-aws rds modify-db-instance --db-instance-identifier octogee-cloud --no-deletion-protection --apply-immediately
+ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+aws s3 rb "s3://${CLUSTER_NAME}-${ACCOUNT_ID}" --force
+aws iam list-access-keys --user-name "${CLUSTER_NAME}-files" --query 'AccessKeyMetadata[].AccessKeyId' --output text
 ```
+
+For each access key ID printed above, run:
 
 ```bash
-aws rds delete-db-instance --db-instance-identifier octogee-cloud --skip-final-snapshot
+aws iam delete-access-key --user-name "${CLUSTER_NAME}-files" --access-key-id YOUR-ACCESS-KEY-ID
 ```
+
+Then remove the policy and user:
 
 ```bash
-aws rds wait db-instance-deleted --db-instance-identifier octogee-cloud
+aws iam delete-user-policy --user-name "${CLUSTER_NAME}-files" --policy-name bucket
+aws iam delete-user --user-name "${CLUSTER_NAME}-files"
 ```
 
-```bash
-eksctl delete cluster --name octogee-cloud --region "${AWS_REGION}"
-```
-
-Then remove the `octogee-cloud` database subnet group, the
-`octogee-cloud-database` security group, the S3 bucket, and the
-`octogee-cloud-files` IAM user.
+Check the AWS console for remaining resources with your installation's name,
+including volumes, load balancers, snapshots, and CloudFormation stacks.

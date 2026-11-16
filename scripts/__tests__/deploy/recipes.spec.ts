@@ -143,6 +143,13 @@ ${GCLOUD_STUB}`);
     }
     expect(call("sql instances create")).toContain("--availability-type=ZONAL");
   });
+
+  it("connects to private-node clusters through the IAM-authenticated DNS endpoint", () => {
+    expect(host.run("deploy/cloud/gcp.sh", [], { env: SETTINGS }).status).toBe(0);
+    expect(call("clusters create")).toContain("--enable-dns-access");
+    expect(call("clusters create")).toContain("--no-enable-ip-access");
+    expect(call("clusters get-credentials")).toContain("--dns-endpoint");
+  });
 });
 
 describe("choosing the agent's model", () => {
@@ -156,7 +163,7 @@ describe("choosing the agent's model", () => {
     return lines("kubectl").find((line) => line.includes("secret generic platform-model-keys"));
   }
 
-  it("uses a free-tier Gemini model when a Gemini key is the only key", () => {
+  it("uses Gemini when a Gemini key is the only key", () => {
     expect(modelKeysCall({ GEMINI_API_KEY: "stub-key" })).toContain("--from-literal=AGENT_MODEL=google/gemini-3.6-flash");
   });
 
@@ -166,6 +173,12 @@ describe("choosing the agent's model", () => {
 
   it("stores nothing when there is no key", () => {
     expect(modelKeysCall({})).toBeUndefined();
+  });
+
+  it("uses the requested model and reasoning level with the supplied key", () => {
+    const call = modelKeysCall({ OPENROUTER_API_KEY: "stub-key", AGENT_MODEL: "openrouter/meta/muse-ember", AGENT_THINKING: "max" });
+    expect(call).toContain("--from-literal=AGENT_MODEL=openrouter/meta/muse-ember");
+    expect(call).toContain("--from-literal=AGENT_THINKING=max");
   });
 });
 

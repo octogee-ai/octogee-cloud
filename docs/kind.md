@@ -19,6 +19,15 @@ The cluster runs:
 - the LLM broker, which holds the model provider keys;
 - a shared gateway, once you add one.
 
+## Optional features
+
+Enable agent import and export, the embedded OpenClaw dashboard, project
+repository sources, and voice with `octogee-api.featureFlags.enabled` in the
+Helm chart. Use keys from
+[`shared/types/feature-flags.ts`](../shared/types/feature-flags.ts); the API
+validates them at startup. Shared gateway users work through Mattermost and
+Gitea. The OpenClaw Control UI is available on isolated gateways.
+
 ## What you need
 
 - Docker, with at least 8 CPUs and 12 GB of memory for its VM
@@ -255,6 +264,14 @@ octogee-fleet --env=kind gateway ls
 
 The gateway boots against the platform API, so the API must be running first.
 
+Use `gateway inspect <id>` to see a gateway's readiness, running image, and
+mounted users:
+
+[![Live fleet CLI output showing a ready shared gateway](images/fleet-gateway.svg)](images/fleet-gateway.svg)
+
+This is captured CLI output from the disposable EKS evaluation, rendered as
+text for readability. Its environment alias is `demo`; this guide uses `kind`.
+
 ## Users
 
 Add a user, then place them on the shared gateway. The platform does not place
@@ -314,6 +331,15 @@ a migration to or from it is in flight:
 octogee-fleet --env=kind user migrate lin --to-isolated=pod-s --apply
 octogee-fleet --env=kind ops inspect <operation>
 ```
+
+The first start downloads the builder image and prepares the gateway home.
+Allow time for those steps, and follow progress with `gateway inspect <id>`
+and `ops inspect <operation-id>`. A recorded failed operation is distinct from
+an image pull or a gateway that is still starting. In the November 16, 2026
+EKS evaluation of build `a087072e46e9791a5394adfbdd8a2d947f3d7b49`,
+this migration reported `Isolated target did not finish normal
+startup before import; source retained`; the isolated Control UI flow was
+not verified in that run.
 
 The fleet controller creates the home claim `octogee-gateway-<id>-data` before
 it starts the pod, and never replaces the claim of a gateway that has served.

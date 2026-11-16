@@ -90,7 +90,7 @@ model_for_key() {
 }
 
 apply_model_keys() {
-  local name value model="" names="" args=()
+  local name value model="${AGENT_MODEL:-}" names="" args=()
   for name in ANTHROPIC_API_KEY OPENAI_API_KEY GEMINI_API_KEY OPENROUTER_API_KEY; do
     value="$(printenv "${name}" || true)"
     if [ -n "${value}" ]; then
@@ -101,6 +101,9 @@ apply_model_keys() {
   done
   [ "${#args[@]}" -gt 0 ] || return 0
   args+=("--from-literal=AGENT_MODEL=${model}")
+  if [ -n "${AGENT_THINKING:-}" ]; then
+    args+=("--from-literal=AGENT_THINKING=${AGENT_THINKING}")
+  fi
   step "Copying model keys into the cluster:${names}"
   k create secret generic platform-model-keys "${args[@]}" --dry-run=client -o yaml | k apply -f - >/dev/null
   if k get deploy/gateway >/dev/null 2>&1; then

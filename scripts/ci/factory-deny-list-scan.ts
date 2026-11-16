@@ -16,7 +16,8 @@ function readTree(root: string, directory: string, files: Map<string, string>): 
     if (entry.isDirectory()) {
       if (!SKIPPED_DIRECTORIES.has(entry.name)) readTree(root, path, files);
     } else if (entry.isFile()) {
-      files.set(relative(root, path).split("\\").join("/"), readFileSync(path, "utf8"));
+      const content = readFileSync(path);
+      if (!content.includes(0)) files.set(relative(root, path).split("\\").join("/"), content.toString("utf8"));
     }
   }
 }
