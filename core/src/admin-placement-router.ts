@@ -2,7 +2,7 @@ import type { Request, Response, Router } from "express";
 import { projectGatewayDesiredRootForGateway } from "@octogee/shared/types/gateway-releases";
 import type { AdminFleetMutationRunner } from "./admin-fleet-router.js";
 import { clearRetiredUserActivationPreparation } from "./fleet-state.js";
-import { releaseGitKeysBeforeRootDelete, type GatewayGitKeyRelease } from "./gateway-root-deletion.js";
+import { releaseGitKeysBeforeRootDelete, type RootGitKeyGate } from "./gateway-root-deletion.js";
 import {
   builderActivateOperationId,
   builderReturnOperationId,
@@ -24,7 +24,7 @@ export interface AdminPlacementCapabilities {
   retirementFailedRetryably(operation: Stored<OperationRecord>, gatewayId: string): boolean;
   schedulerHandoffAwaitingRelease(operation: Stored<OperationRecord>): boolean;
   rearmedRetirementPatch: OperationPatch;
-  gatewayGitKeys: GatewayGitKeyRelease | null;
+  gatewayGitKeys: RootGitKeyGate;
 }
 
 export interface AdminPlacementRouterDeps extends AdminPlacementCapabilities {

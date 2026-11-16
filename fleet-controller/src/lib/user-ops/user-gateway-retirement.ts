@@ -18,7 +18,7 @@ import type {
   PlatformStateTransaction,
   Stored,
 } from "@octogee/core/platform-state";
-import { releaseGitKeysBeforeRootDelete, type GatewayGitKeyRelease } from "@octogee/core/gateway-root-deletion";
+import { releaseGitKeysBeforeRootDelete, type RootGitKeyGate } from "@octogee/core/gateway-root-deletion";
 import { schedulerHandoffAwaitingRelease } from "../../scheduler-handoff-release.js";
 
 export type OwnedGatewayRetirementOutcome =
@@ -33,7 +33,7 @@ export interface OwnedGatewayRetirementInput {
   now: number;
   claimRetirement?: typeof claimGatewayRetirementInStore;
   preserveRetirementProof?: (proof: UserGatewayRetirementProof) => Promise<void>;
-  gitKeys?: { client: GatewayGitKeyRelease | null; log: (message: string) => void };
+  gitKeys: RootGitKeyGate;
 }
 
 export interface UserGatewayRetirementProof {
@@ -206,9 +206,9 @@ async function finishCompletedGatewayRetirement(
     canFinish,
   );
   if (!cleanup) return true;
-  const gitKeys = await releaseGitKeysBeforeRootDelete(input.gitKeys?.client ?? null, gatewayId);
+  const gitKeys = await releaseGitKeysBeforeRootDelete(input.gitKeys, gatewayId);
   if (gitKeys.outcome === "kept") {
-    input.gitKeys?.log(`[customer-deletion] ⚠ kept retired gateway ${gatewayId}: ${gitKeys.reason}`);
+    input.gitKeys.log(`[customer-deletion] ⚠ kept retired gateway ${gatewayId}: ${gitKeys.reason}`);
     return true;
   }
   if (proof) await input.preserveRetirementProof!(proof);

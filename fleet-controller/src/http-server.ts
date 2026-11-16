@@ -382,7 +382,7 @@ export function createHttpServer(deps: HttpServerDeps): Express {
     userAccounts: deps.userAccounts,
     userSignIn: deps.userSignIn,
     discoverDeletionProductContext: deps.discoverDeletionProductContext,
-    placement: { ...adminPlacementCapabilities, gatewayGitKeys: deps.gatewayGitKeys },
+    placement: { ...adminPlacementCapabilities, gatewayGitKeys: { client: deps.gatewayGitKeys, log: deps.log } },
     placementShared: adminPlacementSharedCapabilities(deps),
     isolated: adminIsolatedCapabilities({
       namespace: deps.logs.namespace,

@@ -1,13 +1,13 @@
 import type { Router } from "express";
 import type { AdminFleetMutationRunner } from "./admin-fleet-router.js";
-import { type GatewayGitKeyRelease } from "./gateway-root-deletion.js";
+import { type RootGitKeyGate } from "./gateway-root-deletion.js";
 import type { OperationPatch, OperationRecord } from "./platform-state/operations.js";
 import type { PlatformStateStore, Stored } from "./platform-state/store.js";
 export interface AdminPlacementCapabilities {
     retirementFailedRetryably(operation: Stored<OperationRecord>, gatewayId: string): boolean;
     schedulerHandoffAwaitingRelease(operation: Stored<OperationRecord>): boolean;
     rearmedRetirementPatch: OperationPatch;
-    gatewayGitKeys: GatewayGitKeyRelease | null;
+    gatewayGitKeys: RootGitKeyGate;
 }
 export interface AdminPlacementRouterDeps extends AdminPlacementCapabilities {
     store: PlatformStateStore;

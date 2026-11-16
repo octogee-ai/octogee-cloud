@@ -109,8 +109,6 @@ export interface GitKey {
 export interface GitKeyHolderSummary {
     holder: string;
     gatewayId: string;
-    rows: number;
-    newestUpdatedAt: string;
 }
 export interface GitKeyHoldersResponse {
     holders: GitKeyHolderSummary[];

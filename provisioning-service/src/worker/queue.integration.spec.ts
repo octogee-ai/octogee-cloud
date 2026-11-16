@@ -113,9 +113,9 @@ describe.skipIf(!dsn)("the work queue", { timeout: 30_000 }, () => {
     expect((await harness.request("DELETE", "/v1/users/u1/git-keys/gw-1%2Fpod-s", { token: TOKENS.platformApi })).status).toBe(202);
     expect(await work("u1")).toMatchObject({ state: "parked", attempts: 1 });
     const [release] = await queue.claim(1);
-    expect(release).toMatchObject({ uid: "u1", releaseOnly: true, takeover: false });
+    expect(release).toMatchObject({ uid: "u1", keysOnly: true, takeover: false });
     expect(await work("u1")).toMatchObject({ state: "running", attempts: 1 });
-    expect(await queue.finishRelease("u1", release.leaseToken)).toEqual({ state: "parked", attempts: 1 });
+    expect(await queue.finishParkedKeys("u1", release.leaseToken)).toEqual({ state: "parked", attempts: 1 });
 
     await put("u2");
     const [retrying] = await queue.claim(1);
@@ -134,11 +134,11 @@ describe.skipIf(!dsn)("the work queue", { timeout: 30_000 }, () => {
     await finish("u1", parked.leaseToken, { ...FAILED, errorKind: "terminal" });
     await harness.request("DELETE", "/v1/users/u1/git-keys/gw-1%2Fpod-s", { token: TOKENS.platformApi });
     const [release] = await queue.claim(1);
-    expect(release.releaseOnly).toBe(true);
+    expect(release.keysOnly).toBe(true);
 
     expect((await harness.request("POST", "/v1/users/u1/provisioning/retry", { body: {} })).status).toBe(202);
-    expect(await queue.finishRelease("u1", release.leaseToken)).toEqual({ state: "queued", attempts: 0 });
-    expect(await queue.claim(1)).toEqual([expect.objectContaining({ uid: "u1", releaseOnly: false })]);
+    expect(await queue.finishParkedKeys("u1", release.leaseToken)).toEqual({ state: "queued", attempts: 0 });
+    expect(await queue.claim(1)).toEqual([expect.objectContaining({ uid: "u1", keysOnly: false })]);
   });
 
   it("requeues work at once when the spec changed while an attempt was running", async () => {

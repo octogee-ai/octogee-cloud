@@ -53,6 +53,8 @@ export interface ProvisioningServiceClientOptions {
   readonly onRequest?: (outcome: ProvisioningServiceRequestOutcome) => void;
 }
 
+const UNEXPECTED_RESPONSE = "unexpected-response";
+
 export class ProvisioningServiceError extends Error {
   constructor(
     readonly status: number,
@@ -191,7 +193,7 @@ async function errorFromResponse(response: Response): Promise<ProvisioningServic
   } catch {
     body = null;
   }
-  const code = isRecord(body) && typeof body.code === "string" ? body.code : "unexpected-response";
+  const code = isRecord(body) && typeof body.code === "string" ? body.code : UNEXPECTED_RESPONSE;
   const message = isRecord(body) && typeof body.error === "string" ? body.error : `provisioning service answered ${response.status}`;
   return new ProvisioningServiceError(
     response.status,
@@ -207,15 +209,23 @@ function outcomeOf(error: unknown): ProvisioningServiceRequestOutcome {
   return error.status >= 500 ? "server-error" : "client-error";
 }
 
+function gitKeyRelease(body: unknown): GitKeyRelease {
+  const remaining = isRecord(body) ? body.remaining : undefined;
+  if (typeof remaining !== "number" || !Number.isInteger(remaining) || remaining < 0) {
+    throw new ProvisioningServiceError(200, UNEXPECTED_RESPONSE, "provisioning service answered a git key release without a count of remaining rows");
+  }
+  return { remaining };
+}
+
 function credentialFrom(text: string, name: ProvisioningCredentialName): ProvisioningCredential {
   let body: unknown;
   try {
     body = JSON.parse(text);
   } catch {
-    throw new ProvisioningServiceError(200, "unexpected-response", `provisioning service answered an unreadable ${name} credential`);
+    throw new ProvisioningServiceError(200, UNEXPECTED_RESPONSE, `provisioning service answered an unreadable ${name} credential`);
   }
   if (!isRecord(body) || body.name !== name || typeof body.value !== "string" || body.value === "" || typeof body.version !== "number") {
-    throw new ProvisioningServiceError(200, "unexpected-response", `provisioning service answered a malformed ${name} credential`);
+    throw new ProvisioningServiceError(200, UNEXPECTED_RESPONSE, `provisioning service answered a malformed ${name} credential`);
   }
   return { name, value: body.value, version: body.version };
 }
@@ -241,7 +251,7 @@ async function json<T>(response: Response, emptyBody?: T): Promise<T> {
   try {
     return JSON.parse(text) as T;
   } catch (error) {
-    throw new ProvisioningServiceError(response.status, "unexpected-response", `provisioning service answered unreadable JSON: ${errorMessage(error)}`);
+    throw new ProvisioningServiceError(response.status, UNEXPECTED_RESPONSE, `provisioning service answered unreadable JSON: ${errorMessage(error)}`);
   }
 }
 
@@ -295,7 +305,7 @@ function gitKeyMethods(request: (input: RequestInput) => Promise<Response>): Git
         path: `git-key-holders/${encodeURIComponent(holder)}`,
         ...(keyOptions?.signal === undefined ? {} : { signal: keyOptions.signal }),
       });
-      return json<GitKeyRelease>(response);
+      return gitKeyRelease(await json<unknown>(response));
     },
 
     async releaseGatewayGitKeys(gatewayId, keyOptions) {
@@ -304,7 +314,7 @@ function gitKeyMethods(request: (input: RequestInput) => Promise<Response>): Git
         path: `gateways/${encodeURIComponent(gatewayId)}/git-keys`,
         ...(keyOptions?.signal === undefined ? {} : { signal: keyOptions.signal }),
       });
-      return json<GitKeyRelease>(response);
+      return gitKeyRelease(await json<unknown>(response));
     },
   };
 }

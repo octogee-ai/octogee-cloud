@@ -79,7 +79,7 @@ export async function sweepRetiredSharedGateways(deps: SharedGatewayRetirementSw
       continue;
     }
     if (verdict !== "delete") continue;
-    const gitKeys = await releaseGitKeysBeforeRootDelete(deps.gatewayGitKeys, candidate.gatewayId);
+    const gitKeys = await releaseGitKeysBeforeRootDelete({ client: deps.gatewayGitKeys, log: deps.log }, candidate.gatewayId);
     if (gitKeys.outcome === "kept") {
       deps.log(`[shared-pool-scaler] ⚠ kept retired slot ${candidate.gatewayId}: ${gitKeys.reason}`);
       continue;

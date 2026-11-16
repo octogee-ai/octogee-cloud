@@ -21,7 +21,7 @@ The types are `@octogee/shared/types/provisioning-service`.
 | `PUT /v1/users/{uid}/git-keys/{holder}` | Body `{ spec: { publicKey } }`. Authorizes the key on the user's git owner. | `201`, `202`, `200`; body is the `GitKey`; `404` when the user has no provisioning |
 | `GET /v1/users/{uid}/git-keys/{holder}` | Reads the key. | `200`; body is the `GitKey`; `404` when there is none |
 | `DELETE /v1/users/{uid}/git-keys/{holder}` | Releases the key. Optional body `{ expectedPublicKey }` releases it only while the row still holds that key, compared by key material. | `202`, `409 precondition-failed` when the row holds another key |
-| `GET /v1/git-key-holders` | Lists every holder with live rows. | `200`; body `{ holders: [{ holder, gatewayId, rows, newestUpdatedAt }] }` |
+| `GET /v1/git-key-holders` | Lists every holder with live rows. | `200`; body `{ holders: [{ holder, gatewayId }] }` |
 | `DELETE /v1/git-key-holders/{holder}` | Releases every user's key for one holder that is gone. | `202`; body `{ remaining }`, the holder's rows not yet released from the git host |
 | `DELETE /v1/gateways/{gatewayId}/git-keys` | Releases every user's key for every holder of a retired gateway. | `202`; body `{ remaining }`, the gateway's rows not yet released from the git host |
 
@@ -86,8 +86,8 @@ comment.
 Every put of a row, an unchanged one included, increments the row's
 `putSequence`, which the put answers, clears the row's backoff and makes the
 user's work due: idle or retrying work is queued at once, and running work runs
-again when it finishes. Parked work stays parked; its puts are processed once
-the work is retried or its spec changes. `status.observedPutSequence` is the
+again when it finishes. Parked work stays parked, and a key pass processes the
+put (see Work). `status.observedPutSequence` is the
 highest put sequence an attempt that started after that put has processed: it
 registered the key, finding it on the git host under the holder's title or
 registering it there, or recorded a refusal. A transient failure leaves it
@@ -98,6 +98,12 @@ finds its key under another managed title leaves that key alone and reports
 key a pod on another build claimed stays with that pod. A caller treats its key
 as registered only when `Registered=True` and `observedPutSequence` is at least
 the sequence its put returned.
+
+Within one attempt, rows marked for release are reconciled before the others,
+and the git host's key list is read again after every release or register, so
+each row sees the keys the rows before it left. A refusal or failure recorded
+by an attempt that read the row before a later put leaves the backoff that put
+cleared.
 
 Releasing a row deletes only a key under that row's own title. It never deletes
 a key by its material alone, so a key another holder or the earlier path holds
@@ -146,13 +152,19 @@ transient failure, or a twelfth attempt that ended without finishing parks the
 work until the spec changes or a retry is requested. A key write leaves parked
 work parked. Idle rows are resynced six hours after their last success.
 
-A key marked for release is released even while the user's work is parked. A
-release pass claims the parked row under a lease, releases only the marked keys
-and returns the row to parked with its attempts, running no other step. A
-release that fails is recorded on that key's row (`Registered=Unknown`, reason
-`GitKeyFailed`), logged at error level and retried after the key backoff; the
-row stays until a release succeeds. A retry requested during the pass queues
-the work once the pass ends.
+Git keys keep converging while the user's work is parked. A key pass claims the
+parked row under a lease when a key is marked for release, or when a key has a
+put no attempt has tried yet and the user's git account exists. It releases the
+marked keys, registers the put ones, and returns the row to parked with its
+attempts, running no other step. A put that marked a running attempt dirty is
+therefore still processed when that attempt's lease expires on its last
+attempt. A release or register that fails is recorded on that key's row
+(`Registered=Unknown`, reason `GitKeyFailed`), logged at error level and retried
+after the key backoff; a released row stays until a release succeeds. A retry
+requested during the pass queues the work once the pass ends.
+
+Schema v3 keys git keys by holder. It refuses to migrate a database that holds
+any git key row; such rows must be released first.
 
 ## Known limits
 

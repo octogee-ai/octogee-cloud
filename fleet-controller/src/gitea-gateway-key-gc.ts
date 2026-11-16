@@ -93,7 +93,7 @@ export type GitKeyHolderService = Pick<ProvisioningServiceClient, "listGitKeyHol
 export interface DeadGitKeyHolderReleaseDeps {
   keys: GitKeyHolderService;
   mode: GitKeySweepMode;
-  graceMs: number;
+  minAbsenceMs: number;
   now: () => number;
   log: (message: string) => void;
 }
@@ -121,8 +121,8 @@ async function releaseDeadHolders(live: ReadonlySet<string>, absences: Map<strin
     const seen = absences.get(holder);
     const absence = { passes: (seen?.passes ?? 0) + 1, since: seen?.since ?? now };
     absences.set(holder, absence);
-    if (absence.passes < 2 && now - absence.since < deps.graceMs) {
-      deps.log(`[git-key-holders] holder ${holder} is absent from the live set; kept until a second complete pass finds it absent`);
+    if (absence.passes < 2 || now - absence.since < deps.minAbsenceMs) {
+      deps.log(`[git-key-holders] holder ${holder} is absent from the live set since ${new Date(absence.since).toISOString()}; kept until two complete passes have found it absent for ${deps.minAbsenceMs / 60_000} minutes`);
       continue;
     }
     if (deps.mode === "dry-run") {

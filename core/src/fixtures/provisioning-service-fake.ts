@@ -35,6 +35,7 @@ export interface FakeProvisioningService {
   setEvents(uid: string, items: ProvisioningAttempt[]): void;
   issueCredential(uid: string, name: ProvisioningCredentialName, value: string): void;
   setGitKeyStatus(uid: string, holder: string, status: GitKeyStatus): GitKey;
+  completeGitKeyReleases(): number;
   credentialReader: boolean;
   close(): Promise<void>;
 }
@@ -105,17 +106,28 @@ function changePage(
   };
 }
 
+const POD_NAME = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
+
+function validHolder(holder: string): boolean {
+  const separator = holder.indexOf("/");
+  return separator > 0 && SERVICE_IDENTIFIER.test(holder.slice(0, separator)) && POD_NAME.test(holder.slice(separator + 1));
+}
+
 function createFakeGitKeys(nextVersion: () => number) {
   const keys = new Map<string, GitKey>();
-  const releaseWhere = (matches: (key: GitKey) => boolean): void => {
-    for (const [id, key] of keys) if (matches(key)) keys.delete(id);
+  const markForRelease = (id: string, key: GitKey): void => {
+    if (key.deletionRequestedAt === null) keys.set(id, { ...key, deletionRequestedAt: new Date().toISOString(), resourceVersion: String(nextVersion()) });
+  };
+  const releaseWhere = (matches: (key: GitKey) => boolean): { remaining: number } => {
+    for (const [id, key] of keys) if (matches(key)) markForRelease(id, key);
+    return { remaining: [...keys.values()].filter(matches).length };
   };
   return {
     keys,
     put(uid: string, holder: string, spec: GitKey["spec"]): { status: number; key: GitKey } {
       const existing = keys.get(`${uid}/${holder}`);
       const putSequence = (existing?.putSequence ?? 0) + 1;
-      if (existing?.spec.publicKey === spec.publicKey) {
+      if (existing?.spec.publicKey === spec.publicKey && existing.deletionRequestedAt === null) {
         const touched = { ...existing, putSequence, resourceVersion: String(nextVersion()) };
         keys.set(`${uid}/${holder}`, touched);
         return { status: 200, key: touched };
@@ -137,16 +149,18 @@ function createFakeGitKeys(nextVersion: () => number) {
     delete(uid: string, holder: string, expectedPublicKey: string | undefined): number {
       const existing = keys.get(`${uid}/${holder}`);
       if (existing && expectedPublicKey !== undefined && existing.spec.publicKey !== expectedPublicKey) return 409;
-      keys.delete(`${uid}/${holder}`);
+      if (existing) markForRelease(`${uid}/${holder}`, existing);
       return 202;
     },
     holders(): GitKeyHolderSummary[] {
       const summaries = new Map<string, GitKeyHolderSummary>();
-      for (const key of keys.values()) {
-        const rows = (summaries.get(key.holder)?.rows ?? 0) + 1;
-        summaries.set(key.holder, { holder: key.holder, gatewayId: key.gatewayId, rows, newestUpdatedAt: new Date(0).toISOString() });
-      }
+      for (const key of keys.values()) summaries.set(key.holder, { holder: key.holder, gatewayId: key.gatewayId });
       return [...summaries.values()].sort((left, right) => left.holder.localeCompare(right.holder));
+    },
+    completeReleases(): number {
+      const released = [...keys].filter(([, key]) => key.deletionRequestedAt !== null);
+      for (const [id] of released) keys.delete(id);
+      return released.length;
     },
     releaseHolder: (holder: string) => releaseWhere((key) => key.holder === holder),
     releaseGateway: (gatewayId: string) => releaseWhere((key) => key.gatewayId === gatewayId),
@@ -186,6 +200,29 @@ function deleteFakeGitKey(gitKeys: FakeGitKeys, match: RegExpExecArray, body: un
   send(res, status);
 }
 
+function routeFakeUserGitKey(gitKeys: FakeGitKeys, resources: Map<string, UserProvisioning>, recorded: FakeProvisioningRequest, match: RegExpExecArray, res: ServerResponse): boolean {
+  if (!validHolder(decodeURIComponent(match[2]))) fail(res, 400, "invalid-request");
+  else if (recorded.method === "GET") getFakeGitKey(gitKeys, match, res);
+  else if (recorded.method === "PUT") putFakeGitKey(gitKeys, resources, match, recorded.body, res);
+  else if (recorded.method === "DELETE") deleteFakeGitKey(gitKeys, match, recorded.body, res);
+  else return false;
+  return true;
+}
+
+function routeFakeGitKeyRelease(gitKeys: FakeGitKeys, recorded: FakeProvisioningRequest, pathname: string, res: ServerResponse): boolean {
+  const holderMatch = GIT_KEY_HOLDER_PATH.exec(pathname);
+  const gatewayMatch = GATEWAY_GIT_KEYS_PATH.exec(pathname);
+  if (pathname === "/v1/git-key-holders" && recorded.method === "GET") send(res, 200, { holders: gitKeys.holders() });
+  else if (recorded.method !== "DELETE") return false;
+  else if (holderMatch) {
+    const holder = decodeURIComponent(holderMatch[1]);
+    if (validHolder(holder)) send(res, 202, gitKeys.releaseHolder(holder));
+    else fail(res, 400, "invalid-request");
+  } else if (gatewayMatch) send(res, 202, gitKeys.releaseGateway(decodeURIComponent(gatewayMatch[1])));
+  else return false;
+  return true;
+}
+
 function routeFakeGitKeys(
   gitKeys: FakeGitKeys,
   resources: Map<string, UserProvisioning>,
@@ -194,20 +231,7 @@ function routeFakeGitKeys(
   res: ServerResponse,
 ): boolean {
   const gitKeyMatch = GIT_KEY_PATH.exec(pathname);
-  const holderMatch = GIT_KEY_HOLDER_PATH.exec(pathname);
-  const gatewayMatch = GATEWAY_GIT_KEYS_PATH.exec(pathname);
-  if (gitKeyMatch && recorded.method === "GET") getFakeGitKey(gitKeys, gitKeyMatch, res);
-  else if (gitKeyMatch && recorded.method === "PUT") putFakeGitKey(gitKeys, resources, gitKeyMatch, recorded.body, res);
-  else if (gitKeyMatch && recorded.method === "DELETE") deleteFakeGitKey(gitKeys, gitKeyMatch, recorded.body, res);
-  else if (pathname === "/v1/git-key-holders" && recorded.method === "GET") send(res, 200, { holders: gitKeys.holders() });
-  else if (holderMatch && recorded.method === "DELETE") {
-    gitKeys.releaseHolder(decodeURIComponent(holderMatch[1]));
-    send(res, 202, { remaining: 0 });
-  } else if (gatewayMatch && recorded.method === "DELETE") {
-    gitKeys.releaseGateway(decodeURIComponent(gatewayMatch[1]));
-    send(res, 202, { remaining: 0 });
-  } else return false;
-  return true;
+  return gitKeyMatch ? routeFakeUserGitKey(gitKeys, resources, recorded, gitKeyMatch, res) : routeFakeGitKeyRelease(gitKeys, recorded, pathname, res);
 }
 
 export async function startFakeProvisioningService(options: { tokens?: string[] } = {}): Promise<FakeProvisioningService> {
@@ -407,6 +431,7 @@ export async function startFakeProvisioningService(options: { tokens?: string[] 
       credentials.set(`${uid}/${name}`, { name, value, version: (previous?.version ?? 0) + 1 });
     },
     setGitKeyStatus: gitKeys.setStatus,
+    completeGitKeyReleases: gitKeys.completeReleases,
     get credentialReader() {
       return service.credentialReader;
     },
