@@ -90,6 +90,11 @@ export function toResource(row: ProvisioningRow): UserProvisioning {
   };
 }
 
+function keyRegistered(row: GitKeyRow): boolean {
+  return row.observed_generation >= row.generation &&
+    row.conditions.some((condition) => condition.type === "Registered" && condition.status === "True");
+}
+
 export function toGitKey(row: GitKeyRow): GitKey {
   return {
     uid: row.uid,
@@ -175,6 +180,10 @@ export class ProvisioningStore {
              attempts = CASE WHEN state = 'running' THEN attempts ELSE 0 END,
              due_at = CASE WHEN state = 'running' THEN due_at ELSE now() END
        WHERE uid = $1`, [uid]);
+  }
+
+  private async makeIdleWorkDue(client: pg.ClientBase, uid: string): Promise<void> {
+    await client.query(`UPDATE ${this.db.table("provisioning_work")} SET state = 'queued', due_at = now() WHERE uid = $1 AND state = 'idle'`, [uid]);
   }
 
   private async makeKeyWorkDue(client: pg.ClientBase, uid: string): Promise<void> {
@@ -333,6 +342,7 @@ export class ProvisioningStore {
       const { rows } = await client.query<GitKeyRow>(`SELECT * FROM ${t("git_keys")} WHERE uid = $1 AND gateway_id = $2 FOR UPDATE`, [uid, gatewayId]);
       const current = rows[0];
       if (current && current.public_key === spec.publicKey && current.deletion_requested_at === null) {
+        if (!keyRegistered(current)) await this.makeIdleWorkDue(client, uid);
         return { outcome: "unchanged" as const, key: toGitKey(current) };
       }
       const keyVersion = await bumpVersion(uid);

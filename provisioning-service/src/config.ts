@@ -12,7 +12,35 @@ export interface RealHostSettings {
   gitHostAdminToken: string;
 }
 
-export type HostAdapterConfig = { kind: "fake"; delayMs: number } | { kind: "real"; settings: RealHostSettings };
+export interface FakeGitKey {
+  publicKey: string;
+  holder: string | null;
+}
+
+export type HostAdapterConfig =
+  | { kind: "fake"; delayMs: number; gitKeys: Record<string, FakeGitKey[]> }
+  | { kind: "real"; settings: RealHostSettings };
+
+function isFakeGitKey(value: unknown): value is FakeGitKey {
+  const key = value as Partial<FakeGitKey> | null;
+  return typeof key?.publicKey === "string" && (typeof key.holder === "string" || key.holder === null);
+}
+
+function fakeGitKeys(env: NodeJS.ProcessEnv): Record<string, FakeGitKey[]> {
+  const raw = optional(env, "PROVISIONING_FAKE_GIT_KEYS");
+  if (raw === null) return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error("PROVISIONING_FAKE_GIT_KEYS must be JSON");
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed) ||
+    !Object.values(parsed).every((keys) => Array.isArray(keys) && keys.every(isFakeGitKey))) {
+    throw new Error("PROVISIONING_FAKE_GIT_KEYS must map each git owner to a list of { publicKey, holder }");
+  }
+  return parsed as Record<string, FakeGitKey[]>;
+}
 
 export const FAKE_HOST_ADAPTERS_CONSENT = "for-tests-only";
 
@@ -81,7 +109,7 @@ function hostAdapters(env: NodeJS.ProcessEnv): HostAdapterConfig {
     if (optional(env, "PROVISIONING_ALLOW_FAKE_HOST_ADAPTERS") !== FAKE_HOST_ADAPTERS_CONSENT) {
       throw new Error(`PROVISIONING_HOST_ADAPTERS=fake is for tests only; it also needs PROVISIONING_ALLOW_FAKE_HOST_ADAPTERS=${FAKE_HOST_ADAPTERS_CONSENT}`);
     }
-    return { kind: "fake", delayMs: wholeNumber(env, "PROVISIONING_FAKE_HOST_DELAY_MS", 0, 0) };
+    return { kind: "fake", delayMs: wholeNumber(env, "PROVISIONING_FAKE_HOST_DELAY_MS", 0, 0), gitKeys: fakeGitKeys(env) };
   }
   if (kind !== "real") throw new Error(`PROVISIONING_HOST_ADAPTERS must be "real" or "fake", not "${kind}"`);
   return {

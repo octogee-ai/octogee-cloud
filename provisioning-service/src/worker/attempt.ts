@@ -365,9 +365,7 @@ class Attempt {
       return;
     }
     if (present.some((existing) => existing.publicKey === key.public_key && existing.holder === null)) {
-      this.deps.log.warn("git key is registered under a holder this service does not manage; left unchanged", { uid: this.claim.uid, gatewayId: key.gateway_id });
-      await this.writeKeyStatus(key, { type: "Registered", status: "False", reason: "GitKeyFailed", message: "registered under a holder this service does not manage; left unchanged" }, key.registered_public_key);
-      return;
+      this.deps.log.info("adopting the identical git key the user's account holds under a title this service does not manage", { uid: this.claim.uid, gatewayId: key.gateway_id });
     }
     await this.hostCall("git", "registerKey", () => this.deps.git.registerKey({ owner, publicKey: key.public_key, holder: key.gateway_id }, this.signal));
     await this.writeKeyStatus(key, { type: "Registered", status: "True", reason: "Converged" }, key.public_key);

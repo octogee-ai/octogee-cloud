@@ -59,10 +59,21 @@ permission to create TokenReviews.
 
 ## Git keys
 
-Do not call `PUT /v1/users/{uid}/git-keys/{gatewayId}` until the key-title
-migration is decided. Keys registered by the earlier path carry another title.
-The service leaves a key with the same public key under a holder it does not
-manage untouched and reports `Registered=False` with reason `GitKeyFailed`.
+Keys registered by the earlier path carry another title. When a GitKey is put
+and the user's own git account already holds the identical public key under a
+managed title the service does not know, the service adopts it: it removes that
+key and registers the same key under its own title for the gateway, restoring
+the removed key if the registration fails. A different public key is added
+beside it, and that key is left alone. A key another user's account holds is
+never adopted; the git host refuses it and the row reports `Registered=False`
+with reason `GitKeyFailed`.
+
+Putting an unchanged key whose row is not registered queues idle work again,
+so a row an earlier build refused is retried on the gateway's next put.
+
+With `PROVISIONING_HOST_ADAPTERS=fake`, `PROVISIONING_FAKE_GIT_KEYS` seeds the
+fake git host with keys, as JSON mapping each owner to `{ publicKey, holder }`
+entries.
 
 ## Chat accounts
 

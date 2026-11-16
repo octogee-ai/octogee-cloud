@@ -156,10 +156,10 @@ export class FakeGitHost implements GitHost {
 
   registerKey(input: { owner: string; publicKey: string; holder: string }, signal: AbortSignal): Promise<void> {
     return this.host.call("registerKey", input.owner, signal, () => {
-      const keys = this.keys.get(input.owner) ?? [];
-      if (!keys.some((key) => key.publicKey === input.publicKey && key.holder === input.holder)) {
-        keys.push({ publicKey: input.publicKey, holder: input.holder });
-      }
+      const elsewhere = [...this.keys].some(([owner, keys]) => owner !== input.owner && keys.some((key) => key.publicKey === input.publicKey));
+      if (elsewhere) throw new HostError("terminal", "register git key: 422 from git host: key content has been used as non-deploy key");
+      const keys = (this.keys.get(input.owner) ?? []).filter((key) => key.publicKey !== input.publicKey || key.holder === input.holder);
+      if (!keys.some((key) => key.publicKey === input.publicKey)) keys.push({ publicKey: input.publicKey, holder: input.holder });
       this.keys.set(input.owner, keys);
     });
   }
