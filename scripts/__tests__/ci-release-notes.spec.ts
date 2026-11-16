@@ -72,8 +72,15 @@ describe("release notes", () => {
 
   it("reads the GKE install guide run from the tag message", () => {
     expect(gkeRunFrom(`v0.1.0\n\nGKE install guide: 2026-11-15 ${sha}\n`)).toEqual(gkeRun);
+    expect(gkeRunFrom(`v0.1.0\r\n\r\nGKE install guide: 2026-11-15 ${sha}\r\n`)).toEqual(gkeRun);
     expect(gkeRunFrom("v0.1.0")).toBeUndefined();
-    expect(gkeRunFrom(`GKE install guide: 15 Nov ${sha}`)).toBeUndefined();
+  });
+
+  it("refuses malformed or duplicate recorded GKE installs", () => {
+    expect(() => gkeRunFrom(`GKE install guide: 15 Nov ${sha}`)).toThrow("GKE install guide:");
+    expect(() => gkeRunFrom("GKE install guide: 2026-11-15 ccc")).toThrow("GKE install guide:");
+    const record = `GKE install guide: 2026-11-15 ${sha}`;
+    expect(() => gkeRunFrom(`${record}\n${record}`)).toThrow("GKE install guide:");
   });
 
   it("writes the notes from the command line", () => {

@@ -6,8 +6,13 @@ const VERSION = /^v\d+\.\d+\.\d+$/;
 const DIGEST = /^sha256:[a-f0-9]{64}$/;
 
 export function gkeRunFrom(message) {
-  const match = /^GKE install guide: (\d{4}-\d{2}-\d{2}) ([a-f0-9]{40})$/m.exec(message ?? "");
-  return match ? { date: match[1], commit: match[2] } : undefined;
+  const records = (message ?? "").split(/\r?\n/).filter(line => line.trimStart().startsWith("GKE install guide:"));
+  if (records.length === 0) return undefined;
+  const match = /^GKE install guide: (\d{4}-\d{2}-\d{2}) ([a-f0-9]{40})$/.exec(records[0]);
+  if (records.length !== 1 || !match) {
+    throw new Error('Record a GKE run with one line: "GKE install guide: YYYY-MM-DD <commit>"');
+  }
+  return { date: match[1], commit: match[2] };
 }
 
 export function releaseNotes({ tag, fleetVersion, manifest, gkeRun }) {
