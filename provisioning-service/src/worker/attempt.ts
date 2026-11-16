@@ -383,11 +383,16 @@ class Attempt {
       return;
     }
     await this.step("chat-agent", "ChatAgentFailed", async () => {
+      const { existingBotUserId } = this.spec.chat.defaultAgent;
+      if (existingBotUserId !== undefined && chat.agentBotUserId && chat.agentBotUserId !== existingBotUserId) {
+        throw new HostError("terminal", "recorded agent bot differs from the bot already provisioned for this user");
+      }
       const { botUserId } = await this.hostCall("chat", "ensureAgentBot", () => this.deps.chat.ensureAgentBot({
         slug: this.spec.slug, ownerFirstName: this.ownerFirstName(), teamId: chat.teamId,
         ...(chat.channels.general ? { generalChannelId: chat.channels.general } : {}),
         ...(chat.channels.agent ? { agentChannelId: chat.channels.agent } : {}),
         ...(chat.agentBotUserId ? { knownBotUserId: chat.agentBotUserId } : {}),
+        ...(existingBotUserId === undefined ? {} : { existingBotUserId }),
       }, this.signal));
       chat.agentBotUserId = botUserId;
       await this.saveOutputs();

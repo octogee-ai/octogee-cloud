@@ -6,7 +6,11 @@ export function defaultAgentId(slug: string): string {
   return `octogee-${slug}-coach`;
 }
 
-export function desiredUserProvisioningSpec(uid: string, userData: Record<string, unknown>): UserProvisioningSpec {
+export function desiredUserProvisioningSpec(
+  uid: string,
+  userData: Record<string, unknown>,
+  existingBotUserId?: string,
+): UserProvisioningSpec {
   const input = provisionMattermostUserInput(buildProvisioningContext(uid, userData));
   return {
     slug: input.slug,
@@ -15,7 +19,7 @@ export function desiredUserProvisioningSpec(uid: string, userData: Record<string
     avatarUrl: input.photoURL ? input.photoURL : null,
     chat: {
       teamDisplayName: computeWorkspaceDisplayName({ slug: input.slug, firstName: input.firstName, vibe: input.vibe ?? null }),
-      defaultAgent: { enabled: true },
+      defaultAgent: { enabled: true, ...(existingBotUserId === undefined ? {} : { existingBotUserId }) },
     },
     git: { repositories: ["workspace", "project-coaches"], systemConfigRepository: true },
     agentIds: [defaultAgentId(input.slug)],

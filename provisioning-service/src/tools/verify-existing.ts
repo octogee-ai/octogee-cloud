@@ -15,7 +15,8 @@ export const USAGE = `Usage: node dist/src/tools/verify-existing.js <users.json>
 Confirms every listed user's chat host and git host resources through the
 provisioning service's real adapters without writing anything: every request
 other than GET is answered locally and never reaches a host. Each user runs
-twice, once with the stored ids and once without (the first-start path).
+twice, once with the stored ids and once discovering the chat resources. Both
+paths honor a recorded agent bot ID.
 Exits 1 when any resource would be created, a stored id differs from the one
 found by name, or a step fails.
 
@@ -191,7 +192,7 @@ async function verifyChat(chat: ChatHost, user: ExistingUser, useStored: boolean
     teamId: team.teamId,
     generalChannelId: channels.general,
     agentChannelId: channels.agent,
-    knownBotUserId: known(stored.agentBotUserId),
+    existingBotUserId: present(stored.agentBotUserId),
   }, signal));
   if (bot) compare(report, "agent bot", stored.agentBotUserId, bot.botUserId);
 }

@@ -80,7 +80,12 @@ export function parseUserProvisioningSpec(value: unknown): UserProvisioningSpec 
     avatarUrl,
     chat: {
       teamDisplayName: text(chat.teamDisplayName, "spec.chat.teamDisplayName"),
-      defaultAgent: { enabled: bool(defaultAgent.enabled, "spec.chat.defaultAgent.enabled") },
+      defaultAgent: {
+        enabled: bool(defaultAgent.enabled, "spec.chat.defaultAgent.enabled"),
+        ...(defaultAgent.existingBotUserId === undefined ? {} : {
+          existingBotUserId: text(defaultAgent.existingBotUserId, "spec.chat.defaultAgent.existingBotUserId", { pattern: IDENTIFIER }),
+        }),
+      },
     },
     git: { repositories, systemConfigRepository: bool(git.systemConfigRepository, "spec.git.systemConfigRepository") },
     agentIds,

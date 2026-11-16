@@ -151,7 +151,7 @@ export class FakeMattermostApi {
   }
 
   private userJson(user: FakeMmUser) {
-    const { is_bot: _bot, bot_description: _description, ...rest } = user;
+    const { bot_description: _description, ...rest } = user;
     return rest;
   }
 

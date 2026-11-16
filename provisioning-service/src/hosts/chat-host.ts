@@ -35,6 +35,7 @@ export interface ChatAgentInput {
   generalChannelId?: string;
   agentChannelId?: string;
   knownBotUserId?: string;
+  existingBotUserId?: string;
 }
 
 export interface IssuedToken {
