@@ -16,6 +16,33 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.packages.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24.22.1
+      - name: Select package checks
+        id: packages
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+            git fetch --no-tags --depth=1 origin "$BASE_SHA"
+            git diff --name-only --no-renames -z "$BASE_SHA" HEAD > "$RUNNER_TEMP/changed-paths"
+            matrix="$(node scripts/ci/check-packages.mjs "$RUNNER_TEMP/changed-paths")"
+          else
+            matrix="$(node scripts/ci/check-packages.mjs --full)"
+          fi
+          printf 'matrix=%s\n' "$matrix" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "$matrix" | jq -r '"Package checks: " + ([.include[].name] | join(", "))' >> "$GITHUB_STEP_SUMMARY"
+
   lint:
     name: lint
     runs-on: ubuntu-24.04
@@ -36,119 +63,24 @@ jobs:
           cache-dependency-path: package-lock.json
       - run: npm ci --no-audit --no-fund
       - run: npm audit --audit-level=moderate
-      - run: npm run lint
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        if: github.event_name != 'schedule' && github.event_name != 'workflow_dispatch'
+        with:
+          path: ${{ runner.temp }}/eslint-cache
+          key: eslint-${{ runner.os }}-node24-${{ hashFiles('package-lock.json', '**/eslint.config.*') }}-${{ github.sha }}
+          restore-keys: |
+            eslint-${{ runner.os }}-node24-${{ hashFiles('package-lock.json', '**/eslint.config.*') }}-
+      - name: Lint
+        run: npm run lint -- --cache --cache-strategy content --cache-location "$RUNNER_TEMP/eslint-cache"
 
   packages:
     name: ${{ matrix.name }}
+    needs: plan
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - name: scripts
-            installs: scripts
-            gateway-npm: true
-            helm: true
-            run: |
-              cd scripts
-              npm audit --audit-level=moderate
-              npx tsc --noEmit
-              npm test
-              npm run gate
-          - name: gateway-supervisor
-            installs: gateway-supervisor
-            gateway-npm: true
-            run: |
-              cd gateway-supervisor
-              npm audit --audit-level=moderate
-              npm run typecheck
-              npm test
-          - name: core
-            installs: core
-            postgres: true
-            run: |
-              cd core
-              npm run typecheck
-              npm run build
-              node ../scripts/ops/verify-committed-dist.mjs
-              npm test
-              node ../scripts/ci/core-postgres.mjs
-          - name: core-testing
-            installs: core-testing
-            run: |
-              cd core-testing
-              npm run typecheck
-              npm run build
-              node ../scripts/ops/verify-committed-dist.mjs
-              npm test
-          - name: provisioning-service
-            installs: provisioning-service
-            postgres: true
-            run: |
-              cd provisioning-service
-              npm audit --audit-level=moderate
-              npm run typecheck
-              node ../scripts/ci/provisioning-service-postgres.mjs
-          - name: gateway-edge
-            installs: shared gateway-edge
-            run: |
-              cd gateway-edge
-              npm run typecheck
-              npm test
-          - name: llm-broker
-            installs: llm-broker
-            run: |
-              cd llm-broker
-              npm run typecheck
-              npm test
-          - name: platform-api
-            installs: shared llm-broker platform-api
-            builds: llm-broker
-            gateway-npm: true
-            run: |
-              cd platform-api
-              npm run typecheck
-              npm test
-          - name: tests
-            installs: scripts gateway-supervisor shared fleet-controller tests
-            helm: true
-            run: |
-              cd tests
-              npm run typecheck
-              npm test
-          - name: release-artifacts
-            installs: shared core core-testing scripts
-            helm: true
-            run: |
-              node scripts/ci/release-packages.mjs pack --tag=v0.0.0 --out="$RUNNER_TEMP/packages"
-              node scripts/ci/release-packages.mjs verify --out="$RUNNER_TEMP/packages"
-              node scripts/ci/release-packages.mjs publish --dry-run --out="$RUNNER_TEMP/packages"
-              node scripts/ci/release-charts.mjs placeholder-manifest > "$RUNNER_TEMP/image-manifest.json"
-              node scripts/ci/release-charts.mjs package --tag=v0.0.0 --manifest="$RUNNER_TEMP/image-manifest.json" --out="$RUNNER_TEMP/charts"
-              node scripts/ci/release-charts.mjs verify --tag=v0.0.0 --manifest="$RUNNER_TEMP/image-manifest.json" --out="$RUNNER_TEMP/charts"
-          - name: libraries
-            installs: >-
-              shared scripts fleet-controller
-              gateway/extensions/platform/octogee-access-tools
-              gateway/extensions/platform/octogee-activity-tools
-              gateway/extensions/platform/octogee-broker-tools
-              gateway/extensions/platform/octogee-chat-tools
-              gateway/extensions/platform/octogee-status-tools
-              gateway/extensions/platform/octogee-voice-tools
-              gateway/extensions/platform/octogee-web-tools
-              gateway/extensions/platform/octogee-workspace-tools
-            run: |
-              (cd shared && npm run typecheck && npm run build && node ../scripts/ops/verify-committed-dist.mjs && npm test)
-              (cd fleet-controller && npm run typecheck && npm test)
-              (cd gateway/extensions/platform/octogee-access-tools && npm test)
-              (cd gateway/extensions/platform/octogee-activity-tools && npm run typecheck && npm test)
-              (cd gateway/extensions/platform/octogee-broker-tools && npm test)
-              (cd gateway/extensions/platform/octogee-chat-tools && npm test)
-              (cd gateway/extensions/platform/octogee-status-tools && npm test)
-              (cd gateway/extensions/platform/octogee-voice-tools && npm test)
-              (cd gateway/extensions/platform/octogee-web-tools && npm test)
-              (cd gateway/extensions/platform/octogee-workspace-tools && npm test)
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -191,16 +123,19 @@ jobs:
             esac
           done
       - name: Typecheck and test
-        run: ${{ matrix.run }}
+        env:
+          PACKAGE_CHECK: ${{ matrix.name }}
+        run: node scripts/ci/check-packages.mjs --run "$PACKAGE_CHECK"
 
   checks:
     name: checks
     if: always()
-    needs: [lint, packages]
+    needs: [plan, lint, packages]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - env:
+          PLAN: ${{ needs.plan.result }}
           LINT: ${{ needs.lint.result }}
           PACKAGES: ${{ needs.packages.result }}
-        run: test "$LINT" = success && test "$PACKAGES" = success
+        run: test "$PLAN" = success && test "$LINT" = success && test "$PACKAGES" = success

@@ -1,0 +1,68 @@
+{
+  "include": [
+    {
+      "name": "scripts",
+      "installs": "scripts",
+      "gateway-npm": true,
+      "helm": true,
+      "run": "cd scripts\nnpm audit --audit-level=moderate\nnpx tsc --noEmit\nnpm test\nnpm run gate\n"
+    },
+    {
+      "name": "gateway-supervisor",
+      "installs": "gateway-supervisor",
+      "gateway-npm": true,
+      "run": "cd gateway-supervisor\nnpm audit --audit-level=moderate\nnpm run typecheck\nnpm test\n"
+    },
+    {
+      "name": "core",
+      "installs": "core",
+      "postgres": true,
+      "run": "cd core\nnpm run typecheck\nnpm run build\nnode ../scripts/ops/verify-committed-dist.mjs\nnpm test\nnode ../scripts/ci/core-postgres.mjs\n"
+    },
+    {
+      "name": "core-testing",
+      "installs": "core-testing",
+      "run": "cd core-testing\nnpm run typecheck\nnpm run build\nnode ../scripts/ops/verify-committed-dist.mjs\nnpm test\n"
+    },
+    {
+      "name": "provisioning-service",
+      "installs": "provisioning-service",
+      "postgres": true,
+      "run": "cd provisioning-service\nnpm audit --audit-level=moderate\nnpm run typecheck\nnode ../scripts/ci/provisioning-service-postgres.mjs\n"
+    },
+    {
+      "name": "gateway-edge",
+      "installs": "shared gateway-edge",
+      "run": "cd gateway-edge\nnpm run typecheck\nnpm test\n"
+    },
+    {
+      "name": "llm-broker",
+      "installs": "llm-broker",
+      "run": "cd llm-broker\nnpm run typecheck\nnpm test\n"
+    },
+    {
+      "name": "platform-api",
+      "installs": "shared llm-broker platform-api",
+      "builds": "llm-broker",
+      "gateway-npm": true,
+      "run": "cd platform-api\nnpm run typecheck\nnpm test\n"
+    },
+    {
+      "name": "tests",
+      "installs": "scripts gateway-supervisor shared fleet-controller tests",
+      "helm": true,
+      "run": "cd tests\nnpm run typecheck\nnpm test\n"
+    },
+    {
+      "name": "release-artifacts",
+      "installs": "shared core core-testing scripts",
+      "helm": true,
+      "run": "node scripts/ci/release-packages.mjs pack --tag=v0.0.0 --out=\"$RUNNER_TEMP/packages\"\nnode scripts/ci/release-packages.mjs verify --out=\"$RUNNER_TEMP/packages\"\nnode scripts/ci/release-packages.mjs publish --dry-run --out=\"$RUNNER_TEMP/packages\"\nnode scripts/ci/release-charts.mjs placeholder-manifest > \"$RUNNER_TEMP/image-manifest.json\"\nnode scripts/ci/release-charts.mjs package --tag=v0.0.0 --manifest=\"$RUNNER_TEMP/image-manifest.json\" --out=\"$RUNNER_TEMP/charts\"\nnode scripts/ci/release-charts.mjs verify --tag=v0.0.0 --manifest=\"$RUNNER_TEMP/image-manifest.json\" --out=\"$RUNNER_TEMP/charts\"\n"
+    },
+    {
+      "name": "libraries",
+      "installs": "shared scripts fleet-controller gateway/extensions/platform/octogee-access-tools gateway/extensions/platform/octogee-activity-tools gateway/extensions/platform/octogee-broker-tools gateway/extensions/platform/octogee-chat-tools gateway/extensions/platform/octogee-status-tools gateway/extensions/platform/octogee-voice-tools gateway/extensions/platform/octogee-web-tools gateway/extensions/platform/octogee-workspace-tools",
+      "run": "(cd shared && npm run typecheck && npm run build && node ../scripts/ops/verify-committed-dist.mjs && npm test)\n(cd fleet-controller && npm run typecheck && npm test)\n(cd gateway/extensions/platform/octogee-access-tools && npm test)\n(cd gateway/extensions/platform/octogee-activity-tools && npm run typecheck && npm test)\n(cd gateway/extensions/platform/octogee-broker-tools && npm test)\n(cd gateway/extensions/platform/octogee-chat-tools && npm test)\n(cd gateway/extensions/platform/octogee-status-tools && npm test)\n(cd gateway/extensions/platform/octogee-voice-tools && npm test)\n(cd gateway/extensions/platform/octogee-web-tools && npm test)\n(cd gateway/extensions/platform/octogee-workspace-tools && npm test)\n"
+    }
+  ]
+}

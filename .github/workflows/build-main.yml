@@ -9,6 +9,10 @@ on:
         description: Scan the latest published main build without building images
         type: boolean
         default: false
+      benchmark-tripwire:
+        description: Compare Docker and BuildKit inspection of the same built image digests
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -64,7 +68,18 @@ jobs:
           mkdir -p "$RUNNER_TEMP/digests"
           node scripts/ci/cloud-build.mjs digests --platform="$PLATFORM" --metadata="$RUNNER_TEMP/metadata.json" > "$RUNNER_TEMP/digests/${{ matrix.arch }}.json"
       - name: Check the images carry only platform source
-        run: node scripts/ci/cloud-build.mjs tripwire --registry="$REGISTRY" --digests="$RUNNER_TEMP/digests/${{ matrix.arch }}.json" --root=. --pull
+        if: ${{ !inputs.benchmark-tripwire }}
+        run: node scripts/ci/cloud-build.mjs tripwire --registry="$REGISTRY" --digests="$RUNNER_TEMP/digests/${{ matrix.arch }}.json" --root=. --buildkit
+      - name: Compare image inspection on the same digests
+        if: inputs.benchmark-tripwire
+        run: node scripts/ci/benchmark-image-paths.mjs "$RUNNER_TEMP/digests/${{ matrix.arch }}.json" "$REGISTRY" "$RUNNER_TEMP/inspection"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: ${{ !cancelled() && inputs.benchmark-tripwire }}
+        with:
+          name: image-inspection-${{ matrix.arch }}
+          path: ${{ runner.temp }}/inspection/
+          if-no-files-found: error
+          retention-days: 7
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: digests-${{ matrix.arch }}

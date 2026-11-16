@@ -1,8 +1,9 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { join, relative } from "node:path";
-import { pathToFileURL } from "node:url";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, relative } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { IMAGE_BUILDS, PLATFORM_CONTEXT, imagePlan } from "./image-build.mjs";
 import { gatewayBakePlan } from "./gateway-bake.mjs";
 
@@ -235,6 +236,26 @@ export async function imagePaths(image) {
   }
 }
 
+export async function buildkitImagePaths(image, platform) {
+  if (!/@sha256:[a-f0-9]{64}$/.test(image)) throw new Error("An immutable image digest is required");
+  if (!PLATFORMS.includes(platform)) throw new Error(`Unsupported platform: ${platform}`);
+  const directory = mkdtempSync(join(tmpdir(), "image-paths-"));
+  try {
+    const dockerfile = fileURLToPath(new URL("./image-paths.Dockerfile", import.meta.url));
+    const build = tool("docker", [
+      "buildx", "build", `--file=${dockerfile}`, `--platform=${platform}`,
+      `--build-context=subject=docker-image://${image}`, `--output=type=local,dest=${directory}`, dirname(dockerfile),
+    ], ["ignore", "ignore", "inherit"]);
+    await exited(build, `Listing ${image}`);
+    const paths = JSON.parse(readFileSync(join(directory, "paths.json"), "utf8"));
+    if (!Array.isArray(paths) || paths.some(path => typeof path !== "string" || !path)) throw new Error(`Invalid image path inventory for ${image}`);
+    if (!paths.length) throw new Error(`${image} lists no files`);
+    return paths;
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
 function docker(args) {
   // eslint-disable-next-line sonarjs/no-os-command-from-path -- docker is the build runner's own tool.
   const result = spawnSync("docker", args, { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] });
@@ -304,13 +325,14 @@ const selectedImages = opts => (typeof opts.images === "string" ? { images: opts
 
 async function tripwire(opts) {
   const root = opts.root ?? ".";
-  const { images: pushed } = JSON.parse(readFileSync(opts.digests, "utf8"));
+  const { platform, images: pushed } = JSON.parse(readFileSync(opts.digests, "utf8"));
   const checked = [];
   const failures = [];
   for (const [name, digest] of Object.entries(pushed)) {
     const image = `${opts.registry}/${name}@${digest}`;
-    if (opts.pull === true) docker(["pull", "--quiet", image]);
-    const findings = productFindings(await imagePaths(image), path => existsSync(join(root, path)));
+    if (opts.pull === true && opts.buildkit !== true) docker(["pull", "--quiet", image]);
+    const paths = await (opts.buildkit === true ? buildkitImagePaths(image, platform) : imagePaths(image));
+    const findings = productFindings(paths, path => existsSync(join(root, path)));
     if (findings.length) failures.push(`${image} carries files that are not platform source:\n${findings.slice(0, 50).join("\n")}`);
     checked.push(image);
   }
