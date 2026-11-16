@@ -52,7 +52,8 @@ describe("the release's kind smoke requirement", () => {
     const names = (release.jobs.release.steps as { name?: string; run?: string }[]).map(step => step.name);
     const check = release.jobs.release.steps.find((step: { name?: string }) => step.name === "Check the kind smokes passed at the tagged commit");
     expect(check.run).toContain("--workflow=kind-smoke.yml");
-    expect(check.run).toContain("node scripts/ci/release-runs.mjs --sha=\"$GITHUB_SHA\"");
+    expect(check.run).toContain("node scripts/ci/release-runs.mjs --sha=\"$SOURCE_SHA\"");
+    expect(check.env.SOURCE_SHA).toBe("${{ steps.build.outputs.sha }}");
     expect(names.indexOf(check.name)).toBe(names.indexOf("Check the tag is on main and Build main published its images") + 1);
   });
 });
