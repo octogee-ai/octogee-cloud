@@ -61,6 +61,7 @@ function mkDeps(overrides: Partial<DeprovisionUserDeps> = {}): DeprovisionUserDe
     loadCleanupContext: vi.fn(async () => mkCleanup()),
     unmountFromGateway: vi.fn(async () => "unmounted" as const),
     cloudCleanup: {
+      markTeardown: vi.fn(async () => "marked" as const),
       git: { eraseOwner: vi.fn(async () => undefined) },
       channels: { erase: vi.fn(async () => undefined) },
       eraseUserRecords: vi.fn(async () => undefined),
@@ -78,7 +79,7 @@ function mkDeps(overrides: Partial<DeprovisionUserDeps> = {}): DeprovisionUserDe
 }
 
 describe("createDeprovisionUserHandler — happy path", () => {
-  it("returns success=true and reports unmount-gateway + 8 cloud steps", async () => {
+  it("returns success=true and reports unmount-gateway + 9 cloud steps", async () => {
     const deps = mkDeps();
     const handler = createDeprovisionUserHandler(deps);
     const ctx = mkCtx();
@@ -90,6 +91,7 @@ describe("createDeprovisionUserHandler — happy path", () => {
     expect(stepNames).toEqual([
       "unmount-gateway:running",
       "unmount-gateway:done",
+      "teardown:done",
       "gitea:done",
       "mattermost:done",
       "storage:done",
@@ -173,6 +175,7 @@ describe("createDeprovisionUserHandler — cloud step failure", () => {
   it("returns success=false with the partial-failure summary when a cloud step fails", async () => {
     const deps = mkDeps({
       cloudCleanup: {
+        markTeardown: vi.fn(async () => "marked" as const),
         git: {
           eraseOwner: vi.fn(async () => {
             throw new Error("gitea boom");

@@ -11,6 +11,7 @@ let vmDiskUsage: VmDiskUsageSample[] = [];
 const configRoll = new Map<string, number>();
 const disruptionObservations = new Map<string, number>();
 let disruptionLastObservedMs: number | null = null;
+let provisioningMetrics: (() => string) | null = null;
 let placementAutomation: PlacementAutomationMetricSample | null = null;
 let disruptionSnapshot = {
   spotNodes: 0,
@@ -81,7 +82,12 @@ export function recordReconcile(result: "ok" | "fail", now: number = Date.now())
   }
 }
 
+export function setProvisioningMetricsSource(render: (() => string) | null): void {
+  provisioningMetrics = render;
+}
+
 export function resetMetrics(): void {
+  provisioningMetrics = null;
   reconcileOk = 0;
   reconcileFail = 0;
   lastSuccessMs = null;
@@ -229,7 +235,7 @@ export function renderMetrics(): string {
     `glm_disruption_pending_gateway_pods ${disruptionSnapshot.pendingGatewayPods}`,
     ...placementAutomationLines(),
     "",
-  ].join("\n");
+  ].join("\n") + (provisioningMetrics?.() ?? "");
 }
 
 function escapeLabel(value: string): string {

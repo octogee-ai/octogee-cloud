@@ -1825,6 +1825,11 @@ describe("default placement", () => {
           expiresAt: 1_800_000_000_000,
           message: "scheduled-user (uid-scheduled) is scheduled for deletion",
         }),
+        expect.objectContaining({
+          code: "account-deletion-pending",
+          uid: "uid-erasing",
+          message: "erasing-user (uid-erasing) was left erasing by a stopped cloud teardown; retry its deprovision-user operation",
+        }),
       ]),
     );
   });
@@ -2639,6 +2644,17 @@ describe("account deletion revokes connector grants at the provider first", () =
     expect(otherDocs[assignmentPath]).toEqual(assignment);
     expect(calls).not.toContain("set:users/u1");
     expect(calls).not.toContain(`delete:${assignmentPath}`);
+  });
+
+  it("refuses deletion of a user a stopped cloud teardown left erasing, naming the deprovision retry", async () => {
+    const { app, calls } = makeDeleteApp({
+      u1: { username: "alice", accountLifecycle: { status: "erasing" }, provisioning: { openclaw: {} } },
+    });
+
+    const response = await request(app).post("/users/u1/delete").expect(409);
+
+    expect(response.body.error).toBe("a cloud teardown of this user stopped part way and left it erasing; retry its deprovision-user operation to finish it");
+    expect(calls).not.toContain("suspend-auth:u1");
   });
 
   it("refuses suspension while an ambiguous source transfer holds user authority", async () => {

@@ -31,6 +31,7 @@ import {
 } from "./fleet-state-sections.js";
 import { FleetMutationRefusedError } from "./normal-fleet-mutation.js";
 import { timestampMillis } from "./timestamps.js";
+import type { ProvisioningReadiness } from "./provisioning-sync.js";
 import { FenceMismatchError } from "./platform-state/errors.js";
 import type { FleetRegistryRecord } from "./platform-state/fleet-registry.js";
 import type { GatewayRoot } from "./platform-state/gateways.js";
@@ -48,6 +49,7 @@ export interface AdminSharedPoolRouterDeps {
   controllerStartedAt?: number | undefined;
   journal: AdminFleetMutationRunner;
   now?: () => number;
+  provisioningReadiness?: ((uid: string) => ProvisioningReadiness | null) | undefined;
   readGatewayKubernetes?: GatewayKubernetesReader | undefined;
 }
 
@@ -206,9 +208,13 @@ export interface FleetStateUser {
   readonly gateway: { readonly gatewayId: string } | null;
   readonly openclaw: { readonly managedBy?: "cowboy" | "operator" };
   readonly fences: Pick<PlatformUserRecord["fences"], "restoreFence" | "sourceTransferFence">;
+  readonly provisioningReady?: ProvisioningReadiness | null;
 }
 
-function fleetStateUser(user: PlatformUserRecord): FleetStateUser {
+function fleetStateUser(
+  user: PlatformUserRecord,
+  provisioningReadiness: ((uid: string) => ProvisioningReadiness | null) | undefined,
+): FleetStateUser {
   const { restoreFence, sourceTransferFence } = user.fences;
   return {
     uid: user.uid,
@@ -222,6 +228,7 @@ function fleetStateUser(user: PlatformUserRecord): FleetStateUser {
       ...(restoreFence === undefined ? {} : { restoreFence }),
       ...(sourceTransferFence === undefined ? {} : { sourceTransferFence }),
     },
+    ...(provisioningReadiness === undefined ? {} : { provisioningReady: provisioningReadiness(user.uid) }),
   };
 }
 
@@ -230,6 +237,7 @@ export async function readFleetState(store: PlatformStateStore, input: {
   platformArtifact?: GatewayArtifact | undefined;
   controllerStartedAt?: number | undefined;
   now: number;
+  provisioningReadiness?: ((uid: string) => ProvisioningReadiness | null) | undefined;
 }) {
   return store.transaction({ label: "admin.fleet.state", readOnly: true }, async (transaction) => {
     const [config, automation, users, gateways, assignments, runtimes, operations, sharedGatewayAutoscaling] = await Promise.all([
@@ -254,7 +262,7 @@ export async function readFleetState(store: PlatformStateStore, input: {
         disposableGatewayIdleMs: config?.disposableGatewayIdleMs ?? null,
       },
       sharedPoolAutomation: automation,
-      users: users.map(fleetStateUser),
+      users: users.map((user) => fleetStateUser(user, input.provisioningReadiness)),
       gateways,
       latestReleasePayloadHashes: Object.fromEntries(sharedGateways.map((root, index) => [root.gatewayId, hashes[index] ?? null])),
       assignments,
@@ -409,7 +417,7 @@ export function addAdminSharedPoolRoutes(router: Router, deps: AdminSharedPoolRo
           platformArtifact: deps.platformArtifact,
           controllerStartedAt: deps.controllerStartedAt,
           now: now(),
-          projectUser: fleetStateUser,
+          projectUser: (user) => fleetStateUser(user, deps.provisioningReadiness),
           readGatewayKubernetes: deps.readGatewayKubernetes,
         }));
         return;
@@ -419,6 +427,7 @@ export function addAdminSharedPoolRoutes(router: Router, deps: AdminSharedPoolRo
         platformArtifact: deps.platformArtifact,
         controllerStartedAt: deps.controllerStartedAt,
         now: now(),
+        provisioningReadiness: deps.provisioningReadiness,
       }));
     } catch (error) {
       next(error);

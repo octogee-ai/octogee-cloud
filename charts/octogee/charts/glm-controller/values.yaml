@@ -62,6 +62,13 @@ env:
   mmUrl: ""
   systemNotificationUrl: ""
 
+# The provisioning service's in-cluster base URL. Empty turns the fleet
+# controller's provisioning spec writes, result mirror and Admin API
+# provisioning routes off. When set, the controller authenticates with a
+# projected service account token for the audience provisioning-service.
+provisioningService:
+  url: ""
+
 # Google sign-in for the fleet command line. googleClientId is the OAuth client
 # of type "TVs and Limited Input devices"; operatorEmails may use the Admin API.
 fleetIdentity:

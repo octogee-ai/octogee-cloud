@@ -27,6 +27,7 @@ function mkCtx(overrides: Partial<NukeCloudCtx> = {}): NukeCloudCtx {
 
 function mkDeps(overrides: Partial<NukeCloudDeps> = {}): NukeCloudDeps {
   return {
+    markTeardown: vi.fn(async () => "marked" as const),
     git: { eraseOwner: vi.fn(async () => undefined) },
     channels: { erase: vi.fn(async () => undefined) },
     eraseUserRecords: vi.fn(async () => undefined),
@@ -42,10 +43,11 @@ function mkDeps(overrides: Partial<NukeCloudDeps> = {}): NukeCloudDeps {
 }
 
 describe("nukeUserCloudSide — happy path", () => {
-  it("runs all nine erasure steps and reports each as ok", async () => {
+  it("runs all ten erasure steps and reports each as ok", async () => {
     const deps = mkDeps();
     const results = await nukeUserCloudSide(mkCtx(), deps);
     expect(results.map((r) => `${r.key}:${r.ok}`)).toEqual([
+      "teardown:true",
       "gitea:true",
       "mattermost:true",
       "storage:true",
@@ -89,6 +91,7 @@ describe("nukeUserCloudSide — happy path", () => {
     const deps = mkDeps({ deleteVmHome: undefined, deleteSignIn: undefined, deleteVm: undefined });
     const results = await nukeUserCloudSide(mkCtx(), deps);
     expect(results.map((r) => `${r.key}:${r.ok}:${r.skipped === true}`)).toEqual([
+      "teardown:true:false",
       "gitea:true:false",
       "mattermost:true:false",
       "storage:true:false",
@@ -198,6 +201,83 @@ describe("nukeUserCloudSide — happy path", () => {
   });
 });
 
+describe("nukeUserCloudSide — teardown marker", () => {
+  it("marks the user's cloud teardown before any destructive step", async () => {
+    const order: string[] = [];
+    const deps = mkDeps({
+      markTeardown: vi.fn(async () => { order.push("mark"); return "marked" as const; }),
+      deleteProvisioning: vi.fn(async () => { order.push("provisioning"); return "deleted" as const; }),
+      git: { eraseOwner: vi.fn(async () => { order.push("git"); }) },
+    });
+
+    const results = await nukeUserCloudSide(mkCtx(), deps);
+
+    expect(deps.markTeardown).toHaveBeenCalledWith("uid-alice");
+    expect(order).toEqual(["mark", "provisioning", "git"]);
+    expect(results[0]).toEqual({ key: "teardown", ok: true });
+  });
+
+  it("erases nothing while the marker cannot be written", async () => {
+    const deps = mkDeps({
+      markTeardown: vi.fn(async () => { throw new Error("platform database unavailable"); }),
+      deleteProvisioning: vi.fn(async () => "deleted" as const),
+    });
+
+    const results = await nukeUserCloudSide(mkCtx(), deps);
+
+    expect(results).toEqual([{ key: "teardown", ok: false, error: "platform database unavailable" }]);
+    expect(deps.deleteProvisioning).not.toHaveBeenCalled();
+    expect(deps.git.eraseOwner).not.toHaveBeenCalled();
+    expect(deps.eraseUserRecords).not.toHaveBeenCalled();
+  });
+
+  it("carries on for a user whose record is already gone", async () => {
+    const deps = mkDeps({ markTeardown: vi.fn(async () => "absent" as const) });
+
+    const results = await nukeUserCloudSide(mkCtx(), deps);
+
+    expect(results[0]).toEqual({ key: "teardown", ok: true, detail: "no user record to mark" });
+    expect(deps.eraseUserRecords).toHaveBeenCalled();
+  });
+});
+
+describe("nukeUserCloudSide — provisioning", () => {
+  it("deletes the user's provisioning before it erases the git and chat accounts", async () => {
+    const order: string[] = [];
+    const deps = mkDeps({
+      deleteProvisioning: vi.fn(async () => { order.push("provisioning"); return "deleted" as const; }),
+      git: { eraseOwner: vi.fn(async () => { order.push("git"); }) },
+      channels: { erase: vi.fn(async () => { order.push("chat"); }) },
+    });
+
+    const results = await nukeUserCloudSide(mkCtx(), deps);
+
+    expect(order).toEqual(["provisioning", "git", "chat"]);
+    expect(results[1]).toEqual({ key: "provisioning", ok: true });
+  });
+
+  it("erases nothing else while the provisioning delete fails", async () => {
+    const deps = mkDeps({ deleteProvisioning: vi.fn(async () => { throw new Error("provisioning service unreachable"); }) });
+
+    const results = await nukeUserCloudSide(mkCtx(), deps);
+
+    expect(results).toEqual([{ key: "teardown", ok: true }, { key: "provisioning", ok: false, error: "provisioning service unreachable" }]);
+    expect(deps.git.eraseOwner).not.toHaveBeenCalled();
+    expect(deps.channels.erase).not.toHaveBeenCalled();
+    expect(deps.eraseUserRecords).not.toHaveBeenCalled();
+  });
+
+  it("carries on, loudly, when the provisioning service cannot name the uid", async () => {
+    const deps = mkDeps({ deleteProvisioning: vi.fn(async () => "unnameable" as const) });
+
+    const results = await nukeUserCloudSide(mkCtx(), deps);
+
+    expect(results[1]).toEqual({ key: "provisioning", ok: true, detail: "the provisioning service cannot name uid-alice; nothing to delete" });
+    expect(deps.git.eraseOwner).toHaveBeenCalled();
+    expect(deps.eraseUserRecords).toHaveBeenCalled();
+  });
+});
+
 describe("nukeUserCloudSide — partial failure", () => {
   it("continues subsequent steps when one fails; reports per-step error", async () => {
     const deps = mkDeps({
@@ -227,7 +307,7 @@ describe("nukeUserCloudSide — partial failure", () => {
     });
     const results = await nukeUserCloudSide(mkCtx(), deps);
     expect(results.find((r) => r.key === "sign-in")?.ok).toBe(false);
-    expect(results).toHaveLength(9);
+    expect(results).toHaveLength(10);
   });
 });
 

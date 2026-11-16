@@ -13,9 +13,12 @@ import type { UserAccounts, UserSignInHosts } from "@octogee/core/admin-user-rou
 import type { UserAccountReader } from "@octogee/core/user-account";
 import {
   addAdminFleetRoutes,
+  createAdminFleetMutationRunner,
   type FleetLogger,
+  type FleetRouterDeps,
   type GatewayPodDiagnostics,
 } from "@octogee/core/admin-fleet-router";
+import { addAdminProvisioningRoutes, type AdminProvisioningClient, type AdminProvisioningRouterDeps } from "@octogee/core/admin-provisioning-router";
 import type { CentralReleaseAuthority } from "@octogee/core/artifact-registry";
 import type {
   PlatformStateStore,
@@ -111,6 +114,9 @@ export interface HttpServerDeps {
   revokeConnectorGrantsForUser: (uid: string) => Promise<void>;
   fleetEventListenerLingerMs?: number;
   logs: { source: LogEntriesSource | null; namespace: string };
+  provisioning?: AdminProvisioningClient | null;
+  provisioningReadiness?: FleetRouterDeps["provisioningReadiness"];
+  provisioningSync?: AdminProvisioningRouterDeps["sync"];
 }
 
 function adaptLogger(log: (msg: string) => void): FleetLogger {
@@ -382,6 +388,13 @@ export function createHttpServer(deps: HttpServerDeps): Express {
       readGatewayPodDiagnostics: deps.readGatewayPodDiagnostics,
       ...(deps.userHome ? { userHome: deps.userHome } : {}),
     }),
+    provisioningReadiness: deps.provisioningReadiness,
+  });
+  addAdminProvisioningRoutes(adminRouter, {
+    provisioning: deps.provisioning ?? null,
+    journal: createAdminFleetMutationRunner(deps.store),
+    logger: adaptLogger(deps.log),
+    sync: deps.provisioningSync,
   });
   addAdminLogsRoutes(adminRouter, {
     source: deps.logs.source,

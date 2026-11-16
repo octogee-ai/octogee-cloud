@@ -418,4 +418,21 @@ describe("glm-controller chart", () => {
     expect(() => helmTemplate({ "global.blobStoreBackend": "gcs" })).toThrow("global.blobStore.gcsBucket is required");
     expect(findDoc(helmTemplate(), "Deployment", "glm-controller")).not.toContain("BLOB_GCS_BUCKET");
   });
+
+  it("gives the controller the provisioning service URL and a projected token for its audience only when a URL is set", () => {
+    const off = findDoc(helmTemplate(), "Deployment", "glm-controller") ?? "";
+    expect(off).not.toContain("PROVISIONING_SERVICE");
+    expect(off).not.toContain("provisioning-service-token");
+
+    const on = parse(findDoc(helmTemplate({ "provisioningService.url": "http://provisioning-service.octogee-test.svc.cluster.local:8080" }), "Deployment", "glm-controller") ?? "");
+    const pod = on.spec.template.spec;
+    const env = Object.fromEntries(pod.containers[0].env.map((entry: { name: string; value?: string }) => [entry.name, entry.value]));
+    expect(env.PROVISIONING_SERVICE_URL).toBe("http://provisioning-service.octogee-test.svc.cluster.local:8080");
+    expect(env.PROVISIONING_SERVICE_TOKEN_PATH).toBe("/var/run/secrets/provisioning-service/token");
+    expect(pod.containers[0].volumeMounts).toContainEqual({ name: "provisioning-service-token", mountPath: "/var/run/secrets/provisioning-service", readOnly: true });
+    expect(pod.volumes).toContainEqual({
+      name: "provisioning-service-token",
+      projected: { sources: [{ serviceAccountToken: { path: "token", audience: "provisioning-service", expirationSeconds: 3600 } }] },
+    });
+  });
 });
