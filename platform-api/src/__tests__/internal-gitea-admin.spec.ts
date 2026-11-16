@@ -584,7 +584,7 @@ describe("internal gitea-admin route with the provisioning service", () => {
     const res = await request(app("walter", "walter", provisioning)).post(`/internal/gitea/${route}`).send({ slug: "acme" });
 
     expect(res.status).toBe(204);
-    expect(provisioning.git).toHaveBeenCalledExactlyOnceWith("uid-acme", repository);
+    expect(provisioning.git).toHaveBeenCalledExactlyOnceWith("uid-acme", repository, expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect(gitHost().ensureOwner).not.toHaveBeenCalled();
     expect(gitHost().ensureRepo).not.toHaveBeenCalled();
   });

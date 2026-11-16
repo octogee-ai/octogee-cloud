@@ -5,6 +5,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { logger } from "@octogee/core/http/logging";
 import { workspaceDefaultAgentChannelName } from "@octogee/shared/types/identity";
+import { installDefaultUserEntitlements } from "@octogee/shared/types/user-entitlements";
+import type { UserProvisioning } from "@octogee/shared/types/provisioning-service";
+import { mmUpdateFromChatOutputs } from "@octogee/core/provisioning-mirror";
+import { buildProvisioningContext, markProvisioningComplete, noProvisioningProjection } from "@octogee/core/provisionSteps";
 import { NO_BROKER_RECORDS, type BrokerRecords } from "../lib/broker-records.js";
 import type { LegacyProvisioning, ProvisioningWait } from "../lib/legacy-provisioning.js";
 import { RecordingDocuments } from "../test-helpers/recording-documents.js";
@@ -12,7 +16,30 @@ import { createFleetBrokerRoutes, type ProvisionedUserReport } from "./fleet-bro
 
 const GATEWAY_ID = "shared-blue";
 const CHAT = { userId: "mm-alice", teamId: "team-alice", channels: { general: "ch-general", agent: "ch-agent" }, agentBotUserId: "bot-alice" };
-const READY_CHAT: ProvisioningWait<{ slug: string; chat: typeof CHAT }> = { ready: true, value: { slug: "alice", chat: CHAT } };
+const RESOURCE: UserProvisioning = {
+  uid: "uid-alice",
+  generation: 1,
+  resourceVersion: "4",
+  spec: {
+    slug: "alice",
+    displayName: { first: "Alice", last: "" },
+    email: "alice@example.test",
+    avatarUrl: null,
+    chat: { teamDisplayName: "Alice", defaultAgent: { enabled: true } },
+    git: { repositories: ["workspace", "project-coaches"], systemConfigRepository: true },
+    agentIds: ["octogee-alice-coach"],
+  },
+  status: {
+    observedGeneration: 1,
+    conditions: [{ type: "ChatReady", status: "True", reason: "Converged", message: "", lastTransitionTime: "2026-11-15T18:00:00Z", observedGeneration: 1 }],
+    outputs: { chat: CHAT, credentials: ["agent-chat-token", "user-chat-token"] },
+    work: { state: "idle", attempts: 1, nextAttemptAt: null, lastAttemptAt: null },
+  },
+};
+const READY_CHAT: ProvisioningWait<{ slug: string; chat: typeof CHAT; resource: UserProvisioning }> = {
+  ready: true,
+  value: { slug: "alice", chat: CHAT, resource: RESOURCE },
+};
 
 function legacyProvisioning(overrides: Partial<LegacyProvisioning> = {}): LegacyProvisioning {
   return {
@@ -71,17 +98,24 @@ function fixture(options: {
 const post = (app: express.Express, path: string, body: Record<string, unknown> = {}) =>
   request(app).post(`/internal/fleet/${path}`).send({ gatewayId: GATEWAY_ID, uid: "uid-alice", ...body });
 
-async function putDefaultAgentSecret(store: ReturnType<typeof createDocumentFixtureStore>, personalToken: string) {
+async function putDefaultAgentSecret(store: ReturnType<typeof createDocumentFixtureStore>, personalToken: string, mattermostUserId = "bot-alice") {
   await store.secrets.put("uid-alice", {
     kind: "coach-mattermost",
     secretId: "coachMattermost",
     projectId: null,
     personalToken,
-    mattermostUserId: "bot-alice",
+    mattermostUserId,
     createdAt: Date.now(),
     rotatedAt: null,
   });
 }
+
+async function mirrorFully(store: ReturnType<typeof createDocumentFixtureStore>) {
+  const mmUpdate = mmUpdateFromChatOutputs({ slug: "alice", chat: CHAT, agentChannelName: workspaceDefaultAgentChannelName("alice"), proxyUrl: null });
+  await markProvisioningComplete(buildProvisioningContext("uid-alice", { username: "alice" }), mmUpdate, [...RESOURCE.spec.agentIds], noProvisioningProjection, store);
+}
+
+installDefaultUserEntitlements();
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -110,7 +144,7 @@ describe("POST /internal/fleet/provision-mattermost with the provisioning servic
         _coachPersonalToken: "service-agent-token",
       },
     });
-    expect(provisioning.chat).toHaveBeenCalledWith("uid-alice");
+    expect(provisioning.chat).toHaveBeenCalledWith("uid-alice", expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect(provisionMattermost).not.toHaveBeenCalled();
   });
 
@@ -195,35 +229,56 @@ describe("POST /internal/fleet/provision-mattermost with the provisioning servic
 describe("POST /internal/fleet/set-mattermost-fields with the provisioning service", () => {
   const mmUpdate = { "mattermost.userId": "mm-alice" };
 
-  it("writes nothing and answers 204 once the mirror has written the user's chat account", async () => {
-    const { app, documents, markProvisioningComplete, renderAvatar } = fixture({ mattermostUserId: "mm-alice" });
+  it("writes nothing and answers 204 once the mirror has written every record the gateway's snapshot reads", async () => {
+    const { app, store, documents, markProvisioningComplete, renderAvatar } = fixture();
+    await mirrorFully(store);
+    const writesBefore = documents.writes.length;
 
     await post(app, "set-mattermost-fields", { mmUpdate }).expect(204);
 
     expect(markProvisioningComplete).not.toHaveBeenCalled();
     expect(renderAvatar).not.toHaveBeenCalled();
-    expect(documents.writes).toEqual([]);
+    expect(documents.writes.length).toBe(writesBefore);
   });
 
-  it("answers 503 until the mirror has written the user's chat account", async () => {
-    const { app } = fixture();
+  it("answers 503 while the mirror has written the user's chat account but not yet the workspace, its channels and the agent identity", async () => {
+    const warned = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    const { app } = fixture({ mattermostUserId: "mm-alice" });
 
     const response = await post(app, "set-mattermost-fields", { mmUpdate }).expect(503);
 
+    expect(response.headers["retry-after"]).toBe("5");
     expect(response.body).toEqual({ error: "provisioning_pending", reason: "WaitingForMirror" });
+    expect(warned).toHaveBeenCalledWith("legacy provisioning: answering not ready", expect.objectContaining({ reason: "WaitingForMirror" }));
   });
 
-  it("answers 503 and logs both ids when the user record holds another chat account than the service reports", async () => {
+  it.each([
+    ["another chat account on the user record", "ChatAccountMismatch", "the user record holds chat user mm-other", async (store: ReturnType<typeof createDocumentFixtureStore>) => {
+      await store.users.records.patch("uid-alice", { mattermostUserId: "mm-other" });
+    }],
+    ["another chat account behind the agent's platform secret", "ChatAccountMismatch", "belongs to chat user mm-other-bot", async (store: ReturnType<typeof createDocumentFixtureStore>) => {
+      await putDefaultAgentSecret(store, "older-token", "mm-other-bot");
+    }],
+    ["another slug on the user record", "SlugMismatch", "carries slug bob", async (store: ReturnType<typeof createDocumentFixtureStore>) => {
+      await store.users.records.patch("uid-alice", { slug: "bob" });
+    }],
+    ["a user being erased", "UserBeingErased", "account lifecycle is erasing", async (store: ReturnType<typeof createDocumentFixtureStore>) => {
+      const user = await store.users.records.get("uid-alice");
+      await store.users.records.patch("uid-alice", { accountLifecycle: { ...user!.accountLifecycle, status: "erasing" } });
+    }],
+  ])("answers 503 with its own reason and an error naming the uid for %s the mirror refuses", async (_case, reason, detail, arrange) => {
     const logged = vi.spyOn(logger, "error").mockImplementation(() => {});
-    const { app, documents } = fixture({ mattermostUserId: "mm-other" });
+    const { app, store, documents } = fixture();
+    await arrange(store);
+    const writesBefore = documents.writes.length;
 
     const response = await post(app, "set-mattermost-fields", { mmUpdate }).expect(503);
 
-    expect(response.body).toEqual({ error: "provisioning_pending", reason: "ChatAccountMismatch" });
-    expect(logged).toHaveBeenCalledWith("legacy provisioning: the user record holds another chat account than the service reports", {
-      uid: "uid-alice", recorded: "mm-other", reported: "mm-alice",
+    expect(response.body).toEqual({ error: "provisioning_pending", reason });
+    expect(logged).toHaveBeenCalledWith("legacy provisioning: the mirror refuses this user, so its mount cannot finish", {
+      uid: "uid-alice", reason, detail: expect.stringContaining(detail),
     });
-    expect(documents.writes).toEqual([]);
+    expect(documents.writes.length).toBe(writesBefore);
   });
 
   it("answers 503 while chat is not ready", async () => {
@@ -314,6 +369,19 @@ describe("POST /internal/fleet/provisioned with the provisioning service", () =>
     expect(renderAvatar).not.toHaveBeenCalled();
     expect(sync).not.toHaveBeenCalled();
     expect(reports).toEqual([{ uid: "uid-alice", slug: "alice", mattermostUserId: "mm-alice", first: false }]);
+  });
+
+  it("keeps an uploaded avatar that has no look across every mount", async () => {
+    const { app, sync, renderAvatar } = fixture({
+      mattermostUserId: "mm-alice",
+      agentDocument: { avatar: { path: "Coach-avatar.png", gcsPath: "users/alice/Coach-avatar.png" }, avatarVersion: 2 },
+    });
+
+    await post(app, "provisioned", { first: true }).expect(204);
+    await post(app, "provisioned", { first: false }).expect(204);
+
+    expect(renderAvatar).not.toHaveBeenCalled();
+    expect(sync).not.toHaveBeenCalled();
   });
 
   it("applies no look here without a provisioning service", async () => {
