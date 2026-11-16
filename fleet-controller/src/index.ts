@@ -340,6 +340,7 @@ import { startNativeReturnHoldReaper } from "./native-return-hold-reaper.js";
 import {
   parseGiteaGatewayKeyGcMode,
   readFleetLiveKeyHolders,
+  readLiveKeyHoldersReleasingDead,
   startGiteaGatewayKeyGc,
 } from "./gitea-gateway-key-gc.js";
 import { startHelmRecoverySweeper } from "./helm-recovery-sweeper.js";
@@ -2281,18 +2282,24 @@ function startControllerBackgroundTasks({
   const kubeOps = deps.kubeOps;
   const keySweepApiUrl = requireEnv("GIT_API_URL", "the Gitea gateway key sweep requires it");
   const keySweepToken = requireEnv("GIT_API_TOKEN", "the Gitea gateway key sweep requires it");
+  const keySweepMode = parseGiteaGatewayKeyGcMode(process.env.GITEA_GATEWAY_KEY_GC_MODE);
+  const readLiveKeyHolders = () => readFleetLiveKeyHolders({
+    informer,
+    store: deps.store,
+    readGatewayPodDiagnosticsBatch: (gatewayIds) =>
+      kubeOps.readGatewayPodDiagnosticsBatch({ namespace: NAMESPACE, gatewayIds }),
+  });
   const stopGiteaGatewayKeyGc = startGiteaGatewayKeyGc({
     git: createGiteaGitHost({
       apiBaseUrl: keySweepApiUrl,
       token: () => keySweepToken,
     }),
-    readLiveKeyHolders: () => readFleetLiveKeyHolders({
-      informer,
-      store: deps.store,
-      readGatewayPodDiagnosticsBatch: (gatewayIds) =>
-        kubeOps.readGatewayPodDiagnosticsBatch({ namespace: NAMESPACE, gatewayIds }),
-    }),
-    mode: parseGiteaGatewayKeyGcMode(process.env.GITEA_GATEWAY_KEY_GC_MODE),
+    readLiveKeyHolders: provisioning
+      ? readLiveKeyHoldersReleasingDead(readLiveKeyHolders, {
+        keys: provisioning.client, mode: keySweepMode, graceMs: GITEA_GATEWAY_KEY_GC_GRACE_MS, now: () => Date.now(), log,
+      })
+      : readLiveKeyHolders,
+    mode: keySweepMode,
     maxCallsPerTick: GITEA_GATEWAY_KEY_GC_MAX_CALLS_PER_TICK,
     minCallIntervalMs: GITEA_GATEWAY_KEY_GC_MIN_CALL_INTERVAL_MS,
     graceMs: GITEA_GATEWAY_KEY_GC_GRACE_MS,
