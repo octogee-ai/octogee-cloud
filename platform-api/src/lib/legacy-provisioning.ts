@@ -178,10 +178,14 @@ export function createLegacyProvisioning(deps: LegacyProvisioningDeps): LegacyPr
     return notReady(reason, resource);
   }
 
-  async function parkedWork(uid: string, budget: RouteBudget): Promise<ProvisioningWait<never> | null> {
+  function parkedWithoutGitAccount(resource: UserProvisioning): boolean {
+    return resource.status.work.state === "parked" && resource.status.outputs.git?.owner === undefined;
+  }
+
+  async function workThatNeverRegistersKeys(uid: string, budget: RouteBudget): Promise<ProvisioningWait<never> | null> {
     const read = await current(uid, budget, false);
     if ("wait" in read) return read.wait;
-    return read.resource.status.work.state === "parked" ? pending(uid, read.resource, "Ready") : null;
+    return parkedWithoutGitAccount(read.resource) ? pending(uid, read.resource, "Ready") : null;
   }
 
   async function putNotRegistered(key: GitKey, sequence: number, budget: RouteBudget): Promise<ProvisioningWait<never>> {
@@ -192,7 +196,7 @@ export function createLegacyProvisioning(deps: LegacyProvisioningDeps): LegacyPr
     const read = await current(key.uid, budget, false);
     if ("wait" in read) return read.wait;
     const { work } = read.resource.status;
-    if (work.state === "parked") return pending(key.uid, read.resource, "Ready");
+    if (parkedWithoutGitAccount(read.resource)) return pending(key.uid, read.resource, "Ready");
     const recorded = key.status.conditions.find((candidate) => candidate.type === "Registered");
     const reason = recorded !== undefined && recorded.status !== "True" ? recorded.reason : "GitKeyPutNotObserved";
     logger.error("legacy provisioning: no attempt has processed the gateway's git key put inside the route's budget", {
@@ -262,8 +266,8 @@ export function createLegacyProvisioning(deps: LegacyProvisioningDeps): LegacyPr
         return unavailable(uid, error);
       }
       const sequence = key.putSequence;
-      const parked = await parkedWork(uid, budget);
-      if (parked !== null) return parked;
+      const refusal = await workThatNeverRegistersKeys(uid, budget);
+      if (refusal !== null) return refusal;
       for (;;) {
         if (key.status.observedPutSequence >= sequence) {
           const registered = registeredCondition(key);

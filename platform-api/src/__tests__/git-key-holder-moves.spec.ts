@@ -280,10 +280,30 @@ describe("git keys across moves and rolls, through the platform's routes and ada
     expect(git.titled(serving.holder)).toEqual([serving.disk.key]);
   });
 
-  it("refuses a mount with the service's reason while the user's work is parked, registering nothing", async () => {
+  it("registers a parked user's put again after the key left the git host, while the user's git account exists", async () => {
+    const { git, service, thisBuild } = setup();
+    assign("shared-blue");
+    const serving = pod("shared-blue", "octogee-gateway-shared-blue-5bc59-a1b2c");
+    await thisBuild.serviceMount(serving);
+    const registered = serving.disk.key;
+    service.park("ChatUserFailed", { gitAccount: true });
+    git.deleteTitled(serving.holder, registered!);
+
+    await service.attempt();
+
+    expect(hostKeys(git)).toEqual([]);
+
+    await thisBuild.register(serving);
+
+    expect(serving.disk.marker).toBe(serving.holder);
+    expect(git.titled(serving.holder)).toEqual([registered]);
+    expect(service.row(serving.holder)).toMatchObject({ putSequence: 2, status: { observedPutSequence: 2, conditions: [{ status: "True" }] } });
+  });
+
+  it("refuses a mount with the service's reason while the user's work is parked without a git account, registering nothing", async () => {
     const { git, service } = setup();
     assign("shared-blue");
-    service.park("GitOwnerFailed");
+    service.park("GitOwnerFailed", { gitAccount: false });
     const serving = pod("shared-blue", "octogee-gateway-shared-blue-5bc59-a1b2c", { key: newKey(), marker: null });
     const app = express();
     app.use(express.json());

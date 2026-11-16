@@ -65,7 +65,7 @@ export interface GitKeyServiceContract {
   client: LegacyProvisioningClient;
   attempt: () => Promise<void>;
   releaseHolder: (holder: string) => void;
-  park: (reason: ProvisioningConditionReason) => void;
+  park: (reason: ProvisioningConditionReason, user: { gitAccount: boolean }) => void;
   failNextRegistration: (message: string) => void;
   attempts: () => number;
   puts: string[];
@@ -83,7 +83,7 @@ export function gitKeyServiceContract(user: { uid: string; slug: string }, git: 
   const rows = new Map<string, Row>();
   const puts: string[] = [];
   let version = 0;
-  let parked: ProvisioningConditionReason | null = null;
+  let parked: { reason: ProvisioningConditionReason; gitAccount: boolean } | null = null;
   let registrationFailure: string | null = null;
   let attempts = 0;
   const sameKey = (left: string, right: string) => publicKeyIdentity(left) === publicKeyIdentity(right);
@@ -107,8 +107,8 @@ export function gitKeyServiceContract(user: { uid: string; slug: string }, git: 
         observedGeneration: 1,
         conditions: parked === null
           ? [{ type: "GitReady", status: "True", reason: "Converged", message: "", lastTransitionTime: NOW, observedGeneration: 1 }]
-          : [{ type: "Ready", status: "False", reason: parked, message: "", lastTransitionTime: NOW, observedGeneration: 1 }],
-        outputs: { credentials: [] },
+          : [{ type: "Ready", status: "False", reason: parked.reason, message: "", lastTransitionTime: NOW, observedGeneration: 1 }],
+        outputs: { ...(parked === null || parked.gitAccount ? { git: { owner: `ws-${user.slug}`, repositories: {} } } : {}), credentials: [] },
         work: { state: parked === null ? "idle" : "parked", attempts: 1, nextAttemptAt: null, lastAttemptAt: null },
       },
     };
@@ -211,7 +211,9 @@ export function gitKeyServiceContract(user: { uid: string; slug: string }, git: 
     async attempt() {
       attempts += 1;
       for (const [holder, row] of [...rows]) {
-        if (parked !== null && row.key.deletionRequestedAt === null) continue;
+        const released = row.key.deletionRequestedAt !== null;
+        const putPending = row.key.putSequence > row.key.status.observedPutSequence;
+        if (parked !== null && !released && !(parked.gitAccount && putPending)) continue;
         await reconcile(holder, row);
       }
     },
@@ -219,8 +221,8 @@ export function gitKeyServiceContract(user: { uid: string; slug: string }, git: 
       const row = rows.get(holder);
       if (row && row.key.deletionRequestedAt === null) row.key = { ...row.key, deletionRequestedAt: NOW };
     },
-    park(reason) {
-      parked = reason;
+    park(reason, { gitAccount }) {
+      parked = { reason, gitAccount };
     },
     failNextRegistration(message) {
       registrationFailure = message;

@@ -34,6 +34,7 @@ function resource(overrides: {
   chat?: typeof CHAT;
   systemConfigRepository?: boolean;
   work?: UserProvisioning["status"]["work"];
+  gitOwner?: string;
 } = {}): UserProvisioning {
   return {
     uid: "uid-lin",
@@ -51,7 +52,11 @@ function resource(overrides: {
     status: {
       observedGeneration: overrides.observedGeneration ?? 1,
       conditions: overrides.conditions ?? [],
-      outputs: { ...(overrides.chat ? { chat: overrides.chat } : {}), credentials: [] },
+      outputs: {
+        ...(overrides.chat ? { chat: overrides.chat } : {}),
+        ...(overrides.gitOwner ? { git: { owner: overrides.gitOwner, repositories: {} } } : {}),
+        credentials: [],
+      },
       work: overrides.work ?? { state: "idle", attempts: 1, nextAttemptAt: null, lastAttemptAt: null },
     },
   };
@@ -387,7 +392,43 @@ describe("legacy provisioning adapter: git key", () => {
     }));
   });
 
-  it("answers at once, with the service's reason, when the user's work is parked and so will not process the put", async () => {
+  it("keeps waiting for a parked user whose git account exists, whose put a key pass registers", async () => {
+    const parked = resource({
+      conditions: [condition("Ready", "False", "ChatUserFailed")],
+      work: { state: "parked", attempts: 9, nextAttemptAt: null, lastAttemptAt: null },
+      gitOwner: "ws-lin",
+    });
+    const { client, keyPuts } = fakeClient([parked], null, [PUT], [
+      gitKey({ putSequence: 4, observedPutSequence: 3, registered: "True" }),
+      gitKey({ putSequence: 4, observedPutSequence: 4, registered: "True" }),
+    ]);
+    const { provisioning, sleeps, budget: route } = clockedAdapter(client);
+
+    await expect(call(provisioning, route())).resolves.toEqual({ ready: true, value: undefined });
+
+    expect(keyPuts).toHaveLength(1);
+    expect(sleeps).toEqual([2_000, 2_000]);
+  });
+
+  it("answers a failure a retry can finish when no key pass has registered a parked user's put inside the budget", async () => {
+    vi.spyOn(logger, "error").mockImplementation(() => {});
+    const parked = resource({
+      conditions: [condition("Ready", "False", "ChatUserFailed")],
+      work: { state: "parked", attempts: 9, nextAttemptAt: null, lastAttemptAt: null },
+      gitOwner: "ws-lin",
+    });
+    const { client, keyPuts } = fakeClient([parked, parked], null, [PUT], [
+      gitKey({ putSequence: 4, observedPutSequence: 3, registered: "False", reason: "GitKeyFailed", message: "registration failed: 503 from git host" }),
+    ]);
+    const { provisioning, sleeps, budget: route } = clockedAdapter(client);
+
+    await expect(call(provisioning, route())).resolves.toEqual({ ready: false, reason: "GitKeyFailed", retryAfterSeconds: 5 });
+
+    expect(keyPuts).toHaveLength(1);
+    expect(sleeps.length).toBeGreaterThan(0);
+  });
+
+  it("answers at once, with the service's reason, when the user's work is parked without a git account and so will not process the put", async () => {
     const logged = vi.spyOn(logger, "error").mockImplementation(() => {});
     const parked = resource({
       conditions: [condition("Ready", "False", "GitOwnerFailed")],
