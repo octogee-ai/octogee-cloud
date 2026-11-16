@@ -369,8 +369,13 @@ function releaseUserKeyHandler(legacyProvisioning: LegacyProvisioning | null) {
       return;
     }
     if (legacyProvisioning) {
-      const { gatewayId } = gatewayCallerForRequest(req)!;
-      await releaseServiceGitKey(res, legacyProvisioning, { gatewayId, slug, publicKey: pubKey.trim() });
+      const caller = gatewayCallerForRequest(req);
+      if (!caller) {
+        logger.error("internal/gitea release-user-key: the caller's token binds no gateway id", { slug });
+        res.status(403).json({ error: "gateway identity is required to release a git key" });
+        return;
+      }
+      await releaseServiceGitKey(res, legacyProvisioning, { gatewayId: caller.gatewayId, slug, publicKey: pubKey.trim() });
       return;
     }
     const keyOwner = gatewayKeyOwnerForRequest(req, res);

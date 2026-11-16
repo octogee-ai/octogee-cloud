@@ -741,6 +741,19 @@ describe("internal gitea-admin route with the provisioning service", () => {
     expectNoKeyTouched();
   });
 
+  it("release-user-key refuses a gateway caller whose token binds no gateway id before asking the service", async () => {
+    const logged = vi.spyOn(logger, "error").mockImplementation(() => {});
+    const provisioning = service(async () => ({ ready: true, value: undefined }));
+
+    const res = await request(app(" ", null, provisioning)).post("/internal/gitea/release-user-key").send({ slug: "acme", pubKey: "ssh-ed25519 AAA" });
+
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({ error: "gateway identity is required to release a git key" });
+    expect(logged).toHaveBeenCalledWith("internal/gitea release-user-key: the caller's token binds no gateway id", { slug: "acme" });
+    expect(provisioning.releaseGitKey).not.toHaveBeenCalled();
+    expectNoKeyTouched();
+  });
+
   it("re-mounts an existing user whose key carries a legacy pod title, ending registered with one key under the gateway", async () => {
     const key = "ssh-ed25519 AAAA lin";
     const hostKeys = [{ publicKey: key, holder: WALTER_KEY_OWNER }];
