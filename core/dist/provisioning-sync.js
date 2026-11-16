@@ -151,6 +151,11 @@ export async function markCloudTeardown(store, uid) {
         return "marked";
     });
 }
+async function deleteBetweenSpecWrites(specs, cache, client, uid) {
+    const outcome = await specs.exclusive(uid, () => client.deleteProvisioning(uid));
+    cache.delete(uid);
+    return outcome;
+}
 const MIRROR_NOTICES = {
     written: (uid) => `[provisioning] mirrored chat and git results of ${uid}`,
     "credentials-not-issued": (uid) => `[provisioning] not mirroring ${uid} yet: its chat credentials are not issued`,
@@ -313,6 +318,7 @@ export function createProvisioningSync(deps) {
         },
         observed: (uid) => cache.get(uid),
         markDirty: (uid) => specs.enqueue(uid),
+        deleteProvisioning: (uid) => deleteBetweenSpecWrites(specs, cache, deps.client, uid),
         specFailures: () => [...failures.values()],
         mirrorRefusals: () => [...refusals.values()],
         resync,

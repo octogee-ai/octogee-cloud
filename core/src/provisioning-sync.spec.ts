@@ -545,6 +545,45 @@ describe("a cloud teardown of a user not scheduled for deletion", () => {
     expect(puts()).toHaveLength(putsBefore + 1);
   });
 
+  it("lets a spec write already in flight finish before the teardown's delete, and writes none after it", async () => {
+    seedUser("u1", "lin");
+    let entered: () => void = () => undefined;
+    const putEntered = new Promise<void>((resolve) => { entered = resolve; });
+    let release: () => void = () => undefined;
+    const putReleased = new Promise<void>((resolve) => { release = resolve; });
+    const service = client();
+    const instance = started(createProvisioningSync({
+      store: store(),
+      client: {
+        ...service,
+        putProvisioning: async (uid, spec, options) => {
+          entered();
+          await putReleased;
+          return service.putProvisioning(uid, spec, options);
+        },
+      },
+      documents: { account: async (uid) => ACCOUNTS[uid] },
+      projection: recordingProjection(),
+      proxyUrl: null,
+      log: (message) => logs.push(message),
+      watchTimeoutSeconds: 1,
+      retry: { baseDelayMs: 1, maxDelayMs: 2 },
+    }));
+    await putEntered;
+
+    await markCloudTeardown(store(), "u1");
+    const teardown = instance.deleteProvisioning("u1");
+    release();
+    await expect(teardown).resolves.toBe("deleted");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    instance.markDirty("u1");
+    await until(() => instance.counters.specWrites["being-erased"] >= 1);
+
+    const writes = fake.requests.filter((request) => request.path === "/v1/users/u1/provisioning" && request.method !== "GET");
+    expect(writes.map((request) => request.method)).toEqual(["PUT", "DELETE"]);
+    expect(fake.resources.has("u1")).toBe(false);
+  });
+
   it("keeps a scheduled deletion's id and erase time when it marks the teardown", async () => {
     seedUser("u1", "lin");
     const scheduled = { status: "deletion_scheduled" as const, deletionId: "d1", suspendedAt: 1, eraseAfter: 2 };

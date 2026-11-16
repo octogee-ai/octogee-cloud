@@ -12,6 +12,7 @@ import {
   backoffDelayMs,
   compareResourceVersions,
   startProvisioningWatch,
+  type DeleteProvisioningOutcome,
   type ProvisioningServiceClient,
 } from "./provisioning-service-client.js";
 import {
@@ -87,6 +88,7 @@ export interface ProvisioningSync {
   readiness(uid: string): ProvisioningReadiness | null;
   observed(uid: string): UserProvisioning | undefined;
   markDirty(uid: string): void;
+  deleteProvisioning(uid: string): Promise<DeleteProvisioningOutcome>;
   specFailures(): readonly SpecWriteFailure[];
   mirrorRefusals(): readonly MirrorRefusal[];
   resync(): Promise<void>;
@@ -256,6 +258,17 @@ export async function markCloudTeardown(
   });
 }
 
+async function deleteBetweenSpecWrites(
+  specs: KeyedRetryQueue,
+  cache: Map<string, UserProvisioning>,
+  client: Pick<ProvisioningServiceClient, "deleteProvisioning">,
+  uid: string,
+): Promise<DeleteProvisioningOutcome> {
+  const outcome = await specs.exclusive(uid, () => client.deleteProvisioning(uid));
+  cache.delete(uid);
+  return outcome;
+}
+
 const MIRROR_NOTICES: Partial<Record<ProvisioningMirrorOutcome, (uid: string) => string>> = {
   written: (uid) => `[provisioning] mirrored chat and git results of ${uid}`,
   "credentials-not-issued": (uid) => `[provisioning] not mirroring ${uid} yet: its chat credentials are not issued`,
@@ -417,6 +430,7 @@ export function createProvisioningSync(deps: ProvisioningSyncDeps): Provisioning
     },
     observed: (uid) => cache.get(uid),
     markDirty: (uid) => specs.enqueue(uid),
+    deleteProvisioning: (uid) => deleteBetweenSpecWrites(specs, cache, deps.client, uid),
     specFailures: () => [...failures.values()],
     mirrorRefusals: () => [...refusals.values()],
     resync,

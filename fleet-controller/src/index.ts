@@ -2808,7 +2808,7 @@ export async function main(product: ControllerProduct): Promise<void> {
     log,
   });
   const { deps, fleetControllerPrivateKey, chartFingerprint } =
-    await createControllerRuntime(store, product.createHostingCleanup, userLifecycle, { accounts, documents, provisioning: provisioning?.client ?? null });
+    await createControllerRuntime(store, product.createHostingCleanup, userLifecycle, { accounts, documents, provisioning: provisioning?.sync ?? null });
 
   log(
     `[glm-controller] boot sha=${process.env.BUILD_SHA ?? "unknown"} oc=${process.env.OPENCLAW_VERSION ?? "n/a"} fork=${process.env.OPENCLAW_FORK_SHA ?? "n/a"} node=${process.version} — namespace=${NAMESPACE} gatewayChart=${GATEWAY_CHART} chartFingerprint=${chartFingerprint.slice(0, 12)} chartDriftPolicy=release-gated valuesFile=${GATEWAY_VALUES_FILE}`,
