@@ -43,16 +43,21 @@ describe("release notes", () => {
     expect(text).not.toContain("no migrations");
   });
 
-  it("says what a user of this release gets and what is not there yet", () => {
+  it("describes the platform and the Admin API version policy", () => {
     const text = notes();
     expect(text).toContain("## What this release is");
-    expect(text).toContain("PostgreSQL 16");
-    expect(text).toContain("Nothing places, scales or moves users automatically");
-    expect(text).toContain("The Admin API and the Helm values are pre-1.0");
+    expect(text).toContain("Operators and placement clients use the fleet controller's Admin API");
+    expect(text).toContain("The Admin API and Helm values are pre-1.0");
   });
 
   it("names the date and commit of the full run of the GKE install guide", () => {
     expect(notes()).toContain(`[docs/gke.md](https://github.com/octogee-ai/octogee-cloud/blob/v0.1.0/docs/gke.md) was followed end to end on a fresh Google Cloud project at ${sha} on 2026-11-15.`);
+  });
+
+  it("reports the build and Kind results when the tag records no GKE install", () => {
+    const text = notes({ gkeRun: undefined });
+    expect(text).toContain("Build main published these images and the Kind smoke workflow passed both kind smoke tests");
+    expect(text).not.toContain("was followed end to end");
   });
 
   it.each([
@@ -60,7 +65,6 @@ describe("release notes", () => {
     [{ fleetVersion: "main" }, "An octogee-fleet release version looks like v0.2.0"],
     [{ manifest: { ...manifest, sha: "abc" } }, "The image manifest names no full commit SHA"],
     [{ manifest: { ...manifest, images: { "octogee-api": { digest: "latest", platforms: {} } } } }, "The image manifest has no index digest for octogee-api"],
-    [{ gkeRun: undefined }, "The tag message names no full GKE install guide run"],
     [{ gkeRun: { date: "2026-11-15", commit: "d".repeat(40) } }, `The GKE install guide run was at ${"d".repeat(40)}, not the tagged commit ${sha}`],
   ])("refuses %j", (overrides, message) => {
     expect(() => notes(overrides)).toThrow(message);
@@ -68,8 +72,15 @@ describe("release notes", () => {
 
   it("reads the GKE install guide run from the tag message", () => {
     expect(gkeRunFrom(`v0.1.0\n\nGKE install guide: 2026-11-15 ${sha}\n`)).toEqual(gkeRun);
+    expect(gkeRunFrom(`v0.1.0\r\n\r\nGKE install guide: 2026-11-15 ${sha}\r\n`)).toEqual(gkeRun);
     expect(gkeRunFrom("v0.1.0")).toBeUndefined();
-    expect(gkeRunFrom(`GKE install guide: 15 Nov ${sha}`)).toBeUndefined();
+  });
+
+  it("refuses malformed or duplicate recorded GKE installs", () => {
+    expect(() => gkeRunFrom(`GKE install guide: 15 Nov ${sha}`)).toThrow("GKE install guide:");
+    expect(() => gkeRunFrom("GKE install guide: 2026-11-15 ccc")).toThrow("GKE install guide:");
+    const record = `GKE install guide: 2026-11-15 ${sha}`;
+    expect(() => gkeRunFrom(`${record}\n${record}`)).toThrow("GKE install guide:");
   });
 
   it("writes the notes from the command line", () => {

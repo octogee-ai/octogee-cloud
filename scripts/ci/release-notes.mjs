@@ -6,16 +6,23 @@ const VERSION = /^v\d+\.\d+\.\d+$/;
 const DIGEST = /^sha256:[a-f0-9]{64}$/;
 
 export function gkeRunFrom(message) {
-  const match = /^GKE install guide: (\d{4}-\d{2}-\d{2}) ([a-f0-9]{40})$/m.exec(message ?? "");
-  return match ? { date: match[1], commit: match[2] } : undefined;
+  const records = (message ?? "").split(/\r?\n/).filter(line => line.trimStart().startsWith("GKE install guide:"));
+  if (records.length === 0) return undefined;
+  const match = /^GKE install guide: (\d{4}-\d{2}-\d{2}) ([a-f0-9]{40})$/.exec(records[0]);
+  if (records.length !== 1 || !match) {
+    throw new Error('Record a GKE run with one line: "GKE install guide: YYYY-MM-DD <commit>"');
+  }
+  return { date: match[1], commit: match[2] };
 }
 
 export function releaseNotes({ tag, fleetVersion, manifest, gkeRun }) {
   if (!VERSION.test(tag ?? "")) throw new Error(`A release tag looks like v0.1.0, not ${tag}`);
   if (!VERSION.test(fleetVersion ?? "")) throw new Error(`An octogee-fleet release version looks like v0.2.0, not ${fleetVersion}`);
   if (!/^[a-f0-9]{40}$/.test(manifest?.sha ?? "")) throw new Error("The image manifest names no full commit SHA");
-  if (!gkeRun) throw new Error("The tag message names no full GKE install guide run; add the line \"GKE install guide: YYYY-MM-DD <commit>\"");
-  if (gkeRun.commit !== manifest.sha) throw new Error(`The GKE install guide run was at ${gkeRun.commit}, not the tagged commit ${manifest.sha}`);
+  if (gkeRun && gkeRun.commit !== manifest.sha) throw new Error(`The GKE install guide run was at ${gkeRun.commit}, not the tagged commit ${manifest.sha}`);
+  const gkeEvidence = gkeRun
+    ? `\n\n[docs/gke.md](${SOURCE}/blob/${tag}/docs/gke.md) was followed end to end on a fresh Google Cloud project at ${gkeRun.commit} on ${gkeRun.date}.`
+    : "";
   const rows = Object.entries(manifest.images ?? {}).map(([name, image]) => {
     if (!DIGEST.test(image?.digest ?? "")) throw new Error(`The image manifest has no index digest for ${name}`);
     return `| \`${manifest.registry}/${name}:${tag}\` | \`${image.digest}\` | ${Object.keys(image.platforms ?? {}).join(", ")} |`;
@@ -24,9 +31,9 @@ export function releaseNotes({ tag, fleetVersion, manifest, gkeRun }) {
 
 ## What this release is
 
-octogee-cloud runs AI agents for many users on Kubernetes. Each user's agent is an OpenClaw agent on a shared gateway or on an isolated gateway of its own, and the user works with it through Mattermost for chat and Gitea for git. A fleet controller adds, moves and retires gateways when an operator asks, through its Admin API and the octogee-fleet command line, and an LLM broker holds the model provider keys. It needs a Kubernetes cluster, PostgreSQL 16, S3-compatible object storage and at least one model provider key; the install guides set these up on kind or on GKE. Not here yet: automatic placement and scaling. Nothing places, scales or moves users automatically, so the operator does each step. The Admin API and the Helm values are pre-1.0 and can change in any minor release. The GKE guide installs a single zone with no ingress, not a production setup.
+octogee-cloud runs OpenClaw agents on shared and isolated Kubernetes gateways. Users work with their agents through Mattermost and Gitea. Operators and placement clients use the fleet controller's Admin API to manage gateways and move users. The LLM broker holds the model provider keys. Install guides cover kind, GKE and EKS. The Admin API and Helm values are pre-1.0 and can change in any minor release.
 
-Build main published these images and the Kind smoke workflow passed both kind smoke tests on them at this commit, and [docs/gke.md](${SOURCE}/blob/${tag}/docs/gke.md) was followed end to end on a fresh Google Cloud project at ${gkeRun.commit} on ${gkeRun.date}.
+Build main published these images and the Kind smoke workflow passed both kind smoke tests on them at this commit.${gkeEvidence}
 
 ## Start here
 
