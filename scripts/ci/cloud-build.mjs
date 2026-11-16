@@ -2,7 +2,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, relative } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { IMAGE_BUILDS, PLATFORM_CONTEXT, imagePlan } from "./image-build.mjs";
 import { gatewayBakePlan } from "./gateway-bake.mjs";
@@ -244,7 +244,7 @@ export async function buildkitImagePaths(image, platform) {
     const dockerfile = fileURLToPath(new URL("./image-paths.Dockerfile", import.meta.url));
     const build = tool("docker", [
       "buildx", "build", `--file=${dockerfile}`, `--platform=${platform}`,
-      `--build-context=subject=docker-image://${image}`, `--output=type=local,dest=${directory}`, directory,
+      `--build-context=subject=docker-image://${image}`, `--output=type=local,dest=${directory}`, dirname(dockerfile),
     ], ["ignore", "ignore", "inherit"]);
     await exited(build, `Listing ${image}`);
     const paths = JSON.parse(readFileSync(join(directory, "paths.json"), "utf8"));

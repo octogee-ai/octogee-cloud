@@ -7,7 +7,7 @@ import { buildkitImagePaths, imagePaths, productFindings } from "./cloud-build.m
 const [digestFile, registry, output] = process.argv.slice(2);
 if (!digestFile || !registry || !output) throw new Error("Usage: benchmark-image-paths.mjs <digests.json> <registry> <output-directory>");
 const { platform, images } = JSON.parse(readFileSync(digestFile, "utf8"));
-const runtimeFiles = new Set([".dockerenv", "etc/hostname", "etc/hosts", "etc/resolv.conf"]);
+const runtimeFiles = new Set([".dockerenv", "dev/console", "etc/hostname", "etc/hosts", "etc/mtab", "etc/resolv.conf"]);
 const comparable = paths => [...new Set(paths.map(path => path.replace(/^\.?\//, ""))
   .filter(path => !path.endsWith("/") && !runtimeFiles.has(path)))].sort();
 const rows = [];
