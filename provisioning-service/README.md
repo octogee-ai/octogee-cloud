@@ -18,9 +18,16 @@ The types are `@octogee/shared/types/provisioning-service`.
 | `GET /v1/provisionings?watch=true&resourceVersion=V&timeoutSeconds=T&limit=L` | Returns at once with the changes after `V`, oldest first and at most `L` (default and maximum 500), or holds until one happens or the timeout passes. Answers `{ items, deleted?, resourceVersion }`: `items` are the resources changed, `deleted` is `[{ uid, resourceVersion }]` for each user deleted, present only when there is one. Apply both in `resourceVersion` order, since a uid can be deleted and created again. Ask again from the returned version, which is the last change's when the page was cut short. | `200`, `410 resource-version-expired` |
 | `POST /v1/users/{uid}/provisioning/retry` | Body `{ expectedAttempts? }`. Makes parked or retrying work due now. Honours `Idempotency-Key` for 24 hours. | `202`, `409 precondition-failed`, `409 not-retryable`, `409 idempotency-conflict` |
 | `GET /v1/users/{uid}/provisioning/events` | The last 50 attempts, newest first, with each step's outcome, reason and duration. | `200`, `404` |
-| `PUT /v1/users/{uid}/git-keys/{gatewayId}` | Body `{ spec: { publicKey } }`. Authorizes the key on the user's git owner. | `201`, `202`, `200`; body is the `GitKey`; `404` when the user has no provisioning |
-| `DELETE /v1/users/{uid}/git-keys/{gatewayId}` | Releases the key. Optional body `{ expectedPublicKey }` releases it only while the row still holds that key. | `202`, `409 precondition-failed` when the row holds another key |
-| `DELETE /v1/gateways/{gatewayId}/git-keys` | Releases every user's key for a retired gateway. | `202`; body `{ remaining }`, the gateway's rows not yet released from the git host |
+| `PUT /v1/users/{uid}/git-keys/{holder}` | Body `{ spec: { publicKey } }`. Authorizes the key on the user's git owner. | `201`, `202`, `200`; body is the `GitKey`; `404` when the user has no provisioning |
+| `DELETE /v1/users/{uid}/git-keys/{holder}` | Releases the key. Optional body `{ expectedPublicKey }` releases it only while the row still holds that key, compared by key material. | `202`, `409 precondition-failed` when the row holds another key |
+| `GET /v1/git-key-holders` | Lists every holder with live rows. | `200`; body `{ holders: [{ holder, gatewayId, rows, newestUpdatedAt }] }` |
+| `DELETE /v1/git-key-holders/{holder}` | Releases every user's key for one holder that is gone. | `202`; body `{ remaining }`, the holder's rows not yet released from the git host |
+| `DELETE /v1/gateways/{gatewayId}/git-keys` | Releases every user's key for every holder of a retired gateway. | `202`; body `{ remaining }`, the gateway's rows not yet released from the git host |
+
+A holder is one gateway pod: `<gatewayId>/<podName>`, URL-encoded as one path
+segment. Each pod holds its own key, so two pods of one gateway, as during a
+surge roll, hold two keys at once. A holder that is not a gateway id and a pod
+name is refused with `400`.
 | `GET /v1/users/{uid}/credentials/{name}` | `{ name, value, version }`, `Cache-Control: no-store`. Names: `agent-chat-token`, `user-chat-token`. | `200`, `404`, `409 not-issued` |
 | `GET /healthz`, `/readyz`, `/metrics` | Unauthenticated, no tenant data. `/readyz` and `/metrics` answer from a database check and work snapshot each replica takes every 5 seconds. | `200`, `503` |
 
@@ -50,7 +57,7 @@ account maps to roles through a fixed table:
 
 | Service account | Roles |
 | --- | --- |
-| `octogee-glm-controller` (fleet controller) | `writer`: provisioning put, delete, read, list, watch, retry, events; `key-retirer`: a retired gateway's git keys; `credential-reader`: credentials, to copy issued chat tokens where the platform reads them |
+| `octogee-glm-controller` (fleet controller) | `writer`: provisioning put, delete, read, list, watch, retry, events; `key-retirer`: list git key holders and release a gone holder's or a retired gateway's git keys; `credential-reader`: credentials, to copy issued chat tokens where the platform reads them |
 | `octogee-api` (platform API) | `key-writer`: git keys; `reader`: provisioning read, list, watch, events; `credential-reader`: credentials |
 
 Only service accounts in `PROVISIONING_CALLER_NAMESPACE` are matched. A failed
@@ -113,6 +120,14 @@ a confirmed heartbeat. A failed attempt retries after
 transient failure, or a twelfth attempt that ended without finishing parks the
 work until the spec changes or a retry is requested. A key write leaves parked
 work parked. Idle rows are resynced six hours after their last success.
+
+A key marked for release is released even while the user's work is parked. A
+release pass claims the parked row under a lease, releases only the marked keys
+and returns the row to parked with its attempts, running no other step. A
+release that fails is recorded on that key's row (`Registered=Unknown`, reason
+`GitKeyFailed`), logged at error level and retried after the key backoff; the
+row stays until a release succeeds. A retry requested during the pass queues
+the work once the pass ends.
 
 ## Known limits
 

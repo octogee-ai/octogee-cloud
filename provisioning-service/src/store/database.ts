@@ -148,6 +148,18 @@ const MIGRATIONS: readonly ((table: (name: string) => string) => string)[] = [
       ADD COLUMN refusals integer NOT NULL DEFAULT 0,
       ADD COLUMN retry_after timestamptz;
   `,
+  (t) => `
+    DELETE FROM ${t("git_keys")};
+    ALTER TABLE ${t("git_keys")}
+      DROP CONSTRAINT git_keys_pkey,
+      ADD COLUMN holder text NOT NULL,
+      ADD COLUMN updated_at timestamptz NOT NULL DEFAULT now(),
+      ADD PRIMARY KEY (uid, holder);
+    CREATE INDEX git_keys_by_holder ON ${t("git_keys")} (holder);
+    CREATE INDEX git_keys_by_gateway ON ${t("git_keys")} (gateway_id);
+    CREATE INDEX git_keys_pending_release ON ${t("git_keys")} (uid) WHERE deletion_requested_at IS NOT NULL;
+    ALTER TABLE ${t("provisioning_work")} ADD COLUMN release_only boolean NOT NULL DEFAULT false;
+  `,
 ];
 
 export async function migrate(db: Database): Promise<{ from: number; to: number }> {

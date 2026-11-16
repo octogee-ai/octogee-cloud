@@ -30,8 +30,8 @@ describe.skipIf(!dsn)("the provisioning HTTP API", { timeout: 30_000 }, () => {
       expect((await harness.request("GET", "/v1/users/u1/provisioning", { token: TOKENS.platformApi })).status).toBe(200);
       expect((await harness.request("POST", "/v1/users/u1/provisioning/retry", { token: TOKENS.platformApi, body: {} })).status).toBe(403);
       expect((await harness.request("DELETE", "/v1/users/u1/provisioning", { token: TOKENS.platformApi })).status).toBe(403);
-      expect((await harness.request("PUT", "/v1/users/u1/git-keys/gw-1", { body: { spec: { publicKey: KEY } } })).status).toBe(403);
-      expect((await harness.request("PUT", "/v1/users/u1/git-keys/gw-1", { token: TOKENS.platformApi, body: { spec: { publicKey: KEY } } })).status).toBe(201);
+      expect((await harness.request("PUT", "/v1/users/u1/git-keys/gw-1%2Fpod-s", { body: { spec: { publicKey: KEY } } })).status).toBe(403);
+      expect((await harness.request("PUT", "/v1/users/u1/git-keys/gw-1%2Fpod-s", { token: TOKENS.platformApi, body: { spec: { publicKey: KEY } } })).status).toBe(201);
       expect((await harness.request("GET", "/v1/users/u1/credentials/user-chat-token")).body.code).toBe("not-issued");
       expect((await harness.request("GET", "/v1/users/u1/credentials/user-chat-token", { token: TOKENS.platformApi })).body.code).toBe("not-issued");
     });
@@ -342,26 +342,46 @@ describe.skipIf(!dsn)("the provisioning HTTP API", { timeout: 30_000 }, () => {
     });
 
     it("answers git key writes for an unknown user with 404 and a release of an unknown key with 202", async () => {
-      expect((await harness.request("PUT", "/v1/users/nobody/git-keys/gw-1", { token: TOKENS.platformApi, body: { spec: { publicKey: KEY } } })).status).toBe(404);
-      expect((await harness.request("PUT", "/v1/users/nobody/git-keys/gw-1", { token: TOKENS.platformApi, body: { spec: { publicKey: "not a key" } } })).status).toBe(400);
-      expect((await harness.request("DELETE", "/v1/users/nobody/git-keys/gw-1", { token: TOKENS.platformApi })).status).toBe(202);
+      expect((await harness.request("PUT", "/v1/users/nobody/git-keys/gw-1%2Fpod-s", { token: TOKENS.platformApi, body: { spec: { publicKey: KEY } } })).status).toBe(404);
+      expect((await harness.request("PUT", "/v1/users/nobody/git-keys/gw-1%2Fpod-s", { token: TOKENS.platformApi, body: { spec: { publicKey: "not a key" } } })).status).toBe(400);
+      expect((await harness.request("DELETE", "/v1/users/nobody/git-keys/gw-1%2Fpod-s", { token: TOKENS.platformApi })).status).toBe(202);
     });
 
     it("releases a git key only while it still holds the expected public key", async () => {
       const newer = KEY.replace("gateway-a", "gateway-b").replace("IAAAA", "IBBBB");
       await harness.request("PUT", "/v1/users/u1/provisioning", { body: { spec: spec("lin") } });
-      await harness.request("PUT", "/v1/users/u1/git-keys/gw-1", { token: TOKENS.platformApi, body: { spec: { publicKey: KEY } } });
-      await harness.request("PUT", "/v1/users/u1/git-keys/gw-1", { token: TOKENS.platformApi, body: { spec: { publicKey: newer } } });
+      await harness.request("PUT", "/v1/users/u1/git-keys/gw-1%2Fpod-s", { token: TOKENS.platformApi, body: { spec: { publicKey: KEY } } });
+      await harness.request("PUT", "/v1/users/u1/git-keys/gw-1%2Fpod-s", { token: TOKENS.platformApi, body: { spec: { publicKey: newer } } });
 
-      const stale = await harness.request("DELETE", "/v1/users/u1/git-keys/gw-1", { token: TOKENS.platformApi, body: { expectedPublicKey: KEY } });
+      const stale = await harness.request("DELETE", "/v1/users/u1/git-keys/gw-1%2Fpod-s", { token: TOKENS.platformApi, body: { expectedPublicKey: KEY } });
 
       expect(stale.status).toBe(409);
       expect(stale.body.code).toBe("precondition-failed");
-      const kept = await harness.request("PUT", "/v1/users/u1/git-keys/gw-1", { token: TOKENS.platformApi, body: { spec: { publicKey: newer } } });
+      const kept = await harness.request("PUT", "/v1/users/u1/git-keys/gw-1%2Fpod-s", { token: TOKENS.platformApi, body: { spec: { publicKey: newer } } });
       expect(kept.status).toBe(200);
       expect(kept.body.deletionRequestedAt).toBeNull();
-      expect((await harness.request("DELETE", "/v1/users/u1/git-keys/gw-1", { token: TOKENS.platformApi, body: { expectedPublicKey: newer } })).status).toBe(202);
-      expect((await harness.request("DELETE", "/v1/users/u1/git-keys/gw-1", { token: TOKENS.platformApi, body: { expectedPublicKey: "not a key" } })).status).toBe(400);
+      expect((await harness.request("DELETE", "/v1/users/u1/git-keys/gw-1%2Fpod-s", { token: TOKENS.platformApi, body: { expectedPublicKey: newer } })).status).toBe(202);
+      expect((await harness.request("DELETE", "/v1/users/u1/git-keys/gw-1%2Fpod-s", { token: TOKENS.platformApi, body: { expectedPublicKey: "not a key" } })).status).toBe(400);
+    });
+
+    it("names a git key by its pod-level holder and refuses a holder that is not a gateway id and pod name", async () => {
+      await harness.request("PUT", "/v1/users/u1/provisioning", { body: { spec: spec("lin") } });
+
+      const put = await harness.request("PUT", "/v1/users/u1/git-keys/gw-1%2Fpod-s", { token: TOKENS.platformApi, body: { spec: { publicKey: KEY } } });
+
+      expect(put.status).toBe(201);
+      expect(put.body).toMatchObject({ uid: "u1", gatewayId: "gw-1", holder: "gw-1/pod-s" });
+      for (const holder of ["gw-1", "gw-1%2F", "%2Fpod-s", "gw-1%2FPod_S", "gw-1%2Fpod-s%2Fx", "..%2Fpod-s"]) {
+        expect((await harness.request("PUT", `/v1/users/u1/git-keys/${holder}`, { token: TOKENS.platformApi, body: { spec: { publicKey: KEY } } })).status).toBe(400);
+      }
+    });
+
+    it("lets only the fleet controller list and release git key holders", async () => {
+      expect((await harness.request("GET", "/v1/git-key-holders", { token: TOKENS.platformApi })).status).toBe(403);
+      expect((await harness.request("DELETE", "/v1/git-key-holders/gw-1%2Fpod-s", { token: TOKENS.platformApi })).status).toBe(403);
+      expect((await harness.request("GET", "/v1/git-key-holders", { token: TOKENS.writer })).body).toEqual({ holders: [] });
+      expect((await harness.request("DELETE", "/v1/git-key-holders/gw-1%2Fpod-s", { token: TOKENS.writer })).body).toEqual({ remaining: 0 });
+      expect((await harness.request("DELETE", "/v1/git-key-holders/gw-1", { token: TOKENS.writer })).status).toBe(400);
     });
 
     it("lets only the fleet controller release a gateway's git keys, and validates the gateway id", async () => {
@@ -373,12 +393,12 @@ describe.skipIf(!dsn)("the provisioning HTTP API", { timeout: 30_000 }, () => {
 
     it("releases a git key by its key material, whatever comment the release carries", async () => {
       await harness.request("PUT", "/v1/users/u1/provisioning", { body: { spec: spec("lin") } });
-      await harness.request("PUT", "/v1/users/u1/git-keys/gw-1", { token: TOKENS.platformApi, body: { spec: { publicKey: KEY } } });
+      await harness.request("PUT", "/v1/users/u1/git-keys/gw-1%2Fpod-s", { token: TOKENS.platformApi, body: { spec: { publicKey: KEY } } });
 
-      const released = await harness.request("DELETE", "/v1/users/u1/git-keys/gw-1", { token: TOKENS.platformApi, body: { expectedPublicKey: KEY.replace("gateway-a", "renamed-on-the-pod") } });
+      const released = await harness.request("DELETE", "/v1/users/u1/git-keys/gw-1%2Fpod-s", { token: TOKENS.platformApi, body: { expectedPublicKey: KEY.replace("gateway-a", "renamed-on-the-pod") } });
 
       expect(released.status).toBe(202);
-      const reRegistered = await harness.request("PUT", "/v1/users/u1/git-keys/gw-1", { token: TOKENS.platformApi, body: { spec: { publicKey: KEY } } });
+      const reRegistered = await harness.request("PUT", "/v1/users/u1/git-keys/gw-1%2Fpod-s", { token: TOKENS.platformApi, body: { spec: { publicKey: KEY } } });
       expect(reRegistered.status).toBe(202);
       expect(reRegistered.body.generation).toBe(2);
     });

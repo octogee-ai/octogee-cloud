@@ -14,7 +14,7 @@ import type { Reviewer } from "../auth/token-review.js";
 import type { CredentialStore } from "../hosts/credential-store.js";
 import type { Logger } from "../logger.js";
 import type { Metrics } from "../metrics.js";
-import { parseGitKeyRelease, parseGitKeySpec, parseUserProvisioningSpec, validIdentifier } from "../resources/validate.js";
+import { parseGitKeyHolder, parseGitKeyRelease, parseGitKeySpec, parseUserProvisioningSpec, validIdentifier } from "../resources/validate.js";
 import type { ChangeNotifier } from "../store/change-notifier.js";
 import type { ProvisioningStore } from "../store/provisioning-store.js";
 import type { WorkQueue } from "../worker/queue.js";
@@ -211,26 +211,37 @@ export function createApp(deps: AppDependencies): express.Express {
     response.json(await deps.store.list(query));
   });
 
-  v1.put("/users/:uid/git-keys/:gatewayId", requireRole("key-writer"), async (request, response) => {
+  v1.put("/users/:uid/git-keys/:holder", requireRole("key-writer"), async (request, response) => {
     const uid = uidOf(request);
-    const gatewayId = validIdentifier(String(request.params.gatewayId), "gatewayId");
+    const holder = parseGitKeyHolder(String(request.params.holder));
     const spec = parseGitKeySpec(((request.body ?? {}) as { spec?: unknown }).spec);
-    const { outcome, key } = await deps.store.putGitKey(uid, gatewayId, spec);
+    const { outcome, key } = await deps.store.putGitKey(uid, holder, spec);
     deps.notifier.wakeAll();
     response.status(WRITE_STATUS[outcome]).json(key);
   });
 
-  v1.delete("/users/:uid/git-keys/:gatewayId", requireRole("key-writer"), async (request, response) => {
+  v1.delete("/users/:uid/git-keys/:holder", requireRole("key-writer"), async (request, response) => {
     const uid = uidOf(request);
-    const gatewayId = validIdentifier(String(request.params.gatewayId), "gatewayId");
-    await deps.store.deleteGitKey(uid, gatewayId, parseGitKeyRelease(request.body));
+    const { holder } = parseGitKeyHolder(String(request.params.holder));
+    await deps.store.deleteGitKey(uid, holder, parseGitKeyRelease(request.body));
     deps.notifier.wakeAll();
     response.status(202).end();
   });
 
+  v1.get("/git-key-holders", requireRole("key-retirer"), async (_request, response) => {
+    response.json({ holders: await deps.store.listGitKeyHolders() });
+  });
+
+  v1.delete("/git-key-holders/:holder", requireRole("key-retirer"), async (request, response) => {
+    const { holder } = parseGitKeyHolder(String(request.params.holder));
+    const released = await deps.store.releaseGitKeys("holder", holder);
+    deps.notifier.wakeAll();
+    response.status(202).json(released);
+  });
+
   v1.delete("/gateways/:gatewayId/git-keys", requireRole("key-retirer"), async (request, response) => {
     const gatewayId = validIdentifier(String(request.params.gatewayId), "gatewayId");
-    const released = await deps.store.deleteGatewayGitKeys(gatewayId);
+    const released = await deps.store.releaseGitKeys("gateway_id", gatewayId);
     deps.notifier.wakeAll();
     response.status(202).json(released);
   });

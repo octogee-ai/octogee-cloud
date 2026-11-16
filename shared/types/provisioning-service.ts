@@ -124,11 +124,27 @@ export interface GitKeyStatus {
 export interface GitKey {
   uid: string;
   gatewayId: string;
+  holder: string;
   generation: number;
   resourceVersion: string;
   deletionRequestedAt: string | null;
   spec: GitKeySpec;
   status: GitKeyStatus;
+}
+
+export interface GitKeyHolderSummary {
+  holder: string;
+  gatewayId: string;
+  rows: number;
+  newestUpdatedAt: string;
+}
+
+export interface GitKeyHoldersResponse {
+  holders: GitKeyHolderSummary[];
+}
+
+export interface GitKeyRelease {
+  remaining: number;
 }
 
 export interface PutGitKeyRequest {
