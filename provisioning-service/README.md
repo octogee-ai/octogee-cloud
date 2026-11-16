@@ -123,10 +123,18 @@ the user's attempt finishes, the user's work is not parked, and the attempt's
 error from the git host and any failed release (a deleted key's included),
 fails the attempt as before, so it is retried or parked.
 
-A key held elsewhere backs off per row: 1 minute, doubling to at most 6 hours,
-shown as `status.nextAttemptAt`. The service owns the retry: the user's work is
-scheduled for that time, and the key is tried again then without any put. A put
-resets the backoff and is tried at once.
+The service writes a key to the git host only in an attempt that follows a put,
+one that starts while `putSequence` is above `observedPutSequence`. A reconcile
+without a new put only reads the host and reports. When the host does not hold
+the row's key under its title, it records `Registered=False` with reason
+`GitKeyNotOnHost`, or `GitKeyReplacedOnHost` when a different key is there,
+logs a warning and leaves the host alone; the gateway's next put registers the
+key again. A deleted row's release is the one write without a put.
+
+A refused or mismatched key backs off per row: 1 minute, doubling to at most 6
+hours, shown as `status.nextAttemptAt`. The user's work is scheduled for that
+time, and the key is read again then. A put resets the backoff and is tried at
+once.
 
 With `PROVISIONING_HOST_ADAPTERS=fake`, `PROVISIONING_FAKE_GIT_KEYS` seeds the
 fake git host with keys, as JSON mapping each owner to `{ publicKey, holder }`

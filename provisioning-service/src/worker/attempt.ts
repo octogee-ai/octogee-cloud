@@ -90,11 +90,20 @@ function readyCondition(chat: ChatResult, git: GitResult): ConditionUpdate<UserP
 const KEY_REFUSAL_BACKOFF_MS = 60_000;
 const KEY_REFUSAL_MAX_BACKOFF_MS = 6 * 60 * 60_000;
 
+type KeyRefusalReason = "GitKeyHeldElsewhere" | "GitKeyNotOnHost" | "GitKeyReplacedOnHost";
+
 class KeyRefused extends Error {
-  constructor(override readonly cause: HostError) {
+  constructor(override readonly cause: HostError, readonly reason: KeyRefusalReason = "GitKeyHeldElsewhere") {
     super(cause.message);
     this.name = "KeyRefused";
   }
+}
+
+function hostMismatch(reason: "GitKeyNotOnHost" | "GitKeyReplacedOnHost"): KeyRefused {
+  const detail = reason === "GitKeyNotOnHost"
+    ? "the git host holds no key under this holder's title"
+    : "the git host holds a different key under this holder's title";
+  return new KeyRefused(new HostError("terminal", `${detail}; the service writes the key only when its gateway puts it`), reason);
 }
 
 function deletionsFirst(keys: readonly SnapshotKey[]): SnapshotKey[] {
@@ -391,7 +400,7 @@ class Attempt {
       } catch (error) {
         if (error instanceof LeaseLostError || this.leaseLost) throw error;
         if (error instanceof KeyRefused) {
-          await this.writeKeyRefusal(key, error.cause);
+          await this.writeKeyRefusal(key, error);
           refused.push(`${key.holder}: ${message(error.cause)}`);
           continue;
         }
@@ -427,7 +436,7 @@ class Attempt {
         await this.reconcileKey(owner, key, listing);
       } catch (error) {
         if (error instanceof LeaseLostError || this.leaseLost) throw error;
-        if (error instanceof KeyRefused) await this.writeKeyRefusal(key, error.cause);
+        if (error instanceof KeyRefused) await this.writeKeyRefusal(key, error);
         else await this.writeParkedKeyFailure(key, error);
       }
     }
@@ -478,10 +487,13 @@ class Attempt {
       return;
     }
     if (key.backing_off) return;
-    if (present.some((existing) => sameKey(existing.publicKey, key.public_key) && existing.holder !== key.holder)) {
-      if (key.put_sequence <= key.observed_put_sequence) {
-        throw new KeyRefused(new HostError("terminal", "the key is held under another managed title; it is taken only while its gateway puts it", { code: "key-held-elsewhere" }));
-      }
+    const putPending = key.put_sequence > key.observed_put_sequence;
+    const elsewhere = present.some((existing) => sameKey(existing.publicKey, key.public_key) && existing.holder !== key.holder);
+    if (!putPending && elsewhere) {
+      throw new KeyRefused(new HostError("terminal", "the key is held under another managed title; it is taken only while its gateway puts it", { code: "key-held-elsewhere" }));
+    }
+    if (!putPending) throw hostMismatch(present.some((existing) => existing.holder === key.holder) ? "GitKeyReplacedOnHost" : "GitKeyNotOnHost");
+    if (elsewhere) {
       this.deps.log.info("adopting the identical git key the user's account holds under another managed title, at its gateway's put", { uid: this.claim.uid, holder: key.holder });
     }
     listing.changed();
@@ -494,7 +506,8 @@ class Attempt {
     await this.writeKeyStatus(key, { type: "Registered", status: "True", reason: "Converged" }, key.public_key);
   }
 
-  private writeKeyRefusal(key: GitKeyRow, error: HostError): Promise<void> {
+  private writeKeyRefusal(key: GitKeyRow, refusal: KeyRefused): Promise<void> {
+    const { cause: error, reason } = refusal;
     return this.deps.queue.fenced(this.claim.uid, this.claim.leaseToken, async (client, bumpVersion) => {
       const version = await bumpVersion();
       const { rows } = await client.query<{ retry_after: Date }>(
@@ -503,16 +516,15 @@ class Attempt {
           WHERE uid = $1 AND holder = $2 AND generation = $3 AND put_sequence = $6 RETURNING retry_after`,
         [this.claim.uid, key.holder, key.generation, KEY_REFUSAL_BACKOFF_MS, KEY_REFUSAL_MAX_BACKOFF_MS, key.put_sequence]);
       const nextAttemptAt = rows[0]?.retry_after.toISOString() ?? null;
-      const reason = "GitKeyHeldElsewhere";
       const conditions = applyConditions(key.conditions, [{ type: "Registered", status: "False", reason, message: `${message(error)}; next attempt after ${nextAttemptAt}` }], key.generation, new Date());
       await client.query(
         `UPDATE ${this.deps.db.table("git_keys")} SET conditions = $4, observed_generation = $3, resource_version = $5,
             observed_put_sequence = GREATEST(observed_put_sequence, $6), attempted_put_sequence = GREATEST(attempted_put_sequence, $6)
           WHERE uid = $1 AND holder = $2 AND generation = $3`,
         [this.claim.uid, key.holder, key.generation, JSON.stringify(conditions), version.toString(), key.put_sequence]);
-      this.deps.log.error("the git host refused the git key; recorded on the key and the rest of the attempt continues", {
-        uid: this.claim.uid, holder: key.holder, reason, nextAttemptAt, error: message(error),
-      });
+      const fields = { uid: this.claim.uid, holder: key.holder, reason, nextAttemptAt, error: message(error) };
+      if (reason === "GitKeyHeldElsewhere") this.deps.log.error("the git host refused the git key; recorded on the key and the rest of the attempt continues", fields);
+      else this.deps.log.warn("the git host does not hold the row's key under its title; recorded on the key and left for its gateway's next put", fields);
     });
   }
 
