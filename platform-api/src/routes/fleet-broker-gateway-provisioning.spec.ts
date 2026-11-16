@@ -355,21 +355,23 @@ describe("POST /internal/fleet/git-key", () => {
     vi.spyOn(logger, "error").mockImplementation(() => {});
     vi.spyOn(logger, "warn").mockImplementation(() => {});
     const nextAttemptAt = new Date(Date.now() + 120_000).toISOString();
+    const heldElsewhere = (observedPutSequence: number) => ({
+      uid: "uid-alice", gatewayId: GATEWAY_ID, holder: HOLDER, generation: 1, putSequence: 2, resourceVersion: "2", deletionRequestedAt: null,
+      spec: { publicKey: PUBLIC_KEY },
+      status: { observedGeneration: 1, observedPutSequence, nextAttemptAt, conditions: [{
+        type: "Registered" as const, status: "False" as const, reason: "GitKeyHeldElsewhere" as const, message: "422 from git host",
+        lastTransitionTime: "2026-11-16T10:00:00Z", observedGeneration: 1,
+      }] },
+    });
+    const getGitKey = vi.fn(async () => heldElsewhere(2));
     const provisioning = createLegacyProvisioning({
+      sleep: async () => {},
       client: {
-        getProvisioning: vi.fn(async () => null),
+        getProvisioning: vi.fn(async () => provisioningResource(CHAT)),
         getCredential: vi.fn(async () => null),
         deleteGitKey: vi.fn(async () => "deleted" as const),
-        putGitKey: vi.fn(async (uid: string, holder: string, spec: { publicKey: string }) => ({
-          outcome: "unchanged" as const,
-          key: {
-            uid, gatewayId: holder, generation: 1, resourceVersion: "2", deletionRequestedAt: null, spec,
-            status: { observedGeneration: 1, nextAttemptAt, conditions: [{
-              type: "Registered" as const, status: "False" as const, reason: "GitKeyHeldElsewhere" as const, message: "422 from git host",
-              lastTransitionTime: "2026-11-16T10:00:00Z", observedGeneration: 1,
-            }] },
-          },
-        })),
+        putGitKey: vi.fn(async () => ({ outcome: "unchanged" as const, key: heldElsewhere(1) })),
+        getGitKey,
       },
     });
     const { app } = fixture({ provisioning });
@@ -378,6 +380,7 @@ describe("POST /internal/fleet/git-key", () => {
 
     expect(response.body).toEqual({ error: "provisioning_pending", reason: "GitKeyHeldElsewhere" });
     expect(Number(response.headers["retry-after"])).toBeGreaterThanOrEqual(119);
+    expect(getGitKey).toHaveBeenCalledExactlyOnceWith("uid-alice", HOLDER, expect.objectContaining({ signal: expect.any(AbortSignal) }));
   });
 
   it("answers 409 without the service", async () => {

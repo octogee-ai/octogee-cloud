@@ -53,7 +53,7 @@ export interface LegacyProvisioning {
   releaseGitKey(uid: string, holder: string, publicKey: string, budget: RouteBudget): Promise<DeleteGitKeyOutcome>;
 }
 
-export type LegacyProvisioningClient = Pick<ProvisioningServiceClient, "getProvisioning" | "getCredential" | "putGitKey" | "deleteGitKey">;
+export type LegacyProvisioningClient = Pick<ProvisioningServiceClient, "getProvisioning" | "getCredential" | "putGitKey" | "getGitKey" | "deleteGitKey">;
 
 export interface LegacyProvisioningDeps {
   readonly client: LegacyProvisioningClient;
@@ -124,7 +124,7 @@ export function createLegacyProvisioning(deps: LegacyProvisioningDeps): LegacyPr
   function keyNotRegistered(key: GitKey, registered: NonNullable<ReturnType<typeof registeredCondition>>): ProvisioningWait<never> {
     logger.error("legacy provisioning: the provisioning service has not registered the gateway's git key", {
       uid: key.uid,
-      gatewayId: key.gatewayId,
+      holder: key.holder,
       reason: registered.reason,
       message: registered.message,
     });
@@ -163,6 +163,34 @@ export function createLegacyProvisioning(deps: LegacyProvisioningDeps): LegacyPr
       return { ...notReady(reason, resource), refused: true };
     }
     return notReady(reason, resource);
+  }
+
+  async function parkedWork(uid: string, budget: RouteBudget): Promise<ProvisioningWait<never> | null> {
+    const read = await current(uid, budget, false);
+    if ("wait" in read) return read.wait;
+    return read.resource.status.work.state === "parked" ? pending(uid, read.resource, "Ready") : null;
+  }
+
+  async function putNotRegistered(key: GitKey, sequence: number, budget: RouteBudget): Promise<ProvisioningWait<never>> {
+    if (key.status.observedPutSequence >= sequence) {
+      const reason = key.status.observedGeneration < key.generation ? "GenerationNotObserved" : "RegisteredUnknown";
+      return { ready: false, reason, retryAfterSeconds: DEFAULT_RETRY_AFTER_SECONDS };
+    }
+    const read = await current(key.uid, budget, false);
+    if ("wait" in read) return read.wait;
+    const { work } = read.resource.status;
+    if (work.state === "parked") return pending(key.uid, read.resource, "Ready");
+    const recorded = key.status.conditions.find((candidate) => candidate.type === "Registered");
+    const reason = recorded !== undefined && recorded.status !== "True" ? recorded.reason : "GitKeyPutNotObserved";
+    logger.error("legacy provisioning: no attempt has processed the gateway's git key put inside the route's budget", {
+      uid: key.uid,
+      holder: key.holder,
+      putSequence: sequence,
+      observedPutSequence: key.status.observedPutSequence,
+      work: work.state,
+      reason,
+    });
+    return notReady(reason, read.resource);
   }
 
   function observed(resource: UserProvisioning, type: UserProvisioningConditionType): boolean {
@@ -212,22 +240,36 @@ export function createLegacyProvisioning(deps: LegacyProvisioningDeps): LegacyPr
     },
 
     async gitKey(uid, holder, publicKey, budget) {
+      const { signal } = budget;
+      let key: GitKey;
+      try {
+        key = (await deps.client.putGitKey(uid, holder, { publicKey }, { signal })).key;
+      } catch (error) {
+        if (error instanceof ProvisioningServiceError && error.status === 404) return notProvisioned(uid);
+        return unavailable(uid, error);
+      }
+      const sequence = key.putSequence;
+      const parked = await parkedWork(uid, budget);
+      if (parked !== null) return parked;
       for (;;) {
-        let key: GitKey;
+        if (key.status.observedPutSequence >= sequence) {
+          const registered = registeredCondition(key);
+          if (registered?.status === "True") return { ready: true, value: undefined };
+          if (registered !== null) return keyNotRegistered(key, registered);
+        }
+        if (budget.remainingMs() - GIT_KEY_POLL_MS < RESERVED_AFTER_LONG_POLL_MS) return putNotRegistered(key, sequence, budget);
+        await sleep(GIT_KEY_POLL_MS);
+        let read: GitKey | null;
         try {
-          key = (await deps.client.putGitKey(uid, holder, { publicKey }, { signal: budget.signal })).key;
+          read = await deps.client.getGitKey(uid, holder, { signal });
         } catch (error) {
-          if (error instanceof ProvisioningServiceError && error.status === 404) return notProvisioned(uid);
           return unavailable(uid, error);
         }
-        const registered = registeredCondition(key);
-        if (registered?.status === "True") return { ready: true, value: undefined };
-        if (registered !== null) return keyNotRegistered(key, registered);
-        if (budget.remainingMs() - GIT_KEY_POLL_MS < RESERVED_AFTER_LONG_POLL_MS) {
-          const reason = key.status.observedGeneration < key.generation ? "GenerationNotObserved" : "RegisteredUnknown";
-          return { ready: false, reason, retryAfterSeconds: DEFAULT_RETRY_AFTER_SECONDS };
+        if (read === null) {
+          logger.error("legacy provisioning: the gateway's git key row was released while its registration was awaited", { uid, holder });
+          return { ready: false, reason: "GitKeyReleased", retryAfterSeconds: DEFAULT_RETRY_AFTER_SECONDS };
         }
-        await sleep(GIT_KEY_POLL_MS);
+        key = read;
       }
     },
 
