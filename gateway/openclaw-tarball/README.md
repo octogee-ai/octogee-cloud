@@ -684,32 +684,9 @@ It uses `OCTOGEE_TEST_OPENCLAW_BIN`, `OCTOGEE_TEST_OPENCLAW_NPM`,
 `OCTOGEE_TEST_OPENCLAW_EXTENSIONS` and a disposable `OCTOGEE_TEST_POSTGRES_DSN`.
 The installed-runtime comparison and active-chat abort replay use
 `gateway-supervisor/ops/prove-agent-detach.ts` and `gateway-supervisor/ops/prove-activation-abort.ts`.
-The raw results and aggregates, which are not published in this repository,
-record two alternating baseline/candidate pairs against Mattermost 12.0.1 and
-PostgreSQL 17, with 5 ms database delay in each direction during detach only.
-Ten warm calls per variant give median 4086.65 → 3454.11 ms (15.48% lower), and
-median observed fixture SQL calls 433.5 → 330. Cold calls are reported separately.
-All samples are retained. A 22607.56 ms candidate sample makes nearest-rank p95
-worse than baseline's 4890.20 ms: the published tail acceptance criterion is not
-met. Native maintenance overlaps the delay, but its cause remains unproven. This
-cut does not claim to fix the production slow tail.
-
-The comparison's timed calls precede its transfer phase. Following review, the
-proof uses the production snapshot export, manifest validation, anchor landing and
-installation owners rather than carrying an agent directory. A separate six-agent
-verified-import smoke checks that revised path, original UUID/schema/session identity, exact canonical
-transcript bytes, source write refusal and real Mattermost replies. Its zero-delay
-observations are excluded from the performance comparison. New proof output also
-persists labeled cold/warm median, nearest-rank p95 and spread beside raw samples.
-
-The active-user abort replay keeps the same coach agent active on Shared while its distinct pre-copy target
-store is held. The actual signed abort handler, lifecycle adapter and installed
-offline CLI reproduce HTTP 500 with unmarked policy, then return 200 after six
-preserved-store detaches with corrected policy. Target history/anchors and the
-source anchor survive; the source's held model response finishes afterward.
-Process custody and watcher ownership are local fixtures, not a deployed fleet
-run. Both native config-writer/Doctor cases and 76 current-catalog PostgreSQL
-permission, handoff and recovery controls pass.
+These tools exercise detach and abort behavior against a disposable PostgreSQL
+store and Mattermost installation. Use their output to compare runtimes and
+verify preserved agent identity, history, and source write refusal.
 
 ### Qualification and publication
 

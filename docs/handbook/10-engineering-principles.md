@@ -5,13 +5,13 @@ order: 10
 part: Dev Workflow
 audience: [agent]
 description: Reliable code with risk-based tests, explicit failures, root-cause fixes, and proportional effort.
-updated: 2026-11-13
+updated: 2026-11-16
 ---
 
 # Engineering Principles
 
-Solo operator, pre-launch. Code like your sleep depends on it — because the
-operator is on call for every silent failure.
+Make behavior clear, failures observable, and changes easy to review. Choose
+validation that catches the failures the change could introduce.
 
 ## Core
 
@@ -35,25 +35,15 @@ change break, and what is the cheapest signal that would catch that break?”
 
 ## Greenfield posture
 
-Before broad launch, breaking changes are cheap and correctness is the priority.
+Breaking changes are allowed. Update callers with the change instead of adding
+compatibility shims or duplicate interfaces.
 
-- No migrations, no API versioning, no backwards-compat shims, no `_var` renames
-  for compat. Just change the code — clean breaks over compat hacks.
-- **Past pure-greenfield for real user DATA, still greenfield for code.**
-  Quiet friends-and-family users exist now — code/routes/API/schema shape
-  still gets clean breaks (no redirect routes, no versioning), but a change
-  that moves/renames/removes a field on `users/*`, `workspaces/*`,
-  `projects/*` (or other user-facing docs) needs a real migration: idempotent,
-  dry-run-first, tested against the emulator, `--dry-run` then `--apply` on
-  test then prod. Cattle/fleet state (`glmGateways`, gateways) stays
-  teardown-recoverable — no migration needed there. Breaking the code is
-  free; silently orphaning a quiet user's data is a real regression.
-- **Teardown over surgery:** when state is tangled and no real data is at risk,
-  nuke + rebuild beats an intricate manual recovery (the corollary of "PVC data
-  is critical" — which flips the moment there's real user data).
-- **Upgrade, don't stop:** if a refactor hits a legacy-cruft blocker (one package
-  is CommonJS, another ESM), upgrade the laggard — don't back out or build a
-  dual-pipeline shim. The right architecture is cheap to install now.
+- Preserve user data. A breaking API or code change does not authorize deleting
+  or orphaning stored data. Plan and verify any operation that changes it.
+- Rebuild disposable development state when that is simpler than manual repair.
+  First confirm it contains no data that needs to be retained.
+- Update an incompatible dependency when a refactor requires it, with focused
+  checks for the affected build and runtime behavior.
 
 ## Comments & config
 
@@ -63,8 +53,8 @@ Before broad launch, breaking changes are cheap and correctness is the priority.
   the edge case with a behavioral test. Don't reference the current task/fix/
   caller in a comment ("added for X flow") — it rots.
 - **No environment conditionals.** Never branch on env name to pick a URL/value
-  (`if test then chat-test… else chat…`). Derive from K8s/Helm/env. Cattle, not
-  pets.
+  (`if test then chat-test… else chat…`). Derive values from Kubernetes, Helm,
+  or explicit environment configuration.
 
 ## Dependency posture
 

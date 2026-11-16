@@ -1,15 +1,9 @@
-# Container recipe and spike notes
+# Omarchy desktop container recipe
 
-Working notes from the spike that led to the isolated gateway VM image, and
-the Docker recipe it left behind. The [component README](../README.md) says
-what `desktop/` is today; [`image/README.md`](../image/README.md) covers the VM
-image build. Paths below that do not start with `desktop/` are relative
-to it.
-
-The spike proved that the Omarchy userspace runs headless in a plain container on
-software rendering, that an agent can drive it by screenshot and input without
-any kernel device, and that a human can watch it through noVNC. Records the
-cost.
+The [component README](../README.md) describes the isolated gateway desktop,
+and the [VM image guide](../image/README.md) covers its reproducible build.
+This guide explains the container recipe and its display requirements. Paths
+that do not start with `desktop/` are relative to that directory.
 
 x86_64 only: Omarchy's mirrors do not publish arm64. On Apple Silicon the image
 builds under Rosetta emulation but cannot run the compositor (below); use an

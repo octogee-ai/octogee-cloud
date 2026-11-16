@@ -5,13 +5,13 @@ order: 12
 part: Dev Workflow
 audience: [agent]
 description: Small coherent changes, proportional validation, explicit merge authority, and safe git hygiene.
-updated: 2026-07-28
+updated: 2026-11-16
 ---
 
 # PR & Effort Workflow
 
-Octogee is pre-launch and operated by one person. Optimize for dependable
-features reaching `main`, not for producing process artifacts.
+Keep changes focused and reviewable. Use the checks and review needed to ship
+dependable behavior.
 
 ## Default flow
 
@@ -42,7 +42,6 @@ release gate.
 
 Split work into multiple PRs only when each PR is independently useful and the
 split reduces risk or review complexity. Do not invent dependency ceremonies.
-For release-path deletion work, follow the task's one-deletion-per-PR rule.
 
 ## Proportional validation
 
@@ -68,9 +67,10 @@ independent confidence.
 - Branch from freshly fetched `origin/main`; do not inherit unrelated local commits.
 - Preserve unrelated changes in shared worktrees. Prefer a dedicated worktree.
 - Never force-delete a dirty worktree or an unpushed branch.
-- After push, take one CI snapshot (the Actions **Required checks** job; desktop packaging is explicitly opt-in).
+- After push, check the required `checks`, `dco`, and `CodeQL` results.
   Read `AGENTS.md` again after updating an existing checkout so CI instructions stay current.
-- After a confirmed squash merge, remove the dedicated worktree and branch.
+- Pull requests merge with a merge commit. After confirming the merge, remove
+  the dedicated worktree and branch.
 
 Related: [10 — Engineering Principles](10-engineering-principles.md),
 [11 — Testing](11-testing.md), [13 — Repo Conventions](13-repo-conventions.md).

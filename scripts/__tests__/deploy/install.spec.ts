@@ -188,6 +188,21 @@ describe("installing", () => {
     );
   });
 
+  it.each([
+    { settings: {}, location: "region us-central1", availability: "REGIONAL" },
+    {
+      settings: { GCP_ZONE: "us-central1-a", SQL_AVAILABILITY: "ZONAL" },
+      location: "zone us-central1-a",
+      availability: "ZONAL",
+    },
+  ])("shows the selected GCP location and database availability: $availability", ({ settings, location, availability }) => {
+    stubTools(GCP_TOOLS);
+    const run = install(["--target=gcp", "--yes"], { ...CLOUD_SETTINGS, ...settings });
+    expect(run.status).toBe(0);
+    expect(run.stdout).toContain(`GKE cluster in ${location}`);
+    expect(run.stdout).toContain(`Cloud SQL for PostgreSQL 16 (${availability})`);
+  });
+
   it("clones the repository when piped from curl, then runs from the clone", () => {
     stubTools(LOCAL_TOOLS);
     host.stub(

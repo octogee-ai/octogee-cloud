@@ -1,108 +1,73 @@
-# Why octogee-cloud, when OpenClaw Enterprise exists
+# Why Octogee Cloud
 
-## The short answer
+Octogee Cloud brings user accounts, chat, Git repositories, model access, and
+agent hosting into one platform. It gives operators two ways to run OpenClaw
+agents: shared gateways for platform-controlled tools, and isolated gateways
+for users who need their own execution environment.
 
-OpenClaw Enterprise (OCE) and octogee-cloud start from the same fact about
-OpenClaw and go in opposite directions.
+A **gateway** is the service that runs OpenClaw agents. A **fleet** is the set
+of gateways an operator manages. A **broker** is a platform service that checks
+access before making a request on an agent's behalf.
 
-The fact: an OpenClaw gateway is one trust boundary. Everyone who can operate an
-agent on it can make that agent do anything the agent can do, and the gateway's
-roles are guardrails inside a trusted group, not isolation between hostile
-parties. OpenClaw says so in its
-[trust model](https://docs.openclaw.ai/gateway/security/trust-model) and its
-[multi-user notes](https://docs.openclaw.ai/concepts/multi-user#trust-boundary).
+## From a message to an agent's work
 
-- **OCE keeps that boundary and multiplies it.** Each deployed Agent gets its
-  own gateway. In its design document's words, the control plane "manages
-  multiple single-Agent runtimes rather than making one OpenClaw gateway
-  multi-tenant." Tenants are separated by namespaces, identities and
-  infrastructure around the gateways, never inside one.
-- **octogee-cloud puts strangers on the same gateway.** A shared gateway serves
-  many users who do not know or trust each other, and any of them may be
-  hostile. octogee-cloud builds the walls OpenClaw does not have for that case,
-  and moves a user onto a gateway of their own when they need what a shared one
-  cannot safely give.
+1. An operator creates a user and assigns them to a gateway with `octogee-fleet`.
+2. The platform provisions their Mattermost account and team, agent bot, and
+   Gitea organization with a workspace repository.
+3. The user messages the agent in Mattermost. The gateway runs the agent,
+   using the model broker for AI model calls and platform tools for work.
+4. When the user needs a different environment, the operator moves them to
+   another gateway. The fleet controller coordinates the move and records it
+   in the operations journal.
 
-If every agent you run can have its own gateway, OCE is the right tool and
-octogee-cloud adds little. octogee-cloud exists for the case where it cannot:
-a personal agent for someone who pays little or nothing, where a dedicated
-gateway per person costs more than the service is worth.
+## Two gateway types
 
-## What a shared gateway has to give up, and what replaces it
-
-On a shared gateway no user is the gateway's owner, so nothing a user or their
-agent says can be treated as authority. octogee-cloud enforces that outside the
-gateway:
-
-| Risk on a gateway shared by strangers | What octogee-cloud does |
-| --- | --- |
-| An agent runs code and reads another user's files or the gateway's memory | Agents on shared gateways cannot run host code at all. Process and terminal tools, native CLI runtimes, sub-agent execution, user-defined plugins, hooks, MCP servers and model providers are denied. The floor is re-applied at boot and whenever configuration is reconciled. |
-| The gateway process holds every user's keys | It holds none. Model keys, connector tokens and git credentials stay behind brokers. A broker releases a credential only after checking which gateway is asking and which user that gateway is serving. |
-| An agent claims to act for another user | Every tool call is checked by the platform against its own ownership and membership records: the gateway, the agent, the account, the provider, the requester and the conversation. An id supplied by the model, a local allow-list or a gateway token is not authority. |
-| One user's agent state is readable by another's | Each user's files live under their own directory, and each agent has its own store, a separate PostgreSQL schema. Database logins are per gateway, so an isolated gateway can reach only its owner's stores. Inside a shared gateway the separation holds because agents cannot run code. |
-| A sandbox escape reaches the node | Shared gateway pods run in a gVisor sandbox on nodes with no platform credentials. |
-
-A user on a shared gateway works with their agent through Mattermost and Gitea.
-What they give up is real: no shell, no coding CLIs, and no OpenClaw Control UI,
-which only isolated gateways provide. So octogee-cloud has a second class.
-
-## Isolated gateways, and moving between the two
-
-An isolated gateway serves exactly one user. It is what OpenClaw's
-documentation calls a single-user gateway, and it is the same trust boundary
-OCE gives every Agent: full OpenClaw, host tools and the Control UI included. It
-runs as a Kubernetes pod with its own service account and home claim, or on a
-Google Cloud virtual machine that holds no platform credentials and adds a
-desktop. People the user invites are trusted the way a teammate is, exactly as
-upstream describes.
-
-The part that is specific to octogee-cloud is the movement. A user's agents,
-chat channels, repositories, agent stores and schedules are records the fleet
-controller owns. It can move a user from a shared gateway to an isolated one
-and back, with fences so that only one gateway serves the user at a time and
-the scheduler changes hands once. A user starts on a shared gateway. When they
-need a gateway of their own, an operator moves them there, and later back
-again. The platform moves nobody on its own; automatic moves, such as parking an
-idle user back on a shared gateway, belong to a product built on top.
-
-## Side by side
-
-| | OpenClaw Enterprise | octogee-cloud |
+| | Shared gateway | Isolated gateway |
 | --- | --- | --- |
-| Unit of isolation | One gateway per Agent | A shared gateway for many users, plus one isolated gateway per user who needs it |
-| Who may share a gateway | Nobody who must not share authority | Unrelated, possibly hostile users, with host code denied |
-| Tenant boundary | Namespace, identities and infrastructure around each gateway | Brokers and platform records outside the gateway, plus the no-host-code floor inside it |
-| Control plane | OpenClaw Control Plane, a service with IAM and audit in PostgreSQL | A fleet controller with placement, migration and an operations journal in PostgreSQL |
-| Operator interface | Console, `occ` CLI, HTTP API | A fleet command line over an Admin API; no web console |
-| Where gateways run | Compute drivers: Kubernetes, SSH hosts | Kubernetes pods for shared gateways; pods or Google Cloud virtual machines for isolated ones |
-| Chat and git for users | Not provided | Mattermost and Gitea, provisioned per user |
-| Model access | Provider credentials delivered to each Agent's gateway | A broker meters every call; gateways hold no model keys |
-| License | MIT | MIT |
+| Serves | Multiple independent users | One user and the people they invite |
+| Runs on | A Kubernetes pod | A Kubernetes pod with its own home claim, or a Google Cloud virtual machine |
+| User interface | Mattermost and Gitea | Mattermost, Gitea, and the OpenClaw Control UI |
+| Tools | Platform-controlled tools, with host code execution denied | Host tools, including shell access |
+| Resource model | Users share gateway resources | Resources are dedicated to one user |
 
-## What we are not claiming
+Shared gateways let operators serve several users on the same infrastructure.
+Isolated gateways provide the execution environment needed for shell tools and
+coding command lines. An isolated user can type `/ui` in Mattermost to receive
+a private, single-use Control UI link that expires after two minutes.
 
-- A shared gateway is not a general multi-tenant OpenClaw. It is safe because
-  of what it refuses to do. Anything that needs host code belongs on an
-  isolated gateway.
-- An isolated gateway is not hardened against the people its owner invites.
-  That is OpenClaw's own trust model, unchanged.
-- octogee-cloud does not build, test or preview users' projects. A shared
-  gateway cannot run that code, and the platform has no runner for it; a
-  product built on top can add one.
-- octogee-cloud is not a fork of OCE and does not implement its API, IAM or
-  resource model. Where the two name the same thing, we try to use the same
-  word.
-- The fleet features are not proven on stock OpenClaw. They are developed on a
-  patched build, listed patch by patch in
-  [OpenClaw compatibility](openclaw-compatibility.md), and we send fixes
-  upstream as we find them. We would rather carry no patches.
+## How the trust boundaries work
 
-## Where this may be useful to OpenClaw and OCE
+Users on a shared gateway have separate accounts and permissions. The platform
+must check those permissions independently of anything an agent says. A user
+ID supplied by a model or a gateway token alone does not establish authority.
 
-- **Evidence from the awkward case.** One gateway with many unrelated owners
-  exercises paths that single-owner gateways never hit: owner-less scheduling,
-  per-agent stores under separate database roles, moving a live agent between
-  gateways.
-- **A lower rung.** A deployment that starts users on shared gateways and
-  promotes them to dedicated ones could use OCE for the dedicated half. We have
-  not built that, and we would like to know whether it is wanted.
+| Boundary | Enforcement |
+| --- | --- |
+| Host execution | Shared agents cannot run host code. Process and terminal tools, native command-line runtimes, sub-agent execution, and user-defined plugins, hooks, MCP servers, and model providers are denied. The policy is applied at boot and configuration reconciliation. |
+| Credentials | Model keys, connector tokens, and Git admin credentials stay behind brokers. Gateways use their own registered Git keys. Brokers check the calling gateway and the user it serves before granting access. |
+| Tool access | The platform checks its ownership and membership records for the gateway, agent, account, provider, requester, and conversation. |
+| Agent state | User files have separate directories, and each agent has a PostgreSQL schema. Database logins are per gateway. Within a shared gateway, separation depends on the host execution restrictions. |
+| Host isolation | Cloud shared gateway pods use gVisor, a container sandbox, on nodes without platform credentials. Isolated VM gateways have no platform credentials. |
+
+A shared gateway depends on these controls working together; its directories
+and schemas are not independent process boundaries. An isolated gateway uses
+OpenClaw's single-user trust model: the owner trusts the people they invite.
+See [OpenClaw compatibility](openclaw-compatibility.md) for the patches used by
+the fleet image and their upstream status.
+
+## Moving a user
+
+The fleet controller coordinates a user's agents, chat channels, repositories,
+agent stores, and schedules. During a move, it prevents two gateways from
+serving the user at once and transfers responsibility for scheduled work.
+Operators initiate moves through the Admin API or `octogee-fleet`.
+
+Applications built on this platform can add policies such as automatic scaling
+or moving idle users back to shared infrastructure. The platform provides the
+placement and migration operations those policies use.
+
+## Explore the platform
+
+- [Getting started](getting-started.md): message an agent on a local foundation.
+- [Full platform on kind](kind.md): create users and operate shared gateways.
+- [Contributing](../CONTRIBUTING.md): work on a package or improve a guide.

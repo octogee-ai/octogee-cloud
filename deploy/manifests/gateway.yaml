@@ -88,6 +88,9 @@ spec:
               if [ -n "${AGENT_MODEL:-}" ]; then
                 node /app/dist/index.js config set agents.defaults.model.primary "${AGENT_MODEL}"
               fi
+              if [ -n "${AGENT_THINKING:-}" ]; then
+                node /app/dist/index.js config set agents.defaults.thinkingDefault "${AGENT_THINKING}"
+              fi
           env:
             - name: HOME
               value: /home/node

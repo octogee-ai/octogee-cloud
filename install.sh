@@ -328,7 +328,12 @@ describe_plan() {
       ;;
     gcp)
       say "This creates billable resources in Google Cloud project ${GCP_PROJECT}, region ${GCP_REGION}:"
-      say "a regional GKE cluster, highly available Cloud SQL for PostgreSQL 16,"
+      if [ -n "${GCP_ZONE:-}" ]; then
+        say "a GKE cluster in zone ${GCP_ZONE},"
+      else
+        say "a GKE cluster in region ${GCP_REGION},"
+      fi
+      say "Cloud SQL for PostgreSQL 16 (${SQL_AVAILABILITY:-REGIONAL}),"
       say "a Cloud Storage bucket, Cloud NAT and a load balancer."
       say "Chat: https://chat.${DOMAIN}  Git: https://git.${DOMAIN}"
       ;;

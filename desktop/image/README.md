@@ -7,7 +7,9 @@ must remain available to the agent and authenticated viewers while running.
 Reproducible build of the isolated gateway VM image: stock Omarchy from the
 pinned ISO, installed unattended, plus the desktop session, `vkms` + `vgem`
 for a display-less GCE guest, Docker for the gateway container, and a
-metadata-driven SSH key installer.
+metadata-driven SSH key installer. See the
+[gateway architecture](../../docs/why-octogee-cloud.md) for placement and
+trust boundaries.
 
 ## Build
 

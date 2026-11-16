@@ -17,9 +17,9 @@ Operators drive the fleet with the
 which talks to the fleet controller's Admin API.
 [Why octogee-cloud](docs/why-octogee-cloud.md) explains the trust model.
 
-The Octogee product pins a commit of this repository and builds on top of it.
-Its features and names stay out of here, and `npm run gate` in `scripts/`
-refuses private identifiers and commercial terms.
+Products can pin a commit of this repository and build on top of it.
+Keep product-specific features and private identifiers in those products;
+`npm run gate` in `scripts/` checks this boundary.
 
 ## Layout
 

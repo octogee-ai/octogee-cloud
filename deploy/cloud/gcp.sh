@@ -48,7 +48,8 @@ ensure_cluster() {
     step "GKE cluster (about 10 minutes)"
     g container clusters create "${CLUSTER_NAME}" "${CLUSTER_LOCATION[@]}" \
       --network "${NETWORK_NAME}" --subnetwork "${NETWORK_NAME}" \
-      --enable-ip-alias --enable-private-nodes --enable-dns-access --release-channel regular \
+      --enable-ip-alias --enable-private-nodes --release-channel regular \
+      --enable-dns-access --no-enable-ip-access \
       --machine-type "${MACHINE_TYPE}" --num-nodes 1 \
       --enable-autoscaling --min-nodes 1 --max-nodes 3 \
       --workload-pool "${GCP_PROJECT}.svc.id.goog" --enable-shielded-nodes >/dev/null

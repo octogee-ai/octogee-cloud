@@ -4,288 +4,101 @@
 [![Build main](https://github.com/octogee-ai/octogee-cloud/actions/workflows/build-main.yml/badge.svg?branch=main&event=push)](https://github.com/octogee-ai/octogee-cloud/actions/workflows/build-main.yml)
 [![MIT license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Octogee Cloud runs [OpenClaw](https://openclaw.ai) agents for many users on
-Kubernetes. Each user gets an agent, a Mattermost team for chat and a Gitea
-organization for git. A fleet controller places users on shared gateways,
-where people who do not know each other share one OpenClaw gateway and host
-code is denied, or on an isolated gateway of their own, and moves them between
-the two. Brokers hold the model keys and other credentials, so a gateway holds
-none.
+Run AI agents for multiple users, with chat, Git repositories, and access to
+AI models. Octogee Cloud combines OpenClaw, Mattermost, and Gitea into a
+platform you can host and manage.
 
-It is the open platform under [Octogee](https://octogee.com), and it is also
-the software factory that builds it: the files my agents load at the start of
-every session, the checks they run before a change reaches `main`, and the
-commands that ship a build. You can read the factory yourself instead of
-taking my word for it.
+Each user gets a chat account and a place to keep their agent's work. Users
+message their agents in Mattermost and work with files in Gitea. Operators
+assign users to shared infrastructure or a dedicated gateway and move
+them between the two as their needs change.
 
-- [Architecture](docs/architecture.md): the services, where state lives, and
-  how a product builds on top.
-- [How this differs from OpenClaw Enterprise](docs/why-octogee-cloud.md): the
-  trust model.
-- [Admin API automation](docs/admin-api-automation.md): how a client drives
-  fleet placement and recovery.
+**[Try it locally](docs/getting-started.md) ·
+[Run the full platform](docs/kind.md) ·
+[Contribute](CONTRIBUTING.md)**
 
-## The platform at a glance
+[![An agent answers a pull-request review request in Mattermost](docs/images/mattermost-chat.png)](docs/images/mattermost-chat.png)
 
-```mermaid
-flowchart TB
-  operator([Operator])
-  user([User])
-  provider([Model provider])
-
-  subgraph services[Platform services]
-    controller[Fleet controller<br/>and Admin API]
-    api[Platform API]
-    provisioning[Provisioning service<br/>when enabled]
-    broker[LLM broker]
-  end
-
-  hosts[Mattermost and Gitea]
-
-  subgraph gateways[Gateways]
-    shared[Shared gateway<br/>many users, no host code]
-    isolated[Isolated gateway<br/>one user, full OpenClaw]
-  end
-
-  state[(PostgreSQL and<br/>object storage)]
-
-  operator -->|octogee-fleet| controller
-  user -->|chat and git| hosts
-  controller -->|adds, retires,<br/>moves users| gateways
-  hosts <-->|messages| gateways
-  gateways -->|mount data and per-pod Git keys| api
-  controller -->|writes provisioning specs| provisioning
-  api -->|reads credentials and registers Git keys| provisioning
-  provisioning -->|reconciles accounts and resources| hosts
-  gateways -->|model calls| broker
-  broker --> provider
-  services --> state
-  gateways --> state
-```
-
-An operator runs the fleet from the command line. Users never touch the
-platform directly: they talk to their agent in Mattermost and keep their work
-in Gitea. Gateways run the agents and hold no keys. [How it works](#how-it-works)
-has the components and three walkthroughs.
-
-## Run it
-
-```bash
-curl -fsSLo install.sh https://raw.githubusercontent.com/octogee-ai/octogee-cloud/main/install.sh
-# Review install.sh before running it.
-bash install.sh
-```
-
-`install.sh` sets up the foundation: Gitea, Mattermost and one stock OpenClaw
-gateway, [on your machine](docs/getting-started.md) or [on GKE or EKS](docs/running-in-the-cloud.md).
-It does not install the fleet controller, the platform API or the LLM broker.
-
-The full platform, with the fleet controller, users and shared gateways, runs
-from the images this repository publishes on a local kind cluster, see
-[The full platform on kind](docs/kind.md), or on GKE with Cloud SQL and Cloud
-Storage, see [The full platform on GKE](docs/gke.md). Start from the
-[latest release](https://github.com/octogee-ai/octogee-cloud/releases/latest),
-or from `main`'s newest commit whose kind smokes passed, as both guides
-describe. A release publishes the images, the Helm charts and the
-`@octogee/core`, `@octogee/shared` and `@octogee/core-testing` npm packages at one version (see
-[Releasing](docs/releasing.md)). v0.1.0 came before the charts and packages
-were published and before the source directories were renamed: it has images
-only, and [its directories have their earlier names](docs/legacy-names.md#source-directories-in-v010).
-Platform state is in PostgreSQL. The full platform also ran on a fresh AWS
-account with RDS and S3. [The full platform on EKS](docs/eks.md) records what
-the run verified and its install limits. On GKE, one install
-added a shared gateway and a user, answered in Mattermost, moved the user to an
-isolated gateway and back, and retired the isolated gateway. That install is a
-single zone with no ingress; there is no production install guide yet. Users on a shared
-gateway work through Mattermost and Gitea; the OpenClaw Control UI is for
-isolated gateways only. The platform API knows a user by their Mattermost
-session or personal access token; see
-[Call the platform API as a user](docs/kind.md#call-the-platform-api-as-a-user).
-
-Some features start switched off, among them agent import and export, the
-OpenClaw dashboard, project repository sources and voice. List the ones you
-want in the chart value `octogee-api.featureFlags.enabled` (the platform API's
-values keep its earlier name), using the keys in
-[`shared/types/feature-flags.ts`](shared/types/feature-flags.ts). An unknown
-key stops the platform API at startup.
-
-## What you need to sign up for
-
-For `install.sh` on your own machine, one model key; Gemini's free tier works
-there, but not on the full platform. On Google Cloud, also a billing account
-and a domain. [See every account and tier](docs/getting-started.md#what-you-need-to-sign-up-for).
+An agent conversation from the [GKE installation walkthrough](docs/running-in-the-cloud.md),
+using Meta Muse Ember through OpenRouter. Click any screenshot to enlarge it.
 
 ## How it works
 
-### The components
+- **OpenClaw runs the agents.** An agent combines an AI model with tools to
+  carry out tasks. A gateway is the service that runs agents and connects them
+  to chat and tools.
+- **Mattermost provides chat.** Users send messages, receive replies, and
+  collaborate in channels.
+- **Gitea stores work.** Each user gets an organization with a workspace
+  repository for files and version history.
+- **Octogee Cloud manages the fleet.** The fleet controller assigns users to
+  gateways, moves them between gateways, and coordinates updates. A model
+  broker connects agents to AI providers and records usage.
 
-| Component | Directory | What it does |
+Shared gateways serve multiple users through platform-controlled tools.
+Isolated gateways give one user shell tools and the OpenClaw Control UI in a
+dedicated environment. Operators manage both with the
+[`octogee-fleet`](https://github.com/octogee-ai/octogee-fleet) command line.
+Read the [architecture guide](docs/architecture.md),
+[trust boundaries](docs/why-octogee-cloud.md), and
+[Admin API automation guide](docs/admin-api-automation.md).
+
+## Choose a starting point
+
+| What you want to do | Start here | What you get |
 | --- | --- | --- |
-| Fleet controller | `fleet-controller/` | Owns which gateways exist and which user is on which. Serves the Admin API, installs gateways with Helm, moves users, and journals every change. |
-| Platform API | `platform-api/` | Serves most HTTP routes, brokers gateway credentials and registers the serving pod's Git key. |
-| Provisioning service | [`provisioning-service/`](provisioning-service/README.md) | Converges each user's chat and Git resources, adopts recorded bot identities, issues chat credentials, and tracks each serving pod's Git key. |
-| LLM broker | `llm-broker/` | Holds the model provider keys and meters every call. |
-| Edge | `gateway-edge/` | A sidecar in each gateway pod that serves the user's workspace files, and the gateway router that sends `/g/<gatewayId>/*` to the right sidecar. |
-| Provisioner | `gateway-supervisor/` | Runs in every gateway. Mounts users assigned to the gateway, configures their agents and reports readiness. Installs without the provisioning service use it to set up chat and Git through the platform API. |
-| Gateway image | `gateway/` | OpenClaw, the provisioner and the platform's OpenClaw extensions. |
+| Talk to an agent on your machine | [Local foundation](docs/getting-started.md) | One OpenClaw gateway, Mattermost, and Gitea in Docker |
+| Explore user management and shared gateways | [Full platform on kind](docs/kind.md) | The fleet controller, platform API, model broker, chat, and Git on a local Kubernetes cluster |
+| Install the foundation on Google Cloud or AWS | [Cloud installation](docs/running-in-the-cloud.md) | One gateway, chat, and Git on GKE or EKS with managed storage |
+| Run the full platform in a cloud account | [GKE](docs/gke.md) or [EKS](docs/eks.md) | Fleet management, user accounts, model access, chat, and Git with managed storage |
+| Improve the code or documentation | [Contributing](CONTRIBUTING.md) | Local package checks and a guide to your first pull request |
 
-In a cluster, the fleet controller and the platform API still run under their
-earlier names, `glm-controller` and `octogee-api`, so those are the names
-`kubectl` and the chart values show.
-[Architecture](docs/architecture.md#services) lists what every component runs
-as.
+The local foundation needs Docker and a model provider API key for agent
+replies. The full platform uses [kind](https://kind.sigs.k8s.io/), which runs
+Kubernetes in Docker; allow at least 8 CPUs and 12 GB of memory for Docker.
+See [requirements](docs/requirements.md) for tools and
+[the installation guide](docs/getting-started.md#what-you-need-to-sign-up-for)
+for accounts and model access.
 
-### Inside a gateway
+For published builds, start from the
+[latest release](https://github.com/octogee-ai/octogee-cloud/releases/latest)
+and follow the guide included in that checkout.
+[Releasing](docs/releasing.md) explains image, chart, and package versions.
 
-```mermaid
-flowchart TB
-  mattermost[Mattermost]
-  router[Gateway router]
+## Find your way around
 
-  subgraph gateway["Gateway (a pod or a VM)"]
-    openclaw["OpenClaw gateway<br/>runs the agents"]
-    extensions["Platform extensions<br/>access, broker, chat,<br/>web and workspace tools"]
-    edge[Edge sidecar]
-    provisioner[Provisioner]
-    openclaw --- extensions
-  end
+| Location | Purpose |
+| --- | --- |
+| [`core/`](core/), [`core-testing/`](core-testing/), [`shared/`](shared/) | Shared runtime, platform state, and types |
+| [`fleet-controller/`](fleet-controller/) | Fleet controller and administration API |
+| [`platform-api/`](platform-api/), [`llm-broker/`](llm-broker/), [`gateway-edge/`](gateway-edge/) | Platform API, model access, and gateway routing |
+| [`deploy/`](deploy/), [`gateway/`](gateway/), [`desktop/`](desktop/), [`charts/`](charts/), [`terraform/`](terraform/) | Installers, images, and infrastructure |
+| [`gateway-supervisor/`](gateway-supervisor/), [`provisioning-service/`](provisioning-service/) | Gateway lifecycle and account provisioning |
+| [`scripts/`](scripts/), [`tests/`](tests/) | Operations, build tooling, and cross-package tests |
+| [`templates/`](templates/) | Starter files for agents and workspaces |
+| [`docs/`](docs/), [`AGENTS.md`](AGENTS.md) | Guides, engineering conventions, and agent instructions |
 
-  broker[LLM broker]
-  postgres[("PostgreSQL<br/>one schema per agent")]
-  api[Platform API]
+## Contribute
 
-  mattermost <-->|"each agent's<br/>bot account"| openclaw
-  router -->|workspace files| edge
-  openclaw -->|model calls| broker
-  openclaw -->|agent state| postgres
-  extensions -->|tool calls| api
-  provisioner -->|"who is assigned here,<br/>and their set-up"| api
-```
+Documentation improvements, bug reports, and code changes are welcome. You can
+run package tests with Node.js 24 and npm, without a cloud account or model key.
+[Contributing](CONTRIBUTING.md) walks through setup, checks, and commit sign-off.
+Our [code of conduct](CODE_OF_CONDUCT.md) applies in project spaces.
 
-A gateway asks for everything and is trusted with nothing. Its calls are
-authenticated as that gateway, and the platform checks which gateway is asking
-and which user it serves before it answers. On a shared gateway the agents also cannot run host code, which is
-what lets people who do not know each other share one OpenClaw process.
+## Security and published images
 
-### A message, end to end
-
-```mermaid
-sequenceDiagram
-  actor User
-  participant Mattermost
-  participant Gateway as OpenClaw gateway
-  participant Broker as LLM broker
-  participant Provider as Model provider
-
-  User->>Mattermost: writes to their agent
-  Mattermost->>Gateway: to the agent's bot account
-  Gateway->>Broker: model call with<br/>the agent's own credential
-  Broker->>Broker: checks the credential<br/>and its owner, meters the call
-  Broker->>Provider: forwards it with<br/>the provider key
-  Provider-->>Broker: completion
-  Broker-->>Gateway: completion
-  Gateway->>Mattermost: the agent replies
-  Mattermost-->>User: reply
-```
-
-The provider key never leaves the broker. The gateway holds a credential that
-is good for one agent and that the platform can revoke.
-
-### Adding a user
-
-With the provisioning service enabled, the fleet controller writes the user's
-desired resources when it admits the user and assigns a serving gateway.
-
-```mermaid
-sequenceDiagram
-  actor Operator
-  participant Controller as Fleet controller
-  participant Service as Provisioning service
-  participant Provisioner as Provisioner<br/>in the gateway
-  participant API as Platform API
-  participant Hosts as Mattermost<br/>and Gitea
-
-  Operator->>Controller: octogee-fleet user add
-  Controller->>Controller: records the user
-  Operator->>Controller: octogee-fleet user assign
-  Controller->>Controller: records the assignment,<br/>journals it
-  Controller->>Service: writes desired chat and Git resources
-  Service->>Hosts: reconciles accounts, channels,<br/>agent bot and repositories
-  Provisioner->>API: who is assigned<br/>to this gateway?
-  API-->>Provisioner: assignments
-  Provisioner->>API: get credentials and register the pod's Git key
-  API->>Service: reads provisioning results and registers the key
-  Provisioner->>Provisioner: adds the user's agent<br/>to OpenClaw
-```
-
-An operator can assign the user manually. A product can drive placement and
-migrations through the [Admin API](docs/admin-api-automation.md).
-
-### Moving a user between gateways
-
-```mermaid
-sequenceDiagram
-  actor Operator
-  participant Controller as Fleet controller
-  participant Source as Source gateway
-  participant Target as Target gateway
-
-  Operator->>Controller: octogee-fleet user migrate
-  Controller->>Target: creates it, if the move is<br/>to a new isolated gateway
-  Source->>Target: keys, then a first copy<br/>of the user's state
-  Controller->>Source: quiesce: stop serving<br/>this user
-  Controller->>Source: flush what is<br/>still in memory
-  Source->>Target: final copy of what changed
-  Controller->>Target: verify the user's<br/>state arrived
-  Controller->>Controller: cut over: the assignment<br/>now names the target
-  Target->>Target: serves the user
-  Controller->>Source: unmount the user
-```
-
-A user's agents, channels, repositories, agent stores and schedules are records
-the fleet controller owns, which is what makes the move possible. The source
-stops before the final copy, so one gateway serves the user at a time. Each
-phase is recorded, so an interrupted move continues from where it stopped.
-
-[Architecture](docs/architecture.md) goes further: where every kind of state
-lives, who authenticates how, the parts an install can replace, and how a
-product builds on top.
-
-## What is here
-
-- `AGENTS.md` is the contract every agent loads.
-- `docs/handbook/` holds the Dev Workflow chapters of the handbook.
-- The platform packages: `core`, `shared`, `fleet-controller`, `gateway-edge`,
-  `platform-api`, the model broker in `llm-broker`, and the gateway's boot
-  steps and runners in `gateway-supervisor`; the images in `gateway`,
-  `desktop` and `vm-bridge`; with `charts`, `terraform`, `templates` and
-  `scripts` beside them. `tests/` holds the
-  cross-package platform specs.
-- `fleet-controller`, `gateway`, `gateway-supervisor`, `desktop`, `vm-bridge`, `scripts` and the
-  libraries `core`, `core-testing` and `shared` each have a README: what the
-  component does and does not do, how it runs, what it talks to, its
-  configuration, and how to build and test it.
-  [Architecture](docs/architecture.md#services) links them.
-- [Legacy names](docs/legacy-names.md) lists the stored names that keep
-  their spelling from before the platform was published.
-
-The Octogee product keeps its own private repository and builds on top of this
-one.
-
-## Contributing and security
-
-[Contributing](CONTRIBUTING.md) explains how to run checks and sign off commits,
-and [Releasing](docs/releasing.md) how a release is cut.
-Pull requests run dependency review, lint, typechecks, and package tests.
 Use the [security policy](SECURITY.md) to report vulnerabilities privately.
+The [OpenClaw compatibility guide](docs/openclaw-compatibility.md) records the
+build and patches used by the fleet image.
 
-Open [Build main](https://github.com/octogee-ai/octogee-cloud/actions/workflows/build-main.yml)
-for the image manifest, Trivy reports, and CycloneDX SBOMs for both Linux
-architectures. The [Image security workflow](https://github.com/octogee-ai/octogee-cloud/actions/workflows/image-security.yml)
-rescans the latest published main build weekly. See [Verify published images](docs/kind.md#verify-published-images)
-for provenance and [Source security](https://github.com/octogee-ai/octogee-cloud/actions/workflows/source-security.yml)
-for lockfile, infrastructure, and workflow scans.
+[Build main](https://github.com/octogee-ai/octogee-cloud/actions/workflows/build-main.yml)
+publishes image manifests, vulnerability reports, and software bills of
+materials. [Verify published images](docs/kind.md#verify-published-images)
+explains how to check their provenance. The
+[source](https://github.com/octogee-ai/octogee-cloud/actions/workflows/source-security.yml)
+and [image](https://github.com/octogee-ai/octogee-cloud/actions/workflows/image-security.yml)
+security workflows run recurring scans.
 
 ## License
 
-MIT. See `LICENSE`.
+[MIT](LICENSE).

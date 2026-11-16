@@ -1,95 +1,81 @@
 # Getting started
 
-Try the Octogee Cloud foundation on your own machine in Docker, or install it
-on managed cloud services. One installer, `install.sh`, handles both. The full
-platform runs on a local kind cluster or on GKE.
+Install the local foundation, open Mattermost, and send a message to your
+agent. The foundation runs one OpenClaw gateway, Mattermost for chat, and
+Gitea for files and version history in Docker on your machine.
 
-## Three installers
+## Choose your installation
 
-This repository holds the whole platform: the fleet controller with its Admin
-API, the platform API, the gateway edge and the OpenClaw gateway image. It has
-three installers.
+| Installation | Use it to | Guide |
+| --- | --- | --- |
+| Local foundation | Talk to an agent and explore chat and Git | Continue below |
+| Full platform on kind | Manage users, shared gateways, and model access | [Full platform guide](kind.md) |
+| Full platform on GKE or EKS | Manage a fleet with cloud databases and storage | [GKE guide](gke.md) or [EKS guide](eks.md) |
+| Cloud foundation on GKE or EKS | Run chat, Git, and one gateway with managed databases and storage | [Cloud guide](running-in-the-cloud.md) |
 
-- `install.sh` installs the foundation: Kubernetes, PostgreSQL, S3 storage,
-  ingress, a Git host, chat, and one OpenClaw gateway you can talk to. It runs
-  on your own machine or on managed cloud services, and the rest of this guide
-  covers it.
-- `scripts/ops/kind-install.sh` installs the full platform on a local kind
-  cluster, with the fleet controller, users, shared gateways and the LLM broker
-  that gives agents their model provider. It copies the platform images this
-  repository publishes, or builds them from your checkout.
-  See [The full platform on kind](kind.md).
-- `scripts/ops/gke-install.sh` installs the same platform on GKE, with Cloud
-  SQL and Cloud Storage, from the published images. See
-  [The full platform on GKE](gke.md).
-- `scripts/ops/eks-install.sh` installs it on EKS, with RDS and S3.
-  [The full platform on EKS](eks.md) records the fresh-account run.
+Both local installations use kind, which runs Kubernetes in Docker. The
+foundation installer is `install.sh`. The full platform installer is
+`scripts/ops/kind-install.sh`; it adds the fleet controller, platform API, and
+model broker. Each guide lists its requirements and verification status.
 
-On the full platform, users on a shared gateway reach their agent through
-Mattermost and Gitea. The OpenClaw Control UI is for users on an isolated
-gateway only. Such a user types `/ui` in Mattermost. The reply, which only they
-can see, holds a link to their Control UI that works once and expires after two
-minutes. Anyone else who types `/ui` is told the Control UI is for isolated
-gateways only.
+To contribute without installing a cluster, start with
+[Contributing](../CONTRIBUTING.md).
 
 ## What you need to sign up for
 
-This is the complete list. Mattermost, Gitea, PostgreSQL, file storage and the
-OpenClaw gateway are installed for you and need no account.
+The installer creates the chat, Git, database, and storage services. Bring a
+model provider API key so the agent can reply.
 
-### To try it on your own machine
+### Model access
 
-| Sign up for | Tier to choose | What it costs |
+Choose a provider you already use, or create an API key with one below.
+Provider billing and model availability apply to calls made by your agents.
+
+| Provider | Export the key as | Installation |
 | --- | --- | --- |
-| [Google](https://aistudio.google.com/apikey), for a Gemini API key | [Free tier](https://ai.google.dev/pricing) | Nothing. Google may use free-tier content to improve its products, so use a paid key for private work |
+| [OpenAI](https://platform.openai.com/api-keys) | `OPENAI_API_KEY` | Foundation and full platform |
+| [Anthropic](https://platform.claude.com/settings/keys) | `ANTHROPIC_API_KEY` | Foundation and full platform |
+| [OpenRouter](https://openrouter.ai/keys) | `OPENROUTER_API_KEY` | Foundation and full platform |
+| [Google Gemini](https://aistudio.google.com/apikey) | `GEMINI_API_KEY` | Foundation |
 
-Docker Desktop on macOS and Windows is [free for personal use and small
-businesses](https://docs.docker.com/subscription/desktop-license/). Linux needs
-only Docker Engine.
+This walkthrough uses [Meta Muse Ember through OpenRouter](https://openrouter.ai/meta/muse-ember)
+with maximum reasoning. Enter your OpenRouter key before running the installer:
 
-A key from Anthropic, OpenAI or OpenRouter works in place of Gemini. They bill
-by use.
+```bash
+read -rs OPENROUTER_API_KEY && export OPENROUTER_API_KEY
+export AGENT_MODEL=openrouter/meta/muse-ember
+export AGENT_THINKING=max
+```
 
-### To run the full platform on kind
+Paste the key and press Enter. The input stays hidden and the key stays out of
+shell history. `AGENT_MODEL` selects the model and `AGENT_THINKING` selects its
+reasoning level. For another provider, use its key from the table and its
+OpenClaw model ID, or omit these two settings to use the installer's defaults.
+The installer copies supported keys exported in that terminal into the cluster.
+Export only the keys you want it to use.
 
-The kind install script needs one model provider key and stops without one.
-OpenRouter is the suggestion: one key reaches Muse Ember, the default agent
-model, and other providers' models such as Grok. An OpenAI or Anthropic key
-works too.
+For Gemini, review the provider's
+[model pricing and data-use terms](https://aistudio.google.com/docs/pricing)
+when choosing between free and paid access. The full platform's
+[model provider guide](kind.md#model-provider-keys) explains its model selection.
 
-| Sign up for | Tier to choose | What it costs | Export it as |
-| --- | --- | --- | --- |
-| [OpenRouter](https://openrouter.ai/keys), for an API key (suggested) | Pay as you go | What the agents' model calls cost | `OPENROUTER_API_KEY` |
-| [OpenAI](https://platform.openai.com/api-keys), for an API key | Pay as you go | What the agents' model calls cost | `OPENAI_API_KEY` |
-| [Anthropic](https://platform.claude.com/settings/keys), for an API key | Pay as you go | What the agents' model calls cost | `ANTHROPIC_API_KEY` |
+### Cloud hosting
 
-[Model provider keys](kind.md#model-provider-keys) lists the models the script
-sets for each key, and how to run Muse or Grok.
+For Google Cloud or AWS, use a cloud account with billing enabled, permission
+to create the resources in the [cloud guide](running-in-the-cloud.md), and a
+domain whose DNS records you can manage. Supply an email address for
+certificate notices.
 
-### To run it on Google Cloud
-
-| Sign up for | Tier to choose | What it costs |
-| --- | --- | --- |
-| [Google Cloud](https://cloud.google.com/free), with billing turned on | New account with the [welcome credit](https://cloud.google.com/free) | Nothing while the credit lasts, up to 90 days. After that you pay for what you use |
-| A domain, from any registrar | Any | A yearly fee. There is no free tier |
-| [Google](https://aistudio.google.com/apikey), for a Gemini API key | [Free tier](https://ai.google.dev/pricing) | Nothing |
-
-[Let's Encrypt](https://letsencrypt.org) issues your certificates for free. It
-needs no account, only an email address for notices.
-
-Google Cloud is not free once the credit is gone. Its
-[free tier](https://cloud.google.com/free/docs/free-cloud-features) covers the
-fee for one zonal GKE cluster, but not the nodes or networking, and Cloud SQL
-is free only for one 30-day instance. To make the credit last, follow
-[Start small](running-in-the-cloud.md#start-small-on-the-welcome-credit) and
-[set a budget alert](https://cloud.google.com/billing/docs/how-to/budgets).
+Cloud charges cover the cluster, virtual machines, database, storage, and
+networking while resources exist. Check your provider's pricing and set a
+budget before installation. The cloud guide includes sizing and removal steps.
 
 ### To manage gateways with `octogee-fleet`
 
 The [`octogee-fleet`](https://github.com/octogee-ai/octogee-fleet) command line
-signs in with your Google account. It needs one more free item in the same
-Google Cloud project: an OAuth client of the type
-**TVs and Limited Input devices**. That odd name is Google's term for sign-in
+signs in with your Google account. Create an OAuth client in the same
+Google Cloud project, with the type
+**TVs and Limited Input devices**. This client type supports sign-in
 from a command line, where `octogee-fleet` prints a code and you approve it in
 a browser. On kind it signs in with a key the installer generates instead, so
 it needs no OAuth client there.
@@ -103,25 +89,22 @@ go install github.com/octogee-ai/octogee-fleet@latest
 
 ## Install
 
-Run this from any shell. Your login shell can be zsh or anything else, because
-the script itself runs in Bash.
+Download the installer, review it, and run it with Bash. These commands work
+from a terminal on macOS or Linux, or inside WSL2 on Windows:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/octogee-ai/octogee-cloud/main/install.sh | bash
+curl -fsSLo install.sh https://raw.githubusercontent.com/octogee-ai/octogee-cloud/main/install.sh
+# Review install.sh before running it.
+bash install.sh --target=local
 ```
 
-The installer asks where to run, checks your machine, and tells you how to fix
-anything missing. It then shows what it will create and asks before it creates
-anything.
-
-To read the script before you run it:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/octogee-ai/octogee-cloud/main/install.sh -o install.sh
-```
+The installer checks your machine and gives instructions for missing tools.
+It then shows what it will create and asks for confirmation. It checks out the
+repository at `~/octogee-cloud` by default. Run the `deploy/` commands below
+from that checkout:
 
 ```bash
-bash install.sh
+cd ~/octogee-cloud
 ```
 
 To check your machine without installing, or to run without questions:
@@ -167,19 +150,25 @@ images. When it finishes:
 
 3. Send a direct message to `@agent`.
 
-The agent needs a model key to answer. If one is exported in your shell, the
-installer lists it before you confirm and copies it into the cluster. Without
-one, the agent answers with a sign-in error. To add a key later, run the install
-recipe again with it set. It is safe to run repeatedly.
+You can also invite `@agent` to a channel and mention it in a message:
+
+[![Mattermost conversation with a real Muse Ember reply](images/mattermost-chat.png)](images/mattermost-chat.png)
+
+This conversation was captured on the GKE foundation installation. Click the
+image to view it at full size.
+
+The installer lists exported model keys before you confirm and copies them
+into the cluster. To update the key or model, run the recipe again:
 
 ```bash
-ANTHROPIC_API_KEY=your-key ./deploy/local/up.sh
+read -rs OPENROUTER_API_KEY && export OPENROUTER_API_KEY
+export AGENT_MODEL=openrouter/meta/muse-ember
+export AGENT_THINKING=max
+./deploy/local/up.sh
 ```
 
-It also reads `OPENAI_API_KEY`, `GEMINI_API_KEY` and `OPENROUTER_API_KEY`. The
-agent uses the first of these it finds, in the order Anthropic, OpenAI, Gemini,
-OpenRouter. With a Gemini key it uses `gemini-3.6-flash`, which is on the free
-tier.
+Without `AGENT_MODEL`, the installer selects a default model from the first
+available key in this order: Anthropic, OpenAI, Gemini, OpenRouter.
 
 Git is at <http://git.localhost:8088> with the same username and password.
 
@@ -190,6 +179,17 @@ To open the OpenClaw Control UI, start a port-forward and go to
 ```bash
 kubectl --kubeconfig ~/.kube/octogee-cloud-local -n octogee-cloud-local port-forward deploy/gateway 18789
 ```
+
+Use another local port if `18789` is already in use, for example
+`18790:18789`, and open `http://localhost:18790`. You can share that local link
+in Mattermost with someone running the same port-forward. Each browser signs
+in with the gateway token; keep the token out of chat messages and screenshots.
+
+[![The same Mattermost conversation in OpenClaw, with Muse Ember and Maximum reasoning selected](images/openclaw-control-ui.png)](images/openclaw-control-ui.png)
+
+The foundation Control UI, opened from a link in Mattermost through a local
+port-forward to the GKE gateway. The fleet's isolated-gateway `/ui` command is
+a separate flow described in the [full platform guide](kind.md).
 
 Everything runs inside a kind cluster with its own kubeconfig at
 `~/.kube/octogee-cloud-local`. The installer does not change your current
@@ -209,27 +209,9 @@ as the local install, not the full platform.
 
 ## Work on the code
 
-You need Node.js 24 for this part and for the kind install. `install.sh` does
-not need it.
-
-```bash
-git clone https://github.com/octogee-ai/octogee-cloud.git
-```
-
-There are no npm workspaces. Each package, such as `core`, `fleet-controller` or
-`scripts`, has its own `package.json` and lockfile, so install the one you work
-on. For `scripts`:
-
-```bash
-cd octogee-cloud/scripts && npm ci
-```
-
-```bash
-npx tsc --noEmit && npm run gate
-```
-
-`.github/workflows/checks.yml` has the typecheck and test commands each pull
-request runs, and [AGENTS.md](../AGENTS.md) describes every package.
+[Contributing](../CONTRIBUTING.md) covers checkout setup, Node.js 24, package
+checks, and pull requests. [AGENTS.md](../AGENTS.md) maps the packages and their
+engineering conventions.
 
 ## Remove it
 
