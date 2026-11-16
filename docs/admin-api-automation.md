@@ -58,7 +58,7 @@ readable payload. Each user carries only `uid`, `slug`, `admitted`,
 
 `?sections=` names the sections to answer, comma-separated, from `config`,
 `sharedPoolAutomation`, `users`, `gateways`, `releases`, `assignments`,
-`runtimes`, `operations` and `migrations`. Without it the answer is the one
+`runtimes`, `operations`, `migrations` and `placementAutomation`. Without it the answer is the one
 above, unchanged. With it the answer always carries `generatedAt`,
 `fleetControllerStartedAt` and `sections` (the selection in the order listed
 here), then each selected section, all from one read-only transaction that
@@ -270,6 +270,46 @@ so while the fleet controller owns placement no verb makes a Kubernetes call.
 A yield can only be
 stored while the owner is `client`, so handing placement back to the fleet
 controller clears the yield in the same write.
+
+### Handing placement over and back
+
+The operator sets the owner with the Admin API alone:
+
+- `GET /placement-automation` answers `{owner, yieldedAt, phase}`. The
+  `placementAutomation` section of `/fleet/state` answers the same object.
+- `POST /placement-automation/owner` with `{"owner": "client"}` or
+  `{"owner": "fleet-controller"}` sets it, journals the request and answers the
+  same object. Setting the current owner writes nothing and answers success.
+  It takes `?dryRun=true` and an `Idempotency-Key` like every other verb.
+
+`phase` is the handoff state:
+
+| `phase` | Stored | Who acts |
+|---|---|---|
+| `fleet-controller` | owner `fleet-controller`, no yield | The fleet controller's pass. Every verb answers `placement-owner`. |
+| `handoff-pending` | owner `client`, no yield | No one decides. A pass that started before the switch finishes and may still commit; every verb answers `placement-owner`. |
+| `client` | owner `client`, yield written | The client. The fleet controller's pass decides nothing and each of its placement writes is refused. |
+
+Setting `client` clears any yield, so the client acts only after a fresh one.
+The fleet controller reads the owner at the start of each pass. The first pass
+that sees `client` while no other pass of that fleet controller is running
+writes `placementAutomationYieldedAt` and decides nothing. A restarted fleet
+controller yields on its first pass. Setting `fleet-controller` stores the owner
+and clears the yield in one write: every verb answers `placement-owner` from
+then on, and the next pass decides again. Every placement write checks the
+owner inside its own serializable transaction, so a write that raced a switch
+either committed before it or is refused; none is half-applied.
+
+A migration the fleet controller enqueued before it yielded keeps running; the
+operation worker finishes it whoever owns placement. The client sees it in the
+`migrations` and `operations` sections, and a request for the same operation
+answers `already-enqueued`.
+
+The fleet controller logs every owner or yield change it observes, exports
+`glm_placement_automation_owner{owner,phase}`,
+`glm_placement_automation_yielded_timestamp_seconds` and
+`glm_placement_automation_handoff_pending_observations`, and logs an error when
+a handoff stays pending for 8 observations (two minutes) and every 8 after.
 
 ### What a 409 means
 

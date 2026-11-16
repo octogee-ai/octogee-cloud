@@ -21,6 +21,7 @@ import { AdminDryRunPlanned, admitAdminDryRunMarker, isAdminDryRun, refuseUnansw
 import { addAdminComputerRoutes } from "./admin-vm-router.js";
 import { addAdminUserRoutes } from "./admin-user-router.js";
 import { addAdminSharedPoolRoutes } from "./admin-shared-pool-router.js";
+import { addAdminPlacementOwnerRoutes } from "./admin-placement-owner-router.js";
 import { addAdminPlacementRoutes } from "./admin-placement-router.js";
 import { addAdminPlacementSharedRoutes } from "./admin-placement-shared-router.js";
 import { addAdminPlacementIsolatedRoutes } from "./admin-placement-isolated-router.js";
@@ -3283,6 +3284,7 @@ export function addAdminFleetRoutes(router, deps) {
         journal: runAdminFleetMutation,
         readGatewayKubernetes: deps.readGatewayKubernetes,
     });
+    addAdminPlacementOwnerRoutes(router, { store, journal: runAdminFleetMutation, log: (message) => logger.info(message) });
     if (deps.placement)
         addAdminPlacementRoutes(router, { ...deps.placement, store, journal: runAdminFleetMutation });
     if (deps.placementShared)

@@ -8,6 +8,7 @@ import { withCurrentSizingKey, } from "./sizing-key.js";
 import { builderActivateOperationId } from "@octogee/shared/types/isolated-operation-ids";
 import { gatewayAuthorizationFromRootDocument } from "./gateway-live-release.js";
 import { gatewayRetiredInStore } from "./gateway-retirement-claim.js";
+import { assertFleetControllerOwnsPlacementAutomation } from "./placement-automation-owner.js";
 import { MalformedRecordError } from "./platform-state/index.js";
 const USER_ACTIVATION_LEASE_SOURCE = "builder-activation-lease";
 const MIGRATE_USER_OPERATION_KIND = "migrate-user";
@@ -1103,7 +1104,10 @@ async function validateRecoverySource(tx, params, sourceRootData, sourceRuntime)
 }
 export async function commitUnavailableGatewayRecoveryAtomic(deps, params) {
     const now = nowMs(deps);
-    await deps.store.transaction({ label: "fleet-state.commitUnavailableGatewayRecoveryAtomic" }, (tx) => commitUnavailableGatewayRecoveryInTransaction(tx, params, now));
+    await deps.store.transaction({ label: "fleet-state.commitUnavailableGatewayRecoveryAtomic" }, async (tx) => {
+        await assertFleetControllerOwnsPlacementAutomation(tx);
+        return commitUnavailableGatewayRecoveryInTransaction(tx, params, now);
+    });
     return { operationId: params.operationId };
 }
 export async function commitUnavailableGatewayRecoveryInTransaction(tx, params, now) {
@@ -1301,7 +1305,10 @@ function recoveredRuntimeResetUserStateIsExact(input) {
 }
 export async function commitRecoveredDisposableRuntimeResetAtomic(deps, params) {
     const now = nowMs(deps);
-    await deps.store.transaction({ label: "fleet-state.commitRecoveredDisposableRuntimeResetAtomic" }, (tx) => commitRecoveredDisposableRuntimeResetInTransaction(tx, params, now));
+    await deps.store.transaction({ label: "fleet-state.commitRecoveredDisposableRuntimeResetAtomic" }, async (tx) => {
+        await assertFleetControllerOwnsPlacementAutomation(tx);
+        return commitRecoveredDisposableRuntimeResetInTransaction(tx, params, now);
+    });
     return { operationId: params.operationId };
 }
 export async function commitRecoveredDisposableRuntimeResetInTransaction(tx, params, now) {

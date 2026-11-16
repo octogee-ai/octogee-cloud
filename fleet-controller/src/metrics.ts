@@ -11,6 +11,7 @@ let vmDiskUsage: VmDiskUsageSample[] = [];
 const configRoll = new Map<string, number>();
 const disruptionObservations = new Map<string, number>();
 let disruptionLastObservedMs: number | null = null;
+let placementAutomation: PlacementAutomationMetricSample | null = null;
 let disruptionSnapshot = {
   spotNodes: 0,
   onDemandNodes: 0,
@@ -18,6 +19,19 @@ let disruptionSnapshot = {
   gatewayPods: 0,
   pendingGatewayPods: 0,
 };
+
+export interface PlacementAutomationMetricSample {
+  owner: "fleet-controller" | "client";
+  yieldedAt: number | null;
+  phase: "fleet-controller" | "handoff-pending" | "client";
+  pendingObservations: number;
+}
+
+const PLACEMENT_AUTOMATION_PHASES: ReadonlyArray<Pick<PlacementAutomationMetricSample, "owner" | "phase">> = [
+  { owner: "fleet-controller", phase: "fleet-controller" },
+  { owner: "client", phase: "handoff-pending" },
+  { owner: "client", phase: "client" },
+];
 
 export type ConfigRollStage = "checkpoint" | "proof" | "unfreeze";
 export type ConfigRollResult = "ok" | "fail";
@@ -76,6 +90,7 @@ export function resetMetrics(): void {
   configRoll.clear();
   disruptionObservations.clear();
   disruptionLastObservedMs = null;
+  placementAutomation = null;
   disruptionSnapshot = {
     spotNodes: 0,
     onDemandNodes: 0,
@@ -130,6 +145,27 @@ export function recordDisruptionSnapshot(sample: DisruptionSnapshotSample): void
     pendingGatewayPods: Math.max(0, Math.trunc(sample.pendingGatewayPods)),
   };
   disruptionLastObservedMs = sample.now ?? Date.now();
+}
+
+export function recordPlacementAutomation(sample: PlacementAutomationMetricSample): void {
+  placementAutomation = { ...sample };
+}
+
+function placementAutomationLines(): string[] {
+  if (placementAutomation === null) return [];
+  const current = placementAutomation;
+  return [
+    "# HELP glm_placement_automation_owner Placement automation owner and handoff phase; 1 marks the current one.",
+    "# TYPE glm_placement_automation_owner gauge",
+    ...PLACEMENT_AUTOMATION_PHASES.map(({ owner, phase }) =>
+      `glm_placement_automation_owner{owner="${owner}",phase="${phase}"} ${current.owner === owner && current.phase === phase ? 1 : 0}`),
+    "# HELP glm_placement_automation_yielded_timestamp_seconds Unix time the fleet controller yielded placement automation to the client; 0 when it has not.",
+    "# TYPE glm_placement_automation_yielded_timestamp_seconds gauge",
+    `glm_placement_automation_yielded_timestamp_seconds ${((current.yieldedAt ?? 0) / 1000).toFixed(3)}`,
+    "# HELP glm_placement_automation_handoff_pending_observations Consecutive observations of a handoff to the client still awaiting the fleet controller's yield.",
+    "# TYPE glm_placement_automation_handoff_pending_observations gauge",
+    `glm_placement_automation_handoff_pending_observations ${current.pendingObservations}`,
+  ];
 }
 
 export function renderMetrics(): string {
@@ -191,6 +227,7 @@ export function renderMetrics(): string {
     "# HELP glm_disruption_pending_gateway_pods Current Pending gateway pods observed by the disruption observer.",
     "# TYPE glm_disruption_pending_gateway_pods gauge",
     `glm_disruption_pending_gateway_pods ${disruptionSnapshot.pendingGatewayPods}`,
+    ...placementAutomationLines(),
     "",
   ].join("\n");
 }

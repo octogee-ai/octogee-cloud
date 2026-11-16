@@ -10,9 +10,11 @@ import {
 } from "@octogee/shared/types/gateway-releases";
 import type { SharedGatewayPoolConfig } from "@octogee/shared/types/shared-gateway-pool";
 import { gatewayArtifactFromReleasePayload } from "./gateway-live-release.js";
+import { assertFleetControllerOwnsPlacementAutomation, PlacementOwnerRefusedError } from "./placement-automation-owner.js";
 import { readSharedGatewayPoolConfigInStore } from "./shared-gateway-pool-read.js";
 import {
   FleetMutationIdempotencyError,
+  FleetMutationRefusedError,
   runNormalFleetMutation,
 } from "./normal-fleet-mutation.js";
 import type { FleetRegistryRecord } from "./platform-state/fleet-registry.js";
@@ -240,8 +242,15 @@ async function appendRecoveryRollback(
   deps: SharedGatewayRollRecoveryDeps,
   input: SupersedeRollingSharedGatewayRollInput,
 ): Promise<SupersedeRollingSharedGatewayRollResult> {
-  return deps.store.transaction({ label: "shared-gateway-roll-recovery.append" }, (transaction) =>
-    appendSharedRollRecoveryInTransaction(transaction, input, { now: deps.now() }));
+  try {
+    return await deps.store.transaction({ label: "shared-gateway-roll-recovery.append" }, async (transaction) => {
+      await assertFleetControllerOwnsPlacementAutomation(transaction);
+      return appendSharedRollRecoveryInTransaction(transaction, input, { now: deps.now() });
+    });
+  } catch (error) {
+    if (error instanceof PlacementOwnerRefusedError) throw new FleetMutationRefusedError(error);
+    throw error;
+  }
 }
 
 function withObservedKubernetes(

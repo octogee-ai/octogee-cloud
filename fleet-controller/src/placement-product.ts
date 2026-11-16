@@ -1,4 +1,5 @@
 import type { GatewayArtifact } from "@octogee/core/gateway-live-release";
+import type { PlacementAutomationGate } from "@octogee/core/placement-automation-handoff";
 import type { PlatformStateStore } from "@octogee/core/platform-state";
 import type { SizingKeyReader } from "@octogee/core/sizing-key";
 import { createRepeatSquelch } from "@octogee/shared/server/repeat-squelch";
@@ -7,12 +8,19 @@ import {
   startGatewayKubernetesObserver,
   type ReadGatewayPodDiagnosticsBatch,
 } from "./gateway-kubernetes-observation.js";
+import { recordPlacementAutomation } from "./metrics.js";
+import {
+  PLACEMENT_HANDOFF_STUCK_AFTER_OBSERVATIONS,
+  startPlacementAutomationObserver,
+  type PlacementAutomationObserverDeps,
+} from "./placement-automation-observer.js";
 import { logPlatformPlacementNotices, PLATFORM_PLACEMENT_NOTICE_REPEAT_MS } from "./platform-placement-notices.js";
 import type { UserHomeMigrationDeps } from "./user-home-migration.js";
 import type { UserPolicyInputsSource } from "./user-placement-document.js";
 
 export interface PlacementProductDeps {
   store: PlatformStateStore;
+  placementAutomation: PlacementAutomationGate;
   informer: FleetInformer;
   policyInputs: UserPolicyInputsSource;
   readSizingKey: SizingKeyReader;
@@ -20,6 +28,7 @@ export interface PlacementProductDeps {
   platformArtifact: GatewayArtifact;
   now(): number;
   log(message: string): void;
+  error(message: string): void;
   debug(message: string): void;
   ensureAuthSecret(input: { namespace: string; gatewayId: string }): Promise<unknown>;
   readGatewayPodDiagnostics(input: { namespace: string; gatewayId: string }): Promise<{
@@ -37,6 +46,28 @@ export function startPlacement(
   product: PlacementProductFactory | undefined,
   deps: PlacementProductDeps,
   startObserver: (deps: PlacementProductDeps) => () => void = startPlatformObserver,
+  startAutomationObserver: (deps: PlacementAutomationObserverDeps) => () => void = startPlacementAutomationObserver,
+): () => void {
+  const stopAutomationObserver = startAutomationObserver({
+    store: deps.store,
+    gate: deps.placementAutomation,
+    runsPlatformPass: product === undefined,
+    stuckAfterObservations: PLACEMENT_HANDOFF_STUCK_AFTER_OBSERVATIONS,
+    log: deps.log,
+    error: deps.error,
+    record: recordPlacementAutomation,
+  });
+  const stopPlacement = startPlacementAutomation(product, deps, startObserver);
+  return () => {
+    stopPlacement();
+    stopAutomationObserver();
+  };
+}
+
+function startPlacementAutomation(
+  product: PlacementProductFactory | undefined,
+  deps: PlacementProductDeps,
+  startObserver: (deps: PlacementProductDeps) => () => void,
 ): () => void {
   if (product) {
     deps.log("[glm-controller] placement: product automation installed");

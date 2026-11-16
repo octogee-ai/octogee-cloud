@@ -29,6 +29,7 @@ import {
 import { builderActivateOperationId } from "@octogee/shared/types/isolated-operation-ids";
 import { gatewayAuthorizationFromRootDocument } from "./gateway-live-release.js";
 import { gatewayRetiredInStore } from "./gateway-retirement-claim.js";
+import { assertFleetControllerOwnsPlacementAutomation } from "./placement-automation-owner.js";
 import { MalformedRecordError } from "./platform-state/index.js";
 import type {
   ActivationLeaseFence,
@@ -1501,8 +1502,10 @@ export async function commitUnavailableGatewayRecoveryAtomic(
   params: UnavailableGatewayRecoveryParams,
 ): Promise<{ operationId: string }> {
   const now = nowMs(deps);
-  await deps.store.transaction({ label: "fleet-state.commitUnavailableGatewayRecoveryAtomic" }, (tx) =>
-    commitUnavailableGatewayRecoveryInTransaction(tx, params, now));
+  await deps.store.transaction({ label: "fleet-state.commitUnavailableGatewayRecoveryAtomic" }, async (tx) => {
+    await assertFleetControllerOwnsPlacementAutomation(tx);
+    return commitUnavailableGatewayRecoveryInTransaction(tx, params, now);
+  });
   return { operationId: params.operationId };
 }
 
@@ -1766,8 +1769,10 @@ export async function commitRecoveredDisposableRuntimeResetAtomic(
   params: RecoveredDisposableRuntimeResetParams,
 ): Promise<{ operationId: string }> {
   const now = nowMs(deps);
-  await deps.store.transaction({ label: "fleet-state.commitRecoveredDisposableRuntimeResetAtomic" }, (tx) =>
-    commitRecoveredDisposableRuntimeResetInTransaction(tx, params, now));
+  await deps.store.transaction({ label: "fleet-state.commitRecoveredDisposableRuntimeResetAtomic" }, async (tx) => {
+    await assertFleetControllerOwnsPlacementAutomation(tx);
+    return commitRecoveredDisposableRuntimeResetInTransaction(tx, params, now);
+  });
   return { operationId: params.operationId };
 }
 

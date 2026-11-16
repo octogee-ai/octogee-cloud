@@ -1,8 +1,9 @@
 import { GATEWAY_UNREACHABLE_AFTER_MS } from "@octogee/shared/types/fleet-controller";
 import { hasFreshReadyKubernetesObservation, isReleasePayload, projectGatewayDesiredRootForGateway, releasePayloadHash, } from "@octogee/shared/types/gateway-releases";
 import { gatewayArtifactFromReleasePayload } from "./gateway-live-release.js";
+import { assertFleetControllerOwnsPlacementAutomation, PlacementOwnerRefusedError } from "./placement-automation-owner.js";
 import { readSharedGatewayPoolConfigInStore } from "./shared-gateway-pool-read.js";
-import { FleetMutationIdempotencyError, runNormalFleetMutation, } from "./normal-fleet-mutation.js";
+import { FleetMutationIdempotencyError, FleetMutationRefusedError, runNormalFleetMutation, } from "./normal-fleet-mutation.js";
 const ACTOR = "glm-controller-placement-policy";
 export function sharedRollRecoveryOperationId(input) {
     return `recover-shared-roll-${input.sourceGatewayId}-to-${input.targetGatewayId}-r${input.expectedDesiredRelease}-to-r${input.expectedLiveRelease}`;
@@ -150,7 +151,17 @@ function recoveryRolloutOperation(input, operationId, release, payload, now) {
     };
 }
 async function appendRecoveryRollback(deps, input) {
-    return deps.store.transaction({ label: "shared-gateway-roll-recovery.append" }, (transaction) => appendSharedRollRecoveryInTransaction(transaction, input, { now: deps.now() }));
+    try {
+        return await deps.store.transaction({ label: "shared-gateway-roll-recovery.append" }, async (transaction) => {
+            await assertFleetControllerOwnsPlacementAutomation(transaction);
+            return appendSharedRollRecoveryInTransaction(transaction, input, { now: deps.now() });
+        });
+    }
+    catch (error) {
+        if (error instanceof PlacementOwnerRefusedError)
+            throw new FleetMutationRefusedError(error);
+        throw error;
+    }
 }
 function withObservedKubernetes(runtime, observation) {
     if (runtime === null || observation === undefined)

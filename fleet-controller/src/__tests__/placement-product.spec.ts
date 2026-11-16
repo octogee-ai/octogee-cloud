@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
+import { createPlacementAutomationGate } from "@octogee/core/placement-automation-handoff";
 import type { FleetInformer } from "../fleet-informer.js";
 import type { GatewayPodDiagnostics } from "../gateway-kubernetes-observation.js";
+import type { PlacementAutomationObserverDeps } from "../placement-automation-observer.js";
 import { startPlacement, type PlacementProductDeps } from "../placement-product.js";
 import { noUserPolicyInputs } from "../user-placement-document.js";
 
@@ -60,10 +62,13 @@ const informerWithoutMirrors = {
   usersWithoutMalformed: () => null,
 } as unknown as FleetInformer;
 
-function placementDeps(records: Records, log: (message: string) => void): PlacementProductDeps {
+function placementDeps(records: Records, log: (message: string) => void, error: (message: string) => void = log): PlacementProductDeps {
   const ready: GatewayPodDiagnostics = { status: "ready", totalPods: 1, readyPods: 1 };
+  const store = createDocumentFixtureStore(records);
   return {
-    store: createDocumentFixtureStore(records),
+    store,
+    placementAutomation: createPlacementAutomationGate({ store, now: () => 1_000, log, warn: log }),
+    error,
     informer: informerWithoutMirrors,
     policyInputs: noUserPolicyInputs,
     readSizingKey: async () => null,
@@ -93,7 +98,7 @@ describe("placement on a controller with no product installed", () => {
     expect(records.get("gateways/shared-old")?.desiredStatus).toBe("draining");
     expect(records.get("users/uid-cy")?.provisioning).toEqual(user("cy", null).provisioning);
     expect(records.get("glmGateways/shared-a")?.kubernetes).toMatchObject({ status: "ready", totalPods: 1, readyPods: 1, observedAt: 1_000 });
-    expect(log.mock.calls.map(([line]) => String(line))).toEqual([
+    expect(log.mock.calls.map(([line]) => String(line)).filter((line) => !line.startsWith("[placement-automation]"))).toEqual([
       expect.stringContaining("placement: platform only; no user is placed, moved, woken or idled automatically"),
       "[placement] ⚠ platform only: 1 user(s) have no gateway: uid-cy; place them with user assign",
       "[placement] ⚠ platform only: draining shared gateway shared-old keeps 1 user(s); " +
@@ -106,13 +111,41 @@ describe("placement on a controller with no product installed", () => {
     const stopProduct = vi.fn();
     const product = vi.fn(() => stopProduct);
     const startObserver = vi.fn(() => () => undefined);
+    const stopAutomationObserver = vi.fn();
+    const startAutomationObserver = vi.fn((_deps: PlacementAutomationObserverDeps) => stopAutomationObserver);
     const deps = placementDeps(records, vi.fn());
 
-    const stop = startPlacement(product, deps, startObserver);
+    const stop = startPlacement(product, deps, startObserver, startAutomationObserver);
     stop();
 
     expect(product).toHaveBeenCalledWith(deps);
     expect(startObserver).not.toHaveBeenCalled();
     expect(stopProduct).toHaveBeenCalledOnce();
+    expect(startAutomationObserver.mock.calls[0]?.[0]).toMatchObject({ gate: deps.placementAutomation, runsPlatformPass: false });
+    expect(stopAutomationObserver).toHaveBeenCalledOnce();
+  });
+
+  it("yields placement automation at once on a platform-only install, which decides nothing in-process", async () => {
+    const records = platformInstall();
+    records.set("config/orchestrator", { placementAutomationOwner: "client" });
+    const log = vi.fn();
+
+    const stop = startPlacement(undefined, placementDeps(records, log));
+    await vi.waitFor(() => expect(records.get("config/orchestrator")).toMatchObject({ placementAutomationYieldedAt: 1_000 }));
+    stop();
+
+    expect(log).toHaveBeenCalledWith("[placement-automation] owner=client yieldedAt=1000 phase=client");
+  });
+
+  it("leaves the yield to an installed product, showing the handoff as pending until its pass yields", async () => {
+    const records = platformInstall();
+    records.set("config/orchestrator", { placementAutomationOwner: "client" });
+    const log = vi.fn();
+
+    const stop = startPlacement(vi.fn(() => () => undefined), placementDeps(records, log), vi.fn(() => () => undefined));
+    await vi.waitFor(() => expect(log).toHaveBeenCalledWith("[placement-automation] owner=client yieldedAt=none phase=handoff-pending"));
+    stop();
+
+    expect(records.get("config/orchestrator")?.placementAutomationYieldedAt).toBeUndefined();
   });
 });
