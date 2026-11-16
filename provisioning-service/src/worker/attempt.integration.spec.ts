@@ -174,6 +174,66 @@ describe.skipIf(!dsn)("a provisioning attempt", { timeout: 30_000 }, () => {
     expect(harness.log.lines.some((line) => line.level === "error" && line.message === "the git host refused the git key; recorded on the key and the rest of the attempt continues")).toBe(true);
   });
 
+  it("fails the attempt and keeps the row for a retry when releasing a key being deleted fails terminally", async () => {
+    await harness.request("PUT", "/v1/users/u1/provisioning", { body: { spec: spec("lin") } });
+    await harness.request("PUT", "/v1/users/u1/git-keys/gateway-a", { token: TOKENS.platformApi, body: { spec: { publicKey: KEY_A } } });
+    await untilSettled(harness);
+    harness.git.host.failNext("releaseKey", "terminal");
+
+    await harness.request("DELETE", "/v1/users/u1/git-keys/gateway-a", { token: TOKENS.platformApi });
+    await untilSettled(harness);
+
+    expect(harness.git.keys.get("lin")).toEqual([{ publicKey: KEY_A, holder: "gateway-a" }]);
+    const { rows } = await harness.service.db.pool.query(`SELECT deletion_requested_at FROM ${harness.service.db.table("git_keys")} WHERE uid = 'u1'`);
+    expect(rows).toEqual([{ deletion_requested_at: expect.any(Date) }]);
+    expect((await provisioned("u1")).status.work.state).toBe("parked");
+    const events = (await harness.request("GET", "/v1/users/u1/provisioning/events")).body.items;
+    expect(events[0]).toMatchObject({ result: "parked", reason: "GitKeyFailed" });
+  });
+
+  it("puts the refusal of a key in the attempt's git-keys step", async () => {
+    harness.git.owners.add("ada");
+    harness.git.keys.set("ada", [{ publicKey: KEY_A, holder: "gateway-x/pod-1" }]);
+    await harness.request("PUT", "/v1/users/u1/provisioning", { body: { spec: spec("lin") } });
+    await harness.request("PUT", "/v1/users/u1/git-keys/gateway-a", { token: TOKENS.platformApi, body: { spec: { publicKey: KEY_A } } });
+    await untilSettled(harness);
+
+    const events = (await harness.request("GET", "/v1/users/u1/provisioning/events")).body.items;
+    expect(events[0].steps.find((record: { step: string }) => record.step === "git-keys"))
+      .toMatchObject({ outcome: "succeeded", message: expect.stringContaining("gateway-a: register git key: 422") });
+  });
+
+  it("attempts a permanently refused key once per backoff window however often it is put, and a changed key at once", async () => {
+    harness.git.owners.add("ada");
+    harness.git.keys.set("ada", [{ publicKey: KEY_A, holder: "gateway-x/pod-1" }]);
+    const registers = () => harness.git.host.calls.filter((call) => call.operation === "registerKey").length;
+    const put = (publicKey: string) => harness.request("PUT", "/v1/users/u1/git-keys/gateway-a", { token: TOKENS.platformApi, body: { spec: { publicKey } } });
+    await harness.request("PUT", "/v1/users/u1/provisioning", { body: { spec: spec("lin") } });
+    await put(KEY_A);
+    await untilSettled(harness);
+    expect(registers()).toBe(1);
+
+    for (let attempt = 0; attempt < 5; attempt += 1) await put(KEY_A);
+    await untilSettled(harness);
+    expect(registers()).toBe(1);
+    const refused = (await put(KEY_A)).body;
+    expect(Date.parse(refused.status.nextAttemptAt) - Date.now()).toBeGreaterThan(30_000);
+    expect(refused.status.conditions[0]).toMatchObject({ status: "False", reason: "GitKeyHeldElsewhere" });
+
+    await harness.service.db.pool.query(`UPDATE ${harness.service.db.table("git_keys")} SET retry_after = now() - interval '1 second'`);
+    await put(KEY_A);
+    await untilSettled(harness);
+    expect(registers()).toBe(2);
+    const backedOff = (await put(KEY_A)).body;
+    expect(Date.parse(backedOff.status.nextAttemptAt) - Date.now()).toBeGreaterThan(90_000);
+
+    await put(KEY_B);
+    await untilSettled(harness);
+    expect(registers()).toBe(3);
+    const changed = (await put(KEY_B)).body;
+    expect(changed.status).toMatchObject({ nextAttemptAt: null, conditions: [{ status: "True" }] });
+  });
+
   it("records a key the user added to their own account by hand on the key alone, and leaves that key there", async () => {
     await harness.request("PUT", "/v1/users/u1/provisioning", { body: { spec: spec("lin") } });
     harness.git.owners.add("lin");

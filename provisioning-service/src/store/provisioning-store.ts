@@ -51,6 +51,8 @@ interface GitKeyRow {
   deletion_requested_at: Date | null;
   observed_generation: number;
   conditions: ProvisioningCondition<GitKeyConditionType>[];
+  refusals: number;
+  retry_after: Date | null;
 }
 
 export type WriteOutcome = "created" | "changed" | "unchanged";
@@ -103,7 +105,11 @@ export function toGitKey(row: GitKeyRow): GitKey {
     resourceVersion: String(row.resource_version),
     deletionRequestedAt: row.deletion_requested_at ? row.deletion_requested_at.toISOString() : null,
     spec: { publicKey: row.public_key },
-    status: { observedGeneration: row.observed_generation, conditions: row.conditions },
+    status: {
+      observedGeneration: row.observed_generation,
+      conditions: row.conditions,
+      nextAttemptAt: row.retry_after ? row.retry_after.toISOString() : null,
+    },
   };
 }
 
@@ -339,10 +345,11 @@ export class ProvisioningStore {
     return this.db.write(async (client, bumpVersion) => {
       const owner = await client.query(`SELECT 1 FROM ${t("provisionings")} WHERE uid = $1 FOR UPDATE`, [uid]);
       if (owner.rowCount === 0) throw new ApiError(404, "not-found", "no provisioning for this user");
-      const { rows } = await client.query<GitKeyRow>(`SELECT * FROM ${t("git_keys")} WHERE uid = $1 AND gateway_id = $2 FOR UPDATE`, [uid, gatewayId]);
+      const { rows } = await client.query<GitKeyRow & { retry_due: boolean }>(
+        `SELECT *, (retry_after IS NULL OR retry_after <= now()) AS retry_due FROM ${t("git_keys")} WHERE uid = $1 AND gateway_id = $2 FOR UPDATE`, [uid, gatewayId]);
       const current = rows[0];
       if (current && current.public_key === spec.publicKey && current.deletion_requested_at === null) {
-        if (!keyRegistered(current)) await this.makeIdleWorkDue(client, uid);
+        if (!keyRegistered(current) && current.retry_due) await this.makeIdleWorkDue(client, uid);
         return { outcome: "unchanged" as const, key: toGitKey(current) };
       }
       const keyVersion = await bumpVersion(uid);
@@ -354,7 +361,8 @@ export class ProvisioningStore {
           [uid, gatewayId, keyVersion.toString(), spec.publicKey, JSON.stringify(pendingConditions(GIT_KEY_CONDITION_TYPES, new Date()))])).rows[0];
       } else {
         written = (await client.query<GitKeyRow>(
-          `UPDATE ${t("git_keys")} SET generation = generation + 1, resource_version = $3, public_key = $4, deletion_requested_at = NULL
+          `UPDATE ${t("git_keys")} SET generation = generation + 1, resource_version = $3, public_key = $4, deletion_requested_at = NULL,
+              refusals = 0, retry_after = NULL
             WHERE uid = $1 AND gateway_id = $2 RETURNING *`, [uid, gatewayId, keyVersion.toString(), spec.publicKey])).rows[0];
       }
       await client.query(`UPDATE ${t("provisionings")} SET resource_version = $2 WHERE uid = $1`, [uid, userVersion.toString()]);

@@ -85,6 +85,16 @@ function readyCondition(chat: ChatResult, git: GitResult): ConditionUpdate<UserP
   return { type: "Ready", status: "True", reason: "Converged" };
 }
 
+const KEY_REFUSAL_BACKOFF_MS = 60_000;
+const KEY_REFUSAL_MAX_BACKOFF_MS = 6 * 60 * 60_000;
+
+class KeyRefused extends Error {
+  constructor(override readonly cause: HostError) {
+    super(cause.message);
+    this.name = "KeyRefused";
+  }
+}
+
 function staleKeys(key: GitKeyRow): string[] {
   const candidates = [key.registered_public_key, key.deletion_requested_at ? key.public_key : null];
   const unique = [...new Set(candidates.filter((value): value is string => value !== null))];
@@ -337,26 +347,25 @@ class Attempt {
     const present = await this.hostCall("git", "listKeys", () => this.deps.git.listKeys({ owner, holders: this.snapshot.keys.map((key) => key.gateway_id) }, this.signal));
     const failures: string[] = [];
     const refused: string[] = [];
+    let kind: HostErrorKind = "transient";
     for (const key of this.snapshot.keys) {
       try {
         await this.reconcileKey(owner, key, present);
       } catch (error) {
         if (error instanceof LeaseLostError || this.leaseLost) throw error;
-        if (key.deletion_requested_at === null) {
-          const reason = error instanceof HostError && error.code === "key-held-elsewhere" ? "GitKeyHeldElsewhere" : "GitKeyFailed";
-          await this.writeKeyStatus(key, { type: "Registered", status: "False", reason, message: message(error) }, key.registered_public_key);
-        }
-        if (hostErrorKind(error) !== "terminal") {
-          failures.push(`${key.gateway_id}: ${message(error)}`);
+        if (error instanceof KeyRefused) {
+          await this.writeKeyRefusal(key, error.cause);
+          refused.push(`${key.gateway_id}: ${message(error.cause)}`);
           continue;
         }
-        this.deps.log.error("the git host refused the git key; recorded on the key and the rest of the attempt continues", {
-          uid: this.claim.uid, gatewayId: key.gateway_id, error: message(error),
-        });
-        refused.push(`${key.gateway_id}: ${message(error)}`);
+        failures.push(`${key.gateway_id}: ${message(error)}`);
+        if (hostErrorKind(error) === "terminal") kind = "terminal";
+        if (key.deletion_requested_at === null) {
+          await this.writeKeyStatus(key, { type: "Registered", status: "False", reason: "GitKeyFailed", message: message(error) }, key.registered_public_key);
+        }
       }
     }
-    if (failures.length) throw new HostError("transient", failures.join("; "));
+    if (failures.length) throw new HostError(kind, failures.join("; "));
     return refused;
   }
 
@@ -376,19 +385,47 @@ class Attempt {
       await this.writeKeyStatus(key, { type: "Registered", status: "True", reason: "Converged" }, key.public_key);
       return;
     }
+    if (key.retry_after !== null && key.retry_after.getTime() > Date.now()) return;
     if (present.some((existing) => sameKey(existing.publicKey, key.public_key) && existing.holder === null)) {
       this.deps.log.info("adopting the identical git key the user's account holds under a title this service does not manage", { uid: this.claim.uid, gatewayId: key.gateway_id });
     }
-    await this.hostCall("git", "registerKey", () => this.deps.git.registerKey({ owner, publicKey: key.public_key, holder: key.gateway_id }, this.signal));
+    try {
+      await this.hostCall("git", "registerKey", () => this.deps.git.registerKey({ owner, publicKey: key.public_key, holder: key.gateway_id }, this.signal));
+    } catch (error) {
+      if (error instanceof HostError && error.kind === "terminal") throw new KeyRefused(error);
+      throw error;
+    }
     await this.writeKeyStatus(key, { type: "Registered", status: "True", reason: "Converged" }, key.public_key);
+  }
+
+  private writeKeyRefusal(key: GitKeyRow, error: HostError): Promise<void> {
+    return this.deps.queue.fenced(this.claim.uid, this.claim.leaseToken, async (client, bumpVersion) => {
+      const version = await bumpVersion();
+      const { rows } = await client.query<{ retry_after: Date }>(
+        `UPDATE ${this.deps.db.table("git_keys")} SET refusals = refusals + 1,
+            retry_after = now() + LEAST($4::double precision * power(2, refusals), $5::double precision) * interval '1 millisecond'
+          WHERE uid = $1 AND gateway_id = $2 AND generation = $3 RETURNING retry_after`,
+        [this.claim.uid, key.gateway_id, key.generation, KEY_REFUSAL_BACKOFF_MS, KEY_REFUSAL_MAX_BACKOFF_MS]);
+      const nextAttemptAt = rows[0]?.retry_after.toISOString() ?? null;
+      const reason = error.code === "key-held-elsewhere" ? "GitKeyHeldElsewhere" : "GitKeyFailed";
+      const conditions = applyConditions(key.conditions, [{ type: "Registered", status: "False", reason, message: `${message(error)}; next attempt after ${nextAttemptAt}` }], key.generation, new Date());
+      await client.query(
+        `UPDATE ${this.deps.db.table("git_keys")} SET conditions = $4, observed_generation = $3, resource_version = $5
+          WHERE uid = $1 AND gateway_id = $2 AND generation = $3`,
+        [this.claim.uid, key.gateway_id, key.generation, JSON.stringify(conditions), version.toString()]);
+      this.deps.log.error("the git host refused the git key; recorded on the key and the rest of the attempt continues", {
+        uid: this.claim.uid, gatewayId: key.gateway_id, reason, nextAttemptAt, error: message(error),
+      });
+    });
   }
 
   private writeKeyStatus(key: GitKeyRow, update: ConditionUpdate<"Registered">, registered: string | null): Promise<void> {
     return this.deps.queue.fenced(this.claim.uid, this.claim.leaseToken, async (client, bumpVersion) => {
       const conditions = applyConditions(key.conditions, [update], key.generation, new Date());
       const version = await bumpVersion();
+      const cleared = update.status === "True" ? ", refusals = 0, retry_after = NULL" : "";
       await client.query(
-        `UPDATE ${this.deps.db.table("git_keys")} SET conditions = $4, observed_generation = $3, registered_public_key = $5, resource_version = $6
+        `UPDATE ${this.deps.db.table("git_keys")} SET conditions = $4, observed_generation = $3, registered_public_key = $5, resource_version = $6${cleared}
           WHERE uid = $1 AND gateway_id = $2 AND generation = $3`,
         [this.claim.uid, key.gateway_id, key.generation, JSON.stringify(conditions), registered, version.toString()]);
     });

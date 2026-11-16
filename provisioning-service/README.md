@@ -70,12 +70,18 @@ material, never by comment.
 A key another user's account holds, or one on the user's own account under a
 title outside the managed prefix (added by hand), is never adopted. The git
 host refuses it, and the row reports `Registered=False` with reason
-`GitKeyHeldElsewhere`; any other refusal reports `GitKeyFailed`. A refused key
-is recorded on its row only: the rest of the user's attempt finishes and the
-user's work is not parked.
+`GitKeyHeldElsewhere`; any other refusal reports `GitKeyFailed`. A refused
+registration is recorded on its row only: the rest of the user's attempt
+finishes, the user's work is not parked, and the attempt's `git-keys` step
+carries the refusal. Releasing a key, a deleted key's included, still fails
+the attempt, so it is retried or parked.
 
-Putting an unchanged key whose row is not registered queues idle work again,
-so a row an earlier build refused is retried on the gateway's next put.
+A refused key backs off per row: 1 minute, doubling to at most 6 hours, shown
+as `status.nextAttemptAt`. Until then an unchanged put queues no work and the
+worker does not try the key again; a put with a different key resets the
+backoff and is tried at once. Putting an unchanged key whose row is not
+registered and has no backoff queues idle work, so a row an earlier build
+refused is retried once on the gateway's next put.
 
 With `PROVISIONING_HOST_ADAPTERS=fake`, `PROVISIONING_FAKE_GIT_KEYS` seeds the
 fake git host with keys, as JSON mapping each owner to `{ publicKey, holder }`

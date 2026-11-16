@@ -92,6 +92,7 @@ export interface GitKeySpec {
 export interface GitKeyStatus {
     observedGeneration: number;
     conditions: ProvisioningCondition<GitKeyConditionType>[];
+    nextAttemptAt: string | null;
 }
 export interface GitKey {
     uid: string;
