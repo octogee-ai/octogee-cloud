@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=scripts/lib/deployment-target.sh
 source "$SCRIPT_DIR/lib/deployment-target.sh"
+source "$SCRIPT_DIR/lib/cloud-sql-backup-policy.sh"
 
 SELECTOR=""
 FORCE_ROTATE=false
@@ -89,18 +90,8 @@ wait_for_cloud_sql() {
 verify_terraform_prerequisites() {
   local database secret iam_member
 
-  jq -e --arg region "$REGION" --argjson pitr "$DESIRED_PITR" '
-    .region == $region and
-    .settings.backupConfiguration.pointInTimeRecoveryEnabled == $pitr and
-    ($pitr == false or (
-      .settings.backupConfiguration.enabled == true and
-      (.settings.backupConfiguration.startTime | strings | length) > 0 and
-      .settings.backupConfiguration.transactionLogRetentionDays >= 7 and
-      .settings.backupConfiguration.backupRetentionSettings.retainedBackups >= 7 and
-      .settings.retainBackupsOnDelete == true and
-      .settings.deletionProtectionEnabled == true
-    ))
-  ' "$INSTANCE_JSON" >/dev/null || fail_prerequisites "Cloud SQL settings, PITR, or backup policy drifted"
+  octogee_cloud_sql_backup_policy_matches "$REGION" "$DESIRED_PITR" < "$INSTANCE_JSON" \
+    || fail_prerequisites "Cloud SQL settings, PITR, or backup policy drifted"
 
   for database in "mattermost_${TARGET_ENVIRONMENT}" "gitea_${TARGET_ENVIRONMENT}"; do
     gcloud sql databases describe "$database" \

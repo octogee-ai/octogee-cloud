@@ -28,6 +28,7 @@ function verifyMonitoring(unowned = "") {
   mkdirSync(join(monitoring, "extra"));
   mkdirSync(bin);
   copyFileSync(join(repoRoot, "scripts/verify-monitoring.sh"), join(scripts, "verify-monitoring.sh"));
+  copyFileSync(join(repoRoot, "scripts/lib/monitoring-collection-filter.mjs"), join(scripts, "lib/monitoring-collection-filter.mjs"));
   writeFileSync(join(monitoring, "dashboards", "smoke.json"), "{}\n");
   writeFileSync(join(monitoring, "files", "gmp-rules.yaml"), rules("base-alerts"));
   writeFileSync(join(monitoring, "extra", "gmp-rules.yaml"), rules("extra-alerts"));

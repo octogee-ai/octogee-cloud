@@ -36,7 +36,16 @@ function createHarness(): {
   const dashboards = join(monitoring, "dashboards");
   mkdirSync(dashboards, { recursive: true });
   writeFileSync(join(dashboards, "smoke.json"), "{}\n");
-  writeFileSync(join(monitoring, "gmp-collection-filter.json"), "{}\n");
+  writeFileSync(join(monitoring, "gmp-collection-filter.json"), JSON.stringify({
+    collection: { filter: { matchOneOf: ["{job=\"platform\"}"] } },
+  }));
+  const filters = join(monitoring, "gmp-collection-filters");
+  mkdirSync(filters);
+  writeFileSync(join(filters, "hosted.json"), JSON.stringify(["{job=\"hosted-controller\"}", "{job=\"platform\"}"]));
+  copyFileSync(
+    join(repoRoot, "scripts/lib/monitoring-collection-filter.mjs"),
+    join(scripts, "lib/monitoring-collection-filter.mjs"),
+  );
   mkdirSync(bin);
   copyFileSync(
     join(repoRoot, "scripts/setup-monitoring.sh"),
@@ -109,6 +118,9 @@ exit 0
     `#!/usr/bin/env bash
 if [[ "$*" == "config current-context" ]]; then
   printf '%s\n' gke_us-west1_octogee
+elif [[ "$*" == "patch operatorconfig config "* ]]; then
+  for arg; do last="$arg"; done
+  printf 'filter:%s\n' "$last" >>"$OCTOGEE_MONITORING_TEST_LOG"
 elif [[ "$*" == *"get computeclass"* ]]; then
   printf 'computeclass:%s\n' "$*" >>"$OCTOGEE_MONITORING_TEST_LOG"
   printf '%s' True
@@ -166,6 +178,15 @@ afterEach(() => {
 });
 
 describe("monitoring setup", () => {
+  it("applies product collection filters alongside the base filters", () => {
+    const result = runHarness();
+    expect(result.status, result.stderr).toBe(0);
+    const applied = result.calls.find(call => call.startsWith("filter:"));
+    expect(JSON.parse(applied!.slice("filter:".length))).toEqual({
+      collection: { filter: { matchOneOf: ["{job=\"platform\"}", "{job=\"hosted-controller\"}"] } },
+    });
+  });
+
   it("runs secrets then Helm with no compute-class preflight", () => {
     const result = runHarness();
 

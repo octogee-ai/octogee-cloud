@@ -278,7 +278,10 @@ describe("monitoring setup", () => {
 
   it("exports every rendered pod monitor's job through the collection filter", () => {
     const jobs = renderedPodMonitorNames();
-    const filter = JSON.parse(chart("gmp-collection-filter.json")) as {
+    const filter = JSON.parse(execFileSync(process.execPath, [
+      resolve(root, "scripts/lib/monitoring-collection-filter.mjs"),
+      resolve(root, "charts/monitoring"),
+    ], { encoding: "utf8" })) as {
       collection: { filter: { matchOneOf: string[] } };
     };
     const exported = filter.collection.filter.matchOneOf.flatMap(
@@ -291,9 +294,9 @@ describe("monitoring setup", () => {
 
   it("keeps the GKE-owned singleton as the explicit verified patch exception", () => {
     expect(setupMonitoring).toMatch(/operatorconfig config -n gmp-public[\s\S]*--type=merge/);
-    expect(setupMonitoring).toContain("gmp-collection-filter.json");
+    expect(setupMonitoring).toContain("monitoring-collection-filter.mjs");
     expect(setupMonitoring).toContain("verify-monitoring.sh");
-    expect(verifyMonitoring).toContain("gmp-public/config collection filter");
+    expect(verifyMonitoring).toMatch(/monitoring-collection-filter\.mjs.*--verify/);
     expect(verifyMonitoring).toContain("metadata.annotations.meta\\.helm\\.sh/release-name");
     expect(verifyMonitoring).not.toContain("grep '^grafana-dash-' || true");
   });

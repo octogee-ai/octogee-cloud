@@ -42,6 +42,7 @@ source "$SCRIPT_DIR/lib/gateway-image-bundle.sh"
 source "$SCRIPT_DIR/lib/gateway-capacity-placement.sh"
 # shellcheck source=scripts/lib/env-extensions.sh
 source "$SCRIPT_DIR/lib/env-extensions.sh"
+source "$SCRIPT_DIR/lib/cloud-sql-backup-policy.sh"
 
 # ── Colors ────────────────────────────────────────────────────────────────────
 GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[1;33m'
@@ -227,6 +228,18 @@ else
   fail "cloud-sql-proxy not ready (readyReplicas=${PROXY_READY:-0})"
   if $FIX; then
     print_platform_helm_repair
+  fi
+fi
+
+if [[ "$ENV" != "custom" && "${TARGET_CLOUD_SQL_PITR_ENABLED:-}" == "true" ]]; then
+  CLOUD_SQL_ID="$TARGET_CLOUD_SQL_PROJECT/$TARGET_CLOUD_SQL_INSTANCE"
+  if ! CLOUD_SQL_POLICY=$(gcloud sql instances describe "$TARGET_CLOUD_SQL_INSTANCE" \
+      --project="$TARGET_CLOUD_SQL_PROJECT" --format=json); then
+    fail "Cannot read Cloud SQL backup policy for $CLOUD_SQL_ID"
+  elif octogee_cloud_sql_backup_policy_matches "$TARGET_CLOUD_SQL_REGION" true <<< "$CLOUD_SQL_POLICY"; then
+    pass "Cloud SQL PITR and backup policy verified for $CLOUD_SQL_ID"
+  else
+    fail "Cloud SQL PITR or backup policy drifted for $CLOUD_SQL_ID"
   fi
 fi
 
