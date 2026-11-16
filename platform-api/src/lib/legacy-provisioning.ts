@@ -11,6 +11,7 @@ import {
   createProvisioningServiceClient,
   provisioningServiceConfigFromEnvironment,
   ProvisioningServiceError,
+  type DeleteGitKeyOutcome,
   type ProvisioningServiceClient,
 } from "@octogee/core/provisioning-service-client";
 import { logger } from "@octogee/core/http/logging";
@@ -49,9 +50,10 @@ export interface LegacyProvisioning {
   git(uid: string, repository: LegacyGitRepository | null, budget: RouteBudget): Promise<ProvisioningWait<void>>;
   agentChatToken(uid: string, budget: RouteBudget): Promise<ProvisioningWait<string>>;
   gitKey(uid: string, gatewayId: string, publicKey: string, budget: RouteBudget): Promise<ProvisioningWait<void>>;
+  releaseGitKey(uid: string, gatewayId: string, publicKey: string, budget: RouteBudget): Promise<DeleteGitKeyOutcome>;
 }
 
-export type LegacyProvisioningClient = Pick<ProvisioningServiceClient, "getProvisioning" | "getCredential" | "putGitKey">;
+export type LegacyProvisioningClient = Pick<ProvisioningServiceClient, "getProvisioning" | "getCredential" | "putGitKey" | "deleteGitKey">;
 
 export interface LegacyProvisioningDeps {
   readonly client: LegacyProvisioningClient;
@@ -226,6 +228,10 @@ export function createLegacyProvisioning(deps: LegacyProvisioningDeps): LegacyPr
         }
         await sleep(GIT_KEY_POLL_MS);
       }
+    },
+
+    releaseGitKey(uid, gatewayId, publicKey, budget) {
+      return deps.client.deleteGitKey(uid, gatewayId, { expectedPublicKey: publicKey, signal: budget.signal });
     },
   };
 }

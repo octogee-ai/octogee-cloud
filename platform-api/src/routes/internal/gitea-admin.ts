@@ -337,19 +337,49 @@ function ensureUserHandler(legacyProvisioning: LegacyProvisioning | null) {
   };
 }
 
-const router: Router = Router();
-
-router.post("/release-user-key", async (req: Request, res: Response) => {
-  const { slug, pubKey } = (req.body ?? {}) as { slug?: unknown; pubKey?: unknown };
-  if (!validSlug(res, slug)) return;
-  if (!isSshPublicKey(pubKey)) {
-    res.status(400).json({ error: "pubKey must be a valid SSH public key" });
-    return;
+async function releaseServiceGitKey(
+  res: Response,
+  legacyProvisioning: LegacyProvisioning,
+  { gatewayId, slug, publicKey }: { gatewayId: string; slug: string; publicKey: string },
+): Promise<void> {
+  try {
+    const user = await platformStateStore.users.records.findBySlug(slug);
+    if (!user) {
+      logger.info("internal/gitea release-user-key: no user carries the slug, so no git key is held for it", { gatewayId, slug });
+      res.status(204).end();
+      return;
+    }
+    const outcome = await legacyProvisioning.releaseGitKey(user.uid, gatewayId, publicKey, routeBudget());
+    if (outcome === "superseded") {
+      logger.info("internal/gitea release-user-key: the gateway's key now holds another public key, which stays registered", { gatewayId, uid: user.uid });
+    }
+    res.status(204).end();
+  } catch (err) {
+    logger.error("internal/gitea release-user-key through the provisioning service failed", { err, slug, gatewayId });
+    res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
   }
-  const keyOwner = gatewayKeyOwnerForRequest(req, res);
-  if (!keyOwner) return;
-  await broker(res, "release-user-key", () => gitHost().releaseKey(slug, pubKey, keyOwner));
-});
+}
+
+function releaseUserKeyHandler(legacyProvisioning: LegacyProvisioning | null) {
+  return async (req: Request, res: Response): Promise<void> => {
+    const { slug, pubKey } = (req.body ?? {}) as { slug?: unknown; pubKey?: unknown };
+    if (!validSlug(res, slug)) return;
+    if (!isSshPublicKey(pubKey)) {
+      res.status(400).json({ error: "pubKey must be a valid SSH public key" });
+      return;
+    }
+    if (legacyProvisioning) {
+      const { gatewayId } = gatewayCallerForRequest(req)!;
+      await releaseServiceGitKey(res, legacyProvisioning, { gatewayId, slug, publicKey: pubKey.trim() });
+      return;
+    }
+    const keyOwner = gatewayKeyOwnerForRequest(req, res);
+    if (!keyOwner) return;
+    await broker(res, "release-user-key", () => gitHost().releaseKey(slug, pubKey, keyOwner));
+  };
+}
+
+const router: Router = Router();
 
 router.get("/user-pubkey", async (req: Request, res: Response) => {
   const { slug } = req.query;
@@ -459,6 +489,7 @@ export function createInternalGiteaAdminRoutes({ legacyProvisioning }: InternalG
   routes.use(requireInternalServiceAuth);
   for (const route of USER_GIT_ROUTES) routes.post(`/${route.op}`, userGitHandler(route, legacyProvisioning));
   routes.post("/ensure-user", ensureUserHandler(legacyProvisioning));
+  routes.post("/release-user-key", releaseUserKeyHandler(legacyProvisioning));
   routes.use(router);
   return routes;
 }
