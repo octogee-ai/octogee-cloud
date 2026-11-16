@@ -14,6 +14,7 @@ export interface FakeGitHost {
   host: GiteaGitHost;
   held: () => HostKey[];
   titled: (holder: string) => string[];
+  deleteTitled: (holder: string, publicKey: string) => void;
 }
 
 export function fakeGitHost(slug: string): FakeGitHost {
@@ -46,6 +47,11 @@ export function fakeGitHost(slug: string): FakeGitHost {
     host: createGiteaGitHost({ apiBaseUrl: "https://gitea.invalid/api/v1", token: () => "token", fetch }),
     held: () => keys.map((key) => ({ ...key })),
     titled: (holder) => keys.filter((key) => key.title === gatewayKeyTitle(holder)).map((key) => key.key),
+    deleteTitled(holder, publicKey) {
+      for (let index = keys.length - 1; index >= 0; index -= 1) {
+        if (keys[index].title === gatewayKeyTitle(holder) && publicKeyIdentity(keys[index].key) === publicKeyIdentity(publicKey)) keys.splice(index, 1);
+      }
+    },
   };
 }
 
@@ -60,6 +66,8 @@ export interface GitKeyServiceContract {
   attempt: () => Promise<void>;
   releaseHolder: (holder: string) => void;
   park: (reason: ProvisioningConditionReason) => void;
+  failNextRegistration: (message: string) => void;
+  attempts: () => number;
   puts: string[];
   row: (holder: string) => GitKey | null;
   rows: () => Array<{ holder: string; publicKey: string }>;
@@ -76,6 +84,8 @@ export function gitKeyServiceContract(user: { uid: string; slug: string }, git: 
   const puts: string[] = [];
   let version = 0;
   let parked: ProvisioningConditionReason | null = null;
+  let registrationFailure: string | null = null;
+  let attempts = 0;
   const sameKey = (left: string, right: string) => publicKeyIdentity(left) === publicKeyIdentity(right);
   const copy = (key: GitKey): GitKey => structuredClone(key);
 
@@ -116,7 +126,7 @@ export function gitKeyServiceContract(user: { uid: string; slug: string }, git: 
     const sequence = key.putSequence;
     const managed = () => git.held().filter((existing) => isManagedGatewayKeyTitle(existing.title));
     const has = (publicKey: string) => managed().some((existing) => sameKey(existing.key, publicKey) && existing.title === gatewayKeyTitle(holder));
-    for (const stale of staleKeys(row).filter(has)) await git.host.releaseKey(user.slug, stale, holder);
+    for (const stale of staleKeys(row).filter(has)) git.deleteTitled(holder, stale);
     if (key.deletionRequestedAt !== null) {
       rows.delete(holder);
       return;
@@ -129,13 +139,23 @@ export function gitKeyServiceContract(user: { uid: string; slug: string }, git: 
     };
     if (has(key.spec.publicKey)) return registered();
     if (row.backingOff) return;
+    const putPending = key.putSequence > key.status.observedPutSequence;
+    const notRegistered = (reason: ProvisioningConditionReason, message: string) => {
+      key.status = { ...key.status, observedGeneration: key.generation, conditions: [condition("False", reason, message, key.generation)] };
+    };
     const elsewhere = managed().some((existing) => sameKey(existing.key, key.spec.publicKey) && existing.title !== gatewayKeyTitle(holder));
-    if (elsewhere && key.putSequence <= key.status.observedPutSequence) {
+    if (elsewhere && !putPending) {
       key.status = { ...key.status, observedGeneration: key.generation, observedPutSequence: Math.max(key.status.observedPutSequence, sequence),
         nextAttemptAt: new Date(Date.parse(NOW) + 120_000).toISOString(),
         conditions: [condition("False", "GitKeyHeldElsewhere", "the key is held under another managed title; it is taken only while its gateway puts it", key.generation)] };
       row.backingOff = true;
       return;
+    }
+    if (!putPending) return notRegistered("GitKeyFailed", "the key is not on the git host under this holder's title; it is written only in an attempt that follows a put");
+    if (registrationFailure !== null) {
+      const failure = registrationFailure;
+      registrationFailure = null;
+      return notRegistered("GitKeyFailed", failure);
     }
     await git.host.registerKey(user.slug, key.spec.publicKey, holder);
     registered();
@@ -185,6 +205,7 @@ export function gitKeyServiceContract(user: { uid: string; slug: string }, git: 
     client,
     puts,
     async attempt() {
+      attempts += 1;
       for (const [holder, row] of [...rows]) {
         if (parked !== null && row.key.deletionRequestedAt === null) continue;
         await reconcile(holder, row);
@@ -197,6 +218,10 @@ export function gitKeyServiceContract(user: { uid: string; slug: string }, git: 
     park(reason) {
       parked = reason;
     },
+    failNextRegistration(message) {
+      registrationFailure = message;
+    },
+    attempts: () => attempts,
     row: (holder) => {
       const row = rows.get(holder);
       return row ? copy(row.key) : null;

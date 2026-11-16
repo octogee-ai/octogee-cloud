@@ -214,7 +214,7 @@ describe("git keys across moves and rolls, through the platform's routes and ada
     expect(service.rows()).toEqual([]);
   });
 
-  it("releases on the git host and registers there once the service is switched off after a service mount", async () => {
+  it("releases on the git host and registers there once the service is switched off, and the row left behind never overwrites the pod's later key", async () => {
     const { git, service, thisBuild } = setup();
     assign("shared-blue");
     const serving = pod("shared-blue", "octogee-gateway-shared-blue-5bc59-a1b2c");
@@ -232,6 +232,29 @@ describe("git keys across moves and rolls, through the platform's routes and ada
 
     expect(hostKeys(git)).toEqual([]);
     expect(service.puts).toEqual([serving.holder]);
+    expect(service.rows()).toEqual([{ holder: serving.holder, publicKey: registered }]);
+
+    serving.disk = { key: newKey(), marker: null };
+    await switchedOff.thisBuild.register(serving);
+    await service.attempt();
+
+    expect(git.titled(serving.holder)).toEqual([serving.disk.key]);
+    expect(hostKeys(git)).toEqual([serving.disk.key]);
+    expect(service.row(serving.holder)?.status.conditions[0]).toMatchObject({ status: "False" });
+  });
+
+  it("waits through a registration attempt that failed without processing the put, and puts only once", async () => {
+    const { git, service, thisBuild } = setup();
+    assign("shared-blue");
+    const serving = pod("shared-blue", "octogee-gateway-shared-blue-5bc59-a1b2c");
+    service.failNextRegistration("503 from git host");
+
+    await thisBuild.serviceMount(serving);
+
+    expect(service.puts).toEqual([serving.holder]);
+    expect(service.attempts()).toBeGreaterThan(1);
+    expect(service.row(serving.holder)).toMatchObject({ putSequence: 1, status: { observedPutSequence: 1, conditions: [{ status: "True" }] } });
+    expect(git.titled(serving.holder)).toEqual([serving.disk.key]);
   });
 
   it("refuses a mount with the service's reason while the user's work is parked, registering nothing", async () => {
