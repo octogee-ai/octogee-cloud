@@ -14,7 +14,7 @@ import type { Reviewer } from "../auth/token-review.js";
 import type { CredentialStore } from "../hosts/credential-store.js";
 import type { Logger } from "../logger.js";
 import type { Metrics } from "../metrics.js";
-import { parseGitKeySpec, parseUserProvisioningSpec, validIdentifier } from "../resources/validate.js";
+import { parseGitKeyRelease, parseGitKeySpec, parseUserProvisioningSpec, validIdentifier } from "../resources/validate.js";
 import type { ChangeNotifier } from "../store/change-notifier.js";
 import type { ProvisioningStore } from "../store/provisioning-store.js";
 import type { WorkQueue } from "../worker/queue.js";
@@ -221,7 +221,9 @@ export function createApp(deps: AppDependencies): express.Express {
   });
 
   v1.delete("/users/:uid/git-keys/:gatewayId", requireRole("key-writer"), async (request, response) => {
-    await deps.store.deleteGitKey(uidOf(request), validIdentifier(String(request.params.gatewayId), "gatewayId"));
+    const uid = uidOf(request);
+    const gatewayId = validIdentifier(String(request.params.gatewayId), "gatewayId");
+    await deps.store.deleteGitKey(uid, gatewayId, parseGitKeyRelease(request.body));
     deps.notifier.wakeAll();
     response.status(202).end();
   });

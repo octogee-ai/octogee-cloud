@@ -79,6 +79,16 @@ export function parseGitKeySpec(value: unknown): GitKeySpec {
   return { publicKey: spec.publicKey.trim() };
 }
 
+export function parseGitKeyRelease(value: unknown): string | null {
+  if (value === undefined || value === null) return null;
+  const body = object(value, "body");
+  if (body.expectedPublicKey === undefined) return null;
+  if (typeof body.expectedPublicKey !== "string" || body.expectedPublicKey.length > 16_384 || !PUBLIC_KEY.test(body.expectedPublicKey.trim())) {
+    throw invalid("expectedPublicKey must be one OpenSSH public key line");
+  }
+  return body.expectedPublicKey.trim();
+}
+
 export function sameJson(left: unknown, right: unknown): boolean {
   return canonical(left) === canonical(right);
 }
