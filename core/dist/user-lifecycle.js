@@ -333,7 +333,7 @@ async function addUserToGatewayInner(adapter, uid, opts = {}) {
         steps.push("claim-slot");
     }
     const brokerProfilesReady = startBrokerProfiles(adapter, slug);
-    const remote = await provisionUserState(adapter, uid, snapshot, ctx, markStep, signal);
+    const remote = await provisionUserState(adapter, snapshot, ctx, markStep, signal);
     snapshot = remote.snapshot;
     const { workspace, mm } = remote;
     steps.push(...workspace.steps, ...mm.steps);
@@ -381,18 +381,18 @@ function serviceProvisioningFor(adapter, snapshot) {
     }
     return adapter.provisioningService;
 }
-async function provisionUserState(adapter, uid, snapshot, ctx, markStep, signal) {
-    const { slug } = snapshot;
+async function provisionUserState(adapter, snapshot, ctx, markStep, signal) {
+    const { slug, uid } = snapshot;
     const service = serviceProvisioningFor(adapter, snapshot);
     if (service) {
         markStep("await-provisioning");
         const ready = await awaitServiceProvisioning(adapter, service, snapshot, signal);
         markStep("ssh-key");
-        const workspace = await provisionWorkspace(adapter, uid, ready, ctx, markStep, { service, signal });
+        const workspace = await provisionWorkspace(adapter, ready, ctx, markStep, { service, signal });
         return { snapshot: ready, workspace, mm: { mmUpdate: null, steps: [] } };
     }
     markStep("ssh-key");
-    const [workspace, mm] = await settleBoth(adapter, slug, provisionWorkspace(adapter, uid, snapshot, ctx, markStep), provisionMattermostIfMissing(adapter, uid, snapshot, ctx));
+    const [workspace, mm] = await settleBoth(adapter, slug, provisionWorkspace(adapter, snapshot, ctx, markStep), provisionMattermostIfMissing(adapter, uid, snapshot, ctx));
     throwIfAborted(signal, uid);
     const refreshed = mm.mmUpdate ? (await adapter.loadUserSnapshot(uid)) ?? snapshot : snapshot;
     return { snapshot: refreshed, workspace, mm };
@@ -472,8 +472,8 @@ function startBrokerProfiles(adapter, slug) {
         }
     })();
 }
-async function provisionWorkspace(adapter, uid, snapshot, ctx, markStep, through) {
-    const { slug } = snapshot;
+async function provisionWorkspace(adapter, snapshot, ctx, markStep, through) {
+    const { slug, uid } = snapshot;
     const steps = [];
     steps.push(...(through
         ? await ensureServiceGitKey(adapter, through.service, uid, slug, through.signal)

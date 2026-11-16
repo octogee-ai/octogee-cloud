@@ -265,7 +265,9 @@ describe("POST /internal/fleet/git-key", () => {
     vi.spyOn(logger, "error").mockImplementation(() => {});
     const { app } = fixture({ keys: null });
 
-    await post(app, "git-key", { publicKey: PUBLIC_KEY }).expect(409);
+    const response = await post(app, "git-key", { publicKey: PUBLIC_KEY }).expect(409);
+
+    expect(response.body).toEqual({ error: "provisioning_service_not_configured" });
   });
 });
 

@@ -863,7 +863,7 @@ async function addUserToGatewayInner(
 
   const brokerProfilesReady = startBrokerProfiles(adapter, slug);
 
-  const remote = await provisionUserState(adapter, uid, snapshot, ctx, markStep, signal);
+  const remote = await provisionUserState(adapter, snapshot, ctx, markStep, signal);
   snapshot = remote.snapshot;
   const { workspace, mm } = remote;
   steps.push(...workspace.steps, ...mm.steps);
@@ -926,26 +926,25 @@ function serviceProvisioningFor(adapter: UserLifecycleAdapter, snapshot: UserSna
 
 async function provisionUserState(
   adapter: UserLifecycleAdapter,
-  uid: string,
   snapshot: UserSnapshot,
   ctx: UserContext,
   markStep: MarkStep,
   signal: AbortSignal | undefined,
 ): Promise<{ snapshot: UserSnapshot; workspace: WorkspaceProvisioning; mm: ChatProvisioning }> {
-  const { slug } = snapshot;
+  const { slug, uid } = snapshot;
   const service = serviceProvisioningFor(adapter, snapshot);
   if (service) {
     markStep("await-provisioning");
     const ready = await awaitServiceProvisioning(adapter, service, snapshot, signal);
     markStep("ssh-key");
-    const workspace = await provisionWorkspace(adapter, uid, ready, ctx, markStep, { service, signal });
+    const workspace = await provisionWorkspace(adapter, ready, ctx, markStep, { service, signal });
     return { snapshot: ready, workspace, mm: { mmUpdate: null, steps: [] } };
   }
   markStep("ssh-key");
   const [workspace, mm] = await settleBoth(
     adapter,
     slug,
-    provisionWorkspace(adapter, uid, snapshot, ctx, markStep),
+    provisionWorkspace(adapter, snapshot, ctx, markStep),
     provisionMattermostIfMissing(adapter, uid, snapshot, ctx),
   );
   throwIfAborted(signal, uid);
@@ -1068,7 +1067,6 @@ function startBrokerProfiles(
 
 async function provisionWorkspace(
   adapter: UserLifecycleAdapter,
-  uid: string,
   snapshot: UserSnapshot,
   ctx: UserContext,
   markStep: MarkStep,
@@ -1078,7 +1076,7 @@ async function provisionWorkspace(
   projectClones: { steps: AddUserStep[]; pending: string[] };
   byos: { restored: boolean; present: boolean; steps: AddUserStep[] };
 }> {
-  const { slug } = snapshot;
+  const { slug, uid } = snapshot;
   const steps: AddUserStep[] = [];
   steps.push(...(through
     ? await ensureServiceGitKey(adapter, through.service, uid, slug, through.signal)

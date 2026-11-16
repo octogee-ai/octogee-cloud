@@ -55,7 +55,7 @@ export function createProvisioningGitKeys(deps: ProvisioningGitKeysDeps): Provis
 
   async function send(method: "PUT" | "DELETE", path: string, operation: string, body?: unknown): Promise<Response> {
     const token = await readToken(deps.tokenPath);
-    if (token === "") throw new ProvisioningServiceError(0, "unreachable", `provisioning service ${operation}: the service account token is empty`);
+    if (token.length === 0) throw new ProvisioningServiceError(0, "unreachable", `provisioning service ${operation}: the service account token is empty`);
     let response: Response;
     try {
       response = await fetchImpl(new URL(path, base), {
