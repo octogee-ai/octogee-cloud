@@ -472,25 +472,35 @@ function installServiceProvisioningRoutes(router: Router, deps: ResolvedFleetBro
     if (!holder) return;
     const { legacyProvisioning } = deps;
     if (!serviceRouteConfigured(res, "git-key/release", legacyProvisioning)) return;
-    await runBrokered(res, async () => {
-      if (!holdsServiceGitKeys(await store.gateways.roots.get(bound.gatewayId))) {
-        logger.info("gateway git key release: only a shared gateway holds a git key row, so the provisioning service is not asked", { gatewayId: bound.gatewayId, holder });
-        res.status(204).end();
-        return;
-      }
-      const user = await store.users.records.findBySlug(slug);
-      if (user === null) {
-        res.status(404).json({ error: "not_found" });
-        return;
-      }
-      const { uid } = user;
-      const outcome = await legacyProvisioning.releaseGitKey(uid, holder, publicKey.trim(), routeBudget());
-      if (outcome === "superseded") {
-        logger.info("gateway git key release: the row holds a newer registration, which stays", { uid, holder });
-      }
+    try {
+      await releaseServiceGitKeyRow(store, legacyProvisioning, { gatewayId: bound.gatewayId, holder, slug, publicKey: publicKey.trim() });
       res.status(204).end();
-    });
+    } catch (err) {
+      logger.error("gateway git key release failed", { err, gatewayId: bound.gatewayId, holder, slug });
+      res.status(502).json({ error: "git_key_release_failed" });
+    }
   });
+}
+
+async function releaseServiceGitKeyRow(
+  store: PlatformStateRepositories,
+  legacyProvisioning: LegacyProvisioning,
+  { gatewayId, holder, slug, publicKey }: { gatewayId: string; holder: string; slug: string; publicKey: string },
+): Promise<void> {
+  if (!holdsServiceGitKeys(await store.gateways.roots.get(gatewayId))) {
+    logger.info("gateway git key release: only a shared gateway holds a git key row, so the provisioning service is not asked", { gatewayId, holder });
+    return;
+  }
+  const user = await store.users.records.findBySlug(slug);
+  if (user === null) {
+    logger.info("gateway git key release: no user carries the slug, so there is no row to release", { gatewayId, holder, slug });
+    return;
+  }
+  const { uid } = user;
+  const outcome = await legacyProvisioning.releaseGitKey(uid, holder, publicKey, routeBudget());
+  if (outcome === "superseded") {
+    logger.info("gateway git key release: the row holds a newer registration, which stays", { uid, holder });
+  }
 }
 
 function gitKeyHolder(bound: GatewayBinding): string | null {

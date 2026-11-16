@@ -254,6 +254,22 @@ function routeAllowsInboundMigrationSlug(req: Request): boolean {
   return req.path === "/internal/gitea" || req.path.startsWith("/internal/gitea/");
 }
 
+const OWN_GIT_KEY_RELEASE_ROUTES = new Set([
+  "/internal/fleet/git-key/release",
+  "/internal/gitea/release-user-key",
+]);
+
+function admitsOwnGitKeyReleaseForUnassignedSlug(bound: GatewayBinding, req: Request, slug: string): boolean {
+  if (!bound.podName || !OWN_GIT_KEY_RELEASE_ROUTES.has(req.path)) return false;
+  logger.info("[tenant-enforcement] admitted a git key release for a slug not assigned to the calling gateway", {
+    gatewayId: bound.gatewayId,
+    podName: bound.podName,
+    slug,
+    path: req.path,
+  });
+  return true;
+}
+
 function routeRequiresTargetUser(req: Request, productRoutes: ProductTenantRoutes): boolean {
   return productRoutes.userTargetedRoutes.includes(normalizeTenantPolicyPath(req.path));
 }
@@ -269,6 +285,7 @@ async function slugAllowedForRequest(
   req: Request,
 ): Promise<boolean> {
   if (await slugBelongsToGateway(store, slug, bound.gatewayId)) return true;
+  if (admitsOwnGitKeyReleaseForUnassignedSlug(bound, req, slug)) return true;
   if (!routeAllowsInboundMigrationSlug(req)) return false;
   if (await slugHasRunningInboundMigration(store, bound.gatewayId, slug)) return true;
   const gateway = await store.gateways.roots.get(bound.gatewayId);
