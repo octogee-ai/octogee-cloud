@@ -101,6 +101,37 @@ function changePage(
   };
 }
 
+function fakeGitKeyRoute(
+  gitKeys: Map<string, GitKey>,
+  hasUser: (uid: string) => boolean,
+  nextVersion: () => number,
+): (uid: string, gatewayId: string, recorded: FakeProvisioningRequest, res: ServerResponse) => void {
+  return (uid, gatewayId, recorded, res) => {
+    const id = `${uid}/${gatewayId}`;
+    const existing = gitKeys.get(id);
+    if (recorded.method === "DELETE") {
+      const expected = (recorded.body as { expectedPublicKey?: string } | undefined)?.expectedPublicKey;
+      if (existing && expected !== undefined && existing.spec.publicKey !== expected) return fail(res, 409, "precondition-failed");
+      gitKeys.delete(id);
+      return send(res, 202);
+    }
+    if (!hasUser(uid)) return fail(res, 404, "not-found");
+    const publicKey = (recorded.body as { spec: { publicKey: string } }).spec.publicKey;
+    if (existing?.spec.publicKey === publicKey) return send(res, 200, existing);
+    const key: GitKey = {
+      uid,
+      gatewayId,
+      generation: (existing?.generation ?? 0) + 1,
+      resourceVersion: String(nextVersion()),
+      deletionRequestedAt: null,
+      spec: { publicKey },
+      status: { observedGeneration: 0, conditions: [] },
+    };
+    gitKeys.set(id, key);
+    send(res, existing ? 202 : 201, key);
+  };
+}
+
 export async function startFakeProvisioningService(options: { tokens?: string[] } = {}): Promise<FakeProvisioningService> {
   const requests: FakeProvisioningRequest[] = [];
   const resources = new Map<string, UserProvisioning>();
@@ -113,6 +144,7 @@ export async function startFakeProvisioningService(options: { tokens?: string[] 
   let oldestRetained = 0;
   const credentials = new Map<string, ProvisioningCredential>();
   const gitKeys = new Map<string, GitKey>();
+  const gitKey = fakeGitKeyRoute(gitKeys, (uid) => resources.has(uid), () => (counter += 1));
   const service = { acceptedTokens: new Set(options.tokens ?? ["token"]), credentialReader: true };
 
   function bump(uid: string, resource: UserProvisioning): UserProvisioning {
@@ -219,33 +251,6 @@ export async function startFakeProvisioningService(options: { tokens?: string[] 
     const uid = decodeURIComponent(userMatch[1]);
     if (!SERVICE_IDENTIFIER.test(uid)) return fail(res, 400, "invalid-request");
     user(uid, userMatch[2], recorded, res);
-  }
-
-  function gitKey(uid: string, gatewayId: string, recorded: FakeProvisioningRequest, res: ServerResponse): void {
-    const id = `${uid}/${gatewayId}`;
-    const existing = gitKeys.get(id);
-    if (recorded.method === "DELETE") {
-      const expected = (recorded.body as { expectedPublicKey?: string } | undefined)?.expectedPublicKey;
-      if (existing && expected !== undefined && existing.spec.publicKey !== expected) return fail(res, 409, "precondition-failed");
-      gitKeys.delete(id);
-      return send(res, 202);
-    }
-    if (!resources.has(uid)) return fail(res, 404, "not-found");
-    const publicKey = (recorded.body as { spec: { publicKey: string } }).spec.publicKey;
-    if (existing?.spec.publicKey === publicKey) return send(res, 200, existing);
-    counter += 1;
-    const generation = (existing?.generation ?? 0) + 1;
-    const key: GitKey = {
-      uid,
-      gatewayId,
-      generation,
-      resourceVersion: String(counter),
-      deletionRequestedAt: null,
-      spec: { publicKey },
-      status: { observedGeneration: 0, conditions: [] },
-    };
-    gitKeys.set(id, key);
-    send(res, existing ? 202 : 201, key);
   }
 
   function credential(uid: string, name: string, res: ServerResponse): void {

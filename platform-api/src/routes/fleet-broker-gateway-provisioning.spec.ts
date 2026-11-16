@@ -11,7 +11,7 @@ import { workspaceDefaultAgentChannelName } from "@octogee/shared/types/identity
 import { installDefaultUserEntitlements } from "@octogee/shared/types/user-entitlements";
 import type { ChatOutputs, GitKey, UserProvisioning } from "@octogee/shared/types/provisioning-service";
 import { NO_BROKER_RECORDS, type BrokerRecords } from "../lib/broker-records.js";
-import type { LegacyProvisioning, ProvisioningWait } from "../lib/legacy-provisioning.js";
+import type { LegacyProvisioning } from "../lib/legacy-provisioning.js";
 import type { ProvisioningGitKeys } from "../lib/provisioning-git-keys.js";
 import { RecordingDocuments } from "../test-helpers/recording-documents.js";
 import { createFleetBrokerRoutes } from "./fleet-broker.js";
@@ -184,10 +184,12 @@ describe("POST /internal/fleet/provisioning-readiness", () => {
   });
 
   it("answers 204 for a fully mirrored user without a default agent", async () => {
-    const { app, store } = fixture({ provisioning: legacyProvisioning({ chat: vi.fn(async () => readyChat(NO_AGENT_CHAT)) }) });
+    const { app, store, provisioning } = fixture({ provisioning: legacyProvisioning({ chat: vi.fn(async () => readyChat(NO_AGENT_CHAT)) }) });
     await mirrorFully(store, NO_AGENT_CHAT);
 
     await post(app, "provisioning-readiness").expect(204);
+
+    expect(provisioning?.git).toHaveBeenCalledOnce();
   });
 
   it("answers 503 WaitingForMirror while only the chat account, agent token and agent channel are mirrored", async () => {
