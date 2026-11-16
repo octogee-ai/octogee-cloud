@@ -225,6 +225,20 @@ async function broker(res: Response, op: string, fn: () => Promise<void>): Promi
   }
 }
 
+async function answeredForKeyAlreadyHeld(res: Response, slug: string, pubKey: string, holder: string): Promise<boolean> {
+  let held: boolean;
+  try {
+    held = await gitHost().holdsKey(slug, pubKey, holder);
+  } catch (err) {
+    logger.warn("internal/gitea ensure-user could not read the user's keys on the git host, so the provisioning service is asked first", { err, slug, holder });
+    return false;
+  }
+  if (!held) return false;
+  logger.info("internal/gitea ensure-user: the key is already registered under the calling pod's title, so nothing is written and the provisioning service is not asked", { slug, holder });
+  res.status(204).end();
+  return true;
+}
+
 async function awaitServiceGit(
   res: Response,
   legacyProvisioning: LegacyProvisioning,
@@ -310,6 +324,7 @@ function ensureUserHandler(legacyProvisioning: LegacyProvisioning | null) {
     if (!access) return;
     const keyOwner = gatewayKeyOwnerForRequest(req, res);
     if (!keyOwner) return;
+    if (legacyProvisioning && (await answeredForKeyAlreadyHeld(res, slug, pubKey, keyOwner))) return;
     if (legacyProvisioning && !(await awaitServiceGitReady(res, legacyProvisioning, slug))) return;
     await broker(res, "ensure-user", () =>
       access === "serving"

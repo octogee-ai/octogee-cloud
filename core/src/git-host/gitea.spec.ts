@@ -341,6 +341,50 @@ describe("createGiteaGitHost — managed Gitea admin operations", () => {
     });
   });
 
+  describe("holdsKey", () => {
+    const holder = "shared-1/octogee-gateway-shared-1-abc-xyz";
+    const otherHolder = "shared-1/octogee-gateway-shared-1-def-uvw";
+    const key = "ssh-ed25519 AAAAHELD octogee-acme@gateway";
+
+    it("is true when the holder's title carries the same key material, whatever the comment, and only reads", async () => {
+      fetchMock.mockResolvedValueOnce(res(200, [{ id: 7, title: keyTitle(holder), key: "ssh-ed25519 AAAAHELD stored-comment" }]));
+
+      await expect(host.holdsKey("acme", key, holder)).resolves.toBe(true);
+
+      expect(callsTo(fetchMock)).toEqual([
+        { url: `${BASE}/users/ws-acme/keys?limit=50&page=1`, method: "GET", body: undefined },
+      ]);
+    });
+
+    it("is false when the holder's title carries different key material", async () => {
+      fetchMock.mockResolvedValueOnce(res(200, [{ id: 7, title: keyTitle(holder), key: "ssh-ed25519 AAAAOTHER octogee-acme@gateway" }]));
+
+      await expect(host.holdsKey("acme", key, holder)).resolves.toBe(false);
+    });
+
+    it("is false when the key is registered under another holder's title or the legacy title", async () => {
+      fetchMock.mockResolvedValueOnce(res(200, [{ id: 7, title: keyTitle(otherHolder), key }]));
+      await expect(host.holdsKey("acme", key, holder)).resolves.toBe(false);
+
+      fetchMock.mockResolvedValueOnce(res(200, [{ id: 8, title: "octogee-gateway", key }]));
+      await expect(host.holdsKey("acme", key, holder)).resolves.toBe(false);
+    });
+
+    it("is false when the account has no keys or does not exist", async () => {
+      fetchMock.mockResolvedValueOnce(res(200, []));
+      await expect(host.holdsKey("acme", key, holder)).resolves.toBe(false);
+
+      fetchMock.mockResolvedValueOnce(res(404, { message: "user does not exist" }));
+      await expect(host.holdsKey("acme", key, holder)).resolves.toBe(false);
+    });
+
+    it("throws when the keys cannot be read", async () => {
+      fetchMock.mockResolvedValueOnce(res(500, { message: "database is locked" }));
+
+      await expect(host.holdsKey("acme", key, holder)).rejects.toThrow(/list-keys failed: 500/);
+    });
+  });
+
   describe("listKeys and primaryKey", () => {
     it("returns every managed gateway key so overlapping pods can verify membership", async () => {
       fetchMock.mockResolvedValueOnce(

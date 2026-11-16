@@ -486,6 +486,9 @@ export function createGiteaGitHost(config: GiteaGitHostConfig): GiteaGitHost {
     registerKeyUnlessHeld: (workspaceSlug, pubKey, keyOwnerId) =>
       registerGatewayKey(api, workspaceSlug, pubKey, keyOwnerId, false),
 
+    holdsKey: (workspaceSlug, pubKey, keyOwnerId) =>
+      hasManagedKey(api, giteaUsername(workspaceSlug), pubKey, gatewayKeyTitle(pubKey, keyOwnerId)),
+
     async listKeys(workspaceSlug) {
       return (await readUserKeys(api, giteaUsername(workspaceSlug)))
         .filter(isManagedGatewayKey)

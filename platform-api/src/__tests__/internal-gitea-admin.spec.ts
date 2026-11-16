@@ -1,6 +1,6 @@
 import express from "express";
 import request from "supertest";
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 import { gitHost } from "../lib/git-host.js";
 import { platformStateStore } from "@octogee/core/identity/platform-state-store";
@@ -9,6 +9,9 @@ import { createLegacyProvisioning, type LegacyProvisioning } from "../lib/legacy
 import type { UserProvisioning } from "@octogee/shared/types/provisioning-service";
 import { createProvisioningServiceClient } from "@octogee/core/provisioning-service-client";
 import { createGiteaGitHost } from "@octogee/core/git-host";
+import { gatewayKeyTitle } from "@octogee/core/gitea-naming";
+import type { MigrationClient } from "@octogee/core/fleet-migration-client";
+import { runMigration, type MigrationRunnerDeps } from "@octogee/core/fleet-migration-runner";
 import { logger } from "@octogee/core/http/logging";
 
 const mocks = vi.hoisted(() => ({
@@ -25,6 +28,7 @@ vi.mock("../lib/git-host.js", () => {
     releaseKey: vi.fn(async () => {}),
     registerKey: vi.fn(async () => {}),
     registerKeyUnlessHeld: vi.fn(async () => {}),
+    holdsKey: vi.fn(async () => false),
     primaryKey: vi.fn(async () => "ssh-ed25519 OLD predecessor"),
     listKeys: vi.fn(async () => ["ssh-ed25519 OLD predecessor", "ssh-ed25519 KEY octogee"]),
     ensureOwner: vi.fn(async () => {}),
@@ -604,6 +608,250 @@ describe("internal gitea-admin route", () => {
     expect(gitHost().ensureRepo).not.toHaveBeenCalled();
     expect(gitHost().repoExists).not.toHaveBeenCalled();
     expect(gitHost().archiveRepo).not.toHaveBeenCalled();
+  });
+});
+
+describe("internal gitea-admin ensure-user for a key the calling pod already holds", () => {
+  const KEY = "ssh-ed25519 AAAAHELD octogee-acme@gateway";
+  const OWN_TITLE = gatewayKeyTitle(WALTER_KEY_OWNER);
+  const OTHER_POD_TITLE = gatewayKeyTitle("walter/octogee-gateway-walter-5bc5949d46-other");
+
+  type GitHostKeys = ReadonlyArray<{ title: string; key: string }> | "no-account" | "unreadable";
+
+  function gitHostHolding(keys: GitHostKeys): string[] {
+    const requests: string[] = [];
+    const fetch: typeof globalThis.fetch = async (input, init) => {
+      const path = new URL(String(input)).pathname.replace(/^\/api\/v1/, "");
+      const method = init?.method ?? "GET";
+      requests.push(`${method} ${path}`);
+      if (method !== "GET" || path !== "/users/ws-acme/keys") throw new Error(`unexpected git host request ${method} ${path}`);
+      if (keys === "no-account") return Response.json({ message: "user does not exist" }, { status: 404 });
+      if (keys === "unreadable") return Response.json({ message: "database is locked" }, { status: 500 });
+      return Response.json(keys.map((held, index) => ({ id: index + 1, ...held })));
+    };
+    vi.mocked(gitHost().holdsKey).mockImplementation(
+      createGiteaGitHost({ apiBaseUrl: "http://gitea.invalid/api/v1", token: () => "token", fetch }).holdsKey,
+    );
+    return requests;
+  }
+
+  function serviceWithoutTheUser(git: LegacyProvisioning["git"] = async () => ({ ready: false, reason: "NotProvisioned", retryAfterSeconds: 5 })): LegacyProvisioning {
+    const unread = (what: string) => vi.fn(async () => {
+      throw new Error(`${what} is not read by ensure-user`);
+    });
+    return {
+      chat: unread("chat"),
+      git: vi.fn(git),
+      agentChatToken: unread("the agent chat token"),
+      gitKey: unread("the service's git key"),
+      releaseGitKey: unread("the service's git key"),
+    };
+  }
+
+  function unreachableService() {
+    const fetch = vi.fn<typeof globalThis.fetch>(async () => {
+      throw new TypeError("fetch failed");
+    });
+    const client = createProvisioningServiceClient({
+      baseUrl: "http://provisioning.invalid",
+      tokenPath: "/token",
+      readToken: async () => "token",
+      fetch,
+      retry: { attempts: 1, baseDelayMs: 0, maxDelayMs: 0 },
+    });
+    return { provisioning: createLegacyProvisioning({ client }), fetch };
+  }
+
+  function ensureUser(provisioning: LegacyProvisioning | null, pubKey = KEY) {
+    return request(app("walter", "walter", provisioning)).post("/internal/gitea/ensure-user").send({ slug: "acme", pubKey });
+  }
+
+  function expectNothingRegistered() {
+    expect(gitHost().registerKey).not.toHaveBeenCalled();
+    expect(gitHost().registerKeyUnlessHeld).not.toHaveBeenCalled();
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.docs.clear();
+    assignUser("acme", "walter");
+    vi.spyOn(logger, "error").mockImplementation(() => {});
+    vi.spyOn(logger, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.mocked(gitHost().holdsKey).mockReset();
+    vi.mocked(gitHost().holdsKey).mockImplementation(async () => false);
+    vi.restoreAllMocks();
+  });
+
+  it("answers 204 while the service has no resource for the user, without asking the service or writing to the git host", async () => {
+    const requests = gitHostHolding([{ title: OWN_TITLE, key: "ssh-ed25519 AAAAHELD stored-comment" }]);
+    const logged = vi.spyOn(logger, "info").mockImplementation(() => {});
+    const provisioning = serviceWithoutTheUser();
+
+    const res = await ensureUser(provisioning);
+
+    expect(res.status).toBe(204);
+    expect(res.body).toEqual({});
+    expect(provisioning.git).not.toHaveBeenCalled();
+    expect(requests).toEqual(["GET /users/ws-acme/keys"]);
+    expectNothingRegistered();
+    expect(logged).toHaveBeenCalledWith(expect.stringContaining("already registered"), { slug: "acme", holder: WALTER_KEY_OWNER });
+  });
+
+  it("answers 204 while the service is unreachable, without sending it a request", async () => {
+    gitHostHolding([{ title: OWN_TITLE, key: KEY }]);
+    const { provisioning, fetch } = unreachableService();
+
+    const res = await ensureUser(provisioning);
+
+    expect(res.status).toBe(204);
+    expect(fetch).not.toHaveBeenCalled();
+    expectNothingRegistered();
+  });
+
+  it("answers 204 for a standby pod that already holds the key", async () => {
+    assignUser("acme", "shared-1");
+    mocks.docs.set("gateways/walter", isolatedGateway());
+    gitHostHolding([{ title: OWN_TITLE, key: KEY }]);
+    const provisioning = serviceWithoutTheUser();
+
+    const res = await ensureUser(provisioning);
+
+    expect(res.status).toBe(204);
+    expect(provisioning.git).not.toHaveBeenCalled();
+    expectNothingRegistered();
+  });
+
+  it.each<[string, GitHostKeys]>([
+    ["the pod's title carries different key material", [{ title: OWN_TITLE, key: "ssh-ed25519 AAAAOTHER octogee-acme@gateway" }]],
+    ["the key is registered under another pod's title", [{ title: OTHER_POD_TITLE, key: KEY }]],
+    ["the key is registered under the title shared by all gateways", [{ title: "octogee-gateway", key: KEY }]],
+    ["the account has no key", []],
+    ["the account does not exist", "no-account"],
+    ["the git host cannot list the account's keys", "unreadable"],
+  ])("waits for the service as before when %s", async (_case, keys) => {
+    const requests = gitHostHolding(keys);
+    const provisioning = serviceWithoutTheUser();
+
+    const res = await ensureUser(provisioning);
+
+    expect(res.status).toBe(503);
+    expect(res.headers["retry-after"]).toBe("5");
+    expect(res.body).toEqual({ error: "provisioning_pending", reason: "NotProvisioned" });
+    expect(provisioning.git).toHaveBeenCalledExactlyOnceWith("uid-acme", null, expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    expect(requests).toEqual(["GET /users/ws-acme/keys"]);
+    expectNothingRegistered();
+  });
+
+  it("answers the unreachable service's 503 as before for a key the pod does not hold", async () => {
+    gitHostHolding([{ title: OTHER_POD_TITLE, key: KEY }]);
+    const { provisioning, fetch } = unreachableService();
+
+    const res = await ensureUser(provisioning);
+
+    expect(res.status).toBe(503);
+    expect(res.body).toEqual({ error: "provisioning_pending", reason: "ProvisioningServiceUnavailable" });
+    expect(fetch).toHaveBeenCalled();
+    expectNothingRegistered();
+  });
+
+  it("logs a failed key read and registers through the service's gate as before", async () => {
+    gitHostHolding("unreadable");
+    const provisioning = serviceWithoutTheUser(async () => ({ ready: true, value: undefined }));
+
+    const res = await ensureUser(provisioning);
+
+    expect(res.status).toBe(204);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("could not read"),
+      expect.objectContaining({ slug: "acme", holder: WALTER_KEY_OWNER, err: expect.objectContaining({ message: expect.stringContaining("list-keys failed: 500") }) }),
+    );
+    expect(provisioning.git).toHaveBeenCalledOnce();
+    expect(gitHost().registerKey).toHaveBeenCalledExactlyOnceWith("acme", KEY, WALTER_KEY_OWNER);
+  });
+
+  it("registers without reading the key first when the provisioning service is not configured", async () => {
+    const requests = gitHostHolding([{ title: OWN_TITLE, key: KEY }]);
+
+    const res = await ensureUser(null);
+
+    expect(res.status).toBe(204);
+    expect(requests).toEqual([]);
+    expect(gitHost().registerKey).toHaveBeenCalledExactlyOnceWith("acme", KEY, WALTER_KEY_OWNER);
+  });
+
+  describe("a user move while the service has no resource for the user", () => {
+    function sourceGatewayRegistersKey(provisioning: LegacyProvisioning) {
+      return async (step: string) => {
+        const res = await ensureUser(provisioning);
+        if (res.status >= 300) throw new Error(`${step} failed: gitea-broker POST /internal/gitea/ensure-user → ${res.status} ${JSON.stringify(res.body)}`);
+      };
+    }
+
+    function moveWhoseFinalCopyFails(provisioning: LegacyProvisioning) {
+      const registerKey = sourceGatewayRegistersKey(provisioning);
+      const reports: string[] = [];
+      const assignmentStates: string[] = [];
+      const client = {
+        abortImport: vi.fn(async () => undefined),
+        scheduler: vi.fn(),
+        schedules: vi.fn(async (schedules: { migrationId: string; slug: string; op: string }) => ({
+          migrationId: schedules.migrationId, slug: schedules.slug, op: schedules.op, records: [], skipped: [], removed: 0, created: 0, existing: 0, failed: [],
+        })),
+        quiesce: vi.fn(async ({ migrationId, slug }) => ({ migrationId, slug, drained: true, runningCount: 0 })),
+        flushGateway: vi.fn(async ({ migrationId, slug }) => {
+          await registerKey("flush");
+          return { migrationId, slug, ok: true, durationMs: 1, steps: [] };
+        }),
+        resume: vi.fn(async () => registerKey("resume")),
+        transferState: vi.fn(async ({ migrationId, slug, mode }) => {
+          if (mode === "final") throw new Error("the target refused the final copy");
+          return { migrationId, slug, imported: true };
+        }),
+        verifyTarget: vi.fn(),
+        restoreTarget: vi.fn(),
+        unmount: vi.fn(async ({ migrationId, slug }) => ({ migrationId, slug, unmounted: true })),
+      } as unknown as MigrationClient;
+      const deps: MigrationRunnerDeps = {
+        client,
+        commitCutover: vi.fn(async () => undefined),
+        setAssignmentState: vi.fn(async ({ gatewayId, state }) => {
+          assignmentStates.push(`${gatewayId}:${state}`);
+        }),
+        readScheduleTransfer: vi.fn(async () => null),
+        saveScheduleTransfer: vi.fn(async () => undefined),
+        recordScheduleRestore: vi.fn(async () => undefined),
+        log: () => undefined,
+        reportStep: (step) => {
+          reports.push(`${step.name}:${step.status}`);
+        },
+        wait: async () => undefined,
+      };
+      const run = () => runMigration({
+        migrationId: "move-1", uid: "uid-acme", slug: "acme", fromGatewayId: "walter", toGatewayId: "shared-2", gateAssignment: true,
+      }, deps);
+      return { run, client, reports, assignmentStates };
+    }
+
+    it("flushes the source, and after the final copy fails resumes the source and leaves the user serving there", async () => {
+      const requests = gitHostHolding([{ title: OWN_TITLE, key: KEY }]);
+      const provisioning = serviceWithoutTheUser();
+      const move = moveWhoseFinalCopyFails(provisioning);
+
+      const result = await move.run();
+
+      expect(result).toMatchObject({ success: false, rolledBack: true });
+      expect(result.errorAt?.error).toBe("the target refused the final copy");
+      expect(move.reports).toContain("flush-source:done");
+      expect(move.reports).toContain("rollback:resume-ingress:done");
+      expect(move.assignmentStates.at(-1)).toBe("walter:serving");
+      expect(move.client.resume).toHaveBeenCalledOnce();
+      expect(provisioning.git).not.toHaveBeenCalled();
+      expect(new Set(requests)).toEqual(new Set(["GET /users/ws-acme/keys"]));
+      expectNothingRegistered();
+    });
   });
 });
 
