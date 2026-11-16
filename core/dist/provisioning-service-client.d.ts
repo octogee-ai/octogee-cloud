@@ -1,4 +1,4 @@
-import { type ProvisioningCredential, type ProvisioningCredentialName, type ProvisioningErrorCode, type ProvisioningEventsResponse, type RetryProvisioningRequest, type UserProvisioning, type UserProvisioningList, type UserProvisioningListQuery, type UserProvisioningSpec, type UserProvisioningWatchResponse } from "@octogee/shared/types/provisioning-service";
+import { type GitKey, type GitKeySpec, type ProvisioningCredential, type ProvisioningCredentialName, type ProvisioningErrorCode, type ProvisioningEventsResponse, type RetryProvisioningRequest, type UserProvisioning, type UserProvisioningList, type UserProvisioningListQuery, type UserProvisioningSpec, type UserProvisioningWatchResponse } from "@octogee/shared/types/provisioning-service";
 export declare const PROVISIONING_SERVICE_URL_ENV = "PROVISIONING_SERVICE_URL";
 export declare const PROVISIONING_SERVICE_TOKEN_PATH_ENV = "PROVISIONING_SERVICE_TOKEN_PATH";
 export interface ProvisioningServiceRetryPolicy {
@@ -30,6 +30,10 @@ export type DeleteProvisioningOutcome = "deleted" | "unnameable";
 export interface PutProvisioningResult {
     readonly outcome: "created" | "changed" | "unchanged";
     readonly resource: UserProvisioning;
+}
+export interface PutGitKeyResult {
+    readonly outcome: "created" | "changed" | "unchanged";
+    readonly key: GitKey;
 }
 export interface RequestSignalOptions {
     readonly signal?: AbortSignal;
@@ -65,7 +69,8 @@ export interface ProvisioningServiceClient {
     watchProvisionings(options: WatchProvisioningsOptions): Promise<UserProvisioningWatchResponse>;
     retryProvisioning(uid: string, request: RetryProvisioningRequest, idempotencyKey: string): Promise<unknown>;
     getProvisioningEvents(uid: string, options?: RequestSignalOptions): Promise<ProvisioningEventsResponse | null>;
-    getCredential(uid: string, name: ProvisioningCredentialName): Promise<ProvisioningCredential | null>;
+    getCredential(uid: string, name: ProvisioningCredentialName, options?: RequestSignalOptions): Promise<ProvisioningCredential | null>;
+    putGitKey(uid: string, gatewayId: string, spec: GitKeySpec, options?: RequestSignalOptions): Promise<PutGitKeyResult>;
 }
 export interface ProvisioningServiceConfig {
     readonly baseUrl: string;

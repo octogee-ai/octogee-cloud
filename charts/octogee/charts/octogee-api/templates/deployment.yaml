@@ -127,6 +127,12 @@ spec:
             - name: {{ $key }}
               value: {{ $value | quote }}
             {{- end }}
+            {{- with (.Values.provisioningService).url }}
+            - name: PROVISIONING_SERVICE_URL
+              value: {{ . | quote }}
+            - name: PROVISIONING_SERVICE_TOKEN_PATH
+              value: /var/run/secrets/provisioning-service/token
+            {{- end }}
             {{- $secretEnv := .Values.secrets }}
             {{- range $path, $_ := .Files.Glob "**/secret-env.yaml" }}
             {{- $secretEnv = concat $secretEnv ($.Files.Get $path | fromYamlArray) }}
@@ -167,6 +173,11 @@ spec:
             - name: kubernetes-api-identity
               mountPath: /var/run/secrets/kubernetes-api
               readOnly: true
+            {{- if (.Values.provisioningService).url }}
+            - name: provisioning-service-token
+              mountPath: /var/run/secrets/provisioning-service
+              readOnly: true
+            {{- end }}
             {{- with $productPod.volumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -189,6 +200,15 @@ spec:
                   items:
                     - key: ca.crt
                       path: ca.crt
+        {{- if (.Values.provisioningService).url }}
+        - name: provisioning-service-token
+          projected:
+            sources:
+              - serviceAccountToken:
+                  path: token
+                  audience: provisioning-service
+                  expirationSeconds: 3600
+        {{- end }}
         {{- with $productPod.volumes }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

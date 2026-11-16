@@ -68,7 +68,7 @@ function refusingStore(store, uid, chat) {
         get: (target, property, receiver) => property === "transaction" ? transaction : Reflect.get(target, property, receiver),
     });
 }
-function chatReady(resource) {
+export function chatReady(resource) {
     const condition = resource.status.conditions.find((candidate) => candidate.type === "ChatReady");
     const chat = resource.status.outputs.chat;
     if (condition?.status !== "True" || chat === undefined)
@@ -125,6 +125,20 @@ async function chatRecordsMatch(store, uid, chat, slug) {
 }
 async function recordsMatch(store, resource, chat, slug) {
     return (await userRecordsMatch(store, resource, chat, slug)) && (await chatRecordsMatch(store, resource.uid, chat, slug));
+}
+export async function mirroredState(store, resource, chat) {
+    const user = await store.users.records.get(resource.uid);
+    if (user === null)
+        return { state: "user-missing", detail: `no user record exists for ${resource.uid}` };
+    const slug = resource.spec.slug;
+    if (user.slug !== slug)
+        return { state: "slug-mismatch", detail: `the user record carries slug ${user.slug}, the spec names ${slug}` };
+    if (userBeingErased(user))
+        return { state: "being-erased", detail: `the user's account lifecycle is ${user.accountLifecycle?.status}` };
+    const mismatch = await chatAccountMismatch(store, user, chat);
+    if (mismatch !== null)
+        return { state: "chat-id-mismatch", detail: mismatch };
+    return { state: (await recordsMatch(store, resource, chat, slug)) ? "mirrored" : "pending" };
 }
 export async function mirrorUserProvisioning(deps, resource) {
     const chat = chatReady(resource);

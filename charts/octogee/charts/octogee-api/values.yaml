@@ -34,6 +34,13 @@ gatewayServiceAccount: ""
 featureFlags:
   enabled: []
 
+# The provisioning service's in-cluster base URL. Empty keeps the gateway
+# provisioning routes on their own chat and git setup. When set, those routes
+# answer from the user's provisioning resource and the API authenticates with a
+# projected service account token for the audience provisioning-service.
+provisioningService:
+  url: ""
+
 env:
   GITEA_URL: ""  # auto-computed from K8S_NAMESPACE
   GITEA_ORG: "octogee"

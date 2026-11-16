@@ -25,6 +25,7 @@ import {
   ensureProjectGiteaRepo,
   ProjectRepoProvisioningError,
 } from "../projects/provisioning.js";
+import { respondProvisioningPending, routeBudget, type LegacyGitRepository, type LegacyProvisioning } from "../../lib/legacy-provisioning.js";
 
 // Gitea ADMIN broker for the in-pod provisioner. The provisioner runs in the OpenClaw
 // openclaw container and no longer holds the admin token; it calls octogee-api with its
@@ -37,9 +38,6 @@ import {
 // path traversal / injection into the privileged Gitea paths. The assigned-roster guard below is
 // defense-in-depth over octogee-api tenant enforcement: it blocks cross-tenant Gitea key
 // replacement / repo mutation before any admin call is attempted.
-
-const router: Router = Router();
-router.use(requireInternalServiceAuth);
 
 // Our Gitea repo names are fixed platform repos or project slugs. Keep the
 // system_config underscore as an exact-name exception instead of relaxing
@@ -227,22 +225,119 @@ async function broker(res: Response, op: string, fn: () => Promise<void>): Promi
   }
 }
 
-router.post("/ensure-user", async (req: Request, res: Response) => {
-  const { slug, pubKey } = (req.body ?? {}) as { slug?: unknown; pubKey?: unknown };
-  if (!validSlug(res, slug)) return;
-  if (!isSshPublicKey(pubKey)) {
-    res.status(400).json({ error: "pubKey must be a valid SSH public key" });
-    return;
+async function awaitServiceGit(
+  res: Response,
+  legacyProvisioning: LegacyProvisioning,
+  route: string,
+  slug: string,
+  repository: LegacyGitRepository | null,
+): Promise<void> {
+  try {
+    const user = await platformStateStore.users.records.findBySlug(slug);
+    if (!user) {
+      logger.error("internal/gitea: no user carries the slug", { slug });
+      respondProvisioningPending(res, { route, slug }, { reason: "NotProvisioned", retryAfterSeconds: 5 });
+      return;
+    }
+    const wait = await legacyProvisioning.git(user.uid, repository, routeBudget());
+    if (!wait.ready) {
+      respondProvisioningPending(res, { route, uid: user.uid }, wait);
+      return;
+    }
+    res.status(204).end();
+  } catch (err) {
+    logger.error("internal/gitea provisioning service read failed", { err, slug, repository });
+    res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
   }
-  const access = await requireUserAccess(req, res, slug);
-  if (!access) return;
-  const keyOwner = gatewayKeyOwnerForRequest(req, res);
-  if (!keyOwner) return;
-  await broker(res, "ensure-user", () =>
-    access === "serving"
-      ? gitHost().registerKey(slug, pubKey, keyOwner)
-      : gitHost().registerKeyUnlessHeld(slug, pubKey, keyOwner));
-});
+}
+
+interface UserGitRoute {
+  op: string;
+  repository: LegacyGitRepository | null;
+  ensure: (slug: string) => Promise<void>;
+}
+
+const USER_GIT_ROUTES: readonly UserGitRoute[] = [
+  { op: "ensure-org", repository: null, ensure: (slug) => gitHost().ensureOwner(slug) },
+  { op: "ensure-workspace-repo", repository: "workspace", ensure: (slug) => gitHost().ensureRepo(slug, { kind: "workspace" }) },
+  { op: "ensure-system-config-repo", repository: "system-config", ensure: (slug) => gitHost().ensureRepo(slug, { kind: "system-config" }) },
+  { op: "ensure-project-coach-repo", repository: "project-coaches", ensure: (slug) => gitHost().ensureRepo(slug, { kind: "project-coaches" }) },
+];
+
+function userGitHandler(route: UserGitRoute, legacyProvisioning: LegacyProvisioning | null) {
+  return async (req: Request, res: Response): Promise<void> => {
+    const { slug } = (req.body ?? {}) as { slug?: unknown };
+    if (!validSlug(res, slug)) return;
+    if (!(await requireUserAccess(req, res, slug))) return;
+    if (legacyProvisioning) {
+      await awaitServiceGit(res, legacyProvisioning, route.op, slug, route.repository);
+      return;
+    }
+    await broker(res, route.op, () => route.ensure(slug));
+  };
+}
+
+interface ServiceKeyMount {
+  gatewayId: string;
+  access: UserAccess;
+  slug: string;
+  publicKey: string;
+}
+
+async function awaitServiceGitKey(
+  res: Response,
+  legacyProvisioning: LegacyProvisioning,
+  { gatewayId, access, slug, publicKey }: ServiceKeyMount,
+): Promise<void> {
+  try {
+    const user = await platformStateStore.users.records.findBySlug(slug);
+    if (!user) {
+      logger.error("internal/gitea: no user carries the slug", { slug });
+      respondProvisioningPending(res, { route: "ensure-user", slug }, { reason: "NotProvisioned", retryAfterSeconds: 5 });
+      return;
+    }
+    if (access === "standby") {
+      logger.info("internal/gitea ensure-user: a standby gateway registers no key for a user another gateway serves", { gatewayId, uid: user.uid });
+      res.status(204).end();
+      return;
+    }
+    const wait = await legacyProvisioning.gitKey(user.uid, gatewayId, publicKey, routeBudget());
+    if (!wait.ready) {
+      respondProvisioningPending(res, { route: "ensure-user", uid: user.uid }, wait);
+      return;
+    }
+    res.status(204).end();
+  } catch (err) {
+    logger.error("internal/gitea ensure-user through the provisioning service failed", { err, slug, gatewayId });
+    res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+function ensureUserHandler(legacyProvisioning: LegacyProvisioning | null) {
+  return async (req: Request, res: Response): Promise<void> => {
+    const { slug, pubKey } = (req.body ?? {}) as { slug?: unknown; pubKey?: unknown };
+    if (!validSlug(res, slug)) return;
+    if (!isSshPublicKey(pubKey)) {
+      res.status(400).json({ error: "pubKey must be a valid SSH public key" });
+      return;
+    }
+    const access = await requireUserAccess(req, res, slug);
+    if (!access) return;
+    if (legacyProvisioning) {
+      const { gatewayId } = gatewayCallerForRequest(req)!;
+      await awaitServiceGitKey(res, legacyProvisioning, { gatewayId, access, slug, publicKey: pubKey.trim() });
+      return;
+    }
+    const keyOwner = gatewayKeyOwnerForRequest(req, res);
+    if (!keyOwner) return;
+    await broker(res, "ensure-user", () =>
+      access === "serving"
+        ? gitHost().registerKey(slug, pubKey, keyOwner)
+        : gitHost().registerKeyUnlessHeld(slug, pubKey, keyOwner));
+  };
+}
+
+const router: Router = Router();
 
 router.post("/release-user-key", async (req: Request, res: Response) => {
   const { slug, pubKey } = (req.body ?? {}) as { slug?: unknown; pubKey?: unknown };
@@ -280,34 +375,6 @@ router.get("/user-pubkeys", async (req: Request, res: Response) => {
     logger.error("internal/gitea user-pubkeys failed", { err });
     res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
   }
-});
-
-router.post("/ensure-org", async (req: Request, res: Response) => {
-  const { slug } = (req.body ?? {}) as { slug?: unknown };
-  if (!validSlug(res, slug)) return;
-  if (!(await requireUserAccess(req, res, slug))) return;
-  await broker(res, "ensure-org", () => gitHost().ensureOwner(slug));
-});
-
-router.post("/ensure-workspace-repo", async (req: Request, res: Response) => {
-  const { slug } = (req.body ?? {}) as { slug?: unknown };
-  if (!validSlug(res, slug)) return;
-  if (!(await requireUserAccess(req, res, slug))) return;
-  await broker(res, "ensure-workspace-repo", () => gitHost().ensureRepo(slug, { kind: "workspace" }));
-});
-
-router.post("/ensure-system-config-repo", async (req: Request, res: Response) => {
-  const { slug } = (req.body ?? {}) as { slug?: unknown };
-  if (!validSlug(res, slug)) return;
-  if (!(await requireUserAccess(req, res, slug))) return;
-  await broker(res, "ensure-system-config-repo", () => gitHost().ensureRepo(slug, { kind: "system-config" }));
-});
-
-router.post("/ensure-project-coach-repo", async (req: Request, res: Response) => {
-  const { slug } = (req.body ?? {}) as { slug?: unknown };
-  if (!validSlug(res, slug)) return;
-  if (!(await requireUserAccess(req, res, slug))) return;
-  await broker(res, "ensure-project-coach-repo", () => gitHost().ensureRepo(slug, { kind: "project-coaches" }));
 });
 
 router.post("/ensure-project-repo", async (req: Request, res: Response) => {
@@ -383,4 +450,15 @@ router.post("/archive-repo", async (req: Request, res: Response) => {
   await broker(res, "archive-repo", () => gitHost().archiveRepo({ owner: org, repo }));
 });
 
-export default router;
+export interface InternalGiteaAdminRouteDeps {
+  legacyProvisioning: LegacyProvisioning | null;
+}
+
+export function createInternalGiteaAdminRoutes({ legacyProvisioning }: InternalGiteaAdminRouteDeps): Router {
+  const routes: Router = Router();
+  routes.use(requireInternalServiceAuth);
+  for (const route of USER_GIT_ROUTES) routes.post(`/${route.op}`, userGitHandler(route, legacyProvisioning));
+  routes.post("/ensure-user", ensureUserHandler(legacyProvisioning));
+  routes.use(router);
+  return routes;
+}
