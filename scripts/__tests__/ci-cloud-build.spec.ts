@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { cloudBakePlan, copyPublished, digestsFromMetadata, imageManifest, imagePaths, mergeCommands, productFindings, resolvePublished } from "../ci/cloud-build.mjs";
+import { buildkitImagePaths, cloudBakePlan, copyPublished, digestsFromMetadata, imageManifest, imagePaths, mergeCommands, productFindings, resolvePublished } from "../ci/cloud-build.mjs";
 import { IMAGE_BUILDS } from "../ci/image-build.mjs";
 
 const root = fileURLToPath(new URL("../..", import.meta.url));
@@ -295,6 +295,38 @@ describe("image file listing", () => {
   it("fails when an image lists no files", async () => {
     await expect(withTools({ docker: docker("exit 0"), tar: "cat > /dev/null" }, () => imagePaths("image@sha256:1")))
       .rejects.toThrow("image@sha256:1 lists no files");
+  });
+});
+
+describe("image file listing from the build's existing snapshots", () => {
+  const image = `${registry}/octogee-gateway@${digest(1)}`;
+  const docker = (body: string) => `
+    test "$1 $2" = 'buildx build' || exit 91
+    destination=''
+    for arg in "$@"; do
+      case "$arg" in --output=type=local,dest=*) destination="\${arg#--output=type=local,dest=}" ;; esac
+    done
+    test -n "$destination" || exit 92
+    ${body}
+  `;
+
+  it("reads the full path inventory from an immutable image without pulling into the Docker daemon", async () => {
+    const script = docker(`printf '%s' '["app/core/dist/main.js","usr/bin/node","opt/product/private.js"]' > "$destination/paths.json"`);
+    await expect(withTools({ docker: script }, () => buildkitImagePaths(image, "linux/arm64")))
+      .resolves.toEqual(["app/core/dist/main.js", "usr/bin/node", "opt/product/private.js"]);
+  });
+
+  it.each([
+    ["exit 7", "exited 7"],
+    ["printf '[]' > \"$destination/paths.json\"", "lists no files"],
+    ["printf '{}' > \"$destination/paths.json\"", "Invalid image path inventory"],
+  ])("fails closed when the inventory cannot be produced: %s", async (body, error) => {
+    await expect(withTools({ docker: docker(body) }, () => buildkitImagePaths(image, "linux/arm64"))).rejects.toThrow(error);
+  });
+
+  it("requires a digest and a supported platform", async () => {
+    await expect(buildkitImagePaths(`${registry}/octogee-gateway:latest`, "linux/arm64")).rejects.toThrow("immutable image digest");
+    await expect(buildkitImagePaths(image, "linux/s390x")).rejects.toThrow("Unsupported platform");
   });
 });
 

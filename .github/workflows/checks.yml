@@ -123,7 +123,9 @@ jobs:
             esac
           done
       - name: Typecheck and test
-        run: ${{ matrix.run }}
+        env:
+          PACKAGE_CHECK: ${{ matrix.name }}
+        run: node scripts/ci/check-packages.mjs --run "$PACKAGE_CHECK"
 
   checks:
     name: checks

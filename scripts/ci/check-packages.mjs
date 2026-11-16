@@ -21,10 +21,21 @@ export function checkPackages(paths, full = false) {
   };
 }
 
+export function packageCommand(name) {
+  const job = matrix.include.find(job => job.name === name);
+  if (!job) throw new Error(`Unknown package check: ${name}`);
+  return job.run;
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const input = process.argv[2];
-  if (!input) throw new Error("Usage: check-packages.mjs <NUL-delimited-paths-file>|--full");
-  const full = input === "--full";
-  const paths = full ? [] : readFileSync(input, "utf8").split("\0").filter(Boolean);
-  console.log(JSON.stringify(checkPackages(paths, full)));
+  if (!input) throw new Error("Usage: check-packages.mjs <NUL-delimited-paths-file>|--full|--run <name>");
+  if (input === "--run") {
+    execFileSync("/bin/bash", ["--noprofile", "--norc", "-eo", "pipefail", "-c", packageCommand(process.argv[3])], { stdio: "inherit" });
+  } else {
+    const full = input === "--full";
+    const paths = full ? [] : readFileSync(input, "utf8").split("\0").filter(Boolean);
+    console.log(JSON.stringify(checkPackages(paths, full)));
+  }
 }
+import { execFileSync } from "node:child_process";

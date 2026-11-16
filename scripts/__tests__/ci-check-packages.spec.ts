@@ -3,12 +3,17 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { checkPackages } from "../ci/check-packages.mjs";
+import { checkPackages, packageCommand } from "../ci/check-packages.mjs";
 
 const names = (paths: string[], full = false) => checkPackages(paths, full).include.map((job: { name: string }) => job.name);
 const always = ["scripts", "tests", "release-artifacts"];
 
 describe("package checks selected before runner allocation", () => {
+  it("executes only a named repository command, never a command supplied through the matrix", () => {
+    expect(packageCommand("llm-broker")).toBe("cd llm-broker\nnpm run typecheck\nnpm test\n");
+    expect(() => packageCommand("llm-broker; touch /tmp/injected")).toThrow("Unknown package check");
+  });
+
   it("keeps repository, cross-component and release checks with the changed service's whole suite", () => {
     expect(names(["platform-api/src/routes/fleet-broker.ts"])).toEqual([
       "scripts", "platform-api", "tests", "release-artifacts",
