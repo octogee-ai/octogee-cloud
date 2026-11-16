@@ -287,6 +287,19 @@ describe("provisioning service client", () => {
     expect(fake.requests.at(-1)?.path).toBe("/v1/users/u1/credentials/user-chat-token");
   });
 
+  it("releases a git key only while it still holds the expected public key, and answers superseded otherwise", async () => {
+    const api = client();
+    await api.putProvisioning("u1", SPEC);
+    await api.putGitKey("u1", "gateway-a", { publicKey: "ssh-ed25519 AAAA old" });
+    await api.putGitKey("u1", "gateway-a", { publicKey: "ssh-ed25519 BBBB new" });
+
+    await expect(api.deleteGitKey("u1", "gateway-a", { expectedPublicKey: "ssh-ed25519 AAAA old" })).resolves.toBe("superseded");
+    expect(fake.requests.at(-1)).toMatchObject({ method: "DELETE", path: "/v1/users/u1/git-keys/gateway-a", body: { expectedPublicKey: "ssh-ed25519 AAAA old" } });
+    await expect(api.deleteGitKey("u1", "gateway-a", { expectedPublicKey: "ssh-ed25519 BBBB new" })).resolves.toBe("deleted");
+    expect(fake.gitKeys.has("u1/gateway-a")).toBe(false);
+    expect(sleeps).toEqual([]);
+  });
+
   it("puts a gateway's git key and reports whether the service created, changed or kept it", async () => {
     const api = client();
     await api.putProvisioning("u1", SPEC);

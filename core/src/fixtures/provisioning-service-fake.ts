@@ -123,6 +123,12 @@ function createFakeGitKeys(nextVersion: () => number) {
       keys.set(`${uid}/${gatewayId}`, key);
       return { status: existing ? 202 : 201, key };
     },
+    delete(uid: string, gatewayId: string, expectedPublicKey: string | undefined): number {
+      const existing = keys.get(`${uid}/${gatewayId}`);
+      if (existing && expectedPublicKey !== undefined && existing.spec.publicKey !== expectedPublicKey) return 409;
+      keys.delete(`${uid}/${gatewayId}`);
+      return 202;
+    },
     setStatus(uid: string, gatewayId: string, status: GitKeyStatus): GitKey {
       const existing = keys.get(`${uid}/${gatewayId}`);
       if (!existing) throw new Error(`fake provisioning service has no git key ${uid}/${gatewayId}`);
@@ -146,6 +152,18 @@ function putFakeGitKey(
   if (!resources.has(uid)) return fail(res, 404, "not-found");
   const { status, key } = gitKeys.put(uid, decodeURIComponent(match[2]), (body as { spec: GitKey["spec"] }).spec);
   send(res, status, key);
+}
+
+function deleteFakeGitKey(
+  gitKeys: ReturnType<typeof createFakeGitKeys>,
+  match: RegExpExecArray,
+  body: unknown,
+  res: ServerResponse,
+): void {
+  const expected = (body as { expectedPublicKey?: string } | undefined)?.expectedPublicKey;
+  const status = gitKeys.delete(decodeURIComponent(match[1]), decodeURIComponent(match[2]), expected);
+  if (status === 409) return fail(res, 409, "precondition-failed");
+  send(res, status);
 }
 
 export async function startFakeProvisioningService(options: { tokens?: string[] } = {}): Promise<FakeProvisioningService> {
@@ -259,6 +277,7 @@ export async function startFakeProvisioningService(options: { tokens?: string[] 
     if (credentialMatch) return credential(decodeURIComponent(credentialMatch[1]), decodeURIComponent(credentialMatch[2]), res);
     const gitKeyMatch = GIT_KEY_PATH.exec(url.pathname);
     if (gitKeyMatch && recorded.method === "PUT") return putFakeGitKey(gitKeys, resources, gitKeyMatch, recorded.body, res);
+    if (gitKeyMatch && recorded.method === "DELETE") return deleteFakeGitKey(gitKeys, gitKeyMatch, recorded.body, res);
     const userMatch = /^\/v1\/users\/([^/]+)\/provisioning(\/retry|\/events)?$/.exec(url.pathname);
     if (!userMatch) return fail(res, 404, "not-found");
     const uid = decodeURIComponent(userMatch[1]);
