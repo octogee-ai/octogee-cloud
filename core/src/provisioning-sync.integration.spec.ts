@@ -138,8 +138,8 @@ describe.skipIf(!dsn)("provisioning spec writer, backfill and mirror on PostgreS
 
     await admit("u1", "lin");
 
-    await until(() => fake.resources.has("u1"));
-    expect(instance.counters.specWrites.created).toBe(1);
+    await until(() => instance.counters.specWrites.created === 1);
+    expect(fake.resources.has("u1")).toBe(true);
   });
 
   it("resumes a backfill a previous fleet controller left in progress", async () => {
