@@ -468,6 +468,11 @@ function installServiceProvisioningRoutes(router: Router, deps: ResolvedFleetBro
     const { legacyProvisioning } = deps;
     if (!serviceRouteConfigured(res, "git-key/release", legacyProvisioning)) return;
     await runBrokered(res, async () => {
+      if ((await store.gateways.roots.get(bound.gatewayId))?.gatewayClass !== "shared") {
+        logger.info("gateway git key release: only a shared gateway holds a git key row, so the provisioning service is not asked", { gatewayId: bound.gatewayId, holder });
+        res.status(204).end();
+        return;
+      }
       const user = await store.users.records.findBySlug(slug);
       if (user === null) {
         res.status(404).json({ error: "not_found" });

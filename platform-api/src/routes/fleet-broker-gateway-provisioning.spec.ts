@@ -442,6 +442,30 @@ describe("POST /internal/fleet/git-key/release", () => {
     expect(provisioning?.releaseGitKey).toHaveBeenCalledWith("uid-alice", HOLDER, PUBLIC_KEY, expect.objectContaining({ signal: expect.any(AbortSignal) }));
   });
 
+  it("releases the token's own holder whatever holder, pod or gateway key owner the body names", async () => {
+    const { app, provisioning } = fixture();
+    const other = "shared-green/octogee-gateway-shared-green-7d8e9-f3g4h";
+
+    await release(app, { publicKey: PUBLIC_KEY, holder: other, gitKeyHolder: other, serviceHolder: other, podName: "octogee-gateway-shared-green-7d8e9-f3g4h" }).expect(204);
+
+    expect(provisioning?.releaseGitKey).toHaveBeenCalledTimes(1);
+    expect(provisioning?.releaseGitKey).toHaveBeenCalledWith("uid-alice", HOLDER, PUBLIC_KEY, expect.anything());
+  });
+
+  it.each([
+    ["an isolated gateway", "isolated" as const],
+    ["a gateway the platform holds no root for", null],
+  ])("answers %s that there is no row, without asking the provisioning service", async (_caller, gatewayClass) => {
+    const logged = vi.spyOn(logger, "info").mockImplementation(() => {});
+    const { app, provisioning } = fixture({ gatewayClass });
+
+    await release(app, { publicKey: PUBLIC_KEY }).expect(204);
+    await release(app, { slug: "nobody", publicKey: PUBLIC_KEY }).expect(204);
+
+    expect(provisioning?.releaseGitKey).not.toHaveBeenCalled();
+    expect(logged).toHaveBeenCalledWith(expect.stringContaining("only a shared gateway holds a git key row"), { gatewayId: GATEWAY_ID, holder: HOLDER });
+  });
+
   it("refuses a caller whose token binds no pod", async () => {
     const { app, provisioning } = fixture({ podName: null });
 

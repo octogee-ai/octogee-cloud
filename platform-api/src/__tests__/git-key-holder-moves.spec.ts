@@ -2,7 +2,7 @@ import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { gatewayKeyOwnerId } from "@octogee/core/gitea-naming";
+import { gatewayKeyOwnerId, publicKeyIdentity } from "@octogee/core/gitea-naming";
 import { logger } from "@octogee/core/http/logging";
 import { platformStateStore } from "@octogee/core/identity/platform-state-store";
 import { NO_BROKER_RECORDS } from "../lib/broker-records.js";
@@ -49,6 +49,15 @@ function assign(gatewayId: string): void {
   state.docs.set(`users/${USER.uid}`, { username: USER.slug, provisioning: { openclaw: { slug: USER.slug, gatewayId } } });
 }
 
+function seedSharedGateway(gatewayId: string): void {
+  state.docs.set(`gateways/${gatewayId}`, {
+    gatewayId, createdAt: 1, createdBy: "admin", updatedAt: 2, updatedBy: "admin", latestRelease: 2, desiredRelease: 2, liveRelease: 1,
+    desiredStatus: "running", configSchemaVersion: 1, profile: "shared", gatewayClass: "shared", imageProfile: "shared", sizingTier: null, gcpProject: null,
+    gatewayContainerSecurityContext: null, serviceAccountName: `octogee-gw-${gatewayId}`, serviceAccount: null, builderAccess: null,
+    ownerUid: null, builderSlug: null, modelBrokerLimits: null, preemption: null,
+  });
+}
+
 function seedInboundMove(toGatewayId: string): void {
   state.docs.set("glmOperations/op-1", {
     kind: "migrate-user", status: "running", gatewayId: toGatewayId, inputUid: USER.uid, input: { uid: USER.uid, toGatewayId },
@@ -70,6 +79,11 @@ function platform(git: FakeGitHost, service: GitKeyServiceContract | null, sleep
   app.use("/internal/gitea", createInternalGiteaAdminRoutes({ legacyProvisioning }));
   const call = (from: Pod, path: string, body: Record<string, unknown>) =>
     request(app).post(path).set("x-gateway-id", from.gatewayId).set("x-pod-name", from.podName).send(body);
+  const listedKeys = async (from: Pod): Promise<string[]> => {
+    const answer = await request(app).get("/internal/gitea/user-pubkeys").query({ slug: USER.slug })
+      .set("x-gateway-id", from.gatewayId).set("x-pod-name", from.podName).expect(200);
+    return (answer.body as { pubKeys: string[] }).pubKeys;
+  };
 
   const thisBuild = {
     async serviceMount(p: Pod) {
@@ -86,6 +100,11 @@ function platform(git: FakeGitHost, service: GitKeyServiceContract | null, sleep
       const answer = await thisBuild.registration(p);
       expect([200, 204]).toContain(answer.status);
       if (answer.body?.registeredOn === "git-host") p.disk.marker = null;
+    },
+    async resync(p: Pod): Promise<"held" | "registered"> {
+      if ((await listedKeys(p)).some((listed) => publicKeyIdentity(listed) === publicKeyIdentity(p.disk.key!))) return "held";
+      await thisBuild.register(p);
+      return "registered";
     },
     async giveUp(p: Pod) {
       const released = await call(p, "/internal/fleet/git-key/release", { slug: USER.slug, publicKey: p.disk.key });
@@ -112,6 +131,8 @@ const hostKeys = (git: FakeGitHost) => git.held().map(({ key }) => key).sort();
 
 beforeEach(() => {
   state.docs.clear();
+  seedSharedGateway("shared-blue");
+  seedSharedGateway("shared-green");
   vi.spyOn(logger, "info").mockImplementation(() => {});
   vi.spyOn(logger, "warn").mockImplementation(() => {});
   vi.spyOn(logger, "error").mockImplementation(() => {});
@@ -310,30 +331,93 @@ describe("git keys across moves and rolls, through the platform's routes and ada
     expect(service.row(serving.holder)).toMatchObject({ putSequence: 2, status: { observedPutSequence: 2, conditions: [{ status: "True" }] } });
   });
 
-  it("answers the pod whose put lost to another pod's put for the same key that the key is held elsewhere, and registers it at that pod's next put", async () => {
+  describe("a move that rolls back after the target took the travelling key", () => {
+    async function rolledBackToSource() {
+      const { git, service, thisBuild } = setup();
+      assign("shared-blue");
+      const source = pod("shared-blue", "octogee-gateway-shared-blue-5bc59-a1b2c");
+      await thisBuild.serviceMount(source);
+      const carried = source.disk.key!;
+      seedInboundMove("shared-green");
+      const target = pod("shared-green", "octogee-gateway-shared-green-7d8e9-f3g4h", { key: carried, marker: source.holder });
+      await thisBuild.register(target);
+      expect(target.disk.marker).toBeNull();
+      expect(git.titled(target.holder)).toEqual([carried]);
+
+      await thisBuild.register(source);
+      expect(git.titled(source.holder)).toEqual([carried]);
+      expect(service.rows()).toEqual([{ holder: source.holder, publicKey: carried }]);
+      return { git, service, thisBuild, source, target, carried };
+    }
+
+    it("loses the key when the target's late direct registration is followed by the target's release, and the source's resync registers it again", async () => {
+      const { git, service, thisBuild, source, target, carried } = await rolledBackToSource();
+
+      await thisBuild.register(target);
+      await thisBuild.giveUp(target);
+      await service.attempt();
+
+      expect(hostKeys(git)).toEqual([]);
+      expect(service.rows()).toEqual([{ holder: source.holder, publicKey: carried }]);
+      expect(service.row(source.holder)?.status.conditions[0]).toMatchObject({ status: "False", reason: "GitKeyNotOnHost" });
+
+      await expect(thisBuild.resync(source)).resolves.toBe("registered");
+
+      expect(source.disk.marker).toBe(source.holder);
+      expect(git.titled(source.holder)).toEqual([carried]);
+      expect(hostKeys(git)).toEqual([carried]);
+      expect(service.row(source.holder)).toMatchObject({ putSequence: 3, status: { observedPutSequence: 3, conditions: [{ status: "True" }] } });
+    });
+
+    it("leaves the key under the target's title when the target unmounts before its late registration lands, and the source's next put takes it back", async () => {
+      const { git, service, thisBuild, source, target, carried } = await rolledBackToSource();
+      const lateRegistration = pod(target.gatewayId, target.podName, { key: carried, marker: null });
+
+      await thisBuild.giveUp(target);
+      expect(git.titled(source.holder)).toEqual([carried]);
+      await thisBuild.register(lateRegistration);
+      await service.attempt();
+
+      expect(git.titled(target.holder)).toEqual([carried]);
+      expect(hostKeys(git)).toEqual([carried]);
+      expect(service.rows()).toEqual([{ holder: source.holder, publicKey: carried }]);
+      expect(service.row(source.holder)?.status.conditions[0]).toMatchObject({ status: "False", reason: "GitKeyHeldElsewhere" });
+      await expect(thisBuild.resync(source)).resolves.toBe("held");
+
+      await thisBuild.register(source);
+
+      expect(git.titled(source.holder)).toEqual([carried]);
+      expect(hostKeys(git)).toEqual([carried]);
+      expect(service.row(source.holder)).toMatchObject({ putSequence: 3, status: { observedPutSequence: 3, conditions: [{ status: "True" }] } });
+    });
+  });
+
+  it("answers a source's resume put that lost to the target's mount put in one attempt that the key is held elsewhere, and registers it at the source's next put", async () => {
     const { git, service, thisBuild } = setup();
     assign("shared-blue");
-    seedInboundMove("shared-green");
     const source = pod("shared-blue", "octogee-gateway-shared-blue-5bc59-a1b2c");
     await thisBuild.serviceMount(source);
     const carried = source.disk.key;
     const target = pod("shared-green", "octogee-gateway-shared-green-7d8e9-f3g4h", { key: carried, marker: null });
-    target.disk.marker = target.holder;
-
     const attemptOnceBothPutsArePending = async () => {
       while (service.puts.length < 3) await new Promise((resolve) => setImmediate(resolve));
       await service.attempt();
     };
     const racing = platform(git, service, attemptOnceBothPutsArePending).thisBuild;
 
-    const [resumed, activated] = await Promise.all([racing.registration(source), racing.registration(target)]);
+    assign("shared-green");
+    const mounted = racing.serviceMount(target);
+    while (service.puts.length < 2) await new Promise((resolve) => setImmediate(resolve));
+    assign("shared-blue");
+    const resumed = await racing.registration(source);
+    await mounted;
 
-    expect(activated.status).toBe(204);
     expect(resumed.status).toBe(503);
     expect(resumed.body).toEqual({ error: "provisioning_pending", reason: "GitKeyHeldElsewhere" });
     expect(git.titled(target.holder)).toEqual([carried]);
     expect(git.titled(source.holder)).toEqual([]);
     expect(source.disk.marker).toBe(source.holder);
+    expect(service.row(target.holder)).toMatchObject({ putSequence: 1, status: { observedPutSequence: 1, conditions: [{ status: "True" }] } });
 
     await thisBuild.register(source);
 

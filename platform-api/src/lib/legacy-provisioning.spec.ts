@@ -332,6 +332,18 @@ describe("legacy provisioning adapter: git key", () => {
     await expect(call(provisioning, route())).resolves.toEqual({ ready: true, value: undefined });
   });
 
+  it("is ready for a key registered for its put while the row backs off after a key pass could not list the git host's keys", async () => {
+    const logged = vi.spyOn(logger, "error").mockImplementation(() => {});
+    const backingOff = new Date(NOW + 60_000).toISOString();
+    const { client, keyGets } = fakeClient([IDLE], null, [PUT], [gitKey({ putSequence: 4, observedPutSequence: 4, registered: "True", nextAttemptAt: backingOff })]);
+    const { provisioning, budget: route } = clockedAdapter(client);
+
+    await expect(call(provisioning, route())).resolves.toEqual({ ready: true, value: undefined });
+
+    expect(keyGets).toHaveLength(1);
+    expect(logged).not.toHaveBeenCalled();
+  });
+
   it("ends the wait at once when the attempt that followed the put failed to register, answering that failure", async () => {
     const logged = vi.spyOn(logger, "error").mockImplementation(() => {});
     const { client, keyPuts, keyGets } = fakeClient([IDLE], null, [PUT], [
