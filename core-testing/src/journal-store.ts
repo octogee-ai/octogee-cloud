@@ -1,3 +1,4 @@
+import { assertGitKeysReleasedFor } from "@octogee/core/gateway-root-deletion";
 import { isDeepStrictEqual } from "node:util";
 import {
   isGatewayDesiredDoc,
@@ -541,7 +542,8 @@ function gatewayRepositories(documents: FixtureDocuments, write: Write): Gateway
         }
         updateRoot(id, { runtimeRestartFence: next ?? { clear: true } });
       },
-      delete: async (id, fence) => {
+      delete: async (id, gitKeys, fence) => {
+        assertGitKeysReleasedFor(id, gitKeys);
         if (fence !== undefined) assertRootFence(id, fence, presentRoot(id));
         write(() => {
           for (const child of ["releases", "assignments"]) {

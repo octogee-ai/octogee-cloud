@@ -7,6 +7,7 @@ import type {
 } from "@octogee/shared/types/gateway-releases";
 import type { GatewayMutableConfig } from "@octogee/shared/types/gateway-mutable-config";
 import type { GatewayClass, GatewayDesiredStatus, GatewayVmRuntimeBundle } from "@octogee/shared/types/glm";
+import type { GitKeysReleasedProof } from "../gateway-root-deletion.js";
 import type { Clearable, OpaqueMap, RecordPatch, Revision, Stored, TimeInput } from "./store.js";
 
 export type GatewayRuntimeRestartFenceValue = OpaqueMap & {
@@ -78,7 +79,7 @@ export interface GatewayRootsRepository {
     expected: GatewayRuntimeRestartFenceValue | null,
     next: GatewayRuntimeRestartFenceValue | null,
   ): Promise<void>;
-  delete(gatewayId: string, fence?: GatewayRootFence): Promise<void>;
+  delete(gatewayId: string, gitKeys: GitKeysReleasedProof, fence?: GatewayRootFence): Promise<void>;
   deleteChildren(gatewayId: string): Promise<void>;
 }
 

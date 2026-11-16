@@ -5,12 +5,14 @@ import {
   type OperationRecord,
   type PlatformStateStore,
 } from "@octogee/core/platform-state";
+import { releaseGitKeysBeforeRootDelete, type GatewayGitKeyRelease } from "@octogee/core/gateway-root-deletion";
 import { isRetryableUninstallFailure } from "./helm-runner.js";
 import { isAgentStoreRetirementSessionDrain } from "./operation-retry.js";
 import { isReapedOperationError, REARMED_RETIRE_OPERATION } from "./stuck-op-reaper.js";
 
 export interface SharedGatewayRetirementSweepDeps {
   store: PlatformStateStore;
+  gatewayGitKeys: GatewayGitKeyRelease | null;
   log(message: string): void;
 }
 
@@ -77,8 +79,13 @@ export async function sweepRetiredSharedGateways(deps: SharedGatewayRetirementSw
       continue;
     }
     if (verdict !== "delete") continue;
+    const gitKeys = await releaseGitKeysBeforeRootDelete(deps.gatewayGitKeys, candidate.gatewayId);
+    if (gitKeys.outcome === "kept") {
+      deps.log(`[shared-pool-scaler] ⚠ kept retired slot ${candidate.gatewayId}: ${gitKeys.reason}`);
+      continue;
+    }
     try {
-      await deps.store.gateways.roots.delete(candidate.gatewayId, { desiredStatus: ["retired"], retirementVersion });
+      await deps.store.gateways.roots.delete(candidate.gatewayId, gitKeys.proof, { desiredStatus: ["retired"], retirementVersion });
     } catch (error) {
       if (!(error instanceof FenceMismatchError)) throw error;
       deps.log(`[shared-pool-scaler] retired slot ${candidate.gatewayId} changed before deletion; kept for the next sweep`);

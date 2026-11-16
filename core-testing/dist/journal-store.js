@@ -1,3 +1,4 @@
+import { assertGitKeysReleasedFor } from "@octogee/core/gateway-root-deletion";
 import { isDeepStrictEqual } from "node:util";
 import { isGatewayDesiredDoc, isGatewayRuntimeDoc, isReleasePayload, parsePlatformReleaseRecord, PLATFORM_RELEASE_RECORD_DOC_PATH, upgradeReleasePayloadSchema, } from "@octogee/shared/types/gateway-releases";
 import { gatewayVmRuntimeDocPath, isGatewayVmRuntimeBundle, isOperationAuditRecord, isOperationAuditRow, } from "@octogee/shared/types/glm";
@@ -400,7 +401,8 @@ function gatewayRepositories(documents, write) {
                 }
                 updateRoot(id, { runtimeRestartFence: next ?? { clear: true } });
             },
-            delete: async (id, fence) => {
+            delete: async (id, gitKeys, fence) => {
+                assertGitKeysReleasedFor(id, gitKeys);
                 if (fence !== undefined)
                     assertRootFence(id, fence, presentRoot(id));
                 write(() => {

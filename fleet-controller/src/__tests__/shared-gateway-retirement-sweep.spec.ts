@@ -12,7 +12,7 @@ function store(): PlatformStateStore {
 }
 
 function sweep(platformState: PlatformStateStore = store()) {
-  return sweepRetiredSharedGateways({ store: platformState, log: vi.fn() });
+  return sweepRetiredSharedGateways({ store: platformState, gatewayGitKeys: null, log: vi.fn() });
 }
 
 function read(path: string): Data | undefined {
@@ -179,5 +179,59 @@ describe("sweepRetiredSharedGateways", () => {
 
     expect(read("gateways/shared-0")).toMatchObject({ desiredStatus: "retired", retirementVersion: 2 });
     expect(records.has("gateways/shared-0/releases/1")).toBe(true);
+  });
+
+  describe("with the provisioning service holding the gateway's git keys", () => {
+    function keysAnswering(answer: () => Promise<{ remaining: number }>) {
+      return { releaseGatewayGitKeys: vi.fn(answer) };
+    }
+
+    it("releases the gateway's git keys and deletes the root once none remain", async () => {
+      retiredGateway("shared-0");
+      retirement("shared-0", { status: "succeeded" });
+      const gatewayGitKeys = keysAnswering(async () => ({ remaining: 0 }));
+
+      await sweepRetiredSharedGateways({ store: store(), gatewayGitKeys, log: vi.fn() });
+
+      expect(gatewayGitKeys.releaseGatewayGitKeys).toHaveBeenCalledExactlyOnceWith("shared-0");
+      expect(records.has("gateways/shared-0")).toBe(false);
+    });
+
+    it("keeps the root and logs how many rows remain while the service still holds them", async () => {
+      retiredGateway("shared-0");
+      retirement("shared-0", { status: "succeeded" });
+      const log = vi.fn();
+
+      await sweepRetiredSharedGateways({ store: store(), gatewayGitKeys: keysAnswering(async () => ({ remaining: 3 })), log });
+
+      expect(read("gateways/shared-0")?.desiredStatus).toBe("retired");
+      expect(log).toHaveBeenCalledExactlyOnceWith("[shared-pool-scaler] ⚠ kept retired slot shared-0: the provisioning service still holds 3 git key rows for shared-0");
+    });
+
+    it("keeps the root, logs the failure and deletes it on a later pass once the release succeeds", async () => {
+      retiredGateway("shared-0");
+      retirement("shared-0", { status: "succeeded" });
+      const log = vi.fn();
+      const gatewayGitKeys = keysAnswering(async () => ({ remaining: 0 }));
+      gatewayGitKeys.releaseGatewayGitKeys.mockRejectedValueOnce(new Error("provisioning service unavailable"));
+
+      await sweepRetiredSharedGateways({ store: store(), gatewayGitKeys, log });
+      expect(read("gateways/shared-0")?.desiredStatus).toBe("retired");
+      expect(log).toHaveBeenCalledExactlyOnceWith("[shared-pool-scaler] ⚠ kept retired slot shared-0: releasing the git keys of shared-0 failed: provisioning service unavailable");
+
+      await sweepRetiredSharedGateways({ store: store(), gatewayGitKeys, log });
+      expect(records.has("gateways/shared-0")).toBe(false);
+    });
+
+    it("asks for no release while the slot's retirement is unfinished", async () => {
+      retiredGateway("shared-0");
+      retirement("shared-0", { status: "running" });
+      const gatewayGitKeys = keysAnswering(async () => ({ remaining: 0 }));
+
+      await sweepRetiredSharedGateways({ store: store(), gatewayGitKeys, log: vi.fn() });
+
+      expect(gatewayGitKeys.releaseGatewayGitKeys).not.toHaveBeenCalled();
+      expect(records.has("gateways/shared-0")).toBe(true);
+    });
   });
 });
