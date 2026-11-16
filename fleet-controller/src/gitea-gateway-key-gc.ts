@@ -8,6 +8,7 @@ import {
   type ManagedGitHost,
 } from "@octogee/core/git-host";
 import type { FleetRegistryRecord, GatewayRoot, PlatformStateStore } from "@octogee/core/platform-state";
+import type { ProvisioningServiceClient } from "@octogee/core/provisioning-service-client";
 import type { FleetInformer } from "./fleet-informer.js";
 import { gatewayVmPodName } from "@octogee/shared/types/glm";
 
@@ -61,7 +62,6 @@ async function readOwnersByGateway(sources: LiveGatewayOwnerSources): Promise<Ma
     const vm = vmOwner(record);
     if (vm) addOwner(vm.gatewayId, vm.owner);
   }
-  for (const gatewayId of ids) addOwner(gatewayId, gatewayId);
   return ownersByGateway;
 }
 
@@ -86,6 +86,74 @@ export async function readFleetLiveKeyHolders(sources: FleetKeyHolderSources): P
     fleetRegistry,
     readGatewayPodDiagnosticsBatch: sources.readGatewayPodDiagnosticsBatch,
   });
+}
+
+export type GitKeyHolderService = Pick<ProvisioningServiceClient, "listGitKeyHolders" | "releaseGitKeyHolder">;
+
+export interface DeadGitKeyHolderReleaseDeps {
+  keys: GitKeyHolderService;
+  mode: GitKeySweepMode;
+  minAbsenceMs: number;
+  now: () => number;
+  log: (message: string) => void;
+}
+
+interface Absence {
+  passes: number;
+  since: number;
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function releaseDeadHolders(live: ReadonlySet<string>, absences: Map<string, Absence>, deps: DeadGitKeyHolderReleaseDeps): Promise<void> {
+  let listed: string[];
+  try {
+    listed = (await deps.keys.listGitKeyHolders()).map((summary) => summary.holder);
+  } catch (error) {
+    deps.log(`[git-key-holders] ⚠ listing git key holders failed — ${errorText(error)}; releasing none this pass`);
+    return;
+  }
+  const now = deps.now();
+  for (const holder of absences.keys()) if (live.has(holder) || !listed.includes(holder)) absences.delete(holder);
+  for (const holder of listed.filter((candidate) => !live.has(candidate))) {
+    const seen = absences.get(holder);
+    const absence = { passes: (seen?.passes ?? 0) + 1, since: seen?.since ?? now };
+    absences.set(holder, absence);
+    if (absence.passes < 2 || now - absence.since < deps.minAbsenceMs) {
+      deps.log(`[git-key-holders] holder ${holder} is absent from the live set since ${new Date(absence.since).toISOString()}; kept until two complete passes have found it absent for ${deps.minAbsenceMs / 60_000} minutes`);
+      continue;
+    }
+    if (deps.mode === "dry-run") {
+      deps.log(`[git-key-holders] dry-run: would release git key holder ${holder}, absent since ${new Date(absence.since).toISOString()}`);
+      continue;
+    }
+    try {
+      const { remaining } = await deps.keys.releaseGitKeyHolder(holder);
+      deps.log(`[git-key-holders] released git key holder ${holder}, absent since ${new Date(absence.since).toISOString()}; ${remaining} rows not yet released from the git host`);
+    } catch (error) {
+      deps.log(`[git-key-holders] ⚠ releasing git key holder ${holder} failed — ${errorText(error)}; tried again next pass`);
+    }
+  }
+}
+
+export function readLiveKeyHoldersReleasingDead(
+  read: () => Promise<GitKeyHolders>,
+  deps: DeadGitKeyHolderReleaseDeps,
+): () => Promise<GitKeyHolders> {
+  const absences = new Map<string, Absence>();
+  return async () => {
+    let holders: GitKeyHolders;
+    try {
+      holders = await read();
+    } catch (error) {
+      deps.log(`[git-key-holders] ⚠ the live set is incomplete, so this pass releases no git key holder — ${errorText(error)}`);
+      throw error;
+    }
+    await releaseDeadHolders(holders.owners, absences, deps);
+    return holders;
+  };
 }
 
 export interface StartGiteaGatewayKeyGcDeps extends GitKeySweepInput {

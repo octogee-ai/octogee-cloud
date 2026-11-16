@@ -270,6 +270,13 @@ describe("provisioning service client", () => {
     await expect(client().deleteProvisioning("..")).resolves.toBe("unnameable");
   });
 
+  it.each([["{}"], ['{"remaining":"0"}'], ['{"remaining":-1}'], ['{"remaining":1.5}']])("answers unexpected-response when a git key release answers %s instead of a count of remaining rows", async (body) => {
+    const api = client({ fetch: async () => new Response(body, { status: 202, headers: { "content-type": "application/json" } }) });
+
+    await expect(api.releaseGatewayGitKeys("gateway-a")).rejects.toMatchObject({ code: "unexpected-response" });
+    await expect(api.releaseGitKeyHolder("gateway-a/pod-a")).rejects.toMatchObject({ code: "unexpected-response" });
+  });
+
   it("answers unexpected-response when an accepted retry has a body that is not JSON", async () => {
     const api = client({ fetch: async () => new Response("<html>accepted</html>", { status: 202 }) });
 
@@ -290,36 +297,96 @@ describe("provisioning service client", () => {
   it("releases a git key only while it still holds the expected public key, and answers superseded otherwise", async () => {
     const api = client();
     await api.putProvisioning("u1", SPEC);
-    await api.putGitKey("u1", "gateway-a", { publicKey: "ssh-ed25519 AAAA old" });
-    await api.putGitKey("u1", "gateway-a", { publicKey: "ssh-ed25519 BBBB new" });
+    await api.putGitKey("u1", "gateway-a/pod-a", { publicKey: "ssh-ed25519 AAAA old" });
+    await api.putGitKey("u1", "gateway-a/pod-a", { publicKey: "ssh-ed25519 BBBB new" });
 
-    await expect(api.deleteGitKey("u1", "gateway-a", { expectedPublicKey: "ssh-ed25519 AAAA old" })).resolves.toBe("superseded");
-    expect(fake.requests.at(-1)).toMatchObject({ method: "DELETE", path: "/v1/users/u1/git-keys/gateway-a", body: { expectedPublicKey: "ssh-ed25519 AAAA old" } });
-    await expect(api.deleteGitKey("u1", "gateway-a", { expectedPublicKey: "ssh-ed25519 BBBB new" })).resolves.toBe("deleted");
-    expect(fake.gitKeys.has("u1/gateway-a")).toBe(false);
+    await expect(api.deleteGitKey("u1", "gateway-a/pod-a", { expectedPublicKey: "ssh-ed25519 AAAA old" })).resolves.toBe("superseded");
+    expect(fake.requests.at(-1)).toMatchObject({ method: "DELETE", path: "/v1/users/u1/git-keys/gateway-a%2Fpod-a", body: { expectedPublicKey: "ssh-ed25519 AAAA old" } });
+    await expect(api.deleteGitKey("u1", "gateway-a/pod-a", { expectedPublicKey: "ssh-ed25519 BBBB new" })).resolves.toBe("deleted");
+    expect(fake.gitKeys.get("u1/gateway-a/pod-a")?.deletionRequestedAt).toEqual(expect.any(String));
+    expect(fake.completeGitKeyReleases()).toBe(1);
+    expect(fake.gitKeys.has("u1/gateway-a/pod-a")).toBe(false);
     expect(sleeps).toEqual([]);
+  });
+
+  it("releases a retired gateway's git keys across users and answers the rows that remain", async () => {
+    const api = client();
+    await api.putProvisioning("u1", SPEC);
+    await api.putProvisioning("u2", SPEC);
+    await api.putGitKey("u1", "gateway-a/pod-a", { publicKey: "ssh-ed25519 AAAA lin" });
+    await api.putGitKey("u2", "gateway-a/pod-a", { publicKey: "ssh-ed25519 AAAA mei" });
+    await api.putGitKey("u1", "gateway-b/pod-b", { publicKey: "ssh-ed25519 BBBB lin" });
+
+    await expect(api.releaseGatewayGitKeys("gateway-a")).resolves.toEqual({ remaining: 2 });
+    expect(fake.requests.at(-1)).toMatchObject({ method: "DELETE", path: "/v1/gateways/gateway-a/git-keys" });
+    fake.completeGitKeyReleases();
+
+    await expect(api.releaseGatewayGitKeys("gateway-a")).resolves.toEqual({ remaining: 0 });
+    expect([...fake.gitKeys.keys()]).toEqual(["u1/gateway-b/pod-b"]);
+  });
+
+  it("answers each put's sequence and reads a key back with the put sequence its status has observed", async () => {
+    const api = client();
+    await api.putProvisioning("u1", SPEC);
+
+    const first = await api.putGitKey("u1", "gateway-a/pod-a", { publicKey: "ssh-ed25519 AAAA one" });
+    const again = await api.putGitKey("u1", "gateway-a/pod-a", { publicKey: "ssh-ed25519 AAAA one" });
+
+    expect([first.key.putSequence, again.key.putSequence]).toEqual([1, 2]);
+    await expect(api.getGitKey("u1", "gateway-a/pod-a")).resolves.toMatchObject({ putSequence: 2, status: { observedPutSequence: 0 } });
+    expect(fake.requests.at(-1)).toMatchObject({ method: "GET", path: "/v1/users/u1/git-keys/gateway-a%2Fpod-a" });
+    await expect(api.getGitKey("u1", "gateway-a/pod-b")).resolves.toBeNull();
+  });
+
+  it("lists git key holders and releases one holder's keys across users", async () => {
+    const api = client();
+    await api.putProvisioning("u1", SPEC);
+    await api.putProvisioning("u2", SPEC);
+    await api.putGitKey("u1", "gateway-a/pod-old", { publicKey: "ssh-ed25519 AAAA lin" });
+    await api.putGitKey("u2", "gateway-a/pod-old", { publicKey: "ssh-ed25519 AAAA mei" });
+    await api.putGitKey("u1", "gateway-a/pod-new", { publicKey: "ssh-ed25519 BBBB lin" });
+
+    await expect(api.listGitKeyHolders()).resolves.toEqual([
+      { holder: "gateway-a/pod-new", gatewayId: "gateway-a" },
+      { holder: "gateway-a/pod-old", gatewayId: "gateway-a" },
+    ]);
+    expect(fake.requests.at(-1)).toMatchObject({ method: "GET", path: "/v1/git-key-holders" });
+    await expect(api.releaseGitKeyHolder("gateway-a/pod-old")).resolves.toEqual({ remaining: 2 });
+    expect(fake.requests.at(-1)).toMatchObject({ method: "DELETE", path: "/v1/git-key-holders/gateway-a%2Fpod-old" });
+    fake.completeGitKeyReleases();
+
+    await expect(api.releaseGitKeyHolder("gateway-a/pod-old")).resolves.toEqual({ remaining: 0 });
+    expect([...fake.gitKeys.keys()]).toEqual(["u1/gateway-a/pod-new"]);
+  });
+
+  it.each([["gateway-a"], ["gateway-a/Pod_A"], ["gateway a/pod-a"]])("refuses the git key holder %j, which is not a gateway id and a pod name", async (holder) => {
+    const api = client();
+    await api.putProvisioning("u1", SPEC);
+
+    await expect(api.putGitKey("u1", holder, { publicKey: "ssh-ed25519 AAAA lin" })).rejects.toMatchObject({ status: 400, code: "invalid-request" });
+    await expect(api.releaseGitKeyHolder(holder)).rejects.toMatchObject({ status: 400, code: "invalid-request" });
   });
 
   it("puts a gateway's git key and reports whether the service created, changed or kept it", async () => {
     const api = client();
     await api.putProvisioning("u1", SPEC);
 
-    const created = await api.putGitKey("u1", "gateway-a", { publicKey: "ssh-ed25519 AAAA one" });
-    const unchanged = await api.putGitKey("u1", "gateway-a", { publicKey: "ssh-ed25519 AAAA one" });
-    const changed = await api.putGitKey("u1", "gateway-a", { publicKey: "ssh-ed25519 BBBB two" });
+    const created = await api.putGitKey("u1", "gateway-a/pod-a", { publicKey: "ssh-ed25519 AAAA one" });
+    const unchanged = await api.putGitKey("u1", "gateway-a/pod-a", { publicKey: "ssh-ed25519 AAAA one" });
+    const changed = await api.putGitKey("u1", "gateway-a/pod-a", { publicKey: "ssh-ed25519 BBBB two" });
 
     expect([created.outcome, unchanged.outcome, changed.outcome]).toEqual(["created", "unchanged", "changed"]);
-    expect(changed.key).toMatchObject({ uid: "u1", gatewayId: "gateway-a", generation: 2, spec: { publicKey: "ssh-ed25519 BBBB two" } });
+    expect(changed.key).toMatchObject({ uid: "u1", gatewayId: "gateway-a", holder: "gateway-a/pod-a", generation: 2, spec: { publicKey: "ssh-ed25519 BBBB two" } });
     expect(fake.requests.at(-1)).toMatchObject({
       method: "PUT",
-      path: "/v1/users/u1/git-keys/gateway-a",
+      path: "/v1/users/u1/git-keys/gateway-a%2Fpod-a",
       authorization: "Bearer token-1",
       body: { spec: { publicKey: "ssh-ed25519 BBBB two" } },
     });
   });
 
   it("surfaces a git key put for a user the service does not manage as a 404", async () => {
-    await expect(client().putGitKey("nobody", "gateway-a", { publicKey: "ssh-ed25519 AAAA one" }))
+    await expect(client().putGitKey("nobody", "gateway-a/pod-a", { publicKey: "ssh-ed25519 AAAA one" }))
       .rejects.toMatchObject({ status: 404, code: "not-found", transient: false });
   });
 
@@ -330,7 +397,7 @@ describe("provisioning service client", () => {
     const controller = new AbortController();
     setTimeout(() => controller.abort(), 20);
 
-    await expect(api.putGitKey("u1", "gateway-a", { publicKey: "ssh-ed25519 AAAA one" }, { signal: controller.signal }))
+    await expect(api.putGitKey("u1", "gateway-a/pod-a", { publicKey: "ssh-ed25519 AAAA one" }, { signal: controller.signal }))
       .rejects.toMatchObject({ code: "aborted" });
   });
 

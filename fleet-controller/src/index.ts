@@ -213,7 +213,7 @@ import {
   type AdminUserProductDetail,
 } from "@octogee/core/admin-user-directory-router";
 import { createMattermostChannelHost, type ManagedChannelHost } from "@octogee/core/channel-host";
-import { createGiteaGitHost } from "@octogee/core/git-host";
+import { createGiteaGitHost, type GitKeyHolders, type GitKeySweepMode } from "@octogee/core/git-host";
 import type { UserAccountReader } from "@octogee/core/user-account";
 import { platformStateUserAccountReader, platformStateUserAccounts } from "@octogee/core/platform-state-user-accounts";
 import { createUnmountFromGateway } from "./lib/user-ops/unmount-gateway.js";
@@ -240,6 +240,7 @@ import {
   type ProvisioningProjectionFactory,
   type ProvisioningServiceRuntime,
 } from "./provisioning-service-runtime.js";
+import type { GatewayGitKeyRelease } from "@octogee/core/gateway-root-deletion";
 import { gatewayScopedJobId, signFleetRequest } from "@octogee/core/fleet-signature";
 import {
   readByotSnapshotProjection,
@@ -340,6 +341,7 @@ import { startNativeReturnHoldReaper } from "./native-return-hold-reaper.js";
 import {
   parseGiteaGatewayKeyGcMode,
   readFleetLiveKeyHolders,
+  readLiveKeyHoldersReleasingDead,
   startGiteaGatewayKeyGc,
 } from "./gitea-gateway-key-gc.js";
 import { startHelmRecoverySweeper } from "./helm-recovery-sweeper.js";
@@ -2219,6 +2221,17 @@ const GITEA_GATEWAY_KEY_GC_INTERVAL_MS = 60_000;
 const GITEA_GATEWAY_KEY_GC_MAX_CALLS_PER_TICK = 480;
 const GITEA_GATEWAY_KEY_GC_MIN_CALL_INTERVAL_MS = 100;
 const GITEA_GATEWAY_KEY_GC_GRACE_MS = 10 * 60 * 1000;
+const DEAD_GIT_KEY_HOLDER_MIN_ABSENCE_MS = 10 * 60 * 1000;
+
+function releasingDeadKeyHolders(
+  read: () => Promise<GitKeyHolders>,
+  provisioning: ProvisioningServiceRuntime | null,
+  mode: GitKeySweepMode,
+  log: (message: string) => void,
+): () => Promise<GitKeyHolders> {
+  if (provisioning === null) return read;
+  return readLiveKeyHoldersReleasingDead(read, { keys: provisioning.client, mode, minAbsenceMs: DEAD_GIT_KEY_HOLDER_MIN_ABSENCE_MS, now: () => Date.now(), log });
+}
 
 function startControllerBackgroundTasks({
   addProductAdminRoutes,
@@ -2281,18 +2294,20 @@ function startControllerBackgroundTasks({
   const kubeOps = deps.kubeOps;
   const keySweepApiUrl = requireEnv("GIT_API_URL", "the Gitea gateway key sweep requires it");
   const keySweepToken = requireEnv("GIT_API_TOKEN", "the Gitea gateway key sweep requires it");
+  const keySweepMode = parseGiteaGatewayKeyGcMode(process.env.GITEA_GATEWAY_KEY_GC_MODE);
+  const readLiveKeyHolders = () => readFleetLiveKeyHolders({
+    informer,
+    store: deps.store,
+    readGatewayPodDiagnosticsBatch: (gatewayIds) =>
+      kubeOps.readGatewayPodDiagnosticsBatch({ namespace: NAMESPACE, gatewayIds }),
+  });
   const stopGiteaGatewayKeyGc = startGiteaGatewayKeyGc({
     git: createGiteaGitHost({
       apiBaseUrl: keySweepApiUrl,
       token: () => keySweepToken,
     }),
-    readLiveKeyHolders: () => readFleetLiveKeyHolders({
-      informer,
-      store: deps.store,
-      readGatewayPodDiagnosticsBatch: (gatewayIds) =>
-        kubeOps.readGatewayPodDiagnosticsBatch({ namespace: NAMESPACE, gatewayIds }),
-    }),
-    mode: parseGiteaGatewayKeyGcMode(process.env.GITEA_GATEWAY_KEY_GC_MODE),
+    readLiveKeyHolders: releasingDeadKeyHolders(readLiveKeyHolders, provisioning, keySweepMode, log),
+    mode: keySweepMode,
     maxCallsPerTick: GITEA_GATEWAY_KEY_GC_MAX_CALLS_PER_TICK,
     minCallIntervalMs: GITEA_GATEWAY_KEY_GC_MIN_CALL_INTERVAL_MS,
     graceMs: GITEA_GATEWAY_KEY_GC_GRACE_MS,
@@ -2367,6 +2382,7 @@ function startControllerBackgroundTasks({
     platformArtifact,
     controllerStartedAt,
     provisioning: provisioning?.client ?? null,
+    gatewayGitKeys: provisioning?.client ?? null,
     provisioningReadiness: provisioning?.sync.readiness,
     provisioningSync: provisioning?.sync,
     ...(httpKubeOps
@@ -2547,11 +2563,22 @@ function agentStoreDsns(): { adminDsn: string; clientDsn: string } {
   };
 }
 
+interface ControllerRuntimeSeams {
+  accounts: UserAccountReader;
+  documents: UserDocuments;
+  provisioning: ErasureProvisioning | null;
+  gatewayGitKeys: GatewayGitKeyRelease | null;
+}
+
+function provisioningSeams(runtime: ProvisioningServiceRuntime | null): Pick<ControllerRuntimeSeams, "provisioning" | "gatewayGitKeys"> {
+  return { provisioning: runtime?.sync ?? null, gatewayGitKeys: runtime?.client ?? null };
+}
+
 async function createControllerRuntime(
   store: PlatformStateStore,
   createHostingCleanup: ControllerProduct["createHostingCleanup"],
   userLifecycle: ProductUserLifecycle | null,
-  { accounts, documents, provisioning }: { accounts: UserAccountReader; documents: UserDocuments; provisioning: ErasureProvisioning | null },
+  { accounts, documents, provisioning, gatewayGitKeys }: ControllerRuntimeSeams,
 ): Promise<ControllerRuntime> {
   const runKubectl: KubectlSubprocess = (args, opts) => spawnKubectl(args, opts);
   const authSecretEnsurer = createAuthSecretEnsurer({
@@ -2720,6 +2747,7 @@ async function createControllerRuntime(
     userLifecycle,
     accounts,
     provisioning,
+    gatewayGitKeys,
   });
 
   const deps: ControllerDeps = {
@@ -2816,7 +2844,7 @@ export async function main(product: ControllerProduct): Promise<void> {
     log,
   });
   const { deps, fleetControllerPrivateKey, chartFingerprint } =
-    await createControllerRuntime(store, product.createHostingCleanup, userLifecycle, { accounts, documents, provisioning: provisioning?.sync ?? null });
+    await createControllerRuntime(store, product.createHostingCleanup, userLifecycle, { accounts, documents, ...provisioningSeams(provisioning) });
 
   log(
     `[glm-controller] boot sha=${process.env.BUILD_SHA ?? "unknown"} oc=${process.env.OPENCLAW_VERSION ?? "n/a"} fork=${process.env.OPENCLAW_FORK_SHA ?? "n/a"} node=${process.version} — namespace=${NAMESPACE} gatewayChart=${GATEWAY_CHART} chartFingerprint=${chartFingerprint.slice(0, 12)} chartDriftPolicy=release-gated valuesFile=${GATEWAY_VALUES_FILE}`,
@@ -2882,7 +2910,7 @@ export async function main(product: ControllerProduct): Promise<void> {
     provisioning,
   });
   if (provisioning) stoppers.push(provisioning.start());
-  stoppers.push(startSharedGatewayRetirementLoop({ store: deps.store, log }));
+  stoppers.push(startSharedGatewayRetirementLoop({ store: deps.store, gatewayGitKeys: provisioning?.client ?? null, log }));
   if (product.startProjection) stoppers.push(product.startProjection({ store: deps.store, log }));
   const shutdown = createControllerShutdown(stoppers, log);
   process.on("SIGTERM", shutdown);
@@ -3097,9 +3125,10 @@ async function buildHandlers(
     userLifecycle: ProductUserLifecycle | null;
     accounts: UserAccountReader;
     provisioning: ErasureProvisioning | null;
+    gatewayGitKeys: GatewayGitKeyRelease | null;
   },
 ): Promise<OperationHandlers> {
-  const { privateKey, modelKeySourceIssuer, store, deleteHostingSites, userLifecycle, accounts, provisioning } = fleetOps;
+  const { privateKey, modelKeySourceIssuer, store, deleteHostingSites, userLifecycle, accounts, provisioning, gatewayGitKeys } = fleetOps;
   if (!privateKey) {
     throw new Error(
       "FLEET_CONTROLLER_PRIVATE_KEY is not set — required for migrate-customer. Refusing to start with stub handlers.",
@@ -3487,7 +3516,7 @@ async function buildHandlers(
   });
 
   const { deprovisionUser, suspendUser, eraseUser } = buildUserRemovalHandlers({
-    documents, store, logFn, kubeOps, privateKey, deleteHostingSites, userLifecycle, accounts, provisioning,
+    documents, store, logFn, kubeOps, privateKey, deleteHostingSites, userLifecycle, accounts, provisioning, gatewayGitKeys,
   });
 
   const restartGateway = createRestartGatewayHandler({
@@ -3696,6 +3725,7 @@ export interface UserRemovalOptions {
   userLifecycle: ProductUserLifecycle | null;
   accounts: UserAccountReader;
   provisioning: ErasureProvisioning | null;
+  gatewayGitKeys: GatewayGitKeyRelease | null;
 }
 
 function userDataScope(cleanup: UserCleanupContext, currentOperationId: string): UserDataScope {
@@ -3709,7 +3739,7 @@ function userDataScope(cleanup: UserCleanupContext, currentOperationId: string):
   };
 }
 
-function buildEraseUserHandler({ documents, store, logFn, kubeOps, privateKey, deleteHostingSites, userLifecycle, provisioning }: UserRemovalOptions) {
+function buildEraseUserHandler({ documents, store, logFn, kubeOps, privateKey, deleteHostingSites, userLifecycle, provisioning, gatewayGitKeys }: UserRemovalOptions) {
   const cloudCleanup = buildUserCloudCleanupDeps(store, logFn, deleteHostingSites, userLifecycle, provisioning);
   const clusterAbsent = async (gatewayId: string) => {
     if (!await retiredSharedGatewayRuntimeAbsent(kubeOps, NAMESPACE, gatewayId, deploymentNameForInstance(gatewayId))) return false;
@@ -3776,6 +3806,7 @@ function buildEraseUserHandler({ documents, store, logFn, kubeOps, privateKey, d
         deletionId,
         now: Date.now(),
         preserveRetirementProof: proof => preserveUserGatewayRetirement(store, cleanup.uid, deletionId, proof),
+        gitKeys: { client: gatewayGitKeys, log: logFn },
       }),
     findUndrainedArtifactIds: async (artifactIds) =>
       userLifecycle === null ? [] : userLifecycle.data.undrainedArtifactIds(artifactIds),
@@ -3809,7 +3840,7 @@ function buildEraseUserHandler({ documents, store, logFn, kubeOps, privateKey, d
   });
 }
 
-function buildSuspendUserHandler({ store, privateKey, logFn, kubeOps, userLifecycle, accounts }: UserRemovalOptions) {
+function buildSuspendUserHandler({ store, privateKey, logFn, kubeOps, userLifecycle, accounts, gatewayGitKeys }: UserRemovalOptions) {
   const decryptConnectorSecret = createConnectorSecretDecryptor();
   const signIn = buildUserSignInHosts(logFn);
   return createSuspendUserHandler({
@@ -3862,6 +3893,7 @@ function buildSuspendUserHandler({ store, privateKey, logFn, kubeOps, userLifecy
         deletionId,
         now: Date.now(),
         preserveRetirementProof: proof => preserveUserGatewayRetirement(store, uid, deletionId, proof),
+        gitKeys: { client: gatewayGitKeys, log: logFn },
       }),
     markSuspended: (deletionId) => markSuspendedAndReleaseErasure(store, deletionId, Date.now()),
     product: userLifecycle?.suspension,

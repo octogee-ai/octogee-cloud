@@ -38,6 +38,22 @@ export function validIdentifier(value: string, name: string): string {
   return value;
 }
 
+const POD_NAME = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
+
+export interface GitKeyHolder {
+  holder: string;
+  gatewayId: string;
+}
+
+export function parseGitKeyHolder(value: string): GitKeyHolder {
+  const separator = value.indexOf("/");
+  if (separator < 0) throw invalid("holder must be a gateway id and a pod name joined by /");
+  const gatewayId = validIdentifier(value.slice(0, separator), "holder gateway id");
+  const podName = value.slice(separator + 1);
+  if (!POD_NAME.test(podName)) throw invalid("holder pod name is not a valid pod name");
+  return { holder: value, gatewayId };
+}
+
 export function parseUserProvisioningSpec(value: unknown): UserProvisioningSpec {
   const spec = object(value, "spec");
   const displayName = object(spec.displayName, "spec.displayName");

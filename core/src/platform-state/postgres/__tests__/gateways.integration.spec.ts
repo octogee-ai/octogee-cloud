@@ -4,6 +4,7 @@ import { releasePayloadHash } from "@octogee/shared/types/gateway-releases";
 import type { GatewayVmRuntimeBundle } from "@octogee/shared/types/glm";
 import { parseAssignmentDoc } from "../../../assignment-doc.js";
 import { initialGatewayReleaseDocuments } from "../../../gateway-live-release.js";
+import { releaseGitKeysBeforeRootDelete, type GitKeysReleasedProof } from "../../../gateway-root-deletion.js";
 import {
   AlreadyExistsError,
   DuplicateRecordError,
@@ -19,6 +20,12 @@ const NOW = 1_762_500_000_000;
 const ARTIFACT = { imageRepository: "us-central1-docker.pkg.dev/octogee/octogee/octogee-gateway", imageTag: "753c212" };
 const WAIT = { timeout: 20_000, interval: 20 };
 const ALLOCATION = { kind: "disposable-builder", schemaVersion: 1, leaseId: "lease-1", generation: 3, claimedByUid: "uid-ceckert" } as const;
+
+async function released(gatewayId: string): Promise<GitKeysReleasedProof> {
+  const release = await releaseGitKeysBeforeRootDelete({ client: null, log: () => undefined }, gatewayId);
+  if (release.outcome !== "released") throw new Error(release.reason);
+  return release.proof;
+}
 
 function mutableConfig(overrides: Partial<GatewayMutableConfig> = {}): GatewayMutableConfig {
   return {
@@ -352,16 +359,23 @@ describe.skipIf(!dsn)("PostgreSQL gateway repositories", { timeout: 30_000 }, ()
       await assignments().put(assignment("walter", "uid-ceckert"));
       await harness.store.gateways.vmRuntime.put("walter", vmBundle("walter"));
 
-      expect(await failure(roots().delete("walter", { retirementVersion: 3 }))).toBeInstanceOf(FenceMismatchError);
+      expect(await failure(roots().delete("walter", await released("walter"), { retirementVersion: 3 }))).toBeInstanceOf(FenceMismatchError);
       expect(await roots().get("walter")).not.toBeNull();
-      expect(await failure(roots().delete("ghost", { retirementVersion: 3 }))).toBeInstanceOf(MissingRecordError);
+      expect(await failure(roots().delete("ghost", await released("ghost"), { retirementVersion: 3 }))).toBeInstanceOf(MissingRecordError);
 
-      await roots().delete("walter", { retirementVersion: 4 });
+      await roots().delete("walter", await released("walter"), { retirementVersion: 4 });
       expect(await roots().get("walter")).toBeNull();
       expect(await rowCount("gateway_releases", "walter")).toBe(0);
       expect(await rowCount("gateway_assignments", "walter")).toBe(0);
       expect(await harness.store.gateways.vmRuntime.get("walter")).not.toBeNull();
-      await roots().delete("walter");
+      await roots().delete("walter", await released("walter"));
+    });
+
+    it("refuses to delete a root with the git key release proof of another gateway", async () => {
+      await mint("walter");
+
+      await expect(roots().delete("walter", await released("flexo"))).rejects.toThrow(/release proof of flexo/);
+      expect(await roots().get("walter")).not.toBeNull();
     });
 
     it("deletes a root with children inside a transaction through the cascade", async () => {
@@ -371,7 +385,7 @@ describe.skipIf(!dsn)("PostgreSQL gateway repositories", { timeout: 30_000 }, ()
 
       await harness.store.transaction({ label: "delete parent" }, async (tx) => {
         expect(await tx.gateways.assignments.isEmpty("flexo")).toBe(false);
-        await tx.gateways.roots.delete("flexo");
+        await tx.gateways.roots.delete("flexo", await released("flexo"));
       });
 
       expect(await roots().get("flexo")).toBeNull();
@@ -685,7 +699,7 @@ describe.skipIf(!dsn)("PostgreSQL gateway repositories", { timeout: 30_000 }, ()
       await vi.waitFor(() => expect(changeKeys(all)).toEqual(["added:flexo"]), WAIT);
       await roots().patch("walter", { desiredStatus: "paused" });
       await vi.waitFor(() => expect(changeKeys(all)).toEqual(["added:flexo", "modified:walter"]), WAIT);
-      await roots().delete("flexo");
+      await roots().delete("flexo", await released("flexo"));
       await vi.waitFor(() => expect(changeKeys(all)).toEqual(["added:flexo", "modified:walter", "removed:flexo"]), WAIT);
 
       const modified = all.events.flatMap((event) => (event.kind === "changes" ? [...event.changes] : []))[1];

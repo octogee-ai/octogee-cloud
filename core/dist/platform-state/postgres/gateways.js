@@ -1,3 +1,4 @@
+import { assertGitKeysReleasedFor } from "../../gateway-root-deletion.js";
 import { isReleasePayload, upgradeReleasePayloadSchema } from "@octogee/shared/types/gateway-releases";
 import { isGatewayVmRuntimeBundle } from "@octogee/shared/types/glm";
 import { parseAssignmentDoc } from "../../assignment-doc.js";
@@ -229,7 +230,8 @@ function createRootsRepository(session) {
             const gateway = parameters.add(gatewayId, "text");
             await session.execute(`DELETE FROM $schema.gateway_releases WHERE gateway_id = ${gateway}`, parameters.values);
         },
-        async delete(gatewayId, fence) {
+        async delete(gatewayId, gitKeys, fence) {
+            assertGitKeysReleasedFor(gatewayId, gitKeys);
             await deleteRecord(session, "gateways.roots.delete", target(gatewayId), rootFences(fence));
         },
     };

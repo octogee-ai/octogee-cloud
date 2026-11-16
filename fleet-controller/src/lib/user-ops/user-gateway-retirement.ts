@@ -18,6 +18,7 @@ import type {
   PlatformStateTransaction,
   Stored,
 } from "@octogee/core/platform-state";
+import { releaseGitKeysBeforeRootDelete, type RootGitKeyGate } from "@octogee/core/gateway-root-deletion";
 import { schedulerHandoffAwaitingRelease } from "../../scheduler-handoff-release.js";
 
 export type OwnedGatewayRetirementOutcome =
@@ -32,6 +33,7 @@ export interface OwnedGatewayRetirementInput {
   now: number;
   claimRetirement?: typeof claimGatewayRetirementInStore;
   preserveRetirementProof?: (proof: UserGatewayRetirementProof) => Promise<void>;
+  gitKeys: RootGitKeyGate;
 }
 
 export interface UserGatewayRetirementProof {
@@ -204,12 +206,17 @@ async function finishCompletedGatewayRetirement(
     canFinish,
   );
   if (!cleanup) return true;
+  const gitKeys = await releaseGitKeysBeforeRootDelete(input.gitKeys, gatewayId);
+  if (gitKeys.outcome === "kept") {
+    input.gitKeys.log(`[customer-deletion] ⚠ kept retired gateway ${gatewayId}: ${gitKeys.reason}`);
+    return true;
+  }
   if (proof) await input.preserveRetirementProof!(proof);
   await input.store.gateways.roots.deleteChildren(gatewayId);
   return input.store.transaction({ label: "customer-deletion.owned-gateway-retirement.finish" }, async (transaction) => {
     const current = await canFinish(transaction);
     if (!current || !isDeepStrictEqual(current, cleanup)) return true;
-    await transaction.gateways.roots.delete(gatewayId, { retirementVersion: expectedClaim.version });
+    await transaction.gateways.roots.delete(gatewayId, gitKeys.proof, { retirementVersion: expectedClaim.version });
     await transaction.journal.operations.delete(current.claimOperationId);
     if (current.recoveryOperationId !== null) await transaction.journal.operations.delete(current.recoveryOperationId);
     if (current.recoveryReceiptId !== null) await transaction.journal.recoveryReceipts.delete(current.recoveryReceiptId);

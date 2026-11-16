@@ -54,7 +54,7 @@ describe.skipIf(!dsn)("provisioning service conformance", { timeout: 120_000 }, 
       expect((await implementation.request("GET", "/v1/users/auth-1/provisioning", { token: TOKENS.platformApi })).status).toBe(200);
       expectContractError(await implementation.request("POST", "/v1/users/auth-1/provisioning/retry", { token: TOKENS.platformApi, body: {} }), 403, "forbidden");
       expectContractError(await implementation.request("DELETE", "/v1/users/auth-1/provisioning", { token: TOKENS.platformApi }), 403, "forbidden");
-      expectContractError(await implementation.request("PUT", "/v1/users/auth-1/git-keys/gw-1", { body: { spec: { publicKey: KEY } } }), 403, "forbidden");
+      expectContractError(await implementation.request("PUT", "/v1/users/auth-1/git-keys/gw-1%2Fpod-a", { body: { spec: { publicKey: KEY } } }), 403, "forbidden");
       expect((await implementation.request("GET", "/v1/users/auth-1/credentials/user-chat-token")).status).not.toBe(403);
     });
   });
@@ -127,21 +127,21 @@ describe.skipIf(!dsn)("provisioning service conformance", { timeout: 120_000 }, 
 
   describe("git keys and credentials", () => {
     it("authorizes a key for a provisioned user and reports it registered", async () => {
-      expectContractError(await implementation.request("PUT", "/v1/users/key-none/git-keys/gw-1", { token: TOKENS.platformApi, body: { spec: { publicKey: KEY } } }), 404, "not-found");
+      expectContractError(await implementation.request("PUT", "/v1/users/key-none/git-keys/gw-1%2Fpod-a", { token: TOKENS.platformApi, body: { spec: { publicKey: KEY } } }), 404, "not-found");
       await put("key-1", { spec: spec("key-one") });
-      const created = await implementation.request("PUT", "/v1/users/key-1/git-keys/gw-1", { token: TOKENS.platformApi, body: { spec: { publicKey: KEY } } });
+      const created = await implementation.request("PUT", "/v1/users/key-1/git-keys/gw-1%2Fpod-a", { token: TOKENS.platformApi, body: { spec: { publicKey: KEY } } });
       expect(created.status).toBe(201);
-      expect(created.body).toMatchObject({ uid: "key-1", gatewayId: "gw-1", generation: 1, deletionRequestedAt: null, spec: { publicKey: KEY } });
+      expect(created.body).toMatchObject({ uid: "key-1", gatewayId: "gw-1", holder: "gw-1/pod-a", generation: 1, deletionRequestedAt: null, spec: { publicKey: KEY } });
       await untilReady(implementation, "key-1", 1);
       let registered: any;
       for (let poll = 0; poll < 50; poll += 1) {
-        registered = await implementation.request("PUT", "/v1/users/key-1/git-keys/gw-1", { token: TOKENS.platformApi, body: { spec: { publicKey: KEY } } });
+        registered = await implementation.request("PUT", "/v1/users/key-1/git-keys/gw-1%2Fpod-a", { token: TOKENS.platformApi, body: { spec: { publicKey: KEY } } });
         if (registered.body.status.conditions.some((entry: { type: string; status: string }) => entry.type === "Registered" && entry.status === "True")) break;
         await new Promise((resolve) => setTimeout(resolve, 200));
       }
       expect(registered.status).toBe(200);
       expect(registered.body.status.conditions).toContainEqual(expect.objectContaining({ type: "Registered", status: "True" }));
-      expect((await implementation.request("DELETE", "/v1/users/key-1/git-keys/gw-1", { token: TOKENS.platformApi })).status).toBe(202);
+      expect((await implementation.request("DELETE", "/v1/users/key-1/git-keys/gw-1%2Fpod-a", { token: TOKENS.platformApi })).status).toBe(202);
     });
 
     it("serves an issued credential with no-store and answers 404 for an unknown name", async () => {

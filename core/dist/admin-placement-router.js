@@ -1,5 +1,6 @@
 import { projectGatewayDesiredRootForGateway } from "@octogee/shared/types/gateway-releases";
 import { clearRetiredUserActivationPreparation } from "./fleet-state.js";
+import { releaseGitKeysBeforeRootDelete } from "./gateway-root-deletion.js";
 import { builderActivateOperationId, builderReturnOperationId, isolatedRecoverOperationId, placementRetireOperationId, } from "@octogee/shared/types/isolated-operation-ids";
 import { FleetMutationRefusedError } from "./normal-fleet-mutation.js";
 import { FenceMismatchError } from "./platform-state/errors.js";
@@ -8,13 +9,18 @@ const RETIRE_GATEWAY_KIND = "retire-gateway";
 const LIVE_ACTIVATION_LEASE_STATUSES = new Set(["requested", "provisioning", "activating", "active", "returning"]);
 class PreconditionFailed extends Error {
 }
+class GitKeysHeld extends Error {
+}
 function isRecord(value) {
     return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+function refusalCause(error) {
+    return error instanceof FleetMutationRefusedError ? refusalCause(error.refusal) : error;
 }
 function preconditionBody(error) {
     if (error instanceof FleetMutationRefusedError)
         return preconditionBody(error.refusal);
-    if (error instanceof PreconditionFailed || error instanceof FenceMismatchError) {
+    if (error instanceof PreconditionFailed || error instanceof FenceMismatchError || error instanceof GitKeysHeld) {
         return { code: "precondition-failed", error: error.message };
     }
     return null;
@@ -42,7 +48,7 @@ async function settle(res, run) {
         const body = preconditionBody(error);
         if (body === null)
             throw error;
-        res.status(409).json(body);
+        res.status(refusalCause(error) instanceof GitKeysHeld ? 412 : 409).json(body);
     }
 }
 function parseTarget(req) {
@@ -129,6 +135,9 @@ async function deleteRetiredRoot(deps, target) {
         await assertNoLiveActivationLease(transaction, target.gatewayId);
         return retirement;
     });
+    const gitKeys = await releaseGitKeysBeforeRootDelete(deps.gatewayGitKeys, target.gatewayId);
+    if (gitKeys.outcome === "kept")
+        throw new GitKeysHeld(gitKeys.reason);
     const preparationCleared = await clearRetiredUserActivationPreparation({ store }, {
         uid: target.ownerUid,
         targetGatewayId: target.gatewayId,
@@ -142,7 +151,7 @@ async function deleteRetiredRoot(deps, target) {
     ]);
     await store.transaction({ label: "admin.placement.delete-retired-root" }, async (transaction) => {
         await assertNoLiveActivationLease(transaction, target.gatewayId);
-        await transaction.gateways.roots.delete(target.gatewayId, {
+        await transaction.gateways.roots.delete(target.gatewayId, gitKeys.proof, {
             retirementVersion: verdict.retirementVersion,
             desiredStatus: ["retired"],
         });

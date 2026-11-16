@@ -305,6 +305,7 @@ function buildDeps(
 ): HttpServerDeps {
   const documents = fakeStoreDocuments(store);
   return {
+    gatewayGitKeys: null,
     userDirectory: noAdminUserDirectorySource,
     store: storeWithWatch(createJournalFixtureStore({
       get: (id) => documents.get(`glmOperations/${id}`),

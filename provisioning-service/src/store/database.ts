@@ -148,6 +148,22 @@ const MIGRATIONS: readonly ((table: (name: string) => string) => string)[] = [
       ADD COLUMN refusals integer NOT NULL DEFAULT 0,
       ADD COLUMN retry_after timestamptz;
   `,
+  (t) => `
+    DO $$ BEGIN
+      IF EXISTS (SELECT 1 FROM ${t("git_keys")}) THEN
+        RAISE EXCEPTION 'schema v3 keys git keys by holder and cannot migrate existing git key rows; release them before upgrading';
+      END IF;
+    END $$;
+    ALTER TABLE ${t("git_keys")}
+      DROP CONSTRAINT git_keys_pkey,
+      ADD COLUMN holder text NOT NULL,
+      ADD PRIMARY KEY (uid, holder);
+    CREATE INDEX git_keys_by_holder ON ${t("git_keys")} (holder);
+    CREATE INDEX git_keys_by_gateway ON ${t("git_keys")} (gateway_id);
+    CREATE INDEX git_keys_pending_release ON ${t("git_keys")} (uid) WHERE deletion_requested_at IS NOT NULL;
+    ALTER TABLE ${t("provisioning_work")} ADD COLUMN keys_only boolean NOT NULL DEFAULT false;
+    ALTER TABLE ${t("git_keys")} ADD COLUMN put_sequence integer NOT NULL DEFAULT 0, ADD COLUMN observed_put_sequence integer NOT NULL DEFAULT 0;
+  `,
 ];
 
 export async function migrate(db: Database): Promise<{ from: number; to: number }> {

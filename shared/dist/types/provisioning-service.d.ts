@@ -5,7 +5,7 @@ export declare const USER_PROVISIONING_CONDITION_TYPES: readonly ["ChatReady", "
 export type UserProvisioningConditionType = (typeof USER_PROVISIONING_CONDITION_TYPES)[number];
 export declare const GIT_KEY_CONDITION_TYPES: readonly ["Registered"];
 export type GitKeyConditionType = (typeof GIT_KEY_CONDITION_TYPES)[number];
-export declare const PROVISIONING_CONDITION_REASONS: readonly ["Converged", "Pending", "ChatUserFailed", "ChatTeamFailed", "ChatChannelsFailed", "ChatAgentFailed", "UserChatTokenFailed", "GitOwnerFailed", "GitRepositoryFailed", "GitKeyFailed", "GitKeyHeldElsewhere", "ChatNotReady", "GitNotReady", "CredentialsNotIssued"];
+export declare const PROVISIONING_CONDITION_REASONS: readonly ["Converged", "Pending", "ChatUserFailed", "ChatTeamFailed", "ChatChannelsFailed", "ChatAgentFailed", "UserChatTokenFailed", "GitOwnerFailed", "GitRepositoryFailed", "GitKeyFailed", "GitKeyHeldElsewhere", "GitKeyNotOnHost", "GitKeyReplacedOnHost", "ChatNotReady", "GitNotReady", "CredentialsNotIssued"];
 export type ProvisioningConditionReason = (typeof PROVISIONING_CONDITION_REASONS)[number];
 export interface ProvisioningCondition<Type extends string = string> {
     type: Type;
@@ -93,15 +93,28 @@ export interface GitKeyStatus {
     observedGeneration: number;
     conditions: ProvisioningCondition<GitKeyConditionType>[];
     nextAttemptAt: string | null;
+    observedPutSequence: number;
 }
 export interface GitKey {
     uid: string;
     gatewayId: string;
+    holder: string;
     generation: number;
+    putSequence: number;
     resourceVersion: string;
     deletionRequestedAt: string | null;
     spec: GitKeySpec;
     status: GitKeyStatus;
+}
+export interface GitKeyHolderSummary {
+    holder: string;
+    gatewayId: string;
+}
+export interface GitKeyHoldersResponse {
+    holders: GitKeyHolderSummary[];
+}
+export interface GitKeyRelease {
+    remaining: number;
 }
 export interface PutGitKeyRequest {
     spec: GitKeySpec;
@@ -170,5 +183,5 @@ export interface ProvisioningErrorBody {
     code: ProvisioningErrorCode;
     error: string;
 }
-export declare const PROVISIONING_ROLES: readonly ["writer", "key-writer", "reader", "credential-reader"];
+export declare const PROVISIONING_ROLES: readonly ["writer", "key-writer", "key-retirer", "reader", "credential-reader"];
 export type ProvisioningRole = (typeof PROVISIONING_ROLES)[number];

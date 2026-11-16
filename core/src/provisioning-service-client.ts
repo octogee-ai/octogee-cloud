@@ -2,6 +2,9 @@ import { readFile } from "node:fs/promises";
 import {
   PROVISIONING_API_VERSION,
   type GitKey,
+  type GitKeyHolderSummary,
+  type GitKeyHoldersResponse,
+  type GitKeyRelease,
   type GitKeySpec,
   type ProvisioningCredential,
   type ProvisioningCredentialName,
@@ -49,6 +52,8 @@ export interface ProvisioningServiceClientOptions {
   readonly now?: () => number;
   readonly onRequest?: (outcome: ProvisioningServiceRequestOutcome) => void;
 }
+
+const UNEXPECTED_RESPONSE = "unexpected-response";
 
 export class ProvisioningServiceError extends Error {
   constructor(
@@ -129,8 +134,12 @@ export interface ProvisioningServiceClient {
   retryProvisioning(uid: string, request: RetryProvisioningRequest, idempotencyKey: string): Promise<unknown>;
   getProvisioningEvents(uid: string, options?: RequestSignalOptions): Promise<ProvisioningEventsResponse | null>;
   getCredential(uid: string, name: ProvisioningCredentialName, options?: RequestSignalOptions): Promise<ProvisioningCredential | null>;
-  putGitKey(uid: string, gatewayId: string, spec: GitKeySpec, options?: RequestSignalOptions): Promise<PutGitKeyResult>;
-  deleteGitKey(uid: string, gatewayId: string, options: { expectedPublicKey: string } & RequestSignalOptions): Promise<DeleteGitKeyOutcome>;
+  putGitKey(uid: string, holder: string, spec: GitKeySpec, options?: RequestSignalOptions): Promise<PutGitKeyResult>;
+  getGitKey(uid: string, holder: string, options?: RequestSignalOptions): Promise<GitKey | null>;
+  deleteGitKey(uid: string, holder: string, options: { expectedPublicKey: string } & RequestSignalOptions): Promise<DeleteGitKeyOutcome>;
+  listGitKeyHolders(options?: RequestSignalOptions): Promise<GitKeyHolderSummary[]>;
+  releaseGitKeyHolder(holder: string, options?: RequestSignalOptions): Promise<GitKeyRelease>;
+  releaseGatewayGitKeys(gatewayId: string, options?: RequestSignalOptions): Promise<GitKeyRelease>;
 }
 
 export interface ProvisioningServiceConfig {
@@ -184,7 +193,7 @@ async function errorFromResponse(response: Response): Promise<ProvisioningServic
   } catch {
     body = null;
   }
-  const code = isRecord(body) && typeof body.code === "string" ? body.code : "unexpected-response";
+  const code = isRecord(body) && typeof body.code === "string" ? body.code : UNEXPECTED_RESPONSE;
   const message = isRecord(body) && typeof body.error === "string" ? body.error : `provisioning service answered ${response.status}`;
   return new ProvisioningServiceError(
     response.status,
@@ -200,15 +209,23 @@ function outcomeOf(error: unknown): ProvisioningServiceRequestOutcome {
   return error.status >= 500 ? "server-error" : "client-error";
 }
 
+function gitKeyRelease(body: unknown): GitKeyRelease {
+  const remaining = isRecord(body) ? body.remaining : undefined;
+  if (typeof remaining !== "number" || !Number.isInteger(remaining) || remaining < 0) {
+    throw new ProvisioningServiceError(200, UNEXPECTED_RESPONSE, "provisioning service answered a git key release without a count of remaining rows");
+  }
+  return { remaining };
+}
+
 function credentialFrom(text: string, name: ProvisioningCredentialName): ProvisioningCredential {
   let body: unknown;
   try {
     body = JSON.parse(text);
   } catch {
-    throw new ProvisioningServiceError(200, "unexpected-response", `provisioning service answered an unreadable ${name} credential`);
+    throw new ProvisioningServiceError(200, UNEXPECTED_RESPONSE, `provisioning service answered an unreadable ${name} credential`);
   }
   if (!isRecord(body) || body.name !== name || typeof body.value !== "string" || body.value === "" || typeof body.version !== "number") {
-    throw new ProvisioningServiceError(200, "unexpected-response", `provisioning service answered a malformed ${name} credential`);
+    throw new ProvisioningServiceError(200, UNEXPECTED_RESPONSE, `provisioning service answered a malformed ${name} credential`);
   }
   return { name, value: body.value, version: body.version };
 }
@@ -228,24 +245,78 @@ function abortedError(input: RequestInput): ProvisioningServiceError {
   return new ProvisioningServiceError(0, "aborted", `provisioning service ${input.method} ${input.path} was aborted by its caller`);
 }
 
-async function deleteGitKey(
-  request: (input: RequestInput) => Promise<Response>,
-  uid: string,
-  gatewayId: string,
-  options: { expectedPublicKey: string } & RequestSignalOptions,
-): Promise<DeleteGitKeyOutcome> {
+async function json<T>(response: Response, emptyBody?: T): Promise<T> {
+  const text = await response.text();
+  if (text === "" && emptyBody !== undefined) return emptyBody;
   try {
-    await request({
-      method: "DELETE",
-      path: `users/${userSegment(uid)}/git-keys/${encodeURIComponent(gatewayId)}`,
-      body: { expectedPublicKey: options.expectedPublicKey },
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-    });
+    return JSON.parse(text) as T;
   } catch (error) {
-    if (error instanceof ProvisioningServiceError && error.status === 409 && error.code === "precondition-failed") return "superseded";
-    throw error;
+    throw new ProvisioningServiceError(response.status, UNEXPECTED_RESPONSE, `provisioning service answered unreadable JSON: ${errorMessage(error)}`);
   }
-  return "deleted";
+}
+
+type GitKeyMethods = Pick<ProvisioningServiceClient, "putGitKey" | "getGitKey" | "deleteGitKey" | "listGitKeyHolders" | "releaseGitKeyHolder" | "releaseGatewayGitKeys">;
+
+function gitKeyMethods(request: (input: RequestInput) => Promise<Response>): GitKeyMethods {
+  return {
+    async putGitKey(uid, holder, spec, keyOptions) {
+      const response = await request({
+        method: "PUT",
+        path: `users/${userSegment(uid)}/git-keys/${encodeURIComponent(holder)}`,
+        body: { spec },
+        ...(keyOptions?.signal === undefined ? {} : { signal: keyOptions.signal }),
+      });
+      return { outcome: PUT_OUTCOMES[response.status] ?? "unchanged", key: await json<GitKey>(response) };
+    },
+
+    async getGitKey(uid, holder, keyOptions) {
+      const response = await request({
+        method: "GET",
+        path: `users/${userSegment(uid)}/git-keys/${encodeURIComponent(holder)}`,
+        allowNotFound: true,
+        ...(keyOptions?.signal === undefined ? {} : { signal: keyOptions.signal }),
+      });
+      return response.status === 404 ? null : json<GitKey>(response);
+    },
+
+    async deleteGitKey(uid, holder, keyOptions) {
+      try {
+        await request({
+          method: "DELETE",
+          path: `users/${userSegment(uid)}/git-keys/${encodeURIComponent(holder)}`,
+          body: { expectedPublicKey: keyOptions.expectedPublicKey },
+          ...(keyOptions.signal === undefined ? {} : { signal: keyOptions.signal }),
+        });
+      } catch (error) {
+        if (error instanceof ProvisioningServiceError && error.status === 409 && error.code === "precondition-failed") return "superseded";
+        throw error;
+      }
+      return "deleted";
+    },
+
+    async listGitKeyHolders(keyOptions) {
+      const response = await request({ method: "GET", path: "git-key-holders", ...(keyOptions?.signal === undefined ? {} : { signal: keyOptions.signal }) });
+      return (await json<GitKeyHoldersResponse>(response)).holders;
+    },
+
+    async releaseGitKeyHolder(holder, keyOptions) {
+      const response = await request({
+        method: "DELETE",
+        path: `git-key-holders/${encodeURIComponent(holder)}`,
+        ...(keyOptions?.signal === undefined ? {} : { signal: keyOptions.signal }),
+      });
+      return gitKeyRelease(await json<unknown>(response));
+    },
+
+    async releaseGatewayGitKeys(gatewayId, keyOptions) {
+      const response = await request({
+        method: "DELETE",
+        path: `gateways/${encodeURIComponent(gatewayId)}/git-keys`,
+        ...(keyOptions?.signal === undefined ? {} : { signal: keyOptions.signal }),
+      });
+      return gitKeyRelease(await json<unknown>(response));
+    },
+  };
 }
 
 export function createProvisioningServiceClient(options: ProvisioningServiceClientOptions): ProvisioningServiceClient {
@@ -321,16 +392,6 @@ export function createProvisioningServiceClient(options: ProvisioningServiceClie
         const delay = error.retryAfterMs ?? backoffDelayMs(attemptIndex, retry, random);
         await sleep(Math.min(delay, retry.maxDelayMs));
       }
-    }
-  }
-
-  async function json<T>(response: Response, emptyBody?: T): Promise<T> {
-    const text = await response.text();
-    if (text === "" && emptyBody !== undefined) return emptyBody;
-    try {
-      return JSON.parse(text) as T;
-    } catch (error) {
-      throw new ProvisioningServiceError(response.status, "unexpected-response", `provisioning service answered unreadable JSON: ${errorMessage(error)}`);
     }
   }
 
@@ -444,18 +505,7 @@ export function createProvisioningServiceClient(options: ProvisioningServiceClie
       }
       return credentialFrom(await response.text(), name);
     },
-
-    async putGitKey(uid, gatewayId, spec, keyOptions) {
-      const response = await request({
-        method: "PUT",
-        path: `users/${userSegment(uid)}/git-keys/${encodeURIComponent(gatewayId)}`,
-        body: { spec },
-        ...(keyOptions?.signal === undefined ? {} : { signal: keyOptions.signal }),
-      });
-      return { outcome: PUT_OUTCOMES[response.status] ?? "unchanged", key: await json<GitKey>(response) };
-    },
-
-    deleteGitKey: (uid, gatewayId, keyOptions) => deleteGitKey(request, uid, gatewayId, keyOptions),
+    ...gitKeyMethods(request),
   };
   return client;
 }

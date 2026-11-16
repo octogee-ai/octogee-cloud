@@ -10,6 +10,7 @@ import type {
 import { LeaseLostError } from "../hosts/credential-store.js";
 import type { HostErrorKind } from "../hosts/host-error.js";
 import type { Logger } from "../logger.js";
+import type { GitKeyRowCount, WorkSnapshot } from "../metrics.js";
 import type { Database } from "../store/database.js";
 
 export const LEASE_MS = 60_000;
@@ -18,6 +19,7 @@ export const MAX_TRANSIENT_ATTEMPTS = 12;
 export const RESYNC_AFTER_MS = 6 * 60 * 60 * 1_000;
 const BACKOFF_BASE_MS = 5_000;
 const BACKOFF_CAP_MS = 10 * 60 * 1_000;
+export const KEY_REFUSAL_BACKOFF_MS = 60_000;
 
 export function backoffMs(failedAttempts: number, random: () => number = Math.random): number {
   const exponent = Math.max(failedAttempts - 1, 0);
@@ -29,6 +31,7 @@ export interface Claim {
   uid: string;
   leaseToken: string;
   takeover: boolean;
+  keysOnly: boolean;
   claimedAt: number;
 }
 
@@ -72,29 +75,71 @@ export class WorkQueue {
     const t = this.db.table;
     const claimedAt = Date.now();
     return this.db.write(async (client, bumpVersion) => {
-      const { rows } = await client.query<{ uid: string; state: ProvisioningWorkState; attempts: number; generation: number }>(
-        `SELECT w.uid, w.state, w.attempts, p.generation FROM ${t("provisioning_work")} w JOIN ${t("provisionings")} p ON p.uid = w.uid
-          WHERE w.due_at <= now()
-            AND (w.state IN ('queued', 'retrying', 'idle') OR (w.state = 'running' AND w.lease_expires_at < now()))
+      const { rows } = await client.query<{ uid: string; state: ProvisioningWorkState; attempts: number; generation: number; keys_only: boolean }>(
+        `SELECT w.uid, w.state, w.attempts, w.keys_only, p.generation FROM ${t("provisioning_work")} w JOIN ${t("provisionings")} p ON p.uid = w.uid
+          WHERE (w.due_at <= now() AND w.state IN ('queued', 'retrying', 'idle'))
+             OR (w.state = 'running' AND w.lease_expires_at < now())
           ORDER BY w.due_at LIMIT $1 FOR UPDATE OF w SKIP LOCKED`, [limit]);
       const claims: Claim[] = [];
       for (const row of rows) {
         const takeover = row.state === "running";
-        if (takeover && row.attempts + 1 >= MAX_TRANSIENT_ATTEMPTS) {
+        if (takeover && !row.keys_only && row.attempts + 1 >= MAX_TRANSIENT_ATTEMPTS) {
           await this.parkUnfinished(client, row, await bumpVersion(row.uid));
           continue;
         }
-        const leaseToken = randomUUID();
-        await client.query(
-          `UPDATE ${t("provisioning_work")}
-              SET state = 'running', lease_holder = $2, lease_token = $3, lease_expires_at = now() + make_interval(secs => $4),
-                  attempts = attempts + $5, dirty = false, last_attempt_at = now()
-            WHERE uid = $1`, [row.uid, this.options.holder, leaseToken, this.leaseMs / 1_000, takeover ? 1 : 0]);
-        const version = await bumpVersion(row.uid);
-        await client.query(`UPDATE ${t("provisionings")} SET resource_version = $2 WHERE uid = $1`, [row.uid, version.toString()]);
-        claims.push({ uid: row.uid, leaseToken, takeover, claimedAt });
+        const leaseToken = await this.lease(client, row.uid, takeover && !row.keys_only ? 1 : 0, await bumpVersion(row.uid));
+        claims.push({ uid: row.uid, leaseToken, takeover, keysOnly: row.keys_only, claimedAt });
       }
+      if (claims.length < limit) claims.push(...await this.claimParkedKeys(client, bumpVersion, limit - claims.length, claimedAt));
       return claims;
+    });
+  }
+
+  private async claimParkedKeys(client: pg.PoolClient, bumpVersion: (uid: string) => Promise<bigint>, limit: number, claimedAt: number): Promise<Claim[]> {
+    const t = this.db.table;
+    const { rows } = await client.query<{ uid: string }>(
+      `SELECT w.uid FROM ${t("provisioning_work")} w JOIN ${t("provisionings")} p ON p.uid = w.uid
+        WHERE w.state = 'parked' AND (
+          EXISTS (SELECT 1 FROM ${t("git_keys")} k WHERE k.uid = w.uid AND (k.retry_after IS NULL OR k.retry_after <= now())
+            AND (k.deletion_requested_at IS NOT NULL OR k.put_sequence > k.observed_put_sequence))
+          OR (w.due_at <= now() AND p.outputs->'git'->>'owner' IS NOT NULL
+            AND EXISTS (SELECT 1 FROM ${t("git_keys")} k WHERE k.uid = w.uid AND k.deletion_requested_at IS NULL)))
+        ORDER BY w.uid LIMIT $1 FOR UPDATE OF w SKIP LOCKED`, [limit]);
+    const claims: Claim[] = [];
+    for (const row of rows) {
+      await client.query(`UPDATE ${t("provisioning_work")} SET keys_only = true WHERE uid = $1`, [row.uid]);
+      const leaseToken = await this.lease(client, row.uid, 0, await bumpVersion(row.uid));
+      claims.push({ uid: row.uid, leaseToken, takeover: false, keysOnly: true, claimedAt });
+    }
+    return claims;
+  }
+
+  private async lease(client: pg.PoolClient, uid: string, attemptIncrement: number, version: bigint): Promise<string> {
+    const t = this.db.table;
+    const leaseToken = randomUUID();
+    await client.query(
+      `UPDATE ${t("provisioning_work")}
+          SET state = 'running', lease_holder = $2, lease_token = $3, lease_expires_at = now() + make_interval(secs => $4),
+              attempts = attempts + $5, dirty = CASE WHEN keys_only THEN dirty ELSE false END,
+              last_attempt_at = CASE WHEN keys_only THEN last_attempt_at ELSE now() END
+        WHERE uid = $1`, [uid, this.options.holder, leaseToken, this.leaseMs / 1_000, attemptIncrement]);
+    await client.query(`UPDATE ${t("provisionings")} SET resource_version = $2 WHERE uid = $1`, [uid, version.toString()]);
+    return leaseToken;
+  }
+
+  async finishParkedKeys(uid: string, leaseToken: string): Promise<FinishResult> {
+    const t = this.db.table;
+    return this.fenced(uid, leaseToken, async (client, bumpVersion) => {
+      const observeAfterMs = Math.max(KEY_REFUSAL_BACKOFF_MS, Math.min(this.resyncAfterMs, await this.nextKeyRetryMs(client, uid) ?? this.resyncAfterMs));
+      const { rows } = await client.query<{ state: ProvisioningWorkState; attempts: number }>(
+        `UPDATE ${t("provisioning_work")}
+            SET state = CASE WHEN dirty THEN 'queued' ELSE 'parked' END, attempts = CASE WHEN dirty THEN 0 ELSE attempts END,
+                due_at = CASE WHEN dirty THEN now() ELSE now() + make_interval(secs => $2) END,
+                dirty = false, keys_only = false, lease_holder = NULL, lease_token = NULL, lease_expires_at = NULL
+          WHERE uid = $1 RETURNING state, attempts`, [uid, observeAfterMs / 1_000]);
+      const version = await bumpVersion();
+      await client.query(`UPDATE ${t("provisionings")} SET resource_version = $2 WHERE uid = $1`, [uid, version.toString()]);
+      return rows[0];
     });
   }
 
@@ -191,7 +236,7 @@ export class WorkQueue {
       `DELETE FROM ${t("attempts")} WHERE uid = $1 AND id NOT IN (SELECT id FROM ${t("attempts")} WHERE uid = $1 ORDER BY id DESC LIMIT 50)`, [uid]);
   }
 
-  async snapshot(): Promise<{ states: Record<ProvisioningWorkState, number>; oldestDueSeconds: number; generationLagSeconds: number; expiredLeases: number }> {
+  async snapshot(): Promise<WorkSnapshot & { expiredLeases: number }> {
     const t = this.db.table;
     const { rows } = await this.db.pool.query<{ state: ProvisioningWorkState; count: string }>(
       `SELECT state, count(*) AS count FROM ${t("provisioning_work")} GROUP BY state`);
@@ -204,6 +249,20 @@ export class WorkQueue {
             WHERE p.observed_generation < p.generation) AS lag,
          (SELECT count(*) FROM ${t("provisioning_work")} WHERE state = 'running' AND lease_expires_at < now()) AS expired`);
     const row = aggregate.rows[0];
-    return { states, oldestDueSeconds: row.oldest_due ?? 0, generationLagSeconds: row.lag ?? 0, expiredLeases: Number(row.expired) };
+    return { states, gitKeys: await this.gitKeyCounts(), oldestDueSeconds: row.oldest_due ?? 0, generationLagSeconds: row.lag ?? 0, expiredLeases: Number(row.expired) };
+  }
+
+  private async gitKeyCounts(): Promise<GitKeyRowCount[]> {
+    try {
+      const { rows } = await this.db.pool.query<{ status: string; reason: string; count: string }>(
+        `SELECT c->>'status' AS status, c->>'reason' AS reason, count(*) AS count
+           FROM ${this.db.table("git_keys")} k CROSS JOIN LATERAL jsonb_array_elements(k.conditions) c
+          WHERE k.deletion_requested_at IS NULL AND c->>'type' = 'Registered'
+          GROUP BY 1, 2 ORDER BY 1, 2`);
+      return rows.map((key) => ({ status: key.status, reason: key.reason, count: Number(key.count) }));
+    } catch (error) {
+      this.options.log.error("counting git key rows failed; provisioning_git_keys exports nothing until a count succeeds", { error: error instanceof Error ? error.message : String(error) });
+      return [];
+    }
   }
 }

@@ -21,6 +21,8 @@ export const PROVISIONING_CONDITION_REASONS = [
   "GitRepositoryFailed",
   "GitKeyFailed",
   "GitKeyHeldElsewhere",
+  "GitKeyNotOnHost",
+  "GitKeyReplacedOnHost",
   "ChatNotReady",
   "GitNotReady",
   "CredentialsNotIssued",
@@ -119,16 +121,32 @@ export interface GitKeyStatus {
   observedGeneration: number;
   conditions: ProvisioningCondition<GitKeyConditionType>[];
   nextAttemptAt: string | null;
+  observedPutSequence: number;
 }
 
 export interface GitKey {
   uid: string;
   gatewayId: string;
+  holder: string;
   generation: number;
+  putSequence: number;
   resourceVersion: string;
   deletionRequestedAt: string | null;
   spec: GitKeySpec;
   status: GitKeyStatus;
+}
+
+export interface GitKeyHolderSummary {
+  holder: string;
+  gatewayId: string;
+}
+
+export interface GitKeyHoldersResponse {
+  holders: GitKeyHolderSummary[];
+}
+
+export interface GitKeyRelease {
+  remaining: number;
 }
 
 export interface PutGitKeyRequest {
@@ -236,5 +254,5 @@ export interface ProvisioningErrorBody {
   error: string;
 }
 
-export const PROVISIONING_ROLES = ["writer", "key-writer", "reader", "credential-reader"] as const;
+export const PROVISIONING_ROLES = ["writer", "key-writer", "key-retirer", "reader", "credential-reader"] as const;
 export type ProvisioningRole = (typeof PROVISIONING_ROLES)[number];

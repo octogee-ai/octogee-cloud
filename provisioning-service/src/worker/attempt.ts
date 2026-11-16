@@ -16,9 +16,10 @@ import type { AuthorizedGitKey, GitHost, GitRepositoryKind } from "../hosts/git-
 import { HostError, hostErrorKind, type HostErrorKind } from "../hosts/host-error.js";
 import type { Logger } from "../logger.js";
 import type { Metrics } from "../metrics.js";
+import type pg from "pg";
 import type { Database } from "../store/database.js";
 import type { GitKeyRow } from "../store/provisioning-store.js";
-import { HEARTBEAT_MS, type Claim, type FinishResult, type WorkQueue } from "./queue.js";
+import { HEARTBEAT_MS, KEY_REFUSAL_BACKOFF_MS, type Claim, type FinishResult, type WorkQueue } from "./queue.js";
 
 export interface AttemptDependencies {
   db: Database;
@@ -87,14 +88,91 @@ function readyCondition(chat: ChatResult, git: GitResult): ConditionUpdate<UserP
   return { type: "Ready", status: "True", reason: "Converged" };
 }
 
-const KEY_REFUSAL_BACKOFF_MS = 60_000;
 const KEY_REFUSAL_MAX_BACKOFF_MS = 6 * 60 * 60_000;
 
+type KeyRefusalReason = "GitKeyHeldElsewhere" | "GitKeyNotOnHost" | "GitKeyReplacedOnHost" | "GitNotReady";
+
+const BACKOFF_EXPONENT_CAP = 20;
+const BACKOFF_SQL = `now() + LEAST($4::double precision * power(2, LEAST(refusals, ${BACKOFF_EXPONENT_CAP})), $5::double precision) * interval '1 millisecond'`;
+
 class KeyRefused extends Error {
-  constructor(override readonly cause: HostError) {
+  constructor(override readonly cause: HostError, readonly reason: KeyRefusalReason = "GitKeyHeldElsewhere", readonly repeated = false) {
     super(cause.message);
     this.name = "KeyRefused";
   }
+}
+
+const HELD_ELSEWHERE = "the key is held under another managed title; it is taken only while its gateway puts it";
+const TAKEN_LATER = "another holder of this user took the key later in the same attempt";
+const MISMATCH_DETAILS = {
+  GitKeyHeldElsewhere: HELD_ELSEWHERE,
+  GitKeyNotOnHost: "the git host holds no key under this holder's title; the service writes the key only when its gateway puts it",
+  GitKeyReplacedOnHost: "the git host holds a different key under this holder's title; the service writes the key only when its gateway puts it",
+} as const;
+
+function nextStep(retryAfter: Date | null): string {
+  return retryAfter ? `next attempt after ${retryAfter.toISOString()}` : "a later put is processed next";
+}
+
+function registeredCondition(key: GitKeyRow): { status: string; reason: string; message?: string } | undefined {
+  return key.conditions.find((condition) => condition.type === "Registered");
+}
+
+function observedMismatch(key: GitKeyRow, observed: keyof typeof MISMATCH_DETAILS): KeyRefused {
+  const previous = registeredCondition(key);
+  const kept = observed === "GitKeyNotOnHost" && previous?.status === "False" && previous.reason === "GitKeyHeldElsewhere" ? "GitKeyHeldElsewhere" : observed;
+  const repeated = previous?.status === "False" && previous.reason === kept;
+  return new KeyRefused(new HostError("terminal", MISMATCH_DETAILS[kept], kept === "GitKeyHeldElsewhere" ? { code: "key-held-elsewhere" } : {}), kept, repeated);
+}
+
+function heldElsewhere(present: readonly AuthorizedGitKey[], key: GitKeyRow): boolean {
+  const wanted = publicKeyIdentity(key.public_key);
+  return present.some((existing) => existing.holder !== key.holder && publicKeyIdentity(existing.publicKey) === wanted);
+}
+
+function hostMismatch(present: readonly AuthorizedGitKey[], key: GitKeyRow): keyof typeof MISMATCH_DETAILS {
+  if (heldElsewhere(present, key)) return "GitKeyHeldElsewhere";
+  return present.some((existing) => existing.holder === key.holder) ? "GitKeyReplacedOnHost" : "GitKeyNotOnHost";
+}
+
+function lostKey(present: readonly AuthorizedGitKey[], key: GitKeyRow): KeyRefused {
+  const reason = hostMismatch(present, key);
+  if (reason === "GitKeyHeldElsewhere") return new KeyRefused(new HostError("terminal", TAKEN_LATER, { code: "key-held-elsewhere" }));
+  return new KeyRefused(new HostError("terminal", MISMATCH_DETAILS[reason]), reason);
+}
+
+const REFUSAL_LOGS: Record<KeyRefusalReason, string> = {
+  GitKeyHeldElsewhere: "the git host refused the git key; recorded on the key and the rest of the attempt continues",
+  GitKeyNotOnHost: "the git host does not hold the row's key under its title; recorded on the key and left for its gateway's next put",
+  GitKeyReplacedOnHost: "the git host does not hold the row's key under its title; recorded on the key and left for its gateway's next put",
+  GitNotReady: "the user's git account does not exist yet; the put key is refused until provisioning creates it",
+};
+
+function deletionsFirst(keys: readonly SnapshotKey[]): SnapshotKey[] {
+  return [...keys.filter((key) => key.deletion_requested_at !== null), ...keys.filter((key) => key.deletion_requested_at === null)];
+}
+
+interface KeyListing {
+  current(): Promise<AuthorizedGitKey[]>;
+  changed(): void;
+  readonly writes: number;
+}
+
+type KeyHold = "written" | "confirm";
+
+interface HeldKey {
+  key: SnapshotKey;
+  hold: KeyHold;
+  writes: number;
+}
+
+function unsettled(listing: KeyListing, held: readonly HeldKey[]): HeldKey[] {
+  return held.filter((entry) => entry.hold === "confirm" || listing.writes > entry.writes);
+}
+
+function holdsKey(present: readonly AuthorizedGitKey[], key: GitKeyRow): boolean {
+  const wanted = publicKeyIdentity(key.public_key);
+  return present.some((existing) => existing.holder === key.holder && publicKeyIdentity(existing.publicKey) === wanted);
 }
 
 function staleKeys(key: GitKeyRow): string[] {
@@ -127,12 +205,25 @@ class Attempt {
     return this.snapshot.spec;
   }
 
-  async run(): Promise<AttemptResult> {
+  run(): Promise<AttemptResult> {
+    return this.leased(async () => {
+      const [chat, git] = await Promise.all([this.chatBranch(), this.gitBranch()]);
+      return this.finish(chat, git);
+    });
+  }
+
+  runParkedKeys(): Promise<AttemptResult> {
+    return this.leased(async () => {
+      await this.reconcileParkedKeys();
+      return this.deps.queue.finishParkedKeys(this.claim.uid, this.claim.leaseToken);
+    });
+  }
+
+  private async leased(body: () => Promise<FinishResult>): Promise<AttemptResult> {
     const heartbeat = setInterval(() => this.beat(), this.deps.heartbeatMs ?? HEARTBEAT_MS);
     this.armDeadline();
     try {
-      const [chat, git] = await Promise.all([this.chatBranch(), this.gitBranch()]);
-      return await this.finish(chat, git);
+      return await body();
     } catch (error) {
       if (!(error instanceof LeaseLostError) && !this.leaseLost) throw error;
       return await this.recordLeaseLost();
@@ -345,79 +436,226 @@ class Attempt {
     });
   }
 
+  private keyListing(owner: string, keys: readonly SnapshotKey[]): KeyListing {
+    let present: AuthorizedGitKey[] | null = null;
+    let writes = 0;
+    return {
+      current: async () => {
+        present ??= await this.hostCall("git", "listKeys", () => this.deps.git.listKeys({ owner, holders: keys.map((key) => key.holder) }, this.signal));
+        return present;
+      },
+      changed: () => { present = null; writes += 1; },
+      get writes() { return writes; },
+    };
+  }
+
+  private async settleHeldKeys(present: readonly AuthorizedGitKey[], held: readonly HeldKey[]): Promise<string[]> {
+    const refused: string[] = [];
+    for (const { key, hold } of held) {
+      if (holdsKey(present, key)) {
+        if (hold === "confirm") await this.writeKeyStatus(key, { type: "Registered", status: "True", reason: "Converged" }, key.public_key);
+        continue;
+      }
+      const refusal = lostKey(present, key);
+      await this.writeKeyRefusal(key, refusal);
+      refused.push(`${key.holder}: ${message(refusal.cause)}`);
+    }
+    return refused;
+  }
+
   private async reconcileKeys(owner: string): Promise<string[]> {
-    const present = await this.hostCall("git", "listKeys", () => this.deps.git.listKeys({ owner, holders: this.snapshot.keys.map((key) => key.gateway_id) }, this.signal));
+    const keys = deletionsFirst(this.snapshot.keys);
+    const listing = this.keyListing(owner, keys);
+    await listing.current();
     const failures: string[] = [];
     const refused: string[] = [];
+    const held: HeldKey[] = [];
     let kind: HostErrorKind = "transient";
-    for (const key of this.snapshot.keys) {
+    for (const key of keys) {
       try {
-        await this.reconcileKey(owner, key, present);
+        const hold = await this.reconcileKey(owner, key, listing);
+        if (hold) held.push({ key, hold, writes: listing.writes });
       } catch (error) {
         if (error instanceof LeaseLostError || this.leaseLost) throw error;
         if (error instanceof KeyRefused) {
-          await this.writeKeyRefusal(key, error.cause);
-          refused.push(`${key.gateway_id}: ${message(error.cause)}`);
+          await this.writeKeyRefusal(key, error);
+          refused.push(`${key.holder}: ${message(error.cause)}`);
           continue;
         }
-        failures.push(`${key.gateway_id}: ${message(error)}`);
+        failures.push(`${key.holder}: ${message(error)}`);
         if (hostErrorKind(error) === "terminal") kind = "terminal";
         if (key.deletion_requested_at === null) {
           await this.writeKeyStatus(key, { type: "Registered", status: "False", reason: "GitKeyFailed", message: message(error) }, key.registered_public_key);
         }
       }
     }
+    const pending = unsettled(listing, held);
+    if (pending.length > 0) refused.push(...await this.settleHeldKeys(await listing.current(), pending));
     if (failures.length) throw new HostError(kind, failures.join("; "));
     return refused;
   }
 
-  private async reconcileKey(owner: string, key: SnapshotKey, present: AuthorizedGitKey[]): Promise<void> {
-    const sameKey = (left: string, right: string) => publicKeyIdentity(left) === publicKeyIdentity(right);
-    const has = (publicKey: string) => present.some((existing) => sameKey(existing.publicKey, publicKey) && existing.holder === key.gateway_id);
-    for (const publicKey of staleKeys(key).filter(has)) {
-      await this.hostCall("git", "releaseKey", () => this.deps.git.releaseKey({ owner, publicKey, holder: key.gateway_id }, this.signal));
-    }
-    if (key.deletion_requested_at !== null) {
-      await this.deps.queue.fenced(this.claim.uid, this.claim.leaseToken, (client) =>
-        client.query(`DELETE FROM ${this.deps.db.table("git_keys")} WHERE uid = $1 AND gateway_id = $2 AND generation = $3 AND deletion_requested_at IS NOT NULL`,
-          [this.claim.uid, key.gateway_id, key.generation]));
+  private async reconcileParkedKeys(): Promise<void> {
+    const due = this.snapshot.keys.filter((key) => key.deletion_requested_at === null || !key.backing_off);
+    const owner = this.outputs.git?.owner;
+    if (owner === undefined) {
+      await this.settleKeysWithoutGitAccount(due);
       return;
     }
-    if (has(key.public_key)) {
-      await this.writeKeyStatus(key, { type: "Registered", status: "True", reason: "Converged" }, key.public_key);
-      return;
-    }
-    if (key.backing_off) return;
-    if (present.some((existing) => sameKey(existing.publicKey, key.public_key) && existing.holder === null)) {
-      this.deps.log.info("adopting the identical git key the user's account holds under a title this service does not manage", { uid: this.claim.uid, gatewayId: key.gateway_id });
-    }
+    const keys = deletionsFirst(due);
+    const listing = this.keyListing(owner, keys);
     try {
-      await this.hostCall("git", "registerKey", () => this.deps.git.registerKey({ owner, publicKey: key.public_key, holder: key.gateway_id }, this.signal));
+      await listing.current();
+    } catch (error) {
+      if (error instanceof LeaseLostError || this.leaseLost) throw error;
+      await this.recordParkedListingFailure(keys, error);
+      return;
+    }
+    const held: HeldKey[] = [];
+    for (const key of keys) {
+      const hold = await this.reconcileParkedKey(owner, key, listing);
+      if (hold) held.push({ key, hold, writes: listing.writes });
+    }
+    const pending = unsettled(listing, held);
+    if (pending.length === 0) return;
+    let present: AuthorizedGitKey[];
+    try {
+      present = await listing.current();
+    } catch (error) {
+      if (error instanceof LeaseLostError || this.leaseLost) throw error;
+      for (const { key } of pending.filter((entry) => entry.hold === "confirm")) await this.writeParkedKeyFailure(key, error);
+      this.deps.log.error("confirming a parked user's git keys on the git host failed; its put rows back off and its other rows are observed on the next pass", { uid: this.claim.uid, error: message(error) });
+      return;
+    }
+    await this.settleHeldKeys(present, pending);
+  }
+
+  private async settleKeysWithoutGitAccount(keys: readonly SnapshotKey[]): Promise<void> {
+    for (const key of keys) {
+      if (key.deletion_requested_at !== null) await this.deleteReleasedRow(key);
+      else if (!key.backing_off && key.put_sequence > key.observed_put_sequence) {
+        await this.writeKeyRefusal(key, new KeyRefused(new HostError("terminal", "the user's git account does not exist yet; put the key again once provisioning has created it"), "GitNotReady"));
+      }
+    }
+  }
+
+  private async recordParkedListingFailure(keys: readonly SnapshotKey[], error: unknown): Promise<void> {
+    for (const key of keys.filter((candidate) => !candidate.backing_off)) {
+      if (key.deletion_requested_at !== null || key.put_sequence > key.observed_put_sequence) await this.writeParkedKeyFailure(key, error);
+      else await this.backOffUnobservedKey(key);
+    }
+    this.deps.log.error("listing a parked user's git keys failed; its rows back off and are observed again after that", { uid: this.claim.uid, error: message(error) });
+  }
+
+  private async reconcileParkedKey(owner: string, key: SnapshotKey, listing: KeyListing): Promise<KeyHold | null> {
+    try {
+      return await this.reconcileKey(owner, key, listing);
+    } catch (error) {
+      if (error instanceof LeaseLostError || this.leaseLost) throw error;
+      if (error instanceof KeyRefused) await this.writeKeyRefusal(key, error);
+      else await this.writeParkedKeyFailure(key, error);
+      return null;
+    }
+  }
+
+  private async armKeyBackoff(client: pg.PoolClient, key: GitKeyRow): Promise<Date | null> {
+    const { rows } = await client.query<{ retry_after: Date }>(
+      `UPDATE ${this.deps.db.table("git_keys")} SET refusals = refusals + 1,
+          retry_after = ${BACKOFF_SQL}
+        WHERE uid = $1 AND holder = $2 AND generation = $3 AND put_sequence = $6 RETURNING retry_after`,
+      [this.claim.uid, key.holder, key.generation, KEY_REFUSAL_BACKOFF_MS, KEY_REFUSAL_MAX_BACKOFF_MS, key.put_sequence]);
+    return rows[0]?.retry_after ?? null;
+  }
+
+  private backOffUnobservedKey(key: GitKeyRow): Promise<void> {
+    return this.deps.queue.fenced(this.claim.uid, this.claim.leaseToken, async (client, bumpVersion) => {
+      if (await this.armKeyBackoff(client, key) === null) return;
+      const version = await bumpVersion();
+      await client.query(`UPDATE ${this.deps.db.table("git_keys")} SET resource_version = $4 WHERE uid = $1 AND holder = $2 AND generation = $3`,
+        [this.claim.uid, key.holder, key.generation, version.toString()]);
+    });
+  }
+
+  private writeParkedKeyFailure(key: GitKeyRow, error: unknown): Promise<void> {
+    const [action, noun] = key.deletion_requested_at === null ? ["registering", "registration"] : ["releasing", "release"];
+    return this.deps.queue.fenced(this.claim.uid, this.claim.leaseToken, async (client, bumpVersion) => {
+      const version = await bumpVersion();
+      const retryAfter = await this.armKeyBackoff(client, key);
+      const conditions = applyConditions(key.conditions,
+        [{ type: "Registered", status: "Unknown", reason: "GitKeyFailed", message: `${noun} failed: ${message(error)}; ${nextStep(retryAfter)}` }], key.generation, new Date());
+      await client.query(`UPDATE ${this.deps.db.table("git_keys")} SET conditions = $4, resource_version = $5 WHERE uid = $1 AND holder = $2 AND generation = $3`,
+        [this.claim.uid, key.holder, key.generation, JSON.stringify(conditions), version.toString()]);
+      this.deps.log.error(`${action} a parked user's git key failed; recorded on the key and retried after backoff`, {
+        uid: this.claim.uid, holder: key.holder, nextAttemptAt: retryAfter?.toISOString() ?? null, error: message(error),
+      });
+    });
+  }
+
+  private deleteReleasedRow(key: GitKeyRow): Promise<unknown> {
+    return this.deps.queue.fenced(this.claim.uid, this.claim.leaseToken, (client) =>
+      client.query(`DELETE FROM ${this.deps.db.table("git_keys")} WHERE uid = $1 AND holder = $2 AND generation = $3 AND deletion_requested_at IS NOT NULL`,
+        [this.claim.uid, key.holder, key.generation]));
+  }
+
+  private async releaseStaleKeys(owner: string, key: SnapshotKey, listing: KeyListing): Promise<"released" | "backing-off"> {
+    const present = await listing.current();
+    const stale = staleKeys(key).filter((publicKey) => {
+      const identity = publicKeyIdentity(publicKey);
+      return present.some((existing) => existing.holder === key.holder && publicKeyIdentity(existing.publicKey) === identity);
+    });
+    if (stale.length > 0 && key.backing_off && key.deletion_requested_at === null) return "backing-off";
+    for (const publicKey of stale) {
+      listing.changed();
+      await this.hostCall("git", "releaseKey", () => this.deps.git.releaseKey({ owner, publicKey, holder: key.holder }, this.signal));
+    }
+    return "released";
+  }
+
+  private async reconcileKey(owner: string, key: SnapshotKey, listing: KeyListing): Promise<KeyHold | null> {
+    const putPending = key.put_sequence > key.observed_put_sequence;
+    const released = key.deletion_requested_at !== null;
+    if ((putPending || released) && await this.releaseStaleKeys(owner, key, listing) === "backing-off") return null;
+    if (released) {
+      await this.deleteReleasedRow(key);
+      return null;
+    }
+    const present = await listing.current();
+    if (holdsKey(present, key)) {
+      if (putPending) return "confirm";
+      await this.writeKeyStatus(key, { type: "Registered", status: "True", reason: "Converged" }, key.public_key);
+      return "written";
+    }
+    if (key.backing_off) return null;
+    if (!putPending) throw observedMismatch(key, hostMismatch(present, key));
+    if (heldElsewhere(present, key)) {
+      this.deps.log.info("adopting the identical git key the user's account holds under another managed title, at its gateway's put", { uid: this.claim.uid, holder: key.holder });
+    }
+    listing.changed();
+    try {
+      await this.hostCall("git", "registerKey", () => this.deps.git.registerKey({ owner, publicKey: key.public_key, holder: key.holder }, this.signal));
     } catch (error) {
       if (error instanceof HostError && error.code === "key-held-elsewhere") throw new KeyRefused(error);
       throw error;
     }
-    await this.writeKeyStatus(key, { type: "Registered", status: "True", reason: "Converged" }, key.public_key);
+    return "confirm";
   }
 
-  private writeKeyRefusal(key: GitKeyRow, error: HostError): Promise<void> {
+  private writeKeyRefusal(key: GitKeyRow, refusal: KeyRefused): Promise<void> {
+    const { cause: error, reason, repeated } = refusal;
     return this.deps.queue.fenced(this.claim.uid, this.claim.leaseToken, async (client, bumpVersion) => {
       const version = await bumpVersion();
-      const { rows } = await client.query<{ retry_after: Date }>(
-        `UPDATE ${this.deps.db.table("git_keys")} SET refusals = refusals + 1,
-            retry_after = now() + LEAST($4::double precision * power(2, refusals), $5::double precision) * interval '1 millisecond'
-          WHERE uid = $1 AND gateway_id = $2 AND generation = $3 RETURNING retry_after`,
-        [this.claim.uid, key.gateway_id, key.generation, KEY_REFUSAL_BACKOFF_MS, KEY_REFUSAL_MAX_BACKOFF_MS]);
-      const nextAttemptAt = rows[0]?.retry_after.toISOString() ?? null;
-      const reason = "GitKeyHeldElsewhere";
-      const conditions = applyConditions(key.conditions, [{ type: "Registered", status: "False", reason, message: `${message(error)}; next attempt after ${nextAttemptAt}` }], key.generation, new Date());
+      const retryAfter = await this.armKeyBackoff(client, key);
+      const nextAttemptAt = retryAfter?.toISOString() ?? null;
+      const conditions = applyConditions(key.conditions, [{ type: "Registered", status: "False", reason, message: `${message(error)}; ${nextStep(retryAfter)}` }], key.generation, new Date());
       await client.query(
-        `UPDATE ${this.deps.db.table("git_keys")} SET conditions = $4, observed_generation = $3, resource_version = $5
-          WHERE uid = $1 AND gateway_id = $2 AND generation = $3`,
-        [this.claim.uid, key.gateway_id, key.generation, JSON.stringify(conditions), version.toString()]);
-      this.deps.log.error("the git host refused the git key; recorded on the key and the rest of the attempt continues", {
-        uid: this.claim.uid, gatewayId: key.gateway_id, reason, nextAttemptAt, error: message(error),
-      });
+        `UPDATE ${this.deps.db.table("git_keys")} SET conditions = $4, observed_generation = $3, resource_version = $5,
+            observed_put_sequence = GREATEST(observed_put_sequence, $6)
+          WHERE uid = $1 AND holder = $2 AND generation = $3`,
+        [this.claim.uid, key.holder, key.generation, JSON.stringify(conditions), version.toString(), key.put_sequence]);
+      const fields = { uid: this.claim.uid, holder: key.holder, reason, nextAttemptAt, error: message(error) };
+      const mismatch = reason === "GitKeyNotOnHost" || reason === "GitKeyReplacedOnHost";
+      if (mismatch && !repeated) this.deps.log.warn(REFUSAL_LOGS[reason], fields);
+      else this.deps.log.error(REFUSAL_LOGS[reason], fields);
     });
   }
 
@@ -425,11 +663,11 @@ class Attempt {
     return this.deps.queue.fenced(this.claim.uid, this.claim.leaseToken, async (client, bumpVersion) => {
       const conditions = applyConditions(key.conditions, [update], key.generation, new Date());
       const version = await bumpVersion();
-      const cleared = update.status === "True" ? ", refusals = 0, retry_after = NULL" : "";
+      const cleared = update.status === "True" ? ", refusals = 0, retry_after = NULL, observed_put_sequence = GREATEST(observed_put_sequence, $7)" : "";
       await client.query(
         `UPDATE ${this.deps.db.table("git_keys")} SET conditions = $4, observed_generation = $3, registered_public_key = $5, resource_version = $6${cleared}
-          WHERE uid = $1 AND gateway_id = $2 AND generation = $3`,
-        [this.claim.uid, key.gateway_id, key.generation, JSON.stringify(conditions), registered, version.toString()]);
+          WHERE uid = $1 AND holder = $2 AND generation = $3`,
+        [this.claim.uid, key.holder, key.generation, JSON.stringify(conditions), registered, version.toString(), ...(update.status === "True" ? [key.put_sequence] : [])]);
     });
   }
 
@@ -483,6 +721,7 @@ export async function runAttempt(deps: AttemptDependencies, claim: Claim): Promi
     `SELECT generation, spec, outputs, conditions FROM ${t("provisionings")} WHERE uid = $1`, [claim.uid]);
   if (!loaded.rows[0]) return { state: "gone" };
   const keys = await deps.db.pool.query<SnapshotKey>(
-    `SELECT *, (retry_after IS NOT NULL AND retry_after > now()) AS backing_off FROM ${t("git_keys")} WHERE uid = $1 ORDER BY gateway_id`, [claim.uid]);
-  return new Attempt(deps, claim, { ...loaded.rows[0], keys: keys.rows }).run();
+    `SELECT *, (retry_after IS NOT NULL AND retry_after > now()) AS backing_off FROM ${t("git_keys")} WHERE uid = $1 ORDER BY holder`, [claim.uid]);
+  const attempt = new Attempt(deps, claim, { ...loaded.rows[0], keys: keys.rows });
+  return claim.keysOnly ? attempt.runParkedKeys() : attempt.run();
 }

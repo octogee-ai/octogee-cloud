@@ -14,6 +14,8 @@ export const PROVISIONING_CONDITION_REASONS = [
     "GitRepositoryFailed",
     "GitKeyFailed",
     "GitKeyHeldElsewhere",
+    "GitKeyNotOnHost",
+    "GitKeyReplacedOnHost",
     "ChatNotReady",
     "GitNotReady",
     "CredentialsNotIssued",
@@ -45,4 +47,4 @@ export const PROVISIONING_ERROR_CODES = [
     "rate-limited",
     "unavailable",
 ];
-export const PROVISIONING_ROLES = ["writer", "key-writer", "reader", "credential-reader"];
+export const PROVISIONING_ROLES = ["writer", "key-writer", "key-retirer", "reader", "credential-reader"];

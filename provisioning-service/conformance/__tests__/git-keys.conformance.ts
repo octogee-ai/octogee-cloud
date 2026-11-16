@@ -28,7 +28,7 @@ describe.skipIf(!dsn)("provisioning service conformance: git keys the hosts alre
   async function registered(uid: string, publicKey: string): Promise<{ status: string; reason: string }> {
     let found: { status: string; reason: string; observedGeneration: number } | undefined;
     for (let poll = 0; poll < 50; poll += 1) {
-      const key = await implementation.request("PUT", `/v1/users/${uid}/git-keys/gw-1`, { token: TOKENS.platformApi, body: { spec: { publicKey } } });
+      const key = await implementation.request("PUT", `/v1/users/${uid}/git-keys/gw-1%2Fpod-a`, { token: TOKENS.platformApi, body: { spec: { publicKey } } });
       found = key.body.status.conditions.find((entry: { type: string }) => entry.type === "Registered");
       if (found && found.observedGeneration >= key.body.generation && found.reason !== "Pending") break;
       await new Promise((resolve) => setTimeout(resolve, 200));
@@ -39,7 +39,7 @@ describe.skipIf(!dsn)("provisioning service conformance: git keys the hosts alre
   async function provisionedWithKey(uid: string, slug: string, publicKey: string): Promise<void> {
     await implementation.request("PUT", `/v1/users/${uid}/provisioning`, { body: { spec: spec(slug) } });
     await untilReady(implementation, uid, 1);
-    await implementation.request("PUT", `/v1/users/${uid}/git-keys/gw-1`, { token: TOKENS.platformApi, body: { spec: { publicKey } } });
+    await implementation.request("PUT", `/v1/users/${uid}/git-keys/gw-1%2Fpod-a`, { token: TOKENS.platformApi, body: { spec: { publicKey } } });
   }
 
   it("adopts the identical public key the user's account already holds under a title it does not manage", async () => {

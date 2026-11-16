@@ -2,6 +2,7 @@ import type { Request, Response, Router } from "express";
 import { projectGatewayDesiredRootForGateway } from "@octogee/shared/types/gateway-releases";
 import type { AdminFleetMutationRunner } from "./admin-fleet-router.js";
 import { clearRetiredUserActivationPreparation } from "./fleet-state.js";
+import { releaseGitKeysBeforeRootDelete, type RootGitKeyGate } from "./gateway-root-deletion.js";
 import {
   builderActivateOperationId,
   builderReturnOperationId,
@@ -23,6 +24,7 @@ export interface AdminPlacementCapabilities {
   retirementFailedRetryably(operation: Stored<OperationRecord>, gatewayId: string): boolean;
   schedulerHandoffAwaitingRelease(operation: Stored<OperationRecord>): boolean;
   rearmedRetirementPatch: OperationPatch;
+  gatewayGitKeys: RootGitKeyGate;
 }
 
 export interface AdminPlacementRouterDeps extends AdminPlacementCapabilities {
@@ -32,13 +34,19 @@ export interface AdminPlacementRouterDeps extends AdminPlacementCapabilities {
 
 class PreconditionFailed extends Error {}
 
+class GitKeysHeld extends Error {}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+function refusalCause(error: unknown): unknown {
+  return error instanceof FleetMutationRefusedError ? refusalCause(error.refusal) : error;
+}
+
 function preconditionBody(error: unknown): Record<string, unknown> | null {
   if (error instanceof FleetMutationRefusedError) return preconditionBody(error.refusal);
-  if (error instanceof PreconditionFailed || error instanceof FenceMismatchError) {
+  if (error instanceof PreconditionFailed || error instanceof FenceMismatchError || error instanceof GitKeysHeld) {
     return { code: "precondition-failed", error: error.message };
   }
   return null;
@@ -64,7 +72,7 @@ async function settle<T>(res: Response, run: () => Promise<T>): Promise<void> {
   } catch (error) {
     const body = preconditionBody(error);
     if (body === null) throw error;
-    res.status(409).json(body);
+    res.status(refusalCause(error) instanceof GitKeysHeld ? 412 : 409).json(body);
   }
 }
 
@@ -173,6 +181,8 @@ async function deleteRetiredRoot(deps: AdminPlacementRouterDeps, target: Retired
     await assertNoLiveActivationLease(transaction, target.gatewayId);
     return retirement;
   });
+  const gitKeys = await releaseGitKeysBeforeRootDelete(deps.gatewayGitKeys, target.gatewayId);
+  if (gitKeys.outcome === "kept") throw new GitKeysHeld(gitKeys.reason);
   const preparationCleared = await clearRetiredUserActivationPreparation({ store }, {
     uid: target.ownerUid,
     targetGatewayId: target.gatewayId,
@@ -186,7 +196,7 @@ async function deleteRetiredRoot(deps: AdminPlacementRouterDeps, target: Retired
   ]);
   await store.transaction({ label: "admin.placement.delete-retired-root" }, async (transaction) => {
     await assertNoLiveActivationLease(transaction, target.gatewayId);
-    await transaction.gateways.roots.delete(target.gatewayId, {
+    await transaction.gateways.roots.delete(target.gatewayId, gitKeys.proof, {
       retirementVersion: verdict.retirementVersion,
       desiredStatus: ["retired"],
     });

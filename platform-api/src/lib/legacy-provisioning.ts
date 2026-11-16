@@ -49,8 +49,8 @@ export interface LegacyProvisioning {
   chat(uid: string, budget: RouteBudget): Promise<ProvisioningWait<ReadyChat>>;
   git(uid: string, repository: LegacyGitRepository | null, budget: RouteBudget): Promise<ProvisioningWait<void>>;
   agentChatToken(uid: string, budget: RouteBudget): Promise<ProvisioningWait<string>>;
-  gitKey(uid: string, gatewayId: string, publicKey: string, budget: RouteBudget): Promise<ProvisioningWait<void>>;
-  releaseGitKey(uid: string, gatewayId: string, publicKey: string, budget: RouteBudget): Promise<DeleteGitKeyOutcome>;
+  gitKey(uid: string, holder: string, publicKey: string, budget: RouteBudget): Promise<ProvisioningWait<void>>;
+  releaseGitKey(uid: string, holder: string, publicKey: string, budget: RouteBudget): Promise<DeleteGitKeyOutcome>;
 }
 
 export type LegacyProvisioningClient = Pick<ProvisioningServiceClient, "getProvisioning" | "getCredential" | "putGitKey" | "deleteGitKey">;
@@ -210,11 +210,11 @@ export function createLegacyProvisioning(deps: LegacyProvisioningDeps): LegacyPr
       return { ready: true, value: credential.value };
     },
 
-    async gitKey(uid, gatewayId, publicKey, budget) {
+    async gitKey(uid, holder, publicKey, budget) {
       for (;;) {
         let key: GitKey;
         try {
-          key = (await deps.client.putGitKey(uid, gatewayId, { publicKey }, { signal: budget.signal })).key;
+          key = (await deps.client.putGitKey(uid, holder, { publicKey }, { signal: budget.signal })).key;
         } catch (error) {
           if (error instanceof ProvisioningServiceError && error.status === 404) return notProvisioned(uid);
           return unavailable(uid, error);
@@ -230,8 +230,8 @@ export function createLegacyProvisioning(deps: LegacyProvisioningDeps): LegacyPr
       }
     },
 
-    releaseGitKey(uid, gatewayId, publicKey, budget) {
-      return deps.client.deleteGitKey(uid, gatewayId, { expectedPublicKey: publicKey, signal: budget.signal });
+    releaseGitKey(uid, holder, publicKey, budget) {
+      return deps.client.deleteGitKey(uid, holder, { expectedPublicKey: publicKey, signal: budget.signal });
     },
   };
 }

@@ -86,7 +86,7 @@ describe("loadConfig", () => {
 
   it("gives the fleet controller's and the platform API's roles to the service accounts the environment names", () => {
     expect(loadConfig({ ...BASE, ...REAL }).callerRoles).toEqual({
-      "fleet-controller-account": ["writer", "credential-reader"],
+      "fleet-controller-account": ["writer", "key-retirer", "credential-reader"],
       "platform-api-account": ["key-writer", "reader", "credential-reader"],
     });
   });

@@ -8,6 +8,8 @@ import { readMountedUsers } from "../heartbeat-relocation.js";
 import { pausedIsolatedRetirementSourceFencedOff } from "../lib/native-retirement-telemetry.js";
 import { ensureOwnedGatewaysRetired } from "../lib/user-ops/user-gateway-retirement.js";
 
+const NO_GIT_KEY_SERVICE = { client: null, log: () => undefined };
+
 const GATEWAY_ID = "alice-s-0a1b2c3d";
 const UID = "uid-alice";
 const DELETION_ID = "delete-1";
@@ -32,7 +34,7 @@ function parkedPodGateway() {
 }
 
 async function eraseUserGateway(store: ReturnType<typeof parkedPodGateway>, podsAbsent: () => Promise<boolean>) {
-  expect(await ensureOwnedGatewaysRetired({ store, uid: UID, deletionId: DELETION_ID, now: NOW })).toBe("retirement-pending");
+  expect(await ensureOwnedGatewaysRetired({ store, uid: UID, gitKeys: NO_GIT_KEY_SERVICE, deletionId: DELETION_ID, now: NOW })).toBe("retirement-pending");
   const root = await store.gateways.roots.get(GATEWAY_ID);
   const claim = root?.retirementClaim as { operationId: string; version: number };
   const operation = await store.journal.operations.get(claim.operationId) as Operation;

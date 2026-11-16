@@ -9,6 +9,8 @@ import type { PlatformStateTransaction } from "@octogee/core/platform-state";
 import { createJournalFixtureStore, journalRowsIn, type FixtureDocuments } from "@octogee/core-testing/journal-store";
 import { ensureOwnedGatewaysRetired } from "../lib/user-ops/user-gateway-retirement.js";
 
+const NO_GIT_KEY_SERVICE = { client: null, log: () => undefined };
+
 interface Root {
   gatewayId: string;
   latestRelease: number;
@@ -162,7 +164,7 @@ describe("owned user gateway retirement", () => {
       expect(operations[operationId]).toBeDefined();
       expect(proof).toEqual({ gatewayId: "builder-alice", operationId, version: 1, completedAt: 90, runtime: "cluster" });
     });
-    await expect(ensureOwnedGatewaysRetired({ store, uid: "uid-1", deletionId: "delete-1", now: 100, preserveRetirementProof })).resolves.toBe("retired");
+    await expect(ensureOwnedGatewaysRetired({ store, uid: "uid-1", gitKeys: NO_GIT_KEY_SERVICE, deletionId: "delete-1", now: 100, preserveRetirementProof })).resolves.toBe("retired");
     expect(preserveRetirementProof).toHaveBeenCalledTimes(1);
     expect(roots).toEqual({});
     expect(operations).toEqual({});
@@ -174,7 +176,7 @@ describe("owned user gateway retirement", () => {
       [operationId]: retirementOperation("succeeded"),
     });
     const claimRetirement = vi.fn();
-    await expect(ensureOwnedGatewaysRetired({ store, uid: "uid-1", deletionId: "delete-1", now: 100, claimRetirement: claimRetirement as never }))
+    await expect(ensureOwnedGatewaysRetired({ store, uid: "uid-1", gitKeys: NO_GIT_KEY_SERVICE, deletionId: "delete-1", now: 100, claimRetirement: claimRetirement as never }))
       .resolves.toBe("retired");
     expect(deleted).toEqual(["gateways/builder-alice", `glmOperations/${operationId}`]);
     expect(claimRetirement).not.toHaveBeenCalled();
@@ -187,7 +189,7 @@ describe("owned user gateway retirement", () => {
     const operations = { [operationId]: retirementOperation("succeeded"), [recoveryId]: recoveryOperation() };
     const receipts = { [recoveryId]: recoveryOperation() };
     const { store, committed } = harness(roots, operations, {}, {}, [], {}, receipts);
-    const input = { store, uid: "uid-1", deletionId: "delete-1", now: 100 };
+    const input = { store, uid: "uid-1", gitKeys: NO_GIT_KEY_SERVICE, deletionId: "delete-1", now: 100 };
 
     await expect(ensureOwnedGatewaysRetired(input)).resolves.toBe("retired");
     expect(committed).toEqual([[
@@ -210,7 +212,7 @@ describe("owned user gateway retirement", () => {
     const { store, failures, committed, hooks } = harness(roots, operations, {}, {}, [], subcollections, receipts);
     if (failure === "children") hooks.releaseCleanup = () => { throw new Error("recovery child cleanup unavailable"); };
     else failures.commit = true;
-    const input = { store, uid: "uid-1", deletionId: "delete-1", now: 100 };
+    const input = { store, uid: "uid-1", gitKeys: NO_GIT_KEY_SERVICE, deletionId: "delete-1", now: 100 };
 
     await expect(ensureOwnedGatewaysRetired(input)).rejects.toThrow(/unavailable/);
     expect(roots["builder-alice"]).toBeDefined();
@@ -247,7 +249,7 @@ describe("owned user gateway retirement", () => {
       const receipts: Rows = artifact === "receipt" ? { [recoveryId]: recovery } : {};
       const { store, deleted } = harness(roots, operations, {}, {}, [], {}, receipts);
 
-      await expect(ensureOwnedGatewaysRetired({ store, uid: "uid-1", deletionId: "delete-1", now: 100 }))
+      await expect(ensureOwnedGatewaysRetired({ store, uid: "uid-1", gitKeys: NO_GIT_KEY_SERVICE, deletionId: "delete-1", now: 100 }))
         .rejects.toThrow(/recovery.*does not match/);
       expect(deleted).toEqual([]);
       expect(roots["builder-alice"]).toBeDefined();
@@ -267,7 +269,7 @@ describe("owned user gateway retirement", () => {
       receipts[recoveryId] = { ...recoveryOperation(), input: { uid: "other", gatewayId: "builder-alice" } };
     };
 
-    await expect(ensureOwnedGatewaysRetired({ store, uid: "uid-1", deletionId: "delete-1", now: 100 }))
+    await expect(ensureOwnedGatewaysRetired({ store, uid: "uid-1", gitKeys: NO_GIT_KEY_SERVICE, deletionId: "delete-1", now: 100 }))
       .rejects.toThrow(/recovery.*does not match/);
     expect(roots["builder-alice"]).toBeDefined();
     expect(operations[operationId]).toBeDefined();
@@ -286,7 +288,7 @@ describe("owned user gateway retirement", () => {
     hooks.releaseCleanup = () => {
       receipts[recoveryId] = recoveryOperation();
     };
-    const input = { store, uid: "uid-1", deletionId: "delete-1", now: 100 };
+    const input = { store, uid: "uid-1", gitKeys: NO_GIT_KEY_SERVICE, deletionId: "delete-1", now: 100 };
 
     await expect(ensureOwnedGatewaysRetired(input)).resolves.toBe("retirement-pending");
     expect(roots["builder-alice"]).toBeDefined();
@@ -310,7 +312,7 @@ describe("owned user gateway retirement", () => {
     const subcollections = { "gateways/builder-alice/releases": ["release-1"] };
     const { store, committed, hooks } = harness(roots, operations, {}, {}, [], subcollections);
     hooks.releaseCleanup = () => { throw new Error("root child cleanup unavailable"); };
-    const input = { store, uid: "uid-1", deletionId: "delete-1", now: 100 };
+    const input = { store, uid: "uid-1", gitKeys: NO_GIT_KEY_SERVICE, deletionId: "delete-1", now: 100 };
 
     await expect(ensureOwnedGatewaysRetired(input)).rejects.toThrow(/cleanup unavailable/);
     expect(roots["builder-alice"]?.retirementClaim?.operationId).toBe(operationId);
@@ -331,7 +333,7 @@ describe("owned user gateway retirement", () => {
     const roots = { "builder-alice": retiredRoot(operationId) };
     const operations = { [operationId]: retirementOperation("succeeded") };
     const { store, failures, committed } = harness(roots, operations);
-    const input = { store, uid: "uid-1", deletionId: "delete-1", now: 100 };
+    const input = { store, uid: "uid-1", gitKeys: NO_GIT_KEY_SERVICE, deletionId: "delete-1", now: 100 };
     failures.commit = true;
 
     await expect(ensureOwnedGatewaysRetired(input)).rejects.toThrow(/commit unavailable/);
@@ -363,7 +365,7 @@ describe("owned user gateway retirement", () => {
       };
     };
 
-    await expect(ensureOwnedGatewaysRetired({ store, uid: "uid-1", deletionId: "delete-1", now: 100 }))
+    await expect(ensureOwnedGatewaysRetired({ store, uid: "uid-1", gitKeys: NO_GIT_KEY_SERVICE, deletionId: "delete-1", now: 100 }))
       .rejects.toThrow(/ownership changed|retirement claim changed|retirement operation does not match|retained resources/);
     expect(roots["builder-alice"]).toBeDefined();
     expect(operations[operationId]).toBeDefined();
@@ -395,7 +397,7 @@ describe("owned user gateway retirement", () => {
       };
     };
 
-    await expect(ensureOwnedGatewaysRetired({ store, uid: "uid-1", deletionId: "delete-1", now: 100 }))
+    await expect(ensureOwnedGatewaysRetired({ store, uid: "uid-1", gitKeys: NO_GIT_KEY_SERVICE, deletionId: "delete-1", now: 100 }))
       .resolves.toBe("retirement-pending");
     expect(roots["builder-alice"]).toBeDefined();
     expect(operations[operationId]).toBeDefined();
@@ -409,7 +411,7 @@ describe("owned user gateway retirement", () => {
     const { store, deleted } = harness({ "builder-alice": retiredRoot(operationId) }, {
       [operationId]: { ...retirementOperation("failed"), error: "RESOURCE_NOT_FOUND during VM deletion" },
     });
-    await expect(ensureOwnedGatewaysRetired({ store, uid: "uid-1", deletionId: "delete-1", now: 100 }))
+    await expect(ensureOwnedGatewaysRetired({ store, uid: "uid-1", gitKeys: NO_GIT_KEY_SERVICE, deletionId: "delete-1", now: 100 }))
       .rejects.toThrow(/retirement failed: RESOURCE_NOT_FOUND/);
     expect(deleted).toEqual([]);
   });
@@ -420,7 +422,7 @@ describe("owned user gateway retirement", () => {
       [operationId]: retirementOperation(status),
     });
     const claimRetirement = vi.fn();
-    await expect(ensureOwnedGatewaysRetired({ store, uid: "uid-1", deletionId: "delete-1", now: 100, claimRetirement: claimRetirement as never }))
+    await expect(ensureOwnedGatewaysRetired({ store, uid: "uid-1", gitKeys: NO_GIT_KEY_SERVICE, deletionId: "delete-1", now: 100, claimRetirement: claimRetirement as never }))
       .resolves.toBe("retirement-pending");
     expect(deleted).toEqual([]);
     expect(claimRetirement).not.toHaveBeenCalled();
@@ -436,7 +438,7 @@ describe("owned user gateway retirement", () => {
     const { store, deleted } = harness({ "builder-alice": retiredRoot(operationId) }, {
       [operationId]: { ...retirementOperation("succeeded"), ...change },
     });
-    await expect(ensureOwnedGatewaysRetired({ store, uid: "uid-1", deletionId: "delete-1", now: 100 }))
+    await expect(ensureOwnedGatewaysRetired({ store, uid: "uid-1", gitKeys: NO_GIT_KEY_SERVICE, deletionId: "delete-1", now: 100 }))
       .rejects.toThrow(/retirement operation does not match/);
     expect(deleted).toEqual([]);
   });
@@ -446,7 +448,7 @@ describe("owned user gateway retirement", () => {
     const operation = retirementOperation("succeeded");
     operation.input = { ...operation.input, [flag]: true };
     const { store, deleted } = harness({ "builder-alice": retiredRoot(operationId) }, { [operationId]: operation });
-    await expect(ensureOwnedGatewaysRetired({ store, uid: "uid-1", deletionId: "delete-1", now: 100 }))
+    await expect(ensureOwnedGatewaysRetired({ store, uid: "uid-1", gitKeys: NO_GIT_KEY_SERVICE, deletionId: "delete-1", now: 100 }))
       .rejects.toThrow(/retained resources/);
     expect(deleted).toEqual([]);
   });
@@ -457,7 +459,7 @@ describe("owned user gateway retirement", () => {
     const { store, deleted } = harness({ "builder-alice": root }, {
       "delete-retire-delete-1-builder-alice": retirementOperation("succeeded"),
     });
-    await expect(ensureOwnedGatewaysRetired({ store, uid: "uid-1", deletionId: "delete-1", now: 100 }))
+    await expect(ensureOwnedGatewaysRetired({ store, uid: "uid-1", gitKeys: NO_GIT_KEY_SERVICE, deletionId: "delete-1", now: 100 }))
       .rejects.toThrow(/invalid retirement claim/);
     expect(deleted).toEqual([]);
   });
@@ -469,7 +471,7 @@ describe("owned user gateway retirement", () => {
     }, remaining === "user" ? { "uid-1": assignedUser("builder-alice") } : {},
     remaining === "runtime" ? { "builder-alice": runtimeRecord("builder-alice") } : {},
     remaining === "assignment" ? ["uid-1"] : []);
-    await expect(ensureOwnedGatewaysRetired({ store, uid: "uid-1", deletionId: "delete-1", now: 100 }))
+    await expect(ensureOwnedGatewaysRetired({ store, uid: "uid-1", gitKeys: NO_GIT_KEY_SERVICE, deletionId: "delete-1", now: 100 }))
       .resolves.toBe("retirement-pending");
     expect(deleted).toEqual([]);
   });
@@ -483,7 +485,7 @@ describe("owned user gateway retirement", () => {
         ? { ...retiredRoot(operationId), ownerUid: "other" }
         : retiredRoot("new-retirement");
     };
-    await expect(ensureOwnedGatewaysRetired({ store, uid: "uid-1", deletionId: "delete-1", now: 100 }))
+    await expect(ensureOwnedGatewaysRetired({ store, uid: "uid-1", gitKeys: NO_GIT_KEY_SERVICE, deletionId: "delete-1", now: 100 }))
       .rejects.toThrow(changed === "owner" ? /ownership changed/ : /retirement claim changed/);
     expect(deleted).toEqual([]);
   });
@@ -493,7 +495,7 @@ describe("owned user gateway retirement", () => {
     const root = recoveredRoot(operationId);
     root.allocation = { kind: "disposable-builder", claimedByUid: "uid-1", leaseId: "lease-1" };
     const { store, deleted } = harness({ "builder-alice": root }, { [operationId]: retirementOperation("succeeded") });
-    await expect(ensureOwnedGatewaysRetired({ store, uid: "uid-1", deletionId: "delete-1", now: 100 }))
+    await expect(ensureOwnedGatewaysRetired({ store, uid: "uid-1", gitKeys: NO_GIT_KEY_SERVICE, deletionId: "delete-1", now: 100 }))
       .rejects.toThrow(/allocation has no generation/);
     expect(deleted).toEqual([]);
   });
@@ -510,7 +512,7 @@ describe("owned user gateway retirement", () => {
       },
     };
     const { store } = harness({ "builder-alice": root }, operations);
-    await expect(ensureOwnedGatewaysRetired({ store, uid: "uid-1", deletionId: "delete-1", now: 100 }))
+    await expect(ensureOwnedGatewaysRetired({ store, uid: "uid-1", gitKeys: NO_GIT_KEY_SERVICE, deletionId: "delete-1", now: 100 }))
       .resolves.toBe("retired");
   });
 
@@ -524,7 +526,7 @@ describe("owned user gateway retirement", () => {
       },
     };
     const { store, deleted } = harness({ "builder-alice": recoveredRoot(operationId) }, operations);
-    const input = { store, uid: "uid-1", deletionId: "delete-1", now: 100 };
+    const input = { store, uid: "uid-1", gitKeys: NO_GIT_KEY_SERVICE, deletionId: "delete-1", now: 100 };
     await expect(ensureOwnedGatewaysRetired(input)).resolves.toBe("retirement-pending");
     expect(deleted).toEqual([]);
     operations[`${prefix}-builder-alice-g1`].schedulerHandoffReleased = true;
@@ -553,7 +555,7 @@ describe("owned user gateway retirement", () => {
     };
     const { store } = harness({ "builder-alice": recoveredRoot(operationId) }, operations);
 
-    await expect(ensureOwnedGatewaysRetired({ store, uid: "uid-1", deletionId: "delete-1", now: 100 }))
+    await expect(ensureOwnedGatewaysRetired({ store, uid: "uid-1", gitKeys: NO_GIT_KEY_SERVICE, deletionId: "delete-1", now: 100 }))
       .resolves.toBe(outcome);
   });
 
@@ -574,7 +576,7 @@ describe("owned user gateway retirement", () => {
       }
       return { version: 1 };
     });
-    const input = { store, uid: "uid-1", deletionId: "delete-1", now: 100, claimRetirement: claimRetirement as never };
+    const input = { store, uid: "uid-1", gitKeys: NO_GIT_KEY_SERVICE, deletionId: "delete-1", now: 100, claimRetirement: claimRetirement as never };
 
     await expect(ensureOwnedGatewaysRetired(input)).resolves.toBe("retirement-pending");
     expect(roots["builder-alice"]).toMatchObject({ desiredStatus: "paused", updatedAt: 100, updatedBy: "customer-deletion-lifecycle" });
@@ -597,7 +599,7 @@ describe("owned user gateway retirement", () => {
     });
 
     await expect(ensureOwnedGatewaysRetired({
-      store, uid: "uid-1", deletionId: "delete-1", now: 100, claimRetirement: claimRetirement as never,
+      store, uid: "uid-1", gitKeys: NO_GIT_KEY_SERVICE, deletionId: "delete-1", now: 100, claimRetirement: claimRetirement as never,
     })).rejects.toThrow(/still has mounted users/);
     expect(roots["builder-alice"]!.desiredStatus).toBe("running");
   });
@@ -617,7 +619,7 @@ describe("owned user gateway retirement", () => {
     await expect(ensureOwnedGatewaysRetired({
       store,
       uid: "uid-1",
-      deletionId: "delete-1",
+      gitKeys: NO_GIT_KEY_SERVICE, deletionId: "delete-1",
       now: 100,
       claimRetirement: claimRetirement as never,
     })).resolves.toBe("retirement-pending");
@@ -642,7 +644,7 @@ describe("owned user gateway retirement", () => {
     await ensureOwnedGatewaysRetired({
       store,
       uid: "uid-1",
-      deletionId: "delete-1",
+      gitKeys: NO_GIT_KEY_SERVICE, deletionId: "delete-1",
       now: 100,
       claimRetirement: claimRetirement as never,
     });
@@ -666,7 +668,7 @@ describe("owned user gateway retirement", () => {
     await expect(ensureOwnedGatewaysRetired({
       store,
       uid: "uid-1",
-      deletionId: "delete-1",
+      gitKeys: NO_GIT_KEY_SERVICE, deletionId: "delete-1",
       now: 100,
       claimRetirement: claimRetirement as never,
     })).resolves.toBe("retirement-pending");
@@ -696,7 +698,7 @@ describe("owned user gateway retirement", () => {
     await expect(ensureOwnedGatewaysRetired({
       store,
       uid: "uid-1",
-      deletionId: "delete-1",
+      gitKeys: NO_GIT_KEY_SERVICE, deletionId: "delete-1",
       now: 100,
       claimRetirement: vi.fn() as never,
     })).resolves.toBe("retired");
@@ -726,7 +728,7 @@ describe("owned user gateway retirement", () => {
     await expect(ensureOwnedGatewaysRetired({
       store,
       uid: "uid-1",
-      deletionId: "delete-1",
+      gitKeys: NO_GIT_KEY_SERVICE, deletionId: "delete-1",
       now: 100,
       claimRetirement: vi.fn() as never,
     })).resolves.toBe("retired");
@@ -743,7 +745,7 @@ describe("owned user gateway retirement", () => {
     await expect(ensureOwnedGatewaysRetired({
       store,
       uid: "uid-1",
-      deletionId: "delete-1",
+      gitKeys: NO_GIT_KEY_SERVICE, deletionId: "delete-1",
       now: 100,
       claimRetirement: claimRetirement as never,
     })).resolves.toBe("not-owned");
@@ -763,7 +765,7 @@ describe("owned user gateway retirement", () => {
     await expect(ensureOwnedGatewaysRetired({
       store,
       uid: "uid-1",
-      deletionId: "delete-1",
+      gitKeys: NO_GIT_KEY_SERVICE, deletionId: "delete-1",
       now: 100,
       claimRetirement: claimRetirement as never,
     })).resolves.toBe("retirement-pending");
@@ -771,5 +773,72 @@ describe("owned user gateway retirement", () => {
     expect(claimRetirement).toHaveBeenCalledWith(expect.objectContaining({
       gatewayId: "legacy-user",
     }));
+  });
+});
+
+describe("owned user gateway retirement and the gateway's git keys", () => {
+  const OPERATION_ID = "delete-retire-delete-1-builder-alice";
+
+  function retiredAlice() {
+    const roots: Record<string, Root> = { "builder-alice": retiredRoot(OPERATION_ID) };
+    const operations: Record<string, OperationRow> = { [OPERATION_ID]: { ...retirementOperation("succeeded"), completedAt: 90 } };
+    return { roots, operations, ...harness(roots, operations) };
+  }
+
+  function gitKeys(answer: () => Promise<{ remaining: number }>) {
+    return { client: { releaseGatewayGitKeys: vi.fn(answer) }, log: vi.fn() };
+  }
+
+  it("releases the gateway's git keys before deleting the root, and finishes once none remain", async () => {
+    const { roots, store } = retiredAlice();
+    const keys = gitKeys(async () => ({ remaining: 0 }));
+
+    await expect(ensureOwnedGatewaysRetired({ store, uid: "uid-1", deletionId: "delete-1", now: 100, gitKeys: keys })).resolves.toBe("retired");
+
+    expect(keys.client.releaseGatewayGitKeys).toHaveBeenCalledExactlyOnceWith("builder-alice");
+    expect(roots).toEqual({});
+  });
+
+  it("stays pending and keeps the root and its retirement while the service still holds the gateway's rows", async () => {
+    const { roots, operations, store } = retiredAlice();
+    const keys = gitKeys(async () => ({ remaining: 2 }));
+
+    await expect(ensureOwnedGatewaysRetired({ store, uid: "uid-1", deletionId: "delete-1", now: 100, gitKeys: keys })).resolves.toBe("retirement-pending");
+
+    expect(roots["builder-alice"]?.desiredStatus).toBe("retired");
+    expect(operations[OPERATION_ID]).toBeDefined();
+    expect(keys.log).toHaveBeenCalledExactlyOnceWith("[customer-deletion] ⚠ kept retired gateway builder-alice: the provisioning service still holds 2 git key rows for builder-alice");
+  });
+
+  it("stays pending when the release fails, logs it, and finishes on a later pass", async () => {
+    const { roots, store } = retiredAlice();
+    const keys = gitKeys(async () => ({ remaining: 0 }));
+    keys.client.releaseGatewayGitKeys.mockRejectedValueOnce(new Error("provisioning service unavailable"));
+
+    await expect(ensureOwnedGatewaysRetired({ store, uid: "uid-1", deletionId: "delete-1", now: 100, gitKeys: keys })).resolves.toBe("retirement-pending");
+    expect(roots["builder-alice"]).toBeDefined();
+    expect(keys.log).toHaveBeenCalledExactlyOnceWith("[customer-deletion] ⚠ kept retired gateway builder-alice: releasing the git keys of builder-alice failed: provisioning service unavailable");
+
+    await expect(ensureOwnedGatewaysRetired({ store, uid: "uid-1", deletionId: "delete-1", now: 100, gitKeys: keys })).resolves.toBe("retired");
+    expect(roots).toEqual({});
+  });
+
+  it("asks for no release while the gateway's retirement is unfinished", async () => {
+    const roots: Record<string, Root> = { "builder-alice": retiredRoot(OPERATION_ID) };
+    const operations: Record<string, OperationRow> = { [OPERATION_ID]: retirementOperation("running") };
+    const { store } = harness(roots, operations);
+    const keys = gitKeys(async () => ({ remaining: 0 }));
+
+    await expect(ensureOwnedGatewaysRetired({ store, uid: "uid-1", deletionId: "delete-1", now: 100, gitKeys: keys })).resolves.toBe("retirement-pending");
+
+    expect(keys.client.releaseGatewayGitKeys).not.toHaveBeenCalled();
+  });
+
+  it("finishes without a release request when no provisioning service is configured", async () => {
+    const { roots, store } = retiredAlice();
+
+    await expect(ensureOwnedGatewaysRetired({ store, uid: "uid-1", deletionId: "delete-1", now: 100, gitKeys: { client: null, log: vi.fn() } })).resolves.toBe("retired");
+
+    expect(roots).toEqual({});
   });
 });

@@ -63,7 +63,7 @@ export interface ServiceConfig {
 export type CallerRoleTable = Readonly<Record<string, readonly ProvisioningRole[]>>;
 
 const CALLER_ROLES = {
-  fleetController: ["writer", "credential-reader"],
+  fleetController: ["writer", "key-retirer", "credential-reader"],
   platformApi: ["key-writer", "reader", "credential-reader"],
 } as const satisfies Record<string, readonly ProvisioningRole[]>;
 
