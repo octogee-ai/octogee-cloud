@@ -60,7 +60,8 @@ export async function assertActivationSourceRecoveryReleased(
   const operationId = builderActivateOperationId(fence.targetGatewayId, fence.generation);
   const operation = await transaction.journal.operations.get(operationId);
   if (operation === null || !input.sourceRecoveryPending(operation)) return;
-  if (fence.failedActivationCleanup || operation.status === "failed") throw new SourceRecoveryPendingError(operationId);
+  const recoveringFailedActivation = operation.status === "failed" || operation.input?.recoverSourceOnly === true;
+  if (fence.failedActivationCleanup || recoveringFailedActivation) throw new SourceRecoveryPendingError(operationId);
 }
 
 export interface AllocateIsolatedGatewayInput {

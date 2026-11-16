@@ -151,19 +151,50 @@ explicit `false` lets it proceed. An older server does not send the field.
 The read can be stale, so the verbs check it again inside their own
 transaction, against the activation operation
 `builder-activate-<gateway>-g<generation>` of the lease or allocation they
-act on, as the fleet controller's own placement pass holds off:
+act on. The check is deliberately stricter than the fleet controller's own
+placement pass, which holds off only its cleanup of a failed activation: the
+verbs refuse every reason.
 
-- The cleanup of a failed activation (`retire-owned` with reason
-  `activation-failed`, and `activation-lease/fail` whose `operationId` is that
-  activation operation) is refused whenever its source recovery is pending,
-  whatever the operation's status.
-- Any other call of `retire-owned`, `activation-lease/fail` or
-  `recover-unreachable` for that gateway and generation is refused while the
-  activation operation is `failed` and its source recovery is pending. While
-  the activation is still `pending` or `running` they are admitted.
+- `activation-lease/fail` whose `operationId` is that activation operation is
+  refused whenever its source recovery is pending.
+- `retire-owned` with any reason (including the `parked-computer-replaced`
+  retirement that `allocate` makes of an obsolete parked gateway) is refused
+  while the activation is `failed` and its source recovery is pending. While
+  the activation is `pending` or `running`, first attempt or re-armed
+  recovery, `retire-owned` is refused earlier by the in-flight migration
+  fence, with `reasonCode` `retirement-blocked` (`user migration is in
+  flight for gateway <gateway>`).
+- `activation-lease/fail` for another cause and `recover-unreachable` are
+  refused while the activation's source recovery is pending and the
+  activation is `failed`, or is a re-armed source-only recovery
+  (`recoverSourceOnly`) that is `pending` or `running`: that recovery could
+  still be paused under it. While a first attempt is `pending` or `running`
+  they are admitted.
 
 A refusal answers `409` `precondition-failed` with `reasonCode`
 `source-recovery-pending`, dry runs included.
+
+#### A failed activation that cannot recover
+
+For a failed activation, `sourceRecoveryPending` clears only when the
+operation is rolled back, commits its cutover, moves to the v2 migration
+record, or is re-armed and that recovery finishes. The scheduler release loop
+skips these operations, and the fleet controller re-arms one only while it
+still owns the source and the target still matches the lease. A failed
+activation that can no longer be re-armed keeps the verdict `true`, and every
+verb above stays refused for that gateway and generation.
+
+The fleet controller logs this once per operation revision, at warning
+level:
+
+```text
+[migration-recovery] ⚠ <operation> failed while holding its source and its source recovery cannot be re-armed; sourceRecoveryPending stays true and isolated placement verbs for <gateway> answer source-recovery-pending
+```
+
+`GET /operations/<operation>` shows it as a `failed` `migrate-user`
+operation with `sourceRecoveryPending: true`. The escape is an operator
+retirement of the gateway, `DELETE /gateways/<gateway>`, which does not run
+this check. The Admin API has no route that marks an operation rolled back.
 
 ## Operation reads
 
@@ -434,7 +465,7 @@ this table against them.
 | `drain-move-not-supersedable` | The drain move cannot be superseded. | `supersede` |
 | `fleet-state-changed` | A fleet state fence changed, such as a source epoch, a target heartbeat or a previous recovery. | `recover`, `runtime-reset` |
 | `fence-mismatch` | A stored record changed under the verb's fence. | all |
-| `source-recovery-pending` | The activation operation is still recovering its source. | `retire-owned`, `activation-lease/fail`, `recover-unreachable` |
+| `source-recovery-pending` | The activation operation is still recovering its source. | `retire-owned`, `activation-lease/fail`, `recover-unreachable`, `isolated-gateway/allocate` |
 | `user-missing` | The user does not exist. | isolated verbs |
 | `user-slug-missing` | The user has no slug. | `isolated-gateway/allocate` |
 | `lease-missing` | The user has no activation lease. | `activation-lease/complete` |
@@ -697,7 +728,8 @@ Answers `{uid, leaseId, generation, status: "failed"}`, also when the lease is
 already failed. It refuses with `reasonCode` `source-recovery-pending` and
 leaves the lease unchanged while the lease's activation operation still
 recovers its source: always when `operationId` is that activation operation,
-and for any other `operationId` when the activation has `failed` (see
+and for any other `operationId` when the activation has `failed` or is a
+`pending` or `running` source-only recovery (see
 [Source recovery](#source-recovery)).
 
 ### `POST /users/<id>/activation-lease/sizing-transition`
@@ -740,10 +772,11 @@ gateway reads as `retired` with that retirement claim, and
 means the gateway is not owned by `ownerUid`, is already retired, is another
 generation, a stated fence no longer matches, or a pending telemetry
 operation or another retirement claim blocks it; the `reason` says which.
-It also refuses with `reasonCode` `source-recovery-pending` while the
-activation operation `builder-activate-<gateway>-g<generation>` still
-recovers its source: always with reason `activation-failed`, and with any
-other reason when the activation has `failed` (see
+It also refuses with `reasonCode` `source-recovery-pending`, for every
+reason, while the activation operation
+`builder-activate-<gateway>-g<generation>` has `failed` and still recovers
+its source. While that activation is `pending` or `running`, the in-flight
+migration fence refuses first with `retirement-blocked` (see
 [Source recovery](#source-recovery)).
 
 ### `POST /users/<id>/home/prepare`
@@ -845,7 +878,10 @@ Profiles that run as pods need no preparation.
 Then it allocates. A parked gateway of the same sizing key that runs
 the shared gateway's current artifact is resumed and the answer is
 `outcome: "resumed"`. A parked gateway that is obsolete is retired, with
-reason `parked-computer-replaced`, and a new gateway is allocated. A new
+reason `parked-computer-replaced`, and a new gateway is allocated. That
+retirement is refused with `reasonCode` `source-recovery-pending` while the
+parked gateway's own activation still recovers its source (see
+[Source recovery](#source-recovery)). A new
 gateway gets its Kubernetes auth secret, after the owner check and never in a
 dry run, then, in one transaction, its
 root and first release (from the shared gateway's live artifact) and the
@@ -888,7 +924,8 @@ It runs in three steps: reserve, observe, complete.
    records the recovery operation `builder-recover-<gateway>-g<generation>`
    as pending, and pauses the gateway. If a fence fails it answers `409`
    `precondition-failed` and writes nothing. That includes a failed
-   activation of this gateway and generation whose source recovery is pending
+   activation of this gateway and generation, or a `pending` or `running`
+   source-only recovery of it, whose source recovery is pending
    (`reasonCode` `source-recovery-pending`); the check runs again when
    completing.
 2. **Observe.** It reads the gateway's pods from Kubernetes.

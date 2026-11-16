@@ -317,6 +317,18 @@ async function releaseRetiredTargetPreparation(
   });
 }
 
+const reportedUnrecoverableActivations = new WeakMap<PlatformStateStore, Map<string, unknown>>();
+
+function reportUnrecoverableActivation(deps: { store: PlatformStateStore; log: (message: string) => void }, operation: Stored<Operation>): void {
+  if (!userActivationSourceRecoveryPending(operation)) return;
+  const reported = reportedUnrecoverableActivations.get(deps.store) ?? new Map<string, unknown>();
+  reportedUnrecoverableActivations.set(deps.store, reported);
+  if (reported.get(operation.id) === operation.revision) return;
+  reported.set(operation.id, operation.revision);
+  deps.log(`[migration-recovery] ⚠ ${operation.id} failed while holding its source and its source recovery cannot be re-armed; ` +
+    `sourceRecoveryPending stays true and isolated placement verbs for ${String(operation.input.toGatewayId)} answer source-recovery-pending`);
+}
+
 export async function recoverFailedLegacyMigrations(deps: { store: PlatformStateStore; log: (message: string) => void; now: () => number }): Promise<void> {
   const failed = await deps.store.journal.operations.listByStatus(["failed"]);
   for (const operation of failed) {
@@ -326,6 +338,7 @@ export async function recoverFailedLegacyMigrations(deps: { store: PlatformState
         deps.log(`[migration-recovery] queued native source recovery for ${operation.id}; assignment and marker remain held`);
         continue;
       }
+      reportUnrecoverableActivation(deps, operation);
       const released = preparationAwaitingTargetUnmount(operation) && await releaseRetiredTargetPreparation(deps.store, operation.id);
       if (released) {
         deps.log(`[migration-recovery] released ${operation.id}'s preparation marker for ${released.uid}: target ${released.targetGatewayId} retired before its unmount was confirmed`);

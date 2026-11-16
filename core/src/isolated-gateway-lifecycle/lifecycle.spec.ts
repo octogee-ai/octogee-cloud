@@ -17,6 +17,7 @@ import {
   homePreparedBeforeAllocation,
   unauditedLifecycleMutations,
 } from "./index.js";
+import { builderActivateOperationId } from "@octogee/shared/types/isolated-operation-ids";
 import { SourceRecoveryPendingError } from "../placement-refusal.js";
 
 
@@ -726,9 +727,11 @@ describe("placement receipts", () => {
   describe("while the activation is still recovering its source", () => {
     const ACTIVATION = "builder-activate-alice-xs-12345678-g1";
     const failure = { uid: "uid-alice", leaseId: "lease-one", generation: 1, targetGatewayId: "alice-xs-12345678", operationId: ACTIVATION, message: "failed" };
-    const seed = (released: boolean, status = "failed") => fixtureFirestore({
+    const seed = (released: boolean, status = "failed", recoverSourceOnly = false) => fixtureFirestore({
       "users/uid-alice": leaseUserDoc({ ...activatingLease }),
-      [`glmOperations/${ACTIVATION}`]: { kind: "migrate-user", status, createdAt: 1, createdBy: "test", input: {}, steps: [], schedulerHandoffReleased: released },
+      [`glmOperations/${ACTIVATION}`]: { kind: "migrate-user", status, createdAt: 1, createdBy: "test", steps: [], schedulerHandoffReleased: released,
+        input: { uid: "uid-alice", userSlug: "alice", fromGatewayId: "shared-blue", toGatewayId: "alice-xs-12345678", source: "builder-activation-lease",
+          ...(recoverSourceOnly ? { recoverSourceOnly } : {}) } },
     });
     const otherCause = { ...failure, operationId: "builder-authorization-ended-alice-xs-12345678", message: "authorization ended" };
     const sourceRecoveryPending = (operation: { id: string; schedulerHandoffReleased?: unknown }) =>
@@ -763,6 +766,14 @@ describe("placement receipts", () => {
 
       await failActivationLease({ store: state, now: () => 25_000, requireOwner, sourceRecoveryPending }, otherCause);
       expect(docs.get("users/uid-alice")).toMatchObject({ provisioning: { openclaw: { activationLease: { status: "failed" } } } });
+    });
+
+    it.each(["pending", "running"])("refuses a failure for another cause while a re-armed source-only recovery is %s", async (status) => {
+      const { state, docs } = seed(false, status, true);
+
+      await expect(failActivationLease({ store: state, now: () => 25_000, requireOwner, sourceRecoveryPending }, otherCause))
+        .rejects.toEqual(new SourceRecoveryPendingError(ACTIVATION));
+      expect(docs.get("users/uid-alice")).toMatchObject({ provisioning: { openclaw: { activationLease: { status: "activating" } } } });
     });
 
     it("refuses the activation's own failure cleanup while it is still running", async () => {
@@ -840,7 +851,7 @@ describe("activation from a draining Shared source", () => {
 describe("parked isolated gateway reuse", () => {
   const nextRequest = { ...request, leaseId: "lease-two", generation: 2 };
 
-  async function parkedHarness() {
+  async function parkedHarness(sourceRecoveryPending: (operation: { id: string }) => boolean = () => false) {
     const h = allocationHarness();
     const parkedGatewayId = await h.run();
     const root = h.docs.get(`gateways/${parkedGatewayId}`)!;
@@ -851,7 +862,7 @@ describe("parked isolated gateway reuse", () => {
     h.docs.set("users/uid-alice", user);
     h.ensureAuthSecret.mockClear();
     const allocate = (parkedGateway = { gatewayId: parkedGatewayId, generation: 1 }) => allocateIsolatedGateway(
-      { store: h.state, readSizingKey: hobbyTier, requireOwner, mutations: unauditedLifecycleMutations, requireHomeReady: homePreparedBeforeAllocation, namespace: "test", log: vi.fn(), now: () => 3_000, ensureAuthSecret: h.ensureAuthSecret, sourceRecoveryPending: () => false },
+      { store: h.state, readSizingKey: hobbyTier, requireOwner, mutations: unauditedLifecycleMutations, requireHomeReady: homePreparedBeforeAllocation, namespace: "test", log: vi.fn(), now: () => 3_000, ensureAuthSecret: h.ensureAuthSecret, sourceRecoveryPending },
       { ...nextRequest, parkedGateway },
     );
     const run = async (parkedGateway?: { gatewayId: string; generation: number }) => (await allocate(parkedGateway)).gatewayId;
@@ -901,6 +912,20 @@ describe("parked isolated gateway reuse", () => {
     });
     expect(h.docs.get(`gateways/${gatewayId}`)).toMatchObject({ desiredStatus: "running", allocation: { generation: 2 } });
     expect(h.docs.get(`gateways/${h.parkedGatewayId}`)?.desiredStatus).toBe("retired");
+  });
+
+  it("refuses to retire and replace a parked gateway while its activation still recovers its source", async () => {
+    let activation = "";
+    const h = await parkedHarness((operation) => operation.id === activation);
+    activation = builderActivateOperationId(h.parkedGatewayId, 1);
+    h.docs.set(`glmOperations/${activation}`, { kind: "migrate-user", status: "failed", createdAt: 1, createdBy: "test", steps: [],
+      input: { uid: "uid-alice", userSlug: "alice", fromGatewayId: "shared-blue", toGatewayId: h.parkedGatewayId, source: "builder-activation-lease" } });
+    h.root.sizingProfile = "pro";
+
+    await expect(h.allocate()).rejects.toEqual(new SourceRecoveryPendingError(activation));
+    expect(h.retirementOf()).toBeUndefined();
+    expect(h.docs.get(`gateways/${h.parkedGatewayId}`)?.desiredStatus).toBe("paused");
+    expect(userRoots(h.docs)).toEqual([`gateways/${h.parkedGatewayId}`]);
   });
 
   it.each([

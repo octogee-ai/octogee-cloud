@@ -13,6 +13,7 @@ import {
 const GATEWAY = "alice-xs-12345678";
 const RECOVERY = `builder-recover-${GATEWAY}-g1`;
 const RETIREMENT = `placement-retire-uid-alice-${GATEWAY}-g1`;
+const ACTIVATION_INPUT = { uid: "uid-alice", userSlug: "alice", fromGatewayId: "shared-blue", toGatewayId: GATEWAY, source: "builder-activation-lease" };
 const requireOwner = async () => undefined;
 
 function isolatedRoot(overrides: Record<string, unknown> = {}) {
@@ -144,15 +145,24 @@ describe("unreachable isolated gateway recovery", () => {
 
 describe("unreachable recovery of a failed activation's target", () => {
   const ACTIVATION = builderActivateOperationId(GATEWAY, 1);
-  const activation = (status: string, released: boolean) => ({ [`glmOperations/${ACTIVATION}`]: {
+  const activation = (status: string, released: boolean, recoverSourceOnly = false) => ({ [`glmOperations/${ACTIVATION}`]: {
     kind: "migrate-user", status, createdAt: 1, createdBy: "test", startedAt: 1, completedAt: status === "failed" ? 2 : null,
-    input: {}, steps: [], schedulerHandoffReleased: released,
+    input: { ...ACTIVATION_INPUT, ...(recoverSourceOnly ? { recoverSourceOnly } : {}) }, steps: [], schedulerHandoffReleased: released,
   } });
   const recovering = (operation: { id: string; schedulerHandoffReleased?: unknown }) =>
     operation.id === ACTIVATION && operation.schedulerHandoffReleased === false;
 
   it("refuses while the failed activation recovers its source, and pauses nothing", async () => {
     const h = harness(activation("failed", false));
+
+    await expect(recoverUnreachableIsolatedGateway({ ...h.deps, sourceRecoveryPending: recovering }, h.request))
+      .rejects.toEqual(new SourceRecoveryPendingError(ACTIVATION));
+    expect(h.docs.get(`gateways/${GATEWAY}`)?.desiredStatus).toBe("running");
+    expect(h.docs.has(`gatewayRecoveryReceipts/${RECOVERY}`)).toBe(false);
+  });
+
+  it.each(["pending", "running"])("refuses while a re-armed source-only recovery is %s, and pauses nothing", async (status) => {
+    const h = harness(activation(status, false, true));
 
     await expect(recoverUnreachableIsolatedGateway({ ...h.deps, sourceRecoveryPending: recovering }, h.request))
       .rejects.toEqual(new SourceRecoveryPendingError(ACTIVATION));
@@ -234,7 +244,7 @@ describe("owned isolated gateway retirement", () => {
   describe("after a failed activation", () => {
     const ACTIVATION = builderActivateOperationId(GATEWAY, 1);
     const failedActivation = { [`glmOperations/${ACTIVATION}`]: {
-      kind: "migrate-user", status: "failed", createdAt: 1, createdBy: "test", startedAt: 1, completedAt: 2, input: {}, steps: [],
+      kind: "migrate-user", status: "failed", createdAt: 1, createdBy: "test", startedAt: 1, completedAt: 2, input: ACTIVATION_INPUT, steps: [],
       schedulerHandoffReleased: false,
     } };
     const activationFailed = { ...retire, reason: "activation-failed" as const };
@@ -266,20 +276,19 @@ describe("owned isolated gateway retirement", () => {
       expect(h.docs.has(`glmOperations/${RETIREMENT}`)).toBe(false);
     });
 
-    it("admits another retirement reason while the activation is still running", async () => {
+    it.each([
+      ["pending", "builder-returned", false], ["running", "builder-returned", false], ["pending", "activation-failed", false],
+      ["running", "activation-failed", false], ["pending", "builder-returned", true], ["running", "activation-failed", true],
+    ] as const)("blocks the retirement as an in-flight migration while the activation is %s, for %s (source-only recovery %s)", async (status, reason, recoverSourceOnly) => {
       const h = harness({ ...pausedRoot(), ...failedActivation });
-      h.docs.set(`glmOperations/${ACTIVATION}`, { ...h.docs.get(`glmOperations/${ACTIVATION}`), status: "running", completedAt: null });
+      h.docs.set(`glmOperations/${ACTIVATION}`, { ...h.docs.get(`glmOperations/${ACTIVATION}`), status, completedAt: null,
+        input: { ...ACTIVATION_INPUT, ...(recoverSourceOnly ? { recoverSourceOnly } : {}) } });
 
-      await expect(retireOwnedIsolatedGateway({ ...h.deps, sourceRecoveryPending: recovering }, retire))
-        .resolves.toEqual({ retired: true, operationId: RETIREMENT });
-    });
-
-    it("refuses activation-failed cleanup while the activation is still running", async () => {
-      const h = harness({ ...pausedRoot(), ...failedActivation });
-      h.docs.set(`glmOperations/${ACTIVATION}`, { ...h.docs.get(`glmOperations/${ACTIVATION}`), status: "running", completedAt: null });
-
-      await expect(retireOwnedIsolatedGateway({ ...h.deps, sourceRecoveryPending: recovering }, activationFailed))
-        .rejects.toEqual(new SourceRecoveryPendingError(ACTIVATION));
+      await expect(retireOwnedIsolatedGateway({ ...h.deps, sourceRecoveryPending: recovering }, { ...retire, reason })).resolves.toEqual({
+        retired: false, operationId: RETIREMENT, reason: `user migration is in flight for gateway ${GATEWAY}`,
+      });
+      expect(h.docs.get(`gateways/${GATEWAY}`)?.desiredStatus).toBe("paused");
+      expect(h.docs.has(`glmOperations/${RETIREMENT}`)).toBe(false);
     });
   });
 
