@@ -25,7 +25,7 @@ import {
   ensureProjectGiteaRepo,
   ProjectRepoProvisioningError,
 } from "../projects/provisioning.js";
-import { respondProvisioningNotReady, respondProvisioningPending, routeBudget, type LegacyGitRepository, type LegacyProvisioning, type RouteBudget } from "../../lib/legacy-provisioning.js";
+import { LEGACY_ROUTE_DEADLINE_MS, respondProvisioningNotReady, respondProvisioningPending, routeBudget, type LegacyGitRepository, type LegacyProvisioning, type RouteBudget } from "../../lib/legacy-provisioning.js";
 
 // Gitea ADMIN broker for the in-pod provisioner. The provisioner runs in the OpenClaw
 // openclaw container and no longer holds the admin token; it calls octogee-api with its
@@ -228,38 +228,22 @@ async function broker(res: Response, op: string, fn: () => Promise<void>): Promi
 export const HELD_KEY_READ_TIMEOUT_MS = 5_000;
 export const SERVICE_HELD_KEY_BUDGET_MS = 20_000;
 
-async function answeredForKeyAlreadyHeld(res: Response, slug: string, pubKey: string, holder: string): Promise<boolean> {
-  let held: boolean;
-  try {
-    held = await gitHost().holdsKey(slug, pubKey, holder, AbortSignal.timeout(HELD_KEY_READ_TIMEOUT_MS));
-  } catch (err) {
-    logger.warn("internal/gitea ensure-user could not read the user's keys on the git host, so the provisioning service is asked first", { err, slug, holder });
-    return false;
-  }
-  if (!held) return false;
-  logger.info("internal/gitea ensure-user: the key is already registered under the calling pod's title, so nothing is written and the provisioning service is not asked", { slug, holder });
-  res.status(204).end();
-  return true;
+interface PodKey {
+  slug: string;
+  publicKey: string;
+  keyOwner: string;
+  access: UserAccess;
 }
 
-const REASONS_NAMING_THE_KEY_ELSEWHERE: ReadonlySet<string> = new Set(["GitKeyHeldElsewhere"]);
-
-async function answeredForUnconfirmedKeyAlreadyHeld(res: Response, { slug, publicKey, keyOwner }: ServiceHeldKey, reason: string): Promise<boolean> {
-  let held: boolean;
+async function heldUnderOwnTitle({ slug, publicKey, keyOwner }: PodKey, unreadable: { consequence: string; reason?: string }): Promise<boolean> {
   try {
-    held = await gitHost().holdsKey(slug, publicKey, keyOwner, AbortSignal.timeout(HELD_KEY_READ_TIMEOUT_MS));
+    return await gitHost().holdsKey(slug, publicKey, keyOwner, AbortSignal.timeout(HELD_KEY_READ_TIMEOUT_MS));
   } catch (err) {
-    logger.warn("internal/gitea ensure-user could not read the user's keys on the git host after the provisioning service did not confirm the key, so the service's answer stands", { err, slug, holder: keyOwner, reason });
+    logger.warn(`internal/gitea ensure-user could not read the user's keys on the git host, so ${unreadable.consequence}`, {
+      err, slug, holder: keyOwner, ...(unreadable.reason === undefined ? {} : { reason: unreadable.reason }),
+    });
     return false;
   }
-  if (!held) return false;
-  if (REASONS_NAMING_THE_KEY_ELSEWHERE.has(reason)) {
-    logger.warn("internal/gitea ensure-user: the git host holds the key under the calling pod's title, which contradicts the provisioning service's refusal; the registration is answered as done and the gateway keeps its marker", { slug, holder: keyOwner, reason });
-  } else {
-    logger.info("internal/gitea ensure-user: the provisioning service did not confirm the key, and the git host already holds it under the calling pod's title, so the registration is answered as done and the gateway keeps its marker", { slug, holder: keyOwner, reason });
-  }
-  res.status(204).end();
-  return true;
 }
 
 async function awaitServiceGit(
@@ -316,7 +300,7 @@ function userGitHandler(route: UserGitRoute, legacyProvisioning: LegacyProvision
 
 const ENSURE_USER = "ensure-user";
 
-async function awaitServiceGitReady(res: Response, legacyProvisioning: LegacyProvisioning, slug: string, budget: RouteBudget = routeBudget()): Promise<boolean> {
+async function awaitServiceGitReady(res: Response, legacyProvisioning: LegacyProvisioning, slug: string, budget: RouteBudget): Promise<boolean> {
   try {
     const user = await platformStateStore.users.records.findBySlug(slug);
     if (!user) {
@@ -337,11 +321,45 @@ async function awaitServiceGitReady(res: Response, legacyProvisioning: LegacyPro
   }
 }
 
-interface ServiceHeldKey {
-  slug: string;
-  publicKey: string;
-  keyOwner: string;
-  access: UserAccess;
+interface GitHostRegistration {
+  serviceBudgetMs: number;
+  registered: (res: Response) => void;
+}
+
+const WITHOUT_MARKER: GitHostRegistration = {
+  serviceBudgetMs: LEGACY_ROUTE_DEADLINE_MS,
+  registered: (res) => { res.status(204).end(); },
+};
+
+const MARKER_DROPPED: GitHostRegistration = {
+  serviceBudgetMs: SERVICE_HELD_KEY_BUDGET_MS,
+  registered: (res) => { res.status(200).json({ registeredOn: "git-host" }); },
+};
+
+async function registerOnGitHost(
+  res: Response,
+  legacyProvisioning: LegacyProvisioning | null,
+  key: PodKey,
+  { serviceBudgetMs, registered }: GitHostRegistration,
+): Promise<void> {
+  const { slug, publicKey, keyOwner, access } = key;
+  if (legacyProvisioning) {
+    if (await heldUnderOwnTitle(key, { consequence: "the provisioning service is asked first" })) {
+      logger.info("internal/gitea ensure-user: the key is already registered under the calling pod's title, so nothing is written and the provisioning service is not asked", { slug, holder: keyOwner });
+      registered(res);
+      return;
+    }
+    if (!(await awaitServiceGitReady(res, legacyProvisioning, slug, routeBudget(serviceBudgetMs)))) return;
+  }
+  try {
+    await (access === "serving"
+      ? gitHost().registerKey(slug, publicKey, keyOwner)
+      : gitHost().registerKeyUnlessHeld(slug, publicKey, keyOwner));
+    registered(res);
+  } catch (err) {
+    logger.error("internal/gitea ensure-user failed", { err });
+    res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
+  }
 }
 
 interface UnconfirmedServiceKey {
@@ -352,7 +370,7 @@ interface UnconfirmedServiceKey {
 async function putServiceHeldKey(
   res: Response,
   legacyProvisioning: LegacyProvisioning,
-  { slug, publicKey, keyOwner }: ServiceHeldKey,
+  { slug, publicKey, keyOwner }: PodKey,
 ): Promise<UnconfirmedServiceKey | null> {
   try {
     const user = await platformStateStore.users.records.findBySlug(slug);
@@ -371,29 +389,29 @@ async function putServiceHeldKey(
   }
 }
 
-async function registerServiceHeldKey(res: Response, legacyProvisioning: LegacyProvisioning, key: ServiceHeldKey): Promise<void> {
+const REASONS_NAMING_THE_KEY_ELSEWHERE: ReadonlySet<string> = new Set(["GitKeyHeldElsewhere"]);
+
+async function registerThroughService(res: Response, legacyProvisioning: LegacyProvisioning, key: PodKey): Promise<void> {
   const unconfirmed = await putServiceHeldKey(res, legacyProvisioning, key);
   if (unconfirmed === null) {
     res.status(204).end();
     return;
   }
-  if (await answeredForUnconfirmedKeyAlreadyHeld(res, key, unconfirmed.reason)) return;
-  unconfirmed.answer();
-}
-
-async function registerOnGitHostInstead(res: Response, { slug, publicKey, keyOwner, access }: ServiceHeldKey): Promise<void> {
-  try {
-    await (access === "serving"
-      ? gitHost().registerKey(slug, publicKey, keyOwner)
-      : gitHost().registerKeyUnlessHeld(slug, publicKey, keyOwner));
-    res.status(200).json({ registeredOn: "git-host" });
-  } catch (err) {
-    logger.error("internal/gitea ensure-user failed", { err });
-    res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
+  const { reason } = unconfirmed;
+  if (!(await heldUnderOwnTitle(key, { consequence: "the provisioning service's answer stands", reason }))) {
+    unconfirmed.answer();
+    return;
   }
+  const fields = { slug: key.slug, holder: key.keyOwner, reason };
+  if (REASONS_NAMING_THE_KEY_ELSEWHERE.has(reason)) {
+    logger.warn("internal/gitea ensure-user: the git host holds the key under the calling pod's title, which contradicts the provisioning service's refusal; the registration is answered as done and the gateway keeps its marker", fields);
+  } else {
+    logger.info("internal/gitea ensure-user: the provisioning service did not confirm the key, and the git host already holds it under the calling pod's title, so the registration is answered as done and the gateway keeps its marker", fields);
+  }
+  res.status(204).end();
 }
 
-async function ensureServiceHeldKey(
+async function ensureMarkedKey(
   req: Request,
   res: Response,
   legacyProvisioning: LegacyProvisioning | null,
@@ -409,16 +427,15 @@ async function ensureServiceHeldKey(
   const key = { slug, publicKey, keyOwner, access };
   if (legacyProvisioning === null) {
     logger.warn("internal/gitea ensure-user: the provisioning service is not configured, so a key the gateway says the service holds is registered on the git host", { slug, keyOwner });
-    await registerOnGitHostInstead(res, key);
+    await registerOnGitHost(res, null, key, MARKER_DROPPED);
     return;
   }
   if (serviceHolder !== keyOwner || access !== "serving") {
     logger.info("internal/gitea ensure-user: the key is registered on the git host, since the gateway's marker names another pod or this pod is on standby", { slug, keyOwner, serviceHolder, access });
-    if (!(await awaitServiceGitReady(res, legacyProvisioning, slug, routeBudget(SERVICE_HELD_KEY_BUDGET_MS)))) return;
-    await registerOnGitHostInstead(res, key);
+    await registerOnGitHost(res, legacyProvisioning, key, MARKER_DROPPED);
     return;
   }
-  await registerServiceHeldKey(res, legacyProvisioning, key);
+  await registerThroughService(res, legacyProvisioning, key);
 }
 
 function ensureUserHandler(legacyProvisioning: LegacyProvisioning | null) {
@@ -432,17 +449,12 @@ function ensureUserHandler(legacyProvisioning: LegacyProvisioning | null) {
     const access = await requireUserAccess(req, res, slug);
     if (!access) return;
     if (typeof serviceHolder === "string" && serviceHolder !== "") {
-      await ensureServiceHeldKey(req, res, legacyProvisioning, { slug, publicKey: pubKey.trim(), serviceHolder, access });
+      await ensureMarkedKey(req, res, legacyProvisioning, { slug, publicKey: pubKey.trim(), serviceHolder, access });
       return;
     }
     const keyOwner = gatewayKeyOwnerForRequest(req, res);
     if (!keyOwner) return;
-    if (legacyProvisioning && (await answeredForKeyAlreadyHeld(res, slug, pubKey, keyOwner))) return;
-    if (legacyProvisioning && !(await awaitServiceGitReady(res, legacyProvisioning, slug))) return;
-    await broker(res, ENSURE_USER, () =>
-      access === "serving"
-        ? gitHost().registerKey(slug, pubKey, keyOwner)
-        : gitHost().registerKeyUnlessHeld(slug, pubKey, keyOwner));
+    await registerOnGitHost(res, legacyProvisioning, { slug, publicKey: pubKey, keyOwner, access }, WITHOUT_MARKER);
   };
 }
 
