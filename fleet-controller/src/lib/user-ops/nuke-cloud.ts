@@ -21,6 +21,7 @@ export interface NukeCloudCtx extends UserDataScope {
 }
 
 export type NukeCloudStepKey =
+  | "teardown"
   | "provisioning"
   | "gitea"
   | "mattermost"
@@ -44,6 +45,7 @@ export interface NukeCloudDeps {
   git: Pick<ManagedGitHost, "eraseOwner">;
   channels: Pick<ManagedChannelHost, "erase">;
 
+  markTeardown: (uid: string) => Promise<"marked" | "absent">;
   deleteProvisioning?: (uid: string) => Promise<DeleteProvisioningOutcome>;
   eraseUserRecords: (scope: UserDataScope) => Promise<void>;
   deleteUserStorage: (scope: UserDataScope) => Promise<void>;
@@ -60,17 +62,8 @@ export async function nukeUserCloudSide(
   deps: NukeCloudDeps,
 ): Promise<NukeCloudStepResult[]> {
   const log = deps.log ?? (() => undefined);
-  const results: NukeCloudStepResult[] = [];
-
-  const deleteProvisioning = deps.deleteProvisioning;
-  if (deleteProvisioning) {
-    const provisioning = await runStep("provisioning", log, async () => {
-      const outcome = await deleteProvisioning(ctx.uid);
-      if (outcome === "unnameable") return `the provisioning service cannot name ${ctx.uid}; nothing to delete`;
-    });
-    if (!provisioning.ok) return [provisioning];
-    results.push(provisioning);
-  }
+  const results = await stopProvisioning(ctx.uid, deps, log);
+  if (results.some((result) => !result.ok)) return results;
 
 if (!ctx.slug) {
   results.push({ key: "gitea", ok: true, skipped: true });
@@ -165,6 +158,22 @@ if (ctx.skipHosting || !deps.deleteHostingSites || !ctx.slug) {
   }
 
   return results;
+}
+
+async function stopProvisioning(
+  uid: string,
+  deps: Pick<NukeCloudDeps, "markTeardown" | "deleteProvisioning">,
+  log: (msg: string) => void,
+): Promise<NukeCloudStepResult[]> {
+  const teardown = await runStep("teardown", log, async () => {
+    if (await deps.markTeardown(uid) === "absent") return "no user record to mark";
+  });
+  const deleteProvisioning = deps.deleteProvisioning;
+  if (!teardown.ok || !deleteProvisioning) return [teardown];
+  const provisioning = await runStep("provisioning", log, async () => {
+    if (await deleteProvisioning(uid) === "unnameable") return `the provisioning service cannot name ${uid}; nothing to delete`;
+  });
+  return [teardown, provisioning];
 }
 
 async function runStep(

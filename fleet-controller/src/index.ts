@@ -219,6 +219,7 @@ import { platformStateUserAccountReader, platformStateUserAccounts } from "@octo
 import { createUnmountFromGateway } from "./lib/user-ops/unmount-gateway.js";
 import { isRetiredSharedGateway, retiredSharedGatewayRuntimeAbsent } from "./lib/user-ops/retired-shared-gateway.js";
 import { nukeUserCloudSide, type NukeCloudDeps } from "./lib/user-ops/nuke-cloud.js";
+import { markCloudTeardown } from "@octogee/core/provisioning-sync";
 import { markSuspendedAndReleaseErasure } from "./lib/user-ops/erasure-release.js";
 import {
   productVerificationJobPatch,
@@ -3987,6 +3988,7 @@ export function buildUserCloudCleanupDeps(
       await productData?.eraseStorage(scope);
     },
     remainingUserStorage: async (uid, slug) => s3 === undefined ? [] : s3.remaining(uid, slug),
+    markTeardown: (uid) => markCloudTeardown(store, uid),
     eraseUserRecords: (scope) => eraseUserRecords(store, productData, scope),
     ...(provisioning ? { deleteProvisioning: (uid: string) => provisioning.deleteProvisioning(uid) } : {}),
     deleteCredentialSecrets: async (secretNames: string[]) => {

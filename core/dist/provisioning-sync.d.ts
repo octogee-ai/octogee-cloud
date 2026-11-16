@@ -74,4 +74,5 @@ export declare function runJournaledBackfill<T>(store: PlatformStateStore, run: 
     journaled: boolean;
     result: T;
 }>;
+export declare function markCloudTeardown(store: Pick<PlatformStateStore, "transaction">, uid: string): Promise<"marked" | "absent">;
 export declare function createProvisioningSync(deps: ProvisioningSyncDeps): ProvisioningSync;
