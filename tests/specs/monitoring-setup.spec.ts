@@ -48,6 +48,26 @@ function renderedDeployment(name: string): Record<string, unknown> {
   return deployment;
 }
 
+function renderedPodMonitorNames(): string[] {
+  const rendered = execFileSync(
+    "helm",
+    [
+      "template",
+      "grafana",
+      resolve(root, "charts/monitoring"),
+      "--namespace",
+      "monitoring",
+    ],
+    { encoding: "utf8" },
+  );
+  return parseAllDocuments(rendered)
+    .map((document) => document.toJSON() as Record<string, unknown> | null)
+    .filter((document) =>
+      document?.kind === "ClusterPodMonitoring" || document?.kind === "PodMonitoring",
+    )
+    .map((document) => (document?.metadata as { name: string }).name);
+}
+
 describe("monitoring setup", () => {
   it("adopts all first-party monitoring objects through one pinned Helm release", () => {
     expect(chart("Chart.yaml")).toContain("name: octogee-monitoring");
@@ -242,21 +262,7 @@ describe("monitoring setup", () => {
   });
 
   it("renders every supported app monitor as a separate cluster resource", () => {
-    const rendered = execFileSync(
-      "helm",
-      [
-        "template",
-        "grafana",
-        resolve(root, "charts/monitoring"),
-        "--namespace",
-        "monitoring",
-      ],
-      { encoding: "utf8" },
-    );
-    const names = parseAllDocuments(rendered)
-      .map((document) => document.toJSON() as Record<string, unknown> | null)
-      .filter((document) => document?.kind === "ClusterPodMonitoring")
-      .map((document) => (document?.metadata as { name: string }).name);
+    const names = renderedPodMonitorNames();
 
     expect(names).toEqual(expect.arrayContaining([
       "gmp-kube-state-metrics",
@@ -268,6 +274,19 @@ describe("monitoring setup", () => {
       "provisioning-service",
     ]));
     expect(names).not.toContain("mattermost");
+  });
+
+  it("exports every rendered pod monitor's job through the collection filter", () => {
+    const jobs = renderedPodMonitorNames();
+    const filter = JSON.parse(chart("gmp-collection-filter.json")) as {
+      collection: { filter: { matchOneOf: string[] } };
+    };
+    const exported = filter.collection.filter.matchOneOf.flatMap(
+      (matcher) => /job="([^"]+)"/.exec(matcher)?.[1] ?? [],
+    );
+
+    expect(jobs.length).toBeGreaterThan(0);
+    expect(jobs.filter((job) => !exported.includes(job))).toEqual([]);
   });
 
   it("keeps the GKE-owned singleton as the explicit verified patch exception", () => {
