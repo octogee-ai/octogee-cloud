@@ -138,7 +138,8 @@ export class WorkQueue {
       const { attempts, dirty } = rows[0];
       let next: FinishResult & { delayMs: number; errorReason: string | null; errorMessage: string | null };
       if (input.outcome.kind === "succeeded") {
-        next = { state: dirty ? "queued" : "idle", attempts: 0, delayMs: dirty ? 0 : this.resyncAfterMs, errorReason: null, errorMessage: null };
+        const delayMs = dirty ? 0 : Math.min(this.resyncAfterMs, await this.nextKeyRetryMs(client, uid) ?? this.resyncAfterMs);
+        next = { state: dirty ? "queued" : "idle", attempts: 0, delayMs, errorReason: null, errorMessage: null };
       } else {
         const failed = attempts + 1;
         const error = { errorReason: input.outcome.reason, errorMessage: input.outcome.message };
@@ -164,6 +165,14 @@ export class WorkQueue {
       await this.recordAttempt(client, uid, { ...input.attempt, result });
       return { state: next.state, attempts: next.attempts };
     });
+  }
+
+  private async nextKeyRetryMs(client: pg.PoolClient, uid: string): Promise<number | null> {
+    const { rows } = await client.query<{ delay_ms: number | null }>(
+      `SELECT (EXTRACT(EPOCH FROM min(retry_after) - now()) * 1000)::float AS delay_ms
+         FROM ${this.db.table("git_keys")} WHERE uid = $1 AND deletion_requested_at IS NULL AND retry_after IS NOT NULL`, [uid]);
+    const delayMs = rows[0]?.delay_ms ?? null;
+    return delayMs === null ? null : Math.max(0, delayMs);
   }
 
   async recordLeaseLost(uid: string, attempt: Omit<ProvisioningAttempt, "result" | "durationMs">): Promise<void> {

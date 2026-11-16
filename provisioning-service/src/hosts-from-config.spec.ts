@@ -21,9 +21,10 @@ describe("hostsFromConfig", () => {
     const real = hostsFromConfig({ kind: "real", settings: SETTINGS }, log);
     expect(real.chat).not.toBeInstanceOf(FakeChatHost);
     expect(real.git).not.toBeInstanceOf(FakeGitHost);
-    const fake = hostsFromConfig({ kind: "fake", delayMs: 0 }, log);
+    const fake = hostsFromConfig({ kind: "fake", delayMs: 0, gitKeys: { lin: [{ publicKey: "ssh-ed25519 AAAA gateway", holder: "gw-1/pod-1" }] } }, log);
     expect(fake.chat).toBeInstanceOf(FakeChatHost);
     expect(fake.git).toBeInstanceOf(FakeGitHost);
+    expect((fake.git as FakeGitHost).keys.get("lin")).toEqual([{ publicKey: "ssh-ed25519 AAAA gateway", holder: "gw-1/pod-1" }]);
   });
 
   it("calls the git host under /api/v1 and the chat host under /api/v4 of the configured host roots", async () => {

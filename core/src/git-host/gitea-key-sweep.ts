@@ -3,6 +3,7 @@ import {
   gatewayKeyTitle,
   giteaUsername,
   isManagedGatewayKeyTitle,
+  publicKeyIdentity,
 } from "../gitea-naming.js";
 import type {
   GitKeyCensus,
@@ -35,10 +36,6 @@ type KeyClass = "unmanaged" | "live" | "legacy" | "young" | "stale";
 
 function emptyTotals(): Omit<GitKeyCensus, "username"> {
   return { managed: 0, live: 0, legacy: 0, young: 0, stale: 0, deleted: 0, legacyStale: 0, legacyDeleted: 0 };
-}
-
-function publicKeyIdentity(pubKey: string): string {
-  return pubKey.trim().split(/\s+/u).slice(0, 2).join(" ");
 }
 
 function classifyKey(key: GiteaPublicKeyRecord, liveTitles: ReadonlySet<string>, cutoff: number): KeyClass {

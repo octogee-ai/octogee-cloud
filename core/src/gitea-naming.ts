@@ -39,3 +39,7 @@ export function gatewayKeyTitle(identity: string): string {
 export function isManagedGatewayKeyTitle(title: string): boolean {
   return title === GATEWAY_KEY_TITLE || title.startsWith(`${GATEWAY_KEY_TITLE}-`);
 }
+
+export function publicKeyIdentity(publicKey: string): string {
+  return publicKey.trim().split(/\s+/u).slice(0, 2).join(" ");
+}
