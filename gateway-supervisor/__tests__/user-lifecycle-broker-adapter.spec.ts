@@ -3127,6 +3127,29 @@ describe("buildBrokeredLifecycleAdapter git key give-up", () => {
     expect(log).toHaveBeenCalledWith(expect.stringContaining("[remove:alice]"), { status: "failed" });
   });
 
+  it("deletes an erased user's key even when its release fails, and logs the failed release", async () => {
+    await keyOnDisk(HOLDER);
+    await fs.rm(userDir, { recursive: true, force: true });
+    const configBefore = await fs.readFile(OPENCLAW_CONFIG).catch(() => null);
+    await fs.writeFile(OPENCLAW_CONFIG, JSON.stringify({ database: { families: { agent: { engine: "postgres" } } } }));
+    const log = vi.fn();
+    const agentsDetach = vi.fn(async ({ agentId }: { agentId: string }) => ({ ok: true as const, agentId, failed: [] }));
+    const rpc = mkRemovalRpc({ agents: { entries: keyedRoster(["octogee-bob-coach"]) } }, { agentsDetach });
+    const releaseGitKey = vi.fn(async () => { throw new Error("fleet-broker POST /internal/fleet/git-key/release → 502"); });
+    const adapter = buildBrokeredLifecycleAdapter({ client: mkClient({ releaseGitKey }), rpc, procRoot: path.join(testRuntime.dir, "key-proc"), log });
+    try {
+      const ids = ["octogee-alice-coach"];
+      await expect(adapter.removeImportedUserBySlug!("alice", undefined, undefined, undefined, ids)).resolves.toMatchObject({ releasedAgentIds: ids });
+    } finally {
+      if (configBefore) await fs.writeFile(OPENCLAW_CONFIG, configBefore);
+      else await fs.rm(OPENCLAW_CONFIG, { force: true });
+    }
+
+    expect(fsSync.existsSync(keyDir)).toBe(false);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("provisioning service release failed"), { status: "failed" });
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("deleted the erased user's key"), { status: "failed" });
+  });
+
   it("gives up the key on disk before a key import replaces it", async () => {
     await keyOnDisk(HOLDER);
     const releaseGitKey = vi.fn(async () => "released" as const);

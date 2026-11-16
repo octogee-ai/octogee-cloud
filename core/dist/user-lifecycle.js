@@ -455,6 +455,10 @@ async function ensureServiceGitKey(adapter, service, snapshot, signal) {
     if (!gitKeyHolder) {
         return failServiceWait(adapter, `[add:${slug}] the snapshot names no git key holder for this pod, so the service cannot register its key`);
     }
+    if (adapter.hasUserSshKey(slug) && adapter.readLocalUserPubKey(slug) === null) {
+        adapter.log(`[add:${slug}] ✖ the public key cannot be read for the key on disk; giving it up and registering a fresh one`, { status: "failed" });
+        await adapter.giveUpUserGitKey(slug);
+    }
     const key = service.serviceGitKey(slug, gitKeyHolder);
     await waitForServiceProvisioning(adapter, service, { slug, what: "the provisioning service to register this pod's git key", boundMs: SERVICE_GIT_KEY_WAIT_MS, signal }, () => service.registerGitKey(uid, key.publicKey));
     key.registered();

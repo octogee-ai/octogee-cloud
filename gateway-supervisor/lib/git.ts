@@ -625,7 +625,7 @@ export function prepareServiceGitKey(slug: string, holder: string): PreparedServ
 export function readLocalUserPubKey(slug: string): string | null {
   const pubPath = path.join(CUSTOMER_KEYS_DIR, slug, "id_ed25519.pub");
   try {
-    return fs.readFileSync(pubPath, "utf-8").trim();
+    return fs.readFileSync(pubPath, "utf-8").trim() || null;
   } catch {
     return null;
   }

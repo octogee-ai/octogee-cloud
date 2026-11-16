@@ -71,6 +71,7 @@ import {
   rosterAgentSpecsFromEntries,
 } from "./agent-roster-creation.js";
 import {
+  type GivenUpUserGitKey,
   type UserContext,
   type UserLifecycleAdapter,
   type UserStateImportMode,
@@ -113,7 +114,7 @@ import {
   setRepoSshCommand,
 } from "./git.js";
 import { brokeredGitHost } from "./gitea-admin-broker-client.js";
-import { giveUpUserGitKey, type GivenUpUserGitKey } from "./user-git-key.js";
+import { giveUpUserGitKey } from "./user-git-key.js";
 import {
   hasMountedMarker,
   clearMountedMarker,
@@ -585,10 +586,18 @@ function giveUpGitKey(ctx: Pick<BrokerCtx, "client" | "log">, slug: string): Pro
   });
 }
 
-async function giveUpDepartedUserGitKey(ctx: Pick<BrokerCtx, "client" | "log">, slug: string): Promise<void> {
+async function giveUpDepartedUserGitKey(ctx: Pick<BrokerCtx, "client" | "log">, slug: string, erased: boolean): Promise<void> {
   try {
     await giveUpGitKey(ctx, slug);
   } catch (error) {
+    if (erased) {
+      await fsp.rm(path.join(CUSTOMER_KEYS_DIR, slug), { recursive: true, force: true });
+      ctx.log(
+        `[remove:${slug}] ✖ git key release failed; deleted the erased user's key without it: ${error instanceof Error ? error.message : String(error)}`,
+        { status: "failed" },
+      );
+      return;
+    }
     ctx.log(
       `[remove:${slug}] ✖ git key release failed; the local keypair is kept for the preStop flush and for the next import of this user here, which release it again: ${error instanceof Error ? error.message : String(error)}`,
       { status: "failed" },
@@ -2387,7 +2396,7 @@ async function removeImportedUserBySlug(
     { ignoreReadOnlyConnections: true },
   );
   await removeDepartedUserFileState(slug, { log: ctx.log });
-  if (!isConfiguredGatewayUser(slug)) await giveUpDepartedUserGitKey(ctx, slug);
+  if (!isConfiguredGatewayUser(slug)) await giveUpDepartedUserGitKey(ctx, slug, erasureAgentIds !== undefined);
   await removeAgentDirs(agentDirs);
   await removeActivationManifest(OPENCLAW_DIR, slug);
   await assertSharedErasureRosterRemoved(ctx, slug, erasureAgentIds);

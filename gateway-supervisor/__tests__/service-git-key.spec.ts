@@ -89,6 +89,14 @@ describe("prepareServiceGitKey", () => {
     expect(fs.existsSync(path.join(KEYS_DIR, "lin", "id_ed25519"))).toBe(true);
   });
 
+  it("reads an empty public key file as unreadable", () => {
+    generateUserSshKey("lin");
+    fs.writeFileSync(path.join(KEYS_DIR, "lin", "id_ed25519.pub"), "\n");
+
+    expect(readLocalUserPubKey("lin")).toBeNull();
+    expect(() => prepareServiceGitKey("lin", HOLDER)).toThrow("public key");
+  });
+
   it("fails on a marker it cannot read instead of reading it as absent", () => {
     fs.mkdirSync(path.join(KEYS_DIR, "lin", "service-holder"), { recursive: true });
 

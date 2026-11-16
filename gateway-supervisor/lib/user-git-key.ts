@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import type { GivenUpUserGitKey } from "@octogee/core/user-lifecycle";
 import { isValidUsername } from "@octogee/shared/types/identity";
 import { CUSTOMER_KEYS_DIR } from "./config.js";
 
@@ -10,8 +11,6 @@ export interface UserGitKeyReleaser {
   releaseHostKey: (slug: string, publicKey: string) => Promise<void>;
   log: (message: string, fields?: { status: "failed" }) => void;
 }
-
-export type GivenUpUserGitKey = "absent" | "released" | "unreleasable";
 
 function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error);

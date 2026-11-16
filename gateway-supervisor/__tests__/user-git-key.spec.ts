@@ -148,6 +148,18 @@ describe("giveUpUserGitKey", () => {
     expect(fs.existsSync(dir)).toBe(false);
   });
 
+  it("treats an empty public key file as unreadable", async () => {
+    const dir = keyOnDisk("lin", { publicKey: null });
+    fs.writeFileSync(path.join(dir, "id_ed25519.pub"), "\n");
+    const { releaser: deps, calls, logs } = releaser();
+
+    await expect(giveUpUserGitKey("lin", deps)).resolves.toBe("unreleasable");
+
+    expect(calls).toEqual([]);
+    expect(logs).toContainEqual({ line: expect.stringContaining("public key cannot be read"), failed: true });
+    expect(fs.existsSync(dir)).toBe(false);
+  });
+
   it("refuses a slug that is not a user name", async () => {
     const { releaser: deps } = releaser();
 

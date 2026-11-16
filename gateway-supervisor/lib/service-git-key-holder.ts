@@ -17,8 +17,8 @@ export function serviceGitKeyHolder(slug: string): string | null {
   }
 }
 
-export function recordServiceGitKeyHolder(slug: string, gatewayId: string): void {
-  fs.writeFileSync(holderPath(slug), `${gatewayId}\n`, { mode: 0o600 });
+export function recordServiceGitKeyHolder(slug: string, holder: string): void {
+  fs.writeFileSync(holderPath(slug), `${holder}\n`, { mode: 0o600 });
 }
 
 export function clearServiceGitKeyHolder(slug: string): void {

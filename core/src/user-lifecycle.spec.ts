@@ -3328,6 +3328,24 @@ describe("addUserToGateway — through the provisioning service", () => {
     expect(state.calls).not.toContain("registerKey");
   });
 
+  it("gives up a key whose public half cannot be read and registers a fresh one, as the gateway's own path does", async () => {
+    const state = makeState(snap({ provisionedBy: "service", gitKeyHolder: HOLDER, mattermostUserId: "mm-user" }), { ...emptyDisk(), sshKey: true });
+    const { adapter } = withService(state);
+    adapter.readLocalUserPubKey = () => null;
+    adapter.giveUpUserGitKey = async () => {
+      state.calls.push("giveUpUserGitKey");
+      state.disk.sshKey = false;
+      return "unreleasable";
+    };
+
+    await addUserToGateway(adapter, "uid-test");
+
+    expect(state.calls.indexOf("giveUpUserGitKey")).toBeGreaterThan(-1);
+    expect(state.calls.indexOf("giveUpUserGitKey")).toBeLessThan(state.calls.indexOf("service:gitKey"));
+    expect(state.calls).toContain("service:keyRegistered");
+    expect(state.errorLogs).toContainEqual(expect.stringContaining("public key cannot be read"));
+  });
+
   it("re-mounts a user with a workspace already on disk without asking for any repository", async () => {
     const state = makeState(mountedSnapshot({ provisionedBy: "service", gitKeyHolder: HOLDER }), mountedDisk());
     const { adapter, service } = withService(state);
