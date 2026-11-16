@@ -206,7 +206,7 @@ selection and rollout are a separate operator step.
 
 OpenClaw main `ec025eba2df15ab949239fa17dfd99ac4286b50c` was frozen at fetch time
 for independent qualification. The overlay is
-`72836edc9da0bf50443f9f429c02779d74d051dd` on
+`c82e03906fce34883b1a3cd99b15b6d0b83b4648` on
 `ceckert/openclaw:codex/gateway-refresh-20261116`.
 
 The frozen tip's [push CI](https://github.com/openclaw/openclaw/actions/runs/43928652222)
@@ -237,6 +237,14 @@ restore and relies on native cascading cleanup when replacing a declaration.
 The overlay keeps Gateway broker startup lazy on constrained hosts through
 its own startup module. The frozen tip's mixed static and dynamic import of
 the shared broker host was fatal to the native package build.
+
+Native [#197510](https://github.com/openclaw/openclaw/pull/197510) no longer
+creates plugin migration readiness receipts during reads. A cold workspace
+registry could fall through to a synchronous PostgreSQL read on the Gateway
+main thread and abort startup. The overlay awaits the existing worker-backed
+loader in prepared workspace and cron callers. It retains migration holds,
+registry ownership and cancellation. Remove the overlay once the native
+caller acquires the cold workspace registry through the same worker path.
 
 Native [#198180](https://github.com/openclaw/openclaw/pull/198180) owns held-store
 path selection and offline schema migration. The duplicate path selector is
@@ -711,8 +719,11 @@ archives were packed sequentially from that build. Hosted islands, platform
 Browser resources and the PostgreSQL routine catalog use the same source.
 
 Production typechecks, the overlay-specific line-cap ratchet and generated
-channel config checks passed. The exact source passed 31 detach and worker
-admission tests and 13 PostgreSQL conformance tests. The isolated Gateway
+channel config checks passed. The initial candidate passed 31 detach and
+worker admission tests and 13 PostgreSQL conformance tests.
+The startup repair passed 63 focused tests covering model publication,
+prepared registry reuse, channel ownership, migration readiness, recovery and
+cron preparation. The isolated Gateway
 detach replay closed the old SQLite descriptor and let the matching creation
 claim restore the agent and read its history. Aggregate `pnpm check` was
 stopped after its package-lock generator stalled.
@@ -728,11 +739,11 @@ SHA-256 readback.
 
 | Object | Generation | SHA-256 |
 | --- | --- | --- |
-| `openclaw-fork-d1b80574.tgz` | `1794860901653714` | `d1b8057474e02277050cd88caf7cf2ad5f028868c4c261a2b45234c2bbce8ebf` |
+| `openclaw-fork-7f735d72.tgz` | `1794867207615129` | `7f735d728bd456c5b579fe40e2724f3a168fa8d7f350083e57dc4848728cf14c` |
 | `openclaw-mattermost-8e55e60d.tgz` | `1794860917248896` | `8e55e60dd0219f8b96dd428eab74dab999a46310fe76b5af1031fd447dd6c259` |
 
 The verified GitHub release mirrors these exact objects under
-[`gateway-72836ed`](https://github.com/ceckert/openclaw/releases/tag/gateway-72836ed).
+[`gateway-c82e039`](https://github.com/ceckert/openclaw/releases/tag/gateway-c82e039).
 
 ### Upstream contributions
 
