@@ -114,37 +114,21 @@ function credentialFrom(text, name) {
 function abortedError(input) {
     return new ProvisioningServiceError(0, "aborted", `provisioning service ${input.method} ${input.path} was aborted by its caller`);
 }
-function gitKeyPath(uid, gatewayId) {
-    return `users/${userSegment(uid)}/git-keys/${encodeURIComponent(gatewayId)}`;
-}
-function gitKeyMethods(request, json) {
-    return {
-        async putGitKey(uid, gatewayId, publicKey, keyOptions) {
-            const response = await request({
-                method: "PUT",
-                path: gitKeyPath(uid, gatewayId),
-                body: { spec: { publicKey } },
-                ...(keyOptions?.signal === undefined ? {} : { signal: keyOptions.signal }),
-            });
-            return json(response);
-        },
-        async deleteGitKey(uid, gatewayId, keyOptions) {
-            try {
-                await request({
-                    method: "DELETE",
-                    path: gitKeyPath(uid, gatewayId),
-                    body: { expectedPublicKey: keyOptions.expectedPublicKey },
-                    ...(keyOptions.signal === undefined ? {} : { signal: keyOptions.signal }),
-                });
-            }
-            catch (error) {
-                if (error instanceof ProvisioningServiceError && error.status === 409 && error.code === "precondition-failed")
-                    return "superseded";
-                throw error;
-            }
-            return "deleted";
-        },
-    };
+async function deleteGitKey(request, uid, gatewayId, options) {
+    try {
+        await request({
+            method: "DELETE",
+            path: `users/${userSegment(uid)}/git-keys/${encodeURIComponent(gatewayId)}`,
+            body: { expectedPublicKey: options.expectedPublicKey },
+            ...(options.signal === undefined ? {} : { signal: options.signal }),
+        });
+    }
+    catch (error) {
+        if (error instanceof ProvisioningServiceError && error.status === 409 && error.code === "precondition-failed")
+            return "superseded";
+        throw error;
+    }
+    return "deleted";
 }
 export function createProvisioningServiceClient(options) {
     const fetchImpl = options.fetch ?? fetch;
@@ -342,7 +326,16 @@ export function createProvisioningServiceClient(options) {
             }
             return credentialFrom(await response.text(), name);
         },
-        ...gitKeyMethods(request, json),
+        async putGitKey(uid, gatewayId, spec, keyOptions) {
+            const response = await request({
+                method: "PUT",
+                path: `users/${userSegment(uid)}/git-keys/${encodeURIComponent(gatewayId)}`,
+                body: { spec },
+                ...(keyOptions?.signal === undefined ? {} : { signal: keyOptions.signal }),
+            });
+            return { outcome: PUT_OUTCOMES[response.status] ?? "unchanged", key: await json(response) };
+        },
+        deleteGitKey: (uid, gatewayId, keyOptions) => deleteGitKey(request, uid, gatewayId, keyOptions),
     };
     return client;
 }

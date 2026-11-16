@@ -287,27 +287,51 @@ describe("provisioning service client", () => {
     expect(fake.requests.at(-1)?.path).toBe("/v1/users/u1/credentials/user-chat-token");
   });
 
-  it("registers a gateway's git key on the user's path and answers the key", async () => {
-    const api = client();
-    await api.putProvisioning("u1", SPEC);
-
-    const key = await api.putGitKey("u1", "shared-blue", "ssh-ed25519 AAAAkey");
-
-    expect(key).toMatchObject({ uid: "u1", gatewayId: "shared-blue", spec: { publicKey: "ssh-ed25519 AAAAkey" } });
-    expect(fake.requests.at(-1)).toMatchObject({ method: "PUT", path: "/v1/users/u1/git-keys/shared-blue", body: { spec: { publicKey: "ssh-ed25519 AAAAkey" } } });
-    await expect(api.putGitKey("nobody", "shared-blue", "ssh-ed25519 AAAAkey")).rejects.toMatchObject({ status: 404, code: "not-found" });
-  });
-
   it("releases a git key only while it still holds the expected public key, and answers superseded otherwise", async () => {
     const api = client();
     await api.putProvisioning("u1", SPEC);
-    await api.putGitKey("u1", "shared-blue", "ssh-ed25519 AAAAold");
-    await api.putGitKey("u1", "shared-blue", "ssh-ed25519 AAAAnew");
+    await api.putGitKey("u1", "gateway-a", { publicKey: "ssh-ed25519 AAAA old" });
+    await api.putGitKey("u1", "gateway-a", { publicKey: "ssh-ed25519 BBBB new" });
 
-    await expect(api.deleteGitKey("u1", "shared-blue", { expectedPublicKey: "ssh-ed25519 AAAAold" })).resolves.toBe("superseded");
-    expect(fake.requests.at(-1)).toMatchObject({ method: "DELETE", path: "/v1/users/u1/git-keys/shared-blue", body: { expectedPublicKey: "ssh-ed25519 AAAAold" } });
-    await expect(api.deleteGitKey("u1", "shared-blue", { expectedPublicKey: "ssh-ed25519 AAAAnew" })).resolves.toBe("deleted");
+    await expect(api.deleteGitKey("u1", "gateway-a", { expectedPublicKey: "ssh-ed25519 AAAA old" })).resolves.toBe("superseded");
+    expect(fake.requests.at(-1)).toMatchObject({ method: "DELETE", path: "/v1/users/u1/git-keys/gateway-a", body: { expectedPublicKey: "ssh-ed25519 AAAA old" } });
+    await expect(api.deleteGitKey("u1", "gateway-a", { expectedPublicKey: "ssh-ed25519 BBBB new" })).resolves.toBe("deleted");
+    expect(fake.gitKeys.has("u1/gateway-a")).toBe(false);
     expect(sleeps).toEqual([]);
+  });
+
+  it("puts a gateway's git key and reports whether the service created, changed or kept it", async () => {
+    const api = client();
+    await api.putProvisioning("u1", SPEC);
+
+    const created = await api.putGitKey("u1", "gateway-a", { publicKey: "ssh-ed25519 AAAA one" });
+    const unchanged = await api.putGitKey("u1", "gateway-a", { publicKey: "ssh-ed25519 AAAA one" });
+    const changed = await api.putGitKey("u1", "gateway-a", { publicKey: "ssh-ed25519 BBBB two" });
+
+    expect([created.outcome, unchanged.outcome, changed.outcome]).toEqual(["created", "unchanged", "changed"]);
+    expect(changed.key).toMatchObject({ uid: "u1", gatewayId: "gateway-a", generation: 2, spec: { publicKey: "ssh-ed25519 BBBB two" } });
+    expect(fake.requests.at(-1)).toMatchObject({
+      method: "PUT",
+      path: "/v1/users/u1/git-keys/gateway-a",
+      authorization: "Bearer token-1",
+      body: { spec: { publicKey: "ssh-ed25519 BBBB two" } },
+    });
+  });
+
+  it("surfaces a git key put for a user the service does not manage as a 404", async () => {
+    await expect(client().putGitKey("nobody", "gateway-a", { publicKey: "ssh-ed25519 AAAA one" }))
+      .rejects.toMatchObject({ status: 404, code: "not-found", transient: false });
+  });
+
+  it("stops a git key put when the caller aborts", async () => {
+    const api = client({
+      fetch: (_url, init) => new Promise((_resolve, reject) => init?.signal?.addEventListener("abort", () => reject(init.signal?.reason))),
+    });
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 20);
+
+    await expect(api.putGitKey("u1", "gateway-a", { publicKey: "ssh-ed25519 AAAA one" }, { signal: controller.signal }))
+      .rejects.toMatchObject({ code: "aborted" });
   });
 
   it("surfaces a refused credential read as a 403 without retrying", async () => {

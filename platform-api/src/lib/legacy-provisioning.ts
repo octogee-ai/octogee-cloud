@@ -1,6 +1,7 @@
 import type { Response } from "express";
 import type {
   ChatOutputs,
+  GitKey,
   GitRepositoryRole,
   UserProvisioning,
   UserProvisioningConditionType,
@@ -17,6 +18,7 @@ import { logger } from "@octogee/core/http/logging";
 export const LEGACY_PROVISIONING_LONG_POLL_SECONDS = 10;
 export const LEGACY_ROUTE_DEADLINE_MS = 40_000;
 const RESERVED_AFTER_LONG_POLL_MS = 10_000;
+const GIT_KEY_POLL_MS = 2_000;
 const DEFAULT_RETRY_AFTER_SECONDS = 5;
 const MAX_RETRY_AFTER_SECONDS = 300;
 
@@ -46,14 +48,16 @@ export interface LegacyProvisioning {
   chat(uid: string, budget: RouteBudget): Promise<ProvisioningWait<ReadyChat>>;
   git(uid: string, repository: LegacyGitRepository | null, budget: RouteBudget): Promise<ProvisioningWait<void>>;
   agentChatToken(uid: string, budget: RouteBudget): Promise<ProvisioningWait<string>>;
+  gitKey(uid: string, gatewayId: string, publicKey: string, budget: RouteBudget): Promise<ProvisioningWait<void>>;
 }
 
-export type LegacyProvisioningClient = Pick<ProvisioningServiceClient, "getProvisioning" | "getCredential">;
+export type LegacyProvisioningClient = Pick<ProvisioningServiceClient, "getProvisioning" | "getCredential" | "putGitKey">;
 
 export interface LegacyProvisioningDeps {
   readonly client: LegacyProvisioningClient;
   readonly now?: () => number;
   readonly longPollSeconds?: number;
+  readonly sleep?: (ms: number) => Promise<void>;
 }
 
 function clampSeconds(seconds: number): number {
@@ -94,9 +98,30 @@ function notProvisioned(uid: string): ProvisioningWait<never> {
   return { ready: false, reason: "NotProvisioned", retryAfterSeconds: DEFAULT_RETRY_AFTER_SECONDS };
 }
 
+function keyRegistered(key: GitKey): boolean {
+  return key.status.observedGeneration >= key.generation &&
+    key.status.conditions.some((candidate) => candidate.type === "Registered" && candidate.status === "True");
+}
+
+function keyPending(key: GitKey): ProvisioningWait<never> {
+  if (key.status.observedGeneration < key.generation) {
+    return { ready: false, reason: "GenerationNotObserved", retryAfterSeconds: DEFAULT_RETRY_AFTER_SECONDS };
+  }
+  const registered = key.status.conditions.find((candidate) => candidate.type === "Registered");
+  const reason = registered?.reason ?? "RegisteredUnknown";
+  logger.error("legacy provisioning: the provisioning service has not registered the gateway's git key", {
+    uid: key.uid,
+    gatewayId: key.gatewayId,
+    reason,
+    message: registered?.message ?? "",
+  });
+  return { ready: false, reason, retryAfterSeconds: DEFAULT_RETRY_AFTER_SECONDS };
+}
+
 export function createLegacyProvisioning(deps: LegacyProvisioningDeps): LegacyProvisioning {
   const now = deps.now ?? Date.now;
   const longPollSeconds = deps.longPollSeconds ?? LEGACY_PROVISIONING_LONG_POLL_SECONDS;
+  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
 
   function notReady(reason: string, resource: UserProvisioning | null): Extract<ProvisioningWait<never>, { ready: false }> {
     const nextAttemptAt = resource?.status.work.nextAttemptAt;
@@ -181,6 +206,21 @@ export function createLegacyProvisioning(deps: LegacyProvisioningDeps): LegacyPr
         return { ready: false, reason: "CredentialsNotIssued", retryAfterSeconds: DEFAULT_RETRY_AFTER_SECONDS };
       }
       return { ready: true, value: credential.value };
+    },
+
+    async gitKey(uid, gatewayId, publicKey, budget) {
+      for (;;) {
+        let key: GitKey;
+        try {
+          key = (await deps.client.putGitKey(uid, gatewayId, { publicKey }, { signal: budget.signal })).key;
+        } catch (error) {
+          if (error instanceof ProvisioningServiceError && error.status === 404) return notProvisioned(uid);
+          return unavailable(uid, error);
+        }
+        if (keyRegistered(key)) return { ready: true, value: undefined };
+        if (budget.remainingMs() - GIT_KEY_POLL_MS < RESERVED_AFTER_LONG_POLL_MS) return keyPending(key);
+        await sleep(GIT_KEY_POLL_MS);
+      }
     },
   };
 }
