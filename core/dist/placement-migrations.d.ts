@@ -1,4 +1,5 @@
 import { type ReleasePayload } from "@octogee/shared/types/gateway-releases";
+import type { PlacementOwnerFence } from "./placement-automation-owner.js";
 import { GatewayRetirementConflictError } from "./gateway-retirement-claim.js";
 import type { OperationRecord } from "./platform-state/operations.js";
 import type { PlatformStateTransaction, Stored } from "./platform-state/store.js";
@@ -14,6 +15,7 @@ export interface PlacementMigrationClassifier {
     sourceRecoveryForwardRetryable(operation: Stored<OperationRecord>): boolean;
 }
 export interface PlacementMigrationEnqueueContext extends PlacementMigrationClassifier {
+    requireOwner: PlacementOwnerFence;
     now: number;
     platformArtifact: ReleasePayload | null;
 }
@@ -84,6 +86,7 @@ export type SupersedePendingSharedDrainMoveOutcome = {
     reason: string;
 };
 export declare function supersedePendingSharedDrainMoveInTransaction(transaction: PlatformStateTransaction, context: {
+    requireOwner: PlacementOwnerFence;
     now: number;
     operationJournalRetentionMs: number;
 }, request: SupersedePendingSharedDrainMoveRequest): Promise<SupersedePendingSharedDrainMoveOutcome>;

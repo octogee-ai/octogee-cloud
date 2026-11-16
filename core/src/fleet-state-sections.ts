@@ -7,6 +7,8 @@ import {
 import type { OperationKind, OperationStatus } from "@octogee/shared/types/glm";
 import { isSharedPoolMemberRoot } from "@octogee/shared/types/shared-gateway-pool";
 import type { GatewayArtifact } from "./gateway-live-release.js";
+import { readPlacementAutomationOwnership } from "./placement-automation-owner.js";
+import { placementAutomationState } from "./placement-automation-handoff.js";
 import { InvalidSharedGatewayAutoscalingConfigError, readSharedGatewayAutoscalingConfigInStore } from "./shared-gateway-pool-read.js";
 import type { FleetRegistryRecord } from "./platform-state/fleet-registry.js";
 import type { GatewayRoot } from "./platform-state/gateways.js";
@@ -23,6 +25,7 @@ export const FLEET_STATE_SECTIONS = [
   "runtimes",
   "operations",
   "migrations",
+  "placementAutomation",
 ] as const;
 
 export type FleetStateSection = (typeof FLEET_STATE_SECTIONS)[number];
@@ -152,6 +155,7 @@ export async function readFleetStateSections<User extends { readonly provisionin
       runtimes: async () => ({ runtimes: await runtimes() }),
       operations: async () => ({ operations: await transaction.journal.operations.listByStatus(input.operationStatuses) }),
       migrations: async () => ({ migrations: await transaction.journal.operations.listByKind(MIGRATE_USER, ACTIVE_MIGRATION_STATUSES) }),
+      placementAutomation: async () => ({ placementAutomation: placementAutomationState(await readPlacementAutomationOwnership(transaction)) }),
     };
 
     const answered = await Promise.all(input.sections.map((section) => loaders[section]()));

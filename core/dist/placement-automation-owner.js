@@ -47,6 +47,12 @@ export async function assertFleetControllerOwnsPlacementAutomation(transaction) 
         throw new PlacementOwnerRefusedError(ownership, "fleet-controller");
     return ownership;
 }
+export const requireClientPlacementOwner = async (transaction) => {
+    await assertClientOwnsPlacementAutomation(transaction);
+};
+export const requireFleetControllerPlacementOwner = async (transaction) => {
+    await assertFleetControllerOwnsPlacementAutomation(transaction);
+};
 export function placementOwnerRefusalBody(error) {
     if (error instanceof PlacementOwnerRefusedError)
         return { code: PLACEMENT_OWNER_REFUSAL_CODE, error: error.message };

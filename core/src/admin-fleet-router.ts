@@ -113,6 +113,7 @@ import { addAdminComputerRoutes } from "./admin-vm-router.js";
 import { addAdminUserRoutes, type UserAccounts, type UserSignInHosts } from "./admin-user-router.js";
 import { addAdminSharedPoolRoutes, type AdminSharedPoolRouterDeps } from "./admin-shared-pool-router.js";
 import type { GatewayKubernetesReader } from "./fleet-state-sections.js";
+import { addAdminPlacementOwnerRoutes } from "./admin-placement-owner-router.js";
 import { addAdminPlacementRoutes, type AdminPlacementCapabilities } from "./admin-placement-router.js";
 import { addAdminPlacementSharedRoutes, type AdminPlacementSharedCapabilities } from "./admin-placement-shared-router.js";
 import { addAdminPlacementIsolatedRoutes, type AdminIsolatedCapabilities } from "./admin-placement-isolated-router.js";
@@ -4768,6 +4769,7 @@ export function addAdminFleetRoutes(
     provisioningReadiness: deps.provisioningReadiness,
     readGatewayKubernetes: deps.readGatewayKubernetes,
   });
+  addAdminPlacementOwnerRoutes(router, { store, journal: runAdminFleetMutation, log: (message) => logger.info(message) });
   if (deps.placement) addAdminPlacementRoutes(router, { ...deps.placement, store, journal: runAdminFleetMutation });
   if (deps.placementShared) addAdminPlacementSharedRoutes(router, { ...deps.placementShared, store, journal: runAdminFleetMutation });
   if (deps.isolated) addAdminPlacementIsolatedRoutes(router, { store, journal: runAdminFleetMutation, accounts: deps.accounts, capabilities: deps.isolated, log: (message) => deps.logger.info(message), warn: (message) => deps.logger.warn(message) });
