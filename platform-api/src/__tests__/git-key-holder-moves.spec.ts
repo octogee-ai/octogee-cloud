@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createGiteaGitHost, type GiteaGitHost } from "@octogee/core/git-host";
-import { gatewayKeyOwnerId } from "@octogee/core/gitea-naming";
+import { gatewayKeyOwnerId, gatewayKeyTitle } from "@octogee/core/gitea-naming";
 
 const SLUG = "acme";
 
@@ -29,14 +29,20 @@ function fakeGitea() {
     throw new Error(`unexpected git host request ${method} ${path}`);
   };
   const host = createGiteaGitHost({ apiBaseUrl: "http://gitea.invalid/api/v1", token: () => "token", fetch });
-  return { host, keys: () => held.map(({ key }) => key).sort() };
+  const deleteTitled = (title: string) => {
+    for (let index = held.length - 1; index >= 0; index -= 1) if (held[index].title === title) held.splice(index, 1);
+  };
+  return { host, deleteTitled, keys: () => held.map(({ key }) => key).sort() };
 }
 
-function contractService(host: GiteaGitHost) {
+function contractService({ host, deleteTitled }: Pick<ReturnType<typeof fakeGitea>, "host" | "deleteTitled">) {
   const rows = new Map<string, string>();
+  const puts: string[] = [];
   return {
+    puts,
     rows: () => [...rows.entries()].map(([holder, publicKey]) => ({ holder, publicKey })).sort((a, b) => a.holder.localeCompare(b.holder)),
     async put(holder: string, publicKey: string) {
+      puts.push(holder);
       rows.set(holder, publicKey);
       await host.registerKey(SLUG, publicKey, holder);
     },
@@ -46,7 +52,7 @@ function contractService(host: GiteaGitHost) {
     async release(holder: string, expectedPublicKey: string) {
       if (rows.get(holder) !== expectedPublicKey) return;
       rows.delete(holder);
-      await host.releaseKey(SLUG, expectedPublicKey, holder);
+      deleteTitled(gatewayKeyTitle(holder));
     },
   };
 }
@@ -103,7 +109,7 @@ const carriedDisk = (from: Pod): Disk => ({ ...from.disk });
 describe("git keys across a move between builds, under the per-pod holder contract", () => {
   it("ends with one key held by the target pod when a user moves from this build to a previous build", async () => {
     const git = fakeGitea();
-    const service = contractService(git.host);
+    const service = contractService(git);
     const source = pod("shared-blue", "octogee-gateway-shared-blue-5bc59-a1b2c");
     await thisBuild(git.host, service).serviceMount(source);
     const target = pod("isolated-acme", "octogee-gateway-isolated-acme-0", carriedDisk(source));
@@ -121,7 +127,7 @@ describe("git keys across a move between builds, under the per-pod holder contra
 
   it("ends with one key held by the target pod when a user moves from a previous build to this build", async () => {
     const git = fakeGitea();
-    const service = contractService(git.host);
+    const service = contractService(git);
     const source = pod("shared-blue", "octogee-gateway-shared-blue-5bc59-a1b2c", { key: newKey(), marker: null });
     await previousBuild(git.host).claim(source);
     const target = pod("isolated-acme", "octogee-gateway-isolated-acme-0", carriedDisk(source));
@@ -139,7 +145,7 @@ describe("git keys across a move between builds, under the per-pod holder contra
 
   it("keeps a key per pod while one gateway rolls with a surge, and the older pod's unmount removes only its own", async () => {
     const git = fakeGitea();
-    const service = contractService(git.host);
+    const service = contractService(git);
     const build = thisBuild(git.host, service);
     const older = pod("shared-blue", "octogee-gateway-shared-blue-5bc59-a1b2c");
     const newer = pod("shared-blue", "octogee-gateway-shared-blue-7d8e9-f3g4h");
@@ -156,5 +162,38 @@ describe("git keys across a move between builds, under the per-pod holder contra
 
     expect(git.keys()).toEqual([newer.disk.key]);
     expect(service.rows()).toEqual([{ holder: newer.holder, publicKey: newer.disk.key }]);
+  });
+
+  it("puts the key again when a pod remounts a user with the key it already registered", async () => {
+    const git = fakeGitea();
+    const service = contractService(git);
+    const build = thisBuild(git.host, service);
+    const serving = pod("shared-blue", "octogee-gateway-shared-blue-5bc59-a1b2c");
+
+    await build.serviceMount(serving);
+    const first = serving.disk.key;
+    await build.serviceMount(serving);
+
+    expect(serving.disk.key).toBe(first);
+    expect(service.puts).toEqual([serving.holder, serving.holder]);
+    expect(git.keys()).toEqual([first]);
+  });
+
+  it("registers a fresh key for a replaced machine whose retained home holds the old holder's key, and the old holder's release leaves it", async () => {
+    const git = fakeGitea();
+    const service = contractService(git);
+    const build = thisBuild(git.host, service);
+    const replaced = pod("isolated-acme", "octogee-vm-isolated-acme-1111");
+    await build.serviceMount(replaced);
+    const replacement = pod("isolated-acme", "octogee-vm-isolated-acme-2222", replaced.disk);
+    const retainedKey = replacement.disk.key;
+
+    await build.serviceMount(replacement);
+    await service.release(replaced.holder, retainedKey!);
+    await service.reconcile();
+
+    expect(replacement.disk.key).not.toBe(retainedKey);
+    expect(git.keys()).toEqual([replacement.disk.key]);
+    expect(service.rows()).toEqual([{ holder: replacement.holder, publicKey: replacement.disk.key }]);
   });
 });
