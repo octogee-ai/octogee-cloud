@@ -2291,6 +2291,8 @@ function startControllerBackgroundTasks({
       store: deps.store,
       readGatewayPodDiagnosticsBatch: (gatewayIds) =>
         kubeOps.readGatewayPodDiagnosticsBatch({ namespace: NAMESPACE, gatewayIds }),
+      retiredGatewayKeys: provisioning?.client ?? null,
+      log,
     }),
     mode: parseGiteaGatewayKeyGcMode(process.env.GITEA_GATEWAY_KEY_GC_MODE),
     maxCallsPerTick: GITEA_GATEWAY_KEY_GC_MAX_CALLS_PER_TICK,

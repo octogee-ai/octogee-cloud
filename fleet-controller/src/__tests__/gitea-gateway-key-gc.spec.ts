@@ -36,8 +36,14 @@ function diagnostics(podNames: string[], status: GatewayPodDiagnostics["status"]
   };
 }
 
-function root(gatewayId: string) {
-  return { gatewayId };
+function root(gatewayId: string, desiredStatus: "running" | "paused" | "retired" = "running") {
+  return { gatewayId, desiredStatus };
+}
+
+const NO_RELEASES = { retiredGatewayKeys: null, log: () => {} };
+
+function missingPods(gatewayIds: readonly string[]) {
+  return Object.fromEntries(gatewayIds.map((id) => [id, diagnostics([], "missing")]));
 }
 
 function runtime(gatewayId: string, vm: { instanceId: string } | null = null) {
@@ -61,6 +67,7 @@ describe("readLiveGatewayKeyHolders", () => {
         runtime("builder-jack", { instanceId: "123456789" }),
       ],
       readGatewayPodDiagnosticsBatch: readBatch,
+      ...NO_RELEASES,
     });
 
     expect(readBatch).toHaveBeenCalledWith(["builder-jack", "shared-0"]);
@@ -75,10 +82,10 @@ describe("readLiveGatewayKeyHolders", () => {
 
   it("keeps every known gateway's own id live, including a gateway with no pod, because the provisioning service holds keys under it", async () => {
     const { owners } = await readLiveGatewayKeyHolders({
-      gateways: [root("builder-paused")],
+      gateways: [root("builder-paused", "paused")],
       fleetRegistry: [],
-      readGatewayPodDiagnosticsBatch: async (gatewayIds) =>
-        Object.fromEntries(gatewayIds.map((id) => [id, diagnostics([], "missing")])),
+      readGatewayPodDiagnosticsBatch: async (gatewayIds) => missingPods(gatewayIds),
+      ...NO_RELEASES,
     });
 
     expect([...owners]).toEqual(["builder-paused"]);
@@ -95,6 +102,7 @@ describe("readLiveGatewayKeyHolders", () => {
       informer: { gateways: () => null, fleetRegistry: () => null },
       store,
       readGatewayPodDiagnosticsBatch: readBatch,
+      ...NO_RELEASES,
     })).rejects.toBeInstanceOf(MalformedRecordError);
     expect(readBatch).not.toHaveBeenCalled();
   });
@@ -108,8 +116,8 @@ describe("readLiveGatewayKeyHolders", () => {
         fleetRegistry: () => [runtime("builder-jack", { instanceId: "123456789" })],
       },
       store,
-      readGatewayPodDiagnosticsBatch: async (gatewayIds) =>
-        Object.fromEntries(gatewayIds.map((id) => [id, diagnostics([], "missing")])),
+      readGatewayPodDiagnosticsBatch: async (gatewayIds) => missingPods(gatewayIds),
+      ...NO_RELEASES,
     });
 
     expect([...owners].sort()).toEqual(["builder-jack", "builder-jack/octogee-gateway-builder-jack-vm-123456789"]);
@@ -123,7 +131,72 @@ describe("readLiveGatewayKeyHolders", () => {
       readGatewayPodDiagnosticsBatch: async () => ({
         "shared-0": { ...diagnostics([], "unknown"), error: "pods not found" },
       }),
+      ...NO_RELEASES,
     })).rejects.toThrow(/shared-0.*pods not found/);
+  });
+});
+
+describe("readLiveGatewayKeyHolders and retired gateways", () => {
+  function releases(answer: (gatewayId: string) => Promise<{ remaining: number }>) {
+    return { releaseGatewayGitKeys: vi.fn(answer) };
+  }
+
+  it("releases a retired gateway's git keys on each pass and stops holding its own id once none remain", async () => {
+    const retiredGatewayKeys = releases(async () => ({ remaining: 0 }));
+
+    const { owners } = await readLiveGatewayKeyHolders({
+      gateways: [root("walter"), root("builder-gone", "retired")],
+      fleetRegistry: [],
+      readGatewayPodDiagnosticsBatch: async (gatewayIds) => missingPods(gatewayIds),
+      retiredGatewayKeys,
+      log: () => {},
+    });
+
+    expect([...owners]).toEqual(["walter"]);
+    expect(retiredGatewayKeys.releaseGatewayGitKeys).toHaveBeenCalledExactlyOnceWith("builder-gone");
+  });
+
+  it("keeps a retired gateway's own id live while the service still holds its rows, and logs how many", async () => {
+    const log = vi.fn();
+
+    const { owners } = await readLiveGatewayKeyHolders({
+      gateways: [root("builder-gone", "retired")],
+      fleetRegistry: [],
+      readGatewayPodDiagnosticsBatch: async (gatewayIds) => missingPods(gatewayIds),
+      retiredGatewayKeys: releases(async () => ({ remaining: 2 })),
+      log,
+    });
+
+    expect([...owners]).toEqual(["builder-gone"]);
+    expect(log).toHaveBeenCalledWith("[gitea-key-gc] retired gateway builder-gone: the provisioning service still holds 2 git key rows, so its own id stays a live holder");
+  });
+
+  it("keeps a retired gateway's own id live and logs the failure when the release fails, so the next pass retries it", async () => {
+    const log = vi.fn();
+
+    const { owners } = await readLiveGatewayKeyHolders({
+      gateways: [root("builder-gone", "retired"), root("walter")],
+      fleetRegistry: [],
+      readGatewayPodDiagnosticsBatch: async (gatewayIds) => missingPods(gatewayIds),
+      retiredGatewayKeys: releases(async () => {
+        throw new Error("provisioning service unavailable");
+      }),
+      log,
+    });
+
+    expect([...owners].sort()).toEqual(["builder-gone", "walter"]);
+    expect(log).toHaveBeenCalledWith("[gitea-key-gc] ⚠ retired gateway builder-gone: releasing its git keys failed — provisioning service unavailable; its own id stays a live holder");
+  });
+
+  it("keeps a retired gateway's own id live when the provisioning service is off", async () => {
+    const { owners } = await readLiveGatewayKeyHolders({
+      gateways: [root("builder-gone", "retired")],
+      fleetRegistry: [],
+      readGatewayPodDiagnosticsBatch: async (gatewayIds) => missingPods(gatewayIds),
+      ...NO_RELEASES,
+    });
+
+    expect([...owners]).toEqual(["builder-gone"]);
   });
 });
 
@@ -181,8 +254,8 @@ describe("the key sweep and the provisioning service's adopted keys", () => {
       readLiveKeyHolders: () => readLiveGatewayKeyHolders({
         gateways: [root("walter")],
         fleetRegistry: [],
-        readGatewayPodDiagnosticsBatch: async (gatewayIds) =>
-          Object.fromEntries(gatewayIds.map((id) => [id, diagnostics([], "missing")])),
+        readGatewayPodDiagnosticsBatch: async (gatewayIds) => missingPods(gatewayIds),
+        ...NO_RELEASES,
       }),
       mode: "enforce",
       maxCallsPerTick: 100,
@@ -196,5 +269,32 @@ describe("the key sweep and the provisioning service's adopted keys", () => {
     expect(keys.map(({ title, key }) => ({ title, key }))).toEqual([
       { title: gatewayKeyTitle("walter"), key: "ssh-ed25519 AAAAlin lin@gateway" },
     ]);
+  });
+
+  it("sweeps a key held under a retired gateway's own id once the service holds none of its rows", async () => {
+    let now = Date.parse("2026-11-15T18:00:00Z");
+    const old = new Date(now - 30 * 24 * 3_600_000).toISOString();
+    const keys: StoredKey[] = [{ id: 1, title: gatewayKeyTitle("walter"), key: "ssh-ed25519 AAAAlin lin@gateway", created_at: old }];
+    const host = fakeGitea(() => now, keys);
+    now += GRACE_MS + 60_000;
+
+    await host.sweepKeys({
+      readLiveKeyHolders: () => readLiveGatewayKeyHolders({
+        gateways: [root("walter", "retired")],
+        fleetRegistry: [],
+        readGatewayPodDiagnosticsBatch: async (gatewayIds) => missingPods(gatewayIds),
+        retiredGatewayKeys: { releaseGatewayGitKeys: async () => ({ remaining: 0 }) },
+        log: () => {},
+      }),
+      mode: "enforce",
+      maxCallsPerTick: 100,
+      minCallIntervalMs: 0,
+      graceMs: GRACE_MS,
+      now: () => now,
+      sleep: async () => {},
+      log: () => {},
+    }, createGitKeySweepState());
+
+    expect(keys).toEqual([]);
   });
 });

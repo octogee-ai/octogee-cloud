@@ -8,6 +8,7 @@ import {
   type ManagedGitHost,
 } from "@octogee/core/git-host";
 import type { FleetRegistryRecord, GatewayRoot, PlatformStateStore } from "@octogee/core/platform-state";
+import type { ProvisioningServiceClient } from "@octogee/core/provisioning-service-client";
 import type { FleetInformer } from "./fleet-informer.js";
 import { gatewayVmPodName } from "@octogee/shared/types/glm";
 
@@ -21,12 +22,32 @@ export function parseGiteaGatewayKeyGcMode(
   throw new Error(`${envName} must be dry-run or enforce (got ${raw ?? "<unset>"})`);
 }
 
+export type RetiredGatewayKeyRelease = Pick<ProvisioningServiceClient, "releaseGatewayGitKeys">;
+
 export interface LiveGatewayOwnerSources {
-  gateways: readonly Pick<GatewayRoot, "gatewayId">[];
+  gateways: readonly Pick<GatewayRoot, "gatewayId" | "desiredStatus">[];
   fleetRegistry: readonly Pick<FleetRegistryRecord, "gatewayId" | "vm">[];
   readGatewayPodDiagnosticsBatch: (
     gatewayIds: readonly string[],
   ) => Promise<Record<string, GatewayPodDiagnostics>>;
+  retiredGatewayKeys: RetiredGatewayKeyRelease | null;
+  log: (message: string) => void;
+}
+
+async function retiredGatewaysWithoutKeys(sources: LiveGatewayOwnerSources): Promise<Set<string>> {
+  const released = new Set<string>();
+  const { retiredGatewayKeys, log } = sources;
+  if (retiredGatewayKeys === null) return released;
+  for (const { gatewayId } of sources.gateways.filter((gateway) => gateway.desiredStatus === "retired")) {
+    try {
+      const { remaining } = await retiredGatewayKeys.releaseGatewayGitKeys(gatewayId);
+      if (remaining === 0) released.add(gatewayId);
+      else log(`[gitea-key-gc] retired gateway ${gatewayId}: the provisioning service still holds ${remaining} git key rows, so its own id stays a live holder`);
+    } catch (err) {
+      log(`[gitea-key-gc] ⚠ retired gateway ${gatewayId}: releasing its git keys failed — ${err instanceof Error ? err.message : String(err)}; its own id stays a live holder`);
+    }
+  }
+  return released;
 }
 
 function vmOwner(record: Pick<FleetRegistryRecord, "gatewayId" | "vm">): { gatewayId: string; owner: string } | null {
@@ -61,7 +82,8 @@ async function readOwnersByGateway(sources: LiveGatewayOwnerSources): Promise<Ma
     const vm = vmOwner(record);
     if (vm) addOwner(vm.gatewayId, vm.owner);
   }
-  for (const gatewayId of ids) addOwner(gatewayId, gatewayId);
+  const released = await retiredGatewaysWithoutKeys(sources);
+  for (const gatewayId of ids) if (!released.has(gatewayId)) addOwner(gatewayId, gatewayId);
   return ownersByGateway;
 }
 
@@ -74,6 +96,8 @@ export interface FleetKeyHolderSources {
   informer: Pick<FleetInformer, "gateways" | "fleetRegistry">;
   store: Pick<PlatformStateStore, "gateways" | "fleetRegistry">;
   readGatewayPodDiagnosticsBatch: LiveGatewayOwnerSources["readGatewayPodDiagnosticsBatch"];
+  retiredGatewayKeys: LiveGatewayOwnerSources["retiredGatewayKeys"];
+  log: LiveGatewayOwnerSources["log"];
 }
 
 export async function readFleetLiveKeyHolders(sources: FleetKeyHolderSources): Promise<GitKeyHolders> {
@@ -85,6 +109,8 @@ export async function readFleetLiveKeyHolders(sources: FleetKeyHolderSources): P
     gateways,
     fleetRegistry,
     readGatewayPodDiagnosticsBatch: sources.readGatewayPodDiagnosticsBatch,
+    retiredGatewayKeys: sources.retiredGatewayKeys,
+    log: sources.log,
   });
 }
 
