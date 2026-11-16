@@ -10,9 +10,11 @@ import {
 } from "@octogee/shared/types/gateway-releases";
 import type { SharedGatewayPoolConfig } from "@octogee/shared/types/shared-gateway-pool";
 import { gatewayArtifactFromReleasePayload } from "./gateway-live-release.js";
+import { PlacementOwnerRefusedError, requireFleetControllerPlacementOwner, type PlacementOwnerFence } from "./placement-automation-owner.js";
 import { readSharedGatewayPoolConfigInStore } from "./shared-gateway-pool-read.js";
 import {
   FleetMutationIdempotencyError,
+  FleetMutationRefusedError,
   runNormalFleetMutation,
 } from "./normal-fleet-mutation.js";
 import type { FleetRegistryRecord } from "./platform-state/fleet-registry.js";
@@ -240,8 +242,13 @@ async function appendRecoveryRollback(
   deps: SharedGatewayRollRecoveryDeps,
   input: SupersedeRollingSharedGatewayRollInput,
 ): Promise<SupersedeRollingSharedGatewayRollResult> {
-  return deps.store.transaction({ label: "shared-gateway-roll-recovery.append" }, (transaction) =>
-    appendSharedRollRecoveryInTransaction(transaction, input, { now: deps.now() }));
+  try {
+    return await deps.store.transaction({ label: "shared-gateway-roll-recovery.append" }, (transaction) =>
+      appendSharedRollRecoveryInTransaction(transaction, input, { now: deps.now(), requireOwner: requireFleetControllerPlacementOwner }));
+  } catch (error) {
+    if (error instanceof PlacementOwnerRefusedError) throw new FleetMutationRefusedError(error);
+    throw error;
+  }
 }
 
 function withObservedKubernetes(
@@ -255,8 +262,9 @@ function withObservedKubernetes(
 export async function appendSharedRollRecoveryInTransaction(
   transaction: PlatformStateTransaction,
   input: SupersedeRollingSharedGatewayRollInput,
-  options: { now: number; sourceKubernetes?: GatewayKubernetesObservation },
+  options: { now: number; requireOwner: PlacementOwnerFence; sourceKubernetes?: GatewayKubernetesObservation },
 ): Promise<SupersedeRollingSharedGatewayRollResult> {
+  await options.requireOwner(transaction);
   const operationId = sharedRollRecoveryOperationId(input);
   const gatewayIds = [input.targetGatewayId, input.sourceGatewayId];
   const [roots, runtimes, pool, operation, assignments, operations] = await Promise.all([
@@ -331,6 +339,7 @@ export async function supersedeRollingSharedGatewayRoll(
   deps: SharedGatewayRollRecoveryDeps,
   input: SupersedeRollingSharedGatewayRollInput,
 ): Promise<SupersedeRollingSharedGatewayRollResult> {
+  await deps.store.transaction({ label: "shared-gateway-roll-recovery.owner", readOnly: true }, requireFleetControllerPlacementOwner);
   try {
     return await runNormalFleetMutation(deps.store, {
       actor: ACTOR,

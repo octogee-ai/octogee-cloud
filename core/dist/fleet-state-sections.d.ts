@@ -5,7 +5,7 @@ import type { FleetRegistryRecord } from "./platform-state/fleet-registry.js";
 import type { GatewayRoot } from "./platform-state/gateways.js";
 import type { PlatformUserRecord } from "./platform-state/users.js";
 import type { PlatformStateStore, PlatformStateTransaction, Stored } from "./platform-state/store.js";
-export declare const FLEET_STATE_SECTIONS: readonly ["config", "sharedPoolAutomation", "users", "gateways", "releases", "assignments", "runtimes", "operations", "migrations"];
+export declare const FLEET_STATE_SECTIONS: readonly ["config", "sharedPoolAutomation", "users", "gateways", "releases", "assignments", "runtimes", "operations", "migrations", "placementAutomation"];
 export type FleetStateSection = (typeof FLEET_STATE_SECTIONS)[number];
 export declare const FLEET_STATE_SECTIONS_ERROR: string;
 export type GatewayKubernetesReader = (runtime: Stored<FleetRegistryRecord> | null, now: number) => GatewayKubernetesReading;

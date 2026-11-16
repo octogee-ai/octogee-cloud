@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   recordGatewayHealth,
+  recordPlacementAutomation,
   recordConfigRoll,
   recordDisruptionObservation,
   recordDisruptionSnapshot,
@@ -113,5 +114,29 @@ describe("glm-controller metrics", () => {
     expect(out).toContain("glm_disruption_gateway_pods 4");
     expect(out).toContain("glm_disruption_pending_gateway_pods 1");
     expect(out).toContain("glm_disruption_last_observed_timestamp_seconds 1700000000.000");
+  });
+
+  it("renders no placement automation series before the first observation", () => {
+    expect(renderMetrics()).not.toContain("glm_placement_automation");
+  });
+
+  it("marks the placement automation owner and phase, the yield time and a pending handoff", () => {
+    recordPlacementAutomation({ owner: "client", yieldedAt: null, phase: "handoff-pending", pendingObservations: 4 });
+    const pending = renderMetrics();
+
+    expect(pending).toContain("# TYPE glm_placement_automation_owner gauge");
+    expect(pending).toContain('glm_placement_automation_owner{owner="fleet-controller",phase="fleet-controller"} 0');
+    expect(pending).toContain('glm_placement_automation_owner{owner="client",phase="handoff-pending"} 1');
+    expect(pending).toContain('glm_placement_automation_owner{owner="client",phase="client"} 0');
+    expect(pending).toContain("glm_placement_automation_yielded_timestamp_seconds 0.000");
+    expect(pending).toContain("glm_placement_automation_handoff_pending_observations 4");
+
+    recordPlacementAutomation({ owner: "client", yieldedAt: 1_700_000_000_000, phase: "client", pendingObservations: 0 });
+    const handed = renderMetrics();
+
+    expect(handed).toContain('glm_placement_automation_owner{owner="client",phase="client"} 1');
+    expect(handed).toContain('glm_placement_automation_owner{owner="client",phase="handoff-pending"} 0');
+    expect(handed).toContain("glm_placement_automation_yielded_timestamp_seconds 1700000000.000");
+    expect(handed).toContain("glm_placement_automation_handoff_pending_observations 0");
   });
 });

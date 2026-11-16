@@ -1,5 +1,7 @@
 import { isReleasePayload, releasePayloadHash, } from "@octogee/shared/types/gateway-releases";
 import { isSharedPoolMemberRoot } from "@octogee/shared/types/shared-gateway-pool";
+import { readPlacementAutomationOwnership } from "./placement-automation-owner.js";
+import { placementAutomationState } from "./placement-automation-handoff.js";
 import { InvalidSharedGatewayAutoscalingConfigError, readSharedGatewayAutoscalingConfigInStore } from "./shared-gateway-pool-read.js";
 export const FLEET_STATE_SECTIONS = [
     "config",
@@ -11,6 +13,7 @@ export const FLEET_STATE_SECTIONS = [
     "runtimes",
     "operations",
     "migrations",
+    "placementAutomation",
 ];
 export const FLEET_STATE_SECTIONS_ERROR = `sections must be a comma-separated list of ${FLEET_STATE_SECTIONS.join(", ")}`;
 const MIGRATE_USER = "migrate-user";
@@ -112,6 +115,7 @@ export async function readFleetStateSections(store, input) {
             runtimes: async () => ({ runtimes: await runtimes() }),
             operations: async () => ({ operations: await transaction.journal.operations.listByStatus(input.operationStatuses) }),
             migrations: async () => ({ migrations: await transaction.journal.operations.listByKind(MIGRATE_USER, ACTIVE_MIGRATION_STATUSES) }),
+            placementAutomation: async () => ({ placementAutomation: placementAutomationState(await readPlacementAutomationOwnership(transaction)) }),
         };
         const answered = await Promise.all(input.sections.map((section) => loaders[section]()));
         return Object.assign({ generatedAt: input.now, fleetControllerStartedAt: input.controllerStartedAt ?? null, sections: input.sections }, ...answered);

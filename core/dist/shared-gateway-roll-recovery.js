@@ -1,8 +1,9 @@
 import { GATEWAY_UNREACHABLE_AFTER_MS } from "@octogee/shared/types/fleet-controller";
 import { hasFreshReadyKubernetesObservation, isReleasePayload, projectGatewayDesiredRootForGateway, releasePayloadHash, } from "@octogee/shared/types/gateway-releases";
 import { gatewayArtifactFromReleasePayload } from "./gateway-live-release.js";
+import { PlacementOwnerRefusedError, requireFleetControllerPlacementOwner } from "./placement-automation-owner.js";
 import { readSharedGatewayPoolConfigInStore } from "./shared-gateway-pool-read.js";
-import { FleetMutationIdempotencyError, runNormalFleetMutation, } from "./normal-fleet-mutation.js";
+import { FleetMutationIdempotencyError, FleetMutationRefusedError, runNormalFleetMutation, } from "./normal-fleet-mutation.js";
 const ACTOR = "glm-controller-placement-policy";
 export function sharedRollRecoveryOperationId(input) {
     return `recover-shared-roll-${input.sourceGatewayId}-to-${input.targetGatewayId}-r${input.expectedDesiredRelease}-to-r${input.expectedLiveRelease}`;
@@ -150,7 +151,14 @@ function recoveryRolloutOperation(input, operationId, release, payload, now) {
     };
 }
 async function appendRecoveryRollback(deps, input) {
-    return deps.store.transaction({ label: "shared-gateway-roll-recovery.append" }, (transaction) => appendSharedRollRecoveryInTransaction(transaction, input, { now: deps.now() }));
+    try {
+        return await deps.store.transaction({ label: "shared-gateway-roll-recovery.append" }, (transaction) => appendSharedRollRecoveryInTransaction(transaction, input, { now: deps.now(), requireOwner: requireFleetControllerPlacementOwner }));
+    }
+    catch (error) {
+        if (error instanceof PlacementOwnerRefusedError)
+            throw new FleetMutationRefusedError(error);
+        throw error;
+    }
 }
 function withObservedKubernetes(runtime, observation) {
     if (runtime === null || observation === undefined)
@@ -158,6 +166,7 @@ function withObservedKubernetes(runtime, observation) {
     return { ...runtime, kubernetes: observation };
 }
 export async function appendSharedRollRecoveryInTransaction(transaction, input, options) {
+    await options.requireOwner(transaction);
     const operationId = sharedRollRecoveryOperationId(input);
     const gatewayIds = [input.targetGatewayId, input.sourceGatewayId];
     const [roots, runtimes, pool, operation, assignments, operations] = await Promise.all([
@@ -222,6 +231,7 @@ export async function appendSharedRollRecoveryInTransaction(transaction, input, 
     return { kind: "scheduled", release, operationId };
 }
 export async function supersedeRollingSharedGatewayRoll(deps, input) {
+    await deps.store.transaction({ label: "shared-gateway-roll-recovery.owner", readOnly: true }, requireFleetControllerPlacementOwner);
     try {
         return await runNormalFleetMutation(deps.store, {
             actor: ACTOR,

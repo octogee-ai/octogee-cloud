@@ -287,6 +287,7 @@ describe("every changing route", () => {
       method: "post",
       path: "/shared-gateways/shared-b/add-operations/op-1/complete",
     },
+    "POST /placement-automation/owner": { method: "post", path: "/placement-automation/owner", body: { owner: "client" } },
   };
 
   function changingRoutes(router: Router): string[] {
