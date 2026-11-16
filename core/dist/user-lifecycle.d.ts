@@ -88,6 +88,7 @@ export type ServiceProvisioningAnswer = {
     readonly refused: true;
     readonly reason: string;
 };
+export type GivenUpUserGitKey = "absent" | "released" | "unreleasable";
 export interface ServiceGitKey {
     publicKey: string;
     registered: () => void;
@@ -95,9 +96,7 @@ export interface ServiceGitKey {
 export interface ServiceProvisioningAdapter {
     readiness: (uid: string) => Promise<ServiceProvisioningAnswer>;
     serviceGitKey: (slug: string, holder: string) => ServiceGitKey;
-    holdsServiceGitKey: (slug: string, holder: string | undefined) => boolean;
     registerGitKey: (uid: string, publicKey: string) => Promise<ServiceProvisioningAnswer>;
-    releaseGitKey: (uid: string, publicKey: string) => Promise<"released" | "not-configured">;
     sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
     now?: () => number;
 }
@@ -185,9 +184,9 @@ export interface UserLifecycleAdapter {
     initWorkspaceRepoFromExistingDir: (ctx: UserContext, path?: ProvisioningPath) => Promise<string | null>;
     hasUserSshKey: (slug: string) => boolean;
     generateUserSshKey: (slug: string) => string;
-    gitHost: Pick<ManagedGitHost, "registerKey" | "listKeys" | "releaseKey" | "ensureOwner" | "ensureRepo">;
+    gitHost: Pick<ManagedGitHost, "registerKey" | "listKeys" | "ensureOwner" | "ensureRepo">;
     readLocalUserPubKey: (slug: string) => string | null;
-    deleteUserSshKey: (slug: string) => Promise<void>;
+    giveUpUserGitKey: (slug: string) => Promise<GivenUpUserGitKey>;
     blobSyncForSlug: (slug: string) => Promise<void>;
     restoreByosubForAgent: (slug: string) => Promise<{
         restored: boolean;

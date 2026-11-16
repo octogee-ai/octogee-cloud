@@ -95,6 +95,7 @@ describe("prepareServiceGitKey", () => {
 
     expect(key.publicKey).not.toBe("ssh-ed25519 AAAA orphan");
     expect(readLocalUserPubKey("lin")).toBe(key.publicKey);
+    expect(logged.lines).toContainEqual(expect.stringContaining("lin: the key directory held no private key"));
   });
 
   it("refuses to prepare a key without a holder", () => {

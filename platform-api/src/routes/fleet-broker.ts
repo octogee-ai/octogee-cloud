@@ -467,12 +467,11 @@ function installServiceProvisioningRoutes(router: Router, deps: ResolvedFleetBro
   router.post("/git-key/release", async (req, res) => {
     const bound = boundGateway(req, res);
     if (!bound) return;
-    const uid = typeof req.body?.uid === "string" ? req.body.uid : "";
-    if (!uid) {
-      res.status(400).json({ error: "uid_required" });
+    const { slug, publicKey } = objectBody(req);
+    if (!isValidUsername(slug)) {
+      res.status(400).json({ error: "invalid_slug" });
       return;
     }
-    const publicKey = objectBody(req).publicKey;
     if (!isSshPublicKeyLine(publicKey)) {
       res.status(400).json({ error: "invalid_public_key" });
       return;
@@ -482,10 +481,12 @@ function installServiceProvisioningRoutes(router: Router, deps: ResolvedFleetBro
     const { legacyProvisioning } = deps;
     if (!serviceRouteConfigured(res, "git-key/release", legacyProvisioning)) return;
     await runBrokered(res, async () => {
-      if (await store.users.records.get(uid) === null) {
+      const user = await store.users.records.findBySlug(slug);
+      if (user === null) {
         res.status(404).json({ error: "not_found" });
         return;
       }
+      const { uid } = user;
       const outcome = await legacyProvisioning.releaseGitKey(uid, holder, publicKey.trim(), routeBudget());
       if (outcome === "superseded") {
         logger.info("gateway git key release: the row holds a newer registration, which stays", { uid, holder });

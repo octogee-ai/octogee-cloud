@@ -531,7 +531,7 @@ async function registerFirstTimeSshKey(adapter, slug) {
         }
     }
     catch (err) {
-        await adapter.deleteUserSshKey(slug).catch(() => { });
+        await adapter.giveUpUserGitKey(slug).catch((releaseError) => adapter.log(`[add:${slug}] ✖ could not give up the key whose registration failed; it stays on disk for the next mount: ${String(releaseError)}`, { status: "failed" }));
         throw new Error(`[add:${slug}] SSH key registration failed: ${String(err)}`);
     }
     adapter.log(`[add:${slug}] SSH key + Gitea user registered`);
@@ -539,7 +539,7 @@ async function registerFirstTimeSshKey(adapter, slug) {
 async function resyncSshKeyIfDrifted(adapter, slug, reclaimExistingSshKey) {
     const localPub = adapter.readLocalUserPubKey(slug);
     if (localPub === null) {
-        await adapter.deleteUserSshKey(slug).catch(() => { });
+        await adapter.giveUpUserGitKey(slug);
         throw new Error(`[add:${slug}] SSH key dir exists but pubkey is unreadable; cleared, retry will regenerate`);
     }
     const giteaPubKeys = await adapter.gitHost.listKeys(slug);
@@ -861,34 +861,23 @@ export async function removeUserFromGateway(adapter, uid, opts = {}) {
         await adapter.deleteDepartedUserState(slug);
         steps.push("delete-dir");
         adapter.log(`[remove:${slug}] user state deleted`);
-        if (await releaseUnmountedGiteaKey(adapter, snapshot))
+        if (await giveUpUnmountedGitKey(adapter, slug))
             steps.push("release-gitea-key");
         if (adapter.onUnmounted)
             adapter.onUnmounted(slug);
         return { wasMounted: true, steps };
     });
 }
-async function releaseUnmountedGiteaKey(adapter, snapshot) {
-    const { slug } = snapshot;
-    const pubKey = adapter.readLocalUserPubKey(slug);
-    if (pubKey === null)
-        return false;
-    const service = adapter.provisioningService;
+async function giveUpUnmountedGitKey(adapter, slug) {
     try {
-        if (!service?.holdsServiceGitKey(slug, snapshot.gitKeyHolder)) {
-            await adapter.gitHost.releaseKey(slug, pubKey);
-        }
-        else if (await service.releaseGitKey(snapshot.uid, pubKey) === "not-configured") {
-            adapter.log(`[remove:${slug}] the platform no longer provisions through the service; releasing the key on the git host by its key material`);
-            await adapter.gitHost.releaseKey(slug, pubKey);
-        }
+        if (await adapter.giveUpUserGitKey(slug) !== "released")
+            return false;
     }
     catch (err) {
-        adapter.log(`⚠ [remove:${slug}] Gitea key release failed; local keypair kept for the preStop release: ${String(err)}`);
+        adapter.log(`[remove:${slug}] ✖ git key release failed; the local keypair is kept for the preStop flush and for the next import of this user here, which release it again: ${String(err)}`, { status: "failed" });
         return false;
     }
-    await adapter.deleteUserSshKey(slug);
-    adapter.log(`[remove:${slug}] Gitea key released and local keypair removed`);
+    adapter.log(`[remove:${slug}] git key released and local keypair removed`);
     return true;
 }
 export function pubKeysMatch(a, b) {

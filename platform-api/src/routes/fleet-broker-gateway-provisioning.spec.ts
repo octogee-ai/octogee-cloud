@@ -391,10 +391,13 @@ describe("POST /internal/fleet/git-key", () => {
 });
 
 describe("POST /internal/fleet/git-key/release", () => {
-  it("releases only the caller's own gateway key while it holds the caller's public key, also after the user moved away", async () => {
+  const release = (app: express.Express, body: Record<string, unknown> = {}) =>
+    request(app).post("/internal/fleet/git-key/release").send({ slug: "alice", ...body });
+
+  it("releases only the caller's own holder's key, named by the user's slug, also after the user moved away", async () => {
     const { app, provisioning } = fixture({ assignedTo: "shared-green" });
 
-    await post(app, "git-key/release", { publicKey: PUBLIC_KEY }).expect(204);
+    await release(app, { publicKey: PUBLIC_KEY }).expect(204);
 
     expect(provisioning?.releaseGitKey).toHaveBeenCalledWith("uid-alice", HOLDER, PUBLIC_KEY, expect.objectContaining({ signal: expect.any(AbortSignal) }));
   });
@@ -402,7 +405,7 @@ describe("POST /internal/fleet/git-key/release", () => {
   it("refuses a caller whose token binds no pod", async () => {
     const { app, provisioning } = fixture({ podName: null });
 
-    await post(app, "git-key/release", { publicKey: PUBLIC_KEY }).expect(403);
+    await release(app, { publicKey: PUBLIC_KEY }).expect(403);
 
     expect(provisioning?.releaseGitKey).not.toHaveBeenCalled();
   });
@@ -411,7 +414,7 @@ describe("POST /internal/fleet/git-key/release", () => {
     const logged = vi.spyOn(logger, "info").mockImplementation(() => {});
     const { app } = fixture({ provisioning: legacyProvisioning({ releaseGitKey: vi.fn(async () => "superseded" as const) }) });
 
-    await post(app, "git-key/release", { publicKey: PUBLIC_KEY }).expect(204);
+    await release(app, { publicKey: PUBLIC_KEY }).expect(204);
 
     expect(logged).toHaveBeenCalledWith(expect.stringContaining("newer registration"), { uid: "uid-alice", holder: HOLDER });
   });
@@ -419,24 +422,43 @@ describe("POST /internal/fleet/git-key/release", () => {
   it("refuses a release without the public key it releases", async () => {
     const { app, provisioning } = fixture();
 
-    await post(app, "git-key/release").expect(400);
+    await release(app).expect(400);
 
+    expect(provisioning?.releaseGitKey).not.toHaveBeenCalled();
+  });
+
+  it("refuses a release that names no user slug", async () => {
+    const { app, provisioning } = fixture();
+
+    const response = await request(app).post("/internal/fleet/git-key/release").send({ uid: "uid-alice", publicKey: PUBLIC_KEY }).expect(400);
+
+    expect(response.body).toEqual({ error: "invalid_slug" });
     expect(provisioning?.releaseGitKey).not.toHaveBeenCalled();
   });
 
   it("refuses a gateway id in the body that is not the caller's", async () => {
     const { app, provisioning } = fixture();
 
-    await post(app, "git-key/release", { gatewayId: "shared-green", publicKey: PUBLIC_KEY }).expect(403);
+    await release(app, { gatewayId: "shared-green", publicKey: PUBLIC_KEY }).expect(403);
 
     expect(provisioning?.releaseGitKey).not.toHaveBeenCalled();
   });
 
-  it("answers 404 for a uid that names no user", async () => {
+  it("answers 404 not_found for a slug that names no user", async () => {
     const { app, provisioning } = fixture();
 
-    await request(app).post("/internal/fleet/git-key/release").send({ uid: "uid-nobody", publicKey: PUBLIC_KEY }).expect(404);
+    const response = await release(app, { slug: "nobody", publicKey: PUBLIC_KEY }).expect(404);
 
+    expect(response.body).toEqual({ error: "not_found" });
     expect(provisioning?.releaseGitKey).not.toHaveBeenCalled();
+  });
+
+  it("answers 409 for any caller while the platform does not run the provisioning service", async () => {
+    vi.spyOn(logger, "error").mockImplementation(() => {});
+    const { app } = fixture({ provisioning: null });
+
+    const response = await release(app, { publicKey: PUBLIC_KEY }).expect(409);
+
+    expect(response.body).toEqual({ error: "provisioning_service_not_configured" });
   });
 });

@@ -95,6 +95,8 @@ export type ServiceProvisioningAnswer =
   | { readonly ready: false; readonly reason: string; readonly retryAfterMs: number }
   | { readonly ready: false; readonly refused: true; readonly reason: string };
 
+export type GivenUpUserGitKey = "absent" | "released" | "unreleasable";
+
 export interface ServiceGitKey {
   publicKey: string;
   registered: () => void;
@@ -103,9 +105,7 @@ export interface ServiceGitKey {
 export interface ServiceProvisioningAdapter {
   readiness: (uid: string) => Promise<ServiceProvisioningAnswer>;
   serviceGitKey: (slug: string, holder: string) => ServiceGitKey;
-  holdsServiceGitKey: (slug: string, holder: string | undefined) => boolean;
   registerGitKey: (uid: string, publicKey: string) => Promise<ServiceProvisioningAnswer>;
-  releaseGitKey: (uid: string, publicKey: string) => Promise<"released" | "not-configured">;
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   now?: () => number;
 }
@@ -211,11 +211,11 @@ export interface UserLifecycleAdapter {
 
   hasUserSshKey: (slug: string) => boolean;
   generateUserSshKey: (slug: string) => string;
-  gitHost: Pick<ManagedGitHost, "registerKey" | "listKeys" | "releaseKey" | "ensureOwner" | "ensureRepo">;
+  gitHost: Pick<ManagedGitHost, "registerKey" | "listKeys" | "ensureOwner" | "ensureRepo">;
 
 readLocalUserPubKey: (slug: string) => string | null;
 
-deleteUserSshKey: (slug: string) => Promise<void>;
+  giveUpUserGitKey: (slug: string) => Promise<GivenUpUserGitKey>;
 
   blobSyncForSlug: (slug: string) => Promise<void>;
 
@@ -1158,7 +1158,10 @@ async function registerFirstTimeSshKey(
       );
     }
   } catch (err) {
-    await adapter.deleteUserSshKey(slug).catch(() => {});
+    await adapter.giveUpUserGitKey(slug).catch((releaseError) => adapter.log(
+      `[add:${slug}] ✖ could not give up the key whose registration failed; it stays on disk for the next mount: ${String(releaseError)}`,
+      { status: "failed" },
+    ));
     throw new Error(`[add:${slug}] SSH key registration failed: ${String(err)}`);
   }
   adapter.log(`[add:${slug}] SSH key + Gitea user registered`);
@@ -1171,7 +1174,7 @@ async function resyncSshKeyIfDrifted(
 ): Promise<AddUserStep[]> {
   const localPub = adapter.readLocalUserPubKey(slug);
   if (localPub === null) {
-    await adapter.deleteUserSshKey(slug).catch(() => {});
+    await adapter.giveUpUserGitKey(slug);
     throw new Error(
       `[add:${slug}] SSH key dir exists but pubkey is unreadable; cleared, retry will regenerate`,
     );
@@ -1643,36 +1646,27 @@ export async function removeUserFromGateway(
     steps.push("delete-dir");
     adapter.log(`[remove:${slug}] user state deleted`);
 
-    if (await releaseUnmountedGiteaKey(adapter, snapshot)) steps.push("release-gitea-key");
+    if (await giveUpUnmountedGitKey(adapter, slug)) steps.push("release-gitea-key");
 
     if (adapter.onUnmounted) adapter.onUnmounted(slug);
     return { wasMounted: true, steps };
   });
 }
 
-async function releaseUnmountedGiteaKey(
+async function giveUpUnmountedGitKey(
   adapter: UserLifecycleAdapter,
-  snapshot: UserSnapshot,
+  slug: string,
 ): Promise<boolean> {
-  const { slug } = snapshot;
-  const pubKey = adapter.readLocalUserPubKey(slug);
-  if (pubKey === null) return false;
-  const service = adapter.provisioningService;
   try {
-    if (!service?.holdsServiceGitKey(slug, snapshot.gitKeyHolder)) {
-      await adapter.gitHost.releaseKey(slug, pubKey);
-    } else if (await service.releaseGitKey(snapshot.uid, pubKey) === "not-configured") {
-      adapter.log(`[remove:${slug}] the platform no longer provisions through the service; releasing the key on the git host by its key material`);
-      await adapter.gitHost.releaseKey(slug, pubKey);
-    }
+    if (await adapter.giveUpUserGitKey(slug) !== "released") return false;
   } catch (err) {
     adapter.log(
-      `⚠ [remove:${slug}] Gitea key release failed; local keypair kept for the preStop release: ${String(err)}`,
+      `[remove:${slug}] ✖ git key release failed; the local keypair is kept for the preStop flush and for the next import of this user here, which release it again: ${String(err)}`,
+      { status: "failed" },
     );
     return false;
   }
-  await adapter.deleteUserSshKey(slug);
-  adapter.log(`[remove:${slug}] Gitea key released and local keypair removed`);
+  adapter.log(`[remove:${slug}] git key released and local keypair removed`);
   return true;
 }
 

@@ -192,15 +192,14 @@ return "ssh-pubkey";
         return state.giteaRegisteredPubKeys ??
           (state.giteaRegisteredPubKey === null ? [] : [state.giteaRegisteredPubKey]);
       },
-      releaseKey: async (_slug, pubKey) => {
-        record(`releaseKey:${pubKey}`);
-        if (state.giteaReleaseShouldFail) throw new Error("gitea release failed");
-      },
     },
     readLocalUserPubKey: () => (state.disk.sshKey ? "ssh-pubkey" : null),
-    deleteUserSshKey: async () => {
-      record("deleteUserSshKey");
+    giveUpUserGitKey: async () => {
+      if (!state.disk.sshKey) return "absent";
+      record("giveUpUserGitKey");
+      if (state.giteaReleaseShouldFail) throw new Error("git key release failed");
       state.disk.sshKey = false;
+      return "released";
     },
 
     blobSyncForSlug: async () => {
@@ -1631,7 +1630,7 @@ const state = makeState(
     expect(state.calls).toContain("generateUserSshKey");
     expect(state.calls).toContain("registerKey");
 
-expect(state.calls).toContain("deleteUserSshKey");
+expect(state.calls).toContain("giveUpUserGitKey");
     expect(state.disk.sshKey).toBe(false);
     
     expect(state.writes.find((w) => w.field === "system/config.gitea")).toBeUndefined();
@@ -1658,8 +1657,19 @@ const adapter = makeAdapter(state);
     await expect(addUserToGateway(adapter, "uid-test")).rejects.toThrow(
       /SSH key registration failed.*giteaPub=absent/,
     );
-    expect(state.calls).toContain("deleteUserSshKey");
+    expect(state.calls).toContain("giveUpUserGitKey");
     expect(state.disk.sshKey).toBe(false);
+  });
+
+  it("fails the mount with the registration error and says loudly that the key it could not give up stays", async () => {
+    const state = makeState(snap({ status: "complete", repoUrl: "http://gitea/octogee/test-workspace", mattermostUserId: "mm-user" }), emptyDisk());
+    state.giteaRegisterShouldFail = true;
+    state.giteaReleaseShouldFail = true;
+
+    await expect(addUserToGateway(makeAdapter(state), "uid-test")).rejects.toThrow(/SSH key registration failed/);
+
+    expect(state.disk.sshKey).toBe(true);
+    expect(state.errorLogs).toContainEqual(expect.stringContaining("could not give up the key whose registration failed"));
   });
 
   it("self-heals stale Gitea-side key on existing-key path (the ceckert bug)", async () => {
@@ -2121,18 +2131,17 @@ describe("removeUserFromGateway", () => {
     expect(state.writes).toEqual([]);
   });
 
-  it("releases this gateway's Gitea key and forgets the local keypair once the user is gone", async () => {
+  it("gives up this pod's git key once the user is gone", async () => {
     const state = makeState(mountedSnapshot(), mountedDisk());
 
     await removeUserFromGateway(makeAdapter(state), "uid-test");
 
-    const release = state.calls.indexOf("releaseKey:ssh-pubkey");
-    expect(release).toBeGreaterThan(state.calls.indexOf("applyRemoveUserConfigPatch"));
-    expect(state.calls.indexOf("deleteUserSshKey")).toBeGreaterThan(release);
+    expect(state.calls.indexOf("giveUpUserGitKey")).toBeGreaterThan(state.calls.indexOf("deleteDepartedUserState"));
+    expect(state.calls.filter((call) => call === "giveUpUserGitKey")).toHaveLength(1);
     expect(state.disk.sshKey).toBe(false);
   });
 
-  it("keeps the local keypair and finishes the unmount when the Gitea release fails", async () => {
+  it("keeps the local keypair, finishes the unmount and logs a failure when the key release fails", async () => {
     const state = makeState(mountedSnapshot(), mountedDisk());
     state.giteaReleaseShouldFail = true;
 
@@ -2140,9 +2149,8 @@ describe("removeUserFromGateway", () => {
 
     expect(result.steps).toEqual(["config-patch-remove", "delete-dir"]);
     expect(state.calls).toContain("onUnmounted");
-    expect(state.calls).not.toContain("deleteUserSshKey");
     expect(state.disk.sshKey).toBe(true);
-    expect(state.logs.some((line) => line.includes("Gitea key release failed"))).toBe(true);
+    expect(state.errorLogs).toContainEqual(expect.stringContaining("git key release failed"));
   });
 
   it("does not release a Gitea key when the eviction is cancelled", async () => {
@@ -2161,7 +2169,7 @@ describe("removeUserFromGateway", () => {
     });
 
     expect(result.retained).toBe(true);
-    expect(state.calls.some((call) => call.startsWith("releaseKey"))).toBe(false);
+    expect(state.calls).not.toContain("giveUpUserGitKey");
     expect(state.disk.sshKey).toBe(true);
   });
 
@@ -2901,7 +2909,7 @@ const ADAPTER_REPO_TOUCHING: Record<keyof UserLifecycleAdapter, boolean> = {
     generateUserSshKey: false,
     gitHost: false,
     readLocalUserPubKey: false,
-    deleteUserSshKey: false,
+    giveUpUserGitKey: false,
     blobSyncForSlug: false,
     restoreByosubForAgent: false,
     listProjectsNeedingClone: false,
@@ -3220,7 +3228,6 @@ describe("addUserToGateway — through the provisioning service", () => {
     options: {
       readiness?: () => ServiceProvisioningAnswer;
       registerGitKey?: () => ServiceProvisioningAnswer;
-      holdsServiceGitKey?: boolean;
     } = {},
   ) {
     let clock = 0;
@@ -3235,14 +3242,9 @@ describe("addUserToGateway — through the provisioning service", () => {
         state.disk.sshKey = true;
         return { publicKey: "ssh-service-pubkey", registered: () => state.calls.push("service:keyRegistered") };
       }),
-      holdsServiceGitKey: () => options.holdsServiceGitKey ?? true,
       registerGitKey: vi.fn(async () => {
         state.calls.push("service:registerGitKey");
         return options.registerGitKey?.() ?? READY;
-      }),
-      releaseGitKey: vi.fn(async () => {
-        state.calls.push("service:releaseGitKey");
-        return "released" as const;
       }),
       sleep: async (ms) => {
         sleeps.push(ms);
@@ -3427,66 +3429,28 @@ describe("addUserToGateway — through the provisioning service", () => {
   });
 });
 
-describe("removeUserFromGateway — through the provisioning service", () => {
-  function serviceRemoval(
-    holds: boolean,
-    snapshot: Partial<UserSnapshot> = { provisionedBy: "service", gitKeyHolder: HOLDER },
-    outcome: "released" | "not-configured" = "released",
-  ) {
+describe("removeUserFromGateway — whatever path registered the key", () => {
+  it.each([
+    ["the snapshot says service and names this pod's holder", { provisionedBy: "service", gitKeyHolder: HOLDER }],
+    ["the snapshot names a holder but no longer says service", { gitKeyHolder: HOLDER }],
+    ["the snapshot says nothing about the service", {}],
+  ] as Array<[string, Partial<UserSnapshot>]>)("gives up the key through the one release when %s", async (_name, snapshot) => {
     const state = makeState(mountedSnapshot(snapshot), mountedDisk());
-    const adapter = makeAdapter(state);
-    const releaseGitKey = vi.fn(async () => {
-      state.calls.push("service:releaseGitKey");
-      return outcome;
-    });
-    const holdsServiceGitKey = vi.fn(() => holds);
-    adapter.provisioningService = {
-      readiness: async () => ({ ready: true }),
-      serviceGitKey: () => ({ publicKey: "ssh-pubkey", registered: () => {} }),
-      holdsServiceGitKey,
-      registerGitKey: async () => ({ ready: true }),
-      releaseGitKey,
-    };
-    return { state, adapter, releaseGitKey, holdsServiceGitKey };
-  }
 
-  it("releases a key it registered through the service with the service, naming the key it releases", async () => {
-    const { state, adapter, releaseGitKey, holdsServiceGitKey } = serviceRemoval(true);
+    const result = await removeUserFromGateway(makeAdapter(state), "uid-test");
 
-    const result = await removeUserFromGateway(adapter, "uid-test");
-
-    expect(holdsServiceGitKey).toHaveBeenCalledWith("test", HOLDER);
-    expect(releaseGitKey).toHaveBeenCalledWith("uid-test", "ssh-pubkey");
-    expect(state.calls.some((call) => call.startsWith("releaseKey:"))).toBe(false);
-    expect(state.calls).toContain("deleteUserSshKey");
+    expect(state.calls.filter((call) => call === "giveUpUserGitKey")).toHaveLength(1);
+    expect(state.disk.sshKey).toBe(false);
     expect(result.steps).toContain("release-gitea-key");
   });
 
-  it("releases through the service whenever the marker holds the key, even when the snapshot no longer says service", async () => {
-    const { state, adapter, releaseGitKey, holdsServiceGitKey } = serviceRemoval(true, {});
+  it("records no release step for a key that could not be released", async () => {
+    const state = makeState(mountedSnapshot(), mountedDisk());
+    const adapter = makeAdapter(state);
+    adapter.giveUpUserGitKey = async () => "unreleasable";
 
-    await removeUserFromGateway(adapter, "uid-test");
+    const result = await removeUserFromGateway(adapter, "uid-test");
 
-    expect(holdsServiceGitKey).toHaveBeenCalledWith("test", undefined);
-    expect(releaseGitKey).toHaveBeenCalledWith("uid-test", "ssh-pubkey");
-    expect(state.calls.some((call) => call.startsWith("releaseKey:"))).toBe(false);
-  });
-
-  it("releases the key on the git host by its key material once the service has been switched off", async () => {
-    const { state, adapter, releaseGitKey } = serviceRemoval(true, {}, "not-configured");
-
-    await removeUserFromGateway(adapter, "uid-test");
-
-    expect(releaseGitKey).toHaveBeenCalledOnce();
-    expect(state.calls.indexOf("service:releaseGitKey")).toBeLessThan(state.calls.indexOf("releaseKey:ssh-pubkey"));
-  });
-
-  it("releases a key registered before the service the way it was registered", async () => {
-    const { state, adapter, releaseGitKey } = serviceRemoval(false);
-
-    await removeUserFromGateway(adapter, "uid-test");
-
-    expect(releaseGitKey).not.toHaveBeenCalled();
-    expect(state.calls).toContain("releaseKey:ssh-pubkey");
+    expect(result.steps).toEqual(["config-patch-remove", "delete-dir"]);
   });
 });

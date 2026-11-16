@@ -249,9 +249,10 @@ vi.mock("@octogee/core/project-agent-workspaces", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@octogee/core/project-agent-workspaces")>();
   return { ...actual, restoreProjectAgentWorkspaces: restoreDefaultAgentWorkspaces };
 });
+const gitHostMocks = vi.hoisted(() => ({ releaseKey: vi.fn(async (_slug: string, _publicKey: string) => undefined) }));
 vi.mock("../lib/gitea-admin-broker-client.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/gitea-admin-broker-client.js")>();
-  return { ...actual, brokeredGitHost: { ...actual.brokeredGitHost, ensureRepo: vi.fn(async () => undefined) } };
+  return { ...actual, brokeredGitHost: { ...actual.brokeredGitHost, ensureRepo: vi.fn(async () => undefined), releaseKey: gitHostMocks.releaseKey } };
 });
 
 const gitMocks = vi.hoisted(() => ({
@@ -3031,6 +3032,130 @@ describe("buildBrokeredLifecycleAdapter template files", () => {
     expect(fsSync.readFileSync(path.join(customerDir, ".gitignore"), "utf-8")).toBe(
       ".ssh/\n",
     );
+  });
+});
+
+describe("buildBrokeredLifecycleAdapter git key give-up", () => {
+  const PUBLIC_KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAliceGatewayKey octogee-alice@gateway";
+  const HOLDER = "shared-blue/octogee-gateway-shared-blue-5bc59-p946t";
+  const keyDir = path.join(testRuntime.dir, "customer-keys", "alice");
+  const userDir = path.join(testRuntime.dir, "customers", "alice");
+
+  async function keyOnDisk(marker?: string): Promise<void> {
+    await fs.mkdir(keyDir, { recursive: true });
+    await fs.writeFile(path.join(keyDir, "id_ed25519"), "private");
+    await fs.writeFile(path.join(keyDir, "id_ed25519.pub"), `${PUBLIC_KEY}\n`);
+    if (marker) await fs.writeFile(path.join(keyDir, "service-holder"), `${marker}\n`);
+  }
+
+  function importedUser(releaseGitKey: FleetBrokerClient["releaseGitKey"]) {
+    const log = vi.fn();
+    const rpc = mkRemovalRpc({ agents: { entries: keyedRoster(["octogee-alice-coach"]) },
+      channels: { mattermost: { accounts: { "alice-coach": {} } } }, bindings: [] });
+    const adapter = buildBrokeredLifecycleAdapter({ client: mkClient({ releaseGitKey }), rpc, procRoot: path.join(testRuntime.dir, "key-proc"), log });
+    return { adapter, log };
+  }
+
+  beforeEach(async () => {
+    gitHostMocks.releaseKey.mockReset();
+    gitHostMocks.releaseKey.mockResolvedValue(undefined);
+    await fs.rm(keyDir, { recursive: true, force: true });
+    await fs.mkdir(userDir, { recursive: true });
+    await fs.mkdir(path.join(testRuntime.dir, "key-proc"), { recursive: true });
+  });
+
+  afterEach(async () => {
+    await fs.rm(keyDir, { recursive: true, force: true });
+    await fs.rm(userDir, { recursive: true, force: true });
+  });
+
+  it.each([
+    ["with the marker of a registered key", HOLDER],
+    ["with no marker, as after a put whose wait expired before the marker was written", undefined],
+  ])("releases the service row and this pod's own host key when a migration source unmounts the user %s", async (_name, marker) => {
+    await keyOnDisk(marker);
+    const releaseGitKey = vi.fn(async () => "released" as const);
+    const { adapter } = importedUser(releaseGitKey);
+
+    await expect(adapter.removeImportedUserBySlug!("alice")).resolves.toMatchObject({ wasMounted: true, steps: ["config-patch-remove", "delete-dir"] });
+
+    expect(releaseGitKey).toHaveBeenCalledExactlyOnceWith("alice", PUBLIC_KEY);
+    expect(gitHostMocks.releaseKey).toHaveBeenCalledExactlyOnceWith("alice", PUBLIC_KEY);
+    expect(releaseGitKey.mock.invocationCallOrder[0]).toBeLessThan(gitHostMocks.releaseKey.mock.invocationCallOrder[0]!);
+    expect(fsSync.existsSync(keyDir)).toBe(false);
+  });
+
+  it("releases on the git host alone when the platform does not run the provisioning service", async () => {
+    await keyOnDisk(HOLDER);
+    const { adapter, log } = importedUser(vi.fn(async () => "not-configured" as const));
+
+    await adapter.removeImportedUserBySlug!("alice");
+
+    expect(gitHostMocks.releaseKey).toHaveBeenCalledExactlyOnceWith("alice", PUBLIC_KEY);
+    expect(fsSync.existsSync(keyDir)).toBe(false);
+    expect(log.mock.calls.some(([, fields]) => fields?.status === "failed")).toBe(false);
+  });
+
+  it("keeps the key and logs a failure when a release fails during the unmount, which still removes the user", async () => {
+    await keyOnDisk(HOLDER);
+    const { adapter, log } = importedUser(vi.fn(async () => { throw new Error("fleet-broker POST /internal/fleet/git-key/release → 502"); }));
+
+    await expect(adapter.removeImportedUserBySlug!("alice")).resolves.toMatchObject({ wasMounted: true });
+
+    expect(gitHostMocks.releaseKey).toHaveBeenCalledExactlyOnceWith("alice", PUBLIC_KEY);
+    expect(fsSync.existsSync(path.join(keyDir, "id_ed25519"))).toBe(true);
+    expect(fsSync.existsSync(userDir)).toBe(false);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("provisioning service release failed"), { status: "failed" });
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("[remove:alice]"), { status: "failed" });
+  });
+
+  it("gives up the key on disk before a key import replaces it", async () => {
+    await keyOnDisk(HOLDER);
+    const releaseGitKey = vi.fn(async () => "released" as const);
+    const { adapter } = importedUser(releaseGitKey);
+
+    await adapter.prepareKeyImportDir("alice");
+
+    expect(releaseGitKey).toHaveBeenCalledExactlyOnceWith("alice", PUBLIC_KEY);
+    expect(gitHostMocks.releaseKey).toHaveBeenCalledExactlyOnceWith("alice", PUBLIC_KEY);
+    expect(fsSync.existsSync(keyDir)).toBe(false);
+  });
+
+  it("refuses a key import, keeping the key on disk, when its release fails", async () => {
+    await keyOnDisk(HOLDER);
+    gitHostMocks.releaseKey.mockRejectedValue(new Error("gitea-broker POST /internal/gitea/release-user-key → 502"));
+    const { adapter, log } = importedUser(vi.fn(async () => "released" as const));
+
+    await expect(adapter.prepareKeyImportDir("alice")).rejects.toThrow("release-user-key");
+
+    expect(fsSync.existsSync(path.join(keyDir, "id_ed25519"))).toBe(true);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("git host release failed"), { status: "failed" });
+  });
+
+  it("gives up the key on disk before a whole-state import replaces it", async () => {
+    await keyOnDisk();
+    const releaseGitKey = vi.fn(async () => "released" as const);
+    const log = vi.fn();
+    const adapter = buildBrokeredLifecycleAdapter({ client: mkClient({ releaseGitKey }), rpc: mkGatewayRpc({ agentsDetach: vi.fn(async ({ agentId }: { agentId: string }) => ({ ok: true as const, agentId })) }),
+      procRoot: path.join(testRuntime.dir, "key-proc"), log });
+
+    await adapter.prepareImportDir("alice", "default");
+
+    expect(releaseGitKey).toHaveBeenCalledExactlyOnceWith("alice", PUBLIC_KEY);
+    expect(gitHostMocks.releaseKey).toHaveBeenCalledExactlyOnceWith("alice", PUBLIC_KEY);
+    expect(fsSync.existsSync(keyDir)).toBe(false);
+  });
+
+  it("gives the core unmount the same release", async () => {
+    await keyOnDisk();
+    const releaseGitKey = vi.fn(async () => "released" as const);
+    const { adapter } = importedUser(releaseGitKey);
+
+    await expect(adapter.giveUpUserGitKey("alice")).resolves.toBe("released");
+
+    expect(releaseGitKey).toHaveBeenCalledExactlyOnceWith("alice", PUBLIC_KEY);
+    expect(gitHostMocks.releaseKey).toHaveBeenCalledExactlyOnceWith("alice", PUBLIC_KEY);
+    expect(fsSync.existsSync(keyDir)).toBe(false);
   });
 });
 

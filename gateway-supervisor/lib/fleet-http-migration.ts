@@ -102,7 +102,6 @@ import { rejectMisaddressedGateway } from "./fleet-gateway-path.js";
 import type { UserLifecycleAdapter, RemoveUserResult } from "./user-lifecycle.js";
 import {
   cloneMissingProjects,
-  removeUserFromGateway,
   restoreUserRuntimeFromSnapshot,
   type RestoreUserRuntimeResult,
   type UserSnapshot,
@@ -3209,11 +3208,8 @@ async function unmountImportedUser(
   deps: MigrationHandlerDeps,
   body: UnmountRequestBody,
   activation: ConfiguredUserActivation | null,
-): Promise<UnmountResponse | undefined> {
-  if (!deps.adapter.removeImportedUserBySlug) {
-    if (activation && !activation.live) throw new Error("held user import cannot be returned without imported-user removal");
-    return undefined;
-  }
+): Promise<UnmountResponse> {
+  if (!deps.adapter.removeImportedUserBySlug) throw new Error("unmount requires imported-user removal");
   const { slug, migrationId } = body;
   const result = await removeUnmountedUserImport(deps, body, activation);
   if (result.wasMounted) deps.adapter.onUnmounted?.(slug);
@@ -3247,42 +3243,7 @@ export function createUnmountHandler(deps: MigrationHandlerDeps): RequestHandler
         res.status(200).json({ migrationId: body.migrationId, slug: body.slug, unmounted: false } satisfies UnmountResponse);
         return;
       }
-      const imported = await unmountImportedUser(deps, body, activation);
-      if (imported) {
-        res.status(200).json(imported);
-        return;
-      }
-
-      const uid = await deps.adapter.uidForSlug(body.slug);
-      if (!uid) {
-        await pauseSystemConfigWatchForUser(deps, body.slug);
-        await releaseVoiceHold(deps, body.slug, body.migrationId);
-        const response: UnmountResponse = {
-          migrationId: body.migrationId,
-          slug: body.slug,
-          unmounted: false,
-        };
-        dlog(
-          `[migration-http] unmount migrationId=${body.migrationId} slug=${body.slug} → no user; idempotent no-op`,
-        );
-        res.status(200).json(response);
-        return;
-      }
-      const result = await removeUserWithSystemConfigWatchPaused({
-        deps,
-        slug: body.slug,
-        remove: () => removeUserFromGateway(deps.adapter, uid),
-      });
-      await releaseVoiceHold(deps, body.slug, body.migrationId);
-      const response: UnmountResponse = {
-        migrationId: body.migrationId,
-        slug: body.slug,
-        unmounted: result.wasMounted,
-      };
-      dlog(
-        `[migration-http] 🟢 unmount migrationId=${body.migrationId} slug=${body.slug} wasMounted=${result.wasMounted} steps=${result.steps.join(",")}`,
-      );
-      res.status(200).json(response);
+      res.status(200).json(await unmountImportedUser(deps, body, activation));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       log(`[migration-http] 🔴 unmount migrationId=${body.migrationId} slug=${body.slug}: ${message}`, { status: "failed" });

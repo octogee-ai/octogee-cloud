@@ -32,6 +32,7 @@ import { gatewayCredentialHeaders as defaultGatewayCredentialHeaders } from "@oc
 import type { SystemConfigObservedStatus } from "./system-config-status.js";
 import type { DeveloperToolchainStatus } from "@octogee/shared/types/developer-toolchain";
 import type { ServiceProvisioningAnswer } from "@octogee/core/user-lifecycle";
+import type { ServiceGitKeyRelease } from "./user-git-key.js";
 
 function baseUrl(): string {
   if (process.env.FLEET_BROKER_URL) return process.env.FLEET_BROKER_URL;
@@ -193,7 +194,7 @@ export interface FleetBrokerClient {
   assertOpenClawDoctor(input: { releaseKey: string; requestId: string }): Promise<void>;
   provisioningReadiness(uid: string): Promise<ServiceProvisioningAnswer>;
   registerGitKey(uid: string, publicKey: string): Promise<ServiceProvisioningAnswer>;
-  releaseGitKey(uid: string, publicKey: string): Promise<"released" | "not-configured">;
+  releaseGitKey(slug: string, publicKey: string): Promise<ServiceGitKeyRelease>;
 }
 
 export async function resolveGithubTokenForSlug(
@@ -236,20 +237,27 @@ async function serviceProvisioningAnswer(path: string, body: unknown): Promise<S
   };
 }
 
-async function releaseServiceGitKey(uid: string, publicKey: string): Promise<"released" | "not-configured"> {
+function namesBrokerError(text: string, error: string): boolean {
+  try {
+    return (JSON.parse(text) as { error?: unknown } | null)?.error === error;
+  } catch {
+    return false;
+  }
+}
+
+async function releaseServiceGitKey(slug: string, publicKey: string): Promise<ServiceGitKeyRelease> {
   const path = "/internal/fleet/git-key/release";
   const resp = await internalFetch(`${baseUrl()}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ uid, publicKey }),
+    body: JSON.stringify({ slug, publicKey }),
   });
   if (resp.ok) return "released";
-  if (resp.status === 409) {
-    const text = await resp.text().catch(() => "");
-    if (text.includes("provisioning_service_not_configured")) return "not-configured";
-    throw new FleetBrokerHttpError(`fleet-broker POST ${path} → 409 ${text.slice(0, 300)}`, 409, null);
-  }
-  throw await brokerHttpError(path, resp);
+  if (resp.status !== 409 && resp.status !== 404) throw await brokerHttpError(path, resp);
+  const text = await resp.text().catch(() => "");
+  if (resp.status === 409 && namesBrokerError(text, "provisioning_service_not_configured")) return "not-configured";
+  if (resp.status === 404 && namesBrokerError(text, "not_found")) return "unknown-user";
+  throw new FleetBrokerHttpError(`fleet-broker POST ${path} → ${resp.status} ${text.slice(0, 300)}`, resp.status, null);
 }
 
 function serviceProvisioningClient(

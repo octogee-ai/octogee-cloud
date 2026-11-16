@@ -10,7 +10,7 @@ import {
   workspaceGiteaOrg, workspaceRepoName, projectRepoName, systemConfigRepoName,
 } from "./gitea-naming.js";
 import { brokeredGitHost } from "./gitea-admin-broker-client.js";
-import { recordServiceGitKeyHolder, serviceGitKeyHolder } from "./service-git-key-holder.js";
+import { recordServiceGitKeyHolder } from "./service-git-key-holder.js";
 import { cloneGithubProjectViaBroker } from "./github-project-clone-broker.js";
 import { replaceFileAtomically, seedFileAtomically } from "./atomic-file.js";
 import { notesWelcomeSeed } from "@octogee/core/templates/project-seeds";
@@ -596,11 +596,6 @@ function restrictUserSshKeyModes(keyDir: string, keyPath: string, pubPath: strin
   /* eslint-enable sonarjs/file-permissions */
 }
 
-export async function deleteUserSshKey(slug: string): Promise<void> {
-  const keyDir = path.join(CUSTOMER_KEYS_DIR, slug);
-  await fs.promises.rm(keyDir, { recursive: true, force: true });
-}
-
 export interface PreparedServiceGitKey {
   publicKey: string;
   registered: () => void;
@@ -618,7 +613,10 @@ export function prepareServiceGitKey(slug: string, holder: string): PreparedServ
     restrictUserSshKeyModes(keyDir, keyPath, `${keyPath}.pub`);
     return { publicKey: onDisk, registered };
   }
-  fs.rmSync(keyDir, { recursive: true, force: true });
+  if (fs.existsSync(keyDir)) {
+    fs.rmSync(keyDir, { recursive: true, force: true });
+    log(`[git] ${slug}: the key directory held no private key; replaced it. The registration that follows under this pod's holder replaces whatever it had registered`);
+  }
   const publicKey = generateKeyPair(keyDir, slug);
   log(`[git] ${slug}: generated a key for registration through the provisioning service`);
   return { publicKey, registered };
