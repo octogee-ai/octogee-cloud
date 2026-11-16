@@ -153,6 +153,10 @@ function app(opts: {
   a.post("/internal/product-fanout", enforcement, handler);
   a.post("/api/product-ingest", enforcement, handler);
   a.get("/internal/gitea/user-pubkey", enforcement, handler);
+  a.post("/internal/gitea/ensure-user", enforcement, handler);
+  a.post("/internal/gitea/release-user-key", enforcement, handler);
+  a.post("/internal/fleet/git-key", enforcement, handler);
+  a.post("/internal/fleet/git-key/release", enforcement, handler);
   return a;
 }
 
@@ -1057,6 +1061,53 @@ const STILL_ON_SHARED = {
       .query({ slug: "victim" });
 
     expect(res.status).toBe(403);
+  });
+
+  describe("a pod releasing its own git key", () => {
+    const RELEASE_ROUTES = ["/internal/fleet/git-key/release", "/internal/gitea/release-user-key"];
+    const SLUG_REFUSAL = "request names a workspace slug not assigned to the bound gateway";
+
+    it.each(RELEASE_ROUTES)("admits %s for a slug assigned to another gateway, a slug no user carries, and the pod's own slug", async (route) => {
+      const target = app({ boundTenant: WALTER_R2 });
+
+      const answers = await Promise.all(["victim", "departed", "alice"].map((slug) => request(target).post(route).send({ slug })));
+
+      expect(answers.map(({ status }) => status)).toEqual([200, 200, 200]);
+    });
+
+    it.each(RELEASE_ROUTES)("refuses %s for a slug assigned elsewhere when the token names no pod", async (route) => {
+      const onDenied = vi.fn(async () => {});
+
+      const res = await request(app({ boundTenant: WALTER, onDenied })).post(route).send({ slug: "victim" });
+
+      expect(res.status).toBe(403);
+      expect(onDenied).toHaveBeenCalledWith(expect.objectContaining({ reason: SLUG_REFUSAL, cause: "placement" }));
+    });
+
+    it.each(RELEASE_ROUTES)("refuses %s when the body claims another gateway, for a platform actor, and for a retired machine's final checkpoint binding", async (route) => {
+      const foreignClaim = await request(app({ boundTenant: WALTER_R2 })).post(route).send({ gatewayId: "other", slug: "victim" });
+      const platformActor = await request(app({ boundTenant: { kind: "platform", actor: "cron" } })).post(route).send({ slug: "victim" });
+      const retiredMachine = await request(app({
+        boundTenant: { ...WALTER_R2, finalHomeCheckpoint: true },
+        gateways: { walter: configuredWalter({ desiredStatus: "retired" }) },
+      })).post(route).send({ slug: "victim" });
+
+      expect([foreignClaim.status, platformActor.status, retiredMachine.status]).toEqual([403, 403, 403]);
+    });
+
+    it("admits a slug assigned elsewhere on no other route, with the same pod token", async () => {
+      const target = app({ boundTenant: WALTER_R2 });
+
+      const answers = await Promise.all([
+        request(target).post("/internal/gitea/ensure-user").send({ slug: "victim" }),
+        request(target).get("/internal/gitea/user-pubkey").query({ slug: "victim" }),
+        request(target).post("/internal/fleet/git-key").send({ uid: "victim" }),
+        request(target).post("/internal/fleet/git-key/release/").send({ slug: "victim" }),
+        request(target).post("/internal/probe").send({ slug: "victim" }),
+      ]);
+
+      expect(answers.map(({ status }) => status)).toEqual([403, 403, 403, 403, 403]);
+    });
   });
 
   it("allows an authenticated stable gateway pod to bootstrap its configured user", async () => {

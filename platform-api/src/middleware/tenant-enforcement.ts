@@ -254,6 +254,15 @@ function routeAllowsInboundMigrationSlug(req: Request): boolean {
   return req.path === "/internal/gitea" || req.path.startsWith("/internal/gitea/");
 }
 
+const OWN_GIT_KEY_RELEASE_ROUTES = new Set([
+  "/internal/fleet/git-key/release",
+  "/internal/gitea/release-user-key",
+]);
+
+function releasesOnlyTheCallingPodsGitKey(bound: GatewayBinding, req: Request): boolean {
+  return Boolean(bound.podName) && OWN_GIT_KEY_RELEASE_ROUTES.has(req.path);
+}
+
 function routeRequiresTargetUser(req: Request, productRoutes: ProductTenantRoutes): boolean {
   return productRoutes.userTargetedRoutes.includes(normalizeTenantPolicyPath(req.path));
 }
@@ -268,6 +277,7 @@ async function slugAllowedForRequest(
   bound: GatewayBinding,
   req: Request,
 ): Promise<boolean> {
+  if (releasesOnlyTheCallingPodsGitKey(bound, req)) return true;
   if (await slugBelongsToGateway(store, slug, bound.gatewayId)) return true;
   if (!routeAllowsInboundMigrationSlug(req)) return false;
   if (await slugHasRunningInboundMigration(store, bound.gatewayId, slug)) return true;

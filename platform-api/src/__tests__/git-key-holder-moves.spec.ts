@@ -7,6 +7,7 @@ import { logger } from "@octogee/core/http/logging";
 import { platformStateStore } from "@octogee/core/identity/platform-state-store";
 import { NO_BROKER_RECORDS } from "../lib/broker-records.js";
 import { createLegacyProvisioning } from "../lib/legacy-provisioning.js";
+import { createTenantEnforcementMiddleware } from "../middleware/tenant-enforcement.js";
 import { createFleetBrokerRoutes } from "../routes/fleet-broker.js";
 import { createInternalGiteaAdminRoutes } from "../routes/internal/gitea-admin.js";
 import { fakeGitHost, gitKeyServiceContract, type FakeGitHost, type GitKeyServiceContract } from "../test-helpers/git-key-service-contract.js";
@@ -49,6 +50,15 @@ function assign(gatewayId: string): void {
   state.docs.set(`users/${USER.uid}`, { username: USER.slug, provisioning: { openclaw: { slug: USER.slug, gatewayId } } });
 }
 
+function releasePlacement(): void {
+  state.docs.set(`users/${USER.uid}`, { username: USER.slug, provisioning: { openclaw: { slug: USER.slug } } });
+}
+
+function eraseUser(git: FakeGitHost): void {
+  state.docs.delete(`users/${USER.uid}`);
+  git.deleteAccount();
+}
+
 function seedSharedGateway(gatewayId: string): void {
   state.docs.set(`gateways/${gatewayId}`, {
     gatewayId, createdAt: 1, createdBy: "admin", updatedAt: 2, updatedBy: "admin", latestRelease: 2, desiredRelease: 2, liveRelease: 1,
@@ -75,13 +85,15 @@ function platform(git: FakeGitHost, service: GitKeyServiceContract | null, sleep
     req.boundTenant = { kind: "gateway", gatewayId: req.header("x-gateway-id"), podName: req.header("x-pod-name"), tokenSource: "ksa" } as never;
     next();
   });
+  app.use(createTenantEnforcementMiddleware({ readFlowGateway: async () => null, store: platformStateStore, onDenied: async () => {}, onAccess: () => {} }));
   app.use("/internal/fleet", createFleetBrokerRoutes({ store: platformStateStore, records: NO_BROKER_RECORDS, legacyProvisioning }));
   app.use("/internal/gitea", createInternalGiteaAdminRoutes({ legacyProvisioning }));
   const call = (from: Pod, path: string, body: Record<string, unknown>) =>
     request(app).post(path).set("x-gateway-id", from.gatewayId).set("x-pod-name", from.podName).send(body);
+  const read = (from: Pod, path: string, query: Record<string, string>) =>
+    request(app).get(path).query(query).set("x-gateway-id", from.gatewayId).set("x-pod-name", from.podName);
   const listedKeys = async (from: Pod): Promise<string[]> => {
-    const answer = await request(app).get("/internal/gitea/user-pubkeys").query({ slug: USER.slug })
-      .set("x-gateway-id", from.gatewayId).set("x-pod-name", from.podName).expect(200);
+    const answer = await read(from, "/internal/gitea/user-pubkeys", { slug: USER.slug }).expect(200);
     return (answer.body as { pubKeys: string[] }).pubKeys;
   };
 
@@ -120,7 +132,7 @@ function platform(git: FakeGitHost, service: GitKeyServiceContract | null, sleep
     claim: (p: Pod) => call(p, "/internal/gitea/ensure-user", { slug: USER.slug, pubKey: p.disk.key }).expect(204),
     unmount: (p: Pod) => call(p, "/internal/gitea/release-user-key", { slug: USER.slug, pubKey: p.disk.key }).expect(204),
   };
-  return { thisBuild, previousBuild };
+  return { thisBuild, previousBuild, call, read };
 }
 
 function setup() {
@@ -458,6 +470,141 @@ describe("git keys across moves and rolls, through the platform's routes and ada
     expect(git.titled(source.holder)).toEqual([carried]);
     expect(hostKeys(git)).toEqual([carried]);
     expect(service.row(target.holder)?.status.conditions[0]).toMatchObject({ status: "False", reason: "GitKeyHeldElsewhere" });
+  });
+
+  describe("a pod giving up the key of a user it no longer serves, behind tenant enforcement", () => {
+    const SERVICE_RELEASE = "/internal/fleet/git-key/release";
+    const HOST_RELEASE = "/internal/gitea/release-user-key";
+    const TENANT_REFUSAL = { code: "tenant-enforcement" };
+
+    async function served() {
+      const platformUnderTest = setup();
+      assign("shared-blue");
+      const source = pod("shared-blue", "octogee-gateway-shared-blue-5bc59-a1b2c");
+      await platformUnderTest.thisBuild.serviceMount(source);
+      const publicKey = source.disk.key!;
+      const held = { host: [publicKey], rows: [{ holder: source.holder, publicKey }] };
+      return { ...platformUnderTest, source, publicKey, held };
+    }
+
+    it.each([
+      ["moved to another gateway", () => assign("shared-green")],
+      ["was released", releasePlacement],
+    ])("releases the pod's service row and its git host key once the user's placement %s", async (_departure, depart) => {
+      const { git, service, call, source, publicKey } = await served();
+      depart();
+
+      const serviceRelease = await call(source, SERVICE_RELEASE, { slug: USER.slug, publicKey });
+      const hostRelease = await call(source, HOST_RELEASE, { slug: USER.slug, pubKey: publicKey });
+      await service.attempt();
+
+      expect({ service: serviceRelease.status, host: hostRelease.status }).toEqual({ service: 204, host: 204 });
+      expect(hostKeys(git)).toEqual([]);
+      expect(service.rows()).toEqual([]);
+    });
+
+    it("answers the service release of an erased user as an unknown user, and the git host release as done with nothing to delete", async () => {
+      const { git, call, source, publicKey } = await served();
+      eraseUser(git);
+
+      const serviceRelease = await call(source, SERVICE_RELEASE, { slug: USER.slug, publicKey });
+      const hostRelease = await call(source, HOST_RELEASE, { slug: USER.slug, pubKey: publicKey });
+
+      expect({ status: serviceRelease.status, body: serviceRelease.body }).toEqual({ status: 404, body: { error: "not_found" } });
+      expect(hostRelease.status).toBe(204);
+    });
+
+    it("releases the row a pod still holds for a user who is moving back to it", async () => {
+      const { git, service, call, source, publicKey } = await served();
+      assign("shared-green");
+      seedInboundMove("shared-blue");
+
+      const serviceRelease = await call(source, SERVICE_RELEASE, { slug: USER.slug, publicKey });
+      const hostRelease = await call(source, HOST_RELEASE, { slug: USER.slug, pubKey: publicKey });
+      await service.attempt();
+
+      expect({ service: serviceRelease.status, host: hostRelease.status }).toEqual({ service: 204, host: 204 });
+      expect(hostKeys(git)).toEqual([]);
+      expect(service.rows()).toEqual([]);
+    });
+
+    it("answers an isolated gateway's service release without asking the service, and releases its git host key", async () => {
+      const { git, service, thisBuild, call } = setup();
+      assign("isolated-acme");
+      const isolated = pod("isolated-acme", "octogee-gateway-isolated-acme-0", { key: newKey(), marker: null });
+      await thisBuild.register(isolated);
+      const deleted = vi.spyOn(service.client, "deleteGitKey");
+      assign("shared-green");
+
+      const serviceRelease = await call(isolated, SERVICE_RELEASE, { slug: USER.slug, publicKey: isolated.disk.key });
+      const hostRelease = await call(isolated, HOST_RELEASE, { slug: USER.slug, pubKey: isolated.disk.key });
+
+      expect({ service: serviceRelease.status, host: hostRelease.status }).toEqual({ service: 204, host: 204 });
+      expect(deleted).not.toHaveBeenCalled();
+      expect(hostKeys(git)).toEqual([]);
+    });
+
+    it("answers the service release 409 while the service is switched off, and still releases the git host key", async () => {
+      const { git, source, publicKey } = await served();
+      const switchedOff = platform(git, null);
+      assign("shared-green");
+
+      const serviceRelease = await switchedOff.call(source, SERVICE_RELEASE, { slug: USER.slug, publicKey });
+      const hostRelease = await switchedOff.call(source, HOST_RELEASE, { slug: USER.slug, pubKey: publicKey });
+
+      expect({ status: serviceRelease.status, body: serviceRelease.body }).toEqual({ status: 409, body: { error: "provisioning_service_not_configured" } });
+      expect(hostRelease.status).toBe(204);
+      expect(hostKeys(git)).toEqual([]);
+    });
+
+    it("admits a release from a pod that never served the user, and it removes neither the serving pod's key nor its row", async () => {
+      const { git, service, call, publicKey, held } = await served();
+      const stranger = pod("shared-green", "octogee-gateway-shared-green-7d8e9-f3g4h");
+
+      const serviceRelease = await call(stranger, SERVICE_RELEASE, { slug: USER.slug, publicKey });
+      const hostRelease = await call(stranger, HOST_RELEASE, { slug: USER.slug, pubKey: publicKey });
+      await service.attempt();
+
+      expect({ service: serviceRelease.status, host: hostRelease.status }).toEqual({ service: 204, host: 204 });
+      expect(hostKeys(git)).toEqual(held.host);
+      expect(service.rows()).toEqual(held.rows);
+    });
+
+    it.each([
+      ["a token that names no pod", (source: Pod) => ({ from: { ...source, podName: "" }, claim: {} })],
+      ["a body that claims another gateway", (source: Pod) => ({ from: source, claim: { gatewayId: "shared-green" } })],
+    ])("refuses both releases for %s, leaving the key and the row", async (_caller, requestFrom) => {
+      const { git, service, call, source, publicKey, held } = await served();
+      assign("shared-green");
+      const { from, claim } = requestFrom(source);
+
+      const serviceRelease = await call(from, SERVICE_RELEASE, { slug: USER.slug, publicKey, ...claim });
+      const hostRelease = await call(from, HOST_RELEASE, { slug: USER.slug, pubKey: publicKey, ...claim });
+      await service.attempt();
+
+      expect({ service: serviceRelease.status, host: hostRelease.status }).toEqual({ service: 403, host: 403 });
+      expect(hostKeys(git)).toEqual(held.host);
+      expect(service.rows()).toEqual(held.rows);
+    });
+
+    it("keeps refusing every other route that names a user the pod no longer serves", async () => {
+      const { git, service, call, read, source, publicKey, held } = await served();
+      assign("shared-green");
+
+      const answers = await Promise.all([
+        call(source, "/internal/gitea/ensure-user", { slug: USER.slug, pubKey: publicKey }),
+        call(source, "/internal/gitea/ensure-user", { slug: USER.slug, pubKey: publicKey, serviceHolder: source.holder }),
+        call(source, "/internal/gitea/ensure-org", { slug: USER.slug }),
+        call(source, "/internal/gitea/archive-repo", { org: USER.slug, repo: "workspace" }),
+        call(source, "/internal/fleet/git-key", { uid: USER.uid, publicKey }),
+        call(source, "/internal/fleet/provisioning-readiness", { uid: USER.uid }),
+        read(source, "/internal/gitea/user-pubkeys", { slug: USER.slug }),
+      ]);
+
+      expect(answers.map(({ status, body }) => ({ status, code: body.code }))).toEqual(answers.map(() => ({ status: 403, ...TENANT_REFUSAL })));
+      expect(hostKeys(git)).toEqual(held.host);
+      expect(service.rows()).toEqual(held.rows);
+    });
   });
 
   it("refuses a mount with the service's own reason while the user's work is parked without a git account, registering nothing", async () => {

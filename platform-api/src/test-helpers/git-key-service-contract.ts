@@ -15,13 +15,15 @@ export interface FakeGitHost {
   held: () => HostKey[];
   titled: (holder: string) => string[];
   deleteTitled: (holder: string, publicKey: string) => void;
+  deleteAccount: () => void;
 }
 
 export function fakeGitHost(slug: string): FakeGitHost {
   const keys: HostKey[] = [];
   let nextId = 1;
+  let accountDeleted = false;
   const account = `ws-${slug}`;
-  const fetch: typeof globalThis.fetch = async (input, init) => {
+  const accountFetch: typeof globalThis.fetch = async (input, init) => {
     const path = new URL(String(input)).pathname.replace(/^\/api\/v1/, "");
     const method = init?.method ?? "GET";
     if (method === "POST" && path === "/admin/users") return Response.json({ message: "user already exists" }, { status: 422 });
@@ -43,6 +45,8 @@ export function fakeGitHost(slug: string): FakeGitHost {
     }
     throw new Error(`unexpected git host request ${method} ${path}`);
   };
+  const fetch: typeof globalThis.fetch = async (input, init) =>
+    accountDeleted ? Response.json({ message: "user does not exist" }, { status: 404 }) : accountFetch(input, init);
   return {
     host: createGiteaGitHost({ apiBaseUrl: "https://gitea.invalid/api/v1", token: () => "token", fetch }),
     held: () => keys.map((key) => ({ ...key })),
@@ -51,6 +55,10 @@ export function fakeGitHost(slug: string): FakeGitHost {
       for (let index = keys.length - 1; index >= 0; index -= 1) {
         if (keys[index].title === gatewayKeyTitle(holder) && publicKeyIdentity(keys[index].key) === publicKeyIdentity(publicKey)) keys.splice(index, 1);
       }
+    },
+    deleteAccount() {
+      accountDeleted = true;
+      keys.length = 0;
     },
   };
 }
