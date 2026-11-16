@@ -49,6 +49,7 @@ export interface ServiceConfig {
   database: DatabaseConnection;
   databaseSchema: string;
   callerNamespace: string;
+  callerRoles: CallerRoleTable;
   tokenReviewUrl: string;
   tokenReviewTokenFile: string;
   tokenReviewCaFile: string | null;
@@ -59,10 +60,24 @@ export interface ServiceConfig {
   changeRetentionSeconds: number;
 }
 
-export const CALLER_ROLES: Readonly<Record<string, readonly ProvisioningRole[]>> = {
-  "octogee-glm-controller": ["writer", "credential-reader"],
-  "octogee-api": ["key-writer", "reader", "credential-reader"],
-};
+export type CallerRoleTable = Readonly<Record<string, readonly ProvisioningRole[]>>;
+
+const CALLER_ROLES = {
+  fleetController: ["writer", "credential-reader"],
+  platformApi: ["key-writer", "reader", "credential-reader"],
+} as const satisfies Record<string, readonly ProvisioningRole[]>;
+
+export type CallerServiceAccounts = Record<keyof typeof CALLER_ROLES, string>;
+
+export function callerRoleTable(serviceAccounts: CallerServiceAccounts): CallerRoleTable {
+  if (serviceAccounts.fleetController === serviceAccounts.platformApi) {
+    throw new Error("PROVISIONING_FLEET_CONTROLLER_SERVICE_ACCOUNT and PROVISIONING_PLATFORM_API_SERVICE_ACCOUNT must name different service accounts");
+  }
+  return {
+    [serviceAccounts.fleetController]: CALLER_ROLES.fleetController,
+    [serviceAccounts.platformApi]: CALLER_ROLES.platformApi,
+  };
+}
 
 const SCHEMA_PATTERN = /^[a-z_][a-z0-9_]{0,62}$/;
 const IN_CLUSTER_REVIEWER_TOKEN = "/var/run/secrets/kubernetes-api/token";
@@ -141,6 +156,10 @@ export function loadConfig(env: NodeJS.ProcessEnv): ServiceConfig {
     database: databaseConnection(databaseSettingsFromEnvironment(env)),
     databaseSchema,
     callerNamespace: required(env, "PROVISIONING_CALLER_NAMESPACE"),
+    callerRoles: callerRoleTable({
+      fleetController: required(env, "PROVISIONING_FLEET_CONTROLLER_SERVICE_ACCOUNT"),
+      platformApi: required(env, "PROVISIONING_PLATFORM_API_SERVICE_ACCOUNT"),
+    }),
     tokenReviewUrl,
     tokenReviewTokenFile: optional(env, "PROVISIONING_TOKEN_REVIEW_TOKEN_FILE") ?? IN_CLUSTER_REVIEWER_TOKEN,
     tokenReviewCaFile,

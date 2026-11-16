@@ -44,13 +44,18 @@ and answers `429 rate-limited` with `Retry-After`. `/healthz`, `/readyz` and
 ## Authentication
 
 Every `/v1` request carries a projected Kubernetes service account token with
-audience `provisioning-service`, checked with TokenReview. The reviewed service
-account maps to roles through a fixed table:
+audience `provisioning-service`, checked with TokenReview. The service has two
+callers with fixed roles, and the environment names the service account each one
+runs as:
 
-| Service account | Roles |
-| --- | --- |
-| `octogee-glm-controller` (fleet controller) | `writer`: provisioning put, delete, read, list, watch, retry, events; `credential-reader`: credentials, to copy issued chat tokens where the platform reads them |
-| `octogee-api` (platform API) | `key-writer`: git keys; `reader`: provisioning read, list, watch, events; `credential-reader`: credentials |
+| Caller | Service account named by | Roles |
+| --- | --- | --- |
+| fleet controller | `PROVISIONING_FLEET_CONTROLLER_SERVICE_ACCOUNT` | `writer`: provisioning put, delete, read, list, watch, retry, events; `credential-reader`: credentials, to copy issued chat tokens where the platform reads them |
+| platform API | `PROVISIONING_PLATFORM_API_SERVICE_ACCOUNT` | `key-writer`: git keys; `reader`: provisioning read, list, watch, events; `credential-reader`: credentials |
+
+The two settings must name different service accounts. The platform chart sets
+them to the service accounts its fleet controller and platform API Deployments
+run as (`glm-controller` and `octogee-api.serviceAccountName`).
 
 Only service accounts in `PROVISIONING_CALLER_NAMESPACE` are matched. A failed
 review or wrong audience answers `401`; any other service account, or a route
@@ -153,6 +158,8 @@ newer than it knows.
 | `PROVISIONING_DB_POOL_MAX` | no, `10` | no | connection pool size |
 | `PROVISIONING_DATABASE_SCHEMA` | no, `provisioning_service` | no | schema holding the service's tables |
 | `PROVISIONING_CALLER_NAMESPACE` | yes | no | namespace of the callers' service accounts |
+| `PROVISIONING_FLEET_CONTROLLER_SERVICE_ACCOUNT` | yes | no | service account the fleet controller runs as |
+| `PROVISIONING_PLATFORM_API_SERVICE_ACCOUNT` | yes | no | service account the platform API runs as; must differ from the fleet controller's |
 | `PROVISIONING_CREDENTIAL_KEY` | yes | yes | base64 of 32 bytes; encrypts issued credentials |
 | `PROVISIONING_TOKEN_REVIEW_URL` | no | no | TokenReview endpoint; defaults to the in-cluster API server |
 | `KUBERNETES_SERVICE_HOST`, `KUBERNETES_SERVICE_PORT_HTTPS` | when the URL above is unset | no | set by Kubernetes |

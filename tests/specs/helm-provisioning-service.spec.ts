@@ -16,6 +16,11 @@ const ENABLED = {
   "provisioningService.image.tag": "bbbbbbb",
   "provisioningService.image.digest": DIGEST,
 };
+const SERVICE_URL = "http://provisioning-service.octogee-local.svc.cluster.local:8080";
+const CALLERS_POINTED_AT_IT = {
+  "glm-controller.provisioningService.url": SERVICE_URL,
+  "octogee-api.provisioningService.url": SERVICE_URL,
+};
 const DEFAULT_DENY = {
   "networkPolicy.enforceDefaultDeny": "true",
   "networkPolicy.controlPlaneCidr": "172.16.0.0/28",
@@ -103,6 +108,25 @@ describe("the provisioning service in the platform chart", () => {
   it("refuses to render without the namespace TokenReview grant its callers' authentication needs", () => {
     expect(() => chart.helmTemplate({ sets: { ...ENABLED, "gatewayFleet.tokenReviewRbac.enabled": "false" } }))
       .toThrow(/requires gatewayFleet.tokenReviewRbac.enabled/);
+  });
+
+  it.each<Record<string, string>>([{}, { "octogee-api.serviceAccountName": "platform-api-account" }])("gives the fleet controller's and the platform API's roles to the service accounts those callers run as", (sets) => {
+    const out = chart.helmTemplate({ sets: { ...ENABLED, ...CALLERS_POINTED_AT_IT, ...sets } });
+    const rendered = resources(out);
+    const callers = rendered.filter((resource) => resource.kind === "Deployment"
+      && resource.spec.template.spec.containers.some((main: { env?: Array<{ name: string }> }) => (main.env ?? []).some((entry) => entry.name === "PROVISIONING_SERVICE_URL")));
+    const runsAs = Object.fromEntries(callers.map((deployment) => [deployment.metadata.name, deployment.spec.template.spec.serviceAccountName as string]));
+    const accounts = rendered.filter((resource) => resource.kind === "ServiceAccount").map((resource) => resource.metadata.name);
+    const named = Object.fromEntries((container(out).env as Array<{ name: string; value?: string }>)
+      .filter((entry) => /^PROVISIONING_.*_SERVICE_ACCOUNT$/.test(entry.name))
+      .map((entry) => [entry.name, entry.value]));
+
+    expect(Object.keys(runsAs).sort()).toEqual(["glm-controller", "octogee-api"]);
+    expect(accounts).toEqual(expect.arrayContaining(Object.values(runsAs)));
+    expect(named).toEqual({
+      PROVISIONING_FLEET_CONTROLLER_SERVICE_ACCOUNT: runsAs["glm-controller"],
+      PROVISIONING_PLATFORM_API_SERVICE_ACCOUNT: runsAs["octogee-api"],
+    });
   });
 
   it("admits only the fleet controller, the platform API and the metrics collector", () => {

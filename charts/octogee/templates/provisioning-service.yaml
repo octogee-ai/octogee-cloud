@@ -80,6 +80,10 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            - name: PROVISIONING_FLEET_CONTROLLER_SERVICE_ACCOUNT
+              value: glm-controller
+            - name: PROVISIONING_PLATFORM_API_SERVICE_ACCOUNT
+              value: {{ required "octogee-api.serviceAccountName is required" (index .Values "octogee-api").serviceAccountName | quote }}
             - name: PROVISIONING_HOST_ADAPTERS
               value: real
             {{- range list (list "HOST" "host" false) (list "PORT" "port" true) (list "NAME" "database" false) (list "USER" "user" false) (list "PASSWORD" "password" false) (list "SSLMODE" "sslmode" false) (list "CA_CERT" "ca-cert" true) (list "TLS_SERVER_IDENTITY" "tls-server-identity" true) }}
