@@ -25,7 +25,7 @@ const MAX_RETRY_AFTER_SECONDS = 300;
 
 export type ProvisioningWait<T> =
   | { readonly ready: true; readonly value: T }
-  | { readonly ready: false; readonly reason: string; readonly retryAfterSeconds: number };
+  | { readonly ready: false; readonly reason: string; readonly retryAfterSeconds: number; readonly refused?: true };
 
 export type LegacyGitRepository = GitRepositoryRole | "system-config";
 
@@ -46,14 +46,14 @@ export interface ReadyChat {
 }
 
 export interface LegacyProvisioning {
-  chat(uid: string, budget: RouteBudget): Promise<ProvisioningWait<ReadyChat>>;
+  chat(uid: string, budget: RouteBudget, options?: { longPoll: boolean }): Promise<ProvisioningWait<ReadyChat>>;
   git(uid: string, repository: LegacyGitRepository | null, budget: RouteBudget): Promise<ProvisioningWait<void>>;
   agentChatToken(uid: string, budget: RouteBudget): Promise<ProvisioningWait<string>>;
   gitKey(uid: string, holder: string, publicKey: string, budget: RouteBudget): Promise<ProvisioningWait<void>>;
   releaseGitKey(uid: string, holder: string, publicKey: string, budget: RouteBudget): Promise<DeleteGitKeyOutcome>;
 }
 
-export type LegacyProvisioningClient = Pick<ProvisioningServiceClient, "getProvisioning" | "getCredential" | "putGitKey" | "deleteGitKey">;
+export type LegacyProvisioningClient = Pick<ProvisioningServiceClient, "getProvisioning" | "getCredential" | "putGitKey" | "getGitKey" | "deleteGitKey">;
 
 export interface LegacyProvisioningDeps {
   readonly client: LegacyProvisioningClient;
@@ -64,6 +64,12 @@ export interface LegacyProvisioningDeps {
 
 function clampSeconds(seconds: number): number {
   return Math.min(Math.max(Math.ceil(seconds), 1), MAX_RETRY_AFTER_SECONDS);
+}
+
+export const SERVICE_GIT_KEYS_NOT_FOR_GATEWAY = "ServiceGitKeysAreForSharedGateways";
+
+export function holdsServiceGitKeys(gateway: { gatewayClass?: string | null } | null | undefined): boolean {
+  return gateway?.gatewayClass === "shared";
 }
 
 export interface NotReadyAnswer {
@@ -79,6 +85,19 @@ export function respondProvisioningPending(
 ): void {
   logger.warn("legacy provisioning: answering not ready", { ...answer, reason: wait.reason, retryAfterSeconds: wait.retryAfterSeconds });
   res.set("Retry-After", String(wait.retryAfterSeconds)).status(503).json({ error: "provisioning_pending", reason: wait.reason });
+}
+
+export function respondProvisioningNotReady(
+  res: Response,
+  answer: NotReadyAnswer,
+  wait: Extract<ProvisioningWait<unknown>, { ready: false }>,
+): void {
+  if (wait.refused !== true) {
+    respondProvisioningPending(res, answer, wait);
+    return;
+  }
+  logger.error("legacy provisioning: refusing the request, which no retry can finish", { ...answer, reason: wait.reason });
+  res.status(422).json({ error: "provisioning_refused", reason: wait.reason });
 }
 
 function unavailable(uid: string, error: unknown): ProvisioningWait<never> {
@@ -100,6 +119,8 @@ function notProvisioned(uid: string): ProvisioningWait<never> {
   return { ready: false, reason: "NotProvisioned", retryAfterSeconds: DEFAULT_RETRY_AFTER_SECONDS };
 }
 
+const KEY_REFUSALS_NO_RETRY_FINISHES: ReadonlySet<string> = new Set(["GitNotReady"]);
+
 function registeredCondition(key: GitKey) {
   return key.status.observedGeneration >= key.generation
     ? key.status.conditions.find((candidate) => candidate.type === "Registered") ?? null
@@ -111,7 +132,7 @@ export function createLegacyProvisioning(deps: LegacyProvisioningDeps): LegacyPr
   const longPollSeconds = deps.longPollSeconds ?? LEGACY_PROVISIONING_LONG_POLL_SECONDS;
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
 
-  function notReady(reason: string, resource: UserProvisioning | null): ProvisioningWait<never> {
+  function notReady(reason: string, resource: UserProvisioning | null): Extract<ProvisioningWait<never>, { ready: false }> {
     const nextAttemptAt = resource?.status.work.nextAttemptAt;
     const due = nextAttemptAt ? Date.parse(nextAttemptAt) - now() : Number.NaN;
     return {
@@ -124,7 +145,7 @@ export function createLegacyProvisioning(deps: LegacyProvisioningDeps): LegacyPr
   function keyNotRegistered(key: GitKey, registered: NonNullable<ReturnType<typeof registeredCondition>>): ProvisioningWait<never> {
     logger.error("legacy provisioning: the provisioning service has not registered the gateway's git key", {
       uid: key.uid,
-      gatewayId: key.gatewayId,
+      holder: key.holder,
       reason: registered.reason,
       message: registered.message,
     });
@@ -133,6 +154,7 @@ export function createLegacyProvisioning(deps: LegacyProvisioningDeps): LegacyPr
       ready: false,
       reason: registered.reason,
       retryAfterSeconds: Number.isFinite(due) && due > 0 ? clampSeconds(due / 1000) : DEFAULT_RETRY_AFTER_SECONDS,
+      ...(KEY_REFUSALS_NO_RETRY_FINISHES.has(registered.reason) ? { refused: true as const } : {}),
     };
   }
 
@@ -140,11 +162,11 @@ export function createLegacyProvisioning(deps: LegacyProvisioningDeps): LegacyPr
     return Math.min(longPollSeconds, Math.floor((budget.remainingMs() - RESERVED_AFTER_LONG_POLL_MS) / 1000));
   }
 
-  async function current(uid: string, budget: RouteBudget): Promise<{ resource: UserProvisioning } | { wait: ProvisioningWait<never> }> {
+  async function current(uid: string, budget: RouteBudget, longPoll = true): Promise<{ resource: UserProvisioning } | { wait: ProvisioningWait<never> }> {
     const { signal } = budget;
     try {
       let resource = await deps.client.getProvisioning(uid, { signal });
-      const timeoutSeconds = longPollFor(budget);
+      const timeoutSeconds = longPoll ? longPollFor(budget) : 0;
       if (resource !== null && resource.status.observedGeneration < resource.generation && timeoutSeconds >= 1) {
         resource = await deps.client.getProvisioning(uid, { waitForGeneration: resource.generation, timeoutSeconds, signal });
       }
@@ -160,8 +182,30 @@ export function createLegacyProvisioning(deps: LegacyProvisioningDeps): LegacyPr
     const reason = resource.status.conditions.find((candidate) => candidate.type === type)?.reason ?? `${type}Unknown`;
     if (resource.status.work.state === "parked") {
       logger.error("legacy provisioning: the user's provisioning is parked", { uid, reason });
+      return { ...notReady(reason, resource), refused: true };
     }
     return notReady(reason, resource);
+  }
+
+  async function putNotRegistered(key: GitKey, sequence: number, budget: RouteBudget): Promise<ProvisioningWait<never>> {
+    if (key.status.observedPutSequence >= sequence) {
+      const reason = key.status.observedGeneration < key.generation ? "GenerationNotObserved" : "RegisteredUnknown";
+      return { ready: false, reason, retryAfterSeconds: DEFAULT_RETRY_AFTER_SECONDS };
+    }
+    const read = await current(key.uid, budget, false);
+    if ("wait" in read) return read.wait;
+    const { work } = read.resource.status;
+    const recorded = key.status.conditions.find((candidate) => candidate.type === "Registered");
+    const reason = recorded !== undefined && recorded.status !== "True" ? recorded.reason : "GitKeyPutNotObserved";
+    logger.error("legacy provisioning: no attempt has processed the gateway's git key put inside the route's budget", {
+      uid: key.uid,
+      holder: key.holder,
+      putSequence: sequence,
+      observedPutSequence: key.status.observedPutSequence,
+      work: work.state,
+      reason,
+    });
+    return notReady(reason, read.resource);
   }
 
   function observed(resource: UserProvisioning, type: UserProvisioningConditionType): boolean {
@@ -176,8 +220,8 @@ export function createLegacyProvisioning(deps: LegacyProvisioningDeps): LegacyPr
   }
 
   return {
-    async chat(uid, budget) {
-      const read = await current(uid, budget);
+    async chat(uid, budget, options) {
+      const read = await current(uid, budget, options?.longPoll ?? true);
       if ("wait" in read) return read.wait;
       const chat = observed(read.resource, "ChatReady") ? chatReady(read.resource) : null;
       if (chat === null) return pending(uid, read.resource, "ChatReady");
@@ -211,22 +255,34 @@ export function createLegacyProvisioning(deps: LegacyProvisioningDeps): LegacyPr
     },
 
     async gitKey(uid, holder, publicKey, budget) {
+      const { signal } = budget;
+      let key: GitKey;
+      try {
+        key = (await deps.client.putGitKey(uid, holder, { publicKey }, { signal })).key;
+      } catch (error) {
+        if (error instanceof ProvisioningServiceError && error.status === 404) return notProvisioned(uid);
+        return unavailable(uid, error);
+      }
+      const sequence = key.putSequence;
       for (;;) {
-        let key: GitKey;
+        if (key.status.observedPutSequence >= sequence) {
+          const registered = registeredCondition(key);
+          if (registered?.status === "True") return { ready: true, value: undefined };
+          if (registered !== null) return keyNotRegistered(key, registered);
+        }
+        if (budget.remainingMs() - GIT_KEY_POLL_MS < RESERVED_AFTER_LONG_POLL_MS) return putNotRegistered(key, sequence, budget);
+        await sleep(GIT_KEY_POLL_MS);
+        let read: GitKey | null;
         try {
-          key = (await deps.client.putGitKey(uid, holder, { publicKey }, { signal: budget.signal })).key;
+          read = await deps.client.getGitKey(uid, holder, { signal });
         } catch (error) {
-          if (error instanceof ProvisioningServiceError && error.status === 404) return notProvisioned(uid);
           return unavailable(uid, error);
         }
-        const registered = registeredCondition(key);
-        if (registered?.status === "True") return { ready: true, value: undefined };
-        if (registered !== null) return keyNotRegistered(key, registered);
-        if (budget.remainingMs() - GIT_KEY_POLL_MS < RESERVED_AFTER_LONG_POLL_MS) {
-          const reason = key.status.observedGeneration < key.generation ? "GenerationNotObserved" : "RegisteredUnknown";
-          return { ready: false, reason, retryAfterSeconds: DEFAULT_RETRY_AFTER_SECONDS };
+        if (read === null) {
+          logger.error("legacy provisioning: the gateway's git key row was released while its registration was awaited", { uid, holder });
+          return { ready: false, reason: "GitKeyReleased", retryAfterSeconds: DEFAULT_RETRY_AFTER_SECONDS };
         }
-        await sleep(GIT_KEY_POLL_MS);
+        key = read;
       }
     },
 

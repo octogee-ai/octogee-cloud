@@ -16,6 +16,8 @@ import { agentIdsFromConfig } from "./byosub-restore.js";
 import { OPENCLAW_DIR, readOpenClawConfig } from "./config.js";
 import { readActivationManifest } from "./migration-activation-manifest.js";
 import { withUserRemoval } from "./user-removal-exclusion.js";
+import { startGitKeyResyncForPod, type GitKeyResyncRoster } from "./git-key-resync.js";
+import { clearLeftoverPreStopMarker, podPreStopMarker, type PreStopMarker } from "./prestop-marker.js";
 import {
   materializeBrokerProfilesForAgents,
   openAiCatalogInputForBaseUrl,
@@ -1566,6 +1568,28 @@ async function mountUserWithPublication(input: {
   }
 }
 
+export function withGitKeyResync(
+  startReconcile: () => () => void,
+  adapter: UserLifecycleAdapter,
+  roster: GitKeyResyncRoster | null,
+  marker: PreStopMarker,
+): () => () => void {
+  if (roster === null) return startReconcile;
+  return () => {
+    const stopReconcile = startReconcile();
+    const stopKeyResync = startGitKeyResyncForPod({
+      adapter,
+      mountedUsers: () => getMountObservedSlugs(adapter),
+      roster,
+      marker,
+    });
+    return () => {
+      stopKeyResync();
+      stopReconcile();
+    };
+  };
+}
+
 function startMaybeReconcileLoop(params: {
   provision: boolean;
   opts: StartFleetOptions;
@@ -1656,7 +1680,7 @@ function startMaybeReconcileLoop(params: {
     { userSource, appliedFp, cloneRetry, persistAppliedFp },
   );
   if (userSource) wrappedAdapter.recordAppliedFingerprint = convergenceHooks.recordApplied;
-  const start = () => startReconcileLoop({
+  const startReconcile = () => startReconcileLoop({
     gatewayId: opts.gatewayId,
     intervalMs: opts.subscribeDesiredChanges ? 60_000 : RECONCILE_LOOP_INTERVAL_MS,
     subscribe: opts.subscribeDesiredChanges,
@@ -1769,6 +1793,7 @@ function startMaybeReconcileLoop(params: {
       invalidateConfigRemovedSlug, onLocalStateRemoved,
     }),
   });
+  const start = withGitKeyResync(startReconcile, wrappedAdapter, userSource ? { ensureAllowed, desiredFingerprints: desiredFp, appliedFingerprints: appliedFp } : null, podPreStopMarker(opts.openclawDir));
   return startAfterSurgeReadiness({
     released: surgeReadiness.released,
     start,
@@ -2576,6 +2601,7 @@ export function createIsolatedSurgeGateWiring(input: IsolatedSurgeGateWiringOpti
 export async function startFleetController(
   opts: StartFleetOptions,
 ): Promise<StartedFleetController> {
+  clearLeftoverPreStopMarker(podPreStopMarker(opts.openclawDir));
   const caps = resolveFleetCapabilities({
     localReconcile: opts.localReconcile,
     hasBrokeredRoster: !!opts.readDesiredSlugs || !!opts.readDesiredUsers,

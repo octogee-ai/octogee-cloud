@@ -5,7 +5,8 @@ import type { WorkspaceProject } from "@octogee/core/platform-state";
 import { isolatedBootMode } from "@octogee/core/isolated-prelaunch";
 import { noProvisioningProjection, type ProvisioningProjection } from "@octogee/core/provisionSteps";
 import { mirroredState, mmUpdateFromChatOutputs, type MirroredState } from "@octogee/core/provisioning-mirror";
-import { respondProvisioningPending, routeBudget, type LegacyProvisioning, type ProvisioningWait } from "../lib/legacy-provisioning.js";
+import { gatewayKeyOwnerId } from "@octogee/core/gitea-naming";
+import { holdsServiceGitKeys, respondProvisioningNotReady, respondProvisioningPending, routeBudget, SERVICE_GIT_KEYS_NOT_FOR_GATEWAY, type LegacyProvisioning, type ProvisioningWait, type RouteBudget } from "../lib/legacy-provisioning.js";
 import { sharedAgentAnchorMigrationScope, sharedAssignedSourceSurgeAnchorScope } from "../lib/shared-agent-anchor-migration.js";
 import { installWorkspaceBlobBrokerRoute, type WorkspaceBlobStore } from "./fleet-broker-workspace-blob.js";
 import { readUserRestoreAuthoritySnapshot } from "@octogee/core/fleet-state";
@@ -379,8 +380,9 @@ async function mirroredChat(
   uid: string,
   legacyProvisioning: LegacyProvisioning,
   store: PlatformStateRepositories,
+  budget: RouteBudget = routeBudget(),
 ): Promise<ProvisioningWait<void>> {
-  const wait = await legacyProvisioning.chat(uid, routeBudget());
+  const wait = await legacyProvisioning.chat(uid, budget);
   if (!wait.ready) return wait;
   const mirrored = await mirroredState(store, wait.value.resource, wait.value.chat);
   if (mirrored.state === "mirrored") return { ready: true, value: undefined };
@@ -388,7 +390,155 @@ async function mirroredChat(
   const refused = mirrored as Extract<MirroredState, { detail: string }>;
   const reason = MIRROR_REFUSAL_REASONS[refused.state];
   logger.error("legacy provisioning: the mirror refuses this user, so its mount cannot finish", { uid, reason, detail: refused.detail });
-  return { ready: false, reason, retryAfterSeconds: 5 };
+  return { ready: false, reason, retryAfterSeconds: 5, refused: true };
+}
+
+async function serviceProvisioningReadiness(
+  uid: string,
+  legacyProvisioning: LegacyProvisioning,
+  store: PlatformStateRepositories,
+): Promise<ProvisioningWait<void>> {
+  const budget = routeBudget();
+  const chat = await mirroredChat(uid, legacyProvisioning, store, budget);
+  if (!chat.ready) return chat;
+  return legacyProvisioning.git(uid, null, budget);
+}
+
+function serviceRouteConfigured<T>(res: Response, route: string, dependency: T | null): dependency is T {
+  if (dependency !== null) return true;
+  logger.error("gateway provisioning route called while the platform is not configured with the provisioning service", { route });
+  res.status(409).json({ error: "provisioning_service_not_configured" });
+  return false;
+}
+
+function installServiceProvisioningRoutes(router: Router, deps: ResolvedFleetBrokerRouteDeps): void {
+  const { store } = deps;
+
+  router.post("/provisioning-readiness", async (req, res) => {
+    const assigned = await requireAssignedUser(store, req, res);
+    if (!assigned) return;
+    const { legacyProvisioning } = deps;
+    if (!serviceRouteConfigured(res, "provisioning-readiness", legacyProvisioning)) return;
+    await runBrokered(res, async () => {
+      const answer = await serviceProvisioningReadiness(assigned.uid, legacyProvisioning, store);
+      if (!answer.ready) {
+        respondProvisioningNotReady(res, { route: "provisioning-readiness", uid: assigned.uid }, answer);
+        return;
+      }
+      res.status(204).end();
+    });
+  });
+
+  router.post("/git-key", async (req, res) => {
+    const assigned = await requireAssignedUser(store, req, res);
+    if (!assigned) return;
+    const publicKey = objectBody(req).publicKey;
+    if (!isSshPublicKeyLine(publicKey)) {
+      res.status(400).json({ error: "invalid_public_key" });
+      return;
+    }
+    const holder = requireGitKeyHolder(assigned.bound, res);
+    if (!holder) return;
+    const { legacyProvisioning } = deps;
+    if (!serviceRouteConfigured(res, "git-key", legacyProvisioning)) return;
+    await runBrokered(res, async () => {
+      if (!holdsServiceGitKeys(await store.gateways.roots.get(assigned.bound.gatewayId))) {
+        logger.warn("gateway git key registration: only a shared gateway holds a git key row, so the provisioning service is not asked and the registration is refused", { gatewayId: assigned.bound.gatewayId, holder, uid: assigned.uid });
+        res.status(422).json({ error: "provisioning_refused", reason: SERVICE_GIT_KEYS_NOT_FOR_GATEWAY });
+        return;
+      }
+      const answer = await legacyProvisioning.gitKey(assigned.uid, holder, publicKey.trim(), routeBudget());
+      if (!answer.ready) {
+        respondProvisioningNotReady(res, { route: "git-key", uid: assigned.uid }, answer);
+        return;
+      }
+      res.status(204).end();
+    });
+  });
+
+  router.post("/git-key/release", async (req, res) => {
+    const bound = boundGateway(req, res);
+    if (!bound) return;
+    const { slug, publicKey } = objectBody(req);
+    if (!isValidUsername(slug)) {
+      res.status(400).json({ error: "invalid_slug" });
+      return;
+    }
+    if (!isSshPublicKeyLine(publicKey)) {
+      res.status(400).json({ error: "invalid_public_key" });
+      return;
+    }
+    const holder = requireGitKeyHolder(bound, res);
+    if (!holder) return;
+    const { legacyProvisioning } = deps;
+    if (!serviceRouteConfigured(res, "git-key/release", legacyProvisioning)) return;
+    await runBrokered(res, async () => {
+      if (!holdsServiceGitKeys(await store.gateways.roots.get(bound.gatewayId))) {
+        logger.info("gateway git key release: only a shared gateway holds a git key row, so the provisioning service is not asked", { gatewayId: bound.gatewayId, holder });
+        res.status(204).end();
+        return;
+      }
+      const user = await store.users.records.findBySlug(slug);
+      if (user === null) {
+        res.status(404).json({ error: "not_found" });
+        return;
+      }
+      const { uid } = user;
+      const outcome = await legacyProvisioning.releaseGitKey(uid, holder, publicKey.trim(), routeBudget());
+      if (outcome === "superseded") {
+        logger.info("gateway git key release: the row holds a newer registration, which stays", { uid, holder });
+      }
+      res.status(204).end();
+    });
+  });
+}
+
+function gitKeyHolder(bound: GatewayBinding): string | null {
+  return bound.podName ? gatewayKeyOwnerId(bound.gatewayId, bound.podName) : null;
+}
+
+function requireGitKeyHolder(bound: GatewayBinding, res: Response): string | null {
+  const holder = gitKeyHolder(bound);
+  if (holder === null) {
+    logger.error("gateway git key route called by a token that binds no pod", { gatewayId: bound.gatewayId });
+    res.status(403).json(FORBIDDEN);
+  }
+  return holder;
+}
+
+const SNAPSHOT_SERVICE_READ_MS = 3_000;
+
+async function servedThroughService(uid: string, legacyProvisioning: LegacyProvisioning, store: PlatformStateRepositories): Promise<boolean> {
+  try {
+    const chat = await legacyProvisioning.chat(uid, routeBudget(SNAPSHOT_SERVICE_READ_MS), { longPoll: false });
+    if (!chat.ready) return false;
+    return (await mirroredState(store, chat.value.resource, chat.value.chat)).state === "mirrored";
+  } catch (err) {
+    logger.error("user-snapshot: the provisioning service could not be read, so the gateway takes its own path for this mount", { err, uid });
+    return false;
+  }
+}
+
+async function snapshotProvisioning(
+  uid: string,
+  bound: GatewayBinding,
+  gateway: GatewayRoot | undefined,
+  deps: ResolvedFleetBrokerRouteDeps,
+): Promise<{ gitKeyHolder?: string; provisionedBy?: "service" }> {
+  const { legacyProvisioning } = deps;
+  if (legacyProvisioning === null || !holdsServiceGitKeys(gateway)) return {};
+  const holder = gitKeyHolder(bound);
+  if (holder === null) {
+    logger.warn("user-snapshot: the caller's token binds no pod, so the gateway takes its own path for this mount", { uid, gatewayId: bound.gatewayId });
+    return {};
+  }
+  const service = await servedThroughService(uid, legacyProvisioning, deps.store);
+  return service ? { gitKeyHolder: holder, provisionedBy: "service" } : { gitKeyHolder: holder };
+}
+
+function isSshPublicKeyLine(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= 8192 &&
+    /^(ssh-(ed25519|rsa)|ecdsa-sha2-nistp\d+) [A-Za-z0-9+/=]+( [^\r\n]*)?$/u.test(value.trim());
 }
 
 const defaultExecuteChatSearch: ExecuteChatSearch = async (identity, params) => {
@@ -2042,7 +2192,7 @@ function installSnapshotRoutes(
       res.status(404).json({ error: "not_found" });
       return;
     }
-    res.json({ user: snapshot });
+    res.json({ user: { ...snapshot, ...(await snapshotProvisioning(uid, bound, gatewayData, deps)) } });
   });
 
   router.post("/reconcile-project-coach-membership", async (req, res) => {
@@ -4290,6 +4440,7 @@ export function createFleetBrokerRoutes(opts: FleetBrokerRouteOptions): Router {
   installSnapshotRoutes(router, deps);
   installUserIdentityRoute(router, deps.store);
   installProvisioningRoutes(router, deps);
+  installServiceProvisioningRoutes(router, deps);
   installGatewayOpsRoutes(router, deps);
   installVmRuntimeRoutes(router, deps);
   installVmEgressRoutes(router, deps);

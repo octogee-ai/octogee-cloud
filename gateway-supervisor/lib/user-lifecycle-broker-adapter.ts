@@ -71,6 +71,7 @@ import {
   rosterAgentSpecsFromEntries,
 } from "./agent-roster-creation.js";
 import {
+  type GivenUpUserGitKey,
   type UserContext,
   type UserLifecycleAdapter,
   type UserStateImportMode,
@@ -78,6 +79,7 @@ import {
   type ProjectCloneOptions,
   type ProjectCloneTarget,
   type RemoveUserResult,
+  type ServiceProvisioningAdapter,
   type UserSnapshot,
 } from "./user-lifecycle.js";
 
@@ -103,7 +105,7 @@ import {
   cloneWorkspaceRepo,
   userRepositoryHasCanonicalRemote,
   userSshKeyPath,
-  deleteUserSshKey,
+  prepareServiceGitKey,
   generateUserSshKey,
   initWorkspaceRepo,
   projectCheckoutMatchesSource,
@@ -112,6 +114,7 @@ import {
   setRepoSshCommand,
 } from "./git.js";
 import { brokeredGitHost } from "./gitea-admin-broker-client.js";
+import { giveUpUserGitKey } from "./user-git-key.js";
 import {
   hasMountedMarker,
   clearMountedMarker,
@@ -281,7 +284,7 @@ interface BuildBrokeredLifecycleAdapterOptions {
 interface BrokerCtx {
   client: FleetBrokerClient;
   rpc: GatewayRpcClient;
-  log: (msg: string) => void;
+  log: (msg: string, fields?: { status: "failed" }) => void;
   isIsolatedGateway: () => boolean;
   configCache: ConfigCache;
   snapshotsByUid: Map<string, FleetBrokerUserSnapshot>;
@@ -560,7 +563,46 @@ function toUserSnapshot(snapshot: FleetBrokerUserSnapshot): UserSnapshot {
     freeTierModelRef: snapshot.freeTierModelRef,
     builderAgentDefault: snapshot.builderAgentDefault,
     systemConfig: snapshot.systemConfig,
+    ...(snapshot.provisionedBy === "service" ? { provisionedBy: "service" as const } : {}),
+    ...(snapshot.gitKeyHolder ? { gitKeyHolder: snapshot.gitKeyHolder } : {}),
   };
+}
+
+export function brokeredServiceProvisioning(
+  client: Pick<FleetBrokerClient, "provisioningReadiness" | "registerGitKey">,
+): ServiceProvisioningAdapter {
+  return {
+    readiness: (uid) => client.provisioningReadiness(uid),
+    serviceGitKey: (slug, holder) => prepareServiceGitKey(slug, holder),
+    registerGitKey: (uid, publicKey) => client.registerGitKey(uid, publicKey),
+  };
+}
+
+function giveUpGitKey(ctx: Pick<BrokerCtx, "client" | "log">, slug: string): Promise<GivenUpUserGitKey> {
+  return giveUpUserGitKey(slug, {
+    releaseServiceKey: (user, publicKey) => ctx.client.releaseGitKey(user, publicKey),
+    releaseHostKey: (user, publicKey) => brokeredGitHost.releaseKey(user, publicKey),
+    log: ctx.log,
+  });
+}
+
+async function giveUpDepartedUserGitKey(ctx: Pick<BrokerCtx, "client" | "log">, slug: string, erased: boolean): Promise<void> {
+  try {
+    await giveUpGitKey(ctx, slug);
+  } catch (error) {
+    if (erased) {
+      await fsp.rm(path.join(CUSTOMER_KEYS_DIR, slug), { recursive: true, force: true });
+      ctx.log(
+        `[remove:${slug}] ✖ git key release failed; deleted the erased user's key without it: ${error instanceof Error ? error.message : String(error)}`,
+        { status: "failed" },
+      );
+      return;
+    }
+    ctx.log(
+      `[remove:${slug}] ✖ git key release failed; the local keypair is kept for the preStop flush and for the next import of this user here, which release it again: ${error instanceof Error ? error.message : String(error)}`,
+      { status: "failed" },
+    );
+  }
 }
 
 function ensureUserDirectories(slug: string): void {
@@ -1850,6 +1892,7 @@ async function listExportPaths(slug: string): Promise<Array<{ cwd: string; path:
 }
 
 async function prepareImportDir(
+  ctx: Pick<BrokerCtx, "client" | "log">,
   slug: string,
   mode: UserStateImportMode,
   release: AgentStateRelease,
@@ -1859,15 +1902,13 @@ async function prepareImportDir(
     ? configuredUserPortableStatePlan(OPENCLAW_CONFIG, stateDir)
     : null;
   if (builderPlan) assertConfiguredUserPortableStatePlanOnDisk(stateDir, builderPlan);
+  if (mode === "default" && !builderPlan) await giveUpGitKey(ctx, slug);
   const wipeState = mode !== "final" && !builderPlan;
   if (wipeState) await removeAgentDirs(await releaseAgentState(agentIdsForMigration(slug), release));
   const wipePaths = !wipeState ? [] : [
     path.join(OPENCLAW_DIR, "customers", slug),
     path.join(OPENCLAW_DIR, MIGRATION_ACTIVATION_DIR, slug),
   ];
-  if (mode === "default" && !builderPlan) {
-    wipePaths.push(path.join(OPENCLAW_DIR, "customer-keys", slug));
-  }
   for (const p of wipePaths) {
     await fsp.rm(p, { recursive: true, force: true }).catch(() => undefined);
   }
@@ -1890,11 +1931,8 @@ async function prepareImportDir(
   return OPENCLAW_DIR;
 }
 
-async function prepareKeyImportDir(slug: string): Promise<string> {
-  await fsp.rm(path.join(OPENCLAW_DIR, "customer-keys", slug), {
-    recursive: true,
-    force: true,
-  }).catch(() => undefined);
+async function prepareKeyImportDir(ctx: Pick<BrokerCtx, "client" | "log">, slug: string): Promise<string> {
+  await giveUpGitKey(ctx, slug);
   await fsp.mkdir(CUSTOMER_KEYS_DIR, { recursive: true });
   return OPENCLAW_DIR;
 }
@@ -2358,9 +2396,7 @@ async function removeImportedUserBySlug(
     { ignoreReadOnlyConnections: true },
   );
   await removeDepartedUserFileState(slug, { log: ctx.log });
-  if (!isConfiguredGatewayUser(slug)) {
-    await fsp.rm(path.join(CUSTOMER_KEYS_DIR, slug), { recursive: true, force: true });
-  }
+  if (!isConfiguredGatewayUser(slug)) await giveUpDepartedUserGitKey(ctx, slug, erasureAgentIds !== undefined);
   await removeAgentDirs(agentDirs);
   await removeActivationManifest(OPENCLAW_DIR, slug);
   await assertSharedErasureRosterRemoved(ctx, slug, erasureAgentIds);
@@ -2449,7 +2485,7 @@ function runtimeUpdateOperations(ctx: BrokerCtx): Pick<UserLifecycleAdapter,
       await setUserChannelsRunning(ctx.rpc, slug, true);
     }, { ignorePublications: true }),
     prepareImportDir: (slug, mode) => openClawRuntimeUpdateGuard.run(() =>
-      prepareImportDir(slug, mode, agentStateRelease(ctx, `[prepare-import:${slug}]`)), { slug }),
+      prepareImportDir(ctx, slug, mode, agentStateRelease(ctx, `[prepare-import:${slug}]`)), { slug }),
     activateImportedUser: (slug, callOpts) =>
       openClawRuntimeUpdateGuard.run(() => activateImportedUser(ctx, slug, callOpts), {
         signal: callOpts?.signal,
@@ -2555,12 +2591,15 @@ export function buildBrokeredLifecycleAdapter(
     removePartialWorkspace,
     deleteDepartedUserState: (slug) => removeDepartedUserFileState(slug, { log: opts.log }),
     cloneWorkspaceRepo,
-    initWorkspaceRepoFromExistingDir: (userCtx) => initWorkspaceRepo(userCtx.customerDir, userCtx.slug),
+    initWorkspaceRepoFromExistingDir: (userCtx, provisioningPath) => provisioningPath === "service"
+      ? initWorkspaceRepo(userCtx.customerDir, userCtx.slug, { ensureWorkspaceRepo: null, prepareRepository: setRepoSshCommand })
+      : initWorkspaceRepo(userCtx.customerDir, userCtx.slug),
+    provisioningService: brokeredServiceProvisioning(opts.client),
     hasUserSshKey: (slug) => fs.existsSync(userSshKeyPath(slug)),
     generateUserSshKey,
     gitHost: brokeredGitHost,
     readLocalUserPubKey,
-    deleteUserSshKey,
+    giveUpUserGitKey: (slug) => giveUpGitKey(ctx, slug),
     blobSyncForSlug: async (slug) => {
       await blobSyncForSlug(slug, { store: createBrokeredBlobStore(opts.client) });
     },
@@ -2601,7 +2640,7 @@ export function buildBrokeredLifecycleAdapter(
       return current.anchors.filter(anchor => anchor.agentId !== SAFE_DEFAULT_AGENT_ID);
     },
     listExportPaths,
-    prepareKeyImportDir,
+    prepareKeyImportDir: (slug) => prepareKeyImportDir(ctx, slug),
     targetMigrationIdentityCustody: async (slug, migrationId) => {
       if (!migrationId) throw new Error("target migration authority is required");
       const current = await ctx.client.readAgentAnchors({ slug, migrationId });

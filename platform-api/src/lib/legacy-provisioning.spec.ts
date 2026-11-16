@@ -15,6 +15,7 @@ import {
   LEGACY_ROUTE_DEADLINE_MS,
   legacyProvisioningFromEnvironment,
   routeBudget,
+  type LegacyProvisioning,
   type LegacyProvisioningClient,
   type RouteBudget,
 } from "./legacy-provisioning.js";
@@ -33,6 +34,7 @@ function resource(overrides: {
   chat?: typeof CHAT;
   systemConfigRepository?: boolean;
   work?: UserProvisioning["status"]["work"];
+  gitOwner?: string;
 } = {}): UserProvisioning {
   return {
     uid: "uid-lin",
@@ -50,13 +52,26 @@ function resource(overrides: {
     status: {
       observedGeneration: overrides.observedGeneration ?? 1,
       conditions: overrides.conditions ?? [],
-      outputs: { ...(overrides.chat ? { chat: overrides.chat } : {}), credentials: [] },
+      outputs: {
+        ...(overrides.chat ? { chat: overrides.chat } : {}),
+        ...(overrides.gitOwner ? { git: { owner: overrides.gitOwner, repositories: {} } } : {}),
+        credentials: [],
+      },
       work: overrides.work ?? { state: "idle", attempts: 1, nextAttemptAt: null, lastAttemptAt: null },
     },
   };
 }
 
-function gitKey(overrides: { generation?: number; observedGeneration?: number; registered?: "True" | "False"; reason?: ProvisioningConditionReason; message?: string; nextAttemptAt?: string | null } = {}): GitKey {
+function gitKey(overrides: {
+  generation?: number;
+  observedGeneration?: number;
+  putSequence?: number;
+  observedPutSequence?: number;
+  registered?: "True" | "False";
+  reason?: ProvisioningConditionReason;
+  message?: string;
+  nextAttemptAt?: string | null;
+} = {}): GitKey {
   const generation = overrides.generation ?? 1;
   return {
     uid: "uid-lin",
@@ -65,11 +80,11 @@ function gitKey(overrides: { generation?: number; observedGeneration?: number; r
     generation,
     resourceVersion: "9",
     deletionRequestedAt: null,
-    putSequence: 1,
+    putSequence: overrides.putSequence ?? 1,
     spec: { publicKey: "ssh-ed25519 AAAA lin" },
     status: {
       observedGeneration: overrides.observedGeneration ?? generation,
-      observedPutSequence: 1,
+      observedPutSequence: overrides.observedPutSequence ?? overrides.putSequence ?? 1,
       nextAttemptAt: overrides.nextAttemptAt ?? null,
       conditions: overrides.registered === undefined ? [] : [{
         type: "Registered",
@@ -83,9 +98,15 @@ function gitKey(overrides: { generation?: number; observedGeneration?: number; r
   };
 }
 
-function fakeClient(answers: Array<UserProvisioning | null | Error>, credential: ProvisioningCredential | null | Error = null, keys: Array<GitKey | Error> = []) {
+function fakeClient(
+  answers: Array<UserProvisioning | null | Error>,
+  credential: ProvisioningCredential | null | Error = null,
+  keys: Array<GitKey | Error> = [],
+  keyReads: Array<GitKey | null | Error> = [],
+) {
   const calls: Array<{ uid: string; options: unknown }> = [];
   const keyPuts: Array<{ uid: string; gatewayId: string; spec: unknown; options: unknown }> = [];
+  const keyGets: Array<{ uid: string; holder: string; options: unknown }> = [];
   const client: LegacyProvisioningClient = {
     getProvisioning: vi.fn(async (uid, options) => {
       calls.push({ uid, options });
@@ -105,8 +126,15 @@ function fakeClient(answers: Array<UserProvisioning | null | Error>, credential:
       if (answer instanceof Error) throw answer;
       return { outcome: "unchanged" as const, key: answer };
     }),
+    getGitKey: vi.fn(async (uid, holder, options) => {
+      keyGets.push({ uid, holder, options });
+      const answer = keyReads.length > 1 ? keyReads.shift() : keyReads[0];
+      if (answer === undefined) throw new Error("no git key read left");
+      if (answer instanceof Error) throw answer;
+      return answer;
+    }),
   };
-  return { client, calls, keyPuts };
+  return { client, calls, keyPuts, keyGets };
 }
 
 const SIGNAL = new AbortController().signal;
@@ -165,14 +193,14 @@ describe("legacy provisioning adapter: chat", () => {
     expect(logged).toHaveBeenCalledWith("legacy provisioning: no provisioning resource exists for the user", { uid: "uid-lin" });
   });
 
-  it("logs a parked user's reason", async () => {
+  it("marks a parked user's wait refused and logs its reason", async () => {
     const logged = vi.spyOn(logger, "error").mockImplementation(() => {});
     const { client } = fakeClient([resource({
       conditions: [condition("ChatReady", "False", "ChatUserFailed")],
       work: { state: "parked", attempts: 9, nextAttemptAt: null, lastAttemptAt: "2026-11-15T17:59:00Z" },
     })]);
 
-    await expect(adapter(client).chat("uid-lin", budget())).resolves.toEqual({ ready: false, reason: "ChatUserFailed", retryAfterSeconds: 5 });
+    await expect(adapter(client).chat("uid-lin", budget())).resolves.toEqual({ ready: false, reason: "ChatUserFailed", retryAfterSeconds: 5, refused: true });
     expect(logged).toHaveBeenCalledWith("legacy provisioning: the user's provisioning is parked", { uid: "uid-lin", reason: "ChatUserFailed" });
   });
 
@@ -265,79 +293,223 @@ describe("legacy provisioning adapter: git key", () => {
     return { provisioning, sleeps, budget: () => routeBudget(LEGACY_ROUTE_DEADLINE_MS, () => clock) };
   }
 
-  it("puts the gateway's key and is ready once the service reports it registered for the key's current generation", async () => {
-    const { client, keyPuts } = fakeClient([], null, [
-      gitKey({ generation: 2, observedGeneration: 1, registered: "True" }),
-      gitKey({ generation: 2, observedGeneration: 2, registered: "True" }),
+  const IDLE = resource();
+  const PUT = gitKey({ putSequence: 4, observedPutSequence: 3, registered: "True" });
+  const call = (provisioning: LegacyProvisioning, route: RouteBudget) => provisioning.gitKey("uid-lin", "walter", "ssh-ed25519 AAAA lin", route);
+
+  it("puts the key once, then reads it back until an attempt that followed that put reports it registered", async () => {
+    const { client, keyPuts, keyGets } = fakeClient([IDLE], null, [PUT], [
+      gitKey({ putSequence: 4, observedPutSequence: 3, registered: "True" }),
+      gitKey({ putSequence: 4, observedPutSequence: 4, registered: "True" }),
     ]);
     const { provisioning, sleeps, budget: route } = clockedAdapter(client);
 
-    await expect(provisioning.gitKey("uid-lin", "walter", "ssh-ed25519 AAAA lin", route())).resolves.toEqual({ ready: true, value: undefined });
+    await expect(call(provisioning, route())).resolves.toEqual({ ready: true, value: undefined });
 
     expect(keyPuts.map(({ uid, gatewayId, spec }) => ({ uid, gatewayId, spec }))).toEqual([
       { uid: "uid-lin", gatewayId: "walter", spec: { publicKey: "ssh-ed25519 AAAA lin" } },
-      { uid: "uid-lin", gatewayId: "walter", spec: { publicKey: "ssh-ed25519 AAAA lin" } },
     ]);
-    expect(sleeps).toEqual([2_000]);
+    expect(keyGets.map(({ uid, holder }) => ({ uid, holder }))).toEqual([{ uid: "uid-lin", holder: "walter" }, { uid: "uid-lin", holder: "walter" }]);
+    expect(sleeps).toEqual([2_000, 2_000]);
   });
 
-  it("ends the wait at once on a failed registration step, answering the step's failure and not a key held elsewhere", async () => {
-    const logged = vi.spyOn(logger, "error").mockImplementation(() => {});
-    const { client, keyPuts } = fakeClient([], null, [gitKey({ registered: "False", reason: "GitKeyFailed", message: "401 from git host" })]);
+  it("never reports a key registered on a registration recorded before its put, however long that stays", async () => {
+    vi.spyOn(logger, "error").mockImplementation(() => {});
+    const { client, keyPuts } = fakeClient([IDLE, IDLE], null, [PUT], [gitKey({ putSequence: 4, observedPutSequence: 3, registered: "True" })]);
     const { provisioning, sleeps, budget: route } = clockedAdapter(client);
 
-    await expect(provisioning.gitKey("uid-lin", "walter", "ssh-ed25519 AAAA lin", route()))
-      .resolves.toEqual({ ready: false, reason: "GitKeyFailed", retryAfterSeconds: 5 });
+    await expect(call(provisioning, route())).resolves.toEqual({ ready: false, reason: "GitKeyPutNotObserved", retryAfterSeconds: 5 });
 
     expect(keyPuts).toHaveLength(1);
-    expect(sleeps).toEqual([]);
-    expect(logged).toHaveBeenCalledWith("legacy provisioning: the provisioning service has not registered the gateway's git key", {
-      uid: "uid-lin", gatewayId: "walter", reason: "GitKeyFailed", message: "401 from git host",
-    });
-  });
-
-  it("keeps putting the key while the service has not observed its generation, and stops inside the route's budget", async () => {
-    const { client, keyPuts } = fakeClient([], null, [gitKey({ generation: 2, observedGeneration: 1, registered: "False", reason: "GitKeyHeldElsewhere" })]);
-    const { provisioning, sleeps, budget: route } = clockedAdapter(client);
-
-    await expect(provisioning.gitKey("uid-lin", "walter", "ssh-ed25519 AAAA lin", route()))
-      .resolves.toEqual({ ready: false, reason: "GenerationNotObserved", retryAfterSeconds: 5 });
-
     expect(sleeps.length).toBeGreaterThan(0);
     expect(sleeps.reduce((total, ms) => total + ms, 0)).toBeLessThanOrEqual(LEGACY_ROUTE_DEADLINE_MS - 10_000);
-    expect(keyPuts.length).toBe(sleeps.length + 1);
   });
 
-  it("ends the wait at once for a key held elsewhere, with Retry-After until the service tries it again", async () => {
+  it("is ready when a later put's attempt has registered the key", async () => {
+    const { client } = fakeClient([IDLE], null, [PUT], [gitKey({ putSequence: 6, observedPutSequence: 5, registered: "True" })]);
+    const { provisioning, budget: route } = clockedAdapter(client);
+
+    await expect(call(provisioning, route())).resolves.toEqual({ ready: true, value: undefined });
+  });
+
+  it("is ready for a key registered for its put while the row backs off after a key pass could not list the git host's keys", async () => {
     const logged = vi.spyOn(logger, "error").mockImplementation(() => {});
-    const nextAttemptAt = new Date(NOW + 120_000).toISOString();
-    const { client, keyPuts } = fakeClient([], null, [gitKey({ registered: "False", reason: "GitKeyHeldElsewhere", message: "422 from git host", nextAttemptAt })]);
+    const backingOff = new Date(NOW + 60_000).toISOString();
+    const { client, keyGets } = fakeClient([IDLE], null, [PUT], [gitKey({ putSequence: 4, observedPutSequence: 4, registered: "True", nextAttemptAt: backingOff })]);
+    const { provisioning, budget: route } = clockedAdapter(client);
+
+    await expect(call(provisioning, route())).resolves.toEqual({ ready: true, value: undefined });
+
+    expect(keyGets).toHaveLength(1);
+    expect(logged).not.toHaveBeenCalled();
+  });
+
+  it("ends the wait at once when the attempt that followed the put failed to register, answering that failure", async () => {
+    const logged = vi.spyOn(logger, "error").mockImplementation(() => {});
+    const { client, keyPuts, keyGets } = fakeClient([IDLE], null, [PUT], [
+      gitKey({ putSequence: 4, observedPutSequence: 4, registered: "False", reason: "GitKeyFailed", message: "401 from git host" }),
+    ]);
     const { provisioning, sleeps, budget: route } = clockedAdapter(client);
 
-    await expect(provisioning.gitKey("uid-lin", "walter", "ssh-ed25519 AAAA lin", route()))
-      .resolves.toEqual({ ready: false, reason: "GitKeyHeldElsewhere", retryAfterSeconds: 120 });
+    await expect(call(provisioning, route())).resolves.toEqual({ ready: false, reason: "GitKeyFailed", retryAfterSeconds: 5 });
 
     expect(keyPuts).toHaveLength(1);
-    expect(sleeps).toEqual([]);
+    expect(keyGets).toHaveLength(1);
+    expect(sleeps).toEqual([2_000]);
     expect(logged).toHaveBeenCalledWith("legacy provisioning: the provisioning service has not registered the gateway's git key", {
-      uid: "uid-lin", gatewayId: "walter", reason: "GitKeyHeldElsewhere", message: "422 from git host",
+      uid: "uid-lin", holder: "walter/octogee-gateway-walter-0", reason: "GitKeyFailed", message: "401 from git host",
     });
   });
 
-  it("names a key the service observed without a registration condition apart from an unobserved one", async () => {
-    const { client } = fakeClient([], null, [gitKey({ generation: 1, observedGeneration: 1 })]);
+  it("ends the wait at once for a key held elsewhere after the put, with Retry-After until the service tries it again", async () => {
+    vi.spyOn(logger, "error").mockImplementation(() => {});
+    const nextAttemptAt = new Date(NOW + 120_000).toISOString();
+    const { client, keyGets } = fakeClient([IDLE], null, [PUT], [
+      gitKey({ putSequence: 4, observedPutSequence: 4, registered: "False", reason: "GitKeyHeldElsewhere", message: "422 from git host", nextAttemptAt }),
+    ]);
     const { provisioning, budget: route } = clockedAdapter(client);
 
-    await expect(provisioning.gitKey("uid-lin", "walter", "ssh-ed25519 AAAA lin", route()))
-      .resolves.toEqual({ ready: false, reason: "RegisteredUnknown", retryAfterSeconds: 5 });
+    await expect(call(provisioning, route())).resolves.toEqual({ ready: false, reason: "GitKeyHeldElsewhere", retryAfterSeconds: 118 });
+
+    expect(keyGets).toHaveLength(1);
   });
 
-  it("is not ready while the service has not observed the key's generation", async () => {
-    const { client } = fakeClient([], null, [gitKey({ generation: 1, observedGeneration: 0 })]);
+  it("keeps waiting through a refusal recorded before the put", async () => {
+    const { client } = fakeClient([IDLE], null, [gitKey({ putSequence: 4, observedPutSequence: 3, registered: "False", reason: "GitKeyHeldElsewhere" })], [
+      gitKey({ putSequence: 4, observedPutSequence: 3, registered: "False", reason: "GitKeyHeldElsewhere" }),
+      gitKey({ putSequence: 4, observedPutSequence: 4, registered: "True" }),
+    ]);
+    const { provisioning, sleeps, budget: route } = clockedAdapter(client);
+
+    await expect(call(provisioning, route())).resolves.toEqual({ ready: true, value: undefined });
+
+    expect(sleeps).toEqual([2_000, 2_000]);
+  });
+
+  it("answers the last failure the service recorded when no attempt has processed the put inside the budget", async () => {
+    const logged = vi.spyOn(logger, "error").mockImplementation(() => {});
+    const retrying = resource({ work: { state: "retrying", attempts: 3, nextAttemptAt: new Date(NOW + 90_000).toISOString(), lastAttemptAt: null } });
+    const { client, keyPuts } = fakeClient([retrying], null, [PUT], [
+      gitKey({ putSequence: 4, observedPutSequence: 3, registered: "False", reason: "GitKeyFailed", message: "503 from git host" }),
+    ]);
+    const { provisioning, sleeps, budget: route } = clockedAdapter(client);
+
+    const answer = await call(provisioning, route());
+
+    expect(answer).toMatchObject({ ready: false, reason: "GitKeyFailed" });
+    expect(keyPuts).toHaveLength(1);
+    expect(sleeps.reduce((total, ms) => total + ms, 0)).toBeLessThanOrEqual(LEGACY_ROUTE_DEADLINE_MS - 10_000);
+    expect(logged).toHaveBeenCalledWith("legacy provisioning: no attempt has processed the gateway's git key put inside the route's budget", expect.objectContaining({
+      uid: "uid-lin", holder: "walter/octogee-gateway-walter-0", putSequence: 4, observedPutSequence: 3, work: "retrying",
+    }));
+  });
+
+  it("keeps waiting for a parked user whose git account exists, whose put a key pass registers", async () => {
+    const parked = resource({
+      conditions: [condition("Ready", "False", "ChatUserFailed")],
+      work: { state: "parked", attempts: 9, nextAttemptAt: null, lastAttemptAt: null },
+      gitOwner: "ws-lin",
+    });
+    const { client, keyPuts } = fakeClient([parked], null, [PUT], [
+      gitKey({ putSequence: 4, observedPutSequence: 3, registered: "True" }),
+      gitKey({ putSequence: 4, observedPutSequence: 4, registered: "True" }),
+    ]);
+    const { provisioning, sleeps, budget: route } = clockedAdapter(client);
+
+    await expect(call(provisioning, route())).resolves.toEqual({ ready: true, value: undefined });
+
+    expect(keyPuts).toHaveLength(1);
+    expect(sleeps).toEqual([2_000, 2_000]);
+  });
+
+  it("answers a failure a retry can finish when no key pass has registered a parked user's put inside the budget", async () => {
+    vi.spyOn(logger, "error").mockImplementation(() => {});
+    const parked = resource({
+      conditions: [condition("Ready", "False", "ChatUserFailed")],
+      work: { state: "parked", attempts: 9, nextAttemptAt: null, lastAttemptAt: null },
+      gitOwner: "ws-lin",
+    });
+    const { client, keyPuts } = fakeClient([parked, parked], null, [PUT], [
+      gitKey({ putSequence: 4, observedPutSequence: 3, registered: "False", reason: "GitKeyFailed", message: "registration failed: 503 from git host" }),
+    ]);
+    const { provisioning, sleeps, budget: route } = clockedAdapter(client);
+
+    await expect(call(provisioning, route())).resolves.toEqual({ ready: false, reason: "GitKeyFailed", retryAfterSeconds: 5 });
+
+    expect(keyPuts).toHaveLength(1);
+    expect(sleeps.length).toBeGreaterThan(0);
+  });
+
+  it("refuses with the service's own reason when its key pass refuses a parked user's put for want of a git account", async () => {
+    const logged = vi.spyOn(logger, "error").mockImplementation(() => {});
+    const parked = resource({
+      conditions: [condition("Ready", "False", "GitOwnerFailed")],
+      work: { state: "parked", attempts: 9, nextAttemptAt: null, lastAttemptAt: null },
+    });
+    const nextAttemptAt = new Date(NOW + 60_000).toISOString();
+    const { client, calls, keyPuts, keyGets } = fakeClient([parked, parked], null, [PUT], [
+      gitKey({ putSequence: 4, observedPutSequence: 4, registered: "False", reason: "GitNotReady", message: "the user's git account does not exist yet", nextAttemptAt }),
+    ]);
+    const { provisioning, sleeps, budget: route } = clockedAdapter(client);
+
+    await expect(call(provisioning, route())).resolves.toEqual({ ready: false, reason: "GitNotReady", retryAfterSeconds: 58, refused: true });
+
+    expect(keyPuts).toHaveLength(1);
+    expect(keyGets).toHaveLength(1);
+    expect(sleeps).toEqual([2_000]);
+    expect(calls).toEqual([]);
+    expect(logged).toHaveBeenCalledWith("legacy provisioning: the provisioning service has not registered the gateway's git key", {
+      uid: "uid-lin", holder: "walter/octogee-gateway-walter-0", reason: "GitNotReady", message: "the user's git account does not exist yet",
+    });
+  });
+
+  it("does not predict the service's answer for parked work: it waits for the key pass and answers a failure a retry can finish when the budget ends", async () => {
+    vi.spyOn(logger, "error").mockImplementation(() => {});
+    const parked = resource({
+      conditions: [condition("Ready", "False", "ChatUserFailed")],
+      work: { state: "parked", attempts: 9, nextAttemptAt: null, lastAttemptAt: null },
+    });
+    const { client, calls } = fakeClient([parked], null, [PUT], [gitKey({ putSequence: 4, observedPutSequence: 3 })]);
+    const { provisioning, sleeps, budget: route } = clockedAdapter(client);
+
+    await expect(call(provisioning, route())).resolves.toEqual({ ready: false, reason: "GitKeyPutNotObserved", retryAfterSeconds: 5 });
+
+    expect(sleeps.length).toBeGreaterThan(1);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("names a key an attempt processed without a registration condition", async () => {
+    vi.spyOn(logger, "error").mockImplementation(() => {});
+    const { client } = fakeClient([IDLE, IDLE], null, [PUT], [gitKey({ putSequence: 4, observedPutSequence: 4 })]);
     const { provisioning, budget: route } = clockedAdapter(client);
 
-    await expect(provisioning.gitKey("uid-lin", "walter", "ssh-ed25519 AAAA lin", route()))
-      .resolves.toEqual({ ready: false, reason: "GenerationNotObserved", retryAfterSeconds: 5 });
+    await expect(call(provisioning, route())).resolves.toEqual({ ready: false, reason: "RegisteredUnknown", retryAfterSeconds: 5 });
+  });
+
+  it("is not ready while the service has not observed the key's generation, whatever its put sequence", async () => {
+    vi.spyOn(logger, "error").mockImplementation(() => {});
+    const { client } = fakeClient([IDLE, IDLE], null, [PUT], [gitKey({ generation: 2, observedGeneration: 1, putSequence: 4, observedPutSequence: 4, registered: "True" })]);
+    const { provisioning, budget: route } = clockedAdapter(client);
+
+    await expect(call(provisioning, route())).resolves.toEqual({ ready: false, reason: "GenerationNotObserved", retryAfterSeconds: 5 });
+  });
+
+  it("answers loudly when the row is released while its registration is awaited", async () => {
+    const logged = vi.spyOn(logger, "error").mockImplementation(() => {});
+    const { client } = fakeClient([IDLE], null, [PUT], [null]);
+    const { provisioning, budget: route } = clockedAdapter(client);
+
+    await expect(call(provisioning, route())).resolves.toEqual({ ready: false, reason: "GitKeyReleased", retryAfterSeconds: 5 });
+
+    expect(logged).toHaveBeenCalledWith("legacy provisioning: the gateway's git key row was released while its registration was awaited", { uid: "uid-lin", holder: "walter" });
+  });
+
+  it("answers an outage while reading the key back as unavailable", async () => {
+    vi.spyOn(logger, "error").mockImplementation(() => {});
+    const { client } = fakeClient([IDLE], null, [PUT], [new ProvisioningServiceError(503, "unavailable", "down", 7_000)]);
+    const { provisioning, budget: route } = clockedAdapter(client);
+
+    await expect(call(provisioning, route())).resolves.toEqual({ ready: false, reason: "ProvisioningServiceUnavailable", retryAfterSeconds: 7 });
   });
 
   it("is not ready for a user the service has no resource for, apart from an outage", async () => {
@@ -369,7 +541,7 @@ describe("legacy provisioning adapter: git key", () => {
 });
 
 describe("legacy provisioning requests", () => {
-  it("only ever reads from the provisioning service, apart from putting the gateway's own git key", async () => {
+  it("only ever reads from the provisioning service, apart from one put of the gateway's own git key", async () => {
     vi.spyOn(logger, "error").mockImplementation(() => {});
     const methods: string[] = [];
     const answers: Response[] = [
@@ -380,7 +552,9 @@ describe("legacy provisioning requests", () => {
       Response.json(resource({ conditions: [condition("GitReady", "False", "GitRepositoryFailed")] })),
       Response.json({ code: "not-issued", error: "not issued" }, { status: 409 }),
       Response.json({ code: "not-found", error: "no provisioning for this user" }, { status: 404 }),
-      Response.json(gitKey({ registered: "True" })),
+      Response.json(gitKey({ putSequence: 2, observedPutSequence: 1, registered: "True" })),
+      Response.json(resource()),
+      Response.json(gitKey({ putSequence: 2, observedPutSequence: 2, registered: "True" })),
     ];
     const fetch: typeof globalThis.fetch = async (input, init) => {
       const url = new URL(input instanceof Request ? input.url : String(input));
@@ -411,6 +585,7 @@ describe("legacy provisioning requests", () => {
       "GET users/{uid}/provisioning",
       "GET users/{uid}/credentials/agent-chat-token",
       "PUT users/{uid}/git-keys/walter",
+      "GET users/{uid}/git-keys/walter",
     ]));
   });
 });

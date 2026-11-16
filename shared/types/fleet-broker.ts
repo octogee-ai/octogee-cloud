@@ -316,6 +316,8 @@ export interface FleetBrokerUserSnapshot {
   coachToken: string | null;
   coachMmUserId: string | null;
   coachIdentity?: FleetBrokerDefaultAgentIdentity;
+  provisionedBy?: "service";
+  gitKeyHolder?: string;
   byotActive?: boolean;
   systemConfig?: {
     byot?: { provider?: string; baseUrl?: string; model?: string };

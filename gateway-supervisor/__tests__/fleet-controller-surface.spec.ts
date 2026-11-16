@@ -1,8 +1,12 @@
 import { generateKeyPairSync } from "node:crypto";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { gatewayScopedJobId, signFleetRequest } from "../lib/fleet-signature.js";
 import { startFleetController } from "../lib/fleet-provisioner.js";
+import { GIT_KEY_RESYNC_INTERVAL_MS, gitKeyResyncJitterMs } from "../lib/git-key-resync.js";
 import type {
   StartFleetOptions,
   StartedFleetController,
@@ -78,6 +82,114 @@ describe("fleet controller port surface", () => {
     expect(body.rsyncAttemptFencing).toBe(true);
     expect(body.podUid).toBe("pod-uid-1");
     expect(JSON.stringify(body)).not.toContain(GATEWAY_ID);
+  });
+
+  it("removes a prestop marker an earlier container of this pod left, before it serves anything", async () => {
+    const openclawDir = fs.mkdtempSync(path.join(os.tmpdir(), "octogee-fleet-surface-"));
+    const marker = path.join(openclawDir, "prestop-started");
+    fs.writeFileSync(marker, "pod-uid-1\n");
+    try {
+      controller = await startFleetController({ ...controllerOpts(), openclawDir });
+
+      expect(fs.existsSync(marker)).toBe(false);
+    } finally {
+      fs.rmSync(openclawDir, { recursive: true, force: true });
+    }
+  });
+
+  it("removes the leftover marker before its first wait, so a marker the prestop flush writes during startup stays", async () => {
+    stubUserClaim("jack");
+    const openclawDir = fs.mkdtempSync(path.join(os.tmpdir(), "octogee-fleet-surface-"));
+    const marker = path.join(openclawDir, "prestop-started");
+    fs.writeFileSync(marker, "pod-uid-1\n");
+    const liveMarkerWrites: string[] = [];
+    const opts = { ...controllerOpts(), openclawDir };
+    opts.adapter = {
+      isIsolatedGateway: () => true,
+      isConfiguredUser: (slug: string) => slug === "jack",
+      configuredUserOverlayPresent: () => true,
+      listLocalUserSlugs: () => ["jack"],
+      hasWorkspaceGitDir: () => true,
+      hasGitRemote: () => true,
+      userMountMarked: () => true,
+      clearMountMarker: () => undefined,
+    } as unknown as UserLifecycleAdapter;
+    opts.surgeOpenClawProcessGate = {
+      status: async () => {
+        if (liveMarkerWrites.length === 0) {
+          try {
+            fs.writeFileSync(marker, "pod-uid-1\n", { flag: "wx" });
+            liveMarkerWrites.push("written");
+          } catch (error) {
+            liveMarkerWrites.push((error as NodeJS.ErrnoException).code ?? String(error));
+          }
+        }
+        return { version: 1, podUid: "pod-uid-1", role: "normal", mode: "permitted", phase: "running" };
+      },
+    } as unknown as NonNullable<StartFleetOptions["surgeOpenClawProcessGate"]>;
+    try {
+      controller = await startFleetController(opts);
+
+      expect(liveMarkerWrites).toEqual(["written"]);
+      expect(fs.readFileSync(marker, "utf8")).toBe("pod-uid-1\n");
+    } finally {
+      fs.rmSync(openclawDir, { recursive: true, force: true });
+    }
+  });
+
+  it("stands the key resync down on the prestop marker in the controller's own state directory", async () => {
+    const podUid = "pod-uid-2908";
+    vi.stubEnv("POD_UID", podUid);
+    const openclawDir = fs.mkdtempSync(path.join(os.tmpdir(), "octogee-fleet-surface-"));
+    fs.writeFileSync(path.join(openclawDir, "applied-fingerprints.json"), JSON.stringify({ ada: "fp-1" }));
+    fs.writeFileSync(path.join(openclawDir, ".surge-handoff-ready.json"), JSON.stringify({ targetPodUid: podUid }));
+    const listed: string[] = [];
+    const logged: string[] = [];
+    const opts: StartFleetOptions = {
+      ...controllerOpts(),
+      openclawDir,
+      localReconcile: true,
+      readDesiredUsers: async () => new Map([["ada", { uid: "uid-ada", fingerprint: "fp-1", lane: "move" as const, ensureAllowed: true }]]),
+      readEnsureAdmission: async () => true,
+      stampMounted: async () => undefined,
+      recordReconcileError: async () => undefined,
+      clearReconcileError: async () => undefined,
+      adapter: {
+        listLocalUserSlugs: () => ["ada"],
+        listLocalUserDirs: () => ["ada"],
+        hasWorkspaceGitDir: () => true,
+        hasGitRemote: () => true,
+        userMountMarked: () => true,
+        readLocalUserPubKey: () => "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAda octogee-ada@gateway",
+        giveUpUserGitKey: async () => "released" as const,
+        gitHost: {
+          listKeys: async (slug: string) => {
+            listed.push(slug);
+            return [];
+          },
+          registerKey: async () => undefined,
+        },
+        log: (line: string) => { logged.push(line); },
+      } as unknown as UserLifecycleAdapter,
+    };
+    vi.useFakeTimers({ toFake: ["setTimeout", "setInterval", "clearTimeout", "clearInterval"] });
+    try {
+      controller = await startFleetController(opts);
+      fs.writeFileSync(path.join(openclawDir, "prestop-started"), `${podUid}\n`);
+      const stoodDown = "the pod's prestop flush has started and releases every key, so this tick is skipped";
+      await vi.waitFor(async () => {
+        await vi.advanceTimersByTimeAsync(gitKeyResyncJitterMs(podUid, GIT_KEY_RESYNC_INTERVAL_MS) + 1_000);
+        expect(listed.length > 0 || logged.some((line) => line.includes(stoodDown))).toBe(true);
+      }, { timeout: 30_000 });
+
+      expect(logged).toContainEqual(expect.stringContaining(stoodDown));
+      expect(listed).toEqual([]);
+    } finally {
+      await controller?.stop();
+      controller = undefined;
+      vi.useRealTimers();
+      fs.rmSync(openclawDir, { recursive: true, force: true });
+    }
   });
 
   it.each([

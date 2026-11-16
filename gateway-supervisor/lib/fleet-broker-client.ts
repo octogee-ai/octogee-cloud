@@ -31,6 +31,8 @@ import { internalFetch } from "./internal-fetch.js";
 import { gatewayCredentialHeaders as defaultGatewayCredentialHeaders } from "@octogee/core/internal-fetch";
 import type { SystemConfigObservedStatus } from "./system-config-status.js";
 import type { DeveloperToolchainStatus } from "@octogee/shared/types/developer-toolchain";
+import type { ServiceProvisioningAnswer } from "@octogee/core/user-lifecycle";
+import type { ServiceGitKeyRelease } from "./user-git-key.js";
 
 function baseUrl(): string {
   if (process.env.FLEET_BROKER_URL) return process.env.FLEET_BROKER_URL;
@@ -190,6 +192,9 @@ export interface FleetBrokerClient {
   completeOpenClawBoot(input: { releaseKey: string; openclawBuild?: string }): Promise<void>;
   completeOpenClawDoctor(input: { releaseKey: string; requestId: string; verifiedAgentIds: string[] }): Promise<void>;
   assertOpenClawDoctor(input: { releaseKey: string; requestId: string }): Promise<void>;
+  provisioningReadiness(uid: string): Promise<ServiceProvisioningAnswer>;
+  registerGitKey(uid: string, publicKey: string): Promise<ServiceProvisioningAnswer>;
+  releaseGitKey(slug: string, publicKey: string): Promise<ServiceGitKeyRelease>;
 }
 
 export async function resolveGithubTokenForSlug(
@@ -198,6 +203,71 @@ export async function resolveGithubTokenForSlug(
 ): Promise<string | null> {
   const uid = await client.uidForSlug(slug);
   return uid ? client.githubTokenForSync(uid) : null;
+}
+
+const DEFAULT_PENDING_RETRY_MS = 5_000;
+
+async function serviceProvisioningAnswer(path: string, body: unknown): Promise<ServiceProvisioningAnswer> {
+  const resp = await internalFetch(`${baseUrl()}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (resp.ok) return { ready: true };
+  if (resp.status !== 503 && resp.status !== 422) throw await brokerHttpError(path, resp);
+  const text = await resp.text().catch(() => "");
+  let answer: { error?: unknown; reason?: unknown } | null = null;
+  try {
+    answer = JSON.parse(text) as { error?: unknown; reason?: unknown } | null;
+  } catch {
+    answer = null;
+  }
+  const reason = typeof answer?.reason === "string" && answer.reason
+    ? answer.reason
+    : `fleet-broker POST ${path} answered ${resp.status} without a reason`;
+  if (resp.status === 422) {
+    if (answer?.error !== "provisioning_refused") throw new FleetBrokerHttpError(`fleet-broker POST ${path} → 422 ${text.slice(0, 300)}`, 422, null);
+    return { ready: false, refused: true, reason };
+  }
+  const seconds = Number(resp.headers.get("retry-after"));
+  return {
+    ready: false,
+    reason,
+    retryAfterMs: Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : DEFAULT_PENDING_RETRY_MS,
+  };
+}
+
+function namesBrokerError(text: string, error: string): boolean {
+  try {
+    return (JSON.parse(text) as { error?: unknown } | null)?.error === error;
+  } catch {
+    return false;
+  }
+}
+
+async function releaseServiceGitKey(slug: string, publicKey: string): Promise<ServiceGitKeyRelease> {
+  const path = "/internal/fleet/git-key/release";
+  const resp = await internalFetch(`${baseUrl()}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ slug, publicKey }),
+  });
+  if (resp.ok) return "released";
+  if (resp.status !== 409 && resp.status !== 404) throw await brokerHttpError(path, resp);
+  const text = await resp.text().catch(() => "");
+  if (resp.status === 409 && namesBrokerError(text, "provisioning_service_not_configured")) return "not-configured";
+  if (resp.status === 404 && namesBrokerError(text, "not_found")) return "unknown-user";
+  throw new FleetBrokerHttpError(`fleet-broker POST ${path} → ${resp.status} ${text.slice(0, 300)}`, resp.status, null);
+}
+
+function serviceProvisioningClient(
+  gatewayId: string,
+): Pick<FleetBrokerClient, "provisioningReadiness" | "registerGitKey" | "releaseGitKey"> {
+  return {
+    provisioningReadiness: (uid) => serviceProvisioningAnswer("/internal/fleet/provisioning-readiness", { gatewayId, uid }),
+    registerGitKey: (uid, publicKey) => serviceProvisioningAnswer("/internal/fleet/git-key", { uid, publicKey }),
+    releaseGitKey: releaseServiceGitKey,
+  };
 }
 
 export interface FleetBrokerClientOptions {
@@ -402,6 +472,7 @@ export function createFleetBrokerClient(
     ?? defaultGatewayCredentialHeaders;
   return {
     ...npmRegistryCredentialClient(gatewayId, gatewayCredentialHeaders),
+    ...serviceProvisioningClient(gatewayId),
     builderIdentity: (opts) => readUserIdentity(gatewayId, gatewayCredentialHeaders, opts),
     watchAssignments: (wake, log) => watchFleetAssignments({
       url: `${baseUrl()}/internal/fleet/assignment-watch`,

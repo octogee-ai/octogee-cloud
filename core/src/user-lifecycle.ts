@@ -42,6 +42,8 @@ export interface UserSnapshot {
   // The operator's user agent default dial: the {primary, fallbacks} a
   // catalog agent with no explicit pick converges to at mount-time reassert.
   builderAgentDefault?: { primary: string; fallbacks: string[] };
+  provisionedBy?: "service";
+  gitKeyHolder?: string;
   systemConfig?: {
     byot?: { provider?: string; baseUrl?: string; model?: string };
     agentModels?: AgentModelSelections;
@@ -86,8 +88,37 @@ export interface UserContext {
 
 export type MmUpdate = Record<string, unknown>;
 
+export type ProvisioningPath = "gateway" | "service";
+
+export type ServiceProvisioningAnswer =
+  | { readonly ready: true }
+  | { readonly ready: false; readonly reason: string; readonly retryAfterMs: number }
+  | { readonly ready: false; readonly refused: true; readonly reason: string };
+
+export type GivenUpUserGitKey = "absent" | "released" | "unreleasable";
+
+export interface ServiceGitKey {
+  publicKey: string;
+  registered: () => void;
+}
+
+export interface ServiceProvisioningAdapter {
+  readiness: (uid: string) => Promise<ServiceProvisioningAnswer>;
+  serviceGitKey: (slug: string, holder: string) => ServiceGitKey;
+  registerGitKey: (uid: string, publicKey: string) => Promise<ServiceProvisioningAnswer>;
+  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
+  now?: () => number;
+}
+
+export const SERVICE_PROVISIONING_WAIT_MS = 90_000;
+export const SERVICE_GIT_KEY_WAIT_MS = 60_000;
+const SERVICE_POLL_MIN_MS = 1_000;
+const SERVICE_POLL_MAX_MS = 15_000;
+
 export interface UserLifecycleAdapter {
   log: (msg: string, fields?: { status: "failed" }) => void;
+
+  provisioningService?: ServiceProvisioningAdapter;
 
   isIsolatedGateway?: () => boolean;
 
@@ -176,15 +207,15 @@ export interface UserLifecycleAdapter {
   deleteDepartedUserState: (slug: string) => Promise<void>;
 
   cloneWorkspaceRepo: (slug: string, repoUrl: string) => Promise<boolean>;
-  initWorkspaceRepoFromExistingDir: (ctx: UserContext) => Promise<string | null>;
+  initWorkspaceRepoFromExistingDir: (ctx: UserContext, path?: ProvisioningPath) => Promise<string | null>;
 
   hasUserSshKey: (slug: string) => boolean;
   generateUserSshKey: (slug: string) => string;
-  gitHost: Pick<ManagedGitHost, "registerKey" | "listKeys" | "releaseKey" | "ensureOwner" | "ensureRepo">;
+  gitHost: Pick<ManagedGitHost, "registerKey" | "listKeys" | "ensureOwner" | "ensureRepo">;
 
 readLocalUserPubKey: (slug: string) => string | null;
 
-deleteUserSshKey: (slug: string) => Promise<void>;
+  giveUpUserGitKey: (slug: string) => Promise<GivenUpUserGitKey>;
 
   blobSyncForSlug: (slug: string) => Promise<void>;
 
@@ -382,6 +413,7 @@ export function _inFlightUidsHasForTests(uid: string): boolean {
 
 export type MountStep =
   | "load-snapshot"
+  | "await-provisioning"
   | "ssh-key"
   | "claim-slot"
   | "workspace-repo"
@@ -838,18 +870,11 @@ async function addUserToGatewayInner(
 
   const brokerProfilesReady = startBrokerProfiles(adapter, slug);
 
-  markStep("ssh-key");
-  const [workspace, mm] = await settleBoth(
-    adapter,
-    slug,
-    provisionWorkspace(adapter, uid, snapshot, ctx, markStep),
-    provisionMattermostIfMissing(adapter, uid, snapshot, ctx),
-  );
+  const remote = await provisionUserState(adapter, snapshot, ctx, markStep, signal);
+  snapshot = remote.snapshot;
+  const { workspace, mm } = remote;
   steps.push(...workspace.steps, ...mm.steps);
   throwIfAborted(signal, uid);
-  if (mm.mmUpdate) {
-    snapshot = (await adapter.loadUserSnapshot(uid)) ?? snapshot;
-  }
   const { projectClones, byos } = workspace;
 
   markStep(CONFIG_PATCH);
@@ -895,6 +920,142 @@ async function addUserToGatewayInner(
   };
 }
 
+type WorkspaceProvisioning = Awaited<ReturnType<typeof provisionWorkspace>>;
+type ChatProvisioning = Awaited<ReturnType<typeof provisionMattermostIfMissing>>;
+
+function serviceProvisioningFor(adapter: UserLifecycleAdapter, snapshot: UserSnapshot): ServiceProvisioningAdapter | null {
+  if (snapshot.provisionedBy !== "service") return null;
+  if (!adapter.provisioningService) {
+    throw new Error(`[add:${snapshot.slug}] the platform provisions this user through the provisioning service, but this gateway has no provisioning service adapter`);
+  }
+  return adapter.provisioningService;
+}
+
+async function provisionUserState(
+  adapter: UserLifecycleAdapter,
+  snapshot: UserSnapshot,
+  ctx: UserContext,
+  markStep: MarkStep,
+  signal: AbortSignal | undefined,
+): Promise<{ snapshot: UserSnapshot; workspace: WorkspaceProvisioning; mm: ChatProvisioning }> {
+  const { slug, uid } = snapshot;
+  const service = serviceProvisioningFor(adapter, snapshot);
+  if (service) {
+    markStep("await-provisioning");
+    const ready = await awaitServiceProvisioning(adapter, service, snapshot, signal);
+    markStep("ssh-key");
+    const workspace = await provisionWorkspace(adapter, ready, ctx, markStep, { service, signal });
+    return { snapshot: ready, workspace, mm: { mmUpdate: null, steps: [] } };
+  }
+  markStep("ssh-key");
+  const [workspace, mm] = await settleBoth(
+    adapter,
+    slug,
+    provisionWorkspace(adapter, snapshot, ctx, markStep),
+    provisionMattermostIfMissing(adapter, uid, snapshot, ctx),
+  );
+  throwIfAborted(signal, uid);
+  const refreshed = mm.mmUpdate ? (await adapter.loadUserSnapshot(uid)) ?? snapshot : snapshot;
+  return { snapshot: refreshed, workspace, mm };
+}
+
+function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason instanceof Error ? signal.reason : new Error("aborted"));
+      return;
+    }
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal?.reason instanceof Error ? signal.reason : new Error("aborted"));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+function failServiceWait(adapter: UserLifecycleAdapter, message: string): never {
+  adapter.log(message, { status: "failed" });
+  throw new Error(message);
+}
+
+async function waitForServiceProvisioning(
+  adapter: UserLifecycleAdapter,
+  service: ServiceProvisioningAdapter,
+  wait: { slug: string; what: string; boundMs: number; signal: AbortSignal | undefined },
+  probe: () => Promise<ServiceProvisioningAnswer>,
+): Promise<void> {
+  const now = service.now ?? Date.now;
+  const sleep = service.sleep ?? abortableSleep;
+  const startedAt = now();
+  for (let round = 0; ; round += 1) {
+    const answer = await probe();
+    const waited = now() - startedAt;
+    if (answer.ready) {
+      if (round > 0) adapter.log(`[add:${wait.slug}] ${wait.what}: ready after ${waited}ms`);
+      return;
+    }
+    if ("refused" in answer) {
+      return failServiceWait(adapter,
+        `[add:${wait.slug}] the platform refused the mount while waiting for ${wait.what} (reason ${answer.reason}); no retry can finish this mount`);
+    }
+    const backoff = SERVICE_POLL_MIN_MS * 2 ** Math.min(round, 4);
+    const delay = Math.min(Math.max(answer.retryAfterMs, backoff), SERVICE_POLL_MAX_MS);
+    if (waited + delay > wait.boundMs) {
+      return failServiceWait(adapter,
+        `[add:${wait.slug}] gave up waiting for ${wait.what} after ${waited}ms (bound ${wait.boundMs}ms, last reason ${answer.reason}); failing the mount, the mount retry takes over`);
+    }
+    adapter.log(`[add:${wait.slug}] waiting for ${wait.what} (reason ${answer.reason}, next check in ${delay}ms, waited ${waited}ms)`);
+    await sleep(delay, wait.signal);
+  }
+}
+
+async function awaitServiceProvisioning(
+  adapter: UserLifecycleAdapter,
+  service: ServiceProvisioningAdapter,
+  snapshot: UserSnapshot,
+  signal: AbortSignal | undefined,
+): Promise<UserSnapshot> {
+  const { slug, uid } = snapshot;
+  await waitForServiceProvisioning(
+    adapter,
+    service,
+    { slug, what: "the provisioning service to report chat and git ready", boundMs: SERVICE_PROVISIONING_WAIT_MS, signal },
+    () => service.readiness(uid),
+  );
+  const refreshed = await adapter.loadUserSnapshot(uid, { refresh: true });
+  if (!refreshed) throw new Error(`[add:${slug}] the user snapshot vanished after the provisioning service reported the user ready`);
+  return refreshed;
+}
+
+async function ensureServiceGitKey(
+  adapter: UserLifecycleAdapter,
+  service: ServiceProvisioningAdapter,
+  snapshot: UserSnapshot,
+  signal: AbortSignal | undefined,
+): Promise<AddUserStep[]> {
+  const { uid, slug, gitKeyHolder } = snapshot;
+  if (!gitKeyHolder) {
+    return failServiceWait(adapter, `[add:${slug}] the snapshot names no git key holder for this pod, so the service cannot register its key`);
+  }
+  if (adapter.hasUserSshKey(slug) && adapter.readLocalUserPubKey(slug) === null) {
+    adapter.log(`[add:${slug}] ✖ the public key cannot be read for the key on disk; giving it up and registering a fresh one`, { status: "failed" });
+    await adapter.giveUpUserGitKey(slug);
+  }
+  const key = service.serviceGitKey(slug, gitKeyHolder);
+  await waitForServiceProvisioning(
+    adapter,
+    service,
+    { slug, what: "the provisioning service to register this pod's git key", boundMs: SERVICE_GIT_KEY_WAIT_MS, signal },
+    () => service.registerGitKey(uid, key.publicKey),
+  );
+  key.registered();
+  return ["ssh-key"];
+}
+
 async function settleBoth<A, B>(
   adapter: UserLifecycleAdapter,
   slug: string,
@@ -929,20 +1090,24 @@ function startBrokerProfiles(
 
 async function provisionWorkspace(
   adapter: UserLifecycleAdapter,
-  uid: string,
   snapshot: UserSnapshot,
   ctx: UserContext,
   markStep: MarkStep,
+  through?: { service: ServiceProvisioningAdapter; signal: AbortSignal | undefined },
 ): Promise<{
   steps: AddUserStep[];
   projectClones: { steps: AddUserStep[]; pending: string[] };
   byos: { restored: boolean; present: boolean; steps: AddUserStep[] };
 }> {
-  const { slug } = snapshot;
+  const { slug, uid } = snapshot;
   const steps: AddUserStep[] = [];
-  steps.push(...(await ensureSshKeyAndGitea(adapter, slug)));
+  steps.push(...(through
+    ? await ensureServiceGitKey(adapter, through.service, snapshot, through.signal)
+    : await ensureSshKeyAndGitea(adapter, slug)));
   markStep("workspace-repo");
-  steps.push(...(await ensureWorkspaceRepo(adapter, uid, snapshot, ctx)));
+  steps.push(...(through
+    ? await convergeWorkspaceCheckout(adapter, uid, snapshot, ctx, "service")
+    : await ensureWorkspaceRepo(adapter, uid, snapshot, ctx)));
   markStep("project-clones");
   const projectClones = rehydratesProjectCheckouts(adapter, snapshot)
     ? await cloneMissingProjects(adapter, slug)
@@ -959,7 +1124,7 @@ async function loadAndPrepareForMount(
   uid: string,
   usersDir: string,
 ): Promise<{ snapshot: UserSnapshot; ctx: UserContext; newUser: boolean }> {
-  const snapshot = await adapter.loadUserSnapshot(uid);
+  const snapshot = await adapter.loadUserSnapshot(uid, { refresh: true });
   if (!snapshot) {
     throw new Error(`[add:${uid}] user doc not found in Firestore`);
   }
@@ -997,20 +1162,23 @@ async function registerFirstTimeSshKey(
       );
     }
   } catch (err) {
-    await adapter.deleteUserSshKey(slug).catch(() => {});
+    await adapter.giveUpUserGitKey(slug).catch((releaseError) => adapter.log(
+      `[add:${slug}] ✖ could not give up the key whose registration failed; it stays on disk for the next mount: ${String(releaseError)}`,
+      { status: "failed" },
+    ));
     throw new Error(`[add:${slug}] SSH key registration failed: ${String(err)}`);
   }
   adapter.log(`[add:${slug}] SSH key + Gitea user registered`);
 }
 
-async function resyncSshKeyIfDrifted(
-  adapter: UserLifecycleAdapter,
+export async function resyncSshKeyIfDrifted(
+  adapter: Pick<UserLifecycleAdapter, "readLocalUserPubKey" | "giveUpUserGitKey" | "gitHost" | "log">,
   slug: string,
   reclaimExistingSshKey: boolean,
 ): Promise<AddUserStep[]> {
   const localPub = adapter.readLocalUserPubKey(slug);
   if (localPub === null) {
-    await adapter.deleteUserSshKey(slug).catch(() => {});
+    await adapter.giveUpUserGitKey(slug);
     throw new Error(
       `[add:${slug}] SSH key dir exists but pubkey is unreadable; cleared, retry will regenerate`,
     );
@@ -1051,6 +1219,7 @@ async function convergeWorkspaceCheckout(
   uid: string,
   snapshot: UserSnapshot,
   ctx: UserContext,
+  path: ProvisioningPath = "gateway",
 ): Promise<AddUserStep[]> {
   const { slug } = snapshot;
   if (adapter.hasWorkspaceGitDir(slug)) {
@@ -1059,20 +1228,21 @@ async function convergeWorkspaceCheckout(
       adapter.log(`[add:${slug}] workspace Git metadata is incomplete; repairing from canonical Gitea`);
       return cloneExistingWorkspaceRepo(adapter, snapshot, ctx);
     }
-    return recoverMissingWorkspaceRemote(adapter, uid, ctx);
+    return recoverMissingWorkspaceRemote(adapter, uid, ctx, path);
   }
   if (snapshot.repoUrl) {
     return cloneExistingWorkspaceRepo(adapter, snapshot, ctx);
   }
-  return initNewWorkspaceRepo(adapter, uid, ctx);
+  return initNewWorkspaceRepo(adapter, uid, ctx, path);
 }
 
 async function recoverMissingWorkspaceRemote(
   adapter: UserLifecycleAdapter,
   uid: string,
   ctx: UserContext,
+  path: ProvisioningPath,
 ): Promise<AddUserStep[]> {
-  const repoUrl = await adapter.initWorkspaceRepoFromExistingDir(ctx);
+  const repoUrl = await adapter.initWorkspaceRepoFromExistingDir(ctx, path);
   if (!repoUrl) {
     throw new Error(`[add:${ctx.slug}] recovery workspace repo creation failed`);
   }
@@ -1108,10 +1278,11 @@ async function initNewWorkspaceRepo(
   adapter: UserLifecycleAdapter,
   uid: string,
   ctx: UserContext,
+  path: ProvisioningPath,
 ): Promise<AddUserStep[]> {
   adapter.ensureUserDirectories(ctx.slug);
   await adapter.writeUserTemplateFiles(ctx);
-  const repoUrl = await adapter.initWorkspaceRepoFromExistingDir(ctx);
+  const repoUrl = await adapter.initWorkspaceRepoFromExistingDir(ctx, path);
   if (!repoUrl) {
     throw new Error(`[add:${ctx.slug}] initial workspace repo creation failed`);
   }
@@ -1479,29 +1650,27 @@ export async function removeUserFromGateway(
     steps.push("delete-dir");
     adapter.log(`[remove:${slug}] user state deleted`);
 
-    if (await releaseUnmountedGiteaKey(adapter, slug)) steps.push("release-gitea-key");
+    if (await giveUpUnmountedGitKey(adapter, slug)) steps.push("release-gitea-key");
 
     if (adapter.onUnmounted) adapter.onUnmounted(slug);
     return { wasMounted: true, steps };
   });
 }
 
-async function releaseUnmountedGiteaKey(
+async function giveUpUnmountedGitKey(
   adapter: UserLifecycleAdapter,
   slug: string,
 ): Promise<boolean> {
-  const pubKey = adapter.readLocalUserPubKey(slug);
-  if (pubKey === null) return false;
   try {
-    await adapter.gitHost.releaseKey(slug, pubKey);
+    if (await adapter.giveUpUserGitKey(slug) !== "released") return false;
   } catch (err) {
     adapter.log(
-      `⚠ [remove:${slug}] Gitea key release failed; local keypair kept for the preStop release: ${String(err)}`,
+      `[remove:${slug}] ✖ git key release failed; the local keypair is kept for the preStop flush and for the next import of this user here, which release it again: ${String(err)}`,
+      { status: "failed" },
     );
     return false;
   }
-  await adapter.deleteUserSshKey(slug);
-  adapter.log(`[remove:${slug}] Gitea key released and local keypair removed`);
+  adapter.log(`[remove:${slug}] git key released and local keypair removed`);
   return true;
 }
 

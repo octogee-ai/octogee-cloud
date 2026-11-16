@@ -16,6 +16,8 @@ import {
   type UserContext,
   type UserSnapshot,
   type MmUpdate,
+  type ServiceProvisioningAdapter,
+  type ServiceProvisioningAnswer,
 } from "./user-lifecycle.js";
 
 interface DiskState {
@@ -190,15 +192,14 @@ return "ssh-pubkey";
         return state.giteaRegisteredPubKeys ??
           (state.giteaRegisteredPubKey === null ? [] : [state.giteaRegisteredPubKey]);
       },
-      releaseKey: async (_slug, pubKey) => {
-        record(`releaseKey:${pubKey}`);
-        if (state.giteaReleaseShouldFail) throw new Error("gitea release failed");
-      },
     },
     readLocalUserPubKey: () => (state.disk.sshKey ? "ssh-pubkey" : null),
-    deleteUserSshKey: async () => {
-      record("deleteUserSshKey");
+    giveUpUserGitKey: async () => {
+      if (!state.disk.sshKey) return "absent";
+      record("giveUpUserGitKey");
+      if (state.giteaReleaseShouldFail) throw new Error("git key release failed");
       state.disk.sshKey = false;
+      return "released";
     },
 
     blobSyncForSlug: async () => {
@@ -1629,7 +1630,7 @@ const state = makeState(
     expect(state.calls).toContain("generateUserSshKey");
     expect(state.calls).toContain("registerKey");
 
-expect(state.calls).toContain("deleteUserSshKey");
+expect(state.calls).toContain("giveUpUserGitKey");
     expect(state.disk.sshKey).toBe(false);
     
     expect(state.writes.find((w) => w.field === "system/config.gitea")).toBeUndefined();
@@ -1656,8 +1657,28 @@ const adapter = makeAdapter(state);
     await expect(addUserToGateway(adapter, "uid-test")).rejects.toThrow(
       /SSH key registration failed.*giteaPub=absent/,
     );
-    expect(state.calls).toContain("deleteUserSshKey");
+    expect(state.calls).toContain("giveUpUserGitKey");
     expect(state.disk.sshKey).toBe(false);
+  });
+
+  it("fails the mount with the give-up failure, and not with a promise to regenerate, when an unreadable key cannot be given up", async () => {
+    const state = makeState(snap({ status: "complete", repoUrl: "http://gitea/octogee/test-workspace", mattermostUserId: "mm-user" }), mountedDisk());
+    const adapter = makeAdapter(state);
+    adapter.readLocalUserPubKey = () => null;
+    adapter.giveUpUserGitKey = async () => { throw new Error("key directory could not be removed"); };
+
+    await expect(addUserToGateway(adapter, "uid-test")).rejects.toThrow("key directory could not be removed");
+  });
+
+  it("fails the mount with the registration error and says loudly that the key it could not give up stays", async () => {
+    const state = makeState(snap({ status: "complete", repoUrl: "http://gitea/octogee/test-workspace", mattermostUserId: "mm-user" }), emptyDisk());
+    state.giteaRegisterShouldFail = true;
+    state.giteaReleaseShouldFail = true;
+
+    await expect(addUserToGateway(makeAdapter(state), "uid-test")).rejects.toThrow(/SSH key registration failed/);
+
+    expect(state.disk.sshKey).toBe(true);
+    expect(state.errorLogs).toContainEqual(expect.stringContaining("could not give up the key whose registration failed"));
   });
 
   it("self-heals stale Gitea-side key on existing-key path (the ceckert bug)", async () => {
@@ -2119,18 +2140,17 @@ describe("removeUserFromGateway", () => {
     expect(state.writes).toEqual([]);
   });
 
-  it("releases this gateway's Gitea key and forgets the local keypair once the user is gone", async () => {
+  it("gives up this pod's git key once the user is gone", async () => {
     const state = makeState(mountedSnapshot(), mountedDisk());
 
     await removeUserFromGateway(makeAdapter(state), "uid-test");
 
-    const release = state.calls.indexOf("releaseKey:ssh-pubkey");
-    expect(release).toBeGreaterThan(state.calls.indexOf("applyRemoveUserConfigPatch"));
-    expect(state.calls.indexOf("deleteUserSshKey")).toBeGreaterThan(release);
+    expect(state.calls.indexOf("giveUpUserGitKey")).toBeGreaterThan(state.calls.indexOf("deleteDepartedUserState"));
+    expect(state.calls.filter((call) => call === "giveUpUserGitKey")).toHaveLength(1);
     expect(state.disk.sshKey).toBe(false);
   });
 
-  it("keeps the local keypair and finishes the unmount when the Gitea release fails", async () => {
+  it("keeps the local keypair, finishes the unmount and logs a failure when the key release fails", async () => {
     const state = makeState(mountedSnapshot(), mountedDisk());
     state.giteaReleaseShouldFail = true;
 
@@ -2138,9 +2158,8 @@ describe("removeUserFromGateway", () => {
 
     expect(result.steps).toEqual(["config-patch-remove", "delete-dir"]);
     expect(state.calls).toContain("onUnmounted");
-    expect(state.calls).not.toContain("deleteUserSshKey");
     expect(state.disk.sshKey).toBe(true);
-    expect(state.logs.some((line) => line.includes("Gitea key release failed"))).toBe(true);
+    expect(state.errorLogs).toContainEqual(expect.stringContaining("git key release failed"));
   });
 
   it("does not release a Gitea key when the eviction is cancelled", async () => {
@@ -2159,7 +2178,7 @@ describe("removeUserFromGateway", () => {
     });
 
     expect(result.retained).toBe(true);
-    expect(state.calls.some((call) => call.startsWith("releaseKey"))).toBe(false);
+    expect(state.calls).not.toContain("giveUpUserGitKey");
     expect(state.disk.sshKey).toBe(true);
   });
 
@@ -2881,6 +2900,7 @@ const ADAPTER_REPO_TOUCHING: Record<keyof UserLifecycleAdapter, boolean> = {
     initWorkspaceRepoFromExistingDir: true,
     cloneProjectRepo: true,
     log: false,
+    provisioningService: false,
     loadUserSnapshot: false,
     setProvisioningStatus: false,
     provisionDefaultAgentAutomation: false,
@@ -2898,7 +2918,7 @@ const ADAPTER_REPO_TOUCHING: Record<keyof UserLifecycleAdapter, boolean> = {
     generateUserSshKey: false,
     gitHost: false,
     readLocalUserPubKey: false,
-    deleteUserSshKey: false,
+    giveUpUserGitKey: false,
     blobSyncForSlug: false,
     restoreByosubForAgent: false,
     listProjectsNeedingClone: false,
@@ -3203,5 +3223,278 @@ describe("lifecycle log identity", () => {
       logger.info("Shared work");
       expect(JSON.parse(lines.at(-1)!).builderSlug).toBeUndefined();
     } finally { spy.mockRestore(); }
+  });
+});
+
+const HOLDER = "gw-test/octogee-gateway-gw-test-5bc59-p946t";
+
+describe("addUserToGateway — through the provisioning service", () => {
+  const READY: ServiceProvisioningAnswer = { ready: true };
+  const pending = (reason: string, retryAfterMs = 5_000): ServiceProvisioningAnswer => ({ ready: false, reason, retryAfterMs });
+
+  function withService(
+    state: MockState,
+    options: {
+      readiness?: () => ServiceProvisioningAnswer;
+      registerGitKey?: () => ServiceProvisioningAnswer;
+    } = {},
+  ) {
+    let clock = 0;
+    const sleeps: number[] = [];
+    const service: ServiceProvisioningAdapter = {
+      readiness: vi.fn(async () => {
+        state.calls.push("service:readiness");
+        return options.readiness?.() ?? READY;
+      }),
+      serviceGitKey: vi.fn(() => {
+        state.calls.push("service:gitKey");
+        state.disk.sshKey = true;
+        return { publicKey: "ssh-service-pubkey", registered: () => state.calls.push("service:keyRegistered") };
+      }),
+      registerGitKey: vi.fn(async () => {
+        state.calls.push("service:registerGitKey");
+        return options.registerGitKey?.() ?? READY;
+      }),
+      sleep: async (ms) => {
+        sleeps.push(ms);
+        clock += ms;
+      },
+      now: () => clock,
+    };
+    const adapter = makeAdapter(state);
+    adapter.provisioningService = service;
+    const loads: Array<{ refresh?: boolean } | undefined> = [];
+    adapter.loadUserSnapshot = async (_uid, options) => {
+      loads.push(options);
+      return state.user;
+    };
+    const initPaths: Array<string | undefined> = [];
+    const init = adapter.initWorkspaceRepoFromExistingDir;
+    adapter.initWorkspaceRepoFromExistingDir = async (ctx, path) => {
+      initPaths.push(path);
+      return init(ctx, path);
+    };
+    return { adapter, service, sleeps, loads, initPaths };
+  }
+
+  const LEGACY_REMOTE_CALLS = [
+    "registerKey",
+    "ensureOwner",
+    "ensureRepo:system-config",
+    "ensureRepo:workspace",
+    "provisionMattermostUser",
+    "write:mattermost.*",
+    "generateUserSshKey",
+  ];
+
+  beforeEach(() => {
+    _resetInFlightUidsForTests();
+  });
+
+  it("waits for chat and git, registers its own key through the service and performs no chat or git side effect", async () => {
+    const state = makeState(snap({ provisionedBy: "service", gitKeyHolder: HOLDER, mattermostUserId: "mm-user" }), emptyDisk());
+    const { adapter, initPaths, loads } = withService(state);
+
+    const result = await addUserToGateway(adapter, "uid-test");
+
+    for (const call of LEGACY_REMOTE_CALLS) expect(state.calls).not.toContain(call);
+    expect(state.calls.indexOf("service:readiness")).toBeLessThan(state.calls.indexOf("service:registerGitKey"));
+    expect(state.calls.indexOf("service:registerGitKey")).toBeLessThan(state.calls.indexOf("initWorkspaceRepoFromExistingDir"));
+    expect(initPaths).toEqual(["service"]);
+    expect(adapter.provisioningService?.serviceGitKey).toHaveBeenCalledWith("test", HOLDER);
+    expect(state.calls.indexOf("service:registerGitKey")).toBeLessThan(state.calls.indexOf("service:keyRegistered"));
+    expect(loads).toContainEqual({ refresh: true });
+    expect(state.calls).toContain("applyAddUserConfigPatch");
+    expect(state.calls).toContain("provisionDefaultAgentAutomation");
+    expect(state.writes).toContainEqual({ field: "provisioning.openclaw.status", value: "complete" });
+    expect(result.steps).toEqual(expect.arrayContaining(["ssh-key", "init-workspace-repo", "config-patch", "mark-complete"]));
+    expect(result.steps).not.toContain("mattermost-provision");
+  });
+
+  it("decides the path from a fresh snapshot, so a cached one that predates the platform's answer still takes the service path", async () => {
+    const state = makeState(snap({ status: "", provisionedBy: "service", gitKeyHolder: HOLDER, mattermostUserId: "mm-user" }), emptyDisk());
+    const { adapter, loads } = withService(state);
+    const seededByReconcile = { ...state.user!, provisionedBy: undefined, gitKeyHolder: undefined };
+    adapter.loadUserSnapshot = async (_uid, options) => {
+      loads.push(options);
+      return options?.refresh ? state.user : seededByReconcile;
+    };
+
+    await addUserToGateway(adapter, "uid-test");
+
+    expect(loads[0]).toEqual({ refresh: true });
+    expect(state.calls).toContain("service:readiness");
+    expect(state.calls).toContain("service:registerGitKey");
+    expect(state.calls).not.toContain("registerKey");
+  });
+
+  it("gives up a key whose public half cannot be read and registers a fresh one, as the gateway's own path does", async () => {
+    const state = makeState(snap({ provisionedBy: "service", gitKeyHolder: HOLDER, mattermostUserId: "mm-user" }), { ...emptyDisk(), sshKey: true });
+    const { adapter } = withService(state);
+    adapter.readLocalUserPubKey = () => null;
+    adapter.giveUpUserGitKey = async () => {
+      state.calls.push("giveUpUserGitKey");
+      state.disk.sshKey = false;
+      return "unreleasable";
+    };
+
+    await addUserToGateway(adapter, "uid-test");
+
+    expect(state.calls.indexOf("giveUpUserGitKey")).toBeGreaterThan(-1);
+    expect(state.calls.indexOf("giveUpUserGitKey")).toBeLessThan(state.calls.indexOf("service:gitKey"));
+    expect(state.calls).toContain("service:keyRegistered");
+    expect(state.errorLogs).toContainEqual(expect.stringContaining("public key cannot be read"));
+  });
+
+  it("re-mounts a user with a workspace already on disk without asking for any repository", async () => {
+    const state = makeState(mountedSnapshot({ provisionedBy: "service", gitKeyHolder: HOLDER }), mountedDisk());
+    const { adapter, service } = withService(state);
+
+    await addUserToGateway(adapter, "uid-test");
+
+    for (const call of LEGACY_REMOTE_CALLS) expect(state.calls).not.toContain(call);
+    expect(state.calls).not.toContain("initWorkspaceRepoFromExistingDir");
+    expect(service.registerGitKey).toHaveBeenCalledWith("uid-test", "ssh-service-pubkey");
+  });
+
+  it("logs each reason it waits for, backs off, and continues once the service is ready", async () => {
+    const state = makeState(snap({ provisionedBy: "service", gitKeyHolder: HOLDER, mattermostUserId: "mm-user" }), emptyDisk());
+    const answers = [pending("ChatTeamFailed", 0), pending("GitRepositoryFailed", 7_000), READY];
+    const { adapter, sleeps } = withService(state, { readiness: () => answers.shift()! });
+
+    await addUserToGateway(adapter, "uid-test");
+
+    expect(sleeps).toEqual([1_000, 7_000]);
+    expect(state.logs).toContainEqual(expect.stringContaining("waiting for the provisioning service to report chat and git ready (reason ChatTeamFailed"));
+    expect(state.logs).toContainEqual(expect.stringContaining("(reason GitRepositoryFailed, next check in 7000ms"));
+    expect(state.logs).toContainEqual(expect.stringContaining("chat and git ready: ready after 8000ms"));
+  });
+
+  it("caps a long Retry-After so a recovered service is noticed", async () => {
+    const state = makeState(snap({ provisionedBy: "service", gitKeyHolder: HOLDER, mattermostUserId: "mm-user" }), emptyDisk());
+    const answers = [pending("ProvisioningServiceUnavailable", 300_000), READY];
+    const { adapter, sleeps } = withService(state, { readiness: () => answers.shift()! });
+
+    await addUserToGateway(adapter, "uid-test");
+
+    expect(sleeps).toEqual([15_000]);
+  });
+
+  it("fails the mount with the last reason once the wait exceeds its bound, before any key, checkout or config patch", async () => {
+    const state = makeState(snap({ provisionedBy: "service", gitKeyHolder: HOLDER }), emptyDisk());
+    const { adapter, sleeps } = withService(state, { readiness: () => pending("GitOwnerFailed") });
+
+    await expect(addUserToGateway(adapter, "uid-test")).rejects.toThrow(
+      /gave up waiting for the provisioning service to report chat and git ready after \d+ms \(bound 90000ms, last reason GitOwnerFailed\); failing the mount/,
+    );
+
+    expect(sleeps.reduce((sum, ms) => sum + ms, 0)).toBeLessThanOrEqual(90_000);
+    expect(state.errorLogs).toContainEqual(expect.stringContaining("gave up waiting for the provisioning service to report chat and git ready"));
+    expect(state.calls).not.toContain("service:registerGitKey");
+    expect(state.calls).not.toContain("applyAddUserConfigPatch");
+    expect(state.writes).not.toContainEqual({ field: "provisioning.openclaw.status", value: "complete" });
+  });
+
+  it("fails the mount when the service does not register the key within its bound", async () => {
+    const state = makeState(snap({ provisionedBy: "service", gitKeyHolder: HOLDER, mattermostUserId: "mm-user" }), emptyDisk());
+    const { adapter, service } = withService(state, { registerGitKey: () => pending("GitKeyFailed") });
+
+    await expect(addUserToGateway(adapter, "uid-test")).rejects.toThrow(
+      /gave up waiting for the provisioning service to register this pod's git key .*last reason GitKeyFailed/,
+    );
+
+    expect(vi.mocked(service.registerGitKey).mock.calls.length).toBeGreaterThan(1);
+    expect(state.calls).not.toContain("applyAddUserConfigPatch");
+  });
+
+  it("fails the mount at once and logs an error when the platform refuses the user", async () => {
+    const state = makeState(snap({ provisionedBy: "service", gitKeyHolder: HOLDER }), emptyDisk());
+    const { adapter, service, sleeps } = withService(state, {
+      readiness: () => ({ ready: false, refused: true, reason: "UserBeingErased" }),
+    });
+
+    await expect(addUserToGateway(adapter, "uid-test")).rejects.toThrow(
+      /the platform refused the mount while waiting for the provisioning service to report chat and git ready \(reason UserBeingErased\); no retry can finish this mount/,
+    );
+
+    expect(service.readiness).toHaveBeenCalledOnce();
+    expect(sleeps).toEqual([]);
+    expect(state.errorLogs).toContainEqual(expect.stringContaining("reason UserBeingErased"));
+    expect(state.calls).not.toContain("service:registerGitKey");
+  });
+
+  it("records no holder for a key the service did not register within its bound", async () => {
+    const state = makeState(snap({ provisionedBy: "service", gitKeyHolder: HOLDER, mattermostUserId: "mm-user" }), emptyDisk());
+    const { adapter } = withService(state, { registerGitKey: () => pending("GitKeyHeldElsewhere", 120_000) });
+
+    await expect(addUserToGateway(adapter, "uid-test")).rejects.toThrow(/GitKeyHeldElsewhere/);
+
+    expect(state.calls).not.toContain("service:keyRegistered");
+  });
+
+  it("fails the mount before any key when the snapshot names no holder for this pod", async () => {
+    const state = makeState(snap({ provisionedBy: "service", mattermostUserId: "mm-user" }), emptyDisk());
+    const { adapter, service } = withService(state);
+
+    await expect(addUserToGateway(adapter, "uid-test")).rejects.toThrow("names no git key holder");
+
+    expect(service.serviceGitKey).not.toHaveBeenCalled();
+    expect(service.registerGitKey).not.toHaveBeenCalled();
+  });
+
+  it("stops waiting when the mount is aborted", async () => {
+    const state = makeState(snap({ provisionedBy: "service", gitKeyHolder: HOLDER }), emptyDisk());
+    const { adapter, service } = withService(state, { readiness: () => pending("ChatUserFailed") });
+    delete service.sleep;
+    delete service.now;
+    const controller = new AbortController();
+    const mounted = addUserToGateway(adapter, "uid-test", { signal: controller.signal });
+    controller.abort(new Error("caller gave up"));
+
+    await expect(mounted).rejects.toThrow("caller gave up");
+  });
+
+  it("keeps today's path when the platform does not provision through the service", async () => {
+    const state = makeState(snap({ status: "" }), emptyDisk());
+    const { adapter, service } = withService(state);
+
+    await addUserToGateway(adapter, "uid-test");
+
+    expect(service.readiness).not.toHaveBeenCalled();
+    expect(service.registerGitKey).not.toHaveBeenCalled();
+    expect(state.calls).toEqual(expect.arrayContaining(["generateUserSshKey", "registerKey", "ensureOwner", "provisionMattermostUser"]));
+  });
+
+  it("refuses a service-provisioned user on a gateway without a provisioning service adapter", async () => {
+    const state = makeState(snap({ provisionedBy: "service", gitKeyHolder: HOLDER }), emptyDisk());
+
+    await expect(addUserToGateway(makeAdapter(state), "uid-test")).rejects.toThrow("has no provisioning service adapter");
+    for (const call of LEGACY_REMOTE_CALLS) expect(state.calls).not.toContain(call);
+  });
+});
+
+describe("removeUserFromGateway — whatever path registered the key", () => {
+  it.each([
+    ["the snapshot says service and names this pod's holder", { provisionedBy: "service", gitKeyHolder: HOLDER }],
+    ["the snapshot names a holder but no longer says service", { gitKeyHolder: HOLDER }],
+    ["the snapshot says nothing about the service", {}],
+  ] as Array<[string, Partial<UserSnapshot>]>)("gives up the key through the one release when %s", async (_name, snapshot) => {
+    const state = makeState(mountedSnapshot(snapshot), mountedDisk());
+
+    const result = await removeUserFromGateway(makeAdapter(state), "uid-test");
+
+    expect(state.calls.filter((call) => call === "giveUpUserGitKey")).toHaveLength(1);
+    expect(state.disk.sshKey).toBe(false);
+    expect(result.steps).toContain("release-gitea-key");
+  });
+
+  it("records no release step for a key that could not be released", async () => {
+    const state = makeState(mountedSnapshot(), mountedDisk());
+    const adapter = makeAdapter(state);
+    adapter.giveUpUserGitKey = async () => "unreleasable";
+
+    const result = await removeUserFromGateway(adapter, "uid-test");
+
+    expect(result.steps).toEqual(["config-patch-remove", "delete-dir"]);
   });
 });

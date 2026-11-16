@@ -1484,30 +1484,20 @@ describe("createUnmountHandler", () => {
     expect(getStatus()).toBe(401);
   });
 
-  it("returns 200 + unmounted:false when no user matches slug (idempotent)", async () => {
-    const adapter = mkAdapter({
-      uidForSlug: vi.fn(async () => null),
-    });
+  it("refuses an unmount on a gateway whose adapter cannot remove an imported user", async () => {
+    const adapter = mkAdapter();
     const pauseSystemConfigWatch = vi.fn(async (_slug: string) => undefined);
-    const resumeSystemConfigWatch = vi.fn(async (_slug: string) => undefined);
-    const handler = createUnmountHandler(mkDeps({
-      adapter,
-      pauseSystemConfigWatch,
-      resumeSystemConfigWatch,
-    }));
+    const handler = createUnmountHandler(mkDeps({ adapter, pauseSystemConfigWatch }));
     const rawBody = JSON.stringify(SAMPLE_UNMOUNT);
-    const sig = signForPod(SAMPLE_UNMOUNT.migrationId, rawBody);
-    const req = mkRequest(SAMPLE_UNMOUNT, { signature: sig });
+    const req = mkRequest(SAMPLE_UNMOUNT, { signature: signForPod(SAMPLE_UNMOUNT.migrationId, rawBody) });
     const { res, getStatus, getBody } = mkResponse();
+
     await handler(req, res, vi.fn());
-    expect(getStatus()).toBe(200);
-    expect(getBody()).toEqual({
-      migrationId: "mig-1",
-      slug: "chris",
-      unmounted: false,
-    });
-    expect(pauseSystemConfigWatch).toHaveBeenCalledWith("chris");
-    expect(resumeSystemConfigWatch).not.toHaveBeenCalled();
+
+    expect(getStatus()).toBe(500);
+    expect(getBody()).toMatchObject({ error: "unmount failed", message: "unmount requires imported-user removal" });
+    expect(adapter.applyRemoveUserConfigPatch).not.toHaveBeenCalled();
+    expect(adapter.deleteDepartedUserState).not.toHaveBeenCalled();
   });
 
   it.each(["complete", "early-noop", "foreign-agent", "changed-pod"])(
@@ -1578,9 +1568,10 @@ describe("createUnmountHandler", () => {
     expect(removeImportedUserBySlug).not.toHaveBeenCalled();
   });
 
-  it("returns 200 + unmounted:true when removeUserFromGateway succeeded", async () => {
-
-const adapter = mkAdapter();
+  it("returns 200 + unmounted:true once the imported user is removed", async () => {
+    const removeImportedUserBySlug = vi.fn(async () => ({ wasMounted: true, steps: ["config-patch-remove" as const, "delete-dir" as const] }));
+    const onUnmounted = vi.fn();
+    const adapter = mkAdapter({ removeImportedUserBySlug, onUnmounted });
     const pauseSystemConfigWatch = vi.fn(async (_slug: string) => undefined);
     const handler = createUnmountHandler(mkDeps({ adapter, pauseSystemConfigWatch }));
     const rawBody = JSON.stringify(SAMPLE_UNMOUNT);
@@ -1590,8 +1581,9 @@ const adapter = mkAdapter();
     await handler(req, res, vi.fn());
     expect(getStatus()).toBe(200);
     expect(getBody()).toMatchObject({ unmounted: true });
-    expect(adapter.applyRemoveUserConfigPatch).toHaveBeenCalled();
-    expect(adapter.deleteDepartedUserState).toHaveBeenCalled();
+    expect(removeImportedUserBySlug).toHaveBeenCalledExactlyOnceWith("chris");
+    expect(onUnmounted).toHaveBeenCalledWith("chris");
+    expect(adapter.uidForSlug).not.toHaveBeenCalled();
     expect(pauseSystemConfigWatch).toHaveBeenCalledWith("chris");
   });
 

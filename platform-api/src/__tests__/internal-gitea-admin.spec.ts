@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 import { gitHost } from "../lib/git-host.js";
 import { platformStateStore } from "@octogee/core/identity/platform-state-store";
-import { createInternalGiteaAdminRoutes } from "../routes/internal/gitea-admin.js";
+import { createInternalGiteaAdminRoutes, HELD_KEY_READ_TIMEOUT_MS, SERVICE_HELD_KEY_BUDGET_MS } from "../routes/internal/gitea-admin.js";
 import { createLegacyProvisioning, type LegacyProvisioning } from "../lib/legacy-provisioning.js";
 import type { UserProvisioning } from "@octogee/shared/types/provisioning-service";
 import { createProvisioningServiceClient } from "@octogee/core/provisioning-service-client";
@@ -13,6 +13,7 @@ import { gatewayKeyTitle } from "@octogee/core/gitea-naming";
 import type { MigrationClient } from "@octogee/core/fleet-migration-client";
 import { runMigration, type MigrationRunnerDeps } from "@octogee/core/fleet-migration-runner";
 import { logger } from "@octogee/core/http/logging";
+import { MIGRATION_QUIESCE_TIMEOUT_MS } from "@octogee/shared/types/fleet-controller";
 
 const mocks = vi.hoisted(() => ({
   docs: new Map<string, Record<string, unknown>>(),
@@ -102,6 +103,10 @@ function isolatedGateway(overrides: Record<string, unknown> = {}) {
     preemption: null,
     ...overrides,
   };
+}
+
+function sharedGateway() {
+  return isolatedGateway({ profile: "shared", gatewayClass: "shared", imageProfile: "shared", ownerUid: null, builderSlug: null });
 }
 
 function assignUser(slug: string, gatewayId: string) {
@@ -254,6 +259,17 @@ describe("internal gitea-admin route", () => {
       "ssh-ed25519 AAA",
       WALTER_KEY_OWNER,
     );
+  });
+
+  it("ensure-user registers a key the marker says the service holds on the git host, logs it and tells the gateway to drop the marker, without the service", async () => {
+    const warned = vi.spyOn(logger, "warn").mockImplementation(() => {});
+
+    const res = await request(app()).post("/internal/gitea/ensure-user").send({ slug: "acme", pubKey: "ssh-ed25519 AAA", serviceHolder: WALTER_KEY_OWNER });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ registeredOn: "git-host" });
+    expect(gitHost().registerKey).toHaveBeenCalledWith("acme", "ssh-ed25519 AAA", WALTER_KEY_OWNER);
+    expect(warned).toHaveBeenCalledWith(expect.stringContaining("not configured"), expect.objectContaining({ slug: "acme" }));
   });
 
   it("ensure-user → 403 when slug is not assigned to this gateway, before touching Gitea", async () => {
@@ -667,8 +683,8 @@ describe("internal gitea-admin ensure-user for a key the calling pod already hol
     return { provisioning: createLegacyProvisioning({ client }), fetch };
   }
 
-  function ensureUser(provisioning: LegacyProvisioning | null, pubKey = KEY) {
-    return request(app("walter", "walter", provisioning)).post("/internal/gitea/ensure-user").send({ slug: "acme", pubKey });
+  function ensureUser(provisioning: LegacyProvisioning | null, pubKey = KEY, serviceHolder?: string) {
+    return request(app("walter", "walter", provisioning)).post("/internal/gitea/ensure-user").send({ slug: "acme", pubKey, ...(serviceHolder === undefined ? {} : { serviceHolder }) });
   }
 
   function expectNothingRegistered() {
@@ -680,6 +696,7 @@ describe("internal gitea-admin ensure-user for a key the calling pod already hol
     vi.clearAllMocks();
     mocks.docs.clear();
     assignUser("acme", "walter");
+    mocks.docs.set("gateways/walter", sharedGateway());
     vi.spyOn(logger, "error").mockImplementation(() => {});
     vi.spyOn(logger, "warn").mockImplementation(() => {});
   });
@@ -824,15 +841,16 @@ describe("internal gitea-admin ensure-user for a key the calling pod already hol
   });
 
   describe("a user move while the service has no resource for the user", () => {
-    function sourceGatewayRegistersKey(provisioning: LegacyProvisioning) {
+    function sourceGatewayRegistersKey(provisioning: LegacyProvisioning, serviceHolder?: string) {
       return async (step: string) => {
-        const res = await ensureUser(provisioning);
+        const res = await ensureUser(provisioning, KEY, serviceHolder);
         if (res.status >= 300) throw new Error(`${step} failed: gitea-broker POST /internal/gitea/ensure-user → ${res.status} ${JSON.stringify(res.body)}`);
+        if (res.body.registeredOn !== undefined) throw new Error(`${step} told the gateway to drop its marker`);
       };
     }
 
-    function moveWhoseFinalCopyFails(provisioning: LegacyProvisioning) {
-      const registerKey = sourceGatewayRegistersKey(provisioning);
+    function moveWhoseFinalCopyFails(provisioning: LegacyProvisioning, serviceHolder?: string) {
+      const registerKey = sourceGatewayRegistersKey(provisioning, serviceHolder);
       const reports: string[] = [];
       const assignmentStates: string[] = [];
       const client = {
@@ -893,6 +911,360 @@ describe("internal gitea-admin ensure-user for a key the calling pod already hol
       expect(new Set(requests)).toEqual(new Set(["GET /users/ws-acme/keys"]));
       expectNothingRegistered();
     });
+
+    it("does the same for a source whose marker says the service holds its key while the service is unreachable", async () => {
+      const requests = gitHostHolding([{ title: OWN_TITLE, key: KEY }]);
+      const { provisioning, fetch } = unreachableService();
+      const move = moveWhoseFinalCopyFails(provisioning, WALTER_KEY_OWNER);
+
+      const result = await move.run();
+
+      expect(result).toMatchObject({ success: false, rolledBack: true });
+      expect(result.errorAt?.error).toBe("the target refused the final copy");
+      expect(move.reports).toContain("flush-source:done");
+      expect(move.reports).toContain("rollback:resume-ingress:done");
+      expect(move.assignmentStates.at(-1)).toBe("walter:serving");
+      expect(fetch).toHaveBeenCalled();
+      expect(new Set(requests)).toEqual(new Set(["GET /users/ws-acme/keys"]));
+      expectNothingRegistered();
+    });
+  });
+
+  describe("when the gateway's marker says the service holds the key", () => {
+    const PUT_ROW = `PUT /v1/users/uid-acme/git-keys/${WALTER_KEY_OWNER}`;
+
+    function serviceAnswering(gitKey: LegacyProvisioning["gitKey"]): LegacyProvisioning {
+      return { ...serviceWithoutTheUser(), gitKey: vi.fn(gitKey) };
+    }
+
+    function serviceRequests(fetch: ReturnType<typeof unreachableService>["fetch"]): string[] {
+      return fetch.mock.calls.map(([input, init]) => `${init?.method ?? "GET"} ${decodeURIComponent(new URL(String(input)).pathname)}`);
+    }
+
+    it("answers 204 and keeps the marker while the service is unreachable, after sending the put", async () => {
+      const requests = gitHostHolding([{ title: OWN_TITLE, key: "ssh-ed25519 AAAAHELD stored-comment" }]);
+      const logged = vi.spyOn(logger, "info").mockImplementation(() => {});
+      const { provisioning, fetch } = unreachableService();
+
+      const res = await ensureUser(provisioning, KEY, WALTER_KEY_OWNER);
+
+      expect(res.status).toBe(204);
+      expect(res.body).toEqual({});
+      expect(serviceRequests(fetch)).toEqual([PUT_ROW]);
+      expect(requests).toEqual(["GET /users/ws-acme/keys"]);
+      expect(fetch.mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(gitHost().holdsKey).mock.invocationCallOrder[0]);
+      expectNothingRegistered();
+      expect(logged).toHaveBeenCalledWith(
+        expect.stringContaining("did not confirm"),
+        { slug: "acme", holder: WALTER_KEY_OWNER, reason: "ProvisioningServiceUnavailable" },
+      );
+    });
+
+    it("answers the unreachable service's 503 as before for a key the pod does not hold, after sending the put", async () => {
+      const requests = gitHostHolding([{ title: OTHER_POD_TITLE, key: KEY }]);
+      const { provisioning, fetch } = unreachableService();
+
+      const res = await ensureUser(provisioning, KEY, WALTER_KEY_OWNER);
+
+      expect(res.status).toBe(503);
+      expect(res.headers["retry-after"]).toBe("5");
+      expect(res.body).toEqual({ error: "provisioning_pending", reason: "ProvisioningServiceUnavailable" });
+      expect(serviceRequests(fetch)).toEqual([PUT_ROW]);
+      expect(requests).toEqual(["GET /users/ws-acme/keys"]);
+      expectNothingRegistered();
+    });
+
+    it("does not read the git host once the service confirms the key", async () => {
+      const requests = gitHostHolding([{ title: OWN_TITLE, key: KEY }]);
+      const provisioning = serviceAnswering(async () => ({ ready: true, value: undefined }));
+
+      const res = await ensureUser(provisioning, KEY, WALTER_KEY_OWNER);
+
+      expect(res.status).toBe(204);
+      expect(provisioning.gitKey).toHaveBeenCalledExactlyOnceWith("uid-acme", WALTER_KEY_OWNER, KEY, expect.objectContaining({ signal: expect.any(AbortSignal) }));
+      expect(gitHost().holdsKey).not.toHaveBeenCalled();
+      expect(requests).toEqual([]);
+    });
+
+    it.each<[string, Awaited<ReturnType<LegacyProvisioning["gitKey"]>>]>([
+      ["has not processed the put inside the budget", { ready: false, reason: "GitKeyPutNotObserved", retryAfterSeconds: 5 }],
+      ["has no resource for the user", { ready: false, reason: "NotProvisioned", retryAfterSeconds: 5 }],
+      ["did not answer inside the budget", { ready: false, reason: "ProvisioningServiceTimeout", retryAfterSeconds: 5 }],
+      ["refuses because the user's work is parked", { ready: false, reason: "GitOwnerFailed", retryAfterSeconds: 5, refused: true }],
+    ])("answers 204 for a held key when the service %s", async (_case, wait) => {
+      gitHostHolding([{ title: OWN_TITLE, key: KEY }]);
+      const provisioning = serviceAnswering(async () => wait);
+
+      const res = await ensureUser(provisioning, KEY, WALTER_KEY_OWNER);
+
+      expect(res.status).toBe(204);
+      expect(res.body).toEqual({});
+      expect(provisioning.gitKey).toHaveBeenCalledOnce();
+      expectNothingRegistered();
+    });
+
+    it("answers the service's refusal as before for a key the pod does not hold", async () => {
+      gitHostHolding([]);
+      const provisioning = serviceAnswering(async () => ({ ready: false, reason: "GitOwnerFailed", retryAfterSeconds: 5, refused: true }));
+
+      const res = await ensureUser(provisioning, KEY, WALTER_KEY_OWNER);
+
+      expect(res.status).toBe(422);
+      expect(res.body).toEqual({ error: "provisioning_refused", reason: "GitOwnerFailed" });
+      expect(gitHost().holdsKey).toHaveBeenCalledOnce();
+      expectNothingRegistered();
+    });
+
+    it("answers 204 and warns when the service reports the key held elsewhere while the pod's own title carries it", async () => {
+      gitHostHolding([{ title: OWN_TITLE, key: KEY }]);
+      const provisioning = serviceAnswering(async () => ({ ready: false, reason: "GitKeyHeldElsewhere", retryAfterSeconds: 60 }));
+
+      const res = await ensureUser(provisioning, KEY, WALTER_KEY_OWNER);
+
+      expect(res.status).toBe(204);
+      expect(res.body).toEqual({});
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.stringContaining("contradicts"),
+        { slug: "acme", holder: WALTER_KEY_OWNER, reason: "GitKeyHeldElsewhere" },
+      );
+      expectNothingRegistered();
+    });
+
+    it("answers held elsewhere as before when the pod's own title does not carry the key", async () => {
+      gitHostHolding([{ title: OTHER_POD_TITLE, key: KEY }]);
+      const provisioning = serviceAnswering(async () => ({ ready: false, reason: "GitKeyHeldElsewhere", retryAfterSeconds: 60 }));
+
+      const res = await ensureUser(provisioning, KEY, WALTER_KEY_OWNER);
+
+      expect(res.status).toBe(503);
+      expect(res.headers["retry-after"]).toBe("60");
+      expect(res.body).toEqual({ error: "provisioning_pending", reason: "GitKeyHeldElsewhere" });
+      expectNothingRegistered();
+    });
+
+    it("answers 204 for a held key when the service call throws, and 502 as before when the key is not held", async () => {
+      const provisioning = serviceAnswering(async () => {
+        throw new Error("the provisioning service answered 500");
+      });
+
+      gitHostHolding([{ title: OWN_TITLE, key: KEY }]);
+      const held = await ensureUser(provisioning, KEY, WALTER_KEY_OWNER);
+      gitHostHolding([]);
+      const notHeld = await ensureUser(provisioning, KEY, WALTER_KEY_OWNER);
+
+      expect(held.status).toBe(204);
+      expect(notHeld.status).toBe(502);
+      expect(notHeld.body).toEqual({ error: "the provisioning service answered 500" });
+      expect(logger.error).toHaveBeenCalledWith(
+        expect.stringContaining("through the provisioning service failed"),
+        expect.objectContaining({ slug: "acme", keyOwner: WALTER_KEY_OWNER }),
+      );
+      expectNothingRegistered();
+    });
+
+    it("logs a failed key read and answers the service's 503 as before", async () => {
+      const requests = gitHostHolding("unreadable");
+      const { provisioning } = unreachableService();
+
+      const res = await ensureUser(provisioning, KEY, WALTER_KEY_OWNER);
+
+      expect(res.status).toBe(503);
+      expect(res.body).toEqual({ error: "provisioning_pending", reason: "ProvisioningServiceUnavailable" });
+      expect(requests).toEqual(["GET /users/ws-acme/keys"]);
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.stringContaining("could not read"),
+        expect.objectContaining({ slug: "acme", holder: WALTER_KEY_OWNER, reason: "ProvisioningServiceUnavailable", err: expect.objectContaining({ message: expect.stringContaining("list-keys failed: 500") }) }),
+      );
+      expectNothingRegistered();
+    });
+
+    it("stops waiting for a git host that does not answer the key listing and answers the service's 503", async () => {
+      gitHostHolding("unanswered");
+      const timeout = AbortSignal.timeout.bind(AbortSignal);
+      const bound = vi.spyOn(AbortSignal, "timeout").mockImplementation((ms) => timeout(ms === HELD_KEY_READ_TIMEOUT_MS ? 1 : ms));
+      const { provisioning } = unreachableService();
+
+      const res = await ensureUser(provisioning, KEY, WALTER_KEY_OWNER);
+
+      expect(res.status).toBe(503);
+      expect(res.body).toEqual({ error: "provisioning_pending", reason: "ProvisioningServiceUnavailable" });
+      expect(bound.mock.calls).toContainEqual([HELD_KEY_READ_TIMEOUT_MS]);
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.stringContaining("could not read"),
+        expect.objectContaining({ slug: "acme", holder: WALTER_KEY_OWNER, err: expect.objectContaining({ name: "TimeoutError" }) }),
+      );
+      expectNothingRegistered();
+    });
+
+    const FOREIGN_MARKER = "walter/octogee-gateway-walter-old-pod";
+
+    function standbyPod() {
+      assignUser("acme", "shared-1");
+      mocks.docs.set("gateways/walter", isolatedGateway());
+    }
+
+    it.each([
+      ["names the calling pod", WALTER_KEY_OWNER],
+      ["names another pod", FOREIGN_MARKER],
+    ])("refuses a pod the user is not assigned to before any request to the service and before reading the key, when the marker %s", async (_case, marker) => {
+      assignUser("acme", "shared-1");
+      const requests = gitHostHolding([{ title: OWN_TITLE, key: KEY }]);
+      const { provisioning, fetch } = unreachableService();
+
+      const res = await ensureUser(provisioning, KEY, marker);
+
+      expect(res.status).toBe(403);
+      expect(res.body).toEqual({ error: "slug is not assigned to this gateway" });
+      expect(gitHost().holdsKey).not.toHaveBeenCalled();
+      expect(requests).toEqual([]);
+      expect(fetch).not.toHaveBeenCalled();
+      expectNothingRegistered();
+    });
+
+    it.each([
+      ["names the calling pod", WALTER_KEY_OWNER],
+      ["names another pod", FOREIGN_MARKER],
+    ])("refuses a token that names no pod before any request to the service and before reading the key, when the marker %s", async (_case, marker) => {
+      const requests = gitHostHolding([{ title: OWN_TITLE, key: KEY }]);
+      const { provisioning, fetch } = unreachableService();
+
+      const res = await request(app("walter", null, provisioning)).post("/internal/gitea/ensure-user").send({ slug: "acme", pubKey: KEY, serviceHolder: marker });
+
+      expect(res.status).toBe(403);
+      expect(gitHost().holdsKey).not.toHaveBeenCalled();
+      expect(requests).toEqual([]);
+      expect(fetch).not.toHaveBeenCalled();
+      expectNothingRegistered();
+    });
+
+    it("refuses a pod that may not stand by for the user before reading the key", async () => {
+      assignUser("acme", "shared-1");
+      mocks.docs.set("gateways/walter", isolatedGateway({ builderSlug: "someone-else" }));
+      const requests = gitHostHolding([{ title: OWN_TITLE, key: KEY }]);
+      const { provisioning, fetch } = unreachableService();
+
+      const res = await ensureUser(provisioning, KEY, WALTER_KEY_OWNER);
+
+      expect(res.status).toBe(403);
+      expect(gitHost().holdsKey).not.toHaveBeenCalled();
+      expect(requests).toEqual([]);
+      expect(fetch).not.toHaveBeenCalled();
+      expectNothingRegistered();
+    });
+
+    describe.each([
+      ["a marker naming another pod", FOREIGN_MARKER, () => {}, "registerKey"],
+      ["a standby pod", WALTER_KEY_OWNER, standbyPod, "registerKeyUnlessHeld"],
+    ] as const)("for %s", (_case, marker, arrange, write) => {
+      it("answers that the key is on the git host while the service is unreachable, so the gateway drops its marker", async () => {
+        arrange();
+        const requests = gitHostHolding([{ title: OWN_TITLE, key: "ssh-ed25519 AAAAHELD stored-comment" }]);
+        const logged = vi.spyOn(logger, "info").mockImplementation(() => {});
+        const { provisioning, fetch } = unreachableService();
+
+        const res = await ensureUser(provisioning, KEY, marker);
+
+        expect(res.status).toBe(200);
+        expect(res.body).toEqual({ registeredOn: "git-host" });
+        expect(requests).toEqual(["GET /users/ws-acme/keys"]);
+        expect(fetch).not.toHaveBeenCalled();
+        expectNothingRegistered();
+        expect(logged).toHaveBeenCalledWith(expect.stringContaining("already registered"), { slug: "acme", holder: WALTER_KEY_OWNER });
+      });
+
+      it("answers the unreachable service's 503 as before for a key the pod does not hold", async () => {
+        arrange();
+        const requests = gitHostHolding([{ title: OTHER_POD_TITLE, key: KEY }]);
+        const { provisioning, fetch } = unreachableService();
+
+        const res = await ensureUser(provisioning, KEY, marker);
+
+        expect(res.status).toBe(503);
+        expect(res.headers["retry-after"]).toBe("5");
+        expect(res.body).toEqual({ error: "provisioning_pending", reason: "ProvisioningServiceUnavailable" });
+        expect(requests).toEqual(["GET /users/ws-acme/keys"]);
+        expect(fetch).toHaveBeenCalled();
+        expectNothingRegistered();
+      });
+
+      it("answers the same for a held key while the user's git side is not ready", async () => {
+        arrange();
+        gitHostHolding([{ title: OWN_TITLE, key: KEY }]);
+        const provisioning = serviceWithoutTheUser();
+
+        const res = await ensureUser(provisioning, KEY, marker);
+
+        expect(res.status).toBe(200);
+        expect(res.body).toEqual({ registeredOn: "git-host" });
+        expect(provisioning.git).not.toHaveBeenCalled();
+        expectNothingRegistered();
+      });
+
+      it("logs a failed key read, waits for the user's git side and registers on the git host as before", async () => {
+        arrange();
+        gitHostHolding("unreadable");
+        const waiting = serviceWithoutTheUser();
+        const ready = serviceWithoutTheUser(async () => ({ ready: true, value: undefined }));
+
+        const whileNotReady = await ensureUser(waiting, KEY, marker);
+        const onceReady = await ensureUser(ready, KEY, marker);
+
+        expect(whileNotReady.status).toBe(503);
+        expect(whileNotReady.body).toEqual({ error: "provisioning_pending", reason: "NotProvisioned" });
+        expect(onceReady.status).toBe(200);
+        expect(onceReady.body).toEqual({ registeredOn: "git-host" });
+        expect(gitHost()[write]).toHaveBeenCalledExactlyOnceWith("acme", KEY, WALTER_KEY_OWNER);
+        expect(logger.warn).toHaveBeenCalledWith(
+          expect.stringContaining("could not read"),
+          expect.objectContaining({ slug: "acme", holder: WALTER_KEY_OWNER, err: expect.objectContaining({ message: expect.stringContaining("list-keys failed: 500") }) }),
+        );
+      });
+
+      it("waits for the user's git side and registers on the git host as before for a key the pod does not hold", async () => {
+        arrange();
+        const requests = gitHostHolding([]);
+        const provisioning = serviceWithoutTheUser(async () => ({ ready: true, value: undefined }));
+
+        const res = await ensureUser(provisioning, KEY, marker);
+
+        expect(res.status).toBe(200);
+        expect(res.body).toEqual({ registeredOn: "git-host" });
+        expect(requests).toEqual(["GET /users/ws-acme/keys"]);
+        expect(provisioning.git).toHaveBeenCalledOnce();
+        expect(gitHost()[write]).toHaveBeenCalledExactlyOnceWith("acme", KEY, WALTER_KEY_OWNER);
+      });
+    });
+
+    it("registers a marked key on the git host without reading it first when the provisioning service is not configured", async () => {
+      const requests = gitHostHolding([{ title: OWN_TITLE, key: KEY }]);
+
+      const res = await ensureUser(null, KEY, WALTER_KEY_OWNER);
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ registeredOn: "git-host" });
+      expect(requests).toEqual([]);
+      expect(gitHost().registerKey).toHaveBeenCalledExactlyOnceWith("acme", KEY, WALTER_KEY_OWNER);
+    });
+
+    it("gives the service and the key read together less time than the gateway waits for the answer", async () => {
+      gitHostHolding([]);
+      const budgets: number[] = [];
+      const provisioning = serviceAnswering(async (_uid, _holder, _key, budget) => {
+        budgets.push(budget.remainingMs());
+        return { ready: true, value: undefined };
+      });
+      const foreign = serviceWithoutTheUser(async (_uid, _repository, budget) => {
+        budgets.push(budget.remainingMs());
+        return { ready: true, value: undefined };
+      });
+
+      await ensureUser(provisioning, KEY, WALTER_KEY_OWNER);
+      await ensureUser(foreign, KEY, FOREIGN_MARKER);
+
+      expect(budgets).toHaveLength(2);
+      for (const remaining of budgets) expect(remaining).toBeLessThanOrEqual(SERVICE_HELD_KEY_BUDGET_MS);
+      expect(SERVICE_HELD_KEY_BUDGET_MS + HELD_KEY_READ_TIMEOUT_MS).toBeLessThanOrEqual(MIGRATION_QUIESCE_TIMEOUT_MS / 2 - 5_000);
+    });
   });
 });
 
@@ -925,6 +1297,7 @@ describe("internal gitea-admin route with the provisioning service", () => {
     vi.clearAllMocks();
     mocks.docs.clear();
     assignUser("acme", "walter");
+    mocks.docs.set("gateways/walter", sharedGateway());
   });
 
   it.each([
@@ -1090,5 +1463,132 @@ describe("internal gitea-admin route with the provisioning service", () => {
 
     expect(methods.length).toBeGreaterThan(0);
     expect(new Set(methods)).toEqual(new Set(["GET /v1/users/uid-acme/provisioning"]));
+  });
+
+  describe("ensure-user for a key the gateway's marker says the service holds", () => {
+    const KEY = "ssh-ed25519 AAA rotated";
+
+    it("puts the service row for the token's pod instead of calling the git host", async () => {
+      const provisioning = service(async () => ({ ready: true, value: undefined }));
+
+      const res = await request(app("walter", "walter", provisioning)).post("/internal/gitea/ensure-user").send({ slug: "acme", pubKey: KEY, serviceHolder: WALTER_KEY_OWNER });
+
+      expect(res.status).toBe(204);
+      expect(provisioning.gitKey).toHaveBeenCalledExactlyOnceWith("uid-acme", WALTER_KEY_OWNER, KEY, expect.objectContaining({ signal: expect.any(AbortSignal) }));
+      expectNoKeyTouched();
+    });
+
+    it.each([
+      ["an isolated gateway", () => { mocks.docs.set("gateways/walter", isolatedGateway()); }],
+      ["a gateway the platform holds no root for", () => { mocks.docs.delete("gateways/walter"); }],
+    ])("registers on the git host for %s whose marker names its own pod, puts no row and tells the gateway to drop its marker", async (_caller, seed) => {
+      const logged = vi.spyOn(logger, "info").mockImplementation(() => {});
+      seed();
+      const provisioning = service(async () => ({ ready: true, value: undefined }));
+
+      const res = await request(app("walter", "walter", provisioning)).post("/internal/gitea/ensure-user").send({ slug: "acme", pubKey: KEY, serviceHolder: WALTER_KEY_OWNER });
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ registeredOn: "git-host" });
+      expect(gitHost().registerKey).toHaveBeenCalledExactlyOnceWith("acme", KEY, WALTER_KEY_OWNER);
+      expect(provisioning.gitKey).not.toHaveBeenCalled();
+      expect(logged).toHaveBeenCalledWith(expect.stringContaining("only a shared gateway holds a git key row"), { slug: "acme", keyOwner: WALTER_KEY_OWNER, gatewayId: "walter" });
+    });
+
+    it("answers 502 and writes nothing when the calling gateway's class cannot be read, for a marker naming its own pod", async () => {
+      const logged = vi.spyOn(logger, "error").mockImplementation(() => {});
+      vi.spyOn(platformStateStore.gateways.roots, "get").mockRejectedValueOnce(new Error("the platform store is unavailable"));
+      const provisioning = service(async () => ({ ready: true, value: undefined }));
+
+      const res = await request(app("walter", "walter", provisioning)).post("/internal/gitea/ensure-user").send({ slug: "acme", pubKey: KEY, serviceHolder: WALTER_KEY_OWNER });
+
+      expect(res.status).toBe(502);
+      expect(res.body).toEqual({ error: "gateway class lookup failed" });
+      expect(provisioning.gitKey).not.toHaveBeenCalled();
+      expect(provisioning.git).not.toHaveBeenCalled();
+      expectNoKeyTouched();
+      expect(logged).toHaveBeenCalledWith(expect.stringContaining("could not read the calling gateway's class"), expect.objectContaining({ slug: "acme", gatewayId: "walter" }));
+    });
+
+    it("answers the service's reason while the row is not registered", async () => {
+      const provisioning = service(async () => ({ ready: true, value: undefined }), async () => ({ ready: false, reason: "GenerationNotObserved", retryAfterSeconds: 5 }));
+
+      const res = await request(app("walter", "walter", provisioning)).post("/internal/gitea/ensure-user").send({ slug: "acme", pubKey: KEY, serviceHolder: WALTER_KEY_OWNER });
+
+      expect(res.status).toBe(503);
+      expect(res.body).toEqual({ error: "provisioning_pending", reason: "GenerationNotObserved" });
+      expectNoKeyTouched();
+    });
+
+    it("answers 422 with the reason when the service refuses the registration, as for parked work", async () => {
+      const logged = vi.spyOn(logger, "error").mockImplementation(() => {});
+      const provisioning = service(async () => ({ ready: true, value: undefined }), async () => ({ ready: false, reason: "GitOwnerFailed", retryAfterSeconds: 5, refused: true }));
+
+      const res = await request(app("walter", "walter", provisioning)).post("/internal/gitea/ensure-user").send({ slug: "acme", pubKey: KEY, serviceHolder: WALTER_KEY_OWNER });
+
+      expect(res.status).toBe(422);
+      expect(res.body).toEqual({ error: "provisioning_refused", reason: "GitOwnerFailed" });
+      expect(logged).toHaveBeenCalledWith(expect.stringContaining("no retry can finish"), expect.objectContaining({ reason: "GitOwnerFailed" }));
+      expectNoKeyTouched();
+    });
+
+    it("refuses a token without a pod name and logs it", async () => {
+      const logged = vi.spyOn(logger, "error").mockImplementation(() => {});
+      const provisioning = service(async () => ({ ready: true, value: undefined }));
+      mocks.docs.set("gateways/walter", isolatedGateway());
+
+      const res = await request(app("walter", null, provisioning)).post("/internal/gitea/ensure-user").send({ slug: "acme", pubKey: KEY, serviceHolder: WALTER_KEY_OWNER });
+
+      expect(res.status).toBe(403);
+      expect(provisioning.gitKey).not.toHaveBeenCalled();
+      expectNoKeyTouched();
+      expect(logged).toHaveBeenCalledWith(expect.stringContaining("binds no pod"), expect.objectContaining({ slug: "acme" }));
+    });
+
+    it("waits for the user's git side before registering on the git host for a marker naming another pod", async () => {
+      const provisioning = service(async () => ({ ready: false, reason: "NotProvisioned", retryAfterSeconds: 5 }));
+
+      const res = await request(app("walter", "walter", provisioning)).post("/internal/gitea/ensure-user").send({ slug: "acme", pubKey: KEY, serviceHolder: "walter/octogee-gateway-walter-old-pod" });
+
+      expect(res.status).toBe(503);
+      expect(res.body).toEqual({ error: "provisioning_pending", reason: "NotProvisioned" });
+      expectNoKeyTouched();
+    });
+
+    it("keeps a standby pod off the service row, registering only a key no other gateway holds", async () => {
+      assignUser("acme", "shared-1");
+      mocks.docs.set("gateways/walter", isolatedGateway());
+      const provisioning = service(async () => ({ ready: true, value: undefined }));
+
+      const res = await request(app("walter", "walter", provisioning)).post("/internal/gitea/ensure-user").send({ slug: "acme", pubKey: KEY, serviceHolder: WALTER_KEY_OWNER });
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ registeredOn: "git-host" });
+      expect(gitHost().registerKeyUnlessHeld).toHaveBeenCalledExactlyOnceWith("acme", KEY, WALTER_KEY_OWNER);
+      expect(gitHost().registerKey).not.toHaveBeenCalled();
+      expect(provisioning.gitKey).not.toHaveBeenCalled();
+    });
+
+    it("registers on the git host and tells the gateway to drop its marker when the marker names another pod", async () => {
+      const provisioning = service(async () => ({ ready: true, value: undefined }));
+
+      const res = await request(app("walter", "walter", provisioning)).post("/internal/gitea/ensure-user").send({ slug: "acme", pubKey: KEY, serviceHolder: "walter/octogee-gateway-walter-old-pod" });
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ registeredOn: "git-host" });
+      expect(gitHost().registerKey).toHaveBeenCalledExactlyOnceWith("acme", KEY, WALTER_KEY_OWNER);
+      expect(provisioning.gitKey).not.toHaveBeenCalled();
+    });
+  });
+
+  it("keeps a gateway that sends no marker on the git host, as a previous build expects", async () => {
+    const provisioning = service(async () => ({ ready: true, value: undefined }));
+
+    const res = await request(app("walter", "walter", provisioning)).post("/internal/gitea/ensure-user").send({ slug: "acme", pubKey: "ssh-ed25519 AAA" });
+
+    expect(res.status).toBe(204);
+    expect(res.body).toEqual({});
+    expect(gitHost().registerKey).toHaveBeenCalledExactlyOnceWith("acme", "ssh-ed25519 AAA", WALTER_KEY_OWNER);
+    expect(provisioning.gitKey).not.toHaveBeenCalled();
   });
 });

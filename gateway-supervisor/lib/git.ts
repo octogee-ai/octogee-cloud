@@ -10,6 +10,7 @@ import {
   workspaceGiteaOrg, workspaceRepoName, projectRepoName, systemConfigRepoName,
 } from "./gitea-naming.js";
 import { brokeredGitHost } from "./gitea-admin-broker-client.js";
+import { recordServiceGitKeyHolder } from "./service-git-key-holder.js";
 import { cloneGithubProjectViaBroker } from "./github-project-clone-broker.js";
 import { replaceFileAtomically, seedFileAtomically } from "./atomic-file.js";
 import { notesWelcomeSeed } from "@octogee/core/templates/project-seeds";
@@ -571,13 +572,19 @@ export function generateUserSshKey(slug: string): string {
     return fs.readFileSync(pubPath, "utf-8").trim();
   }
 
+  const pubKey = generateKeyPair(keyDir, slug);
+  log(`[git] SSH keypair generated for ${slug}`);
+  return pubKey;
+}
+
+function generateKeyPair(keyDir: string, slug: string): string {
+  const keyPath = path.join(keyDir, "id_ed25519");
+  const pubPath = keyPath + ".pub";
   fs.mkdirSync(keyDir, { recursive: true });
   execFileSync("/usr/bin/ssh-keygen", ["-t", "ed25519", "-N", "", "-f", keyPath, "-C", `octogee-${slug}@gateway`, "-q"], {
     stdio: "pipe",
   });
   restrictUserSshKeyModes(keyDir, keyPath, pubPath);
-
-  log(`[git] SSH keypair generated for ${slug}`);
   return fs.readFileSync(pubPath, "utf-8").trim();
 }
 
@@ -589,15 +596,36 @@ function restrictUserSshKeyModes(keyDir: string, keyPath: string, pubPath: strin
   /* eslint-enable sonarjs/file-permissions */
 }
 
-export async function deleteUserSshKey(slug: string): Promise<void> {
+export interface PreparedServiceGitKey {
+  publicKey: string;
+  registered: () => void;
+}
+
+export function prepareServiceGitKey(slug: string, holder: string): PreparedServiceGitKey {
+  if (!isValidUsername(slug)) throw new Error("Invalid SSH key owner");
+  if (!holder) throw new Error("A service git key needs the holder");
   const keyDir = path.join(CUSTOMER_KEYS_DIR, slug);
-  await fs.promises.rm(keyDir, { recursive: true, force: true });
+  const keyPath = path.join(keyDir, "id_ed25519");
+  const registered = () => recordServiceGitKeyHolder(slug, holder);
+  if (fs.existsSync(keyPath)) {
+    const onDisk = readLocalUserPubKey(slug);
+    if (onDisk === null) throw new Error(`[git] ${slug}: a private key is on disk but its public key cannot be read; leaving it in place`);
+    restrictUserSshKeyModes(keyDir, keyPath, `${keyPath}.pub`);
+    return { publicKey: onDisk, registered };
+  }
+  if (fs.existsSync(keyDir)) {
+    fs.rmSync(keyDir, { recursive: true, force: true });
+    log(`[git] ${slug}: the key directory held no private key; replaced it. The registration that follows under this pod's holder replaces whatever it had registered`);
+  }
+  const publicKey = generateKeyPair(keyDir, slug);
+  log(`[git] ${slug}: generated a key for registration through the provisioning service`);
+  return { publicKey, registered };
 }
 
 export function readLocalUserPubKey(slug: string): string | null {
   const pubPath = path.join(CUSTOMER_KEYS_DIR, slug, "id_ed25519.pub");
   try {
-    return fs.readFileSync(pubPath, "utf-8").trim();
+    return fs.readFileSync(pubPath, "utf-8").trim() || null;
   } catch {
     return null;
   }
@@ -1642,7 +1670,7 @@ export function adoptProjectClone(cloneDir: string, dest: string): void {
 }
 
 interface InitWorkspaceRepoDeps {
-  ensureWorkspaceRepo: (slug: string) => Promise<void>;
+  ensureWorkspaceRepo: ((slug: string) => Promise<void>) | null;
   prepareRepository: (repoDir: string, slug: string) => void;
   workspaceRemoteUrl?: (slug: string) => string;
 }
@@ -1747,7 +1775,7 @@ export async function initWorkspaceRepo(
   seedFileAtomically(welcomeDest, welcome.content, 0o644);
 
   try {
-    await deps.ensureWorkspaceRepo(slug);
+    await deps.ensureWorkspaceRepo?.(slug);
   } catch (err) {
     log(`⚠ [git] Failed to create repo ${org}/${repoName}: ${errMessage(err)}`);
     return null;

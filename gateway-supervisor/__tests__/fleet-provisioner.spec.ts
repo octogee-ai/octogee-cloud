@@ -41,6 +41,7 @@ import {
   waitForBrokerProfilesSettled,
   waitForDashboardBridgeReady,
   waitForOpenClawHealthz,
+  withGitKeyResync,
 } from "../lib/fleet-provisioner.js";
 import {
   addUserToGateway,
@@ -58,10 +59,14 @@ import { _resetReconcileInFlightForTests, startReconcileLoop } from "../lib/reco
 import { startAfterSurgeReadiness } from "../lib/surge-reconcile-gate.js";
 import {
   _resetMigratingInProcessPinsForTests,
+  hasMountedMarker,
   isMigratingInPinned,
   listLocalUserDirs,
   writeMigratingInPin,
+  writeMountedMarker,
 } from "../lib/local-default-agent-wired.js";
+import { GIT_KEY_RESYNC_INTERVAL_MS } from "../lib/git-key-resync.js";
+import { MIGRATING_IN_PIN_TTL_MS } from "@octogee/shared/types/fleet-controller";
 import { stubUserClaim } from "./helpers/user-claim.js";
 import { buildBrokeredLifecycleAdapter } from "../lib/user-lifecycle-broker-adapter.js";
 import { userClaimFromIdentity, markUserClaimOverlayApplied, writeUserClaim } from "@octogee/shared/server/user-claim";
@@ -2739,6 +2744,77 @@ describe("in-pod gateway heartbeat", () => {
     });
 
     expect(probe).toEqual({ status: "ready", podUid: "pod-uid-1", startedAt: 42, rsyncAttemptFencing: true });
+  });
+});
+
+describe("withGitKeyResync — the key resync that starts with the reconcile", () => {
+  const settledRoster = (slugs: string[]) => ({
+    ensureAllowed: new Map(slugs.map((slug) => [slug, true])),
+    desiredFingerprints: new Map(slugs.map((slug) => [slug, "fp-1"])),
+    appliedFingerprints: new Map(slugs.map((slug) => [slug, "fp-1"])),
+  });
+
+  function podWithUsers(slugs: string[]) {
+    const usersDir = fs.mkdtempSync(path.join(os.tmpdir(), "fleet-key-resync-"));
+    tmpDirs.push(usersDir);
+    const hostKeys = new Map<string, string[]>();
+    const registered: string[] = [];
+    const adapter = {
+      listLocalUserSlugs: () => slugs,
+      hasWorkspaceGitDir: () => true,
+      hasGitRemote: () => true,
+      userMountMarked: (slug: string) => hasMountedMarker(usersDir, slug),
+      userMigratingIn: (slug: string) => isMigratingInPinned(usersDir, slug, MIGRATING_IN_PIN_TTL_MS),
+      readLocalUserPubKey: (slug: string) => `ssh-ed25519 AAAAC3Nza${slug} octogee-${slug}@gateway`,
+      giveUpUserGitKey: async () => "released" as const,
+      gitHost: {
+        listKeys: async (slug: string) => hostKeys.get(slug) ?? [],
+        registerKey: async (slug: string, pubKey: string) => {
+          registered.push(slug);
+          hostKeys.set(slug, [pubKey]);
+        },
+      },
+      log: () => {},
+    } as unknown as UserLifecycleAdapter;
+    return { usersDir, adapter, registered, marker: { file: path.join(usersDir, "prestop-started"), podId: "pod-a" } };
+  }
+
+  it("resyncs a user whose move here was activated a minute ago on the next pass, and leaves a user who is mid-import or not mount-observed alone", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "setInterval", "clearTimeout", "clearInterval", "Date"] });
+    try {
+      const slugs = ["activated", "importing", "settled", "unmarked"];
+      const { usersDir, adapter, registered, marker } = podWithUsers(slugs);
+      writeMountedMarker(usersDir, "settled");
+      writeMountedMarker(usersDir, "importing");
+      writeMigratingInPin(usersDir, "importing");
+      writeMigratingInPin(usersDir, "activated");
+      writeMountedMarker(usersDir, "activated");
+      vi.setSystemTime(Date.now() + 60_000);
+      const stopReconcile = vi.fn();
+      const startReconcile = vi.fn(() => stopReconcile);
+
+      const stop = withGitKeyResync(startReconcile, adapter, settledRoster(slugs), marker)();
+
+      expect(startReconcile).toHaveBeenCalledOnce();
+      expect(isMigratingInPinned(usersDir, "activated", MIGRATING_IN_PIN_TTL_MS)).toBe(true);
+      await vi.advanceTimersByTimeAsync(GIT_KEY_RESYNC_INTERVAL_MS);
+      expect(registered).toEqual(["activated", "settled"]);
+
+      stop();
+      expect(stopReconcile).toHaveBeenCalledOnce();
+      registered.length = 0;
+      await vi.advanceTimersByTimeAsync(GIT_KEY_RESYNC_INTERVAL_MS * 2);
+      expect(registered).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("starts only the reconcile when the pod has no user roster", () => {
+    const { adapter, marker } = podWithUsers([]);
+    const startReconcile = vi.fn(() => () => {});
+
+    expect(withGitKeyResync(startReconcile, adapter, null, marker)).toBe(startReconcile);
   });
 });
 
