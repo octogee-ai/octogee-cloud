@@ -327,12 +327,12 @@ describe("periodic git key resync for mounted users", () => {
   });
 
   it.each([
-    ["stops being settled, as when it starts quiescing for a move", (state: { settled: boolean }) => { state.settled = false; }],
-    ["is unmounted", (state: { mounted: string[] }) => { state.mounted = []; }],
-    ["is on a pod whose prestop flush starts", (state: { stopping: boolean }) => { state.stopping = true; }],
-  ])("registers nothing for a user who %s between the listing and the registration", async (_case, change) => {
+    ["stops being settled, as when it starts quiescing for a move", serviceHeldKey, (state: { settled: boolean }) => { state.settled = false; }],
+    ["is unmounted, with a key the pod registers directly", generateUserSshKey, (state: { mounted: string[] }) => { state.mounted = []; }],
+    ["is on a pod whose prestop flush starts", serviceHeldKey, (state: { stopping: boolean }) => { state.stopping = true; }],
+  ])("registers nothing for a user who %s between the listing and the registration", async (_case, keyOnDisk, change) => {
     const host = gitHostBehindThePlatform();
-    serviceHeldKey("lin");
+    keyOnDisk("lin");
     const state = { settled: true, mounted: ["lin"], stopping: false };
     const release = host.holdListings();
     const { pass } = resyncFor(() => state.mounted, () => state.settled, () => state.stopping);
