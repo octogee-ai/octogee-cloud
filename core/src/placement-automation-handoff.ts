@@ -1,10 +1,10 @@
-import type { PlacementOwnerFence } from "./isolated-gateway-lifecycle/inputs.js";
 import {
-  assertFleetControllerOwnsPlacementAutomation,
   placementAutomationOwnership,
   readPlacementAutomationOwnership,
+  requireFleetControllerPlacementOwner,
   type PlacementAutomationOwner,
   type PlacementAutomationOwnership,
+  type PlacementOwnerFence,
 } from "./placement-automation-owner.js";
 import type { PlatformStateStore, PlatformStateTransaction } from "./platform-state/store.js";
 
@@ -74,6 +74,7 @@ export interface PlacementAutomationGate {
   pass<T>(run: (turn: PlacementAutomationTurn) => Promise<T>): Promise<T>;
   readonly requireOwner: PlacementOwnerFence;
   passesInFlight(): number;
+  lastPassStartedAt(): number | null;
 }
 
 export interface PlacementAutomationGateDeps {
@@ -83,16 +84,13 @@ export interface PlacementAutomationGateDeps {
   warn(message: string): void;
 }
 
-const requireFleetControllerOwner: PlacementOwnerFence = async (transaction) => {
-  await assertFleetControllerOwnsPlacementAutomation(transaction);
-};
-
 function passCount(count: number): string {
   return count === 1 ? "1 running pass" : `${count} running passes`;
 }
 
 export function createPlacementAutomationGate(deps: PlacementAutomationGateDeps): PlacementAutomationGate {
   let inFlight = 0;
+  let lastStartedAt: number | null = null;
 
   async function yieldToClient(ownership: PlacementAutomationOwnership): Promise<PlacementAutomationTurn> {
     let outcome: PlacementYieldOutcome;
@@ -124,13 +122,15 @@ export function createPlacementAutomationGate(deps: PlacementAutomationGateDeps)
   return {
     async pass(run) {
       inFlight += 1;
+      lastStartedAt = deps.now();
       try {
         return await run(await begin());
       } finally {
         inFlight -= 1;
       }
     },
-    requireOwner: requireFleetControllerOwner,
+    requireOwner: requireFleetControllerPlacementOwner,
     passesInFlight: () => inFlight,
+    lastPassStartedAt: () => lastStartedAt,
   };
 }

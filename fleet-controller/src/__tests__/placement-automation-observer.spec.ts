@@ -27,6 +27,7 @@ function harness(orchestrator: Data | null, runsPlatformPass: boolean) {
     gate,
     runsPlatformPass,
     stuckAfterObservations: STUCK_AFTER,
+    now: () => NOW,
     log: (message) => logs.push(message),
     error: (message) => errors.push(message),
     record: (sample) => samples.push(sample),
@@ -90,7 +91,8 @@ describe("placement automation observer", () => {
 
     await observer.observe();
     expect(errors).toEqual([
-      "[placement-automation] handoff stuck: the owner is the client but the fleet controller has not yielded after 3 observations; 0 in-process passes are running here",
+      "[placement-automation] handoff stuck: the owner is the client but the fleet controller has not yielded after 3 observations; " +
+        "no in-process pass has run through the gate since the handoff was requested, so the installed pass may not use the gate",
     ]);
 
     await observeTimes(observer, STUCK_AFTER - 1);

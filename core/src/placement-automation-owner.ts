@@ -77,6 +77,16 @@ export async function assertFleetControllerOwnsPlacementAutomation(
   return ownership;
 }
 
+export type PlacementOwnerFence = (transaction: PlatformStateTransaction) => Promise<void>;
+
+export const requireClientPlacementOwner: PlacementOwnerFence = async (transaction) => {
+  await assertClientOwnsPlacementAutomation(transaction);
+};
+
+export const requireFleetControllerPlacementOwner: PlacementOwnerFence = async (transaction) => {
+  await assertFleetControllerOwnsPlacementAutomation(transaction);
+};
+
 export function placementOwnerRefusalBody(error: unknown): { code: typeof PLACEMENT_OWNER_REFUSAL_CODE; error: string } | null {
   if (error instanceof PlacementOwnerRefusedError) return { code: PLACEMENT_OWNER_REFUSAL_CODE, error: error.message };
   if (error instanceof FleetMutationRefusedError) return placementOwnerRefusalBody(error.refusal);

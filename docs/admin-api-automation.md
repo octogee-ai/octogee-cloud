@@ -298,7 +298,26 @@ controller yields on its first pass. Setting `fleet-controller` stores the owner
 and clears the yield in one write: every verb answers `placement-owner` from
 then on, and the next pass decides again. Every placement write checks the
 owner inside its own serializable transaction, so a write that raced a switch
-either committed before it or is refused; none is half-applied.
+either committed before it or is refused; none is half-applied. A write that
+read the owner before the yield and touches nothing a client verb read
+afterwards commits, serialized ahead of the yield; one that conflicts with a
+client verb is aborted, retried and refused.
+
+Every exported transaction that writes placement state takes the owner check
+it asserts as a required argument: the verbs pass the client's, in-process
+callers the fleet controller's.
+
+First placement of a user with no assignment and no lease stays with the
+fleet controller after the yield, by design; the client acts only on users
+with an assignment.
+
+A hung in-process pass blocks the yield until the fleet controller restarts.
+It shows as the stuck-handoff error, which names the running passes, and as
+`glm_placement_automation_handoff_pending_observations` climbing.
+
+Hand placement back to the fleet controller before rolling the fleet
+controller back to a build that predates the gate: an older build ignores the
+owner and keeps deciding while the client acts.
 
 A migration the fleet controller enqueued before it yielded keeps running; the
 operation worker finishes it whoever owns placement. The client sees it in the
@@ -310,6 +329,8 @@ The fleet controller logs every owner or yield change it observes, exports
 `glm_placement_automation_yielded_timestamp_seconds` and
 `glm_placement_automation_handoff_pending_observations`, and logs an error when
 a handoff stays pending for 8 observations (two minutes) and every 8 after.
+When no pass has run through the gate since the switch, the error says so:
+the installed in-process pass does not call the gate and cannot yield.
 
 ### What a 409 means
 

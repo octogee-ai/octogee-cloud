@@ -1,4 +1,4 @@
-import { assertFleetControllerOwnsPlacementAutomation, placementAutomationOwnership, readPlacementAutomationOwnership, } from "./placement-automation-owner.js";
+import { placementAutomationOwnership, readPlacementAutomationOwnership, requireFleetControllerPlacementOwner, } from "./placement-automation-owner.js";
 function placementAutomationPhase(ownership) {
     if (ownership.owner === "fleet-controller")
         return "fleet-controller";
@@ -29,14 +29,12 @@ export async function yieldPlacementAutomationInTransaction(transaction, now) {
     await transaction.config.orchestrator.patch({ placementAutomationYieldedAt: now }, { revision: stored.revision });
     return { kind: "yielded", ownership: { owner: "client", yieldedAt: now } };
 }
-const requireFleetControllerOwner = async (transaction) => {
-    await assertFleetControllerOwnsPlacementAutomation(transaction);
-};
 function passCount(count) {
     return count === 1 ? "1 running pass" : `${count} running passes`;
 }
 export function createPlacementAutomationGate(deps) {
     let inFlight = 0;
+    let lastStartedAt = null;
     async function yieldToClient(ownership) {
         let outcome;
         try {
@@ -67,6 +65,7 @@ export function createPlacementAutomationGate(deps) {
     return {
         async pass(run) {
             inFlight += 1;
+            lastStartedAt = deps.now();
             try {
                 return await run(await begin());
             }
@@ -74,7 +73,8 @@ export function createPlacementAutomationGate(deps) {
                 inFlight -= 1;
             }
         },
-        requireOwner: requireFleetControllerOwner,
+        requireOwner: requireFleetControllerPlacementOwner,
         passesInFlight: () => inFlight,
+        lastPassStartedAt: () => lastStartedAt,
     };
 }

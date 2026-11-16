@@ -1,7 +1,8 @@
 import type { SizingTier } from "@octogee/shared/types/sizing";
 import { type NormalFleetMutationInput } from "../normal-fleet-mutation.js";
 import type { SizingKeyReader } from "../sizing-key.js";
-import type { PlatformStateStore, PlatformStateTransaction } from "../platform-state/store.js";
+import type { PlacementOwnerFence } from "../placement-automation-owner.js";
+import type { PlatformStateStore } from "../platform-state/store.js";
 export declare const ISOLATED_GATEWAY_LIFECYCLE_ACTOR = "glm-controller-disposable-gateway";
 export declare const PLACEMENT_AUTOMATION_ACTOR = "glm-controller-placement-policy";
 export declare const ISOLATED_GATEWAY_ALLOCATION_KIND = "disposable-builder";
@@ -9,7 +10,7 @@ export declare const ROLLED_BACK_STATUS = "rolled-back";
 export declare class IsolatedGatewayFenceError extends Error {
     constructor(message: string);
 }
-export type PlacementOwnerFence = (transaction: PlatformStateTransaction) => Promise<void>;
+export type { PlacementOwnerFence } from "../placement-automation-owner.js";
 export type LifecycleMutation<T> = Omit<NormalFleetMutationInput<T>, "action"> & {
     action: () => Promise<T>;
 };

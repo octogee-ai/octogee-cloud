@@ -53,6 +53,7 @@ export function startPlacement(
     gate: deps.placementAutomation,
     runsPlatformPass: product === undefined,
     stuckAfterObservations: PLACEMENT_HANDOFF_STUCK_AFTER_OBSERVATIONS,
+    now: deps.now,
     log: deps.log,
     error: deps.error,
     record: recordPlacementAutomation,

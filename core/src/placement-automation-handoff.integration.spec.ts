@@ -97,11 +97,66 @@ describe.skipIf(!dsn)("PostgreSQL placement automation handoff", { timeout: 30_0
     expect(await runningOperationIds()).toEqual(["in-process"]);
   });
 
-  it("never leaves a yield beside the fleet controller when a yield races the hand-back", async () => {
+  function paused<T>(label: string, body: (transaction: PlatformStateTransaction) => Promise<T>) {
+    const read = gate();
+    const resume = gate();
+    const attempts: number[] = [];
+    const run = harness.store.transaction({ label }, async (transaction) => {
+      attempts.push(transaction.attempt);
+      await transaction.config.orchestrator.get();
+      if (transaction.attempt === 1) {
+        read.open();
+        await resume.opened;
+      }
+      return body(transaction);
+    });
+    return { read: read.opened, resume: resume.open, run, attempts };
+  }
+
+  it("commits a disjoint in-process write that read the owner before the yield, serialized ahead of it", async () => {
     await setOwner("client");
+    const write = paused("test.disjoint-write", async (transaction) => {
+      await assertFleetControllerOwnsPlacementAutomation(transaction);
+      await transaction.journal.operations.create(operation({ id: "in-process", status: "running", startedAt: NOW }));
+      return "claimed";
+    });
+    await write.read;
 
-    await Promise.all([yieldNow(), setOwner("fleet-controller")]);
+    expect(await yieldNow()).toMatchObject({ kind: "yielded" });
+    write.resume();
 
+    expect(await write.run).toBe("claimed");
+    expect(write.attempts).toEqual([1]);
+    expect(await runningOperationIds()).toEqual(["in-process"]);
+  });
+
+  it("drops a yield that read the owner before a hand-back committed, leaving no yield", async () => {
+    await setOwner("client");
+    const pending = paused("test.yield", (transaction) => yieldPlacementAutomationInTransaction(transaction, NOW));
+    await pending.read;
+
+    await setOwner("fleet-controller");
+    pending.resume();
+
+    expect(await pending.run).toEqual({ kind: "not-requested", ownership: { owner: "fleet-controller", yieldedAt: null } });
+    expect(pending.attempts.length).toBeGreaterThanOrEqual(2);
+    expect(await readPlacementAutomationState(harness.store)).toEqual({ owner: "fleet-controller", yieldedAt: null, phase: "fleet-controller" });
+  });
+
+  it("clears a yield that committed while a hand-back was reading the owner", async () => {
+    await setOwner("client");
+    const handBack = paused("test.hand-back", (transaction) => setPlacementAutomationOwnerInTransaction(transaction, "fleet-controller"));
+    await handBack.read;
+
+    expect(await yieldNow()).toEqual({ kind: "yielded", ownership: { owner: "client", yieldedAt: NOW } });
+    handBack.resume();
+
+    expect(await handBack.run).toEqual({
+      previous: { owner: "client", yieldedAt: NOW },
+      current: { owner: "fleet-controller", yieldedAt: null },
+      changed: true,
+    });
+    expect(handBack.attempts.length).toBeGreaterThanOrEqual(2);
     expect(await readPlacementAutomationState(harness.store)).toEqual({ owner: "fleet-controller", yieldedAt: null, phase: "fleet-controller" });
   });
 });

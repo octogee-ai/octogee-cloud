@@ -253,13 +253,27 @@ describe("the in-process pass gate", () => {
     expect(stored(documents)?.placementAutomationYieldedAt ?? null).toBeNull();
   });
 
-  it("counts a pass as running until it settles, even when it fails", async () => {
+  it("counts a pass as running until it settles, even when it fails, and remembers when the last one started", async () => {
     const { store } = fixture();
-    const gate = gateOn(store);
+    let clock = NOW;
+    const gate = gateOn(store, [], () => clock);
+    expect(gate.lastPassStartedAt()).toBeNull();
 
-    await expect(gate.pass(async () => { throw new Error("pass failed"); })).rejects.toThrow("pass failed");
-
+    const running = await heldPass(gate);
+    expect(gate.passesInFlight()).toBe(1);
+    await running.finish();
     expect(gate.passesInFlight()).toBe(0);
+
+    clock = NOW + 5;
+    let during = -1;
+    await expect(gate.pass(async () => {
+      during = gate.passesInFlight();
+      throw new Error("pass failed");
+    })).rejects.toThrow("pass failed");
+
+    expect(during).toBe(1);
+    expect(gate.passesInFlight()).toBe(0);
+    expect(gate.lastPassStartedAt()).toBe(NOW + 5);
   });
 
   it("reports a failed yield and leaves the handoff pending for the next pass", async () => {

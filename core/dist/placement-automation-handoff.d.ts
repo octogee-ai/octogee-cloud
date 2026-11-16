@@ -1,5 +1,4 @@
-import type { PlacementOwnerFence } from "./isolated-gateway-lifecycle/inputs.js";
-import { type PlacementAutomationOwner, type PlacementAutomationOwnership } from "./placement-automation-owner.js";
+import { type PlacementAutomationOwner, type PlacementAutomationOwnership, type PlacementOwnerFence } from "./placement-automation-owner.js";
 import type { PlatformStateStore, PlatformStateTransaction } from "./platform-state/store.js";
 export type PlacementAutomationPhase = "fleet-controller" | "handoff-pending" | "client";
 export interface PlacementAutomationState extends PlacementAutomationOwnership {
@@ -32,6 +31,7 @@ export interface PlacementAutomationGate {
     pass<T>(run: (turn: PlacementAutomationTurn) => Promise<T>): Promise<T>;
     readonly requireOwner: PlacementOwnerFence;
     passesInFlight(): number;
+    lastPassStartedAt(): number | null;
 }
 export interface PlacementAutomationGateDeps {
     store: PlatformStateStore;

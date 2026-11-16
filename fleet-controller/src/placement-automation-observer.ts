@@ -17,18 +17,26 @@ export interface PlacementAutomationObserverDeps {
   gate: PlacementAutomationGate;
   runsPlatformPass: boolean;
   stuckAfterObservations: number;
+  now(): number;
   log(message: string): void;
   error(message: string): void;
   record(sample: PlacementAutomationSample): void;
 }
 
-function runningPasses(count: number): string {
-  return count === 1 ? "1 in-process pass is running here" : `${count} in-process passes are running here`;
+function stuckCause(gate: PlacementAutomationGate, pendingSince: number): string {
+  const running = gate.passesInFlight();
+  if (running > 0) return running === 1 ? "1 in-process pass is running here" : `${running} in-process passes are running here`;
+  const lastStarted = gate.lastPassStartedAt();
+  if (lastStarted === null || lastStarted < pendingSince) {
+    return "no in-process pass has run through the gate since the handoff was requested, so the installed pass may not use the gate";
+  }
+  return "the last in-process pass could not record the yield";
 }
 
 export function createPlacementAutomationObserver(deps: PlacementAutomationObserverDeps): { observe(): Promise<void> } {
   let last: PlacementAutomationState | null = null;
   let pending = 0;
+  let pendingSince = 0;
   return {
     async observe() {
       if (deps.runsPlatformPass) await deps.gate.pass(async () => undefined);
@@ -37,13 +45,14 @@ export function createPlacementAutomationObserver(deps: PlacementAutomationObser
         deps.log(`[placement-automation] owner=${state.owner} yieldedAt=${state.yieldedAt ?? "none"} phase=${state.phase}`);
       }
       last = state;
+      if (state.phase === "handoff-pending" && pending === 0) pendingSince = deps.now();
       pending = state.phase === "handoff-pending" ? pending + 1 : 0;
       deps.record({ ...state, pendingObservations: pending });
       const stuckAfter = deps.stuckAfterObservations;
       if (pending >= stuckAfter && (pending - stuckAfter) % stuckAfter === 0) {
         deps.error(
           `[placement-automation] handoff stuck: the owner is the client but the fleet controller has not yielded after ${pending} observations; ` +
-            runningPasses(deps.gate.passesInFlight()),
+            stuckCause(deps.gate, pendingSince),
         );
       }
     },
