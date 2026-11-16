@@ -23,6 +23,7 @@ vi.mock("../lib/config.js", () => ({
 const { prepareServiceGitKey, generateUserSshKey, readLocalUserPubKey } = await import("../lib/git.js");
 const { serviceGitKeyHolder, recordServiceGitKeyHolder } = await import("../lib/service-git-key-holder.js");
 const { brokeredGitHost } = await import("../lib/gitea-admin-broker-client.js");
+const { internalFetch } = await import("../lib/internal-fetch.js");
 
 const HOLDER = "shared-blue/octogee-gateway-shared-blue-5bc59-p946t";
 const OTHER_HOLDER = "isolated-lin/octogee-gateway-isolated-lin-0";
@@ -90,13 +91,45 @@ describe("prepareServiceGitKey", () => {
   });
 });
 
-describe("a key registered the legacy way", () => {
-  it("is no longer held for the service", async () => {
+describe("a legacy registration of a key the service holds", () => {
+  const body = () => JSON.parse(String(vi.mocked(internalFetch).mock.calls.at(-1)?.[1]?.body));
+
+  it("asks the platform to register it through the service for this pod and keeps the marker", async () => {
     const key = prepareServiceGitKey("lin", HOLDER);
     key.registered();
+    vi.mocked(internalFetch).mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+    await brokeredGitHost.registerKey("lin", key.publicKey);
+
+    expect(body()).toEqual({ slug: "lin", pubKey: key.publicKey, serviceHolder: HOLDER });
+    expect(serviceGitKeyHolder("lin")).toBe(HOLDER);
+  });
+
+  it("drops the marker when the platform registered the key on the git host instead", async () => {
+    const key = prepareServiceGitKey("lin", HOLDER);
+    key.registered();
+    vi.mocked(internalFetch).mockResolvedValueOnce(Response.json({ registeredOn: "git-host" }));
 
     await brokeredGitHost.registerKey("lin", key.publicKey);
 
     expect(serviceGitKeyHolder("lin")).toBeNull();
+  });
+
+  it("keeps the marker and fails when the platform does not register it", async () => {
+    const key = prepareServiceGitKey("lin", HOLDER);
+    key.registered();
+    vi.mocked(internalFetch).mockResolvedValueOnce(Response.json({ error: "provisioning_pending", reason: "GenerationNotObserved" }, { status: 503 }));
+
+    await expect(brokeredGitHost.registerKey("lin", key.publicKey)).rejects.toThrow("503");
+    expect(serviceGitKeyHolder("lin")).toBe(HOLDER);
+  });
+
+  it("sends no marker for a key the service does not hold", async () => {
+    const legacy = generateUserSshKey("lin");
+    vi.mocked(internalFetch).mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+    await brokeredGitHost.registerKey("lin", legacy);
+
+    expect(body()).toEqual({ slug: "lin", pubKey: legacy });
   });
 });

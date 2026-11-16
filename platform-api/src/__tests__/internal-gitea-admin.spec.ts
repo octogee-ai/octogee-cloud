@@ -252,6 +252,17 @@ describe("internal gitea-admin route", () => {
     );
   });
 
+  it("ensure-user registers a key the marker says the service holds on the git host, logs it and tells the gateway to drop the marker, without the service", async () => {
+    const warned = vi.spyOn(logger, "warn").mockImplementation(() => {});
+
+    const res = await request(app()).post("/internal/gitea/ensure-user").send({ slug: "acme", pubKey: "ssh-ed25519 AAA", serviceHolder: WALTER_KEY_OWNER });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ registeredOn: "git-host" });
+    expect(gitHost().registerKey).toHaveBeenCalledWith("acme", "ssh-ed25519 AAA", WALTER_KEY_OWNER);
+    expect(warned).toHaveBeenCalledWith(expect.stringContaining("not configured"), expect.objectContaining({ slug: "acme" }));
+  });
+
   it("ensure-user → 403 when slug is not assigned to this gateway, before touching Gitea", async () => {
     const res = await authed(
       request(app()).post("/internal/gitea/ensure-user"),
@@ -801,5 +812,64 @@ describe("internal gitea-admin route with the provisioning service", () => {
 
     expect(methods.length).toBeGreaterThan(0);
     expect(new Set(methods)).toEqual(new Set(["GET /v1/users/uid-acme/provisioning"]));
+  });
+
+  describe("ensure-user for a key the gateway's marker says the service holds", () => {
+    const KEY = "ssh-ed25519 AAA rotated";
+
+    it("puts the service row for the token's pod instead of calling the git host", async () => {
+      const provisioning = service(async () => ({ ready: true, value: undefined }));
+
+      const res = await request(app("walter", "walter", provisioning)).post("/internal/gitea/ensure-user").send({ slug: "acme", pubKey: KEY, serviceHolder: WALTER_KEY_OWNER });
+
+      expect(res.status).toBe(204);
+      expect(provisioning.gitKey).toHaveBeenCalledExactlyOnceWith("uid-acme", WALTER_KEY_OWNER, KEY, expect.objectContaining({ signal: expect.any(AbortSignal) }));
+      expectNoKeyTouched();
+    });
+
+    it("answers the service's reason while the row is not registered", async () => {
+      const provisioning = service(async () => ({ ready: true, value: undefined }), async () => ({ ready: false, reason: "GenerationNotObserved", retryAfterSeconds: 5 }));
+
+      const res = await request(app("walter", "walter", provisioning)).post("/internal/gitea/ensure-user").send({ slug: "acme", pubKey: KEY, serviceHolder: WALTER_KEY_OWNER });
+
+      expect(res.status).toBe(503);
+      expect(res.body).toEqual({ error: "provisioning_pending", reason: "GenerationNotObserved" });
+      expectNoKeyTouched();
+    });
+
+    it("refuses a token without a pod name and logs it", async () => {
+      const logged = vi.spyOn(logger, "error").mockImplementation(() => {});
+      const provisioning = service(async () => ({ ready: true, value: undefined }));
+      mocks.docs.set("gateways/walter", isolatedGateway());
+
+      const res = await request(app("walter", null, provisioning)).post("/internal/gitea/ensure-user").send({ slug: "acme", pubKey: KEY, serviceHolder: WALTER_KEY_OWNER });
+
+      expect(res.status).toBe(403);
+      expect(provisioning.gitKey).not.toHaveBeenCalled();
+      expectNoKeyTouched();
+      expect(logged).toHaveBeenCalledWith(expect.stringContaining("binds no pod"), expect.objectContaining({ slug: "acme" }));
+    });
+
+    it("registers on the git host and tells the gateway to drop its marker when the marker names another pod", async () => {
+      const provisioning = service(async () => ({ ready: true, value: undefined }));
+
+      const res = await request(app("walter", "walter", provisioning)).post("/internal/gitea/ensure-user").send({ slug: "acme", pubKey: KEY, serviceHolder: "walter/octogee-gateway-walter-old-pod" });
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ registeredOn: "git-host" });
+      expect(gitHost().registerKey).toHaveBeenCalledExactlyOnceWith("acme", KEY, WALTER_KEY_OWNER);
+      expect(provisioning.gitKey).not.toHaveBeenCalled();
+    });
+  });
+
+  it("keeps a gateway that sends no marker on the git host, as a previous build expects", async () => {
+    const provisioning = service(async () => ({ ready: true, value: undefined }));
+
+    const res = await request(app("walter", "walter", provisioning)).post("/internal/gitea/ensure-user").send({ slug: "acme", pubKey: "ssh-ed25519 AAA" });
+
+    expect(res.status).toBe(204);
+    expect(res.body).toEqual({});
+    expect(gitHost().registerKey).toHaveBeenCalledExactlyOnceWith("acme", "ssh-ed25519 AAA", WALTER_KEY_OWNER);
+    expect(provisioning.gitKey).not.toHaveBeenCalled();
   });
 });

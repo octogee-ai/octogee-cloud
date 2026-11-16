@@ -1,7 +1,7 @@
 import type { GitRepoRole, ManagedGitHost } from "@octogee/core/git-host";
 
 import { internalFetch } from "./internal-fetch.js";
-import { clearServiceGitKeyHolder } from "./service-git-key-holder.js";
+import { clearServiceGitKeyHolder, serviceGitKeyHolder } from "./service-git-key-holder.js";
 
 export type BrokeredGitHost = Pick<
   ManagedGitHost,
@@ -23,6 +23,21 @@ async function postVoid(path: string, body: unknown): Promise<void> {
     const text = (await resp.text().catch(() => "")).slice(0, 300);
     throw new Error(`gitea-broker POST ${path} → ${resp.status} ${text}`);
   }
+}
+
+async function postServiceHeldKey(body: { slug: string; pubKey: string; serviceHolder: string }): Promise<{ registeredOn?: unknown }> {
+  const path = "/internal/gitea/ensure-user";
+  const resp = await internalFetch(`${baseUrl()}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    const text = (await resp.text().catch(() => "")).slice(0, 300);
+    throw new Error(`gitea-broker POST ${path} → ${resp.status} ${text}`);
+  }
+  if (resp.status === 204) return {};
+  return (await resp.json()) as { registeredOn?: unknown };
 }
 
 async function getJson(path: string): Promise<unknown> {
@@ -49,8 +64,13 @@ function ensureRepoRequest(slug: string, role: GitRepoRole): { path: string; bod
 
 export const brokeredGitHost: BrokeredGitHost = {
   async registerKey(slug, pubKey) {
-    clearServiceGitKeyHolder(slug);
-    await postVoid("/internal/gitea/ensure-user", { slug, pubKey });
+    const serviceHolder = serviceGitKeyHolder(slug);
+    if (serviceHolder === null) {
+      await postVoid("/internal/gitea/ensure-user", { slug, pubKey });
+      return;
+    }
+    const answer = await postServiceHeldKey({ slug, pubKey, serviceHolder });
+    if (answer.registeredOn === "git-host") clearServiceGitKeyHolder(slug);
   },
 
   releaseKey: (slug, pubKey) => postVoid("/internal/gitea/release-user-key", { slug, pubKey }),

@@ -298,9 +298,79 @@ async function awaitServiceGitReady(res: Response, legacyProvisioning: LegacyPro
   }
 }
 
+interface ServiceHeldKey {
+  slug: string;
+  publicKey: string;
+  keyOwner: string;
+  access: UserAccess;
+}
+
+async function registerServiceHeldKey(
+  res: Response,
+  legacyProvisioning: LegacyProvisioning,
+  { slug, publicKey, keyOwner }: ServiceHeldKey,
+): Promise<void> {
+  try {
+    const user = await platformStateStore.users.records.findBySlug(slug);
+    if (!user) {
+      logger.error("internal/gitea: no user carries the slug", { slug });
+      respondProvisioningPending(res, { route: "ensure-user", slug }, { reason: "NotProvisioned", retryAfterSeconds: 5 });
+      return;
+    }
+    const wait = await legacyProvisioning.gitKey(user.uid, keyOwner, publicKey, routeBudget());
+    if (!wait.ready) {
+      respondProvisioningPending(res, { route: "ensure-user", uid: user.uid }, wait);
+      return;
+    }
+    res.status(204).end();
+  } catch (err) {
+    logger.error("internal/gitea ensure-user through the provisioning service failed", { err, slug, keyOwner });
+    res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+async function registerOnGitHostInstead(res: Response, { slug, publicKey, keyOwner, access }: ServiceHeldKey): Promise<void> {
+  try {
+    await (access === "serving"
+      ? gitHost().registerKey(slug, publicKey, keyOwner)
+      : gitHost().registerKeyUnlessHeld(slug, publicKey, keyOwner));
+    res.status(200).json({ registeredOn: "git-host" });
+  } catch (err) {
+    logger.error("internal/gitea ensure-user failed", { err });
+    res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+async function ensureServiceHeldKey(
+  req: Request,
+  res: Response,
+  legacyProvisioning: LegacyProvisioning | null,
+  { slug, publicKey, serviceHolder, access }: { slug: string; publicKey: string; serviceHolder: string; access: UserAccess },
+): Promise<void> {
+  const caller = gatewayCallerForRequest(req);
+  if (!caller?.podName) {
+    logger.error("internal/gitea ensure-user: a key held by the service needs a token that names its pod, and this one binds no pod", { slug, gatewayId: caller?.gatewayId });
+    res.status(403).json({ error: "gateway pod identity is required for SSH key ownership" });
+    return;
+  }
+  const keyOwner = gatewayKeyOwnerId(caller.gatewayId, caller.podName);
+  const key = { slug, publicKey, keyOwner, access };
+  if (legacyProvisioning === null) {
+    logger.warn("internal/gitea ensure-user: the provisioning service is not configured, so a key the gateway says the service holds is registered on the git host", { slug, keyOwner });
+    await registerOnGitHostInstead(res, key);
+    return;
+  }
+  if (serviceHolder !== keyOwner) {
+    logger.info("internal/gitea ensure-user: the gateway's marker names another pod, so this pod's key is registered on the git host", { slug, keyOwner, serviceHolder });
+    await registerOnGitHostInstead(res, key);
+    return;
+  }
+  await registerServiceHeldKey(res, legacyProvisioning, key);
+}
+
 function ensureUserHandler(legacyProvisioning: LegacyProvisioning | null) {
   return async (req: Request, res: Response): Promise<void> => {
-    const { slug, pubKey } = (req.body ?? {}) as { slug?: unknown; pubKey?: unknown };
+    const { slug, pubKey, serviceHolder } = (req.body ?? {}) as { slug?: unknown; pubKey?: unknown; serviceHolder?: unknown };
     if (!validSlug(res, slug)) return;
     if (!isSshPublicKey(pubKey)) {
       res.status(400).json({ error: "pubKey must be a valid SSH public key" });
@@ -308,6 +378,10 @@ function ensureUserHandler(legacyProvisioning: LegacyProvisioning | null) {
     }
     const access = await requireUserAccess(req, res, slug);
     if (!access) return;
+    if (typeof serviceHolder === "string" && serviceHolder !== "") {
+      await ensureServiceHeldKey(req, res, legacyProvisioning, { slug, publicKey: pubKey.trim(), serviceHolder, access });
+      return;
+    }
     const keyOwner = gatewayKeyOwnerForRequest(req, res);
     if (!keyOwner) return;
     if (legacyProvisioning && !(await awaitServiceGitReady(res, legacyProvisioning, slug))) return;
