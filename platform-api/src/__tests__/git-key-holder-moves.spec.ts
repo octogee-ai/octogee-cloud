@@ -2,9 +2,10 @@ import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { gatewayKeyOwnerId, publicKeyIdentity } from "@octogee/core/gitea-naming";
+import { GATEWAY_KEY_TITLE, gatewayKeyOwnerId, gatewayKeyTitle, publicKeyIdentity } from "@octogee/core/gitea-naming";
 import { logger } from "@octogee/core/http/logging";
 import { platformStateStore } from "@octogee/core/identity/platform-state-store";
+import { ProvisioningServiceError } from "@octogee/core/provisioning-service-client";
 import { NO_BROKER_RECORDS } from "../lib/broker-records.js";
 import { createLegacyProvisioning } from "../lib/legacy-provisioning.js";
 import { createTenantEnforcementMiddleware } from "../middleware/tenant-enforcement.js";
@@ -503,15 +504,34 @@ describe("git keys across moves and rolls, through the platform's routes and ada
       expect(service.rows()).toEqual([]);
     });
 
-    it("answers the service release of an erased user as an unknown user, and the git host release as done with nothing to delete", async () => {
-      const { git, call, source, publicKey } = await served();
+    it("answers both releases of an erased user as done, with no row and no key to delete", async () => {
+      const { git, service, call, source, publicKey } = await served();
+      const deleted = vi.spyOn(service.client, "deleteGitKey");
       eraseUser(git);
 
       const serviceRelease = await call(source, SERVICE_RELEASE, { slug: USER.slug, publicKey });
       const hostRelease = await call(source, HOST_RELEASE, { slug: USER.slug, pubKey: publicKey });
 
-      expect({ status: serviceRelease.status, body: serviceRelease.body }).toEqual({ status: 404, body: { error: "not_found" } });
-      expect(hostRelease.status).toBe(204);
+      expect({ service: serviceRelease.status, host: hostRelease.status }).toEqual({ service: 204, host: 204 });
+      expect({ service: serviceRelease.text, host: hostRelease.text }).toEqual({ service: "", host: "" });
+      expect(deleted).not.toHaveBeenCalled();
+    });
+
+    it("answers a failing release for a user the pod does not serve without the uid, the service path or the git host's message, and logs each failure", async () => {
+      const { git, service, call, publicKey } = await served();
+      const stranger = pod("shared-green", "octogee-gateway-shared-green-7d8e9-f3g4h");
+      const serviceFailure = new ProvisioningServiceError(0, "unreachable", `provisioning service DELETE users/${USER.uid}/git-keys/${stranger.holder} failed: fetch failed`);
+      const hostFailure = new Error(`gitea-admin list-keys failed: 500 ws-${USER.slug} is locked by ${USER.uid}`);
+      vi.spyOn(service.client, "deleteGitKey").mockRejectedValue(serviceFailure);
+      vi.spyOn(git.host, "releaseKey").mockRejectedValue(hostFailure);
+
+      const serviceRelease = await call(stranger, SERVICE_RELEASE, { slug: USER.slug, publicKey });
+      const hostRelease = await call(stranger, HOST_RELEASE, { slug: USER.slug, pubKey: publicKey });
+
+      expect({ status: serviceRelease.status, body: serviceRelease.body }).toEqual({ status: 502, body: { error: "git_key_release_failed" } });
+      expect({ status: hostRelease.status, body: hostRelease.body }).toEqual({ status: 502, body: { error: "git_key_release_failed" } });
+      expect(logger.error).toHaveBeenCalledWith("gateway git key release failed", { err: serviceFailure, gatewayId: stranger.gatewayId, holder: stranger.holder, slug: USER.slug });
+      expect(logger.error).toHaveBeenCalledWith("internal/gitea release-user-key failed", { err: hostFailure, slug: USER.slug, holder: stranger.holder });
     });
 
     it("releases the row a pod still holds for a user who is moving back to it", async () => {
@@ -557,7 +577,7 @@ describe("git keys across moves and rolls, through the platform's routes and ada
       expect(hostKeys(git)).toEqual([]);
     });
 
-    it("admits a release from a pod that never served the user, and it removes neither the serving pod's key nor its row", async () => {
+    it("admits a release from a pod that never served the user, and it removes neither the serving pod's row nor the key under the serving pod's title", async () => {
       const { git, service, call, publicKey, held } = await served();
       const stranger = pod("shared-green", "octogee-gateway-shared-green-7d8e9-f3g4h");
 
@@ -568,6 +588,24 @@ describe("git keys across moves and rolls, through the platform's routes and ada
       expect({ service: serviceRelease.status, host: hostRelease.status }).toEqual({ service: 204, host: 204 });
       expect(hostKeys(git)).toEqual(held.host);
       expect(service.rows()).toEqual(held.rows);
+    });
+
+    it.each([
+      ["the title from before per-pod titles", () => GATEWAY_KEY_TITLE],
+      ["the title derived from the key itself", (publicKey: string) => gatewayKeyTitle(publicKeyIdentity(publicKey))],
+    ])("still deletes a key held under %s when a pod that never served the user submits its material", async (_title, titleFor) => {
+      const { git, call } = setup();
+      assign("shared-blue");
+      const legacyKey = newKey();
+      git.holdUnderTitle(titleFor(legacyKey), legacyKey);
+      const stranger = pod("shared-green", "octogee-gateway-shared-green-7d8e9-f3g4h");
+
+      await call(stranger, HOST_RELEASE, { slug: USER.slug, pubKey: newKey() }).expect(204);
+      const afterAnotherKey = hostKeys(git);
+      await call(stranger, HOST_RELEASE, { slug: USER.slug, pubKey: legacyKey }).expect(204);
+
+      expect(afterAnotherKey).toEqual([legacyKey]);
+      expect(hostKeys(git)).toEqual([]);
     });
 
     it.each([

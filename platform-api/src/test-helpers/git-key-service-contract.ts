@@ -15,6 +15,7 @@ export interface FakeGitHost {
   held: () => HostKey[];
   titled: (holder: string) => string[];
   deleteTitled: (holder: string, publicKey: string) => void;
+  holdUnderTitle: (title: string, publicKey: string) => void;
   deleteAccount: () => void;
 }
 
@@ -55,6 +56,9 @@ export function fakeGitHost(slug: string): FakeGitHost {
       for (let index = keys.length - 1; index >= 0; index -= 1) {
         if (keys[index].title === gatewayKeyTitle(holder) && publicKeyIdentity(keys[index].key) === publicKeyIdentity(publicKey)) keys.splice(index, 1);
       }
+    },
+    holdUnderTitle(title, publicKey) {
+      keys.push({ id: nextId++, title, key: publicKey });
     },
     deleteAccount() {
       accountDeleted = true;

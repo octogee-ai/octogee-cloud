@@ -3,6 +3,7 @@ import { EventEmitter } from "node:events";
 import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
 import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
+import { logger } from "@octogee/core/http/logging";
 import {
   createTenantEnforcementMiddleware,
   NO_PRODUCT_TENANT_ROUTES,
@@ -1093,6 +1094,25 @@ const STILL_ON_SHARED = {
       })).post(route).send({ slug: "victim" });
 
       expect([foreignClaim.status, platformActor.status, retiredMachine.status]).toEqual([403, 403, 403]);
+    });
+
+    it.each(RELEASE_ROUTES)("logs the calling gateway, its pod and the slug when %s is admitted for a slug not assigned to the caller, and nothing for the pod's own slug", async (route) => {
+      const logged = vi.spyOn(logger, "info").mockImplementation(() => {});
+      const target = app({ boundTenant: WALTER_R2 });
+      const key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKeyMaterial octogee@gateway";
+
+      await request(target).post(route).send({ slug: "alice", publicKey: key, pubKey: key }).expect(200);
+      const forOwnSlug = logged.mock.calls.length;
+      await request(target).post(route).send({ slug: "victim", publicKey: key, pubKey: key }).expect(200);
+      await request(target).post(route).send({ slug: "departed", publicKey: key, pubKey: key }).expect(200);
+      const calls = logged.mock.calls;
+      logged.mockRestore();
+
+      expect(forOwnSlug).toBe(0);
+      expect(calls).toEqual(["victim", "departed"].map((slug) => [
+        "[tenant-enforcement] admitted a git key release for a slug not assigned to the calling gateway",
+        { gatewayId: "walter", podName: WALTER_R2.podName, slug, path: route },
+      ]));
     });
 
     it("admits a slug assigned elsewhere on no other route, with the same pod token", async () => {

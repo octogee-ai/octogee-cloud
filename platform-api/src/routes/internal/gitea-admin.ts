@@ -480,7 +480,13 @@ async function releaseUserKey(req: Request, res: Response): Promise<void> {
   }
   const keyOwner = gatewayKeyOwnerForRequest(req, res);
   if (!keyOwner) return;
-  await broker(res, "release-user-key", () => gitHost().releaseKey(slug, pubKey, keyOwner));
+  try {
+    await gitHost().releaseKey(slug, pubKey, keyOwner);
+    res.status(204).end();
+  } catch (err) {
+    logger.error("internal/gitea release-user-key failed", { err, slug, holder: keyOwner });
+    res.status(502).json({ error: "git_key_release_failed" });
+  }
 }
 
 const router: Router = Router();

@@ -499,9 +499,21 @@ describe("POST /internal/fleet/git-key/release", () => {
 
     const response = await release(app, { publicKey: PUBLIC_KEY }).expect(502);
 
-    expect(response.body).toEqual({ error: "the platform store is unavailable" });
+    expect(response.body).toEqual({ error: "git_key_release_failed" });
     expect(provisioning?.releaseGitKey).not.toHaveBeenCalled();
-    expect(logged).toHaveBeenCalledWith("fleet broker call failed", expect.objectContaining({ err: expect.any(Error) }));
+    expect(logged).toHaveBeenCalledWith("gateway git key release failed", { err: expect.any(Error), gatewayId: GATEWAY_ID, holder: HOLDER, slug: "alice" });
+  });
+
+  it("answers a failed provisioning service call for a user assigned elsewhere with a body that names neither the uid nor the service path, and logs the failure", async () => {
+    const logged = vi.spyOn(logger, "error").mockImplementation(() => {});
+    const failure = new Error(`provisioning service DELETE users/uid-alice/git-keys/${HOLDER} failed: fetch failed`);
+    const { app } = fixture({ assignedTo: "shared-green", provisioning: legacyProvisioning({ releaseGitKey: vi.fn(async () => { throw failure; }) }) });
+
+    const response = await release(app, { publicKey: PUBLIC_KEY }).expect(502);
+
+    expect(response.body).toEqual({ error: "git_key_release_failed" });
+    expect(response.text).not.toContain("uid-alice");
+    expect(logged).toHaveBeenCalledWith("gateway git key release failed", { err: failure, gatewayId: GATEWAY_ID, holder: HOLDER, slug: "alice" });
   });
 
   it("refuses a caller whose token binds no pod", async () => {
@@ -546,13 +558,16 @@ describe("POST /internal/fleet/git-key/release", () => {
     expect(provisioning?.releaseGitKey).not.toHaveBeenCalled();
   });
 
-  it("answers 404 not_found for a slug that names no user", async () => {
+  it("answers a slug that names no user as it answers a released row, without asking the provisioning service", async () => {
     const { app, provisioning } = fixture();
 
-    const response = await release(app, { slug: "nobody", publicKey: PUBLIC_KEY }).expect(404);
+    const unknown = await release(app, { slug: "nobody", publicKey: PUBLIC_KEY });
+    const known = await release(app, { publicKey: PUBLIC_KEY });
 
-    expect(response.body).toEqual({ error: "not_found" });
-    expect(provisioning?.releaseGitKey).not.toHaveBeenCalled();
+    expect({ status: unknown.status, body: unknown.text }).toEqual({ status: 204, body: "" });
+    expect({ status: known.status, body: known.text }).toEqual({ status: unknown.status, body: unknown.text });
+    expect(provisioning?.releaseGitKey).toHaveBeenCalledTimes(1);
+    expect(provisioning?.releaseGitKey).toHaveBeenCalledWith("uid-alice", HOLDER, PUBLIC_KEY, expect.anything());
   });
 
   it("answers 409 for any caller while the platform does not run the provisioning service", async () => {
