@@ -99,7 +99,7 @@ export interface ServiceProvisioningAdapter {
   serviceGitKey: (slug: string) => string;
   holdsServiceGitKey: (slug: string) => boolean;
   registerGitKey: (uid: string, publicKey: string) => Promise<ServiceProvisioningAnswer>;
-  releaseGitKey: (uid: string) => Promise<void>;
+  releaseGitKey: (uid: string, publicKey: string) => Promise<void>;
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   now?: () => number;
 }
@@ -1647,9 +1647,9 @@ async function releaseUnmountedGiteaKey(
   const { slug } = snapshot;
   const pubKey = adapter.readLocalUserPubKey(slug);
   if (pubKey === null) return false;
-  const service = snapshot.provisionedBy === "service" ? adapter.provisioningService : undefined;
+  const service = adapter.provisioningService;
   try {
-    if (service?.holdsServiceGitKey(slug)) await service.releaseGitKey(snapshot.uid);
+    if (service?.holdsServiceGitKey(slug)) await service.releaseGitKey(snapshot.uid, pubKey);
     else await adapter.gitHost.releaseKey(slug, pubKey);
   } catch (err) {
     adapter.log(

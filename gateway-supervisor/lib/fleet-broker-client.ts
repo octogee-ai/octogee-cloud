@@ -193,7 +193,7 @@ export interface FleetBrokerClient {
   assertOpenClawDoctor(input: { releaseKey: string; requestId: string }): Promise<void>;
   provisioningReadiness(uid: string): Promise<ServiceProvisioningAnswer>;
   registerGitKey(uid: string, publicKey: string): Promise<ServiceProvisioningAnswer>;
-  releaseGitKey(uid: string): Promise<void>;
+  releaseGitKey(uid: string, publicKey: string): Promise<void>;
 }
 
 export async function resolveGithubTokenForSlug(
@@ -242,7 +242,7 @@ function serviceProvisioningClient(
   return {
     provisioningReadiness: (uid) => serviceProvisioningAnswer("/internal/fleet/provisioning-readiness", { gatewayId, uid }),
     registerGitKey: (uid, publicKey) => serviceProvisioningAnswer("/internal/fleet/git-key", { gatewayId, uid, publicKey }),
-    releaseGitKey: (uid) => postNoContent("/internal/fleet/git-key/release", { gatewayId, uid }),
+    releaseGitKey: (uid, publicKey) => postNoContent("/internal/fleet/git-key/release", { gatewayId, uid, publicKey }),
   };
 }
 

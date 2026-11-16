@@ -1,6 +1,7 @@
 import type { GitRepoRole, ManagedGitHost } from "@octogee/core/git-host";
 
 import { internalFetch } from "./internal-fetch.js";
+import { clearServiceGitKeyHolder } from "./service-git-key-holder.js";
 
 export type BrokeredGitHost = Pick<
   ManagedGitHost,
@@ -47,7 +48,10 @@ function ensureRepoRequest(slug: string, role: GitRepoRole): { path: string; bod
 }
 
 export const brokeredGitHost: BrokeredGitHost = {
-  registerKey: (slug, pubKey) => postVoid("/internal/gitea/ensure-user", { slug, pubKey }),
+  async registerKey(slug, pubKey) {
+    clearServiceGitKeyHolder(slug);
+    await postVoid("/internal/gitea/ensure-user", { slug, pubKey });
+  },
 
   releaseKey: (slug, pubKey) => postVoid("/internal/gitea/release-user-key", { slug, pubKey }),
 

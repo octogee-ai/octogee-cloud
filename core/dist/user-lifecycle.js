@@ -868,10 +868,10 @@ async function releaseUnmountedGiteaKey(adapter, snapshot) {
     const pubKey = adapter.readLocalUserPubKey(slug);
     if (pubKey === null)
         return false;
-    const service = snapshot.provisionedBy === "service" ? adapter.provisioningService : undefined;
+    const service = adapter.provisioningService;
     try {
         if (service?.holdsServiceGitKey(slug))
-            await service.releaseGitKey(snapshot.uid);
+            await service.releaseGitKey(snapshot.uid, pubKey);
         else
             await adapter.gitHost.releaseKey(slug, pubKey);
     }

@@ -92,7 +92,7 @@ export interface ServiceProvisioningAdapter {
     serviceGitKey: (slug: string) => string;
     holdsServiceGitKey: (slug: string) => boolean;
     registerGitKey: (uid: string, publicKey: string) => Promise<ServiceProvisioningAnswer>;
-    releaseGitKey: (uid: string) => Promise<void>;
+    releaseGitKey: (uid: string, publicKey: string) => Promise<void>;
     sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
     now?: () => number;
 }

@@ -111,10 +111,10 @@ import {
   projectCheckoutMatchesSource,
   readLocalUserPubKey,
   removePartialWorkspace,
-  serviceGitKeyHolder,
   setRepoSshCommand,
 } from "./git.js";
 import { brokeredGitHost } from "./gitea-admin-broker-client.js";
+import { serviceGitKeyHolder } from "./service-git-key-holder.js";
 import {
   hasMountedMarker,
   clearMountedMarker,
@@ -580,7 +580,7 @@ export function brokeredServiceProvisioning(
     serviceGitKey: (slug) => generateServiceGitKey(slug, holder()),
     holdsServiceGitKey: (slug) => gatewayId !== undefined && gatewayId !== "" && serviceGitKeyHolder(slug) === gatewayId,
     registerGitKey: (uid, publicKey) => client.registerGitKey(uid, publicKey),
-    releaseGitKey: (uid) => client.releaseGitKey(uid),
+    releaseGitKey: (uid, publicKey) => client.releaseGitKey(uid, publicKey),
   };
 }
 

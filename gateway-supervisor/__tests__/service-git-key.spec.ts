@@ -7,6 +7,8 @@ const TEST_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "octogee-service-git-key
 const KEYS_DIR = path.join(TEST_ROOT, "keys");
 afterAll(() => fs.rmSync(TEST_ROOT, { recursive: true, force: true }));
 
+vi.mock("../lib/internal-fetch.js", () => ({ internalFetch: vi.fn(async () => new Response(null, { status: 204 })) }));
+
 vi.mock("../lib/config.js", () => ({
   log: () => {},
   dlog: () => {},
@@ -18,7 +20,9 @@ vi.mock("../lib/config.js", () => ({
   AGENTS_DIR: path.join(TEST_ROOT, "agents"),
 }));
 
-const { generateServiceGitKey, generateUserSshKey, readLocalUserPubKey, serviceGitKeyHolder } = await import("../lib/git.js");
+const { generateServiceGitKey, generateUserSshKey, readLocalUserPubKey } = await import("../lib/git.js");
+const { serviceGitKeyHolder } = await import("../lib/service-git-key-holder.js");
+const { brokeredGitHost } = await import("../lib/gitea-admin-broker-client.js");
 
 afterEach(() => fs.rmSync(KEYS_DIR, { recursive: true, force: true }));
 
@@ -59,5 +63,18 @@ describe("generateServiceGitKey", () => {
   it("refuses to generate without a gateway id", () => {
     expect(() => generateServiceGitKey("lin", "")).toThrow("needs the gateway id");
     expect(fs.existsSync(path.join(KEYS_DIR, "lin"))).toBe(false);
+  });
+});
+
+describe("a key registered the legacy way", () => {
+  it("is no longer held for the service, so the user's next service mount here registers a fresh key", async () => {
+    const registeredThroughService = generateServiceGitKey("lin", "shared-blue");
+
+    await brokeredGitHost.registerKey("lin", registeredThroughService);
+
+    expect(serviceGitKeyHolder("lin")).toBeNull();
+    const next = generateServiceGitKey("lin", "shared-blue");
+    expect(next).not.toBe(registeredThroughService);
+    expect(serviceGitKeyHolder("lin")).toBe("shared-blue");
   });
 });

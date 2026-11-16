@@ -3416,8 +3416,8 @@ describe("addUserToGateway — through the provisioning service", () => {
 });
 
 describe("removeUserFromGateway — through the provisioning service", () => {
-  function serviceRemoval(holds: boolean) {
-    const state = makeState(mountedSnapshot({ provisionedBy: "service" }), mountedDisk());
+  function serviceRemoval(holds: boolean, snapshot: Partial<UserSnapshot> = { provisionedBy: "service" }) {
+    const state = makeState(mountedSnapshot(snapshot), mountedDisk());
     const adapter = makeAdapter(state);
     const releaseGitKey = vi.fn(async () => {
       state.calls.push("service:releaseGitKey");
@@ -3432,15 +3432,24 @@ describe("removeUserFromGateway — through the provisioning service", () => {
     return { state, adapter, releaseGitKey };
   }
 
-  it("releases a key it registered through the service with the service, not the git host", async () => {
+  it("releases a key it registered through the service with the service, naming the key it releases", async () => {
     const { state, adapter, releaseGitKey } = serviceRemoval(true);
 
     const result = await removeUserFromGateway(adapter, "uid-test");
 
-    expect(releaseGitKey).toHaveBeenCalledWith("uid-test");
+    expect(releaseGitKey).toHaveBeenCalledWith("uid-test", "ssh-pubkey");
     expect(state.calls.some((call) => call.startsWith("releaseKey:"))).toBe(false);
     expect(state.calls).toContain("deleteUserSshKey");
     expect(result.steps).toContain("release-gitea-key");
+  });
+
+  it("releases through the service whenever this gateway's marker holds the key, even when the snapshot no longer says service", async () => {
+    const { state, adapter, releaseGitKey } = serviceRemoval(true, {});
+
+    await removeUserFromGateway(adapter, "uid-test");
+
+    expect(releaseGitKey).toHaveBeenCalledWith("uid-test", "ssh-pubkey");
+    expect(state.calls.some((call) => call.startsWith("releaseKey:"))).toBe(false);
   });
 
   it("releases a key registered before the service the way it was registered", async () => {

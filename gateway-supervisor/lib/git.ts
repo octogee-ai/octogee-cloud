@@ -10,6 +10,7 @@ import {
   workspaceGiteaOrg, workspaceRepoName, projectRepoName, systemConfigRepoName,
 } from "./gitea-naming.js";
 import { brokeredGitHost } from "./gitea-admin-broker-client.js";
+import { recordServiceGitKeyHolder, serviceGitKeyHolder } from "./service-git-key-holder.js";
 import { cloneGithubProjectViaBroker } from "./github-project-clone-broker.js";
 import { replaceFileAtomically, seedFileAtomically } from "./atomic-file.js";
 import { notesWelcomeSeed } from "@octogee/core/templates/project-seeds";
@@ -594,16 +595,6 @@ export async function deleteUserSshKey(slug: string): Promise<void> {
   await fs.promises.rm(keyDir, { recursive: true, force: true });
 }
 
-const SERVICE_KEY_HOLDER_FILE = "service-holder";
-
-export function serviceGitKeyHolder(slug: string): string | null {
-  try {
-    return fs.readFileSync(path.join(CUSTOMER_KEYS_DIR, slug, SERVICE_KEY_HOLDER_FILE), "utf-8").trim() || null;
-  } catch {
-    return null;
-  }
-}
-
 export function generateServiceGitKey(slug: string, gatewayId: string): string {
   if (!isValidUsername(slug)) throw new Error("Invalid SSH key owner");
   if (!gatewayId) throw new Error("A service git key needs the gateway id");
@@ -613,7 +604,7 @@ export function generateServiceGitKey(slug: string, gatewayId: string): string {
     fs.rmSync(keyDir, { recursive: true, force: true });
   }
   const pubKey = generateUserSshKey(slug);
-  fs.writeFileSync(path.join(keyDir, SERVICE_KEY_HOLDER_FILE), `${gatewayId}\n`, { mode: 0o600 });
+  recordServiceGitKeyHolder(slug, gatewayId);
   return pubKey;
 }
 

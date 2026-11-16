@@ -72,15 +72,15 @@ describe("fleet broker provisioning service routes", () => {
     );
   });
 
-  it("releases the gateway's key and throws when the broker refuses", async () => {
+  it("releases the gateway's key naming the public key it releases, and throws when the broker refuses", async () => {
     vi.mocked(internalFetch).mockResolvedValueOnce(new Response(null, { status: 204 }));
-    await client().releaseGitKey("uid-lin");
+    await client().releaseGitKey("uid-lin", "ssh-ed25519 AAAA");
     expect(internalFetch).toHaveBeenCalledWith(
       "http://broker/internal/fleet/git-key/release",
-      expect.objectContaining({ body: JSON.stringify({ gatewayId: "shared-blue", uid: "uid-lin" }) }),
+      expect.objectContaining({ body: JSON.stringify({ gatewayId: "shared-blue", uid: "uid-lin", publicKey: "ssh-ed25519 AAAA" }) }),
     );
 
     vi.mocked(internalFetch).mockResolvedValueOnce(new Response("down", { status: 502 }));
-    await expect(client().releaseGitKey("uid-lin")).rejects.toMatchObject({ status: 502 });
+    await expect(client().releaseGitKey("uid-lin", "ssh-ed25519 AAAA")).rejects.toMatchObject({ status: 502 });
   });
 });
