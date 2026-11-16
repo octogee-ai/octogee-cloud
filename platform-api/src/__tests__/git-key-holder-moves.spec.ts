@@ -86,10 +86,13 @@ function platform(git: FakeGitHost, service: GitKeyServiceContract | null, sleep
   };
 
   const thisBuild = {
-    async serviceMount(p: Pod) {
+    mountRequest(p: Pod) {
       const publicKey = p.disk.key ?? newKey();
       p.disk.key = publicKey;
-      await call(p, "/internal/fleet/git-key", { uid: USER.uid, publicKey }).expect(204);
+      return call(p, "/internal/fleet/git-key", { uid: USER.uid, publicKey });
+    },
+    async serviceMount(p: Pod) {
+      await thisBuild.mountRequest(p).expect(204);
       p.disk.marker = p.holder;
     },
     registration(p: Pod) {
@@ -221,28 +224,59 @@ describe("git keys across moves and rolls, through the platform's routes and ada
     expect(hostKeys(git)).toEqual([first]);
   });
 
-  it("registers a replaced machine's retained key under its new title on the git host, with no row for the new holder", async () => {
+  it.each([
+    ["the machine it replaced", (replacedHolder: string) => replacedHolder],
+    ["this machine", (_replacedHolder: string, ownHolder: string) => ownHolder],
+  ])("registers an isolated gateway's retained key on the git host and drops a marker naming %s, with no row", async (_named, markerFor) => {
     const { git, service, thisBuild } = setup();
     assign("isolated-acme");
-    const replaced = pod("isolated-acme", "octogee-gateway-isolated-acme-vm-1111");
-    await thisBuild.serviceMount(replaced);
+    const replaced = pod("isolated-acme", "octogee-gateway-isolated-acme-vm-1111", { key: newKey(), marker: null });
+    await thisBuild.register(replaced);
     const retained = replaced.disk.key;
-    const machine = pod("isolated-acme", "octogee-gateway-isolated-acme-vm-2222", { key: retained, marker: replaced.holder });
+    const machine = pod("isolated-acme", "octogee-gateway-isolated-acme-vm-2222", { key: retained, marker: null });
+    machine.disk.marker = markerFor(replaced.holder, machine.holder);
 
     await thisBuild.register(machine);
     await service.attempt();
 
     expect(machine.disk.marker).toBeNull();
     expect(git.titled(machine.holder)).toEqual([retained]);
-    expect(service.rows()).toEqual([{ holder: replaced.holder, publicKey: retained }]);
-    expect(service.puts).toEqual([replaced.holder]);
+    expect(hostKeys(git)).toEqual([retained]);
+    expect(service.rows()).toEqual([]);
+    expect(service.puts).toEqual([]);
+  });
 
-    service.releaseHolder(replaced.holder);
+  it("releases the row of a shared pod that died without unmounting, leaving the key the user's next pod took under its own title", async () => {
+    const { git, service, thisBuild } = setup();
+    assign("shared-blue");
+    const died = pod("shared-blue", "octogee-gateway-shared-blue-5bc59-a1b2c");
+    await thisBuild.serviceMount(died);
+    const carried = died.disk.key;
+    const next = pod("shared-green", "octogee-gateway-shared-green-7d8e9-f3g4h", { key: carried, marker: died.holder });
+    assign("shared-green");
+    await thisBuild.register(next);
+
+    service.releaseHolder(died.holder);
     await service.attempt();
 
-    expect(hostKeys(git)).toEqual([retained]);
-    expect(git.titled(machine.holder)).toEqual([retained]);
+    expect(next.disk.marker).toBeNull();
+    expect(git.titled(next.holder)).toEqual([carried]);
+    expect(hostKeys(git)).toEqual([carried]);
     expect(service.rows()).toEqual([]);
+    expect(service.puts).toEqual([died.holder]);
+  });
+
+  it("refuses an isolated gateway's mount through the service for good, registering nothing", async () => {
+    const { git, service, thisBuild } = setup();
+    assign("isolated-acme");
+    const isolated = pod("isolated-acme", "octogee-gateway-isolated-acme-0", { key: newKey(), marker: null });
+
+    const answer = await thisBuild.mountRequest(isolated);
+
+    expect(answer.status).toBe(422);
+    expect(answer.body).toEqual({ error: "provisioning_refused", reason: "ServiceGitKeysAreForSharedGateways" });
+    expect(hostKeys(git)).toEqual([]);
+    expect(service.puts).toEqual([]);
   });
 
   it("releases on the git host and registers there once the service is switched off, and the row left behind never overwrites the pod's later key", async () => {

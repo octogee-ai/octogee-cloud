@@ -6,7 +6,7 @@ import { isolatedBootMode } from "@octogee/core/isolated-prelaunch";
 import { noProvisioningProjection, type ProvisioningProjection } from "@octogee/core/provisionSteps";
 import { mirroredState, mmUpdateFromChatOutputs, type MirroredState } from "@octogee/core/provisioning-mirror";
 import { gatewayKeyOwnerId } from "@octogee/core/gitea-naming";
-import { respondProvisioningNotReady, respondProvisioningPending, routeBudget, type LegacyProvisioning, type ProvisioningWait, type RouteBudget } from "../lib/legacy-provisioning.js";
+import { holdsServiceGitKeys, respondProvisioningNotReady, respondProvisioningPending, routeBudget, SERVICE_GIT_KEYS_NOT_FOR_GATEWAY, type LegacyProvisioning, type ProvisioningWait, type RouteBudget } from "../lib/legacy-provisioning.js";
 import { sharedAgentAnchorMigrationScope, sharedAssignedSourceSurgeAnchorScope } from "../lib/shared-agent-anchor-migration.js";
 import { installWorkspaceBlobBrokerRoute, type WorkspaceBlobStore } from "./fleet-broker-workspace-blob.js";
 import { readUserRestoreAuthoritySnapshot } from "@octogee/core/fleet-state";
@@ -442,6 +442,11 @@ function installServiceProvisioningRoutes(router: Router, deps: ResolvedFleetBro
     const { legacyProvisioning } = deps;
     if (!serviceRouteConfigured(res, "git-key", legacyProvisioning)) return;
     await runBrokered(res, async () => {
+      if (!holdsServiceGitKeys(await store.gateways.roots.get(assigned.bound.gatewayId))) {
+        logger.warn("gateway git key registration: only a shared gateway holds a git key row, so the provisioning service is not asked and the registration is refused", { gatewayId: assigned.bound.gatewayId, holder, uid: assigned.uid });
+        res.status(422).json({ error: "provisioning_refused", reason: SERVICE_GIT_KEYS_NOT_FOR_GATEWAY });
+        return;
+      }
       const answer = await legacyProvisioning.gitKey(assigned.uid, holder, publicKey.trim(), routeBudget());
       if (!answer.ready) {
         respondProvisioningNotReady(res, { route: "git-key", uid: assigned.uid }, answer);
@@ -468,7 +473,7 @@ function installServiceProvisioningRoutes(router: Router, deps: ResolvedFleetBro
     const { legacyProvisioning } = deps;
     if (!serviceRouteConfigured(res, "git-key/release", legacyProvisioning)) return;
     await runBrokered(res, async () => {
-      if ((await store.gateways.roots.get(bound.gatewayId))?.gatewayClass !== "shared") {
+      if (!holdsServiceGitKeys(await store.gateways.roots.get(bound.gatewayId))) {
         logger.info("gateway git key release: only a shared gateway holds a git key row, so the provisioning service is not asked", { gatewayId: bound.gatewayId, holder });
         res.status(204).end();
         return;
@@ -521,7 +526,7 @@ async function snapshotProvisioning(
   deps: ResolvedFleetBrokerRouteDeps,
 ): Promise<{ gitKeyHolder?: string; provisionedBy?: "service" }> {
   const { legacyProvisioning } = deps;
-  if (legacyProvisioning === null || gateway?.gatewayClass !== "shared") return {};
+  if (legacyProvisioning === null || !holdsServiceGitKeys(gateway)) return {};
   const holder = gitKeyHolder(bound);
   if (holder === null) {
     logger.warn("user-snapshot: the caller's token binds no pod, so the gateway takes its own path for this mount", { uid, gatewayId: bound.gatewayId });

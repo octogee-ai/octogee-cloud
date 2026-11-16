@@ -66,6 +66,12 @@ function clampSeconds(seconds: number): number {
   return Math.min(Math.max(Math.ceil(seconds), 1), MAX_RETRY_AFTER_SECONDS);
 }
 
+export const SERVICE_GIT_KEYS_NOT_FOR_GATEWAY = "ServiceGitKeysAreForSharedGateways";
+
+export function holdsServiceGitKeys(gateway: { gatewayClass?: string | null } | null | undefined): boolean {
+  return gateway?.gatewayClass === "shared";
+}
+
 export interface NotReadyAnswer {
   readonly route: string;
   readonly uid?: string;

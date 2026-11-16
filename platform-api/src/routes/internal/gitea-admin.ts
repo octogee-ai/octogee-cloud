@@ -25,7 +25,7 @@ import {
   ensureProjectGiteaRepo,
   ProjectRepoProvisioningError,
 } from "../projects/provisioning.js";
-import { LEGACY_ROUTE_DEADLINE_MS, respondProvisioningNotReady, respondProvisioningPending, routeBudget, type LegacyGitRepository, type LegacyProvisioning, type RouteBudget } from "../../lib/legacy-provisioning.js";
+import { holdsServiceGitKeys, LEGACY_ROUTE_DEADLINE_MS, respondProvisioningNotReady, respondProvisioningPending, routeBudget, type LegacyGitRepository, type LegacyProvisioning, type RouteBudget } from "../../lib/legacy-provisioning.js";
 
 // Gitea ADMIN broker for the in-pod provisioner. The provisioner runs in the OpenClaw
 // openclaw container and no longer holds the admin token; it calls octogee-api with its
@@ -432,6 +432,19 @@ async function ensureMarkedKey(
   }
   if (serviceHolder !== keyOwner || access !== "serving") {
     logger.info("internal/gitea ensure-user: the key is registered on the git host, since the gateway's marker names another pod or this pod is on standby", { slug, keyOwner, serviceHolder, access });
+    await registerOnGitHost(res, legacyProvisioning, key, MARKER_DROPPED);
+    return;
+  }
+  let sharedGateway: boolean;
+  try {
+    sharedGateway = holdsServiceGitKeys(await platformStateStore.gateways.roots.get(caller.gatewayId));
+  } catch (err) {
+    logger.error("internal/gitea ensure-user could not read the calling gateway's class", { err, slug, gatewayId: caller.gatewayId });
+    res.status(502).json({ error: "gateway class lookup failed" });
+    return;
+  }
+  if (!sharedGateway) {
+    logger.info("internal/gitea ensure-user: only a shared gateway holds a git key row, so the key is registered on the git host and the gateway drops its marker", { slug, keyOwner, gatewayId: caller.gatewayId });
     await registerOnGitHost(res, legacyProvisioning, key, MARKER_DROPPED);
     return;
   }

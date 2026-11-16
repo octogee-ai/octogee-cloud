@@ -334,6 +334,20 @@ describe("POST /internal/fleet/git-key", () => {
     expect(provisioning?.gitKey).toHaveBeenCalledWith("uid-alice", HOLDER, PUBLIC_KEY, expect.objectContaining({ signal: expect.any(AbortSignal) }));
   });
 
+  it.each([
+    ["an isolated gateway", "isolated" as const],
+    ["a gateway the platform holds no root for", null],
+  ])("refuses %s for good without asking the provisioning service, since only a shared gateway holds a git key row", async (_caller, gatewayClass) => {
+    const logged = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    const { app, provisioning } = fixture({ gatewayClass });
+
+    const response = await post(app, "git-key", { publicKey: PUBLIC_KEY }).expect(422);
+
+    expect(response.body).toEqual({ error: "provisioning_refused", reason: "ServiceGitKeysAreForSharedGateways" });
+    expect(provisioning?.gitKey).not.toHaveBeenCalled();
+    expect(logged).toHaveBeenCalledWith(expect.stringContaining("only a shared gateway holds a git key row"), { gatewayId: GATEWAY_ID, holder: HOLDER, uid: "uid-alice" });
+  });
+
   it("refuses a caller whose token binds no pod, since the pod holds the key", async () => {
     const { app, provisioning } = fixture({ podName: null });
 

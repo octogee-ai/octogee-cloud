@@ -105,6 +105,10 @@ function isolatedGateway(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function sharedGateway() {
+  return isolatedGateway({ profile: "shared", gatewayClass: "shared", imageProfile: "shared", ownerUid: null, builderSlug: null });
+}
+
 function assignUser(slug: string, gatewayId: string) {
   mocks.docs.set(`users/uid-${slug}`, {
     username: slug,
@@ -692,6 +696,7 @@ describe("internal gitea-admin ensure-user for a key the calling pod already hol
     vi.clearAllMocks();
     mocks.docs.clear();
     assignUser("acme", "walter");
+    mocks.docs.set("gateways/walter", sharedGateway());
     vi.spyOn(logger, "error").mockImplementation(() => {});
     vi.spyOn(logger, "warn").mockImplementation(() => {});
   });
@@ -1292,6 +1297,7 @@ describe("internal gitea-admin route with the provisioning service", () => {
     vi.clearAllMocks();
     mocks.docs.clear();
     assignUser("acme", "walter");
+    mocks.docs.set("gateways/walter", sharedGateway());
   });
 
   it.each([
@@ -1470,6 +1476,23 @@ describe("internal gitea-admin route with the provisioning service", () => {
       expect(res.status).toBe(204);
       expect(provisioning.gitKey).toHaveBeenCalledExactlyOnceWith("uid-acme", WALTER_KEY_OWNER, KEY, expect.objectContaining({ signal: expect.any(AbortSignal) }));
       expectNoKeyTouched();
+    });
+
+    it.each([
+      ["an isolated gateway", () => { mocks.docs.set("gateways/walter", isolatedGateway()); }],
+      ["a gateway the platform holds no root for", () => { mocks.docs.delete("gateways/walter"); }],
+    ])("registers on the git host for %s whose marker names its own pod, puts no row and tells the gateway to drop its marker", async (_caller, seed) => {
+      const logged = vi.spyOn(logger, "info").mockImplementation(() => {});
+      seed();
+      const provisioning = service(async () => ({ ready: true, value: undefined }));
+
+      const res = await request(app("walter", "walter", provisioning)).post("/internal/gitea/ensure-user").send({ slug: "acme", pubKey: KEY, serviceHolder: WALTER_KEY_OWNER });
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ registeredOn: "git-host" });
+      expect(gitHost().registerKey).toHaveBeenCalledExactlyOnceWith("acme", KEY, WALTER_KEY_OWNER);
+      expect(provisioning.gitKey).not.toHaveBeenCalled();
+      expect(logged).toHaveBeenCalledWith(expect.stringContaining("only a shared gateway holds a git key row"), { slug: "acme", keyOwner: WALTER_KEY_OWNER, gatewayId: "walter" });
     });
 
     it("answers the service's reason while the row is not registered", async () => {
