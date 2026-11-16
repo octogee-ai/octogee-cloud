@@ -1409,12 +1409,12 @@ const ERR_GATEWAY_OPERATION_IN_FLIGHT = "another operation is already pending or
 export const ERR_USER_NOT_FOUND = "user not found";
 const ERR_OPERATION_NOT_FOUND = "operation not found";
 export const OPERATION_LOOKUP_MAX_IDS = 200;
-function parseOperationLookupIds(body) {
-    const ids = body !== null && typeof body === "object" ? body.ids : undefined;
-    const invalid = `ids must be an array of 1 to ${OPERATION_LOOKUP_MAX_IDS} distinct non-empty strings`;
-    if (!Array.isArray(ids) || ids.length === 0 || ids.length > OPERATION_LOOKUP_MAX_IDS)
+function parseOperationLookupIds(raw) {
+    const invalid = `ids must be a comma-separated list of 1 to ${OPERATION_LOOKUP_MAX_IDS} distinct non-empty operation ids`;
+    if (typeof raw !== "string")
         return invalid;
-    if (!ids.every((id) => typeof id === "string" && id !== "") || new Set(ids).size !== ids.length)
+    const ids = raw.split(",");
+    if (ids.length > OPERATION_LOOKUP_MAX_IDS || ids.some((id) => id === "") || new Set(ids).size !== ids.length)
         return invalid;
     return ids;
 }
@@ -4655,24 +4655,9 @@ export function addAdminFleetRoutes(router, deps) {
             next(e);
         }
     });
-    router.get("/operations/:id", async (req, res, next) => {
+    router.get("/operations/lookup", async (req, res, next) => {
         try {
-            const id = req.params.id;
-            const record = await store.journal.getRecord(id);
-            if (!record) {
-                res.status(404).json({ error: ERR_OPERATION_NOT_FOUND, operationId: id });
-                return;
-            }
-            const [operation] = await withActorEmails(accounts, [operationReadShape(record, deps.placement?.schedulerHandoffAwaitingRelease)]);
-            res.json({ operation });
-        }
-        catch (e) {
-            next(e);
-        }
-    });
-    router.post("/operations/lookup", async (req, res, next) => {
-        try {
-            const ids = parseOperationLookupIds(req.body);
+            const ids = parseOperationLookupIds(req.query.ids);
             if (typeof ids === "string") {
                 res.status(400).json({ error: ids });
                 return;
@@ -4684,6 +4669,21 @@ export function addAdminFleetRoutes(router, deps) {
             });
             const operations = await withActorEmails(accounts, present);
             res.json({ operations, missing: ids.filter((id) => !found.has(id)), generatedAt: new Date().toISOString() });
+        }
+        catch (e) {
+            next(e);
+        }
+    });
+    router.get("/operations/:id", async (req, res, next) => {
+        try {
+            const id = req.params.id;
+            const record = await store.journal.getRecord(id);
+            if (!record) {
+                res.status(404).json({ error: ERR_OPERATION_NOT_FOUND, operationId: id });
+                return;
+            }
+            const [operation] = await withActorEmails(accounts, [operationReadShape(record, deps.placement?.schedulerHandoffAwaitingRelease)]);
+            res.json({ operation });
         }
         catch (e) {
             next(e);

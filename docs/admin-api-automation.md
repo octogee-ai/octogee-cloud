@@ -141,7 +141,7 @@ by the same function the fleet controller's own placement pass reads. It is
 
 The `migrations` section lists only `pending` and `running` operations. A
 failed activation still recovering its source is read with
-`GET /operations/<id>` or `POST /operations/lookup`, which carry the same
+`GET /operations/<id>` or `GET /operations/lookup`, which carry the same
 field on every `migrate-user` operation. A client treats an absent
 `sourceRecoveryPending` as unknown, not as `false`: an older server does not
 send it. The read can be stale, so `retire-owned` with reason
@@ -150,20 +150,22 @@ transaction and refuse with `reasonCode` `source-recovery-pending`.
 
 ## Operation reads
 
-`GET /operations/<id>` answers `{operation}` or `404`. `POST /operations/lookup`
-reads up to 200 operations in one request:
+`GET /operations/<id>` answers `{operation}` or `404`. `GET /operations/lookup`
+reads up to 200 operations in one request, named as a comma-separated `ids`:
 
-```json
-{ "ids": ["builder-activate-alice-xs-12345678-g3", "builder-return-alice-xs-12345678-g3"] }
+```
+GET /operations/lookup?ids=builder-activate-alice-xs-12345678-g3,builder-return-alice-xs-12345678-g3
 ```
 
 It answers `{operations, missing, generatedAt}`: `operations` holds each
 operation that exists, in the order asked, in the shape `GET /operations/<id>`
 answers, with `actorEmail` resolved in one account lookup for the batch;
 `missing` lists the ids with no operation. It reads operations only, not
-audit records. `ids` must be 1 to 200 distinct non-empty strings, or the call
-answers `400`. It writes nothing and counts as one request against the
-per-caller limit of 300 requests a minute.
+audit records. `ids` must be given once and hold 1 to 200 distinct non-empty
+ids, or the call answers `400`. The whole request line and headers must stay
+within the server's 16 KiB header limit, which 200 activation and return
+operation ids do. It counts as one request against the per-caller limit of
+300 requests a minute.
 
 A refused precondition answers `409` and is logged as the warning
 `fleet mutation refused`, with its failed audit entry kept.

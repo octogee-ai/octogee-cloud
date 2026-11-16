@@ -52,11 +52,11 @@ function harness(options: { placement?: AdminPlacementCapabilities } = {}) {
   return { app, getMany, get };
 }
 
-describe("POST /operations/lookup", () => {
+describe("GET /operations/lookup", () => {
   it("answers the operations that exist in the single-operation shape and names the ones that do not", async () => {
     const h = harness({ placement });
 
-    const res = await request(h.app).post("/operations/lookup").send({ ids: [ACTIVATION, "missing-1", "restart-1", "missing-2"] }).expect(200);
+    const res = await request(h.app).get("/operations/lookup").query({ ids: [ACTIVATION, "missing-1", "restart-1", "missing-2"].join(",") }).expect(200);
     const single = await request(h.app).get(`/operations/${ACTIVATION}`).expect(200);
 
     expect(res.body.operations.map((entry: Row) => entry.id)).toEqual([ACTIVATION, "restart-1"]);
@@ -67,7 +67,7 @@ describe("POST /operations/lookup", () => {
   it("looks the actors up once for the whole batch", async () => {
     const h = harness({ placement });
 
-    const res = await request(h.app).post("/operations/lookup").send({ ids: [ACTIVATION, RETURN, "restart-1"] }).expect(200);
+    const res = await request(h.app).get("/operations/lookup").query({ ids: [ACTIVATION, RETURN, "restart-1"].join(",") }).expect(200);
 
     expect(res.body.operations.map((entry: Row) => entry.actorEmail)).toEqual(["admin@example.com", "other@example.com", "admin@example.com"]);
     expect(h.getMany).toHaveBeenCalledTimes(1);
@@ -75,34 +75,34 @@ describe("POST /operations/lookup", () => {
   });
 
   it("marks migrate-user operations with their source recovery verdict", async () => {
-    const res = await request(harness({ placement }).app).post("/operations/lookup").send({ ids: [ACTIVATION, RETURN, "restart-1"] }).expect(200);
+    const res = await request(harness({ placement }).app).get("/operations/lookup").query({ ids: [ACTIVATION, RETURN, "restart-1"].join(",") }).expect(200);
 
     expect(res.body.operations.map((entry: Row) => entry.sourceRecoveryPending)).toEqual([true, false, undefined]);
   });
 
   it("leaves the verdict absent without the placement capability", async () => {
-    const res = await request(harness().app).post("/operations/lookup").send({ ids: [ACTIVATION] }).expect(200);
+    const res = await request(harness().app).get("/operations/lookup").query({ ids: [ACTIVATION].join(",") }).expect(200);
 
     expect(res.body.operations[0]).not.toHaveProperty("sourceRecoveryPending");
   });
 
   it.each([
     ["no ids", {}],
-    ["an empty list", { ids: [] }],
-    ["a non-string id", { ids: [ACTIVATION, 7] }],
-    ["an empty id", { ids: [""] }],
-    ["a repeated id", { ids: [ACTIVATION, ACTIVATION] }],
-    ["more ids than the bound", { ids: Array.from({ length: OPERATION_LOOKUP_MAX_IDS + 1 }, (_, index) => `op-${index}`) }],
-  ])("answers 400 for %s", async (_name, body) => {
-    const res = await request(harness().app).post("/operations/lookup").send(body).expect(400);
+    ["an empty list", { ids: "" }],
+    ["an empty id", { ids: `${ACTIVATION},` }],
+    ["a repeated id", { ids: `${ACTIVATION},${ACTIVATION}` }],
+    ["the parameter given twice", { ids: [ACTIVATION, RETURN] }],
+    ["more ids than the bound", { ids: Array.from({ length: OPERATION_LOOKUP_MAX_IDS + 1 }, (_, index) => `op-${index}`).join(",") }],
+  ])("answers 400 for %s", async (_name, query) => {
+    const res = await request(harness().app).get("/operations/lookup").query(query).expect(400);
 
-    expect(res.body.error).toBe(`ids must be an array of 1 to ${OPERATION_LOOKUP_MAX_IDS} distinct non-empty strings`);
+    expect(res.body.error).toBe(`ids must be a comma-separated list of 1 to ${OPERATION_LOOKUP_MAX_IDS} distinct non-empty operation ids`);
   });
 
   it("accepts exactly the bound", async () => {
     const ids = Array.from({ length: OPERATION_LOOKUP_MAX_IDS }, (_, index) => `op-${index}`);
 
-    const res = await request(harness().app).post("/operations/lookup").send({ ids }).expect(200);
+    const res = await request(harness().app).get("/operations/lookup").query({ ids: ids.join(",") }).expect(200);
 
     expect(res.body.missing).toHaveLength(OPERATION_LOOKUP_MAX_IDS);
   });
