@@ -1,4 +1,5 @@
 import type { GitRepoRole, ManagedGitHost } from "@octogee/core/git-host";
+import { SERVICE_GIT_KEY_WAIT_MS } from "@octogee/core/user-lifecycle";
 
 import { log } from "./config.js";
 import { internalFetch } from "./internal-fetch.js";
@@ -26,19 +27,51 @@ async function postVoid(path: string, body: unknown): Promise<void> {
   }
 }
 
+const SERVICE_HELD_KEY_POLL_MIN_MS = 1_000;
+const SERVICE_HELD_KEY_POLL_MAX_MS = 15_000;
+const SERVICE_HELD_KEY_DEFAULT_RETRY_MS = 5_000;
+
+async function pendingAnswer(resp: Response): Promise<{ reason: string; retryAfterMs: number }> {
+  const text = await resp.text().catch(() => "");
+  let reason: unknown;
+  try {
+    reason = (JSON.parse(text) as { reason?: unknown } | null)?.reason;
+  } catch {
+    reason = undefined;
+  }
+  const seconds = Number(resp.headers.get("retry-after"));
+  return {
+    reason: typeof reason === "string" && reason ? reason : `503 without a reason: ${text.slice(0, 300)}`,
+    retryAfterMs: Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : SERVICE_HELD_KEY_DEFAULT_RETRY_MS,
+  };
+}
+
 async function postServiceHeldKey(body: { slug: string; pubKey: string; serviceHolder: string }): Promise<{ registeredOn?: unknown }> {
   const path = "/internal/gitea/ensure-user";
-  const resp = await internalFetch(`${baseUrl()}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!resp.ok) {
-    const text = (await resp.text().catch(() => "")).slice(0, 300);
-    throw new Error(`gitea-broker POST ${path} → ${resp.status} ${text}`);
+  const startedAt = Date.now();
+  for (let round = 0; ; round += 1) {
+    const resp = await internalFetch(`${baseUrl()}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (resp.ok) return resp.status === 204 ? {} : (await resp.json()) as { registeredOn?: unknown };
+    if (resp.status !== 503) {
+      const text = (await resp.text().catch(() => "")).slice(0, 300);
+      throw new Error(`gitea-broker POST ${path} → ${resp.status} ${text}`);
+    }
+    const { reason, retryAfterMs } = await pendingAnswer(resp);
+    const waited = Date.now() - startedAt;
+    const backoff = SERVICE_HELD_KEY_POLL_MIN_MS * 2 ** Math.min(round, 4);
+    const delay = Math.min(Math.max(retryAfterMs, backoff), SERVICE_HELD_KEY_POLL_MAX_MS);
+    if (waited + delay > SERVICE_GIT_KEY_WAIT_MS) {
+      const message = `[git] ${body.slug}: gave up waiting for the platform to register this pod's key after ${waited}ms (bound ${SERVICE_GIT_KEY_WAIT_MS}ms, last reason ${reason})`;
+      log(message, { status: "failed" });
+      throw new Error(message);
+    }
+    log(`[git] ${body.slug}: waiting for the platform to register this pod's key (reason ${reason}, next check in ${delay}ms, waited ${waited}ms)`);
+    await new Promise<void>((resolve) => setTimeout(resolve, delay));
   }
-  if (resp.status === 204) return {};
-  return (await resp.json()) as { registeredOn?: unknown };
 }
 
 async function getJson(path: string): Promise<unknown> {
