@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
+import { createGitKeySweepState, createGiteaGitHost } from "@octogee/core/git-host";
+import { gatewayKeyOwnerId, gatewayKeyTitle } from "@octogee/core/gitea-naming";
 import { MalformedRecordError } from "@octogee/core/platform-state";
 import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { readFleetLiveKeyHolders, readLiveGatewayKeyHolders } from "../gitea-gateway-key-gc.js";
@@ -122,5 +124,77 @@ describe("readLiveGatewayKeyHolders", () => {
         "shared-0": { ...diagnostics([], "unknown"), error: "pods not found" },
       }),
     })).rejects.toThrow(/shared-0.*pods not found/);
+  });
+});
+
+describe("the key sweep and the provisioning service's adopted keys", () => {
+  const GRACE_MS = 10 * 60_000;
+  const API = "http://gitea.test/api/v1";
+
+  interface StoredKey {
+    id: number;
+    title: string;
+    key: string;
+    created_at: string;
+  }
+
+  function fakeGitea(clock: () => number, keys: StoredKey[]) {
+    let nextId = 100;
+    const page = (url: URL) => Number(url.searchParams.get("page") ?? "1");
+    const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url = new URL(String(input));
+      const method = init?.method ?? "GET";
+      const path = url.pathname.slice(new URL(API).pathname.length);
+      if (method === "POST" && path === "/admin/users") return Response.json({ message: "user already exists" }, { status: 422 });
+      if (method === "GET" && path === "/admin/users") return Response.json(page(url) === 1 ? [{ login: "ws-lin" }] : []);
+      if (method === "GET" && path === "/users/ws-lin/keys") return Response.json(page(url) === 1 ? keys : []);
+      if (method === "DELETE" && path.startsWith("/admin/users/ws-lin/keys/")) {
+        const id = Number(path.split("/").at(-1));
+        keys.splice(keys.findIndex((key) => key.id === id), 1);
+        return new Response(null, { status: 204 });
+      }
+      if (method === "POST" && path === "/admin/users/ws-lin/keys") {
+        const body = JSON.parse(String(init?.body)) as { title: string; key: string };
+        if (keys.some((key) => key.key.split(" ")[1] === body.key.split(" ")[1])) {
+          return Response.json({ message: "Key content has been used as non-deploy key" }, { status: 422 });
+        }
+        keys.push({ id: nextId++, ...body, created_at: new Date(clock()).toISOString() });
+        return Response.json({}, { status: 201 });
+      }
+      throw new Error(`unexpected gitea request: ${method} ${path}`);
+    };
+    return createGiteaGitHost({ apiBaseUrl: API, token: () => "admin-token", fetch: fetchImpl as typeof fetch });
+  }
+
+  it("keeps a key adopted under a known gateway's own id past the grace period, and still sweeps a key held for a gateway that is gone", async () => {
+    let now = Date.parse("2026-11-15T18:00:00Z");
+    const old = new Date(now - 30 * 24 * 3_600_000).toISOString();
+    const keys: StoredKey[] = [
+      { id: 1, title: gatewayKeyTitle(gatewayKeyOwnerId("walter", "octogee-gateway-walter-5bc5949d46-p946t")), key: "ssh-ed25519 AAAAlin lin@gateway", created_at: old },
+      { id: 2, title: gatewayKeyTitle("gone"), key: "ssh-ed25519 AAAAgone lin@gone", created_at: old },
+    ];
+    const host = fakeGitea(() => now, keys);
+
+    await host.registerKey("lin", "ssh-ed25519 AAAAlin lin@gateway", "walter");
+    now += GRACE_MS + 60_000;
+    await host.sweepKeys({
+      readLiveKeyHolders: () => readLiveGatewayKeyHolders({
+        gateways: [root("walter")],
+        fleetRegistry: [],
+        readGatewayPodDiagnosticsBatch: async (gatewayIds) =>
+          Object.fromEntries(gatewayIds.map((id) => [id, diagnostics([], "missing")])),
+      }),
+      mode: "enforce",
+      maxCallsPerTick: 100,
+      minCallIntervalMs: 0,
+      graceMs: GRACE_MS,
+      now: () => now,
+      sleep: async () => {},
+      log: () => {},
+    }, createGitKeySweepState());
+
+    expect(keys.map(({ title, key }) => ({ title, key }))).toEqual([
+      { title: gatewayKeyTitle("walter"), key: "ssh-ed25519 AAAAlin lin@gateway" },
+    ]);
   });
 });

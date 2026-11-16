@@ -143,6 +143,11 @@ const MIGRATIONS: readonly ((table: (name: string) => string) => string)[] = [
       created_at timestamptz NOT NULL DEFAULT now()
     );
   `,
+  (t) => `
+    ALTER TABLE ${t("git_keys")}
+      ADD COLUMN refusals integer NOT NULL DEFAULT 0,
+      ADD COLUMN retry_after timestamptz;
+  `,
 ];
 
 export async function migrate(db: Database): Promise<{ from: number; to: number }> {

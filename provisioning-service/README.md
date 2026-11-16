@@ -59,10 +59,34 @@ permission to create TokenReviews.
 
 ## Git keys
 
-Do not call `PUT /v1/users/{uid}/git-keys/{gatewayId}` until the key-title
-migration is decided. Keys registered by the earlier path carry another title.
-The service leaves a key with the same public key under a holder it does not
-manage untouched and reports `Registered=False` with reason `GitKeyFailed`.
+Keys registered by the earlier path carry another title. When a GitKey is put
+and the user's own git account already holds the identical public key under a
+managed title the service does not know, the service adopts it: it removes that
+key and registers the same key under its own title for the gateway, restoring
+the removed key if the registration fails. A different public key is added
+beside it, and that key is left alone. Keys are compared by type and key
+material, never by comment.
+
+A key another user's account holds, or one on the user's own account under a
+title outside the managed prefix (added by hand), is never adopted. The git
+host refuses it, and the row reports `Registered=False` with reason
+`GitKeyHeldElsewhere`. That refusal is recorded on its row only: the rest of
+the user's attempt finishes, the user's work is not parked, and the attempt's
+`git-keys` step carries it. Every other failure, a credential or permission
+error from the git host and any failed release (a deleted key's included),
+fails the attempt as before, so it is retried or parked.
+
+A key held elsewhere backs off per row: 1 minute, doubling to at most 6 hours,
+shown as `status.nextAttemptAt`. The service owns the retry: the user's work is
+scheduled for that time, and the key is tried again then without any put. Until
+then an unchanged put queues no work and the worker does not try the key; a
+put with a different key resets the backoff and is tried at once. Putting an
+unchanged key whose row is not registered and has no backoff queues idle work,
+so a row an earlier build refused is retried once on the gateway's next put.
+
+With `PROVISIONING_HOST_ADAPTERS=fake`, `PROVISIONING_FAKE_GIT_KEYS` seeds the
+fake git host with keys, as JSON mapping each owner to `{ publicKey, holder }`
+entries.
 
 ## Chat accounts
 

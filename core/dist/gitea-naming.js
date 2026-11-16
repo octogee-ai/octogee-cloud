@@ -27,3 +27,6 @@ export function gatewayKeyTitle(identity) {
 export function isManagedGatewayKeyTitle(title) {
     return title === GATEWAY_KEY_TITLE || title.startsWith(`${GATEWAY_KEY_TITLE}-`);
 }
+export function publicKeyIdentity(publicKey) {
+    return publicKey.trim().split(/\s+/u).slice(0, 2).join(" ");
+}

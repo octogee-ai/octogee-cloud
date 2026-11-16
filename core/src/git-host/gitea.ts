@@ -7,6 +7,7 @@ import {
   gatewayKeyTitle as ownerGatewayKeyTitle,
   giteaUsername,
   isManagedGatewayKeyTitle,
+  publicKeyIdentity,
   projectRepoName,
   systemConfigRepoName,
   workspaceGiteaOrg,
@@ -108,10 +109,6 @@ function repoCreation(workspaceSlug: string, role: GitRepoRole): RepoCreation {
         },
       };
   }
-}
-
-function publicKeyIdentity(pubKey: string): string {
-  return pubKey.trim().split(/\s+/u).slice(0, 2).join(" ");
 }
 
 function publicKeysMatch(left: unknown, right: string): boolean {
