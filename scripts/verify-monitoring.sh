@@ -188,21 +188,6 @@ while IFS= read -r dashboard; do
 done <<<"$all_configmaps"
 
 actual_filter="$(kubectl get operatorconfig config --namespace gmp-public --context "$TARGET_KUBE_CONTEXT" -o json)"
-if ! printf '%s' "$actual_filter" | node -e '
-const fs = require("node:fs");
-const desired = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-let actual;
-try {
-  actual = JSON.parse(fs.readFileSync(0, "utf8"));
-} catch {
-  process.exit(1);
-}
-if (JSON.stringify(actual.collection?.filter?.matchOneOf) !== JSON.stringify(desired.collection.filter.matchOneOf)) {
-  process.exit(1);
-}
-' "$REPO_DIR/charts/monitoring/gmp-collection-filter.json"; then
-  echo "gmp-public/config collection filter drifted" >&2
-  exit 1
-fi
+node "$SCRIPT_DIR/lib/monitoring-collection-filter.mjs" "$REPO_DIR/charts/monitoring" --verify <<<"$actual_filter"
 
 echo "Monitoring release and gmp-public/config collection filter are healthy for $TARGET_ID"

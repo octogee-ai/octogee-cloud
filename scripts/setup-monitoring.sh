@@ -50,6 +50,8 @@ if $UNINSTALL; then
   exit 0
 fi
 
+COLLECTION_FILTER="$(node "$SCRIPT_DIR/lib/monitoring-collection-filter.mjs" "$REPO_DIR/charts/monitoring")"
+
 secret_args=(--target="$TARGET_ID")
 [[ -n "$SECRET_MODE" ]] && secret_args+=("$SECRET_MODE")
 "$SCRIPT_DIR/setup-monitoring-secrets.sh" "${secret_args[@]}"
@@ -111,7 +113,7 @@ kubectl wait --context "$TARGET_KUBE_CONTEXT" --namespace gke-gmp-system \
   --for=condition=Available deployment/rule-evaluator --timeout=5m >/dev/null
 
 kubectl patch operatorconfig config -n gmp-public --context "$TARGET_KUBE_CONTEXT" --type=merge \
-  --patch-file="$REPO_DIR/charts/monitoring/gmp-collection-filter.json" >/dev/null
+  --patch "$COLLECTION_FILTER" >/dev/null
 
 verify_args=(--target="$TARGET_ID")
 $IAP_ENABLED && verify_args+=(--iap)
