@@ -73,6 +73,8 @@ export interface PutProvisioningResult {
   readonly resource: UserProvisioning;
 }
 
+export type DeleteGitKeyOutcome = "deleted" | "superseded";
+
 export interface PutGitKeyResult {
   readonly outcome: "created" | "changed" | "unchanged";
   readonly key: GitKey;
@@ -128,6 +130,7 @@ export interface ProvisioningServiceClient {
   getProvisioningEvents(uid: string, options?: RequestSignalOptions): Promise<ProvisioningEventsResponse | null>;
   getCredential(uid: string, name: ProvisioningCredentialName, options?: RequestSignalOptions): Promise<ProvisioningCredential | null>;
   putGitKey(uid: string, gatewayId: string, spec: GitKeySpec, options?: RequestSignalOptions): Promise<PutGitKeyResult>;
+  deleteGitKey(uid: string, gatewayId: string, options: { expectedPublicKey: string } & RequestSignalOptions): Promise<DeleteGitKeyOutcome>;
 }
 
 export interface ProvisioningServiceConfig {
@@ -223,6 +226,26 @@ interface RequestInput {
 
 function abortedError(input: RequestInput): ProvisioningServiceError {
   return new ProvisioningServiceError(0, "aborted", `provisioning service ${input.method} ${input.path} was aborted by its caller`);
+}
+
+async function deleteGitKey(
+  request: (input: RequestInput) => Promise<Response>,
+  uid: string,
+  gatewayId: string,
+  options: { expectedPublicKey: string } & RequestSignalOptions,
+): Promise<DeleteGitKeyOutcome> {
+  try {
+    await request({
+      method: "DELETE",
+      path: `users/${userSegment(uid)}/git-keys/${encodeURIComponent(gatewayId)}`,
+      body: { expectedPublicKey: options.expectedPublicKey },
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    });
+  } catch (error) {
+    if (error instanceof ProvisioningServiceError && error.status === 409 && error.code === "precondition-failed") return "superseded";
+    throw error;
+  }
+  return "deleted";
 }
 
 export function createProvisioningServiceClient(options: ProvisioningServiceClientOptions): ProvisioningServiceClient {
@@ -431,6 +454,8 @@ export function createProvisioningServiceClient(options: ProvisioningServiceClie
       });
       return { outcome: PUT_OUTCOMES[response.status] ?? "unchanged", key: await json<GitKey>(response) };
     },
+
+    deleteGitKey: (uid, gatewayId, keyOptions) => deleteGitKey(request, uid, gatewayId, keyOptions),
   };
   return client;
 }

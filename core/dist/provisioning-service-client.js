@@ -114,6 +114,22 @@ function credentialFrom(text, name) {
 function abortedError(input) {
     return new ProvisioningServiceError(0, "aborted", `provisioning service ${input.method} ${input.path} was aborted by its caller`);
 }
+async function deleteGitKey(request, uid, gatewayId, options) {
+    try {
+        await request({
+            method: "DELETE",
+            path: `users/${userSegment(uid)}/git-keys/${encodeURIComponent(gatewayId)}`,
+            body: { expectedPublicKey: options.expectedPublicKey },
+            ...(options.signal === undefined ? {} : { signal: options.signal }),
+        });
+    }
+    catch (error) {
+        if (error instanceof ProvisioningServiceError && error.status === 409 && error.code === "precondition-failed")
+            return "superseded";
+        throw error;
+    }
+    return "deleted";
+}
 export function createProvisioningServiceClient(options) {
     const fetchImpl = options.fetch ?? fetch;
     const readToken = options.readToken ?? (async (path) => (await readFile(path, "utf8")).trim());
@@ -319,6 +335,7 @@ export function createProvisioningServiceClient(options) {
             });
             return { outcome: PUT_OUTCOMES[response.status] ?? "unchanged", key: await json(response) };
         },
+        deleteGitKey: (uid, gatewayId, keyOptions) => deleteGitKey(request, uid, gatewayId, keyOptions),
     };
     return client;
 }

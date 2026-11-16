@@ -31,6 +31,7 @@ export interface PutProvisioningResult {
     readonly outcome: "created" | "changed" | "unchanged";
     readonly resource: UserProvisioning;
 }
+export type DeleteGitKeyOutcome = "deleted" | "superseded";
 export interface PutGitKeyResult {
     readonly outcome: "created" | "changed" | "unchanged";
     readonly key: GitKey;
@@ -71,6 +72,9 @@ export interface ProvisioningServiceClient {
     getProvisioningEvents(uid: string, options?: RequestSignalOptions): Promise<ProvisioningEventsResponse | null>;
     getCredential(uid: string, name: ProvisioningCredentialName, options?: RequestSignalOptions): Promise<ProvisioningCredential | null>;
     putGitKey(uid: string, gatewayId: string, spec: GitKeySpec, options?: RequestSignalOptions): Promise<PutGitKeyResult>;
+    deleteGitKey(uid: string, gatewayId: string, options: {
+        expectedPublicKey: string;
+    } & RequestSignalOptions): Promise<DeleteGitKeyOutcome>;
 }
 export interface ProvisioningServiceConfig {
     readonly baseUrl: string;
