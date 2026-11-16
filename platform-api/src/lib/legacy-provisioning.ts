@@ -81,6 +81,19 @@ export function respondProvisioningPending(
   res.set("Retry-After", String(wait.retryAfterSeconds)).status(503).json({ error: "provisioning_pending", reason: wait.reason });
 }
 
+export function respondProvisioningNotReady(
+  res: Response,
+  answer: NotReadyAnswer,
+  wait: Extract<ProvisioningWait<unknown>, { ready: false }>,
+): void {
+  if (wait.refused !== true) {
+    respondProvisioningPending(res, answer, wait);
+    return;
+  }
+  logger.error("legacy provisioning: refusing the request, which no retry can finish", { ...answer, reason: wait.reason });
+  res.status(422).json({ error: "provisioning_refused", reason: wait.reason });
+}
+
 function unavailable(uid: string, error: unknown): ProvisioningWait<never> {
   if (error instanceof ProvisioningServiceError && error.code === "aborted") {
     logger.error("legacy provisioning: the route's deadline passed before the provisioning service answered", { uid });

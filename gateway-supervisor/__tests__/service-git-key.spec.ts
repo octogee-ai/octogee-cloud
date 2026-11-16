@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
+import { MIGRATION_QUIESCE_TIMEOUT_MS } from "@octogee/shared/types/fleet-controller";
 
 const TEST_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "octogee-service-git-key-"));
 const KEYS_DIR = path.join(TEST_ROOT, "keys");
@@ -171,7 +172,7 @@ describe("a legacy registration of a key the service holds", () => {
     expect(logged.failures).toEqual([]);
   });
 
-  it("gives up inside one bounded wait and fails loudly with the service's reason, keeping the marker", async () => {
+  it("gives up inside a bound shorter than the fleet controller's flush and resume timeout, failing loudly with the service's reason", async () => {
     vi.useFakeTimers();
     const key = prepareServiceGitKey("lin", HOLDER);
     key.registered();
@@ -179,18 +180,45 @@ describe("a legacy registration of a key the service holds", () => {
     vi.mocked(internalFetch).mockImplementation(async () => pending("GitKeyHeldElsewhere", "120"));
     const started = Date.now();
 
-    const registering = brokeredGitHost.registerKey("lin", key.publicKey).then(() => null, (error: Error) => error);
-    await vi.advanceTimersByTimeAsync(120_000);
+    const registering = brokeredGitHost.registerKey("lin", key.publicKey).then(() => null, (error: Error) => ({ error, after: Date.now() - started }));
+    await vi.advanceTimersByTimeAsync(MIGRATION_QUIESCE_TIMEOUT_MS);
     const failure = await registering;
 
-    expect(failure?.message).toContain("GitKeyHeldElsewhere");
-    expect(failure?.message).toContain("gave up");
-    expect(Date.now() - started).toBeLessThanOrEqual(120_000);
-    expect(vi.mocked(internalFetch).mock.calls.length).toBeGreaterThan(1);
-    expect(vi.mocked(internalFetch).mock.calls.length).toBeLessThanOrEqual(6);
+    expect(failure?.error.message).toContain("GitKeyHeldElsewhere");
+    expect(failure?.error.message).toContain("gave up");
+    expect(failure?.after).toBeLessThanOrEqual(MIGRATION_QUIESCE_TIMEOUT_MS / 2);
+    const calls = vi.mocked(internalFetch).mock.calls;
+    expect(calls.length).toBeGreaterThan(1);
+    for (const [, , options] of calls) expect(options?.timeoutMs).toBeLessThanOrEqual(MIGRATION_QUIESCE_TIMEOUT_MS / 2);
+    expect(calls.at(-1)?.[2]?.timeoutMs).toBeLessThan(calls[0][2]?.timeoutMs ?? 0);
     expect(logged.failures).toContainEqual(expect.stringContaining("GitKeyHeldElsewhere"));
     expect(serviceGitKeyHolder("lin")).toBe(HOLDER);
     vi.mocked(internalFetch).mockImplementation(async () => new Response(null, { status: 204 }));
+  });
+
+  it("fails at once, with the reason, when the platform refuses the registration", async () => {
+    const key = prepareServiceGitKey("lin", HOLDER);
+    key.registered();
+    vi.mocked(internalFetch).mockClear();
+    vi.mocked(internalFetch).mockResolvedValueOnce(Response.json({ error: "provisioning_refused", reason: "GitOwnerFailed" }, { status: 422 }));
+
+    await expect(brokeredGitHost.registerKey("lin", key.publicKey)).rejects.toThrow("the platform refused to register this pod's key (reason GitOwnerFailed)");
+
+    expect(internalFetch).toHaveBeenCalledTimes(1);
+    expect(logged.failures).toContainEqual(expect.stringContaining("GitOwnerFailed"));
+    expect(serviceGitKeyHolder("lin")).toBe(HOLDER);
+  });
+
+  it("fails loudly when a request outlasts what is left of the bound", async () => {
+    const key = prepareServiceGitKey("lin", HOLDER);
+    key.registered();
+    vi.mocked(internalFetch).mockClear();
+    vi.mocked(internalFetch).mockRejectedValueOnce(new Error("internal-fetch: POST http://broker/internal/gitea/ensure-user timed out after 30000ms"));
+
+    await expect(brokeredGitHost.registerKey("lin", key.publicKey)).rejects.toThrow("timed out");
+
+    expect(logged.failures).toContainEqual(expect.stringContaining("timed out"));
+    expect(serviceGitKeyHolder("lin")).toBe(HOLDER);
   });
 
   it("fails at once on an answer that is not a pending one", async () => {

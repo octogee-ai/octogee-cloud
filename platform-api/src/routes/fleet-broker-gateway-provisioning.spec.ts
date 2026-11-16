@@ -377,6 +377,17 @@ describe("POST /internal/fleet/git-key", () => {
     expect(response.headers["retry-after"]).toBe("7");
   });
 
+  it("answers 422 with the reason when the service refuses the registration, as for parked work", async () => {
+    vi.spyOn(logger, "error").mockImplementation(() => {});
+    const { app } = fixture({
+      provisioning: legacyProvisioning({ gitKey: vi.fn(async () => ({ ready: false as const, reason: "GitOwnerFailed", retryAfterSeconds: 5, refused: true as const })) }),
+    });
+
+    const response = await post(app, "git-key", { publicKey: PUBLIC_KEY }).expect(422);
+
+    expect(response.body).toEqual({ error: "provisioning_refused", reason: "GitOwnerFailed" });
+  });
+
   it("answers 503 with Retry-After until the service's next attempt for a key held elsewhere", async () => {
     vi.spyOn(logger, "error").mockImplementation(() => {});
     vi.spyOn(logger, "warn").mockImplementation(() => {});

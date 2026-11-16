@@ -1,5 +1,5 @@
 import type { GitRepoRole, ManagedGitHost } from "@octogee/core/git-host";
-import { SERVICE_GIT_KEY_WAIT_MS } from "@octogee/core/user-lifecycle";
+import { MIGRATION_QUIESCE_TIMEOUT_MS } from "@octogee/shared/types/fleet-controller";
 
 import { log } from "./config.js";
 import { internalFetch } from "./internal-fetch.js";
@@ -27,49 +27,77 @@ async function postVoid(path: string, body: unknown): Promise<void> {
   }
 }
 
+export const SERVICE_HELD_KEY_WAIT_MS = MIGRATION_QUIESCE_TIMEOUT_MS / 2;
 const SERVICE_HELD_KEY_POLL_MIN_MS = 1_000;
 const SERVICE_HELD_KEY_POLL_MAX_MS = 15_000;
 const SERVICE_HELD_KEY_DEFAULT_RETRY_MS = 5_000;
 
-async function pendingAnswer(resp: Response): Promise<{ reason: string; retryAfterMs: number }> {
+interface ServiceHeldKeyAnswer {
+  error: unknown;
+  reason: string;
+  retryAfterMs: number;
+}
+
+async function notRegisteredAnswer(resp: Response): Promise<ServiceHeldKeyAnswer> {
   const text = await resp.text().catch(() => "");
-  let reason: unknown;
+  let body: { error?: unknown; reason?: unknown } | null;
   try {
-    reason = (JSON.parse(text) as { reason?: unknown } | null)?.reason;
+    body = JSON.parse(text) as { error?: unknown; reason?: unknown } | null;
   } catch {
-    reason = undefined;
+    body = null;
   }
   const seconds = Number(resp.headers.get("retry-after"));
   return {
-    reason: typeof reason === "string" && reason ? reason : `503 without a reason: ${text.slice(0, 300)}`,
+    error: body?.error,
+    reason: typeof body?.reason === "string" && body.reason ? body.reason : `${resp.status} without a reason: ${text.slice(0, 300)}`,
     retryAfterMs: Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : SERVICE_HELD_KEY_DEFAULT_RETRY_MS,
   };
+}
+
+function failRegistration(message: string, cause?: unknown): never {
+  log(message, { status: "failed" });
+  throw new Error(message, cause === undefined ? undefined : { cause });
+}
+
+async function requestServiceHeldKey(path: string, body: { slug: string }, timeoutMs: number): Promise<Response> {
+  try {
+    return await internalFetch(`${baseUrl()}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }, { timeoutMs });
+  } catch (error) {
+    return failRegistration(
+      `[git] ${body.slug}: the request to register this pod's key failed inside its ${SERVICE_HELD_KEY_WAIT_MS}ms bound: ${error instanceof Error ? error.message : String(error)}`,
+      error,
+    );
+  }
 }
 
 async function postServiceHeldKey(body: { slug: string; pubKey: string; serviceHolder: string }): Promise<{ registeredOn?: unknown }> {
   const path = "/internal/gitea/ensure-user";
   const startedAt = Date.now();
   for (let round = 0; ; round += 1) {
-    const resp = await internalFetch(`${baseUrl()}${path}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
+    const resp = await requestServiceHeldKey(path, body, SERVICE_HELD_KEY_WAIT_MS - (Date.now() - startedAt));
     if (resp.ok) return resp.status === 204 ? {} : (await resp.json()) as { registeredOn?: unknown };
-    if (resp.status !== 503) {
+    if (resp.status !== 503 && resp.status !== 422) {
       const text = (await resp.text().catch(() => "")).slice(0, 300);
       throw new Error(`gitea-broker POST ${path} → ${resp.status} ${text}`);
     }
-    const { reason, retryAfterMs } = await pendingAnswer(resp);
+    const answer = await notRegisteredAnswer(resp);
+    if (resp.status === 422) {
+      if (answer.error !== "provisioning_refused") throw new Error(`gitea-broker POST ${path} → 422 ${answer.reason}`);
+      return failRegistration(`[git] ${body.slug}: the platform refused to register this pod's key (reason ${answer.reason}); no retry can finish it`);
+    }
     const waited = Date.now() - startedAt;
     const backoff = SERVICE_HELD_KEY_POLL_MIN_MS * 2 ** Math.min(round, 4);
-    const delay = Math.min(Math.max(retryAfterMs, backoff), SERVICE_HELD_KEY_POLL_MAX_MS);
-    if (waited + delay > SERVICE_GIT_KEY_WAIT_MS) {
-      const message = `[git] ${body.slug}: gave up waiting for the platform to register this pod's key after ${waited}ms (bound ${SERVICE_GIT_KEY_WAIT_MS}ms, last reason ${reason})`;
-      log(message, { status: "failed" });
-      throw new Error(message);
+    const delay = Math.min(Math.max(answer.retryAfterMs, backoff), SERVICE_HELD_KEY_POLL_MAX_MS);
+    if (waited + delay >= SERVICE_HELD_KEY_WAIT_MS) {
+      return failRegistration(
+        `[git] ${body.slug}: gave up waiting for the platform to register this pod's key after ${waited}ms (bound ${SERVICE_HELD_KEY_WAIT_MS}ms, last reason ${answer.reason})`,
+      );
     }
-    log(`[git] ${body.slug}: waiting for the platform to register this pod's key (reason ${reason}, next check in ${delay}ms, waited ${waited}ms)`);
+    log(`[git] ${body.slug}: waiting for the platform to register this pod's key (reason ${answer.reason}, next check in ${delay}ms, waited ${waited}ms)`);
     await new Promise<void>((resolve) => setTimeout(resolve, delay));
   }
 }

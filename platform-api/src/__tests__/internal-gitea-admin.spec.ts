@@ -837,6 +837,18 @@ describe("internal gitea-admin route with the provisioning service", () => {
       expectNoKeyTouched();
     });
 
+    it("answers 422 with the reason when the service refuses the registration, as for parked work", async () => {
+      const logged = vi.spyOn(logger, "error").mockImplementation(() => {});
+      const provisioning = service(async () => ({ ready: true, value: undefined }), async () => ({ ready: false, reason: "GitOwnerFailed", retryAfterSeconds: 5, refused: true }));
+
+      const res = await request(app("walter", "walter", provisioning)).post("/internal/gitea/ensure-user").send({ slug: "acme", pubKey: KEY, serviceHolder: WALTER_KEY_OWNER });
+
+      expect(res.status).toBe(422);
+      expect(res.body).toEqual({ error: "provisioning_refused", reason: "GitOwnerFailed" });
+      expect(logged).toHaveBeenCalledWith(expect.stringContaining("no retry can finish"), expect.objectContaining({ reason: "GitOwnerFailed" }));
+      expectNoKeyTouched();
+    });
+
     it("refuses a token without a pod name and logs it", async () => {
       const logged = vi.spyOn(logger, "error").mockImplementation(() => {});
       const provisioning = service(async () => ({ ready: true, value: undefined }));

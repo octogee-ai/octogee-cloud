@@ -6,7 +6,7 @@ import { isolatedBootMode } from "@octogee/core/isolated-prelaunch";
 import { noProvisioningProjection, type ProvisioningProjection } from "@octogee/core/provisionSteps";
 import { mirroredState, mmUpdateFromChatOutputs, type MirroredState } from "@octogee/core/provisioning-mirror";
 import { gatewayKeyOwnerId } from "@octogee/core/gitea-naming";
-import { respondProvisioningPending, routeBudget, type LegacyProvisioning, type ProvisioningWait, type RouteBudget } from "../lib/legacy-provisioning.js";
+import { respondProvisioningNotReady, respondProvisioningPending, routeBudget, type LegacyProvisioning, type ProvisioningWait, type RouteBudget } from "../lib/legacy-provisioning.js";
 import { sharedAgentAnchorMigrationScope, sharedAssignedSourceSurgeAnchorScope } from "../lib/shared-agent-anchor-migration.js";
 import { installWorkspaceBlobBrokerRoute, type WorkspaceBlobStore } from "./fleet-broker-workspace-blob.js";
 import { readUserRestoreAuthoritySnapshot } from "@octogee/core/fleet-state";
@@ -404,19 +404,6 @@ async function serviceProvisioningReadiness(
   return legacyProvisioning.git(uid, null, budget);
 }
 
-function respondServiceProvisioning(
-  res: Response,
-  answer: { route: string; uid: string },
-  wait: Extract<ProvisioningWait<unknown>, { ready: false }>,
-): void {
-  if (wait.refused !== true) {
-    respondProvisioningPending(res, answer, wait);
-    return;
-  }
-  logger.error("gateway provisioning: refusing the mount, which no retry can finish", { ...answer, reason: wait.reason });
-  res.status(422).json({ error: "provisioning_refused", reason: wait.reason });
-}
-
 function serviceRouteConfigured<T>(res: Response, route: string, dependency: T | null): dependency is T {
   if (dependency !== null) return true;
   logger.error("gateway provisioning route called while the platform is not configured with the provisioning service", { route });
@@ -435,7 +422,7 @@ function installServiceProvisioningRoutes(router: Router, deps: ResolvedFleetBro
     await runBrokered(res, async () => {
       const answer = await serviceProvisioningReadiness(assigned.uid, legacyProvisioning, store);
       if (!answer.ready) {
-        respondServiceProvisioning(res, { route: "provisioning-readiness", uid: assigned.uid }, answer);
+        respondProvisioningNotReady(res, { route: "provisioning-readiness", uid: assigned.uid }, answer);
         return;
       }
       res.status(204).end();
@@ -457,7 +444,7 @@ function installServiceProvisioningRoutes(router: Router, deps: ResolvedFleetBro
     await runBrokered(res, async () => {
       const answer = await legacyProvisioning.gitKey(assigned.uid, holder, publicKey.trim(), routeBudget());
       if (!answer.ready) {
-        respondProvisioningPending(res, { route: "git-key", uid: assigned.uid }, answer);
+        respondProvisioningNotReady(res, { route: "git-key", uid: assigned.uid }, answer);
         return;
       }
       res.status(204).end();

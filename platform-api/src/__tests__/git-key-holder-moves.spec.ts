@@ -234,7 +234,7 @@ describe("git keys across moves and rolls, through the platform's routes and ada
     expect(service.puts).toEqual([serving.holder]);
   });
 
-  it("answers a mount 503 with the service's reason while the user's work is parked, registering nothing", async () => {
+  it("refuses a mount with the service's reason while the user's work is parked, registering nothing", async () => {
     const { git, service } = setup();
     assign("shared-blue");
     service.park("GitOwnerFailed");
@@ -250,9 +250,9 @@ describe("git keys across moves and rolls, through the platform's routes and ada
       legacyProvisioning: createLegacyProvisioning({ client: service.client, sleep: () => service.attempt() }),
     }));
 
-    const answer = await request(app).post("/internal/fleet/git-key").send({ uid: USER.uid, publicKey: serving.disk.key }).expect(503);
+    const answer = await request(app).post("/internal/fleet/git-key").send({ uid: USER.uid, publicKey: serving.disk.key }).expect(422);
 
-    expect(answer.body).toEqual({ error: "provisioning_pending", reason: "GitOwnerFailed" });
+    expect(answer.body).toEqual({ error: "provisioning_refused", reason: "GitOwnerFailed" });
     expect(hostKeys(git)).toEqual([]);
   });
 });
