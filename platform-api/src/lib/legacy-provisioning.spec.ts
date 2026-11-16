@@ -128,14 +128,14 @@ describe("legacy provisioning adapter: chat", () => {
     expect(logged).toHaveBeenCalledWith("legacy provisioning: no provisioning resource exists for the user", { uid: "uid-lin" });
   });
 
-  it("logs a parked user's reason", async () => {
+  it("marks a parked user's wait refused and logs its reason", async () => {
     const logged = vi.spyOn(logger, "error").mockImplementation(() => {});
     const { client } = fakeClient([resource({
       conditions: [condition("ChatReady", "False", "ChatUserFailed")],
       work: { state: "parked", attempts: 9, nextAttemptAt: null, lastAttemptAt: "2026-11-15T17:59:00Z" },
     })]);
 
-    await expect(adapter(client).chat("uid-lin", budget())).resolves.toEqual({ ready: false, reason: "ChatUserFailed", retryAfterSeconds: 5 });
+    await expect(adapter(client).chat("uid-lin", budget())).resolves.toEqual({ ready: false, reason: "ChatUserFailed", retryAfterSeconds: 5, refused: true });
     expect(logged).toHaveBeenCalledWith("legacy provisioning: the user's provisioning is parked", { uid: "uid-lin", reason: "ChatUserFailed" });
   });
 

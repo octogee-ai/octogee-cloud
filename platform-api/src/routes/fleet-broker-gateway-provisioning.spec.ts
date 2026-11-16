@@ -5,7 +5,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { ProvisioningServiceError } from "@octogee/core/provisioning-service-client";
 import { logger } from "@octogee/core/http/logging";
-import type { GitKey } from "@octogee/shared/types/provisioning-service";
+import { mmUpdateFromChatOutputs } from "@octogee/core/provisioning-mirror";
+import { buildProvisioningContext, markProvisioningComplete, noProvisioningProjection } from "@octogee/core/provisionSteps";
+import { workspaceDefaultAgentChannelName } from "@octogee/shared/types/identity";
+import { installDefaultUserEntitlements } from "@octogee/shared/types/user-entitlements";
+import type { ChatOutputs, GitKey, UserProvisioning } from "@octogee/shared/types/provisioning-service";
 import { NO_BROKER_RECORDS, type BrokerRecords } from "../lib/broker-records.js";
 import type { LegacyProvisioning, ProvisioningWait } from "../lib/legacy-provisioning.js";
 import type { ProvisioningGitKeys } from "../lib/provisioning-git-keys.js";
@@ -14,19 +18,48 @@ import { createFleetBrokerRoutes } from "./fleet-broker.js";
 
 const GATEWAY_ID = "shared-blue";
 const PUBLIC_KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGatewayKey octogee-alice@gateway";
-const CHAT = { userId: "mm-alice", teamId: "team-alice", channels: { general: "ch-general", agent: "ch-agent" }, agentBotUserId: "bot-alice" };
-const READY_CHAT: ProvisioningWait<{ slug: string; chat: typeof CHAT }> = { ready: true, value: { slug: "alice", chat: CHAT } };
+const CHAT: ChatOutputs = { userId: "mm-alice", teamId: "team-alice", channels: { general: "ch-general", agent: "ch-agent" }, agentBotUserId: "bot-alice" };
+const NO_AGENT_CHAT: ChatOutputs = { userId: "mm-alice", teamId: "team-alice", channels: { general: "ch-general" } };
+
+function provisioningResource(chat: ChatOutputs): UserProvisioning {
+  return {
+    uid: "uid-alice",
+    generation: 1,
+    resourceVersion: "4",
+    spec: {
+      slug: "alice",
+      displayName: { first: "Alice", last: "" },
+      email: "alice@example.test",
+      avatarUrl: null,
+      chat: { teamDisplayName: "Alice", defaultAgent: { enabled: chat.agentBotUserId !== undefined } },
+      git: { repositories: ["workspace", "project-coaches"], systemConfigRepository: true },
+      agentIds: ["octogee-alice-coach"],
+    },
+    status: {
+      observedGeneration: 1,
+      conditions: [{ type: "ChatReady", status: "True", reason: "Converged", message: "", lastTransitionTime: "2026-11-15T18:00:00Z", observedGeneration: 1 }],
+      outputs: { chat, credentials: ["agent-chat-token", "user-chat-token"] },
+      work: { state: "idle", attempts: 1, nextAttemptAt: null, lastAttemptAt: null },
+    },
+  };
+}
+
+function readyChat(chat: ChatOutputs = CHAT) {
+  return { ready: true as const, value: { slug: "alice", chat, resource: provisioningResource(chat) } };
+}
+
+installDefaultUserEntitlements();
 
 function legacyProvisioning(overrides: Partial<LegacyProvisioning> = {}): LegacyProvisioning {
   return {
-    chat: vi.fn(async () => READY_CHAT),
+    chat: vi.fn(async () => readyChat()),
     git: vi.fn(async () => ({ ready: true as const, value: undefined })),
     agentChatToken: vi.fn(async () => ({ ready: true as const, value: "service-agent-token" })),
     ...overrides,
   };
 }
 
-function gitKey(overrides: { publicKey?: string; generation?: number; observedGeneration?: number; registered?: "True" | "False"; reason?: string } = {}): GitKey {
+function gitKey(overrides: { publicKey?: string; generation?: number; observedGeneration?: number; registered?: "True" | "False"; reason?: string; message?: string } = {}): GitKey {
   const generation = overrides.generation ?? 1;
   return {
     uid: "uid-alice",
@@ -41,7 +74,7 @@ function gitKey(overrides: { publicKey?: string; generation?: number; observedGe
         type: "Registered",
         status: overrides.registered ?? "True",
         reason: (overrides.reason ?? "Converged") as never,
-        message: "",
+        message: overrides.message ?? "",
         lastTransitionTime: "2026-11-15T18:00:00Z",
         observedGeneration: overrides.observedGeneration ?? generation,
       }],
@@ -60,7 +93,6 @@ function gitKeys(overrides: Partial<ProvisioningGitKeys> = {}): ProvisioningGitK
 interface Options {
   provisioning?: LegacyProvisioning | null;
   keys?: ProvisioningGitKeys | null;
-  mattermostUserId?: string;
   assignedTo?: string;
   boundGatewayId?: string;
 }
@@ -69,7 +101,6 @@ function fixture(options: Options = {}) {
   const documents = new RecordingDocuments({
     "users/uid-alice": {
       username: "alice",
-      ...(options.mattermostUserId ? { mattermost: { userId: options.mattermostUserId } } : {}),
       provisioning: { openclaw: { gatewayId: options.assignedTo ?? GATEWAY_ID, slug: "alice" } },
     },
   });
@@ -90,29 +121,31 @@ function fixture(options: Options = {}) {
   return { app, store, provisioning, keys };
 }
 
-async function mirrorChat(store: ReturnType<typeof createDocumentFixtureStore>, options: { secret?: boolean; agentChannel?: string | null } = {}) {
-  if (options.secret !== false) {
-    await store.secrets.put("uid-alice", {
-      kind: "coach-mattermost",
-      secretId: "coachMattermost",
-      projectId: null,
-      personalToken: "agent-token",
-      mattermostUserId: "bot-alice",
-      createdAt: Date.now(),
-      rotatedAt: null,
-    });
-  }
-  if (options.agentChannel !== null) {
-    await store.workspaces.channels.put({
-      scope: { workspaceSlug: "alice", projectSlug: null },
-      channelId: "coach-dm",
-      kind: "coach-dm",
-      mattermostChannelId: options.agentChannel ?? "ch-agent",
-      archivedAt: null,
-      createdBy: "uid-alice",
-      createdAt: null,
-    });
-  }
+async function mirrorFully(store: ReturnType<typeof createDocumentFixtureStore>, chat: ChatOutputs = CHAT) {
+  const mmUpdate = mmUpdateFromChatOutputs({ slug: "alice", chat, agentChannelName: workspaceDefaultAgentChannelName("alice"), proxyUrl: null });
+  await markProvisioningComplete(buildProvisioningContext("uid-alice", { username: "alice" }), mmUpdate, ["octogee-alice-coach"], noProvisioningProjection, store);
+}
+
+async function mirrorChatAccountTokenAndAgentChannel(store: ReturnType<typeof createDocumentFixtureStore>) {
+  await store.users.records.patch("uid-alice", { mattermostUserId: "mm-alice" });
+  await store.secrets.put("uid-alice", {
+    kind: "coach-mattermost",
+    secretId: "coachMattermost",
+    projectId: null,
+    personalToken: "agent-token",
+    mattermostUserId: "bot-alice",
+    createdAt: Date.now(),
+    rotatedAt: null,
+  });
+  await store.workspaces.channels.put({
+    scope: { workspaceSlug: "alice", projectSlug: null },
+    channelId: "coach-dm",
+    kind: "coach-dm",
+    mattermostChannelId: "ch-agent",
+    archivedAt: null,
+    createdBy: "uid-alice",
+    createdAt: null,
+  });
 }
 
 const post = (app: express.Express, path: string, body: Record<string, unknown> = {}) =>
@@ -141,32 +174,53 @@ describe("POST /internal/fleet/user-snapshot", () => {
 });
 
 describe("POST /internal/fleet/provisioning-readiness", () => {
-  it("answers 204 once the service reports chat and git ready and the mirror wrote the account, token and agent channel", async () => {
-    const { app, store, provisioning } = fixture({ mattermostUserId: "mm-alice" });
-    await mirrorChat(store);
+  it("answers 204 once the service reports chat and git ready and every mirrored record matches", async () => {
+    const { app, store, provisioning } = fixture();
+    await mirrorFully(store);
 
     await post(app, "provisioning-readiness").expect(204);
 
-    expect(provisioning?.git).toHaveBeenCalledWith("uid-alice", null);
+    expect(provisioning?.git).toHaveBeenCalledWith("uid-alice", null, expect.objectContaining({ signal: expect.any(AbortSignal) }));
+  });
+
+  it("answers 204 for a fully mirrored user without a default agent", async () => {
+    const { app, store } = fixture({ provisioning: legacyProvisioning({ chat: vi.fn(async () => readyChat(NO_AGENT_CHAT)) }) });
+    await mirrorFully(store, NO_AGENT_CHAT);
+
+    await post(app, "provisioning-readiness").expect(204);
+  });
+
+  it("answers 503 WaitingForMirror while only the chat account, agent token and agent channel are mirrored", async () => {
+    const { app, store, provisioning } = fixture();
+    await mirrorChatAccountTokenAndAgentChannel(store);
+
+    const response = await post(app, "provisioning-readiness").expect(503);
+
+    expect(response.body).toEqual({ error: "provisioning_pending", reason: "WaitingForMirror" });
+    expect(provisioning?.git).not.toHaveBeenCalled();
+  });
+
+  it("answers 503 WaitingForMirror for a user without a default agent while only the chat account is mirrored", async () => {
+    const { app, store } = fixture({ provisioning: legacyProvisioning({ chat: vi.fn(async () => readyChat(NO_AGENT_CHAT)) }) });
+    await store.users.records.patch("uid-alice", { mattermostUserId: "mm-alice" });
+
+    const response = await post(app, "provisioning-readiness").expect(503);
+
+    expect(response.body).toEqual({ error: "provisioning_pending", reason: "WaitingForMirror" });
   });
 
   it.each([
     ["the service reports chat not ready", { chatReason: "ChatTeamFailed" }, "ChatTeamFailed"],
-    ["the mirror has not written the chat account", { mattermostUserId: undefined }, "WaitingForMirror"],
-    ["the mirror has not written the agent token", { secret: false }, "AgentTokenNotMirrored"],
-    ["the mirror has not written the agent channel", { agentChannel: null }, "AgentChannelNotMirrored"],
-    ["the agent channel record names another channel", { agentChannel: "ch-old" }, "AgentChannelNotMirrored"],
     ["the service reports git not ready", { gitReason: "GitRepositoryFailed" }, "GitRepositoryFailed"],
   ] as const)("answers 503 with the reason while %s", async (_case, scenario, reason) => {
-    const s = scenario as { chatReason?: string; gitReason?: string; mattermostUserId?: string; secret?: boolean; agentChannel?: string | null };
+    const s = scenario as { chatReason?: string; gitReason?: string };
     const { app, store } = fixture({
-      mattermostUserId: "mattermostUserId" in s ? s.mattermostUserId : "mm-alice",
       provisioning: legacyProvisioning({
         ...(s.chatReason ? { chat: vi.fn(async () => ({ ready: false as const, reason: s.chatReason!, retryAfterSeconds: 12 })) } : {}),
         ...(s.gitReason ? { git: vi.fn(async () => ({ ready: false as const, reason: s.gitReason!, retryAfterSeconds: 12 })) } : {}),
       }),
     });
-    await mirrorChat(store, { ...(s.secret === false ? { secret: false } : {}), ...("agentChannel" in s ? { agentChannel: s.agentChannel } : {}) });
+    await mirrorFully(store);
 
     const response = await post(app, "provisioning-readiness").expect(503);
 
@@ -174,8 +228,35 @@ describe("POST /internal/fleet/provisioning-readiness", () => {
     expect(Number(response.headers["retry-after"])).toBeGreaterThan(0);
   });
 
+  it("answers 422 and logs an error for a user the mirror refuses", async () => {
+    const logged = vi.spyOn(logger, "error").mockImplementation(() => {});
+    const { app, store } = fixture();
+    await mirrorFully(store);
+    const user = await store.users.records.get("uid-alice");
+    await store.users.records.patch("uid-alice", { accountLifecycle: { ...user!.accountLifecycle!, status: "erasing" } });
+
+    const response = await post(app, "provisioning-readiness").expect(422);
+
+    expect(response.body).toEqual({ error: "provisioning_refused", reason: "UserBeingErased" });
+    expect(response.headers["retry-after"]).toBeUndefined();
+    expect(logged).toHaveBeenCalledWith(expect.stringContaining("refusing"), expect.objectContaining({ route: "provisioning-readiness", reason: "UserBeingErased" }));
+  });
+
+  it("answers 422 for a user whose provisioning is parked", async () => {
+    vi.spyOn(logger, "error").mockImplementation(() => {});
+    const { app } = fixture({
+      provisioning: legacyProvisioning({
+        chat: vi.fn(async () => ({ ready: false as const, reason: "ChatUserFailed", retryAfterSeconds: 5, refused: true as const })),
+      }),
+    });
+
+    const response = await post(app, "provisioning-readiness").expect(422);
+
+    expect(response.body).toEqual({ error: "provisioning_refused", reason: "ChatUserFailed" });
+  });
+
   it("refuses a user assigned to another gateway", async () => {
-    const { app, provisioning } = fixture({ assignedTo: "shared-green", mattermostUserId: "mm-alice" });
+    const { app, provisioning } = fixture({ assignedTo: "shared-green" });
 
     await post(app, "provisioning-readiness").expect(403);
 
@@ -184,7 +265,7 @@ describe("POST /internal/fleet/provisioning-readiness", () => {
 
   it("answers 409 and logs it when the platform is not configured with the service", async () => {
     const logged = vi.spyOn(logger, "error").mockImplementation(() => {});
-    const { app } = fixture({ provisioning: null, mattermostUserId: "mm-alice" });
+    const { app } = fixture({ provisioning: null });
 
     const response = await post(app, "provisioning-readiness").expect(409);
 
@@ -236,6 +317,17 @@ describe("POST /internal/fleet/git-key", () => {
     const response = await post(app, "git-key", { publicKey: PUBLIC_KEY }).expect(503);
 
     expect(response.body).toEqual({ error: "provisioning_pending", reason });
+  });
+
+  it("answers 422 and logs an error when the service refuses the key as held elsewhere", async () => {
+    const logged = vi.spyOn(logger, "error").mockImplementation(() => {});
+    const refused = gitKey({ registered: "False", reason: "GitKeyFailed", message: "registered under a holder this service does not manage; left unchanged" });
+    const { app } = fixture({ keys: gitKeys({ put: vi.fn(async () => refused) }) });
+
+    const response = await post(app, "git-key", { publicKey: PUBLIC_KEY }).expect(422);
+
+    expect(response.body).toEqual({ error: "provisioning_refused", reason: "GitKeyHeldElsewhere" });
+    expect(logged).toHaveBeenCalledWith(expect.stringContaining("refusing"), expect.objectContaining({ route: "git-key", reason: "GitKeyHeldElsewhere" }));
   });
 
   it("answers 503 with the service's Retry-After while it is unavailable", async () => {

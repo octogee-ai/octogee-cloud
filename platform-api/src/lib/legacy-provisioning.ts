@@ -22,7 +22,7 @@ const MAX_RETRY_AFTER_SECONDS = 300;
 
 export type ProvisioningWait<T> =
   | { readonly ready: true; readonly value: T }
-  | { readonly ready: false; readonly reason: string; readonly retryAfterSeconds: number };
+  | { readonly ready: false; readonly reason: string; readonly retryAfterSeconds: number; readonly refused?: true };
 
 export type LegacyGitRepository = GitRepositoryRole | "system-config";
 
@@ -98,7 +98,7 @@ export function createLegacyProvisioning(deps: LegacyProvisioningDeps): LegacyPr
   const now = deps.now ?? Date.now;
   const longPollSeconds = deps.longPollSeconds ?? LEGACY_PROVISIONING_LONG_POLL_SECONDS;
 
-  function notReady(reason: string, resource: UserProvisioning | null): ProvisioningWait<never> {
+  function notReady(reason: string, resource: UserProvisioning | null): Extract<ProvisioningWait<never>, { ready: false }> {
     const nextAttemptAt = resource?.status.work.nextAttemptAt;
     const due = nextAttemptAt ? Date.parse(nextAttemptAt) - now() : Number.NaN;
     return {
@@ -132,6 +132,7 @@ export function createLegacyProvisioning(deps: LegacyProvisioningDeps): LegacyPr
     const reason = resource.status.conditions.find((candidate) => candidate.type === type)?.reason ?? `${type}Unknown`;
     if (resource.status.work.state === "parked") {
       logger.error("legacy provisioning: the user's provisioning is parked", { uid, reason });
+      return { ...notReady(reason, resource), refused: true };
     }
     return notReady(reason, resource);
   }

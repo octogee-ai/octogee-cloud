@@ -393,10 +393,11 @@ async function mirroredChat(
   const refused = mirrored as Extract<MirroredState, { detail: string }>;
   const reason = MIRROR_REFUSAL_REASONS[refused.state];
   logger.error("legacy provisioning: the mirror refuses this user, so its mount cannot finish", { uid, reason, detail: refused.detail });
-  return { ready: false, reason, retryAfterSeconds: 5 };
+  return { ready: false, reason, retryAfterSeconds: 5, refused: true };
 }
 
 const MIRROR_RETRY_AFTER_SECONDS = 5;
+const SERVICE_KEY_HELD_ELSEWHERE = "registered under a holder this service does not manage";
 
 async function serviceProvisioningReadiness(
   uid: string,
@@ -416,6 +417,9 @@ function gitKeyRegistration(key: GitKey, publicKey: string): ProvisioningWait<vo
   }
   const registered = key.status.conditions.find((condition) => condition.type === "Registered");
   if (registered?.status === "True") return { ready: true, value: undefined };
+  if (registered?.message.startsWith(SERVICE_KEY_HELD_ELSEWHERE) === true) {
+    return { ready: false, reason: "GitKeyHeldElsewhere", retryAfterSeconds: MIRROR_RETRY_AFTER_SECONDS, refused: true };
+  }
   return { ready: false, reason: registered?.reason ?? "RegisteredUnknown", retryAfterSeconds: MIRROR_RETRY_AFTER_SECONDS };
 }
 
@@ -445,6 +449,19 @@ async function registerServiceGitKey(
   return gitKeyRegistration(key, publicKey);
 }
 
+function respondServiceProvisioning(
+  res: Response,
+  answer: { route: string; uid: string },
+  wait: Extract<ProvisioningWait<unknown>, { ready: false }>,
+): void {
+  if (wait.refused !== true) {
+    respondProvisioningPending(res, answer, wait);
+    return;
+  }
+  logger.error("gateway provisioning: refusing the mount, which no retry can finish", { ...answer, reason: wait.reason });
+  res.status(422).json({ error: "provisioning_refused", reason: wait.reason });
+}
+
 function serviceRouteConfigured<T>(res: Response, route: string, dependency: T | null): dependency is T {
   if (dependency !== null) return true;
   logger.error("gateway provisioning route called while the platform is not configured with the provisioning service", { route });
@@ -463,7 +480,7 @@ function installServiceProvisioningRoutes(router: Router, deps: ResolvedFleetBro
     await runBrokered(res, async () => {
       const answer = await serviceProvisioningReadiness(assigned.uid, legacyProvisioning, store);
       if (!answer.ready) {
-        respondProvisioningPending(res, { route: "provisioning-readiness", uid: assigned.uid }, answer);
+        respondServiceProvisioning(res, { route: "provisioning-readiness", uid: assigned.uid }, answer);
         return;
       }
       res.status(204).end();
@@ -483,7 +500,7 @@ function installServiceProvisioningRoutes(router: Router, deps: ResolvedFleetBro
     await runBrokered(res, async () => {
       const answer = await registerServiceGitKey(provisioningGitKeys, assigned.uid, assigned.bound.gatewayId, publicKey.trim());
       if (!answer.ready) {
-        respondProvisioningPending(res, { route: "git-key", uid: assigned.uid }, answer);
+        respondServiceProvisioning(res, { route: "git-key", uid: assigned.uid }, answer);
         return;
       }
       res.status(204).end();
