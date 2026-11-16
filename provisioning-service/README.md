@@ -67,6 +67,12 @@ permission to create TokenReviews.
 
 ## Git keys
 
+No caller puts or deletes a GitKey yet. A row is keyed by user and gateway id,
+but a shared gateway rolls with a surge, so for a while two pods of one gateway
+each hold their own key for the same user. Until the row's holder is a pod, the
+platform API registers and releases each pod's key directly on the git host,
+under a title per pod, after the service reports the user's git side ready.
+
 Keys registered by the earlier path carry another title. When a GitKey is put
 and the user's own git account already holds the identical public key under a
 managed title the service does not know, the service adopts it: it removes that
