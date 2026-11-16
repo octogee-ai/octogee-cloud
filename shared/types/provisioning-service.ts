@@ -236,5 +236,5 @@ export interface ProvisioningErrorBody {
   error: string;
 }
 
-export const PROVISIONING_ROLES = ["writer", "key-writer", "reader", "credential-reader"] as const;
+export const PROVISIONING_ROLES = ["writer", "key-writer", "key-retirer", "reader", "credential-reader"] as const;
 export type ProvisioningRole = (typeof PROVISIONING_ROLES)[number];

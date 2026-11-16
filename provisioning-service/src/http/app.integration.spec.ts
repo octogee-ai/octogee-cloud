@@ -364,6 +364,13 @@ describe.skipIf(!dsn)("the provisioning HTTP API", { timeout: 30_000 }, () => {
       expect((await harness.request("DELETE", "/v1/users/u1/git-keys/gw-1", { token: TOKENS.platformApi, body: { expectedPublicKey: "not a key" } })).status).toBe(400);
     });
 
+    it("lets only the fleet controller release a gateway's git keys, and validates the gateway id", async () => {
+      expect((await harness.request("DELETE", "/v1/gateways/gw-1/git-keys", { token: TOKENS.platformApi })).status).toBe(403);
+      expect((await harness.request("DELETE", "/v1/gateways/gw-1/git-keys", { token: TOKENS.keyWriterOnly })).status).toBe(403);
+      expect((await harness.request("DELETE", "/v1/gateways/gw-1/git-keys", { token: TOKENS.writer })).body).toEqual({ remaining: 0 });
+      expect((await harness.request("DELETE", "/v1/gateways/..%2Fx/git-keys", { token: TOKENS.writer })).status).toBe(400);
+    });
+
     it("releases a git key by its key material, whatever comment the release carries", async () => {
       await harness.request("PUT", "/v1/users/u1/provisioning", { body: { spec: spec("lin") } });
       await harness.request("PUT", "/v1/users/u1/git-keys/gw-1", { token: TOKENS.platformApi, body: { spec: { publicKey: KEY } } });

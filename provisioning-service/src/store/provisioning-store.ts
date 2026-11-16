@@ -390,6 +390,29 @@ export class ProvisioningStore {
       await this.makeKeyWorkDue(client, uid);
     });
   }
+
+  async deleteGatewayGitKeys(gatewayId: string): Promise<{ remaining: number }> {
+    const t = this.db.table;
+    return this.db.write(async (client, bumpVersion) => {
+      const { rows: holders } = await client.query<{ uid: string }>(
+        `SELECT DISTINCT uid FROM ${t("git_keys")} WHERE gateway_id = $1 AND deletion_requested_at IS NULL ORDER BY uid`, [gatewayId]);
+      for (const { uid } of holders) {
+        await client.query(`SELECT 1 FROM ${t("provisionings")} WHERE uid = $1 FOR UPDATE`, [uid]);
+        const held = await client.query(
+          `SELECT 1 FROM ${t("git_keys")} WHERE uid = $1 AND gateway_id = $2 AND deletion_requested_at IS NULL FOR UPDATE`, [uid, gatewayId]);
+        if (held.rowCount === 0) continue;
+        const keyVersion = await bumpVersion(uid);
+        const userVersion = await bumpVersion(uid);
+        await client.query(`UPDATE ${t("git_keys")} SET deletion_requested_at = now(), resource_version = $3 WHERE uid = $1 AND gateway_id = $2`,
+          [uid, gatewayId, keyVersion.toString()]);
+        await client.query(`UPDATE ${t("provisionings")} SET resource_version = $2 WHERE uid = $1`, [uid, userVersion.toString()]);
+        await this.makeKeyWorkDue(client, uid);
+      }
+      const { rows } = await client.query<{ remaining: string }>(
+        `SELECT count(*) AS remaining FROM ${t("git_keys")} WHERE gateway_id = $1`, [gatewayId]);
+      return { remaining: Number(rows[0].remaining) };
+    });
+  }
 }
 
 export type { GitKeyRow, ProvisioningRow };
