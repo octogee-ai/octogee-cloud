@@ -1,0 +1,41 @@
+export const PLACEMENT_REFUSAL_REASONS = [
+    "migration-terminal",
+    "user-held",
+    "shared-drain-superseded",
+    "migration-authority",
+    "target-capacity",
+    "shared-pool-unconfigured",
+    "target-not-shared",
+    "source-not-proven-unavailable",
+    "assignment-changed",
+    "roll-not-eligible",
+    "drain-move-not-supersedable",
+    "fleet-state-changed",
+    "fence-mismatch",
+    "source-recovery-pending",
+    "user-missing",
+    "user-slug-missing",
+    "lease-missing",
+    "gateway-not-owned",
+    "retirement-blocked",
+    "isolated-fence",
+    "retirement-conflict",
+    "sizing-key-changed",
+    "initial-release-conflict",
+];
+export class PlacementPreconditionFailed extends Error {
+    reasonCode;
+    constructor(reasonCode, message) {
+        super(message);
+        this.reasonCode = reasonCode;
+        this.name = "PlacementPreconditionFailed";
+    }
+}
+export class SourceRecoveryPendingError extends PlacementPreconditionFailed {
+    operationId;
+    constructor(operationId) {
+        super("source-recovery-pending", `operation ${operationId} is still recovering its source`);
+        this.operationId = operationId;
+        this.name = "SourceRecoveryPendingError";
+    }
+}

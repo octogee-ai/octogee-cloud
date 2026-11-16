@@ -2,7 +2,8 @@ import type { SizingTier } from "@octogee/shared/types/sizing";
 import { type NormalFleetMutationInput } from "../normal-fleet-mutation.js";
 import type { SizingKeyReader } from "../sizing-key.js";
 import type { PlacementOwnerFence } from "../placement-automation-owner.js";
-import type { PlatformStateStore } from "../platform-state/store.js";
+import type { OperationRecord } from "../platform-state/operations.js";
+import type { PlatformStateStore, PlatformStateTransaction, Stored } from "../platform-state/store.js";
 export declare const ISOLATED_GATEWAY_LIFECYCLE_ACTOR = "glm-controller-disposable-gateway";
 export declare const PLACEMENT_AUTOMATION_ACTOR = "glm-controller-placement-policy";
 export declare const ISOLATED_GATEWAY_ALLOCATION_KIND = "disposable-builder";
@@ -25,8 +26,15 @@ export interface IsolatedLifecycleDeps {
     mutations: LifecycleMutationRunner;
     now(): number;
     log(message: string): void;
+    sourceRecoveryPending(operation: Stored<OperationRecord>): boolean;
 }
 export declare function checkPlacementOwner(input: Pick<IsolatedLifecycleDeps, "store" | "requireOwner">): Promise<void>;
+export interface ActivationSourceRecoveryFence {
+    targetGatewayId: string;
+    generation: number;
+    failedActivationCleanup: boolean;
+}
+export declare function assertActivationSourceRecoveryReleased(input: Pick<IsolatedLifecycleDeps, "sourceRecoveryPending">, transaction: PlatformStateTransaction, fence: ActivationSourceRecoveryFence): Promise<void>;
 export interface AllocateIsolatedGatewayInput {
     uid: string;
     builderSlug: string;

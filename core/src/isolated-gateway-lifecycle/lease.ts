@@ -22,6 +22,7 @@ import {
   type IsolatedLifecycleDeps,
   type LifecycleMode,
   type SizingKeyTransitionInput,
+  assertActivationSourceRecoveryReleased,
 } from "./inputs.js";
 
 export function userAllowsInteractiveAccess(user: PlatformUserRecord): boolean {
@@ -442,7 +443,7 @@ export async function completeActivationLease(
 }
 
 export async function failActivationLease(
-  input: Pick<IsolatedLifecycleDeps, "store" | "now" | "requireOwner">,
+  input: Pick<IsolatedLifecycleDeps, "store" | "now" | "requireOwner" | "sourceRecoveryPending">,
   request: FailActivationLeaseInput,
   mode: LifecycleMode = "apply",
 ): Promise<void> {
@@ -465,6 +466,11 @@ export async function failActivationLease(
       }
       throw new IsolatedGatewayFenceError(`activation lease for ${request.uid} changed before failure cleanup`);
     }
+    await assertActivationSourceRecoveryReleased(input, transaction, {
+      targetGatewayId: request.targetGatewayId,
+      generation: request.generation,
+      failedActivationCleanup: request.operationId === builderActivateOperationId(request.targetGatewayId, request.generation),
+    });
     if (mode === "plan") return;
     await transaction.users.placementReceipts.create(request.uid, buildPlacementReceipt({
       kind: "activation-failed",

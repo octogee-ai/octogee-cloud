@@ -25,6 +25,6 @@ export declare function advanceActivationLease(input: Pick<IsolatedLifecycleDeps
 export declare function completeActivationLease(input: Pick<IsolatedLifecycleDeps, "store" | "readSizingKey" | "now" | "requireOwner"> & {
     leaseIdFactory?: () => string;
 }, request: CompleteActivationLeaseInput, mode?: LifecycleMode): Promise<void>;
-export declare function failActivationLease(input: Pick<IsolatedLifecycleDeps, "store" | "now" | "requireOwner">, request: FailActivationLeaseInput, mode?: LifecycleMode): Promise<void>;
+export declare function failActivationLease(input: Pick<IsolatedLifecycleDeps, "store" | "now" | "requireOwner" | "sourceRecoveryPending">, request: FailActivationLeaseInput, mode?: LifecycleMode): Promise<void>;
 export declare function nextSizingKeyTransitionLease(user: PlatformUserRecord, sizingKey: string | null, request: SizingKeyTransitionInput, now: number): UserActivationLease;
 export declare function requestSizingKeyTransition(input: Pick<IsolatedLifecycleDeps, "store" | "readSizingKey" | "now" | "requireOwner" | "mutations">, request: SizingKeyTransitionInput, mode?: LifecycleMode): Promise<void>;

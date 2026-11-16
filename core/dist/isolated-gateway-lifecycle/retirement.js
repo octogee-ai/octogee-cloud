@@ -3,7 +3,7 @@ import { projectGatewayDesiredRootForGateway } from "@octogee/shared/types/gatew
 import { isolatedRecoverOperationId, placementRetireOperationId, } from "@octogee/shared/types/isolated-operation-ids";
 import { GatewayRetirementConflictError, claimGatewayRetirementInStore, } from "../gateway-retirement-claim.js";
 import { FenceMismatchError } from "../platform-state/errors.js";
-import { ISOLATED_GATEWAY_ALLOCATION_KIND, PLACEMENT_AUTOMATION_ACTOR, ROLLED_BACK_STATUS, checkPlacementOwner, fieldMap, readMillis, } from "./inputs.js";
+import { ISOLATED_GATEWAY_ALLOCATION_KIND, PLACEMENT_AUTOMATION_ACTOR, ROLLED_BACK_STATUS, checkPlacementOwner, fieldMap, readMillis, assertActivationSourceRecoveryReleased, } from "./inputs.js";
 function nonEmptyString(value) {
     return typeof value === "string" && value.length > 0 ? value : null;
 }
@@ -108,6 +108,9 @@ function newRecoveryReceipt(operationId, request, startedAt) {
         inputUid: request.uid,
     };
 }
+function unreachableRecoveryFence(request) {
+    return { targetGatewayId: request.gatewayId, generation: request.generation, failedActivationCleanup: false };
+}
 export async function checkUnreachableRecoveryFence(input, request) {
     const operationId = isolatedRecoverOperationId(request.gatewayId, request.generation);
     await reserveUnreachableRecovery(input, request, operationId, "plan");
@@ -117,6 +120,7 @@ export async function reserveUnreachableRecovery(input, request, operationId, mo
     await input.store.transaction({ label: "placement-policy.recovery-reserve", readOnly: mode === "plan" }, async (transaction) => {
         await input.requireOwner(transaction);
         const root = await exactRecoveryState(input.now, transaction, request);
+        await assertActivationSourceRecoveryReleased(input, transaction, unreachableRecoveryFence(request));
         const receipt = await transaction.journal.recoveryReceipts.get(operationId);
         if (receipt !== null) {
             assertPendingRecoveryReceiptMatches(receipt, request);
@@ -145,6 +149,7 @@ export async function completeUnreachableRecovery(input, request, operationId) {
     await input.store.transaction({ label: "placement-policy.recovery-complete" }, async (transaction) => {
         await input.requireOwner(transaction);
         await exactRecoveryState(input.now, transaction, request);
+        await assertActivationSourceRecoveryReleased(input, transaction, unreachableRecoveryFence(request));
         const receipt = await transaction.journal.recoveryReceipts.get(operationId);
         if (receipt?.status !== "pending") {
             if (receipt?.status === "succeeded")
@@ -314,6 +319,11 @@ export async function retireOwnedIsolatedGateway(input, request, mode = "apply")
                 }
                 await assertRetirementAuthorityFence(transaction, request);
                 await assertZeroWorkloadRecoveryReceipt(transaction, request);
+                await assertActivationSourceRecoveryReleased(input, transaction, {
+                    targetGatewayId: request.gatewayId,
+                    generation: request.generation,
+                    failedActivationCleanup: request.reason === "activation-failed",
+                });
             },
         });
         return { retired: true, operationId };

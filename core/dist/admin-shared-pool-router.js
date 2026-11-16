@@ -314,6 +314,7 @@ export function addAdminSharedPoolRoutes(router, deps) {
                     now: now(),
                     projectUser: (user) => fleetStateUser(user, deps.provisioningReadiness),
                     readGatewayKubernetes: deps.readGatewayKubernetes,
+                    sourceRecoveryPending: deps.sourceRecoveryPending,
                 }));
                 return;
             }

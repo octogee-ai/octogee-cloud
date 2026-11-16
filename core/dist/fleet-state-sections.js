@@ -61,6 +61,11 @@ function placementUser(user, base) {
         home: user.home,
     };
 }
+export function withSourceRecoveryPending(operation, sourceRecoveryPending) {
+    if (sourceRecoveryPending === undefined || operation.kind !== MIGRATE_USER)
+        return operation;
+    return { ...operation, sourceRecoveryPending: sourceRecoveryPending(operation) };
+}
 function once(load) {
     let loaded;
     return () => {
@@ -114,7 +119,10 @@ export async function readFleetStateSections(store, input) {
             assignments: async () => ({ assignments: await transaction.gateways.assignments.listAll() }),
             runtimes: async () => ({ runtimes: await runtimes() }),
             operations: async () => ({ operations: await transaction.journal.operations.listByStatus(input.operationStatuses) }),
-            migrations: async () => ({ migrations: await transaction.journal.operations.listByKind(MIGRATE_USER, ACTIVE_MIGRATION_STATUSES) }),
+            migrations: async () => {
+                const migrations = await transaction.journal.operations.listByKind(MIGRATE_USER, ACTIVE_MIGRATION_STATUSES);
+                return { migrations: migrations.map((operation) => withSourceRecoveryPending(operation, input.sourceRecoveryPending)) };
+            },
             placementAutomation: async () => ({ placementAutomation: placementAutomationState(await readPlacementAutomationOwnership(transaction)) }),
         };
         const answered = await Promise.all(input.sections.map((section) => loaders[section]()));

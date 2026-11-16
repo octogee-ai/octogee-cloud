@@ -1,7 +1,7 @@
 import type { GatewayAssignment } from "../platform-state/gateways.js";
 import type { PlatformUserRecord } from "../platform-state/users.js";
 import { type AuthoritativeLeaseStatus, type IsolatedLifecycleDeps, type LifecycleMode, type RecoverUnreachableIsolatedGatewayInput, type RetireOwnedIsolatedGatewayInput } from "./inputs.js";
-type RetirementDeps = Pick<IsolatedLifecycleDeps, "store" | "now" | "log" | "requireOwner">;
+type RetirementDeps = Pick<IsolatedLifecycleDeps, "store" | "now" | "log" | "requireOwner" | "sourceRecoveryPending">;
 export type OwnedGatewayRetirement = {
     retired: true;
     operationId: string;

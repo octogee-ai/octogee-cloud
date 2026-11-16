@@ -36,6 +36,7 @@ const accounts = {
 const warn = vi.fn();
 const capabilities: AdminIsolatedCapabilities = {
   namespace: "octogee-test",
+  sourceRecoveryPending: () => false,
   ensureAuthSecret: vi.fn(async () => undefined),
   readGatewayPodDiagnostics: vi.fn(async () => ({ status: "missing", totalPods: 0 })),
 };
@@ -168,6 +169,7 @@ describe("POST /users/:uid/activation-lease/advance", () => {
       code: "precondition-failed",
       reason: `activation lease for ${OWNER} changed`,
       error: `activation lease for ${OWNER} changed`,
+      reasonCode: "isolated-fence",
     });
     expect(storedLease().status).toBe("activating");
     expect(receipts()).toEqual([]);
@@ -273,6 +275,32 @@ describe("POST /users/:uid/activation-lease/fail", () => {
     expect(storedLease().status).toBe("active");
   });
 
+  describe("while the failed activation is still recovering its source", () => {
+    const recovering = { sourceRecoveryPending: (operation: { id: string; schedulerHandoffReleased?: unknown }) =>
+      operation.id === ACTIVATION && operation.schedulerHandoffReleased === false };
+    const failVia = (body: Data, query = "") =>
+      request(app(recovering)).post(`/users/${OWNER}/activation-lease/fail${query}`).send(body);
+    const activation = (released: boolean) => ({ ...migration({ uid: OWNER }), status: "failed", completedAt: 3, schedulerHandoffReleased: released });
+
+    it.each(["", "?dryRun=true"])("refuses with source-recovery-pending (query %j) and leaves the lease activating", async (query) => {
+      seed({ [`users/${OWNER}`]: user("shared-blue", lease()), [`glmOperations/${ACTIVATION}`]: activation(false) });
+
+      const res = await failVia(failure, query).expect(409);
+
+      expect(res.body).toMatchObject({ code: "precondition-failed", reasonCode: "source-recovery-pending", error: `operation ${ACTIVATION} is still recovering its source` });
+      expect(storedLease().status).toBe("activating");
+      expect(receipts()).toEqual([]);
+    });
+
+    it("fails the lease once the source recovery is released", async () => {
+      seed({ [`users/${OWNER}`]: user("shared-blue", lease()), [`glmOperations/${ACTIVATION}`]: activation(true) });
+
+      await failVia(failure).expect(200);
+
+      expect(storedLease().status).toBe("failed");
+    });
+  });
+
   it("answers 400 and journals nothing for an operation id that is not the lease's", async () => {
     const res = await fail({ ...failure, operationId: `builder-activate-${TARGET}-g2` }).expect(400);
 
@@ -348,7 +376,45 @@ describe("POST /isolated-gateways/:id/retire-owned", () => {
 
   it("refuses a gateway owned by someone else", async () => {
     seed({ [`gateways/${TARGET}`]: isolatedRoot({ ownerUid: "uid-bob" }) });
-    await retire(body).expect(409).expect((res) => expect(res.body.reason).toBe(`gateway ${TARGET} is not owned by ${OWNER}`));
+    await retire(body).expect(409).expect((res) => expect(res.body).toMatchObject({
+      reason: `gateway ${TARGET} is not owned by ${OWNER}`, reasonCode: "gateway-not-owned",
+    }));
+  });
+
+  it("answers retirement-blocked when a retirement fence fails", async () => {
+    seed({ [`users/${OWNER}`]: user("shared-blue", lease({ status: "parked" })), [`gateways/${TARGET}`]: isolatedRoot() });
+
+    const res = await retire({ ...body, leaseId: "lease-two" }).expect(409);
+
+    expect(res.body.reasonCode).toBe("retirement-blocked");
+  });
+
+  describe("for a failed activation still recovering its source", () => {
+    const recovering = { sourceRecoveryPending: (operation: { id: string; schedulerHandoffReleased?: unknown }) =>
+      operation.id === ACTIVATION && operation.schedulerHandoffReleased === false };
+    const retireVia = (query = "") => request(app(recovering)).post(`/isolated-gateways/${TARGET}/retire-owned${query}`)
+      .send({ ...body, reason: "activation-failed" });
+    const activation = (released: boolean) => ({ ...migration({ uid: OWNER }), status: "failed", completedAt: 3, schedulerHandoffReleased: released });
+
+    it.each(["", "?dryRun=true"])("refuses with source-recovery-pending (query %j) and claims nothing", async (query) => {
+      seed({ [`users/${OWNER}`]: user("shared-blue", lease({ status: "failed" })), [`gateways/${TARGET}`]: isolatedRoot(),
+        [`glmOperations/${ACTIVATION}`]: activation(false) });
+
+      const res = await retireVia(query).expect(409);
+
+      expect(res.body).toMatchObject({ code: "precondition-failed", reasonCode: "source-recovery-pending" });
+      expect(docs.get(`gateways/${TARGET}`)?.desiredStatus).toBe("paused");
+      expect(docs.has(`glmOperations/${RETIREMENT}`)).toBe(false);
+    });
+
+    it("retires once the source recovery is released", async () => {
+      seed({ [`users/${OWNER}`]: user("shared-blue", lease({ status: "failed" })), [`gateways/${TARGET}`]: isolatedRoot(),
+        [`glmOperations/${ACTIVATION}`]: activation(true) });
+
+      await retireVia().expect(200);
+
+      expect(docs.get(`gateways/${TARGET}`)?.desiredStatus).toBe("retired");
+    });
   });
 
   it.each([
@@ -578,6 +644,18 @@ describe("POST /isolated-gateways/:id/recover-unreachable", () => {
     expect(receipt()).toMatchObject({ status: "succeeded", recoveryReceipt: { schemaVersion: 1, pods: 0 } });
   });
 
+  it.each(["", "?dryRun=true"])("refuses with source-recovery-pending (query %j) while the failed activation recovers its source", async (query) => {
+    docs.set(`glmOperations/${ACTIVATION}`, { ...migration({ uid: OWNER }), status: "failed", completedAt: 3, schedulerHandoffReleased: false });
+    const recovering = { sourceRecoveryPending: (operation: { id: string; schedulerHandoffReleased?: unknown }) =>
+      operation.id === ACTIVATION && operation.schedulerHandoffReleased === false };
+
+    const res = await request(app(recovering)).post(`/isolated-gateways/${TARGET}/recover-unreachable${query}`).send(body).expect(409);
+
+    expect(res.body).toMatchObject({ code: "precondition-failed", reasonCode: "source-recovery-pending" });
+    expect(docs.get(`gateways/${TARGET}`)?.desiredStatus).toBe("running");
+    expect(receipt()).toBeNull();
+  });
+
   it("answers precondition-failed and writes nothing when the reservation fence fails", async () => {
     const res = await recover({ ...body, authoritativeGatewayId: "shared-green" }).expect(409);
 
@@ -716,6 +794,7 @@ describe("the verbs express every in-process lease call", () => {
       mutations: unauditedLifecycleMutations,
       now: () => 50_000,
       log: vi.fn(),
+      sourceRecoveryPending: () => false,
     }, body);
 
     expect(stored(docs)).toEqual(stored(twin));

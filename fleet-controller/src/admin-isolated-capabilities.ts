@@ -6,6 +6,7 @@ import {
   type HomeCapabilities,
   type HomeCapabilitiesFactory,
 } from "@octogee/core/isolated-gateway-lifecycle";
+import { adminPlacementCapabilities } from "./admin-placement-capabilities.js";
 import { createAuthSecretEnsurer, defaultRandomTokenHex, type KubectlSubprocess } from "./auth-secret-ensurer.js";
 import { spawnKubectl } from "./fleet-ingress.js";
 import type { createHomeCopyClient } from "./lib/compute-home-copy.js";
@@ -90,6 +91,7 @@ export function adminIsolatedCapabilities(inputs: AdminIsolatedCapabilityInputs)
   });
   return {
     namespace: inputs.namespace,
+    sourceRecoveryPending: adminPlacementCapabilities.schedulerHandoffAwaitingRelease,
     ensureAuthSecret: (input) => authSecrets.ensureAuthSecret(input),
     readGatewayPodDiagnostics,
     ...(inputs.userHome ? { home: adminHomeCapabilities(inputs.userHome) } : {}),

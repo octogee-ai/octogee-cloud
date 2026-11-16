@@ -36,7 +36,7 @@ function fixture() {
   return { user, source, assignment, request, writes, lease, docs, audited,
     setRace: (fn: () => void) => { race = fn; },
     setTier: (next: string) => { tier = next; },
-    run: () => refreshRequestedAllocation({ store, readSizingKey, requireOwner: async () => undefined, mutations, now: () => 1000, log: vi.fn() }, request) };
+    run: () => refreshRequestedAllocation({ store, readSizingKey, requireOwner: async () => undefined, mutations, now: () => 1000, log: vi.fn(), sourceRecoveryPending: () => false }, request) };
 }
 
 describe("requested isolated allocation refresh", () => {
