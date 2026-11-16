@@ -28,7 +28,7 @@ export interface UserSnapshot {
         primary: string;
         fallbacks: string[];
     };
-    provisioning?: "service";
+    provisionedBy?: "service";
     systemConfig?: {
         byot?: {
             provider?: string;

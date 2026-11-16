@@ -42,7 +42,7 @@ export interface UserSnapshot {
   // The operator's user agent default dial: the {primary, fallbacks} a
   // catalog agent with no explicit pick converges to at mount-time reassert.
   builderAgentDefault?: { primary: string; fallbacks: string[] };
-  provisioning?: "service";
+  provisionedBy?: "service";
   systemConfig?: {
     byot?: { provider?: string; baseUrl?: string; model?: string };
     agentModels?: AgentModelSelections;
@@ -917,7 +917,7 @@ type WorkspaceProvisioning = Awaited<ReturnType<typeof provisionWorkspace>>;
 type ChatProvisioning = Awaited<ReturnType<typeof provisionMattermostIfMissing>>;
 
 function serviceProvisioningFor(adapter: UserLifecycleAdapter, snapshot: UserSnapshot): ServiceProvisioningAdapter | null {
-  if (snapshot.provisioning !== "service") return null;
+  if (snapshot.provisionedBy !== "service") return null;
   if (!adapter.provisioningService) {
     throw new Error(`[add:${snapshot.slug}] the platform provisions this user through the provisioning service, but this gateway has no provisioning service adapter`);
   }
@@ -1640,7 +1640,7 @@ async function releaseUnmountedGiteaKey(
   const { slug } = snapshot;
   const pubKey = adapter.readLocalUserPubKey(slug);
   if (pubKey === null) return false;
-  const service = snapshot.provisioning === "service" ? adapter.provisioningService : undefined;
+  const service = snapshot.provisionedBy === "service" ? adapter.provisioningService : undefined;
   try {
     if (service?.holdsServiceGitKey(slug)) await service.releaseGitKey(snapshot.uid);
     else await adapter.gitHost.releaseKey(slug, pubKey);

@@ -2170,7 +2170,7 @@ function installSnapshotRoutes(
       res.status(404).json({ error: "not_found" });
       return;
     }
-    res.json({ user: deps.legacyProvisioning ? { ...snapshot, provisioning: "service" } : snapshot });
+    res.json({ user: deps.legacyProvisioning ? { ...snapshot, provisionedBy: "service" } : snapshot });
   });
 
   router.post("/reconcile-project-coach-membership", async (req, res) => {

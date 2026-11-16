@@ -128,7 +128,7 @@ describe("POST /internal/fleet/user-snapshot", () => {
 
     const response = await post(app, "user-snapshot").expect(200);
 
-    expect(response.body.user.provisioning).toBe("service");
+    expect(response.body.user.provisionedBy).toBe("service");
   });
 
   it("leaves the gateway on its own provisioning path without the service", async () => {
@@ -136,7 +136,7 @@ describe("POST /internal/fleet/user-snapshot", () => {
 
     const response = await post(app, "user-snapshot").expect(200);
 
-    expect(response.body.user).not.toHaveProperty("provisioning");
+    expect(response.body.user).not.toHaveProperty("provisionedBy");
   });
 });
 

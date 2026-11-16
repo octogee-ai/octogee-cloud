@@ -3278,7 +3278,7 @@ describe("addUserToGateway — through the provisioning service", () => {
   });
 
   it("waits for chat and git, registers its own key through the service and performs no chat or git side effect", async () => {
-    const state = makeState(snap({ provisioning: "service", mattermostUserId: "mm-user" }), emptyDisk());
+    const state = makeState(snap({ provisionedBy: "service", mattermostUserId: "mm-user" }), emptyDisk());
     const { adapter, initPaths, loads } = withService(state);
 
     const result = await addUserToGateway(adapter, "uid-test");
@@ -3296,7 +3296,7 @@ describe("addUserToGateway — through the provisioning service", () => {
   });
 
   it("re-mounts a user with a workspace already on disk without asking for any repository", async () => {
-    const state = makeState(mountedSnapshot({ provisioning: "service" }), mountedDisk());
+    const state = makeState(mountedSnapshot({ provisionedBy: "service" }), mountedDisk());
     const { adapter, service } = withService(state);
 
     await addUserToGateway(adapter, "uid-test");
@@ -3307,7 +3307,7 @@ describe("addUserToGateway — through the provisioning service", () => {
   });
 
   it("logs each reason it waits for, backs off, and continues once the service is ready", async () => {
-    const state = makeState(snap({ provisioning: "service", mattermostUserId: "mm-user" }), emptyDisk());
+    const state = makeState(snap({ provisionedBy: "service", mattermostUserId: "mm-user" }), emptyDisk());
     const answers = [pending("ChatTeamFailed", 0), pending("GitRepositoryFailed", 7_000), READY];
     const { adapter, sleeps } = withService(state, { readiness: () => answers.shift()! });
 
@@ -3320,7 +3320,7 @@ describe("addUserToGateway — through the provisioning service", () => {
   });
 
   it("caps a long Retry-After so a recovered service is noticed", async () => {
-    const state = makeState(snap({ provisioning: "service", mattermostUserId: "mm-user" }), emptyDisk());
+    const state = makeState(snap({ provisionedBy: "service", mattermostUserId: "mm-user" }), emptyDisk());
     const answers = [pending("ProvisioningServiceUnavailable", 300_000), READY];
     const { adapter, sleeps } = withService(state, { readiness: () => answers.shift()! });
 
@@ -3330,7 +3330,7 @@ describe("addUserToGateway — through the provisioning service", () => {
   });
 
   it("fails the mount with the last reason once the wait exceeds its bound, before any key, checkout or config patch", async () => {
-    const state = makeState(snap({ provisioning: "service" }), emptyDisk());
+    const state = makeState(snap({ provisionedBy: "service" }), emptyDisk());
     const { adapter, sleeps } = withService(state, { readiness: () => pending("GitOwnerFailed") });
 
     await expect(addUserToGateway(adapter, "uid-test")).rejects.toThrow(
@@ -3344,7 +3344,7 @@ describe("addUserToGateway — through the provisioning service", () => {
   });
 
   it("fails the mount when the service does not register the key within its bound", async () => {
-    const state = makeState(snap({ provisioning: "service", mattermostUserId: "mm-user" }), emptyDisk());
+    const state = makeState(snap({ provisionedBy: "service", mattermostUserId: "mm-user" }), emptyDisk());
     const { adapter, service } = withService(state, { registerGitKey: () => pending("GitKeyFailed") });
 
     await expect(addUserToGateway(adapter, "uid-test")).rejects.toThrow(
@@ -3356,7 +3356,7 @@ describe("addUserToGateway — through the provisioning service", () => {
   });
 
   it("stops waiting when the mount is aborted", async () => {
-    const state = makeState(snap({ provisioning: "service" }), emptyDisk());
+    const state = makeState(snap({ provisionedBy: "service" }), emptyDisk());
     const { adapter, service } = withService(state, { readiness: () => pending("ChatUserFailed") });
     delete service.sleep;
     delete service.now;
@@ -3379,7 +3379,7 @@ describe("addUserToGateway — through the provisioning service", () => {
   });
 
   it("refuses a service-provisioned user on a gateway without a provisioning service adapter", async () => {
-    const state = makeState(snap({ provisioning: "service" }), emptyDisk());
+    const state = makeState(snap({ provisionedBy: "service" }), emptyDisk());
 
     await expect(addUserToGateway(makeAdapter(state), "uid-test")).rejects.toThrow("has no provisioning service adapter");
     for (const call of LEGACY_REMOTE_CALLS) expect(state.calls).not.toContain(call);
@@ -3388,7 +3388,7 @@ describe("addUserToGateway — through the provisioning service", () => {
 
 describe("removeUserFromGateway — through the provisioning service", () => {
   function serviceRemoval(holds: boolean) {
-    const state = makeState(mountedSnapshot({ provisioning: "service" }), mountedDisk());
+    const state = makeState(mountedSnapshot({ provisionedBy: "service" }), mountedDisk());
     const adapter = makeAdapter(state);
     const releaseGitKey = vi.fn(async () => {
       state.calls.push("service:releaseGitKey");
