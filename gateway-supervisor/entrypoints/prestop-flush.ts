@@ -15,6 +15,7 @@ import {
   type FleetBrokerClient,
 } from "../lib/fleet-broker-client.js";
 import { runGatewayPreStopFlush } from "../lib/gateway-prestop-flush.js";
+import { markPreStopStarted } from "../lib/prestop-marker.js";
 import {
   listLocalUserPubKeys,
   listOnDiskUserSlugs,
@@ -143,7 +144,19 @@ export function createPreStopGiteaKeyRelease(
   };
 }
 
+export function announcePreStopToSupervisor(mark: () => void = markPreStopStarted): void {
+  try {
+    mark();
+  } catch (err) {
+    log(
+      `[prestop-flush] could not tell the supervisor that the flush started, so its key resync may register a released key again: ${err instanceof Error ? err.message : String(err)}`,
+      { status: "failed" },
+    );
+  }
+}
+
 async function main(): Promise<void> {
+  announcePreStopToSupervisor();
   const { builderSlug, gatewayClass, gatewayId } = resolvePreStopFlushConfig();
   const brokerClient = createFleetBrokerClient(gatewayId);
   await brokerClient

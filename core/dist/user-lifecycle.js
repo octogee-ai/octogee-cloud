@@ -540,7 +540,7 @@ async function registerFirstTimeSshKey(adapter, slug) {
     }
     adapter.log(`[add:${slug}] SSH key + Gitea user registered`);
 }
-async function resyncSshKeyIfDrifted(adapter, slug, reclaimExistingSshKey) {
+export async function resyncSshKeyIfDrifted(adapter, slug, reclaimExistingSshKey) {
     const localPub = adapter.readLocalUserPubKey(slug);
     if (localPub === null) {
         await adapter.giveUpUserGitKey(slug);

@@ -349,6 +349,7 @@ export declare function cloneProjectsFromSnapshot(adapter: UserLifecycleAdapter,
     steps: AddUserStep[];
     pending: string[];
 }>;
+export declare function resyncSshKeyIfDrifted(adapter: Pick<UserLifecycleAdapter, "readLocalUserPubKey" | "giveUpUserGitKey" | "gitHost" | "log">, slug: string, reclaimExistingSshKey: boolean): Promise<AddUserStep[]>;
 type ProjectCheckoutAdapter = Pick<UserLifecycleAdapter, "listProjectsNeedingClone" | "cloneProjectRepo" | "seedDeferredProjectWorkspace" | "isIsolatedGateway" | "isConfiguredUser" | "log">;
 export interface CloneMissingProjectsOptions {
     githubCheckouts?: "hydrate-here" | "defer";

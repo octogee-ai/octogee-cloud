@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+
 import type { GitRepoRole, ManagedGitHost } from "@octogee/core/git-host";
 import { MIGRATION_QUIESCE_TIMEOUT_MS } from "@octogee/shared/types/fleet-controller";
 
@@ -59,6 +61,25 @@ function failRegistration(message: string, cause?: unknown): never {
   throw new Error(message, cause === undefined ? undefined : { cause });
 }
 
+export class KeyRegistrationRefused extends Error {
+  constructor(message: string, readonly reason: string) {
+    super(message);
+    this.name = "KeyRegistrationRefused";
+  }
+}
+
+const refusalsLoggedByCaller = new AsyncLocalStorage<true>();
+
+export function withQuietRefusals<T>(work: () => Promise<T>): Promise<T> {
+  return refusalsLoggedByCaller.run(true, work);
+}
+
+function refuseRegistration(slug: string, reason: string): never {
+  const refusal = new KeyRegistrationRefused(`[git] ${slug}: the platform refused to register this pod's key (reason ${reason}); no retry can finish it`, reason);
+  if (refusalsLoggedByCaller.getStore() !== true) log(refusal.message, { status: "failed" });
+  throw refusal;
+}
+
 async function requestServiceHeldKey(path: string, body: { slug: string }, timeoutMs: number): Promise<Response> {
   try {
     return await internalFetch(`${baseUrl()}${path}`, {
@@ -87,7 +108,7 @@ async function postServiceHeldKey(body: { slug: string; pubKey: string; serviceH
     const answer = await notRegisteredAnswer(resp);
     if (resp.status === 422) {
       if (answer.error !== "provisioning_refused") throw new Error(`gitea-broker POST ${path} → 422 ${answer.reason}`);
-      return failRegistration(`[git] ${body.slug}: the platform refused to register this pod's key (reason ${answer.reason}); no retry can finish it`);
+      return refuseRegistration(body.slug, answer.reason);
     }
     const waited = Date.now() - startedAt;
     const backoff = SERVICE_HELD_KEY_POLL_MIN_MS * 2 ** Math.min(round, 4);

@@ -1171,8 +1171,8 @@ async function registerFirstTimeSshKey(
   adapter.log(`[add:${slug}] SSH key + Gitea user registered`);
 }
 
-async function resyncSshKeyIfDrifted(
-  adapter: UserLifecycleAdapter,
+export async function resyncSshKeyIfDrifted(
+  adapter: Pick<UserLifecycleAdapter, "readLocalUserPubKey" | "giveUpUserGitKey" | "gitHost" | "log">,
   slug: string,
   reclaimExistingSshKey: boolean,
 ): Promise<AddUserStep[]> {

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  announcePreStopToSupervisor,
   createPreStopGiteaKeyRelease,
   createPreStopSessionQuiesce,
   createPreStopSystemConfigFlush,
@@ -7,6 +8,22 @@ import {
   resolvePreStopFlushConfig,
 } from "../entrypoints/prestop-flush.js";
 import { withUserClaim } from "./helpers/user-claim.js";
+
+describe("prestop-flush announcement to the supervisor", () => {
+  it("marks that the flush started", () => {
+    const mark = vi.fn();
+
+    announcePreStopToSupervisor(mark);
+
+    expect(mark).toHaveBeenCalledOnce();
+  });
+
+  it("goes on with the flush when the mark cannot be written", () => {
+    expect(() => announcePreStopToSupervisor(() => {
+      throw new Error("read-only file system");
+    })).not.toThrow();
+  });
+});
 
 describe("prestop-flush entrypoint config", () => {
   it("normalizes the local gateway id to default", () => {

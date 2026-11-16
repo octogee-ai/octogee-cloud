@@ -11,11 +11,13 @@ import express from "express";
 import { rateLimit } from "express-rate-limit";
 import { workspaceIdentityReady } from "@octogee/core/openclaw-workspace-bootstrap";
 import { OpenclawWireError } from "@octogee/shared/types/openclaw-wire-core";
+import * as os from "node:os";
 import * as path from "node:path";
 import { agentIdsFromConfig } from "./byosub-restore.js";
 import { OPENCLAW_DIR, readOpenClawConfig } from "./config.js";
 import { readActivationManifest } from "./migration-activation-manifest.js";
 import { withUserRemoval } from "./user-removal-exclusion.js";
+import { startGitKeyResyncForPod, type GitKeyResyncRoster } from "./git-key-resync.js";
 import {
   materializeBrokerProfilesForAgents,
   openAiCatalogInputForBaseUrl,
@@ -1566,6 +1568,27 @@ async function mountUserWithPublication(input: {
   }
 }
 
+function withGitKeyResync(
+  startReconcile: () => () => void,
+  adapter: UserLifecycleAdapter,
+  roster: GitKeyResyncRoster | null,
+): () => () => void {
+  if (roster === null) return startReconcile;
+  return () => {
+    const stopReconcile = startReconcile();
+    const stopKeyResync = startGitKeyResyncForPod({
+      adapter,
+      mountedUsers: () => getMountObservedSlugs(adapter),
+      roster,
+      podId: process.env.POD_UID?.trim() || os.hostname(),
+    });
+    return () => {
+      stopKeyResync();
+      stopReconcile();
+    };
+  };
+}
+
 function startMaybeReconcileLoop(params: {
   provision: boolean;
   opts: StartFleetOptions;
@@ -1656,7 +1679,7 @@ function startMaybeReconcileLoop(params: {
     { userSource, appliedFp, cloneRetry, persistAppliedFp },
   );
   if (userSource) wrappedAdapter.recordAppliedFingerprint = convergenceHooks.recordApplied;
-  const start = () => startReconcileLoop({
+  const startReconcile = () => startReconcileLoop({
     gatewayId: opts.gatewayId,
     intervalMs: opts.subscribeDesiredChanges ? 60_000 : RECONCILE_LOOP_INTERVAL_MS,
     subscribe: opts.subscribeDesiredChanges,
@@ -1769,6 +1792,7 @@ function startMaybeReconcileLoop(params: {
       invalidateConfigRemovedSlug, onLocalStateRemoved,
     }),
   });
+  const start = withGitKeyResync(startReconcile, wrappedAdapter, userSource ? { ensureAllowed, desiredFingerprints: desiredFp, appliedFingerprints: appliedFp } : null);
   return startAfterSurgeReadiness({
     released: surgeReadiness.released,
     start,
