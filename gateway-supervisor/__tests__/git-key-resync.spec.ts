@@ -40,7 +40,7 @@ const {
 } = await import("../lib/git-key-resync.js");
 
 const { pendingCloneAppliedFingerprint } = await import("../lib/pending-clone-fingerprint.js");
-const { clearPreStopStarted, markPreStopStarted, preStopStarted } = await import("../lib/prestop-marker.js");
+const { clearPreStopStarted, markPreStopStarted, podPreStopMarker, preStopStarted } = await import("../lib/prestop-marker.js");
 
 const HOLDER = "shared-blue/octogee-gateway-shared-blue-5bc59-p946t";
 
@@ -279,7 +279,7 @@ describe("periodic git key resync for mounted users", () => {
     const host = gitHostBehindThePlatform();
     generateUserSshKey("ada");
     generateUserSshKey("lin");
-    const marker = path.join(TEST_ROOT, "prestop-started");
+    const marker = { file: path.join(TEST_ROOT, "prestop-started"), podId: "pod-a" };
     const { pass } = resyncFor(["ada", "lin"], () => true, () => preStopStarted(marker));
     markPreStopStarted(marker);
 
@@ -291,6 +291,25 @@ describe("periodic git key resync for mounted users", () => {
     await expect(pass()).resolves.toBe("ran");
 
     expect(host.registrations.map(({ slug }) => slug)).toEqual(["ada", "lin"]);
+  });
+
+  it("ignores a prestop marker another pod wrote, such as one carried in with a home directory", async () => {
+    const host = gitHostBehindThePlatform();
+    generateUserSshKey("lin");
+    const file = path.join(TEST_ROOT, "prestop-carried-in");
+    markPreStopStarted({ file, podId: "pod-that-stopped" });
+    const { pass } = resyncFor(["lin"], () => true, () => preStopStarted({ file, podId: "pod-a" }));
+
+    await expect(pass()).resolves.toBe("ran");
+
+    expect(host.registrations.map(({ slug }) => slug)).toEqual(["lin"]);
+    expect(preStopStarted({ file, podId: "pod-that-stopped" })).toBe(true);
+    fs.rmSync(file);
+  });
+
+  it("keeps the marker outside the shared temp directory, in the pod's own state directory", () => {
+    expect(podPreStopMarker().file).toBe(path.join(TEST_ROOT, "prestop-started"));
+    expect(podPreStopMarker().podId).not.toBe("");
   });
 
   it("stops a running pass before the next user when the pod's prestop flush starts", async () => {
@@ -342,9 +361,9 @@ describe("the pod's git key resync", () => {
     const host = gitHostBehindThePlatform();
     generateUserSshKey("ada");
     generateUserSshKey("lin");
-    const marker = path.join(TEST_ROOT, "prestop-left-behind");
-    markPreStopStarted(marker);
     const podId = "octogee-gateway-shared-blue-5bc59-p946t";
+    const marker = { file: path.join(TEST_ROOT, "prestop-left-behind"), podId };
+    markPreStopStarted(marker);
 
     const stop = startGitKeyResyncForPod({
       adapter: { readLocalUserPubKey, giveUpUserGitKey: vi.fn(async () => {}), gitHost: brokeredGitHost, log, userMigratingIn: () => false },
@@ -354,8 +373,7 @@ describe("the pod's git key resync", () => {
         desiredFingerprints: new Map([["ada", "fp-1"], ["lin", "fp-1"]]),
         appliedFingerprints: new Map([["ada", "fp-1"], ["lin", "fp-1"]]),
       },
-      podId,
-      prestopMarker: marker,
+      marker,
     });
 
     expect(preStopStarted(marker)).toBe(false);

@@ -144,7 +144,7 @@ export function createPreStopGiteaKeyRelease(
   };
 }
 
-export function announcePreStopToSupervisor(mark: () => void = markPreStopStarted): void {
+export function announcePreStopToSupervisor(mark: () => void = () => markPreStopStarted()): void {
   try {
     mark();
   } catch (err) {

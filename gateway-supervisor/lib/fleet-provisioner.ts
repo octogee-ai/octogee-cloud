@@ -11,13 +11,13 @@ import express from "express";
 import { rateLimit } from "express-rate-limit";
 import { workspaceIdentityReady } from "@octogee/core/openclaw-workspace-bootstrap";
 import { OpenclawWireError } from "@octogee/shared/types/openclaw-wire-core";
-import * as os from "node:os";
 import * as path from "node:path";
 import { agentIdsFromConfig } from "./byosub-restore.js";
 import { OPENCLAW_DIR, readOpenClawConfig } from "./config.js";
 import { readActivationManifest } from "./migration-activation-manifest.js";
 import { withUserRemoval } from "./user-removal-exclusion.js";
 import { startGitKeyResyncForPod, type GitKeyResyncRoster } from "./git-key-resync.js";
+import { podPreStopMarker } from "./prestop-marker.js";
 import {
   materializeBrokerProfilesForAgents,
   openAiCatalogInputForBaseUrl,
@@ -1580,7 +1580,7 @@ function withGitKeyResync(
       adapter,
       mountedUsers: () => getMountObservedSlugs(adapter),
       roster,
-      podId: process.env.POD_UID?.trim() || os.hostname(),
+      marker: podPreStopMarker(),
     });
     return () => {
       stopKeyResync();

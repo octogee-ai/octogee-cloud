@@ -4,7 +4,7 @@ import { resyncSshKeyIfDrifted, type UserLifecycleAdapter } from "@octogee/core/
 
 import { KeyRegistrationRefused, withQuietRefusals } from "./gitea-admin-broker-client.js";
 import { pendingCloneOnlyStale } from "./pending-clone-fingerprint.js";
-import { clearPreStopStarted, preStopStarted } from "./prestop-marker.js";
+import { clearPreStopStarted, preStopStarted, type PreStopMarker } from "./prestop-marker.js";
 
 export const GIT_KEY_RESYNC_INTERVAL_MS = 10 * 60_000;
 
@@ -142,15 +142,14 @@ export interface PodGitKeyResync {
   adapter: GitKeyResyncDeps["adapter"] & Pick<UserLifecycleAdapter, "userMigratingIn">;
   mountedUsers: () => readonly string[];
   roster: GitKeyResyncRoster;
-  podId: string;
-  prestopMarker?: string;
+  marker: PreStopMarker;
   intervalMs?: number;
 }
 
 export function startGitKeyResyncForPod(input: PodGitKeyResync): () => void {
-  const { adapter, prestopMarker, intervalMs = GIT_KEY_RESYNC_INTERVAL_MS } = input;
+  const { adapter, marker, intervalMs = GIT_KEY_RESYNC_INTERVAL_MS } = input;
   try {
-    clearPreStopStarted(prestopMarker);
+    clearPreStopStarted(marker);
   } catch (error) {
     adapter.log(
       `[git-key-resync] a prestop marker left by an earlier container could not be removed, so no key is resynced on this pod: ${describe(error)}`,
@@ -161,8 +160,15 @@ export function startGitKeyResyncForPod(input: PodGitKeyResync): () => void {
     adapter,
     mountedUsers: input.mountedUsers,
     settled: settledInRoster(input.roster, adapter.userMigratingIn),
-    podStopping: () => preStopStarted(prestopMarker),
+    podStopping: () => {
+      try {
+        return preStopStarted(marker);
+      } catch (error) {
+        adapter.log(`[git-key-resync] the prestop marker could not be read, so no key is resynced: ${describe(error)}`, { status: "failed" });
+        return true;
+      }
+    },
     log: adapter.log,
   });
-  return startGitKeyResync(pass, { intervalMs, jitterMs: gitKeyResyncJitterMs(input.podId, intervalMs) });
+  return startGitKeyResync(pass, { intervalMs, jitterMs: gitKeyResyncJitterMs(marker.podId, intervalMs) });
 }
