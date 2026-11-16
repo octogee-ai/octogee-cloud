@@ -2,6 +2,7 @@ import type { GitRepositoryOutput } from "@octogee/shared/types/provisioning-ser
 import type { ProvisioningCredential, ProvisioningCredentialName } from "@octogee/shared/types/provisioning-service";
 import type { ChatAgentInput, ChatChannels, ChatChannelsInput, ChatHost, ChatTeamInput, ChatUserInput, IssuedToken } from "./chat-host.js";
 import type { CredentialStore } from "./credential-store.js";
+import { publicKeyIdentity } from "@octogee/core/gitea-naming";
 import type { AuthorizedGitKey, GitHost, GitRepositoryKind } from "./git-host.js";
 import { HostError, type HostErrorKind } from "./host-error.js";
 
@@ -121,11 +122,15 @@ export class FakeChatHost implements ChatHost {
   }
 }
 
+export interface FakeStoredGitKey extends AuthorizedGitKey {
+  readonly managed?: false;
+}
+
 export class FakeGitHost implements GitHost {
   readonly host = new FakeHostCore();
   readonly owners = new Set<string>();
   readonly repositories = new Map<string, GitRepositoryOutput>();
-  readonly keys = new Map<string, AuthorizedGitKey[]>();
+  readonly keys = new Map<string, FakeStoredGitKey[]>();
 
   ensureOwner(input: { slug: string; knownOwner?: string }, signal: AbortSignal): Promise<{ owner: string }> {
     return this.host.call("ensureOwner", input.slug, signal, () => {
@@ -148,7 +153,7 @@ export class FakeGitHost implements GitHost {
   }
 
   listKeys(input: { owner: string; holders: string[] }, signal: AbortSignal): Promise<AuthorizedGitKey[]> {
-    return this.host.call("listKeys", input.owner, signal, () => (this.keys.get(input.owner) ?? []).map((key) => ({
+    return this.host.call("listKeys", input.owner, signal, () => (this.keys.get(input.owner) ?? []).filter((key) => key.managed !== false).map((key) => ({
       publicKey: key.publicKey,
       holder: key.holder !== null && input.holders.includes(key.holder) ? key.holder : null,
     })));
@@ -156,18 +161,24 @@ export class FakeGitHost implements GitHost {
 
   registerKey(input: { owner: string; publicKey: string; holder: string }, signal: AbortSignal): Promise<void> {
     return this.host.call("registerKey", input.owner, signal, () => {
-      const elsewhere = [...this.keys].some(([owner, keys]) => owner !== input.owner && keys.some((key) => key.publicKey === input.publicKey));
-      if (elsewhere) throw new HostError("terminal", "register git key: 422 from git host: key content has been used as non-deploy key");
-      const keys = (this.keys.get(input.owner) ?? []).filter((key) => key.publicKey !== input.publicKey || key.holder === input.holder);
-      if (!keys.some((key) => key.publicKey === input.publicKey)) keys.push({ publicKey: input.publicKey, holder: input.holder });
+      const identity = publicKeyIdentity(input.publicKey);
+      const same = (key: FakeStoredGitKey) => publicKeyIdentity(key.publicKey) === identity;
+      const owned = this.keys.get(input.owner) ?? [];
+      const elsewhere = [...this.keys].some(([owner, keys]) => owner !== input.owner && keys.some(same));
+      if (elsewhere || owned.some((key) => same(key) && key.managed === false)) {
+        throw new HostError("terminal", "register git key: 422 from git host: key content has been used as non-deploy key", { code: "key-held-elsewhere" });
+      }
+      const keys = owned.filter((key) => !same(key) || key.holder === input.holder);
+      if (!keys.some(same)) keys.push({ publicKey: input.publicKey, holder: input.holder });
       this.keys.set(input.owner, keys);
     });
   }
 
   releaseKey(input: { owner: string; publicKey: string; holder: string }, signal: AbortSignal): Promise<void> {
     return this.host.call("releaseKey", input.owner, signal, () => {
+      const identity = publicKeyIdentity(input.publicKey);
       const keys = this.keys.get(input.owner) ?? [];
-      this.keys.set(input.owner, keys.filter((key) => !(key.publicKey === input.publicKey && key.holder === input.holder)));
+      this.keys.set(input.owner, keys.filter((key) => !(publicKeyIdentity(key.publicKey) === identity && key.holder === input.holder && key.managed !== false)));
     });
   }
 }

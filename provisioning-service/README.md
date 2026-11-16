@@ -64,9 +64,15 @@ and the user's own git account already holds the identical public key under a
 managed title the service does not know, the service adopts it: it removes that
 key and registers the same key under its own title for the gateway, restoring
 the removed key if the registration fails. A different public key is added
-beside it, and that key is left alone. A key another user's account holds is
-never adopted; the git host refuses it and the row reports `Registered=False`
-with reason `GitKeyFailed`.
+beside it, and that key is left alone. Keys are compared by type and key
+material, never by comment.
+
+A key another user's account holds, or one on the user's own account under a
+title outside the managed prefix (added by hand), is never adopted. The git
+host refuses it, and the row reports `Registered=False` with reason
+`GitKeyHeldElsewhere`; any other refusal reports `GitKeyFailed`. A refused key
+is recorded on its row only: the rest of the user's attempt finishes and the
+user's work is not parked.
 
 Putting an unchanged key whose row is not registered queues idle work again,
 so a row an earlier build refused is retried on the gateway's next put.

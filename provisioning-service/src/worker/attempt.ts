@@ -11,6 +11,7 @@ import type {
 import { applyConditions, type ConditionUpdate } from "../resources/conditions.js";
 import type { ChatHost } from "../hosts/chat-host.js";
 import { LeaseLostError, type CredentialStore } from "../hosts/credential-store.js";
+import { publicKeyIdentity } from "@octogee/core/gitea-naming";
 import type { AuthorizedGitKey, GitHost, GitRepositoryKind } from "../hosts/git-host.js";
 import { HostError, hostErrorKind, type HostErrorKind } from "../hosts/host-error.js";
 import type { Logger } from "../logger.js";
@@ -87,7 +88,9 @@ function readyCondition(chat: ChatResult, git: GitResult): ConditionUpdate<UserP
 function staleKeys(key: GitKeyRow): string[] {
   const candidates = [key.registered_public_key, key.deletion_requested_at ? key.public_key : null];
   const unique = [...new Set(candidates.filter((value): value is string => value !== null))];
-  return key.deletion_requested_at !== null ? unique : unique.filter((value) => value !== key.public_key);
+  if (key.deletion_requested_at !== null) return unique;
+  const wanted = publicKeyIdentity(key.public_key);
+  return unique.filter((value) => publicKeyIdentity(value) !== wanted);
 }
 
 class Attempt {
@@ -330,27 +333,36 @@ class Attempt {
     });
   }
 
-  private async reconcileKeys(owner: string): Promise<void> {
+  private async reconcileKeys(owner: string): Promise<string[]> {
     const present = await this.hostCall("git", "listKeys", () => this.deps.git.listKeys({ owner, holders: this.snapshot.keys.map((key) => key.gateway_id) }, this.signal));
     const failures: string[] = [];
-    let kind: HostErrorKind = "transient";
+    const refused: string[] = [];
     for (const key of this.snapshot.keys) {
       try {
         await this.reconcileKey(owner, key, present);
       } catch (error) {
         if (error instanceof LeaseLostError || this.leaseLost) throw error;
-        failures.push(`${key.gateway_id}: ${message(error)}`);
-        if (hostErrorKind(error) === "terminal") kind = "terminal";
         if (key.deletion_requested_at === null) {
-          await this.writeKeyStatus(key, { type: "Registered", status: "False", reason: "GitKeyFailed", message: message(error) }, key.registered_public_key);
+          const reason = error instanceof HostError && error.code === "key-held-elsewhere" ? "GitKeyHeldElsewhere" : "GitKeyFailed";
+          await this.writeKeyStatus(key, { type: "Registered", status: "False", reason, message: message(error) }, key.registered_public_key);
         }
+        if (hostErrorKind(error) !== "terminal") {
+          failures.push(`${key.gateway_id}: ${message(error)}`);
+          continue;
+        }
+        this.deps.log.error("the git host refused the git key; recorded on the key and the rest of the attempt continues", {
+          uid: this.claim.uid, gatewayId: key.gateway_id, error: message(error),
+        });
+        refused.push(`${key.gateway_id}: ${message(error)}`);
       }
     }
-    if (failures.length) throw new HostError(kind, failures.join("; "));
+    if (failures.length) throw new HostError("transient", failures.join("; "));
+    return refused;
   }
 
   private async reconcileKey(owner: string, key: GitKeyRow, present: AuthorizedGitKey[]): Promise<void> {
-    const has = (publicKey: string) => present.some((existing) => existing.publicKey === publicKey && existing.holder === key.gateway_id);
+    const sameKey = (left: string, right: string) => publicKeyIdentity(left) === publicKeyIdentity(right);
+    const has = (publicKey: string) => present.some((existing) => sameKey(existing.publicKey, publicKey) && existing.holder === key.gateway_id);
     for (const publicKey of staleKeys(key).filter(has)) {
       await this.hostCall("git", "releaseKey", () => this.deps.git.releaseKey({ owner, publicKey, holder: key.gateway_id }, this.signal));
     }
@@ -364,7 +376,7 @@ class Attempt {
       await this.writeKeyStatus(key, { type: "Registered", status: "True", reason: "Converged" }, key.public_key);
       return;
     }
-    if (present.some((existing) => existing.publicKey === key.public_key && existing.holder === null)) {
+    if (present.some((existing) => sameKey(existing.publicKey, key.public_key) && existing.holder === null)) {
       this.deps.log.info("adopting the identical git key the user's account holds under a title this service does not manage", { uid: this.claim.uid, gatewayId: key.gateway_id });
     }
     await this.hostCall("git", "registerKey", () => this.deps.git.registerKey({ owner, publicKey: key.public_key, holder: key.gateway_id }, this.signal));

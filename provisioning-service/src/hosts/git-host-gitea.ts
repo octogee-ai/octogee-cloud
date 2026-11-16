@@ -40,6 +40,8 @@ function isSuccess(status: number): boolean {
   return status >= 200 && status < 300;
 }
 
+const KEY_CONTENT_IN_USE = /\b422 Key content has been used\b/u;
+
 export function createGiteaGitHostAdapter(config: GiteaGitHostAdapterConfig): GitHost {
   const baseFetch = config.fetch ?? fetch;
 
@@ -186,8 +188,16 @@ export function createGiteaGitHostAdapter(config: GiteaGitHostAdapterConfig): Gi
         .map((key) => ({ publicKey: key.key.trim(), holder: byTitle.get(key.title) ?? null }));
     },
 
-    registerKey: ({ owner, publicKey, holder }, signal) =>
-      withCoreHost("register git key", signal, (host) => host.registerKey(owner, publicKey, holder)),
+    async registerKey({ owner, publicKey, holder }, signal) {
+      try {
+        await withCoreHost("register git key", signal, (host) => host.registerKey(owner, publicKey, holder));
+      } catch (error) {
+        if (error instanceof HostError && error.cause instanceof Error && KEY_CONTENT_IN_USE.test(error.cause.message)) {
+          throw new HostError("terminal", `${error.message}: the key is held on another account or under a title this service does not manage`, { cause: error, code: "key-held-elsewhere" });
+        }
+        throw error;
+      }
+    },
 
     releaseKey: ({ owner, publicKey, holder }, signal) =>
       withCoreHost("release git key", signal, (host) => host.releaseKey(owner, publicKey, holder)),

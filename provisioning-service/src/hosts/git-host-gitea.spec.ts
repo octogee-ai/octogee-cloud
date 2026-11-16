@@ -157,6 +157,21 @@ describe("Gitea git host adapter", () => {
     await expect(host.listKeys({ owner: "lin", holders: ["gw-1"] }, signal())).resolves.toEqual([]);
   });
 
+  it("names a key the git host holds elsewhere as held elsewhere and terminal, apart from other refusals", async () => {
+    const { api, host } = setup();
+    await host.ensureOwner({ slug: "lin" }, signal());
+    await host.ensureOwner({ slug: "ada" }, signal());
+    api.addKey(giteaUsername("ada"), "laptop", KEY);
+    api.addKey(giteaUsername("lin"), "laptop", OTHER_KEY);
+
+    await expect(host.registerKey({ owner: "lin", publicKey: KEY, holder: "gw-1" }, signal())).rejects.toMatchObject({ kind: "terminal", code: "key-held-elsewhere" });
+    await expect(host.registerKey({ owner: "lin", publicKey: OTHER_KEY, holder: "gw-1" }, signal())).rejects.toMatchObject({ kind: "terminal", code: "key-held-elsewhere" });
+    api.fail("POST", /^\/admin\/users\/[^/]+\/keys$/, 422);
+    const refused = await host.registerKey({ owner: "lin", publicKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGatewayKeyNew gateway", holder: "gw-1" }, signal()).catch((error: unknown) => error);
+    expect(refused).toBeInstanceOf(HostError);
+    expect((refused as HostError).code).toBeUndefined();
+  });
+
   it("classes a failed key registration by the git host's status and never logs the admin token", async () => {
     const { api, host, logs } = setup();
     await host.ensureOwner({ slug: "lin" }, signal());

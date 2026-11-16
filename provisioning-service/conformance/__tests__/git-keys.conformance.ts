@@ -52,8 +52,8 @@ describe.skipIf(!dsn)("provisioning service conformance: git keys the hosts alre
     expect(await registered("add-1", ADDED)).toMatchObject({ status: "True" });
   });
 
-  it("refuses a public key another user's account holds", async () => {
+  it("refuses a public key another user's account holds, with its own reason", async () => {
     await provisionedWithKey("cross-1", "cross-one", OTHER_USERS);
-    expect(await registered("cross-1", OTHER_USERS)).toMatchObject({ status: "False", reason: "GitKeyFailed" });
+    expect(await registered("cross-1", OTHER_USERS)).toMatchObject({ status: "False", reason: "GitKeyHeldElsewhere" });
   });
 });
