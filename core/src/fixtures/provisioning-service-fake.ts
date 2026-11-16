@@ -129,6 +129,9 @@ function createFakeGitKeys(nextVersion: () => number) {
       keys.delete(`${uid}/${gatewayId}`);
       return 202;
     },
+    releaseGateway(gatewayId: string): void {
+      for (const [id, key] of keys) if (key.gatewayId === gatewayId) keys.delete(id);
+    },
     setStatus(uid: string, gatewayId: string, status: GitKeyStatus): GitKey {
       const existing = keys.get(`${uid}/${gatewayId}`);
       if (!existing) throw new Error(`fake provisioning service has no git key ${uid}/${gatewayId}`);
@@ -140,6 +143,7 @@ function createFakeGitKeys(nextVersion: () => number) {
 }
 
 const GIT_KEY_PATH = /^\/v1\/users\/([^/]+)\/git-keys\/([^/]+)$/;
+const GATEWAY_GIT_KEYS_PATH = /^\/v1\/gateways\/([^/]+)\/git-keys$/;
 
 function putFakeGitKey(
   gitKeys: ReturnType<typeof createFakeGitKeys>,
@@ -164,6 +168,33 @@ function deleteFakeGitKey(
   const status = gitKeys.delete(decodeURIComponent(match[1]), decodeURIComponent(match[2]), expected);
   if (status === 409) return fail(res, 409, "precondition-failed");
   send(res, status);
+}
+
+function routeFakeGitKeys(
+  gitKeys: ReturnType<typeof createFakeGitKeys>,
+  resources: Map<string, UserProvisioning>,
+  recorded: FakeProvisioningRequest,
+  pathname: string,
+  res: ServerResponse,
+): boolean {
+  const gitKeyMatch = GIT_KEY_PATH.exec(pathname);
+  if (gitKeyMatch && recorded.method === "PUT") putFakeGitKey(gitKeys, resources, gitKeyMatch, recorded.body, res);
+  else if (gitKeyMatch && recorded.method === "DELETE") deleteFakeGitKey(gitKeys, gitKeyMatch, recorded.body, res);
+  else {
+    const gatewayKeysMatch = GATEWAY_GIT_KEYS_PATH.exec(pathname);
+    if (!gatewayKeysMatch || recorded.method !== "DELETE") return false;
+    releaseFakeGatewayGitKeys(gitKeys, gatewayKeysMatch, res);
+  }
+  return true;
+}
+
+function releaseFakeGatewayGitKeys(
+  gitKeys: ReturnType<typeof createFakeGitKeys>,
+  match: RegExpExecArray,
+  res: ServerResponse,
+): void {
+  gitKeys.releaseGateway(decodeURIComponent(match[1]));
+  send(res, 202, { remaining: 0 });
 }
 
 export async function startFakeProvisioningService(options: { tokens?: string[] } = {}): Promise<FakeProvisioningService> {
@@ -275,9 +306,7 @@ export async function startFakeProvisioningService(options: { tokens?: string[] 
     if (url.pathname === "/v1/provisionings") return listOrWatch(url, res);
     const credentialMatch = /^\/v1\/users\/([^/]+)\/credentials\/([^/]+)$/.exec(url.pathname);
     if (credentialMatch) return credential(decodeURIComponent(credentialMatch[1]), decodeURIComponent(credentialMatch[2]), res);
-    const gitKeyMatch = GIT_KEY_PATH.exec(url.pathname);
-    if (gitKeyMatch && recorded.method === "PUT") return putFakeGitKey(gitKeys, resources, gitKeyMatch, recorded.body, res);
-    if (gitKeyMatch && recorded.method === "DELETE") return deleteFakeGitKey(gitKeys, gitKeyMatch, recorded.body, res);
+    if (routeFakeGitKeys(gitKeys, resources, recorded, url.pathname, res)) return;
     const userMatch = /^\/v1\/users\/([^/]+)\/provisioning(\/retry|\/events)?$/.exec(url.pathname);
     if (!userMatch) return fail(res, 404, "not-found");
     const uid = decodeURIComponent(userMatch[1]);

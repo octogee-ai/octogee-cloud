@@ -300,6 +300,20 @@ describe("provisioning service client", () => {
     expect(sleeps).toEqual([]);
   });
 
+  it("releases a retired gateway's git keys across users and answers the rows that remain", async () => {
+    const api = client();
+    await api.putProvisioning("u1", SPEC);
+    await api.putProvisioning("u2", SPEC);
+    await api.putGitKey("u1", "gateway-a", { publicKey: "ssh-ed25519 AAAA lin" });
+    await api.putGitKey("u2", "gateway-a", { publicKey: "ssh-ed25519 AAAA mei" });
+    await api.putGitKey("u1", "gateway-b", { publicKey: "ssh-ed25519 BBBB lin" });
+
+    await expect(api.releaseGatewayGitKeys("gateway-a")).resolves.toEqual({ remaining: 0 });
+
+    expect(fake.requests.at(-1)).toMatchObject({ method: "DELETE", path: "/v1/gateways/gateway-a/git-keys" });
+    expect([...fake.gitKeys.keys()]).toEqual(["u1/gateway-b"]);
+  });
+
   it("puts a gateway's git key and reports whether the service created, changed or kept it", async () => {
     const api = client();
     await api.putProvisioning("u1", SPEC);
