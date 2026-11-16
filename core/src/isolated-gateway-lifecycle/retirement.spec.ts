@@ -3,6 +3,7 @@ import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store"
 import { builderActivateOperationId } from "@octogee/shared/types/isolated-operation-ids";
 import { SourceRecoveryPendingError } from "../placement-refusal.js";
 import {
+  checkUnreachableRecoveryFence,
   recoverUnreachableIsolatedGateway,
   retireOwnedIsolatedGateway,
   retirementAuthorityFenceAllows,
@@ -141,6 +142,42 @@ describe("unreachable isolated gateway recovery", () => {
   });
 });
 
+describe("unreachable recovery of a failed activation's target", () => {
+  const ACTIVATION = builderActivateOperationId(GATEWAY, 1);
+  const activation = (status: string, released: boolean) => ({ [`glmOperations/${ACTIVATION}`]: {
+    kind: "migrate-user", status, createdAt: 1, createdBy: "test", startedAt: 1, completedAt: status === "failed" ? 2 : null,
+    input: {}, steps: [], schedulerHandoffReleased: released,
+  } });
+  const recovering = (operation: { id: string; schedulerHandoffReleased?: unknown }) =>
+    operation.id === ACTIVATION && operation.schedulerHandoffReleased === false;
+
+  it("refuses while the failed activation recovers its source, and pauses nothing", async () => {
+    const h = harness(activation("failed", false));
+
+    await expect(recoverUnreachableIsolatedGateway({ ...h.deps, sourceRecoveryPending: recovering }, h.request))
+      .rejects.toEqual(new SourceRecoveryPendingError(ACTIVATION));
+    expect(h.docs.get(`gateways/${GATEWAY}`)?.desiredStatus).toBe("running");
+    expect(h.docs.has(`gatewayRecoveryReceipts/${RECOVERY}`)).toBe(false);
+  });
+
+  it("refuses the dry run the same way", async () => {
+    const h = harness(activation("failed", false));
+
+    await expect(checkUnreachableRecoveryFence({ ...h.deps, sourceRecoveryPending: recovering }, h.request))
+      .rejects.toEqual(new SourceRecoveryPendingError(ACTIVATION));
+  });
+
+  it.each([
+    ["the source recovery is released", activation("failed", true)],
+    ["the activation is still running", activation("running", false)],
+  ])("recovers once %s", async (_name, seed) => {
+    const h = harness(seed);
+
+    await expect(recoverUnreachableIsolatedGateway({ ...h.deps, sourceRecoveryPending: recovering }, h.request))
+      .resolves.toEqual({ state: "recovered", operationId: RECOVERY });
+  });
+});
+
 describe("owned isolated gateway retirement", () => {
   const pausedRoot = () => ({ [`gateways/${GATEWAY}`]: isolatedRoot({ desiredStatus: "paused" }) });
   const retire = { uid: "uid-alice", builderSlug: "alice", gatewayId: GATEWAY, generation: 1, leaseId: "lease-one", reason: "builder-returned" as const };
@@ -221,11 +258,28 @@ describe("owned isolated gateway retirement", () => {
         .resolves.toEqual({ retired: true, operationId: RETIREMENT });
     });
 
-    it("does not consult source recovery for another retirement reason", async () => {
+    it("refuses another retirement reason too while the failed activation recovers its source", async () => {
       const h = harness({ ...pausedRoot(), ...failedActivation });
 
       await expect(retireOwnedIsolatedGateway({ ...h.deps, sourceRecoveryPending: recovering }, retire))
+        .rejects.toEqual(new SourceRecoveryPendingError(ACTIVATION));
+      expect(h.docs.has(`glmOperations/${RETIREMENT}`)).toBe(false);
+    });
+
+    it("admits another retirement reason while the activation is still running", async () => {
+      const h = harness({ ...pausedRoot(), ...failedActivation });
+      h.docs.set(`glmOperations/${ACTIVATION}`, { ...h.docs.get(`glmOperations/${ACTIVATION}`), status: "running", completedAt: null });
+
+      await expect(retireOwnedIsolatedGateway({ ...h.deps, sourceRecoveryPending: recovering }, retire))
         .resolves.toEqual({ retired: true, operationId: RETIREMENT });
+    });
+
+    it("refuses activation-failed cleanup while the activation is still running", async () => {
+      const h = harness({ ...pausedRoot(), ...failedActivation });
+      h.docs.set(`glmOperations/${ACTIVATION}`, { ...h.docs.get(`glmOperations/${ACTIVATION}`), status: "running", completedAt: null });
+
+      await expect(retireOwnedIsolatedGateway({ ...h.deps, sourceRecoveryPending: recovering }, activationFailed))
+        .rejects.toEqual(new SourceRecoveryPendingError(ACTIVATION));
     });
   });
 

@@ -46,15 +46,21 @@ export async function checkPlacementOwner(input: Pick<IsolatedLifecycleDeps, "st
   await input.store.transaction({ label: "isolated-gateway.owner-check", readOnly: true }, input.requireOwner);
 }
 
+export interface ActivationSourceRecoveryFence {
+  targetGatewayId: string;
+  generation: number;
+  failedActivationCleanup: boolean;
+}
+
 export async function assertActivationSourceRecoveryReleased(
   input: Pick<IsolatedLifecycleDeps, "sourceRecoveryPending">,
   transaction: PlatformStateTransaction,
-  targetGatewayId: string,
-  generation: number,
+  fence: ActivationSourceRecoveryFence,
 ): Promise<void> {
-  const operationId = builderActivateOperationId(targetGatewayId, generation);
+  const operationId = builderActivateOperationId(fence.targetGatewayId, fence.generation);
   const operation = await transaction.journal.operations.get(operationId);
-  if (operation !== null && input.sourceRecoveryPending(operation)) throw new SourceRecoveryPendingError(operationId);
+  if (operation === null || !input.sourceRecoveryPending(operation)) return;
+  if (fence.failedActivationCleanup || operation.status === "failed") throw new SourceRecoveryPendingError(operationId);
 }
 
 export interface AllocateIsolatedGatewayInput {

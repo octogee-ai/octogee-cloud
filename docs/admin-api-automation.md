@@ -142,11 +142,28 @@ by the same function the fleet controller's own placement pass reads. It is
 The `migrations` section lists only `pending` and `running` operations. A
 failed activation still recovering its source is read with
 `GET /operations/<id>` or `GET /operations/lookup`, which carry the same
-field on every `migrate-user` operation. A client treats an absent
-`sourceRecoveryPending` as unknown, not as `false`: an older server does not
-send it. The read can be stale, so `retire-owned` with reason
-`activation-failed` and `activation-lease/fail` check it again inside their
-transaction and refuse with `reasonCode` `source-recovery-pending`.
+field on every `migrate-user` operation, in every status.
+
+**For client authors:** an absent `sourceRecoveryPending` means unknown, and
+the client withholds the cleanup it guards, exactly as for `true`. Only an
+explicit `false` lets it proceed. An older server does not send the field.
+
+The read can be stale, so the verbs check it again inside their own
+transaction, against the activation operation
+`builder-activate-<gateway>-g<generation>` of the lease or allocation they
+act on, as the fleet controller's own placement pass holds off:
+
+- The cleanup of a failed activation (`retire-owned` with reason
+  `activation-failed`, and `activation-lease/fail` whose `operationId` is that
+  activation operation) is refused whenever its source recovery is pending,
+  whatever the operation's status.
+- Any other call of `retire-owned`, `activation-lease/fail` or
+  `recover-unreachable` for that gateway and generation is refused while the
+  activation operation is `failed` and its source recovery is pending. While
+  the activation is still `pending` or `running` they are admitted.
+
+A refusal answers `409` `precondition-failed` with `reasonCode`
+`source-recovery-pending`, dry runs included.
 
 ## Operation reads
 
@@ -162,10 +179,16 @@ operation that exists, in the order asked, in the shape `GET /operations/<id>`
 answers, with `actorEmail` resolved in one account lookup for the batch;
 `missing` lists the ids with no operation. It reads operations only, not
 audit records. `ids` must be given once and hold 1 to 200 distinct non-empty
-ids, or the call answers `400`. The whole request line and headers must stay
-within the server's 16 KiB header limit, which 200 activation and return
-operation ids do. It counts as one request against the per-caller limit of
-300 requests a minute.
+ids. Otherwise the call answers `400` with an `error` naming the problem:
+`ids` missing, given twice, empty or holding an empty id, repeating an id, or
+holding more than 200. It counts as one request against the per-caller limit
+of 300 requests a minute.
+
+The request line and headers together must fit the server's 16 KiB header
+limit (the Node.js default); a longer request is refused with `431` before
+the route runs. The bound of 200 assumes ids of about 45 characters, the
+length of the activation and return operation ids, about 9 KiB of query. A
+client asking for longer ids sends fewer per request.
 
 A refused precondition answers `409` and is logged as the warning
 `fleet mutation refused`, with its failed audit entry kept.
@@ -392,7 +415,9 @@ the installed in-process pass does not call the gate and cannot yield.
 Every `precondition-failed` from a placement verb carries `reasonCode`, one
 of the values below; a new cause gets a new value. `error` stays the
 human-readable message, and the isolated verbs keep it in `reason` too. A
-client treats an absent `reasonCode` as an unclassified refusal.
+client treats an absent `reasonCode` as an unclassified refusal. The values
+are a contract: `core/src/placement-refusal.spec.ts` pins them and checks
+this table against them.
 
 | `reasonCode` | Cause | Verbs |
 |---|---|---|
@@ -409,7 +434,7 @@ client treats an absent `reasonCode` as an unclassified refusal.
 | `drain-move-not-supersedable` | The drain move cannot be superseded. | `supersede` |
 | `fleet-state-changed` | A fleet state fence changed, such as a source epoch, a target heartbeat or a previous recovery. | `recover`, `runtime-reset` |
 | `fence-mismatch` | A stored record changed under the verb's fence. | all |
-| `source-recovery-pending` | The activation operation is still recovering its source. | `retire-owned` (`activation-failed`), `activation-lease/fail` |
+| `source-recovery-pending` | The activation operation is still recovering its source. | `retire-owned`, `activation-lease/fail`, `recover-unreachable` |
 | `user-missing` | The user does not exist. | isolated verbs |
 | `user-slug-missing` | The user has no slug. | `isolated-gateway/allocate` |
 | `lease-missing` | The user has no activation lease. | `activation-lease/complete` |
@@ -669,9 +694,11 @@ the lease is not that returning lease, or the user has not returned.
 operation that ended it. Without one, it records the canonical activation
 operation `builder-activate-<gateway>-g<generation>`.
 Answers `{uid, leaseId, generation, status: "failed"}`, also when the lease is
-already failed. While the canonical activation operation still recovers its
-source, it answers `precondition-failed` with `reasonCode`
-`source-recovery-pending` and leaves the lease unchanged.
+already failed. It refuses with `reasonCode` `source-recovery-pending` and
+leaves the lease unchanged while the lease's activation operation still
+recovers its source: always when `operationId` is that activation operation,
+and for any other `operationId` when the activation has `failed` (see
+[Source recovery](#source-recovery)).
 
 ### `POST /users/<id>/activation-lease/sizing-transition`
 
@@ -713,9 +740,11 @@ gateway reads as `retired` with that retirement claim, and
 means the gateway is not owned by `ownerUid`, is already retired, is another
 generation, a stated fence no longer matches, or a pending telemetry
 operation or another retirement claim blocks it; the `reason` says which.
-With reason `activation-failed`, it also refuses with `reasonCode`
-`source-recovery-pending` while the activation operation
-`builder-activate-<gateway>-g<generation>` still recovers its source.
+It also refuses with `reasonCode` `source-recovery-pending` while the
+activation operation `builder-activate-<gateway>-g<generation>` still
+recovers its source: always with reason `activation-failed`, and with any
+other reason when the activation has `failed` (see
+[Source recovery](#source-recovery)).
 
 ### `POST /users/<id>/home/prepare`
 
@@ -858,7 +887,10 @@ It runs in three steps: reserve, observe, complete.
 1. **Reserve.** In one transaction the fleet controller checks the fences,
    records the recovery operation `builder-recover-<gateway>-g<generation>`
    as pending, and pauses the gateway. If a fence fails it answers `409`
-   `precondition-failed` and writes nothing.
+   `precondition-failed` and writes nothing. That includes a failed
+   activation of this gateway and generation whose source recovery is pending
+   (`reasonCode` `source-recovery-pending`); the check runs again when
+   completing.
 2. **Observe.** It reads the gateway's pods from Kubernetes.
 3. **Complete.** With no pods left, it marks the operation succeeded with a
    zero-pod receipt and answers

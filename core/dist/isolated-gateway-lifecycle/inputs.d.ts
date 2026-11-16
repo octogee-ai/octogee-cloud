@@ -29,7 +29,12 @@ export interface IsolatedLifecycleDeps {
     sourceRecoveryPending(operation: Stored<OperationRecord>): boolean;
 }
 export declare function checkPlacementOwner(input: Pick<IsolatedLifecycleDeps, "store" | "requireOwner">): Promise<void>;
-export declare function assertActivationSourceRecoveryReleased(input: Pick<IsolatedLifecycleDeps, "sourceRecoveryPending">, transaction: PlatformStateTransaction, targetGatewayId: string, generation: number): Promise<void>;
+export interface ActivationSourceRecoveryFence {
+    targetGatewayId: string;
+    generation: number;
+    failedActivationCleanup: boolean;
+}
+export declare function assertActivationSourceRecoveryReleased(input: Pick<IsolatedLifecycleDeps, "sourceRecoveryPending">, transaction: PlatformStateTransaction, fence: ActivationSourceRecoveryFence): Promise<void>;
 export interface AllocateIsolatedGatewayInput {
     uid: string;
     builderSlug: string;

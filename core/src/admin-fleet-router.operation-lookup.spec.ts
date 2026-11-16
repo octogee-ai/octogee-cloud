@@ -87,16 +87,17 @@ describe("GET /operations/lookup", () => {
   });
 
   it.each([
-    ["no ids", {}],
-    ["an empty list", { ids: "" }],
-    ["an empty id", { ids: `${ACTIVATION},` }],
-    ["a repeated id", { ids: `${ACTIVATION},${ACTIVATION}` }],
-    ["the parameter given twice", { ids: [ACTIVATION, RETURN] }],
-    ["more ids than the bound", { ids: Array.from({ length: OPERATION_LOOKUP_MAX_IDS + 1 }, (_, index) => `op-${index}`).join(",") }],
-  ])("answers 400 for %s", async (_name, query) => {
+    ["no ids", {}, "ids is required: a comma-separated list of operation ids"],
+    ["an empty list", { ids: "" }, "ids must not be empty or contain an empty operation id"],
+    ["an empty id", { ids: `${ACTIVATION},` }, "ids must not be empty or contain an empty operation id"],
+    ["a repeated id", { ids: `${ACTIVATION},${ACTIVATION}` }, "ids must not repeat an operation id"],
+    ["the parameter given twice", { ids: [ACTIVATION, RETURN] }, "ids must be given once, as a comma-separated list"],
+    ["more ids than the bound", { ids: Array.from({ length: OPERATION_LOOKUP_MAX_IDS + 1 }, (_, index) => `op-${index}`).join(",") },
+      `ids holds ${OPERATION_LOOKUP_MAX_IDS + 1} operation ids, more than ${OPERATION_LOOKUP_MAX_IDS}`],
+  ])("answers 400 for %s", async (_name, query, error) => {
     const res = await request(harness().app).get("/operations/lookup").query(query).expect(400);
 
-    expect(res.body.error).toBe(`ids must be a comma-separated list of 1 to ${OPERATION_LOOKUP_MAX_IDS} distinct non-empty operation ids`);
+    expect(res.body).toEqual({ error });
   });
 
   it("accepts exactly the bound", async () => {

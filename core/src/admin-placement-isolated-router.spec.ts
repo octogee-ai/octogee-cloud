@@ -644,6 +644,18 @@ describe("POST /isolated-gateways/:id/recover-unreachable", () => {
     expect(receipt()).toMatchObject({ status: "succeeded", recoveryReceipt: { schemaVersion: 1, pods: 0 } });
   });
 
+  it.each(["", "?dryRun=true"])("refuses with source-recovery-pending (query %j) while the failed activation recovers its source", async (query) => {
+    docs.set(`glmOperations/${ACTIVATION}`, { ...migration({ uid: OWNER }), status: "failed", completedAt: 3, schedulerHandoffReleased: false });
+    const recovering = { sourceRecoveryPending: (operation: { id: string; schedulerHandoffReleased?: unknown }) =>
+      operation.id === ACTIVATION && operation.schedulerHandoffReleased === false };
+
+    const res = await request(app(recovering)).post(`/isolated-gateways/${TARGET}/recover-unreachable${query}`).send(body).expect(409);
+
+    expect(res.body).toMatchObject({ code: "precondition-failed", reasonCode: "source-recovery-pending" });
+    expect(docs.get(`gateways/${TARGET}`)?.desiredStatus).toBe("running");
+    expect(receipt()).toBeNull();
+  });
+
   it("answers precondition-failed and writes nothing when the reservation fence fails", async () => {
     const res = await recover({ ...body, authoritativeGatewayId: "shared-green" }).expect(409);
 

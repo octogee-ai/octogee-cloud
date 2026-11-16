@@ -1410,12 +1410,17 @@ export const ERR_USER_NOT_FOUND = "user not found";
 const ERR_OPERATION_NOT_FOUND = "operation not found";
 export const OPERATION_LOOKUP_MAX_IDS = 200;
 function parseOperationLookupIds(raw) {
-    const invalid = `ids must be a comma-separated list of 1 to ${OPERATION_LOOKUP_MAX_IDS} distinct non-empty operation ids`;
+    if (raw === undefined)
+        return "ids is required: a comma-separated list of operation ids";
     if (typeof raw !== "string")
-        return invalid;
+        return "ids must be given once, as a comma-separated list";
     const ids = raw.split(",");
-    if (ids.length > OPERATION_LOOKUP_MAX_IDS || ids.some((id) => id === "") || new Set(ids).size !== ids.length)
-        return invalid;
+    if (ids.some((id) => id === ""))
+        return "ids must not be empty or contain an empty operation id";
+    if (ids.length > OPERATION_LOOKUP_MAX_IDS)
+        return `ids holds ${ids.length} operation ids, more than ${OPERATION_LOOKUP_MAX_IDS}`;
+    if (new Set(ids).size !== ids.length)
+        return "ids must not repeat an operation id";
     return ids;
 }
 function operationReadShape(record, sourceRecoveryPending) {

@@ -360,7 +360,11 @@ export async function failActivationLease(input, request, mode = "apply") {
             }
             throw new IsolatedGatewayFenceError(`activation lease for ${request.uid} changed before failure cleanup`);
         }
-        await assertActivationSourceRecoveryReleased(input, transaction, request.targetGatewayId, request.generation);
+        await assertActivationSourceRecoveryReleased(input, transaction, {
+            targetGatewayId: request.targetGatewayId,
+            generation: request.generation,
+            failedActivationCleanup: request.operationId === builderActivateOperationId(request.targetGatewayId, request.generation),
+        });
         if (mode === "plan")
             return;
         await transaction.users.placementReceipts.create(request.uid, buildPlacementReceipt({

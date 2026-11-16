@@ -726,10 +726,11 @@ describe("placement receipts", () => {
   describe("while the activation is still recovering its source", () => {
     const ACTIVATION = "builder-activate-alice-xs-12345678-g1";
     const failure = { uid: "uid-alice", leaseId: "lease-one", generation: 1, targetGatewayId: "alice-xs-12345678", operationId: ACTIVATION, message: "failed" };
-    const seed = (released: boolean) => fixtureFirestore({
+    const seed = (released: boolean, status = "failed") => fixtureFirestore({
       "users/uid-alice": leaseUserDoc({ ...activatingLease }),
-      [`glmOperations/${ACTIVATION}`]: { kind: "migrate-user", status: "failed", createdAt: 1, createdBy: "test", input: {}, steps: [], schedulerHandoffReleased: released },
+      [`glmOperations/${ACTIVATION}`]: { kind: "migrate-user", status, createdAt: 1, createdBy: "test", input: {}, steps: [], schedulerHandoffReleased: released },
     });
+    const otherCause = { ...failure, operationId: "builder-authorization-ended-alice-xs-12345678", message: "authorization ended" };
     const sourceRecoveryPending = (operation: { id: string; schedulerHandoffReleased?: unknown }) =>
       operation.id === ACTIVATION && operation.schedulerHandoffReleased === false;
 
@@ -747,6 +748,28 @@ describe("placement receipts", () => {
 
       await failActivationLease({ store: state, now: () => 25_000, requireOwner, sourceRecoveryPending }, failure);
       expect(docs.get("users/uid-alice")).toMatchObject({ provisioning: { openclaw: { activationLease: { status: "failed" } } } });
+    });
+
+    it("refuses a failure for another cause too while the failed activation recovers its source", async () => {
+      const { state, docs } = seed(false);
+
+      await expect(failActivationLease({ store: state, now: () => 25_000, requireOwner, sourceRecoveryPending }, otherCause))
+        .rejects.toEqual(new SourceRecoveryPendingError(ACTIVATION));
+      expect(docs.get("users/uid-alice")).toMatchObject({ provisioning: { openclaw: { activationLease: { status: "activating" } } } });
+    });
+
+    it("admits a failure for another cause while the activation is still running", async () => {
+      const { state, docs } = seed(false, "running");
+
+      await failActivationLease({ store: state, now: () => 25_000, requireOwner, sourceRecoveryPending }, otherCause);
+      expect(docs.get("users/uid-alice")).toMatchObject({ provisioning: { openclaw: { activationLease: { status: "failed" } } } });
+    });
+
+    it("refuses the activation's own failure cleanup while it is still running", async () => {
+      const { state } = seed(false, "running");
+
+      await expect(failActivationLease({ store: state, now: () => 25_000, requireOwner, sourceRecoveryPending }, failure))
+        .rejects.toEqual(new SourceRecoveryPendingError(ACTIVATION));
     });
   });
 });

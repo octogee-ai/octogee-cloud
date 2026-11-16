@@ -27,6 +27,7 @@ import {
   type RecoverUnreachableIsolatedGatewayInput,
   type RetireOwnedIsolatedGatewayInput,
   assertActivationSourceRecoveryReleased,
+  type ActivationSourceRecoveryFence,
 } from "./inputs.js";
 
 type RetirementDeps = Pick<IsolatedLifecycleDeps, "store" | "now" | "log" | "requireOwner" | "sourceRecoveryPending">;
@@ -206,6 +207,10 @@ function newRecoveryReceipt(
   };
 }
 
+function unreachableRecoveryFence(request: RecoverUnreachableIsolatedGatewayInput): ActivationSourceRecoveryFence {
+  return { targetGatewayId: request.gatewayId, generation: request.generation, failedActivationCleanup: false };
+}
+
 export async function checkUnreachableRecoveryFence(
   input: RetirementDeps,
   request: RecoverUnreachableIsolatedGatewayInput,
@@ -224,6 +229,7 @@ export async function reserveUnreachableRecovery(
   await input.store.transaction({ label: "placement-policy.recovery-reserve", readOnly: mode === "plan" }, async (transaction) => {
     await input.requireOwner(transaction);
     const root = await exactRecoveryState(input.now, transaction, request);
+    await assertActivationSourceRecoveryReleased(input, transaction, unreachableRecoveryFence(request));
     const receipt = await transaction.journal.recoveryReceipts.get(operationId);
     if (receipt !== null) {
       assertPendingRecoveryReceiptMatches(receipt, request);
@@ -255,6 +261,7 @@ export async function completeUnreachableRecovery(
   await input.store.transaction({ label: "placement-policy.recovery-complete" }, async (transaction) => {
     await input.requireOwner(transaction);
     await exactRecoveryState(input.now, transaction, request);
+    await assertActivationSourceRecoveryReleased(input, transaction, unreachableRecoveryFence(request));
     const receipt = await transaction.journal.recoveryReceipts.get(operationId);
     if (receipt?.status !== "pending") {
       if (receipt?.status === "succeeded") return;
@@ -473,9 +480,11 @@ export async function retireOwnedIsolatedGateway(
         }
         await assertRetirementAuthorityFence(transaction, request);
         await assertZeroWorkloadRecoveryReceipt(transaction, request);
-        if (request.reason === "activation-failed") {
-          await assertActivationSourceRecoveryReleased(input, transaction, request.gatewayId, request.generation);
-        }
+        await assertActivationSourceRecoveryReleased(input, transaction, {
+          targetGatewayId: request.gatewayId,
+          generation: request.generation,
+          failedActivationCleanup: request.reason === "activation-failed",
+        });
       },
     });
     return { retired: true, operationId };

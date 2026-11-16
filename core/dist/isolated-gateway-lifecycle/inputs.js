@@ -18,10 +18,12 @@ export const unauditedLifecycleMutations = (mutation) => mutation.action();
 export async function checkPlacementOwner(input) {
     await input.store.transaction({ label: "isolated-gateway.owner-check", readOnly: true }, input.requireOwner);
 }
-export async function assertActivationSourceRecoveryReleased(input, transaction, targetGatewayId, generation) {
-    const operationId = builderActivateOperationId(targetGatewayId, generation);
+export async function assertActivationSourceRecoveryReleased(input, transaction, fence) {
+    const operationId = builderActivateOperationId(fence.targetGatewayId, fence.generation);
     const operation = await transaction.journal.operations.get(operationId);
-    if (operation !== null && input.sourceRecoveryPending(operation))
+    if (operation === null || !input.sourceRecoveryPending(operation))
+        return;
+    if (fence.failedActivationCleanup || operation.status === "failed")
         throw new SourceRecoveryPendingError(operationId);
 }
 export const PLACEMENT_RETIREMENT_REASONS = [
