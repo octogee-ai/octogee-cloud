@@ -10,7 +10,7 @@ import type {
 import { LeaseLostError } from "../hosts/credential-store.js";
 import type { HostErrorKind } from "../hosts/host-error.js";
 import type { Logger } from "../logger.js";
-import type { WorkSnapshot } from "../metrics.js";
+import type { GitKeyRowCount, WorkSnapshot } from "../metrics.js";
 import type { Database } from "../store/database.js";
 
 export const LEASE_MS = 60_000;
@@ -19,6 +19,7 @@ export const MAX_TRANSIENT_ATTEMPTS = 12;
 export const RESYNC_AFTER_MS = 6 * 60 * 60 * 1_000;
 const BACKOFF_BASE_MS = 5_000;
 const BACKOFF_CAP_MS = 10 * 60 * 1_000;
+export const KEY_REFUSAL_BACKOFF_MS = 60_000;
 
 export function backoffMs(failedAttempts: number, random: () => number = Math.random): number {
   const exponent = Math.max(failedAttempts - 1, 0);
@@ -76,8 +77,8 @@ export class WorkQueue {
     return this.db.write(async (client, bumpVersion) => {
       const { rows } = await client.query<{ uid: string; state: ProvisioningWorkState; attempts: number; generation: number; keys_only: boolean }>(
         `SELECT w.uid, w.state, w.attempts, w.keys_only, p.generation FROM ${t("provisioning_work")} w JOIN ${t("provisionings")} p ON p.uid = w.uid
-          WHERE w.due_at <= now()
-            AND (w.state IN ('queued', 'retrying', 'idle') OR (w.state = 'running' AND w.lease_expires_at < now()))
+          WHERE (w.due_at <= now() AND w.state IN ('queued', 'retrying', 'idle'))
+             OR (w.state = 'running' AND w.lease_expires_at < now())
           ORDER BY w.due_at LIMIT $1 FOR UPDATE OF w SKIP LOCKED`, [limit]);
       const claims: Claim[] = [];
       for (const row of rows) {
@@ -129,7 +130,7 @@ export class WorkQueue {
   async finishParkedKeys(uid: string, leaseToken: string): Promise<FinishResult> {
     const t = this.db.table;
     return this.fenced(uid, leaseToken, async (client, bumpVersion) => {
-      const observeAfterMs = Math.min(this.resyncAfterMs, await this.nextKeyRetryMs(client, uid) ?? this.resyncAfterMs);
+      const observeAfterMs = Math.max(KEY_REFUSAL_BACKOFF_MS, Math.min(this.resyncAfterMs, await this.nextKeyRetryMs(client, uid) ?? this.resyncAfterMs));
       const { rows } = await client.query<{ state: ProvisioningWorkState; attempts: number }>(
         `UPDATE ${t("provisioning_work")}
             SET state = CASE WHEN dirty THEN 'queued' ELSE 'parked' END, attempts = CASE WHEN dirty THEN 0 ELSE attempts END,
@@ -248,12 +249,20 @@ export class WorkQueue {
             WHERE p.observed_generation < p.generation) AS lag,
          (SELECT count(*) FROM ${t("provisioning_work")} WHERE state = 'running' AND lease_expires_at < now()) AS expired`);
     const row = aggregate.rows[0];
-    const keys = await this.db.pool.query<{ status: string; reason: string; count: string }>(
-      `SELECT c->>'status' AS status, c->>'reason' AS reason, count(*) AS count
-         FROM ${t("git_keys")} k CROSS JOIN LATERAL jsonb_array_elements(k.conditions) c
-        WHERE k.deletion_requested_at IS NULL AND c->>'type' = 'Registered'
-        GROUP BY 1, 2 ORDER BY 1, 2`);
-    const gitKeys = keys.rows.map((key) => ({ status: key.status, reason: key.reason, count: Number(key.count) }));
-    return { states, gitKeys, oldestDueSeconds: row.oldest_due ?? 0, generationLagSeconds: row.lag ?? 0, expiredLeases: Number(row.expired) };
+    return { states, gitKeys: await this.gitKeyCounts(), oldestDueSeconds: row.oldest_due ?? 0, generationLagSeconds: row.lag ?? 0, expiredLeases: Number(row.expired) };
+  }
+
+  private async gitKeyCounts(): Promise<GitKeyRowCount[]> {
+    try {
+      const { rows } = await this.db.pool.query<{ status: string; reason: string; count: string }>(
+        `SELECT c->>'status' AS status, c->>'reason' AS reason, count(*) AS count
+           FROM ${this.db.table("git_keys")} k CROSS JOIN LATERAL jsonb_array_elements(k.conditions) c
+          WHERE k.deletion_requested_at IS NULL AND c->>'type' = 'Registered'
+          GROUP BY 1, 2 ORDER BY 1, 2`);
+      return rows.map((key) => ({ status: key.status, reason: key.reason, count: Number(key.count) }));
+    } catch (error) {
+      this.options.log.error("counting git key rows failed; provisioning_git_keys exports nothing until a count succeeds", { error: error instanceof Error ? error.message : String(error) });
+      return [];
+    }
   }
 }
