@@ -127,10 +127,6 @@ function isManagedGatewayKey(key: GiteaPublicKey): key is ManagedGatewayKey {
   );
 }
 
-function legacyGatewayKeyMatches(key: GiteaPublicKey, pubKey: string): boolean {
-  return key.title === GATEWAY_KEY_TITLE || key.title === gatewayKeyTitle(pubKey);
-}
-
 function ok(status: number, also: number[] = []): boolean {
   return (status >= 200 && status < 300) || also.includes(status);
 }
@@ -416,7 +412,7 @@ async function releaseGatewayKey(
   const matching = (await readUserKeys(api, username)).filter(
     (key) => isManagedGatewayKey(key) &&
       publicKeysMatch(key.key, pubKey) &&
-      (ownerTitle === null || key.title === ownerTitle || legacyGatewayKeyMatches(key, pubKey)),
+      (ownerTitle === null || key.title === ownerTitle),
   );
   for (const key of matching) {
     await deleteUserKey(api, username, key);

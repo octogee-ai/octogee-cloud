@@ -577,7 +577,7 @@ describe("git keys across moves and rolls, through the platform's routes and ada
       expect(hostKeys(git)).toEqual([]);
     });
 
-    it("admits a release from a pod that never served the user, and it removes neither the serving pod's row nor the key under the serving pod's title", async () => {
+    it("admits a release from a pod that never served the user, and it removes neither the serving pod's key nor its row", async () => {
       const { git, service, call, publicKey, held } = await served();
       const stranger = pod("shared-green", "octogee-gateway-shared-green-7d8e9-f3g4h");
 
@@ -593,18 +593,37 @@ describe("git keys across moves and rolls, through the platform's routes and ada
     it.each([
       ["the title from before per-pod titles", () => GATEWAY_KEY_TITLE],
       ["the title derived from the key itself", (publicKey: string) => gatewayKeyTitle(publicKeyIdentity(publicKey))],
-    ])("still deletes a key held under %s when a pod that never served the user submits its material", async (_title, titleFor) => {
+    ])("leaves a key held under %s where it is when its material is submitted, by a pod that never served the user and by the pod that serves the user", async (_title, titleFor) => {
       const { git, call } = setup();
       assign("shared-blue");
       const legacyKey = newKey();
       git.holdUnderTitle(titleFor(legacyKey), legacyKey);
       const stranger = pod("shared-green", "octogee-gateway-shared-green-7d8e9-f3g4h");
+      const serving = pod("shared-blue", "octogee-gateway-shared-blue-5bc59-a1b2c");
 
-      await call(stranger, HOST_RELEASE, { slug: USER.slug, pubKey: newKey() }).expect(204);
-      const afterAnotherKey = hostKeys(git);
       await call(stranger, HOST_RELEASE, { slug: USER.slug, pubKey: legacyKey }).expect(204);
+      const afterStranger = hostKeys(git);
+      await call(serving, HOST_RELEASE, { slug: USER.slug, pubKey: legacyKey }).expect(204);
 
-      expect(afterAnotherKey).toEqual([legacyKey]);
+      expect(afterStranger).toEqual([legacyKey]);
+      expect(hostKeys(git)).toEqual([legacyKey]);
+    });
+
+    it.each([
+      ["the title from before per-pod titles", () => GATEWAY_KEY_TITLE],
+      ["the title derived from the key itself", (publicKey: string) => gatewayKeyTitle(publicKeyIdentity(publicKey))],
+    ])("takes a key held under %s under the serving pod's own title when that pod registers it, and the pod's release then removes it", async (_title, titleFor) => {
+      const { git, thisBuild, call } = setup();
+      assign("shared-blue");
+      const legacyKey = newKey();
+      git.holdUnderTitle(titleFor(legacyKey), legacyKey);
+      const serving = pod("shared-blue", "octogee-gateway-shared-blue-5bc59-a1b2c", { key: legacyKey, marker: null });
+
+      await thisBuild.register(serving);
+      const afterRegistration = git.titled(serving.holder);
+      await call(serving, HOST_RELEASE, { slug: USER.slug, pubKey: legacyKey }).expect(204);
+
+      expect(afterRegistration).toEqual([legacyKey]);
       expect(hostKeys(git)).toEqual([]);
     });
 

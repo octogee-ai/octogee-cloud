@@ -467,6 +467,38 @@ describe("createGiteaGitHost — managed Gitea admin operations", () => {
       expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
+    const LEGACY_TITLES: Array<[string, string]> = [
+      ["the title from before per-pod titles", "octogee-gateway"],
+      ["the title derived from the key itself", keyTitle("ssh-ed25519 OLD")],
+    ];
+
+    it.each(LEGACY_TITLES)("leaves a key under %s when the release names an owner, and deletes the same key once it is under that owner's title", async (_title, legacyTitle) => {
+      fetchMock.mockResolvedValueOnce(res(200, [{ id: 7, title: legacyTitle, key: "ssh-ed25519 OLD predecessor" }]));
+      await host.releaseKey("acme", "ssh-ed25519 OLD", "walter/pod-new");
+
+      expect(callsTo(fetchMock).filter((call) => call.method === "DELETE")).toEqual([]);
+
+      fetchMock
+        .mockResolvedValueOnce(res(200, [{ id: 8, title: keyTitle("walter/pod-new"), key: "ssh-ed25519 OLD predecessor" }]))
+        .mockResolvedValueOnce(res(204));
+      await host.releaseKey("acme", "ssh-ed25519 OLD", "walter/pod-new");
+
+      expect(callsTo(fetchMock).filter((call) => call.method === "DELETE")).toEqual([
+        expect.objectContaining({ url: `${BASE}/admin/users/ws-acme/keys/8` }),
+      ]);
+    });
+
+    it.each(LEGACY_TITLES)("deletes a key under %s for a release that names no owner", async (_title, legacyTitle) => {
+      fetchMock
+        .mockResolvedValueOnce(res(200, [{ id: 7, title: legacyTitle, key: "ssh-ed25519 OLD predecessor" }]))
+        .mockResolvedValueOnce(res(204));
+      await host.releaseKey("acme", "ssh-ed25519 OLD");
+
+      expect(callsTo(fetchMock).filter((call) => call.method === "DELETE")).toEqual([
+        expect.objectContaining({ url: `${BASE}/admin/users/ws-acme/keys/7` }),
+      ]);
+    });
+
     it("treats an already-cleaned retiring key as an idempotent success", async () => {
       fetchMock.mockResolvedValueOnce(res(200, [
         { id: 9, title: "octogee-gateway-new", key: "ssh-ed25519 NEXT successor" },

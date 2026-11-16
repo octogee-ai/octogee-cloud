@@ -75,9 +75,6 @@ function isManagedGatewayKey(key) {
         typeof key.title === "string" &&
         isManagedGatewayKeyTitle(key.title));
 }
-function legacyGatewayKeyMatches(key, pubKey) {
-    return key.title === GATEWAY_KEY_TITLE || key.title === gatewayKeyTitle(pubKey);
-}
 function ok(status, also = []) {
     return (status >= 200 && status < 300) || also.includes(status);
 }
@@ -287,7 +284,7 @@ async function releaseGatewayKey(api, workspaceSlug, pubKey, keyOwnerId) {
     const ownerTitle = keyOwnerId === undefined ? null : gatewayKeyTitle(pubKey, keyOwnerId);
     const matching = (await readUserKeys(api, username)).filter((key) => isManagedGatewayKey(key) &&
         publicKeysMatch(key.key, pubKey) &&
-        (ownerTitle === null || key.title === ownerTitle || legacyGatewayKeyMatches(key, pubKey)));
+        (ownerTitle === null || key.title === ownerTitle));
     for (const key of matching) {
         await deleteUserKey(api, username, key);
     }
