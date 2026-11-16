@@ -25,7 +25,6 @@ import {
 } from "@octogee/shared/types/user-entitlements";
 import { createInternalGiteaAdminRoutes } from "./routes/internal/gitea-admin.js";
 import { legacyProvisioningFromEnvironment } from "./lib/legacy-provisioning.js";
-import { provisioningGitKeysFromEnvironment } from "./lib/provisioning-git-keys.js";
 import { installBodyParsers } from "@octogee/core/http/body-parsers";
 import { createMattermostMintRoutes, createMmRestProxyHandler } from "./routes/mattermost-proxy.js";
 import { createOpenClawRuntimeBrokerRoutes, type SessionChannelPurposeReader } from "./routes/openclaw-runtime-broker.js";
@@ -617,7 +616,6 @@ export function createPlatformApp(opts: PlatformAppOptions = {}) {
     onUserProvisioned: product?.onUserProvisioned,
     provisioningProjection: product?.provisioningProjection,
     legacyProvisioning,
-    provisioningGitKeys: provisioningGitKeysFromEnvironment(process.env),
   }));
   // octogee-api-only: broker sidecar GitHub file-browser token reads
   // so cattle pods do not need Firestore or KMS access to user secrets.

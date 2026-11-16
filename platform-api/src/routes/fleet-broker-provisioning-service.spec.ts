@@ -49,6 +49,9 @@ function legacyProvisioning(overrides: Partial<LegacyProvisioning> = {}): Legacy
     gitKey: vi.fn(async () => {
       throw new Error("the fleet broker routes put no git key");
     }),
+    releaseGitKey: vi.fn(async () => {
+      throw new Error("these fleet broker routes release no git key");
+    }),
     ...overrides,
   };
 }

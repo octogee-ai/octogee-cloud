@@ -6,9 +6,6 @@ import { isolatedBootMode } from "@octogee/core/isolated-prelaunch";
 import { noProvisioningProjection, type ProvisioningProjection } from "@octogee/core/provisionSteps";
 import { mirroredState, mmUpdateFromChatOutputs, type MirroredState } from "@octogee/core/provisioning-mirror";
 import { respondProvisioningPending, routeBudget, type LegacyProvisioning, type ProvisioningWait, type RouteBudget } from "../lib/legacy-provisioning.js";
-import type { ProvisioningGitKeys } from "../lib/provisioning-git-keys.js";
-import type { GitKey } from "@octogee/shared/types/provisioning-service";
-import { ProvisioningServiceError } from "@octogee/core/provisioning-service-client";
 import { sharedAgentAnchorMigrationScope, sharedAssignedSourceSurgeAnchorScope } from "../lib/shared-agent-anchor-migration.js";
 import { installWorkspaceBlobBrokerRoute, type WorkspaceBlobStore } from "./fleet-broker-workspace-blob.js";
 import { readUserRestoreAuthoritySnapshot } from "@octogee/core/fleet-state";
@@ -272,7 +269,6 @@ interface FleetBrokerRouteDeps {
   }) => Promise<void>;
   provisioningProjection?: ProvisioningProjection;
   legacyProvisioning?: LegacyProvisioning | null;
-  provisioningGitKeys?: ProvisioningGitKeys | null;
   onUserProvisioned?: (report: ProvisionedUserReport) => Promise<void>;
   renderAvatar?: RenderAvatar;
   createBlobSignedUrl?: CreateBlobSignedUrl;
@@ -396,9 +392,6 @@ async function mirroredChat(
   return { ready: false, reason, retryAfterSeconds: 5, refused: true };
 }
 
-const MIRROR_RETRY_AFTER_SECONDS = 5;
-const SERVICE_KEY_HELD_ELSEWHERE = "registered under a holder this service does not manage";
-
 async function serviceProvisioningReadiness(
   uid: string,
   legacyProvisioning: LegacyProvisioning,
@@ -408,45 +401,6 @@ async function serviceProvisioningReadiness(
   const chat = await mirroredChat(uid, legacyProvisioning, store, budget);
   if (!chat.ready) return chat;
   return legacyProvisioning.git(uid, null, budget);
-}
-
-function gitKeyRegistration(key: GitKey, publicKey: string): ProvisioningWait<void> {
-  if (key.spec.publicKey !== publicKey) return { ready: false, reason: "GitKeyReplaced", retryAfterSeconds: MIRROR_RETRY_AFTER_SECONDS };
-  if (key.status.observedGeneration < key.generation) {
-    return { ready: false, reason: "GenerationNotObserved", retryAfterSeconds: MIRROR_RETRY_AFTER_SECONDS };
-  }
-  const registered = key.status.conditions.find((condition) => condition.type === "Registered");
-  if (registered?.status === "True") return { ready: true, value: undefined };
-  if (registered?.message.startsWith(SERVICE_KEY_HELD_ELSEWHERE) === true) {
-    return { ready: false, reason: "GitKeyHeldElsewhere", retryAfterSeconds: MIRROR_RETRY_AFTER_SECONDS, refused: true };
-  }
-  return { ready: false, reason: registered?.reason ?? "RegisteredUnknown", retryAfterSeconds: MIRROR_RETRY_AFTER_SECONDS };
-}
-
-async function registerServiceGitKey(
-  gitKeys: ProvisioningGitKeys,
-  uid: string,
-  gatewayId: string,
-  publicKey: string,
-): Promise<ProvisioningWait<void>> {
-  let key: GitKey;
-  try {
-    key = await gitKeys.putGitKey(uid, gatewayId, publicKey);
-  } catch (error) {
-    if (!(error instanceof ProvisioningServiceError)) throw error;
-    if (error.status === 404) {
-      logger.error("gateway git key: the user has no provisioning resource", { uid, gatewayId });
-      return { ready: false, reason: "NotProvisioned", retryAfterSeconds: MIRROR_RETRY_AFTER_SECONDS };
-    }
-    if (!error.transient) throw error;
-    logger.error("gateway git key: the provisioning service is unavailable", { uid, gatewayId, err: error });
-    return {
-      ready: false,
-      reason: "ProvisioningServiceUnavailable",
-      retryAfterSeconds: error.retryAfterMs === null ? MIRROR_RETRY_AFTER_SECONDS : Math.min(Math.max(Math.ceil(error.retryAfterMs / 1000), 1), 300),
-    };
-  }
-  return gitKeyRegistration(key, publicKey);
 }
 
 function respondServiceProvisioning(
@@ -495,10 +449,10 @@ function installServiceProvisioningRoutes(router: Router, deps: ResolvedFleetBro
       res.status(400).json({ error: "invalid_public_key" });
       return;
     }
-    const { provisioningGitKeys } = deps;
-    if (!serviceRouteConfigured(res, "git-key", provisioningGitKeys)) return;
+    const { legacyProvisioning } = deps;
+    if (!serviceRouteConfigured(res, "git-key", legacyProvisioning)) return;
     await runBrokered(res, async () => {
-      const answer = await registerServiceGitKey(provisioningGitKeys, assigned.uid, assigned.bound.gatewayId, publicKey.trim());
+      const answer = await legacyProvisioning.gitKey(assigned.uid, assigned.bound.gatewayId, publicKey.trim(), routeBudget());
       if (!answer.ready) {
         respondServiceProvisioning(res, { route: "git-key", uid: assigned.uid }, answer);
         return;
@@ -520,14 +474,14 @@ function installServiceProvisioningRoutes(router: Router, deps: ResolvedFleetBro
       res.status(400).json({ error: "invalid_public_key" });
       return;
     }
-    const { provisioningGitKeys } = deps;
-    if (!serviceRouteConfigured(res, "git-key/release", provisioningGitKeys)) return;
+    const { legacyProvisioning } = deps;
+    if (!serviceRouteConfigured(res, "git-key/release", legacyProvisioning)) return;
     await runBrokered(res, async () => {
       if (await store.users.records.get(uid) === null) {
         res.status(404).json({ error: "not_found" });
         return;
       }
-      const outcome = await provisioningGitKeys.deleteGitKey(uid, bound.gatewayId, { expectedPublicKey: publicKey.trim() });
+      const outcome = await legacyProvisioning.releaseGitKey(uid, bound.gatewayId, publicKey.trim(), routeBudget());
       if (outcome === "superseded") {
         logger.info("gateway git key release: the row holds a newer registration, which stays", { uid, gatewayId: bound.gatewayId });
       }
@@ -1868,7 +1822,6 @@ type ResolvedFleetBrokerRouteDeps = {
   onUserProvisioned: NonNullable<FleetBrokerRouteDeps["onUserProvisioned"]>;
   provisioningProjection: ProvisioningProjection | undefined;
   legacyProvisioning: LegacyProvisioning | null;
-  provisioningGitKeys: ProvisioningGitKeys | null;
   renderAvatar: RenderAvatar;
   createBlobSignedUrl: CreateBlobSignedUrl;
   createVmHomeSignedUrl: CreateBlobSignedUrl;
@@ -1930,7 +1883,6 @@ function resolveFleetBrokerRouteImplementations(
     onUserProvisioned: opts.onUserProvisioned ?? (async () => {}),
     provisioningProjection: opts.provisioningProjection,
     legacyProvisioning: opts.legacyProvisioning ?? null,
-    provisioningGitKeys: opts.provisioningGitKeys ?? null,
     renderAvatar: opts.renderAvatar ?? defaultRenderAvatar,
     createBlobSignedUrl: opts.createBlobSignedUrl ?? defaultCreateBlobSignedUrl,
     readBlobMetadata: opts.readBlobMetadata ?? defaultReadBlobMetadata,

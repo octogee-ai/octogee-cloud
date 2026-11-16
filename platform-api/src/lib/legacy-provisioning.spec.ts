@@ -93,6 +93,7 @@ function fakeClient(answers: Array<UserProvisioning | null | Error>, credential:
       if (credential instanceof Error) throw credential;
       return credential;
     }),
+    deleteGitKey: vi.fn(async () => "deleted" as const),
     putGitKey: vi.fn(async (uid, gatewayId, spec, options) => {
       keyPuts.push({ uid, gatewayId, spec, options });
       const answer = keys.length > 1 ? keys.shift() : keys[0];
@@ -311,6 +312,28 @@ describe("legacy provisioning adapter: git key", () => {
       .resolves.toEqual({ ready: false, reason: "NotProvisioned", retryAfterSeconds: 5 });
     await expect(clockedAdapter(down.client).provisioning.gitKey("uid-lin", "walter", "ssh-ed25519 AAAA lin", budget()))
       .resolves.toEqual({ ready: false, reason: "ProvisioningServiceUnavailable", retryAfterSeconds: 7 });
+  });
+
+  it("refuses at once a key the service will not register because another holder has it", async () => {
+    vi.spyOn(logger, "error").mockImplementation(() => {});
+    const heldElsewhere = gitKey({ registered: "False", reason: "GitKeyFailed", message: "registered under a holder this service does not manage; left unchanged" });
+    const { client, keyPuts } = fakeClient([], null, [heldElsewhere]);
+    const { provisioning, sleeps, budget: route } = clockedAdapter(client);
+
+    await expect(provisioning.gitKey("uid-lin", "walter", "ssh-ed25519 AAAA lin", route()))
+      .resolves.toEqual({ ready: false, reason: "GitKeyHeldElsewhere", retryAfterSeconds: 5, refused: true });
+
+    expect(keyPuts).toHaveLength(1);
+    expect(sleeps).toEqual([]);
+  });
+
+  it("releases the gateway's key only while it still holds the given public key", async () => {
+    const { client } = fakeClient([]);
+    vi.mocked(client.deleteGitKey).mockResolvedValueOnce("superseded");
+
+    await expect(adapter(client).releaseGitKey("uid-lin", "walter", "ssh-ed25519 AAAA lin", budget())).resolves.toBe("superseded");
+
+    expect(client.deleteGitKey).toHaveBeenCalledWith("uid-lin", "walter", { expectedPublicKey: "ssh-ed25519 AAAA lin", signal: SIGNAL });
   });
 
   it("throws a refusal from the service", async () => {

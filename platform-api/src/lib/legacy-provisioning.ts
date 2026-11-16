@@ -11,6 +11,7 @@ import {
   createProvisioningServiceClient,
   provisioningServiceConfigFromEnvironment,
   ProvisioningServiceError,
+  type DeleteGitKeyOutcome,
   type ProvisioningServiceClient,
 } from "@octogee/core/provisioning-service-client";
 import { logger } from "@octogee/core/http/logging";
@@ -49,9 +50,10 @@ export interface LegacyProvisioning {
   git(uid: string, repository: LegacyGitRepository | null, budget: RouteBudget): Promise<ProvisioningWait<void>>;
   agentChatToken(uid: string, budget: RouteBudget): Promise<ProvisioningWait<string>>;
   gitKey(uid: string, gatewayId: string, publicKey: string, budget: RouteBudget): Promise<ProvisioningWait<void>>;
+  releaseGitKey(uid: string, gatewayId: string, publicKey: string, budget: RouteBudget): Promise<DeleteGitKeyOutcome>;
 }
 
-export type LegacyProvisioningClient = Pick<ProvisioningServiceClient, "getProvisioning" | "getCredential" | "putGitKey">;
+export type LegacyProvisioningClient = Pick<ProvisioningServiceClient, "getProvisioning" | "getCredential" | "putGitKey" | "deleteGitKey">;
 
 export interface LegacyProvisioningDeps {
   readonly client: LegacyProvisioningClient;
@@ -101,6 +103,14 @@ function notProvisioned(uid: string): ProvisioningWait<never> {
 function keyRegistered(key: GitKey): boolean {
   return key.status.observedGeneration >= key.generation &&
     key.status.conditions.some((candidate) => candidate.type === "Registered" && candidate.status === "True");
+}
+
+const SERVICE_KEY_HELD_ELSEWHERE = "registered under a holder this service does not manage";
+
+function keyHeldElsewhere(key: GitKey): boolean {
+  if (key.status.observedGeneration < key.generation) return false;
+  const registered = key.status.conditions.find((candidate) => candidate.type === "Registered");
+  return registered?.status === "False" && registered.message.startsWith(SERVICE_KEY_HELD_ELSEWHERE);
 }
 
 function keyPending(key: GitKey): ProvisioningWait<never> {
@@ -218,9 +228,17 @@ export function createLegacyProvisioning(deps: LegacyProvisioningDeps): LegacyPr
           return unavailable(uid, error);
         }
         if (keyRegistered(key)) return { ready: true, value: undefined };
+        if (keyHeldElsewhere(key)) {
+          logger.error("legacy provisioning: the service will not register the gateway's git key, which another holder has", { uid, gatewayId });
+          return { ready: false, reason: "GitKeyHeldElsewhere", retryAfterSeconds: DEFAULT_RETRY_AFTER_SECONDS, refused: true };
+        }
         if (budget.remainingMs() - GIT_KEY_POLL_MS < RESERVED_AFTER_LONG_POLL_MS) return keyPending(key);
         await sleep(GIT_KEY_POLL_MS);
       }
+    },
+
+    releaseGitKey(uid, gatewayId, publicKey, budget) {
+      return deps.client.deleteGitKey(uid, gatewayId, { expectedPublicKey: publicKey, signal: budget.signal });
     },
   };
 }
