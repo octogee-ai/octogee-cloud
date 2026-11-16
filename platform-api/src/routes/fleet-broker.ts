@@ -3,7 +3,9 @@ import { isBlobObjectVersion } from "@octogee/shared/types/fleet-broker";
 import { gcsBlobStore, runtimeBlobStore } from "../lib/runtime-blob-store.js";
 import type { WorkspaceProject } from "@octogee/core/platform-state";
 import { isolatedBootMode } from "@octogee/core/isolated-prelaunch";
-import type { ProvisioningProjection } from "@octogee/core/provisionSteps";
+import { noProvisioningProjection, type ProvisioningProjection } from "@octogee/core/provisionSteps";
+import { mirroredState, mmUpdateFromChatOutputs, type MirroredState } from "@octogee/core/provisioning-mirror";
+import { respondProvisioningPending, routeBudget, type LegacyProvisioning, type ProvisioningWait } from "../lib/legacy-provisioning.js";
 import { sharedAgentAnchorMigrationScope, sharedAssignedSourceSurgeAnchorScope } from "../lib/shared-agent-anchor-migration.js";
 import { installWorkspaceBlobBrokerRoute, type WorkspaceBlobStore } from "./fleet-broker-workspace-blob.js";
 import { readUserRestoreAuthoritySnapshot } from "@octogee/core/fleet-state";
@@ -71,6 +73,7 @@ import {
   isValidUsername,
   parseAgentId,
   projectAgentId,
+  workspaceDefaultAgentChannelName,
 } from "@octogee/shared/types/identity";
 import { MANIFEST_OBJECT_SUFFIX } from "@octogee/core/workspace-manifest";
 import { userEntitlements } from "@octogee/shared/types/user-entitlements";
@@ -265,6 +268,7 @@ interface FleetBrokerRouteDeps {
     mmUpdate: FleetBrokerMattermostUpdate;
   }) => Promise<void>;
   provisioningProjection?: ProvisioningProjection;
+  legacyProvisioning?: LegacyProvisioning | null;
   onUserProvisioned?: (report: ProvisionedUserReport) => Promise<void>;
   renderAvatar?: RenderAvatar;
   createBlobSignedUrl?: CreateBlobSignedUrl;
@@ -340,6 +344,51 @@ async function applyDefaultAgentLook(
   } catch (error) {
     logger.error("[fleet-broker] default agent look was not applied", { uid: input.uid, error });
   }
+}
+
+async function serviceMattermostUpdate(
+  uid: string,
+  legacyProvisioning: LegacyProvisioning,
+  deps: { store: PlatformStateRepositories; provisioningProjection: ProvisioningProjection | undefined },
+): Promise<ProvisioningWait<Record<string, unknown>>> {
+  const budget = routeBudget();
+  const wait = await legacyProvisioning.chat(uid, budget);
+  if (!wait.ready) return wait;
+  const { slug, chat } = wait.value;
+  const stored = await (deps.provisioningProjection ?? noProvisioningProjection).storedMattermostNames(uid, slug);
+  const platformToken = (await defaultAgentMattermostSecret(deps.store, uid))?.personalToken;
+  const agentChatToken = platformToken ? { ready: true as const, value: platformToken } : await legacyProvisioning.agentChatToken(uid, budget);
+  if (!agentChatToken.ready) return agentChatToken;
+  const mmUpdate = mmUpdateFromChatOutputs({
+    slug,
+    chat,
+    agentChannelName: stored.coachChannelName ?? workspaceDefaultAgentChannelName(slug),
+    proxyUrl: process.env.API_PUBLIC_URL || "",
+  });
+  return { ready: true, value: { ...mmUpdate, _coachPersonalToken: agentChatToken.value } };
+}
+
+const MIRROR_REFUSAL_REASONS: Readonly<Record<Exclude<MirroredState["state"], "mirrored" | "pending">, string>> = {
+  "user-missing": "UserMissing",
+  "slug-mismatch": "SlugMismatch",
+  "being-erased": "UserBeingErased",
+  "chat-id-mismatch": "ChatAccountMismatch",
+};
+
+async function mirroredChat(
+  uid: string,
+  legacyProvisioning: LegacyProvisioning,
+  store: PlatformStateRepositories,
+): Promise<ProvisioningWait<void>> {
+  const wait = await legacyProvisioning.chat(uid, routeBudget());
+  if (!wait.ready) return wait;
+  const mirrored = await mirroredState(store, wait.value.resource, wait.value.chat);
+  if (mirrored.state === "mirrored") return { ready: true, value: undefined };
+  if (mirrored.state === "pending") return { ready: false, reason: "WaitingForMirror", retryAfterSeconds: 5 };
+  const refused = mirrored as Extract<MirroredState, { detail: string }>;
+  const reason = MIRROR_REFUSAL_REASONS[refused.state];
+  logger.error("legacy provisioning: the mirror refuses this user, so its mount cannot finish", { uid, reason, detail: refused.detail });
+  return { ready: false, reason, retryAfterSeconds: 5 };
 }
 
 const defaultExecuteChatSearch: ExecuteChatSearch = async (identity, params) => {
@@ -1667,6 +1716,8 @@ type ResolvedFleetBrokerRouteDeps = {
   provisionMattermost: NonNullable<FleetBrokerRouteDeps["provisionMattermost"]>;
   markProvisioningComplete: NonNullable<FleetBrokerRouteDeps["markProvisioningComplete"]>;
   onUserProvisioned: NonNullable<FleetBrokerRouteDeps["onUserProvisioned"]>;
+  provisioningProjection: ProvisioningProjection | undefined;
+  legacyProvisioning: LegacyProvisioning | null;
   renderAvatar: RenderAvatar;
   createBlobSignedUrl: CreateBlobSignedUrl;
   createVmHomeSignedUrl: CreateBlobSignedUrl;
@@ -1726,6 +1777,8 @@ function resolveFleetBrokerRouteImplementations(
     markProvisioningComplete:
       opts.markProvisioningComplete ?? defaultMarkProvisioningComplete(opts.provisioningProjection),
     onUserProvisioned: opts.onUserProvisioned ?? (async () => {}),
+    provisioningProjection: opts.provisioningProjection,
+    legacyProvisioning: opts.legacyProvisioning ?? null,
     renderAvatar: opts.renderAvatar ?? defaultRenderAvatar,
     createBlobSignedUrl: opts.createBlobSignedUrl ?? defaultCreateBlobSignedUrl,
     readBlobMetadata: opts.readBlobMetadata ?? defaultReadBlobMetadata,
@@ -2981,6 +3034,18 @@ function installProvisioningRoutes(
   router.post("/provision-mattermost", async (req, res) => {
     const assigned = await requireAssignedUser(store, req, res);
     if (!assigned) return;
+    const { legacyProvisioning } = deps;
+    if (legacyProvisioning) {
+      await runBrokered(res, async () => {
+        const answer = await serviceMattermostUpdate(assigned.uid, legacyProvisioning, deps);
+        if (!answer.ready) {
+          respondProvisioningPending(res, { route: "provision-mattermost", uid: assigned.uid }, answer);
+          return;
+        }
+        res.json({ mmUpdate: answer.value });
+      });
+      return;
+    }
     await runBrokered(res, async () => {
       const mmUpdate = await provisionMattermost({
         uid: assigned.uid,
@@ -2996,6 +3061,18 @@ function installProvisioningRoutes(
     const mmUpdate = recordBodyValue(objectBody(req).mmUpdate);
     if (!mmUpdate) {
       res.status(400).json({ error: "invalid_mm_update" });
+      return;
+    }
+    const { legacyProvisioning } = deps;
+    if (legacyProvisioning) {
+      await runBrokered(res, async () => {
+        const answer = await mirroredChat(assigned.uid, legacyProvisioning, store);
+        if (!answer.ready) {
+          respondProvisioningPending(res, { route: "set-mattermost-fields", uid: assigned.uid }, answer);
+          return;
+        }
+        res.status(204).end();
+      });
       return;
     }
     await runBrokered(res, async () => {
@@ -3096,6 +3173,11 @@ function installProvisioningRoutes(
       return;
     }
     await runBrokered(res, async () => {
+      const { slug } = assigned.userRecord;
+      const agent = deps.legacyProvisioning && slug ? await records.userDocuments.agent(assigned.uid) : undefined;
+      if (deps.legacyProvisioning && slug && !agent?.look && !agent?.avatar) {
+        await applyDefaultAgentLook({ uid: assigned.uid, slug }, deps);
+      }
       await onUserProvisioned({
         uid: assigned.uid,
         slug: assigned.userRecord.slug,

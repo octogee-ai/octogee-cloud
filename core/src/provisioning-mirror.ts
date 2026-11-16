@@ -115,7 +115,7 @@ function refusingStore(store: ProvisioningMirrorDeps["store"], uid: string, chat
   });
 }
 
-function chatReady(resource: UserProvisioning): ChatOutputs | null {
+export function chatReady(resource: UserProvisioning): ChatOutputs | null {
   const condition = resource.status.conditions.find((candidate) => candidate.type === "ChatReady");
   const chat = resource.status.outputs.chat;
   if (condition?.status !== "True" || chat === undefined) return null;
@@ -147,8 +147,10 @@ export function mmUpdateFromChatOutputs(input: {
   };
 }
 
+type MirrorReadStore = Pick<PlatformStateStore, "users" | "workspaces" | "secrets">;
+
 async function userRecordsMatch(
-  store: ProvisioningMirrorDeps["store"],
+  store: MirrorReadStore,
   resource: UserProvisioning,
   chat: ChatOutputs,
   slug: string,
@@ -171,7 +173,7 @@ async function userRecordsMatch(
 }
 
 async function chatRecordsMatch(
-  store: ProvisioningMirrorDeps["store"],
+  store: MirrorReadStore,
   uid: string,
   chat: ChatOutputs,
   slug: string,
@@ -192,12 +194,27 @@ async function chatRecordsMatch(
 }
 
 async function recordsMatch(
-  store: ProvisioningMirrorDeps["store"],
+  store: MirrorReadStore,
   resource: UserProvisioning,
   chat: ChatOutputs,
   slug: string,
 ): Promise<boolean> {
   return (await userRecordsMatch(store, resource, chat, slug)) && (await chatRecordsMatch(store, resource.uid, chat, slug));
+}
+
+export type MirroredState =
+  | { readonly state: "mirrored" | "pending" }
+  | { readonly state: "user-missing" | "slug-mismatch" | "being-erased" | "chat-id-mismatch"; readonly detail: string };
+
+export async function mirroredState(store: MirrorReadStore, resource: UserProvisioning, chat: ChatOutputs): Promise<MirroredState> {
+  const user = await store.users.records.get(resource.uid);
+  if (user === null) return { state: "user-missing", detail: `no user record exists for ${resource.uid}` };
+  const slug = resource.spec.slug;
+  if (user.slug !== slug) return { state: "slug-mismatch", detail: `the user record carries slug ${user.slug}, the spec names ${slug}` };
+  if (userBeingErased(user)) return { state: "being-erased", detail: `the user's account lifecycle is ${user.accountLifecycle?.status}` };
+  const mismatch = await chatAccountMismatch(store, user, chat);
+  if (mismatch !== null) return { state: "chat-id-mismatch", detail: mismatch };
+  return { state: (await recordsMatch(store, resource, chat, slug)) ? "mirrored" : "pending" };
 }
 
 export async function mirrorUserProvisioning(

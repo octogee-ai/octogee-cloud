@@ -294,10 +294,14 @@ export function createProvisioningServiceClient(options) {
             });
             return response.status === 404 ? null : json(response);
         },
-        async getCredential(uid, name) {
+        async getCredential(uid, name, credentialOptions) {
             let response;
             try {
-                response = await request({ method: "GET", path: `users/${userSegment(uid)}/credentials/${encodeURIComponent(name)}` });
+                response = await request({
+                    method: "GET",
+                    path: `users/${userSegment(uid)}/credentials/${encodeURIComponent(name)}`,
+                    ...(credentialOptions?.signal === undefined ? {} : { signal: credentialOptions.signal }),
+                });
             }
             catch (error) {
                 if (error instanceof ProvisioningServiceError && error.status === 409 && error.code === "not-issued")
@@ -305,6 +309,15 @@ export function createProvisioningServiceClient(options) {
                 throw error;
             }
             return credentialFrom(await response.text(), name);
+        },
+        async putGitKey(uid, gatewayId, spec, keyOptions) {
+            const response = await request({
+                method: "PUT",
+                path: `users/${userSegment(uid)}/git-keys/${encodeURIComponent(gatewayId)}`,
+                body: { spec },
+                ...(keyOptions?.signal === undefined ? {} : { signal: keyOptions.signal }),
+            });
+            return { outcome: PUT_OUTCOMES[response.status] ?? "unchanged", key: await json(response) };
         },
     };
     return client;

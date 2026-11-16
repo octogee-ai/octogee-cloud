@@ -23,7 +23,8 @@ import {
   staticUserEntitlements,
   type UserEntitlementResolver,
 } from "@octogee/shared/types/user-entitlements";
-import internalGiteaAdminRoutes from "./routes/internal/gitea-admin.js";
+import { createInternalGiteaAdminRoutes } from "./routes/internal/gitea-admin.js";
+import { legacyProvisioningFromEnvironment } from "./lib/legacy-provisioning.js";
 import { installBodyParsers } from "@octogee/core/http/body-parsers";
 import { createMattermostMintRoutes, createMmRestProxyHandler } from "./routes/mattermost-proxy.js";
 import { createOpenClawRuntimeBrokerRoutes, type SessionChannelPurposeReader } from "./routes/openclaw-runtime-broker.js";
@@ -573,7 +574,8 @@ export function createPlatformApp(opts: PlatformAppOptions = {}) {
   if (chatArtifacts) app.use("/api/chat/artifacts", chatArtifacts.public);
   // octogee-api-only: Gitea admin broker. Gateway provisioners call this with
   // their projected gateway KSA token; octogee-api holds the Gitea admin token.
-  app.use("/internal/gitea", internalGiteaAdminRoutes);
+  const legacyProvisioning = legacyProvisioningFromEnvironment(process.env);
+  app.use("/internal/gitea", createInternalGiteaAdminRoutes({ legacyProvisioning }));
   if (chatArtifacts) app.use("/internal/chat-artifacts", chatArtifacts.worker);
   // octogee-api-only: broker the gateway-edge OpenClaw runtime Firestore
   // dependencies so cattle pods do not need ADC/datastore reach.
@@ -613,6 +615,7 @@ export function createPlatformApp(opts: PlatformAppOptions = {}) {
     onBudgetInterruption: product?.onBudgetInterruption,
     onUserProvisioned: product?.onUserProvisioned,
     provisioningProjection: product?.provisioningProjection,
+    legacyProvisioning,
   }));
   // octogee-api-only: broker sidecar GitHub file-browser token reads
   // so cattle pods do not need Firestore or KMS access to user secrets.
