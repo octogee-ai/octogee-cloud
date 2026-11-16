@@ -26,9 +26,10 @@ import {
   type LifecycleMode,
   type RecoverUnreachableIsolatedGatewayInput,
   type RetireOwnedIsolatedGatewayInput,
+  assertActivationSourceRecoveryReleased,
 } from "./inputs.js";
 
-type RetirementDeps = Pick<IsolatedLifecycleDeps, "store" | "now" | "log" | "requireOwner">;
+type RetirementDeps = Pick<IsolatedLifecycleDeps, "store" | "now" | "log" | "requireOwner" | "sourceRecoveryPending">;
 
 export type OwnedGatewayRetirement =
   | { retired: true; operationId: string }
@@ -472,6 +473,9 @@ export async function retireOwnedIsolatedGateway(
         }
         await assertRetirementAuthorityFence(transaction, request);
         await assertZeroWorkloadRecoveryReceipt(transaction, request);
+        if (request.reason === "activation-failed") {
+          await assertActivationSourceRecoveryReleased(input, transaction, request.gatewayId, request.generation);
+        }
       },
     });
     return { retired: true, operationId };

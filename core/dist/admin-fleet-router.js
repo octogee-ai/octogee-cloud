@@ -21,6 +21,7 @@ import { AdminDryRunPlanned, admitAdminDryRunMarker, isAdminDryRun, refuseUnansw
 import { addAdminComputerRoutes } from "./admin-vm-router.js";
 import { addAdminUserRoutes } from "./admin-user-router.js";
 import { addAdminSharedPoolRoutes } from "./admin-shared-pool-router.js";
+import { withSourceRecoveryPending } from "./fleet-state-sections.js";
 import { addAdminPlacementOwnerRoutes } from "./admin-placement-owner-router.js";
 import { addAdminPlacementRoutes } from "./admin-placement-router.js";
 import { addAdminPlacementSharedRoutes } from "./admin-placement-shared-router.js";
@@ -1407,6 +1408,22 @@ const ERR_GATEWAY_NOT_FOUND = "gateway not found";
 const ERR_GATEWAY_OPERATION_IN_FLIGHT = "another operation is already pending or running for this gateway";
 export const ERR_USER_NOT_FOUND = "user not found";
 const ERR_OPERATION_NOT_FOUND = "operation not found";
+export const OPERATION_LOOKUP_MAX_IDS = 200;
+function parseOperationLookupIds(body) {
+    const ids = body !== null && typeof body === "object" ? body.ids : undefined;
+    const invalid = `ids must be an array of 1 to ${OPERATION_LOOKUP_MAX_IDS} distinct non-empty strings`;
+    if (!Array.isArray(ids) || ids.length === 0 || ids.length > OPERATION_LOOKUP_MAX_IDS)
+        return invalid;
+    if (!ids.every((id) => typeof id === "string" && id !== "") || new Set(ids).size !== ids.length)
+        return invalid;
+    return ids;
+}
+function operationReadShape(record, sourceRecoveryPending) {
+    const [doc] = operationDocs([record]);
+    const shaped = shapeOperationsHistoryRecord(doc.id, doc.data());
+    const annotated = withSourceRecoveryPending(record, sourceRecoveryPending);
+    return "sourceRecoveryPending" in annotated ? { ...shaped, sourceRecoveryPending: annotated.sourceRecoveryPending } : shaped;
+}
 export const ERR_TARGET_GATEWAY_NOT_READY = "target gateway not ready";
 export const ADMIN_FLEET_REQUEST_REASON = "Admin fleet request";
 const OP_KIND_RESTART_GATEWAY = "restart-gateway";
@@ -3294,6 +3311,7 @@ export function addAdminFleetRoutes(router, deps) {
         journal: runAdminFleetMutation,
         provisioningReadiness: deps.provisioningReadiness,
         readGatewayKubernetes: deps.readGatewayKubernetes,
+        sourceRecoveryPending: deps.placement?.schedulerHandoffAwaitingRelease,
     });
     addAdminPlacementOwnerRoutes(router, { store, journal: runAdminFleetMutation, log: (message) => logger.info(message) });
     if (deps.placement)
@@ -4645,9 +4663,27 @@ export function addAdminFleetRoutes(router, deps) {
                 res.status(404).json({ error: ERR_OPERATION_NOT_FOUND, operationId: id });
                 return;
             }
-            const [doc] = operationDocs([record]);
-            const [operation] = await withActorEmails(accounts, [shapeOperationsHistoryRecord(doc.id, doc.data())]);
+            const [operation] = await withActorEmails(accounts, [operationReadShape(record, deps.placement?.schedulerHandoffAwaitingRelease)]);
             res.json({ operation });
+        }
+        catch (e) {
+            next(e);
+        }
+    });
+    router.post("/operations/lookup", async (req, res, next) => {
+        try {
+            const ids = parseOperationLookupIds(req.body);
+            if (typeof ids === "string") {
+                res.status(400).json({ error: ids });
+                return;
+            }
+            const found = await store.journal.operations.getMany(ids);
+            const present = ids.flatMap((id) => {
+                const record = found.get(id);
+                return record === undefined ? [] : [operationReadShape(record, deps.placement?.schedulerHandoffAwaitingRelease)];
+            });
+            const operations = await withActorEmails(accounts, present);
+            res.json({ operations, missing: ids.filter((id) => !found.has(id)), generatedAt: new Date().toISOString() });
         }
         catch (e) {
             next(e);

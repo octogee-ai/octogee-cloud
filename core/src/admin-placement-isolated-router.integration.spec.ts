@@ -22,7 +22,11 @@ const TARGET = "alice-xs-12345678";
 
 const warn = vi.fn();
 
-function app(store: PlatformStateStore, readGatewayPodDiagnostics: AdminIsolatedCapabilities["readGatewayPodDiagnostics"] = vi.fn()) {
+function app(
+  store: PlatformStateStore,
+  readGatewayPodDiagnostics: AdminIsolatedCapabilities["readGatewayPodDiagnostics"] = vi.fn(),
+  sourceRecoveryPending: AdminIsolatedCapabilities["sourceRecoveryPending"] = () => false,
+) {
   const server = express();
   server.use(express.json());
   server.use((req, _res, next) => {
@@ -33,7 +37,7 @@ function app(store: PlatformStateStore, readGatewayPodDiagnostics: AdminIsolated
     store,
     journal: createAdminFleetMutationRunner(store),
     accounts: { get: async () => null },
-    capabilities: { namespace: "octogee-test", ensureAuthSecret: vi.fn(), readGatewayPodDiagnostics },
+    capabilities: { namespace: "octogee-test", sourceRecoveryPending, ensureAuthSecret: vi.fn(), readGatewayPodDiagnostics },
     log: vi.fn(),
     warn,
     now: () => NOW + 5_000,
@@ -136,6 +140,35 @@ describe.skipIf(!dsn)("PostgreSQL isolated lease completion, failure and retirem
     .post("/users/alice/activation-lease/fail").send({ leaseId: "lease-one", generation: 1, targetGatewayId: TARGET, message: "prepare failed", ...body });
   const retire = (store: PlatformStateStore, body: Record<string, unknown> = {}) => request(app(store))
     .post(`/isolated-gateways/${TARGET}/retire-owned`).send({ ownerUid: "alice", generation: 1, leaseId: "lease-one", reason: "builder-returned", ...body });
+
+  it("withholds failure cleanup while the activation still recovers its source, inside the verb's transaction", async () => {
+    const store = await seed("activating");
+    await yieldToClient(store);
+    const activationId = `builder-activate-${TARGET}-g1`;
+    await store.journal.operations.create(operation({
+      id: activationId, kind: "migrate-user", status: "failed", startedAt: NOW, completedAt: NOW, schedulerHandoffReleased: false,
+    }));
+    const recovering: AdminIsolatedCapabilities["sourceRecoveryPending"] = (stored) =>
+      stored.id === activationId && stored.schedulerHandoffReleased === false;
+    const server = app(store, vi.fn(), recovering);
+    const failLease = () => request(server).post("/users/alice/activation-lease/fail")
+      .send({ leaseId: "lease-one", generation: 1, targetGatewayId: TARGET, message: "prepare failed" });
+    const retireTarget = () => request(server).post(`/isolated-gateways/${TARGET}/retire-owned`)
+      .send({ ownerUid: "alice", generation: 1, leaseId: "lease-one", reason: "activation-failed" });
+
+    for (const refused of [await failLease().expect(409), await retireTarget().expect(409)]) {
+      expect(refused.body).toMatchObject({ code: "precondition-failed", reasonCode: "source-recovery-pending" });
+    }
+    expect((await lease()).status).toBe("activating");
+    expect((await store.gateways.roots.get(TARGET))?.desiredStatus).toBe("paused");
+
+    await store.journal.operations.patch(activationId, { schedulerHandoffReleased: true });
+
+    await failLease().expect(200);
+    await retireTarget().expect(200);
+    expect((await lease()).status).toBe("failed");
+    expect((await store.gateways.roots.get(TARGET))?.desiredStatus).toBe("retired");
+  });
 
   it("completes a returning lease only after the fleet controller yields, and writes the returned receipt", async () => {
     const store = await seed("returning");
@@ -317,6 +350,7 @@ describe.skipIf(!dsn)("PostgreSQL isolated allocation home readiness", () => {
       ensureAuthSecret,
       now: () => NOW + 5_000,
       log: vi.fn(),
+      sourceRecoveryPending: () => false,
     }, request);
   }
 

@@ -1,8 +1,11 @@
+import { builderActivateOperationId } from "@octogee/shared/types/isolated-operation-ids";
 import type { SizingTier } from "@octogee/shared/types/sizing";
 import { runNormalFleetMutation, type NormalFleetMutationInput } from "../normal-fleet-mutation.js";
 import type { SizingKeyReader } from "../sizing-key.js";
 import type { PlacementOwnerFence } from "../placement-automation-owner.js";
-import type { PlatformStateStore } from "../platform-state/store.js";
+import { SourceRecoveryPendingError } from "../placement-refusal.js";
+import type { OperationRecord } from "../platform-state/operations.js";
+import type { PlatformStateStore, PlatformStateTransaction, Stored } from "../platform-state/store.js";
 
 export const ISOLATED_GATEWAY_LIFECYCLE_ACTOR = "glm-controller-disposable-gateway";
 export const PLACEMENT_AUTOMATION_ACTOR = "glm-controller-placement-policy";
@@ -36,10 +39,22 @@ export interface IsolatedLifecycleDeps {
   mutations: LifecycleMutationRunner;
   now(): number;
   log(message: string): void;
+  sourceRecoveryPending(operation: Stored<OperationRecord>): boolean;
 }
 
 export async function checkPlacementOwner(input: Pick<IsolatedLifecycleDeps, "store" | "requireOwner">): Promise<void> {
   await input.store.transaction({ label: "isolated-gateway.owner-check", readOnly: true }, input.requireOwner);
+}
+
+export async function assertActivationSourceRecoveryReleased(
+  input: Pick<IsolatedLifecycleDeps, "sourceRecoveryPending">,
+  transaction: PlatformStateTransaction,
+  targetGatewayId: string,
+  generation: number,
+): Promise<void> {
+  const operationId = builderActivateOperationId(targetGatewayId, generation);
+  const operation = await transaction.journal.operations.get(operationId);
+  if (operation !== null && input.sourceRecoveryPending(operation)) throw new SourceRecoveryPendingError(operationId);
 }
 
 export interface AllocateIsolatedGatewayInput {

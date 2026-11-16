@@ -3,7 +3,7 @@ import { accountAllowsInteractiveAccess } from "@octogee/shared/types/account-li
 import { builderActivateOperationId, builderReturnOperationId, placementRetireOperationId, } from "@octogee/shared/types/isolated-operation-ids";
 import { isolatedSizingTier } from "@octogee/shared/types/sizing-profile";
 import { withCurrentSizingKey } from "../sizing-key.js";
-import { ISOLATED_GATEWAY_LIFECYCLE_ACTOR, IsolatedGatewayFenceError, checkPlacementOwner, fieldMap, readMillis, } from "./inputs.js";
+import { ISOLATED_GATEWAY_LIFECYCLE_ACTOR, IsolatedGatewayFenceError, checkPlacementOwner, fieldMap, readMillis, assertActivationSourceRecoveryReleased, } from "./inputs.js";
 export function userAllowsInteractiveAccess(user) {
     return accountAllowsInteractiveAccess({ accountLifecycle: user.accountLifecycle ?? undefined });
 }
@@ -360,6 +360,7 @@ export async function failActivationLease(input, request, mode = "apply") {
             }
             throw new IsolatedGatewayFenceError(`activation lease for ${request.uid} changed before failure cleanup`);
         }
+        await assertActivationSourceRecoveryReleased(input, transaction, request.targetGatewayId, request.generation);
         if (mode === "plan")
             return;
         await transaction.users.placementReceipts.create(request.uid, buildPlacementReceipt({

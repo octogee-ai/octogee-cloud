@@ -3,6 +3,7 @@ import type { OperationStatus } from "@octogee/shared/types/glm";
 import type { GatewayArtifact } from "./gateway-live-release.js";
 import type { FleetRegistryRecord } from "./platform-state/fleet-registry.js";
 import type { GatewayRoot } from "./platform-state/gateways.js";
+import type { OperationRecord } from "./platform-state/operations.js";
 import type { PlatformUserRecord } from "./platform-state/users.js";
 import type { PlatformStateStore, PlatformStateTransaction, Stored } from "./platform-state/store.js";
 export declare const FLEET_STATE_SECTIONS: readonly ["config", "sharedPoolAutomation", "users", "gateways", "releases", "assignments", "runtimes", "operations", "migrations", "placementAutomation"];
@@ -25,7 +26,12 @@ export interface FleetStateSectionsInput<User extends {
     readonly now: number;
     readonly projectUser: (user: PlatformUserRecord) => User;
     readonly readGatewayKubernetes?: GatewayKubernetesReader | undefined;
+    readonly sourceRecoveryPending?: SourceRecoveryPendingReader | undefined;
 }
+export type SourceRecoveryPendingReader = (operation: Stored<OperationRecord>) => boolean;
+export declare function withSourceRecoveryPending<T extends Stored<OperationRecord>>(operation: T, sourceRecoveryPending: SourceRecoveryPendingReader | undefined): T | (T & {
+    sourceRecoveryPending: boolean;
+});
 export declare function readFleetStateSections<User extends {
     readonly provisioning: object;
     readonly openclaw: object;

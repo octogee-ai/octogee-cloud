@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
+import { builderActivateOperationId } from "@octogee/shared/types/isolated-operation-ids";
+import { SourceRecoveryPendingError } from "../placement-refusal.js";
 import {
   recoverUnreachableIsolatedGateway,
   retireOwnedIsolatedGateway,
@@ -56,7 +58,7 @@ function harness(seed: Record<string, Record<string, unknown>> = {}) {
   const store = createDocumentFixtureStore(docs);
   const log = vi.fn();
   const diagnostics = vi.fn(async (_gatewayId: string): Promise<PodObservation> => ({ status: "missing", totalPods: 0 }));
-  const deps = { store, now: () => 10_000, log, requireOwner, readGatewayPodDiagnostics: diagnostics };
+  const deps = { store, now: () => 10_000, log, requireOwner, readGatewayPodDiagnostics: diagnostics, sourceRecoveryPending: () => false };
   const request = { uid: "uid-alice", builderSlug: "alice", gatewayId: GATEWAY, leaseId: "lease-one", generation: 1, authoritativeGatewayId: "shared-blue" };
   return { docs, store, log, diagnostics, deps, request };
 }
@@ -190,6 +192,41 @@ describe("owned isolated gateway retirement", () => {
     });
     await recoverUnreachableIsolatedGateway(h.deps, h.request);
     await expect(retireOwnedIsolatedGateway(h.deps, { ...retire, zeroWorkloadRecoveryOperationId: RECOVERY })).resolves.toMatchObject({ retired: true });
+  });
+
+  describe("after a failed activation", () => {
+    const ACTIVATION = builderActivateOperationId(GATEWAY, 1);
+    const failedActivation = { [`glmOperations/${ACTIVATION}`]: {
+      kind: "migrate-user", status: "failed", createdAt: 1, createdBy: "test", startedAt: 1, completedAt: 2, input: {}, steps: [],
+      schedulerHandoffReleased: false,
+    } };
+    const activationFailed = { ...retire, reason: "activation-failed" as const };
+    const recovering = (operation: { id: string; schedulerHandoffReleased?: unknown }) =>
+      operation.id === ACTIVATION && operation.schedulerHandoffReleased === false;
+
+    it.each(["apply", "plan"] as const)("refuses to %s while the activation's source recovery is pending and writes nothing", async (mode) => {
+      const h = harness({ ...pausedRoot(), ...failedActivation });
+
+      await expect(retireOwnedIsolatedGateway({ ...h.deps, sourceRecoveryPending: recovering }, activationFailed, mode))
+        .rejects.toEqual(new SourceRecoveryPendingError(ACTIVATION));
+      expect(h.docs.get(`gateways/${GATEWAY}`)?.desiredStatus).toBe("paused");
+      expect(h.docs.has(`glmOperations/${RETIREMENT}`)).toBe(false);
+    });
+
+    it("retires once the activation's source recovery is released", async () => {
+      const h = harness({ ...pausedRoot(), ...failedActivation });
+      h.docs.set(`glmOperations/${ACTIVATION}`, { ...h.docs.get(`glmOperations/${ACTIVATION}`), schedulerHandoffReleased: true });
+
+      await expect(retireOwnedIsolatedGateway({ ...h.deps, sourceRecoveryPending: recovering }, activationFailed))
+        .resolves.toEqual({ retired: true, operationId: RETIREMENT });
+    });
+
+    it("does not consult source recovery for another retirement reason", async () => {
+      const h = harness({ ...pausedRoot(), ...failedActivation });
+
+      await expect(retireOwnedIsolatedGateway({ ...h.deps, sourceRecoveryPending: recovering }, retire))
+        .resolves.toEqual({ retired: true, operationId: RETIREMENT });
+    });
   });
 
   it("lets the owner refusal through rather than reporting it as a blocked retirement", async () => {

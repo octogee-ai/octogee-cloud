@@ -17,6 +17,7 @@ import {
   homePreparedBeforeAllocation,
   unauditedLifecycleMutations,
 } from "./index.js";
+import { SourceRecoveryPendingError } from "../placement-refusal.js";
 
 
 const request = {
@@ -504,7 +505,7 @@ describe("placement receipts", () => {
     const { state, docs } = fixtureFirestore({
       "users/uid-alice": leaseUserDoc({ ...activatingLease }),
     });
-    const input = { store: state, now: () => 25_000, requireOwner };
+    const input = { store: state, now: () => 25_000, requireOwner, sourceRecoveryPending: () => false };
     const advance = {
       uid: "uid-alice",
       leaseId: "lease-one",
@@ -683,7 +684,7 @@ describe("placement receipts", () => {
     const { state, docs } = fixtureFirestore({
       "users/uid-alice": leaseUserDoc({ ...activatingLease }),
     });
-    const input = { store: state, now: () => 25_000, requireOwner };
+    const input = { store: state, now: () => 25_000, requireOwner, sourceRecoveryPending: () => false };
     const failure = {
       uid: "uid-alice",
       leaseId: "lease-one",
@@ -721,6 +722,33 @@ describe("placement receipts", () => {
       docs.get("users/uid-alice/placement_receipts/lease-one-1-activation-failed"),
     ).toMatchObject({ at: 25_000 });
   });
+
+  describe("while the activation is still recovering its source", () => {
+    const ACTIVATION = "builder-activate-alice-xs-12345678-g1";
+    const failure = { uid: "uid-alice", leaseId: "lease-one", generation: 1, targetGatewayId: "alice-xs-12345678", operationId: ACTIVATION, message: "failed" };
+    const seed = (released: boolean) => fixtureFirestore({
+      "users/uid-alice": leaseUserDoc({ ...activatingLease }),
+      [`glmOperations/${ACTIVATION}`]: { kind: "migrate-user", status: "failed", createdAt: 1, createdBy: "test", input: {}, steps: [], schedulerHandoffReleased: released },
+    });
+    const sourceRecoveryPending = (operation: { id: string; schedulerHandoffReleased?: unknown }) =>
+      operation.id === ACTIVATION && operation.schedulerHandoffReleased === false;
+
+    it.each(["apply", "plan"] as const)("refuses to %s and leaves the lease activating", async (mode) => {
+      const { state, docs } = seed(false);
+
+      await expect(failActivationLease({ store: state, now: () => 25_000, requireOwner, sourceRecoveryPending }, failure, mode))
+        .rejects.toEqual(new SourceRecoveryPendingError(ACTIVATION));
+      expect(docs.get("users/uid-alice")).toMatchObject({ provisioning: { openclaw: { activationLease: { status: "activating" } } } });
+      expect(docs.has("users/uid-alice/placement_receipts/lease-one-1-activation-failed")).toBe(false);
+    });
+
+    it("fails the lease once the source recovery is released", async () => {
+      const { state, docs } = seed(true);
+
+      await failActivationLease({ store: state, now: () => 25_000, requireOwner, sourceRecoveryPending }, failure);
+      expect(docs.get("users/uid-alice")).toMatchObject({ provisioning: { openclaw: { activationLease: { status: "failed" } } } });
+    });
+  });
 });
 
 function allocationHarness(readSizingKey: () => Promise<"hobby" | "pro" | null> = hobbyTier) {
@@ -735,7 +763,7 @@ function allocationHarness(readSizingKey: () => Promise<"hobby" | "pro" | null> 
     "users/uid-alice": userData(),
   });
   const ensureAuthSecret = vi.fn(async (_input: unknown) => undefined);
-  const allocate = () => allocateIsolatedGateway({ store: h.state, readSizingKey, requireOwner, mutations: unauditedLifecycleMutations, requireHomeReady: homePreparedBeforeAllocation, namespace: "test", log: vi.fn(), now: () => 2_000, ensureAuthSecret }, request);
+  const allocate = () => allocateIsolatedGateway({ store: h.state, readSizingKey, requireOwner, mutations: unauditedLifecycleMutations, requireHomeReady: homePreparedBeforeAllocation, namespace: "test", log: vi.fn(), now: () => 2_000, ensureAuthSecret, sourceRecoveryPending: () => false }, request);
   return { ...h, ensureAuthSecret, allocate, run: async () => (await allocate()).gatewayId };
 }
 
@@ -800,7 +828,7 @@ describe("parked isolated gateway reuse", () => {
     h.docs.set("users/uid-alice", user);
     h.ensureAuthSecret.mockClear();
     const allocate = (parkedGateway = { gatewayId: parkedGatewayId, generation: 1 }) => allocateIsolatedGateway(
-      { store: h.state, readSizingKey: hobbyTier, requireOwner, mutations: unauditedLifecycleMutations, requireHomeReady: homePreparedBeforeAllocation, namespace: "test", log: vi.fn(), now: () => 3_000, ensureAuthSecret: h.ensureAuthSecret },
+      { store: h.state, readSizingKey: hobbyTier, requireOwner, mutations: unauditedLifecycleMutations, requireHomeReady: homePreparedBeforeAllocation, namespace: "test", log: vi.fn(), now: () => 3_000, ensureAuthSecret: h.ensureAuthSecret, sourceRecoveryPending: () => false },
       { ...nextRequest, parkedGateway },
     );
     const run = async (parkedGateway?: { gatewayId: string; generation: number }) => (await allocate(parkedGateway)).gatewayId;

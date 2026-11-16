@@ -10,7 +10,7 @@ import { type SizingTier } from "@octogee/shared/types/sizing";
 import { type GatewayPricingMode } from "@octogee/shared/types/cost-estimator";
 import { type UserAccounts, type UserSignInHosts } from "./admin-user-router.js";
 import { type AdminSharedPoolRouterDeps } from "./admin-shared-pool-router.js";
-import type { GatewayKubernetesReader } from "./fleet-state-sections.js";
+import { type GatewayKubernetesReader } from "./fleet-state-sections.js";
 import { type AdminPlacementCapabilities } from "./admin-placement-router.js";
 import { type AdminPlacementSharedCapabilities } from "./admin-placement-shared-router.js";
 import { type AdminIsolatedCapabilities } from "./admin-placement-isolated-router.js";
@@ -330,6 +330,7 @@ export declare function rollupFleetStats(gateways: ReadonlyArray<ReturnType<type
     };
 };
 export declare const ERR_USER_NOT_FOUND = "user not found";
+export declare const OPERATION_LOOKUP_MAX_IDS = 200;
 export declare const ERR_TARGET_GATEWAY_NOT_READY = "target gateway not ready";
 export declare const ADMIN_FLEET_REQUEST_REASON = "Admin fleet request";
 export declare const OP_KIND_MIGRATE_USER = "migrate-user";

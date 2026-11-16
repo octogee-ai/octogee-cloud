@@ -116,7 +116,54 @@ repeated `sections` parameter, answers `400`.
   latest release payload hash equals `platformArtifactHash` (empty when the
   server has no platform artifact).
 - `migrations`: the `migrate-user` operations that are `pending` or
-  `running`, whatever `?operationStatus=` says.
+  `running`, whatever `?operationStatus=` says. Each carries
+  `sourceRecoveryPending` (see [Source recovery](#source-recovery)).
+
+### Source recovery
+
+`sourceRecoveryPending` is `true` while the operation runner still owns the
+source side of a `migrate-user` operation: it may yet resume, roll back or
+recover the user on the source gateway, so the target must not be retired and
+the lease must not be failed. It is derived from the stored operation alone,
+by the same function the fleet controller's own placement pass reads. It is
+`true` when either holds:
+
+- the operation is the activation operation of an activation lease
+  (`builder-activate-<gateway>-g<generation>`, source
+  `builder-activation-lease`, from a shared gateway, scheduler handoff staged
+  after cutover), with no cutover committed, not rolled back, and `pending`,
+  `running`, or `failed` after an attempt that held, or may have held, the
+  source (a source-only recovery, a forward recovery checkpoint, or attempt
+  evidence that is missing or includes `quiesce-source`);
+- or the operation is `pending`, `running` or `failed` with a complete
+  scheduler handoff that has not been released (`schedulerHandoffReleased`
+  is `false`).
+
+The `migrations` section lists only `pending` and `running` operations. A
+failed activation still recovering its source is read with
+`GET /operations/<id>` or `POST /operations/lookup`, which carry the same
+field on every `migrate-user` operation. A client treats an absent
+`sourceRecoveryPending` as unknown, not as `false`: an older server does not
+send it. The read can be stale, so `retire-owned` with reason
+`activation-failed` and `activation-lease/fail` check it again inside their
+transaction and refuse with `reasonCode` `source-recovery-pending`.
+
+## Operation reads
+
+`GET /operations/<id>` answers `{operation}` or `404`. `POST /operations/lookup`
+reads up to 200 operations in one request:
+
+```json
+{ "ids": ["builder-activate-alice-xs-12345678-g3", "builder-return-alice-xs-12345678-g3"] }
+```
+
+It answers `{operations, missing, generatedAt}`: `operations` holds each
+operation that exists, in the order asked, in the shape `GET /operations/<id>`
+answers, with `actorEmail` resolved in one account lookup for the batch;
+`missing` lists the ids with no operation. It reads operations only, not
+audit records. `ids` must be 1 to 200 distinct non-empty strings, or the call
+answers `400`. It writes nothing and counts as one request against the
+per-caller limit of 300 requests a minute.
 
 A refused precondition answers `409` and is logged as the warning
 `fleet mutation refused`, with its failed audit entry kept.
@@ -337,8 +384,39 @@ the installed in-process pass does not call the gate and cannot yield.
 | `code` | Meaning | What the client does |
 |---|---|---|
 | `placement-owner` | The client does not own placement, or the fleet controller has not yielded. | It does not act. It reads the switch and the yield again on its next tick. |
-| `precondition-failed` | A fact the client acted on has changed, such as an epoch, a release, the pool, a lease or the target's load. `error` names it. | It logs the refusal and decides again from a fresh read on its next tick. It never retries within the same tick. |
+| `precondition-failed` | A fact the client acted on has changed, such as an epoch, a release, the pool, a lease or the target's load. `error` names it for people; `reasonCode` names the cause for machines. | It logs the refusal and decides again from a fresh read on its next tick. It never retries within the same tick. |
 | `observation-unknown` | The fleet controller's live read of the gateway's pods failed, or returned no status, an `unknown` status or a malformed one. `error` names the read failure when there was one. Nothing changed. | It tries again on a later tick. |
+
+Every `precondition-failed` from a placement verb carries `reasonCode`, one
+of the values below; a new cause gets a new value. `error` stays the
+human-readable message, and the isolated verbs keep it in `reason` too. A
+client treats an absent `reasonCode` as an unclassified refusal.
+
+| `reasonCode` | Cause | Verbs |
+|---|---|---|
+| `migration-terminal` | The migration operation ended and cannot be re-armed. | `placement-migrations` |
+| `user-held` | An operator holds the user. | `placement-migrations` |
+| `shared-drain-superseded` | The shared drain no longer authorizes the migration. | `placement-migrations` |
+| `migration-authority` | Another placement authority check failed, such as another pending migration of the user or a slug mismatch. | `placement-migrations` |
+| `target-capacity` | The target has more users assigned or arriving than `expectedTargetUsersAtMost`. | `recover`, `placement-migrations` |
+| `shared-pool-unconfigured` | The shared gateway pool is not configured. | shared verbs |
+| `target-not-shared` | The target is not in the shared gateway pool. | `recover`, `runtime-reset` |
+| `source-not-proven-unavailable` | The source is ready, has a fresh heartbeat, still has pods, is in an active roll, or changed too recently. | `recover` |
+| `assignment-changed` | The operation id does not match the user's current source assignment. | `placement-migrations` |
+| `roll-not-eligible` | The roll recovery is not eligible. | `roll-recovery` |
+| `drain-move-not-supersedable` | The drain move cannot be superseded. | `supersede` |
+| `fleet-state-changed` | A fleet state fence changed, such as a source epoch, a target heartbeat or a previous recovery. | `recover`, `runtime-reset` |
+| `fence-mismatch` | A stored record changed under the verb's fence. | all |
+| `source-recovery-pending` | The activation operation is still recovering its source. | `retire-owned` (`activation-failed`), `activation-lease/fail` |
+| `user-missing` | The user does not exist. | isolated verbs |
+| `user-slug-missing` | The user has no slug. | `isolated-gateway/allocate` |
+| `lease-missing` | The user has no activation lease. | `activation-lease/complete` |
+| `gateway-not-owned` | The gateway is not owned by the user. | `retire-owned`, `recover-unreachable` |
+| `retirement-blocked` | A retirement fence failed; `error` says which. | `retire-owned` |
+| `isolated-fence` | A lease or isolated gateway fence changed. | isolated verbs |
+| `retirement-conflict` | A retirement claim or an in-flight migration blocks the change. | isolated verbs |
+| `sizing-key-changed` | The user's sizing key changed during the call. | isolated verbs |
+| `initial-release-conflict` | The gateway's initial release conflicts. | `isolated-gateway/allocate` |
 
 A `409` that carries `auditId` and no `code` is an `Idempotency-Key` replay. It
 answers with the audit of the earlier call instead of acting twice. With
@@ -589,7 +667,9 @@ the lease is not that returning lease, or the user has not returned.
 operation that ended it. Without one, it records the canonical activation
 operation `builder-activate-<gateway>-g<generation>`.
 Answers `{uid, leaseId, generation, status: "failed"}`, also when the lease is
-already failed.
+already failed. While the canonical activation operation still recovers its
+source, it answers `precondition-failed` with `reasonCode`
+`source-recovery-pending` and leaves the lease unchanged.
 
 ### `POST /users/<id>/activation-lease/sizing-transition`
 
@@ -631,6 +711,9 @@ gateway reads as `retired` with that retirement claim, and
 means the gateway is not owned by `ownerUid`, is already retired, is another
 generation, a stated fence no longer matches, or a pending telemetry
 operation or another retirement claim blocks it; the `reason` says which.
+With reason `activation-failed`, it also refuses with `reasonCode`
+`source-recovery-pending` while the activation operation
+`builder-activate-<gateway>-g<generation>` still recovers its source.
 
 ### `POST /users/<id>/home/prepare`
 

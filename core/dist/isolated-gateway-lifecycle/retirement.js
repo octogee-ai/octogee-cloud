@@ -3,7 +3,7 @@ import { projectGatewayDesiredRootForGateway } from "@octogee/shared/types/gatew
 import { isolatedRecoverOperationId, placementRetireOperationId, } from "@octogee/shared/types/isolated-operation-ids";
 import { GatewayRetirementConflictError, claimGatewayRetirementInStore, } from "../gateway-retirement-claim.js";
 import { FenceMismatchError } from "../platform-state/errors.js";
-import { ISOLATED_GATEWAY_ALLOCATION_KIND, PLACEMENT_AUTOMATION_ACTOR, ROLLED_BACK_STATUS, checkPlacementOwner, fieldMap, readMillis, } from "./inputs.js";
+import { ISOLATED_GATEWAY_ALLOCATION_KIND, PLACEMENT_AUTOMATION_ACTOR, ROLLED_BACK_STATUS, checkPlacementOwner, fieldMap, readMillis, assertActivationSourceRecoveryReleased, } from "./inputs.js";
 function nonEmptyString(value) {
     return typeof value === "string" && value.length > 0 ? value : null;
 }
@@ -314,6 +314,9 @@ export async function retireOwnedIsolatedGateway(input, request, mode = "apply")
                 }
                 await assertRetirementAuthorityFence(transaction, request);
                 await assertZeroWorkloadRecoveryReceipt(transaction, request);
+                if (request.reason === "activation-failed") {
+                    await assertActivationSourceRecoveryReleased(input, transaction, request.gatewayId, request.generation);
+                }
             },
         });
         return { retired: true, operationId };

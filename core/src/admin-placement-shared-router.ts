@@ -14,17 +14,21 @@ import { FleetMutationRefusedError } from "./normal-fleet-mutation.js";
 import { assertClientOwnsPlacementAutomation, placementOwnerRefusalBody, requireClientPlacementOwner } from "./placement-automation-owner.js";
 import {
   CONTINUOUS_PLACEMENT_SOURCE,
+  HeldUserPlacementError,
   PLACEMENT_MIGRATION_KIND,
   PLACEMENT_MIGRATION_SOURCES,
+  PlacementMigrationAuthorityError,
+  SharedDrainSupersededError,
+  TerminalPlacementMigrationConflictError,
   continuousPlacementMigrationOperationId,
   enqueuePlacementMigrationInTransaction,
-  isPlacementMigrationRefusal,
   supersedePendingSharedDrainMoveInTransaction,
   type EnqueuePlacementMigrationRequest,
   type PlacementMigrationClassifier,
   type PlacementMigrationSource,
   type SupersedePendingSharedDrainMoveRequest,
 } from "./placement-migrations.js";
+import { PlacementPreconditionFailed, type PlacementRefusalReason } from "./placement-refusal.js";
 import { FenceMismatchError } from "./platform-state/errors.js";
 import type { PlatformStateStore, PlatformStateTransaction } from "./platform-state/store.js";
 import { readSharedGatewayPoolConfigInStore } from "./shared-gateway-pool-read.js";
@@ -42,26 +46,31 @@ export interface AdminPlacementSharedRouterDeps extends AdminPlacementSharedCapa
   now?: () => number;
 }
 
-class PreconditionFailed extends Error {}
-
 class ObservationUnknown extends Error {}
 
 class Rehearsed extends Error {}
+
+const REFUSAL_REASONS: ReadonlyArray<[new (...args: never[]) => Error, PlacementRefusalReason]> = [
+  [TerminalPlacementMigrationConflictError, "migration-terminal"],
+  [HeldUserPlacementError, "user-held"],
+  [SharedDrainSupersededError, "shared-drain-superseded"],
+  [PlacementMigrationAuthorityError, "migration-authority"],
+  [FleetStatePreconditionError, "fleet-state-changed"],
+  [FenceMismatchError, "fence-mismatch"],
+];
+
+function refusalReason(error: unknown): PlacementRefusalReason | null {
+  if (error instanceof PlacementPreconditionFailed) return error.reasonCode;
+  return REFUSAL_REASONS.find(([type]) => error instanceof type)?.[1] ?? null;
+}
 
 function refusalBody(error: unknown): Record<string, unknown> | null {
   if (error instanceof FleetMutationRefusedError) return refusalBody(error.refusal);
   const owner = placementOwnerRefusalBody(error);
   if (owner !== null) return owner;
   if (error instanceof ObservationUnknown) return { code: "observation-unknown", error: error.message };
-  if (
-    error instanceof PreconditionFailed ||
-    error instanceof FenceMismatchError ||
-    error instanceof FleetStatePreconditionError ||
-    isPlacementMigrationRefusal(error)
-  ) {
-    return { code: "precondition-failed", error: (error as Error).message };
-  }
-  return null;
+  const reasonCode = refusalReason(error);
+  return reasonCode === null ? null : { code: "precondition-failed", error: (error as Error).message, reasonCode };
 }
 
 function refusalsBelowError(journal: AdminFleetMutationRunner): AdminFleetMutationRunner {
@@ -140,12 +149,12 @@ async function assertTargetUsersAtMost(
   atMost: number,
 ): Promise<void> {
   const blocker = await targetUsersBlocker(transaction, targetGatewayId, uid, atMost);
-  if (blocker !== null) throw new PreconditionFailed(blocker);
+  if (blocker !== null) throw new PlacementPreconditionFailed("target-capacity", blocker);
 }
 
 async function sharedGatewayIdsIn(transaction: PlatformStateTransaction): Promise<string[]> {
   const pool = await readSharedGatewayPoolConfigInStore(transaction);
-  if (pool === null) throw new PreconditionFailed("the shared gateway pool is not configured");
+  if (pool === null) throw new PlacementPreconditionFailed("shared-pool-unconfigured", "the shared gateway pool is not configured");
   return [...pool.sharedGatewayIds];
 }
 
@@ -293,14 +302,14 @@ function recoverSharedUserIntent(req: Request, deps: AdminPlacementSharedRouterD
             targetHeartbeatMaxAgeMs: GATEWAY_UNREACHABLE_AFTER_MS,
             validateTarget: async ({ targetGatewayId }) => {
               if (!sharedGatewayIds.includes(targetGatewayId)) {
-                throw new PreconditionFailed(`target ${targetGatewayId} is not in the shared gateway pool`);
+                throw new PlacementPreconditionFailed("target-not-shared", `target ${targetGatewayId} is not in the shared gateway pool`);
               }
               await assertTargetUsersAtMost(transaction, targetGatewayId, uid, expectedTargetUsersAtMost);
             },
             validateSource: async (context) => {
               const observation = knownObservation(source);
               const blocker = unavailableSourceBlocker(context, observation, now, sourceUnchangedForAtLeastMs);
-              if (blocker !== null) throw new PreconditionFailed(blocker);
+              if (blocker !== null) throw new PlacementPreconditionFailed("source-not-proven-unavailable", blocker);
               sourceKubernetesStatus = observation.status;
             },
           }, now);
@@ -331,7 +340,7 @@ function resetRecoveredRuntimeIntent(req: Request): RouteIntent<unknown> {
       apply: async (transaction, now) => {
         const sharedGatewayIds = await sharedGatewayIdsIn(transaction);
         if (!sharedGatewayIds.includes(targetGatewayId)) {
-          throw new PreconditionFailed(`target ${targetGatewayId} is not in the shared gateway pool`);
+          throw new PlacementPreconditionFailed("target-not-shared", `target ${targetGatewayId} is not in the shared gateway pool`);
         }
         const outcome = await commitRecoveredDisposableRuntimeResetInTransaction(transaction, {
           requireOwner: requireClientPlacementOwner,
@@ -385,7 +394,7 @@ function supersedeRollingSharedGatewayIntent(req: Request, deps: AdminPlacementS
           }
           const sourceKubernetes = knownObservation(source);
           const result = await appendSharedRollRecoveryInTransaction(transaction, input, { now, requireOwner: requireClientPlacementOwner, sourceKubernetes });
-          if (result.kind === "not-eligible") throw new PreconditionFailed(result.reason);
+          if (result.kind === "not-eligible") throw new PlacementPreconditionFailed("roll-not-eligible", result.reason);
           return { ...result, sourceKubernetesStatus: sourceKubernetes.status };
         },
       };
@@ -442,7 +451,7 @@ function enqueuePlacementMigrationIntent(req: Request, deps: AdminPlacementShare
           const assignment = await transaction.gateways.assignments.get(request.fromGatewayId, request.uid);
           const expected = assignment === null ? null : continuousPlacementMigrationOperationId({ ...request, sourceAssignmentEpoch: assignment.epoch });
           if (expected !== request.operationId) {
-            throw new PreconditionFailed(`operation ${request.operationId} does not match the user's current assignment on ${request.fromGatewayId}`);
+            throw new PlacementPreconditionFailed("assignment-changed", `operation ${request.operationId} does not match the user's current assignment on ${request.fromGatewayId}`);
           }
         }
         const outcome = await enqueuePlacementMigrationInTransaction(transaction, {
@@ -487,7 +496,7 @@ function supersedeSharedDrainMoveIntent(req: Request, deps: AdminPlacementShared
           now,
           operationJournalRetentionMs: deps.operationJournalRetentionMs,
         }, request);
-        if (outcome.kind === "refused") throw new PreconditionFailed(outcome.reason);
+        if (outcome.kind === "refused") throw new PlacementPreconditionFailed("drain-move-not-supersedable", outcome.reason);
         return { operationId: request.operationId, outcome: outcome.kind };
       },
     }),
