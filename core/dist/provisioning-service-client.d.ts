@@ -65,7 +65,7 @@ export interface ProvisioningServiceClient {
     watchProvisionings(options: WatchProvisioningsOptions): Promise<UserProvisioningWatchResponse>;
     retryProvisioning(uid: string, request: RetryProvisioningRequest, idempotencyKey: string): Promise<unknown>;
     getProvisioningEvents(uid: string, options?: RequestSignalOptions): Promise<ProvisioningEventsResponse | null>;
-    getCredential(uid: string, name: ProvisioningCredentialName): Promise<ProvisioningCredential | null>;
+    getCredential(uid: string, name: ProvisioningCredentialName, options?: RequestSignalOptions): Promise<ProvisioningCredential | null>;
 }
 export interface ProvisioningServiceConfig {
     readonly baseUrl: string;

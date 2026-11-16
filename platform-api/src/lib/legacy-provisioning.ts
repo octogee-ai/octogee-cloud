@@ -15,6 +15,8 @@ import {
 import { logger } from "@octogee/core/http/logging";
 
 export const LEGACY_PROVISIONING_LONG_POLL_SECONDS = 10;
+export const LEGACY_ROUTE_DEADLINE_MS = 40_000;
+const RESERVED_AFTER_LONG_POLL_MS = 10_000;
 const DEFAULT_RETRY_AFTER_SECONDS = 5;
 const MAX_RETRY_AFTER_SECONDS = 300;
 
@@ -24,10 +26,26 @@ export type ProvisioningWait<T> =
 
 export type LegacyGitRepository = GitRepositoryRole | "system-config";
 
+export interface RouteBudget {
+  readonly signal: AbortSignal;
+  remainingMs(): number;
+}
+
+export function routeBudget(totalMs = LEGACY_ROUTE_DEADLINE_MS, now: () => number = Date.now): RouteBudget {
+  const end = now() + totalMs;
+  return { signal: AbortSignal.timeout(totalMs), remainingMs: () => Math.max(0, end - now()) };
+}
+
+export interface ReadyChat {
+  readonly slug: string;
+  readonly chat: ChatOutputs;
+  readonly resource: UserProvisioning;
+}
+
 export interface LegacyProvisioning {
-  chat(uid: string): Promise<ProvisioningWait<{ slug: string; chat: ChatOutputs }>>;
-  git(uid: string, repository: LegacyGitRepository | null): Promise<ProvisioningWait<void>>;
-  agentChatToken(uid: string): Promise<ProvisioningWait<string>>;
+  chat(uid: string, budget: RouteBudget): Promise<ProvisioningWait<ReadyChat>>;
+  git(uid: string, repository: LegacyGitRepository | null, budget: RouteBudget): Promise<ProvisioningWait<void>>;
+  agentChatToken(uid: string, budget: RouteBudget): Promise<ProvisioningWait<string>>;
 }
 
 export type LegacyProvisioningClient = Pick<ProvisioningServiceClient, "getProvisioning" | "getCredential">;
@@ -58,6 +76,10 @@ export function respondProvisioningPending(
 }
 
 function unavailable(uid: string, error: unknown): ProvisioningWait<never> {
+  if (error instanceof ProvisioningServiceError && error.code === "aborted") {
+    logger.error("legacy provisioning: the route's deadline passed before the provisioning service answered", { uid });
+    return { ready: false, reason: "ProvisioningServiceTimeout", retryAfterSeconds: DEFAULT_RETRY_AFTER_SECONDS };
+  }
   if (!(error instanceof ProvisioningServiceError) || !error.transient) throw error;
   logger.error("legacy provisioning: the provisioning service is unavailable", { uid, err: error });
   return {
@@ -86,11 +108,17 @@ export function createLegacyProvisioning(deps: LegacyProvisioningDeps): LegacyPr
     };
   }
 
-  async function current(uid: string): Promise<{ resource: UserProvisioning } | { wait: ProvisioningWait<never> }> {
+  function longPollFor(budget: RouteBudget): number {
+    return Math.min(longPollSeconds, Math.floor((budget.remainingMs() - RESERVED_AFTER_LONG_POLL_MS) / 1000));
+  }
+
+  async function current(uid: string, budget: RouteBudget): Promise<{ resource: UserProvisioning } | { wait: ProvisioningWait<never> }> {
+    const { signal } = budget;
     try {
-      let resource = await deps.client.getProvisioning(uid);
-      if (resource !== null && resource.status.observedGeneration < resource.generation) {
-        resource = await deps.client.getProvisioning(uid, { waitForGeneration: resource.generation, timeoutSeconds: longPollSeconds });
+      let resource = await deps.client.getProvisioning(uid, { signal });
+      const timeoutSeconds = longPollFor(budget);
+      if (resource !== null && resource.status.observedGeneration < resource.generation && timeoutSeconds >= 1) {
+        resource = await deps.client.getProvisioning(uid, { waitForGeneration: resource.generation, timeoutSeconds, signal });
       }
       if (resource === null) return { wait: notProvisioned(uid) };
       return { resource };
@@ -120,16 +148,16 @@ export function createLegacyProvisioning(deps: LegacyProvisioningDeps): LegacyPr
   }
 
   return {
-    async chat(uid) {
-      const read = await current(uid);
+    async chat(uid, budget) {
+      const read = await current(uid, budget);
       if ("wait" in read) return read.wait;
       const chat = observed(read.resource, "ChatReady") ? chatReady(read.resource) : null;
       if (chat === null) return pending(uid, read.resource, "ChatReady");
-      return { ready: true, value: { slug: read.resource.spec.slug, chat } };
+      return { ready: true, value: { slug: read.resource.spec.slug, chat, resource: read.resource } };
     },
 
-    async git(uid, repository) {
-      const read = await current(uid);
+    async git(uid, repository, budget) {
+      const read = await current(uid, budget);
       if ("wait" in read) return read.wait;
       if (repository !== null && !carries(read.resource, repository)) {
         logger.error("legacy provisioning: the user's spec carries no such repository", { uid, repository });
@@ -139,10 +167,10 @@ export function createLegacyProvisioning(deps: LegacyProvisioningDeps): LegacyPr
       return { ready: true, value: undefined };
     },
 
-    async agentChatToken(uid) {
+    async agentChatToken(uid, budget) {
       let credential: Awaited<ReturnType<LegacyProvisioningClient["getCredential"]>>;
       try {
-        credential = await deps.client.getCredential(uid, "agent-chat-token");
+        credential = await deps.client.getCredential(uid, "agent-chat-token", { signal: budget.signal });
       } catch (error) {
         if (error instanceof ProvisioningServiceError && error.status === 404) return notProvisioned(uid);
         return unavailable(uid, error);

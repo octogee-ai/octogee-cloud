@@ -25,7 +25,7 @@ import {
   ensureProjectGiteaRepo,
   ProjectRepoProvisioningError,
 } from "../projects/provisioning.js";
-import { respondProvisioningPending, type LegacyGitRepository, type LegacyProvisioning } from "../../lib/legacy-provisioning.js";
+import { respondProvisioningPending, routeBudget, type LegacyGitRepository, type LegacyProvisioning } from "../../lib/legacy-provisioning.js";
 
 // Gitea ADMIN broker for the in-pod provisioner. The provisioner runs in the OpenClaw
 // openclaw container and no longer holds the admin token; it calls octogee-api with its
@@ -239,7 +239,7 @@ async function awaitServiceGit(
       respondProvisioningPending(res, { route, slug }, { reason: "NotProvisioned", retryAfterSeconds: 5 });
       return;
     }
-    const wait = await legacyProvisioning.git(user.uid, repository);
+    const wait = await legacyProvisioning.git(user.uid, repository, routeBudget());
     if (!wait.ready) {
       respondProvisioningPending(res, { route, uid: user.uid }, wait);
       return;

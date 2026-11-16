@@ -237,6 +237,7 @@ describe("provisioning service client", () => {
     await expect(api.getProvisioning("u1", { signal: controller.signal })).rejects.toMatchObject({ code: "aborted" });
     await expect(api.listProvisionings({}, { signal: controller.signal })).rejects.toMatchObject({ code: "aborted" });
     await expect(api.getProvisioningEvents("u1", { signal: controller.signal })).rejects.toMatchObject({ code: "aborted" });
+    await expect(api.getCredential("u1", "agent-chat-token", { signal: controller.signal })).rejects.toMatchObject({ code: "aborted" });
 
     expect(fetches).toBe(1);
     expect(sleeps).toEqual([]);

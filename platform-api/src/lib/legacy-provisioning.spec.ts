@@ -9,7 +9,14 @@ import type {
 } from "@octogee/shared/types/provisioning-service";
 import { createProvisioningServiceClient, ProvisioningServiceError } from "@octogee/core/provisioning-service-client";
 import { logger } from "@octogee/core/http/logging";
-import { createLegacyProvisioning, legacyProvisioningFromEnvironment, type LegacyProvisioningClient } from "./legacy-provisioning.js";
+import {
+  createLegacyProvisioning,
+  LEGACY_ROUTE_DEADLINE_MS,
+  legacyProvisioningFromEnvironment,
+  routeBudget,
+  type LegacyProvisioningClient,
+  type RouteBudget,
+} from "./legacy-provisioning.js";
 
 const NOW = Date.parse("2026-11-15T18:00:00Z");
 const CHAT = { userId: "mm-lin", teamId: "team-lin", channels: { general: "ch-general", agent: "ch-agent" }, agentBotUserId: "bot-lin" };
@@ -65,6 +72,12 @@ function fakeClient(answers: Array<UserProvisioning | null | Error>, credential:
   return { client, calls };
 }
 
+const SIGNAL = new AbortController().signal;
+
+function budget(remainingMs = LEGACY_ROUTE_DEADLINE_MS): RouteBudget {
+  return { signal: SIGNAL, remainingMs: () => remainingMs };
+}
+
 function adapter(client: LegacyProvisioningClient) {
   return createLegacyProvisioning({ client, now: () => NOW, longPollSeconds: 10 });
 }
@@ -75,8 +88,8 @@ describe("legacy provisioning adapter: chat", () => {
   it("answers the chat outputs once ChatReady is True for the current generation", async () => {
     const { client, calls } = fakeClient([resource({ conditions: [condition("ChatReady", "True", "Converged")], chat: CHAT })]);
 
-    await expect(adapter(client).chat("uid-lin")).resolves.toEqual({ ready: true, value: { slug: "lin", chat: CHAT } });
-    expect(calls).toEqual([{ uid: "uid-lin", options: undefined }]);
+    await expect(adapter(client).chat("uid-lin", budget())).resolves.toEqual({ ready: true, value: { slug: "lin", chat: CHAT, resource: expect.objectContaining({ uid: "uid-lin" }) } });
+    expect(calls).toEqual([{ uid: "uid-lin", options: { signal: SIGNAL } }]);
   });
 
   it("long-polls for a generation the service has not observed yet", async () => {
@@ -85,8 +98,8 @@ describe("legacy provisioning adapter: chat", () => {
       resource({ generation: 2, observedGeneration: 2, conditions: [condition("ChatReady", "True", "Converged")], chat: CHAT }),
     ]);
 
-    await expect(adapter(client).chat("uid-lin")).resolves.toMatchObject({ ready: true });
-    expect(calls[1]).toEqual({ uid: "uid-lin", options: { waitForGeneration: 2, timeoutSeconds: 10 } });
+    await expect(adapter(client).chat("uid-lin", budget())).resolves.toMatchObject({ ready: true });
+    expect(calls[1]).toEqual({ uid: "uid-lin", options: { waitForGeneration: 2, timeoutSeconds: 10, signal: SIGNAL } });
   });
 
   it("is not ready while chat is retrying, with the condition's reason and the service's next attempt", async () => {
@@ -95,7 +108,7 @@ describe("legacy provisioning adapter: chat", () => {
       work: { state: "retrying", attempts: 3, nextAttemptAt: "2026-11-15T18:00:42Z", lastAttemptAt: "2026-11-15T17:59:00Z" },
     })]);
 
-    await expect(adapter(client).chat("uid-lin")).resolves.toEqual({ ready: false, reason: "ChatTeamFailed", retryAfterSeconds: 42 });
+    await expect(adapter(client).chat("uid-lin", budget())).resolves.toEqual({ ready: false, reason: "ChatTeamFailed", retryAfterSeconds: 42 });
   });
 
   it("is not ready while the generation is still unobserved after the long-poll", async () => {
@@ -104,14 +117,14 @@ describe("legacy provisioning adapter: chat", () => {
       resource({ generation: 2, observedGeneration: 1, conditions: [condition("ChatReady", "True", "Converged")], chat: CHAT }),
     ]);
 
-    await expect(adapter(client).chat("uid-lin")).resolves.toEqual({ ready: false, reason: "GenerationNotObserved", retryAfterSeconds: 5 });
+    await expect(adapter(client).chat("uid-lin", budget())).resolves.toEqual({ ready: false, reason: "GenerationNotObserved", retryAfterSeconds: 5 });
   });
 
   it("is not ready and logs the uid when the service has no resource for the user", async () => {
     const logged = vi.spyOn(logger, "error").mockImplementation(() => {});
     const { client } = fakeClient([null]);
 
-    await expect(adapter(client).chat("uid-lin")).resolves.toEqual({ ready: false, reason: "NotProvisioned", retryAfterSeconds: 5 });
+    await expect(adapter(client).chat("uid-lin", budget())).resolves.toEqual({ ready: false, reason: "NotProvisioned", retryAfterSeconds: 5 });
     expect(logged).toHaveBeenCalledWith("legacy provisioning: no provisioning resource exists for the user", { uid: "uid-lin" });
   });
 
@@ -122,7 +135,7 @@ describe("legacy provisioning adapter: chat", () => {
       work: { state: "parked", attempts: 9, nextAttemptAt: null, lastAttemptAt: "2026-11-15T17:59:00Z" },
     })]);
 
-    await expect(adapter(client).chat("uid-lin")).resolves.toEqual({ ready: false, reason: "ChatUserFailed", retryAfterSeconds: 5 });
+    await expect(adapter(client).chat("uid-lin", budget())).resolves.toEqual({ ready: false, reason: "ChatUserFailed", retryAfterSeconds: 5 });
     expect(logged).toHaveBeenCalledWith("legacy provisioning: the user's provisioning is parked", { uid: "uid-lin", reason: "ChatUserFailed" });
   });
 
@@ -130,14 +143,14 @@ describe("legacy provisioning adapter: chat", () => {
     vi.spyOn(logger, "error").mockImplementation(() => {});
     const { client } = fakeClient([new ProvisioningServiceError(503, "unavailable", "down", 30_000)]);
 
-    await expect(adapter(client).chat("uid-lin")).resolves.toEqual({ ready: false, reason: "ProvisioningServiceUnavailable", retryAfterSeconds: 30 });
+    await expect(adapter(client).chat("uid-lin", budget())).resolves.toEqual({ ready: false, reason: "ProvisioningServiceUnavailable", retryAfterSeconds: 30 });
   });
 
   it("throws a refusal from the service", async () => {
     const refusal = new ProvisioningServiceError(403, "forbidden", "role");
     const { client } = fakeClient([refusal]);
 
-    await expect(adapter(client).chat("uid-lin")).rejects.toBe(refusal);
+    await expect(adapter(client).chat("uid-lin", budget())).rejects.toBe(refusal);
   });
 });
 
@@ -147,21 +160,21 @@ describe("legacy provisioning adapter: git", () => {
     const { client } = fakeClient([ready(), ready()]);
     const provisioning = adapter(client);
 
-    await expect(provisioning.git("uid-lin", null)).resolves.toEqual({ ready: true, value: undefined });
-    await expect(provisioning.git("uid-lin", "workspace")).resolves.toEqual({ ready: true, value: undefined });
+    await expect(provisioning.git("uid-lin", null, budget())).resolves.toEqual({ ready: true, value: undefined });
+    await expect(provisioning.git("uid-lin", "workspace", budget())).resolves.toEqual({ ready: true, value: undefined });
   });
 
   it("is not ready while git is retrying", async () => {
     const { client } = fakeClient([resource({ conditions: [condition("GitReady", "False", "GitRepositoryFailed")] })]);
 
-    await expect(adapter(client).git("uid-lin", "workspace")).resolves.toEqual({ ready: false, reason: "GitRepositoryFailed", retryAfterSeconds: 5 });
+    await expect(adapter(client).git("uid-lin", "workspace", budget())).resolves.toEqual({ ready: false, reason: "GitRepositoryFailed", retryAfterSeconds: 5 });
   });
 
   it("refuses and logs a repository the user's spec does not carry", async () => {
     const logged = vi.spyOn(logger, "error").mockImplementation(() => {});
     const { client } = fakeClient([resource({ systemConfigRepository: false, conditions: [condition("GitReady", "True", "Converged")] })]);
 
-    await expect(adapter(client).git("uid-lin", "system-config")).resolves.toEqual({ ready: false, reason: "RepositoryNotInSpec", retryAfterSeconds: 5 });
+    await expect(adapter(client).git("uid-lin", "system-config", budget())).resolves.toEqual({ ready: false, reason: "RepositoryNotInSpec", retryAfterSeconds: 5 });
     expect(logged).toHaveBeenCalledWith("legacy provisioning: the user's spec carries no such repository", { uid: "uid-lin", repository: "system-config" });
   });
 });
@@ -170,15 +183,15 @@ describe("legacy provisioning adapter: credentials", () => {
   it("reads the service's agent chat token", async () => {
     const { client } = fakeClient([], { name: "agent-chat-token", value: "agent-token", version: 1 });
 
-    await expect(adapter(client).agentChatToken("uid-lin")).resolves.toEqual({ ready: true, value: "agent-token" });
-    expect(client.getCredential).toHaveBeenCalledWith("uid-lin", "agent-chat-token");
+    await expect(adapter(client).agentChatToken("uid-lin", budget())).resolves.toEqual({ ready: true, value: "agent-token" });
+    expect(client.getCredential).toHaveBeenCalledWith("uid-lin", "agent-chat-token", { signal: SIGNAL });
   });
 
   it("is not ready and logs the uid before the service has issued it", async () => {
     const logged = vi.spyOn(logger, "error").mockImplementation(() => {});
     const { client } = fakeClient([], null);
 
-    await expect(adapter(client).agentChatToken("uid-lin")).resolves.toEqual({ ready: false, reason: "CredentialsNotIssued", retryAfterSeconds: 5 });
+    await expect(adapter(client).agentChatToken("uid-lin", budget())).resolves.toEqual({ ready: false, reason: "CredentialsNotIssued", retryAfterSeconds: 5 });
     expect(logged).toHaveBeenCalledWith("legacy provisioning: the user's agent chat token is not issued", { uid: "uid-lin" });
   });
 
@@ -187,15 +200,15 @@ describe("legacy provisioning adapter: credentials", () => {
     const missing = fakeClient([], new ProvisioningServiceError(404, "not-found", "no provisioning for this user"));
     const outage = fakeClient([], new ProvisioningServiceError(503, "unavailable", "down", 30_000));
 
-    await expect(adapter(missing.client).agentChatToken("uid-lin")).resolves.toEqual({ ready: false, reason: "NotProvisioned", retryAfterSeconds: 5 });
-    await expect(adapter(outage.client).agentChatToken("uid-lin")).resolves.toEqual({ ready: false, reason: "ProvisioningServiceUnavailable", retryAfterSeconds: 30 });
+    await expect(adapter(missing.client).agentChatToken("uid-lin", budget())).resolves.toEqual({ ready: false, reason: "NotProvisioned", retryAfterSeconds: 5 });
+    await expect(adapter(outage.client).agentChatToken("uid-lin", budget())).resolves.toEqual({ ready: false, reason: "ProvisioningServiceUnavailable", retryAfterSeconds: 30 });
   });
 
   it("throws a refusal from the service", async () => {
     const refusal = new ProvisioningServiceError(403, "forbidden", "role");
     const { client } = fakeClient([], refusal);
 
-    await expect(adapter(client).agentChatToken("uid-lin")).rejects.toBe(refusal);
+    await expect(adapter(client).agentChatToken("uid-lin", budget())).rejects.toBe(refusal);
   });
 });
 
@@ -227,15 +240,57 @@ describe("legacy provisioning requests", () => {
     });
     const provisioning = adapter(client);
 
-    await provisioning.chat("uid-lin");
-    await provisioning.chat("uid-lin");
-    await provisioning.chat("uid-lin");
-    await provisioning.git("uid-lin", "workspace");
-    await provisioning.agentChatToken("uid-lin");
-    await provisioning.agentChatToken("uid-lin");
+    await provisioning.chat("uid-lin", budget());
+    await provisioning.chat("uid-lin", budget());
+    await provisioning.chat("uid-lin", budget());
+    await provisioning.git("uid-lin", "workspace", budget());
+    await provisioning.agentChatToken("uid-lin", budget());
+    await provisioning.agentChatToken("uid-lin", budget());
 
     expect(answers).toEqual([]);
     expect(new Set(methods)).toEqual(new Set(["GET"]));
+  });
+});
+
+describe("legacy provisioning deadline", () => {
+  it("shortens the long poll to what the route's budget leaves after the time reserved for the rest of the route", async () => {
+    const { client, calls } = fakeClient([resource({ generation: 2, observedGeneration: 1 }), resource({ generation: 2, observedGeneration: 1 })]);
+
+    await adapter(client).chat("uid-lin", budget(14_000));
+
+    expect(calls[1]).toEqual({ uid: "uid-lin", options: { waitForGeneration: 2, timeoutSeconds: 4, signal: SIGNAL } });
+  });
+
+  it("skips the long poll when the budget cannot hold one", async () => {
+    const { client, calls } = fakeClient([resource({ generation: 2, observedGeneration: 1 })]);
+
+    await expect(adapter(client).chat("uid-lin", budget(10_500))).resolves.toEqual({ ready: false, reason: "GenerationNotObserved", retryAfterSeconds: 5 });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("answers a logged timeout within the route's deadline when the service hangs", async () => {
+    const logged = vi.spyOn(logger, "error").mockImplementation(() => {});
+    const hanging: typeof globalThis.fetch = (_input, init) =>
+      new Promise((_resolve, reject) => init?.signal?.addEventListener("abort", () => reject(init.signal?.reason)));
+    const client = createProvisioningServiceClient({
+      baseUrl: "http://provisioning.invalid",
+      tokenPath: "/token",
+      readToken: async () => "token",
+      fetch: hanging,
+      retry: { attempts: 1, baseDelayMs: 0, maxDelayMs: 0 },
+    });
+    const started = Date.now();
+    const route = routeBudget(100);
+
+    await expect(adapter(client).chat("uid-lin", route)).resolves.toEqual({ ready: false, reason: "ProvisioningServiceTimeout", retryAfterSeconds: 5 });
+    await expect(adapter(client).agentChatToken("uid-lin", route)).resolves.toEqual({ ready: false, reason: "ProvisioningServiceTimeout", retryAfterSeconds: 5 });
+
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(logged).toHaveBeenCalledWith("legacy provisioning: the route's deadline passed before the provisioning service answered", { uid: "uid-lin" });
+  });
+
+  it("keeps the route's whole deadline well inside the gateway's 60 second request timeout", () => {
+    expect(LEGACY_ROUTE_DEADLINE_MS).toBeLessThanOrEqual(45_000);
   });
 });
 

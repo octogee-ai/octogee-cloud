@@ -4,10 +4,10 @@ import { gcsBlobStore, runtimeBlobStore } from "../lib/runtime-blob-store.js";
 import type { WorkspaceProject } from "@octogee/core/platform-state";
 import { isolatedBootMode } from "@octogee/core/isolated-prelaunch";
 import { noProvisioningProjection, type ProvisioningProjection } from "@octogee/core/provisionSteps";
-import { mmUpdateFromChatOutputs } from "@octogee/core/provisioning-mirror";
-import { respondProvisioningPending, type LegacyProvisioning, type ProvisioningWait } from "../lib/legacy-provisioning.js";
+import { mirroredState, mmUpdateFromChatOutputs, type MirroredState } from "@octogee/core/provisioning-mirror";
+import { respondProvisioningPending, routeBudget, type LegacyProvisioning, type ProvisioningWait, type RouteBudget } from "../lib/legacy-provisioning.js";
 import type { ProvisioningGitKeys } from "../lib/provisioning-git-keys.js";
-import type { ChatOutputs, GitKey } from "@octogee/shared/types/provisioning-service";
+import type { GitKey } from "@octogee/shared/types/provisioning-service";
 import { ProvisioningServiceError } from "@octogee/core/provisioning-service-client";
 import { sharedAgentAnchorMigrationScope, sharedAssignedSourceSurgeAnchorScope } from "../lib/shared-agent-anchor-migration.js";
 import { installWorkspaceBlobBrokerRoute, type WorkspaceBlobStore } from "./fleet-broker-workspace-blob.js";
@@ -355,12 +355,13 @@ async function serviceMattermostUpdate(
   legacyProvisioning: LegacyProvisioning,
   deps: { store: PlatformStateRepositories; provisioningProjection: ProvisioningProjection | undefined },
 ): Promise<ProvisioningWait<Record<string, unknown>>> {
-  const wait = await legacyProvisioning.chat(uid);
+  const budget = routeBudget();
+  const wait = await legacyProvisioning.chat(uid, budget);
   if (!wait.ready) return wait;
   const { slug, chat } = wait.value;
   const stored = await (deps.provisioningProjection ?? noProvisioningProjection).storedMattermostNames(uid, slug);
   const platformToken = (await defaultAgentMattermostSecret(deps.store, uid))?.personalToken;
-  const agentChatToken = platformToken ? { ready: true as const, value: platformToken } : await legacyProvisioning.agentChatToken(uid);
+  const agentChatToken = platformToken ? { ready: true as const, value: platformToken } : await legacyProvisioning.agentChatToken(uid, budget);
   if (!agentChatToken.ready) return agentChatToken;
   const mmUpdate = mmUpdateFromChatOutputs({
     slug,
@@ -371,43 +372,41 @@ async function serviceMattermostUpdate(
   return { ready: true, value: { ...mmUpdate, _coachPersonalToken: agentChatToken.value } };
 }
 
+const MIRROR_REFUSAL_REASONS: Readonly<Record<Exclude<MirroredState["state"], "mirrored" | "pending">, string>> = {
+  "user-missing": "UserMissing",
+  "slug-mismatch": "SlugMismatch",
+  "being-erased": "UserBeingErased",
+  "chat-id-mismatch": "ChatAccountMismatch",
+};
+
 async function mirroredChat(
   uid: string,
-  mattermostUserId: string | null | undefined,
   legacyProvisioning: LegacyProvisioning,
-): Promise<ProvisioningWait<ChatOutputs>> {
-  const wait = await legacyProvisioning.chat(uid);
+  store: PlatformStateRepositories,
+  budget: RouteBudget = routeBudget(),
+): Promise<ProvisioningWait<void>> {
+  const wait = await legacyProvisioning.chat(uid, budget);
   if (!wait.ready) return wait;
-  const reported = wait.value.chat.userId;
-  if (mattermostUserId && mattermostUserId !== reported) {
-    logger.error("legacy provisioning: the user record holds another chat account than the service reports", { uid, recorded: mattermostUserId, reported });
-    return { ready: false, reason: "ChatAccountMismatch", retryAfterSeconds: 5 };
-  }
-  if (mattermostUserId !== reported) return { ready: false, reason: "WaitingForMirror", retryAfterSeconds: 5 };
-  return { ready: true, value: wait.value.chat };
+  const mirrored = await mirroredState(store, wait.value.resource, wait.value.chat);
+  if (mirrored.state === "mirrored") return { ready: true, value: undefined };
+  if (mirrored.state === "pending") return { ready: false, reason: "WaitingForMirror", retryAfterSeconds: 5 };
+  const refused = mirrored as Extract<MirroredState, { detail: string }>;
+  const reason = MIRROR_REFUSAL_REASONS[refused.state];
+  logger.error("legacy provisioning: the mirror refuses this user, so its mount cannot finish", { uid, reason, detail: refused.detail });
+  return { ready: false, reason, retryAfterSeconds: 5 };
 }
 
 const MIRROR_RETRY_AFTER_SECONDS = 5;
 
 async function serviceProvisioningReadiness(
-  assigned: { uid: string; userRecord: Stored<PlatformUserRecord> },
+  uid: string,
   legacyProvisioning: LegacyProvisioning,
   store: PlatformStateRepositories,
 ): Promise<ProvisioningWait<void>> {
-  const { uid, userRecord } = assigned;
-  const chat = await mirroredChat(uid, userRecord.mattermostUserId, legacyProvisioning);
+  const budget = routeBudget();
+  const chat = await mirroredChat(uid, legacyProvisioning, store, budget);
   if (!chat.ready) return chat;
-  if (await defaultAgentMattermostSecret(store, uid) === null) {
-    return { ready: false, reason: "AgentTokenNotMirrored", retryAfterSeconds: MIRROR_RETRY_AFTER_SECONDS };
-  }
-  const agentChannel = chat.value.channels.agent;
-  if (agentChannel && userRecord.slug) {
-    const stored = await store.workspaces.channels.get({ workspaceSlug: userRecord.slug, projectSlug: null }, "coach-dm");
-    if (stored?.mattermostChannelId !== agentChannel) {
-      return { ready: false, reason: "AgentChannelNotMirrored", retryAfterSeconds: MIRROR_RETRY_AFTER_SECONDS };
-    }
-  }
-  return legacyProvisioning.git(uid, null);
+  return legacyProvisioning.git(uid, null, budget);
 }
 
 function gitKeyRegistration(key: GitKey, publicKey: string): ProvisioningWait<void> {
@@ -462,7 +461,7 @@ function installServiceProvisioningRoutes(router: Router, deps: ResolvedFleetBro
     const { legacyProvisioning } = deps;
     if (!serviceRouteConfigured(res, "provisioning-readiness", legacyProvisioning)) return;
     await runBrokered(res, async () => {
-      const answer = await serviceProvisioningReadiness(assigned, legacyProvisioning, store);
+      const answer = await serviceProvisioningReadiness(assigned.uid, legacyProvisioning, store);
       if (!answer.ready) {
         respondProvisioningPending(res, { route: "provisioning-readiness", uid: assigned.uid }, answer);
         return;
@@ -3194,7 +3193,7 @@ function installProvisioningRoutes(
     const { legacyProvisioning } = deps;
     if (legacyProvisioning) {
       await runBrokered(res, async () => {
-        const answer = await mirroredChat(assigned.uid, assigned.userRecord.mattermostUserId, legacyProvisioning);
+        const answer = await mirroredChat(assigned.uid, legacyProvisioning, store);
         if (!answer.ready) {
           respondProvisioningPending(res, { route: "set-mattermost-fields", uid: assigned.uid }, answer);
           return;
@@ -3302,7 +3301,8 @@ function installProvisioningRoutes(
     }
     await runBrokered(res, async () => {
       const { slug } = assigned.userRecord;
-      if (deps.legacyProvisioning && slug && !(await records.userDocuments.agent(assigned.uid))?.look) {
+      const agent = deps.legacyProvisioning && slug ? await records.userDocuments.agent(assigned.uid) : undefined;
+      if (deps.legacyProvisioning && slug && !agent?.look && !agent?.avatar) {
         await applyDefaultAgentLook({ uid: assigned.uid, slug }, deps);
       }
       await onUserProvisioned({

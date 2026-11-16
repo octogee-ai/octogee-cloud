@@ -36,4 +36,13 @@ export declare function mmUpdateFromChatOutputs(input: {
     agentChannelName: string;
     proxyUrl: string | null;
 }): MmUpdate;
+type MirrorReadStore = Pick<PlatformStateStore, "users" | "workspaces" | "secrets">;
+export type MirroredState = {
+    readonly state: "mirrored" | "pending";
+} | {
+    readonly state: "user-missing" | "slug-mismatch" | "being-erased" | "chat-id-mismatch";
+    readonly detail: string;
+};
+export declare function mirroredState(store: MirrorReadStore, resource: UserProvisioning, chat: ChatOutputs): Promise<MirroredState>;
 export declare function mirrorUserProvisioning(deps: ProvisioningMirrorDeps, resource: UserProvisioning): Promise<ProvisioningMirrorOutcome>;
+export {};

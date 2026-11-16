@@ -119,7 +119,7 @@ export interface ProvisioningServiceClient {
   watchProvisionings(options: WatchProvisioningsOptions): Promise<UserProvisioningWatchResponse>;
   retryProvisioning(uid: string, request: RetryProvisioningRequest, idempotencyKey: string): Promise<unknown>;
   getProvisioningEvents(uid: string, options?: RequestSignalOptions): Promise<ProvisioningEventsResponse | null>;
-  getCredential(uid: string, name: ProvisioningCredentialName): Promise<ProvisioningCredential | null>;
+  getCredential(uid: string, name: ProvisioningCredentialName, options?: RequestSignalOptions): Promise<ProvisioningCredential | null>;
 }
 
 export interface ProvisioningServiceConfig {
@@ -399,10 +399,14 @@ export function createProvisioningServiceClient(options: ProvisioningServiceClie
       return response.status === 404 ? null : json<ProvisioningEventsResponse>(response);
     },
 
-    async getCredential(uid, name) {
+    async getCredential(uid, name, credentialOptions) {
       let response: Response;
       try {
-        response = await request({ method: "GET", path: `users/${userSegment(uid)}/credentials/${encodeURIComponent(name)}` });
+        response = await request({
+          method: "GET",
+          path: `users/${userSegment(uid)}/credentials/${encodeURIComponent(name)}`,
+          ...(credentialOptions?.signal === undefined ? {} : { signal: credentialOptions.signal }),
+        });
       } catch (error) {
         if (error instanceof ProvisioningServiceError && error.status === 409 && error.code === "not-issued") return null;
         throw error;
