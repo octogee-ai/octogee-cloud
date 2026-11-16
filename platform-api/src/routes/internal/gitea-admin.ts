@@ -277,17 +277,19 @@ function userGitHandler(route: UserGitRoute, legacyProvisioning: LegacyProvision
   };
 }
 
+const ENSURE_USER = "ensure-user";
+
 async function awaitServiceGitReady(res: Response, legacyProvisioning: LegacyProvisioning, slug: string): Promise<boolean> {
   try {
     const user = await platformStateStore.users.records.findBySlug(slug);
     if (!user) {
       logger.error("internal/gitea: no user carries the slug", { slug });
-      respondProvisioningPending(res, { route: "ensure-user", slug }, { reason: "NotProvisioned", retryAfterSeconds: 5 });
+      respondProvisioningPending(res, { route: ENSURE_USER, slug }, { reason: "NotProvisioned", retryAfterSeconds: 5 });
       return false;
     }
     const wait = await legacyProvisioning.git(user.uid, null, routeBudget());
     if (!wait.ready) {
-      respondProvisioningPending(res, { route: "ensure-user", uid: user.uid }, wait);
+      respondProvisioningPending(res, { route: ENSURE_USER, uid: user.uid }, wait);
       return false;
     }
     return true;
@@ -314,12 +316,12 @@ async function registerServiceHeldKey(
     const user = await platformStateStore.users.records.findBySlug(slug);
     if (!user) {
       logger.error("internal/gitea: no user carries the slug", { slug });
-      respondProvisioningPending(res, { route: "ensure-user", slug }, { reason: "NotProvisioned", retryAfterSeconds: 5 });
+      respondProvisioningPending(res, { route: ENSURE_USER, slug }, { reason: "NotProvisioned", retryAfterSeconds: 5 });
       return;
     }
     const wait = await legacyProvisioning.gitKey(user.uid, keyOwner, publicKey, routeBudget());
     if (!wait.ready) {
-      respondProvisioningPending(res, { route: "ensure-user", uid: user.uid }, wait);
+      respondProvisioningPending(res, { route: ENSURE_USER, uid: user.uid }, wait);
       return;
     }
     res.status(204).end();
@@ -385,7 +387,7 @@ function ensureUserHandler(legacyProvisioning: LegacyProvisioning | null) {
     const keyOwner = gatewayKeyOwnerForRequest(req, res);
     if (!keyOwner) return;
     if (legacyProvisioning && !(await awaitServiceGitReady(res, legacyProvisioning, slug))) return;
-    await broker(res, "ensure-user", () =>
+    await broker(res, ENSURE_USER, () =>
       access === "serving"
         ? gitHost().registerKey(slug, pubKey, keyOwner)
         : gitHost().registerKeyUnlessHeld(slug, pubKey, keyOwner));
@@ -513,7 +515,7 @@ export function createInternalGiteaAdminRoutes({ legacyProvisioning }: InternalG
   const routes: Router = Router();
   routes.use(requireInternalServiceAuth);
   for (const route of USER_GIT_ROUTES) routes.post(`/${route.op}`, userGitHandler(route, legacyProvisioning));
-  routes.post("/ensure-user", ensureUserHandler(legacyProvisioning));
+  routes.post(`/${ENSURE_USER}`, ensureUserHandler(legacyProvisioning));
   routes.post("/release-user-key", releaseUserKey);
   routes.use(router);
   return routes;
