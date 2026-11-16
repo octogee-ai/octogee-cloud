@@ -11,8 +11,9 @@ function holderPath(slug: string): string {
 export function serviceGitKeyHolder(slug: string): string | null {
   try {
     return fs.readFileSync(holderPath(slug), "utf-8").trim() || null;
-  } catch {
-    return null;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
   }
 }
 

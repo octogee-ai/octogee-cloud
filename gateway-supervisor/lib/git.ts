@@ -606,38 +606,22 @@ export interface PreparedServiceGitKey {
   registered: () => void;
 }
 
-const STAGED_KEY_DIR = "staged";
-
 export function prepareServiceGitKey(slug: string, holder: string): PreparedServiceGitKey {
   if (!isValidUsername(slug)) throw new Error("Invalid SSH key owner");
   if (!holder) throw new Error("A service git key needs the holder");
   const keyDir = path.join(CUSTOMER_KEYS_DIR, slug);
   const keyPath = path.join(keyDir, "id_ed25519");
-  const onDisk = fs.existsSync(keyPath) ? readLocalUserPubKey(slug) : null;
-  const marker = serviceGitKeyHolder(slug);
-  if (onDisk === null) {
-    fs.rmSync(keyDir, { recursive: true, force: true });
-    const publicKey = generateKeyPair(keyDir, slug);
-    log(`[git] ${slug}: generated a key for registration through the provisioning service`);
-    return { publicKey, registered: () => recordServiceGitKeyHolder(slug, holder) };
-  }
-  if (marker === null || marker === holder) {
+  const registered = () => recordServiceGitKeyHolder(slug, holder);
+  if (fs.existsSync(keyPath)) {
+    const onDisk = readLocalUserPubKey(slug);
+    if (onDisk === null) throw new Error(`[git] ${slug}: a private key is on disk but its public key cannot be read; leaving it in place`);
     restrictUserSshKeyModes(keyDir, keyPath, `${keyPath}.pub`);
-    return { publicKey: onDisk, registered: () => recordServiceGitKeyHolder(slug, holder) };
+    return { publicKey: onDisk, registered };
   }
-  const stagedDir = path.join(keyDir, STAGED_KEY_DIR);
-  fs.rmSync(stagedDir, { recursive: true, force: true });
-  const publicKey = generateKeyPair(stagedDir, slug);
-  log(`[git] ${slug}: the key on disk is registered for another holder; staged a key for this one`);
-  return {
-    publicKey,
-    registered: () => {
-      fs.renameSync(path.join(stagedDir, "id_ed25519"), keyPath);
-      fs.renameSync(path.join(stagedDir, "id_ed25519.pub"), `${keyPath}.pub`);
-      fs.rmSync(stagedDir, { recursive: true, force: true });
-      recordServiceGitKeyHolder(slug, holder);
-    },
-  };
+  fs.rmSync(keyDir, { recursive: true, force: true });
+  const publicKey = generateKeyPair(keyDir, slug);
+  log(`[git] ${slug}: generated a key for registration through the provisioning service`);
+  return { publicKey, registered };
 }
 
 export function readLocalUserPubKey(slug: string): string | null {

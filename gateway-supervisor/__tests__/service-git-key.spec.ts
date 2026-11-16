@@ -9,8 +9,10 @@ afterAll(() => fs.rmSync(TEST_ROOT, { recursive: true, force: true }));
 
 vi.mock("../lib/internal-fetch.js", () => ({ internalFetch: vi.fn(async () => new Response(null, { status: 204 })) }));
 
+const logged = vi.hoisted(() => ({ lines: [] as string[] }));
+
 vi.mock("../lib/config.js", () => ({
-  log: () => {},
+  log: (line: string) => logged.lines.push(line),
   dlog: () => {},
   GIT_API_URL: "https://gitea.test/api/v1",
   GIT_SSH_HOST: "gitea.test",
@@ -60,19 +62,29 @@ describe("prepareServiceGitKey", () => {
     expect(serviceGitKeyHolder("lin")).toBe(HOLDER);
   });
 
-  it("keeps a key registered for another holder in place until the replacement for this holder is registered", () => {
+  it("registers the key on disk under this holder when its marker names another holder", () => {
     const carried = generateUserSshKey("lin");
     recordServiceGitKeyHolder("lin", OTHER_HOLDER);
 
     const key = prepareServiceGitKey("lin", HOLDER);
 
-    expect(key.publicKey).not.toBe(carried);
-    expect(readLocalUserPubKey("lin")).toBe(carried);
-    expect(serviceGitKeyHolder("lin")).toBe(OTHER_HOLDER);
+    expect(key.publicKey).toBe(carried);
     key.registered();
-    expect(readLocalUserPubKey("lin")).toBe(key.publicKey);
     expect(serviceGitKeyHolder("lin")).toBe(HOLDER);
-    expect(fs.readdirSync(path.join(KEYS_DIR, "lin")).sort()).toEqual(["id_ed25519", "id_ed25519.pub", "service-holder"]);
+  });
+
+  it("fails and keeps the private key when its public half cannot be read", () => {
+    generateUserSshKey("lin");
+    fs.rmSync(path.join(KEYS_DIR, "lin", "id_ed25519.pub"));
+
+    expect(() => prepareServiceGitKey("lin", HOLDER)).toThrow("public key");
+    expect(fs.existsSync(path.join(KEYS_DIR, "lin", "id_ed25519"))).toBe(true);
+  });
+
+  it("fails on a marker it cannot read instead of reading it as absent", () => {
+    fs.mkdirSync(path.join(KEYS_DIR, "lin", "service-holder"), { recursive: true });
+
+    expect(() => serviceGitKeyHolder("lin")).toThrow();
   });
 
   it("regenerates a key directory that holds no usable key", () => {
@@ -113,6 +125,7 @@ describe("a legacy registration of a key the service holds", () => {
     await brokeredGitHost.registerKey("lin", key.publicKey);
 
     expect(serviceGitKeyHolder("lin")).toBeNull();
+    expect(logged.lines).toContainEqual(expect.stringContaining("lin: the platform registered the key on the git host"));
   });
 
   it("keeps the marker and fails when the platform does not register it", async () => {

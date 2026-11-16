@@ -74,9 +74,8 @@ describe("fleet controller port surface", () => {
     const body = await res.json() as Record<string, unknown>;
 
     expect(res.status).toBe(200);
-    expect(Object.keys(body).sort()).toEqual(["podUid", "provisioning", "rsyncAttemptFencing", "startedAt", "status"]);
+    expect(Object.keys(body).sort()).toEqual(["podUid", "rsyncAttemptFencing", "startedAt", "status"]);
     expect(body.rsyncAttemptFencing).toBe(true);
-    expect(body.provisioning).toBe("service");
     expect(body.podUid).toBe("pod-uid-1");
     expect(JSON.stringify(body)).not.toContain(GATEWAY_ID);
   });

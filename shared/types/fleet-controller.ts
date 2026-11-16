@@ -106,7 +106,6 @@ export interface FleetHealthResponse {
   podUid: string | null;
   startedAt: number;
   rsyncAttemptFencing: boolean;
-  provisioning: "service";
 }
 
 // Tenant-bearing fleet state. Signed with the fleet controller key, which only

@@ -534,7 +534,6 @@ export function buildFleetHealthResponse(input: {
     podUid: input.podUid,
     startedAt: input.startedAt,
     rsyncAttemptFencing: true,
-    provisioning: "service",
   };
 }
 

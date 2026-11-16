@@ -1,5 +1,6 @@
 import type { GitRepoRole, ManagedGitHost } from "@octogee/core/git-host";
 
+import { log } from "./config.js";
 import { internalFetch } from "./internal-fetch.js";
 import { clearServiceGitKeyHolder, serviceGitKeyHolder } from "./service-git-key-holder.js";
 
@@ -70,7 +71,10 @@ export const brokeredGitHost: BrokeredGitHost = {
       return;
     }
     const answer = await postServiceHeldKey({ slug, pubKey, serviceHolder });
-    if (answer.registeredOn === "git-host") clearServiceGitKeyHolder(slug);
+    if (answer.registeredOn === "git-host") {
+      clearServiceGitKeyHolder(slug);
+      log(`[git] ${slug}: the platform registered the key on the git host, so the service no longer holds it here; dropped the marker`);
+    }
   },
 
   releaseKey: (slug, pubKey) => postVoid("/internal/gitea/release-user-key", { slug, pubKey }),

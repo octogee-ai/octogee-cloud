@@ -55,7 +55,6 @@ export interface FleetHealthResponse {
     podUid: string | null;
     startedAt: number;
     rsyncAttemptFencing: boolean;
-    provisioning: "service";
 }
 export interface FleetStateRequestBody {
     requestId: string;
