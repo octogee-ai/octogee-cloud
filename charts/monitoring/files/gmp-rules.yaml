@@ -166,13 +166,13 @@ spec:
             summary: "A provisioning attempt lost its lease in {{ $labels.namespace }}"
             description: "A provisioning-service worker held work past its lease, so another replica took it over. Look for a restarted or stalled provisioning-service pod and slow chat or git host calls."
         - alert: ProvisioningGitKeyNotOnHost
-          expr: sum by (namespace, reason) (provisioning_git_keys{namespace=~"__ENVIRONMENT_NAMESPACES__",status="False",reason=~"GitKeyNotOnHost|GitKeyReplacedOnHost"}) > 0
+          expr: max by (namespace, reason) (provisioning_git_keys{namespace=~"__ENVIRONMENT_NAMESPACES__",status="False",reason=~"GitKeyNotOnHost|GitKeyReplacedOnHost"}) > 0
           for: 30m
           labels:
             severity: warning
           annotations:
             summary: "{{ $value }} git key rows in {{ $labels.namespace }} report {{ $labels.reason }}"
-            description: "The git host no longer holds these keys under their holders' titles, and the provisioning service does not write a key without a put from its gateway. Those pods cannot reach git until their gateway puts the key again. List the rows with GET /v1/users/{uid}/git-keys/{holder}, then check the holder's gateway: a live, mounted pod re-registers its key; a gone holder's rows are released by the dead-holder sweep."
+            description: "The git host no longer holds these keys under their holders' titles, and the provisioning service does not write a key without a put from its gateway. Those pods cannot reach git until their gateway puts the key again. Find the rows in the provisioning-service logs: each mismatch is logged with its uid, holder and reason, at warning when first seen and at error from the second observation (\"the git host does not hold the row's key under its title\"). Read a row with GET /v1/users/{uid}/git-keys/{holder}, then check the holder's gateway: a live, mounted pod re-registers its key; a gone holder's rows are released by the dead-holder sweep."
     - name: octogee.mattermost
       rules:
         - alert: MattermostDown

@@ -64,6 +64,40 @@ describe.skipIf(!dsn)("the work queue", { timeout: 30_000 }, () => {
     expect(await queue.heartbeat("u1", taken.leaseToken)).toBe(true);
   });
 
+  it("takes over a parked key pass whose lease expired, although the user's next observation is not due yet", async () => {
+    const KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA gateway-a";
+    const putKey = () => harness.request("PUT", "/v1/users/u1/git-keys/gw-1%2Fpod-s", { token: TOKENS.platformApi, body: { spec: { publicKey: KEY } } });
+    await put("u1");
+    const [parked] = await queue.claim(1);
+    await finish("u1", parked.leaseToken, { ...FAILED, errorKind: "terminal" });
+    await putKey();
+    const [observed] = await queue.claim(1);
+    await queue.finishParkedKeys("u1", observed.leaseToken);
+    expect((await work("u1")).due_in).toBeGreaterThan(50);
+    const [lost] = await queue.claim(1);
+    expect(lost).toMatchObject({ uid: "u1", keysOnly: true });
+    await harness.service.db.pool.query(`UPDATE ${harness.service.db.table("provisioning_work")} SET lease_expires_at = now() - interval '1 second'`);
+
+    const [taken] = await new WorkQueue(harness.service.db, { holder: "replica-2", log: harness.log }).claim(1);
+
+    expect(taken).toMatchObject({ uid: "u1", takeover: true, keysOnly: true });
+    expect(await work("u1")).toMatchObject({ state: "running", attempts: 1 });
+    await expect(queue.finishParkedKeys("u1", lost.leaseToken)).rejects.toBeInstanceOf(LeaseLostError);
+    expect(await queue.finishParkedKeys("u1", taken.leaseToken)).toEqual({ state: "parked", attempts: 1 });
+  });
+
+  it("takes over a full attempt whose lease expired even when its due time is in the future", async () => {
+    await put("u1");
+    await queue.claim(1);
+    await harness.service.db.pool.query(
+      `UPDATE ${harness.service.db.table("provisioning_work")} SET lease_expires_at = now() - interval '1 second', due_at = now() + interval '6 hours'`);
+
+    const [taken] = await new WorkQueue(harness.service.db, { holder: "replica-2", log: harness.log }).claim(1);
+
+    expect(taken).toMatchObject({ uid: "u1", takeover: true, keysOnly: false });
+    expect((await work("u1")).attempts).toBe(1);
+  });
+
   it("schedules a transient failure with backoff and parks after the twelfth", async () => {
     await put("u1");
     for (let attempt = 1; attempt < MAX_TRANSIENT_ATTEMPTS; attempt += 1) {
