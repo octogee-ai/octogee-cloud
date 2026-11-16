@@ -73,8 +73,8 @@ budget before installation. The cloud guide includes sizing and removal steps.
 ### To manage gateways with `octogee-fleet`
 
 The [`octogee-fleet`](https://github.com/octogee-ai/octogee-fleet) command line
-signs in with your Google account. It needs one more free item in the same
-Google Cloud project: an OAuth client of the type
+signs in with your Google account. Create an OAuth client in the same
+Google Cloud project, with the type
 **TVs and Limited Input devices**. This client type supports sign-in
 from a command line, where `octogee-fleet` prints a code and you approve it in
 a browser. On kind it signs in with a key the installer generates instead, so
