@@ -6,16 +6,12 @@
 release image and the stock Mattermost Team Edition image. Stock images are
 enough for that.
 
-The fleet features are a different matter: many users on shared gateways,
-isolated gateways, and moving a user between the two. The gateway image this
-repository builds for them runs a patched build: upstream OpenClaw `main` at
-commit [`081748ca`](https://github.com/openclaw/openclaw/commit/081748ca26e21d519506fd262c909320e91d2d1d)
-plus a public overlay of seven commits, ending at
-[`21889851`](https://github.com/ceckert/openclaw/commit/2188985128c3be6af0a9fd32966d6668787ac783)
-in the fork `ceckert/openclaw`. Its packages are the release
-[`gateway-2188985`](https://github.com/ceckert/openclaw/releases/tag/gateway-2188985),
-which `gateway/openclaw-tarball/current.json` pins. We have not run the
-fleet features end to end on a stock release. The goal is to carry no patches.
+The fleet image supports many users on shared gateways, isolated gateways and
+moves between them. It builds from a selected OpenClaw main snapshot with a
+public overlay in `ceckert/openclaw`. The [overlay assessment](../gateway/openclaw-tarball/README.md)
+records the current upstream and overlay commits. The
+[package pin](../gateway/openclaw-tarball/current.json) names the release that
+supplies the packages. The goal is to carry no patches.
 
 Every recut starts from the question "does upstream already do this?". A patch
 stays only for a reproduced bug or a behavior the platform depends on, and each
@@ -30,10 +26,9 @@ image, most visibly when users move between gateways.
 
 ## What octogee-cloud needs from OpenClaw
 
-These families support features the platform itself depends on. States are as
-of 2026-11-14, for the overlay cut that day; the detached-database descriptor
-row is as of 2026-11-15. "No pull request" means the fix exists only in the
-overlay.
+These families support features the platform depends on. The table reflects
+the November 16, 2026 refresh. "No pull request" means the fix exists only in
+the overlay.
 
 | Capability | octogee-cloud feature | On stock OpenClaw | Upstream | The patch can go when |
 | --- | --- | --- | --- | --- |
@@ -49,10 +44,10 @@ overlay.
 | Channel membership as an authoritative, revocable grant | Chat-channel access on a shared gateway | Native filters invite-only and linked sessions but has no authoritative empty-set sync or revocation for this policy | No pull request; native [#194791](https://github.com/openclaw/openclaw/pull/194791) (merged) covers part | Native membership methods give equivalent revocation |
 | One session per Mattermost channel that keeps reply threads | Chat-channel semantics on a shared gateway | Thread-scoped sessions only | No pull request | Native supports the option, or the platform adopts thread sessions |
 | Requester identity carried through queued work, one approval reviewer, and a separate verified creator for scheduled runs | Knowing who asked for an action when approvals are involved | Requester facts can be lost across queued or held continuations | No pull request; earlier fix [#159396](https://github.com/openclaw/openclaw/pull/159396) merged | Native propagation passes delayed-continuation controls and exposes a verified job creator |
-| PostgreSQL startup during backup recovery | PostgreSQL agent stores; isolated gateways booting on a retained home | Startup fails during recovery | [#193596](https://github.com/openclaw/openclaw/pull/193596), open, ready for review | Merged into the selected base |
+| PostgreSQL startup during backup recovery | PostgreSQL agent stores; isolated gateways booting on a retained home | Startup fails during recovery | [#193596](https://github.com/openclaw/openclaw/pull/193596), open, awaiting maintainer CI approval | Merged into the selected base |
 | Offline config reduction kept across restart (`config patch --allow-size-drop`) and a first-write health baseline | Preparing an isolated gateway before it serves | Recovery restores the larger backup config | [#193636](https://github.com/openclaw/openclaw/pull/193636), open, draft | Merged, or the public option is decided another way |
 | Reconnect idle PostgreSQL connections after a host suspension | Suspending and resuming an isolated gateway's VM | The first request after resume fails | [#193875](https://github.com/openclaw/openclaw/pull/193875), open | Merged into the selected base |
-| Upgrade a PostgreSQL state store created before upstream added a column to schema 39 without a migration | Moving a gateway to a newer OpenClaw build while keeping its PostgreSQL state | A store created by an older build is refused as schema drift | [#197425](https://github.com/openclaw/openclaw/pull/197425), open | The selected base upgrades both schema 39 shapes itself |
+| Upgrade a PostgreSQL state store created before upstream added a column to schema 39 without a migration | Moving a gateway to a newer OpenClaw build while keeping its PostgreSQL state | The native schema 40 migration still expects the column. The overlay repairs the exact predecessor before native admission | [#197425](https://github.com/openclaw/openclaw/pull/197425), open | The selected base upgrades both schema 39 shapes and the installed pin-roll passes |
 | Read the web-secret index through the async PostgreSQL reader | PostgreSQL agent stores | `secrets.reload` fails on a cold store | No pull request | Native awaits the worker-backed reader |
 | Republish a deferred agent's model after a concurrent refresh | Creating agents while the gateway reloads | The agent stays connected but cannot reply | No pull request | The selected base carries an equivalent fix |
 
@@ -65,7 +60,7 @@ overlay.
 | Final-reply notification flag | Activity view in the hosted app | No pull request |
 | Dashboard participant labels | Shows who said what in the embedded dashboard | No pull request |
 | `doctor --skip-recovery-backups` | Store import and upgrade paths that already keep their own backups | No pull request |
-| npm 12.2.1 pin and distribution patch | Packaging: dependency fixes that upstream npm does not ship yet | Not an OpenClaw change |
+| npm 12.2.1 distribution patch | Packaging: dependency fixes that upstream npm does not ship yet | Not an OpenClaw change |
 | Generated schemas and test support | Describe the retained APIs above | Go with their features |
 
 [#191463](https://github.com/openclaw/openclaw/pull/191463) (agent removal
@@ -96,16 +91,13 @@ lives with two limits.
 
 ## How to check this yourself
 
-The overlay source is the branch
-[`codex/gateway-refresh-20261113-3`](https://github.com/ceckert/openclaw/tree/codex/gateway-refresh-20261113-3)
-on `ceckert/openclaw`, and the release tag `gateway-2188985` marks the same
-commit. Diff it against the upstream base commit above to see every changed
-line. The tables are drawn from the build notes kept for each cut: a table of
-retained families with removal conditions, notes on individual fixes, and a
-list of open contributions. The current cut's notes are in
-`gateway/openclaw-tarball/README.md`. Pull request states come from the GitHub API on the date
-above. We decided "platform needs it" by matching each family to the
-platform's architecture and security documents.
+Read the frozen upstream and overlay commits in the
+[overlay assessment](../gateway/openclaw-tarball/README.md) and diff them to
+inspect the changes. The
+[package pin](../gateway/openclaw-tarball/current.json) records the fork,
+release tag and full SHA-256 hashes. The assessment lists the retained
+patches, their removal conditions, and the state of open contributions.
+The table above classifies each family by the platform feature it serves.
 
 ## What we have not done
 
