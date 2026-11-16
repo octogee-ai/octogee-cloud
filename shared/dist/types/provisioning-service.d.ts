@@ -93,12 +93,14 @@ export interface GitKeyStatus {
     observedGeneration: number;
     conditions: ProvisioningCondition<GitKeyConditionType>[];
     nextAttemptAt: string | null;
+    observedPutSequence: number;
 }
 export interface GitKey {
     uid: string;
     gatewayId: string;
     holder: string;
     generation: number;
+    putSequence: number;
     resourceVersion: string;
     deletionRequestedAt: string | null;
     spec: GitKeySpec;

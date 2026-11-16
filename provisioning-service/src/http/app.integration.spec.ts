@@ -376,6 +376,24 @@ describe.skipIf(!dsn)("the provisioning HTTP API", { timeout: 30_000 }, () => {
       }
     });
 
+    it("counts every put of a key, an unchanged one included, and reads the key back by holder for its writer only", async () => {
+      await harness.request("PUT", "/v1/users/u1/provisioning", { body: { spec: spec("lin") } });
+      const path = "/v1/users/u1/git-keys/gw-1%2Fpod-s";
+
+      const created = await harness.request("PUT", path, { token: TOKENS.platformApi, body: { spec: { publicKey: KEY } } });
+      const unchanged = await harness.request("PUT", path, { token: TOKENS.platformApi, body: { spec: { publicKey: KEY } } });
+
+      expect([created.status, unchanged.status]).toEqual([201, 200]);
+      expect([created.body.putSequence, unchanged.body.putSequence]).toEqual([1, 2]);
+      expect(unchanged.body.status.observedPutSequence).toBe(0);
+      expect(BigInt(unchanged.body.resourceVersion)).toBeGreaterThan(BigInt(created.body.resourceVersion));
+      const read = await harness.request("GET", path, { token: TOKENS.platformApi });
+      expect(read.status).toBe(200);
+      expect(read.body).toMatchObject({ holder: "gw-1/pod-s", putSequence: 2, spec: { publicKey: KEY } });
+      expect((await harness.request("GET", "/v1/users/u1/git-keys/gw-1%2Fpod-t", { token: TOKENS.platformApi })).status).toBe(404);
+      expect((await harness.request("GET", path, { token: TOKENS.writer })).status).toBe(403);
+    });
+
     it("lets only the fleet controller list and release git key holders", async () => {
       expect((await harness.request("GET", "/v1/git-key-holders", { token: TOKENS.platformApi })).status).toBe(403);
       expect((await harness.request("DELETE", "/v1/git-key-holders/gw-1%2Fpod-s", { token: TOKENS.platformApi })).status).toBe(403);

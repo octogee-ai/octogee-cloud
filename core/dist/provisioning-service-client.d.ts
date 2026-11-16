@@ -72,6 +72,7 @@ export interface ProvisioningServiceClient {
     getProvisioningEvents(uid: string, options?: RequestSignalOptions): Promise<ProvisioningEventsResponse | null>;
     getCredential(uid: string, name: ProvisioningCredentialName, options?: RequestSignalOptions): Promise<ProvisioningCredential | null>;
     putGitKey(uid: string, holder: string, spec: GitKeySpec, options?: RequestSignalOptions): Promise<PutGitKeyResult>;
+    getGitKey(uid: string, holder: string, options?: RequestSignalOptions): Promise<GitKey | null>;
     deleteGitKey(uid: string, holder: string, options: {
         expectedPublicKey: string;
     } & RequestSignalOptions): Promise<DeleteGitKeyOutcome>;

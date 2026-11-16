@@ -19,6 +19,7 @@ The types are `@octogee/shared/types/provisioning-service`.
 | `POST /v1/users/{uid}/provisioning/retry` | Body `{ expectedAttempts? }`. Makes parked or retrying work due now. Honours `Idempotency-Key` for 24 hours. | `202`, `409 precondition-failed`, `409 not-retryable`, `409 idempotency-conflict` |
 | `GET /v1/users/{uid}/provisioning/events` | The last 50 attempts, newest first, with each step's outcome, reason and duration. | `200`, `404` |
 | `PUT /v1/users/{uid}/git-keys/{holder}` | Body `{ spec: { publicKey } }`. Authorizes the key on the user's git owner. | `201`, `202`, `200`; body is the `GitKey`; `404` when the user has no provisioning |
+| `GET /v1/users/{uid}/git-keys/{holder}` | Reads the key. | `200`; body is the `GitKey`; `404` when there is none |
 | `DELETE /v1/users/{uid}/git-keys/{holder}` | Releases the key. Optional body `{ expectedPublicKey }` releases it only while the row still holds that key, compared by key material. | `202`, `409 precondition-failed` when the row holds another key |
 | `GET /v1/git-key-holders` | Lists every holder with live rows. | `200`; body `{ holders: [{ holder, gatewayId, rows, newestUpdatedAt }] }` |
 | `DELETE /v1/git-key-holders/{holder}` | Releases every user's key for one holder that is gone. | `202`; body `{ remaining }`, the holder's rows not yet released from the git host |
@@ -76,16 +77,27 @@ under a title per pod, after the service reports the user's git side ready.
 Keys registered by the earlier path carry another title. When a GitKey is put
 and the user's own git account already holds the identical public key under
 another managed title, whether the earlier path's or another holder's, the
-service adopts it on the attempt that follows the put: it removes that key and
+service adopts it on an attempt that follows the put: it removes that key and
 registers the same key under its own holder's title, restoring the removed key
-if the registration fails. Adoption happens only for a put. An attempt that
-reconciles a row nobody put since finds its key under another managed title,
-leaves that key alone and reports `Registered=False` with reason
-`GitKeyHeldElsewhere` and the key backoff, so a key a pod on another build
-claimed stays with that pod. Every put, an unchanged one included, makes idle
-work due, so a gateway that mounts again takes its key back. A different public
-key is added beside it, and that key is left alone. Keys are compared by type
-and key material, never by comment.
+if the registration fails. A different public key is added beside it, and that
+key is left alone. Keys are compared by type and key material, never by
+comment.
+
+Every put of a row, an unchanged one included, increments the row's
+`putSequence`, which the put answers, clears the row's backoff and makes the
+user's work due: idle or retrying work is queued at once, and running work runs
+again when it finishes. Parked work stays parked; its puts are processed once
+the work is retried or its spec changes. `status.observedPutSequence` is the
+highest put sequence an attempt that started after that put has processed: it
+registered the key, finding it on the git host under the holder's title or
+registering it there, or recorded a refusal. A transient failure leaves it
+unchanged. An attempt adopts only while `putSequence` is above
+`observedPutSequence` at its start. An attempt with nothing new to observe that
+finds its key under another managed title leaves that key alone and reports
+`Registered=False` with reason `GitKeyHeldElsewhere` and the key backoff, so a
+key a pod on another build claimed stays with that pod. A caller treats its key
+as registered only when `Registered=True` and `observedPutSequence` is at least
+the sequence its put returned.
 
 Releasing a row deletes only a key under that row's own title. It never deletes
 a key by its material alone, so a key another holder or the earlier path holds
@@ -102,9 +114,8 @@ fails the attempt as before, so it is retried or parked.
 
 A key held elsewhere backs off per row: 1 minute, doubling to at most 6 hours,
 shown as `status.nextAttemptAt`. The service owns the retry: the user's work is
-scheduled for that time, and the key is tried again then without any put. Until
-then an unchanged put queues no work and the worker does not try the key; a
-put with a different key resets the backoff and is tried at once.
+scheduled for that time, and the key is tried again then without any put. A put
+resets the backoff and is tried at once.
 
 With `PROVISIONING_HOST_ADAPTERS=fake`, `PROVISIONING_FAKE_GIT_KEYS` seeds the
 fake git host with keys, as JSON mapping each owner to `{ publicKey, holder }`

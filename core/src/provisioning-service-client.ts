@@ -133,6 +133,7 @@ export interface ProvisioningServiceClient {
   getProvisioningEvents(uid: string, options?: RequestSignalOptions): Promise<ProvisioningEventsResponse | null>;
   getCredential(uid: string, name: ProvisioningCredentialName, options?: RequestSignalOptions): Promise<ProvisioningCredential | null>;
   putGitKey(uid: string, holder: string, spec: GitKeySpec, options?: RequestSignalOptions): Promise<PutGitKeyResult>;
+  getGitKey(uid: string, holder: string, options?: RequestSignalOptions): Promise<GitKey | null>;
   deleteGitKey(uid: string, holder: string, options: { expectedPublicKey: string } & RequestSignalOptions): Promise<DeleteGitKeyOutcome>;
   listGitKeyHolders(options?: RequestSignalOptions): Promise<GitKeyHolderSummary[]>;
   releaseGitKeyHolder(holder: string, options?: RequestSignalOptions): Promise<GitKeyRelease>;
@@ -244,7 +245,7 @@ async function json<T>(response: Response, emptyBody?: T): Promise<T> {
   }
 }
 
-type GitKeyMethods = Pick<ProvisioningServiceClient, "putGitKey" | "deleteGitKey" | "listGitKeyHolders" | "releaseGitKeyHolder" | "releaseGatewayGitKeys">;
+type GitKeyMethods = Pick<ProvisioningServiceClient, "putGitKey" | "getGitKey" | "deleteGitKey" | "listGitKeyHolders" | "releaseGitKeyHolder" | "releaseGatewayGitKeys">;
 
 function gitKeyMethods(request: (input: RequestInput) => Promise<Response>): GitKeyMethods {
   return {
@@ -256,6 +257,16 @@ function gitKeyMethods(request: (input: RequestInput) => Promise<Response>): Git
         ...(keyOptions?.signal === undefined ? {} : { signal: keyOptions.signal }),
       });
       return { outcome: PUT_OUTCOMES[response.status] ?? "unchanged", key: await json<GitKey>(response) };
+    },
+
+    async getGitKey(uid, holder, keyOptions) {
+      const response = await request({
+        method: "GET",
+        path: `users/${userSegment(uid)}/git-keys/${encodeURIComponent(holder)}`,
+        allowNotFound: true,
+        ...(keyOptions?.signal === undefined ? {} : { signal: keyOptions.signal }),
+      });
+      return response.status === 404 ? null : json<GitKey>(response);
     },
 
     async deleteGitKey(uid, holder, keyOptions) {

@@ -220,6 +220,12 @@ export function createApp(deps: AppDependencies): express.Express {
     response.status(WRITE_STATUS[outcome]).json(key);
   });
 
+  v1.get("/users/:uid/git-keys/:holder", requireRole("key-writer"), async (request, response) => {
+    const key = await deps.store.getGitKey(uidOf(request), parseGitKeyHolder(String(request.params.holder)).holder);
+    if (!key) throw new ApiError(404, "not-found", "no git key for this user and holder");
+    response.json(key);
+  });
+
   v1.delete("/users/:uid/git-keys/:holder", requireRole("key-writer"), async (request, response) => {
     const uid = uidOf(request);
     const { holder } = parseGitKeyHolder(String(request.params.holder));

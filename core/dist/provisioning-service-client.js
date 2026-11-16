@@ -136,6 +136,15 @@ function gitKeyMethods(request) {
             });
             return { outcome: PUT_OUTCOMES[response.status] ?? "unchanged", key: await json(response) };
         },
+        async getGitKey(uid, holder, keyOptions) {
+            const response = await request({
+                method: "GET",
+                path: `users/${userSegment(uid)}/git-keys/${encodeURIComponent(holder)}`,
+                allowNotFound: true,
+                ...(keyOptions?.signal === undefined ? {} : { signal: keyOptions.signal }),
+            });
+            return response.status === 404 ? null : json(response);
+        },
         async deleteGitKey(uid, holder, keyOptions) {
             try {
                 await request({

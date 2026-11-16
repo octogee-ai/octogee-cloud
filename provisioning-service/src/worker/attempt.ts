@@ -450,7 +450,7 @@ class Attempt {
     }
     if (key.backing_off) return;
     if (present.some((existing) => sameKey(existing.publicKey, key.public_key) && existing.holder !== key.holder)) {
-      if (!key.adopt_requested) {
+      if (key.put_sequence <= key.observed_put_sequence) {
         throw new KeyRefused(new HostError("terminal", "the key is held under another managed title; it is taken only while its gateway puts it", { code: "key-held-elsewhere" }));
       }
       this.deps.log.info("adopting the identical git key the user's account holds under another managed title, at its gateway's put", { uid: this.claim.uid, holder: key.holder });
@@ -476,9 +476,10 @@ class Attempt {
       const reason = "GitKeyHeldElsewhere";
       const conditions = applyConditions(key.conditions, [{ type: "Registered", status: "False", reason, message: `${message(error)}; next attempt after ${nextAttemptAt}` }], key.generation, new Date());
       await client.query(
-        `UPDATE ${this.deps.db.table("git_keys")} SET conditions = $4, observed_generation = $3, resource_version = $5
+        `UPDATE ${this.deps.db.table("git_keys")} SET conditions = $4, observed_generation = $3, resource_version = $5,
+            observed_put_sequence = GREATEST(observed_put_sequence, $6)
           WHERE uid = $1 AND holder = $2 AND generation = $3`,
-        [this.claim.uid, key.holder, key.generation, JSON.stringify(conditions), version.toString()]);
+        [this.claim.uid, key.holder, key.generation, JSON.stringify(conditions), version.toString(), key.put_sequence]);
       this.deps.log.error("the git host refused the git key; recorded on the key and the rest of the attempt continues", {
         uid: this.claim.uid, holder: key.holder, reason, nextAttemptAt, error: message(error),
       });
@@ -489,11 +490,11 @@ class Attempt {
     return this.deps.queue.fenced(this.claim.uid, this.claim.leaseToken, async (client, bumpVersion) => {
       const conditions = applyConditions(key.conditions, [update], key.generation, new Date());
       const version = await bumpVersion();
-      const cleared = update.status === "True" ? ", refusals = 0, retry_after = NULL, adopt_requested = false" : "";
+      const cleared = update.status === "True" ? ", refusals = 0, retry_after = NULL, observed_put_sequence = GREATEST(observed_put_sequence, $7)" : "";
       await client.query(
         `UPDATE ${this.deps.db.table("git_keys")} SET conditions = $4, observed_generation = $3, registered_public_key = $5, resource_version = $6${cleared}
           WHERE uid = $1 AND holder = $2 AND generation = $3`,
-        [this.claim.uid, key.holder, key.generation, JSON.stringify(conditions), registered, version.toString()]);
+        [this.claim.uid, key.holder, key.generation, JSON.stringify(conditions), registered, version.toString(), ...(update.status === "True" ? [key.put_sequence] : [])]);
     });
   }
 

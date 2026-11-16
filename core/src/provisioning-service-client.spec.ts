@@ -314,6 +314,19 @@ describe("provisioning service client", () => {
     expect([...fake.gitKeys.keys()]).toEqual(["u1/gateway-b/pod-b"]);
   });
 
+  it("answers each put's sequence and reads a key back with the put sequence its status has observed", async () => {
+    const api = client();
+    await api.putProvisioning("u1", SPEC);
+
+    const first = await api.putGitKey("u1", "gateway-a/pod-a", { publicKey: "ssh-ed25519 AAAA one" });
+    const again = await api.putGitKey("u1", "gateway-a/pod-a", { publicKey: "ssh-ed25519 AAAA one" });
+
+    expect([first.key.putSequence, again.key.putSequence]).toEqual([1, 2]);
+    await expect(api.getGitKey("u1", "gateway-a/pod-a")).resolves.toMatchObject({ putSequence: 2, status: { observedPutSequence: 0 } });
+    expect(fake.requests.at(-1)).toMatchObject({ method: "GET", path: "/v1/users/u1/git-keys/gateway-a%2Fpod-a" });
+    await expect(api.getGitKey("u1", "gateway-a/pod-b")).resolves.toBeNull();
+  });
+
   it("lists git key holders and releases one holder's keys across users", async () => {
     const api = client();
     await api.putProvisioning("u1", SPEC);

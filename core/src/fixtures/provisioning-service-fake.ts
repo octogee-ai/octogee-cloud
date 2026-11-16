@@ -114,7 +114,12 @@ function createFakeGitKeys(nextVersion: () => number) {
     keys,
     put(uid: string, holder: string, spec: GitKey["spec"]): { status: number; key: GitKey } {
       const existing = keys.get(`${uid}/${holder}`);
-      if (existing?.spec.publicKey === spec.publicKey) return { status: 200, key: existing };
+      const putSequence = (existing?.putSequence ?? 0) + 1;
+      if (existing?.spec.publicKey === spec.publicKey) {
+        const touched = { ...existing, putSequence, resourceVersion: String(nextVersion()) };
+        keys.set(`${uid}/${holder}`, touched);
+        return { status: 200, key: touched };
+      }
       const key: GitKey = {
         uid,
         gatewayId: holder.slice(0, holder.indexOf("/")),
@@ -122,8 +127,9 @@ function createFakeGitKeys(nextVersion: () => number) {
         generation: (existing?.generation ?? 0) + 1,
         resourceVersion: String(nextVersion()),
         deletionRequestedAt: null,
+        putSequence,
         spec,
-        status: existing?.status ?? { observedGeneration: 0, conditions: [], nextAttemptAt: null },
+        status: existing?.status ?? { observedGeneration: 0, observedPutSequence: 0, conditions: [], nextAttemptAt: null },
       };
       keys.set(`${uid}/${holder}`, key);
       return { status: existing ? 202 : 201, key };
@@ -167,6 +173,12 @@ function putFakeGitKey(gitKeys: FakeGitKeys, resources: ReadonlyMap<string, User
   send(res, status, key);
 }
 
+function getFakeGitKey(gitKeys: FakeGitKeys, match: RegExpExecArray, res: ServerResponse): void {
+  const key = gitKeys.keys.get(`${decodeURIComponent(match[1])}/${decodeURIComponent(match[2])}`);
+  if (key) send(res, 200, key);
+  else fail(res, 404, "not-found");
+}
+
 function deleteFakeGitKey(gitKeys: FakeGitKeys, match: RegExpExecArray, body: unknown, res: ServerResponse): void {
   const expected = (body as { expectedPublicKey?: string } | undefined)?.expectedPublicKey;
   const status = gitKeys.delete(decodeURIComponent(match[1]), decodeURIComponent(match[2]), expected);
@@ -184,7 +196,8 @@ function routeFakeGitKeys(
   const gitKeyMatch = GIT_KEY_PATH.exec(pathname);
   const holderMatch = GIT_KEY_HOLDER_PATH.exec(pathname);
   const gatewayMatch = GATEWAY_GIT_KEYS_PATH.exec(pathname);
-  if (gitKeyMatch && recorded.method === "PUT") putFakeGitKey(gitKeys, resources, gitKeyMatch, recorded.body, res);
+  if (gitKeyMatch && recorded.method === "GET") getFakeGitKey(gitKeys, gitKeyMatch, res);
+  else if (gitKeyMatch && recorded.method === "PUT") putFakeGitKey(gitKeys, resources, gitKeyMatch, recorded.body, res);
   else if (gitKeyMatch && recorded.method === "DELETE") deleteFakeGitKey(gitKeys, gitKeyMatch, recorded.body, res);
   else if (pathname === "/v1/git-key-holders" && recorded.method === "GET") send(res, 200, { holders: gitKeys.holders() });
   else if (holderMatch && recorded.method === "DELETE") {

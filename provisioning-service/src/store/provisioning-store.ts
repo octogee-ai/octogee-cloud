@@ -58,7 +58,8 @@ interface GitKeyRow {
   conditions: ProvisioningCondition<GitKeyConditionType>[];
   refusals: number;
   retry_after: Date | null;
-  adopt_requested: boolean;
+  put_sequence: number;
+  observed_put_sequence: number;
 }
 
 export type WriteOutcome = "created" | "changed" | "unchanged";
@@ -104,6 +105,7 @@ export function toGitKey(row: GitKeyRow): GitKey {
     gatewayId: row.gateway_id,
     holder: row.holder,
     generation: row.generation,
+    putSequence: row.put_sequence,
     resourceVersion: String(row.resource_version),
     deletionRequestedAt: row.deletion_requested_at ? row.deletion_requested_at.toISOString() : null,
     spec: { publicKey: row.public_key },
@@ -111,6 +113,7 @@ export function toGitKey(row: GitKeyRow): GitKey {
       observedGeneration: row.observed_generation,
       conditions: row.conditions,
       nextAttemptAt: row.retry_after ? row.retry_after.toISOString() : null,
+      observedPutSequence: row.observed_put_sequence,
     },
   };
 }
@@ -188,10 +191,6 @@ export class ProvisioningStore {
              attempts = CASE WHEN state = 'running' THEN attempts ELSE 0 END,
              due_at = CASE WHEN state = 'running' THEN due_at ELSE now() END
        WHERE uid = $1`, [uid]);
-  }
-
-  private async makeIdleWorkDue(client: pg.ClientBase, uid: string): Promise<void> {
-    await client.query(`UPDATE ${this.db.table("provisioning_work")} SET state = 'queued', due_at = now() WHERE uid = $1 AND state = 'idle'`, [uid]);
   }
 
   private async makeKeyWorkDue(client: pg.ClientBase, uid: string): Promise<void> {
@@ -353,27 +352,35 @@ export class ProvisioningStore {
         `SELECT *, (retry_after IS NULL OR retry_after <= now()) AS retry_due FROM ${t("git_keys")} WHERE uid = $1 AND holder = $2 FOR UPDATE`, [uid, holder]);
       const current = rows[0];
       if (current && current.public_key === spec.publicKey && current.deletion_requested_at === null) {
-        await client.query(`UPDATE ${t("git_keys")} SET updated_at = now(), adopt_requested = true WHERE uid = $1 AND holder = $2`, [uid, holder]);
-        if (current.retry_due) await this.makeIdleWorkDue(client, uid);
-        return { outcome: "unchanged" as const, key: toGitKey(current) };
+        const keyVersion = await bumpVersion(uid);
+        const touched = (await client.query<GitKeyRow>(
+          `UPDATE ${t("git_keys")} SET updated_at = now(), put_sequence = put_sequence + 1, refusals = 0, retry_after = NULL, resource_version = $3
+            WHERE uid = $1 AND holder = $2 RETURNING *`, [uid, holder, keyVersion.toString()])).rows[0];
+        await this.makeKeyWorkDue(client, uid);
+        return { outcome: "unchanged" as const, key: toGitKey(touched) };
       }
       const keyVersion = await bumpVersion(uid);
       const userVersion = await bumpVersion(uid);
       let written: GitKeyRow;
       if (!current) {
         written = (await client.query<GitKeyRow>(
-          `INSERT INTO ${t("git_keys")} (uid, gateway_id, holder, generation, resource_version, public_key, conditions, adopt_requested) VALUES ($1, $2, $3, 1, $4, $5, $6, true) RETURNING *`,
+          `INSERT INTO ${t("git_keys")} (uid, gateway_id, holder, generation, resource_version, public_key, conditions, put_sequence) VALUES ($1, $2, $3, 1, $4, $5, $6, 1) RETURNING *`,
           [uid, gatewayId, holder, keyVersion.toString(), spec.publicKey, JSON.stringify(pendingConditions(GIT_KEY_CONDITION_TYPES, new Date()))])).rows[0];
       } else {
         written = (await client.query<GitKeyRow>(
           `UPDATE ${t("git_keys")} SET generation = generation + 1, resource_version = $3, public_key = $4, deletion_requested_at = NULL,
-              refusals = 0, retry_after = NULL, updated_at = now(), adopt_requested = true
+              refusals = 0, retry_after = NULL, updated_at = now(), put_sequence = put_sequence + 1
             WHERE uid = $1 AND holder = $2 RETURNING *`, [uid, holder, keyVersion.toString(), spec.publicKey])).rows[0];
       }
       await client.query(`UPDATE ${t("provisionings")} SET resource_version = $2 WHERE uid = $1`, [uid, userVersion.toString()]);
       await this.makeKeyWorkDue(client, uid);
       return { outcome: current ? "changed" as const : "created" as const, key: toGitKey(written) };
     });
+  }
+
+  async getGitKey(uid: string, holder: string): Promise<GitKey | null> {
+    const { rows } = await this.db.pool.query<GitKeyRow>(`SELECT * FROM ${this.db.table("git_keys")} WHERE uid = $1 AND holder = $2`, [uid, holder]);
+    return rows[0] ? toGitKey(rows[0]) : null;
   }
 
   async deleteGitKey(uid: string, holder: string, expectedPublicKey: string | null): Promise<void> {
