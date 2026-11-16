@@ -61,6 +61,7 @@ async function readOwnersByGateway(sources: LiveGatewayOwnerSources): Promise<Ma
     const vm = vmOwner(record);
     if (vm) addOwner(vm.gatewayId, vm.owner);
   }
+  for (const gatewayId of ids) addOwner(gatewayId, gatewayId);
   return ownersByGateway;
 }
 

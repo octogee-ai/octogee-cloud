@@ -63,10 +63,23 @@ describe("readLiveGatewayKeyHolders", () => {
 
     expect(readBatch).toHaveBeenCalledWith(["builder-jack", "shared-0"]);
     expect([...owners].sort()).toEqual([
+      "builder-jack",
       "builder-jack/octogee-gateway-builder-jack-vm-123456789",
+      "shared-0",
       "shared-0/octogee-gateway-shared-0-a-1",
       "shared-0/octogee-gateway-shared-0-b-2",
     ]);
+  });
+
+  it("keeps every known gateway's own id live, including a gateway with no pod, because the provisioning service holds keys under it", async () => {
+    const { owners } = await readLiveGatewayKeyHolders({
+      gateways: [root("builder-paused")],
+      fleetRegistry: [],
+      readGatewayPodDiagnosticsBatch: async (gatewayIds) =>
+        Object.fromEntries(gatewayIds.map((id) => [id, diagnostics([], "missing")])),
+    });
+
+    expect([...owners]).toEqual(["builder-paused"]);
   });
 
   it("fails closed when a direct read meets a revision runtime document named for another gateway", async () => {
@@ -97,7 +110,7 @@ describe("readLiveGatewayKeyHolders", () => {
         Object.fromEntries(gatewayIds.map((id) => [id, diagnostics([], "missing")])),
     });
 
-    expect([...owners]).toEqual(["builder-jack/octogee-gateway-builder-jack-vm-123456789"]);
+    expect([...owners].sort()).toEqual(["builder-jack", "builder-jack/octogee-gateway-builder-jack-vm-123456789"]);
     expect(list).not.toHaveBeenCalled();
   });
 
