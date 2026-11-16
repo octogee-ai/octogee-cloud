@@ -1,4 +1,4 @@
-import { type GitKey, type GitKeySpec, type ProvisioningCredential, type ProvisioningCredentialName, type ProvisioningErrorCode, type ProvisioningEventsResponse, type RetryProvisioningRequest, type UserProvisioning, type UserProvisioningList, type UserProvisioningListQuery, type UserProvisioningSpec, type UserProvisioningWatchResponse } from "@octogee/shared/types/provisioning-service";
+import { type GitKey, type GitKeyHolderSummary, type GitKeyRelease, type GitKeySpec, type ProvisioningCredential, type ProvisioningCredentialName, type ProvisioningErrorCode, type ProvisioningEventsResponse, type RetryProvisioningRequest, type UserProvisioning, type UserProvisioningList, type UserProvisioningListQuery, type UserProvisioningSpec, type UserProvisioningWatchResponse } from "@octogee/shared/types/provisioning-service";
 export declare const PROVISIONING_SERVICE_URL_ENV = "PROVISIONING_SERVICE_URL";
 export declare const PROVISIONING_SERVICE_TOKEN_PATH_ENV = "PROVISIONING_SERVICE_TOKEN_PATH";
 export interface ProvisioningServiceRetryPolicy {
@@ -32,9 +32,6 @@ export interface PutProvisioningResult {
     readonly resource: UserProvisioning;
 }
 export type DeleteGitKeyOutcome = "deleted" | "superseded";
-export interface GatewayGitKeysRelease {
-    readonly remaining: number;
-}
 export interface PutGitKeyResult {
     readonly outcome: "created" | "changed" | "unchanged";
     readonly key: GitKey;
@@ -74,11 +71,13 @@ export interface ProvisioningServiceClient {
     retryProvisioning(uid: string, request: RetryProvisioningRequest, idempotencyKey: string): Promise<unknown>;
     getProvisioningEvents(uid: string, options?: RequestSignalOptions): Promise<ProvisioningEventsResponse | null>;
     getCredential(uid: string, name: ProvisioningCredentialName, options?: RequestSignalOptions): Promise<ProvisioningCredential | null>;
-    putGitKey(uid: string, gatewayId: string, spec: GitKeySpec, options?: RequestSignalOptions): Promise<PutGitKeyResult>;
-    deleteGitKey(uid: string, gatewayId: string, options: {
+    putGitKey(uid: string, holder: string, spec: GitKeySpec, options?: RequestSignalOptions): Promise<PutGitKeyResult>;
+    deleteGitKey(uid: string, holder: string, options: {
         expectedPublicKey: string;
     } & RequestSignalOptions): Promise<DeleteGitKeyOutcome>;
-    releaseGatewayGitKeys(gatewayId: string, options?: RequestSignalOptions): Promise<GatewayGitKeysRelease>;
+    listGitKeyHolders(options?: RequestSignalOptions): Promise<GitKeyHolderSummary[]>;
+    releaseGitKeyHolder(holder: string, options?: RequestSignalOptions): Promise<GitKeyRelease>;
+    releaseGatewayGitKeys(gatewayId: string, options?: RequestSignalOptions): Promise<GitKeyRelease>;
 }
 export interface ProvisioningServiceConfig {
     readonly baseUrl: string;
