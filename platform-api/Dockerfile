@@ -23,6 +23,7 @@ COPY shared/dist /shared/dist
 COPY core-testing/package.json /core-testing/package.json
 COPY core-testing/dist /core-testing/dist
 COPY platform-api/.npmrc platform-api/package.json platform-api/package-lock.json* ./
+COPY platform-api/vendor/picomatch/ ./vendor/picomatch/
 RUN npm ci --ignore-scripts
 
 COPY scripts/ops/sync-local-file-deps.mjs /scripts/ops/sync-local-file-deps.mjs
@@ -45,6 +46,7 @@ COPY core/dist /core/dist
 COPY shared/package.json /shared/package.json
 COPY shared/dist /shared/dist
 COPY platform-api/.npmrc platform-api/package.json platform-api/package-lock.json* ./
+COPY platform-api/vendor/picomatch/ ./vendor/picomatch/
 RUN npm ci --omit=dev --ignore-scripts
 RUN npm rebuild better-sqlite3 --foreground-scripts \
     && node -e "const Database = require('better-sqlite3'); const db = new Database(':memory:'); db.close()"

@@ -238,7 +238,7 @@ async function giteaCreateFiles(contentsPath, files, commitMessage) {
         files: files.map((file) => ({
             operation: "create",
             path: file.path,
-            content: Buffer.from(file.content, "utf-8").toString("base64"),
+            content: (typeof file.content === "string" ? Buffer.from(file.content, "utf-8") : file.content).toString("base64"),
         })),
     }, false);
 }

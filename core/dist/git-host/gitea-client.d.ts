@@ -16,5 +16,5 @@ export declare function giteaWriteFiles(org: string, repoName: string, files: Re
 }>, commitMessage: string): Promise<void>;
 export declare function giteaWriteFilesIfAllAbsent(org: string, repoName: string, files: ReadonlyArray<{
     path: string;
-    content: string;
+    content: string | Buffer;
 }>, commitMessage: string): Promise<void>;

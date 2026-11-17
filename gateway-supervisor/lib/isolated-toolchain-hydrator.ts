@@ -337,6 +337,7 @@ async function readPinnedToolchain(options: HydrateIsolatedToolchainOptions): Pr
   groupsBytes: Buffer;
   manifest: IsolatedToolGroups;
   bundleSha256: string;
+  picomatchArchive?: string;
 }> {
   if (!isSha256(options.packageLockSha256) || !isSha256(options.groupsSha256)) {
     throw hydrationError("invalid-toolchain-lock-pin");
@@ -379,8 +380,16 @@ async function readPinnedToolchain(options: HydrateIsolatedToolchainOptions): Pr
   }
   const descriptor = parseIsolatedToolchainLock(lockValue, manifest);
   parsePackageJson(packageValue, descriptor);
+  const packages = objectRecord(objectRecord(lockValue)?.packages);
+  const picomatch = objectRecord(packages?.["node_modules/picomatch"]);
+  let picomatchArchive: string | undefined;
+  if (picomatch?.name === "@octogee/picomatch") {
+    const resolved = typeof picomatch.resolved === "string" ? picomatch.resolved : "";
+    picomatchArchive = /^file:(vendor\/picomatch\/picomatch-[\d.]+-[a-f0-9]{8}\.tgz)$/.exec(resolved)?.[1];
+    if (!picomatchArchive || !isIntegrity(picomatch.integrity)) throw hydrationError(INVALID_TOOLCHAIN_LOCK);
+  }
   const bundleSha256 = createHash("sha256").update(lockBytes).update(groupsBytes).digest("hex");
-  return { descriptor, lockBytes, groupsBytes, manifest, bundleSha256 };
+  return { descriptor, lockBytes, groupsBytes, manifest, bundleSha256, picomatchArchive };
 }
 
 function statusFor(status: DeveloperToolchainStatus, now: Date): IsolatedToolchainStatus {
@@ -988,6 +997,12 @@ export async function hydrateIsolatedToolchain(
       fs.writeFile(path.join(stagingPath, "package-lock.json"), pinned.lockBytes, { mode: 0o600 }),
       fs.writeFile(path.join(stagingPath, "groups.json"), pinned.groupsBytes, { mode: 0o600 }),
     ]);
+    if (pinned.picomatchArchive) {
+      const destination = path.join(stagingPath, pinned.picomatchArchive);
+      await fs.mkdir(path.dirname(destination), { recursive: true, mode: 0o700 });
+      await fs.copyFile(path.join(path.dirname(options.packageLockPath), pinned.picomatchArchive), destination)
+        .catch((cause) => { throw hydrationError("toolchain-package-unavailable", cause); });
+    }
     await installWithRegistryFallback({
       destination: stagingPath,
       cachePath: options.cachePath ?? path.join(options.root, "npm-cache"),

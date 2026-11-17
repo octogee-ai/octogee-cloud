@@ -20,6 +20,7 @@ COPY shared/dist /shared/dist
 COPY core-testing/package.json /core-testing/package.json
 COPY core-testing/dist /core-testing/dist
 COPY llm-broker/.npmrc llm-broker/package.json llm-broker/package-lock.json ./
+COPY llm-broker/vendor/picomatch/ ./vendor/picomatch/
 RUN npm ci --ignore-scripts
 COPY scripts/ops/sync-local-file-deps.mjs /scripts/ops/sync-local-file-deps.mjs
 COPY llm-broker/tsconfig.json ./
@@ -37,6 +38,7 @@ COPY core/dist /core/dist
 COPY shared/package.json /shared/package.json
 COPY shared/dist /shared/dist
 COPY llm-broker/.npmrc llm-broker/package.json llm-broker/package-lock.json ./
+COPY llm-broker/vendor/picomatch/ ./vendor/picomatch/
 RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 COPY --from=builder /llm-broker/dist ./dist
 

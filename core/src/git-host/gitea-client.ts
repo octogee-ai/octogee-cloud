@@ -296,7 +296,7 @@ export async function giteaWriteFiles(
 export async function giteaWriteFilesIfAllAbsent(
   org: string,
   repoName: string,
-  files: ReadonlyArray<{ path: string; content: string }>,
+  files: ReadonlyArray<{ path: string; content: string | Buffer }>,
   commitMessage: string,
 ): Promise<void> {
   if (files.length === 0) return;
@@ -309,7 +309,7 @@ export async function giteaWriteFilesIfAllAbsent(
 
 async function giteaCreateFiles(
   contentsPath: string,
-  files: ReadonlyArray<{ path: string; content: string }>,
+  files: ReadonlyArray<{ path: string; content: string | Buffer }>,
   commitMessage: string,
 ): Promise<void> {
   await giteaAdminFetch("POST", contentsPath, {
@@ -318,7 +318,7 @@ async function giteaCreateFiles(
     files: files.map((file) => ({
       operation: "create",
       path: file.path,
-      content: Buffer.from(file.content, "utf-8").toString("base64"),
+      content: (typeof file.content === "string" ? Buffer.from(file.content, "utf-8") : file.content).toString("base64"),
     })),
   }, false);
 }

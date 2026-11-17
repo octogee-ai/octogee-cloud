@@ -3,8 +3,9 @@
 These npm tarballs patch CVE-2026-112366. Each preserves its upstream
 release version, license, and import surface and identifies itself as
 `@octogee/picomatch`. npm installs the package in the original
-`node_modules/picomatch` location. Each lock entry pins the archive's
-commit-addressed download URL and SHA-512 integrity.
+`node_modules/picomatch` location. Each consuming package carries the archive
+it uses and pins its SHA-512 integrity. This works with npm 12's remote-tarball
+restriction and keeps detached build contexts self-contained.
 
 The v2 patch comes from [upstream #246](https://github.com/micromatch/picomatch/pull/246)
 at `f03bec2c02e46f063fbfdc161aae1d0f854b2565`. The v4 patch comes from
