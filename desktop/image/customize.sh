@@ -19,6 +19,42 @@ record_image_identity() {
   printf 'OMARCHY_ISO_VERSION=%s\nOMARCHY_VERSION=%s\nIMAGE_NAME=%s\n' "$OMARCHY_VERSION" "$installed" "$IMAGE_NAME" > /etc/octogee-computer.env
 }
 
+configure_omarchy_suspend_lock() {
+  python3 - "$1" <<'PYTHON'
+import os
+from pathlib import Path
+import stat
+import sys
+import tempfile
+
+script = Path(sys.argv[1])
+anchor = b"\n# omarchy:hidden=true\n"
+guard = b'''
+if [[ ${OCTO_COMPOSITOR:-} == hyprland && ${OCTO_DISPLAY:-} == drm &&
+      -n ${HOME:-} && -f "$HOME/.local/state/omarchy/indicators/stay-awake" ]]; then
+  printf '%s\\n' 'Omarchy suspend lock skipped for the managed stay-awake desktop'
+  exit 0
+fi
+'''
+original = script.read_bytes()
+if original.count(anchor) != 1 or b"\nrequest_lock\nsync_clamshell\n" not in original:
+    raise SystemExit(f"Unrecognized Omarchy suspend-lock hook at {script}")
+if anchor + guard in original:
+    sys.exit(0)
+
+mode = stat.S_IMODE(script.stat().st_mode)
+with tempfile.NamedTemporaryFile(dir=script.parent, prefix=".omarchy-sleep-lock-", delete=False) as staging:
+    pending = Path(staging.name)
+    try:
+        staging.write(original.replace(anchor, anchor + guard, 1))
+        staging.flush()
+        os.fchmod(staging.fileno(), mode)
+        os.replace(pending, script)
+    finally:
+        pending.unlink(missing_ok=True)
+PYTHON
+}
+
 log "packages"
 OMARCHY_ALLOW_DIRECT_PACMAN=1 pacman -Syu --noconfirm --needed \
   at-spi2-core wayvnc x11vnc grim wtype wl-clipboard slurp jq python python-pip python-websocket-client bc \
@@ -56,6 +92,7 @@ rm -f /tmp/novnc.tgz
 pip install --quiet --break-system-packages --no-cache-dir "websockify==${WEBSOCKIFY_VERSION}"
 
 log "desktop session files"
+configure_omarchy_suspend_lock /usr/bin/omarchy-system-sleep-lock
 cp -R --no-preserve=all "$HERE/desktop-rootfs/." /
 cp -R --no-preserve=all "$HERE/rootfs/." /
 chown -R root:root /usr/local/bin/octo-shims /usr/share/omarchy/octo-desktop /etc/systemd/system/octo-*.service /etc/systemd/system/octo-*.timer /etc/systemd/logind.conf.d/octo-desktop.conf /etc/modules-load.d/octo-desktop.conf /etc/sudoers.d/octo-desktop /usr/local/bin/octo-desktop-* /usr/local/bin/octo-metadata-ssh-keys
