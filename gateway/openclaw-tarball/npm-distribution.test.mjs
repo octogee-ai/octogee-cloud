@@ -10,6 +10,18 @@ import test from 'node:test';
 const root = process.argv[2];
 if (!root) throw new Error('Usage: node npm-distribution.test.mjs <extracted-or-installed-npm-root>');
 
+test('bundled tinyglobby matcher preserves repeated wildcard matches without nested repetition', () => {
+  const requireNpm = createRequire(path.resolve(root, 'package.json'));
+  const requireTinyglobby = createRequire(requireNpm.resolve('tinyglobby'));
+  const { isMatch, makeRe } = requireTinyglobby('picomatch');
+
+  assert.equal(isMatch('aba', '+(*a)'), true);
+  assert.equal(isMatch('aba!', '+(*a)'), false);
+  assert.equal(isMatch('c', '*(a*b)c'), true);
+  assert.doesNotMatch(makeRe('+(*a)').source, /\)[+*]/);
+  assert.doesNotMatch(makeRe('*(a*b)c').source, /\)[+*]/);
+});
+
 for (const [format, bundled] of [['commonjs', false], ['esm', false], ['commonjs', true], ['esm', true]]) {
   const label = `${format}${bundled ? ' public bundle' : ' raw'}`;
   const load = (name) => {

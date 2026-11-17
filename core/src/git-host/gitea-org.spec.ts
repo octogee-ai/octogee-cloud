@@ -251,8 +251,10 @@ describe("gateway-edge gitea client — per-workspace org", () => {
     }
   });
 
-  it("batch-creates an all-absent seed group", async () => {
+  it("batch-creates an all-absent seed group with its binary archive intact", async () => {
+    const archive = Buffer.from([0x1f, 0x8b, 0x00, 0xff]);
     fetchMock
+      .mockResolvedValueOnce(res(404))
       .mockResolvedValueOnce(res(404))
       .mockResolvedValueOnce(res(404))
       .mockResolvedValueOnce(res(201, {}));
@@ -264,11 +266,12 @@ describe("gateway-edge gitea client — per-workspace org", () => {
       [
         { path: "package.json", content: "new manifest" },
         { path: "package-lock.json", content: "new lock" },
+        { path: "vendor/picomatch.tgz", content: archive },
       ],
       "auto: seed project starter",
     );
 
-    const [, init] = fetchMock.mock.calls[2];
+    const [, init] = fetchMock.mock.calls[3];
     const body = JSON.parse(init.body as string);
     expect(body.files).toEqual([
       {
@@ -281,6 +284,7 @@ describe("gateway-edge gitea client — per-workspace org", () => {
         path: "package-lock.json",
         content: Buffer.from("new lock", "utf-8").toString("base64"),
       },
+      { operation: "create", path: "vendor/picomatch.tgz", content: archive.toString("base64") },
     ]);
   });
 

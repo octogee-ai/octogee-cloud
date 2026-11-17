@@ -85,7 +85,10 @@ export async function ensureProjectGiteaRepo(input: {
     await giteaWriteFilesIfAllAbsent(
       org,
       repoName,
-      starterSeeds.map((seed) => ({ path: seed.relPath, content: seed.content })),
+      starterSeeds.map((seed) => ({
+        path: seed.relPath,
+        content: seed.encoding === "base64" ? Buffer.from(seed.content, "base64") : seed.content,
+      })),
       "auto: seed project starter",
     );
   } catch (error) {

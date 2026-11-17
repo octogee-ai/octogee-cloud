@@ -331,12 +331,23 @@ function digestBytes(value: Uint8Array): Buffer {
   return createHash("sha256").update(value).digest();
 }
 
+function pinnedPicomatchArchive(lockValue: unknown): string | undefined {
+  const packages = objectRecord(objectRecord(lockValue)?.packages);
+  const picomatch = objectRecord(packages?.["node_modules/picomatch"]);
+  if (picomatch?.name !== "@octogee/picomatch") return undefined;
+  const resolved = typeof picomatch.resolved === "string" ? picomatch.resolved : "";
+  const archive = /^file:(vendor\/picomatch\/picomatch-[\d.]+-[a-f0-9]{8}\.tgz)$/.exec(resolved)?.[1];
+  if (!archive || !isIntegrity(picomatch.integrity)) throw hydrationError(INVALID_TOOLCHAIN_LOCK);
+  return archive;
+}
+
 async function readPinnedToolchain(options: HydrateIsolatedToolchainOptions): Promise<{
   descriptor: IsolatedToolchainLock;
   lockBytes: Buffer;
   groupsBytes: Buffer;
   manifest: IsolatedToolGroups;
   bundleSha256: string;
+  picomatchArchive?: string;
 }> {
   if (!isSha256(options.packageLockSha256) || !isSha256(options.groupsSha256)) {
     throw hydrationError("invalid-toolchain-lock-pin");
@@ -380,7 +391,7 @@ async function readPinnedToolchain(options: HydrateIsolatedToolchainOptions): Pr
   const descriptor = parseIsolatedToolchainLock(lockValue, manifest);
   parsePackageJson(packageValue, descriptor);
   const bundleSha256 = createHash("sha256").update(lockBytes).update(groupsBytes).digest("hex");
-  return { descriptor, lockBytes, groupsBytes, manifest, bundleSha256 };
+  return { descriptor, lockBytes, groupsBytes, manifest, bundleSha256, picomatchArchive: pinnedPicomatchArchive(lockValue) };
 }
 
 function statusFor(status: DeveloperToolchainStatus, now: Date): IsolatedToolchainStatus {
@@ -988,6 +999,12 @@ export async function hydrateIsolatedToolchain(
       fs.writeFile(path.join(stagingPath, "package-lock.json"), pinned.lockBytes, { mode: 0o600 }),
       fs.writeFile(path.join(stagingPath, "groups.json"), pinned.groupsBytes, { mode: 0o600 }),
     ]);
+    if (pinned.picomatchArchive) {
+      const destination = path.join(stagingPath, pinned.picomatchArchive);
+      await fs.mkdir(path.dirname(destination), { recursive: true, mode: 0o700 });
+      await fs.copyFile(path.join(path.dirname(options.packageLockPath), pinned.picomatchArchive), destination)
+        .catch((cause) => { throw hydrationError("toolchain-package-unavailable", cause); });
+    }
     await installWithRegistryFallback({
       destination: stagingPath,
       cachePath: options.cachePath ?? path.join(options.root, "npm-cache"),

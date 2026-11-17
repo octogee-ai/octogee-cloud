@@ -333,6 +333,34 @@ describe("User npm toolchain lock", () => {
     await expect(hydrateIsolatedToolchain({ root, preinstalledRoot, ...pin, installDependencies })).resolves.toMatchObject({ status: "ready" });
   });
 
+  it("stages the locked picomatch archive before hydrating from npm", async () => {
+    const home = await tempRoot();
+    const pin = await writePinnedInputs(home);
+    const lock = JSON.parse(await fs.readFile(pin.packageLockPath, "utf8"));
+    const archive = "vendor/picomatch/picomatch-4.0.7-e1f8b86c.tgz";
+    const bytes = Buffer.from("patched archive");
+    lock.packages["node_modules/picomatch"] = {
+      name: "@octogee/picomatch",
+      resolved: `file:${archive}`,
+      integrity: `sha512-${createHash("sha512").update(bytes).digest("base64")}`,
+    };
+    const lockBytes = JSON.stringify(lock);
+    await fs.mkdir(path.dirname(path.join(home, archive)), { recursive: true });
+    await fs.writeFile(path.join(home, archive), bytes);
+    await fs.writeFile(pin.packageLockPath, lockBytes);
+
+    await expect(hydrateIsolatedToolchain({
+      ...pin,
+      packageLockSha256: sha256(lockBytes),
+      root: path.join(home, "runtime"),
+      registryCredentialsProvider: registryCredentials,
+      installDependencies: async (destination) => {
+        expect(await fs.readFile(path.join(destination, archive))).toEqual(bytes);
+        await fakeInstall(destination);
+      },
+    })).resolves.toMatchObject({ status: "ready" });
+  });
+
   it("refuses a mismatched image payload without deleting it or installing into user home", async () => {
     const home = await tempRoot();
     const pin = await writePinnedInputs(home);

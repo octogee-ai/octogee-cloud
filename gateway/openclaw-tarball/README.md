@@ -108,18 +108,22 @@ Before publication:
   ip-address 10.7.4 fixes because pnpm 12.15 loses these bundled-file patches on
   a cached import. The glob 13.0.6 cancellation backport follows upstream commit
   `4682e8c9babee1b385202ede36389634e12076d7`; minimatch 10.2.5 preprocessing limits
-  follow `77a0f5c4b80bdc641c3c930a1d9edf5ad2db57f8`. Versions remain unchanged
+  follow `77a0f5c4b80bdc641c3c930a1d9edf5ad2db57f8`. The picomatch 4.0.5
+  backport in npm's tinyglobby dependency follows upstream commit
+  `c63a5bf4e61dbdb81bc41e97dc2616c30acce337` for CVE-2026-112366.
+  Versions remain unchanged
   for these backports, so version-only advisory scans still report them.
   Both glob public `index.min.js` bundles are regenerated from the patched closure
   with esbuild 0.27.3 using upstream `scripts/build.sh` options (`--minify
   --platform=node --bundle`, each format's `index.js`, matching `--format=cjs`
   or `--format=esm`), omitting source maps absent from npm's distribution.
   Run `node npm-distribution.test.mjs <npm-root>` against the staged and installed
-  copies: all 24 raw/public CJS/ESM controls must pass. Reassess this patch against
+  copies. The 24 raw/public CJS/ESM controls and the tinyglobby matcher control
+  must pass. Reassess this patch against
   each selected npm release; retire each backport when the stock installed closure
   supplies the equivalent fix.
   Platform Dockerfiles stage npm 12.2.1 with this same distribution patch and
-  run the same 24 controls before copying only the patched npm tree into runtimes;
+  run the same 25 controls before copying only the patched npm tree into runtimes;
   the patch and test bytes are platform/site release and per-image fingerprint inputs.
 - Install the exact root and Mattermost pair in an isolated npm prefix and
   verify installed build-info. Core, Codex, Parallel and Mattermost must come
@@ -730,16 +734,22 @@ the bundled companions, and imported all three Codex native hooks. The
 non-superuser PostgreSQL pin-roll passed from the oldest retained source,
 `e9c9cd30`.
 
+The CVE-2026-112366 recut was built and packed sequentially from the
+same clean OpenClaw source. The installed npm bundle includes the picomatch
+backport and passes all 25 distribution controls. The Linux full-plugin
+installer and native archive integrity check passed. Mattermost reproduced
+byte-for-byte.
+
 The root object was created with a generation-zero precondition. Mattermost
 reused its existing generation after the complete hash matched. Both objects
 passed exact-generation SHA-256 readback.
 
 | Object | Generation | SHA-256 |
 | --- | --- | --- |
-| `openclaw-fork-216f0a49.tgz` | `1794929726331566` | `216f0a495c85aa022d0fccaa24cdbcfa6c450c64b251b5b9ed5b50c1b178f8df` |
+| `openclaw-fork-4e3dd5a4.tgz` | `1794944210039754` | `4e3dd5a4142f5c71c4105fc69d80420992a9c14ce061572d979bca1cfe478ac9` |
 | `openclaw-mattermost-8e55e60d.tgz` | `1794860917248896` | `8e55e60dd0219f8b96dd428eab74dab999a46310fe76b5af1031fd447dd6c259` |
 
-The [GitHub release mirror](https://github.com/ceckert/openclaw/releases/tag/gateway-708ff80)
+The [GitHub release mirror](https://github.com/ceckert/openclaw/releases/tag/gateway-708ff80-picomatch)
 uses the same names and verified SHA-256 hashes.
 
 ### Upstream contributions

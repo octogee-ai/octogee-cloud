@@ -1,5 +1,6 @@
 import viteStaticPackage from "./vite-static/package.json" with { type: "json" };
 import viteStaticPackageLock from "./vite-static/package-lock.json" with { type: "json" };
+import viteStaticPicomatchArchive from "./vite-static/picomatch-archive.json" with { type: "json" };
 const RECIPE_PUBLISH_CONTRACT = {
     "static-site": "the `public/` folder deploys as-is, with no build step",
     "vite-static": "`npm run build` produces `dist/`, and `dist/` is what deploys",
@@ -556,6 +557,7 @@ export function projectPlaybookSeeds(input) {
         { relPath: "DECISIONS.md", content: decisionsLog(input, doctrine) },
     ];
 }
+const viteStarterPicomatch = viteStaticPackageLock.packages["node_modules/picomatch"];
 export function projectRecipeStarterSeeds(input) {
     if (input.recipe !== "vite-static")
         return [];
@@ -574,5 +576,6 @@ export function projectRecipeStarterSeeds(input) {
     return [
         { relPath: "package.json", content: `${JSON.stringify(manifest, null, 2)}\n` },
         { relPath: "package-lock.json", content: `${JSON.stringify(lock, null, 2)}\n` },
+        { relPath: viteStarterPicomatch.resolved.slice("file:".length), content: viteStaticPicomatchArchive.base64, encoding: "base64" },
     ];
 }

@@ -85,6 +85,7 @@ COPY core-testing/dist /app/core-testing/dist
 # runtime-only after `tsc` finishes. Avoids `npx tsc` falling back to a
 # downloaded unpinned compiler.
 COPY fleet-controller/.npmrc fleet-controller/package.json fleet-controller/package-lock.json* ./
+COPY fleet-controller/vendor/picomatch/ ./vendor/picomatch/
 # --ignore-scripts for parity with every other service image: nothing here is
 # native, so no dependency install script is load-bearing. npm 12 already
 # blocks them (no allowScripts policy) and says so only in a warning — stating

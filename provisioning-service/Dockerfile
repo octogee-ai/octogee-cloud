@@ -22,6 +22,7 @@ COPY shared/package.json /app/shared/package.json
 COPY shared/dist /app/shared/dist
 
 COPY provisioning-service/.npmrc provisioning-service/package.json provisioning-service/package-lock.json ./
+COPY provisioning-service/vendor/picomatch/ ./vendor/picomatch/
 RUN npm ci --ignore-scripts
 
 COPY provisioning-service/tsconfig.json ./

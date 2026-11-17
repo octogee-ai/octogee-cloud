@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, it, expect } from "vitest";
 import type { ProjectRecipeId } from "@octogee/shared/types/project";
 import {
@@ -252,6 +253,7 @@ describe("projectRecipeStarterSeeds", () => {
     expect(seeds.map((seed) => seed.relPath)).toEqual([
       "package.json",
       "package-lock.json",
+      "vendor/picomatch/picomatch-4.0.7-e1f8b86c.tgz",
     ]);
     const manifest = JSON.parse(seeds[0].content) as {
       name: string;
@@ -261,7 +263,7 @@ describe("projectRecipeStarterSeeds", () => {
     const lock = JSON.parse(seeds[1].content) as {
       name: string;
       lockfileVersion: number;
-      packages: Record<string, { name?: string; devDependencies?: Record<string, string> }>;
+      packages: Record<string, { name?: string; devDependencies?: Record<string, string>; resolved?: string; integrity?: string }>;
     };
     expect(manifest).toMatchObject({
       name: "wildcard",
@@ -275,6 +277,11 @@ describe("projectRecipeStarterSeeds", () => {
         "": { name: "wildcard", devDependencies: manifest.devDependencies },
       },
     });
+    const archive = seeds[2]!;
+    const installed = lock.packages["node_modules/picomatch"]!;
+    expect(archive.encoding).toBe("base64");
+    expect(installed.resolved).toBe(`file:${archive.relPath}`);
+    expect(installed.integrity).toBe(`sha512-${createHash("sha512").update(Buffer.from(archive.content, "base64")).digest("base64")}`);
   });
 
   it("does not pretend a dependency graph exists for another recipe", () => {

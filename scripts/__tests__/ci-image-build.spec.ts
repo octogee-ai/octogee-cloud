@@ -186,6 +186,7 @@ describe("base image recipes", () => {
       "gateway/isolated-toolchain/package-lock.json",
       "gateway/isolated-toolchain/package.json",
       "gateway/isolated-toolchain/preinstall.mjs",
+      "gateway/isolated-toolchain/vendor/picomatch/picomatch-4.0.7-e1f8b86c.tgz",
       "gateway/stamp-claude-first-run.mjs",
     ]);
   });

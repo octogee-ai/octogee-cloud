@@ -22,6 +22,7 @@ COPY shared/dist /shared/dist
 COPY core-testing/package.json /core-testing/package.json
 COPY core-testing/dist /core-testing/dist
 COPY gateway-edge/.npmrc gateway-edge/package.json gateway-edge/package-lock.json* ./
+COPY gateway-edge/vendor/picomatch/ ./vendor/picomatch/
 RUN npm ci --ignore-scripts
 
 COPY scripts/ops/sync-local-file-deps.mjs /scripts/ops/sync-local-file-deps.mjs
@@ -63,6 +64,7 @@ COPY core/dist /core/dist
 COPY shared/package.json /shared/package.json
 COPY shared/dist /shared/dist
 COPY gateway-edge/.npmrc gateway-edge/package.json gateway-edge/package-lock.json* ./
+COPY gateway-edge/vendor/picomatch/ ./vendor/picomatch/
 RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 COPY --from=builder /gateway-edge/dist ./dist
 COPY gateway-edge/agent-import-gitleaks.toml ./agent-import-gitleaks.toml

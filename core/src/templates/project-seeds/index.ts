@@ -1,10 +1,15 @@
 import type { ProjectRecipeId } from "@octogee/shared/types/project";
 import viteStaticPackage from "./vite-static/package.json" with { type: "json" };
 import viteStaticPackageLock from "./vite-static/package-lock.json" with { type: "json" };
+import viteStaticPicomatchArchive from "./vite-static/picomatch-archive.json" with { type: "json" };
 
 export interface PlaybookSeed {
   relPath: string;
   content: string;
+}
+
+export interface ProjectRecipeStarterSeed extends PlaybookSeed {
+  encoding?: "base64";
 }
 
 export interface ProjectPlaybookSeedInput {
@@ -603,7 +608,9 @@ export function projectPlaybookSeeds(input: ProjectPlaybookSeedInput): PlaybookS
   ];
 }
 
-export function projectRecipeStarterSeeds(input: ProjectRecipeStarterSeedInput): PlaybookSeed[] {
+const viteStarterPicomatch = viteStaticPackageLock.packages["node_modules/picomatch"];
+
+export function projectRecipeStarterSeeds(input: ProjectRecipeStarterSeedInput): ProjectRecipeStarterSeed[] {
   if (input.recipe !== "vite-static") return [];
   const manifest = { ...viteStaticPackage, name: input.projectSlug };
   const lock = {
@@ -620,5 +627,6 @@ export function projectRecipeStarterSeeds(input: ProjectRecipeStarterSeedInput):
   return [
     { relPath: "package.json", content: `${JSON.stringify(manifest, null, 2)}\n` },
     { relPath: "package-lock.json", content: `${JSON.stringify(lock, null, 2)}\n` },
+    { relPath: viteStarterPicomatch.resolved.slice("file:".length), content: viteStaticPicomatchArchive.base64, encoding: "base64" },
   ];
 }
