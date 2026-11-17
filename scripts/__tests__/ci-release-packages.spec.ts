@@ -141,10 +141,10 @@ describe("npm publish", () => {
     expect(npm).toHaveBeenCalledExactlyOnceWith(["publish", "/release/octogee-core-0.2.0.tgz", "--access", "public", "--provenance"]);
   });
 
-  it("dry runs without provenance", () => {
+  it("dry runs without provenance under its own dist-tag, so a placeholder version below latest still passes", () => {
     const npm = vi.fn();
     publish({ out, dryRun: true, exists: () => false, npm });
-    expect(npm).toHaveBeenLastCalledWith(["publish", "/release/octogee-core-0.2.0.tgz", "--access", "public", "--dry-run"]);
+    expect(npm).toHaveBeenLastCalledWith(["publish", "/release/octogee-core-0.2.0.tgz", "--access", "public", "--dry-run", "--tag", "dry-run"]);
   });
 
   it("stops at the first package npm refuses", () => {

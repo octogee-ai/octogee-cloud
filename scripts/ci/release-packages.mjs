@@ -219,7 +219,7 @@ export function publish({ out, dryRun = false, exists = publishedVersionExists, 
       outcomes.push({ name: entry.name, published: false });
       continue;
     }
-    npm(["publish", entry.tarball, "--access", "public", ...(dryRun ? ["--dry-run"] : ["--provenance"])]);
+    npm(["publish", entry.tarball, "--access", "public", ...(dryRun ? ["--dry-run", "--tag", "dry-run"] : ["--provenance"])]);
     outcomes.push({ name: entry.name, published: true });
   }
   return outcomes;
