@@ -51,6 +51,7 @@ Read the [architecture guide](docs/architecture.md),
 | Explore user management and shared gateways | [Full platform on kind](docs/kind.md) | The fleet controller, platform API, model broker, chat, and Git on a local Kubernetes cluster |
 | Install the foundation on Google Cloud or AWS | [Cloud installation](docs/running-in-the-cloud.md) | One gateway, chat, and Git on GKE or EKS with managed storage |
 | Run the full platform in a cloud account | [GKE](docs/gke.md) or [EKS](docs/eks.md) | Fleet management, user accounts, model access, chat, and Git with managed storage |
+| Deploy and operate the full platform in production | [Production deployment](docs/production.md) | Ingress, regional capacity, upgrades, and recovery |
 | Improve the code or documentation | [Contributing](CONTRIBUTING.md) | Local package checks and a guide to your first pull request |
 
 The local foundation needs Docker and a model provider API key for agent

@@ -11,6 +11,7 @@ Gitea for files and version history in Docker on your machine.
 | Local foundation | Talk to an agent and explore chat and Git | Continue below |
 | Full platform on kind | Manage users, shared gateways, and model access | [Full platform guide](kind.md) |
 | Full platform on GKE or EKS | Manage a fleet with cloud databases and storage | [GKE guide](gke.md) or [EKS guide](eks.md) |
+| Production deployment | Plan ingress, regional capacity, upgrades, and recovery | [Production guide](production.md) |
 | Cloud foundation on GKE or EKS | Run chat, Git, and one gateway with managed databases and storage | [Cloud guide](running-in-the-cloud.md) |
 
 Both local installations use kind, which runs Kubernetes in Docker. The
