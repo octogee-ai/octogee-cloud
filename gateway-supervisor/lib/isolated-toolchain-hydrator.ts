@@ -331,6 +331,16 @@ function digestBytes(value: Uint8Array): Buffer {
   return createHash("sha256").update(value).digest();
 }
 
+function pinnedPicomatchArchive(lockValue: unknown): string | undefined {
+  const packages = objectRecord(objectRecord(lockValue)?.packages);
+  const picomatch = objectRecord(packages?.["node_modules/picomatch"]);
+  if (picomatch?.name !== "@octogee/picomatch") return undefined;
+  const resolved = typeof picomatch.resolved === "string" ? picomatch.resolved : "";
+  const archive = /^file:(vendor\/picomatch\/picomatch-[\d.]+-[a-f0-9]{8}\.tgz)$/.exec(resolved)?.[1];
+  if (!archive || !isIntegrity(picomatch.integrity)) throw hydrationError(INVALID_TOOLCHAIN_LOCK);
+  return archive;
+}
+
 async function readPinnedToolchain(options: HydrateIsolatedToolchainOptions): Promise<{
   descriptor: IsolatedToolchainLock;
   lockBytes: Buffer;
@@ -380,16 +390,8 @@ async function readPinnedToolchain(options: HydrateIsolatedToolchainOptions): Pr
   }
   const descriptor = parseIsolatedToolchainLock(lockValue, manifest);
   parsePackageJson(packageValue, descriptor);
-  const packages = objectRecord(objectRecord(lockValue)?.packages);
-  const picomatch = objectRecord(packages?.["node_modules/picomatch"]);
-  let picomatchArchive: string | undefined;
-  if (picomatch?.name === "@octogee/picomatch") {
-    const resolved = typeof picomatch.resolved === "string" ? picomatch.resolved : "";
-    picomatchArchive = /^file:(vendor\/picomatch\/picomatch-[\d.]+-[a-f0-9]{8}\.tgz)$/.exec(resolved)?.[1];
-    if (!picomatchArchive || !isIntegrity(picomatch.integrity)) throw hydrationError(INVALID_TOOLCHAIN_LOCK);
-  }
   const bundleSha256 = createHash("sha256").update(lockBytes).update(groupsBytes).digest("hex");
-  return { descriptor, lockBytes, groupsBytes, manifest, bundleSha256, picomatchArchive };
+  return { descriptor, lockBytes, groupsBytes, manifest, bundleSha256, picomatchArchive: pinnedPicomatchArchive(lockValue) };
 }
 
 function statusFor(status: DeveloperToolchainStatus, now: Date): IsolatedToolchainStatus {
