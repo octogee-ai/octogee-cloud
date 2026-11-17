@@ -19,7 +19,7 @@ RUN mkdir -p /tmp/isolated-toolchain-validation \
     && chown node:node /tmp/isolated-toolchain-validation
 COPY --chown=node:node gateway/isolated-toolchain/package.json /tmp/isolated-toolchain-validation/package.json
 COPY --chown=node:node gateway/isolated-toolchain/package-lock.json /tmp/isolated-toolchain-validation/package-lock.json
-COPY --chown=node:node gateway/isolated-toolchain/vendor/picomatch/ /tmp/isolated-toolchain-validation/vendor/picomatch/
+COPY --chown=node:node gateway/isolated-toolchain/vendor/picomatch/picomatch-4.0.7-e1f8b86c.tgz /tmp/isolated-toolchain-validation/vendor/picomatch/
 COPY --chown=node:node gateway/isolated-toolchain/groups.json /tmp/isolated-toolchain-validation/groups.json
 
 USER node
@@ -141,7 +141,7 @@ USER root
 
 COPY --chown=node:node gateway/isolated-toolchain/package.json /octogee/toolchain/package.json
 COPY --chown=node:node gateway/isolated-toolchain/package-lock.json /octogee/toolchain/package-lock.json
-COPY --chown=node:node gateway/isolated-toolchain/vendor/picomatch/ /octogee/toolchain/vendor/picomatch/
+COPY --chown=node:node gateway/isolated-toolchain/vendor/picomatch/picomatch-4.0.7-e1f8b86c.tgz /octogee/toolchain/vendor/picomatch/
 COPY --chown=node:node gateway/isolated-toolchain/groups.json /octogee/toolchain/groups.json
 COPY --chown=node:node gateway/stamp-claude-first-run.mjs /octogee/gateway/stamp-claude-first-run.mjs
 COPY --from=isolated-toolchain-validation /tmp/isolated-toolchain-validation/ /opt/octogee/toolchains/image/
