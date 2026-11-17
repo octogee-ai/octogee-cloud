@@ -29,7 +29,7 @@ var Ct = (e, t, n) => (n = e != null ? Dr(Fr(e)) : {}, Lr(
 ));
 
 // openclaw/node_modules/.pnpm/punycode.js@2.3.1/node_modules/punycode.js/punycode.js
-var Rn = wt((Wu, Cn) => {
+var Rn = wt((Ku, Cn) => {
   "use strict";
   var No = /^xn--/, Lo = /[^\0-\x7F]/, Bo = /[\x2E\u3002\uFF0E\uFF61]/g, Uo = {
     overflow: "Overflow: input needs wider integers to process",
@@ -713,7 +713,7 @@ function M(e) {
 function te(e) {
   return typeof e == "number" && Number.isFinite(e) ? e : void 0;
 }
-var Br = 2147e6, ba = Math.floor(Br / 1e3);
+var Br = 2147e6, ya = Math.floor(Br / 1e3);
 
 // openclaw/packages/gateway-client/src/session-projection-message-identity.ts
 function It(e) {
@@ -966,8 +966,8 @@ var Xr = "Delivery: Final assistant text is not automatically delivered in this 
 var Xe = "\u27E6openclaw:ctx\u27E7";
 
 // openclaw/src/auto-reply/reply/strip-inbound-meta.ts
-var bc = `Context: ${Xe}`;
-var Yr = [Xe, ...Je], xc = new RegExp(Yr.map(ae).join("|"), "g");
+var yc = `Context: ${Xe}`;
+var Yr = [Xe, ...Je], bc = new RegExp(Yr.map(ae).join("|"), "g");
 
 // openclaw/packages/llm-core/src/types.ts
 var $t = "<<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>>", Kt = "<<<END_OPENCLAW_INTERNAL_CONTEXT>>>", Wt = "OpenClaw runtime context:", qt = "End OpenClaw runtime context.";
@@ -975,7 +975,7 @@ var $t = "<<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>>", Kt = "<<<END_OPENCLAW_INTERNAL
 // openclaw/src/agents/internal-runtime-context.ts
 var to = $t, no = Kt;
 var Ht = "This context is runtime-generated, not user-authored. Keep internal details private.";
-var $c = ["OpenClaw runtime context (internal):", Ht, ""].join(`
+var zc = ["OpenClaw runtime context (internal):", Ht, ""].join(`
 `) + `
 `;
 function Te(e) {
@@ -984,7 +984,7 @@ function Te(e) {
     pattern: new RegExp(`(?:^|\\r?\\n)[ \\t]*${ae(e)}[ \\t]*(?=\\r?\\n|$)`, "g")
   };
 }
-var Kc = Te(to), Wc = Te(no), qc = Te(Wt), Hc = Te(qt);
+var $c = Te(to), Kc = Te(no), Wc = Te(Wt), qc = Te(qt);
 var ro = [
   "OpenClaw runtime context for the active user request in this turn. Do not reply to or describe this context. Use it to continue answering the active user request now. Do not wait for another message.",
   "OpenClaw runtime context for the immediately preceding user message.",
@@ -996,7 +996,7 @@ var ro = [
   }).map((e) => e.split(/\s+/).map(ae).join("\\s+")).join("|")
 ), io = new RegExp(
   Ht.split(/\s+/).map(ae).join("\\s+")
-), Vc = new RegExp(
+), Hc = new RegExp(
   `^[ \\t]*(?:${oo.source})\\s+${io.source}[ \\t]*(?:\\r?\\n|$)`,
   "gm"
 );
@@ -4647,10 +4647,10 @@ var Is = Ln(V);
 
 // openclaw/packages/net-policy/src/ip.ts
 var nr = Ct(tr(), 1);
-var ld = [nr.default.IPv4.parse("198.18.0.0"), 15];
+var ad = [nr.default.IPv4.parse("198.18.0.0"), 15];
 
 // openclaw/packages/tool-call-repair/src/grammar.ts
-var fd = new TextEncoder();
+var pd = new TextEncoder();
 
 // openclaw/src/shared/clawhub-recommendations.ts
 var rr = [
@@ -4662,10 +4662,10 @@ var rr = [
   "installed",
   "official",
   "kind"
-], np = /* @__PURE__ */ new Set([...rr, "pluginId"]), rp = /* @__PURE__ */ new Set([...rr, "registry", "skillRef"]);
+], tp = /* @__PURE__ */ new Set([...rr, "pluginId"]), np = /* @__PURE__ */ new Set([...rr, "registry", "skillRef"]);
 
 // openclaw/src/shared/plugin-inline-view.ts
-var sp = 16 * 1024;
+var ip = 16 * 1024;
 
 // openclaw/ui/src/lib/chat/message-normalizer.ts
 function yt(e) {
@@ -4682,7 +4682,7 @@ function or(e) {
 function oe(e, t) {
   return t.map((n) => [n, e]);
 }
-var Rf = new Map([
+var Cf = new Map([
   // A launched subagent is a worker, not one more operation of the launcher.
   ...oe("subagents", ["sessions_spawn"]),
   ...oe("commands", ["exec", "bash", "shell", "run_command", "run_terminal_cmd"]),
@@ -7811,10 +7811,10 @@ var fr = "13 2 3 14 12 14 11 22 21 10 12 10 13 2", Ms = "M13.99 1.87 13.92 1.62 
 };
 
 // openclaw/ui/src/lib/chat/tool-display-icon.ts
-var Jf = new Map(Object.entries(Ue.tools));
+var Gf = new Map(Object.entries(Ue.tools));
 
 // openclaw/ui/src/lib/chat/tool-display-identity.ts
-var rh = Ue.tools;
+var nh = Ue.tools;
 
 // openclaw/ui/src/lib/protocol-validators.generated/activity.js
 function se(e) {
@@ -7958,9 +7958,6 @@ function aa(e) {
     return typeof e == "string" ? e : JSON.stringify(e, null, 2);
 }
 var la = 0;
-function ca(e) {
-  return Ve(e.type) || typeof e.name == "string" && (e.arguments != null || e.args != null || e.input != null);
-}
 function Ir(e) {
   let t = e, n = N(t.__openclaw), r = n?.catalogSource === !0, o = typeof t.role == "string" ? t.role.toLowerCase() : "", i = yt(e) || o === "tool" || o === "function" || typeof t.toolName == "string" || typeof t.tool_name == "string", s = ea(t.content), a = ve(t), u = t.__openclawToolStreamLive === !0, d = u ? kr(t.__openclawToolStreamLiveOutput) : void 0, g = or(t.__openclawToolStreamDiffStat), f = [], y = /* @__PURE__ */ new WeakSet(), l = Qs(t), c = qe(t)?.runId ?? M(t.runId), m = (h, x, k = !1) => {
     let R = na(h), _ = h.details ?? t.details, v = N(h.__openclaw), A = ve(h) ?? a ?? (r ? !1 : void 0), T = !r && R ? J(R.trim()) : void 0, E = r ? void 0 : N(_)?.bridgeDispatchStarted ?? T?.bridgeDispatchStarted, S = ra(h, _, T, k ? void 0 : t), D = h.subagentCollectionErrors ?? t.subagentCollectionErrors;
@@ -7979,7 +7976,7 @@ function Ir(e) {
     };
   };
   for (let h = 0; h < s.length; h++) {
-    let x = s[h] ?? {}, k = ca(x);
+    let x = s[h] ?? {}, k = Ve(x.type) || typeof x.name == "string" && (x.arguments != null || x.args != null || x.input != null);
     if (!k && !Ie(x.type))
       continue;
     let R = M(x.runId) ?? c, _ = M(x.parentToolCallId), v = _r(x, t), A = xt(x, t), T = {
@@ -8058,10 +8055,10 @@ function Sr(e) {
 }
 
 // openclaw/ui/src/lib/chat/browser-tab-preview.ts
-function ua(e) {
+function ca(e) {
   return e.callId ?? e.messageId ?? e.previewRevision;
 }
-var Mr = /* @__PURE__ */ new WeakMap(), da = /* @__PURE__ */ new Map();
+var Mr = /* @__PURE__ */ new WeakMap(), ua = /* @__PURE__ */ new Map();
 function Ar(e, t) {
   let n = Mr.get(e);
   if (n?.toolMessages === t)
@@ -8071,22 +8068,22 @@ function Ar(e, t) {
     for (let s of i)
       if (K(s))
         for (let a of Sr(s)) {
-          let u = ua(a);
+          let u = ca(a);
           if (a.browserTab && u && Tr(a, !1) === "succeeded") {
             let d = _t(a.browserTab);
             r ??= /* @__PURE__ */ new Map(), r.delete(d), r.set(d, { tab: a.browserTab, revision: u });
           }
         }
-  let o = r ?? da;
+  let o = r ?? ua;
   return Mr.set(e, { toolMessages: t, latest: o }), o;
 }
 
 // gateway-edge/openclaw-browser-resources/entry.ts
-function $h(e, t) {
+function zh(e, t) {
   return [...Ar(e, []).values()].filter((r) => r.tab.target === "host" && r.tab.profile === t).at(-1) ?? null;
 }
 export {
-  $h as latestNativeBrowserTab
+  zh as latestNativeBrowserTab
 };
 /*!
 TypeBox
