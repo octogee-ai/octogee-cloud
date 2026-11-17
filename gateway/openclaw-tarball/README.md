@@ -108,18 +108,22 @@ Before publication:
   ip-address 10.7.4 fixes because pnpm 12.15 loses these bundled-file patches on
   a cached import. The glob 13.0.6 cancellation backport follows upstream commit
   `4682e8c9babee1b385202ede36389634e12076d7`; minimatch 10.2.5 preprocessing limits
-  follow `77a0f5c4b80bdc641c3c930a1d9edf5ad2db57f8`. Versions remain unchanged
+  follow `77a0f5c4b80bdc641c3c930a1d9edf5ad2db57f8`. The picomatch 4.0.5
+  backport in npm's tinyglobby dependency follows upstream commit
+  `c63a5bf4e61dbdb81bc41e97dc2616c30acce337` for CVE-2026-112366.
+  Versions remain unchanged
   for these backports, so version-only advisory scans still report them.
   Both glob public `index.min.js` bundles are regenerated from the patched closure
   with esbuild 0.27.3 using upstream `scripts/build.sh` options (`--minify
   --platform=node --bundle`, each format's `index.js`, matching `--format=cjs`
   or `--format=esm`), omitting source maps absent from npm's distribution.
   Run `node npm-distribution.test.mjs <npm-root>` against the staged and installed
-  copies: all 24 raw/public CJS/ESM controls must pass. Reassess this patch against
+  copies. The 24 raw/public CJS/ESM controls and the tinyglobby matcher control
+  must pass. Reassess this patch against
   each selected npm release; retire each backport when the stock installed closure
   supplies the equivalent fix.
   Platform Dockerfiles stage npm 12.2.1 with this same distribution patch and
-  run the same 24 controls before copying only the patched npm tree into runtimes;
+  run the same 25 controls before copying only the patched npm tree into runtimes;
   the patch and test bytes are platform/site release and per-image fingerprint inputs.
 - Install the exact root and Mattermost pair in an isolated npm prefix and
   verify installed build-info. Core, Codex, Parallel and Mattermost must come
