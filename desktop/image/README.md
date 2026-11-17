@@ -1,8 +1,9 @@
 # Isolated gateway VM image build
 
 Managed desktop sessions enable Omarchy's persistent stay-awake indicator
-before starting the compositor. The fleet controller owns parking; the passwordless desktop
-must remain available to the agent and authenticated viewers while running.
+before starting the compositor. The Omarchy suspend hook honors that setting on
+the managed VM desktop. The fleet controller owns parking so the passwordless
+desktop is available to the agent and authenticated viewers after resume.
 
 Reproducible build of the isolated gateway VM image: stock Omarchy from the
 pinned ISO, installed unattended, plus the desktop session, `vkms` + `vgem`
