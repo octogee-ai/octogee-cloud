@@ -26,7 +26,7 @@ const nativeConfig = JSON.parse(readFileSync(path.join(source, "tsconfig.json"),
 const paths = Object.fromEntries(Object.entries(nativeConfig.compilerOptions.paths).map(([key, values]) => [key, values.map(value => path.resolve(source, value))]));
 paths["@octogee/core/*"] = [path.join(repoRoot, "core/dist/*.d.ts")];
 paths["@octogee/shared/*"] = [path.join(repoRoot, "shared/dist/*.d.ts")];
-const vitestRoot = path.join(repoRoot, "../tests/node_modules/vitest");
+const vitestRoot = path.join(repoRoot, "tests/node_modules/vitest");
 const vitest = JSON.parse(readFileSync(path.join(vitestRoot, "package.json"), "utf8"));
 if (typeof vitest.types !== "string") throw new Error("The test dependency must declare its Vitest types");
 paths.vitest = [path.resolve(vitestRoot, vitest.types)];

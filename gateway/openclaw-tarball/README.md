@@ -80,8 +80,12 @@ a fresh directory. `OPENCLAW_SKIP_BUILD=1` is only for exact source already
 built in this cycle. Both packers use the same OpenClaw artifact tree. The root
 packer checks every `gateway/verify-*-plugin-contract.mjs` in the tree it
 runs from, so a deployment that adds plugins runs it from its overlay tree.
+The SDK checks use the test package and the broker runtime check uses the
+scripts package. Install their locked dependencies in the packing checkout.
 
 ```bash
+npm ci --prefix tests
+npm ci --prefix scripts
 ARTIFACT_DIR=$(mktemp -d -t openclaw-current-artifacts-XXXXXX)
 ROOT_TGZ=$(OPENCLAW_SKIP_BUILD=1 \
   bash gateway/openclaw-tarball/pack-fork-tarball.sh \
@@ -202,25 +206,36 @@ Run focused artifact/base-image tests, evaluate feedback and wait for final-head
 CI. After merge, Build main produces images, not a deployment. Environment
 selection and rollout are a separate operator step.
 
-## Current overlay for the November 16 Gateway refresh
+## Current overlay for the November 17 Gateway refresh
 
-OpenClaw main `ec025eba2df15ab949239fa17dfd99ac4286b50c` was frozen at fetch time
+OpenClaw main `46982ac40764b40cd06ede122d4397a1532757c8` was frozen at fetch time
 for independent qualification. The overlay is
-`c82e03906fce34883b1a3cd99b15b6d0b83b4648` on
-`ceckert/openclaw:codex/gateway-refresh-20261116`.
+`708ff8066264cc1db389763243293367e85d70da` on
+`ceckert/openclaw:codex/gateway-refresh-20261117`.
 
-The frozen tip's [push CI](https://github.com/openclaw/openclaw/actions/runs/43928652222)
-passed `security-fast` and skipped the build, native tests, Control UI and
-PostgreSQL conformance. Its [scheduled full CI](https://github.com/openclaw/openclaw/actions/runs/43929212396)
-passed all three PostgreSQL conformance shards. Of 164 jobs, 136 passed,
-14 failed, 12 were skipped, and the build and macOS Swift packages were
-canceled. Failures include Control UI E2E, dependency checks, Node tests
-and the published driver update. The latest successful
+The [frozen tip's push CI](https://github.com/openclaw/openclaw/actions/runs/44105898982)
+passed `security-fast` and skipped 39 jobs, including the artifact build,
+Control UI and PostgreSQL conformance. The nearest [scheduled full CI](https://github.com/openclaw/openclaw/actions/runs/44103038898)
+ran on `5230147ebfe95e1717987f1f82e18280829614eb`. All four PostgreSQL shards
+passed. Of 168 jobs, 146 passed, eight failed, and 14 were skipped. The package
+build, Docker seed E2E, dependencies, two Control UI E2E shards, two Node
+shards, and the aggregate CI gate failed. The latest successful
 [scheduled full CI](https://github.com/openclaw/openclaw/actions/runs/43129347832)
 ran on `cda0b61ac4d23fb0a5fa5530e37f9e74ce3face5` with 151 passing jobs. Its 11
 skips were Control UI i18n, check planning, shared SDK declarations, Node 24
 compatibility, Android and iOS screenshots and release E2E, iOS screenshot
 evidence, PR failure reporting and release child evidence sealing.
+
+Native [#184515](https://github.com/openclaw/openclaw/pull/184515) now carries
+membership through mention lookup, recording and commit validation. The
+overlay removes its parallel mention facts and retains recorded channel
+provenance and directory invalidation for Octogee's restricted-channel policy.
+Native [#193487](https://github.com/openclaw/openclaw/pull/193487) performs
+VncAuth during readiness probing. External credential rotation still needs a
+fresh password on reconnect to an already acquired desktop. The overlay uses
+the native password reader and retains the stopped-session and revoked-observer
+checks before issuing a token. Remove this adaptation when native reconnects
+refresh the credential and preserve the same authority.
 
 Native #197510 owns database admission descriptors. The overlay places its
 detached-store probe guard at that owner. A queued asynchronous probe could
@@ -236,7 +251,8 @@ The overlay removes the redundant authority reconciliation from portable-job
 restore and relies on native cascading cleanup when replacing a declaration.
 The overlay keeps Gateway broker startup lazy on constrained hosts through
 its own startup module. The frozen tip's mixed static and dynamic import of
-the shared broker host was fatal to the native package build.
+the shared broker host failed the package build in the previous refresh.
+The frozen tip still imports that host statically for retained native workers.
 
 Native [#197510](https://github.com/openclaw/openclaw/pull/197510) no longer
 creates plugin migration readiness receipts during reads. A cold workspace
@@ -691,36 +707,40 @@ verify preserved agent identity, history, and source write refusal.
 ### Qualification and publication
 
 The full package build used Node 24.22.2, pinned pnpm 12.15.0 and the frozen
-lockfile. Its build-info commit matches the clean source. The root and Mattermost
-archives were packed sequentially from that build. Hosted islands, platform
-Browser resources and the PostgreSQL routine catalog use the same source.
+lockfile. Its build-info commit matches the clean source. The platform Browser
+projection, hosted islands and PostgreSQL routine catalog use that source.
 
-Production typechecks, the overlay-specific line-cap ratchet and generated
-channel config checks passed. The initial candidate passed 31 detach and
-worker admission tests and 13 PostgreSQL conformance tests.
-The startup repair passed 63 focused tests covering model publication,
-prepared registry reuse, channel ownership, migration readiness, recovery and
-cron preparation. The isolated Gateway
-detach replay closed the old SQLite descriptor and let the matching creation
-claim restore the agent and read its history. Aggregate `pnpm check` was
-stopped after its package-lock generator stalled.
+The focused native suite passed 146 tests covering mention and channel
+membership, desktop reconnects, strict channel stop, registry loading, worker
+artifacts and database admission. PostgreSQL conformance passed 11 tests for
+retained reattachment, schema admission and secret reload. Production, script
+and root test types, generated channel config, validators, the line-cap
+ratchet and the npm package-lock guard passed. Aggregate `pnpm check` reached
+lint and reported 21 inherited line-cap violations and three overlay test
+settlement promises. The overlay now awaits those promises. The Control UI
+build completed with six bundle-budget warnings. Final scoped lint and the
+SQLite and PostgreSQL admission regressions passed after the settlement
+change.
 
-The tarball integrity check and both npm distribution control runs passed,
-including the independent global installation. The native AMD64
-`full-plugin-installer` target verified the installed bundled companions,
-registry and Codex hooks. The non-superuser PostgreSQL pin-roll passed from
-`e9c9cd30`, the oldest retained pin.
+Both archives were packed sequentially from that build. The native archive
+integrity check, the installed companions, and the npm distribution controls
+passed for the vendored bytes and both installations. The Linux AMD64
+`openclaw-full-plugin-installer` target refreshed the native registry, verified
+the bundled companions, and imported all three Codex native hooks. The
+non-superuser PostgreSQL pin-roll passed from the oldest retained source,
+`e9c9cd30`.
 
-Published with generation-zero preconditions and verified by exact-generation
-SHA-256 readback.
+The root object was created with a generation-zero precondition. Mattermost
+reused its existing generation after the complete hash matched. Both objects
+passed exact-generation SHA-256 readback.
 
 | Object | Generation | SHA-256 |
 | --- | --- | --- |
-| `openclaw-fork-7f735d72.tgz` | `1794867207615129` | `7f735d728bd456c5b579fe40e2724f3a168fa8d7f350083e57dc4848728cf14c` |
+| `openclaw-fork-216f0a49.tgz` | `1794929726331566` | `216f0a495c85aa022d0fccaa24cdbcfa6c450c64b251b5b9ed5b50c1b178f8df` |
 | `openclaw-mattermost-8e55e60d.tgz` | `1794860917248896` | `8e55e60dd0219f8b96dd428eab74dab999a46310fe76b5af1031fd447dd6c259` |
 
-The verified GitHub release mirrors these exact objects under
-[`gateway-c82e039`](https://github.com/ceckert/openclaw/releases/tag/gateway-c82e039).
+The [GitHub release mirror](https://github.com/ceckert/openclaw/releases/tag/gateway-708ff80)
+uses the same names and verified SHA-256 hashes.
 
 ### Upstream contributions
 
