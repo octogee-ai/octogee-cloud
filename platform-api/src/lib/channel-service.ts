@@ -62,6 +62,10 @@ function bad(status: number, error: string): SessionChannelResult {
   return { status, body: { error } };
 }
 
+function notProvisioned(): SessionChannelResult {
+  return bad(422, "Workspace not provisioned");
+}
+
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
@@ -102,7 +106,7 @@ export async function createProjectSessionChannel(
   input: SessionChannelCreateInput,
 ): Promise<SessionChannelResult> {
   if (!isValidProjectId(project)) return bad(400, "Invalid project");
-  if (!actor.workspaceId) return bad(422, "Workspace not provisioned");
+  if (!actor.workspaceId) return notProvisioned();
   const record = await platformStateStore.workspaces.projects.get(actor.workspaceId, project);
   if (!record) return bad(404, "Project not found");
   const projectAgentMember = await projectAgentChannelMember(actor.uid, project, record.agent);
@@ -131,7 +135,7 @@ async function createSessionChannelImpl(
   const normalized = normalizeSessionChannelCreateInput(input);
   const invalidInput = invalidSessionChannelCreateInput(normalized);
   if (invalidInput) return invalidInput;
-  if (!actor.workspaceId) return bad(422, "Workspace not provisioned");
+  if (!actor.workspaceId) return notProvisioned();
   const workspaceId = actor.workspaceId;
   const scope = laneScope(workspaceId, project, normalized.name);
 
@@ -179,7 +183,7 @@ async function createSessionChannelImpl(
   });
   await writeSessionChannelPresentation(channelScope, normalized);
   if (!project) {
-    const failure = await enrollWorkspaceGroup(workspaceId, normalized.name);
+    const failure = await enrollWorkspaceGroup(workspaceId, normalized.name, CREATE_ENROLLMENT_FAILED);
     if (failure) return failure;
   }
   logger.info(`[channels] Created session channel ${scope}`, { uid: actor.uid });
@@ -194,16 +198,23 @@ async function completeExistingSessionChannel(
   result: SessionChannelResult,
 ): Promise<SessionChannelResult> {
   if (project || result.status !== 200) return result;
-  return await enrollWorkspaceGroup(workspaceId, name) ?? result;
+  return await enrollWorkspaceGroup(workspaceId, name, CREATE_ENROLLMENT_FAILED) ?? result;
 }
 
-async function enrollWorkspaceGroup(workspaceId: string, name: string): Promise<SessionChannelResult | null> {
+const CREATE_ENROLLMENT_FAILED = "Channel creation failed - could not add workspace members";
+const RESTORE_ENROLLMENT_FAILED = "Channel restore failed - could not add workspace members";
+
+async function enrollWorkspaceGroup(
+  workspaceId: string,
+  name: string,
+  failure: string,
+): Promise<SessionChannelResult | null> {
   try {
     await enrollWorkspaceChannelMembers(workspaceId, name);
     return null;
   } catch (error) {
     logger.error(`[channels] Workspace group enrollment failed for ${workspaceId}/${name}:`, { err: error });
-    return bad(502, "Channel creation failed - could not add workspace members");
+    return bad(502, failure);
   }
 }
 
@@ -481,7 +492,7 @@ async function renameSessionChannelImpl(
   name: string,
   patch: SessionChannelPatchInput,
 ): Promise<SessionChannelResult> {
-  if (!actor.workspaceId) return bad(422, "Workspace not provisioned");
+  if (!actor.workspaceId) return notProvisioned();
   const scope = laneScope(actor.workspaceId, project, name);
 
   if (patch.purpose !== undefined) {
@@ -532,7 +543,7 @@ async function archiveSessionChannelImpl(
   project: string | null,
   name: string,
 ): Promise<SessionChannelResult> {
-  if (!actor.workspaceId) return bad(422, "Workspace not provisioned");
+  if (!actor.workspaceId) return notProvisioned();
   const scope = laneScope(actor.workspaceId, project, name);
 
   const found = await readSessionChannel(actor.workspaceId, project, name);
@@ -559,4 +570,95 @@ async function archiveSessionChannelImpl(
   logger.info(`[channels] Archived session channel ${scope}`, { uid: actor.uid });
 
   return { status: 200, body: { success: true } };
+}
+
+export interface ArchivedSessionChannel {
+  name: string;
+  displayName: string;
+  archivedAt: number;
+}
+
+export async function listArchivedSessionChannels(
+  actor: SessionChannelActor,
+): Promise<SessionChannelResult> {
+  if (!actor.workspaceId) return notProvisioned();
+  const workspaceId = actor.workspaceId;
+  const ledger = await platformStateStore.workspaces.channels.list(laneChannelScope(workspaceId, null));
+  const owned = ledger.flatMap((channel) =>
+    channel.kind === "session"
+    && channel.archivedAt !== null
+    && channel.createdBy === actor.uid
+    && channel.mattermostChannelId !== null
+    && sessionChannelNameAvailability(channel.channelId).ok
+      ? [{ name: channel.channelId, mattermostChannelId: channel.mattermostChannelId, archivedAt: channel.archivedAt }]
+      : [],
+  );
+  let listed: Array<ArchivedSessionChannel | null>;
+  try {
+    listed = await Promise.all(owned.map((channel) => archivedSessionChannelOf(workspaceId, channel)));
+  } catch (err) {
+    logger.error(`[channels] Archived channel lookup failed for ${workspaceId}:`, { err });
+    return bad(502, "Archived task lookup failed");
+  }
+  const channels = listed
+    .filter((channel): channel is ArchivedSessionChannel => channel !== null)
+    .sort((a, b) => b.archivedAt - a.archivedAt);
+  return { status: 200, body: { channels } };
+}
+
+async function archivedSessionChannelOf(
+  workspaceId: string,
+  channel: { name: string; mattermostChannelId: string; archivedAt: number },
+): Promise<ArchivedSessionChannel | null> {
+  const mm = (await mmApi(`/channels/${channel.mattermostChannelId}`)) as {
+    name?: unknown;
+    display_name?: unknown;
+  };
+  if (mm?.name !== laneChannelName(workspaceId, null, channel.name)) {
+    logger.error(
+      `[channels] MM channel binding mismatch for archived ${workspaceId}/${channel.name} - doc points at ${channel.mattermostChannelId} (${String(mm?.name)})`,
+    );
+    return null;
+  }
+  if (typeof mm.display_name !== "string") {
+    throw new Error(`MM channel ${channel.mattermostChannelId} has no display name`);
+  }
+  return { name: channel.name, displayName: mm.display_name, archivedAt: channel.archivedAt };
+}
+
+export async function restoreSessionChannel(
+  actor: SessionChannelActor,
+  name: string,
+): Promise<SessionChannelResult> {
+  if (!actor.workspaceId) return notProvisioned();
+  const workspaceId = actor.workspaceId;
+  const scope = laneScope(workspaceId, null, name);
+
+  const found = await readSessionChannel(workspaceId, null, name);
+  if (!found) return bad(404, "Session channel not found");
+  if (found.channel.createdBy !== actor.uid) return bad(403, "Only the task's owner can restore it");
+  const restored = { status: 200, body: { success: true, channelId: found.channelId, name } };
+  if (found.channel.archivedAt === null) return restored;
+  const bindingFailure = await verifyChannelBinding(workspaceId, null, name, found.channelId);
+  if (bindingFailure) return bindingFailure;
+
+  try {
+    const { setStoredChannelArchived } = await import("./channel-lifecycle.js");
+    await setStoredChannelArchived(found.docPath, false);
+  } catch (err) {
+    logger.error(`[channels] Channel restore failed for ${scope}:`, { err });
+    return bad(502, "Channel restore failed");
+  }
+
+  const enrollmentFailure = await enrollWorkspaceGroup(workspaceId, name, RESTORE_ENROLLMENT_FAILED);
+  if (enrollmentFailure) return enrollmentFailure;
+
+  await platformStateStore.workspaces.channels.patch(
+    laneChannelScope(workspaceId, null),
+    name,
+    { archivedAt: null },
+  );
+  logger.info(`[channels] Restored session channel ${scope}`, { uid: actor.uid });
+
+  return restored;
 }

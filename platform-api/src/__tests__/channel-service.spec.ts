@@ -78,6 +78,8 @@ const {
   createProjectSessionChannel,
   renameProjectSessionChannel,
   archiveProjectSessionChannel,
+  listArchivedSessionChannels,
+  restoreSessionChannel,
   sessionChannelNameAvailability,
 } = await import("../lib/channel-service.js");
 const { platformStateStore } = await import("@octogee/core/identity/platform-state-store");
@@ -1047,5 +1049,173 @@ describe("workspace group enrollment during channel creation", () => {
     seedSessionDoc({ createdDisplayName: "Planning" });
     expect((await createSessionChannel(actor(), { name: "patchroll", displayName: "Planning" })).status).toBe(200);
     expect(h.enrollWorkspaceChannelMembers).toHaveBeenCalledTimes(2);
+  });
+});
+
+function seedArchivedTask(name: string, extra: Record<string, unknown> = {}) {
+  h.docs.set(`workspaces/mira/channels/${name}`, {
+    id: name,
+    kind: "session",
+    name,
+    mattermost: { channelId: `${name}-channel` },
+    createdBy: "owner-1",
+    archivedAt: ARCHIVED_AT,
+    ...extra,
+  });
+}
+
+function mockMmChannels(channels: Record<string, { name: string; display_name: string } | Error>) {
+  h.mmApi.mockReset().mockImplementation(async (path: string, method?: string) => {
+    const id = path.replace(/^\/channels\//, "");
+    if ((method === undefined || method === "GET") && id in channels) {
+      const value = channels[id];
+      if (value instanceof Error) throw value;
+      return { id, ...value };
+    }
+    throw new Error(`unexpected Mattermost call: ${method ?? "GET"} ${path}`);
+  });
+}
+
+describe("listArchivedSessionChannels", () => {
+  it("lists the caller's archived tasks newest first with their Mattermost titles", async () => {
+    seedArchivedTask("older", { archivedAt: ARCHIVED_AT - 1000 });
+    seedArchivedTask("newer", { archivedAt: ARCHIVED_AT });
+    seedArchivedTask("live", { archivedAt: null });
+    seedArchivedTask("theirs", { createdBy: "someone-else" });
+    mockMmChannels({
+      "older-channel": { name: "mira-older", display_name: "Older Task" },
+      "newer-channel": { name: "mira-newer", display_name: "Newer Task" },
+    });
+
+    const result = await listArchivedSessionChannels(actor());
+
+    expect(result).toEqual({
+      status: 200,
+      body: {
+        channels: [
+          { name: "newer", displayName: "Newer Task", archivedAt: ARCHIVED_AT },
+          { name: "older", displayName: "Older Task", archivedAt: ARCHIVED_AT - 1000 },
+        ],
+      },
+    });
+  });
+
+  it("omits and logs a record whose Mattermost channel is outside the caller's lane", async () => {
+    seedArchivedTask("forged");
+    mockMmChannels({ "forged-channel": { name: "victim-general", display_name: "General" } });
+
+    const result = await listArchivedSessionChannels(actor());
+
+    expect(result).toEqual({ status: 200, body: { channels: [] } });
+    expect(h.logger.error).toHaveBeenCalled();
+  });
+
+  it("surfaces a Mattermost lookup failure as 502", async () => {
+    seedArchivedTask("patchroll");
+    mockMmChannels({ "patchroll-channel": new Error("MM down") });
+
+    const result = await listArchivedSessionChannels(actor());
+
+    expect(result).toEqual({ status: 502, body: { error: "Archived task lookup failed" } });
+    expect(h.logger.error).toHaveBeenCalled();
+  });
+
+  it("refuses an unprovisioned workspace", async () => {
+    await expect(listArchivedSessionChannels(actor({ workspaceId: null }))).resolves.toEqual({
+      status: 422,
+      body: { error: "Workspace not provisioned" },
+    });
+  });
+});
+
+describe("restoreSessionChannel", () => {
+  it("refuses a caller who is not the task's owner before any Mattermost call", async () => {
+    seedSessionDoc({ createdBy: "someone-else", archivedAt: ARCHIVED_AT });
+
+    const result = await restoreSessionChannel(actor(), "patchroll");
+
+    expect(result).toEqual({ status: 403, body: { error: "Only the task's owner can restore it" } });
+    expect(h.mmApi).not.toHaveBeenCalled();
+    expect(h.setStoredChannelArchived).not.toHaveBeenCalled();
+    expect(h.docs.get(DOC_PATH)?.archivedAt).toBe(ARCHIVED_AT);
+  });
+
+  it("404s when the task does not exist", async () => {
+    await expect(restoreSessionChannel(actor(), "patchroll")).resolves.toEqual({
+      status: 404,
+      body: { error: "Session channel not found" },
+    });
+    expect(h.mmApi).not.toHaveBeenCalled();
+  });
+
+  it("refuses when the record's Mattermost channel is outside the caller's lane", async () => {
+    seedSessionDoc({ createdBy: "owner-1", archivedAt: ARCHIVED_AT });
+    h.mmApi.mockReset().mockResolvedValue({ id: "channel-1", name: "victim-general" });
+
+    const result = await restoreSessionChannel(actor(), "patchroll");
+
+    expect(result).toEqual({ status: 404, body: { error: "Session channel not found" } });
+    expect(h.setStoredChannelArchived).not.toHaveBeenCalled();
+    expect(h.docs.get(DOC_PATH)?.archivedAt).toBe(ARCHIVED_AT);
+  });
+
+  it("restores the Mattermost channel, re-enrolls workspace members, then clears the archive", async () => {
+    seedSessionDoc({ createdBy: "owner-1", archivedAt: ARCHIVED_AT });
+    mockVerifiedMmChannel({});
+    h.enrollWorkspaceChannelMembers.mockImplementation(async () => {
+      expect(h.setStoredChannelArchived).toHaveBeenCalledWith(DOC_PATH, false);
+      expect(h.docs.get(DOC_PATH)?.archivedAt).toBe(ARCHIVED_AT);
+    });
+
+    const result = await restoreSessionChannel(actor(), "patchroll");
+
+    expect(result).toEqual({
+      status: 200,
+      body: { success: true, channelId: "channel-1", name: "patchroll" },
+    });
+    expect(h.enrollWorkspaceChannelMembers).toHaveBeenCalledWith("mira", "patchroll");
+    expect(h.docs.get(DOC_PATH)?.archivedAt).toBeNull();
+  });
+
+  it("is a no-op for a task that is not archived", async () => {
+    seedSessionDoc({ createdBy: "owner-1", archivedAt: null });
+
+    const result = await restoreSessionChannel(actor(), "patchroll");
+
+    expect(result).toEqual({
+      status: 200,
+      body: { success: true, channelId: "channel-1", name: "patchroll" },
+    });
+    expect(h.mmApi).not.toHaveBeenCalled();
+    expect(h.setStoredChannelArchived).not.toHaveBeenCalled();
+  });
+
+  it("keeps the task archived when the Mattermost restore fails", async () => {
+    seedSessionDoc({ createdBy: "owner-1", archivedAt: ARCHIVED_AT });
+    mockVerifiedMmChannel({});
+    h.setStoredChannelArchived.mockRejectedValueOnce(new Error("MM down"));
+
+    const result = await restoreSessionChannel(actor(), "patchroll");
+
+    expect(result).toEqual({ status: 502, body: { error: "Channel restore failed" } });
+    expect(h.enrollWorkspaceChannelMembers).not.toHaveBeenCalled();
+    expect(h.docs.get(DOC_PATH)?.archivedAt).toBe(ARCHIVED_AT);
+    expect(h.logger.error).toHaveBeenCalled();
+  });
+
+  it("keeps the task archived when member enrollment fails, and completes on retry", async () => {
+    seedSessionDoc({ createdBy: "owner-1", archivedAt: ARCHIVED_AT });
+    mockVerifiedMmChannel({});
+    h.enrollWorkspaceChannelMembers.mockRejectedValueOnce(new Error("MM down"));
+
+    expect(await restoreSessionChannel(actor(), "patchroll")).toEqual({
+      status: 502,
+      body: { error: "Channel restore failed - could not add workspace members" },
+    });
+    expect(h.docs.get(DOC_PATH)?.archivedAt).toBe(ARCHIVED_AT);
+
+    expect((await restoreSessionChannel(actor(), "patchroll")).status).toBe(200);
+    expect(h.enrollWorkspaceChannelMembers).toHaveBeenCalledTimes(2);
+    expect(h.docs.get(DOC_PATH)?.archivedAt).toBeNull();
   });
 });
