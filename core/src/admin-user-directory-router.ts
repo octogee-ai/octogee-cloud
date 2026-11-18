@@ -11,9 +11,9 @@ import {
   toISODate,
   type UserSummary,
 } from "./admin-shape.js";
-import { readOwnerSpendStanding, type OwnerSpendStanding } from "./model-broker/owner-spend-standing.js";
+import { ownerSpendStanding, readOwnerSpendStanding, type OwnerSpendStanding } from "./model-broker/owner-spend-standing.js";
 import { operatorRailRegistry, type ModelBrokerRailRegistry } from "./model-broker/rails.js";
-import { UNCONFIGURED_MODEL_BROKER_USAGE, type ModelBrokerUsageLedger } from "./model-broker/usage.js";
+import type { ModelBrokerUsageLedger } from "./model-broker/usage.js";
 import { userEntitlements } from "@octogee/shared/types/user-entitlements";
 import { isUserParkedVm } from "@octogee/shared/types/glm";
 import { placementReceiptDocId, type PlacementReceipt } from "@octogee/shared/types/placement-receipts";
@@ -287,17 +287,13 @@ export interface AdminUserSpendDeps {
   usage: ModelBrokerUsageLedger;
 }
 
-export function unconfiguredAdminUserSpend(): AdminUserSpendDeps {
-  return { rails: operatorRailRegistry(), usage: UNCONFIGURED_MODEL_BROKER_USAGE };
-}
-
 export type AdminUserProductDetail = (uid: string) => Promise<Readonly<Record<string, unknown>>>;
 
 export interface AdminUserDirectoryRouterDeps {
   store: PlatformStateStore;
   accounts: UserAccountReader;
   source: AdminUserDirectorySource;
-  spend: AdminUserSpendDeps;
+  spend: AdminUserSpendDeps | null;
   logger: UserDirectoryRouterLogger;
   productUserDetail?: AdminUserProductDetail | undefined;
 }
@@ -395,7 +391,7 @@ interface UserDirectory {
   source: AdminUserDirectorySource;
   store: PlatformStateStore;
   accounts: UserAccountReader;
-  spend: AdminUserSpendDeps;
+  spend: AdminUserSpendDeps | null;
   logger: UserDirectoryRouterLogger;
 }
 
@@ -410,6 +406,19 @@ async function readUserSpend(
   onOwnerCredential: boolean,
   now: number,
 ): Promise<OwnerSpendStanding> {
+  const modelAccess = userEntitlements().policy(account.planInputs, new Date(now)).modelAccess;
+  if (!directory.spend) {
+    return ownerSpendStanding(operatorRailRegistry(), {
+      profile: null,
+      modelAccess,
+      onOwnerCredential,
+      windowCostUsd: 0,
+      weekCostUsd: 0,
+      balanceUsd: null,
+      fundedLedger: null,
+      now,
+    });
+  }
   try {
     return await readOwnerSpendStanding({
       rails: directory.spend.rails,
@@ -417,7 +426,7 @@ async function readUserSpend(
       ownerUid: userRecord.uid,
       gatewayId: userRecord.gateway?.gatewayId ?? "",
       planInputs: account.planInputs,
-      modelAccess: userEntitlements().policy(account.planInputs, new Date(now)).modelAccess,
+      modelAccess,
       onOwnerCredential,
       now,
     });

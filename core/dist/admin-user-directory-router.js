@@ -1,7 +1,6 @@
 import { buildUserSummary, isoMillis, toISODate, } from "./admin-shape.js";
-import { readOwnerSpendStanding } from "./model-broker/owner-spend-standing.js";
+import { ownerSpendStanding, readOwnerSpendStanding } from "./model-broker/owner-spend-standing.js";
 import { operatorRailRegistry } from "./model-broker/rails.js";
-import { UNCONFIGURED_MODEL_BROKER_USAGE } from "./model-broker/usage.js";
 import { userEntitlements } from "@octogee/shared/types/user-entitlements";
 import { isUserParkedVm } from "@octogee/shared/types/glm";
 import { placementReceiptDocId } from "@octogee/shared/types/placement-receipts";
@@ -180,9 +179,6 @@ export function mergeDailyUsage(legacyLogs, brokerDaily) {
     }
     return Array.from(merged.values()).sort((a, b) => String(b.date).localeCompare(String(a.date)));
 }
-export function unconfiguredAdminUserSpend() {
-    return { rails: operatorRailRegistry(), usage: UNCONFIGURED_MODEL_BROKER_USAGE };
-}
 const DEFAULT_PAGE_SIZE = 25;
 const MAX_PAGE_SIZE = 100;
 function objectValue(value) {
@@ -239,6 +235,19 @@ function accountFor(accounts, uid) {
     return accounts.get(uid) ?? userAccountFromData(uid, {});
 }
 async function readUserSpend(directory, userRecord, account, onOwnerCredential, now) {
+    const modelAccess = userEntitlements().policy(account.planInputs, new Date(now)).modelAccess;
+    if (!directory.spend) {
+        return ownerSpendStanding(operatorRailRegistry(), {
+            profile: null,
+            modelAccess,
+            onOwnerCredential,
+            windowCostUsd: 0,
+            weekCostUsd: 0,
+            balanceUsd: null,
+            fundedLedger: null,
+            now,
+        });
+    }
     try {
         return await readOwnerSpendStanding({
             rails: directory.spend.rails,
@@ -246,7 +255,7 @@ async function readUserSpend(directory, userRecord, account, onOwnerCredential, 
             ownerUid: userRecord.uid,
             gatewayId: userRecord.gateway?.gatewayId ?? "",
             planInputs: account.planInputs,
-            modelAccess: userEntitlements().policy(account.planInputs, new Date(now)).modelAccess,
+            modelAccess,
             onOwnerCredential,
             now,
         });

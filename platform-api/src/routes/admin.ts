@@ -12,7 +12,6 @@ import { addAdminFleetRoutes, type DeletionProductContextDiscovery } from "@octo
 import {
   addAdminUserDirectoryRoutes,
   noAdminUserDirectorySource,
-  unconfiguredAdminUserSpend,
   type AdminUserDirectorySource,
   type AdminUserProductDetail,
   type AdminUserSpendDeps,
@@ -150,7 +149,7 @@ export function createAdminRoutes(product: AdminProductHooks = {}): Router {
     store: platformStateStore,
     accounts,
     source: product.userDirectory ?? noAdminUserDirectorySource,
-    spend: product.userSpend ?? unconfiguredAdminUserSpend(),
+    spend: product.userSpend ?? null,
     logger,
     productUserDetail: product.userDetail,
   });

@@ -304,6 +304,23 @@ describe("admin user routes — spend the way the broker enforces it", () => {
     expect(res.body.summary.spend.meter.kind).toBe("funded_budget");
   });
 
+  it("reports users as unmetered on a platform with no usage ledger", async () => {
+    const app = appWith(new Map([["users/uid-1", userDoc()]]), {
+      accounts: noUserAccounts,
+      source: noAdminUserDirectorySource,
+      spend: null,
+      logger: { info: vi.fn(), warn: vi.fn() },
+    });
+
+    const res = await request(app).get("/api/admin/users").expect(200);
+
+    expect(res.body.items[0].spend).toMatchObject({
+      meter: { kind: "unmetered" },
+      throttle: { degraded: false, blocked: false, reason: null },
+      needsAttention: false,
+    });
+  });
+
   it("fails the list instead of reporting zero spend when the usage ledger cannot be read", async () => {
     const warn = vi.fn();
     const app = appWith(new Map([["users/uid-1", userDoc()]]), {

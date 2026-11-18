@@ -209,7 +209,6 @@ import { loadUserCleanupContext } from "./lib/user-ops/cleanup-context.js";
 import type { UserAccounts } from "@octogee/core/admin-user-router";
 import {
   noAdminUserDirectorySource,
-  unconfiguredAdminUserSpend,
   type AdminUserDirectorySource,
   type AdminUserProductDetail,
   type AdminUserSpendDeps,
@@ -2196,7 +2195,7 @@ interface ControllerBackgroundTasksDeps {
   productAdminUserDetail?: AdminUserProductDetail | undefined;
   accounts: UserAccountReader;
   userDirectory: AdminUserDirectorySource;
-  userSpend: AdminUserSpendDeps;
+  userSpend: AdminUserSpendDeps | null;
   adminIdentity: IdentityProvider;
   policyInputs: UserPolicyInputsSource;
   placement?: PlacementProductFactory | undefined;
@@ -2825,7 +2824,7 @@ export function controllerUserSeams(
     accounts: product.accountReader?.(store) ?? platformStateUserAccountReader(store),
     documents: product.userDocuments?.(store) ?? platformStateUserDocuments(store),
     userDirectory: product.userDirectory?.(store) ?? noAdminUserDirectorySource,
-    userSpend: product.userSpend?.(store) ?? unconfiguredAdminUserSpend(),
+    userSpend: product.userSpend?.(store) ?? null,
     adminUserDetail: product.adminUserDetail?.(store),
     policyInputs: product.userPolicyInputs?.(store, log) ?? noUserPolicyInputs,
   };

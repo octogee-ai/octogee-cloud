@@ -29,7 +29,7 @@ describe("controller user seams", () => {
     expect(transaction.users.accounts.create).toHaveBeenCalledWith(expect.objectContaining({ uid: "u-ada", name: "ada", email: "ada@example.test" }));
     await expect(seams.accounts.get("u-ada")).resolves.toMatchObject({ uid: "u-ada", username: "ada", email: "ada@example.test" });
     expect(seams.userDirectory).toBe(noAdminUserDirectorySource);
-    expect(seams.userSpend.usage).toBe(UNCONFIGURED_MODEL_BROKER_USAGE);
+    expect(seams.userSpend).toBeNull();
     expect(seams.adminUserDetail).toBeUndefined();
     expect(seams.policyInputs).toBe(noUserPolicyInputs);
   });

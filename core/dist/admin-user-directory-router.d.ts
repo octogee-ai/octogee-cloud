@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { type ModelBrokerRailRegistry } from "./model-broker/rails.js";
-import { type ModelBrokerUsageLedger } from "./model-broker/usage.js";
+import type { ModelBrokerUsageLedger } from "./model-broker/usage.js";
 import { type UserAccountReader } from "./user-account.js";
 import type { PlatformUserRecord } from "./platform-state/users.js";
 import type { PlatformStateStore, UntypedRecord } from "./platform-state/store.js";
@@ -70,13 +70,12 @@ export interface AdminUserSpendDeps {
     rails: ModelBrokerRailRegistry;
     usage: ModelBrokerUsageLedger;
 }
-export declare function unconfiguredAdminUserSpend(): AdminUserSpendDeps;
 export type AdminUserProductDetail = (uid: string) => Promise<Readonly<Record<string, unknown>>>;
 export interface AdminUserDirectoryRouterDeps {
     store: PlatformStateStore;
     accounts: UserAccountReader;
     source: AdminUserDirectorySource;
-    spend: AdminUserSpendDeps;
+    spend: AdminUserSpendDeps | null;
     logger: UserDirectoryRouterLogger;
     productUserDetail?: AdminUserProductDetail | undefined;
 }

@@ -93,7 +93,7 @@ export interface HttpServerDeps {
   store: PlatformStateStore;
   accounts: UserAccountReader;
   userDirectory: AdminUserDirectorySource;
-  userSpend: AdminUserSpendDeps;
+  userSpend: AdminUserSpendDeps | null;
   identity: RequireAdminDeps["identity"];
   log: (msg: string) => void;
   provisionGatewayAuthSecret: (opts: {
