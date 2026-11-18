@@ -9,6 +9,8 @@ const h = vi.hoisted(() => ({
   createProjectSessionChannel: vi.fn(),
   renameProjectSessionChannel: vi.fn(),
   archiveProjectSessionChannel: vi.fn(),
+  listArchivedSessionChannels: vi.fn(),
+  restoreSessionChannel: vi.fn(),
   logger: { error: vi.fn(), info: vi.fn() },
 }));
 
@@ -27,6 +29,8 @@ vi.mock("../lib/channel-service.js", () => ({
   createProjectSessionChannel: (...args: unknown[]) => h.createProjectSessionChannel(...args),
   renameProjectSessionChannel: (...args: unknown[]) => h.renameProjectSessionChannel(...args),
   archiveProjectSessionChannel: (...args: unknown[]) => h.archiveProjectSessionChannel(...args),
+  listArchivedSessionChannels: (...args: unknown[]) => h.listArchivedSessionChannels(...args),
+  restoreSessionChannel: (...args: unknown[]) => h.restoreSessionChannel(...args),
 }));
 
 const { default: channelsRouter } = await import("../routes/channels/index.js");
@@ -51,6 +55,8 @@ beforeEach(() => {
   h.createProjectSessionChannel.mockReset();
   h.renameProjectSessionChannel.mockReset();
   h.archiveProjectSessionChannel.mockReset();
+  h.listArchivedSessionChannels.mockReset();
+  h.restoreSessionChannel.mockReset();
   h.logger.error.mockReset();
 });
 
@@ -191,6 +197,69 @@ describe("POST /api/channels/:name/archive", () => {
 
     expect(resp.status).toBe(500);
     expect(resp.body).toEqual({ error: "Failed to archive channel" });
+    expect(h.logger.error).toHaveBeenCalled();
+  });
+});
+
+describe("GET /api/channels/archived", () => {
+  it("relays the caller's archived tasks from the service", async () => {
+    const channels = [{ name: "patchroll", displayName: "Patch Roll", archivedAt: 1_700_000_000_000 }];
+    h.listArchivedSessionChannels.mockResolvedValue({ status: 200, body: { channels } });
+
+    const resp = await request(app()).get("/api/channels/archived");
+
+    expect(resp.status).toBe(200);
+    expect(resp.body).toEqual({ channels });
+    expect(h.listArchivedSessionChannels).toHaveBeenCalledWith({ uid: "owner-1", workspaceId: "mira" });
+  });
+
+  it("returns 500 and logs when the service throws", async () => {
+    h.listArchivedSessionChannels.mockRejectedValue(new Error("boom"));
+
+    const resp = await request(app()).get("/api/channels/archived");
+
+    expect(resp.status).toBe(500);
+    expect(resp.body).toEqual({ error: "Failed to list archived channels" });
+    expect(h.logger.error).toHaveBeenCalled();
+  });
+});
+
+describe("POST /api/channels/:name/restore", () => {
+  it("relays the restore to the service", async () => {
+    h.restoreSessionChannel.mockResolvedValue({
+      status: 200,
+      body: { success: true, channelId: "channel-1", name: "patchroll" },
+    });
+
+    const resp = await request(app()).post("/api/channels/patchroll/restore");
+
+    expect(resp.status).toBe(200);
+    expect(resp.body).toEqual({ success: true, channelId: "channel-1", name: "patchroll" });
+    expect(h.restoreSessionChannel).toHaveBeenCalledWith(
+      { uid: "owner-1", workspaceId: "mira" },
+      "patchroll",
+    );
+  });
+
+  it("relays the service's refusal of a non-owner", async () => {
+    h.restoreSessionChannel.mockResolvedValue({
+      status: 403,
+      body: { error: "Only the task's owner can restore it" },
+    });
+
+    const resp = await request(app()).post("/api/channels/patchroll/restore");
+
+    expect(resp.status).toBe(403);
+    expect(resp.body).toEqual({ error: "Only the task's owner can restore it" });
+  });
+
+  it("returns 500 and logs when the service throws", async () => {
+    h.restoreSessionChannel.mockRejectedValue(new Error("boom"));
+
+    const resp = await request(app()).post("/api/channels/patchroll/restore");
+
+    expect(resp.status).toBe(500);
+    expect(resp.body).toEqual({ error: "Failed to restore channel" });
     expect(h.logger.error).toHaveBeenCalled();
   });
 });

@@ -6,8 +6,10 @@ import {
   archiveSessionChannel,
   createProjectSessionChannel,
   createSessionChannel,
+  listArchivedSessionChannels,
   renameProjectSessionChannel,
   renameSessionChannel,
+  restoreSessionChannel,
   type SessionChannelActor,
 } from "../../lib/channel-service.js";
 
@@ -27,6 +29,16 @@ router.post("/", strictRateLimit, async (req: Request, res: Response) => {
   } catch (err) {
     logger.error("[channels] Create failed:", { err });
     res.status(500).json({ error: "Failed to create channel" });
+  }
+});
+
+router.get("/archived", async (req: Request, res: Response) => {
+  try {
+    const result = await listArchivedSessionChannels(actorFrom(req));
+    res.status(result.status).json(result.body);
+  } catch (err) {
+    logger.error("[channels] Archived list failed:", { err });
+    res.status(500).json({ error: "Failed to list archived channels" });
   }
 });
 
@@ -85,6 +97,17 @@ router.post("/:name/archive", strictRateLimit, async (req: Request, res: Respons
   } catch (err) {
     logger.error("[channels] Archive failed:", { err });
     res.status(500).json({ error: "Failed to archive channel" });
+  }
+});
+
+router.post("/:name/restore", strictRateLimit, async (req: Request, res: Response) => {
+  try {
+    const { name } = req.params as { name: string };
+    const result = await restoreSessionChannel(actorFrom(req), name);
+    res.status(result.status).json(result.body);
+  } catch (err) {
+    logger.error("[channels] Restore failed:", { err });
+    res.status(500).json({ error: "Failed to restore channel" });
   }
 });
 
