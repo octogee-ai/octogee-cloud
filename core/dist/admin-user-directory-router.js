@@ -251,11 +251,11 @@ async function readUserSpend(directory, userRecord, account, onOwnerCredential, 
     }
     catch (err) {
         directory.logger.warn("admin user spend standing read failed", { uid: userRecord.uid, err });
-        return unavailableSpendStanding(directory.spend.rails.resolveOwnerProfile({ ...account.planInputs }, userRecord.uid, now)?.rail
-            ?? directory.spend.rails.defaultRailId, "read_failed");
+        return unavailableSpendStanding(directory.spend.rails.defaultRailId, "read_failed");
     }
 }
 const SPEND_READ_CONCURRENCY = 16;
+const THROTTLE_FILTERS = new Set(["all", "throttled", "ok"]);
 async function mapWithConcurrency(items, limit, map) {
     const results = new Array(items.length);
     let next = 0;
@@ -442,9 +442,14 @@ export function addAdminUserDirectoryRoutes(router, deps) {
             const pageSize = Math.min(MAX_PAGE_SIZE, Math.max(1, parseInt(req.query.pageSize ?? `${DEFAULT_PAGE_SIZE}`, 10)));
             const cursor = req.query.cursor || null;
             const sort = (req.query.sort ?? "createdAt");
+            const throttleFilter = req.query.throttle ?? "all";
+            if (!THROTTLE_FILTERS.has(throttleFilter)) {
+                res.status(400).json({ error: "Unknown throttle filter" });
+                return;
+            }
             const filters = {
                 search: (req.query.search ?? "").trim().toLowerCase(),
-                throttleFilter: req.query.throttle ?? "all",
+                throttleFilter,
                 byotFilter: req.query.byot ?? "all",
             };
             const order = sort === "lastActive" ? "lastActive" : "createdAt";

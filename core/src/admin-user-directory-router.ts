@@ -424,15 +424,12 @@ async function readUserSpend(
     });
   } catch (err) {
     directory.logger.warn("admin user spend standing read failed", { uid: userRecord.uid, err });
-    return unavailableSpendStanding(
-      directory.spend.rails.resolveOwnerProfile({ ...account.planInputs }, userRecord.uid, now)?.rail
-        ?? directory.spend.rails.defaultRailId,
-      "read_failed",
-    );
+    return unavailableSpendStanding(directory.spend.rails.defaultRailId, "read_failed");
   }
 }
 
 const SPEND_READ_CONCURRENCY = 16;
+const THROTTLE_FILTERS = new Set(["all", "throttled", "ok"]);
 
 async function mapWithConcurrency<T, R>(
   items: readonly T[],
@@ -684,9 +681,14 @@ router.get(
         const cursor = (req.query.cursor as string) || null;
         const sort = ((req.query.sort as string) ?? "createdAt") as
           | "createdAt" | "lastActive" | "percentUsed" | "revenue";
+        const throttleFilter = (req.query.throttle as string) ?? "all";
+        if (!THROTTLE_FILTERS.has(throttleFilter)) {
+          res.status(400).json({ error: "Unknown throttle filter" });
+          return;
+        }
         const filters: UserListFilters = {
           search: ((req.query.search as string) ?? "").trim().toLowerCase(),
-          throttleFilter: (req.query.throttle as string) ?? "all",
+          throttleFilter,
           byotFilter: (req.query.byot as string) ?? "all",
         };
 

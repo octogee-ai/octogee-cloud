@@ -279,6 +279,18 @@ describe("admin user routes — spend the way the broker enforces it", () => {
     expect([...(await listed("?throttle=ok")).keys()].sort()).toEqual(["uid-free", "uid-funded", "uid-none"]);
   });
 
+  it("rejects a throttle filter it does not know", async () => {
+    const app = appWith(new Map([["users/uid-1", userDoc()]]), {
+      accounts: noUserAccounts,
+      source: noAdminUserDirectorySource,
+      spend: null,
+    });
+
+    const res = await request(app).get("/api/admin/users?throttle=degraded").expect(400);
+
+    expect(res.body).toEqual({ error: "Unknown throttle filter" });
+  });
+
   it("counts users needing attention from their spend standing", async () => {
     const res = await request(await spendApp()).get("/api/admin/users/stats").expect(200);
 
@@ -367,6 +379,26 @@ describe("admin user routes — spend the way the broker enforces it", () => {
       uid: "uid-1",
       err: expect.any(Error),
     }));
+  });
+
+  it("still lists a user whose plan cannot be resolved", async () => {
+    const rails = operatorRailRegistry();
+    const app = appWith(new Map([["users/uid-1", userDoc()]]), {
+      accounts: noUserAccounts,
+      source: noAdminUserDirectorySource,
+      spend: {
+        rails: { ...rails, resolveOwnerProfile: () => { throw new Error("malformed plan"); } },
+        usage: UNCONFIGURED_MODEL_BROKER_USAGE,
+      },
+      logger: { info: vi.fn(), warn: vi.fn() },
+    });
+
+    const res = await request(app).get("/api/admin/users").expect(200);
+
+    expect(res.body.items[0].spend).toMatchObject({
+      rail: rails.defaultRailId,
+      meter: { kind: "unavailable", cause: "read_failed" },
+    });
   });
 });
 
