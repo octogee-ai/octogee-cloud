@@ -1,4 +1,6 @@
 import { noAdminUserDirectorySource } from "@octogee/core/admin-user-directory-router";
+import { operatorRailRegistry } from "@octogee/core/model-broker/rails";
+import { UNCONFIGURED_MODEL_BROKER_USAGE } from "@octogee/core/model-broker/usage";
 import type { PlatformStateStore } from "@octogee/core/platform-state";
 import { describe, expect, it, vi } from "vitest";
 import { controllerUserSeams } from "../index.js";
@@ -27,6 +29,7 @@ describe("controller user seams", () => {
     expect(transaction.users.accounts.create).toHaveBeenCalledWith(expect.objectContaining({ uid: "u-ada", name: "ada", email: "ada@example.test" }));
     await expect(seams.accounts.get("u-ada")).resolves.toMatchObject({ uid: "u-ada", username: "ada", email: "ada@example.test" });
     expect(seams.userDirectory).toBe(noAdminUserDirectorySource);
+    expect(seams.userSpend.usage).toBe(UNCONFIGURED_MODEL_BROKER_USAGE);
     expect(seams.adminUserDetail).toBeUndefined();
     expect(seams.policyInputs).toBe(noUserPolicyInputs);
   });
@@ -39,6 +42,7 @@ describe("controller user seams", () => {
       accountReader: { get: vi.fn(), getMany: vi.fn(), list: vi.fn() },
       userDocuments: { account: vi.fn(), agent: vi.fn() },
       userDirectory: { ...noAdminUserDirectorySource },
+      userSpend: { rails: operatorRailRegistry(), usage: UNCONFIGURED_MODEL_BROKER_USAGE },
       adminUserDetail: vi.fn(),
       userPolicyInputs: { current: vi.fn(), list: vi.fn(), subscribe: vi.fn() },
     };
@@ -48,6 +52,7 @@ describe("controller user seams", () => {
       accountReader: vi.fn(() => supplied.accountReader),
       userDocuments: vi.fn(() => supplied.userDocuments),
       userDirectory: vi.fn(() => supplied.userDirectory),
+      userSpend: vi.fn(() => supplied.userSpend),
       adminUserDetail: vi.fn(() => supplied.adminUserDetail),
       userPolicyInputs: vi.fn(() => supplied.userPolicyInputs),
     };
@@ -59,10 +64,11 @@ describe("controller user seams", () => {
       accounts: supplied.accountReader,
       documents: supplied.userDocuments,
       userDirectory: supplied.userDirectory,
+      userSpend: supplied.userSpend,
       adminUserDetail: supplied.adminUserDetail,
       policyInputs: supplied.userPolicyInputs,
     });
-    for (const factory of [product.userAccounts, product.accountReader, product.userDocuments, product.userDirectory, product.adminUserDetail]) {
+    for (const factory of [product.userAccounts, product.accountReader, product.userDocuments, product.userDirectory, product.userSpend, product.adminUserDetail]) {
       expect(factory).toHaveBeenCalledWith(store);
     }
     expect(product.userPolicyInputs).toHaveBeenCalledWith(store, log);

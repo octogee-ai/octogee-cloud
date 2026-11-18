@@ -1,11 +1,14 @@
 import { buildUserSummary, isoMillis, toISODate, } from "./admin-shape.js";
+import { readOwnerSpendStanding } from "./model-broker/owner-spend-standing.js";
+import { operatorRailRegistry } from "./model-broker/rails.js";
+import { UNCONFIGURED_MODEL_BROKER_USAGE } from "./model-broker/usage.js";
 import { userEntitlements } from "@octogee/shared/types/user-entitlements";
 import { isUserParkedVm } from "@octogee/shared/types/glm";
 import { placementReceiptDocId } from "@octogee/shared/types/placement-receipts";
 import { userAccountFromData, } from "./user-account.js";
 import { MissingRecordError } from "./platform-state/errors.js";
 import { BROKER_USAGE_SERIES_READ_LIMIT, brokerUsageSeries } from "./broker-usage-series.js";
-import { usageWindowStartMs, weekWindowStartMs } from "@octogee/shared/types/model-broker-usage";
+import { usageWindowStartMs } from "@octogee/shared/types/model-broker-usage";
 import { anonymousOperationalEnvironment, anonymousOperationalGatewayClass, isAnonymousOperationalModelDimension, } from "@octogee/shared/types/account-lifecycle";
 function financeNumber(value) {
     return typeof value === "number" && Number.isFinite(value) ? value : 0;
@@ -57,7 +60,7 @@ function projectAnonymousArchive(id, data) {
     };
 }
 export const noAdminUserDirectorySource = {
-    brokerLedgers: async () => new Map(),
+    brokerRollups: async () => new Map(),
     brokerWindows: async () => [],
     brokerEvents: async () => [],
     brokerEventCosts: async () => [],
@@ -68,28 +71,6 @@ export const noAdminUserDirectorySource = {
     workspaceModelUsage: async () => [],
     adminActions: async () => [],
 };
-// Admin USD figures come exclusively from the broker ledger: the current 4h
-// window + week ledger + the all-time rollup per user.
-async function readBrokerUserUsage(source, uids, now) {
-    const usage = new Map();
-    if (uids.length === 0)
-        return usage;
-    const ledgers = await source.brokerLedgers(uids, usageWindowStartMs(now), weekWindowStartMs(now));
-    uids.forEach((uid) => {
-        const ledger = ledgers.get(uid);
-        const windowData = ledger?.window ?? {};
-        const weekData = ledger?.week ?? {};
-        const rollupData = ledger?.rollup ?? {};
-        usage.set(uid, {
-            windowCostUsd: financeNumber(windowData.chargeUsd ?? windowData.costUsd),
-            weekCostUsd: financeNumber(weekData.chargeUsd ?? weekData.costUsd),
-            totalCostUsd: financeNumber(rollupData.costUsd),
-            totalTokens: financeNumber(rollupData.totalTokens),
-            now,
-        });
-    });
-    return usage;
-}
 // One admin detail view reads at most this many event docs (30d of history).
 // ~20K calls/month/user is far past current scale; when a user crosses
 // it the history truncates loudly (warn log) instead of reading unbounded —
@@ -199,6 +180,9 @@ export function mergeDailyUsage(legacyLogs, brokerDaily) {
     }
     return Array.from(merged.values()).sort((a, b) => String(b.date).localeCompare(String(a.date)));
 }
+export function unconfiguredAdminUserSpend() {
+    return { rails: operatorRailRegistry(), usage: UNCONFIGURED_MODEL_BROKER_USAGE };
+}
 const DEFAULT_PAGE_SIZE = 25;
 const MAX_PAGE_SIZE = 100;
 function objectValue(value) {
@@ -224,6 +208,9 @@ function adminModelCredential(credential) {
         lastUsedAt: credential.lastUsedAt === null ? null : new Date(credential.lastUsedAt).toISOString(),
     };
 }
+function spendThrottled(spend) {
+    return spend.throttle.degraded || spend.throttle.blocked;
+}
 function applyUserFilters(items, f) {
     let result = items;
     if (f.search) {
@@ -232,11 +219,11 @@ function applyUserFilters(items, f) {
             c.email.toLowerCase().includes(q) ||
             c.username.toLowerCase().includes(q));
     }
-    if (f.throttleFilter === "degraded") {
-        result = result.filter((c) => c.degraded);
+    if (f.throttleFilter === "throttled") {
+        result = result.filter((c) => spendThrottled(c.spend));
     }
     else if (f.throttleFilter === "ok") {
-        result = result.filter((c) => !c.degraded);
+        result = result.filter((c) => !spendThrottled(c.spend));
     }
     if (f.byotFilter !== "all") {
         result = result.filter((c) => c.byotActive === (f.byotFilter === "on"));
@@ -251,14 +238,39 @@ class UnknownUserCursorError extends Error {
 function accountFor(accounts, uid) {
     return accounts.get(uid) ?? userAccountFromData(uid, {});
 }
+async function readUserSpend(directory, userRecord, account, onOwnerCredential, now) {
+    try {
+        return await readOwnerSpendStanding({
+            rails: directory.spend.rails,
+            usage: directory.spend.usage,
+            ownerUid: userRecord.uid,
+            gatewayId: userRecord.gateway?.gatewayId ?? "",
+            planInputs: account.planInputs,
+            modelAccess: userEntitlements().policy(account.planInputs, new Date(now)).modelAccess,
+            onOwnerCredential,
+            now,
+        });
+    }
+    catch (err) {
+        directory.logger.warn("admin user spend standing read failed", { uid: userRecord.uid, err });
+        throw err;
+    }
+}
+async function summarizeUser(directory, userRecord, account, ownerCredentialActive, rollup, now) {
+    const spend = await readUserSpend(directory, userRecord, account, ownerCredentialActive, now);
+    return buildUserSummary(userRecord, account, ownerCredentialActive, { spend, rollup, now });
+}
 async function summarizeUsers(directory, users) {
+    if (users.length === 0)
+        return [];
+    const now = Date.now();
     const uids = users.map((userRecord) => userRecord.uid);
-    const [accounts, brokerUsage, credentials] = await Promise.all([
+    const [accounts, rollups, credentials] = await Promise.all([
         directory.accounts.getMany(uids),
-        readBrokerUserUsage(directory.source, uids, Date.now()),
+        directory.source.brokerRollups(uids),
         Promise.all(uids.map((uid) => directory.store.users.modelCredentials.get(uid))),
     ]);
-    return users.map((userRecord, index) => buildUserSummary(userRecord, accountFor(accounts, userRecord.uid), credentials[index]?.active === true, brokerUsage.get(userRecord.uid) ?? {}));
+    return Promise.all(users.map((userRecord, index) => summarizeUser(directory, userRecord, accountFor(accounts, userRecord.uid), credentials[index]?.active === true, rollups.get(userRecord.uid), now)));
 }
 function newestFirstWithUndatedLast(a, b) {
     if (a === null || b === null)
@@ -363,7 +375,7 @@ function sendUnknownCursor(res, error) {
 // eslint-disable-next-line max-lines-per-function -- factory mounts the user routes; splitting it would scatter the contract
 export function addAdminUserDirectoryRoutes(router, deps) {
     const { accounts, source, store, logger } = deps;
-    const directory = { source, store, accounts };
+    const directory = { source, store, accounts, spend: deps.spend, logger };
     router.get("/user-archives", async (_req, res, next) => {
         try {
             const archives = (await readAllArchives(store)).map((archive) => projectAnonymousArchive(archive.id, { ...archive.record, archivedAt: archive.archivedAt }));
@@ -451,7 +463,7 @@ export function addAdminUserDirectoryRoutes(router, deps) {
                 if (summary.provisioningStatus !== "complete")
                     incompleteProvisioning++;
                 totalCostUsd += summary.costUsd;
-                if (summary.degraded || summary.percentUsed > 80)
+                if (summary.spend.needsAttention)
                     needsAttention++;
             }
             res.json({
@@ -491,12 +503,11 @@ export function addAdminUserDirectoryRoutes(router, deps) {
             const productDetail = await deps.productUserDetail?.(uid);
             const usage = account.usage;
             const now = Date.now();
-            const [brokerUsage, brokerDaily, brokerRollup] = await Promise.all([
-                readBrokerUserUsage(source, [uid], now),
+            const [brokerDaily, brokerRollup] = await Promise.all([
                 readBrokerDailyUsage(source, uid, thirtyDaysAgo.getTime(), logger),
                 source.brokerRollup(uid),
             ]);
-            const summary = buildUserSummary(userRecord, account, userCredentialActive, brokerUsage.get(uid) ?? { now });
+            const summary = await summarizeUser(directory, userRecord, account, userCredentialActive, brokerRollup, now);
             const defaultAgentDm = userRecord.slug === null
                 ? null
                 : await store.workspaces.channels.get({ workspaceSlug: userRecord.slug, projectSlug: null }, "coach-dm");
@@ -536,20 +547,12 @@ export function addAdminUserDirectoryRoutes(router, deps) {
                 summary,
                 accountLifecycle: userRecord.accountLifecycle ?? { status: "active" },
                 usage: {
-                    totalTokensUsed: usage.totalTokensUsed || 0,
                     brokerTotalTokens: summary.brokerTotalTokens,
+                    requestCount: summary.requestCount,
                     costUsd: summary.costUsd,
-                    nextRefillAt: summary.nextRefillAt,
-                    degraded: summary.degraded,
-                    percentUsed: summary.percentUsed,
-                    interactionCount: usage.interactionCount || 0,
-                    lastUpdated: toISODate(usage.lastUpdated),
-                    windowCostUsd: summary.windowCostUsd,
-                    windowBudgetUsd: summary.windowBudgetUsd,
-                    weekCostUsd: summary.weekCostUsd,
-                    weekBudgetUsd: summary.weekBudgetUsd,
-                    weekPercentUsed: summary.weekPercentUsed,
-                    weekResetAt: summary.weekResetAt,
+                    lastActive: summary.lastActive,
+                    selfReportedTokens: financeNumber(usage.totalTokensUsed),
+                    selfReportedInteractions: financeNumber(usage.interactionCount),
                 },
                 modelCredential,
                 byot: { active: userCredentialActive },

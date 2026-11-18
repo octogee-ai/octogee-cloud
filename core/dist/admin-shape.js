@@ -1,5 +1,4 @@
 import { userEntitlements } from "@octogee/shared/types/user-entitlements";
-import { MODEL_BROKER_USAGE_WINDOW_MS, MODEL_BROKER_WEEK_WINDOW_MS, spendWindowPercentUsed, usageWindowStartMs, weekWindowStartMs, } from "@octogee/shared/types/model-broker-usage";
 export function toISODate(val) {
     if (!val)
         return null;
@@ -29,46 +28,32 @@ function userSummaryFields(user) {
         accountLifecycleStatus: user.accountLifecycle?.status ?? "active",
     };
 }
-export function buildUserSummary(user, account, ownerCredentialActive, broker = {}) {
-    const now = broker.now ?? Date.now();
-    const policy = userEntitlements().policy(account.planInputs, new Date(now));
-    const usage = account.usage;
-    const windowCostUsd = broker.windowCostUsd ?? 0;
-    const weekCostUsd = broker.weekCostUsd ?? 0;
-    const costUsd = broker.totalCostUsd ?? 0;
-    // Owner-credential (BYOSUB/BYOT) traffic never lands in a spend window, so a
-    // percentage against a zero budget would misleadingly read 100% — mirror the
-    // user surfaces and show 0. The broker never throttles them either.
-    const onOwnerCredential = ownerCredentialActive;
-    const degraded = userEntitlements().spendThrottle(policy, {
-        windowCostUsd,
-        weekCostUsd,
-        onOwnerCredential,
-    }).degraded;
+function lastActiveAt(rollup, usage) {
+    const brokerMs = numberAt(rollup ?? {}, "updatedAt", Number.NaN);
+    const legacy = toISODate(usage.lastUpdated);
+    const legacyMs = legacy === null ? Number.NaN : Date.parse(legacy);
+    const latest = Math.max(...[brokerMs, legacyMs].filter((value) => Number.isFinite(value)));
+    return Number.isFinite(latest) ? new Date(latest).toISOString() : null;
+}
+export function buildUserSummary(user, account, ownerCredentialActive, broker) {
+    const rollup = broker.rollup ?? {};
+    const costUsd = numberAt(rollup, "costUsd");
     return {
         ...userEntitlements().productProjection?.adminUserSummary(account.planInputs, {
             costUsd,
-            now: new Date(now),
+            now: new Date(broker.now),
         }),
         uid: user.uid,
         displayName: displayNameFor(account),
         email: account.email ?? "",
         username: account.username ?? "",
         byotActive: ownerCredentialActive,
-        windowCostUsd,
-        windowBudgetUsd: policy.spendWindowUsd,
-        weekCostUsd,
-        weekBudgetUsd: policy.spendWeekUsd,
-        weekPercentUsed: onOwnerCredential ? 0 : spendWindowPercentUsed(weekCostUsd, policy.spendWeekUsd),
-        weekResetAt: new Date(weekWindowStartMs(now) + MODEL_BROKER_WEEK_WINDOW_MS).toISOString(),
-        nextRefillAt: new Date(usageWindowStartMs(now) + MODEL_BROKER_USAGE_WINDOW_MS).toISOString(),
-        totalTokensUsed: numberAt(usage, "totalTokensUsed", numberAt(usage, "tokensUsed")),
-        brokerTotalTokens: broker.totalTokens ?? 0,
+        spend: broker.spend,
+        brokerTotalTokens: numberAt(rollup, "totalTokens"),
+        requestCount: numberAt(rollup, "requestCount"),
         costUsd,
-        degraded,
-        lastActive: toISODate(usage.lastUpdated),
+        lastActive: lastActiveAt(broker.rollup, account.usage),
         mattermostUsername: account.mattermostUsername,
-        percentUsed: onOwnerCredential ? 0 : spendWindowPercentUsed(windowCostUsd, policy.spendWindowUsd),
         ...userSummaryFields(user),
     };
 }

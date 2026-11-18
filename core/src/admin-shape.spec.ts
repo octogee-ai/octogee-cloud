@@ -5,23 +5,27 @@ import {
   userEntitlements,
 } from "@octogee/shared/types/user-entitlements";
 import { buildUserSummary, type BrokerUserUsage } from "./admin-shape.js";
+import type { OwnerSpendStanding } from "./model-broker/owner-spend-standing.js";
 import { userAccountFromData } from "./user-account.js";
 import { userRecordFromData } from "./platform-state/documents/users.js";
 
 const NOW = Date.UTC(2026, 6, 2, 13, 30);
-const LIVE_SIGNUP_OFFER = {
-  schemaVersion: 3,
-  offerId: "builder-signup",
-  offerVersion: 1,
-  personalTier: "personal",
-  builderTier: "hobby",
-  configHash: "config-a",
-  claimedAt: new Date(NOW),
-  endsAt: new Date(NOW + 7 * 24 * 60 * 60 * 1000),
+
+const unmetered: OwnerSpendStanding = {
+  rail: "operator",
+  meter: { kind: "unmetered" },
+  balanceUsd: null,
+  throttle: { degraded: false, blocked: false, reason: null },
+  needsAttention: false,
 };
 
-function summarize(uid: string, data: Record<string, unknown>, broker?: BrokerUserUsage) {
-  return buildUserSummary(userRecordFromData(uid, data, 0, null), userAccountFromData(uid, data), data.byotActive === true, broker);
+function summarize(uid: string, data: Record<string, unknown>, broker: Partial<BrokerUserUsage> = {}) {
+  return buildUserSummary(
+    userRecordFromData(uid, data, 0, null),
+    userAccountFromData(uid, data),
+    data.byotActive === true,
+    { spend: unmetered, rollup: undefined, now: NOW, ...broker },
+  );
 }
 
 describe("buildUserSummary", () => {
@@ -33,36 +37,31 @@ describe("buildUserSummary", () => {
     }).accountLifecycleStatus).toBe("deletion_scheduled");
   });
 
-  it("does not label an exhausted active trial as running on HOUSE", () => {
-    const trial = { trialGrant: LIVE_SIGNUP_OFFER };
-    expect(
-      summarize("u", trial, { windowCostUsd: 9999, now: NOW }).degraded,
-    ).toBe(false);
+  it("carries the spend standing it was given", () => {
+    expect(summarize("u", {}).spend).toBe(unmetered);
   });
 
-  it("shows 0% (not a zero-budget 100%) for owner-credential users — mirrors the user surfaces", () => {
-    // free/house-only tier + BYOT: weeklyBudgetUsd is 0, so an unguarded percentage
-    // would read 100% despite the broker never metering or throttling this traffic.
-    const summary = summarize(
-      "u",
-      { subscription: { tier: "free" }, byotActive: true },
-      { windowCostUsd: 5, weekCostUsd: 40, now: NOW },
-    );
-    expect(summary.percentUsed).toBe(0);
-    expect(summary.weekPercentUsed).toBe(0);
-    expect(summary.degraded).toBe(false);
+  it("reads tokens, requests and cost from the broker rollup", () => {
+    const summary = summarize("u", {}, {
+      rollup: { costUsd: 1.73, totalTokens: 1_000, requestCount: 12, updatedAt: NOW },
+    });
+    expect(summary).toMatchObject({ costUsd: 1.73, brokerTotalTokens: 1_000, requestCount: 12 });
   });
 
-  it("reports the epoch-aligned 4h window refill time", () => {
-    const summary = summarize(
-      "u",
-      { trialGrant: LIVE_SIGNUP_OFFER },
-      { windowCostUsd: 0, now: NOW },
-    );
-    // 13:30Z sits in the 12:00–16:00Z window → refill at 16:00Z
-    expect(summary.nextRefillAt).toBe(new Date(Date.UTC(2026, 6, 2, 16)).toISOString());
+  it("dates last activity from the broker rollup when the self-reported counter is empty", () => {
+    const summary = summarize("u", { usage: {} }, { rollup: { updatedAt: NOW } });
+    expect(summary.lastActive).toBe(new Date(NOW).toISOString());
   });
 
+  it("dates last activity from whichever of the rollup and the self-reported counter is later", () => {
+    const later = new Date(NOW + 60_000);
+    const summary = summarize("u", { usage: { lastUpdated: later } }, { rollup: { updatedAt: NOW } });
+    expect(summary.lastActive).toBe(later.toISOString());
+  });
+
+  it("reports no last activity for a user with no recorded traffic", () => {
+    expect(summarize("u", {}).lastActive).toBeNull();
+  });
 });
 
 describe("buildUserSummary commercial fields", () => {

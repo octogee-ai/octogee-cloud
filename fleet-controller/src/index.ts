@@ -209,8 +209,10 @@ import { loadUserCleanupContext } from "./lib/user-ops/cleanup-context.js";
 import type { UserAccounts } from "@octogee/core/admin-user-router";
 import {
   noAdminUserDirectorySource,
+  unconfiguredAdminUserSpend,
   type AdminUserDirectorySource,
   type AdminUserProductDetail,
+  type AdminUserSpendDeps,
 } from "@octogee/core/admin-user-directory-router";
 import { createMattermostChannelHost, type ManagedChannelHost } from "@octogee/core/channel-host";
 import { createGiteaGitHost, type GitKeyHolders, type GitKeySweepMode } from "@octogee/core/git-host";
@@ -2194,6 +2196,7 @@ interface ControllerBackgroundTasksDeps {
   productAdminUserDetail?: AdminUserProductDetail | undefined;
   accounts: UserAccountReader;
   userDirectory: AdminUserDirectorySource;
+  userSpend: AdminUserSpendDeps;
   adminIdentity: IdentityProvider;
   policyInputs: UserPolicyInputsSource;
   placement?: PlacementProductFactory | undefined;
@@ -2246,6 +2249,7 @@ function startControllerBackgroundTasks({
   productAdminUserDetail,
   accounts,
   userDirectory,
+  userSpend,
   adminIdentity,
   policyInputs,
   placement,
@@ -2381,6 +2385,7 @@ function startControllerBackgroundTasks({
     store: deps.store,
     accounts,
     userDirectory,
+    userSpend,
     log,
     port: HTTP_PORT,
     identity: adminIdentity,
@@ -2798,6 +2803,7 @@ export interface ControllerProduct {
   accountReader?: (store: PlatformStateStore) => UserAccountReader;
   userDocuments?: (store: PlatformStateStore) => UserDocuments;
   userDirectory?: (store: PlatformStateStore) => AdminUserDirectorySource;
+  userSpend?: (store: PlatformStateStore) => AdminUserSpendDeps;
   adminUserDetail?: (store: PlatformStateStore) => AdminUserProductDetail;
   adminIdentity?: IdentityProvider;
   userPolicyInputs?: (store: PlatformStateStore, log: (message: string) => void) => UserPolicyInputsSource;
@@ -2819,6 +2825,7 @@ export function controllerUserSeams(
     accounts: product.accountReader?.(store) ?? platformStateUserAccountReader(store),
     documents: product.userDocuments?.(store) ?? platformStateUserDocuments(store),
     userDirectory: product.userDirectory?.(store) ?? noAdminUserDirectorySource,
+    userSpend: product.userSpend?.(store) ?? unconfiguredAdminUserSpend(),
     adminUserDetail: product.adminUserDetail?.(store),
     policyInputs: product.userPolicyInputs?.(store, log) ?? noUserPolicyInputs,
   };
@@ -2844,7 +2851,7 @@ export async function main(product: ControllerProduct): Promise<void> {
     logger,
   });
   const userLifecycle = createUserLifecycle(product, store);
-  const { userAccounts, accounts, documents, userDirectory, adminUserDetail, policyInputs } = controllerUserSeams(product, store, log);
+  const { userAccounts, accounts, documents, userDirectory, userSpend, adminUserDetail, policyInputs } = controllerUserSeams(product, store, log);
   const provisioning = createProvisioningServiceRuntime({
     env: process.env,
     store,
@@ -2916,6 +2923,7 @@ export async function main(product: ControllerProduct): Promise<void> {
     productAdminUserDetail: adminUserDetail,
     accounts,
     userDirectory,
+    userSpend,
     provisioning,
   });
   if (provisioning) stoppers.push(provisioning.start());

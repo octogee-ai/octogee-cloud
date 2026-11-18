@@ -210,6 +210,8 @@ vi.mock("@octogee/core/http/auth", () => ({
 import express from "express";
 import adminRouter, { createAdminRoutes } from "../routes/admin.js";
 import { userAccountFromData, type UserAccountReader } from "@octogee/core/user-account";
+import { operatorRailRegistry } from "@octogee/core/model-broker/rails";
+import { InMemoryModelBrokerUsageStore } from "@octogee/core/model-broker/usage";
 
 function eligibleUser(slug: string, openclaw: Record<string, unknown> = {}): Record<string, unknown> {
   return { username: slug, onboardingStep: "complete", provisioning: { status: "complete", openclaw: { slug, ...openclaw } } };
@@ -342,10 +344,12 @@ describe("GET /api/admin/users/:uid — what the product adds", () => {
     usersDocs = { "uid-alice": { email: "alice@example.test" } };
   });
 
+  const userSpend = () => ({ rails: operatorRailRegistry(), usage: new InMemoryModelBrokerUsageStore() });
+
   it("adds the fields the product's hook reports for the user", async () => {
     const userDetail = vi.fn(async () => ({ onboarding: { step: "complete", complete: true, milestones: {} } }));
 
-    const res = await detailOf(createAdminRoutes({ userDetail }));
+    const res = await detailOf(createAdminRoutes({ userDetail, userSpend: userSpend() }));
 
     expect(res.status).toBe(200);
     expect(userDetail).toHaveBeenCalledExactlyOnceWith("uid-alice");
@@ -359,7 +363,7 @@ describe("GET /api/admin/users/:uid — what the product adds", () => {
       list: vi.fn(async () => new Map()),
     };
 
-    const res = await detailOf(createAdminRoutes({ accounts }));
+    const res = await detailOf(createAdminRoutes({ accounts, userSpend: userSpend() }));
 
     expect(res.status).toBe(200);
     expect(accounts.get).toHaveBeenCalledWith("uid-alice");
@@ -367,7 +371,7 @@ describe("GET /api/admin/users/:uid — what the product adds", () => {
   });
 
   it("reports no onboarding state without a product", async () => {
-    const res = await detailOf(createAdminRoutes());
+    const res = await detailOf(createAdminRoutes({ userSpend: userSpend() }));
 
     expect(res.status).toBe(200);
     expect(res.body).not.toHaveProperty("onboarding");

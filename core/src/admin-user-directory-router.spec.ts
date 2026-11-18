@@ -9,6 +9,14 @@ import {
   type AdminUserDirectoryRouterDeps,
 } from "./admin-user-directory-router.js";
 import { noUserAccounts } from "./user-account.js";
+import type { FundedBudget } from "./model-broker/budget.js";
+import {
+  createModelBrokerRailRegistry,
+  operatorRail,
+  operatorRailRegistry,
+  type OwnerRailProfile,
+} from "./model-broker/rails.js";
+import { InMemoryModelBrokerUsageStore, UNCONFIGURED_MODEL_BROKER_USAGE } from "./model-broker/usage.js";
 import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 
 type DocData = Record<string, unknown>;
@@ -20,7 +28,7 @@ function makeBarePlatformApp(docs: Record<string, DocData>) {
 
 function appWith(
   documents: DocStore,
-  product: Pick<AdminUserDirectoryRouterDeps, "accounts" | "source" | "productUserDetail">,
+  product: Pick<AdminUserDirectoryRouterDeps, "accounts" | "source" | "productUserDetail"> & Partial<AdminUserDirectoryRouterDeps>,
 ) {
   const app = express();
   app.use(express.json());
@@ -28,6 +36,7 @@ function appWith(
   const deps: AdminUserDirectoryRouterDeps = {
     store: createDocumentFixtureStore(documents),
     logger: { info: vi.fn(), warn: vi.fn() },
+    spend: { rails: operatorRailRegistry(), usage: new InMemoryModelBrokerUsageStore() },
     ...product,
   };
 
@@ -111,7 +120,14 @@ describe("admin user routes — bare platform", () => {
     const res = await request(makeBarePlatformApp(recorded())).get("/api/admin/users/uid-1").expect(200);
 
     expect(res.body.provisioning).toMatchObject({ status: "complete", slug: "builder" });
-    expect(res.body.usage).toMatchObject({ totalTokensUsed: 0, costUsd: 0 });
+    expect(res.body.usage).toEqual({
+      brokerTotalTokens: 0,
+      requestCount: 0,
+      costUsd: 0,
+      lastActive: null,
+      selfReportedTokens: 0,
+      selfReportedInteractions: 0,
+    });
     expect(res.body).toMatchObject({ workspaces: [], usageLogs: [], modelCosts: {}, modelCredential: null });
   });
 
@@ -137,6 +153,172 @@ describe("admin user routes — bare platform", () => {
     const res = await request(makeBarePlatformApp(recorded())).get("/api/admin/users/uid-1/audit").expect(200);
 
     expect(res.body.items).toEqual([]);
+  });
+});
+
+describe("admin user routes — spend the way the broker enforces it", () => {
+  const DAY_MS = 86_400_000;
+
+  function fundedBudget(now: number): FundedBudget {
+    return {
+      ownerUid: "uid-funded",
+      ledgerCollection: "fundedBudgets",
+      ledgerKey: "uid-funded_grant",
+      ledgerBinding: { grantId: "grant" },
+      ledgerRetentionMs: 0,
+      expiresAtMs: now + 6 * DAY_MS,
+      capUsd: 4.8,
+      hardCapUsd: 8,
+      nextCapIncreaseAtMs: now + DAY_MS,
+      logFields: {},
+    };
+  }
+
+  function windowsProfile(overrides: Partial<OwnerRailProfile> = {}): OwnerRailProfile {
+    return {
+      rail: "metered",
+      spendWindowUsd: 1,
+      spendWeekUsd: 10,
+      windowBudgets: true,
+      freeTier: false,
+      houseFallback: true,
+      fundedBudget: null,
+      ...overrides,
+    };
+  }
+
+  async function charge(usage: InMemoryModelBrokerUsageStore, ownerUid: string, chargeUsd: number, now: number) {
+    await usage.recordUsage({
+      requestId: `${ownerUid}-${chargeUsd}`,
+      provider: "anthropic",
+      gatewayId: "gw-shared",
+      ownerUid,
+      model: "claude-sonnet-4-6",
+      usage: { inputTokens: 10, outputTokens: 10, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 },
+      method: "POST",
+      path: "/v1/messages",
+      upstreamStatus: 200,
+      chargeUsd,
+      now,
+    });
+  }
+
+  async function spendApp(rollups: Record<string, DocData> = {}) {
+    const now = Date.now();
+    const budget = fundedBudget(now);
+    const profiles: Record<string, OwnerRailProfile | null> = {
+      "uid-funded": windowsProfile({ windowBudgets: false, fundedBudget: budget }),
+      "uid-free": windowsProfile({ freeTier: true, spendWindowUsd: 0.5, spendWeekUsd: 3 }),
+      "uid-window": windowsProfile(),
+      "uid-none": null,
+    };
+    const rails = createModelBrokerRailRegistry({
+      rails: [{ ...operatorRail, id: "metered" }],
+      defaultRailId: "metered",
+      resolveOwnerProfile: (_planInputs, ownerUid) => profiles[ownerUid] ?? null,
+    });
+    const usage = new InMemoryModelBrokerUsageStore();
+    usage.fundedBudgetLedgers.set(budget.ledgerKey, {
+      ownerUid: "uid-funded",
+      grantId: "grant",
+      chargeUsd: 4.81,
+      requestCount: 402,
+      totalTokens: 27_565_342,
+      updatedAt: now,
+    });
+    await charge(usage, "uid-free", 0.2, now);
+    await charge(usage, "uid-window", 1.2, now);
+    const docs = Object.fromEntries(Object.keys(profiles).map((uid) => [`users/${uid}`, userDoc()]));
+    return appWith(new Map(Object.entries(docs)), {
+      accounts: noUserAccounts,
+      source: {
+        ...noAdminUserDirectorySource,
+        brokerRollups: async (uids) => new Map(uids.map((uid) => [uid, rollups[uid]])),
+        brokerRollup: async (uid) => rollups[uid],
+      },
+      spend: { rails, usage },
+    });
+  }
+
+  async function listed(query = "") {
+    const res = await request(await spendApp()).get(`/api/admin/users${query}`).expect(200);
+    return new Map<string, DocData>(res.body.items.map((item: DocData) => [item.uid, item]));
+  }
+
+  it("meters a funded-budget user against the unlocked budget and flags an overrun", async () => {
+    const funded = (await listed()).get("uid-funded");
+
+    expect(funded?.spend).toMatchObject({
+      meter: { kind: "funded_budget", usedUsd: 4.81, availableUsd: 4.8, hardCapUsd: 8, percentUsed: 100 },
+      needsAttention: true,
+    });
+  });
+
+  it("does not read a user with no budget as fully used", async () => {
+    const none = (await listed()).get("uid-none");
+
+    expect(none?.spend).toMatchObject({
+      meter: { kind: "unmetered" },
+      throttle: { degraded: false, blocked: false },
+      needsAttention: false,
+    });
+  });
+
+  it("does not flag a house-only user who is under budget", async () => {
+    const free = (await listed()).get("uid-free");
+
+    expect(free?.spend).toMatchObject({
+      meter: { kind: "spend_windows", week: { usedUsd: 0.2, limitUsd: 3 } },
+      throttle: { degraded: false, blocked: false },
+      needsAttention: false,
+    });
+  });
+
+  it("filters to throttled users and to users running normally", async () => {
+    expect([...(await listed("?throttle=throttled")).keys()]).toEqual(["uid-window"]);
+    expect([...(await listed("?throttle=ok")).keys()].sort()).toEqual(["uid-free", "uid-funded", "uid-none"]);
+  });
+
+  it("counts users needing attention from their spend standing", async () => {
+    const res = await request(await spendApp()).get("/api/admin/users/stats").expect(200);
+
+    expect(res.body.needsAttention).toBe(1);
+  });
+
+  it("reads tokens, requests and last activity from the broker rollup", async () => {
+    const updatedAt = Date.UTC(2026, 10, 17, 9, 30);
+    const app = await spendApp({
+      "uid-funded": { costUsd: 4.81, totalTokens: 27_565_342, requestCount: 402, updatedAt },
+    });
+
+    const res = await request(app).get("/api/admin/users/uid-funded").expect(200);
+
+    expect(res.body.usage).toEqual({
+      brokerTotalTokens: 27_565_342,
+      requestCount: 402,
+      costUsd: 4.81,
+      lastActive: new Date(updatedAt).toISOString(),
+      selfReportedTokens: 0,
+      selfReportedInteractions: 0,
+    });
+    expect(res.body.summary.spend.meter.kind).toBe("funded_budget");
+  });
+
+  it("fails the list instead of reporting zero spend when the usage ledger cannot be read", async () => {
+    const warn = vi.fn();
+    const app = appWith(new Map([["users/uid-1", userDoc()]]), {
+      accounts: noUserAccounts,
+      source: noAdminUserDirectorySource,
+      spend: { rails: operatorRailRegistry(), usage: UNCONFIGURED_MODEL_BROKER_USAGE },
+      logger: { info: vi.fn(), warn },
+    });
+
+    await request(app).get("/api/admin/users").expect(500);
+
+    expect(warn).toHaveBeenCalledWith("admin user spend standing read failed", expect.objectContaining({
+      uid: "uid-1",
+      err: expect.any(Error),
+    }));
   });
 });
 
