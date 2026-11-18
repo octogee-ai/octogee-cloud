@@ -184,6 +184,9 @@ describe("operator rail spend throttle", () => {
     onOwnerCredential: false,
     houseFallback: false,
     balanceUsd: 9,
+    fundedBudget: null,
+    fundedLedger: null,
+    now: 0,
   };
 
   it("stays clear while budgets have room", () => {

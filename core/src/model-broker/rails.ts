@@ -68,6 +68,9 @@ export interface RailSpendObservation {
   onOwnerCredential: boolean;
   houseFallback: boolean;
   balanceUsd: number;
+  fundedBudget: FundedBudget | null;
+  fundedLedger: FundedBudgetLedger | null;
+  now: number;
 }
 
 export interface RailSpendThrottle extends SpendThrottleState {

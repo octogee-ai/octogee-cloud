@@ -1,7 +1,7 @@
 {
   "name": "@octogee/core",
   "version": "1.0.0",
-  "description": "Octogee shared runtime \u2014 consumers depend on its built interface, never its source.",
+  "description": "Octogee shared runtime — consumers depend on its built interface, never its source.",
   "private": true,
   "license": "MIT",
   "type": "module",
@@ -973,6 +973,10 @@
     "./model-broker/limits": {
       "types": "./dist/model-broker/limits.d.ts",
       "default": "./dist/model-broker/limits.js"
+    },
+    "./model-broker/owner-spend-standing": {
+      "types": "./dist/model-broker/owner-spend-standing.d.ts",
+      "default": "./dist/model-broker/owner-spend-standing.js"
     },
     "./model-broker/model-config": {
       "types": "./dist/model-broker/model-config.d.ts",
