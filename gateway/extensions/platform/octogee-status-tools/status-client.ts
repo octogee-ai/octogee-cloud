@@ -24,10 +24,48 @@ export interface AgentUsageStatus {
     path: "platform_broker" | "byok_api_key" | "byosub" | "byosub_suppressed_customer";
     provider: string | null;
   };
+  spend?: SpendStanding;
   [accountField: string]: unknown;
 }
 
-const PLATFORM_FIELDS = new Set(["gatewayClass", "week", "window", "credits", "credential"]);
+export interface SpendReading {
+  usedUsd: number;
+  limitUsd: number;
+  percentUsed: number;
+  resetsAt: string;
+}
+
+export type SpendMeter =
+  | { kind: "owner_credential" }
+  | {
+      kind: "funded_budget";
+      usedUsd: number;
+      availableUsd: number;
+      hardCapUsd: number;
+      percentUsed: number;
+      nextIncreaseAt: string | null;
+      endsAt: string;
+    }
+  | { kind: "funded_budget_unavailable" }
+  | { kind: "spend_windows"; week: SpendReading; window: SpendReading }
+  | { kind: "balance"; balanceUsd: number }
+  | { kind: "unmetered" };
+
+export interface SpendThrottle {
+  degraded: boolean;
+  blocked: boolean;
+  reason: string | null;
+}
+
+export interface SpendStanding {
+  rail: string;
+  meter: SpendMeter;
+  balanceUsd: number | null;
+  throttle: SpendThrottle;
+  needsAttention: boolean;
+}
+
+const PLATFORM_FIELDS = new Set(["gatewayClass", "week", "window", "credits", "credential", "spend"]);
 
 export class StatusToolError extends Error {
   constructor(
@@ -78,10 +116,19 @@ export async function fetchAgentUsageStatus(opts: {
     throw new StatusToolError("broker-error", `agent-usage-status ${res.status} ${body}`);
   }
   const data = (await res.json()) as AgentUsageStatus;
-  if (!data || typeof data !== "object" || !data.window || !data.credential) {
+  if (!data || typeof data !== "object" || !data.window || !data.credential ||
+      (data.spend !== undefined && !isSpendStanding(data.spend))) {
     throw new StatusToolError("malformed", "agent-usage-status: malformed broker response");
   }
   return data;
+}
+
+function isSpendStanding(value: unknown): value is SpendStanding {
+  if (!value || typeof value !== "object") return false;
+  const { meter, throttle } = value as Partial<SpendStanding>;
+  return !!meter && typeof meter === "object" && typeof meter.kind === "string" &&
+    !!throttle && typeof throttle === "object" && typeof throttle.blocked === "boolean" &&
+    typeof throttle.degraded === "boolean";
 }
 
 const CREDENTIAL_LABELS: Record<AgentUsageStatus["credential"]["path"], string> = {
@@ -95,6 +142,56 @@ const CREDENTIAL_LABELS: Record<AgentUsageStatus["credential"]["path"], string> 
 function refillClause(nextRefillAt: string): string {
   const date = new Date(nextRefillAt);
   return Number.isNaN(date.getTime()) ? "" : ` · refills ${date.toISOString()}`;
+}
+
+function usd(value: number): string {
+  return `$${value.toFixed(2)}`;
+}
+
+function when(value: string): string {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toISOString();
+}
+
+function throttleLine(throttle: SpendThrottle): string {
+  if (throttle.blocked) {
+    if (throttle.reason === "week_exhausted") {
+      return "Throttle: BLOCKED — weekly allowance spent, resumes when the week resets";
+    }
+    if (throttle.reason === null || throttle.reason === "window_exhausted") {
+      return "Throttle: BLOCKED — burst window spent, resumes at the next refill";
+    }
+    return `Throttle: BLOCKED (${throttle.reason})`;
+  }
+  if (throttle.degraded) {
+    return throttle.reason === null || throttle.reason === "window_exhausted"
+      ? "Throttle: window exhausted — degraded to the house model until refill"
+      : `Throttle: degraded to the house model (${throttle.reason})`;
+  }
+  return "Throttle: none — full models available";
+}
+
+function meterLines(meter: SpendMeter): string[] {
+  switch (meter.kind) {
+    case "funded_budget":
+      return [
+        `Funded budget: ${usd(meter.usedUsd)} of ${usd(meter.availableUsd)} available now (${usd(meter.hardCapUsd)} cap)` +
+          (meter.nextIncreaseAt ? ` · next increase ${when(meter.nextIncreaseAt)}` : "") +
+          ` · ends ${when(meter.endsAt)}`,
+      ];
+    case "spend_windows":
+      return [
+        `Week: ${meter.week.percentUsed}% used, resets ${when(meter.week.resetsAt)}`,
+        `Burst window: ${meter.window.percentUsed}% used, refills ${when(meter.window.resetsAt)}`,
+      ];
+    case "balance":
+      return [`Balance: ${usd(meter.balanceUsd)}`];
+    case "funded_budget_unavailable":
+      return ["Funded budget: cannot be read right now"];
+    case "owner_credential":
+    case "unmetered":
+      return [];
+  }
 }
 
 function accountLine(status: AgentUsageStatus): string | null {
@@ -111,25 +208,13 @@ export function formatStatusText(status: AgentUsageStatus): string {
   if (account) lines.push(account);
   lines.push(`Billing: ${CREDENTIAL_LABELS[status.credential.path]}` +
     (status.credential.provider ? ` (${status.credential.provider})` : ""));
-  if (status.credential.path === "platform_broker" || status.credential.path === "byosub_suppressed_customer") {
+  if (status.spend) {
+    lines.push(...meterLines(status.spend.meter), throttleLine(status.spend.throttle));
+  } else if (status.credential.path === "platform_broker" || status.credential.path === "byosub_suppressed_customer") {
     lines.push(
       `Token window: ${status.window.percentUsed}% used${refillClause(status.window.nextRefillAt)}`,
+      throttleLine(status.window),
     );
-    if (status.window.blocked) {
-      lines.push(
-        status.window.reason === "week_exhausted"
-          ? "Throttle: BLOCKED — weekly allowance spent, resumes when the week resets"
-          : "Throttle: BLOCKED — burst window spent, resumes at the next refill",
-      );
-    } else if (status.window.degraded) {
-      lines.push(
-        status.window.reason === null || status.window.reason === "window_exhausted"
-          ? "Throttle: window exhausted — degraded to the house model until refill"
-          : `Throttle: degraded to the house model (${status.window.reason})`,
-      );
-    } else {
-      lines.push("Throttle: none — full models available");
-    }
   }
   return lines.join("\n");
 }
