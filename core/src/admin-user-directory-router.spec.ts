@@ -304,7 +304,7 @@ describe("admin user routes — spend the way the broker enforces it", () => {
     expect(res.body.summary.spend.meter.kind).toBe("funded_budget");
   });
 
-  it("reports users as unmetered on a platform with no usage ledger", async () => {
+  it("says spend is unavailable on a platform with no usage ledger", async () => {
     const app = appWith(new Map([["users/uid-1", userDoc()]]), {
       accounts: noUserAccounts,
       source: noAdminUserDirectorySource,
@@ -315,13 +315,40 @@ describe("admin user routes — spend the way the broker enforces it", () => {
     const res = await request(app).get("/api/admin/users").expect(200);
 
     expect(res.body.items[0].spend).toMatchObject({
-      meter: { kind: "unmetered" },
-      throttle: { degraded: false, blocked: false, reason: null },
+      meter: { kind: "unavailable", cause: "no_usage_ledger" },
       needsAttention: false,
     });
   });
 
-  it("fails the list instead of reporting zero spend when the usage ledger cannot be read", async () => {
+  it("reads at most 16 users' spend at a time", async () => {
+    const ledger = new InMemoryModelBrokerUsageStore();
+    let inFlight = 0;
+    let peak = 0;
+    const readWindowUsage = ledger.readWindowUsage.bind(ledger);
+    ledger.readWindowUsage = async (input) => {
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      inFlight--;
+      return readWindowUsage(input);
+    };
+    const documents = new Map(Array.from({ length: 40 }, (_, i) => [
+      `users/uid-${i}`,
+      userDoc({ username: `user-${i}`, provisioning: { openclaw: { status: "complete", slug: `user-${i}` } } }),
+    ] as const));
+    const app = appWith(documents, {
+      accounts: noUserAccounts,
+      source: noAdminUserDirectorySource,
+      spend: { rails: operatorRailRegistry(), usage: ledger },
+    });
+
+    const res = await request(app).get("/api/admin/users/stats").expect(200);
+
+    expect(res.body.totalUsers).toBe(40);
+    expect(peak).toBe(16);
+  });
+
+  it("flags a user whose spend cannot be read and still lists everyone else", async () => {
     const warn = vi.fn();
     const app = appWith(new Map([["users/uid-1", userDoc()]]), {
       accounts: noUserAccounts,
@@ -330,8 +357,12 @@ describe("admin user routes — spend the way the broker enforces it", () => {
       logger: { info: vi.fn(), warn },
     });
 
-    await request(app).get("/api/admin/users").expect(500);
+    const res = await request(app).get("/api/admin/users").expect(200);
 
+    expect(res.body.items[0].spend).toMatchObject({
+      meter: { kind: "unavailable", cause: "read_failed" },
+      needsAttention: true,
+    });
     expect(warn).toHaveBeenCalledWith("admin user spend standing read failed", expect.objectContaining({
       uid: "uid-1",
       err: expect.any(Error),

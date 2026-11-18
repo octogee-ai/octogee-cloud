@@ -36,7 +36,10 @@ export type OwnerSpendMeter =
   | { kind: "funded_budget_unavailable" }
   | { kind: "spend_windows"; week: SpendMeterReading; window: SpendMeterReading }
   | { kind: "balance"; balanceUsd: number }
-  | { kind: "unmetered" };
+  | { kind: "unmetered" }
+  | { kind: "unavailable"; cause: SpendUnavailableCause };
+
+export type SpendUnavailableCause = "no_usage_ledger" | "read_failed";
 
 export interface OwnerSpendStanding {
   rail: string;
@@ -102,6 +105,16 @@ function bindingPercent(meter: OwnerSpendMeter): number {
   if (meter.kind === "funded_budget") return meter.percentUsed;
   if (meter.kind === "spend_windows") return meter.week.percentUsed;
   return 0;
+}
+
+export function unavailableSpendStanding(rail: string, cause: SpendUnavailableCause): OwnerSpendStanding {
+  return {
+    rail,
+    meter: { kind: "unavailable", cause },
+    balanceUsd: null,
+    throttle: { degraded: false, blocked: false, reason: null },
+    needsAttention: cause === "read_failed",
+  };
 }
 
 function railThrottle(

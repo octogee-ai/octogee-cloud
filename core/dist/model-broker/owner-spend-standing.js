@@ -49,6 +49,15 @@ function bindingPercent(meter) {
         return meter.week.percentUsed;
     return 0;
 }
+export function unavailableSpendStanding(rail, cause) {
+    return {
+        rail,
+        meter: { kind: "unavailable", cause },
+        balanceUsd: null,
+        throttle: { degraded: false, blocked: false, reason: null },
+        needsAttention: cause === "read_failed",
+    };
+}
 function railThrottle(rails, rail, input) {
     const metered = input.profile?.windowBudgets ? input.profile : null;
     return rails.rail(rail).throttle({

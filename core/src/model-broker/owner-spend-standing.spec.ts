@@ -9,7 +9,7 @@ import {
   type OwnerRailProfile,
   type RailSpendObservation,
 } from "./rails.js";
-import { ownerSpendStanding, type OwnerSpendObservation } from "./owner-spend-standing.js";
+import { ownerSpendStanding, unavailableSpendStanding, type OwnerSpendObservation } from "./owner-spend-standing.js";
 
 const NOW = Date.UTC(2026, 10, 18, 12, 0, 0);
 
@@ -137,5 +137,18 @@ describe("ownerSpendStanding", () => {
     const standing = ownerSpendStanding(rails, observation({ onOwnerCredential: true, weekCostUsd: 30 }));
     expect(standing.meter).toEqual({ kind: "owner_credential" });
     expect(standing.needsAttention).toBe(false);
+  });
+});
+
+describe("unavailableSpendStanding", () => {
+  it("flags a failed read but not a platform that has no usage ledger", () => {
+    expect(unavailableSpendStanding("metered", "read_failed")).toEqual({
+      rail: "metered",
+      meter: { kind: "unavailable", cause: "read_failed" },
+      balanceUsd: null,
+      throttle: { degraded: false, blocked: false, reason: null },
+      needsAttention: true,
+    });
+    expect(unavailableSpendStanding("operator", "no_usage_ledger").needsAttention).toBe(false);
   });
 });

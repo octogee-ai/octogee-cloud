@@ -30,7 +30,11 @@ export type OwnerSpendMeter = {
     balanceUsd: number;
 } | {
     kind: "unmetered";
+} | {
+    kind: "unavailable";
+    cause: SpendUnavailableCause;
 };
+export type SpendUnavailableCause = "no_usage_ledger" | "read_failed";
 export interface OwnerSpendStanding {
     rail: string;
     meter: OwnerSpendMeter;
@@ -48,6 +52,7 @@ export interface OwnerSpendObservation {
     fundedLedger: FundedBudgetLedger | null;
     now: number;
 }
+export declare function unavailableSpendStanding(rail: string, cause: SpendUnavailableCause): OwnerSpendStanding;
 export declare function ownerSpendStanding(rails: ModelBrokerRailRegistry, input: OwnerSpendObservation): OwnerSpendStanding;
 export interface OwnerSpendReadInput {
     rails: ModelBrokerRailRegistry;

@@ -1,6 +1,6 @@
 import { buildUserSummary, isoMillis, toISODate, } from "./admin-shape.js";
-import { ownerSpendStanding, readOwnerSpendStanding } from "./model-broker/owner-spend-standing.js";
-import { operatorRailRegistry } from "./model-broker/rails.js";
+import { readOwnerSpendStanding, unavailableSpendStanding, } from "./model-broker/owner-spend-standing.js";
+import { OPERATOR_RAIL_ID } from "./model-broker/rails.js";
 import { userEntitlements } from "@octogee/shared/types/user-entitlements";
 import { isUserParkedVm } from "@octogee/shared/types/glm";
 import { placementReceiptDocId } from "@octogee/shared/types/placement-receipts";
@@ -235,19 +235,8 @@ function accountFor(accounts, uid) {
     return accounts.get(uid) ?? userAccountFromData(uid, {});
 }
 async function readUserSpend(directory, userRecord, account, onOwnerCredential, now) {
-    const modelAccess = userEntitlements().policy(account.planInputs, new Date(now)).modelAccess;
-    if (!directory.spend) {
-        return ownerSpendStanding(operatorRailRegistry(), {
-            profile: null,
-            modelAccess,
-            onOwnerCredential,
-            windowCostUsd: 0,
-            weekCostUsd: 0,
-            balanceUsd: null,
-            fundedLedger: null,
-            now,
-        });
-    }
+    if (!directory.spend)
+        return unavailableSpendStanding(OPERATOR_RAIL_ID, "no_usage_ledger");
     try {
         return await readOwnerSpendStanding({
             rails: directory.spend.rails,
@@ -255,15 +244,29 @@ async function readUserSpend(directory, userRecord, account, onOwnerCredential, 
             ownerUid: userRecord.uid,
             gatewayId: userRecord.gateway?.gatewayId ?? "",
             planInputs: account.planInputs,
-            modelAccess,
+            modelAccess: userEntitlements().policy(account.planInputs, new Date(now)).modelAccess,
             onOwnerCredential,
             now,
         });
     }
     catch (err) {
         directory.logger.warn("admin user spend standing read failed", { uid: userRecord.uid, err });
-        throw err;
+        return unavailableSpendStanding(directory.spend.rails.resolveOwnerProfile({ ...account.planInputs }, userRecord.uid, now)?.rail
+            ?? directory.spend.rails.defaultRailId, "read_failed");
     }
+}
+const SPEND_READ_CONCURRENCY = 16;
+async function mapWithConcurrency(items, limit, map) {
+    const results = new Array(items.length);
+    let next = 0;
+    const worker = async () => {
+        while (next < items.length) {
+            const index = next++;
+            results[index] = await map(items[index], index);
+        }
+    };
+    await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+    return results;
 }
 async function summarizeUser(directory, userRecord, { account, ownerCredentialActive, rollup }, now) {
     const spend = await readUserSpend(directory, userRecord, account, ownerCredentialActive, now);
@@ -279,11 +282,11 @@ async function summarizeUsers(directory, users) {
         directory.source.brokerRollups(uids),
         Promise.all(uids.map((uid) => directory.store.users.modelCredentials.get(uid))),
     ]);
-    return Promise.all(users.map((userRecord, index) => summarizeUser(directory, userRecord, {
+    return mapWithConcurrency(users, SPEND_READ_CONCURRENCY, (userRecord, index) => summarizeUser(directory, userRecord, {
         account: accountFor(accounts, userRecord.uid),
         ownerCredentialActive: credentials[index]?.active === true,
         rollup: rollups.get(userRecord.uid),
-    }, now)));
+    }, now));
 }
 function newestFirstWithUndatedLast(a, b) {
     if (a === null || b === null)
