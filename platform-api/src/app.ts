@@ -327,10 +327,10 @@ function clusterRouteOverrides(
   featurePolicy: FeaturePolicy,
   voiceCatalog: VoiceCatalog,
   product: ProductRuntime | undefined,
-  accounts: UserAccountReader,
-  userSpend: AdminUserSpendDeps,
+  admin: { accounts: UserAccountReader; userSpend: AdminUserSpendDeps },
   notifications?: ProductNotifications,
 ) {
+  const { accounts, userSpend } = admin;
   return {
     mmRestProxyHandler: createMmRestProxyHandler(platformStateStore, notifications),
     mattermostMintRoutes: createMattermostMintRoutes(platformStateStore),
@@ -567,8 +567,7 @@ export function createPlatformApp(opts: PlatformAppOptions = {}) {
     featurePolicy,
     voiceOpenAiApiKey ? createOpenAiVoiceCatalog(voiceOpenAiApiKey) : createVoiceCatalog(voiceRelayConfig, { log: voiceRelayLog }),
     product,
-    brokerRecords.accounts,
-    { rails: modelBrokerRails, usage: brokerRecords.usage },
+    { accounts: brokerRecords.accounts, userSpend: { rails: modelBrokerRails, usage: brokerRecords.usage } },
     opts.product?.notifications,
   ));
   mountRouteTable(app, product?.apiRoutes(productRouteDeps) ?? []);

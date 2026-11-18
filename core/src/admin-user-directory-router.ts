@@ -436,12 +436,16 @@ async function readUserSpend(
   }
 }
 
+interface UserSummaryInputs {
+  account: UserAccount;
+  ownerCredentialActive: boolean;
+  rollup: UntypedRecord | undefined;
+}
+
 async function summarizeUser(
   directory: UserDirectory,
   userRecord: PlatformUserRecord,
-  account: UserAccount,
-  ownerCredentialActive: boolean,
-  rollup: UntypedRecord | undefined,
+  { account, ownerCredentialActive, rollup }: UserSummaryInputs,
   now: number,
 ): Promise<UserSummary> {
   const spend = await readUserSpend(directory, userRecord, account, ownerCredentialActive, now);
@@ -461,14 +465,11 @@ async function summarizeUsers(
     Promise.all(uids.map((uid) => directory.store.users.modelCredentials.get(uid))),
   ]);
   return Promise.all(users.map((userRecord, index) =>
-    summarizeUser(
-      directory,
-      userRecord,
-      accountFor(accounts, userRecord.uid),
-      credentials[index]?.active === true,
-      rollups.get(userRecord.uid),
-      now,
-    )));
+    summarizeUser(directory, userRecord, {
+      account: accountFor(accounts, userRecord.uid),
+      ownerCredentialActive: credentials[index]?.active === true,
+      rollup: rollups.get(userRecord.uid),
+    }, now)));
 }
 
 function newestFirstWithUndatedLast(a: string | null, b: string | null): number {
@@ -754,7 +755,12 @@ router.get(
           readBrokerDailyUsage(source, uid, thirtyDaysAgo.getTime(), logger),
           source.brokerRollup(uid),
         ]);
-        const summary = await summarizeUser(directory, userRecord, account, userCredentialActive, brokerRollup, now);
+        const summary = await summarizeUser(
+          directory,
+          userRecord,
+          { account, ownerCredentialActive: userCredentialActive, rollup: brokerRollup },
+          now,
+        );
 
         const defaultAgentDm = userRecord.slug === null
           ? null

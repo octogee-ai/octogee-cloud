@@ -49,24 +49,26 @@ function bindingPercent(meter) {
         return meter.week.percentUsed;
     return 0;
 }
-export function ownerSpendStanding(rails, input) {
-    const { profile } = input;
-    const rail = profile?.rail ?? rails.defaultRailId;
-    const meter = ownerSpendMeter(input);
-    const metered = profile?.windowBudgets ? profile : null;
-    const { balanceVisible, ...throttle } = rails.rail(rail).throttle({
+function railThrottle(rails, rail, input) {
+    const metered = input.profile?.windowBudgets ? input.profile : null;
+    return rails.rail(rail).throttle({
         modelAccess: input.modelAccess,
         windowCostUsd: input.windowCostUsd,
         windowBudgetUsd: metered?.spendWindowUsd ?? UNMETERED_USD,
         weekCostUsd: input.weekCostUsd,
         weekBudgetUsd: metered?.spendWeekUsd ?? UNMETERED_USD,
         onOwnerCredential: input.onOwnerCredential,
-        houseFallback: profile?.houseFallback ?? true,
+        houseFallback: input.profile?.houseFallback ?? true,
         balanceUsd: input.balanceUsd ?? 0,
-        fundedBudget: profile?.fundedBudget ?? null,
+        fundedBudget: input.profile?.fundedBudget ?? null,
         fundedLedger: input.fundedLedger,
         now: input.now,
     });
+}
+export function ownerSpendStanding(rails, input) {
+    const rail = input.profile?.rail ?? rails.defaultRailId;
+    const meter = ownerSpendMeter(input);
+    const { balanceVisible, ...throttle } = railThrottle(rails, rail, input);
     return {
         rail,
         meter,

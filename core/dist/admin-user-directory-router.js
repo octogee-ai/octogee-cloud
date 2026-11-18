@@ -265,7 +265,7 @@ async function readUserSpend(directory, userRecord, account, onOwnerCredential, 
         throw err;
     }
 }
-async function summarizeUser(directory, userRecord, account, ownerCredentialActive, rollup, now) {
+async function summarizeUser(directory, userRecord, { account, ownerCredentialActive, rollup }, now) {
     const spend = await readUserSpend(directory, userRecord, account, ownerCredentialActive, now);
     return buildUserSummary(userRecord, account, ownerCredentialActive, { spend, rollup, now });
 }
@@ -279,7 +279,11 @@ async function summarizeUsers(directory, users) {
         directory.source.brokerRollups(uids),
         Promise.all(uids.map((uid) => directory.store.users.modelCredentials.get(uid))),
     ]);
-    return Promise.all(users.map((userRecord, index) => summarizeUser(directory, userRecord, accountFor(accounts, userRecord.uid), credentials[index]?.active === true, rollups.get(userRecord.uid), now)));
+    return Promise.all(users.map((userRecord, index) => summarizeUser(directory, userRecord, {
+        account: accountFor(accounts, userRecord.uid),
+        ownerCredentialActive: credentials[index]?.active === true,
+        rollup: rollups.get(userRecord.uid),
+    }, now)));
 }
 function newestFirstWithUndatedLast(a, b) {
     if (a === null || b === null)
@@ -516,7 +520,7 @@ export function addAdminUserDirectoryRoutes(router, deps) {
                 readBrokerDailyUsage(source, uid, thirtyDaysAgo.getTime(), logger),
                 source.brokerRollup(uid),
             ]);
-            const summary = await summarizeUser(directory, userRecord, account, userCredentialActive, brokerRollup, now);
+            const summary = await summarizeUser(directory, userRecord, { account, ownerCredentialActive: userCredentialActive, rollup: brokerRollup }, now);
             const defaultAgentDm = userRecord.slug === null
                 ? null
                 : await store.workspaces.channels.get({ workspaceSlug: userRecord.slug, projectSlug: null }, "coach-dm");
