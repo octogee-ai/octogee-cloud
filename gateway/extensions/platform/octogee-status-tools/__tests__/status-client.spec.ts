@@ -5,6 +5,8 @@ import {
   gatewayClassMismatchNote,
   StatusToolError,
   type AgentUsageStatus,
+  type SpendMeter,
+  type SpendStanding,
 } from "../status-client.js";
 
 function status(overrides: Partial<AgentUsageStatus> = {}): AgentUsageStatus {
@@ -137,6 +139,110 @@ describe("formatStatusText", () => {
     );
     expect(windowLocked).toContain("Throttle: BLOCKED — burst window spent, resumes at the next refill");
     expect(windowLocked).not.toContain("Throttle: none");
+  });
+});
+
+function spend(meter: SpendMeter, throttle: Partial<SpendStanding["throttle"]> = {}): SpendStanding {
+  return {
+    rail: "metered",
+    meter,
+    balanceUsd: null,
+    throttle: { degraded: false, blocked: false, reason: null, ...throttle },
+    needsAttention: false,
+  };
+}
+
+function meterText(standing: SpendStanding, overrides: Partial<AgentUsageStatus> = {}): string[] {
+  return formatStatusText(status({ spend: standing, ...overrides })).split("\n").slice(2);
+}
+
+describe("formatStatusText with a spend standing", () => {
+  const fundedBudget: SpendMeter = {
+    kind: "funded_budget",
+    usedUsd: 4.9,
+    availableUsd: 4.8,
+    hardCapUsd: 8,
+    percentUsed: 100,
+    nextIncreaseAt: "2026-11-18T13:00:00.000Z",
+    endsAt: "2026-11-24T12:00:00.000Z",
+  };
+
+  it("reads a funded budget against what is available now and names the rail's block reason", () => {
+    expect(meterText(spend(fundedBudget, { blocked: true, reason: "funded_budget_exhausted" }))).toEqual([
+      "Funded budget: $4.90 of $4.80 available now ($8.00 cap) · next increase 2026-11-18T13:00:00.000Z · ends 2026-11-24T12:00:00.000Z",
+      "Throttle: BLOCKED (funded_budget_exhausted)",
+    ]);
+  });
+
+  it("leaves out the next increase once the funded budget has reached its cap", () => {
+    expect(meterText(spend({ ...fundedBudget, availableUsd: 8, nextIncreaseAt: null }))[0]).toBe(
+      "Funded budget: $4.90 of $8.00 available now ($8.00 cap) · ends 2026-11-24T12:00:00.000Z",
+    );
+  });
+
+  it("puts the week ahead of the burst window", () => {
+    expect(meterText(spend({
+      kind: "spend_windows",
+      week: { usedUsd: 10, limitUsd: 20, percentUsed: 50, resetsAt: "2026-11-19T00:00:00.000Z" },
+      window: { usedUsd: 2, limitUsd: 2, percentUsed: 100, resetsAt: "2026-11-18T16:00:00.000Z" },
+    }, { degraded: true, reason: "window_exhausted" }))).toEqual([
+      "Week: 50% used, resets 2026-11-19T00:00:00.000Z",
+      "Burst window: 100% used, refills 2026-11-18T16:00:00.000Z",
+      "Throttle: window exhausted — degraded to the house model until refill",
+    ]);
+  });
+
+  it("shows a balance", () => {
+    expect(meterText(spend({ kind: "balance", balanceUsd: 3.5 }))).toEqual([
+      "Balance: $3.50",
+      "Throttle: none — full models available",
+    ]);
+  });
+
+  it("says when the funded budget cannot be read instead of showing a zero meter", () => {
+    expect(meterText(spend({ kind: "funded_budget_unavailable" }))).toEqual([
+      "Funded budget: cannot be read right now",
+      "Throttle: none — full models available",
+    ]);
+  });
+
+  it("says when spend cannot be read at all", () => {
+    expect(meterText(spend({ kind: "unavailable", cause: "read_failed" }))).toEqual([
+      "Spend: cannot be read right now",
+      "Throttle: none — full models available",
+    ]);
+  });
+
+  it.each(["owner_credential", "unmetered"] as const)("shows no meter for %s", (kind) => {
+    expect(meterText(spend({ kind }), { credential: { path: "byok_api_key", provider: "anthropic" } })).toEqual([
+      "Throttle: none — full models available",
+    ]);
+  });
+
+  it("keeps the standing out of the account line", () => {
+    const text = formatStatusText(status({ ...productFields, spend: spend({ kind: "unmetered" }) }));
+    expect(text.split("\n")[1]).toBe("Account: tier pro · effectiveTier pro · trialDaysRemaining 4");
+  });
+});
+
+describe("fetchAgentUsageStatus spend validation", () => {
+  function respond(body: unknown) {
+    return fetchAgentUsageStatus({
+      agentId: "octogee-x-coach",
+      brokerUrl: "http://broker.local",
+      tokenPath: "/token",
+      fetchImpl: (async () => new Response(JSON.stringify(body), { status: 200 })) as unknown as typeof fetch,
+      readTokenImpl: async () => "t",
+    });
+  }
+
+  it("accepts a response that carries a spend standing", async () => {
+    const body = status({ spend: spend({ kind: "unmetered" }) });
+    await expect(respond(body)).resolves.toEqual(body);
+  });
+
+  it("rejects a spend standing without a meter or throttle", async () => {
+    await expect(respond(status({ spend: { rail: "metered" } as never }))).rejects.toThrowError(StatusToolError);
   });
 });
 

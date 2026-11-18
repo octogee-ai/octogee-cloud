@@ -36,6 +36,7 @@ import {
   addAdminUserDirectoryRoutes,
   type AdminUserDirectorySource,
   type AdminUserProductDetail,
+  type AdminUserSpendDeps,
 } from "@octogee/core/admin-user-directory-router";
 import { addAdminLogsRoutes } from "@octogee/core/admin-logs-router";
 import { readAdminGatewayKubernetes } from "./admin-kubernetes-observer.js";
@@ -92,6 +93,7 @@ export interface HttpServerDeps {
   store: PlatformStateStore;
   accounts: UserAccountReader;
   userDirectory: AdminUserDirectorySource;
+  userSpend: AdminUserSpendDeps | null;
   identity: RequireAdminDeps["identity"];
   log: (msg: string) => void;
   provisionGatewayAuthSecret: (opts: {
@@ -356,6 +358,7 @@ export function createHttpServer(deps: HttpServerDeps): Express {
     store: deps.store,
     accounts: deps.accounts,
     source: deps.userDirectory,
+    spend: deps.userSpend,
     logger: adaptLogger(deps.log),
     productUserDetail: deps.productAdminUserDetail,
   });

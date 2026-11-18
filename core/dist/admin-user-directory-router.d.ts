@@ -1,18 +1,15 @@
 import { Router } from "express";
+import { type ModelBrokerRailRegistry } from "./model-broker/rails.js";
+import type { ModelBrokerUsageLedger } from "./model-broker/usage.js";
 import { type UserAccountReader } from "./user-account.js";
 import type { PlatformUserRecord } from "./platform-state/users.js";
 import type { PlatformStateStore, UntypedRecord } from "./platform-state/store.js";
-export interface BrokerLedgerRecords {
-    window: UntypedRecord | undefined;
-    week: UntypedRecord | undefined;
-    rollup: UntypedRecord | undefined;
-}
 export interface AdminUserDirectoryRecord {
     id: string;
     record: UntypedRecord;
 }
 export interface AdminUserDirectorySource {
-    brokerLedgers(uids: readonly string[], windowStartMs: number, weekStartMs: number): Promise<ReadonlyMap<string, BrokerLedgerRecords>>;
+    brokerRollups(uids: readonly string[]): Promise<ReadonlyMap<string, UntypedRecord | undefined>>;
     brokerWindows(uid: string, windowStartsMs: readonly number[]): Promise<UntypedRecord[]>;
     brokerEvents(uid: string, sinceMs: number, limit: number): Promise<UntypedRecord[]>;
     brokerEventCosts(uid: string, sinceMs: number, limit: number): Promise<UntypedRecord[]>;
@@ -69,11 +66,16 @@ export interface UserDirectoryRouterLogger {
     info: (msg: string, meta?: Record<string, unknown>) => void;
     warn: (msg: string, meta?: Record<string, unknown>) => void;
 }
+export interface AdminUserSpendDeps {
+    rails: ModelBrokerRailRegistry;
+    usage: ModelBrokerUsageLedger;
+}
 export type AdminUserProductDetail = (uid: string) => Promise<Readonly<Record<string, unknown>>>;
 export interface AdminUserDirectoryRouterDeps {
     store: PlatformStateStore;
     accounts: UserAccountReader;
     source: AdminUserDirectorySource;
+    spend: AdminUserSpendDeps | null;
     logger: UserDirectoryRouterLogger;
     productUserDetail?: AdminUserProductDetail | undefined;
 }

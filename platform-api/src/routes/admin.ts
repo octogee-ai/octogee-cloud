@@ -14,6 +14,7 @@ import {
   noAdminUserDirectorySource,
   type AdminUserDirectorySource,
   type AdminUserProductDetail,
+  type AdminUserSpendDeps,
 } from "@octogee/core/admin-user-directory-router";
 import type { UserAccountReader } from "@octogee/core/user-account";
 import { platformStateUserAccountReader } from "@octogee/core/platform-state-user-accounts";
@@ -130,6 +131,7 @@ export interface AdminProductHooks {
   suspendAuthUser?: AuthUserSuspension;
   userDetail?: AdminUserProductDetail;
   userDirectory?: AdminUserDirectorySource;
+  userSpend?: AdminUserSpendDeps;
   addAdminRoutes?: ProductAdminRoutes;
   platformConfigFields?: () => Record<string, unknown>;
 }
@@ -147,6 +149,7 @@ export function createAdminRoutes(product: AdminProductHooks = {}): Router {
     store: platformStateStore,
     accounts,
     source: product.userDirectory ?? noAdminUserDirectorySource,
+    spend: product.userSpend ?? null,
     logger,
     productUserDetail: product.userDetail,
   });

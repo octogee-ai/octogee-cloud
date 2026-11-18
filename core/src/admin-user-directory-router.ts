@@ -9,9 +9,15 @@ import {
   buildUserSummary,
   isoMillis,
   toISODate,
-  type BrokerUserUsage,
   type UserSummary,
 } from "./admin-shape.js";
+import {
+  readOwnerSpendStanding,
+  unavailableSpendStanding,
+  type OwnerSpendStanding,
+} from "./model-broker/owner-spend-standing.js";
+import { OPERATOR_RAIL_ID, type ModelBrokerRailRegistry } from "./model-broker/rails.js";
+import type { ModelBrokerUsageLedger } from "./model-broker/usage.js";
 import { userEntitlements } from "@octogee/shared/types/user-entitlements";
 import { isUserParkedVm } from "@octogee/shared/types/glm";
 import { placementReceiptDocId, type PlacementReceipt } from "@octogee/shared/types/placement-receipts";
@@ -25,7 +31,7 @@ import { MissingRecordError } from "./platform-state/errors.js";
 import type { AnonymousOperationalArchive } from "./platform-state/jobs.js";
 import type { PlatformStateStore, UntypedRecord } from "./platform-state/store.js";
 import { BROKER_USAGE_SERIES_READ_LIMIT, brokerUsageSeries } from "./broker-usage-series.js";
-import { usageWindowStartMs, weekWindowStartMs } from "@octogee/shared/types/model-broker-usage";
+import { usageWindowStartMs } from "@octogee/shared/types/model-broker-usage";
 import {
   anonymousOperationalEnvironment,
   anonymousOperationalGatewayClass,
@@ -83,19 +89,13 @@ function projectAnonymousArchive(id: string, data: Record<string, unknown>) {
   };
 }
 
-export interface BrokerLedgerRecords {
-  window: UntypedRecord | undefined;
-  week: UntypedRecord | undefined;
-  rollup: UntypedRecord | undefined;
-}
-
 export interface AdminUserDirectoryRecord {
   id: string;
   record: UntypedRecord;
 }
 
 export interface AdminUserDirectorySource {
-  brokerLedgers(uids: readonly string[], windowStartMs: number, weekStartMs: number): Promise<ReadonlyMap<string, BrokerLedgerRecords>>;
+  brokerRollups(uids: readonly string[]): Promise<ReadonlyMap<string, UntypedRecord | undefined>>;
   brokerWindows(uid: string, windowStartsMs: readonly number[]): Promise<UntypedRecord[]>;
   brokerEvents(uid: string, sinceMs: number, limit: number): Promise<UntypedRecord[]>;
   brokerEventCosts(uid: string, sinceMs: number, limit: number): Promise<UntypedRecord[]>;
@@ -108,7 +108,7 @@ export interface AdminUserDirectorySource {
 }
 
 export const noAdminUserDirectorySource: AdminUserDirectorySource = {
-  brokerLedgers: async () => new Map(),
+  brokerRollups: async () => new Map(),
   brokerWindows: async () => [],
   brokerEvents: async () => [],
   brokerEventCosts: async () => [],
@@ -119,32 +119,6 @@ export const noAdminUserDirectorySource: AdminUserDirectorySource = {
   workspaceModelUsage: async () => [],
   adminActions: async () => [],
 };
-
-// Admin USD figures come exclusively from the broker ledger: the current 4h
-// window + week ledger + the all-time rollup per user.
-async function readBrokerUserUsage(
-  source: AdminUserDirectorySource,
-  uids: string[],
-  now: number,
-): Promise<Map<string, BrokerUserUsage>> {
-  const usage = new Map<string, BrokerUserUsage>();
-  if (uids.length === 0) return usage;
-  const ledgers = await source.brokerLedgers(uids, usageWindowStartMs(now), weekWindowStartMs(now));
-  uids.forEach((uid) => {
-    const ledger = ledgers.get(uid);
-    const windowData = ledger?.window ?? {};
-    const weekData = ledger?.week ?? {};
-    const rollupData = ledger?.rollup ?? {};
-    usage.set(uid, {
-      windowCostUsd: financeNumber(windowData.chargeUsd ?? windowData.costUsd),
-      weekCostUsd: financeNumber(weekData.chargeUsd ?? weekData.costUsd),
-      totalCostUsd: financeNumber(rollupData.costUsd),
-      totalTokens: financeNumber(rollupData.totalTokens),
-      now,
-    });
-  });
-  return usage;
-}
 
 export interface BrokerDailyUsage {
   date: string;
@@ -312,12 +286,18 @@ export interface UserDirectoryRouterLogger {
   warn: (msg: string, meta?: Record<string, unknown>) => void;
 }
 
+export interface AdminUserSpendDeps {
+  rails: ModelBrokerRailRegistry;
+  usage: ModelBrokerUsageLedger;
+}
+
 export type AdminUserProductDetail = (uid: string) => Promise<Readonly<Record<string, unknown>>>;
 
 export interface AdminUserDirectoryRouterDeps {
   store: PlatformStateStore;
   accounts: UserAccountReader;
   source: AdminUserDirectorySource;
+  spend: AdminUserSpendDeps | null;
   logger: UserDirectoryRouterLogger;
   productUserDetail?: AdminUserProductDetail | undefined;
 }
@@ -369,6 +349,10 @@ function adminModelCredential(credential: ModelCredentialRecord | null): AdminUs
 }
 
 
+function spendThrottled(spend: OwnerSpendStanding): boolean {
+  return spend.throttle.degraded || spend.throttle.blocked;
+}
+
 function applyUserFilters(
   items: UserSummary[],
   f: UserListFilters,
@@ -383,10 +367,10 @@ function applyUserFilters(
         c.username.toLowerCase().includes(q),
     );
   }
-  if (f.throttleFilter === "degraded") {
-    result = result.filter((c) => c.degraded);
+  if (f.throttleFilter === "throttled") {
+    result = result.filter((c) => spendThrottled(c.spend));
   } else if (f.throttleFilter === "ok") {
-    result = result.filter((c) => !c.degraded);
+    result = result.filter((c) => !spendThrottled(c.spend));
   }
   if (f.byotFilter !== "all") {
     result = result.filter((c) => c.byotActive === (f.byotFilter === "on"));
@@ -411,29 +395,93 @@ interface UserDirectory {
   source: AdminUserDirectorySource;
   store: PlatformStateStore;
   accounts: UserAccountReader;
+  spend: AdminUserSpendDeps | null;
+  logger: UserDirectoryRouterLogger;
 }
 
 function accountFor(accounts: ReadonlyMap<string, UserAccount>, uid: string): UserAccount {
   return accounts.get(uid) ?? userAccountFromData(uid, {});
 }
 
+async function readUserSpend(
+  directory: UserDirectory,
+  userRecord: PlatformUserRecord,
+  account: UserAccount,
+  onOwnerCredential: boolean,
+  now: number,
+): Promise<OwnerSpendStanding> {
+  if (!directory.spend) return unavailableSpendStanding(OPERATOR_RAIL_ID, "no_usage_ledger");
+  try {
+    return await readOwnerSpendStanding({
+      rails: directory.spend.rails,
+      usage: directory.spend.usage,
+      ownerUid: userRecord.uid,
+      gatewayId: userRecord.gateway?.gatewayId ?? "",
+      planInputs: account.planInputs,
+      modelAccess: userEntitlements().policy(account.planInputs, new Date(now)).modelAccess,
+      onOwnerCredential,
+      now,
+    });
+  } catch (err) {
+    directory.logger.warn("admin user spend standing read failed", { uid: userRecord.uid, err });
+    return unavailableSpendStanding(directory.spend.rails.defaultRailId, "read_failed");
+  }
+}
+
+const SPEND_READ_CONCURRENCY = 16;
+const THROTTLE_FILTERS = new Set(["all", "throttled", "ok"]);
+
+async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  limit: number,
+  map: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await map(items[index]!, index);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
+interface UserSummaryInputs {
+  account: UserAccount;
+  ownerCredentialActive: boolean;
+  rollup: UntypedRecord | undefined;
+}
+
+async function summarizeUser(
+  directory: UserDirectory,
+  userRecord: PlatformUserRecord,
+  { account, ownerCredentialActive, rollup }: UserSummaryInputs,
+  now: number,
+): Promise<UserSummary> {
+  const spend = await readUserSpend(directory, userRecord, account, ownerCredentialActive, now);
+  return buildUserSummary(userRecord, account, ownerCredentialActive, { spend, rollup, now });
+}
+
 async function summarizeUsers(
   directory: UserDirectory,
   users: readonly PlatformUserRecord[],
 ): Promise<UserSummary[]> {
+  if (users.length === 0) return [];
+  const now = Date.now();
   const uids = users.map((userRecord) => userRecord.uid);
-  const [accounts, brokerUsage, credentials] = await Promise.all([
+  const [accounts, rollups, credentials] = await Promise.all([
     directory.accounts.getMany(uids),
-    readBrokerUserUsage(directory.source, uids, Date.now()),
+    directory.source.brokerRollups(uids),
     Promise.all(uids.map((uid) => directory.store.users.modelCredentials.get(uid))),
   ]);
-  return users.map((userRecord, index) =>
-    buildUserSummary(
-      userRecord,
-      accountFor(accounts, userRecord.uid),
-      credentials[index]?.active === true,
-      brokerUsage.get(userRecord.uid) ?? {},
-    ));
+  return mapWithConcurrency(users, SPEND_READ_CONCURRENCY, (userRecord, index) =>
+    summarizeUser(directory, userRecord, {
+      account: accountFor(accounts, userRecord.uid),
+      ownerCredentialActive: credentials[index]?.active === true,
+      rollup: rollups.get(userRecord.uid),
+    }, now));
 }
 
 function newestFirstWithUndatedLast(a: string | null, b: string | null): number {
@@ -567,7 +615,7 @@ export function addAdminUserDirectoryRoutes(
   deps: AdminUserDirectoryRouterDeps,
 ): Router {
   const { accounts, source, store, logger } = deps;
-  const directory: UserDirectory = { source, store, accounts };
+  const directory: UserDirectory = { source, store, accounts, spend: deps.spend, logger };
 
   router.get(
     "/user-archives",
@@ -633,9 +681,14 @@ router.get(
         const cursor = (req.query.cursor as string) || null;
         const sort = ((req.query.sort as string) ?? "createdAt") as
           | "createdAt" | "lastActive" | "percentUsed" | "revenue";
+        const throttleFilter = (req.query.throttle as string) ?? "all";
+        if (!THROTTLE_FILTERS.has(throttleFilter)) {
+          res.status(400).json({ error: "Unknown throttle filter" });
+          return;
+        }
         const filters: UserListFilters = {
           search: ((req.query.search as string) ?? "").trim().toLowerCase(),
-          throttleFilter: (req.query.throttle as string) ?? "all",
+          throttleFilter,
           byotFilter: (req.query.byot as string) ?? "all",
         };
 
@@ -675,7 +728,7 @@ router.get(
           totalUsers++;
           if (summary.provisioningStatus !== "complete") incompleteProvisioning++;
           totalCostUsd += summary.costUsd;
-          if (summary.degraded || summary.percentUsed > 80) needsAttention++;
+          if (summary.spend.needsAttention) needsAttention++;
         }
 
         res.json({
@@ -715,12 +768,16 @@ router.get(
         const usage = account.usage;
 
         const now = Date.now();
-        const [brokerUsage, brokerDaily, brokerRollup] = await Promise.all([
-          readBrokerUserUsage(source, [uid], now),
+        const [brokerDaily, brokerRollup] = await Promise.all([
           readBrokerDailyUsage(source, uid, thirtyDaysAgo.getTime(), logger),
           source.brokerRollup(uid),
         ]);
-        const summary = buildUserSummary(userRecord, account, userCredentialActive, brokerUsage.get(uid) ?? { now });
+        const summary = await summarizeUser(
+          directory,
+          userRecord,
+          { account, ownerCredentialActive: userCredentialActive, rollup: brokerRollup },
+          now,
+        );
 
         const defaultAgentDm = userRecord.slug === null
           ? null
@@ -769,20 +826,12 @@ router.get(
           summary,
           accountLifecycle: userRecord.accountLifecycle ?? { status: "active" },
           usage: {
-            totalTokensUsed: usage.totalTokensUsed || 0,
             brokerTotalTokens: summary.brokerTotalTokens,
+            requestCount: summary.requestCount,
             costUsd: summary.costUsd,
-            nextRefillAt: summary.nextRefillAt,
-            degraded: summary.degraded,
-            percentUsed: summary.percentUsed,
-            interactionCount: usage.interactionCount || 0,
-            lastUpdated: toISODate(usage.lastUpdated),
-            windowCostUsd: summary.windowCostUsd,
-            windowBudgetUsd: summary.windowBudgetUsd,
-            weekCostUsd: summary.weekCostUsd,
-            weekBudgetUsd: summary.weekBudgetUsd,
-            weekPercentUsed: summary.weekPercentUsed,
-            weekResetAt: summary.weekResetAt,
+            lastActive: summary.lastActive,
+            selfReportedTokens: financeNumber(usage.totalTokensUsed),
+            selfReportedInteractions: financeNumber(usage.interactionCount),
           },
           modelCredential,
           byot: { active: userCredentialActive },

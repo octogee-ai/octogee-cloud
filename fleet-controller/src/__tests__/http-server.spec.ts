@@ -3,6 +3,8 @@ import type { Express } from "express";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { admitAdminDryRunMarker, isAdminDryRun } from "@octogee/core/admin-dry-run";
 import { noAdminUserDirectorySource } from "@octogee/core/admin-user-directory-router";
+import { operatorRailRegistry } from "@octogee/core/model-broker/rails";
+import { InMemoryModelBrokerUsageStore } from "@octogee/core/model-broker/usage";
 import { userAccountFromData, type UserAccountReader } from "@octogee/core/user-account";
 import { createLogger } from "../lib/logger.js";
 import type { GatewayPodDiagnostics } from "../lib/kube-ops.js";
@@ -307,6 +309,7 @@ function buildDeps(
   return {
     gatewayGitKeys: null,
     userDirectory: noAdminUserDirectorySource,
+    userSpend: { rails: operatorRailRegistry(), usage: new InMemoryModelBrokerUsageStore() },
     store: storeWithWatch(createJournalFixtureStore({
       get: (id) => documents.get(`glmOperations/${id}`),
       set: (id, data) => documents.set(`glmOperations/${id}`, data),

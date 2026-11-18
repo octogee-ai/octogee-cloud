@@ -3,6 +3,8 @@ import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { addAdminUserDirectoryRoutes, noAdminUserDirectorySource } from "./admin-user-directory-router.js";
 import { addAdminUserRoutes } from "./admin-user-router.js";
+import { operatorRailRegistry } from "./model-broker/rails.js";
+import { InMemoryModelBrokerUsageStore } from "./model-broker/usage.js";
 import { createHarness, dsn, type PlatformStateHarness } from "./platform-state/postgres/__tests__/fixtures/harness.js";
 import { platformStateUserAccountReader, platformStateUserAccounts } from "./platform-state-user-accounts.js";
 
@@ -17,6 +19,7 @@ function adminApp(harness: PlatformStateHarness) {
     store: harness.store,
     accounts: platformStateUserAccountReader(harness.store),
     source: noAdminUserDirectorySource,
+    spend: { rails: operatorRailRegistry(), usage: new InMemoryModelBrokerUsageStore() },
     logger: { info: () => undefined, warn: () => undefined },
   });
   const app = express();

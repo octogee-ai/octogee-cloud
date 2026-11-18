@@ -19,9 +19,8 @@ import type {
   UserRepositories,
 } from "@octogee/core/platform-state";
 import { readSubscriptionIntegration } from "@octogee/core/model-credential-records";
-import { userEntitlements, type UserPolicy } from "@octogee/shared/types/user-entitlements";
+import { userEntitlements } from "@octogee/shared/types/user-entitlements";
 import {
-  spendWindowPercentUsed,
   MODEL_BROKER_USAGE_WINDOW_MS,
   MODEL_BROKER_WEEK_WINDOW_MS,
   usageWindowStartMs,
@@ -37,6 +36,7 @@ import {
   resolveOwnerModelBrokerGrant,
 } from "@octogee/core/model-broker/limits";
 import { operatorRailRegistry, type ModelBrokerRailRegistry } from "@octogee/core/model-broker/rails";
+import { readOwnerSpendStanding, type OwnerSpendStanding } from "@octogee/core/model-broker/owner-spend-standing";
 import {
   agentModelTokenIssueKey,
   createAgentModelTokenIssueCoordinator,
@@ -174,42 +174,33 @@ function credentialPathFor(
     : { path: "byosub_suppressed_customer", provider };
 }
 
-function deriveSpendStatus(input: {
-  policy: UserPolicy;
-  railId: string;
-  rails: ModelBrokerRailRegistry;
-  credentialPath: string;
-  windowCostUsd: number;
-  weekCostUsd: number;
-  balanceUsd: number;
-}) {
-  const { policy, windowCostUsd, weekCostUsd, balanceUsd } = input;
-  const onOwnerCredential =
-    input.credentialPath === "byok_api_key" || input.credentialPath === "byosub";
-  const throttle = input.rails.rail(input.railId).throttle({
-    modelAccess: policy.modelAccess,
-    windowCostUsd,
-    windowBudgetUsd: policy.spendWindowUsd,
-    weekCostUsd,
-    weekBudgetUsd: policy.spendWeekUsd,
-    onOwnerCredential,
-    houseFallback: policy.houseFallback,
-    balanceUsd,
-  });
-  return {
-    windowCostUsd,
-    weekCostUsd,
-    onOwnerCredential,
-    balanceUsd,
-    throttle,
-  };
-}
-
 interface UsageReaders {
   store: PlatformStateRepositories;
   accounts: UserAccountReader;
   usage: ModelBrokerUsageLedger;
   rails: ModelBrokerRailRegistry;
+}
+
+function legacyMeterFields(standing: OwnerSpendStanding, nowMs: number) {
+  const weekResetAt = new Date(weekWindowStartMs(nowMs) + MODEL_BROKER_WEEK_WINDOW_MS).toISOString();
+  const nextRefillAt = new Date(usageWindowStartMs(nowMs) + MODEL_BROKER_USAGE_WINDOW_MS).toISOString();
+  const { meter } = standing;
+  if (meter.kind === "spend_windows") {
+    return {
+      week: { percentUsed: meter.week.percentUsed, resetAt: meter.week.resetsAt },
+      window: { percentUsed: meter.window.percentUsed, nextRefillAt: meter.window.resetsAt },
+    };
+  }
+  if (meter.kind === "funded_budget") {
+    return {
+      week: { percentUsed: meter.percentUsed, resetAt: meter.endsAt },
+      window: { percentUsed: meter.percentUsed, nextRefillAt: meter.nextIncreaseAt ?? meter.endsAt },
+    };
+  }
+  return {
+    week: { percentUsed: 0, resetAt: weekResetAt },
+    window: { percentUsed: 0, nextRefillAt },
+  };
 }
 
 async function agentUsageStatusPayload(
@@ -218,61 +209,36 @@ async function agentUsageStatusPayload(
   assigned: { uid: string; account: UserAccount },
   nowMs: number,
 ): Promise<Record<string, unknown>> {
-  const windowStartMs = usageWindowStartMs(nowMs);
-  const weekStartMs = weekWindowStartMs(nowMs);
-  const balanceLedger = rails.balanceLedger(assigned.uid);
-  const owner = { gatewayId, ownerUid: assigned.uid, now: nowMs };
-  const [authorization, ownerCredential, window, week, balanceUsd] =
-    await Promise.all([
-      readGatewayAuthorizationInStore(store, gatewayId),
-      store.users.modelCredentials.get(assigned.uid),
-      usage.readWindowUsage(owner),
-      usage.readWeekUsage(owner),
-      balanceLedger ? usage.readBalance(balanceLedger) : 0,
-    ]);
-
-  const policy = userEntitlements().policy(assigned.account.planInputs, new Date(nowMs));
-  const railId = rails.resolveOwnerProfile({ ...assigned.account.planInputs }, assigned.uid, nowMs)?.rail ?? rails.defaultRailId;
+  const [authorization, ownerCredential] = await Promise.all([
+    readGatewayAuthorizationInStore(store, gatewayId),
+    store.users.modelCredentials.get(assigned.uid),
+  ]);
   if (!authorization) {
     throw new Error(
       `durable root config unavailable for gateways/${gatewayId}`,
     );
   }
   const credential = credentialPathFor(ownerCredential, authorization.config.gatewayClass);
-  const spend = deriveSpendStatus({
-    policy,
-    railId,
+  const spend = await readOwnerSpendStanding({
     rails,
-    credentialPath: credential.path,
-    windowCostUsd: window.chargeUsd,
-    weekCostUsd: week.chargeUsd,
-    balanceUsd,
+    usage,
+    ownerUid: assigned.uid,
+    gatewayId,
+    planInputs: assigned.account.planInputs,
+    modelAccess: userEntitlements().policy(assigned.account.planInputs, new Date(nowMs)).modelAccess,
+    onOwnerCredential: credential.path === "byok_api_key" || credential.path === "byosub",
+    now: nowMs,
   });
+  const legacy = legacyMeterFields(spend, nowMs);
 
   return {
     ...userEntitlements().productProjection?.agentUsageStatus(assigned.account.planInputs, new Date(nowMs)),
     gatewayClass: authorization.config.gatewayClass,
-    week: {
-      percentUsed: spend.onOwnerCredential
-        ? 0
-        : spendWindowPercentUsed(spend.weekCostUsd, policy.spendWeekUsd),
-      resetAt: new Date(
-        weekStartMs + MODEL_BROKER_WEEK_WINDOW_MS,
-      ).toISOString(),
-    },
-    window: {
-      percentUsed: spend.onOwnerCredential
-        ? 0
-        : spendWindowPercentUsed(spend.windowCostUsd, policy.spendWindowUsd),
-      nextRefillAt: new Date(
-        windowStartMs + MODEL_BROKER_USAGE_WINDOW_MS,
-      ).toISOString(),
-      degraded: spend.throttle.degraded,
-      blocked: spend.throttle.blocked,
-      reason: spend.throttle.reason,
-    },
-    credits: spend.throttle.balanceVisible ? { balanceUsd: spend.balanceUsd } : null,
+    week: legacy.week,
+    window: { ...legacy.window, ...spend.throttle },
+    credits: spend.balanceUsd === null ? null : { balanceUsd: spend.balanceUsd },
     credential,
+    spend,
   };
 }
 
