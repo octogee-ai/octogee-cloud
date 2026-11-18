@@ -49,7 +49,8 @@ export type SpendMeter =
   | { kind: "funded_budget_unavailable" }
   | { kind: "spend_windows"; week: SpendReading; window: SpendReading }
   | { kind: "balance"; balanceUsd: number }
-  | { kind: "unmetered" };
+  | { kind: "unmetered" }
+  | { kind: "unavailable"; cause: string };
 
 export interface SpendThrottle {
   degraded: boolean;
@@ -188,6 +189,8 @@ function meterLines(meter: SpendMeter): string[] {
       return [`Balance: ${usd(meter.balanceUsd)}`];
     case "funded_budget_unavailable":
       return ["Funded budget: cannot be read right now"];
+    case "unavailable":
+      return ["Spend: cannot be read right now"];
     case "owner_credential":
     case "unmetered":
       return [];

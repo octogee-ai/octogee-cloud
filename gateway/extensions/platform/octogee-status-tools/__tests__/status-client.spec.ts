@@ -206,6 +206,13 @@ describe("formatStatusText with a spend standing", () => {
     ]);
   });
 
+  it("says when spend cannot be read at all", () => {
+    expect(meterText(spend({ kind: "unavailable", cause: "read_failed" }))).toEqual([
+      "Spend: cannot be read right now",
+      "Throttle: none — full models available",
+    ]);
+  });
+
   it.each(["owner_credential", "unmetered"] as const)("shows no meter for %s", (kind) => {
     expect(meterText(spend({ kind }), { credential: { path: "byok_api_key", provider: "anthropic" } })).toEqual([
       "Throttle: none — full models available",
