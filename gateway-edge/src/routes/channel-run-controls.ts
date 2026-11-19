@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, type Response } from 'express';
 import { authenticatedRequestLimit, authenticationFailureLimit } from '@octogee/core/http/authenticated-request-limit';
 import { requireAuthenticatedUid } from '@octogee/core/http/auth';
 import { logger } from '@octogee/core/http/logging';
@@ -8,9 +8,12 @@ import { isMattermostPostId, parseChannelScopedMattermostSessionRoute } from '@o
 import { createOpenClawRuntimeBroker, runtimeBrokerBaseUrlFromEnv } from '../chat-proxy/openclaw/runtime-broker.js';
 
 type RunBroker = ReturnType<typeof createOpenClawRuntimeBroker>;
+type RunControlBroker = Pick<RunBroker, 'getChannelRunControlAccess'>;
+type RunAccess = NonNullable<Awaited<ReturnType<NonNullable<RunBroker['getChannelRunControlAccess']>>>>;
+type NativeRpc = ReturnType<typeof attachUpstreamRpcClient>;
 
 export function createChannelRunControlsRouter(deps: {
-  broker: Pick<RunBroker, 'getChannelRunControlAccess'>;
+  broker: RunControlBroker;
   open?: typeof openAuthenticatedUpstream;
 }) {
   const router = Router({ mergeParams: true });
@@ -22,45 +25,30 @@ export function createChannelRunControlsRouter(deps: {
       return;
     }
     const gatewayId = process.env.GATEWAY_ID;
-    const { channelId, runId } = req.query;
+    const { channelId } = req.query;
     const stopping = req.method === 'POST';
+    const requestedRunId = parseRequestedRunId(req.query.runId, stopping);
     if (!gatewayId || req.params.gatewayId !== gatewayId || !isMattermostPostId(channelId)
-      || ((stopping || runId !== undefined) && !isRunId(runId))) {
+      || requestedRunId === null) {
       res.status(400).json({ error: 'A channel and its active run are required.' });
       return;
     }
     res.set('Cache-Control', 'no-store');
     try {
-      const access = await deps.broker.getChannelRunControlAccess?.(req.uid!, channelId);
-      const route = parseChannelScopedMattermostSessionRoute(access?.sessionKey);
-      if (!access || access.gatewayId !== gatewayId || route?.primaryChannelId !== channelId || route.agentId !== access.expectedAgentId) {
+      const access = await scopedRunAccess(deps.broker, gatewayId, channelId, req.uid!);
+      if (!access) {
         res.sendStatus(403);
         return;
       }
       const upstream = await open({ gatewayId, url: process.env.OPENCLAW_GATEWAY_URL ?? 'http://127.0.0.1:18789', timeoutMs: 5000 });
       const rpc = attachUpstreamRpcClient(upstream);
       try {
-        const requestedRunId = isRunId(runId) ? runId : undefined;
-        const origin = requestedRunId && access.isOwner ? undefined : await readRunOrigin(rpc, access.sessionKey, requestedRunId);
-        const currentRunId = requestedRunId ?? origin?.runId
-          ?? (access.isOwner ? await describeSingleActiveRun(rpc, access.sessionKey, access.expectedAgentId) : undefined);
-        const allowed = currentRunId !== undefined
-          && (access.isOwner || origin?.starterMmUserId === access.callerMmUserId);
+        const allowedRunId = await resolveAllowedRun(rpc, access, requestedRunId);
         if (!stopping) {
-          res.json(allowed ? { allowed, runId: currentRunId } : { allowed });
+          res.json(allowedRunId ? { allowed: true, runId: allowedRunId } : { allowed: false });
           return;
         }
-        if (!allowed) {
-          res.sendStatus(403);
-          return;
-        }
-        const stopped = await rpc.call('sessions.abort', { key: access.sessionKey, agentId: access.expectedAgentId, runId: currentRunId });
-        const result = stopped.ok ? stopped.result as { status?: string; abortedRunId?: string | null } : undefined;
-        if (result?.status !== 'no-active-run' && !(result?.status === 'aborted' && result.abortedRunId === currentRunId)) {
-          res.status(409).json({ error: 'The Gateway could not stop that run.' });
-          return;
-        }
-        res.json({ status: result.status });
+        await stopAllowedRun(rpc, access, allowedRunId, res);
       } finally {
         rpc.dispose();
         upstream.close();
@@ -77,14 +65,49 @@ function isRunId(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0 && value.length <= 256;
 }
 
-async function describeSingleActiveRun(rpc: ReturnType<typeof attachUpstreamRpcClient>, key: string, agentId: string) {
+function parseRequestedRunId(value: unknown, required: boolean) {
+  if (isRunId(value)) return value;
+  return required || value !== undefined ? null : undefined;
+}
+
+async function scopedRunAccess(broker: RunControlBroker, gatewayId: string, channelId: string, uid: string) {
+  const access = await broker.getChannelRunControlAccess?.(uid, channelId);
+  if (!access || access.gatewayId !== gatewayId) return undefined;
+  const route = parseChannelScopedMattermostSessionRoute(access.sessionKey);
+  return route?.primaryChannelId === channelId && route.agentId === access.expectedAgentId ? access : undefined;
+}
+
+async function resolveAllowedRun(rpc: NativeRpc, access: RunAccess, requestedRunId: string | undefined) {
+  if (requestedRunId && access.isOwner) return requestedRunId;
+  const origin = await readRunOrigin(rpc, access.sessionKey, requestedRunId);
+  if (access.isOwner) return origin?.runId ?? await describeSingleActiveRun(rpc, access.sessionKey, access.expectedAgentId);
+  return origin?.starterMmUserId === access.callerMmUserId ? requestedRunId ?? origin?.runId : undefined;
+}
+
+async function stopAllowedRun(rpc: NativeRpc, access: RunAccess, runId: string | undefined, res: Response) {
+  if (!runId) {
+    res.sendStatus(403);
+    return;
+  }
+  const stopped = await rpc.call<{ status?: string; abortedRunId?: string | null }>('sessions.abort', {
+    key: access.sessionKey, agentId: access.expectedAgentId, runId,
+  });
+  const result = stopped.ok ? stopped.result : undefined;
+  if (result?.status !== 'no-active-run' && !(result?.status === 'aborted' && result.abortedRunId === runId)) {
+    res.status(409).json({ error: 'The Gateway could not stop that run.' });
+    return;
+  }
+  res.json({ status: result.status });
+}
+
+async function describeSingleActiveRun(rpc: NativeRpc, key: string, agentId: string) {
   const result = await rpc.call<{ session: { activeRunIds?: unknown } | null }>('sessions.describe', { key, agentId });
   if (!result.ok) throw new Error('Could not read the active session');
   const ids = result.result?.session?.activeRunIds;
   return Array.isArray(ids) && ids.length === 1 && isRunId(ids[0]) ? ids[0] : undefined;
 }
 
-async function readRunOrigin(rpc: ReturnType<typeof attachUpstreamRpcClient>, sessionKey: string, runId: string | undefined) {
+async function readRunOrigin(rpc: NativeRpc, sessionKey: string, runId: string | undefined) {
   const origin = await rpc.call<{ runId?: string; starterMmUserId: string | null }>('octogee.activity.channelRunOrigin', {
     sessionKey, ...(runId ? { runId } : {}),
   });

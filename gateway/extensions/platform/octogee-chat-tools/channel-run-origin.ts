@@ -6,6 +6,20 @@ const CHANNEL_SESSION = /^agent:[^:]+:mattermost:(?:channel|group):([a-z0-9]{26}
 const MATTERMOST_USER = /^[a-z0-9]{26}$/u;
 const TERMINAL = new Set(["end", "error", "abort"]);
 
+function validRunId(runId: unknown): runId is string {
+  return typeof runId === "string" && runId.length > 0 && runId.length <= 256;
+}
+
+function parseRunInput(params: Record<string, unknown>) {
+  const { sessionKey, runId, senderId, mode } = params;
+  if (typeof sessionKey !== "string" || !validRunId(runId) ||
+    typeof senderId !== "string" || !MATTERMOST_USER.test(senderId) || (mode !== "queue" && mode !== "steer")) {
+    return null;
+  }
+  const channelId = CHANNEL_SESSION.exec(sessionKey)?.[1];
+  return channelId ? { sessionKey, channelId, runId, senderId, mode } : null;
+}
+
 export function registerChannelRunOrigin(
   api: Pick<OpenClawPluginApi, "registrationMode" | "registerService" | "registerGatewayMethod"> & {
     runtime: Pick<OpenClawPluginApi["runtime"], "events">;
@@ -35,12 +49,13 @@ export function registerChannelRunOrigin(
   api.registerGatewayMethod(METHOD, ({ params, respond }) => {
     const { sessionKey, runId } = params;
     if (typeof sessionKey !== "string" || !CHANNEL_SESSION.test(sessionKey) ||
-      (runId !== undefined && (typeof runId !== "string" || !runId || runId.length > 256))) {
+      (runId !== undefined && !validRunId(runId))) {
       respond(false, undefined, { code: "INVALID_REQUEST", message: "A valid channel session and run are required" });
       return;
     }
     const runs = origins.get(sessionKey);
-    const selected = typeof runId === "string" ? runId : runs?.size === 1 ? runs.keys().next().value : undefined;
+    const onlyRunId = runs?.size === 1 ? runs.keys().next().value : undefined;
+    const selected = runId ?? onlyRunId;
     const starterMmUserId = selected ? runs?.get(selected) : undefined;
     respond(true, starterMmUserId ? { runId: selected, starterMmUserId } : { starterMmUserId: null });
   }, { scope: "operator.admin" });
@@ -50,13 +65,12 @@ export function registerChannelRunOrigin(
       respond(false, undefined, { code: "INVALID_REQUEST", message: "Run input authorization is only available to the Mattermost connector" });
       return;
     }
-    const { sessionKey, runId, senderId, mode } = params;
-    const channelId = typeof sessionKey === "string" ? CHANNEL_SESSION.exec(sessionKey)?.[1] : undefined;
-    if (!channelId || typeof sessionKey !== "string" || typeof runId !== "string" || !runId || runId.length > 256 ||
-        typeof senderId !== "string" || !MATTERMOST_USER.test(senderId) || (mode !== "queue" && mode !== "steer")) {
+    const input = parseRunInput(params);
+    if (!input) {
       respond(false, undefined, { code: "INVALID_REQUEST", message: "A channel run, sender and action are required" });
       return;
     }
+    const { sessionKey, channelId, senderId, runId, mode } = input;
     try {
       const scope = await sessionContext.readRunControl({ senderId, channelId });
       const allowed = scope.sessionKey === sessionKey &&
