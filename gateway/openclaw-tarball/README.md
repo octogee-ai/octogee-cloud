@@ -687,7 +687,7 @@ source, and the non-superuser pin-roll passed from `e9c9cd30`.
 Both archives were packed sequentially from the same build. The root integrity
 check, source-matched installed Mattermost, Codex, and Parallel bytes, and all
 25 patched npm distribution controls passed. The actual Linux AMD64
-[full plugin installer](https://console.cloud.google.com/cloud-build/builds/667f2793-aa04-4534-b54c-29ef716e1718?project=94934561284)
+[full plugin installer](https://console.cloud.google.com/cloud-build/builds/667f2793-aa04-4534-b54c-29ef716e1718)
 passed the native registry, bundled source-match, and native-hook gates.
 
 Both GCS objects use generation-zero creation. Readback verified each exact
