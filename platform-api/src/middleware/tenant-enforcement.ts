@@ -138,6 +138,7 @@ export const SELF_SCOPED_INTERNAL_BROKER_ROUTES = new Set([
   "/internal/openclaw/notifications/final-reply",
   "/internal/openclaw/activity/session-context",
   "/internal/openclaw/activity/dispatch-context",
+  "/internal/openclaw/activity/conversation-access",
   "/internal/openclaw/activity/run-control-access",
 ]);
 

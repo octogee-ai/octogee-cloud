@@ -14,6 +14,7 @@ vi.mock('@octogee/core/channels/activity-conversation', () => ({
 const threadRootPostId = 'r'.repeat(26);
 const gatewayId = 'b-alice';
 const memberMmUserId = 'm'.repeat(26);
+const conversationAccessPath = '/internal/openclaw/activity/conversation-access';
 const runControlPath = '/internal/openclaw/activity/run-control-access';
 const scope = { gatewayId, ownerUid: 'owner', channelId: 'c'.repeat(26), threadRootPostId, expectedAgentId: 'octogee-alice-proj-web', sessionKey: `agent:octogee-alice-proj-web:mattermost:group:${'c'.repeat(26)}` };
 function harness(
@@ -35,7 +36,7 @@ function harness(
   app.use((req, _res, next) => { req.boundTenant = tenant; next(); });
   app.use(rateLimit({ limit: 60 }), createTenantEnforcementMiddleware({
     store, readFlowGateway: async () => null,
-    enforceWhen: req => req.path === runControlPath,
+    enforceWhen: req => req.path === conversationAccessPath || req.path === runControlPath,
     onAccess: () => {},
   }));
   app.use('/internal/openclaw', createOpenClawRuntimeBrokerRoutes({ store, readSizingKey: async () => null }));
@@ -43,7 +44,7 @@ function harness(
   return {
     ticketWrites,
     post: () => request(app).post('/internal/openclaw/ws/redeem').send({ ticketId: 'ticket', purpose: 'openclaw-ws' }),
-    access: () => request(app).post('/internal/openclaw/activity/conversation-access').send({ uid: 'member', channelId: scope.channelId, threadRootPostId }),
+    access: () => request(app).post(conversationAccessPath).send({ uid: 'member', channelId: scope.channelId, threadRootPostId }),
     runControl: (actor: { senderId?: string; uid?: string; gatewayId?: string }) => request(app).post(runControlPath).send({ ...actor, channelId: scope.channelId }),
   };
 }
@@ -68,9 +69,11 @@ describe('channel-scoped native Activity authority', () => {
     const moved = harness({}, 'b-moved'); expect((await moved.post()).status).toBe(403); expect(moved.ticketWrites()).toEqual([]);
   });
   it('keeps periodic access checks bound to this gateway', async () => {
-    const h = harness(); expect((await h.access()).body).toEqual(scope);
+    const h = harness(); expect((await h.access().expect(200)).body).toEqual(scope);
     authorize.mockResolvedValueOnce({ ...scope, gatewayId: 'b-foreign' }); expect((await h.access()).status).toBe(403);
     authorize.mockResolvedValueOnce(null); expect((await h.access()).status).toBe(403);
+    const platform = harness({}, gatewayId, { kind: 'platform', actor: 'cron' });
+    expect((await platform.access()).status).toBe(403);
   });
   it('binds run controls to the calling gateway and the verified Mattermost identity', async () => {
     const h = harness();
