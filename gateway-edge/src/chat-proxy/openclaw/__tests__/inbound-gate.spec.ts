@@ -13,7 +13,11 @@ it('makes a channel-scoped Activity connection read-only even after observing a 
   state.readOnly = true;
   state.observedRunIds.add('run-1');
   state.observedApprovalIds.add('approval-1');
-  for (const method of ['chat.abort', 'exec.approval.resolve', 'plugin.approval.resolve', 'sessions.subscribe', 'sessions.messages.subscribe']) {
+  for (const method of [
+    'chat.abort', 'sessions.abort', 'exec.approval.resolve', 'plugin.approval.resolve',
+    'sessions.subscribe', 'sessions.messages.subscribe',
+    'octogee.activity.channelRunOrigin', 'octogee.activity.authorizeChannelRunInput',
+  ]) {
     expect(evaluateInboundFrame(frame(method, { runId: 'run-1', approvalId: 'approval-1' }), false, state).accept).toBe(false);
   }
 });

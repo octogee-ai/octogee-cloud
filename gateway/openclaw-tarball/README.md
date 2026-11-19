@@ -210,12 +210,19 @@ Run focused artifact/base-image tests, evaluate feedback and wait for final-head
 CI. After merge, Build main produces images, not a deployment. Environment
 selection and rollout are a separate operator step.
 
-## Current overlay for the November 18 Gateway refresh
+## Current Gateway overlay
 
 OpenClaw main `d0fc73b3a4ddb4e4b5bce555778ea3a6bbfe2c6b` was frozen for
-independent qualification at the operator's request. The source overlay is
+independent qualification at the operator's request. The November 18 overlay is
 `7f6e786959a4e069093a924a10ebd3fad3c3c01a` on
 `ceckert/openclaw:codex/gateway-refresh-20261118`.
+
+The current pin, `616ad93c050ed05d9154cc6819e42423fc303d02`, adds run input
+controls on top of that overlay. The Mattermost connector verifies the sender
+through the Gateway before applying the requested follow-up or steer mode.
+The reply runner checks the selected run and keeps native steering authority.
+Remove this overlay when the channel SDK supports authorized per-message queue
+selection and exact-run steering.
 
 The [frozen tip's push CI](https://github.com/openclaw/openclaw/actions/runs/44433270401)
 passed `security-fast` and skipped 39 jobs, including the package build,

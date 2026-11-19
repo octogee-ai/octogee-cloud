@@ -1,10 +1,10 @@
 {
   "upstreamRef": "main",
-  "sourceSha": "7f6e786959a4e069093a924a10ebd3fad3c3c01a",
-  "openclawObject": "openclaw-fork-1c4a4137.tgz",
-  "mattermostObject": "openclaw-mattermost-cf82f58c.tgz",
-  "openclawSha256": "1c4a4137455d6148dcca127b59d33a988a8b925e3d9c6d8d35a50faaffa412df",
-  "mattermostSha256": "cf82f58c941d9f0268e871b98e387ec9d671e648f014926c8200ce0f4ba40b9c",
+  "sourceSha": "616ad93c050ed05d9154cc6819e42423fc303d02",
+  "openclawObject": "openclaw-fork-856160dd.tgz",
+  "mattermostObject": "openclaw-mattermost-a677a3a5.tgz",
+  "openclawSha256": "856160dd4b619b2a56b68a77acfdb8d2a26e76f8f3211cc6ab562d4e547b3087",
+  "mattermostSha256": "a677a3a5deb883598e709fdd904fc23661c1f4117f6454369e795bf1161f0a1d",
   "releaseRepository": "ceckert/openclaw",
-  "releaseTag": "gateway-7f6e786-20261118"
+  "releaseTag": "gateway-616ad93-20261119"
 }

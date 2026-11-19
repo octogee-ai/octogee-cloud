@@ -112,7 +112,13 @@ export type ChatActivityReport =
   | (ChatActivityReportBase & { kind: "post" })
   | (ChatActivityReportBase & { kind: "reaction"; emojiName: string; createdAt: number });
 
+export interface ChannelRunControlAccess extends ActivityConversation {
+  callerMmUserId: string;
+  isOwner: boolean;
+}
+
 export interface OpenClawRuntimeBroker {
+  getChannelRunControlAccess?(uid: string, channelId: string): Promise<ChannelRunControlAccess | null>;
   getActivityConversation?(uid: string, channelId: string, threadRootPostId?: string): Promise<ActivityConversation | null>;
   notifyFinalReply(input: NativeFinalReply): Promise<void>;
   redeemOpenClawWs(ticketId: string, purpose?: RedeemableWsTicketPurpose): Promise<RedeemOpenClawWsOutcome>;
@@ -378,6 +384,16 @@ export function createOpenClawRuntimeBroker(opts: {
         kind: "redeemed",
         redeemed: { uid, gatewayId: redeemedGatewayId, gatewayUrl, expectedAgentId, ...(body?.activityConversation ? { activityConversation: parseActivityConversation(body.activityConversation, redeemedGatewayId, expectedAgentId) } : {}), ...(purpose === "voice-ws" ? voiceRedeemCustody(body, expectedAgentId) : {}) },
       };
+    },
+    async getChannelRunControlAccess(uid, channelId) {
+      const response = await post('/internal/openclaw/activity/run-control-access', { uid, channelId }, new Set([200, 403, 404]));
+      if (response.status !== 200) return null;
+      const payload = await readJsonOrNull(response);
+      const scope = parseActivityConversation(payload, gatewayId);
+      if (!isMattermostPostId(payload?.callerMmUserId) || typeof payload?.isOwner !== 'boolean' || scope.channelId !== channelId) {
+        throw new OpenClawRuntimeBrokerError(502, 'malformed channel run control access');
+      }
+      return { ...scope, callerMmUserId: payload.callerMmUserId, isOwner: payload.isOwner };
     },
     async getActivityConversation(uid, channelId, threadRootPostId) {
       const response = await post('/internal/openclaw/activity/conversation-access', { uid, channelId, ...(threadRootPostId === undefined ? {} : { threadRootPostId }) }, new Set([200, 403, 404]));

@@ -1,4 +1,4 @@
-import type { PlatformUserRecord } from '../platform-state/index.js';
+import type { PlatformStateStore, PlatformUserRecord } from '../platform-state/index.js';
 import { authorizeChannel } from './channel-session-authorization.js';
 export interface ActivityConversation {
     gatewayId: string;
@@ -18,4 +18,14 @@ interface ActivityConversationInput {
     authorize?: typeof authorizeChannel;
 }
 export declare function resolveActivityConversation(input: ActivityConversationInput): Promise<ActivityConversation | null>;
+export declare function resolveChannelRunControlConversation(input: ActivityConversationInput, workspaces: PlatformStateStore['workspaces']): Promise<{
+    gatewayId: string;
+    ownerUid: string;
+    channelId: string;
+    expectedAgentId: string;
+    threadRootPostId?: string | undefined;
+    sessionKey: string;
+    callerMmUserId: string;
+    isOwner: boolean;
+} | null>;
 export {};

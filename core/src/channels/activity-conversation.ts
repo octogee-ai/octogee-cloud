@@ -1,7 +1,7 @@
-import type { PlatformUserRecord } from '../platform-state/index.js';
+import type { PlatformStateStore, PlatformUserRecord } from '../platform-state/index.js';
 import { accountAllowsInteractiveAccess } from '@octogee/shared/types/account-lifecycle';
 import { isValidGatewayId } from '@octogee/shared/types/glm';
-import { isMattermostPostId } from '@octogee/shared/types/mattermost-session-route';
+import { isMattermostPostId, parseChannelScopedMattermostSessionRoute } from '@octogee/shared/types/mattermost-session-route';
 import { authorizeChannel, type AuthorizedChannel, type ChannelSessionMattermostClient } from './channel-session-authorization.js';
 import { ChannelSessionMattermostError } from './channel-session-model-control.js';
 
@@ -66,7 +66,7 @@ async function conversationChannel(
   return channel;
 }
 
-export async function resolveActivityConversation(input: ActivityConversationInput): Promise<ActivityConversation | null> {
+async function resolveAuthorizedActivityConversation(input: ActivityConversationInput) {
   const { threadRootPostId } = input;
   if (threadRootPostId !== undefined && !isMattermostPostId(threadRootPostId)) return null;
   const access = await (input.authorize ?? authorizeChannel)(input.uid, input.channelId, undefined, {
@@ -83,11 +83,39 @@ export async function resolveActivityConversation(input: ActivityConversationInp
   if (kind === 'direct') {
     return threadRootPostId === undefined
       ? null
-      : { ...conversation, threadRootPostId, sessionKey: `agent:${target.agentId}:mattermost:direct:${access.callerMmUserId}:thread:${threadRootPostId}` };
+      : { access, scope: { ...conversation, threadRootPostId, sessionKey: `agent:${target.agentId}:mattermost:direct:${access.callerMmUserId}:thread:${threadRootPostId}` } };
   }
   return {
-    ...conversation,
-    ...(threadRootPostId === undefined ? {} : { threadRootPostId }),
-    sessionKey: `agent:${target.agentId}:mattermost:${kind}:${input.channelId}`,
+    access,
+    scope: {
+      ...conversation,
+      ...(threadRootPostId === undefined ? {} : { threadRootPostId }),
+      sessionKey: `agent:${target.agentId}:mattermost:${kind}:${input.channelId}`,
+    },
+  };
+}
+
+export async function resolveActivityConversation(input: ActivityConversationInput): Promise<ActivityConversation | null> {
+  return (await resolveAuthorizedActivityConversation(input))?.scope ?? null;
+}
+
+export async function resolveChannelRunControlConversation(
+  input: ActivityConversationInput,
+  workspaces: PlatformStateStore['workspaces'],
+) {
+  const result = await resolveAuthorizedActivityConversation(input);
+  if (!result || !parseChannelScopedMattermostSessionRoute(result.scope.sessionKey)) return null;
+  const { access, scope } = result;
+  const { ownerUid, workspaceSlug, projectId } = access.target;
+  const channel = await workspaces.channels.findByMattermostChannelId(scope.channelId);
+  if (!channel || channel.archivedAt !== null || channel.scope.workspaceSlug !== workspaceSlug
+    || channel.scope.projectSlug !== (projectId ?? null)) return null;
+  const member = projectId
+    ? await workspaces.projectMembers.get(workspaceSlug, projectId, input.uid)
+    : await workspaces.members.get(workspaceSlug, input.uid);
+  return {
+    ...scope,
+    callerMmUserId: access.callerMmUserId,
+    isOwner: ownerUid === input.uid || channel.createdBy === input.uid || member?.role === 'owner',
   };
 }

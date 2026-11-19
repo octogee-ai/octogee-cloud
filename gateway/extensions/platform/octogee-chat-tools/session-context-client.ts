@@ -7,6 +7,7 @@ import {
 } from "./identity-client.js";
 
 export const SESSION_CONTEXT_PATH = "/internal/openclaw/activity/session-context";
+const RUN_CONTROL_ACCESS_PATH = "/internal/openclaw/activity/run-control-access";
 export const DISPATCH_CONTEXT_PATH = "/internal/openclaw/activity/dispatch-context";
 export const DEFAULT_SESSION_CONTEXT_TIMEOUT_MS = 2_000;
 
@@ -40,6 +41,7 @@ export interface SessionContextReadInput {
 }
 
 export interface SessionContextClient {
+  readRunControl(input: { senderId: string; channelId: string }): Promise<{ sessionKey: string; isOwner: boolean }>;
   read(input: SessionContextReadInput): Promise<SessionContext>;
   authorizeDispatch(input: {
     agentId: string;
@@ -169,6 +171,13 @@ export function createSessionContextClient(
   }
 
   return {
+    async readRunControl(input) {
+      const { sessionKey, isOwner } = await lookup(RUN_CONTROL_ACCESS_PATH, input);
+      if (typeof sessionKey !== "string" || typeof isOwner !== "boolean") {
+        throw new SessionContextError("bad-response", "Invalid channel run control access");
+      }
+      return { sessionKey, isOwner };
+    },
     async read(input) {
       const body = await lookup(SESSION_CONTEXT_PATH, input);
       const purpose = body.purpose;
