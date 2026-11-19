@@ -1,4 +1,5 @@
 import express from 'express';
+import { rateLimit } from 'express-rate-limit';
 import request from 'supertest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createOpenClawRuntimeBrokerRoutes } from './openclaw-runtime-broker.js';
@@ -32,7 +33,7 @@ function harness(
   const store = createDocumentFixtureStore(docs);
   const app = express(); app.use(express.json());
   app.use((req, _res, next) => { req.boundTenant = tenant; next(); });
-  app.use(createTenantEnforcementMiddleware({
+  app.use(rateLimit({ limit: 60 }), createTenantEnforcementMiddleware({
     store, readFlowGateway: async () => null,
     enforceWhen: req => req.path === runControlPath,
     onAccess: () => {},
