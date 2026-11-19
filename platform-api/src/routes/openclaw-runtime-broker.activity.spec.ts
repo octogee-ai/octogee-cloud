@@ -4,10 +4,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createOpenClawRuntimeBrokerRoutes } from './openclaw-runtime-broker.js';
 import { createDocumentFixtureStore } from '@octogee/core-testing/journal-store';
 import { RecordingDocuments } from '../test-helpers/recording-documents.js';
-const authorize = vi.hoisted(() => vi.fn());
-vi.mock('@octogee/core/channels/activity-conversation', () => ({ resolveActivityConversation: authorize }));
+const { authorize, authorizeRunControl } = vi.hoisted(() => ({ authorize: vi.fn(), authorizeRunControl: vi.fn() }));
+vi.mock('@octogee/core/channels/activity-conversation', () => ({
+  resolveActivityConversation: authorize,
+  resolveChannelRunControlConversation: authorizeRunControl,
+}));
 const threadRootPostId = 'r'.repeat(26);
 const gatewayId = 'b-alice';
+const memberMmUserId = 'm'.repeat(26);
 const scope = { gatewayId, ownerUid: 'owner', channelId: 'c'.repeat(26), threadRootPostId, expectedAgentId: 'octogee-alice-proj-web', sessionKey: `agent:octogee-alice-proj-web:mattermost:group:${'c'.repeat(26)}` };
 function harness(payloadPatch: Record<string, unknown> = {}, ownerGateway = gatewayId) {
   const { gatewayId: _, ...payload } = scope;
@@ -15,6 +19,7 @@ function harness(payloadPatch: Record<string, unknown> = {}, ownerGateway = gate
   const docs = new RecordingDocuments({
     'gatewayTickets/ticket': ticket,
     'users/owner': { provisioning: { openclaw: { gatewayId: ownerGateway } } },
+    'users/member': { mattermost: { userId: memberMmUserId } },
     [`gateways/${gatewayId}`]: { gatewayId, desiredRelease: 1, latestRelease: 1, liveRelease: 1, desiredStatus: 'running', configSchemaVersion: 1, profile: 'isolated', gatewayClass: 'isolated', imageProfile: 'isolated', sizingTier: null, gcpProject: null, gatewayContainerSecurityContext: null, serviceAccountName: null, serviceAccount: null, builderAccess: { controlIdentity: 'per-user', controlUiEnabled: true }, ownerUid: 'owner', builderSlug: 'alice', modelBrokerLimits: null, preemption: null },
     [`glmGateways/${gatewayId}`]: { docKind: 'runtime', gatewayId, release: 1, lifecycle: 'serving', heartbeat: { internalUrl: 'ws://native.internal:18789' } },
   });
@@ -22,9 +27,17 @@ function harness(payloadPatch: Record<string, unknown> = {}, ownerGateway = gate
   app.use((req, _res, next) => { req.boundTenant = { kind: 'gateway', gatewayId, ownerUid: 'owner' }; next(); });
   app.use('/internal/openclaw', createOpenClawRuntimeBrokerRoutes({ store: createDocumentFixtureStore(docs), readSizingKey: async () => null }));
   const ticketWrites = () => docs.writes.filter((write) => write.path.startsWith('gatewayTickets/'));
-  return { ticketWrites, post: () => request(app).post('/internal/openclaw/ws/redeem').send({ ticketId: 'ticket', purpose: 'openclaw-ws' }), access: () => request(app).post('/internal/openclaw/activity/conversation-access').send({ uid: 'member', channelId: scope.channelId, threadRootPostId }) };
+  return {
+    ticketWrites,
+    post: () => request(app).post('/internal/openclaw/ws/redeem').send({ ticketId: 'ticket', purpose: 'openclaw-ws' }),
+    access: () => request(app).post('/internal/openclaw/activity/conversation-access').send({ uid: 'member', channelId: scope.channelId, threadRootPostId }),
+    runControl: (actor: { senderId?: string; uid?: string }) => request(app).post('/internal/openclaw/activity/run-control-access').send({ ...actor, channelId: scope.channelId }),
+  };
 }
-beforeEach(() => authorize.mockReset().mockResolvedValue(scope));
+beforeEach(() => {
+  authorize.mockReset().mockResolvedValue(scope);
+  authorizeRunControl.mockReset().mockResolvedValue({ ...scope, callerMmUserId: memberMmUserId, isOwner: false });
+});
 describe('channel-scoped native Activity authority', () => {
   it('redeems once against the selected owner/agent without issuing a posting grant', async () => {
     const h = harness(); const result = await h.post();
@@ -45,5 +58,16 @@ describe('channel-scoped native Activity authority', () => {
     const h = harness(); expect((await h.access()).body).toEqual(scope);
     authorize.mockResolvedValueOnce({ ...scope, gatewayId: 'b-foreign' }); expect((await h.access()).status).toBe(403);
     authorize.mockResolvedValueOnce(null); expect((await h.access()).status).toBe(403);
+  });
+  it('binds run controls to the calling gateway and the verified Mattermost identity', async () => {
+    const h = harness();
+    expect((await h.runControl({ uid: 'member' })).body).toMatchObject({ authorized: true, isOwner: false });
+    expect((await h.runControl({ senderId: memberMmUserId })).body).toMatchObject({ authorized: true, callerMmUserId: memberMmUserId });
+    expect(authorizeRunControl).toHaveBeenLastCalledWith(expect.objectContaining({ uid: 'member', channelId: scope.channelId }), expect.anything());
+    expect((await h.runControl({ uid: 'owner', senderId: memberMmUserId })).status).toBe(400);
+    authorizeRunControl.mockResolvedValueOnce({ ...scope, gatewayId: 'b-foreign', callerMmUserId: memberMmUserId, isOwner: true });
+    expect((await h.runControl({ uid: 'member' })).status).toBe(403);
+    authorizeRunControl.mockResolvedValueOnce({ ...scope, callerMmUserId: 'o'.repeat(26), isOwner: true });
+    expect((await h.runControl({ senderId: memberMmUserId })).status).toBe(403);
   });
 });

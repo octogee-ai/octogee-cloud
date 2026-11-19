@@ -82,6 +82,8 @@ function buildFakeApi(): {
       match: { channel: "mattermost", accountId: `${slug}-coach`, peer: { kind: "group", id: "bbbbbbbbbbbbbbbbbbbbbbbbbb" } },
     })) },
     logger: { info: () => {}, warn: () => {}, error: (message: string) => errors.push(message) },
+    registerGatewayMethod: vi.fn(),
+    registerService: vi.fn(),
     registerTool: (factory: (ctx: any) => any, opts: { name: string }) => {
       registered.push({ name: opts.name, factory });
     },
@@ -89,7 +91,7 @@ function buildFakeApi(): {
       hooks.push({ name, handler });
     },
   };
-  return { api: { ...api, runtime: { config: { current: () => api.config } } }, registered, hooks, errors };
+  return { api: { ...api, runtime: { config: { current: () => api.config }, events: { onAgentEvent: vi.fn() } } }, registered, hooks, errors };
 }
 
 const ownerToolContext = {

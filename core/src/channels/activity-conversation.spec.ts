@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { resolveActivityConversation } from './activity-conversation.js';
+import { resolveActivityConversation, resolveChannelRunControlConversation } from './activity-conversation.js';
 import { ChannelSessionMattermostError } from './channel-session-model-control.js';
-import type { PlatformUserRecord } from '../platform-state/index.js';
+import type { PlatformStateStore, PlatformUserRecord } from '../platform-state/index.js';
 
 const channelId = 'c'.repeat(26);
 const threadRootPostId = 'r'.repeat(26);
@@ -109,5 +109,26 @@ describe('native Activity conversation', () => {
     expect(await resolveActivityConversation({ ...f, uid, channelId })).toBeNull();
     f.users.get.mockResolvedValueOnce({ uid: 'owner', slug: null, gateway: null, accountLifecycle: null } as unknown as PlatformUserRecord);
     expect(await resolveActivityConversation({ ...f, uid, channelId })).toBeNull();
+  });
+});
+
+describe('Workspace and Project run controls conversation', () => {
+  it.each([
+    ['owner', 'member', null, true],
+    ['member', 'owner', null, true],
+    ['member', 'member', 'member', true],
+    ['member', 'member', 'other', false],
+  ] as const)('uses the verified channel owner from %s, %s, and %s', async (callerUid, role, createdBy, isOwner) => {
+    const f = fixture();
+    f.target.agentId = 'octogee-alice-proj-web-coach';
+    const workspaces = {
+      channels: { findByMattermostChannelId: vi.fn(async () => ({
+        archivedAt: null, createdBy, scope: { workspaceSlug: 'alice', projectSlug: 'web' },
+      })) },
+      projectMembers: { get: vi.fn(async () => ({ role })) },
+    } as unknown as PlatformStateStore['workspaces'];
+    expect(await resolveChannelRunControlConversation({ ...f, uid: callerUid, channelId }, workspaces)).toMatchObject({
+      callerMmUserId: 'u'.repeat(26), isOwner, channelId,
+    });
   });
 });

@@ -11,7 +11,7 @@ import {
 } from "../lib/workspace-conversation.js";
 import { projectMemberExists } from "../lib/project-members.js";
 import { isMattermostPostId, parseChannelScopedMattermostSessionRoute } from '@octogee/shared/types/mattermost-session-route';
-import { resolveActivityConversation, type ActivityConversation } from '@octogee/core/channels/activity-conversation';
+import { resolveActivityConversation, resolveChannelRunControlConversation, type ActivityConversation } from '@octogee/core/channels/activity-conversation';
 import { Router, type Request, type Response } from "express";
 import { accountAllowsInteractiveAccess } from "@octogee/shared/types/account-lifecycle";
 
@@ -936,6 +936,29 @@ function mountUserAndWsRoutes(router: Router, deps: RuntimeBrokerDeps): void {
     const scope = await resolveActivityConversation({ users: deps.store.users.records, uid, channelId, ...(threadRootPostId === undefined ? {} : { threadRootPostId }) });
     if (!scope || scope.gatewayId !== bound.gatewayId) { forbidden(res); return; }
     res.set('Cache-Control', 'no-store').json(scope);
+  });
+  router.post('/activity/run-control-access', async (req, res) => {
+    const bound = boundGateway(req, res);
+    if (!bound) return;
+    const uid = stringBody(req, 'uid');
+    const senderId = stringBody(req, 'senderId');
+    const channelId = stringBody(req, 'channelId');
+    if (!isMattermostPostId(channelId) || (uid ? senderId || !safeDocId(uid) : !isMattermostPostId(senderId))) {
+      res.status(400).json({ error: 'invalid_activity_channel' });
+      return;
+    }
+    const sender = senderId ? await uniqueUser(deps.store.users.records.findByMattermostUserId(senderId)) : null;
+    const callerUid = uid || (sender !== 'duplicate' && sender?.uid);
+    if (!callerUid) { forbidden(res); return; }
+    const scope = await resolveChannelRunControlConversation(
+      { users: deps.store.users.records, uid: callerUid, channelId },
+      deps.store.workspaces,
+    );
+    if (!scope || scope.gatewayId !== bound.gatewayId || (senderId && scope.callerMmUserId !== senderId)) {
+      forbidden(res);
+      return;
+    }
+    res.set('Cache-Control', 'no-store').json({ authorized: true, ...scope });
   });
   router.post("/users/gateway-id", async (req, res) => {
     const bound = boundGateway(req, res);

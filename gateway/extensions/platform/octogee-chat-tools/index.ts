@@ -15,9 +15,10 @@
  */
 
 // @ts-expect-error — resolved at runtime via the gateway base image's openclaw install (no local types)
-import { definePluginEntry, jsonResult } from "openclaw/plugin-sdk/core";
+import { definePluginEntry, jsonResult, type OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import { Type } from "typebox";
 
+import { registerChannelRunOrigin } from "./channel-run-origin.js";
 import { ChatToolError, createChatClient } from "./chat-client.js";
 import {
   createIdentityClient,
@@ -44,6 +45,7 @@ interface ToolCtx {
 }
 
 interface PluginHookContext {
+  runId?: unknown;
   agentId?: unknown;
   channelId?: unknown;
   chatId?: unknown;
@@ -61,9 +63,9 @@ type PluginHookResult =
   | { outcome: "block"; reason: string; message: string }
   | undefined;
 
-interface PluginRegisterApi {
+interface PluginRegisterApi extends Pick<OpenClawPluginApi, "registrationMode" | "registerService" | "registerGatewayMethod"> {
   pluginConfig?: unknown;
-  runtime: { config: { current: () => { bindings?: unknown } } };
+  runtime: { config: { current: () => { bindings?: unknown } }; events: OpenClawPluginApi["runtime"]["events"] };
   logger?: { debug?: (msg: string) => void; error?: (msg: string) => void };
   registerTool: (factory: (ctx: ToolCtx) => unknown, meta: { name: string }) => void;
   on: (
@@ -311,6 +313,7 @@ function completeRunIdentity(ctx: PluginHookContext): ctx is PluginHookContext &
 function beforeAgentRunHandler(
   client: SessionContextClient,
   logger: PluginLogger,
+  recordRunOrigin?: ReturnType<typeof registerChannelRunOrigin>,
 ): (event: unknown, ctx: PluginHookContext) => Promise<PluginHookResult> {
   return async (event, ctx) => {
     const runEvent = eventRecord(event);
@@ -333,6 +336,7 @@ function beforeAgentRunHandler(
         channelId: ctx.chatId,
         ...(direct ?? {}),
       });
+      recordRunOrigin?.({ ...ctx, senderId: ctx.senderId ?? runEvent.senderId });
       return undefined;
     } catch (error) {
       return blockedMattermostRun(
@@ -380,7 +384,8 @@ export default definePluginEntry({
 
     api.on("before_dispatch", beforeDispatchHandler(sessionContextClient, api.logger, () => api.runtime.config.current().bindings));
     api.on("before_prompt_build", beforePromptBuildHandler(sessionContextClient, api.logger));
-    api.on("before_agent_run", beforeAgentRunHandler(sessionContextClient, api.logger));
+    const recordRunOrigin = registerChannelRunOrigin(api, sessionContextClient);
+    api.on("before_agent_run", beforeAgentRunHandler(sessionContextClient, api.logger, recordRunOrigin));
 
     // ── octogee_chat_search ──────────────────────────────────────────────────
     // OpenClaw calls the factory `(ctx) => tool` per-invocation, so each

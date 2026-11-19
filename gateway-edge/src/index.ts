@@ -1,5 +1,6 @@
 import { installDefaultUserEntitlements } from "@octogee/shared/types/user-entitlements";
 import { isGatewayVm } from "./lib/gateway-vm.js";
+import { channelRunControlsFromEnv } from "./routes/channel-run-controls.js";
 import { createChannelAgentReadinessRouter } from "./routes/channel-agent-readiness.js";
 import express, { Express, Request, RequestHandler, Response, Router } from "express";
 import http from "node:http";
@@ -259,6 +260,9 @@ function mountSidecarLocalitySurface(app: Express, options: {
     }));
   }
   mountApi(app, "/channel-agent-readiness", createChannelAgentReadinessRouter());
+  if (process.env.GATEWAY_ID && process.env.OPENCLAW_RUNTIME_BROKER_URL) {
+    app.use("/api/g/:gatewayId/chat-run", channelRunControlsFromEnv(process.env.GATEWAY_ID));
+  }
   const workspaceLocality = Router({ mergeParams: true });
   workspaceLocality.use(gitRoutes);
   mountApi(app, "/workspace", workspaceLocality);

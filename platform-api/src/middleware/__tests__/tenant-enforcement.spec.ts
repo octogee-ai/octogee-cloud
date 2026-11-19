@@ -116,6 +116,7 @@ function app(opts: {
   a.post("/internal/openclaw/notifications/final-reply", enforcement, handler);
   a.post("/internal/openclaw/activity/session-context", enforcement, handler);
   a.post("/internal/openclaw/activity/dispatch-context", enforcement, handler);
+  a.post("/internal/openclaw/activity/run-control-access", enforcement, handler);
   a.post("/internal/workspace-git/authorize", enforcement, handler);
   a.post("/internal/channel-agent-readiness/authorize", enforcement, handler);
   a.post("/internal/product-broker/list", enforcement, handler);
@@ -900,16 +901,20 @@ const STILL_ON_SHARED = {
     expect(platform.status).toBe(403);
   });
 
-  it("passes dispatch context only to the bound gateway tenant", async () => {
+  it.each([
+    ["dispatch-context", { agentId: "octogee-alice-coach" }],
+    ["run-control-access", { uid: "victim" }],
+  ])("passes %s only to the bound gateway tenant", async (route, input) => {
+    const path = `/internal/openclaw/activity/${route}`;
     const ownedGateway = await request(app({ boundTenant: WALTER }))
-      .post("/internal/openclaw/activity/dispatch-context")
-      .send({ agentId: "octogee-alice-coach" });
+      .post(path)
+      .send(input);
     const foreignGateway = await request(app({ boundTenant: WALTER }))
-      .post("/internal/openclaw/activity/dispatch-context")
-      .send({ gatewayId: "other", agentId: "octogee-alice-coach" });
+      .post(path)
+      .send({ gatewayId: "other", ...input });
     const platform = await request(app({ boundTenant: { kind: "platform", actor: "cron" } }))
-      .post("/internal/openclaw/activity/dispatch-context")
-      .send({ agentId: "octogee-alice-coach" });
+      .post(path)
+      .send(input);
 
     expect(ownedGateway.status).toBe(200);
     expect(foreignGateway.status).toBe(403);
