@@ -866,8 +866,15 @@ async function closeSourceForNativeReturnProvision(
 ): Promise<void> {
   const { targets, slug, migrationId } = input;
   if (!handoff) throw new Error("native return requires a durable scheduler handoff");
-  if (!handoff.forwardRecovery) {
+  if (!input.ctx.assertActiveClaim || !input.ctx.persistSchedulerHandoff) {
+    throw new Error("native return forward recovery requires strict claimed persistence");
+  }
+  const recovering = handoff.forwardRecovery !== undefined;
+  const stageScheduler = () => step("stage-scheduler", () => stagePortableSchedules(input.deps, client, handoff));
+  if (!recovering) {
     await quiesceNativeReturnSource(input, client, step, handoff);
+    await input.ctx.assertActiveClaim();
+    await stageScheduler();
     if (!input.nativeReturn.checkpointRequested) {
       await step("flush-source", () => client.flushGateway({
         migrationId,
@@ -877,10 +884,7 @@ async function closeSourceForNativeReturnProvision(
       }));
     }
   }
-  if (!input.ctx.assertActiveClaim || !input.ctx.persistSchedulerHandoff) {
-    throw new Error("native return forward recovery requires strict claimed persistence");
-  }
-  await input.ctx.assertActiveClaim(handoff.forwardRecovery !== undefined);
+  await input.ctx.assertActiveClaim(recovering);
   const placement = await input.deps.resolveSourcePlacement(input.uid, targets.fromGatewayId);
   const owner = await input.deps.readUser(input.uid);
   if (!placement || (placement.epoch ?? 0) !== targets.fromEpoch ||
@@ -901,7 +905,7 @@ async function closeSourceForNativeReturnProvision(
       throw new Error("Native PostgreSQL agent-store handoff was not confirmed");
     }
   });
-  if (handoff) await step("stage-scheduler", () => stagePortableSchedules(input.deps, client, handoff));
+  if (recovering) await stageScheduler();
   await input.deps.setMigrationPhase?.({
     uid: input.uid, sourceGatewayId: targets.fromGatewayId, operationId: input.operationId, phase: "checkpointing",
   });
@@ -1050,13 +1054,13 @@ async function stagePortableSchedules(
   const { migrationId, slug } = handoff;
   const exported = await client.scheduler({ migrationId, slug, gatewayId: handoff.fromGatewayId, phase: "export", retainNonportable: true });
   const retained = retainedJobIds(exported.snapshot);
+  await client.scheduler({
+    migrationId, slug, gatewayId: handoff.toGatewayId, phase: "stage", agentIds: exported.agentIds, snapshot: exported.snapshot,
+  });
   deps.log(
     `[migrate-customer] native return ${slug}: portable schedules of ${exported.agentIds.join(", ")} staged on ${handoff.toGatewayId}; ` +
     `host-bound jobs left dormant on ${handoff.fromGatewayId}: ${retained.length ? retained.join(", ") : "none"}`,
   );
-  await client.scheduler({
-    migrationId, slug, gatewayId: handoff.toGatewayId, phase: "stage", agentIds: exported.agentIds, snapshot: exported.snapshot,
-  });
 }
 
 async function abortStagedSchedules(
