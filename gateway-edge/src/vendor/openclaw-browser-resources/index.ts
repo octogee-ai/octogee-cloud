@@ -592,7 +592,7 @@ function me(e, n) {
   let a = w(w(e)?.__openclaw);
   return ge(a?.seq) ?? ge(n?.messageSeq);
 }
-function K(e) {
+function G(e) {
   let n = x(e);
   return n?.endsWith(":user") ? n.slice(0, -5) || null : n;
 }
@@ -600,7 +600,7 @@ function ne(e, n) {
   let a = w(e), l = x(a?.role)?.toLowerCase();
   if (!a || !l)
     return null;
-  let p = w(a.__openclaw), g = x(p?.importedFrom), y = x(p?.cliSessionId), m = x(p?.externalId), T = w(p?.transcriptPosition), R = x(T?.source), I = !(R !== null && R.length <= 128 && typeof T?.rawSeq == "number" && Number.isSafeInteger(T.rawSeq) && T.rawSeq >= 0) && !!(g || y || m), u = x(p?.idempotencyKey) ?? x(a.idempotencyKey) ?? x(n?.idempotencyKey) ?? x(n?.clientRunId), t = K(u), r = K(n?.runId), s = K(p?.runId), o = K(
+  let p = w(a.__openclaw), g = x(p?.importedFrom), y = x(p?.cliSessionId), m = x(p?.externalId), T = w(p?.transcriptPosition), R = x(T?.source), I = !(R !== null && R.length <= 128 && typeof T?.rawSeq == "number" && Number.isSafeInteger(T.rawSeq) && T.rawSeq >= 0) && !!(g || y || m), u = x(p?.idempotencyKey) ?? x(a.idempotencyKey) ?? x(n?.idempotencyKey) ?? x(n?.clientRunId), t = G(u), r = G(n?.runId), s = G(p?.runId), o = G(
     w(a.openclawStreamFallback)?.runId
   ), d = x(p?.mirrorOrigin) !== null, i = l === "assistant" && x(a.api)?.toLowerCase() === "cli", c = i && t?.startsWith("cli-assistant:") ? x(t.slice(14)) : t, b = l === "assistant" ? s ?? r ?? o ?? (i || !d ? c : null) : s ?? c ?? r;
   return {
@@ -716,7 +716,7 @@ function re(e) {
   let n = Ie(e);
   return n === "toolcall" || n === "tool_call" || n === "tooluse" || n === "tool_use";
 }
-function V(e) {
+function H(e) {
   let n = Ie(e);
   return n === "toolresult" || n === "tool_result";
 }
@@ -894,7 +894,7 @@ var ks = 16 * 1024;
 
 // openclaw/ui/src/lib/chat/message-normalizer.ts
 function de(e) {
-  return V(h(e)?.role);
+  return H(h(e)?.role);
 }
 
 // openclaw/ui/src/lib/chat/tool-call-diff.ts
@@ -907,7 +907,7 @@ function Be(e) {
 function F(e, n) {
   return n.map((a) => [a, e]);
 }
-var Ba = new Map([
+var Ga = new Map([
   // A launched subagent is a worker, not one more operation of the launcher.
   ...F("subagents", ["sessions_spawn"]),
   ...F("commands", ["exec", "bash", "shell", "run_command", "run_terminal_cmd"]),
@@ -958,13 +958,13 @@ var ze = {
 }, We = {
   label: "Agent",
   allAgents: "All agents"
-}, Ke = {
+}, Ge = {
   pinToSwitcher: "Pin to switcher",
   unpinFromSwitcher: "Unpin from switcher"
 };
 
 // openclaw/ui/src/i18n/locales/en.ts
-var Kn = {
+var Gn = {
   runtimeErrors: {
     socketInsecure: "Browser refused the Gateway WebSocket for security reasons. Use wss:// when OpenClaw is served over HTTPS/Tailscale Serve, or open it on loopback at http://127.0.0.1:18789.",
     socketRefused: "Browser refused the Gateway WebSocket for security reasons. Check the Gateway WebSocket URL and browser security policy.",
@@ -1168,6 +1168,11 @@ var Kn = {
     title: "Starting up",
     description: "The agent is getting ready. This view will load automatically.",
     short: "Starting up\u2026"
+  },
+  routeNotFound: {
+    title: "Page not found",
+    description: "This link is invalid or no longer available. Check the address or return to chat.",
+    goToChat: "Go to chat"
   },
   lazyView: {
     errorTitle: "Couldn\u2019t load this panel.",
@@ -1383,7 +1388,7 @@ var Kn = {
     copyId: {},
     default: "Default",
     setDefault: {},
-    ...Ke,
+    ...Ge,
     selectTitle: {},
     selectSubtitle: {},
     tabs: {},
@@ -1801,6 +1806,7 @@ var Kn = {
       viewingNow: "Viewing now",
       recentSessions: "Recent sessions",
       noRecentSessions: "No recent visible sessions.",
+      recentSessionsUnavailable: "Recent sessions unavailable.",
       viewActivity: "View activity",
       web: "Web app",
       cli: "Command line",
@@ -2060,25 +2066,6 @@ var Kn = {
   // Login copy lives in the lazy en-login catalog; the anchor keeps its merge target.
   login: {},
   chat: {
-    inlineSwarm: {
-      title: "Swarm",
-      progress: "{done} of {total} settled",
-      childStatus: "{name}: {status}",
-      overflow: "+{count}",
-      moreWorkers: "{count} more workers",
-      status: {
-        queued: "Queued",
-        running: "Running",
-        done: "Completed",
-        failed: "Failed or stopped"
-      },
-      count: {
-        queued: "{count} queued",
-        running: "{count} running",
-        done: "{count} completed",
-        failed: "{count} failed or stopped"
-      }
-    },
     sessionAutomation: {},
     activityPills: {},
     mobileDetails: {
@@ -2187,6 +2174,7 @@ Do the update it asks for on this machine, confirm the installed version, and te
       preparingContext: "Preparing reply",
       memoryFlushing: "Saving conversation memory",
       startingModel: "Waiting for a response",
+      preparingTool: "Preparing a tool call",
       waitingForLocalModel: "Waiting for the local model to respond",
       waitingForModelSlot: "Waiting for a free model slot",
       waitingForState: "Temporarily busy\u2014retrying"
@@ -2544,10 +2532,10 @@ Do the update it asks for on this machine, confirm the installed version, and te
     urlPlaceholder: "Supported link URL"
   },
   openclawId: {}
-}, z = Kn;
+}, z = Gn;
 
 // openclaw/ui/src/i18n/locales/en-chat-tool-labels.ts
-var Ge = {
+var Ke = {
   chat: {
     toolCards: {
       patch: {
@@ -2590,6 +2578,7 @@ var Ge = {
       changedFiles: "Changed files",
       viewingImage: "Viewing image",
       viewedImage: "Viewed image",
+      viewedImages: "Viewed {count} images",
       viewImage: "View image",
       askingQuestion: "Asking you a question",
       askedQuestion: "Asked you a question",
@@ -2802,10 +2791,10 @@ var Ge = {
   }
 }, qe = Object.assign(
   () => {
-    let { activity: e, review: n, verbs: a, ...l } = Ge.chat.toolCards;
+    let { activity: e, review: n, verbs: a, ...l } = Ke.chat.toolCards;
     Object.assign(z.chat.toolCards, l), Object.assign(z.chat.toolCards.activity, e), Object.assign(z.chat.toolCards.review, n), Object.assign(z.chat.toolCards.verbs, a);
   },
-  { catalog: Ge }
+  { catalog: Ke }
 );
 
 // openclaw/ui/src/lib/protocol-validators.generated/activity.js
@@ -2832,12 +2821,12 @@ var Ye = [
   /(^type$|^actorType$|^source$|^id$)/u,
   /(^emoji$|^count$|^identities$)/u,
   /(^id$|^label$)/u
-], Gn = (e) => qn(e), qn = (e) => typeof e == "object" && e !== null && !Array.isArray(e) && "itemId" in e && "phase" in e && "kind" in e && "title" in e && Object.getOwnPropertyNames(e).every(
+], Kn = (e) => qn(e), qn = (e) => typeof e == "object" && e !== null && !Array.isArray(e) && "itemId" in e && "phase" in e && "kind" in e && "title" in e && Object.getOwnPropertyNames(e).every(
   (n, a) => Ye[0].test(n) || Je(e[n])
-) && (e.delegation === void 0 || !("delegation" in e) || Hn(e.delegation)) && rt(e.itemId) && ot(e.phase) && Ve(e.kind) && Ve(e.title) && (e.status === void 0 || !("status" in e) || dt(e.status)) && (e.name === void 0 || !("name" in e) || N(e.name)) && (e.meta === void 0 || !("meta" in e) || N(e.meta)) && (e.commandBearing === void 0 || !("commandBearing" in e) || Q(e.commandBearing)) && (e.toolCallId === void 0 || !("toolCallId" in e) || N(e.toolCallId)) && (e.unpairedCall === void 0 || !("unpairedCall" in e) || Q(e.unpairedCall)) && (e.startedAt === void 0 || !("startedAt" in e) || Xe(e.startedAt)) && (e.endedAt === void 0 || !("endedAt" in e) || Xe(e.endedAt)) && (e.error === void 0 || !("error" in e) || N(e.error)) && (e.summary === void 0 || !("summary" in e) || N(e.summary)) && (e.progressText === void 0 || !("progressText" in e) || N(e.progressText)) && (e.suppressChannelProgress === void 0 || !("suppressChannelProgress" in e) || Q(e.suppressChannelProgress)) && (e.hideFromChannelProgress === void 0 || !("hideFromChannelProgress" in e) || Q(e.hideFromChannelProgress)) && (e.approvalId === void 0 || !("approvalId" in e) || N(e.approvalId)) && (e.approvalSlug === void 0 || !("approvalSlug" in e) || N(e.approvalSlug)), Je = (e) => !1, Hn = (e) => Array.isArray(e) && e.every((n, a) => Vn(n)) && e.length <= 32, Vn = (e) => typeof e == "object" && e !== null && !Array.isArray(e) && "runId" in e && "childSessionKey" in e && "status" in e && Object.getOwnPropertyNames(e).every(
+) && (e.delegation === void 0 || !("delegation" in e) || Vn(e.delegation)) && rt(e.itemId) && ot(e.phase) && He(e.kind) && He(e.title) && (e.status === void 0 || !("status" in e) || dt(e.status)) && (e.name === void 0 || !("name" in e) || N(e.name)) && (e.meta === void 0 || !("meta" in e) || N(e.meta)) && (e.commandBearing === void 0 || !("commandBearing" in e) || Q(e.commandBearing)) && (e.toolCallId === void 0 || !("toolCallId" in e) || N(e.toolCallId)) && (e.unpairedCall === void 0 || !("unpairedCall" in e) || Q(e.unpairedCall)) && (e.startedAt === void 0 || !("startedAt" in e) || Xe(e.startedAt)) && (e.endedAt === void 0 || !("endedAt" in e) || Xe(e.endedAt)) && (e.error === void 0 || !("error" in e) || N(e.error)) && (e.summary === void 0 || !("summary" in e) || N(e.summary)) && (e.progressText === void 0 || !("progressText" in e) || N(e.progressText)) && (e.suppressChannelProgress === void 0 || !("suppressChannelProgress" in e) || Q(e.suppressChannelProgress)) && (e.hideFromChannelProgress === void 0 || !("hideFromChannelProgress" in e) || Q(e.hideFromChannelProgress)) && (e.approvalId === void 0 || !("approvalId" in e) || N(e.approvalId)) && (e.approvalSlug === void 0 || !("approvalSlug" in e) || N(e.approvalSlug)), Je = (e) => !1, Vn = (e) => Array.isArray(e) && e.every((n, a) => Hn(n)) && e.length <= 32, Hn = (e) => typeof e == "object" && e !== null && !Array.isArray(e) && "runId" in e && "childSessionKey" in e && "status" in e && Object.getOwnPropertyNames(e).every(
   (n, a) => Ye[1].test(n) || Je(e[n])
-) && Xn(e.runId) && Yn(e.childSessionKey) && (e.label === void 0 || !("label" in e) || He(e.label)) && (e.groupId === void 0 || !("groupId" in e) || He(e.groupId)) && (e.runtimeMs === void 0 || !("runtimeMs" in e) || Jn(e.runtimeMs)) && Qn(e.status), Xn = (e) => typeof e == "string" && (e.length >= 2 || e.length >= 1 && $(e) >= 1) && (e.length <= 256 || e.length <= 512 && $(e) <= 256), Yn = (e) => typeof e == "string" && (e.length >= 2 || e.length >= 1 && $(e) >= 1) && (e.length <= 1024 || e.length <= 2048 && $(e) <= 1024), He = (e) => typeof e == "string" && (e.length >= 2 || e.length >= 1 && $(e) >= 1) && (e.length <= 512 || e.length <= 1024 && $(e) <= 512), Jn = (e) => Number.isFinite(e) && e >= 0 && e <= 9007199254740991, Qn = (e) => Zn(e) || et(e) || Qe(e) || nt(e) || tt(e), Zn = (e) => typeof e == "string" && e === "accepted", et = (e) => typeof e == "string" && e === "done", Qe = (e) => typeof e == "string" && e === "failed", nt = (e) => typeof e == "string" && e === "killed", tt = (e) => typeof e == "string" && e === "timeout", rt = (e) => typeof e == "string" && (e.length >= 2 || e.length >= 1 && $(e) >= 1), ot = (e) => it(e) || st(e) || at(e), it = (e) => typeof e == "string" && e === "start", st = (e) => typeof e == "string" && e === "update", at = (e) => typeof e == "string" && e === "end", Ve = (e) => typeof e == "string", dt = (e) => lt(e) || ct(e) || Qe(e) || ut(e) || pt(e), lt = (e) => typeof e == "string" && e === "running", ct = (e) => typeof e == "string" && e === "completed", ut = (e) => typeof e == "string" && e === "blocked", pt = (e) => typeof e == "string" && e === "skipped", N = (e) => typeof e == "string", Q = (e) => typeof e == "boolean", Xe = (e) => Number.isFinite(e);
-var Ze = (e) => Gn(e);
+) && Xn(e.runId) && Yn(e.childSessionKey) && (e.label === void 0 || !("label" in e) || Ve(e.label)) && (e.groupId === void 0 || !("groupId" in e) || Ve(e.groupId)) && (e.runtimeMs === void 0 || !("runtimeMs" in e) || Jn(e.runtimeMs)) && Qn(e.status), Xn = (e) => typeof e == "string" && (e.length >= 2 || e.length >= 1 && $(e) >= 1) && (e.length <= 256 || e.length <= 512 && $(e) <= 256), Yn = (e) => typeof e == "string" && (e.length >= 2 || e.length >= 1 && $(e) >= 1) && (e.length <= 1024 || e.length <= 2048 && $(e) <= 1024), Ve = (e) => typeof e == "string" && (e.length >= 2 || e.length >= 1 && $(e) >= 1) && (e.length <= 512 || e.length <= 1024 && $(e) <= 512), Jn = (e) => Number.isFinite(e) && e >= 0 && e <= 9007199254740991, Qn = (e) => Zn(e) || et(e) || Qe(e) || nt(e) || tt(e), Zn = (e) => typeof e == "string" && e === "accepted", et = (e) => typeof e == "string" && e === "done", Qe = (e) => typeof e == "string" && e === "failed", nt = (e) => typeof e == "string" && e === "killed", tt = (e) => typeof e == "string" && e === "timeout", rt = (e) => typeof e == "string" && (e.length >= 2 || e.length >= 1 && $(e) >= 1), ot = (e) => it(e) || st(e) || at(e), it = (e) => typeof e == "string" && e === "start", st = (e) => typeof e == "string" && e === "update", at = (e) => typeof e == "string" && e === "end", He = (e) => typeof e == "string", dt = (e) => lt(e) || ct(e) || Qe(e) || ut(e) || pt(e), lt = (e) => typeof e == "string" && e === "running", ct = (e) => typeof e == "string" && e === "completed", ut = (e) => typeof e == "string" && e === "blocked", pt = (e) => typeof e == "string" && e === "skipped", N = (e) => typeof e == "string", Q = (e) => typeof e == "boolean", Xe = (e) => Number.isFinite(e);
+var Ze = (e) => Kn(e);
 
 // openclaw/ui/src/lib/chat/prepared-activity.ts
 function le(e) {
@@ -2852,7 +2841,7 @@ var ft = /* @__PURE__ */ new Set([
   "knowledge_edit_body",
   "knowledge_save_page",
   "knowledge_create_claim"
-]), od = new Map([
+]), ad = new Map([
   ["skills_read", "reads"],
   ["skills_search", "searches"],
   ["memory_search", "searches"],
@@ -2989,7 +2978,7 @@ function on(e) {
   };
   for (let i = 0; i < y.length; i++) {
     let c = y[i] ?? {}, b = re(c.type) || typeof c.name == "string" && (c.arguments != null || c.args != null || c.input != null);
-    if (!b && !V(c.type))
+    if (!b && !H(c.type))
       continue;
     let k = f(c.runId) ?? r, S = f(c.parentToolCallId), E = rn(c, n), D = ce(c, n), j = {
       id: E ?? `${D}:${i}`,
@@ -3091,11 +3080,11 @@ function cn(e, n) {
 }
 
 // gateway-edge/openclaw-browser-resources/entry.ts
-function _d(e, n) {
+function Od(e, n) {
   return [...cn(e, []).values()].filter((l) => l.tab.target === "host" && l.tab.profile === n).at(-1) ?? null;
 }
 export {
-  _d as latestNativeBrowserTab
+  Od as latestNativeBrowserTab
 };
 /*!
 TypeBox
