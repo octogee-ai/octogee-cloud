@@ -2,6 +2,7 @@ import type { Express, RequestHandler } from "express";
 import { Router } from "express";
 import { describe, expect, it, vi } from "vitest";
 
+import githubPullRequestRoutes from "../routes/projects/github-pull-request.js";
 import { mountClusterRoutes } from "../routes/mount-cluster-routes.js";
 
 type MountCall = {
@@ -67,8 +68,9 @@ describe("mountClusterRoutes", () => {
     mountClusterRoutes(app);
 
     const projects = useCalls(app, "/api/projects");
-    expect(projects).toHaveLength(8);
+    expect(projects).toHaveLength(9);
     expect((projects[0].handlers[0] as { name?: string }).name).toBe("requireAuth");
+    expect(projects.at(-1)?.handlers).toEqual([githubPullRequestRoutes]);
   });
 
   it("mounts public project routes before project auth and prefers the injected project routers", () => {
@@ -158,6 +160,7 @@ describe("mountClusterRoutes", () => {
       "/api/workspace",
       "/api/channels",
       "/api/channels",
+      "/api/projects",
       "/api/projects",
       "/api/projects",
       "/api/projects",
