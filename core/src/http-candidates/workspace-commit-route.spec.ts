@@ -3,22 +3,13 @@ import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => {
-  class MockConnectorTokenReadError extends Error {
-    constructor(
-      readonly status: number,
-      readonly errorCode: string,
-    ) {
-      super(errorCode);
-    }
-  }
   return {
-    ConnectorTokenReadError: MockConnectorTokenReadError,
     resolveUserDir: vi.fn(),
     resolveProjectDir: vi.fn(),
     commitAndPushWorkspace: vi.fn(),
     isSafeSlug: vi.fn(),
     isTrustedGithubUserCheckout: vi.fn(),
-    readOwnerRuntimeConnectorAccessToken: vi.fn(),
+    isGithubProjectCheckpoint: vi.fn(),
     resolveCommitAuthor: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
@@ -34,11 +25,7 @@ vi.mock("../workspace/workspace-git.js", () => ({
   commitAndPushWorkspace: h.commitAndPushWorkspace,
   isSafeSlug: h.isSafeSlug,
   isTrustedGithubUserCheckout: h.isTrustedGithubUserCheckout,
-}));
-
-vi.mock("../connectors/connector-tokens.js", () => ({
-  ConnectorTokenReadError: h.ConnectorTokenReadError,
-  readOwnerRuntimeConnectorAccessToken: h.readOwnerRuntimeConnectorAccessToken,
+  isGithubProjectCheckpoint: h.isGithubProjectCheckpoint,
 }));
 
 vi.mock("../workspace/route-helpers.js", () => ({
@@ -73,7 +60,7 @@ beforeEach(() => {
   h.isSafeSlug.mockImplementation((slug: string) => /^[a-z0-9-]+$/.test(slug));
   h.resolveUserDir.mockResolvedValue("/customers/acme");
   h.isTrustedGithubUserCheckout.mockReturnValue(false);
-  h.readOwnerRuntimeConnectorAccessToken.mockResolvedValue("gh-owner-token");
+  h.isGithubProjectCheckpoint.mockReturnValue(false);
   h.resolveCommitAuthor.mockReturnValue({ name: "Octogee Agent", email: "agent@octogee.test" });
   h.commitAndPushWorkspace.mockImplementation(async (_dir, options) => {
     const prepared = await options.beforeCommit?.();
@@ -124,7 +111,6 @@ describe("internal workspace commit route", () => {
 
     expect(h.resolveUserDir).not.toHaveBeenCalled();
     expect(h.commitAndPushWorkspace).not.toHaveBeenCalled();
-    expect(h.readOwnerRuntimeConnectorAccessToken).not.toHaveBeenCalled();
   });
 
   it("fails closed and reports a retryable error when proof lookup is unavailable", async () => {
@@ -257,75 +243,20 @@ describe("internal workspace commit route — multi-agent project lane", () => {
     );
   });
 
-  it("fetches GitHub auth on demand and confines it to the commit operation", async () => {
+  it("checkpoints GitHub-backed projects without diverting files into a generated manifest", async () => {
     h.resolveProjectDir.mockResolvedValue("/customers/acme/projects/orbit");
-    h.isTrustedGithubUserCheckout.mockReturnValue(true);
+    h.isGithubProjectCheckpoint.mockReturnValue(true);
 
     await request(app())
       .post("/internal/workspace/commit")
       .send({ agentId: "octogee-acme-proj-orbit-coach", slug: "acme", project: "orbit", message: "checkpoint" })
       .expect(200);
 
-    expect(h.readOwnerRuntimeConnectorAccessToken).toHaveBeenCalledWith("github");
     expect(h.commitAndPushWorkspace).toHaveBeenCalledWith(
       "/customers/acme/projects/orbit",
-      expect.objectContaining({ githubToken: "gh-owner-token" }),
+      expect.objectContaining({ message: "checkpoint" }),
     );
-  });
-
-  it("does not create a local commit when GitHub is disconnected", async () => {
-    h.resolveProjectDir.mockResolvedValue("/customers/acme/projects/orbit");
-    h.isTrustedGithubUserCheckout.mockReturnValue(true);
-    h.readOwnerRuntimeConnectorAccessToken.mockResolvedValue(null);
-
-    await request(app())
-      .post("/internal/workspace/commit")
-      .send({ agentId: "octogee-acme-proj-orbit-coach", slug: "acme", project: "orbit" })
-      .expect(422, {
-        error: "Connect GitHub before saving this project.",
-        code: "GITHUB_NOT_CONNECTED",
-      });
-
-    expect(h.commitAndPushWorkspace).not.toHaveBeenCalled();
-  });
-
-  it("fails explicitly before committing when the GitHub broker is unavailable", async () => {
-    h.resolveProjectDir.mockResolvedValue("/customers/acme/projects/orbit");
-    h.isTrustedGithubUserCheckout.mockReturnValue(true);
-    h.readOwnerRuntimeConnectorAccessToken.mockRejectedValue(new Error("broker down"));
-
-    await request(app())
-      .post("/internal/workspace/commit")
-      .send({ agentId: "octogee-acme-proj-orbit-coach", slug: "acme", project: "orbit" })
-      .expect(503, {
-        error: "GitHub authentication is temporarily unavailable; retry shortly.",
-        code: "GITHUB_AUTH_UNAVAILABLE",
-      });
-
-    expect(h.error).toHaveBeenCalledWith(
-      "internal/workspace/commit: GitHub credential broker failed",
-      { error: "broker down" },
-    );
-    expect(h.commitAndPushWorkspace).not.toHaveBeenCalled();
-  });
-
-  it("directs the user to reconnect before committing when GitHub requires reauthorization", async () => {
-    h.resolveProjectDir.mockResolvedValue("/customers/acme/projects/orbit");
-    h.isTrustedGithubUserCheckout.mockReturnValue(true);
-    h.readOwnerRuntimeConnectorAccessToken.mockRejectedValue(
-      new h.ConnectorTokenReadError(409, "reauth_required"),
-    );
-
-    await request(app())
-      .post("/internal/workspace/commit")
-      .send({ agentId: "octogee-acme-proj-orbit-coach", slug: "acme", project: "orbit" })
-      .expect(422, {
-        error: "Reconnect GitHub before saving this project.",
-        code: "GITHUB_REAUTH_REQUIRED",
-      });
-
-    expect(h.commitAndPushWorkspace).not.toHaveBeenCalled();
-    expect(h.error).not.toHaveBeenCalled();
+    expect(h.divertWorktreeBinaries).not.toHaveBeenCalled();
   });
 
   it("rejects malformed project ids before touching the tree", async () => {
@@ -386,21 +317,6 @@ describe("binary diversion on the commit path", () => {
     }, undefined, { retainLocalFiles: true });
     const options = h.commitAndPushWorkspace.mock.calls.at(-1)![1];
     expect(await options.beforeCommit()).toEqual({ ok: true, excludePaths: ["asset.png"] });
-  });
-
-  it("stores GitHub-backed checkout binaries with the rest of the workspace blobs", async () => {
-    h.isTrustedGithubUserCheckout.mockReturnValue(true);
-
-    await request(app())
-      .post("/internal/workspace/commit")
-      .send({ agentId: "octogee-acme-coach", slug: "acme" })
-      .expect(200);
-
-    expect(h.divertWorktreeBinaries).toHaveBeenCalledWith("/customers/acme", {
-      slug: "acme",
-      projectSlug: null,
-      gcsPrefix: "customers/acme",
-    }, undefined, { excludePaths: [".system/project-coaches"] });
   });
 
   it("aborts without committing when a binary cannot be rehomed", async () => {

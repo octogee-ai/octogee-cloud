@@ -3,6 +3,7 @@ import { requestBlobStore, type BlobStore } from "./blob-store.js";
 import { userAccounts } from "../identity/user-accounts.js";
 import { readProject } from "./firestoreReads.js";
 import { platformStateStore } from "../identity/platform-state-store.js";
+import { githubCheckpointBranch, githubCheckpointRepo, projectRepoSourceFromDoc } from "@octogee/shared/types/project";
 import { USERNAME_RE } from "@octogee/shared/types/identity";
 import { readConnectorAccessToken } from "../connectors/connector-tokens.js";
 import { workspaceGiteaOrg, workspaceRepoName, projectRepoName } from "../gitea-naming.js";
@@ -22,6 +23,7 @@ export interface FileTarget {
   blobStore?: BlobStore;
   githubToken?: string;
   cacheAuthority?: string;
+  checkpointBranch?: string;
   // Gitea: the username to impersonate via admin Sudo (no per-user PAT). The caller's
   // own gitea identity where they hold real ACL (owner / project collaborator), or the
   // workspace owner's when brokering for a workspace member who has no repo access.
@@ -49,6 +51,7 @@ export interface ResolveFileTargetOpts {
   resolveGithubToken?: boolean;
   allowWorkspaceMembers?: boolean;
   access?: "read" | "write";
+  useProjectCheckpoint?: boolean;
 }
 
 export async function resolveFileTarget(
@@ -92,7 +95,20 @@ async function resolveProjectTarget(
       reason: "project_archived",
     };
   }
-  const github = project.repoSource?.provider === "github" ? project.repoSource : null;
+  const github = projectRepoSourceFromDoc(project.repoSource);
+  if (opts.useProjectCheckpoint && github?.workingCopy?.ready) {
+    if (!isOwner) return { ok: false, status: 403, error: "Private project checkpoint is only available to its owner" };
+    const repoName = githubCheckpointRepo(github.workingCopy.id);
+    return {
+      ok: true,
+      target: {
+        ...giteaProjectTarget(slug, projectSlug, slug, project.canvasFile),
+        repoName,
+        checkpointBranch: githubCheckpointBranch(repoName)!,
+        cacheAuthority: callerUid,
+      },
+    };
+  }
   if (github) {
     return resolveGithubProjectTarget({
       callerUid,

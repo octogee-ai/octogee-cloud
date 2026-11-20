@@ -1,10 +1,11 @@
+import { isGithubProjectCheckpoint } from "@octogee/core/workspace/workspace-git";
 import { initializeRelocatedProjectAgent, projectAgentWorkspace, restoreProjectAgentWorkspaces } from "@octogee/core/project-agent-workspaces";
 import { enableSystemConfigWatch } from "./system-config-watch-state.js";
 import { readAcceptedUserConfig } from "./system-config.js";
 import { parseAgentId, projectAgentId } from "@octogee/shared/types/identity";
 import { cloneMissingProjects, prepareUserRuntimePublication } from "./user-lifecycle.js";
 import { prepareSharedUserAgentAnchors } from "./agent-anchor-record.js";
-import { readProjectRestoreReady } from "@octogee/core/project-asset-state";
+import { readProjectRestoreReady, writeProjectRestoreReady } from "@octogee/core/project-asset-state";
 import { prepareUserProjectAssets } from "./user-project-assets.js";
 import { createBrokeredProjectBlobHydrator } from "./project-blob-materialization.js";
 import { sharedMigrationAgentIds, sharedMigrationExportPaths } from "./source-transfer-plan.js";
@@ -635,7 +636,8 @@ async function projectsNeedingClone(ctx: BrokerCtx, slug: string, projects: read
       ctx.log(`[add:${slug}/${p.projectSlug}] project checkout is turned off by its owner`);
       return [];
     }
-    const repoSource = projectRepoSourceFromDoc(p.repoSource);
+    const source = projectRepoSourceFromDoc(p.repoSource);
+    const repoSource = source?.workingCopy?.ready ? null : source;
     const target = {
       projectSlug: p.projectSlug,
       giteaRepoName: p.giteaRepoName,
@@ -689,7 +691,7 @@ function githubCheckoutReady(snapshot: FleetBrokerUserSnapshot, projectId: strin
   const project = snapshot.projects.find(row => row.projectSlug === projectId);
   return snapshot.projectCheckoutScope === "workspace-and-projects" && project?.repoSource?.provider === "github" &&
     projectCheckoutEnabled(project.checkoutEnabled) &&
-    projectCheckoutMatchesSource(snapshot.slug, projectId, project.giteaRepoName ?? "", project.repoSource) &&
+    projectCheckoutMatchesSource(snapshot.slug, projectId, project.giteaRepoName ?? "", project.repoSource.workingCopy?.ready ? null : project.repoSource) &&
     userRepositoryHasCanonicalRemote(path.join(CUSTOMERS_DIR, snapshot.slug, "projects", projectId));
 }
 
@@ -728,7 +730,12 @@ async function prepareBrokerProjectWorkspaces(ctx: BrokerCtx, snapshot: FleetBro
 async function restoreUserProjectAssets(ctx: BrokerCtx, slug: string, project: string): Promise<void> {
   if (!ctx.isIsolatedGateway()) return;
   const projects = path.join(CUSTOMERS_DIR, slug, "projects");
-  if (await readProjectRestoreReady(path.join(projects, project), slug, project)) return;
+  const dir = path.join(projects, project);
+  if (await readProjectRestoreReady(dir, slug, project)) return;
+  if (isGithubProjectCheckpoint(dir)) {
+    await writeProjectRestoreReady(dir, slug, project);
+    return;
+  }
   await prepareUserProjectAssets({ projects, slug, project, hydrate: createBrokeredProjectBlobHydrator(ctx.client), log: ctx.log });
 }
 

@@ -29,6 +29,7 @@ import projectsJoinLeaveRoutes from "./projects/join-leave.js";
 import projectsMembersRoutes from "./projects/members.js";
 import projectsAgentRoutes from "./projects/agent.js";
 import projectsRepoSourceRoutes from "./projects/repo-source.js";
+import githubPullRequestRoutes from "./projects/github-pull-request.js";
 import projectsSettingsRoutes from "./projects/settings.js";
 
 import internalWorkspaceCommitRoutes from "@octogee/core/http-candidates/workspace-commit-router";
@@ -78,6 +79,7 @@ function projectRoutes(opts: MountClusterRoutesOpts): readonly RouteHandler[] {
     projectsAgentRoutes,
     opts.projectsRepoSourceRoutes ?? projectsRepoSourceRoutes,
     projectsSettingsRoutes,
+    githubPullRequestRoutes,
   ];
 }
 

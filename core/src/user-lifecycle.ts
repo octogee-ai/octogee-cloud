@@ -661,7 +661,7 @@ async function restoreUserRuntimeFromSnapshotInner(
 }
 
 function githubRepoSourceOf(target: ProjectCloneTarget): ProjectRepoSource | null {
-  return target.repoSource?.provider === "github" ? target.repoSource : null;
+  return target.repoSource?.provider === "github" && !target.repoSource.workingCopy?.ready ? target.repoSource : null;
 }
 
 function projectCloneOptions(target: ProjectCloneTarget, signal?: AbortSignal): ProjectCloneOptions | undefined {

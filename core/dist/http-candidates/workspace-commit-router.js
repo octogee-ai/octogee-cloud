@@ -1,8 +1,7 @@
 import { clientRequestLimit } from "../http/authenticated-request-limit.js";
 import { PROJECT_AGENT_WORKSPACE_PARTS } from "@octogee/shared/types/project";
 import { Router } from "express";
-import { resolveUserDir, resolveProjectDir, commitAndPushWorkspace, isTrustedGithubUserCheckout, isSafeSlug, } from "../workspace/workspace-git.js";
-import { ConnectorTokenReadError, readOwnerRuntimeConnectorAccessToken, } from "../connectors/connector-tokens.js";
+import { resolveUserDir, resolveProjectDir, commitAndPushWorkspace, isTrustedGithubUserCheckout, isGithubProjectCheckpoint, isSafeSlug, } from "../workspace/workspace-git.js";
 import { isValidProjectId } from "@octogee/shared/types/identity";
 import { resolveCommitAuthor } from "../workspace/route-helpers.js";
 import { logger } from "../http/logging.js";
@@ -11,37 +10,6 @@ import { divertWorktreeBinaries } from "../workspace/binary-diversion.js";
 const router = Router();
 const DEFAULT_MESSAGE = "agent: workspace commit";
 const MAX_MESSAGE_LEN = 5_000;
-async function onDemandGithubToken(dir, res) {
-    if (!isTrustedGithubUserCheckout(dir))
-        return undefined;
-    try {
-        const token = await readOwnerRuntimeConnectorAccessToken("github");
-        if (token)
-            return token;
-        res.status(422).json({
-            error: "Connect GitHub before saving this project.",
-            code: "GITHUB_NOT_CONNECTED",
-        });
-        return null;
-    }
-    catch (err) {
-        if (err instanceof ConnectorTokenReadError && err.errorCode === "reauth_required") {
-            res.status(422).json({
-                error: "Reconnect GitHub before saving this project.",
-                code: "GITHUB_REAUTH_REQUIRED",
-            });
-            return null;
-        }
-        logger.error("internal/workspace/commit: GitHub credential broker failed", {
-            error: err instanceof Error ? err.message : String(err),
-        });
-        res.status(503).json({
-            error: "GitHub authentication is temporarily unavailable; retry shortly.",
-            code: "GITHUB_AUTH_UNAVAILABLE",
-        });
-        return null;
-    }
-}
 function usersRoot() {
     return process.env.CUSTOMERS_DIR || "/home/node/.openclaw/customers";
 }
@@ -140,15 +108,14 @@ router.post("/commit", clientRequestLimit(1200, true), async (req, res) => {
         dir = projectDir;
     }
     const author = resolveCommitAuthor(undefined, slug);
-    const githubToken = await onDemandGithubToken(dir, res);
-    if (githubToken === null)
-        return;
+    const githubProject = isTrustedGithubUserCheckout(dir) || isGithubProjectCheckpoint(dir);
     let divertedBlobs = 0;
     const r = await commitAndPushWorkspace(dir, {
         message,
         author,
-        ...(githubToken ? { githubToken } : {}),
         beforeCommit: async () => {
+            if (githubProject)
+                return { ok: true };
             const diverted = await divertBinaries(dir, slug, project);
             if (diverted.failures.length > 0) {
                 return {

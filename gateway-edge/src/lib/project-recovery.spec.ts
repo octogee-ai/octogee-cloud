@@ -35,7 +35,7 @@ linuxTest("restores text and the matching immutable asset after losing the worki
     const sha256=createHash("sha256").update(body).digest("hex");objects.set(sha256,Buffer.from(body));
     return {sha256,size:body.length,gcsPath:`${target.gcsPrefix}/.objects/${sha256}`};
   });
-  const deps={readUser,resolveProject:resolveProjectDir,commit:commitAndPushWorkspace,githubToken:async()=>undefined,prepare:async()=>{throw new Error("unexpected asset preparation");},
+  const deps={readUser,resolveProject:resolveProjectDir,commit:commitAndPushWorkspace,prepare:async()=>{throw new Error("unexpected asset preparation");},
     divert:(cwd:string,target:any)=>divertWorktreeBinaries(cwd,target,{gitStatus,storeWorkspaceBlob:store},{retainLocalFiles:true})};
   const versions=[];
   for(const n of [1,2]){
@@ -150,7 +150,7 @@ linuxTest.each(["available", "unavailable", "replacement", "conflict", "deletion
   });
   const hydrate=createBrokeredProjectBlobHydrator({workspaceManifestReadUrl:async()=>{throw new Error("local Git manifest is authoritative");},blobMaterializationReadUrl:blobRead},users);
   vi.stubGlobal("fetch",vi.fn(async(url:string)=>storage === "unavailable" ? new Response(null,{status:503}) : new Response(new Uint8Array(objects.get(new URL(url).pathname.slice(1))!),{headers:{"x-goog-generation":"1"}})));
-  const deps={readUser,resolveProject:resolveProjectDir,commit:commitAndPushWorkspace,githubToken:async()=>undefined,
+  const deps={readUser,resolveProject:resolveProjectDir,commit:commitAndPushWorkspace,
     prepare:async()=>prepareUserProjectAssets({projects:path.dirname(dir),slug:"alice",project:"demo",hydrate,requireRestoredCheckout:true}),
     divert:(cwd:string,scope:any)=>divertWorktreeBinaries(cwd,scope,{gitStatus,storeWorkspaceBlob:async(_target,_name,body)=>{
       const hash=createHash("sha256").update(body).digest("hex");objects.set(hash,Buffer.from(body));

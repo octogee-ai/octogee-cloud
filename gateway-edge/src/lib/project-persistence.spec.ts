@@ -6,14 +6,11 @@ import { persistUserProjects } from "./project-persistence.js";
 import { writeProjectRestoreReady } from "@octogee/core/project-asset-state";
 import type { FleetBrokerProjectRestore } from "@octogee/shared/types/fleet-broker";
 
-vi.mock("@octogee/core/connectors/connector-tokens", () => ({ readOwnerRuntimeConnectorAccessToken: vi.fn() }));
-
 let root: string;
 function deps() {
   return { readUser: vi.fn(async (slug: string) => ({ uid: `uid-${slug}`, slug, gatewayId: "builder-one", status: "complete" as const,
       checkpointEpoch: 1, projects: [{ projectSlug: "demo", giteaRepoName: "demo", provisioningState: "active" }] as FleetBrokerProjectRestore[] })),
     resolveProject: vi.fn(async (_root, slug, project): Promise<string | null> => path.join(root, slug, "projects", project)),
-    githubToken: vi.fn(async () => undefined),
     prepare: vi.fn(async () => undefined),
     divert: vi.fn(async () => ({ failures: [] as string[], failedPaths: [] as string[], diverted: [] })),
     commit: vi.fn(async (_dir, options) => {

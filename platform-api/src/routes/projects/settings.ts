@@ -2,7 +2,9 @@ import { Router, type Request, type Response } from "express";
 import { strictRateLimit } from "@octogee/core/http/security";
 import { logger } from "@octogee/core/http/logging";
 import { platformStateStore } from "@octogee/core/identity/platform-state-store";
-import { withProject } from "../../lib/withProject.js";
+import { projectCheckoutEnabled, projectRepoSourceFromDoc } from "@octogee/shared/types/project";
+import { enableGithubProjectCheckout, GithubProjectError } from "../../lib/github-project-working-copy.js";
+import { projectIsArchived, withProject } from "../../lib/withProject.js";
 
 const VISIBILITIES: ReadonlySet<unknown> = new Set(["private", "public", "unlisted"]);
 const OWNER_SET_STATUSES: ReadonlySet<unknown> = new Set(["idea", "building", "launched", "paused"]);
@@ -36,6 +38,13 @@ function requestedProjectSettings(body: unknown): RequestedSettings {
 
 const router: Router = Router();
 
+router.get("/:wid/:pid/settings", strictRateLimit, async (req: Request, res: Response) => {
+  const { wid, pid } = req.params as { wid: string; pid: string };
+  await withProject(req, res, wid, pid, { ownerOnly: true }, async ({ project }) => {
+    res.json({ checkoutEnabled: projectCheckoutEnabled(project.checkoutEnabled), repoSource: projectRepoSourceFromDoc(project.repoSource) });
+  });
+});
+
 router.patch("/:wid/:pid/settings", strictRateLimit, async (req: Request, res: Response) => {
   const { wid, pid } = req.params as { wid: string; pid: string };
   await withProject(req, res, wid, pid, {
@@ -43,14 +52,30 @@ router.patch("/:wid/:pid/settings", strictRateLimit, async (req: Request, res: R
     ownerErrorMessage: "Only the project owner can change project settings",
     logTag: "[project-settings] crashed for",
     errorMessage: "Could not update project settings",
-  }, async ({ uid }) => {
+  }, async ({ uid, project }) => {
     const requested = requestedProjectSettings(req.body);
     if (!requested.ok) {
       res.status(400).json({ error: requested.error });
       return;
     }
+    const source = projectRepoSourceFromDoc(project.repoSource);
+    const settings = { ...requested.value };
+    if (settings.checkoutEnabled === true && source) {
+      if (await projectIsArchived(project)) {
+        res.status(409).json({ error: "Project is archived", code: "PROJECT_ARCHIVED" });
+        return;
+      }
+      try {
+        await enableGithubProjectCheckout({ wid, pid, uid }, source);
+      } catch (error) {
+        if (!(error instanceof GithubProjectError)) throw error;
+        res.status(error.status).json({ error: error.message });
+        return;
+      }
+      delete settings.checkoutEnabled;
+    }
     await platformStateStore.workspaces.projects.patch(wid, pid, {
-      ...requested.value,
+      ...settings,
       updatedAt: { serverNow: true },
     });
     logger.info("[project-settings] updated", { uid, project: `${wid}/${pid}`, fields: Object.keys(requested.value) });

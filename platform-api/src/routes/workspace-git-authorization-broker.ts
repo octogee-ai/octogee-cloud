@@ -95,7 +95,7 @@ async function authorize(req: Request, res: Response, deps: WorkspaceGitAuthoriz
       callerUid: req.uid,
       callerWorkspaceSlug: req.workspaceSlug,
     },
-    body.lane,
+    { access: body.lane.access, resolveGithubToken: false, useProjectCheckpoint: true },
   );
   if (!result.ok) {
     res.status(result.status).json({
@@ -104,12 +104,16 @@ async function authorize(req: Request, res: Response, deps: WorkspaceGitAuthoriz
     });
     return;
   }
+  if (body.lane.resolveGithubToken && result.target.provider === "github") {
+    res.status(409).json({ error: "GitHub project changes must be published through a pull request", reason: "github_pull_request_required" });
+    return;
+  }
   const authorization: WorkspaceGitAuthorization = {
     gatewayId: body.gatewayId,
     uid: req.uid,
     slug: body.slug,
     projectSlug: body.projectSlug,
-    githubToken: result.target.githubToken ?? null,
+    githubToken: null,
     commitAuthor: resolveCommitAuthor(req.user, body.slug),
   };
   res.set("cache-control", "no-store").json(authorization);

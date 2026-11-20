@@ -11,7 +11,19 @@ export interface ProjectRepoSource {
     provider: 'github';
     owner: string;
     repo: string;
+    workingCopy?: GitHubProjectWorkingCopy;
 }
+export interface GitHubProjectWorkingCopy {
+    id: string;
+    repositoryId: number;
+    baseBranch: string;
+    baseCommit: string;
+    ready: boolean;
+    pullRequestUrl?: string;
+}
+export declare function githubCheckpointRepo(id: string): string;
+export declare function githubCheckpointBranch(repo: string): string | null;
+export declare const GITHUB_PROJECT_METADATA = ".files/manifest.json";
 export type ProjectAgentStatus = 'provisioning' | 'ready' | 'error';
 export interface ProjectAgentIdentity {
     name: string;

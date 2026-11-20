@@ -97,6 +97,7 @@ export function desiredUsers(
 
 function projectCloneKey(project: FleetBrokerProjectRestore): string {
   const repoSource = project.repoSource;
+  if (repoSource?.workingCopy?.ready) return `${project.projectSlug}@${project.giteaRepoName}`;
   return repoSource?.provider === "github"
     ? `${project.projectSlug}@github:${repoSource.owner}/${repoSource.repo}`
     : project.projectSlug;

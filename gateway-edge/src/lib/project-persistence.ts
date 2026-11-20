@@ -6,14 +6,13 @@ import { createBrokeredProjectBlobHydrator, prepareUserProjectAssets } from "@oc
 import { projectBlobHydrationClient } from "@octogee/core/workspace/project-blob-upload";
 import { logger } from "@octogee/core/http/logging";
 import { isValidProjectId, isValidUsername } from "@octogee/shared/types/identity";
-import { commitAndPushWorkspace, isTrustedGithubUserCheckout, isTrustedGiteaUserCheckout, resolveUserDir, resolveProjectDir } from "@octogee/core/workspace/workspace-git";
+import { commitAndPushWorkspace, isTrustedGiteaUserCheckout, resolveUserDir, resolveProjectDir } from "@octogee/core/workspace/workspace-git";
 import { divertWorktreeBinaries } from "@octogee/core/workspace/binary-diversion";
-import { readOwnerRuntimeConnectorAccessToken } from "@octogee/core/connectors/connector-tokens";
 import { gatewayCredentialHeaders, internalFetch } from "@octogee/core/internal-fetch";
 import type { FleetBrokerAssignmentRosterEntry, FleetBrokerUserSnapshot } from "@octogee/shared/types/fleet-broker";
 import { isValidGatewayId } from "@octogee/shared/types/glm";
 import type { WorkspaceBlobTarget } from "@octogee/core/workspace/workspace-blob";
-import { PROJECT_AGENT_WORKSPACE_PARTS, projectCheckoutEnabled } from "@octogee/shared/types/project";
+import { PROJECT_AGENT_WORKSPACE_PARTS, githubCheckpointBranch, projectCheckoutEnabled } from "@octogee/shared/types/project";
 
 type PersistenceUser = Pick<FleetBrokerUserSnapshot, "uid" | "slug" | "gatewayId" | "status" | "projects" | "projectAgents"> & { checkpointEpoch: number };
 
@@ -22,7 +21,6 @@ interface ProjectPersistenceDeps {
   resolveProject: typeof resolveProjectDir;
   commit: typeof commitAndPushWorkspace;
   divert: typeof divertWorktreeBinaries;
-  githubToken: (dir: string) => Promise<string | undefined>;
   prepare: (input: { root: string; slug: string; project: string }) => Promise<void>;
 }
 const defaults: ProjectPersistenceDeps = {
@@ -37,12 +35,6 @@ const defaults: ProjectPersistenceDeps = {
   },
   commit: commitAndPushWorkspace,
   divert: (dir, target) => divertWorktreeBinaries(dir, target, undefined, { retainLocalFiles: true }),
-  githubToken: async dir => {
-    if (!isTrustedGithubUserCheckout(dir)) return undefined;
-    const token = await readOwnerRuntimeConnectorAccessToken("github");
-    if (!token) throw new Error("Reconnect GitHub before saving this project");
-    return token;
-  },
 };
 
 const persistenceTails = new Map<string, Promise<void>>();
@@ -137,9 +129,10 @@ const sharedDefaults: SharedPersistenceDeps = {
 function sharedGiteaProjects(user: PersistenceUser): Map<string, string> {
   const projects = new Map<string, string>();
   for (const project of user.projects) {
-    if (project.checkoutEnabled === false || project.repoSource?.provider === "github" ||
+    if (project.checkoutEnabled === false || (project.repoSource?.provider === "github" && !project.repoSource.workingCopy?.ready) ||
         (project.provisioningState !== undefined && project.provisioningState !== "active")) continue;
-    if (!isValidProjectId(project.projectSlug) || !isValidProjectId(project.giteaRepoName) || projects.has(project.projectSlug)) {
+    if (!isValidProjectId(project.projectSlug) || !project.giteaRepoName ||
+        (!isValidProjectId(project.giteaRepoName) && !githubCheckpointBranch(project.giteaRepoName)) || projects.has(project.projectSlug)) {
       throw new Error("Shared checkpoint project source is invalid");
     }
     projects.set(project.projectSlug, project.giteaRepoName);
@@ -194,6 +187,7 @@ export async function persistSharedUserFiles(input: { root: string; slug: string
         assertCurrent,
         beforeCommit: async () => {
           await assertCurrent();
+          if (githubCheckpointBranch(repo)) return { ok: true };
           const excludePaths = project === null ? ["projects", PROJECT_AGENT_WORKSPACE_PARTS.join("/")] : [];
           const gcsPrefix = project ? `customers/${input.slug}/projects/${project}` : `customers/${input.slug}`;
           const result = await deps.divert(dir, { slug: input.slug, projectSlug: project, gcsPrefix }, { excludePaths });
@@ -226,15 +220,18 @@ async function persistProjectsOnce(input: { root: string; slug: string }, deps: 
     await assertCurrent();
     const dir = await deps.resolveProject(input.root, input.slug, project);
     if (!dir) throw new Error(`project repository unavailable: ${project}`);
-    await prepareChangedProjectAssets({ ...input, project }, dir, deps);
-    const githubToken = await deps.githubToken(dir);
+    const checkpoint = Boolean(githubCheckpointBranch(source));
+    if (!checkpoint) await prepareChangedProjectAssets({ ...input, project }, dir, deps);
     const saved = await deps.commit(dir, {
       message: "autosave: project changes",
       author: { name: "Octogee autosave", email: `${input.slug}@octogee.com` },
       assertCurrent,
-      ...(githubToken ? { githubToken } : {}),
       beforeCommit: async () => {
         await assertCurrent();
+        if (checkpoint) {
+          if (!isTrustedGiteaUserCheckout(dir, source)) throw new Error("Canonical private project checkout is unavailable");
+          return { ok: true };
+        }
         const result = await deps.divert(dir, { slug: input.slug, projectSlug: project, gcsPrefix: `customers/${input.slug}/projects/${project}` });
         return result.failures.length
           ? { ok: false, error: { code: "BLOB_DIVERSION_FAILED", cwd: dir, paths: result.failedPaths } }
@@ -244,7 +241,7 @@ async function persistProjectsOnce(input: { root: string; slug: string }, deps: 
     if (!saved.ok) throw new Error(`project ${project}: ${saved.error.code}`);
     if (!saved.result.pushed) throw new Error(`project ${project}: ${saved.result.pushError || "remote push unconfirmed"}`);
     await assertCurrent();
-    await prepareChangedProjectAssets({ ...input, project }, dir, deps);
+    if (!checkpoint) await prepareChangedProjectAssets({ ...input, project }, dir, deps);
   }
   return { projects: projects.size };
 }
@@ -255,7 +252,9 @@ function userProjectCheckouts(user: PersistenceUser): Map<string, string> {
     if (!projectCheckoutEnabled(project.checkoutEnabled) ||
         project.provisioningState !== undefined && project.provisioningState !== "active") continue;
     if (!isValidProjectId(project.projectSlug) || projects.has(project.projectSlug)) throw new Error("User project checkout source is invalid");
-    projects.set(project.projectSlug, JSON.stringify([project.giteaRepoName, project.repoSource?.provider, project.repoSource?.owner, project.repoSource?.repo]));
+    if (project.repoSource?.provider === "github" && !project.repoSource.workingCopy?.ready) continue;
+    if (!project.giteaRepoName) throw new Error("User project checkout repository is missing");
+    projects.set(project.projectSlug, project.giteaRepoName);
   }
   return projects;
 }
