@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { lstatSync, promises as fs } from "node:fs";
 import * as path from "node:path";
 import { acquireWorkspaceMutationLeaseSync, projectMutationLeaseGitDir } from "../workspace-mutation-lease.js";
-import { GITHUB_PROJECT_METADATA, PROJECT_AGENT_WORKSPACE_PARTS, githubCheckpointBranch } from "@octogee/shared/types/project";
+import { GITHUB_PROJECT_METADATA_PATHS, PROJECT_AGENT_WORKSPACE_PARTS, githubCheckpointBranch } from "@octogee/shared/types/project";
 import { findUnsafeGitMetadataEntry, readGitMetadataText } from "../git-metadata.js";
 import { isDuplicateAssetUpload } from "./workspace-manifest-conflict.js";
 const MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
@@ -132,7 +132,7 @@ async function stageWorkspaceCommit(customerDir, excludePaths) {
     const identity = userGitIdentity(customerDir);
     const workspace = identity && path.resolve(customerDir) === path.join(identity.usersRoot, identity.slug);
     const excluded = [...new Set([...excludePaths, ...(workspace ? [PROJECT_AGENT_WORKSPACE_PARTS.join("/")] : [])])];
-    const reserved = checkpoint || isTrustedGithubUserCheckout(customerDir) ? [GITHUB_PROJECT_METADATA] : [];
+    const reserved = checkpoint || isTrustedGithubUserCheckout(customerDir) ? GITHUB_PROJECT_METADATA_PATHS : [];
     const staged = await stageWorkspaceChanges(customerDir, excluded, reserved);
     if (!staged.ok)
         return staged;

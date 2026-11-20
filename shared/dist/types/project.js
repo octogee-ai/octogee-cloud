@@ -30,7 +30,7 @@ export function githubCheckpointBranch(repo) {
     const id = GITHUB_CHECKPOINT_REPO.exec(repo)?.[1];
     return id ? `octogee-${id}` : null;
 }
-export const GITHUB_PROJECT_METADATA = '.files/manifest.json';
+export const GITHUB_PROJECT_METADATA_PATHS = ['.files/manifest.json', '.octogee/avatar.svg'];
 function githubWorkingCopyFromDoc(value) {
     if (!value || typeof value !== 'object')
         return undefined;
