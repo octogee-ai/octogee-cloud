@@ -367,7 +367,11 @@ const gitCommitHandler: AuthorizedHandler = async (req, res, _next, target) => {
 };
 
 const gitPushHandler: AuthorizedHandler = async (req, res, _next, target) => {
-    const branch = typeof req.body?.branch === "string" ? req.body.branch : undefined;
+    if (target.githubToken) {
+    res.status(409).json({ error: "GitHub project changes must be published through a pull request" });
+    return;
+  }
+  const branch = typeof req.body?.branch === "string" ? req.body.branch : undefined;
     if (branch && !isSafeRefName(branch)) {
       res.status(400).json({ error: "Invalid branch", code: "BAD_BRANCH" });
       return;
@@ -381,7 +385,7 @@ const gitPushHandler: AuthorizedHandler = async (req, res, _next, target) => {
       }
       const mutation = await runWorkspaceGitMutation(
         dir,
-        () => gitPush(dir, { branch, githubToken: target.githubToken ?? undefined }),
+        () => gitPush(dir, { branch }),
       );
       if (!mutation.ok) {
         respondGitError(res, mutation.error);

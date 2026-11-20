@@ -168,7 +168,7 @@ async function giteaAdminFetch(method, path, body, allow404, quietErrorStatuses 
     }
     return resp.json();
 }
-export async function createProjectGiteaRepo(org, repoName, description, privateRepo) {
+export async function createProjectGiteaRepo(org, repoName, description, privateRepo, { defaultBranch = "main", autoInit = true } = {}) {
     const repoPath = `repos/${giteaName(org)}/${giteaName(repoName)}`;
     const path = `orgs/${giteaName(org)}/repos`;
     try {
@@ -176,8 +176,8 @@ export async function createProjectGiteaRepo(org, repoName, description, private
             name: repoName,
             description,
             private: privateRepo,
-            auto_init: true,
-            default_branch: "main",
+            auto_init: autoInit,
+            default_branch: defaultBranch,
         }, false, [409]);
         return true;
     }
@@ -189,7 +189,7 @@ export async function createProjectGiteaRepo(org, repoName, description, private
             }
             assertExpectedRepo(existing, org, repoName);
             const record = existing;
-            if (record.private !== privateRepo || record.default_branch !== "main") {
+            if (record.private !== privateRepo || record.default_branch !== defaultBranch) {
                 throw new Error(`Gitea repo configuration mismatch for ${org}/${repoName}`);
             }
             return false;

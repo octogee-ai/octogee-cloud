@@ -226,6 +226,7 @@ export async function createProjectGiteaRepo(
   repoName: string,
   description: string,
   privateRepo: boolean,
+  { defaultBranch = "main", autoInit = true } = {},
 ): Promise<boolean> {
   const repoPath = `repos/${giteaName(org)}/${giteaName(repoName)}`;
   const path = `orgs/${giteaName(org)}/repos`;
@@ -234,8 +235,8 @@ export async function createProjectGiteaRepo(
       name: repoName,
       description,
       private: privateRepo,
-      auto_init: true,
-      default_branch: "main",
+      auto_init: autoInit,
+      default_branch: defaultBranch,
     }, false, [409]);
     return true;
   } catch (err) {
@@ -251,7 +252,7 @@ export async function createProjectGiteaRepo(
       }
       assertExpectedRepo(existing, org, repoName);
       const record = existing as Record<string, unknown>;
-      if (record.private !== privateRepo || record.default_branch !== "main") {
+      if (record.private !== privateRepo || record.default_branch !== defaultBranch) {
         throw new Error(`Gitea repo configuration mismatch for ${org}/${repoName}`);
       }
       return false;

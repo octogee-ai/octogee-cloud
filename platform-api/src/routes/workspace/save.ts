@@ -1,6 +1,6 @@
+import { GITHUB_PROJECT_METADATA } from "@octogee/shared/types/project";
 import { Router, type Request, type Response } from "express";
-import { withFileTarget, type FileTarget } from "@octogee/core/workspace/fileTarget";
-import { githubContentsApi, githubContentsPut } from "@octogee/core/git-host/github";
+import { withGiteaTarget, type FileTarget } from "@octogee/core/workspace/fileTarget";
 import {
   isBrokeredWritablePath,
   isTextFile,
@@ -137,35 +137,6 @@ function savePayload(
   };
 }
 
-async function githubSha(target: FileTarget, path: string): Promise<string | undefined> {
-  try {
-    const existing = (await githubContentsApi(
-      target.org, target.repoName, path, target.githubToken,
-    )) as { sha?: string };
-    return existing.sha;
-  } catch (e) {
-    return rethrowUnlessNotFound(e);
-  }
-}
-
-async function saveGithub(
-  target: FileTarget,
-  request: Extract<ValidatedSaveRequest, { ok: true }>,
-  payload: SavePayload,
-): Promise<{ ok: true; sha: string | null; provider: "github" }> {
-  const sha = await githubSha(target, request.path);
-  const out = (await githubContentsPut(target.org, target.repoName, request.path, target.githubToken, {
-    message: payload.message,
-    contentBase64: payload.contentBase64,
-    ...(sha ? { sha } : {}),
-    author: payload.author,
-  })) as { content?: { sha?: string } };
-  logger.info(
-    `save github repo=${target.org}/${target.repoName} path=${request.path} dur=${Date.now() - payload.start}ms`,
-  );
-  return { ok: true, sha: out.content?.sha ?? null, provider: "github" };
-}
-
 async function giteaSha(target: FileTarget, apiPath: string): Promise<string | undefined> {
   try {
     const existing = (await targetGiteaApi(target, apiPath)) as { sha?: string };
@@ -186,6 +157,7 @@ async function saveGitea(
     message: payload.message,
     content: payload.contentBase64,
     ...(sha ? { sha } : {}),
+    ...(target.checkpointBranch ? { branch: target.checkpointBranch } : {}),
     author: payload.author,
   })) as { content?: { sha?: string } };
   logger.info(
@@ -194,33 +166,26 @@ async function saveGitea(
   return { ok: true, sha: out.content?.sha ?? null, provider: "gitea" };
 }
 
-async function saveTarget(
-  target: FileTarget,
-  request: Extract<ValidatedSaveRequest, { ok: true }>,
-  payload: SavePayload,
-): Promise<{ ok: true; sha: string | null; provider: "github" | "gitea" }> {
-  if (target.provider === "github") return saveGithub(target, request, payload);
-  return saveGitea(target, request, payload);
-}
-
-router.post("/save", withFileTarget(async (req, res, _next, target) => {
+router.post("/save", withGiteaTarget(async (req, res, _next, target) => {
   const request = validatedSaveRequest(req.body);
   if (!request.ok) {
     sendValidationError(res, request);
     return;
   }
 
+  if (target.checkpointBranch && request.path === GITHUB_PROJECT_METADATA) {
+    res.status(403).json({ error: "This file is reserved for project assets", code: "PATH_NOT_WRITABLE" });
+    return;
+  }
   if (target.brokered && !isBrokeredWritablePath(request.path, target.canvasFile)) {
     sendBrokeredPathError(res);
     return;
   }
 
-  const result = await saveTarget(target, request, savePayload(req, target, request));
-  if (target.provider === "gitea") {
-    await syncSavedGiteaCheckout(target);
-  }
+  const result = await saveGitea(target, request, savePayload(req, target, request));
+  await syncSavedGiteaCheckout(target);
   invalidateWorkspaceFileResponseCache(target);
   res.json(result);
-}, { allowWorkspaceMembers: true, access: "write" }));
+}, { allowWorkspaceMembers: true, access: "write", useProjectCheckpoint: true }));
 
 export default router;

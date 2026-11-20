@@ -1,3 +1,5 @@
+import { giteaDeleteVerifiedRepo } from "@octogee/core/git-host/gitea-client";
+import { githubCheckpointRepo, projectRepoSourceFromDoc } from "@octogee/shared/types/project";
 import type { WorkspaceProject } from "@octogee/core/platform-state";
 import { platformStateStore } from "@octogee/core/identity/platform-state-store";
 import { projectPresentation, type PendingProjectDeletion, type ProjectRepoProvider } from "@octogee/core/identity/project-presentation";
@@ -63,6 +65,9 @@ export async function deleteProjectPlatformState(
   pendingDeletion: PendingProjectDeletion,
 ): Promise<void> {
   await projectPresentation().markProjectPendingDeletion(workspaceSlug, projectSlug, pendingDeletion);
+  const stored = await platformStateStore.workspaces.projects.get(workspaceSlug, projectSlug);
+  const workingCopy = projectRepoSourceFromDoc(stored?.repoSource)?.workingCopy;
+  if (workingCopy) await giteaDeleteVerifiedRepo(workspaceSlug, githubCheckpointRepo(workingCopy.id));
   await platformStateStore.transaction({ label: "project.delete" }, async (tx) => {
     const { projects, projectMembers, channels } = tx.workspaces;
     const scope = { workspaceSlug, projectSlug };

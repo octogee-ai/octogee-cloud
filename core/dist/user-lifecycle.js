@@ -183,7 +183,7 @@ async function restoreUserRuntimeFromSnapshotInner(adapter, snapshot, opts) {
     };
 }
 function githubRepoSourceOf(target) {
-    return target.repoSource?.provider === "github" ? target.repoSource : null;
+    return target.repoSource?.provider === "github" && !target.repoSource.workingCopy?.ready ? target.repoSource : null;
 }
 function projectCloneOptions(target, signal) {
     const repoSource = githubRepoSourceOf(target);

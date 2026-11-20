@@ -78,7 +78,7 @@ import {
 } from "@octogee/shared/types/identity";
 import { MANIFEST_OBJECT_SUFFIX } from "@octogee/core/workspace-manifest";
 import { userEntitlements } from "@octogee/shared/types/user-entitlements";
-import { projectAgentConfigured, projectRepoSourceFromDoc } from "@octogee/shared/types/project";
+import { githubCheckpointRepo, projectAgentConfigured, projectRepoSourceFromDoc } from "@octogee/shared/types/project";
 import {
   createCachedUserAgentDefaultResolver,
   createCachedHouseModelResolver,
@@ -1421,6 +1421,8 @@ async function collectProjects(
     const repoSource = projectRepoSourceFromDoc(project.repoSource ?? undefined);
     if (repoSource) {
       out.repoSource = repoSource;
+      if (repoSource.workingCopy?.ready) out.giteaRepoName = githubCheckpointRepo(repoSource.workingCopy.id);
+      else if (repoSource.workingCopy) out.checkoutEnabled = false;
     }
     return out;
   });

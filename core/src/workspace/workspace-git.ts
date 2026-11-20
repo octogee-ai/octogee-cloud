@@ -3,7 +3,7 @@ import { lstatSync, promises as fs } from "node:fs";
 import * as path from "node:path";
 
 import { acquireWorkspaceMutationLeaseSync, projectMutationLeaseGitDir } from "../workspace-mutation-lease.js";
-import { PROJECT_AGENT_WORKSPACE_PARTS } from "@octogee/shared/types/project";
+import { GITHUB_PROJECT_METADATA, PROJECT_AGENT_WORKSPACE_PARTS, githubCheckpointBranch } from "@octogee/shared/types/project";
 import { findUnsafeGitMetadataEntry, readGitMetadataText } from "../git-metadata.js";
 import { isDuplicateAssetUpload } from "./workspace-manifest-conflict.js";
 
@@ -154,9 +154,9 @@ export interface CommitResult {
   empty: boolean;
 }
 
-async function stageWorkspaceChanges(customerDir: string, excluded: string[]): Promise<GitRunOk | GitFailure> {
-  if (!excluded.length) return runGit(customerDir, ["add", "-A"]);
-  const changes = await runGit(customerDir, ["ls-files", "--modified", "--deleted", "--others", "--exclude-standard", "-z", "--", ".", ...excluded.map(file => `:(exclude,literal)${file}`)]);
+async function stageWorkspaceChanges(customerDir: string, excluded: string[], reserved: string[]): Promise<GitRunOk | GitFailure> {
+  if (!excluded.length && !reserved.length) return runGit(customerDir, ["add", "-A"]);
+  const changes = await runGit(customerDir, ["ls-files", "--modified", "--deleted", "--others", "--exclude-standard", "-z", "--", ".", ...[...excluded, ...reserved].map(file => `:(exclude,literal)${file}`)]);
   if (!changes.ok) return changes;
   const paths = [...new Set(changes.stdout.split(NUL).filter(Boolean))];
   if (paths.length) {
@@ -165,7 +165,35 @@ async function stageWorkspaceChanges(customerDir: string, excluded: string[]): P
     });
     if (!added.ok) return added;
   }
-  return runGit(customerDir, ["rm", "-r", "--cached", "--ignore-unmatch", "--", ...excluded.map(file => `:(literal)${file}`)]);
+  if (reserved.length) {
+    const reset = await runGit(customerDir, ["reset", "-q", "HEAD", "--", ...reserved]);
+    if (!reset.ok) return reset;
+  }
+  if (excluded.length) {
+    return runGit(customerDir, ["rm", "-r", "--cached", "--ignore-unmatch", "--", ...excluded.map(file => `:(literal)${file}`)]);
+  }
+  return changes;
+}
+
+async function stageWorkspaceCommit(
+  customerDir: string,
+  excludePaths: string[],
+): Promise<{ ok: true; empty: boolean } | GitFailure> {
+  const checkpoint = checkpointBranch(customerDir);
+  if (checkpoint) {
+    const checked = await assertCheckpointBranch(customerDir, checkpoint);
+    if (!checked.ok) return checked;
+  }
+  const identity = userGitIdentity(customerDir);
+  const workspace = identity && path.resolve(customerDir) === path.join(identity.usersRoot, identity.slug);
+  const excluded = [...new Set([...excludePaths, ...(workspace ? [PROJECT_AGENT_WORKSPACE_PARTS.join("/")] : [])])];
+  const reserved = checkpoint || isTrustedGithubUserCheckout(customerDir) ? [GITHUB_PROJECT_METADATA] : [];
+  const staged = await stageWorkspaceChanges(customerDir, excluded, reserved);
+  if (!staged.ok) return staged;
+
+  const statusRes = await runGit(customerDir, excluded.length || reserved.length ? ["diff", "--cached", "--name-only", "-z"] : ["status", "--porcelain=v1", "-z"]);
+  if (!statusRes.ok) return statusRes;
+  return { ok: true, empty: !statusRes.stdout };
 }
 
 export async function gitCommit(
@@ -177,19 +205,11 @@ export async function gitCommit(
     return { ok: false, error: { code: "INTERNAL", message: "commit message empty or too long" } };
   }
 
-  const identity = userGitIdentity(customerDir);
-  const workspace = identity && path.resolve(customerDir) === path.join(identity.usersRoot, identity.slug);
-  const excluded = [...new Set([...(options.excludePaths ?? []), ...(workspace ? [PROJECT_AGENT_WORKSPACE_PARTS.join("/")] : [])])];
-  const staged = await stageWorkspaceChanges(customerDir, excluded);
+  const staged = await stageWorkspaceCommit(customerDir, options.excludePaths ?? []);
   if (!staged.ok) return staged;
+  if (staged.empty) return { ok: true, result: { sha: "", empty: true } };
 
-const statusRes = await runGit(customerDir, excluded.length ? ["diff", "--cached", "--name-only", "-z"] : ["status", "--porcelain=v1", "-z"]);
-  if (!statusRes.ok) return statusRes;
-  if (!statusRes.stdout) {
-    return { ok: true, result: { sha: "", empty: true } };
-  }
-
-const commitRes = await runGit(
+  const commitRes = await runGit(
     customerDir,
     [
       "-c", `user.name=${options.author.name}`,
@@ -221,7 +241,6 @@ export type WorkspaceCommitPreparation =
 export interface CommitAndPushOptions {
   message: string;
   author: CommitAuthor;
-  githubToken?: string;
   beforeCommit?: () => Promise<WorkspaceCommitPreparation>;
   assertCurrent?: () => Promise<void>;
 }
@@ -341,13 +360,19 @@ export async function commitAndPushWorkspace(
       if (prepared.excludePaths?.length) commitOptions = { ...options, excludePaths: prepared.excludePaths };
     }
     await options.assertCurrent?.();
+    const checkpoint = checkpointBranch(customerDir);
     const commitRes = await deps.gitCommit(customerDir, commitOptions);
     if (!commitRes.ok) return commitRes;
     const committed = !commitRes.result.empty;
-    const prepareRes = await deps.gitPreparePush(customerDir, {
-      author: options.author,
-      ...(options.githubToken ? { githubToken: options.githubToken } : {}),
-    });
+    if (isTrustedGithubUserCheckout(customerDir)) {
+      return {
+        ok: true,
+        result: { committed, pushed: false, nothingToCommit: !committed, pushError: GITHUB_PUBLISH_REQUIRED },
+      };
+    }
+    const prepareRes = checkpoint
+      ? await prepareCheckpointPush(customerDir, checkpoint)
+      : await deps.gitPreparePush(customerDir, { author: options.author });
     if (!prepareRes.ok) {
       return {
         ok: true,
@@ -360,10 +385,7 @@ export async function commitAndPushWorkspace(
       };
     }
     await options.assertCurrent?.();
-    const pushRes = await deps.gitPush(customerDir, {
-      ...prepareRes.target,
-      ...(options.githubToken ? { githubToken: options.githubToken } : {}),
-    });
+    const pushRes = await deps.gitPush(customerDir, prepareRes.target);
     if (!pushRes.ok) {
       return {
         ok: true,
@@ -421,6 +443,10 @@ export async function gitCheckout(
   options: { branch: string; create?: boolean },
 ): Promise<{ ok: true } | { ok: false; error: WorkspaceGitError }> {
   const branch = options.branch;
+  const checkpoint = checkpointBranch(customerDir);
+  if (checkpoint && (options.create || branch !== checkpoint)) {
+    return { ok: false, error: { code: "INTERNAL", message: `Project checkpoint requires branch ${checkpoint}` } };
+  }
   if (!branch || branch.length > 250 || branch.startsWith("-")) {
     return {
       ok: false,
@@ -436,16 +462,44 @@ export async function gitCheckout(
   return { ok: true };
 }
 
+const GITHUB_PUBLISH_REQUIRED = "GitHub project changes must be published through a pull request";
+
+async function assertCheckpointBranch(cwd: string, branch: string): Promise<{ ok: true } | GitFailure> {
+  const current = await runGit(cwd, ["branch", "--show-current"]);
+  if (!current.ok) return current;
+  return current.stdout.trim() === branch
+    ? { ok: true }
+    : { ok: false, error: { code: "INTERNAL", message: `Project checkpoint requires branch ${branch}` } };
+}
+
 export async function gitPush(
   customerDir: string,
-  options: { branch?: string; setUpstream?: boolean; githubToken?: string } = {},
+  options: { branch?: string; setUpstream?: boolean } = {},
 ): Promise<{ ok: true } | { ok: false; error: WorkspaceGitError }> {
+  if (isTrustedGithubUserCheckout(customerDir)) {
+    return { ok: false, error: { code: "INTERNAL", message: GITHUB_PUBLISH_REQUIRED } };
+  }
+  const checkpoint = checkpointBranch(customerDir);
+  if (checkpoint) {
+    if (options.branch && options.branch !== checkpoint) {
+      return { ok: false, error: { code: "INTERNAL", message: `Project checkpoint requires branch ${checkpoint}` } };
+    }
+    const checked = await assertCheckpointBranch(customerDir, checkpoint);
+    if (!checked.ok) return checked;
+    return pushWorkspaceBranch(customerDir, { branch: checkpoint });
+  }
+  return pushWorkspaceBranch(customerDir, options);
+}
+
+async function pushWorkspaceBranch(
+  customerDir: string,
+  options: { branch?: string; setUpstream?: boolean },
+): Promise<{ ok: true } | GitFailure> {
   if (options.branch && !options.setUpstream) {
     const head = await runGit(customerDir, ["rev-parse", "HEAD"]);
     if (!head.ok) return head;
     const remote = await runGit(customerDir, ["ls-remote", END_OF_OPTIONS, "origin", `refs/heads/${options.branch}`], {
       timeoutMs: GIT_PUSH_TIMEOUT_MS,
-      githubToken: options.githubToken,
     });
     if (!remote.ok) return remote;
     if (/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/u.test(head.stdout.trim()) &&
@@ -462,7 +516,6 @@ export async function gitPush(
     : ["push", END_OF_OPTIONS];
   const r = await runGit(customerDir, args, {
     timeoutMs: GIT_PUSH_TIMEOUT_MS,
-    githubToken: options.githubToken,
   });
   if (!r.ok) return r;
   return { ok: true };
@@ -478,9 +531,25 @@ type WorkspacePushPreparation =
   | { ok: true; target: WorkspacePushTarget }
   | GitFailure;
 
+async function prepareCheckpointPush(cwd: string, branch: string): Promise<WorkspacePushPreparation> {
+  const remote = `refs/remotes/origin/${branch}`;
+  const fetched = await runGit(cwd, ["fetch", "--no-tags", "--no-recurse-submodules", "origin", `+refs/heads/${branch}:${remote}`], {
+    timeoutMs: GIT_PUSH_TIMEOUT_MS,
+  });
+  if (!fetched.ok) return fetched;
+  const behind = await runGit(cwd, ["merge-base", "--is-ancestor", "HEAD", remote]);
+  if (behind.ok) {
+    const merged = await runGit(cwd, ["merge", "--ff-only", remote]);
+    if (!merged.ok) return merged;
+  } else if (behind.error.code !== "GIT_FAILED" || behind.error.status !== 1) {
+    return behind;
+  }
+  return { ok: true, target: { branch, setUpstream: false } };
+}
+
 export async function gitPreparePush(
   customerDir: string,
-  options: { author: CommitAuthor; githubToken?: string },
+  options: { author: CommitAuthor },
 ): Promise<WorkspacePushPreparation> {
   const branchResult = await runGit(customerDir, ["branch", "--show-current"]);
   if (!branchResult.ok) return branchResult;
@@ -498,13 +567,11 @@ export async function gitPreparePush(
     return prepareUntrackedBranchPush(customerDir, {
       author: options.author,
       branch,
-      githubToken: options.githubToken,
     });
   }
   const syncResult = await gitRebaseOntoRemoteBranch(customerDir, {
     author: options.author,
     branch: upstreamResult.branch,
-    githubToken: options.githubToken,
   });
   if (!syncResult.ok) return syncResult;
   return {
@@ -551,7 +618,7 @@ async function readOriginUpstream(
 
 async function prepareUntrackedBranchPush(
   customerDir: string,
-  options: { author: CommitAuthor; branch: string; githubToken?: string },
+  options: { author: CommitAuthor; branch: string },
 ): Promise<WorkspacePushPreparation> {
   const remoteBranchResult = await runGit(
     customerDir,
@@ -563,13 +630,12 @@ async function prepareUntrackedBranchPush(
       "origin",
       `refs/heads/${options.branch}`,
     ],
-    { timeoutMs: GIT_PUSH_TIMEOUT_MS, githubToken: options.githubToken },
+    { timeoutMs: GIT_PUSH_TIMEOUT_MS },
   );
   if (remoteBranchResult.ok) {
     const syncResult = await gitRebaseOntoRemoteBranch(customerDir, {
       author: options.author,
       branch: options.branch,
-      githubToken: options.githubToken,
     });
     if (!syncResult.ok) return syncResult;
   } else if (!remoteBranchIsMissing(remoteBranchResult)) {
@@ -593,7 +659,7 @@ function gitConfigIsMissing(
 
 async function gitRebaseOntoRemoteBranch(
   customerDir: string,
-  options: { author: CommitAuthor; branch: string; githubToken?: string },
+  options: { author: CommitAuthor; branch: string },
 ): Promise<{ ok: true } | { ok: false; error: WorkspaceGitError }> {
   const fetchResult = await runGit(
     customerDir,
@@ -604,7 +670,7 @@ async function gitRebaseOntoRemoteBranch(
       "origin",
       `+refs/heads/${options.branch}:refs/remotes/origin/${options.branch}`,
     ],
-    { timeoutMs: GIT_PUSH_TIMEOUT_MS, githubToken: options.githubToken },
+    { timeoutMs: GIT_PUSH_TIMEOUT_MS },
   );
   if (!fetchResult.ok) return fetchResult;
 
@@ -929,8 +995,17 @@ function expectedUserRemoteUrl(
 
 const ORIGIN_URL = "remote.origin.url";
 const ORIGIN_FETCH = "remote.origin.fetch";
-const MAIN_REMOTE = "branch.main.remote";
-const MAIN_MERGE = "branch.main.merge";
+export function isGithubProjectCheckpoint(cwd: string): boolean {
+  return checkpointBranch(cwd) !== null;
+}
+
+function checkpointBranch(cwd: string, contents?: string): string | null {
+  const identity = userGitIdentity(cwd);
+  if (!identity) return null;
+  const receipt = contents ?? readGitMetadataText(`${identity.metadataDir}.octogee-trusted-v3`, 1024);
+  const repo = /^octogee-customer-git-v3\ngitea:([^\n]+)\n$/u.exec(receipt ?? "")?.[1];
+  return repo ? githubCheckpointBranch(repo) : null;
+}
 const MALFORMED_REPOSITORY = "<malformed>";
 
 async function validateTrustedMetadata(
@@ -968,27 +1043,23 @@ function validRemoteConfigEntry(key: string, value: string, expectedRemote: stri
   return key === ORIGIN_FETCH && value === "+refs/heads/*:refs/remotes/origin/*";
 }
 
-function validMainBranchConfigEntry(key: string, value: string): boolean {
-  if (key === MAIN_REMOTE) return value === "origin";
-  return key === MAIN_MERGE && value === "refs/heads/main";
-}
-
-function unsafeMainBranchConfigEntry(
+function unsafeBranchConfigEntry(
   entries: readonly { key: string; value: string }[],
+  branch: string,
 ): string | null {
   let mainRemoteCount = 0;
   let mainMergeCount = 0;
   for (const { key, value } of entries) {
-    if (!validMainBranchConfigEntry(key, value)) return key;
-    if (key === MAIN_REMOTE) mainRemoteCount++;
-    else mainMergeCount++;
+    if (key === `branch.${branch}.remote` && value === "origin") mainRemoteCount++;
+    else if (key === `branch.${branch}.merge` && value === `refs/heads/${branch}`) mainMergeCount++;
+    else return key;
   }
   const hasNoMainUpstream = mainRemoteCount === 0 && mainMergeCount === 0;
   const hasCanonicalMainUpstream = mainRemoteCount === 1 && mainMergeCount === 1;
-  return hasNoMainUpstream || hasCanonicalMainUpstream ? null : "branch.main";
+  return hasNoMainUpstream || hasCanonicalMainUpstream ? null : `branch.${branch}`;
 }
 
-function unsafeConfigEntry(entries: readonly string[], expectedRemote: string | null): string | null {
+function unsafeConfigEntry(entries: readonly string[], expectedRemote: string | null, branch: string): string | null {
   let originUrlCount = 0;
   let originFetchCount = 0;
   const mainBranchEntries: Array<{ key: string; value: string }> = [];
@@ -1009,7 +1080,7 @@ function unsafeConfigEntry(entries: readonly string[], expectedRemote: string | 
   }
   if (!expectedRemote) return null;
   if (originUrlCount !== 1 || originFetchCount !== 1) return "remote.origin";
-  return unsafeMainBranchConfigEntry(mainBranchEntries);
+  return unsafeBranchConfigEntry(mainBranchEntries, branch);
 }
 
 async function unsafeLocalRepositoryConfigKey(cwd: string): Promise<string | null> {
@@ -1059,7 +1130,7 @@ async function unsafeLocalRepositoryConfigKey(cwd: string): Promise<string | nul
       }
       const entries = Buffer.concat(chunks).toString("utf8").split(NUL).filter(Boolean);
       const expectedRemote = expectedUserRemoteUrl(cwd, receiptContents);
-      resolve(unsafeConfigEntry(entries, expectedRemote));
+      resolve(unsafeConfigEntry(entries, expectedRemote, checkpointBranch(cwd, receiptContents) ?? "main"));
     });
   });
 }

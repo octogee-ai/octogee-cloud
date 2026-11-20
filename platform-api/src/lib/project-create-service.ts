@@ -122,7 +122,7 @@ function resolveCreateRepoSource(repoSource: unknown, access: RepoSourceAccess):
   if (!isValidGithubRepoSource(repoSource)) {
     return { ok: false, status: 400, error: "Invalid repoSource (expected { provider: 'github', owner, repo })" };
   }
-  return { ok: true, value: repoSource };
+  return { ok: true, value: { provider: "github", owner: repoSource.owner, repo: repoSource.repo } };
 }
 
 function bad(status: number, error: string, extra: Record<string, unknown> = {}): ProjectCreateResult {
@@ -352,7 +352,7 @@ async function reserveProvisioningProject(plan: ProjectCreatePlan): Promise<Proj
       provisioningError: null,
       pendingVisibility: plan.targetVisibility,
       visibility: "private",
-      checkoutEnabled: null,
+      checkoutEnabled: plan.ghRepoSource ? false : null,
       status: plan.status,
       archived: null,
       archivedAt: null,

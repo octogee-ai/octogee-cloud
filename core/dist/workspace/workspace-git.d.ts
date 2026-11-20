@@ -113,7 +113,6 @@ export type WorkspaceCommitPreparation = {
 export interface CommitAndPushOptions {
     message: string;
     author: CommitAuthor;
-    githubToken?: string;
     beforeCommit?: () => Promise<WorkspaceCommitPreparation>;
     assertCurrent?: () => Promise<void>;
 }
@@ -171,7 +170,6 @@ export declare function gitCheckout(customerDir: string, options: {
 export declare function gitPush(customerDir: string, options?: {
     branch?: string;
     setUpstream?: boolean;
-    githubToken?: string;
 }): Promise<{
     ok: true;
 } | {
@@ -192,7 +190,6 @@ type WorkspacePushPreparation = {
 } | GitFailure;
 export declare function gitPreparePush(customerDir: string, options: {
     author: CommitAuthor;
-    githubToken?: string;
 }): Promise<WorkspacePushPreparation>;
 export declare const WORKSPACE_GIT_HARDENING_PINS: ReadonlyArray<string>;
 export declare const WORKSPACE_GIT_HARDENING_ENV: Readonly<Record<string, string>>;
@@ -210,6 +207,7 @@ export declare function workspaceGitCommandArgs(cwd: string, args: ReadonlyArray
 export declare function workspaceGitEnvironment(source?: NodeJS.ProcessEnv, cwd?: string, githubToken?: string): NodeJS.ProcessEnv;
 export declare function isTrustedGithubUserCheckout(cwd: string): boolean;
 export declare function isTrustedGiteaUserCheckout(cwd: string, repoName: string): boolean;
+export declare function isGithubProjectCheckpoint(cwd: string): boolean;
 export declare function parsePorcelain(stdout: string): WorkspaceGitStatusEntry[];
 export declare function parseLog(stdout: string): WorkspaceGitLogEntry[];
 export declare function parseBranchList(stdout: string): WorkspaceGitBranchEntry[];

@@ -557,13 +557,13 @@ export { clearWorkspaceFileResponseCache };
 
 router.get("/branches", withFileTarget(async (_req, res, _next, target) => {
   res.json(await repoBranchesApi(target));
-}, { allowWorkspaceMembers: true }));
+}, { allowWorkspaceMembers: true, useProjectCheckpoint: true }));
 
 router.get("/tree", withFileTarget(async (req, res, _next, target) => {
   const ref = refFromReq(req) ?? (await repoDefaultBranch(target));
   const bustCache = req.query.nocache === "1";
   res.json(await workspaceFileIndexResponse(target, ref, bustCache));
-}, { allowWorkspaceMembers: true }));
+}, { allowWorkspaceMembers: true, useProjectCheckpoint: true }));
 
 router.get("/files", withFileTarget(async (req, res, _next, target) => {
   const path = (req.query.path as string) ?? "";
@@ -580,7 +580,7 @@ router.get("/files", withFileTarget(async (req, res, _next, target) => {
   }
 
   res.json(await workspaceFilesResponse(target, path, bustCache, ref));
-}, { allowWorkspaceMembers: true }));
+}, { allowWorkspaceMembers: true, useProjectCheckpoint: true }));
 
 router.get("/files/commits", withFileTarget(async (req, res, _next, target) => {
   const path = (req.query.path as string) ?? "";
@@ -596,7 +596,7 @@ router.get("/files/commits", withFileTarget(async (req, res, _next, target) => {
   }
 
   res.json(await workspaceFileCommitsResponse(target, path, undefined, ref));
-}, { allowWorkspaceMembers: true }));
+}, { allowWorkspaceMembers: true, useProjectCheckpoint: true }));
 
 router.post("/files/commits", withFileTarget(async (req, res, _next, target) => {
   const path = ((req.query.path as string | undefined) ?? (req.body as { path?: string } | undefined)?.path) ?? "";
@@ -619,7 +619,7 @@ router.post("/files/commits", withFileTarget(async (req, res, _next, target) => 
   }
 
   res.json(await workspaceFileCommitsResponse(target, path, entries, ref));
-}, { allowWorkspaceMembers: true }));
+}, { allowWorkspaceMembers: true, useProjectCheckpoint: true }));
 
 router.get("/file", withFileTarget(async (req, res, _next, target) => {
   const path = req.query.path as string;
@@ -649,6 +649,6 @@ router.get("/file", withFileTarget(async (req, res, _next, target) => {
     return;
   }
   res.json(response);
-}, { allowWorkspaceMembers: true }));
+}, { allowWorkspaceMembers: true, useProjectCheckpoint: true }));
 
 export default router;

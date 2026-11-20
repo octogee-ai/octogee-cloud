@@ -10,6 +10,7 @@ export interface FileTarget {
     blobStore?: BlobStore;
     githubToken?: string;
     cacheAuthority?: string;
+    checkpointBranch?: string;
     sudoUser?: string;
     brokered?: boolean;
     workspaceMemberBrokered?: boolean;
@@ -34,6 +35,7 @@ export interface ResolveFileTargetOpts {
     resolveGithubToken?: boolean;
     allowWorkspaceMembers?: boolean;
     access?: "read" | "write";
+    useProjectCheckpoint?: boolean;
 }
 export declare function resolveFileTarget(input: FileTargetInput, opts?: ResolveFileTargetOpts): Promise<FileTargetResult>;
 export type TargetedHandler = (req: Request, res: Response, next: NextFunction, target: FileTarget) => Promise<void>;

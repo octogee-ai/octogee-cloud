@@ -1,5 +1,6 @@
 import { Router, type Request, type Response } from "express";
 
+import { githubCheckpointBranch } from "@octogee/shared/types/project";
 import { isValidProjectId, isValidUsername } from "@octogee/shared/types/identity";
 import {
   defaultProjectRecipe,
@@ -566,7 +567,7 @@ router.post("/delete-project-repo", async (req: Request, res: Response) => {
 
 router.get("/repo-exists", async (req: Request, res: Response) => {
   const { org, repo } = req.query;
-  if (!isValidUsername(org) || !validRepoName(repo)) {
+  if (!isValidUsername(org) || !(validRepoName(repo) || (typeof repo === "string" && githubCheckpointBranch(repo)))) {
     res.status(400).json({ error: "org must be a valid workspace username and repo a valid repo name" });
     return;
   }

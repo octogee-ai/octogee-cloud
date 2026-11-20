@@ -45,6 +45,33 @@ async function makeRepo(): Promise<string> {
   return dir;
 }
 
+describe("GitHub checkout publication boundary", () => {
+  it("rejects a generic push from a GitHub project regardless of the requested branch", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "github-project-"));
+    const users = path.join(root, "customers");
+    const repo = path.join(users, "alice", "projects", "orbit");
+    const metadata = path.join(root, "git-metadata", "alice", "projects", "orbit.git");
+    const previous = process.env.CUSTOMERS_DIR;
+    process.env.CUSTOMERS_DIR = users;
+    try {
+      await fs.mkdir(repo, { recursive: true });
+      git(repo, ["init", "--initial-branch=main"]);
+      git(repo, ["remote", "add", "origin", "https://github.com/alice/orbit.git"]);
+      await fs.mkdir(path.dirname(metadata), { recursive: true });
+      await fs.rename(path.join(repo, ".git"), metadata);
+      await fs.writeFile(`${metadata}.octogee-trusted-v3`, "octogee-customer-git-v3\ngithub:alice/orbit\n");
+      expect(await gitPush(repo, { branch: "main" })).toEqual({
+        ok: false,
+        error: { code: "INTERNAL", message: "GitHub project changes must be published through a pull request" },
+      });
+    } finally {
+      if (previous === undefined) delete process.env.CUSTOMERS_DIR;
+      else process.env.CUSTOMERS_DIR = previous;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("parsePorcelain", () => {
   it("returns [] for empty output", () => {
     expect(parsePorcelain("")).toEqual([]);

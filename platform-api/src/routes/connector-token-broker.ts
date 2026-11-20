@@ -261,6 +261,11 @@ async function verifiedGatewayAuthorization(
   };
 }
 
+async function hasPrivateGithubProject(store: PlatformStateRepositories, uid: string): Promise<boolean> {
+  const projects = await store.workspaces.projects.listByOwner(uid);
+  return projects.some(project => Boolean(project.repoSource?.workingCopy));
+}
+
 async function accessAuthorized(
   input: {
     readPublicCanvasFile: PublicCanvasFileReader;
@@ -341,11 +346,15 @@ async function projectCloneGatewayMode(input: ProjectCloneAuthorizationInput): P
 async function projectCloneSourceAuthorized(input: ProjectCloneAuthorizationInput): Promise<{ owner: string; repo: string } | null> {
   const { store, bound, access } = input;
   if (!await projectCloneGatewayMode(input)) return null;
+  if (await hasPrivateGithubProject(store, input.uid)) {
+    return refused(bound, "GitHub credentials for this workspace stay in the platform API");
+  }
   const project = await store.workspaces.projects.get(access.builderSlug, access.projectSlug);
   if (!project || project.ownerUid !== bound.ownerUid || !project.repoSource) {
     return refused(bound, `project ${access.builderSlug}/${access.projectSlug} is missing, foreign, or has no repo source`);
   }
-  const { provider, owner, repo } = project.repoSource;
+  const { provider, owner, repo, workingCopy } = project.repoSource;
+  if (workingCopy || project.checkoutEnabled === false) return refused(bound, "GitHub project is using a private checkpoint or checkout is disabled");
   if (provider !== "github" || typeof owner !== "string" || typeof repo !== "string") {
     return refused(bound, `project ${access.builderSlug}/${access.projectSlug} is not GitHub-backed`);
   }
@@ -436,6 +445,10 @@ async function respondAuthorizedAccess(input: {
     connectorId,
     access,
   }))) {
+    res.status(403).json(FORBIDDEN);
+    return;
+  }
+  if (connectorId === "github" && await hasPrivateGithubProject(store, uid)) {
     res.status(403).json(FORBIDDEN);
     return;
   }

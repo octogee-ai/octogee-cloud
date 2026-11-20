@@ -17,7 +17,7 @@ import { notesWelcomeSeed } from "@octogee/core/templates/project-seeds";
 
 import { acquireWorkspaceMutationLeaseSync } from "@octogee/core/workspace-mutation-lease";
 import { findUnsafeGitMetadataEntry, readGitMetadataText } from "@octogee/core/git-metadata";
-import type { ProjectRepoSource } from "@octogee/shared/types/project";
+import { githubCheckpointBranch, type ProjectRepoSource } from "@octogee/shared/types/project";
 import { isValidUsername } from "@octogee/shared/types/identity";
 import { ADD_USER_DEADLINE_MS } from "@octogee/shared/types/fleet-controller";
 
@@ -191,6 +191,10 @@ function sourceFromReceipt(
   return null;
 }
 
+function sourceBranch(source: CanonicalUserGitSource): string {
+  return (source.kind === "gitea" && githubCheckpointBranch(source.repoName)) || "main";
+}
+
 function writeCanonicalGitConfig(
   gitDir: string,
   slug: string,
@@ -198,6 +202,7 @@ function writeCanonicalGitConfig(
 ): void {
   const configPath = path.join(gitDir, "config");
   const configTmp = `${configPath}.octogee.tmp`;
+  const branch = sourceBranch(source);
   const contents = [
     "[core]",
     "\trepositoryformatversion = 0",
@@ -210,9 +215,9 @@ function writeCanonicalGitConfig(
     '[remote "origin"]',
     `\turl = ${source.remoteUrl}`,
     "\tfetch = +refs/heads/*:refs/remotes/origin/*",
-    '[branch "main"]',
+    `[branch "${branch}"]`,
     "\tremote = origin",
-    "\tmerge = refs/heads/main",
+    `\tmerge = refs/heads/${branch}`,
     "",
   ].join("\n");
   fs.writeFileSync(configTmp, contents, { encoding: "utf8", mode: 0o600 });
@@ -338,12 +343,13 @@ function initializeFreshUserGit(
   deps: UserGitRefreshDeps,
 ): void {
   const source = canonicalUserGitSource(identity, deps);
+  const branch = sourceBranch(source);
   const staging = `${identity.metadataDir}.octogee-new-${randomUUID()}`;
   fs.mkdirSync(path.dirname(identity.metadataDir), { recursive: true, mode: 0o700 });
   try {
     execFileSync(
       GIT_BINARY,
-      ["init", "--bare", "--initial-branch=main", staging],
+      ["init", "--bare", `--initial-branch=${branch}`, staging],
       {
         cwd: repoDir,
         stdio: ["ignore", "pipe", "pipe"],
@@ -358,33 +364,33 @@ function initializeFreshUserGit(
       "origin",
       "+refs/heads/*:refs/remotes/origin/*",
     ], deps.githubToken);
-    const remoteMain = runFreshUserGit(
+    const remoteHead = runFreshUserGit(
       repoDir,
       staging,
       identity.slug,
-      ["for-each-ref", "--format=%(objectname)", "refs/remotes/origin/main"],
+      ["for-each-ref", "--format=%(objectname)", `refs/remotes/origin/${branch}`],
       deps.githubToken,
     );
     runFreshUserGit(
       repoDir,
       staging,
       identity.slug,
-      ["symbolic-ref", "HEAD", "refs/heads/main"],
+      ["symbolic-ref", "HEAD", `refs/heads/${branch}`],
       deps.githubToken,
     );
-    if (remoteMain) {
+    if (remoteHead) {
       runFreshUserGit(
         repoDir,
         staging,
         identity.slug,
-        ["update-ref", "refs/heads/main", remoteMain],
+        ["update-ref", `refs/heads/${branch}`, remoteHead],
         deps.githubToken,
       );
       runFreshUserGit(
         repoDir,
         staging,
         identity.slug,
-        ["read-tree", "refs/heads/main"],
+        ["read-tree", `refs/heads/${branch}`],
         deps.githubToken,
       );
     } else {
@@ -1055,7 +1061,10 @@ async function refreshProjectCheckout(
       dest, args, userSshKeyPath(slug), opts.githubToken,
     );
     if (run(["fetch", "--no-tags", "origin"]) === null) return false;
-    const remoteMain = run(["for-each-ref", "--format=%(objectname)", "refs/remotes/origin/main"]);
+    const identity = userGitIdentity(dest);
+    const source = identity && trustedUserGitSource(identity);
+    const branch = source ? sourceBranch(source) : "main";
+    const remoteMain = run(["for-each-ref", "--format=%(objectname)", `refs/remotes/origin/${branch}`]);
     if (remoteMain === null) return false;
     if (!remoteMain) return true;
     const committedPaths = stageAlreadyCommittedProjectEdits(run);

@@ -104,30 +104,6 @@ describe("commitAndPushWorkspace", () => {
     });
   });
 
-  it("passes an on-demand GitHub token through remote preparation and push only", async () => {
-    const prepare = vi.fn<PrepareFn>(async () => ({
-      ok: true,
-      target: { branch: "main", setUpstream: false },
-    }));
-    const push = vi.fn<PushFn>(async () => ({ ok: true }));
-
-    await commitAndPushWorkspace(
-      "/d",
-      { message: "m", author, githubToken: "gh-owner-token" },
-      mutationDeps(commitOk(false), push, vi.fn(), prepare),
-    );
-
-    expect(prepare).toHaveBeenCalledWith("/d", {
-      author,
-      githubToken: "gh-owner-token",
-    });
-    expect(push).toHaveBeenCalledWith("/d", {
-      branch: "main",
-      setUpstream: false,
-      githubToken: "gh-owner-token",
-    });
-  });
-
   it("returns committed-but-not-pushed (with pushError) when push fails — not fatal", async () => {
     const r = await commitAndPushWorkspace("/d", { message: "m", author }, mutationDeps(commitOk(false), pushFail));
     expect(r.ok).toBe(true);

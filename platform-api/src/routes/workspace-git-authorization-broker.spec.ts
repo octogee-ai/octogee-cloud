@@ -53,7 +53,7 @@ const body = {
   slug: "alice",
   projectSlug: "orbit",
   access: "write",
-  resolveGithubToken: true,
+  resolveGithubToken: false,
 };
 
 beforeEach(() => {
@@ -123,16 +123,24 @@ describe("POST /internal/workspace-git/authorize", () => {
     expect(res.headers["cache-control"]).toBe("no-store");
     expect(resolveTarget).toHaveBeenCalledWith(
       { slug: "alice", projectSlug: "orbit", callerUid: "uid-member", callerWorkspaceSlug: "member" },
-      { access: "write", resolveGithubToken: true },
+      { access: "write", resolveGithubToken: false, useProjectCheckpoint: true },
     );
     expect(res.body).toEqual({
       gatewayId: "walter",
       uid: "uid-member",
       slug: "alice",
       projectSlug: "orbit",
-      githubToken: "gh-member-token",
+      githubToken: null,
       commitAuthor: { name: "Mem Ber", email: "member@example.com" },
     });
+  });
+
+  it("refuses generic GitHub pushes without looking up a connector token", async () => {
+    await request(app()).post("/internal/workspace-git/authorize").send({ ...body, resolveGithubToken: true }).expect(409, {
+      error: "GitHub project changes must be published through a pull request",
+      reason: "github_pull_request_required",
+    });
+    expect(resolveTarget).toHaveBeenCalledWith(expect.anything(), { access: "write", resolveGithubToken: false, useProjectCheckpoint: true });
   });
 
   it("grants a workspace-level tree to its owner with a slug-derived author when the profile is bare", async () => {

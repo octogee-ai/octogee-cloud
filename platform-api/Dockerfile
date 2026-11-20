@@ -36,6 +36,7 @@ RUN npm run build
 FROM node:26.13.0-slim@sha256:5adad64f9a1fca2d51972caa65983634c8a774eb300d72b20f7f2a0f60368072
 ARG OS_PACKAGE_REFRESH=2026-11-11
 RUN test -n "$OS_PACKAGE_REFRESH" && apt-get update && apt-get upgrade -y \
+    && apt-get install -y --no-install-recommends git ca-certificates \
     && rm -rf /var/lib/apt/lists/* /usr/local/lib/node_modules/npm
 COPY --from=platform-npm /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
 WORKDIR /octogee-api

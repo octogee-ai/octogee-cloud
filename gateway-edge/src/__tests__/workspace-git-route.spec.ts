@@ -183,20 +183,14 @@ describe("gateway-local workspace git authorization", () => {
     });
   });
 
-  it("resolves a caller token for remote writes and passes it only to git push", async () => {
+  it("refuses to publish a GitHub project even when an older broker returns a GitHub credential", async () => {
     const res = await request(app())
       .post("/api/g/walter/workspace/git/push")
       .set("authorization", BEARER)
       .send({ slug: "alice", project: "orbit", branch: "feature/member" });
 
-    expect(res.status).toBe(200);
-    expect(h.authorize).toHaveBeenCalledWith(expect.objectContaining({
-      lane: { access: "write", resolveGithubToken: true },
-    }));
-    expect(h.gitPush).toHaveBeenCalledWith("/customers/alice/projects/orbit", {
-      branch: "feature/member",
-      githubToken: "gh-member-token",
-    });
+    expect(res.status).toBe(409);
+    expect(h.gitPush).not.toHaveBeenCalled();
   });
 
   it("pushes a gitea-backed workspace tree without a github token", async () => {
@@ -208,6 +202,6 @@ describe("gateway-local workspace git authorization", () => {
 
     expect(res.status).toBe(200);
     expect(h.resolveUserDir).toHaveBeenCalledWith(expect.any(String), "alice");
-    expect(h.gitPush).toHaveBeenCalledWith("/customers/alice", { branch: undefined, githubToken: undefined });
+    expect(h.gitPush).toHaveBeenCalledWith("/customers/alice", { branch: undefined });
   });
 });

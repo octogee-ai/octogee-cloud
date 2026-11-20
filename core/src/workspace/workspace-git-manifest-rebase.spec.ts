@@ -135,3 +135,51 @@ describe("immutable asset upload timestamp rebase", () => {
     expect(git(repo, ["status", "--porcelain"])).toBe("");
   });
 });
+
+describe("private GitHub working branch checkpoints", () => {
+  it("keeps the checkpoint on its managed branch and leaves generated manifest changes out of history", async () => {
+    root = await fs.mkdtemp(path.join(os.tmpdir(), "github-checkpoint-"));
+    const id = "1".repeat(32);
+    const branch = `octogee-${id}`;
+    const remoteName = `github_checkpoint_${id}`;
+    const remote = path.join(root, "checkpoint.git");
+    const users = path.join(root, "customers");
+    const repo = path.join(users, "alice", "projects", "orbit");
+    const metadata = path.join(root, "git-metadata", "alice", "projects", "orbit.git");
+    await fs.mkdir(repo, { recursive: true });
+    git(root, ["init", "--bare", `--initial-branch=${branch}`, remote]);
+    git(repo, ["init", `--initial-branch=${branch}`]);
+    git(repo, ["config", "user.name", "Test"]);
+    git(repo, ["config", "user.email", "tester@example.com"]);
+    await fs.writeFile(path.join(repo, "README.md"), "base\n");
+    git(repo, ["add", "README.md"]);
+    git(repo, ["commit", "-m", "base"]);
+    git(repo, ["remote", "add", "origin", remote]);
+    git(repo, ["push", "-u", "origin", branch]);
+    const base = git(repo, ["rev-parse", "HEAD"]);
+    git(repo, ["remote", "set-url", "origin", `git@gitea:alice/${remoteName}.git`]);
+    await fs.mkdir(path.dirname(metadata), { recursive: true });
+    await fs.rename(path.join(repo, ".git"), metadata);
+    await fs.writeFile(`${metadata}.octogee-trusted-v3`, `octogee-customer-git-v3\ngitea:${remoteName}\n`);
+    await fs.writeFile(path.join(repo, ".git"), `gitdir: ${metadata}\n`);
+    transport.ssh = path.join(root, "ssh");
+    await fs.writeFile(transport.ssh, `#!/bin/sh\ncase "$2" in *receive-pack*) exec /usr/bin/git-receive-pack '${remote}';; *) exec /usr/bin/git-upload-pack '${remote}';; esac\n`);
+    await fs.chmod(transport.ssh, 0o755);
+    vi.stubEnv("CUSTOMERS_DIR", users);
+    vi.stubEnv("GIT_SSH_HOST", "gitea");
+    await fs.mkdir(path.join(repo, ".files"));
+    await fs.writeFile(path.join(repo, ".files/manifest.json"), "{}\n");
+    git(repo, ["add", ".files/manifest.json"]);
+
+    expect(await save(repo)).toMatchObject({ ok: true, result: { committed: false, pushed: true } });
+    expect(git(remote, ["rev-parse", branch])).toBe(base);
+
+    await fs.writeFile(path.join(repo, "README.md"), "intentional edit\n");
+    expect(await save(repo)).toMatchObject({ ok: true, result: { committed: true, pushed: true } });
+    git(root, ["clone", remote, "restored"]);
+    expect(git(path.join(root, "restored"), ["branch", "--show-current"])).toBe(branch);
+    expect(await fs.readFile(path.join(root, "restored", "README.md"), "utf8")).toBe("intentional edit\n");
+    await expect(fs.access(path.join(root, "restored", ".files/manifest.json"))).rejects.toThrow();
+    expect(git(remote, ["for-each-ref", "--format=%(refname)"])).toBe(`refs/heads/${branch}`);
+  });
+});

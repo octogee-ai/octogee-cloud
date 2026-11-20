@@ -5,7 +5,7 @@ import {
   type FeaturePolicy,
   type FeatureSubject,
 } from "@octogee/shared/types/feature-flags";
-import type { ProjectRepoSource } from "@octogee/shared/types/index";
+import { projectRepoSourceFromDoc, type ProjectRepoSource } from "@octogee/shared/types/project";
 import { strictRateLimit } from "@octogee/core/http/security";
 import { platformStateStore } from "@octogee/core/identity/platform-state-store";
 import { logger } from "@octogee/core/http/logging";
@@ -80,7 +80,7 @@ function requestedRepoSource(body: unknown): RequestedRepoSource {
 
   const candidate = typeof requested === "string" ? parseGithubRepoUrl(requested) : requested;
   if (!isValidGithubRepoSource(candidate)) return { ok: false, error: INVALID_REPO_SOURCE };
-  return { ok: true, value: candidate };
+  return { ok: true, value: { provider: "github", owner: candidate.owner, repo: candidate.repo } };
 }
 
 function assignedGatewayId(req: Request): string | null {
@@ -200,10 +200,18 @@ export function createProjectRepoSourceRoutes(
         }
       }
 
+      const current = await platformStateStore.workspaces.projects.get(wid, pid);
+      if (!current || current.ownerUid !== uid) throw new Error("Project owner changed");
+      const previous = projectRepoSourceFromDoc(current.repoSource);
+      const sameRepository = requested.value && previous?.owner.toLowerCase() === requested.value.owner.toLowerCase() &&
+        previous.repo.toLowerCase() === requested.value.repo.toLowerCase();
       await platformStateStore.workspaces.projects.patch(wid, pid, {
-        repoSource: requested.value ? { ...requested.value } : null,
+        ...(requested.value && !sameRepository ? { checkoutEnabled: false } : {}),
+        repoSource: requested.value
+          ? { ...requested.value, ...(sameRepository && previous.workingCopy ? { workingCopy: previous.workingCopy } : {}) }
+          : null,
         updatedAt: { serverNow: true },
-      });
+      }, { revision: current.revision });
 
       logger.info(
         `[repo-source] ${projectPath}: ${repoSourceLabel(project.repoSource)} → ${repoSourceLabel(requested.value)}`,

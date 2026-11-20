@@ -8,7 +8,10 @@ export declare function giteaApiAsUserAllowNotFound(sudoUser: string, org: strin
 export declare function giteaDeleteRepo(org: string, repo: string): Promise<void>;
 export declare function giteaGetRepo(org: string, repo: string): Promise<unknown | null>;
 export declare function giteaDeleteVerifiedRepo(org: string, repo: string): Promise<void>;
-export declare function createProjectGiteaRepo(org: string, repoName: string, description: string, privateRepo: boolean): Promise<boolean>;
+export declare function createProjectGiteaRepo(org: string, repoName: string, description: string, privateRepo: boolean, { defaultBranch, autoInit }?: {
+    autoInit?: boolean | undefined;
+    defaultBranch?: string | undefined;
+}): Promise<boolean>;
 export declare function giteaWriteFile(org: string, repoName: string, filePath: string, content: string, commitMessage: string): Promise<void>;
 export declare function giteaWriteFiles(org: string, repoName: string, files: ReadonlyArray<{
     path: string;
