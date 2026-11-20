@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { githubCheckpointBranch, githubCheckpointRepo } from "@octogee/shared/types/project";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 
 const TEST_ROOT = await vi.hoisted(async () => {
@@ -315,6 +316,25 @@ describe("user Git metadata refresh", () => {
       expect(findNamed(quarantineRoot, "commondir")).not.toBeNull();
     },
   );
+
+  it("reconstructs a private checkpoint's managed branch and trusts the resulting metadata on the next mount", () => {
+    const canonical = createCanonicalRepo({ "README.md": "autosaved project edit\n" });
+    temporaryRoots.push(canonical.root);
+    const repoName = githubCheckpointRepo("a".repeat(32));
+    const branch = githubCheckpointBranch(repoName)!;
+    git(canonical.bare, ["branch", "-m", branch]);
+    const repoDir = path.join(CUSTOMERS_DIR, "alice", "projects", "orbit");
+    const metadataDir = path.join(METADATA_ROOT, "alice", "projects", "orbit.git");
+    const fetch = vi.fn(fetchCanonicalFrom(canonical.bare));
+
+    expect(externalizeUserGitDir(repoDir, { giteaRepoName: repoName, fetchCanonical: fetch })).toBe(metadataDir);
+    expect(gitExec(repoDir, ["symbolic-ref", "HEAD"])).toBe(`refs/heads/${branch}`);
+    expect(gitExec(repoDir, ["rev-parse", "HEAD"])).toBe(canonical.head);
+    expect(gitExec(repoDir, ["show", "HEAD:README.md"])).toBe("autosaved project edit");
+    expect(userRepositoryHasCanonicalRemote(repoDir)).toBe(true);
+    expect(externalizeUserGitDir(repoDir, { giteaRepoName: repoName, fetchCanonical: fetch })).toBe(metadataDir);
+    expect(fetch).toHaveBeenCalledOnce();
+  });
 
   it("projects an empty canonical repository as an unborn main branch with an empty index", () => {
     const canonical = createCanonicalRepo();

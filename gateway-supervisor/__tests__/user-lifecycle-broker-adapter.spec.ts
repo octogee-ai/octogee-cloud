@@ -245,9 +245,11 @@ vi.mock('../lib/surge-openclaw-process-gate.js', async importOriginal => ({
   createSurgeOpenClawProcessSupervisorClient: () => ({ status: supervisorMocks.status }),
 }));
 const restoreDefaultAgentWorkspaces = vi.hoisted(() => vi.fn());
+const initializeProjectAgentWorkspace = vi.hoisted(() => vi.fn());
 vi.mock("@octogee/core/project-agent-workspaces", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@octogee/core/project-agent-workspaces")>();
-  return { ...actual, restoreProjectAgentWorkspaces: restoreDefaultAgentWorkspaces };
+  initializeProjectAgentWorkspace.mockImplementation(process.platform === "linux" ? actual.initializeRelocatedProjectAgent : async () => {});
+  return { ...actual, restoreProjectAgentWorkspaces: restoreDefaultAgentWorkspaces, initializeRelocatedProjectAgent: initializeProjectAgentWorkspace };
 });
 const gitHostMocks = vi.hoisted(() => ({ releaseKey: vi.fn(async (_slug: string, _publicKey: string) => undefined) }));
 vi.mock("../lib/gitea-admin-broker-client.js", async (importOriginal) => {
@@ -4139,10 +4141,15 @@ describe("buildBrokeredLifecycleAdapter add config patch", () => {
     let config: Record<string, any> = { agents: { entries: {} }, channels: { mattermost: { accounts: {} } }, bindings: [] };
     await fs.mkdir(path.dirname(OPENCLAW_CONFIG), { recursive: true });
     await fs.writeFile(OPENCLAW_CONFIG, JSON.stringify(config));
+    initializeProjectAgentWorkspace.mockClear();
     const rpc = mkGatewayRpc({
       configGet: vi.fn(async () => configSnapshot(config)),
       agentsCreate: vi.fn(async ({ name, workspace: nativeWorkspace }) => {
         if (name === agentId) {
+          if (github) {
+            expect(initializeProjectAgentWorkspace).toHaveBeenCalledWith(expect.objectContaining({ customerDir, project: projectId }));
+            if (process.platform === "linux") expect(await fs.readFile(path.join(nativeWorkspace, "IDENTITY.md"), "utf8")).toContain("Name:");
+          }
           if (source === "gitea") expect(await fs.readFile(path.join(nativeWorkspace, "README.md"), "utf8")).toBe("# Repository source\n");
           else expect(await fs.readFile(path.join(nativeWorkspace, "AGENTS.md"), "utf8")).toBe("Private agent instructions");
         }
