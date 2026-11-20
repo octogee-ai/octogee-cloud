@@ -945,6 +945,8 @@ var ze = {
   newAgent: "New agent",
   creatingAgent: "Creating new agent",
   namedSettings: "{name} settings",
+  namedShare: "Share {name}",
+  shareTemplatePrompt: "Create a shareable template of yourself",
   newConversation: "New session",
   workspaceMenuLabel: "Workspace menu",
   switchAgent: "Switch agent",
