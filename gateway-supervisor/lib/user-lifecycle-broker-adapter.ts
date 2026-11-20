@@ -695,12 +695,11 @@ function githubCheckoutReady(snapshot: FleetBrokerUserSnapshot, projectId: strin
     userRepositoryHasCanonicalRemote(path.join(CUSTOMERS_DIR, snapshot.slug, "projects", projectId));
 }
 
-async function initializeRelocatedGithubProjectAgents(slug: string, projectAgents: readonly Record<string, unknown>[], current: unknown): Promise<void> {
+async function initializeGithubProjectAgentWorkspaces(slug: string, projectAgents: readonly Record<string, unknown>[]): Promise<void> {
   const customerDir = path.join(CUSTOMERS_DIR, slug);
   for (const entry of projectAgents) {
     const id = String(entry.id), parsed = parseAgentId(id);
     if (parsed.kind !== "project" || entry.workspace !== projectAgentWorkspace(customerDir, parsed.project)) continue;
-    if (currentProjectEntry(current, id)?.workspace !== path.join(customerDir, "projects", parsed.project)) continue;
     const identity = entry.identity as { name: string; emoji: string };
     await initializeRelocatedProjectAgent({ customerDir, project: parsed.project, ...identity });
   }
@@ -1401,9 +1400,7 @@ async function applyAddUserConfigPatch(
   });
   const projectAgentEntries = buildUserProjectAgents(brokerSnapshot, projectAgents, identity,
     { ownerMmUserId: brokerUserMattermostUserId(brokerSnapshot, snapshot), isolatedGateway });
-  if (projectAgents.some(agent => agent.githubBacked)) {
-    await initializeRelocatedGithubProjectAgents(snapshot.slug, projectAgentEntries, await freshRosterConfig(ctx));
-  }
+  await initializeGithubProjectAgentWorkspaces(snapshot.slug, projectAgentEntries);
   const brokerAgentIds = [agentId, ...agentIdsFromEntries(projectAgentEntries)];
   await Promise.all(
     brokerAgentIds.map((id) => fsp.mkdir(path.join(AGENTS_DIR, id, "agent"), { recursive: true })),
@@ -1632,7 +1629,7 @@ async function reconcileConfiguredUserProjectAgents(
     activationProjectIds: preparedProjectAgents.filter((agent) => agent.status === "provisioning" && agent.activationId).map((agent) => agent.projectId),
   };
   const logPrefix = `[project-agents:${snapshot.slug}]`;
-  await initializeRelocatedGithubProjectAgents(snapshot.slug, projectAgentEntries, current);
+  await initializeGithubProjectAgentWorkspaces(snapshot.slug, projectAgentEntries);
   const { retiredAgentIds } = configuredUserProjectAgentPatch(current, patchInput);
   await ensureUserRosterAgents(ctx, projectAgentEntries.filter(entry => !pendingAgentIds.has(String(entry.id))), logPrefix);
   const agentIds = agentIdsFromEntries(projectAgentEntries);

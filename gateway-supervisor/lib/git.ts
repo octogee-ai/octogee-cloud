@@ -148,8 +148,12 @@ function githubSource(repoSource: ProjectRepoSource): CanonicalUserGitSource {
   };
 }
 
+function isGiteaRepositoryName(repoName: string): boolean {
+  return SAFE_GIT_IDENTITY_RE.test(repoName) || githubCheckpointBranch(repoName) !== null;
+}
+
 function giteaSource(slug: string, repoName: string): CanonicalUserGitSource {
-  if (!SAFE_GIT_IDENTITY_RE.test(repoName)) throw new Error("[git] invalid Gitea repository name");
+  if (!isGiteaRepositoryName(repoName)) throw new Error("[git] invalid Gitea repository name");
   return {
     kind: "gitea",
     repoName,
@@ -181,7 +185,7 @@ function sourceFromReceipt(
   const source = lines[1] ?? "";
   if (source.startsWith("gitea:")) {
     const repoName = source.slice("gitea:".length);
-    return SAFE_GIT_IDENTITY_RE.test(repoName) ? giteaSource(identity.slug, repoName) : null;
+    return isGiteaRepositoryName(repoName) ? giteaSource(identity.slug, repoName) : null;
   }
   if (source.startsWith("github:")) {
     const [owner, repo, extra] = source.slice("github:".length).split("/");
