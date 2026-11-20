@@ -1,4 +1,4 @@
-import { GITHUB_PROJECT_METADATA } from "@octogee/shared/types/project";
+import { GITHUB_PROJECT_METADATA_PATHS } from "@octogee/shared/types/project";
 import { Router, type Request, type Response } from "express";
 import { withGiteaTarget, type FileTarget } from "@octogee/core/workspace/fileTarget";
 import {
@@ -173,8 +173,8 @@ router.post("/save", withGiteaTarget(async (req, res, _next, target) => {
     return;
   }
 
-  if (target.checkpointBranch && request.path === GITHUB_PROJECT_METADATA) {
-    res.status(403).json({ error: "This file is reserved for project assets", code: "PATH_NOT_WRITABLE" });
+  if (target.checkpointBranch && GITHUB_PROJECT_METADATA_PATHS.some(path => path === request.path)) {
+    res.status(403).json({ error: "This file is reserved for Octogee", code: "PATH_NOT_WRITABLE" });
     return;
   }
   if (target.brokered && !isBrokeredWritablePath(request.path, target.canvasFile)) {

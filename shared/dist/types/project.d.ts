@@ -23,7 +23,7 @@ export interface GitHubProjectWorkingCopy {
 }
 export declare function githubCheckpointRepo(id: string): string;
 export declare function githubCheckpointBranch(repo: string): string | null;
-export declare const GITHUB_PROJECT_METADATA = ".files/manifest.json";
+export declare const GITHUB_PROJECT_METADATA_PATHS: readonly ['.files/manifest.json', '.octogee/avatar.svg'];
 export type ProjectAgentStatus = 'provisioning' | 'ready' | 'error';
 export interface ProjectAgentIdentity {
     name: string;

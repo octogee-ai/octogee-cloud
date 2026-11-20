@@ -137,7 +137,7 @@ describe("immutable asset upload timestamp rebase", () => {
 });
 
 describe("private GitHub working branch checkpoints", () => {
-  it("keeps the checkpoint on its managed branch and leaves generated manifest changes out of history", async () => {
+  it("keeps generated files out of the managed checkpoint while saving authored changes", async () => {
     root = await fs.mkdtemp(path.join(os.tmpdir(), "github-checkpoint-"));
     const id = "1".repeat(32);
     const branch = `octogee-${id}`;
@@ -169,7 +169,9 @@ describe("private GitHub working branch checkpoints", () => {
     vi.stubEnv("GIT_SSH_HOST", "gitea");
     await fs.mkdir(path.join(repo, ".files"));
     await fs.writeFile(path.join(repo, ".files/manifest.json"), "{}\n");
-    git(repo, ["add", ".files/manifest.json"]);
+    await fs.mkdir(path.join(repo, ".octogee"));
+    await fs.writeFile(path.join(repo, ".octogee/avatar.svg"), "<svg/>\n");
+    git(repo, ["add", ".files/manifest.json", ".octogee/avatar.svg"]);
 
     expect(await save(repo)).toMatchObject({ ok: true, result: { committed: false, pushed: true } });
     expect(git(remote, ["rev-parse", branch])).toBe(base);
@@ -180,6 +182,8 @@ describe("private GitHub working branch checkpoints", () => {
     expect(git(path.join(root, "restored"), ["branch", "--show-current"])).toBe(branch);
     expect(await fs.readFile(path.join(root, "restored", "README.md"), "utf8")).toBe("intentional edit\n");
     await expect(fs.access(path.join(root, "restored", ".files/manifest.json"))).rejects.toThrow();
+    await expect(fs.access(path.join(root, "restored", ".octogee/avatar.svg"))).rejects.toThrow();
+    expect(await fs.readFile(path.join(repo, ".octogee/avatar.svg"), "utf8")).toBe("<svg/>\n");
     expect(git(remote, ["for-each-ref", "--format=%(refname)"])).toBe(`refs/heads/${branch}`);
   });
 });

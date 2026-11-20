@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { githubCheckpointBranch, githubCheckpointRepo, type ProjectRepoSource } from "@octogee/shared/types/project";
 
@@ -123,8 +123,9 @@ function saveCheckpoint(message: string, file = "README.md", remote = checkpoint
   git(dir, "clone", remote, ".");
   git(dir, "config", "user.name", "Project author");
   git(dir, "config", "user.email", "author@example.com");
-  if (file.startsWith(".files/")) mkdirSync(join(dir, ".files"));
-  writeFileSync(join(dir, file), `${message}\n`);
+  const destination = join(dir, file);
+  mkdirSync(dirname(destination), { recursive: true });
+  writeFileSync(destination, `${message}\n`);
   git(dir, "add", file);
   git(dir, "commit", "-m", message);
   git(dir, "push", "origin", `HEAD:refs/heads/${branch()}`);
@@ -172,10 +173,10 @@ describe("private GitHub project working copy", () => {
     expect(git(github, "for-each-ref", "--format=%(refname)")).toBe("refs/heads/main");
   });
 
-  it("refuses to publish metadata committed outside the checkpoint path", async () => {
+  it.each([".files/manifest.json", ".octogee/avatar.svg"])("refuses to publish generated metadata committed at %s", async (file) => {
     await enableGithubProjectCheckout(key, upstream);
-    const checkpointSha = saveCheckpoint("Reserved file", ".files/manifest.json");
-    await expect(publishGithubProject(key, project.repoSource, "Update Orbit")).rejects.toThrow("reserved asset manifest");
+    const checkpointSha = saveCheckpoint("Reserved file", file);
+    await expect(publishGithubProject(key, project.repoSource, "Update Orbit")).rejects.toMatchObject({ status: 409 });
     expect(git(checkpoint, "rev-parse", branch())).toBe(checkpointSha);
     expect(git(github, "for-each-ref", "--format=%(refname)")).toBe("refs/heads/main");
   });

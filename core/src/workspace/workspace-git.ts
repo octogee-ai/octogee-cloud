@@ -3,7 +3,7 @@ import { lstatSync, promises as fs } from "node:fs";
 import * as path from "node:path";
 
 import { acquireWorkspaceMutationLeaseSync, projectMutationLeaseGitDir } from "../workspace-mutation-lease.js";
-import { GITHUB_PROJECT_METADATA, PROJECT_AGENT_WORKSPACE_PARTS, githubCheckpointBranch } from "@octogee/shared/types/project";
+import { GITHUB_PROJECT_METADATA_PATHS, PROJECT_AGENT_WORKSPACE_PARTS, githubCheckpointBranch } from "@octogee/shared/types/project";
 import { findUnsafeGitMetadataEntry, readGitMetadataText } from "../git-metadata.js";
 import { isDuplicateAssetUpload } from "./workspace-manifest-conflict.js";
 
@@ -154,7 +154,7 @@ export interface CommitResult {
   empty: boolean;
 }
 
-async function stageWorkspaceChanges(customerDir: string, excluded: string[], reserved: string[]): Promise<GitRunOk | GitFailure> {
+async function stageWorkspaceChanges(customerDir: string, excluded: string[], reserved: readonly string[]): Promise<GitRunOk | GitFailure> {
   if (!excluded.length && !reserved.length) return runGit(customerDir, ["add", "-A"]);
   const changes = await runGit(customerDir, ["ls-files", "--modified", "--deleted", "--others", "--exclude-standard", "-z", "--", ".", ...[...excluded, ...reserved].map(file => `:(exclude,literal)${file}`)]);
   if (!changes.ok) return changes;
@@ -187,7 +187,7 @@ async function stageWorkspaceCommit(
   const identity = userGitIdentity(customerDir);
   const workspace = identity && path.resolve(customerDir) === path.join(identity.usersRoot, identity.slug);
   const excluded = [...new Set([...excludePaths, ...(workspace ? [PROJECT_AGENT_WORKSPACE_PARTS.join("/")] : [])])];
-  const reserved = checkpoint || isTrustedGithubUserCheckout(customerDir) ? [GITHUB_PROJECT_METADATA] : [];
+  const reserved = checkpoint || isTrustedGithubUserCheckout(customerDir) ? GITHUB_PROJECT_METADATA_PATHS : [];
   const staged = await stageWorkspaceChanges(customerDir, excluded, reserved);
   if (!staged.ok) return staged;
 

@@ -10,7 +10,7 @@ import { githubJson, githubRepoUrl, isValidGithubRepoSource } from "@octogee/cor
 import { platformStateStore } from "@octogee/core/identity/platform-state-store";
 import { WORKSPACE_GIT_HARDENING_ENV, WORKSPACE_GIT_HARDENING_PINS } from "@octogee/core/workspace/workspace-git";
 import {
-  GITHUB_PROJECT_METADATA,
+  GITHUB_PROJECT_METADATA_PATHS,
   githubCheckpointBranch,
   githubCheckpointRepo,
   projectRepoSourceFromDoc,
@@ -220,8 +220,8 @@ async function verifyPublishable(dir: string, base: string, sha: string): Promis
   } catch {
     throw new GithubProjectError(409, "The private checkpoint no longer descends from the recorded GitHub base.");
   }
-  const metadata = await runGit(dir, ["log", "--format=%H", "--full-history", "-m", "-1", `${base}..${sha}`, "--", GITHUB_PROJECT_METADATA]);
-  if (metadata) throw new GithubProjectError(409, "Project history changes Octogee’s reserved asset manifest. Resolve that change before publishing.");
+  const metadata = await runGit(dir, ["log", "--format=%H", "--full-history", "-m", "-1", `${base}..${sha}`, "--", ...GITHUB_PROJECT_METADATA_PATHS]);
+  if (metadata) throw new GithubProjectError(409, "Project history changes reserved Octogee files. Resolve that change before publishing.");
 }
 
 async function savePullRequest(key: ProjectKey, copy: GitHubProjectWorkingCopy, result: PullRequest): Promise<void> {
