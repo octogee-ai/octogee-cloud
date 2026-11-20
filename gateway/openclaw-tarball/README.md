@@ -212,31 +212,58 @@ selection and rollout are a separate operator step.
 
 ## Current Gateway overlay
 
-OpenClaw main `d0fc73b3a4ddb4e4b5bce555778ea3a6bbfe2c6b` was frozen for
-independent qualification at the operator's request. The November 18 overlay is
-`7f6e786959a4e069093a924a10ebd3fad3c3c01a` on
-`ceckert/openclaw:codex/gateway-refresh-20261118`.
+OpenClaw main `577dd00411502db77f9b6d0c9b09bbede3e77762` was frozen for
+independent qualification at the operator's request. The November 19 overlay is
+`eb456958968eefbbd84ac915bbeecf41af60ac1b` on
+`ceckert/openclaw:codex/gateway-refresh-20261119`. It carries the November 18
+overlay, the Mattermost run input controls and one new scheduler migration fix.
 
-The current pin, `616ad93c050ed05d9154cc6819e42423fc303d02`, adds run input
-controls on top of that overlay. The Mattermost connector verifies the sender
-through the Gateway before applying the requested follow-up or steer mode.
-The reply runner checks the selected run and keeps native steering authority.
-Remove this overlay when the channel SDK supports authorized per-message queue
-selection and exact-run steering.
+The Mattermost connector verifies the sender through the Gateway before applying
+the requested follow-up or steer mode. The reply runner checks the selected run
+and keeps native steering authority. Remove this overlay when the channel SDK
+supports authorized per-message queue selection and exact-run steering.
 
-The [frozen tip's push CI](https://github.com/openclaw/openclaw/actions/runs/44433270401)
-passed `security-fast` and skipped 39 jobs, including the package build,
-Control UI and PostgreSQL conformance. The latest successful
-[scheduled full CI](https://github.com/openclaw/openclaw/actions/runs/43129347832)
-ran at `cda0b61ac4d23fb0a5fa5530e37f9e74ce3face5` with 151 passing jobs.
-Its 11 skips were Control UI i18n, check planning, shared SDK declarations,
-Node 24 compatibility, Android and iOS screenshots and release E2E, iOS
-screenshot evidence, PR failure reporting, and release child evidence sealing.
-The [preceding completed scheduled run](https://github.com/openclaw/openclaw/actions/runs/44420676718)
-at `8e9fe3d5535c89648dd790ee44b3424381d3be86` passed the artifact build and
-all four PostgreSQL shards. It had 144 passing, 12 failing and 12 skipped jobs.
-Failures included dependencies, Control UI E2E, nine Node shards and the
-aggregate gate. Those scheduled results cover their own source commits.
+A Builder return moves scheduled jobs with `cron.migration`. A job created from
+a browser or device session stores a Gateway operator source bound to the
+exporting Gateway's device. Restored on the target, that source failed device
+revalidation, the error was classified permanent, and the scheduler disabled the
+job after its first run. New users saw their default automation fail after the
+move. Staging now rebinds each Gateway-sourced job to the staging caller's live
+operator authority. The caller must hold `operator.cron` and be the same
+requester profile. The fresh source is narrowed to the stored grant's scopes and
+admin flags, and the caller's authority guards the staged commit. Projected
+declarations with a Gateway source, and any Gateway-sourced job the caller
+cannot rebind, refuse the stage. The rebinding is never accepted from the wire.
+Session-kind sources that record a device, conversation locality and inference
+bindings are not rebound; they remain an open risk for moved jobs. A stage retry
+from a caller that cannot capture authority fails even after an earlier attempt
+succeeded. Remove this overlay when native migration restores operator sources
+on the receiving Gateway.
+
+The [frozen tip's push CI](https://github.com/openclaw/openclaw/actions/runs/44638734128)
+passed `security-fast` and skipped 42 jobs, including the package build,
+Control UI and PostgreSQL conformance. The neighbouring
+[scheduled full CI](https://github.com/openclaw/openclaw/actions/runs/44637548930)
+at `f03cea11e22279aff7be580296b1fc025537614c` was still running at qualification:
+100 passing, 3 failing (`checks-ui-e2e (6/10)`, `android-access-native`,
+`checks-node-compact-large-35`), 10 skipped and 50 pending jobs. It covers its own
+source commit. The frozen tip's own `oxlint` reports `max-lines` on 23 files the
+overlay does not change; the overlay's 413 changed files lint clean.
+
+Native [#201812](https://github.com/openclaw/openclaw/pull/201812) and
+[#201998](https://github.com/openclaw/openclaw/pull/201998) check approval run
+authority once at request start and delete `forceDenyIfRuntimeAuthorityClosed`.
+The overlay's shared closure scheduler is removed; its reviewer guard on
+resolution is retained. Native [#201887](https://github.com/openclaw/openclaw/pull/201887)
+drops the per-dispatch run authority check from node invocation; the overlay
+keeps only its live computer-control assertion there. Native
+[#201063](https://github.com/openclaw/openclaw/pull/201063) passes plugin install
+records into web secret resolution, replacing the overlay's asynchronous read.
+Doctor keeps the overlay's maintenance-admitted recovery-backup skip ahead of the
+native shared-image retention from [#201914](https://github.com/openclaw/openclaw/pull/201914).
+New automations keep their restored fields alongside native prompt naming from
+[#201184](https://github.com/openclaw/openclaw/pull/201184). The sections below
+describe boundaries retained from earlier cuts.
 
 The frozen tip includes native [#193596](https://github.com/openclaw/openclaw/pull/193596),
 which prepares the backup and acquires its PostgreSQL lease through the config
@@ -683,29 +710,32 @@ verify preserved agent identity, history, and source write refusal.
 ### Qualification and publication
 
 The clean full package build used Node 24.22.2 and pinned pnpm 12.15.0 with the
-frozen lockfile. Its build-info commit matches the overlay. The OpenClaw native
-tip passed 112 focused tests and 25 PostgreSQL conformance tests. The overlay
-passed 224 focused tests and 12 PostgreSQL conformance tests covering retained
-channel, authorization, and recovery boundaries. The platform Browser bundle
-and the product hosted islands were regenerated from the same source. The
-PostgreSQL 16.16 and pgvector 0.8.7 routine catalog was regenerated from that
-source, and the non-superuser pin-roll passed from `e9c9cd30`.
+frozen lockfile. Its build-info commit matches the overlay. Production, extension
+and core typechecks, the channel config and generated validator checks, and every
+`pnpm check` ratchet passed. The aggregate lint fails on native `max-lines`
+diagnostics in 23 files the overlay does not change; the overlay's 413 changed
+files lint clean. The overlay passed 265 focused tests covering every rebase
+conflict, the scheduler migration rebind and the Mattermost run input controls.
+The platform Browser bundle was regenerated from the same source. The PostgreSQL
+16.16 and pgvector 0.8.7 routine catalog was regenerated from that source with
+unchanged definitions, and the non-superuser pin-roll passed from `e9c9cd30`.
 
 Both archives were packed sequentially from the same build. The root integrity
 check, source-matched installed Mattermost, Codex, and Parallel bytes, and all
-25 patched npm distribution controls passed. The actual Linux AMD64
-[full plugin installer](https://console.cloud.google.com/cloud-build/builds/667f2793-aa04-4534-b54c-29ef716e1718)
-passed the native registry, bundled source-match, and native-hook gates.
+25 patched npm distribution controls on the staged and installed npm passed. The
+actual Linux AMD64
+[full plugin installer](https://console.cloud.google.com/cloud-build/builds/d3b86934-d161-434c-bd05-27c7949c4a0a)
+passed the bundled source-match and native-hook gates.
 
 Both GCS objects use generation-zero creation. Readback verified each exact
 generation and full SHA-256. The
-[GitHub release mirror](https://github.com/ceckert/openclaw/releases/tag/gateway-7f6e786-20261118)
+[GitHub release mirror](https://github.com/ceckert/openclaw/releases/tag/gateway-eb45695-20261119)
 uses the same names and verified hashes.
 
 | Object | Generation | SHA-256 |
 | --- | --- | --- |
-| `openclaw-fork-1c4a4137.tgz` | `1795053431766588` | `1c4a4137455d6148dcca127b59d33a988a8b925e3d9c6d8d35a50faaffa412df` |
-| `openclaw-mattermost-cf82f58c.tgz` | `1795053494335029` | `cf82f58c941d9f0268e871b98e387ec9d671e648f014926c8200ce0f4ba40b9c` |
+| `openclaw-fork-d01c8b8c.tgz` | `1795137613271862` | `d01c8b8ccc796c143a04fe0c7b0c1284c877623e09eceac6f928b3a4ede664c6` |
+| `openclaw-mattermost-961fbd39.tgz` | `1795137618388495` | `961fbd39a5fe03e27a558add39738e336a0d82e08b48b3f23bd1003259a27dd1` |
 
 ### Upstream contributions
 
