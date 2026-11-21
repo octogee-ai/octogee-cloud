@@ -320,8 +320,21 @@ async function resumeSystemConfigWatchForUser(
   await enableSystemConfigWatch(OPENCLAW_DIR, slug, expectedGeneration);
 }
 
-function importedActivationOptions(signal?: AbortSignal, migrationId?: string, beforeRuntimePublish?: () => Promise<void>, deferRuntimeVerification?: true) {
-  return signal || migrationId || beforeRuntimePublish || deferRuntimeVerification ? { ...(signal ? { signal } : {}), ...(migrationId ? { migrationId } : {}), ...(beforeRuntimePublish ? { beforeRuntimePublish } : {}), ...(deferRuntimeVerification ? { deferRuntimeVerification } : {}) } : undefined;
+function importedActivationOptions(
+  signal?: AbortSignal,
+  migrationId?: string,
+  beforeRuntimePublish?: () => Promise<void>,
+  deferRuntimeVerification?: true,
+  sharedToSharedRoster?: true,
+) {
+  if (!signal && !migrationId && !beforeRuntimePublish && !deferRuntimeVerification) return undefined;
+  return {
+    ...(signal ? { signal } : {}),
+    ...(migrationId ? { migrationId } : {}),
+    ...(beforeRuntimePublish ? { beforeRuntimePublish } : {}),
+    ...(deferRuntimeVerification ? { deferRuntimeVerification } : {}),
+    ...(sharedToSharedRoster ? { sharedToSharedRoster } : {}),
+  };
 }
 
 async function importedWorkspaceIdentityRestore(input: { deps: MigrationHandlerDeps; slug: string; migrationId?: string; signal?: AbortSignal; beforeRuntimePublish?: () => Promise<void> }): Promise<(() => Promise<void>) | undefined> {
@@ -330,8 +343,34 @@ async function importedWorkspaceIdentityRestore(input: { deps: MigrationHandlerD
   return sharedTargetWorkspaceRestore(input.deps, { migrationId: input.migrationId, slug: input.slug, mode: "final", rpcPhase: "finish-rsync-import" }, resolveOpenClawStateDir(), input.signal ?? AbortSignal.timeout(MIGRATION_TRANSFER_TIMEOUT_MS));
 }
 
+async function hydrateImportedProjects(
+  deps: MigrationHandlerDeps,
+  slug: string,
+  loadStrategy: MigrationLoadStrategy,
+): Promise<string[]> {
+  if (
+    loadStrategy === "standard" &&
+    deps.adapter.projectCheckoutScope?.(slug) !== "workspace-only"
+  ) {
+    const { pending, deferred } = await cloneMissingProjects(deps.adapter, slug, { githubCheckouts: "defer" });
+    if (deferred.length > 0) {
+      deps.log?.(
+        `[migration-http] GitHub checkouts for ${slug} hydrate after cutover, once this gateway holds the assignment: ${deferred.join(", ")}`,
+      );
+    }
+    if (pending.length > 0) {
+      throw new Error(
+        `[migration-http] project checkout hydration incomplete for ${slug}: ${pending.join(", ")}`,
+      );
+    }
+    return deferred;
+  }
+  return [];
+}
+
 async function activateImportedUserForMigration(input: {
   deferRuntimeVerification?: true;
+  sharedToSharedRoster?: true;
   deps: MigrationHandlerDeps;
   slug: string;
   mode: MigrationImportMode;
@@ -344,25 +383,10 @@ async function activateImportedUserForMigration(input: {
   const beforeRuntimePublish = await importedWorkspaceIdentityRestore(input);
   await ensureMigrationGiteaKey(deps, slug, "target-activation");
   const fenceGeneration = mode === "default" ? await pauseSystemConfigWatchForUser(deps, slug) : undefined;
-  let deferredCheckouts: string[] = [];
-  if (
-    loadStrategy === "standard" &&
-    deps.adapter.projectCheckoutScope?.(slug) !== "workspace-only"
-  ) {
-    const { pending, deferred } = await cloneMissingProjects(deps.adapter, slug, { githubCheckouts: "defer" });
-    deferredCheckouts = deferred;
-    if (deferred.length > 0) {
-      deps.log?.(
-        `[migration-http] GitHub checkouts for ${slug} hydrate after cutover, once this gateway holds the assignment: ${deferred.join(", ")}`,
-      );
-    }
-    if (pending.length > 0) {
-      throw new Error(
-        `[migration-http] project checkout hydration incomplete for ${slug}: ${pending.join(", ")}`,
-      );
-    }
-  }
-  const options = importedActivationOptions(signal, input.migrationId, beforeRuntimePublish, input.deferRuntimeVerification);
+  const deferredCheckouts = await hydrateImportedProjects(deps, slug, loadStrategy);
+  const sharedToSharedRoster = beforeRuntimePublish && input.migrationId?.startsWith("mig-") &&
+    (input.sharedToSharedRoster || mode === "default") ? true : undefined;
+  const options = importedActivationOptions(signal, input.migrationId, beforeRuntimePublish, input.deferRuntimeVerification, sharedToSharedRoster);
   const activation = options ? await deps.adapter.activateImportedUser(slug, options) : await deps.adapter.activateImportedUser(slug);
   if (loadStrategy === "standard") {
     deps.adapter.recordAppliedFingerprint?.(
@@ -2347,10 +2371,10 @@ async function activateUserDefaultAgent(
   slug: string,
   signal: AbortSignal,
   loadStrategy: MigrationLoadStrategy,
-  deferRuntimeVerification?: true,
+  opts: { deferRuntimeVerification?: true; migrationId?: string },
 ): Promise<string | undefined> {
   const verificationPending = await activateImportedUserForMigration({
-    deferRuntimeVerification,
+    ...opts,
     deps,
     slug,
     mode: "final",
@@ -2370,7 +2394,9 @@ async function activateConfiguredUserImport(
 ): Promise<string | undefined> {
   if (activation.live) {
     signal.throwIfAborted();
-    return activateUserDefaultAgent(deps, activation.request.slug, signal, loadStrategy, deferRuntimeVerification);
+    return activateUserDefaultAgent(deps, activation.request.slug, signal, loadStrategy, {
+      deferRuntimeVerification, migrationId: activation.request.migrationId,
+    });
   }
   const { request } = activation;
   let cancellation: Promise<void> | null = null;
@@ -2395,7 +2421,7 @@ async function activateConfiguredUserImport(
       { durationMs: Date.now() - releaseStartedAt },
     );
     signal.throwIfAborted();
-    return await activateUserDefaultAgent(deps, request.slug, signal, loadStrategy, deferRuntimeVerification);
+    return await activateUserDefaultAgent(deps, request.slug, signal, loadStrategy, { deferRuntimeVerification });
   } catch (error) {
     (deps.log ?? provisionerLog)(
       `[migration-rsync] User activation failed migrationId=${request.migrationId} slug=${request.slug}: ` +
@@ -2515,6 +2541,9 @@ async function activateFinishedRsyncImport(input: {
         loadStrategy,
         signal,
         beforeRuntimePublish: input.beforeRuntimePublish,
+        ...(input.beforeRuntimePublish && !body.preserveSource
+          ? { sharedToSharedRoster: true }
+          : {}),
       });
     }
     deps.adapter.writeMountMarker?.(body.slug);

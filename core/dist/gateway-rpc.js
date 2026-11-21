@@ -524,8 +524,8 @@ async function requestGatewayRestart(call, params) {
     }
     return result;
 }
-async function callOkPayload(call, method, params) {
-    const payload = await call(method, params);
+async function callOkPayload(call, method, params, requestTimeoutMs) {
+    const payload = await call(method, params, requestTimeoutMs);
     if (!payload || typeof payload !== "object" || payload.ok !== true) {
         throw new OpenclawWireError(INVALID_RESPONSE, `${method} payload missing \`ok: true\``);
     }
@@ -535,6 +535,25 @@ async function callAgentsCreate(call, params) {
     const payload = await callOkPayload(call, "agents.create", params);
     if (typeof payload.agentId !== "string" || payload.agentId.length === 0) {
         throw new OpenclawWireError(INVALID_RESPONSE, "agents.create payload missing string `agentId`");
+    }
+    return payload;
+}
+function matchesRetainedAgentReceipt(value, requested) {
+    if (value === null || typeof value !== "object")
+        return false;
+    const receipt = value;
+    return receipt.agentId === requested.agentId && receipt.name === requested.name &&
+        receipt.workspace === requested.workspace && receipt.storeId === requested.storeId &&
+        receipt.schema === requested.schema && typeof receipt.agentDir === "string" && path.isAbsolute(receipt.agentDir);
+}
+async function callAgentsRestoreMany(call, params) {
+    const payload = await callOkPayload(call, "agents.restoreMany", params, 120_000);
+    const receipts = payload.agents;
+    const requestedIds = new Set(params.agents.map(agent => agent.agentId));
+    if (requestedIds.size === 0 || requestedIds.size !== params.agents.length ||
+        payload.reloadApplied !== true || !Array.isArray(receipts) || receipts.length !== params.agents.length ||
+        !params.agents.every(expected => receipts.filter(receipt => matchesRetainedAgentReceipt(receipt, expected)).length === 1)) {
+        throw new OpenclawWireError(INVALID_RESPONSE, "agents.restoreMany did not acknowledge the exact applied retained roster");
     }
     return payload;
 }
@@ -685,6 +704,7 @@ export function createGatewayRpc(opts = {}) {
             return { ...payload, id };
         },
         agentsCreate: (params) => callAgentsCreate(call, params),
+        agentsRestoreMany: (params) => callAgentsRestoreMany(call, params),
         agentsDelete: (params) => callAgentsDelete(call, params),
         agentsDetach: async (params) => {
             const payload = await callOkPayload(call, "agents.detach", params);

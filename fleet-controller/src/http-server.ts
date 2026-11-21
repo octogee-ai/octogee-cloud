@@ -250,15 +250,19 @@ function createFleetEventHub(deps: {
       closeExpiry(key);
       if (!record || !extras?.expiresAt) return;
       const at = extras.expiresAt(record);
-      if (at === undefined || at <= Date.now()) return;
-      const timer = setTimeout(() => {
+      if (at === undefined) return;
+      const expire = () => {
+        const remaining = at - Date.now();
+        if (remaining > 0) {
+          expiryTimers.set(key, setTimeout(expire, remaining).unref());
+          return;
+        }
         expiryTimers.delete(key);
         if (updatePlacementFingerprint(placements, { type: "modified", key, record }, fingerprint)) {
           emit({ kind: "changed", collection, at: Date.now(), placement: true, placementOnly: true });
         }
-      }, at - Date.now());
-      timer.unref();
-      expiryTimers.set(key, timer);
+      };
+      expire();
     };
     const subscription = deps.store.watch(request, {
       onEvent: (event) => {

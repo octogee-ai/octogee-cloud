@@ -269,6 +269,20 @@ export interface GatewayAgentsCreateResult {
   [extra: string]: unknown;
 }
 
+export interface GatewayRetainedAgentSpec {
+  agentId: string;
+  name: string;
+  workspace: string;
+  storeId: string;
+  schema: string;
+}
+
+export interface GatewayAgentsRestoreManyReceipt {
+  ok: true;
+  reloadApplied: true;
+  agents: Array<GatewayRetainedAgentSpec & { agentDir: string }>;
+}
+
 const AGENT_NOT_FOUND_MESSAGE = /^agent "[^"]*" not found$/;
 const AGENT_ALREADY_EXISTS_MESSAGE = /^agent "[^"]*" already exists$/;
 const AGENT_DELETION_PENDING_MESSAGE = /^agent "([^"]*)" deletion cleanup is still pending$/;
@@ -376,6 +390,7 @@ export interface GatewayRpcClient {
   cronJobCount(agentId: string, opts?: { includeDisabled?: boolean }): Promise<number>;
   cronAdd(spec: CronAddSpec): Promise<CronAddResult>;
   agentsCreate(params: GatewayAgentsCreateParams): Promise<GatewayAgentsCreateResult>;
+  agentsRestoreMany(params: { agents: GatewayRetainedAgentSpec[] }): Promise<GatewayAgentsRestoreManyReceipt>;
   agentsDelete(params: GatewayAgentsDeleteParams): Promise<GatewayAgentsDeleteResult>;
   agentsDetach(params: { agentId: string }): Promise<GatewayAgentsDeleteResult>;
   isGatewayUp(timeoutMs?: number): Promise<boolean>;
@@ -952,8 +967,9 @@ async function callOkPayload(
   call: GatewayCall,
   method: string,
   params: object,
+  requestTimeoutMs?: number,
 ): Promise<Record<string, unknown>> {
-  const payload = await call(method, params);
+  const payload = await call(method, params, requestTimeoutMs);
   if (!payload || typeof payload !== "object" || (payload as { ok?: unknown }).ok !== true) {
     throw new OpenclawWireError(INVALID_RESPONSE, `${method} payload missing \`ok: true\``);
   }
@@ -972,6 +988,29 @@ async function callAgentsCreate(
     );
   }
   return payload as GatewayAgentsCreateResult;
+}
+
+function matchesRetainedAgentReceipt(value: unknown, requested: GatewayRetainedAgentSpec): boolean {
+  if (value === null || typeof value !== "object") return false;
+  const receipt = value as Partial<GatewayRetainedAgentSpec & { agentDir: string }>;
+  return receipt.agentId === requested.agentId && receipt.name === requested.name &&
+    receipt.workspace === requested.workspace && receipt.storeId === requested.storeId &&
+    receipt.schema === requested.schema && typeof receipt.agentDir === "string" && path.isAbsolute(receipt.agentDir);
+}
+
+async function callAgentsRestoreMany(
+  call: GatewayCall,
+  params: { agents: GatewayRetainedAgentSpec[] },
+): Promise<GatewayAgentsRestoreManyReceipt> {
+  const payload = await callOkPayload(call, "agents.restoreMany", params, 120_000);
+  const receipts = payload.agents;
+  const requestedIds = new Set(params.agents.map(agent => agent.agentId));
+  if (requestedIds.size === 0 || requestedIds.size !== params.agents.length ||
+      payload.reloadApplied !== true || !Array.isArray(receipts) || receipts.length !== params.agents.length ||
+      !params.agents.every(expected => receipts.filter(receipt => matchesRetainedAgentReceipt(receipt, expected)).length === 1)) {
+    throw new OpenclawWireError(INVALID_RESPONSE, "agents.restoreMany did not acknowledge the exact applied retained roster");
+  }
+  return payload as unknown as GatewayAgentsRestoreManyReceipt;
 }
 
 async function callAgentsDelete(
@@ -1151,6 +1190,7 @@ export function createGatewayRpc(opts: GatewayRpcClientOptions = {}): GatewayRpc
     },
 
     agentsCreate: (params) => callAgentsCreate(call, params),
+    agentsRestoreMany: (params) => callAgentsRestoreMany(call, params),
 
     agentsDelete: (params) => callAgentsDelete(call, params),
     agentsDetach: async (params) => {

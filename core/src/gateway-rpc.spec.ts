@@ -1280,6 +1280,29 @@ describe("gateway-rpc", () => {
     });
   });
 
+  describe("agentsRestoreMany", () => {
+    const requested = { agentId: "octogee-alice-coach", name: "octogee-alice-coach", workspace: "/w", storeId: "store-a", schema: "schema-a" };
+    const agent = { ...requested, agentDir: "/state/agents/octogee-alice-coach/agent" };
+    const receipt = { ok: true, reloadApplied: true, agents: [agent] };
+
+    it("requires the applied receipt to match the exact requested store identity", async () => {
+      server.setHandler("agents.restoreMany", (params) => {
+        expect(params).toEqual({ agents: [requested] });
+        return { ok: true, payload: receipt };
+      });
+      await expect(client.agentsRestoreMany({ agents: [requested] })).resolves.toEqual(receipt);
+      server.setHandler("agents.restoreMany", () => ({ ok: true, payload: { ...receipt, agents: [{ ...agent, storeId: "other" }] } }));
+      await expect(client.agentsRestoreMany({ agents: [requested] })).rejects.toMatchObject({ code: "invalid-response" });
+      server.setHandler("agents.restoreMany", () => ({ ok: true, payload: { ...receipt, reloadApplied: false } }));
+      await expect(client.agentsRestoreMany({ agents: [requested] })).rejects.toMatchObject({ code: "invalid-response" });
+    });
+
+    it("reports an unavailable restore method as a failed native request", async () => {
+      server.setHandler("agents.restoreMany", () => ({ ok: false, error: { code: "INVALID_REQUEST", message: "unknown method: agents.restoreMany" } }));
+      await expect(client.agentsRestoreMany({ agents: [requested] })).rejects.toThrow("unknown method: agents.restoreMany");
+    });
+  });
+
   describe("agentsCreate", () => {
     it("returns on the persisted agents.create acknowledgement without waiting for config.changed", async () => {
       let captured: unknown = "not-called";
