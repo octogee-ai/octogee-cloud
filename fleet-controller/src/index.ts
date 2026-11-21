@@ -2121,7 +2121,10 @@ function buildHeartbeatPollerCoreDeps(
         polledHeartbeats.set(record.gatewayId, record.heartbeat);
         polledRuntimes.set(record.gatewayId, record);
       }
-      return heartbeatPollInstanceIds(records);
+      const paused = new Set((informer.gateways() ?? [])
+        .filter(gateway => gateway.desiredStatus === "paused")
+        .map(gateway => gateway.gatewayId));
+      return heartbeatPollInstanceIds(records, paused);
     },
     fetchFleetState,
     readAssignedSlugs: async (instanceId) => {
@@ -2182,8 +2185,12 @@ export function buildGatewayHeartbeatPollerDeps(
   };
 }
 
-export function heartbeatPollInstanceIds(records: readonly FleetRegistryRecord[]): string[] {
-  return records.filter((record) => record.lifecycle !== "failed").map((record) => record.gatewayId);
+export function heartbeatPollInstanceIds(records: readonly FleetRegistryRecord[], paused: ReadonlySet<string>): string[] {
+  return records.filter(record => {
+    const parked = record.runtime === "gce-vm" && paused.has(record.gatewayId) &&
+      (record.vm?.status === "SUSPENDED" || record.vm?.status === "TERMINATED");
+    return record.lifecycle !== "failed" && !parked;
+  }).map(record => record.gatewayId);
 }
 
 type ControllerStopper = () => void;
