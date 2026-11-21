@@ -9,6 +9,9 @@ import {
   buildIsolatedGatewayConfig,
   completeActivationLease,
   sharedSourceRelease,
+  bootRepairedParkedGateway,
+  finishParkedGatewayPrewarm,
+  startParkedGatewayPrewarm,
   isolatedAllocationFenceAllows,
   failActivationLease,
   nextActivationLease,
@@ -17,7 +20,9 @@ import {
   homePreparedBeforeAllocation,
   unauditedLifecycleMutations,
 } from "./index.js";
+import { releasePayloadHash, type ReleasePayload } from "@octogee/shared/types/gateway-releases";
 import { builderActivateOperationId } from "@octogee/shared/types/isolated-operation-ids";
+import { isolatedBootMode } from "../isolated-prelaunch.js";
 import { SourceRecoveryPendingError } from "../placement-refusal.js";
 
 
@@ -861,9 +866,9 @@ describe("parked isolated gateway reuse", () => {
     Object.assign(user.provisioning.openclaw.activationLease, { leaseId: "lease-two", generation: 2 });
     h.docs.set("users/uid-alice", user);
     h.ensureAuthSecret.mockClear();
-    const allocate = (parkedGateway = { gatewayId: parkedGatewayId, generation: 1 }) => allocateIsolatedGateway(
+    const allocate = (parkedGateway: { gatewayId: string; generation: number } | null = { gatewayId: parkedGatewayId, generation: 1 }) => allocateIsolatedGateway(
       { store: h.state, readSizingKey: hobbyTier, requireOwner, mutations: unauditedLifecycleMutations, requireHomeReady: homePreparedBeforeAllocation, namespace: "test", log: vi.fn(), now: () => 3_000, ensureAuthSecret: h.ensureAuthSecret, sourceRecoveryPending },
-      { ...nextRequest, parkedGateway },
+      { ...nextRequest, ...(parkedGateway ? { parkedGateway } : {}) },
     );
     const run = async (parkedGateway?: { gatewayId: string; generation: number }) => (await allocate(parkedGateway)).gatewayId;
     const retirementOf = () => h.docs.get(`glmOperations/placement-retire-uid-alice-${parkedGatewayId}-g1`);
@@ -892,6 +897,129 @@ describe("parked isolated gateway reuse", () => {
     expect(h.ensureAuthSecret).not.toHaveBeenCalled();
     expect(h.retirementOf()).toBeUndefined();
     await expect(h.allocate()).rejects.toThrow(/parked gateway/);
+  });
+
+  async function prewarmHarness() {
+    const h = await parkedHarness();
+    h.docs.get(`glmGateways/${h.parkedGatewayId}`)!.vm = { instanceId: "old-instance", status: "SUSPENDED" };
+    const payload = h.docs.get("gateways/shared-blue/releases/3")!.payload as ReleasePayload;
+    const operation = {
+      id: "prewarm-one", kind: "prewarm-gateway", status: "running", createdBy: "ship-test",
+      createdAt: 2000, startedAt: 2001, completedAt: null, steps: [],
+      inputUid: request.uid, gatewayId: h.parkedGatewayId,
+      input: { uid: request.uid, gatewayId: h.parkedGatewayId, generation: 1, sourceSha: "a".repeat(40), bootImageId: "123", payload },
+    } as const;
+    await h.state.journal.operations.create({ ...operation, steps: [] });
+    const setParked = () => {
+      const user = userData();
+      Object.assign(user.provisioning.openclaw.activationLease, { status: "parked" });
+      h.docs.set("users/uid-alice", user);
+    };
+    const requestDemand = () => {
+      const user = userData();
+      Object.assign(user.provisioning.openclaw.activationLease, { leaseId: "lease-two", generation: 2, status: "requested" });
+      h.docs.set("users/uid-alice", user);
+    };
+    return { ...h, operation: { ...operation, steps: [] }, setParked, requestDemand };
+  }
+
+  it("leaves a parked computer alone when demand is already requested before prewarm claims it", async () => {
+    const h = await prewarmHarness();
+    await expect(startParkedGatewayPrewarm(h.state, h.operation, 2100)).resolves.toEqual({ state: "demand-won" });
+    expect(h.root.desiredStatus).toBe("paused");
+    await expect(h.run()).resolves.toBe(h.parkedGatewayId);
+  });
+
+  it("retries until the registry confirms the observed VM has suspended", async () => {
+    const h = await prewarmHarness();
+    h.setParked();
+    const runtime = h.docs.get(`glmGateways/${h.parkedGatewayId}`)!;
+    const source = { instanceId: "old-instance", bootImageId: "111", needsRepair: false };
+    runtime.vm = { instanceId: source.instanceId, status: "RUNNING" };
+    await expect(startParkedGatewayPrewarm(h.state, h.operation, 2100, source)).rejects.toThrow("waiting for VM suspension to be recorded");
+    expect((await h.state.gateways.roots.get(h.parkedGatewayId))?.desiredStatus).toBe("paused");
+    runtime.vm = { instanceId: source.instanceId, status: "SUSPENDED" };
+    await expect(startParkedGatewayPrewarm(h.state, h.operation, 2200, source)).resolves.toMatchObject({ state: "booting" });
+  });
+
+  it("hands a freshly prewarmed running computer directly to matching demand without suspending it", async () => {
+    const h = await prewarmHarness();
+    h.setParked();
+    const started = await startParkedGatewayPrewarm(h.state, h.operation, 2100);
+    expect(started.state).toBe("booting");
+    h.requestDemand();
+    await expect(h.allocate()).rejects.toThrow(/prewarm has not released/);
+    expect(h.ensureAuthSecret).not.toHaveBeenCalled();
+    const root = await h.state.gateways.roots.get(h.parkedGatewayId);
+    await h.state.gateways.roots.patch(h.parkedGatewayId, { liveRelease: root!.desiredRelease });
+    await expect(finishParkedGatewayPrewarm(h.state, h.operation, 2200, "ready")).resolves.toBe("handoff");
+    expect((await h.state.gateways.roots.get(h.parkedGatewayId))?.desiredStatus).toBe("running");
+    await expect(h.run()).resolves.toBe(h.parkedGatewayId);
+    await expect(finishParkedGatewayPrewarm(h.state, h.operation, 2300, "rollback")).resolves.toBe("demand-won");
+    expect(await h.state.gateways.roots.get(h.parkedGatewayId)).toMatchObject({
+      desiredStatus: "running", allocation: { generation: 2, leaseId: "lease-two" },
+    });
+  });
+
+  it("authorizes native prelaunch only while the operation holds the exact owner and serving Shared roster epoch", async () => {
+    const h = await prewarmHarness();
+    h.setParked();
+    await startParkedGatewayPrewarm(h.state, h.operation, 2100);
+    const bootMode = async () => {
+      const gateway = await h.state.gateways.roots.get(h.parkedGatewayId);
+      return isolatedBootMode({ reader: h.state, gateway: gateway! });
+    };
+    await expect(bootMode()).resolves.toEqual({ mode: "prelaunch" });
+    h.requestDemand();
+    await expect(bootMode()).resolves.toEqual({ mode: "prelaunch" });
+    h.docs.get("gateways/shared-blue/assignments/uid-alice")!.epoch = 5;
+    await expect(bootMode()).rejects.toThrow("User activation authority is inconsistent");
+  });
+
+  it("requires a fresh original instance report before switching the parked computer to the candidate release", async () => {
+    const h = await prewarmHarness();
+    h.setParked();
+    const oldReleaseRow = h.docs.get(`gateways/${h.parkedGatewayId}/releases/1`)!;
+    const oldPayload = oldReleaseRow.payload as ReleasePayload;
+    const changedPayload = { ...oldPayload, imageTag: `abc1234@sha256:${"e".repeat(64)}` };
+    oldReleaseRow.payload = changedPayload;
+    oldReleaseRow.payloadHash = releasePayloadHash(changedPayload);
+    await expect(startParkedGatewayPrewarm(h.state, h.operation, 2100, {
+      instanceId: "old-instance", bootImageId: "111", needsRepair: true,
+    })).resolves.toMatchObject({ state: "repairing", claim: { previousRelease: 1, release: 2 } });
+    expect(await h.state.gateways.roots.get(h.parkedGatewayId)).toMatchObject({ desiredStatus: "running", desiredRelease: 1 });
+    const runtimeDoc = h.docs.get(`glmGateways/${h.parkedGatewayId}`)!;
+    runtimeDoc.vm = { instanceId: "old-instance", status: "RUNNING" };
+    const report = { currentPointId: null, retainedPoints: 0, ready: true, bundleVersion: "v1",
+      freeBytes: 3 * 1024 ** 3, instanceId: "old-instance", observedAt: 2099 };
+    runtimeDoc.vmBootRecovery = report;
+    await expect(finishParkedGatewayPrewarm(h.state, h.operation, 2250, "repaired")).rejects.toThrow(/fresh healthy/);
+    runtimeDoc.vmBootRecovery = { ...report, observedAt: 2150, instanceId: "other-instance" };
+    await expect(finishParkedGatewayPrewarm(h.state, h.operation, 2250, "repaired")).rejects.toThrow(/fresh healthy/);
+    runtimeDoc.vmBootRecovery = { ...report, observedAt: 2150 };
+    await expect(finishParkedGatewayPrewarm(h.state, h.operation, 2250, "repaired")).resolves.toBe("repair-parking");
+    expect(await h.state.gateways.roots.get(h.parkedGatewayId)).toMatchObject({ desiredStatus: "paused", desiredRelease: 1 });
+    await expect(bootRepairedParkedGateway(h.state, h.operation, 2300)).rejects.toThrow(/not safely parked/);
+    runtimeDoc.vm = { instanceId: "old-instance", status: "SUSPENDED" };
+    await expect(bootRepairedParkedGateway(h.state, h.operation, 2300)).resolves.toBe("booting");
+    expect(await h.state.gateways.roots.get(h.parkedGatewayId)).toMatchObject({ desiredStatus: "running", desiredRelease: 2 });
+    expect((await h.state.journal.operations.get(h.operation.id))?.output).toMatchObject({
+      repairedBootRecovery: { observedAt: 2150, instanceId: "old-instance" },
+    });
+  });
+
+  it("reparks a verified release when no demand arrived, allowing a later generation to claim it normally", async () => {
+    const h = await prewarmHarness();
+    h.setParked();
+    const started = await startParkedGatewayPrewarm(h.state, h.operation, 2100);
+    expect(started.state).toBe("booting");
+    const root = await h.state.gateways.roots.get(h.parkedGatewayId);
+    await h.state.gateways.roots.patch(h.parkedGatewayId, { liveRelease: root!.desiredRelease });
+    await expect(finishParkedGatewayPrewarm(h.state, h.operation, 2200, "ready")).resolves.toBe("parked");
+    expect((await h.state.gateways.roots.get(h.parkedGatewayId))?.desiredStatus).toBe("paused");
+    h.requestDemand();
+    await expect(h.allocate(null)).resolves.toEqual({ gatewayId: h.parkedGatewayId, outcome: "resumed" });
+    expect((await h.state.gateways.roots.get(h.parkedGatewayId))?.desiredStatus).toBe("running");
   });
 
   it("retires a parked gateway on another release and mints a fresh one", async () => {

@@ -96,9 +96,11 @@ import {
   type VmGatewayCostInput,
 } from "@octogee/shared/types/cost-estimator";
 import type { FleetRegistryVmFields } from "./platform-state/fleet-registry.js";
+import { migrationTransferTaskId, retargetedMigrationTransferId } from "./platform-state/migration-tasks.js";
 import { GATEWAY_UNREACHABLE_AFTER_MS, parseOpenClawProcessReport } from "@octogee/shared/types/fleet-controller";
 import {
   builderReturnOperationId,
+  isUserReturnOperationIdFor,
   placementRetireOperationId,
 } from "@octogee/shared/types/isolated-operation-ids";
 import { withActorEmails } from "./admin-journal-actor.js";
@@ -2303,9 +2305,49 @@ function operationReadShape(
   const annotated = withSourceRecoveryPending(record as Stored<OperationRecord>, sourceRecoveryPending);
   return "sourceRecoveryPending" in annotated ? { ...shaped, sourceRecoveryPending: annotated.sourceRecoveryPending } : shaped;
 }
+async function readReturnKeysTransferTarget(
+  { migrationTasks }: Pick<PlatformStateStore, "migrationTasks">,
+  input: Record<string, unknown>,
+  migrationId: string,
+  expectedTarget?: string,
+): Promise<string | undefined> {
+  const taskId = migrationTransferTaskId({ migrationId, mode: "keys" });
+  const task = await migrationTasks.get(taskId);
+  if (!task) return undefined;
+  if (task.kind !== "gateway-rsync-transfer" || task.migrationId !== migrationId ||
+      task.slug !== input.userSlug || task.sourceGatewayId !== input.fromGatewayId ||
+      task.mode !== "keys" || !isSharedPoolSlotId(task.targetGatewayId) ||
+      (expectedTarget !== undefined && task.targetGatewayId !== expectedTarget)) {
+    throw new Error(`return transfer task ${taskId} does not match its lease operation`);
+  }
+  return task.targetGatewayId;
+}
+
+export async function retryTransferTargetGatewayId(
+  store: Pick<PlatformStateStore, "migrationTasks">,
+  operation: Stored<OperationRecord>,
+): Promise<string | undefined> {
+  const { input, id } = operation;
+  if (operation.kind !== "migrate-user" || operation.origin !== "automatic" ||
+      operation.createdBy !== "glm-controller-placement-policy" ||
+      !["failed", ROLLED_BACK_STATUS].includes(operation.status) || !operation.retryRequestedAt ||
+      input.source !== "builder-activation-lease" || !isUserReturnOperationIdFor(id, input.fromGatewayId)) {
+    return undefined;
+  }
+  const migrationId = `mig-${id}`;
+  const currentTarget = input.toGatewayId;
+  if (isSharedPoolSlotId(currentTarget) && operation.gatewayId === currentTarget) {
+    const retargeted = retargetedMigrationTransferId(migrationId, currentTarget);
+    const target = await readReturnKeysTransferTarget(store, input, retargeted, currentTarget);
+    if (target !== undefined) return target;
+  }
+  return readReturnKeysTransferTarget(store, input, migrationId);
+}
+
 export const ERR_TARGET_GATEWAY_NOT_READY = "target gateway not ready";
 export const ADMIN_FLEET_REQUEST_REASON = "Admin fleet request";
 const OP_KIND_RESTART_GATEWAY = "restart-gateway";
+const ROLLED_BACK_STATUS = "rolled-back";
 
 interface RestoreRecoveryBody {
   sourceSha?: unknown;
@@ -2405,7 +2447,7 @@ const OP_STATUSES = new Set([
   "running",
   "succeeded",
   "failed",
-  "rolled-back",
+  ROLLED_BACK_STATUS,
 ]);
 
 export interface AdminGatewayControlProjection {
@@ -3048,7 +3090,7 @@ export function projectHandoffProgress(
 }
 
 function isUnresolvedMigrationFailure(data: Record<string, unknown>): boolean {
-  return data.kind === OP_KIND_MIGRATE_USER && (data.status === "failed" || data.status === "rolled-back");
+  return data.kind === OP_KIND_MIGRATE_USER && (data.status === "failed" || data.status === ROLLED_BACK_STATUS);
 }
 
 async function listUnresolvedOperationDocs(
@@ -3080,7 +3122,7 @@ const JOURNAL_STATUS_FILTERS = [
   "running",
   "succeeded",
   "failed",
-  "rolled-back",
+  ROLLED_BACK_STATUS,
   "recorded",
   "in-progress",
   "completed",
@@ -4516,7 +4558,7 @@ function rearmableUserReturnOperation(input: {
   const operation = input.operation;
   if (!operation || !isPlainRecord(operation.input)) return false;
   const operationInput = operation.input;
-  const terminalStatus = operation.status === "failed" || operation.status === "rolled-back";
+  const terminalStatus = operation.status === "failed" || operation.status === ROLLED_BACK_STATUS;
   const steps = operation.steps;
   const error = operation.error;
   const endpointPreflightFailure = Array.isArray(steps) && steps.length === 0 &&
@@ -6266,13 +6308,20 @@ router.get(
           res.status(400).json({ error: ids });
           return;
         }
-        const found = await store.journal.operations.getMany(ids);
-        const present = ids.flatMap((id) => {
-          const record = found.get(id);
-          return record === undefined ? [] : [operationReadShape(record, deps.placement?.schedulerHandoffAwaitingRelease)];
+        const { present, missing } = await store.transaction({ label: "admin-operation-lookup", readOnly: true }, async tx => {
+          const found = await tx.journal.operations.getMany(ids);
+          const present = await Promise.all(ids.flatMap((id) => {
+            const record = found.get(id);
+            if (record === undefined) return [];
+            return [retryTransferTargetGatewayId(tx, record).then(targetGatewayId => {
+              const shaped = operationReadShape(record, deps.placement?.schedulerHandoffAwaitingRelease);
+              return targetGatewayId ? { ...shaped, retryTransferTargetGatewayId: targetGatewayId } : shaped;
+            })];
+          }));
+          return { present, missing: ids.filter(id => !found.has(id)) };
         });
         const operations = await withActorEmails(accounts, present);
-        res.json({ operations, missing: ids.filter((id) => !found.has(id)), generatedAt: new Date().toISOString() });
+        res.json({ operations, missing, generatedAt: new Date().toISOString() });
       } catch (e) {
         next(e);
       }

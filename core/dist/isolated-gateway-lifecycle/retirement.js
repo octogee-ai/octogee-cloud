@@ -4,6 +4,7 @@ import { isolatedRecoverOperationId, placementRetireOperationId, } from "@octoge
 import { GatewayRetirementConflictError, claimGatewayRetirementInStore, } from "../gateway-retirement-claim.js";
 import { FenceMismatchError } from "../platform-state/errors.js";
 import { ISOLATED_GATEWAY_ALLOCATION_KIND, PLACEMENT_AUTOMATION_ACTOR, ROLLED_BACK_STATUS, checkPlacementOwner, fieldMap, readMillis, assertActivationSourceRecoveryReleased, } from "./inputs.js";
+import { readActiveParkedPrewarm } from "./prewarm.js";
 function nonEmptyString(value) {
     return typeof value === "string" && value.length > 0 ? value : null;
 }
@@ -313,6 +314,9 @@ export async function retireOwnedIsolatedGateway(input, request, mode = "apply")
             ownerGuard: input.requireOwner,
             plan: mode === "plan",
             claimGuard: async ({ transaction, root }) => {
+                const prewarm = await readActiveParkedPrewarm(transaction, request.uid);
+                if (prewarm?.gatewayId === request.gatewayId)
+                    throw new GatewayRetirementConflictError("Owner computer prewarm has not released the allocation");
                 const rootRecord = root;
                 if (!retirementAllocationMatches(rootRecord, request)) {
                     throw new GatewayRetirementConflictError(`gateway ${request.gatewayId} no longer matches isolated allocation for ${request.uid}`);

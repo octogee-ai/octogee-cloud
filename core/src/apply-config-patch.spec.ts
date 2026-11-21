@@ -65,6 +65,7 @@ function makeFakeRpc(overrides: Partial<GatewayRpcClient> = {}): GatewayRpcClien
     cronJobCount: unusedRpc("cronJobCount"),
     cronAdd: unusedRpc("cronAdd"),
     agentsCreate: unusedRpc("agentsCreate"),
+    agentsRestoreMany: unusedRpc("agentsRestoreMany"),
     agentsDelete: unusedRpc("agentsDelete"),
     agentsDetach: unusedRpc("agentsDetach"),
     ...overrides,
