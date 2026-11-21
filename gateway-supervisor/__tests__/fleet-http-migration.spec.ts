@@ -4886,7 +4886,7 @@ describe("PostgreSQL agent anchors across an rsync carry", () => {
 
       expectNoHeldGateCalls(deps);
       expect(deps.adapter.releaseAgent).toHaveBeenCalledExactlyOnceWith("octogee-chris-coach");
-      expect(deps.adapter.activateImportedUser).toHaveBeenCalledExactlyOnceWith("chris", { signal: expect.any(AbortSignal) });
+      expect(deps.adapter.activateImportedUser).toHaveBeenCalledExactlyOnceWith("chris", { signal: expect.any(AbortSignal), migrationId });
       expect(rowCount(previous)).toBe(2);
       expect(result.getStatus()).toBe(200);
       expect(result.getBody()).toEqual({
@@ -4909,7 +4909,7 @@ describe("PostgreSQL agent anchors across an rsync carry", () => {
     const response = mkResponse();
     await createFinishRsyncImportHandler(deps)(mkRequest(body, { signature: signForPod(migrationId, JSON.stringify(body)) }), response.res, vi.fn());
     expect(response.getStatus(), JSON.stringify(response.getBody())).toBe(200);
-    expect(deps.adapter.activateImportedUser).toHaveBeenCalledWith("chris", { signal: expect.any(AbortSignal), deferRuntimeVerification: true });
+    expect(deps.adapter.activateImportedUser).toHaveBeenCalledWith("chris", { signal: expect.any(AbortSignal), migrationId, deferRuntimeVerification: true });
     expect(deps.adapter.waitForAccountHealthy).not.toHaveBeenCalled();
     expect(deps.adapter.writeMountMarker).toHaveBeenCalledWith("chris");
   });

@@ -876,6 +876,123 @@ describe("buildBrokeredLifecycleAdapter migration import activation", () => {
     expect(mocks.removeActivationManifest).toHaveBeenCalledOnce();
   });
 
+  it.each([1, 5])("uses one retained-roster receipt for a live isolated import with %i agents", async count => {
+    const entries = Array.from({ length: count }, (_, index) => {
+      const agentId = index === 0 ? "octogee-tester10-coach" : `octogee-tester10-proj-p${index}-coach`;
+      return {
+        agentId, accountId: `tester10-${index}`,
+        agent: { id: agentId, workspace: path.join(testRuntime.dir, "customers", "tester10", `carried-${index}`) },
+      };
+    });
+    const anchors = entries.map(({ agentId }, index) => ({
+      agentId, storeId: `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`, schema: `octogee_agent_${index}`,
+    }));
+    const request = entries.map(({ agentId, agent }, index) => ({
+      ...anchors[index], name: agentId, workspace: agent.workspace,
+    }));
+    const receipt = Promise.withResolvers<null>();
+    const agentsRestoreMany = vi.fn(async () => {
+      await receipt.promise;
+      return { ok: true as const, reloadApplied: true as const, agents: request.map(agent => ({
+        ...agent, agentDir: path.join(testRuntime.dir, "agents", agent.agentId, "agent"),
+      })) };
+    });
+    mocks.readActivationManifest.mockResolvedValue({
+      ...entries[0], slug: "tester10", appliedFingerprint: "fp", projectAgents: entries.slice(1),
+    });
+    vi.stubEnv("GATEWAY_ID", "target");
+    vi.stubEnv("POD_UID", "target-instance");
+    const readAgentAnchors = vi.fn(async () => ({
+      assignment: { uid: "uid-tester10", epoch: 3, state: "quiescing" as const },
+      migration: { migrationId: "mig-retained", claimStartedAt: 1, sourceGatewayId: "shared-source", sourceEpoch: 3 },
+      anchors,
+    }));
+    try {
+      await withPostgresAgentConfig({ agents: { entries: {} } }, async () => {
+        let finalRevisionApplied = false;
+        const rpc = {
+          ...rosterRpc(),
+          agentsRestoreMany,
+          configGet: vi.fn(async () => {
+            const publishing = mocks.applyOpenClawActivationManifest.mock.calls.length > 0;
+            const revision = publishing ? "revision-import" : "revision-roster";
+            return {
+              ...configSnapshot({}),
+              configRevisionHash: revision,
+              appliedConfigHash: !publishing || finalRevisionApplied ? revision : "revision-roster",
+            };
+          }),
+        };
+        const adapter = buildBrokeredLifecycleAdapter({
+          client: mkClient({ readAgentAnchors }), rpc: rpc as unknown as GatewayRpcClient, log: vi.fn(), isIsolatedGateway: () => true,
+        });
+        const activation = adapter.activateImportedUser("tester10", { migrationId: "mig-retained" });
+        try {
+          await vi.waitFor(() => expect(agentsRestoreMany).toHaveBeenCalledExactlyOnceWith({ agents: request }));
+          expect(mocks.applyOpenClawActivationManifest).not.toHaveBeenCalled();
+          receipt.resolve(null);
+          await vi.waitFor(() => expect(mocks.applyOpenClawActivationManifest).toHaveBeenCalledOnce());
+          expect(mocks.removeActivationManifest).not.toHaveBeenCalled();
+        } finally {
+          receipt.resolve(null);
+          finalRevisionApplied = true;
+          await activation;
+        }
+        expect(rpc.agentsCreate).not.toHaveBeenCalled();
+        expect(mocks.applyOpenClawActivationManifest).toHaveBeenCalledOnce();
+        expect(readAgentAnchors).toHaveBeenCalledTimes(2);
+        expect(mocks.removeActivationManifest).toHaveBeenCalledOnce();
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("retries an unacknowledged native roster through the same batch and rejects changed control-plane custody", async () => {
+    const agentId = "octogee-tester10-coach";
+    const workspace = path.join(testRuntime.dir, "customers", "tester10");
+    const retained = { agentId, storeId: "00000000-0000-4000-8000-000000000001", schema: "octogee_agent_a" };
+    const authority = {
+      assignment: { uid: "uid-tester10", epoch: 3, state: "quiescing" as const },
+      migration: { migrationId: "mig-retained", claimStartedAt: 1, sourceGatewayId: "shared-source", sourceEpoch: 3 },
+      anchors: [retained],
+    };
+    let claimStartedAt = 1;
+    const readAgentAnchors = vi.fn(async () => ({
+      ...authority, migration: { ...authority.migration, claimStartedAt },
+    }));
+    const reply = { ok: true as const, reloadApplied: true as const, agents: [{
+      ...retained, name: agentId, workspace, agentDir: path.join(testRuntime.dir, "agents", agentId, "agent"),
+    }] };
+    const agentsRestoreMany = vi.fn(async () => reply)
+      .mockRejectedValueOnce(new Error("restore acknowledgement lost"))
+      .mockImplementationOnce(async () => { claimStartedAt++; return reply; });
+    vi.stubEnv("GATEWAY_ID", "target");
+    vi.stubEnv("POD_UID", "target-instance");
+    try {
+      await withPostgresAgentConfig({ agents: { entries: {} } }, async () => {
+        const rpc = { ...rosterRpc(), agentsRestoreMany };
+        const adapter = buildBrokeredLifecycleAdapter({
+          client: mkClient({ readAgentAnchors }), rpc: rpc as unknown as GatewayRpcClient, log: vi.fn(), isIsolatedGateway: () => true,
+        });
+        const activate = () => adapter.activateImportedUser("tester10", { migrationId: "mig-retained" });
+        await expect(activate()).rejects.toThrow("restore acknowledgement lost");
+        await expect(activate()).rejects.toThrow("Retained roster migration authority changed");
+        expect(mocks.applyOpenClawActivationManifest).not.toHaveBeenCalled();
+        await expect(activate()).resolves.toMatchObject({ appliedFingerprint: "fp-tester10" });
+        expect(rpc.agentsCreate).not.toHaveBeenCalled();
+        expect(agentsRestoreMany.mock.calls).toEqual([
+          [{ agents: [{ ...retained, name: agentId, workspace }] }],
+          [{ agents: [{ ...retained, name: agentId, workspace }] }],
+          [{ agents: [{ ...retained, name: agentId, workspace }] }],
+        ]);
+        expect(mocks.applyOpenClawActivationManifest).toHaveBeenCalledOnce();
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("keeps a shared import pending when its final revision fails to apply", async () => {
     let now = Date.now();
     const clock = vi.spyOn(Date, "now").mockImplementation(() => now);

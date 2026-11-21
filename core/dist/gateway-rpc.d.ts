@@ -186,6 +186,20 @@ export interface GatewayAgentsCreateResult {
     workspace?: string;
     [extra: string]: unknown;
 }
+export interface GatewayRetainedAgentSpec {
+    agentId: string;
+    name: string;
+    workspace: string;
+    storeId: string;
+    schema: string;
+}
+export interface GatewayAgentsRestoreManyReceipt {
+    ok: true;
+    reloadApplied: true;
+    agents: Array<GatewayRetainedAgentSpec & {
+        agentDir: string;
+    }>;
+}
 /**
  * openclaw refuses `agents.create` for an id already in the roster with
  * `errorShape(INVALID_REQUEST, 'agent "<id>" already exists')`. An ensure that
@@ -270,6 +284,9 @@ export interface GatewayRpcClient {
     }): Promise<number>;
     cronAdd(spec: CronAddSpec): Promise<CronAddResult>;
     agentsCreate(params: GatewayAgentsCreateParams): Promise<GatewayAgentsCreateResult>;
+    agentsRestoreMany(params: {
+        agents: GatewayRetainedAgentSpec[];
+    }): Promise<GatewayAgentsRestoreManyReceipt>;
     agentsDelete(params: GatewayAgentsDeleteParams): Promise<GatewayAgentsDeleteResult>;
     agentsDetach(params: {
         agentId: string;

@@ -2347,10 +2347,10 @@ async function activateUserDefaultAgent(
   slug: string,
   signal: AbortSignal,
   loadStrategy: MigrationLoadStrategy,
-  deferRuntimeVerification?: true,
+  opts: { deferRuntimeVerification?: true; migrationId?: string },
 ): Promise<string | undefined> {
   const verificationPending = await activateImportedUserForMigration({
-    deferRuntimeVerification,
+    ...opts,
     deps,
     slug,
     mode: "final",
@@ -2370,7 +2370,9 @@ async function activateConfiguredUserImport(
 ): Promise<string | undefined> {
   if (activation.live) {
     signal.throwIfAborted();
-    return activateUserDefaultAgent(deps, activation.request.slug, signal, loadStrategy, deferRuntimeVerification);
+    return activateUserDefaultAgent(deps, activation.request.slug, signal, loadStrategy, {
+      deferRuntimeVerification, migrationId: activation.request.migrationId,
+    });
   }
   const { request } = activation;
   let cancellation: Promise<void> | null = null;
@@ -2395,7 +2397,7 @@ async function activateConfiguredUserImport(
       { durationMs: Date.now() - releaseStartedAt },
     );
     signal.throwIfAborted();
-    return await activateUserDefaultAgent(deps, request.slug, signal, loadStrategy, deferRuntimeVerification);
+    return await activateUserDefaultAgent(deps, request.slug, signal, loadStrategy, { deferRuntimeVerification });
   } catch (error) {
     (deps.log ?? provisionerLog)(
       `[migration-rsync] User activation failed migrationId=${request.migrationId} slug=${request.slug}: ` +

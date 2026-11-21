@@ -1941,6 +1941,47 @@ async function prepareKeyImportDir(ctx: Pick<BrokerCtx, "client" | "log">, slug:
   return OPENCLAW_DIR;
 }
 
+async function targetMigrationIdentityCustody(ctx: BrokerCtx, slug: string, migrationId: string) {
+  if (!migrationId) throw new Error("target migration authority is required");
+  const current = await ctx.client.readAgentAnchors({ slug, migrationId });
+  const gatewayId = process.env.GATEWAY_ID?.trim(), podUid = process.env.POD_UID?.trim();
+  if (!gatewayId || !podUid || current.migration?.migrationId !== migrationId || !current.assignment?.uid || current.assignment.state !== "quiescing" ||
+      current.assignment.epoch !== current.migration.sourceEpoch || !Number.isSafeInteger(current.migration.claimStartedAt) || current.migration.claimStartedAt <= 0) {
+    throw new Error("Target migration authority changed");
+  }
+  return { custody: { migrationId, uid: current.assignment.uid, gatewayId, podUid }, migration: current.migration, anchors: current.anchors };
+}
+
+async function restoreRetainedUserRoster(
+  ctx: BrokerCtx, entries: readonly unknown[], opts: { slug: string; migrationId: string; signal?: AbortSignal },
+): Promise<void> {
+  const specs = rosterAgentSpecsFromEntries(entries);
+  const authority = await targetMigrationIdentityCustody(ctx, opts.slug, opts.migrationId);
+  const anchors = new Map(authority.anchors.map(anchor => [anchor.agentId, anchor]));
+  if (anchors.size !== authority.anchors.length || anchors.size !== specs.length) {
+    throw new Error("Retained roster does not match the current target migration authority");
+  }
+  const agents = specs.map(({ agentId, workspace }) => {
+    const anchor = anchors.get(agentId);
+    if (!anchor) throw new Error("Retained roster does not match the current target migration authority");
+    return { agentId, name: agentId, workspace, storeId: anchor.storeId, schema: anchor.schema };
+  });
+  await Promise.all(agents.map(agent => fsp.mkdir(agent.workspace, { recursive: true })));
+  opts.signal?.throwIfAborted();
+  try {
+    const startedAt = Date.now();
+    await ctx.rpc.agentsRestoreMany({ agents });
+    opts.signal?.throwIfAborted();
+    if (!isDeepStrictEqual(await targetMigrationIdentityCustody(ctx, opts.slug, opts.migrationId), authority)) {
+      throw new Error("Retained roster migration authority changed after OpenClaw applied it");
+    }
+    opts.signal?.throwIfAborted();
+    ctx.log(`[import:${opts.slug}] native retained-roster restore applied for ${agents.length} agents in ${Date.now() - startedAt}ms`);
+  } finally {
+    invalidateConfigCache(ctx);
+  }
+}
+
 async function sourceMigrationIdentityCustody(ctx: BrokerCtx, slug: string, migrationId: string): Promise<MigrationSourceIdentityCustody> {
   const gatewayId = process.env.GATEWAY_ID ?? "", podUid = process.env.POD_UID ?? "";
   const uid = await ctx.client.uidForSlug(slug);
@@ -2014,6 +2055,26 @@ function importedRosterNeedsAcknowledgement(manifest: MigrationActivationManifes
   return !sourceIdentity || manifest.sourceWorkspaceIdentities !== undefined || manifest.targetWorkspaceIdentities !== undefined;
 }
 
+async function ensureImportedUserRoster(
+  ctx: BrokerCtx,
+  manifest: MigrationActivationManifest,
+  sourceIdentity: MigrationSourceIdentityCustody | undefined,
+  opts: { signal?: AbortSignal; migrationId?: string },
+): Promise<void> {
+  if (!importedRosterNeedsAcknowledgement(manifest, sourceIdentity)) return;
+  const { slug } = manifest;
+  const entries = [manifest.agent, ...manifest.projectAgents.map(entry => entry.agent)];
+  const isolated = ctx.isIsolatedGateway();
+  if (isolated && !sourceIdentity && opts.migrationId && postgresAgentStoreConfigured()) {
+    await restoreRetainedUserRoster(ctx, entries, { slug, migrationId: opts.migrationId, signal: opts.signal });
+    return;
+  }
+  await ensureUserRosterAgents(ctx, entries, `[import:${slug}]`, {
+    signal: opts.signal,
+    waitForAppliedRevision: isolated,
+  });
+}
+
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 }
@@ -2085,15 +2146,7 @@ async function activateImportedUser(
     logPrefix: `[import:${slug}]`,
     purpose: "import",
   });
-  if (importedRosterNeedsAcknowledgement(safeManifest, sourceIdentity)) {
-    await ensureUserRosterAgents(ctx, [
-      safeManifest.agent,
-      ...safeManifest.projectAgents.map((entry) => entry.agent),
-    ], `[import:${slug}]`, {
-      signal: opts.signal,
-      waitForAppliedRevision: ctx.isIsolatedGateway(),
-    });
-  }
+  await ensureImportedUserRoster(ctx, safeManifest, sourceIdentity, opts);
   if (configuredBuilder && opts.deferRuntimeVerification) await keepIsolatedRuntimeDormant(ctx);
   await restoreSourceIdentityAfterRoster(ctx, manifest, safeManifest, sourceIdentity);
   await reportSharedAnchors?.();
@@ -2645,16 +2698,7 @@ export function buildBrokeredLifecycleAdapter(
     },
     listExportPaths,
     prepareKeyImportDir: (slug) => prepareKeyImportDir(ctx, slug),
-    targetMigrationIdentityCustody: async (slug, migrationId) => {
-      if (!migrationId) throw new Error("target migration authority is required");
-      const current = await ctx.client.readAgentAnchors({ slug, migrationId });
-      const gatewayId = process.env.GATEWAY_ID?.trim(), podUid = process.env.POD_UID?.trim();
-      if (!gatewayId || !podUid || current.migration?.migrationId !== migrationId || !current.assignment?.uid || current.assignment.state !== "quiescing" ||
-          current.assignment.epoch !== current.migration.sourceEpoch || !Number.isSafeInteger(current.migration.claimStartedAt) || current.migration.claimStartedAt <= 0) {
-        throw new Error("Target migration authority changed");
-      }
-      return { custody: { migrationId, uid: current.assignment.uid, gatewayId, podUid }, migration: current.migration, anchors: current.anchors };
-    },
+    targetMigrationIdentityCustody: (slug, migrationId) => targetMigrationIdentityCustody(ctx, slug, migrationId),
     exportOpenClawActivationManifest: (slug, options) =>
       exportSourceActivationManifest(ctx, slug, options),
   };
