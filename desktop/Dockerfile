@@ -25,10 +25,10 @@ RUN set -eux; \
       > /tmp/stubs/PKGBUILD; \
     runuser -u packagebuilder -- bash -lc 'cd /tmp/stubs && makepkg --noconfirm'
 
-ARG WLRCTL_REF=v0.2.2
+COPY rootfs/usr/share/omarchy/octo-desktop/fetch-wlrctl.sh /tmp/fetch-wlrctl.sh
 RUN set -eux; \
-    pacman -Sy --noconfirm --needed git meson ninja wayland wayland-protocols libxkbcommon; \
-    git clone --depth 1 --branch "${WLRCTL_REF}" https://git.sr.ht/~brocellous/wlrctl /tmp/wlrctl; \
+    pacman -Sy --noconfirm --needed meson ninja wayland wayland-protocols libxkbcommon; \
+    bash /tmp/fetch-wlrctl.sh /tmp/wlrctl; \
     meson setup /tmp/wlrctl/build /tmp/wlrctl -Dman-pages=disabled --buildtype=release; \
     ninja -C /tmp/wlrctl/build
 
