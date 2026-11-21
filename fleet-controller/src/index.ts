@@ -156,6 +156,7 @@ import {
 } from "./operation-queue.js";
 import { readOperationRolloutLanes, withOperationRolloutLane } from "./operation-rollout-lanes.js";
 import {
+  WAITING_FOR_ISOLATED_GATEWAY,
   buildOperationCompletionUpdate,
   operationFirstStartedAt,
   operationNeedsDurableRestartResume,
@@ -1279,6 +1280,14 @@ export async function markGatewayLive(
       log(`[converge-gateway] ${gateway.gatewayId} prelaunch reservation changed; deferring release`);
       return false;
     }
+    const waitingMoves = initialDisposablePrelaunch && root.desiredStatus === "running" && root.ownerUid
+      ? await transaction.journal.operations.listForUid(root.ownerUid, { kind: MIGRATE_USER_KIND, statuses: ["pending"] })
+      : [];
+    for (const move of waitingMoves) {
+      if (move.input?.toGatewayId === gateway.gatewayId && move.waitingOn === WAITING_FOR_ISOLATED_GATEWAY) {
+        await transaction.journal.operations.patch(move.id, { waitingOn: { clear: true }, nextAttemptAt: { clear: true } }, { revision: move.revision });
+      }
+    }
     await transaction.gateways.roots.patch(
       gateway.gatewayId,
       { liveRelease: gateway.desiredRelease, updatedAt: now, updatedBy: "converge-gateway" },
@@ -1690,10 +1699,15 @@ function operationFromRecord(record: Stored<OperationRecord>): Operation {
   return operation;
 }
 
-function addedPendingOperations(event: WatchEvent<"operations">): readonly Stored<OperationRecord>[] {
+function runnablePendingOperations(event: WatchEvent<"operations">): readonly Stored<OperationRecord>[] {
   if (event.kind === "snapshot") return event.records;
   if (event.kind === "resync") return [];
-  return event.changes.flatMap((change) => change.type === "added" && change.record !== null ? [change.record] : []);
+  return event.changes.flatMap(({ type, record }) => {
+    if (!record || type === "removed") return [];
+    const readinessWaitCleared = record.output?.isolatedGatewayReadinessChecks !== undefined &&
+      record.waitingOn == null && record.nextAttemptAt == null;
+    return type === "added" || readinessWaitCleared ? [record] : [];
+  });
 }
 
 export function startOperationWorker(deps: ControllerDeps): () => void {
@@ -1702,7 +1716,7 @@ export function startOperationWorker(deps: ControllerDeps): () => void {
   };
   const subscription = deps.store.watch({ aggregate: "operations", filter: { statuses: ["pending"] } }, {
     onEvent: (event) => {
-      void processInOrder(addedPendingOperations(event)).catch((err) => {
+      void processInOrder(runnablePendingOperations(event)).catch((err) => {
         deps.log(`[glm-controller] ⚠ pending operation run failed: ${err instanceof Error ? err.message : String(err)}`);
       });
     },
