@@ -127,10 +127,10 @@ export function homeScope(stateRoot: string, bundle: GatewayVmRuntimeBundle): Ho
   };
 }
 
-export function tarCreateArgs(archive: string, scope: HomeScope): string[] {
+export function tarCreateArgs(archive: string, scope: HomeScope, fast = false): string[] {
   return [
     "--create",
-    "--gzip",
+    fast ? "--use-compress-program=gzip -1" : "--gzip",
     "--numeric-owner",
     `--file=${archive}`,
     "--anchored",
@@ -192,6 +192,27 @@ async function pruneCheckpoints(deps: HomeCheckpointDeps, slug: string): Promise
   }
 }
 
+async function writeHomeArchive(deps: HomeCheckpointDeps, archive: string, scope: HomeScope, fast: boolean): Promise<number> {
+  const write = async (fastCompression: boolean) => {
+    await sh(deps, "tar", tarCreateArgs(archive, scope, fastCompression), [0]);
+    const size = await deps.fs.fileSize(archive);
+    if (size <= 0) throw new Error("home checkpoint archive is empty");
+    return size;
+  };
+  if (fast) {
+    try {
+      const size = await write(true);
+      if (size <= VM_HOME_CHECKPOINT_MAX_BYTES) return size;
+    } catch (error) {
+      if (!(error instanceof Error && error.message.includes("No space left on device"))) throw error;
+    }
+    deps.log("[vm-agent] retrying home checkpoint with standard compression to fit available space");
+  }
+  const size = await write(false);
+  if (size > VM_HOME_CHECKPOINT_MAX_BYTES) throw new Error(`home checkpoint archive is ${size} bytes, over the ${VM_HOME_CHECKPOINT_MAX_BYTES} byte cap`);
+  return size;
+}
+
 async function createAndUploadCheckpoint(
   deps: HomeCheckpointDeps,
   scope: HomeScope,
@@ -212,15 +233,7 @@ async function createAndUploadCheckpoint(
     desktopDir: `${snapshotRoot}/desktop-home`,
   };
   if (!(await deps.fs.exists(capturedScope.desktopDir))) throw new Error("home snapshot has no complete desktop home");
-  const size = await time("archive", async () => {
-    await sh(deps, "tar", tarCreateArgs(archive, capturedScope), [0]);
-    const size = await deps.fs.fileSize(archive);
-    if (size <= 0) throw new Error("home checkpoint archive is empty");
-    if (size > VM_HOME_CHECKPOINT_MAX_BYTES) {
-      throw new Error(`home checkpoint archive is ${size} bytes, over the ${VM_HOME_CHECKPOINT_MAX_BYTES} byte cap`);
-    }
-    return size;
-  });
+  const size = await time("archive", () => writeHomeArchive(deps, archive, capturedScope, requestedAt !== null));
   const sha256 = await time("hash", () => deps.fs.sha256(archive));
   const signed = await post<FleetBrokerVmHomeCheckpointUrl>(deps, "checkpoint-url", { slug: scope.slug, size }, "vm-home checkpoint-url");
   if (!VM_HOME_CHECKPOINT_NAME_RE.test(signed.name)) throw new Error(`vm-home checkpoint-url returned an invalid name ${signed.name}`);

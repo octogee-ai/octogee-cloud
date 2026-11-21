@@ -1670,7 +1670,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@google-cloud/secret-manager": "^7.2.0",
+    "@google-cloud/secret-manager": "^8.0.0",
     "@types/express": "^5.0.6",
     "@types/pg": "^8.23.1",
     "@types/ws": "^8.18.2",
@@ -1682,7 +1682,7 @@
     "jszip": "^3.10.2",
     "pg": "^8.23.1",
     "unique-names-generator": "^4.7.1",
-    "ws": "^8.22.2"
+    "ws": "^8.23.0"
   },
   "overrides": {
     "brace-expansion@>=2.0.0 <3.0.0": "2.1.7",
@@ -1693,7 +1693,7 @@
     "rimraf@>=4.2.0 <6.1.4": "^6.1.4"
   },
   "devDependencies": {
-    "@aws-sdk/client-sts": "^3.1164.0",
+    "@aws-sdk/client-sts": "^3.1169.0",
     "@google-cloud/kms": "^6.3.0",
     "@google-cloud/storage": "^8.4.0",
     "@octogee/core-testing": "file:../core-testing",
@@ -1707,7 +1707,7 @@
     "vitest": "^5.1.0"
   },
   "peerDependencies": {
-    "@aws-sdk/client-sts": "^3.1164.0",
+    "@aws-sdk/client-sts": "^3.1169.0",
     "@google-cloud/kms": "^6.3.0",
     "@google-cloud/storage": "^8.4.0",
     "@octogee/shared": "^1.0.0",

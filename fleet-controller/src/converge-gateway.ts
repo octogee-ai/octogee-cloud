@@ -1,3 +1,4 @@
+import type { SurgeReadyFleetState } from "./surge-user-handoff.js";
 import { createHash } from "node:crypto";
 import {
   isolatedGatewayServiceAccountName,
@@ -127,12 +128,14 @@ export interface GatewayConvergencePlanInput {
   deploymentReady: boolean;
 }
 
+export type ReadyVmObservation = SurgeReadyFleetState & { vmStartedAt: number | null | undefined };
+
 export type GatewayConvergenceAction =
   | { kind: "uninstall" }
   | { kind: "hold-missing-release"; error: string }
   | { kind: "hold-unreleased-chart"; error: string }
   | { kind: "upsert"; replicas: number }
-  | { kind: "mark-live"; prelaunchRefresh?: true }
+  | { kind: "mark-live"; prelaunchRefresh?: true; vmReady?: ReadyVmObservation }
   | { kind: "steady" };
 
 export function markLiveRuntimePatch(

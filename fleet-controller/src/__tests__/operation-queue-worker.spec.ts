@@ -995,7 +995,12 @@ describe("pending operation watch", () => {
       inputUid: "uid",
     };
     const other = { ...move, id: "other", createdAt: 10, waitingOn: "different-wait" };
-    const { db, emit } = createOperationsFixture({ move, other }, {
+    const unrelated = baseOp({
+      id: "unrelated", kind: "migrate-user", waitingOn: "different-wait", nextAttemptAt: retryAt,
+      output: { isolatedGatewayReadinessChecks: 1 },
+      input: { uid: "other-uid", fromGatewayId: "shared-b", toGatewayId: "builder-b" },
+    });
+    const { db, emit } = createOperationsFixture({ move, other, unrelated }, {
       gateways: {
         isolated: {
           gatewayId: "isolated", gatewayClass: "isolated", ownerUid: "uid",
@@ -1007,6 +1012,9 @@ describe("pending operation watch", () => {
     const root = (await db.gateways.roots.get("isolated"))!;
     const stop = startOperationWorker(buildDeps(db, { "migrate-user": async () => ({ success: true, steps: [] }) }));
     try {
+      const pending = await db.journal.operations.listByStatus(["pending"]);
+      await emit({ kind: "snapshot", records: pending, cursor: "c1" as never });
+      expect((await db.journal.operations.get("move"))?.status).toBe("pending");
       await markGatewayLive({ store: db, log: vi.fn() }, root as DurableGateway, {
         imageTag: "release", imageRepository: "gateway",
         profileImages: { builder: { imageRepository: "gateway-builder", imageTag: "release@sha256:" + "a".repeat(64) } },
@@ -1014,9 +1022,95 @@ describe("pending operation watch", () => {
       const ready = (await db.journal.operations.get("move"))!;
       expect(ready.nextAttemptAt).toBeUndefined();
       expect((await db.journal.operations.get("other"))?.nextAttemptAt).toBe(retryAt);
-      await emit({ kind: "changes", changes: [{ type: "modified", key: ready.id, record: ready }], cursor: "c1" as never });
+      await db.journal.operations.patch("unrelated", { waitingOn: { clear: true }, nextAttemptAt: { clear: true } });
+      await emit({ kind: "changes", changes: [
+        { type: "modified", key: ready.id, record: ready },
+        { type: "modified", key: "unrelated", record: (await db.journal.operations.get("unrelated"))! },
+      ], cursor: "c2" as never });
       await vi.waitFor(async () => expect((await db.journal.operations.get("move"))?.status).toBe("succeeded"));
+      expect((await db.journal.operations.get("unrelated"))?.status).toBe("pending");
     } finally {
+      stop();
+    }
+  });
+
+  it.each(["promotion", "return"] as const)("wakes a queued %s on committed blocker completion", async direction => {
+    const toGatewayId = direction === "promotion" ? "builder-a" : "shared-a";
+    const fromGatewayId = direction === "promotion" ? "shared-a" : "builder-a";
+    const blocker = baseOp({ id: "roll", status: "running", startedAt: 1, input: { gatewayId: toGatewayId } });
+    const mover = baseOp({ id: "move", kind: "migrate-user", createdAt: 2,
+      input: { uid: "alice", fromGatewayId, toGatewayId } });
+    const { db, store, emit } = createOperationsFixture({ roll: blocker, move: mover });
+    const handler = vi.fn(async () => ({ steps: [], success: true }));
+    const stop = startOperationWorker(buildDeps(db, { "migrate-user": handler }));
+    try {
+      const op = async (id: string) => (await db.journal.operations.get(id))!;
+      await emit({ kind: "snapshot", records: [await op("roll"), await op("move")], cursor: "c1" as never });
+      await vi.waitFor(() => expect(store.get("move")?.waitingOn).toBe(`roll ${toGatewayId}`));
+      expect(handler).not.toHaveBeenCalled();
+
+      store.set("roll", { ...blocker, status: "succeeded", completedAt: 3 });
+      await emit({ kind: "changes", changes: [{ type: "removed", key: "roll", record: null }], cursor: "c2" as never });
+      await vi.waitFor(() => expect(store.get("move")?.status).toBe("succeeded"));
+      expect(handler).toHaveBeenCalledOnce();
+    } finally {
+      stop();
+    }
+  });
+
+  it("keeps a Native source roll queued after return cutover until the return leaves the active watch", async () => {
+    const returning = baseOp({ id: "return", kind: "migrate-user", status: "running", startedAt: 1,
+      input: { uid: "alice", fromGatewayId: "builder-a", toGatewayId: "shared-a" } });
+    const roll = baseOp({ id: "roll", createdAt: 2, input: { gatewayId: "builder-a" } });
+    const { db, store, emit } = createOperationsFixture({ return: returning, roll }, {
+      gateways: { "builder-a": { gatewayId: "builder-a", gatewayClass: "isolated" } },
+      runtimes: { "builder-a": { runtime: "gce-vm" } },
+    });
+    const handler = vi.fn(async () => ({ steps: [], success: true }));
+    const stop = startOperationWorker(buildDeps(db, { rollout: handler }));
+    try {
+      const op = async (id: string) => (await db.journal.operations.get(id))!;
+      await emit({ kind: "snapshot", records: [await op("return"), await op("roll")], cursor: "c1" as never });
+      await vi.waitFor(() => expect(store.get("roll")?.waitingOn).toBe("migration builder-a → shared-a"));
+
+      store.set("return", { ...returning, cutoverCommittedAt: 3 });
+      await emit({ kind: "changes", changes: [{ type: "modified", key: "return", record: await op("return") }], cursor: "c2" as never });
+      expect(handler).not.toHaveBeenCalled();
+      expect(store.get("roll")?.status).toBe("pending");
+
+      store.set("return", { ...returning, status: "succeeded", cutoverCommittedAt: 3, completedAt: 4 });
+      await emit({ kind: "changes", changes: [{ type: "removed", key: "return", record: null }], cursor: "c3" as never });
+      await vi.waitFor(() => expect(store.get("roll")?.status).toBe("succeeded"));
+      expect(handler).toHaveBeenCalledOnce();
+    } finally {
+      stop();
+    }
+  });
+
+  it("starts an independent migration in the same watch delivery while a conflicting migration still waits", async () => {
+    const alice = baseOp({ id: "alice", kind: "migrate-user", createdAt: 1,
+      input: { uid: "alice", fromGatewayId: "shared-a", toGatewayId: "builder-a" } });
+    const bob = baseOp({ id: "bob", kind: "migrate-user", createdAt: 2,
+      input: { uid: "bob", fromGatewayId: "builder-b", toGatewayId: "shared-a" } });
+    const cory = baseOp({ id: "cory", kind: "migrate-user", createdAt: 3,
+      input: { uid: "cory", fromGatewayId: "builder-c", toGatewayId: "shared-c" } });
+    const { db, store, emit } = createOperationsFixture({ alice, bob, cory });
+    let finishAlice: (() => void) | undefined;
+    const held = new Promise<void>(resolve => { finishAlice = resolve; });
+    const handler: OperationHandler = vi.fn(async (op) => {
+      if (op.id === "alice") await held;
+      return { steps: [], success: true };
+    });
+    const stop = startOperationWorker(buildDeps(db, { "migrate-user": handler }));
+    try {
+      const op = async (id: string) => (await db.journal.operations.get(id))!;
+      await emit({ kind: "snapshot", records: [await op("alice"), await op("bob"), await op("cory")], cursor: "c1" as never });
+      await vi.waitFor(() => expect(store.get("cory")?.status).toBe("succeeded"));
+      expect(store.get("alice")?.status).toBe("running");
+      expect(store.get("bob")?.status).toBe("pending");
+      expect(store.get("bob")?.waitingOn).toBe("migration shared-a → builder-a");
+    } finally {
+      finishAlice?.();
       stop();
     }
   });
@@ -1033,7 +1127,7 @@ describe("pending operation watch", () => {
     });
     const pending = async (id: string) => (await db.journal.operations.get(id))!;
     const stop = startOperationWorker(buildDeps(db, { "add-gateway": handler }));
-    expect(watchRequests).toEqual([{ aggregate: "operations", filter: { statuses: ["pending"] } }]);
+    expect(watchRequests).toEqual([{ aggregate: "operations", filter: { statuses: ["pending", "running"] } }]);
 
     await emit({ kind: "snapshot", records: [await pending("op-a")], cursor: "c1" as never });
     await vi.waitFor(() => expect(store.get("op-a")?.status).toBe("succeeded"));
