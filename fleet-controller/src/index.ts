@@ -194,6 +194,8 @@ import { createParkedPrewarmHandler } from "./handlers/parked-prewarm.js";
 import { PARKED_PREWARM_KIND } from "@octogee/core/isolated-gateway-lifecycle";
 import { createGatewayVmHandler } from "./handlers/gateway-vm.js";
 import { createHomeArchiveHandler } from "./handlers/home-archive.js";
+import { createHomeBackupReleaseHandler } from "./handlers/home-backup-release.js";
+import { RELEASE_RESTORED_HOME_BACKUP } from "@octogee/core/isolated-gateway-lifecycle";
 import { resolveParkedHomeArchiveGrant } from "@octogee/core/admin-fleet-router";
 import { createGatewayVmClient } from "./lib/compute-vm.js";
 import { pausedIsolatedRetirementSourceFencedOff } from "./lib/native-retirement-telemetry.js";
@@ -3626,6 +3628,7 @@ async function buildHandlers(
     log: logFn,
   });
 
+  const releaseHomeBackup = createHomeBackupReleaseHandler({ store, vm: createGatewayComputeClient(store, logFn) });
   const archiveHome = createHomeArchiveHandler({
     store,
     vm: createGatewayComputeClient(store, logFn),
@@ -3646,7 +3649,9 @@ async function buildHandlers(
       now: Date.now,
       log: logFn,
     }),
-    "gateway-vm": (op, ctx) => runGatewayRuntimeExclusive(() => op.input.action === "archive" ? archiveHome(op, ctx) : gatewayVm(op, ctx)),
+    "gateway-vm": (op, ctx) => op.input.action === RELEASE_RESTORED_HOME_BACKUP
+      ? releaseHomeBackup(op, ctx)
+      : runGatewayRuntimeExclusive(() => op.input.action === "archive" ? archiveHome(op, ctx) : gatewayVm(op, ctx)),
     [MIGRATE_USER_KIND]: migrateUser,
     "retire-gateway": retireGateway,
     "restart-gateway": restartGateway,
@@ -3797,6 +3802,7 @@ function userDataScope(cleanup: UserCleanupContext, currentOperationId: string):
 
 function buildEraseUserHandler({ documents, store, logFn, kubeOps, privateKey, deleteHostingSites, userLifecycle, provisioning, gatewayGitKeys }: UserRemovalOptions) {
   const cloudCleanup = buildUserCloudCleanupDeps(store, logFn, deleteHostingSites, userLifecycle, provisioning);
+  const deleteVm = cloudCleanup.deleteVm;
   const clusterAbsent = async (gatewayId: string) => {
     if (!await retiredSharedGatewayRuntimeAbsent(kubeOps, NAMESPACE, gatewayId, deploymentNameForInstance(gatewayId))) return false;
     const pvc = await spawnKubectl(["-n", NAMESPACE, "get", `pvc/octogee-gateway-${gatewayId}-data`, "--ignore-not-found=true", "-o", "name"]);
@@ -3818,7 +3824,10 @@ function buildEraseUserHandler({ documents, store, logFn, kubeOps, privateKey, d
           },
         }
       : {}),
-    eraseVm: cloudCleanup.deleteVm,
+    eraseVm: deleteVm === undefined ? undefined : async (uid) => {
+      if ((await store.users.records.get(uid))?.home.homeArchive !== undefined) await markCloudTeardown(store, uid);
+      await deleteVm(uid);
+    },
     readSharedSource: async gatewayId => {
       const gateway = await readDesiredRoot(store, gatewayId) as DurableGateway | null;
       if (!gateway || gateway.gatewayClass !== "shared" || gateway.ownerUid != null ||
