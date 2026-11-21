@@ -1,3 +1,4 @@
+import { isSchedulerMigrationResult } from "@octogee/shared/types/fleet-controller";
 import { assertWorkspaceIdentityReady } from "./openclaw-workspace-bootstrap.js";
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
@@ -650,18 +651,10 @@ export function createGatewayRpc(opts = {}) {
             const result = await call("cron.migration", params);
             if (!result || typeof result !== "object")
                 throw new OpenclawWireError(INVALID_RESPONSE, "cron.migration returned non-object payload");
-            const value = result;
-            const requester = value.stageRequesterProfileId;
-            if (value.operationId !== params.operationId || value.phase !== params.phase ||
-                typeof value.drained !== "boolean" || !Array.isArray(value.agentIds) ||
-                value.agentIds.some(id => typeof id !== "string" || !id) ||
-                (params.phase === "stage-requester" && (value.agentIds.length !== 0 ||
-                    (requester !== null && (typeof requester !== "string" || !requester.trim() || requester.length > 512)))) ||
-                (value.agentIds.length === 0 && !["resume", "abort", "stage-requester"].includes(params.phase)) ||
-                (params.phase === "export" && value.snapshot === undefined)) {
+            if (!isSchedulerMigrationResult(result, params.operationId, params.phase)) {
                 throw new OpenclawWireError(INVALID_RESPONSE, "cron.migration returned a mismatched operation or invalid scheduler state");
             }
-            return value;
+            return result;
         },
         async cronRequest(method, params) {
             if (!SCHEDULE_TRANSFER_CRON_METHODS.includes(method))

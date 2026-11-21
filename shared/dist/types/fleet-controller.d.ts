@@ -315,6 +315,8 @@ export interface SchedulerMigrationResult {
     snapshot?: unknown;
     stageRequesterProfileId?: string | null;
 }
+export declare function isSchedulerRequesterProfileId(value: unknown): value is string | null;
+export declare function isSchedulerMigrationResult(value: unknown, operationId: string, phase: SchedulerMigrationPhase): value is SchedulerMigrationResult;
 export interface SchedulerMigrationRequestBody extends MigrationRequestBody {
     resolveAgentScope?: true;
     phase: SchedulerMigrationPhase;

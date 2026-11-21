@@ -1,4 +1,4 @@
-import type { SchedulerMigrationRequest, SchedulerMigrationResult } from "@octogee/shared/types/fleet-controller";
+import { type SchedulerMigrationRequest, type SchedulerMigrationResult } from "@octogee/shared/types/fleet-controller";
 import { type OpenclawWireErrorCode } from "@octogee/shared/types/openclaw-wire-core";
 import { type DeviceIdentity } from "./gateway-device-identity.js";
 export { OpenclawWireError, type OpenclawWireErrorCode, } from "@octogee/shared/types/openclaw-wire-core";

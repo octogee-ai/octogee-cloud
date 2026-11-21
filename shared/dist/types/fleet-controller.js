@@ -69,5 +69,23 @@ export const MIGRATION_RSYNC_PORT_DEFAULT = 30873;
 export const MIGRATION_ID_HEADER = "X-Migration-Id";
 export const MIGRATION_SLUG_HEADER = "X-Migration-Slug";
 export const MIGRATION_MODE_HEADER = "X-Migration-Mode";
+export function isSchedulerRequesterProfileId(value) {
+    return value === null || (typeof value === "string" && value.trim().length > 0 && value.length <= 512);
+}
+function hasSchedulerMigrationAgentScope(result) {
+    if (!Array.isArray(result.agentIds) || result.agentIds.some(id => typeof id !== "string" || !id))
+        return false;
+    if (result.phase === "stage-requester") {
+        return result.agentIds.length === 0 && isSchedulerRequesterProfileId(result.stageRequesterProfileId);
+    }
+    return result.agentIds.length > 0 || result.phase === "resume" || result.phase === "abort";
+}
+export function isSchedulerMigrationResult(value, operationId, phase) {
+    if (value === null || typeof value !== "object")
+        return false;
+    const result = value;
+    return result.operationId === operationId && result.phase === phase && typeof result.drained === "boolean" &&
+        hasSchedulerMigrationAgentScope(result) && (phase !== "export" || result.snapshot !== undefined);
+}
 // users/{uid}/scheduleTransfers/{migrationId}
 export const SCHEDULE_TRANSFERS_SUBCOLLECTION = "scheduleTransfers";

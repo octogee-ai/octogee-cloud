@@ -7,6 +7,7 @@ import {
   MIGRATION_TRANSFER_TIMEOUT_MS,
   MIGRATION_UNMOUNT_TIMEOUT_MS,
   MIGRATION_VERIFY_TIMEOUT_MS,
+  isSchedulerMigrationResult,
   type ScheduleCheckRequestBody,
   type ScheduleCheckResult,
   type ScheduleRemoveRequestBody,
@@ -286,7 +287,7 @@ export function createMigrationClient(deps: MigrationClientDeps): MigrationClien
       }
     },
     async scheduler({ gatewayId, transportId, ...body }) {
-      const result = await postSignedJson<SchedulerMigrationResult>({
+      const result = await postSignedJson<unknown>({
         transportId: transportId ?? gatewayId,
         path: `/scheduler/${gatewayId}`,
         gatewayId,
@@ -294,13 +295,7 @@ export function createMigrationClient(deps: MigrationClientDeps): MigrationClien
         body,
         timeoutMs: quiesceMs,
       });
-      const requester = result.stageRequesterProfileId;
-      if (result.operationId !== body.migrationId || result.phase !== body.phase ||
-          !Array.isArray(result.agentIds) || result.agentIds.some(id => typeof id !== "string" || !id) ||
-          (body.phase === "stage-requester" && (result.agentIds.length !== 0 ||
-            (requester !== null && (typeof requester !== "string" || !requester.trim() || requester.length > 512)))) ||
-          (result.agentIds.length === 0 && !["resume", "abort", "stage-requester"].includes(body.phase)) ||
-          result.drained !== true || (body.phase === "export" && result.snapshot === undefined)) {
+      if (!isSchedulerMigrationResult(result, body.migrationId, body.phase) || !result.drained) {
         throw new Error(`scheduler ${body.phase} did not prove a drained matching operation`);
       }
       return result;
