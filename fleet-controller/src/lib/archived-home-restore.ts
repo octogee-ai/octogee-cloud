@@ -10,25 +10,44 @@ interface Identity {
   gatewayId: string;
 }
 
+function restoreOwnerEligible(owner: NonNullable<Awaited<ReturnType<PlatformStateRepositories["users"]["records"]["get"]>>>): boolean {
+  const { home, fences, accountLifecycle } = owner;
+  const migration = home.homeMigration;
+  return fences.computerRecovery === undefined && home.homeStorage === undefined &&
+    (migration === undefined || (migration.phase === "complete" && migration.id === undefined &&
+      migration.source === undefined && migration.target === undefined && migration.copy === undefined)) &&
+    (accountLifecycle === null || accountLifecycle.status === "active");
+}
+
+function restoreRootMatches(root: Awaited<ReturnType<PlatformStateRepositories["gateways"]["roots"]["get"]>>,
+  identity: Identity, lease: { leaseId: string; generation: number }): boolean {
+  return root?.gatewayClass === "isolated" && root.ownerUid === identity.ownerUid && root.desiredStatus === "running" &&
+    root.retirementClaim == null && root.allocation?.claimedByUid === identity.ownerUid &&
+    root.allocation.leaseId === lease.leaseId && root.allocation.generation === lease.generation;
+}
+
+function matchesArchivedSource(owner: { home: { homeDisk?: { id?: unknown; source?: unknown } } },
+  archive: Extract<UserHomeArchive, { phase: "restoring" }> | { snapshot: Restoring["snapshot"] }): boolean {
+  return owner.home.homeDisk?.id === archive.snapshot.sourceDiskId &&
+    owner.home.homeDisk?.source === archive.snapshot.sourceDisk;
+}
+
+function matchingRestoreDemand(archive: UserHomeArchive, identity: Identity, lease: { leaseId: string; generation: number }): boolean {
+  return archive.phase !== "restoring" || (archive.targetGatewayId === identity.gatewayId &&
+    archive.leaseId === lease.leaseId && archive.generation === lease.generation);
+}
+
 async function readDemand(store: PlatformStateRepositories, identity: Identity) {
   const { ownerUid, gatewayId } = identity;
   const [owner, root] = await Promise.all([store.users.records.get(ownerUid), store.gateways.roots.get(gatewayId)]);
   const lease = owner?.activationLease;
   const archive = owner?.home.homeArchive;
   if (!owner || !archive || (archive.phase !== "archived" && archive.phase !== "restoring") ||
-      owner.fences.computerRecovery !== undefined || owner.home.homeStorage !== undefined || (owner.home.homeMigration !== undefined &&
-        (owner.home.homeMigration.phase !== "complete" || owner.home.homeMigration.id !== undefined ||
-          owner.home.homeMigration.source !== undefined || owner.home.homeMigration.target !== undefined ||
-          owner.home.homeMigration.copy !== undefined)) ||
-      (owner.accountLifecycle !== null && owner.accountLifecycle.status !== "active") || lease?.status !== "provisioning" ||
-      lease.targetGatewayId !== gatewayId || root?.gatewayClass !== "isolated" || root.ownerUid !== ownerUid ||
-      root.desiredStatus !== "running" || root.retirementClaim != null || root.allocation?.claimedByUid !== ownerUid ||
-      root.allocation.leaseId !== lease.leaseId || root.allocation.generation !== lease.generation ||
-      owner.home.homeDisk?.id !== archive.snapshot.sourceDiskId || owner.home.homeDisk.source !== archive.snapshot.sourceDisk) {
+      !restoreOwnerEligible(owner) || lease?.status !== "provisioning" || lease.targetGatewayId !== gatewayId ||
+      !restoreRootMatches(root, identity, lease) || !matchesArchivedSource(owner, archive)) {
     throw new Error("User home archive requires the exact active restore demand");
   }
-  if (archive.phase === "restoring" && (archive.targetGatewayId !== gatewayId ||
-      archive.leaseId !== lease.leaseId || archive.generation !== lease.generation)) {
+  if (!matchingRestoreDemand(archive, identity, lease)) {
     throw new Error("User home archive has another restore demand in progress");
   }
   return { owner, archive, lease };

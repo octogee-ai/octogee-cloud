@@ -89,7 +89,9 @@ interface UserHomeSnapshotCustody {
 export type UserHomeArchive = UserHomeArchiveIdentity & ({
     readonly phase: "preparing";
 } | (UserHomeSnapshotCustody & {
-    readonly phase: "snapshot-ready" | "archived";
+    readonly phase: "snapshot-ready";
+}) | (UserHomeSnapshotCustody & {
+    readonly phase: "archived";
 }) | (UserHomeSnapshotCustody & {
     readonly phase: "restoring";
     readonly targetGatewayId: string;
@@ -105,6 +107,7 @@ export type UserHomeArchive = UserHomeArchiveIdentity & ({
     readonly generation: number;
     readonly restoredDisk: RetainedUserHome;
     readonly restoredInstanceId: string;
+    readonly releaseProvenForActivation?: string;
 }));
 export interface UserHomeState {
     readonly homeArchive?: UserHomeArchive;

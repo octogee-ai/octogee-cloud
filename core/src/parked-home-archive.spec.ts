@@ -63,6 +63,16 @@ describe("enroll a parked home archive", () => {
     },
   );
 
+  it("rearms the same persisted archive after a retryable terminal failure", async () => {
+    const store = fixture();
+    const input = { ownerUid: fence.ownerUid, grant: fence, createdBy: "operator" };
+    const { operationId } = await enqueueParkedHomeArchive(store, input);
+    await store.journal.operations.patch(operationId, { status: "failed", completedAt: 20, error: "Compute unavailable" });
+
+    await expect(enqueueParkedHomeArchive(store, input)).resolves.toEqual({ operationId });
+    expect(await store.journal.operations.get(operationId)).toMatchObject({ status: "pending", completedAt: null });
+  });
+
   it("requires the exact case-sensitive owner grant", async () => {
     await expect(enqueueParkedHomeArchive(fixture(), {
       ownerUid: fence.ownerUid.toLowerCase(), grant: fence, createdBy: "operator",
