@@ -1,7 +1,7 @@
 import { hasUserActivationTargetRollback } from './user-activation-roll-recovery.js';
 import { isUserActivateOperationIdFor, isUserReturnOperationIdFor } from "@octogee/shared/types/isolated-operation-ids";
 import type { Operation } from "@octogee/shared/types/glm";
-import { serialFleetOperationsConflict, type RolloutLane } from "@octogee/core/fleet-operation-lock";
+import { fleetOperationLockResources, serialFleetOperationsConflict, type RolloutLane } from "@octogee/core/fleet-operation-lock";
 import { PARKED_PREWARM_KIND } from "@octogee/core/isolated-gateway-lifecycle";
 import { MIGRATE_USER_KIND } from "./operation-kinds.js";
 
@@ -103,6 +103,8 @@ function describeWaitingOn(op: OperationRef): string {
 }
 
 export interface PendingOperationRef extends OperationRef {
+  sharedDestinationReleased?: boolean;
+  unstartedPlacementMove?: boolean;
   createdAt: number;
   queuedAt?: number;
   nextAttemptAt?: number | null;
@@ -209,6 +211,15 @@ export function isUnstartedUserReturn(operation: Operation): boolean {
     operation.input.recoverSourceOnly === undefined && hasNoInvocationHistory(operation) && hasNoRuntimeEffects(operation);
 }
 
+export function isUnstartedSharedPlacementMove(operation: Operation): boolean {
+  const source = inputString(operation.input, "fromGatewayId");
+  const target = inputString(operation.input, "toGatewayId");
+  return operation.kind === MIGRATE_USER_KIND && operation.status === "pending" &&
+    operation.origin === "automatic" && operation.input?.source === "continuous-placement-policy" &&
+    source?.startsWith("shared-") === true && target?.startsWith("shared-") === true && source !== target &&
+    hasNoInvocationHistory(operation) && hasNoRuntimeEffects(operation);
+}
+
 function returnMatchesOperatorRoll(returning: OperationRef, rollout: OperationRef): boolean {
   return returning.unstartedBuilderReturn === true && rollout.kind === "rollout" && rollout.origin === "operator" &&
     returning.input?.fromGatewayId === rollout.input?.gatewayId;
@@ -256,12 +267,60 @@ function placementMoveYieldsToUserActivation(move: OperationRef, activation: Ope
     inputString(move.input, "fromGatewayId") === source;
 }
 
+type MigrationQueueScope = Pick<OperationRef, "id" | "kind" | "input" | "userMigrationV2">;
+
+function usesOnlySharedDestination(candidate: MigrationQueueScope, backingOff: MigrationQueueScope): boolean {
+  if (candidate.kind !== MIGRATE_USER_KIND || backingOff.kind !== MIGRATE_USER_KIND ||
+      backingOff.input?.source !== "continuous-placement-policy") return false;
+  const target = inputString(backingOff.input, "toGatewayId");
+  const candidateUid = inputString(candidate.input, "uid");
+  const backingOffUid = inputString(backingOff.input, "uid");
+  if (!target?.startsWith("shared-") || inputString(candidate.input, "toGatewayId") !== target ||
+      !candidateUid || !backingOffUid || candidateUid === backingOffUid) return false;
+  const candidateResources = fleetOperationLockResources(candidate);
+  return [...fleetOperationLockResources(backingOff)].every(resource => resource === target || !candidateResources.has(resource));
+}
+
+export function usesOnlySharedDestinationWhileBackingOff(
+  candidate: MigrationQueueScope,
+  backingOff: MigrationQueueScope & Pick<PendingOperationRef, "nextAttemptAt">,
+  now: number,
+): boolean {
+  return (backingOff.nextAttemptAt ?? now) > now && usesOnlySharedDestination(candidate, backingOff);
+}
+
+function releasedSharedDestinationHeads(candidate: PendingOperationRef, pending: readonly PendingOperationRef[], now: number) {
+  const bySource = new Map<string, PendingOperationRef>();
+  for (const operation of pending) {
+    const source = inputString(operation.input, "fromGatewayId");
+    if (!source || !operation.sharedDestinationReleased ||
+        !usesOnlySharedDestinationWhileBackingOff(candidate, operation, now)) continue;
+    const earlier = bySource.get(source);
+    if (!earlier || compareOperationQueueOrder(operation, earlier) < 0) bySource.set(source, operation);
+  }
+  return bySource;
+}
+
+function sharesReleasedDestination(
+  candidate: PendingOperationRef,
+  pending: PendingOperationRef,
+  heads: ReadonlyMap<string, PendingOperationRef>,
+): boolean {
+  const source = inputString(pending.input, "fromGatewayId");
+  if (!source || !usesOnlySharedDestination(candidate, pending)) return false;
+  const head = heads.get(source);
+  if (!head) return false;
+  return head.id === pending.id ||
+    pending.unstartedPlacementMove === true && compareOperationQueueOrder(head, pending) < 0;
+}
+
 function findOlderPendingSameScope(
   candidate: PendingOperationRef,
   pendingOpsSameKind: ReadonlyArray<PendingOperationRef>,
   now: number,
   eligibleRolls: ReadonlySet<string>,
 ): SerialConflict | null {
+  const releasedDestinations = releasedSharedDestinationHeads(candidate, pendingOpsSameKind, now);
   const older = pendingOpsSameKind
     .filter(
       (pending) =>
@@ -273,6 +332,7 @@ function findOlderPendingSameScope(
         !unstartedReturnYieldsToOperatorRoll(pending, candidate, eligibleRolls) &&
         !placementMoveYieldsToUserActivation(pending, candidate) &&
         !isBackingOffReleasedOperation(pending, now) &&
+        !sharesReleasedDestination(candidate, pending, releasedDestinations) &&
         operationsConflict(candidate, pending) &&
         compareOperationQueueOrder(pending, candidate) < 0,
     )

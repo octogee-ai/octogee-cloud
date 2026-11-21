@@ -59,11 +59,13 @@ function queuedSharedMigrationBeforeTransport(row: UntypedRecord, id: string): b
   return queuedSharedScope(row) && unclaimedRetry(row) && handoffMatches(row, id) && untouchedTransportHistory(row);
 }
 
-function userOwnerMatches(row: UntypedRecord, id: string, owner: Stored<PlatformUserRecord> | null): boolean {
+function userOwnerMatches(row: UntypedRecord, id: string, owner: Stored<PlatformUserRecord> | null, requirePreparation: boolean): boolean {
   if (!owner) return false;
   const marker = readWorkspaceMigrationMarker({ migration: owner.fences.migration });
+  const preparing = marker?.operationId === id && marker.state === 'preparing' && marker.phase === 'preparing';
   return !isolatedRuntimeMutationFenced(owner) && owner.gateway?.gatewayId === row.input.fromGatewayId &&
-    ['complete', 'provisioning'].includes(owner.openclaw.status ?? '') && marker?.operationId === id && marker.state === 'preparing' && marker.phase === 'preparing';
+    ['complete', 'provisioning'].includes(owner.openclaw.status ?? '') &&
+    (preparing || !requirePreparation && owner.fences.migration === undefined && row.attemptHistory.length === row.attempts);
 }
 
 function sourceAssignmentMatches(row: UntypedRecord, id: string, assignment: UntypedRecord | AssignmentDoc | null | undefined): boolean {
@@ -74,13 +76,27 @@ function sourceAssignmentMatches(row: UntypedRecord, id: string, assignment: Unt
     (assignment.updatedByOperationId == null || typeof assignment.updatedByOperationId === 'string' && assignment.updatedByOperationId.length > 0);
 }
 
-export async function queuedSharedMigrationOwnsSourceInStore(
-  state: Pick<PlatformStateRepositories, 'users' | 'gateways'>, row: UntypedRecord, id: string,
+type SharedMigrationState = Pick<PlatformStateRepositories, 'users' | 'gateways'>;
+
+async function verifyQueuedSharedSourceCustody(
+  state: SharedMigrationState, row: UntypedRecord, id: string, requirePreparation: boolean,
 ): Promise<boolean> {
   if (!queuedSharedMigrationBeforeTransport(row, id)) return false;
   const { uid, fromGatewayId, toGatewayId } = row.input;
   const [owner, source, target] = await Promise.all([
     state.users.records.get(uid), state.gateways.assignments.get(fromGatewayId, uid), state.gateways.assignments.get(toGatewayId, uid),
   ]);
-  return target === null && userOwnerMatches(row, id, owner) && sourceAssignmentMatches(row, id, source);
+  return target === null && userOwnerMatches(row, id, owner, requirePreparation) && sourceAssignmentMatches(row, id, source);
+}
+
+export function queuedSharedMigrationOwnsSourceInStore(
+  state: SharedMigrationState, row: UntypedRecord, id: string,
+): Promise<boolean> {
+  return verifyQueuedSharedSourceCustody(state, row, id, true);
+}
+
+export function queuedSharedMigrationNeverTouchedDestinationInStore(
+  state: SharedMigrationState, row: UntypedRecord, id: string,
+): Promise<boolean> {
+  return verifyQueuedSharedSourceCustody(state, row, id, false);
 }
