@@ -3833,12 +3833,9 @@ async function buildHandlers(
     log: logFn,
   });
 
-  const releaseHomeBackup = createHomeBackupReleaseHandler({ store, vm: createGatewayComputeClient(store, logFn) });
-  const archiveHome = createHomeArchiveHandler({
-    store,
-    vm: createGatewayComputeClient(store, logFn),
-    grant: resolveParkedHomeArchiveGrant(ENVIRONMENT_SETTINGS.name, process.env.GATEWAY_TEST_HOME_ARCHIVE_GRANT),
-  });
+  const archiveGrant = resolveParkedHomeArchiveGrant(ENVIRONMENT_SETTINGS.name, process.env.GATEWAY_TEST_HOME_ARCHIVE_GRANT);
+  const releaseHomeBackup = createHomeBackupReleaseHandler({ store, vm: createGatewayComputeClient(store, logFn), archiveGrant });
+  const archiveHome = createHomeArchiveHandler({ store, vm: createGatewayComputeClient(store, logFn), grant: archiveGrant });
 
   return {
     "add-gateway": addGateway,

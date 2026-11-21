@@ -34,6 +34,7 @@ export declare function writeParkedHomeArchive(tx: PlatformStateTransaction, own
     now: number;
 }): Promise<void>;
 export declare function planReturnedHomeArchive(tx: PlatformStateTransaction, owner: Stored<PlatformUserRecord>, next: UserActivationLease, grant: ParkedHomeArchiveGrant | undefined, now: number): Promise<(() => Promise<void>) | undefined>;
+export declare function planArchiveAfterBackupRelease(tx: PlatformStateTransaction, owner: Stored<PlatformUserRecord>, releaseOperationId: string, grant: ParkedHomeArchiveGrant | undefined, now: number): Promise<(() => Promise<void>) | undefined>;
 export declare function enqueueParkedHomeArchive(store: PlatformStateStore, input: {
     ownerUid: string;
     grant: ParkedHomeArchiveGrant | undefined;

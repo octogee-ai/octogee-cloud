@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
+import { planArchiveAfterBackupRelease } from "@octogee/core/admin-fleet-router";
 import { RELEASE_RESTORED_HOME_BACKUP, restoredHomeBackupReleaseId } from "@octogee/core/isolated-gateway-lifecycle";
 import type { OperationRecord, PlatformStateRepositories, PlatformStateStore, UserHomeArchive } from "@octogee/core/platform-state";
 import { builderActivateOperationId } from "@octogee/shared/types/isolated-operation-ids";
@@ -99,6 +100,7 @@ async function nativeReadyAfterCutover(state: PlatformStateRepositories, archive
 export function createHomeBackupReleaseHandler(deps: {
   store: PlatformStateStore;
   vm: Pick<GatewayVmClient, "eraseHomeSnapshot">;
+  archiveGrant?: { ownerUid: string; sizingProfile: string };
 }): OperationHandler {
   return async (operation, ctx) => {
     const id = operationIdentity(operation);
@@ -138,7 +140,9 @@ export function createHomeBackupReleaseHandler(deps: {
       const current = await readRestoredBackup(tx, id);
       if (!current) return;
       if (!isDeepStrictEqual(current.archive, proof.archive)) throw new Error("Restored home backup custody changed during release");
-      await tx.users.records.patch(id.uid, { home: { homeArchive: { clear: true } } }, { revision: current.owner.revision });
+      const archive = await planArchiveAfterBackupRelease(tx, current.owner, operation.id, deps.archiveGrant, Date.now());
+      if (archive) await archive();
+      else await tx.users.records.patch(id.uid, { home: { homeArchive: { clear: true } } }, { revision: current.owner.revision });
     });
     return { steps: [], success: true, output: { homeBackupReleased: true } };
   };
