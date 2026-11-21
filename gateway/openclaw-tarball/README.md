@@ -212,6 +212,16 @@ selection and rollout are a separate operator step.
 
 ## Current Gateway overlay
 
+The November 21 overlay at `7f0f50982ccc4c2d984370b94749ade6c57f8cb7` adds
+`agents.restoreMany` to the previous fork pin. Restoring a Builder through
+`agents.create` published and applied a separate config revision for each
+retained agent. The native batch validates every PostgreSQL store, publishes
+the roster once, and acknowledges when the Gateway has applied it. An exact
+retry can finish a committed restore without publishing a second revision.
+The supervisor then enables routing after restoring identities and credentials.
+Remove this overlay when upstream supports applied, store-preserving roster
+restoration for a whole group of agents.
+
 The November 20 overlay at `102845f2f6537a7d31b948b4d07db80a91ed724d` on
 `ceckert/openclaw:codex/retain-requester-bound-schedules` adds the scheduler
 handoff fix to `0e76ab99c8f23245c126b8ab1713396d088a8ad1`. A Builder return
