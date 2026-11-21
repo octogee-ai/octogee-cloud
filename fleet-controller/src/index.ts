@@ -156,9 +156,12 @@ import {
   findSerialConflict,
   isSeriallyExclusiveKind,
   isUnstartedUserReturn,
+  isUnstartedSharedPlacementMove,
   type OperationRef,
   type PendingOperationRef,
+  usesOnlySharedDestinationWhileBackingOff,
 } from "./operation-queue.js";
+import { queuedSharedMigrationOwnsSourceInStore } from "./lib/queued-shared-migration.js";
 import { readOperationRolloutLanes, withOperationRolloutLane } from "./operation-rollout-lanes.js";
 import {
   WAITING_FOR_ISOLATED_GATEWAY,
@@ -1964,10 +1967,13 @@ async function attemptClaimOrQueueOperation(
             userMigrationV2: runningOperation.userMigrationV2,
             cutoverCommittedAt: runningOperation.cutoverCommittedAt,
           }] : []);
-        pendingOpsSameKind = pending.flatMap((pendingOperation) =>
-          isSeriallyExclusiveKind(pendingOperation.kind) ? [{
+        pendingOpsSameKind = await Promise.all(pending.filter(operation => isSeriallyExclusiveKind(operation.kind))
+          .map(async (pendingOperation) => ({
+            sharedDestinationReleased: usesOnlySharedDestinationWhileBackingOff(freshOperation, pendingOperation, Date.now()) &&
+              await queuedSharedMigrationOwnsSourceInStore(tx, pendingOperation, pendingOperation.id),
             id: pendingOperation.id,
             kind: pendingOperation.kind,
+            unstartedPlacementMove: isUnstartedSharedPlacementMove(pendingOperation),
             origin: pendingOperation.origin,
             unstartedBuilderReturn: isUnstartedUserReturn(pendingOperation),
             gatewayCompatibilityPending: pendingOperation.output?.gatewayCompatibilityPending === true,
@@ -1979,7 +1985,7 @@ async function attemptClaimOrQueueOperation(
             nextAttemptAt: pendingOperation.nextAttemptAt,
             userMigrationV2: pendingOperation.userMigrationV2,
             cutoverCommittedAt: pendingOperation.cutoverCommittedAt,
-          }] : []);
+          })));
       }
 
       const rolloutLanes = await readOperationRolloutLanes(

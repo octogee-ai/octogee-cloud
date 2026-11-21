@@ -668,6 +668,40 @@ describe("decideOperationClaim — FIFO per scope (an older pending op blocks a 
     });
   });
 
+  it.each([
+    { label: "different owner and source", uid: "bob", source: "isolated-b", nowOffset: 0, proof: true, running: false, expected: "claim" },
+    { label: "same owner", uid: "alice", source: "isolated-b", nowOffset: 0, proof: true, running: false, expected: "queue" },
+    { label: "same source", uid: "bob", source: "shared-a", nowOffset: 0, proof: true, running: false, expected: "queue" },
+    { label: "backoff expired", uid: "bob", source: "isolated-b", nowOffset: 1_000, proof: true, running: false, expected: "queue" },
+    { label: "no durable proof", uid: "bob", source: "isolated-b", nowOffset: 0, proof: false, running: false, expected: "queue" },
+    { label: "actively running", uid: "bob", source: "isolated-b", nowOffset: 0, proof: true, running: true, expected: "queue" },
+  ])("uses the proven pre-transport pause only for target-only FIFO conflicts ($label)", ({ uid, source, nowOffset, proof, running, expected }) => {
+    const backingOff = { id: "older", kind: "migrate-user", createdAt: 2, nextAttemptAt: now + 1_000,
+      sharedDestinationReleased: proof, input: { uid: "alice", source: "continuous-placement-policy", fromGatewayId: "shared-a", toGatewayId: "shared-b" } };
+    const decision = decideOperationClaim({
+      op: { id: "newer", kind: "migrate-user", status: "pending", createdAt: 3, input: { uid, fromGatewayId: source, toGatewayId: "shared-b" } },
+      now: now + nowOffset,
+      runningOpsSameKind: running ? [backingOff] : [],
+      pendingOpsSameKind: running ? [] : [backingOff],
+    });
+    expect(decision.outcome).toBe(expected);
+  });
+
+  it.each([true, false])("respects proven backoff past two same-lane drains only when they are untouched (untouched=%s)", unstartedPlacementMove => {
+    const lane = { source: "continuous-placement-policy", fromGatewayId: "shared-draining", toGatewayId: "shared-live" };
+    const head = { id: "head", kind: "migrate-user", createdAt: 1, nextAttemptAt: now + 5_000,
+      sharedDestinationReleased: true, input: { ...lane, uid: "first" } };
+    const tail = { id: "tail", kind: "migrate-user", createdAt: 2, unstartedPlacementMove, input: { ...lane, uid: "other" } };
+    const last = { id: "last", kind: "migrate-user", createdAt: 3, unstartedPlacementMove, input: { ...lane, uid: "last" } };
+    const pendingOpsSameKind = [head, tail, last];
+    const unrelated = { id: "builder-return", kind: "migrate-user", status: "pending", createdAt: 4,
+      input: { uid: "buyer", fromGatewayId: "isolated-b", toGatewayId: "shared-live" } };
+    expect(decideOperationClaim({ op: unrelated, now, runningOpsSameKind: [], pendingOpsSameKind }).outcome)
+      .toBe(unstartedPlacementMove ? "claim" : "queue");
+    expect(decideOperationClaim({ op: { ...tail, status: "pending" }, now, runningOpsSameKind: [], pendingOpsSameKind }).outcome)
+      .toBe("queue");
+  });
+
   it("never blocks itself when its own doc appears in the pending list", () => {
     const decision = decideOperationClaim({
       op: { id: "op-1", kind: "rollout", status: "pending", createdAt: 2 },
