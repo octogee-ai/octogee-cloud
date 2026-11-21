@@ -53,6 +53,16 @@ describe("real archive custody transition", () => {
     expect(owner?.fences.computerRecovery).toBeUndefined();
   });
 
+  it("preserves both disks when the exact snapshot cannot be verified", async () => {
+    const { store, vm, ctx } = fixture();
+    vm.verifyHomeSnapshot.mockRejectedValue(new Error("Snapshot provenance differs"));
+    const run = createHomeArchiveHandler({ store, vm: vm as never, grant: { ownerUid: uid, sizingProfile: "desktop-small" } });
+    await expect(run(operation, ctx)).resolves.toMatchObject({ success: false, error: "Snapshot provenance differs" });
+    expect(vm.deleteRetainingHome).not.toHaveBeenCalled();
+    expect(vm.deleteRetainedHome).not.toHaveBeenCalled();
+    expect((await store.users.records.get(uid))?.fences.computerRecovery?.operationId).toBe(operationId);
+  });
+
   it("keeps custody fenced while either charged disk remains", async () => {
     const { store, vm, ctx } = fixture();
     vm.archiveDisksAbsent.mockResolvedValue(false);

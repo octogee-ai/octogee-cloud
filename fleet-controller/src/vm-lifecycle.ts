@@ -1193,6 +1193,29 @@ async function recordEnsuredVm(deps: VmLifecycleDeps, gatewayId: string, spec: G
   return state;
 }
 
+async function ensureSnapshotBackedVm(deps: VmLifecycleDeps, request: {
+  gatewayId: string; ownerUid: string; spec: GatewayVmSpec; input: CreateGatewayVmInput;
+  archive: NonNullable<PlatformUserRecord["home"]["homeArchive"]>;
+}, operations: EnsureVmOperations): Promise<GatewayVmState> {
+  const { archive, gatewayId, ownerUid, spec, input } = request;
+  if ((archive.phase !== "archived" && archive.phase !== "restoring") || !archive.snapshot || !archive.bootDisk) {
+    throw new Error("User home archive requires explicit snapshot recovery");
+  }
+  const description = await restoreArchivedHome(deps, { gatewayId, ownerUid }, spec, input);
+  const retainedHome = await readRetainedUserHome(deps.store, ownerUid);
+  if (!retainedHome) throw new Error("Restored home ownership was not recorded");
+  return finishEnsuredVm(deps, { gatewayId, ownerUid, spec, description, input, recovery: null, retainedHome }, operations);
+}
+
+function unhandledHomeArchive(owner: PlatformUserRecord | null) {
+  const archive = owner?.home.homeArchive;
+  return archive?.phase === "restored" ? undefined : archive;
+}
+
+function parkedPrewarmBootImage(prewarm: Awaited<ReturnType<typeof readActiveParkedPrewarm>>, output?: Record<string, unknown>): string | undefined {
+  return prewarm && output?.prewarmState === "booting" ? parkedPrewarmInput(prewarm).bootImageId : undefined;
+}
+
 async function ensureBoundVm(deps: VmLifecycleDeps, request: {
   gatewayId: string; image: string; ownerUid: string | undefined; bridge: string;
 }, operations: EnsureVmOperations): Promise<GatewayVmState> {
@@ -1204,16 +1227,8 @@ async function ensureBoundVm(deps: VmLifecycleDeps, request: {
   ]);
   const spec = recordedSpecInConfiguredZones(data?.vmSpec, deps.vmSpec);
   const input = gatewayVmInstanceInput({ gatewayId, ownerUid, spec, environment: deps.environment, image, bridgeIp: bridge });
-  const archive = owner?.home.homeArchive;
-  if (archive && archive.phase !== "restored") {
-    if (archive.phase !== "archived" && archive.phase !== "restoring" || !archive.snapshot || !archive.bootDisk) {
-      throw new Error("User home archive requires explicit snapshot recovery");
-    }
-    const description = await restoreArchivedHome(deps, { gatewayId, ownerUid }, spec, input);
-    const retainedHome = await readRetainedUserHome(deps.store, ownerUid);
-    if (!retainedHome) throw new Error("Restored home ownership was not recorded");
-    return finishEnsuredVm(deps, { gatewayId, ownerUid, spec, description, input, recovery: null, retainedHome }, operations);
-  }
+  const archive = unhandledHomeArchive(owner);
+  if (archive) return ensureSnapshotBackedVm(deps, { gatewayId, ownerUid, spec, input, archive }, operations);
   let description = existing ? await deps.vm.describe(existing.instanceName, existing.zone) : null;
   if (!description) description = await deps.vm.findByLabels(ownerVmLabels(deps.environment, ownerUid));
   const prewarm = await readActiveParkedPrewarm(deps.store, ownerUid);
@@ -1223,7 +1238,7 @@ async function ensureBoundVm(deps: VmLifecycleDeps, request: {
     return recoverOriginalParkedVm(deps, { gatewayId, ownerUid, binding: input, spec, description, existing, previousInstanceId, previousBootImageId }, operations.wakeVm);
   }
   const recovery = await requireHomeRecovery(deps, { gatewayId, ownerUid, data, description });
-  const expectedPrewarmImageId = prewarm && prewarmOutput?.prewarmState === "booting" ? parkedPrewarmInput(prewarm).bootImageId : undefined;
+  const expectedPrewarmImageId = parkedPrewarmBootImage(prewarm, prewarmOutput);
   if (expectedPrewarmImageId) await verifyParkedPrewarmImage(deps, { gatewayId, ownerUid, spec, expectedImageId: expectedPrewarmImageId, description, existing, data });
   if (description) description = await prepareParkedUpgrade(deps, { gatewayId, ownerUid, image, description, spec,
     bind: (parked) => operations.reconcileVmBinding(gatewayId, ownerUid, input, parked), expectedPrewarmImageId });

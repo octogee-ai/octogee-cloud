@@ -156,6 +156,20 @@ function restoredHome(
   return { ...expected, id: resource.id! };
 }
 
+function validRecoverablePage(page: RecoverableSnapshotPage, seenTokens: Set<string>): boolean {
+  return (page.items === undefined || Array.isArray(page.items)) &&
+    (page.nextPageToken === undefined || (typeof page.nextPageToken === "string" && !seenTokens.has(page.nextPageToken)));
+}
+
+function validRecoverableSnapshot(copy: RecoverableSnapshot, snapshot: RetainedUserHomeSnapshot, labels: Record<string, string>): boolean {
+  const original = copy.originalResource!;
+  return RESOURCE_NAME.test(copy.name ?? "") && NUMERIC_ID.test(copy.id ?? "") &&
+    original.name === snapshot.name && original.sourceDiskId === snapshot.sourceDiskId &&
+    computePath(original.sourceDisk) === snapshot.sourceDisk && labelsMatch(original.labels, labels) &&
+    original.snapshotType === "STANDARD" && Number(original.diskSizeGb) === snapshot.sizeGb &&
+    snapshotInSourceRegion(original, snapshot.sourceDisk);
+}
+
 export function createVmHomeSnapshotClient(deps: {
   request: ComputeRequest;
   projectId: string;
@@ -294,8 +308,7 @@ export function createVmHomeSnapshotClient(deps: {
       const response = await deps.request({ method: "GET", url: `${directory}?${query}` });
       if (response.status >= 400 || !response.data) throw new Error(`List recoverable home snapshots: HTTP ${response.status}`);
       const page = response.data as RecoverableSnapshotPage;
-      if ((page.items !== undefined && !Array.isArray(page.items)) ||
-          (page.nextPageToken !== undefined && (typeof page.nextPageToken !== "string" || seenTokens.has(page.nextPageToken)))) {
+      if (!validRecoverablePage(page, seenTokens)) {
         throw new Error("Malformed recoverable home snapshot listing");
       }
       for (const copy of page.items ?? []) {
@@ -324,12 +337,7 @@ export function createVmHomeSnapshotClient(deps: {
     const directory = `${COMPUTE_BETA_PREFIX}${project}/global/recoverableSnapshots`;
     const copy = await findRecoverableSnapshot(directory, snapshot);
     if (!copy) return true;
-    const original = copy.originalResource!;
-    if (!RESOURCE_NAME.test(copy.name ?? "") || !NUMERIC_ID.test(copy.id ?? "") ||
-        original.name !== snapshot.name || original.sourceDiskId !== snapshot.sourceDiskId ||
-        computePath(original.sourceDisk) !== snapshot.sourceDisk || !labelsMatch(original.labels, labels) ||
-        original.snapshotType !== "STANDARD" || Number(original.diskSizeGb) !== snapshot.sizeGb ||
-        !snapshotInSourceRegion(original, snapshot.sourceDisk)) {
+    if (!validRecoverableSnapshot(copy, snapshot, labels)) {
       throw new Error("Home recoverable snapshot identity, source disk or owner differs");
     }
     await deleteSnapshotResource(`${directory}/${copy.name}`, copy.id!);
@@ -339,6 +347,10 @@ export function createVmHomeSnapshotClient(deps: {
   function diskPathInZone(path: string, zone: string): boolean {
     const prefix = `${project}/zones/${zone}/disks/`;
     return ZONE.test(zone) && path.startsWith(prefix) && RESOURCE_NAME.test(path.slice(prefix.length));
+  }
+
+  function soleDiskUser(disk: Disk, instancePath: string): boolean {
+    return disk.users?.length === 1 && computePath(disk.users[0]) === instancePath;
   }
 
   async function readArchiveBootDisk(input: SnapshotStoppedHomeInput): Promise<ArchivedBootDisk> {
@@ -351,7 +363,7 @@ export function createVmHomeSnapshotClient(deps: {
     }
     const disk = await read<Disk>(source);
     const instancePath = `${project}/zones/${home.zone}/instances/${instanceName}`;
-    if (!disk || !NUMERIC_ID.test(disk.id ?? "") || disk.users?.length !== 1 || computePath(disk.users[0]) !== instancePath) {
+    if (!disk || !NUMERIC_ID.test(disk.id ?? "") || !soleDiskUser(disk, instancePath)) {
       throw new Error("Home archive boot disk owner or attachment differs");
     }
     return { source, id: disk.id! };
