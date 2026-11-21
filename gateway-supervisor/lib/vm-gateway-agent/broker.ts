@@ -10,15 +10,21 @@ export interface BrokerClientDeps {
   fetchImpl: typeof fetch;
 }
 
-export async function brokerPost(deps: BrokerClientDeps, path: string, body: Record<string, unknown>): Promise<Response> {
+export async function brokerPost(
+  deps: BrokerClientDeps, path: string, body: Record<string, unknown>,
+  options?: { signal: AbortSignal; headers: Record<string, string> },
+): Promise<Response> {
   const [tenantToken, credentialToken] = await Promise.all([
     deps.metadata.identityToken(TENANT_TOKEN_AUDIENCE),
     deps.metadata.identityToken(CREDENTIAL_TOKEN_AUDIENCE),
   ]);
+  options?.signal.throwIfAborted();
+  const timeout = AbortSignal.timeout(30_000);
   return deps.fetchImpl(`${deps.apiUrl}/internal/fleet/${path}`, {
     method: "POST",
-    signal: AbortSignal.timeout(30_000),
+    signal: options ? AbortSignal.any([options.signal, timeout]) : timeout,
     headers: {
+      ...options?.headers,
       "content-type": "application/json",
       "x-k8s-sa-token": tenantToken,
       "x-octogee-gateway-credential-token": credentialToken,

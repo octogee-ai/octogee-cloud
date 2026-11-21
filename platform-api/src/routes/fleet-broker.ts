@@ -1,3 +1,4 @@
+import { CHECKPOINT_CURSOR_HEADER, vmCheckpointCursor, vmRuntimeCheckpointSignal, waitForVmCheckpointChange } from "../lib/vm-checkpoint-watch.js";
 import { brokerRequestLimit } from "../middleware/broker-request-limit.js";
 import { isBlobObjectVersion } from "@octogee/shared/types/fleet-broker";
 import { gcsBlobStore, runtimeBlobStore } from "../lib/runtime-blob-store.js";
@@ -45,7 +46,6 @@ import {
   isDisposableHomeCheckpoint,
   sameHomeCheckpoint,
   resolveGatewayRuntime,
-  homeCheckpointOutstanding,
   type GatewayVmHomeCheckpoint,
   type GatewayVmEgressState,
   type GatewayVmHomeState,
@@ -4220,11 +4220,24 @@ async function recordVmBootRecoveryReport(deps: ResolvedFleetBrokerRouteDeps, re
   return true;
 }
 
-function vmRuntimeCheckpointSignal(home: Partial<GatewayVmHomeState> | undefined): GatewayVmRuntimeResponse["homeCheckpoint"] {
-  return {
-    requestedAt: typeof home?.checkpointRequestedAt === "number" ? home.checkpointRequestedAt : null,
-    completedAt: !homeCheckpointOutstanding(home) && typeof home?.lastCheckpoint?.completedAt === "number" ? home.lastCheckpoint.completedAt : null,
-  };
+async function respondVmCheckpointWait(
+  deps: ResolvedFleetBrokerRouteDeps, res: Response, bound: GatewayBinding, cursor: string,
+): Promise<void> {
+  if (!bound.podUid) { res.status(403).json(FORBIDDEN); return; }
+  if (!/^[a-f0-9]{64}$/.test(cursor)) { res.status(400).json({ error: "invalid_checkpoint_cursor" }); return; }
+  const disconnected = new AbortController();
+  const close = () => disconnected.abort();
+  res.once("close", close);
+  try {
+    const result = await waitForVmCheckpointChange(deps.store, {
+      gatewayId: bound.gatewayId, instanceId: bound.podUid, cursor, signal: disconnected.signal,
+    });
+    if (disconnected.signal.aborted) return;
+    if (result === "unbound") { res.status(403).json(FORBIDDEN); return; }
+    res.set("cache-control", "no-store").set(CHECKPOINT_CURSOR_HEADER, cursor).status(result === "changed" ? 200 : 204).end();
+  } finally {
+    res.off("close", close);
+  }
 }
 
 function installVmRuntimeRoutes(router: Router, deps: ResolvedFleetBrokerRouteDeps): void {
@@ -4232,6 +4245,11 @@ function installVmRuntimeRoutes(router: Router, deps: ResolvedFleetBrokerRouteDe
   router.post("/vm-runtime", async (req, res) => {
     const bound = boundGateway(req, res);
     if (!bound) return;
+    const cursor = req.get(CHECKPOINT_CURSOR_HEADER);
+    if (cursor !== undefined) {
+      await respondVmCheckpointWait(deps, res, bound, cursor);
+      return;
+    }
     const [stored, observation] = await Promise.all([
       store.gateways.vmRuntime.get(bound.gatewayId),
       readVmRuntimeObservation(store, bound.gatewayId),
@@ -4252,6 +4270,8 @@ function installVmRuntimeRoutes(router: Router, deps: ResolvedFleetBrokerRouteDe
       bundle: { ...bundle, ...(restoreCheckpoint ? { homeRestoreCheckpoint: restoreCheckpoint } : {}) },
       homeCheckpoint: vmRuntimeCheckpointSignal(home),
     };
+    const checkpointCursor = vmCheckpointCursor(observation, bound.podUid);
+    if (checkpointCursor !== null) res.set(CHECKPOINT_CURSOR_HEADER, checkpointCursor);
     res.set("cache-control", "no-store");
     res.json(response);
   });
