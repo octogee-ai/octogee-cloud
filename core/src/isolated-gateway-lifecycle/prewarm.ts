@@ -12,6 +12,7 @@ import type { PlatformStateStore, PlatformStateTransaction, Stored } from "../pl
 import { userAllowsInteractiveAccess } from "./lease.js";
 
 export const PARKED_PREWARM_KIND = "prewarm-gateway";
+export const ACTIVE_PARKED_PREWARM_STATUSES = ["pending", "running"] as const;
 
 export interface ParkedPrewarmInput {
   uid: string;
@@ -38,7 +39,7 @@ export async function readActiveParkedPrewarm(
   state: Pick<PlatformStateTransaction, "journal">,
   uid: string,
 ): Promise<OperationRecord | null> {
-  const operations = await state.journal.operations.listForUid(uid, { kind: PARKED_PREWARM_KIND, statuses: ["pending", "running"] });
+  const operations = await state.journal.operations.listForUid(uid, { kind: PARKED_PREWARM_KIND, statuses: ACTIVE_PARKED_PREWARM_STATUSES });
   return operations.find((operation) => isPrewarmClaimActive(operation.output?.prewarmState)) ?? null;
 }
 
@@ -59,6 +60,13 @@ type PrewarmClaimState = typeof PREWARM_CLAIM_STATES[number];
 
 function isPrewarmClaimActive(state: unknown): state is PrewarmClaimState {
   return PREWARM_CLAIM_STATES.some((phase) => phase === state);
+}
+
+export function activeParkedPrewarmGatewayIds(operations: readonly OperationRecord[]): ReadonlySet<string> {
+  return new Set(operations.flatMap((operation) =>
+    operation.kind === PARKED_PREWARM_KIND && operation.gatewayId &&
+    (operation.status === "pending" || operation.status === "running") &&
+    isPrewarmClaimActive(operation.output?.prewarmState) ? [operation.gatewayId] : []));
 }
 
 type PrewarmStart = { state: PrewarmClaimState | "parked"; claim: PrewarmClaim } |
