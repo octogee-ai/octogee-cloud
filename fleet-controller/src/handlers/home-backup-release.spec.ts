@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
-import { advanceActivationLease, enqueueRestoredHomeBackupRelease } from "@octogee/core/isolated-gateway-lifecycle";
+import { advanceActivationLease, planRestoredHomeBackupRelease } from "@octogee/core/isolated-gateway-lifecycle";
 import { enqueueParkedHomeArchive } from "@octogee/core/admin-fleet-router";
 import type { UserHomeArchive } from "@octogee/core/platform-state";
 import { createHomeBackupReleaseHandler } from "./home-backup-release.js";
@@ -43,7 +43,8 @@ function fixture() {
   const assertActiveClaim = vi.fn(async () => undefined);
   const create = () => store.transaction({ label: "activate" }, async tx => {
     const user = (await tx.users.records.get(uid))!;
-    await enqueueRestoredHomeBackupRelease(tx, user, user.activationLease!, 600);
+    const operation = await planRestoredHomeBackupRelease(tx, user, user.activationLease!, 600);
+    if (operation) await tx.journal.operations.create(operation);
   });
   const run = async () => {
     const op = (await store.journal.operations.get(`release-home-backup-${archiveOp}`))! as unknown as Operation;

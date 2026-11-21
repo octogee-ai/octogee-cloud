@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { enqueueRestoredHomeBackupRelease } from "./home-backup-release.js";
+import { planRestoredHomeBackupRelease } from "./home-backup-release.js";
 import { accountAllowsInteractiveAccess } from "@octogee/shared/types/account-lifecycle";
 import {
   builderActivateOperationId,
@@ -349,6 +349,7 @@ export async function advanceActivationLease(
     }
     if (mode === "plan") return;
     const admitHome = request.toStatus === "active" && newHomeAdmitted(user, lease);
+    const backupRelease = request.toStatus === "active" ? await planRestoredHomeBackupRelease(transaction, user, lease, now) : null;
     if (request.toStatus === "active") {
       await transaction.users.placementReceipts.create(request.uid, buildPlacementReceipt({
         kind: "activated",
@@ -364,9 +365,7 @@ export async function advanceActivationLease(
       }));
     }
     await transaction.users.records.setActivationLease(request.uid, next, exactLeaseFence(lease, [request.fromStatus]));
-    if (request.toStatus === "active") {
-      await enqueueRestoredHomeBackupRelease(transaction, user, lease, now);
-    }
+    if (backupRelease) await transaction.journal.operations.create(backupRelease);
     if (admitHome) {
       await transaction.users.records.patch(request.uid, { home: { homeStorage: { ...user.home.homeStorage, admittedAt: now } } });
     }

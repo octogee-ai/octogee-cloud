@@ -52,6 +52,26 @@ describe.skipIf(!dsn)("PostgreSQL isolated lifecycle: one owner acts at a time",
     expect(await leaseStatus()).toBe("active");
   });
 
+  it("commits the restored home backup release with activation in one PostgreSQL transaction", async () => {
+    const store = await seed();
+    const homeDisk = { projectId: "test-project", zone: "us-central1-b", name: "restored-home", id: "130",
+      source: "projects/test-project/zones/us-central1-b/disks/restored-home", sizeGb: 10, diskType: "pd-balanced" } as const;
+    await fixture().records.patch("alice", { home: { homeDisk, homeArchive: {
+      phase: "restored", operationId: "archive-one", gatewayId: TARGET, instanceId: "120", restoredInstanceId: "125",
+      targetGatewayId: TARGET, leaseId: "lease-one", generation: 1, restoredDisk: homeDisk,
+      snapshot: { projectId: homeDisk.projectId, name: "archive", id: "124", sourceDiskId: "121",
+        sourceDisk: "projects/test-project/zones/us-central1-b/disks/archived-home", sizeGb: 10 },
+      bootDisk: { source: "projects/test-project/zones/us-central1-b/disks/archived-boot", id: "122" },
+    } } });
+    await advance(inProcessCaller);
+    await advance(inProcessCaller);
+    expect(await leaseStatus()).toBe("active");
+    expect(await store.users.placementReceipts.get("alice", "lease-one", 1, "activated")).toMatchObject({ gatewayId: TARGET });
+    const [release] = await store.journal.operations.listForUid("alice", { statuses: ["pending"] });
+    expect(release?.id).toEqual("release-home-backup-archive-one");
+    expect(release?.input).toMatchObject({ action: "release-home-backup", snapshotId: "124", activationOperationId: `builder-activate-${TARGET}-g1` });
+  });
+
   it("still refuses the client after the switch until the fleet controller yields", async () => {
     const store = await seed();
     await store.config.orchestrator.patch({ placementAutomationOwner: "client" });
