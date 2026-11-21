@@ -1,5 +1,6 @@
 import { createVmHomeClient } from "./compute-home.js";
-import type { GatewayVmBootDiskType, GatewayVmDesktop, GatewayVmProvisioningModel, RetainedUserHome } from "@octogee/shared/types/glm";
+import { createVmHomeSnapshotClient, type RestoreHomeFromSnapshotInput, type SnapshotStoppedHomeInput } from "./compute-home-snapshot.js";
+import type { GatewayVmBootDiskType, GatewayVmDesktop, GatewayVmProvisioningModel, RetainedUserHome, RetainedUserHomeSnapshot } from "@octogee/shared/types/glm";
 
 export interface ComputeRequest {
   (opts: { url: string; method: string; body?: unknown }): Promise<{ status: number; data?: unknown }>;
@@ -82,6 +83,8 @@ export interface CreateGatewayVmResult {
 }
 
 export interface GatewayVmClient {
+  snapshotStoppedHome(input: SnapshotStoppedHomeInput): Promise<RetainedUserHomeSnapshot | null>;
+  restoreHomeFromSnapshot(input: RestoreHomeFromSnapshotInput): Promise<RetainedUserHome | null>;
   expandHome(home: RetainedUserHome, ownerUid: string, sizeGb: number): Promise<RetainedUserHome>;
   retainHome(instanceName: string, zone: string, ownerUid: string): Promise<RetainedUserHome>;
   verifyDetachedHome(home: RetainedUserHome, ownerUid: string): Promise<void>;
@@ -128,6 +131,7 @@ const DEFAULT_POLL_INTERVAL_MS = 2_000;
 
 interface ComputeOperation {
   name?: string;
+  selfLink?: string;
   status?: string;
   targetLink?: string;
   insertTime?: string;
@@ -414,17 +418,18 @@ async function readFamilyImage(request: ComputeRequest, family: string, project:
 function operationWaiter(deps: GatewayVmClientDeps, base: string) {
   const operationTimeoutMs = deps.operationTimeoutMs ?? DEFAULT_OPERATION_TIMEOUT_MS;
   const pollIntervalMs = deps.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
-  return async function waitForOperation(zone: string, operation: ComputeOperation, what: string): Promise<void> {
+  return async function waitForOperation(zone: string | null, operation: ComputeOperation, what: string): Promise<void> {
     const name = operation.name;
     if (!name) throw new Error(`${what}: compute returned an operation without a name`);
     const deadline = deps.now() + operationTimeoutMs;
+    const scope = zone === null ? "global" : `zones/${zone}`;
     let current = operation;
     while (current.status !== "DONE") {
       if (deps.now() >= deadline) {
         throw new Error(`${what}: operation ${name} did not finish within ${operationTimeoutMs}ms`);
       }
       await deps.wait(pollIntervalMs);
-      const res = await deps.request({ url: `${base}/zones/${zone}/operations/${name}`, method: "GET" });
+      const res = await deps.request({ url: `${base}/${scope}/operations/${name}`, method: "GET" });
       current = (res.data ?? {}) as ComputeOperation;
     }
     const errors = current.error?.errors ?? [];
@@ -625,6 +630,13 @@ export function createGatewayVmClient(deps: GatewayVmClientDeps): GatewayVmClien
 
 
   return {
+    ...createVmHomeSnapshotClient({ request: deps.request, projectId: deps.projectId, readInstance,
+      waitForOperation: (zone, operation, what) => {
+        const receipt = operation as ComputeOperation;
+        const globalPath = `projects/${deps.projectId}/global/operations/${receipt.name}`;
+        const path = receipt.selfLink?.replace(/^https:\/\/(?:www|compute)\.googleapis\.com\/compute\/v1\//u, "");
+        return waitForOperation(path === globalPath ? null : zone, receipt, what);
+      } }),
     ...createVmHomeClient({ request: deps.request, projectId: deps.projectId, readInstance, journalHomeResize: deps.journalHomeResize,
       waitForOperation: (zone, operation, what) => waitForOperation(zone, operation as ComputeOperation, what) }),
     create,

@@ -57,6 +57,8 @@ function harness(
     bind: vi.fn(async () => {}),
     retainHome: vi.fn(async () => ({ projectId: "octogee-test", zone: "us-west1-b", name: "computer-home", id: "777", sizeGb: 30, diskType: "pd-ssd" as const, source: "projects/octogee-test/zones/us-west1-b/disks/computer-home" })),
     verifyDetachedHome: vi.fn(async () => {}),
+    snapshotStoppedHome: vi.fn(async () => null),
+    restoreHomeFromSnapshot: vi.fn(async () => null),
     deleteRetainedHome: vi.fn(async () => {}),
     setServiceAccount: vi.fn(async () => {}),
     setMachineType: vi.fn(async () => {}),
