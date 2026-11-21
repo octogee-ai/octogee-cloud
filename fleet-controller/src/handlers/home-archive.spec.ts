@@ -12,6 +12,7 @@ const source = { instanceId: "101", name: "owner-computer", zone: home.zone, sta
 const snapshot = { projectId: "test", sourceDisk: home.source, sourceDiskId: home.id, sizeGb: 10, id: "103", name: "archive-102-archive-one" };
 const bootDisk = { id: "104", source: "projects/test/zones/us-central1-b/disks/old-boot" };
 const operation = { id: operationId, kind: "gateway-vm", status: "running", origin: "operator", inputUid: uid, gatewayId,
+  createdBy: "operator", createdAt: 1, startedAt: 2, completedAt: null, steps: [],
   input: { action: "archive", ownerUid: uid, uid, expectedGatewayId: gatewayId, expectedInstanceId: source.instanceId },
 } as Operation;
 

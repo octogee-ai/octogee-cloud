@@ -1,3 +1,4 @@
+import { assertFailedHomeRestoreReleased } from "./home-archive-recovery.js";
 import { createHash } from "node:crypto";
 import { accountAllowsInteractiveAccess } from "@octogee/shared/types/account-lifecycle";
 import type { RetainedUserHomeSnapshot } from "@octogee/shared/types/glm";
@@ -206,10 +207,15 @@ class HomePreparationRun {
       async tx => {
         await this.deps.requireOwner(tx);
         const owner = assertOwner(await tx.users.records.get(this.request.uid));
-        const { homeArchive: archive, homeDisk: disk, homeStorage } = owner.home;
+        const { homeArchive, homeDisk: disk, homeStorage } = owner.home;
+        const archive = recoverableArchivePhase(homeArchive, operationId);
         const migration = userHomeOwner(owner).homeMigration;
-        if (archive?.phase !== "archived" || archive.operationId !== operationId || owner.fences.computerRecovery !== undefined) {
+        if (!archive || owner.fences.computerRecovery !== undefined) {
           throw new IsolatedGatewayFenceError("home archive custody changed during preparation");
+        }
+        if (archive.phase === "restoring") {
+          if (archive.generation >= this.request.generation) throw new IsolatedGatewayFenceError("home archive already has a restore holder");
+          await assertFailedHomeRestoreReleased(tx, { ...archive, ownerUid: this.request.uid });
         }
         if (!snapshotMatchesRetainedHome(archive.snapshot, disk) || homeStorage !== undefined ||
             (migration && (migration.phase !== "complete" || isActiveHomeMigration(migration)))) {
@@ -420,6 +426,10 @@ class HomePreparationRun {
       default: throw new Error("invalid home migration phase");
     }
   }
+}
+
+function recoverableArchivePhase(archive: NonNullable<PlatformUserRecord["home"]["homeArchive"]> | undefined, operationId: string) {
+  return (archive?.phase === "archived" || archive?.phase === "restoring") && archive.operationId === operationId ? archive : undefined;
 }
 
 export async function prepareIsolatedHome(

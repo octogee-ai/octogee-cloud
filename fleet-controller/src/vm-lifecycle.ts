@@ -1201,7 +1201,9 @@ async function ensureSnapshotBackedVm(deps: VmLifecycleDeps, request: {
   if ((archive.phase !== "archived" && archive.phase !== "restoring") || !archive.snapshot || !archive.bootDisk) {
     throw new Error("User home archive requires explicit snapshot recovery");
   }
-  const description = await restoreArchivedHome(deps, { gatewayId, ownerUid }, spec, input);
+  const description = await restoreArchivedHome({ ...deps,
+    rebind: description => operations.reconcileVmBinding(gatewayId, ownerUid, input, description),
+  }, { gatewayId, ownerUid }, spec, input);
   const retainedHome = await readRetainedUserHome(deps.store, ownerUid);
   if (!retainedHome) throw new Error("Restored home ownership was not recorded");
   return finishEnsuredVm(deps, { gatewayId, ownerUid, spec, description, input, recovery: null, retainedHome }, operations);
