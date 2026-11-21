@@ -1158,6 +1158,31 @@ describe("gateway-rpc", () => {
     });
   });
 
+  describe("agentsDetachMany", () => {
+    const agentIds = ["octogee-alice-coach", "octogee-alice-proj-tools-coach"];
+    const complete = (agentId: string) => ({ ok: true, agentId, removed: [], failed: [] });
+
+    it("confirms all requested agents were detached without removing their stores", async () => {
+      let captured: unknown;
+      server.setHandler("agents.detachMany", params => {
+        captured = params;
+        return { ok: true, payload: { ok: true, results: agentIds.map(complete) } };
+      });
+      await expect(client.agentsDetachMany({ agentIds })).resolves.toBeUndefined();
+      expect(captured).toEqual({ agentIds });
+    });
+
+    it.each([
+      [complete(agentIds[0]!)],
+      [complete(agentIds[0]!), complete(agentIds[0]!)],
+      [complete(agentIds[0]!), { ...complete(agentIds[1]!), removed: [{}] }],
+      [complete(agentIds[0]!), { ...complete(agentIds[1]!), failed: [{}] }],
+    ])("refuses an incomplete or destructive batch result %#", async (...results) => {
+      server.setHandler("agents.detachMany", () => ({ ok: true, payload: { ok: true, results } }));
+      await expect(client.agentsDetachMany({ agentIds })).rejects.toMatchObject({ code: "invalid-response" });
+    });
+  });
+
   describe("agentsDelete", () => {
     it.each([
       { purgeFailed: "true" }, { purgeFailed: null }, { purgeFailed: 0 },

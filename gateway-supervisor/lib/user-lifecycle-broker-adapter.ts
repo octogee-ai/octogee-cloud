@@ -2455,7 +2455,7 @@ async function resumeAssignedIsolatedRuntime(ctx: BrokerCtx, slug: string): Prom
 
 function runtimeUpdateOperations(ctx: BrokerCtx): Pick<UserLifecycleAdapter,
   "applyAddUserConfigPatch" | "reconcileConfiguredUserProjectAgents" | "applyRemoveUserConfigPatch" | "resumeUser" |
-  "prepareImportDir" | "activateImportedUser" | "removeImportedUserBySlug" | "releaseAgent"> {
+  "prepareImportDir" | "activateImportedUser" | "removeImportedUserBySlug" | "releaseAgent" | "detachSourceAgents"> {
   return {
     applyAddUserConfigPatch: (snapshot, mmUpdate, callOpts) =>
       openClawRuntimeUpdateGuard.run(async () => {
@@ -2500,6 +2500,21 @@ function runtimeUpdateOperations(ctx: BrokerCtx): Pick<UserLifecycleAdapter,
         removeImportedUserBySlug(ctx, slug, { evictionBatch, currentEvictionBatch, targetCleanup, erasureAgentIds }), { slug, evicting: evictionBatch }),
     releaseAgent: (agentId) => openClawRuntimeUpdateGuard.run(() =>
       releaseAgentsAndInvalidateCache(ctx, [agentId], `[release:${agentId}]`)),
+    detachSourceAgents: (slug, agentIds, signal) => openClawRuntimeUpdateGuard.run(async () => {
+      try {
+        const batchSize = 5;
+        for (let index = 0; index < agentIds.length; index += batchSize) {
+          signal.throwIfAborted();
+          const batch = agentIds.slice(index, index + batchSize);
+          const start = Date.now();
+          ctx.log(`[release:${slug}] agents.detachMany started agentCount=${batch.length}`);
+          await ctx.rpc.agentsDetachMany({ agentIds: batch });
+          ctx.log(`[release:${slug}] agents.detachMany completed agentCount=${batch.length} elapsedMs=${Date.now() - start}`);
+        }
+      } finally {
+        invalidateConfigCache(ctx);
+      }
+    }, { signal, slug }),
   };
 }
 

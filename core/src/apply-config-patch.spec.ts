@@ -67,6 +67,7 @@ function makeFakeRpc(overrides: Partial<GatewayRpcClient> = {}): GatewayRpcClien
     agentsCreate: unusedRpc("agentsCreate"),
     agentsDelete: unusedRpc("agentsDelete"),
     agentsDetach: unusedRpc("agentsDetach"),
+    agentsDetachMany: unusedRpc("agentsDetachMany"),
     ...overrides,
   };
 }

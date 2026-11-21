@@ -4,7 +4,6 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { exportAgentStoreSnapshots, prepareAgentStoreSnapshots, findPortableAgentStores, installPreparedAgentStores } from "../lib/agent-store-snapshot.js";
-import { OpenClawRuntimeUpdateGuard } from "../lib/openclaw-runtime-update-guard.js";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -27,10 +26,10 @@ async function fixture(agentId = "octogee-alice-coach") {
 
 it("detaches before carrying a PostgreSQL anchor and adopts it without a SQLite backup or restore", async () => {
   const { root, agentId, file, identity } = await fixture();
-  const detachAgent = vi.fn(async () => undefined);
+  const detachAgents = vi.fn(async () => undefined);
   const stageDir = path.join(root, "stage");
-  await exportAgentStoreSnapshots({ sources: [{ cwd: root, path: `agents/${agentId}` }], exportRoot: stageDir, detachAgent });
-  expect(detachAgent).toHaveBeenCalledExactlyOnceWith(agentId);
+  await exportAgentStoreSnapshots({ sources: [{ cwd: root, path: `agents/${agentId}` }], exportRoot: stageDir, detachAgents });
+  expect(detachAgents).toHaveBeenCalledExactlyOnceWith([agentId]);
   const prepared = await prepareAgentStoreSnapshots({ stageDir, importDir: path.join(root, "target"), migrationId: "m1" });
   expect(prepared.stores).toHaveLength(1);
   const adopted = new DatabaseSync(prepared.stores[0]!.restoredPath, { readOnly: true });
@@ -40,21 +39,18 @@ it("detaches before carrying a PostgreSQL anchor and adopts it without a SQLite 
   expect(await fs.readFile(file)).toEqual(await fs.readFile(prepared.stores[0]!.restoredPath));
 });
 
-it("exports a multi-agent user without queueing detaches behind the serialized runtime deadline", async () => {
+it("requires one native receipt for every agent before staging any anchor", async () => {
   const agents = await Promise.all(Array.from({ length: 5 }, (_, index) => fixture(`octogee-alice-project-${index}`)));
   const stageDir = path.join(agents[0]!.root, "stage");
-  const guard = new OpenClawRuntimeUpdateGuard();
-  const detached: string[] = [];
-  const detachAgent = vi.fn((agentId: string) => guard.run(async () => {
-    await new Promise(resolve => setTimeout(resolve, 20));
-    detached.push(agentId);
-  }, { timeoutMs: 1 }));
+  const detachAgents = vi.fn(async (_agentIds: readonly string[]) => {
+    await expect(fs.stat(stageDir)).rejects.toMatchObject({ code: "ENOENT" });
+  });
   await exportAgentStoreSnapshots({
     sources: agents.map(agent => ({ cwd: agent.root, path: `agents/${agent.agentId}` })),
     exportRoot: stageDir,
-    detachAgent,
+    detachAgents,
   });
-  expect(detached).toEqual(agents.map(agent => agent.agentId));
+  expect(detachAgents).toHaveBeenCalledExactlyOnceWith(agents.map(agent => agent.agentId));
   const prepared = await prepareAgentStoreSnapshots({ stageDir, importDir: path.join(agents[0]!.root, "target"), migrationId: "multi-agent" });
   expect(prepared.stores).toHaveLength(agents.length);
   for (const agent of agents) {
@@ -65,8 +61,8 @@ it("exports a multi-agent user without queueing detaches behind the serialized r
 
 it.each(["missing", "failed"])("does not carry an anchor when detach is %s", async mode => {
   const { root, agentId, file } = await fixture();
-  const detachAgent = mode === "failed" ? vi.fn(async () => { throw new Error("detach unavailable"); }) : undefined;
-  await expect(exportAgentStoreSnapshots({ sources: [{ cwd: root, path: `agents/${agentId}` }], exportRoot: path.join(root, "stage") , detachAgent })).rejects.toThrow(mode === "failed" ? "detach unavailable" : "must be detached");
+  const detachAgents = mode === "failed" ? vi.fn(async () => { throw new Error("detach unavailable"); }) : undefined;
+  await expect(exportAgentStoreSnapshots({ sources: [{ cwd: root, path: `agents/${agentId}` }], exportRoot: path.join(root, "stage") , detachAgents })).rejects.toThrow(mode === "failed" ? "detach unavailable" : "must be detached");
   expect((await fs.stat(file)).size).toBeGreaterThan(0);
   await expect(fs.stat(path.join(root, "stage"))).rejects.toMatchObject({ code: "ENOENT" });
 });
@@ -74,7 +70,7 @@ it.each(["missing", "failed"])("does not carry an anchor when detach is %s", asy
 it("refuses an altered PostgreSQL anchor before installing it", async () => {
   const { root, agentId } = await fixture();
   const stageDir = path.join(root, "stage");
-  await exportAgentStoreSnapshots({ sources: [{ cwd: root, path: `agents/${agentId}` }], exportRoot: stageDir, detachAgent: async () => undefined });
+  await exportAgentStoreSnapshots({ sources: [{ cwd: root, path: `agents/${agentId}` }], exportRoot: stageDir, detachAgents: async () => undefined });
   const artifact = path.join(stageDir, `agents/${agentId}/agent/.octogee-snapshot/postgres-anchor/database.sqlite`);
   await fs.appendFile(artifact, "altered-anchor");
   await expect(prepareAgentStoreSnapshots({ stageDir, importDir: path.join(root, "target"), migrationId: "altered" })).rejects.toThrow("does not match its manifest");
@@ -87,7 +83,7 @@ it.each(["export", "import"])("refuses a SQLite agent %s after the fresh Postgre
     const db = new DatabaseSync(file); db.exec("DROP TABLE openclaw_engine_anchor"); db.close();
     await expect(exportAgentStoreSnapshots({ sources: [{ cwd: root, path: `agents/${agentId}` }], exportRoot: stageDir })).rejects.toThrow("SQLite agent handoff is unsupported after the PostgreSQL cutover");
   } else {
-    await exportAgentStoreSnapshots({ sources: [{ cwd: root, path: `agents/${agentId}` }], exportRoot: stageDir, detachAgent: async () => undefined });
+    await exportAgentStoreSnapshots({ sources: [{ cwd: root, path: `agents/${agentId}` }], exportRoot: stageDir, detachAgents: async () => undefined });
     const artifact = path.join(stageDir, `agents/${agentId}/agent/.octogee-snapshot/postgres-anchor/database.sqlite`);
     const db = new DatabaseSync(artifact); db.exec("DROP TABLE openclaw_engine_anchor"); db.close();
     await expect(prepareAgentStoreSnapshots({ stageDir, importDir: path.join(root, "target"), migrationId: "sqlite" })).rejects.toThrow("SQLite agent handoff is unsupported after the PostgreSQL cutover");
@@ -96,9 +92,9 @@ it.each(["export", "import"])("refuses a SQLite agent %s after the fresh Postgre
 
 it("refuses duplicate source roots for one agent before detaching either store", async () => {
   const first = await fixture(), second = await fixture();
-  const detachAgent = vi.fn(async () => undefined);
-  await expect(exportAgentStoreSnapshots({ sources: [first, second].map(item => ({ cwd: item.root, path: `agents/${item.agentId}` })), exportRoot: path.join(first.root, "stage"), detachAgent })).rejects.toThrow("more than one database");
-  expect(detachAgent).not.toHaveBeenCalled();
+  const detachAgents = vi.fn(async () => undefined);
+  await expect(exportAgentStoreSnapshots({ sources: [first, second].map(item => ({ cwd: item.root, path: `agents/${item.agentId}` })), exportRoot: path.join(first.root, "stage"), detachAgents })).rejects.toThrow("more than one database");
+  expect(detachAgents).not.toHaveBeenCalled();
 });
 
 it.each([
@@ -113,9 +109,9 @@ it.each([
   await fs.writeFile(path.join(backupDir, "manifest.json"), "{}");
   const sources = [{ cwd: root, path: `agents/${agentId}` }];
   expect((await findPortableAgentStores(sources)).map((store) => store.sourceAgentDir)).toEqual([path.dirname(file)]);
-  const detachAgent = vi.fn(async () => undefined);
-  await exportAgentStoreSnapshots({ sources, exportRoot: path.join(root, "stage"), detachAgent });
-  expect(detachAgent).toHaveBeenCalledExactlyOnceWith(agentId);
+  const detachAgents = vi.fn(async () => undefined);
+  await exportAgentStoreSnapshots({ sources, exportRoot: path.join(root, "stage"), detachAgents });
+  expect(detachAgents).toHaveBeenCalledExactlyOnceWith([agentId]);
   expect(await fs.readFile(path.join(backupDir, "anchor.sqlite"))).toEqual(await fs.readFile(file));
   expect(await fs.readFile(path.join(backupDir, "database.sqlite"), "utf8")).toBe("doctor-export-fixture");
 });

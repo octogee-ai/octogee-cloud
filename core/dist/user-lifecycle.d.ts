@@ -287,6 +287,7 @@ export interface UserLifecycleAdapter {
         assertCurrent: () => Promise<void>;
     }, erasureAgentIds?: readonly string[]) => Promise<RemoveUserResult>;
     releaseAgent?: (agentId: string) => Promise<void>;
+    detachSourceAgents?: (slug: string, agentIds: readonly string[], signal: AbortSignal) => Promise<void>;
 }
 export type UserStateImportMode = "pre" | "final" | "default";
 export type AddUserStep = "claim-slot" | "ensure-dir" | "write-templates" | "clone-workspace-repo" | "init-workspace-repo" | "ssh-key" | "ssh-key-resync" | "blob-sync" | "byosub-restore" | "byot-reassert" | "context-files-reassert" | "project-clone" | "mattermost-provision" | "config-patch" | "verify-channel-ready" | "mark-complete" | "report-provisioned";
