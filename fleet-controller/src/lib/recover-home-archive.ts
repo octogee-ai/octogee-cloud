@@ -1,3 +1,4 @@
+import { isAuthorizedHomeArchiveOrigin } from "@octogee/core/admin-fleet-router";
 import { assertFailedHomeRestoreReleased } from "@octogee/core/isolated-gateway-lifecycle";
 import type { OperationRecord, UserDeletionJob, PlatformStateRepositories, PlatformStateStore, PlatformStateTransaction, UserHomeArchive } from "@octogee/core/platform-state";
 import type { GatewayVmClient, GatewayVmDescription } from "./compute-vm.js";
@@ -18,7 +19,7 @@ async function readErasingOwner(store: PlatformStateRepositories, uid: string, d
 
 function isOriginalArchiveJournal(operation: Awaited<ReturnType<PlatformStateRepositories["journal"]["operations"]["get"]>>,
   archive: UserHomeArchive, uid: string): boolean {
-  return operation?.origin === "operator" && operation.inputUid === uid && operation.input.action === "archive" &&
+  return operation !== null && isAuthorizedHomeArchiveOrigin(operation) && operation.inputUid === uid && operation.input.action === "archive" &&
     operation.input.expectedInstanceId === archive.instanceId && operation.input.expectedGatewayId === archive.gatewayId;
 }
 

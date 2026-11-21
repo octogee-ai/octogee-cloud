@@ -1,3 +1,4 @@
+import { resolveParkedHomeArchiveGrant } from "./parked-home-archive.js";
 import { projectGatewayDesiredRootForGateway } from "@octogee/shared/types/gateway-releases";
 import { builderActivateOperationId } from "@octogee/shared/types/isolated-operation-ids";
 import { isSizingTier } from "@octogee/shared/types/sizing";
@@ -387,7 +388,8 @@ function addLeaseVerbs({ deps, journal, lifecycle, verb }) {
             return null;
         },
         action: async () => {
-            await completeActivationLease(lifecycle, input);
+            const archiveGrant = resolveParkedHomeArchiveGrant(deps.releaseEnvironment, process.env.GATEWAY_TEST_HOME_ARCHIVE_GRANT);
+            await completeActivationLease({ ...lifecycle, archiveGrant }, input);
             const lease = leaseOf(await readOwner(deps.store, input.uid));
             return { uid: input.uid, lease: { leaseId: lease.leaseId, generation: lease.generation, status: lease.status } };
         },

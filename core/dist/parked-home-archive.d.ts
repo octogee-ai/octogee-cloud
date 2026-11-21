@@ -1,12 +1,29 @@
-import type { PlatformStateStore } from "./platform-state/store.js";
-import type { PlatformUserRecord } from "./platform-state/users.js";
-interface ParkedHomeArchiveGrant {
+import type { PlatformStateStore, PlatformStateTransaction, Stored } from "./platform-state/store.js";
+import type { PlatformUserRecord, UserActivationLease } from "./platform-state/users.js";
+export interface ParkedHomeArchiveGrant {
     ownerUid: string;
     sizingProfile: string;
 }
 export declare function parkedHomeUnderSnapshotCustody(owner: PlatformUserRecord | null): boolean;
+export declare function isAuthorizedHomeArchiveOrigin(operation: {
+    origin?: unknown;
+    createdBy?: unknown;
+}): boolean;
 export declare function resolveParkedHomeArchiveGrant(environment: string | null | undefined, value: string | undefined): ParkedHomeArchiveGrant | undefined;
 export declare function simpleHomePreparation(value: PlatformUserRecord["home"]["homeMigration"]): boolean;
+interface ArchiveTarget {
+    gatewayId: string;
+    instanceId: string;
+    sharedId: string;
+    assignmentEpoch: number;
+}
+export declare function writeParkedHomeArchive(tx: PlatformStateTransaction, owner: Stored<PlatformUserRecord>, target: ArchiveTarget, operation: {
+    operationId: string;
+    createdBy: string;
+    origin: "operator" | "automatic";
+    now: number;
+}): Promise<void>;
+export declare function planReturnedHomeArchive(tx: PlatformStateTransaction, owner: Stored<PlatformUserRecord>, next: UserActivationLease, grant: ParkedHomeArchiveGrant | undefined, now: number): Promise<(() => Promise<void>) | undefined>;
 export declare function enqueueParkedHomeArchive(store: PlatformStateStore, input: {
     ownerUid: string;
     grant: ParkedHomeArchiveGrant | undefined;

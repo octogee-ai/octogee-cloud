@@ -1,3 +1,4 @@
+import { planReturnedHomeArchive, type ParkedHomeArchiveGrant } from "../parked-home-archive.js";
 import { randomUUID } from "node:crypto";
 import { planRestoredHomeBackupRelease } from "./home-backup-release.js";
 import { accountAllowsInteractiveAccess } from "@octogee/shared/types/account-lifecycle";
@@ -372,8 +373,25 @@ export async function advanceActivationLease(
   });
 }
 
+async function completeReturningLeaseState(
+  readAssignment: () => Promise<GatewayAssignment | null>,
+  identity: { userUid: string; sourceGatewayId: string }, lease: UserActivationLease, now: () => number,
+  completed: (sourceAssignmentEpoch: number) => UserActivationLease | null,
+): Promise<UserActivationLease> {
+  let next = completed(0);
+  if (next?.status === "requested") {
+    const epoch = servingAssignmentEpoch(await readAssignment(), identity.userUid, identity.sourceGatewayId);
+    next = epoch === null ? parkedActivationLease(lease, now(), {
+      code: "pending-demand-assignment-unavailable",
+      message: "pending demand was parked because the shared assignment fence was unavailable",
+    }) : completed(epoch);
+  }
+  if (!next) throw new IsolatedGatewayFenceError(`returning activation lease for ${identity.userUid} is invalid`);
+  return next;
+}
+
 export async function completeActivationLease(
-  input: Pick<IsolatedLifecycleDeps, "store" | "readSizingKey" | "now" | "requireOwner"> & { leaseIdFactory?: () => string },
+  input: Pick<IsolatedLifecycleDeps, "store" | "readSizingKey" | "now" | "requireOwner"> & { leaseIdFactory?: () => string; archiveGrant?: ParkedHomeArchiveGrant },
   request: CompleteActivationLeaseInput,
   mode: LifecycleMode = "apply",
 ): Promise<void> {
@@ -402,28 +420,14 @@ export async function completeActivationLease(
       nextLeaseId,
       now: input.now(),
     });
-    let next = completed(0);
-    if (!next) {
-      throw new IsolatedGatewayFenceError(`returning activation lease for ${request.uid} is invalid`);
-    }
-    if (next.status === "requested") {
-      const assignmentEpoch = servingAssignmentEpoch(
-        await transaction.gateways.assignments.get(sourceGatewayId, request.uid),
-        request.uid,
-        sourceGatewayId,
-      );
-      next = assignmentEpoch === null
-        ? parkedActivationLease(lease, input.now(), {
-            code: "pending-demand-assignment-unavailable",
-            message: "pending demand was parked because the shared assignment fence was unavailable",
-          })
-        : completed(assignmentEpoch);
-    }
-    if (!next) {
-      throw new IsolatedGatewayFenceError(`returning activation lease for ${request.uid} is invalid`);
-    }
+    const next = await completeReturningLeaseState(
+      () => transaction.gateways.assignments.get(sourceGatewayId, request.uid),
+      { userUid: request.uid, sourceGatewayId }, lease, input.now, completed,
+    );
     if (mode === "plan") return;
     const now = input.now();
+    const archive = request.parked ? await planReturnedHomeArchive(transaction, user, next, input.archiveGrant, now) : undefined;
+    await archive?.();
     await transaction.users.placementReceipts.create(request.uid, buildPlacementReceipt({
       kind: "returned",
       uid: request.uid,

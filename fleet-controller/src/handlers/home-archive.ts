@@ -1,3 +1,4 @@
+import { isAuthorizedHomeArchiveOrigin } from "@octogee/core/admin-fleet-router";
 import type { PlatformStateRepositories, PlatformStateStore, UserHomeArchive } from "@octogee/core/platform-state";
 import { isUserParkedVm, type RetainedUserHome } from "@octogee/shared/types/glm";
 import type { GatewayVmClient, GatewayVmDescription } from "../lib/compute-vm.js";
@@ -130,7 +131,7 @@ async function disposeParkedHome(deps: { store: PlatformStateStore; vm: GatewayV
 function requireArchiveOperation(operation: Parameters<OperationHandler>[0], ctx: OperationContext,
   grant: { ownerUid: string; sizingProfile: string } | undefined) {
   const { ownerUid, expectedGatewayId, expectedInstanceId, action } = operation.input;
-  if (!grant || ownerUid !== grant.ownerUid || action !== "archive" || operation.origin !== "operator" ||
+  if (!grant || ownerUid !== grant.ownerUid || action !== "archive" || !isAuthorizedHomeArchiveOrigin(operation) ||
       operation.input.uid !== ownerUid || typeof expectedGatewayId !== "string" || typeof expectedInstanceId !== "string" ||
       !ctx.assertActiveClaim) throw new Error("Home archive requires an exact operator grant and operation claim");
   const identity = { ownerUid: grant.ownerUid, gatewayId: expectedGatewayId, instanceId: expectedInstanceId,

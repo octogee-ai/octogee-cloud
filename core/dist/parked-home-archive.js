@@ -4,6 +4,12 @@ export function parkedHomeUnderSnapshotCustody(owner) {
     const archive = owner?.home.homeArchive;
     return archive !== undefined && archive.phase !== "restored";
 }
+class IneligibleHomeArchiveError extends Error {
+}
+const RETURN_ARCHIVE_ACTOR = "glm-controller-return-home-archive";
+export function isAuthorizedHomeArchiveOrigin(operation) {
+    return operation.origin === "operator" || (operation.origin === "automatic" && operation.createdBy === RETURN_ARCHIVE_ACTOR);
+}
 export function resolveParkedHomeArchiveGrant(environment, value) {
     if (environment !== "test" || !value)
         return undefined;
@@ -40,7 +46,7 @@ function matchesArchiveFence(owner, archive) {
 async function retryArchive(tx, owner, existing, dryRun) {
     const ownerUid = owner.uid;
     const operation = await tx.journal.operations.get(existing.operationId);
-    if (operation?.origin !== "operator" || operation.inputUid !== ownerUid || operation.input.action !== "archive" ||
+    if (!operation || !isAuthorizedHomeArchiveOrigin(operation) || operation.inputUid !== ownerUid || operation.input.action !== "archive" ||
         operation.input.expectedGatewayId !== existing.gatewayId || operation.input.expectedInstanceId !== existing.instanceId) {
         throw new Error("Home archive journal identity changed");
     }
@@ -68,7 +74,7 @@ function parkedArchiveInputs(owner) {
         lease.targetGatewayId !== parked.gatewayId ||
         typeof returnOperationId !== "string" || !returnOperationId || returnOperationId.includes("/") ||
         !hasAttachedArchiveHome(owner)) {
-        throw new Error("Home archive requires an idle owner and a verified parked VM");
+        throw new IneligibleHomeArchiveError("Home archive requires an idle owner and a verified parked VM");
     }
     return { gatewayId: parked.gatewayId, instanceId: parked.instanceId, sharedId, returnOperationId };
 }
@@ -88,9 +94,42 @@ async function verifyArchiveInputs(tx, input, grant) {
         assignment?.uid !== ownerUid || assignment.gatewayId !== sharedId || assignment.state !== "serving" ||
         !Number.isSafeInteger(assignment.epoch) || assignment.epoch < 0 ||
         !hasVerifiedReturn(returned, ownerUid, gatewayId, sharedId) || pending.length > 0) {
-        throw new Error("Home archive requires a settled native return to the serving Shared assignment");
+        throw new IneligibleHomeArchiveError("Home archive requires a settled native return to the serving Shared assignment");
     }
     return assignment.epoch;
+}
+export async function writeParkedHomeArchive(tx, owner, target, operation) {
+    const ownerUid = owner.uid;
+    const { gatewayId, instanceId, sharedId, assignmentEpoch } = target;
+    const { operationId, createdBy, origin, now } = operation;
+    const homeArchive = { phase: "preparing", operationId, gatewayId, instanceId };
+    await tx.users.records.patch(ownerUid, { home: { homeArchive } }, { revision: owner.revision });
+    await tx.users.records.setFence(ownerUid, "computerRecovery", {
+        operationId, gatewayId, instanceId, sharedGatewayId: sharedId, assignmentEpoch,
+    }, "absent");
+    await tx.journal.operations.create({
+        id: operationId, kind: "gateway-vm", status: "pending", origin, createdBy, createdAt: now,
+        startedAt: null, completedAt: null, steps: [], gatewayId, inputUid: ownerUid,
+        input: { action: "archive", uid: ownerUid, ownerUid, expectedGatewayId: gatewayId, expectedInstanceId: instanceId },
+    });
+}
+export async function planReturnedHomeArchive(tx, owner, next, grant, now) {
+    if (!grant || grant.ownerUid !== owner.uid || next.status !== "parked" ||
+        owner.home.homeArchive !== undefined || !pilotHomeEligible(owner))
+        return;
+    try {
+        const { gatewayId, instanceId, sharedId, returnOperationId } = parkedArchiveInputs({ ...owner, activationLease: next });
+        const assignmentEpoch = await verifyArchiveInputs(tx, { gatewayId, sharedId, returnOperationId }, grant);
+        const operationId = randomUUID();
+        return () => writeParkedHomeArchive(tx, owner, { gatewayId, instanceId, sharedId, assignmentEpoch }, {
+            operationId, createdBy: RETURN_ARCHIVE_ACTOR, origin: "automatic", now,
+        });
+    }
+    catch (error) {
+        if (!(error instanceof IneligibleHomeArchiveError))
+            throw error;
+        return undefined;
+    }
 }
 export async function enqueueParkedHomeArchive(store, input) {
     const { ownerUid, grant, createdBy } = input;
@@ -108,15 +147,8 @@ export async function enqueueParkedHomeArchive(store, input) {
         const operationId = randomUUID();
         if (input.dryRun)
             return { operationId };
-        const homeArchive = { phase: "preparing", operationId, gatewayId, instanceId };
-        await tx.users.records.patch(ownerUid, { home: { homeArchive } }, { revision: owner.revision });
-        await tx.users.records.setFence(ownerUid, "computerRecovery", {
-            operationId, gatewayId, instanceId, sharedGatewayId: sharedId, assignmentEpoch,
-        }, "absent");
-        await tx.journal.operations.create({
-            id: operationId, kind: "gateway-vm", status: "pending", origin: "operator", createdBy, createdAt: Date.now(),
-            startedAt: null, completedAt: null, steps: [], gatewayId, inputUid: ownerUid,
-            input: { action: "archive", uid: ownerUid, ownerUid, expectedGatewayId: gatewayId, expectedInstanceId: instanceId },
+        await writeParkedHomeArchive(tx, owner, { gatewayId, instanceId, sharedId, assignmentEpoch }, {
+            operationId, createdBy, origin: "operator", now: Date.now(),
         });
         return { operationId };
     });

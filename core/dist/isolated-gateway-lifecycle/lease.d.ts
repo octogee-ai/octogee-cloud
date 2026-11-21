@@ -1,3 +1,4 @@
+import { type ParkedHomeArchiveGrant } from "../parked-home-archive.js";
 import { type GatewaySizingProfile } from "@octogee/shared/types/sizing-profile";
 import type { PlatformUserRecord, UserActivationLease } from "../platform-state/users.js";
 import { type AdvanceActivationLeaseInput, type CompleteActivationLeaseInput, type FailActivationLeaseInput, type IsolatedLifecycleDeps, type LifecycleMode, type SizingKeyTransitionInput } from "./inputs.js";
@@ -24,6 +25,7 @@ export declare function nextFailedActivationLease(lease: UserActivationLease, re
 export declare function advanceActivationLease(input: Pick<IsolatedLifecycleDeps, "store" | "now" | "requireOwner">, given: AdvanceActivationLeaseInput, mode?: LifecycleMode): Promise<void>;
 export declare function completeActivationLease(input: Pick<IsolatedLifecycleDeps, "store" | "readSizingKey" | "now" | "requireOwner"> & {
     leaseIdFactory?: () => string;
+    archiveGrant?: ParkedHomeArchiveGrant;
 }, request: CompleteActivationLeaseInput, mode?: LifecycleMode): Promise<void>;
 export declare function failActivationLease(input: Pick<IsolatedLifecycleDeps, "store" | "now" | "requireOwner" | "sourceRecoveryPending">, request: FailActivationLeaseInput, mode?: LifecycleMode): Promise<void>;
 export declare function nextSizingKeyTransitionLease(user: PlatformUserRecord, sizingKey: string | null, request: SizingKeyTransitionInput, now: number): UserActivationLease;

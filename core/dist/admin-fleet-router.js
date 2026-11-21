@@ -1,4 +1,4 @@
-export { enqueueParkedHomeArchive, resolveParkedHomeArchiveGrant, simpleHomePreparation } from "./parked-home-archive.js";
+export { enqueueParkedHomeArchive, isAuthorizedHomeArchiveOrigin, planReturnedHomeArchive, resolveParkedHomeArchiveGrant, simpleHomePreparation } from "./parked-home-archive.js";
 import { migrationCancellationDeferred } from "./fleet-state.js";
 import { readSharedSourceRecoveryAuthority, readSharedSourceRecoverySupersession, SharedSourceRecoveryConflict } from "./shared-source-recovery.js";
 import { randomUUID } from "node:crypto";
@@ -3359,7 +3359,7 @@ export function addAdminFleetRoutes(router, deps) {
     if (deps.placementShared)
         addAdminPlacementSharedRoutes(router, { ...deps.placementShared, store, journal: runAdminFleetMutation });
     if (deps.isolated)
-        addAdminPlacementIsolatedRoutes(router, { store, journal: runAdminFleetMutation, accounts: deps.accounts, capabilities: deps.isolated, log: (message) => deps.logger.info(message), warn: (message) => deps.logger.warn(message) });
+        addAdminPlacementIsolatedRoutes(router, { store, releaseEnvironment: deps.releaseEnvironment, journal: runAdminFleetMutation, accounts: deps.accounts, capabilities: deps.isolated, log: (message) => deps.logger.info(message), warn: (message) => deps.logger.warn(message) });
     if (deps.strandedSource)
         addAdminStrandedSourceRoutes(router, { ...deps.strandedSource, store, journal: runAdminFleetMutation, log: (message) => logger.info(message) });
     async function handleActiveUserDeletion(input) {

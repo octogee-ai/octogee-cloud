@@ -1,3 +1,4 @@
+import { isAuthorizedHomeArchiveOrigin } from "@octogee/core/admin-fleet-router";
 import { RELEASE_RESTORED_HOME_BACKUP } from "@octogee/core/isolated-gateway-lifecycle";
 import { isUserActivateOperationIdFor, isUserReturnOperationIdFor } from "@octogee/shared/types/isolated-operation-ids";
 import { OPERATOR_ISOLATED_GATEWAY_SOURCE } from "@octogee/core/operator-isolated-gateway";
@@ -146,10 +147,10 @@ export function operationNeedsDurableUserMigrationV2Resume(op: {
   return op.kind === MIGRATE_USER_KIND && op.userMigrationV2 !== undefined;
 }
 
-function isDurableVmHomeOperation(op: { kind?: string; origin?: string; input?: Record<string, unknown> }): boolean {
+function isDurableVmHomeOperation(op: { kind?: string; origin?: string; createdBy?: string; input?: Record<string, unknown> }): boolean {
   if (op.kind !== "gateway-vm") return false;
   const action = op.input?.action;
-  return (op.origin === "operator" && action === "archive") ||
+  return (isAuthorizedHomeArchiveOrigin(op) && action === "archive") ||
     (op.origin === "automatic" && action === RELEASE_RESTORED_HOME_BACKUP);
 }
 

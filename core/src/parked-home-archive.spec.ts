@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
-import { enqueueParkedHomeArchive } from "./parked-home-archive.js";
+import { enqueueParkedHomeArchive, planReturnedHomeArchive } from "./parked-home-archive.js";
 
 const fence = { ownerUid: "UidA", sizingProfile: "desktop-small" };
 const parked = { instanceName: "owner-computer", zone: "us-central1-b", instanceId: "200",
@@ -78,4 +78,38 @@ describe("enroll a parked home archive", () => {
       ownerUid: fence.ownerUid.toLowerCase(), grant: fence, createdBy: "operator",
     })).rejects.toThrow(/grant/);
   });
+});
+
+
+describe("archive after a durably settled return", () => {
+  async function complete(store: ReturnType<typeof fixture>, grant = fence, pendingDemand = false) {
+    return store.transaction({ label: "fixture.complete-return" }, async tx => {
+      const owner = (await tx.users.records.get(fence.ownerUid))!;
+      const lease = { ...owner.activationLease!, status: pendingDemand ? "requested" as const : "parked" as const };
+      const applyArchive = await planReturnedHomeArchive(tx, owner, lease, grant, 12);
+      await applyArchive?.();
+      await tx.users.records.setActivationLease(owner.uid, lease, { leaseId: lease.leaseId, generation: lease.generation });
+    });
+  }
+
+  it("enqueues exactly once for the opted-in normal parked return", async () => {
+    const store = fixture();
+    await complete(store);
+    await complete(store);
+    const ops = await store.journal.operations.listForUid(fence.ownerUid, { statuses: ["pending"] });
+    expect(ops).toHaveLength(1);
+    expect(ops[0]).toMatchObject({ origin: "automatic", kind: "gateway-vm", input: { uid: fence.ownerUid, action: "archive" } });
+    expect((await store.users.records.get(fence.ownerUid))?.home.homeArchive?.operationId).toBe(ops[0].id);
+  });
+
+  it.each(["another user", "ineligible home", "unfinished return", "new demand"])(
+    "leaves ordinary placement alone for %s", async reason => {
+      const store = fixture({ ...(reason === "ineligible home" ? { homeStorage: true } : {}),
+        ...(reason === "unfinished return" ? { status: "running" } : {}) });
+      await complete(store, reason === "another user" ? { ...fence, ownerUid: "foreign" } : fence, reason === "new demand");
+      const owner = await store.users.records.get(fence.ownerUid);
+      expect(owner?.home.homeArchive).toBeUndefined();
+      expect(owner?.fences.computerRecovery).toBeUndefined();
+    },
+  );
 });

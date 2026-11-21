@@ -1,4 +1,4 @@
-export { enqueueParkedHomeArchive, resolveParkedHomeArchiveGrant, simpleHomePreparation } from "./parked-home-archive.js";
+export { enqueueParkedHomeArchive, isAuthorizedHomeArchiveOrigin, planReturnedHomeArchive, resolveParkedHomeArchiveGrant, simpleHomePreparation } from "./parked-home-archive.js";
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { type GatewayClass, type GatewayImageProfile, type GatewayProfile, type GatewayRuntime, type GatewayVmState, type OperationAuditAliasPlan } from "@octogee/shared/types/glm";
 import { type PlatformRuntimeConfig } from "@octogee/shared/types/platform-config";
