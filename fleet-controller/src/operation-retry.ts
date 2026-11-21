@@ -146,6 +146,13 @@ export function operationNeedsDurableUserMigrationV2Resume(op: {
   return op.kind === MIGRATE_USER_KIND && op.userMigrationV2 !== undefined;
 }
 
+function isDurableVmHomeOperation(op: { kind?: string; origin?: string; input?: Record<string, unknown> }): boolean {
+  if (op.kind !== "gateway-vm") return false;
+  const action = op.input?.action;
+  return (op.origin === "operator" && action === "archive") ||
+    (op.origin === "automatic" && action === RELEASE_RESTORED_HOME_BACKUP);
+}
+
 export function operationNeedsDurableRestartResume(op: {
   id?: string;
   kind?: string;
@@ -162,7 +169,7 @@ export function operationNeedsDurableRestartResume(op: {
     sourceTransferBlocksRelease(op.sourceTransferExecution) || op.kind === "suspend-user" ||
     (op.kind === "restart-gateway" && (op.input?.restoreRecovery !== undefined || op.input?.sourceRecovery !== undefined)) ||
     op.kind === "prewarm-gateway" || op.kind === "erase-user" ||
-    isLevelTriggeredUserReturn(op) ||
+    isLevelTriggeredUserReturn(op) || isDurableVmHomeOperation(op) ||
     operationNeedsDurableUserMigrationV2Resume(op);
 }
 

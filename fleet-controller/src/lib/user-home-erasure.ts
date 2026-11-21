@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
+import { simpleHomePreparation } from "@octogee/core/admin-fleet-router";
 import type { RetainedUserHome, RetainedUserHomeSnapshot } from "@octogee/shared/types/glm";
 import type { UserHomeState, OpaqueMap, PlatformStateStore, PlatformUserRecord, UserHomeArchive } from "@octogee/core/platform-state";
 import type { HomeCopyInput, UserHomeLocation, UserHomeMigration, UserHomeStorage } from "@octogee/core/isolated-gateway-lifecycle";
@@ -30,7 +31,7 @@ function archiveHasNoWriters(owner: PlatformUserRecord): boolean {
 }
 
 function archiveHasNoSecondaryHome(home: UserHomeState): boolean {
-  return home.homeStorage === undefined && home.homeMigration === undefined && home.homeErasure === undefined;
+  return home.homeStorage === undefined && simpleHomePreparation(home.homeMigration) && home.homeErasure === undefined;
 }
 
 function validateArchivedSource(owner: PlatformUserRecord, home: RetainedUserHome, snapshot: RetainedUserHomeSnapshot): void {
@@ -85,7 +86,7 @@ async function eraseArchivedHome(deps: {
       throw new Error("User home archive custody changed during erasure");
     }
     await tx.users.records.patch(uid, {
-      home: { homeArchive: { clear: true }, ...(proof.archive.phase === "archived" ? { homeDisk: { clear: true } } : {}) },
+      home: { homeArchive: { clear: true }, ...(proof.archive.phase === "archived" ? { homeDisk: { clear: true }, homeMigration: { clear: true } } : {}) },
     }, { revision: current.revision });
   });
   return true;

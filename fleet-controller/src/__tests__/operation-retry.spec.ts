@@ -217,6 +217,12 @@ describe("operationNeedsDurableRestartResume", () => {
     expect(operationNeedsDurableRestartResume(op)).toBe(true);
     expect(operationNeedsDurableRestartResume({ ...op, id: "manual-move" })).toBe(false);
   });
+  it("re-drives journaled archive and backup release without applying to ordinary VM actions", () => {
+    expect(operationNeedsDurableRestartResume({ kind: "gateway-vm", origin: "operator", input: { action: "archive" } })).toBe(true);
+    expect(operationNeedsDurableRestartResume({ kind: "gateway-vm", origin: "automatic", input: { action: "release-home-backup" } })).toBe(true);
+    expect(operationNeedsDurableRestartResume({ kind: "gateway-vm", origin: "operator", input: { action: "resume" } })).toBe(false);
+  });
+
   it.each(["suspend-user", "erase-user", "prewarm-gateway"])(
     "keeps an interrupted %s operation available for restart re-drive",
     (kind) => {

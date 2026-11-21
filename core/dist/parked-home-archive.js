@@ -14,7 +14,7 @@ function hasVerifiedReturn(operation, ownerUid, isolated, shared) {
         operation.inputUid === ownerUid && operation.input.fromGatewayId === isolated &&
         operation.input.toGatewayId === shared && (park?.parked === "stopped" || park?.parked === "suspended");
 }
-function simpleHomePreparation(value) {
+export function simpleHomePreparation(value) {
     return value === undefined || (value.phase === "complete" &&
         value.id === undefined && value.source === undefined && value.target === undefined && value.copy === undefined);
 }

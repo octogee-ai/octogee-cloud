@@ -7,6 +7,7 @@ import { createGatewayCredentialEnsurers } from "./gateway-credential-ensurers.j
 import { createAgentStoreCredentialProvisioner, createAgentStoreCredentialRevoker, createAgentStoreCredentialRetirementVerifier, createAgentStoreOwnershipTransferer, assertNoUserAgentStores, eraseUserAgentStores } from "@octogee/core/agent-store-credentials";
 import { createUserAgentStoreErasure, preserveUserGatewayRetirement, type SharedAgentErasureSource } from "./lib/user-ops/agent-store-erasure.js";
 import { eraseUserComputerStorage } from "./lib/user-home-erasure.js";
+import { rearmArchiveBeforeAccountOperation, settleInterruptedHomeArchiveForErasure } from "./lib/recover-home-archive.js";
 import { createUserHomeProvider } from "./lib/user-home-provider.js";
 import { createHomeCopyClient } from "./lib/compute-home-copy.js";
 import type { ComputeRequest } from "./lib/compute-vm.js";
@@ -1728,6 +1729,7 @@ export const OPERATION_QUEUE_DRAIN_MS_DEFAULT = 20_000;
 // Restart re-drive candidates. The predicate below admits only migrations with
 // durable migration or recovery state; legacy rollout sub-operations remain rollout-owned.
 const RESUMABLE_OP_KINDS: ReadonlySet<string> = new Set([
+  "gateway-vm",
   "prewarm-gateway",
   "rollout",
   "restart-gateway",
@@ -1749,6 +1751,12 @@ async function attemptClaimOrQueueOperation(
     return await deps.store.transaction({ label: "operation-worker.claim" }, async (tx) => {
       const stored = await tx.journal.operations.get(op.id);
       if (stored === null) return { outcome: "skipped" as const };
+      const blockingArchive = GATEWAY_VM_SPEC ? await rearmArchiveBeforeAccountOperation(tx, stored) : null;
+      if (blockingArchive) {
+        const waitingOn = `home archive ${blockingArchive}`;
+        if (stored.waitingOn !== waitingOn) await tx.journal.operations.patch(op.id, { waitingOn });
+        return { outcome: "queued" as const };
+      }
       const freshOperation = operationFromRecord(stored);
       await assertOwnerOperationUnfenced(tx, op.id, freshOperation.input);
       if (freshOperation.kind === 'migrate-user') await assertMigrationRestartUnfenced(tx, freshOperation.input);
@@ -4109,6 +4117,7 @@ export function buildUserCloudCleanupDeps(
             const runtime = vmGatewayRuntimeRef.current;
             if (!runtime) throw new Error("the VM gateway runtime is not initialised; cannot delete the user's VM");
             const homes = createUserHomeServices(store, logFn);
+            await settleInterruptedHomeArchiveForErasure({ store, vm: homes.compute }, uid);
             return eraseUserComputerStorage({
               store, compute: homes.compute, deleteVm: ownerUid => runtime.deleteVm(ownerUid),
               removeStoppedHome: homes.provider.removeStoppedHome, copy: homes.copy,

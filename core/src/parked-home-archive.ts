@@ -23,7 +23,7 @@ function hasVerifiedReturn(operation: OperationRecord | null, ownerUid: string, 
     operation.input.toGatewayId === shared && (park?.parked === "stopped" || park?.parked === "suspended");
 }
 
-function simpleHomePreparation(value: PlatformUserRecord["home"]["homeMigration"]): boolean {
+export function simpleHomePreparation(value: PlatformUserRecord["home"]["homeMigration"]): boolean {
   return value === undefined || (value.phase === "complete" &&
     value.id === undefined && value.source === undefined && value.target === undefined && value.copy === undefined);
 }

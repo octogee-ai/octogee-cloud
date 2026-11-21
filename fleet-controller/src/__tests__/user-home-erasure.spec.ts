@@ -162,3 +162,12 @@ it("erases a restored backup even without activation, preserving the restored di
   expect(h.compute.eraseHomeSnapshot).toHaveBeenLastCalledWith(archivedHome.snapshot, "owner");
   expect(h.deleteVm).toHaveBeenCalledOnce();
 });
+
+it("erases an archived snapshot with a completed disk-free preparation marker", async () => {
+  const h = archiveFixture();
+  h.provisioning().homeMigration = { phase: "complete", preparedFor: { sizingProfile: "hobby" } };
+  await expect(h.erase()).resolves.toBe(true);
+  expect(h.compute.eraseHomeSnapshot).toHaveBeenCalledWith(archivedHome.snapshot, "owner");
+  expect(h.provisioning().homeArchive).toBeUndefined();
+  expect(h.provisioning().homeMigration).toBeUndefined();
+});
