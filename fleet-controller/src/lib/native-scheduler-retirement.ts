@@ -1,4 +1,6 @@
-import type { PlatformUserRecord, FleetRegistryRecord, GatewayRoot, OperationRecord, PlatformStateStore, UntypedRecord, UserHomeArchive } from "@octogee/core/platform-state";
+import { isDeepStrictEqual } from "node:util";
+import { builderReturnOperationId } from "@octogee/shared/types/isolated-operation-ids";
+import type { PlatformUserRecord, FleetRegistryRecord, GatewayRoot, OperationRecord, PlatformStateRepositories, PlatformStateStore, UntypedRecord, UserHomeArchive } from "@octogee/core/platform-state";
 import { archiveSchedulerCustodyMatches, retainedBootPreservesScheduler } from "@octogee/core/admin-fleet-router";
 import { migrationCancellationDeferred } from "@octogee/core/fleet-state";
 import type { MigrationClient } from "@octogee/core/fleet-migration-client";
@@ -111,14 +113,120 @@ type VmAuthority = { instanceId: string; instanceName: string; zone: string;
   restoredHome?: { id: string; source: string };
 };
 
-function admittedReplacementImage(image: UntypedRecord | undefined, pending: Retirement, targetGatewayId: string): VmAuthority["image"] | null {
-  if (!image || !retainedBootPreservesScheduler(image, pending, [pending.sourceGatewayId, targetGatewayId])) return null;
+const NUMERIC_INSTANCE_ID = /^[1-9]\d{0,19}$/u;
+const RELEASE_SHA = /^[0-9a-f]{40}$/u;
+
+function historicalReturnGeneration(op: OperationRecord | null, pending: Retirement): number | null {
+  if (!op || op.id !== pending.returnOperationId || op.inputUid !== pending.uid || !isCompletedNativeReturn(op, pending)) return null;
+  const generation = Number(op.id.split("-g").at(-1));
+  const park = op.output?.nativeSourcePark as UntypedRecord | undefined;
+  if (!Number.isSafeInteger(generation) || generation < 1 || op.id !== builderReturnOperationId(pending.sourceGatewayId, generation) ||
+      !["stopped", "suspended"].includes(park?.parked) || typeof op.completedAt !== "number" ||
+      !Number.isFinite(op.completedAt) || op.completedAt < pending.completedAt!) return null;
+  return generation;
+}
+
+type ParkedEdge = { previous: string; current: string; imageId: string; startedAt: number; completedAt: number };
+function provenParkStep(operation: OperationRecord, edge: ParkedEdge): boolean {
+  const steps = operation.steps?.filter(step => step.name === "verify-prewarmed-computer") ?? [];
+  const step = steps.length === 1 ? steps[0] : undefined;
+  return step?.status === "done" && step.detail === `instance=${edge.current} bootImage=${edge.imageId}` &&
+    typeof step.completedAt === "number" && step.completedAt >= edge.startedAt && step.completedAt <= edge.completedAt;
+}
+
+function samePrewarmGeneration(operation: OperationRecord, pending: Retirement, generation: number): boolean {
+  const { input } = operation;
+  return operation.kind === "prewarm-gateway" && operation.status === "succeeded" && operation.output?.prewarmState === "parked" &&
+    operation.inputUid === pending.uid && input.uid === pending.uid && input.gatewayId === pending.sourceGatewayId &&
+    operation.gatewayId === pending.sourceGatewayId && input.generation === generation &&
+    typeof input.sourceSha === "string" && RELEASE_SHA.test(input.sourceSha);
+}
+
+function numericIdentifier(value: unknown): value is string {
+  return typeof value === "string" && NUMERIC_INSTANCE_ID.test(value);
+}
+
+function orderedParkedTimes(operation: OperationRecord, startedAt: number, completedAt: number): boolean {
+  const activeAttemptAt = operation.startedAt ?? startedAt;
+  return operation.createdAt <= startedAt && startedAt <= activeAttemptAt && activeAttemptAt <= completedAt && completedAt <= Date.now();
+}
+
+function parseParkedEdge(operation: OperationRecord): ParkedEdge | null {
+  const { previousInstanceId: previous, instanceId: current, bootImageId: imageId } = operation.output ?? {};
+  const startedAt = operation.firstStartedAt ?? operation.startedAt;
+  const { completedAt } = operation;
+  if (!numericIdentifier(previous) || !numericIdentifier(current) || !numericIdentifier(imageId) ||
+      previous === current || imageId !== operation.input.bootImageId ||
+      typeof startedAt !== "number" || typeof completedAt !== "number") return null;
+  if (!orderedParkedTimes(operation, startedAt, completedAt)) return null;
+  const edge = { previous, current, imageId, startedAt, completedAt };
+  return provenParkStep(operation, edge) ? edge : null;
+}
+
+function uniqueParkedPath(edges: readonly ParkedEdge[], original: string, current: string, notBefore: number): ParkedEdge[] {
+  const byPrevious = new Map<string, ParkedEdge | null>();
+  for (const edge of edges) byPrevious.set(edge.previous, byPrevious.has(edge.previous) ? null : edge);
+  const path: ParkedEdge[] = [];
+  const seen = new Set([original]);
+  let source = original;
+  let earliest = notBefore;
+  while (source !== current) {
+    const edge = byPrevious.get(source);
+    if (!edge || edge.startedAt < earliest || seen.has(edge.current)) return [];
+    path.push(edge);
+    seen.add(edge.current);
+    source = edge.current;
+    earliest = edge.completedAt;
+  }
+  return path;
+}
+
+export function preservesLegacySchedulerRetirement(image: UntypedRecord, pending: Retirement, gateways: readonly string[]): boolean {
+  return isDeepStrictEqual(image.legacySchedulerRetirement, pending) &&
+    retainedBootPreservesScheduler({ ...image, nativeSchedulerRetirement: image.legacySchedulerRetirement }, pending, gateways);
+}
+
+function historicalEndpointMatches(path: readonly ParkedEdge[], image: UntypedRecord, sourceGatewayId: string): boolean {
+  const prior = path.at(-2);
+  const last = path.at(-1);
+  return !!prior && !!last && prior.imageId === image.previous?.id && last.imageId === image.id &&
+    last.previous === image.sourceComputer?.instanceId &&
+    image.operationId === `boot-${sourceGatewayId}-${last.previous}-${last.imageId}`;
+}
+
+export async function hasHistoricalSchedulerBootLineage(
+  state: PlatformStateRepositories, owner: PlatformUserRecord, pending: Retirement, image: UntypedRecord, instanceId: string,
+): Promise<boolean> {
+  if (owner.uid !== pending.uid || owner.home.homeDisk?.id !== pending.homeDiskId || owner.home.homeDisk.source !== pending.homeDiskSource ||
+      image.nativeSchedulerRetirement !== undefined || image.legacySchedulerRetirement !== undefined ||
+      !retainedBootPreservesScheduler({ ...image, nativeSchedulerRetirement: pending }, pending, [pending.sourceGatewayId])) return false;
+  const returned = await state.journal.operations.get(pending.returnOperationId);
+  const generation = historicalReturnGeneration(returned, pending);
+  if (generation === null || !returned?.completedAt) return false;
+  const prewarms = await state.journal.operations.listForUid(pending.uid, { kind: "prewarm-gateway", statuses: ["succeeded"] });
+  const edges = prewarms.flatMap(op => {
+    const edge = samePrewarmGeneration(op, pending, generation) ? parseParkedEdge(op) : null;
+    return edge && edge.startedAt >= returned.completedAt! ? [edge] : [];
+  });
+  const path = uniqueParkedPath(edges, pending.instanceId, instanceId, returned.completedAt);
+  return historicalEndpointMatches(path, image, pending.sourceGatewayId);
+}
+
+async function admittedReplacementImage(state: PlatformStateRepositories, user: PlatformUserRecord, pending: Retirement,
+  targetGatewayId: string, instanceId: string): Promise<VmAuthority["image"] | null> {
+  const image = user.home.homeDisk?.bootImage as UntypedRecord | undefined;
+  if (!image) return null;
   if (["name", "id", "project", "operationId"].some(key => typeof image[key] !== "string" || !image[key])) return null;
+  const gateways = [pending.sourceGatewayId, targetGatewayId];
+  if (!retainedBootPreservesScheduler(image, pending, gateways) && !preservesLegacySchedulerRetirement(image, pending, gateways) &&
+      !await hasHistoricalSchedulerBootLineage(state, user, pending, image, instanceId)) return null;
   return { name: image.name, id: image.id, project: image.project, operationId: image.operationId };
 }
 
-function vmAuthority(runtime: FleetRegistryRecord | null, user: PlatformUserRecord | null, pending: Retirement,
-  targetGatewayId: string, archive: ArchiveAuthority | null): VmAuthority | null {
+async function vmAuthority(state: PlatformStateRepositories, observed: {
+  runtime: FleetRegistryRecord | null; user: PlatformUserRecord | null; pending: Retirement; targetGatewayId: string; archive: ArchiveAuthority | null;
+}): Promise<VmAuthority | null> {
+  const { runtime, user, pending, targetGatewayId, archive } = observed;
   const vm = runtime?.vm;
   if (archive) {
     if (!vm || vm.instanceId !== archive.restoredInstanceId || vm.zone !== archive.restoredDisk.zone) return null;
@@ -127,7 +235,7 @@ function vmAuthority(runtime: FleetRegistryRecord | null, user: PlatformUserReco
   }
   if (vm?.instanceName !== pending.instanceName || vm.zone !== pending.zone || typeof vm.instanceId !== "string") return null;
   if (vm.instanceId === pending.instanceId) return { instanceId: vm.instanceId, instanceName: vm.instanceName, zone: vm.zone };
-  const image = admittedReplacementImage(user?.home.homeDisk?.bootImage as UntypedRecord | undefined, pending, targetGatewayId);
+  const image = user ? await admittedReplacementImage(state, user, pending, targetGatewayId, vm.instanceId) : null;
   return image ? { instanceId: vm.instanceId, instanceName: vm.instanceName, zone: vm.zone, image } : null;
 }
 
@@ -143,7 +251,7 @@ async function authorize(deps: Deps, input: NativeSchedulerRetirementInput, pend
       tx.journal.operations.getMany([...new Set([input.operationId, pending.returnOperationId])]),
     ]);
     const archive = user ? restoredSchedulerHome(user, input, pending) : null;
-    const authority = vmAuthority(runtime, user, pending, input.gatewayId, archive);
+    const authority = await vmAuthority(tx, { runtime, user, pending, targetGatewayId: input.gatewayId, archive });
     const exact = user !== null && ownerMatches(user, input, pending, archive) &&
       targetMatches(root, runtime, input, authority) &&
       (!expected || JSON.stringify(authority) === JSON.stringify(expected)) &&

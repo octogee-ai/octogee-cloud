@@ -1,8 +1,8 @@
 import { retainedBootPreservesScheduler } from "@octogee/core/admin-fleet-router";
-import type { OpaqueMap, PlatformStateStore, PlatformUserRecord } from "@octogee/core/platform-state";
+import type { OpaqueMap, PlatformStateRepositories, PlatformStateStore, PlatformUserRecord } from "@octogee/core/platform-state";
 import type { GatewayVmSpec, RetainedUserHome } from "@octogee/shared/types/glm";
 import type { ComputeImageRef, GatewayVmClient } from "./compute-vm.js";
-import { readNativeSchedulerRetirement } from "./native-scheduler-retirement.js";
+import { hasHistoricalSchedulerBootLineage, preservesLegacySchedulerRetirement, readNativeSchedulerRetirement } from "./native-scheduler-retirement.js";
 
 export interface RetainedBootImage extends ComputeImageRef {
   project: string;
@@ -11,6 +11,7 @@ export interface RetainedBootImage extends ComputeImageRef {
   operationId: string | null;
   sourceComputer: { name: string; zone: string; instanceId: string; gatewayId: string } | null;
   nativeSchedulerRetirement?: OpaqueMap;
+  legacySchedulerRetirement?: OpaqueMap;
 }
 type BootImages = Pick<GatewayVmClient, "readImage" | "readFamilyImage">;
 
@@ -28,30 +29,51 @@ function assertPinnedSource(prior: RetainedBootImage, previous: ComputeImageRef,
     || prior.previous?.id !== previous.id || prior.previous?.name !== previous.name) throw new Error("retained boot operation source changed");
 }
 
-function previousBootPreservesScheduler(pinned: RetainedBootImage | undefined, previous: ComputeImageRef,
-  pending: OpaqueMap, gatewayId: string): boolean {
-  return pinned !== undefined && !!pinned.operationId && pinned.id === previous.id && pinned.name === previous.name &&
-    retainedBootPreservesScheduler({ ...pinned }, pending, [gatewayId]);
+function hasExactPredecessor(pinned: RetainedBootImage | undefined, previous: ComputeImageRef): pinned is RetainedBootImage {
+  return pinned !== undefined && !!pinned.operationId && pinned.id === previous.id && pinned.name === previous.name;
 }
 
-function schedulerRetirementForReplacement(owner: PlatformUserRecord, home: RetainedUserHome,
-  source: NonNullable<RetainedBootImage["sourceComputer"]>, previous: ComputeImageRef, pinned: RetainedBootImage | undefined): OpaqueMap | undefined {
-  const pending = readNativeSchedulerRetirement(owner.fences.pendingNativeSchedulerRetirement);
-  if (!pending) return undefined;
+function provisionedSuccessor(owner: PlatformUserRecord, sourceGatewayId: string, previousGatewayId: string): boolean {
+  const lease = owner.activationLease;
+  return lease?.status === "provisioning" && (sourceGatewayId === previousGatewayId || lease.targetGatewayId === sourceGatewayId);
+}
+
+type SchedulerRetirement = NonNullable<ReturnType<typeof readNativeSchedulerRetirement>>;
+type BootSource = NonNullable<RetainedBootImage["sourceComputer"]>;
+function assertSchedulerSource(owner: PlatformUserRecord, home: RetainedUserHome, source: BootSource, pending: SchedulerRetirement): void {
   if (pending.uid !== owner.uid || pending.slug !== owner.slug || pending.homeDiskId !== home.id ||
       pending.homeDiskSource !== home.source || pending.zone !== source.zone || pending.instanceName !== source.name) {
     throw new Error("Retained boot replacement scheduler home or owner identity changed");
   }
+}
+
+async function schedulerRetirementForReplacement(state: PlatformStateRepositories, owner: PlatformUserRecord, input: {
+  home: RetainedUserHome; source: BootSource; previous: ComputeImageRef; pinned: RetainedBootImage | undefined;
+}): Promise<Pick<RetainedBootImage, "nativeSchedulerRetirement" | "legacySchedulerRetirement">> {
+  const { home, source, previous, pinned } = input;
+  const pending = readNativeSchedulerRetirement(owner.fences.pendingNativeSchedulerRetirement);
+  if (!pending) return {};
+  assertSchedulerSource(owner, home, source, pending);
   if (pending.instanceId === source.instanceId) {
     if (pending.sourceGatewayId !== source.gatewayId && owner.activationLease?.targetGatewayId !== source.gatewayId) {
       throw new Error("Retained boot replacement scheduler source gateway changed");
     }
-    return undefined;
+    return {};
   }
-  if (pending.completedAt === undefined || !previousBootPreservesScheduler(pinned, previous, pending, source.gatewayId)) {
+  if (pending.completedAt === undefined || !hasExactPredecessor(pinned, previous)) {
     throw new Error("Retained boot replacement cannot prove scheduler lineage from the previous image");
   }
-  return pending;
+  if (retainedBootPreservesScheduler({ ...pinned }, pending, [source.gatewayId])) return { nativeSchedulerRetirement: pending };
+  if (await preservesHistoricalBoot(state, owner, source, pinned, pending)) return { legacySchedulerRetirement: pending };
+  throw new Error("Retained boot replacement cannot prove scheduler lineage from the previous image");
+}
+
+async function preservesHistoricalBoot(state: PlatformStateRepositories, owner: PlatformUserRecord,
+  source: NonNullable<RetainedBootImage["sourceComputer"]>, pinned: RetainedBootImage,
+  pending: SchedulerRetirement): Promise<boolean> {
+  if (!provisionedSuccessor(owner, source.gatewayId, pending.sourceGatewayId)) return false;
+  return preservesLegacySchedulerRetirement({ ...pinned }, pending, [pending.sourceGatewayId, source.gatewayId]) ||
+    await hasHistoricalSchedulerBootLineage(state, owner, pending, { ...pinned }, source.instanceId);
 }
 
 export async function selectRetainedBootImage(input: { store: PlatformStateStore; vm: BootImages; ownerUid: string;
@@ -75,9 +97,9 @@ export async function selectRetainedBootImage(input: { store: PlatformStateStore
       if (!fresh || current?.id !== home.id || current.source !== home.source) throw new Error("retained home owner/anchor changed before image selection");
       const currentImage = current.bootImage as RetainedBootImage | undefined;
       if (currentImage?.id !== prior?.id || currentImage?.operationId !== prior?.operationId) throw new Error("retained boot selection changed concurrently");
-      const nativeSchedulerRetirement = previous && input.sourceComputer
-        ? schedulerRetirementForReplacement(fresh, home, input.sourceComputer, previous, currentImage) : undefined;
-      const selected = nativeSchedulerRetirement ? { ...candidate, nativeSchedulerRetirement } : candidate;
+      const retirement = previous && input.sourceComputer
+        ? await schedulerRetirementForReplacement(tx, fresh, { home, source: input.sourceComputer, previous, pinned: currentImage }) : {};
+      const selected = { ...candidate, ...retirement };
       await tx.users.records.patch(ownerUid, { home: { homeDisk: { ...current, bootImage: selected } } }, { revision: fresh.revision });
       return selected;
     });
