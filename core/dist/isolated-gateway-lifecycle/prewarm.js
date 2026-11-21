@@ -70,10 +70,13 @@ function eligibleSharedSource(owner, sharedGatewayIds) {
 }
 function parkedInstanceId(runtime, sourceVm) {
     const vm = runtime?.vm;
-    if (runtime?.runtime !== "gce-vm" || vm?.status !== "SUSPENDED" ||
+    if (runtime?.runtime !== "gce-vm" || !vm ||
         (sourceVm && sourceVm.instanceId !== vm.instanceId))
         return null;
-    return vm.instanceId;
+    if (sourceVm && (vm.status === "RUNNING" || vm.status === "SUSPENDING")) {
+        throw new Error("Parked computer is waiting for VM suspension to be recorded");
+    }
+    return vm.status === "SUSPENDED" ? vm.instanceId : null;
 }
 function conflictingPrewarmOwnerOperation(conflicts, id) {
     return conflicts.some((entry) => entry.id !== id &&
@@ -119,9 +122,11 @@ export async function startParkedGatewayPrewarm(store, operation, now, sourceVm)
         if (result)
             return result;
         const sharedId = eligibleSharedSource(owner, pool?.sharedGatewayIds ?? []);
-        const instanceId = parkedInstanceId(runtime, sourceVm);
-        if (!sharedId || !instanceId || !empty || !parkedRootEligible(root, uid, generation) ||
+        if (!sharedId || !empty || !parkedRootEligible(root, uid, generation) ||
             conflictingPrewarmOwnerOperation(conflicts, operation.id))
+            return { state: "ineligible" };
+        const instanceId = parkedInstanceId(runtime, sourceVm);
+        if (!instanceId)
             return { state: "ineligible" };
         const [assignment, release] = await Promise.all([
             tx.gateways.assignments.get(sharedId, uid), tx.gateways.releases.get(gatewayId, root.liveRelease),

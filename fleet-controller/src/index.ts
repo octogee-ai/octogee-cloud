@@ -191,6 +191,7 @@ import { recoverSharedRestoreRuntime } from "./lib/shared-restore-runtime.js";
 import { schedulerHandoffAwaitingRelease, startSchedulerHandoffRelease } from "./scheduler-handoff-release.js";
 import { createRecycleGatewayHandler } from "./handlers/recycle-gateway.js";
 import { createParkedPrewarmHandler } from "./handlers/parked-prewarm.js";
+import { PARKED_PREWARM_KIND } from "@octogee/core/isolated-gateway-lifecycle";
 import { createGatewayVmHandler } from "./handlers/gateway-vm.js";
 import { createGatewayVmClient } from "./lib/compute-vm.js";
 import { pausedIsolatedRetirementSourceFencedOff } from "./lib/native-retirement-telemetry.js";
@@ -1750,7 +1751,10 @@ async function attemptClaimOrQueueOperation(
       if (freshOperation.kind === 'migrate-user') await assertMigrationRestartUnfenced(tx, freshOperation.input);
       let runningOpsSameKind: OperationRef[] = [];
       let pendingOpsSameKind: PendingOperationRef[] = [];
-      if (isSeriallyExclusiveKind(op.kind)) {
+      if (freshOperation.kind === PARKED_PREWARM_KIND) {
+        const running = await tx.journal.operations.listByKind(PARKED_PREWARM_KIND, ["running"]);
+        runningOpsSameKind = running.map(({ id, kind, input }) => ({ id, kind, input }));
+      } else if (isSeriallyExclusiveKind(op.kind)) {
         const [running, pending] = await Promise.all([
           tx.journal.operations.listByStatus(["running"]),
           tx.journal.operations.listByStatus(["pending"]),

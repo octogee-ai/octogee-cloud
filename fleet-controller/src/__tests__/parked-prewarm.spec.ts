@@ -24,17 +24,18 @@ function fixture() {
   const listeners = new Map<string, (event: { kind: "resync"; reason: "notification-gap" }) => void>();
   const close = vi.fn(async () => undefined);
   const notify = (aggregate: string) => listeners.get(aggregate)?.({ kind: "resync", reason: "notification-gap" });
-  const root = { desiredStatus: "running", liveRelease: 2, allocation: { generation: 5 } };
+  const root = { gatewayClass: "isolated", ownerUid: "alice", desiredStatus: "running", liveRelease: 2, allocation: { generation: 5 } };
   const registry = { release: 2, vm: { status: "SUSPENDED", instanceId: "987" }, vmBootRecovery: {} };
+  const owner = { gateway: { gatewayId: "shared" }, activationLease: { status: "parked" } };
   let persisted = operation;
   const store = {
     watch: (request: { aggregate: string }, listener: { onEvent: (event: { kind: "resync"; reason: "notification-gap" }) => void }) => {
       listeners.set(request.aggregate, listener.onEvent);
       return { close };
     },
-    gateways: { roots: { get: async () => root } },
+    gateways: { roots: { get: async () => root }, assignments: { get: async () => ({ state: "serving", epoch: 4 }) } },
     fleetRegistry: { get: async () => registry },
-    users: { records: { get: async () => ({ gateway: { gatewayId: "shared" }, activationLease: { status: "parked" } }) } },
+    users: { records: { get: async () => owner } },
     journal: { operations: { get: async () => persisted } },
   } as unknown as PlatformStateStore;
   const observe = vi.fn(async () => ({
@@ -43,8 +44,9 @@ function fixture() {
     bootImageId: registry.vm.instanceId === "987" ? "100" : "123",
     recoveryReady: true,
   }));
+  const bootImage = vi.fn(async () => "123");
   const runtime = {
-    prewarmBootImageId: async () => "123",
+    prewarmBootImageId: bootImage,
     prewarmVmObservation: observe,
   } as unknown as VmGatewayRuntime;
   const probeReady = vi.fn(async () => true);
@@ -58,7 +60,7 @@ function fixture() {
   const handler = createParkedPrewarmHandler({ store, readVmRuntime: () => runtime, requestReconcileTick, probeReady, now: () => 625 });
   return {
     run: () => handler(operation, { reportStep }),
-    observe, probeReady, reportStep, notify, close, root, registry,
+    bootImage, observe, probeReady, reportStep, notify, close, root, registry, owner,
     persistRepair: () => { persisted = { ...operation, output: { prewarmState: "repairing", previousBootImageId: "100", repairStartedAt: 625 } }; },
     runVm: (instanceId = "998") => { registry.vm = { status: "RUNNING", instanceId }; notify("fleetRegistry"); },
     suspendVm: () => { registry.vm.status = "SUSPENDED"; notify("fleetRegistry"); },
@@ -66,6 +68,34 @@ function fixture() {
 }
 
 describe("parked prewarm operation", () => {
+  it("retries a parked computer while the previous attempt is still suspending it", async () => {
+    const h = fixture();
+    h.root.desiredStatus = "paused";
+    h.runVm("987");
+    await expect(h.run()).rejects.toThrow("still suspending");
+    expect(startParkedGatewayPrewarm).not.toHaveBeenCalled();
+  });
+
+  it("records a superseded image without waking the computer", async () => {
+    const h = fixture();
+    h.bootImage.mockResolvedValueOnce("124");
+    await expect(h.run()).resolves.toMatchObject({ success: true, output: { prewarmState: "superseded" } });
+    expect(h.observe).not.toHaveBeenCalled();
+    expect(startParkedGatewayPrewarm).not.toHaveBeenCalled();
+  });
+
+  it("releases the claim for retry when shared placement changes during recovery", async () => {
+    const h = fixture();
+    vi.mocked(startParkedGatewayPrewarm).mockImplementationOnce(async () => {
+      h.persistRepair();
+      h.owner.gateway.gatewayId = "new-shared";
+      return { state: "repairing", claim };
+    });
+    await expect(h.run()).rejects.toThrow("Shared assignment changed");
+    expect(finishParkedGatewayPrewarm).toHaveBeenCalledWith(expect.anything(), operation, 625, "rollback");
+    expect(bootRepairedParkedGateway).not.toHaveBeenCalled();
+  }, 1000);
+
   it("waits for the instance-bound healthy probe and wakes on suspend publication", async () => {
     const h = fixture();
     h.probeReady.mockResolvedValueOnce(false);

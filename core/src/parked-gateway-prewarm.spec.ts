@@ -46,4 +46,19 @@ describe("Ship parked computer admission", () => {
     expect((await enqueueParkedGatewayPrewarm(fixture(), { ...request, uid: "bob" })).status).toBe("ineligible");
     expect((await enqueueParkedGatewayPrewarm(fixture("running"), request)).status).toBe("ineligible");
   });
+
+  it("records a newer upgrade behind an active upgrade of the same owner-bound computer", async () => {
+    const store = fixture();
+    const active = await enqueueParkedGatewayPrewarm(store, request);
+    if (active.status !== "queued") throw new Error(active.reason);
+    await store.journal.operations.patch(active.operationId, { status: "running", output: { prewarmState: "repairing" } });
+    await store.gateways.roots.patch(request.gatewayId, { desiredStatus: "running" });
+
+    const newer = { ...request, sourceSha: "b".repeat(40), bootImageId: "999" };
+    const queued = await enqueueParkedGatewayPrewarm(store, newer);
+    expect(queued.status).toBe("queued");
+    expect(queued).not.toEqual(active);
+    expect(await enqueueParkedGatewayPrewarm(store, newer)).toEqual(queued);
+    expect((await store.journal.operations.get(active.operationId))?.status).toBe("running");
+  });
 });
