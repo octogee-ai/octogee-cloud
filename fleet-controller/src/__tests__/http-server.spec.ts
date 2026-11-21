@@ -624,23 +624,41 @@ describe("createHttpServer — admin gateway routes", () => {
     expect(res.text.split(`event: placement-reset\ndata: {"collection":"${collection}"`)).toHaveLength(3);
   });
 
-  it("wakes placement when a ready runtime heartbeat actually expires without another write", async () => {
+  it("wakes placement at heartbeat expiry even if the timer first fires before the wall-clock deadline", async () => {
     type RuntimeSnapshot = Extract<WatchEvent<"fleetRegistry">, { kind: "snapshot" }>;
+    let snapshotDelivered!: () => void;
+    const primed = new Promise<void>(resolve => { snapshotDelivered = resolve; });
+    const now = Date.now();
+    vi.useFakeTimers({ now, toFake: ["Date", "setTimeout", "clearTimeout"] });
     const watches = createWatchRegistry({
-      script: aggregate => aggregate === "fleetRegistry" ? [{
-        kind: "snapshot",
-        cursor: FIXTURE_CURSOR,
-        records: [{
-          ...servingRuntime("gw-fixture", { heartbeat: { lastHeartbeatAt: Date.now() - GATEWAY_UNREACHABLE_AFTER_MS + 30 } }),
-          revision: "test-revision",
-        } as RuntimeSnapshot["records"][number]],
-      }] : [SNAPSHOT],
+      script: aggregate => {
+        if (aggregate !== "fleetRegistry") return [SNAPSHOT];
+        snapshotDelivered();
+        return [{
+          kind: "snapshot",
+          cursor: FIXTURE_CURSOR,
+          records: [{
+            ...servingRuntime("gw-fixture", { heartbeat: { lastHeartbeatAt: now - GATEWAY_UNREACHABLE_AFTER_MS + 30 } }),
+            revision: "test-revision",
+          } as RuntimeSnapshot["records"][number]],
+        }];
+      },
     });
-    const res = await request(createHttpServer(buildDeps(store, {}, watches)))
+    const req = request(createHttpServer(buildDeps(store, {}, watches)))
       .get("/api/admin/fleet-events?placement=1&once=1")
-      .set("Authorization", "Bearer admin-token")
-      .timeout(1_000);
-    expect(res.text).toContain('event: placement-changed\ndata: {"collection":"glmGateways"');
+      .set("Authorization", "Bearer admin-token");
+    const response = req.then(res => res);
+    try {
+      await primed;
+      vi.setSystemTime(now - 10);
+      await vi.advanceTimersByTimeAsync(31);
+      expect(watches.activeCount()).toBeGreaterThan(0);
+      await vi.advanceTimersByTimeAsync(10);
+      expect((await response).text).toContain('event: placement-changed\ndata: {"collection":"glmGateways"');
+    } finally {
+      req.abort();
+      vi.useRealTimers();
+    }
   });
 
   it("requires admin auth for placement event hints", async () => {
