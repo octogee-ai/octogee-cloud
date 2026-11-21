@@ -625,6 +625,69 @@ describe("createHttpServer — admin gateway routes", () => {
     expect(res.text.split(`event: placement-reset\ndata: {"collection":"${collection}"`)).toHaveLength(3);
   });
 
+  it.each([
+    { leaseStatus: "activating", operationStatus: "rolled-back", operationPrefix: "builder-activate", boundary: "after", terminalBeforeWatch: true },
+    { leaseStatus: "returning", operationStatus: "succeeded", operationPrefix: "builder-return", boundary: "after", terminalBeforeWatch: true },
+    { leaseStatus: "activating", operationStatus: "rolled-back", operationPrefix: "builder-activate", boundary: "after", terminalBeforeWatch: false },
+    { leaseStatus: "activating", operationStatus: "rolled-back", operationPrefix: "builder-activate", boundary: "equal", terminalBeforeWatch: true },
+  ] as const)("wakes for empty telemetry only after the $leaseStatus retirement fence ($boundary, already terminal: $terminalBeforeWatch)", async ({
+    leaseStatus, operationStatus, operationPrefix, boundary, terminalBeforeWatch,
+  }) => {
+    const now = Date.now();
+    const targetGatewayId = "disposable-fixture";
+    const operationId = `${operationPrefix}-${targetGatewayId}-g7`;
+    const terminal = {
+      kind: "migrate-user" as const, status: operationStatus, input: { uid: "uid-fixture" },
+      createdBy: "test", createdAt: now - 100, startedAt: now - 50, completedAt: now - 20, steps: [],
+    };
+    const running = { ...terminal, status: "running" as const, completedAt: null };
+    setOperation(store, operationId, terminalBeforeWatch ? terminal : running);
+    const user = {
+      uid: "uid-fixture", slug: null, mattermostUserId: null, admitted: false,
+      persona: null, workspaceId: null, role: null, createdAt: 1, updatedAt: 1,
+      provisioning: {}, gateway: null, openclaw: {}, agents: { agentIds: [], activatedAgents: [] },
+      accountLifecycle: null, fences: {}, home: {},
+      activationLease: { leaseId: "private-lease", generation: 7, status: leaseStatus, targetGatewayId },
+      revision: "test-revision" as Revision,
+    } satisfies Stored<PlatformUserRecord>;
+    type WatchRecord<A extends WatchAggregate> = Extract<WatchEvent<A>, { kind: "snapshot" }>["records"][number];
+    const runtime = (gatewayId: string, lastHeartbeatAt: number) => ({
+      ...servingRuntime(gatewayId, { heartbeat: { lastHeartbeatAt } }), revision: "test-revision",
+    }) as WatchRecord<"fleetRegistry">;
+    const watches = createWatchRegistry({
+      script: aggregate => {
+        if (aggregate === "builders") return [{ ...SNAPSHOT, records: [user] }];
+        if (aggregate === "operations" && !terminalBeforeWatch) {
+          setOperation(store, operationId, terminal);
+          return [
+            { ...SNAPSHOT, records: [{ ...running, id: operationId, revision: "test-revision" as Revision } satisfies WatchRecord<"operations">] },
+            { ...CHANGES, changes: [{ type: "removed", key: operationId, record: null }] },
+          ];
+        }
+        if (aggregate !== "fleetRegistry") return [SNAPSHOT];
+        return [
+          { ...SNAPSHOT, records: [runtime(targetGatewayId, now - 40), runtime("unrelated", now - 40)] },
+          { ...CHANGES, changes: [
+            { type: "modified", key: "unrelated", record: runtime("unrelated", now - 10) },
+            { type: "modified", key: targetGatewayId, record: runtime(targetGatewayId, now - 20) },
+            ...(boundary === "after" ? [{ type: "modified" as const, key: targetGatewayId, record: runtime(targetGatewayId, now - 10) }] : []),
+          ] },
+        ];
+      },
+    });
+    const response = request(createHttpServer(buildDeps(store, {}, watches)))
+      .get("/api/admin/fleet-events?placement=1&once=1")
+      .set("Authorization", "Bearer admin-token")
+      .timeout(500);
+    if (boundary === "equal") {
+      await expect(response).rejects.toThrow("Timeout");
+      return;
+    }
+    const { text } = await response;
+    expect(text).toContain('event: placement-changed\ndata: {"collection":"glmGateways"');
+    expect(text).not.toContain(targetGatewayId);
+  });
+
   it("wakes placement at heartbeat expiry even if the timer first fires before the wall-clock deadline", async () => {
     type RuntimeSnapshot = Extract<WatchEvent<"fleetRegistry">, { kind: "snapshot" }>;
     let snapshotDelivered!: () => void;
