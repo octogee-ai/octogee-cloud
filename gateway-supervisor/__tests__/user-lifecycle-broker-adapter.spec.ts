@@ -233,6 +233,8 @@ const mocks = vi.hoisted(() => ({
   readActivationManifest: vi.fn(),
   applyOpenClawActivationManifest: vi.fn(),
   removeActivationManifest: vi.fn(),
+  captureSourceWorkspaceIdentities: vi.fn(),
+  restoreSourceWorkspaceIdentities: vi.fn(),
 }));
 const offlineDetachMocks = vi.hoisted(() => ({ run: vi.fn() }));
 vi.mock('../lib/openclaw-cli.js', async importOriginal => ({
@@ -319,8 +321,12 @@ const routingActivationMocks = vi.hoisted(() => ({
 
 vi.mock("../lib/migration-activation-manifest.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/migration-activation-manifest.js")>();
+  mocks.captureSourceWorkspaceIdentities.mockImplementation(actual.captureSourceWorkspaceIdentities);
+  mocks.restoreSourceWorkspaceIdentities.mockImplementation(actual.restoreSourceWorkspaceIdentities);
   return {
     ...actual,
+    captureSourceWorkspaceIdentities: mocks.captureSourceWorkspaceIdentities,
+    restoreSourceWorkspaceIdentities: mocks.restoreSourceWorkspaceIdentities,
     readActivationManifest: mocks.readActivationManifest,
     applyOpenClawActivationManifest: mocks.applyOpenClawActivationManifest,
     removeActivationManifest: mocks.removeActivationManifest,
@@ -796,6 +802,108 @@ describe("buildBrokeredLifecycleAdapter migration import activation", () => {
       if (priorConfig) await fs.writeFile(OPENCLAW_CONFIG, priorConfig);
       else await fs.rm(OPENCLAW_CONFIG, { force: true });
       await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    { count: 1, mode: "complete" },
+    { count: 5, mode: "complete" },
+    { count: 5, mode: "partial retry" },
+    { count: 5, mode: "fully replayed" },
+    { count: 5, mode: "native refusal" },
+    { count: 5, mode: "authority changed" },
+    { count: 5, mode: "wrong anchor epoch" },
+    { count: 5, mode: "missing source anchor" },
+  ])("batches retained Shared source rollback for $count agents ($mode)", async ({ count, mode }) => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "shared-rollback-roster-"));
+    const priorConfig = await fs.readFile(OPENCLAW_CONFIG).catch(() => undefined);
+    vi.stubEnv("OPENCLAW_STATE_DIR", stateDir);
+    vi.stubEnv("GATEWAY_ID", "shared-source");
+    vi.stubEnv("POD_UID", "source-pod");
+    const slug = "tester10";
+    const custody = { migrationId: "mig-source-rollback", uid: "uid-tester10", gatewayId: "shared-source", podUid: "source-pod", epoch: 3 };
+    const entries = Array.from({ length: count }, (_, index) => {
+      const accountId = index === 0 ? `${slug}-coach` : `${slug}-proj-p${index}`;
+      const agentId = index === 0 ? `octogee-${slug}-coach` : `octogee-${slug}-proj-p${index}-coach`;
+      return { agentId, accountId, agent: { id: agentId, workspace: path.join(testRuntime.dir, "customers", slug, ...(index === 0 ? [] : ["projects", `p${index}`])) },
+        mattermostAccount: { botToken: "synthetic-token" }, bindings: [] };
+    });
+    const anchors = entries.map(({ agentId }, index) => ({
+      agentId, storeId: `aabbccdd-eeff-4123-8123-${index.toString().padStart(12, "0")}`,
+      schema: `octogee_agent_aabbccddeeff${index}`,
+    }));
+    const manifest = { ...entries[0], version: 2, slug, appliedFingerprint: "rollback-roster", projectAgents: entries.slice(1),
+      sourceWorkspaceIdentities: { ...custody, files: entries.map(({ agentId }) => ({ agentId, content: null, sha256: null })) } };
+    const firstMissing = mode === "partial retry" ? 1 : mode === "fully replayed" ? count : 0;
+    const configured = new Set(entries.slice(0, firstMissing).map(entry => entry.agentId));
+    let epoch = custody.epoch;
+    const batch = vi.fn(async ({ agents }: Parameters<GatewayRpcClient["agentsRestoreMany"]>[0]) => {
+      if (mode === "native refusal") throw new Error("Native retained restore refused");
+      for (const agent of agents) configured.add(agent.agentId);
+      if (mode === "authority changed") epoch++;
+      return { ok: true as const, reloadApplied: true as const, agents: agents.map(agent => ({
+        ...agent, agentDir: path.join(stateDir, "agents", agent.agentId, "agent"),
+      })) };
+    });
+    try {
+      await fs.writeFile(OPENCLAW_CONFIG, JSON.stringify({ database: { engine: "postgres" } }));
+      const localAnchors = mode === "missing source anchor" ? anchors.slice(0, -1) : anchors;
+      await landAgentAnchors(stateDir, localAnchors);
+      mocks.readActivationManifest.mockResolvedValue(manifest);
+      mocks.captureSourceWorkspaceIdentities.mockImplementationOnce(async () => manifest);
+      mocks.restoreSourceWorkspaceIdentities.mockImplementationOnce(async () => undefined);
+      anchorQuery.mockImplementation(async (target, sql) => sql.includes("openclaw_schema_meta")
+        ? [{ store_id: target.storeId }] : [{ agent_id: anchors.find(anchor => anchor.schema === target.schema)?.agentId }]);
+      const rpc = mkGatewayRpc({
+        agentsRestoreMany: batch,
+        configGet: vi.fn(async () => configSnapshot({ agents: { entries: Object.fromEntries(entries
+          .filter(entry => configured.has(entry.agentId)).map(entry => [entry.agentId, entry.agent])) },
+          channels: { mattermost: { accounts: Object.fromEntries(entries.map(({ accountId }) => [accountId, {}])) } },
+        })),
+        channelsStatus: vi.fn(async () => ({ channelAccounts: { mattermost: entries.map(({ accountId }) => ({
+          accountId, running: true, connected: true,
+        })) } })),
+      });
+      const report = vi.fn(async () => undefined);
+      const client = mkClient({
+        userSnapshot: vi.fn(async () => ({ uid: custody.uid, slug, gatewayId: custody.gatewayId, status: "complete" }) as FleetBrokerUserSnapshot),
+        assignmentRoster: vi.fn(async () => [{ uid: custody.uid, state: "quiescing", epoch }]),
+        readAgentAnchors: vi.fn(async () => ({ anchors, assignment: { uid: custody.uid, epoch: mode === "wrong anchor epoch" ? epoch+1 : epoch, state: "quiescing" } })),
+        reportAgentAnchors: report,
+      });
+      const adapter = buildBrokeredLifecycleAdapter({ client, rpc, log: vi.fn(), isIsolatedGateway: () => false });
+      const activation = adapter.resumeUser(slug, { migrationId: custody.migrationId });
+      const refusals: Record<string, string> = {
+        "authority changed": "custody changed",
+        "wrong anchor epoch": "custody changed",
+        "native refusal": "Native retained restore refused",
+        "missing source anchor": "requires existing local and recorded identities",
+      };
+      if (refusals[mode]) {
+        await expect(activation).rejects.toThrow(refusals[mode]);
+        expect(batch).toHaveBeenCalledTimes(mode === "wrong anchor epoch" || mode === "missing source anchor" ? 0 : 1);
+        expect(report).not.toHaveBeenCalled();
+        expect(mocks.applyOpenClawActivationManifest).not.toHaveBeenCalled();
+        expect(rpc.channelsStart).not.toHaveBeenCalled();
+      } else {
+        await activation;
+        if (mode === "fully replayed") expect(batch).not.toHaveBeenCalled();
+        else expect(batch).toHaveBeenCalledExactlyOnceWith({ agents: anchors.slice(firstMissing).map((anchor, index) => ({
+          ...anchor, name: anchor.agentId, workspace: entries[firstMissing+index].agent.workspace,
+        })) });
+        expect(report).toHaveBeenCalledOnce();
+        expect(rpc.channelsStart).toHaveBeenCalled();
+      }
+      expect(rpc.agentsCreate).not.toHaveBeenCalled();
+      expect(await readLocalAgentAnchors(stateDir, entries.map(entry => entry.agentId))).toEqual(localAnchors);
+    } finally {
+      mocks.restoreSourceWorkspaceIdentities.mockReset();
+      const real = await vi.importActual<typeof import("../lib/migration-activation-manifest.js")>("../lib/migration-activation-manifest.js");
+      mocks.restoreSourceWorkspaceIdentities.mockImplementation(real.restoreSourceWorkspaceIdentities);
+      vi.unstubAllEnvs();
+      if (priorConfig) await fs.writeFile(OPENCLAW_CONFIG, priorConfig);
+      else await fs.rm(OPENCLAW_CONFIG, { force: true });
+      await fs.rm(stateDir, { recursive: true, force: true });
     }
   });
 
