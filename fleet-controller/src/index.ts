@@ -2859,6 +2859,7 @@ async function createControllerRuntime(
       journalBootUpgrade: createBootUpgradeJournal(store),
       wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
       onVmRuntimeSettled: (gatewayId) => convergeSettledVm(gatewayId),
+      onVmDeploymentPublished: (gatewayId) => convergeSettledVm(gatewayId),
       now: () => Date.now(),
       log,
     })
