@@ -149,6 +149,7 @@ import { assertActiveOperationClaim, assertUserRestoreSettled, createOperationCo
 import {
   compareOperationQueueOrder,
   decideOperationClaim,
+  findSerialConflict,
   isSeriallyExclusiveKind,
   isUnstartedUserReturn,
   type OperationRef,
@@ -1704,39 +1705,109 @@ function operationFromRecord(record: Stored<OperationRecord>): Operation {
   return operation;
 }
 
-function runnablePendingOperations(event: WatchEvent<"operations">): readonly Stored<OperationRecord>[] {
-  if (event.kind === "snapshot") return event.records;
-  if (event.kind === "resync") return [];
-  return event.changes.flatMap(({ type, record }) => {
-    if (!record || type === "removed") return [];
-    const readinessWaitCleared = record.output?.isolatedGatewayReadinessChecks !== undefined &&
-      record.waitingOn == null && record.nextAttemptAt == null;
-    return type === "added" || readinessWaitCleared ? [record] : [];
-  });
+function releasesOperationQueueScope(
+  prior: Stored<OperationRecord> | undefined,
+  next: Stored<OperationRecord> | null,
+): prior is Stored<OperationRecord> {
+  return prior !== undefined && isSeriallyExclusiveKind(prior.kind) &&
+    (next === null || prior.status === "running" && next.status === "pending");
+}
+
+function addReleasedOperationWakeups(
+  wakeups: Map<string, Stored<OperationRecord>>,
+  active: ReadonlyMap<string, Stored<OperationRecord>>,
+  released: readonly OperationRef[],
+): void {
+  if (released.length === 0) return;
+  const now = Date.now();
+  for (const candidate of active.values()) {
+    if (candidate.status !== "pending" || (candidate.nextAttemptAt ?? now) > now) continue;
+    if (findSerialConflict({ ...candidate, rolloutLane: undefined }, released)) wakeups.set(candidate.id, candidate);
+  }
+}
+
+function isolatedGatewayWaitCleared(
+  prior: Stored<OperationRecord> | undefined,
+  next: Stored<OperationRecord>,
+): boolean {
+  return next.kind === MIGRATE_USER_KIND && next.output?.isolatedGatewayReadinessChecks !== undefined &&
+    next.waitingOn == null && next.nextAttemptAt == null &&
+    (prior === undefined || prior.waitingOn === WAITING_FOR_ISOLATED_GATEWAY);
+}
+
+function operationWatchWakeups(
+  event: WatchEvent<"operations">,
+  active: Map<string, Stored<OperationRecord>>,
+): Stored<OperationRecord>[] {
+  if (event.kind === "resync") {
+    active.clear();
+    return [];
+  }
+  if (event.kind === "snapshot") {
+    active.clear();
+    for (const record of event.records) active.set(record.id, record);
+    return event.records.filter(record => record.status === "pending");
+  }
+
+  const wakeups = new Map<string, Stored<OperationRecord>>();
+  const released: OperationRef[] = [];
+  for (const change of event.changes) {
+    const prior = active.get(change.key);
+    const next = change.record;
+    if (next) active.set(change.key, next);
+    else active.delete(change.key);
+    if (next?.status === "pending" &&
+      (change.type === "added" || prior?.status === "running" || isolatedGatewayWaitCleared(prior, next))) {
+      wakeups.set(next.id, next);
+    }
+    if (releasesOperationQueueScope(prior, next)) released.push({ ...prior, rolloutLane: undefined });
+  }
+  addReleasedOperationWakeups(wakeups, active, released);
+  return [...wakeups.values()];
 }
 
 export function startOperationWorker(deps: ControllerDeps): () => void {
-  const processInOrder = async (records: readonly Stored<OperationRecord>[]) => {
-    for (const record of records) await processOperation(operationFromRecord(record), deps);
+  const active = new Map<string, Stored<OperationRecord>>();
+  const queued = new Map<string, Stored<OperationRecord>>();
+  let claiming = false;
+  let stopped = false;
+  const reportFailure = (err: unknown) =>
+    deps.log(`[glm-controller] ⚠ pending operation run failed: ${err instanceof Error ? err.message : String(err)}`);
+  const claimInOrder = async () => {
+    while (queued.size > 0 && !stopped) {
+      const records = [...queued.values()].sort(compareOperationQueueOrder);
+      queued.clear();
+      for (const record of records) {
+        if (stopped) return;
+        const claimed = await claimOperation(operationFromRecord(record), deps);
+        if (claimed) void runClaimedOperation(claimed, deps).catch(reportFailure);
+      }
+    }
   };
-  const subscription = deps.store.watch({ aggregate: "operations", filter: { statuses: ["pending"] } }, {
+  const wake = () => {
+    if (claiming || stopped || queued.size === 0) return;
+    claiming = true;
+    void claimInOrder().catch(reportFailure).finally(() => {
+      claiming = false;
+      wake();
+    });
+  };
+  const subscription = deps.store.watch({ aggregate: "operations", filter: { statuses: ["pending", "running"] } }, {
     onEvent: (event) => {
-      void processInOrder(runnablePendingOperations(event)).catch((err) => {
-        deps.log(`[glm-controller] ⚠ pending operation run failed: ${err instanceof Error ? err.message : String(err)}`);
-      });
+      if (stopped) return;
+      for (const record of operationWatchWakeups(event, active)) queued.set(record.id, record);
+      wake();
     },
     onError: (err) => deps.log(`[glm-controller] ⚠ operations snapshot error: ${String(err)}`),
   });
   return () => {
+    stopped = true;
+    active.clear();
+    queued.clear();
     void subscription.close();
   };
 }
 
-// How often the queue drain re-scans pending ops. It exists for two cases the
-// onSnapshot listener above can't see: an op queued behind a conflicting rollout
-// (unblocked when the OTHER doc changes, not this one) and a retry whose backoff
-// has elapsed (unblocked by time passing, not a Firestore event). Cadence mirrors
-// the stuck-op-reaper's level-triggered pattern.
 export const OPERATION_QUEUE_DRAIN_MS_DEFAULT = 20_000;
 
 // Restart re-drive candidates. The predicate below admits only migrations with
@@ -1858,26 +1929,23 @@ async function attemptClaimOrQueueOperation(
   }
 }
 
-export async function processOperation(
-  op: Operation | OperationAuditRecord,
-  deps: ControllerDeps,
-): Promise<void> {
-  if (isOperationAuditRow(op)) return;
-  const operation = op as Operation;
+async function claimOperation(operation: Operation, deps: ControllerDeps): Promise<Operation | undefined> {
   const claim = await attemptClaimOrQueueOperation(operation, deps);
   if (claim.outcome === "queued") {
     deps.log(`[glm-controller] op=${operation.id} kind=${operation.kind} queued — waiting on a conflicting op`);
     return;
   }
   if (claim.outcome !== "claimed" || !claim.fresh) return;
-
   deps.log(`[glm-controller] claim op=${operation.id} kind=${operation.kind}`);
-  await runClaimedOperation(claim.fresh, deps);
+  return claim.fresh;
 }
 
-// Re-scan every pending op and try to claim each. The
-// correctness net for (a) an op queued behind a since-finished conflicting op,
-// and (b) a retry whose backoff window has elapsed — see OPERATION_QUEUE_DRAIN_MS_DEFAULT.
+export async function processOperation(op: Operation | OperationAuditRecord, deps: ControllerDeps): Promise<void> {
+  if (isOperationAuditRow(op)) return;
+  const claimed = await claimOperation(op as Operation, deps);
+  if (claimed) await runClaimedOperation(claimed, deps);
+}
+
 export async function drainPendingOperationsOnce(deps: ControllerDeps): Promise<void> {
   // Equality-only query, FIFO sort in memory: status+createdAt has no
   // composite index and must never need one — an orderBy here throws
