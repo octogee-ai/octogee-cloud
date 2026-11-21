@@ -82,6 +82,15 @@ export interface CreateGatewayVmResult {
   alreadyExisted: boolean;
 }
 
+export interface BootReplacementWindow {
+  instanceName: string;
+  zone: string;
+  previousInstanceId: string;
+  instanceId: string;
+  startedAt: number;
+  endedAt: number;
+}
+
 export interface GatewayVmClient {
   snapshotStoppedHome(input: SnapshotStoppedHomeInput): Promise<RetainedUserHomeSnapshot | null>;
   restoreHomeFromSnapshot(input: RestoreHomeFromSnapshotInput): Promise<RetainedUserHome | null>;
@@ -109,6 +118,7 @@ export interface GatewayVmClient {
   resume(instanceName: string, zone: string): Promise<StartGatewayVmResult>;
   delete(instanceName: string, zone: string): Promise<boolean>;
   lastPreemptedAt(instanceName: string, zone: string): Promise<number | null>;
+  verifyBootReplacement(window: BootReplacementWindow): Promise<boolean>;
   readBootImage(instanceName: string, zone: string): Promise<ComputeImageRef>;
   readFamilyImage(family: string, project?: string): Promise<ComputeImageRef>;
   readImage(name: string, project?: string): Promise<ComputeImageRef>;
@@ -138,6 +148,9 @@ interface ComputeOperation {
   selfLink?: string;
   status?: string;
   targetLink?: string;
+  targetId?: string;
+  operationType?: string;
+  endTime?: string;
   insertTime?: string;
   error?: { errors?: Array<{ code?: string; message?: string }> };
 }
@@ -389,6 +402,28 @@ async function readLastPreemptedAt(request: ComputeRequest, base: string, instan
     pageToken = nonEmpty(page.nextPageToken) ?? undefined;
   } while (pageToken);
   return latest;
+}
+
+async function verifyBootReplacement(request: ComputeRequest, base: string, window: BootReplacementWindow): Promise<boolean> {
+  const { zone, instanceName, previousInstanceId, instanceId, startedAt, endedAt } = window;
+  const target = `${base.replace("compute.googleapis.com", "www.googleapis.com")}/zones/${zone}/instances/${instanceName}`;
+  const params = new URLSearchParams({
+    filter: `(targetLink = "${target}") (insertTime >= "${new Date(startedAt).toISOString()}") (insertTime <= "${new Date(endedAt).toISOString()}")`,
+    maxResults: "100",
+  });
+  const res = await request({ url: `${base}/zones/${zone}/operations?${params}`, method: "GET" });
+  const page = (res.data ?? {}) as ComputeOperationList;
+  if (res.status !== 200 || page.nextPageToken) return false;
+  const changes = (page.items ?? []).filter(operation =>
+    operation.targetLink === target && (operation.operationType === "delete" || operation.operationType === "insert"));
+  const deleted = changes.find(operation => operation.operationType === "delete" && operation.targetId === previousInstanceId);
+  const inserted = changes.find(operation => operation.operationType === "insert" && operation.targetId === instanceId);
+  if (changes.length !== 2 || !deleted || !inserted) return false;
+  return [deleted, inserted].every(operation => {
+    const began = Date.parse(operation.insertTime ?? "");
+    const ended = Date.parse(operation.endTime ?? "");
+    return operation.status === "DONE" && operation.error === undefined && startedAt <= began && began <= ended && ended <= endedAt;
+  }) && Date.parse(deleted.endTime ?? "") <= Date.parse(inserted.insertTime ?? "");
 }
 
 async function readBootImage(request: ComputeRequest, base: string, instanceName: string, zone: string): Promise<ComputeImageRef> {
@@ -658,6 +693,7 @@ export function createGatewayVmClient(deps: GatewayVmClientDeps): GatewayVmClien
     suspend: (instanceName, zone) => lifecycle("suspend", instanceName, zone),
     resume,
     delete: remove, lastPreemptedAt: (instanceName, zone) => readLastPreemptedAt(deps.request, base, instanceName, zone),
+    verifyBootReplacement: (window) => verifyBootReplacement(deps.request, base, window),
     readImage: (name, project = deps.projectId) => readImageRef(deps.request, name, project),
     readBootImage: (name, zone) => readBootImage(deps.request, base, name, zone), readFamilyImage: (family, project = deps.projectId) => readFamilyImage(deps.request, family, project),
   };
