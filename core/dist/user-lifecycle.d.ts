@@ -263,6 +263,7 @@ export interface UserLifecycleAdapter {
     prepareKeyImportDir: (slug: string) => Promise<string>;
     targetMigrationIdentityCustody?: (slug: string, migrationId: string) => Promise<{
         custody: import("./migration-activation-manifest.js").MigrationTargetIdentityCustody;
+        sharedToShared?: true;
         migration: import("@octogee/shared/types/fleet-broker").FleetBrokerAgentAnchorMigration;
         anchors: import("@octogee/shared/types/fleet-broker").FleetBrokerAgentAnchor[];
     }>;
@@ -271,6 +272,7 @@ export interface UserLifecycleAdapter {
         migrationId?: string;
         beforeRuntimePublish?: () => Promise<void>;
         deferRuntimeVerification?: true;
+        sharedToSharedRoster?: true;
     }) => Promise<{
         appliedFingerprint: string;
         verificationPending?: string;

@@ -414,6 +414,9 @@ export function createCronCustodyGateways(agentScopes) {
         return agentIds;
     };
     const scheduler = (gatewayId, body) => {
+        if (body.phase === "stage-requester") {
+            return [200, { operationId: body.migrationId, phase: body.phase, agentIds: [], drained: true, stageRequesterProfileId: null }];
+        }
         const phase = body.phase;
         const agentIds = body.resolveAgentScope === true ? agentsOf(String(body.slug)) : body.agentIds;
         if (phase === "stage" && (agentIds === undefined || body.snapshot === undefined))

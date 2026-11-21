@@ -140,18 +140,21 @@ gssh "rm -f ~/pipeline.log; nohup env OCTOGEE_DESKTOP_REGISTRY='$REGISTRY' OCTOG
 
 log "pipeline running on ${BUILDER}; log follows"
 seen=0
-while :; do
+relay_pipeline_log() {
   out="$(gssh "tail -n +$((seen + 1)) ~/pipeline.log" || true)"
-  if [[ -n "$out" ]]; then
-    printf '%s\n' "$out" | sed 's/^/  /'
-    seen=$((seen + $(printf '%s\n' "$out" | wc -l)))
-  fi
+  [[ -n "$out" ]] || return 0
+  printf '%s\n' "$out" | sed 's/^/  /'
+  seen=$((seen + $(printf '%s\n' "$out" | wc -l)))
+}
+while :; do
+  relay_pipeline_log
   if printf '%s' "$out" | grep -q "PIPELINE_DONE"; then break; fi
   liveness="$(gssh "if kill -0 \$(cat ~/pipeline.pid) 2>/dev/null; then echo alive; elif grep -q PIPELINE_DONE ~/pipeline.log; then echo done; else echo dead; fi" || true)"
   case "$liveness" in
     alive) ;;
-    done) break ;;
+    done) relay_pipeline_log; break ;;
     dead)
+      relay_pipeline_log
       echo "pipeline exited without PIPELINE_DONE; see ~/pipeline.log on $BUILDER (use --keep-builder to inspect)" >&2
       exit 1
       ;;

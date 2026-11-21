@@ -7,6 +7,7 @@ const unexpected: OperationHandler = async (op) => {
 export function operationHandlers(overrides: Partial<OperationHandlers> = {}): OperationHandlers {
   return {
     "add-gateway": unexpected,
+    "prewarm-gateway": unexpected,
     "gateway-vm": unexpected,
     "migrate-user": unexpected,
     "retire-gateway": unexpected,

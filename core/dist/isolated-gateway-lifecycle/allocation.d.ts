@@ -30,7 +30,7 @@ export declare function isolatedAllocationFenceAllows(input: {
 }): boolean;
 export declare function sharedSourceRelease(value: unknown, gatewayId: string): number | null;
 type DesiredRoot = ReturnType<typeof projectGatewayDesiredRootForGateway>;
-export declare function gatewayRunsArtifact(store: PlatformStateStore, root: NonNullable<DesiredRoot>, artifact: unknown): Promise<boolean>;
+export declare function gatewayRunsArtifact(store: Pick<PlatformStateStore, "gateways">, root: NonNullable<DesiredRoot>, artifact: unknown): Promise<boolean>;
 export declare function allocateIsolatedGateway(input: IsolatedGatewayAllocationDeps, request: AllocateIsolatedGatewayInput, mode?: LifecycleMode): Promise<IsolatedGatewayAllocation>;
 export declare function refreshRequestedAllocation(input: IsolatedLifecycleDeps, request: AllocateIsolatedGatewayInput, mode?: LifecycleMode): Promise<boolean>;
 export {};

@@ -267,12 +267,23 @@ describe("runtime heartbeat polling", () => {
     return { gatewayId, release: 2, lifecycle } as FleetRegistryRecord;
   }
 
-  it("polls every runtime record except failed ones", () => {
+  it("polls live runtimes and skips failed ones", () => {
     expect(heartbeatPollInstanceIds([
       runtimeRecord("default", "provisioning"),
       runtimeRecord("failed", "failed"),
       runtimeRecord("serving", "serving"),
-    ])).toEqual(["default", "serving"]);
+    ], new Set())).toEqual(["default", "serving"]);
+  });
+
+  it("skips confirmed parked VMs and immediately resumes polling when desired state changes", () => {
+    const vm = (gatewayId: string, status: string) => ({
+      ...runtimeRecord(gatewayId, "serving"), runtime: "gce-vm", vm: { status },
+    } as FleetRegistryRecord);
+    const records = [vm("sleeping", "SUSPENDED"), vm("stopped", "TERMINATED"), vm("parking", "SUSPENDING"), vm("waking", "SUSPENDED")];
+    const paused = new Set(["sleeping", "stopped", "parking"]);
+    expect(heartbeatPollInstanceIds(records, paused)).toEqual(["parking", "waking"]);
+    paused.delete("sleeping");
+    expect(heartbeatPollInstanceIds(records, paused)).toEqual(["sleeping", "parking", "waking"]);
   });
 
   it("fails the whole poll listing on a runtime document that claims another gateway identity", async () => {

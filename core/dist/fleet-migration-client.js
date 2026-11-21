@@ -1,5 +1,5 @@
 import { gatewayScopedJobId, signFleetRequest } from "./fleet-signature.js";
-import { SIGNATURE_HEADER, MIGRATION_QUIESCE_TIMEOUT_MS, MIGRATION_TRANSFER_TIMEOUT_MS, MIGRATION_UNMOUNT_TIMEOUT_MS, MIGRATION_VERIFY_TIMEOUT_MS, } from "@octogee/shared/types/fleet-controller";
+import { SIGNATURE_HEADER, MIGRATION_QUIESCE_TIMEOUT_MS, MIGRATION_TRANSFER_TIMEOUT_MS, MIGRATION_UNMOUNT_TIMEOUT_MS, MIGRATION_VERIFY_TIMEOUT_MS, isSchedulerMigrationResult, } from "@octogee/shared/types/fleet-controller";
 export class MigrationRpcError extends Error {
     details;
     status;
@@ -115,10 +115,7 @@ export function createMigrationClient(deps) {
                 body,
                 timeoutMs: quiesceMs,
             });
-            if (result.operationId !== body.migrationId || result.phase !== body.phase ||
-                !Array.isArray(result.agentIds) || result.agentIds.some(id => typeof id !== "string" || !id) ||
-                (result.agentIds.length === 0 && body.phase !== "resume" && body.phase !== "abort") ||
-                result.drained !== true || (body.phase === "export" && result.snapshot === undefined)) {
+            if (!isSchedulerMigrationResult(result, body.migrationId, body.phase) || !result.drained) {
                 throw new Error(`scheduler ${body.phase} did not prove a drained matching operation`);
             }
             return result;
