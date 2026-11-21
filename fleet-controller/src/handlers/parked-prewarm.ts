@@ -8,7 +8,10 @@ import {
 import type { FleetRegistryRecord, GatewayRoot, PlatformStateStore, PlatformUserRecord, WatchAggregate, WatchEvent, WatchRecords } from "@octogee/core/platform-state";
 import type { Operation, OperationStep } from "@octogee/shared/types/glm";
 import type { OperationContext, OperationHandler, OperationResult } from "../operation-router.js";
-import type { VmGatewayRuntime } from "../vm-gateway-runtime.js";
+import type { ParkedPrewarmVmObservation, VmGatewayRuntime } from "../vm-gateway-runtime.js";
+
+const PREWARM_TIMEOUT_MS = 20 * 60_000;
+const VERIFY_PREWARM_STEP = "verify-prewarmed-computer";
 
 export interface ParkedPrewarmDeps {
   store: PlatformStateStore;
@@ -125,7 +128,7 @@ async function verifiedCandidateVm(run: PrewarmRun, state: State): Promise<strin
   const observed = await run.runtime.prewarmVmObservation(gatewayId, uid);
   if (observed?.status !== "RUNNING" || observed.instanceId !== registry.vm.instanceId) return null;
   if (observed.bootImageId !== bootImageId) throw new Error("Prewarm booted an image other than the requested image");
-  await recordVerifiedStep(run, "verify-prewarmed-computer", observed.instanceId, bootImageId);
+  await recordVerifiedStep(run, VERIFY_PREWARM_STEP, observed.instanceId, bootImageId);
   return observed.instanceId;
 }
 
@@ -141,7 +144,13 @@ async function parkedCandidateResult(run: PrewarmRun, state: State): Promise<Ope
   }
   if (root.desiredStatus !== "paused" || registry?.vm?.status !== "SUSPENDED") return null;
   const observed = await run.runtime.prewarmVmObservation(gatewayId, uid);
-  return observed?.status === "SUSPENDED" && observed.bootImageId === bootImageId ? prewarmResult(run, "parked", observed.instanceId) : null;
+  if (observed?.status !== "SUSPENDED") return null;
+  const proof = `instance=${observed.instanceId} bootImage=${bootImageId}`;
+  if (observed.bootImageId !== bootImageId || !run.steps.some(step =>
+    step.name === VERIFY_PREWARM_STEP && step.status === "done" && step.detail === proof)) {
+    throw new Error("Computer suspended without readiness verification for this instance and boot image");
+  }
+  return prewarmResult(run, "parked", observed.instanceId);
 }
 
 async function authorizedRepairPark(run: PrewarmRun, state: State): Promise<boolean> {
@@ -190,7 +199,7 @@ async function progressPhase(run: PrewarmRun, phase: Phase, state: State): Promi
   return next === "demand-won" ? prewarmResult(run, next, instanceId) : next;
 }
 
-async function readPrewarmState(run: PrewarmRun): Promise<State> {
+async function readPrewarmState(run: Pick<PrewarmRun, "deps" | "request">): Promise<State> {
   const { gatewayId, uid } = run.request;
   const store = run.deps.store;
   const [root, registry, owner] = await Promise.all([
@@ -202,7 +211,7 @@ async function readPrewarmState(run: PrewarmRun): Promise<State> {
 async function drivePrewarm(run: PrewarmRun, initialPhase: Phase): Promise<OperationResult> {
   const { deps, op, ctx } = run;
   const { gatewayId, uid } = run.request;
-  const deadline = deps.now() + (deps.timeoutMs ?? 20 * 60_000);
+  const deadline = deps.now() + (deps.timeoutMs ?? PREWARM_TIMEOUT_MS);
   const wake = phaseWake(deps, gatewayId, uid);
   let phase = initialPhase;
   try {
@@ -231,20 +240,57 @@ async function drivePrewarm(run: PrewarmRun, initialPhase: Phase): Promise<Opera
   }
 }
 
+function ownsParkedComputer(root: GatewayRoot | null, request: PrewarmRun["request"]): root is GatewayRoot {
+  return root?.gatewayClass === "isolated" && root.desiredStatus === "paused" && root.ownerUid === request.uid &&
+    root.allocation?.generation === request.generation && root.retirementClaim == null;
+}
+
+async function waitForParkedRetry(run: Pick<PrewarmRun, "deps" | "ctx" | "runtime" | "request">): Promise<ParkedPrewarmVmObservation | null> {
+  const { deps, ctx, runtime, request } = run;
+  const { gatewayId, uid } = request;
+  const deadline = deps.now() + (deps.timeoutMs ?? PREWARM_TIMEOUT_MS);
+  const wake = phaseWake(deps, gatewayId, uid);
+  try {
+    while (deps.now() < deadline) {
+      await ctx.assertActiveClaim?.();
+      const revision = wake.revision();
+      const state = await readPrewarmState(run);
+      if (!ownsParkedComputer(state.root, request) || ownerHasDemand(state, gatewayId)) return null;
+      const vm = state.registry?.vm;
+      if (vm?.status === "SUSPENDED" && vm.instanceId && state.root.liveRelease === state.root.desiredRelease) {
+        const observed = await runtime.prewarmVmObservation(gatewayId, uid);
+        if (observed?.status === "SUSPENDED" && observed.instanceId === vm.instanceId) return observed;
+      }
+      await wake.wait(revision, Math.max(0, Math.min(5_000, deadline - deps.now())));
+    }
+    throw new Error("Timed out waiting for the replacement computer to be recorded as suspended");
+  } finally {
+    await wake.close();
+  }
+}
+
 async function retryIfStillSuspending(store: PlatformStateStore, request: PrewarmRun["request"], vmStatus?: string): Promise<void> {
-  const { gatewayId, uid, generation } = request;
+  const { gatewayId } = request;
   const [root, registry] = await Promise.all([store.gateways.roots.get(gatewayId), store.fleetRegistry.get(gatewayId)]);
   const status = vmStatus ?? registry?.vm?.status;
-  if (root?.gatewayClass === "isolated" && root.desiredStatus === "paused" && root.ownerUid === uid &&
-      root.allocation?.generation === generation && (status === "RUNNING" || status === "SUSPENDING")) {
+  if (ownsParkedComputer(root, request) && (status === "RUNNING" || status === "SUSPENDING")) {
     throw new Error("Parked computer is still suspending");
   }
+}
+
+async function startingVm(run: Pick<PrewarmRun, "deps" | "ctx" | "op" | "runtime" | "request">) {
+  if ((run.op.attempts ?? 0) > 0) return waitForParkedRetry(run);
+  const { deps, runtime, request } = run;
+  const source = await runtime.prewarmVmObservation(request.gatewayId, request.uid);
+  if (source?.status === "SUSPENDED") return source;
+  await retryIfStillSuspending(deps.store, request, source?.status);
+  return null;
 }
 
 export function createParkedPrewarmHandler(deps: ParkedPrewarmDeps): OperationHandler {
   return async (op, ctx) => {
     const request = parkedPrewarmInput(op);
-    const { gatewayId, uid, bootImageId } = request;
+    const { gatewayId, bootImageId } = request;
     const runtime = deps.readVmRuntime();
     if (!runtime) throw new Error("Parked computer prewarm requires the GCE runtime");
     const existing = await deps.store.journal.operations.get(op.id);
@@ -254,11 +300,8 @@ export function createParkedPrewarmHandler(deps: ParkedPrewarmDeps): OperationHa
       if (publishedImageId !== bootImageId) {
         return { success: true, steps: [], output: { prewarmState: "superseded", bootImageId, publishedImageId } };
       }
-      source = await runtime.prewarmVmObservation(gatewayId, uid);
-      if (source?.status !== "SUSPENDED") {
-        await retryIfStillSuspending(deps.store, request, source?.status);
-        return { success: true, steps: [], output: { prewarmState: "ineligible" } };
-      }
+      source = await startingVm({ deps, op, ctx, runtime, request });
+      if (!source) return { success: true, steps: [], output: { prewarmState: "ineligible" } };
     }
     await ctx.assertActiveClaim?.();
     const started = await startParkedGatewayPrewarm(deps.store, op, deps.now(), source ? {
