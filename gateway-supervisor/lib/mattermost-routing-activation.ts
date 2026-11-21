@@ -412,6 +412,33 @@ async function inspectPendingAccountActivation(
   return { confirmed: restart.length === 0 && unconfirmed.length === 0, restart };
 }
 
+async function settlePendingMattermostAccounts(
+  rpc: GatewayRpcClient,
+  pending: PendingActivationBatch,
+  accountIds: readonly string[],
+  runtime: RoutingActivationRuntime,
+  options: { restartAccountIds?: readonly string[]; restartConfiguredPending?: boolean },
+): Promise<void> {
+  const activation = await inspectPendingAccountActivation(
+    rpc,
+    pending,
+    accountIds,
+    options.restartAccountIds ?? [],
+    options.restartConfiguredPending === true,
+  );
+  if (activation.confirmed) return;
+  if (activation.restart.length > 0) {
+    await restartMattermostAccounts(rpc, pending, activation.restart, runtime.log);
+  }
+  await confirmRoutingActivation(
+    rpc,
+    pending,
+    accountIds,
+    { accounts: pending.baselineLastStartAt },
+    runtime,
+  );
+}
+
 export async function stopStaleMattermostRoutingAccounts(
   rpc: GatewayRpcClient,
   params: {
@@ -514,25 +541,7 @@ export async function activatePendingMattermostRouting(
       if (clearPendingActivation(openclawDir, pending)) return;
       continue;
     }
-    const activation = await inspectPendingAccountActivation(
-      rpc,
-      pending,
-      accountIds,
-      options.restartAccountIds ?? [],
-      options.restartConfiguredPending === true,
-    );
-    if (activation.restart.length > 0) {
-      await restartMattermostAccounts(rpc, pending, activation.restart, log);
-    }
-    if (!activation.confirmed) {
-      await confirmRoutingActivation(
-        rpc,
-        pending,
-        accountIds,
-        { accounts: pending.baselineLastStartAt },
-        runtime,
-      );
-    }
+    await settlePendingMattermostAccounts(rpc, pending, accountIds, runtime, options);
     if (clearPendingActivation(openclawDir, pending)) return;
   }
 }
