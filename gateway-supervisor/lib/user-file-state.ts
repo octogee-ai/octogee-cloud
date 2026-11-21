@@ -20,15 +20,15 @@ function userPath(root: string, slug: string): string {
   return path.join(root, "customers", slug);
 }
 
-export async function userFileStatePaths(root: string, slug: string): Promise<Array<{ cwd: string; path: string }>> {
+async function userFileStateDirectories(root: string, slug: string): Promise<Array<{ path: string; device: bigint }>> {
   userPath(root, slug);
-  const sources: Array<{ cwd: string; path: string }> = [];
+  const sources: Array<{ path: string; device: bigint }> = [];
   for (const directory of ["customers", "git-metadata", "customer-keys"]) {
     const relative = path.join(directory, slug);
     try {
-      const stat = await fs.lstat(path.join(root, relative));
+      const stat = await fs.lstat(path.join(root, relative), { bigint: true });
       if (!stat.isDirectory()) throw new Error(`User state is not a directory: ${relative}`);
-      sources.push({ cwd: root, path: relative });
+      sources.push({ path: relative, device: stat.dev });
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
@@ -36,12 +36,19 @@ export async function userFileStatePaths(root: string, slug: string): Promise<Ar
   return sources;
 }
 
+export async function userFileStatePaths(root: string, slug: string): Promise<Array<{ cwd: string; path: string }>> {
+  return (await userFileStateDirectories(root, slug)).map(source => ({ cwd: root, path: source.path }));
+}
+
 export async function flushUserFiles(slug: string, { root = OPENCLAW_DIR, persistProjects }: { root?: string; persistProjects?: (slug: string) => Promise<void> } = {}): Promise<void> {
   const workspace = userPath(root, slug);
   if (!(await fs.lstat(workspace)).isDirectory()) throw new Error(`User workspace is not a directory: ${slug}`);
   await persistProjects?.(slug);
-  for (const source of await userFileStatePaths(root, slug)) {
-    await run("/usr/bin/sync", ["-f", path.join(source.cwd, source.path)]);
+  const synced = new Set<bigint>();
+  for (const source of await userFileStateDirectories(root, slug)) {
+    if (synced.has(source.device)) continue;
+    await run("/usr/bin/sync", ["-f", path.join(root, source.path)]);
+    synced.add(source.device);
   }
 }
 
