@@ -57,6 +57,8 @@ locals {
     "modelBrokerRateWindows.expiresAt"        = { collection = "modelBrokerRateWindows", field = "expiresAt", disable_indexes = true }
     "usage_models.expiresAt"                  = { collection = "usage_models", field = "expiresAt", disable_indexes = true }
     "opsSupportQuestions.expiresAt"           = { collection = "opsSupportQuestions", field = "expiresAt", disable_indexes = true }
+    "projectCloudAllocations.expiresAt"       = { collection = "projectCloudAllocations", field = "expiresAt", disable_indexes = true }
+    "projectCloudOperations.expiresAt"        = { collection = "projectCloudOperations", field = "expiresAt", disable_indexes = true }
     "productivityApprovals.expireAt"          = { collection = "productivityApprovals", field = "expireAt" }
     "glmOperations.expireAt"                  = { collection = "glmOperations", field = "expireAt" }
   }

@@ -7,6 +7,7 @@ import {
 import type { OperationKind, OperationStatus } from "@octogee/shared/types/glm";
 import { isSharedPoolMemberRoot } from "@octogee/shared/types/shared-gateway-pool";
 import type { GatewayArtifact } from "./gateway-live-release.js";
+import { ACTIVE_PARKED_PREWARM_STATUSES, activeParkedPrewarmGatewayIds, PARKED_PREWARM_KIND } from "./isolated-gateway-lifecycle/prewarm.js";
 import { readPlacementAutomationOwnership } from "./placement-automation-owner.js";
 import { placementAutomationState } from "./placement-automation-handoff.js";
 import { InvalidSharedGatewayAutoscalingConfigError, readSharedGatewayAutoscalingConfigInStore } from "./shared-gateway-pool-read.js";
@@ -145,10 +146,17 @@ export async function readFleetStateSections<User extends { readonly provisionin
         return { users: users.map((user) => placementUser(user, input.projectUser(user))) };
       },
       gateways: async () => {
-        const [gateways, observed] = await Promise.all([roots(), runtimes()]);
+        const [gateways, observed, prewarms] = await Promise.all([
+          roots(), runtimes(), transaction.journal.operations.listByKind(PARKED_PREWARM_KIND, ACTIVE_PARKED_PREWARM_STATUSES),
+        ]);
         const runtimeById = new Map(observed.map((runtime) => [runtime.gatewayId, runtime]));
+        const prewarming = activeParkedPrewarmGatewayIds(prewarms);
         return {
-          gateways: gateways.map((root) => ({ ...root, ...readKubernetes(runtimeById.get(root.gatewayId) ?? null, input.now) })),
+          gateways: gateways.map((root) => ({
+            ...root,
+            ...readKubernetes(runtimeById.get(root.gatewayId) ?? null, input.now),
+            parkedPrewarmActive: prewarming.has(root.gatewayId),
+          })),
         };
       },
       releases: async () => {

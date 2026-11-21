@@ -162,6 +162,7 @@ export interface FleetBrokerAgentAnchorMigration {
     sourceEpoch: number;
 }
 export interface FleetBrokerAgentAnchors {
+    sharedToShared?: true;
     migration?: FleetBrokerAgentAnchorMigration;
     anchors: FleetBrokerAgentAnchor[];
     state?: FleetBrokerGatewayStateAnchor;
