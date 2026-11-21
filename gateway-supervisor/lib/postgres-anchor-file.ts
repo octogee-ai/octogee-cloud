@@ -3,9 +3,12 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-export async function publishAnchor(file: string, anchor: { storeId: string; schema: string }): Promise<boolean> {
+export async function publishAnchor(
+  file: string,
+  anchor: { storeId: string; schema: string },
+  staged = `${file}.anchor-${randomUUID()}.tmp`,
+): Promise<boolean> {
   await fs.mkdir(path.dirname(file), { recursive: true });
-  const staged = `${file}.anchor-${randomUUID()}.tmp`;
   try {
     const db = new DatabaseSync(staged);
     try {
