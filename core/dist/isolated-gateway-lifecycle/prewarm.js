@@ -118,7 +118,7 @@ export async function startParkedGatewayPrewarm(store, operation, now, sourceVm)
             tx.gateways.assignments.isEmpty(gatewayId), tx.journal.operations.listForUid(uid, { statuses: ["pending", "running"] }),
         ]);
         assertPrewarmWorker(operation, current);
-        if (owner?.home.homeArchive !== undefined && owner.home.homeArchive.phase !== "restored")
+        if (parkedHomeUnderSnapshotCustody(owner))
             return { state: "ineligible" };
         const result = existingOrDemandOperation(current, owner);
         if (result)
@@ -276,3 +276,4 @@ export async function bootRepairedParkedGateway(store, operation, now) {
         return BOOTING;
     });
 }
+import { parkedHomeUnderSnapshotCustody } from "../parked-home-archive.js";

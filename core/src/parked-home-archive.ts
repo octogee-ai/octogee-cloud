@@ -9,6 +9,11 @@ interface ParkedHomeArchiveGrant {
   sizingProfile: string;
 }
 
+export function parkedHomeUnderSnapshotCustody(owner: PlatformUserRecord | null): boolean {
+  const archive = owner?.home.homeArchive;
+  return archive !== undefined && archive.phase !== "restored";
+}
+
 export function resolveParkedHomeArchiveGrant(environment: string | null | undefined, value: string | undefined): ParkedHomeArchiveGrant | undefined {
   if (environment !== "test" || !value) return undefined;
   const match = /^([A-Za-z0-9_-]{1,63}):([a-z][a-z0-9-]{0,62})$/u.exec(value);

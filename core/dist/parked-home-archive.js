@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { isUserParkedVm } from "@octogee/shared/types/glm";
+export function parkedHomeUnderSnapshotCustody(owner) {
+    const archive = owner?.home.homeArchive;
+    return archive !== undefined && archive.phase !== "restored";
+}
 export function resolveParkedHomeArchiveGrant(environment, value) {
     if (environment !== "test" || !value)
         return undefined;
