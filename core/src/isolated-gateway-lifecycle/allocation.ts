@@ -210,6 +210,7 @@ export function sharedSourceRelease(value: unknown, gatewayId: string): number |
 }
 
 type ParkedGateway = NonNullable<AllocateIsolatedGatewayInput["parkedGateway"]>;
+type ParkedSource = { release: number; liveRelease: number; handoffOperationId?: string };
 type DesiredRoot = ReturnType<typeof projectGatewayDesiredRootForGateway>;
 
 function parkedRootMatches(root: DesiredRoot, request: AllocateIsolatedGatewayInput, parked: ParkedGateway): boolean {
@@ -295,13 +296,27 @@ function assertParkedRootResumable(input: {
   return root!;
 }
 
+async function verifyPrewarmHandoff(
+  transaction: PlatformStateTransaction,
+  request: AllocateIsolatedGatewayInput,
+  parked: ParkedGateway,
+  expected: string | undefined,
+): Promise<boolean> {
+  const prewarm = await readActiveParkedPrewarm(transaction, request.uid);
+  if (prewarm && prewarm.output?.prewarmState !== "handoff") {
+    throw new IsolatedGatewayFenceError("Owner computer prewarm has not released the allocation");
+  }
+  const handoff = prewarm?.gatewayId === parked.gatewayId ? prewarm : null;
+  if ((handoff?.id ?? undefined) !== expected) throw new IsolatedGatewayFenceError("Owner computer prewarm handoff changed");
+  return handoff !== null;
+}
+
 async function resumeParkedIsolatedGateway(
   input: IsolatedLifecycleDeps & Pick<IsolatedGatewayAllocationDeps, "requireHomeReady">,
   request: AllocateIsolatedGatewayInput,
   parked: ParkedGateway,
-  source: { release: number; liveRelease: number },
+  source: ParkedSource,
   mode: LifecycleMode,
-  handoffOperationId?: string,
 ): Promise<void> {
   const sizingKeyRead = { store: input.store, readSizingKey: input.readSizingKey, uid: request.uid, now: input.now() };
   const resume = () => withCurrentSizingKey(sizingKeyRead, ({ sizingKey, profile: sizingProfile, assertCurrent }) => input.store.transaction({ label: "disposable-gateway.resume-parked", readOnly: mode === "plan" }, async (transaction) => {
@@ -315,13 +330,8 @@ async function resumeParkedIsolatedGateway(
       ]);
       assertCurrent(user);
       const stored = roots.get(parked.gatewayId) ?? null;
-      const prewarm = await readActiveParkedPrewarm(transaction, request.uid);
-      if (prewarm && prewarm.output?.prewarmState !== "handoff") throw new IsolatedGatewayFenceError("Owner computer prewarm has not released the allocation");
-      const handoff = prewarm?.output?.prewarmState === "handoff" && prewarm.gatewayId === parked.gatewayId ? prewarm : null;
-      if ((handoff?.id ?? undefined) !== handoffOperationId) {
-        throw new IsolatedGatewayFenceError("Owner computer prewarm handoff changed");
-      }
-      const root = assertParkedRootResumable({ stored, runtime, request, parked, liveRelease: source.liveRelease, handoff: handoff !== null });
+      const handoff = await verifyPrewarmHandoff(transaction, request, parked, source.handoffOperationId);
+      const root = assertParkedRootResumable({ stored, runtime, request, parked, liveRelease: source.liveRelease, handoff });
       if (sharedSourceRelease(roots.get(request.sourceGatewayId), request.sourceGatewayId) !== source.release) {
         throw new IsolatedGatewayFenceError(`isolated gateway source ${request.sourceGatewayId} changed`);
       }
@@ -484,8 +494,8 @@ export async function allocateIsolatedGateway(
       throw new IsolatedGatewayFenceError("Owner computer prewarm handoff no longer matches the current Shared release");
     }
     await resumeParkedIsolatedGateway(input, request, { gatewayId: warmingGatewayId, generation }, {
-      release: source.release, liveRelease: root.liveRelease!,
-    }, mode, prewarm.id);
+      release: source.release, liveRelease: root.liveRelease!, handoffOperationId: prewarm.id,
+    }, mode);
     return { gatewayId: warmingGatewayId, outcome: "resumed" };
   }
   const parked = request.parkedGateway ?? await matchingParkedGateway(input.store, request, source.artifact);

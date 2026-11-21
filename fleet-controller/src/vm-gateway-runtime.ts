@@ -18,7 +18,7 @@ import {
   type HelmInstancesMap,
   type RuntimeUserIdentity,
 } from "@octogee/shared/types/glm";
-import type { GatewayVmClient } from "./lib/compute-vm.js";
+import type { GatewayVmClient, GatewayVmDescription } from "./lib/compute-vm.js";
 import { assertReplacementRecoveryCapacity, createVmLifecycle, recordVmObservation, vmSpecDesktop } from "./vm-lifecycle.js";
 import type { KubectlSubprocess } from "./fleet-ingress.js";
 import {
@@ -463,13 +463,11 @@ export function createVmGatewayRuntime(deps: VmGatewayRuntimeDeps): VmGatewayRun
       const vm = runtime?.vm;
       if (!vm?.instanceId) return null;
       const observed = await deps.vm.describe(vm.instanceName, vm.zone);
-      if (!observed || observed.instanceId !== vm.instanceId || observed.gatewayId !== gatewayId ||
-          observed.metadata["octogee-owner-uid"] !== uid) return null;
+      if (!isOwnedVm(observed, vm.instanceId, gatewayId, uid)) return null;
       if (observed.status !== "RUNNING" && observed.status !== "SUSPENDED") return null;
       const bootImage = await deps.vm.readBootImage(vm.instanceName, vm.zone);
       const checked = await deps.vm.describe(vm.instanceName, vm.zone);
-      if (checked?.instanceId !== observed.instanceId || checked.status !== observed.status || checked.gatewayId !== gatewayId ||
-          checked.metadata["octogee-owner-uid"] !== uid) return null;
+      if (!isOwnedVm(checked, vm.instanceId, gatewayId, uid) || checked.status !== observed.status) return null;
       let recoveryReady = true;
       try {
         assertReplacementRecoveryCapacity(runtime ?? undefined, vm, checked);
@@ -484,6 +482,11 @@ export function createVmGatewayRuntime(deps: VmGatewayRuntimeDeps): VmGatewayRun
     replaceStoppedVm: vmLifecycle.replaceStoppedVm,
     detectPreemption: vmLifecycle.detectPreemption,
   };
+}
+
+function isOwnedVm(observed: GatewayVmDescription | null, instanceId: string, gatewayId: string, uid: string): observed is GatewayVmDescription {
+  return observed !== null && observed.instanceId === instanceId && observed.gatewayId === gatewayId &&
+    observed.metadata["octogee-owner-uid"] === uid;
 }
 
 export function createRuntimeDispatchingHelmRunner(input: {

@@ -62,6 +62,19 @@ function operatorPrelaunchSource(gateway: DurableGateway, user: PlatformUserReco
   ].every(Boolean) ? { sourceGatewayId, sourceAssignmentEpoch: null } : null;
 }
 
+function parkedPrewarmAuthoritySource(
+  output: Record<string, unknown>,
+  gateway: DurableGateway,
+  user: PlatformUserRecord,
+): PrelaunchSource | null {
+  const { sourceGatewayId, sourceAssignmentEpoch, release, previousRelease, prewarmState } = output;
+  const bootRelease = prewarmState === "repairing" ? previousRelease : release;
+  if (bootRelease !== gateway.desiredRelease || typeof sourceGatewayId !== "string" ||
+      sourceGatewayId === gateway.gatewayId || sourceGatewayId !== user.gateway?.gatewayId ||
+      typeof sourceAssignmentEpoch !== "number" || !Number.isSafeInteger(sourceAssignmentEpoch)) return null;
+  return { sourceGatewayId, sourceAssignmentEpoch };
+}
+
 async function parkedPrewarmSource(
   reader: PrelaunchAuthorityReader,
   gateway: DurableGateway,
@@ -75,13 +88,8 @@ async function parkedPrewarmSource(
   const operation = await readActiveParkedPrewarm(state, user.uid);
   if (operation?.gatewayId !== gateway.gatewayId) return null;
   const request = parkedPrewarmInput(operation);
-  const { sourceGatewayId, sourceAssignmentEpoch, release, previousRelease, prewarmState } = operation.output ?? {};
-  const bootRelease = prewarmState === "repairing" ? previousRelease : release;
-  if (request.uid !== user.uid || request.generation !== gateway.allocation.generation ||
-      bootRelease !== gateway.desiredRelease || typeof sourceGatewayId !== "string" ||
-      sourceGatewayId === gateway.gatewayId || sourceGatewayId !== user.gateway?.gatewayId ||
-      typeof sourceAssignmentEpoch !== "number" || !Number.isSafeInteger(sourceAssignmentEpoch)) return null;
-  return { sourceGatewayId, sourceAssignmentEpoch };
+  if (request.uid !== user.uid || request.generation !== gateway.allocation.generation) return null;
+  return parkedPrewarmAuthoritySource(operation.output ?? {}, gateway, user);
 }
 
 function samePrelaunchAllocation(gateway: DurableGateway, expected: DurableGateway): boolean {
@@ -150,20 +158,23 @@ async function hasServingUserAssignment(reader: PrelaunchAuthorityReader, gatewa
   return assigned?.uid === user.uid && assigned.state === "serving";
 }
 
-export async function isolatedBootMode(input: {
-  reader: PrelaunchAuthorityReader; gateway: DurableGateway;
-}): Promise<{ mode: "prelaunch" | "normal" | "activating"; migrationId?: string }> {
+type IsolatedBootInput = { reader: PrelaunchAuthorityReader; gateway: DurableGateway };
+type IsolatedBootMode = { mode: "prelaunch" | "normal" | "activating"; migrationId?: string };
+
+async function operatorBootMode(input: IsolatedBootInput): Promise<IsolatedBootMode> {
+  if (await isolatedPrelaunchReserved(input)) return { mode: "prelaunch" };
+  if (!(await input.reader.gateways.assignments.isEmpty(input.gateway.gatewayId))) return { mode: "normal" };
+  throw new Error("Operator isolated gateway prelaunch authority is unavailable");
+}
+
+export async function isolatedBootMode(input: IsolatedBootInput): Promise<IsolatedBootMode> {
   const { gateway, reader } = input;
   if (gateway.gatewayClass !== "isolated" || gateway.allocation?.kind !== "disposable-builder") return { mode: "normal" };
   if (!gateway.ownerUid) throw new Error("Isolated prelaunch owner is unavailable");
   const user = await reader.users.records.get(gateway.ownerUid);
   if (!user) throw new Error("Isolated prelaunch owner is unavailable");
   if (await hasServingUserAssignment(reader, gateway, user)) return { mode: "normal" };
-  if (isOperatorIssuedAllocation(gateway.allocation)) {
-    if (await isolatedPrelaunchReserved(input)) return { mode: "prelaunch" };
-    if (!(await reader.gateways.assignments.isEmpty(gateway.gatewayId))) return { mode: "normal" };
-    throw new Error("Operator isolated gateway prelaunch authority is unavailable");
-  }
+  if (isOperatorIssuedAllocation(gateway.allocation)) return operatorBootMode(input);
   const lease = user.activationLease;
   if (!activationLeaseMatches(gateway, lease)) {
     if (await isolatedPrelaunchReserved(input)) return { mode: "prelaunch" };

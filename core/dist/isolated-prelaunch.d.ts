@@ -9,11 +9,13 @@ export declare function isolatedPrelaunchReserved(input: {
     expectedGateway?: DurableGateway;
     activationBoot?: true;
 }): Promise<boolean>;
-export declare function isolatedBootMode(input: {
+type IsolatedBootInput = {
     reader: PrelaunchAuthorityReader;
     gateway: DurableGateway;
-}): Promise<{
+};
+type IsolatedBootMode = {
     mode: "prelaunch" | "normal" | "activating";
     migrationId?: string;
-}>;
+};
+export declare function isolatedBootMode(input: IsolatedBootInput): Promise<IsolatedBootMode>;
 export {};

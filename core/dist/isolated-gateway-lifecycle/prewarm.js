@@ -21,7 +21,12 @@ export async function readActiveParkedPrewarm(state, uid) {
     const operations = await state.journal.operations.listForUid(uid, { kind: PARKED_PREWARM_KIND, statuses: ["pending", "running"] });
     return operations.find((operation) => isPrewarmClaimActive(operation.output?.prewarmState)) ?? null;
 }
-const PREWARM_CLAIM_STATES = ["booting", "handoff", "repairing", "repair-parking"];
+const BOOTING = "booting";
+const HANDOFF = "handoff";
+const REPAIRING = "repairing";
+const REPAIR_PARKING = "repair-parking";
+const DEMAND_WON = "demand-won";
+const PREWARM_CLAIM_STATES = [BOOTING, HANDOFF, REPAIRING, REPAIR_PARKING];
 function isPrewarmClaimActive(state) {
     return PREWARM_CLAIM_STATES.some((phase) => phase === state);
 }
@@ -41,8 +46,56 @@ function assertPrewarmWorker(operation, current) {
 function hasCustomerDemand(status) {
     return status !== undefined && status !== "parked" && status !== "failed";
 }
+function parkedRootEligible(root, uid, generation) {
+    return root?.desiredStatus === "paused" && root.gatewayClass === "isolated" &&
+        root.ownerUid === uid && root.allocation?.claimedByUid === uid && root.allocation.generation === generation &&
+        root.allocation.kind === "disposable-builder" && root.liveRelease !== null && root.liveRelease === root.desiredRelease;
+}
+function eligibleSharedSource(owner, sharedGatewayIds) {
+    const shared = owner?.gateway?.gatewayId;
+    return owner && shared && sharedGatewayIds.includes(shared) &&
+        userAllowsInteractiveAccess(owner) && !isolatedRuntimeMutationFenced(owner) ? shared : null;
+}
+function parkedInstanceId(runtime, sourceVm) {
+    const vm = runtime?.vm;
+    if (runtime?.runtime !== "gce-vm" || vm?.status !== "SUSPENDED" ||
+        (sourceVm && sourceVm.instanceId !== vm.instanceId))
+        return null;
+    return vm.instanceId;
+}
+function conflictingPrewarmOwnerOperation(conflicts, id) {
+    return conflicts.some((entry) => entry.id !== id &&
+        (entry.kind !== PARKED_PREWARM_KIND || isPrewarmClaimActive(entry.output?.prewarmState)));
+}
+function existingOrDemandOperation(current, owner) {
+    const phase = current.output?.prewarmState;
+    if (phase === "parked" || isPrewarmClaimActive(phase))
+        return { state: phase, claim: prewarmClaim(current) };
+    if (phase === DEMAND_WON || hasCustomerDemand(owner?.activationLease?.status))
+        return { state: DEMAND_WON };
+    return null;
+}
+async function writePrewarmStart(tx, input) {
+    const { operation, request, root, claim, now, sourceVm } = input;
+    const { gatewayId, payload } = request;
+    const repairing = sourceVm?.needsRepair === true;
+    if (claim.release !== root.liveRelease) {
+        await tx.gateways.releases.append({
+            gatewayId, expectedLatestRelease: root.latestRelease, createdAt: now, createdBy: operation.id,
+            sourceRelease: root.liveRelease, note: "Parked computer prewarm", payload,
+            payloadHash: releasePayloadHash(payload), activate: !repairing, updatedBy: operation.id,
+        });
+    }
+    await tx.gateways.roots.patch(gatewayId, { desiredStatus: "running", updatedAt: now, updatedBy: operation.id });
+    const state = repairing ? REPAIRING : BOOTING;
+    await tx.journal.operations.patch(operation.id, { output: {
+            prewarmState: state, ...claim, ...(repairing ? { repairStartedAt: now, previousBootImageId: sourceVm.bootImageId } : {}),
+        } });
+    return { state, claim };
+}
 export async function startParkedGatewayPrewarm(store, operation, now, sourceVm) {
-    const { uid, gatewayId, generation, payload } = parkedPrewarmInput(operation);
+    const request = parkedPrewarmInput(operation);
+    const { uid, gatewayId, generation, payload } = request;
     return store.transaction({ label: "isolated-gateway.prewarm-start" }, async (tx) => {
         const [current, root, runtime, owner, pool, empty, conflicts] = await Promise.all([
             tx.journal.operations.get(operation.id), tx.gateways.roots.get(gatewayId),
@@ -50,50 +103,27 @@ export async function startParkedGatewayPrewarm(store, operation, now, sourceVm)
             tx.gateways.assignments.isEmpty(gatewayId), tx.journal.operations.listForUid(uid, { statuses: ["pending", "running"] }),
         ]);
         assertPrewarmWorker(operation, current);
-        const phase = current.output?.prewarmState;
-        if (phase === "parked" || isPrewarmClaimActive(phase))
-            return { state: phase, claim: prewarmClaim(current) };
-        if (current.output?.prewarmState === "demand-won")
-            return { state: "demand-won" };
-        if (hasCustomerDemand(owner?.activationLease?.status))
-            return { state: "demand-won" };
-        const sharedId = owner?.gateway?.gatewayId;
-        const vm = runtime?.vm;
-        if (!sharedId || !pool?.sharedGatewayIds.includes(sharedId) || !empty || !owner || !userAllowsInteractiveAccess(owner) ||
-            isolatedRuntimeMutationFenced(owner) || root?.desiredStatus !== "paused" || root.gatewayClass !== "isolated" ||
-            root.ownerUid !== uid || root.allocation?.claimedByUid !== uid || root.allocation.generation !== generation ||
-            root.allocation.kind !== "disposable-builder" || root.liveRelease === null || root.liveRelease !== root.desiredRelease ||
-            runtime?.runtime !== "gce-vm" || !vm?.instanceId || vm.status !== "SUSPENDED" ||
-            (sourceVm && sourceVm.instanceId !== vm.instanceId) ||
-            conflicts.some((entry) => entry.id !== operation.id && (entry.kind !== PARKED_PREWARM_KIND || isPrewarmClaimActive(entry.output?.prewarmState)))) {
+        const result = existingOrDemandOperation(current, owner);
+        if (result)
+            return result;
+        const sharedId = eligibleSharedSource(owner, pool?.sharedGatewayIds ?? []);
+        const instanceId = parkedInstanceId(runtime, sourceVm);
+        if (!sharedId || !instanceId || !empty || !parkedRootEligible(root, uid, generation) ||
+            conflictingPrewarmOwnerOperation(conflicts, operation.id))
             return { state: "ineligible" };
-        }
         const [assignment, release] = await Promise.all([
             tx.gateways.assignments.get(sharedId, uid), tx.gateways.releases.get(gatewayId, root.liveRelease),
             assertGatewayRuntimeMutationUnfencedInStore(tx, gatewayId),
         ]);
         if (assignment?.state !== "serving" || assignment.slug !== root.builderSlug || !release)
             return { state: "ineligible" };
-        const repairing = sourceVm?.needsRepair === true;
         const sameRelease = release.payloadHash === releasePayloadHash(payload);
-        const targetRelease = sameRelease ? root.liveRelease : root.latestRelease + 1;
         const claim = {
-            release: targetRelease, previousRelease: root.liveRelease, previousInstanceId: vm.instanceId,
+            release: sameRelease ? root.liveRelease : root.latestRelease + 1,
+            previousRelease: root.liveRelease, previousInstanceId: instanceId,
             sourceGatewayId: sharedId, sourceAssignmentEpoch: assignment.epoch,
         };
-        if (!sameRelease) {
-            await tx.gateways.releases.append({
-                gatewayId, expectedLatestRelease: root.latestRelease, createdAt: now, createdBy: operation.id,
-                sourceRelease: root.liveRelease, note: "Parked computer prewarm", payload,
-                payloadHash: releasePayloadHash(payload), activate: !repairing, updatedBy: operation.id,
-            });
-        }
-        await tx.gateways.roots.patch(gatewayId, { desiredStatus: "running", updatedAt: now, updatedBy: operation.id });
-        const state = repairing ? "repairing" : "booting";
-        await tx.journal.operations.patch(operation.id, { output: {
-                prewarmState: state, ...claim, ...(repairing ? { repairStartedAt: now, previousBootImageId: sourceVm.bootImageId } : {}),
-            } });
-        return { state, claim };
+        return writePrewarmStart(tx, { operation, request, root, claim, now, sourceVm });
     });
 }
 export function isFreshParkedPrewarmRecovery(value, instanceId, notBefore) {
@@ -104,82 +134,118 @@ export function isFreshParkedPrewarmRecovery(value, instanceId, notBefore) {
         recovery.instanceId === instanceId && typeof recovery.observedAt === "number" && recovery.observedAt >= notBefore &&
         (recovery.retainedPoints === 0) === (recovery.currentPointId === null);
 }
+function finishAlreadyResolved(operation, root, owner, request, mode) {
+    const phase = operation.output?.prewarmState;
+    if (phase === "parked" || phase === DEMAND_WON)
+        return phase;
+    if (phase !== HANDOFF)
+        return null;
+    if (mode === "ready")
+        return HANDOFF;
+    return root?.ownerUid === request.uid && root.allocation?.generation !== request.generation &&
+        owner?.activationLease?.targetGatewayId === request.gatewayId ? DEMAND_WON : null;
+}
+function assertOwnedPrewarmRoot(root, request, expected) {
+    if (!root || root.desiredStatus !== expected.status || root.ownerUid !== request.uid ||
+        root.allocation?.claimedByUid !== request.uid || root.allocation.generation !== request.generation ||
+        root.desiredRelease !== expected.release) {
+        throw new Error("Parked computer prewarm no longer owns the unassigned gateway");
+    }
+}
+function assertOriginalVmRecovery(operation, originalInstanceId, runtime) {
+    if (operation.output?.prewarmState !== REPAIRING || runtime?.vm?.instanceId !== originalInstanceId ||
+        runtime.vm.status !== "RUNNING" || !isFreshParkedPrewarmRecovery(runtime.vmBootRecovery, originalInstanceId, operation.output.repairStartedAt)) {
+        throw new Error("Original VM has not published fresh healthy boot recovery");
+    }
+}
+async function sameDemandArtifact(tx, root, owner, liveRelease) {
+    const lease = owner?.activationLease;
+    const requestedSource = lease?.sourceGatewayId;
+    if (lease?.status !== "requested" || !requestedSource ||
+        owner?.gateway?.gatewayId !== requestedSource || lease.entitlementTier !== root.sizingProfile)
+        return false;
+    const source = await tx.gateways.roots.get(requestedSource);
+    if (source?.gatewayClass !== "shared" || source.liveRelease !== source.desiredRelease)
+        return false;
+    const [sourceArtifact, destinationArtifact] = await Promise.all([
+        readGatewayArtifactInStore(tx, requestedSource, source.liveRelease),
+        readGatewayArtifactInStore(tx, root.gatewayId, liveRelease),
+    ]);
+    return destinationArtifact !== null && isDeepStrictEqual(sourceArtifact, destinationArtifact);
+}
+function finishedParkPhase(owner, mode) {
+    if (hasCustomerDemand(owner?.activationLease?.status))
+        return DEMAND_WON;
+    return mode === "repaired" ? REPAIR_PARKING : "parked";
+}
+function prewarmFinishWindow(claim, phase) {
+    const recovering = phase === REPAIRING || phase === REPAIR_PARKING;
+    return {
+        status: phase === REPAIR_PARKING ? "paused" : "running",
+        release: recovering ? claim.previousRelease : claim.release,
+    };
+}
+async function writePrewarmPark(tx, input) {
+    const { current, root, owner, runtime, claim, now, mode } = input;
+    const state = finishedParkPhase(owner, mode);
+    await tx.gateways.roots.patch(root.gatewayId, {
+        desiredStatus: "paused",
+        ...(mode === "rollback" && root.liveRelease !== claim.release ? { desiredRelease: claim.previousRelease } : {}),
+        updatedAt: now, updatedBy: current.id,
+    }, { revision: root.revision });
+    await tx.journal.operations.patch(current.id, { output: {
+            ...current.output, ...claim, prewarmState: state,
+            ...(state === REPAIR_PARKING ? { repairedBootRecovery: runtime?.vmBootRecovery } : {}),
+        } });
+    return state;
+}
 export async function finishParkedGatewayPrewarm(store, operation, now, mode) {
-    const { uid, gatewayId, generation } = parkedPrewarmInput(operation);
+    const request = parkedPrewarmInput(operation);
+    const { uid, gatewayId } = request;
     return store.transaction({ label: "isolated-gateway.prewarm-finish" }, async (tx) => {
         const [current, root, owner, empty, runtime] = await Promise.all([
             tx.journal.operations.get(operation.id), tx.gateways.roots.get(gatewayId), tx.users.records.get(uid),
             tx.gateways.assignments.isEmpty(gatewayId), tx.fleetRegistry.get(gatewayId),
         ]);
         assertPrewarmWorker(operation, current);
-        if (current.output?.prewarmState === "parked" || current.output?.prewarmState === "demand-won")
-            return current.output.prewarmState;
-        if (current.output?.prewarmState === "handoff" && mode === "ready")
-            return "handoff";
-        if (current.output?.prewarmState === "handoff" && root?.ownerUid === uid &&
-            root.allocation?.generation !== generation && owner?.activationLease?.targetGatewayId === gatewayId)
-            return "demand-won";
+        const resolved = finishAlreadyResolved(current, root, owner, request, mode);
+        if (resolved)
+            return resolved;
         const claim = prewarmClaim(current);
-        const phase = current.output?.prewarmState;
-        const repairing = phase === "repairing" || phase === "repair-parking";
-        const liveRelease = repairing ? claim.previousRelease : claim.release;
-        if (!root || root.desiredStatus !== (phase === "repair-parking" ? "paused" : "running") || root.ownerUid !== uid ||
-            root.allocation?.claimedByUid !== uid || root.allocation.generation !== generation ||
-            root.desiredRelease !== liveRelease || !empty || owner?.gateway?.gatewayId === gatewayId) {
+        const window = prewarmFinishWindow(claim, current.output?.prewarmState);
+        const liveRelease = window.release;
+        assertOwnedPrewarmRoot(root, request, window);
+        if (!empty || owner?.gateway?.gatewayId === gatewayId)
             throw new Error("Parked computer prewarm no longer owns the unassigned gateway");
-        }
         if (mode !== "rollback" && root.liveRelease !== liveRelease)
             throw new Error("Prewarmed release is not live");
-        const recovery = runtime?.vmBootRecovery;
-        if (mode === "repaired" && (phase !== "repairing" || runtime?.vm?.instanceId !== claim.previousInstanceId ||
-            runtime.vm.status !== "RUNNING" || !isFreshParkedPrewarmRecovery(recovery, claim.previousInstanceId, current.output?.repairStartedAt))) {
-            throw new Error("Original VM has not published fresh healthy boot recovery");
+        if (mode === "repaired")
+            assertOriginalVmRecovery(current, claim.previousInstanceId, runtime);
+        if (mode !== "rollback" && await sameDemandArtifact(tx, root, owner, liveRelease)) {
+            await tx.journal.operations.patch(operation.id, { output: { ...claim, prewarmState: HANDOFF, release: liveRelease } });
+            return HANDOFF;
         }
-        const lease = owner?.activationLease;
-        const requestedSource = lease?.sourceGatewayId;
-        if (mode !== "rollback" && lease?.status === "requested" && requestedSource &&
-            owner?.gateway?.gatewayId === requestedSource && lease.entitlementTier === root.sizingProfile) {
-            const source = await tx.gateways.roots.get(requestedSource);
-            const sourceArtifact = source?.gatewayClass === "shared" && source.liveRelease === source.desiredRelease
-                ? await readGatewayArtifactInStore(tx, requestedSource, source.liveRelease) : null;
-            const destinationArtifact = await readGatewayArtifactInStore(tx, gatewayId, liveRelease);
-            if (destinationArtifact && isDeepStrictEqual(sourceArtifact, destinationArtifact)) {
-                await tx.journal.operations.patch(operation.id, { output: { ...claim, prewarmState: "handoff", release: liveRelease } });
-                return "handoff";
-            }
-        }
-        const demand = hasCustomerDemand(lease?.status);
-        const state = demand ? "demand-won" : mode === "repaired" ? "repair-parking" : "parked";
-        await tx.gateways.roots.patch(gatewayId, {
-            desiredStatus: "paused",
-            ...(mode === "rollback" && root.liveRelease !== claim.release ? { desiredRelease: claim.previousRelease } : {}),
-            updatedAt: now, updatedBy: operation.id,
-        }, { revision: root.revision });
-        await tx.journal.operations.patch(operation.id, { output: {
-                ...current.output, ...claim, prewarmState: state,
-                ...(state === "repair-parking" ? { repairedBootRecovery: recovery } : {}),
-            } });
-        return state;
+        return writePrewarmPark(tx, { current, root, owner, runtime, claim, now, mode });
     });
 }
 export async function bootRepairedParkedGateway(store, operation, now) {
-    const { uid, gatewayId, generation } = parkedPrewarmInput(operation);
+    const request = parkedPrewarmInput(operation);
+    const { uid, gatewayId } = request;
     return store.transaction({ label: "isolated-gateway.prewarm-repaired-boot" }, async (tx) => {
         const [current, root, runtime, user, empty] = await Promise.all([
             tx.journal.operations.get(operation.id), tx.gateways.roots.get(gatewayId), tx.fleetRegistry.get(gatewayId),
             tx.users.records.get(uid), tx.gateways.assignments.isEmpty(gatewayId),
         ]);
         assertPrewarmWorker(operation, current);
-        if (current.output?.prewarmState !== "repair-parking")
+        if (current.output?.prewarmState !== REPAIR_PARKING)
             throw new Error("Original VM recovery park claim changed");
         const claim = prewarmClaim(current);
         if (hasCustomerDemand(user?.activationLease?.status)) {
-            await tx.journal.operations.patch(operation.id, { output: { ...current.output, prewarmState: "demand-won" } });
-            return "demand-won";
+            await tx.journal.operations.patch(operation.id, { output: { ...current.output, prewarmState: DEMAND_WON } });
+            return DEMAND_WON;
         }
-        if (!root || root.ownerUid !== uid || root.desiredStatus !== "paused" || root.liveRelease !== claim.previousRelease ||
-            root.desiredRelease !== claim.previousRelease || root.allocation?.generation !== generation ||
-            runtime?.vm?.status !== "SUSPENDED" || runtime.vm.instanceId !== claim.previousInstanceId ||
+        assertOwnedPrewarmRoot(root, request, { status: "paused", release: claim.previousRelease });
+        if (root.liveRelease !== claim.previousRelease || parkedInstanceId(runtime, undefined) !== claim.previousInstanceId ||
             !empty || !user || isolatedRuntimeMutationFenced(user) || user.gateway?.gatewayId === gatewayId) {
             throw new Error("Claimed original VM was not safely parked after recovery");
         }
@@ -187,7 +253,7 @@ export async function bootRepairedParkedGateway(store, operation, now) {
         await tx.gateways.roots.patch(gatewayId, {
             desiredStatus: "running", desiredRelease: claim.release, updatedAt: now, updatedBy: operation.id,
         }, { revision: root.revision });
-        await tx.journal.operations.patch(operation.id, { output: { ...current.output, prewarmState: "booting" } });
-        return "booting";
+        await tx.journal.operations.patch(operation.id, { output: { ...current.output, prewarmState: BOOTING } });
+        return BOOTING;
     });
 }

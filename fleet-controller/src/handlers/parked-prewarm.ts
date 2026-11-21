@@ -33,8 +33,9 @@ function phaseWake(deps: ParkedPrewarmDeps, gatewayId: string, uid: string) {
   const whenChanged = <A extends WatchAggregate>(signature: (record: WatchRecords[A]) => string) => {
     let previous: string | undefined;
     return (event: WatchEvent<A>) => {
-      const next = event.kind === "snapshot" ? event.records.at(-1)
-        : event.kind === "changes" ? event.changes.at(-1)?.record : null;
+      let next: WatchRecords[A] | null | undefined;
+      if (event.kind === "snapshot") next = event.records.at(-1);
+      if (event.kind === "changes") next = event.changes.at(-1)?.record;
       const current = next ? signature(next) : undefined;
       if (event.kind !== "changes" || current !== previous) wake();
       previous = current;
@@ -96,11 +97,15 @@ async function recordVerifiedStep(run: PrewarmRun, name: string, instanceId: str
   run.steps = [...run.steps.filter((existing) => existing.name !== name), step];
 }
 
+function originalVmIsRunning(run: PrewarmRun, state: State): boolean {
+  return state.root?.liveRelease === run.claim.previousRelease &&
+    state.registry?.vm?.instanceId === run.claim.previousInstanceId && state.registry.vm.status === "RUNNING";
+}
+
 async function originalVmRecovered(run: PrewarmRun, state: State): Promise<boolean> {
   const { gatewayId, uid } = run.request;
-  const { previousRelease, previousInstanceId } = run.claim;
-  if (state.root?.liveRelease !== previousRelease || state.registry?.vm?.instanceId !== previousInstanceId ||
-      state.registry.vm.status !== "RUNNING") return false;
+  const { previousInstanceId } = run.claim;
+  if (!state.registry || !originalVmIsRunning(run, state)) return false;
   const operation = await run.deps.store.journal.operations.get(run.op.id);
   if (!isFreshParkedPrewarmRecovery(state.registry.vmBootRecovery, previousInstanceId, operation?.output?.repairStartedAt) ||
       !await run.deps.probeReady(gatewayId, previousInstanceId)) return false;
@@ -124,10 +129,14 @@ async function verifiedCandidateVm(run: PrewarmRun, state: State): Promise<strin
   return observed.instanceId;
 }
 
+function ownerHasDemand(state: State, gatewayId: string) {
+  return state.owner?.activationLease?.status === "requested" || state.owner?.gateway?.gatewayId === gatewayId;
+}
+
 async function parkedCandidateResult(run: PrewarmRun, state: State): Promise<OperationResult | null> {
   const { gatewayId, uid, generation, bootImageId } = run.request;
-  const { root, registry, owner } = state;
-  if (root?.allocation?.generation !== generation || owner?.activationLease?.status === "requested" || owner?.gateway?.gatewayId === gatewayId) {
+  const { root, registry } = state;
+  if (root?.allocation?.generation !== generation || ownerHasDemand(state, gatewayId)) {
     return prewarmResult(run, "demand-won", registry?.vm?.instanceId);
   }
   if (root.desiredStatus !== "paused" || registry?.vm?.status !== "SUSPENDED") return null;
@@ -143,24 +152,30 @@ async function authorizedRepairPark(run: PrewarmRun, state: State): Promise<bool
   return observed?.status === "SUSPENDED" && observed.instanceId === run.claim.previousInstanceId;
 }
 
+function handoffProgress(run: PrewarmRun, state: State): Phase | OperationResult {
+  const { uid, gatewayId, generation } = run.request;
+  const taken = state.root?.ownerUid === uid && state.root.allocation?.generation !== generation &&
+    state.owner?.activationLease?.targetGatewayId === gatewayId;
+  return taken ? prewarmResult(run, "demand-won", state.registry?.vm?.instanceId) : "handoff";
+}
+
 async function progressPhase(run: PrewarmRun, phase: Phase, state: State): Promise<Phase | OperationResult> {
-  const { gatewayId, uid, generation } = run.request;
   const { deps, op } = run;
   if (phase === "parked") return await parkedCandidateResult(run, state) ?? phase;
-  if (phase === "handoff") {
-    return state.root?.ownerUid === uid && state.root.allocation?.generation !== generation &&
-      state.owner?.activationLease?.targetGatewayId === gatewayId
-      ? prewarmResult(run, "demand-won", state.registry?.vm?.instanceId) : phase;
-  }
+  if (phase === "handoff") return handoffProgress(run, state);
   if (phase === "repair-parking") {
     if (!await authorizedRepairPark(run, state)) return phase;
     const next = await bootRepairedParkedGateway(deps.store, op, deps.now());
     return next === "demand-won" ? prewarmResult(run, next, state.registry?.vm?.instanceId) : next;
   }
-  const instanceId = phase === "repairing" ?
-    await originalVmRecovered(run, state) ? run.claim.previousInstanceId : null :
-    await verifiedCandidateVm(run, state);
-  if (!instanceId) return phase;
+  let instanceId: string | null;
+  if (phase === "repairing") {
+    if (!await originalVmRecovered(run, state)) return phase;
+    instanceId = run.claim.previousInstanceId;
+  } else {
+    instanceId = await verifiedCandidateVm(run, state);
+    if (!instanceId) return phase;
+  }
   const next = await finishParkedGatewayPrewarm(deps.store, op, deps.now(), phase === "repairing" ? "repaired" : "ready");
   return next === "demand-won" ? prewarmResult(run, next, instanceId) : next;
 }
