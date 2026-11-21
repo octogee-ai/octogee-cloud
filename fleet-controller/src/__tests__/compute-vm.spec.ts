@@ -938,12 +938,13 @@ describe("verifyBootReplacement", () => {
     startedAt: Date.parse("2026-11-21T16:44:00Z"), endedAt: Date.parse("2026-11-21T17:04:00Z") };
 
   it("accepts the exact completed delete followed by insertion", async () => {
-    const compute = fakeCompute(() => ({ status: 200, data: { items: [inserted, deleted] } }));
+    const old = { ...inserted, targetId: "3", insertTime: "2026-11-21T16:13:00Z" };
+    const compute = fakeCompute(() => ({ status: 200, data: { items: [inserted, deleted, old] } }));
     await expect(clientWith(compute.request).client.verifyBootReplacement(window)).resolves.toBe(true);
     expect(compute.calls).toHaveLength(1);
     const request = new URL(compute.calls[0].url);
     expect(request.pathname).toBe("/compute/v1/projects/octogee-test/zones/us-west1-b/operations");
-    expect(request.searchParams.get("filter")).toContain(`targetLink = "${targetLink}"`);
+    expect(request.searchParams.get("filter")).toBe(`targetLink eq "${targetLink.replaceAll(".", "\\.")}"`);
   });
 
   it.each([

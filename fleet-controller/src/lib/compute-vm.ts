@@ -151,6 +151,7 @@ interface ComputeOperation {
   targetId?: string;
   operationType?: string;
   endTime?: string;
+  httpErrorStatusCode?: number;
   insertTime?: string;
   error?: { errors?: Array<{ code?: string; message?: string }> };
 }
@@ -408,21 +409,24 @@ async function verifyBootReplacement(request: ComputeRequest, base: string, wind
   const { zone, instanceName, previousInstanceId, instanceId, startedAt, endedAt } = window;
   const target = `${base.replace("compute.googleapis.com", "www.googleapis.com")}/zones/${zone}/instances/${instanceName}`;
   const params = new URLSearchParams({
-    filter: `(targetLink = "${target}") (insertTime >= "${new Date(startedAt).toISOString()}") (insertTime <= "${new Date(endedAt).toISOString()}")`,
-    maxResults: "100",
+    filter: `targetLink eq "${target.replaceAll(".", "\\.")}"`,
+    maxResults: "500",
   });
   const res = await request({ url: `${base}/zones/${zone}/operations?${params}`, method: "GET" });
   const page = (res.data ?? {}) as ComputeOperationList;
   if (res.status !== 200 || page.nextPageToken) return false;
-  const changes = (page.items ?? []).filter(operation =>
-    operation.targetLink === target && (operation.operationType === "delete" || operation.operationType === "insert"));
+  const changes = (page.items ?? []).filter(operation => {
+    if (operation.targetLink !== target || (operation.operationType !== "delete" && operation.operationType !== "insert")) return false;
+    const at = Date.parse(operation.insertTime ?? "");
+    return !Number.isFinite(at) || (startedAt <= at && at <= endedAt);
+  });
   const deleted = changes.find(operation => operation.operationType === "delete" && operation.targetId === previousInstanceId);
   const inserted = changes.find(operation => operation.operationType === "insert" && operation.targetId === instanceId);
   if (changes.length !== 2 || !deleted || !inserted) return false;
   return [deleted, inserted].every(operation => {
     const began = Date.parse(operation.insertTime ?? "");
     const ended = Date.parse(operation.endTime ?? "");
-    return operation.status === "DONE" && operation.error === undefined && startedAt <= began && began <= ended && ended <= endedAt;
+    return operation.status === "DONE" && operation.error === undefined && operation.httpErrorStatusCode === undefined && startedAt <= began && began <= ended && ended <= endedAt;
   }) && Date.parse(deleted.endTime ?? "") <= Date.parse(inserted.insertTime ?? "");
 }
 
