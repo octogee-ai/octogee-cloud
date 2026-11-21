@@ -1,3 +1,4 @@
+import { migrationTransferTaskId } from "@octogee/core/platform-state";
 import http from "node:http";
 import { MIGRATION_IMPORT_FINISH_TIMEOUT_MS } from "@octogee/shared/types/fleet-controller";
 import { Agent, getGlobalDispatcher, setGlobalDispatcher } from "undici";
@@ -10,7 +11,6 @@ import { FLEET_KEY_PAIR } from "./fixtures/fleet-keys.js";
 import { readTransferAttemptForCleanup } from "../lib/migration-transfer-lease.js";
 import {
   createRsyncMigrationTransfer,
-  migrationTransferTaskId,
   resolveMigrationRecoveryUrl,
   type CommandRunner,
 } from "../lib/migration-rsync-transfer";
