@@ -141,6 +141,10 @@
       "types": "./dist/octogee-api/src/lib/project-agent-service.d.ts",
       "default": "./dist/octogee-api/src/lib/project-agent-service.js"
     },
+    "./lib/project-create-admission": {
+      "types": "./dist/octogee-api/src/lib/project-create-admission.d.ts",
+      "default": "./dist/octogee-api/src/lib/project-create-admission.js"
+    },
     "./lib/project-create-service": {
       "types": "./dist/octogee-api/src/lib/project-create-service.d.ts",
       "default": "./dist/octogee-api/src/lib/project-create-service.js"

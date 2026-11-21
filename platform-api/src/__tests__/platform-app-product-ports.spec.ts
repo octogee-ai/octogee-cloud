@@ -19,6 +19,8 @@ const { NO_WORKSPACE_STORAGE_ACCOUNTING, installWorkspaceStorageAccounting, work
   await import("@octogee/shared/types/workspace-storage-quota");
 const { NO_PROJECT_AGENT_DELIVERY_INTENTS, installProjectAgentDeliveryIntents, projectAgentDeliveryIntents } =
   await import("../lib/project-agent-delivery-intents.js");
+const { ADMIT_EVERY_PROJECT_CREATE, installProjectCreateAdmission, projectCreateAdmission } =
+  await import("../lib/project-create-admission.js");
 const { userAccounts } = await import("@octogee/core/identity/user-accounts");
 const { NO_CONNECTOR_DISCONNECTED, connectorDisconnected, installConnectorDisconnected } =
   await import("../lib/connector-disconnect.js");
@@ -29,6 +31,7 @@ afterEach(() => {
   installWorkspaceStorageAccounting(NO_WORKSPACE_STORAGE_ACCOUNTING);
   installProjectAgentDeliveryIntents(NO_PROJECT_AGENT_DELIVERY_INTENTS);
   installConnectorDisconnected(NO_CONNECTOR_DISCONNECTED);
+  installProjectCreateAdmission(ADMIT_EVERY_PROJECT_CREATE);
 });
 
 function productWith(runtime: Partial<ProductRuntime>) {
@@ -119,5 +122,23 @@ describe("createPlatformApp product ports", () => {
     createPlatformApp({ product: productWith({ connectorDisconnected: disconnected }) });
 
     expect(connectorDisconnected()).toBe(disconnected);
+  });
+
+  it("admits every project create without a product", async () => {
+    installProjectCreateAdmission(async () => ({ allowed: false, status: 403, body: {} }));
+
+    createPlatformApp();
+
+    expect(projectCreateAdmission()).toBe(ADMIT_EVERY_PROJECT_CREATE);
+    await expect(projectCreateAdmission()({ uid: "u", workspaceId: "w", projectSlug: "p", source: "ui" }))
+      .resolves.toEqual({ allowed: true });
+  });
+
+  it("installs the product's project create admission", () => {
+    const admission = async () => ({ allowed: true as const });
+
+    createPlatformApp({ product: productWith({ projectCreateAdmission: admission }) });
+
+    expect(projectCreateAdmission()).toBe(admission);
   });
 });
