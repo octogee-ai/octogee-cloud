@@ -1,5 +1,6 @@
 import request from "supertest";
 import type { Express } from "express";
+import { GATEWAY_UNREACHABLE_AFTER_MS } from "@octogee/shared/types/fleet-controller";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { admitAdminDryRunMarker, isAdminDryRun } from "@octogee/core/admin-dry-run";
 import { noAdminUserDirectorySource } from "@octogee/core/admin-user-directory-router";
@@ -623,6 +624,25 @@ describe("createHttpServer — admin gateway routes", () => {
     expect(res.text.split(`event: placement-reset\ndata: {"collection":"${collection}"`)).toHaveLength(3);
   });
 
+  it("wakes placement when a ready runtime heartbeat actually expires without another write", async () => {
+    type RuntimeSnapshot = Extract<WatchEvent<"fleetRegistry">, { kind: "snapshot" }>;
+    const watches = createWatchRegistry({
+      script: aggregate => aggregate === "fleetRegistry" ? [{
+        kind: "snapshot",
+        cursor: FIXTURE_CURSOR,
+        records: [{
+          ...servingRuntime("gw-fixture", { heartbeat: { lastHeartbeatAt: Date.now() - GATEWAY_UNREACHABLE_AFTER_MS + 30 } }),
+          revision: "test-revision",
+        } as RuntimeSnapshot["records"][number]],
+      }] : [SNAPSHOT],
+    });
+    const res = await request(createHttpServer(buildDeps(store, {}, watches)))
+      .get("/api/admin/fleet-events?placement=1&once=1")
+      .set("Authorization", "Bearer admin-token")
+      .timeout(1_000);
+    expect(res.text).toContain('event: placement-changed\ndata: {"collection":"glmGateways"');
+  });
+
   it("requires admin auth for placement event hints", async () => {
     const watches = createWatchRegistry();
     const app = createHttpServer(buildDeps(store, {}, watches));
@@ -639,7 +659,7 @@ describe("createHttpServer — admin gateway routes", () => {
       .set("Authorization", "Bearer admin-token");
 
     expect(res.status).toBe(200);
-    expect(watches.aggregates()).toEqual(["builders", "gateways", "config", "fleetRegistry", "operations"]);
+    expect(watches.aggregates()).toEqual(["builders", "gateways", "config", "assignments", "fleetRegistry", "operations"]);
   });
 
   it.each([
@@ -1227,7 +1247,7 @@ describe("createHttpServer — fleet-events watcher sharing", () => {
 
     expect(first.status).toBe(200);
     expect(second.status).toBe(200);
-    for (const aggregate of ["builders", "gateways", "config", "fleetRegistry", "operations"] as const) {
+    for (const aggregate of ["builders", "gateways", "config", "assignments", "fleetRegistry", "operations"] as const) {
       expect(registry.attachCount(aggregate), aggregate).toBe(1);
     }
   });
@@ -1240,16 +1260,16 @@ describe("createHttpServer — fleet-events watcher sharing", () => {
     expect((await streamOnce(app)).status).toBe(200);
 
     expect(registry.attachCount("operations")).toBe(1);
-    expect(registry.activeCount()).toBe(5);
+    expect(registry.activeCount()).toBe(6);
   });
 
-  it("filters the glmOperations watch to active operations", async () => {
+  it("filters the glmOperations watch to active operations and migration recovery", async () => {
     const registry = createWatchRegistry({ repeatEveryMs: 5 });
     const app = createHttpServer(buildDeps(store, {}, registry));
 
     expect((await streamOnce(app)).status).toBe(200);
 
-    expect(registry.filterFor("operations")).toEqual({ statuses: ["pending", "running"] });
+    expect(registry.filterFor("operations")).toEqual({ statuses: ["pending", "running"], includeMigrationRecovery: true });
   });
 
   it("tears down watchers after the last connection closes when linger is disabled", async () => {
