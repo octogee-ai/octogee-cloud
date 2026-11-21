@@ -569,6 +569,10 @@ const SCHEDULER_MIGRATION_PHASES = ["hold", "export", "stage", "activate", "resu
 const SCHEDULER_RETAINING_PHASES = ["hold", "export", "stage"];
 
 function isSchedulerMigrationRequest(body: SchedulerMigrationRequestBody): boolean {
+  if (body.phase === "stage-requester") {
+    return body.agentIds === undefined && body.snapshot === undefined && body.retainNonportable === undefined &&
+      body.resolveAgentScope === undefined && body.targetRequesterProfileId === undefined;
+  }
   const agentIdsValid = body.agentIds === undefined ||
     (Array.isArray(body.agentIds) && body.agentIds.length > 0 && body.agentIds.every((id) => typeof id === "string" && id));
   const stageValid = body.phase !== "stage" || (body.agentIds !== undefined && body.snapshot !== undefined);
@@ -576,7 +580,10 @@ function isSchedulerMigrationRequest(body: SchedulerMigrationRequestBody): boole
     (typeof body.retainNonportable === "boolean" && SCHEDULER_RETAINING_PHASES.includes(body.phase));
   const scopeValid = body.resolveAgentScope === undefined ||
     (body.resolveAgentScope === true && body.phase === "export" && body.agentIds === undefined);
-  return SCHEDULER_MIGRATION_PHASES.includes(body.phase) && agentIdsValid && stageValid && retainValid && scopeValid;
+  const requester = body.targetRequesterProfileId;
+  const requesterValid = requester === undefined || (body.phase === "export" && body.retainNonportable === true &&
+    (requester === null || (typeof requester === "string" && requester.trim().length > 0 && requester.length <= 512)));
+  return SCHEDULER_MIGRATION_PHASES.includes(body.phase) && agentIdsValid && stageValid && retainValid && scopeValid && requesterValid;
 }
 
 export function createSchedulerMigrationHandler(deps: MigrationHandlerDeps): RequestHandler {
@@ -595,6 +602,7 @@ export function createSchedulerMigrationHandler(deps: MigrationHandlerDeps): Req
         ...(body.agentIds ? { agentIds: body.agentIds } : {}),
         ...(body.snapshot === undefined ? {} : { snapshot: body.snapshot }),
         ...(body.retainNonportable === undefined ? {} : { retainNonportable: body.retainNonportable }),
+        ...(body.targetRequesterProfileId === undefined ? {} : { targetRequesterProfileId: body.targetRequesterProfileId }),
       });
       res.status(result.drained ? 200 : 409).json(result);
     } catch (error) {

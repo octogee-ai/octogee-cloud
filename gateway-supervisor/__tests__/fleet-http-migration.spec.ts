@@ -5735,8 +5735,8 @@ describe("scheduler migration signed endpoint", () => {
     );
     expect(response.getStatus()).toBe(409);
   });
-  it("forwards a partial export so host-bound jobs stay dormant here", async () => {
-    const partial = { ...body, phase: "export" as const, retainNonportable: true };
+  it.each(["shared-operator", null])("forwards the destination requester in a partial export (%s)", async targetRequesterProfileId => {
+    const partial = { ...body, phase: "export" as const, retainNonportable: true, targetRequesterProfileId };
     const result = { operationId: partial.migrationId, phase: "export", agentIds: ["octogee-chris-coach"], drained: true, snapshot: { retainedJobIds: ["desktop-watch"] } };
     const schedulerMigration = vi.fn(async () => result);
     const response = mkResponse();
@@ -5744,7 +5744,19 @@ describe("scheduler migration signed endpoint", () => {
       mkRequest(partial, { signature: signForPod(partial.migrationId, JSON.stringify(partial)) }), response.res, vi.fn(),
     );
     expect(response.getStatus()).toBe(200);
-    expect(schedulerMigration).toHaveBeenCalledWith("chris", { operationId: "handoff-1", phase: "export", retainNonportable: true });
+    expect(schedulerMigration).toHaveBeenCalledWith("chris", { operationId: "handoff-1", phase: "export", retainNonportable: true, targetRequesterProfileId });
+  });
+  it("returns the staging requester through the signed scheduler route", async () => {
+    const probe = { ...body, phase: "stage-requester" as const };
+    const result = { operationId: body.migrationId, phase: probe.phase, agentIds: [], drained: true, stageRequesterProfileId: "shared-operator" };
+    const schedulerMigration = vi.fn(async () => result);
+    const response = mkResponse();
+    await createSchedulerMigrationHandler(mkDeps({ adapter: mkAdapter({ schedulerMigration }) }))(
+      mkRequest(probe, { signature: signForPod(probe.migrationId, JSON.stringify(probe)) }), response.res, vi.fn(),
+    );
+    expect(response.getStatus()).toBe(200);
+    expect(response.getBody()).toEqual(result);
+    expect(schedulerMigration).toHaveBeenCalledWith("chris", { operationId: body.migrationId, phase: probe.phase });
   });
   it("resolves the initial export scope only when explicitly requested", async () => {
     const initial = { ...body, phase: "export", resolveAgentScope: true };

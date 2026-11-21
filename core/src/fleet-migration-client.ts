@@ -294,9 +294,12 @@ export function createMigrationClient(deps: MigrationClientDeps): MigrationClien
         body,
         timeoutMs: quiesceMs,
       });
+      const requester = result.stageRequesterProfileId;
       if (result.operationId !== body.migrationId || result.phase !== body.phase ||
           !Array.isArray(result.agentIds) || result.agentIds.some(id => typeof id !== "string" || !id) ||
-          (result.agentIds.length === 0 && body.phase !== "resume" && body.phase !== "abort") ||
+          (body.phase === "stage-requester" && (result.agentIds.length !== 0 ||
+            (requester !== null && (typeof requester !== "string" || !requester.trim() || requester.length > 512)))) ||
+          (result.agentIds.length === 0 && !["resume", "abort", "stage-requester"].includes(body.phase)) ||
           result.drained !== true || (body.phase === "export" && result.snapshot === undefined)) {
         throw new Error(`scheduler ${body.phase} did not prove a drained matching operation`);
       }

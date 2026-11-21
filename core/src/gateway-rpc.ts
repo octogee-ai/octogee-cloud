@@ -1115,10 +1115,13 @@ export function createGatewayRpc(opts: GatewayRpcClientOptions = {}): GatewayRpc
       const result = await call("cron.migration", params);
       if (!result || typeof result !== "object") throw new OpenclawWireError(INVALID_RESPONSE, "cron.migration returned non-object payload");
       const value = result as SchedulerMigrationResult;
+      const requester = value.stageRequesterProfileId;
       if (value.operationId !== params.operationId || value.phase !== params.phase ||
           typeof value.drained !== "boolean" || !Array.isArray(value.agentIds) ||
           value.agentIds.some(id => typeof id !== "string" || !id) ||
-          (value.agentIds.length === 0 && params.phase !== "resume" && params.phase !== "abort") ||
+          (params.phase === "stage-requester" && (value.agentIds.length !== 0 ||
+            (requester !== null && (typeof requester !== "string" || !requester.trim() || requester.length > 512)))) ||
+          (value.agentIds.length === 0 && !["resume", "abort", "stage-requester"].includes(params.phase)) ||
           (params.phase === "export" && value.snapshot === undefined)) {
         throw new OpenclawWireError(INVALID_RESPONSE, "cron.migration returned a mismatched operation or invalid scheduler state");
       }

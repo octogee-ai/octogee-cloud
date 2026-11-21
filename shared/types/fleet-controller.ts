@@ -434,7 +434,7 @@ export interface MigrationProgressRequestBody extends MigrationRequestBody {
 }
 
 
-export type SchedulerMigrationPhase = "hold" | "export" | "stage" | "activate" | "resume" | "retire" | "abort";
+export type SchedulerMigrationPhase = "hold" | "export" | "stage-requester" | "stage" | "activate" | "resume" | "retire" | "abort";
 
 export interface SchedulerMigrationRequest {
   resolveAgentScope?: true;
@@ -443,6 +443,7 @@ export interface SchedulerMigrationRequest {
   agentIds?: string[];
   snapshot?: unknown;
   retainNonportable?: boolean;
+  targetRequesterProfileId?: string | null;
 }
 
 export interface SchedulerMigrationResult {
@@ -451,6 +452,7 @@ export interface SchedulerMigrationResult {
   agentIds: string[];
   drained: boolean;
   snapshot?: unknown;
+  stageRequesterProfileId?: string | null;
 }
 
 export interface SchedulerMigrationRequestBody extends MigrationRequestBody {
@@ -459,6 +461,7 @@ export interface SchedulerMigrationRequestBody extends MigrationRequestBody {
   agentIds?: string[];
   snapshot?: unknown;
   retainNonportable?: boolean;
+  targetRequesterProfileId?: string | null;
 }
 
 // One user agent's cron job as OpenClaw `cron.add` accepts it, captured

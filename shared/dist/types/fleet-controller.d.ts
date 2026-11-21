@@ -297,7 +297,7 @@ export interface MigrationProgressRequestBody extends MigrationRequestBody {
     status: "pending" | "running" | "done" | "failed" | "skipped";
     elapsedMs?: number;
 }
-export type SchedulerMigrationPhase = "hold" | "export" | "stage" | "activate" | "resume" | "retire" | "abort";
+export type SchedulerMigrationPhase = "hold" | "export" | "stage-requester" | "stage" | "activate" | "resume" | "retire" | "abort";
 export interface SchedulerMigrationRequest {
     resolveAgentScope?: true;
     operationId: string;
@@ -305,6 +305,7 @@ export interface SchedulerMigrationRequest {
     agentIds?: string[];
     snapshot?: unknown;
     retainNonportable?: boolean;
+    targetRequesterProfileId?: string | null;
 }
 export interface SchedulerMigrationResult {
     operationId: string;
@@ -312,6 +313,7 @@ export interface SchedulerMigrationResult {
     agentIds: string[];
     drained: boolean;
     snapshot?: unknown;
+    stageRequesterProfileId?: string | null;
 }
 export interface SchedulerMigrationRequestBody extends MigrationRequestBody {
     resolveAgentScope?: true;
@@ -319,6 +321,7 @@ export interface SchedulerMigrationRequestBody extends MigrationRequestBody {
     agentIds?: string[];
     snapshot?: unknown;
     retainNonportable?: boolean;
+    targetRequesterProfileId?: string | null;
 }
 export interface ScheduleRecord {
     sourceJobId: string;
