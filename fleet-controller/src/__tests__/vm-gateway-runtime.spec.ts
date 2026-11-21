@@ -684,7 +684,9 @@ describe("createVmGatewayRuntime.upsertInstance", () => {
   it.each([
     { status: "SUSPENDED", helmReplicas: 0, observedReplicas: 0 },
     { status: "RUNNING", helmReplicas: 0, observedReplicas: 1 },
-    { status: "SUSPENDED", helmReplicas: 1, observedReplicas: 1 },
+    { status: "SUSPENDED", helmReplicas: 1, observedReplicas: 0 },
+    { status: "SUSPENDING", helmReplicas: 0, observedReplicas: 1 },
+    { status: "TERMINATED", helmReplicas: 1, observedReplicas: 0 },
   ])("reports $observedReplicas replicas for a $status same-release VM with Helm intent $helmReplicas", async ({
     status, helmReplicas, observedReplicas,
   }) => {

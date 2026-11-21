@@ -19,7 +19,7 @@ import {
   type RuntimeUserIdentity,
 } from "@octogee/shared/types/glm";
 import type { GatewayVmClient, GatewayVmDescription } from "./lib/compute-vm.js";
-import { assertReplacementRecoveryCapacity, createVmLifecycle, recordVmObservation, vmSpecDesktop } from "./vm-lifecycle.js";
+import { assertReplacementRecoveryCapacity, createVmLifecycle, PARKED_STATUSES, recordVmObservation, vmSpecDesktop } from "./vm-lifecycle.js";
 import type { KubectlSubprocess } from "./fleet-ingress.js";
 import {
   helmTemplateArgsFromUpgradeArgs,
@@ -305,7 +305,7 @@ function vmDeploymentBecameRoutable(previous: FleetRegistryRecord | null, vm: Ga
 function observedVmDeployment(record: FleetRegistryRecord | null): HelmInstancesMap[string] | null {
   const instance = record?.vmInstance as HelmInstancesMap[string] | undefined;
   if (!instance) return null;
-  if (record?.vm?.status === "SUSPENDED" && record.helm.replicas === 0) {
+  if (PARKED_STATUSES.has(record?.vm?.status ?? "")) {
     return { ...instance, replicas: 0 };
   }
   return instance;
