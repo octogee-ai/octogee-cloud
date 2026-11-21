@@ -47,12 +47,13 @@ function stageMigrationRun(dir: string) {
     install: 'printf "%s\\n" "$@" >> "$SESSION_PROBE"\ncat > "$SUDOERS_PROBE"',
     visudo: 'exit 0',
     sudo: 'printf "%s\\n" "${OMARCHY_ALLOW_DIRECT_PACMAN:-}" "$@" > "$MIGRATION_PROBE"\nexit "$MIGRATION_STATUS"',
-    rm: 'exit 0',
-    git: 'touch "$CONTINUATION_PROBE"\nexit 42',
   };
   for (const [name, body] of Object.entries(stubs)) {
     writeFileSync(path.join(dir, name), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
   }
+  const nextStep = path.join(dir, 'desktop-rootfs/usr/share/omarchy/octo-desktop/fetch-wlrctl.sh');
+  mkdirSync(path.dirname(nextStep), { recursive: true });
+  writeFileSync(nextStep, 'touch "$CONTINUATION_PROBE"\nexit 42\n');
   const source = readFileSync(path.resolve('../desktop/image/customize.sh'), 'utf8');
   const script = path.join(dir, 'customize.sh');
   writeFileSync(script, source.replaceAll('/tmp/pacman.log', path.join(dir, 'pacman.log')));
