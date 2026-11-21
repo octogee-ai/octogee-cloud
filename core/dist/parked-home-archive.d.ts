@@ -12,6 +12,7 @@ export declare function isAuthorizedHomeArchiveOrigin(operation: {
 export declare function resolveParkedHomeArchiveGrant(environment: string | null | undefined, value: string | undefined): ParkedHomeArchiveGrant | undefined;
 export declare function simpleHomePreparation(value: PlatformUserRecord["home"]["homeMigration"]): boolean;
 type ArchiveSource = NonNullable<UserHomeArchive["source"]>;
+export declare function retainedBootPreservesScheduler(image: OpaqueMap, custody: OpaqueMap, gateways: readonly string[]): boolean;
 export declare function archivedSchedulerSourceImage(owner: PlatformUserRecord, gatewayId: string, instanceId: string, custody: OpaqueMap): {
     id: string;
     name: string;

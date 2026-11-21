@@ -1,5 +1,5 @@
 import type { PlatformUserRecord, FleetRegistryRecord, GatewayRoot, OperationRecord, PlatformStateStore, UntypedRecord, UserHomeArchive } from "@octogee/core/platform-state";
-import { archiveSchedulerCustodyMatches } from "@octogee/core/admin-fleet-router";
+import { archiveSchedulerCustodyMatches, retainedBootPreservesScheduler } from "@octogee/core/admin-fleet-router";
 import { migrationCancellationDeferred } from "@octogee/core/fleet-state";
 import type { MigrationClient } from "@octogee/core/fleet-migration-client";
 import type { GatewayVmClient } from "./compute-vm.js";
@@ -112,11 +112,8 @@ type VmAuthority = { instanceId: string; instanceName: string; zone: string;
 };
 
 function admittedReplacementImage(image: UntypedRecord | undefined, pending: Retirement, targetGatewayId: string): VmAuthority["image"] | null {
-  if (image?.homeAdmission !== true || image.homeId !== pending.homeDiskId) return null;
+  if (!image || !retainedBootPreservesScheduler(image, pending, [pending.sourceGatewayId, targetGatewayId])) return null;
   if (["name", "id", "project", "operationId"].some(key => typeof image[key] !== "string" || !image[key])) return null;
-  const source = image.sourceComputer;
-  if (source?.instanceId !== pending.instanceId || source.name !== pending.instanceName || source.zone !== pending.zone ||
-      ![pending.sourceGatewayId, targetGatewayId].includes(source.gatewayId)) return null;
   return { name: image.name, id: image.id, project: image.project, operationId: image.operationId };
 }
 

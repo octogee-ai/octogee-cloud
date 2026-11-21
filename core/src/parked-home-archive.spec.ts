@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
-import { enqueueParkedHomeArchive, planReturnedHomeArchive } from "./parked-home-archive.js";
+import { archivedSchedulerSourceImage, enqueueParkedHomeArchive, planReturnedHomeArchive } from "./parked-home-archive.js";
 
 const fence = { ownerUid: "UidA", sizingProfile: "desktop-small" };
 const parked = { instanceName: "owner-computer", zone: "us-central1-b", instanceId: "200",
@@ -99,6 +99,19 @@ describe("enroll a parked home archive", () => {
     const store = fixture({ native: true, schedulerDiskId: "999" });
     await expect(enqueueParkedHomeArchive(store, { ownerUid: fence.ownerUid, grant: fence, createdBy: "operator" })).rejects.toThrow();
     expect((await store.users.records.get(fence.ownerUid))?.home.homeArchive).toBeUndefined();
+  });
+
+  it.each([true, false])("requires exact scheduler retirement metadata on a multi-hop archive image (same=%s)", async same => {
+    const store = fixture({ native: true });
+    const owner = (await store.users.records.get(fence.ownerUid))!;
+    const custody = owner.fences.pendingNativeSchedulerRetirement!;
+    const bootImage = { id: "900", name: "qualified-image", project: "test-project", homeId: homeDisk.id, homeAdmission: true,
+      operationId: "boot-302", sourceComputer: { instanceId: "302", name: parked.instanceName, zone: parked.zone, gatewayId: parked.gatewayId },
+      nativeSchedulerRetirement: same ? custody : { ...custody, migrationId: "unrelated-return" } };
+    const current = { ...owner, home: { ...owner.home, homeDisk: { ...homeDisk, bootImage } } };
+    const read = () => archivedSchedulerSourceImage(current, parked.gatewayId, "303", custody);
+    if (same) expect(read()).toEqual({ id: "900", name: "qualified-image", project: "test-project" });
+    else expect(read).toThrow(/scheduler replacement lineage/);
   });
 
   it("requires the exact case-sensitive owner grant", async () => {
