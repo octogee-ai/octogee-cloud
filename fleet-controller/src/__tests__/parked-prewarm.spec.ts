@@ -20,13 +20,14 @@ const operation: Operation = {
 };
 const claim = { release: 2, previousRelease: 1, previousInstanceId: "987", sourceGatewayId: "shared", sourceAssignmentEpoch: 4 };
 
-function fixture() {
+function fixture(now = () => 625) {
   const listeners = new Map<string, (event: { kind: "resync"; reason: "notification-gap" }) => void>();
   const close = vi.fn(async () => undefined);
   const notify = (aggregate: string) => listeners.get(aggregate)?.({ kind: "resync", reason: "notification-gap" });
-  const root = { gatewayClass: "isolated", ownerUid: "alice", desiredStatus: "running", liveRelease: 2, allocation: { generation: 5 } };
-  const registry = { release: 2, vm: { status: "SUSPENDED", instanceId: "987" }, vmBootRecovery: {} };
+  const root = { gatewayClass: "isolated", ownerUid: "alice", desiredStatus: "running", desiredRelease: 2, liveRelease: 2, allocation: { generation: 5 } };
+  const registry = { runtime: "gce-vm", release: 2, vm: { status: "SUSPENDED", instanceId: "987" } as { status: string; instanceId: string } | null, vmBootRecovery: {} };
   const owner = { gateway: { gatewayId: "shared" }, activationLease: { status: "parked" } };
+  const readRegistry = vi.fn(async () => registry);
   let persisted = operation;
   const store = {
     watch: (request: { aggregate: string }, listener: { onEvent: (event: { kind: "resync"; reason: "notification-gap" }) => void }) => {
@@ -34,16 +35,15 @@ function fixture() {
       return { close };
     },
     gateways: { roots: { get: async () => root }, assignments: { get: async () => ({ state: "serving", epoch: 4 }) } },
-    fleetRegistry: { get: async () => registry },
+    fleetRegistry: { get: readRegistry },
     users: { records: { get: async () => owner } },
     journal: { operations: { get: async () => persisted } },
   } as unknown as PlatformStateStore;
-  const observe = vi.fn(async () => ({
-    status: registry.vm.status,
-    instanceId: registry.vm.instanceId,
-    bootImageId: registry.vm.instanceId === "987" ? "100" : "123",
-    recoveryReady: true,
-  }));
+  const observe = vi.fn(async () => {
+    const vm = registry.vm;
+    if (!vm) return null;
+    return { ...vm, bootImageId: vm.instanceId === "987" ? "100" : "123", recoveryReady: true };
+  });
   const bootImage = vi.fn(async () => "123");
   const runtime = {
     prewarmBootImageId: bootImage,
@@ -57,17 +57,77 @@ function fixture() {
     root.desiredStatus = "paused";
     return "parked";
   });
-  const handler = createParkedPrewarmHandler({ store, readVmRuntime: () => runtime, requestReconcileTick, probeReady, now: () => 625 });
+  const handler = createParkedPrewarmHandler({ store, readVmRuntime: () => runtime, requestReconcileTick, probeReady, now });
   return {
-    run: () => handler(operation, { reportStep }),
-    bootImage, observe, probeReady, reportStep, notify, close, root, registry, owner,
+    run: (op = operation) => handler(op, { reportStep }),
+    bootImage, observe, probeReady, reportStep, notify, close, root, registry, owner, readRegistry,
     persistRepair: () => { persisted = { ...operation, output: { prewarmState: "repairing", previousBootImageId: "100", repairStartedAt: 625 } }; },
+    clearVm: () => { registry.vm = null; notify("fleetRegistry"); },
     runVm: (instanceId = "998") => { registry.vm = { status: "RUNNING", instanceId }; notify("fleetRegistry"); },
-    suspendVm: () => { registry.vm.status = "SUSPENDED"; notify("fleetRegistry"); },
+    suspendVm: () => { registry.vm = { ...registry.vm!, status: "SUSPENDED" }; notify("fleetRegistry"); },
   };
 }
 
 describe("parked prewarm operation", () => {
+  it("waits for a replacement to be recorded and suspended on retry, then verifies its readiness", async () => {
+    const h = fixture();
+    h.root.desiredStatus = "paused";
+    h.clearVm();
+    vi.mocked(startParkedGatewayPrewarm).mockImplementationOnce(async () => {
+      h.root.desiredStatus = "running";
+      return { state: "booting", claim };
+    });
+    const complete = vi.fn();
+    const running = h.run({ ...operation, attempts: 1 });
+    void running.then(complete, complete);
+    await vi.waitFor(() => expect(h.readRegistry).toHaveBeenCalledOnce());
+    expect(complete).not.toHaveBeenCalled();
+    expect(startParkedGatewayPrewarm).not.toHaveBeenCalled();
+
+    h.runVm();
+    await vi.waitFor(() => expect(h.readRegistry).toHaveBeenCalledTimes(2));
+    expect(h.observe).not.toHaveBeenCalled();
+    expect(startParkedGatewayPrewarm).not.toHaveBeenCalled();
+    h.suspendVm();
+    await vi.waitFor(() => expect(startParkedGatewayPrewarm).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ attempts: 1 }), 625, {
+      instanceId: "998", bootImageId: "123", needsRepair: false,
+    }));
+    h.probeReady.mockResolvedValueOnce(false);
+    h.runVm();
+    await vi.waitFor(() => expect(h.probeReady).toHaveBeenCalledWith("builder-alice", "998"));
+    expect(complete).not.toHaveBeenCalled();
+    expect(h.reportStep).not.toHaveBeenCalled();
+    h.notify("fleetRegistry");
+    await vi.waitFor(() => expect(h.reportStep).toHaveBeenCalledWith(expect.objectContaining({
+      name: "verify-prewarmed-computer", detail: "instance=998 bootImage=123",
+    })));
+    h.suspendVm();
+    await expect(running).resolves.toMatchObject({ success: true, output: { prewarmState: "parked", instanceId: "998", bootImageId: "123" } });
+  });
+
+  it("fails the attempt if its replacement never becomes observable", async () => {
+    let now = 625;
+    const h = fixture(() => now);
+    h.root.desiredStatus = "paused";
+    h.clearVm();
+    const running = h.run({ ...operation, attempts: 1 });
+    void running.catch(() => {});
+    await vi.waitFor(() => expect(h.readRegistry).toHaveBeenCalled());
+    now += 25 * 60_000;
+    h.notify("fleetRegistry");
+    await expect(running).rejects.toThrow("waiting for the replacement computer to be recorded as suspended");
+    expect(startParkedGatewayPrewarm).not.toHaveBeenCalled();
+  });
+
+  it("requires readiness proof for the exact instance it reports as parked after resuming", async () => {
+    const h = fixture();
+    h.root.desiredStatus = "paused";
+    h.runVm();
+    h.suspendVm();
+    vi.mocked(startParkedGatewayPrewarm).mockResolvedValueOnce({ state: "parked", claim });
+    await expect(h.run()).rejects.toThrow("without readiness verification for this instance");
+  });
+
   it("retries a parked computer while the previous attempt is still suspending it", async () => {
     const h = fixture();
     h.root.desiredStatus = "paused";
