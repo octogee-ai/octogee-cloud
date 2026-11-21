@@ -144,9 +144,12 @@ async function publishImageReport(deps: VmAgentDeps): Promise<void> {
   await response.body?.cancel();
 }
 
-export async function fetchRuntimeBundle(deps: VmAgentDeps): Promise<BundleFetch> {
+export async function fetchRuntimeBundle(deps: VmAgentDeps, checkScheduledHomeCheckpoint = false): Promise<BundleFetch> {
   const [disk, images, recovery] = await Promise.all([diskReport(deps), imageReport(deps), bootRecoveryReport(deps)]);
-  const res = await brokerPost(deps, VM_RUNTIME_ROUTE, { ...disk, ...images, ...recovery });
+  const res = await brokerPost(deps, VM_RUNTIME_ROUTE, {
+    ...disk, ...images, ...recovery,
+    ...(checkScheduledHomeCheckpoint ? { checkScheduledHomeCheckpoint: true } : {}),
+  });
   if (res.status === 404) return { kind: "not-rendered" };
   if (!res.ok) throw await brokerFailure(VM_RUNTIME_ROUTE, res);
   const body = (await res.json()) as Partial<GatewayVmRuntimeResponse>;
@@ -159,6 +162,7 @@ export async function fetchRuntimeBundle(deps: VmAgentDeps): Promise<BundleFetch
     homeCheckpoint: {
       requestedAt: numberOrNull(body.homeCheckpoint?.requestedAt),
       completedAt: numberOrNull(body.homeCheckpoint?.completedAt),
+      ...(body.homeCheckpoint?.deferScheduled === true ? { deferScheduled: true } : {}),
     },
   };
 }
@@ -431,26 +435,32 @@ function outstandingCheckpointRequestedAt(signal: HomeCheckpointSignal): number 
   return signal.requestedAt !== null && signal.requestedAt > (signal.completedAt ?? 0) ? signal.requestedAt : null;
 }
 
-export function homeCheckpointDue(state: VmAgentState, signal: HomeCheckpointSignal, now: number): { due: boolean; force: boolean } {
-  const force = outstandingCheckpointRequestedAt(signal) !== null;
-  const periodic = state.homeCheckpointCheckedAt === null || now - state.homeCheckpointCheckedAt >= HOME_CHECKPOINT_INTERVAL_MS;
-  return { due: force || periodic, force };
+function scheduledHomeCheckpointDue(state: VmAgentState, now: number): boolean {
+  return state.homeCheckpointCheckedAt === null || now - state.homeCheckpointCheckedAt >= HOME_CHECKPOINT_INTERVAL_MS;
 }
 
-export async function checkpointHomeIfDue(
+async function checkpointHomeIfDue(
   deps: VmAgentDeps,
   bundle: GatewayVmRuntimeBundle,
   signal: HomeCheckpointSignal,
   state: VmAgentState,
+  scheduledDue: boolean,
 ): Promise<VmAgentState> {
+  const force = outstandingCheckpointRequestedAt(signal) !== null;
+  if (!force && !scheduledDue) return state;
   const now = deps.now();
-  const { due, force } = homeCheckpointDue(state, signal, now);
-  if (!due) return state;
   const scope = homeScope(deps.stateRoot, bundle);
   if (!scope) {
     const requested = force ? ` (requested at ${signal.requestedAt})` : "";
     deps.log(`[vm-agent] home checkpoint skipped${requested}: bundle ${bundle.version} carries no user home (data emptyDir + user identity)`);
     return { ...state, homeCheckpointCheckedAt: now };
+  }
+  if (!force && signal.deferScheduled) {
+    deps.log("[vm-agent] scheduled home checkpoint deferred until serving", {
+      gatewayId: deps.gatewayId, builderSlug: scope.slug, category: "home-checkpoint",
+      phase: "check-home", status: "skipped", reason: "home-not-serving",
+    });
+    return state;
   }
   let reporting: Promise<void> | undefined;
   const timer = setInterval(() => {
@@ -504,7 +514,8 @@ async function releaseHomeWriterHold(deps: VmAgentDeps, bundle: GatewayVmRuntime
 }
 
 export async function convergeOnce(deps: VmAgentDeps, state: VmAgentState): Promise<VmAgentState> {
-  const fetched = await fetchRuntimeBundle(deps);
+  const scheduledDue = scheduledHomeCheckpointDue(state, deps.now());
+  const fetched = await fetchRuntimeBundle(deps, scheduledDue);
   if (fetched.kind === "not-rendered") {
     deps.log("[vm-agent] runtime bundle not rendered yet; waiting");
     return state;
@@ -532,7 +543,7 @@ export async function convergeOnce(deps: VmAgentDeps, state: VmAgentState): Prom
   const running = await Promise.all(bundle.containers.map((c) => inspectContainer(deps.engine, `octogee-${c.name}`)));
   if (await keepAcknowledgedCheckpointHeld(deps, bundle, running, signal)) return next;
   if (signal.requestedAt !== null && allHomeWritersHeld(running)) {
-    return checkpointHomeIfDue(deps, bundle, signal, next);
+    return checkpointHomeIfDue(deps, bundle, signal, next, scheduledDue);
   }
   await releaseHomeWriterHold(deps, bundle, running);
   const desktopAuth = await hostDesktopAuth(deps, next);
@@ -543,7 +554,7 @@ export async function convergeOnce(deps: VmAgentDeps, state: VmAgentState): Prom
     if (next.appliedVersion !== bundle.version) next = { ...next, appliedVersion: bundle.version };
     await syncUserDesk(deps, bundle);
     await inspectUnusedScratch(deps, identity.instanceId);
-    return checkpointHomeIfDue(deps, bundle, signal, next);
+    return checkpointHomeIfDue(deps, bundle, signal, next, scheduledDue);
   }
   await applyDecision(deps, bundle, plan, decision, { running, vmId: identity.instanceId });
   await syncUserDesk(deps, bundle);
