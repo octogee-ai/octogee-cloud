@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { isUserParkedVm } from "@octogee/shared/types/glm";
+import { builderReturnOperationId } from "@octogee/shared/types/isolated-operation-ids";
+import { restoredHomeBackupReleaseId } from "./isolated-gateway-lifecycle/home-backup-release.js";
 export function parkedHomeUnderSnapshotCustody(owner) {
     const archive = owner?.home.homeArchive;
     return archive !== undefined && archive.phase !== "restored";
@@ -146,7 +148,17 @@ function parkedArchiveRoot(root, grant) {
         root.liveRelease != null && root.desiredRelease === root.liveRelease && root.retirementClaim == null &&
         root.sizingProfile === grant.sizingProfile;
 }
-async function verifyArchiveInputs(tx, owner, input, grant) {
+function archiveHasPendingConflict(pending, backup) {
+    return pending.some(operation => operation.id !== backup?.operationId || operation.status !== "running");
+}
+function requireParkedArchiveVm(observed, backup) {
+    const instanceId = observed?.instanceId;
+    if (!observed || !numericIdentity(instanceId) || (backup && instanceId !== backup.instanceId)) {
+        throw new IneligibleHomeArchiveError("Home archive lacks the parked VM observation");
+    }
+    return { ...observed, instanceId };
+}
+async function verifyArchiveInputs(tx, owner, input, grant, backup) {
     const { gatewayId, sharedId, returnOperationId } = input;
     const { ownerUid } = grant;
     const [root, shared, assignment, returned, pending, runtime] = await Promise.all([
@@ -157,12 +169,10 @@ async function verifyArchiveInputs(tx, owner, input, grant) {
     if (!parkedArchiveRoot(root, grant) || shared?.gatewayClass !== "shared" ||
         assignment?.uid !== ownerUid || assignment.gatewayId !== sharedId || assignment.state !== "serving" ||
         !Number.isSafeInteger(assignment.epoch) || assignment.epoch < 0 ||
-        !returned || !hasVerifiedReturn(returned, ownerUid, gatewayId, sharedId) || pending.length > 0) {
+        !returned || !hasVerifiedReturn(returned, ownerUid, gatewayId, sharedId) || archiveHasPendingConflict(pending, backup)) {
         throw new IneligibleHomeArchiveError("Home archive requires a settled native return to the serving Shared assignment");
     }
-    const observed = observedArchiveSource(owner, input, runtime);
-    if (!numericIdentity(observed?.instanceId))
-        throw new IneligibleHomeArchiveError("Home archive lacks the parked VM observation");
+    const observed = requireParkedArchiveVm(observedArchiveSource(owner, input, runtime), backup);
     const source = { instanceName: observed.instanceName, zone: observed.zone, homeDiskId: owner.home.homeDisk.id };
     const nativeSchedulerRetirement = archiveNativeScheduler(owner, input, returned, source, observed.instanceId);
     return { gatewayId, sharedId, instanceId: observed.instanceId, assignmentEpoch: assignment.epoch, source, nativeSchedulerRetirement };
@@ -184,11 +194,32 @@ export async function writeParkedHomeArchive(tx, owner, target, operation) {
     });
 }
 export async function planReturnedHomeArchive(tx, owner, next, grant, now) {
-    if (!grant || grant.ownerUid !== owner.uid || next.status !== "parked" ||
-        owner.home.homeArchive !== undefined || !pilotHomeEligible(owner))
+    if (owner.home.homeArchive !== undefined)
+        return;
+    return planEligibleReturnedArchive(tx, owner, next, grant, { now });
+}
+function matchesReturnedBackup(owner, releaseOperationId, next) {
+    const archive = owner.home.homeArchive;
+    return archive?.phase === "restored" && restoredHomeBackupReleaseId(archive.operationId) === releaseOperationId &&
+        typeof archive.releaseProvenForActivation === "string" && archive.releaseProvenForActivation === next.activationOperationId && archive.targetGatewayId === next.targetGatewayId &&
+        archive.leaseId === next.leaseId && archive.generation === next.generation &&
+        next.returnOperationId === builderReturnOperationId(archive.targetGatewayId, archive.generation) &&
+        archive.restoredDisk.id === owner.home.homeDisk?.id && archive.restoredDisk.source === owner.home.homeDisk.source
+        ? { operationId: releaseOperationId, instanceId: archive.restoredInstanceId } : undefined;
+}
+export async function planArchiveAfterBackupRelease(tx, owner, releaseOperationId, grant, now) {
+    const next = owner.activationLease;
+    if (!next || !grant)
+        return;
+    const backup = matchesReturnedBackup(owner, releaseOperationId, next);
+    if (backup)
+        return planEligibleReturnedArchive(tx, owner, next, grant, { now, backup });
+}
+async function planEligibleReturnedArchive(tx, owner, next, grant, { now, backup }) {
+    if (!grant || grant.ownerUid !== owner.uid || next.status !== "parked" || !pilotHomeEligible(owner))
         return;
     try {
-        const target = await verifyArchiveInputs(tx, owner, parkedArchiveInputs({ ...owner, activationLease: next }), grant);
+        const target = await verifyArchiveInputs(tx, owner, parkedArchiveInputs({ ...owner, activationLease: next }), grant, backup);
         const operationId = randomUUID();
         return () => writeParkedHomeArchive(tx, owner, target, {
             operationId, createdBy: RETURN_ARCHIVE_ACTOR, origin: "automatic", now,

@@ -35,7 +35,7 @@ const receipt = { schemaVersion: 1 as const, kind: "activated" as const, uid, at
 
 function fixture() {
   const docs: Record<string, Record<string, unknown>> = {
-    [`users/${uid}`]: { slug: "alice", provisioning: { homeArchive: archive, homeDisk: restoredDisk, openclaw: { activationLease: lease } } },
+    [`users/${uid}`]: { slug: "alice", provisioning: { homeArchive: archive, homeDisk: restoredDisk, openclaw: { slug: "alice", activationLease: lease } } },
     [`glmOperations/${activationId}`]: { ...migration },
     [`glmGateways/${target}`]: { docKind: "runtime", gatewayId: target, release: 1, lifecycle: "serving", runtime: "gce-vm", vmBootRecovery: { ready: true, instanceId: archive.restoredInstanceId, observedAt: 550 } },
   };
@@ -47,12 +47,99 @@ function fixture() {
     const operation = await planRestoredHomeBackupRelease(tx, user, user.activationLease!, 600);
     if (operation) await tx.journal.operations.create(operation);
   });
-  const run = async () => {
+  const run = async (archiveGrant?: { ownerUid: string; sizingProfile: string }) => {
     const op = (await store.journal.operations.get(`release-home-backup-${archiveOp}`))! as unknown as Operation;
-    return createHomeBackupReleaseHandler({ store, vm: provider })(op, { assertActiveClaim, reportStep: vi.fn() });
+    return createHomeBackupReleaseHandler({ store, vm: provider, archiveGrant })(op, { assertActiveClaim, reportStep: vi.fn() });
   };
   return { store, docs, provider, create, run };
 }
+
+async function parkRestoredOwner(h: ReturnType<typeof fixture>, generation = lease.generation) {
+  const returnId = `builder-return-${target}-g${generation}`;
+  const retirement = {
+    uid, slug: "alice", returnOperationId: returnId, migrationId: "returned-scheduler",
+    sourceGatewayId: target, sharedGatewayId: source, instanceName: "restored-computer",
+    instanceId: archive.restoredInstanceId, zone: restoredDisk.zone, homeDiskId: restoredDisk.id,
+    homeDiskSource: restoredDisk.source, cutoverCommittedAt: 700, completedAt: 750,
+  };
+  await h.store.users.records.setGatewayMirror(uid, { gatewayId: source });
+  await h.store.users.records.setActivationLease(uid, { ...lease, generation,
+    status: "parked", returnOperationId: returnId }, { leaseId, generation: lease.generation, status: ["active"] });
+  await h.store.users.records.setFence(uid, "pendingNativeSchedulerRetirement", retirement, "absent");
+  h.docs[`gateways/${target}`] = {
+    gatewayId: target, gatewayClass: "isolated", ownerUid: uid, desiredStatus: "paused", sizingProfile: "hobby",
+    desiredRelease: 1, liveRelease: 1, latestRelease: 1,
+  };
+  h.docs[`gateways/${source}`] = { gatewayId: source, gatewayClass: "shared", desiredStatus: "running",
+    desiredRelease: 1, liveRelease: 1, latestRelease: 1 };
+  h.docs[`gateways/${source}/assignments/${uid}`] = { uid, gatewayId: source, slug: "alice", state: "serving", source: "onboarding", epoch: 2 };
+  Object.assign(h.docs[`glmGateways/${target}`], {
+    vmSpec: { desktop: "x11" }, vm: {
+      instanceName: retirement.instanceName, instanceId: retirement.instanceId, zone: retirement.zone, status: "SUSPENDED",
+    },
+  });
+  h.docs[`glmOperations/${returnId}`] = {
+    ...migration, id: returnId, cutoverCommittedAt: 700, completedAt: 800,
+    input: { ...migration.input, fromGatewayId: target, toGatewayId: source },
+    schedulerHandoff: { uid, slug: "alice", migrationId: retirement.migrationId, fromGatewayId: target, toGatewayId: source },
+    output: { nativeSourcePark: { parked: "suspended" } },
+  };
+  return retirement;
+}
+
+const archiveGrant = { ownerUid: uid, sizingProfile: "hobby" };
+const backupOperationId = `release-home-backup-${archiveOp}`;
+
+describe("coalesce a parked return with purged restored backup custody", () => {
+  it("enqueues the ordinary archive once for the exact returned restored generation", async () => {
+    const h = fixture();
+    await h.store.users.placementReceipts.create(uid, receipt);
+    await h.create();
+    await h.store.journal.operations.patch(backupOperationId, { status: "running", startedAt: 800 });
+    const nativeSchedulerRetirement = await parkRestoredOwner(h);
+    await expect(h.run(archiveGrant)).resolves.toMatchObject({ success: true });
+    const current = (await h.store.users.records.get(uid))!;
+    expect(current.home.homeDisk).toEqual(restoredDisk);
+    expect(current.home.homeArchive).toMatchObject({ phase: "preparing", nativeSchedulerRetirement,
+      instanceId: archive.restoredInstanceId, source: { homeDiskId: restoredDisk.id } });
+    const newArchiveId = current.home.homeArchive!.operationId;
+    expect(current.fences.computerRecovery?.operationId).toBe(newArchiveId);
+    expect(await h.store.journal.operations.get(newArchiveId)).toMatchObject({
+      status: "pending", origin: "automatic", input: { action: "archive", ownerUid: uid,
+        expectedGatewayId: target, expectedInstanceId: archive.restoredInstanceId },
+    });
+    await expect(h.run(archiveGrant)).resolves.toMatchObject({ success: true });
+    expect(h.provider.eraseHomeSnapshot).toHaveBeenCalledOnce();
+    expect((await h.store.users.records.get(uid))?.home.homeArchive?.operationId).toBe(newArchiveId);
+  });
+
+  it.each(["active", "newer-generation", "reacquired", "changed-instance", "competing-operation", "missing-grant"] as const)(
+    "clears only the completed backup for an ineligible %s owner", async condition => {
+      const h = fixture();
+      await h.store.users.placementReceipts.create(uid, receipt);
+      await h.create();
+      await h.store.journal.operations.patch(backupOperationId, { status: "running", startedAt: 800 });
+      if (condition !== "active" && condition !== "reacquired") {
+        await parkRestoredOwner(h, condition === "newer-generation" ? lease.generation + 1 : lease.generation);
+      }
+      if (condition === "reacquired") {
+        await h.store.users.records.setActivationLease(uid, { ...lease, generation: lease.generation + 1, status: "requested" },
+          { leaseId, generation: lease.generation, status: ["active"] });
+      }
+      if (condition === "changed-instance") {
+        Object.assign(h.docs[`glmGateways/${target}`].vm as object, { instanceId: "301" });
+      }
+      if (condition === "competing-operation") {
+        h.docs["glmOperations/other-operation"] = { ...migration, id: "other-operation", status: "pending", completedAt: null };
+      }
+      await expect(h.run(condition === "missing-grant" ? undefined : archiveGrant)).resolves.toMatchObject({ success: true });
+      const owner = await h.store.users.records.get(uid);
+      expect(owner?.home.homeArchive).toBeUndefined();
+      expect(owner?.home.homeDisk).toEqual(restoredDisk);
+      expect(owner?.fences.computerRecovery).toBeUndefined();
+    },
+  );
+});
 
 describe("release the restored Builder backup", () => {
   it("never deletes before the exact placement receipt and committed authoritative schedule handoff", async () => {

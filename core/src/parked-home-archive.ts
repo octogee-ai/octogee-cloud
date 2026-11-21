@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { isUserParkedVm } from "@octogee/shared/types/glm";
+import { builderReturnOperationId } from "@octogee/shared/types/isolated-operation-ids";
+import { restoredHomeBackupReleaseId } from "./isolated-gateway-lifecycle/home-backup-release.js";
 import type { OperationRecord } from "./platform-state/operations.js";
 import type { FleetRegistryRecord } from "./platform-state/fleet-registry.js";
 import type { OpaqueMap, PlatformStateStore, PlatformStateTransaction, Stored } from "./platform-state/store.js";
@@ -172,7 +174,25 @@ function parkedArchiveRoot(root: Awaited<ReturnType<PlatformStateTransaction["ga
     root.sizingProfile === grant.sizingProfile;
 }
 
-async function verifyArchiveInputs(tx: PlatformStateTransaction, owner: Stored<PlatformUserRecord>, input: ParkedInput, grant: ParkedHomeArchiveGrant): Promise<ArchiveTarget> {
+interface ReleasedHomeBackup {
+  operationId: string;
+  instanceId: string;
+}
+
+function archiveHasPendingConflict(pending: readonly OperationRecord[], backup?: ReleasedHomeBackup): boolean {
+  return pending.some(operation => operation.id !== backup?.operationId || operation.status !== "running");
+}
+
+function requireParkedArchiveVm(observed: ReturnType<typeof observedArchiveSource>, backup?: ReleasedHomeBackup) {
+  const instanceId = observed?.instanceId;
+  if (!observed || !numericIdentity(instanceId) || (backup && instanceId !== backup.instanceId)) {
+    throw new IneligibleHomeArchiveError("Home archive lacks the parked VM observation");
+  }
+  return { ...observed, instanceId };
+}
+
+async function verifyArchiveInputs(tx: PlatformStateTransaction, owner: Stored<PlatformUserRecord>, input: ParkedInput,
+  grant: ParkedHomeArchiveGrant, backup?: ReleasedHomeBackup): Promise<ArchiveTarget> {
   const { gatewayId, sharedId, returnOperationId } = input;
   const { ownerUid } = grant;
   const [root, shared, assignment, returned, pending, runtime] = await Promise.all([
@@ -183,11 +203,10 @@ async function verifyArchiveInputs(tx: PlatformStateTransaction, owner: Stored<P
   if (!parkedArchiveRoot(root, grant) || shared?.gatewayClass !== "shared" ||
       assignment?.uid !== ownerUid || assignment.gatewayId !== sharedId || assignment.state !== "serving" ||
       !Number.isSafeInteger(assignment.epoch) || assignment.epoch < 0 ||
-      !returned || !hasVerifiedReturn(returned, ownerUid, gatewayId, sharedId) || pending.length > 0) {
+      !returned || !hasVerifiedReturn(returned, ownerUid, gatewayId, sharedId) || archiveHasPendingConflict(pending, backup)) {
     throw new IneligibleHomeArchiveError("Home archive requires a settled native return to the serving Shared assignment");
   }
-  const observed = observedArchiveSource(owner, input, runtime);
-  if (!numericIdentity(observed?.instanceId)) throw new IneligibleHomeArchiveError("Home archive lacks the parked VM observation");
+  const observed = requireParkedArchiveVm(observedArchiveSource(owner, input, runtime), backup);
   const source = { instanceName: observed.instanceName, zone: observed.zone, homeDiskId: owner.home.homeDisk!.id as string };
   const nativeSchedulerRetirement = archiveNativeScheduler(owner, input, returned, source, observed.instanceId);
   return { gatewayId, sharedId, instanceId: observed.instanceId, assignmentEpoch: assignment.epoch, source, nativeSchedulerRetirement };
@@ -222,10 +241,33 @@ export async function writeParkedHomeArchive(tx: PlatformStateTransaction, owner
 
 export async function planReturnedHomeArchive(tx: PlatformStateTransaction, owner: Stored<PlatformUserRecord>, next: UserActivationLease,
   grant: ParkedHomeArchiveGrant | undefined, now: number): Promise<(() => Promise<void>) | undefined> {
-  if (!grant || grant.ownerUid !== owner.uid || next.status !== "parked" ||
-      owner.home.homeArchive !== undefined || !pilotHomeEligible(owner)) return;
+  if (owner.home.homeArchive !== undefined) return;
+  return planEligibleReturnedArchive(tx, owner, next, grant, { now });
+}
+
+function matchesReturnedBackup(owner: Stored<PlatformUserRecord>, releaseOperationId: string, next: UserActivationLease) {
+  const archive = owner.home.homeArchive;
+  return archive?.phase === "restored" && restoredHomeBackupReleaseId(archive.operationId) === releaseOperationId &&
+    typeof archive.releaseProvenForActivation === "string" && archive.releaseProvenForActivation === next.activationOperationId && archive.targetGatewayId === next.targetGatewayId &&
+    archive.leaseId === next.leaseId && archive.generation === next.generation &&
+    next.returnOperationId === builderReturnOperationId(archive.targetGatewayId, archive.generation) &&
+    archive.restoredDisk.id === owner.home.homeDisk?.id && archive.restoredDisk.source === owner.home.homeDisk.source
+    ? { operationId: releaseOperationId, instanceId: archive.restoredInstanceId } : undefined;
+}
+
+export async function planArchiveAfterBackupRelease(tx: PlatformStateTransaction, owner: Stored<PlatformUserRecord>,
+  releaseOperationId: string, grant: ParkedHomeArchiveGrant | undefined, now: number): Promise<(() => Promise<void>) | undefined> {
+  const next = owner.activationLease;
+  if (!next || !grant) return;
+  const backup = matchesReturnedBackup(owner, releaseOperationId, next);
+  if (backup) return planEligibleReturnedArchive(tx, owner, next, grant, { now, backup });
+}
+
+async function planEligibleReturnedArchive(tx: PlatformStateTransaction, owner: Stored<PlatformUserRecord>, next: UserActivationLease,
+  grant: ParkedHomeArchiveGrant | undefined, { now, backup }: { now: number; backup?: ReleasedHomeBackup }): Promise<(() => Promise<void>) | undefined> {
+  if (!grant || grant.ownerUid !== owner.uid || next.status !== "parked" || !pilotHomeEligible(owner)) return;
   try {
-    const target = await verifyArchiveInputs(tx, owner, parkedArchiveInputs({ ...owner, activationLease: next }), grant);
+    const target = await verifyArchiveInputs(tx, owner, parkedArchiveInputs({ ...owner, activationLease: next }), grant, backup);
     const operationId = randomUUID();
     return () => writeParkedHomeArchive(tx, owner, target, {
       operationId, createdBy: RETURN_ARCHIVE_ACTOR, origin: "automatic", now,
