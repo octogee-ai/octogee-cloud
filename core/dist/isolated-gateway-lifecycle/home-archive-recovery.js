@@ -3,13 +3,16 @@ function validRecoveryIdentity(identity) {
     return [identity.ownerUid, identity.targetGatewayId, identity.leaseId].every(id => typeof id === "string" && id.length > 0 && !id.includes("/")) &&
         Number.isSafeInteger(identity.generation) && identity.generation > 0;
 }
+function failedReceiptMatches(receipt, identity) {
+    return receipt?.kind === "activation-failed" && receipt.gatewayId === identity.targetGatewayId &&
+        receipt.leaseId === identity.leaseId && receipt.generation === identity.generation;
+}
 export async function assertFailedHomeRestoreReleased(state, identity) {
     const { ownerUid, targetGatewayId, leaseId, generation } = identity;
     if (!validRecoveryIdentity(identity))
         throw new IsolatedGatewayFenceError("Home archive restore receipt identity is incomplete");
     const receipt = await state.users.placementReceipts.get(ownerUid, leaseId, generation, "activation-failed");
-    if (!receipt || receipt.kind !== "activation-failed" || receipt.gatewayId !== targetGatewayId ||
-        receipt.leaseId !== leaseId || receipt.generation !== generation) {
+    if (!failedReceiptMatches(receipt, identity)) {
         throw new IsolatedGatewayFenceError("Failed home restore receipt does not match the original demand");
     }
     const [operation, active, assignment] = await Promise.all([

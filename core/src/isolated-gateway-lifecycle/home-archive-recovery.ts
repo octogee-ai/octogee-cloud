@@ -1,3 +1,4 @@
+import type { PlacementReceipt } from "@octogee/shared/types/placement-receipts";
 import type { PlatformStateRepositories } from "../platform-state/store.js";
 import { IsolatedGatewayFenceError } from "./inputs.js";
 
@@ -13,12 +14,16 @@ function validRecoveryIdentity(identity: RestoreGeneration): boolean {
     Number.isSafeInteger(identity.generation) && identity.generation > 0;
 }
 
+function failedReceiptMatches(receipt: PlacementReceipt | null, identity: RestoreGeneration): receipt is PlacementReceipt {
+  return receipt?.kind === "activation-failed" && receipt.gatewayId === identity.targetGatewayId &&
+    receipt.leaseId === identity.leaseId && receipt.generation === identity.generation;
+}
+
 export async function assertFailedHomeRestoreReleased(state: PlatformStateRepositories, identity: RestoreGeneration): Promise<void> {
   const { ownerUid, targetGatewayId, leaseId, generation } = identity;
   if (!validRecoveryIdentity(identity)) throw new IsolatedGatewayFenceError("Home archive restore receipt identity is incomplete");
   const receipt = await state.users.placementReceipts.get(ownerUid, leaseId, generation, "activation-failed");
-  if (!receipt || receipt.kind !== "activation-failed" || receipt.gatewayId !== targetGatewayId ||
-      receipt.leaseId !== leaseId || receipt.generation !== generation) {
+  if (!failedReceiptMatches(receipt, identity)) {
     throw new IsolatedGatewayFenceError("Failed home restore receipt does not match the original demand");
   }
   const [operation, active, assignment] = await Promise.all([
