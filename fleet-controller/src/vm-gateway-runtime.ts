@@ -31,6 +31,7 @@ import { buildUpgradeArgs, type HelmRunner, type HelmSubprocess } from "./helm-r
 const VM_ROUTES_CONFIGMAP_KEY = "routes.json";
 
 export interface VmGatewayRuntime extends HelmRunner {
+  assertVmPauseNotPending(gatewayId: string, ownerUid?: string): void;
   prewarmBootImageId(gatewayId: string): Promise<string>;
   prewarmVmObservation(gatewayId: string, uid: string): Promise<ParkedPrewarmVmObservation | null>;
   readDeploymentPrerequisiteError(gatewayId: string): Promise<string | null>;
@@ -68,7 +69,7 @@ export interface VmGatewayRuntimeDeps {
   disposableParking?: boolean;
   homeCheckpointTimeoutMs?: number;
   homeCheckpointPollMs?: number;
-  onVmCreationSettled: (gatewayId: string) => void;
+  onVmRuntimeSettled: (gatewayId: string) => void;
   now: () => number;
   log: (msg: string) => void;
 }
@@ -364,7 +365,7 @@ export function createVmGatewayRuntime(deps: VmGatewayRuntimeDeps): VmGatewayRun
     disposableParking: deps.disposableParking,
     homeCheckpointTimeoutMs: deps.homeCheckpointTimeoutMs,
     homeCheckpointPollMs: deps.homeCheckpointPollMs,
-    onVmCreationSettled: deps.onVmCreationSettled,
+    onVmRuntimeSettled: deps.onVmRuntimeSettled,
     now: deps.now,
     log: deps.log,
   });
@@ -386,6 +387,7 @@ export function createVmGatewayRuntime(deps: VmGatewayRuntimeDeps): VmGatewayRun
 
     async upsertInstance(opts) {
       const { gatewayId } = opts;
+      vmLifecycle.assertVmPauseNotPending(gatewayId, opts.builderIdentity?.ownerUid);
       if (deps.ensureAuthSecret) await deps.ensureAuthSecret({ namespace: deps.namespace, gatewayId });
       const desktop = vmSpecDesktop((await deps.store.fleetRegistry.get(gatewayId))?.vmSpec, deps.vmSpec);
       const [manifests, bridge] = await Promise.all([renderManifests(opts, desktop), bridgeIp()]);
@@ -425,7 +427,7 @@ export function createVmGatewayRuntime(deps: VmGatewayRuntimeDeps): VmGatewayRun
         replicas: opts.replicas,
       });
       if (opts.replicas === 0) {
-        if (!await vmLifecycle.pauseVm(gatewayId)) return;
+        if (!await vmLifecycle.pauseVm(gatewayId, opts.deferVmPause, ownerUid)) return;
       } else {
         await vmLifecycle.ensureVm(gatewayId, `${opts.imageRepository}:${opts.imageTag}`, ownerUid, bridge);
       }
@@ -479,6 +481,7 @@ export function createVmGatewayRuntime(deps: VmGatewayRuntimeDeps): VmGatewayRun
     readDeploymentPrerequisiteError: vmLifecycle.readDeploymentPrerequisiteError,
     recoverUnreachable: vmLifecycle.recoverUnreachable,
     deleteVm: vmLifecycle.deleteVm,
+    assertVmPauseNotPending: vmLifecycle.assertVmPauseNotPending,
     replaceStoppedVm: vmLifecycle.replaceStoppedVm,
     detectPreemption: vmLifecycle.detectPreemption,
   };

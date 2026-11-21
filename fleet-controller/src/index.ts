@@ -364,7 +364,7 @@ import {
   platformGatewayArtifactFromEnvironment,
   writePlatformReleaseRecord,
 } from "./platform-release.js";
-import { VmCreationPendingError, FinalHomeCheckpointPendingError, clearReplacedVm } from "./vm-lifecycle.js";
+import { VmCreationPendingError, VmPausePendingError, FinalHomeCheckpointPendingError, clearReplacedVm } from "./vm-lifecycle.js";
 import { createCachedApiServerEgressResolver } from "./apiserver-egress.js";
 import { noUserPolicyInputs, type UserPolicyInputsSource } from "./user-placement-document.js";
 import type {
@@ -862,6 +862,7 @@ type ConvergingGatewayRuntime = GatewayRuntimeDoc & VmRuntimeIdentity;
 
 interface GatewayConvergencePassDeps {
   store: PlatformStateStore;
+  assertVmPauseNotPending?: (gatewayId: string, ownerUid?: string) => void;
   helm: HelmRunner;
   kubeOps: KubeOps;
   chartFingerprint: string;
@@ -1096,6 +1097,10 @@ export async function runGatewayConvergencePass(
       try {
         await convergeOneGateway(passDeps, gateway, instances, runtimeById);
       } catch (err) {
+        if (err instanceof VmPausePendingError) {
+          requestGatewayRecheck(gateway.gatewayId);
+          continue;
+        }
         if (err instanceof FinalHomeCheckpointPendingError || err instanceof VmCreationPendingError) continue;
         const message = err instanceof Error ? err.message : String(err);
         if (err instanceof SurgeAssignmentBusyError) {
@@ -1132,6 +1137,7 @@ async function convergeOneGateway(
   instances: HelmInstancesMap,
   runtimeById: Map<string, ConvergingGatewayRuntime>,
 ): Promise<void> {
+  passDeps.assertVmPauseNotPending?.(gateway.gatewayId, gateway.ownerUid ?? undefined);
   if (isIsolatedGateway(gateway) && gateway.liveRelease !== null && gateway.liveRelease < gateway.desiredRelease) {
     const recovery = await readUserActivationRollRecoveryCustody({ state: passDeps.store, gatewayId: gateway.gatewayId });
     if (recovery && hasUserActivationTargetRollback(recovery.operation, recovery.recovery)) {
@@ -1285,6 +1291,7 @@ async function upsertGateway(
   await helm.upsertInstance({
     ...desiredOpts,
     ...(isolatedPod ? { rollStrategy: "recreate" as const } : {}),
+    ...(runtimeKind === "gce-vm" && replicas === 0 ? { deferVmPause: true } : {}),
     ...runtimeUserIdentity(gateway),
   });
 }
@@ -1453,13 +1460,13 @@ async function convergeGatewaysIfConfigured(
   }
 }
 
-function convergeAfterVmCreation(
+function convergeAfterVmRuntimeChange(
   convergeGateways: (gatewayIds: readonly string[]) => Promise<void>,
   log: (msg: string) => void,
 ): (gatewayId: string) => void {
   return (gatewayId) => {
     void convergeGateways([gatewayId]).catch((err: unknown) => {
-      log(`[converge-gateway] ⚠ ${gatewayId}: converge after its VM creation settled failed: ${err instanceof Error ? err.message : String(err)}; requeued`);
+      log(`[converge-gateway] ⚠ ${gatewayId}: converge after its VM runtime change settled failed: ${err instanceof Error ? err.message : String(err)}; requeued`);
       requestReconcileTickRef.fire?.(gatewayId);
     });
   };
@@ -2851,7 +2858,7 @@ async function createControllerRuntime(
       readDesiredStatus: async (gatewayId) => (await readDesiredRoot(store, gatewayId))?.desiredStatus ?? null,
       journalBootUpgrade: createBootUpgradeJournal(store),
       wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-      onVmCreationSettled: (gatewayId) => convergeSettledVm(gatewayId),
+      onVmRuntimeSettled: (gatewayId) => convergeSettledVm(gatewayId),
       now: () => Date.now(),
       log,
     })
@@ -2908,6 +2915,7 @@ async function createControllerRuntime(
   const runGatewayConvergence = (gatewayIds?: readonly string[]) =>
     runGatewayConvergencePass({
       store,
+      assertVmPauseNotPending: vmRuntime?.assertVmPauseNotPending,
       helm,
       kubeOps,
       chartFingerprint,
@@ -2917,7 +2925,7 @@ async function createControllerRuntime(
       log,
     }, gatewayIds);
   const convergeGateways = serializeGatewayConvergence(runGatewayConvergence);
-  const convergeSettledVm = convergeAfterVmCreation(convergeGateways, log);
+  const convergeSettledVm = convergeAfterVmRuntimeChange(convergeGateways, log);
   const nativeReturnRecovery = buildNativeReturnSourceRecoveryOwner(store, kubeOps, fleetControllerPrivateKey, prepareMigrationAgentStores);
   const handlers = await buildHandlers(documents, log, helm, kubeOps, {
     syncFleetIngress: handlerSyncFleetIngress, privateKey: fleetControllerPrivateKey,
@@ -3769,6 +3777,7 @@ async function buildHandlers(
     },
     vm: createGatewayComputeClient(store, logFn),
     readGateway: async (gatewayId) => {
+      vmGatewayRuntimeRef.current?.assertVmPauseNotPending(gatewayId);
       const runtime = await store.fleetRegistry.get(gatewayId);
       return runtime === null ? null : { runtime: runtime.runtime, vm: runtime.vm ?? null };
     },
