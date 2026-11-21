@@ -35,7 +35,7 @@ function fixture() {
   const vm = {
     describe: vi.fn<() => Promise<typeof source | null>>().mockResolvedValueOnce(source).mockResolvedValue(null), stop: vi.fn(), readArchiveBootDisk: vi.fn(async () => bootDisk),
     readBootImage: vi.fn(), readImage: vi.fn(),
-    snapshotStoppedHome: vi.fn(async () => snapshot), verifyHomeSnapshot: vi.fn(), deleteRetainingHome: vi.fn(),
+    snapshotStoppedHome: vi.fn<() => Promise<typeof snapshot | null>>(async () => snapshot), verifyHomeSnapshot: vi.fn(), deleteRetainingHome: vi.fn(),
     deleteRetainedHome: vi.fn(), archiveDisksAbsent: vi.fn(async () => true),
   };
   const ctx = { assertActiveClaim: vi.fn(), cancellationRequested: vi.fn(), reportStep: vi.fn() };
@@ -57,6 +57,29 @@ describe("real archive custody transition", () => {
     expect(owner?.fences.computerRecovery).toBeUndefined();
   });
 
+  it("completes the same incarnation after stop, snapshot, and disk removal advance independently", async () => {
+    const { store, vm, ctx } = fixture();
+    vm.describe.mockReset().mockResolvedValueOnce({ ...source, status: "SUSPENDED" })
+      .mockResolvedValueOnce({ ...source, status: "STOPPING" }).mockResolvedValueOnce(source)
+      .mockResolvedValueOnce(source).mockResolvedValue(null);
+    vm.snapshotStoppedHome.mockResolvedValueOnce(null);
+    vm.archiveDisksAbsent.mockResolvedValueOnce(false);
+    const run = createHomeArchiveHandler({ store, vm: vm as never, grant: { ownerUid: uid, sizingProfile: "desktop-small" } });
+    const waiting = { success: false, waitingForHomeArchiveProvider: true };
+    for (let observation = 0; observation < 3; observation += 1) {
+      await expect(run(operation, ctx)).resolves.toMatchObject(waiting);
+      expect((await store.users.records.get(uid))?.fences.computerRecovery?.operationId).toBe(operationId);
+      expect(vm.deleteRetainingHome).not.toHaveBeenCalled();
+    }
+    expect(vm.stop).toHaveBeenCalledOnce();
+    await expect(run(operation, ctx)).resolves.toMatchObject(waiting);
+    expect((await store.users.records.get(uid))?.home.homeArchive).toMatchObject({ phase: "snapshot-ready", snapshot });
+    await expect(run(operation, ctx)).resolves.toMatchObject({ success: true, output: { snapshot, zeroProvisionedDisks: true } });
+    expect(vm.deleteRetainingHome).toHaveBeenCalledOnce();
+    expect(vm.snapshotStoppedHome).toHaveBeenCalledTimes(2);
+    expect((await store.users.records.get(uid))?.fences.computerRecovery).toBeUndefined();
+  });
+
   it.each([true, false])("archives only a replacement with proof it retained the scheduler disk (same=%s)", async same => {
     const { store, vm, ctx } = fixture();
     const nativeSchedulerRetirement = { instanceId: "99", instanceName: source.name, zone: source.zone, homeDiskId: home.id };
@@ -72,11 +95,11 @@ describe("real archive custody transition", () => {
     vm.readImage.mockResolvedValue(image);
 
     const run = createHomeArchiveHandler({ store, vm: vm as never, grant: { ownerUid: uid, sizingProfile: "desktop-small" } });
-    const result = await run(operation, ctx);
-    expect(result.success, result.error).toBe(same);
     if (same) {
+      await expect(run(operation, ctx)).resolves.toMatchObject({ success: true });
       expect((await store.users.records.get(uid))?.home.homeArchive).toMatchObject({ phase: "archived", nativeSchedulerRetirement });
     } else {
+      await expect(run(operation, ctx)).rejects.toThrow("Parked scheduler replacement boot image does not match the retained home");
       expect(vm.stop).not.toHaveBeenCalled();
       expect(vm.snapshotStoppedHome).not.toHaveBeenCalled();
       expect(vm.deleteRetainingHome).not.toHaveBeenCalled();
@@ -87,7 +110,7 @@ describe("real archive custody transition", () => {
     const { store, vm, ctx } = fixture();
     vm.verifyHomeSnapshot.mockRejectedValue(new Error("Snapshot provenance differs"));
     const run = createHomeArchiveHandler({ store, vm: vm as never, grant: { ownerUid: uid, sizingProfile: "desktop-small" } });
-    await expect(run(operation, ctx)).resolves.toMatchObject({ success: false, error: "Snapshot provenance differs" });
+    await expect(run(operation, ctx)).rejects.toThrow("Snapshot provenance differs");
     expect(vm.deleteRetainingHome).not.toHaveBeenCalled();
     expect(vm.deleteRetainedHome).not.toHaveBeenCalled();
     expect((await store.users.records.get(uid))?.fences.computerRecovery?.operationId).toBe(operationId);
@@ -99,7 +122,7 @@ describe("real archive custody transition", () => {
     const run = createHomeArchiveHandler({ store, vm: vm as never, grant: { ownerUid: uid, sizingProfile: "desktop-small" } });
     const result = await run(operation, ctx);
     expect(result.error).toMatch(/provisioned disks/);
-    expect(result).toMatchObject({ success: false, retryAfterMs: expect.any(Number) });
+    expect(result).toMatchObject({ success: false, waitingForHomeArchiveProvider: true });
     expect((await store.users.records.get(uid))?.home.homeArchive?.phase).toEqual("snapshot-ready");
     expect((await store.users.records.get(uid))?.fences.computerRecovery?.operationId).toEqual(operationId);
   });

@@ -163,6 +163,7 @@ import { readOperationRolloutLanes, withOperationRolloutLane } from "./operation
 import {
   WAITING_FOR_ISOLATED_GATEWAY,
   buildOperationCompletionUpdate,
+  homeArchiveProviderDueAt,
   operationFirstStartedAt,
   operationNeedsDurableRestartResume,
   shouldPersistClaimedOperationCompletion,
@@ -1851,6 +1852,7 @@ function operationWatchWakeups(
 export function startOperationWorker(deps: ControllerDeps): () => void {
   const active = new Map<string, Stored<OperationRecord>>();
   const queued = new Map<string, Stored<OperationRecord>>();
+  const providerTimers = new Map<string, ReturnType<typeof setTimeout>>();
   let claiming = false;
   let stopped = false;
   const reportFailure = (err: unknown) =>
@@ -1874,10 +1876,26 @@ export function startOperationWorker(deps: ControllerDeps): () => void {
       wake();
     });
   };
+  const queueRecord = (record: Stored<OperationRecord>) => {
+    const due = homeArchiveProviderDueAt(record);
+    if (due === undefined || due <= Date.now()) {
+      queued.set(record.id, record);
+      return;
+    }
+    const previous = providerTimers.get(record.id);
+    if (previous) clearTimeout(previous);
+    providerTimers.set(record.id, setTimeout(() => {
+      providerTimers.delete(record.id);
+      const current = active.get(record.id);
+      if (stopped || !current || homeArchiveProviderDueAt(current) !== due) return;
+      queued.set(current.id, current);
+      wake();
+    }, due - Date.now()));
+  };
   const subscription = deps.store.watch({ aggregate: "operations", filter: { statuses: ["pending", "running"] } }, {
     onEvent: (event) => {
       if (stopped) return;
-      for (const record of operationWatchWakeups(event, active)) queued.set(record.id, record);
+      for (const record of operationWatchWakeups(event, active)) queueRecord(record);
       wake();
     },
     onError: (err) => deps.log(`[glm-controller] ⚠ operations snapshot error: ${String(err)}`),
@@ -1886,6 +1904,8 @@ export function startOperationWorker(deps: ControllerDeps): () => void {
     stopped = true;
     active.clear();
     queued.clear();
+    for (const timer of providerTimers.values()) clearTimeout(timer);
+    providerTimers.clear();
     void subscription.close();
   };
 }
@@ -2228,6 +2248,7 @@ async function runClaimedOperation(
         id: op.id,
         kind: freshOp.kind,
         origin: freshOp.origin,
+        createdBy: freshOp.createdBy,
         input: freshOp.input,
         attempts: freshOp.attempts,
         attemptHistory: freshOp.attemptHistory,
@@ -2261,6 +2282,10 @@ async function runClaimedOperation(
   }
 
   if (completion.status === "pending") {
+    if (result.waitingForHomeArchiveProvider === true) {
+      deps.log(`[glm-controller] op=${op.id} waiting for home archive provider: ${result.error ?? "pending"}`);
+      return;
+    }
     deps.log(
       `[glm-controller] op=${op.id} attempt ${String(completion.attempts)} failed transiently — ${result.error ?? "unknown error"} — retrying`,
     );
