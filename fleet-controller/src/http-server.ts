@@ -25,6 +25,7 @@ import type { StrandedSourceGatewayCalls } from "@octogee/core/stranded-source-r
 import type {
   PlatformStateStore,
   WatchAggregate,
+  WatchRecords,
   WatchRequest,
   WatchSubscription,
 } from "@octogee/core/platform-state";
@@ -149,28 +150,31 @@ const FLEET_EVENT_LINGER_MS_DEFAULT = 10 * 60_000;
 const ACTIVE_OPERATION_STATUSES = ["pending", "running"] as const;
 
 type FleetEvent =
-  | { kind: "changed"; collection: string; at: number }
+  | { kind: "changed"; collection: string; at: number; placement: boolean }
+  | { kind: "placement-reset"; collection: string; at: number }
   | { kind: "error"; collection: string; error: string };
 
 interface FleetEventHub {
   subscribe(handler: (event: FleetEvent) => void): () => void;
 }
 
-interface FleetEventWatch {
-  readonly collection: string;
-  readonly request: WatchRequest<WatchAggregate>;
-}
+type PlacementFingerprint<A extends WatchAggregate> = (record: WatchRecords[A]) => [key: string, fingerprint: string] | undefined;
 
-const FLEET_EVENT_WATCHES: readonly FleetEventWatch[] = [
-  { collection: "users", request: { aggregate: "builders", filter: {} } },
-  { collection: "gateways", request: { aggregate: "gateways", filter: {} } },
-  { collection: "config", request: { aggregate: "config", filter: {} } },
-  { collection: GLM_GATEWAYS_COLLECTION, request: { aggregate: "fleetRegistry", filter: {} } },
-  {
-    collection: GLM_OPERATIONS_COLLECTION,
-    request: { aggregate: "operations", filter: { statuses: ACTIVE_OPERATION_STATUSES } },
-  },
-];
+const builderPlacementFingerprint: PlacementFingerprint<"builders"> = ({ uid, activationLease: lease }) =>
+  lease ? [uid, JSON.stringify([lease.leaseId, lease.generation, lease.status, lease.targetGatewayId,
+    lease.sourceGatewayId, lease.sourceAssignmentEpoch, lease.returnRequestedAt, lease.operatorTerminateRequestedAt])] : undefined;
+
+const gatewayPlacementFingerprint: PlacementFingerprint<"gateways"> = (root) =>
+  [root.gatewayId, JSON.stringify([root.desiredStatus, root.desiredRelease, root.liveRelease,
+    root.allocation?.leaseId, root.allocation?.generation])];
+
+const runtimePlacementFingerprint: PlacementFingerprint<"fleetRegistry"> = (runtime) =>
+  [runtime.gatewayId, JSON.stringify([runtime.lifecycle, runtime.vm?.status, runtime.vm?.instanceId,
+    runtime.heartbeat.status, runtime.heartbeat.version, [...runtime.heartbeat.mountedCustomers].sort()])];
+
+const migrationPlacementFingerprint: PlacementFingerprint<"operations"> = (operation) =>
+  operation.kind === "migrate-user" && operation.input.source === "builder-activation-lease"
+    ? [operation.id, operation.status] : undefined;
 
 function createFleetEventHub(deps: {
   store: Pick<PlatformStateStore, "watch">;
@@ -191,26 +195,54 @@ function createFleetEventHub(deps: {
     emit({ kind: "error", collection, error: message });
   };
 
-  const watch = ({ collection, request }: FleetEventWatch): WatchSubscription => {
+  function watch<A extends WatchAggregate>(
+    collection: string,
+    request: WatchRequest<A>,
+    fingerprint?: PlacementFingerprint<A>,
+  ): WatchSubscription {
     let primed = false;
+    const placements = new Map<string, string>();
     const subscription = deps.store.watch(request, {
       onEvent: (event) => {
         if (event.kind === "resync") return;
+        let placement = false;
+        if (fingerprint && event.kind === "snapshot") {
+          placements.clear();
+          for (const record of event.records) {
+            const entry = fingerprint(record);
+            if (entry) placements.set(...entry);
+          }
+          emit({ kind: "placement-reset", collection, at: Date.now() });
+        } else if (fingerprint && event.kind === "changes") {
+          for (const { key, record } of event.changes) {
+            const next = record ? fingerprint(record)?.[1] : undefined;
+            if (next === placements.get(key)) continue;
+            placement = true;
+            if (next === undefined) placements.delete(key);
+            else placements.set(key, next);
+          }
+        }
         if (!primed) {
           primed = true;
           return;
         }
-        emit({ kind: "changed", collection, at: Date.now() });
+        emit({ kind: "changed", collection, at: Date.now(), placement });
       },
       onError: (error) => reportFailure(collection, error),
     });
     subscription.closed.catch((error: unknown) => reportFailure(collection, error));
     return subscription;
-  };
+  }
 
   const ensureWatchers = () => {
     if (subscriptions) return;
-    subscriptions = FLEET_EVENT_WATCHES.map(watch);
+    subscriptions = [
+      watch("users", { aggregate: "builders", filter: {} }, builderPlacementFingerprint),
+      watch("gateways", { aggregate: "gateways", filter: {} }, gatewayPlacementFingerprint),
+      watch("config", { aggregate: "config", filter: {} }),
+      watch(GLM_GATEWAYS_COLLECTION, { aggregate: "fleetRegistry", filter: {} }, runtimePlacementFingerprint),
+      watch(GLM_OPERATIONS_COLLECTION, { aggregate: "operations", filter: { statuses: ACTIVE_OPERATION_STATUSES } }, migrationPlacementFingerprint),
+    ];
   };
 
   const teardown = () => {
@@ -258,6 +290,7 @@ function addAdminFleetEventRoute(
     let closed = false;
     let unsubscribe: () => void = () => undefined;
     const closeAfterFirstChange = req.query.once === "1";
+    const placementOnly = req.query.placement === "1";
     const keepalive = setInterval(() => {
       if (!closed) res.write(": keepalive\n\n");
     }, 30_000);
@@ -269,11 +302,16 @@ function addAdminFleetEventRoute(
       res.end();
     };
 
-    writeSseEvent(res, "ready", { at: Date.now() });
+    writeSseEvent(res, "ready", { at: Date.now(), ...(placementOnly ? { placementChanges: true } : {}) });
     unsubscribe = hub.subscribe((event) => {
       if (closed) return;
+      if (event.kind === "placement-reset") {
+        if (placementOnly) writeSseEvent(res, "placement-reset", { collection: event.collection, at: event.at });
+        return;
+      }
       if (event.kind === "changed") {
-        writeSseEvent(res, "changed", { collection: event.collection, at: event.at });
+        if (placementOnly && !event.placement) return;
+        writeSseEvent(res, placementOnly ? "placement-changed" : "changed", { collection: event.collection, at: event.at });
         if (closeAfterFirstChange) close();
         return;
       }
