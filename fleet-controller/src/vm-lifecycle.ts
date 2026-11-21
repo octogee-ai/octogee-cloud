@@ -1155,6 +1155,10 @@ function vmPauses(deps: VmLifecycleDeps, creations: ReturnType<typeof vmCreation
     }
   }
 
+  function canDeferPause(description: GatewayVmDescription, stopFor: StopOnPark | null): boolean {
+    return needsPark(description) || (stopFor !== null && description.status === "SUSPENDED");
+  }
+
   async function pause(gatewayId: string, defer = false, ownerUid?: string): Promise<boolean> {
     const pauseStillDesired = async () => {
       const status = (await deps.store.gateways.roots.get(gatewayId))?.desiredStatus;
@@ -1176,7 +1180,7 @@ function vmPauses(deps: VmLifecycleDeps, creations: ReturnType<typeof vmCreation
     };
     const owner = parkedVmOwner(data, description) ?? ownerUid;
     if (owner && creations.isDeleting(owner)) throw new Error(`the VM of ${owner} is being deleted`);
-    if (!defer || !owner || (!needsPark(description) && !(stopFor && description.status === "SUSPENDED"))) {
+    if (!defer || !owner || !canDeferPause(description, stopFor)) {
       await execute();
       return pauseStillDesired();
     }
