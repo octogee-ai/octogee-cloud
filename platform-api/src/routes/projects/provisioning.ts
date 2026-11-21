@@ -32,6 +32,8 @@ export class ProjectRepoProvisioningError extends Error {
   }
 }
 
+const README_PATH = "README.md";
+
 export async function ensureProjectGiteaRepo(input: {
   workspaceId: string;
   slug: string;
@@ -48,6 +50,20 @@ export async function ensureProjectGiteaRepo(input: {
 }): Promise<{ created: boolean }> {
   const org = workspaceGiteaOrg(input.workspaceId);
   const repoName = projectRepoName(input.slug);
+  const playbookSeeds = [
+    ...projectPlaybookSeeds({
+      projectName: input.name,
+      projectType: input.projectType,
+      recipe: input.recipe,
+      today: new Date().toISOString().slice(0, 10),
+    }),
+    notesWelcomeSeed(input.name),
+  ];
+  const platformPaths = new Set([README_PATH, ...playbookSeeds.map((seed) => seed.relPath)]);
+  const collision = input.starterFiles?.find((file) => platformPaths.has(file.path));
+  if (collision) {
+    throw new ProjectRepoProvisioningError(`starter files must not include ${collision.path}`, false);
+  }
   const created = await createProjectGiteaRepo(
     org,
     repoName,
@@ -62,18 +78,7 @@ export async function ensureProjectGiteaRepo(input: {
       workspaceSlug: input.workspaceId,
       projectSlug: input.slug,
     });
-    await giteaWriteFile(org, repoName, "README.md", body, "auto: seed project README");
-
-    const today = new Date().toISOString().slice(0, 10);
-    const playbookSeeds = [
-      ...projectPlaybookSeeds({
-        projectName: input.name,
-        projectType: input.projectType,
-        recipe: input.recipe,
-        today,
-      }),
-      notesWelcomeSeed(input.name),
-    ];
+    await giteaWriteFile(org, repoName, README_PATH, body, "auto: seed project README");
     await giteaWriteFiles(
       org,
       repoName,

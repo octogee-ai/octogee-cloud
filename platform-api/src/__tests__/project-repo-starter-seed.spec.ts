@@ -70,3 +70,19 @@ it("seeds no starter for a recipe without one", async () => {
 
   expect(seededStarter()).toEqual([]);
 });
+
+it.each(["README.md", "runbook/how-we-build.md"])(
+  "refuses starter files that include %s, which the platform seeds itself, before touching the repository",
+  async (path) => {
+    await expect(ensureProjectGiteaRepo({
+      ...INPUT,
+      starterFiles: [
+        { path: "package.json", content: "{}\n" },
+        { path, content: "# Mine\n" },
+      ],
+    })).rejects.toThrow(`starter files must not include ${path}`);
+
+    expect(gitea.createProjectGiteaRepo).not.toHaveBeenCalled();
+    expect(gitea.giteaWriteFilesIfAllAbsent).not.toHaveBeenCalled();
+  },
+);
