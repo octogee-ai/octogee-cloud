@@ -4,7 +4,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { assertTargetIdentityCustody, type MigrationTargetIdentityCustody } from "@octogee/core/migration-activation-manifest";
 import { queryAgentStore, readPostgresAgentAnchor } from "@octogee/core/agent-postgres";
-import type { FleetBrokerAgentAnchor, FleetBrokerGatewayStateAnchor, FleetBrokerAuxiliaryAnchor } from "@octogee/shared/types/fleet-broker";
+import type { FleetBrokerAgentAnchor, FleetBrokerAgentAnchorMigration, FleetBrokerGatewayStateAnchor, FleetBrokerAuxiliaryAnchor } from "@octogee/shared/types/fleet-broker";
 import { localStateStorePath } from "./openclaw-state-store.js";
 import type { FleetBrokerClient } from "./fleet-broker-client.js";
 
@@ -124,6 +124,37 @@ async function readSharedAnchorAuthority(input: SharedUserAgentAnchorsInput) {
   return { recorded, uid, assignment: { ...assignment, state: assignment.state } };
 }
 
+function assertRetainedSharedWorkspace(
+  witness: MigrationTargetIdentityCustody | null | undefined,
+  uid: string,
+  migrationId: string | undefined,
+  recordedMigration: FleetBrokerAgentAnchorMigration | undefined,
+  assignmentEpoch: number,
+): void {
+  if (!witness) throw new Error("Shared target workspace identity capture is missing");
+  const gatewayId = process.env.GATEWAY_ID?.trim();
+  const podUid = process.env.POD_UID?.trim();
+  if (!migrationId || recordedMigration?.migrationId !== migrationId ||
+      recordedMigration.sourceEpoch !== assignmentEpoch || !gatewayId || !podUid ||
+      recordedMigration.sourceGatewayId === gatewayId) {
+    throw new Error("Shared retained roster custody changed");
+  }
+  assertTargetIdentityCustody(witness, { migrationId, uid, gatewayId, podUid });
+}
+
+function sharedRecordedAnchors(
+  slug: string,
+  agentIds: readonly string[],
+  anchors: readonly FleetBrokerAgentAnchor[],
+): FleetBrokerAgentAnchor[] {
+  const expected = anchors.filter(anchor => agentIds.includes(anchor.agentId));
+  if (expected.some(anchor => !isAgentAnchor(anchor)) ||
+      new Set(expected.map(anchor => anchor.agentId)).size !== expected.length) {
+    throw new Error(`Recorded Shared agent anchors are invalid for ${slug}`);
+  }
+  return expected;
+}
+
 export async function prepareSharedUserAgentAnchors(input: SharedUserAgentAnchorsInput): Promise<{
   report: () => Promise<void>;
   retainedSharedRoster?: FleetBrokerAgentAnchor[];
@@ -137,20 +168,9 @@ export async function prepareSharedUserAgentAnchors(input: SharedUserAgentAnchor
   const assignmentEpoch = assignment.epoch;
   const retainedSharedRoster = input.sharedToSharedWorkspace !== undefined && recorded.sharedToShared === true;
   if (retainedSharedRoster) {
-    const witness = input.sharedToSharedWorkspace;
-    const gatewayId = process.env.GATEWAY_ID?.trim();
-    const podUid = process.env.POD_UID?.trim();
-    if (!witness) throw new Error("Shared target workspace identity capture is missing");
-    if (!migrationImport || recorded.migration?.sourceEpoch !== assignmentEpoch ||
-        !gatewayId || !podUid || recorded.migration.sourceGatewayId === gatewayId) {
-      throw new Error("Shared retained roster custody changed");
-    }
-    assertTargetIdentityCustody(witness, { migrationId: input.migrationId, uid, gatewayId, podUid });
+    assertRetainedSharedWorkspace(input.sharedToSharedWorkspace, uid, input.migrationId, recorded.migration, assignmentEpoch);
   }
-  const expected = recorded.anchors.filter((anchor) => agentIds.includes(anchor.agentId));
-  if (expected.some((anchor) => !isAgentAnchor(anchor)) || new Set(expected.map((anchor) => anchor.agentId)).size !== expected.length) {
-    throw new Error(`Recorded Shared agent anchors are invalid for ${slug}`);
-  }
+  const expected = sharedRecordedAnchors(slug, agentIds, recorded.anchors);
   const sameIdentity = (left: FleetBrokerAgentAnchor, right: FleetBrokerAgentAnchor) =>
     left.storeId === right.storeId && left.schema === right.schema;
   const assertRecordedIdentities = async () => {

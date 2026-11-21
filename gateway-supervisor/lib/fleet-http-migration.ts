@@ -343,6 +343,31 @@ async function importedWorkspaceIdentityRestore(input: { deps: MigrationHandlerD
   return sharedTargetWorkspaceRestore(input.deps, { migrationId: input.migrationId, slug: input.slug, mode: "final", rpcPhase: "finish-rsync-import" }, resolveOpenClawStateDir(), input.signal ?? AbortSignal.timeout(MIGRATION_TRANSFER_TIMEOUT_MS));
 }
 
+async function hydrateImportedProjects(
+  deps: MigrationHandlerDeps,
+  slug: string,
+  loadStrategy: MigrationLoadStrategy,
+): Promise<string[]> {
+  if (
+    loadStrategy === "standard" &&
+    deps.adapter.projectCheckoutScope?.(slug) !== "workspace-only"
+  ) {
+    const { pending, deferred } = await cloneMissingProjects(deps.adapter, slug, { githubCheckouts: "defer" });
+    if (deferred.length > 0) {
+      deps.log?.(
+        `[migration-http] GitHub checkouts for ${slug} hydrate after cutover, once this gateway holds the assignment: ${deferred.join(", ")}`,
+      );
+    }
+    if (pending.length > 0) {
+      throw new Error(
+        `[migration-http] project checkout hydration incomplete for ${slug}: ${pending.join(", ")}`,
+      );
+    }
+    return deferred;
+  }
+  return [];
+}
+
 async function activateImportedUserForMigration(input: {
   deferRuntimeVerification?: true;
   sharedToSharedRoster?: true;
@@ -358,24 +383,7 @@ async function activateImportedUserForMigration(input: {
   const beforeRuntimePublish = await importedWorkspaceIdentityRestore(input);
   await ensureMigrationGiteaKey(deps, slug, "target-activation");
   const fenceGeneration = mode === "default" ? await pauseSystemConfigWatchForUser(deps, slug) : undefined;
-  let deferredCheckouts: string[] = [];
-  if (
-    loadStrategy === "standard" &&
-    deps.adapter.projectCheckoutScope?.(slug) !== "workspace-only"
-  ) {
-    const { pending, deferred } = await cloneMissingProjects(deps.adapter, slug, { githubCheckouts: "defer" });
-    deferredCheckouts = deferred;
-    if (deferred.length > 0) {
-      deps.log?.(
-        `[migration-http] GitHub checkouts for ${slug} hydrate after cutover, once this gateway holds the assignment: ${deferred.join(", ")}`,
-      );
-    }
-    if (pending.length > 0) {
-      throw new Error(
-        `[migration-http] project checkout hydration incomplete for ${slug}: ${pending.join(", ")}`,
-      );
-    }
-  }
+  const deferredCheckouts = await hydrateImportedProjects(deps, slug, loadStrategy);
   const sharedToSharedRoster = beforeRuntimePublish && input.migrationId?.startsWith("mig-") &&
     (input.sharedToSharedRoster || mode === "default") ? true : undefined;
   const options = importedActivationOptions(signal, input.migrationId, beforeRuntimePublish, input.deferRuntimeVerification, sharedToSharedRoster);

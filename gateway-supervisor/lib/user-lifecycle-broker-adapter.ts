@@ -2130,10 +2130,35 @@ async function prepareImportedProjectAgents(ctx: BrokerCtx, manifest: MigrationA
   return { ...control, projectSnapshot };
 }
 
+type ImportedUserActivationOptions = {
+  signal?: AbortSignal;
+  resumeExistingSharedCustody?: boolean;
+  migrationId?: string;
+  beforeRuntimePublish?: () => Promise<void>;
+  deferRuntimeVerification?: true;
+  sharedToSharedRoster?: true;
+};
+
+function prepareImportedSharedAnchors(
+  ctx: BrokerCtx,
+  manifest: MigrationActivationManifest,
+  opts: ImportedUserActivationOptions,
+) {
+  const useWorkspaceWitness = opts.sharedToSharedRoster && !opts.resumeExistingSharedCustody &&
+    opts.beforeRuntimePublish && opts.migrationId;
+  return prepareUserSharedAnchors(ctx, {
+    slug: manifest.slug,
+    agentIds: activationManifestAgentIds(manifest),
+    allowQuiescingExisting: opts.resumeExistingSharedCustody,
+    migrationId: opts.migrationId,
+    ...(useWorkspaceWitness ? { sharedToSharedWorkspace: manifest.targetWorkspaceIdentities ?? null } : {}),
+  });
+}
+
 async function activateImportedUser(
   ctx: BrokerCtx,
   slug: string,
-  opts: { signal?: AbortSignal; resumeExistingSharedCustody?: boolean; migrationId?: string; beforeRuntimePublish?: () => Promise<void>; deferRuntimeVerification?: true; sharedToSharedRoster?: true } | undefined,
+  opts: ImportedUserActivationOptions | undefined,
 ): Promise<{ appliedFingerprint: string; verificationPending?: string }> {
   opts ??= {};
   if (sharedImportWithoutIdentityWitness(ctx, opts)) {
@@ -2152,12 +2177,7 @@ async function activateImportedUser(
   const routingActivationReason = `[import:${slug}] account-level Mattermost binding changed`;
   setRepoSshCommand(path.join(CUSTOMERS_DIR, slug), slug);
   ctx.log(`[import:${slug}] canonical workspace Git metadata ready`);
-  const sharedAnchors = await prepareUserSharedAnchors(ctx, {
-    slug, agentIds: activationManifestAgentIds(safeManifest), allowQuiescingExisting: opts.resumeExistingSharedCustody, migrationId: opts.migrationId,
-    ...(opts.sharedToSharedRoster && !opts.resumeExistingSharedCustody && opts.beforeRuntimePublish && opts.migrationId
-      ? { sharedToSharedWorkspace: safeManifest.targetWorkspaceIdentities ?? null }
-      : {}),
-  });
+  const sharedAnchors = await prepareImportedSharedAnchors(ctx, safeManifest, opts);
   await deleteSupersededUserAgents(ctx, {
     slug,
     evictionSlugs: [],
