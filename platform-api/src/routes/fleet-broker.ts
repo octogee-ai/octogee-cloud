@@ -1,3 +1,4 @@
+import { builderActivateOperationId } from "@octogee/shared/types/isolated-operation-ids";
 import { brokerRequestLimit } from "../middleware/broker-request-limit.js";
 import { isBlobObjectVersion } from "@octogee/shared/types/fleet-broker";
 import { gcsBlobStore, runtimeBlobStore } from "../lib/runtime-blob-store.js";
@@ -4220,6 +4221,28 @@ async function recordVmBootRecoveryReport(deps: ResolvedFleetBrokerRouteDeps, re
   return true;
 }
 
+async function shouldDeferScheduledVmCheckpoint(
+  store: PlatformStateRepositories,
+  bound: GatewayBinding,
+  runtime: FleetRegistryRecord | undefined,
+): Promise<boolean> {
+  if (!bound.podUid || runtime?.runtime !== "gce-vm" || runtime.vm?.instanceId !== bound.podUid) return false;
+  const gateway = await store.gateways.roots.get(bound.gatewayId);
+  const allocation = gateway?.allocation;
+  if (gateway?.gatewayClass !== "isolated" || gateway.desiredStatus !== "running" ||
+      allocation?.kind !== "disposable-builder" || !gateway.ownerUid || gateway.ownerUid !== allocation.claimedByUid) return false;
+  const owner = await store.users.records.get(gateway.ownerUid);
+  const lease = owner?.activationLease;
+  if (!lease || lease.leaseId !== allocation.leaseId || lease.generation !== allocation.generation ||
+      lease.targetGatewayId !== bound.gatewayId || lease.builderSlug !== gateway.builderSlug || owner.slug !== gateway.builderSlug ||
+      !lease.sourceGatewayId || lease.sourceGatewayId === bound.gatewayId || owner.gateway?.gatewayId !== lease.sourceGatewayId ||
+      lease.activeAt !== undefined) return false;
+
+  const activatesHere = lease.activationOperationId === builderActivateOperationId(bound.gatewayId, allocation.generation);
+  return lease.status === "provisioning" && (lease.activationOperationId === undefined || activatesHere)
+    || lease.status === "activating" && activatesHere;
+}
+
 function vmRuntimeCheckpointSignal(home: Partial<GatewayVmHomeState> | undefined): GatewayVmRuntimeResponse["homeCheckpoint"] {
   return {
     requestedAt: typeof home?.checkpointRequestedAt === "number" ? home.checkpointRequestedAt : null,
@@ -4248,9 +4271,10 @@ function installVmRuntimeRoutes(router: Router, deps: ResolvedFleetBrokerRouteDe
     const home = observation?.vmHome;
     const restoreCheckpoint = validatedHomeRestore(home, res);
     if (restoreCheckpoint === null) return;
+    const deferScheduled = await shouldDeferScheduledVmCheckpoint(store, bound, observation);
     const response: GatewayVmRuntimeResponse = {
       bundle: { ...bundle, ...(restoreCheckpoint ? { homeRestoreCheckpoint: restoreCheckpoint } : {}) },
-      homeCheckpoint: vmRuntimeCheckpointSignal(home),
+      homeCheckpoint: { ...vmRuntimeCheckpointSignal(home), ...(deferScheduled ? { deferScheduled: true } : {}) },
     };
     res.set("cache-control", "no-store");
     res.json(response);

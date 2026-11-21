@@ -974,6 +974,31 @@ describe("convergeOnce", () => {
     expect(uploads()).toBe(3);
   });
 
+  it("defers only scheduled checkpoints and leaves them due when the home starts serving", async () => {
+    const clock = { now: 1_000 };
+    const docker = fakeDocker();
+    let signal: { requestedAt: number | null; completedAt: number | null; deferScheduled?: true } = {
+      requestedAt: null, completedAt: null, deferScheduled: true,
+    };
+    const h = deps(docker, () => runtimeReply(homeBundle(), signal), clock, { home: { dirty: true } });
+    let state = await convergeOnce(h.d, initialAgentState());
+    state = await convergeOnce(h.d, state);
+    expect(state.homeCheckpointCheckedAt).toBeNull();
+    expect(docker.log).not.toContain("find /srv/octogee/volumes/data");
+    expect(calls(h.fetchImpl, "/upload")).toHaveLength(0);
+
+    signal = { requestedAt: null, completedAt: null };
+    state = await convergeOnce(h.d, state);
+    expect(state.homeCheckpointCheckedAt).toBe(clock.now);
+    expect(calls(h.fetchImpl, "/upload")).toHaveLength(1);
+
+    clock.now += 1_000;
+    signal = { requestedAt: clock.now, completedAt: null, deferScheduled: true };
+    await convergeOnce(h.d, state);
+    expect(calls(h.fetchImpl, "/upload")).toHaveLength(2);
+    expect(docker.containers.get("octogee-gateway")?.paused).toBe(true);
+  });
+
   it("reports live images throughout slow checkpoint compression", async () => {
     const h = deps(fakeDocker(), () => runtimeReply(homeBundle()), { now: 1_000 }, { home: { dirty: true } });
     const state = await convergeOnce(h.d, initialAgentState());

@@ -159,6 +159,7 @@ export async function fetchRuntimeBundle(deps: VmAgentDeps): Promise<BundleFetch
     homeCheckpoint: {
       requestedAt: numberOrNull(body.homeCheckpoint?.requestedAt),
       completedAt: numberOrNull(body.homeCheckpoint?.completedAt),
+      ...(body.homeCheckpoint?.deferScheduled === true ? { deferScheduled: true } : {}),
     },
   };
 }
@@ -451,6 +452,13 @@ export async function checkpointHomeIfDue(
     const requested = force ? ` (requested at ${signal.requestedAt})` : "";
     deps.log(`[vm-agent] home checkpoint skipped${requested}: bundle ${bundle.version} carries no user home (data emptyDir + user identity)`);
     return { ...state, homeCheckpointCheckedAt: now };
+  }
+  if (!force && signal.deferScheduled) {
+    deps.log("[vm-agent] scheduled home checkpoint deferred until serving", {
+      gatewayId: deps.gatewayId, builderSlug: scope.slug, category: "home-checkpoint",
+      phase: "check-home", status: "skipped", reason: "home-not-serving",
+    });
+    return state;
   }
   let reporting: Promise<void> | undefined;
   const timer = setInterval(() => {

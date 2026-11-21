@@ -307,7 +307,7 @@ export function isGatewayVmRuntimeBundle(value: unknown): value is GatewayVmRunt
 
 export interface GatewayVmRuntimeResponse {
   bundle: GatewayVmRuntimeBundle;
-  homeCheckpoint: { requestedAt: number | null; completedAt: number | null };
+  homeCheckpoint: { requestedAt: number | null; completedAt: number | null; deferScheduled?: true };
 }
 
 export interface GatewayVmDiskSample {
