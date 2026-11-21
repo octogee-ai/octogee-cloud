@@ -2969,6 +2969,7 @@ const ADAPTER_REPO_TOUCHING: Record<keyof UserLifecycleAdapter, boolean> = {
     exportOpenClawActivationManifest: false,
     removeImportedUserBySlug: false,
     releaseAgent: false,
+    detachSourceAgents: false,
   };
 
   const REPO_TOUCHING = (
