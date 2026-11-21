@@ -60,6 +60,7 @@ export interface VmGatewayRuntimeDeps {
   homeCheckpointTimeoutMs?: number;
   homeCheckpointPollMs?: number;
   onVmCreationSettled: (gatewayId: string) => void;
+  onVmDeploymentPublished: (gatewayId: string) => void;
   now: () => number;
   log: (msg: string) => void;
 }
@@ -285,6 +286,12 @@ function homeStorageIdOf(uid: string, user: PlatformUserRecord | null): string |
   return disk.id;
 }
 
+function vmDeploymentBecameRoutable(previous: FleetRegistryRecord | null, vm: GatewayVmState | undefined): boolean {
+  if (vm?.status !== "RUNNING" || !vm.internalIp) return false;
+  return previous?.vmInstance?.replicas !== 1 || previous.vm?.status !== "RUNNING" ||
+    previous.vm.instanceId !== vm.instanceId || previous.vm.startedAt !== vm.startedAt;
+}
+
 export function createVmGatewayRuntime(deps: VmGatewayRuntimeDeps): VmGatewayRuntime {
   const upgradeTimeout = deps.upgradeTimeout ?? "10m";
   let routesTail: Promise<void> = Promise.resolve();
@@ -378,7 +385,8 @@ export function createVmGatewayRuntime(deps: VmGatewayRuntimeDeps): VmGatewayRun
     async upsertInstance(opts) {
       const { gatewayId } = opts;
       if (deps.ensureAuthSecret) await deps.ensureAuthSecret({ namespace: deps.namespace, gatewayId });
-      const desktop = vmSpecDesktop((await deps.store.fleetRegistry.get(gatewayId))?.vmSpec, deps.vmSpec);
+      const previousRuntime = await deps.store.fleetRegistry.get(gatewayId);
+      const desktop = vmSpecDesktop(previousRuntime?.vmSpec, deps.vmSpec);
       const [manifests, bridge] = await Promise.all([renderManifests(opts, desktop), bridgeIp()]);
       const ownerUid = opts.builderIdentity?.ownerUid;
       const homeStorageId = ownerUid ? homeStorageIdOf(ownerUid, await deps.store.users.records.get(ownerUid)) : undefined;
@@ -415,10 +423,11 @@ export function createVmGatewayRuntime(deps: VmGatewayRuntimeDeps): VmGatewayRun
         sizingTier: opts.sizingTier,
         replicas: opts.replicas,
       });
+      let activeVm: GatewayVmState | undefined;
       if (opts.replicas === 0) {
         await vmLifecycle.pauseVm(gatewayId);
       } else {
-        await vmLifecycle.ensureVm(gatewayId, `${opts.imageRepository}:${opts.imageTag}`, ownerUid, bridge);
+        activeVm = await vmLifecycle.ensureVm(gatewayId, `${opts.imageRepository}:${opts.imageTag}`, ownerUid, bridge);
       }
       if (ownerUid && bundle.volumes.some(volume => volume.name === "project-materializations" && volume.kind === "ephemeral")) {
         await deps.store.users.records.patch(ownerUid, { home: { projectStorageNativeBoot: true } });
@@ -427,6 +436,7 @@ export function createVmGatewayRuntime(deps: VmGatewayRuntimeDeps): VmGatewayRun
       deps.log(`[vm-gateway-runtime] ${gatewayId}: runtime bundle ${bundle.version} rendered (${opts.imageTag})`);
       await reconcileRoutes();
       await deps.store.fleetRegistry.patch(gatewayId, { vmInstance: { ...instance } });
+      if (opts.replicas === 1 && vmDeploymentBecameRoutable(previousRuntime, activeVm)) deps.onVmDeploymentPublished(gatewayId);
     },
 
     async removeInstance({ gatewayId, awaitHomeCheckpoint }) {
