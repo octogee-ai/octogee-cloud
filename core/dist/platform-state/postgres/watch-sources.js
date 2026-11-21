@@ -7,14 +7,23 @@ import { postgresMigrationTasksWatchSource } from "./migration-tasks.js";
 import { postgresAgentIdentitiesWatchSource, postgresWorkspaceChannelsWatchSource, postgresWorkspaceMembersWatchSource, postgresWorkspaceProjectMembersWatchSource, postgresWorkspaceProjectsWatchSource, postgresWorkspacesWatchSource, } from "./workspaces.js";
 const operationsWatchSource = (filter) => {
     const statuses = [...filter.statuses];
+    const terminal = ["failed", "rolled-back"];
+    const watchedStatuses = filter.includeMigrationRecovery ? [...statuses, ...terminal] : statuses;
+    const matching = (parameters) => {
+        const active = `status = ANY(${parameters.add(statuses, "text[]")})`;
+        if (!filter.includeMigrationRecovery)
+            return active;
+        return `(${active} OR (kind = 'migrate-user' AND status = ANY(${parameters.add(terminal, "text[]")})
+      AND (retry_requested_at IS NOT NULL OR source_recovery_requested_at IS NOT NULL OR scheduler_handoff IS NOT NULL)))`;
+    };
     return {
         aggregate: "operations",
         operation: "watch operations",
-        selectAll: (parameters) => `SELECT * FROM $schema.operations WHERE status = ANY(${parameters.add(statuses, "text[]")}) ORDER BY id`,
-        selectKeys: (keys, parameters) => `SELECT * FROM $schema.operations WHERE status = ANY(${parameters.add(statuses, "text[]")}) AND id = ANY(${parameters.add([...keys], "text[]")})`,
+        selectAll: (parameters) => `SELECT * FROM $schema.operations WHERE ${matching(parameters)} ORDER BY id`,
+        selectKeys: (keys, parameters) => `SELECT * FROM $schema.operations WHERE ${matching(parameters)} AND id = ANY(${parameters.add([...keys], "text[]")})`,
         keyOf: (row) => row.id,
         decode: decodeOperation,
-        mayMatch: (filterKeys) => filterKeys.status === undefined || filterKeys.status.some((status) => typeof status === "string" && statuses.includes(status)),
+        mayMatch: (filterKeys) => filterKeys.status === undefined || filterKeys.status.some(status => typeof status === "string" && watchedStatuses.includes(status)),
     };
 };
 const WATCH_SOURCES = {
