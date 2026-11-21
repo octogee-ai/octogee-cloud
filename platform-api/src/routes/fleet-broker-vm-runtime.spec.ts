@@ -14,6 +14,13 @@ const bundle = {
 };
 
 class FailingDocuments extends RecordingDocuments {
+  readonly reads: string[] = [];
+
+  override get(path: string): Record<string, unknown> | undefined {
+    this.reads.push(path);
+    return super.get(path);
+  }
+
   constructor(seed: Record<string, Record<string, unknown>>, private readonly failWrites: boolean) {
     super(seed);
   }
@@ -79,11 +86,16 @@ describe("POST /internal/fleet/vm-runtime", () => {
       username: "bob", provisioning: { openclaw: { gatewayId, activationLease } },
     });
     const signal = async (entries: Record<string, Record<string, unknown>>) => {
-      const reply = await post(appWith({ ...docs, ...entries }, vmBound)).expect(200);
+      const reply = await post(appWith({ ...docs, ...entries }, vmBound), { checkScheduledHomeCheckpoint: true }).expect(200);
       return reply.body.homeCheckpoint;
     };
     const periodic = { requestedAt: null, completedAt: null };
     const deferred = { ...periodic, deferScheduled: true };
+
+    const heartbeat = appWith({ ...docs, "users/uid-bob": user("shared-1") }, vmBound);
+    expect((await post(heartbeat).expect(200)).body.homeCheckpoint).toEqual(periodic);
+    expect(heartbeat.documents.reads).not.toContain("gateways/b-x");
+    expect(heartbeat.documents.reads).not.toContain("users/uid-bob");
 
     expect(await signal({ "users/uid-bob": user("shared-1") })).toEqual(deferred);
     expect(await signal({ "users/uid-bob": user("shared-1", {
@@ -102,10 +114,15 @@ describe("POST /internal/fleet/vm-runtime", () => {
       "gateways/b-x": { ...root, allocation: null },
       "users/uid-bob": user("shared-1"),
     })).toEqual(periodic);
-    expect(await signal({
+    const forced = appWith({
+      ...docs,
       [RUNTIME]: runtime({ vm: { instanceId: "4242" }, vmHome: { checkpointRequestedAt: 50 } }),
       "users/uid-bob": user("shared-1"),
-    })).toEqual({ ...deferred, requestedAt: 50 });
+    }, vmBound);
+    const request = await post(forced, { checkScheduledHomeCheckpoint: true }).expect(200);
+    expect(request.body.homeCheckpoint).toEqual({ ...periodic, requestedAt: 50 });
+    expect(forced.documents.reads).not.toContain("gateways/b-x");
+    expect(forced.documents.reads).not.toContain("users/uid-bob");
   });
 
   it("keeps serving a bundle rendered before bundles named their desktop, and fails closed on an unknown desktop", async () => {

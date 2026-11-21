@@ -999,6 +999,32 @@ describe("convergeOnce", () => {
     expect(docker.containers.get("octogee-gateway")?.paused).toBe(true);
   });
 
+  it("checks activation eligibility only when periodic work is due before fetching runtime", async () => {
+    const clock = { now: 1_000 };
+    const docker = fakeDocker();
+    const h = deps(docker, () => runtimeReply(homeBundle()), clock, { home: { dirty: true } });
+    const sent = () => JSON.parse(String(calls(h.fetchImpl, "/internal/fleet/vm-runtime").at(-1)?.[1].body));
+    let state = await convergeOnce(h.d, initialAgentState());
+    state = await convergeOnce(h.d, state);
+    expect(sent()).toMatchObject({ checkScheduledHomeCheckpoint: true });
+    expect(calls(h.fetchImpl, "/upload")).toHaveLength(1);
+
+    h.home.dirty = true;
+    clock.now += HOME_CHECKPOINT_INTERVAL_MS - 1;
+    const identity = h.d.metadata.instanceIdentity;
+    h.d.metadata.instanceIdentity = async () => {
+      clock.now += 1;
+      return identity();
+    };
+    state = await convergeOnce(h.d, state);
+    expect(sent()).not.toHaveProperty("checkScheduledHomeCheckpoint");
+    expect(calls(h.fetchImpl, "/upload")).toHaveLength(1);
+
+    await convergeOnce(h.d, state);
+    expect(sent()).toMatchObject({ checkScheduledHomeCheckpoint: true });
+    expect(calls(h.fetchImpl, "/upload")).toHaveLength(2);
+  });
+
   it("reports live images throughout slow checkpoint compression", async () => {
     const h = deps(fakeDocker(), () => runtimeReply(homeBundle()), { now: 1_000 }, { home: { dirty: true } });
     const state = await convergeOnce(h.d, initialAgentState());

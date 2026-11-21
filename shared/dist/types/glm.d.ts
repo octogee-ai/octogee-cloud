@@ -201,6 +201,7 @@ export interface GatewayVmDiskSample {
     freeBytes: number;
 }
 export interface GatewayVmRuntimeRequest {
+    checkScheduledHomeCheckpoint?: true;
     disk?: GatewayVmDiskSample;
     images?: GatewayVmImageSample;
     preempted?: true;

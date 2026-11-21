@@ -316,6 +316,7 @@ export interface GatewayVmDiskSample {
 }
 
 export interface GatewayVmRuntimeRequest {
+  checkScheduledHomeCheckpoint?: true;
   disk?: GatewayVmDiskSample;
   images?: GatewayVmImageSample;
   preempted?: true;

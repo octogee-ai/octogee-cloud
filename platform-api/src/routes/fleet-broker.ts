@@ -4271,7 +4271,8 @@ function installVmRuntimeRoutes(router: Router, deps: ResolvedFleetBrokerRouteDe
     const home = observation?.vmHome;
     const restoreCheckpoint = validatedHomeRestore(home, res);
     if (restoreCheckpoint === null) return;
-    const deferScheduled = await shouldDeferScheduledVmCheckpoint(store, bound, observation);
+    const deferScheduled = objectBody(req).checkScheduledHomeCheckpoint === true &&
+      !homeCheckpointOutstanding(home) && await shouldDeferScheduledVmCheckpoint(store, bound, observation);
     const response: GatewayVmRuntimeResponse = {
       bundle: { ...bundle, ...(restoreCheckpoint ? { homeRestoreCheckpoint: restoreCheckpoint } : {}) },
       homeCheckpoint: { ...vmRuntimeCheckpointSignal(home), ...(deferScheduled ? { deferScheduled: true } : {}) },
