@@ -40,7 +40,7 @@ export async function readActiveParkedPrewarm(
   uid: string,
 ): Promise<OperationRecord | null> {
   const operations = await state.journal.operations.listForUid(uid, { kind: PARKED_PREWARM_KIND, statuses: ACTIVE_PARKED_PREWARM_STATUSES });
-  return operations.find((operation) => isPrewarmClaimActive(operation.output?.prewarmState)) ?? null;
+  return operations.find((operation) => parkedPrewarmPlacementHold(operation) !== undefined) ?? null;
 }
 
 type PrewarmClaim = {
@@ -62,11 +62,17 @@ function isPrewarmClaimActive(state: unknown): state is PrewarmClaimState {
   return PREWARM_CLAIM_STATES.some((phase) => phase === state);
 }
 
+export function parkedPrewarmPlacementHold(operation: OperationRecord): "blocking" | typeof HANDOFF | undefined {
+  const phase = operation.output?.prewarmState;
+  if (operation.kind !== PARKED_PREWARM_KIND ||
+      !ACTIVE_PARKED_PREWARM_STATUSES.some(status => status === operation.status) ||
+      !isPrewarmClaimActive(phase)) return undefined;
+  return phase === HANDOFF ? HANDOFF : "blocking";
+}
+
 export function activeParkedPrewarmGatewayIds(operations: readonly OperationRecord[]): ReadonlySet<string> {
-  return new Set(operations.flatMap((operation) =>
-    operation.kind === PARKED_PREWARM_KIND && operation.gatewayId &&
-    (operation.status === "pending" || operation.status === "running") &&
-    isPrewarmClaimActive(operation.output?.prewarmState) ? [operation.gatewayId] : []));
+  return new Set(operations.flatMap(operation =>
+    operation.gatewayId && parkedPrewarmPlacementHold(operation) !== undefined ? [operation.gatewayId] : []));
 }
 
 type PrewarmStart = { state: PrewarmClaimState | "parked"; claim: PrewarmClaim } |

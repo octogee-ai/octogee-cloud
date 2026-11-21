@@ -2,6 +2,7 @@ import request from "supertest";
 import type { Express } from "express";
 import { GATEWAY_UNREACHABLE_AFTER_MS } from "@octogee/shared/types/fleet-controller";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { PARKED_PREWARM_KIND } from "@octogee/core/isolated-gateway-lifecycle";
 import { admitAdminDryRunMarker, isAdminDryRun } from "@octogee/core/admin-dry-run";
 import { noAdminUserDirectorySource } from "@octogee/core/admin-user-directory-router";
 import { operatorRailRegistry } from "@octogee/core/model-broker/rails";
@@ -659,6 +660,39 @@ describe("createHttpServer — admin gateway routes", () => {
       req.abort();
       vi.useRealTimers();
     }
+  });
+
+  it.each([
+    { before: undefined, progress: "booting", after: "handoff", transition: "hand off" },
+    { before: "repairing", progress: "repair-parking", after: "demand-won", transition: "release after source repair" },
+    { before: "handoff", progress: "handoff", after: null, transition: "terminal removal" },
+  ])("wakes placement when a parked operation changes its eligibility ($transition)", async ({ before, progress, after }) => {
+    type OperationsSnapshot = Extract<WatchEvent<"operations">, { kind: "snapshot" }>;
+    const id = "private-parked-prewarm";
+    const operation = (prewarmState: string | undefined, at: number): OperationsSnapshot["records"][number] => ({
+      id, kind: PARKED_PREWARM_KIND, gatewayId: "private-gateway",
+      status: prewarmState ? "running" : "pending",
+      input: {}, output: { prewarmState }, steps: [],
+      createdBy: "test", createdAt: 1, startedAt: prewarmState ? 2 : null, completedAt: null,
+      lastProgressAt: at, revision: "test-revision" as Revision,
+    });
+    const watches = createWatchRegistry({
+      script: aggregate => aggregate === "operations" ? [
+        { kind: "snapshot", records: [operation(before, 2)], cursor: FIXTURE_CURSOR },
+        { kind: "changes", changes: [{ type: "modified", key: id, record: operation(progress, 3) }], cursor: FIXTURE_CURSOR },
+        { kind: "snapshot", records: [operation(progress, 3)], cursor: FIXTURE_CURSOR },
+        { kind: "changes", changes: after === null
+          ? [{ type: "removed", key: id, record: null }]
+          : [{ type: "modified", key: id, record: operation(after, 4) }], cursor: FIXTURE_CURSOR },
+      ] : [SNAPSHOT],
+    });
+    const res = await request(createHttpServer(buildDeps(store, {}, watches)))
+      .get("/api/admin/fleet-events?placement=1&once=1")
+      .set("Authorization", "Bearer admin-token")
+      .timeout(1_000);
+    expect(res.text).toContain('event: placement-changed\ndata: {"collection":"glmOperations"');
+    expect(res.text.split('event: placement-reset\ndata: {"collection":"glmOperations"')).toHaveLength(3);
+    expect(res.text).not.toContain(id);
   });
 
   it("requires admin auth for placement event hints", async () => {
