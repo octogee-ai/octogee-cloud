@@ -27,6 +27,7 @@ declare const REPAIR_PARKING = "repair-parking";
 declare const DEMAND_WON = "demand-won";
 declare const PREWARM_CLAIM_STATES: readonly ["booting", "handoff", "repairing", "repair-parking"];
 type PrewarmClaimState = typeof PREWARM_CLAIM_STATES[number];
+export declare function parkedPrewarmPlacementHold(operation: OperationRecord): "blocking" | typeof HANDOFF | undefined;
 export declare function activeParkedPrewarmGatewayIds(operations: readonly OperationRecord[]): ReadonlySet<string>;
 type PrewarmStart = {
     state: PrewarmClaimState | "parked";

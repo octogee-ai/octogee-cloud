@@ -21,6 +21,7 @@ import {
   type GatewayPodDiagnostics,
 } from "@octogee/core/admin-fleet-router";
 import { addAdminProvisioningRoutes, type AdminProvisioningClient, type AdminProvisioningRouterDeps } from "@octogee/core/admin-provisioning-router";
+import { parkedPrewarmPlacementHold, PARKED_PREWARM_KIND } from "@octogee/core/isolated-gateway-lifecycle";
 import type { CentralReleaseAuthority } from "@octogee/core/artifact-registry";
 import { ACTIVATION_LEASE_SOURCE, CONTINUOUS_PLACEMENT_SOURCE, PLACEMENT_MIGRATION_KIND } from "@octogee/core/placement-migrations";
 import type { StrandedSourceGatewayCalls } from "@octogee/core/stranded-source-restore";
@@ -162,7 +163,8 @@ interface FleetEventHub {
   subscribe(handler: (event: FleetEvent) => void): () => void;
 }
 
-type PlacementFingerprint<A extends WatchAggregate> = (record: WatchRecords[A]) => [key: string, fingerprint: string] | undefined;
+type PlacementFingerprint<A extends WatchAggregate> =
+  (record: WatchRecords[A]) => [key: string, fingerprint: string, quietOnEntry?: boolean] | undefined;
 
 const builderPlacementFingerprint: PlacementFingerprint<"builders"> = (user) => {
   const lease = user.activationLease;
@@ -202,16 +204,24 @@ const migrationPlacementFingerprint: PlacementFingerprint<"operations"> = (opera
     ? [operation.id, JSON.stringify([operation.status, operation.retryRequestedAt, operation.sourceRecoveryRequestedAt,
       operation.schedulerHandoffReleased, operation.nativeReturnSourceRecoveryReceipts?.length])] : undefined;
 
+const operationPlacementFingerprint: PlacementFingerprint<"operations"> = operation => {
+  if (operation.kind !== PARKED_PREWARM_KIND) return migrationPlacementFingerprint(operation);
+  const hold = parkedPrewarmPlacementHold(operation);
+  return hold === undefined ? undefined : [operation.id, hold, hold === "blocking"];
+};
+
 function updatePlacementFingerprint<A extends WatchAggregate>(
   fingerprints: Map<string, string>,
   { key, record }: WatchChange<A>,
   fingerprint: PlacementFingerprint<A>,
 ): boolean {
-  const next = record ? fingerprint(record)?.[1] : undefined;
-  if (next === fingerprints.get(key)) return false;
+  const entry = record ? fingerprint(record) : undefined;
+  const prior = fingerprints.get(key);
+  const next = entry?.[1];
+  if (next === prior) return false;
   if (next === undefined) fingerprints.delete(key);
   else fingerprints.set(key, next);
-  return true;
+  return prior !== undefined || entry?.[2] !== true;
 }
 
 function createFleetEventHub(deps: {
@@ -274,7 +284,7 @@ function createFleetEventHub(deps: {
           for (const record of event.records) {
             const entry = fingerprint(record);
             if (entry) {
-              placements.set(...entry);
+              placements.set(entry[0], entry[1]);
               scheduleExpiry(entry[0], record);
             }
           }
@@ -309,7 +319,7 @@ function createFleetEventHub(deps: {
       watch("config", { aggregate: "config", filter: {} }, configPlacementFingerprint),
       watch("assignments", { aggregate: "assignments", filter: {} }, assignmentPlacementFingerprint, { placementOnly: true }),
       watch(GLM_GATEWAYS_COLLECTION, { aggregate: "fleetRegistry", filter: {} }, runtimePlacementFingerprint, { expiresAt: heartbeatExpiresAt }),
-      watch(GLM_OPERATIONS_COLLECTION, { aggregate: "operations", filter: { statuses: ACTIVE_OPERATION_STATUSES, includeMigrationRecovery: true } }, migrationPlacementFingerprint),
+      watch(GLM_OPERATIONS_COLLECTION, { aggregate: "operations", filter: { statuses: ACTIVE_OPERATION_STATUSES, includeMigrationRecovery: true } }, operationPlacementFingerprint),
     ];
   };
 
