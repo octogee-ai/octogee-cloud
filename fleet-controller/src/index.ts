@@ -19,7 +19,7 @@ import {
   startIsolatedPodBlockerObserver,
 } from "./isolated-pod-home.js";
 import { runNormalFleetMutation } from "@octogee/core/normal-fleet-mutation";
-import { platformStateStoreFromEnvironment, MissingRecordError, type WorkspaceProject, type FleetRegistryRecord, type GatewayRoot, type OpaqueMap, type GatewayRootFields, type GatewayRootPatch, type OperationRecord, type PlatformStateStore, type Stored, type WatchChange, type WatchEvent, type FleetRegistryInventory } from "@octogee/core/platform-state";
+import { platformStateStoreFromEnvironment, MissingRecordError, type WorkspaceProject, type FleetRegistryRecord, type GatewayRoot, type OpaqueMap, type GatewayRootFields, type GatewayRootPatch, type OperationRecord, type PlatformStateStore, type PlatformStateTransaction, type Stored, type WatchChange, type WatchEvent, type FleetRegistryInventory } from "@octogee/core/platform-state";
 import { restartGatewayProcess, restartGatewayDeployment } from './lib/runtime-restart-transport.js';
 import { assertMigrationRestartUnfenced } from './lib/runtime-restart-coordinator.js';
 import { assertOwnerOperationUnfenced } from './lib/vm-recovery-fence.js';
@@ -156,6 +156,7 @@ import {
 } from "./operation-queue.js";
 import { readOperationRolloutLanes, withOperationRolloutLane } from "./operation-rollout-lanes.js";
 import {
+  WAITING_FOR_ISOLATED_GATEWAY,
   buildOperationCompletionUpdate,
   operationFirstStartedAt,
   operationNeedsDurableRestartResume,
@@ -1257,6 +1258,16 @@ function runtimeUserIdentity(gateway: DurableGateway): { builderIdentity?: Runti
     : {};
 }
 
+async function wakeIsolatedGatewayMoves(transaction: PlatformStateTransaction, root: GatewayRoot, initialPrelaunch: boolean): Promise<void> {
+  if (!initialPrelaunch || root.desiredStatus !== "running" || !root.ownerUid) return;
+  const moves = await transaction.journal.operations.listForUid(root.ownerUid, { kind: MIGRATE_USER_KIND, statuses: ["pending"] });
+  for (const move of moves) {
+    if (move.input?.toGatewayId === root.gatewayId && move.waitingOn === WAITING_FOR_ISOLATED_GATEWAY) {
+      await transaction.journal.operations.patch(move.id, { waitingOn: { clear: true }, nextAttemptAt: { clear: true } }, { revision: move.revision });
+    }
+  }
+}
+
 export async function markGatewayLive(
   passDeps: Pick<GatewayConvergencePassDeps, "store" | "log">,
   gateway: DurableGateway,
@@ -1279,6 +1290,7 @@ export async function markGatewayLive(
       log(`[converge-gateway] ${gateway.gatewayId} prelaunch reservation changed; deferring release`);
       return false;
     }
+    await wakeIsolatedGatewayMoves(transaction, root, initialDisposablePrelaunch);
     await transaction.gateways.roots.patch(
       gateway.gatewayId,
       { liveRelease: gateway.desiredRelease, updatedAt: now, updatedBy: "converge-gateway" },
@@ -1690,10 +1702,15 @@ function operationFromRecord(record: Stored<OperationRecord>): Operation {
   return operation;
 }
 
-function addedPendingOperations(event: WatchEvent<"operations">): readonly Stored<OperationRecord>[] {
+function runnablePendingOperations(event: WatchEvent<"operations">): readonly Stored<OperationRecord>[] {
   if (event.kind === "snapshot") return event.records;
   if (event.kind === "resync") return [];
-  return event.changes.flatMap((change) => change.type === "added" && change.record !== null ? [change.record] : []);
+  return event.changes.flatMap(({ type, record }) => {
+    if (!record || type === "removed") return [];
+    const readinessWaitCleared = record.output?.isolatedGatewayReadinessChecks !== undefined &&
+      record.waitingOn == null && record.nextAttemptAt == null;
+    return type === "added" || readinessWaitCleared ? [record] : [];
+  });
 }
 
 export function startOperationWorker(deps: ControllerDeps): () => void {
@@ -1702,7 +1719,7 @@ export function startOperationWorker(deps: ControllerDeps): () => void {
   };
   const subscription = deps.store.watch({ aggregate: "operations", filter: { statuses: ["pending"] } }, {
     onEvent: (event) => {
-      void processInOrder(addedPendingOperations(event)).catch((err) => {
+      void processInOrder(runnablePendingOperations(event)).catch((err) => {
         deps.log(`[glm-controller] ⚠ pending operation run failed: ${err instanceof Error ? err.message : String(err)}`);
       });
     },
