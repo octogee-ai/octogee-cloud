@@ -212,6 +212,15 @@ selection and rollout are a separate operator step.
 
 ## Current Gateway overlay
 
+The November 21 release at `1543016b7f4252be4b78f53bcda08338a2e2d2b7` adds
+`agents.detachMany` for final export from a running shared gateway. The
+Gateway validates each PostgreSQL store, applies one roster revision, and
+returns each detached agent’s receipt. The receiving Gateway can restore the
+same retained roster after an earlier completed deletion. An exact replay
+after restart preserves the stores and sessions without another roster write.
+This overlay can be retired when upstream supports these batch operations and
+their retained-store and replay guarantees.
+
 The November 21 overlay at `7f0f50982ccc4c2d984370b94749ade6c57f8cb7` adds
 `agents.restoreMany` to the previous fork pin. Restoring a Builder or a shared-to-shared move through
 `agents.create` published and applied a separate config revision for each
