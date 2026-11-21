@@ -61,6 +61,7 @@ deploymentProjectId?: string;
 gatewayServiceAccount?: string;
     rollStrategy?: "recreate" | "surge";
     waitForReady?: boolean;
+    deferVmPause?: boolean;
   }): Promise<void>;
 
 removeInstance(opts: {
