@@ -140,3 +140,25 @@ it("rejects absent or conflicting source evidence before contacting Compute", as
   expect(h.compute.archiveDisksAbsent).not.toHaveBeenCalled();
   expect(h.compute.eraseHomeSnapshot).not.toHaveBeenCalled();
 });
+
+it("erases a restored backup even without activation, preserving the restored disk through legacy cleanup", async () => {
+  const h = archiveFixture();
+  const newHome = { ...retainedHome, name: "restored-home", source: "projects/sandbox/zones/us-central1-b/disks/restored-home", id: "103" };
+  h.provisioning().homeDisk = newHome;
+  h.provisioning().homeArchive = { ...archivedHome, phase: "restored", restoredDisk: newHome, restoredInstanceId: "200" };
+  h.compute.eraseHomeSnapshot.mockResolvedValueOnce(false);
+  h.deleteVm.mockImplementation(async () => {
+    expect(h.provisioning().homeArchive).toBeUndefined();
+    expect(h.provisioning().homeDisk).toEqual(newHome);
+    return true;
+  });
+
+  await expect(h.erase()).rejects.toThrow("snapshot erasure");
+  expect(h.deleteVm).not.toHaveBeenCalled();
+  expect(h.provisioning().homeDisk).toEqual(newHome);
+  expect(h.provisioning().homeArchive.phase).toBe("restored");
+  await expect(h.erase()).resolves.toBe(true);
+  expect(h.compute.archiveDisksAbsent).not.toHaveBeenCalled();
+  expect(h.compute.eraseHomeSnapshot).toHaveBeenLastCalledWith(archivedHome.snapshot, "owner");
+  expect(h.deleteVm).toHaveBeenCalledOnce();
+});

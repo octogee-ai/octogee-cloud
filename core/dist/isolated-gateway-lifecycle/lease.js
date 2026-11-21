@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { enqueueRestoredHomeBackupRelease } from "./home-backup-release.js";
 import { accountAllowsInteractiveAccess } from "@octogee/shared/types/account-lifecycle";
 import { builderActivateOperationId, builderReturnOperationId, placementRetireOperationId, } from "@octogee/shared/types/isolated-operation-ids";
 import { isolatedSizingTier } from "@octogee/shared/types/sizing-profile";
@@ -272,6 +273,9 @@ export async function advanceActivationLease(input, given, mode = "apply") {
             }));
         }
         await transaction.users.records.setActivationLease(request.uid, next, exactLeaseFence(lease, [request.fromStatus]));
+        if (request.toStatus === "active") {
+            await enqueueRestoredHomeBackupRelease(transaction, user, lease, now);
+        }
         if (admitHome) {
             await transaction.users.records.patch(request.uid, { home: { homeStorage: { ...user.home.homeStorage, admittedAt: now } } });
         }
