@@ -28,6 +28,9 @@ export function assertHomePreparationAuthority(owner, sizingKey, request) {
 function stored(value) {
     return value;
 }
+function snapshotMatchesRetainedHome(snapshot, disk) {
+    return disk !== undefined && snapshot.sourceDiskId === disk.id && snapshot.sourceDisk === disk.source && snapshot.projectId === disk.projectId;
+}
 function assertNativeCopy(state) {
     const legacy = state;
     if (legacy.copy.targetFilesystem === "ext4" || legacy.target?.claim !== undefined || legacy.proof?.filesystem !== "btrfs") {
@@ -115,6 +118,27 @@ class HomePreparationRun {
                 throw new IsolatedGatewayFenceError("home migration started before readiness was recorded");
             return { homeMigration: stored({ ...(current ?? {}), phase: "complete", preparedFor: this.preparedFor }) };
         });
+        return { state: "ready" };
+    }
+    async prepareArchive(operationId, mode) {
+        await this.withCurrentTier(assertOwner => this.deps.store.transaction({ label: "builder-home-migration.prepare-archive", readOnly: mode === "plan" }, async (tx) => {
+            await this.deps.requireOwner(tx);
+            const owner = assertOwner(await tx.users.records.get(this.request.uid));
+            const { homeArchive: archive, homeDisk: disk, homeStorage } = owner.home;
+            const migration = userHomeOwner(owner).homeMigration;
+            if (archive?.phase !== "archived" || archive.operationId !== operationId || owner.fences.computerRecovery !== undefined) {
+                throw new IsolatedGatewayFenceError("home archive custody changed during preparation");
+            }
+            if (!snapshotMatchesRetainedHome(archive.snapshot, disk) || homeStorage !== undefined ||
+                (migration && (migration.phase !== "complete" || isActiveHomeMigration(migration)))) {
+                throw new IsolatedGatewayFenceError("home archive does not match the owner's retained home");
+            }
+            if (mode === "apply" && !preparedMatches(migration?.preparedFor, this.preparedFor)) {
+                await tx.users.records.patch(this.request.uid, {
+                    home: { homeMigration: { phase: "complete", preparedFor: { ...this.preparedFor } } },
+                }, { revision: owner.revision });
+            }
+        }));
         return { state: "ready" };
     }
     async removeExpiredHome(storage) {
@@ -331,6 +355,9 @@ export async function prepareIsolatedHome(deps, request, mode = "apply") {
     if (!owner)
         return { state: "ready" };
     await run.loadPolicy();
+    const archive = owner.home.homeArchive;
+    if (archive && archive.phase !== "restored")
+        return run.prepareArchive(archive.operationId, mode);
     if (mode === "plan")
         return run.plan(userHomeOwner(owner));
     try {
