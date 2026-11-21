@@ -6,7 +6,7 @@ import { PARKED_PREWARM_KIND } from "@octogee/core/isolated-gateway-lifecycle";
 import { MIGRATE_USER_KIND } from "./operation-kinds.js";
 
 const ACCOUNT_SUSPENSION_KIND = "suspend-user";
-const PARKED_PREWARM_CONCURRENCY = 3;
+export const PARKED_PREWARM_CONCURRENCY = 3;
 
 export const SERIALLY_EXCLUSIVE_OPERATION_KINDS: ReadonlySet<string> = new Set([
   "rollout",
