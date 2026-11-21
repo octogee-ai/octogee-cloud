@@ -161,7 +161,7 @@ import {
   type PendingOperationRef,
   usesOnlySharedDestinationWhileBackingOff,
 } from "./operation-queue.js";
-import { queuedSharedMigrationOwnsSourceInStore } from "./lib/queued-shared-migration.js";
+import { queuedSharedMigrationNeverTouchedDestinationInStore } from "./lib/queued-shared-migration.js";
 import { readOperationRolloutLanes, withOperationRolloutLane } from "./operation-rollout-lanes.js";
 import {
   WAITING_FOR_ISOLATED_GATEWAY,
@@ -1970,7 +1970,7 @@ async function attemptClaimOrQueueOperation(
         pendingOpsSameKind = await Promise.all(pending.filter(operation => isSeriallyExclusiveKind(operation.kind))
           .map(async (pendingOperation) => ({
             sharedDestinationReleased: usesOnlySharedDestinationWhileBackingOff(freshOperation, pendingOperation, Date.now()) &&
-              await queuedSharedMigrationOwnsSourceInStore(tx, pendingOperation, pendingOperation.id),
+              await queuedSharedMigrationNeverTouchedDestinationInStore(tx, pendingOperation, pendingOperation.id),
             id: pendingOperation.id,
             kind: pendingOperation.kind,
             unstartedPlacementMove: isUnstartedSharedPlacementMove(pendingOperation),
