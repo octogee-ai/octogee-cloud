@@ -159,17 +159,20 @@ function handoffProgress(run: PrewarmRun, state: State): Phase | OperationResult
   return taken ? prewarmResult(run, "demand-won", state.registry?.vm?.instanceId) : "handoff";
 }
 
+async function assertPrewarmSourceAssignment(run: PrewarmRun, owner: State["owner"]): Promise<void> {
+  if (owner?.activationLease?.status === "requested") return;
+  const { sourceGatewayId, sourceAssignmentEpoch } = run.claim;
+  const assignment = await run.deps.store.gateways.assignments.get(sourceGatewayId, run.request.uid);
+  if (owner?.gateway?.gatewayId !== sourceGatewayId || assignment?.state !== "serving" || assignment.epoch !== sourceAssignmentEpoch) {
+    throw new Error("Shared assignment changed during parked computer upgrade");
+  }
+}
+
 async function progressPhase(run: PrewarmRun, phase: Phase, state: State): Promise<Phase | OperationResult> {
   const { deps, op } = run;
   if (phase === "parked") return await parkedCandidateResult(run, state) ?? phase;
   if (phase === "handoff") return handoffProgress(run, state);
-  if (state.owner?.activationLease?.status !== "requested") {
-    const { sourceGatewayId, sourceAssignmentEpoch } = run.claim;
-    const assignment = await deps.store.gateways.assignments.get(sourceGatewayId, run.request.uid);
-    if (state.owner?.gateway?.gatewayId !== sourceGatewayId || assignment?.state !== "serving" || assignment.epoch !== sourceAssignmentEpoch) {
-      throw new Error("Shared assignment changed during parked computer upgrade");
-    }
-  }
+  await assertPrewarmSourceAssignment(run, state.owner);
   if (phase === "repair-parking") {
     if (!await authorizedRepairPark(run, state)) return phase;
     const next = await bootRepairedParkedGateway(deps.store, op, deps.now());
@@ -228,6 +231,16 @@ async function drivePrewarm(run: PrewarmRun, initialPhase: Phase): Promise<Opera
   }
 }
 
+async function retryIfStillSuspending(store: PlatformStateStore, request: PrewarmRun["request"], vmStatus?: string): Promise<void> {
+  const { gatewayId, uid, generation } = request;
+  const [root, registry] = await Promise.all([store.gateways.roots.get(gatewayId), store.fleetRegistry.get(gatewayId)]);
+  const status = vmStatus ?? registry?.vm?.status;
+  if (root?.gatewayClass === "isolated" && root.desiredStatus === "paused" && root.ownerUid === uid &&
+      root.allocation?.generation === generation && (status === "RUNNING" || status === "SUSPENDING")) {
+    throw new Error("Parked computer is still suspending");
+  }
+}
+
 export function createParkedPrewarmHandler(deps: ParkedPrewarmDeps): OperationHandler {
   return async (op, ctx) => {
     const request = parkedPrewarmInput(op);
@@ -243,12 +256,7 @@ export function createParkedPrewarmHandler(deps: ParkedPrewarmDeps): OperationHa
       }
       source = await runtime.prewarmVmObservation(gatewayId, uid);
       if (source?.status !== "SUSPENDED") {
-        const [root, registry] = await Promise.all([deps.store.gateways.roots.get(gatewayId), deps.store.fleetRegistry.get(gatewayId)]);
-        const status = source?.status ?? registry?.vm?.status;
-        if (root?.gatewayClass === "isolated" && root.desiredStatus === "paused" && root.ownerUid === uid &&
-            root.allocation?.generation === request.generation && (status === "RUNNING" || status === "SUSPENDING")) {
-          throw new Error("Parked computer is still suspending");
-        }
+        await retryIfStillSuspending(deps.store, request, source?.status);
         return { success: true, steps: [], output: { prewarmState: "ineligible" } };
       }
     }
