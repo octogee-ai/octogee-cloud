@@ -855,25 +855,27 @@ describe("buildBrokeredLifecycleAdapter migration import activation", () => {
       .toBeLessThan(mocks.applyOpenClawActivationManifest.mock.invocationCallOrder[0]);
   });
 
-  it.each([false, true])("waits for the final import revision and only gates intermediate roster revisions on isolated gateways (isolated=%s)", async (isIsolatedGateway) => {
+  it.each([false, true])("uses the native roster receipt and waits for the final import revision (isolated=%s)", async (isIsolatedGateway) => {
     let created = false;
     let applied = false;
+    const rosterReceipt = Promise.withResolvers<void>();
     const base = rosterRpc();
     const rpc = {
       ...base,
       agentsCreate: vi.fn(async (params: { name: string; workspace: string }) => {
         const result = await base.agentsCreate(params);
         created = true;
+        await rosterReceipt.promise;
         return result;
       }),
       configGet: vi.fn(async () => {
         const revision = mocks.applyOpenClawActivationManifest.mock.calls.length > 0
           ? "revision-import"
-          : "revision-roster";
+          : created ? "revision-sibling" : "revision-before";
         return {
           ...configSnapshot({}),
           configRevisionHash: revision,
-          appliedConfigHash: !created || applied ? revision : "revision-before",
+          appliedConfigHash: !created || applied ? revision : "revision-roster",
         };
       }),
       channelsStatus: vi.fn(async () => ({ channelAccounts: {
@@ -887,14 +889,13 @@ describe("buildBrokeredLifecycleAdapter migration import activation", () => {
     const activation = adapter.activateImportedUser("tester10");
     try {
       await vi.waitFor(() => expect(rpc.agentsCreate).toHaveBeenCalledOnce());
-      if (isIsolatedGateway) {
-        expect(mocks.applyOpenClawActivationManifest).not.toHaveBeenCalled();
-      } else {
-        await vi.waitFor(() => expect(mocks.applyOpenClawActivationManifest).toHaveBeenCalledOnce());
-      }
+      expect(mocks.applyOpenClawActivationManifest).not.toHaveBeenCalled();
+      rosterReceipt.resolve();
+      await vi.waitFor(() => expect(mocks.applyOpenClawActivationManifest).toHaveBeenCalledOnce());
       expect(mocks.removeActivationManifest).not.toHaveBeenCalled();
       expect(rpc.channelsStatus).not.toHaveBeenCalled();
     } finally {
+      rosterReceipt.resolve();
       applied = true;
       await activation;
     }
