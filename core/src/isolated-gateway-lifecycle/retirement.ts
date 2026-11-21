@@ -30,6 +30,8 @@ import {
   type ActivationSourceRecoveryFence,
 } from "./inputs.js";
 
+import { readActiveParkedPrewarm } from "./prewarm.js";
+
 type RetirementDeps = Pick<IsolatedLifecycleDeps, "store" | "now" | "log" | "requireOwner" | "sourceRecoveryPending">;
 
 export type OwnedGatewayRetirement =
@@ -472,6 +474,8 @@ export async function retireOwnedIsolatedGateway(
       ownerGuard: input.requireOwner,
       plan: mode === "plan",
       claimGuard: async ({ transaction, root }) => {
+        const prewarm = await readActiveParkedPrewarm(transaction, request.uid);
+        if (prewarm?.gatewayId === request.gatewayId) throw new GatewayRetirementConflictError("Owner computer prewarm has not released the allocation");
         const rootRecord = root as unknown as Record<string, unknown>;
         if (!retirementAllocationMatches(rootRecord, request)) {
           throw new GatewayRetirementConflictError(

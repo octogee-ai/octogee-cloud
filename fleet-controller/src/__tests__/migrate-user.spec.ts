@@ -1174,7 +1174,7 @@ describe("native VM return", () => {
     expect(result).toMatchObject({ success: false, rolledBack: false, error: expect.stringContaining(missingWitness) });
     expect(h.client.abortImport).not.toHaveBeenCalled();
     expect(h.client.unmount).not.toHaveBeenCalled();
-    expect(order).toEqual(["assignment:quiescing", "scheduler:gw-blue:export", "scheduler:gw-green:stage", "final-import-refused"]);
+    expect(order).toEqual(["assignment:quiescing", "scheduler:gw-green:stage-requester", "scheduler:gw-blue:export", "scheduler:gw-green:stage", "final-import-refused"]);
     expect(assignment).toEqual({ gatewayId: "gw-blue", epoch: 4, state: "quiescing" });
     expect(h.deps.commitCutover).not.toHaveBeenCalled();
     expect(native.requestCheckpoint).not.toHaveBeenCalled();
@@ -1832,7 +1832,7 @@ describe("native VM return", () => {
     const schedulerCalls = (h: ReturnType<typeof mkDeps>) =>
       vi.mocked(h.client.scheduler).mock.calls.map(([request]) => [request.gatewayId, request.phase, request.retainNonportable]);
 
-    it("restores the Builder when Shared refuses a schedule owned by another requester", async () => {
+    it.each([false, true])("restores the Builder when Shared refuses a schedule during a mixed rollout (older Shared: %s)", async olderShared => {
       const h = mkDeps();
       const native = nativeReturn(h);
       const message = "Cron job proactive-check belongs to another requester; recreate it from its own operator";
@@ -1841,6 +1841,10 @@ describe("native VM return", () => {
         jobs: [{ id: "proactive-check", agentId: "octogee-alice-coach" }], scratch: [], retainedJobIds: [],
       };
       vi.mocked(h.client.scheduler).mockImplementation(async ({ migrationId, phase }) => {
+        if (phase === "stage-requester") {
+          if (olderShared) throw new MigrationRpcError("invalid scheduler migration request", { status: 400, details: { error: "invalid scheduler migration request" } });
+          return { operationId: migrationId, phase, agentIds: [], drained: true, stageRequesterProfileId: "shared-operator" };
+        }
         if (phase === "stage") {
           const body = { error: "scheduler migration failed", message, retryable: false };
           throw new MigrationRpcError(`/scheduler/gw-green: 500 ${JSON.stringify(body)}`, { status: 500, retryable: false });
@@ -1853,8 +1857,9 @@ describe("native VM return", () => {
       expect(result).toMatchObject({ success: false, rolledBack: true, error: expect.stringContaining(message) });
       expect(classifyOperationFailure(result.error)).toBe("terminal");
       expect(schedulerCalls(h)).toEqual([
-        ["gw-blue", "export", true], ["gw-green", "stage", undefined], ["gw-green", "abort", undefined], ["gw-blue", "resume", undefined],
+        ["gw-green", "stage-requester", undefined], ["gw-blue", "export", true], ["gw-green", "stage", undefined], ["gw-green", "abort", undefined], ["gw-blue", "resume", undefined],
       ]);
+      expect(vi.mocked(h.client.scheduler).mock.calls[1][0].targetRequesterProfileId).toBe(olderShared ? undefined : "shared-operator");
       expect(h.client.transferState).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ mode: "keys" }));
       expect(h.client.resume).toHaveBeenCalledExactlyOnceWith({ migrationId: "mig-op-1", gatewayId: "gw-blue", slug: "alice" });
       expect(h.deps.setAssignmentState).toHaveBeenLastCalledWith(expect.objectContaining({ gatewayId: "gw-blue", state: "serving" }));
@@ -1863,7 +1868,7 @@ describe("native VM return", () => {
       expect(native.requestCheckpoint).not.toHaveBeenCalled();
     });
 
-    it("moves portable schedules to Shared and leaves host-bound jobs dormant on the VM", async () => {
+    it("exports against the Shared requester and leaves incompatible schedules dormant on the VM", async () => {
       const h = mkDeps();
       const native = nativeReturn(h);
       const order: string[] = [];
@@ -1873,7 +1878,7 @@ describe("native VM return", () => {
       });
       native.acknowledgeCompletedSchedulerHandoff.mockImplementation(async () => { order.push("acknowledge"); });
       native.park.mockImplementation(async () => { order.push("park"); return { parked: "suspended" }; });
-      const snapshot = { version: 1, operationId: handoffId, agentIds: ["octogee-alice-coach"], jobs: [], scratch: [], retainedJobIds: ["desktop-watch"] };
+      const snapshot = { version: 1, operationId: handoffId, agentIds: ["octogee-alice-coach"], jobs: [], scratch: [], retainedJobIds: ["desktop-watch", "proactive-check"] };
       vi.mocked(h.client.quiesce).mockImplementation(async (request) => {
         order.push(`quiesce:${request.gatewayId}`);
         expect(h.ctx.persistSchedulerHandoff).toHaveBeenCalledWith({ migrationId: handoffId, fromGatewayId: "gw-blue", toGatewayId: "gw-green", uid: "uid-alice", slug: "alice" });
@@ -1881,6 +1886,9 @@ describe("native VM return", () => {
       });
       vi.mocked(h.client.scheduler).mockImplementation(async ({ gatewayId, phase, migrationId }) => {
         order.push(`${gatewayId}:${phase}`);
+        if (phase === "stage-requester") {
+          return { operationId: migrationId, phase, agentIds: [], drained: true, stageRequesterProfileId: "shared-operator" };
+        }
         return { operationId: migrationId, phase, agentIds: ["octogee-alice-coach"], drained: true, snapshot };
       });
       vi.mocked(h.deps.commitCutover).mockImplementation(async () => { order.push("cutover"); });
@@ -1890,17 +1898,18 @@ describe("native VM return", () => {
       });
 
       expect(await createMigrateUserHandler(h.deps)(mkOp({}), h.ctx)).toMatchObject({ success: true });
-      expect(order).toEqual(["quiesce:gw-blue", "quiesce:gw-blue", "gw-blue:export", "gw-green:stage", "cutover", "gw-blue:retire", "unmount:gw-blue", "park", "gw-green:activate", "verify", "acknowledge"]);
+      expect(order).toEqual(["quiesce:gw-blue", "quiesce:gw-blue", "gw-green:stage-requester", "gw-blue:export", "gw-green:stage", "cutover", "gw-blue:retire", "unmount:gw-blue", "park", "gw-green:activate", "verify", "acknowledge"]);
       expect(vi.mocked(h.client.quiesce).mock.calls[1][0]).toMatchObject({ schedulerHandoff: true, schedulerMigrationId: handoffId, retainNonportable: true });
       expect(schedulerCalls(h)).toEqual([
-        ["gw-blue", "export", true], ["gw-green", "stage", undefined], ["gw-blue", "retire", undefined], ["gw-green", "activate", undefined],
+        ["gw-green", "stage-requester", undefined], ["gw-blue", "export", true], ["gw-green", "stage", undefined], ["gw-blue", "retire", undefined], ["gw-green", "activate", undefined],
       ]);
-      expect(vi.mocked(h.client.scheduler).mock.calls[1][0]).toMatchObject({ migrationId: handoffId, agentIds: ["octogee-alice-coach"], snapshot });
+      expect(vi.mocked(h.client.scheduler).mock.calls[1][0]).toMatchObject({ targetRequesterProfileId: "shared-operator" });
+      expect(vi.mocked(h.client.scheduler).mock.calls[2][0]).toMatchObject({ migrationId: handoffId, agentIds: ["octogee-alice-coach"], snapshot });
       expect(h.steps.filter((step) => step.status === "done").map((step) => step.name)).toEqual([
         "keys-sync-state", "wait-for-active-work", "quiesce-source", "stage-scheduler", "flush-source", "transfer-agent-store", "request-native-checkpoint", "cutover-firestore", "checkpoint-native-computer",
         "release-native-writers", "retire-source-scheduler", "unmount-source", "park-native-computer", "activate-scheduler", "verify-target",
       ]);
-      expect(vi.mocked(h.deps.log).mock.calls.flat().join("\n")).toContain("desktop-watch");
+      expect(vi.mocked(h.deps.log).mock.calls.flat().join("\n")).toContain("desktop-watch, proactive-check");
     });
 
     it.each(["activate", "verify"])("does not attest completion when %s fails", async phase => {
@@ -1929,7 +1938,7 @@ describe("native VM return", () => {
       });
 
       expect(await createMigrateUserHandler(h.deps)(mkOp({}), h.ctx)).toMatchObject({ success: true });
-      expect(schedulerCalls(h).map(([, phase]) => phase)).toEqual(["export", "stage", "retire", "activate"]);
+      expect(schedulerCalls(h).map(([, phase]) => phase)).toEqual(["stage-requester", "export", "stage", "retire", "activate"]);
       expect(h.client.unmount).not.toHaveBeenCalled();
       expect(native.park).toHaveBeenCalledExactlyOnceWith({ mode: "stop", reason: "live source cleanup failed: VM unreachable" });
       expect(vi.mocked(h.deps.log).mock.calls.flat().join("\n")).toContain(`stay fenced under ${handoffId}`);
@@ -1941,7 +1950,7 @@ describe("native VM return", () => {
       vi.mocked(h.client.unmount).mockRejectedValue(new MigrationRpcError("unmount refused", { status: 500 }));
 
       expect(await createMigrateUserHandler(h.deps)(mkOp({}), h.ctx)).toMatchObject({ success: true });
-      expect(schedulerCalls(h).map(([, phase]) => phase)).toEqual(["export", "stage", "retire", "activate"]);
+      expect(schedulerCalls(h).map(([, phase]) => phase)).toEqual(["stage-requester", "export", "stage", "retire", "activate"]);
       expect(native.park).toHaveBeenCalledExactlyOnceWith({ mode: "stop", reason: "live source cleanup failed: unmount refused" });
       expect(vi.mocked(h.deps.log).mock.calls.flat().join("\n")).not.toContain("stay fenced");
     });
@@ -1990,7 +1999,7 @@ describe("native VM return", () => {
       expect(order).toEqual([
         `gw-green:abort:${handoffId}`, `gw-blue:resume:${handoffId}`,
         "quiesce:gw-blue:undefined:undefined",
-        `quiesce:gw-blue:${retried}:true`, `gw-blue:export:${retried}`, `gw-green:stage:${retried}`,
+        `quiesce:gw-blue:${retried}:true`, `gw-green:stage-requester:${retried}`, `gw-blue:export:${retried}`, `gw-green:stage:${retried}`,
         "cutover", `gw-blue:retire:${retried}`, `gw-green:activate:${retried}`,
       ]);
       expect(h.ctx.persistSchedulerHandoff).toHaveBeenCalledWith({ ...previous, migrationId: retried });

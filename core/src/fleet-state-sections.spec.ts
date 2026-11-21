@@ -6,7 +6,7 @@ import { SHARED_POOL_SCALER_CREATOR } from "@octogee/shared/types/shared-gateway
 import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { createAdminFleetMutationRunner } from "./admin-fleet-router.js";
 import { addAdminSharedPoolRoutes, readFleetState } from "./admin-shared-pool-router.js";
-import type { GatewayKubernetesReader, SourceRecoveryPendingReader } from "./fleet-state-sections.js";
+import { readFleetStateSections, type GatewayKubernetesReader, type SourceRecoveryPendingReader } from "./fleet-state-sections.js";
 import type { PlatformStateStore } from "./platform-state/store.js";
 
 type Data = Record<string, unknown>;
@@ -227,6 +227,30 @@ describe("GET /fleet/state sections", () => {
         kubernetesObservedAt: null,
       });
     }
+  });
+
+  it.each([
+    ["running", "repairing", true],
+    ["running", "booting", true],
+    ["running", "handoff", true],
+    ["pending", "repair-parking", true],
+    ["pending", undefined, false],
+    ["failed", "repairing", false],
+    ["succeeded", "parked", false],
+  ])("reports a %s parked upgrade in %s as active only while it holds the gateway", async (status, prewarmState, active) => {
+    seedFleet();
+    records.set("glmOperations/prewarm", {
+      kind: "prewarm-gateway", status, createdBy: "test", createdAt: 4,
+      gatewayId: "gw-isolated", input: { gatewayId: "gw-isolated", uid: "uid-a" }, steps: [],
+      ...(prewarmState && { output: { prewarmState } }),
+    });
+
+    const state = await readFleetStateSections(store(), {
+      sections: ["gateways"], operationStatuses: [], now: NOW, projectUser: () => ({ provisioning: {}, openclaw: {} }),
+    });
+
+    expect((state.gateways as Data[]).find((gateway) => gateway.gatewayId === "gw-isolated"))
+      .toMatchObject({ parkedPrewarmActive: active });
   });
 
   it("answers the release hashes and the shared gateways whose latest release is the platform artifact", async () => {

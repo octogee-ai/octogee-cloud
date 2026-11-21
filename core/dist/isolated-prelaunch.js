@@ -1,6 +1,7 @@
 import { builderActivateOperationId } from "@octogee/shared/types/isolated-operation-ids";
 import { isOperatorIssuedAllocation } from "./operator-isolated-gateway.js";
 import { accountAllowsInteractiveAccess } from "@octogee/shared/types/account-lifecycle";
+import { parkedPrewarmInput, readActiveParkedPrewarm } from "./isolated-gateway-lifecycle/prewarm.js";
 function prelaunchStatusMatches(gatewayId, generation, lease, activationBoot) {
     return lease.status === "provisioning" && lease.activationOperationId === undefined && lease.activatingAt === undefined ||
         activationBoot && ["provisioning", "activating"].includes(lease.status) &&
@@ -44,6 +45,30 @@ function operatorPrelaunchSource(gateway, user) {
         user.slug === gateway.builderSlug,
     ].every(Boolean) ? { sourceGatewayId, sourceAssignmentEpoch: null } : null;
 }
+function parkedPrewarmAuthoritySource(output, gateway, user) {
+    const { sourceGatewayId, sourceAssignmentEpoch, release, previousRelease, prewarmState } = output;
+    const bootRelease = prewarmState === "repairing" ? previousRelease : release;
+    if (bootRelease !== gateway.desiredRelease || typeof sourceGatewayId !== "string" ||
+        sourceGatewayId === gateway.gatewayId || sourceGatewayId !== user.gateway?.gatewayId ||
+        typeof sourceAssignmentEpoch !== "number" || !Number.isSafeInteger(sourceAssignmentEpoch))
+        return null;
+    return { sourceGatewayId, sourceAssignmentEpoch };
+}
+async function parkedPrewarmSource(reader, gateway, user) {
+    if (!reader.journal || !user || gateway.desiredStatus !== "running" ||
+        !accountAllowsInteractiveAccess({ accountLifecycle: user.accountLifecycle }) ||
+        gateway.ownerUid !== user.uid || gateway.allocation?.claimedByUid !== user.uid ||
+        user.slug !== gateway.builderSlug)
+        return null;
+    const state = { journal: reader.journal };
+    const operation = await readActiveParkedPrewarm(state, user.uid);
+    if (operation?.gatewayId !== gateway.gatewayId)
+        return null;
+    const request = parkedPrewarmInput(operation);
+    if (request.uid !== user.uid || request.generation !== gateway.allocation.generation)
+        return null;
+    return parkedPrewarmAuthoritySource(operation.output ?? {}, gateway, user);
+}
 function samePrelaunchAllocation(gateway, expected) {
     return [
         gateway.ownerUid === expected.ownerUid,
@@ -63,7 +88,7 @@ export async function isolatedPrelaunchReserved(input) {
     const user = await reader.users.records.get(gateway.ownerUid);
     const source = isOperatorIssuedAllocation(gateway.allocation)
         ? operatorPrelaunchSource(gateway, user)
-        : leasePrelaunchSource(gateway, user, input.activationBoot === true);
+        : leasePrelaunchSource(gateway, user, input.activationBoot === true) ?? await parkedPrewarmSource(reader, gateway, user);
     if (!source)
         return false;
     const { sourceGatewayId, sourceAssignmentEpoch } = source;
@@ -106,6 +131,13 @@ async function hasServingUserAssignment(reader, gateway, user) {
     const assigned = await reader.gateways.assignments.get(gateway.gatewayId, user.uid);
     return assigned?.uid === user.uid && assigned.state === "serving";
 }
+async function operatorBootMode(input) {
+    if (await isolatedPrelaunchReserved(input))
+        return { mode: "prelaunch" };
+    if (!(await input.reader.gateways.assignments.isEmpty(input.gateway.gatewayId)))
+        return { mode: "normal" };
+    throw new Error("Operator isolated gateway prelaunch authority is unavailable");
+}
 export async function isolatedBootMode(input) {
     const { gateway, reader } = input;
     if (gateway.gatewayClass !== "isolated" || gateway.allocation?.kind !== "disposable-builder")
@@ -117,17 +149,16 @@ export async function isolatedBootMode(input) {
         throw new Error("Isolated prelaunch owner is unavailable");
     if (await hasServingUserAssignment(reader, gateway, user))
         return { mode: "normal" };
-    if (isOperatorIssuedAllocation(gateway.allocation)) {
-        if (await isolatedPrelaunchReserved(input))
-            return { mode: "prelaunch" };
-        if (!(await reader.gateways.assignments.isEmpty(gateway.gatewayId)))
-            return { mode: "normal" };
-        throw new Error("Operator isolated gateway prelaunch authority is unavailable");
-    }
+    if (isOperatorIssuedAllocation(gateway.allocation))
+        return operatorBootMode(input);
     const lease = user.activationLease;
     if (!activationLeaseMatches(gateway, lease)) {
+        if (await isolatedPrelaunchReserved(input))
+            return { mode: "prelaunch" };
         throw new Error("User activation authority is inconsistent");
     }
+    if (lease.status === "parked" && await isolatedPrelaunchReserved(input))
+        return { mode: "prelaunch" };
     const boot = activationBootMode(gateway, lease);
     if (boot.mode !== "normal" && await isolatedPrelaunchReserved({ ...input, activationBoot: true }))
         return { mode: "prelaunch" };

@@ -4375,6 +4375,7 @@ describe("PostgreSQL agent anchors across an rsync carry", () => {
       activateImportedUser: vi.fn(async (_slug, opts) => {
         calls++;
         expect(opts?.beforeRuntimePublish).toBeTypeOf("function");
+        expect(opts?.sharedToSharedRoster).toBe(true);
         const writeNative = async () => {
           for (const [dir] of originals) { await fs.mkdir(dir, { recursive: true }); await fs.writeFile(path.join(dir, "IDENTITY.md"), "- Name: machine-agent-id\n"); }
         };
@@ -4893,7 +4894,7 @@ describe("PostgreSQL agent anchors across an rsync carry", () => {
 
       expectNoHeldGateCalls(deps);
       expect(deps.adapter.releaseAgent).toHaveBeenCalledExactlyOnceWith("octogee-chris-coach");
-      expect(deps.adapter.activateImportedUser).toHaveBeenCalledExactlyOnceWith("chris", { signal: expect.any(AbortSignal) });
+      expect(deps.adapter.activateImportedUser).toHaveBeenCalledExactlyOnceWith("chris", { signal: expect.any(AbortSignal), migrationId });
       expect(rowCount(previous)).toBe(2);
       expect(result.getStatus()).toBe(200);
       expect(result.getBody()).toEqual({
@@ -4916,7 +4917,7 @@ describe("PostgreSQL agent anchors across an rsync carry", () => {
     const response = mkResponse();
     await createFinishRsyncImportHandler(deps)(mkRequest(body, { signature: signForPod(migrationId, JSON.stringify(body)) }), response.res, vi.fn());
     expect(response.getStatus(), JSON.stringify(response.getBody())).toBe(200);
-    expect(deps.adapter.activateImportedUser).toHaveBeenCalledWith("chris", { signal: expect.any(AbortSignal), deferRuntimeVerification: true });
+    expect(deps.adapter.activateImportedUser).toHaveBeenCalledWith("chris", { signal: expect.any(AbortSignal), migrationId, deferRuntimeVerification: true });
     expect(deps.adapter.waitForAccountHealthy).not.toHaveBeenCalled();
     expect(deps.adapter.writeMountMarker).toHaveBeenCalledWith("chris");
   });
@@ -5742,8 +5743,8 @@ describe("scheduler migration signed endpoint", () => {
     );
     expect(response.getStatus()).toBe(409);
   });
-  it("forwards a partial export so host-bound jobs stay dormant here", async () => {
-    const partial = { ...body, phase: "export" as const, retainNonportable: true };
+  it.each(["shared-operator", null])("forwards the destination requester in a partial export (%s)", async targetRequesterProfileId => {
+    const partial = { ...body, phase: "export" as const, retainNonportable: true, targetRequesterProfileId };
     const result = { operationId: partial.migrationId, phase: "export", agentIds: ["octogee-chris-coach"], drained: true, snapshot: { retainedJobIds: ["desktop-watch"] } };
     const schedulerMigration = vi.fn(async () => result);
     const response = mkResponse();
@@ -5751,7 +5752,19 @@ describe("scheduler migration signed endpoint", () => {
       mkRequest(partial, { signature: signForPod(partial.migrationId, JSON.stringify(partial)) }), response.res, vi.fn(),
     );
     expect(response.getStatus()).toBe(200);
-    expect(schedulerMigration).toHaveBeenCalledWith("chris", { operationId: "handoff-1", phase: "export", retainNonportable: true });
+    expect(schedulerMigration).toHaveBeenCalledWith("chris", { operationId: "handoff-1", phase: "export", retainNonportable: true, targetRequesterProfileId });
+  });
+  it("returns the staging requester through the signed scheduler route", async () => {
+    const probe = { ...body, phase: "stage-requester" as const };
+    const result = { operationId: body.migrationId, phase: probe.phase, agentIds: [], drained: true, stageRequesterProfileId: "shared-operator" };
+    const schedulerMigration = vi.fn(async () => result);
+    const response = mkResponse();
+    await createSchedulerMigrationHandler(mkDeps({ adapter: mkAdapter({ schedulerMigration }) }))(
+      mkRequest(probe, { signature: signForPod(probe.migrationId, JSON.stringify(probe)) }), response.res, vi.fn(),
+    );
+    expect(response.getStatus()).toBe(200);
+    expect(response.getBody()).toEqual(result);
+    expect(schedulerMigration).toHaveBeenCalledWith("chris", { operationId: body.migrationId, phase: probe.phase });
   });
   it("resolves the initial export scope only when explicitly requested", async () => {
     const initial = { ...body, phase: "export", resolveAgentScope: true };

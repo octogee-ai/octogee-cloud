@@ -750,6 +750,29 @@ describe("gateway-rpc", () => {
       server.setHandler("cron.migration", () => ({ ok: true, payload }));
       await expect(client.schedulerMigration({ operationId: "move-1", phase: "export" })).rejects.toMatchObject({ code: "invalid-response" });
     });
+
+    const requesterProbe = { operationId: "move-1", phase: "stage-requester" as const };
+    const requesterResult = { ...requesterProbe, agentIds: [], drained: true };
+    it.each(["shared-operator", null])("reads the staging requester from OpenClaw (%s)", async stageRequesterProfileId => {
+      const payload = { ...requesterResult, stageRequesterProfileId };
+      server.setHandler("cron.migration", params => {
+        expect(params).toEqual(requesterProbe);
+        return { ok: true, payload };
+      });
+      await expect(client.schedulerMigration(requesterProbe)).resolves.toEqual(payload);
+    });
+
+    it.each([
+      ["agent scope", { agentIds: ["octogee-alice-coach"] }],
+      ["missing requester", { stageRequesterProfileId: undefined }],
+      ["blank requester", { stageRequesterProfileId: " " }],
+      ["oversized requester", { stageRequesterProfileId: "x".repeat(513) }],
+      ["non-string requester", { stageRequesterProfileId: 42 }],
+    ] as const)("rejects a staging requester acknowledgement with %s", async (_label, invalid) => {
+      const payload = { ...requesterResult, stageRequesterProfileId: "shared-operator", ...invalid };
+      server.setHandler("cron.migration", () => ({ ok: true, payload }));
+      await expect(client.schedulerMigration(requesterProbe)).rejects.toMatchObject({ code: "invalid-response" });
+    });
   });
 
   describe("scheduled migration eligibility", () => {
@@ -1279,6 +1302,29 @@ describe("gateway-rpc", () => {
 
       expect(err).toBeInstanceOf(OpenclawWireError);
       expect(isAgentNotFoundRpcError(err)).toBe(false);
+    });
+  });
+
+  describe("agentsRestoreMany", () => {
+    const requested = { agentId: "octogee-alice-coach", name: "octogee-alice-coach", workspace: "/w", storeId: "store-a", schema: "schema-a" };
+    const agent = { ...requested, agentDir: "/state/agents/octogee-alice-coach/agent" };
+    const receipt = { ok: true, reloadApplied: true, agents: [agent] };
+
+    it("requires the applied receipt to match the exact requested store identity", async () => {
+      server.setHandler("agents.restoreMany", (params) => {
+        expect(params).toEqual({ agents: [requested] });
+        return { ok: true, payload: receipt };
+      });
+      await expect(client.agentsRestoreMany({ agents: [requested] })).resolves.toEqual(receipt);
+      server.setHandler("agents.restoreMany", () => ({ ok: true, payload: { ...receipt, agents: [{ ...agent, storeId: "other" }] } }));
+      await expect(client.agentsRestoreMany({ agents: [requested] })).rejects.toMatchObject({ code: "invalid-response" });
+      server.setHandler("agents.restoreMany", () => ({ ok: true, payload: { ...receipt, reloadApplied: false } }));
+      await expect(client.agentsRestoreMany({ agents: [requested] })).rejects.toMatchObject({ code: "invalid-response" });
+    });
+
+    it("reports an unavailable restore method as a failed native request", async () => {
+      server.setHandler("agents.restoreMany", () => ({ ok: false, error: { code: "INVALID_REQUEST", message: "unknown method: agents.restoreMany" } }));
+      await expect(client.agentsRestoreMany({ agents: [requested] })).rejects.toThrow("unknown method: agents.restoreMany");
     });
   });
 

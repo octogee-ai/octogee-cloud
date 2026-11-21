@@ -333,6 +333,7 @@ export declare function rollupFleetStats(gateways: ReadonlyArray<ReturnType<type
 };
 export declare const ERR_USER_NOT_FOUND = "user not found";
 export declare const OPERATION_LOOKUP_MAX_IDS = 200;
+export declare function retryTransferTargetGatewayId(store: Pick<PlatformStateStore, "migrationTasks">, operation: Stored<OperationRecord>): Promise<string | undefined>;
 export declare const ERR_TARGET_GATEWAY_NOT_READY = "target gateway not ready";
 export declare const ADMIN_FLEET_REQUEST_REASON = "Admin fleet request";
 export declare const OP_KIND_MIGRATE_USER = "migrate-user";

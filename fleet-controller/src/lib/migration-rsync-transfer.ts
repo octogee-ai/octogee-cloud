@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import type { GatewayVmAddress } from "./gateway-address.js";
 import { gatewayVmPodName } from "@octogee/shared/types/glm";
-import type { PlatformStateStore } from "@octogee/core/platform-state";
+import { migrationTransferTaskId, type PlatformStateStore } from "@octogee/core/platform-state";
 import { assertTransferClaim, claimTransferTask, controllerPodIdentity, finishTransferTask, type ControllerPodIdentity, type TransferClaim } from "./migration-transfer-lease.js";
 import {
   type FinishRsyncImportRequestBody,
@@ -115,18 +115,6 @@ function runSubprocess(
 export function createSubprocessCommandRunner(): CommandRunner {
   return (command, args, opts = {}) =>
     new Promise<CommandResult>((resolve, reject) => runSubprocess(command, args, opts, resolve, reject));
-}
-
-export function migrationTransferTaskId(input: {
-  migrationId: string;
-  mode?: MigrationSyncMode;
-}): string {
-  const mode = input.mode ?? "pre";
-  return `${sanitizeDocId(input.migrationId)}__${mode}`;
-}
-
-function sanitizeDocId(value: string): string {
-  return value.replace(/[^A-Za-z0-9._-]/g, "_");
 }
 
 const VM_READY_TIMEOUT_MS = 60_000;

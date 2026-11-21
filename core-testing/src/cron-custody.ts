@@ -460,6 +460,9 @@ export function createCronCustodyGateways(agentScopes: Record<string, string[]>)
   };
 
   const scheduler = (gatewayId: string, body: Record<string, unknown>): Reply => {
+    if (body.phase === "stage-requester") {
+      return [200, { operationId: body.migrationId, phase: body.phase, agentIds: [], drained: true, stageRequesterProfileId: null }];
+    }
     const phase = body.phase as Phase;
     const agentIds = body.resolveAgentScope === true ? agentsOf(String(body.slug)) : body.agentIds as string[] | undefined;
     if (phase === "stage" && (agentIds === undefined || body.snapshot === undefined)) return [400, { error: "invalid scheduler migration request" }];
