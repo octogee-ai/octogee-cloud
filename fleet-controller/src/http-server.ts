@@ -4,6 +4,7 @@ import type { GatewayArtifact } from "@octogee/core/gateway-live-release";
 import express, { Router, type Express, type Request, type Response, type NextFunction } from "express";
 import type { Server } from "node:http";
 import { rateLimit } from "express-rate-limit";
+import { GATEWAY_UNREACHABLE_AFTER_MS } from "@octogee/shared/types/fleet-controller";
 import { publicAppOriginsFromEnv } from "@octogee/core/public-app-origins";
 import { renderMetrics } from "./metrics.js";
 import { adminPlacementCapabilities } from "./admin-placement-capabilities.js";
@@ -21,10 +22,14 @@ import {
 } from "@octogee/core/admin-fleet-router";
 import { addAdminProvisioningRoutes, type AdminProvisioningClient, type AdminProvisioningRouterDeps } from "@octogee/core/admin-provisioning-router";
 import type { CentralReleaseAuthority } from "@octogee/core/artifact-registry";
+import { ACTIVATION_LEASE_SOURCE, CONTINUOUS_PLACEMENT_SOURCE, PLACEMENT_MIGRATION_KIND } from "@octogee/core/placement-migrations";
 import type { StrandedSourceGatewayCalls } from "@octogee/core/stranded-source-restore";
 import type {
   PlatformStateStore,
+  Stored,
   WatchAggregate,
+  WatchChange,
+  WatchRecords,
   WatchRequest,
   WatchSubscription,
 } from "@octogee/core/platform-state";
@@ -149,28 +154,65 @@ const FLEET_EVENT_LINGER_MS_DEFAULT = 10 * 60_000;
 const ACTIVE_OPERATION_STATUSES = ["pending", "running"] as const;
 
 type FleetEvent =
-  | { kind: "changed"; collection: string; at: number }
+  | { kind: "changed"; collection: string; at: number; placement: boolean; placementOnly?: boolean }
+  | { kind: "placement-reset"; collection: string; at: number }
   | { kind: "error"; collection: string; error: string };
 
 interface FleetEventHub {
   subscribe(handler: (event: FleetEvent) => void): () => void;
 }
 
-interface FleetEventWatch {
-  readonly collection: string;
-  readonly request: WatchRequest<WatchAggregate>;
+type PlacementFingerprint<A extends WatchAggregate> = (record: WatchRecords[A]) => [key: string, fingerprint: string] | undefined;
+
+const builderPlacementFingerprint: PlacementFingerprint<"builders"> = (user) => {
+  const lease = user.activationLease;
+  return [user.uid, JSON.stringify([user.slug, user.admitted, user.accountLifecycle, user.provisioning.status,
+    user.openclaw.status, user.openclaw.managedBy, user.gateway?.gatewayId, user.fences.runtimeReset?.status,
+    user.home.homeStorage, user.home.homeDisk,
+    lease?.leaseId, lease?.generation, lease?.status, lease?.targetGatewayId, lease?.sourceGatewayId,
+    lease?.sourceAssignmentEpoch, lease?.returnRequestedAt, lease?.operatorTerminateRequestedAt])];
+};
+
+const gatewayPlacementFingerprint: PlacementFingerprint<"gateways"> = (root) =>
+  [root.gatewayId, JSON.stringify([root.desiredStatus, root.desiredRelease, root.liveRelease,
+    root.allocation?.leaseId, root.allocation?.generation, root.latestRelease])];
+
+const configPlacementFingerprint: PlacementFingerprint<"config"> = (config) => config.kind === "orchestrator"
+  ? ["orchestrator", JSON.stringify([config.value.placementAutomationOwner, config.value.placementAutomationYieldedAt,
+    config.value.disposableGatewayIdleMs, config.value.sharedGatewayAutoscaling, config.value.sizingProfiles, config.value.defaultGatewayId])]
+  : undefined;
+
+const assignmentPlacementFingerprint: PlacementFingerprint<"assignments"> = (assignment) =>
+  [`${assignment.gatewayId}/${assignment.uid}`, JSON.stringify([assignment.state, assignment.epoch, assignment.updatedByOperationId])];
+
+function heartbeatExpiresAt(runtime: WatchRecords["fleetRegistry"]): number | undefined {
+  const at = runtime.heartbeat.lastHeartbeatAt;
+  return typeof at === "number" ? at + GATEWAY_UNREACHABLE_AFTER_MS + 1 : undefined;
 }
 
-const FLEET_EVENT_WATCHES: readonly FleetEventWatch[] = [
-  { collection: "users", request: { aggregate: "builders", filter: {} } },
-  { collection: "gateways", request: { aggregate: "gateways", filter: {} } },
-  { collection: "config", request: { aggregate: "config", filter: {} } },
-  { collection: GLM_GATEWAYS_COLLECTION, request: { aggregate: "fleetRegistry", filter: {} } },
-  {
-    collection: GLM_OPERATIONS_COLLECTION,
-    request: { aggregate: "operations", filter: { statuses: ACTIVE_OPERATION_STATUSES } },
-  },
-];
+const runtimePlacementFingerprint: PlacementFingerprint<"fleetRegistry"> = (runtime) =>
+  [runtime.gatewayId, JSON.stringify([runtime.release, runtime.lifecycle, runtime.vm?.status, runtime.vm?.instanceId,
+    runtime.kubernetes?.status, runtime.heartbeat.status, runtime.heartbeat.version,
+    runtime.heartbeat.configuredBuilder?.generation, [...runtime.heartbeat.mountedCustomers].sort(),
+    (heartbeatExpiresAt(runtime) ?? 0) > Date.now()])];
+
+const migrationPlacementFingerprint: PlacementFingerprint<"operations"> = (operation) =>
+  operation.kind === PLACEMENT_MIGRATION_KIND &&
+    (operation.input.source === ACTIVATION_LEASE_SOURCE || operation.input.source === CONTINUOUS_PLACEMENT_SOURCE)
+    ? [operation.id, JSON.stringify([operation.status, operation.retryRequestedAt, operation.sourceRecoveryRequestedAt,
+      operation.schedulerHandoffReleased, operation.nativeReturnSourceRecoveryReceipts?.length])] : undefined;
+
+function updatePlacementFingerprint<A extends WatchAggregate>(
+  fingerprints: Map<string, string>,
+  { key, record }: WatchChange<A>,
+  fingerprint: PlacementFingerprint<A>,
+): boolean {
+  const next = record ? fingerprint(record)?.[1] : undefined;
+  if (next === fingerprints.get(key)) return false;
+  if (next === undefined) fingerprints.delete(key);
+  else fingerprints.set(key, next);
+  return true;
+}
 
 function createFleetEventHub(deps: {
   store: Pick<PlatformStateStore, "watch">;
@@ -191,26 +233,80 @@ function createFleetEventHub(deps: {
     emit({ kind: "error", collection, error: message });
   };
 
-  const watch = ({ collection, request }: FleetEventWatch): WatchSubscription => {
+  function watch<A extends WatchAggregate>(
+    collection: string,
+    request: WatchRequest<A>,
+    fingerprint: PlacementFingerprint<A>,
+    extras?: { placementOnly?: boolean; expiresAt?: (record: WatchRecords[A]) => number | undefined },
+  ): WatchSubscription {
     let primed = false;
+    const placements = new Map<string, string>();
+    const expiryTimers = new Map<string, NodeJS.Timeout>();
+    const closeExpiry = (key: string) => {
+      clearTimeout(expiryTimers.get(key));
+      expiryTimers.delete(key);
+    };
+    const scheduleExpiry = (key: string, record: Stored<WatchRecords[A]> | null) => {
+      closeExpiry(key);
+      if (!record || !extras?.expiresAt) return;
+      const at = extras.expiresAt(record);
+      if (at === undefined || at <= Date.now()) return;
+      const timer = setTimeout(() => {
+        expiryTimers.delete(key);
+        if (updatePlacementFingerprint(placements, { type: "modified", key, record }, fingerprint)) {
+          emit({ kind: "changed", collection, at: Date.now(), placement: true, placementOnly: true });
+        }
+      }, at - Date.now());
+      timer.unref();
+      expiryTimers.set(key, timer);
+    };
     const subscription = deps.store.watch(request, {
       onEvent: (event) => {
         if (event.kind === "resync") return;
+        let placement = false;
+        if (event.kind === "snapshot") {
+          placements.clear();
+          for (const key of expiryTimers.keys()) closeExpiry(key);
+          for (const record of event.records) {
+            const entry = fingerprint(record);
+            if (entry) {
+              placements.set(...entry);
+              scheduleExpiry(entry[0], record);
+            }
+          }
+          emit({ kind: "placement-reset", collection, at: Date.now() });
+        } else if (event.kind === "changes") {
+          for (const change of event.changes) {
+            if (updatePlacementFingerprint(placements, change, fingerprint)) placement = true;
+            scheduleExpiry(change.key, change.record);
+          }
+        }
         if (!primed) {
           primed = true;
           return;
         }
-        emit({ kind: "changed", collection, at: Date.now() });
+        emit({ kind: "changed", collection, at: Date.now(), placement, placementOnly: extras?.placementOnly });
       },
       onError: (error) => reportFailure(collection, error),
     });
-    subscription.closed.catch((error: unknown) => reportFailure(collection, error));
+    const clearExpiry = () => { for (const key of expiryTimers.keys()) closeExpiry(key); };
+    void subscription.closed.then(clearExpiry, (error: unknown) => {
+      clearExpiry();
+      reportFailure(collection, error);
+    });
     return subscription;
-  };
+  }
 
   const ensureWatchers = () => {
     if (subscriptions) return;
-    subscriptions = FLEET_EVENT_WATCHES.map(watch);
+    subscriptions = [
+      watch("users", { aggregate: "builders", filter: {} }, builderPlacementFingerprint),
+      watch("gateways", { aggregate: "gateways", filter: {} }, gatewayPlacementFingerprint),
+      watch("config", { aggregate: "config", filter: {} }, configPlacementFingerprint),
+      watch("assignments", { aggregate: "assignments", filter: {} }, assignmentPlacementFingerprint, { placementOnly: true }),
+      watch(GLM_GATEWAYS_COLLECTION, { aggregate: "fleetRegistry", filter: {} }, runtimePlacementFingerprint, { expiresAt: heartbeatExpiresAt }),
+      watch(GLM_OPERATIONS_COLLECTION, { aggregate: "operations", filter: { statuses: ACTIVE_OPERATION_STATUSES, includeMigrationRecovery: true } }, migrationPlacementFingerprint),
+    ];
   };
 
   const teardown = () => {
@@ -258,6 +354,7 @@ function addAdminFleetEventRoute(
     let closed = false;
     let unsubscribe: () => void = () => undefined;
     const closeAfterFirstChange = req.query.once === "1";
+    const placementOnly = req.query.placement === "1";
     const keepalive = setInterval(() => {
       if (!closed) res.write(": keepalive\n\n");
     }, 30_000);
@@ -269,15 +366,22 @@ function addAdminFleetEventRoute(
       res.end();
     };
 
-    writeSseEvent(res, "ready", { at: Date.now() });
+    writeSseEvent(res, "ready", { at: Date.now(), ...(placementOnly ? { placementChanges: true } : {}) });
     unsubscribe = hub.subscribe((event) => {
       if (closed) return;
+      if (event.kind === "placement-reset") {
+        if (placementOnly) writeSseEvent(res, "placement-reset", { collection: event.collection, at: event.at });
+        return;
+      }
       if (event.kind === "changed") {
-        writeSseEvent(res, "changed", { collection: event.collection, at: event.at });
+        if (placementOnly ? !event.placement : event.placementOnly) return;
+        writeSseEvent(res, placementOnly ? "placement-changed" : "changed", { collection: event.collection, at: event.at });
         if (closeAfterFirstChange) close();
         return;
       }
-      writeSseEvent(res, "error", { collection: event.collection, error: event.error });
+      writeSseEvent(res, "error", placementOnly
+        ? { collection: event.collection }
+        : { collection: event.collection, error: event.error });
     });
     req.on("close", close);
   });
