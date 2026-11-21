@@ -12,6 +12,9 @@ import {
   MalformedRecordError,
   type PlatformStateError,
   type PlatformStateStore,
+  type PlatformUserRecord,
+  type Revision,
+  type Stored,
   type WatchAggregate,
   type WatchCursor,
   type WatchEvent,
@@ -521,6 +524,67 @@ describe("createHttpServer — admin gateway routes", () => {
     expect(res.text).toContain("event: ready");
     expect(res.text).toContain("event: changed");
     expect(res.text).toMatch(/"collection":"(users|gateways|config|glmGateways|glmOperations)"/);
+  });
+
+  it.each([
+    { trigger: "return", collection: "users" },
+    { trigger: "activation", collection: "users" },
+    { trigger: "release", collection: "gateways" },
+  ])("wakes placement for $trigger and skips activity-only changes", async ({ trigger, collection }) => {
+    type StoredRecord<T> = T extends { records: readonly (infer Row)[] } ? Row : never;
+    const builder = (status: "active" | "requested", lastActiveAt: number, returnRequestedAt?: number): Stored<PlatformUserRecord> => ({
+      uid: "uid-fixture", slug: null, mattermostUserId: null, admitted: false,
+      persona: null, workspaceId: null, role: null, createdAt: 1, updatedAt: 1,
+      provisioning: {}, gateway: null, openclaw: {}, agents: { agentIds: [], activatedAgents: [] },
+      accountLifecycle: null, fences: {}, home: {},
+      activationLease: { leaseId: "private-lease", generation: 7, status, returnRequestedAt, lastActiveAt },
+      revision: "test-revision" as Revision,
+    });
+    const gateway = (liveRelease: number) => ({
+      ...durableSharedGateway("gw-fixture"), gatewayId: "gw-fixture", liveRelease, revision: "test-revision",
+    }) as StoredRecord<WatchEvent<"gateways">>;
+    const change = (key: string, record: ReturnType<typeof builder> | ReturnType<typeof gateway>): WatchEvent<WatchAggregate> => ({
+      kind: "changes", cursor: FIXTURE_CURSOR,
+      changes: [{ type: "modified", key, record }],
+    });
+    const watches = createWatchRegistry({
+      script: (aggregate) => {
+        if (aggregate === "builders") {
+          return [
+            { kind: "snapshot", cursor: FIXTURE_CURSOR, records: [builder("active", 1)] },
+            change("uid-fixture", builder("active", 2)),
+            ...(trigger === "return" ? [change("uid-fixture", builder("active", 2, 3))] : []),
+            ...(trigger === "activation" ? [change("uid-fixture", builder("requested", 2))] : []),
+          ];
+        }
+        if (aggregate === "gateways" && trigger === "release") {
+          return [
+            { kind: "snapshot", cursor: FIXTURE_CURSOR, records: [gateway(1)] },
+            change("gw-fixture", gateway(2)),
+          ];
+        }
+        return [SNAPSHOT];
+      },
+    });
+    const res = await request(createHttpServer(buildDeps(store, {}, watches)))
+      .get("/api/admin/fleet-events?placement=1&once=1")
+      .set("Authorization", "Bearer admin-token");
+
+    expect(res.status).toBe(200);
+    expect(res.text).toContain('"placementChanges":true');
+    expect(res.text).toContain("event: placement-reset");
+    expect(res.text).toContain(`event: placement-changed\ndata: {"collection":"${collection}"`);
+    expect(res.text).not.toContain("event: changed");
+    expect(res.text).not.toContain("uid-fixture");
+    expect(res.text).not.toContain("gw-fixture");
+    expect(res.text).not.toContain("private-lease");
+  });
+
+  it("requires admin auth for placement event hints", async () => {
+    const watches = createWatchRegistry();
+    const app = createHttpServer(buildDeps(store, {}, watches));
+    await request(app).get("/api/admin/fleet-events?placement=1").expect(401);
+    expect(watches.aggregates()).toEqual([]);
   });
 
   it("subscribes fleet invalidation events to admin data dependencies", async () => {
