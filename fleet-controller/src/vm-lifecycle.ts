@@ -763,20 +763,17 @@ async function prewarmReplacementRecovery(
 
 async function replacementSource(deps: VmLifecycleDeps, gatewayId: string, boot: boolean, forceOwnerUid?: string, expectedInstanceId?: string): Promise<{ description: GatewayVmDescription; ownerUid: string; spec: GatewayVmSpec }> {
   const { data, vm, observed } = await replacementObservation(deps, gatewayId, boot, forceOwnerUid, expectedInstanceId);
-  if (forceOwnerUid) {
-    await assertVmUnbound(deps, gatewayId, observed);
-    await assertHomeAssignment(deps.store, forceOwnerUid, gatewayId, true);
-  }
-  const description = await stopSuspendedVm(deps, gatewayId, observed, "replace its boot");
-  const ownerUid = assertReplacementOwner(deps, data, description);
+  const ownerUid = assertReplacementOwner(deps, data, observed);
   if (forceOwnerUid && forceOwnerUid !== ownerUid) throw new Error("force replacement owner changed");
   if (!boot && !forceOwnerUid) await assertNoBootProjectStorage(deps.store, ownerUid);
-  if (!forceOwnerUid) {
-    assertReplacementRecoveryCapacity(boot ? await prewarmReplacementRecovery(deps, data, ownerUid, gatewayId, vm.instanceId!) : data, vm, description);
-  }
-  await assertVmUnbound(deps, gatewayId, description);
+  const recovery = boot && !forceOwnerUid ? await prewarmReplacementRecovery(deps, data, ownerUid, gatewayId, vm.instanceId!) : data;
+  if (!forceOwnerUid) assertReplacementRecoveryCapacity(recovery, vm, observed);
+  await assertVmUnbound(deps, gatewayId, observed);
   await assertHomeAssignment(deps.store, ownerUid, gatewayId, boot || !!forceOwnerUid);
-  return { description, ownerUid, spec: recordedSpecInConfiguredZones(data?.vmSpec, deps.vmSpec) };
+  const spec = recordedSpecInConfiguredZones(data?.vmSpec, deps.vmSpec);
+  const description = await stopSuspendedVm(deps, gatewayId, observed, "replace its boot");
+  if (!forceOwnerUid && description !== observed) assertReplacementRecoveryCapacity(recovery, vm, description);
+  return { description, ownerUid, spec };
 }
 
 function assertAbsentReplacementRecord(input: { gatewayId: string; source: NonNullable<RetainedBootImage["sourceComputer"]>; home: RetainedUserHome; record: VmRecord; desired: string }): void {

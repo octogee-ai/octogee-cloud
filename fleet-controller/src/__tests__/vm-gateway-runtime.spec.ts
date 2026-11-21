@@ -2816,6 +2816,15 @@ describe("stopped retained-home boot replacement", () => {
     expect(h.docs["glmGateways/b-x"].vm).toBeNull();
     expect(authority).toHaveBeenCalledTimes(2);
   });
+  it("preserves suspended VM memory when boot recovery is not ready", async () => {
+    const docs = vmDoc();
+    docs["glmGateways/b-x"].vmBootRecovery = { ...receipt, ready: false };
+    let current: GatewayVmDescription = { ...ownedStopped, status: "SUSPENDED" };
+    const h = harness(docs, { describe: vi.fn(async () => current), stop: vi.fn(async () => { current = ownedStopped; }) }, undefined, { "b-x": "paused" });
+    await expect(h.runtime.replaceStoppedVm("b-x", "op-unready", async () => {})).rejects.toThrow(/recovery reports not ready/);
+    expect(h.vm.stop).not.toHaveBeenCalled();
+    expect(h.vm.deleteRetainingHome).not.toHaveBeenCalled();
+  });
   it("stops a suspended paused VM before replacing its boot", async () => {
     let current: GatewayVmDescription = { ...ownedStopped, status: "SUSPENDED" };
     const h = harness(vmDoc(), { describe: vi.fn(async () => current), stop: vi.fn(async () => { current = ownedStopped; }), readFamilyImage: vi.fn(async () => accepted) }, undefined, { "b-x": "paused" });
