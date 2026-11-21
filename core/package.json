@@ -89,6 +89,10 @@
       "types": "./dist/admin-placement-shared-router.d.ts",
       "default": "./dist/admin-placement-shared-router.js"
     },
+    "./parked-gateway-prewarm": {
+      "types": "./dist/parked-gateway-prewarm.d.ts",
+      "default": "./dist/parked-gateway-prewarm.js"
+    },
     "./isolated-gateway-lifecycle": {
       "types": "./dist/isolated-gateway-lifecycle/index.d.ts",
       "default": "./dist/isolated-gateway-lifecycle/index.js"

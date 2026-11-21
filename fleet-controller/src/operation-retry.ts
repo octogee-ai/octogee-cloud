@@ -160,7 +160,7 @@ export function operationNeedsDurableRestartResume(op: {
     op.schedulerHandoff?.forwardRecovery !== undefined ||
     sourceTransferBlocksRelease(op.sourceTransferExecution) || op.kind === "suspend-user" ||
     (op.kind === "restart-gateway" && (op.input?.restoreRecovery !== undefined || op.input?.sourceRecovery !== undefined)) ||
-    op.kind === "erase-user" ||
+    op.kind === "prewarm-gateway" || op.kind === "erase-user" ||
     isLevelTriggeredUserReturn(op) ||
     operationNeedsDurableUserMigrationV2Resume(op);
 }
