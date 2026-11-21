@@ -256,6 +256,7 @@ function recordOutput(value: unknown): boolean {
 }
 
 const HOME_ARCHIVE_PROVIDER_WAIT_MS = 5_000;
+const HOME_BACKUP_PURGE_WAIT_MS = 30_000;
 const HOME_ARCHIVE_PROVIDER_BUDGET_MS = 20 * 60_000;
 const WAITING_FOR_HOME_ARCHIVE_PROVIDER = "home-archive-provider";
 
@@ -263,10 +264,16 @@ function isHomeArchiveOperation(op: OperationCompletionInput["op"]): boolean {
   return op.kind === "gateway-vm" && op.input?.action === "archive" && isAuthorizedHomeArchiveOrigin(op);
 }
 
+function isHomeBackupProviderOperation(op: OperationCompletionInput["op"]): boolean {
+  return op.kind === "gateway-vm" && op.input?.action === RELEASE_RESTORED_HOME_BACKUP &&
+    op.origin === "automatic" && op.createdBy === "glm-controller-placement-policy";
+}
+
 export function homeArchiveProviderDueAt(op: OperationCompletionInput["op"] & {
   status?: string; waitingOn?: string | null; nextAttemptAt?: number | null;
 }): number | undefined {
-  return isHomeArchiveOperation(op) && op.status === "pending" && op.waitingOn === WAITING_FOR_HOME_ARCHIVE_PROVIDER
+  return (isHomeArchiveOperation(op) || isHomeBackupProviderOperation(op)) &&
+    op.status === "pending" && op.waitingOn === WAITING_FOR_HOME_ARCHIVE_PROVIDER
     ? op.nextAttemptAt ?? undefined : undefined;
 }
 
@@ -279,18 +286,34 @@ function homeArchiveProviderCompletion(input: OperationCompletionInput, steps: O
     const expired = { ...input, result: { success: false, steps, error: `Home archive provider wait timed out: ${error}` } };
     return failedCompletion(expired, steps, attempts, failureCompletionContext(expired, steps, attempts));
   }
+  return pendingHomeProvider(input, steps, Math.min(input.now + HOME_ARCHIVE_PROVIDER_WAIT_MS, deadline), {
+    homeArchiveProviderDeadlineAt: deadline,
+  });
+}
+
+function pendingHomeProvider(input: OperationCompletionInput, steps: OperationStep[], nextAttemptAt: number,
+  output: Record<string, unknown>): OperationPatch {
   return {
     status: "pending",
     startedAt: null,
     completedAt: null,
     expireAt: CLEAR,
     steps,
-    nextAttemptAt: Math.min(input.now + HOME_ARCHIVE_PROVIDER_WAIT_MS, deadline),
+    nextAttemptAt,
     lastProgressAt: input.now,
     waitingOn: WAITING_FOR_HOME_ARCHIVE_PROVIDER,
-    error,
-    output: { homeArchiveProviderDeadlineAt: deadline },
+    error: input.result.error ?? "Provider has not completed the archive transition",
+    output,
   };
+}
+
+function homeProviderContinuation(input: OperationCompletionInput, steps: OperationStep[], attempts: number): OperationPatch | undefined {
+  if (input.result.waitingForHomeArchiveProvider !== true) return undefined;
+  if (isHomeArchiveOperation(input.op)) return homeArchiveProviderCompletion(input, steps, attempts);
+  if (isHomeBackupProviderOperation(input.op)) {
+    return pendingHomeProvider(input, steps, input.now + HOME_BACKUP_PURGE_WAIT_MS, { homeBackupReleasePending: true });
+  }
+  return undefined;
 }
 
 function isHomeBackupReleasePending({ op, result }: OperationCompletionInput): boolean {
@@ -521,9 +544,8 @@ export function buildOperationCompletionUpdate(
     };
   }
   if (result.success) return successfulCompletion(input, persistedSteps, attempts);
-  if (result.waitingForHomeArchiveProvider === true && isHomeArchiveOperation(op)) {
-    return homeArchiveProviderCompletion(input, persistedSteps, attempts);
-  }
+  const continuation = homeProviderContinuation(input, persistedSteps, attempts);
+  if (continuation) return continuation;
 
   const failure = failureCompletionContext(input, persistedSteps, attempts);
   if (result.failedAfterCutover === true) return failedAfterCutoverCompletion(input, persistedSteps, attempts, failure);

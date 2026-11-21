@@ -1,3 +1,4 @@
+import { RELEASE_RESTORED_HOME_BACKUP } from "@octogee/core/isolated-gateway-lifecycle";
 import type { Operation } from "@octogee/shared/types/glm";
 import { describe, expect, it } from "vitest";
 import {
@@ -48,6 +49,21 @@ describe("parked home archive provider continuation", () => {
     expect(buildOperationCompletionUpdate({ op: { ...timed, attempts: 0 },
       result: { success: false, steps: [], error: "Snapshot provenance differs" },
       steps: [], now: 1_201_000 })).toMatchObject({ status: "failed", error: "Snapshot provenance differs" });
+  });
+});
+
+describe("restored home backup provider continuation", () => {
+  it("rechecks accepted provider erasure in 30s without consuming an attempt or losing custody", () => {
+    const result = { success: false, steps: [], error: "Restored home backup erasure is still converging",
+      waitingForHomeArchiveProvider: true };
+    const op = { kind: "gateway-vm", origin: "automatic", createdBy: "glm-controller-placement-policy",
+      input: { action: RELEASE_RESTORED_HOME_BACKUP }, attempts: MAX_OPERATION_ATTEMPTS };
+    const pending = buildOperationCompletionUpdate({ op, result, steps: [], now: 7_000 });
+    expect(pending).toMatchObject({ status: "pending", nextAttemptAt: 37_000, waitingOn: "home-archive-provider" });
+    expect(pending).not.toHaveProperty("attempts");
+    expect(pending).not.toHaveProperty("input");
+    expect(buildOperationCompletionUpdate({ op: { ...op, createdBy: "other-actor" }, result, steps: [], now: 7_000 }))
+      .toMatchObject({ status: "failed" });
   });
 });
 

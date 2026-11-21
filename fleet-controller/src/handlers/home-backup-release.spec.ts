@@ -81,18 +81,20 @@ describe("release the restored Builder backup", () => {
     await expect(h.run()).resolves.toMatchObject({ success: false });
     expect(h.provider.eraseHomeSnapshot).not.toHaveBeenCalled();
     runtime.vmBootRecovery = ready;
-    h.provider.eraseHomeSnapshot.mockRejectedValueOnce(new Error("HTTP 403")).mockResolvedValueOnce(false);
+    h.provider.eraseHomeSnapshot.mockRejectedValueOnce(new Error("HTTP 403"))
+      .mockResolvedValueOnce(false).mockResolvedValueOnce(false);
+    await expect(h.run()).resolves.toMatchObject({ success: false, retryAfterMs: expect.any(Number) });
     for (let count = 0; count < 2; count += 1) {
-      await expect(h.run()).resolves.toMatchObject({ success: false, retryAfterMs: expect.any(Number) });
+      await expect(h.run()).resolves.toMatchObject({ success: false, waitingForHomeArchiveProvider: true });
       expect((await h.store.users.records.get(uid))?.home.homeArchive).toEqual({ ...archive, releaseProvenForActivation: activationId });
       delete runtime.vmBootRecovery;
     }
     await expect(h.run()).resolves.toMatchObject({ success: true });
     expect((await h.store.users.records.get(uid))?.home).toMatchObject({ homeDisk: restoredDisk });
     expect((await h.store.users.records.get(uid))?.home.homeArchive).toBeUndefined();
-    expect(h.provider.eraseHomeSnapshot).toHaveBeenNthCalledWith(3, archive.snapshot, uid);
+    expect(h.provider.eraseHomeSnapshot).toHaveBeenNthCalledWith(4, archive.snapshot, uid);
     await expect(h.run()).resolves.toMatchObject({ success: true });
-    expect(h.provider.eraseHomeSnapshot).toHaveBeenCalledTimes(3);
+    expect(h.provider.eraseHomeSnapshot).toHaveBeenCalledTimes(4);
   });
 });
 
