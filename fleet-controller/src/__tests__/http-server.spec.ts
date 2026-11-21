@@ -12,6 +12,9 @@ import {
   MalformedRecordError,
   type PlatformStateError,
   type PlatformStateStore,
+  type PlatformUserRecord,
+  type Revision,
+  type Stored,
   type WatchAggregate,
   type WatchCursor,
   type WatchEvent,
@@ -529,11 +532,14 @@ describe("createHttpServer — admin gateway routes", () => {
     { trigger: "release", collection: "gateways" },
   ])("wakes placement for $trigger and skips activity-only changes", async ({ trigger, collection }) => {
     type StoredRecord<T> = T extends { records: readonly (infer Row)[] } ? Row : never;
-    const builder = (status: "active" | "requested", lastActiveAt: number, returnRequestedAt?: number) => ({
-      uid: "uid-fixture",
+    const builder = (status: "active" | "requested", lastActiveAt: number, returnRequestedAt?: number): Stored<PlatformUserRecord> => ({
+      uid: "uid-fixture", slug: null, mattermostUserId: null, admitted: false,
+      persona: null, workspaceId: null, role: null, createdAt: 1, updatedAt: 1,
+      provisioning: {}, gateway: null, openclaw: {}, agents: { agentIds: [], activatedAgents: [] },
+      accountLifecycle: null, fences: {}, home: {},
       activationLease: { leaseId: "private-lease", generation: 7, status, returnRequestedAt, lastActiveAt },
-      revision: "test-revision",
-    }) as StoredRecord<WatchEvent<"builders">>;
+      revision: "test-revision" as Revision,
+    });
     const gateway = (liveRelease: number) => ({
       ...durableSharedGateway("gw-fixture"), gatewayId: "gw-fixture", liveRelease, revision: "test-revision",
     }) as StoredRecord<WatchEvent<"gateways">>;
