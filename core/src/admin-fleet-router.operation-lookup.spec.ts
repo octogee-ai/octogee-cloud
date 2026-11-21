@@ -29,7 +29,7 @@ const placement: AdminPlacementCapabilities = {
   gatewayGitKeys: { client: null, log: () => undefined },
 };
 
-function harness(options: { placement?: AdminPlacementCapabilities } = {}) {
+function harness(options: { placement?: AdminPlacementCapabilities; records?: Record<string, Row> } = {}) {
   const emails: Record<string, string> = { "uid-admin": "admin@example.com", "uid-other": "other@example.com" };
   const getMany = vi.fn(async (uids: readonly string[]) =>
     new Map(uids.filter((uid) => emails[uid]).map((uid) => [uid, { uid, email: emails[uid] } as unknown as UserAccount])));
@@ -39,7 +39,7 @@ function harness(options: { placement?: AdminPlacementCapabilities } = {}) {
   app.use(express.json());
   addAdminFleetRoutes(app, {
     accounts,
-    store: createDocumentFixtureStore(new Map(Object.entries(structuredClone(SEED)))),
+    store: createDocumentFixtureStore(new Map(Object.entries(structuredClone({ ...SEED, ...options.records })))),
     logger: { info: vi.fn(), warn: vi.fn() },
     provisionGatewayAuthSecret: vi.fn(async () => ({})),
     listGatewayBuilds: vi.fn(async () => []),
@@ -63,6 +63,29 @@ describe("GET /operations/lookup", () => {
     expect(res.body.operations.map((entry: Row) => entry.id)).toEqual([ACTIVATION, "restart-1"]);
     expect(res.body.operations[0]).toEqual(single.body.operation);
     expect(res.body.missing).toEqual(["missing-1", "missing-2"]);
+  });
+
+  it("reports the original Shared transfer target for an explicitly retried Builder return", async () => {
+    const source = "alice-xs-12345678";
+    const migrationId = `mig-${RETURN}`;
+    const h = harness({ records: {
+      [`${GLM_OPERATIONS_COLLECTION}/${RETURN}`]: operation("migrate-user", "glm-controller-placement-policy", {
+        origin: "automatic",
+        retryRequestedAt: 3,
+        input: { uid: "uid-alice", source: "builder-activation-lease", userSlug: "alice", fromGatewayId: source, toGatewayId: "shared-second" },
+      }),
+      [`glmMigrationTransferTasks/${migrationId}__keys`]: {
+        kind: "gateway-rsync-transfer", migrationId, mode: "keys", slug: "alice",
+        sourceGatewayId: source, targetGatewayId: "shared-first", status: "succeeded",
+        attempt: 1, attemptId: "first", createdAt: 1, startedAt: 1, updatedAt: 2, completedAt: 2,
+      },
+    } });
+
+    const res = await request(h.app).get("/operations/lookup").query({ ids: RETURN }).expect(200);
+
+    expect(res.body.operations).toEqual([expect.objectContaining({
+      id: RETURN, retryTransferTargetGatewayId: "shared-first",
+    })]);
   });
 
   it("looks the actors up once for the whole batch", async () => {
