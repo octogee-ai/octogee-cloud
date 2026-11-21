@@ -125,6 +125,17 @@ describe("POST /internal/fleet/vm-runtime", () => {
     expect(forced.documents.reads).not.toContain("users/uid-bob");
   });
 
+  it("advertises checkpoint waiting only to the currently bound Compute instance", async () => {
+    const docs = { [BUNDLE]: bundle, [RUNTIME]: runtime({ vm: { instanceId: "4242" } }) };
+    const response = await post(appWith(docs, vmBound));
+    expect(response.headers["x-octogee-checkpoint-cursor"]).toMatch(/^[a-f0-9]{64}$/);
+    for (const other of [gatewayBound, { ...vmBound, podUid: "older" }]) {
+      expect((await post(appWith(docs, other))).headers["x-octogee-checkpoint-cursor"]).toBeUndefined();
+    }
+    await post(appWith(docs, gatewayBound)).set("x-octogee-checkpoint-cursor", "a".repeat(64)).expect(403);
+    await post(appWith(docs, vmBound)).set("x-octogee-checkpoint-cursor", "malformed").expect(400);
+  });
+
   it("keeps serving a bundle rendered before bundles named their desktop, and fails closed on an unknown desktop", async () => {
     const { desktop: _desktop, ...omarchyEra } = bundle;
     const served = await post(appWith({ [BUNDLE]: omarchyEra }, gatewayBound));

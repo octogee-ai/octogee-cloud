@@ -242,6 +242,30 @@ describe("checkpointHome", () => {
     expect(h.deps.log).toHaveBeenCalledWith(expect.stringContaining("prune failed"));
   });
 
+  it.each(["size cap", "scratch disk full"])("retries requested checkpoints with standard compression after %s", async (reason) => {
+    const h = fakeHome({}, {
+      "/internal/fleet/computer-home/checkpoint-url": () => ({ status: 200, body: { name: NAME, upload: signedUpload } }),
+      "/internal/fleet/computer-home/commit": () => ({ status: 200, body: { name: NAME } }),
+      "/internal/fleet/computer-home/prune": () => ({ status: 200, body: { deleted: 0 } }),
+    });
+    const run = h.deps.shell.run;
+    const standardCompression: boolean[] = [];
+    h.deps.shell.run = async (command, args) => {
+      if (command === "tar") {
+        standardCompression.push(args.includes("--gzip"));
+        if (standardCompression.length === 1) {
+          if (reason === "scratch disk full") return { code: 2, stdout: "", stderr: "gzip: stdout: No space left on device" };
+          h.world.archiveSize = VM_HOME_CHECKPOINT_MAX_BYTES + 1;
+        } else {
+          h.world.archiveSize = 2048;
+        }
+      }
+      return run(command, args);
+    };
+    await expect(checkpointHome(h.deps, h.scope, { force: true, requestedAt: 1234 })).resolves.toMatchObject({ status: "uploaded", size: 2048 });
+    expect(standardCompression).toEqual([false, true]);
+  });
+
   it("refuses an oversized or empty archive and surfaces tar, upload, and commit failures, always cleaning up", async () => {
     const big = fakeHome({ archiveSize: VM_HOME_CHECKPOINT_MAX_BYTES + 1 });
     await expect(checkpointHome(big.deps, big.scope, { force: true })).rejects.toThrow(/over the .* byte cap/);
@@ -583,7 +607,7 @@ describe.runIf(process.platform === "linux").each([".octogee-source-doctor-diagn
     const f = await fixture();
     try {
       const archive = path.join(f.root, "checkpoint.tar.gz");
-      await run("tar", tarCreateArgs(archive, f.scope));
+      await run("tar", tarCreateArgs(archive, f.scope, true));
       const listed = (await run("tar", ["--list", "--gzip", `--file=${archive}`])).stdout;
       expect(listed).not.toContain(`data/${diagnosticPath}/`);
       expect(listed).toContain(`data/Documents/${diagnosticPath}/notes.txt`);

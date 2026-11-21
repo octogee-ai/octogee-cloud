@@ -930,6 +930,18 @@ describe("parked isolated gateway reuse", () => {
     await expect(h.run()).resolves.toBe(h.parkedGatewayId);
   });
 
+  it("retries until the registry confirms the observed VM has suspended", async () => {
+    const h = await prewarmHarness();
+    h.setParked();
+    const runtime = h.docs.get(`glmGateways/${h.parkedGatewayId}`)!;
+    const source = { instanceId: "old-instance", bootImageId: "111", needsRepair: false };
+    runtime.vm = { instanceId: source.instanceId, status: "RUNNING" };
+    await expect(startParkedGatewayPrewarm(h.state, h.operation, 2100, source)).rejects.toThrow("waiting for VM suspension to be recorded");
+    expect((await h.state.gateways.roots.get(h.parkedGatewayId))?.desiredStatus).toBe("paused");
+    runtime.vm = { instanceId: source.instanceId, status: "SUSPENDED" };
+    await expect(startParkedGatewayPrewarm(h.state, h.operation, 2200, source)).resolves.toMatchObject({ state: "booting" });
+  });
+
   it("hands a freshly prewarmed running computer directly to matching demand without suspending it", async () => {
     const h = await prewarmHarness();
     h.setParked();

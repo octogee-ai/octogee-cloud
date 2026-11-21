@@ -141,6 +141,10 @@
       "types": "./dist/octogee-api/src/lib/project-agent-service.d.ts",
       "default": "./dist/octogee-api/src/lib/project-agent-service.js"
     },
+    "./lib/project-create-admission": {
+      "types": "./dist/octogee-api/src/lib/project-create-admission.d.ts",
+      "default": "./dist/octogee-api/src/lib/project-create-admission.js"
+    },
     "./lib/project-create-service": {
       "types": "./dist/octogee-api/src/lib/project-create-service.d.ts",
       "default": "./dist/octogee-api/src/lib/project-create-service.js"
@@ -344,10 +348,10 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.1164.0",
-    "@aws-sdk/client-sts": "^3.1164.0",
+    "@aws-sdk/client-sts": "^3.1169.0",
     "@aws-sdk/s3-request-presigner": "3.1164.0",
     "@google-cloud/kms": "^6.3.0",
-    "@google-cloud/secret-manager": "^7.0.0",
+    "@google-cloud/secret-manager": "^8.0.0",
     "@google-cloud/storage": "^8.4.0",
     "@octogee/core": "file:../core",
     "@octogee/shared": "file:../shared",
@@ -364,7 +368,7 @@
     "sharp": "^0.35.5",
     "undici": "^8.12.4",
     "unique-names-generator": "^4.7.1",
-    "ws": "^8.21.3"
+    "ws": "^8.23.0"
   },
   "devDependencies": {
     "@octogee/core-testing": "file:../core-testing",

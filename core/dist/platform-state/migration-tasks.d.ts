@@ -37,3 +37,8 @@ export interface MigrationTasksRepository {
     claim(task: MigrationTransferTask, expected: Revision | "absent"): Promise<void>;
     finish(taskId: string, claim: MigrationTransferClaim, completedAt: number, error: string | null): Promise<void>;
 }
+export declare function migrationTransferTaskId({ migrationId, mode }: {
+    migrationId: string;
+    mode?: MigrationTransferMode;
+}): string;
+export declare function retargetedMigrationTransferId(migrationId: string, gatewayId: string): string;

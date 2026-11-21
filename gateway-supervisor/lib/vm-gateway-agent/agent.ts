@@ -72,6 +72,7 @@ export const RUNTIME_UID = 1000;
 export const RUNTIME_GID = 1000;
 export const AGENT_CONTAINER = "octo-gateway-agent";
 const VM_RUNTIME_ROUTE = "vm-runtime";
+const CHECKPOINT_CURSOR_HEADER = "x-octogee-checkpoint-cursor";
 export const HOST_PROBE_CONTAINER = "octogee-host-probe";
 export const HOST_OPENCLAW_VNC_REFLECTOR = "/usr/local/bin/octo-desktop-openclaw-vnc";
 const HOST_PROBE_BIN = "/octogee-host-bin";
@@ -111,7 +112,7 @@ export const initialAgentState = (): VmAgentState => ({ tokensWrittenAt: null, a
 export type HomeCheckpointSignal = GatewayVmRuntimeResponse["homeCheckpoint"];
 
 export type BundleFetch =
-  | { kind: "bundle"; bundle: GatewayVmRuntimeBundle; homeCheckpoint: HomeCheckpointSignal }
+  | { kind: "bundle"; bundle: GatewayVmRuntimeBundle; homeCheckpoint: HomeCheckpointSignal; checkpointCursor?: string }
   | { kind: "not-rendered" };
 
 function numberOrNull(value: unknown): number | null {
@@ -156,9 +157,11 @@ export async function fetchRuntimeBundle(deps: VmAgentDeps, checkScheduledHomeCh
   if (!isGatewayVmRuntimeBundle(body.bundle) || body.bundle.gatewayId !== deps.gatewayId) {
     throw new Error("vm-runtime: response is not this gateway's runtime bundle");
   }
+  const checkpointCursor = res.headers.get(CHECKPOINT_CURSOR_HEADER);
   return {
     kind: "bundle",
     bundle: body.bundle,
+    ...(checkpointCursor && /^[a-f0-9]{64}$/.test(checkpointCursor) ? { checkpointCursor } : {}),
     homeCheckpoint: {
       requestedAt: numberOrNull(body.homeCheckpoint?.requestedAt),
       completedAt: numberOrNull(body.homeCheckpoint?.completedAt),
@@ -513,7 +516,9 @@ async function releaseHomeWriterHold(deps: VmAgentDeps, bundle: GatewayVmRuntime
   if (released) deps.log(`[vm-agent] released ${released} held home writers; no checkpoint hold is in force`);
 }
 
-export async function convergeOnce(deps: VmAgentDeps, state: VmAgentState): Promise<VmAgentState> {
+export async function convergeOnce(
+  deps: VmAgentDeps, state: VmAgentState, observeCheckpointCursor?: (cursor?: string) => void,
+): Promise<VmAgentState> {
   const scheduledDue = scheduledHomeCheckpointDue(state, deps.now());
   const fetched = await fetchRuntimeBundle(deps, scheduledDue);
   if (fetched.kind === "not-rendered") {
@@ -521,6 +526,7 @@ export async function convergeOnce(deps: VmAgentDeps, state: VmAgentState): Prom
     return state;
   }
   const { bundle, homeCheckpoint: signal } = fetched;
+  observeCheckpointCursor?.(fetched.checkpointCursor);
   const requestedAt = outstandingCheckpointRequestedAt(signal);
   if (requestedAt !== null) {
     deps.log("[vm-agent] home checkpoint request observed", {
@@ -646,17 +652,42 @@ async function keepJournalForwarded(deps: VmAgentDeps): Promise<void> {
   }
 }
 
+async function watchCheckpoint(deps: VmAgentDeps, cursor: string, signal: AbortSignal): Promise<void> {
+  while (!signal.aborted) {
+    const response = await brokerPost(deps, VM_RUNTIME_ROUTE, {}, { signal, headers: { [CHECKPOINT_CURSOR_HEADER]: cursor } });
+    if (!response.ok) throw await brokerFailure("vm-runtime checkpoint watch", response);
+    await response.body?.cancel();
+    if (response.headers.get(CHECKPOINT_CURSOR_HEADER) !== cursor) throw new Error("vm-runtime checkpoint watch is unsupported");
+    if (response.status === 200) return;
+    if (response.status !== 204) throw new Error(`unexpected checkpoint watch HTTP ${response.status}`);
+  }
+}
+
+async function waitForAgentTick(deps: VmAgentDeps, periodic: Promise<void>, cursor?: string): Promise<void> {
+  if (!cursor) return periodic;
+  const controller = new AbortController();
+  try {
+    await Promise.race([periodic, watchCheckpoint(deps, cursor, controller.signal).catch(async error => {
+      if (!controller.signal.aborted) deps.log(`[vm-agent] checkpoint watch unavailable: ${String(error)}`);
+      await periodic;
+    })]);
+  } finally {
+    controller.abort();
+  }
+}
+
 export async function runVmGatewayAgent(deps: VmAgentDeps, opts: { intervalMs: number; sleep: (ms: number) => Promise<void>; stop?: () => boolean }): Promise<void> {
   const preemption = watchPreemption(deps, opts);
   let state = initialAgentState();
   while (!opts.stop?.()) {
+    let checkpointCursor: string | undefined;
     await keepJournalForwarded(deps);
     try {
-      state = await convergeOnce(deps, state);
+      state = await convergeOnce(deps, state, cursor => { checkpointCursor = cursor; });
     } catch (err) {
       deps.log(`[vm-agent] converge failed: ${err instanceof Error ? err.message : String(err)}`);
     }
-    await opts.sleep(opts.intervalMs);
+    await waitForAgentTick(deps, opts.sleep(opts.intervalMs), checkpointCursor);
   }
   await preemption;
 }

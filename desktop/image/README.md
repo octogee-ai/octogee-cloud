@@ -47,7 +47,7 @@ Google registry cannot be used.
 3. The build preloads the digest-addressed isolated gateway and gateway-edge
    images into Docker on the boot disk, then verifies both are present.
    `customize.sh` (inside the guest, as root) installs the session packages,
-   builds `wlrctl`, installs pinned noVNC and websockify, copies the overlay
+   builds `wlrctl` from its pinned release archive, installs pinned noVNC and websockify, copies the overlay
    and session scripts, enables the units, sets Limine's timeout to zero,
    cleans the kernel command line, resets the machine identity and SSH host
    keys, and records the image name in `/etc/octogee-computer-image`.
@@ -247,7 +247,8 @@ boots as before.
 | --- | --- |
 | Omarchy 4.5.0 x86 ISO + sha256 | `build.sh` (`ISO_SHA256`); [official download](https://omarchy.org/) |
 | Package set | Omarchy's stable mirror at build time; the image name carries the build stamp |
-| wlrctl, noVNC, websockify | `customize.sh` |
+| wlrctl 0.2.2 release archive + sha256 | `../rootfs/usr/share/omarchy/octo-desktop/fetch-wlrctl.sh`; Debian's copy of the upstream release |
+| noVNC, websockify | `customize.sh` |
 | hyprbars (hyprwm/hyprland-plugins commit) | `customize.sh` (`HYPRBARS_COMMIT`) |
 | Dock + window switcher shell plugins | `rootfs/usr/share/omarchy/octo-desktop/plugins/provenance.json` |
 | Session scripts | `../rootfs` (shared with the container spike) |

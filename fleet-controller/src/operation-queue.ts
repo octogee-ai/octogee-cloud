@@ -2,9 +2,11 @@ import { hasUserActivationTargetRollback } from './user-activation-roll-recovery
 import { isUserActivateOperationIdFor, isUserReturnOperationIdFor } from "@octogee/shared/types/isolated-operation-ids";
 import type { Operation } from "@octogee/shared/types/glm";
 import { serialFleetOperationsConflict, type RolloutLane } from "@octogee/core/fleet-operation-lock";
+import { PARKED_PREWARM_KIND } from "@octogee/core/isolated-gateway-lifecycle";
 import { MIGRATE_USER_KIND } from "./operation-kinds.js";
 
 const ACCOUNT_SUSPENSION_KIND = "suspend-user";
+const PARKED_PREWARM_CONCURRENCY = 3;
 
 export const SERIALLY_EXCLUSIVE_OPERATION_KINDS: ReadonlySet<string> = new Set([
   "rollout",
@@ -293,6 +295,16 @@ export function decideOperationClaim(
   if (op.status !== "pending") return { outcome: "skip" };
   if (typeof op.nextAttemptAt === "number" && op.nextAttemptAt > now) {
     return { outcome: "skip" };
+  }
+  if (op.kind === PARKED_PREWARM_KIND) {
+    const prewarms = runningOpsSameKind.filter(running => running.kind === PARKED_PREWARM_KIND && running.id !== op.id);
+    const owner = inputString(op.input, "uid");
+    if (owner && prewarms.some(running => inputString(running.input, "uid") === owner)) {
+      return { outcome: "queue", waitingOn: "the owner's parked computer upgrade" };
+    }
+    return prewarms.length >= PARKED_PREWARM_CONCURRENCY
+      ? { outcome: "queue", waitingOn: "a parked computer upgrade slot" }
+      : { outcome: "claim" };
   }
   const runningConflict = findSerialConflict(op, runningOpsSameKind);
   if (runningConflict) return { outcome: "queue", waitingOn: runningConflict.waitingOn };
