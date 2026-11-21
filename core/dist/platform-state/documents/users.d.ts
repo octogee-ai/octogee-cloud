@@ -51,6 +51,7 @@ export declare const HOME_PATHS: {
     readonly computer: "provisioning.computer";
     readonly homeCheckpoint: "provisioning.homeCheckpoint";
     readonly homeDisk: "provisioning.homeDisk";
+    readonly homeArchive: "provisioning.homeArchive";
     readonly homeStorage: "provisioning.homeStorage";
     readonly homeMigration: "provisioning.homeMigration";
     readonly homeErasure: "provisioning.homeErasure";
@@ -85,6 +86,7 @@ export declare const PATCH_GROUPS: {
         readonly computer: "provisioning.computer";
         readonly homeCheckpoint: "provisioning.homeCheckpoint";
         readonly homeDisk: "provisioning.homeDisk";
+        readonly homeArchive: "provisioning.homeArchive";
         readonly homeStorage: "provisioning.homeStorage";
         readonly homeMigration: "provisioning.homeMigration";
         readonly homeErasure: "provisioning.homeErasure";

@@ -1,3 +1,4 @@
+import { restoreArchivedHome } from "./lib/archived-home-restore.js";
 import { parkedPrewarmInput, readActiveParkedPrewarm } from "@octogee/core/isolated-gateway-lifecycle";
 import {
   MissingRecordError,
@@ -605,8 +606,8 @@ async function recordVmHome(deps: VmLifecycleDeps, input: { gatewayId: string; o
  }
 
 async function deleteOwnedVm(deps: VmLifecycleDeps, ownerUid: string): Promise<boolean> {
-    const description = await deps.vm.findByLabels(ownerVmLabels(deps.environment, ownerUid));
     let home = await readRetainedUserHome(deps.store, ownerUid);
+    const description = await deps.vm.findByLabels(ownerVmLabels(deps.environment, ownerUid));
     if (!description) {
       if (home) {
         await deps.vm.deleteRetainedHome(home, ownerUid);
@@ -1198,9 +1199,21 @@ async function ensureBoundVm(deps: VmLifecycleDeps, request: {
   const { gatewayId, image, ownerUid, bridge } = request;
   if (!ownerUid) throw new Error(`gateway ${gatewayId}: a gce-vm isolated gateway needs an owner`);
   operations.assertNoneInFlight(gatewayId, ownerUid);
-  const { data, vm: existing } = await readVmRecord(deps.store, gatewayId);
+  const [{ data, vm: existing }, owner] = await Promise.all([
+    readVmRecord(deps.store, gatewayId), deps.store.users.records.get(ownerUid),
+  ]);
   const spec = recordedSpecInConfiguredZones(data?.vmSpec, deps.vmSpec);
   const input = gatewayVmInstanceInput({ gatewayId, ownerUid, spec, environment: deps.environment, image, bridgeIp: bridge });
+  const archive = owner?.home.homeArchive;
+  if (archive && archive.phase !== "restored") {
+    if (archive.phase !== "archived" && archive.phase !== "restoring" || !archive.snapshot || !archive.bootDisk) {
+      throw new Error("User home archive requires explicit snapshot recovery");
+    }
+    const description = await restoreArchivedHome(deps, { gatewayId, ownerUid }, spec, input);
+    const retainedHome = await readRetainedUserHome(deps.store, ownerUid);
+    if (!retainedHome) throw new Error("Restored home ownership was not recorded");
+    return finishEnsuredVm(deps, { gatewayId, ownerUid, spec, description, input, recovery: null, retainedHome }, operations);
+  }
   let description = existing ? await deps.vm.describe(existing.instanceName, existing.zone) : null;
   if (!description) description = await deps.vm.findByLabels(ownerVmLabels(deps.environment, ownerUid));
   const prewarm = await readActiveParkedPrewarm(deps.store, ownerUid);

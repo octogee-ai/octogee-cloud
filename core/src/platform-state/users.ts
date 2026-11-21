@@ -5,7 +5,7 @@ import type {
 } from "@octogee/shared/types/fleet-broker";
 import type { ConnectorCaptureMethod, IntegrationStatus } from "@octogee/shared/types/connectors";
 import type { ScheduleTransferDoc } from "@octogee/shared/types/fleet-controller";
-import type { UserParkedVm, GatewayProfile, GatewayVmHomeCheckpoint } from "@octogee/shared/types/glm";
+import type { UserParkedVm, GatewayProfile, GatewayVmHomeCheckpoint, RetainedUserHome, RetainedUserHomeSnapshot } from "@octogee/shared/types/glm";
 import type { PlacementReceipt, PlacementReceiptKind } from "@octogee/shared/types/placement-receipts";
 import type { WorkspaceMigrationMarker } from "@octogee/shared/types/workspace-migration";
 import type {
@@ -106,7 +106,41 @@ export interface UserOpenClawState {
   readonly toolchain?: OpaqueMap;
 }
 
+interface UserHomeArchiveIdentity {
+  readonly operationId: string;
+  readonly gatewayId: string;
+  readonly instanceId: string;
+}
+
+interface UserHomeSnapshotCustody {
+  readonly snapshot: RetainedUserHomeSnapshot;
+  readonly bootDisk: { readonly source: string; readonly id: string };
+}
+
+export type UserHomeArchive = UserHomeArchiveIdentity & (
+  | { readonly phase: "preparing" }
+  | (UserHomeSnapshotCustody & { readonly phase: "snapshot-ready" | "archived" })
+  | (UserHomeSnapshotCustody & {
+    readonly phase: "restoring";
+    readonly targetGatewayId: string;
+    readonly leaseId: string;
+    readonly generation: number;
+    readonly zone: string;
+    readonly diskName: string;
+    readonly restoredDisk?: RetainedUserHome;
+  })
+  | (UserHomeSnapshotCustody & {
+    readonly phase: "restored";
+    readonly targetGatewayId: string;
+    readonly leaseId: string;
+    readonly generation: number;
+    readonly restoredDisk: RetainedUserHome;
+    readonly restoredInstanceId: string;
+  })
+);
+
 export interface UserHomeState {
+  readonly homeArchive?: UserHomeArchive;
   readonly computer?: UserParkedVm;
   readonly homeCheckpoint?: GatewayVmHomeCheckpoint;
   readonly homeDisk?: OpaqueMap;

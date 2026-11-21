@@ -8,10 +8,12 @@ interface VmReplacementMutation {
     preActionStatus: Record<string, unknown>;
     mutation: Record<string, unknown>;
     forced?: boolean;
+    dryRunRefusal?: () => Promise<string | null>;
     action: () => Promise<string>;
 }
 interface VmRouterDeps {
     replacementEnabled?: boolean;
+    releaseEnvironment?: "test" | "prod" | null;
     store: PlatformStateStore;
     journal: (input: VmReplacementMutation) => Promise<string>;
 }
