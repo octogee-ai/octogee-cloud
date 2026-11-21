@@ -177,3 +177,57 @@ describe("restore the verified home snapshot", () => {
     },
   );
 });
+
+describe("erase the exact owned home snapshot", () => {
+  const recycledName = "home-102-g3-recycled";
+  const recycleDirectory = `https://compute.googleapis.com/compute/beta/projects/${PROJECT}/global/recoverableSnapshots`;
+  const recycled = { id: "777", name: recycledName, originalResource: snapshotResource };
+
+  it("removes the active snapshot and its recoverable copy, then verifies both are gone", async () => {
+    const { client, request, resources } = fixture();
+    resources[snapshotResource.selfLink] = snapshotResource;
+    let copies = [recycled];
+    const original = request.getMockImplementation()!;
+    request.mockImplementation(async call => {
+      if (call.method === "GET" && call.url.startsWith(`${recycleDirectory}?`)) return { status: 200, data: { items: copies } };
+      if (call.method === "DELETE" && call.url.startsWith(`${snapshotResource.selfLink}?`)) delete resources[snapshotResource.selfLink];
+      else if (call.method === "DELETE" && call.url.startsWith(`${recycleDirectory}/${recycledName}?`)) copies = [];
+      else return original(call);
+      return { status: 200, data: { name: "erase-op", status: "DONE" } };
+    });
+
+    await expect(client.eraseHomeSnapshot(snapshot, OWNER)).resolves.toBe(false);
+    await expect(client.eraseHomeSnapshot(snapshot, OWNER)).resolves.toBe(false);
+    await expect(client.eraseHomeSnapshot(snapshot, OWNER)).resolves.toBe(true);
+    expect(request.mock.calls.filter(([call]) => call.method === "DELETE")).toHaveLength(2);
+  });
+
+  it("refuses a same-name active snapshot with a different numeric identity", async () => {
+    const { client, request, resources } = fixture();
+    resources[snapshotResource.selfLink] = { ...snapshotResource, id: "900" };
+    await expect(client.eraseHomeSnapshot(snapshot, OWNER)).rejects.toThrow(/exact READY snapshot/);
+    expect(request.mock.calls.some(([call]) => call.method === "DELETE")).toBe(false);
+  });
+
+  it("ignores another original ID and refuses the expected original with wrong owner binding", async () => {
+    const { client, request } = fixture();
+    const original = request.getMockImplementation()!;
+    request.mockImplementation(call => call.url.startsWith(`${recycleDirectory}?`)
+      ? Promise.resolve({ status: 200, data: { items: [
+        { ...recycled, originalResource: { ...snapshotResource, id: "900" } },
+        { ...recycled, originalResource: { ...snapshotResource, labels: {} } },
+      ] } })
+      : original(call));
+    await expect(client.eraseHomeSnapshot(snapshot, OWNER)).rejects.toThrow(/recoverable snapshot identity/);
+    expect(request.mock.calls.some(([call]) => call.method === "DELETE")).toBe(false);
+  });
+
+  it("fails closed when the recycle-bin listing cannot be verified", async () => {
+    const { client, request } = fixture();
+    const original = request.getMockImplementation()!;
+    request.mockImplementation(call => call.url.startsWith(`${recycleDirectory}?`)
+      ? Promise.resolve({ status: 403 }) : original(call));
+    await expect(client.eraseHomeSnapshot(snapshot, OWNER)).rejects.toThrow(/HTTP 403/);
+    expect(request.mock.calls.some(([call]) => call.method === "DELETE")).toBe(false);
+  });
+});

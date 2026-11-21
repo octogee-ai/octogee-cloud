@@ -49,13 +49,25 @@ interface Disk {
   sourceSnapshotId?: string;
 }
 
+interface RecoverableSnapshot {
+  id?: string;
+  name?: string;
+  originalResource?: Snapshot;
+}
+
+interface RecoverableSnapshotPage {
+  items?: RecoverableSnapshot[];
+  nextPageToken?: string;
+}
+
 const COMPUTE_PREFIX = "https://compute.googleapis.com/compute/v1/";
+const COMPUTE_BETA_PREFIX = "https://compute.googleapis.com/compute/beta/";
 const RESOURCE_NAME = /^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/u;
 const NUMERIC_ID = /^[1-9]\d{0,19}$/u;
 const ZONE = /^[a-z]+(?:-[a-z0-9]+)+\d-[a-z]$/u;
 
 function computePath(url: string | undefined): string | undefined {
-  return url?.replace(/^https:\/\/(?:www|compute)\.googleapis\.com\/compute\/v1\//u, "");
+  return url?.replace(/^https:\/\/(?:www|compute)\.googleapis\.com\/compute\/(?:v1|beta)\//u, "");
 }
 
 function storageLabels(ownerUid: string, storage: string): Record<string, string> {
@@ -144,6 +156,7 @@ export function createVmHomeSnapshotClient(deps: {
   projectId: string;
   readInstance: (name: string, zone: string) => Promise<HomeInstance | null>;
   waitForOperation: (zone: string, operation: unknown, what: string) => Promise<void>;
+  waitForGlobalOperation: (operation: unknown, what: string) => Promise<void>;
 }) {
   const project = `projects/${deps.projectId}`;
 
@@ -243,5 +256,69 @@ export function createVmHomeSnapshotClient(deps: {
     return restoredHome(disk, expected, snapshot, snapshotPath, labels);
   }
 
-  return { snapshotStoppedHome, restoreHomeFromSnapshot };
+  async function deleteSnapshotResource(url: string, identity: string): Promise<void> {
+    const id = requestId("erase", url, identity);
+    try {
+      const response = await deps.request({ method: "DELETE", url: `${url}?requestId=${id}` });
+      if (response.status === 404) return;
+      if (response.status >= 400 || !response.data) throw new Error(`Delete home snapshot: HTTP ${response.status}`);
+      await deps.waitForGlobalOperation(response.data, "Delete owned home snapshot");
+    } catch (error) {
+      if (responseStatus(error) !== 404) throw error;
+    }
+  }
+
+  async function findRecoverableSnapshot(directory: string, snapshot: RetainedUserHomeSnapshot): Promise<RecoverableSnapshot | null> {
+    let pageToken: string | undefined;
+    const seenTokens = new Set<string>();
+    let match: RecoverableSnapshot | null = null;
+    do {
+      const query = new URLSearchParams({ filter: `originalResource.name = "${snapshot.name}"` });
+      if (pageToken) query.set("pageToken", pageToken);
+      const response = await deps.request({ method: "GET", url: `${directory}?${query}` });
+      if (response.status >= 400 || !response.data) throw new Error(`List recoverable home snapshots: HTTP ${response.status}`);
+      const page = response.data as RecoverableSnapshotPage;
+      if ((page.items !== undefined && !Array.isArray(page.items)) ||
+          (page.nextPageToken !== undefined && (typeof page.nextPageToken !== "string" || seenTokens.has(page.nextPageToken)))) {
+        throw new Error("Malformed recoverable home snapshot listing");
+      }
+      for (const copy of page.items ?? []) {
+        if (copy.originalResource?.id !== snapshot.id) continue;
+        if (match) throw new Error("Multiple recoverable copies of the exact home snapshot");
+        match = copy;
+      }
+      pageToken = page.nextPageToken;
+      if (pageToken) seenTokens.add(pageToken);
+    } while (pageToken);
+    return match;
+  }
+
+  async function eraseHomeSnapshot(snapshot: RetainedUserHomeSnapshot, ownerUid: string): Promise<boolean> {
+    const sourceZone = snapshot.sourceDisk.split("/")[3] ?? "";
+    validateRestoreScope({ snapshot, ownerUid, zone: sourceZone, diskName: snapshot.name, minimumSizeGb: snapshot.sizeGb }, deps.projectId);
+    const path = `${project}/global/snapshots/${snapshot.name}`;
+    const labels = snapshotLabels(ownerUid);
+    const resource = await read<Snapshot>(path);
+    if (resource) {
+      if (snapshotReceipt(resource, snapshot, path, labels)?.id !== snapshot.id) throw new Error("Erase requires the exact READY snapshot");
+      await deleteSnapshotResource(`${COMPUTE_PREFIX}${path}`, snapshot.id);
+      return false;
+    }
+
+    const directory = `${COMPUTE_BETA_PREFIX}${project}/global/recoverableSnapshots`;
+    const copy = await findRecoverableSnapshot(directory, snapshot);
+    if (!copy) return true;
+    const original = copy.originalResource!;
+    if (!RESOURCE_NAME.test(copy.name ?? "") || !NUMERIC_ID.test(copy.id ?? "") ||
+        original.name !== snapshot.name || original.sourceDiskId !== snapshot.sourceDiskId ||
+        computePath(original.sourceDisk) !== snapshot.sourceDisk || !labelsMatch(original.labels, labels) ||
+        original.snapshotType !== "STANDARD" || Number(original.diskSizeGb) !== snapshot.sizeGb ||
+        !snapshotInSourceRegion(original, snapshot.sourceDisk)) {
+      throw new Error("Home recoverable snapshot identity, source disk or owner differs");
+    }
+    await deleteSnapshotResource(`${directory}/${copy.name}`, copy.id!);
+    return false;
+  }
+
+  return { snapshotStoppedHome, restoreHomeFromSnapshot, eraseHomeSnapshot };
 }

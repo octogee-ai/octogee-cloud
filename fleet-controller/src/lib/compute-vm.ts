@@ -85,6 +85,7 @@ export interface CreateGatewayVmResult {
 export interface GatewayVmClient {
   snapshotStoppedHome(input: SnapshotStoppedHomeInput): Promise<RetainedUserHomeSnapshot | null>;
   restoreHomeFromSnapshot(input: RestoreHomeFromSnapshotInput): Promise<RetainedUserHome | null>;
+  eraseHomeSnapshot(snapshot: RetainedUserHomeSnapshot, ownerUid: string): Promise<boolean>;
   expandHome(home: RetainedUserHome, ownerUid: string, sizeGb: number): Promise<RetainedUserHome>;
   retainHome(instanceName: string, zone: string, ownerUid: string): Promise<RetainedUserHome>;
   verifyDetachedHome(home: RetainedUserHome, ownerUid: string): Promise<void>;
@@ -631,6 +632,7 @@ export function createGatewayVmClient(deps: GatewayVmClientDeps): GatewayVmClien
 
   return {
     ...createVmHomeSnapshotClient({ request: deps.request, projectId: deps.projectId, readInstance,
+      waitForGlobalOperation: (operation, what) => waitForOperation(null, operation as ComputeOperation, what),
       waitForOperation: (zone, operation, what) => {
         const receipt = operation as ComputeOperation;
         const globalPath = `projects/${deps.projectId}/global/operations/${receipt.name}`;

@@ -59,6 +59,7 @@ function harness(
     verifyDetachedHome: vi.fn(async () => {}),
     snapshotStoppedHome: vi.fn(async () => null),
     restoreHomeFromSnapshot: vi.fn(async () => null),
+    eraseHomeSnapshot: vi.fn(async () => true),
     deleteRetainedHome: vi.fn(async () => {}),
     setServiceAccount: vi.fn(async () => {}),
     setMachineType: vi.fn(async () => {}),
