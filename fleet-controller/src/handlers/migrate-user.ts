@@ -1041,7 +1041,7 @@ async function retireTargetNativeScheduler(deps: MigrateUserDeps, client: Migrat
 function retainedJobIds(snapshot: unknown): string[] {
   const ids = (snapshot as { retainedJobIds?: unknown } | null | undefined)?.retainedJobIds;
   if (!Array.isArray(ids) || ids.some((id) => typeof id !== "string")) {
-    throw new Error("partial scheduler export did not report which host-bound jobs it retained");
+    throw new Error("partial scheduler export did not report which jobs it retained");
   }
   return ids as string[];
 }
@@ -1052,14 +1052,28 @@ async function stagePortableSchedules(
   handoff: SchedulerHandoffState,
 ): Promise<void> {
   const { migrationId, slug } = handoff;
-  const exported = await client.scheduler({ migrationId, slug, gatewayId: handoff.fromGatewayId, phase: "export", retainNonportable: true });
+  let targetRequesterProfileId: string | null | undefined;
+  if (!handoff.forwardRecovery) {
+    try {
+      const requester = await client.scheduler({ migrationId, slug, gatewayId: handoff.toGatewayId, phase: "stage-requester" });
+      targetRequesterProfileId = requester.stageRequesterProfileId;
+    } catch (error) {
+      if (!(error instanceof MigrationRpcError) || error.status !== 400 ||
+          (error.details as { error?: unknown } | undefined)?.error !== "invalid scheduler migration request") throw error;
+      deps.log(`[migrate-customer] native return ${slug}: ${handoff.toGatewayId} does not report the scheduler requester`);
+    }
+  }
+  const exported = await client.scheduler({
+    migrationId, slug, gatewayId: handoff.fromGatewayId, phase: "export", retainNonportable: true,
+    ...(targetRequesterProfileId === undefined ? {} : { targetRequesterProfileId }),
+  });
   const retained = retainedJobIds(exported.snapshot);
   await client.scheduler({
     migrationId, slug, gatewayId: handoff.toGatewayId, phase: "stage", agentIds: exported.agentIds, snapshot: exported.snapshot,
   });
   deps.log(
     `[migrate-customer] native return ${slug}: portable schedules of ${exported.agentIds.join(", ")} staged on ${handoff.toGatewayId}; ` +
-    `host-bound jobs left dormant on ${handoff.fromGatewayId}: ${retained.length ? retained.join(", ") : "none"}`,
+    `nonportable jobs left dormant on ${handoff.fromGatewayId}: ${retained.length ? retained.join(", ") : "none"}`,
   );
 }
 

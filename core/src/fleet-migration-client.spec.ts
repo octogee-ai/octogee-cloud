@@ -819,4 +819,26 @@ describe("MigrationClient.scheduler", () => {
     const client = createMigrationClient({ privateKey: PRIVATE_KEY, resolveGatewayUrl: () => "https://fleet-test.example.com", fetch: fakeFetch, transferState: transferNotUnderTest });
     await expect(client.scheduler({ migrationId: "handoff-1", slug: "alice", gatewayId: "gw-source", phase: "hold" })).rejects.toThrow("did not prove");
   });
+
+  const requesterProbe = { migrationId: "handoff-1", slug: "alice", gatewayId: "gw-target", phase: "stage-requester" as const };
+  const requesterResult = { operationId: requesterProbe.migrationId, phase: requesterProbe.phase, agentIds: [], drained: true };
+  it.each(["shared-operator", null])("reads the staging requester over the fleet transport (%s)", async stageRequesterProfileId => {
+    const result = { ...requesterResult, stageRequesterProfileId };
+    const { fakeFetch } = captureFetch(() => new Response(JSON.stringify(result)));
+    const client = createMigrationClient({ privateKey: PRIVATE_KEY, resolveGatewayUrl: () => "https://fleet-test.example.com", fetch: fakeFetch, transferState: transferNotUnderTest });
+    await expect(client.scheduler(requesterProbe)).resolves.toEqual(result);
+  });
+
+  it.each([
+    ["agent scope", { agentIds: ["octogee-alice-coach"] }],
+    ["missing requester", { stageRequesterProfileId: undefined }],
+    ["empty requester", { stageRequesterProfileId: "" }],
+    ["oversized requester", { stageRequesterProfileId: "x".repeat(513) }],
+    ["non-string requester", { stageRequesterProfileId: 42 }],
+  ] as const)("rejects a fleet staging requester acknowledgement with %s", async (_label, invalid) => {
+    const result = { ...requesterResult, stageRequesterProfileId: "shared-operator", ...invalid };
+    const { fakeFetch } = captureFetch(() => new Response(JSON.stringify(result)));
+    const client = createMigrationClient({ privateKey: PRIVATE_KEY, resolveGatewayUrl: () => "https://fleet-test.example.com", fetch: fakeFetch, transferState: transferNotUnderTest });
+    await expect(client.scheduler(requesterProbe)).rejects.toThrow("did not prove");
+  });
 });

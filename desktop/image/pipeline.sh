@@ -111,7 +111,7 @@ customize_guest() {
   preload_gateway_image
   tar -C "$PAYLOAD" -czf "$WORK/customize-payload.tgz" customize.sh rootfs desktop-rootfs
   guest_scp "$WORK/customize-payload.tgz" "octo@127.0.0.1:/tmp/customize-payload.tgz"
-  guest_ssh 'rm -rf /tmp/customize && mkdir -p /tmp/customize && tar -C /tmp/customize -xzf /tmp/customize-payload.tgz && sudo -n env OMARCHY_VERSION='"$OMARCHY_VERSION"' IMAGE_NAME='"$IMAGE_NAME"' bash /tmp/customize/customize.sh' 2>&1 | sed 's/^/  [guest] /'
+  guest_ssh 'rm -rf /tmp/customize && mkdir -p /tmp/customize && tar -C /tmp/customize -xzf /tmp/customize-payload.tgz && sudo -n env OMARCHY_VERSION='"$OMARCHY_VERSION"' IMAGE_NAME='"$IMAGE_NAME"' bash /tmp/customize/customize.sh' 2>&1 | sed -u 's/^/  [guest] /'
 }
 
 guest_started=0

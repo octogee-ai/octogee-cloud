@@ -1384,6 +1384,13 @@ ALTER TABLE orchestrator_config
     CHECK (placement_automation_yielded_at IS NULL OR placement_automation_owner = 'client');
 `;
 
+const PARKED_COMPUTER_UPGRADE = `
+ALTER TABLE operations DROP CONSTRAINT operations_kind_check;
+ALTER TABLE operations ADD CONSTRAINT operations_kind_check CHECK (kind IN (
+  'add-gateway','gateway-vm','prewarm-gateway','migrate-user','retire-gateway','restart-gateway','recycle-gateway',
+  'scale-shared-member','rollout','deprovision-user','suspend-user','erase-user'));
+`;
+
 export const PLATFORM_STATE_MIGRATIONS: readonly PlatformStateMigration[] = [
   { version: 1, name: "core-schema", sql: CORE_SCHEMA },
   { version: 2, name: "change-feed", sql: CHANGE_FEED },
@@ -1406,4 +1413,5 @@ export const PLATFORM_STATE_MIGRATIONS: readonly PlatformStateMigration[] = [
   { version: 19, name: "model-credentials", sql: MODEL_CREDENTIALS },
   { version: 20, name: "connector-integrations", sql: CONNECTOR_INTEGRATIONS },
   { version: 21, name: "placement-automation-owner", sql: PLACEMENT_AUTOMATION_OWNER },
+  { version: 22, name: "parked-computer-upgrade", sql: PARKED_COMPUTER_UPGRADE },
 ];

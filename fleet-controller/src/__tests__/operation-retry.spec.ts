@@ -217,7 +217,7 @@ describe("operationNeedsDurableRestartResume", () => {
     expect(operationNeedsDurableRestartResume(op)).toBe(true);
     expect(operationNeedsDurableRestartResume({ ...op, id: "manual-move" })).toBe(false);
   });
-  it.each(["suspend-user", "erase-user"])(
+  it.each(["suspend-user", "erase-user", "prewarm-gateway"])(
     "keeps an interrupted %s operation available for restart re-drive",
     (kind) => {
       expect(operationNeedsDurableRestartResume({ kind })).toBe(true);

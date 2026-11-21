@@ -2,7 +2,10 @@ import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { isUserReturnOperationIdFor } from "@octogee/shared/types/isolated-operation-ids";
 import type { MigrationClient } from "@octogee/core/fleet-migration-client";
-import type { MigrationTransferTask, PlatformStateStore, PlatformStateTransaction, Stored } from "@octogee/core/platform-state";
+import {
+  migrationTransferTaskId, retargetedMigrationTransferId,
+  type MigrationTransferTask, type PlatformStateStore, type PlatformStateTransaction, type Stored,
+} from "@octogee/core/platform-state";
 import type { CommandRunner } from "./migration-rsync-transfer.js";
 
 export interface ControllerPodIdentity { name: string; uid: string }
@@ -69,10 +72,6 @@ function assertTaskIdentity(existing: MigrationTransferTask | null, taskId: stri
 type TransferScope = { migrationId: string; slug: string; gatewayId: string; mode: MigrationTransferTask["mode"]; fromGatewayId?: string };
 type TaskSelection = { taskId: string; migrationId: string; existing: Stored<MigrationTransferTask> | null };
 
-function transferTaskKey(migrationId: string, mode: MigrationTransferTask["mode"]): string {
-  return `${migrationId.replace(/[^A-Za-z0-9._-]/g, "_")}__${mode}`;
-}
-
 async function completedRetirementMatches(
   tx: PlatformStateTransaction, target: string, receipt: Record<string, unknown>, completedAt: number,
 ): Promise<boolean> {
@@ -134,8 +133,8 @@ async function selectTransferTask(tx: PlatformStateTransaction, taskId: string, 
   if (!existing || existing.targetGatewayId === input.gatewayId || !await retiredReturnTransfer(tx, input, existing)) {
     return { taskId, migrationId: input.migrationId, existing };
   }
-  const migrationId = `${input.migrationId}:retarget:${input.gatewayId}`;
-  const newTaskId = transferTaskKey(migrationId, input.mode);
+  const migrationId = retargetedMigrationTransferId(input.migrationId, input.gatewayId);
+  const newTaskId = migrationTransferTaskId({ migrationId, mode: input.mode });
   return { taskId: newTaskId, migrationId, existing: await tx.migrationTasks.get(newTaskId) };
 }
 
@@ -148,7 +147,7 @@ export async function readTransferAttemptForCleanup(
   deps: Pick<LeaseDeps, "store" | "now" | "runCommand" | "namespace">,
   input: Parameters<MigrationClient["abortImport"]>[0],
 ): Promise<string | undefined> {
-  const taskId = transferTaskKey(input.migrationId, input.mode);
+  const taskId = migrationTransferTaskId(input);
   const read = () => deps.store.transaction({ label: "migration-transfer-lease.cleanup", readOnly: true },
     tx => selectTransferTask(tx, taskId, input));
   const selection = await read();
