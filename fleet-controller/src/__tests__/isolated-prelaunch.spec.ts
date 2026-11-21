@@ -34,7 +34,7 @@ function fixture() {
     docKind: "runtime", gatewayId: gateway.gatewayId, release: 2, lifecycle: "serving", runtime: "gce-vm",
     helm: { ...desiredImage },
     heartbeat: { status: "booting", version: imageTag, mountedCustomers: [] },
-  } as unknown as GatewayRuntimeDoc & { runtime?: string };
+  } as unknown as GatewayRuntimeDoc & { runtime?: "gce-vm" | "cluster" };
   const documents = new Map<string, unknown>([
     ["gateways/jefe-run", gateway],
     ["users/uid-jefe", user],
@@ -127,7 +127,7 @@ describe("disposable isolated prelaunch release refresh", () => {
 
 
 describe("prelaunch release admission boundaries", () => {
-  it.each(["cluster", undefined])("does not admit a %s runtime to the VM refresh exception", async (runtime) => {
+  it.each(["cluster", undefined] as const)("does not admit a %s runtime to the VM refresh exception", async (runtime) => {
     const h = fixture();
     h.runtime.runtime = runtime;
     await expect(shouldReconcileDisposablePrelaunch(h.store, h.gateway)).resolves.toBe(false);
