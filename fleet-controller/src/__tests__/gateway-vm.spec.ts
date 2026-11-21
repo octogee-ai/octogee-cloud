@@ -46,6 +46,7 @@ function harness(
     setProvisioningModel: unused("setProvisioningModel"),
     suspend: unused("suspend"),
     resume: unused("resume"),
+    verifyBootReplacement: unused("verifyBootReplacement"),
     readBootImage: unused("readBootImage"),
     readFamilyImage: unused("readFamilyImage"),
     readImage: unused("readImage"),
