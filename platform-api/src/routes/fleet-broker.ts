@@ -4221,6 +4221,29 @@ async function recordVmBootRecoveryReport(deps: ResolvedFleetBrokerRouteDeps, re
   return true;
 }
 
+function ownerIsActivatingOnVm(
+  owner: PlatformUserRecord | null,
+  gateway: GatewayRoot,
+  allocation: NonNullable<GatewayRoot["allocation"]>,
+): boolean {
+  const lease = owner?.activationLease;
+  if (!owner || !lease || !lease.sourceGatewayId) return false;
+  if (![
+    lease.leaseId === allocation.leaseId,
+    lease.generation === allocation.generation,
+    lease.targetGatewayId === gateway.gatewayId,
+    lease.builderSlug === gateway.builderSlug,
+    owner.slug === gateway.builderSlug,
+    lease.sourceGatewayId !== gateway.gatewayId,
+    owner.gateway?.gatewayId === lease.sourceGatewayId,
+    lease.activeAt === undefined,
+  ].every(Boolean)) return false;
+
+  const activatesHere = lease.activationOperationId === builderActivateOperationId(gateway.gatewayId, allocation.generation);
+  return lease.status === "provisioning" && (lease.activationOperationId === undefined || activatesHere)
+    || lease.status === "activating" && activatesHere;
+}
+
 async function shouldDeferScheduledVmCheckpoint(
   store: PlatformStateRepositories,
   bound: GatewayBinding,
@@ -4231,16 +4254,7 @@ async function shouldDeferScheduledVmCheckpoint(
   const allocation = gateway?.allocation;
   if (gateway?.gatewayClass !== "isolated" || gateway.desiredStatus !== "running" ||
       allocation?.kind !== "disposable-builder" || !gateway.ownerUid || gateway.ownerUid !== allocation.claimedByUid) return false;
-  const owner = await store.users.records.get(gateway.ownerUid);
-  const lease = owner?.activationLease;
-  if (!lease || lease.leaseId !== allocation.leaseId || lease.generation !== allocation.generation ||
-      lease.targetGatewayId !== bound.gatewayId || lease.builderSlug !== gateway.builderSlug || owner.slug !== gateway.builderSlug ||
-      !lease.sourceGatewayId || lease.sourceGatewayId === bound.gatewayId || owner.gateway?.gatewayId !== lease.sourceGatewayId ||
-      lease.activeAt !== undefined) return false;
-
-  const activatesHere = lease.activationOperationId === builderActivateOperationId(bound.gatewayId, allocation.generation);
-  return lease.status === "provisioning" && (lease.activationOperationId === undefined || activatesHere)
-    || lease.status === "activating" && activatesHere;
+  return ownerIsActivatingOnVm(await store.users.records.get(gateway.ownerUid), gateway, allocation);
 }
 
 function vmRuntimeCheckpointSignal(home: Partial<GatewayVmHomeState> | undefined): GatewayVmRuntimeResponse["homeCheckpoint"] {
