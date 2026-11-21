@@ -97,6 +97,19 @@ it("asks the product for starter files with the create facts and seeds what it r
   }));
 });
 
+it("answers a taken slug without asking the product for starter files", async () => {
+  h.docs.set(PROJECT, { ownerUid: "owner-1" });
+  const provide = vi.fn(async (): Promise<never> => {
+    throw new Error("templates unavailable");
+  });
+  installProjectStarterFiles(provide);
+
+  const result = await create({ starter: "phone" });
+
+  expect(result.status).toBe(409);
+  expect(provide).not.toHaveBeenCalled();
+});
+
 it("passes a null starter when the request names none", async () => {
   const provide = vi.fn(async () => null);
   installProjectStarterFiles(provide);

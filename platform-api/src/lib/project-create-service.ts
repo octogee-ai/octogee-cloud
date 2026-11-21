@@ -149,9 +149,6 @@ export async function createProjectForActor(
   const admissionFailure = await admitProjectCreate(plan);
   if (admissionFailure) return admissionFailure;
 
-  const starterFiles = await projectCreateStarterFiles(plan);
-  if (!starterFiles.ok) return starterFiles.result;
-
   const existing = await platformStateStore.workspaces.projects.get(plan.workspaceId, plan.slug);
   if (existing) {
     // Deterministic 409 before the plan gate — a duplicate slug is a slug
@@ -169,6 +166,9 @@ export async function createProjectForActor(
     const proofFailure = await actor.proveRepoSource(plan.ghRepoSource);
     if (proofFailure) return proofFailure;
   }
+
+  const starterFiles = await projectCreateStarterFiles(plan);
+  if (!starterFiles.ok) return starterFiles.result;
 
   const reservationFailure = await reserveProvisioningProject(plan);
   if (reservationFailure) return reservationFailure;
