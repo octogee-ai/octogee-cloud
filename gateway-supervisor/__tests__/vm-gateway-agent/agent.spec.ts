@@ -325,6 +325,43 @@ describe("runVmGatewayAgent", () => {
     return runVmGatewayAgent(d, { intervalMs: 0, sleep: async () => {}, stop: () => ticks++ > 1 });
   };
 
+  it.each([true, false])("responds to checkpoint watch hints only from a supporting broker (%s)", async supporting => {
+    const cursor = "a".repeat(64);
+    const header = "x-octogee-checkpoint-cursor";
+    const events: string[] = [];
+    let converges = 0;
+    const h = deps(fakeDocker(), () => runtimeReply(bundleFixture()), { now: 1_000 });
+    h.d.metadata.preempted = async () => true;
+    const fallback = h.d.fetchImpl;
+    h.d.fetchImpl = async (url, init) => {
+      if (!String(url).endsWith("/vm-runtime") || JSON.parse(String(init?.body)).preempted) return fallback(url, init);
+      if (new Headers(init?.headers).get(header)) {
+        events.push("watch");
+        const headers = supporting ? { [header]: cursor } : {};
+        return new Response(null, { status: 200, headers });
+      }
+      converges += 1;
+      events.push("read");
+      const response = await fallback(url, init);
+      if (converges === 1) response.headers.set(header, cursor);
+      return response;
+    };
+    let releasePeriodic!: () => void;
+    const periodic = new Promise<void>(resolve => { releasePeriodic = resolve; });
+    const running = runVmGatewayAgent(h.d, {
+      intervalMs: 30_000,
+      sleep: () => converges === 1 ? periodic : Promise.resolve(),
+      stop: () => converges >= 2,
+    });
+    await vi.waitFor(() => expect(events).toContain("watch"));
+    if (!supporting) {
+      expect(events).toEqual(["read", "watch"]);
+      releasePeriodic();
+    }
+    await running;
+    expect(events).toEqual(["read", "watch", "read"]);
+  });
+
   it("forwards the host journal even when no runtime bundle can be fetched", async () => {
     const docker = fakeDocker();
     const h = deps(docker, () => ({ status: 500, body: { error: "unavailable" } }), { now: 1_000 });
