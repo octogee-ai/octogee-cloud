@@ -107,16 +107,19 @@ function schedulerHomeMatches(owner, source, custody) {
     return custody.homeDiskId === source.homeDiskId && custody.homeDiskSource === owner.home.homeDisk?.source &&
         custody.zone === source.zone && custody.instanceName === source.instanceName && numericIdentity(custody.instanceId);
 }
-function isAdmittedSchedulerSource(previous, custody, gatewayId) {
-    return previous !== undefined && previous.instanceId === custody.instanceId && previous.name === custody.instanceName &&
-        previous.zone === custody.zone && previous.gatewayId === gatewayId;
+export function retainedBootPreservesScheduler(image, custody, gateways) {
+    const predecessor = image.sourceComputer;
+    return image.homeAdmission === true && image.homeId === custody.homeDiskId && predecessor != null &&
+        predecessor.name === custody.instanceName && predecessor.zone === custody.zone &&
+        typeof predecessor.gatewayId === "string" && gateways.includes(predecessor.gatewayId) &&
+        numericIdentity(predecessor.instanceId) && (predecessor.instanceId === custody.instanceId ||
+        isDeepStrictEqual(image.nativeSchedulerRetirement, custody));
 }
 export function archivedSchedulerSourceImage(owner, gatewayId, instanceId, custody) {
     if (custody.instanceId === instanceId)
         return null;
     const image = owner.home.homeDisk?.bootImage;
-    if (!image || image.homeAdmission !== true || image.homeId !== custody.homeDiskId ||
-        !isAdmittedSchedulerSource(image.sourceComputer, custody, gatewayId) ||
+    if (!image || !retainedBootPreservesScheduler(image, custody, [gatewayId]) ||
         typeof image.operationId !== "string" || !image.operationId ||
         !numericIdentity(image.id) || typeof image.name !== "string" || typeof image.project !== "string") {
         throw new IneligibleHomeArchiveError("Home archive lacks exact parked scheduler replacement lineage");

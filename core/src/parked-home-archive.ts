@@ -131,16 +131,19 @@ function schedulerHomeMatches(owner: PlatformUserRecord, source: ArchiveSource, 
     custody.zone === source.zone && custody.instanceName === source.instanceName && numericIdentity(custody.instanceId);
 }
 
-function isAdmittedSchedulerSource(previous: OpaqueMap | undefined, custody: OpaqueMap, gatewayId: string): boolean {
-  return previous !== undefined && previous.instanceId === custody.instanceId && previous.name === custody.instanceName &&
-    previous.zone === custody.zone && previous.gatewayId === gatewayId;
+export function retainedBootPreservesScheduler(image: OpaqueMap, custody: OpaqueMap, gateways: readonly string[]): boolean {
+  const predecessor = image.sourceComputer as OpaqueMap | undefined;
+  return image.homeAdmission === true && image.homeId === custody.homeDiskId && predecessor != null &&
+    predecessor.name === custody.instanceName && predecessor.zone === custody.zone &&
+    typeof predecessor.gatewayId === "string" && gateways.includes(predecessor.gatewayId) &&
+    numericIdentity(predecessor.instanceId) && (predecessor.instanceId === custody.instanceId ||
+      isDeepStrictEqual(image.nativeSchedulerRetirement, custody));
 }
 
 export function archivedSchedulerSourceImage(owner: PlatformUserRecord, gatewayId: string, instanceId: string, custody: OpaqueMap) {
   if (custody.instanceId === instanceId) return null;
   const image = owner.home.homeDisk?.bootImage as OpaqueMap | undefined;
-  if (!image || image.homeAdmission !== true || image.homeId !== custody.homeDiskId ||
-      !isAdmittedSchedulerSource(image.sourceComputer as OpaqueMap | undefined, custody, gatewayId) ||
+  if (!image || !retainedBootPreservesScheduler(image, custody, [gatewayId]) ||
       typeof image.operationId !== "string" || !image.operationId ||
       !numericIdentity(image.id) || typeof image.name !== "string" || typeof image.project !== "string") {
     throw new IneligibleHomeArchiveError("Home archive lacks exact parked scheduler replacement lineage");

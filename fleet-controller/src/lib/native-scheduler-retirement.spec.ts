@@ -18,19 +18,30 @@ const disk = { id: "102", source: "projects/test/zones/us-central1-b/disks/new-h
 const retirement = { uid, slug, sourceGatewayId: source, sharedGatewayId: shared, migrationId, returnOperationId,
   instanceId: "100", instanceName: "old-vm", zone, homeDiskId: "101", homeDiskSource: oldDisk, cutoverCommittedAt: 9, completedAt: 10 };
 
-function fixture(options: { snapshotSource?: string; generation?: number; attachedDisk?: string; schedulerDrained?: boolean } = {}) {
+function fixture(options: { snapshotSource?: string; generation?: number; attachedDisk?: string; schedulerDrained?: boolean; retainedBoot?: "legacy" | "multiple" | "wrong-custody" } = {}) {
   const archive = { phase: "restored", operationId: "home-archive", gatewayId: source, instanceId: "200",
     nativeSchedulerRetirement: retirement,
     snapshot: { sourceDisk: oldDisk, sourceDiskId: options.snapshotSource ?? "101", projectId: "test", id: "301", name: "home-snapshot", sizeGb: 10 },
     bootDisk: { source: "projects/test/zones/us-central1-b/disks/old-boot", id: "302" },
     targetGatewayId: gatewayId, leaseId: "restored-demand", generation: 2, restoredInstanceId: "201", restoredDisk: disk };
+  const { retainedBoot } = options;
+  const oldDiskRecord = { ...disk, id: retirement.homeDiskId, source: oldDisk };
+  const boot = { homeAdmission: true as const, homeId: retirement.homeDiskId, name: "qualified-builder", id: "409", project: "test",
+    operationId: "replaced-boot", sourceComputer: {
+      name: retirement.instanceName, zone, gatewayId: source, instanceId: retainedBoot === "legacy" ? retirement.instanceId : "200",
+    },
+    ...(retainedBoot && retainedBoot !== "legacy" ? { nativeSchedulerRetirement: retainedBoot === "multiple"
+      ? retirement : { ...retirement, migrationId: "other-migration" } } : {}),
+  };
+  const describedName = retainedBoot ? retirement.instanceName : "restored-vm";
   const store = createDocumentFixtureStore(new Map<string, Record<string, unknown>>([
     [`users/${uid}`, { provisioning: {
-      homeDisk: disk, homeArchive: archive, pendingNativeSchedulerRetirement: retirement,
+      ...(retainedBoot ? { homeDisk: { ...oldDiskRecord, bootImage: boot } } : { homeDisk: disk, homeArchive: archive }),
+      pendingNativeSchedulerRetirement: retirement,
       openclaw: { slug, gatewayId, activationLease: { status: "activating", leaseId: "restored-demand", generation: options.generation ?? 2, targetGatewayId: gatewayId } },
     } }],
     [`gateways/${gatewayId}`, { gatewayId, ownerUid: uid, builderSlug: slug, gatewayClass: "isolated", desiredStatus: "running", desiredRelease: 1, latestRelease: 1 }],
-    [`glmGateways/${gatewayId}`, { docKind: "runtime", release: 1, lifecycle: "serving", gatewayId, runtime: "gce-vm", vm: { instanceId: "201", instanceName: "restored-vm", zone } }],
+    [`glmGateways/${gatewayId}`, { docKind: "runtime", release: 1, lifecycle: "serving", gatewayId, runtime: "gce-vm", vm: { instanceId: "201", instanceName: describedName, zone } }],
     [`glmOperations/${returnOperationId}`, {
       id: returnOperationId, kind: "migrate-user", status: "succeeded", cutoverCommittedAt: 9, completedAt: 11,
       input: { uid, fromGatewayId: source, toGatewayId: shared },
@@ -41,11 +52,12 @@ function fixture(options: { snapshotSource?: string; generation?: number; attach
       input: { uid, fromGatewayId: shared, toGatewayId: gatewayId },
     }],
   ]));
-  const description: GatewayVmDescription = { name: "restored-vm", instanceId: "201", gatewayId, zone, status: "RUNNING",
+  const description: GatewayVmDescription = { name: describedName, instanceId: "201", gatewayId, zone, status: "RUNNING",
     metadata: { "octogee-owner-uid": uid }, labels: {}, machineType: "e2-medium", internalIp: null, provisioningModel: "STANDARD",
     serviceAccounts: [], lastStartedAt: 10 };
-  const vm = { describe: vi.fn(async () => description), retainHome: vi.fn(async () => ({ ...disk, id: options.attachedDisk ?? disk.id })),
-    readBootImage: vi.fn(), readImage: vi.fn() };
+  const attached = retainedBoot ? oldDiskRecord : disk;
+  const vm = { describe: vi.fn(async () => description), retainHome: vi.fn(async () => ({ ...attached, id: options.attachedDisk ?? attached.id })),
+    readBootImage: vi.fn(async () => ({ id: boot.id, name: boot.name })), readImage: vi.fn(async () => boot) };
   const scheduler = vi.fn(async () => ({ operationId: migrationId, phase: "retire" as const, agentIds: ["alice"], drained: options.schedulerDrained ?? true }));
   const run = () => retireNativeSchedulerBeforeStage({ store, vm, log: vi.fn() }, {
     uid, slug, gatewayId, operationId, claimedStartedAt: 20,
@@ -72,6 +84,22 @@ describe("retire the original scheduler handoff on a snapshot-backed home", () =
   it("keeps the receipt until native retirement acknowledges the original migration", async () => {
     const h = fixture({ schedulerDrained: false });
     await expect(h.run()).rejects.toThrow(/acknowledgement changed/);
+    expect((await h.store.users.records.get(uid))?.fences.pendingNativeSchedulerRetirement).toEqual(retirement);
+  });
+});
+
+describe("serve retained scheduler custody across boot image replacement", () => {
+  it.each(["legacy", "multiple"] as const)("accepts the exact attached home and boot identity through %s lineage", async retainedBoot => {
+    const h = fixture({ retainedBoot });
+    await h.run();
+    expect(h.scheduler).toHaveBeenCalledExactlyOnceWith({ migrationId, gatewayId, slug, phase: "retire" });
+    expect((await h.store.users.records.get(uid))?.fences.pendingNativeSchedulerRetirement).toBeUndefined();
+  });
+
+  it("refuses boot metadata carrying another scheduler migration receipt", async () => {
+    const h = fixture({ retainedBoot: "wrong-custody" });
+    await expect(h.run()).rejects.toThrow(/retirement authority changed/);
+    expect(h.scheduler).not.toHaveBeenCalled();
     expect((await h.store.users.records.get(uid))?.fences.pendingNativeSchedulerRetirement).toEqual(retirement);
   });
 });
