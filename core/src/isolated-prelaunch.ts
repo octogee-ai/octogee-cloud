@@ -4,11 +4,13 @@ import { accountAllowsInteractiveAccess } from "@octogee/shared/types/account-li
 import type { GatewayDoc } from "@octogee/shared/types/gateway-releases";
 import type { GatewayMutableConfig } from "@octogee/shared/types/gateway-mutable-config";
 import type { UserActivationLease, PlatformUserRecord } from "./platform-state/users.js";
+import { parkedPrewarmInput, readActiveParkedPrewarm } from "./isolated-gateway-lifecycle/prewarm.js";
 import type { PlatformStateRepositories } from "./platform-state/store.js";
 
 type DurableGateway = GatewayDoc & GatewayMutableConfig;
 
-export type PrelaunchAuthorityReader = Pick<PlatformStateRepositories, "users" | "gateways">;
+export type PrelaunchAuthorityReader = Pick<PlatformStateRepositories, "users" | "gateways"> &
+  Partial<Pick<PlatformStateRepositories, "journal">>;
 
 function prelaunchStatusMatches(gatewayId: string, generation: number, lease: UserActivationLease, activationBoot: boolean): boolean {
   return lease.status === "provisioning" && lease.activationOperationId === undefined && lease.activatingAt === undefined ||
@@ -60,6 +62,27 @@ function operatorPrelaunchSource(gateway: DurableGateway, user: PlatformUserReco
   ].every(Boolean) ? { sourceGatewayId, sourceAssignmentEpoch: null } : null;
 }
 
+async function parkedPrewarmSource(
+  reader: PrelaunchAuthorityReader,
+  gateway: DurableGateway,
+  user: PlatformUserRecord | null,
+): Promise<PrelaunchSource | null> {
+  if (!reader.journal || !user || gateway.desiredStatus !== "running" ||
+      !accountAllowsInteractiveAccess({ accountLifecycle: user.accountLifecycle }) ||
+      gateway.ownerUid !== user.uid || gateway.allocation?.claimedByUid !== user.uid ||
+      user.slug !== gateway.builderSlug) return null;
+  const state = { journal: reader.journal };
+  const operation = await readActiveParkedPrewarm(state, user.uid);
+  if (operation?.gatewayId !== gateway.gatewayId) return null;
+  const request = parkedPrewarmInput(operation);
+  const { sourceGatewayId, sourceAssignmentEpoch, release } = operation.output ?? {};
+  if (request.uid !== user.uid || request.generation !== gateway.allocation.generation ||
+      release !== gateway.desiredRelease || typeof sourceGatewayId !== "string" ||
+      sourceGatewayId === gateway.gatewayId || sourceGatewayId !== user.gateway?.gatewayId ||
+      typeof sourceAssignmentEpoch !== "number" || !Number.isSafeInteger(sourceAssignmentEpoch)) return null;
+  return { sourceGatewayId, sourceAssignmentEpoch };
+}
+
 function samePrelaunchAllocation(gateway: DurableGateway, expected: DurableGateway): boolean {
   return [
     gateway.ownerUid === expected.ownerUid,
@@ -84,7 +107,7 @@ export async function isolatedPrelaunchReserved(input: {
   const user = await reader.users.records.get(gateway.ownerUid);
   const source = isOperatorIssuedAllocation(gateway.allocation)
     ? operatorPrelaunchSource(gateway, user)
-    : leasePrelaunchSource(gateway, user, input.activationBoot === true);
+    : leasePrelaunchSource(gateway, user, input.activationBoot === true) ?? await parkedPrewarmSource(reader, gateway, user);
   if (!source) return false;
   const { sourceGatewayId, sourceAssignmentEpoch } = source;
   const [sourceRoot, assigned, targetEmpty] = await Promise.all([
@@ -142,8 +165,10 @@ export async function isolatedBootMode(input: {
   }
   const lease = user.activationLease;
   if (!activationLeaseMatches(gateway, lease)) {
+    if (await isolatedPrelaunchReserved(input)) return { mode: "prelaunch" };
     throw new Error("User activation authority is inconsistent");
   }
+  if (lease.status === "parked" && await isolatedPrelaunchReserved(input)) return { mode: "prelaunch" };
   const boot = activationBootMode(gateway, lease);
   if (boot.mode !== "normal" && await isolatedPrelaunchReserved({ ...input, activationBoot: true })) return { mode: "prelaunch" };
   if (boot.mode === "prelaunch") throw new Error("Isolated prelaunch authority is inconsistent");

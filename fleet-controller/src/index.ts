@@ -175,7 +175,7 @@ import { createRetireGatewayHandler } from "./handlers/retire-gateway.js";
 import { readFileSync } from "node:fs";
 import { createGatewayServiceAccountTeardown, gatewaysHaveGoogleServiceAccounts } from "./lib/gateway-gsa.js";
 import { gatewayFleetBaseUrl, gatewayVmAddress } from "./lib/gateway-address.js";
-import { createVmReadinessProbe, createSurgeEndpointLister } from "./vm-endpoints.js";
+import { createVmReadinessProbe, createSurgeEndpointLister, endpointFromVm } from "./vm-endpoints.js";
 import {
   createRuntimeDispatchingHelmRunner,
   createVmGatewayRuntime,
@@ -190,6 +190,7 @@ import { recoverSharedSourceRuntime } from "./lib/shared-source-runtime.js";
 import { recoverSharedRestoreRuntime } from "./lib/shared-restore-runtime.js";
 import { schedulerHandoffAwaitingRelease, startSchedulerHandoffRelease } from "./scheduler-handoff-release.js";
 import { createRecycleGatewayHandler } from "./handlers/recycle-gateway.js";
+import { createParkedPrewarmHandler } from "./handlers/parked-prewarm.js";
 import { createGatewayVmHandler } from "./handlers/gateway-vm.js";
 import { createGatewayVmClient } from "./lib/compute-vm.js";
 import { pausedIsolatedRetirementSourceFencedOff } from "./lib/native-retirement-telemetry.js";
@@ -1723,6 +1724,7 @@ export const OPERATION_QUEUE_DRAIN_MS_DEFAULT = 20_000;
 // Restart re-drive candidates. The predicate below admits only migrations with
 // durable migration or recovery state; legacy rollout sub-operations remain rollout-owned.
 const RESUMABLE_OP_KINDS: ReadonlySet<string> = new Set([
+  "prewarm-gateway",
   "rollout",
   "restart-gateway",
   MIGRATE_USER_KIND,
@@ -3206,10 +3208,11 @@ async function buildHandlers(
   });
 
   const recoveryTargetTransport = createSurgePodTransport({ privateKey, log: logFn });
+  const probeVmReady = createVmReadinessProbe({ port: FLEET_CONTROLLER_PORT, timeoutMs: GATEWAY_HEALTH_TIMEOUT_MS, log: logFn });
   const recoveryTargetEndpoints = createSurgeEndpointLister({
     readRuntimeDoc: gatewayId => store.fleetRegistry.get(gatewayId),
     listPods: gatewayId => listSurgePods(spawnKubectl, NAMESPACE, gatewayId),
-    readVmReady: createVmReadinessProbe({ port: FLEET_CONTROLLER_PORT, timeoutMs: GATEWAY_HEALTH_TIMEOUT_MS, log: logFn }),
+    readVmReady: probeVmReady,
   });
   const migrateUser = createMigrateUserHandler({
     prepareIsolatedRecoveryTarget: input => prepareIsolatedRecoveryTarget({
@@ -3619,6 +3622,18 @@ async function buildHandlers(
 
   return {
     "add-gateway": addGateway,
+    "prewarm-gateway": createParkedPrewarmHandler({
+      store,
+      readVmRuntime: () => vmGatewayRuntimeRef.current ?? null,
+      probeReady: async (gatewayId, instanceId) => {
+        const runtime = await store.fleetRegistry.get(gatewayId);
+        const endpoint = endpointFromVm(gatewayId, runtime?.vm);
+        return runtime?.vm?.instanceId === instanceId && endpoint !== null && await probeVmReady(endpoint, gatewayId);
+      },
+      requestReconcileTick: (gatewayId) => requestReconcileTickRef.fire?.(gatewayId),
+      now: Date.now,
+      log: logFn,
+    }),
     "gateway-vm": (op, ctx) => runGatewayRuntimeExclusive(() => gatewayVm(op, ctx)),
     [MIGRATE_USER_KIND]: migrateUser,
     "retire-gateway": retireGateway,

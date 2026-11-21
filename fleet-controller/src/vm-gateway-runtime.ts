@@ -31,11 +31,19 @@ import { buildUpgradeArgs, type HelmRunner, type HelmSubprocess } from "./helm-r
 const VM_ROUTES_CONFIGMAP_KEY = "routes.json";
 
 export interface VmGatewayRuntime extends HelmRunner {
+  prewarmBootImageId(gatewayId: string): Promise<string>;
+  prewarmVmObservation(gatewayId: string, uid: string): Promise<ParkedPrewarmVmObservation | null>;
   readDeploymentPrerequisiteError(gatewayId: string): Promise<string | null>;
   recoverUnreachable(gatewayId: string): Promise<void>;
   deleteVm(ownerUid: string): Promise<boolean>;
   replaceStoppedVm(gatewayId: string, operationId: string, assertAuthority: () => Promise<void>, options?: { forceOwnerUid: string; expectedInstanceId: string }): Promise<Record<string, unknown>>;
   detectPreemption(gatewayId: string, sinceMs: number): Promise<string | null>;
+}
+
+export interface ParkedPrewarmVmObservation {
+  instanceId: string;
+  status: string;
+  bootImageId: string;
 }
 
 export interface VmGatewayRuntimeDeps {
@@ -416,7 +424,7 @@ export function createVmGatewayRuntime(deps: VmGatewayRuntimeDeps): VmGatewayRun
         replicas: opts.replicas,
       });
       if (opts.replicas === 0) {
-        await vmLifecycle.pauseVm(gatewayId);
+        if (!await vmLifecycle.pauseVm(gatewayId)) return;
       } else {
         await vmLifecycle.ensureVm(gatewayId, `${opts.imageRepository}:${opts.imageTag}`, ownerUid, bridge);
       }
@@ -444,6 +452,24 @@ export function createVmGatewayRuntime(deps: VmGatewayRuntimeDeps): VmGatewayRun
       return `${gatewayId}: VM runtime has no Helm release to recover`;
     },
 
+    async prewarmBootImageId(gatewayId) {
+      const runtime = await deps.store.fleetRegistry.get(gatewayId);
+      const spec = runtime?.vmSpec ?? deps.vmSpec;
+      return (await deps.vm.readFamilyImage(spec.imageFamily, spec.imageProject)).id;
+    },
+    async prewarmVmObservation(gatewayId, uid) {
+      const vm = (await deps.store.fleetRegistry.get(gatewayId))?.vm;
+      if (!vm?.instanceId) return null;
+      const observed = await deps.vm.describe(vm.instanceName, vm.zone);
+      if (!observed || observed.instanceId !== vm.instanceId || observed.gatewayId !== gatewayId ||
+          observed.metadata["octogee-owner-uid"] !== uid) return null;
+      if (observed.status !== "RUNNING" && observed.status !== "SUSPENDED") return null;
+      const bootImage = await deps.vm.readBootImage(vm.instanceName, vm.zone);
+      const checked = await deps.vm.describe(vm.instanceName, vm.zone);
+      if (checked?.instanceId !== observed.instanceId || checked.status !== observed.status || checked.gatewayId !== gatewayId ||
+          checked.metadata["octogee-owner-uid"] !== uid) return null;
+      return { instanceId: vm.instanceId, status: observed.status, bootImageId: bootImage.id };
+    },
     readDeploymentPrerequisiteError: vmLifecycle.readDeploymentPrerequisiteError,
     recoverUnreachable: vmLifecycle.recoverUnreachable,
     deleteVm: vmLifecycle.deleteVm,

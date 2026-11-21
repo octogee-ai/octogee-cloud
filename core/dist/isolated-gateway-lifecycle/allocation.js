@@ -11,6 +11,7 @@ import { readGatewayArtifactInStore, writeInitialGatewayReleaseInTransaction, } 
 import { ISOLATED_GATEWAY_ALLOCATION_KIND, ISOLATED_GATEWAY_LIFECYCLE_ACTOR, IsolatedGatewayFenceError, checkPlacementOwner, } from "./inputs.js";
 import { exactLeaseFence, userAllowsInteractiveAccess } from "./lease.js";
 import { retireOwnedIsolatedGateway } from "./retirement.js";
+import { parkedPrewarmInput, readActiveParkedPrewarm } from "./prewarm.js";
 function isolatedRuntimeConfig(gatewayId, sizingTier) {
     return {
         configSchemaVersion: 1,
@@ -176,7 +177,9 @@ function provisioningLease(lease, targetGatewayId, now) {
 function assertParkedRootResumable(input) {
     const { parked } = input;
     const root = projectGatewayDesiredRootForGateway(input.stored, parked.gatewayId);
-    if (!input.stored || !parkedRootMatches(root, input.request, parked) || root.liveRelease !== input.liveRelease ||
+    const resumable = input.handoff && root?.desiredStatus === "running"
+        ? { ...root, desiredStatus: "paused" } : root;
+    if (!input.stored || !parkedRootMatches(resumable, input.request, parked) || root.liveRelease !== input.liveRelease ||
         !rootOnLiveRelease(root)) {
         throw new IsolatedGatewayFenceError(`parked gateway ${parked.gatewayId} changed before resuming`);
     }
@@ -185,7 +188,7 @@ function assertParkedRootResumable(input) {
     }
     return root;
 }
-async function resumeParkedIsolatedGateway(input, request, parked, source, mode) {
+async function resumeParkedIsolatedGateway(input, request, parked, source, mode, handoffOperationId) {
     const sizingKeyRead = { store: input.store, readSizingKey: input.readSizingKey, uid: request.uid, now: input.now() };
     const resume = () => withCurrentSizingKey(sizingKeyRead, ({ sizingKey, profile: sizingProfile, assertCurrent }) => input.store.transaction({ label: "disposable-gateway.resume-parked", readOnly: mode === "plan" }, async (transaction) => {
         await input.requireOwner(transaction);
@@ -198,7 +201,14 @@ async function resumeParkedIsolatedGateway(input, request, parked, source, mode)
         ]);
         assertCurrent(user);
         const stored = roots.get(parked.gatewayId) ?? null;
-        const root = assertParkedRootResumable({ stored, runtime, request, parked, liveRelease: source.liveRelease });
+        const prewarm = await readActiveParkedPrewarm(transaction, request.uid);
+        if (prewarm?.output?.prewarmState === "booting")
+            throw new IsolatedGatewayFenceError("Owner computer prewarm has not released the allocation");
+        const handoff = prewarm?.output?.prewarmState === "handoff" && prewarm.gatewayId === parked.gatewayId ? prewarm : null;
+        if ((handoff?.id ?? undefined) !== handoffOperationId) {
+            throw new IsolatedGatewayFenceError("Owner computer prewarm handoff changed");
+        }
+        const root = assertParkedRootResumable({ stored, runtime, request, parked, liveRelease: source.liveRelease, handoff: handoff !== null });
         if (sharedSourceRelease(roots.get(request.sourceGatewayId), request.sourceGatewayId) !== source.release) {
             throw new IsolatedGatewayFenceError(`isolated gateway source ${request.sourceGatewayId} changed`);
         }
@@ -261,6 +271,24 @@ async function resumeOrRetireParkedGateway(input, request, parked, source, mode)
     }
     return null;
 }
+async function matchingParkedGateway(state, request, artifact) {
+    const roots = await state.gateways.roots.list({ gatewayClass: "isolated", ownerUid: request.uid });
+    const matches = [];
+    for (const root of roots) {
+        if (!root.allocation || root.sizingProfile !== request.sizingKey)
+            continue;
+        const parked = { gatewayId: root.gatewayId, generation: root.allocation.generation };
+        const projected = projectGatewayDesiredRootForGateway(root, root.gatewayId);
+        if (projected && parkedRootMatches(projected, request, parked) &&
+            (await state.fleetRegistry.get(root.gatewayId))?.runtime === "gce-vm" &&
+            await gatewayRunsArtifact(state, projected, artifact)) {
+            matches.push(parked);
+        }
+    }
+    if (matches.length > 1)
+        throw new IsolatedGatewayFenceError("More than one parked computer matches the current Shared release");
+    return matches[0];
+}
 async function readAllocationSource(store, request) {
     const poolConfig = await readSharedGatewayPoolConfigInStore(store);
     if (!poolConfig?.sharedGatewayIds.includes(request.sourceGatewayId)) {
@@ -302,9 +330,24 @@ export async function allocateIsolatedGateway(input, request, mode = "apply") {
     await checkPlacementOwner(input);
     const gatewayId = allocatedIsolatedGatewayId(request);
     await checkHomeReadiness(input, request, gatewayId);
+    const prewarm = await readActiveParkedPrewarm(input.store, request.uid);
+    if (prewarm?.output?.prewarmState === "booting")
+        throw new IsolatedGatewayFenceError("Owner computer prewarm has not released the allocation");
     const source = await readAllocationSource(input.store, request);
-    if (request.parkedGateway) {
-        const resumed = await resumeOrRetireParkedGateway(input, request, request.parkedGateway, source, mode);
+    if (prewarm?.output?.prewarmState === "handoff") {
+        const { gatewayId: warmingGatewayId, generation } = parkedPrewarmInput(prewarm);
+        const root = projectGatewayDesiredRootForGateway(await input.store.gateways.roots.get(warmingGatewayId), warmingGatewayId);
+        if (!root || root.sizingProfile !== request.sizingKey || !(await gatewayRunsArtifact(input.store, root, source.artifact))) {
+            throw new IsolatedGatewayFenceError("Owner computer prewarm handoff no longer matches the current Shared release");
+        }
+        await resumeParkedIsolatedGateway(input, request, { gatewayId: warmingGatewayId, generation }, {
+            release: source.release, liveRelease: root.liveRelease,
+        }, mode, prewarm.id);
+        return { gatewayId: warmingGatewayId, outcome: "resumed" };
+    }
+    const parked = request.parkedGateway ?? await matchingParkedGateway(input.store, request, source.artifact);
+    if (parked) {
+        const resumed = await resumeOrRetireParkedGateway(input, request, parked, source, mode);
         if (resumed)
             return { gatewayId: resumed, outcome: "resumed" };
     }
@@ -354,6 +397,10 @@ export async function allocateIsolatedGateway(input, request, mode = "apply") {
         })) {
             throw new IsolatedGatewayFenceError(`isolated gateway demand fence changed for ${request.uid}`);
         }
+        if (await readActiveParkedPrewarm(transaction, request.uid))
+            throw new IsolatedGatewayFenceError("Owner computer prewarm changed before fresh allocation");
+        if (await matchingParkedGateway(transaction, request, source.artifact))
+            throw new IsolatedGatewayFenceError("A matching parked computer became available before allocation");
         input.requireHomeReady({ user, request, sizingProfile });
         if (mode === "plan")
             return;
