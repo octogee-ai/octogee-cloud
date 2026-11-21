@@ -50,6 +50,62 @@ describe("resumeOrphanedRunningOps", () => {
     expect(redrive.mock.calls[0][0]).toMatchObject({ id: "op-roll", kind: "rollout" });
   });
 
+  it("re-adopts all three independent prewarms while the first handler is still waiting", async () => {
+    let finishFirst!: () => void;
+    const first = new Promise<void>(resolve => { finishFirst = resolve; });
+    const started: string[] = [];
+    const operations = ["a", "b", "c", "overflow"].map<FakeOpDoc>(id => ({
+      id,
+      data: { status: "running", kind: "prewarm-gateway", input: { uid: id, gatewayId: `computer-${id}` } },
+    }));
+    const sweep = resumeOrphanedRunningOps({
+      store: makeStore(operations),
+      log: vi.fn(),
+      resumableKinds: new Set(["prewarm-gateway"]),
+      redrive: async op => {
+        started.push(op.id);
+        if (op.id === "a") await first;
+      },
+    });
+    try {
+      await vi.waitFor(() => expect(started).toEqual(["a", "b", "c"]), { timeout: 250 });
+    } finally {
+      finishFirst();
+      await sweep;
+    }
+    await expect(sweep).resolves.toEqual({ scanned: 4, resumed: 4 });
+    expect(started).toEqual(["a", "b", "c", "overflow"]);
+  });
+
+  it.each([
+    ["same owner", { uid: "owner-a", gatewayId: "computer-b" }],
+    ["same gateway", { uid: "owner-b", gatewayId: "computer-a" }],
+  ])("keeps orphaned prewarms with the %s sequential", async (_scope, input) => {
+    let finishFirst!: () => void;
+    const first = new Promise<void>(resolve => { finishFirst = resolve; });
+    const redrive = vi.fn<ResumeOrphanedOpsDeps["redrive"]>(async op => {
+      if (op.id === "a") await first;
+    });
+    const sweep = resumeOrphanedRunningOps({
+      store: makeStore([
+        { id: "a", data: { status: "running", kind: "prewarm-gateway", input: { uid: "owner-a", gatewayId: "computer-a" } } },
+        { id: "b", data: { status: "running", kind: "prewarm-gateway", input } },
+        { id: "c", data: { status: "running", kind: "rollout" } },
+      ]),
+      log: vi.fn(),
+      resumableKinds: new Set(["prewarm-gateway", "rollout"]),
+      redrive,
+    });
+    try {
+      await vi.waitFor(() => expect(redrive).toHaveBeenCalledOnce());
+      expect(redrive).toHaveBeenCalledWith(expect.objectContaining({ id: "a" }));
+    } finally {
+      finishFirst();
+      await sweep;
+    }
+    expect(redrive.mock.calls.map(([operation]) => operation.id)).toEqual(["a", "b", "c"]);
+  });
+
   it("skips non-resumable running kinds (migrate-customer sub-ops, add-gateway) — the rollout re-drive re-issues those", async () => {
     const redrive = vi.fn<ResumeOrphanedOpsDeps["redrive"]>(async () => undefined);
     const ops: FakeOpDoc[] = [

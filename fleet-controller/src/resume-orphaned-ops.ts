@@ -1,5 +1,7 @@
+import { PARKED_PREWARM_KIND } from "@octogee/core/isolated-gateway-lifecycle";
 import type { PlatformStateRepositories } from "@octogee/core/platform-state";
 import type { Operation } from "@octogee/shared/types/glm";
+import { PARKED_PREWARM_CONCURRENCY } from "./operation-queue.js";
 
 export interface ResumeOrphanedOpsDeps {
   store: Pick<PlatformStateRepositories, "journal">;
@@ -31,10 +33,12 @@ export async function resumeOrphanedRunningOps(
   deps: ResumeOrphanedOpsDeps,
 ): Promise<ResumeOrphanedOpsResult> {
   const running = await deps.store.journal.operations.listByStatus(["running"]);
+  const prewarms: Operation[] = [];
   let resumed = 0;
-  for (const op of running) {
-    if (!deps.resumableKinds.has(op.kind)) continue;
-    if (deps.resumableOperation && !deps.resumableOperation(op)) continue;
+  async function flushPrewarms() {
+    await Promise.all(prewarms.splice(0).map(redrive));
+  }
+  async function redrive(op: Operation) {
     deps.log(
       `[resume-orphaned-ops] re-driving orphaned running op=${op.id} kind=${op.kind} (controller restarted mid-op)`,
     );
@@ -47,5 +51,25 @@ export async function resumeOrphanedRunningOps(
       );
     }
   }
+  for (const op of running) {
+    if (!deps.resumableKinds.has(op.kind)) continue;
+    if (deps.resumableOperation && !deps.resumableOperation(op)) continue;
+    if (!scopedPrewarm(op)) {
+      await flushPrewarms();
+      await redrive(op);
+      continue;
+    }
+    if (prewarms.length === PARKED_PREWARM_CONCURRENCY ||
+      prewarms.some(pending => pending.input.uid === op.input.uid || pending.input.gatewayId === op.input.gatewayId)) {
+      await flushPrewarms();
+    }
+    prewarms.push(op);
+  }
+  await flushPrewarms();
   return { scanned: running.length, resumed };
+}
+
+function scopedPrewarm(op: Operation): boolean {
+  return op.kind === PARKED_PREWARM_KIND && typeof op.input.uid === "string" && op.input.uid.length > 0 &&
+    typeof op.input.gatewayId === "string" && op.input.gatewayId.length > 0;
 }
