@@ -20,6 +20,37 @@ import {
 const UNCONVERGED_SOURCE_ERROR =
   '/push-rsync-state/shared-45b73f50e990: 409 {"error":"source mount refused","message":"[migration-activation:livefixture] source has no converged configuration for livefixture: its configuration was permanently refused (config.patch would remove entries from array path(s): agents.entries.octogee-unmatched-route.tools.deny); nothing converged to carry; park and release the user so placement mounts it fresh, or erase it"}';
 
+describe("parked home archive provider continuation", () => {
+  const op = { kind: "gateway-vm", origin: "operator", input: { action: "archive" },
+    startedAt: 1_000, attempts: MAX_OPERATION_ATTEMPTS };
+  const result = { success: false, steps: [], error: "Waiting for the exact source stop or home snapshot",
+    waitingForHomeArchiveProvider: true };
+
+  it("requeues the same fenced operation in five seconds without spending an attempt", () => {
+    const pending = buildOperationCompletionUpdate({ op, result, steps: [], now: 2_000 });
+    expect(pending).toMatchObject({
+      status: "pending", startedAt: null, completedAt: null, nextAttemptAt: 7_000,
+      output: { homeArchiveProviderDeadlineAt: 1_202_000 },
+    });
+    expect(pending).not.toHaveProperty("attempts");
+    expect(pending).not.toHaveProperty("input");
+    const another = buildOperationCompletionUpdate({ op: { ...op, output: { homeArchiveProviderDeadlineAt: 1_202_000 } },
+      result, steps: [], now: 1_199_500 });
+    expect(another).toMatchObject({ status: "pending", nextAttemptAt: 1_202_000,
+      output: { homeArchiveProviderDeadlineAt: 1_202_000 } });
+  });
+
+  it("records a timeout at the original deadline and leaves hard errors terminal", () => {
+    const timed = { ...op, output: { homeArchiveProviderDeadlineAt: 1_202_000 } };
+    const failed = buildOperationCompletionUpdate({ op: timed, result, steps: [], now: 1_202_000 });
+    expect(failed).toMatchObject({ status: "failed", error: expect.stringMatching(/timed out/i),
+      attemptHistory: [{ classification: "terminal" }] });
+    expect(buildOperationCompletionUpdate({ op: { ...timed, attempts: 0 },
+      result: { success: false, steps: [], error: "Snapshot provenance differs" },
+      steps: [], now: 1_201_000 })).toMatchObject({ status: "failed", error: "Snapshot provenance differs" });
+  });
+});
+
 describe("PostgreSQL source recovery health retries", () => {
   const error = "source management health unconfirmed; outcome remains fenced";
   it("retains the owned source recovery beyond the attempt cap only for its exact unavailable health result", () => {

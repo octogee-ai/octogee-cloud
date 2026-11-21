@@ -14,7 +14,7 @@ interface ArchiveIdentity {
 }
 
 function archivePending(error: string): OperationResult {
-  return { steps: [], success: false, retryAfterMs: 5_000, error };
+  return { steps: [], success: false, waitingForHomeArchiveProvider: true, error };
 }
 
 function archiveOwnerStorageCompatible(owner: NonNullable<Awaited<ReturnType<PlatformStateRepositories["users"]["records"]["get"]>>>): boolean {
@@ -45,7 +45,7 @@ function verifyArchiveSource(input: { owner: PlatformUserRecord; archive: UserHo
   const observed = runtime?.vm;
   if (!observed) return archive.phase === "snapshot-ready" || !archive.nativeSchedulerRetirement ? source : null;
   return observed.instanceId === identity.instanceId && observed.instanceName === source.instanceName &&
-    observed.zone === source.zone && ["SUSPENDED", "TERMINATED", "STOPPED"].includes(observed.status ?? "") ? source : null;
+    observed.zone === source.zone && ["SUSPENDED", "STOPPING", "TERMINATED", "STOPPED"].includes(observed.status ?? "") ? source : null;
 }
 
 async function readArchive(state: PlatformStateRepositories, identity: ArchiveIdentity) {
@@ -84,6 +84,7 @@ async function prepareSnapshot(deps: { store: PlatformStateStore; vm: GatewayVmC
   const { archive, home, source, instanceName, zone, snapshotName } = observation;
   if (archive.phase !== "preparing") return archive;
   if (!source) throw new Error("Home archive source VM is absent before snapshot-ready");
+  if (source.status === "STOPPING") return null;
   if (source.status === "SUSPENDED") {
     await read();
     await vm.stop(instanceName, zone);
@@ -168,22 +169,18 @@ export function createHomeArchiveHandler(deps: {
     const { identity, assertClaim } = requireArchiveOperation(operation, ctx, deps.grant);
     const read = async () => { await assertClaim(); return readArchive(deps.store, identity); };
     const { vm } = deps;
-    try {
-      const { owner, archive, parked, home } = await read();
-      if (archive.phase === "archived") return { steps: [], success: true, output: { snapshot: archive.snapshot, zeroProvisionedDisks: true } };
-      if (archive.phase === "restored" || !parked) throw new Error("Home archive is no longer operating on a parked VM");
-      const { instanceName, zone } = parked;
-      const snapshotName = `home-archive-${operation.id}`;
-      const source = await vm.describe(instanceName, zone);
-      if (source && (source.instanceId !== identity.instanceId || source.gatewayId !== identity.gatewayId || source.metadata["octogee-owner-uid"] !== identity.ownerUid)) {
-        throw new Error("Home archive source VM identity changed");
-      }
-      if (source) await verifyReplacementImage(vm, identity, owner, archive, source);
-      const ready = await prepareSnapshot(deps, identity, assertClaim, read, { archive, home, source, instanceName, zone, snapshotName });
-      if (!ready) return archivePending("Waiting for the exact source stop or home snapshot");
-      return await disposeParkedHome(deps, identity, assertClaim, read, { archive: ready, home, source, instanceName, zone, snapshotName });
-    } catch (error) {
-      return archivePending(error instanceof Error ? error.message : String(error));
+    const { owner, archive, parked, home } = await read();
+    if (archive.phase === "archived") return { steps: [], success: true, output: { snapshot: archive.snapshot, zeroProvisionedDisks: true } };
+    if (archive.phase === "restored" || !parked) throw new Error("Home archive is no longer operating on a parked VM");
+    const { instanceName, zone } = parked;
+    const snapshotName = `home-archive-${operation.id}`;
+    const source = await vm.describe(instanceName, zone);
+    if (source && (source.instanceId !== identity.instanceId || source.gatewayId !== identity.gatewayId || source.metadata["octogee-owner-uid"] !== identity.ownerUid)) {
+      throw new Error("Home archive source VM identity changed");
     }
+    if (source) await verifyReplacementImage(vm, identity, owner, archive, source);
+    const ready = await prepareSnapshot(deps, identity, assertClaim, read, { archive, home, source, instanceName, zone, snapshotName });
+    if (!ready) return archivePending("Waiting for the exact source stop or home snapshot");
+    return await disposeParkedHome(deps, identity, assertClaim, read, { archive: ready, home, source, instanceName, zone, snapshotName });
   };
 }

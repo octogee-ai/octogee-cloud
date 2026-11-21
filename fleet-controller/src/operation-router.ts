@@ -16,6 +16,7 @@ export interface OperationResult {
   scrubInputOnSuccess?: boolean;
   retryAfterMs?: number;
   waitingForUserIdle?: boolean;
+  waitingForHomeArchiveProvider?: boolean;
 }
 
 export interface OperationContext {

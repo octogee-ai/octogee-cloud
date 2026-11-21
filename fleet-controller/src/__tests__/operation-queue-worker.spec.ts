@@ -1115,6 +1115,33 @@ describe("pending operation watch", () => {
     }
   });
 
+  it("wakes one fenced archive at its persisted provider deadline after restart", async () => {
+    const id = "archive-owner";
+    const { db, store, emit } = createOperationsFixture({
+      [id]: baseOp({ id, kind: "gateway-vm", origin: "automatic", createdBy: "glm-controller-return-home-archive",
+        input: { action: "archive", uid: "alice" }, nextAttemptAt: 6_000, waitingOn: "home-archive-provider",
+        output: { homeArchiveProviderDeadlineAt: 1_201_000 } }),
+    });
+    const handler = vi.fn<OperationHandler>().mockResolvedValue({ success: true, steps: [] });
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const stop = startOperationWorker(buildDeps(db, { "gateway-vm": handler }));
+    try {
+      const pending = (await db.journal.operations.get(id))!;
+      await emit({ kind: "snapshot", records: [pending], cursor: "c1" as never });
+      await emit({ kind: "resync", reason: "backend-restart" });
+      await emit({ kind: "snapshot", records: [pending], cursor: "c2" as never });
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(handler).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(handler).toHaveBeenCalledOnce();
+      expect(store.get(id)?.status).toBe("succeeded");
+    } finally {
+      stop();
+      vi.useRealTimers();
+    }
+  });
+
   it("claims the watch snapshot and each later addition, ignoring modifications, until stopped", async () => {
     const claimed: string[] = [];
     const handler: OperationHandler = vi.fn(async (op) => {

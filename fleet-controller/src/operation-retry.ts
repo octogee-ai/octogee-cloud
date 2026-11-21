@@ -194,6 +194,7 @@ export interface OperationCompletionInput {
     id?: string;
     kind?: string;
     origin?: string;
+    createdBy?: string;
     input?: Record<string, unknown>;
     attempts?: number;
     attemptHistory?: OperationAttemptRecord[];
@@ -252,6 +253,44 @@ function successfulCompletion(
 
 function recordOutput(value: unknown): boolean {
   return value !== null && typeof value === "object";
+}
+
+const HOME_ARCHIVE_PROVIDER_WAIT_MS = 5_000;
+const HOME_ARCHIVE_PROVIDER_BUDGET_MS = 20 * 60_000;
+const WAITING_FOR_HOME_ARCHIVE_PROVIDER = "home-archive-provider";
+
+function isHomeArchiveOperation(op: OperationCompletionInput["op"]): boolean {
+  return op.kind === "gateway-vm" && op.input?.action === "archive" && isAuthorizedHomeArchiveOrigin(op);
+}
+
+export function homeArchiveProviderDueAt(op: OperationCompletionInput["op"] & {
+  status?: string; waitingOn?: string | null; nextAttemptAt?: number | null;
+}): number | undefined {
+  return isHomeArchiveOperation(op) && op.status === "pending" && op.waitingOn === WAITING_FOR_HOME_ARCHIVE_PROVIDER
+    ? op.nextAttemptAt ?? undefined : undefined;
+}
+
+function homeArchiveProviderCompletion(input: OperationCompletionInput, steps: OperationStep[], attempts: number): OperationPatch {
+  const recorded = input.op.output?.homeArchiveProviderDeadlineAt;
+  const deadline = typeof recorded === "number" && Number.isSafeInteger(recorded)
+    ? recorded : input.now + HOME_ARCHIVE_PROVIDER_BUDGET_MS;
+  const error = input.result.error ?? "Provider has not completed the archive transition";
+  if (input.now >= deadline) {
+    const expired = { ...input, result: { success: false, steps, error: `Home archive provider wait timed out: ${error}` } };
+    return failedCompletion(expired, steps, attempts, failureCompletionContext(expired, steps, attempts));
+  }
+  return {
+    status: "pending",
+    startedAt: null,
+    completedAt: null,
+    expireAt: CLEAR,
+    steps,
+    nextAttemptAt: Math.min(input.now + HOME_ARCHIVE_PROVIDER_WAIT_MS, deadline),
+    lastProgressAt: input.now,
+    waitingOn: WAITING_FOR_HOME_ARCHIVE_PROVIDER,
+    error,
+    output: { homeArchiveProviderDeadlineAt: deadline },
+  };
 }
 
 function isHomeBackupReleasePending({ op, result }: OperationCompletionInput): boolean {
@@ -316,7 +355,7 @@ interface FailureCompletionContext {
 }
 
 function failureClassification(input: OperationCompletionInput, error: string, levelTriggeredFence: boolean): OperationFailureClassification {
-  if (input.result.failedAfterCutover === true) return "terminal";
+  if (input.result.failedAfterCutover === true || isHomeArchiveOperation(input.op)) return "terminal";
   return levelTriggeredFence ? "transient" : classifyOperationFailure(error);
 }
 
@@ -482,6 +521,9 @@ export function buildOperationCompletionUpdate(
     };
   }
   if (result.success) return successfulCompletion(input, persistedSteps, attempts);
+  if (result.waitingForHomeArchiveProvider === true && isHomeArchiveOperation(op)) {
+    return homeArchiveProviderCompletion(input, persistedSteps, attempts);
+  }
 
   const failure = failureCompletionContext(input, persistedSteps, attempts);
   if (result.failedAfterCutover === true) return failedAfterCutoverCompletion(input, persistedSteps, attempts, failure);
