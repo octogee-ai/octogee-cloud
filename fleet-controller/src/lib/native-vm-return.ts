@@ -2,6 +2,7 @@ import { isDeepStrictEqual } from "node:util";
 import type {
   PlatformUserRecord,
   FleetRegistryRecord,
+  FleetRegistryPatch,
   FleetRegistryVmHome,
   GatewayAssignment,
   GatewayRoot,
@@ -11,7 +12,7 @@ import type {
   Stored,
 } from "@octogee/core/platform-state";
 import { legacyForwardRecoveryMatches } from "@octogee/core/fleet-state";
-import { nativeReturnSourceIdentity, nativeReturnSourceState, type NativeReturnSourceState } from "./native-return-source-fence.js";
+import { nativeReturnSourceIdentity, observeNativeReturnSource, type ParkedVmPowerStatus } from "./native-return-source-fence.js";
 import { awaitHomeCheckpoint, readHomeCheckpointCompletedAt } from "./home-checkpoint.js";
 import type { GatewayVmClient } from "./compute-vm.js";
 import { nativeSchedulerRetirementForReturn } from "./native-scheduler-retirement.js";
@@ -194,7 +195,12 @@ function sourceCheckpointMatches(runtime: Runtime, input: NativeVmReturnInput): 
 }
 
 type SourceIdentity = NonNullable<ReturnType<typeof nativeReturnSourceIdentity>>;
-type PauseIntent = { requestStop: string | null } | { parkedAs: SourceIdentity; clearStop: boolean };
+type PauseIntent = { requestStop: string | null } | {
+  parkedAs: SourceIdentity;
+  clearStop: boolean;
+  powerStatus?: ParkedVmPowerStatus;
+  observedAt: number;
+};
 
 type StopRequest = { operationId: string; reason: string; claimedAt?: number };
 
@@ -244,9 +250,22 @@ async function pauseCommittedSource(deps: NativeReturnDeps, input: NativeVmRetur
     const token = readStopRequest(source);
     const claimed = token?.claimedAt !== undefined ? token : null;
     const stopOnPark = stopOnParkUpdate(input, intent, claimed);
-    if (stopOnPark) await tx.fleetRegistry.patch(input.fromGatewayId, { vmStopOnPark: stopOnPark }, { revision: source!.revision });
+    const vm = parkedObservationUpdate(source, intent);
+    const patch: FleetRegistryPatch = { ...(stopOnPark ? { vmStopOnPark: stopOnPark } : {}), ...(vm ? { vm } : {}) };
+    if (stopOnPark || vm) await tx.fleetRegistry.patch(input.fromGatewayId, patch, { revision: source!.revision });
     return claimed;
   });
+}
+
+function parkedObservationUpdate(source: Runtime, intent: PauseIntent) {
+  if (!("parkedAs" in intent) || !intent.powerStatus) return undefined;
+  const vm = source?.vm;
+  if (!vm) throw new Error("native return source VM observation lost authority");
+  if (vm.status === intent.powerStatus) return undefined;
+  if (typeof vm.updatedAt === "number" && vm.updatedAt > intent.observedAt) {
+    throw new Error("native return source VM changed after its park observation");
+  }
+  return { ...vm, status: intent.powerStatus, updatedAt: intent.observedAt };
 }
 
 function pauseAuthorityMatches(input: NativeVmReturnInput, records: PauseRecords, intent: PauseIntent): boolean {
@@ -298,7 +317,10 @@ async function parkCommittedSource(deps: NativeReturnDeps, input: NativeVmReturn
     await deps.wait(Math.min(5_000, deadline - deps.now()));
     observed = await parkedSourceState(deps, input);
   }
-  await pauseCommittedSource(deps, input, { parkedAs: observed.identity!, clearStop: stopReason !== null });
+  await pauseCommittedSource(deps, input, {
+    parkedAs: observed.identity!, clearStop: stopReason !== null,
+    powerStatus: observed.powerStatus, observedAt: observed.observedAt,
+  });
   return stopReason === null ? { parked: observed.state === "suspended" ? "suspended" : "stopped" } : { parked: "stopped", stopReason };
 }
 
@@ -327,14 +349,15 @@ async function claimSuspendedSourceStop(deps: NativeReturnDeps, input: NativeVmR
   });
 }
 
-async function parkedSourceState(deps: NativeReturnDeps, input: NativeVmReturnInput): Promise<{ state: NativeReturnSourceState; identity: SourceIdentity | null }> {
+async function parkedSourceState(deps: NativeReturnDeps, input: NativeVmReturnInput) {
   const [source, desired] = await Promise.all([
     deps.store.fleetRegistry.get(input.fromGatewayId),
     deps.store.gateways.roots.get(input.fromGatewayId),
   ]);
   assertOwner(desired, input);
   const identity = nativeReturnSourceIdentity(source ?? undefined, desired ?? undefined);
-  return { state: identity ? await nativeReturnSourceState(deps.vm, identity) : "running", identity };
+  const observed = identity ? await observeNativeReturnSource(deps.vm, identity) : { state: "running" as const };
+  return { ...observed, identity, observedAt: deps.now() };
 }
 
 async function sourceVmStatus(deps: NativeReturnDeps, input: NativeVmReturnInput): Promise<string | null> {

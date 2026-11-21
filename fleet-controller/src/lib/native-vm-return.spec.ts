@@ -224,6 +224,7 @@ describe("native computer return checkpoint", () => {
 
   it("parks the unmounted source by suspend and reports it suspended", async () => {
     const h = harness();
+    Object.assign(h.source.vm, { status: "RUNNING", updatedAt: 900 });
     const native = await releasedReturn(h);
     const vm = h.deps.vm as { describe: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn> };
     vm.describe.mockImplementationOnce(async () => {
@@ -232,8 +233,33 @@ describe("native computer return checkpoint", () => {
       return { status: "SUSPENDING", instanceId: "vm-id" };
     }).mockResolvedValue({ status: "SUSPENDED", instanceId: "vm-id" });
     await expect(native.park({ mode: "suspend" })).resolves.toEqual({ parked: "suspended" });
+    expect(h.source.vm).toMatchObject({ instanceId: "vm-id", status: "SUSPENDED", updatedAt: h.deps.now() });
     expect(h.deps.wait).toHaveBeenCalledOnce();
     expect(vm.stop).not.toHaveBeenCalled();
+  });
+
+  it("keeps the positively observed parked power when a restarted return replays parking", async () => {
+    const h = harness();
+    const native = await releasedReturn(h);
+    h.vm.describe.mockResolvedValue({ status: "SUSPENDED", instanceId: "vm-id" });
+    await expect(native.park({ mode: "suspend" })).resolves.toEqual({ parked: "suspended" });
+    const observedAt = h.source.vm.updatedAt;
+    expect(h.source.vm.status).toBe("SUSPENDED");
+    await h.deps.wait(1);
+    const resumed = (await prepareNativeVmReturn(h.deps, input))!;
+    await expect(resumed.park({ mode: "suspend" })).resolves.toEqual({ parked: "suspended" });
+    expect(h.source.vm).toMatchObject({ instanceId: "vm-id", status: "SUSPENDED", updatedAt: observedAt });
+  });
+
+  it("does not overwrite a newer opposing VM observation", async () => {
+    const h = harness();
+    const native = await releasedReturn(h);
+    h.vm.describe.mockImplementationOnce(async () => {
+      Object.assign(h.source.vm, { status: "RUNNING", updatedAt: h.deps.now() + 1 });
+      return { status: "SUSPENDED", instanceId: "vm-id" };
+    });
+    await expect(native.park({ mode: "suspend" })).rejects.toThrow(/changed after its park observation/);
+    expect(h.source.vm.status).toBe("RUNNING");
   });
 
   it("asks the fleet controller to stop rather than suspend a source whose live cleanup failed, and clears the request once stopped", async () => {
@@ -247,6 +273,7 @@ describe("native computer return checkpoint", () => {
     }).mockResolvedValue({ status: "TERMINATED", instanceId: "vm-id" });
     await expect(native.park({ mode: "stop", reason: "unmount refused" })).resolves.toEqual({ parked: "stopped", stopReason: "unmount refused" });
     expect(h.source.vmStopOnPark).toBeUndefined();
+    expect(h.source.vm.status).toBe("TERMINATED");
     expect(vm.stop).not.toHaveBeenCalled();
   });
 
@@ -322,6 +349,7 @@ describe("native computer return checkpoint", () => {
     const vm = h.deps.vm as { describe: ReturnType<typeof vi.fn> };
     vm.describe.mockResolvedValue(null);
     await expect(native.park({ mode: "suspend" })).resolves.toEqual({ parked: "stopped" });
+    expect(h.source.vm.status).toBeUndefined();
     const stuck = harness();
     const parked = await releasedReturn(stuck);
     await expect(parked.park({ mode: "suspend" })).rejects.toThrow(/park timed out/);
