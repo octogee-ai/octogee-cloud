@@ -96,8 +96,13 @@ export async function createHarness(overrides: StoreOverrides = FAST_TIMINGS): P
     },
     async dispose() {
       const closing = await Promise.allSettled(stores.map((store) => store.close()));
-      await pool.query(`DROP SCHEMA IF EXISTS ${pg.escapeIdentifier(schema)} CASCADE`);
       await pool.end();
+      const cleanup = newPool(`${applicationName}-cleanup`);
+      try {
+        await cleanup.query(`DROP SCHEMA IF EXISTS ${pg.escapeIdentifier(schema)} CASCADE`);
+      } finally {
+        await cleanup.end();
+      }
       const failure = closing.find((result): result is PromiseRejectedResult => result.status === "rejected");
       if (failure !== undefined) throw failure.reason;
     },
