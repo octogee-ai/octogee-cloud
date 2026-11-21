@@ -42,6 +42,16 @@ describe("Ship parked computer admission", () => {
     expect(replacement.status).toBe("queued");
     expect(replacement).not.toEqual(first);
   });
+  it("skips an archived owner even while the old physical VM is still observed", async () => {
+    const store = fixture();
+    await store.users.records.create({ uid: request.uid, createdAt: 1 });
+    const homeArchive = { phase: "preparing" as const, operationId: "archive-1", gatewayId: request.gatewayId, instanceId: "456" };
+    await store.users.records.patch(request.uid, { home: { homeArchive } });
+
+    expect((await store.users.records.get(request.uid))?.home.homeArchive).toEqual(homeArchive);
+    await expect(enqueueParkedGatewayPrewarm(store, request)).resolves.toMatchObject({ status: "ineligible" });
+    expect(await store.journal.operations.listForUid(request.uid, { statuses: ["pending"] })).toEqual([]);
+  });
   it("skips ownership changes and running roots", async () => {
     expect((await enqueueParkedGatewayPrewarm(fixture(), { ...request, uid: "bob" })).status).toBe("ineligible");
     expect((await enqueueParkedGatewayPrewarm(fixture("running"), request)).status).toBe("ineligible");

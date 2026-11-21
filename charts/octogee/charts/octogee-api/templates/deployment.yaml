@@ -78,6 +78,10 @@ spec:
                   fieldPath: metadata.namespace
             - name: DEPLOYMENT_TARGET_ID
               value: {{ required "global.deploymentTargetId is required" (.Values.global).deploymentTargetId | quote }}
+            {{- with (dig "computer" "testHomeArchiveGrant" "" (.Values.global | default dict)) }}
+            - name: GATEWAY_TEST_HOME_ARCHIVE_GRANT
+              value: {{ . | quote }}
+            {{- end }}
             - name: PUBLIC_APP_ORIGINS
               value: {{ join "," (required "global.publicAppOrigins is required" (.Values.global).publicAppOrigins) | quote }}
             - name: GCLOUD_PROJECT

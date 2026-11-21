@@ -1,6 +1,6 @@
 import express from "express";
 import request from "supertest";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { addAdminFleetRoutes } from "./admin-fleet-router.js";
 import { createJournalFixtureStore, fixtureDocumentsAt, journalRowsAtPaths } from "@octogee/core-testing/journal-store";
 import { noUserAccounts } from "./user-account.js";
@@ -22,7 +22,7 @@ const parked = { ...vm, gatewayId: GATEWAY, parkedAt: 100, checkpoint: { outcome
 const runtime = { docKind: "runtime", gatewayId: GATEWAY, release: 1, lifecycle: "serving", runtime: "gce-vm", vm };
 const sharedRoot = { ...gateway, gatewayId: "shared-a", gatewayClass: "shared", ownerUid: null, builderSlug: null };
 
-function harness(overrides: Record<string, Record<string, unknown> | null> = {}, role = "admin", computerReplacementEnabled: boolean | undefined = true) {
+function harness(overrides: Record<string, Record<string, unknown> | null> = {}, role = "admin", computerReplacementEnabled: boolean | undefined = true, releaseEnvironment?: "test" | "prod") {
   const records = new Map<string, Record<string, unknown>>(Object.entries({
     [`gateways/${GATEWAY}`]: gateway,
     "gateways/shared-a": sharedRoot,
@@ -37,12 +37,33 @@ function harness(overrides: Record<string, Record<string, unknown> | null> = {},
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => { Object.assign(req, { uid: role === "anonymous" ? undefined : "operator", isAdmin: role === "admin" }); next(); });
-  addAdminFleetRoutes(app, { accounts: noUserAccounts, store, computerReplacementEnabled, logger: { info: vi.fn(), warn: vi.fn() }, provisionGatewayAuthSecret: vi.fn(), listGatewayBuilds: vi.fn(), suspendAuthUser: vi.fn(), revokeConnectorGrantsForUser: vi.fn() });
+  addAdminFleetRoutes(app, { accounts: noUserAccounts, store, computerReplacementEnabled, releaseEnvironment, logger: { info: vi.fn(), warn: vi.fn() }, provisionGatewayAuthSecret: vi.fn(), listGatewayBuilds: vi.fn(), suspendAuthUser: vi.fn(), revokeConnectorGrantsForUser: vi.fn() });
   app.use((error: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => res.status(500).json({ error: error.message }));
   return { app, records, operations: () => [...records.values()].filter((value) => value.kind === "gateway-vm"), audits: () => [...records.values()].filter((value) => value.recordType === "audit") };
 }
 const livePath = `/gateways/${GATEWAY}/vm/replace`;
 const parkedPath = `/users/${OWNER}/vm/replace`;
+
+describe("admin home archive", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("honors a matching grant only in TEST", async () => {
+    vi.stubEnv("GATEWAY_TEST_HOME_ARCHIVE_GRANT", `${OWNER}:desktop-small`);
+    const prod = harness({}, "admin", true, "prod");
+    await request(prod.app).post(`/users/${OWNER}/vm/archive`).send({}).expect(409);
+    expect(prod.operations()).toHaveLength(0);
+    const test = harness({}, "admin", true, "test");
+    await request(test.app).post("/users/another/vm/archive").send({}).expect(409);
+    expect(test.operations()).toHaveLength(0);
+  });
+
+  it("rejects supplied physical resource identifiers without creating an operation", async () => {
+    vi.stubEnv("GATEWAY_TEST_HOME_ARCHIVE_GRANT", `${OWNER}:desktop-small`);
+    const h = harness({}, "admin", true, "test");
+    await request(h.app).post(`/users/${OWNER}/vm/archive`).send({ disk: "unknown" }).expect(400);
+    expect(h.operations()).toHaveLength(0);
+  });
+});
 
 describe("admin VM replacement", () => {
   it.each([livePath, parkedPath])("rejects unavailable replacement before admission: %s", async (path) => {

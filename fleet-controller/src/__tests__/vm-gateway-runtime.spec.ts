@@ -116,6 +116,12 @@ function harness(
     expandHome: vi.fn(async (home, _owner, sizeGb) => ({ ...home, sizeGb: Math.max(home.sizeGb, sizeGb) })),
     retainHome: vi.fn(async () => ({ projectId: "octogee-test", zone: "us-west1-b", name: "computer-home", id: "777", sizeGb: 30, diskType: "pd-ssd" as const, source: "projects/octogee-test/zones/us-west1-b/disks/computer-home" })),
     verifyDetachedHome: vi.fn(async () => {}),
+    snapshotStoppedHome: vi.fn(async () => null),
+    restoreHomeFromSnapshot: vi.fn(async () => null),
+    verifyHomeSnapshot: vi.fn(async () => {}),
+    eraseHomeSnapshot: vi.fn(async () => true),
+    readArchiveBootDisk: vi.fn(async () => ({ source: "unused", id: "1" })),
+    archiveDisksAbsent: vi.fn(async () => true),
     deleteRetainedHome: vi.fn(async () => {}),
     deleteRetainingHome: vi.fn(async () => {}),
     setServiceAccount: vi.fn(async () => {}),
@@ -883,6 +889,14 @@ describe("createVmGatewayRuntime.upsertInstance", () => {
 });
 
 describe("createVmGatewayRuntime creating a fresh VM", () => {
+  it("fails closed when the owner has an unhandled archived home before discovering or creating VMs", async () => {
+    const h = harness({ "users/UidA": { provisioning: { homeArchive: { phase: "archived" } } } });
+
+    await expect(h.runtime.upsertInstance(upsertOpts)).rejects.toThrow(/home archive/);
+    expect(h.vm.findByLabels).not.toHaveBeenCalled();
+    expect(h.vm.create).not.toHaveBeenCalled();
+  });
+
   const otherUser = { ...upsertOpts, gatewayId: "b-y", builderIdentity: { ownerUid: "UidB", builderSlug: "papa" } };
 
   function heldInserts() {

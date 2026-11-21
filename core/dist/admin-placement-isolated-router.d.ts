@@ -15,6 +15,7 @@ export interface AdminIsolatedCapabilities {
     readGatewayPodDiagnostics(gatewayId: string): Promise<PodObservation>;
 }
 export interface AdminPlacementIsolatedRouterDeps {
+    releaseEnvironment?: "test" | "prod" | null;
     store: PlatformStateStore;
     journal: AdminFleetMutationRunner;
     accounts: Pick<UserAccountReader, "get">;

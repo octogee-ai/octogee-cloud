@@ -127,6 +127,15 @@ export interface RetainedUserHome {
   source: string;
 }
 
+export interface RetainedUserHomeSnapshot {
+  projectId: string;
+  name: string;
+  id: string;
+  sourceDisk: string;
+  sourceDiskId: string;
+  sizeGb: number;
+}
+
 export const GATEWAY_VM_STOP_REASONS = ["idle", "preempted", "operator"] as const;
 export type GatewayVmStopReason = (typeof GATEWAY_VM_STOP_REASONS)[number];
 

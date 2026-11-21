@@ -75,6 +75,39 @@ function allocationFence(h: ReturnType<typeof fixture>, user: Awaited<ReturnType
 }
 
 describe("isolated home preparation, as the in-process caller runs it", () => {
+  function archivedHome() {
+    const h = fixture("hobby");
+    const home = h.owner().provisioning;
+    home.homeDisk = { ...h.source.disk, sizeGb: 10 };
+    home.homeMigration = { phase: "complete", preparedFor: { leaseId: "previous", generation: 1, sizingKey: "hobby" } };
+    home.homeArchive = {
+      phase: "archived", operationId: "park-1", gatewayId: "isolated-1", instanceId: "123",
+      bootDisk: { source: "projects/octogee-test/zones/us-central1-a/disks/old-boot", id: "99" },
+      snapshot: { id: "321", name: "parked-home", projectId: "octogee-test", sourceDiskId: "100", sourceDisk: h.source.disk.source, sizeGb: 10 },
+    };
+    return h;
+  }
+
+  it("prepares a fresh lease from the archived home without querying the deleted disk", async () => {
+    const h = archivedHome();
+    await expect(h.prepare("plan")).resolves.toMatchObject({ state: "ready" });
+    expect(h.owner().provisioning.homeMigration.preparedFor.generation).toBe(1);
+    await expect(h.prepare()).resolves.toEqual({ state: "ready" });
+    expect(allocationFence(h, await h.user())).not.toThrow();
+    expect(h.owner().provisioning.homeArchive.phase).toBe("archived");
+    expect(computeCalls(h.home)).toBe(0);
+  });
+
+  it.each(["preparing", "snapshot-ready", "restoring", "wrong-source"])("refuses %s archive preparation before accessing Compute", async reason => {
+    const h = archivedHome();
+    const archive = h.owner().provisioning.homeArchive;
+    if (reason === "wrong-source") archive.snapshot.sourceDiskId = "999";
+    else archive.phase = reason;
+    await expect(h.prepare()).rejects.toThrow(/archive/i);
+    expect(h.owner().provisioning.homeMigration.preparedFor.generation).toBe(1);
+    expect(computeCalls(h.home)).toBe(0);
+  });
+
   it("prepares a Hobby user's retained home at the Hobby allowance, like any VM tier", async () => {
     const h = fixture("hobby");
     await h.reconcile();

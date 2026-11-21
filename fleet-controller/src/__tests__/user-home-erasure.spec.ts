@@ -1,6 +1,6 @@
 import { expect, it, vi } from "vitest";
 import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
-import { eraseUserHomeMigrationStorage } from "../lib/user-home-erasure.js";
+import { eraseUserComputerStorage, eraseUserHomeMigrationStorage } from "../lib/user-home-erasure.js";
 function fixture(){
  const source={runtime:"gce-vm",layout:"flat",disk:{id:"100"}};
  const target={runtime:"gce-vm",layout:"portable",disk:{id:"200"}};
@@ -36,4 +36,156 @@ it("refuses to finish when the owner record is gone but home storage remains",as
  h.deps.remainingOwnerHomes.mockResolvedValueOnce(["projects/octogee/zones/us-central1-b/disks/orphan-home"]);
  await expect(h.run()).rejects.toThrow(/home storage remains: projects\/octogee\/zones\/us-central1-b\/disks\/orphan-home/);
  expect(h.deps.log).not.toHaveBeenCalled();
+});
+
+const retainedHome = {
+  projectId: "sandbox", zone: "us-central1-b", name: "builder-home", id: "100", sizeGb: 10,
+  diskType: "pd-balanced", source: "projects/sandbox/zones/us-central1-b/disks/builder-home",
+} as const;
+const archivedHome = {
+  phase: "archived", operationId: "archive-op", gatewayId: "hobby-s", instanceId: "99",
+  snapshot: {
+    projectId: "sandbox", name: "owner-home-archive", id: "102",
+    sourceDiskId: retainedHome.id, sourceDisk: retainedHome.source, sizeGb: retainedHome.sizeGb,
+  },
+  bootDisk: { id: "101", source: "projects/sandbox/zones/us-central1-b/disks/builder-boot" },
+} as const;
+
+function archiveFixture() {
+  const h = fixture();
+  h.records["users/owner"] = {
+    accountLifecycle: { status: "erasing", deletionId: "user-deletion" },
+    provisioning: { homeArchive: archivedHome, homeDisk: retainedHome },
+  };
+  const compute = {
+    archiveDisksAbsent: vi.fn(async () => true),
+    eraseHomeSnapshot: vi.fn(async () => true),
+  };
+  const deleteVm = vi.fn(async () => true);
+  return { ...h, compute, deleteVm,
+    erase: () => eraseUserComputerStorage({ ...h.deps, compute, deleteVm }, "owner"),
+  };
+}
+
+it("preserves snapshot and old disk receipts through erase retries and skips generic VM cleanup until both are verified", async () => {
+  const h = archiveFixture();
+  h.compute.archiveDisksAbsent.mockResolvedValueOnce(false);
+  h.compute.eraseHomeSnapshot
+    .mockRejectedValueOnce(new Error("HTTP 403"))
+    .mockResolvedValueOnce(false)
+    .mockResolvedValueOnce(true);
+
+  await expect(h.erase()).rejects.toThrow("disk absence");
+  expect(h.compute.eraseHomeSnapshot).not.toHaveBeenCalled();
+  await expect(h.erase()).rejects.toThrow("403");
+  await expect(h.erase()).rejects.toThrow("snapshot erasure");
+  expect(h.provisioning().homeArchive).toEqual(archivedHome);
+  expect(h.provisioning().homeDisk).toEqual(retainedHome);
+  expect(h.deleteVm).not.toHaveBeenCalled();
+
+  h.deleteVm.mockImplementation(async () => {
+    expect(h.provisioning().homeArchive).toBeUndefined();
+    expect(h.provisioning().homeDisk).toBeUndefined();
+    return false;
+  });
+  await expect(h.erase()).resolves.toBe(true);
+  expect(h.compute.archiveDisksAbsent).toHaveBeenCalledWith(retainedHome, archivedHome.bootDisk);
+  expect(h.compute.eraseHomeSnapshot).toHaveBeenLastCalledWith(archivedHome.snapshot, "owner");
+  expect(h.deleteVm).toHaveBeenCalledOnce();
+  await expect(h.erase()).resolves.toBe(false);
+  expect(h.compute.eraseHomeSnapshot).toHaveBeenCalledTimes(3);
+});
+
+it.each(["preparing", "snapshot-ready", "restoring"])("leaves %s archive state and staged resources to its owner", async phase => {
+  const h = archiveFixture();
+  h.provisioning().homeArchive = { ...archivedHome, phase };
+  await expect(h.erase()).rejects.toThrow("archive");
+  expect(h.provisioning().homeArchive.phase).toBe(phase);
+  expect(h.compute.archiveDisksAbsent).not.toHaveBeenCalled();
+  expect(h.deleteVm).not.toHaveBeenCalled();
+});
+
+it("requires the account erasure mark and no recovery or secondary home writer", async () => {
+  const h = archiveFixture();
+  h.records["users/owner"].accountLifecycle.status = "active";
+  await expect(h.erase()).rejects.toThrow("erasure authority");
+  h.records["users/owner"].accountLifecycle.status = "erasing";
+  h.provisioning().computerRecovery = { operationId: "other-operation" };
+  await expect(h.erase()).rejects.toThrow("archive");
+  delete h.provisioning().computerRecovery;
+  h.provisioning().homeMigration = { phase: "copying", copy: {} };
+  await expect(h.erase()).rejects.toThrow("archive");
+  expect(h.compute.archiveDisksAbsent).not.toHaveBeenCalled();
+  expect(h.compute.eraseHomeSnapshot).not.toHaveBeenCalled();
+  expect(h.deps.copy.abort).not.toHaveBeenCalled();
+  expect(h.deleteVm).not.toHaveBeenCalled();
+});
+
+it("refuses to clear either receipt if the durable archive changed while cloud erasure was in progress", async () => {
+  const h = archiveFixture();
+  h.compute.eraseHomeSnapshot.mockImplementation(async () => {
+    h.provisioning().homeArchive = { ...archivedHome, operationId: "changed-archive" };
+    return true;
+  });
+  await expect(h.erase()).rejects.toThrow("archive custody changed");
+  expect(h.provisioning().homeArchive.operationId).toBe("changed-archive");
+  expect(h.provisioning().homeDisk).toEqual(retainedHome);
+  expect(h.deleteVm).not.toHaveBeenCalled();
+});
+
+it("rejects absent or conflicting source evidence before contacting Compute", async () => {
+  const h = archiveFixture();
+  h.provisioning().homeDisk = { ...retainedHome, id: "999" };
+  await expect(h.erase()).rejects.toThrow("source disk receipt");
+  expect(h.compute.archiveDisksAbsent).not.toHaveBeenCalled();
+  expect(h.compute.eraseHomeSnapshot).not.toHaveBeenCalled();
+});
+
+it("erases a restored backup even without activation, preserving the restored disk through legacy cleanup", async () => {
+  const h = archiveFixture();
+  const newHome = { ...retainedHome, name: "restored-home", source: "projects/sandbox/zones/us-central1-b/disks/restored-home", id: "103" };
+  h.provisioning().homeDisk = newHome;
+  h.provisioning().homeArchive = { ...archivedHome, phase: "restored", restoredDisk: newHome, restoredInstanceId: "200" };
+  h.compute.eraseHomeSnapshot.mockResolvedValueOnce(false);
+  h.deleteVm.mockImplementation(async () => {
+    expect(h.provisioning().homeArchive).toBeUndefined();
+    expect(h.provisioning().homeDisk).toEqual(newHome);
+    return true;
+  });
+
+  await expect(h.erase()).rejects.toThrow("snapshot erasure");
+  expect(h.deleteVm).not.toHaveBeenCalled();
+  expect(h.provisioning().homeDisk).toEqual(newHome);
+  expect(h.provisioning().homeArchive.phase).toBe("restored");
+  await expect(h.erase()).resolves.toBe(true);
+  expect(h.compute.archiveDisksAbsent).not.toHaveBeenCalled();
+  expect(h.compute.eraseHomeSnapshot).toHaveBeenLastCalledWith(archivedHome.snapshot, "owner");
+  expect(h.deleteVm).toHaveBeenCalledOnce();
+});
+
+it("erases an archived snapshot with a completed disk-free preparation marker", async () => {
+  const h = archiveFixture();
+  h.provisioning().homeMigration = { phase: "complete", preparedFor: { sizingProfile: "hobby" } };
+  await expect(h.erase()).resolves.toBe(true);
+  expect(h.compute.eraseHomeSnapshot).toHaveBeenCalledWith(archivedHome.snapshot, "owner");
+  expect(h.provisioning().homeArchive).toBeUndefined();
+  expect(h.provisioning().homeMigration).toBeUndefined();
+});
+
+it.each([true, false])("erases only the closed scheduler state carried inside the exact archived home (same=%s)", async same => {
+  const h = archiveFixture();
+  const scheduler = { returnOperationId: "return-one", migrationId: "return-scheduler", homeDiskId: retainedHome.id };
+  h.provisioning().homeArchive = { ...archivedHome, nativeSchedulerRetirement: scheduler };
+  h.provisioning().pendingNativeSchedulerRetirement = same ? scheduler : { ...scheduler, migrationId: "other" };
+  if (!same) {
+    await expect(h.erase()).rejects.toThrow(/archive must settle/);
+    expect(h.compute.eraseHomeSnapshot).not.toHaveBeenCalled();
+    expect(h.provisioning().pendingNativeSchedulerRetirement).toBeDefined();
+    return;
+  }
+  h.compute.eraseHomeSnapshot.mockResolvedValueOnce(false);
+  await expect(h.erase()).rejects.toThrow(/still converging/);
+  expect(h.provisioning().pendingNativeSchedulerRetirement).toEqual(scheduler);
+  await expect(h.erase()).resolves.toBe(true);
+  expect(h.provisioning().pendingNativeSchedulerRetirement).toBeUndefined();
 });

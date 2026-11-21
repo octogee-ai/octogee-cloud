@@ -942,6 +942,17 @@ describe("parked isolated gateway reuse", () => {
     await expect(startParkedGatewayPrewarm(h.state, h.operation, 2200, source)).resolves.toMatchObject({ state: "booting" });
   });
 
+  it("refuses to start a queued prewarm after archive custody is recorded", async () => {
+    const h = await prewarmHarness();
+    h.setParked();
+    await h.state.users.records.patch(request.uid, { home: { homeArchive: {
+      phase: "preparing", operationId: "archive-1", gatewayId: h.parkedGatewayId, instanceId: "123",
+    } } });
+
+    await expect(startParkedGatewayPrewarm(h.state, h.operation, 2100)).resolves.toEqual({ state: "ineligible" });
+    expect(h.root.desiredStatus).toBe("paused");
+  });
+
   it("hands a freshly prewarmed running computer directly to matching demand without suspending it", async () => {
     const h = await prewarmHarness();
     h.setParked();

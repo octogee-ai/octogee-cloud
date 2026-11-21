@@ -2,7 +2,7 @@ import type { AccountLifecycle } from "@octogee/shared/types/account-lifecycle";
 import type { UserAuxiliaryFamily, FleetBrokerUserRuntimeReset } from "@octogee/shared/types/fleet-broker";
 import type { ConnectorCaptureMethod, IntegrationStatus } from "@octogee/shared/types/connectors";
 import type { ScheduleTransferDoc } from "@octogee/shared/types/fleet-controller";
-import type { UserParkedVm, GatewayProfile, GatewayVmHomeCheckpoint } from "@octogee/shared/types/glm";
+import type { UserParkedVm, GatewayProfile, GatewayVmHomeCheckpoint, RetainedUserHome, RetainedUserHomeSnapshot } from "@octogee/shared/types/glm";
 import type { PlacementReceipt, PlacementReceiptKind } from "@octogee/shared/types/placement-receipts";
 import type { WorkspaceMigrationMarker } from "@octogee/shared/types/workspace-migration";
 import type { Clearable, OpaqueMap, Page, PageRequest, RecordPatch, Revision, Stored, TimeInput } from "./store.js";
@@ -74,7 +74,64 @@ export interface UserOpenClawState {
     readonly greeting?: OpaqueMap;
     readonly toolchain?: OpaqueMap;
 }
+interface UserHomeArchiveIdentity {
+    readonly operationId: string;
+    readonly gatewayId: string;
+    readonly instanceId: string;
+    readonly source?: {
+        readonly instanceName: string;
+        readonly zone: string;
+        readonly homeDiskId: string;
+    };
+    readonly nativeSchedulerRetirement?: OpaqueMap;
+}
+interface UserHomeSnapshotCustody {
+    readonly snapshot: RetainedUserHomeSnapshot;
+    readonly bootDisk: {
+        readonly source: string;
+        readonly id: string;
+    };
+}
+export type UserHomeArchive = UserHomeArchiveIdentity & ({
+    readonly phase: "preparing";
+} | (UserHomeSnapshotCustody & {
+    readonly phase: "snapshot-ready";
+}) | (UserHomeSnapshotCustody & {
+    readonly phase: "archived";
+}) | (UserHomeSnapshotCustody & {
+    readonly phase: "restoring";
+    readonly targetGatewayId: string;
+    readonly leaseId: string;
+    readonly generation: number;
+    readonly zone: string;
+    readonly diskName: string;
+    readonly previousTargetGatewayId?: string;
+    readonly previousLeaseId?: string;
+    readonly previousGeneration?: number;
+    readonly targetInstanceName?: string;
+    readonly targetInstanceId?: string;
+    readonly diskInsertRequested?: true;
+    readonly vmInsertRequested?: true;
+    readonly eraseRestore?: {
+        readonly deletionId: string;
+        readonly instanceId: string;
+        readonly bootDisk: {
+            readonly source: string;
+            readonly id: string;
+        };
+    };
+    readonly restoredDisk?: RetainedUserHome;
+}) | (UserHomeSnapshotCustody & {
+    readonly phase: "restored";
+    readonly targetGatewayId: string;
+    readonly leaseId: string;
+    readonly generation: number;
+    readonly restoredDisk: RetainedUserHome;
+    readonly restoredInstanceId: string;
+    readonly releaseProvenForActivation?: string;
+}));
 export interface UserHomeState {
+    readonly homeArchive?: UserHomeArchive;
     readonly computer?: UserParkedVm;
     readonly homeCheckpoint?: GatewayVmHomeCheckpoint;
     readonly homeDisk?: OpaqueMap;
@@ -445,3 +502,4 @@ export interface ControlSessionAttachment {
 export interface ControlSessionChecks {
     current(attachment: ControlSessionAttachment, now: number): Promise<boolean>;
 }
+export {};

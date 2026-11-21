@@ -1,3 +1,4 @@
+import { rearmRestoredHomeForDemand, restoreArchivedHome } from "./lib/archived-home-restore.js";
 import { parkedPrewarmInput, readActiveParkedPrewarm } from "@octogee/core/isolated-gateway-lifecycle";
 import {
   MissingRecordError,
@@ -617,8 +618,8 @@ async function recordVmHome(deps: VmLifecycleDeps, input: { gatewayId: string; o
  }
 
 async function deleteOwnedVm(deps: VmLifecycleDeps, ownerUid: string): Promise<boolean> {
-    const description = await deps.vm.findByLabels(ownerVmLabels(deps.environment, ownerUid));
     let home = await readRetainedUserHome(deps.store, ownerUid);
+    const description = await deps.vm.findByLabels(ownerVmLabels(deps.environment, ownerUid));
     if (!description) {
       if (home) {
         await deps.vm.deleteRetainedHome(home, ownerUid);
@@ -1279,17 +1280,47 @@ async function recordEnsuredVm(deps: VmLifecycleDeps, gatewayId: string, spec: G
   return state;
 }
 
+async function ensureSnapshotBackedVm(deps: VmLifecycleDeps, request: {
+  gatewayId: string; ownerUid: string; spec: GatewayVmSpec; input: CreateGatewayVmInput;
+  archive: NonNullable<PlatformUserRecord["home"]["homeArchive"]>;
+}, operations: EnsureVmOperations): Promise<GatewayVmState> {
+  const { archive, gatewayId, ownerUid, spec, input } = request;
+  if ((archive.phase !== "archived" && archive.phase !== "restoring") || !archive.snapshot || !archive.bootDisk) {
+    throw new Error("User home archive requires explicit snapshot recovery");
+  }
+  const description = await restoreArchivedHome({ ...deps,
+    rebind: description => operations.reconcileVmBinding(gatewayId, ownerUid, input, description),
+  }, { gatewayId, ownerUid }, spec, input);
+  const retainedHome = await readRetainedUserHome(deps.store, ownerUid);
+  if (!retainedHome) throw new Error("Restored home ownership was not recorded");
+  return finishEnsuredVm(deps, { gatewayId, ownerUid, spec, description, input, recovery: null, retainedHome }, operations);
+}
+
+function unhandledHomeArchive(owner: PlatformUserRecord | null) {
+  const archive = owner?.home.homeArchive;
+  return archive?.phase === "restored" ? undefined : archive;
+}
+
+function parkedPrewarmBootImage(prewarm: Awaited<ReturnType<typeof readActiveParkedPrewarm>>, output?: Record<string, unknown>): string | undefined {
+  return prewarm && output?.prewarmState === "booting" ? parkedPrewarmInput(prewarm).bootImageId : undefined;
+}
+
 async function ensureBoundVm(deps: VmLifecycleDeps, request: {
   gatewayId: string; image: string; ownerUid: string | undefined; bridge: string;
 }, operations: EnsureVmOperations): Promise<GatewayVmState> {
   const { gatewayId, image, ownerUid, bridge } = request;
   if (!ownerUid) throw new Error(`gateway ${gatewayId}: a gce-vm isolated gateway needs an owner`);
   operations.assertNoneInFlight(gatewayId, ownerUid);
-  const { data, vm: existing } = await readVmRecord(deps.store, gatewayId);
+  const [{ data, vm: existing }, owner] = await Promise.all([
+    readVmRecord(deps.store, gatewayId), deps.store.users.records.get(ownerUid),
+  ]);
   const spec = recordedSpecInConfiguredZones(data?.vmSpec, deps.vmSpec);
   const input = gatewayVmInstanceInput({ gatewayId, ownerUid, spec, environment: deps.environment, image, bridgeIp: bridge });
+  const archive = unhandledHomeArchive(owner);
+  if (archive) return ensureSnapshotBackedVm(deps, { gatewayId, ownerUid, spec, input, archive }, operations);
   let description = existing ? await deps.vm.describe(existing.instanceName, existing.zone) : null;
   if (!description) description = await deps.vm.findByLabels(ownerVmLabels(deps.environment, ownerUid));
+  await rearmRestoredHomeForDemand(deps, { gatewayId, ownerUid }, description, owner);
   const prewarm = await readActiveParkedPrewarm(deps.store, ownerUid);
   const prewarmOutput = prewarm?.gatewayId === gatewayId ? prewarm.output : undefined;
   if (prewarmOutput?.prewarmState === "repairing") {
@@ -1297,7 +1328,7 @@ async function ensureBoundVm(deps: VmLifecycleDeps, request: {
     return recoverOriginalParkedVm(deps, { gatewayId, ownerUid, binding: input, spec, description, existing, previousInstanceId, previousBootImageId }, operations.wakeVm);
   }
   const recovery = await requireHomeRecovery(deps, { gatewayId, ownerUid, data, description });
-  const expectedPrewarmImageId = prewarm && prewarmOutput?.prewarmState === "booting" ? parkedPrewarmInput(prewarm).bootImageId : undefined;
+  const expectedPrewarmImageId = parkedPrewarmBootImage(prewarm, prewarmOutput);
   if (expectedPrewarmImageId) await verifyParkedPrewarmImage(deps, { gatewayId, ownerUid, spec, expectedImageId: expectedPrewarmImageId, description, existing, data });
   if (description) description = await prepareParkedUpgrade(deps, { gatewayId, ownerUid, image, description, spec,
     bind: (parked) => operations.reconcileVmBinding(gatewayId, ownerUid, input, parked), expectedPrewarmImageId });

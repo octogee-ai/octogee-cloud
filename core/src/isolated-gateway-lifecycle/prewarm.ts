@@ -178,6 +178,7 @@ export async function startParkedGatewayPrewarm(
       tx.gateways.assignments.isEmpty(gatewayId), tx.journal.operations.listForUid(uid, { statuses: ["pending", "running"] }),
     ]);
     assertPrewarmWorker(operation, current);
+    if (parkedHomeUnderSnapshotCustody(owner)) return { state: "ineligible" };
     const result = existingOrDemandOperation(current, owner);
     if (result) return result;
     const sharedId = eligibleSharedSource(owner, pool?.sharedGatewayIds ?? []);
@@ -366,3 +367,4 @@ export async function bootRepairedParkedGateway(
     return BOOTING;
   });
 }
+import { parkedHomeUnderSnapshotCustody } from "../parked-home-archive.js";

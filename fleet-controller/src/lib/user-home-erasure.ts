@@ -1,13 +1,101 @@
-import type { UserHomeState, OpaqueMap, PlatformStateStore } from "@octogee/core/platform-state";
+import { isDeepStrictEqual } from "node:util";
+import { archiveSchedulerCustodyMatches, simpleHomePreparation } from "@octogee/core/admin-fleet-router";
+import type { RetainedUserHome, RetainedUserHomeSnapshot } from "@octogee/shared/types/glm";
+import type { UserHomeState, OpaqueMap, PlatformStateStore, PlatformUserRecord, UserHomeArchive } from "@octogee/core/platform-state";
 import type { HomeCopyInput, UserHomeLocation, UserHomeMigration, UserHomeStorage } from "@octogee/core/isolated-gateway-lifecycle";
 
-export async function eraseUserHomeMigrationStorage(deps: {
+import type { GatewayVmClient } from "./compute-vm.js";
+
+interface UserHomeErasureDeps {
   store: PlatformStateStore;
   removeStoppedHome(uid: string, home: UserHomeLocation): Promise<boolean>;
   copy: { abort(input: HomeCopyInput): Promise<boolean>; sweep(input: HomeCopyInput): Promise<boolean> };
   remainingOwnerHomes(uid: string): Promise<string[]>;
   log(message: string): void;
+}
+
+export async function eraseUserComputerStorage(deps: UserHomeErasureDeps & {
+  compute: Pick<GatewayVmClient, "archiveDisksAbsent" | "eraseHomeSnapshot">;
+  deleteVm(uid: string): Promise<boolean>;
 }, uid: string): Promise<boolean> {
+  const erasedArchive = await eraseArchivedHome(deps, uid);
+  const deleted = await deps.deleteVm(uid);
+  if (!await eraseUserHomeMigrationStorage(deps, uid)) {
+    throw new Error("User home cleanup is still converging; erasure tracking retained for retry");
+  }
+  return erasedArchive || deleted;
+}
+
+function archiveHasNoWriters(owner: PlatformUserRecord, archive: UserHomeArchive): boolean {
+  const { pendingNativeSchedulerRetirement, ...writers } = owner.fences;
+  return Object.values(writers).every(fence => fence === undefined) &&
+    (pendingNativeSchedulerRetirement === undefined || archiveSchedulerCustodyMatches(owner, archive));
+}
+
+function archiveHasNoSecondaryHome(home: UserHomeState): boolean {
+  return home.homeStorage === undefined && simpleHomePreparation(home.homeMigration) && home.homeErasure === undefined;
+}
+
+function validateArchivedSource(owner: PlatformUserRecord, home: RetainedUserHome, snapshot: RetainedUserHomeSnapshot): void {
+  if (owner.home.computer !== undefined || !archiveHasNoSecondaryHome(owner.home)) {
+    throw new Error("User home archive must settle before erasure; storage retained for retry");
+  }
+  if (home.id !== snapshot.sourceDiskId || home.source !== snapshot.sourceDisk ||
+      home.projectId !== snapshot.projectId || home.sizeGb !== snapshot.sizeGb) {
+    throw new Error("User home archive source disk receipt does not match the snapshot");
+  }
+}
+
+function validateRestoredHome(home: RetainedUserHome, archive: Extract<UserHomeArchive, { phase: "restored" }>): void {
+  if (home.id !== archive.restoredDisk?.id || home.source !== archive.restoredDisk.source ||
+      home.id === archive.snapshot.sourceDiskId || home.source === archive.snapshot.sourceDisk) {
+    throw new Error("User home archive restored disk receipt does not match the active home");
+  }
+}
+
+function archiveErasureCustody(owner: PlatformUserRecord) {
+  if (owner.accountLifecycle?.status !== "erasing") throw new Error("User home archive requires account erasure authority");
+  const archive = owner.home.homeArchive;
+  if ((archive?.phase !== "archived" && archive?.phase !== "restored") || !archiveHasNoWriters(owner, archive)) {
+    throw new Error("User home archive must settle before erasure; storage retained for retry");
+  }
+  const home = owner.home.homeDisk as unknown as RetainedUserHome | undefined;
+  if (!archive.snapshot || !archive.bootDisk || !home) throw new Error("User home archive is missing the source disk receipt");
+  if (archive.phase === "archived") {
+    validateArchivedSource(owner, home, archive.snapshot);
+  } else {
+    validateRestoredHome(home, archive);
+  }
+  return { archive, home, deletionId: owner.accountLifecycle.deletionId, scheduler: owner.fences.pendingNativeSchedulerRetirement };
+}
+
+async function eraseArchivedHome(deps: {
+  store: PlatformStateStore;
+  compute: Pick<GatewayVmClient, "archiveDisksAbsent" | "eraseHomeSnapshot">;
+}, uid: string): Promise<boolean> {
+  const owner = await deps.store.users.records.get(uid);
+  if (!owner?.home.homeArchive) return false;
+  const proof = archiveErasureCustody(owner);
+  if (proof.archive.phase === "archived" && !await deps.compute.archiveDisksAbsent(proof.home, proof.archive.bootDisk)) {
+    throw new Error("User home archive disk absence is not verified; storage retained for retry");
+  }
+  if (!await deps.compute.eraseHomeSnapshot(proof.archive.snapshot, uid)) {
+    throw new Error("User home archive snapshot erasure is still converging; storage retained for retry");
+  }
+  await deps.store.transaction({ label: "builder-home-erasure.clear-archive" }, async tx => {
+    const current = await tx.users.records.get(uid);
+    if (!current || !isDeepStrictEqual(archiveErasureCustody(current), proof)) {
+      throw new Error("User home archive custody changed during erasure");
+    }
+    await tx.users.records.patch(uid, {
+      home: { homeArchive: { clear: true }, ...(proof.archive.phase === "archived" ? { homeDisk: { clear: true }, homeMigration: { clear: true } } : {}) },
+    }, { revision: current.revision });
+    if (proof.scheduler) await tx.users.records.setFence(uid, "pendingNativeSchedulerRetirement", { clear: true }, proof.scheduler);
+  });
+  return true;
+}
+
+export async function eraseUserHomeMigrationStorage(deps: UserHomeErasureDeps, uid: string): Promise<boolean> {
   const owner = await deps.store.users.records.get(uid);
   if (!owner) {
     const remaining = await deps.remainingOwnerHomes(uid);
@@ -15,6 +103,7 @@ export async function eraseUserHomeMigrationStorage(deps: {
     deps.log(`[home-erasure] ${uid}: owner record already erased and no owner-labelled home storage remains`);
     return true;
   }
+  if (owner.home.homeArchive !== undefined) throw new Error("User home archive requires explicit snapshot erasure");
   const migration = owner.home.homeMigration as UserHomeMigration | undefined;
   if (migration?.copy) {
     const adopted = ["adopting", "complete"].includes(migration.phase);

@@ -6,7 +6,8 @@ import { prepareIsolatedRecoveryTarget } from "./isolated-recovery-target.js";
 import { createGatewayCredentialEnsurers } from "./gateway-credential-ensurers.js";
 import { createAgentStoreCredentialProvisioner, createAgentStoreCredentialRevoker, createAgentStoreCredentialRetirementVerifier, createAgentStoreOwnershipTransferer, assertNoUserAgentStores, eraseUserAgentStores } from "@octogee/core/agent-store-credentials";
 import { createUserAgentStoreErasure, preserveUserGatewayRetirement, type SharedAgentErasureSource } from "./lib/user-ops/agent-store-erasure.js";
-import { eraseUserHomeMigrationStorage } from "./lib/user-home-erasure.js";
+import { eraseUserComputerStorage } from "./lib/user-home-erasure.js";
+import { rearmArchiveBeforeAccountOperation, settleInterruptedHomeArchiveForErasure } from "./lib/recover-home-archive.js";
 import { createUserHomeProvider } from "./lib/user-home-provider.js";
 import { createHomeCopyClient } from "./lib/compute-home-copy.js";
 import type { ComputeRequest } from "./lib/compute-vm.js";
@@ -198,6 +199,10 @@ import { createRecycleGatewayHandler } from "./handlers/recycle-gateway.js";
 import { createParkedPrewarmHandler } from "./handlers/parked-prewarm.js";
 import { PARKED_PREWARM_KIND } from "@octogee/core/isolated-gateway-lifecycle";
 import { createGatewayVmHandler } from "./handlers/gateway-vm.js";
+import { createHomeArchiveHandler } from "./handlers/home-archive.js";
+import { createHomeBackupReleaseHandler } from "./handlers/home-backup-release.js";
+import { RELEASE_RESTORED_HOME_BACKUP } from "@octogee/core/isolated-gateway-lifecycle";
+import { resolveParkedHomeArchiveGrant } from "@octogee/core/admin-fleet-router";
 import { createGatewayVmClient } from "./lib/compute-vm.js";
 import { pausedIsolatedRetirementSourceFencedOff } from "./lib/native-retirement-telemetry.js";
 import { clearHomeCheckpointRequest, readHomeCheckpointCompletedAt, requestHomeCheckpoint } from "./lib/home-checkpoint.js";
@@ -1890,6 +1895,7 @@ export const OPERATION_QUEUE_DRAIN_MS_DEFAULT = 20_000;
 // Restart re-drive candidates. The predicate below admits only migrations with
 // durable migration or recovery state; legacy rollout sub-operations remain rollout-owned.
 const RESUMABLE_OP_KINDS: ReadonlySet<string> = new Set([
+  "gateway-vm",
   "prewarm-gateway",
   "rollout",
   "restart-gateway",
@@ -1911,6 +1917,12 @@ async function attemptClaimOrQueueOperation(
     return await deps.store.transaction({ label: "operation-worker.claim" }, async (tx) => {
       const stored = await tx.journal.operations.get(op.id);
       if (stored === null) return { outcome: "skipped" as const };
+      const blockingArchive = GATEWAY_VM_SPEC ? await rearmArchiveBeforeAccountOperation(tx, stored) : null;
+      if (blockingArchive) {
+        const waitingOn = `home archive ${blockingArchive}`;
+        if (stored.waitingOn !== waitingOn) await tx.journal.operations.patch(op.id, { waitingOn });
+        return { outcome: "queued" as const };
+      }
       const freshOperation = operationFromRecord(stored);
       await assertOwnerOperationUnfenced(tx, op.id, freshOperation.input);
       if (freshOperation.kind === 'migrate-user') await assertMigrationRestartUnfenced(tx, freshOperation.input);
@@ -3796,6 +3808,13 @@ async function buildHandlers(
     log: logFn,
   });
 
+  const releaseHomeBackup = createHomeBackupReleaseHandler({ store, vm: createGatewayComputeClient(store, logFn) });
+  const archiveHome = createHomeArchiveHandler({
+    store,
+    vm: createGatewayComputeClient(store, logFn),
+    grant: resolveParkedHomeArchiveGrant(ENVIRONMENT_SETTINGS.name, process.env.GATEWAY_TEST_HOME_ARCHIVE_GRANT),
+  });
+
   return {
     "add-gateway": addGateway,
     "prewarm-gateway": createParkedPrewarmHandler({
@@ -3810,7 +3829,9 @@ async function buildHandlers(
       now: Date.now,
       log: logFn,
     }),
-    "gateway-vm": (op, ctx) => runGatewayRuntimeExclusive(() => gatewayVm(op, ctx)),
+    "gateway-vm": (op, ctx) => op.input.action === RELEASE_RESTORED_HOME_BACKUP
+      ? releaseHomeBackup(op, ctx)
+      : runGatewayRuntimeExclusive(() => op.input.action === "archive" ? archiveHome(op, ctx) : gatewayVm(op, ctx)),
     [MIGRATE_USER_KIND]: migrateUser,
     "retire-gateway": retireGateway,
     "restart-gateway": restartGateway,
@@ -3961,6 +3982,7 @@ function userDataScope(cleanup: UserCleanupContext, currentOperationId: string):
 
 function buildEraseUserHandler({ documents, store, logFn, kubeOps, privateKey, deleteHostingSites, userLifecycle, provisioning, gatewayGitKeys }: UserRemovalOptions) {
   const cloudCleanup = buildUserCloudCleanupDeps(store, logFn, deleteHostingSites, userLifecycle, provisioning);
+  const deleteVm = cloudCleanup.deleteVm;
   const clusterAbsent = async (gatewayId: string) => {
     if (!await retiredSharedGatewayRuntimeAbsent(kubeOps, NAMESPACE, gatewayId, deploymentNameForInstance(gatewayId))) return false;
     const pvc = await spawnKubectl(["-n", NAMESPACE, "get", `pvc/octogee-gateway-${gatewayId}-data`, "--ignore-not-found=true", "-o", "name"]);
@@ -3982,7 +4004,10 @@ function buildEraseUserHandler({ documents, store, logFn, kubeOps, privateKey, d
           },
         }
       : {}),
-    eraseVm: cloudCleanup.deleteVm,
+    eraseVm: deleteVm === undefined ? undefined : async (uid) => {
+      if ((await store.users.records.get(uid))?.home.homeArchive !== undefined) await markCloudTeardown(store, uid);
+      await deleteVm(uid);
+    },
     readSharedSource: async gatewayId => {
       const gateway = await readDesiredRoot(store, gatewayId) as DurableGateway | null;
       if (!gateway || gateway.gatewayClass !== "shared" || gateway.ownerUid != null ||
@@ -4190,10 +4215,12 @@ function createUserHomeServices(store: PlatformStateStore, log: (message: string
   const homeJournal: HomeServiceJournal = journal ?? (<T>(what: string, uid: string, action: () => Promise<T>) => runNormalFleetMutation(store, {
     actor: "cowboy", forced: false, what, why: "Migrate the user home without removing its verified source", target: { ownerUid: uid }, preActionStatus: {}, mutation: { action: what }, action,
   }));
+  const compute = createGatewayComputeClient(store, log);
   const provider = createUserHomeProvider({ store, projectId: gatewayComputeProjectId(), environment: VM_ENVIRONMENT,
-    request: homeCopyRequest, vm: createGatewayComputeClient(store, log), journal: homeJournal });
+    request: homeCopyRequest, vm: compute, journal: homeJournal });
   return {
     provider,
+    compute,
     copy: createHomeCopyClient({ request: homeCopyRequest, projectId: gatewayComputeProjectId(), journal: (what, input, action, resource) => homeJournal(what, input.ownerUid, action, resource) }),
   };
 }
@@ -4265,12 +4292,13 @@ export function buildUserCloudCleanupDeps(
           deleteVm: async (uid: string) => {
             const runtime = vmGatewayRuntimeRef.current;
             if (!runtime) throw new Error("the VM gateway runtime is not initialised; cannot delete the user's VM");
-            const deleted = await runtime.deleteVm(uid);
             const homes = createUserHomeServices(store, logFn);
-            if (!await eraseUserHomeMigrationStorage({ store, removeStoppedHome: homes.provider.removeStoppedHome, copy: homes.copy, remainingOwnerHomes: homes.provider.remainingOwnerHomes, log: logFn }, uid)) {
-              throw new Error("User home cleanup is still converging; erasure tracking retained for retry");
-            }
-            return deleted;
+            await settleInterruptedHomeArchiveForErasure({ store, vm: homes.compute }, uid);
+            return eraseUserComputerStorage({
+              store, compute: homes.compute, deleteVm: ownerUid => runtime.deleteVm(ownerUid),
+              removeStoppedHome: homes.provider.removeStoppedHome, copy: homes.copy,
+              remainingOwnerHomes: homes.provider.remainingOwnerHomes, log: logFn,
+            }, uid);
           },
         }
       : {}),

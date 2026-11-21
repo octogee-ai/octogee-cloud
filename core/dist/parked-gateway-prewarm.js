@@ -18,7 +18,9 @@ async function verifiedParkedOperation(state, root, matches, request) {
 export function enqueueParkedGatewayPrewarm(store, request) {
     const { gatewayId, uid, sourceSha, bootImageId, payload, createdBy } = request;
     return store.transaction({ label: "isolated-gateway.enqueue-prewarm" }, async (tx) => {
-        const root = await tx.gateways.roots.get(gatewayId);
+        const [root, owner] = await Promise.all([tx.gateways.roots.get(gatewayId), tx.users.records.get(uid)]);
+        if (parkedHomeUnderSnapshotCustody(owner))
+            return { status: "ineligible", reason: "user home archive is under snapshot custody" };
         const allocation = root?.allocation;
         if (root?.gatewayClass !== "isolated" || root.ownerUid !== uid || allocation?.kind !== "disposable-builder" || allocation.claimedByUid !== uid) {
             return { status: "ineligible", reason: "parked owner or allocation has changed" };
@@ -45,3 +47,4 @@ export function enqueueParkedGatewayPrewarm(store, request) {
         return { status: "queued", operationId };
     });
 }
+import { parkedHomeUnderSnapshotCustody } from "./parked-home-archive.js";
