@@ -33,26 +33,33 @@ function parkedArchiveFleet(): Seed {
   const ownerUid = "uid-ada";
   const sharedGatewayId = "shared-a";
   const returnOperationId = "archive-fixture-return";
+  const instanceName = "archive-fixture-vm";
+  const zone = "us-central1-b";
+  const homeSource = "projects/test/zones/us-central1-b/disks/archive-fixture-home";
+  const migrationId = "archive-fixture-scheduler";
   return {
     ...FLEET,
     [`gateways/${gatewayId}`]: { ...FLEET[`gateways/${gatewayId}`], desiredStatus: "paused", liveRelease: 2, sizingProfile: "archive-fixture" },
+    [`glmGateways/${gatewayId}`]: { docKind: "runtime", gatewayId, runtime: "gce-vm", lifecycle: "serving", release: 2,
+      vmSpec: { desktop: "x11" }, vm: { instanceName, instanceId: "123", zone, status: "SUSPENDED" } },
     [`users/${ownerUid}`]: {
       username: "ada",
       provisioning: {
-        computer: {
-          instanceName: "archive-fixture-vm", instanceId: "123", zone: "us-central1-b", gatewayId, parkedAt: 10,
-          checkpoint: { outcome: "fresh", requestedAt: 8, completedAt: 9 }, vmSpec: { desktop: "x11" },
-        },
-        homeDisk: { id: "124" },
+        projectStorage: { nativeBoot: true },
+        homeDisk: { id: "124", source: homeSource, zone },
+        pendingNativeSchedulerRetirement: { uid: ownerUid, slug: "ada", returnOperationId, migrationId,
+          sourceGatewayId: gatewayId, sharedGatewayId, instanceName, instanceId: "123", zone, homeDiskId: "124",
+          homeDiskSource: homeSource, cutoverCommittedAt: 5, completedAt: 10 },
         openclaw: { slug: "ada", gatewayId: sharedGatewayId, status: "complete", activationLease: {
           status: "parked", leaseId: "archive-fixture-lease", generation: 1, targetGatewayId: gatewayId, returnOperationId,
         } },
       },
     },
     ...operation(returnOperationId, {
-      kind: "migrate-user", status: "succeeded", createdAt: 1, startedAt: 2, completedAt: 11,
+      kind: "migrate-user", status: "succeeded", createdAt: 1, startedAt: 2, completedAt: 11, cutoverCommittedAt: 5,
       inputUid: ownerUid, input: { uid: ownerUid, fromGatewayId: gatewayId, toGatewayId: sharedGatewayId },
-      steps: [], output: { nativeSourcePark: { parked: "stopped" } },
+      schedulerHandoff: { uid: ownerUid, slug: "ada", migrationId, fromGatewayId: gatewayId, toGatewayId: sharedGatewayId },
+      steps: [], output: { nativeSourcePark: { parked: "suspended" } },
     }),
   };
 }
