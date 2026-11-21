@@ -15,7 +15,9 @@ const newDisk = { projectId: "test", zone, name: "snapshot-backed", id: "105", s
   source: "projects/test/zones/us-central1-b/disks/snapshot-backed" };
 const instance = { name: "test-owner", instanceId: "106", gatewayId, zone, status: "RUNNING",
   metadata: { "octogee-owner-uid": uid } };
-const spec = { zones: [zone], desktop: "x11", homeDiskSizeGb: 10 } as GatewayVmSpec;
+const spec: GatewayVmSpec = { zones: [zone], desktop: "x11", homeDiskSizeGb: 10, bootDiskType: "pd-balanced",
+  diskSizeGb: 80, machineType: "e2-medium", provisioningModel: "STANDARD", imageFamily: "fixture-image",
+  serviceAccountEmail: "vm@example.invalid", subnetwork: "fixture-subnet" };
 const input = { instanceName: instance.name, zones: spec.zones } as CreateGatewayVmInput;
 
 function fixture(generation = 2) {
