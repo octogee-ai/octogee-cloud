@@ -217,7 +217,7 @@ describe("operationNeedsDurableRestartResume", () => {
     expect(operationNeedsDurableRestartResume(op)).toBe(true);
     expect(operationNeedsDurableRestartResume({ ...op, id: "manual-move" })).toBe(false);
   });
-  it.each(["suspend-user", "erase-user"])(
+  it.each(["suspend-user", "erase-user", "prewarm-gateway"])(
     "keeps an interrupted %s operation available for restart re-drive",
     (kind) => {
       expect(operationNeedsDurableRestartResume({ kind })).toBe(true);
@@ -1260,7 +1260,7 @@ describe("the move an operator's give starts", () => {
   );
 
   it("counts the first check as one", () => {
-    expect(complete(move())).toMatchObject({ status: "pending", output: { isolatedGatewayReadinessChecks: 1 } });
+    expect(complete(move())).toMatchObject({ status: "pending", waitingOn: "isolated-gateway-ready", output: { isolatedGatewayReadinessChecks: 1 } });
   });
 
   it("does not spend the move's attempts on readiness checks", () => {

@@ -91,7 +91,7 @@ export interface PlatformStateTransaction extends PlatformStateRepositories {
 }
 
 export interface WatchFilters {
-  readonly operations: { readonly statuses: readonly OperationStatus[] };
+  readonly operations: { readonly statuses: readonly OperationStatus[]; readonly includeMigrationRecovery?: boolean };
   readonly gateways: { readonly gatewayId?: string };
   readonly assignments: { readonly gatewayId?: string };
   readonly fleetRegistry: { readonly gatewayId?: string };

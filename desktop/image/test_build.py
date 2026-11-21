@@ -17,7 +17,11 @@ if args[:3] == ['compute', 'instances', 'create'] and os.environ.get('BUILD_CASE
     print('code: ZONE_RESOURCE_POOL_EXHAUSTED', file=sys.stderr); sys.exit(1)
 if args[:3] == ['compute', 'instances', 'create'] and os.environ.get('BUILD_CASE') == 'create-failed':
     print('quota exceeded', file=sys.stderr); sys.exit(1)
-if 'ssh' in args and 'tail -n' in args[-1]: print('PIPELINE_DONE')
+if 'ssh' in args and os.environ.get('BUILD_CASE') == 'pipeline-died':
+    if 'tail -n +1 ' in args[-1]: print('12:00:00 [customize] packages')
+    if 'tail -n +2 ' in args[-1]: print("  [guest] fatal: unable to access 'https://source.example/tool/': The requested URL returned error: 503")
+    if 'kill -0' in args[-1]: print('dead')
+elif 'ssh' in args and 'tail -n' in args[-1]: print('PIPELINE_DONE')
 if 'ssh' in args and 'cat ~/image-build/omarchy-version' in args[-1]: print('4.5.0-2')
 '''
 DEFAULT_REGISTRY = 'ghcr.io/octogee-ai/octogee-cloud'
@@ -178,6 +182,17 @@ class CandidateBuildTests(unittest.TestCase):
             self.assertNotIn('--source-uri', image)
             delete = calls.index(['compute', 'instances', 'delete', 'builder-x', '--zone', 'us-central1-b', '--project', 'fixture', '--quiet'])
             self.assertGreater(delete, registration)
+
+    def test_dead_pipeline_prints_the_lines_it_wrote_before_dying(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.write_gcloud(root)
+            result = self.run_build(root, ['--builder-name', 'builder-x'], case='pipeline-died')
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn('[customize] packages', result.stdout)
+            self.assertIn("[guest] fatal: unable to access 'https://source.example/tool/': The requested URL returned error: 503", result.stdout)
+            self.assertIn('pipeline exited without PIPELINE_DONE', result.stderr)
+            self.assertEqual(self.calls(root)[-1][:4], ['compute', 'instances', 'delete', 'builder-x'])
 
     def test_failed_registration_still_deletes_the_builder_and_its_image_disk(self):
         with tempfile.TemporaryDirectory() as directory:

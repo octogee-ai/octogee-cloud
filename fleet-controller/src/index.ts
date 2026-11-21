@@ -19,7 +19,7 @@ import {
   startIsolatedPodBlockerObserver,
 } from "./isolated-pod-home.js";
 import { runNormalFleetMutation } from "@octogee/core/normal-fleet-mutation";
-import { platformStateStoreFromEnvironment, MissingRecordError, type WorkspaceProject, type FleetRegistryRecord, type GatewayRoot, type OpaqueMap, type GatewayRootFields, type GatewayRootPatch, type OperationRecord, type PlatformStateStore, type Stored, type WatchChange, type WatchEvent, type FleetRegistryInventory } from "@octogee/core/platform-state";
+import { platformStateStoreFromEnvironment, MissingRecordError, type WorkspaceProject, type FleetRegistryRecord, type GatewayRoot, type OpaqueMap, type GatewayRootFields, type GatewayRootPatch, type OperationRecord, type PlatformStateStore, type PlatformStateTransaction, type Stored, type WatchChange, type WatchEvent, type FleetRegistryInventory } from "@octogee/core/platform-state";
 import { restartGatewayProcess, restartGatewayDeployment } from './lib/runtime-restart-transport.js';
 import { assertMigrationRestartUnfenced } from './lib/runtime-restart-coordinator.js';
 import { assertOwnerOperationUnfenced } from './lib/vm-recovery-fence.js';
@@ -156,6 +156,7 @@ import {
 } from "./operation-queue.js";
 import { readOperationRolloutLanes, withOperationRolloutLane } from "./operation-rollout-lanes.js";
 import {
+  WAITING_FOR_ISOLATED_GATEWAY,
   buildOperationCompletionUpdate,
   operationFirstStartedAt,
   operationNeedsDurableRestartResume,
@@ -175,7 +176,7 @@ import { createRetireGatewayHandler } from "./handlers/retire-gateway.js";
 import { readFileSync } from "node:fs";
 import { createGatewayServiceAccountTeardown, gatewaysHaveGoogleServiceAccounts } from "./lib/gateway-gsa.js";
 import { gatewayFleetBaseUrl, gatewayVmAddress } from "./lib/gateway-address.js";
-import { createVmReadinessProbe, createSurgeEndpointLister } from "./vm-endpoints.js";
+import { createVmReadinessProbe, createSurgeEndpointLister, endpointFromVm } from "./vm-endpoints.js";
 import {
   createRuntimeDispatchingHelmRunner,
   createVmGatewayRuntime,
@@ -190,6 +191,8 @@ import { recoverSharedSourceRuntime } from "./lib/shared-source-runtime.js";
 import { recoverSharedRestoreRuntime } from "./lib/shared-restore-runtime.js";
 import { schedulerHandoffAwaitingRelease, startSchedulerHandoffRelease } from "./scheduler-handoff-release.js";
 import { createRecycleGatewayHandler } from "./handlers/recycle-gateway.js";
+import { createParkedPrewarmHandler } from "./handlers/parked-prewarm.js";
+import { PARKED_PREWARM_KIND } from "@octogee/core/isolated-gateway-lifecycle";
 import { createGatewayVmHandler } from "./handlers/gateway-vm.js";
 import { createGatewayVmClient } from "./lib/compute-vm.js";
 import { pausedIsolatedRetirementSourceFencedOff } from "./lib/native-retirement-telemetry.js";
@@ -1257,6 +1260,16 @@ function runtimeUserIdentity(gateway: DurableGateway): { builderIdentity?: Runti
     : {};
 }
 
+async function wakeIsolatedGatewayMoves(transaction: PlatformStateTransaction, root: GatewayRoot, initialPrelaunch: boolean): Promise<void> {
+  if (!initialPrelaunch || root.desiredStatus !== "running" || !root.ownerUid) return;
+  const moves = await transaction.journal.operations.listForUid(root.ownerUid, { kind: MIGRATE_USER_KIND, statuses: ["pending"] });
+  for (const move of moves) {
+    if (move.input?.toGatewayId === root.gatewayId && move.waitingOn === WAITING_FOR_ISOLATED_GATEWAY) {
+      await transaction.journal.operations.patch(move.id, { waitingOn: { clear: true }, nextAttemptAt: { clear: true } }, { revision: move.revision });
+    }
+  }
+}
+
 export async function markGatewayLive(
   passDeps: Pick<GatewayConvergencePassDeps, "store" | "log">,
   gateway: DurableGateway,
@@ -1279,6 +1292,7 @@ export async function markGatewayLive(
       log(`[converge-gateway] ${gateway.gatewayId} prelaunch reservation changed; deferring release`);
       return false;
     }
+    await wakeIsolatedGatewayMoves(transaction, root, initialDisposablePrelaunch);
     await transaction.gateways.roots.patch(
       gateway.gatewayId,
       { liveRelease: gateway.desiredRelease, updatedAt: now, updatedBy: "converge-gateway" },
@@ -1690,10 +1704,15 @@ function operationFromRecord(record: Stored<OperationRecord>): Operation {
   return operation;
 }
 
-function addedPendingOperations(event: WatchEvent<"operations">): readonly Stored<OperationRecord>[] {
+function runnablePendingOperations(event: WatchEvent<"operations">): readonly Stored<OperationRecord>[] {
   if (event.kind === "snapshot") return event.records;
   if (event.kind === "resync") return [];
-  return event.changes.flatMap((change) => change.type === "added" && change.record !== null ? [change.record] : []);
+  return event.changes.flatMap(({ type, record }) => {
+    if (!record || type === "removed") return [];
+    const readinessWaitCleared = record.output?.isolatedGatewayReadinessChecks !== undefined &&
+      record.waitingOn == null && record.nextAttemptAt == null;
+    return type === "added" || readinessWaitCleared ? [record] : [];
+  });
 }
 
 export function startOperationWorker(deps: ControllerDeps): () => void {
@@ -1702,7 +1721,7 @@ export function startOperationWorker(deps: ControllerDeps): () => void {
   };
   const subscription = deps.store.watch({ aggregate: "operations", filter: { statuses: ["pending"] } }, {
     onEvent: (event) => {
-      void processInOrder(addedPendingOperations(event)).catch((err) => {
+      void processInOrder(runnablePendingOperations(event)).catch((err) => {
         deps.log(`[glm-controller] ⚠ pending operation run failed: ${err instanceof Error ? err.message : String(err)}`);
       });
     },
@@ -1723,6 +1742,7 @@ export const OPERATION_QUEUE_DRAIN_MS_DEFAULT = 20_000;
 // Restart re-drive candidates. The predicate below admits only migrations with
 // durable migration or recovery state; legacy rollout sub-operations remain rollout-owned.
 const RESUMABLE_OP_KINDS: ReadonlySet<string> = new Set([
+  "prewarm-gateway",
   "rollout",
   "restart-gateway",
   MIGRATE_USER_KIND,
@@ -1748,7 +1768,10 @@ async function attemptClaimOrQueueOperation(
       if (freshOperation.kind === 'migrate-user') await assertMigrationRestartUnfenced(tx, freshOperation.input);
       let runningOpsSameKind: OperationRef[] = [];
       let pendingOpsSameKind: PendingOperationRef[] = [];
-      if (isSeriallyExclusiveKind(op.kind)) {
+      if (freshOperation.kind === PARKED_PREWARM_KIND) {
+        const running = await tx.journal.operations.listByKind(PARKED_PREWARM_KIND, ["running"]);
+        runningOpsSameKind = running.map(({ id, kind, input }) => ({ id, kind, input }));
+      } else if (isSeriallyExclusiveKind(op.kind)) {
         const [running, pending] = await Promise.all([
           tx.journal.operations.listByStatus(["running"]),
           tx.journal.operations.listByStatus(["pending"]),
@@ -2121,7 +2144,10 @@ function buildHeartbeatPollerCoreDeps(
         polledHeartbeats.set(record.gatewayId, record.heartbeat);
         polledRuntimes.set(record.gatewayId, record);
       }
-      return heartbeatPollInstanceIds(records);
+      const paused = new Set((informer.gateways() ?? [])
+        .filter(gateway => gateway.desiredStatus === "paused")
+        .map(gateway => gateway.gatewayId));
+      return heartbeatPollInstanceIds(records, paused);
     },
     fetchFleetState,
     readAssignedSlugs: async (instanceId) => {
@@ -2182,8 +2208,12 @@ export function buildGatewayHeartbeatPollerDeps(
   };
 }
 
-export function heartbeatPollInstanceIds(records: readonly FleetRegistryRecord[]): string[] {
-  return records.filter((record) => record.lifecycle !== "failed").map((record) => record.gatewayId);
+export function heartbeatPollInstanceIds(records: readonly FleetRegistryRecord[], paused: ReadonlySet<string>): string[] {
+  return records.filter(record => {
+    const parked = record.runtime === "gce-vm" && paused.has(record.gatewayId) &&
+      (record.vm?.status === "SUSPENDED" || record.vm?.status === "TERMINATED");
+    return record.lifecycle !== "failed" && !parked;
+  }).map(record => record.gatewayId);
 }
 
 type ControllerStopper = () => void;
@@ -3206,10 +3236,11 @@ async function buildHandlers(
   });
 
   const recoveryTargetTransport = createSurgePodTransport({ privateKey, log: logFn });
+  const probeVmReady = createVmReadinessProbe({ port: FLEET_CONTROLLER_PORT, timeoutMs: GATEWAY_HEALTH_TIMEOUT_MS, log: logFn });
   const recoveryTargetEndpoints = createSurgeEndpointLister({
     readRuntimeDoc: gatewayId => store.fleetRegistry.get(gatewayId),
     listPods: gatewayId => listSurgePods(spawnKubectl, NAMESPACE, gatewayId),
-    readVmReady: createVmReadinessProbe({ port: FLEET_CONTROLLER_PORT, timeoutMs: GATEWAY_HEALTH_TIMEOUT_MS, log: logFn }),
+    readVmReady: probeVmReady,
   });
   const migrateUser = createMigrateUserHandler({
     prepareIsolatedRecoveryTarget: input => prepareIsolatedRecoveryTarget({
@@ -3619,6 +3650,18 @@ async function buildHandlers(
 
   return {
     "add-gateway": addGateway,
+    "prewarm-gateway": createParkedPrewarmHandler({
+      store,
+      readVmRuntime: () => vmGatewayRuntimeRef.current ?? null,
+      probeReady: async (gatewayId, instanceId) => {
+        const runtime = await store.fleetRegistry.get(gatewayId);
+        const endpoint = endpointFromVm(gatewayId, runtime?.vm);
+        return runtime?.vm?.instanceId === instanceId && endpoint !== null && await probeVmReady(endpoint, gatewayId);
+      },
+      requestReconcileTick: (gatewayId) => requestReconcileTickRef.fire?.(gatewayId),
+      now: Date.now,
+      log: logFn,
+    }),
     "gateway-vm": (op, ctx) => runGatewayRuntimeExclusive(() => gatewayVm(op, ctx)),
     [MIGRATE_USER_KIND]: migrateUser,
     "retire-gateway": retireGateway,

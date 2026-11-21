@@ -89,6 +89,10 @@
       "types": "./dist/admin-placement-shared-router.d.ts",
       "default": "./dist/admin-placement-shared-router.js"
     },
+    "./parked-gateway-prewarm": {
+      "types": "./dist/parked-gateway-prewarm.d.ts",
+      "default": "./dist/parked-gateway-prewarm.js"
+    },
     "./isolated-gateway-lifecycle": {
       "types": "./dist/isolated-gateway-lifecycle/index.d.ts",
       "default": "./dist/isolated-gateway-lifecycle/index.js"
@@ -1700,7 +1704,7 @@
     "sharp": "^0.35.5",
     "supertest": "^7.3.2",
     "typescript": "^7.0.2",
-    "vitest": "^4.1.12"
+    "vitest": "^5.1.0"
   },
   "peerDependencies": {
     "@aws-sdk/client-sts": "^3.1164.0",

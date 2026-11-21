@@ -1,4 +1,5 @@
 export { seedSizingProfiles } from "./documents/config.js";
+export { migrationTransferTaskId, retargetedMigrationTransferId } from "./migration-tasks.js";
 export { MANAGED_CHANNEL_INSTALLATION, MANAGED_GIT_HOST } from "./channel-identities.js";
 export { AlreadyExistsError, BackendFailureError, ContentionExhaustedError, DuplicateRecordError, FenceMismatchError, isPlatformStateError, MalformedRecordError, MissingRecordError, UnsupportedOperationError, } from "./errors.js";
 export { agentImportRecordFromPayload } from "./documents/jobs.js";

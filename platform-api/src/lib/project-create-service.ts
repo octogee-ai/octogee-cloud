@@ -20,6 +20,7 @@ import { requestedProjectRecipe } from "./project-recipe.js";
 import { userEntitlements } from "@octogee/shared/types/user-entitlements";
 import type { FleetBrokerProjectCreateInput } from "@octogee/shared/types/fleet-broker";
 import { provisionProjectAgent } from "./project-agent-service.js";
+import { projectCreateAdmission } from "./project-create-admission.js";
 
 // "workspace" would collide with the workspace repo in Gitea (projectRepoName
 // is the slug itself) — a project by that name adopts and shares the repo.
@@ -138,6 +139,9 @@ export async function createProjectForActor(
   if (!planResult.ok) return planResult.result;
   const plan = planResult.plan;
 
+  const admissionFailure = await admitProjectCreate(plan);
+  if (admissionFailure) return admissionFailure;
+
   const existing = await platformStateStore.workspaces.projects.get(plan.workspaceId, plan.slug);
   if (existing) {
     // Deterministic 409 before the plan gate — a duplicate slug is a slug
@@ -193,6 +197,24 @@ export async function createProjectForActor(
     };
   } catch (error) {
     return failProjectProvisioning(plan, artifacts, error);
+  }
+}
+
+async function admitProjectCreate(plan: ProjectCreatePlan): Promise<ProjectCreateResult | null> {
+  try {
+    const decision = await projectCreateAdmission()({
+      uid: plan.uid,
+      workspaceId: plan.workspaceId,
+      projectSlug: plan.slug,
+      source: plan.source,
+    });
+    return decision.allowed ? null : { status: decision.status, body: decision.body };
+  } catch (error) {
+    logger.error(`[projects] Create admission failed for ${plan.workspaceId}/${plan.slug}`, {
+      uid: plan.uid,
+      error,
+    });
+    return bad(500, "Project creation could not be admitted");
   }
 }
 

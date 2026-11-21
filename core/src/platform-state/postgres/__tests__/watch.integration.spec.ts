@@ -134,6 +134,25 @@ describe.skipIf(!dsn)("PostgreSQL platform state watch", { timeout: 30_000 }, ()
     await vi.waitFor(() => expect(changesOf(listener)).toContainEqual(expect.objectContaining({ type: "added", key: "notified" })), WAIT);
   });
 
+  it("notifies placement of a retry requested on a terminal migration without including ordinary failures", async () => {
+    const store = harness.openStore({
+      ...FAST_TIMINGS,
+      watchTiming: { pollIntervalMs: 60_000, initialRetryDelayMs: 20, maxRetryDelayMs: 200 },
+    });
+    await harness.store.journal.operations.create(operation({ id: "return", kind: "migrate-user", status: "failed" }));
+    await harness.store.journal.operations.create(operation({ id: "unrelated", status: "failed" }));
+    const { listener } = await watched(store, { aggregate: "operations", filter: { statuses: ["pending"], includeMigrationRecovery: true } });
+    expect(snapshotIds(listener.events[0])).toEqual([]);
+    await vi.waitFor(async () => expect(await listenBackends()).toBe(1), WAIT);
+
+    await harness.store.journal.operations.patch("unrelated", { retryRequestedAt: 10 });
+    await harness.store.journal.operations.patch("return", { retryRequestedAt: 11 });
+
+    await vi.waitFor(() => expect(changesOf(listener)).toMatchObject([
+      { type: "added", key: "return", record: { status: "failed", retryRequestedAt: 11 } },
+    ]), WAIT);
+  });
+
   it("keeps delivering by polling while the notification connection is down", async () => {
     const store = harness.openStore({
       ...FAST_TIMINGS,
