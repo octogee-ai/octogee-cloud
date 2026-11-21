@@ -148,6 +148,17 @@ describe.skipIf(!dsn)("migratePlatformState", () => {
     expect(rows).toEqual(PLATFORM_STATE_MIGRATIONS.map(({ version, name }) => ({ version, name })));
   });
 
+  it("admits parked computer upgrades after upgrading the operations journal", async () => {
+    const { pool, schema } = isolated();
+    await migratePlatformState(pool, { schema, through: 21 });
+    const store = createPostgresPlatformStateStore({ pool, schema });
+    const prewarm = { ...operation(), kind: "prewarm-gateway" as const };
+    await expect(store.journal.operations.create(prewarm)).rejects.toThrow();
+    await migratePlatformState(pool, { schema });
+    await store.journal.operations.create(prewarm);
+    expect(await store.journal.operations.get(prewarm.id)).toMatchObject({ kind: "prewarm-gateway" });
+  });
+
   it("adds Meta token and pointer support without changing existing tokens", async () => {
     const { pool, schema } = isolated();
     const table = pg.escapeIdentifier(schema);

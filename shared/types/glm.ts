@@ -673,6 +673,7 @@ export function resolveUserGatewayControlState(
 
 export type OperationKind =
   | "add-gateway"
+  | "prewarm-gateway"
   | "gateway-vm"
   | "migrate-user"
   | "retire-gateway"
