@@ -2,7 +2,7 @@ import { publishAnchor } from "./postgres-anchor-file.js";
 import { readLocalAuxiliaryAnchors } from "./user-auxiliary-anchors.js";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { assertTargetIdentityCustody, type MigrationTargetIdentityCustody } from "@octogee/core/migration-activation-manifest";
+import { assertTargetIdentityCustody, type MigrationSourceIdentityCustody, type MigrationTargetIdentityCustody } from "@octogee/core/migration-activation-manifest";
 import { queryAgentStore, readPostgresAgentAnchor } from "@octogee/core/agent-postgres";
 import type { FleetBrokerAgentAnchor, FleetBrokerAgentAnchorMigration, FleetBrokerGatewayStateAnchor, FleetBrokerAuxiliaryAnchor } from "@octogee/shared/types/fleet-broker";
 import { localStateStorePath } from "./openclaw-state-store.js";
@@ -103,6 +103,7 @@ interface SharedUserAgentAnchorsInput {
   agentIds: readonly string[];
   allowQuiescingExisting?: boolean;
   sharedToSharedWorkspace?: MigrationTargetIdentityCustody | null;
+  sourceResume?: MigrationSourceIdentityCustody;
   broker: Pick<FleetBrokerClient, "readAgentAnchors" | "reportAgentAnchors">;
 }
 
@@ -155,6 +156,20 @@ function sharedRecordedAnchors(
   return expected;
 }
 
+function sourceRollbackRetainsRoster(
+  custody: MigrationSourceIdentityCustody | undefined,
+  assignment: { uid: string; epoch: number },
+  agentCount: number,
+  localCount: number,
+  recordedCount: number,
+): boolean {
+  if (!custody) return false;
+  if (assignment.uid !== custody.uid || assignment.epoch !== custody.epoch) {
+    throw new Error("Shared source rollback anchor custody changed");
+  }
+  return localCount === agentCount && recordedCount === agentCount;
+}
+
 export async function prepareSharedUserAgentAnchors(input: SharedUserAgentAnchorsInput): Promise<{
   report: () => Promise<void>;
   retainedSharedRoster?: FleetBrokerAgentAnchor[];
@@ -188,6 +203,7 @@ export async function prepareSharedUserAgentAnchors(input: SharedUserAgentAnchor
     return local;
   };
   const local = await assertRecordedIdentities();
+  const retainedSourceRoster = sourceRollbackRetainsRoster(input.sourceResume, assignment, agentIds.length, local.length, expected.length);
   if (quiescingExisting && (expected.length !== agentIds.length || local.length !== agentIds.length)) {
     throw new Error(`Shared quiescing resume requires existing local and recorded identities for ${slug}`);
   }
@@ -205,7 +221,7 @@ export async function prepareSharedUserAgentAnchors(input: SharedUserAgentAnchor
     for (const anchor of anchors) await verifyAgentAnchorInPostgres(anchor);
     await broker.reportAgentAnchors({ uid, slug, assignmentEpoch, assignmentState, anchors, configuredAgentIds: agentIds, ...(recorded.migration ? { migration: recorded.migration } : {}) });
   };
-  return { report, ...(retainedSharedRoster ? { retainedSharedRoster: expected } : {}) };
+  return { report, ...(retainedSharedRoster || retainedSourceRoster ? { retainedSharedRoster: expected } : {}) };
 }
 
 export type GatewayStateAnchorVerifier = (anchor: FleetBrokerGatewayStateAnchor) => Promise<void>;
