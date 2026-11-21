@@ -1670,7 +1670,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@google-cloud/secret-manager": "^7.2.0",
+    "@google-cloud/secret-manager": "^8.0.0",
     "@types/express": "^5.0.6",
     "@types/pg": "^8.23.1",
     "@types/ws": "^8.18.2",
