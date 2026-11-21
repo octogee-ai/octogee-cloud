@@ -552,6 +552,51 @@ describe("internal gitea-admin route", () => {
     expect(projectProvisioning.ensureProjectGiteaRepo).not.toHaveBeenCalled();
   });
 
+  it("provision-project-repo passes the product's starter files through to the seed", async () => {
+    const starterFiles = [
+      { path: "package.json", content: "{}\n" },
+      { path: "assets/icon.png", content: "iVBORw0=", encoding: "base64" },
+    ];
+    const res = await authed(request(app()).post("/internal/gitea/provision-project-repo")).send({
+      workspaceId: "acme",
+      slug: "mygame",
+      name: "My game",
+      tagline: "Ship it",
+      projectType: null,
+      visibility: "private",
+      recipe: "vite-static",
+      starterFiles,
+    });
+
+    expect(res.status).toBe(200);
+    expect(projectProvisioning.ensureProjectGiteaRepo).toHaveBeenCalledWith(
+      expect.objectContaining({ slug: "mygame", starterFiles }),
+    );
+  });
+
+  it.each([
+    ["an absolute path", [{ path: "/etc/passwd", content: "x" }]],
+    ["a parent segment", [{ path: "src/../../x", content: "x" }]],
+    ["a .git path", [{ path: ".git/config", content: "x" }]],
+    ["a file listed twice", [{ path: "a.txt", content: "x" }, { path: "a.txt", content: "y" }]],
+    ["a list that is not a list", { path: "a.txt", content: "x" }],
+  ])("provision-project-repo → 400 on starter files with %s, before touching Gitea", async (_case, starterFiles) => {
+    const res = await authed(request(app()).post("/internal/gitea/provision-project-repo")).send({
+      workspaceId: "acme",
+      slug: "mygame",
+      name: "My game",
+      tagline: "Ship it",
+      projectType: null,
+      visibility: "private",
+      recipe: "vite-static",
+      starterFiles,
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toEqual(expect.any(String));
+    expect(projectProvisioning.ensureProjectGiteaRepo).not.toHaveBeenCalled();
+  });
+
   it("delete-project-repo is scoped to the assigned workspace", async () => {
     const res = await authed(request(app()).post("/internal/gitea/delete-project-repo")).send({
       workspaceId: "acme",

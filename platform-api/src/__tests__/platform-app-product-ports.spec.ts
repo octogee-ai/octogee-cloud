@@ -21,6 +21,8 @@ const { NO_PROJECT_AGENT_DELIVERY_INTENTS, installProjectAgentDeliveryIntents, p
   await import("../lib/project-agent-delivery-intents.js");
 const { ADMIT_EVERY_PROJECT_CREATE, installProjectCreateAdmission, projectCreateAdmission } =
   await import("../lib/project-create-admission.js");
+const { PLATFORM_RECIPE_STARTER_FILES, installProjectStarterFiles, projectStarterFiles } =
+  await import("../lib/project-starter-files.js");
 const { userAccounts } = await import("@octogee/core/identity/user-accounts");
 const { NO_CONNECTOR_DISCONNECTED, connectorDisconnected, installConnectorDisconnected } =
   await import("../lib/connector-disconnect.js");
@@ -32,6 +34,7 @@ afterEach(() => {
   installProjectAgentDeliveryIntents(NO_PROJECT_AGENT_DELIVERY_INTENTS);
   installConnectorDisconnected(NO_CONNECTOR_DISCONNECTED);
   installProjectCreateAdmission(ADMIT_EVERY_PROJECT_CREATE);
+  installProjectStarterFiles(PLATFORM_RECIPE_STARTER_FILES);
 });
 
 function productWith(runtime: Partial<ProductRuntime>) {
@@ -132,6 +135,30 @@ describe("createPlatformApp product ports", () => {
     expect(projectCreateAdmission()).toBe(ADMIT_EVERY_PROJECT_CREATE);
     await expect(projectCreateAdmission()({ uid: "u", workspaceId: "w", projectSlug: "p", source: "ui" }))
       .resolves.toEqual({ allowed: true });
+  });
+
+  it("keeps the platform recipe starter without a product", async () => {
+    installProjectStarterFiles(async () => []);
+
+    createPlatformApp();
+
+    expect(projectStarterFiles()).toBe(PLATFORM_RECIPE_STARTER_FILES);
+    await expect(projectStarterFiles()({
+      uid: "u",
+      workspaceId: "w",
+      projectSlug: "p",
+      projectType: null,
+      recipe: "vite-static",
+      starter: null,
+    })).resolves.toBeNull();
+  });
+
+  it("installs the product's project starter files", () => {
+    const starterFiles = async () => [];
+
+    createPlatformApp({ product: productWith({ projectStarterFiles: starterFiles }) });
+
+    expect(projectStarterFiles()).toBe(starterFiles);
   });
 
   it("installs the product's project create admission", () => {

@@ -15,6 +15,7 @@ import {
 } from "@octogee/core/templates/project-seeds";
 import { seedBoardWelcomeIssue } from "../../lib/board-welcome.js";
 import type { ProjectRecipeId } from "@octogee/shared/types/project";
+import type { ProjectStarterFile } from "../../lib/project-starter-files.js";
 
 export interface ProjectRepoProvisioningResult {
   created: boolean;
@@ -43,6 +44,7 @@ export async function ensureProjectGiteaRepo(input: {
   // the GitHub repo — a welcome issue here would be invisible (and seeding
   // into a user's imported GitHub repo is not ours to do).
   githubBacked?: boolean;
+  starterFiles?: ProjectStarterFile[];
 }): Promise<{ created: boolean }> {
   const org = workspaceGiteaOrg(input.workspaceId);
   const repoName = projectRepoName(input.slug);
@@ -78,16 +80,12 @@ export async function ensureProjectGiteaRepo(input: {
       playbookSeeds.map((seed) => ({ path: seed.relPath, content: seed.content })),
       "auto: seed project playbook",
     );
-    const starterSeeds = projectRecipeStarterSeeds({
-      projectSlug: input.slug,
-      recipe: input.recipe,
-    });
     await giteaWriteFilesIfAllAbsent(
       org,
       repoName,
-      starterSeeds.map((seed) => ({
-        path: seed.relPath,
-        content: seed.encoding === "base64" ? Buffer.from(seed.content, "base64") : seed.content,
+      starterFilesFor(input).map((file) => ({
+        path: file.path,
+        content: file.encoding === "base64" ? Buffer.from(file.content, "base64") : file.content,
       })),
       "auto: seed project starter",
     );
@@ -100,6 +98,15 @@ export async function ensureProjectGiteaRepo(input: {
     await seedBoardWelcomeIssue({ workspaceId: input.workspaceId, slug: input.slug, name: input.name });
   }
   return { created };
+}
+
+function starterFilesFor(input: { slug: string; recipe: ProjectRecipeId; starterFiles?: ProjectStarterFile[] }): ProjectStarterFile[] {
+  if (input.starterFiles) return input.starterFiles;
+  return projectRecipeStarterSeeds({ projectSlug: input.slug, recipe: input.recipe }).map((seed) => ({
+    path: seed.relPath,
+    content: seed.content,
+    ...(seed.encoding === "base64" ? { encoding: "base64" as const } : {}),
+  }));
 }
 
 export async function provisionProjectRepoResult(

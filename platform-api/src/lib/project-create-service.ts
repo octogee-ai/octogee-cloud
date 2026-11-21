@@ -21,6 +21,11 @@ import { userEntitlements } from "@octogee/shared/types/user-entitlements";
 import type { FleetBrokerProjectCreateInput } from "@octogee/shared/types/fleet-broker";
 import { provisionProjectAgent } from "./project-agent-service.js";
 import { projectCreateAdmission } from "./project-create-admission.js";
+import {
+  isValidProjectStarter,
+  requestProjectStarterFiles,
+  type ProjectStarterFile,
+} from "./project-starter-files.js";
 
 // "workspace" would collide with the workspace repo in Gitea (projectRepoName
 // is the slug itself) — a project by that name adopts and shares the repo.
@@ -61,6 +66,7 @@ interface ProjectCreatePlan {
   targetVisibility: string;
   ghRepoSource: { provider: "github"; owner: string; repo: string } | null;
   recipe: ProjectRecipeId;
+  starter: string | null;
   giteaRepoName: string;
   source: "ui" | "agent";
   queuesKickoff: boolean;
@@ -77,6 +83,7 @@ interface NormalizedProjectCreateRequest {
   visibility: string;
   repoSource: unknown;
   recipe: unknown;
+  starter: unknown;
 }
 
 interface MattermostMemberAdd {
@@ -142,6 +149,9 @@ export async function createProjectForActor(
   const admissionFailure = await admitProjectCreate(plan);
   if (admissionFailure) return admissionFailure;
 
+  const starterFiles = await projectCreateStarterFiles(plan);
+  if (!starterFiles.ok) return starterFiles.result;
+
   const existing = await platformStateStore.workspaces.projects.get(plan.workspaceId, plan.slug);
   if (existing) {
     // Deterministic 409 before the plan gate — a duplicate slug is a slug
@@ -178,7 +188,7 @@ export async function createProjectForActor(
     await writeProjectOwnerMember(plan);
     const callerCtx = await getWorkspaceMmContext(plan.uid, plan.workspaceId);
     const channel = await provisionProjectMattermost(plan, callerCtx, artifacts);
-    await provisionProjectCodeRepo(plan, artifacts);
+    await provisionProjectCodeRepo(plan, starterFiles.files, artifacts);
     await markProjectActive(plan);
     await provisionProjectAgentByDefault(plan);
     logger.info(`[projects] Created project ${plan.workspaceId}/${plan.slug}`, {
@@ -216,6 +226,27 @@ async function admitProjectCreate(plan: ProjectCreatePlan): Promise<ProjectCreat
     });
     return bad(500, "Project creation could not be admitted");
   }
+}
+
+async function projectCreateStarterFiles(
+  plan: ProjectCreatePlan,
+): Promise<{ ok: true; files: ProjectStarterFile[] | null } | { ok: false; result: ProjectCreateResult }> {
+  if (plan.ghRepoSource) return { ok: true, files: null };
+  const outcome = await requestProjectStarterFiles({
+    uid: plan.uid,
+    workspaceId: plan.workspaceId,
+    projectSlug: plan.slug,
+    projectType: plan.projectType,
+    recipe: plan.recipe,
+    starter: plan.starter,
+  });
+  if (outcome.ok) return outcome;
+  logger.error(`[projects] Starter files failed for ${plan.workspaceId}/${plan.slug}`, {
+    uid: plan.uid,
+    starter: plan.starter,
+    error: outcome.error,
+  });
+  return { ok: false, result: bad(500, "Project starter files could not be prepared") };
 }
 
 async function prewarmProjectCapacity(plan: ProjectCreatePlan, prewarm: () => Promise<void>): Promise<void> {
@@ -283,6 +314,9 @@ function buildProjectCreatePlan(
     : requestedProjectRecipe(request.recipe);
   if (!recipe.ok) return { ok: false, result: bad(400, recipe.error) };
 
+  const starter = requestedProjectStarter(request.starter);
+  if (!starter.ok) return { ok: false, result: bad(400, "Invalid starter") };
+
   if (!workspaceId) {
     return { ok: false, result: bad(422, "Workspace not provisioned") };
   }
@@ -303,11 +337,17 @@ function buildProjectCreatePlan(
       targetVisibility: request.visibility,
       ghRepoSource: rs.value,
       recipe: recipe.value,
+      starter: starter.value,
       giteaRepoName: projectRepoName(request.slug),
       source: actor.source ?? "ui",
       queuesKickoff: (actor.source ?? "ui") === "ui" && projectAgentDeliveryIntents().recordsIntents,
     },
   };
+}
+
+function requestedProjectStarter(value: unknown): { ok: true; value: string | null } | { ok: false } {
+  if (value === undefined || value === null) return { ok: true, value: null };
+  return isValidProjectStarter(value) ? { ok: true, value } : { ok: false };
 }
 
 function normalizeProjectCreateRequest(
@@ -325,6 +365,7 @@ function normalizeProjectCreateRequest(
     visibility: nonEmptyStringOr(request.visibility, "private"),
     repoSource: request.repoSource,
     recipe: request.recipe,
+    starter: request.starter,
   };
 }
 
@@ -404,6 +445,7 @@ async function writeProjectProductFields(plan: ProjectCreatePlan): Promise<void>
     projectType: plan.projectType,
     canvasFile: "README.md",
     recipe: plan.recipe,
+    starter: plan.starter,
     publishedUrl: null,
     starCount: 0,
     memberCount: 1,
@@ -521,6 +563,7 @@ async function writeProjectGeneralChannel(plan: ProjectCreatePlan, mmChannelId: 
 
 async function provisionProjectCodeRepo(
   plan: ProjectCreatePlan,
+  starterFiles: ProjectStarterFile[] | null,
   artifacts: ProjectProvisioningArtifacts,
 ): Promise<void> {
   const repoResult = await provisionProjectRepoResult({
@@ -532,6 +575,7 @@ async function provisionProjectCodeRepo(
     visibility: plan.targetVisibility,
     recipe: plan.recipe,
     githubBacked: plan.ghRepoSource !== null,
+    ...(starterFiles ? { starterFiles } : {}),
   });
   artifacts.repoCreated = repoResult.created;
   if (!repoResult.error) return;
