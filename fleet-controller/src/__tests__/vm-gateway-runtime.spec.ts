@@ -134,6 +134,10 @@ function harness(
   };
   const log = vi.fn();
   const creationSettled = vi.fn();
+  const deploymentPublished = vi.fn((gatewayId: string) => {
+    expect(docs[`glmGateways/${gatewayId}`].vmInstance).toMatchObject({ replicas: 1 });
+    expect(routesPublished().at(-1)).toHaveProperty(gatewayId);
+  });
   const journalBootUpgrade = vi.fn<VmGatewayRuntimeDeps["journalBootUpgrade"]>(async (_input, work) => work(async () => {}));
   const helmCalls: string[][] = [];
   const kubectlCalls: Array<{ args: string[]; stdin?: string }> = [];
@@ -166,10 +170,11 @@ function harness(
     homeCheckpointTimeoutMs: extra.homeCheckpointTimeoutMs ?? 60_000,
     homeCheckpointPollMs: 10_000,
     onVmCreationSettled: creationSettled,
+    onVmDeploymentPublished: deploymentPublished,
     now: () => clock.now, log,
   });
   const routesPublished = () => kubectlCalls.filter((c) => c.args[0] === "apply").map((c) => JSON.parse(JSON.parse(c.stdin!).data["routes.json"]) as Record<string, string>);
-  return { runtime, store, docs, writes, deletes, vm, log, creationSettled, journalBootUpgrade, helmCalls, kubectlCalls, routesPublished, clock, waits };
+  return { runtime, store, docs, writes, deletes, vm, log, creationSettled, journalBootUpgrade, helmCalls, kubectlCalls, routesPublished, clock, waits, deploymentPublished };
 }
 
 const upsertOpts = {
@@ -667,6 +672,21 @@ describe("createVmGatewayRuntime.upsertInstance", () => {
     await expect(routesFail.runtime.upsertInstance(upsertOpts)).rejects.toThrow(/configmaps is forbidden/);
     expect(routesFail.docs["glmGateways/b-x"].vm).toEqual({ ...recorded, updatedAt: 1_000 });
     expect(routesFail.docs["glmGateways/b-x"].vmInstance).toBeUndefined();
+  });
+
+  it("requests verification once after publishing a resumed VM's routable deployment", async () => {
+    let current = suspended;
+    const h = harness({ "glmGateways/b-x": { ...initialRuntimeDoc("b-x"), runtime: "gce-vm",
+      vm: { ...recorded, status: "SUSPENDED", internalIp: null }, vmInstance: { replicas: 0 } } }, {
+      describe: vi.fn(async () => current),
+      resume: vi.fn(async () => { current = running; return { fellBackToStandard: false }; }),
+    });
+
+    await h.runtime.upsertInstance({ ...upsertOpts, replicas: 1 });
+    expect(h.deploymentPublished).toHaveBeenCalledExactlyOnceWith("b-x");
+
+    await h.runtime.upsertInstance({ ...upsertOpts, replicas: 1 });
+    expect(h.deploymentPublished).toHaveBeenCalledTimes(1);
   });
 
   it("pauses by suspending the user's running VM instead of claiming or starting one, and records the paused deployment", async () => {

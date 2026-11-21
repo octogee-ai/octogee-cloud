@@ -1368,13 +1368,13 @@ async function convergeGatewaysIfConfigured(
   }
 }
 
-function convergeAfterVmCreation(
+function convergeAfterVmRuntimePublished(
   convergeGateways: (gatewayIds: readonly string[]) => Promise<void>,
   log: (msg: string) => void,
 ): (gatewayId: string) => void {
   return (gatewayId) => {
     void convergeGateways([gatewayId]).catch((err: unknown) => {
-      log(`[converge-gateway] ⚠ ${gatewayId}: converge after its VM creation settled failed: ${err instanceof Error ? err.message : String(err)}; requeued`);
+      log(`[converge-gateway] ⚠ ${gatewayId}: converge after publishing VM runtime failed: ${err instanceof Error ? err.message : String(err)}; requeued`);
       requestReconcileTickRef.fire?.(gatewayId);
     });
   };
@@ -2684,6 +2684,7 @@ async function createControllerRuntime(
       journalBootUpgrade: createBootUpgradeJournal(store),
       wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
       onVmCreationSettled: (gatewayId) => convergeSettledVm(gatewayId),
+      onVmDeploymentPublished: (gatewayId) => convergeSettledVm(gatewayId),
       now: () => Date.now(),
       log,
     })
@@ -2749,7 +2750,7 @@ async function createControllerRuntime(
       log,
     }, gatewayIds);
   const convergeGateways = serializeGatewayConvergence(runGatewayConvergence);
-  const convergeSettledVm = convergeAfterVmCreation(convergeGateways, log);
+  const convergeSettledVm = convergeAfterVmRuntimePublished(convergeGateways, log);
   const nativeReturnRecovery = buildNativeReturnSourceRecoveryOwner(store, kubeOps, fleetControllerPrivateKey, prepareMigrationAgentStores);
   const handlers = await buildHandlers(documents, log, helm, kubeOps, {
     syncFleetIngress: handlerSyncFleetIngress, privateKey: fleetControllerPrivateKey,
