@@ -1115,11 +1115,14 @@ describe("pending operation watch", () => {
     }
   });
 
-  it("wakes one fenced archive at its persisted provider deadline after restart", async () => {
+  it.each([
+    { action: "archive", createdBy: "glm-controller-return-home-archive", waitMs: 5_000 },
+    { action: "release-home-backup", createdBy: "glm-controller-placement-policy", waitMs: 30_000 },
+  ])("wakes one $action at its persisted provider deadline after restart", async ({ action, createdBy, waitMs }) => {
     const id = "archive-owner";
     const { db, store, emit } = createOperationsFixture({
-      [id]: baseOp({ id, kind: "gateway-vm", origin: "automatic", createdBy: "glm-controller-return-home-archive",
-        input: { action: "archive", uid: "alice" }, nextAttemptAt: 6_000, waitingOn: "home-archive-provider",
+      [id]: baseOp({ id, kind: "gateway-vm", origin: "automatic", createdBy,
+        input: { action, uid: "alice" }, nextAttemptAt: 1_000 + waitMs, waitingOn: "home-archive-provider",
         output: { homeArchiveProviderDeadlineAt: 1_201_000 } }),
     });
     const handler = vi.fn<OperationHandler>().mockResolvedValue({ success: true, steps: [] });
@@ -1131,7 +1134,7 @@ describe("pending operation watch", () => {
       await emit({ kind: "snapshot", records: [pending], cursor: "c1" as never });
       await emit({ kind: "resync", reason: "backend-restart" });
       await emit({ kind: "snapshot", records: [pending], cursor: "c2" as never });
-      await vi.advanceTimersByTimeAsync(4_999);
+      await vi.advanceTimersByTimeAsync(waitMs - 1);
       expect(handler).not.toHaveBeenCalled();
       await vi.advanceTimersByTimeAsync(1);
       expect(handler).toHaveBeenCalledOnce();

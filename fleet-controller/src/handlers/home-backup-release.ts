@@ -124,7 +124,10 @@ export function createHomeBackupReleaseHandler(deps: {
     await ctx.assertActiveClaim();
     try {
       if (!await deps.vm.eraseHomeSnapshot(proof.archive.snapshot, id.uid)) {
-        return retry("Restored home backup erasure is still converging");
+        return {
+          steps: [], success: false, waitingForHomeArchiveProvider: true,
+          error: "Restored home backup erasure is still converging",
+        };
       }
     } catch (error) {
       if (transientSnapshotError(error)) return retry("Restored home backup erasure temporarily failed; snapshot custody retained");
