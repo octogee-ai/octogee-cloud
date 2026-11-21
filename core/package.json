@@ -1693,7 +1693,7 @@
     "rimraf@>=4.2.0 <6.1.4": "^6.1.4"
   },
   "devDependencies": {
-    "@aws-sdk/client-sts": "^3.1164.0",
+    "@aws-sdk/client-sts": "^3.1169.0",
     "@google-cloud/kms": "^6.3.0",
     "@google-cloud/storage": "^8.4.0",
     "@octogee/core-testing": "file:../core-testing",
@@ -1707,7 +1707,7 @@
     "vitest": "^4.1.12"
   },
   "peerDependencies": {
-    "@aws-sdk/client-sts": "^3.1164.0",
+    "@aws-sdk/client-sts": "^3.1169.0",
     "@google-cloud/kms": "^6.3.0",
     "@google-cloud/storage": "^8.4.0",
     "@octogee/shared": "^1.0.0",
