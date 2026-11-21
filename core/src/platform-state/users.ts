@@ -128,6 +128,18 @@ export type UserHomeArchive = UserHomeArchiveIdentity & (
     readonly generation: number;
     readonly zone: string;
     readonly diskName: string;
+    readonly previousTargetGatewayId?: string;
+    readonly previousLeaseId?: string;
+    readonly previousGeneration?: number;
+    readonly targetInstanceName?: string;
+    readonly targetInstanceId?: string;
+    readonly diskInsertRequested?: true;
+    readonly vmInsertRequested?: true;
+    readonly eraseRestore?: {
+      readonly deletionId: string;
+      readonly instanceId: string;
+      readonly bootDisk: { readonly source: string; readonly id: string };
+    };
     readonly restoredDisk?: RetainedUserHome;
   })
   | (UserHomeSnapshotCustody & {

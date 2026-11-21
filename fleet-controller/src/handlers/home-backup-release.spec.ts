@@ -71,10 +71,19 @@ describe("release the restored Builder backup", () => {
     await h.store.users.placementReceipts.create(uid, receipt);
     await h.create();
     await h.create();
+    const runtime = h.docs[`glmGateways/${target}`];
+    const ready = runtime.vmBootRecovery;
+    runtime.vmBootRecovery = { ready: true, instanceId: archive.restoredInstanceId, observedAt: 399 };
+    await expect(h.run()).resolves.toMatchObject({ success: false });
+    runtime.vmBootRecovery = { ready: true, instanceId: archive.instanceId, observedAt: 550 };
+    await expect(h.run()).resolves.toMatchObject({ success: false });
+    expect(h.provider.eraseHomeSnapshot).not.toHaveBeenCalled();
+    runtime.vmBootRecovery = ready;
     h.provider.eraseHomeSnapshot.mockRejectedValueOnce(new Error("HTTP 403")).mockResolvedValueOnce(false);
     for (let count = 0; count < 2; count += 1) {
       await expect(h.run()).resolves.toMatchObject({ success: false, retryAfterMs: expect.any(Number) });
       expect((await h.store.users.records.get(uid))?.home.homeArchive).toEqual({ ...archive, releaseProvenForActivation: activationId });
+      delete runtime.vmBootRecovery;
     }
     await expect(h.run()).resolves.toMatchObject({ success: true });
     expect((await h.store.users.records.get(uid))?.home).toMatchObject({ homeDisk: restoredDisk });

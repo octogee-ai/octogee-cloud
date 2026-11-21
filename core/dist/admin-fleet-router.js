@@ -1,4 +1,4 @@
-export { enqueueParkedHomeArchive, resolveParkedHomeArchiveGrant } from "./parked-home-archive.js";
+export { enqueueParkedHomeArchive, resolveParkedHomeArchiveGrant, simpleHomePreparation } from "./parked-home-archive.js";
 import { migrationCancellationDeferred } from "./fleet-state.js";
 import { readSharedSourceRecoveryAuthority, readSharedSourceRecoverySupersession, SharedSourceRecoveryConflict } from "./shared-source-recovery.js";
 import { randomUUID } from "node:crypto";
