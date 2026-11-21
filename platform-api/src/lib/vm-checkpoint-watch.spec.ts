@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { FleetRegistryRecord, PlatformStateStore, Stored, WatchCursor, WatchListener } from "@octogee/core/platform-state";
-import { vmCheckpointCursor, waitForVmCheckpointChange } from "./vm-checkpoint-watch.js";
+import { createVmCheckpointWaiter, vmCheckpointCursor } from "./vm-checkpoint-watch.js";
 
 const CURSOR = "test-watch-cursor" as WatchCursor;
 
@@ -20,11 +20,12 @@ function harness(initial = runtime()) {
     return { close, closed: new Promise<void>(() => {}) };
   });
   const abort = new AbortController();
+  const waitForChange = createVmCheckpointWaiter({ watch: watch as PlatformStateStore["watch"], fleetRegistry: { get } });
   return {
     close, get, watch, abort,
-    wait: (cursor = vmCheckpointCursor(initial, "42")!) => waitForVmCheckpointChange({
-      watch: watch as PlatformStateStore["watch"], fleetRegistry: { get },
-    }, { gatewayId: "builder", instanceId: "42", cursor, signal: abort.signal }),
+    wait: (signal = abort.signal) => waitForChange({
+      gatewayId: "builder", instanceId: "42", cursor: vmCheckpointCursor(initial, "42")!, signal,
+    }),
     snapshot: (value = current) => { current = value; return listener.onEvent({ kind: "snapshot", records: [value], cursor: CURSOR }); },
     resync: () => listener.onEvent({ kind: "resync", reason: "notification-gap" }),
     change: (value: Stored<FleetRegistryRecord>) => {
@@ -38,8 +39,8 @@ describe("checkpoint change wait", () => {
   it("subscribes before detecting a request already committed by the initial snapshot", async () => {
     const h = harness();
     const pending = h.wait();
-    expect(h.watch).toHaveBeenCalledWith({ aggregate: "fleetRegistry", filter: { gatewayId: "builder" } }, expect.anything());
-    expect(h.get).not.toHaveBeenCalled();
+    expect(h.watch).toHaveBeenCalledWith({ aggregate: "fleetRegistry", filter: {} }, expect.anything());
+    expect(h.watch.mock.invocationCallOrder[0]).toBeLessThan(h.get.mock.invocationCallOrder[0]!);
 
     await h.snapshot(runtime({ checkpointRequestedAt: 7 }));
     await expect(pending).resolves.toBe("changed");
@@ -52,10 +53,25 @@ describe("checkpoint change wait", () => {
     const pending = h.wait();
     await h.snapshot();
     await h.change({ ...active, openclawHealthyBuild: "other-build" });
-    expect(h.get).not.toHaveBeenCalled();
+    expect(h.get).toHaveBeenCalledOnce();
     await h.resync();
     await h.snapshot(runtime());
     await expect(pending).resolves.toBe("changed");
+  });
+
+  it("shares the registry watch until all waiting connections close", async () => {
+    const h = harness();
+    const first = h.wait();
+    const secondSignal = new AbortController();
+    const second = h.wait(secondSignal.signal);
+    await h.snapshot();
+    expect(h.watch).toHaveBeenCalledOnce();
+    h.abort.abort();
+    await expect(first).resolves.toBe("unchanged");
+    expect(h.close).not.toHaveBeenCalled();
+    secondSignal.abort();
+    await expect(second).resolves.toBe("unchanged");
+    expect(h.close).toHaveBeenCalledOnce();
   });
 
   it("returns without a wake when the bounded wait expires unchanged", async () => {
@@ -79,7 +95,7 @@ describe("checkpoint change wait", () => {
     disconnected.abort.abort();
     await expect(waiting).resolves.toBe("unchanged");
     expect(disconnected.close).toHaveBeenCalledOnce();
-    expect(disconnected.get).not.toHaveBeenCalled();
+    expect(disconnected.get).toHaveBeenCalledOnce();
 
     const replaced = harness();
     const pending = replaced.wait();

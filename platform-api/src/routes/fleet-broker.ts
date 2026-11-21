@@ -1,4 +1,4 @@
-import { CHECKPOINT_CURSOR_HEADER, vmCheckpointCursor, vmRuntimeCheckpointSignal, waitForVmCheckpointChange } from "../lib/vm-checkpoint-watch.js";
+import { CHECKPOINT_CURSOR_HEADER, createVmCheckpointWaiter, vmCheckpointCursor, vmRuntimeCheckpointSignal } from "../lib/vm-checkpoint-watch.js";
 import { brokerRequestLimit } from "../middleware/broker-request-limit.js";
 import { isBlobObjectVersion } from "@octogee/shared/types/fleet-broker";
 import { gcsBlobStore, runtimeBlobStore } from "../lib/runtime-blob-store.js";
@@ -4221,7 +4221,7 @@ async function recordVmBootRecoveryReport(deps: ResolvedFleetBrokerRouteDeps, re
 }
 
 async function respondVmCheckpointWait(
-  deps: ResolvedFleetBrokerRouteDeps, res: Response, bound: GatewayBinding, cursor: string,
+  waitForChange: ReturnType<typeof createVmCheckpointWaiter>, res: Response, bound: GatewayBinding, cursor: string,
 ): Promise<void> {
   if (!bound.podUid) { res.status(403).json(FORBIDDEN); return; }
   if (!/^[a-f0-9]{64}$/.test(cursor)) { res.status(400).json({ error: "invalid_checkpoint_cursor" }); return; }
@@ -4229,7 +4229,7 @@ async function respondVmCheckpointWait(
   const close = () => disconnected.abort();
   res.once("close", close);
   try {
-    const result = await waitForVmCheckpointChange(deps.store, {
+    const result = await waitForChange({
       gatewayId: bound.gatewayId, instanceId: bound.podUid, cursor, signal: disconnected.signal,
     });
     if (disconnected.signal.aborted) return;
@@ -4242,12 +4242,13 @@ async function respondVmCheckpointWait(
 
 function installVmRuntimeRoutes(router: Router, deps: ResolvedFleetBrokerRouteDeps): void {
   const { store } = deps;
+  const waitForChange = createVmCheckpointWaiter(store);
   router.post("/vm-runtime", async (req, res) => {
     const bound = boundGateway(req, res);
     if (!bound) return;
     const cursor = req.get(CHECKPOINT_CURSOR_HEADER);
     if (cursor !== undefined) {
-      await respondVmCheckpointWait(deps, res, bound, cursor);
+      await respondVmCheckpointWait(waitForChange, res, bound, cursor);
       return;
     }
     const [stored, observation] = await Promise.all([
