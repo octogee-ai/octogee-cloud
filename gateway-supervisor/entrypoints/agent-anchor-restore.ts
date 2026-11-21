@@ -15,6 +15,7 @@ import {
 import { clusterIsolatedGateway, openclawStateRoot } from "../lib/openclaw-state-store.js";
 import { createFleetBrokerClient, type FleetBrokerClient } from "../lib/fleet-broker-client.js";
 import { initializeIsolatedNativeState } from "../lib/isolated-native-bootstrap.js";
+import { prepareFreshIsolatedPostgresState } from "../lib/isolated-postgres-bootstrap.js";
 
 export interface AgentAnchorRestoreResult {
   landed: string[];
@@ -27,12 +28,17 @@ function nonBlank(value: string | undefined): string {
   return value?.trim() ?? "";
 }
 
+function hasRecordedAnchors({ anchors, state, auxiliary }: Awaited<ReturnType<FleetBrokerClient["readAgentAnchors"]>>): boolean {
+  return anchors.length > 0 || Boolean(state) || Boolean(auxiliary?.length);
+}
+
 export async function runAgentAnchorRestore(input: {
   env?: NodeJS.ProcessEnv;
   broker: Pick<FleetBrokerClient, "readAgentAnchors">;
   readConfig?: () => unknown;
   verify?: AgentAnchorVerifier;
   initializeHost?: (stateDir: string) => Promise<void>;
+  prepareHost?: (options: Parameters<typeof prepareFreshIsolatedPostgresState>[0]) => Promise<boolean>;
   verifyState?: GatewayStateAnchorVerifier;
   verifyAuxiliary?: AuxiliaryAnchorVerifier;
   log: (message: string) => void;
@@ -41,8 +47,15 @@ export async function runAgentAnchorRestore(input: {
   const slug = nonBlank(env.GATEWAY_CLASS) === "shared" ? null : userClaimSlug(env);
   if (!slug) return { landed: [], preserved: [], skipped: true };
   const configured = new Set(agentIdsFromConfig((input.readConfig ?? readOpenClawConfig)()));
-  const { anchors, state, auxiliary = [] } = await input.broker.readAgentAnchors({ slug });
+  const recorded = await input.broker.readAgentAnchors({ slug });
+  const { anchors, state, auxiliary = [] } = recorded;
   const stateRoot = openclawStateRoot(env);
+  if (await (input.prepareHost ?? prepareFreshIsolatedPostgresState)({
+    stateDir: stateRoot, env, noRecordedAnchors: !hasRecordedAnchors(recorded),
+  })) {
+    input.log(`[agent-anchors] prepared Native PostgreSQL state before first import for ${slug}`);
+    return { landed: [], preserved: [], skipped: false };
+  }
   const landedState = state && clusterIsolatedGateway(env)
     ? await landGatewayStateAnchor(stateRoot, state, input.verifyState)
     : undefined;

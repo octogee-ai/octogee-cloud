@@ -14,6 +14,25 @@ afterEach(async () => {
 const defaultAgent = { agentId: "octogee-alice-coach", storeId: "92c817cc-770f-466d-b4a6-4e9b02998363", schema: "octogee_agent_92c817cc770f466d" };
 
 describe("agent-anchor-restore entrypoint", () => {
+  it("uses the native one-shot journal initializer for an empty managed PostgreSQL VM", async () => {
+    const dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "agent-anchor-fresh-vm-")));
+    roots.push(dir);
+    const initializeHost = vi.fn(async () => undefined);
+    const prepareHost = vi.fn(async () => true);
+    await expect(runAgentAnchorRestore({
+      env: withUserClaim({
+        GATEWAY_CLASS: "isolated", GATEWAY_RUNTIME_KIND: "gce-vm", GATEWAY_ID: "alice-s-first",
+        OPENCLAW_STATE_DIR: dir, OPENCLAW_AGENT_STORE_DSN: "postgres://local-test/agents",
+      }, "alice"),
+      broker: { readAgentAnchors: async () => ({ anchors: [], auxiliary: [] }) },
+      readConfig: () => ({ agents: { entries: { [defaultAgent.agentId]: {} } } }),
+      initializeHost,
+      prepareHost,
+      log: () => {},
+    })).resolves.toEqual({ landed: [], preserved: [], skipped: false });
+    expect(prepareHost).toHaveBeenCalledOnce();
+    expect(initializeHost).not.toHaveBeenCalled();
+  });
   it.each(['cluster', 'gce-vm'])("initializes a claimed %s host before its first migration records any anchors", async runtime => {
     const dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'agent-anchor-first-import-')));
     roots.push(dir);
