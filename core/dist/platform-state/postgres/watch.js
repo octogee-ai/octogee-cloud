@@ -218,9 +218,10 @@ class PostgresWatch {
             const horizon = head.horizon;
             if (horizon === cursor)
                 return { horizon, keys: [], rows: [] };
+            const recordKey = this.source.recordKey;
             const entries = await query(`SELECT record_key, filter_keys FROM $schema.change_log
-          WHERE aggregate = $1::text AND txid >= $2::xid8 AND txid < $3::xid8
-          ORDER BY txid, seq`, [this.source.aggregate, cursor, horizon]);
+          WHERE aggregate = $1::text AND txid >= $2::xid8 AND txid < $3::xid8${recordKey === undefined ? "" : " AND record_key = $4::text"}
+          ORDER BY txid, seq`, recordKey === undefined ? [this.source.aggregate, cursor, horizon] : [this.source.aggregate, cursor, horizon, recordKey]);
             const keys = this.candidateKeys(entries);
             if (keys.length === 0)
                 return { horizon, keys, rows: [] };

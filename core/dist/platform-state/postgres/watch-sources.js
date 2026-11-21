@@ -6,6 +6,20 @@ import { decodeOperation } from "./journal.js";
 import { postgresMigrationTasksWatchSource } from "./migration-tasks.js";
 import { postgresAgentIdentitiesWatchSource, postgresWorkspaceChannelsWatchSource, postgresWorkspaceMembersWatchSource, postgresWorkspaceProjectMembersWatchSource, postgresWorkspaceProjectsWatchSource, postgresWorkspacesWatchSource, } from "./workspaces.js";
 const operationsWatchSource = (filter) => {
+    if ("operationId" in filter) {
+        const recordKey = filter.operationId;
+        const selectOperation = (parameters) => `SELECT * FROM $schema.operations WHERE id = ${parameters.add(recordKey, "text")}`;
+        return {
+            aggregate: "operations",
+            operation: "watch operation by id",
+            recordKey,
+            selectAll: selectOperation,
+            selectKeys: (_keys, parameters) => selectOperation(parameters),
+            keyOf: (row) => row.id,
+            decode: decodeOperation,
+            mayMatch: () => true,
+        };
+    }
     const statuses = [...filter.statuses];
     const terminal = ["failed", "rolled-back"];
     const watchedStatuses = filter.includeMigrationRecovery ? [...statuses, ...terminal] : statuses;

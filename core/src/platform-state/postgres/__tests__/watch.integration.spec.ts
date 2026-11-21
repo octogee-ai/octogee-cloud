@@ -106,6 +106,36 @@ describe.skipIf(!dsn)("PostgreSQL platform state watch", { timeout: 30_000 }, ()
     expect(cursors).toEqual([...cursors].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0)));
   });
 
+  it("delivers a watched operation that reaches terminal state before its active row is observed", async () => {
+    const operationId = "fast-prewarm";
+    const { listener: activeOnly } = await watched();
+    const { listener: exact } = await watched(harness.store, {
+      aggregate: "operations",
+      filter: { operationId },
+    });
+    expect(snapshotIds(exact.events[0])).toEqual([]);
+
+    await harness.store.transaction({ label: "complete-fast-prewarm" }, async (tx) => {
+      await tx.journal.operations.create(operation({ id: operationId }));
+      await tx.journal.operations.patch(operationId, {
+        status: "succeeded",
+        completedAt: 10,
+        output: { prewarmState: "ineligible" },
+      });
+      await tx.journal.operations.create(operation({ id: "unrelated-pending" }));
+    });
+
+    await vi.waitFor(() => expect(changesOf(activeOnly).map(change => change.key)).toEqual(["unrelated-pending"]), WAIT);
+    await vi.waitFor(() => expect(changesOf(exact)).toMatchObject([
+      { type: "added", key: operationId, record: { status: "succeeded", output: { prewarmState: "ineligible" } } },
+    ]), WAIT);
+    const { listener: afterCompletion } = await watched(harness.store, {
+      aggregate: "operations",
+      filter: { operationId },
+    });
+    expect(snapshotIds(afterCompletion.events[0])).toEqual([operationId]);
+  });
+
   it("does not replay a snapshot revision when an older transaction holds the change horizon", async () => {
     const held = await harness.pool.connect();
     try {

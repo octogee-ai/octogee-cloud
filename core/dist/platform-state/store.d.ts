@@ -66,6 +66,8 @@ export interface WatchFilters {
     readonly operations: {
         readonly statuses: readonly OperationStatus[];
         readonly includeMigrationRecovery?: boolean;
+    } | {
+        readonly operationId: string;
     };
     readonly gateways: {
         readonly gatewayId?: string;

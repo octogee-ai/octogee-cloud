@@ -20,6 +20,7 @@ export type FilterKeys = Readonly<Record<string, readonly unknown[]>>;
 export interface PostgresWatchSource<A extends WatchAggregate> {
   readonly aggregate: A;
   readonly operation: string;
+  readonly recordKey?: string;
   selectAll(parameters: SqlParameters): string;
   selectKeys(keys: readonly string[], parameters: SqlParameters): string;
   keyOf(row: Row): string;
@@ -30,6 +31,21 @@ export interface PostgresWatchSource<A extends WatchAggregate> {
 type PostgresWatchSourceFactory<A extends WatchAggregate> = (filter: WatchFilters[A]) => PostgresWatchSource<A>;
 
 const operationsWatchSource: PostgresWatchSourceFactory<"operations"> = (filter) => {
+  if ("operationId" in filter) {
+    const recordKey = filter.operationId;
+    const selectOperation = (parameters: SqlParameters) =>
+      `SELECT * FROM $schema.operations WHERE id = ${parameters.add(recordKey, "text")}`;
+    return {
+      aggregate: "operations",
+      operation: "watch operation by id",
+      recordKey,
+      selectAll: selectOperation,
+      selectKeys: (_keys, parameters) => selectOperation(parameters),
+      keyOf: (row) => row.id as string,
+      decode: decodeOperation,
+      mayMatch: () => true,
+    };
+  }
   const statuses = [...filter.statuses];
   const terminal = ["failed", "rolled-back"];
   const watchedStatuses = filter.includeMigrationRecovery ? [...statuses, ...terminal] : statuses;
