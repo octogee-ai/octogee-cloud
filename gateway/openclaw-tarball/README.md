@@ -213,7 +213,7 @@ selection and rollout are a separate operator step.
 ## Current Gateway overlay
 
 The November 21 overlay at `7f0f50982ccc4c2d984370b94749ade6c57f8cb7` adds
-`agents.restoreMany` to the previous fork pin. Restoring a Builder through
+`agents.restoreMany` to the previous fork pin. Restoring a Builder or a shared-to-shared move through
 `agents.create` published and applied a separate config revision for each
 retained agent. The native batch validates every PostgreSQL store, publishes
 the roster once, and acknowledges when the Gateway has applied it. An exact
