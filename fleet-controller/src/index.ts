@@ -19,7 +19,7 @@ import {
   startIsolatedPodBlockerObserver,
 } from "./isolated-pod-home.js";
 import { runNormalFleetMutation } from "@octogee/core/normal-fleet-mutation";
-import { platformStateStoreFromEnvironment, MissingRecordError, type WorkspaceProject, type FleetRegistryRecord, type GatewayRoot, type OpaqueMap, type GatewayRootFields, type GatewayRootPatch, type OperationRecord, type PlatformStateStore, type Stored, type WatchChange, type WatchEvent, type FleetRegistryInventory } from "@octogee/core/platform-state";
+import { platformStateStoreFromEnvironment, MissingRecordError, type WorkspaceProject, type FleetRegistryRecord, type GatewayRoot, type OpaqueMap, type GatewayRootFields, type GatewayRootPatch, type OperationRecord, type PlatformStateStore, type PlatformStateTransaction, type Stored, type WatchChange, type WatchEvent, type FleetRegistryInventory } from "@octogee/core/platform-state";
 import { restartGatewayProcess, restartGatewayDeployment } from './lib/runtime-restart-transport.js';
 import { assertMigrationRestartUnfenced } from './lib/runtime-restart-coordinator.js';
 import { assertOwnerOperationUnfenced } from './lib/vm-recovery-fence.js';
@@ -976,6 +976,19 @@ function matchesReadyVm(
     gatewayHeartbeatMatchesImageTag(observed.state.version, desiredImageTag);
 }
 
+function readyVmFromHandoff(
+  gateway: DurableGateway,
+  runtime: ConvergingGatewayRuntime | undefined,
+  handoff: SurgeUserHandoffResult,
+  desiredImageTag: string,
+): ReadyVmObservation | undefined {
+  if (!handoff.ready || !handoff.readyFleetState ||
+      !matchesReadyVm(gateway.gatewayId, runtime, handoff.readyFleetState, desiredImageTag)) return undefined;
+  if (runtime?.lifecycle === "serving" && gateway.liveRelease === gateway.desiredRelease &&
+      runtimeReportsDesiredBuild(runtime, desiredImageTag)) return undefined;
+  return { ...handoff.readyFleetState, vmStartedAt: runtime?.vm?.startedAt };
+}
+
 export async function refineGatewayConvergenceAction(input: {
   passDeps: Pick<GatewayConvergencePassDeps, "store" | "reconcileSurgeHandoff">;
   gateway: DurableGateway;
@@ -1019,11 +1032,8 @@ export async function refineGatewayConvergenceAction(input: {
   if (prelaunchRefresh && handoff.prelaunchHeld) {
     return { kind: "mark-live", prelaunchRefresh: true };
   }
-  if (handoff.ready && handoff.readyFleetState && matchesReadyVm(gateway.gatewayId, runtime, handoff.readyFleetState, desiredImage.imageTag) &&
-      (runtime?.lifecycle !== "serving" || gateway.liveRelease !== gateway.desiredRelease ||
-        !runtimeReportsDesiredBuild(runtime, desiredImage.imageTag))) {
-    return { kind: "mark-live", vmReady: { ...handoff.readyFleetState, vmStartedAt: runtime?.vm?.startedAt } };
-  }
+  const vmReady = readyVmFromHandoff(gateway, runtime, handoff, desiredImage.imageTag);
+  if (vmReady) return { kind: "mark-live", vmReady };
   const desiredBuildReported = reportsDesiredBuildOrVerifiedInitialPrelaunch({
     runtime,
     desiredImageTag: desiredImage.imageTag,
@@ -1281,6 +1291,46 @@ function runtimeUserIdentity(gateway: DurableGateway): { builderIdentity?: Runti
     : {};
 }
 
+function currentReadyVm(
+  gateway: DurableGateway,
+  root: GatewayRoot,
+  runtime: FleetRegistryRecord | null,
+  vmReady: ReadyVmObservation,
+  imageTag: string,
+): boolean {
+  return root.updatedAt === gateway.updatedAt && runtime?.vm?.startedAt === vmReady.vmStartedAt &&
+    matchesReadyVm(gateway.gatewayId, runtime, vmReady, imageTag);
+}
+
+async function publishLiveRuntime(input: {
+  transaction: PlatformStateTransaction;
+  gateway: DurableGateway;
+  runtime: FleetRegistryRecord;
+  patch: NonNullable<ReturnType<typeof markLiveRuntimePatch>>;
+  imageTag: string;
+  now: number;
+  vmReady?: ReadyVmObservation;
+}): Promise<void> {
+  const { transaction, gateway, runtime, patch, imageTag, now, vmReady } = input;
+  await transaction.fleetRegistry.patch(gateway.gatewayId, {
+    ...patch,
+    ...(isInitialIsolatedPrelaunch(gateway) && !vmReady ? { heartbeat: {
+      ...runtime.heartbeat,
+      status: "booting",
+      version: versionFromImageTag(imageTag),
+      internalUrl: gatewayServiceInternalUrl(gateway.gatewayId),
+      startedAt: now,
+      lastHeartbeatAt: now,
+      mountedCustomers: [],
+    } } : {}),
+  });
+  if (vmReady) {
+    const assigned = assignedSlugsFromUserMirror(await transaction.users.records.listByGateway(gateway.gatewayId), gateway.gatewayId);
+    const heartbeat = pollerHeartbeatReport(heartbeatRecordFrom(vmReady.state, assigned), gatewayServiceInternalUrl(gateway.gatewayId));
+    await transaction.fleetRegistry.recordHeartbeat(gateway.gatewayId, heartbeat);
+  }
+}
+
 export async function markGatewayLive(
   passDeps: Pick<GatewayConvergencePassDeps, "store" | "log">,
   gateway: DurableGateway,
@@ -1289,7 +1339,6 @@ export async function markGatewayLive(
   vmReady?: ReadyVmObservation,
 ): Promise<void> {
   const { store, log } = passDeps;
-  const initialDisposablePrelaunch = isInitialIsolatedPrelaunch(gateway);
   const imageTag = gatewayImageFor(gateway, artifact).imageTag;
   const now = Date.now();
   const markedLive = await store.transaction({ label: "converge-gateway.mark-live" }, async (transaction) => {
@@ -1299,8 +1348,7 @@ export async function markGatewayLive(
       root.retirementClaim != null) return false;
     const runtimePatch = markLiveRuntimePatch(gateway);
     const runtime = prelaunchRefresh || runtimePatch ? await transaction.fleetRegistry.get(gateway.gatewayId) : null;
-    if (vmReady && (!matchesReadyVm(gateway.gatewayId, runtime, vmReady, imageTag) ||
-      runtime?.vm?.startedAt !== vmReady.vmStartedAt || root.updatedAt !== gateway.updatedAt)) {
+    if (vmReady && !currentReadyVm(gateway, root, runtime, vmReady, imageTag)) {
       log(`[converge-gateway] ${gateway.gatewayId} VM readiness identity changed; deferring release`);
       return false;
     }
@@ -1316,27 +1364,7 @@ export async function markGatewayLive(
     );
     if (runtimePatch) {
       if (!runtime) throw new MissingRecordError({ aggregate: "fleet-registry", key: gateway.gatewayId });
-      await transaction.fleetRegistry.patch(gateway.gatewayId, {
-        ...runtimePatch,
-        ...(initialDisposablePrelaunch && !vmReady
-          ? {
-              heartbeat: {
-                ...runtime.heartbeat,
-                status: "booting",
-                version: versionFromImageTag(imageTag),
-                internalUrl: gatewayServiceInternalUrl(gateway.gatewayId),
-                startedAt: now,
-                lastHeartbeatAt: now,
-                mountedCustomers: [],
-              },
-            }
-          : {}),
-      });
-    }
-    if (vmReady) {
-      const assigned = assignedSlugsFromUserMirror(await transaction.users.records.listByGateway(gateway.gatewayId), gateway.gatewayId);
-      const heartbeat = pollerHeartbeatReport(heartbeatRecordFrom(vmReady.state, assigned), gatewayServiceInternalUrl(gateway.gatewayId));
-      await transaction.fleetRegistry.recordHeartbeat(gateway.gatewayId, heartbeat);
+      await publishLiveRuntime({ transaction, gateway, runtime, patch: runtimePatch, imageTag, now, vmReady });
     }
     return true;
   });
