@@ -2311,7 +2311,7 @@ async function retryTransferTargetGatewayId(
   const { input, id } = operation;
   if (operation.kind !== "migrate-user" || operation.origin !== "automatic" ||
       operation.createdBy !== "glm-controller-placement-policy" ||
-      !["failed", "rolled-back"].includes(operation.status) || !operation.retryRequestedAt ||
+      !["failed", ROLLED_BACK_STATUS].includes(operation.status) || !operation.retryRequestedAt ||
       input.source !== "builder-activation-lease" || !isUserReturnOperationIdFor(id, input.fromGatewayId)) {
     return undefined;
   }
@@ -2330,6 +2330,7 @@ async function retryTransferTargetGatewayId(
 export const ERR_TARGET_GATEWAY_NOT_READY = "target gateway not ready";
 export const ADMIN_FLEET_REQUEST_REASON = "Admin fleet request";
 const OP_KIND_RESTART_GATEWAY = "restart-gateway";
+const ROLLED_BACK_STATUS = "rolled-back";
 
 interface RestoreRecoveryBody {
   sourceSha?: unknown;
@@ -2429,7 +2430,7 @@ const OP_STATUSES = new Set([
   "running",
   "succeeded",
   "failed",
-  "rolled-back",
+  ROLLED_BACK_STATUS,
 ]);
 
 export interface AdminGatewayControlProjection {
@@ -3072,7 +3073,7 @@ export function projectHandoffProgress(
 }
 
 function isUnresolvedMigrationFailure(data: Record<string, unknown>): boolean {
-  return data.kind === OP_KIND_MIGRATE_USER && (data.status === "failed" || data.status === "rolled-back");
+  return data.kind === OP_KIND_MIGRATE_USER && (data.status === "failed" || data.status === ROLLED_BACK_STATUS);
 }
 
 async function listUnresolvedOperationDocs(
@@ -3104,7 +3105,7 @@ const JOURNAL_STATUS_FILTERS = [
   "running",
   "succeeded",
   "failed",
-  "rolled-back",
+  ROLLED_BACK_STATUS,
   "recorded",
   "in-progress",
   "completed",
@@ -4540,7 +4541,7 @@ function rearmableUserReturnOperation(input: {
   const operation = input.operation;
   if (!operation || !isPlainRecord(operation.input)) return false;
   const operationInput = operation.input;
-  const terminalStatus = operation.status === "failed" || operation.status === "rolled-back";
+  const terminalStatus = operation.status === "failed" || operation.status === ROLLED_BACK_STATUS;
   const steps = operation.steps;
   const error = operation.error;
   const endpointPreflightFailure = Array.isArray(steps) && steps.length === 0 &&
