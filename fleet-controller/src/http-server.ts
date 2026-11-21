@@ -7,6 +7,7 @@ import { rateLimit } from "express-rate-limit";
 import { GATEWAY_UNREACHABLE_AFTER_MS } from "@octogee/shared/types/fleet-controller";
 import { publicAppOriginsFromEnv } from "@octogee/core/public-app-origins";
 import { renderMetrics } from "./metrics.js";
+import { createPlacementRetirementTelemetry } from "./placement-retirement-telemetry.js";
 import { adminPlacementCapabilities } from "./admin-placement-capabilities.js";
 import type { GatewayGitKeyRelease } from "@octogee/core/gateway-root-deletion";
 import { adminPlacementSharedCapabilities } from "./admin-placement-shared-capabilities.js";
@@ -30,6 +31,7 @@ import type {
   Stored,
   WatchAggregate,
   WatchChange,
+  WatchEvent,
   WatchRecords,
   WatchRequest,
   WatchSubscription,
@@ -225,7 +227,7 @@ function updatePlacementFingerprint<A extends WatchAggregate>(
 }
 
 function createFleetEventHub(deps: {
-  store: Pick<PlatformStateStore, "watch">;
+  store: Pick<PlatformStateStore, "watch" | "journal">;
   log: (msg: string) => void;
   lingerMs: number;
 }): FleetEventHub {
@@ -237,6 +239,12 @@ function createFleetEventHub(deps: {
     for (const subscriber of [...subscribers]) subscriber(event);
   };
 
+  const retirementTelemetry = createPlacementRetirementTelemetry(
+    deps.store.journal.operations,
+    () => emit({ kind: "changed", collection: GLM_GATEWAYS_COLLECTION, at: Date.now(), placement: true, placementOnly: true }),
+    deps.log,
+  );
+
   const reportFailure = (collection: string, error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
     deps.log(`[glm-controller] fleet event watch failed collection=${collection}: ${message}`);
@@ -247,7 +255,11 @@ function createFleetEventHub(deps: {
     collection: string,
     request: WatchRequest<A>,
     fingerprint: PlacementFingerprint<A>,
-    extras?: { placementOnly?: boolean; expiresAt?: (record: WatchRecords[A]) => number | undefined },
+    extras?: {
+      placementOnly?: boolean;
+      expiresAt?: (record: WatchRecords[A]) => number | undefined;
+      observe?: (event: WatchEvent<A>) => boolean | void;
+    },
   ): WatchSubscription {
     let primed = false;
     const placements = new Map<string, string>();
@@ -276,8 +288,8 @@ function createFleetEventHub(deps: {
     };
     const subscription = deps.store.watch(request, {
       onEvent: (event) => {
+        let placement = extras?.observe?.(event) === true;
         if (event.kind === "resync") return;
-        let placement = false;
         if (event.kind === "snapshot") {
           placements.clear();
           for (const key of expiryTimers.keys()) closeExpiry(key);
@@ -314,16 +326,17 @@ function createFleetEventHub(deps: {
   const ensureWatchers = () => {
     if (subscriptions) return;
     subscriptions = [
-      watch("users", { aggregate: "builders", filter: {} }, builderPlacementFingerprint),
+      watch("users", { aggregate: "builders", filter: {} }, builderPlacementFingerprint, { observe: retirementTelemetry.builders }),
       watch("gateways", { aggregate: "gateways", filter: {} }, gatewayPlacementFingerprint),
       watch("config", { aggregate: "config", filter: {} }, configPlacementFingerprint),
       watch("assignments", { aggregate: "assignments", filter: {} }, assignmentPlacementFingerprint, { placementOnly: true }),
-      watch(GLM_GATEWAYS_COLLECTION, { aggregate: "fleetRegistry", filter: {} }, runtimePlacementFingerprint, { expiresAt: heartbeatExpiresAt }),
-      watch(GLM_OPERATIONS_COLLECTION, { aggregate: "operations", filter: { statuses: ACTIVE_OPERATION_STATUSES, includeMigrationRecovery: true } }, operationPlacementFingerprint),
+      watch(GLM_GATEWAYS_COLLECTION, { aggregate: "fleetRegistry", filter: {} }, runtimePlacementFingerprint, { expiresAt: heartbeatExpiresAt, observe: retirementTelemetry.runtime }),
+      watch(GLM_OPERATIONS_COLLECTION, { aggregate: "operations", filter: { statuses: ACTIVE_OPERATION_STATUSES, includeMigrationRecovery: true } }, operationPlacementFingerprint, { observe: retirementTelemetry.operations }),
     ];
   };
 
   const teardown = () => {
+    retirementTelemetry.clear();
     for (const subscription of subscriptions ?? []) void subscription.close();
     subscriptions = null;
   };
