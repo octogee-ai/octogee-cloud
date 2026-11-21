@@ -35,7 +35,7 @@
     "node": ">=24"
   },
   "dependencies": {
-    "@aws-sdk/client-sts": "^3.1164.0",
+    "@aws-sdk/client-sts": "^3.1169.0",
     "@google-cloud/kms": "^6.3.0",
     "@google-cloud/secret-manager": "^8.0.0",
     "@google-cloud/storage": "^8.4.0",
