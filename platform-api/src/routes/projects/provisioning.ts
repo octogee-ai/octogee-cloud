@@ -15,6 +15,7 @@ import {
 } from "@octogee/core/templates/project-seeds";
 import { seedBoardWelcomeIssue } from "../../lib/board-welcome.js";
 import type { ProjectRecipeId } from "@octogee/shared/types/project";
+import type { ProjectStarterFile } from "../../lib/project-starter-files.js";
 
 export interface ProjectRepoProvisioningResult {
   created: boolean;
@@ -31,6 +32,8 @@ export class ProjectRepoProvisioningError extends Error {
   }
 }
 
+const README_PATH = "README.md";
+
 export async function ensureProjectGiteaRepo(input: {
   workspaceId: string;
   slug: string;
@@ -43,9 +46,24 @@ export async function ensureProjectGiteaRepo(input: {
   // the GitHub repo — a welcome issue here would be invisible (and seeding
   // into a user's imported GitHub repo is not ours to do).
   githubBacked?: boolean;
+  starterFiles?: ProjectStarterFile[];
 }): Promise<{ created: boolean }> {
   const org = workspaceGiteaOrg(input.workspaceId);
   const repoName = projectRepoName(input.slug);
+  const playbookSeeds = [
+    ...projectPlaybookSeeds({
+      projectName: input.name,
+      projectType: input.projectType,
+      recipe: input.recipe,
+      today: new Date().toISOString().slice(0, 10),
+    }),
+    notesWelcomeSeed(input.name),
+  ];
+  const platformPaths = new Set([README_PATH, ...playbookSeeds.map((seed) => seed.relPath)]);
+  const collision = input.starterFiles?.find((file) => platformPaths.has(file.path));
+  if (collision) {
+    throw new ProjectRepoProvisioningError(`starter files must not include ${collision.path}`, false);
+  }
   const created = await createProjectGiteaRepo(
     org,
     repoName,
@@ -60,34 +78,19 @@ export async function ensureProjectGiteaRepo(input: {
       workspaceSlug: input.workspaceId,
       projectSlug: input.slug,
     });
-    await giteaWriteFile(org, repoName, "README.md", body, "auto: seed project README");
-
-    const today = new Date().toISOString().slice(0, 10);
-    const playbookSeeds = [
-      ...projectPlaybookSeeds({
-        projectName: input.name,
-        projectType: input.projectType,
-        recipe: input.recipe,
-        today,
-      }),
-      notesWelcomeSeed(input.name),
-    ];
+    await giteaWriteFile(org, repoName, README_PATH, body, "auto: seed project README");
     await giteaWriteFiles(
       org,
       repoName,
       playbookSeeds.map((seed) => ({ path: seed.relPath, content: seed.content })),
       "auto: seed project playbook",
     );
-    const starterSeeds = projectRecipeStarterSeeds({
-      projectSlug: input.slug,
-      recipe: input.recipe,
-    });
     await giteaWriteFilesIfAllAbsent(
       org,
       repoName,
-      starterSeeds.map((seed) => ({
-        path: seed.relPath,
-        content: seed.encoding === "base64" ? Buffer.from(seed.content, "base64") : seed.content,
+      starterFilesFor(input).map((file) => ({
+        path: file.path,
+        content: file.encoding === "base64" ? Buffer.from(file.content, "base64") : file.content,
       })),
       "auto: seed project starter",
     );
@@ -100,6 +103,15 @@ export async function ensureProjectGiteaRepo(input: {
     await seedBoardWelcomeIssue({ workspaceId: input.workspaceId, slug: input.slug, name: input.name });
   }
   return { created };
+}
+
+function starterFilesFor(input: { slug: string; recipe: ProjectRecipeId; starterFiles?: ProjectStarterFile[] }): ProjectStarterFile[] {
+  if (input.starterFiles) return input.starterFiles;
+  return projectRecipeStarterSeeds({ projectSlug: input.slug, recipe: input.recipe }).map((seed) => ({
+    path: seed.relPath,
+    content: seed.content,
+    ...(seed.encoding === "base64" ? { encoding: "base64" as const } : {}),
+  }));
 }
 
 export async function provisionProjectRepoResult(

@@ -6,12 +6,17 @@ import { mmApi } from "../../lib/mattermost.js";
 import { createFreshPrivateChannel } from "../../lib/mattermost-channel-name.js";
 import { logger } from "@octogee/core/http/logging";
 import { projectGeneralChannelName } from "@octogee/shared/types/identity";
-import { defaultProjectRecipe, isProjectRecipeId } from "@octogee/shared/types/project";
+import { defaultProjectRecipe, isProjectRecipeId, type ProjectRecipeId } from "@octogee/shared/types/project";
 import { getWorkspaceMmContext } from "../../lib/mattermost-context.js";
 import { withProject, type ProjectCtx } from "../../lib/withProject.js";
 import { provisionProjectRepo } from "./provisioning.js";
 import { projectRepoName } from "@octogee/core/gitea-naming";
 import { provisionProjectAgent } from "../../lib/project-agent-service.js";
+import {
+  isValidProjectStarter,
+  requestProjectStarterFiles,
+  type ProjectStarterFilesOutcome,
+} from "../../lib/project-starter-files.js";
 
 const router: Router = Router();
 
@@ -238,8 +243,32 @@ function restoredVisibility(ctx: ProjectCtx): string {
     : ctx.project.visibility;
 }
 
+async function retryStarterFiles(
+  ctx: ProjectCtx,
+  projectType: string | null,
+  recipe: ProjectRecipeId,
+): Promise<ProjectStarterFilesOutcome> {
+  if (ctx.project.repoSource?.provider === "github") return { ok: true, files: null };
+  return requestProjectStarterFiles({
+    uid: ctx.uid,
+    workspaceId: ctx.wid,
+    projectSlug: ctx.pid,
+    projectType,
+    recipe,
+    starter: isValidProjectStarter(ctx.project.starter) ? ctx.project.starter : null,
+  });
+}
+
 async function reconcileRetryRepoOrFail(ctx: ProjectCtx, res: Response, visibility: string): Promise<boolean> {
   const projectType = typeof ctx.project.projectType === "string" ? ctx.project.projectType : null;
+  const recipe = isProjectRecipeId(ctx.project.recipe) ? ctx.project.recipe : defaultProjectRecipe(projectType);
+  const starterFiles = await retryStarterFiles(ctx, projectType, recipe);
+  if (!starterFiles.ok) {
+    await markRetryFailed(ctx, starterFiles.error);
+    logger.error(`[projects] Retry starter files failed for ${ctx.wid}/${ctx.pid}: ${starterFiles.error}`);
+    res.status(502).json({ error: "Retry failed — could not prepare starter files" });
+    return false;
+  }
   const repoErr = await provisionProjectRepo({
     workspaceId: ctx.wid,
     slug: ctx.pid,
@@ -248,9 +277,8 @@ async function reconcileRetryRepoOrFail(ctx: ProjectCtx, res: Response, visibili
     projectType,
     visibility,
     githubBacked: ctx.project.repoSource?.provider === "github",
-    recipe: isProjectRecipeId(ctx.project.recipe)
-      ? ctx.project.recipe
-      : defaultProjectRecipe(projectType),
+    recipe,
+    ...(starterFiles.files ? { starterFiles: starterFiles.files } : {}),
   });
   if (!repoErr) return true;
   await markRetryFailed(ctx, repoErr);

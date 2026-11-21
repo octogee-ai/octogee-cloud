@@ -161,6 +161,10 @@
       "types": "./dist/octogee-api/src/lib/project-recipe.d.ts",
       "default": "./dist/octogee-api/src/lib/project-recipe.js"
     },
+    "./lib/project-starter-files": {
+      "types": "./dist/octogee-api/src/lib/project-starter-files.d.ts",
+      "default": "./dist/octogee-api/src/lib/project-starter-files.js"
+    },
     "./lib/projectId": {
       "types": "./dist/octogee-api/src/lib/projectId.d.ts",
       "default": "./dist/octogee-api/src/lib/projectId.js"

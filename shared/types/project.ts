@@ -162,6 +162,7 @@ checkoutEnabled?: boolean;
 
 canvasFile: string;
   recipe?: ProjectRecipeId | null;
+  starter?: string | null;
   publishedUrl: string | null;
   starCount: number;
   memberCount: number;

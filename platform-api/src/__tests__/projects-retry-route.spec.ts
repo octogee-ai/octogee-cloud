@@ -107,6 +107,7 @@ vi.mock("@octogee/core/http/logging", () => ({
 }));
 
 const { default: retryRoutes } = await import("../routes/projects/retry.js");
+const { installProjectStarterFiles, PLATFORM_RECIPE_STARTER_FILES } = await import("../lib/project-starter-files.js");
 
 function app() {
   const a = express();
@@ -162,6 +163,7 @@ beforeEach(() => {
     throw new Error(`unexpected Mattermost call: ${method ?? "GET"} ${path}`);
   });
   h.provisionProjectRepo.mockReset().mockResolvedValue(null);
+  installProjectStarterFiles(PLATFORM_RECIPE_STARTER_FILES);
   h.provisionProjectAgent.mockReset().mockResolvedValue({ status: 200, body: { success: true } });
   h.logger.error.mockReset();
   h.logger.info.mockReset();
@@ -327,6 +329,63 @@ describe("POST /api/projects/:wid/:pid/retry-provisioning", () => {
 
     expect(h.provisionProjectRepo).toHaveBeenCalledWith(
       expect.objectContaining({ projectType: "game", recipe: "vite-static" }),
+    );
+  });
+
+  it("reseeds the product's starter files for the starter the project was created with", async () => {
+    h.project.recipe = "vite-static";
+    h.project.starter = "phone";
+    const starterFiles = [{ path: "package.json", content: "{}\n" }];
+    const provide = vi.fn(async () => starterFiles);
+    installProjectStarterFiles(provide);
+
+    await request(app())
+      .post("/api/projects/mira/orbit/retry-provisioning")
+      .expect(200);
+
+    expect(provide).toHaveBeenCalledWith({
+      uid: "owner-1",
+      workspaceId: "mira",
+      projectSlug: "orbit",
+      projectType: "web",
+      recipe: "vite-static",
+      starter: "phone",
+    });
+    expect(h.provisionProjectRepo).toHaveBeenCalledWith(expect.objectContaining({ starterFiles }));
+  });
+
+  it("keeps a GitHub-backed project on the recipe seed during retry", async () => {
+    h.project.repoSource = { provider: "github", owner: "mira", repo: "orbit" };
+    h.project.starter = "phone";
+    const provide = vi.fn(async () => [{ path: "package.json", content: "{}\n" }]);
+    installProjectStarterFiles(provide);
+
+    await request(app())
+      .post("/api/projects/mira/orbit/retry-provisioning")
+      .expect(200);
+
+    expect(provide).not.toHaveBeenCalled();
+    expect(h.provisionProjectRepo).toHaveBeenCalledWith(expect.not.objectContaining({ starterFiles: expect.anything() }));
+  });
+
+  it("keeps the project failed when the product's starter files fail", async () => {
+    h.project.starter = "phone";
+    installProjectStarterFiles(async () => {
+      throw new Error("templates missing");
+    });
+
+    await request(app())
+      .post("/api/projects/mira/orbit/retry-provisioning")
+      .expect(502, { error: "Retry failed — could not prepare starter files" });
+
+    expect(h.provisionProjectRepo).not.toHaveBeenCalled();
+    expect(h.projectUpdates.at(-1)).toEqual({
+      provisioningState: "failed",
+      provisioningError: "starter files could not be prepared: templates missing",
+      updatedAt: { serverNow: true },
+    });
+    expect(h.logger.error).toHaveBeenCalledWith(
+      "[projects] Retry starter files failed for mira/orbit: starter files could not be prepared: templates missing",
     );
   });
 

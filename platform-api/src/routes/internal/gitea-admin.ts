@@ -19,6 +19,7 @@ import {
 import type { PlatformUserRecord } from "@octogee/core/platform-state";
 import { platformStateStore } from "@octogee/core/identity/platform-state-store";
 import { gitHost } from "../../lib/git-host.js";
+import { projectStarterFilesProblem, type ProjectStarterFile } from "../../lib/project-starter-files.js";
 import { requireInternalServiceAuth } from "@octogee/core/http/auth";
 import { logger } from "@octogee/core/http/logging";
 import {
@@ -79,6 +80,7 @@ interface ProjectRepoProvisionRequest {
   visibility: "private" | "public" | "unlisted";
   recipe?: ProjectRecipeId;
   githubBacked?: boolean;
+  starterFiles?: ProjectStarterFile[];
 }
 
 function validProjectRepoName(value: unknown): value is string {
@@ -133,6 +135,11 @@ function validProjectRepoProvisionRequest(
   }
   if (!validProjectRepoRecipe(input.recipe)) {
     res.status(400).json({ error: `recipe must be one of ${PROJECT_RECIPE_IDS.join(", ")}` });
+    return false;
+  }
+  const starterFilesProblem = input.starterFiles === undefined ? null : projectStarterFilesProblem(input.starterFiles);
+  if (starterFilesProblem) {
+    res.status(400).json({ error: starterFilesProblem });
     return false;
   }
   return true;
@@ -543,6 +550,7 @@ router.post("/provision-project-repo", async (req: Request, res: Response) => {
       visibility: input.visibility,
       recipe: input.recipe ?? defaultProjectRecipe(input.projectType),
       githubBacked: input.githubBacked === true,
+      ...(input.starterFiles ? { starterFiles: input.starterFiles } : {}),
     });
     res.json(result);
   } catch (err) {

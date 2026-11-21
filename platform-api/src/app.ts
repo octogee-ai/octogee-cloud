@@ -80,6 +80,11 @@ import {
   installProjectCreateAdmission,
   type ProjectCreateAdmission,
 } from "./lib/project-create-admission.js";
+import {
+  installProjectStarterFiles,
+  PLATFORM_RECIPE_STARTER_FILES,
+  type ProjectStarterFiles,
+} from "./lib/project-starter-files.js";
 import { installUserAccounts, readSizingKey } from "@octogee/core/identity/user-accounts";
 import { installAgentIdentity } from "./lib/agent-identity.js";
 import type { AuthUserSuspension } from "./lib/user-deletion-deps.js";
@@ -195,6 +200,7 @@ export interface ProductRuntime {
   projectPresentation?: ProjectPresentation;
   projectAgentDeliveryIntents?: ProjectAgentDeliveryIntents;
   projectCreateAdmission?: ProjectCreateAdmission;
+  projectStarterFiles?: ProjectStarterFiles;
   workspaceStorageAccounting?: WorkspaceStorageAccounting;
   connectorDisconnected?: ConnectorDisconnected;
   brokerRecords?: BrokerRecords;
@@ -462,6 +468,7 @@ export function createPlatformApp(opts: PlatformAppOptions = {}) {
   installProjectPresentation(product?.projectPresentation ?? NO_PROJECT_PRESENTATION);
   installProjectAgentDeliveryIntents(product?.projectAgentDeliveryIntents ?? NO_PROJECT_AGENT_DELIVERY_INTENTS);
   installProjectCreateAdmission(product?.projectCreateAdmission ?? ADMIT_EVERY_PROJECT_CREATE);
+  installProjectStarterFiles(product?.projectStarterFiles ?? PLATFORM_RECIPE_STARTER_FILES);
   installWorkspaceStorageAccounting(product?.workspaceStorageAccounting ?? NO_WORKSPACE_STORAGE_ACCOUNTING);
   installConnectorDisconnected(product?.connectorDisconnected ?? NO_CONNECTOR_DISCONNECTED);
   mountRouteTable(app, product?.routesBeforeMiddleware ?? []);

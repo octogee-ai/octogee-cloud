@@ -97,6 +97,7 @@ export interface FleetBrokerProjectCreateInput {
   visibility?: string;
   repoSource?: unknown;
   recipe?: unknown;
+  starter?: unknown;
 }
 
 export interface FleetBrokerProjectCreateSuccess {
