@@ -212,9 +212,14 @@ selection and rollout are a separate operator step.
 
 ## Current Gateway overlay
 
-The November 20 overlay is `0e76ab99c8f23245c126b8ab1713396d088a8ad1` on
-`ceckert/openclaw:codex/gateway-refresh-20261120`. It carries the retained
-Octogee boundaries below on the frozen upstream tip.
+The November 20 overlay at `b562588752ef0764a779480423db6f4517063791` on
+`ceckert/openclaw:codex/retain-requester-bound-schedules` adds the scheduler
+handoff fix to `0e76ab99c8f23245c126b8ab1713396d088a8ad1`. A Builder return
+could fail when Shared could not rebind a job to its original authenticated
+requester. Partial export now retains that job and its scratch data on the
+Builder. The staging Gateway still verifies the requester and narrows the
+rebound grant. Remove the overlay patch when the selected upstream supports
+equivalent requester-aware retention.
 
 The Mattermost connector verifies the sender through the Gateway before applying
 the requested follow-up or steer mode. The reply runner checks the selected run
