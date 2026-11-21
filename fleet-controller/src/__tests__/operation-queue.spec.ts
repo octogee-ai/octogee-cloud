@@ -232,6 +232,17 @@ describe("findSerialConflict — shared migration/release-roll scope", () => {
 });
 
 describe("decideOperationClaim", () => {
+  it("waits for an available parked-upgrade slot and serializes upgrades of the same owner", () => {
+    const prewarm = (uid: string) => ({ id: uid, kind: "prewarm-gateway", input: { uid } });
+    const op = { ...prewarm("next"), status: "pending", createdAt: 10 };
+    const claim = (runningOpsSameKind: ReturnType<typeof prewarm>[]) =>
+      decideOperationClaim({ op, now: 20, runningOpsSameKind, pendingOpsSameKind: [] });
+
+    expect(claim([prewarm("one"), prewarm("two"), prewarm("three")])).toMatchObject({ outcome: "queue" });
+    expect(claim([prewarm("one"), { ...prewarm("next"), id: "previous" }])).toMatchObject({ outcome: "queue" });
+    expect(claim([prewarm("one"), prewarm("two")])).toEqual({ outcome: "claim" });
+  });
+
   it("finishes a user activation retry before rolling its held target", () => {
     const activation = {
       id: "builder-activate-builder-a-g1", kind: "migrate-user", status: "pending",

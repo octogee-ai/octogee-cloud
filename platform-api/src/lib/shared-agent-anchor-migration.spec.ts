@@ -29,8 +29,16 @@ function fixture(kind: "v2" | "legacy" = "v2") {
 describe("cancelled Shared migration anchor custody", () => {
   it.each(["v2", "legacy"] as const)("continues exact %s anchor read and report revalidation after the forward boundary", async kind => {
     const f = fixture(kind);
-    expect(await f.read()).toMatchObject({ uid: "uid-bob", assignmentEpoch: 7, assignmentState: "quiescing", migration: f.expected });
+    expect(await f.read()).toMatchObject({ uid: "uid-bob", assignmentEpoch: 7, assignmentState: "quiescing", migration: f.expected, sharedToShared: true });
     expect(await f.read({ expected: f.expected })).toMatchObject({ migration: f.expected });
+  });
+  it("does not classify an isolated return as a Shared-to-Shared roster restore", async () => {
+    const f = fixture();
+    Object.assign(f.records[`gateways/${f.source}`], {
+      gatewayClass: "isolated", imageProfile: "isolated", ownerUid: "uid-bob", builderSlug: "bob",
+    });
+    expect(await f.read()).toMatchObject({ migration: f.expected });
+    expect(await f.read()).not.toHaveProperty("sharedToShared");
   });
   it.each(["phase", "claim", "migration", "uid", "slug", "source", "target", "epoch", "assignment"])("rejects cancelled V2 anchor admission after %s changes", async change => {
     const f = fixture();
@@ -77,6 +85,7 @@ describe("Shared surge rebound receiving pod", () => {
   it("admits only the durably rebound receiving pod under the original scheduler operation", async () => {
     const f = surgeFixture();
     expect(await f.readTarget()).toMatchObject({ migration: f.expected });
+    expect(await f.readTarget()).not.toHaveProperty("sharedToShared");
     expect(await f.readTarget(f.original)).toBeNull();
     expect(await f.readTarget(f.sourcePod)).toBeNull();
     expect(await f.readSource(f.receiving)).toBeNull();

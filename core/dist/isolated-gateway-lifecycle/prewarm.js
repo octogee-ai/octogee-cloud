@@ -6,6 +6,7 @@ import { readGatewayArtifactInStore } from "../gateway-live-release.js";
 import { readSharedGatewayPoolConfigInStore } from "../shared-gateway-pool-read.js";
 import { userAllowsInteractiveAccess } from "./lease.js";
 export const PARKED_PREWARM_KIND = "prewarm-gateway";
+export const ACTIVE_PARKED_PREWARM_STATUSES = ["pending", "running"];
 export function parkedPrewarmInput(operation) {
     const { uid, gatewayId, generation, sourceSha, bootImageId, payload } = operation.input;
     if (typeof uid !== "string" || !uid || typeof gatewayId !== "string" || !gatewayId ||
@@ -18,8 +19,8 @@ export function parkedPrewarmInput(operation) {
     return { uid, gatewayId, generation, sourceSha, bootImageId, payload };
 }
 export async function readActiveParkedPrewarm(state, uid) {
-    const operations = await state.journal.operations.listForUid(uid, { kind: PARKED_PREWARM_KIND, statuses: ["pending", "running"] });
-    return operations.find((operation) => isPrewarmClaimActive(operation.output?.prewarmState)) ?? null;
+    const operations = await state.journal.operations.listForUid(uid, { kind: PARKED_PREWARM_KIND, statuses: ACTIVE_PARKED_PREWARM_STATUSES });
+    return operations.find((operation) => parkedPrewarmPlacementHold(operation) !== undefined) ?? null;
 }
 const BOOTING = "booting";
 const HANDOFF = "handoff";
@@ -29,6 +30,17 @@ const DEMAND_WON = "demand-won";
 const PREWARM_CLAIM_STATES = [BOOTING, HANDOFF, REPAIRING, REPAIR_PARKING];
 function isPrewarmClaimActive(state) {
     return PREWARM_CLAIM_STATES.some((phase) => phase === state);
+}
+export function parkedPrewarmPlacementHold(operation) {
+    const phase = operation.output?.prewarmState;
+    if (operation.kind !== PARKED_PREWARM_KIND ||
+        !ACTIVE_PARKED_PREWARM_STATUSES.some(status => status === operation.status) ||
+        !isPrewarmClaimActive(phase))
+        return undefined;
+    return phase === HANDOFF ? HANDOFF : "blocking";
+}
+export function activeParkedPrewarmGatewayIds(operations) {
+    return new Set(operations.flatMap(operation => operation.gatewayId && parkedPrewarmPlacementHold(operation) !== undefined ? [operation.gatewayId] : []));
 }
 function prewarmClaim(operation) {
     const { release, previousRelease, previousInstanceId, sourceGatewayId, sourceAssignmentEpoch } = operation.output ?? {};
@@ -58,10 +70,13 @@ function eligibleSharedSource(owner, sharedGatewayIds) {
 }
 function parkedInstanceId(runtime, sourceVm) {
     const vm = runtime?.vm;
-    if (runtime?.runtime !== "gce-vm" || vm?.status !== "SUSPENDED" ||
+    if (runtime?.runtime !== "gce-vm" || !vm ||
         (sourceVm && sourceVm.instanceId !== vm.instanceId))
         return null;
-    return vm.instanceId;
+    if (sourceVm && (vm.status === "RUNNING" || vm.status === "SUSPENDING")) {
+        throw new Error("Parked computer is waiting for VM suspension to be recorded");
+    }
+    return vm.status === "SUSPENDED" ? vm.instanceId : null;
 }
 function conflictingPrewarmOwnerOperation(conflicts, id) {
     return conflicts.some((entry) => entry.id !== id &&
@@ -107,9 +122,11 @@ export async function startParkedGatewayPrewarm(store, operation, now, sourceVm)
         if (result)
             return result;
         const sharedId = eligibleSharedSource(owner, pool?.sharedGatewayIds ?? []);
-        const instanceId = parkedInstanceId(runtime, sourceVm);
-        if (!sharedId || !instanceId || !empty || !parkedRootEligible(root, uid, generation) ||
+        if (!sharedId || !empty || !parkedRootEligible(root, uid, generation) ||
             conflictingPrewarmOwnerOperation(conflicts, operation.id))
+            return { state: "ineligible" };
+        const instanceId = parkedInstanceId(runtime, sourceVm);
+        if (!instanceId)
             return { state: "ineligible" };
         const [assignment, release] = await Promise.all([
             tx.gateways.assignments.get(sharedId, uid), tx.gateways.releases.get(gatewayId, root.liveRelease),

@@ -250,7 +250,7 @@ CORS preflight the server never answers.
   VM's user manager. The session then checks the accessibility bus and runs
   Hyprland → wayvnc, noVNC, control API, Chromium. A `uwsm` shim runs
   Omarchy's autostart apps directly.
-- `wlrctl` is built from source (not packaged); noVNC is a pinned release.
+- `wlrctl` is built from a checksum-pinned release archive (not packaged); noVNC is a pinned release.
 - Home is seeded from `/opt/octo-home-seed` on first start into the `octo-home`
   named volume, so browser sessions survive `docker compose down`;
   `docker compose down -v` resets it (`measure.sh` always starts from a reset).

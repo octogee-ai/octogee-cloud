@@ -1,5 +1,5 @@
 import { releasePayloadHash } from "@octogee/shared/types/gateway-releases";
-import { PARKED_PREWARM_KIND, parkedPrewarmInput } from "./isolated-gateway-lifecycle/prewarm.js";
+import { activeParkedPrewarmGatewayIds, PARKED_PREWARM_KIND, parkedPrewarmInput } from "./isolated-gateway-lifecycle/prewarm.js";
 function inProgress(operation) {
     return operation.status === "running" || operation.status === "pending";
 }
@@ -31,10 +31,9 @@ export function enqueueParkedGatewayPrewarm(store, request) {
         const active = matches.find(inProgress);
         if (active)
             return { status: "queued", operationId: active.id };
-        if (root.desiredStatus !== "paused")
+        const prewarming = activeParkedPrewarmGatewayIds(history.filter(op => op.input.generation === allocation.generation));
+        if (root.desiredStatus !== "paused" && (root.desiredStatus !== "running" || !prewarming.has(gatewayId))) {
             return { status: "ineligible", reason: "gateway is no longer parked" };
-        if (history.some(inProgress)) {
-            throw new Error(`Another parked computer upgrade is active for ${gatewayId}`);
         }
         const previous = await verifiedParkedOperation(tx, root, matches, request);
         if (previous)

@@ -12,6 +12,7 @@ import type { PlatformStateStore, PlatformStateTransaction, Stored } from "../pl
 import { userAllowsInteractiveAccess } from "./lease.js";
 
 export const PARKED_PREWARM_KIND = "prewarm-gateway";
+export const ACTIVE_PARKED_PREWARM_STATUSES = ["pending", "running"] as const;
 
 export interface ParkedPrewarmInput {
   uid: string;
@@ -38,8 +39,8 @@ export async function readActiveParkedPrewarm(
   state: Pick<PlatformStateTransaction, "journal">,
   uid: string,
 ): Promise<OperationRecord | null> {
-  const operations = await state.journal.operations.listForUid(uid, { kind: PARKED_PREWARM_KIND, statuses: ["pending", "running"] });
-  return operations.find((operation) => isPrewarmClaimActive(operation.output?.prewarmState)) ?? null;
+  const operations = await state.journal.operations.listForUid(uid, { kind: PARKED_PREWARM_KIND, statuses: ACTIVE_PARKED_PREWARM_STATUSES });
+  return operations.find((operation) => parkedPrewarmPlacementHold(operation) !== undefined) ?? null;
 }
 
 type PrewarmClaim = {
@@ -59,6 +60,19 @@ type PrewarmClaimState = typeof PREWARM_CLAIM_STATES[number];
 
 function isPrewarmClaimActive(state: unknown): state is PrewarmClaimState {
   return PREWARM_CLAIM_STATES.some((phase) => phase === state);
+}
+
+export function parkedPrewarmPlacementHold(operation: OperationRecord): "blocking" | typeof HANDOFF | undefined {
+  const phase = operation.output?.prewarmState;
+  if (operation.kind !== PARKED_PREWARM_KIND ||
+      !ACTIVE_PARKED_PREWARM_STATUSES.some(status => status === operation.status) ||
+      !isPrewarmClaimActive(phase)) return undefined;
+  return phase === HANDOFF ? HANDOFF : "blocking";
+}
+
+export function activeParkedPrewarmGatewayIds(operations: readonly OperationRecord[]): ReadonlySet<string> {
+  return new Set(operations.flatMap(operation =>
+    operation.gatewayId && parkedPrewarmPlacementHold(operation) !== undefined ? [operation.gatewayId] : []));
 }
 
 type PrewarmStart = { state: PrewarmClaimState | "parked"; claim: PrewarmClaim } |
@@ -103,9 +117,12 @@ function eligibleSharedSource(owner: Stored<PlatformUserRecord> | null, sharedGa
 
 function parkedInstanceId(runtime: FleetRegistryRecord | null, sourceVm: OriginalVm | undefined): string | null {
   const vm = runtime?.vm;
-  if (runtime?.runtime !== "gce-vm" || vm?.status !== "SUSPENDED" ||
+  if (runtime?.runtime !== "gce-vm" || !vm ||
       (sourceVm && sourceVm.instanceId !== vm.instanceId)) return null;
-  return vm.instanceId;
+  if (sourceVm && (vm.status === "RUNNING" || vm.status === "SUSPENDING")) {
+    throw new Error("Parked computer is waiting for VM suspension to be recorded");
+  }
+  return vm.status === "SUSPENDED" ? vm.instanceId : null;
 }
 
 function conflictingPrewarmOwnerOperation(conflicts: readonly OperationRecord[], id: string): boolean {
@@ -164,9 +181,10 @@ export async function startParkedGatewayPrewarm(
     const result = existingOrDemandOperation(current, owner);
     if (result) return result;
     const sharedId = eligibleSharedSource(owner, pool?.sharedGatewayIds ?? []);
-    const instanceId = parkedInstanceId(runtime, sourceVm);
-    if (!sharedId || !instanceId || !empty || !parkedRootEligible(root, uid, generation) ||
+    if (!sharedId || !empty || !parkedRootEligible(root, uid, generation) ||
         conflictingPrewarmOwnerOperation(conflicts, operation.id)) return { state: "ineligible" };
+    const instanceId = parkedInstanceId(runtime, sourceVm);
+    if (!instanceId) return { state: "ineligible" };
     const [assignment, release] = await Promise.all([
       tx.gateways.assignments.get(sharedId, uid), tx.gateways.releases.get(gatewayId, root.liveRelease),
       assertGatewayRuntimeMutationUnfencedInStore(tx, gatewayId),
