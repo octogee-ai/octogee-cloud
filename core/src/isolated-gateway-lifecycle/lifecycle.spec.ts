@@ -9,6 +9,7 @@ import {
   buildIsolatedGatewayConfig,
   completeActivationLease,
   sharedSourceRelease,
+  bootRepairedParkedGateway,
   finishParkedGatewayPrewarm,
   startParkedGatewayPrewarm,
   isolatedAllocationFenceAllows,
@@ -19,7 +20,7 @@ import {
   homePreparedBeforeAllocation,
   unauditedLifecycleMutations,
 } from "./index.js";
-import type { ReleasePayload } from "@octogee/shared/types/gateway-releases";
+import { releasePayloadHash, type ReleasePayload } from "@octogee/shared/types/gateway-releases";
 import { builderActivateOperationId } from "@octogee/shared/types/isolated-operation-ids";
 import { isolatedBootMode } from "../isolated-prelaunch.js";
 import { SourceRecoveryPendingError } from "../placement-refusal.js";
@@ -961,6 +962,38 @@ describe("parked isolated gateway reuse", () => {
     await expect(bootMode()).resolves.toEqual({ mode: "prelaunch" });
     h.docs.get("gateways/shared-blue/assignments/uid-alice")!.epoch = 5;
     await expect(bootMode()).rejects.toThrow("User activation authority is inconsistent");
+  });
+
+  it("requires a fresh original instance report before switching the parked computer to the candidate release", async () => {
+    const h = await prewarmHarness();
+    h.setParked();
+    const oldReleaseRow = h.docs.get(`gateways/${h.parkedGatewayId}/releases/1`)!;
+    const oldPayload = oldReleaseRow.payload as ReleasePayload;
+    const changedPayload = { ...oldPayload, imageTag: `abc1234@sha256:${"e".repeat(64)}` };
+    oldReleaseRow.payload = changedPayload;
+    oldReleaseRow.payloadHash = releasePayloadHash(changedPayload);
+    await expect(startParkedGatewayPrewarm(h.state, h.operation, 2100, {
+      instanceId: "old-instance", bootImageId: "111", needsRepair: true,
+    })).resolves.toMatchObject({ state: "repairing", claim: { previousRelease: 1, release: 2 } });
+    expect(await h.state.gateways.roots.get(h.parkedGatewayId)).toMatchObject({ desiredStatus: "running", desiredRelease: 1 });
+    const runtimeDoc = h.docs.get(`glmGateways/${h.parkedGatewayId}`)!;
+    runtimeDoc.vm = { instanceId: "old-instance", status: "RUNNING" };
+    const report = { currentPointId: null, retainedPoints: 0, ready: true, bundleVersion: "v1",
+      freeBytes: 3 * 1024 ** 3, instanceId: "old-instance", observedAt: 2099 };
+    runtimeDoc.vmBootRecovery = report;
+    await expect(finishParkedGatewayPrewarm(h.state, h.operation, 2250, "repaired")).rejects.toThrow(/fresh healthy/);
+    runtimeDoc.vmBootRecovery = { ...report, observedAt: 2150, instanceId: "other-instance" };
+    await expect(finishParkedGatewayPrewarm(h.state, h.operation, 2250, "repaired")).rejects.toThrow(/fresh healthy/);
+    runtimeDoc.vmBootRecovery = { ...report, observedAt: 2150 };
+    await expect(finishParkedGatewayPrewarm(h.state, h.operation, 2250, "repaired")).resolves.toBe("repair-parking");
+    expect(await h.state.gateways.roots.get(h.parkedGatewayId)).toMatchObject({ desiredStatus: "paused", desiredRelease: 1 });
+    await expect(bootRepairedParkedGateway(h.state, h.operation, 2300)).rejects.toThrow(/not safely parked/);
+    runtimeDoc.vm = { instanceId: "old-instance", status: "SUSPENDED" };
+    await expect(bootRepairedParkedGateway(h.state, h.operation, 2300)).resolves.toBe("booting");
+    expect(await h.state.gateways.roots.get(h.parkedGatewayId)).toMatchObject({ desiredStatus: "running", desiredRelease: 2 });
+    expect((await h.state.journal.operations.get(h.operation.id))?.output).toMatchObject({
+      repairedBootRecovery: { observedAt: 2150, instanceId: "old-instance" },
+    });
   });
 
   it("reparks a verified release when no demand arrived, allowing a later generation to claim it normally", async () => {

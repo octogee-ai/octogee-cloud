@@ -19,7 +19,7 @@ import {
   type RuntimeUserIdentity,
 } from "@octogee/shared/types/glm";
 import type { GatewayVmClient } from "./lib/compute-vm.js";
-import { createVmLifecycle, recordVmObservation, vmSpecDesktop } from "./vm-lifecycle.js";
+import { assertReplacementRecoveryCapacity, createVmLifecycle, recordVmObservation, vmSpecDesktop } from "./vm-lifecycle.js";
 import type { KubectlSubprocess } from "./fleet-ingress.js";
 import {
   helmTemplateArgsFromUpgradeArgs,
@@ -44,6 +44,7 @@ export interface ParkedPrewarmVmObservation {
   instanceId: string;
   status: string;
   bootImageId: string;
+  recoveryReady: boolean;
 }
 
 export interface VmGatewayRuntimeDeps {
@@ -458,7 +459,8 @@ export function createVmGatewayRuntime(deps: VmGatewayRuntimeDeps): VmGatewayRun
       return (await deps.vm.readFamilyImage(spec.imageFamily, spec.imageProject)).id;
     },
     async prewarmVmObservation(gatewayId, uid) {
-      const vm = (await deps.store.fleetRegistry.get(gatewayId))?.vm;
+      const runtime = await deps.store.fleetRegistry.get(gatewayId);
+      const vm = runtime?.vm;
       if (!vm?.instanceId) return null;
       const observed = await deps.vm.describe(vm.instanceName, vm.zone);
       if (!observed || observed.instanceId !== vm.instanceId || observed.gatewayId !== gatewayId ||
@@ -468,7 +470,13 @@ export function createVmGatewayRuntime(deps: VmGatewayRuntimeDeps): VmGatewayRun
       const checked = await deps.vm.describe(vm.instanceName, vm.zone);
       if (checked?.instanceId !== observed.instanceId || checked.status !== observed.status || checked.gatewayId !== gatewayId ||
           checked.metadata["octogee-owner-uid"] !== uid) return null;
-      return { instanceId: vm.instanceId, status: observed.status, bootImageId: bootImage.id };
+      let recoveryReady = true;
+      try {
+        assertReplacementRecoveryCapacity(runtime ?? undefined, vm, checked);
+      } catch {
+        recoveryReady = false;
+      }
+      return { instanceId: vm.instanceId, status: observed.status, bootImageId: bootImage.id, recoveryReady };
     },
     readDeploymentPrerequisiteError: vmLifecycle.readDeploymentPrerequisiteError,
     recoverUnreachable: vmLifecycle.recoverUnreachable,

@@ -316,7 +316,7 @@ async function resumeParkedIsolatedGateway(
       assertCurrent(user);
       const stored = roots.get(parked.gatewayId) ?? null;
       const prewarm = await readActiveParkedPrewarm(transaction, request.uid);
-      if (prewarm?.output?.prewarmState === "booting") throw new IsolatedGatewayFenceError("Owner computer prewarm has not released the allocation");
+      if (prewarm && prewarm.output?.prewarmState !== "handoff") throw new IsolatedGatewayFenceError("Owner computer prewarm has not released the allocation");
       const handoff = prewarm?.output?.prewarmState === "handoff" && prewarm.gatewayId === parked.gatewayId ? prewarm : null;
       if ((handoff?.id ?? undefined) !== handoffOperationId) {
         throw new IsolatedGatewayFenceError("Owner computer prewarm handoff changed");
@@ -475,7 +475,7 @@ export async function allocateIsolatedGateway(
   const gatewayId = allocatedIsolatedGatewayId(request);
   await checkHomeReadiness(input, request, gatewayId);
   const prewarm = await readActiveParkedPrewarm(input.store, request.uid);
-  if (prewarm?.output?.prewarmState === "booting") throw new IsolatedGatewayFenceError("Owner computer prewarm has not released the allocation");
+  if (prewarm && prewarm.output?.prewarmState !== "handoff") throw new IsolatedGatewayFenceError("Owner computer prewarm has not released the allocation");
   const source = await readAllocationSource(input.store, request);
   if (prewarm?.output?.prewarmState === "handoff") {
     const { gatewayId: warmingGatewayId, generation } = parkedPrewarmInput(prewarm);

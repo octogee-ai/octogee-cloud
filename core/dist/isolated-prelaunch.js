@@ -56,9 +56,10 @@ async function parkedPrewarmSource(reader, gateway, user) {
     if (operation?.gatewayId !== gateway.gatewayId)
         return null;
     const request = parkedPrewarmInput(operation);
-    const { sourceGatewayId, sourceAssignmentEpoch, release } = operation.output ?? {};
+    const { sourceGatewayId, sourceAssignmentEpoch, release, previousRelease, prewarmState } = operation.output ?? {};
+    const bootRelease = prewarmState === "repairing" ? previousRelease : release;
     if (request.uid !== user.uid || request.generation !== gateway.allocation.generation ||
-        release !== gateway.desiredRelease || typeof sourceGatewayId !== "string" ||
+        bootRelease !== gateway.desiredRelease || typeof sourceGatewayId !== "string" ||
         sourceGatewayId === gateway.gatewayId || sourceGatewayId !== user.gateway?.gatewayId ||
         typeof sourceAssignmentEpoch !== "number" || !Number.isSafeInteger(sourceAssignmentEpoch))
         return null;
