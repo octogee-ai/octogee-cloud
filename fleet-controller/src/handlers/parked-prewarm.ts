@@ -163,6 +163,13 @@ async function progressPhase(run: PrewarmRun, phase: Phase, state: State): Promi
   const { deps, op } = run;
   if (phase === "parked") return await parkedCandidateResult(run, state) ?? phase;
   if (phase === "handoff") return handoffProgress(run, state);
+  if (state.owner?.activationLease?.status !== "requested") {
+    const { sourceGatewayId, sourceAssignmentEpoch } = run.claim;
+    const assignment = await deps.store.gateways.assignments.get(sourceGatewayId, run.request.uid);
+    if (state.owner?.gateway?.gatewayId !== sourceGatewayId || assignment?.state !== "serving" || assignment.epoch !== sourceAssignmentEpoch) {
+      throw new Error("Shared assignment changed during parked computer upgrade");
+    }
+  }
   if (phase === "repair-parking") {
     if (!await authorizedRepairPark(run, state)) return phase;
     const next = await bootRepairedParkedGateway(deps.store, op, deps.now());
@@ -230,11 +237,20 @@ export function createParkedPrewarmHandler(deps: ParkedPrewarmDeps): OperationHa
     const existing = await deps.store.journal.operations.get(op.id);
     let source;
     if (existing?.output?.prewarmState === undefined) {
-      if (await runtime.prewarmBootImageId(gatewayId) !== bootImageId) {
-        throw new Error("Parked computer prewarm boot image is no longer current");
+      const publishedImageId = await runtime.prewarmBootImageId(gatewayId);
+      if (publishedImageId !== bootImageId) {
+        return { success: true, steps: [], output: { prewarmState: "superseded", bootImageId, publishedImageId } };
       }
       source = await runtime.prewarmVmObservation(gatewayId, uid);
-      if (source?.status !== "SUSPENDED") return { success: true, steps: [], output: { prewarmState: "ineligible" } };
+      if (source?.status !== "SUSPENDED") {
+        const [root, registry] = await Promise.all([deps.store.gateways.roots.get(gatewayId), deps.store.fleetRegistry.get(gatewayId)]);
+        const status = source?.status ?? registry?.vm?.status;
+        if (root?.gatewayClass === "isolated" && root.desiredStatus === "paused" && root.ownerUid === uid &&
+            root.allocation?.generation === request.generation && (status === "RUNNING" || status === "SUSPENDING")) {
+          throw new Error("Parked computer is still suspending");
+        }
+        return { success: true, steps: [], output: { prewarmState: "ineligible" } };
+      }
     }
     await ctx.assertActiveClaim?.();
     const started = await startParkedGatewayPrewarm(deps.store, op, deps.now(), source ? {
