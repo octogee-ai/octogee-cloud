@@ -750,6 +750,29 @@ describe("gateway-rpc", () => {
       server.setHandler("cron.migration", () => ({ ok: true, payload }));
       await expect(client.schedulerMigration({ operationId: "move-1", phase: "export" })).rejects.toMatchObject({ code: "invalid-response" });
     });
+
+    const requesterProbe = { operationId: "move-1", phase: "stage-requester" as const };
+    const requesterResult = { ...requesterProbe, agentIds: [], drained: true };
+    it.each(["shared-operator", null])("reads the staging requester from OpenClaw (%s)", async stageRequesterProfileId => {
+      const payload = { ...requesterResult, stageRequesterProfileId };
+      server.setHandler("cron.migration", params => {
+        expect(params).toEqual(requesterProbe);
+        return { ok: true, payload };
+      });
+      await expect(client.schedulerMigration(requesterProbe)).resolves.toEqual(payload);
+    });
+
+    it.each([
+      ["agent scope", { agentIds: ["octogee-alice-coach"] }],
+      ["missing requester", { stageRequesterProfileId: undefined }],
+      ["blank requester", { stageRequesterProfileId: " " }],
+      ["oversized requester", { stageRequesterProfileId: "x".repeat(513) }],
+      ["non-string requester", { stageRequesterProfileId: 42 }],
+    ] as const)("rejects a staging requester acknowledgement with %s", async (_label, invalid) => {
+      const payload = { ...requesterResult, stageRequesterProfileId: "shared-operator", ...invalid };
+      server.setHandler("cron.migration", () => ({ ok: true, payload }));
+      await expect(client.schedulerMigration(requesterProbe)).rejects.toMatchObject({ code: "invalid-response" });
+    });
   });
 
   describe("scheduled migration eligibility", () => {

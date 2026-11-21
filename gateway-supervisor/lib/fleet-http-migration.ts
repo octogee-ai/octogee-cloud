@@ -26,6 +26,7 @@ import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
+  isSchedulerRequesterProfileId,
   type SchedulerMigrationRequestBody,
   type ScheduleCheckResult,
   type ScheduleRecord,
@@ -568,15 +569,25 @@ export function createMigrationProgressHandler(deps: MigrationHandlerDeps): Requ
 const SCHEDULER_MIGRATION_PHASES = ["hold", "export", "stage", "activate", "resume", "retire", "abort"];
 const SCHEDULER_RETAINING_PHASES = ["hold", "export", "stage"];
 
+function areSchedulerExportOptionsValid(body: SchedulerMigrationRequestBody): boolean {
+  const scopeValid = body.resolveAgentScope === undefined ||
+    (body.resolveAgentScope === true && body.phase === "export" && body.agentIds === undefined);
+  const requesterValid = body.targetRequesterProfileId === undefined ||
+    (body.phase === "export" && body.retainNonportable === true && isSchedulerRequesterProfileId(body.targetRequesterProfileId));
+  return scopeValid && requesterValid;
+}
+
 function isSchedulerMigrationRequest(body: SchedulerMigrationRequestBody): boolean {
+  if (body.phase === "stage-requester") {
+    return [body.agentIds, body.snapshot, body.retainNonportable, body.resolveAgentScope, body.targetRequesterProfileId]
+      .every(value => value === undefined);
+  }
   const agentIdsValid = body.agentIds === undefined ||
     (Array.isArray(body.agentIds) && body.agentIds.length > 0 && body.agentIds.every((id) => typeof id === "string" && id));
   const stageValid = body.phase !== "stage" || (body.agentIds !== undefined && body.snapshot !== undefined);
   const retainValid = body.retainNonportable === undefined ||
     (typeof body.retainNonportable === "boolean" && SCHEDULER_RETAINING_PHASES.includes(body.phase));
-  const scopeValid = body.resolveAgentScope === undefined ||
-    (body.resolveAgentScope === true && body.phase === "export" && body.agentIds === undefined);
-  return SCHEDULER_MIGRATION_PHASES.includes(body.phase) && agentIdsValid && stageValid && retainValid && scopeValid;
+  return SCHEDULER_MIGRATION_PHASES.includes(body.phase) && agentIdsValid && stageValid && retainValid && areSchedulerExportOptionsValid(body);
 }
 
 export function createSchedulerMigrationHandler(deps: MigrationHandlerDeps): RequestHandler {
@@ -595,6 +606,7 @@ export function createSchedulerMigrationHandler(deps: MigrationHandlerDeps): Req
         ...(body.agentIds ? { agentIds: body.agentIds } : {}),
         ...(body.snapshot === undefined ? {} : { snapshot: body.snapshot }),
         ...(body.retainNonportable === undefined ? {} : { retainNonportable: body.retainNonportable }),
+        ...(body.targetRequesterProfileId === undefined ? {} : { targetRequesterProfileId: body.targetRequesterProfileId }),
       });
       res.status(result.drained ? 200 : 409).json(result);
     } catch (error) {

@@ -434,7 +434,7 @@ export interface MigrationProgressRequestBody extends MigrationRequestBody {
 }
 
 
-export type SchedulerMigrationPhase = "hold" | "export" | "stage" | "activate" | "resume" | "retire" | "abort";
+export type SchedulerMigrationPhase = "hold" | "export" | "stage-requester" | "stage" | "activate" | "resume" | "retire" | "abort";
 
 export interface SchedulerMigrationRequest {
   resolveAgentScope?: true;
@@ -443,6 +443,7 @@ export interface SchedulerMigrationRequest {
   agentIds?: string[];
   snapshot?: unknown;
   retainNonportable?: boolean;
+  targetRequesterProfileId?: string | null;
 }
 
 export interface SchedulerMigrationResult {
@@ -451,6 +452,30 @@ export interface SchedulerMigrationResult {
   agentIds: string[];
   drained: boolean;
   snapshot?: unknown;
+  stageRequesterProfileId?: string | null;
+}
+
+export function isSchedulerRequesterProfileId(value: unknown): value is string | null {
+  return value === null || (typeof value === "string" && value.trim().length > 0 && value.length <= 512);
+}
+
+function hasSchedulerMigrationAgentScope(result: SchedulerMigrationResult): boolean {
+  if (!Array.isArray(result.agentIds) || result.agentIds.some(id => typeof id !== "string" || !id)) return false;
+  if (result.phase === "stage-requester") {
+    return result.agentIds.length === 0 && isSchedulerRequesterProfileId(result.stageRequesterProfileId);
+  }
+  return result.agentIds.length > 0 || result.phase === "resume" || result.phase === "abort";
+}
+
+export function isSchedulerMigrationResult(
+  value: unknown,
+  operationId: string,
+  phase: SchedulerMigrationPhase,
+): value is SchedulerMigrationResult {
+  if (value === null || typeof value !== "object") return false;
+  const result = value as SchedulerMigrationResult;
+  return result.operationId === operationId && result.phase === phase && typeof result.drained === "boolean" &&
+    hasSchedulerMigrationAgentScope(result) && (phase !== "export" || result.snapshot !== undefined);
 }
 
 export interface SchedulerMigrationRequestBody extends MigrationRequestBody {
@@ -459,6 +484,7 @@ export interface SchedulerMigrationRequestBody extends MigrationRequestBody {
   agentIds?: string[];
   snapshot?: unknown;
   retainNonportable?: boolean;
+  targetRequesterProfileId?: string | null;
 }
 
 // One user agent's cron job as OpenClaw `cron.add` accepts it, captured
