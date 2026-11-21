@@ -8,6 +8,11 @@ import {
   type HomeInstance,
 } from "./compute-home.js";
 
+export interface ArchivedBootDisk {
+  source: string;
+  id: string;
+}
+
 export interface SnapshotStoppedHomeInput {
   home: RetainedUserHome;
   ownerUid: string;
@@ -186,7 +191,7 @@ export function createVmHomeSnapshotClient(deps: {
     return true;
   }
 
-  async function verifyStoppedSource(input: SnapshotStoppedHomeInput): Promise<void> {
+  async function verifyStoppedSource(input: SnapshotStoppedHomeInput): Promise<HomeInstance> {
     const { home, instanceName, instanceId, ownerUid } = input;
     const instancePath = `${project}/zones/${home.zone}/instances/${instanceName}`;
     const instance = await deps.readInstance(instanceName, home.zone);
@@ -202,6 +207,7 @@ export function createVmHomeSnapshotClient(deps: {
       throw new Error("Home snapshot source disk identity or attachment differs");
     }
     assertRetainedHomeDisk(disk, home, ownerUid, "snapshot");
+    return instance;
   }
 
   async function snapshotStoppedHome(input: SnapshotStoppedHomeInput): Promise<RetainedUserHomeSnapshot | null> {
@@ -226,6 +232,16 @@ export function createVmHomeSnapshotClient(deps: {
       if (!resource) throw new Error("Home snapshot creation conflicted without an identifiable snapshot");
     }
     return snapshotReceipt(resource, expected, path, labels);
+  }
+
+  async function verifyHomeSnapshot(snapshot: RetainedUserHomeSnapshot, ownerUid: string): Promise<void> {
+    const zone = snapshot.sourceDisk.split("/")[3] ?? "";
+    validateRestoreScope({ snapshot, ownerUid, zone, diskName: snapshot.name, minimumSizeGb: snapshot.sizeGb }, deps.projectId);
+    const path = `${project}/global/snapshots/${snapshot.name}`;
+    const resource = await read<Snapshot>(path);
+    if (!resource || snapshotReceipt(resource, snapshot, path, snapshotLabels(ownerUid))?.id !== snapshot.id) {
+      throw new Error("Home custody requires the exact READY snapshot");
+    }
   }
 
   async function restoreHomeFromSnapshot(input: RestoreHomeFromSnapshotInput): Promise<RetainedUserHome | null> {
@@ -320,5 +336,37 @@ export function createVmHomeSnapshotClient(deps: {
     return false;
   }
 
-  return { snapshotStoppedHome, restoreHomeFromSnapshot, eraseHomeSnapshot };
+  function diskPathInZone(path: string, zone: string): boolean {
+    const prefix = `${project}/zones/${zone}/disks/`;
+    return ZONE.test(zone) && path.startsWith(prefix) && RESOURCE_NAME.test(path.slice(prefix.length));
+  }
+
+  async function readArchiveBootDisk(input: SnapshotStoppedHomeInput): Promise<ArchivedBootDisk> {
+    const { home, instanceName } = input;
+    const instance = await verifyStoppedSource(input);
+    const boot = instance.disks?.find(disk => disk.boot === true);
+    const source = computePath(boot?.source);
+    if (instance.disks?.length !== 2 || boot?.autoDelete !== true || !source || !diskPathInZone(source, home.zone) || source === home.source) {
+      throw new Error("Home archive requires exactly two disks and a verified auto-delete boot disk");
+    }
+    const disk = await read<Disk>(source);
+    const instancePath = `${project}/zones/${home.zone}/instances/${instanceName}`;
+    if (!disk || !NUMERIC_ID.test(disk.id ?? "") || disk.users?.length !== 1 || computePath(disk.users[0]) !== instancePath) {
+      throw new Error("Home archive boot disk owner or attachment differs");
+    }
+    return { source, id: disk.id! };
+  }
+
+  async function archiveDisksAbsent(home: RetainedUserHome, boot: ArchivedBootDisk): Promise<boolean> {
+    if (home.projectId !== deps.projectId || home.source === boot.source ||
+        !diskPathInZone(home.source, home.zone) || !diskPathInZone(boot.source, home.zone) ||
+        !NUMERIC_ID.test(home.id) || !NUMERIC_ID.test(boot.id)) throw new Error("Invalid archive disk receipts");
+    const [existingHome, existingBoot] = await Promise.all([read<Disk>(home.source), read<Disk>(boot.source)]);
+    if ((existingHome && existingHome.id !== home.id) || (existingBoot && existingBoot.id !== boot.id)) {
+      throw new Error("Home archive disk name was replaced");
+    }
+    return !existingHome && !existingBoot;
+  }
+
+  return { snapshotStoppedHome, restoreHomeFromSnapshot, eraseHomeSnapshot, verifyHomeSnapshot, readArchiveBootDisk, archiveDisksAbsent };
 }

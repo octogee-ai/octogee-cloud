@@ -53,7 +53,7 @@ async function assertSharedAssignment(state: PlatformStateRepositories, owner: S
   assertAssignment(assignment, identity, shared);
 }
 
-export async function assertVmRecoveryFence(store: PlatformStateStore, identity: RecoveryIdentity): Promise<void> {
+export async function assertVmRecoveryFence(store: PlatformStateRepositories, identity: RecoveryIdentity): Promise<void> {
   await assertSharedAssignment(store, await store.users.records.get(identity.ownerUid), identity);
 }
 

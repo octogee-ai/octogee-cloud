@@ -192,6 +192,7 @@ describe.skipIf(!dsn)("PostgreSQL user records: patches", () => {
     await records.create({ uid: "alice", createdAt: NOW });
     const archive = {
       phase: "archived" as const, operationId: "archive-1", gatewayId: "user-gateway", instanceId: "104",
+      bootDisk: { source: "projects/test-project/zones/us-central1-b/disks/boot", id: "106" },
       snapshot: { projectId: "test-project", name: "home-1", id: "105",
         sourceDisk: "projects/test-project/zones/us-central1-b/disks/original", sourceDiskId: "103", sizeGb: 10 },
     };

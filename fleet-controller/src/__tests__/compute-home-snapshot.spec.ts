@@ -231,3 +231,34 @@ describe("erase the exact owned home snapshot", () => {
     expect(request.mock.calls.some(([call]) => call.method === "DELETE")).toBe(false);
   });
 });
+
+describe("verify the exact charged disks before and after archive", () => {
+  const bootPath = `projects/${PROJECT}/zones/${ZONE}/disks/owner-boot`;
+  const boot = { source: bootPath, id: "105" };
+  const bootUrl = `https://compute.googleapis.com/compute/v1/${bootPath}`;
+
+  it("captures boot provenance and refuses to report zero provisioning until both disks disappear", async () => {
+    const { client, resources } = fixture();
+    resources[`${BASE}/zones/${ZONE}/instances/${instance.name}`] = {
+      ...instance, disks: [{ boot: true, autoDelete: true, source: bootUrl }, ...instance.disks],
+    };
+    resources[bootUrl] = { name: "owner-boot", id: boot.id, users: disk.users };
+
+    await expect(client.readArchiveBootDisk(snapshotInput)).resolves.toEqual(boot);
+    await expect(client.archiveDisksAbsent(home, boot)).resolves.toBe(false);
+    delete resources[bootUrl];
+    await expect(client.archiveDisksAbsent(home, boot)).resolves.toBe(false);
+    delete resources[`${BASE}/zones/${ZONE}/disks/${home.name}`];
+    await expect(client.archiveDisksAbsent(home, boot)).resolves.toBe(true);
+  });
+
+  it("rejects an extra attached disk or reused provider name", async () => {
+    const { client, resources } = fixture();
+    resources[`${BASE}/zones/${ZONE}/instances/${instance.name}`] = {
+      ...instance, disks: [{ boot: true, autoDelete: true, source: bootUrl }, ...instance.disks, { boot: false, autoDelete: false }],
+    };
+    resources[bootUrl] = { name: "owner-boot", id: "999", users: disk.users };
+    await expect(client.readArchiveBootDisk(snapshotInput)).rejects.toThrow(/exactly two disks/);
+    await expect(client.archiveDisksAbsent(home, boot)).rejects.toThrow(/replaced/);
+  });
+});

@@ -12,6 +12,7 @@ global:
   logLevel: "info"
   logKeepLongIdentifiers: false
   computer:
+    testHomeArchiveGrant: ""
     enabled: false
     projectId: ""
     serviceAccountEmail: ""

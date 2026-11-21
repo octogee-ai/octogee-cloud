@@ -192,6 +192,8 @@ import { schedulerHandoffAwaitingRelease, startSchedulerHandoffRelease } from ".
 import { createRecycleGatewayHandler } from "./handlers/recycle-gateway.js";
 import { createParkedPrewarmHandler } from "./handlers/parked-prewarm.js";
 import { createGatewayVmHandler } from "./handlers/gateway-vm.js";
+import { createHomeArchiveHandler } from "./handlers/home-archive.js";
+import { resolveParkedHomeArchiveGrant } from "@octogee/core/admin-fleet-router";
 import { createGatewayVmClient } from "./lib/compute-vm.js";
 import { pausedIsolatedRetirementSourceFencedOff } from "./lib/native-retirement-telemetry.js";
 import { clearHomeCheckpointRequest, readHomeCheckpointCompletedAt, requestHomeCheckpoint } from "./lib/home-checkpoint.js";
@@ -3620,6 +3622,12 @@ async function buildHandlers(
     log: logFn,
   });
 
+  const archiveHome = createHomeArchiveHandler({
+    store,
+    vm: createGatewayComputeClient(store, logFn),
+    grant: resolveParkedHomeArchiveGrant(ENVIRONMENT_SETTINGS.name, process.env.GATEWAY_TEST_HOME_ARCHIVE_GRANT),
+  });
+
   return {
     "add-gateway": addGateway,
     "prewarm-gateway": createParkedPrewarmHandler({
@@ -3634,7 +3642,7 @@ async function buildHandlers(
       now: Date.now,
       log: logFn,
     }),
-    "gateway-vm": (op, ctx) => runGatewayRuntimeExclusive(() => gatewayVm(op, ctx)),
+    "gateway-vm": (op, ctx) => runGatewayRuntimeExclusive(() => op.input.action === "archive" ? archiveHome(op, ctx) : gatewayVm(op, ctx)),
     [MIGRATE_USER_KIND]: migrateUser,
     "retire-gateway": retireGateway,
     "restart-gateway": restartGateway,

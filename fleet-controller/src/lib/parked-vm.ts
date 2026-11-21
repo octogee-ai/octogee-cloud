@@ -49,7 +49,7 @@ function validHomeCapacity(value: Partial<RetainedUserHome> | null | undefined):
 
 export async function readRetainedUserHome(state: Pick<PlatformStateRepositories, "users">, ownerUid: string): Promise<RetainedUserHome | null> {
   const owner = await state.users.records.get(ownerUid);
-  if (owner?.home.homeArchive !== undefined) throw new Error("User home archive requires explicit snapshot recovery");
+  if (owner?.home.homeArchive !== undefined && owner.home.homeArchive.phase !== "restored") throw new Error("User home archive requires explicit snapshot recovery");
   const value = owner?.home.homeDisk as Partial<RetainedUserHome> | undefined;
   if (value === undefined) return null;
   if (!validHomeIdentity(value) || !validHomeCapacity(value)) {

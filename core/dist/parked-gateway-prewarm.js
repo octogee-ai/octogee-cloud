@@ -19,7 +19,7 @@ export function enqueueParkedGatewayPrewarm(store, request) {
     const { gatewayId, uid, sourceSha, bootImageId, payload, createdBy } = request;
     return store.transaction({ label: "isolated-gateway.enqueue-prewarm" }, async (tx) => {
         const [root, owner] = await Promise.all([tx.gateways.roots.get(gatewayId), tx.users.records.get(uid)]);
-        if (owner?.home.homeArchive !== undefined)
+        if (owner?.home.homeArchive !== undefined && owner.home.homeArchive.phase !== "restored")
             return { status: "ineligible", reason: "user home archive is under snapshot custody" };
         const allocation = root?.allocation;
         if (root?.gatewayClass !== "isolated" || root.ownerUid !== uid || allocation?.kind !== "disposable-builder" || allocation.claimedByUid !== uid) {

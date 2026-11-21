@@ -1,3 +1,4 @@
+import { restoreArchivedHome } from "./lib/archived-home-restore.js";
 import { parkedPrewarmInput, readActiveParkedPrewarm } from "@octogee/core/isolated-gateway-lifecycle";
 import {
   MissingRecordError,
@@ -1201,9 +1202,18 @@ async function ensureBoundVm(deps: VmLifecycleDeps, request: {
   const [{ data, vm: existing }, owner] = await Promise.all([
     readVmRecord(deps.store, gatewayId), deps.store.users.records.get(ownerUid),
   ]);
-  if (owner?.home.homeArchive !== undefined) throw new Error("User home archive requires explicit snapshot recovery");
   const spec = recordedSpecInConfiguredZones(data?.vmSpec, deps.vmSpec);
   const input = gatewayVmInstanceInput({ gatewayId, ownerUid, spec, environment: deps.environment, image, bridgeIp: bridge });
+  const archive = owner?.home.homeArchive;
+  if (archive && archive.phase !== "restored") {
+    if (archive.phase !== "archived" && archive.phase !== "restoring" || !archive.snapshot || !archive.bootDisk) {
+      throw new Error("User home archive requires explicit snapshot recovery");
+    }
+    const description = await restoreArchivedHome(deps, { gatewayId, ownerUid }, spec, input);
+    const retainedHome = await readRetainedUserHome(deps.store, ownerUid);
+    if (!retainedHome) throw new Error("Restored home ownership was not recorded");
+    return finishEnsuredVm(deps, { gatewayId, ownerUid, spec, description, input, recovery: null, retainedHome }, operations);
+  }
   let description = existing ? await deps.vm.describe(existing.instanceName, existing.zone) : null;
   if (!description) description = await deps.vm.findByLabels(ownerVmLabels(deps.environment, ownerUid));
   const prewarm = await readActiveParkedPrewarm(deps.store, ownerUid);

@@ -1,3 +1,4 @@
+export { resolveParkedHomeArchiveGrant } from "./parked-home-archive.js";
 import { migrationCancellationDeferred } from "./fleet-state.js";
 import { readSharedSourceRecoveryAuthority, readSharedSourceRecoverySupersession, SharedSourceRecoveryConflict } from "./shared-source-recovery.js";
 import { randomUUID } from "node:crypto";
@@ -4825,7 +4826,7 @@ export function addAdminFleetRoutes(
 
   router.use(admitAdminDryRunMarker);
 
-  addAdminComputerRoutes(router, { store, replacementEnabled: deps.computerReplacementEnabled, journal: runAdminFleetMutation });
+  addAdminComputerRoutes(router, { store, replacementEnabled: deps.computerReplacementEnabled, releaseEnvironment: deps.releaseEnvironment, journal: runAdminFleetMutation });
   addAdminUserRoutes(router, { store, accounts: deps.userAccounts, signIn: deps.userSignIn, journal: runAdminFleetMutation });
   addAdminSharedPoolRoutes(router, {
     store,

@@ -175,7 +175,7 @@ export async function startParkedGatewayPrewarm(
       tx.gateways.assignments.isEmpty(gatewayId), tx.journal.operations.listForUid(uid, { statuses: ["pending", "running"] }),
     ]);
     assertPrewarmWorker(operation, current);
-    if (owner?.home.homeArchive !== undefined) return { state: "ineligible" };
+    if (owner?.home.homeArchive !== undefined && owner.home.homeArchive.phase !== "restored") return { state: "ineligible" };
     const result = existingOrDemandOperation(current, owner);
     if (result) return result;
     const sharedId = eligibleSharedSource(owner, pool?.sharedGatewayIds ?? []);

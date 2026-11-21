@@ -1,3 +1,4 @@
+export { resolveParkedHomeArchiveGrant } from "./parked-home-archive.js";
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { type GatewayClass, type GatewayImageProfile, type GatewayProfile, type GatewayRuntime, type GatewayVmState, type OperationAuditAliasPlan } from "@octogee/shared/types/glm";
 import { type PlatformRuntimeConfig } from "@octogee/shared/types/platform-config";
@@ -474,4 +475,3 @@ export declare function createAdminFleetMutationRunner(store: PlatformStateStore
 export type AdminFleetMutationRunner = ReturnType<typeof createAdminFleetMutationRunner>;
 export declare function respondToAdminFleetMutationError(error: unknown, _req: Request, res: Response, next: NextFunction): void;
 export declare function addAdminFleetRoutes(router: Router, deps: FleetRouterDeps): Router;
-export {};

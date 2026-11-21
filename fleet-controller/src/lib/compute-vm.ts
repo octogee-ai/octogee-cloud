@@ -1,5 +1,5 @@
 import { createVmHomeClient } from "./compute-home.js";
-import { createVmHomeSnapshotClient, type RestoreHomeFromSnapshotInput, type SnapshotStoppedHomeInput } from "./compute-home-snapshot.js";
+import { createVmHomeSnapshotClient, type ArchivedBootDisk, type RestoreHomeFromSnapshotInput, type SnapshotStoppedHomeInput } from "./compute-home-snapshot.js";
 import type { GatewayVmBootDiskType, GatewayVmDesktop, GatewayVmProvisioningModel, RetainedUserHome, RetainedUserHomeSnapshot } from "@octogee/shared/types/glm";
 
 export interface ComputeRequest {
@@ -85,7 +85,10 @@ export interface CreateGatewayVmResult {
 export interface GatewayVmClient {
   snapshotStoppedHome(input: SnapshotStoppedHomeInput): Promise<RetainedUserHomeSnapshot | null>;
   restoreHomeFromSnapshot(input: RestoreHomeFromSnapshotInput): Promise<RetainedUserHome | null>;
+  verifyHomeSnapshot(snapshot: RetainedUserHomeSnapshot, ownerUid: string): Promise<void>;
   eraseHomeSnapshot(snapshot: RetainedUserHomeSnapshot, ownerUid: string): Promise<boolean>;
+  readArchiveBootDisk(input: SnapshotStoppedHomeInput): Promise<ArchivedBootDisk>;
+  archiveDisksAbsent(home: RetainedUserHome, boot: ArchivedBootDisk): Promise<boolean>;
   expandHome(home: RetainedUserHome, ownerUid: string, sizeGb: number): Promise<RetainedUserHome>;
   retainHome(instanceName: string, zone: string, ownerUid: string): Promise<RetainedUserHome>;
   verifyDetachedHome(home: RetainedUserHome, ownerUid: string): Promise<void>;
