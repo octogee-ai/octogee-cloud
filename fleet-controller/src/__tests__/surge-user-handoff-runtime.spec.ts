@@ -163,6 +163,20 @@ function requestThroughFetch(fetch: typeof globalThis.fetch): SurgeControlReques
 }
 
 describe("surge handoff direct pod transport", () => {
+  it.each([true, false])("carries only signed readiness from the queried endpoint (same=%s)", async same => {
+    const fetch = vi.fn(async (url: FetchInput, _init?: RequestInit) => {
+      if (String(url).endsWith("/health")) return Response.json({ status: "ready" });
+      if (String(url).endsWith("/surge-ready")) return Response.json({ openclawUp: true, prelaunchState: "serving", handoffReleased: true });
+      return Response.json({ gatewayId: GATEWAY_ID, podUid: same ? source.uid : target.uid,
+        status: "ready", version: "build-1", customers: [], startedAt: 10 });
+    });
+    const transport = createSurgePodTransport({ privateKey: FLEET_KEY_PAIR.privateKey, fetch, log: vi.fn() });
+    const result = await transport.readPodHealth(source, GATEWAY_ID);
+    expect(fetch.mock.calls.filter(([url]) => String(url).includes("/fleet-state/"))).toHaveLength(1);
+    if (same) expect(result?.signedFleetState).toMatchObject({ status: "ready", version: "build-1", startedAt: 10 });
+    else expect(result?.signedFleetState).toBeUndefined();
+  });
+
   it.each(["hold", "export", "stage", "activate", "resume", "retire", "abort"] as const)("sends scheduler %s to the exact pod with gateway-bound migration authority", async phase => {
     const operationId = "surge-scheduler-exact-clock";
     const agentIds = ["octogee-alice-coach", "octogee-alice-proj-orbit-coach"];

@@ -60,6 +60,7 @@ import {
   createBackgroundGatewayRecovery,
   startGatewayHeartbeatPoller,
   type GatewayHeartbeatPollerDeps,
+  heartbeatRecordFrom,
 } from "./gateway-heartbeat-poller.js";
 import { createFleetStateFetcher, readPrivateProjectAgentWorkspace, requestFleetState } from "./fleet-state-client.js";
 import {
@@ -105,6 +106,7 @@ import {
   supersedingGatewayImageTag,
   type DurableGateway,
   type GatewayConvergenceAction,
+  type ReadyVmObservation,
   type GatewayUpsertOpts,
   type ObservedHelmInstance,
 } from "./converge-gateway.js";
@@ -115,6 +117,7 @@ import {
   SurgeAssignmentBusyError,
   type SurgeUserHandoffDeps,
   type SurgeUserHandoffResult,
+  type SurgeReadyFleetState,
 } from "./surge-user-handoff.js";
 
 import { readSurgeAssignments } from "./surge-orphan-assignment.js";
@@ -175,7 +178,7 @@ import { createRetireGatewayHandler } from "./handlers/retire-gateway.js";
 import { readFileSync } from "node:fs";
 import { createGatewayServiceAccountTeardown, gatewaysHaveGoogleServiceAccounts } from "./lib/gateway-gsa.js";
 import { gatewayFleetBaseUrl, gatewayVmAddress } from "./lib/gateway-address.js";
-import { createVmReadinessProbe, createSurgeEndpointLister } from "./vm-endpoints.js";
+import { createVmReadinessProbe, createSurgeEndpointLister, endpointFromVm } from "./vm-endpoints.js";
 import {
   createRuntimeDispatchingHelmRunner,
   createVmGatewayRuntime,
@@ -743,7 +746,7 @@ async function syncFleetIngressIfConfigured(
 
 interface DurableRuntimeState {
   gateways: DurableGateway[];
-  runtimeDocs: GatewayRuntimeDoc[];
+  runtimeDocs: ConvergingGatewayRuntime[];
   invalidRootIds: string[];
   strayGlmDocs: StrayGlmDoc[];
 }
@@ -778,17 +781,17 @@ function classifyFleetRegistryInventory(
   inventory: FleetRegistryInventory,
   gateways: readonly DurableGateway[],
 ): {
-  runtimeDocs: GatewayRuntimeDoc[];
+  runtimeDocs: ConvergingGatewayRuntime[];
   strayGlmDocs: StrayGlmDoc[];
 } {
   const gatewayIds = new Set(gateways.map((gateway) => gateway.gatewayId));
-  const runtimeDocs: GatewayRuntimeDoc[] = [];
+  const runtimeDocs: ConvergingGatewayRuntime[] = [];
   const strayGlmDocs: StrayGlmDoc[] = inventory.foreign.map(({ gatewayId, fields }) => ({
     id: gatewayId,
     remedy: strayGlmDocRemedy(gatewayId, fields),
   }));
   for (const { revision: _revision, ...record } of inventory.records) {
-    const runtime: GatewayRuntimeDoc = { docKind: "runtime", ...record };
+    const runtime: ConvergingGatewayRuntime = { docKind: "runtime", ...record };
     if (gatewayIds.has(record.gatewayId)) {
       runtimeDocs.push(runtime);
     } else {
@@ -850,6 +853,9 @@ async function syncDurableRuntimeDependencies(
   await restartGatewayDeploymentsForModelKeyChanges(deps, gateways, changedModelKeyGateways);
 }
 
+type VmRuntimeIdentity = Pick<FleetRegistryRecord, "runtime" | "vm">;
+type ConvergingGatewayRuntime = GatewayRuntimeDoc & VmRuntimeIdentity;
+
 interface GatewayConvergencePassDeps {
   store: PlatformStateStore;
   helm: HelmRunner;
@@ -892,7 +898,7 @@ export async function shouldReconcileDisposablePrelaunch(
 }
 
 function runtimeReportsDesiredBuild(
-  runtime: GatewayRuntimeDoc | undefined,
+  runtime: ConvergingGatewayRuntime | undefined,
   desiredImageTag: string,
   allowBooting = false,
 ): boolean {
@@ -905,7 +911,7 @@ function runtimeReportsDesiredBuild(
 }
 
 function reportsDesiredBuildOrVerifiedInitialPrelaunch(input: {
-  runtime: GatewayRuntimeDoc | undefined;
+  runtime: ConvergingGatewayRuntime | undefined;
   desiredImageTag: string;
   gateway: DurableGateway;
   handoffReady: boolean;
@@ -920,7 +926,7 @@ function reportsDesiredBuildOrVerifiedInitialPrelaunch(input: {
 function reconcileGatewaySurgeHandoff(input: {
   passDeps: Pick<GatewayConvergencePassDeps, "reconcileSurgeHandoff">;
   gateway: DurableGateway;
-  runtime: GatewayRuntimeDoc | undefined;
+  runtime: ConvergingGatewayRuntime | undefined;
   desiredImage: { imageRepository: string; imageTag: string };
   pendingArtifact: ReleasePayload | null;
   helmObserved: ObservedHelmInstance | null;
@@ -951,10 +957,23 @@ function reconcileGatewaySurgeHandoff(input: {
   });
 }
 
-function gatewayNeedsLiveVerification(gateway: DurableGateway, runtime: GatewayRuntimeDoc | undefined): boolean {
+function gatewayNeedsLiveVerification(gateway: DurableGateway, runtime: ConvergingGatewayRuntime | undefined): boolean {
   if (gateway.desiredStatus === "running") return true;
   return gateway.desiredStatus === "draining" &&
     (gateway.liveRelease !== gateway.desiredRelease || runtime?.lifecycle !== "serving");
+}
+
+function matchesReadyVm(
+  gatewayId: string,
+  runtime: VmRuntimeIdentity | null | undefined,
+  observed: SurgeReadyFleetState,
+  desiredImageTag: string,
+): boolean {
+  if (runtime?.runtime !== "gce-vm") return false;
+  const endpoint = endpointFromVm(gatewayId, runtime.vm);
+  return endpoint !== null && endpoint.uid === observed.endpoint.uid && endpoint.name === observed.endpoint.name &&
+    endpoint.podIP === observed.endpoint.podIP && observed.state.status === "ready" &&
+    gatewayHeartbeatMatchesImageTag(observed.state.version, desiredImageTag);
 }
 
 export async function refineGatewayConvergenceAction(input: {
@@ -962,7 +981,7 @@ export async function refineGatewayConvergenceAction(input: {
   gateway: DurableGateway;
   artifact: ReleasePayload | null;
   pendingArtifact?: ReleasePayload | null;
-  runtime: GatewayRuntimeDoc | undefined;
+  runtime: ConvergingGatewayRuntime | undefined;
   helmObserved: ObservedHelmInstance | null;
   desiredChartFingerprint?: string;
   desiredDeploymentIntentFingerprint?: string;
@@ -999,6 +1018,11 @@ export async function refineGatewayConvergenceAction(input: {
   });
   if (prelaunchRefresh && handoff.prelaunchHeld) {
     return { kind: "mark-live", prelaunchRefresh: true };
+  }
+  if (handoff.ready && handoff.readyFleetState && matchesReadyVm(gateway.gatewayId, runtime, handoff.readyFleetState, desiredImage.imageTag) &&
+      (runtime?.lifecycle !== "serving" || gateway.liveRelease !== gateway.desiredRelease ||
+        !runtimeReportsDesiredBuild(runtime, desiredImage.imageTag))) {
+    return { kind: "mark-live", vmReady: { ...handoff.readyFleetState, vmStartedAt: runtime?.vm?.startedAt } };
   }
   const desiredBuildReported = reportsDesiredBuildOrVerifiedInitialPrelaunch({
     runtime,
@@ -1092,7 +1116,7 @@ async function convergeOneGateway(
   passDeps: GatewayConvergencePassDeps,
   gateway: DurableGateway,
   instances: HelmInstancesMap,
-  runtimeById: Map<string, GatewayRuntimeDoc>,
+  runtimeById: Map<string, ConvergingGatewayRuntime>,
 ): Promise<void> {
   if (isIsolatedGateway(gateway) && gateway.liveRelease !== null && gateway.liveRelease < gateway.desiredRelease) {
     const recovery = await readUserActivationRollRecoveryCustody({ state: passDeps.store, gatewayId: gateway.gatewayId });
@@ -1108,7 +1132,7 @@ async function convergeAvailableGateway(
   passDeps: GatewayConvergencePassDeps,
   gateway: DurableGateway,
   instances: HelmInstancesMap,
-  runtimeById: Map<string, GatewayRuntimeDoc>,
+  runtimeById: Map<string, ConvergingGatewayRuntime>,
 ): Promise<void> {
   const { store } = passDeps;
   const instance = instances[gateway.gatewayId];
@@ -1170,7 +1194,7 @@ async function convergeAvailableGateway(
       return;
     case "mark-live":
       if (!artifact) throw new Error(`gateway ${gateway.gatewayId} cannot mark a missing release live`);
-      await markGatewayLive(passDeps, gateway, artifact, action.prelaunchRefresh);
+      await markGatewayLive(passDeps, gateway, artifact, action.prelaunchRefresh, action.vmReady);
       return;
   }
 }
@@ -1192,7 +1216,7 @@ async function upsertGateway(
   input: {
     gateway: DurableGateway;
     artifact: ReleasePayload | null;
-    runtime: GatewayRuntimeDoc | undefined;
+    runtime: ConvergingGatewayRuntime | undefined;
     desiredOpts: GatewayUpsertOpts | null;
     replicas: number;
   },
@@ -1262,6 +1286,7 @@ export async function markGatewayLive(
   gateway: DurableGateway,
   artifact: ReleasePayload,
   prelaunchRefresh = false,
+  vmReady?: ReadyVmObservation,
 ): Promise<void> {
   const { store, log } = passDeps;
   const initialDisposablePrelaunch = isInitialIsolatedPrelaunch(gateway);
@@ -1274,6 +1299,11 @@ export async function markGatewayLive(
       root.retirementClaim != null) return false;
     const runtimePatch = markLiveRuntimePatch(gateway);
     const runtime = prelaunchRefresh || runtimePatch ? await transaction.fleetRegistry.get(gateway.gatewayId) : null;
+    if (vmReady && (!matchesReadyVm(gateway.gatewayId, runtime, vmReady, imageTag) ||
+      runtime?.vm?.startedAt !== vmReady.vmStartedAt || root.updatedAt !== gateway.updatedAt)) {
+      log(`[converge-gateway] ${gateway.gatewayId} VM readiness identity changed; deferring release`);
+      return false;
+    }
     if (prelaunchRefresh && (!runtimeMatchesPrelaunchRelease(root, runtime, gatewayImageFor(root, artifact)) ||
       !(await isolatedPrelaunchReserved({ reader: transaction, gateway: root, expectedGateway: gateway })))) {
       log(`[converge-gateway] ${gateway.gatewayId} prelaunch reservation changed; deferring release`);
@@ -1288,7 +1318,7 @@ export async function markGatewayLive(
       if (!runtime) throw new MissingRecordError({ aggregate: "fleet-registry", key: gateway.gatewayId });
       await transaction.fleetRegistry.patch(gateway.gatewayId, {
         ...runtimePatch,
-        ...(initialDisposablePrelaunch
+        ...(initialDisposablePrelaunch && !vmReady
           ? {
               heartbeat: {
                 ...runtime.heartbeat,
@@ -1302,6 +1332,11 @@ export async function markGatewayLive(
             }
           : {}),
       });
+    }
+    if (vmReady) {
+      const assigned = assignedSlugsFromUserMirror(await transaction.users.records.listByGateway(gateway.gatewayId), gateway.gatewayId);
+      const heartbeat = pollerHeartbeatReport(heartbeatRecordFrom(vmReady.state, assigned), gatewayServiceInternalUrl(gateway.gatewayId));
+      await transaction.fleetRegistry.recordHeartbeat(gateway.gatewayId, heartbeat);
     }
     return true;
   });
