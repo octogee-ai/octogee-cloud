@@ -14,6 +14,13 @@ const bundle = {
 };
 
 class FailingDocuments extends RecordingDocuments {
+  readonly reads: string[] = [];
+
+  override get(path: string): Record<string, unknown> | undefined {
+    this.reads.push(path);
+    return super.get(path);
+  }
+
   constructor(seed: Record<string, Record<string, unknown>>, private readonly failWrites: boolean) {
     super(seed);
   }
@@ -61,6 +68,61 @@ describe("POST /internal/fleet/vm-runtime", () => {
       [RUNTIME]: runtime({ vmHome: { checkpointRequestedAt: 50, lastCheckpoint: { name: "20260905T101500Z.tar.gz", size: 1, sha256: "a".repeat(64), instanceId: "1", completedAt: 40 } } }),
     }, gatewayBound));
     expect(requested.body.homeCheckpoint).toEqual({ requestedAt: 50, completedAt: null });
+  });
+
+  it("defers scheduled checkpoints for the exact owner activation until placement commits", async () => {
+    const root = {
+      gatewayId: "b-x", gatewayClass: "isolated", desiredStatus: "running", desiredRelease: 1, latestRelease: 1,
+      ownerUid: "uid-bob", builderSlug: "bob", allocation: {
+        kind: "disposable-builder", schemaVersion: 1, leaseId: "bob-2", generation: 2, claimedByUid: "uid-bob",
+      },
+    };
+    const docs = { [BUNDLE]: bundle, [RUNTIME]: runtime({ vm: { instanceId: "4242" } }), "gateways/b-x": root };
+    const lease = {
+      leaseId: "bob-2", generation: 2, status: "activating", targetGatewayId: "b-x", sourceGatewayId: "shared-1",
+      builderSlug: "bob", activationOperationId: "builder-activate-b-x-g2",
+    };
+    const user = (gatewayId: string, activationLease: Record<string, unknown> = lease) => ({
+      username: "bob", provisioning: { openclaw: { gatewayId, activationLease } },
+    });
+    const signal = async (entries: Record<string, Record<string, unknown>>) => {
+      const reply = await post(appWith({ ...docs, ...entries }, vmBound), { checkScheduledHomeCheckpoint: true }).expect(200);
+      return reply.body.homeCheckpoint;
+    };
+    const periodic = { requestedAt: null, completedAt: null };
+    const deferred = { ...periodic, deferScheduled: true };
+
+    const heartbeat = appWith({ ...docs, "users/uid-bob": user("shared-1") }, vmBound);
+    expect((await post(heartbeat).expect(200)).body.homeCheckpoint).toEqual(periodic);
+    expect(heartbeat.documents.reads).not.toContain("gateways/b-x");
+    expect(heartbeat.documents.reads).not.toContain("users/uid-bob");
+
+    expect(await signal({ "users/uid-bob": user("shared-1") })).toEqual(deferred);
+    expect(await signal({ "users/uid-bob": user("shared-1", {
+      ...lease, status: "provisioning", activationOperationId: undefined,
+    }) })).toEqual(deferred);
+    expect(await signal({ "users/uid-bob": user("b-x") })).toEqual(periodic);
+    expect(await signal({ "users/uid-bob": user("shared-1", { ...lease, status: "parked" }) })).toEqual(periodic);
+    expect(await signal({ "users/uid-bob": user("shared-1", { ...lease, generation: 1 }) })).toEqual(periodic);
+    expect(await signal({ "users/uid-bob": user("shared-1", { ...lease, activationOperationId: "wrong" }) })).toEqual(periodic);
+    expect(await signal({ "users/uid-bob": user("shared-1", { ...lease, builderSlug: "other" }) })).toEqual(periodic);
+    expect(await signal({
+      [RUNTIME]: runtime({ vm: { instanceId: "foreign" } }),
+      "users/uid-bob": user("shared-1"),
+    })).toEqual(periodic);
+    expect(await signal({
+      "gateways/b-x": { ...root, allocation: null },
+      "users/uid-bob": user("shared-1"),
+    })).toEqual(periodic);
+    const forced = appWith({
+      ...docs,
+      [RUNTIME]: runtime({ vm: { instanceId: "4242" }, vmHome: { checkpointRequestedAt: 50 } }),
+      "users/uid-bob": user("shared-1"),
+    }, vmBound);
+    const request = await post(forced, { checkScheduledHomeCheckpoint: true }).expect(200);
+    expect(request.body.homeCheckpoint).toEqual({ ...periodic, requestedAt: 50 });
+    expect(forced.documents.reads).not.toContain("gateways/b-x");
+    expect(forced.documents.reads).not.toContain("users/uid-bob");
   });
 
   it("advertises checkpoint waiting only to the currently bound Compute instance", async () => {
