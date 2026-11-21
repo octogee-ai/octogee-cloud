@@ -2085,10 +2085,12 @@ async function ensureImportedUserRoster(
     await restoreRetainedUserRoster(ctx, entries, { slug, migrationId: opts.migrationId, signal: opts.signal, retainedSharedRoster });
     return;
   }
+  const rosterStartedAt = Date.now();
   await ensureUserRosterAgents(ctx, entries, `[import:${slug}]`, {
     signal: opts.signal,
-    waitForAppliedRevision: isolated,
+    waitForAppliedRevision: false,
   });
+  ctx.log(`[import:${slug}] native roster admission in ${Date.now() - rosterStartedAt}ms`);
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -2245,7 +2247,9 @@ async function activateImportedUser(
   ctx.log(`[import:${slug}] activation config patch in ${patch.elapsedMs}ms`);
   secretMaterial.noteIf(patch.configNoop !== true, "activation config patch changed the config");
   if (opts.deferRuntimeVerification) {
+    const revisionWaitStartedAt = Date.now();
     await waitForAppliedConfigRevision(ctx.rpc, slug, { signal: opts.signal });
+    ctx.log(`[import:${slug}] final config revision confirmed in ${Date.now() - revisionWaitStartedAt}ms`);
     return { appliedFingerprint: manifest.appliedFingerprint };
   }
   const verificationPending = await settleActivatedImport(ctx, {
@@ -2283,7 +2287,9 @@ async function settleActivatedImport(
 ): Promise<string | undefined> {
   const { slug, patch, secretMaterial, signal, configuredUserRouting } = input;
   try {
+    const revisionWaitStartedAt = Date.now();
     await waitForAppliedConfigRevision(ctx.rpc, slug, { signal });
+    ctx.log(`[import:${slug}] final config revision confirmed in ${Date.now() - revisionWaitStartedAt}ms`);
     await reloadRuntimeSecretsIfChanged(ctx, `[import:${slug}]`, secretMaterial, signal);
     if (ctx.pendingRuntimeSecrets.get(slug) === secretMaterial) ctx.pendingRuntimeSecrets.delete(slug);
     if (configuredUserRouting && patch.configNoop === true) {

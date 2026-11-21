@@ -91,6 +91,7 @@ export const MAX_OPERATION_ATTEMPTS = 3;
 export const MAX_PREEMPTED_OPERATION_ATTEMPTS = 6;
 export const MAX_OPERATION_ATTEMPT_HISTORY = 20;
 export const MAX_OPERATOR_ISOLATED_GATEWAY_WAIT_ATTEMPTS = 30;
+export const WAITING_FOR_ISOLATED_GATEWAY = "isolated-gateway-ready";
 export const OPERATOR_ISOLATED_GATEWAY_WAIT_MS = 60_000;
 
 // `completedAt` is a plain epoch number, which a native Firestore TTL policy
@@ -378,7 +379,7 @@ function operatorIsolatedGatewayWait(input: OperationCompletionInput, checks: nu
     steps: [],
     expireAt: CLEAR,
     nextAttemptAt: input.now + OPERATOR_ISOLATED_GATEWAY_WAIT_MS,
-    waitingOn: CLEAR,
+    waitingOn: WAITING_FOR_ISOLATED_GATEWAY,
     rolledBack: false,
     output: { isolatedGatewayReadinessChecks: checks },
     error: `waiting for isolated gateway ${String(input.op.input?.toGatewayId)} to become ready ` +

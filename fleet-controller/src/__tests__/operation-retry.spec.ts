@@ -1266,7 +1266,7 @@ describe("the move an operator's give starts", () => {
   );
 
   it("counts the first check as one", () => {
-    expect(complete(move())).toMatchObject({ status: "pending", output: { isolatedGatewayReadinessChecks: 1 } });
+    expect(complete(move())).toMatchObject({ status: "pending", waitingOn: "isolated-gateway-ready", output: { isolatedGatewayReadinessChecks: 1 } });
   });
 
   it("does not spend the move's attempts on readiness checks", () => {

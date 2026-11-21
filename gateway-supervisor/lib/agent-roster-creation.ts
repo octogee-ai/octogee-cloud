@@ -56,6 +56,7 @@ export async function createRosterAgents(
   const failures: string[] = [];
 
   for (const spec of specs) {
+    const startedAt = Date.now();
     try {
       const created = await createAfterPendingDeletion(spec, opts);
       if (created.agentId !== spec.agentId) {
@@ -64,7 +65,7 @@ export async function createRosterAgents(
         );
         continue;
       }
-      log(`${prefix}agents.create ${spec.agentId} — rostered at ${spec.workspace}`);
+      log(`${prefix}agents.create ${spec.agentId} — rostered at ${spec.workspace} durationMs=${Date.now() - startedAt}`);
       results.push({ agentId: spec.agentId, status: "created" });
     } catch (err) {
       if (isAgentAlreadyExistsRpcError(err)) {

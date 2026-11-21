@@ -3,13 +3,14 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { queryAgentStore } from "@octogee/core/agent-postgres";
+import { readImageAgentSchemaVersion } from "./openclaw-agent-schema-descriptor.js";
 import { installedAgentSchemaVersion, postgresSourceMetadataMatches } from "./openclaw-source-doctor.js";
 import { runOpenClaw, type OpenClawCommand } from "./openclaw-cli.js";
 import { readOpenClawFileSnapshot, readPostgresAnchorSnapshot, sameOpenClawFileSnapshot } from "./openclaw-file-snapshot.js";
 
 const descriptorCache = new WeakMap<OpenClawCommand, Promise<number>>();
 
-async function cachedSchemaVersion(root: string, agentId: string, run: OpenClawCommand, env: NodeJS.ProcessEnv, assertCurrent: () => Promise<void>): Promise<number> {
+async function cachedDevelopmentProbe(root: string, agentId: string, run: OpenClawCommand, env: NodeJS.ProcessEnv, assertCurrent: () => Promise<void>): Promise<number> {
   await assertCurrent();
   let descriptor = descriptorCache.get(run);
   if (!descriptor) {
@@ -89,7 +90,10 @@ export async function upgradeImportedAgentStores(input: {
   try {
     const configPath = path.join(root, "openclaw.json");
     const run = input.run ?? runOpenClaw;
-    const expectedSchemaVersion = await phase("descriptor", () => cachedSchemaVersion(root, captured[0]!.agentId, run, env, assertCurrent));
+    const expectedSchemaVersion = await phase("descriptor", async () => {
+      const version = await readImageAgentSchemaVersion();
+      return version ?? cachedDevelopmentProbe(root, captured[0]!.agentId, run, env, assertCurrent);
+    });
     const verifyMetadata = async (exact: boolean) => {
       let needsUpgrade = false;
       for (const store of captured) {

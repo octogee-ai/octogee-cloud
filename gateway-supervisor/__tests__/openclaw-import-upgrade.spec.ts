@@ -237,3 +237,37 @@ it("leaves an older source schema unchanged when preparing a user activation", a
   await expect(upgradeImportedAgentStores({ ...f, allowUpgrade: false })).rejects.toThrow("source retained");
   expect(f.run.mock.calls.map(([args]) => args[0])).toEqual(["database"]);
 });
+
+it("uses the image schema descriptor while still checking live store identity and custody", async () => {
+  const descriptor = await import("../lib/openclaw-agent-schema-descriptor.js");
+  const read = vi.spyOn(descriptor, "readImageAgentSchemaVersion").mockResolvedValue(37);
+  try {
+    const f = await fixture();
+
+    await upgradeImportedAgentStores(f);
+
+    expect(f.run).not.toHaveBeenCalled();
+    expect(f.query).toHaveBeenCalledTimes(1);
+    expect(f.assertCurrent).toHaveBeenCalled();
+    f.stores[0]!.agentId = "different-agent";
+    await expect(upgradeImportedAgentStores(f)).rejects.toThrow(/identity\/version metadata mismatch/);
+    expect(f.run).not.toHaveBeenCalled();
+  } finally {
+    read.mockRestore();
+  }
+});
+
+it("fails without falling back to Native CLI when the image schema descriptor is corrupt", async () => {
+  const descriptor = await import("../lib/openclaw-agent-schema-descriptor.js");
+  const read = vi.spyOn(descriptor, "readImageAgentSchemaVersion").mockRejectedValue(new Error("Invalid OpenClaw image schema descriptor"));
+  try {
+    const f = await fixture();
+
+    await expect(upgradeImportedAgentStores(f)).rejects.toThrow(/Invalid OpenClaw image schema descriptor/);
+
+    expect(f.run).not.toHaveBeenCalled();
+    expect(f.query).not.toHaveBeenCalled();
+  } finally {
+    read.mockRestore();
+  }
+});
