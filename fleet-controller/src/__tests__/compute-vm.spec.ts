@@ -927,3 +927,37 @@ describe("cold placement image identity", () => {
     expect(vi.mocked(request).mock.calls.every(([call]) => call.method === "GET")).toBe(true);
   });
 });
+
+describe("verifyBootReplacement", () => {
+  const targetLink = `https://www.googleapis.com/compute/v1/projects/octogee-test/zones/us-west1-b/instances/${input.instanceName}`;
+  const deleted = { operationType: "delete", status: "DONE", targetLink, targetId: "1",
+    insertTime: "2026-11-21T16:52:43Z", endTime: "2026-11-21T16:52:48Z" };
+  const inserted = { operationType: "insert", status: "DONE", targetLink, targetId: "2",
+    insertTime: "2026-11-21T16:52:51Z", endTime: "2026-11-21T16:53:21Z" };
+  const window = { instanceName: input.instanceName, zone: "us-west1-b", previousInstanceId: "1", instanceId: "2",
+    startedAt: Date.parse("2026-11-21T16:44:00Z"), endedAt: Date.parse("2026-11-21T17:04:00Z") };
+
+  it("accepts the exact completed delete followed by insertion", async () => {
+    const old = { ...inserted, targetId: "3", insertTime: "2026-11-21T16:13:00Z" };
+    const compute = fakeCompute(() => ({ status: 200, data: { items: [inserted, deleted, old] } }));
+    await expect(clientWith(compute.request).client.verifyBootReplacement(window)).resolves.toBe(true);
+    expect(compute.calls).toHaveLength(1);
+    const request = new URL(compute.calls[0].url);
+    expect(request.pathname).toBe("/compute/v1/projects/octogee-test/zones/us-west1-b/operations");
+    expect(request.searchParams.get("filter")).toBe(`targetLink eq "${targetLink.replaceAll(".", "\\.")}"`);
+  });
+
+  it.each([
+    { items: [deleted] },
+    { items: [deleted, inserted], nextPageToken: "truncated" },
+    { items: [deleted, inserted, { ...deleted, targetId: "3" }] },
+    { items: [deleted, { ...inserted, targetLink: `${targetLink}-different` }] },
+    { items: [deleted, { ...inserted, targetId: "3" }] },
+    { items: [deleted, { ...inserted, error: { errors: [{ code: "FAILED" }] } }] },
+    { items: [deleted, { ...inserted, insertTime: "2026-11-21T16:52:47Z" }] },
+    { items: [deleted, { ...inserted, endTime: "2026-11-21T17:04:01Z" }] },
+  ])("refuses an incomplete or conflicting provider history %#", async data => {
+    const compute = fakeCompute(() => ({ status: 200, data }));
+    await expect(clientWith(compute.request).client.verifyBootReplacement(window)).resolves.toBe(false);
+  });
+});

@@ -63,7 +63,7 @@ function fixture(options: { snapshotSource?: string; generation?: number; attach
     serviceAccounts: [], lastStartedAt: 10 };
   const attached = retainedBoot ? oldDiskRecord : disk;
   const vm = { describe: vi.fn(async () => description), retainHome: vi.fn(async () => ({ ...attached, id: options.attachedDisk ?? attached.id })),
-    readBootImage: vi.fn(async () => ({ id: boot.id, name: boot.name })), readImage: vi.fn(async () => boot) };
+    readBootImage: vi.fn(async () => ({ id: boot.id, name: boot.name })), readImage: vi.fn(async () => boot), verifyBootReplacement: vi.fn(async () => true) };
   const scheduler = vi.fn(async () => ({ operationId: migrationId, phase: "retire" as const, agentIds: ["alice"], drained: options.schedulerDrained ?? true }));
   const run = () => retireNativeSchedulerBeforeStage({ store, vm, log: vi.fn() }, {
     uid, slug, gatewayId, operationId, claimedStartedAt: 20,
@@ -143,6 +143,33 @@ describe("adopt independently verified historical scheduler lineage", () => {
     await h.run();
     expect(h.scheduler).toHaveBeenCalledExactlyOnceWith({ migrationId, gatewayId, slug, phase: "retire" });
     expect((await h.store.users.records.get(uid))?.fences.pendingNativeSchedulerRetirement).toBeUndefined();
+  });
+
+  it("uses provider-confirmed replacement after a prewarm retry loses its parked receipt", async () => {
+    const h = await historicalFixture();
+    await h.store.journal.operations.patch("ship-200-201", {
+      startedAt: 19, completedAt: 20,
+      steps: [], output: { prewarmState: "ineligible" },
+    });
+    await h.run();
+    expect(h.vm.verifyBootReplacement).toHaveBeenCalledTimes(2);
+    expect(h.vm.verifyBootReplacement).toHaveBeenCalledWith({
+      instanceName: retirement.instanceName, zone, previousInstanceId: "200", instanceId: "201",
+      startedAt: 16, endedAt: 19,
+    });
+    expect(h.scheduler).toHaveBeenCalledOnce();
+  });
+
+  it("preserves the original scheduler hold if provider replacement is absent", async () => {
+    const h = await historicalFixture();
+    await h.store.journal.operations.patch("ship-200-201", {
+      startedAt: 19, completedAt: 20,
+      steps: [], output: { prewarmState: "ineligible" },
+    });
+    h.vm.verifyBootReplacement.mockResolvedValue(false);
+    await expect(h.run()).rejects.toThrow(/authority changed/);
+    expect(h.scheduler).not.toHaveBeenCalled();
+    expect((await h.store.users.records.get(uid))?.fences.pendingNativeSchedulerRetirement).toEqual(retirement);
   });
 
   it.each(["missing", "ambiguous", "foreign", "generation", "time", "image", "unfinished", "empty"])(

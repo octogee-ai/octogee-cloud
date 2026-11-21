@@ -113,6 +113,7 @@ function harness(
     findByLabels: vi.fn(async () => null),
     list: vi.fn(async () => []),
     bind: vi.fn(async () => {}),
+    verifyBootReplacement: vi.fn(async () => false),
     expandHome: vi.fn(async (home, _owner, sizeGb) => ({ ...home, sizeGb: Math.max(home.sizeGb, sizeGb) })),
     retainHome: vi.fn(async () => ({ projectId: "octogee-test", zone: "us-west1-b", name: "computer-home", id: "777", sizeGb: 30, diskType: "pd-ssd" as const, source: "projects/octogee-test/zones/us-west1-b/disks/computer-home" })),
     verifyDetachedHome: vi.fn(async () => {}),

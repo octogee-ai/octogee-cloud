@@ -4,7 +4,7 @@ import type { PlatformUserRecord, FleetRegistryRecord, GatewayRoot, OperationRec
 import { archiveSchedulerCustodyMatches, retainedBootPreservesScheduler } from "@octogee/core/admin-fleet-router";
 import { migrationCancellationDeferred } from "@octogee/core/fleet-state";
 import type { MigrationClient } from "@octogee/core/fleet-migration-client";
-import type { GatewayVmClient } from "./compute-vm.js";
+import type { BootReplacementWindow, GatewayVmClient } from "./compute-vm.js";
 
 export interface NativeSchedulerRetirementInput {
   uid: string;
@@ -61,7 +61,7 @@ export function nativeSchedulerRetirementForReturn(
 
 type Deps = {
   store: PlatformStateStore;
-  vm: Pick<GatewayVmClient, "describe" | "retainHome" | "readBootImage" | "readImage">;
+  vm: Pick<GatewayVmClient, "describe" | "retainHome" | "readBootImage" | "readImage" | "verifyBootReplacement">;
   log: (message: string) => void;
 };
 
@@ -109,7 +109,7 @@ function ownerMatches(user: PlatformUserRecord, input: NativeSchedulerRetirement
 }
 
 type VmAuthority = { instanceId: string; instanceName: string; zone: string;
-  image?: { name: string; id: string; project: string; operationId: string };
+  image?: { name: string; id: string; project: string; operationId: string; replacement?: BootReplacementWindow };
   restoredHome?: { id: string; source: string };
 };
 
@@ -134,9 +134,9 @@ function provenParkStep(operation: OperationRecord, edge: ParkedEdge): boolean {
     typeof step.completedAt === "number" && step.completedAt >= edge.startedAt && step.completedAt <= edge.completedAt;
 }
 
-function samePrewarmGeneration(operation: OperationRecord, pending: Retirement, generation: number): boolean {
+function samePrewarmRequest(operation: OperationRecord, pending: Retirement, generation: number): boolean {
   const { input } = operation;
-  return operation.kind === "prewarm-gateway" && operation.status === "succeeded" && operation.output?.prewarmState === "parked" &&
+  return operation.kind === "prewarm-gateway" && operation.status === "succeeded" &&
     operation.inputUid === pending.uid && input.uid === pending.uid && input.gatewayId === pending.sourceGatewayId &&
     operation.gatewayId === pending.sourceGatewayId && input.generation === generation &&
     typeof input.sourceSha === "string" && RELEASE_SHA.test(input.sourceSha);
@@ -194,22 +194,60 @@ function historicalEndpointMatches(path: readonly ParkedEdge[], image: UntypedRe
     image.operationId === `boot-${sourceGatewayId}-${last.previous}-${last.imageId}`;
 }
 
+type HistoricalBootTarget = { image: UntypedRecord; instanceId: string };
+
+async function historicalBootReplacement(
+  state: PlatformStateRepositories, owner: PlatformUserRecord, pending: Retirement, target: HistoricalBootTarget,
+  allowInterrupted: boolean,
+): Promise<true | BootReplacementWindow | null> {
+  const { image, instanceId } = target;
+  if (owner.uid !== pending.uid || owner.home.homeDisk?.id !== pending.homeDiskId || owner.home.homeDisk.source !== pending.homeDiskSource ||
+      image.nativeSchedulerRetirement !== undefined || image.legacySchedulerRetirement !== undefined ||
+      !retainedBootPreservesScheduler({ ...image, nativeSchedulerRetirement: pending }, pending, [pending.sourceGatewayId])) return null;
+  const returned = await state.journal.operations.get(pending.returnOperationId);
+  const generation = historicalReturnGeneration(returned, pending);
+  if (generation === null || !returned?.completedAt) return null;
+  const prewarms = (await state.journal.operations.listForUid(pending.uid, { kind: "prewarm-gateway", statuses: ["succeeded"] }))
+    .filter(op => samePrewarmRequest(op, pending, generation));
+  const edges = prewarms.flatMap(op => {
+    const edge = op.output?.prewarmState === "parked" ? parseParkedEdge(op) : null;
+    return edge ? [edge] : [];
+  });
+  const path = uniqueParkedPath(edges, pending.instanceId, instanceId, returned.completedAt);
+  if (historicalEndpointMatches(path, image, pending.sourceGatewayId)) return true;
+  if (!allowInterrupted) return null;
+  return interruptedBootReplacement(prewarms, edges, pending, target, returned.completedAt);
+}
+
+function interruptedBootReplacement(
+  prewarms: readonly OperationRecord[], edges: readonly ParkedEdge[], pending: Retirement, target: HistoricalBootTarget,
+  returnedAt: number,
+): BootReplacementWindow | null {
+  const { image, instanceId } = target;
+  const previousInstanceId = image.sourceComputer?.instanceId;
+  if (!numericIdentifier(previousInstanceId) || !numericIdentifier(instanceId) || previousInstanceId === instanceId ||
+      !numericIdentifier(image.id) || image.operationId !== `boot-${pending.sourceGatewayId}-${previousInstanceId}-${image.id}`) return null;
+  const predecessor = uniqueParkedPath(edges, pending.instanceId, previousInstanceId, returnedAt).at(-1);
+  if (!predecessor || predecessor.imageId !== image.previous?.id || edges.some(edge => edge.previous === previousInstanceId)) return null;
+  const candidates = prewarms.filter(op => op.output?.prewarmState === "ineligible" && op.input.bootImageId === image.id &&
+    typeof op.firstStartedAt === "number" && op.firstStartedAt >= predecessor.completedAt);
+  if (candidates.length !== 1) return null;
+  const window = interruptedAttemptWindow(candidates[0]);
+  return window ? { instanceName: pending.instanceName, zone: pending.zone, previousInstanceId, instanceId, ...window } : null;
+}
+
+function interruptedAttemptWindow(operation: OperationRecord): Pick<BootReplacementWindow, "startedAt" | "endedAt"> | null {
+  const { firstStartedAt, startedAt, completedAt } = operation;
+  if (typeof firstStartedAt !== "number" || typeof startedAt !== "number" ||
+      typeof completedAt !== "number" || firstStartedAt >= startedAt ||
+      !orderedParkedTimes(operation, firstStartedAt, completedAt)) return null;
+  return { startedAt: firstStartedAt, endedAt: startedAt };
+}
+
 export async function hasHistoricalSchedulerBootLineage(
   state: PlatformStateRepositories, owner: PlatformUserRecord, pending: Retirement, image: UntypedRecord, instanceId: string,
 ): Promise<boolean> {
-  if (owner.uid !== pending.uid || owner.home.homeDisk?.id !== pending.homeDiskId || owner.home.homeDisk.source !== pending.homeDiskSource ||
-      image.nativeSchedulerRetirement !== undefined || image.legacySchedulerRetirement !== undefined ||
-      !retainedBootPreservesScheduler({ ...image, nativeSchedulerRetirement: pending }, pending, [pending.sourceGatewayId])) return false;
-  const returned = await state.journal.operations.get(pending.returnOperationId);
-  const generation = historicalReturnGeneration(returned, pending);
-  if (generation === null || !returned?.completedAt) return false;
-  const prewarms = await state.journal.operations.listForUid(pending.uid, { kind: "prewarm-gateway", statuses: ["succeeded"] });
-  const edges = prewarms.flatMap(op => {
-    const edge = samePrewarmGeneration(op, pending, generation) ? parseParkedEdge(op) : null;
-    return edge && edge.startedAt >= returned.completedAt! ? [edge] : [];
-  });
-  const path = uniqueParkedPath(edges, pending.instanceId, instanceId, returned.completedAt);
-  return historicalEndpointMatches(path, image, pending.sourceGatewayId);
+  return await historicalBootReplacement(state, owner, pending, { image, instanceId }, false) === true;
 }
 
 async function admittedReplacementImage(state: PlatformStateRepositories, user: PlatformUserRecord, pending: Retirement,
@@ -218,9 +256,11 @@ async function admittedReplacementImage(state: PlatformStateRepositories, user: 
   if (!image) return null;
   if (["name", "id", "project", "operationId"].some(key => typeof image[key] !== "string" || !image[key])) return null;
   const gateways = [pending.sourceGatewayId, targetGatewayId];
-  if (!retainedBootPreservesScheduler(image, pending, gateways) && !preservesLegacySchedulerRetirement(image, pending, gateways) &&
-      !await hasHistoricalSchedulerBootLineage(state, user, pending, image, instanceId)) return null;
-  return { name: image.name, id: image.id, project: image.project, operationId: image.operationId };
+  const authority = { name: image.name, id: image.id, project: image.project, operationId: image.operationId };
+  if (retainedBootPreservesScheduler(image, pending, gateways) || preservesLegacySchedulerRetirement(image, pending, gateways)) return authority;
+  const historical = await historicalBootReplacement(state, user, pending, { image, instanceId }, true);
+  if (historical === null) return null;
+  return historical === true ? authority : { ...authority, replacement: historical };
 }
 
 async function vmAuthority(state: PlatformStateRepositories, observed: {
@@ -266,6 +306,9 @@ async function authorize(deps: Deps, input: NativeSchedulerRetirementInput, pend
 
 async function verifyAdmittedReplacement(deps: Deps, input: NativeSchedulerRetirementInput, pending: Retirement,
   image: NonNullable<VmAuthority["image"]>): Promise<void> {
+  if (image.replacement && !await deps.vm.verifyBootReplacement(image.replacement)) {
+    throw new Error("native scheduler retirement authority changed: missing verified Compute boot replacement");
+  }
   const home = await deps.vm.retainHome(pending.instanceName, pending.zone, input.uid);
   const boot = await deps.vm.readBootImage(pending.instanceName, pending.zone);
   const observed = await deps.vm.readImage(image.name, image.project);
@@ -277,7 +320,8 @@ async function verifyAdmittedReplacement(deps: Deps, input: NativeSchedulerRetir
 
 async function verifyVm(deps: Deps, input: NativeSchedulerRetirementInput, pending: Retirement, authority: VmAuthority): Promise<void> {
   const vm = await deps.vm.describe(authority.instanceName, authority.zone);
-  if (vm?.instanceId !== authority.instanceId || vm.gatewayId !== input.gatewayId || vm.status !== "RUNNING") {
+  if (vm?.instanceId !== authority.instanceId || vm.gatewayId !== input.gatewayId || vm.status !== "RUNNING" ||
+      (authority.image?.replacement && vm.metadata["octogee-owner-uid"] !== input.uid)) {
     throw new Error("native scheduler retirement VM identity changed");
   }
   if (authority.restoredHome) {

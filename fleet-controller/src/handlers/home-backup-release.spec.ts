@@ -267,6 +267,7 @@ it("archives, restores, releases, and repeats on the newly created home", async 
     const scheduler = vi.fn(async () => ({ operationId: retirement.migrationId, drained: true, phase: "retire" as const, agentIds: ["alice"] }));
     await retireNativeSchedulerBeforeStage({ store, vm: {
       describe: vi.fn(async () => description) as never, retainHome: vmRestore.retainHome, readBootImage: vi.fn(), readImage: vi.fn(),
+      verifyBootReplacement: vi.fn(async () => false),
     }, log: vi.fn() }, { uid, slug: "alice", gatewayId: target, operationId: activationOperationId, claimedStartedAt: 510 }, scheduler);
     expect(scheduler).toHaveBeenCalledExactlyOnceWith({ gatewayId: target, slug: "alice", phase: "retire", migrationId: retirement.migrationId });
     await store.journal.operations.patch(activationOperationId, { status: "succeeded", completedAt: 590 });
