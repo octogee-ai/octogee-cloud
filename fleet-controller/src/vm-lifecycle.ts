@@ -63,7 +63,7 @@ export interface VmLifecycleDeps {
   disposableParking?: boolean;
   homeCheckpointTimeoutMs?: number;
   homeCheckpointPollMs?: number;
-  onVmCreationSettled: (gatewayId: string) => void;
+  onVmRuntimeSettled: (gatewayId: string) => void;
   now: () => number;
   log: (msg: string) => void;
 }
@@ -76,7 +76,8 @@ export interface VmLifecycle {
   readDeploymentPrerequisiteError(gatewayId: string): Promise<string | null>;
   ensureVm(gatewayId: string, image: string, ownerUid: string | undefined, bridge: string): Promise<GatewayVmState>;
   parkVm(gatewayId: string, opts?: ParkVmOptions): Promise<GatewayVmState | null>;
-  pauseVm(gatewayId: string): Promise<boolean>;
+  pauseVm(gatewayId: string, defer?: boolean, ownerUid?: string): Promise<boolean>;
+  assertVmPauseNotPending(gatewayId: string, ownerUid?: string): void;
   recoverUnreachable(gatewayId: string): Promise<void>;
   deleteVm(ownerUid: string): Promise<boolean>;
   replaceStoppedVm(gatewayId: string, operationId: string, assertAuthority: () => Promise<void>, options?: { forceOwnerUid: string; expectedInstanceId: string }): Promise<Record<string, unknown>>;
@@ -112,10 +113,14 @@ export async function recordVmObservation(
   gatewayId: string,
   observation: VmObservation,
   what: string,
+  expectedInstanceId?: string | null,
 ): Promise<boolean> {
   const recorded = await deps.store.transaction({ label: "vm-computer.record-observation" }, async (tx) => {
     const current = await tx.fleetRegistry.get(gatewayId);
     if (!current) return false;
+    if (expectedInstanceId !== undefined && current.vm?.instanceId !== expectedInstanceId) {
+      throw new Error(`gateway ${gatewayId}: VM identity changed before recording ${what}`);
+    }
     const { vmHome, ...fields } = observation;
     await tx.fleetRegistry.patch(
       gatewayId,
@@ -201,6 +206,13 @@ export class VmCreationPendingError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "VmCreationPendingError";
+  }
+}
+
+export class VmPausePendingError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "VmPausePendingError";
   }
 }
 
@@ -764,20 +776,17 @@ async function prewarmReplacementRecovery(
 
 async function replacementSource(deps: VmLifecycleDeps, gatewayId: string, boot: boolean, forceOwnerUid?: string, expectedInstanceId?: string): Promise<{ description: GatewayVmDescription; ownerUid: string; spec: GatewayVmSpec }> {
   const { data, vm, observed } = await replacementObservation(deps, gatewayId, boot, forceOwnerUid, expectedInstanceId);
-  if (forceOwnerUid) {
-    await assertVmUnbound(deps, gatewayId, observed);
-    await assertHomeAssignment(deps.store, forceOwnerUid, gatewayId, true);
-  }
-  const description = await stopSuspendedVm(deps, gatewayId, observed, "replace its boot");
-  const ownerUid = assertReplacementOwner(deps, data, description);
+  const ownerUid = assertReplacementOwner(deps, data, observed);
   if (forceOwnerUid && forceOwnerUid !== ownerUid) throw new Error("force replacement owner changed");
   if (!boot && !forceOwnerUid) await assertNoBootProjectStorage(deps.store, ownerUid);
-  if (!forceOwnerUid) {
-    assertReplacementRecoveryCapacity(boot ? await prewarmReplacementRecovery(deps, data, ownerUid, gatewayId, vm.instanceId!) : data, vm, description);
-  }
-  await assertVmUnbound(deps, gatewayId, description);
+  const recovery = boot && !forceOwnerUid ? await prewarmReplacementRecovery(deps, data, ownerUid, gatewayId, vm.instanceId!) : data;
+  if (!forceOwnerUid) assertReplacementRecoveryCapacity(recovery, vm, observed);
+  await assertVmUnbound(deps, gatewayId, observed);
   await assertHomeAssignment(deps.store, ownerUid, gatewayId, boot || !!forceOwnerUid);
-  return { description, ownerUid, spec: recordedSpecInConfiguredZones(data?.vmSpec, deps.vmSpec) };
+  const spec = recordedSpecInConfiguredZones(data?.vmSpec, deps.vmSpec);
+  const description = await stopSuspendedVm(deps, gatewayId, observed, "replace its boot");
+  if (!forceOwnerUid && description !== observed) assertReplacementRecoveryCapacity(recovery, vm, description);
+  return { description, ownerUid, spec };
 }
 
 function assertAbsentReplacementRecord(input: { gatewayId: string; source: NonNullable<RetainedBootImage["sourceComputer"]>; home: RetainedUserHome; record: VmRecord; desired: string }): void {
@@ -1080,6 +1089,7 @@ function vmCreations(deps: VmLifecycleDeps) {
   }
 
   return {
+    isDeleting: (ownerUid: string) => deletingOwners.has(ownerUid),
     has: (gatewayId: string) => creations.has(gatewayId),
     inserted: (gatewayId: string) => creations.get(gatewayId)?.inserted,
     assertNoneInFlight,
@@ -1107,10 +1117,87 @@ function vmCreations(deps: VmLifecycleDeps) {
         await creation.inserted;
         if (creation.failure !== undefined) await deps.wait(VM_CREATION_RETRY_MS);
         creations.delete(gatewayId);
-        deps.onVmCreationSettled(gatewayId);
+        deps.onVmRuntimeSettled(gatewayId);
       })();
       return new VmCreationPendingError(`VM ${input.instanceName} is being created; converging it once Compute finishes`);
     },
+  };
+}
+
+async function stoppableVm(deps: VmLifecycleDeps, gatewayId: string, vm: GatewayVmState): Promise<GatewayVmDescription | null> {
+  const description = await deps.vm.describe(vm.instanceName, vm.zone);
+  if (!description) {
+    deps.log(`[vm-gateway-runtime] ${gatewayId}: ${vm.instanceName} is already absent from Compute`);
+    return null;
+  }
+  if (!vm.instanceId || description.instanceId !== vm.instanceId) {
+    throw new Error(`VM ${description.name}: recorded instance identity changed; refusing to stop`);
+  }
+  if (boundElsewhere(description, gatewayId)) {
+    deps.log(`[vm-gateway-runtime] ${gatewayId}: leaving ${description.name} running: bound to ${description.gatewayId}`);
+    return null;
+  }
+  return description;
+}
+
+function vmPauses(deps: VmLifecycleDeps, creations: ReturnType<typeof vmCreations>) {
+  const pauses = new Map<string, { ownerUid: string; settled: Promise<void> }>();
+
+  function ownerPauses(ownerUid: string) {
+    return [...pauses.values()].filter(pause => pause.ownerUid.toLowerCase() === ownerUid.toLowerCase());
+  }
+
+  function assertNoneInFlight(gatewayId: string, ownerUid?: string): void {
+    if (pauses.has(gatewayId) || (ownerUid && ownerPauses(ownerUid).length > 0)) {
+      throw new VmPausePendingError(`gateway ${gatewayId}: VM pause pending in Compute; fleet will retry`);
+    }
+  }
+
+  function canDeferPause(description: GatewayVmDescription, stopFor: StopOnPark | null): boolean {
+    return needsPark(description) || (stopFor !== null && description.status === "SUSPENDED");
+  }
+
+  async function pause(gatewayId: string, defer = false, ownerUid?: string): Promise<boolean> {
+    const pauseStillDesired = async () => {
+      const status = (await deps.store.gateways.roots.get(gatewayId))?.desiredStatus;
+      return status !== "running" && status !== "draining";
+    };
+    assertNoneInFlight(gatewayId, ownerUid);
+    await creations.inserted(gatewayId);
+    const { data, vm } = await readVmRecord(deps.store, gatewayId);
+    const description = vm ? await stoppableVm(deps, gatewayId, vm) : null;
+    if (!await pauseStillDesired()) return false;
+    if (!vm || !description) return true;
+    if (defer && TRANSITIONAL_STATUSES.has(description.status)) {
+      throw new VmPausePendingError(`VM ${description.name} is still ${description.status.toLowerCase()}`);
+    }
+    const stopFor = readStopOnPark(data);
+    const execute = async () => {
+      const parked = await parkVmInstance(deps, gatewayId, description, vm, { reason: "operator", ...(stopFor ? { stopFor } : {}) });
+      await recordVmObservation(deps, gatewayId, { vm: parked }, "pause", description.instanceId);
+    };
+    const owner = parkedVmOwner(data, description) ?? ownerUid;
+    if (owner && creations.isDeleting(owner)) throw new Error(`the VM of ${owner} is being deleted`);
+    if (!defer || !owner || !canDeferPause(description, stopFor)) {
+      await execute();
+      return pauseStillDesired();
+    }
+    assertNoneInFlight(gatewayId, owner);
+    const settled = execute().then(() => {
+      pauses.delete(gatewayId);
+      deps.onVmRuntimeSettled(gatewayId);
+    }, (err: unknown) => {
+      pauses.delete(gatewayId);
+      deps.log(`[vm-gateway-runtime] ⚠ ${gatewayId}: pause failed: ${errorMessage(err)}; retrying on the next converge`);
+    });
+    pauses.set(gatewayId, { ownerUid: owner, settled });
+    throw new VmPausePendingError(`VM ${description.name} is parking; converging it once Compute finishes`);
+  }
+  return {
+    pause,
+    assertNoneInFlight,
+    has: (gatewayId: string) => pauses.has(gatewayId),
+    waitForOwner: (ownerUid: string) => Promise.all(ownerPauses(ownerUid).map(current => current.settled)),
   };
 }
 
@@ -1287,6 +1374,7 @@ async function finishEnsuredVm(deps: VmLifecycleDeps, request: {
 
 export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
   const creations = vmCreations(deps);
+  const pauses = vmPauses(deps, creations);
 
   async function recordVm(gatewayId: string, vm: GatewayVmState | null, what: string): Promise<boolean> {
     return recordVmObservation(deps, gatewayId, { vm }, what);
@@ -1360,14 +1448,18 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
 
   const ensureVm: VmLifecycle["ensureVm"] = (gatewayId, image, ownerUid, bridge) =>
     ensureBoundVm(deps, { gatewayId, image, ownerUid, bridge }, {
-      assertNoneInFlight: creations.assertNoneInFlight, acquireVm, reconcileVmBinding, wakeVm,
+      assertNoneInFlight: (id, uid) => {
+        pauses.assertNoneInFlight(id, uid);
+        creations.assertNoneInFlight(id, uid);
+      }, acquireVm, reconcileVmBinding, wakeVm,
     });
 
   async function parkVm(gatewayId: string, opts: ParkVmOptions = {}): Promise<GatewayVmState | null> {
+    pauses.assertNoneInFlight(gatewayId);
     await creations.inserted(gatewayId);
     const { data, vm } = await readVmRecord(deps.store, gatewayId);
     if (!vm) return null;
-    const description = await stoppableVm(gatewayId, vm);
+    const description = await stoppableVm(deps, gatewayId, vm);
     if (!description) return null;
     const ownerUid = parkedVmOwner(data, description);
     const checkpoint = opts.awaitHomeCheckpoint === true && needsPark(description)
@@ -1377,37 +1469,6 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
     const parked: ParkedVmState = { ...state, parkedCheckpoint: checkpoint };
     await recordParkedVm(deps, gatewayId, ownerUid, parked, (await readVmRecord(deps.store, gatewayId)).data);
     return parked;
-  }
-
-  async function pauseVm(gatewayId: string): Promise<boolean> {
-    const pauseStillDesired = async () => {
-      const status = (await deps.store.gateways.roots.get(gatewayId))?.desiredStatus;
-      return status !== "running" && status !== "draining";
-    };
-    await creations.inserted(gatewayId);
-    const { data, vm } = await readVmRecord(deps.store, gatewayId);
-    const description = vm ? await stoppableVm(gatewayId, vm) : null;
-    if (!await pauseStillDesired()) return false;
-    if (!vm || !description) return true;
-    const stopFor = readStopOnPark(data);
-    await recordVm(gatewayId, await parkVmInstance(deps, gatewayId, description, vm, { reason: "operator", ...(stopFor ? { stopFor } : {}) }), "pause");
-    return pauseStillDesired();
-  }
-
-  async function stoppableVm(gatewayId: string, vm: GatewayVmState): Promise<GatewayVmDescription | null> {
-    const description = await deps.vm.describe(vm.instanceName, vm.zone);
-    if (!description) {
-      deps.log(`[vm-gateway-runtime] ${gatewayId}: ${vm.instanceName} is already absent from Compute`);
-      return null;
-    }
-    if (!vm.instanceId || description.instanceId !== vm.instanceId) {
-      throw new Error(`VM ${description.name}: recorded instance identity changed; refusing to stop`);
-    }
-    if (boundElsewhere(description, gatewayId)) {
-      deps.log(`[vm-gateway-runtime] ${gatewayId}: leaving ${description.name} running: bound to ${description.gatewayId}`);
-      return null;
-    }
-    return description;
   }
 
   async function recoverUnreachable(gatewayId: string): Promise<void> {
@@ -1464,9 +1525,17 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
   return {
     readDeploymentPrerequisiteError: (gatewayId) => readVmDeploymentPrerequisiteError(deps, gatewayId),
     detectPreemption: (gatewayId, sinceMs) => detectVmPreemption(deps, gatewayId, sinceMs),
-    ensureVm, parkVm, pauseVm,
-    recoverUnreachable: async (gatewayId) => { if (!creations.has(gatewayId)) await recoverUnreachable(gatewayId); },
-    replaceStoppedVm: (gatewayId, operationId, assertAuthority, options) => replaceStoppedVm(deps, gatewayId, operationId, assertAuthority, options),
-    deleteVm: (ownerUid) => creations.deleting(ownerUid, () => deleteOwnedVm(deps, ownerUid)),
+    ensureVm, parkVm, pauseVm: pauses.pause, assertVmPauseNotPending: pauses.assertNoneInFlight,
+    recoverUnreachable: async (gatewayId) => {
+      if (!creations.has(gatewayId) && !pauses.has(gatewayId)) await recoverUnreachable(gatewayId);
+    },
+    replaceStoppedVm: async (gatewayId, operationId, assertAuthority, options) => {
+      pauses.assertNoneInFlight(gatewayId, options?.forceOwnerUid);
+      return replaceStoppedVm(deps, gatewayId, operationId, assertAuthority, options);
+    },
+    deleteVm: (ownerUid) => creations.deleting(ownerUid, async () => {
+      await pauses.waitForOwner(ownerUid);
+      return deleteOwnedVm(deps, ownerUid);
+    }),
   };
 }

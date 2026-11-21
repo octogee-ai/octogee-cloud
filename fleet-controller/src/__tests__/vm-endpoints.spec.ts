@@ -178,6 +178,28 @@ describe("first-boot VM gateway handoff", () => {
     })).resolves.toEqual({ kind: "mark-live" });
   });
 
+  it("uses the released VM's signed readiness in the same convergence pass", async () => {
+    const signedFleetState = { status: "ready", version: imageTag, users: [], startedAt: 100 };
+    const health = {
+      status: "ready" as const, version: imageTag, fleetSignatureCapability: "gateway-scoped" as const,
+      handoffReleased: true, prelaunchState: "serving" as const, mountedCustomers: [], signedFleetState,
+    };
+    const { deps } = handoffDeps({ ready: true, health });
+    const resumed = { ...gateway, liveRelease: gateway.desiredRelease };
+    await expect(refineGatewayConvergenceAction({
+      passDeps: {
+        store: createDocumentFixtureStore({ [`gateways/${gateway.gatewayId}`]: { ...resumed } }),
+        reconcileSurgeHandoff: input => reconcileSurgeUserHandoff(deps, input),
+      },
+      gateway: resumed,
+      artifact,
+      runtime: { gatewayId: gateway.gatewayId, runtime: "gce-vm", lifecycle: "provisioning", vm,
+        heartbeat: { status: "booting", version: null } } as never,
+      helmObserved: { imageRepository: dualReadIsolatedProfileImage(artifact.profileImages!).imageRepository, imageTag, replicas: 1 },
+      action: { kind: "steady" },
+    })).resolves.toMatchObject({ kind: "mark-live", vmReady: { state: signedFleetState } });
+  });
+
   it("settles a released VM whose endpoint reports ready", async () => {
     const { deps } = handoffDeps({
       ready: true,

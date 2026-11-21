@@ -20,7 +20,7 @@ import {
   startIsolatedPodBlockerObserver,
 } from "./isolated-pod-home.js";
 import { runNormalFleetMutation } from "@octogee/core/normal-fleet-mutation";
-import { platformStateStoreFromEnvironment, MissingRecordError, type WorkspaceProject, type FleetRegistryRecord, type GatewayRoot, type OpaqueMap, type GatewayRootFields, type GatewayRootPatch, type OperationRecord, type PlatformStateStore, type PlatformStateTransaction, type Stored, type WatchChange, type WatchEvent, type FleetRegistryInventory } from "@octogee/core/platform-state";
+import { platformStateStoreFromEnvironment, MissingRecordError, type WorkspaceProject, type FleetHeartbeatReport, type FleetRegistryRecord, type GatewayRoot, type OpaqueMap, type GatewayRootFields, type GatewayRootPatch, type OperationRecord, type PlatformStateStore, type PlatformStateTransaction, type Stored, type WatchChange, type WatchEvent, type FleetRegistryInventory } from "@octogee/core/platform-state";
 import { restartGatewayProcess, restartGatewayDeployment } from './lib/runtime-restart-transport.js';
 import { assertMigrationRestartUnfenced } from './lib/runtime-restart-coordinator.js';
 import { assertOwnerOperationUnfenced } from './lib/vm-recovery-fence.js';
@@ -61,6 +61,7 @@ import {
   createBackgroundGatewayRecovery,
   startGatewayHeartbeatPoller,
   type GatewayHeartbeatPollerDeps,
+  heartbeatRecordFrom,
 } from "./gateway-heartbeat-poller.js";
 import { createFleetStateFetcher, readPrivateProjectAgentWorkspace, requestFleetState } from "./fleet-state-client.js";
 import {
@@ -106,6 +107,7 @@ import {
   supersedingGatewayImageTag,
   type DurableGateway,
   type GatewayConvergenceAction,
+  type ReadyVmObservation,
   type GatewayUpsertOpts,
   type ObservedHelmInstance,
 } from "./converge-gateway.js";
@@ -116,6 +118,7 @@ import {
   SurgeAssignmentBusyError,
   type SurgeUserHandoffDeps,
   type SurgeUserHandoffResult,
+  type SurgeReadyFleetState,
 } from "./surge-user-handoff.js";
 
 import { readSurgeAssignments } from "./surge-orphan-assignment.js";
@@ -150,6 +153,7 @@ import { assertActiveOperationClaim, assertUserRestoreSettled, createOperationCo
 import {
   compareOperationQueueOrder,
   decideOperationClaim,
+  findSerialConflict,
   isSeriallyExclusiveKind,
   isUnstartedUserReturn,
   type OperationRef,
@@ -365,7 +369,7 @@ import {
   platformGatewayArtifactFromEnvironment,
   writePlatformReleaseRecord,
 } from "./platform-release.js";
-import { VmCreationPendingError, FinalHomeCheckpointPendingError, clearReplacedVm } from "./vm-lifecycle.js";
+import { VmCreationPendingError, VmPausePendingError, FinalHomeCheckpointPendingError, clearReplacedVm } from "./vm-lifecycle.js";
 import { createCachedApiServerEgressResolver } from "./apiserver-egress.js";
 import { noUserPolicyInputs, type UserPolicyInputsSource } from "./user-placement-document.js";
 import type {
@@ -751,7 +755,7 @@ async function syncFleetIngressIfConfigured(
 
 interface DurableRuntimeState {
   gateways: DurableGateway[];
-  runtimeDocs: GatewayRuntimeDoc[];
+  runtimeDocs: ConvergingGatewayRuntime[];
   invalidRootIds: string[];
   strayGlmDocs: StrayGlmDoc[];
 }
@@ -786,17 +790,17 @@ function classifyFleetRegistryInventory(
   inventory: FleetRegistryInventory,
   gateways: readonly DurableGateway[],
 ): {
-  runtimeDocs: GatewayRuntimeDoc[];
+  runtimeDocs: ConvergingGatewayRuntime[];
   strayGlmDocs: StrayGlmDoc[];
 } {
   const gatewayIds = new Set(gateways.map((gateway) => gateway.gatewayId));
-  const runtimeDocs: GatewayRuntimeDoc[] = [];
+  const runtimeDocs: ConvergingGatewayRuntime[] = [];
   const strayGlmDocs: StrayGlmDoc[] = inventory.foreign.map(({ gatewayId, fields }) => ({
     id: gatewayId,
     remedy: strayGlmDocRemedy(gatewayId, fields),
   }));
   for (const { revision: _revision, ...record } of inventory.records) {
-    const runtime: GatewayRuntimeDoc = { docKind: "runtime", ...record };
+    const runtime: ConvergingGatewayRuntime = { docKind: "runtime", ...record };
     if (gatewayIds.has(record.gatewayId)) {
       runtimeDocs.push(runtime);
     } else {
@@ -858,8 +862,12 @@ async function syncDurableRuntimeDependencies(
   await restartGatewayDeploymentsForModelKeyChanges(deps, gateways, changedModelKeyGateways);
 }
 
+type VmRuntimeIdentity = Pick<FleetRegistryRecord, "runtime" | "vm">;
+type ConvergingGatewayRuntime = GatewayRuntimeDoc & VmRuntimeIdentity;
+
 interface GatewayConvergencePassDeps {
   store: PlatformStateStore;
+  assertVmPauseNotPending?: (gatewayId: string, ownerUid?: string) => void;
   helm: HelmRunner;
   kubeOps: KubeOps;
   chartFingerprint: string;
@@ -900,7 +908,7 @@ export async function shouldReconcileDisposablePrelaunch(
 }
 
 function runtimeReportsDesiredBuild(
-  runtime: GatewayRuntimeDoc | undefined,
+  runtime: ConvergingGatewayRuntime | undefined,
   desiredImageTag: string,
   allowBooting = false,
 ): boolean {
@@ -913,7 +921,7 @@ function runtimeReportsDesiredBuild(
 }
 
 function reportsDesiredBuildOrVerifiedInitialPrelaunch(input: {
-  runtime: GatewayRuntimeDoc | undefined;
+  runtime: ConvergingGatewayRuntime | undefined;
   desiredImageTag: string;
   gateway: DurableGateway;
   handoffReady: boolean;
@@ -928,7 +936,7 @@ function reportsDesiredBuildOrVerifiedInitialPrelaunch(input: {
 function reconcileGatewaySurgeHandoff(input: {
   passDeps: Pick<GatewayConvergencePassDeps, "reconcileSurgeHandoff">;
   gateway: DurableGateway;
-  runtime: GatewayRuntimeDoc | undefined;
+  runtime: ConvergingGatewayRuntime | undefined;
   desiredImage: { imageRepository: string; imageTag: string };
   pendingArtifact: ReleasePayload | null;
   helmObserved: ObservedHelmInstance | null;
@@ -959,10 +967,36 @@ function reconcileGatewaySurgeHandoff(input: {
   });
 }
 
-function gatewayNeedsLiveVerification(gateway: DurableGateway, runtime: GatewayRuntimeDoc | undefined): boolean {
+function gatewayNeedsLiveVerification(gateway: DurableGateway, runtime: ConvergingGatewayRuntime | undefined): boolean {
   if (gateway.desiredStatus === "running") return true;
   return gateway.desiredStatus === "draining" &&
     (gateway.liveRelease !== gateway.desiredRelease || runtime?.lifecycle !== "serving");
+}
+
+function matchesReadyVm(
+  gatewayId: string,
+  runtime: VmRuntimeIdentity | null | undefined,
+  observed: SurgeReadyFleetState,
+  desiredImageTag: string,
+): boolean {
+  if (runtime?.runtime !== "gce-vm") return false;
+  const endpoint = endpointFromVm(gatewayId, runtime.vm);
+  return endpoint !== null && endpoint.uid === observed.endpoint.uid && endpoint.name === observed.endpoint.name &&
+    endpoint.podIP === observed.endpoint.podIP && observed.state.status === "ready" &&
+    gatewayHeartbeatMatchesImageTag(observed.state.version, desiredImageTag);
+}
+
+function readyVmFromHandoff(
+  gateway: DurableGateway,
+  runtime: ConvergingGatewayRuntime | undefined,
+  handoff: SurgeUserHandoffResult,
+  desiredImageTag: string,
+): ReadyVmObservation | undefined {
+  if (!handoff.ready || !handoff.readyFleetState ||
+      !matchesReadyVm(gateway.gatewayId, runtime, handoff.readyFleetState, desiredImageTag)) return undefined;
+  if (runtime?.lifecycle === "serving" && gateway.liveRelease === gateway.desiredRelease &&
+      runtimeReportsDesiredBuild(runtime, desiredImageTag)) return undefined;
+  return { ...handoff.readyFleetState, vmStartedAt: runtime?.vm?.startedAt };
 }
 
 export async function refineGatewayConvergenceAction(input: {
@@ -970,7 +1004,7 @@ export async function refineGatewayConvergenceAction(input: {
   gateway: DurableGateway;
   artifact: ReleasePayload | null;
   pendingArtifact?: ReleasePayload | null;
-  runtime: GatewayRuntimeDoc | undefined;
+  runtime: ConvergingGatewayRuntime | undefined;
   helmObserved: ObservedHelmInstance | null;
   desiredChartFingerprint?: string;
   desiredDeploymentIntentFingerprint?: string;
@@ -1008,6 +1042,8 @@ export async function refineGatewayConvergenceAction(input: {
   if (prelaunchRefresh && handoff.prelaunchHeld) {
     return { kind: "mark-live", prelaunchRefresh: true };
   }
+  const vmReady = readyVmFromHandoff(gateway, runtime, handoff, desiredImage.imageTag);
+  if (vmReady) return { kind: "mark-live", vmReady };
   const desiredBuildReported = reportsDesiredBuildOrVerifiedInitialPrelaunch({
     runtime,
     desiredImageTag: desiredImage.imageTag,
@@ -1066,6 +1102,10 @@ export async function runGatewayConvergencePass(
       try {
         await convergeOneGateway(passDeps, gateway, instances, runtimeById);
       } catch (err) {
+        if (err instanceof VmPausePendingError) {
+          requestGatewayRecheck(gateway.gatewayId);
+          continue;
+        }
         if (err instanceof FinalHomeCheckpointPendingError || err instanceof VmCreationPendingError) continue;
         const message = err instanceof Error ? err.message : String(err);
         if (err instanceof SurgeAssignmentBusyError) {
@@ -1100,8 +1140,9 @@ async function convergeOneGateway(
   passDeps: GatewayConvergencePassDeps,
   gateway: DurableGateway,
   instances: HelmInstancesMap,
-  runtimeById: Map<string, GatewayRuntimeDoc>,
+  runtimeById: Map<string, ConvergingGatewayRuntime>,
 ): Promise<void> {
+  passDeps.assertVmPauseNotPending?.(gateway.gatewayId, gateway.ownerUid ?? undefined);
   if (isIsolatedGateway(gateway) && gateway.liveRelease !== null && gateway.liveRelease < gateway.desiredRelease) {
     const recovery = await readUserActivationRollRecoveryCustody({ state: passDeps.store, gatewayId: gateway.gatewayId });
     if (recovery && hasUserActivationTargetRollback(recovery.operation, recovery.recovery)) {
@@ -1116,7 +1157,7 @@ async function convergeAvailableGateway(
   passDeps: GatewayConvergencePassDeps,
   gateway: DurableGateway,
   instances: HelmInstancesMap,
-  runtimeById: Map<string, GatewayRuntimeDoc>,
+  runtimeById: Map<string, ConvergingGatewayRuntime>,
 ): Promise<void> {
   const { store } = passDeps;
   const instance = instances[gateway.gatewayId];
@@ -1178,7 +1219,7 @@ async function convergeAvailableGateway(
       return;
     case "mark-live":
       if (!artifact) throw new Error(`gateway ${gateway.gatewayId} cannot mark a missing release live`);
-      await markGatewayLive(passDeps, gateway, artifact, action.prelaunchRefresh);
+      await markGatewayLive(passDeps, gateway, artifact, action.prelaunchRefresh, action.vmReady);
       return;
   }
 }
@@ -1200,7 +1241,7 @@ async function upsertGateway(
   input: {
     gateway: DurableGateway;
     artifact: ReleasePayload | null;
-    runtime: GatewayRuntimeDoc | undefined;
+    runtime: ConvergingGatewayRuntime | undefined;
     desiredOpts: GatewayUpsertOpts | null;
     replicas: number;
   },
@@ -1255,6 +1296,7 @@ async function upsertGateway(
   await helm.upsertInstance({
     ...desiredOpts,
     ...(isolatedPod ? { rollStrategy: "recreate" as const } : {}),
+    ...(runtimeKind === "gce-vm" && replicas === 0 ? { deferVmPause: true } : {}),
     ...runtimeUserIdentity(gateway),
   });
 }
@@ -1263,6 +1305,52 @@ function runtimeUserIdentity(gateway: DurableGateway): { builderIdentity?: Runti
   return gateway.ownerUid && gateway.builderSlug
     ? { builderIdentity: { ownerUid: gateway.ownerUid, builderSlug: gateway.builderSlug } }
     : {};
+}
+
+function currentReadyVm(
+  gateway: DurableGateway,
+  root: GatewayRoot,
+  runtime: FleetRegistryRecord | null,
+  vmReady: ReadyVmObservation,
+  imageTag: string,
+): boolean {
+  return root.updatedAt === gateway.updatedAt && runtime?.vm?.startedAt === vmReady.vmStartedAt &&
+    matchesReadyVm(gateway.gatewayId, runtime, vmReady, imageTag);
+}
+
+async function readReadyVmHeartbeat(
+  transaction: PlatformStateTransaction,
+  gatewayId: string,
+  vmReady: ReadyVmObservation | undefined,
+): Promise<FleetHeartbeatReport | undefined> {
+  if (!vmReady) return undefined;
+  const assigned = assignedSlugsFromUserMirror(await transaction.users.records.listByGateway(gatewayId), gatewayId);
+  return pollerHeartbeatReport(heartbeatRecordFrom(vmReady.state, assigned), gatewayServiceInternalUrl(gatewayId));
+}
+
+async function publishLiveRuntime(input: {
+  transaction: PlatformStateTransaction;
+  gateway: DurableGateway;
+  runtime: FleetRegistryRecord;
+  patch: NonNullable<ReturnType<typeof markLiveRuntimePatch>>;
+  imageTag: string;
+  now: number;
+  heartbeat?: FleetHeartbeatReport;
+}): Promise<void> {
+  const { transaction, gateway, runtime, patch, imageTag, now, heartbeat } = input;
+  await transaction.fleetRegistry.patch(gateway.gatewayId, {
+    ...patch,
+    ...(isInitialIsolatedPrelaunch(gateway) && !heartbeat ? { heartbeat: {
+      ...runtime.heartbeat,
+      status: "booting",
+      version: versionFromImageTag(imageTag),
+      internalUrl: gatewayServiceInternalUrl(gateway.gatewayId),
+      startedAt: now,
+      lastHeartbeatAt: now,
+      mountedCustomers: [],
+    } } : {}),
+  });
+  if (heartbeat) await transaction.fleetRegistry.recordHeartbeat(gateway.gatewayId, heartbeat);
 }
 
 async function wakeIsolatedGatewayMoves(transaction: PlatformStateTransaction, root: GatewayRoot, initialPrelaunch: boolean): Promise<void> {
@@ -1280,9 +1368,9 @@ export async function markGatewayLive(
   gateway: DurableGateway,
   artifact: ReleasePayload,
   prelaunchRefresh = false,
+  vmReady?: ReadyVmObservation,
 ): Promise<void> {
   const { store, log } = passDeps;
-  const initialDisposablePrelaunch = isInitialIsolatedPrelaunch(gateway);
   const imageTag = gatewayImageFor(gateway, artifact).imageTag;
   const now = Date.now();
   const markedLive = await store.transaction({ label: "converge-gateway.mark-live" }, async (transaction) => {
@@ -1292,12 +1380,17 @@ export async function markGatewayLive(
       root.retirementClaim != null) return false;
     const runtimePatch = markLiveRuntimePatch(gateway);
     const runtime = prelaunchRefresh || runtimePatch ? await transaction.fleetRegistry.get(gateway.gatewayId) : null;
+    if (vmReady && !currentReadyVm(gateway, root, runtime, vmReady, imageTag)) {
+      log(`[converge-gateway] ${gateway.gatewayId} VM readiness identity changed; deferring release`);
+      return false;
+    }
     if (prelaunchRefresh && (!runtimeMatchesPrelaunchRelease(root, runtime, gatewayImageFor(root, artifact)) ||
       !(await isolatedPrelaunchReserved({ reader: transaction, gateway: root, expectedGateway: gateway })))) {
       log(`[converge-gateway] ${gateway.gatewayId} prelaunch reservation changed; deferring release`);
       return false;
     }
-    await wakeIsolatedGatewayMoves(transaction, root, initialDisposablePrelaunch);
+    const heartbeat = await readReadyVmHeartbeat(transaction, gateway.gatewayId, vmReady);
+    await wakeIsolatedGatewayMoves(transaction, root, isInitialIsolatedPrelaunch(gateway));
     await transaction.gateways.roots.patch(
       gateway.gatewayId,
       { liveRelease: gateway.desiredRelease, updatedAt: now, updatedBy: "converge-gateway" },
@@ -1305,22 +1398,7 @@ export async function markGatewayLive(
     );
     if (runtimePatch) {
       if (!runtime) throw new MissingRecordError({ aggregate: "fleet-registry", key: gateway.gatewayId });
-      await transaction.fleetRegistry.patch(gateway.gatewayId, {
-        ...runtimePatch,
-        ...(initialDisposablePrelaunch
-          ? {
-              heartbeat: {
-                ...runtime.heartbeat,
-                status: "booting",
-                version: versionFromImageTag(imageTag),
-                internalUrl: gatewayServiceInternalUrl(gateway.gatewayId),
-                startedAt: now,
-                lastHeartbeatAt: now,
-                mountedCustomers: [],
-              },
-            }
-          : {}),
-      });
+      await publishLiveRuntime({ transaction, gateway, runtime, patch: runtimePatch, imageTag, now, heartbeat });
     }
     return true;
   });
@@ -1387,13 +1465,13 @@ async function convergeGatewaysIfConfigured(
   }
 }
 
-function convergeAfterVmCreation(
+function convergeAfterVmRuntimeChange(
   convergeGateways: (gatewayIds: readonly string[]) => Promise<void>,
   log: (msg: string) => void,
 ): (gatewayId: string) => void {
   return (gatewayId) => {
     void convergeGateways([gatewayId]).catch((err: unknown) => {
-      log(`[converge-gateway] ⚠ ${gatewayId}: converge after its VM creation settled failed: ${err instanceof Error ? err.message : String(err)}; requeued`);
+      log(`[converge-gateway] ⚠ ${gatewayId}: converge after its VM runtime change settled failed: ${err instanceof Error ? err.message : String(err)}; requeued`);
       requestReconcileTickRef.fire?.(gatewayId);
     });
   };
@@ -1709,39 +1787,109 @@ function operationFromRecord(record: Stored<OperationRecord>): Operation {
   return operation;
 }
 
-function runnablePendingOperations(event: WatchEvent<"operations">): readonly Stored<OperationRecord>[] {
-  if (event.kind === "snapshot") return event.records;
-  if (event.kind === "resync") return [];
-  return event.changes.flatMap(({ type, record }) => {
-    if (!record || type === "removed") return [];
-    const readinessWaitCleared = record.output?.isolatedGatewayReadinessChecks !== undefined &&
-      record.waitingOn == null && record.nextAttemptAt == null;
-    return type === "added" || readinessWaitCleared ? [record] : [];
-  });
+function releasesOperationQueueScope(
+  prior: Stored<OperationRecord> | undefined,
+  next: Stored<OperationRecord> | null,
+): prior is Stored<OperationRecord> {
+  return prior !== undefined && isSeriallyExclusiveKind(prior.kind) &&
+    (next === null || prior.status === "running" && next.status === "pending");
+}
+
+function addReleasedOperationWakeups(
+  wakeups: Map<string, Stored<OperationRecord>>,
+  active: ReadonlyMap<string, Stored<OperationRecord>>,
+  released: readonly OperationRef[],
+): void {
+  if (released.length === 0) return;
+  const now = Date.now();
+  for (const candidate of active.values()) {
+    if (candidate.status !== "pending" || (candidate.nextAttemptAt ?? now) > now) continue;
+    if (findSerialConflict({ ...candidate, rolloutLane: undefined }, released)) wakeups.set(candidate.id, candidate);
+  }
+}
+
+function isolatedGatewayWaitCleared(
+  prior: Stored<OperationRecord> | undefined,
+  next: Stored<OperationRecord>,
+): boolean {
+  return next.kind === MIGRATE_USER_KIND && next.output?.isolatedGatewayReadinessChecks !== undefined &&
+    next.waitingOn == null && next.nextAttemptAt == null &&
+    (prior === undefined || prior.waitingOn === WAITING_FOR_ISOLATED_GATEWAY);
+}
+
+function operationWatchWakeups(
+  event: WatchEvent<"operations">,
+  active: Map<string, Stored<OperationRecord>>,
+): Stored<OperationRecord>[] {
+  if (event.kind === "resync") {
+    active.clear();
+    return [];
+  }
+  if (event.kind === "snapshot") {
+    active.clear();
+    for (const record of event.records) active.set(record.id, record);
+    return event.records.filter(record => record.status === "pending");
+  }
+
+  const wakeups = new Map<string, Stored<OperationRecord>>();
+  const released: OperationRef[] = [];
+  for (const change of event.changes) {
+    const prior = active.get(change.key);
+    const next = change.record;
+    if (next) active.set(change.key, next);
+    else active.delete(change.key);
+    if (next?.status === "pending" &&
+      (change.type === "added" || prior?.status === "running" || isolatedGatewayWaitCleared(prior, next))) {
+      wakeups.set(next.id, next);
+    }
+    if (releasesOperationQueueScope(prior, next)) released.push({ ...prior, rolloutLane: undefined });
+  }
+  addReleasedOperationWakeups(wakeups, active, released);
+  return [...wakeups.values()];
 }
 
 export function startOperationWorker(deps: ControllerDeps): () => void {
-  const processInOrder = async (records: readonly Stored<OperationRecord>[]) => {
-    for (const record of records) await processOperation(operationFromRecord(record), deps);
+  const active = new Map<string, Stored<OperationRecord>>();
+  const queued = new Map<string, Stored<OperationRecord>>();
+  let claiming = false;
+  let stopped = false;
+  const reportFailure = (err: unknown) =>
+    deps.log(`[glm-controller] ⚠ pending operation run failed: ${err instanceof Error ? err.message : String(err)}`);
+  const claimInOrder = async () => {
+    while (queued.size > 0 && !stopped) {
+      const records = [...queued.values()].sort(compareOperationQueueOrder);
+      queued.clear();
+      for (const record of records) {
+        if (stopped) return;
+        const claimed = await claimOperation(operationFromRecord(record), deps);
+        if (claimed) void runClaimedOperation(claimed, deps).catch(reportFailure);
+      }
+    }
   };
-  const subscription = deps.store.watch({ aggregate: "operations", filter: { statuses: ["pending"] } }, {
+  const wake = () => {
+    if (claiming || stopped || queued.size === 0) return;
+    claiming = true;
+    void claimInOrder().catch(reportFailure).finally(() => {
+      claiming = false;
+      wake();
+    });
+  };
+  const subscription = deps.store.watch({ aggregate: "operations", filter: { statuses: ["pending", "running"] } }, {
     onEvent: (event) => {
-      void processInOrder(runnablePendingOperations(event)).catch((err) => {
-        deps.log(`[glm-controller] ⚠ pending operation run failed: ${err instanceof Error ? err.message : String(err)}`);
-      });
+      if (stopped) return;
+      for (const record of operationWatchWakeups(event, active)) queued.set(record.id, record);
+      wake();
     },
     onError: (err) => deps.log(`[glm-controller] ⚠ operations snapshot error: ${String(err)}`),
   });
   return () => {
+    stopped = true;
+    active.clear();
+    queued.clear();
     void subscription.close();
   };
 }
 
-// How often the queue drain re-scans pending ops. It exists for two cases the
-// onSnapshot listener above can't see: an op queued behind a conflicting rollout
-// (unblocked when the OTHER doc changes, not this one) and a retry whose backoff
-// has elapsed (unblocked by time passing, not a Firestore event). Cadence mirrors
-// the stuck-op-reaper's level-triggered pattern.
 export const OPERATION_QUEUE_DRAIN_MS_DEFAULT = 20_000;
 
 // Restart re-drive candidates. The predicate below admits only migrations with
@@ -1870,26 +2018,23 @@ async function attemptClaimOrQueueOperation(
   }
 }
 
-export async function processOperation(
-  op: Operation | OperationAuditRecord,
-  deps: ControllerDeps,
-): Promise<void> {
-  if (isOperationAuditRow(op)) return;
-  const operation = op as Operation;
+async function claimOperation(operation: Operation, deps: ControllerDeps): Promise<Operation | undefined> {
   const claim = await attemptClaimOrQueueOperation(operation, deps);
   if (claim.outcome === "queued") {
     deps.log(`[glm-controller] op=${operation.id} kind=${operation.kind} queued — waiting on a conflicting op`);
     return;
   }
   if (claim.outcome !== "claimed" || !claim.fresh) return;
-
   deps.log(`[glm-controller] claim op=${operation.id} kind=${operation.kind}`);
-  await runClaimedOperation(claim.fresh, deps);
+  return claim.fresh;
 }
 
-// Re-scan every pending op and try to claim each. The
-// correctness net for (a) an op queued behind a since-finished conflicting op,
-// and (b) a retry whose backoff window has elapsed — see OPERATION_QUEUE_DRAIN_MS_DEFAULT.
+export async function processOperation(op: Operation | OperationAuditRecord, deps: ControllerDeps): Promise<void> {
+  if (isOperationAuditRow(op)) return;
+  const claimed = await claimOperation(op as Operation, deps);
+  if (claimed) await runClaimedOperation(claimed, deps);
+}
+
 export async function drainPendingOperationsOnce(deps: ControllerDeps): Promise<void> {
   // Equality-only query, FIFO sort in memory: status+createdAt has no
   // composite index and must never need one — an orderBy here throws
@@ -2725,7 +2870,8 @@ async function createControllerRuntime(
       readDesiredStatus: async (gatewayId) => (await readDesiredRoot(store, gatewayId))?.desiredStatus ?? null,
       journalBootUpgrade: createBootUpgradeJournal(store),
       wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-      onVmCreationSettled: (gatewayId) => convergeSettledVm(gatewayId),
+      onVmRuntimeSettled: (gatewayId) => convergeSettledVm(gatewayId),
+      onVmDeploymentPublished: (gatewayId) => convergeSettledVm(gatewayId),
       now: () => Date.now(),
       log,
     })
@@ -2782,6 +2928,7 @@ async function createControllerRuntime(
   const runGatewayConvergence = (gatewayIds?: readonly string[]) =>
     runGatewayConvergencePass({
       store,
+      assertVmPauseNotPending: vmRuntime?.assertVmPauseNotPending,
       helm,
       kubeOps,
       chartFingerprint,
@@ -2791,7 +2938,7 @@ async function createControllerRuntime(
       log,
     }, gatewayIds);
   const convergeGateways = serializeGatewayConvergence(runGatewayConvergence);
-  const convergeSettledVm = convergeAfterVmCreation(convergeGateways, log);
+  const convergeSettledVm = convergeAfterVmRuntimeChange(convergeGateways, log);
   const nativeReturnRecovery = buildNativeReturnSourceRecoveryOwner(store, kubeOps, fleetControllerPrivateKey, prepareMigrationAgentStores);
   const handlers = await buildHandlers(documents, log, helm, kubeOps, {
     syncFleetIngress: handlerSyncFleetIngress, privateKey: fleetControllerPrivateKey,
@@ -3643,6 +3790,7 @@ async function buildHandlers(
     },
     vm: createGatewayComputeClient(store, logFn),
     readGateway: async (gatewayId) => {
+      vmGatewayRuntimeRef.current?.assertVmPauseNotPending(gatewayId);
       const runtime = await store.fleetRegistry.get(gatewayId);
       return runtime === null ? null : { runtime: runtime.runtime, vm: runtime.vm ?? null };
     },

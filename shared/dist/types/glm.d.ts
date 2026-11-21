@@ -201,6 +201,7 @@ export interface GatewayVmRuntimeResponse {
     homeCheckpoint: {
         requestedAt: number | null;
         completedAt: number | null;
+        deferScheduled?: true;
     };
 }
 export interface GatewayVmDiskSample {
@@ -208,6 +209,7 @@ export interface GatewayVmDiskSample {
     freeBytes: number;
 }
 export interface GatewayVmRuntimeRequest {
+    checkScheduledHomeCheckpoint?: true;
     disk?: GatewayVmDiskSample;
     images?: GatewayVmImageSample;
     preempted?: true;
