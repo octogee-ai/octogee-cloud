@@ -2086,13 +2086,15 @@ async function activateImportedUser(
     purpose: "import",
   });
   if (importedRosterNeedsAcknowledgement(safeManifest, sourceIdentity)) {
+    const rosterStartedAt = Date.now();
     await ensureUserRosterAgents(ctx, [
       safeManifest.agent,
       ...safeManifest.projectAgents.map((entry) => entry.agent),
     ], `[import:${slug}]`, {
       signal: opts.signal,
-      waitForAppliedRevision: ctx.isIsolatedGateway(),
+      waitForAppliedRevision: false,
     });
+    ctx.log(`[import:${slug}] native roster admission in ${Date.now() - rosterStartedAt}ms`);
   }
   if (configuredBuilder && opts.deferRuntimeVerification) await keepIsolatedRuntimeDormant(ctx);
   await restoreSourceIdentityAfterRoster(ctx, manifest, safeManifest, sourceIdentity);
@@ -2153,7 +2155,9 @@ async function activateImportedUser(
   ctx.log(`[import:${slug}] activation config patch in ${patch.elapsedMs}ms`);
   secretMaterial.noteIf(patch.configNoop !== true, "activation config patch changed the config");
   if (opts.deferRuntimeVerification) {
+    const revisionWaitStartedAt = Date.now();
     await waitForAppliedConfigRevision(ctx.rpc, slug, { signal: opts.signal });
+    ctx.log(`[import:${slug}] final config revision confirmed in ${Date.now() - revisionWaitStartedAt}ms`);
     return { appliedFingerprint: manifest.appliedFingerprint };
   }
   const verificationPending = await settleActivatedImport(ctx, {
@@ -2191,7 +2195,9 @@ async function settleActivatedImport(
 ): Promise<string | undefined> {
   const { slug, patch, secretMaterial, signal, configuredUserRouting } = input;
   try {
+    const revisionWaitStartedAt = Date.now();
     await waitForAppliedConfigRevision(ctx.rpc, slug, { signal });
+    ctx.log(`[import:${slug}] final config revision confirmed in ${Date.now() - revisionWaitStartedAt}ms`);
     await reloadRuntimeSecretsIfChanged(ctx, `[import:${slug}]`, secretMaterial, signal);
     if (ctx.pendingRuntimeSecrets.get(slug) === secretMaterial) ctx.pendingRuntimeSecrets.delete(slug);
     if (configuredUserRouting && patch.configNoop === true) {
