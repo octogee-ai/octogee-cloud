@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it, vi, type Mock } from "vitest";
 import { MissingRecordError, type FleetRegistryRecord } from "@octogee/core/platform-state";
 import { createDocumentFixtureStore, FIXTURE_SIZING_PROFILES } from "@octogee/core-testing/journal-store";
+import { releasePayloadHash } from "@octogee/shared/types/gateway-releases";
 import type { GatewayVmSpec, HelmInstancesMap } from "@octogee/shared/types/glm";
 import type { CreateGatewayVmInput, CreateGatewayVmResult, GatewayVmClient, GatewayVmDescription } from "../lib/compute-vm";
 import { ComputeOperationError, GATEWAY_VM_ACCESS_SCOPES } from "../lib/compute-vm";
@@ -2464,6 +2465,77 @@ describe("stopped retained-home boot replacement", () => {
     expect(h.vm.deleteRetainingHome).not.toHaveBeenCalled();
     expect(h.vm.create).not.toHaveBeenCalled();
   });
+
+  it.each(["linked predecessor", "unknown image", "changed boot", "claim lost", "retry after bind"])(
+    "repairs a parked computer under its published Gateway release (%s)",
+    async scenario => {
+      const previousTag = `fc66c86@sha256:${"a".repeat(64)}`;
+      const currentTag = `af15a1a@sha256:${"b".repeat(64)}`;
+      const sharedRepository = "us-docker.pkg.dev/octogee/octogee/octogee-gateway";
+      const repository = `${sharedRepository}-builder`;
+      const previousImage = `${repository}:${previousTag}`;
+      const desiredImage = `${repository}:${currentTag}`;
+      const payload = (imageTag: string) => ({
+        imageRepository: sharedRepository, imageTag,
+        profileImages: { isolated: { imageRepository: repository, imageTag } },
+      });
+      const targetPayload = payload(currentTag);
+      const predecessorPayload = payload(previousTag);
+      const actualImage = scenario === "unknown image" ? "registry.invalid/other:latest" :
+        scenario === "retry after bind" ? desiredImage : previousImage;
+      let vm = {
+        ...ownedStopped,
+        status: scenario === "retry after bind" ? "TERMINATED" : "SUSPENDED",
+        metadata: { ...ownedStopped.metadata, "gateway-image": actualImage },
+      };
+      const h = harness({
+        ...vmDoc(),
+        "gateways/b-x": {
+          gatewayClass: "isolated", imageProfile: "isolated", ownerUid: "UidA",
+          latestRelease: 2, desiredRelease: 2, liveRelease: 2,
+        },
+        "gateways/b-x/releases/1": { gatewayId: "b-x", release: 1, sourceRelease: null, payload: predecessorPayload, payloadHash: releasePayloadHash(predecessorPayload) },
+        "gateways/b-x/releases/2": { gatewayId: "b-x", release: 2, sourceRelease: 1, payload: targetPayload, payloadHash: releasePayloadHash(targetPayload) },
+        "glmOperations/prewarm-repair": {
+          kind: "prewarm-gateway", status: "running", createdAt: 900, startedAt: 950, createdBy: "ship-test",
+          gatewayId: "b-x", inputUid: "UidA",
+          output: { prewarmState: "repairing", previousRelease: 2, previousInstanceId: "4242", previousBootImageId: CURRENT_IMAGE.id },
+          input: { gatewayId: "b-x", uid: "UidA", generation: 1, sourceSha: "a".repeat(40),
+            bootImageId: accepted.id, payload: targetPayload },
+        },
+      }, {
+        describe: vi.fn(async () => vm),
+        readBootImage: vi.fn(async () => scenario === "changed boot" && vm.status === "TERMINATED" ? OLD_IMAGE : CURRENT_IMAGE),
+        stop: vi.fn(async () => {
+          vm = { ...vm, status: "TERMINATED" };
+          if (scenario === "claim lost") {
+            await h.store.journal.operations.patch("prewarm-repair", { output: { prewarmState: "parked" } });
+          }
+        }),
+        bind: vi.fn(async (_name, _zone, binding) => { vm = { ...vm, metadata: { ...vm.metadata, ...binding.metadata } }; }),
+        start: vi.fn(async () => { vm = { ...vm, status: "RUNNING", internalIp: running.internalIp }; return { fellBackToStandard: false }; }),
+      });
+      const upsert = () => h.runtime.upsertInstance({ ...upsertOpts, imageRepository: repository, imageTag: currentTag });
+      const refusals: Record<string, RegExp> = {
+        "unknown image": /predecessor/, "changed boot": /boot image changed/, "claim lost": /claim changed/,
+      };
+      if (refusals[scenario]) {
+        await expect(upsert()).rejects.toThrow(refusals[scenario]);
+        expect(h.vm.bind).not.toHaveBeenCalled();
+        expect(h.vm.start).not.toHaveBeenCalled();
+        if (scenario === "unknown image") expect(h.vm.stop).not.toHaveBeenCalled();
+      } else {
+        await upsert();
+        expect(h.vm.start).toHaveBeenCalledWith(VM, vm.zone);
+        expect(h.vm.resume).not.toHaveBeenCalled();
+        expect(vm.metadata["gateway-image"]).toBe(desiredImage);
+        expect(h.vm.bind).toHaveBeenCalledTimes(scenario === "linked predecessor" ? 1 : 0);
+        expect(h.vm.stop).toHaveBeenCalledTimes(scenario === "linked predecessor" ? 1 : 0);
+      }
+      expect(h.vm.create).not.toHaveBeenCalled();
+      expect(h.vm.deleteRetainingHome).not.toHaveBeenCalled();
+    },
+  );
 
   it("prewarms a new boot image without changing the Gateway image or deleting the owner's home", async () => {
     let deleted = false;
