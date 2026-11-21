@@ -19,7 +19,7 @@ import {
   type RuntimeUserIdentity,
 } from "@octogee/shared/types/glm";
 import type { GatewayVmClient, GatewayVmDescription } from "./lib/compute-vm.js";
-import { assertReplacementRecoveryCapacity, createVmLifecycle, recordVmObservation, vmSpecDesktop } from "./vm-lifecycle.js";
+import { assertReplacementRecoveryCapacity, createVmLifecycle, PARKED_STATUSES, recordVmObservation, vmSpecDesktop } from "./vm-lifecycle.js";
 import type { KubectlSubprocess } from "./fleet-ingress.js";
 import {
   helmTemplateArgsFromUpgradeArgs,
@@ -302,6 +302,15 @@ function vmDeploymentBecameRoutable(previous: FleetRegistryRecord | null, vm: Ga
     previous.vm.instanceId !== vm.instanceId || previous.vm.startedAt !== vm.startedAt;
 }
 
+function observedVmDeployment(record: FleetRegistryRecord | null): HelmInstancesMap[string] | null {
+  const instance = record?.vmInstance as HelmInstancesMap[string] | undefined;
+  if (!instance) return null;
+  if (PARKED_STATUSES.has(record?.vm?.status ?? "")) {
+    return { ...instance, replicas: 0 };
+  }
+  return instance;
+}
+
 export function createVmGatewayRuntime(deps: VmGatewayRuntimeDeps): VmGatewayRuntime {
   const upgradeTimeout = deps.upgradeTimeout ?? "10m";
   let routesTail: Promise<void> = Promise.resolve();
@@ -381,15 +390,14 @@ export function createVmGatewayRuntime(deps: VmGatewayRuntimeDeps): VmGatewayRun
     async readDeployedInstances() {
       const entries: Array<[string, HelmInstancesMap[string]]> = [];
       for (const record of await deps.store.fleetRegistry.list({ runtime: "gce-vm" })) {
-        const instance = record.vmInstance as HelmInstancesMap[string] | undefined;
+        const instance = observedVmDeployment(record);
         if (instance) entries.push([record.gatewayId, instance]);
       }
       return Object.fromEntries(entries);
     },
 
     async readDeployedInstance({ gatewayId }) {
-      const instance = (await deps.store.fleetRegistry.get(gatewayId))?.vmInstance as HelmInstancesMap[string] | undefined;
-      return instance ?? null;
+      return observedVmDeployment(await deps.store.fleetRegistry.get(gatewayId));
     },
 
     async upsertInstance(opts) {

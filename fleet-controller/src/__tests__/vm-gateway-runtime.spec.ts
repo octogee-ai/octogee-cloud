@@ -681,6 +681,36 @@ describe("createVmGatewayRuntime.upsertInstance", () => {
     expect(routesFail.docs["glmGateways/b-x"].vmInstance).toBeUndefined();
   });
 
+  it.each([
+    { status: "SUSPENDED", helmReplicas: 0, observedReplicas: 0 },
+    { status: "RUNNING", helmReplicas: 0, observedReplicas: 1 },
+    { status: "SUSPENDED", helmReplicas: 1, observedReplicas: 0 },
+    { status: "SUSPENDING", helmReplicas: 0, observedReplicas: 1 },
+    { status: "TERMINATED", helmReplicas: 1, observedReplicas: 0 },
+  ])("reports $observedReplicas replicas for a $status same-release VM with Helm intent $helmReplicas", async ({
+    status, helmReplicas, observedReplicas,
+  }) => {
+    const installed = {
+      gatewayId: "b-x",
+      image: { repository: upsertOpts.imageRepository, tag: upsertOpts.imageTag },
+      replicas: 1,
+    };
+    const runtime = initialRuntimeDoc("b-x");
+    const h = harness({
+      "gateways/b-x": { desiredRelease: 2, latestRelease: 2, liveRelease: 2, desiredStatus: "running" },
+      "glmGateways/b-x": {
+        ...runtime, release: 2, runtime: "gce-vm", vm: { ...recorded, status },
+        helm: { ...runtime.helm, replicas: helmReplicas }, vmInstance: installed,
+      },
+    });
+
+    expect(await h.runtime.readDeployedInstance({ namespace: "octogee-test", gatewayId: "b-x" }))
+      .toEqual({ ...installed, replicas: observedReplicas });
+    expect(await h.runtime.readDeployedInstances({ namespace: "octogee-test" }))
+      .toEqual({ "b-x": { ...installed, replicas: observedReplicas } });
+    expect(h.docs["glmGateways/b-x"].vmInstance).toEqual(installed);
+  });
+
   it("requests verification once after publishing a resumed VM's routable deployment", async () => {
     let current = suspended;
     const h = harness({ "glmGateways/b-x": { ...initialRuntimeDoc("b-x"), runtime: "gce-vm",
