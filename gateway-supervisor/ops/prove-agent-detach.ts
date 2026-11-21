@@ -257,10 +257,12 @@ try {
   await exportAgentStoreSnapshots({
     sources: travelers.map(entry => ({ cwd: source.state, path: `agents/${entry.agentId}` })),
     exportRoot: snapshotRoot,
-    detachAgent: async agentId => {
-      assert(identities.has(agentId), "Snapshot export requires the confirmed native detach receipt");
+    detachAgents: async agentIds => {
       const { config } = await source.rpc.configGet();
-      assert(!(config as { agents: { entries: Record<string, unknown> } }).agents.entries[agentId]);
+      for (const agentId of agentIds) {
+        assert(identities.has(agentId), "Snapshot export requires the confirmed native detach receipt");
+        assert(!(config as { agents: { entries: Record<string, unknown> } }).agents.entries[agentId]);
+      }
     },
   });
   const target = await startGateway("target", [targetKeeper]);

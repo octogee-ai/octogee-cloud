@@ -698,6 +698,20 @@ export function createGatewayRpc(opts = {}) {
             }
             return payload;
         },
+        agentsDetachMany: async (params) => {
+            const payload = await callOkPayload(call, "agents.detachMany", params);
+            if (!Array.isArray(payload.results) || payload.results.length !== params.agentIds.length ||
+                !payload.results.every((result, index) => {
+                    if (!result || typeof result !== "object")
+                        return false;
+                    const receipt = result;
+                    return receipt.ok === true && receipt.agentId === params.agentIds[index] &&
+                        receipt.purgeFailed === undefined && Array.isArray(receipt.failed) && receipt.failed.length === 0 &&
+                        Array.isArray(receipt.removed) && receipt.removed.length === 0;
+                })) {
+                throw new OpenclawWireError(INVALID_RESPONSE, "agents.detachMany did not confirm completed store-preserving cleanup for every agent");
+            }
+        },
         async secretsReload() {
             return parseSecretsReloadPayload(await call("secrets.reload", {}));
         },

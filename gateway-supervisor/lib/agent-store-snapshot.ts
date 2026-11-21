@@ -87,19 +87,23 @@ export async function exportAgentStoreSnapshots(
     sources: ReadonlyArray<{ cwd: string; path: string }>;
     exportRoot: string;
     log?: (message: string) => void;
-    detachAgent?: (agentId: string) => Promise<void>;
+    detachAgents?: (agentIds: readonly string[]) => Promise<void>;
   },
 ): Promise<Array<{ cwd: string; path: string }>> {
   const stores = await findPortableAgentStores(input.sources);
   if (stores.length === 0) return exportCodexStoreSnapshots(input);
-  const carried: Array<{ cwd: string; path: string }> = [];
-  for (const store of stores) {
+  const anchored = stores.map(store => {
     const file = path.join(store.sourceAgentDir, AGENT_STORE_BASENAME);
-    const anchor = readPostgresAgentAnchor(file);
     input.signal?.throwIfAborted();
+    const anchor = readPostgresAgentAnchor(file);
     if (!anchor) throw new Error("SQLite agent handoff is unsupported after the PostgreSQL cutover");
-    if (!input.detachAgent) throw new Error(`PostgreSQL agent ${store.agentId} must be detached before handoff`);
-    await input.detachAgent(store.agentId);
+    return { store, file, anchor };
+  });
+  if (!input.detachAgents) throw new Error("PostgreSQL agents must be detached before handoff");
+  await input.detachAgents(stores.map(store => store.agentId));
+  const carried: Array<{ cwd: string; path: string }> = [];
+  for (const { store, file, anchor } of anchored) {
+    input.signal?.throwIfAborted();
     for (const suffix of ["-wal", "-journal"]) {
       const sidecar = await fs.stat(file + suffix).catch((error: NodeJS.ErrnoException) => {
         if (error.code === "ENOENT") return null;

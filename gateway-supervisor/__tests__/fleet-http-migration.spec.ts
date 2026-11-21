@@ -3572,6 +3572,7 @@ describe("PostgreSQL agent anchors across an rsync carry", () => {
         { cwd: stateDir, path: path.join("agents", "octogee-chris-coach") },
       ]),
       releaseAgent: vi.fn(options.releaseAgent ?? (async () => undefined)),
+      detachSourceAgents: vi.fn(async () => undefined),
       sourceMigrationIdentityCustody: vi.fn(async () => ({ migrationId, uid: "uid-chris", gatewayId: GATEWAY_ID, podUid: "source-pod", epoch: 4 })),
       sourceMigrationAgentAnchors: vi.fn(async () => [{ agentId: "octogee-chris-coach", storeId: "1514f000-4540-4f4e-92a1-831adeac3d5b", schema: "octogee_agent_fixture" }]),
       exportOpenClawActivationManifest: vi.fn(async () => ({ version: 2, slug: "chris", appliedFingerprint: "fp-chris", agentId: "octogee-chris-coach", accountId: "chris-coach", agent: { id: "octogee-chris-coach", workspace }, projectAgents: [], mattermostAccount: { botToken: "synthetic-coach-token" }, bindings: [{ agentId: "octogee-chris-coach", match: { channel: "mattermost", accountId: "chris-coach" } }] })),
@@ -3663,12 +3664,12 @@ describe("PostgreSQL agent anchors across an rsync carry", () => {
     expect(snapshotCarried).toBe(true);
   });
 
-  it.each(["complete", "running", "archived", "archived missing anchor", "archived directory symlink", "foreign extra anchor", "missing authority", "foreign custody", "foreign anchor", "missing anchor", "authority changed"])("carries the retained roster after current source roster shrinks (%s)", async (scenario) => {
+  it.each(["complete", "running", "batch refused", "archived", "archived missing anchor", "archived directory symlink", "foreign extra anchor", "missing authority", "foreign custody", "foreign anchor", "missing anchor", "authority changed"])("carries the retained roster after current source roster shrinks (%s)", async (scenario) => {
     const stateDir = await mkTempRoot(), migrationId = "held-roster-retry";
     vi.stubEnv("POD_UID", "source-pod");
     const ids = ["octogee-chris-coach", "octogee-chris-proj-one-coach", "octogee-chris-proj-two-coach"];
     for (const id of ids) await writeStore(stateDir, `agents/${id}/agent/openclaw-agent.sqlite`, () => {});
-    const { handler, adapter, req } = pushRsync(stateDir, migrationId, { surgeSourceOpenClawHeld: async () => scenario !== "running" });
+    const { handler, adapter, req } = pushRsync(stateDir, migrationId, { surgeSourceOpenClawHeld: async () => scenario !== "running" && scenario !== "batch refused" });
     const manifest = await adapter.exportOpenClawActivationManifest!("chris");
     manifest.projectAgents = ids.slice(1).map((agentId, index) => ({ agentId, accountId: agentId.replace(/^octogee-/, "").replace(/-coach$/, ""), agent: { id: agentId, workspace: path.join(stateDir, "customers/chris/projects", index ? "two" : "one") }, mattermostAccount: { botToken: "synthetic-project-token" }, bindings: [{ agentId, match: { channel: "mattermost", accountId: agentId.replace(/^octogee-/, "").replace(/-coach$/, "") } }] }));
     for (const project of manifest.projectAgents) await fs.mkdir(String(project.agent.workspace), { recursive: true });
@@ -3691,10 +3692,12 @@ describe("PostgreSQL agent anchors across an rsync carry", () => {
       let reads = 0;
       adapter.sourceMigrationAgentAnchors = async () => ++reads === 1 ? ids.map(agentId => ({ agentId, storeId: "1514f000-4540-4f4e-92a1-831adeac3d5b", schema: "octogee_agent_fixture" })) : [];
     }
+    if (scenario === "batch refused") vi.mocked(adapter.detachSourceAgents!).mockRejectedValueOnce(new Error("detach not confirmed"));
     spawnMock.mockReturnValueOnce(mkFakeChild({ exitCode: 0 }));
     const response = mkResponse(); await handler(req, response.res, vi.fn());
     if (scenario !== "complete" && scenario !== "running" && scenario !== "archived") {
       const errors = {
+        "batch refused": "detach not confirmed",
         "missing authority": "Retained source requires current migration anchor authority",
         "foreign custody": "Source workspace identity custody changed",
         "foreign anchor": "Retained source agent anchor does not match migration authority",
@@ -3713,8 +3716,12 @@ describe("PostgreSQL agent anchors across an rsync carry", () => {
     expect(response.getStatus(), JSON.stringify(response.getBody())).toBe(200);
     const args = spawnMock.mock.calls[0]![1] as string[];
     for (const id of ids) expect(args.some(arg => arg.endsWith(`/./agents/${id}/agent/.octogee-snapshot`))).toBe(true);
-    if (scenario === "running") expect(vi.mocked(adapter.releaseAgent!).mock.calls.map(([id]) => id)).toEqual(ids);
-    else expect(adapter.releaseAgent).not.toHaveBeenCalled();
+    if (scenario === "running") {
+      expect(adapter.detachSourceAgents).toHaveBeenCalledExactlyOnceWith("chris", ids, expect.any(AbortSignal));
+    } else {
+      expect(adapter.detachSourceAgents).not.toHaveBeenCalled();
+    }
+    expect(adapter.releaseAgent).not.toHaveBeenCalled();
   });
 
   it("detaches through OpenClaw when the source is not held for the migration", async () => {
