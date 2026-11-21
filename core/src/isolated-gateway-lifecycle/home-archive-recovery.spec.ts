@@ -27,6 +27,12 @@ describe("release a failed home restore generation", () => {
     expect(getOperation).toHaveBeenCalledWith("old-op");
   });
 
+  it("rejects an incomplete restore identity before looking up a receipt", async () => {
+    const { state, getReceipt } = fixture();
+    await expect(assertFailedHomeRestoreReleased(state, { ...identity, targetGatewayId: "" })).rejects.toThrow(/archive.*identity/);
+    expect(getReceipt).not.toHaveBeenCalled();
+  });
+
   it("refuses another dispatched activation or receipt generation", async () => {
     const { state, getOperation, getReceipt } = fixture();
     getOperation.mockResolvedValueOnce({ ...failed, status: "running" });

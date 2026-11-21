@@ -8,8 +8,14 @@ interface RestoreGeneration {
   generation: number;
 }
 
+function validRecoveryIdentity(identity: RestoreGeneration): boolean {
+  return [identity.ownerUid, identity.targetGatewayId, identity.leaseId].every(id => typeof id === "string" && id.length > 0 && !id.includes("/")) &&
+    Number.isSafeInteger(identity.generation) && identity.generation > 0;
+}
+
 export async function assertFailedHomeRestoreReleased(state: PlatformStateRepositories, identity: RestoreGeneration): Promise<void> {
   const { ownerUid, targetGatewayId, leaseId, generation } = identity;
+  if (!validRecoveryIdentity(identity)) throw new IsolatedGatewayFenceError("Home archive restore receipt identity is incomplete");
   const receipt = await state.users.placementReceipts.get(ownerUid, leaseId, generation, "activation-failed");
   if (!receipt || receipt.kind !== "activation-failed" || receipt.gatewayId !== targetGatewayId ||
       receipt.leaseId !== leaseId || receipt.generation !== generation) {
