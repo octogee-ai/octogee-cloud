@@ -1120,21 +1120,39 @@ interface EnsureVmOperations {
   wakeVm(gatewayId: string, description: GatewayVmDescription): Promise<GatewayVmDescription>;
 }
 
-async function recoverOriginalParkedVm(deps: VmLifecycleDeps, input: {
-  gatewayId: string; ownerUid: string; image: string; spec: GatewayVmSpec;
+async function verifyOriginalParkedVm(deps: VmLifecycleDeps, input: {
+  gatewayId: string; ownerUid: string;
   description: GatewayVmDescription | null; existing: GatewayVmState | null;
   previousInstanceId: unknown; previousBootImageId: unknown;
-}, wakeVm: EnsureVmOperations["wakeVm"]): Promise<GatewayVmState> {
-  const { gatewayId, ownerUid, image, spec, existing, previousInstanceId, previousBootImageId } = input;
-  let { description } = input;
+}): Promise<GatewayVmDescription> {
+  const { gatewayId, ownerUid, description, existing, previousInstanceId, previousBootImageId } = input;
   if (!description || !existing || description.instanceId !== existing.instanceId ||
       description.instanceId !== previousInstanceId || description.gatewayId !== gatewayId ||
-      description.metadata["octogee-owner-uid"] !== ownerUid || description.metadata["gateway-image"] !== image) {
-    throw new Error("Original parked VM identity or Gateway image changed before recovery");
+      description.metadata["octogee-owner-uid"] !== ownerUid) {
+    throw new Error("Original parked VM identity changed before recovery");
   }
   const original = await deps.vm.readBootImage(description.name, description.zone);
   if (original.id !== previousBootImageId) throw new Error("Original parked VM boot image changed before recovery");
-  if (description.status === "SUSPENDED") {
+  return description;
+}
+
+async function recoverOriginalParkedVm(deps: VmLifecycleDeps, input: Parameters<typeof verifyOriginalParkedVm>[1] & {
+  binding: CreateGatewayVmInput; spec: GatewayVmSpec;
+}, wakeVm: EnsureVmOperations["wakeVm"]): Promise<GatewayVmState> {
+  const { gatewayId, ownerUid, binding, spec } = input;
+  let description = await verifyOriginalParkedVm(deps, input);
+  const image = binding.metadata["gateway-image"];
+  if (description.metadata["gateway-image"] !== image) {
+    if (!PARKED_STATUSES.has(description.status)) throw new Error("Original VM must be parked to change its Gateway image for recovery");
+    if (await deps.readDesiredStatus(gatewayId) !== "running") throw new Error("Parked computer recovery no longer requires a boot");
+    const stopped = await bindParkedVm(deps, gatewayId, description, binding);
+    description = await verifyOriginalParkedVm(deps, { ...input, description: await deps.vm.describe(stopped.name, stopped.zone) });
+    if (!STOPPED_STATUSES.has(description.status) || description.metadata["gateway-image"] !== image) {
+      throw new Error("Original VM did not converge to the recovery Gateway image while stopped");
+    }
+  }
+  if (PARKED_STATUSES.has(description.status)) {
+    if (await deps.readDesiredStatus(gatewayId) !== "running") throw new Error("Parked computer recovery no longer requires a boot");
     await releaseParkedVm(deps.store, ownerUid);
     description = await wakeVm(gatewayId, description);
   }
@@ -1189,7 +1207,7 @@ async function ensureBoundVm(deps: VmLifecycleDeps, request: {
   const prewarmOutput = prewarm?.gatewayId === gatewayId ? prewarm.output : undefined;
   if (prewarmOutput?.prewarmState === "repairing") {
     const { previousInstanceId, previousBootImageId } = prewarmOutput;
-    return recoverOriginalParkedVm(deps, { gatewayId, ownerUid, image, spec, description, existing, previousInstanceId, previousBootImageId }, operations.wakeVm);
+    return recoverOriginalParkedVm(deps, { gatewayId, ownerUid, binding: input, spec, description, existing, previousInstanceId, previousBootImageId }, operations.wakeVm);
   }
   const recovery = await requireHomeRecovery(deps, { gatewayId, ownerUid, data, description });
   const expectedPrewarmImageId = prewarm && prewarmOutput?.prewarmState === "booting" ? parkedPrewarmInput(prewarm).bootImageId : undefined;

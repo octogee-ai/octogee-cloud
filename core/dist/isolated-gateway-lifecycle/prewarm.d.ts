@@ -3,6 +3,7 @@ import { type Operation } from "@octogee/shared/types/glm";
 import type { OperationRecord } from "../platform-state/operations.js";
 import type { PlatformStateStore, PlatformStateTransaction } from "../platform-state/store.js";
 export declare const PARKED_PREWARM_KIND = "prewarm-gateway";
+export declare const ACTIVE_PARKED_PREWARM_STATUSES: readonly ["pending", "running"];
 export interface ParkedPrewarmInput {
     uid: string;
     gatewayId: string;
@@ -26,6 +27,7 @@ declare const REPAIR_PARKING = "repair-parking";
 declare const DEMAND_WON = "demand-won";
 declare const PREWARM_CLAIM_STATES: readonly ["booting", "handoff", "repairing", "repair-parking"];
 type PrewarmClaimState = typeof PREWARM_CLAIM_STATES[number];
+export declare function activeParkedPrewarmGatewayIds(operations: readonly OperationRecord[]): ReadonlySet<string>;
 type PrewarmStart = {
     state: PrewarmClaimState | "parked";
     claim: PrewarmClaim;
