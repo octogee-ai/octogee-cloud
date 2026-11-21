@@ -28,6 +28,35 @@ function unisolatedUserFleet(): Seed {
   };
 }
 
+function parkedArchiveFleet(): Seed {
+  const gatewayId = "iso-ada";
+  const ownerUid = "uid-ada";
+  const sharedGatewayId = "shared-a";
+  const returnOperationId = "archive-fixture-return";
+  return {
+    ...FLEET,
+    [`gateways/${gatewayId}`]: { ...FLEET[`gateways/${gatewayId}`], desiredStatus: "paused", liveRelease: 2, sizingProfile: "archive-fixture" },
+    [`users/${ownerUid}`]: {
+      username: "ada",
+      provisioning: {
+        computer: {
+          instanceName: "archive-fixture-vm", instanceId: "123", zone: "us-central1-b", gatewayId, parkedAt: 10,
+          checkpoint: { outcome: "fresh", requestedAt: 8, completedAt: 9 }, vmSpec: { desktop: "x11" },
+        },
+        homeDisk: { id: "124" },
+        openclaw: { slug: "ada", gatewayId: sharedGatewayId, status: "complete", activationLease: {
+          status: "parked", leaseId: "archive-fixture-lease", generation: 1, targetGatewayId: gatewayId, returnOperationId,
+        } },
+      },
+    },
+    ...operation(returnOperationId, {
+      kind: "migrate-user", status: "succeeded", createdAt: 1, startedAt: 2, completedAt: 11,
+      inputUid: ownerUid, input: { uid: ownerUid, fromGatewayId: gatewayId, toGatewayId: sharedGatewayId },
+      steps: [], output: { nativeSourcePark: { parked: "stopped" } },
+    }),
+  };
+}
+
 afterEach(() => vi.unstubAllEnvs());
 
 describe("a dry run of a changing request", () => {
@@ -262,6 +291,7 @@ describe("every changing route", () => {
     "POST /users/:uid/migrate": { method: "post", path: "/users/uid-ada/migrate", body: { to: "shared-b" } },
     "POST /users/:uid/unassign": { method: "post", path: "/users/uid-ada/unassign" },
     "PATCH /users/:uid/placement": { method: "patch", path: "/users/uid-ada/placement", body: { managedBy: "operator", gatewayId: null } },
+    "POST /users/:uid/vm/archive": { method: "post", path: "/users/uid-ada/vm/archive", seed: parkedArchiveFleet },
     "POST /users/:uid/vm/replace": { method: "post", path: "/users/uid-ada/vm/replace", body: {} },
     "POST /shared-gateways": {
       method: "post",
@@ -322,6 +352,7 @@ describe("every changing route", () => {
 
   it.each(Object.entries(routes))("%s answers a dry run with a plan and writes nothing", async (_route, call) => {
     vi.stubEnv("GATEWAY_SERVICE_ACCOUNT", "gateway@example.iam.gserviceaccount.com");
+    if (_route === "POST /users/:uid/vm/archive") vi.stubEnv("GATEWAY_TEST_HOME_ARCHIVE_GRANT", "uid-ada:archive-fixture");
     const h = harness(call.seed?.() ?? FLEET);
     const before = h.snapshot();
 
