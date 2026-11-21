@@ -1,3 +1,5 @@
+import { isAuthorizedHomeArchiveOrigin } from "@octogee/core/admin-fleet-router";
+import { RELEASE_RESTORED_HOME_BACKUP } from "@octogee/core/isolated-gateway-lifecycle";
 import { isUserActivateOperationIdFor, isUserReturnOperationIdFor } from "@octogee/shared/types/isolated-operation-ids";
 import { OPERATOR_ISOLATED_GATEWAY_SOURCE } from "@octogee/core/operator-isolated-gateway";
 import { sourceTransferBlocksRelease } from './lib/source-transfer-execution.js';
@@ -146,6 +148,13 @@ export function operationNeedsDurableUserMigrationV2Resume(op: {
   return op.kind === MIGRATE_USER_KIND && op.userMigrationV2 !== undefined;
 }
 
+function isDurableVmHomeOperation(op: { kind?: string; origin?: string; createdBy?: string; input?: Record<string, unknown> }): boolean {
+  if (op.kind !== "gateway-vm") return false;
+  const action = op.input?.action;
+  return (isAuthorizedHomeArchiveOrigin(op) && action === "archive") ||
+    (op.origin === "automatic" && action === RELEASE_RESTORED_HOME_BACKUP);
+}
+
 export function operationNeedsDurableRestartResume(op: {
   id?: string;
   kind?: string;
@@ -162,7 +171,7 @@ export function operationNeedsDurableRestartResume(op: {
     sourceTransferBlocksRelease(op.sourceTransferExecution) || op.kind === "suspend-user" ||
     (op.kind === "restart-gateway" && (op.input?.restoreRecovery !== undefined || op.input?.sourceRecovery !== undefined)) ||
     op.kind === "prewarm-gateway" || op.kind === "erase-user" ||
-    isLevelTriggeredUserReturn(op) ||
+    isLevelTriggeredUserReturn(op) || isDurableVmHomeOperation(op) ||
     operationNeedsDurableUserMigrationV2Resume(op);
 }
 
@@ -245,12 +254,17 @@ function recordOutput(value: unknown): boolean {
   return value !== null && typeof value === "object";
 }
 
+function isHomeBackupReleasePending({ op, result }: OperationCompletionInput): boolean {
+  return op.kind === "gateway-vm" && op.input?.action === RELEASE_RESTORED_HOME_BACKUP && result.output?.homeBackupReleasePending === true;
+}
+
 function hasLevelTriggeredFence(input: OperationCompletionInput): boolean {
   const { op, result } = input;
   if (recordOutput(result.output?.deletionBlocked)) return false;
   return recordOutput(result.output?.retirementFencePending) ||
     recordOutput(result.output?.deletionFencePending) ||
     recordOutput(result.output?.deletionCleanupRetry) ||
+    isHomeBackupReleasePending(input) ||
     op.kind === MIGRATE_USER_KIND && result.output?.gatewayCompatibilityPending === true ||
     op.kind === "suspend-user" ||
     op.kind === "erase-user";

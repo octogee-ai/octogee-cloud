@@ -5,18 +5,20 @@ interface HomeDisk {
   id?: string; name?: string; sizeGb?: string; type?: string;
   labels?: Record<string, string>; labelFingerprint?: string; users?: string[];
 }
-interface HomeInstance {
+export interface HomeInstance {
   id?: string;
   status?: string;
   metadata?: { items?: Array<{ key?: string; value?: string }> };
   disks?: Array<{ boot?: boolean; source?: string; deviceName?: string; autoDelete?: boolean }>;
 }
 const missing = (error: unknown): boolean => (error as { response?: { status?: number }; code?: number })?.response?.status === 404 || (error as { code?: number })?.code === 404;
-const VM_HOME_DISK_DEVICE_NAME = "octogee-home";
+export const VM_HOME_DISK_DEVICE_NAME = "octogee-home";
 const ownerOf = (instance: HomeInstance | null): string | undefined => instance?.metadata?.items?.find(item => item.key === "octogee-owner-uid")?.value;
 
-function assertStoppedHomeOwner(instance: HomeInstance | null, instanceId: string, ownerUid: string): void {
-  if (!instance || instance.id !== instanceId || ownerOf(instance) !== ownerUid || !["STOPPED", "TERMINATED"].includes(instance.status ?? "")) throw new Error("boot deletion requires the same stopped owner VM");
+export function assertStoppedHomeOwner(
+  instance: HomeInstance | null, instanceId: string, ownerUid: string, action = "boot deletion",
+): asserts instance is HomeInstance {
+  if (!instance || instance.id !== instanceId || ownerOf(instance) !== ownerUid || !["STOPPED", "TERMINATED"].includes(instance.status ?? "")) throw new Error(`${action} requires the same stopped owner VM`);
 }
 function assertRetainedHomeDisks(disks: HomeInstance["disks"], home: RetainedUserHome, parseName: (source: string) => string): void {
   const attached = disks?.find(disk => disk.deviceName === VM_HOME_DISK_DEVICE_NAME && !disk.boot);
@@ -24,8 +26,8 @@ function assertRetainedHomeDisks(disks: HomeInstance["disks"], home: RetainedUse
   if (!attached?.source || parseName(home.source) !== home.name || parseName(attached.source) !== home.name || attached?.autoDelete !== false || boot.length !== 1 || boot[0].autoDelete !== true
     || disks?.some(disk => !disk.boot && disk.autoDelete !== false)) throw new Error("boot deletion would delete unverified non-boot storage");
 }
-function assertRetainedHomeDisk(disk: HomeDisk, home: RetainedUserHome, ownerUid: string): void {
-  if (disk.id !== home.id || disk.labels?.["octogee-owner-uid"] !== ownerUid.toLowerCase() || disk.labels?.["octogee-storage"] !== "customer-home") throw new Error("retained home changed before boot deletion");
+export function assertRetainedHomeDisk(disk: HomeDisk, home: RetainedUserHome, ownerUid: string, action = "boot deletion"): void {
+  if (disk.id !== home.id || disk.labels?.["octogee-owner-uid"] !== ownerUid.toLowerCase() || disk.labels?.["octogee-storage"] !== "customer-home") throw new Error(`retained home changed before ${action}`);
 }
 
 export function createVmHomeClient(deps: {

@@ -28,6 +28,42 @@ function unisolatedUserFleet(): Seed {
   };
 }
 
+function parkedArchiveFleet(): Seed {
+  const gatewayId = "iso-ada";
+  const ownerUid = "uid-ada";
+  const sharedGatewayId = "shared-a";
+  const returnOperationId = "archive-fixture-return";
+  const instanceName = "archive-fixture-vm";
+  const zone = "us-central1-b";
+  const homeSource = "projects/test/zones/us-central1-b/disks/archive-fixture-home";
+  const migrationId = "archive-fixture-scheduler";
+  return {
+    ...FLEET,
+    [`gateways/${gatewayId}`]: { ...FLEET[`gateways/${gatewayId}`], desiredStatus: "paused", liveRelease: 2, sizingProfile: "archive-fixture" },
+    [`glmGateways/${gatewayId}`]: { docKind: "runtime", gatewayId, runtime: "gce-vm", lifecycle: "serving", release: 2,
+      vmSpec: { desktop: "x11" }, vm: { instanceName, instanceId: "123", zone, status: "SUSPENDED" } },
+    [`users/${ownerUid}`]: {
+      username: "ada",
+      provisioning: {
+        projectStorage: { nativeBoot: true },
+        homeDisk: { id: "124", source: homeSource, zone },
+        pendingNativeSchedulerRetirement: { uid: ownerUid, slug: "ada", returnOperationId, migrationId,
+          sourceGatewayId: gatewayId, sharedGatewayId, instanceName, instanceId: "123", zone, homeDiskId: "124",
+          homeDiskSource: homeSource, cutoverCommittedAt: 5, completedAt: 10 },
+        openclaw: { slug: "ada", gatewayId: sharedGatewayId, status: "complete", activationLease: {
+          status: "parked", leaseId: "archive-fixture-lease", generation: 1, targetGatewayId: gatewayId, returnOperationId,
+        } },
+      },
+    },
+    ...operation(returnOperationId, {
+      kind: "migrate-user", status: "succeeded", createdAt: 1, startedAt: 2, completedAt: 11, cutoverCommittedAt: 5,
+      inputUid: ownerUid, input: { uid: ownerUid, fromGatewayId: gatewayId, toGatewayId: sharedGatewayId },
+      schedulerHandoff: { uid: ownerUid, slug: "ada", migrationId, fromGatewayId: gatewayId, toGatewayId: sharedGatewayId },
+      steps: [], output: { nativeSourcePark: { parked: "suspended" } },
+    }),
+  };
+}
+
 afterEach(() => vi.unstubAllEnvs());
 
 describe("a dry run of a changing request", () => {
@@ -262,6 +298,7 @@ describe("every changing route", () => {
     "POST /users/:uid/migrate": { method: "post", path: "/users/uid-ada/migrate", body: { to: "shared-b" } },
     "POST /users/:uid/unassign": { method: "post", path: "/users/uid-ada/unassign" },
     "PATCH /users/:uid/placement": { method: "patch", path: "/users/uid-ada/placement", body: { managedBy: "operator", gatewayId: null } },
+    "POST /users/:uid/vm/archive": { method: "post", path: "/users/uid-ada/vm/archive", seed: parkedArchiveFleet },
     "POST /users/:uid/vm/replace": { method: "post", path: "/users/uid-ada/vm/replace", body: {} },
     "POST /shared-gateways": {
       method: "post",
@@ -322,6 +359,7 @@ describe("every changing route", () => {
 
   it.each(Object.entries(routes))("%s answers a dry run with a plan and writes nothing", async (_route, call) => {
     vi.stubEnv("GATEWAY_SERVICE_ACCOUNT", "gateway@example.iam.gserviceaccount.com");
+    if (_route === "POST /users/:uid/vm/archive") vi.stubEnv("GATEWAY_TEST_HOME_ARCHIVE_GRANT", "uid-ada:archive-fixture");
     const h = harness(call.seed?.() ?? FLEET);
     const before = h.snapshot();
 

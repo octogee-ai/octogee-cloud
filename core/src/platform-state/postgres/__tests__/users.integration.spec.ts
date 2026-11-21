@@ -187,6 +187,23 @@ describe.skipIf(!dsn)("PostgreSQL user records: admission", () => {
 describe.skipIf(!dsn)("PostgreSQL user records: patches", () => {
   const fixture = useUserFixture();
 
+  it("round-trips archive custody independently of retained-home provenance", async () => {
+    const { records } = fixture();
+    await records.create({ uid: "alice", createdAt: NOW });
+    const archive = {
+      phase: "archived" as const, operationId: "archive-1", gatewayId: "user-gateway", instanceId: "104",
+      bootDisk: { source: "projects/test-project/zones/us-central1-b/disks/boot", id: "106" },
+      snapshot: { projectId: "test-project", name: "home-1", id: "105",
+        sourceDisk: "projects/test-project/zones/us-central1-b/disks/original", sourceDiskId: "103", sizeGb: 10 },
+    };
+    await records.patch("alice", { home: { homeDisk: { id: "103" }, homeArchive: archive } });
+    expect((await records.get("alice"))?.home).toMatchObject({ homeDisk: { id: "103" }, homeArchive: archive });
+
+    await records.patch("alice", { home: { homeArchive: { clear: true } } });
+    expect((await records.get("alice"))?.home).toMatchObject({ homeDisk: { id: "103" } });
+    expect((await records.get("alice"))?.home).not.toHaveProperty("homeArchive");
+  });
+
   it("patches each group field by field, so siblings survive and cleared fields disappear", async () => {
     const { records } = fixture();
     await records.admit("alice", { slug: "alice-renamed", persona: null, createdAt: NOW, provisioningStartedAt: NOW });

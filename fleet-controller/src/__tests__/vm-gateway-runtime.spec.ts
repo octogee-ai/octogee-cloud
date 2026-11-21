@@ -116,6 +116,12 @@ function harness(
     expandHome: vi.fn(async (home, _owner, sizeGb) => ({ ...home, sizeGb: Math.max(home.sizeGb, sizeGb) })),
     retainHome: vi.fn(async () => ({ projectId: "octogee-test", zone: "us-west1-b", name: "computer-home", id: "777", sizeGb: 30, diskType: "pd-ssd" as const, source: "projects/octogee-test/zones/us-west1-b/disks/computer-home" })),
     verifyDetachedHome: vi.fn(async () => {}),
+    snapshotStoppedHome: vi.fn(async () => null),
+    restoreHomeFromSnapshot: vi.fn(async () => null),
+    verifyHomeSnapshot: vi.fn(async () => {}),
+    eraseHomeSnapshot: vi.fn(async () => true),
+    readArchiveBootDisk: vi.fn(async () => ({ source: "unused", id: "1" })),
+    archiveDisksAbsent: vi.fn(async () => true),
     deleteRetainedHome: vi.fn(async () => {}),
     deleteRetainingHome: vi.fn(async () => {}),
     setServiceAccount: vi.fn(async () => {}),
@@ -134,6 +140,10 @@ function harness(
   };
   const log = vi.fn();
   const creationSettled = vi.fn();
+  const deploymentPublished = vi.fn((gatewayId: string) => {
+    expect(docs[`glmGateways/${gatewayId}`].vmInstance).toMatchObject({ replicas: 1 });
+    expect(routesPublished().at(-1)).toHaveProperty(gatewayId);
+  });
   const journalBootUpgrade = vi.fn<VmGatewayRuntimeDeps["journalBootUpgrade"]>(async (_input, work) => work(async () => {}));
   const helmCalls: string[][] = [];
   const kubectlCalls: Array<{ args: string[]; stdin?: string }> = [];
@@ -165,11 +175,12 @@ function harness(
     disposableParking: extra.disposableParking,
     homeCheckpointTimeoutMs: extra.homeCheckpointTimeoutMs ?? 60_000,
     homeCheckpointPollMs: 10_000,
-    onVmCreationSettled: creationSettled,
+    onVmRuntimeSettled: creationSettled,
+    onVmDeploymentPublished: deploymentPublished,
     now: () => clock.now, log,
   });
   const routesPublished = () => kubectlCalls.filter((c) => c.args[0] === "apply").map((c) => JSON.parse(JSON.parse(c.stdin!).data["routes.json"]) as Record<string, string>);
-  return { runtime, store, docs, writes, deletes, vm, log, creationSettled, journalBootUpgrade, helmCalls, kubectlCalls, routesPublished, clock, waits };
+  return { runtime, store, docs, writes, deletes, vm, log, creationSettled, journalBootUpgrade, helmCalls, kubectlCalls, routesPublished, clock, waits, deploymentPublished };
 }
 
 const upsertOpts = {
@@ -669,6 +680,21 @@ describe("createVmGatewayRuntime.upsertInstance", () => {
     expect(routesFail.docs["glmGateways/b-x"].vmInstance).toBeUndefined();
   });
 
+  it("requests verification once after publishing a resumed VM's routable deployment", async () => {
+    let current = suspended;
+    const h = harness({ "glmGateways/b-x": { ...initialRuntimeDoc("b-x"), runtime: "gce-vm",
+      vm: { ...recorded, status: "SUSPENDED", internalIp: null }, vmInstance: { replicas: 0 } } }, {
+      describe: vi.fn(async () => current),
+      resume: vi.fn(async () => { current = running; return { fellBackToStandard: false }; }),
+    });
+
+    await h.runtime.upsertInstance({ ...upsertOpts, replicas: 1 });
+    expect(h.deploymentPublished).toHaveBeenCalledExactlyOnceWith("b-x");
+
+    await h.runtime.upsertInstance({ ...upsertOpts, replicas: 1 });
+    expect(h.deploymentPublished).toHaveBeenCalledTimes(1);
+  });
+
   it("refuses to suspend for a stale pause after demand takes the same root", async () => {
     const docs = {
       "gateways/b-x": { desiredStatus: "paused" },
@@ -863,6 +889,14 @@ describe("createVmGatewayRuntime.upsertInstance", () => {
 });
 
 describe("createVmGatewayRuntime creating a fresh VM", () => {
+  it("fails closed when the owner has an unhandled archived home before discovering or creating VMs", async () => {
+    const h = harness({ "users/UidA": { provisioning: { homeArchive: { phase: "archived" } } } });
+
+    await expect(h.runtime.upsertInstance(upsertOpts)).rejects.toThrow(/home archive/);
+    expect(h.vm.findByLabels).not.toHaveBeenCalled();
+    expect(h.vm.create).not.toHaveBeenCalled();
+  });
+
   const otherUser = { ...upsertOpts, gatewayId: "b-y", builderIdentity: { ownerUid: "UidB", builderSlug: "papa" } };
 
   function heldInserts() {
@@ -1032,6 +1066,59 @@ describe("createVmGatewayRuntime creating a fresh VM", () => {
 
 describe("suspend parking", () => {
   const suspendedElsewhere = { ...suspended, gatewayId: "b-old" };
+
+  it("defers a converging VM pause while other gateways progress, then publishes the verified result", async () => {
+    let current = running;
+    let finish: () => void = () => {};
+    const compute = new Promise<void>(resolve => { finish = resolve; });
+    const h = harness({
+      "glmGateways/b-x": { ...initialRuntimeDoc("b-x"), runtime: "gce-vm", vm: { ...recorded } },
+      "glmGateways/b-y": { ...initialRuntimeDoc("b-y"), runtime: "gce-vm" },
+    }, {
+      describe: vi.fn(async () => current),
+      suspend: vi.fn(async () => { await compute; current = suspended; }),
+    });
+    const pause = { ...upsertOpts, replicas: 0, deferVmPause: true };
+    try {
+      await expect(Promise.race([
+        h.runtime.upsertInstance(pause),
+        new Promise(resolve => setTimeout(resolve, 100)),
+      ])).rejects.toMatchObject({ name: "VmPausePendingError" });
+      await expect(h.runtime.upsertInstance(pause)).rejects.toMatchObject({ name: "VmPausePendingError" });
+      await expect(h.runtime.upsertInstance(upsertOpts)).rejects.toMatchObject({ name: "VmPausePendingError" });
+      await expect(h.runtime.upsertInstance({ ...upsertOpts, gatewayId: "b-y" })).rejects.toMatchObject({ name: "VmPausePendingError" });
+      await h.runtime.upsertInstance({ ...pause, gatewayId: "b-y", builderIdentity: { ownerUid: "UidB", builderSlug: "other" } });
+      expect(h.vm.suspend).toHaveBeenCalledTimes(1);
+      expect(h.docs["glmGateways/b-y"].vmInstance).toMatchObject({ replicas: 0 });
+      expect(h.docs["glmGateways/b-x"].vm).toMatchObject({ status: "RUNNING" });
+      expect(h.docs["glmGateways/b-x"].vmInstance).toBeUndefined();
+    } finally {
+      finish();
+    }
+    await vi.waitFor(() => expect(h.creationSettled).toHaveBeenCalledWith("b-x"));
+    await h.runtime.upsertInstance(pause);
+    expect(h.vm.suspend).toHaveBeenCalledTimes(1);
+    expect(h.docs["glmGateways/b-x"].vm).toMatchObject({ status: "SUSPENDED", stopReason: "operator" });
+    expect(h.docs["glmGateways/b-x"].vmInstance).toMatchObject({ replicas: 0 });
+  });
+
+  it.each(["SUSPENDING", "STOPPING"])("rechecks a %s VM after restart without sending another park", async (status) => {
+    let current = { ...running, status };
+    const h = harness({
+      "glmGateways/b-x": { ...initialRuntimeDoc("b-x"), runtime: "gce-vm", vm: { ...recorded } },
+    }, { describe: vi.fn(async () => current) });
+    const pause = { ...upsertOpts, replicas: 0, deferVmPause: true };
+
+    await expect(h.runtime.upsertInstance(pause)).rejects.toMatchObject({ name: "VmPausePendingError" });
+    expect(h.docs["glmGateways/b-x"].vmInstance).toBeUndefined();
+
+    current = status === "SUSPENDING" ? suspended : stopped;
+    await h.runtime.upsertInstance(pause);
+    expect(h.vm.suspend).not.toHaveBeenCalled();
+    expect(h.vm.stop).not.toHaveBeenCalled();
+    expect(h.docs["glmGateways/b-x"].vmInstance).toMatchObject({ replicas: 0 });
+    expect(h.docs["glmGateways/b-x"].vm).toMatchObject({ status: current.status, stopReason: "operator" });
+  });
 
   it("falls back to stopping, loudly, when Compute rejects the suspend", async () => {
     let current = running;

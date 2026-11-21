@@ -1365,6 +1365,10 @@ ALTER TABLE operations ADD CONSTRAINT operations_kind_check CHECK (kind IN (
   'add-gateway','gateway-vm','prewarm-gateway','migrate-user','retire-gateway','restart-gateway','recycle-gateway',
   'scale-shared-member','rollout','deprovision-user','suspend-user','erase-user'));
 `;
+const HOME_ARCHIVE = `
+ALTER TABLE users ADD COLUMN home_archive jsonb
+  CHECK (home_archive IS NULL OR jsonb_typeof(home_archive) = 'object');
+`;
 export const PLATFORM_STATE_MIGRATIONS = [
     { version: 1, name: "core-schema", sql: CORE_SCHEMA },
     { version: 2, name: "change-feed", sql: CHANGE_FEED },
@@ -1388,4 +1392,5 @@ export const PLATFORM_STATE_MIGRATIONS = [
     { version: 20, name: "connector-integrations", sql: CONNECTOR_INTEGRATIONS },
     { version: 21, name: "placement-automation-owner", sql: PLACEMENT_AUTOMATION_OWNER },
     { version: 22, name: "parked-computer-upgrade", sql: PARKED_COMPUTER_UPGRADE },
+    { version: 23, name: "user-home-archive", sql: HOME_ARCHIVE },
 ];

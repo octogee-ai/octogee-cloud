@@ -82,6 +82,14 @@ export interface RetainedUserHome {
     diskType: "pd-balanced" | "pd-ssd";
     source: string;
 }
+export interface RetainedUserHomeSnapshot {
+    projectId: string;
+    name: string;
+    id: string;
+    sourceDisk: string;
+    sourceDiskId: string;
+    sizeGb: number;
+}
 export declare const GATEWAY_VM_STOP_REASONS: readonly ["idle", "preempted", "operator"];
 export type GatewayVmStopReason = (typeof GATEWAY_VM_STOP_REASONS)[number];
 export declare function isGatewayVmStopReason(value: unknown): value is GatewayVmStopReason;
@@ -193,6 +201,7 @@ export interface GatewayVmRuntimeResponse {
     homeCheckpoint: {
         requestedAt: number | null;
         completedAt: number | null;
+        deferScheduled?: true;
     };
 }
 export interface GatewayVmDiskSample {
@@ -200,6 +209,7 @@ export interface GatewayVmDiskSample {
     freeBytes: number;
 }
 export interface GatewayVmRuntimeRequest {
+    checkScheduledHomeCheckpoint?: true;
     disk?: GatewayVmDiskSample;
     images?: GatewayVmImageSample;
     preempted?: true;

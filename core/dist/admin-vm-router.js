@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { enqueueParkedHomeArchive, resolveParkedHomeArchiveGrant } from "./parked-home-archive.js";
 import { isValidGatewayId, readUserParkedVm } from "@octogee/shared/types/glm";
 import { projectGatewayDesiredRootForGateway } from "@octogee/shared/types/gateway-releases";
 class VmAdmissionError extends Error {
@@ -184,6 +185,45 @@ function requestedVm(req, key) {
     return key === "gatewayId" ? { gatewayId: id } : { ownerUid: id, ...(force ? { force: true } : {}) };
 }
 export function addAdminComputerRoutes(router, deps) {
+    router.post("/users/:uid/vm/archive", async (req, res, next) => {
+        try {
+            const actor = req;
+            if (!actor.uid) {
+                res.status(401).json({ error: "Unauthenticated" });
+                return;
+            }
+            if (!actor.isAdmin) {
+                res.status(403).json({ error: "Admin access required" });
+                return;
+            }
+            const grant = resolveParkedHomeArchiveGrant(deps.releaseEnvironment, process.env.GATEWAY_TEST_HOME_ARCHIVE_GRANT);
+            const ownerUid = req.params.uid;
+            if (!grant || grant.ownerUid !== ownerUid)
+                throw new VmAdmissionError(409, "No exact parked home archive grant");
+            forceRequested(req, "gatewayId");
+            const admit = async (dryRun = false) => {
+                try {
+                    return (await enqueueParkedHomeArchive(deps.store, { ownerUid, grant, createdBy: actor.uid, dryRun })).operationId;
+                }
+                catch (error) {
+                    throw new VmAdmissionError(409, error instanceof Error ? error.message : String(error));
+                }
+            };
+            const operationId = await deps.journal({
+                req, what: "archive parked VM home", why: "TEST operator archive request", target: { ownerUid },
+                preActionStatus: { binding: "parked-owner" }, mutation: { kind: "archive-computer-home", ownerUid },
+                action: () => admit(),
+                dryRunRefusal: async () => { await admit(true); return null; },
+            });
+            res.status(202).json({ ownerUid, operationId });
+        }
+        catch (error) {
+            if (error instanceof VmAdmissionError)
+                res.status(error.status).json({ error: error.message });
+            else
+                next(error);
+        }
+    });
     for (const [path, key] of [["/gateways/:id/vm/replace", "gatewayId"], ["/users/:uid/vm/replace", "ownerUid"]]) {
         router.post(path, async (req, res, next) => {
             try {

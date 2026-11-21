@@ -127,6 +127,15 @@ export interface RetainedUserHome {
   source: string;
 }
 
+export interface RetainedUserHomeSnapshot {
+  projectId: string;
+  name: string;
+  id: string;
+  sourceDisk: string;
+  sourceDiskId: string;
+  sizeGb: number;
+}
+
 export const GATEWAY_VM_STOP_REASONS = ["idle", "preempted", "operator"] as const;
 export type GatewayVmStopReason = (typeof GATEWAY_VM_STOP_REASONS)[number];
 
@@ -307,7 +316,7 @@ export function isGatewayVmRuntimeBundle(value: unknown): value is GatewayVmRunt
 
 export interface GatewayVmRuntimeResponse {
   bundle: GatewayVmRuntimeBundle;
-  homeCheckpoint: { requestedAt: number | null; completedAt: number | null };
+  homeCheckpoint: { requestedAt: number | null; completedAt: number | null; deferScheduled?: true };
 }
 
 export interface GatewayVmDiskSample {
@@ -316,6 +325,7 @@ export interface GatewayVmDiskSample {
 }
 
 export interface GatewayVmRuntimeRequest {
+  checkScheduledHomeCheckpoint?: true;
   disk?: GatewayVmDiskSample;
   images?: GatewayVmImageSample;
   preempted?: true;
