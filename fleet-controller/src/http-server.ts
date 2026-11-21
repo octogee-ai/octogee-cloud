@@ -21,6 +21,7 @@ import {
 } from "@octogee/core/admin-fleet-router";
 import { addAdminProvisioningRoutes, type AdminProvisioningClient, type AdminProvisioningRouterDeps } from "@octogee/core/admin-provisioning-router";
 import type { CentralReleaseAuthority } from "@octogee/core/artifact-registry";
+import { ACTIVATION_LEASE_SOURCE, CONTINUOUS_PLACEMENT_SOURCE, PLACEMENT_MIGRATION_KIND } from "@octogee/core/placement-migrations";
 import type { StrandedSourceGatewayCalls } from "@octogee/core/stranded-source-restore";
 import type {
   PlatformStateStore,
@@ -170,11 +171,13 @@ const gatewayPlacementFingerprint: PlacementFingerprint<"gateways"> = (root) =>
     root.allocation?.leaseId, root.allocation?.generation])];
 
 const runtimePlacementFingerprint: PlacementFingerprint<"fleetRegistry"> = (runtime) =>
-  [runtime.gatewayId, JSON.stringify([runtime.lifecycle, runtime.vm?.status, runtime.vm?.instanceId,
-    runtime.heartbeat.status, runtime.heartbeat.version, [...runtime.heartbeat.mountedCustomers].sort()])];
+  [runtime.gatewayId, JSON.stringify([runtime.release, runtime.lifecycle, runtime.vm?.status, runtime.vm?.instanceId,
+    runtime.kubernetes?.status, runtime.heartbeat.status, runtime.heartbeat.version,
+    runtime.heartbeat.configuredBuilder?.generation, [...runtime.heartbeat.mountedCustomers].sort()])];
 
 const migrationPlacementFingerprint: PlacementFingerprint<"operations"> = (operation) =>
-  operation.kind === "migrate-user" && operation.input.source === "builder-activation-lease"
+  operation.kind === PLACEMENT_MIGRATION_KIND &&
+    (operation.input.source === ACTIVATION_LEASE_SOURCE || operation.input.source === CONTINUOUS_PLACEMENT_SOURCE)
     ? [operation.id, operation.status] : undefined;
 
 function updatePlacementFingerprint<A extends WatchAggregate>(
@@ -324,7 +327,9 @@ function addAdminFleetEventRoute(
         if (closeAfterFirstChange) close();
         return;
       }
-      writeSseEvent(res, "error", { collection: event.collection, error: event.error });
+      writeSseEvent(res, "error", placementOnly
+        ? { collection: event.collection }
+        : { collection: event.collection, error: event.error });
     });
     req.on("close", close);
   });

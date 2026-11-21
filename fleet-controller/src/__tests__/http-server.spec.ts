@@ -580,6 +580,49 @@ describe("createHttpServer — admin gateway routes", () => {
     expect(res.text).not.toContain("private-lease");
   });
 
+  it.each([
+    { aggregate: "fleetRegistry", collection: "glmGateways" },
+    { aggregate: "operations", collection: "glmOperations" },
+  ] as const)("wakes for placement eligibility changes from $collection", async ({ aggregate, collection }) => {
+    type EventRecord<T> = T extends { records: readonly (infer Row)[] } ? Row : never;
+    const runtime = (release: number, lastHeartbeatAt: number) => ({
+      ...servingRuntime("isolated-fixture", { heartbeat: { lastHeartbeatAt } }),
+      release,
+      revision: "test-revision",
+    }) as EventRecord<WatchEvent<"fleetRegistry">>;
+    const move = (status: "pending" | "running", lastProgressAt: number): EventRecord<WatchEvent<"operations">> => ({
+      id: "drain-fixture", kind: "migrate-user", input: { source: "continuous-placement-policy" }, status, lastProgressAt,
+      createdBy: "test", createdAt: 1, startedAt: null, completedAt: null, steps: [],
+      revision: "test-revision" as Revision,
+    });
+    const [initial, progress, changed] = aggregate === "fleetRegistry"
+      ? [runtime(1, 1), runtime(1, 2), runtime(2, 3)]
+      : [move("pending", 1), move("pending", 2), move("running", 3)];
+    const key = aggregate === "fleetRegistry" ? "isolated-fixture" : "drain-fixture";
+    const watches = createWatchRegistry({
+      failWith: watchAggregate => watchAggregate === aggregate
+        ? new MalformedRecordError({ aggregate: "builder", key }, "private failure details")
+        : undefined,
+      script: (watchAggregate) => watchAggregate === aggregate ? [
+        { kind: "snapshot", cursor: FIXTURE_CURSOR, records: [initial] },
+        { kind: "changes", cursor: FIXTURE_CURSOR, changes: [{ type: "modified", key, record: progress }] },
+        { kind: "snapshot", cursor: FIXTURE_CURSOR, records: [progress] },
+        { kind: "changes", cursor: FIXTURE_CURSOR, changes: [{ type: "modified", key, record: changed }] },
+      ] : [SNAPSHOT],
+    });
+    const res = await request(createHttpServer(buildDeps(store, {}, watches)))
+      .get("/api/admin/fleet-events?placement=1&once=1")
+      .set("Authorization", "Bearer admin-token")
+      .timeout(500);
+
+    expect(res.status).toBe(200);
+    expect(res.text).toContain(`event: placement-changed\ndata: {"collection":"${collection}"`);
+    expect(res.text).toContain(`event: error\ndata: {"collection":"${collection}"}`);
+    expect(res.text).not.toContain(key);
+    expect(res.text).not.toContain("private failure details");
+    expect(res.text.split(`event: placement-reset\ndata: {"collection":"${collection}"`)).toHaveLength(3);
+  });
+
   it("requires admin auth for placement event hints", async () => {
     const watches = createWatchRegistry();
     const app = createHttpServer(buildDeps(store, {}, watches));
