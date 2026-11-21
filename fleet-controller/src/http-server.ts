@@ -25,6 +25,7 @@ import type { StrandedSourceGatewayCalls } from "@octogee/core/stranded-source-r
 import type {
   PlatformStateStore,
   WatchAggregate,
+  WatchChange,
   WatchRecords,
   WatchRequest,
   WatchSubscription,
@@ -176,6 +177,18 @@ const migrationPlacementFingerprint: PlacementFingerprint<"operations"> = (opera
   operation.kind === "migrate-user" && operation.input.source === "builder-activation-lease"
     ? [operation.id, operation.status] : undefined;
 
+function updatePlacementFingerprint<A extends WatchAggregate>(
+  fingerprints: Map<string, string>,
+  { key, record }: WatchChange<A>,
+  fingerprint: PlacementFingerprint<A>,
+): boolean {
+  const next = record ? fingerprint(record)?.[1] : undefined;
+  if (next === fingerprints.get(key)) return false;
+  if (next === undefined) fingerprints.delete(key);
+  else fingerprints.set(key, next);
+  return true;
+}
+
 function createFleetEventHub(deps: {
   store: Pick<PlatformStateStore, "watch">;
   log: (msg: string) => void;
@@ -214,12 +227,8 @@ function createFleetEventHub(deps: {
           }
           emit({ kind: "placement-reset", collection, at: Date.now() });
         } else if (fingerprint && event.kind === "changes") {
-          for (const { key, record } of event.changes) {
-            const next = record ? fingerprint(record)?.[1] : undefined;
-            if (next === placements.get(key)) continue;
-            placement = true;
-            if (next === undefined) placements.delete(key);
-            else placements.set(key, next);
+          for (const change of event.changes) {
+            if (updatePlacementFingerprint(placements, change, fingerprint)) placement = true;
           }
         }
         if (!primed) {
