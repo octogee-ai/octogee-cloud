@@ -1,4 +1,4 @@
-import { restoreArchivedHome } from "./lib/archived-home-restore.js";
+import { rearmRestoredHomeForDemand, restoreArchivedHome } from "./lib/archived-home-restore.js";
 import { parkedPrewarmInput, readActiveParkedPrewarm } from "@octogee/core/isolated-gateway-lifecycle";
 import {
   MissingRecordError,
@@ -1233,6 +1233,7 @@ async function ensureBoundVm(deps: VmLifecycleDeps, request: {
   if (archive) return ensureSnapshotBackedVm(deps, { gatewayId, ownerUid, spec, input, archive }, operations);
   let description = existing ? await deps.vm.describe(existing.instanceName, existing.zone) : null;
   if (!description) description = await deps.vm.findByLabels(ownerVmLabels(deps.environment, ownerUid));
+  await rearmRestoredHomeForDemand(deps, { gatewayId, ownerUid }, description, owner);
   const prewarm = await readActiveParkedPrewarm(deps.store, ownerUid);
   const prewarmOutput = prewarm?.gatewayId === gatewayId ? prewarm.output : undefined;
   if (prewarmOutput?.prewarmState === "repairing") {

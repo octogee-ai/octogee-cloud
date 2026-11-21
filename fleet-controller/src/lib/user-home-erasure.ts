@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
-import { simpleHomePreparation } from "@octogee/core/admin-fleet-router";
+import { archiveSchedulerCustodyMatches, simpleHomePreparation } from "@octogee/core/admin-fleet-router";
 import type { RetainedUserHome, RetainedUserHomeSnapshot } from "@octogee/shared/types/glm";
 import type { UserHomeState, OpaqueMap, PlatformStateStore, PlatformUserRecord, UserHomeArchive } from "@octogee/core/platform-state";
 import type { HomeCopyInput, UserHomeLocation, UserHomeMigration, UserHomeStorage } from "@octogee/core/isolated-gateway-lifecycle";
@@ -26,8 +26,10 @@ export async function eraseUserComputerStorage(deps: UserHomeErasureDeps & {
   return erasedArchive || deleted;
 }
 
-function archiveHasNoWriters(owner: PlatformUserRecord): boolean {
-  return Object.values(owner.fences).every(fence => fence === undefined);
+function archiveHasNoWriters(owner: PlatformUserRecord, archive: UserHomeArchive): boolean {
+  const { pendingNativeSchedulerRetirement, ...writers } = owner.fences;
+  return Object.values(writers).every(fence => fence === undefined) &&
+    (pendingNativeSchedulerRetirement === undefined || archiveSchedulerCustodyMatches(owner, archive));
 }
 
 function archiveHasNoSecondaryHome(home: UserHomeState): boolean {
@@ -54,7 +56,7 @@ function validateRestoredHome(home: RetainedUserHome, archive: Extract<UserHomeA
 function archiveErasureCustody(owner: PlatformUserRecord) {
   if (owner.accountLifecycle?.status !== "erasing") throw new Error("User home archive requires account erasure authority");
   const archive = owner.home.homeArchive;
-  if (!archiveHasNoWriters(owner) || (archive?.phase !== "archived" && archive?.phase !== "restored")) {
+  if ((archive?.phase !== "archived" && archive?.phase !== "restored") || !archiveHasNoWriters(owner, archive)) {
     throw new Error("User home archive must settle before erasure; storage retained for retry");
   }
   const home = owner.home.homeDisk as unknown as RetainedUserHome | undefined;
@@ -64,7 +66,7 @@ function archiveErasureCustody(owner: PlatformUserRecord) {
   } else {
     validateRestoredHome(home, archive);
   }
-  return { archive, home, deletionId: owner.accountLifecycle.deletionId };
+  return { archive, home, deletionId: owner.accountLifecycle.deletionId, scheduler: owner.fences.pendingNativeSchedulerRetirement };
 }
 
 async function eraseArchivedHome(deps: {
@@ -88,6 +90,7 @@ async function eraseArchivedHome(deps: {
     await tx.users.records.patch(uid, {
       home: { homeArchive: { clear: true }, ...(proof.archive.phase === "archived" ? { homeDisk: { clear: true }, homeMigration: { clear: true } } : {}) },
     }, { revision: current.revision });
+    if (proof.scheduler) await tx.users.records.setFence(uid, "pendingNativeSchedulerRetirement", { clear: true }, proof.scheduler);
   });
   return true;
 }

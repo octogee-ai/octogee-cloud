@@ -108,6 +108,10 @@ export function createHomeBackupReleaseHandler(deps: {
       const current = await readRestoredBackup(tx, id);
       if (!current) return { archive: null, ready: false };
       const { archive, owner } = current;
+      const pending = owner.fences.pendingNativeSchedulerRetirement;
+      if (pending && (pending.homeDiskId !== archive.restoredDisk.id || pending.homeDiskSource !== archive.restoredDisk.source)) {
+        return { archive, ready: false };
+      }
       if (archive.releaseProvenForActivation === id.activationOperationId) return { archive, ready: true };
       const cutoverAt = await committedCutover(tx, id, archive);
       if (cutoverAt === null || !await nativeReadyAfterCutover(tx, archive, cutoverAt)) return { archive, ready: false };

@@ -12,18 +12,30 @@ const operation = { id: "return-1", status: "succeeded", kind: "migrate-user", c
   inputUid: fence.ownerUid, input: { uid: fence.ownerUid, fromGatewayId: parked.gatewayId, toGatewayId: "shared-a" },
   output: { nativeSourcePark: { parked: "stopped" } }, steps: [] };
 
-function fixture(options: { status?: string; leaseStatus?: string; homeStorage?: boolean } = {}) {
+function fixture(options: { status?: string; leaseStatus?: string; homeStorage?: boolean; native?: boolean; schedulerDiskId?: string } = {}) {
   const documents = new Map<string, Record<string, unknown>>([
     ["users/UidA", { provisioning: {
-      computer: parked, homeDisk, ...(options.homeStorage ? { homeStorage: { runtime: "gce-vm" } } : {}),
-      openclaw: { gatewayId: "shared-a", activationLease: { status: options.leaseStatus ?? "parked", leaseId: "lease-1",
+      ...(options.native ? { projectStorage: { nativeBoot: true }, pendingNativeSchedulerRetirement: {
+        uid: fence.ownerUid, slug: "alice", returnOperationId: operation.id, migrationId: "scheduler-return-1",
+        sourceGatewayId: parked.gatewayId, sharedGatewayId: "shared-a", instanceName: parked.instanceName,
+        instanceId: parked.instanceId, zone: parked.zone, homeDiskId: options.schedulerDiskId ?? homeDisk.id,
+        homeDiskSource: homeDisk.source, completedAt: 10, cutoverCommittedAt: 5,
+      } } : { computer: parked }), homeDisk, ...(options.homeStorage ? { homeStorage: { runtime: "gce-vm" } } : {}),
+      openclaw: { slug: "alice", gatewayId: "shared-a", activationLease: { status: options.leaseStatus ?? "parked", leaseId: "lease-1",
         generation: 1, targetGatewayId: parked.gatewayId, sourceGatewayId: "shared-a", returnOperationId: "return-1" } },
     } }],
     ["gateways/owner-gateway", { gatewayId: parked.gatewayId, gatewayClass: "isolated", ownerUid: fence.ownerUid,
       sizingProfile: fence.sizingProfile, desiredStatus: "paused", desiredRelease: 1, liveRelease: 1, latestRelease: 1 }],
     ["gateways/shared-a", { gatewayId: "shared-a", gatewayClass: "shared", desiredStatus: "running", desiredRelease: 1, latestRelease: 1 }],
     ["gateways/shared-a/assignments/UidA", { uid: "UidA", slug: "alice", gatewayId: "shared-a", source: "onboarding", state: "serving", epoch: 3 }],
-    ["glmOperations/return-1", { ...operation, status: options.status ?? "succeeded" }],
+    ["glmGateways/owner-gateway", { docKind: "runtime", release: 1, lifecycle: "serving", gatewayId: parked.gatewayId, runtime: "gce-vm", vmSpec: parked.vmSpec,
+      vm: { ...parked, status: "SUSPENDED", updatedAt: 10 } }],
+    ["glmOperations/return-1", { ...operation, status: options.status ?? "succeeded", ...(options.native ? {
+      cutoverCommittedAt: 5, schedulerHandoff: {
+        uid: fence.ownerUid, slug: "alice", migrationId: "scheduler-return-1",
+        fromGatewayId: parked.gatewayId, toGatewayId: "shared-a",
+      },
+    } : {}) }],
   ]);
   return createDocumentFixtureStore(documents);
 }
@@ -71,6 +83,22 @@ describe("enroll a parked home archive", () => {
 
     await expect(enqueueParkedHomeArchive(store, input)).resolves.toEqual({ operationId });
     expect(await store.journal.operations.get(operationId)).toMatchObject({ status: "pending", completedAt: null });
+  });
+
+  it("uses the observed native parked VM without a generic idle receipt and retains exact scheduler authority", async () => {
+    const store = fixture({ native: true });
+    const { operationId } = await enqueueParkedHomeArchive(store, { ownerUid: fence.ownerUid, grant: fence, createdBy: "operator" });
+    expect(await store.users.records.get(fence.ownerUid)).toMatchObject({
+      home: { homeArchive: { operationId, source: { instanceName: parked.instanceName, zone: parked.zone, homeDiskId: homeDisk.id },
+        nativeSchedulerRetirement: { migrationId: "scheduler-return-1", instanceId: parked.instanceId, homeDiskId: homeDisk.id } } },
+      fences: { pendingNativeSchedulerRetirement: { migrationId: "scheduler-return-1" } },
+    });
+  });
+
+  it("retains the original machine when parked scheduler authority points to another home", async () => {
+    const store = fixture({ native: true, schedulerDiskId: "999" });
+    await expect(enqueueParkedHomeArchive(store, { ownerUid: fence.ownerUid, grant: fence, createdBy: "operator" })).rejects.toThrow();
+    expect((await store.users.records.get(fence.ownerUid))?.home.homeArchive).toBeUndefined();
   });
 
   it("requires the exact case-sensitive owner grant", async () => {

@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { isUserParkedVm } from "@octogee/shared/types/glm";
 import type { OperationRecord } from "./platform-state/operations.js";
-import type { PlatformStateStore, PlatformStateTransaction, Stored } from "./platform-state/store.js";
+import type { FleetRegistryRecord } from "./platform-state/fleet-registry.js";
+import type { OpaqueMap, PlatformStateStore, PlatformStateTransaction, Stored } from "./platform-state/store.js";
 import type { PlatformUserRecord, UserActivationLease, UserHomeArchive } from "./platform-state/users.js";
 
 export interface ParkedHomeArchiveGrant {
@@ -43,9 +45,8 @@ export function simpleHomePreparation(value: PlatformUserRecord["home"]["homeMig
 
 function pilotHomeEligible(owner: PlatformUserRecord): boolean {
   const { home, fences } = owner;
-  return home.projectStorageNativeBoot !== true && home.homeStorage === undefined && simpleHomePreparation(home.homeMigration) && home.homeErasure === undefined &&
+  return home.homeStorage === undefined && simpleHomePreparation(home.homeMigration) && home.homeErasure === undefined &&
     fences.sourceTransferFence === undefined && fences.restoreFence === undefined && fences.migration === undefined &&
-    fences.pendingNativeSchedulerRetirement === undefined &&
     (owner.accountLifecycle === null || owner.accountLifecycle.status === "active");
 }
 
@@ -77,23 +78,89 @@ async function retryArchive(tx: PlatformStateTransaction, owner: Stored<Platform
   return { operationId: existing.operationId };
 }
 
-function hasAttachedArchiveHome(owner: PlatformUserRecord): boolean {
-  return numericIdentity(owner.home.homeDisk?.id) && owner.home.computer?.vmSpec?.desktop === "x11" &&
-    owner.fences.computerRecovery === undefined;
-}
-
 function parkedArchiveInputs(owner: Stored<PlatformUserRecord>) {
   const lease = owner.activationLease;
-  const parked = owner.home.computer;
   const sharedId = owner.gateway?.gatewayId;
   const returnOperationId = lease?.returnOperationId;
-  if (lease?.status !== "parked" || !sharedId || !isUserParkedVm(parked) || parked.disposable || !numericIdentity(parked.instanceId) ||
-      lease.targetGatewayId !== parked.gatewayId ||
+  if (lease?.status !== "parked" || !sharedId || typeof lease.targetGatewayId !== "string" ||
       typeof returnOperationId !== "string" || !returnOperationId || returnOperationId.includes("/") ||
-      !hasAttachedArchiveHome(owner)) {
+      !numericIdentity(owner.home.homeDisk?.id) || owner.fences.computerRecovery !== undefined) {
     throw new IneligibleHomeArchiveError("Home archive requires an idle owner and a verified parked VM");
   }
-  return { gatewayId: parked.gatewayId, instanceId: parked.instanceId, sharedId, returnOperationId };
+  return { gatewayId: lease.targetGatewayId, sharedId, returnOperationId };
+}
+
+type ParkedInput = ReturnType<typeof parkedArchiveInputs>;
+type ArchiveSource = NonNullable<UserHomeArchive["source"]>;
+
+function observedArchiveVm(runtime: FleetRegistryRecord | null, homeZone: unknown) {
+  const observed = runtime?.vm;
+  return runtime?.runtime === "gce-vm" && runtime.vmSpec?.desktop === "x11" && observed &&
+    ["SUSPENDED", "TERMINATED", "STOPPED"].includes(observed.status ?? "") &&
+    numericIdentity(observed.instanceId) && observed.zone === homeZone ? observed : null;
+}
+
+function observedArchiveSource(owner: PlatformUserRecord, input: ParkedInput, runtime: FleetRegistryRecord | null) {
+  const homeZone = owner.home.homeDisk?.zone;
+  if (runtime !== null) return observedArchiveVm(runtime, homeZone);
+  if (owner.home.projectStorageNativeBoot === true || owner.fences.pendingNativeSchedulerRetirement !== undefined) return null;
+  const parked = owner.home.computer;
+  return isUserParkedVm(parked) && !parked.disposable && parked.vmSpec?.desktop === "x11" &&
+    parked.gatewayId === input.gatewayId && parked.zone === homeZone && numericIdentity(parked.instanceId) ? parked : null;
+}
+
+function schedulerReturnCompleted(returned: OperationRecord, custody: OpaqueMap): boolean {
+  return typeof custody.completedAt === "number" && typeof custody.cutoverCommittedAt === "number" &&
+    custody.cutoverCommittedAt > 0 && custody.cutoverCommittedAt === returned.cutoverCommittedAt &&
+    custody.completedAt >= custody.cutoverCommittedAt &&
+    typeof returned.completedAt === "number" && returned.completedAt >= custody.completedAt;
+}
+
+function schedulerReturnMatches(owner: PlatformUserRecord, input: ParkedInput, returned: OperationRecord, custody: OpaqueMap): boolean {
+  const handoff = returned.schedulerHandoff;
+  return handoff !== undefined && custody.uid === owner.uid && custody.slug === owner.slug && custody.slug === handoff.slug &&
+    custody.returnOperationId === input.returnOperationId && typeof custody.migrationId === "string" &&
+    custody.migrationId === handoff.migrationId && custody.uid === handoff.uid &&
+    custody.sourceGatewayId === input.gatewayId && custody.sourceGatewayId === handoff.fromGatewayId &&
+    custody.sharedGatewayId === input.sharedId && custody.sharedGatewayId === handoff.toGatewayId &&
+    schedulerReturnCompleted(returned, custody);
+}
+
+function schedulerHomeMatches(owner: PlatformUserRecord, source: ArchiveSource, custody: OpaqueMap): boolean {
+  return custody.homeDiskId === source.homeDiskId && custody.homeDiskSource === owner.home.homeDisk?.source &&
+    custody.zone === source.zone && custody.instanceName === source.instanceName && numericIdentity(custody.instanceId);
+}
+
+function isAdmittedSchedulerSource(previous: OpaqueMap | undefined, custody: OpaqueMap, gatewayId: string): boolean {
+  return previous !== undefined && previous.instanceId === custody.instanceId && previous.name === custody.instanceName &&
+    previous.zone === custody.zone && previous.gatewayId === gatewayId;
+}
+
+export function archivedSchedulerSourceImage(owner: PlatformUserRecord, gatewayId: string, instanceId: string, custody: OpaqueMap) {
+  if (custody.instanceId === instanceId) return null;
+  const image = owner.home.homeDisk?.bootImage as OpaqueMap | undefined;
+  if (!image || image.homeAdmission !== true || image.homeId !== custody.homeDiskId ||
+      !isAdmittedSchedulerSource(image.sourceComputer as OpaqueMap | undefined, custody, gatewayId) ||
+      typeof image.operationId !== "string" || !image.operationId ||
+      !numericIdentity(image.id) || typeof image.name !== "string" || typeof image.project !== "string") {
+    throw new IneligibleHomeArchiveError("Home archive lacks exact parked scheduler replacement lineage");
+  }
+  return { id: image.id, name: image.name, project: image.project };
+}
+
+export function archiveSchedulerCustodyMatches(owner: PlatformUserRecord, archive: UserHomeArchive): boolean {
+  if (archive.nativeSchedulerRetirement === undefined) return owner.fences.pendingNativeSchedulerRetirement === undefined;
+  return isDeepStrictEqual(archive.nativeSchedulerRetirement, owner.fences.pendingNativeSchedulerRetirement);
+}
+
+function archiveNativeScheduler(owner: PlatformUserRecord, input: ParkedInput, returned: OperationRecord, source: ArchiveSource, instanceId: string) {
+  const custody = owner.fences.pendingNativeSchedulerRetirement;
+  if (!custody && !returned.schedulerHandoff) return undefined;
+  if (!custody || !schedulerReturnMatches(owner, input, returned, custody) || !schedulerHomeMatches(owner, source, custody)) {
+    throw new IneligibleHomeArchiveError("Home archive requires the terminal native scheduler receipt for this home");
+  }
+  archivedSchedulerSourceImage(owner, input.gatewayId, instanceId, custody);
+  return custody;
 }
 
 function parkedArchiveRoot(root: Awaited<ReturnType<PlatformStateTransaction["gateways"]["roots"]["get"]>>, grant: ParkedHomeArchiveGrant): boolean {
@@ -102,20 +169,25 @@ function parkedArchiveRoot(root: Awaited<ReturnType<PlatformStateTransaction["ga
     root.sizingProfile === grant.sizingProfile;
 }
 
-async function verifyArchiveInputs(tx: PlatformStateTransaction, input: { gatewayId: string; sharedId: string; returnOperationId: string }, grant: ParkedHomeArchiveGrant): Promise<number> {
+async function verifyArchiveInputs(tx: PlatformStateTransaction, owner: Stored<PlatformUserRecord>, input: ParkedInput, grant: ParkedHomeArchiveGrant): Promise<ArchiveTarget> {
   const { gatewayId, sharedId, returnOperationId } = input;
   const { ownerUid } = grant;
-  const [root, shared, assignment, returned, pending] = await Promise.all([
+  const [root, shared, assignment, returned, pending, runtime] = await Promise.all([
     tx.gateways.roots.get(gatewayId), tx.gateways.roots.get(sharedId), tx.gateways.assignments.get(sharedId, ownerUid),
     tx.journal.operations.get(returnOperationId), tx.journal.operations.listForUid(ownerUid, { statuses: ["pending", "running"] }),
+    tx.fleetRegistry.get(gatewayId),
   ]);
   if (!parkedArchiveRoot(root, grant) || shared?.gatewayClass !== "shared" ||
       assignment?.uid !== ownerUid || assignment.gatewayId !== sharedId || assignment.state !== "serving" ||
       !Number.isSafeInteger(assignment.epoch) || assignment.epoch < 0 ||
-      !hasVerifiedReturn(returned, ownerUid, gatewayId, sharedId) || pending.length > 0) {
+      !returned || !hasVerifiedReturn(returned, ownerUid, gatewayId, sharedId) || pending.length > 0) {
     throw new IneligibleHomeArchiveError("Home archive requires a settled native return to the serving Shared assignment");
   }
-  return assignment.epoch;
+  const observed = observedArchiveSource(owner, input, runtime);
+  if (!numericIdentity(observed?.instanceId)) throw new IneligibleHomeArchiveError("Home archive lacks the parked VM observation");
+  const source = { instanceName: observed.instanceName, zone: observed.zone, homeDiskId: owner.home.homeDisk!.id as string };
+  const nativeSchedulerRetirement = archiveNativeScheduler(owner, input, returned, source, observed.instanceId);
+  return { gatewayId, sharedId, instanceId: observed.instanceId, assignmentEpoch: assignment.epoch, source, nativeSchedulerRetirement };
 }
 
 interface ArchiveTarget {
@@ -123,6 +195,8 @@ interface ArchiveTarget {
   instanceId: string;
   sharedId: string;
   assignmentEpoch: number;
+  source: ArchiveSource;
+  nativeSchedulerRetirement?: OpaqueMap;
 }
 
 export async function writeParkedHomeArchive(tx: PlatformStateTransaction, owner: Stored<PlatformUserRecord>,
@@ -130,7 +204,8 @@ export async function writeParkedHomeArchive(tx: PlatformStateTransaction, owner
   const ownerUid = owner.uid;
   const { gatewayId, instanceId, sharedId, assignmentEpoch } = target;
   const { operationId, createdBy, origin, now } = operation;
-  const homeArchive: UserHomeArchive = { phase: "preparing", operationId, gatewayId, instanceId };
+  const homeArchive: UserHomeArchive = { phase: "preparing", operationId, gatewayId, instanceId, source: target.source,
+    ...(target.nativeSchedulerRetirement ? { nativeSchedulerRetirement: target.nativeSchedulerRetirement } : {}) };
   await tx.users.records.patch(ownerUid, { home: { homeArchive } }, { revision: owner.revision });
   await tx.users.records.setFence(ownerUid, "computerRecovery", {
     operationId, gatewayId, instanceId, sharedGatewayId: sharedId, assignmentEpoch,
@@ -147,10 +222,9 @@ export async function planReturnedHomeArchive(tx: PlatformStateTransaction, owne
   if (!grant || grant.ownerUid !== owner.uid || next.status !== "parked" ||
       owner.home.homeArchive !== undefined || !pilotHomeEligible(owner)) return;
   try {
-    const { gatewayId, instanceId, sharedId, returnOperationId } = parkedArchiveInputs({ ...owner, activationLease: next });
-    const assignmentEpoch = await verifyArchiveInputs(tx, { gatewayId, sharedId, returnOperationId }, grant);
+    const target = await verifyArchiveInputs(tx, owner, parkedArchiveInputs({ ...owner, activationLease: next }), grant);
     const operationId = randomUUID();
-    return () => writeParkedHomeArchive(tx, owner, { gatewayId, instanceId, sharedId, assignmentEpoch }, {
+    return () => writeParkedHomeArchive(tx, owner, target, {
       operationId, createdBy: RETURN_ARCHIVE_ACTOR, origin: "automatic", now,
     });
   } catch (error) {
@@ -169,11 +243,10 @@ export async function enqueueParkedHomeArchive(store: PlatformStateStore, input:
     if (!owner || !pilotHomeEligible(owner)) throw new Error("User home is outside the archive pilot");
     const existing = owner.home.homeArchive;
     if (existing) return retryArchive(tx, owner, existing, input.dryRun);
-    const { gatewayId, instanceId, sharedId, returnOperationId } = parkedArchiveInputs(owner);
-    const assignmentEpoch = await verifyArchiveInputs(tx, { gatewayId, sharedId, returnOperationId }, grant);
+    const target = await verifyArchiveInputs(tx, owner, parkedArchiveInputs(owner), grant);
     const operationId = randomUUID();
     if (input.dryRun) return { operationId };
-    await writeParkedHomeArchive(tx, owner, { gatewayId, instanceId, sharedId, assignmentEpoch }, {
+    await writeParkedHomeArchive(tx, owner, target, {
       operationId, createdBy, origin: "operator", now: Date.now(),
     });
     return { operationId };

@@ -78,6 +78,12 @@ interface UserHomeArchiveIdentity {
     readonly operationId: string;
     readonly gatewayId: string;
     readonly instanceId: string;
+    readonly source?: {
+        readonly instanceName: string;
+        readonly zone: string;
+        readonly homeDiskId: string;
+    };
+    readonly nativeSchedulerRetirement?: OpaqueMap;
 }
 interface UserHomeSnapshotCustody {
     readonly snapshot: RetainedUserHomeSnapshot;

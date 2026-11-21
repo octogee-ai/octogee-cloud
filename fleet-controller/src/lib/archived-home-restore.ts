@@ -1,6 +1,7 @@
+import { archiveSchedulerCustodyMatches } from "@octogee/core/admin-fleet-router";
 import { assertFailedHomeRestoreReleased } from "@octogee/core/isolated-gateway-lifecycle";
 import { createHash } from "node:crypto";
-import type { PlatformStateRepositories, PlatformStateStore, UserHomeArchive } from "@octogee/core/platform-state";
+import type { PlatformStateRepositories, PlatformStateStore, PlatformUserRecord, UserHomeArchive } from "@octogee/core/platform-state";
 import type { GatewayVmSpec, RetainedUserHome } from "@octogee/shared/types/glm";
 import type { CreateGatewayVmInput, GatewayVmClient, GatewayVmDescription } from "./compute-vm.js";
 
@@ -51,7 +52,7 @@ async function readDemand(store: PlatformStateRepositories, identity: Identity, 
   const lease = owner?.activationLease;
   const archive = owner?.home.homeArchive;
   if (!owner || !archive || (archive.phase !== "archived" && archive.phase !== "restoring") ||
-      !restoreOwnerEligible(owner) || lease?.status !== "provisioning" || lease.targetGatewayId !== gatewayId ||
+      !restoreOwnerEligible(owner) || !archiveSchedulerCustodyMatches(owner, archive) || lease?.status !== "provisioning" || lease.targetGatewayId !== gatewayId ||
       !restoreRootMatches(root, identity, lease) || !matchesArchivedSource(owner, archive)) {
     throw new Error("User home archive requires the exact active restore demand");
   }
@@ -178,10 +179,65 @@ export async function restoreArchivedHome(deps: {
     if (archive.phase !== "restoring" || archive.snapshot.id !== claim.snapshot.id ||
         !archive.restoredDisk || !sameDisk(archive.restoredDisk, attached)) throw new Error("Snapshot-backed disk custody changed");
     const restored: UserHomeArchive = { operationId: archive.operationId, gatewayId: archive.gatewayId, instanceId: archive.instanceId,
+      ...(archive.source ? { source: archive.source } : {}),
+      ...(archive.nativeSchedulerRetirement ? { nativeSchedulerRetirement: archive.nativeSchedulerRetirement } : {}),
       phase: "restored", snapshot: archive.snapshot, bootDisk: archive.bootDisk, targetGatewayId: gatewayId,
       leaseId: archive.leaseId, generation: archive.generation, restoredDisk: attached, restoredInstanceId: instanceId };
     await tx.users.records.patch(ownerUid, { home: { homeArchive: restored, homeDisk: { ...attached }, homeCheckpoint: { clear: true } } },
       { revision: owner.revision });
   });
   return verified.vmDescription;
+}
+
+type Restored = Extract<UserHomeArchive, { phase: "restored" }>;
+
+function sameRestoredDemand(archive: Restored, lease: NonNullable<PlatformUserRecord["activationLease"]>): boolean {
+  return archive.leaseId === lease.leaseId && archive.generation === lease.generation && archive.targetGatewayId === lease.targetGatewayId;
+}
+
+function restoredArchiveMatchesAttachment(owner: PlatformUserRecord, archive: Restored, expectedOperationId: string,
+  observedInstanceId: string | null, attached: RetainedUserHome): boolean {
+  return archive.operationId === expectedOperationId && archive.restoredInstanceId === observedInstanceId &&
+    sameDisk(archive.restoredDisk, attached) && owner.home.homeDisk?.id === attached.id && owner.home.homeDisk.source === attached.source;
+}
+
+function newerAuthorizedDemand(root: Awaited<ReturnType<PlatformStateRepositories["gateways"]["roots"]["get"]>>,
+  identity: Identity, demand: PlatformUserRecord["activationLease"]): demand is NonNullable<PlatformUserRecord["activationLease"]> {
+  return demand?.status === "provisioning" && demand.targetGatewayId === identity.gatewayId && restoreRootMatches(root, identity, demand);
+}
+
+export async function rearmRestoredHomeForDemand(deps: { store: PlatformStateStore; vm: Pick<GatewayVmClient, "retainHome"> },
+  identity: Identity, description: GatewayVmDescription | null, observedOwner: PlatformUserRecord | null): Promise<void> {
+  const archive = observedOwner?.home.homeArchive;
+  const lease = observedOwner?.activationLease;
+  if (archive?.phase !== "restored" || lease?.status !== "provisioning" || lease.targetGatewayId !== identity.gatewayId ||
+      sameRestoredDemand(archive, lease)) return;
+  const { ownerUid, gatewayId } = identity;
+  if (!description || description.instanceId !== archive.restoredInstanceId ||
+      description.zone !== archive.restoredDisk.zone || description.metadata["octogee-owner-uid"] !== ownerUid) {
+    throw new Error("Failed restore rearm requires the exact restored VM");
+  }
+  const attached = await deps.vm.retainHome(description.name, description.zone, ownerUid);
+  if (!sameDisk(attached, archive.restoredDisk)) throw new Error("Failed restore rearm requires the exact restored disk");
+  await deps.store.transaction({ label: "parked-home.rearm-restored-demand" }, async tx => {
+    const [current, root] = await Promise.all([tx.users.records.get(ownerUid), tx.gateways.roots.get(gatewayId)]);
+    const currentArchive = current?.home.homeArchive;
+    const demand = current?.activationLease ?? null;
+    if (!current || currentArchive?.phase !== "restored" ||
+        !restoredArchiveMatchesAttachment(current, currentArchive, archive.operationId, description.instanceId, attached) ||
+        !newerAuthorizedDemand(root, identity, demand)) {
+      throw new Error("Failed restore rearm ownership changed");
+    }
+    if (sameRestoredDemand(currentArchive, demand)) return;
+    if (demand.generation <= currentArchive.generation || currentArchive.releaseProvenForActivation) {
+      throw new Error("Failed restore rearm requires a newer demand and unreleased backup");
+    }
+    if (current.fences.pendingNativeSchedulerRetirement && !archiveSchedulerCustodyMatches(current, currentArchive)) {
+      throw new Error("Failed restore rearm scheduler custody changed");
+    }
+    await assertFailedHomeRestoreReleased(tx, { ...currentArchive, ownerUid });
+    await tx.users.records.patch(ownerUid, { home: { homeArchive: { ...currentArchive,
+      targetGatewayId: gatewayId, leaseId: demand.leaseId, generation: demand.generation,
+    } } }, { revision: current.revision });
+  });
 }

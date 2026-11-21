@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import type { GatewayVmSpec } from "@octogee/shared/types/glm";
 import type { CreateGatewayVmInput, GatewayVmClient, GatewayVmDescription } from "./compute-vm.js";
-import { restoreArchivedHome } from "./archived-home-restore.js";
+import { rearmRestoredHomeForDemand, restoreArchivedHome } from "./archived-home-restore.js";
 
 const uid = "owner";
 const gatewayId = "target-gateway";
@@ -107,4 +107,31 @@ describe("attach a snapshot-backed home through normal demand", () => {
     expect(vm.restoreHomeFromSnapshot).toHaveBeenCalledTimes(1);
     expect(vm.create).toHaveBeenCalledTimes(1);
   });
+});
+
+describe("rearm a failed generation after the snapshot-backed disk was committed", () => {
+  it.each(["released", "missing-old-proof", "different-disk"] as const)(
+    "keeps the same restored VM and snapshot pinned (%s)", async scenario => {
+      const { store, vm } = fixture();
+      const oldTarget = scenario === "missing-old-proof" ? "failed-gateway" : await seedFailedRestore(store, true);
+      const scheduler = { migrationId: "return-scheduler", homeDiskId: oldHome.id };
+      await store.users.records.setFence(uid, "pendingNativeSchedulerRetirement", scheduler, "absent");
+      await store.users.records.patch(uid, { home: { homeDisk: { ...newDisk }, homeArchive: {
+        ...archive, phase: "restored", targetGatewayId: oldTarget, leaseId: "demand-one", generation: 1,
+        restoredDisk: newDisk, restoredInstanceId: instance.instanceId!, nativeSchedulerRetirement: scheduler,
+      } } });
+      if (scenario === "different-disk") vm.retainHome.mockResolvedValueOnce({ ...newDisk, id: "9000" });
+      const owner = await store.users.records.get(uid);
+      const rearm = rearmRestoredHomeForDemand({ store, vm }, { ownerUid: uid, gatewayId }, { ...instance, gatewayId: oldTarget }, owner);
+      if (scenario === "released") await expect(rearm).resolves.toBeUndefined();
+      else await expect(rearm).rejects.toThrow(/receipt|exact restored disk/);
+      const current = await store.users.records.get(uid);
+      expect(current?.home.homeArchive).toMatchObject({ phase: "restored", snapshot: archive.snapshot, restoredDisk: newDisk,
+        restoredInstanceId: instance.instanceId, targetGatewayId: scenario === "released" ? gatewayId : oldTarget,
+        generation: scenario === "released" ? 2 : 1, nativeSchedulerRetirement: scheduler });
+      expect(current?.fences.pendingNativeSchedulerRetirement).toEqual(scheduler);
+      expect(vm.restoreHomeFromSnapshot).not.toHaveBeenCalled();
+      expect(vm.create).not.toHaveBeenCalled();
+    },
+  );
 });

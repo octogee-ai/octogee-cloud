@@ -171,3 +171,21 @@ it("erases an archived snapshot with a completed disk-free preparation marker", 
   expect(h.provisioning().homeArchive).toBeUndefined();
   expect(h.provisioning().homeMigration).toBeUndefined();
 });
+
+it.each([true, false])("erases only the closed scheduler state carried inside the exact archived home (same=%s)", async same => {
+  const h = archiveFixture();
+  const scheduler = { returnOperationId: "return-one", migrationId: "return-scheduler", homeDiskId: retainedHome.id };
+  h.provisioning().homeArchive = { ...archivedHome, nativeSchedulerRetirement: scheduler };
+  h.provisioning().pendingNativeSchedulerRetirement = same ? scheduler : { ...scheduler, migrationId: "other" };
+  if (!same) {
+    await expect(h.erase()).rejects.toThrow(/archive must settle/);
+    expect(h.compute.eraseHomeSnapshot).not.toHaveBeenCalled();
+    expect(h.provisioning().pendingNativeSchedulerRetirement).toBeDefined();
+    return;
+  }
+  h.compute.eraseHomeSnapshot.mockResolvedValueOnce(false);
+  await expect(h.erase()).rejects.toThrow(/still converging/);
+  expect(h.provisioning().pendingNativeSchedulerRetirement).toEqual(scheduler);
+  await expect(h.erase()).resolves.toBe(true);
+  expect(h.provisioning().pendingNativeSchedulerRetirement).toBeUndefined();
+});

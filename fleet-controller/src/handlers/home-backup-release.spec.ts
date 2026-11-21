@@ -5,6 +5,7 @@ import { enqueueParkedHomeArchive } from "@octogee/core/admin-fleet-router";
 import type { UserHomeArchive } from "@octogee/core/platform-state";
 import { createHomeBackupReleaseHandler } from "./home-backup-release.js";
 import { createHomeArchiveHandler } from "./home-archive.js";
+import { retireNativeSchedulerBeforeStage } from "../lib/native-scheduler-retirement.js";
 import { restoreArchivedHome } from "../lib/archived-home-restore.js";
 import type { Operation } from "@octogee/shared/types/glm";
 
@@ -119,19 +120,26 @@ it("archives, restores, releases, and repeats on the newly created home", async 
     const snapshot = { ...archive.snapshot, id: String(103 + round), sourceDisk: expectedHome.source, sourceDiskId: expectedHome.id };
     const mount = { gatewayId: target, instanceId: sourceInstanceId, instanceName: "computer", zone: expectedHome.zone,
       parkedAt: 10, checkpoint: { outcome: "stale", requestedAt: null, completedAt: null }, vmSpec: { desktop: "x11" } };
-    docs[`users/${uid}`] = { slug: "alice", provisioning: { homeDisk: expectedHome, computer: mount,
-      openclaw: { gatewayId: source, activationLease: { status: "parked", leaseId: "previous", generation: generation - 1,
+    const retirement = { uid, slug: "alice", returnOperationId: returnId, migrationId: `scheduler-${round}`,
+      sourceGatewayId: target, sharedGatewayId: source, instanceName: mount.instanceName, instanceId: sourceInstanceId, zone: mount.zone,
+      homeDiskId: expectedHome.id, homeDiskSource: expectedHome.source, cutoverCommittedAt: 3, completedAt: 4 };
+    docs[`users/${uid}`] = { provisioning: { homeDisk: expectedHome, projectStorage: { nativeBoot: true }, pendingNativeSchedulerRetirement: retirement,
+      openclaw: { slug: "alice", gatewayId: source, activationLease: { status: "parked", leaseId: "previous", generation: generation - 1,
         targetGatewayId: target, returnOperationId: returnId } } } };
     docs[`gateways/${source}`] = { gatewayClass: "shared", gatewayId: source, desiredStatus: "running", liveRelease: 1, desiredRelease: 1, latestRelease: 1 };
     docs[`gateways/${source}/assignments/${uid}`] = { uid, gatewayId: source, state: "serving", source: "onboarding", slug: "alice", epoch: 3 };
     const gateway = { gatewayClass: "isolated", gatewayId: target, ownerUid: uid, sizingProfile: "hobby",
       desiredStatus: "paused", liveRelease: 1, desiredRelease: 1, latestRelease: 1 };
     docs[`gateways/${target}`] = gateway;
-    docs[`glmOperations/${returnId}`] = { ...migration, id: returnId, input: { ...migration.input, fromGatewayId: target, toGatewayId: source },
+    docs[`glmGateways/${target}`] = { docKind: "runtime", gatewayId: target, release: 1, lifecycle: "serving", runtime: "gce-vm",
+      vmSpec: mount.vmSpec, vm: { instanceId: sourceInstanceId, instanceName: mount.instanceName, zone: mount.zone, status: "TERMINATED" } };
+    docs[`glmOperations/${returnId}`] = { ...migration, id: returnId, cutoverCommittedAt: 3, completedAt: 5,
+      input: { ...migration.input, fromGatewayId: target, toGatewayId: source },
+      schedulerHandoff: { migrationId: retirement.migrationId, uid, slug: "alice", fromGatewayId: target, toGatewayId: source },
       output: { nativeSourcePark: { parked: "stopped" } } };
 
     const { operationId } = await enqueueParkedHomeArchive(store, { ownerUid: uid, grant, createdBy: "operator" });
-    const sourceDescription = { instanceId: sourceInstanceId, name: mount.instanceName, zone: mount.zone, status: "TERMINATED",
+    const sourceDescription = { gatewayId: target, instanceId: sourceInstanceId, name: mount.instanceName, zone: mount.zone, status: "TERMINATED",
       metadata: { "octogee-owner-uid": uid } };
     let modelSource: typeof sourceDescription | null = sourceDescription;
     const vmArchive = {
@@ -149,7 +157,7 @@ it("archives, restores, releases, and repeats on the newly created home", async 
 
     const provisioning = { ...lease, status: "provisioning" as const, leaseId: newLeaseId, generation,
       activationOperationId, builderSlug: "alice" };
-    docs[`gateways/${target}`] = { ...gateway, desiredStatus: "running",
+    docs[`gateways/${target}`] = { ...gateway, builderSlug: "alice", desiredStatus: "running",
       allocation: { claimedByUid: uid, leaseId: newLeaseId, generation } };
     await store.users.records.setActivationLease(uid, provisioning, { leaseId: "previous", generation: generation - 1, status: ["parked"] });
     sourceInstanceId = String(920 + round);
@@ -160,10 +168,19 @@ it("archives, restores, releases, and repeats on the newly created home", async 
       { desktop: "x11", zones: [mount.zone], homeDiskSizeGb: 10 } as never, { instanceName: mount.instanceName } as never);
     expect(vmRestore.restoreHomeFromSnapshot).toHaveBeenCalledWith(expect.objectContaining({ snapshot }));
     expect((await store.users.records.get(uid))?.home.homeArchive).toMatchObject({ phase: "restored", restoredDisk: freshHome });
-    docs[`glmOperations/${activationOperationId}`] = { ...migration, id: activationOperationId };
-    docs[`glmGateways/${target}`] = { docKind: "runtime", gatewayId: target, release: 1, lifecycle: "serving", runtime: "gce-vm", vmBootRecovery: { ready: true, instanceId: sourceInstanceId, observedAt: 550 } };
+    docs[`glmOperations/${activationOperationId}`] = { ...migration, id: activationOperationId, status: "running", startedAt: 510, completedAt: null };
+    docs[`glmGateways/${target}`] = { docKind: "runtime", gatewayId: target, release: 1, lifecycle: "serving", runtime: "gce-vm",
+      vm: { instanceId: sourceInstanceId, instanceName: mount.instanceName, zone: mount.zone, status: "RUNNING" },
+      vmBootRecovery: { ready: true, instanceId: sourceInstanceId, observedAt: 550 } };
+    await store.users.records.setGatewayMirror(uid, { gatewayId: target });
     await store.users.records.setActivationLease(uid, { ...provisioning, status: "activating" },
       { leaseId: newLeaseId, generation, status: ["provisioning"] });
+    const scheduler = vi.fn(async () => ({ operationId: retirement.migrationId, drained: true, phase: "retire" as const, agentIds: ["alice"] }));
+    await retireNativeSchedulerBeforeStage({ store, vm: {
+      describe: vi.fn(async () => description) as never, retainHome: vmRestore.retainHome, readBootImage: vi.fn(), readImage: vi.fn(),
+    }, log: vi.fn() }, { uid, slug: "alice", gatewayId: target, operationId: activationOperationId, claimedStartedAt: 510 }, scheduler);
+    expect(scheduler).toHaveBeenCalledExactlyOnceWith({ gatewayId: target, slug: "alice", phase: "retire", migrationId: retirement.migrationId });
+    await store.journal.operations.patch(activationOperationId, { status: "succeeded", completedAt: 590 });
     await advanceActivationLease({ store, requireOwner: async () => undefined, now: () => 600 }, {
       uid, leaseId: newLeaseId, generation, fromStatus: "activating", toStatus: "active",
     });

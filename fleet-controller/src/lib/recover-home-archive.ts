@@ -170,6 +170,8 @@ export async function settleInterruptedHomeArchiveForErasure(
     const { operationId, gatewayId, instanceId, snapshot, bootDisk } = current.archive;
     await tx.users.records.patch(uid, { home: { homeArchive: {
       phase: "archived", operationId, gatewayId, instanceId, snapshot, bootDisk,
+      ...(archive.source ? { source: archive.source } : {}),
+      ...(archive.nativeSchedulerRetirement ? { nativeSchedulerRetirement: archive.nativeSchedulerRetirement } : {}),
     } } }, { revision: current.owner.revision });
   });
 }

@@ -1,5 +1,5 @@
-import type { PlatformStateStore, PlatformStateTransaction, Stored } from "./platform-state/store.js";
-import type { PlatformUserRecord, UserActivationLease } from "./platform-state/users.js";
+import type { OpaqueMap, PlatformStateStore, PlatformStateTransaction, Stored } from "./platform-state/store.js";
+import type { PlatformUserRecord, UserActivationLease, UserHomeArchive } from "./platform-state/users.js";
 export interface ParkedHomeArchiveGrant {
     ownerUid: string;
     sizingProfile: string;
@@ -11,11 +11,20 @@ export declare function isAuthorizedHomeArchiveOrigin(operation: {
 }): boolean;
 export declare function resolveParkedHomeArchiveGrant(environment: string | null | undefined, value: string | undefined): ParkedHomeArchiveGrant | undefined;
 export declare function simpleHomePreparation(value: PlatformUserRecord["home"]["homeMigration"]): boolean;
+type ArchiveSource = NonNullable<UserHomeArchive["source"]>;
+export declare function archivedSchedulerSourceImage(owner: PlatformUserRecord, gatewayId: string, instanceId: string, custody: OpaqueMap): {
+    id: string;
+    name: string;
+    project: string;
+} | null;
+export declare function archiveSchedulerCustodyMatches(owner: PlatformUserRecord, archive: UserHomeArchive): boolean;
 interface ArchiveTarget {
     gatewayId: string;
     instanceId: string;
     sharedId: string;
     assignmentEpoch: number;
+    source: ArchiveSource;
+    nativeSchedulerRetirement?: OpaqueMap;
 }
 export declare function writeParkedHomeArchive(tx: PlatformStateTransaction, owner: Stored<PlatformUserRecord>, target: ArchiveTarget, operation: {
     operationId: string;

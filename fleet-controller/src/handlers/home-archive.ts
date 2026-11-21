@@ -1,5 +1,5 @@
-import { isAuthorizedHomeArchiveOrigin } from "@octogee/core/admin-fleet-router";
-import type { PlatformStateRepositories, PlatformStateStore, UserHomeArchive } from "@octogee/core/platform-state";
+import { archivedSchedulerSourceImage, archiveSchedulerCustodyMatches, isAuthorizedHomeArchiveOrigin, simpleHomePreparation } from "@octogee/core/admin-fleet-router";
+import type { FleetRegistryRecord, PlatformStateRepositories, PlatformStateStore, PlatformUserRecord, UserHomeArchive } from "@octogee/core/platform-state";
 import { isUserParkedVm, type RetainedUserHome } from "@octogee/shared/types/glm";
 import type { GatewayVmClient, GatewayVmDescription } from "../lib/compute-vm.js";
 import { assertVmRecoveryFence } from "../lib/vm-recovery-fence.js";
@@ -18,14 +18,11 @@ function archivePending(error: string): OperationResult {
 }
 
 function archiveOwnerStorageCompatible(owner: NonNullable<Awaited<ReturnType<PlatformStateRepositories["users"]["records"]["get"]>>>): boolean {
-  const migration = owner.home.homeMigration;
-  return owner.home.homeStorage === undefined && owner.home.projectStorageNativeBoot !== true &&
-    (migration === undefined || (migration.phase === "complete" && migration.id === undefined &&
-      migration.source === undefined && migration.target === undefined && migration.copy === undefined));
+  return owner.home.homeStorage === undefined && simpleHomePreparation(owner.home.homeMigration);
 }
 
 function archiveRootMatches(root: Awaited<ReturnType<PlatformStateRepositories["gateways"]["roots"]["get"]>>, identity: ArchiveIdentity): boolean {
-  return root?.ownerUid === identity.ownerUid && root.sizingProfile === identity.sizingProfile &&
+  return root?.ownerUid === identity.ownerUid && root.gatewayClass === "isolated" && root.sizingProfile === identity.sizingProfile &&
     root.desiredStatus === "paused" && root.retirementClaim == null;
 }
 
@@ -39,18 +36,32 @@ function exactArchiveParkedVm(parked: unknown, identity: ArchiveIdentity, zone: 
     parked.zone === zone && parked.vmSpec?.desktop === "x11" ? parked : null;
 }
 
+function verifyArchiveSource(input: { owner: PlatformUserRecord; archive: UserHomeArchive;
+  runtime: FleetRegistryRecord | null; home: RetainedUserHome; identity: ArchiveIdentity }) {
+  const { archive, home, runtime, identity, owner } = input;
+  const source = archive.source;
+  if (!source) return exactArchiveParkedVm(owner.home.computer, identity, home.zone);
+  if (source.zone !== home.zone || source.homeDiskId !== home.id) return null;
+  const observed = runtime?.vm;
+  if (!observed) return archive.phase === "snapshot-ready" || !archive.nativeSchedulerRetirement ? source : null;
+  return observed.instanceId === identity.instanceId && observed.instanceName === source.instanceName &&
+    observed.zone === source.zone && ["SUSPENDED", "TERMINATED", "STOPPED"].includes(observed.status ?? "") ? source : null;
+}
+
 async function readArchive(state: PlatformStateRepositories, identity: ArchiveIdentity) {
   const { ownerUid, gatewayId } = identity;
-  const [owner, root] = await Promise.all([state.users.records.get(ownerUid), state.gateways.roots.get(gatewayId)]);
+  const [owner, root, runtime] = await Promise.all([
+    state.users.records.get(ownerUid), state.gateways.roots.get(gatewayId), state.fleetRegistry.get(gatewayId),
+  ]);
   const archive = owner?.home.homeArchive;
   const home = owner?.home.homeDisk as RetainedUserHome | undefined;
   const parked = owner?.home.computer;
   if (!owner || !archiveRecordMatches(archive, identity) || !archiveRootMatches(root, identity) ||
-      !archiveOwnerStorageCompatible(owner) || !home || !/^[1-9]\d{0,19}$/u.test(home.id)) {
+      !archiveOwnerStorageCompatible(owner) || !archiveSchedulerCustodyMatches(owner, archive) || !home || !/^[1-9]\d{0,19}$/u.test(home.id)) {
     throw new Error("Home archive authority changed");
   }
   if (archive.phase === "archived") return { owner, archive, home, parked };
-  const exactParked = exactArchiveParkedVm(parked, identity, home.zone);
+  const exactParked = verifyArchiveSource({ owner, archive, runtime, home, identity });
   if (!exactParked || archive.phase === "restoring") throw new Error("Home archive lost its exact parked VM");
   await assertVmRecoveryFence(state, identity);
   return { owner, archive, home, parked: exactParked };
@@ -139,6 +150,17 @@ function requireArchiveOperation(operation: Parameters<OperationHandler>[0], ctx
   return { identity, assertClaim: ctx.assertActiveClaim };
 }
 
+async function verifyReplacementImage(vm: GatewayVmClient, identity: ArchiveIdentity, owner: PlatformUserRecord,
+  archive: UserHomeArchive, source: GatewayVmDescription): Promise<void> {
+  if (!archive.nativeSchedulerRetirement) return;
+  const expected = archivedSchedulerSourceImage(owner, identity.gatewayId, identity.instanceId, archive.nativeSchedulerRetirement);
+  if (!expected) return;
+  const [boot, admitted] = await Promise.all([vm.readBootImage(source.name, source.zone), vm.readImage(expected.name, expected.project)]);
+  if (boot.id !== expected.id || boot.name !== expected.name || admitted.id !== expected.id || !admitted.homeAdmission) {
+    throw new Error("Parked scheduler replacement boot image does not match the retained home");
+  }
+}
+
 export function createHomeArchiveHandler(deps: {
   store: PlatformStateStore; vm: GatewayVmClient; grant?: { ownerUid: string; sizingProfile: string };
 }): OperationHandler {
@@ -147,15 +169,16 @@ export function createHomeArchiveHandler(deps: {
     const read = async () => { await assertClaim(); return readArchive(deps.store, identity); };
     const { vm } = deps;
     try {
-      const { archive, parked, home } = await read();
+      const { owner, archive, parked, home } = await read();
       if (archive.phase === "archived") return { steps: [], success: true, output: { snapshot: archive.snapshot, zeroProvisionedDisks: true } };
       if (archive.phase === "restored" || !parked) throw new Error("Home archive is no longer operating on a parked VM");
       const { instanceName, zone } = parked;
       const snapshotName = `home-archive-${operation.id}`;
       const source = await vm.describe(instanceName, zone);
-      if (source && (source.instanceId !== identity.instanceId || source.metadata["octogee-owner-uid"] !== identity.ownerUid)) {
+      if (source && (source.instanceId !== identity.instanceId || source.gatewayId !== identity.gatewayId || source.metadata["octogee-owner-uid"] !== identity.ownerUid)) {
         throw new Error("Home archive source VM identity changed");
       }
+      if (source) await verifyReplacementImage(vm, identity, owner, archive, source);
       const ready = await prepareSnapshot(deps, identity, assertClaim, read, { archive, home, source, instanceName, zone, snapshotName });
       if (!ready) return archivePending("Waiting for the exact source stop or home snapshot");
       return await disposeParkedHome(deps, identity, assertClaim, read, { archive: ready, home, source, instanceName, zone, snapshotName });
