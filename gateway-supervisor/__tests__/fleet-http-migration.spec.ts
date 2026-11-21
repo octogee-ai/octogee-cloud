@@ -4368,6 +4368,7 @@ describe("PostgreSQL agent anchors across an rsync carry", () => {
       activateImportedUser: vi.fn(async (_slug, opts) => {
         calls++;
         expect(opts?.beforeRuntimePublish).toBeTypeOf("function");
+        expect(opts?.sharedToSharedRoster).toBe(true);
         const writeNative = async () => {
           for (const [dir] of originals) { await fs.mkdir(dir, { recursive: true }); await fs.writeFile(path.join(dir, "IDENTITY.md"), "- Name: machine-agent-id\n"); }
         };

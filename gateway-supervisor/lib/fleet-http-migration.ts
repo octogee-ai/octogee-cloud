@@ -320,8 +320,21 @@ async function resumeSystemConfigWatchForUser(
   await enableSystemConfigWatch(OPENCLAW_DIR, slug, expectedGeneration);
 }
 
-function importedActivationOptions(signal?: AbortSignal, migrationId?: string, beforeRuntimePublish?: () => Promise<void>, deferRuntimeVerification?: true) {
-  return signal || migrationId || beforeRuntimePublish || deferRuntimeVerification ? { ...(signal ? { signal } : {}), ...(migrationId ? { migrationId } : {}), ...(beforeRuntimePublish ? { beforeRuntimePublish } : {}), ...(deferRuntimeVerification ? { deferRuntimeVerification } : {}) } : undefined;
+function importedActivationOptions(
+  signal?: AbortSignal,
+  migrationId?: string,
+  beforeRuntimePublish?: () => Promise<void>,
+  deferRuntimeVerification?: true,
+  sharedToSharedRoster?: true,
+) {
+  if (!signal && !migrationId && !beforeRuntimePublish && !deferRuntimeVerification) return undefined;
+  return {
+    ...(signal ? { signal } : {}),
+    ...(migrationId ? { migrationId } : {}),
+    ...(beforeRuntimePublish ? { beforeRuntimePublish } : {}),
+    ...(deferRuntimeVerification ? { deferRuntimeVerification } : {}),
+    ...(sharedToSharedRoster ? { sharedToSharedRoster } : {}),
+  };
 }
 
 async function importedWorkspaceIdentityRestore(input: { deps: MigrationHandlerDeps; slug: string; migrationId?: string; signal?: AbortSignal; beforeRuntimePublish?: () => Promise<void> }): Promise<(() => Promise<void>) | undefined> {
@@ -332,6 +345,7 @@ async function importedWorkspaceIdentityRestore(input: { deps: MigrationHandlerD
 
 async function activateImportedUserForMigration(input: {
   deferRuntimeVerification?: true;
+  sharedToSharedRoster?: true;
   deps: MigrationHandlerDeps;
   slug: string;
   mode: MigrationImportMode;
@@ -362,7 +376,9 @@ async function activateImportedUserForMigration(input: {
       );
     }
   }
-  const options = importedActivationOptions(signal, input.migrationId, beforeRuntimePublish, input.deferRuntimeVerification);
+  const sharedToSharedRoster = beforeRuntimePublish && input.migrationId?.startsWith("mig-") &&
+    (input.sharedToSharedRoster || mode === "default") ? true : undefined;
+  const options = importedActivationOptions(signal, input.migrationId, beforeRuntimePublish, input.deferRuntimeVerification, sharedToSharedRoster);
   const activation = options ? await deps.adapter.activateImportedUser(slug, options) : await deps.adapter.activateImportedUser(slug);
   if (loadStrategy === "standard") {
     deps.adapter.recordAppliedFingerprint?.(
@@ -2517,6 +2533,9 @@ async function activateFinishedRsyncImport(input: {
         loadStrategy,
         signal,
         beforeRuntimePublish: input.beforeRuntimePublish,
+        ...(input.beforeRuntimePublish && !body.preserveSource
+          ? { sharedToSharedRoster: true }
+          : {}),
       });
     }
     deps.adapter.writeMountMarker?.(body.slug);
