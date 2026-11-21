@@ -291,6 +291,9 @@ export interface GatewayRpcClient {
     agentsDetach(params: {
         agentId: string;
     }): Promise<GatewayAgentsDeleteResult>;
+    agentsDetachMany(params: {
+        agentIds: readonly string[];
+    }): Promise<void>;
     isGatewayUp(timeoutMs?: number): Promise<boolean>;
     close(): Promise<void>;
 }

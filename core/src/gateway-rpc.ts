@@ -393,6 +393,7 @@ export interface GatewayRpcClient {
   agentsRestoreMany(params: { agents: GatewayRetainedAgentSpec[] }): Promise<GatewayAgentsRestoreManyReceipt>;
   agentsDelete(params: GatewayAgentsDeleteParams): Promise<GatewayAgentsDeleteResult>;
   agentsDetach(params: { agentId: string }): Promise<GatewayAgentsDeleteResult>;
+  agentsDetachMany(params: { agentIds: readonly string[] }): Promise<void>;
   isGatewayUp(timeoutMs?: number): Promise<boolean>;
   close(): Promise<void>;
 }
@@ -976,6 +977,23 @@ async function callOkPayload(
   return payload as Record<string, unknown>;
 }
 
+async function callAgentsDetachMany(
+  call: GatewayCall,
+  params: { agentIds: readonly string[] },
+): Promise<void> {
+  const payload = await callOkPayload(call, "agents.detachMany", params);
+  if (!Array.isArray(payload.results) || payload.results.length !== params.agentIds.length ||
+      !payload.results.every((result: unknown, index: number) => {
+        if (!result || typeof result !== "object") return false;
+        const receipt = result as Record<string, unknown>;
+        return receipt.ok === true && receipt.agentId === params.agentIds[index] &&
+          receipt.purgeFailed === undefined && Array.isArray(receipt.failed) && receipt.failed.length === 0 &&
+          Array.isArray(receipt.removed) && receipt.removed.length === 0;
+      })) {
+    throw new OpenclawWireError(INVALID_RESPONSE, "agents.detachMany did not confirm completed store-preserving cleanup for every agent");
+  }
+}
+
 async function callAgentsCreate(
   call: GatewayCall,
   params: GatewayAgentsCreateParams,
@@ -1201,6 +1219,8 @@ export function createGatewayRpc(opts: GatewayRpcClientOptions = {}): GatewayRpc
       }
       return payload as GatewayAgentsDeleteResult;
     },
+
+    agentsDetachMany: (params) => callAgentsDetachMany(call, params),
 
     async secretsReload() {
       return parseSecretsReloadPayload(await call("secrets.reload", {}));

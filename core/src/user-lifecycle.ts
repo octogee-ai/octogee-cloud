@@ -336,6 +336,7 @@ prepareKeyImportDir: (slug: string) => Promise<string>;
   ) => Promise<RemoveUserResult>;
 
   releaseAgent?: (agentId: string) => Promise<void>;
+  detachSourceAgents?: (slug: string, agentIds: readonly string[], signal: AbortSignal) => Promise<void>;
 }
 
 export type UserStateImportMode = "pre" | "final" | "default";
