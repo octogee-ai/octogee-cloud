@@ -10,13 +10,20 @@ it("validates a root-owned read-only version against the installed OpenClaw buil
   const descriptor = path.join(install, "octogee-agent-schema.json");
   const buildInfo = path.join(install, "dist", "build-info.json");
   const release = '{"commit":"same-release"}';
-  const lstat = fs.lstat;
+  const open = fs.open;
   let descriptorOwner = 0;
-  const trustedStat = vi.spyOn(fs, "lstat").mockImplementation((async (...args: Parameters<typeof lstat>) => {
-    const stat = await lstat(...args);
-    if (stat && args[0] === descriptor) stat.uid = descriptorOwner;
-    return stat;
-  }) as typeof lstat);
+  const trustedStat = vi.spyOn(fs, "open").mockImplementation(async (...args) => {
+    const handle = await open(...args);
+    if (args[0] === descriptor) {
+      const stat = handle.stat.bind(handle);
+      handle.stat = (async (...opts: Parameters<typeof handle.stat>) => {
+        const result = await stat(...opts);
+        result.uid = descriptorOwner;
+        return result;
+      }) as typeof handle.stat;
+    }
+    return handle;
+  });
 
   try {
     await expect(readImageAgentSchemaVersion(install)).resolves.toBeUndefined();
@@ -38,7 +45,7 @@ it("validates a root-owned read-only version against the installed OpenClaw buil
     await expect(readImageAgentSchemaVersion(install)).rejects.toThrow(/immutable root-owned regular file/);
     await fs.rm(descriptor);
     await fs.symlink(buildInfo, descriptor);
-    await expect(readImageAgentSchemaVersion(install)).rejects.toThrow(/immutable root-owned regular file/);
+    await expect(readImageAgentSchemaVersion(install)).rejects.toThrow(/must not be a symlink/);
   } finally {
     trustedStat.mockRestore();
     await fs.rm(install, { recursive: true, force: true });
