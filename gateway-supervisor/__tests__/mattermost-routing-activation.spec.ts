@@ -281,6 +281,32 @@ describe("Mattermost routing activation", () => {
     expect(mattermostRoutingActivationPending(openclawDir)).toBe(false);
   });
 
+  it.each([1, 2])(
+    "reuses the live routing proof for %s accounts without a second status read",
+    async (count) => {
+      const accountIds = ["alice-coach", "alice-proj-orbit"].slice(0, count);
+      const openclawDir = await temporaryOpenClawDir();
+      markMattermostRoutingActivationPending(openclawDir, "bindings changed", accountIds,
+        Object.fromEntries(accountIds.map((accountId) => [accountId, 100])));
+      const rpc = channelOperationRpc(accountIds, vi.fn(async () => ({
+        channelAccounts: { mattermost: accountIds.map((accountId) => ({
+          accountId, running: true, connected: true, lastStartAt: 101,
+        })) },
+      })));
+      const sleep = vi.fn(async () => undefined);
+
+      await activatePendingMattermostRouting(rpc, openclawDir, vi.fn(), {
+        restartConfiguredPending: true, sleep,
+      });
+
+      expect(rpc.channelsStatus).toHaveBeenCalledOnce();
+      expect(rpc.channelsStop).not.toHaveBeenCalled();
+      expect(rpc.channelsStart).not.toHaveBeenCalled();
+      expect(sleep).not.toHaveBeenCalled();
+      expect(mattermostRoutingActivationPending(openclawDir)).toBe(false);
+    },
+  );
+
   it("accepts the config hot-reload activation without manually restarting the account", async () => {
     const openclawDir = await temporaryOpenClawDir();
     markMattermostRoutingActivationPending(
