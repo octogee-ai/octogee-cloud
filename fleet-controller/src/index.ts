@@ -19,7 +19,7 @@ import {
   startIsolatedPodBlockerObserver,
 } from "./isolated-pod-home.js";
 import { runNormalFleetMutation } from "@octogee/core/normal-fleet-mutation";
-import { platformStateStoreFromEnvironment, MissingRecordError, type WorkspaceProject, type FleetRegistryRecord, type GatewayRoot, type OpaqueMap, type GatewayRootFields, type GatewayRootPatch, type OperationRecord, type PlatformStateStore, type Stored, type WatchChange, type WatchEvent, type FleetRegistryInventory } from "@octogee/core/platform-state";
+import { platformStateStoreFromEnvironment, MissingRecordError, type WorkspaceProject, type FleetRegistryRecord, type GatewayRoot, type OpaqueMap, type GatewayRootFields, type GatewayRootPatch, type OperationRecord, type PlatformStateStore, type PlatformStateTransaction, type Stored, type WatchChange, type WatchEvent, type FleetRegistryInventory } from "@octogee/core/platform-state";
 import { restartGatewayProcess, restartGatewayDeployment } from './lib/runtime-restart-transport.js';
 import { assertMigrationRestartUnfenced } from './lib/runtime-restart-coordinator.js';
 import { assertOwnerOperationUnfenced } from './lib/vm-recovery-fence.js';
@@ -1258,6 +1258,16 @@ function runtimeUserIdentity(gateway: DurableGateway): { builderIdentity?: Runti
     : {};
 }
 
+async function wakeIsolatedGatewayMoves(transaction: PlatformStateTransaction, root: GatewayRoot, initialPrelaunch: boolean): Promise<void> {
+  if (!initialPrelaunch || root.desiredStatus !== "running" || !root.ownerUid) return;
+  const moves = await transaction.journal.operations.listForUid(root.ownerUid, { kind: MIGRATE_USER_KIND, statuses: ["pending"] });
+  for (const move of moves) {
+    if (move.input?.toGatewayId === root.gatewayId && move.waitingOn === WAITING_FOR_ISOLATED_GATEWAY) {
+      await transaction.journal.operations.patch(move.id, { waitingOn: { clear: true }, nextAttemptAt: { clear: true } }, { revision: move.revision });
+    }
+  }
+}
+
 export async function markGatewayLive(
   passDeps: Pick<GatewayConvergencePassDeps, "store" | "log">,
   gateway: DurableGateway,
@@ -1280,14 +1290,7 @@ export async function markGatewayLive(
       log(`[converge-gateway] ${gateway.gatewayId} prelaunch reservation changed; deferring release`);
       return false;
     }
-    const waitingMoves = initialDisposablePrelaunch && root.desiredStatus === "running" && root.ownerUid
-      ? await transaction.journal.operations.listForUid(root.ownerUid, { kind: MIGRATE_USER_KIND, statuses: ["pending"] })
-      : [];
-    for (const move of waitingMoves) {
-      if (move.input?.toGatewayId === gateway.gatewayId && move.waitingOn === WAITING_FOR_ISOLATED_GATEWAY) {
-        await transaction.journal.operations.patch(move.id, { waitingOn: { clear: true }, nextAttemptAt: { clear: true } }, { revision: move.revision });
-      }
-    }
+    await wakeIsolatedGatewayMoves(transaction, root, initialDisposablePrelaunch);
     await transaction.gateways.roots.patch(
       gateway.gatewayId,
       { liveRelease: gateway.desiredRelease, updatedAt: now, updatedBy: "converge-gateway" },
