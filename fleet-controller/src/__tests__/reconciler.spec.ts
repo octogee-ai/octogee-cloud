@@ -20,7 +20,7 @@ import {
   type WatchChange,
 } from "@octogee/core/platform-state";
 import { createJournalFixtureStore, journalRowsIn, type FixtureDocuments } from "@octogee/core-testing/journal-store";
-import { VmCreationPendingError, FinalHomeCheckpointPendingError } from "../vm-lifecycle";
+import { VmCreationPendingError, VmPausePendingError, FinalHomeCheckpointPendingError } from "../vm-lifecycle";
 import { runGatewayRuntimeExclusive } from "../lib/gateway-runtime-mutation";
 import { reconcileSurgeUserHandoff } from "../surge-user-handoff";
 import { assignment, createSurgeHandoffHarness } from "./fixtures/surge-user-handoff";
@@ -1014,6 +1014,7 @@ describe("gateway convergence pass outcomes", () => {
     const helm = {
       upsertInstance: vi.fn(async (opts: Record<string, unknown>) => { order.push(`helm ${String(opts.gatewayId)}`); }),
       readDeployedInstances: vi.fn(async () => ({})),
+      readDeployedInstance: vi.fn(async () => null),
     };
     const ensureIsolatedPodHome = vi.fn(async (input: { gatewayId: string }) => { order.push(`home ${input.gatewayId}`); });
     const store = fixtureStoreOver({ roots, runtimes, users: { u: {} }, operations: {}, assignments: {},
@@ -1095,6 +1096,27 @@ describe("gateway convergence pass outcomes", () => {
     await expect(runGatewayConvergencePass(h.deps)).rejects.toThrow(error);
     expect(h.ensureIsolatedPodHome).not.toHaveBeenCalled();
     expect(h.helm.upsertInstance).not.toHaveBeenCalled();
+  });
+
+  it("releases serialized convergence when a VM pause is pending", async () => {
+    const roots = {
+      parking: durableRoot({ gatewayId: "parking", desiredStatus: "paused", gatewayClass: "isolated",
+        profile: null, imageProfile: "isolated", sizingTier: "m", ownerUid: "u", builderSlug: "alice" }),
+      next: durableRoot({ gatewayId: "next", liveRelease: null }),
+    };
+    const h = isolatedPodPass(roots, {
+      parking: servingRuntime({ gatewayId: "parking", runtime: "gce-vm" }),
+    }, { vm: VM_PROFILE });
+    h.helm.upsertInstance.mockImplementation(async ({ gatewayId }) => {
+      if (gatewayId === "parking") throw new VmPausePendingError("Compute pause pending");
+    });
+    const converge = serializeGatewayConvergence(gatewayIds => runGatewayConvergencePass(h.deps, gatewayIds));
+    await converge(["parking"]);
+    await converge(["next"]);
+
+    expect(h.upserted("parking")).toMatchObject({ replicas: 0, deferVmPause: true });
+    expect(h.upserted("next")).toMatchObject({ replicas: 1 });
+    expect(h.deps.log.mock.calls.flat().filter(line => String(line).includes("⚠"))).toEqual([]);
   });
 
   it("moves past a user whose VM Compute is still creating, so the next converge takes the runtime lock", async () => {
