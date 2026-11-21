@@ -212,9 +212,25 @@ selection and rollout are a separate operator step.
 
 ## Current Gateway overlay
 
-The November 20 overlay is `0e76ab99c8f23245c126b8ab1713396d088a8ad1` on
-`ceckert/openclaw:codex/gateway-refresh-20261120`. It carries the retained
-Octogee boundaries below on the frozen upstream tip.
+The November 21 overlay at `7f0f50982ccc4c2d984370b94749ade6c57f8cb7` adds
+`agents.restoreMany` to the previous fork pin. Restoring a Builder or a shared-to-shared move through
+`agents.create` published and applied a separate config revision for each
+retained agent. The native batch validates every PostgreSQL store, publishes
+the roster once, and acknowledges when the Gateway has applied it. An exact
+retry can finish a committed restore without publishing a second revision.
+The supervisor then enables routing after restoring identities and credentials.
+Remove this overlay when upstream supports applied, store-preserving roster
+restoration for a whole group of agents.
+
+The November 20 overlay at `102845f2f6537a7d31b948b4d07db80a91ed724d` on
+`ceckert/openclaw:codex/retain-requester-bound-schedules` adds the scheduler
+handoff fix to `0e76ab99c8f23245c126b8ab1713396d088a8ad1`. A Builder return
+could fail when Shared could not rebind a job to its original authenticated
+requester. Partial export retains that job and its scratch data on the
+Builder. The source Gateway holds the scheduler before applying the target
+requester filter to the export. The staging Gateway verifies the requester
+and narrows the rebound grant. Remove the overlay patch when the selected
+upstream supports equivalent requester-aware retention.
 
 The Mattermost connector verifies the sender through the Gateway before applying
 the requested follow-up or steer mode. The reply runner checks the selected run

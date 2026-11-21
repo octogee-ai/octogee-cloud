@@ -28,6 +28,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { isDeepStrictEqual } from "node:util";
 
 import type {
+  FleetBrokerAgentAnchor,
   FleetBrokerProjectCheckoutScope,
   FleetBrokerProjectRestore,
   FleetBrokerAssignmentRosterEntry,
@@ -365,13 +366,18 @@ function postgresAgentStoreConfigured(): boolean {
 
 async function prepareUserSharedAnchors(ctx: BrokerCtx, input: {
   uid?: string; slug: string; agentIds: readonly string[]; allowQuiescingExisting?: boolean; migrationId?: string;
-}): Promise<(() => Promise<void>) | undefined> {
+  sharedToSharedWorkspace?: MigrationActivationManifest["targetWorkspaceIdentities"] | null;
+}) {
   if (ctx.isIsolatedGateway() || !postgresAgentStoreConfigured()) return undefined;
   const uid = input.uid ?? await ctx.client.uidForSlug(input.slug);
   if (!uid && !input.migrationId) throw new Error(`Shared imported agent anchors require an assigned owner for ${input.slug}`);
   const surgeTarget = !input.allowQuiescingExisting && process.env.GATEWAY_ID &&
     input.migrationId?.startsWith(`surge-${process.env.GATEWAY_ID}-`);
-  return prepareSharedUserAgentAnchors({ ...input, uid: uid ?? undefined, migrationId: uid && !surgeTarget ? undefined : input.migrationId, stateDir: resolveOpenClawStateDir(), broker: ctx.client });
+  const migrationBound = !uid || surgeTarget || input.sharedToSharedWorkspace !== undefined;
+  return prepareSharedUserAgentAnchors({
+    ...input, uid: uid ?? undefined, migrationId: migrationBound ? input.migrationId : undefined,
+    stateDir: resolveOpenClawStateDir(), broker: ctx.client,
+  });
 }
 
 async function releaseAgentsAndInvalidateCache(
@@ -1434,7 +1440,7 @@ async function applyAddUserConfigPatch(
   const accountTokens = Object.fromEntries([[accountId, defaultAgentPat], ...projectAgents.map(agent => [`${snapshot.slug}-proj-${agent.projectId}`, agent.token])]);
   const assignedIdentity = await assignedWorkspaceIdentityRestore(ctx, { snapshot, brokerSnapshot, agentEntry, projectAgentEntries, accountEntry, projectAccounts, accountTokens, bindings, callOpts });
   await callOpts?.brokerProfilesReady;
-  const reportSharedAnchors = await prepareUserSharedAnchors(ctx, {
+  const sharedAnchors = await prepareUserSharedAnchors(ctx, {
     uid: snapshot.uid, slug: snapshot.slug, agentIds: brokerAgentIds,
   });
   await reconcileUserRosterAgents(
@@ -1444,7 +1450,7 @@ async function applyAddUserConfigPatch(
     brokerAgentIds,
     userAgentEntries,
   );
-  await reportSharedAnchors?.();
+  await sharedAnchors?.report();
   await materializeUserBrokerProfiles(brokerAgentIds, snapshot.slug, ctx.log, secretMaterial);
   const { accountIds: affectedAccountIds, baseline: routingActivationBaseline } = await captureRoutingActivationBaseline(ctx, accountId, projectAccounts);
   const pendingProjectAccountIds = pendingProjectActivationAccountIds(snapshot.slug, projectAgents);
@@ -1941,6 +1947,53 @@ async function prepareKeyImportDir(ctx: Pick<BrokerCtx, "client" | "log">, slug:
   return OPENCLAW_DIR;
 }
 
+async function targetMigrationIdentityCustody(ctx: BrokerCtx, slug: string, migrationId: string) {
+  if (!migrationId) throw new Error("target migration authority is required");
+  const current = await ctx.client.readAgentAnchors({ slug, migrationId });
+  const gatewayId = process.env.GATEWAY_ID?.trim(), podUid = process.env.POD_UID?.trim();
+  if (!gatewayId || !podUid || current.migration?.migrationId !== migrationId || !current.assignment?.uid || current.assignment.state !== "quiescing" ||
+      current.assignment.epoch !== current.migration.sourceEpoch || !Number.isSafeInteger(current.migration.claimStartedAt) || current.migration.claimStartedAt <= 0) {
+    throw new Error("Target migration authority changed");
+  }
+  return {
+    custody: { migrationId, uid: current.assignment.uid, gatewayId, podUid },
+    migration: current.migration,
+    anchors: current.anchors,
+    ...(current.sharedToShared === true ? { sharedToShared: true as const } : {}),
+  };
+}
+
+async function restoreRetainedUserRoster(
+  ctx: BrokerCtx, entries: readonly unknown[], opts: { slug: string; migrationId: string; signal?: AbortSignal; retainedSharedRoster?: readonly FleetBrokerAgentAnchor[] },
+): Promise<void> {
+  const specs = rosterAgentSpecsFromEntries(entries);
+  const authority = opts.retainedSharedRoster ? undefined : await targetMigrationIdentityCustody(ctx, opts.slug, opts.migrationId);
+  const recorded = opts.retainedSharedRoster ?? authority?.anchors ?? [];
+  const anchors = new Map(recorded.map(anchor => [anchor.agentId, anchor]));
+  if (anchors.size !== recorded.length || anchors.size !== specs.length) {
+    throw new Error("Retained roster does not match the current target migration authority");
+  }
+  const agents = specs.map(({ agentId, workspace }) => {
+    const anchor = anchors.get(agentId);
+    if (!anchor) throw new Error("Retained roster does not match the current target migration authority");
+    return { agentId, name: agentId, workspace, storeId: anchor.storeId, schema: anchor.schema };
+  });
+  await Promise.all(agents.map(agent => fsp.mkdir(agent.workspace, { recursive: true })));
+  opts.signal?.throwIfAborted();
+  try {
+    const startedAt = Date.now();
+    await ctx.rpc.agentsRestoreMany({ agents });
+    opts.signal?.throwIfAborted();
+    if (authority && !isDeepStrictEqual(await targetMigrationIdentityCustody(ctx, opts.slug, opts.migrationId), authority)) {
+      throw new Error("Retained roster migration authority changed after OpenClaw applied it");
+    }
+    opts.signal?.throwIfAborted();
+    ctx.log(`[import:${opts.slug}] native retained-roster restore applied for ${agents.length} agents in ${Date.now() - startedAt}ms`);
+  } finally {
+    invalidateConfigCache(ctx);
+  }
+}
+
 async function sourceMigrationIdentityCustody(ctx: BrokerCtx, slug: string, migrationId: string): Promise<MigrationSourceIdentityCustody> {
   const gatewayId = process.env.GATEWAY_ID ?? "", podUid = process.env.POD_UID ?? "";
   const uid = await ctx.client.uidForSlug(slug);
@@ -2014,6 +2067,30 @@ function importedRosterNeedsAcknowledgement(manifest: MigrationActivationManifes
   return !sourceIdentity || manifest.sourceWorkspaceIdentities !== undefined || manifest.targetWorkspaceIdentities !== undefined;
 }
 
+const MAX_NATIVE_RETAINED_ROSTER_AGENTS = 32;
+
+async function ensureImportedUserRoster(
+  ctx: BrokerCtx,
+  manifest: MigrationActivationManifest,
+  sourceIdentity: MigrationSourceIdentityCustody | undefined,
+  opts: { signal?: AbortSignal; migrationId?: string },
+  retainedSharedRoster?: readonly FleetBrokerAgentAnchor[],
+): Promise<void> {
+  if (!importedRosterNeedsAcknowledgement(manifest, sourceIdentity)) return;
+  const { slug } = manifest;
+  const entries = [manifest.agent, ...manifest.projectAgents.map(entry => entry.agent)];
+  const isolated = ctx.isIsolatedGateway();
+  const batchShared = retainedSharedRoster !== undefined && entries.length <= MAX_NATIVE_RETAINED_ROSTER_AGENTS;
+  if (!sourceIdentity && opts.migrationId && (batchShared || isolated && postgresAgentStoreConfigured())) {
+    await restoreRetainedUserRoster(ctx, entries, { slug, migrationId: opts.migrationId, signal: opts.signal, retainedSharedRoster });
+    return;
+  }
+  await ensureUserRosterAgents(ctx, entries, `[import:${slug}]`, {
+    signal: opts.signal,
+    waitForAppliedRevision: isolated,
+  });
+}
+
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 }
@@ -2053,10 +2130,35 @@ async function prepareImportedProjectAgents(ctx: BrokerCtx, manifest: MigrationA
   return { ...control, projectSnapshot };
 }
 
+type ImportedUserActivationOptions = {
+  signal?: AbortSignal;
+  resumeExistingSharedCustody?: boolean;
+  migrationId?: string;
+  beforeRuntimePublish?: () => Promise<void>;
+  deferRuntimeVerification?: true;
+  sharedToSharedRoster?: true;
+};
+
+function prepareImportedSharedAnchors(
+  ctx: BrokerCtx,
+  manifest: MigrationActivationManifest,
+  opts: ImportedUserActivationOptions,
+) {
+  const useWorkspaceWitness = opts.sharedToSharedRoster && !opts.resumeExistingSharedCustody &&
+    opts.beforeRuntimePublish && opts.migrationId;
+  return prepareUserSharedAnchors(ctx, {
+    slug: manifest.slug,
+    agentIds: activationManifestAgentIds(manifest),
+    allowQuiescingExisting: opts.resumeExistingSharedCustody,
+    migrationId: opts.migrationId,
+    ...(useWorkspaceWitness ? { sharedToSharedWorkspace: manifest.targetWorkspaceIdentities ?? null } : {}),
+  });
+}
+
 async function activateImportedUser(
   ctx: BrokerCtx,
   slug: string,
-  opts: { signal?: AbortSignal; resumeExistingSharedCustody?: boolean; migrationId?: string; beforeRuntimePublish?: () => Promise<void>; deferRuntimeVerification?: true } | undefined,
+  opts: ImportedUserActivationOptions | undefined,
 ): Promise<{ appliedFingerprint: string; verificationPending?: string }> {
   opts ??= {};
   if (sharedImportWithoutIdentityWitness(ctx, opts)) {
@@ -2075,9 +2177,7 @@ async function activateImportedUser(
   const routingActivationReason = `[import:${slug}] account-level Mattermost binding changed`;
   setRepoSshCommand(path.join(CUSTOMERS_DIR, slug), slug);
   ctx.log(`[import:${slug}] canonical workspace Git metadata ready`);
-  const reportSharedAnchors = await prepareUserSharedAnchors(ctx, {
-    slug, agentIds: activationManifestAgentIds(safeManifest), allowQuiescingExisting: opts.resumeExistingSharedCustody, migrationId: opts.migrationId,
-  });
+  const sharedAnchors = await prepareImportedSharedAnchors(ctx, safeManifest, opts);
   await deleteSupersededUserAgents(ctx, {
     slug,
     evictionSlugs: [],
@@ -2085,18 +2185,10 @@ async function activateImportedUser(
     logPrefix: `[import:${slug}]`,
     purpose: "import",
   });
-  if (importedRosterNeedsAcknowledgement(safeManifest, sourceIdentity)) {
-    await ensureUserRosterAgents(ctx, [
-      safeManifest.agent,
-      ...safeManifest.projectAgents.map((entry) => entry.agent),
-    ], `[import:${slug}]`, {
-      signal: opts.signal,
-      waitForAppliedRevision: ctx.isIsolatedGateway(),
-    });
-  }
+  await ensureImportedUserRoster(ctx, safeManifest, sourceIdentity, opts, sharedAnchors?.retainedSharedRoster);
   if (configuredBuilder && opts.deferRuntimeVerification) await keepIsolatedRuntimeDormant(ctx);
   await restoreSourceIdentityAfterRoster(ctx, manifest, safeManifest, sourceIdentity);
-  await reportSharedAnchors?.();
+  await sharedAnchors?.report();
   await materializeUserBrokerProfiles(
     activationManifestAgentIds(safeManifest),
     slug,
@@ -2645,16 +2737,7 @@ export function buildBrokeredLifecycleAdapter(
     },
     listExportPaths,
     prepareKeyImportDir: (slug) => prepareKeyImportDir(ctx, slug),
-    targetMigrationIdentityCustody: async (slug, migrationId) => {
-      if (!migrationId) throw new Error("target migration authority is required");
-      const current = await ctx.client.readAgentAnchors({ slug, migrationId });
-      const gatewayId = process.env.GATEWAY_ID?.trim(), podUid = process.env.POD_UID?.trim();
-      if (!gatewayId || !podUid || current.migration?.migrationId !== migrationId || !current.assignment?.uid || current.assignment.state !== "quiescing" ||
-          current.assignment.epoch !== current.migration.sourceEpoch || !Number.isSafeInteger(current.migration.claimStartedAt) || current.migration.claimStartedAt <= 0) {
-        throw new Error("Target migration authority changed");
-      }
-      return { custody: { migrationId, uid: current.assignment.uid, gatewayId, podUid }, migration: current.migration, anchors: current.anchors };
-    },
+    targetMigrationIdentityCustody: (slug, migrationId) => targetMigrationIdentityCustody(ctx, slug, migrationId),
     exportOpenClawActivationManifest: (slug, options) =>
       exportSourceActivationManifest(ctx, slug, options),
   };

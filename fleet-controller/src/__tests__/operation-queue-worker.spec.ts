@@ -1,7 +1,9 @@
+import type { DurableGateway } from "../converge-gateway.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GLM_OPERATIONS_COLLECTION, type Operation, type OperationAttemptRecord } from "@octogee/shared/types/glm";
 import {
   drainPendingOperationsOnce,
+  markGatewayLive,
   processOperation,
   reAdoptAndRunOperation,
   startOperationWorker,
@@ -979,6 +981,46 @@ describe("queued op bookkeeping is write-quiet", () => {
 });
 
 describe("pending operation watch", () => {
+  it("claims a waiting operator move when its isolated gateway publishes the first live release", async () => {
+    const retryAt = Date.now() + 60_000;
+    const move = {
+      ...baseOp({
+        id: "move",
+        kind: "migrate-user",
+        input: { source: "operator-isolated-gateway", uid: "uid", fromGatewayId: "shared", toGatewayId: "isolated" },
+        output: { isolatedGatewayReadinessChecks: 1 },
+        waitingOn: "isolated-gateway-ready",
+        nextAttemptAt: retryAt,
+      }),
+      inputUid: "uid",
+    };
+    const other = { ...move, id: "other", createdAt: 10, waitingOn: "different-wait" };
+    const { db, emit } = createOperationsFixture({ move, other }, {
+      gateways: {
+        isolated: {
+          gatewayId: "isolated", gatewayClass: "isolated", ownerUid: "uid",
+          allocation: { kind: "disposable-builder" }, liveRelease: null, updatedAt: 1,
+        },
+      },
+      runtimes: { isolated: { lifecycle: "provisioning" } },
+    });
+    const root = (await db.gateways.roots.get("isolated"))!;
+    const stop = startOperationWorker(buildDeps(db, { "migrate-user": async () => ({ success: true, steps: [] }) }));
+    try {
+      await markGatewayLive({ store: db, log: vi.fn() }, root as DurableGateway, {
+        imageTag: "release", imageRepository: "gateway",
+        profileImages: { builder: { imageRepository: "gateway-builder", imageTag: "release@sha256:" + "a".repeat(64) } },
+      });
+      const ready = (await db.journal.operations.get("move"))!;
+      expect(ready.nextAttemptAt).toBeUndefined();
+      expect((await db.journal.operations.get("other"))?.nextAttemptAt).toBe(retryAt);
+      await emit({ kind: "changes", changes: [{ type: "modified", key: ready.id, record: ready }], cursor: "c1" as never });
+      await vi.waitFor(async () => expect((await db.journal.operations.get("move"))?.status).toBe("succeeded"));
+    } finally {
+      stop();
+    }
+  });
+
   it("claims the watch snapshot and each later addition, ignoring modifications, until stopped", async () => {
     const claimed: string[] = [];
     const handler: OperationHandler = vi.fn(async (op) => {

@@ -42,3 +42,14 @@ export interface MigrationTasksRepository {
   claim(task: MigrationTransferTask, expected: Revision | "absent"): Promise<void>;
   finish(taskId: string, claim: MigrationTransferClaim, completedAt: number, error: string | null): Promise<void>;
 }
+
+export function migrationTransferTaskId({ migrationId, mode = "pre" }: {
+  migrationId: string;
+  mode?: MigrationTransferMode;
+}): string {
+  return `${migrationId.replace(/[^A-Za-z0-9._-]/g, "_")}__${mode}`;
+}
+
+export function retargetedMigrationTransferId(migrationId: string, gatewayId: string): string {
+  return `${migrationId}:retarget:${gatewayId}`;
+}

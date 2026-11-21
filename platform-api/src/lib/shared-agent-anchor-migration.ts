@@ -51,7 +51,12 @@ async function sharedCrossGatewayAgentAnchorScope(tx: PlatformStateRepositories,
     isolatedTargetAdmitted, targetAssigned: targetAssignment !== null, user, migrationId, sourceGatewayId, targetGatewayId })) return null;
   const migration: FleetBrokerAgentAnchorMigration = { migrationId, claimStartedAt: operation.startedAt, sourceGatewayId, sourceEpoch: assignment.epoch };
   if (!migrationAuthorityMatches(migration, expected)) return null;
-  return { gatewayId, uid, slug, assignmentEpoch: assignment.epoch, assignmentState: "quiescing" as const, migration };
+  return {
+    gatewayId, uid, slug, assignmentEpoch: assignment.epoch, assignmentState: "quiescing" as const, migration,
+    ...(!sourceRequest && sourceRoot.gatewayClass === "shared" && target?.gatewayClass === "shared"
+      ? { sharedToShared: true as const }
+      : {}),
+  };
 }
 
 function migrationTargetAuthority({ operationId, operation, input, user, sourceEpoch, targetRoot, target }: {

@@ -2295,6 +2295,7 @@ async function readIsolatedRuntimeStateScope(
 }
 
 interface SharedAgentAnchorScope {
+  sharedToShared?: true;
   migration?: FleetBrokerAgentAnchorMigration;
   sourceSurge?: FleetBrokerAgentAnchorMigration;
   gatewayId: string;
@@ -2729,7 +2730,12 @@ function installAgentAnchorRoutes(router: Router, deps: ResolvedFleetBrokerRoute
           const anchors = records.map((record) => recordedSharedAgentAnchor(scope, record))
             .filter((anchor): anchor is FleetBrokerAgentAnchor => anchor !== null)
             .sort((left, right) => left.agentId.localeCompare(right.agentId));
-          res.json({ anchors, assignment: { uid: scope.uid, epoch: scope.assignmentEpoch, state: scope.assignmentState }, ...(scope.migration ? { migration: scope.migration } : {}) } satisfies FleetBrokerAgentAnchors);
+          res.json({
+            anchors,
+            assignment: { uid: scope.uid, epoch: scope.assignmentEpoch, state: scope.assignmentState },
+            ...(scope.migration ? { migration: scope.migration } : {}),
+            ...(scope.sharedToShared ? { sharedToShared: true } : {}),
+          } satisfies FleetBrokerAgentAnchors);
         } catch (error) {
           if (!(error instanceof AgentAnchorConflictError)) throw error;
           res.status(409).json({ error: "agent_anchor_conflict", agentId: error.agentId });

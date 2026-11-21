@@ -669,6 +669,23 @@ describe("createVmGatewayRuntime.upsertInstance", () => {
     expect(routesFail.docs["glmGateways/b-x"].vmInstance).toBeUndefined();
   });
 
+  it("refuses to suspend for a stale pause after demand takes the same root", async () => {
+    const docs = {
+      "gateways/b-x": { desiredStatus: "paused" },
+      "glmGateways/b-x": { runtime: "gce-vm", vm: recorded },
+    };
+    const h = harness(docs, {
+      describe: vi.fn(async () => {
+        docs["gateways/b-x"].desiredStatus = "running";
+        return running;
+      }),
+    });
+    await h.runtime.upsertInstance({ ...upsertOpts, replicas: 0 });
+    expect(h.vm.suspend).not.toHaveBeenCalled();
+    expect(h.vm.stop).not.toHaveBeenCalled();
+    expect(h.docs["glmGateways/b-x"].vmInstance).toBeUndefined();
+  });
+
   it("pauses by suspending the user's running VM instead of claiming or starting one, and records the paused deployment", async () => {
     const paused = { ...upsertOpts, replicas: 0 };
     let current = running;
@@ -2477,6 +2494,105 @@ describe("stopped retained-home boot replacement", () => {
     expect(h.vm.create).toHaveBeenCalledWith(expect.objectContaining({ retainedHome: expect.objectContaining(home), image: expect.objectContaining(accepted) }));
     expect(h.vm.start).not.toHaveBeenCalled();
   });
+  it("repairs recovery by resuming the exact original suspended VM before considering the new boot image", async () => {
+    let resumed = false;
+    const original = { ...ownedStopped, status: "SUSPENDED" };
+    const h = harness({
+      ...vmDoc(),
+      "glmOperations/prewarm-repair": {
+        kind: "prewarm-gateway", status: "running", createdAt: 900, startedAt: 950, createdBy: "ship-test",
+        gatewayId: "b-x", inputUid: "UidA",
+        output: { prewarmState: "repairing", previousInstanceId: "4242", previousBootImageId: CURRENT_IMAGE.id },
+        input: { gatewayId: "b-x", uid: "UidA", generation: 1, sourceSha: "a".repeat(40), bootImageId: accepted.id,
+          payload: { imageRepository: "registry/images/octogee-gateway", imageTag: `abc1234@sha256:${"a".repeat(64)}` } },
+      },
+    }, {
+      describe: vi.fn(async () => resumed ? { ...original, status: "RUNNING", internalIp: running.internalIp } : original),
+      resume: vi.fn(async () => { resumed = true; return { fellBackToStandard: false }; }),
+      readBootImage: vi.fn(async () => CURRENT_IMAGE),
+    });
+    await h.runtime.upsertInstance(upsertOpts);
+    expect(h.vm.resume).toHaveBeenCalledWith(VM, original.zone);
+    expect(h.vm.stop).not.toHaveBeenCalled();
+    expect(h.vm.deleteRetainingHome).not.toHaveBeenCalled();
+    expect(h.vm.create).not.toHaveBeenCalled();
+  });
+
+  function mismatchedRecovery(bootImage = CURRENT_IMAGE) {
+    const candidateImage = `${upsertOpts.imageRepository}:${upsertOpts.imageTag}`;
+    let original = {
+      ...ownedStopped, status: "SUSPENDED",
+      metadata: { ...ownedStopped.metadata, "gateway-image": `${upsertOpts.imageRepository}:previous` },
+    };
+    const h = harness({
+      ...vmDoc(),
+      "glmOperations/prewarm-repair": {
+        kind: "prewarm-gateway", status: "running", createdAt: 900, startedAt: 950, createdBy: "ship-test",
+        gatewayId: "b-x", inputUid: "UidA",
+        output: { prewarmState: "repairing", previousInstanceId: "4242", previousBootImageId: CURRENT_IMAGE.id },
+      },
+    }, {
+      describe: vi.fn(async () => original),
+      readBootImage: vi.fn(async () => bootImage),
+      stop: vi.fn(async () => { original = { ...original, status: "TERMINATED" }; }),
+      bind: vi.fn(async () => { original = { ...original, metadata: { ...original.metadata, "gateway-image": candidateImage } }; }),
+      start: vi.fn(async () => {
+        original = { ...original, status: "RUNNING", internalIp: running.internalIp };
+        return { fellBackToStandard: false };
+      }),
+    });
+    return h;
+  }
+
+  it("cold-starts the original boot under the staged Gateway image when the suspended binding differs", async () => {
+    const h = mismatchedRecovery();
+    await h.runtime.upsertInstance(upsertOpts);
+
+    expect(h.vm.stop).toHaveBeenCalledBefore(h.vm.bind);
+    expect(h.vm.bind).toHaveBeenCalledBefore(h.vm.start);
+    expect(h.vm.resume).not.toHaveBeenCalled();
+    expect(h.journalBootUpgrade).not.toHaveBeenCalled();
+    expect(h.vm.deleteRetainingHome).not.toHaveBeenCalled();
+    expect(h.vm.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses to rebind a suspended VM whose original boot image changed", async () => {
+    const h = mismatchedRecovery(OLD_IMAGE);
+
+    await expect(h.runtime.upsertInstance(upsertOpts)).rejects.toThrow("Original parked VM boot image changed before recovery");
+    expect(h.vm.stop).not.toHaveBeenCalled();
+    expect(h.vm.bind).not.toHaveBeenCalled();
+    expect(h.vm.start).not.toHaveBeenCalled();
+  });
+
+  it("prewarms a new boot image without changing the Gateway image or deleting the owner's home", async () => {
+    let deleted = false;
+    let physicallyStopped = false;
+    const oldVm = { ...ownedStopped, status: "SUSPENDED" };
+    const h = harness({
+      ...vmDoc(),
+      "glmOperations/prewarm-one": {
+        kind: "prewarm-gateway", status: "running", createdAt: 900, startedAt: 950, createdBy: "ship-test",
+        gatewayId: "b-x", inputUid: "UidA", output: { prewarmState: "booting" },
+        input: { gatewayId: "b-x", uid: "UidA", generation: 1, sourceSha: "a".repeat(40), bootImageId: accepted.id, payload: { imageRepository: "registry/images/octogee-gateway", imageTag: `abc1234@sha256:${"a".repeat(64)}` } },
+      },
+    }, {
+      describe: vi.fn(async () => deleted ? null : physicallyStopped ? ownedStopped : oldVm),
+      stop: vi.fn(async () => { physicallyStopped = true; }),
+      deleteRetainingHome: vi.fn(async () => { deleted = true; }),
+      readBootImage: vi.fn(async () => CURRENT_IMAGE),
+      readFamilyImage: vi.fn(async () => accepted),
+      readImage: vi.fn(async () => accepted),
+    });
+    await h.runtime.upsertInstance(upsertOpts);
+    expect(h.vm.stop).toHaveBeenCalledWith(VM, ownedStopped.zone);
+    expect(h.vm.resume).not.toHaveBeenCalled();
+    expect(h.vm.deleteRetainingHome).toHaveBeenCalledWith(VM, ownedStopped.zone, "UidA", expect.objectContaining(home), "4242");
+    expect(h.vm.create).toHaveBeenCalledWith(expect.objectContaining({
+      retainedHome: expect.objectContaining(home), image: expect.objectContaining(accepted),
+    }));
+  });
+
   it("journals the boot upgrade it starts", async () => {
     let deleted = false;
     const h = harness(vmDoc(), {

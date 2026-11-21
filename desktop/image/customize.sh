@@ -4,7 +4,6 @@ set -euo pipefail
 OMARCHY_VERSION="${OMARCHY_VERSION:?}"
 IMAGE_NAME="${IMAGE_NAME:?}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WLRCTL_REF="${WLRCTL_REF:-v0.2.2}"
 NOVNC_VERSION="${NOVNC_VERSION:-1.7.0}"
 NOVNC_SHA256="${NOVNC_SHA256:-b1003a11b6e6e8d8f7f5e5586daae7f8ca651d8aee0aa155ff9ac841c48f52c6}"
 WEBSOCKIFY_VERSION="${WEBSOCKIFY_VERSION:-0.13.0}"
@@ -73,9 +72,8 @@ install -m 0440 /dev/stdin /etc/sudoers.d/zz-octo-build <<< 'Defaults:octo !auth
 visudo -cf /etc/sudoers.d/zz-octo-build >/dev/null
 sudo -H -u octo env "XDG_RUNTIME_DIR=${runtime_dir}" "DBUS_SESSION_BUS_ADDRESS=unix:path=${runtime_dir}/bus" bash -lc 'omarchy migrate'
 
-log "wlrctl ${WLRCTL_REF}"
-rm -rf /tmp/wlrctl
-git -c advice.detachedHead=false clone -q --depth 1 --branch "$WLRCTL_REF" https://git.sr.ht/~brocellous/wlrctl /tmp/wlrctl
+log "wlrctl"
+bash "$HERE/desktop-rootfs/usr/share/omarchy/octo-desktop/fetch-wlrctl.sh" /tmp/wlrctl
 meson setup /tmp/wlrctl/build /tmp/wlrctl -Dman-pages=disabled --buildtype=release >/dev/null
 ninja -C /tmp/wlrctl/build >/dev/null
 install -m 0755 /tmp/wlrctl/build/wlrctl /usr/local/bin/wlrctl
