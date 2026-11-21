@@ -1,3 +1,4 @@
+import { UnsupportedOperationError } from "@octogee/core/platform-state";
 import { describe, expect, it, vi } from "vitest";
 import { createJournalFixtureStore, fixtureDocumentsAt, journalRowsAtPaths } from "@octogee/core-testing/journal-store";
 import type { DurableGateway, ReadyVmObservation } from "../converge-gateway.js";
@@ -22,6 +23,25 @@ function fixture(changed: Record<string, unknown> = {}, status = "draining") {
   const backing = fixtureDocumentsAt(documents);
   const writes = vi.fn((path: string, row: Record<string, unknown>) => backing.set(path, row));
   const store = createJournalFixtureStore(journalRowsAtPaths(documents), { documents: { ...backing, set: writes } });
+  const withTransaction = store.transaction.bind(store);
+  store.transaction = (options, work) => withTransaction(options, async tx => {
+    let hasWritten = false;
+    return work({
+      ...tx,
+      gateways: { ...tx.gateways, roots: { ...tx.gateways.roots, patch: async (...args) => {
+        hasWritten = true;
+        return tx.gateways.roots.patch(...args);
+      } } },
+      fleetRegistry: { ...tx.fleetRegistry, patch: async (...args) => {
+        hasWritten = true;
+        return tx.fleetRegistry.patch(...args);
+      } },
+      users: { ...tx.users, records: { ...tx.users.records, listByGateway: async (...args) => {
+        if (hasWritten) throw new UnsupportedOperationError("postgresql", "builders.records.listByGateway", "read-after-write");
+        return tx.users.records.listByGateway(...args);
+      } } },
+    });
+  });
   const publish = (readyVm?: ReadyVmObservation) => markGatewayLive({ store, log: vi.fn() }, gateway, {
     imageRepository: "us-central1-docker.pkg.dev/octogee/octogee/octogee-gateway", imageTag: "build-3",
   }, false, readyVm);

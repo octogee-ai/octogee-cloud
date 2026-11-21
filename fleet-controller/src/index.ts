@@ -19,7 +19,7 @@ import {
   startIsolatedPodBlockerObserver,
 } from "./isolated-pod-home.js";
 import { runNormalFleetMutation } from "@octogee/core/normal-fleet-mutation";
-import { platformStateStoreFromEnvironment, MissingRecordError, type WorkspaceProject, type FleetRegistryRecord, type GatewayRoot, type OpaqueMap, type GatewayRootFields, type GatewayRootPatch, type OperationRecord, type PlatformStateStore, type PlatformStateTransaction, type Stored, type WatchChange, type WatchEvent, type FleetRegistryInventory } from "@octogee/core/platform-state";
+import { platformStateStoreFromEnvironment, MissingRecordError, type WorkspaceProject, type FleetHeartbeatReport, type FleetRegistryRecord, type GatewayRoot, type OpaqueMap, type GatewayRootFields, type GatewayRootPatch, type OperationRecord, type PlatformStateStore, type PlatformStateTransaction, type Stored, type WatchChange, type WatchEvent, type FleetRegistryInventory } from "@octogee/core/platform-state";
 import { restartGatewayProcess, restartGatewayDeployment } from './lib/runtime-restart-transport.js';
 import { assertMigrationRestartUnfenced } from './lib/runtime-restart-coordinator.js';
 import { assertOwnerOperationUnfenced } from './lib/vm-recovery-fence.js';
@@ -1302,6 +1302,16 @@ function currentReadyVm(
     matchesReadyVm(gateway.gatewayId, runtime, vmReady, imageTag);
 }
 
+async function readReadyVmHeartbeat(
+  transaction: PlatformStateTransaction,
+  gatewayId: string,
+  vmReady: ReadyVmObservation | undefined,
+): Promise<FleetHeartbeatReport | undefined> {
+  if (!vmReady) return undefined;
+  const assigned = assignedSlugsFromUserMirror(await transaction.users.records.listByGateway(gatewayId), gatewayId);
+  return pollerHeartbeatReport(heartbeatRecordFrom(vmReady.state, assigned), gatewayServiceInternalUrl(gatewayId));
+}
+
 async function publishLiveRuntime(input: {
   transaction: PlatformStateTransaction;
   gateway: DurableGateway;
@@ -1309,12 +1319,12 @@ async function publishLiveRuntime(input: {
   patch: NonNullable<ReturnType<typeof markLiveRuntimePatch>>;
   imageTag: string;
   now: number;
-  vmReady?: ReadyVmObservation;
+  heartbeat?: FleetHeartbeatReport;
 }): Promise<void> {
-  const { transaction, gateway, runtime, patch, imageTag, now, vmReady } = input;
+  const { transaction, gateway, runtime, patch, imageTag, now, heartbeat } = input;
   await transaction.fleetRegistry.patch(gateway.gatewayId, {
     ...patch,
-    ...(isInitialIsolatedPrelaunch(gateway) && !vmReady ? { heartbeat: {
+    ...(isInitialIsolatedPrelaunch(gateway) && !heartbeat ? { heartbeat: {
       ...runtime.heartbeat,
       status: "booting",
       version: versionFromImageTag(imageTag),
@@ -1324,11 +1334,7 @@ async function publishLiveRuntime(input: {
       mountedCustomers: [],
     } } : {}),
   });
-  if (vmReady) {
-    const assigned = assignedSlugsFromUserMirror(await transaction.users.records.listByGateway(gateway.gatewayId), gateway.gatewayId);
-    const heartbeat = pollerHeartbeatReport(heartbeatRecordFrom(vmReady.state, assigned), gatewayServiceInternalUrl(gateway.gatewayId));
-    await transaction.fleetRegistry.recordHeartbeat(gateway.gatewayId, heartbeat);
-  }
+  if (heartbeat) await transaction.fleetRegistry.recordHeartbeat(gateway.gatewayId, heartbeat);
 }
 
 export async function markGatewayLive(
@@ -1357,6 +1363,7 @@ export async function markGatewayLive(
       log(`[converge-gateway] ${gateway.gatewayId} prelaunch reservation changed; deferring release`);
       return false;
     }
+    const heartbeat = await readReadyVmHeartbeat(transaction, gateway.gatewayId, vmReady);
     await transaction.gateways.roots.patch(
       gateway.gatewayId,
       { liveRelease: gateway.desiredRelease, updatedAt: now, updatedBy: "converge-gateway" },
@@ -1364,7 +1371,7 @@ export async function markGatewayLive(
     );
     if (runtimePatch) {
       if (!runtime) throw new MissingRecordError({ aggregate: "fleet-registry", key: gateway.gatewayId });
-      await publishLiveRuntime({ transaction, gateway, runtime, patch: runtimePatch, imageTag, now, vmReady });
+      await publishLiveRuntime({ transaction, gateway, runtime, patch: runtimePatch, imageTag, now, heartbeat });
     }
     return true;
   });
