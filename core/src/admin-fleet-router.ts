@@ -96,6 +96,7 @@ import {
   type VmGatewayCostInput,
 } from "@octogee/shared/types/cost-estimator";
 import type { FleetRegistryVmFields } from "./platform-state/fleet-registry.js";
+import { migrationTransferTaskId, retargetedMigrationTransferId } from "./platform-state/migration-tasks.js";
 import { GATEWAY_UNREACHABLE_AFTER_MS, parseOpenClawProcessReport } from "@octogee/shared/types/fleet-controller";
 import {
   builderReturnOperationId,
@@ -2304,8 +2305,26 @@ function operationReadShape(
   const annotated = withSourceRecoveryPending(record as Stored<OperationRecord>, sourceRecoveryPending);
   return "sourceRecoveryPending" in annotated ? { ...shaped, sourceRecoveryPending: annotated.sourceRecoveryPending } : shaped;
 }
-async function retryTransferTargetGatewayId(
-  store: PlatformStateStore,
+async function readReturnKeysTransferTarget(
+  { migrationTasks }: Pick<PlatformStateStore, "migrationTasks">,
+  input: Record<string, unknown>,
+  migrationId: string,
+  expectedTarget?: string,
+): Promise<string | undefined> {
+  const taskId = migrationTransferTaskId({ migrationId, mode: "keys" });
+  const task = await migrationTasks.get(taskId);
+  if (!task) return undefined;
+  if (task.kind !== "gateway-rsync-transfer" || task.migrationId !== migrationId ||
+      task.slug !== input.userSlug || task.sourceGatewayId !== input.fromGatewayId ||
+      task.mode !== "keys" || !isSharedPoolSlotId(task.targetGatewayId) ||
+      (expectedTarget !== undefined && task.targetGatewayId !== expectedTarget)) {
+    throw new Error(`return transfer task ${taskId} does not match its lease operation`);
+  }
+  return task.targetGatewayId;
+}
+
+export async function retryTransferTargetGatewayId(
+  store: Pick<PlatformStateStore, "migrationTasks">,
   operation: Stored<OperationRecord>,
 ): Promise<string | undefined> {
   const { input, id } = operation;
@@ -2316,15 +2335,13 @@ async function retryTransferTargetGatewayId(
     return undefined;
   }
   const migrationId = `mig-${id}`;
-  const taskId = `${migrationId}__keys`;
-  const task = await store.migrationTasks.get(taskId);
-  if (!task) return undefined;
-  if (task.kind !== "gateway-rsync-transfer" || task.migrationId !== migrationId ||
-      task.slug !== input.userSlug || task.sourceGatewayId !== input.fromGatewayId ||
-      task.mode !== "keys" || !/^shared-[a-z0-9]+$/.test(task.targetGatewayId)) {
-    throw new Error(`return transfer task ${taskId} does not match its lease operation`);
+  const currentTarget = input.toGatewayId;
+  if (isSharedPoolSlotId(currentTarget) && operation.gatewayId === currentTarget) {
+    const retargeted = retargetedMigrationTransferId(migrationId, currentTarget);
+    const target = await readReturnKeysTransferTarget(store, input, retargeted, currentTarget);
+    if (target !== undefined) return target;
   }
-  return task.targetGatewayId;
+  return readReturnKeysTransferTarget(store, input, migrationId);
 }
 
 export const ERR_TARGET_GATEWAY_NOT_READY = "target gateway not ready";
@@ -6291,17 +6308,20 @@ router.get(
           res.status(400).json({ error: ids });
           return;
         }
-        const found = await store.journal.operations.getMany(ids);
-        const present = await Promise.all(ids.flatMap((id) => {
-          const record = found.get(id);
-          if (record === undefined) return [];
-          return [retryTransferTargetGatewayId(store, record).then(targetGatewayId => {
-            const shaped = operationReadShape(record, deps.placement?.schedulerHandoffAwaitingRelease);
-            return targetGatewayId ? { ...shaped, retryTransferTargetGatewayId: targetGatewayId } : shaped;
-          })];
-        }));
+        const { present, missing } = await store.transaction({ label: "admin-operation-lookup", readOnly: true }, async tx => {
+          const found = await tx.journal.operations.getMany(ids);
+          const present = await Promise.all(ids.flatMap((id) => {
+            const record = found.get(id);
+            if (record === undefined) return [];
+            return [retryTransferTargetGatewayId(tx, record).then(targetGatewayId => {
+              const shaped = operationReadShape(record, deps.placement?.schedulerHandoffAwaitingRelease);
+              return targetGatewayId ? { ...shaped, retryTransferTargetGatewayId: targetGatewayId } : shaped;
+            })];
+          }));
+          return { present, missing: ids.filter(id => !found.has(id)) };
+        });
         const operations = await withActorEmails(accounts, present);
-        res.json({ operations, missing: ids.filter((id) => !found.has(id)), generatedAt: new Date().toISOString() });
+        res.json({ operations, missing, generatedAt: new Date().toISOString() });
       } catch (e) {
         next(e);
       }
