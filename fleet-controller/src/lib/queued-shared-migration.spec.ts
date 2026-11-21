@@ -50,6 +50,16 @@ describe("queued Shared destination custody", () => {
     },
   );
 
+  it("preserves the target dependency without a marker when older attempts are no longer retained", async () => {
+    const h = fixture("mig-op-1:scheduler:21:claim:1000", null);
+    h.row.attempts = 21;
+    h.row.attemptHistory = Array.from({ length: 20 }, (_, index) => ({
+      ...h.row.attemptHistory[0],
+      attempt: index + 2,
+    }));
+    expect(await queuedSharedMigrationNeverTouchedDestinationInStore(h.store, h.row, "op-1")).toBe(false);
+  });
+
   it("preserves the target dependency once a target assignment exists", async () => {
     const h = fixture("mig-op-1:scheduler:1:claim:1000", null, true);
     expect(await queuedSharedMigrationNeverTouchedDestinationInStore(h.store, h.row, "op-1")).toBe(false);

@@ -65,7 +65,7 @@ function userOwnerMatches(row: UntypedRecord, id: string, owner: Stored<Platform
   const preparing = marker?.operationId === id && marker.state === 'preparing' && marker.phase === 'preparing';
   return !isolatedRuntimeMutationFenced(owner) && owner.gateway?.gatewayId === row.input.fromGatewayId &&
     ['complete', 'provisioning'].includes(owner.openclaw.status ?? '') &&
-    (preparing || !requirePreparation && owner.fences.migration === undefined);
+    (preparing || !requirePreparation && owner.fences.migration === undefined && row.attemptHistory.length === row.attempts);
 }
 
 function sourceAssignmentMatches(row: UntypedRecord, id: string, assignment: UntypedRecord | AssignmentDoc | null | undefined): boolean {
