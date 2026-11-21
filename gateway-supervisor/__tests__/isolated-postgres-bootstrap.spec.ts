@@ -62,6 +62,39 @@ it("keeps local auxiliary history and refuses a symbolic preparation receipt", a
   expect(prepare).not.toHaveBeenCalled();
 });
 
+it("recovers the exact atomic publication link left by interruption and no foreign links", async () => {
+  const options = await fixture();
+  const prepare = vi.fn().mockRejectedValueOnce(new Error("interrupted"));
+  await expect(prepareFreshIsolatedPostgresState(options, prepare)).rejects.toThrow("interrupted");
+  const file = path.join(options.stateDir, "state", "openclaw.sqlite");
+  const anchor = readPostgresAgentAnchor(file)!;
+  const foreign = path.join(options.stateDir, "other-link");
+  await fs.link(file, foreign);
+  await expect(prepareFreshIsolatedPostgresState(options, prepare)).rejects.toThrow("hard link");
+  expect((await fs.stat(file)).nlink).toBe(2);
+  await fs.unlink(foreign);
+  const staging = path.join(options.stateDir, `.native-postgres-anchor-${anchor.storeId}.tmp`);
+  await fs.link(file, staging);
+  expect(await prepareFreshIsolatedPostgresState(options, prepare)).toBe(true);
+  expect((await fs.stat(file)).nlink).toBe(1);
+  expect(readPostgresAgentAnchor(file)).toEqual(anchor);
+  await expect(fs.stat(staging)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it("discards a partial staging file before publication and uses the original pending identity", async () => {
+  const options = await fixture();
+  const storeId = "8c4a923c-d36e-4ee8-bcaf-362a3c9f7e82";
+  const staged = path.join(options.stateDir, `.native-postgres-anchor-${storeId}.tmp`);
+  await fs.writeFile(path.join(options.stateDir, ".native-postgres-prepare"), storeId);
+  await fs.writeFile(staged, "incomplete anchor");
+  await fs.writeFile(`${staged}-journal`, "incomplete SQLite rollback journal");
+  const prepare = vi.fn();
+  expect(await prepareFreshIsolatedPostgresState(options, prepare)).toBe(true);
+  expect(prepare.mock.calls[0]?.[1]).toEqual({ storeId, schema: "octogee_state_8c4a923cd36e4ee8" });
+  await expect(fs.stat(staged)).rejects.toMatchObject({ code: "ENOENT" });
+  await expect(fs.stat(`${staged}-journal`)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
 it("refuses to prepare foreign local or newly recorded state after interruption", async () => {
   const options = await fixture();
   const prepare = vi.fn().mockRejectedValueOnce(new Error("interrupted"));

@@ -117,6 +117,51 @@ function supportedFreshRuntime(env: NodeJS.ProcessEnv): boolean {
     Boolean(env.OPENCLAW_AGENT_STORE_DSN?.trim());
 }
 
+async function fileStat(file: string) {
+  try {
+    return await fs.lstat(file);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+function matchesAnchor(file: string, expected: BootstrapAnchor): boolean {
+  const actual = readPostgresAgentAnchor(file);
+  return actual?.storeId === expected.storeId && actual.schema === expected.schema;
+}
+
+async function removeInterruptedStage(file: string, staged: string, anchor: BootstrapAnchor): Promise<void> {
+  const stage = await fileStat(staged);
+  if (!stage) return;
+  if (!stage.isFile()) throw new Error("Invalid Native PostgreSQL anchor staging file");
+  const target = await fileStat(file);
+  if (!target && stage.nlink === 1) {
+    await fs.unlink(staged);
+    return;
+  }
+  if (!target?.isFile() || target.dev !== stage.dev || target.ino !== stage.ino ||
+    target.nlink !== 2 || !matchesAnchor(file, anchor)) {
+    throw new Error("Interrupted Native PostgreSQL anchor publication does not prove one matching hard link");
+  }
+  await fs.unlink(staged);
+}
+
+async function prepareAnchor(stateDir: string, stateFile: string, anchor: BootstrapAnchor): Promise<void> {
+  const staged = path.join(stateDir, `.native-postgres-anchor-${anchor.storeId}.tmp`);
+  await assertUserStorePath(stateDir, path.dirname(stateFile));
+  await removeInterruptedStage(stateFile, staged, anchor);
+  await fs.rm(`${staged}-journal`, { force: true });
+  await assertUserStorePath(stateDir, stateFile);
+  if (!await fileStat(stateFile)) {
+    if (!await isFreshNativeLayout(stateDir)) throw new Error("Local history appeared during pending PostgreSQL preparation");
+    await publishAnchor(stateFile, anchor, staged);
+  }
+  if (!matchesAnchor(stateFile, anchor)) {
+    throw new Error("Pending PostgreSQL preparation must preserve the existing state anchor");
+  }
+}
+
 export async function prepareFreshIsolatedPostgresState(
   options: BootstrapOptions,
   run: (options: BootstrapOptions, anchor: BootstrapAnchor) => Promise<void> = prepareJournal,
@@ -132,19 +177,10 @@ export async function prepareFreshIsolatedPostgresState(
     await assertUserStorePath(stateDir, stateFile);
     anchor = expectedAnchor(randomUUID());
     await publishPreparation(pendingPath, anchor);
-  } else {
-    if (!noRecordedAnchors) throw new Error("Recorded Native state appeared during pending PostgreSQL preparation");
-    await assertUserStorePath(stateDir, stateFile);
+  } else if (!noRecordedAnchors) {
+    throw new Error("Recorded Native state appeared during pending PostgreSQL preparation");
   }
-  const current = readPostgresAgentAnchor(stateFile);
-  if (!current) {
-    if (!await isFreshNativeLayout(stateDir)) throw new Error("Local history appeared during pending PostgreSQL preparation");
-    await publishAnchor(stateFile, anchor);
-  }
-  const published = readPostgresAgentAnchor(stateFile);
-  if (published?.storeId !== anchor.storeId || published.schema !== anchor.schema) {
-    throw new Error("Pending PostgreSQL preparation must preserve the existing state anchor");
-  }
+  await prepareAnchor(stateDir, stateFile, anchor);
   await run(options, anchor);
   await fs.unlink(pendingPath);
   return true;
