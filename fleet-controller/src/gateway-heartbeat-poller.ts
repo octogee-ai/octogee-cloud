@@ -228,7 +228,7 @@ async function evictDepartedForGateway(
   }
 }
 
-function heartbeatRecordFrom(state: GatewayFleetState, assigned: string[]): GatewayHeartbeatRecord {
+export function heartbeatRecordFrom(state: GatewayFleetState, assigned: string[]): GatewayHeartbeatRecord {
   const record: GatewayHeartbeatRecord = {
     status: state.status,
     mountedCustomers: intersectMounted(state.users, assigned),

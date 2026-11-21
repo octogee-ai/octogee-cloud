@@ -349,7 +349,7 @@ async function readPodFleetState(
     pod: SurgePod;
     gatewayId: string;
   },
-): Promise<GatewayFleetState | null> {
+): Promise<{ state: GatewayFleetState | null; exactEndpoint?: true }> {
   const response = await requestFleetState({
     baseUrl: podBaseUrl(opts.pod),
     gatewayId: opts.gatewayId,
@@ -358,7 +358,7 @@ async function readPodFleetState(
     fetchImpl: opts.fetch,
     newRequestId: randomUUID,
   });
-  if (response.status === 404) return null;
+  if (response.status === 404) return { state: null };
   if (!response.ok) {
     throw new SurgePodFleetStateError(
       `fleet state pod=${opts.pod.name}: ${response.status} — ` +
@@ -366,9 +366,13 @@ async function readPodFleetState(
       response.status,
     );
   }
-  const state = parseFleetStateResponse(await response.json());
+  const body = await response.json() as { gatewayId?: unknown; podUid?: unknown } | null;
+  const state = parseFleetStateResponse(body);
   if (!state) throw new Error(`invalid fleet state response from pod=${opts.pod.name}`);
-  return state;
+  return {
+    state,
+    ...(body?.gatewayId === opts.gatewayId && body.podUid === opts.pod.uid ? { exactEndpoint: true } : {}),
+  };
 }
 
 export interface SurgePodTransportOptions {
@@ -445,6 +449,7 @@ async function resolveSurgeFleetState(input: {
   health: Record<string, unknown>;
 }): Promise<{
   state: GatewayFleetState | null;
+  exactEndpoint?: true;
   fleetSignatureCapability: SurgeFleetSignatureCapability;
 }> {
   const legacyState = parseFleetStateResponse(input.health);
@@ -452,7 +457,7 @@ async function resolveSurgeFleetState(input: {
     return { state: legacyState, fleetSignatureCapability: "legacy" };
   }
   return {
-    state: await readPodFleetState(input),
+    ...await readPodFleetState(input),
     fleetSignatureCapability: "gateway-scoped",
   };
 }
@@ -520,14 +525,14 @@ async function readSurgePodHealth(
   if (opts.rejectedSignaturePods.has(pod.uid)) return null;
   try {
     const { health, ready } = await readSurgeHealthResponses(opts.fetch, pod);
-    const { state, fleetSignatureCapability } = await resolveSurgeFleetState({
+    const { state, exactEndpoint, fleetSignatureCapability } = await resolveSurgeFleetState({
       fetch: opts.fetch,
       privateKey: opts.privateKey,
       pod,
       gatewayId,
       health,
     });
-    return parseSurgePodHealth({
+    const healthObservation = parseSurgePodHealth({
       pod,
       health,
       ready,
@@ -535,6 +540,7 @@ async function readSurgePodHealth(
       fleetSignatureCapability,
       reportLegacySignaturePod: opts.reportLegacySignaturePod,
     });
+    return exactEndpoint && state ? { ...healthObservation, signedFleetState: state } : healthObservation;
   } catch (error) {
     if (
       error instanceof SurgePodFleetStateError &&

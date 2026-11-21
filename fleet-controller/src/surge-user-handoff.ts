@@ -1,3 +1,4 @@
+import type { GatewayFleetState } from "./gateway-heartbeat-poller.js";
 import { createRepeatSquelch } from "@octogee/shared/server/repeat-squelch";
 import { recoverAbandonedSurgeSchedulerSource } from "./surge-scheduler-source-recovery.js";
 import { abortSurgeSchedulerTarget, activateSurgeScheduler, resumeSurgeSchedulerSource, assertSurgeSchedulerCustody, inspectExistingSurgeScheduler, stageSurgeScheduler, type SurgeSchedulerCustody } from "./surge-scheduler-handoff.js";
@@ -17,8 +18,13 @@ import { gatewayHeartbeatMatchesImageTag } from "@octogee/shared/types/image-tag
 const CONFIGURED_USER_SYSTEM_CONFIG = "configured-builder-system-config";
 
 export type SurgeUserHandoffResult =
-  | { ready: boolean; prelaunchHeld?: never }
-  | { ready: true; prelaunchHeld: true };
+  | { ready: boolean; prelaunchHeld?: never; readyFleetState?: SurgeReadyFleetState }
+  | { ready: true; prelaunchHeld: true; readyFleetState?: never };
+
+export interface SurgeReadyFleetState {
+  endpoint: Pick<SurgePod, "uid" | "name" | "podIP">;
+  state: GatewayFleetState;
+}
 
 export interface SurgePod {
   image?: string;
@@ -46,6 +52,7 @@ export interface SurgePodHealth {
   prelaunchState: SurgePrelaunchState;
   mountedCustomers: readonly string[];
   migratingIn?: readonly string[];
+  signedFleetState?: GatewayFleetState;
   terminalTarget?: { migrationId: string; slug: string; targetPodUid: string; processHeld?: boolean; completionStarted?: boolean };
 }
 
@@ -1355,7 +1362,7 @@ async function settleReleasedTarget(
     ownedBy: string;
     observedPodUids: readonly string[];
   },
-): Promise<{ ready: boolean }> {
+): Promise<SurgeUserHandoffResult> {
   const { source, targetHealth, ownedBy, observedPodUids } = context;
   if (source.kind !== "missing") return { ready: false };
   const assignments = await deps.readAssignments(input.gatewayId);
@@ -1400,7 +1407,13 @@ async function settleReleasedTarget(
     });
     await progress.report("serving-handoff", "done");
   }
-  return { ready: true };
+  const state = targetHealth.signedFleetState;
+  return {
+    ready: true,
+    ...(state?.status === "ready" && targetHealth.handoffReleased &&
+      (targetHealth.prelaunchState === "none" || targetHealth.prelaunchState === "serving")
+      ? { readyFleetState: { endpoint: context.target, state } } : {}),
+  };
 }
 
 async function releaseSourcelessUser(
