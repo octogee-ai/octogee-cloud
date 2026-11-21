@@ -866,6 +866,14 @@ describe("createVmGatewayRuntime.upsertInstance", () => {
 });
 
 describe("createVmGatewayRuntime creating a fresh VM", () => {
+  it("fails closed when the owner has an unhandled archived home before discovering or creating VMs", async () => {
+    const h = harness({ "users/UidA": { provisioning: { homeArchive: { phase: "archived" } } } });
+
+    await expect(h.runtime.upsertInstance(upsertOpts)).rejects.toThrow(/home archive/);
+    expect(h.vm.findByLabels).not.toHaveBeenCalled();
+    expect(h.vm.create).not.toHaveBeenCalled();
+  });
+
   const otherUser = { ...upsertOpts, gatewayId: "b-y", builderIdentity: { ownerUid: "UidB", builderSlug: "papa" } };
 
   function heldInserts() {

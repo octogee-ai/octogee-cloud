@@ -15,6 +15,7 @@ export async function eraseUserHomeMigrationStorage(deps: {
     deps.log(`[home-erasure] ${uid}: owner record already erased and no owner-labelled home storage remains`);
     return true;
   }
+  if (owner.home.homeArchive !== undefined) throw new Error("User home archive requires explicit snapshot erasure");
   const migration = owner.home.homeMigration as UserHomeMigration | undefined;
   if (migration?.copy) {
     const adopted = ["adopting", "complete"].includes(migration.phase);

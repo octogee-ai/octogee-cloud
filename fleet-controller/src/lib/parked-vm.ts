@@ -48,7 +48,9 @@ function validHomeCapacity(value: Partial<RetainedUserHome> | null | undefined):
 }
 
 export async function readRetainedUserHome(state: Pick<PlatformStateRepositories, "users">, ownerUid: string): Promise<RetainedUserHome | null> {
-  const value = (await state.users.records.get(ownerUid))?.home.homeDisk as Partial<RetainedUserHome> | undefined;
+  const owner = await state.users.records.get(ownerUid);
+  if (owner?.home.homeArchive !== undefined) throw new Error("User home archive requires explicit snapshot recovery");
+  const value = owner?.home.homeDisk as Partial<RetainedUserHome> | undefined;
   if (value === undefined) return null;
   if (!validHomeIdentity(value) || !validHomeCapacity(value)) {
     throw new Error(`User ${ownerUid}: retained home disk record is malformed`);

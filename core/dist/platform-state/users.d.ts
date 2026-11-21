@@ -2,7 +2,7 @@ import type { AccountLifecycle } from "@octogee/shared/types/account-lifecycle";
 import type { UserAuxiliaryFamily, FleetBrokerUserRuntimeReset } from "@octogee/shared/types/fleet-broker";
 import type { ConnectorCaptureMethod, IntegrationStatus } from "@octogee/shared/types/connectors";
 import type { ScheduleTransferDoc } from "@octogee/shared/types/fleet-controller";
-import type { UserParkedVm, GatewayProfile, GatewayVmHomeCheckpoint } from "@octogee/shared/types/glm";
+import type { UserParkedVm, GatewayProfile, GatewayVmHomeCheckpoint, RetainedUserHomeSnapshot } from "@octogee/shared/types/glm";
 import type { PlacementReceipt, PlacementReceiptKind } from "@octogee/shared/types/placement-receipts";
 import type { WorkspaceMigrationMarker } from "@octogee/shared/types/workspace-migration";
 import type { Clearable, OpaqueMap, Page, PageRequest, RecordPatch, Revision, Stored, TimeInput } from "./store.js";
@@ -74,7 +74,19 @@ export interface UserOpenClawState {
     readonly greeting?: OpaqueMap;
     readonly toolchain?: OpaqueMap;
 }
+interface UserHomeArchiveIdentity {
+    readonly operationId: string;
+    readonly gatewayId: string;
+    readonly instanceId: string;
+}
+export type UserHomeArchive = UserHomeArchiveIdentity & ({
+    readonly phase: "preparing";
+} | {
+    readonly phase: "snapshot-ready" | "archived" | "restoring";
+    readonly snapshot: RetainedUserHomeSnapshot;
+});
 export interface UserHomeState {
+    readonly homeArchive?: UserHomeArchive;
     readonly computer?: UserParkedVm;
     readonly homeCheckpoint?: GatewayVmHomeCheckpoint;
     readonly homeDisk?: OpaqueMap;
@@ -445,3 +457,4 @@ export interface ControlSessionAttachment {
 export interface ControlSessionChecks {
     current(attachment: ControlSessionAttachment, now: number): Promise<boolean>;
 }
+export {};
