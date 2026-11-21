@@ -146,8 +146,8 @@ COPY deploy/cloud-sql/octogee-pg-server-ca.pem /etc/ssl/certs/octogee-postgres-c
 RUN chown root:root /octogee/scripts \
     && chmod 755 /octogee/scripts \
     && chmod 500 /octogee/scripts/secret-resolver.mjs
-RUN node /octogee/scripts/ops/verify-native-modules.mjs \
-    && /octogee/scripts/node_modules/.bin/tsx /octogee/scripts/ops/write-image-agent-schema-descriptor.ts \
+RUN node /octogee/scripts/ops/verify-native-modules.mjs
+RUN /octogee/scripts/node_modules/.bin/tsx /octogee/scripts/ops/write-image-agent-schema-descriptor.ts \
     && rm /octogee/scripts/ops/write-image-agent-schema-descriptor.ts
 
 # Workspace templates are runtime data and bypass the build stage.
