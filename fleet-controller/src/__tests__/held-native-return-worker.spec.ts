@@ -8,6 +8,7 @@ import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store"
 import {
   assertPendingHeldNativeOfflineProjection, bindHeldNativeStoppedOriginal, recordHeldNativeOriginalRestart, reserveHeldNativeOfflineSource,
   acquireSharedHeldReturnMaintenance, advanceSharedHeldReturnMaintenance, assertSharedHeldReturnMaintenance,
+  assertSharedInertPreLaunch, authorizeSharedInertMaintenance, authorizeSharedInertStockLaunch, readAuthorizedSharedInertStock, rollbackSharedInertBeforeStock,
   assertSharedHeldReturnMaintenanceUnfenced, completeSharedHeldReturnMaintenance, heldNativeReturnBlocksDestination,
   requestHeldNativeReturnRepair, resumeSharedHeldReturnMaintenance, stageSharedHeldReturnMaintenanceRelease, withdrawSharedHeldReturnMaintenance,
   type SharedHeldReturnMaintenanceAdmission,
@@ -620,4 +621,68 @@ it("publishes the immutable retained Shared release from normal health plus obse
   expect((await h.store.gateways.roots.get(targetGatewayId))?.runtimeRestartFence).toBeUndefined();
   expect(heldNativeReturnBlocksDestination(stillHeld!, targetGatewayId)).toBe(true);
   await expect(assertSharedHeldReturnMaintenanceUnfenced(h.store, stillHeld!)).rejects.toThrow(/offline source custody/);
+});
+
+
+function inertPriorFixture(claim: Awaited<ReturnType<ReturnType<typeof sharedMaintenanceFixture>["acquire"]>>) {
+  return {
+    attemptId: claim.attemptId, podUid: claim.plan.workload.podUid, artifactSetId: "e".repeat(64),
+    originalContainerIds: { gateway: "old-gateway", "gateway-edge": "old-edge" },
+    ownerBackups: claim.plan.owners.map((owner, index) => ({ ...owner, restoredArchiveSha256: index.toString(16).repeat(64) })),
+  };
+}
+
+it("separately authorizes inert replacement and refuses any stock authority before a verified current common restore", async () => {
+  const h = sharedMaintenanceFixture();
+  const claim = await h.acquire();
+  const prior = inertPriorFixture(claim);
+  await expect(authorizeSharedInertMaintenance(h.store, claim, async () => ({ ...prior, ownerBackups: prior.ownerBackups.slice(1) }), () => 510))
+    .rejects.toThrow("all six independently verified owner backups");
+  await authorizeSharedInertMaintenance(h.store, claim, async assertCurrent => { await assertCurrent(); return prior; }, () => 510);
+  await expect(assertSharedInertPreLaunch(h.store, claim)).resolves.toEqual(prior);
+  const ordinaryDispatch = vi.fn();
+  await expect(advanceSharedHeldReturnMaintenance(h.store, claim, "dispatched", () => 515, ordinaryDispatch)).rejects.toThrow("dispatched or withdrawn");
+  expect(ordinaryDispatch).not.toHaveBeenCalled();
+  await expect(stageSharedHeldReturnMaintenanceRelease(h.store, claim, () => 515)).rejects.toThrow("before dispatch");
+  await expect(readAuthorizedSharedInertStock(h.store, claim)).rejects.toThrow("no launch-authorized common restore");
+  const { ownerBackups: _priorBackups, ...binding } = prior;
+  const common = {
+    ...binding, heldContainerIds: { gateway: "held-gateway", "gateway-edge": "held-edge" },
+    observedImageIds: claim.plan.maintenanceImages, ownerHomes: claim.plan.owners,
+    custodyGeneration: "b".repeat(64), restoredArchiveSha256: "c".repeat(64),
+    writersHeldAt: 520, capturedAt: 530, restoredAt: 540,
+  };
+  for (const observed of [
+    { ...common, capturedAt: 512 },
+    { ...common, observedImageIds: claim.plan.originalImages },
+    { ...common, heldContainerIds: { ...common.heldContainerIds, gateway: prior.originalContainerIds.gateway } },
+  ]) {
+    await expect(authorizeSharedInertStockLaunch(h.store, claim, async () => observed, () => 550)).rejects.toThrow("verified common restore");
+  }
+  await authorizeSharedInertStockLaunch(h.store, claim, async assertCurrent => { await assertCurrent(); return common; }, () => 550);
+  await expect(readAuthorizedSharedInertStock(h.store, claim)).resolves.toEqual(common);
+  await expect(assertSharedInertPreLaunch(h.store, claim)).rejects.toThrow("no longer permits");
+  await expect(rollbackSharedInertBeforeStock(h.store, claim, vi.fn())).rejects.toThrow("no longer permits");
+  await expect(stageSharedHeldReturnMaintenanceRelease(h.store, claim, () => 560)).resolves.toBe(2);
+});
+
+it("permits a retried pre-launch rollback only with verified original role and six-owner custody", async () => {
+  const h = sharedMaintenanceFixture();
+  const claim = await h.acquire();
+  const prior = inertPriorFixture(claim);
+  await authorizeSharedInertMaintenance(h.store, claim, async () => prior, () => 510);
+  const original = {
+    attemptId: claim.attemptId, outcome: "rolled-back" as const, workload: claim.plan.workload, owners: claim.plan.owners,
+    images: claim.plan.originalImages, runningImageIds: claim.plan.originalImages, retainedBoot: claim.plan.retainedBoot,
+    nativeSource: claim.plan.originalNativeSource, noInFlightTasks: true, noPreparedImports: true, exclusiveReady: true, verifiedAt: 540,
+  } as const;
+  await expect(rollbackSharedInertBeforeStock(h.store, claim, async assertCurrent => {
+    await assertCurrent();
+    await expect(assertSharedInertPreLaunch(h.store, claim)).rejects.toThrow("no longer permits");
+    return { ...original, verifiedAt: 510 };
+  }, () => 520)).rejects.toThrow("exact verified completion");
+  await expect(rollbackSharedInertBeforeStock(h.store, claim, async current => { await current(); return original; }, () => 550))
+    .resolves.toBeUndefined();
+  await expect(readAuthorizedSharedInertStock(h.store, claim)).rejects.toThrow("no launch-authorized common restore");
+  expect(await h.store.gateways.roots.get(targetGatewayId)).toMatchObject({ desiredRelease: 1, latestRelease: 1, liveRelease: 1 });
 });

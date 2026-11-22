@@ -242,7 +242,7 @@ export async function readSharedHeldReturnMaintenanceDispatch(store, claim) {
 export async function assertSharedHeldReturnMaintenanceReserved(store, claim) {
     await store.transaction({ label: "shared-held-return-maintenance.assert-reserved", readOnly: true }, async (tx) => {
         const current = await readClaim(tx, claim);
-        requireMaintenance(current.phase === "reserved" && !current.stagedRelease, "Shared maintenance reservation has dispatched or withdrawn");
+        requireMaintenance(current.phase === "reserved" && !current.stagedRelease && !current.inertStartup, "Shared maintenance reservation has dispatched or withdrawn");
     });
 }
 export async function advanceSharedHeldReturnMaintenance(store, claim, phase, now = Date.now, verifyDispatch) {
@@ -254,10 +254,114 @@ export async function advanceSharedHeldReturnMaintenance(store, claim, phase, no
     await store.transaction({ label: "shared-held-return-maintenance.advance" }, async (tx) => {
         const current = await readClaim(tx, claim);
         requireMaintenance(!current.restoringMigrationPolicy, "Shared maintenance is completing");
+        requireMaintenance(!current.inertStartup, "Shared maintenance has a distinct inert launch authority");
         if (current.phase === phase)
             return;
         requireMaintenance(phase === "dispatched" ? current.phase === "reserved" && !current.stagedRelease : current.phase === "dispatched", "Shared held return maintenance transition is invalid");
         await tx.gateways.roots.compareAndSetRuntimeRestartFence(claim.gatewayId, current, { ...current, phase, phaseStartedAt: now() });
+    });
+}
+const heldProofSha256 = /^[a-f0-9]{64}$/;
+function matchesInertPrior(claim, proof) {
+    const expected = sortedOwners(claim.plan.owners);
+    const backups = sortedOwners(proof.ownerBackups);
+    return proof.attemptId === claim.attemptId && proof.podUid === claim.plan.workload.podUid &&
+        heldProofSha256.test(proof.artifactSetId) &&
+        Boolean(proof.originalContainerIds.gateway && proof.originalContainerIds["gateway-edge"]) &&
+        proof.originalContainerIds.gateway !== proof.originalContainerIds["gateway-edge"] &&
+        backups.every(owner => heldProofSha256.test(owner.restoredArchiveSha256)) &&
+        new Set(backups.map(owner => owner.restoredArchiveSha256)).size === backups.length &&
+        isDeepStrictEqual(backups.map(({ restoredArchiveSha256: _digest, ...owner }) => owner), expected);
+}
+export async function authorizeSharedInertMaintenance(store, claim, readVerifiedPrior, now = Date.now) {
+    const assertCurrent = () => assertSharedHeldReturnMaintenanceReserved(store, claim);
+    await assertCurrent();
+    const prior = await readVerifiedPrior(assertCurrent);
+    requireMaintenance(matchesInertPrior(claim, prior), "Shared inert startup requires all six independently verified owner backups");
+    await store.transaction({ label: "shared-held-return-maintenance.authorize-inert", readOnly: false }, async (tx) => {
+        const guard = await readClaim(tx, claim);
+        requireMaintenance(guard.phase === "reserved" && !guard.stagedRelease && !guard.inertStartup, "Shared inert startup changed before reservation");
+        await tx.gateways.roots.compareAndSetRuntimeRestartFence(claim.gatewayId, guard, {
+            ...guard, inertStartup: { prior, preparedAt: now() },
+        });
+    });
+}
+function readInertHold(guard) {
+    requireMaintenance(guard.phase === "reserved" && !guard.stagedRelease && guard.inertStartup && !guard.inertStartup.common &&
+        guard.inertStartup.rollingBackAt === undefined, "Shared inert startup no longer permits pre-launch work");
+    return guard.inertStartup;
+}
+export async function assertSharedInertPreLaunch(store, claim) {
+    return store.transaction({ label: "shared-held-return-maintenance.assert-inert", readOnly: true }, async (tx) => readInertHold(await readClaim(tx, claim)).prior);
+}
+function matchesInertCommon(claim, inert, proof, clock) {
+    const { prior } = inert;
+    const ids = [proof.heldContainerIds.gateway, proof.heldContainerIds["gateway-edge"],
+        prior.originalContainerIds.gateway, prior.originalContainerIds["gateway-edge"]];
+    const times = [inert.preparedAt, proof.writersHeldAt, proof.capturedAt, proof.restoredAt, clock];
+    return [proof.attemptId === claim.attemptId, proof.podUid === prior.podUid, proof.artifactSetId === prior.artifactSetId,
+        isDeepStrictEqual(proof.originalContainerIds, prior.originalContainerIds),
+        ids.every(Boolean), new Set(ids).size === 4,
+        runningImagesMatch(proof.observedImageIds, claim.plan.maintenanceImages),
+        isDeepStrictEqual(sortedOwners(proof.ownerHomes), sortedOwners(claim.plan.owners)),
+        heldProofSha256.test(proof.custodyGeneration), heldProofSha256.test(proof.restoredArchiveSha256),
+        times.every((at, index) => Number.isSafeInteger(at) && (index === 0 || at >= times[index - 1])),
+        clock - proof.restoredAt <= 60_000,].every(Boolean);
+}
+export async function authorizeSharedInertStockLaunch(store, claim, readVerifiedCommon, now = Date.now) {
+    const prior = await assertSharedInertPreLaunch(store, claim);
+    const assertCurrent = async () => {
+        requireMaintenance(isDeepStrictEqual(await assertSharedInertPreLaunch(store, claim), prior), "Shared inert startup prior custody changed");
+    };
+    const common = await readVerifiedCommon(assertCurrent);
+    await assertCurrent();
+    await store.transaction({ label: "shared-held-return-maintenance.authorize-inert-stock" }, async (tx) => {
+        const guard = await readClaim(tx, claim);
+        const inert = readInertHold(guard);
+        const clock = now();
+        requireMaintenance(isDeepStrictEqual(inert.prior, prior) && matchesInertCommon(claim, inert, common, clock), "Shared inert startup lacks a verified common restore under the current writer hold");
+        await tx.gateways.roots.compareAndSetRuntimeRestartFence(claim.gatewayId, guard, {
+            ...guard, phase: "dispatched", phaseStartedAt: clock, inertStartup: { ...inert, common },
+        });
+    });
+}
+export async function readAuthorizedSharedInertStock(store, claim) {
+    return store.transaction({ label: "shared-held-return-maintenance.read-inert-stock", readOnly: true }, async (tx) => {
+        const guard = await readClaim(tx, claim);
+        requireMaintenance(guard.phase === "dispatched" && guard.inertStartup?.common && !guard.restoringMigrationPolicy, "Shared inert startup has no launch-authorized common restore");
+        return guard.inertStartup.common;
+    });
+}
+function readInertRollback(guard) {
+    const inert = guard.inertStartup;
+    requireMaintenance(guard.phase === "reserved" && !guard.stagedRelease && inert && !inert.common &&
+        inert.rollingBackAt !== undefined, "Shared inert startup rollback lost authority");
+    return { inert, startedAt: inert.rollingBackAt };
+}
+export async function rollbackSharedInertBeforeStock(store, claim, restoreAndVerifyOriginal, now = Date.now) {
+    await store.transaction({ label: "shared-held-return-maintenance.begin-inert-rollback" }, async (tx) => {
+        const guard = await readClaim(tx, claim);
+        if (guard.inertStartup?.rollingBackAt !== undefined) {
+            readInertRollback(guard);
+            return;
+        }
+        const inert = readInertHold(guard);
+        await tx.gateways.roots.compareAndSetRuntimeRestartFence(claim.gatewayId, guard, {
+            ...guard, inertStartup: { ...inert, rollingBackAt: now() },
+        });
+    });
+    const assertCurrent = async () => {
+        await store.transaction({ label: "shared-held-return-maintenance.assert-inert-rollback", readOnly: true }, async (tx) => {
+            readInertRollback(await readClaim(tx, claim));
+        });
+    };
+    const restored = await restoreAndVerifyOriginal(assertCurrent);
+    await store.transaction({ label: "shared-held-return-maintenance.finish-inert-rollback" }, async (tx) => {
+        const guard = await readClaim(tx, claim);
+        const { startedAt } = readInertRollback(guard);
+        assertResult({ ...guard, phase: "rollback", phaseStartedAt: startedAt }, restored, now());
+        const { inertStartup: _inert, ...remaining } = guard;
+        await tx.gateways.roots.compareAndSetRuntimeRestartFence(claim.gatewayId, guard, remaining);
     });
 }
 function artifactFromReference(image) {
@@ -410,7 +514,7 @@ async function beginWithdrawal(store, claim, now) {
         if (alreadyWithdrawn(await tx.journal.audits.get(claim.auditId), claim))
             return false;
         const guard = await readClaim(tx, claim);
-        requireMaintenance(!guard.stagedRelease && ["reserved", "withdrawing"].includes(guard.phase), "Shared maintenance can withdraw only before image dispatch or release staging");
+        requireMaintenance(!guard.stagedRelease && !guard.inertStartup && ["reserved", "withdrawing"].includes(guard.phase), "Shared maintenance can withdraw only before image dispatch or release staging");
         if (guard.phase === "reserved") {
             await tx.gateways.roots.compareAndSetRuntimeRestartFence(claim.gatewayId, guard, { ...guard, phase: "withdrawing", phaseStartedAt: now() });
         }
