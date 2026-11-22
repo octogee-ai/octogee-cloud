@@ -27,6 +27,18 @@ function openStore(mode: "r" | "r+" = "r") {
   return { file, fd };
 }
 
+it("reports held files across the released roster without including neighboring agents", async () => {
+  const fdDir = path.join(root, "proc", "123", "fd");
+  fs.mkdirSync(fdDir, { recursive: true });
+  const agentDirs = ["coach", "project"].map(id => path.join(root, "agents", id));
+  const expected = agentDirs.map(dir => path.join(dir, "store.sqlite"));
+  const neighbor = path.join(root, "agents", "project-other", "store.sqlite");
+  for (const [fd, file] of [...expected, neighbor].entries()) {
+    fs.symlinkSync(file, path.join(fdDir, String(fd)));
+  }
+  await expect(findHeldPaths(matchUnder(...agentDirs), path.join(root, "proc"))).resolves.toEqual(expected);
+});
+
 const linux = describe.runIf(process.platform === "linux");
 linux("held destination file identity", () => {
   it.each([false, true])("allows a detached read-only inode without closing it (replacement=%s)", async (replacement) => {

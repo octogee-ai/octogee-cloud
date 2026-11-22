@@ -27,9 +27,9 @@ export function matchFiles(files: readonly string[]): HeldPathMatcher {
   return (linked) => candidates.has(linked);
 }
 
-export function matchUnder(root: string): HeldPathMatcher {
-  const prefix = `${path.resolve(root)}${path.sep}`;
-  return (linked) => linked.startsWith(prefix);
+export function matchUnder(...roots: string[]): HeldPathMatcher {
+  const prefixes = roots.map(root => `${path.resolve(root)}${path.sep}`);
+  return (linked) => prefixes.some(prefix => linked.startsWith(prefix));
 }
 
 function isVanishedOrForeignProcess(error: unknown): boolean {

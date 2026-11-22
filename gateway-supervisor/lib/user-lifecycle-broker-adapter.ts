@@ -1933,7 +1933,7 @@ async function releaseAgentState(
   const stateDir = resolveOpenClawStateDir();
   const agentDirs = agentIds.map((agentId) => path.join(stateDir, "agents", agentId));
   await release.releaseAgents(agentIds);
-  for (const agentDir of agentDirs) await assertNotHeld(matchUnder(agentDir), release.procRoot, heldPathOptions);
+  if (agentDirs.length > 0) await assertNotHeld(matchUnder(...agentDirs), release.procRoot, heldPathOptions);
   return agentDirs;
 }
 
