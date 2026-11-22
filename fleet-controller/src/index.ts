@@ -1231,17 +1231,8 @@ async function convergeAvailableGateway(
     instance,
   });
   const desiredOpts = desiredIntent?.opts ?? null;
-  const retained = desiredOpts?.hobbyCheckpoint?.livePod;
-  if (artifact && desiredOpts?.hobbyCheckpoint?.mode === "live" && retained?.retainedImageRecovery) {
-    if (!(await gatewayRuntimeMutationAllowed(store, gateway.gatewayId))) return;
-    await passDeps.helm.upsertInstance({ ...desiredOpts, ...runtimeUserIdentity(gateway) });
-    if (gateway.liveRelease !== gateway.desiredRelease || runtime?.lifecycle !== "serving") {
-      await markGatewayLive(passDeps, gateway, artifact, false, undefined, retained.podUid);
-    }
-    return;
-  }
   const liveAdmission = await beginLiveStandbyAdmission(passDeps, { gateway, artifact, runtime, desiredOpts });
-  if (liveAdmission === "bootstrapping") return;
+  if (liveAdmission === "deferred") return;
   const desiredChartFingerprint = desiredOpts?.chartFingerprint;
   const desiredDeploymentIntentFingerprint = desiredIntent?.comparisonFingerprint;
   const initialAction = planGatewayConvergence({
@@ -1299,10 +1290,21 @@ function readPendingGatewayArtifact(store: PlatformStateStore, gateway: DurableG
 async function beginLiveStandbyAdmission(
   passDeps: GatewayConvergencePassDeps,
   input: { gateway: DurableGateway; artifact: ReleasePayload | null; runtime: ConvergingGatewayRuntime | undefined; desiredOpts: GatewayUpsertOpts | null },
-): Promise<"ordinary" | "bootstrapping" | "admitted"> {
-  if (input.desiredOpts?.hobbyCheckpoint?.mode !== "live" || input.gateway.liveRelease !== null) return "ordinary";
+): Promise<"ordinary" | "deferred" | "admitted"> {
+  const { desiredOpts, gateway, artifact, runtime } = input;
+  if (desiredOpts?.hobbyCheckpoint?.mode !== "live") return "ordinary";
+  const retained = desiredOpts.hobbyCheckpoint.livePod;
+  if (artifact && retained?.retainedImageRecovery) {
+    if (!(await gatewayRuntimeMutationAllowed(passDeps.store, gateway.gatewayId))) return "deferred";
+    await passDeps.helm.upsertInstance({ ...desiredOpts, ...runtimeUserIdentity(gateway) });
+    if (gateway.liveRelease !== gateway.desiredRelease || runtime?.lifecycle !== "serving") {
+      await markGatewayLive(passDeps, gateway, artifact, false, { retainedPodUid: retained.podUid });
+    }
+    return "deferred";
+  }
+  if (gateway.liveRelease !== null) return "ordinary";
   await upsertGateway(passDeps, { ...input, replicas: 1 });
-  return input.runtime ? "admitted" : "bootstrapping";
+  return runtime ? "admitted" : "deferred";
 }
 
 async function uninstallGateway(
@@ -1471,14 +1473,17 @@ function canPublishVmReadiness(input: {
 function retainedLivePodReady(
   root: GatewayRoot, runtime: FleetRegistryRecord | null, podUid: string, imageTag: string, now: number,
 ): boolean {
-  if (runtime?.runtime !== "cluster" || !root.builderSlug || !hasFreshReadyKubernetesObservation(runtime, now, GATEWAY_UNREACHABLE_AFTER_MS) ||
-      runtime.kubernetes?.totalPods !== 1 || runtime.kubernetes.readyPods !== 1 ||
-      runtime.kubernetes.pods?.length !== 1 || runtime.kubernetes.pods[0]?.uid !== podUid) return false;
+  const observation = runtime?.kubernetes;
+  if (runtime?.runtime !== "cluster" || !observation || !root.builderSlug) return false;
+  if (![hasFreshReadyKubernetesObservation(runtime, now, GATEWAY_UNREACHABLE_AFTER_MS),
+    observation.totalPods === 1, observation.readyPods === 1, observation.pods?.length === 1,
+    observation.pods?.[0]?.uid === podUid].every(Boolean)) return false;
   const heartbeat = runtime.heartbeat;
-  return heartbeat.status === "ready" && heartbeat.lastHeartbeatAt !== null && heartbeat.lastHeartbeatAt <= now &&
-    now - heartbeat.lastHeartbeatAt <= GATEWAY_UNREACHABLE_AFTER_MS &&
-    gatewayHeartbeatMatchesImageTag(heartbeat.version, imageTag) && heartbeat.configuredBuilder?.state === "claimed" &&
-    heartbeat.mountedCustomers.length === 1 && heartbeat.mountedCustomers[0] === root.builderSlug;
+  const heartbeatAt = heartbeat.lastHeartbeatAt;
+  if (heartbeatAt === null) return false;
+  return [heartbeat.status === "ready", heartbeatAt <= now, now - heartbeatAt <= GATEWAY_UNREACHABLE_AFTER_MS,
+    gatewayHeartbeatMatchesImageTag(heartbeat.version, imageTag), heartbeat.configuredBuilder?.state === "claimed",
+    heartbeat.mountedCustomers.length === 1, heartbeat.mountedCustomers[0] === root.builderSlug].every(Boolean);
 }
 
 export async function markGatewayLive(
@@ -1486,9 +1491,10 @@ export async function markGatewayLive(
   gateway: DurableGateway,
   artifact: ReleasePayload,
   prelaunchRefresh = false,
-  vmReady?: ReadyVmObservation,
-  retainedPodUid?: string,
+  readiness?: ReadyVmObservation | { retainedPodUid: string },
 ): Promise<void> {
+  const retained = readiness && "retainedPodUid" in readiness ? readiness : undefined;
+  const vmReady = readiness && "endpoint" in readiness ? readiness : undefined;
   const { store, log } = passDeps;
   const imageTag = gatewayImageFor(gateway, artifact).imageTag;
   const now = Date.now();
@@ -1497,8 +1503,8 @@ export async function markGatewayLive(
     if (!root || ![fleetControllerMayMarkGatewayLive(root, gateway.desiredRelease), root.desiredStatus === gateway.desiredStatus,
       root.runtimeRestartFence === undefined, root.retirementClaim == null].every(Boolean)) return false;
     const runtimePatch = markLiveRuntimePatch(gateway);
-    const runtime = prelaunchRefresh || runtimePatch || retainedPodUid ? await transaction.fleetRegistry.get(gateway.gatewayId) : null;
-    if (retainedPodUid && !retainedLivePodReady(root, runtime, retainedPodUid, imageTag, now)) return false;
+    const runtime = prelaunchRefresh || runtimePatch ? await transaction.fleetRegistry.get(gateway.gatewayId) : null;
+    if (retained && !retainedLivePodReady(root, runtime, retained.retainedPodUid, imageTag, now)) return false;
     const readyImageTag = expectedReadyImageTag(root, runtime, artifact);
     if (!readyImageTag || !canPublishVmReadiness({ gateway, root, runtime, artifact, readyImageTag, prelaunchRefresh, vmReady })) {
       log(`[converge-gateway] ${gateway.gatewayId} VM readiness identity changed; deferring release`);
