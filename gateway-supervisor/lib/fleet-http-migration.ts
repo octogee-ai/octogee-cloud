@@ -1,3 +1,5 @@
+import { runHeldSourceReconcile, type HeldNativeSourceKeeper } from "./held-native-source-reconcile.js";
+import type { FleetBrokerUserSnapshot } from "@octogee/shared/types/fleet-broker";
 import { projectAgentWorkspace } from "@octogee/core/project-agent-workspaces";
 import { assertSafeStagedSymlinks, RSYNC_DAEMON_SYMLINK_POLICY, STAGED_RSYNC_COPY_OPTIONS } from "./rsync-staged-symlinks.js";
 import { isDeepStrictEqual } from "node:util";
@@ -59,6 +61,7 @@ import {
   type RsyncMigrationRpcPhase,
   type RestoreMigrationRequestBody,
   type RestoreMigrationResponse,
+  type HeldNativeSourceReconcileRequest,
   type UnmountRequestBody,
   type UnmountResponse,
   type VerifyMigrationRequestBody,
@@ -98,7 +101,7 @@ import { upgradeImportedAgentStores } from "./openclaw-import-upgrade.js";
 import { reattachUserAgents } from "./reattach-user-agents.js";
 import { activeAgentProjectIds } from "./openclaw-config-users.js";
 import { PROC_ROOT } from "./held-files.js";
-import { gatewayScopedJobId, sourceActivationReadinessJobId, verifyFleetRequest } from "./fleet-signature.js";
+import { heldNativeSourceReconcileJobId, gatewayScopedJobId, sourceActivationReadinessJobId, verifyFleetRequest } from "./fleet-signature.js";
 import { rejectMisaddressedGateway } from "./fleet-gateway-path.js";
 import type { UserLifecycleAdapter, RemoveUserResult } from "./user-lifecycle.js";
 import {
@@ -159,12 +162,15 @@ export interface SourceMountRefusal {
 }
 
 export interface MigrationHandlerDeps {
+  getHeldSourceKeeper?: () => HeldNativeSourceKeeper | undefined;
+  readHeldSourceSnapshot?: (uid: string) => Promise<FleetBrokerUserSnapshot | null>;
   voiceMigration?: (input: VoiceMigrationInput) => Promise<{ activeCalls: number }>;
   voiceDrainWaitMs?: number;
   voiceDrainSleep?: (ms: number) => Promise<void>;
   publicKey: string;
   gatewayId: string;
   adapter: UserLifecycleAdapter;
+  readTargetImportPermit?: (slug: string) => Promise<"permitted" | "held">;
   scheduleTransfer?: (
     body: ScheduleTransferRequestBody,
   ) => Promise<ScheduleSnapshotResult | ScheduleRestoreResult | ScheduleRemoveResult | ScheduleCheckResult>;
@@ -981,6 +987,78 @@ export function createRestoreHandler(deps: MigrationHandlerDeps): RequestHandler
   });
 }
 
+function validHeldSourceBinding(body: HeldNativeSourceReconcileRequest, gatewayId: string, now: number): boolean {
+  const { binding, migrationId, slug, nonce, expiresAt } = body;
+  return Boolean(binding && binding.gatewayId === gatewayId && binding.slug === slug &&
+    migrationId === `mig-${binding.operationId}` && /^[a-f0-9]{64}$/.test(nonce) &&
+    Number.isSafeInteger(expiresAt) && expiresAt >= now && expiresAt <= now + 90_000);
+}
+
+async function restoreHeldSourceRuntime(
+  deps: MigrationHandlerDeps, body: HeldNativeSourceReconcileRequest, full: FleetBrokerUserSnapshot, assertHeld: () => Promise<void>,
+) {
+  const { binding, migrationId, slug } = body;
+  const snapshot = snapshotFromRestoreBody({ migrationId, uid: binding.uid, slug, snapshot: full });
+  if (typeof snapshot === "string") throw new Error("The held source broker snapshot is invalid");
+  await pauseSystemConfigWatchForUser(deps, slug);
+  await assertHeld();
+  deps.adapter.seedUserSnapshotForMigration!(full);
+  let settled: Promise<void> | undefined;
+  try {
+    const restored = await restoreUserRuntimeFromSnapshot(deps.adapter, snapshot, {
+      keepSourceQuiescing: true, beforeRuntimePublish: assertHeld, onWorkSettled: value => { settled = value; },
+    });
+    await assertHeld();
+    if (!restored.convergedState || !restored.appliedFingerprint || restored.pendingProjectClones.length) {
+      throw new Error("The held source did not converge");
+    }
+    recordRestoredConvergence(deps, slug, restored);
+    return { migrationId, slug, restored: restored.restored, steps: restored.steps };
+  } finally {
+    await settled;
+  }
+}
+
+export function createHeldNativeSourceReconcileHandler(deps: MigrationHandlerDeps) {
+  const log = deps.log ?? provisionerLog;
+  return (req: Request, res: Response) => withLogContext({}, async () => {
+    const body = parseAndVerifyJsonBody<HeldNativeSourceReconcileRequest>(req, res, deps, log, heldNativeSourceReconcileJobId);
+    if (!body) return;
+    const { binding, migrationId, slug } = body;
+    const now = (deps.now ?? Date.now)();
+    if (!validHeldSourceBinding(body, deps.gatewayId, now)) {
+      res.status(400).json({ error: "invalid_held_source_binding" });
+      return;
+    }
+    const { readHeldSourceSnapshot, flushLocalState } = deps;
+    const heldSourceKeeper = deps.getHeldSourceKeeper?.();
+    const exportManifest = deps.adapter.exportOpenClawActivationManifest;
+    if (!heldSourceKeeper || !readHeldSourceSnapshot || !flushLocalState || !exportManifest ||
+        !deps.adapter.seedUserSnapshotForMigration || !deps.adapter.recordAppliedFingerprint ||
+        deps.adapter.isIsolatedGateway?.() !== true) {
+      res.status(409).json({ error: "held_source_maintenance_unavailable" });
+      return;
+    }
+    try {
+      const proof = await runHeldSourceReconcile(body, heldSourceKeeper, {
+        readSnapshot: readHeldSourceSnapshot,
+        restore: (full, assertHeld) => restoreHeldSourceRuntime(deps, body, full, assertHeld),
+        drain: async () => {
+          const voice = await waitForVoiceDrain(deps, slug, migrationId);
+          if (voice.activeCalls) return { drained: false, runningCount: voice.activeCalls };
+          return deps.adapter.quiesceUser(slug, 60_000, { stopMattermost: true, schedulerMigrationId: binding.schedulerMigrationId, retainNonportable: true });
+        },
+        flush: () => flushLocalState({ slug, reason: "native-return" }),
+        exportManifest: () => exportManifest.call(deps.adapter, slug),
+      });
+      res.json({ requestId: binding.requestId, holdGeneration: binding.holdGeneration, nonce: body.nonce, proof });
+    } catch (error) {
+      log(`[migration-http] held source reconciliation refused for ${slug} (${error instanceof Error ? error.name : "unknown error"})`, { status: "failed" });
+      res.status(409).json({ error: "held_source_reconciliation_incomplete" });
+    }
+  });
+}
+
 export function createExportPathsHandler(deps: MigrationHandlerDeps): RequestHandler {
   const log = deps.log ?? provisionerLog;
   return (req, res) => withLogContext({}, async () => {
@@ -1019,6 +1097,36 @@ export function createExportPathsHandler(deps: MigrationHandlerDeps): RequestHan
         `[migration-http] 🔴 export-paths migrationId=${body.migrationId} slug=${body.slug}: ${message}`, { status: "failed" },
       );
       res.status(500).json({ error: "export-paths failed", message });
+    }
+  });
+}
+
+async function assertTargetImportAllowed(deps: MigrationHandlerDeps, slug: string): Promise<void> {
+  if (await deps.readTargetImportPermit?.(slug) === "held") throw new Error("Migration target import is held");
+}
+
+function hasQuietTargetImportState(deps: MigrationHandlerDeps, slug: string): boolean {
+  return deps.getMountedUsers?.().includes(slug) === false &&
+    !migrationImportBusy() && !Array.from(rsyncImportSessions.values()).some(session => session.slug === slug);
+}
+
+export function createTargetImportHoldWitnessHandler(deps: MigrationHandlerDeps) {
+  const log = deps.log ?? provisionerLog;
+  return (req: Request, res: Response) => withLogContext({}, async () => {
+    const body = parseAndVerifyJsonBody<MigrationRequestBody & { nonce: string }>(req, res, deps, log);
+    if (!body) return;
+    if (typeof body.nonce !== "string" || !/^[a-f0-9]{32}$/.test(body.nonce)) {
+      res.status(400).json({ error: "Invalid target hold nonce" });
+      return;
+    }
+    try {
+      if (await deps.readTargetImportPermit?.(body.slug) === "held" && hasQuietTargetImportState(deps, body.slug)) {
+        res.status(200).json({ migrationId: body.migrationId, slug: body.slug, nonce: body.nonce, held: true });
+        return;
+      }
+      res.status(409).json({ error: "Migration target import is not held" });
+    } catch {
+      res.status(503).json({ error: "Migration target import hold unavailable" });
     }
   });
 }
@@ -1101,6 +1209,7 @@ export function createPrepareImportHandler(deps: MigrationHandlerDeps): RequestH
     if (!mode) return;
 
     try {
+      await assertTargetImportAllowed(deps, body.slug);
       const importDir = mode === "keys"
         ? await deps.adapter.prepareKeyImportDir(body.slug)
         : await deps.adapter.prepareImportDir(body.slug, mode);
@@ -1136,6 +1245,7 @@ export function createActivateImportHandler(deps: MigrationHandlerDeps): Request
     if (!body) return;
 
     try {
+      await assertTargetImportAllowed(deps, body.slug);
       deps.adapter.markUserMigratingIn?.(body.slug);
       const verificationPending = await activateImportedUserForMigration({
         deps,
@@ -1980,6 +2090,7 @@ export function createPrepareRsyncImportHandler(deps: MigrationHandlerDeps): Req
     preparingRsyncImport = true;
     let activation: ConfiguredUserActivation | null = null;
     try {
+      await assertTargetImportAllowed(deps, body.slug);
       activation = await configuredUserActivationRequest(deps, body, mode, configTransferMode);
       if (activation?.live) {
         await admitLiveConfiguredUserImport(deps, activation);
@@ -2842,6 +2953,7 @@ export function createFinishRsyncImportHandler(deps: MigrationHandlerDeps): Requ
     let preserveStage = false;
     let sessionReleased = false;
     try {
+      await assertTargetImportAllowed(deps, body.slug);
       const startedAt = Date.now();
       await stopRsyncTransfer(session);
       const rejection = await validateStagedRsyncImport(session, body.slug, mode, configTransferMode, log);

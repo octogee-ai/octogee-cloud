@@ -50,6 +50,7 @@ export interface MigrationActivationManifest {
     targetWorkspaceIdentities?: TargetWorkspaceIdentities;
 }
 export declare function activationManifestTarPath(slug: string): string;
+export declare function validateActivationManifest(value: unknown, slug: string): MigrationActivationManifest;
 export declare function privateProjectWorkspaceAgentIds(manifest: MigrationActivationManifest): Set<string>;
 export declare function assertTargetIdentityCustody(expected: MigrationTargetIdentityCustody, actual: MigrationTargetIdentityCustody): void;
 export declare function validateTargetWorkspaceIdentities(value: unknown, slug: string, agentIds: readonly string[]): TargetWorkspaceIdentities;

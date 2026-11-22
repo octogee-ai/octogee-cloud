@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { gatewayScopedJobId, signFleetRequest, sourceActivationReadinessJobId, verifyFleetRequest } from "./fleet-signature.js";
+import { heldNativeSourceReconcileJobId, gatewayScopedJobId, signFleetRequest, sourceActivationReadinessJobId, verifyFleetRequest } from "./fleet-signature.js";
 import { FLEET_KEY_PAIR } from "./fixtures/fleet-keys.js";
 import {
   CONFIG_PATCH_DEADLINE_MS,
@@ -10,6 +10,7 @@ import {
 } from "@octogee/shared/types/fleet-controller";
 import {
   createMigrationClient,
+  requestHeldNativeSourceReconcile,
   reportMigrationProgress,
   isDefinitiveConfigRpcRejection,
   MigrationTransportError,
@@ -901,5 +902,31 @@ describe("MigrationClient.scheduler", () => {
     const { fakeFetch } = captureFetch(() => new Response(JSON.stringify(result)));
     const client = createMigrationClient({ privateKey: PRIVATE_KEY, resolveGatewayUrl: () => "https://fleet-test.example.com", fetch: fakeFetch, transferState: transferNotUnderTest });
     await expect(client.scheduler(requesterProbe)).rejects.toThrow("did not prove");
+  });
+});
+
+describe("held Native source transport", () => {
+  const binding = { operationId: "op", requestId: "r", holdGeneration: "g", gatewayId: "src", targetGatewayId: "dst", uid: "u", slug: "alice",
+    sourceEpoch: 1, claimStartedAt: 2, schedulerMigrationId: "mig-op:scheduler:1:claim:2", vmId: "1", bootId: "b", bootDiskId: "2", homeDiskId: "3" };
+  it("addresses only the keeper and requires its nonce-bound proof", async () => {
+    const proof = { verifiedAt: 3, appliedFingerprint: "0".repeat(16), activationManifestSha256: "1".repeat(64) };
+    const { calls, fakeFetch } = captureFetch(call => {
+      const body = JSON.parse(call.body!);
+      const sig = call.headers[SIGNATURE_HEADER.toLowerCase()];
+      expect(verifyFleetRequest(FLEET_KEY_PAIR.publicKey, heldNativeSourceReconcileJobId("mig-op", "src"), call.body!, sig)).toBe(true);
+      expect(verifyFleetRequest(FLEET_KEY_PAIR.publicKey, gatewayScopedJobId("mig-op", "src"), call.body!, sig)).toBe(false);
+      expect(body.binding).toEqual(binding);
+      expect(body.snapshot).toBeUndefined();
+      return Response.json({ proof, nonce: body.nonce, requestId: "r", holdGeneration: "g" });
+    });
+    expect(await requestHeldNativeSourceReconcile({ binding, privateKey: PRIVATE_KEY, sourceUrl: "http://fixture", fetch: fakeFetch })).toEqual(proof);
+    expect(calls.map(call => call.url)).toEqual(["http://fixture/held-native-source-reconcile/src"]);
+  });
+  it("refuses stale proofs and old guests without sending a restore", async () => {
+    for (const response of [Response.json({ nonce: "stale" }), new Response(null, { status: 404 })]) {
+      const { calls, fakeFetch } = captureFetch(() => response);
+      await expect(requestHeldNativeSourceReconcile({ binding, privateKey: PRIVATE_KEY, sourceUrl: "http://fixture", fetch: fakeFetch })).rejects.toThrow();
+      expect(calls).toHaveLength(1);
+    }
   });
 });

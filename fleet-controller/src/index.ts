@@ -6,7 +6,7 @@ import { hasUserActivationTargetRollback, readUserActivationRollRecoveryCustody 
 import { createMigrationAgentStorePreparer, readUserAgentStoreInventory, type PrepareMigrationAgentStores } from "./migration-agent-stores.js";
 import { prepareIsolatedRecoveryTarget } from "./isolated-recovery-target.js";
 import { createGatewayCredentialEnsurers } from "./gateway-credential-ensurers.js";
-import { createAgentStoreCredentialProvisioner, createAgentStoreCredentialRevoker, createAgentStoreCredentialRetirementVerifier, createAgentStoreOwnershipTransferer, assertNoUserAgentStores, eraseUserAgentStores } from "@octogee/core/agent-store-credentials";
+import { createAgentStoreCredentialProvisioner, createAgentStoreCredentialRevoker, createAgentStoreCredentialRetirementVerifier, createAgentStoreOwnershipTransferer, createHeldReturnStoreCustodyVerifier, assertNoUserAgentStores, eraseUserAgentStores } from "@octogee/core/agent-store-credentials";
 import { createUserAgentStoreErasure, preserveUserGatewayRetirement, type SharedAgentErasureSource } from "./lib/user-ops/agent-store-erasure.js";
 import { eraseUserComputerStorage } from "./lib/user-home-erasure.js";
 import { rearmArchiveBeforeAccountOperation, settleInterruptedHomeArchiveForErasure } from "./lib/recover-home-archive.js";
@@ -177,7 +177,11 @@ import {
   verifiedDeletionCompletion,
 } from "./operation-retry.js";
 import { createAddGatewayHandler } from "./handlers/add-gateway.js";
-import { createMigrateUserHandler } from "./handlers/migrate-user.js";
+import { createMigrateUserHandler, type MigrateUserDeps } from "./handlers/migrate-user.js";
+import { createHeldNativeReturnBackupVerifier, type NativeReturnBackupReaders } from "./lib/held-native-return-backup.js";
+import { createHeldNativeReturnDestinationVerifier } from "./lib/held-native-return-destination.js";
+import { createHeldNativeReturnWorker } from "./lib/held-native-return-worker.js";
+import { createHeldNativeSourceReconciler } from "./lib/held-native-source-reconcile.js";
 import {
   migrationSourceReady,
   migrationTargetRootIsStable,
@@ -520,6 +524,7 @@ interface ControllerDeps {
   modelKeySecretEnsurer?: GatewayModelKeySecretEnsurer;
   restartGatewayDeployment?: (revisionId: string) => Promise<void>;
   handlers: OperationHandlers;
+  heldNativeReturnRepairAvailable?: boolean;
   requestNativeReturnSourceRecovery?: ReturnType<typeof createNativeReturnSourceRecoveryOwner>["request"];
   log: (msg: string) => void;
   syncFleetIngress?: (
@@ -2623,6 +2628,13 @@ function releasingDeadKeyHolders(
   return readLiveKeyHoldersReleasingDead(read, { keys: provisioning.client, mode, minAbsenceMs: DEAD_GIT_KEY_HOLDER_MIN_ABSENCE_MS, now: () => Date.now(), log });
 }
 
+function adminNativeReturnOptions(deps: ControllerDeps) {
+  return {
+    heldNativeReturnRepairAvailable: deps.heldNativeReturnRepairAvailable,
+    requestNativeReturnSourceRecovery: deps.requestNativeReturnSourceRecovery,
+  };
+}
+
 function startControllerBackgroundTasks({
   addProductAdminRoutes,
   userAccounts,
@@ -2788,7 +2800,7 @@ function startControllerBackgroundTasks({
             httpKubeOps.readGatewayPodDiagnosticsBatch({ namespace: NAMESPACE, gatewayIds }),
         }
       : {}),
-    requestNativeReturnSourceRecovery: deps.requestNativeReturnSourceRecovery,
+    ...adminNativeReturnOptions(deps),
     strandedSource: strandedSourceGateway,
     ...(GATEWAY_VM_SPEC ? { userHome: adminUserHome(deps.store, GATEWAY_VM_SPEC) } : {}),
     logs: {
@@ -2966,6 +2978,7 @@ interface ControllerRuntimeSeams {
   gatewayGitKeys: GatewayGitKeyRelease | null;
   resolveHobbyCheckpointPod?: ResolveHobbyCheckpointPod;
   requiresInitialGatewayRelease?: RequiresInitialGatewayRelease;
+  heldNativeReturnBackupReaders?: NativeReturnBackupReaders | null;
 }
 
 function provisioningSeams(runtime: ProvisioningServiceRuntime | null): Pick<ControllerRuntimeSeams, "provisioning" | "gatewayGitKeys"> {
@@ -2976,14 +2989,10 @@ async function createControllerRuntime(
   store: PlatformStateStore,
   createHostingCleanup: ControllerProduct["createHostingCleanup"],
   userLifecycle: ProductUserLifecycle | null,
-  { accounts, documents, provisioning, gatewayGitKeys, resolveHobbyCheckpointPod, requiresInitialGatewayRelease }: ControllerRuntimeSeams,
+  { accounts, documents, provisioning, gatewayGitKeys, resolveHobbyCheckpointPod, requiresInitialGatewayRelease, heldNativeReturnBackupReaders }: ControllerRuntimeSeams,
 ): Promise<ControllerRuntime> {
   const runKubectl: KubectlSubprocess = (args, opts) => spawnKubectl(args, opts);
-  const authSecretEnsurer = createAuthSecretEnsurer({
-    runKubectl,
-    randomTokenHex: defaultRandomTokenHex,
-    log,
-  });
+  const authSecretEnsurer = createAuthSecretEnsurer({ runKubectl, randomTokenHex: defaultRandomTokenHex, log });
   const agentStore = agentStoreDsns();
   const provisionAgentStoreCredentials = createAgentStoreCredentialProvisioner(agentStore.adminDsn, agentStore.clientDsn);
   const { ensureGatewayAuthSecret, ensureGatewayCredentials } = createGatewayCredentialEnsurers({
@@ -3137,12 +3146,15 @@ async function createControllerRuntime(
     }, gatewayIds);
   const convergeGateways = serializeGatewayConvergence(runGatewayConvergence);
   const convergeSettledVm = convergeAfterVmRuntimeChange(convergeGateways, log);
-  const nativeReturnRecovery = buildNativeReturnSourceRecoveryOwner(store, kubeOps, fleetControllerPrivateKey, prepareMigrationAgentStores);
+  const nativeReturn = configureNativeReturnSupport({
+    readers: heldNativeReturnBackupReaders, store, documents, privateKey: fleetControllerPrivateKey,
+    runKubectl, kubeOps, prepareMigrationAgentStores, agentStoreAdminDsn: agentStore.adminDsn,
+  });
   const handlers = await buildHandlers(documents, log, helm, kubeOps, {
     syncFleetIngress: handlerSyncFleetIngress, privateKey: fleetControllerPrivateKey,
     modelKeySourceIssuer, prepareGatewayConfig, chartFingerprint,
     runRuntimeRecovery: convergeGateways.runExclusive,
-    prepareMigrationAgentStores, nativeReturnRecovery, store, requiresInitialGatewayRelease,
+    prepareMigrationAgentStores, ...nativeReturn.handlers, store, requiresInitialGatewayRelease,
     deleteHostingSites: createHostingCleanup?.(log),
     userLifecycle,
     accounts,
@@ -3158,7 +3170,7 @@ async function createControllerRuntime(
     modelKeySecretEnsurer,
     restartGatewayDeployment: createGatewayDeploymentRestarter(store,runKubectl, log),
     handlers,
-    requestNativeReturnSourceRecovery: nativeReturnRecovery.request,
+    ...nativeReturn.admin,
     log,
     syncFleetIngress: syncEdgeIngressForGateways,
     convergeGateways,
@@ -3181,7 +3193,52 @@ async function createControllerRuntime(
 
 type HostingCleanup = NonNullable<NukeCloudDeps["deleteHostingSites"]>;
 
+function configureNativeReturnSupport(deps: Parameters<typeof buildHeldNativeReturnHandler>[0] & {
+  kubeOps: KubeOps;
+  prepareMigrationAgentStores: PrepareMigrationAgentStores;
+}) {
+  const nativeReturnRecovery = buildNativeReturnSourceRecoveryOwner(deps.store, deps.kubeOps, deps.privateKey, deps.prepareMigrationAgentStores);
+  const reconcileHeldNativeReturn = buildHeldNativeReturnHandler(deps);
+  return {
+    handlers: { nativeReturnRecovery, reconcileHeldNativeReturn },
+    admin: {
+      heldNativeReturnRepairAvailable: reconcileHeldNativeReturn !== undefined,
+      requestNativeReturnSourceRecovery: nativeReturnRecovery.request,
+    },
+  };
+}
+
+function buildHeldNativeReturnHandler(deps: {
+  readers: NativeReturnBackupReaders | null | undefined;
+  store: PlatformStateStore;
+  documents: UserDocuments;
+  privateKey: string;
+  runKubectl: KubectlSubprocess;
+  agentStoreAdminDsn: string;
+}): MigrateUserDeps["reconcileHeldNativeReturn"] {
+  if (environmentName !== "test" || !deps.readers || !deps.documents.projectRecipes) return undefined;
+  const { store, documents, privateKey } = deps;
+  const backup = createHeldNativeReturnBackupVerifier(deps.readers);
+  const verifyPod = createHeldNativeReturnDestinationVerifier({ namespace: NAMESPACE, privateKey, runKubectl: deps.runKubectl });
+  const verifyStores = createHeldReturnStoreCustodyVerifier(deps.agentStoreAdminDsn);
+  return createHeldNativeReturnWorker({
+    store,
+    now: Date.now,
+    verifyDestination: async (authority, assertCurrent) => {
+      await verifyPod(authority, assertCurrent);
+      const inventory = await store.users.agentStores.list(authority.uid);
+      await verifyStores({ ...authority, schemas: inventory.map(record => record.schema) });
+      await assertCurrent();
+    },
+    verifyBackup: backup.verifyBackup,
+    assertBackupCurrent: (binding, { claimStartedAt: _claimStartedAt, ...scope }, assertCurrent) =>
+      backup.assertBackupCurrent(binding, scope, assertCurrent),
+    reconcile: createHeldNativeSourceReconciler({ store, documents, privateKey, port: FLEET_CONTROLLER_PORT, vm: createGatewayComputeClient(store, log) }),
+  });
+}
+
 export interface ControllerProduct {
+  heldNativeReturnBackupReaders?: (store: PlatformStateStore) => NativeReturnBackupReaders | null;
   resolveHobbyCheckpointPod?: ResolveHobbyCheckpointPod;
   requiresInitialGatewayRelease?: RequiresInitialGatewayRelease;
   createHostingCleanup?: (log: (message: string) => void) => HostingCleanup;
@@ -3252,6 +3309,7 @@ export async function main(product: ControllerProduct): Promise<void> {
       accounts, documents, ...provisioningSeams(provisioning),
       resolveHobbyCheckpointPod: product.resolveHobbyCheckpointPod,
       requiresInitialGatewayRelease: product.requiresInitialGatewayRelease,
+      heldNativeReturnBackupReaders: environmentName === "test" ? product.heldNativeReturnBackupReaders?.(store) : undefined,
     });
 
   log(
@@ -3543,6 +3601,7 @@ async function buildHandlers(
     runRuntimeRecovery: (work: () => Promise<void>) => Promise<void>;
     prepareMigrationAgentStores: PrepareMigrationAgentStores;
     nativeReturnRecovery: ReturnType<typeof createNativeReturnSourceRecoveryOwner>;
+    reconcileHeldNativeReturn?: MigrateUserDeps["reconcileHeldNativeReturn"];
     requiresInitialGatewayRelease?: RequiresInitialGatewayRelease;
     store: PlatformStateStore;
     deleteHostingSites?: HostingCleanup;
@@ -3608,6 +3667,7 @@ async function buildHandlers(
     readVmReady: probeVmReady,
   });
   const migrateUser = createMigrateUserHandler({
+    reconcileHeldNativeReturn: fleetOps.reconcileHeldNativeReturn,
     prepareIsolatedRecoveryTarget: input => prepareIsolatedRecoveryTarget({
       assertAuthority: recovery => assertWorkspaceMigrationRecoveryAuthority(stateDeps, recovery),
       targetAssigned: async gatewayId => {

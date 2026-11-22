@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
 import { DuplicateRecordError, type PlatformUserRecord, type GatewayAssignment, type GatewayRoot, type PlatformStateRepositories, type Stored } from "@octogee/core/platform-state";
-import { userActivationRecoveryTargetMatches, sharedRecoveryTargetCleaned, migrationCancellationDeferred, isolatedTargetBelongsToUser } from "@octogee/core/fleet-state";
+import { userActivationRecoveryTargetMatches, sharedRecoveryTargetCleaned, migrationCancellationDeferred, heldNativeReturnBlocksDestination, isolatedTargetBelongsToUser } from "@octogee/core/fleet-state";
 import { isolatedRuntimeMutationFenced } from "@octogee/core/gateway-retirement-claim";
 import { readSchedulerMigrationIdentity, type UserMigrationV2State } from "@octogee/shared/types/glm";
 import { projectGatewayDesiredRootForGateway } from "@octogee/shared/types/gateway-releases";
@@ -32,7 +32,8 @@ async function sharedCrossGatewayAgentAnchorScope(tx: PlatformStateRepositories,
   const operationId = migrationId.slice(4);
   const operation: StoredFields = (await tx.journal.operations.get(operationId)) ?? {};
   const input = operation.input ?? {};
-  if (!migrationOperationCurrent(operation, input, gatewayId, operationId)) return null;
+  if (!migrationOperationCurrent(operation, input, gatewayId, operationId) ||
+      heldNativeReturnBlocksDestination({ input, schedulerHandoff: operation.schedulerHandoff }, gatewayId)) return null;
   const sourceGatewayId: string = input.fromGatewayId, targetGatewayId: string = input.toGatewayId, uid: string = input.uid;
   const sourceRequest = gatewayId === sourceGatewayId;
   const [gateway, source, user, assignment, targetAssignment] = await Promise.all([

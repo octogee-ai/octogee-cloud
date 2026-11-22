@@ -1,3 +1,5 @@
+import { collectChannelBindings, CorruptStoredFieldError, defaultAgentMattermostSecret, loadSnapshot, snapshotDefaultAgentFields, storedRuntimeReset, storedTimeZone } from "@octogee/core/broker-user-snapshot";
+export { collectChannelBindings, CorruptStoredFieldError, projectCheckoutScopeForGatewayRoot, snapshotBaseFields, snapshotGreetingPosted, storedTimeZone } from "@octogee/core/broker-user-snapshot";
 import { builderActivateOperationId } from "@octogee/shared/types/isolated-operation-ids";
 import { CHECKPOINT_CURSOR_HEADER, createVmCheckpointWaiter, vmCheckpointCursor, vmRuntimeCheckpointSignal } from "../lib/vm-checkpoint-watch.js";
 import { brokerRequestLimit } from "../middleware/broker-request-limit.js";
@@ -16,7 +18,7 @@ import {
 } from "../lib/assigned-isolated-agent-anchor-scope.js";
 import { sharedAgentAnchorMigrationScope, sharedAssignedSourceSurgeAnchorScope } from "../lib/shared-agent-anchor-migration.js";
 import { installWorkspaceBlobBrokerRoute, type WorkspaceBlobStore } from "./fleet-broker-workspace-blob.js";
-import { readUserRestoreAuthoritySnapshot } from "@octogee/core/fleet-state";
+import { heldNativeReturnBlocksOwnerDestination } from "@octogee/core/fleet-state";
 import {
   FenceMismatchError,
   MalformedRecordError,
@@ -74,7 +76,6 @@ import { Router, type Request, type Response } from "express";
 import { logger, redactRequestPath } from "@octogee/core/http/logging";
 import { gcsBucket } from "@octogee/core/workspace/gcs-bucket";
 import { parseAgentLook, type AgentLook } from "@octogee/shared/types/agent-look";
-import { parseTimeZone } from "@octogee/shared/types/time-zone";
 import { DEFAULT_AGENT_LOOK, characterSvg } from "@octogee/shared/types/agent-characters";
 import {
   isValidProjectId,
@@ -84,8 +85,7 @@ import {
   workspaceDefaultAgentChannelName,
 } from "@octogee/shared/types/identity";
 import { MANIFEST_OBJECT_SUFFIX } from "@octogee/core/workspace-manifest";
-import { userEntitlements } from "@octogee/shared/types/user-entitlements";
-import { githubCheckpointRepo, projectAgentConfigured, projectRepoSourceFromDoc } from "@octogee/shared/types/project";
+import { projectAgentConfigured } from "@octogee/shared/types/project";
 import {
   createCachedUserAgentDefaultResolver,
   createCachedHouseModelResolver,
@@ -108,28 +108,22 @@ import type {
   FleetBrokerVmEgress,
   FleetBrokerIsolatedRuntimeStateSnapshotUrls,
   FleetBrokerAssignmentRosterEntry,
-  FleetBrokerChannelBinding,
   FleetBrokerConfiguredUserBootstrap,
   FleetBrokerConfiguredUserDesk,
   FleetBrokerConfiguredUserProjectCredential,
-  FleetBrokerUserRuntimeReset,
   FleetBrokerMattermostUpdate,
   FleetBrokerNpmRegistryCredentials,
   FleetBrokerPreStopFlushEvent,
   FleetBrokerPreStopFlushStep,
-  FleetBrokerProjectCheckoutScope,
   FleetBrokerProjectAgent,
-  FleetBrokerProjectRestore,
   FleetBrokerProvisioningStatus,
   FleetBrokerUsageData,
   FleetBrokerUserSnapshot,
 } from "@octogee/shared/types/fleet-broker";
 import { BUILDER_RUNTIME_STATE_RECOVERY_TIERS } from "@octogee/shared/types/fleet-broker";
 import type { UserIdentity } from "@octogee/shared/types/builder-identity";
-import { readWorkspaceMigrationMarker } from "@octogee/shared/types/workspace-migration";
 import { isDeveloperToolchainStatus } from "@octogee/shared/types/developer-toolchain";
 import {
-  readByotSnapshotProjection,
   collectStoredProjectAgentStates,
 } from "@octogee/core/user-snapshot-mapping";
 import {
@@ -1316,7 +1310,10 @@ async function requireAssignedSlug(
   }
   const assignedUid = await findAssignedUidBySlug(store, bound.gatewayId, slug);
   const uid = assignedUid ?? (preparingProjectRead ? (await configuredUserNpmSubject(store, bound, slug, "preparation"))?.uid : null);
-  if (!uid) {
+  if (!uid || (preparingProjectRead && await store.transaction({ readOnly: true, label: "fleet-broker.blob-target-import-hold" }, async tx => {
+    const owner = await tx.users.records.get(uid);
+    return owner ? heldNativeReturnBlocksOwnerDestination(tx, bound.gatewayId, owner) : true;
+  }))) {
     res.status(403).json(FORBIDDEN);
     return null;
   }
@@ -1370,91 +1367,6 @@ export async function runBrokered(
     logger.error("fleet broker call failed", { path: redactRequestPath(res.req.originalUrl), err });
     res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
   }
-}
-
-export async function collectChannelBindings(
-  store: PlatformStateRepositories,
-  slug: string,
-): Promise<{
-  bindings: FleetBrokerChannelBinding[];
-  projectMemberships: Array<{ projectId: string; channelIds: string[] }>;
-}> {
-  const [workspaceChannels, projects] = await Promise.all([
-    store.workspaces.channels.list({ workspaceSlug: slug, projectSlug: null }),
-    store.workspaces.projects.list(slug),
-  ]);
-
-  const bindings: FleetBrokerChannelBinding[] = [];
-  const projectMemberships: Array<{ projectId: string; channelIds: string[] }> = [];
-  for (const channel of workspaceChannels) {
-    if (channel.mattermostChannelId) bindings.push({ scope: "workspace", kind: channel.kind ?? "general", channelId: channel.mattermostChannelId });
-  }
-  for (const project of projects) {
-    const channels = await store.workspaces.channels.list({ workspaceSlug: slug, projectSlug: project.projectSlug });
-    const channelIds: string[] = [];
-    for (const channel of channels) {
-      if (!channel.mattermostChannelId) continue;
-      bindings.push({ scope: "project", projectId: project.projectSlug, kind: channel.kind ?? "default", channelId: channel.mattermostChannelId });
-      channelIds.push(channel.mattermostChannelId);
-    }
-    if (channelIds.length > 0) projectMemberships.push({ projectId: project.projectSlug, channelIds });
-  }
-  return { bindings, projectMemberships };
-}
-
-async function collectProjects(
-  deps: Pick<ResolvedFleetBrokerRouteDeps, "records" | "store">,
-  slug: string,
-): Promise<FleetBrokerProjectRestore[]> {
-  const [projects, recipes] = await Promise.all([
-    deps.store.workspaces.projects.list(slug),
-    deps.records.userDocuments.projectRecipes(slug),
-  ]);
-  return projects.map((project) => {
-    const out: FleetBrokerProjectRestore = {
-      projectSlug: project.projectSlug,
-      giteaRepoName: project.giteaRepoName,
-    };
-    if (project.provisioningState !== null) {
-      out.provisioningState = project.provisioningState;
-    }
-    if (project.checkoutEnabled === false) {
-      out.checkoutEnabled = false;
-    }
-    const recipe = recipes.get(project.projectSlug);
-    if (recipe !== undefined) {
-      out.recipe = recipe;
-    }
-    const repoSource = projectRepoSourceFromDoc(project.repoSource ?? undefined);
-    if (repoSource) {
-      out.repoSource = repoSource;
-      if (repoSource.workingCopy?.ready) out.giteaRepoName = githubCheckpointRepo(repoSource.workingCopy.id);
-      else if (repoSource.workingCopy) out.checkoutEnabled = false;
-    }
-    return out;
-  });
-}
-
-export function projectCheckoutScopeForGatewayRoot(
-  gatewayData: unknown,
-  gatewayId: string,
-  uid: string,
-  slug: string,
-): FleetBrokerProjectCheckoutScope {
-  const root = projectGatewayDesiredRootForGateway(gatewayData, gatewayId);
-  if (!root) {
-    return "workspace-only";
-  }
-  if (root.gatewayClass === "shared") return "workspace-and-projects";
-  if (root.ownerUid !== uid || root.builderSlug !== slug) return "workspace-only";
-  if (
-    (root.gatewayClass === "isolated" || root.gatewayClass === "operator") &&
-    root.allocation?.kind === "disposable-builder" &&
-    root.allocation.claimedByUid === uid
-  ) {
-    return "workspace-and-projects";
-  }
-  return "workspace-only";
 }
 
 async function assignedUser(
@@ -1619,195 +1531,6 @@ function installNpmCacheCapabilityRoutes(
   });
 }
 
-function snapshotProvisioningStatus(userRecord: PlatformUserRecord): FleetBrokerProvisioningStatus {
-  const status = userRecord.openclaw.status;
-  return status === "provisioning" || status === "complete" ? status : "";
-}
-
-type StoredRuntimeReset = FleetBrokerUserRuntimeReset | (
-  Omit<FleetBrokerUserRuntimeReset, "status"> & {
-    status: "acknowledged";
-    acknowledgedAt: unknown;
-  }
-);
-
-function storedRuntimeReset(
-  userRecord: PlatformUserRecord,
-): StoredRuntimeReset | undefined {
-  const raw: unknown = userRecord.fences.runtimeReset;
-  if (raw === undefined) return undefined;
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    throw new Error("invalid user runtime reset marker");
-  }
-  const marker = raw as Record<string, unknown>;
-  const stringFields = [
-    "uid",
-    "slug",
-    "operationId",
-    "sourceGatewayId",
-    "targetGatewayId",
-    "disposableLeaseId",
-  ] as const;
-  const validStrings = stringFields.every(
-    (field) => typeof marker[field] === "string" && marker[field].length > 0,
-  );
-  const validIntegers = ["generation", "disposableLeaseGeneration", "requestedAt"].every(
-    (field) => Number.isSafeInteger(marker[field]) && (marker[field] as number) >= 0,
-  );
-  const validStatus = marker.status === "pending" ||
-    (marker.status === "acknowledged" && marker.acknowledgedAt !== undefined);
-  if (!validStatus || !validStrings || !validIntegers || !isValidUsername(marker.slug)) {
-    throw new Error("invalid user runtime reset marker");
-  }
-  return marker as unknown as StoredRuntimeReset;
-}
-
-function snapshotRuntimeReset(
-  userRecord: PlatformUserRecord,
-): FleetBrokerUserRuntimeReset | undefined {
-  const marker = storedRuntimeReset(userRecord);
-  return marker?.status === "pending" ? marker : undefined;
-}
-
-async function admittedRuntimeReset(
-  store: PlatformStateRepositories,
-  userRecord: PlatformUserRecord,
-): Promise<FleetBrokerUserRuntimeReset | undefined> {
-  const marker = snapshotRuntimeReset(userRecord);
-  if (!marker) return undefined;
-  const assignment = await store.gateways.assignments.get(marker.targetGatewayId, userRecord.uid);
-  const exact = [
-    marker.uid === userRecord.uid,
-    marker.slug === userRecord.slug,
-    marker.targetGatewayId === userRecord.gateway?.gatewayId,
-    assignment?.gatewayId === marker.targetGatewayId,
-    assignment?.epoch === marker.generation,
-    assignment?.source === "repair",
-    assignment?.updatedByOperationId === marker.operationId,
-  ].every(Boolean);
-  if (!exact) throw new Error("user runtime reset assignment fence changed");
-  return marker;
-}
-
-export function snapshotGreetingPosted(greeting: unknown): boolean {
-  const receipt = greeting as { ok?: unknown; jobId?: unknown } | null | undefined;
-  return receipt?.ok === true && typeof receipt.jobId === "string" && receipt.jobId.trim().length > 0;
-}
-
-export function snapshotBaseFields(
-  userRecord: PlatformUserRecord,
-  account: Record<string, unknown>,
-  slug: string,
-): Omit<
-  FleetBrokerUserSnapshot,
-  "uid" | "slug" | "channels" | "projectCheckoutScope" | "projects" | "coachToken" | "coachMmUserId" | "coachIdentity" | "byotActive"
-> {
-  const mattermostUserId = userRecord.mattermostUserId || null;
-  const entitlements = userEntitlements();
-  const planInputs = entitlements.pickInputs(account);
-  return {
-    ...entitlements.previousImageFields("user-snapshot", { ...account, persona: userRecord.persona }),
-    contextTemplateKey: entitlements.seedContextTemplateKey(planInputs),
-    planInputs,
-    gatewayId: userRecord.gateway?.gatewayId ?? "",
-    status: snapshotProvisioningStatus(userRecord),
-    agentIds: [...userRecord.agents.agentIds],
-    repoUrl: userRecord.provisioning.gitRepoUrl ?? "",
-    mattermostUserId,
-    customerMmUserId: mattermostUserId,
-    ownerName: stringAt(account, "displayName") || stringAt(account, "username") || slug,
-    email: stringAt(account, "email"),
-    displayName: stringAt(account, "displayName"),
-    lastName: stringAt(account, "lastName"),
-    timeZone: storedTimeZone(account),
-    photoURL: stringAt(account, "photoURL"),
-    persona: userRecord.persona,
-  };
-}
-
-async function defaultAgentMattermostSecret(store: PlatformStateRepositories, uid: string): Promise<MattermostTokenSecret | null> {
-  const secret = await store.secrets.get(uid, "coachMattermost");
-  return secret?.kind === "coach-mattermost" ? secret : null;
-}
-
-function snapshotDefaultAgentFields(
-  defaultAgent: MattermostTokenSecret | null,
-): Pick<FleetBrokerUserSnapshot, "coachToken" | "coachMmUserId"> {
-  return {
-    coachToken: defaultAgent?.personalToken ?? null,
-    coachMmUserId: defaultAgent?.mattermostUserId ?? null,
-  };
-}
-
-function snapshotDefaultAgentIdentity(
-  agentData: Record<string, unknown> | undefined,
-): Pick<FleetBrokerUserSnapshot, "coachIdentity"> | Record<string, never> {
-  const name = typeof agentData?.name === "string" ? agentData.name : "";
-  const emoji = typeof agentData?.avatarEmoji === "string" ? agentData.avatarEmoji : "";
-  return name || emoji ? { coachIdentity: { name, emoji } } : {};
-}
-
-interface SnapshotModelDials {
-  freeTierModelRef: string;
-  userAgentDefault: FleetBrokerUserSnapshot["builderAgentDefault"];
-}
-
-interface LoadSnapshotOptions {
-  modelDials: SnapshotModelDials;
-  gatewayId: string;
-  gatewayData: GatewayRoot | undefined;
-}
-
-async function loadSnapshot(
-  deps: Pick<ResolvedFleetBrokerRouteDeps, "records" | "store">,
-  userRecord: Stored<PlatformUserRecord>,
-  account: Record<string, unknown>,
-  options: LoadSnapshotOptions,
-): Promise<(FleetBrokerUserSnapshot & { greetingPosted: boolean }) | null> {
-  const { records, store } = deps;
-  const { modelDials } = options;
-  const { uid, slug } = userRecord;
-  if (!slug || !isValidUsername(slug)) return null;
-  const projectCheckoutScope = projectCheckoutScopeForGatewayRoot(options.gatewayData, options.gatewayId, uid, slug);
-  const [collectedChannels, projects, projectAgents, defaultAgent, agentData, credentialProjection, runtimeReset, restoreAuthority] = await Promise.all([
-    collectChannelBindings(store, slug),
-    projectCheckoutScope === "workspace-and-projects"
-      ? collectProjects(deps, slug)
-      : Promise.resolve([]),
-    collectStoredProjectAgentStates(store, uid, slug),
-    defaultAgentMattermostSecret(store, uid),
-    records.userDocuments.agent(uid),
-    readByotSnapshotProjection(store.users, uid),
-    admittedRuntimeReset(store, userRecord),
-    readUserRestoreAuthoritySnapshot({ store }, { uid, slug, gatewayId: options.gatewayId }),
-  ]);
-  const baseFields = snapshotBaseFields(userRecord, account, slug);
-  const channels = collectedChannels.bindings;
-  const migration = readWorkspaceMigrationMarker({ migration: userRecord.fences.migration });
-  const sourcePreparing = migration?.state === "preparing" && Boolean(migration.operationId)
-    && (migration.phase === "preparing" || migration.phase === "waiting");
-  return {
-    uid,
-    slug,
-    ...baseFields,
-    greetingPosted: snapshotGreetingPosted(userRecord.openclaw.greeting),
-    runtimeMutationFenced: isolatedRuntimeMutationFenced(userRecord)
-      || (userRecord.fences.migration !== undefined && !sourcePreparing),
-    ...(runtimeReset ? { runtimeReset } : {}),
-    ...(restoreAuthority ? { restoreAuthority } : {}),
-    byotActive: credentialProjection.byotActive,
-    freeTierModelRef: modelDials.freeTierModelRef,
-    builderAgentDefault: modelDials.userAgentDefault,
-    channels,
-    projectCheckoutScope,
-    projects,
-    ...(projectAgents.length > 0 ? { projectAgents } : {}),
-    ...snapshotDefaultAgentFields(defaultAgent),
-    ...snapshotDefaultAgentIdentity(agentData),
-    ...(credentialProjection.systemConfig ? { systemConfig: credentialProjection.systemConfig } : {}),
-  };
-}
-
 async function findAssignedUidBySlug(
   store: PlatformStateRepositories,
   gatewayId: string,
@@ -1856,7 +1579,7 @@ async function userSnapshotAdmission(
     store.gateways.roots.get(gatewayId),
   ]);
   const gatewayData = gateway ?? undefined;
-  if (!userRecord) return null;
+  if (!userRecord || await heldNativeReturnBlocksOwnerDestination(store, gatewayId, userRecord)) return null;
   if (userRecord.gateway?.gatewayId === gatewayId) {
     return { userRecord, gatewayData };
   }
@@ -2174,6 +1897,21 @@ function installSnapshotRoutes(
 
   router.post("/configured-builder-bootstrap", async (req, res) => {
     await handleConfiguredUserBootstrap(deps, req, res);
+  });
+
+  router.post("/migration/target-import-permit", async (req, res) => {
+    const bound = boundGateway(req, res);
+    if (!bound) return;
+    const slug = req.body?.slug;
+    if (typeof slug !== "string" || !isValidUsername(slug)) {
+      res.status(400).json({ error: "invalid_slug" }); return;
+    }
+    const held = await store.transaction({ readOnly: true, label: "fleet-broker.target-import-hold" }, async tx => {
+      const owner = await tx.users.records.findBySlug(slug);
+      return owner ? heldNativeReturnBlocksOwnerDestination(tx, bound.gatewayId, owner) : false;
+    });
+    if (held) { res.status(409).json({ error: "held_native_return_target_excluded" }); return; }
+    res.status(204).end();
   });
 
   router.post("/user-snapshot", async (req, res) => {
@@ -2989,26 +2727,11 @@ function installOpenClawBootRoutes(
   });
 }
 
-export class CorruptStoredFieldError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "CorruptStoredFieldError";
-  }
-}
-
 export function storedAgentLook(agent: Record<string, unknown> | undefined): AgentLook {
   if (agent?.look === undefined || agent?.look === null) return DEFAULT_AGENT_LOOK;
   const look = parseAgentLook(agent.look);
   if (!look) throw new CorruptStoredFieldError(`agents/{uid}.look is not a drawable look: ${JSON.stringify(agent.look)}`);
   return look;
-}
-
-export function storedTimeZone(user: Record<string, unknown> | undefined): string | null {
-  const raw = readPath(user, "preferences.timeZone");
-  if (raw === undefined || raw === null) return null;
-  const zone = parseTimeZone(raw);
-  if (!zone) throw new CorruptStoredFieldError(`users/{uid}.preferences.timeZone is not an IANA zone: ${JSON.stringify(raw)}`);
-  return zone;
 }
 
 export function configuredUserDesk(

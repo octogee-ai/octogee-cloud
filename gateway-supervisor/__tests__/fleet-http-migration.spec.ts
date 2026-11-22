@@ -18,6 +18,7 @@ import {
   createActivateImportHandler,
   createActivationManifestExportHandler,
   createSourceActivationReadinessHandler,
+  createTargetImportHoldWitnessHandler,
   createAbortRsyncImportHandler,
   createCompleteSurgeHandoffHandler,
   migrationImportBusy,
@@ -33,12 +34,13 @@ import {
   createScheduleTransferHandler,
   createResumeHandler,
   createRestoreHandler,
+  createHeldNativeSourceReconcileHandler,
   createUnmountHandler,
   createVerifyHandler,
   findPathTraversalViolation,
   type MigrationHandlerDeps,
 } from "../lib/fleet-http-migration.js";
-import { gatewayScopedJobId, signFleetRequest, sourceActivationReadinessJobId } from "../lib/fleet-signature.js";
+import { heldNativeSourceReconcileJobId, gatewayScopedJobId, signFleetRequest, sourceActivationReadinessJobId } from "../lib/fleet-signature.js";
 import { reserveLoopbackPort } from "../lib/migration-rsync-tls.js";
 import { liveImportAdmissionPath } from "../lib/migration-staging.js";
 import {
@@ -1091,6 +1093,29 @@ describe("createVerifyHandler", () => {
   });
 });
 
+describe("held Native source maintenance admission", () => {
+  const request = () => ({
+    migrationId: "mig-op", slug: "alice", binding: { gatewayId: GATEWAY_ID, operationId: "op", slug: "alice" },
+    expiresAt: Date.now() + 30_000, nonce: "f".repeat(64),
+  });
+  it("refuses an ordinary restore signature and never reads the customer's snapshot", async () => {
+    const readHeldSourceSnapshot = vi.fn(), req = request(), res = mkResponse();
+    await createHeldNativeSourceReconcileHandler(mkDeps({ readHeldSourceSnapshot }))(mkRequest(req, {
+      signature: signForPod(req.migrationId, JSON.stringify(req)),
+    }), res.res);
+    expect(res.getStatus()).toBe(401);
+    expect(readHeldSourceSnapshot).not.toHaveBeenCalled();
+  });
+  it("requires the in-guest keeper even on a correctly signed request", async () => {
+    const readHeldSourceSnapshot = vi.fn(), req = request(), res = mkResponse();
+    await createHeldNativeSourceReconcileHandler(mkDeps({ readHeldSourceSnapshot }))(mkRequest(req, {
+      signature: signFleetRequest(PRIVATE_KEY, heldNativeSourceReconcileJobId(req.migrationId, GATEWAY_ID), JSON.stringify(req)),
+    }), res.res);
+    expect(res.getStatus()).toBe(409);
+    expect(readHeldSourceSnapshot).not.toHaveBeenCalled();
+  });
+});
+
 describe("createRestoreHandler", () => {
   it("joins a matching restore retry instead of starting competing mount work", async () => {
     let release!: () => void;
@@ -1947,6 +1972,24 @@ describe("queued-rsync migration control handlers", () => {
 
     expect(getStatus()).toBe(200);
     expect(getBody()).toEqual({ migrationId: "mig-1", slug: "chris", manifest });
+  });
+
+  it("attests a held import only with a scoped signature, canonical denial and no active destination owner", async () => {
+    const body = { migrationId: "mig-1", slug: "chris", nonce: "1".repeat(32) };
+    const signature = signForPod(body.migrationId, JSON.stringify(body));
+    const call = async (readTargetImportPermit: MigrationHandlerDeps["readTargetImportPermit"], mountedUsers: string[], sig = signature) => {
+      const fixture = mkResponse();
+      const handler = createTargetImportHoldWitnessHandler(mkDeps({ readTargetImportPermit, getMountedUsers: () => mountedUsers }));
+      await handler(mkRequest(body, { signature: sig }), fixture.res);
+      return { status: fixture.getStatus(), body: fixture.getBody() };
+    };
+    const permit = vi.fn(async () => "held" as const);
+    expect((await call(permit, [], "invalid")).status).toBe(401);
+    expect(permit).not.toHaveBeenCalled();
+    expect((await call(undefined, [])).status).toBe(409);
+    expect((await call(async () => "permitted", [])).status).toBe(409);
+    expect((await call(permit, ["chris"])).status).toBe(409);
+    expect(await call(permit, ["unrelated"])).toEqual({ status: 200, body: { ...body, held: true } });
   });
 
   it.each([true, false])("source activation readiness returns only the scoped exportable acknowledgement (%s)", async exportable => {

@@ -1,10 +1,11 @@
+import { requireHeldSourceMaintenance, type HeldNativeSourceKeeper } from "./held-native-source-reconcile.js";
 import { createRepeatSquelch } from "@octogee/shared/server/repeat-squelch";
 import { isValidUsername, parseAgentId } from "@octogee/shared/types/identity";
 import { PROJECT_AGENT_WORKSPACE_PARTS } from "@octogee/shared/types/project";
 import type { ProjectBlobHydrator } from "./project-blob-materialization.js";
 import { unassignedConfiguredAgents, stagedSecretOwnersOnly, unmaterializedProjectAccountIds } from "./shared-broker-profile-readiness.js";
 import { createAgentAnchorReporter } from "./agent-anchor-record.js";
-import { createFleetBrokerClient } from "./fleet-broker-client.js";
+import { readMigrationTargetImportPermit, createFleetBrokerClient } from "./fleet-broker-client.js";
 import { isolatedToolchainRoot } from "./user-storage.js";
 import { waitForPreparedIsolatedToolchain } from "./isolated-toolchain-preparation.js";
 import express from "express";
@@ -50,12 +51,14 @@ import {
   createPrepareRsyncImportHandler,
   createPushRsyncStateHandler,
   createMigrationProgressHandler,
+  createTargetImportHoldWitnessHandler,
   createQuiesceHandler,
   createSchedulerMigrationHandler,
   createSchedulerReadyHandler,
   createScheduleTransferHandler,
   createResumeHandler,
   createRestoreHandler,
+  createHeldNativeSourceReconcileHandler,
   createUnmountHandler,
   createVerifyHandler,
   createCompleteSurgeHandoffHandler,
@@ -351,6 +354,7 @@ export function registerByosubDeviceAuth(
 }
 
 export interface StartFleetOptions {
+  getHeldSourceKeeper?: () => HeldNativeSourceKeeper | undefined;
   rpc: GatewayRpcClient;
   adapter: UserLifecycleAdapter;
   gatewayId: string;
@@ -2000,7 +2004,9 @@ function registerMigrationRoutes(
   const quota = rateLimit({ windowMs: 60_000, limit: 1200, standardHeaders: "draft-7", legacyHeaders: false });
   const restore = createRestoreHandler(migrationDeps);
   app.post("/restore/:gatewayId", quota, restore);
+  app.post("/held-native-source-reconcile/:gatewayId", quota, createHeldNativeSourceReconcileHandler(migrationDeps));
   app.post("/resume-restore/:gatewayId", quota, restore);
+  app.post("/target-import-hold/:gatewayId", quota, createTargetImportHoldWitnessHandler(migrationDeps));
   app.post("/migration-progress/:gatewayId", quota, createMigrationProgressHandler(migrationDeps));
   app.post("/resume/:gatewayId", quota, createResumeHandler(migrationDeps));
   app.post("/scheduler/:gatewayId", quota, createSchedulerMigrationHandler(migrationDeps));
@@ -2597,6 +2603,10 @@ export function createIsolatedSurgeGateWiring(input: IsolatedSurgeGateWiringOpti
 }
 
 
+function bindSharedTargetImportPermit(adapter: { isIsolatedGateway?: () => boolean }, gatewayId: string) {
+  return adapter.isIsolatedGateway?.() === true ? undefined : (slug: string) => readMigrationTargetImportPermit(gatewayId, slug);
+}
+
 // eslint-disable-next-line max-lines-per-function -- controller startup owns one ordered lifecycle for listeners, reconciliation, health, and shutdown.
 export async function startFleetController(
   opts: StartFleetOptions,
@@ -2692,6 +2702,7 @@ export async function startFleetController(
 
   const app = express();
   app.disable("x-powered-by");
+  if (opts.getHeldSourceKeeper) app.use(requireHeldSourceMaintenance(opts.gatewayId, () => Boolean(opts.getHeldSourceKeeper?.())));
   app.use(["/scheduler", "/schedules"], express.json({
     limit: "9mb",
     verify: (req: express.Request & { rawBody?: string }, _res, buf) => {
@@ -2785,10 +2796,13 @@ export async function startFleetController(
     configuredUserAssigned,
   });
   const migrationDeps = {
+    getHeldSourceKeeper: opts.getHeldSourceKeeper,
+    readHeldSourceSnapshot: opts.readUserSnapshotForRuntimeReset,
     publicKey: opts.publicKey,
     gatewayId: opts.gatewayId,
     adapter: wrappedAdapter,
     log: opts.log,
+    readTargetImportPermit: bindSharedTargetImportPermit(wrappedAdapter, opts.gatewayId),
     getMountedUsers: () => runtime.mountedCustomers,
     sourceMountRefusal: (slug: string) => runtime.mountRefusal(slug),
     userAttachPending: createVerifyAttachPending({ provision: caps.provision, opts }),

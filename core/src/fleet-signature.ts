@@ -67,3 +67,7 @@ function normalizeKeyMaterial(raw: string): string {
 
   return value;
 }
+
+export function heldNativeSourceReconcileJobId(migrationId: string, gatewayId: string): string {
+  return gatewayScopedJobId(`held-native-source-reconcile/${migrationId}`, gatewayId);
+}

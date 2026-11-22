@@ -1,4 +1,4 @@
-import { type ScheduleCheckRequestBody, type ScheduleCheckResult, type ScheduleRemoveRequestBody, type ScheduleRemoveResult, type ScheduleRestoreRequestBody, type ScheduleRestoreResult, type ScheduleSnapshotRequestBody, type ScheduleSnapshotResult, type ScheduleTransferRequestBody, type SchedulerMigrationRequestBody, type SchedulerMigrationResult, type FlushGatewayResponse, type ImportResponse, type MigrationProgressRequestBody, type QuiesceResponse, type RestoreMigrationResponse, type UnmountResponse, type VerifyMigrationResponse } from "@octogee/shared/types/fleet-controller";
+import { type ScheduleCheckRequestBody, type ScheduleCheckResult, type ScheduleRemoveRequestBody, type ScheduleRemoveResult, type ScheduleRestoreRequestBody, type ScheduleRestoreResult, type ScheduleSnapshotRequestBody, type ScheduleSnapshotResult, type ScheduleTransferRequestBody, type SchedulerMigrationRequestBody, type SchedulerMigrationResult, type FlushGatewayResponse, type HeldNativeSourceBinding, type HeldNativeSourceReconcileProof, type ImportResponse, type MigrationProgressRequestBody, type QuiesceResponse, type RestoreMigrationResponse, type UnmountResponse, type VerifyMigrationResponse } from "@octogee/shared/types/fleet-controller";
 import type { FleetBrokerProjectCheckoutScope, FleetBrokerUserSnapshot } from "@octogee/shared/types/fleet-broker";
 import type { MigrationSyncMode } from "./fleet-migration.js";
 export interface MigrationClientTimeouts {
@@ -125,7 +125,13 @@ export declare class MigrationTransportError extends Error {
     });
 }
 export declare function isDefinitiveConfigRpcRejection(error: unknown): boolean;
+export { reconcileHeldNativeSource } from "./held-native-source-reconcile.js";
+export declare function requestHeldNativeSourceReconcile(input: {
+    binding: HeldNativeSourceBinding;
+    sourceUrl: string;
+    privateKey: string;
+    fetch?: typeof globalThis.fetch;
+}): Promise<HeldNativeSourceReconcileProof>;
 export declare function createMigrationClient(deps: MigrationClientDeps): MigrationClient;
 type ScheduleTransferResult = ScheduleSnapshotResult | ScheduleRestoreResult | ScheduleRemoveResult | ScheduleCheckResult;
 export declare function reportMigrationProgress(deps: Pick<MigrationClientDeps, "privateKey" | "resolveGatewayUrl" | "fetch">, gatewayId: string, body: MigrationProgressRequestBody): Promise<void>;
-export {};

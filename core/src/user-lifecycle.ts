@@ -473,7 +473,7 @@ export async function prepareUserRuntimePublication(options: { signal?: AbortSig
 export async function restoreUserRuntimeFromSnapshot(
   adapter: UserLifecycleAdapter,
   snapshot: UserSnapshot,
-  opts: AddUserOptions = {},
+  opts: AddUserOptions & { keepSourceQuiescing?: true } = {},
 ): Promise<RestoreUserRuntimeResult> {
   return withLogContext({}, async () => {
     setLogContext({ builderSlug: snapshot.slug, category: "lifecycle" });
@@ -569,7 +569,7 @@ function raceWithSignal<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
 async function restoreUserRuntimeFromSnapshotInner(
   adapter: UserLifecycleAdapter,
   snapshot: UserSnapshot,
-  opts: AddUserOptions & { markStep?: MarkStep },
+  opts: AddUserOptions & { markStep?: MarkStep; keepSourceQuiescing?: true },
 ): Promise<RestoreUserRuntimeResult> {
   const verifyTimeoutMs = opts.verifyTimeoutMs ?? VERIFY_ACCOUNT_TIMEOUT_MS;
   const usersDir = opts.usersDir ?? "/home/node/.openclaw/customers";
@@ -645,11 +645,12 @@ async function restoreUserRuntimeFromSnapshotInner(
   }
   throwIfAborted(signal, uid);
 
-  markStep("report-provisioned");
-  steps.push(...(await reportProvisioned(adapter, ctx, false)));
-  throwIfAborted(signal, uid);
-
-  adapter.writeMountMarker?.(slug);
+  if (!opts.keepSourceQuiescing) {
+    markStep("report-provisioned");
+    steps.push(...(await reportProvisioned(adapter, ctx, false)));
+    throwIfAborted(signal, uid);
+    adapter.writeMountMarker?.(slug);
+  }
   adapter.log(
     `[restore:${slug}] durable restore complete in ${Date.now() - startedAt}ms`,
   );

@@ -1,7 +1,7 @@
 {
   "name": "@octogee/core",
   "version": "1.0.0",
-  "description": "Octogee shared runtime — consumers depend on its built interface, never its source.",
+  "description": "Octogee shared runtime \u2014 consumers depend on its built interface, never its source.",
   "private": true,
   "license": "MIT",
   "type": "module",
@@ -1025,6 +1025,10 @@
     "./identity/mobile-proof": {
       "types": "./dist/identity/mobile-proof.d.ts",
       "default": "./dist/identity/mobile-proof.js"
+    },
+    "./broker-user-snapshot": {
+      "types": "./dist/broker-user-snapshot.d.ts",
+      "default": "./dist/broker-user-snapshot.js"
     }
   },
   "typesVersions": {
@@ -1658,6 +1662,9 @@
       ],
       "model-credentials/byot-sync-auth": [
         "dist/model-credentials/byot-sync-auth.d.ts"
+      ],
+      "broker-user-snapshot": [
+        "dist/broker-user-snapshot.d.ts"
       ]
     }
   },

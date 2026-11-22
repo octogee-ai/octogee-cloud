@@ -8,6 +8,7 @@ type UserDocument = Record<string, unknown>;
 export interface UserDocuments {
   account(uid: string): Promise<UserDocument | undefined>;
   agent(uid: string): Promise<UserDocument | undefined>;
+  projectRecipes?(workspaceSlug: string): Promise<ReadonlyMap<string, string>>;
 }
 
 export function platformStateUserDocuments(store: Pick<PlatformStateStore, "users">): UserDocuments {
@@ -17,6 +18,7 @@ export function platformStateUserDocuments(store: Pick<PlatformStateStore, "user
       return record === null ? undefined : userAccountDocument(record);
     },
     agent: async () => undefined,
+    projectRecipes: async () => new Map(),
   };
 }
 

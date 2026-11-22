@@ -2798,6 +2798,17 @@ describe("restoreUserRuntimeFromSnapshot — blob backfill stays out of the migr
     expect(result.steps).toContain("clone-workspace-repo");
   });
 
+  it("reconciles a held source without announcing a mount or provisioning it again", async () => {
+    const state = makeState(snap({ status: "complete" }), emptyDisk());
+    const adapter = makeAdapter(state);
+    const writeMountMarker = vi.fn();
+    const result = await restoreUserRuntimeFromSnapshot({ ...adapter, writeMountMarker }, state.user!, { keepSourceQuiescing: true });
+    expect(result.restored).toBe(true);
+    expect(result.steps).toContain("config-patch");
+    expect(state.provisionedReports).toEqual([]);
+    expect(writeMountMarker).not.toHaveBeenCalled();
+  });
+
   it("reports a restored user as provisioned and not first, after the runtime is verified", async () => {
     const state = makeState(snap({ status: "complete" }), emptyDisk());
 

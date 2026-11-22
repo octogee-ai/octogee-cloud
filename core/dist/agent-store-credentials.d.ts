@@ -13,6 +13,12 @@ export interface AgentStoreHandoffIdentity {
     schema: string;
 }
 export declare function createAgentStoreCredentialProvisioner(adminDsn: string, clientDsn: string): (identity: AgentStoreGatewayIdentity, assertCurrent: () => Promise<void>) => Promise<string>;
+export declare function createHeldReturnStoreCustodyVerifier(adminDsn: string): (input: {
+    uid: string;
+    sourceGatewayId: string;
+    targetGatewayId: string;
+    schemas: string[];
+}) => Promise<void>;
 export declare function createAgentStoreCredentialRevoker(adminDsn: string): (gatewayId: string, assertCurrent: () => Promise<void>) => Promise<void>;
 export declare function createAgentStoreCredentialRetirementVerifier(adminDsn: string): (gatewayId: string, assertCurrent: () => Promise<void>) => Promise<boolean>;
 export declare function createAgentStoreOwnershipTransferer(adminDsn: string, readStores: (user: {

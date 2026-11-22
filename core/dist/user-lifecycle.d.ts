@@ -345,7 +345,9 @@ export declare function prepareUserRuntimePublication(options?: {
     signal?: AbortSignal;
     beforeRuntimePublish?: () => Promise<void>;
 }): Promise<void>;
-export declare function restoreUserRuntimeFromSnapshot(adapter: UserLifecycleAdapter, snapshot: UserSnapshot, opts?: AddUserOptions): Promise<RestoreUserRuntimeResult>;
+export declare function restoreUserRuntimeFromSnapshot(adapter: UserLifecycleAdapter, snapshot: UserSnapshot, opts?: AddUserOptions & {
+    keepSourceQuiescing?: true;
+}): Promise<RestoreUserRuntimeResult>;
 export declare function cloneProjectsFromSnapshot(adapter: UserLifecycleAdapter, snapshot: UserSnapshot, options?: {
     signal?: AbortSignal;
 }): Promise<{

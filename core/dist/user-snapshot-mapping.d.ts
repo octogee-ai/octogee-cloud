@@ -21,4 +21,4 @@ export declare function readAgentModelSelections(users: Pick<UserRepositories, "
 export declare function byotSnapshotProjection(credential: ModelCredentialRecord | null, agentModels: AgentModelSelections): ByotSnapshotProjection;
 export declare function readByotSnapshotProjection(users: Pick<UserRepositories, "agentModels" | "modelCredentials">, uid: string): Promise<ByotSnapshotProjection>;
 export declare function mapUserDocToSnapshot(uid: string, data: Record<string, unknown>, channels: UserSnapshot["channels"]): UserSnapshot;
-export {};
+export { snapshotConfigFingerprint } from "./broker-snapshot-fingerprint.js";
