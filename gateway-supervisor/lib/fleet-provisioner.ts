@@ -41,6 +41,7 @@ import { createFleetStateHandler } from "./fleet-state-http.js";
 import {
   createActivateImportHandler,
   createActivationManifestExportHandler,
+  createSourceActivationReadinessHandler,
   createAbortRsyncImportHandler,
   createExportPathsHandler,
   createFlushHandler,
@@ -2009,6 +2010,7 @@ function registerMigrationRoutes(
   app.post("/flush/:gatewayId", quota, createFlushHandler(migrationDeps));
   app.post("/verify/:gatewayId", quota, createVerifyHandler(migrationDeps));
   app.post("/export-paths/:gatewayId", quota, createExportPathsHandler(migrationDeps));
+  app.post("/source-activation-ready/:gatewayId", quota, createSourceActivationReadinessHandler(migrationDeps));
   app.post(
     "/export-activation-manifest/:gatewayId", quota,
     createActivationManifestExportHandler(migrationDeps),

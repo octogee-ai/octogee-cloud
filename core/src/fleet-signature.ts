@@ -17,6 +17,10 @@ export function gatewayScopedJobId(jobId: string, gatewayId: string): string {
   return `${jobId}@${gatewayId}`;
 }
 
+export function sourceActivationReadinessJobId(migrationId: string, gatewayId: string): string {
+  return gatewayScopedJobId(`source-activation-ready/${migrationId}`, gatewayId);
+}
+
 export function signFleetRequest(
   privateKeyPem: string,
   jobId: string,
