@@ -194,6 +194,23 @@ describe("cancelled forward user preparation", () => {
   }
   const readManifest = (h: ReturnType<typeof preparingHarness>) => request(h.app)
     .post("/internal/fleet/blob/materialization/manifest/read-url").set(GATEWAY_CREDENTIAL_TOKEN_HEADER, JWT).send({ slug: "owner", projectSlug: "app" });
+  it("excludes only the selected destination from import permits and project credentials until reconciliation", async () => {
+    const h = forward("legacy");
+    Object.assign(h.owner.provisioning.openclaw, { migration: { operationId: "move-0", state: "moving", phase: "transferring" } });
+    const checkpoint = h.operation.schedulerHandoff.forwardRecovery;
+    checkpoint.sourceReconcile = { requestId: "test-hold", requestedAt: 60 };
+    const permitRoute = "/internal/fleet/migration/target-import-permit";
+    const admit = () => request(h.app).post(permitRoute).set(GATEWAY_CREDENTIAL_TOKEN_HEADER, JWT).send({ slug: "owner" });
+    expect([401, 403]).toContain((await request(h.app).post(permitRoute).send({ slug: "owner" })).status);
+    const excluded = await admit();
+    expect(excluded.status).toBe(409);
+    expect(excluded.body).toEqual({ error: "held_native_return_target_excluded" });
+    expect((await readManifest(h)).status).toBe(403);
+    expect(h.createBlobSignedUrl).not.toHaveBeenCalled();
+    checkpoint.sourceReconcile.receipt = { verifiedAt: 65, appliedFingerprint: "a".repeat(16), activationManifestSha256: "b".repeat(64) };
+    expect((await admit()).status).toBe(204);
+    expect((await readManifest(h)).status).toBe(200);
+  });
   it.each(["v2", "legacy"] as const)("materializes the held target for the exact cancelled %s migration", async kind => {
     const h = forward(kind);
     expect((await readManifest(h)).status).toBe(200);

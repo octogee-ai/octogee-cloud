@@ -166,6 +166,7 @@ export const GATEWAY_CREDENTIAL_ROUTES = new Set([
   "/internal/fleet/builder-identity",
   "/internal/fleet/npm-registry-credentials",
   "/internal/fleet/user-snapshot",
+  "/internal/fleet/migration/target-import-permit",
   "/internal/fleet/runtime-reset-ack",
   "/internal/fleet/provision-mattermost",
 ]);
