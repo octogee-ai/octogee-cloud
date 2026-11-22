@@ -2076,7 +2076,8 @@ function assignmentClockMatches(current: number, expected: number | undefined): 
 
 export {
   assertHeldNativeReturnRepairClaim, completeHeldNativeReturnRepair, heldNativeReturnBlocksDestination, heldNativeReturnBlocksOwnerDestination,
-  requestHeldNativeReturnRepair, readHeldNativeReturnForTargetExclusion, HeldNativeReturnConflict, reserveHeldNativeOfflineSource, readReservedHeldNativeOfflineSource, bindHeldNativeStoppedOriginal,
+  requestHeldNativeReturnRepair, readHeldNativeReturnForTargetExclusion, readHeldNativeReturnForTargetMaintenance,
+  HeldNativeReturnConflict, reserveHeldNativeOfflineSource, readReservedHeldNativeOfflineSource, bindHeldNativeStoppedOriginal,
   assertHeldNativeOfflineSourceClaim, assertHeldNativeOfflineSourceClaimable, assertPendingHeldNativeOfflineProjection, recordHeldNativeOfflineStage, recordHeldNativeOriginalRestart, HELD_NATIVE_OFFLINE_SOURCE_FENCE_KIND,
   type HeldNativeReturnAuthority, type HeldNativeReturnSelection, type HeldNativeReturnSourceProof, type HeldNativeStoppedOriginalWitness, type HeldNativeOriginalRestartWitness,
 } from "./held-native-return-repair.js";
