@@ -2,6 +2,7 @@ import type { GatewayAssignment } from "../platform-state/gateways.js";
 import type { PlatformUserRecord } from "../platform-state/users.js";
 import { type AuthoritativeLeaseStatus, type IsolatedLifecycleDeps, type LifecycleMode, type RecoverUnreachableIsolatedGatewayInput, type RetireOwnedIsolatedGatewayInput } from "./inputs.js";
 type RetirementDeps = Pick<IsolatedLifecycleDeps, "store" | "now" | "log" | "requireOwner" | "sourceRecoveryPending">;
+type OwnedRetirementDeps = RetirementDeps & Pick<IsolatedLifecycleDeps, "readSizingKey">;
 export type OwnedGatewayRetirement = {
     retired: true;
     operationId: string;
@@ -41,5 +42,5 @@ interface RetirementAuthorityFenceInput {
     assignment: Pick<GatewayAssignment, "uid" | "gatewayId" | "state"> | null;
 }
 export declare function retirementAuthorityFenceAllows(input: RetirementAuthorityFenceInput): boolean;
-export declare function retireOwnedIsolatedGateway(input: RetirementDeps, request: RetireOwnedIsolatedGatewayInput, mode?: LifecycleMode): Promise<OwnedGatewayRetirement>;
+export declare function retireOwnedIsolatedGateway(input: OwnedRetirementDeps, request: RetireOwnedIsolatedGatewayInput, mode?: LifecycleMode): Promise<OwnedGatewayRetirement>;
 export {};

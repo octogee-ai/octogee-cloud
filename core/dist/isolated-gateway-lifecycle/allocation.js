@@ -179,12 +179,15 @@ function assertParkedRootResumable(input) {
     const root = projectGatewayDesiredRootForGateway(input.stored, parked.gatewayId);
     const resumable = input.handoff && root?.desiredStatus === "running"
         ? { ...root, desiredStatus: "paused" } : root;
-    if (!input.stored || !parkedRootMatches(resumable, input.request, parked) || root.liveRelease !== input.liveRelease ||
-        !rootOnLiveRelease(root)) {
+    if (![input.stored, input.stored?.retirementClaim == null, parkedRootMatches(resumable, input.request, parked),
+        root?.liveRelease === input.liveRelease, root && rootOnLiveRelease(root)].every(Boolean)) {
         throw new IsolatedGatewayFenceError(`parked gateway ${parked.gatewayId} changed before resuming`);
     }
     if (input.runtime?.runtime !== "gce-vm") {
         throw new IsolatedGatewayFenceError(`parked gateway ${parked.gatewayId} is not a VM runtime`);
+    }
+    if (!input.handoff && (!input.runtime.vm?.instanceId || !["SUSPENDED", "TERMINATED", "STOPPED"].includes(input.runtime.vm.status ?? ""))) {
+        throw new IsolatedGatewayFenceError(`parked gateway ${parked.gatewayId} is waiting for VM suspension to be recorded`);
     }
     return root;
 }
