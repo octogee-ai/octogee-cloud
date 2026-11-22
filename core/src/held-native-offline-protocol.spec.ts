@@ -18,6 +18,7 @@ const request: OfflineNativeRequest = {
     original: { instanceId: "81", bootDiskId: "82", homeDiskId: "83" },
     maintenance: { instanceId: "91", bootDiskId: "92", bootId: "336053f2-c076-4202-9851-d713bce658a3", acceptedImageId: "93", cloneDiskId: "94" },
     immutableSnapshotId: "84", cleanFileSha256: "d".repeat(64), ownerAnchorSha256: "b".repeat(64), ownerStoreSha256: "f".repeat(64),
+    desiredSnapshotSha256: "d".repeat(64),
   },
 };
 

@@ -24,13 +24,13 @@ export function digestHeldOfflineStoreBackups(backup: NativeReturnVerifiedBackup
 
 function assertInvocationBindings(authorized: AuthorizedOfflineNativeInvocation, backup: NativeReturnVerifiedBackup, claimStartedAt: number) {
   const { holdGeneration, original, maintenance, immutableSnapshotId, cleanFileSha256, ownerAnchorSha256,
-    claimStartedAt: boundClaimStartedAt, ownerStoreSha256, ...scope } = authorized.identity;
+    claimStartedAt: boundClaimStartedAt, ownerStoreSha256, desiredSnapshotSha256, ...scope } = authorized.identity;
   const custody = authorized.custody;
   if (!isDeepStrictEqual(scope, backup.scope) || !isDeepStrictEqual(custody.scope, scope) ||
       holdGeneration !== backup.holdGeneration || boundClaimStartedAt !== claimStartedAt ||
       !isDeepStrictEqual(authorized.verifiedHomeBackup, backup.homeBackup) ||
       ownerStoreSha256 !== digestHeldOfflineStoreBackups(backup) || immutableSnapshotId !== custody.immutableHomeSnapshotId ||
-      !/^[a-f0-9]{64}$/.test(cleanFileSha256) || !/^[a-f0-9]{64}$/.test(ownerAnchorSha256)) {
+      !/^[a-f0-9]{64}$/.test(cleanFileSha256) || !/^[a-f0-9]{64}$/.test(ownerAnchorSha256) || !/^[a-f0-9]{64}$/.test(desiredSnapshotSha256)) {
     throw new Error("Held Native offline invocation changed its owner claim or backup evidence");
   }
   const source = { instanceId: backup.source.vmId, bootDiskId: backup.source.bootDiskId, homeDiskId: backup.source.homeDiskId };

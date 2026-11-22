@@ -1,11 +1,13 @@
+import { verifyOfflineNativeRequest, type OfflineNativeRequest } from "@octogee/core/held-native-offline-protocol";
 import { createHeldNativeOfflineWorkspaceActor } from "./held-native-offline-workspace.js";
 
 type ActorOptions = Parameters<typeof createHeldNativeOfflineWorkspaceActor>[0];
 type RequestInput = { raw: string; signature: string };
 
-export interface HeldNativeOfflineStdioOptions extends Omit<ActorOptions, "expected" | "assertCurrent"> {
+export interface HeldNativeOfflineStdioOptions extends Omit<ActorOptions, "expected" | "assertCurrent" | "compose"> {
   expected: Omit<ActorOptions["expected"], "claimStartedAt">;
   earliestClaimStartedAt: number;
+  prepareProjection(request: OfflineNativeRequest): Promise<ActorOptions["compose"]>;
 }
 
 export async function readHeldNativeStdioEnvelope(input: AsyncIterable<Uint8Array | string>): Promise<RequestInput> {
@@ -29,7 +31,7 @@ export async function runHeldNativeOfflineStdio(
   options: HeldNativeOfflineStdioOptions, input: AsyncIterable<Uint8Array | string>,
 ): Promise<RequestInput> {
   const signed = await readHeldNativeStdioEnvelope(input);
-  const { earliestClaimStartedAt, ...runtime } = options;
+  const { earliestClaimStartedAt, prepareProjection, ...runtime } = options;
   const now = runtime.now ?? Date.now;
   const { identity } = JSON.parse(signed.raw) as { identity?: { claimStartedAt?: unknown } };
   const claimStartedAt = identity?.claimStartedAt;
@@ -38,9 +40,15 @@ export async function runHeldNativeOfflineStdio(
     throw new Error("Held Native stdio request has no enrolled claim");
   }
   const expected = { ...runtime.expected, claimStartedAt };
+  const request = verifyOfflineNativeRequest({ ...signed, expected, fleetPublicKey: runtime.fleetPublicKey, now: now() });
+  await runtime.workspace.assertIsolatedRuntime();
+  await runtime.workspace.assertReadOnlyOriginal();
+  const compose: ActorOptions["compose"] = request.action === "reconcile"
+    ? await prepareProjection(request)
+    : () => { throw new Error("Held Native rollback cannot compose desired config"); };
   return createHeldNativeOfflineWorkspaceActor({
     ...runtime,
-    expected,
+    expected, compose,
     async assertCurrent(request) {
       if (request.identity.claimStartedAt !== claimStartedAt || request.expiresAt <= now()) {
         throw new Error("Held Native local staged claim expired");

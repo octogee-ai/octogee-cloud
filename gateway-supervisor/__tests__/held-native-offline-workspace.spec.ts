@@ -18,6 +18,7 @@ const seed: OfflineNativeRecoveryIdentity = {
   original: { instanceId: "11", bootDiskId: "12", homeDiskId: "13" },
   maintenance: { instanceId: "21", bootDiskId: "22", bootId: "336053f2-c076-4202-9851-d713bce658a3", acceptedImageId: "23", cloneDiskId: "24" },
   immutableSnapshotId: "31", cleanFileSha256: digest(content), ownerAnchorSha256: digest(anchor), ownerStoreSha256: "e".repeat(64),
+    desiredSnapshotSha256: "d".repeat(64),
 };
 
 function keys() {

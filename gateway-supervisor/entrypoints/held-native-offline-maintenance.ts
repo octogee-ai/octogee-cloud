@@ -1,14 +1,19 @@
 import { createHash, createPrivateKey, createPublicKey } from "node:crypto";
 import { constants } from "node:fs";
-import { open, realpath } from "node:fs/promises";
-import { join } from "node:path";
+import { open, realpath, stat } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
+import { readHeldNativeOfflineDesiredProjection } from "@octogee/core/held-native-offline-protocol";
+import { SAFE_DEFAULT_AGENT_ID } from "../lib/openclaw-config-users.js";
+import { prepareHeldBrokerNativeProjectionFromSnapshot } from "../lib/user-lifecycle-broker-adapter.js";
 import { createOfflineLinuxWitness } from "../lib/held-native-offline-linux.js";
 import { runHeldNativeOfflineStdio, type HeldNativeOfflineStdioOptions } from "../lib/held-native-offline-stdio.js";
 
 const enrollmentRoot = "/etc/octogee-held-native-offline";
 const maintenanceRoot = "/var/lib/octogee-held-native-offline";
 const cloneRoot = "/mnt/octogee-held-native-original";
+const sourceState = "/home/node/.openclaw";
+const localMattermostAccounts = "secrets/mattermost-accounts.json";
 const stageDirectory = join(maintenanceRoot, "stage");
 const controlDirectory = join(maintenanceRoot, "control");
 const configPath = join(stageDirectory, "openclaw.json");
@@ -26,7 +31,6 @@ interface Enrollment {
   originalOwnerAnchor: string;
   anchorWitnesses: { path: string; sha256: string }[];
   agentIds: string[];
-  desiredProjection: ReturnType<HeldNativeOfflineStdioOptions["compose"]>;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -78,8 +82,8 @@ function validateEnrollment(value: Enrollment) {
   if (![
     value.version === 1, Number.isSafeInteger(value.maintenanceUid), value.maintenanceUid >= 1000,
     value.maintenanceUid === process.getuid?.(), Number.isSafeInteger(value.earliestClaimStartedAt),
-    value.earliestClaimStartedAt > 0, value.expected?.maintenance, asRecord(value.desiredProjection?.patch),
-    Array.isArray(value.desiredProjection?.replacePaths),
+    value.earliestClaimStartedAt > 0, value.expected?.maintenance,
+    sha256.test(value.expected?.desiredSnapshotSha256),
   ].every(Boolean)) {
     throw new Error("Held Native maintenance enrollment is invalid");
   }
@@ -88,7 +92,6 @@ function validateEnrollment(value: Enrollment) {
       !value.anchorWitnesses.every(anchor => clonePath(anchor.path) && sha256.test(anchor.sha256))) {
     throw new Error("Held Native offline enrollment has no exact roster and anchors");
   }
-  assertSupportedConfig(value.desiredProjection.patch);
 }
 
 async function loadEnrollment() {
@@ -106,6 +109,45 @@ async function loadEnrollment() {
   return { enrollment, fleetPublicKey, maintenancePrivateKey };
 }
 
+async function verifiedDesired(
+  request: Parameters<HeldNativeOfflineStdioOptions["prepareProjection"]>[0], enrollment: Enrollment, publicKey: string,
+) {
+  const { identity } = request;
+  const cleanCredential = join(dirname(clonePath(enrollment.originalConfig)), localMattermostAccounts);
+  const aliasCredential = join(sourceState, localMattermostAccounts);
+  const [desired, clean, alias] = await Promise.all([
+    stableFile(join(enrollmentRoot, "desired.json"), 256 * 1024, true),
+    stat(cleanCredential), stat(aliasCredential),
+  ]);
+  if (clean.dev !== alias.dev || clean.ino !== alias.ino) {
+    throw new Error("Held Native projection credential reference is not the exact restored file");
+  }
+  const envelope = JSON.parse(desired.toString("utf8")) as { raw: string; signature: string };
+  const secrets = asRecord(JSON.parse((await stableFile(cleanCredential, maxConfigBytes)).toString("utf8")));
+  const snapshot = await readHeldNativeOfflineDesiredProjection({
+    ...envelope, expectedSha256: identity.desiredSnapshotSha256, fleetPublicKey: publicKey,
+    scope: { uid: identity.uid, slug: identity.slug, gatewayId: identity.sourceGatewayId,
+      operationId: identity.operationId, requestId: identity.requestId, holdGeneration: identity.holdGeneration },
+    async readRestoredCredential(accountId) {
+      const secret = secrets?.[accountId];
+      return typeof secret === "string" ? secret : null;
+    },
+  });
+  if (!isDeepStrictEqual([...snapshot.agentIds].sort(), enrolledOwnerAgents(enrollment.agentIds))) {
+    throw new Error("Held Native broker roster differs from the verified retained owner");
+  }
+  const compose = prepareHeldBrokerNativeProjectionFromSnapshot(snapshot);
+  return (config: unknown) => {
+    const projection = compose(config);
+    assertSupportedConfig(projection.patch);
+    return projection;
+  };
+}
+
+function enrolledOwnerAgents(agentIds: readonly string[]): string[] {
+  return agentIds.filter(id => id !== SAFE_DEFAULT_AGENT_ID).sort();
+}
+
 async function main() {
   if (!isDeepStrictEqual(process.argv.slice(2), ["--stdio"])) throw new Error("Held Native maintenance takes its signed input on stdin only");
   const { enrollment, fleetPublicKey, maintenancePrivateKey } = await loadEnrollment();
@@ -113,7 +155,7 @@ async function main() {
   const witness = createOfflineLinuxWitness({
     cloneRoot, cloneDevice: enrollment.cloneDevice, instanceId: expected.maintenance.instanceId, bootId: expected.maintenance.bootId,
   });
-  const verifyRoster = [...enrollment.agentIds].sort();
+  const verifyRoster = enrolledOwnerAgents(enrollment.agentIds);
   const workspace = {
     stateDirectory: stageDirectory, controlDirectory,
     originalConfig: clonePath(enrollment.originalConfig), originalOwnerAnchor: clonePath(enrollment.originalOwnerAnchor),
@@ -126,7 +168,7 @@ async function main() {
     async assertOwnerAnchorsAndRoster(config: unknown) {
       assertSupportedConfig(config);
       const entries = asRecord(asRecord(asRecord(config)?.agents)?.entries);
-      if (!entries || !isDeepStrictEqual(Object.keys(entries).sort(), verifyRoster)) {
+      if (!entries || !isDeepStrictEqual(enrolledOwnerAgents(Object.keys(entries)), verifyRoster)) {
         throw new Error("Held Native staged roster differs from its enrolled owner");
       }
       for (const anchor of enrollment.anchorWitnesses) {
@@ -139,7 +181,7 @@ async function main() {
   };
   const result = await runHeldNativeOfflineStdio({
     expected, earliestClaimStartedAt, fleetPublicKey, maintenancePrivateKey, workspace,
-    compose: (_config) => enrollment.desiredProjection,
+    prepareProjection: request => verifiedDesired(request, enrollment, fleetPublicKey),
   }, process.stdin);
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }

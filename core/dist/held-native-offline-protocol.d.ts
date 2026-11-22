@@ -25,6 +25,7 @@ export interface OfflineNativeRecoveryIdentity {
     cleanFileSha256: string;
     ownerAnchorSha256: string;
     ownerStoreSha256: string;
+    desiredSnapshotSha256: string;
 }
 type OfflineAction = "reconcile" | "rollback";
 export interface OfflineNativeRequest {
@@ -61,4 +62,4 @@ export declare function verifyOfflineNativeResult(input: {
     request: OfflineNativeRequest;
     now: number;
 }): OfflineNativeResult;
-export {};
+export { readHeldNativeOfflineDesiredProjection, signHeldNativeOfflineDesiredProjection, type HeldNativeProjectionScope, } from "./held-native-offline-projection.js";

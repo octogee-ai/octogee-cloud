@@ -58,6 +58,7 @@ export interface HeldNativeOriginalRestartWitness {
 }
 export declare function recordHeldNativeOriginalRestart(store: PlatformStateStore, selection: HeldNativeReturnSelection, witness: HeldNativeOriginalRestartWitness, actor: string, now: number): Promise<HeldNativeReturnAuthority>;
 export declare function assertHeldNativeOfflineSourceClaimable(state: PlatformStateRepositories, op: Stored<OperationRecord>): Promise<void>;
+export declare function assertPendingHeldNativeOfflineProjection(store: PlatformStateStore, authority: HeldNativeReturnAuthority): Promise<void>;
 export declare function assertHeldNativeOfflineSourceClaim(store: PlatformStateStore, claim: HeldClaim): Promise<void>;
 export declare function recordHeldNativeOfflineStage(store: PlatformStateStore, claim: HeldClaim, stage: HeldNativeOfflineStageReceipt, now: number): Promise<SchedulerHandoffState>;
 export declare function heldNativeReturnBlocksDestination(op: Pick<OperationRecord, "input" | "schedulerHandoff">, gatewayId: string): boolean;

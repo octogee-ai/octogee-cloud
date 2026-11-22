@@ -3,5 +3,6 @@ set -eu
 [ "$#" -eq 1 ] && [ "$1" = "--stdio" ] || exit 64
 umask 077
 exec /usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 \
+  HOME=/home/node OPENCLAW_DIR=/home/node/.openclaw GATEWAY_CLASS=isolated \
   /usr/local/bin/node --import /octogee/scripts/node_modules/tsx/dist/loader.mjs \
   /octogee/scripts/entrypoints/held-native-offline-maintenance.ts --stdio

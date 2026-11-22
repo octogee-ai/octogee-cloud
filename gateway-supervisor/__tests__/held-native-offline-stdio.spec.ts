@@ -13,6 +13,7 @@ const expected = {
   original: { instanceId: "123", bootDiskId: "124", homeDiskId: "125" },
   maintenance: { instanceId: "321", bootDiskId: "322", bootId: "fixture-boot", acceptedImageId: "323", cloneDiskId: "324" },
   immutableSnapshotId: "901", cleanFileSha256: "c".repeat(64), ownerAnchorSha256: "d".repeat(64), ownerStoreSha256: "e".repeat(64),
+    desiredSnapshotSha256: "d".repeat(64),
 };
 const keys = generateKeyPairSync("ed25519", {
   publicKeyEncoding: { format: "pem", type: "spki" }, privateKeyEncoding: { format: "pem", type: "pkcs8" },
@@ -26,6 +27,8 @@ test("only accepts one bounded JSON envelope and rejects foreign fixed recovery 
   expect(await readHeldNativeStdioEnvelope(frames(...JSON.stringify(sampleSigned(700)).match(/.{1,31}/g)!))).toEqual(sampleSigned(700));
   const runtime = {
     expected, earliestClaimStartedAt: 650, fleetPublicKey: keys.publicKey, now: () => 800,
+    workspace: { assertIsolatedRuntime: vi.fn(async () => {}), assertReadOnlyOriginal: vi.fn(async () => {}) },
+    prepareProjection: vi.fn(async () => () => ({ patch: {}, replacePaths: [] })),
   } as HeldNativeOfflineStdioOptions;
   verifyWorkspace.mockImplementation(options => async input => {
     const verified = verifyOfflineNativeRequest({ ...input, expected: options.expected, fleetPublicKey: options.fleetPublicKey, now: options.now() });

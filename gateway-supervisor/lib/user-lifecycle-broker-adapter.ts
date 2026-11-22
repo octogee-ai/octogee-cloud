@@ -1534,6 +1534,10 @@ export function prepareHeldBrokerNativeMountProjection(snapshot: UserSnapshot, b
   return (current: unknown) => composeBrokerUserMountConfig(current, input);
 }
 
+export function prepareHeldBrokerNativeProjectionFromSnapshot(snapshot: FleetBrokerUserSnapshot) {
+  return prepareHeldBrokerNativeMountProjection(toUserSnapshot(snapshot), snapshot);
+}
+
 async function applyAddUserConfigPatch(
   ctx: BrokerCtx,
   snapshot: UserSnapshot,

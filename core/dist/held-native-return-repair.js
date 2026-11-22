@@ -329,6 +329,13 @@ export async function assertHeldNativeOfflineSourceClaimable(state, op) {
     requireConflict(offline.requestId === offlineRequestId(selection), "Held Native offline request changed before claim");
     await verifyOfflineReleaseCustody(state, hold, offline);
 }
+export async function assertPendingHeldNativeOfflineProjection(store, authority) {
+    await store.transaction({ label: "held-native-return.read-offline-projection", readOnly: true }, async (tx) => {
+        const hold = journalHold(await tx.journal.operations.get(authority.operationId), authority);
+        requireConflict(isDeepStrictEqual(offlineAuthority(authority, hold), authority), "Held Native desired projection does not match the pending owner and operation");
+        await assertHeldNativeOfflineSourceClaimable(tx, hold.op);
+    });
+}
 async function currentOfflineClaim(tx, { authority, claimStartedAt }) {
     const hold = journalHold(await tx.journal.operations.get(authority.operationId), authority);
     const offline = hold.handoff.forwardRecovery.offlineSourceRecovery;

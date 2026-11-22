@@ -33,6 +33,7 @@ const identity: OfflineNativeRecoveryIdentity = {
   maintenance: { instanceId: "21", bootDiskId: "22", acceptedImageId: "23", cloneDiskId: "24", bootId },
   immutableSnapshotId: "90", cleanFileSha256: "e".repeat(64), ownerAnchorSha256: "f".repeat(64),
   ownerStoreSha256: digestHeldOfflineStoreBackups(backup),
+    desiredSnapshotSha256: "d".repeat(64),
 };
 
 function fixture() {
