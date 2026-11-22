@@ -98,8 +98,9 @@ async function save(repo: string) {
 describe("immutable asset upload timestamp rebase", () => {
   it("keeps the published timestamp and both sides' nonconflicting context", async () => {
     const { repo, remote, localHead } = await fixture(localManifest);
-    expect(await save(repo)).toEqual({
-      ok: true, result: { committed: false, pushed: true, nothingToCommit: true },
+    const saved = await save(repo);
+    expect(saved).toEqual({
+      ok: true, result: { committed: false, pushed: true, nothingToCommit: true, commit: git(remote, ["rev-parse", "main"]) },
     });
     expect(JSON.parse(git(remote, ["show", "main:.files/manifest.json"]))).toEqual(remoteManifest);
     expect(git(remote, ["show", "main:local-context.md"])).toBe("retained local context");
@@ -111,7 +112,7 @@ describe("immutable asset upload timestamp rebase", () => {
   it("skips only the redundant replay when the manifest is the entire local change", async () => {
     const { repo, remote, localHead, remoteHead } = await fixture(localManifest, false, false);
     expect(await save(repo)).toEqual({
-      ok: true, result: { committed: false, pushed: true, nothingToCommit: true },
+      ok: true, result: { committed: false, pushed: true, nothingToCommit: true, commit: remoteHead },
     });
     expect(git(repo, ["rev-parse", "HEAD"])).toBe(remoteHead);
     expect(git(remote, ["rev-parse", "main"])).toBe(remoteHead);

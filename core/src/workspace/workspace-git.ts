@@ -231,7 +231,22 @@ export interface CommitAndPushResult {
   committed: boolean;
   pushed: boolean;
   nothingToCommit: boolean;
+  commit?: string;
   pushError?: string;
+}
+
+const FULL_COMMIT_HASH = /^[0-9a-f]{40}$/u;
+
+export async function gitHeadCommit(
+  customerDir: string,
+): Promise<{ ok: true; commit: string } | { ok: false; error: WorkspaceGitError }> {
+  const head = await runGit(customerDir, ["rev-parse", "--verify", "HEAD^{commit}"]);
+  if (!head.ok) return head;
+  const commit = head.stdout.trim();
+  if (!FULL_COMMIT_HASH.test(commit)) {
+    return { ok: false, error: { code: "INTERNAL", message: "HEAD is not a full 40-character commit hash" } };
+  }
+  return { ok: true, commit };
 }
 
 export type WorkspaceCommitPreparation =
@@ -249,6 +264,7 @@ export interface CommitAndPushDeps {
   gitCommit: typeof gitCommit;
   gitPreparePush: typeof gitPreparePush;
   gitPush: typeof gitPush;
+  gitHeadCommit: typeof gitHeadCommit;
   acquireMutationLease: typeof acquireWorkspaceMutationLeaseSync;
 }
 
@@ -256,6 +272,7 @@ const COMMIT_AND_PUSH_DEPS: CommitAndPushDeps = {
   gitCommit,
   gitPreparePush,
   gitPush,
+  gitHeadCommit,
   acquireMutationLease: acquireWorkspaceMutationLeaseSync,
 };
 
@@ -397,9 +414,11 @@ export async function commitAndPushWorkspace(
         },
       };
     }
+    const head = await deps.gitHeadCommit(customerDir);
+    if (!head.ok) return head;
     return {
       ok: true,
-      result: { committed, pushed: true, nothingToCommit: !committed },
+      result: { committed, pushed: true, nothingToCommit: !committed, commit: head.commit },
     };
   } finally {
     lease.release();

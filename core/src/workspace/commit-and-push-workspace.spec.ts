@@ -6,6 +6,10 @@ const author = { name: "acme", email: "acme@octogee.local" };
 type CommitFn = CommitAndPushDeps["gitCommit"];
 type PushFn = CommitAndPushDeps["gitPush"];
 type PrepareFn = CommitAndPushDeps["gitPreparePush"];
+type HeadFn = CommitAndPushDeps["gitHeadCommit"];
+
+const HEAD = "0123456789abcdef0123456789abcdef01234567";
+const headOk: HeadFn = async () => ({ ok: true, commit: HEAD });
 
 const commitOk = (empty: boolean): CommitFn => async () => ({
   ok: true,
@@ -29,10 +33,12 @@ const mutationDeps = (
   gitPush: PushFn,
   release = vi.fn(),
   gitPreparePush: PrepareFn = prepareMain,
+  gitHeadCommit: HeadFn = headOk,
 ): CommitAndPushDeps => ({
   gitCommit,
   gitPush,
   gitPreparePush,
+  gitHeadCommit,
   acquireMutationLease: () => ({ ownerToken: "lease", release }),
 });
 
@@ -52,7 +58,7 @@ describe("commitAndPushWorkspace", () => {
       { message: "m", author },
       mutationDeps(commitOk(true), push, vi.fn(), prepare),
     );
-    expect(r).toEqual({ ok: true, result: { committed: false, pushed: true, nothingToCommit: true } });
+    expect(r).toEqual({ ok: true, result: { committed: false, pushed: true, nothingToCommit: true, commit: HEAD } });
     expect(order).toEqual(["prepare", "push"]);
   });
 
@@ -76,7 +82,7 @@ describe("commitAndPushWorkspace", () => {
       { message: "m", author },
       mutationDeps(commit, push, release, prepare),
     );
-    expect(r).toEqual({ ok: true, result: { committed: true, pushed: true, nothingToCommit: false } });
+    expect(r).toEqual({ ok: true, result: { committed: true, pushed: true, nothingToCommit: false, commit: HEAD } });
     expect(order).toEqual(["commit", "prepare", "push"]);
     expect(release).toHaveBeenCalledOnce();
   });
@@ -96,7 +102,7 @@ describe("commitAndPushWorkspace", () => {
 
     expect(result).toEqual({
       ok: true,
-      result: { committed: true, pushed: true, nothingToCommit: false },
+      result: { committed: true, pushed: true, nothingToCommit: false, commit: HEAD },
     });
     expect(push).toHaveBeenCalledWith("/d", {
       branch: "feature/agent-edit",
@@ -105,12 +111,45 @@ describe("commitAndPushWorkspace", () => {
   });
 
   it("returns committed-but-not-pushed (with pushError) when push fails — not fatal", async () => {
-    const r = await commitAndPushWorkspace("/d", { message: "m", author }, mutationDeps(commitOk(false), pushFail));
+    const head = vi.fn(headOk);
+    const r = await commitAndPushWorkspace(
+      "/d",
+      { message: "m", author },
+      mutationDeps(commitOk(false), pushFail, vi.fn(), prepareMain, head),
+    );
     expect(r.ok).toBe(true);
     if (r.ok) {
       expect(r.result).toMatchObject({ committed: true, pushed: false, nothingToCommit: false });
       expect(r.result.pushError).toContain("git failed");
+      expect(r.result).not.toHaveProperty("commit");
     }
+    expect(head).not.toHaveBeenCalled();
+  });
+
+  it("reads the pushed commit only after the push succeeds", async () => {
+    const order: string[] = [];
+    const push: PushFn = async () => {
+      order.push("push");
+      return { ok: true };
+    };
+    const head: HeadFn = async () => {
+      order.push("head");
+      return { ok: true, commit: HEAD };
+    };
+
+    await commitAndPushWorkspace("/d", { message: "m", author }, mutationDeps(commitOk(false), push, vi.fn(), prepareMain, head));
+
+    expect(order).toEqual(["push", "head"]);
+  });
+
+  it("fails when the pushed commit cannot be read rather than answering without it", async () => {
+    const release = vi.fn();
+    const head: HeadFn = async () => ({ ok: false, error: { code: "INTERNAL", message: "HEAD is not a full commit hash" } });
+
+    const r = await commitAndPushWorkspace("/d", { message: "m", author }, mutationDeps(commitOk(false), pushOk, release, prepareMain, head));
+
+    expect(r).toEqual({ ok: false, error: { code: "INTERNAL", message: "HEAD is not a full commit hash" } });
+    expect(release).toHaveBeenCalledOnce();
   });
 
   it("preserves the local commit and reports a remote rebase conflict without pushing", async () => {
@@ -155,6 +194,7 @@ describe("commitAndPushWorkspace", () => {
       gitCommit: vi.fn(commit),
       gitPreparePush: vi.fn(prepareMain),
       gitPush: vi.fn(pushOk),
+      gitHeadCommit: vi.fn(headOk),
       acquireMutationLease: () => null,
     };
 
