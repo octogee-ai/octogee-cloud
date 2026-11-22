@@ -26,6 +26,10 @@ function replacementPaths(projection: Projection): string[] {
   });
 }
 
+function serializedProjection(projection: Projection): Projection {
+  return { ...projection, patch: JSON.parse(JSON.stringify(projection.patch)) as Record<string, unknown> };
+}
+
 function projected(value: unknown, projection: Projection, paths: readonly string[]): boolean {
   return mergePatchValueAlreadyApplied(value, projection.patch) && paths.every(path => {
     const names = path.split(".");
@@ -54,7 +58,7 @@ export async function applyHeldNativeStagedConfig(input: {
   const before = await stage.read();
   if (!/^[a-f0-9]{64}$/.test(before.contentSha256)) throw new Error("Held Native staged config lacks an observed file digest");
   await stage.assertOwnerAnchorsAndRoster(before.value);
-  const plan = compose(before.value);
+  const plan = serializedProjection(compose(before.value));
   const paths = replacementPaths(plan);
   const patchArgs = ["config", "patch", "--stdin", ...paths.flatMap(path => ["--replace-path", path])];
   const patch = JSON.stringify(plan.patch);
@@ -63,7 +67,7 @@ export async function applyHeldNativeStagedConfig(input: {
   if (!unchanged) await native(patchArgs, patch);
   await native(["config", "validate", "--json"]);
   const after = await stage.read();
-  const afterPlan = compose(after.value);
+  const afterPlan = serializedProjection(compose(after.value));
   if (!/^[a-f0-9]{64}$/.test(after.contentSha256) ||
       (before.contentSha256 === after.contentSha256) !== unchanged ||
       !projected(after.value, plan, paths) || !projected(after.value, afterPlan, replacementPaths(afterPlan))) {
