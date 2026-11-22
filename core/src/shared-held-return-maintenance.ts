@@ -10,14 +10,24 @@ import { schedulerReturnMatches } from "./parked-home-archive.js";
 import { buildOperationAuditIntent, operationAuditDocumentId } from "./operation-audit.js";
 import { CONTINUOUS_PLACEMENT_SOURCE, PLACEMENT_MIGRATION_ACTOR, sharedDrainMoveNeverClaimed } from "./placement-migrations.js";
 import type {
-  GatewayRuntimeRestartFenceValue, OpaqueMap, OperationRecord, PlatformStateRepositories, PlatformStateStore, PlatformUserRecord, Stored,
+  GatewayRuntimeRestartFenceValue, OpaqueMap, OperationRecord, PlatformStateRepositories, PlatformStateStore, PlatformStateTransaction, PlatformUserRecord, Stored,
 } from "./platform-state/index.js";
 
 export class SharedHeldReturnMaintenanceConflict extends Error {}
 
 export const SHARED_HELD_RETURN_MAINTENANCE = "shared-held-return-maintenance";
+const AUDIT_IN_PROGRESS = "in-progress";
+const SHARED_INERT_EMPTY_PEER = "shared-inert-empty-peer";
 
 type Workload = { podName: string; podUid: string; replicaSetUid: string; deploymentUid: string };
+export type SharedInertEmptyPeerScope = { gatewayId: string; workload: Workload };
+type SharedInertEmptyPeerFence = GatewayRuntimeRestartFenceValue & {
+  kind: typeof SHARED_INERT_EMPTY_PEER;
+  retainedGatewayId: string;
+  workload: Workload;
+};
+type EmptyPeerJournal = { scope: SharedInertEmptyPeerScope; acquiredAt: number; restoredAt?: number };
+
 type RoleImages = { gateway: string; "gateway-edge": string };
 type RetainedBoot = { gatewayImageTag: string; completedInitImageId: string };
 type RetainedOwner = { uid: string; slug: string; epoch: number; homeIdentitySha256: string };
@@ -127,7 +137,7 @@ type InertStartup = {
 type Phase = "reserved" | "withdrawing" | "dispatched" | "rollback";
 type Guard = GatewayRuntimeRestartFenceValue & {
   phase: Phase; phaseStartedAt: number; maintenance: SharedHeldReturnMaintenancePlan;
-  stagedRelease?: StagedRelease; restoringMigrationPolicy?: true; inertStartup?: InertStartup;
+  stagedRelease?: StagedRelease; restoringMigrationPolicy?: true; inertStartup?: InertStartup; emptyPeer?: EmptyPeerJournal;
 };
 
 function requireMaintenance(condition: unknown, message: string): asserts condition {
@@ -206,7 +216,10 @@ export async function assertSharedHeldReturnMaintenanceUnfenced(
     .filter((id): id is string => typeof id === "string" && id !== "" && !id.includes("/")))];
   if (gateways.length) {
     const roots = await state.gateways.roots.getMany(gateways);
-    requireMaintenance(![...roots.values()].some(root => root.runtimeRestartFence?.kind === SHARED_HELD_RETURN_MAINTENANCE),
+    requireMaintenance(![...roots.values()].some(root => {
+      const kind = root.runtimeRestartFence?.kind;
+      return kind === SHARED_HELD_RETURN_MAINTENANCE || kind === SHARED_INERT_EMPTY_PEER;
+    }),
       "Shared held return maintenance blocks this operation");
   }
   const forward = operation.schedulerHandoff?.forwardRecovery;
@@ -297,6 +310,109 @@ async function assertCrew(state: PlatformStateRepositories, plan: SharedHeldRetu
   requireMaintenance(!conflict, "Another operation holds the Shared maintenance gateway or an owner");
 }
 
+async function readEmptyPeerRoot(tx: PlatformStateTransaction, claim: SharedHeldReturnMaintenanceClaim,
+  peer: SharedInertEmptyPeerScope, clock: number) {
+  requireMaintenance(/^shared-[a-z0-9]+$/.test(peer.gatewayId) && peer.gatewayId !== claim.gatewayId && matchesWorkload(peer.workload),
+    "Shared maintenance requires an exact distinct empty peer");
+  const [root, runtime, assignments, active, tasks] = await Promise.all([
+    tx.gateways.roots.get(peer.gatewayId), tx.fleetRegistry.get(peer.gatewayId), tx.gateways.assignments.list(peer.gatewayId),
+    tx.journal.operations.listByStatus(["pending", "running"]), tx.migrationTasks.listByStatus(["running"]),
+  ]);
+  requireMaintenance(root, "Shared maintenance empty peer root is unavailable");
+  requireMaintenance([
+    root.gatewayClass === "shared", root.desiredStatus === "running", root.retirementClaim == null,
+    root.liveRelease === root.desiredRelease, root.latestRelease === root.liveRelease,
+  ].every(Boolean), "Shared maintenance empty peer desired state changed");
+  requireMaintenance(runtime && hasFreshReadyKubernetesObservation(runtime, clock, GATEWAY_UNREACHABLE_AFTER_MS),
+    "Shared maintenance empty peer lacks a fresh Kubernetes observation");
+  const pods = runtime.kubernetes?.pods;
+  const pod = pods?.[0];
+  requireMaintenance([
+    runtime.runtime === "cluster", runtime.release === root.liveRelease, runtime.heartbeat.status === "ready",
+    runtime.heartbeat.mountedCustomers.length === 0, !runtime.heartbeat.migratingIn?.length, assignments.length === 0,
+    runtime.kubernetes?.totalPods === 1, runtime.kubernetes?.readyPods === 1, pods?.length === 1,
+    pod?.uid === peer.workload.podUid, pod?.name === peer.workload.podName, pod?.replicaSetUid === peer.workload.replicaSetUid,
+    !tasks.some(task => task.sourceGatewayId === peer.gatewayId || task.targetGatewayId === peer.gatewayId),
+    !active.some(op => touchesScope(op, peer.gatewayId, []) && !canLeaveQueued(op, claim.gatewayId, claim.plan.owners)),
+  ].every(Boolean), "Shared maintenance empty peer has changed workload or active custody");
+  return root;
+}
+
+function emptyPeerFence(claim: SharedHeldReturnMaintenanceClaim, saved: EmptyPeerJournal): SharedInertEmptyPeerFence {
+  return { kind: SHARED_INERT_EMPTY_PEER, phase: "held", gatewayId: saved.scope.gatewayId, attemptId: claim.attemptId,
+    auditId: claim.auditId, startedAt: saved.acquiredAt, retainedGatewayId: claim.gatewayId, workload: saved.scope.workload };
+}
+
+async function readHeldEmptyPeer(tx: PlatformStateTransaction, claim: SharedHeldReturnMaintenanceClaim,
+  peer: SharedInertEmptyPeerScope, clock: number) {
+  const guard = await readClaim(tx, claim);
+  const saved = guard.emptyPeer;
+  requireMaintenance(saved && saved.restoredAt === undefined && isDeepStrictEqual(saved.scope, peer),
+    "Shared maintenance empty peer does not belong to this active attempt");
+  const root = await readEmptyPeerRoot(tx, claim, peer, clock);
+  const fence = emptyPeerFence(claim, saved);
+  requireMaintenance(isDeepStrictEqual(root.runtimeRestartFence, fence), "Shared maintenance empty peer fence changed");
+  return { guard, saved, fence };
+}
+
+export async function assertSharedInertEmptyPeerHeld(
+  store: PlatformStateStore, claim: SharedHeldReturnMaintenanceClaim, peer: SharedInertEmptyPeerScope, now: () => number,
+): Promise<void> {
+  await store.transaction({ label: "shared-held-return-maintenance.assert-empty-peer", readOnly: true },
+    async tx => { await readHeldEmptyPeer(tx, claim, peer, now()); });
+}
+
+export async function holdSharedInertEmptyPeer(
+  store: PlatformStateStore, claim: SharedHeldReturnMaintenanceClaim, peer: SharedInertEmptyPeerScope,
+  verifyExactEmptyWorkload: () => Promise<void>, now: () => number,
+): Promise<void> {
+  await verifyExactEmptyWorkload();
+  await store.transaction({ label: "shared-held-return-maintenance.hold-empty-peer" }, async tx => {
+    const guard = await readClaim(tx, claim);
+    readInertHold(guard);
+    const clock = now();
+    if (guard.emptyPeer) {
+      await readHeldEmptyPeer(tx, claim, peer, clock);
+      return;
+    }
+    const root = await readEmptyPeerRoot(tx, claim, peer, clock);
+    requireMaintenance(!root.runtimeRestartFence, "Shared maintenance empty peer is fenced by another action");
+    const saved = { scope: peer, acquiredAt: clock };
+    await tx.gateways.roots.compareAndSetRuntimeRestartFence(peer.gatewayId, null, emptyPeerFence(claim, saved));
+    await tx.gateways.roots.compareAndSetRuntimeRestartFence(claim.gatewayId, guard, { ...guard, emptyPeer: saved });
+  });
+  await verifyExactEmptyWorkload();
+  await assertSharedInertEmptyPeerHeld(store, claim, peer, now);
+}
+
+export async function releaseSharedInertEmptyPeer(
+  store: PlatformStateStore, claim: SharedHeldReturnMaintenanceClaim, peer: SharedInertEmptyPeerScope,
+  restoreAndVerifySql: (assertHeld: () => Promise<void>) => Promise<void>, now: () => number,
+): Promise<void> {
+  const readReleased = async (tx: PlatformStateTransaction) => {
+    const guard = await readClaim(tx, claim);
+    const saved = guard.emptyPeer;
+    requireMaintenance(saved && isDeepStrictEqual(saved.scope, peer), "Shared maintenance empty peer does not belong to this attempt");
+    return saved.restoredAt !== undefined;
+  };
+  if (await store.transaction({ label: "shared-held-return-maintenance.empty-peer-status", readOnly: true }, readReleased)) return;
+  const assertHeld = () => assertSharedInertEmptyPeerHeld(store, claim, peer, now);
+  await assertHeld();
+  await restoreAndVerifySql(assertHeld);
+  await store.transaction({ label: "shared-held-return-maintenance.release-empty-peer" }, async tx => {
+    const clock = now();
+    if (await readReleased(tx)) return;
+    const { guard, saved, fence } = await readHeldEmptyPeer(tx, claim, peer, clock);
+    await tx.gateways.roots.compareAndSetRuntimeRestartFence(peer.gatewayId, fence, null);
+    const restored = { ...saved, restoredAt: clock };
+    await tx.gateways.roots.compareAndSetRuntimeRestartFence(claim.gatewayId, guard, { ...guard, emptyPeer: restored });
+    const audit = await tx.journal.audits.get(claim.auditId);
+    requireMaintenance(audit, "Shared maintenance empty peer lost its audit");
+    await tx.journal.audits.patch(claim.auditId, { target: { ...audit.target, emptyPeer: restored } },
+      { status: [AUDIT_IN_PROGRESS], actionClaimId: claim.attemptId });
+  });
+}
+
 async function changeTargetImportHold(
   tx: import("./platform-state/index.js").PlatformStateTransaction,
   claim: SharedHeldReturnMaintenanceClaim,
@@ -355,7 +471,7 @@ export async function acquireSharedHeldReturnMaintenance(
     await assertMountedCrew(tx, plan);
     const guard: Guard = { attemptId: claim.attemptId, auditId: claim.auditId, gatewayId, kind: SHARED_HELD_RETURN_MAINTENANCE,
       startedAt: now, phase: "reserved", phaseStartedAt: now, maintenance: plan };
-    await tx.journal.audits.create({ ...audit.document, id: audit.id, status: "in-progress", lifecycleStage: "action-started",
+    await tx.journal.audits.create({ ...audit.document, id: audit.id, status: AUDIT_IN_PROGRESS, lifecycleStage: "action-started",
       actionClaimId: claim.attemptId, actionStartedAt: now, actionRecoveryCount: 0 });
     await changeTargetImportHold(tx, claim, "hold");
     await tx.gateways.roots.compareAndSetRuntimeRestartFence(gatewayId, null, guard);
@@ -369,7 +485,7 @@ async function readClaim(state: PlatformStateRepositories, claim: SharedHeldRetu
   const guard = root?.runtimeRestartFence as Guard | undefined;
   requireMaintenance(guard && guard.kind === SHARED_HELD_RETURN_MAINTENANCE && guard.attemptId === claim.attemptId &&
     guard.auditId === claim.auditId && guard.gatewayId === claim.gatewayId && isDeepStrictEqual(guard.maintenance, claim.plan) &&
-    audit?.status === "in-progress" && audit.actionClaimId === claim.attemptId,
+    audit?.status === AUDIT_IN_PROGRESS && audit.actionClaimId === claim.attemptId,
   "Shared held return maintenance claim changed");
   await assertCrew(state, claim.plan, guard);
   return guard;
@@ -539,7 +655,8 @@ export async function readAuthorizedSharedInertStock(
 ): Promise<SharedInertMaintenanceCommonProof> {
   return store.transaction({ label: "shared-held-return-maintenance.read-inert-stock", readOnly: true }, async tx => {
     const guard = await readClaim(tx, claim);
-    requireMaintenance(guard.phase === "dispatched" && guard.inertStartup?.common && !guard.restoringMigrationPolicy,
+    requireMaintenance(guard.phase === "dispatched" && guard.inertStartup?.common && !guard.restoringMigrationPolicy &&
+      (!guard.emptyPeer || guard.emptyPeer.restoredAt !== undefined),
       "Shared inert startup has no launch-authorized common restore");
     return guard.inertStartup.common;
   });
@@ -577,6 +694,7 @@ export async function rollbackSharedInertBeforeStock(
   await store.transaction({ label: "shared-held-return-maintenance.finish-inert-rollback" }, async tx => {
     const guard = await readClaim(tx, claim);
     const { startedAt } = readInertRollback(guard);
+    requireMaintenance(!guard.emptyPeer || guard.emptyPeer.restoredAt !== undefined, "Shared maintenance empty peer still holds writer custody");
     assertResult({ ...guard, phase: "rollback", phaseStartedAt: startedAt }, restored, now());
     const { inertStartup: _inert, ...remaining } = guard;
     await tx.gateways.roots.compareAndSetRuntimeRestartFence(claim.gatewayId, guard, remaining);
@@ -733,6 +851,7 @@ export async function completeSharedHeldReturnMaintenance(
     const guard = await readClaim(tx, claim);
     const clock = deps.now();
     requireMaintenance(guard.restoringMigrationPolicy, "Shared maintenance completion lost its policy restoration claim");
+    requireMaintenance(!guard.emptyPeer || guard.emptyPeer.restoredAt !== undefined, "Shared maintenance empty peer still holds writer custody");
     assertResult(guard, result, clock);
     const { staged, runtime } = await readVerifiedRetainedRelease(tx, guard, installed, result.verifiedAt, clock);
     await tx.fleetRegistry.patch(claim.gatewayId, {
@@ -747,7 +866,7 @@ export async function completeSharedHeldReturnMaintenance(
       status: "completed", lifecycleStage: rolledBack ? "action-partial" : "action-completed", completedAt: result.verifiedAt,
       outcome: rolledBack ? "partial" : "completed",
       ...(rolledBack && { partialOutcome: { summary: "The original Shared runtime was restored and verified" } }),
-    }, { status: ["in-progress"], actionClaimId: claim.attemptId });
+    }, { status: [AUDIT_IN_PROGRESS], actionClaimId: claim.attemptId });
     await tx.gateways.roots.compareAndSetRuntimeRestartFence(claim.gatewayId, guard, null);
   });
 }
@@ -761,7 +880,8 @@ async function beginWithdrawal(store: PlatformStateStore, claim: SharedHeldRetur
   return store.transaction({ label: "shared-held-return-maintenance.begin-withdrawal" }, async tx => {
     if (alreadyWithdrawn(await tx.journal.audits.get(claim.auditId), claim)) return false;
     const guard = await readClaim(tx, claim);
-    requireMaintenance(!guard.stagedRelease && !guard.inertStartup && ["reserved", "withdrawing"].includes(guard.phase),
+    requireMaintenance(!guard.stagedRelease && !guard.inertStartup && (!guard.emptyPeer || guard.emptyPeer.restoredAt !== undefined) &&
+      ["reserved", "withdrawing"].includes(guard.phase),
       "Shared maintenance can withdraw only before image dispatch or release staging");
     if (guard.phase === "reserved") {
       await tx.gateways.roots.compareAndSetRuntimeRestartFence(claim.gatewayId, guard, { ...guard, phase: "withdrawing", phaseStartedAt: now() });
@@ -796,7 +916,7 @@ export async function withdrawSharedHeldReturnMaintenance(
       status: "completed", lifecycleStage: "action-partial", completedAt: now, outcome: "partial",
       partialOutcome: { summary: "Shared maintenance withdrawn before image dispatch; original custody and migration policy verified" },
       target: { ...audit.target, withdrawnBeforeDispatch: true },
-    }, { status: ["in-progress"], actionClaimId: claim.attemptId });
+    }, { status: [AUDIT_IN_PROGRESS], actionClaimId: claim.attemptId });
     await tx.gateways.roots.compareAndSetRuntimeRestartFence(claim.gatewayId, guard, null);
   });
 }
