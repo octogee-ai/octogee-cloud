@@ -4,7 +4,7 @@ import { gatewayHeartbeatMatchesImageTag, isGatewayImageTag } from "@octogee/sha
 import { SHARED_POOL_SCALER_CREATOR, isSharedPoolMemberRoot, isSharedPoolSlotId, parseSharedPoolReplacements, sharedGatewayAddedBy, } from "@octogee/shared/types/shared-gateway-pool";
 import { GATEWAY_CONFIG_SCHEMA_VERSION, InitialGatewayReleaseConflictError, writeInitialGatewayReleaseInTransaction, } from "./gateway-live-release.js";
 import { claimGatewayRetirementInStore, GatewayRetirementConflictError } from "./gateway-retirement-claim.js";
-import { FLEET_STATE_SECTIONS_ERROR, latestReleasePayloadHash, parseFleetStateSections, platformArtifactHash, readFleetStateSections, readSharedGatewayAutoscalingOrNull, } from "./fleet-state-sections.js";
+import { FLEET_STATE_SECTIONS_ERROR, readSharedReleaseRows, selectSharedReleases, parseFleetStateSections, readFleetStateSections, readSharedGatewayAutoscalingOrNull, } from "./fleet-state-sections.js";
 import { FleetMutationRefusedError } from "./normal-fleet-mutation.js";
 import { timestampMillis } from "./timestamps.js";
 import { FenceMismatchError } from "./platform-state/errors.js";
@@ -156,7 +156,7 @@ function fleetStateUser(user, provisioningReadiness) {
     };
 }
 export async function readFleetState(store, input) {
-    return store.transaction({ label: "admin.fleet.state", readOnly: true }, async (transaction) => {
+    const { releaseRows, ...state } = await store.transaction({ label: "admin.fleet.state", readOnly: true }, async (transaction) => {
         const [config, automation, users, gateways, assignments, runtimes, operations, sharedGatewayAutoscaling] = await Promise.all([
             transaction.config.orchestrator.get(),
             transaction.controllerState.sharedPoolScaler.get(),
@@ -167,12 +167,10 @@ export async function readFleetState(store, input) {
             transaction.journal.operations.listByStatus(input.operationStatuses),
             readSharedGatewayAutoscalingOrNull(transaction),
         ]);
-        const sharedGateways = gateways.filter(isSharedPoolMemberRoot);
-        const hashes = await Promise.all(sharedGateways.map((root) => latestReleasePayloadHash(transaction, root)));
         return {
             generatedAt: input.now,
             fleetControllerStartedAt: input.controllerStartedAt ?? null,
-            platformArtifactHash: platformArtifactHash(input.platformArtifact),
+            releaseRows: await readSharedReleaseRows(transaction.gateways, gateways),
             config: {
                 sharedGatewayAutoscaling,
                 sizingProfiles: config?.sizingProfiles ?? {},
@@ -181,12 +179,12 @@ export async function readFleetState(store, input) {
             sharedPoolAutomation: automation,
             users: users.map((user) => fleetStateUser(user, input.provisioningReadiness)),
             gateways,
-            latestReleasePayloadHashes: Object.fromEntries(sharedGateways.map((root, index) => [root.gatewayId, hashes[index] ?? null])),
             assignments,
             runtimes,
             operations,
         };
     });
+    return { ...state, ...await selectSharedReleases(releaseRows, input.platformArtifact, input.readInstalledSharedRelease) };
 }
 function isAutomationAddOperation(value) {
     if (value === null || !isRecord(value.input))
@@ -310,6 +308,7 @@ export function addAdminSharedPoolRoutes(router, deps) {
                     sections,
                     operationStatuses,
                     platformArtifact: deps.platformArtifact,
+                    readInstalledSharedRelease: deps.readInstalledSharedRelease,
                     controllerStartedAt: deps.controllerStartedAt,
                     now: now(),
                     projectUser: (user) => fleetStateUser(user, deps.provisioningReadiness),
@@ -321,6 +320,7 @@ export function addAdminSharedPoolRoutes(router, deps) {
             res.json(await readFleetState(store, {
                 operationStatuses,
                 platformArtifact: deps.platformArtifact,
+                readInstalledSharedRelease: deps.readInstalledSharedRelease,
                 controllerStartedAt: deps.controllerStartedAt,
                 now: now(),
                 provisioningReadiness: deps.provisioningReadiness,

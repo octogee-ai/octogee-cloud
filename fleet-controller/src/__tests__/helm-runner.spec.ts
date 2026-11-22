@@ -50,6 +50,54 @@ describe("Shared Helm runtime intent receipts", () => {
   const chartFingerprint = "b".repeat(64);
   const deploymentIntentFingerprint = "c".repeat(64);
 
+  const manifest = "---\n# Source: chart/templates/gateway.yaml\nkind: Deployment\n";
+  const sharedRuntimeIntent = `v1:${chartFingerprint}`;
+  const release = `octogee-gw-${gatewayId}`;
+  const installedConfig = {
+    gatewayId, gatewayClass: "shared", imageTag, sharedRuntimeIntent,
+    image: { repository: REPO, tag: imageTag },
+    gatewayEdge: { image: { repository: "example/edge", tag: imageTag } },
+  };
+  const opts = { namespace, gatewayId, gatewayClass: "shared" as const, imageRepository: REPO,
+    imageTag, chartPath: "/chart", valuesFile: "/chart/values-test.yaml", sharedRuntimeIntent };
+
+  it("reads images, intent and the installed manifest digest from the same status observation", async () => {
+    const { runHelm } = mockSubprocess([{ stdout: JSON.stringify({
+      info: { status: "deployed" }, version: 3, manifest, config: installedConfig,
+    }) }]);
+    const runner = createHelmSubprocessRunner({ runHelm, log: vi.fn() });
+    expect(await runner.readSharedInstallation!({ namespace, gatewayId })).toMatchObject({
+      instance: { image: installedConfig.image, gatewayEdgeImage: { imageRepository: "example/edge", imageTag },
+        sharedRuntimeIntent: { fingerprint: sharedRuntimeIntent, helmRevision: 3 } },
+      manifestDigest: createHash("sha256").update(manifest).digest("hex"),
+    });
+    expect(runHelm).toHaveBeenCalledExactlyOnceWith(["status", release, "-n", namespace, "-o", "json"], 10_000);
+  });
+
+  it.each([
+    { version: 3, rendered: manifest.trim(), matches: true },
+    { version: 3, rendered: "kind: Service", matches: false },
+    { version: 4, rendered: manifest, matches: false },
+  ])("compares the complete render against deployed revision $version ($matches)", async ({ version, rendered, matches }) => {
+    const { runHelm, calls } = mockSubprocess([
+      { stdout: rendered }, { stdout: JSON.stringify({ info: { status: "deployed" }, version, manifest }) },
+    ]);
+    const log = vi.fn();
+    const runner = createHelmSubprocessRunner({ runHelm, log });
+    expect(await runner.matchesDeployedManifest!(opts, 3)).toBe(matches);
+    expect(calls[0]?.slice(0, 5)).toEqual(["template", release, "/chart", "-n", namespace]);
+    expect(calls[0]).toEqual(expect.arrayContaining([opts.valuesFile, `sharedRuntimeIntent=${sharedRuntimeIntent}`]));
+    expect(calls[1]).toEqual(["status", release, "-n", namespace, "-o", "json"]);
+    if (version === 3 && !matches) expect(log).toHaveBeenCalledWith(expect.stringContaining("rendered manifest differs"));
+  });
+
+  it("reports a failed template before considering the installed revision", async () => {
+    const { runHelm } = mockSubprocess([{ code: 1, stderr: "template failed" }]);
+    const runner = createHelmSubprocessRunner({ runHelm, log: vi.fn() });
+    await expect(runner.matchesDeployedManifest!(opts, 3)).rejects.toThrow("failed (code=1)");
+    expect(runHelm).toHaveBeenCalledTimes(1);
+  });
+
   it("requires immutable paired images and a complete chart and deployment intent", () => {
     const opts = {
       gatewayClass: "shared" as const, imageTag, gatewayEdgeImageTag: imageTag, chartFingerprint,

@@ -22,9 +22,10 @@ import {
 import { claimGatewayRetirementInStore, GatewayRetirementConflictError } from "./gateway-retirement-claim.js";
 import {
   FLEET_STATE_SECTIONS_ERROR,
-  latestReleasePayloadHash,
+  readSharedReleaseRows,
+  selectSharedReleases,
+  type InstalledSharedReleaseReader,
   parseFleetStateSections,
-  platformArtifactHash,
   readFleetStateSections,
   readSharedGatewayAutoscalingOrNull,
   type GatewayKubernetesReader,
@@ -46,6 +47,7 @@ const OPERATION_STATUSES = ["pending", "running", "succeeded", "failed", "rolled
 
 export interface AdminSharedPoolRouterDeps {
   store: PlatformStateStore;
+  readInstalledSharedRelease?: InstalledSharedReleaseReader | undefined;
   platformArtifact?: GatewayArtifact;
   controllerStartedAt?: number | undefined;
   journal: AdminFleetMutationRunner;
@@ -236,12 +238,13 @@ function fleetStateUser(
 
 export async function readFleetState(store: PlatformStateStore, input: {
   operationStatuses: readonly OperationStatus[];
+  readInstalledSharedRelease?: InstalledSharedReleaseReader | undefined;
   platformArtifact?: GatewayArtifact | undefined;
   controllerStartedAt?: number | undefined;
   now: number;
   provisioningReadiness?: ((uid: string) => ProvisioningReadiness | null) | undefined;
 }) {
-  return store.transaction({ label: "admin.fleet.state", readOnly: true }, async (transaction) => {
+  const { releaseRows, ...state } = await store.transaction({ label: "admin.fleet.state", readOnly: true }, async (transaction) => {
     const [config, automation, users, gateways, assignments, runtimes, operations, sharedGatewayAutoscaling] = await Promise.all([
       transaction.config.orchestrator.get(),
       transaction.controllerState.sharedPoolScaler.get(),
@@ -252,12 +255,10 @@ export async function readFleetState(store: PlatformStateStore, input: {
       transaction.journal.operations.listByStatus(input.operationStatuses),
       readSharedGatewayAutoscalingOrNull(transaction),
     ]);
-    const sharedGateways = gateways.filter(isSharedPoolMemberRoot);
-    const hashes = await Promise.all(sharedGateways.map((root) => latestReleasePayloadHash(transaction, root)));
     return {
       generatedAt: input.now,
       fleetControllerStartedAt: input.controllerStartedAt ?? null,
-      platformArtifactHash: platformArtifactHash(input.platformArtifact),
+      releaseRows: await readSharedReleaseRows(transaction.gateways, gateways),
       config: {
         sharedGatewayAutoscaling,
         sizingProfiles: config?.sizingProfiles ?? {},
@@ -266,12 +267,12 @@ export async function readFleetState(store: PlatformStateStore, input: {
       sharedPoolAutomation: automation,
       users: users.map((user) => fleetStateUser(user, input.provisioningReadiness)),
       gateways,
-      latestReleasePayloadHashes: Object.fromEntries(sharedGateways.map((root, index) => [root.gatewayId, hashes[index] ?? null])),
       assignments,
       runtimes,
       operations,
     };
   });
+  return { ...state, ...await selectSharedReleases(releaseRows, input.platformArtifact, input.readInstalledSharedRelease) };
 }
 
 type AutomationAddOperation = Stored<OperationRecord> & { gatewayId: string; input: Record<string, unknown> & { imageTag: string } };
@@ -417,6 +418,7 @@ export function addAdminSharedPoolRoutes(router: Router, deps: AdminSharedPoolRo
           sections,
           operationStatuses,
           platformArtifact: deps.platformArtifact,
+          readInstalledSharedRelease: deps.readInstalledSharedRelease,
           controllerStartedAt: deps.controllerStartedAt,
           now: now(),
           projectUser: (user) => fleetStateUser(user, deps.provisioningReadiness),
@@ -428,6 +430,7 @@ export function addAdminSharedPoolRoutes(router: Router, deps: AdminSharedPoolRo
       res.json(await readFleetState(store, {
         operationStatuses,
         platformArtifact: deps.platformArtifact,
+        readInstalledSharedRelease: deps.readInstalledSharedRelease,
         controllerStartedAt: deps.controllerStartedAt,
         now: now(),
         provisioningReadiness: deps.provisioningReadiness,

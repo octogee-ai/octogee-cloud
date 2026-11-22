@@ -11,7 +11,7 @@ import { type SizingTier } from "@octogee/shared/types/sizing";
 import { type GatewayPricingMode } from "@octogee/shared/types/cost-estimator";
 import { type UserAccounts, type UserSignInHosts } from "./admin-user-router.js";
 import { type AdminSharedPoolRouterDeps } from "./admin-shared-pool-router.js";
-import { type GatewayKubernetesReader } from "./fleet-state-sections.js";
+import { type InstalledSharedReleaseReader, type GatewayKubernetesReader } from "./fleet-state-sections.js";
 import { type AdminPlacementCapabilities } from "./admin-placement-router.js";
 import { type AdminPlacementSharedCapabilities } from "./admin-placement-shared-router.js";
 import { type AdminIsolatedCapabilities } from "./admin-placement-isolated-router.js";
@@ -71,6 +71,7 @@ export interface FleetRouterDeps {
     }) => Promise<unknown[]>;
     releaseEnvironment?: "test" | "prod" | null;
     releaseAuthority?: CentralReleaseAuthority;
+    readInstalledSharedRelease?: InstalledSharedReleaseReader | undefined;
     platformArtifact?: GatewayArtifact;
     controllerStartedAt?: number;
     readGatewayKubernetes?: GatewayKubernetesReader;
