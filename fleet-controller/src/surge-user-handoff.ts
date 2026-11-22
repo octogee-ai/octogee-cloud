@@ -916,20 +916,28 @@ async function unreserveSourcelessTarget(
   }
 }
 
+function canRebuildSourcelessSharedRoster(
+  input: ReconcileSurgeUserHandoffInput,
+  targetHealth: SurgePodHealth,
+  assignments: readonly SurgeAssignment[],
+): boolean {
+  const startedAt = targetHealth.signedFleetState?.startedAt;
+  return input.recoverSharedPodAfter !== undefined &&
+    !input.requiresUserMigration && input.supersedingImageTag === undefined &&
+    typeof startedAt === "number" && startedAt > input.recoverSharedPodAfter &&
+    targetHealth.prelaunchState === "none" && !targetHealth.terminalTarget &&
+    targetHealth.mountedCustomers.length === 0 && (targetHealth.migratingIn?.length ?? 0) === 0 &&
+    assignments.every(row => row.state === "serving" && !row.sharedSurgeForwardRecovery);
+}
+
 async function releaseSourcelessSharedTarget(
   deps: SurgeUserHandoffDeps,
   input: ReconcileSurgeUserHandoffInput,
   context: { targetPod: SurgePod; targetHealth: SurgePodHealth; ownedBy: string; assignments: readonly SurgeAssignment[] },
 ): Promise<void> {
   const { targetHealth, assignments } = context;
-  const startedAt = targetHealth.signedFleetState?.startedAt;
-  const canRebuildRoster = input.recoverSharedPodAfter !== undefined &&
-    !input.requiresUserMigration && input.supersedingImageTag === undefined &&
-    typeof startedAt === "number" && startedAt > input.recoverSharedPodAfter &&
-    targetHealth.prelaunchState === "none" && !targetHealth.terminalTarget &&
-    targetHealth.mountedCustomers.length === 0 && (targetHealth.migratingIn?.length ?? 0) === 0 &&
-    assignments.every(row => row.state === "serving" && !row.sharedSurgeForwardRecovery);
-  if (!canRebuildRoster && !targetMountedAssignedUsers(assignments, targetHealth.mountedCustomers)) {
+  if (!targetMountedAssignedUsers(assignments, targetHealth.mountedCustomers) &&
+      !canRebuildSourcelessSharedRoster(input, targetHealth, assignments)) {
     deps.log(`[surge-handoff] sourceless Shared target is missing its assigned mounted roster gateway=${input.gatewayId} target=${context.targetPod.name}`);
     deps.recheckGatewayLater(input.gatewayId);
     return;
