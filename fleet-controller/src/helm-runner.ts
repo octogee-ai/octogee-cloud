@@ -30,6 +30,9 @@ export interface HobbyCheckpointPod {
 }
 
 export interface HelmRunner {
+  readSharedInstallation?(opts: { namespace: string; gatewayId: string }): Promise<{
+    instance: HelmInstancesMap[string]; manifestDigest: string;
+  } | null>;
   matchesDeployedManifest?(opts: Omit<BuildUpgradeArgsOpts, "release" | "upgradeTimeout">, revision: number): Promise<boolean>;
 
 readDeployedInstances(opts: { namespace: string }): Promise<HelmInstancesMap>;
@@ -102,7 +105,7 @@ export interface HelmSubprocessResult {
   code: number;
 }
 
-export type HelmSubprocess = (args: string[]) => Promise<HelmSubprocessResult>;
+export type HelmSubprocess = (args: string[], timeoutMs?: number) => Promise<HelmSubprocessResult>;
 
 export interface HelmSubprocessRunnerDeps {
   runHelm: HelmSubprocess;
@@ -386,11 +389,17 @@ async function readInstanceValue(
     );
   }
   const v = JSON.parse(valuesResult.stdout || "{}") as PerReleaseValues;
+  return instanceFromValues(v, releaseName, deployedRevision, deps.log);
+}
+
+function instanceFromValues(
+  v: PerReleaseValues, releaseName: string, deployedRevision: number | null, log: (message: string) => void,
+): HelmInstancesMap[string] | null {
   const gatewayId = coerceIdentityField(v.gatewayId);
   const imageTag = coerceIdentityField(v.imageTag);
   const imageRepo = coerceIdentityField(v.image?.repository);
   if (!gatewayId || !imageTag || !imageRepo) {
-    deps.log(
+    log(
       `[helm-runner] release ${releaseName} missing gatewayId/imageTag/imageRepository — skipping`,
     );
     return null;
@@ -721,17 +730,17 @@ async function getReleaseObservation(
   deps: HelmSubprocessRunnerDeps,
   namespace: string,
   release: string,
-): Promise<{ status: string; deployedRevision: number | null; manifest: string | null } | null> {
-  const result = await deps.runHelm([
-    "status", release, "-n", namespace, "-o", "json",
-  ]);
+  timeoutMs?: number,
+): Promise<{ status: string; deployedRevision: number | null; manifest: string | null; config: PerReleaseValues | null } | null> {
+  const args = ["status", release, "-n", namespace, "-o", "json"];
+  const result = timeoutMs ? await deps.runHelm(args, timeoutMs) : await deps.runHelm(args);
   if (result.code !== 0) {
     if (isReleaseNotFound(result.stderr)) return null;
     throw new Error(
       `helm status ${release} (ns=${namespace}) failed (code=${result.code}): ${result.stderr.trim() || result.stdout.trim()}`,
     );
   }
-  let parsed: { info?: { status?: unknown }; version?: unknown; manifest?: unknown };
+  let parsed: { info?: { status?: unknown }; version?: unknown; manifest?: unknown; config?: unknown };
   try {
     parsed = JSON.parse(result.stdout) as typeof parsed;
   } catch (e) {
@@ -747,7 +756,8 @@ async function getReleaseObservation(
       `helm status ${release} (ns=${namespace}): info.status missing or non-string in response (got ${typeof status}). stdout[:200]: ${sample}`,
     );
   }
-  return { status, deployedRevision: deployedHelmRevision(status, parsed.version), manifest: typeof parsed.manifest === "string" ? parsed.manifest : null };
+  return { status, deployedRevision: deployedHelmRevision(status, parsed.version),
+    manifest: typeof parsed.manifest === "string" ? parsed.manifest : null, config: isPlainObject(parsed.config) ? parsed.config : null };
 }
 
 interface HelmHistoryItem {
@@ -959,19 +969,35 @@ async function assertProvisionedLiveStandby(deps: HelmSubprocessRunnerDeps, opts
   }
 }
 
+function sharedInspectionCommands(deps: HelmSubprocessRunnerDeps, upgradeTimeout: string): Pick<HelmRunner, "readSharedInstallation" | "matchesDeployedManifest"> {
+  return {
+    async readSharedInstallation({ namespace, gatewayId }) {
+      const release = releaseNameForGateway(gatewayId);
+      const observed = await getReleaseObservation(deps, namespace, release, 10_000);
+      if (!observed?.deployedRevision || !observed.config || !observed.manifest) return null;
+      const instance = instanceFromValues(observed.config, release, observed.deployedRevision, deps.log);
+      if (!instance?.sharedRuntimeIntent) return null;
+      return { instance, manifestDigest: createHash("sha256").update(observed.manifest).digest("hex") };
+    },
+
+    async matchesDeployedManifest(opts, revision) {
+      const release = releaseNameForGateway(opts.gatewayId);
+      const rendered = await deps.runHelm(buildChartArgs({ ...opts, release, upgradeTimeout }, "template"), 10_000);
+      if (rendered.code !== 0) throw new Error(`Helm template for ${release} failed (code=${rendered.code})`);
+      const current = await getReleaseObservation(deps, opts.namespace, release, 10_000);
+      return current?.deployedRevision === revision && !!current.manifest?.trim() &&
+        rendered.stdout.trim() === current.manifest.trim();
+    },
+
+  };
+}
+
 export function createHelmSubprocessRunner(deps: HelmSubprocessRunnerDeps): HelmRunner {
   const upgradeTimeout = deps.upgradeTimeout ?? "10m";
   const uninstallTimeout = deps.uninstallTimeout ?? "5m";
 
   return {
-    async matchesDeployedManifest(opts, revision) {
-      const release = releaseNameForGateway(opts.gatewayId);
-      const rendered = await deps.runHelm(buildChartArgs({ ...opts, release, upgradeTimeout }, "template"));
-      if (rendered.code !== 0) throw new Error(`Helm template for ${release} failed (code=${rendered.code})`);
-      const current = await getReleaseObservation(deps, opts.namespace, release);
-      return current?.deployedRevision === revision && !!current.manifest?.trim() &&
-        rendered.stdout.trim() === current.manifest.trim();
-    },
+    ...sharedInspectionCommands(deps, upgradeTimeout),
 
     async readDeployedInstances({ namespace }) {
       const items = await listGatewayReleases(deps, namespace);
@@ -1173,10 +1199,10 @@ if (
 
 const DEFAULT_HELM_BIN = "/usr/local/bin/helm";
 
-export function spawnHelm(args: string[]): Promise<HelmSubprocessResult> {
+export function spawnHelm(args: string[], timeoutMs?: number): Promise<HelmSubprocessResult> {
   const helmBin = process.env.HELM_BIN ?? DEFAULT_HELM_BIN;
   return new Promise<HelmSubprocessResult>((resolve, reject) => {
-    const proc = spawn(helmBin, args, { stdio: ["ignore", "pipe", "pipe"] });
+    const proc = spawn(helmBin, args, { stdio: ["ignore", "pipe", "pipe"], timeout: timeoutMs });
     let stdout = "";
     let stderr = "";
     proc.stdout.on("data", (chunk) => { stdout += chunk.toString(); });

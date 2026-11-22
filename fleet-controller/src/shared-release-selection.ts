@@ -1,6 +1,6 @@
 import type { deploymentSettingsForRuntime } from "@octogee/core/deployment-environment";
 import { readFile } from "node:fs/promises";
-import { isReleasePayload, type ReleasePayload } from "@octogee/shared/types/gateway-releases";
+import { releasePayloadHash, isReleasePayload, type ReleasePayload } from "@octogee/shared/types/gateway-releases";
 import type { HelmInstanceValue } from "@octogee/shared/types/glm";
 import { gatewayUpsertOptsFromRelease, type DurableGateway } from "./converge-gateway.js";
 import { sharedRuntimeIntentForValues, type HelmRunner } from "./helm-runner.js";
@@ -61,19 +61,41 @@ export function installedSharedOptions(input: {
 }
 
 export function installedSharedReleaseReader(settings: GatewayDeploymentSettings, helm: HelmRunner, log: (message: string) => void) {
-  return async (gateway: DurableGateway, current: ReleasePayload, requested: ReleasePayload): Promise<boolean> => {
-    if (!sameSharedSoftware(current, requested)) return false;
+  const slots = Array.from({ length: 4 }, () => Promise.resolve());
+  const accepted = new Map<string, string>();
+  const active = new Map<string, Promise<boolean>>();
+
+  async function inspect(gateway: DurableGateway, current: ReleasePayload, requested: ReleasePayload) {
+    if (!helm.readSharedInstallation || !helm.matchesDeployedManifest) return false;
     try {
-      const [instance, values] = await Promise.all([
-        helm.readDeployedInstance({ namespace: settings.namespace, gatewayId: gateway.gatewayId }),
+      const [observed, values] = await Promise.all([
+        helm.readSharedInstallation({ namespace: settings.namespace, gatewayId: gateway.gatewayId }),
         settings.valuesFile ? readFile(settings.valuesFile) : null,
       ]);
-      const opts = installedSharedOptions({ gateway, current, requested, instance, settings, values });
-      if (!opts || !instance?.sharedRuntimeIntent || !helm.matchesDeployedManifest) return false;
-      return await helm.matchesDeployedManifest(opts, instance.sharedRuntimeIntent.helmRevision);
+      const receipt = observed?.instance.sharedRuntimeIntent;
+      if (!observed || !receipt) return false;
+      const opts = installedSharedOptions({ gateway, current, requested, instance: observed.instance, settings, values });
+      if (!opts) return false;
+      const key = JSON.stringify([receipt.helmRevision, opts.sharedRuntimeIntent, observed.manifestDigest, releasePayloadHash(requested)]);
+      if (accepted.get(gateway.gatewayId) === key) return true;
+      if (!await helm.matchesDeployedManifest(opts, receipt.helmRevision)) return false;
+      if (accepted.size >= 256) accepted.delete(accepted.keys().next().value!);
+      accepted.set(gateway.gatewayId, key);
+      return true;
     } catch (error) {
       log(`[shared-release] cannot verify installed release for ${gateway.gatewayId}: ${error instanceof Error ? error.name : "unknown error"}`);
       return false;
     }
+  }
+
+  return (gateway: DurableGateway, current: ReleasePayload, requested: ReleasePayload): Promise<boolean> => {
+    if (!sameSharedSoftware(current, requested)) return Promise.resolve(false);
+    const key = JSON.stringify([gateway, current, requested]);
+    const pending = active.get(key);
+    if (pending) return pending;
+    const result = slots.shift()!.then(() => inspect(gateway, current, requested)).finally(() => active.delete(key));
+    active.set(key, result);
+    slots.push(result.then(() => undefined, () => undefined));
+    return result;
   };
 }

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { gatewayUpsertOptsFromRelease } from "../converge-gateway.js";
 import { createHelmSubprocessRunner, sharedRuntimeIntentForValues } from "../helm-runner.js";
 import { installedSharedOptions, installedSharedReleaseReader } from "../shared-release-selection.js";
@@ -31,22 +31,50 @@ describe("selecting the installed Shared release", () => {
   it("keeps the accepted runtime across a build retag", () => {
     expect(installedSharedOptions(input)).toMatchObject({ imageTag: before.imageTag });
   });
-  it("requires the receipt and the rendered manifest to agree in the live reader", async () => {
+  it("bounds simultaneous inspections and reuses a match only for the same live revision", async () => {
+    const noFile = { ...settings, valuesFile: undefined };
+    let version = 4;
+    let active = 0;
+    let maximum = 0;
+    const helm = createHelmSubprocessRunner({ log: () => {}, runHelm: async () => ({ stdout: "", stderr: "", code: 0 }) });
+    helm.readSharedInstallation = async ({ gatewayId }) => {
+      const immutable = gatewayUpsertOptsFromRelease({ ...noFile, gateway: { ...gateway, gatewayId }, artifact: before, replicas: 1 });
+      maximum = Math.max(maximum, ++active);
+      await new Promise(resolve => setTimeout(resolve, 5));
+      active--;
+      return { instance: { ...instance, gatewayId, deploymentIntentFingerprint: immutable.deploymentIntentFingerprint,
+        sharedRuntimeIntent: { helmRevision: version, fingerprint: sharedRuntimeIntentForValues(immutable, null)! } }, manifestDigest: "digest" };
+    };
+    const matches = vi.fn(async () => true);
+    helm.matchesDeployedManifest = matches;
+    const read = installedSharedReleaseReader(noFile, helm, () => {});
+    const roots = Array.from({ length: 9 }, (_, n) => ({ ...gateway, gatewayId: `shared-${String(n).padStart(12, "0")}` }));
+
+    expect(await Promise.all(roots.map(root => read(root, before, after)))).toEqual(roots.map(() => true));
+    expect(maximum).toBeLessThanOrEqual(4);
+    expect(maximum).toBeGreaterThan(0);
+    expect(matches).toHaveBeenCalledTimes(9);
+    expect(await read(roots[0], before, after)).toBe(true);
+    expect(matches).toHaveBeenCalledTimes(9);
+    version++;
+    expect(await read(roots[0], before, after)).toBe(true);
+    expect(matches).toHaveBeenCalledTimes(10);
+  });
+
+  it.each([["expected resources", true], ["drifted resources", false]])("requires the receipt and manifest to agree in the live reader: %s", async (manifest, expected) => {
     const noFile = { ...settings, valuesFile: undefined };
     const immutable = gatewayUpsertOptsFromRelease({ ...noFile, gateway, artifact: before, replicas: 1 });
     const receipt = sharedRuntimeIntentForValues(immutable, null);
     const helm = createHelmSubprocessRunner({ log: () => {}, runHelm: async args => {
-      let stdout: string;
-      if (args[0] === "status") stdout = JSON.stringify({ info: { status: "deployed" }, version: 4, manifest: "drifted resources" });
-      else if (args[1] === "values") stdout = JSON.stringify({
+      const config = {
         gatewayId: gateway.gatewayId, gatewayClass: "shared", imageTag: before.imageTag, image: { repository: before.imageRepository },
         gatewayEdge: { image: { repository: before.gatewayEdgeImage.imageRepository, tag: before.gatewayEdgeImage.imageTag } },
         chartFingerprint: settings.chartFingerprint, deploymentIntentFingerprint: immutable.deploymentIntentFingerprint, sharedRuntimeIntent: receipt,
-      });
-      else stdout = args[0] === "template" ? "expected resources" : "drifted resources";
+      };
+      const stdout = args[0] === "status" ? JSON.stringify({ info: { status: "deployed" }, version: 4, manifest, config }) : "expected resources";
       return { stdout, stderr: "", code: 0 };
     } });
-    expect(await installedSharedReleaseReader(noFile, helm, () => {})(gateway, before, after)).toBe(false);
+    expect(await installedSharedReleaseReader(noFile, helm, () => {})(gateway, before, after)).toBe(expected);
   });
 
   it.each([["same", 4, true], ["different deployment", 4, false], ["same", 5, false]])("compares the current manifest and revision: %s r%s", async (installed, version, expected) => {
