@@ -71,8 +71,10 @@ export async function adoptRetainedSharedHelm(
   deps: Dependencies, workload: SourceRecoveryWorkload, selection: Adoption, assertCurrent: () => Promise<void>,
 ) {
   const { gatewayId, chart, installedChartFingerprint, from, to } = selection;
-  if (deps.namespace !== "octogee-test" || workload.deploymentName !== `octogee-gateway-${gatewayId}` ||
-      computeChartFingerprint(chart) !== installedChartFingerprint) throw new Error("Unexpected Shared maintenance installation");
+  if (![deps.namespace === "octogee-test", workload.deploymentName === `octogee-gateway-${gatewayId}`,
+    computeChartFingerprint(chart) === installedChartFingerprint].every(Boolean)) {
+    throw new Error("Unexpected Shared maintenance installation");
+  }
   const release = `octogee-gw-${gatewayId}`;
   const helm = async (args: string[]) => {
     const result = await deps.runHelm([...args, "-n", deps.namespace, "-o", "json"]);
@@ -109,14 +111,16 @@ export async function adoptRetainedSharedHelm(
   if (!isDeepStrictEqual(original, candidate)) {
     await currentWorkload();
     const latest = await helm(statusArgs);
-    if (latest.version !== installed.version || latest.manifest !== installed.manifest || latest.info.status !== "deployed") throw new Error("Shared Helm release changed during maintenance");
+    if (![latest.version === installed.version, latest.manifest === installed.manifest, latest.info.status === "deployed"].every(Boolean)) {
+      throw new Error("Shared Helm release changed during maintenance");
+    }
     await assertCurrent();
     await helm(upgrade);
   }
   const observed = await helm(statusArgs);
   checkInstallation(observed,release,gatewayId,deps.namespace,installedChartFingerprint);
-  if (observed.config?.imageTag !== tag(to.gateway) ||
-    observed.config?.gatewayEdge?.image?.tag !== tag(to["gateway-edge"]) || !isDeepStrictEqual(await parse(observed.manifest),candidate)) {
+  if (![observed.config?.imageTag === tag(to.gateway), observed.config?.gatewayEdge?.image?.tag === tag(to["gateway-edge"]),
+    isDeepStrictEqual(await parse(observed.manifest), candidate)].every(Boolean)) {
     throw new Error("Installed Shared Helm release differs from its accepted render");
   }
   const {deployment,rs} = await currentWorkload();
