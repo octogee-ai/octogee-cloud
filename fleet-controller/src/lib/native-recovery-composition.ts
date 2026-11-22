@@ -10,7 +10,11 @@ type ActionDependencies = Parameters<typeof createCompensatingNativeReturnAction
 type InertDependencies = Parameters<typeof createHeldSharedInertMaintenance>[0];
 type SourceDependencies = Parameters<typeof createCompensatingNativeOriginalObserver>[0];
 
-export type NativeRecoveryComposition = {
+export type NativeRecoveryComposition = Pick<NativeRecoveryCompositionInput, "inert" | "registerOperatorActions"> & {
+  readRetainedCompletion: TargetDependencies["readRetainedCompletion"];
+};
+
+type NativeRecoveryCompositionInput = {
   target: Omit<TargetDependencies, "namespace" | "store"> & Required<Pick<TargetDependencies, "verifyWholeRetirement">>;
   source: Omit<ActionDependencies, "verifySourceServing"> & Pick<SourceDependencies, "vm"> & { serving: CompensatingSourceServingInputs };
   inert: Omit<InertDependencies, "store" | "now">;
@@ -30,7 +34,7 @@ export function createNativeRecoveryComposition(
   namespace: string,
   store: PlatformStateStore,
   now: () => number,
-  enrolled?: NativeRecoveryComposition | null,
+  enrolled?: NativeRecoveryCompositionInput | null,
 ) {
   if (environment !== "test" || !enrolled) return undefined;
   const target = createNativeReturnTargetExclusion({
