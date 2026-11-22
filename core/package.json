@@ -281,6 +281,10 @@
       "types": "./dist/fleet-signature.d.ts",
       "default": "./dist/fleet-signature.js"
     },
+    "./gce-instance-identity": {
+      "types": "./dist/gce-instance-identity.d.ts",
+      "default": "./dist/gce-instance-identity.js"
+    },
     "./fleet-state": {
       "types": "./dist/fleet-state.d.ts",
       "default": "./dist/fleet-state.js"

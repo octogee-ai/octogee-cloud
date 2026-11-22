@@ -1,5 +1,8 @@
 import { randomBytes } from "node:crypto";
-import { heldNativeSourceReconcileJobId, gatewayScopedJobId, signFleetRequest, sourceActivationReadinessJobId } from "./fleet-signature.js";
+import { isIP } from "node:net";
+import { isDeepStrictEqual } from "node:util";
+import { computeInstanceFromPayload, createGoogleIdTokenVerifier, GOOGLE_TOKEN_ISSUERS } from "./gce-instance-identity.js";
+import { heldNativeSourceHoldAudience, heldNativeSourceHoldJobId, heldNativeSourceReconcileJobId, gatewayScopedJobId, signFleetRequest, sourceActivationReadinessJobId } from "./fleet-signature.js";
 import { SIGNATURE_HEADER, MIGRATION_QUIESCE_TIMEOUT_MS, MIGRATION_TRANSFER_TIMEOUT_MS, MIGRATION_UNMOUNT_TIMEOUT_MS, MIGRATION_VERIFY_TIMEOUT_MS, isSchedulerMigrationResult, } from "@octogee/shared/types/fleet-controller";
 export class MigrationRpcError extends Error {
     details;
@@ -104,6 +107,67 @@ async function isUnregisteredActivationReadinessRoute(response, path) {
     ].join("\n");
 }
 export { reconcileHeldNativeSource } from "./held-native-source-reconcile.js";
+export async function requestHeldNativeSourceHold(input) {
+    const { claim, action } = input;
+    const sourceUrl = new URL(input.sourceUrl);
+    assertHeldSourceOrigin(sourceUrl);
+    const { gatewayId, operationId } = claim;
+    const path = `/held-native-source-hold/${action}/${encodeURIComponent(gatewayId)}`;
+    const nonce = randomBytes(32).toString("hex");
+    const body = { claim, nonce, expiresAt: Date.now() + 60_000 };
+    const post = createSignedGatewayPoster({
+        privateKey: input.privateKey,
+        resolveGatewayUrl: () => sourceUrl.origin,
+        fetchWithTimeout: createFetchWithTimeout((url, init) => (input.fetch ?? globalThis.fetch)(url, { ...init, redirect: "error" })),
+    });
+    const response = await post({ path, transportId: gatewayId, gatewayId, migrationId: `mig-${operationId}`, timeoutMs: action === "acquire" ? 90_000 : 5_000,
+        jobId: heldNativeSourceHoldJobId(action, operationId, gatewayId),
+        body,
+    });
+    if (!response.ok) {
+        await response.body?.cancel();
+        throw new Error(`Held Native source hold ${action} returned HTTP ${response.status}`);
+    }
+    const reply = await response.json();
+    if (reply?.nonce !== nonce || !reply.hold)
+        throw new Error("Held Native source returned a stale hold acknowledgement");
+    const hold = validateSourceHold(reply.hold, claim, Date.now());
+    if (typeof reply.instanceIdentity !== "string")
+        throw new Error("Held Native source returned no instance attestation");
+    const verify = input.verifyInstanceIdentity ?? createGoogleIdTokenVerifier();
+    const payload = await verify(reply.instanceIdentity, heldNativeSourceHoldAudience(action, JSON.stringify(body), hold));
+    const instance = payload && GOOGLE_TOKEN_ISSUERS.has(String(payload.iss)) && computeInstanceFromPayload(payload, input.gce);
+    if (!instance || instance.instanceId !== claim.vmId || instance.zone !== input.gce.zone || instance.instanceName !== input.gce.instanceName) {
+        throw new Error("Held Native source returned an unexpected GCE instance attestation");
+    }
+    return hold;
+}
+function assertHeldSourceOrigin(source) {
+    const [first, second] = source.hostname.split(".").map(Number);
+    const privateIPv4 = isIP(source.hostname) === 4 &&
+        (first === 10 || (first === 172 && second >= 16 && second <= 31) || (first === 192 && second === 168));
+    const supported = source.protocol === "https:" || (source.protocol === "http:" && privateIPv4);
+    if (!supported || source.username || source.password || source.search || source.hash || source.pathname !== "/") {
+        throw new Error("Held Native source hold requires HTTPS or a private Compute HTTP origin");
+    }
+}
+function validateSourceHold(hold, claim, now) {
+    const { gatewayId: sourceGatewayId, claimStartedAt: _, vmId, bootId, bootDiskId, homeDiskId, ...scope } = claim;
+    if (!isDeepStrictEqual(hold.scope, { ...scope, sourceGatewayId }) ||
+        !isDeepStrictEqual(hold.source, { vmId, bootId, bootDiskId, homeDiskId }) ||
+        typeof hold.generation !== "string" || !/^[a-f0-9]{64}$/.test(hold.generation) ||
+        !Number.isSafeInteger(hold.heldSince) || hold.heldSince <= 0 || hold.heldSince > now || !validHeldSourceStoreRoster(hold.stores)) {
+        throw new Error("Held Native source returned a mismatched hold acknowledgement");
+    }
+    return hold;
+}
+function validHeldSourceStoreRoster(stores) {
+    if (!Array.isArray(stores) || !stores.length || stores.length > 1024)
+        return false;
+    return stores.every(store => store && typeof store.storeId === "string" && store.storeId.length > 0 &&
+        typeof store.databaseIdentity === "string" && store.databaseIdentity.length > 0) &&
+        new Set(stores.map(store => store.storeId)).size === stores.length;
+}
 export async function requestHeldNativeSourceReconcile(input) {
     const { binding } = input;
     const { gatewayId, slug } = binding;

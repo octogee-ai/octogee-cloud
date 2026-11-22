@@ -611,6 +611,36 @@ export interface HeldNativeSourceBinding {
   claimStartedAt: number;
 }
 
+export type HeldNativeSourceClaim = Omit<HeldNativeSourceBinding, "holdGeneration">;
+export type HeldNativeSourceHoldAction = "acquire" | "read";
+
+export interface HeldNativeSourceHoldRequest {
+  claim: HeldNativeSourceClaim;
+  nonce: string;
+  expiresAt: number;
+}
+
+export interface HeldNativeSourceHoldProof {
+  scope: Omit<HeldNativeSourceClaim, "gatewayId" | "claimStartedAt" | "vmId" | "bootId" | "bootDiskId" | "homeDiskId"> & { sourceGatewayId: string };
+  generation: string;
+  heldSince: number;
+  source: Pick<HeldNativeSourceClaim, "vmId" | "bootId" | "bootDiskId" | "homeDiskId">;
+  stores: { storeId: string; databaseIdentity: string }[];
+}
+
+export function isHeldNativeSourceClaim(value: unknown): value is HeldNativeSourceClaim {
+  if (!value || typeof value !== "object" || Object.keys(value).length !== 13) return false;
+  const claim = value as Partial<HeldNativeSourceClaim>;
+  const scope = [claim.uid, claim.slug, claim.gatewayId, claim.targetGatewayId, claim.operationId, claim.schedulerMigrationId];
+  const providerIds = [claim.vmId, claim.bootDiskId, claim.homeDiskId];
+  return scope.every(field => typeof field === "string" && field.length > 0 && field.length <= 512 && field.trim() === field) &&
+    providerIds.every(field => typeof field === "string" && /^[1-9]\d*$/.test(field)) &&
+    typeof claim.bootId === "string" && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(claim.bootId) &&
+    typeof claim.requestId === "string" && /^[a-f0-9]{64}$/.test(claim.requestId) &&
+    typeof claim.sourceEpoch === "number" && Number.isSafeInteger(claim.sourceEpoch) && claim.sourceEpoch >= 0 &&
+    typeof claim.claimStartedAt === "number" && Number.isSafeInteger(claim.claimStartedAt) && claim.claimStartedAt > 0;
+}
+
 export interface HeldNativeSourceReconcileRequest extends MigrationRequestBody {
   binding: HeldNativeSourceBinding;
   nonce: string;

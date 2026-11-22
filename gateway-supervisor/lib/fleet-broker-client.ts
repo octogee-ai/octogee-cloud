@@ -1,3 +1,4 @@
+import type { HeldNativeSourceClaim } from "@octogee/shared/types/fleet-controller";
 import { watchFleetAssignments } from "./fleet-assignment-watch.js";
 import type {
   FleetBrokerAgentAnchor,
@@ -268,6 +269,14 @@ function serviceProvisioningClient(
     registerGitKey: (uid, publicKey) => serviceProvisioningAnswer("/internal/fleet/git-key", { uid, publicKey }),
     releaseGitKey: releaseServiceGitKey,
   };
+}
+
+export async function assertBrokeredHeldNativeSourceClaim(
+  claim: HeldNativeSourceClaim,
+  options: FleetBrokerClientOptions = {},
+): Promise<void> {
+  const credentials = options.gatewayCredentialHeaders ?? defaultGatewayCredentialHeaders;
+  await postNoContent("/internal/fleet/migration/held-native-source-claim", { gatewayId: claim.gatewayId, claim }, await credentials());
 }
 
 export interface FleetBrokerClientOptions {

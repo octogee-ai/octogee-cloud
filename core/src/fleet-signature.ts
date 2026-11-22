@@ -1,4 +1,5 @@
 import {
+  createHash,
   createPrivateKey,
   createPublicKey,
   sign as cryptoSign,
@@ -70,4 +71,13 @@ function normalizeKeyMaterial(raw: string): string {
 
 export function heldNativeSourceReconcileJobId(migrationId: string, gatewayId: string): string {
   return gatewayScopedJobId(`held-native-source-reconcile/${migrationId}`, gatewayId);
+}
+
+export function heldNativeSourceHoldJobId(action: "acquire" | "read", operationId: string, gatewayId: string): string {
+  return gatewayScopedJobId(`held-native-source-hold/${action}/${operationId}`, gatewayId);
+}
+
+export function heldNativeSourceHoldAudience(action: "acquire" | "read", rawRequest: string, hold: unknown): string {
+  const digest = createHash("sha256").update(JSON.stringify([action, rawRequest, hold])).digest("hex");
+  return `urn:octogee:held-native-source-hold:${digest}`;
 }

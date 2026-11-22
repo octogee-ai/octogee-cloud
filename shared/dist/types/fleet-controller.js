@@ -89,3 +89,16 @@ export function isSchedulerMigrationResult(value, operationId, phase) {
 }
 // users/{uid}/scheduleTransfers/{migrationId}
 export const SCHEDULE_TRANSFERS_SUBCOLLECTION = "scheduleTransfers";
+export function isHeldNativeSourceClaim(value) {
+    if (!value || typeof value !== "object" || Object.keys(value).length !== 13)
+        return false;
+    const claim = value;
+    const scope = [claim.uid, claim.slug, claim.gatewayId, claim.targetGatewayId, claim.operationId, claim.schedulerMigrationId];
+    const providerIds = [claim.vmId, claim.bootDiskId, claim.homeDiskId];
+    return scope.every(field => typeof field === "string" && field.length > 0 && field.length <= 512 && field.trim() === field) &&
+        providerIds.every(field => typeof field === "string" && /^[1-9]\d*$/.test(field)) &&
+        typeof claim.bootId === "string" && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(claim.bootId) &&
+        typeof claim.requestId === "string" && /^[a-f0-9]{64}$/.test(claim.requestId) &&
+        typeof claim.sourceEpoch === "number" && Number.isSafeInteger(claim.sourceEpoch) && claim.sourceEpoch >= 0 &&
+        typeof claim.claimStartedAt === "number" && Number.isSafeInteger(claim.claimStartedAt) && claim.claimStartedAt > 0;
+}

@@ -109,6 +109,7 @@ export const SELF_SCOPED_INTERNAL_BROKER_ROUTES = new Set([
   "/internal/fleet/npm-registry-credentials",
   "/internal/fleet/user-snapshot",
   "/internal/fleet/migration/target-import-permit",
+  "/internal/fleet/migration/held-native-source-claim",
   "/internal/fleet/builder-runtime-state/download-url",
   "/internal/fleet/builder-runtime-state/snapshot-urls",
   "/internal/fleet/builder-runtime-state/prune",

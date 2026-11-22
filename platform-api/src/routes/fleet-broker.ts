@@ -1,3 +1,4 @@
+import { isHeldNativeSourceClaim } from "@octogee/shared/types/fleet-controller";
 import { collectChannelBindings, CorruptStoredFieldError, defaultAgentMattermostSecret, loadSnapshot, snapshotDefaultAgentFields, storedRuntimeReset, storedTimeZone } from "@octogee/core/broker-user-snapshot";
 export { collectChannelBindings, CorruptStoredFieldError, projectCheckoutScopeForGatewayRoot, snapshotBaseFields, snapshotGreetingPosted, storedTimeZone } from "@octogee/core/broker-user-snapshot";
 import { builderActivateOperationId } from "@octogee/shared/types/isolated-operation-ids";
@@ -18,7 +19,7 @@ import {
 } from "../lib/assigned-isolated-agent-anchor-scope.js";
 import { sharedAgentAnchorMigrationScope, sharedAssignedSourceSurgeAnchorScope } from "../lib/shared-agent-anchor-migration.js";
 import { installWorkspaceBlobBrokerRoute, type WorkspaceBlobStore } from "./fleet-broker-workspace-blob.js";
-import { heldNativeReturnBlocksOwnerDestination } from "@octogee/core/fleet-state";
+import { assertHeldNativeReturnRepairClaim, HeldNativeReturnConflict, heldNativeReturnBlocksOwnerDestination } from "@octogee/core/fleet-state";
 import {
   FenceMismatchError,
   MalformedRecordError,
@@ -1897,6 +1898,33 @@ function installSnapshotRoutes(
 
   router.post("/configured-builder-bootstrap", async (req, res) => {
     await handleConfiguredUserBootstrap(deps, req, res);
+  });
+
+  router.post("/migration/held-native-source-claim", async (req, res) => {
+    const bound = boundGateway(req, res);
+    if (!bound) return;
+    const claim: unknown = req.body?.claim;
+    if (!isHeldNativeSourceClaim(claim)) {
+      res.status(400).json({ error: "invalid_held_native_source_claim" }); return;
+    }
+    if (bound.gatewayId !== claim.gatewayId || bound.ownerUid !== claim.uid || bound.podUid !== claim.vmId || bound.finalHomeCheckpoint) {
+      res.status(403).json(FORBIDDEN); return;
+    }
+    const runtime = await store.fleetRegistry.get(bound.gatewayId);
+    if (runtime?.runtime !== "gce-vm" || runtime.vm?.instanceId !== claim.vmId || runtime.vm.status !== "RUNNING") {
+      res.status(403).json(FORBIDDEN); return;
+    }
+    const { operationId, uid, slug, gatewayId, targetGatewayId, schedulerMigrationId, sourceEpoch, requestId, claimStartedAt } = claim;
+    try {
+      await assertHeldNativeReturnRepairClaim(store, {
+        authority: { operationId, uid, slug, sourceGatewayId: gatewayId, targetGatewayId, schedulerMigrationId, sourceEpoch, requestId },
+        claimStartedAt,
+      });
+      res.status(204).end();
+    } catch (error) {
+      if (!(error instanceof HeldNativeReturnConflict)) throw error;
+      res.status(409).json({ error: "held_native_source_claim_changed" });
+    }
   });
 
   router.post("/migration/target-import-permit", async (req, res) => {

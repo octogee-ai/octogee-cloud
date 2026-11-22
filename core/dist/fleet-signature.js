@@ -1,4 +1,4 @@
-import { createPrivateKey, createPublicKey, sign as cryptoSign, verify as cryptoVerify, } from "node:crypto";
+import { createHash, createPrivateKey, createPublicKey, sign as cryptoSign, verify as cryptoVerify, } from "node:crypto";
 export function canonicalPayload(jobId, rawBody) {
     return `${jobId}\n${rawBody}`;
 }
@@ -48,4 +48,11 @@ function normalizeKeyMaterial(raw) {
 }
 export function heldNativeSourceReconcileJobId(migrationId, gatewayId) {
     return gatewayScopedJobId(`held-native-source-reconcile/${migrationId}`, gatewayId);
+}
+export function heldNativeSourceHoldJobId(action, operationId, gatewayId) {
+    return gatewayScopedJobId(`held-native-source-hold/${action}/${operationId}`, gatewayId);
+}
+export function heldNativeSourceHoldAudience(action, rawRequest, hold) {
+    const digest = createHash("sha256").update(JSON.stringify([action, rawRequest, hold])).digest("hex");
+    return `urn:octogee:held-native-source-hold:${digest}`;
 }

@@ -1,4 +1,5 @@
-import { type ScheduleCheckRequestBody, type ScheduleCheckResult, type ScheduleRemoveRequestBody, type ScheduleRemoveResult, type ScheduleRestoreRequestBody, type ScheduleRestoreResult, type ScheduleSnapshotRequestBody, type ScheduleSnapshotResult, type ScheduleTransferRequestBody, type SchedulerMigrationRequestBody, type SchedulerMigrationResult, type FlushGatewayResponse, type HeldNativeSourceBinding, type HeldNativeSourceReconcileProof, type ImportResponse, type MigrationProgressRequestBody, type QuiesceResponse, type RestoreMigrationResponse, type UnmountResponse, type VerifyMigrationResponse } from "@octogee/shared/types/fleet-controller";
+import { type VerifyGoogleIdToken } from "./gce-instance-identity.js";
+import { type ScheduleCheckRequestBody, type ScheduleCheckResult, type ScheduleRemoveRequestBody, type ScheduleRemoveResult, type ScheduleRestoreRequestBody, type ScheduleRestoreResult, type ScheduleSnapshotRequestBody, type ScheduleSnapshotResult, type ScheduleTransferRequestBody, type SchedulerMigrationRequestBody, type SchedulerMigrationResult, type FlushGatewayResponse, type HeldNativeSourceBinding, type HeldNativeSourceClaim, type HeldNativeSourceHoldAction, type HeldNativeSourceHoldProof, type HeldNativeSourceReconcileProof, type ImportResponse, type MigrationProgressRequestBody, type QuiesceResponse, type RestoreMigrationResponse, type UnmountResponse, type VerifyMigrationResponse } from "@octogee/shared/types/fleet-controller";
 import type { FleetBrokerProjectCheckoutScope, FleetBrokerUserSnapshot } from "@octogee/shared/types/fleet-broker";
 import type { MigrationSyncMode } from "./fleet-migration.js";
 export interface MigrationClientTimeouts {
@@ -126,6 +127,20 @@ export declare class MigrationTransportError extends Error {
 }
 export declare function isDefinitiveConfigRpcRejection(error: unknown): boolean;
 export { reconcileHeldNativeSource } from "./held-native-source-reconcile.js";
+export declare function requestHeldNativeSourceHold(input: {
+    claim: HeldNativeSourceClaim;
+    action: HeldNativeSourceHoldAction;
+    sourceUrl: string;
+    privateKey: string;
+    gce: {
+        projectId: string;
+        zone: string;
+        instanceName: string;
+        serviceAccountEmail: string;
+    };
+    fetch?: typeof globalThis.fetch;
+    verifyInstanceIdentity?: VerifyGoogleIdToken;
+}): Promise<HeldNativeSourceHoldProof>;
 export declare function requestHeldNativeSourceReconcile(input: {
     binding: HeldNativeSourceBinding;
     sourceUrl: string;

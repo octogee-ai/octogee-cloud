@@ -434,6 +434,26 @@ export interface HeldNativeSourceBinding {
     schedulerMigrationId: string;
     claimStartedAt: number;
 }
+export type HeldNativeSourceClaim = Omit<HeldNativeSourceBinding, "holdGeneration">;
+export type HeldNativeSourceHoldAction = "acquire" | "read";
+export interface HeldNativeSourceHoldRequest {
+    claim: HeldNativeSourceClaim;
+    nonce: string;
+    expiresAt: number;
+}
+export interface HeldNativeSourceHoldProof {
+    scope: Omit<HeldNativeSourceClaim, "gatewayId" | "claimStartedAt" | "vmId" | "bootId" | "bootDiskId" | "homeDiskId"> & {
+        sourceGatewayId: string;
+    };
+    generation: string;
+    heldSince: number;
+    source: Pick<HeldNativeSourceClaim, "vmId" | "bootId" | "bootDiskId" | "homeDiskId">;
+    stores: {
+        storeId: string;
+        databaseIdentity: string;
+    }[];
+}
+export declare function isHeldNativeSourceClaim(value: unknown): value is HeldNativeSourceClaim;
 export interface HeldNativeSourceReconcileRequest extends MigrationRequestBody {
     binding: HeldNativeSourceBinding;
     nonce: string;
