@@ -4,6 +4,7 @@ import { NATIVE_RETURN_TARGET_EXCLUSION, nativeReturnTargetExclusionId, readHeld
   type HeldNativeReturnSelection } from "@octogee/core/fleet-state";
 import { buildOperationAuditIntent } from "@octogee/core/operation-audit";
 import type { PlatformStateStore, PlatformStateTransaction } from "@octogee/core/platform-state";
+import type { RetiredNativeTarget } from "./compensating-native-return.js";
 import type { SurgeKubectl } from "../surge-user-handoff-runtime.js";
 import { createHeldNativeReturnDestinationVerifier } from "./held-native-return-destination.js";
 
@@ -22,9 +23,10 @@ export interface VerifiedRetainedSharedRoles {
 type Reservation = { scope: NativeOldTargetScope; podUid: string };
 type Audit = NonNullable<Awaited<ReturnType<PlatformStateTransaction["journal"]["audits"]["get"]>>>;
 type Providers = {
-  readRetainedCompletion(reservation: Reservation): Promise<VerifiedRetainedSharedRoles>;
+  readRetainedCompletion?(reservation: Reservation): Promise<VerifiedRetainedSharedRoles>;
   verifyPod(reservation: Reservation, assertCurrent: () => Promise<void>): Promise<void>;
   verifyStores(scope: NativeOldTargetScope, assertCurrent: () => Promise<void>): Promise<void>;
+  verifyRetiredRoutes?(reservation: Reservation, assertCurrent: () => Promise<void>): Promise<boolean>;
   verifyWholeRetirement?(gatewayId: string, assertCurrent: () => Promise<void>): Promise<boolean>;
 };
 
@@ -53,11 +55,52 @@ function readBinding(audit: Audit | null, scope: NativeOldTargetScope): Reservat
   return reservation && isDeepStrictEqual(reservation.scope, scope) && typeof reservation.podUid === "string" ? reservation : null;
 }
 
+function readDrainPod(audit: Audit | null, scope: NativeOldTargetScope) {
+  if (!audit) return null;
+  const { uid, slug: _slug, exclusionId, ...selection } = scope;
+  const { target, mutation } = audit;
+  const reservation = target.reservation as { selection?: unknown; oldPodUid?: string } | undefined;
+  const drain = target.drain as { operationId?: string } | undefined;
+  const qualifiedStatus = audit.status === "in-progress" || (audit.status === "completed" && audit.outcome === "completed");
+  if (!qualifiedStatus || ![audit.id === exclusionId, exclusionId === nativeReturnTargetExclusionId(uid),
+    mutation.kind === NATIVE_RETURN_TARGET_EXCLUSION, mutation.operationId === scope.operationId, target.uid === uid,
+    target.targetGatewayId === scope.targetGatewayId, drain?.operationId === scope.operationId,
+    isDeepStrictEqual(reservation?.selection, selection), Number.isSafeInteger(audit.actionStartedAt),
+    audit.actionClaimId === exclusionId].every(Boolean)) return null;
+  const podUid = reservation?.oldPodUid;
+  return typeof podUid === "string" && podUid ? podUid : null;
+}
+
+export async function readRetiredTargetOperatorScope(tx: PlatformStateTransaction, actor: string, operationId: string): Promise<NativeOldTargetScope> {
+  const operation = await tx.journal.operations.get(operationId);
+  const uid = operation?.input.uid;
+  const slug = operation?.input.userSlug;
+  const handoff = operation?.schedulerHandoff;
+  const sourceEpoch = handoff?.forwardRecovery?.sourceEpoch;
+  requireExclusion(typeof uid === "string" && typeof slug === "string" && handoff && typeof sourceEpoch === "number" &&
+    operation?.kind === "migrate-user", "exact Native return journal is required");
+  const scope = { uid, slug, exclusionId: nativeReturnTargetExclusionId(uid), operationId, sourceEpoch,
+    sourceGatewayId: handoff.fromGatewayId, targetGatewayId: handoff.toGatewayId, schedulerMigrationId: handoff.migrationId };
+  const audit = await tx.journal.audits.get(scope.exclusionId);
+  requireExclusion(audit?.actor === actor && readDrainPod(audit, scope), "operator does not own the exact protected drain");
+  return scope;
+}
+
+async function readRetirementBinding(tx: PlatformStateTransaction, scope: NativeOldTargetScope) {
+  const [audit, retirement] = await Promise.all([
+    tx.journal.audits.get(scope.exclusionId), readNativeOldTargetRetirement(tx, scope.targetGatewayId),
+  ]);
+  const podUid = readDrainPod(audit, scope);
+  if (!audit || !retirement || !podUid || retirement.createdAt <= (audit.actionStartedAt ?? Infinity) ||
+      retirement.createdAt <= audit.createdAt) return null;
+  return { audit, retirement, podUid };
+}
+
 export function createNativeReturnTargetExclusion(deps: { store: PlatformStateStore; now: () => number; provider?: Providers }) {
   const { store, now, provider } = deps;
 
   async function reserve(environment: "test" | "prod", actor: string, selection: HeldNativeReturnSelection) {
-    requireExclusion(environment === "test" && actor && provider, "protected TEST and independent physical provider required");
+    requireExclusion(environment === "test" && actor && provider?.readRetainedCompletion, "protected TEST and independent physical provider required");
     return store.transaction({ label: "native-old-target-exclusion.reserve" }, async tx => {
       const reservation = await selectedOriginal(tx, selection);
       const { scope } = reservation;
@@ -89,7 +132,7 @@ export function createNativeReturnTargetExclusion(deps: { store: PlatformStateSt
   }
 
   async function observePhysical(reservation: Reservation, assertCurrent: () => Promise<void>) {
-    requireExclusion(provider, "independent physical provider unavailable");
+    requireExclusion(provider?.readRetainedCompletion, "independent retained target provider unavailable");
     await assertCurrent();
     const witness = await provider.readRetainedCompletion(reservation);
     requireExclusion(matchesRetainedRoles(reservation, witness), "accepted retained role completion mismatch");
@@ -140,18 +183,50 @@ export function createNativeReturnTargetExclusion(deps: { store: PlatformStateSt
     requireExclusion(isDeepStrictEqual(live, before.completion), "verified old target build changed");
   }
 
+  async function readRetiredTargetExclusion(tx: PlatformStateTransaction, scope: NativeOldTargetScope) {
+    const held = await readRetirementBinding(tx, scope);
+    return held ? { ...held.retirement, oldPodUid: held.podUid } : null;
+  }
+
+  async function verifyRetiredTargetExclusion(scope: NativeOldTargetScope, { oldPodUid, ...retirement }: RetiredNativeTarget) {
+    requireExclusion(provider?.verifyWholeRetirement && provider.verifyRetiredRoutes, "whole retirement and route observers required");
+    const read = () => store.transaction({ label: "native-old-target-exclusion.read-retired", readOnly: true },
+      tx => readRetirementBinding(tx, scope));
+    const before = await read();
+    requireExclusion(before?.podUid === oldPodUid && isDeepStrictEqual(before.retirement, retirement), "retirement no longer matches protected drain");
+    const assertCurrent = async () => {
+      const current = await read();
+      requireExclusion(current?.podUid === oldPodUid && current.audit.revision === before.audit.revision &&
+        isDeepStrictEqual(current.retirement, retirement), "retirement changed during physical observation");
+    };
+    await assertCurrent();
+    requireExclusion(await provider.verifyRetiredRoutes({ scope, podUid: before.podUid }, assertCurrent) &&
+      await provider.verifyWholeRetirement(scope.targetGatewayId, assertCurrent) &&
+      await provider.verifyRetiredRoutes({ scope, podUid: before.podUid }, assertCurrent),
+    "old Shared runtime, credentials or routes still exist");
+    await assertCurrent();
+  }
+
   async function releaseSharedHandoff(environment: "test" | "prod", actor: string, scope: NativeOldTargetScope) {
     requireExclusion(environment === "test" && actor && provider?.verifyWholeRetirement,
       "protected TEST whole retirement verifier required");
-    const read = (tx: PlatformStateTransaction) => readReleaseAuthority(tx, scope);
+    const read = async (tx: PlatformStateTransaction) => {
+      const current = await readReleaseAuthority(tx, scope);
+      requireExclusion(!current.retiredMode || current.audit.actor === actor, "operator does not own the exact protected drain");
+      return current;
+    };
     const before = await store.transaction({ label: "native-old-target-exclusion.retirement-read", readOnly: true }, read);
     const assertCurrent = async () => {
       const current = await store.transaction({ label: "native-old-target-exclusion.retirement-recheck", readOnly: true }, read);
       requireExclusion(isDeepStrictEqual(current.retirement, before.retirement) && current.audit.revision === before.audit.revision,
         "whole retirement or exclusion changed");
     };
-    requireExclusion(await provider.verifyWholeRetirement(scope.targetGatewayId, assertCurrent),
-      "old Shared runtime or credential still exists");
+    if (before.retiredMode) {
+      await verifyRetiredTargetExclusion(scope, { ...before.retirement, oldPodUid: before.retiredMode });
+    } else {
+      requireExclusion(await provider.verifyWholeRetirement(scope.targetGatewayId, assertCurrent),
+        "old Shared runtime or credential still exists");
+    }
     await store.transaction({ label: "native-old-target-exclusion.release-shared-handoff" }, async tx => {
       const { audit, retirement } = await read(tx);
       requireExclusion(isDeepStrictEqual(retirement, before.retirement) && audit.revision === before.audit.revision,
@@ -161,12 +236,20 @@ export function createNativeReturnTargetExclusion(deps: { store: PlatformStateSt
         requireExclusion(prior.actor === actor && isDeepStrictEqual(prior.retirement, retirement), "existing release proof changed");
         return;
       }
-      await tx.journal.audits.patch(audit.id, { target: { ...audit.target,
+      await tx.journal.audits.patch(audit.id, { ...(before.retiredMode ? { status: "completed", lifecycleStage: "action-completed",
+        outcome: "completed", completedAt: now() } as const : {}), target: { ...audit.target,
         sharedHandoffRelease: { retirement, actor, verifiedAt: now() } } }, { revision: audit.revision });
     });
   }
 
-  return { reserve, verifyReserved, readOldTargetExclusion, verifyOldTargetExclusion, releaseSharedHandoff };
+  async function releaseRetiredSharedHandoff(input: { environment: "test"; actor: string; operationId: string }) {
+    requireExclusion(input.environment === "test" && input.actor, "protected TEST operator required");
+    const scope = await store.transaction({ label: "native-old-target-exclusion.retired-release-scope", readOnly: true },
+      tx => readRetiredTargetOperatorScope(tx, input.actor, input.operationId));
+    return releaseSharedHandoff(input.environment, input.actor, scope);
+  }
+
+  return { reserve, verifyReserved, readOldTargetExclusion, verifyOldTargetExclusion, readRetiredTargetExclusion, verifyRetiredTargetExclusion, releaseSharedHandoff, releaseRetiredSharedHandoff };
 }
 
 async function readReleaseAuthority(tx: PlatformStateTransaction, scope: NativeOldTargetScope) {
@@ -176,17 +259,24 @@ async function readReleaseAuthority(tx: PlatformStateTransaction, scope: NativeO
     readNativeOldTargetRetirement(tx, scope.targetGatewayId),
   ]);
   const binding = readBinding(audit, scope);
-  requireExclusion(audit && binding && audit.status === "completed" && audit.outcome === "completed" &&
-    matchesRetainedRoles(binding, audit.target.retainedCompletion as VerifiedRetainedSharedRoles), "verified old target exclusion missing");
+  const retiredMode = readDrainPod(audit, scope);
+  requireExclusion(audit && (retiredMode || verifiedRetainedBinding(audit, binding)), "verified old target exclusion missing");
   requireExclusion(operation && retirement && typeof operation.completedAt === "number" &&
-    retirement.createdAt >= operation.completedAt, "exact whole retirement missing after rollback");
+    (retiredMode ? retirement.completedAt <= operation.completedAt : retirement.createdAt >= operation.completedAt),
+    "exact whole retirement missing at the required rollback stage");
   const stored = operation.input.compensatingNativeReturn as Record<string, unknown> | undefined;
   requireExclusion([operation.status === "failed", operation.rolledBack === true, operation.schedulerHandoffReleased === true,
+    !retiredMode || isDeepStrictEqual(stored?.retiredTarget, { ...retirement, oldPodUid: retiredMode }),
     operation.cutoverCommittedAt === undefined, Object.entries(scope).every(([key, value]) => stored?.[key] === value),
     owner?.gateway?.gatewayId === scope.sourceGatewayId, !owner?.fences.migration, assignments.length === 1,
     assignments[0]?.gatewayId === scope.sourceGatewayId, assignments[0]?.epoch === scope.sourceEpoch,
     assignments[0]?.state === "serving"].every(Boolean), "original source rollback is not complete");
-  return { audit, retirement };
+  return { audit, retirement, retiredMode };
+}
+
+function verifiedRetainedBinding(audit: Audit, binding: Reservation | null) {
+  return binding && audit.status === "completed" && audit.outcome === "completed" &&
+    matchesRetainedRoles(binding, audit.target.retainedCompletion as VerifiedRetainedSharedRoles);
 }
 
 function validEvidence(value: unknown): value is VerifiedRetainedSharedRoles {
@@ -235,6 +325,7 @@ export function createNativeOldTargetPhysicalProvider(deps: {
   return {
     readRetainedCompletion: deps.readRetainedCompletion,
     verifyWholeRetirement: deps.verifyWholeRetirement,
+    verifyRetiredRoutes: ({ scope, podUid }, assertCurrent) => retiredTargetRoutesAbsent(deps, scope.targetGatewayId, podUid, assertCurrent),
     verifyPod: ({ scope, podUid }, assertCurrent) =>
       createHeldNativeReturnDestinationVerifier({ ...deps, loopbackPodUid: podUid })(scope, assertCurrent),
     async verifyStores(scope, assertCurrent) {
@@ -246,4 +337,28 @@ export function createNativeOldTargetPhysicalProvider(deps: {
       await assertCurrent();
     },
   };
+}
+
+export async function retiredTargetRoutesAbsent(
+  deps: { namespace: string; runKubectl: SurgeKubectl }, gatewayId: string, podUid: string, assertCurrent: () => Promise<void>,
+) {
+  const services = new Set([`octogee-gateway-${gatewayId}`, `gateway-edge-${gatewayId}`]);
+  const prefix = ["-n", deps.namespace, "get"];
+  for (const name of services) {
+    await assertCurrent();
+    const service = await deps.runKubectl([...prefix, `service/${name}`, "--ignore-not-found=true", "-o", "name"]);
+    requireExclusion(service.code === 0, "could not read retired target Service");
+    if (service.stdout.trim()) return false;
+  }
+  await assertCurrent();
+  const endpoints = await deps.runKubectl([...prefix, "endpointslices", "-o", "json"]);
+  requireExclusion(endpoints.code === 0, "could not read retired target EndpointSlices");
+  const { items } = JSON.parse(endpoints.stdout) as { items: Array<{
+    metadata: { labels?: Record<string, string> }; endpoints: Array<{ targetRef?: { uid?: string } }>;
+  }> };
+  requireExclusion(Array.isArray(items), "invalid retired target EndpointSlice census");
+  const absent = !items.some(slice => services.has(slice.metadata.labels?.["kubernetes.io/service-name"] ?? "") ||
+    slice.endpoints.some(endpoint => endpoint.targetRef?.uid === podUid));
+  await assertCurrent();
+  return absent;
 }

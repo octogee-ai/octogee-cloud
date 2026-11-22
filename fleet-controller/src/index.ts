@@ -3267,9 +3267,9 @@ function configureEnrolledNativeRecovery(deps: {
   if (!enrollment) return undefined;
   const { store, privateKey, prepareMigrationAgentStores } = deps;
   return createNativeRecoveryComposition(environmentName, NAMESPACE, store, Date.now, {
+    ...enrollment,
     target: {
       privateKey, runKubectl: deps.runKubectl, agentStoreAdminDsn: deps.agentStoreAdminDsn,
-      readRetainedCompletion: enrollment.readRetainedCompletion,
       verifyWholeRetirement: buildNativeReturnTargetRetirementVerifier(store, deps.kubeOps),
     },
     source: {
@@ -3283,7 +3283,6 @@ function configureEnrolledNativeRecovery(deps: {
           });
       },
     },
-    inert: enrollment.inert, registerOperatorActions: enrollment.registerOperatorActions,
   });
 }
 

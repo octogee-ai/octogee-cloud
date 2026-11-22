@@ -10,15 +10,26 @@ type ActionDependencies = Parameters<typeof createCompensatingNativeReturnAction
 type InertDependencies = Parameters<typeof createHeldSharedInertMaintenance>[0];
 type SourceDependencies = Parameters<typeof createCompensatingNativeOriginalObserver>[0];
 
-export type NativeRecoveryComposition = Pick<NativeRecoveryCompositionInput, "inert" | "registerOperatorActions"> & {
-  readRetainedCompletion: TargetDependencies["readRetainedCompletion"];
-};
-
-type NativeRecoveryCompositionInput = {
-  target: Omit<TargetDependencies, "namespace" | "store"> & Required<Pick<TargetDependencies, "verifyWholeRetirement">>;
-  source: Omit<ActionDependencies, "verifySourceServing"> & Pick<SourceDependencies, "vm"> & { serving: CompensatingSourceServingInputs };
+type RetainedComposition = {
+  mode?: undefined;
+  readRetainedCompletion: NonNullable<TargetDependencies["readRetainedCompletion"]>;
   inert: Omit<InertDependencies, "store" | "now">;
   registerOperatorActions(actions: NativeRecoveryOperatorActions): void;
+};
+
+type RetiredComposition = {
+  mode: "retired-only";
+  registerOperatorActions(actions: {
+    compensate: ReturnType<typeof createCompensatingNativeReturn>["requestRetired"];
+    releaseSharedHandoff: ReturnType<typeof createNativeReturnTargetExclusion>["releaseRetiredSharedHandoff"];
+  }): void;
+};
+
+export type NativeRecoveryComposition = RetainedComposition | RetiredComposition;
+
+type NativeRecoveryCompositionInput = NativeRecoveryComposition & {
+  target: Omit<TargetDependencies, "namespace" | "store" | "readRetainedCompletion"> & Required<Pick<TargetDependencies, "verifyWholeRetirement">>;
+  source: Omit<ActionDependencies, "verifySourceServing"> & Pick<SourceDependencies, "vm"> & { serving: CompensatingSourceServingInputs };
 };
 
 type NativeRecoveryOperatorActions = {
@@ -39,7 +50,8 @@ export function createNativeRecoveryComposition(
   if (environment !== "test" || !enrolled) return undefined;
   const target = createNativeReturnTargetExclusion({
     store, now,
-    provider: createNativeOldTargetPhysicalProvider({ ...enrolled.target, namespace, store }),
+    provider: createNativeOldTargetPhysicalProvider({ ...enrolled.target, namespace, store,
+      readRetainedCompletion: enrolled.mode === "retired-only" ? undefined : enrolled.readRetainedCompletion }),
   });
   const compensation = createCompensatingNativeReturn({
     store, now, actions: createCompensatingNativeReturnActions({
@@ -48,14 +60,22 @@ export function createNativeRecoveryComposition(
     provider: {
       readOldTargetExclusion: target.readOldTargetExclusion,
       verifyOldTargetExclusion: target.verifyOldTargetExclusion,
+      readRetiredTargetExclusion: target.readRetiredTargetExclusion,
+      verifyRetiredTargetExclusion: target.verifyRetiredTargetExclusion,
       observeOriginalSource: createCompensatingNativeOriginalObserver({ store, vm: enrolled.source.vm }),
     },
   });
-  const inert = createHeldSharedInertMaintenance({ ...enrolled.inert, store, now });
-  enrolled.registerOperatorActions({
-    compensate: compensation.request, excludeTarget: target.reserve, verifyTargetExclusion: target.verifyReserved,
-    releaseSharedHandoff: target.releaseSharedHandoff,
-    sharedInertMaintenance: inert,
-  });
+  if (enrolled.mode === "retired-only") {
+    enrolled.registerOperatorActions({
+      compensate: compensation.requestRetired,
+      releaseSharedHandoff: target.releaseRetiredSharedHandoff,
+    });
+  } else {
+    enrolled.registerOperatorActions({
+      compensate: compensation.request, excludeTarget: target.reserve, verifyTargetExclusion: target.verifyReserved,
+      releaseSharedHandoff: target.releaseSharedHandoff,
+      sharedInertMaintenance: createHeldSharedInertMaintenance({ ...enrolled.inert, store, now }),
+    });
+  }
   return compensation;
 }

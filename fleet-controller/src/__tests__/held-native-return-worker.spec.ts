@@ -1,4 +1,5 @@
-import { createNativeReturnTargetExclusion } from "../lib/native-return-target-exclusion.js";
+import { buildOperationAuditIntent } from "@octogee/core/operation-audit";
+import { createNativeReturnTargetExclusion, retiredTargetRoutesAbsent } from "../lib/native-return-target-exclusion.js";
 import { createCompensatingNativeReturn } from "../lib/compensating-native-return.js";
 import { gatewayRoot } from "@octogee/core-testing/admin-dry-run-app";
 import { claimGatewayRetirementInStore } from "@octogee/core/gateway-retirement-claim";
@@ -15,7 +16,7 @@ import {
   assertSharedInertPreLaunch, authorizeSharedInertMaintenance, authorizeSharedInertStockLaunch, readAuthorizedSharedInertStock, rollbackSharedInertBeforeStock,
   assertSharedHeldReturnMaintenanceUnfenced, completeSharedHeldReturnMaintenance, heldNativeReturnBlocksDestination,
   requestHeldNativeReturnRepair, resumeSharedHeldReturnMaintenance, stageSharedHeldReturnMaintenanceRelease, withdrawSharedHeldReturnMaintenance,
-  nativeReturnTargetDenied, nativeReturnSharedStoreHandoffDenied,
+  nativeReturnTargetDenied, nativeReturnSharedStoreHandoffDenied, NATIVE_RETURN_TARGET_EXCLUSION, nativeReturnTargetExclusionId,
   nativeReturnAllowsSharedDeparture, readNativeReturnTargetDrain, readNativeReturnSharedDrains, reserveNativeReturnTargetDrain,
   type SharedHeldReturnMaintenanceAdmission,
   type SharedHeldReturnMaintenanceResult,
@@ -819,6 +820,97 @@ function compensationFixture() {
   const ctx = { reportStep: vi.fn(), assertActiveClaim: vi.fn(async () => {}) };
   return { ...h, deps, provider, actions, worker, request, claim, ctx, home, source };
 }
+
+async function retiredCompensationFixture() {
+  const h = compensationFixture();
+  const exclusionId = nativeReturnTargetExclusionId(uid);
+  const request = { ...h.request, exclusionId, targetMode: "retired" as const };
+  const actor = request.actor;
+  const scope = { ...selection, uid, slug, exclusionId };
+  const oldPodUid = "old-retired-pod";
+  const replacementGatewayId = "shared-peer";
+  const audit = buildOperationAuditIntent({
+    actor, forced: false, what: "Drain target", why: "Preserve held Native return",
+    idempotencyKey: `${NATIVE_RETURN_TARGET_EXCLUSION}:${uid}`, now: () => 500,
+    mutation: { kind: NATIVE_RETURN_TARGET_EXCLUSION, operationId }, preActionStatus: { placement: "quiescing" },
+    target: { uid, targetGatewayId, reservation: { selection, oldPodUid, replacementGatewayId,
+      replacementPodUid: "peer-pod", ownerCount: 6, targetRelease: 1 },
+      drain: { operationId, replacementGatewayId, owners: [], dormantInboundOperationIds: [] } },
+  });
+  await h.store.journal.audits.create({ ...audit.document, id: audit.id, status: "in-progress", lifecycleStage: "action-started",
+    actionClaimId: exclusionId, actionStartedAt: 500, actionRecoveryCount: 0 });
+  h.docs.delete(`gateways/${targetGatewayId}`);
+  h.docs.delete(targetRuntimePath);
+  const retirementPath = `glmOperations/shared-pool-retire-${targetGatewayId}`;
+  const retirement = { kind: "retire-gateway", status: "succeeded", gatewayId: targetGatewayId,
+    createdAt: 520, completedAt: 530, input: { gatewayId: targetGatewayId, source: "shared-pool-scaler", retirementClaimVersion: 1 },
+    steps: [{ name: "helm-uninstall", status: "done" }, { name: "revoke-agent-store-credentials", status: "done" }] };
+  h.docs.set(retirementPath, retirement);
+  const physical = {
+    readRetainedCompletion: vi.fn(async () => { throw new Error("retained runtime forbidden"); }),
+    verifyPod: vi.fn(async () => {}), verifyStores: vi.fn(async () => {}),
+    verifyWholeRetirement: vi.fn(async (_id: string, assertCurrent: () => Promise<void>) => { await assertCurrent(); return true; }),
+    verifyRetiredRoutes: vi.fn(async (_reservation, assertCurrent: () => Promise<void>) => { await assertCurrent(); return true; }),
+  };
+  const exclusion = createNativeReturnTargetExclusion({ store: h.store, now: Date.now, provider: physical });
+  const provider = { ...exclusion, observeOriginalSource: vi.fn(async () => h.source) };
+  return { ...h, request, scope, physical, exclusion, retirement, retirementPath,
+    worker: createCompensatingNativeReturn({ ...h.deps, provider }) };
+}
+
+it("compensates the same Native operation only after the enrolled old member is retired and keeps its permanent denial", async () => {
+  const h = await retiredCompensationFixture();
+  const input = { environment: "test" as const, actor: h.request.actor, operationId };
+  await expect(h.worker.requestRetired({ ...input, actor: "unrelated" })).rejects.toThrow(/exact protected drain/);
+  const authority = await h.worker.requestRetired(input);
+  await expect(h.worker.requestRetired(input)).resolves.toEqual(authority);
+  expect(authority.retiredTarget).toMatchObject({ oldPodUid: "old-retired-pod", version: 1, createdAt: 520 });
+  await expect(h.worker.request({ ...h.request, attemptId: authority.attemptId, targetMode: undefined })).rejects.toThrow(/different authority/);
+  await expect(h.exclusion.releaseRetiredSharedHandoff(input)).rejects.toThrow(/whole retirement missing/);
+  const handler = createMigrateUserHandler({ recoverCompensatingNativeReturn: h.worker.recover } as MigrateUserDeps);
+  const deps = { store: h.store, handlers: { "migrate-user": handler }, log: vi.fn() } as unknown as Parameters<typeof processOperation>[1];
+  await processOperation((await h.store.journal.operations.get(operationId))!, { ...deps, assertCompensatingNativeReturnClaimable: h.worker.assertClaimable });
+  expect(h.physical.readRetainedCompletion).not.toHaveBeenCalled();
+  const finished = await h.store.journal.operations.get(operationId);
+  expect(finished).toMatchObject({ status: "failed", rolledBack: true, schedulerHandoffReleased: true, schedulerHandoff: h.operations.schedulerHandoff });
+  expect(finished?.attemptHistory).toContainEqual(h.latest);
+  expect(await h.store.gateways.assignments.get(sourceGatewayId, uid)).toMatchObject({ state: "serving", epoch: sourceEpoch });
+  expect(await nativeReturnSharedStoreHandoffDenied(h.store, uid)).toBe(true);
+  await h.exclusion.releaseRetiredSharedHandoff(input);
+  await h.exclusion.releaseRetiredSharedHandoff(input);
+  await expect(h.worker.requestRetired(input)).resolves.toEqual(authority);
+  expect(await nativeReturnSharedStoreHandoffDenied(h.store, uid)).toBe(false);
+  expect(await nativeReturnTargetDenied(h.store, uid, targetGatewayId)).toBe(true);
+});
+
+it("refuses stale retirement, stale routes and target recreation without releasing the Native checkpoint", async () => {
+  const h = await retiredCompensationFixture();
+  h.docs.set(h.retirementPath, { ...h.retirement, createdAt: 500 });
+  await expect(h.worker.request(h.request)).rejects.toThrow(/retirement after Native drain reservation/);
+  h.docs.set(h.retirementPath, h.retirement);
+  h.physical.verifyRetiredRoutes.mockResolvedValueOnce(false);
+  await expect(h.worker.request(h.request)).rejects.toThrow(/routes still exist/);
+  await h.worker.request(h.request);
+  h.docs.set(targetRuntimePath, h.targetRuntime);
+  const operation = await h.claim();
+  await expect(h.worker.recover(operation, h.ctx)).resolves.toMatchObject({ rolledBack: false, error: expect.stringContaining("durable exclusion changed") });
+  expect((await h.store.fleetRegistry.get(sourceGatewayId))?.vmHome?.returnOperationId).toBe(operationId);
+  expect(h.actions.prepareSourceStores).not.toHaveBeenCalled();
+});
+
+it("refuses Services and EndpointSlices bound to the retired target even when another Service points at its old Pod", async () => {
+  function makeKube(service: string, slices: unknown[]) {
+    return { namespace: "octogee-test", runKubectl: vi.fn(async (args: string[]) => ({
+      code: 0, stderr: "", stdout: args.includes("endpointslices") ? JSON.stringify({ items: slices }) : args.includes(service) ? service : "",
+    })) };
+  }
+  const assertCurrent = vi.fn(async () => {});
+  const verify = (deps: ReturnType<typeof makeKube>) => retiredTargetRoutesAbsent(deps, targetGatewayId, "old-pod", assertCurrent);
+  await expect(verify(makeKube(`service/gateway-edge-${targetGatewayId}`, []))).resolves.toBe(false);
+  await expect(verify(makeKube("", [{ metadata: { labels: { "kubernetes.io/service-name": `octogee-gateway-${targetGatewayId}` } }, endpoints: [] }]))).resolves.toBe(false);
+  await expect(verify(makeKube("", [{ metadata: {}, endpoints: [{ targetRef: { uid: "old-pod" } }] }]))).resolves.toBe(false);
+  await expect(verify(makeKube("", [{ metadata: {}, endpoints: [{ targetRef: { uid: "unrelated" } }] }]))).resolves.toBe(true);
+});
 
 it("admits only with independent durable exclusion and preserves the untouched journal on refusal", async () => {
   const h = compensationFixture();
