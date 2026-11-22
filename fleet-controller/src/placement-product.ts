@@ -1,3 +1,4 @@
+import type { InstalledSharedReleaseReader } from "@octogee/core/fleet-state-sections";
 import type { GatewayArtifact } from "@octogee/core/gateway-live-release";
 import type { PlacementAutomationGate } from "@octogee/core/placement-automation-handoff";
 import type { PlatformStateStore } from "@octogee/core/platform-state";
@@ -25,6 +26,7 @@ export interface PlacementProductDeps {
   policyInputs: UserPolicyInputsSource;
   readSizingKey: SizingKeyReader;
   namespace: string;
+  readInstalledSharedRelease?: InstalledSharedReleaseReader | undefined;
   platformArtifact: GatewayArtifact;
   now(): number;
   log(message: string): void;

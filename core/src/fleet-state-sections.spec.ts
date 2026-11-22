@@ -25,13 +25,14 @@ function store(): PlatformStateStore {
   return createDocumentFixtureStore(records, { serializeTransactions: true });
 }
 
-function app(options: { platformStore?: PlatformStateStore; readGatewayKubernetes?: GatewayKubernetesReader; sourceRecoveryPending?: SourceRecoveryPendingReader } = {}) {
+function app(options: { readInstalledSharedRelease?: () => Promise<boolean>; platformStore?: PlatformStateStore; readGatewayKubernetes?: GatewayKubernetesReader; sourceRecoveryPending?: SourceRecoveryPendingReader } = {}) {
   const platformStore = options.platformStore ?? store();
   const server = express();
   server.use(express.json());
   addAdminSharedPoolRoutes(server, {
     store: platformStore,
     platformArtifact: PLATFORM,
+    readInstalledSharedRelease: options.readInstalledSharedRelease,
     controllerStartedAt: CONTROLLER_STARTED_AT,
     journal: createAdminFleetMutationRunner(platformStore),
     now: () => NOW,
@@ -267,6 +268,17 @@ describe("GET /fleet/state sections", () => {
       },
       platformCurrentSharedGatewayIds: ["shared-aaaaaaaaaaaa", "shared-cccccccccccc"],
     });
+  });
+
+  it.each(["/fleet/state", "/fleet/state?sections=releases"])("selects an installed Shared runtime while preserving its release hash on %s", async (path) => {
+    seedGateway("shared-bbbbbbbbbbbb", {}, PREVIOUS);
+    const readInstalledSharedRelease = vi.fn(async () => true);
+
+    const response = await request(app({ readInstalledSharedRelease })).get(path).expect(200);
+
+    expect(response.body.platformCurrentSharedGatewayIds).toEqual(["shared-bbbbbbbbbbbb"]);
+    expect(response.body.latestReleasePayloadHashes["shared-bbbbbbbbbbbb"]).toBe(releasePayloadHash(PREVIOUS));
+    expect(readInstalledSharedRelease).toHaveBeenCalledWith(expect.objectContaining({ gatewayId: "shared-bbbbbbbbbbbb" }), PREVIOUS, PLATFORM);
   });
 
   it("answers active migrations whatever operation statuses the caller asked for", async () => {

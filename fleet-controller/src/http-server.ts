@@ -1,3 +1,4 @@
+import type { InstalledSharedReleaseReader } from "@octogee/core/fleet-state-sections";
 
 import type { GatewayArtifact } from "@octogee/core/gateway-live-release";
 
@@ -114,6 +115,7 @@ export interface HttpServerDeps {
   }) => Promise<unknown[]>;
   releaseEnvironment?: "test" | "prod" | null;
   releaseAuthority?: CentralReleaseAuthority;
+  readInstalledSharedRelease?: InstalledSharedReleaseReader | undefined;
   platformArtifact?: GatewayArtifact;
   controllerStartedAt?: number;
   readGatewayPodDiagnostics?: (gatewayId: string) => Promise<GatewayPodDiagnostics>;
@@ -508,6 +510,7 @@ export function createHttpServer(deps: HttpServerDeps): Express {
     releaseEnvironment: deps.releaseEnvironment,
     releaseAuthority: deps.releaseAuthority,
     platformArtifact: deps.platformArtifact,
+    readInstalledSharedRelease: deps.readInstalledSharedRelease,
     controllerStartedAt: deps.controllerStartedAt,
     readGatewayKubernetes: readAdminGatewayKubernetes,
     readGatewayPodDiagnostics: deps.readGatewayPodDiagnostics,

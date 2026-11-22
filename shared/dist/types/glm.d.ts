@@ -586,6 +586,10 @@ export interface HelmInstanceValue {
         fingerprint: string;
         helmRevision: number;
     };
+    gatewayEdgeImage?: {
+        imageRepository: string;
+        imageTag: string;
+    };
     serviceAccountName?: string;
     serviceAccount?: GatewayServiceAccountSpec;
     gatewayContainerSecurityContext?: Record<string, unknown>;
