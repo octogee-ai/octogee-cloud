@@ -37,6 +37,15 @@ function projected(value: unknown, projection: Projection, paths: readonly strin
   });
 }
 
+function assertCompleteNativeDryRun(stdout: string): void {
+  let proof;
+  try { proof = JSON.parse(stdout); } catch { throw new Error("Held Native staged config validation emitted no structured proof"); }
+  if (proof?.ok !== true || proof?.checks?.schema !== true || proof?.checks?.resolvability !== true ||
+      proof.checks.resolvabilityComplete !== true || proof.skippedExecRefs !== 0) {
+    throw new Error("Held Native staged config did not verify all secret references");
+  }
+}
+
 export async function applyHeldNativeStagedConfig(input: {
   stage: StagedNativeConfig;
   compose: (config: unknown) => Projection;
@@ -53,6 +62,7 @@ export async function applyHeldNativeStagedConfig(input: {
     const result = await runNative(args, { env: stage.environment, stdin, timeoutMs: 45_000 });
     await check();
     if (result.code !== 0) throw new Error(`Held Native staged config command refused (${args[1]})`);
+    return result.stdout;
   };
   await check();
   const before = await stage.read();
@@ -62,7 +72,7 @@ export async function applyHeldNativeStagedConfig(input: {
   const paths = replacementPaths(plan);
   const patchArgs = ["config", "patch", "--stdin", ...paths.flatMap(path => ["--replace-path", path])];
   const patch = JSON.stringify(plan.patch);
-  await native([...patchArgs, "--dry-run", "--json"], patch);
+  assertCompleteNativeDryRun(await native([...patchArgs, "--dry-run", "--json"], patch));
   const unchanged = projected(before.value, plan, paths);
   if (!unchanged) await native(patchArgs, patch);
   await native(["config", "validate", "--json"]);

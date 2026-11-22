@@ -5,6 +5,7 @@ import type { OpenClawCommand } from "../lib/openclaw-cli.js";
 const expected = { agents: { entries: { "octogee-owner-coach": { identity: { name: "Current owner" } } } } };
 const old = { agents: { entries: { "octogee-owner-coach": { identity: { name: "Prior owner", stale: true } } } } };
 const path = "agents.entries.octogee-owner-coach.identity";
+const nativeProof = { ok: true, checks: { schema: true, resolvability: true, resolvabilityComplete: true }, skippedExecRefs: 0 };
 
 function fixture(original = old) {
   const environment = { OPENCLAW_CONFIG_PATH: "/synthetic/stage/openclaw.json" };
@@ -16,7 +17,7 @@ function fixture(original = old) {
   };
   const assertHeld = vi.fn().mockResolvedValue(undefined);
   const compose = () => ({ patch: expected, replacePaths: [path] });
-  const runNative = vi.fn<OpenClawCommand>().mockResolvedValue({ code: 0, stdout: "synthetic output" });
+  const runNative = vi.fn<OpenClawCommand>().mockResolvedValue({ code: 0, stdout: JSON.stringify(nativeProof) });
   return { stage, assertHeld, compose, runNative };
 }
 
@@ -55,6 +56,10 @@ describe("held Native offline config staging", () => {
     });
     await expect(applyHeldNativeStagedConfig(lost)).rejects.toThrow("claim changed");
     expect(lost.runNative).toHaveBeenCalledTimes(1);
+    const incomplete = fixture();
+    incomplete.runNative.mockResolvedValueOnce({ code: 0, stdout: JSON.stringify({ ...nativeProof, skippedExecRefs: 1 }) });
+    await expect(applyHeldNativeStagedConfig(incomplete)).rejects.toThrow("all secret references");
+    expect(incomplete.runNative).toHaveBeenCalledTimes(1);
     const bad = fixture();
     bad.runNative.mockResolvedValueOnce({ code: 1, stdout: "must not be exposed" });
     await expect(applyHeldNativeStagedConfig(bad)).rejects.toThrow("command refused");
