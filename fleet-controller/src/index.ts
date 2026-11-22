@@ -1,3 +1,4 @@
+import { persistOperationCompletion } from "./legacy-migration-recovery.js";
 import type { HobbyCheckpointPod } from "./helm-runner.js";
 import { installDefaultUserEntitlements, userEntitlements } from "@octogee/shared/types/user-entitlements";
 import { createUserActivationRollRecoveryOwner } from './user-activation-roll-recovery-owner.js';
@@ -2320,6 +2321,7 @@ async function runClaimedOperation(
     const freshOp = await tx.journal.operations.get(op.id);
     if (freshOp === null) return null;
     if (!shouldPersistClaimedOperationCompletion({ status: freshOp.status, startedAt: freshOp.startedAt, claimedStartedAt: op.startedAt })) return null;
+    const now = Date.now();
     const completion = buildOperationCompletionUpdate({
       op: {
         id: op.id,
@@ -2339,14 +2341,13 @@ async function runClaimedOperation(
       },
       result,
       steps,
-      now: Date.now(),
+      now,
     });
     const verifiedDeletion = verifiedDeletionCompletion(result);
     if (verifiedDeletion) {
       await tx.jobs.deletions.patch(verifiedDeletion.deletionId, verifiedDeletionJobPatch(verifiedDeletion.archiveId, Date.now()));
     }
-    await tx.journal.operations.patch(op.id, completion);
-    return completion;
+    return persistOperationCompletion(tx, freshOp, completion, now);
   });
   if (!completion) {
     deps.log(`[glm-controller] op=${op.id} completion discarded because the operation was cancelled or re-claimed`);
