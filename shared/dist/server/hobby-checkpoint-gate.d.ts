@@ -20,4 +20,5 @@ export declare function checkpointGatewayCredentials(read?: typeof readCheckpoin
     token: string;
     agentStoreDsn: string;
 }>;
+export declare function initializeCheckpointEdge(isSidecar: boolean): Promise<void>;
 export {};

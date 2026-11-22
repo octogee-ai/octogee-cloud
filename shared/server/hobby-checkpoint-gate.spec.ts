@@ -1,6 +1,6 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { checkpointGatewayCredentials, matchesRestartedCheckpoint, readCheckpointRestore, waitForCheckpointClaim } from './hobby-checkpoint-gate.js';
+import { checkpointGatewayCredentials, initializeCheckpointEdge, matchesRestartedCheckpoint, readCheckpointRestore, waitForCheckpointClaim } from './hobby-checkpoint-gate.js';
 
 vi.mock("node:fs/promises", async importOriginal => ({
   ...await importOriginal<typeof import("node:fs/promises")>(),
@@ -43,7 +43,7 @@ describe('single-use checkpoint boot', () => {
 });
 
 describe('checkpoint credential projection', () => {
-  it('does not read an already-mounted Secret until the exact restored claim arrives', async () => {
+  it.each(['gateway', 'edge'] as const)('prepares a fresh %s without procfs and opens credentials only after a valid restore', async role => {
     for (const [key, value] of Object.entries(source)) vi.stubEnv(key, value);
     vi.stubEnv('OCTOGEE_CHECKPOINT_SNAPSHOT', '');
     const spec = Object.entries(current).map(([key, value]) => `${key}=${value}`).join('\0');
@@ -53,7 +53,10 @@ describe('checkpoint credential projection', () => {
     vi.mocked(readFile).mockImplementation(async input => {
       const file = String(input);
       mountedPaths.push(file);
-      if (file === '/proc/gvisor/spec_environ') return spec;
+      if (file === '/proc/gvisor/spec_environ') {
+        if (!claimObserved) throw pending;
+        return spec;
+      }
       if (file.endsWith('/claim.json')) {
         if (claimObserved) return JSON.stringify(claim);
         claimObserved = true;
@@ -63,11 +66,27 @@ describe('checkpoint credential projection', () => {
       if (file.endsWith('/agent-store-dsn')) return 'postgres://test/store';
       throw new Error('Unexpected file');
     });
-    await expect(waitForCheckpointClaim('gateway')).resolves.toEqual(claim);
+    await expect(waitForCheckpointClaim(role)).resolves.toEqual(claim);
     expect(mountedPaths.map(file => file.split('/').at(-1))).toEqual([
-      'spec_environ', 'claim.json', 'claim.json', 'spec_environ', 'token', 'agent-store-dsn',
+      'claim.json', 'claim.json', 'spec_environ', 'token', 'agent-store-dsn',
     ]);
-    expect(vi.mocked(writeFile).mock.calls.map(([, body]) => body)).toEqual([source.POD_UID, current.POD_UID]);
+    expect(vi.mocked(writeFile).mock.calls.map(([path, body]) => [path, body])).toEqual([
+      [`/tmp/octogee-hobby-checkpoint-${role}-prepared`, source.POD_UID],
+      [`/tmp/octogee-hobby-checkpoint-${role}-restored`, current.POD_UID],
+    ]);
+  });
+
+  it('rejects a received claim without gVisor restore evidence before reading credentials', async () => {
+    for (const [key, value] of Object.entries(source)) vi.stubEnv(key, value);
+    vi.stubEnv('OCTOGEE_CHECKPOINT_SNAPSHOT', '');
+    const absent = Object.assign(new Error('missing gVisor restore evidence'), { code: 'ENOENT' });
+    vi.mocked(readFile).mockImplementation(async path => {
+      if (String(path).endsWith('/claim.json')) return JSON.stringify(claim);
+      if (String(path) === '/proc/gvisor/spec_environ') throw absent;
+      throw new Error('Attempted early credential read');
+    });
+    await expect(waitForCheckpointClaim('edge')).rejects.toBe(absent);
+    expect(vi.mocked(writeFile).mock.calls.map(([, body]) => body)).toEqual([source.POD_UID]);
   });
 
 
@@ -112,6 +131,34 @@ describe('checkpoint credential projection', () => {
     else await expect(admitted).rejects.toThrow('Expected previous checkpoint restoration in the same admitted pod');
     expect(reads.some(file => file.includes('/checkpoint-credentials/'))).toBe(allowed);
     expect(writeFile).not.toHaveBeenCalled();
+  });
+
+  it('keeps an ordinary edge untouched and rejects checkpoint placement on a routing edge', async () => {
+    vi.stubEnv('OCTOGEE_CHECKPOINT_SLOT_ID', '');
+    await expect(initializeCheckpointEdge(false)).resolves.toBeUndefined();
+    vi.stubEnv('OCTOGEE_CHECKPOINT_SLOT_ID', current.OCTOGEE_CHECKPOINT_SLOT_ID);
+    await expect(initializeCheckpointEdge(false)).rejects.toThrow('requires a private edge sidecar');
+    expect(readFile).not.toHaveBeenCalled();
+  });
+
+  it('initializes the edge environment from an admitted same-pod restart', async () => {
+    for (const [name, value] of Object.entries(current)) vi.stubEnv(name, value);
+    vi.stubEnv('OPENCLAW_GATEWAY_TOKEN', '');
+    vi.stubEnv('OPENCLAW_AGENT_STORE_DSN', '');
+    vi.mocked(readFile).mockImplementation(async path => {
+      const file = String(path);
+      if (file.endsWith('/claim.json')) return JSON.stringify(claim);
+      if (file.endsWith('/octogee-hobby-checkpoint-edge-restored')) return current.POD_UID;
+      if (file.endsWith('/token')) return ' example-token\r\n';
+      if (file.endsWith('/agent-store-dsn')) return ' postgres://test/store\n';
+      throw new Error('Unexpected file');
+    });
+    await initializeCheckpointEdge(true);
+    expect(process.env).toMatchObject({
+      POD_UID: current.POD_UID,
+      OPENCLAW_GATEWAY_TOKEN: 'example-token',
+      OPENCLAW_AGENT_STORE_DSN: 'postgres://test/store',
+    });
   });
 
   it('refuses a malformed Secret without turning it into a wait', async () => {
