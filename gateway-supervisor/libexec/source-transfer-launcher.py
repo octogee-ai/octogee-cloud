@@ -9,7 +9,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 
 MIB = 1024 * 1024
 MAX_SECONDS = 600
@@ -101,10 +101,8 @@ def transfer_child(argv, env, scratch, stderr, address_space):
             yield child
         finally:
             signal.pthread_sigmask(signal.SIG_BLOCK, interrupts)
-            try:
+            with suppress(ProcessLookupError):
                 os.killpg(child.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
             child.wait()
             child.stdout.close()
     finally:
