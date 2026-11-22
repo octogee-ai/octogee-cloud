@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { gatewayScopedJobId, signFleetRequest } from "./fleet-signature.js";
+import { gatewayScopedJobId, signFleetRequest, sourceActivationReadinessJobId, verifyFleetRequest } from "./fleet-signature.js";
 import { FLEET_KEY_PAIR } from "./fixtures/fleet-keys.js";
 import {
   CONFIG_PATCH_DEADLINE_MS,
@@ -47,33 +47,63 @@ function captureFetch(handler: (call: CapturedCall) => Response | Promise<Respon
 
 const PRIVATE_KEY = FLEET_KEY_PAIR.privateKey;
 
-describe("MigrationClient Native source activation preflight", () => {
+describe("MigrationClient Native source activation readiness", () => {
   const scope = { migrationId: "mig-1", gatewayId: "source", slug: "alice" };
-  const manifest = { version: 2, slug: "alice", appliedFingerprint: "1234567890abcdef", botToken: "mock-secret" };
+  const acknowledgement = { migrationId: "mig-1", slug: "alice", exportable: true };
+  const url = "http://source/source-activation-ready/source";
 
-  it("signs the existing guest route and returns only a boolean", async () => {
-    const { calls, fakeFetch } = captureFetch(() => Response.json({ ...scope, manifest }));
+  it("requests a scoped boolean using a signature that cannot authorize the manifest endpoint", async () => {
+    const { calls, fakeFetch } = captureFetch(() => Response.json(acknowledgement));
     const client = createMigrationClient({ privateKey: PRIVATE_KEY, resolveGatewayUrl: () => "http://source", fetch: fakeFetch, transferState: transferNotUnderTest });
-    expect(await client.canExportSourceActivation(scope)).toBe(true);
-    expect(calls[0]).toMatchObject({
-      method: "POST", url: "http://source/export-activation-manifest/source",
-      headers: { [SIGNATURE_HEADER.toLowerCase()]: expect.any(String) },
-    });
-    expect(JSON.parse(calls[0].body!)).toEqual({ migrationId: "mig-1", slug: "alice" });
+    expect(await client.sourceActivationReadiness(scope)).toBe("ready");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ method: "POST", url });
+    const body = calls[0].body!;
+    const signature = calls[0].headers[SIGNATURE_HEADER.toLowerCase()];
+    expect(JSON.parse(body)).toEqual({ migrationId: "mig-1", slug: "alice" });
+    expect(verifyFleetRequest(FLEET_KEY_PAIR.publicKey, sourceActivationReadinessJobId("mig-1", "source"), body, signature)).toBe(true);
+    expect(verifyFleetRequest(FLEET_KEY_PAIR.publicKey, gatewayScopedJobId("mig-1", "source"), body, signature)).toBe(false);
+  });
+
+  it("distinguishes the old Express route absence and makes no manifest or transfer fallback request", async () => {
+    const { calls, fakeFetch } = captureFetch(() => new Response(
+      `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Error</title>
+</head>
+<body>
+<pre>Cannot POST /source-activation-ready/source</pre>
+</body>
+</html>
+`,
+      { status: 404, headers: { "content-type": "text/html; charset=utf-8", "x-content-type-options": "nosniff", "content-security-policy": "default-src 'none'" } },
+    ));
+    const client = createMigrationClient({ privateKey: PRIVATE_KEY, resolveGatewayUrl: () => "http://source", fetch: fakeFetch, transferState: transferNotUnderTest });
+    expect(await client.sourceActivationReadiness(scope)).toBe("unsupported");
+    expect(calls).toEqual([expect.objectContaining({ url })]);
   });
 
   it.each([
-    () => Response.json({ ...scope, manifest: null }),
-    () => Response.json({ ...scope, migrationId: "other", manifest }),
-    () => Response.json({ ...scope, slug: "other", manifest }),
-    () => Response.json({ ...scope, manifest: { ...manifest, slug: "other" } }),
-    () => Response.json({ ...scope, manifest: { ...manifest, appliedFingerprint: "" } }),
+    () => Response.json({ ...acknowledgement, exportable: false }),
+    () => Response.json({ ...acknowledgement, migrationId: "other" }),
+    () => Response.json({ ...acknowledgement, slug: "other" }),
+    () => Response.json({ ...acknowledgement, exportable: "true" }),
+    () => Response.json({ ...acknowledgement, manifest: { credential: "mock-secret" } }),
     () => new Response("mock-secret", { status: 500 }),
     () => new Response("malformed mock-secret", { status: 200 }),
-  ])("rejects missing, mismatched and failed proofs without surfacing the body", async response => {
+    () => new Response("missing", { status: 404 }),
+    () => new Response(JSON.stringify(acknowledgement), { status: 200 }),
+    () => Response.json(acknowledgement, { status: 202 }),
+    () => new Response("<pre>Cannot POST /source-activation-ready/foreign</pre>", { status: 404, headers: { "content-type": "text/html; charset=utf-8", "x-content-type-options": "nosniff" } }),
+    () => { throw new Error("transport timed out"); },
+  ])("rejects missing, mismatched and failed proofs without logging or falling back", async response => {
     const log = vi.fn();
-    const client = createMigrationClient({ privateKey: PRIVATE_KEY, resolveGatewayUrl: () => "http://source", fetch: captureFetch(response).fakeFetch, transferState: transferNotUnderTest, log });
-    expect(await client.canExportSourceActivation(scope)).toBe(false);
+    const { calls, fakeFetch } = captureFetch(response);
+    const client = createMigrationClient({ privateKey: PRIVATE_KEY, resolveGatewayUrl: () => "http://source", fetch: fakeFetch, transferState: transferNotUnderTest, log });
+    expect(await client.sourceActivationReadiness(scope)).toBe("unavailable");
+    expect(calls).toEqual([expect.objectContaining({ url })]);
     expect(log).not.toHaveBeenCalled();
   });
 });

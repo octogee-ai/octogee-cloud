@@ -98,7 +98,7 @@ import { upgradeImportedAgentStores } from "./openclaw-import-upgrade.js";
 import { reattachUserAgents } from "./reattach-user-agents.js";
 import { activeAgentProjectIds } from "./openclaw-config-users.js";
 import { PROC_ROOT } from "./held-files.js";
-import { gatewayScopedJobId, verifyFleetRequest } from "./fleet-signature.js";
+import { gatewayScopedJobId, sourceActivationReadinessJobId, verifyFleetRequest } from "./fleet-signature.js";
 import { rejectMisaddressedGateway } from "./fleet-gateway-path.js";
 import type { UserLifecycleAdapter, RemoveUserResult } from "./user-lifecycle.js";
 import {
@@ -471,6 +471,7 @@ function parseAndVerifyJsonBody<T extends MigrationRequestBody>(
   res: Response,
   deps: Pick<MigrationHandlerDeps, "publicKey" | "gatewayId">,
   log: (msg: string, fields?: LogContext) => void,
+  scopeJobId = gatewayScopedJobId,
 ): T | null {
   const rawBody: string = (req as unknown as { rawBody?: string }).rawBody ?? "";
   let body: T;
@@ -480,7 +481,7 @@ function parseAndVerifyJsonBody<T extends MigrationRequestBody>(
     res.status(400).json({ error: "invalid JSON body" });
     return null;
   }
-  if (!body?.migrationId || !body?.slug) {
+  if (typeof body?.migrationId !== "string" || !body.migrationId || typeof body.slug !== "string" || !body.slug) {
     res.status(400).json({ error: "missing migrationId/slug" });
     return null;
   }
@@ -490,7 +491,7 @@ function parseAndVerifyJsonBody<T extends MigrationRequestBody>(
 
 const sigValid = verifyFleetRequest(
     deps.publicKey,
-    gatewayScopedJobId(body.migrationId, deps.gatewayId),
+    scopeJobId(body.migrationId, deps.gatewayId),
     rawBody,
     sigHeader ?? undefined,
   );
@@ -1019,6 +1020,20 @@ export function createExportPathsHandler(deps: MigrationHandlerDeps): RequestHan
       );
       res.status(500).json({ error: "export-paths failed", message });
     }
+  });
+}
+
+export function createSourceActivationReadinessHandler(deps: MigrationHandlerDeps): RequestHandler {
+  const log = deps.log ?? provisionerLog;
+  return (req, res) => withLogContext({}, async () => {
+    const body = parseAndVerifyJsonBody<MigrationRequestBody>(req, res, deps, log, sourceActivationReadinessJobId);
+    if (!body) return;
+
+    const exportable = await deps.adapter.exportOpenClawActivationManifest?.(body.slug).then(
+      () => true,
+      () => false,
+    ) ?? false;
+    res.status(200).json({ migrationId: body.migrationId, slug: body.slug, exportable });
   });
 }
 

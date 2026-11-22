@@ -1,4 +1,4 @@
-import { gatewayScopedJobId, signFleetRequest } from "./fleet-signature.js";
+import { gatewayScopedJobId, signFleetRequest, sourceActivationReadinessJobId } from "./fleet-signature.js";
 import { SIGNATURE_HEADER, MIGRATION_QUIESCE_TIMEOUT_MS, MIGRATION_TRANSFER_TIMEOUT_MS, MIGRATION_UNMOUNT_TIMEOUT_MS, MIGRATION_VERIFY_TIMEOUT_MS, isSchedulerMigrationResult, } from "@octogee/shared/types/fleet-controller";
 export class MigrationRpcError extends Error {
     details;
@@ -44,7 +44,8 @@ function createFetchWithTimeout(fetchImpl) {
             controller.abort();
         }, timeoutMs);
         try {
-            return await fetchImpl(url, { ...init, signal: controller.signal });
+            const signal = init.signal ? AbortSignal.any([init.signal, controller.signal]) : controller.signal;
+            return await fetchImpl(url, { ...init, signal });
         }
         catch (err) {
             if (didTimeout) {
@@ -58,31 +59,48 @@ function createFetchWithTimeout(fetchImpl) {
         }
     };
 }
-function createSignedJsonPoster(deps) {
+function createSignedGatewayPoster(deps) {
     return async (request) => {
         const { path, timeoutMs } = request;
         const rawBody = JSON.stringify(request.body);
-        const signature = signFleetRequest(deps.privateKey, gatewayScopedJobId(request.migrationId, request.gatewayId), rawBody);
-        const res = await deps.fetchWithTimeout(path, `${deps.resolveGatewayUrl(request.transportId)}${path}`, {
+        const signature = signFleetRequest(deps.privateKey, request.jobId ?? gatewayScopedJobId(request.migrationId, request.gatewayId), rawBody);
+        return deps.fetchWithTimeout(path, `${deps.resolveGatewayUrl(request.transportId)}${path}`, {
             method: "POST",
             headers: {
                 "content-type": "application/json",
                 [SIGNATURE_HEADER]: signature,
             },
             body: rawBody,
+            ...(request.signal ? { signal: request.signal, redirect: "error" } : {}),
         }, timeoutMs);
-        if (!res.ok)
-            throw await migrationRpcError(path, res);
-        try {
-            return (await res.json());
-        }
-        catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
-            throw new MigrationTransportError(`${path} response body was incomplete: ${message}`, {
-                cause: err,
-            });
-        }
     };
+}
+async function readSignedJsonResponse(response, path) {
+    if (!response.ok)
+        throw await migrationRpcError(path, response);
+    try {
+        return (await response.json());
+    }
+    catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        throw new MigrationTransportError(`${path} response body was incomplete: ${message}`, { cause: err });
+    }
+}
+function isActivationReadinessAcknowledgement(value, migrationId, slug) {
+    if (typeof value !== "object" || value === null || Object.keys(value).length !== 3)
+        return false;
+    const reply = value;
+    return reply.migrationId === migrationId && reply.slug === slug && reply.exportable === true;
+}
+async function isUnregisteredActivationReadinessRoute(response, path) {
+    if (response.status !== 404 || response.headers.get("content-type") !== "text/html; charset=utf-8" ||
+        response.headers.get("x-content-type-options") !== "nosniff" ||
+        response.headers.get("content-security-policy") !== "default-src 'none'")
+        return false;
+    return (await response.text()) === [
+        "<!DOCTYPE html>", '<html lang="en">', "<head>", '<meta charset="utf-8">', "<title>Error</title>", "</head>",
+        "<body>", `<pre>Cannot POST ${path}</pre>`, "</body>", "</html>", "",
+    ].join("\n");
 }
 export function createMigrationClient(deps) {
     const log = deps.log ?? (() => undefined);
@@ -90,11 +108,12 @@ export function createMigrationClient(deps) {
     const transferMs = deps.timeouts?.transferMs ?? MIGRATION_TRANSFER_TIMEOUT_MS;
     const unmountMs = deps.timeouts?.unmountMs ?? MIGRATION_UNMOUNT_TIMEOUT_MS;
     const verifyMs = deps.timeouts?.verifyMs ?? MIGRATION_VERIFY_TIMEOUT_MS;
-    const postSignedJson = createSignedJsonPoster({
+    const postSigned = createSignedGatewayPoster({
         privateKey: deps.privateKey,
         resolveGatewayUrl: deps.resolveGatewayUrl,
         fetchWithTimeout: createFetchWithTimeout(deps.fetch ?? globalThis.fetch),
     });
+    const postSignedJson = async (request) => readSignedJsonResponse(await postSigned(request), request.path);
     return {
         async abortImport({ migrationId, gatewayId, slug, mode }) {
             const transferAttemptId = await deps.resolveTransferAttemptForCleanup?.({ migrationId, gatewayId, slug, mode });
@@ -147,18 +166,23 @@ export function createMigrationClient(deps) {
             log(`[migration-client] ✅ restoreTarget migrationId=${migrationId} slug=${slug} gateway=${gatewayId} steps=${res.steps.join(",")}`);
             return res;
         },
-        async canExportSourceActivation({ gatewayId, transportId, migrationId, slug }) {
+        async sourceActivationReadiness({ gatewayId, transportId, migrationId, slug }) {
+            const path = `/source-activation-ready/${gatewayId}`;
             try {
-                const result = await postSignedJson({
-                    transportId: transportId ?? gatewayId, path: `/export-activation-manifest/${gatewayId}`,
-                    gatewayId, migrationId, body: { migrationId, slug }, timeoutMs: verifyMs,
+                const response = await postSigned({
+                    transportId: transportId ?? gatewayId, path, gatewayId, migrationId,
+                    jobId: sourceActivationReadinessJobId(migrationId, gatewayId),
+                    body: { migrationId, slug }, timeoutMs: verifyMs, signal: AbortSignal.timeout(verifyMs),
                 });
-                return result?.migrationId === migrationId && result.slug === slug &&
-                    result.manifest?.version === 2 && result.manifest.slug === slug &&
-                    typeof result.manifest.appliedFingerprint === "string" && result.manifest.appliedFingerprint.length > 0;
+                if (await isUnregisteredActivationReadinessRoute(response, path))
+                    return "unsupported";
+                if (response.status !== 200 || !/^application\/json(?:; charset=utf-8)?$/i.test(response.headers.get("content-type") ?? "")) {
+                    return "unavailable";
+                }
+                return isActivationReadinessAcknowledgement(await response.json(), migrationId, slug) ? "ready" : "unavailable";
             }
             catch {
-                return false;
+                return "unavailable";
             }
         },
         async resume({ migrationId, gatewayId, transportId, slug, role }) {
@@ -269,17 +293,19 @@ async function migrationRpcError(path, response) {
     return new MigrationRpcError(`${path}: ${response.status} ${text}`, options);
 }
 export async function reportMigrationProgress(deps, gatewayId, body) {
-    const post = createSignedJsonPoster({
+    const post = createSignedGatewayPoster({
         privateKey: deps.privateKey,
         resolveGatewayUrl: deps.resolveGatewayUrl,
         fetchWithTimeout: createFetchWithTimeout(deps.fetch ?? globalThis.fetch),
     });
-    await post({
+    const path = `/migration-progress/${gatewayId}`;
+    const response = await post({
         transportId: gatewayId,
-        path: `/migration-progress/${gatewayId}`,
+        path,
         gatewayId,
         migrationId: body.migrationId,
         body: { ...body },
         timeoutMs: 2_000,
     });
+    await readSignedJsonResponse(response, path);
 }

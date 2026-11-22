@@ -759,11 +759,15 @@ type SourceAssignment = Omit<Parameters<MigrateUserDeps["setAssignmentState"]>[0
 
 const NATIVE_RETURN_ACTIVATION_UNAVAILABLE = "native return source activation export unavailable: status 503";
 
-function nativeSourceActivationAvailable(input: NativeReturnProvision, client: MigrationClient): boolean | Promise<boolean> {
+async function nativeSourceActivationAvailable(input: NativeReturnProvision, client: MigrationClient): Promise<boolean> {
   if (input.op.schedulerHandoff?.forwardRecovery || input.nativeReturn.checkpointRequested) return true;
-  return client.canExportSourceActivation({
+  const readiness = await client.sourceActivationReadiness({
     migrationId: input.migrationId, gatewayId: input.targets.fromGatewayId, slug: input.slug,
   });
+  if (readiness === "unsupported") {
+    input.deps.log(`[migrate-customer] ${input.targets.fromGatewayId} migrationId=${input.migrationId}: legacy guest lacks source activation readiness`);
+  }
+  return readiness === "ready" || readiness === "unsupported";
 }
 
 async function runNativeReturn(input: NativeReturnProvision): Promise<OperationResult> {

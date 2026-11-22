@@ -17,6 +17,7 @@ import {
   createMigrationProgressHandler,
   createActivateImportHandler,
   createActivationManifestExportHandler,
+  createSourceActivationReadinessHandler,
   createAbortRsyncImportHandler,
   createCompleteSurgeHandoffHandler,
   migrationImportBusy,
@@ -37,7 +38,7 @@ import {
   findPathTraversalViolation,
   type MigrationHandlerDeps,
 } from "../lib/fleet-http-migration.js";
-import { gatewayScopedJobId, signFleetRequest } from "../lib/fleet-signature.js";
+import { gatewayScopedJobId, signFleetRequest, sourceActivationReadinessJobId } from "../lib/fleet-signature.js";
 import { reserveLoopbackPort } from "../lib/migration-rsync-tls.js";
 import { liveImportAdmissionPath } from "../lib/migration-staging.js";
 import {
@@ -1946,6 +1947,48 @@ describe("queued-rsync migration control handlers", () => {
 
     expect(getStatus()).toBe(200);
     expect(getBody()).toEqual({ migrationId: "mig-1", slug: "chris", manifest });
+  });
+
+  it.each([true, false])("source activation readiness returns only the scoped exportable acknowledgement (%s)", async exportable => {
+    const exportOpenClawActivationManifest = vi.fn(async () => {
+      if (!exportable) throw new Error("unexpected secret-shaped failure");
+      return {
+        version: 2, slug: "chris", appliedFingerprint: "applied", agentId: "octogee-chris-coach",
+        accountId: "chris-coach", agent: {}, mattermostAccount: { botToken: "token" }, bindings: [],
+      };
+    });
+    const adapter = mkAdapter({ exportOpenClawActivationManifest });
+    const log = vi.fn();
+    const body = { migrationId: "mig-1", slug: "chris" };
+    const signature = signFleetRequest(PRIVATE_KEY, sourceActivationReadinessJobId("mig-1", GATEWAY_ID), JSON.stringify(body));
+    const { res, getStatus, getBody } = mkResponse();
+
+    await createSourceActivationReadinessHandler(mkDeps({ adapter, log }))(mkRequest(body, { signature }), res, vi.fn());
+
+    expect(exportOpenClawActivationManifest).toHaveBeenCalledExactlyOnceWith("chris");
+    expect(getStatus()).toBe(200);
+    expect(getBody()).toEqual({ ...body, exportable });
+    expect(log).not.toHaveBeenCalled();
+  });
+
+  it("prevents legacy manifest access with a readiness request signature", async () => {
+    const exportOpenClawActivationManifest = vi.fn();
+    const adapter = mkAdapter({ exportOpenClawActivationManifest });
+    const body = { migrationId: "mig-1", slug: "chris" };
+    const raw = JSON.stringify(body);
+    const readiness = mkRequest(body, { signature: signFleetRequest(PRIVATE_KEY, sourceActivationReadinessJobId("mig-1", GATEWAY_ID), raw) });
+    const legacy = mkRequest(body, { signature: signForPod("mig-1", raw) });
+    const probes = [
+      [createActivationManifestExportHandler, readiness],
+      [createSourceActivationReadinessHandler, legacy],
+    ] as const;
+
+    for (const [handler, request] of probes) {
+      const { res, getStatus } = mkResponse();
+      await handler(mkDeps({ adapter }))(request, res, vi.fn());
+      expect(getStatus()).toBe(401);
+    }
+    expect(exportOpenClawActivationManifest).not.toHaveBeenCalled();
   });
 
   it("createActivateImportHandler records a completed standard activation", async () => {

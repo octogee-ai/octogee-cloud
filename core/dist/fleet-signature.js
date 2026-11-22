@@ -9,6 +9,9 @@ export function canonicalPayload(jobId, rawBody) {
 export function gatewayScopedJobId(jobId, gatewayId) {
     return `${jobId}@${gatewayId}`;
 }
+export function sourceActivationReadinessJobId(migrationId, gatewayId) {
+    return gatewayScopedJobId(`source-activation-ready/${migrationId}`, gatewayId);
+}
 export function signFleetRequest(privateKeyPem, jobId, rawBody) {
     const payload = Buffer.from(canonicalPayload(jobId, rawBody), "utf8");
     return cryptoSign(null, payload, createPrivateKey(normalizeKeyMaterial(privateKeyPem)))
