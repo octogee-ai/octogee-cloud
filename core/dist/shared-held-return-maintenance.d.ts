@@ -1,6 +1,8 @@
 import { type GatewayHelmObservation } from "@octogee/shared/types/gateway-releases";
 import { type HeldNativeReturnSelection } from "./held-native-return-repair.js";
 import type { OperationRecord, PlatformStateRepositories, PlatformStateStore } from "./platform-state/index.js";
+export declare class SharedHeldReturnMaintenanceConflict extends Error {
+}
 export declare const SHARED_HELD_RETURN_MAINTENANCE = "shared-held-return-maintenance";
 type Workload = {
     podName: string;
@@ -62,13 +64,34 @@ export interface ObservedSharedMaintenanceHelm {
     edgeImage: string;
     verifiedAt: number;
 }
+export interface SharedHeldReturnMaintenanceWithdrawal extends Omit<SharedHeldReturnMaintenanceResult, "outcome"> {
+    migrationPolicyRestored: true;
+    installed: ObservedSharedMaintenanceHelm;
+}
 export interface SharedHeldReturnMaintenanceClaim {
     gatewayId: string;
     auditId: string;
     attemptId: string;
     plan: SharedHeldReturnMaintenancePlan;
 }
-type Phase = "reserved" | "dispatched" | "rollback";
+export type SharedHeldReturnMaintenanceDispatch = {
+    phase: "dispatched" | "rollback";
+    release: number;
+};
+type ScopedMaintenance = {
+    operationId: string;
+    gatewayId: string;
+    attemptId: string;
+};
+export type SharedHeldReturnMaintenanceCommand = {
+    action: "acquire";
+    attemptId: string;
+    selection: HeldNativeReturnSelection;
+} | ({
+    action: "status" | "dispatch" | "stage" | "apply" | "rollback" | "withdraw" | "complete";
+} & ScopedMaintenance);
+export type SharedHeldReturnMaintenanceAdmin = (actor: string, command: SharedHeldReturnMaintenanceCommand, dryRun: boolean) => Promise<unknown>;
+type Phase = "reserved" | "withdrawing" | "dispatched" | "rollback";
 export declare function assertSharedHeldReturnMaintenanceUnfenced(state: PlatformStateRepositories, operation: Pick<OperationRecord, "input" | "inputUid" | "gatewayId">): Promise<void>;
 export declare function acquireSharedHeldReturnMaintenance(store: PlatformStateStore, deps: {
     environment: "test" | "prod";
@@ -77,13 +100,27 @@ export declare function acquireSharedHeldReturnMaintenance(store: PlatformStateS
     now: () => number;
     readVerifiedAdmission(): Promise<SharedHeldReturnMaintenanceAdmission>;
 }): Promise<SharedHeldReturnMaintenanceClaim>;
+export declare function readSharedHeldReturnMaintenanceTerminal(store: PlatformStateStore, operator: ScopedMaintenance & {
+    actor: string;
+}): Promise<{
+    gatewayId: string;
+    auditId: string;
+    attemptId: string;
+    phase: "withdrawn" | "completed";
+} | null>;
 export declare function resumeSharedHeldReturnMaintenance(store: PlatformStateStore, gatewayId: string, attemptId: string): Promise<SharedHeldReturnMaintenanceClaim>;
 export declare function assertSharedHeldReturnMaintenance(store: PlatformStateStore, claim: SharedHeldReturnMaintenanceClaim): Promise<Phase>;
+export declare function readSharedHeldReturnMaintenanceDispatch(store: PlatformStateStore, claim: SharedHeldReturnMaintenanceClaim): Promise<SharedHeldReturnMaintenanceDispatch>;
 export declare function advanceSharedHeldReturnMaintenance(store: PlatformStateStore, claim: SharedHeldReturnMaintenanceClaim, phase: "dispatched" | "rollback", now?: () => number): Promise<void>;
 export declare function stageSharedHeldReturnMaintenanceRelease(store: PlatformStateStore, claim: SharedHeldReturnMaintenanceClaim, now: () => number): Promise<number>;
 export declare function completeSharedHeldReturnMaintenance(store: PlatformStateStore, claim: SharedHeldReturnMaintenanceClaim, deps: {
     readVerifiedResult(): Promise<SharedHeldReturnMaintenanceResult>;
     readInstalledHelm(): Promise<ObservedSharedMaintenanceHelm>;
+    now(): number;
+}): Promise<void>;
+export declare function withdrawSharedHeldReturnMaintenance(store: PlatformStateStore, claim: SharedHeldReturnMaintenanceClaim, deps: {
+    restoreMigrationPolicy(): Promise<void>;
+    readVerifiedWithdrawal(): Promise<SharedHeldReturnMaintenanceWithdrawal>;
     now(): number;
 }): Promise<void>;
 export {};

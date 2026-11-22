@@ -7,11 +7,13 @@ import {
   readHeldNativeReturnForTargetMaintenance, type HeldNativeReturnSelection,
 } from "./held-native-return-repair.js";
 import { schedulerReturnMatches } from "./parked-home-archive.js";
-import { buildOperationAuditIntent } from "./operation-audit.js";
+import { buildOperationAuditIntent, operationAuditDocumentId } from "./operation-audit.js";
 import { CONTINUOUS_PLACEMENT_SOURCE, PLACEMENT_MIGRATION_ACTOR, sharedDrainMoveNeverClaimed } from "./placement-migrations.js";
 import type {
   GatewayRuntimeRestartFenceValue, OpaqueMap, OperationRecord, PlatformStateRepositories, PlatformStateStore, PlatformUserRecord, Stored,
 } from "./platform-state/index.js";
+
+export class SharedHeldReturnMaintenanceConflict extends Error {}
 
 export const SHARED_HELD_RETURN_MAINTENANCE = "shared-held-return-maintenance";
 
@@ -64,6 +66,11 @@ export interface ObservedSharedMaintenanceHelm {
   verifiedAt: number;
 }
 
+export interface SharedHeldReturnMaintenanceWithdrawal extends Omit<SharedHeldReturnMaintenanceResult, "outcome"> {
+  migrationPolicyRestored: true;
+  installed: ObservedSharedMaintenanceHelm;
+}
+
 type StagedRelease = { release: number; payloadHash: string; phase: "dispatched" | "rollback" };
 
 export interface SharedHeldReturnMaintenanceClaim {
@@ -73,11 +80,25 @@ export interface SharedHeldReturnMaintenanceClaim {
   plan: SharedHeldReturnMaintenancePlan;
 }
 
-type Phase = "reserved" | "dispatched" | "rollback";
+export type SharedHeldReturnMaintenanceDispatch = {
+  phase: "dispatched" | "rollback";
+  release: number;
+};
+
+type ScopedMaintenance = { operationId: string; gatewayId: string; attemptId: string };
+export type SharedHeldReturnMaintenanceCommand =
+  | { action: "acquire"; attemptId: string; selection: HeldNativeReturnSelection }
+  | ({ action: "status" | "dispatch" | "stage" | "apply" | "rollback" | "withdraw" | "complete" } & ScopedMaintenance);
+
+export type SharedHeldReturnMaintenanceAdmin = (
+  actor: string, command: SharedHeldReturnMaintenanceCommand, dryRun: boolean,
+) => Promise<unknown>;
+
+type Phase = "reserved" | "withdrawing" | "dispatched" | "rollback";
 type Guard = GatewayRuntimeRestartFenceValue & { phase: Phase; phaseStartedAt: number; maintenance: SharedHeldReturnMaintenancePlan; stagedRelease?: StagedRelease };
 
 function requireMaintenance(condition: unknown, message: string): asserts condition {
-  if (!condition) throw new Error(message);
+  if (!condition) throw new SharedHeldReturnMaintenanceConflict(message);
 }
 
 function sortedOwners<T extends { uid: string }>(owners: T[]): T[] {
@@ -268,6 +289,8 @@ export async function acquireSharedHeldReturnMaintenance(
     const existing = root.runtimeRestartFence;
     if (existing) {
       await readClaim(tx, claim);
+      requireMaintenance((await tx.journal.audits.get(claim.auditId))?.actor === deps.actor,
+        "Shared maintenance reservation belongs to another operator");
       return claim;
     }
     await assertCrew(tx, plan);
@@ -293,6 +316,19 @@ async function readClaim(state: PlatformStateRepositories, claim: SharedHeldRetu
   return guard;
 }
 
+export async function readSharedHeldReturnMaintenanceTerminal(
+  store: PlatformStateStore, operator: ScopedMaintenance & { actor: string },
+): Promise<{ gatewayId: string; auditId: string; attemptId: string; phase: "withdrawn" | "completed" } | null> {
+  const { gatewayId, operationId, actor, attemptId } = operator;
+  const id = operationAuditDocumentId(`${SHARED_HELD_RETURN_MAINTENANCE}:${attemptId}`);
+  const audit = await store.journal.audits.get(id);
+  if (audit?.status !== "completed") return null;
+  requireMaintenance([audit.actor === actor, audit.actionClaimId === attemptId,
+    audit.target.gatewayId === gatewayId, audit.target.operationId === operationId].every(Boolean),
+  "Shared maintenance terminal audit belongs to a different operation or operator");
+  return { gatewayId, auditId: id, attemptId, phase: audit.target.withdrawnBeforeDispatch === true ? "withdrawn" : "completed" };
+}
+
 export async function resumeSharedHeldReturnMaintenance(
   store: PlatformStateStore, gatewayId: string, attemptId: string,
 ): Promise<SharedHeldReturnMaintenanceClaim> {
@@ -308,6 +344,17 @@ export async function resumeSharedHeldReturnMaintenance(
 
 export async function assertSharedHeldReturnMaintenance(store: PlatformStateStore, claim: SharedHeldReturnMaintenanceClaim): Promise<Phase> {
   return store.transaction({ label: "shared-held-return-maintenance.assert", readOnly: true }, async tx => (await readClaim(tx, claim)).phase);
+}
+
+export async function readSharedHeldReturnMaintenanceDispatch(
+  store: PlatformStateStore, claim: SharedHeldReturnMaintenanceClaim,
+): Promise<SharedHeldReturnMaintenanceDispatch> {
+  return store.transaction({ label: "shared-held-return-maintenance.read-dispatch", readOnly: true }, async tx => {
+    const guard = await readClaim(tx, claim);
+    const staged = guard.stagedRelease;
+    requireMaintenance(staged && staged.phase === guard.phase, "Shared maintenance physical dispatch requires a matching staged release");
+    return { phase: staged.phase, release: staged.release };
+  });
 }
 
 export async function advanceSharedHeldReturnMaintenance(
@@ -411,6 +458,21 @@ function assertRetainedRuntimeReadiness(
   "Shared maintenance lacks a fresh canonical heartbeat for the staged release");
 }
 
+function assertRetainedHelm(
+  guard: Guard, observed: ObservedSharedMaintenanceHelm, payload: ReleasePayload, originalHelm: GatewayHelmObservation, now: number,
+): void {
+  const { installed } = observed;
+  requireMaintenance([
+    observed.chartFingerprint === guard.maintenance.installedChartFingerprint,
+    observed.edgeImage === sharedImageTuple(payload)["gateway-edge"],
+    installed.imageRepository === payload.imageRepository, installed.imageTag === payload.imageTag,
+    installed.releaseName === originalHelm.releaseName, installed.deploymentName === originalHelm.deploymentName,
+    installed.gatewayServiceName === originalHelm.gatewayServiceName, installed.gatewayEdgeServiceName === originalHelm.gatewayEdgeServiceName,
+    installed.serviceAccountName === originalHelm.serviceAccountName, installed.replicas === 1, installed.availableReplicas === 1,
+    observed.verifiedAt >= guard.phaseStartedAt, observed.verifiedAt <= now,
+  ].every(Boolean), "Shared maintenance has no canonical retained Helm observation for the verified release");
+}
+
 async function publishObservedRetainedRelease(
   tx: import("./platform-state/index.js").PlatformStateTransaction,
   guard: Guard, observed: ObservedSharedMaintenanceHelm, physicalVerifiedAt: number, now: number,
@@ -421,16 +483,8 @@ async function publishObservedRetainedRelease(
   requireMaintenance(row && row.payloadHash === staged.payloadHash, "Shared maintenance staged immutable release changed");
   const runtime = await assertMountedCrew(tx, guard.maintenance);
   assertRetainedRuntimeReadiness(runtime, guard, row.payload.imageTag, physicalVerifiedAt, now);
-  const installed = observed.installed;
-  requireMaintenance([
-    observed.chartFingerprint === guard.maintenance.installedChartFingerprint,
-    observed.edgeImage === sharedImageTuple(row.payload)["gateway-edge"],
-    installed.imageRepository === row.payload.imageRepository, installed.imageTag === row.payload.imageTag,
-    installed.releaseName === runtime.helm.releaseName, installed.deploymentName === runtime.helm.deploymentName,
-    installed.gatewayServiceName === runtime.helm.gatewayServiceName, installed.gatewayEdgeServiceName === runtime.helm.gatewayEdgeServiceName,
-    installed.serviceAccountName === runtime.helm.serviceAccountName, installed.replicas === 1, installed.availableReplicas === 1,
-    observed.verifiedAt >= guard.phaseStartedAt, observed.verifiedAt <= now,
-  ].every(Boolean), "Shared maintenance has no canonical retained Helm observation for the staged release");
+  assertRetainedHelm(guard, observed, row.payload, runtime.helm, now);
+  const { installed } = observed;
   await tx.fleetRegistry.patch(guard.gatewayId, { release: staged.release, lifecycle: "serving", helm: installed }, { revision: runtime.revision });
   await tx.gateways.roots.patch(guard.gatewayId, { liveRelease: staged.release, updatedAt: now, updatedBy: guard.attemptId });
 }
@@ -450,6 +504,54 @@ export async function completeSharedHeldReturnMaintenance(
       status: "completed", lifecycleStage: rolledBack ? "action-partial" : "action-completed", completedAt: result.verifiedAt,
       outcome: rolledBack ? "partial" : "completed",
       ...(rolledBack && { partialOutcome: { summary: "The original Shared runtime was restored and verified" } }),
+    }, { status: ["in-progress"], actionClaimId: claim.attemptId });
+    await tx.gateways.roots.compareAndSetRuntimeRestartFence(claim.gatewayId, guard, null);
+  });
+}
+
+function alreadyWithdrawn(audit: Awaited<ReturnType<PlatformStateRepositories["journal"]["audits"]["get"]>>, claim: SharedHeldReturnMaintenanceClaim): boolean {
+  return [audit?.status === "completed", audit?.outcome === "partial", audit?.actionClaimId === claim.attemptId,
+    audit?.target.withdrawnBeforeDispatch === true, audit?.target.gatewayId === claim.gatewayId, isDeepStrictEqual(audit?.mutation.plan, claim.plan)].every(Boolean);
+}
+
+async function beginWithdrawal(store: PlatformStateStore, claim: SharedHeldReturnMaintenanceClaim, now: () => number): Promise<boolean> {
+  return store.transaction({ label: "shared-held-return-maintenance.begin-withdrawal" }, async tx => {
+    if (alreadyWithdrawn(await tx.journal.audits.get(claim.auditId), claim)) return false;
+    const guard = await readClaim(tx, claim);
+    requireMaintenance(!guard.stagedRelease && ["reserved", "withdrawing"].includes(guard.phase),
+      "Shared maintenance can withdraw only before image dispatch or release staging");
+    if (guard.phase === "reserved") {
+      await tx.gateways.roots.compareAndSetRuntimeRestartFence(claim.gatewayId, guard, { ...guard, phase: "withdrawing", phaseStartedAt: now() });
+    }
+    return true;
+  });
+}
+
+export async function withdrawSharedHeldReturnMaintenance(
+  store: PlatformStateStore, claim: SharedHeldReturnMaintenanceClaim,
+  deps: { restoreMigrationPolicy(): Promise<void>; readVerifiedWithdrawal(): Promise<SharedHeldReturnMaintenanceWithdrawal>; now(): number },
+): Promise<void> {
+  if (!await beginWithdrawal(store, claim, deps.now)) return;
+  await deps.restoreMigrationPolicy();
+  const original = await deps.readVerifiedWithdrawal();
+  await store.transaction({ label: "shared-held-return-maintenance.withdraw" }, async tx => {
+    if (alreadyWithdrawn(await tx.journal.audits.get(claim.auditId), claim)) return;
+    const guard = await readClaim(tx, claim);
+    requireMaintenance(guard.phase === "withdrawing" && !guard.stagedRelease && original.migrationPolicyRestored === true,
+      "Shared maintenance withdrawal has no exact restored migration policy");
+    const now = deps.now();
+    assertResult({ ...guard, phase: "rollback" }, { ...original, outcome: "rolled-back" }, now);
+    const runtime = await assertMountedCrew(tx, claim.plan);
+    const payload = await stagedReleasePayload(tx, { ...guard, phase: "rollback" });
+    requireMaintenance(runtime.release === claim.plan.targetRelease, "Shared maintenance withdrawal requires the original live release");
+    assertRetainedRuntimeReadiness(runtime, guard, payload.imageTag, original.verifiedAt, now);
+    assertRetainedHelm(guard, original.installed, payload, runtime.helm, now);
+    const audit = await tx.journal.audits.get(claim.auditId);
+    requireMaintenance(audit, "Shared maintenance withdrawal lost its audit");
+    await tx.journal.audits.patch(claim.auditId, {
+      status: "completed", lifecycleStage: "action-partial", completedAt: now, outcome: "partial",
+      partialOutcome: { summary: "Shared maintenance withdrawn before image dispatch; original custody and migration policy verified" },
+      target: { ...audit.target, withdrawnBeforeDispatch: true },
     }, { status: ["in-progress"], actionClaimId: claim.attemptId });
     await tx.gateways.roots.compareAndSetRuntimeRestartFence(claim.gatewayId, guard, null);
   });

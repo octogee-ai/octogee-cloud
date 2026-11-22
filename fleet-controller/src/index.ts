@@ -1,3 +1,7 @@
+import {
+  createSharedHeldReturnMaintenanceOperator, type SharedHeldReturnMaintenancePhysical,
+} from "./lib/held-shared-maintenance-operator.js";
+import type { SharedHeldReturnMaintenanceAdmin } from "@octogee/core/fleet-state";
 import { persistOperationCompletion } from "./legacy-migration-recovery.js";
 import type { HobbyCheckpointPod } from "./helm-runner.js";
 import { installDefaultUserEntitlements, userEntitlements } from "@octogee/shared/types/user-entitlements";
@@ -526,6 +530,7 @@ interface ControllerDeps {
   restartGatewayDeployment?: (revisionId: string) => Promise<void>;
   handlers: OperationHandlers;
   heldNativeReturnRepairAvailable?: boolean;
+  sharedHeldReturnMaintenance?: SharedHeldReturnMaintenanceAdmin;
   requestNativeReturnSourceRecovery?: ReturnType<typeof createNativeReturnSourceRecoveryOwner>["request"];
   log: (msg: string) => void;
   syncFleetIngress?: (
@@ -2633,6 +2638,7 @@ function releasingDeadKeyHolders(
 function adminNativeReturnOptions(deps: ControllerDeps) {
   return {
     heldNativeReturnRepairAvailable: deps.heldNativeReturnRepairAvailable,
+    sharedHeldReturnMaintenance: deps.sharedHeldReturnMaintenance,
     requestNativeReturnSourceRecovery: deps.requestNativeReturnSourceRecovery,
   };
 }
@@ -2981,6 +2987,7 @@ interface ControllerRuntimeSeams {
   resolveHobbyCheckpointPod?: ResolveHobbyCheckpointPod;
   requiresInitialGatewayRelease?: RequiresInitialGatewayRelease;
   heldNativeReturnBackupReaders?: NativeReturnBackupReaders | null;
+  sharedHeldReturnMaintenancePhysical?: SharedHeldReturnMaintenancePhysical | null;
 }
 
 function provisioningSeams(runtime: ProvisioningServiceRuntime | null): Pick<ControllerRuntimeSeams, "provisioning" | "gatewayGitKeys"> {
@@ -2991,7 +2998,7 @@ async function createControllerRuntime(
   store: PlatformStateStore,
   createHostingCleanup: ControllerProduct["createHostingCleanup"],
   userLifecycle: ProductUserLifecycle | null,
-  { accounts, documents, provisioning, gatewayGitKeys, resolveHobbyCheckpointPod, requiresInitialGatewayRelease, heldNativeReturnBackupReaders }: ControllerRuntimeSeams,
+  { accounts, documents, provisioning, gatewayGitKeys, resolveHobbyCheckpointPod, requiresInitialGatewayRelease, heldNativeReturnBackupReaders, sharedHeldReturnMaintenancePhysical }: ControllerRuntimeSeams,
 ): Promise<ControllerRuntime> {
   const runKubectl: KubectlSubprocess = (args, opts) => spawnKubectl(args, opts);
   const authSecretEnsurer = createAuthSecretEnsurer({ runKubectl, randomTokenHex: defaultRandomTokenHex, log });
@@ -3149,7 +3156,7 @@ async function createControllerRuntime(
   const convergeGateways = serializeGatewayConvergence(runGatewayConvergence);
   const convergeSettledVm = convergeAfterVmRuntimeChange(convergeGateways, log);
   const nativeReturn = configureNativeReturnSupport({
-    readers: heldNativeReturnBackupReaders, store, documents, privateKey: fleetControllerPrivateKey,
+    readers: heldNativeReturnBackupReaders, store, documents, privateKey: fleetControllerPrivateKey, sharedHeldReturnMaintenancePhysical,
     runKubectl, kubeOps, prepareMigrationAgentStores, agentStoreAdminDsn: agentStore.adminDsn,
   });
   const handlers = await buildHandlers(documents, log, helm, kubeOps, {
@@ -3198,6 +3205,7 @@ type HostingCleanup = NonNullable<NukeCloudDeps["deleteHostingSites"]>;
 function configureNativeReturnSupport(deps: Parameters<typeof buildHeldNativeReturnHandler>[0] & {
   kubeOps: KubeOps;
   prepareMigrationAgentStores: PrepareMigrationAgentStores;
+  sharedHeldReturnMaintenancePhysical?: SharedHeldReturnMaintenancePhysical | null;
 }) {
   const nativeReturnRecovery = buildNativeReturnSourceRecoveryOwner(deps.store, deps.kubeOps, deps.privateKey, deps.prepareMigrationAgentStores);
   const reconcileHeldNativeReturn = buildHeldNativeReturnHandler(deps);
@@ -3205,6 +3213,8 @@ function configureNativeReturnSupport(deps: Parameters<typeof buildHeldNativeRet
     handlers: { nativeReturnRecovery, reconcileHeldNativeReturn },
     admin: {
       heldNativeReturnRepairAvailable: reconcileHeldNativeReturn !== undefined,
+      sharedHeldReturnMaintenance: deps.sharedHeldReturnMaintenancePhysical
+        ? createSharedHeldReturnMaintenanceOperator({ store: deps.store, physical: deps.sharedHeldReturnMaintenancePhysical, now: Date.now }) : undefined,
       requestNativeReturnSourceRecovery: nativeReturnRecovery.request,
     },
   };
@@ -3240,6 +3250,7 @@ function buildHeldNativeReturnHandler(deps: {
 }
 
 export interface ControllerProduct {
+  sharedHeldReturnMaintenancePhysical?: (store: PlatformStateStore) => SharedHeldReturnMaintenancePhysical | null;
   heldNativeReturnBackupReaders?: (store: PlatformStateStore) => NativeReturnBackupReaders | null;
   resolveHobbyCheckpointPod?: ResolveHobbyCheckpointPod;
   requiresInitialGatewayRelease?: RequiresInitialGatewayRelease;
@@ -3290,6 +3301,14 @@ function createUserLifecycle(
   return product.userLifecycle({ store, log });
 }
 
+function controllerNativeReturnSeams(product: ControllerProduct, store: PlatformStateStore, environmentName: string) {
+  if (environmentName !== "test") return {};
+  return {
+    heldNativeReturnBackupReaders: product.heldNativeReturnBackupReaders?.(store),
+    sharedHeldReturnMaintenancePhysical: product.sharedHeldReturnMaintenancePhysical?.(store),
+  };
+}
+
 export async function main(product: ControllerProduct): Promise<void> {
   installDefaultUserEntitlements();
   const controllerStartedAt = Date.now();
@@ -3311,7 +3330,7 @@ export async function main(product: ControllerProduct): Promise<void> {
       accounts, documents, ...provisioningSeams(provisioning),
       resolveHobbyCheckpointPod: product.resolveHobbyCheckpointPod,
       requiresInitialGatewayRelease: product.requiresInitialGatewayRelease,
-      heldNativeReturnBackupReaders: environmentName === "test" ? product.heldNativeReturnBackupReaders?.(store) : undefined,
+      ...controllerNativeReturnSeams(product, store, environmentName),
     });
 
   log(

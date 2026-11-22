@@ -1,3 +1,4 @@
+import type { SharedHeldReturnMaintenanceAdmin } from "@octogee/core/fleet-state";
 import type { InstalledSharedReleaseReader } from "@octogee/core/fleet-state-sections";
 
 import type { GatewayArtifact } from "@octogee/core/gateway-live-release";
@@ -123,6 +124,7 @@ export interface HttpServerDeps {
     gatewayIds: readonly string[],
   ) => Promise<Record<string, GatewayPodDiagnostics>>;
   heldNativeReturnRepairAvailable?: boolean;
+  sharedHeldReturnMaintenance?: SharedHeldReturnMaintenanceAdmin;
   requestNativeReturnSourceRecovery?: (input: { uid: string; operationId: string; requestedAt: number; requestedBy: string }) => Promise<boolean>;
   strandedSource?: StrandedSourceGatewayCalls;
   userHome?: AdminUserHome;
@@ -517,6 +519,7 @@ export function createHttpServer(deps: HttpServerDeps): Express {
     readGatewayPodDiagnostics: deps.readGatewayPodDiagnostics,
     readGatewayPodDiagnosticsBatch: deps.readGatewayPodDiagnosticsBatch,
     heldNativeReturnRepairAvailable: deps.heldNativeReturnRepairAvailable,
+    sharedHeldReturnMaintenance: deps.sharedHeldReturnMaintenance,
     requestNativeReturnSourceRecovery: deps.requestNativeReturnSourceRecovery,
     suspendAuthUser: deps.suspendAuthUser,
     revokeConnectorGrantsForUser: deps.revokeConnectorGrantsForUser,

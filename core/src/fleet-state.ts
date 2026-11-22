@@ -2082,8 +2082,9 @@ export {
 
 export {
   acquireSharedHeldReturnMaintenance, advanceSharedHeldReturnMaintenance, assertSharedHeldReturnMaintenance,
-  assertSharedHeldReturnMaintenanceUnfenced, completeSharedHeldReturnMaintenance, resumeSharedHeldReturnMaintenance,
-  stageSharedHeldReturnMaintenanceRelease, type ObservedSharedMaintenanceHelm,
-  SHARED_HELD_RETURN_MAINTENANCE, type SharedHeldReturnMaintenanceAdmission, type SharedHeldReturnMaintenanceClaim,
-  type SharedHeldReturnMaintenancePlan, type SharedHeldReturnMaintenanceResult,
+  assertSharedHeldReturnMaintenanceUnfenced, completeSharedHeldReturnMaintenance, readSharedHeldReturnMaintenanceDispatch, readSharedHeldReturnMaintenanceTerminal, resumeSharedHeldReturnMaintenance,
+  stageSharedHeldReturnMaintenanceRelease, withdrawSharedHeldReturnMaintenance, type ObservedSharedMaintenanceHelm,
+  SHARED_HELD_RETURN_MAINTENANCE, SharedHeldReturnMaintenanceConflict, type SharedHeldReturnMaintenanceAdmin, type SharedHeldReturnMaintenanceAdmission, type SharedHeldReturnMaintenanceClaim,
+  type SharedHeldReturnMaintenanceCommand, type SharedHeldReturnMaintenanceDispatch,
+  type SharedHeldReturnMaintenancePlan, type SharedHeldReturnMaintenanceResult, type SharedHeldReturnMaintenanceWithdrawal,
 } from "./shared-held-return-maintenance.js";
