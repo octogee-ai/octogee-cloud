@@ -1504,6 +1504,36 @@ export function composeBrokerUserMountConfig(current: unknown, input: BrokerUser
   return { patch: projectMountPolicy(current, mountPatch, snapshot, isolatedGateway), replacePaths: brokerUserMountReplacePaths(current, input) };
 }
 
+export function prepareHeldBrokerNativeMountProjection(snapshot: UserSnapshot, brokerSnapshot: FleetBrokerUserSnapshot) {
+  if (snapshot.uid !== brokerSnapshot.uid || snapshot.slug !== brokerSnapshot.slug || snapshot.gatewayId !== brokerSnapshot.gatewayId ||
+      brokerSnapshot.status !== "complete" || brokerSnapshot.runtimeMutationFenced !== true ||
+      brokerSnapshot.runtimeReset || brokerSnapshot.restoreAuthority || !brokerSnapshot.coachToken) {
+    throw new Error("Held Native source has no complete matching fenced owner projection");
+  }
+  const projectAgents = brokerProjectAgents(brokerSnapshot);
+  const identity = resolveDefaultAgentIdentity(brokerSnapshot.coachIdentity, DEFAULT_AGENT);
+  const ownerMmUserId = brokerUserMattermostUserId(brokerSnapshot, snapshot);
+  const agentProjects = activeAgentProjectIds(projectAgents);
+  const accountId = `${snapshot.slug}-coach`;
+  const accountEntry = buildMattermostAccounts([{
+    uid: snapshot.uid, slug: snapshot.slug, customerMmUserId: ownerMmUserId, channels: brokerSnapshot.channels, agentProjects,
+  }], new Map([[snapshot.uid, brokerSnapshot.coachToken]]))[accountId];
+  if (!accountEntry) throw new Error("Held Native source broker projection is missing the owner Mattermost account");
+  const modelSelection = initialDefaultAgentModelSelection(snapshot);
+  const input: BrokerUserMountConfig = {
+    snapshot, brokerSnapshot, projectAgents, identity, accountId, accountEntry,
+    isolatedGateway: true, evictionSlugs: [], userAgentEntries: [],
+    defaultAgentModelDefaults: platformModelDefaults(modelSelection),
+    agentEntry: buildDefaultAgentEntry(snapshot, {
+      agentId: `octogee-${snapshot.slug}-coach`, identity, customerMmUserId: ownerMmUserId, isolatedGateway: true, modelSelection,
+    }),
+    projectAccounts: buildProjectAgentAccounts(snapshot.slug, projectAgents, ownerMmUserId),
+    bindings: buildUserBindings([{ slug: snapshot.slug, channels: brokerSnapshot.channels, agentProjects }]),
+    normalizeAccountEndpoints: false,
+  };
+  return (current: unknown) => composeBrokerUserMountConfig(current, input);
+}
+
 async function applyAddUserConfigPatch(
   ctx: BrokerCtx,
   snapshot: UserSnapshot,
