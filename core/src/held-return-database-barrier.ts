@@ -3,10 +3,17 @@ import pg from "pg";
 
 type OperatorRole = { name: string; oid: string };
 type StoreSchema = { name: string; oid: string };
-export interface HeldDatabaseWriterScope {
-  uid: string;
+interface WriterScope {
   sourceGatewayId: string;
   schemas: string[];
+  trustedOperators: OperatorRole[];
+}
+export interface HeldDatabaseWriterScope extends WriterScope {
+  uid: string;
+}
+export interface HeldSharedDatabaseWriterScope {
+  gatewayId: string;
+  owners: { uid: string; schemas: string[] }[];
   trustedOperators: OperatorRole[];
 }
 export interface HeldDatabaseWriterBinding {
@@ -32,7 +39,7 @@ export interface HeldReturnDatabaseBarrier {
 type Action = "inspect" | "hold" | "verify" | "drain-idle" | "restore";
 
 const writersSql = `
-WITH schemas AS MATERIALIZED (SELECT oid,nspowner,nspacl FROM pg_namespace WHERE nspowner=$1),
+WITH schemas AS MATERIALIZED (SELECT oid,nspowner,nspacl FROM pg_namespace WHERE nspowner=$1 AND ($3::text[] IS NULL OR nspname=ANY($3))),
 relations AS MATERIALIZED (
   SELECT c.oid,c.relowner,c.relacl FROM pg_class c JOIN schemas n ON c.relnamespace=n.oid
   WHERE c.relkind IN ('r','p','S','v','m','f')
@@ -57,12 +64,14 @@ ORDER BY r.oid`;
 
 async function assertWriters(
   client: pg.Client,
-  scope: HeldDatabaseWriterScope,
+  scope: WriterScope,
   binding: HeldDatabaseWriterBinding,
+  exactSchemas?: string[],
 ) {
   const { rows } = await client.query<OperatorRole & { administrator: boolean }>(writersSql, [
     binding.ownerOid,
     binding.roleOid,
+    exactSchemas ?? null,
   ]);
   if (
     !scope.trustedOperators.length ||
@@ -83,7 +92,8 @@ async function observe(
   client: pg.Client,
   source: string,
   owner: string,
-  scope: HeldDatabaseWriterScope,
+  scope: WriterScope,
+  exactSchemas?: string[],
 ) {
   const {
     rows: [role],
@@ -98,8 +108,8 @@ async function observe(
   if (!role) throw new Error("Original isolated login or owner identity changed");
   const schemas = (
     await client.query<StoreSchema>(
-      'SELECT nspname AS name,oid::text FROM pg_namespace WHERE nspowner=$1 ORDER BY nspname COLLATE "C"',
-      [role.ownerOid],
+      'SELECT nspname AS name,oid::text FROM pg_namespace WHERE nspowner=$1 AND ($2::text[] IS NULL OR nspname=ANY($2)) ORDER BY nspname COLLATE "C"',
+      [role.ownerOid, exactSchemas ?? null],
     )
   ).rows;
   if (
@@ -242,4 +252,101 @@ async function apply(
   if (binding.previousLimit !== 0)
     throw new Error("Original database login still admits new connections");
   await assertSessions(client, binding, action === "drain-idle");
+}
+
+type RunWhileHeld = <T>(
+  scope: HeldSharedDatabaseWriterScope,
+  binding: HeldDatabaseWriterBinding,
+  current: Current,
+  work: (assertHeld: Current) => Promise<T>,
+) => Promise<T>;
+
+export interface HeldSharedDatabaseBarrier {
+  inspect(scope: HeldSharedDatabaseWriterScope, current: Current): Promise<HeldDatabaseWriterBinding>;
+  hold(scope: HeldSharedDatabaseWriterScope, binding: HeldDatabaseWriterBinding, current: Current): Promise<void>;
+  drainIdle(scope: HeldSharedDatabaseWriterScope, binding: HeldDatabaseWriterBinding, current: Current): Promise<void>;
+  restore(scope: HeldSharedDatabaseWriterScope, binding: HeldDatabaseWriterBinding, current: Current): Promise<void>;
+  runWhileHeld: RunWhileHeld;
+}
+
+function retainedSharedScope(input: HeldSharedDatabaseWriterScope): WriterScope {
+  const schemas = input.owners.flatMap(owner => owner.schemas);
+  if (!/^shared-[a-z0-9]+$/.test(input.gatewayId) || input.owners.length !== 6 ||
+      new Set(input.owners.map(owner => owner.uid)).size !== 6 || new Set(schemas).size !== schemas.length ||
+      input.owners.some(owner => !owner.uid || !owner.schemas.length) ||
+      schemas.some(schema => !/^[a-z_][a-z0-9_]{0,62}$/.test(schema))) {
+    throw new Error("Shared store barrier requires the exact six retained owner inventories");
+  }
+  return { sourceGatewayId: input.gatewayId, schemas, trustedOperators: input.trustedOperators };
+}
+
+async function assertNoConcurrentOperators(client: pg.Client, scope: WriterScope, binding: HeldDatabaseWriterBinding) {
+  await client.query("SELECT pg_stat_clear_snapshot()");
+  const { rows: [result] } = await client.query<{ busy: boolean }>(`
+    SELECT EXISTS(SELECT FROM pg_stat_activity WHERE datid=$1 AND pid<>pg_backend_pid()
+      AND backend_type='client backend' AND usesysid=ANY($2::oid[])) AS busy
+  `, [binding.databaseOid, scope.trustedOperators.map(role => role.oid)]);
+  if (result?.busy !== false) throw new Error("Another privileged session is connected to the held Shared stores");
+}
+
+export function heldSharedDatabaseBarrier(
+  adminDsn: string,
+  roleFor: (kind: string, id: string) => string,
+  credentialLock: string,
+): HeldSharedDatabaseBarrier {
+  const db = decodeURIComponent(new URL(adminDsn).pathname.slice(1));
+  if (!db) throw new Error("Held Shared database requires the exact agent store");
+  async function run<T>(input: HeldSharedDatabaseWriterScope, current: Current, options: {
+    action: Action; expected?: HeldDatabaseWriterBinding; work?: (assertHeld: Current) => Promise<T>;
+  }) {
+    const scope = retainedSharedScope(input);
+    const source = roleFor("gateway", db + ":" + scope.sourceGatewayId);
+    const owner = roleFor("shared", db);
+    const client = new pg.Client({ connectionString: adminDsn, connectionTimeoutMillis: 5000, statement_timeout: 5000 });
+    await current();
+    await client.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SET LOCAL search_path=pg_catalog");
+      await client.query("SET LOCAL lock_timeout='2s'");
+      await client.query(credentialLock);
+      const observeCurrent = async () => {
+        await current();
+        const binding = await observe(client, source, owner, scope, scope.schemas);
+        if (options.expected) compareBinding(binding, options.expected);
+        await assertWriters(client, scope, binding, scope.schemas);
+        await assertNoConcurrentOperators(client, scope, binding);
+        return binding;
+      };
+      const binding = await observeCurrent();
+      await apply(client, source, options.action, binding, options.expected);
+      const assertHeld = async () => assertSessions(client, await observeHeld(observeCurrent), false);
+      const value = options.work ? await options.work(assertHeld) : undefined;
+      if (options.work) await assertHeld();
+      await current();
+      await client.query("COMMIT");
+      return { binding, value };
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      await client.end();
+    }
+  }
+  return {
+    inspect: (scope, current) => run(scope, current, { action: "inspect" }).then(result => result.binding),
+    hold: (scope, expected, current) => run(scope, current, { action: "hold", expected }).then(() => undefined),
+    drainIdle: (scope, expected, current) => run(scope, current, { action: "drain-idle", expected }).then(() => undefined),
+    restore: (scope, expected, current) => run(scope, current, { action: "restore", expected }).then(() => undefined),
+    runWhileHeld: async (scope, expected, current, work) => {
+      const result = await run(scope, current, { action: "verify", expected, work });
+      return result.value!;
+    },
+  };
+}
+
+async function observeHeld(observeCurrent: () => Promise<HeldDatabaseWriterBinding>) {
+  const binding = await observeCurrent();
+  if (binding.previousLimit !== 0) throw new Error("Shared gateway login still admits new connections");
+  return binding;
 }

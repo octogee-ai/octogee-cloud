@@ -1,4 +1,4 @@
-import { heldReturnDatabaseBarrier } from "./held-return-database-barrier.js";
+import { heldReturnDatabaseBarrier, heldSharedDatabaseBarrier } from "./held-return-database-barrier.js";
 import { assertTrustedAgentStoreRoutines } from "./agent-store-routines.js";
 import { createHash } from "node:crypto";
 import pg from "pg";
@@ -654,4 +654,7 @@ async function dropAgentStoreObjectsRestricted(client, target, tables) {
 }
 export function createHeldReturnDatabaseBarrier(adminDsn) {
     return heldReturnDatabaseBarrier(adminDsn, roleFor, AGENT_STORE_CREDENTIAL_LOCK);
+}
+export function createHeldSharedDatabaseBarrier(adminDsn) {
+    return heldSharedDatabaseBarrier(adminDsn, roleFor, AGENT_STORE_CREDENTIAL_LOCK);
 }

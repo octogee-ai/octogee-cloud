@@ -6,10 +6,20 @@ type StoreSchema = {
     name: string;
     oid: string;
 };
-export interface HeldDatabaseWriterScope {
-    uid: string;
+interface WriterScope {
     sourceGatewayId: string;
     schemas: string[];
+    trustedOperators: OperatorRole[];
+}
+export interface HeldDatabaseWriterScope extends WriterScope {
+    uid: string;
+}
+export interface HeldSharedDatabaseWriterScope {
+    gatewayId: string;
+    owners: {
+        uid: string;
+        schemas: string[];
+    }[];
     trustedOperators: OperatorRole[];
 }
 export interface HeldDatabaseWriterBinding {
@@ -29,4 +39,13 @@ export interface HeldReturnDatabaseBarrier {
     restore: CheckBinding;
 }
 export declare function heldReturnDatabaseBarrier(adminDsn: string, roleFor: (kind: string, id: string) => string, credentialLock: string): HeldReturnDatabaseBarrier;
+type RunWhileHeld = <T>(scope: HeldSharedDatabaseWriterScope, binding: HeldDatabaseWriterBinding, current: Current, work: (assertHeld: Current) => Promise<T>) => Promise<T>;
+export interface HeldSharedDatabaseBarrier {
+    inspect(scope: HeldSharedDatabaseWriterScope, current: Current): Promise<HeldDatabaseWriterBinding>;
+    hold(scope: HeldSharedDatabaseWriterScope, binding: HeldDatabaseWriterBinding, current: Current): Promise<void>;
+    drainIdle(scope: HeldSharedDatabaseWriterScope, binding: HeldDatabaseWriterBinding, current: Current): Promise<void>;
+    restore(scope: HeldSharedDatabaseWriterScope, binding: HeldDatabaseWriterBinding, current: Current): Promise<void>;
+    runWhileHeld: RunWhileHeld;
+}
+export declare function heldSharedDatabaseBarrier(adminDsn: string, roleFor: (kind: string, id: string) => string, credentialLock: string): HeldSharedDatabaseBarrier;
 export {};
