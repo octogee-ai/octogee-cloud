@@ -1778,6 +1778,17 @@ describe("createVmGatewayRuntime.recoverUnreachable", () => {
     expect(h.log).toHaveBeenCalledWith(expect.stringMatching(/b-x: restarted octogee-computer-test-uida -> RUNNING \(on-demand fallback\)/));
   });
 
+  it("does not touch the provider for a VM reserved as a held Native offline source", async () => {
+    const h = harness({
+      ...live(),
+      "gateways/b-x": { gatewayId: "b-x", gatewayClass: "isolated", desiredStatus: "running",
+        runtimeRestartFence: { attemptId: "fixture", gatewayId: "b-x", phase: "reserved", kind: "held-native-offline-source", startedAt: 1 } },
+    });
+    await h.runtime.recoverUnreachable("b-x");
+    expect(h.vm.describe).not.toHaveBeenCalled();
+    expect(h.vm.start).not.toHaveBeenCalled();
+  });
+
   it("never restarts a VM the fleet controller stopped, a retired gateway's, or one bound to another gateway", async () => {
     for (const stopReason of ["idle", "operator"] as const) {
       const h = harness(live({ ...recorded, status: "TERMINATED", stopReason }));

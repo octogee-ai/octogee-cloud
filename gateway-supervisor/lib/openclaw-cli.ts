@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 
 export interface OpenClawCommandResult { code: number; stdout: string; stderr?: string }
-export interface OpenClawCommandOptions { env: NodeJS.ProcessEnv; signal?: AbortSignal; timeoutMs?: number }
+export interface OpenClawCommandOptions { env: NodeJS.ProcessEnv; signal?: AbortSignal; timeoutMs?: number; stdin?: string }
 export type OpenClawCommand = (
   args: string[],
   options: OpenClawCommandOptions,
@@ -26,7 +26,7 @@ function hasStdinFailure(error: NodeJS.ErrnoException | undefined): boolean {
 
 export const runOpenClaw: OpenClawCommand = (args, options) =>
   new Promise((resolve, reject) => {
-    const { timeoutMs = 180_000, ...commandOptions } = options;
+    const { timeoutMs = 180_000, stdin, ...commandOptions } = options;
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 300_000) {
       reject(new Error("OpenClaw command timeout must be a positive safe integer no greater than 300000ms"));
       return;
@@ -44,5 +44,5 @@ export const runOpenClaw: OpenClawCommand = (args, options) =>
       }
     });
     child.stdin?.on("error", (error: NodeJS.ErrnoException) => { stdinError = error; });
-    child.stdin?.end();
+    child.stdin?.end(stdin);
   });

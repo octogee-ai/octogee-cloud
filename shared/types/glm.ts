@@ -1026,6 +1026,27 @@ export interface HeldNativeReturnRepair {
   receipt?: { verifiedAt: number; appliedFingerprint: string; activationManifestSha256: string };
 }
 
+export interface HeldNativeOfflineStageReceipt {
+  verifiedAt: number;
+  holdGeneration: string;
+  maintenanceInstanceId: string;
+  immutableSnapshotId: string;
+  fileSha256: string;
+  ownerAnchorSha256: string;
+}
+
+export interface HeldNativeOfflineSourceRecovery {
+  requestId: string;
+  requestedAt: number;
+  sourceRelease: number;
+  targetRelease: number;
+  failureAttempt: number;
+  phase: "reserved" | "stopped-original" | "staged-offline";
+  originalInstanceId: string;
+  stoppedAt?: number;
+  stage?: HeldNativeOfflineStageReceipt;
+}
+
 export interface MigrationForwardRecovery {
   schemaVersion: 1;
   phase: "source-flushed";
@@ -1033,6 +1054,7 @@ export interface MigrationForwardRecovery {
   sourceSystemConfigCommit?: string;
   targetReleased?: true;
   sourceReconcile?: HeldNativeReturnRepair;
+  offlineSourceRecovery?: HeldNativeOfflineSourceRecovery;
 }
 
 export interface SchedulerHandoffState {

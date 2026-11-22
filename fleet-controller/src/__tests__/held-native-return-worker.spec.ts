@@ -3,10 +3,10 @@ import { SIGNATURE_HEADER } from "@octogee/shared/types/fleet-controller";
 import { createHeldNativeReturnDestinationVerifier } from "../lib/held-native-return-destination.js";
 import { FLEET_KEY_PAIR } from "./fixtures/fleet-keys.js";
 import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
-import { heldNativeReturnBlocksDestination, requestHeldNativeReturnRepair } from "@octogee/core/fleet-state";
+import { bindHeldNativeStoppedOriginal, heldNativeReturnBlocksDestination, requestHeldNativeReturnRepair, reserveHeldNativeOfflineSource } from "@octogee/core/fleet-state";
 import type { Operation } from "@octogee/shared/types/glm";
 import { expect, it, vi } from "vitest";
-import { createHeldNativeReturnWorker } from "../lib/held-native-return-worker.js";
+import { createHeldNativeOfflineReturnWorker, createHeldNativeReturnWorker } from "../lib/held-native-return-worker.js";
 
 const uid = "uid-owner", slug = "owner", sourceGatewayId = "owner-s-retained", targetGatewayId = "shared-target";
 const operationId = `builder-return-${sourceGatewayId}-g4`, sourceEpoch = 7;
@@ -118,6 +118,34 @@ it("holds only the destination through a worker restart and reuses the exact ret
   const completed = (await store.journal.operations.get(operationId))!;
   expect(heldNativeReturnBlocksDestination(completed, targetGatewayId)).toBe(false);
   expect(completed.cutoverCommittedAt).toBeUndefined();
+  expect((await store.gateways.assignments.get(sourceGatewayId, uid))?.state).toBe("quiescing");
+});
+
+it("reserves a stopped-original alternate without making an online receipt or releasing destination", async () => {
+  const { store } = fixture();
+  const reserved = await reserveHeldNativeOfflineSource(store, selection, "test-operator", 500);
+  expect(heldNativeReturnBlocksDestination((await store.journal.operations.get(operationId))!, targetGatewayId)).toBe(true);
+  await expect(requestHeldNativeReturnRepair(store, selection, "test-operator", 501)).rejects.toThrow("offline source");
+  const witness = { originalInstanceId: "1234", stoppedAt: 520 };
+  await expect(bindHeldNativeStoppedOriginal(store, selection, { ...witness, stoppedAt: 490 }, "test-operator", 530)).rejects.toThrow("reserved source");
+  expect((await store.gateways.roots.get(sourceGatewayId))?.runtimeRestartFence?.phase).toBe("reserved");
+  await expect(bindHeldNativeStoppedOriginal(store, selection, { ...witness, originalInstanceId: "2345" }, "test-operator", 530)).rejects.toThrow("reserved source");
+  await expect(bindHeldNativeStoppedOriginal(store, selection, witness, "test-operator", 530)).resolves.toEqual(reserved);
+  expect((await store.fleetRegistry.get(sourceGatewayId))?.vm).toMatchObject({ instanceId: "1234", status: "TERMINATED", stopReason: "operator" });
+  await store.journal.operations.patch(operationId, { status: "running", startedAt: 600 });
+  const operation = { ...(await store.journal.operations.get(operationId))!, id: operationId } as Operation;
+  const stage = { verifiedAt: 650, holdGeneration: "a".repeat(64), maintenanceInstanceId: "5678", immutableSnapshotId: "90",
+    fileSha256: "b".repeat(64), ownerAnchorSha256: "c".repeat(64) };
+  const worker = createHeldNativeOfflineReturnWorker({
+    store, now: () => 700, verifyDestination: async () => {}, verifyBackup: async () => ({ exact: "verified" }), assertBackupCurrent: async () => {},
+    reconcile: async (authority, assertHeld) => { expect(authority.requestId).toBe(reserved.requestId); await assertHeld(); return stage; },
+  });
+  const handoff = await worker(operation, { reportStep: vi.fn(), assertActiveClaim: vi.fn(async () => {}) });
+  expect(handoff.forwardRecovery?.offlineSourceRecovery).toMatchObject({ phase: "staged-offline", stage });
+  expect(handoff.forwardRecovery?.sourceReconcile).toBeUndefined();
+  const finished = (await store.journal.operations.get(operationId))!;
+  expect(heldNativeReturnBlocksDestination(finished, targetGatewayId)).toBe(true);
+  expect(finished.cutoverCommittedAt).toBeUndefined();
   expect((await store.gateways.assignments.get(sourceGatewayId, uid))?.state).toBe("quiescing");
 });
 

@@ -1,3 +1,4 @@
+import { HELD_NATIVE_OFFLINE_SOURCE_FENCE_KIND } from "@octogee/core/fleet-state";
 import { isDeepStrictEqual } from "node:util";
 import { rearmRestoredHomeForDemand, restoreArchivedHome } from "./lib/archived-home-restore.js";
 import { GUEST_RELEASE_MODE, finishParkedGatewayPrewarm, parkedPrewarmInput, readActiveParkedPrewarm, readRetainedGuestDisks, sameGuestImageRef } from "@octogee/core/isolated-gateway-lifecycle";
@@ -1403,6 +1404,11 @@ async function finishEnsuredVm(deps: VmLifecycleDeps, request: {
   return recordEnsuredVm(deps, gatewayId, spec, description);
 }
 
+async function hasHeldOfflineSourceFence(store: PlatformStateStore, gatewayId: string): Promise<boolean> {
+  const root = await store.gateways.roots.get(gatewayId);
+  return root?.runtimeRestartFence?.kind === HELD_NATIVE_OFFLINE_SOURCE_FENCE_KIND;
+}
+
 export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
   const creations = vmCreations(deps);
   const pauses = vmPauses(deps, creations);
@@ -1412,6 +1418,7 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
   }
 
   async function startVm(gatewayId: string, description: GatewayVmDescription, verb: "started" | "restarted"): Promise<GatewayVmDescription> {
+    await assertNotHeldOfflineSource(gatewayId);
     const started = await deps.vm.start(description.name, description.zone);
     const after = (await deps.vm.describe(description.name, description.zone)) ?? description;
     deps.log(`[vm-gateway-runtime] ${gatewayId}: ${verb} ${description.name} -> ${after.status}${started.fellBackToStandard ? " (on-demand fallback)" : ""}`);
@@ -1419,6 +1426,7 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
   }
 
   async function wakeVm(gatewayId: string, description: GatewayVmDescription): Promise<GatewayVmDescription> {
+    await assertNotHeldOfflineSource(gatewayId);
     return description.status === "SUSPENDED" ? resumeVm(deps, gatewayId, description) : startVm(gatewayId, description, "started");
   }
 
@@ -1479,13 +1487,19 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
     return stopped;
   }
 
-  const ensureVm: VmLifecycle["ensureVm"] = (gatewayId, image, ownerUid, bridge) =>
-    ensureBoundVm(deps, { gatewayId, image, ownerUid, bridge }, {
+  async function assertNotHeldOfflineSource(gatewayId: string): Promise<void> {
+    if (await hasHeldOfflineSourceFence(deps.store, gatewayId)) throw new Error("Native VM is reserved for offline source custody");
+  }
+
+  const ensureVm: VmLifecycle["ensureVm"] = async (gatewayId, image, ownerUid, bridge) => {
+    await assertNotHeldOfflineSource(gatewayId);
+    return ensureBoundVm(deps, { gatewayId, image, ownerUid, bridge }, {
       assertNoneInFlight: (id, uid) => {
         pauses.assertNoneInFlight(id, uid);
         creations.assertNoneInFlight(id, uid);
       }, acquireVm, reconcileVmBinding, wakeVm,
     });
+  };
 
   async function parkVm(gatewayId: string, opts: ParkVmOptions = {}): Promise<GatewayVmState | null> {
     pauses.assertNoneInFlight(gatewayId);
@@ -1504,11 +1518,16 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
     return parked;
   }
 
+  async function mayRecoverUnreachable(gatewayId: string, runtime: unknown, state: GatewayVmState | null): Promise<boolean> {
+    if (await hasHeldOfflineSourceFence(deps.store, gatewayId)) return false;
+    if (resolveGatewayRuntime(runtime) !== "gce-vm") return false;
+    if (state?.stopReason && FLEET_CONTROLLER_STOP_REASONS.has(state.stopReason)) return false;
+    return await deps.readDesiredStatus(gatewayId) === "running";
+  }
+
   async function recoverUnreachable(gatewayId: string): Promise<void> {
     const { data, vm } = await readVmRecord(deps.store, gatewayId);
-    if (resolveGatewayRuntime(data?.runtime) !== "gce-vm") return;
-    if (vm?.stopReason && FLEET_CONTROLLER_STOP_REASONS.has(vm.stopReason)) return;
-    if ((await deps.readDesiredStatus(gatewayId)) !== "running") return;
+    if (!(await mayRecoverUnreachable(gatewayId, data?.runtime, vm))) return;
     const description = vm ? await deps.vm.describe(vm.instanceName, vm.zone) : null;
     if (!description) {
       await recoverMissingReplacement(deps, { gatewayId, data, vm, ensureVm });

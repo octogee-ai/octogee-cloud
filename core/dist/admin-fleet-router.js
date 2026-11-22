@@ -1,5 +1,5 @@
 export { archivedSchedulerSourceImage, archiveSchedulerCustodyMatches, enqueueParkedHomeArchive, isAuthorizedHomeArchiveOrigin, planArchiveAfterBackupRelease, planReturnedHomeArchive, resolveParkedHomeArchiveGrant, retainedBootPreservesScheduler, simpleHomePreparation } from "./parked-home-archive.js";
-import { HeldNativeReturnConflict, requestHeldNativeReturnRepair } from "./held-native-return-repair.js";
+import { bindHeldNativeStoppedOriginal, HeldNativeReturnConflict, requestHeldNativeReturnRepair, reserveHeldNativeOfflineSource } from "./held-native-return-repair.js";
 import { migrationCancellationDeferred } from "./fleet-state.js";
 import { readSharedSourceRecoveryAuthority, readSharedSourceRecoverySupersession, SharedSourceRecoveryConflict } from "./shared-source-recovery.js";
 import { randomUUID } from "node:crypto";
@@ -4014,6 +4014,42 @@ export function addAdminFleetRoutes(router, deps) {
             }
             if (respondCentralReleaseError(res, error))
                 return;
+            next(error);
+        }
+    });
+    router.post("/operations/:id/held-native-offline/:phase", async (req, res, next) => {
+        try {
+            const phase = req.params.phase;
+            if (deps.releaseEnvironment !== "test" || (phase !== "reserve" && phase !== "stopped-original")) {
+                res.status(404).json({ error: "Offline held Native source phase is unavailable" });
+                return;
+            }
+            const selection = parseHeldNativeReturnSelection(req.params.id, req.body);
+            const actor = req.uid;
+            if (!selection || !actor) {
+                res.status(400).json({ error: "Exact held return scope and authenticated operator are required" });
+                return;
+            }
+            if (!deps.observeHeldNativeStoppedOriginal) {
+                res.status(503).json({ error: "Offline held Native source backend is unavailable" });
+                return;
+            }
+            const dryRun = isAdminDryRun(req);
+            if (phase === "stopped-original" && dryRun) {
+                const witness = await deps.observeHeldNativeStoppedOriginal(selection);
+                res.json({ operationId: selection.operationId, phase, witness, dryRun: true });
+                return;
+            }
+            const authority = phase === "reserve"
+                ? await reserveHeldNativeOfflineSource(store, selection, actor, Date.now(), dryRun)
+                : await bindHeldNativeStoppedOriginal(store, selection, await deps.observeHeldNativeStoppedOriginal(selection), actor, Date.now());
+            res.status(dryRun ? 200 : 202).json({ operationId: selection.operationId, requestId: authority.requestId, phase, dryRun });
+        }
+        catch (error) {
+            if (error instanceof HeldNativeReturnConflict) {
+                res.status(409).json({ error: error.message });
+                return;
+            }
             next(error);
         }
     });
