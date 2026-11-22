@@ -4040,7 +4040,14 @@ export function addAdminFleetRoutes(router, deps) {
                 return;
             }
             const { requestId } = await requestHeldNativeReturnRepair(store, selection, actor, Date.now(), dryRun);
-            res.status(dryRun ? 200 : 202).json({ operationId, requestId, ...(dryRun ? { dryRun: true } : {}) });
+            if (dryRun) {
+                res.json({ operationId, requestId, dryRun: true, plans: [{
+                            what: "Reconcile the held Native return source", forced: false, kind: "migrate-user",
+                            target: selection, mutation: { ...selection, requestId },
+                        }] });
+                return;
+            }
+            res.status(202).json({ operationId, requestId });
         }
         catch (error) {
             if (error instanceof HeldNativeReturnConflict) {

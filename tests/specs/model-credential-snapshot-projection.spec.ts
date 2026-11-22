@@ -12,7 +12,10 @@ describe("model credential snapshot projection", () => {
   it("keeps fleet broker snapshots on the shared user snapshot projection helper", () => {
     const fleetBroker = readRepoFile("platform-api/src/routes/fleet-broker.ts");
 
-    expect(fleetBroker).toContain("readByotSnapshotProjection");
+    const brokerSnapshot = readRepoFile("core/src/broker-user-snapshot.ts");
+    expect(fleetBroker).toContain('from "@octogee/core/broker-user-snapshot"');
+    expect(fleetBroker).toContain("await loadSnapshot(");
+    expect(brokerSnapshot).toContain("readByotSnapshotProjection");
     expect(fleetBroker).not.toContain("function snapshotCredentialProjection");
     expect(fleetBroker).not.toContain("function byotSystemConfigFromCredentialRecord");
   });

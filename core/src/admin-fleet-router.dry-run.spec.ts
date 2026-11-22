@@ -64,6 +64,48 @@ function parkedArchiveFleet(): Seed {
   };
 }
 
+const heldNative = {
+  operationId: "builder-return-iso-ada-g4",
+  sourceGatewayId: "iso-ada",
+  targetGatewayId: "shared-b",
+  sourceEpoch: 7,
+  schedulerMigrationId: "mig-builder-return-iso-ada-g4:scheduler:1:claim:100",
+};
+
+function heldNativeReturnFleet(): Seed {
+  const { operationId, sourceGatewayId, targetGatewayId, sourceEpoch, schedulerMigrationId } = heldNative;
+  const uid = "uid-ada", slug = "ada", leaseId = "held-lease";
+  const failure = `migration forward recovery pending: status 503: /push-rsync-state/${sourceGatewayId}: 500 ${JSON.stringify({
+    error: "push-rsync-state failed", message: `[migration-activation:${slug}] source has no applied fingerprint; converge it before migration`,
+  })}`;
+  const source = { ...FLEET[`gateways/${sourceGatewayId}`], gatewayId: sourceGatewayId, desiredRelease: 2, liveRelease: 2,
+    desiredStatus: "running", gatewayClass: "isolated",
+    ownerUid: uid, builderSlug: slug, allocation: { kind: "disposable-builder", claimedByUid: uid, leaseId, generation: 4 } };
+  return {
+    ...servingSharedGateway(targetGatewayId),
+    [`gateways/${sourceGatewayId}`]: source,
+    [`glmGateways/${sourceGatewayId}`]: { ...VM_RUNTIME[`glmGateways/${sourceGatewayId}`],
+      vm: { instanceName: "fixture-owner", instanceId: "1234", zone: "us-central1-b", status: "RUNNING" } },
+    [`gateways/${sourceGatewayId}/assignments/${uid}`]: { uid, slug, gatewayId: sourceGatewayId, epoch: sourceEpoch,
+      state: "quiescing", source: "migrate-user", createdAt: 1, updatedAt: 100, updatedByOperationId: operationId },
+    [`users/${uid}`]: { username: slug, provisioning: { openclaw: { slug, gatewayId: sourceGatewayId,
+      migration: { phase: "transferring", state: "moving", operationId },
+      activationLease: { leaseId, generation: 4, status: "returning", targetGatewayId: sourceGatewayId, returnOperationId: operationId },
+    } } },
+    ...operation(operationId, {
+      kind: "migrate-user", origin: "automatic", createdBy: "glm-controller-placement-policy", inputUid: uid, gatewayId: targetGatewayId,
+      status: "pending", startedAt: null, completedAt: null, attempts: 3,
+      input: { uid, userSlug: slug, fromGatewayId: sourceGatewayId, toGatewayId: targetGatewayId, source: "builder-activation-lease" },
+      schedulerHandoff: { uid, slug, fromGatewayId: sourceGatewayId, toGatewayId: targetGatewayId, migrationId: schedulerMigrationId,
+        forwardRecovery: { schemaVersion: 1, phase: "source-flushed", sourceEpoch } },
+      schedulerHandoffReleased: false,
+      attemptHistory: [{ attempt: 3, startedAt: 100, completedAt: 101, classification: "transient", error: failure, steps: [
+        { name: "keys-sync-state", status: "done" }, { name: "transfer-agent-store", status: "failed" },
+      ] }],
+    }),
+  };
+}
+
 afterEach(() => vi.unstubAllEnvs());
 
 describe("a dry run of a changing request", () => {
@@ -323,6 +365,11 @@ describe("every changing route", () => {
     "POST /shared-gateways/:id/add-operations/:operationId/complete": {
       method: "post",
       path: "/shared-gateways/shared-b/add-operations/op-1/complete",
+    },
+    "POST /operations/:id/reconcile-held-native-source": {
+      method: "post", path: `/operations/${heldNative.operationId}/reconcile-held-native-source`, seed: heldNativeReturnFleet,
+      body: { sourceGatewayId: heldNative.sourceGatewayId, targetGatewayId: heldNative.targetGatewayId,
+        sourceEpoch: heldNative.sourceEpoch, schedulerMigrationId: heldNative.schedulerMigrationId },
     },
     "POST /placement-automation/owner": { method: "post", path: "/placement-automation/owner", body: { owner: "client" } },
   };
