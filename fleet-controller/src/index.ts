@@ -182,9 +182,11 @@ import {
 } from "./operation-retry.js";
 import { createAddGatewayHandler } from "./handlers/add-gateway.js";
 import { createMigrateUserHandler, type MigrateUserDeps } from "./handlers/migrate-user.js";
-import { createHeldNativeReturnBackupVerifier, type NativeReturnBackupReaders } from "./lib/held-native-return-backup.js";
+import { createHeldNativeReturnBackupVerifier, type NativeReturnBackupReaders, type NativeReturnVerifiedBackup } from "./lib/held-native-return-backup.js";
 import { createHeldNativeReturnDestinationVerifier } from "./lib/held-native-return-destination.js";
-import { createHeldNativeReturnWorker } from "./lib/held-native-return-worker.js";
+import { createHeldNativeOfflineReturnWorker, createHeldNativeReturnWorker,
+  type ReconcileHeldNativeOfflineSource, type VerifyHeldNativeReturnCustody } from "./lib/held-native-return-worker.js";
+import type { HeldNativeOriginalRestartWitness, HeldNativeReturnSelection, HeldNativeStoppedOriginalWitness } from "@octogee/core/fleet-state";
 import { createHeldNativeSourceReconciler } from "./lib/held-native-source-reconcile.js";
 import {
   migrationSourceReady,
@@ -531,6 +533,8 @@ interface ControllerDeps {
   handlers: OperationHandlers;
   heldNativeReturnRepairAvailable?: boolean;
   sharedHeldReturnMaintenance?: SharedHeldReturnMaintenanceAdmin;
+  observeHeldNativeStoppedOriginal?: HeldNativeOfflineSourceBackend["observeStoppedOriginal"];
+  observeHeldNativeOriginalRestart?: HeldNativeOfflineSourceBackend["observeOriginalRestart"];
   requestNativeReturnSourceRecovery?: ReturnType<typeof createNativeReturnSourceRecoveryOwner>["request"];
   log: (msg: string) => void;
   syncFleetIngress?: (
@@ -2639,6 +2643,8 @@ function adminNativeReturnOptions(deps: ControllerDeps) {
   return {
     heldNativeReturnRepairAvailable: deps.heldNativeReturnRepairAvailable,
     sharedHeldReturnMaintenance: deps.sharedHeldReturnMaintenance,
+    observeHeldNativeStoppedOriginal: deps.observeHeldNativeStoppedOriginal,
+    observeHeldNativeOriginalRestart: deps.observeHeldNativeOriginalRestart,
     requestNativeReturnSourceRecovery: deps.requestNativeReturnSourceRecovery,
   };
 }
@@ -2988,6 +2994,7 @@ interface ControllerRuntimeSeams {
   requiresInitialGatewayRelease?: RequiresInitialGatewayRelease;
   heldNativeReturnBackupReaders?: NativeReturnBackupReaders | null;
   sharedHeldReturnMaintenancePhysical?: SharedHeldReturnMaintenancePhysical | null;
+  heldNativeOfflineSource?: ControllerProduct["heldNativeOfflineSource"];
 }
 
 function provisioningSeams(runtime: ProvisioningServiceRuntime | null): Pick<ControllerRuntimeSeams, "provisioning" | "gatewayGitKeys"> {
@@ -2998,7 +3005,7 @@ async function createControllerRuntime(
   store: PlatformStateStore,
   createHostingCleanup: ControllerProduct["createHostingCleanup"],
   userLifecycle: ProductUserLifecycle | null,
-  { accounts, documents, provisioning, gatewayGitKeys, resolveHobbyCheckpointPod, requiresInitialGatewayRelease, heldNativeReturnBackupReaders, sharedHeldReturnMaintenancePhysical }: ControllerRuntimeSeams,
+  { accounts, documents, provisioning, gatewayGitKeys, resolveHobbyCheckpointPod, requiresInitialGatewayRelease, heldNativeReturnBackupReaders, heldNativeOfflineSource, sharedHeldReturnMaintenancePhysical }: ControllerRuntimeSeams,
 ): Promise<ControllerRuntime> {
   const runKubectl: KubectlSubprocess = (args, opts) => spawnKubectl(args, opts);
   const authSecretEnsurer = createAuthSecretEnsurer({ runKubectl, randomTokenHex: defaultRandomTokenHex, log });
@@ -3156,7 +3163,7 @@ async function createControllerRuntime(
   const convergeGateways = serializeGatewayConvergence(runGatewayConvergence);
   const convergeSettledVm = convergeAfterVmRuntimeChange(convergeGateways, log);
   const nativeReturn = configureNativeReturnSupport({
-    readers: heldNativeReturnBackupReaders, store, documents, privateKey: fleetControllerPrivateKey, sharedHeldReturnMaintenancePhysical,
+    readers: heldNativeReturnBackupReaders, offlineFactory: heldNativeOfflineSource, store, documents, privateKey: fleetControllerPrivateKey, sharedHeldReturnMaintenancePhysical,
     runKubectl, kubeOps, prepareMigrationAgentStores, agentStoreAdminDsn: agentStore.adminDsn,
   });
   const handlers = await buildHandlers(documents, log, helm, kubeOps, {
@@ -3206,15 +3213,22 @@ function configureNativeReturnSupport(deps: Parameters<typeof buildHeldNativeRet
   kubeOps: KubeOps;
   prepareMigrationAgentStores: PrepareMigrationAgentStores;
   sharedHeldReturnMaintenancePhysical?: SharedHeldReturnMaintenancePhysical | null;
+  offlineFactory?: ControllerProduct["heldNativeOfflineSource"];
 }) {
+  const offline = environmentName === "test" ? deps.offlineFactory?.(deps.store, {
+    verifyDestination: heldNativeDestinationCustody(deps), fleetPrivateKey: deps.privateKey,
+  }) : undefined;
   const nativeReturnRecovery = buildNativeReturnSourceRecoveryOwner(deps.store, deps.kubeOps, deps.privateKey, deps.prepareMigrationAgentStores);
   const reconcileHeldNativeReturn = buildHeldNativeReturnHandler(deps);
+  const reconcileHeldNativeOfflineReturn = buildHeldNativeOfflineReturnHandler({ ...deps, offline });
   return {
-    handlers: { nativeReturnRecovery, reconcileHeldNativeReturn },
+    handlers: { nativeReturnRecovery, reconcileHeldNativeReturn, reconcileHeldNativeOfflineReturn },
     admin: {
       heldNativeReturnRepairAvailable: reconcileHeldNativeReturn !== undefined,
       sharedHeldReturnMaintenance: deps.sharedHeldReturnMaintenancePhysical
         ? createSharedHeldReturnMaintenanceOperator({ store: deps.store, physical: deps.sharedHeldReturnMaintenancePhysical, now: Date.now }) : undefined,
+      observeHeldNativeStoppedOriginal: reconcileHeldNativeOfflineReturn ? offline?.observeStoppedOriginal : undefined,
+      observeHeldNativeOriginalRestart: reconcileHeldNativeOfflineReturn ? offline?.observeOriginalRestart : undefined,
       requestNativeReturnSourceRecovery: nativeReturnRecovery.request,
     },
   };
@@ -3231,17 +3245,10 @@ function buildHeldNativeReturnHandler(deps: {
   if (environmentName !== "test" || !deps.readers || !deps.documents.projectRecipes) return undefined;
   const { store, documents, privateKey } = deps;
   const backup = createHeldNativeReturnBackupVerifier(deps.readers);
-  const verifyPod = createHeldNativeReturnDestinationVerifier({ namespace: NAMESPACE, privateKey, runKubectl: deps.runKubectl });
-  const verifyStores = createHeldReturnStoreCustodyVerifier(deps.agentStoreAdminDsn);
   return createHeldNativeReturnWorker({
     store,
     now: Date.now,
-    verifyDestination: async (authority, assertCurrent) => {
-      await verifyPod(authority, assertCurrent);
-      const inventory = await store.users.agentStores.list(authority.uid);
-      await verifyStores({ ...authority, schemas: inventory.map(record => record.schema) });
-      await assertCurrent();
-    },
+    verifyDestination: heldNativeDestinationCustody(deps),
     verifyBackup: backup.verifyBackup,
     assertBackupCurrent: (binding, { claimStartedAt: _claimStartedAt, ...scope }, assertCurrent) =>
       backup.assertBackupCurrent(binding, scope, assertCurrent),
@@ -3249,9 +3256,47 @@ function buildHeldNativeReturnHandler(deps: {
   });
 }
 
+function heldNativeDestinationCustody(deps: Pick<Parameters<typeof buildHeldNativeReturnHandler>[0], "privateKey" | "runKubectl" | "agentStoreAdminDsn" | "store">): VerifyHeldNativeReturnCustody {
+  const verifyPod = createHeldNativeReturnDestinationVerifier({ namespace: NAMESPACE, privateKey: deps.privateKey, runKubectl: deps.runKubectl });
+  const verifyStores = createHeldReturnStoreCustodyVerifier(deps.agentStoreAdminDsn);
+  return async (authority, assertCurrent) => {
+    await verifyPod(authority, assertCurrent);
+    const inventory = await deps.store.users.agentStores.list(authority.uid);
+    await verifyStores({ ...authority, schemas: inventory.map(record => record.schema) });
+    await assertCurrent();
+  };
+}
+
+export interface HeldNativeOfflineSourceBackend {
+  readers: NativeReturnBackupReaders;
+  observeStoppedOriginal(selection: HeldNativeReturnSelection): Promise<HeldNativeStoppedOriginalWitness>;
+  observeOriginalRestart?(selection: HeldNativeReturnSelection): Promise<HeldNativeOriginalRestartWitness>;
+  stageAlternateSource: ReconcileHeldNativeOfflineSource<NativeReturnVerifiedBackup>;
+}
+
+function buildHeldNativeOfflineReturnHandler(deps: Parameters<typeof buildHeldNativeReturnHandler>[0] & {
+  offline: HeldNativeOfflineSourceBackend | null | undefined;
+}): MigrateUserDeps["reconcileHeldNativeOfflineReturn"] {
+  if (environmentName !== "test" || !deps.offline || !deps.documents.projectRecipes) return undefined;
+  const backup = createHeldNativeReturnBackupVerifier(deps.offline.readers);
+  return createHeldNativeOfflineReturnWorker({
+    store: deps.store,
+    now: Date.now,
+    verifyDestination: heldNativeDestinationCustody(deps),
+    verifyBackup: backup.verifyBackup,
+    assertBackupCurrent: (binding, { claimStartedAt: _, ...scope }, assertCurrent) =>
+      backup.assertBackupCurrent(binding, scope, assertCurrent),
+    reconcile: deps.offline.stageAlternateSource,
+  });
+}
+
 export interface ControllerProduct {
   sharedHeldReturnMaintenancePhysical?: (store: PlatformStateStore) => SharedHeldReturnMaintenancePhysical | null;
   heldNativeReturnBackupReaders?: (store: PlatformStateStore) => NativeReturnBackupReaders | null;
+  heldNativeOfflineSource?: (store: PlatformStateStore, custody: {
+    verifyDestination: VerifyHeldNativeReturnCustody;
+    fleetPrivateKey: string;
+  }) => HeldNativeOfflineSourceBackend | null;
   resolveHobbyCheckpointPod?: ResolveHobbyCheckpointPod;
   requiresInitialGatewayRelease?: RequiresInitialGatewayRelease;
   createHostingCleanup?: (log: (message: string) => void) => HostingCleanup;
@@ -3302,8 +3347,10 @@ function createUserLifecycle(
 }
 
 function controllerNativeReturnSeams(product: ControllerProduct, store: PlatformStateStore, environmentName: string) {
-  if (environmentName !== "test") return {};
+  const shared = { heldNativeOfflineSource: product.heldNativeOfflineSource };
+  if (environmentName !== "test") return shared;
   return {
+    ...shared,
     heldNativeReturnBackupReaders: product.heldNativeReturnBackupReaders?.(store),
     sharedHeldReturnMaintenancePhysical: product.sharedHeldReturnMaintenancePhysical?.(store),
   };
@@ -3623,6 +3670,7 @@ async function buildHandlers(
     prepareMigrationAgentStores: PrepareMigrationAgentStores;
     nativeReturnRecovery: ReturnType<typeof createNativeReturnSourceRecoveryOwner>;
     reconcileHeldNativeReturn?: MigrateUserDeps["reconcileHeldNativeReturn"];
+    reconcileHeldNativeOfflineReturn?: MigrateUserDeps["reconcileHeldNativeOfflineReturn"];
     requiresInitialGatewayRelease?: RequiresInitialGatewayRelease;
     store: PlatformStateStore;
     deleteHostingSites?: HostingCleanup;
@@ -3689,6 +3737,7 @@ async function buildHandlers(
   });
   const migrateUser = createMigrateUserHandler({
     reconcileHeldNativeReturn: fleetOps.reconcileHeldNativeReturn,
+    reconcileHeldNativeOfflineReturn: fleetOps.reconcileHeldNativeOfflineReturn,
     prepareIsolatedRecoveryTarget: input => prepareIsolatedRecoveryTarget({
       assertAuthority: recovery => assertWorkspaceMigrationRecoveryAuthority(stateDeps, recovery),
       targetAssigned: async gatewayId => {

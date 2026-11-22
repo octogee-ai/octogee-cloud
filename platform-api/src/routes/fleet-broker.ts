@@ -7,6 +7,7 @@ import { isBlobObjectVersion } from "@octogee/shared/types/fleet-broker";
 import { gcsBlobStore, runtimeBlobStore } from "../lib/runtime-blob-store.js";
 import type { WorkspaceProject } from "@octogee/core/platform-state";
 import { isolatedBootMode } from "@octogee/core/isolated-prelaunch";
+import { assignedPodInitialBootAllowed, type AssignedPodInitialBootAuthority } from "../lib/assigned-isolated-initial-boot.js";
 import { noProvisioningProjection, type ProvisioningProjection } from "@octogee/core/provisionSteps";
 import { mirroredState, mmUpdateFromChatOutputs, type MirroredState } from "@octogee/core/provisioning-mirror";
 import { gatewayKeyOwnerId } from "@octogee/core/gitea-naming";
@@ -258,6 +259,7 @@ export interface ProvisionedUserReport {
 }
 
 interface FleetBrokerRouteDeps {
+  assignedPodInitialBoot?: AssignedPodInitialBootAuthority | undefined;
   workspaceBlobStore?: WorkspaceBlobStore;
   reconcileDefaultAgentProjectMembership?: (input: ProjectAgentMembershipInput) => Promise<ProjectAgentMembershipResult>;
   provisionMattermost?: (input: {
@@ -1762,7 +1764,12 @@ async function podHostedIsolatedCaller(reader: Pick<PlatformStateRepositories, "
 
 const BOOT_MODE_REFUSED = Symbol("boot mode refused");
 
-function installUserIdentityRoute(router: Router, store: PlatformStateStore): void {
+function installUserIdentityRoute(
+  router: Router,
+  store: PlatformStateStore,
+  now: () => number,
+  assignedPodInitialBoot?: AssignedPodInitialBootAuthority,
+): void {
   router.post("/builder-identity", async (req, res) => {
     const bound = boundGateway(req, res);
     if (!bound) return;
@@ -1776,6 +1783,9 @@ function installUserIdentityRoute(router: Router, store: PlatformStateStore): vo
       const gateway = await transaction.gateways.roots.get(bound.gatewayId);
       const identity = userIdentityForRoot(gateway, bound.gatewayId);
       if (!nativeBoot || !gateway || !identity || identity.state !== "claimed") return identity;
+      if (assignedPodInitialBoot && await assignedPodInitialBootAllowed(transaction, gateway, bound, now(), assignedPodInitialBoot)) {
+        return { ...identity, bootMode: "prelaunch" as const };
+      }
       const boot = await isolatedBootMode({ reader: transaction, gateway });
       return { ...identity, bootMode: boot.mode, ...(boot.migrationId ? { activationMigrationId: boot.migrationId } : {}) };
     });
@@ -4312,7 +4322,7 @@ export function createFleetBrokerRoutes(opts: FleetBrokerRouteOptions): Router {
   const router = Router();
   const deps = resolveFleetBrokerRouteDeps(opts);
   installSnapshotRoutes(router, deps);
-  installUserIdentityRoute(router, deps.store);
+  installUserIdentityRoute(router, deps.store, deps.now, opts.assignedPodInitialBoot);
   installProvisioningRoutes(router, deps);
   installServiceProvisioningRoutes(router, deps);
   installGatewayOpsRoutes(router, deps);

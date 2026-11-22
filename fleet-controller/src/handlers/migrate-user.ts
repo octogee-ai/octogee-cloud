@@ -102,6 +102,7 @@ export interface MigrateUserDeps {
   recordMigrationProgress: (input: { operation: Operation; event: MigrationProgressRecord }) => Promise<void>;
   recoverNativeReturnSource?: OperationHandler;
   reconcileHeldNativeReturn?: (op: Operation, ctx: OperationContext) => Promise<SchedulerHandoffState>;
+  reconcileHeldNativeOfflineReturn?: MigrateUserDeps["reconcileHeldNativeReturn"];
   recoverAbandonedNativeScheduler?: RecoverAbandonedNativeScheduler;
   prepareNativeVmReturn: (input: NativeVmReturnInput) => Promise<NativeVmReturn | null>;
   retireNativeSchedulerBeforeStage: (input: NativeSchedulerRetirementInput, scheduler: MigrationClient["scheduler"]) => Promise<void>;
@@ -877,8 +878,9 @@ async function deferNativeReturnProvision(
 }
 
 function nativeSourceFlushedCheckpoint(handoff: SchedulerHandoffState, sourceEpoch: number): NonNullable<SchedulerHandoffState["forwardRecovery"]> {
-  const sourceReconcile = handoff.forwardRecovery?.sourceReconcile;
-  return { schemaVersion: 1, phase: "source-flushed", sourceEpoch, ...(sourceReconcile && { sourceReconcile }) };
+  const { sourceReconcile, offlineSourceRecovery } = handoff.forwardRecovery ?? {};
+  return { schemaVersion: 1, phase: "source-flushed", sourceEpoch,
+    ...(sourceReconcile && { sourceReconcile }), ...(offlineSourceRecovery && { offlineSourceRecovery }) };
 }
 
 async function closeSourceForNativeReturnProvision(
@@ -2548,6 +2550,13 @@ async function attributePreemption(
 }
 
 async function reconcileHeldNativeReturnIfRequested(deps: MigrateUserDeps, op: Operation, ctx: OperationContext): Promise<Operation> {
+  const offline = op.schedulerHandoff?.forwardRecovery?.offlineSourceRecovery;
+  if (offline) {
+    if (offline.phase === "stopped-original" && deps.reconcileHeldNativeOfflineReturn) {
+      await deps.reconcileHeldNativeOfflineReturn(op, ctx);
+    }
+    throw new Error("held Native offline source still requires independently verified portable publication");
+  }
   const target = op.input.toGatewayId;
   if (typeof target !== "string" || !heldNativeReturnBlocksDestination(op, target)) return op;
   if (!deps.reconcileHeldNativeReturn) throw new Error("held Native return source reconciliation is unavailable");
