@@ -86,12 +86,19 @@ function envOf(entry: Container): Record<string, string | undefined> {
 
 describe("charts/octogee-gateway/ — isolated gateway as a Kubernetes pod", () => {
   it("keeps a checkpoint preparer private and restores the same Pod mounts without embedded auth or a PVC", () => {
-    const values = { computerDesktop: "x11", "hobbyCheckpoint.slotId": ISOLATED_POD.gatewayId! };
+    const values = {
+      computerDesktop: "x11", "hobbyCheckpoint.slotId": ISOLATED_POD.gatewayId!, computeClass: "Balanced",
+      "nodeSelector.cloud\\.google\\.com/min-cpu-platform": "Intel_Ice_Lake",
+    };
     const prepared = renderDeployment(values);
     const restored = renderDeployment({ ...values, "hobbyCheckpoint.restoreSnapshot": "single-use-snapshot" });
     expect(prepared.rendered).not.toContain("podsnapshot.gke.io/ps-name");
     expect(restored.rendered).toContain('podsnapshot.gke.io/ps-name: "single-use-snapshot"');
     expect(prepared.deployment.spec.template.spec.volumes).toEqual(restored.deployment.spec.template.spec.volumes);
+    expect(restored.deployment.spec.template.spec.nodeSelector).toEqual({
+      "cloud.google.com/compute-class": "Balanced", "kubernetes.io/arch": "amd64",
+      "cloud.google.com/min-cpu-platform": "Intel_Ice_Lake",
+    });
     expect(prepared.deployment.spec.template.spec.volumes).toContainEqual({ name: "data", emptyDir: { sizeLimit: "4Gi" } });
     for (const deployment of [prepared.deployment, restored.deployment]) {
       for (const role of ["gateway", "gateway-edge"]) {

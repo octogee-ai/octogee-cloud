@@ -40,6 +40,9 @@
 {{- end -}}
 {{- if $computeClass -}}
 {{- $isolatedPodNodeSelector = dict "cloud.google.com/compute-class" $computeClass "kubernetes.io/arch" "amd64" -}}
+{{- if $checkpointSlot -}}
+{{- $isolatedPodNodeSelector = merge $isolatedPodNodeSelector (deepCopy (.Values.nodeSelector | default dict)) -}}
+{{- end -}}
 {{- else -}}
 {{- $isolatedPodNodeSelector = merge (dict "kubernetes.io/arch" "amd64") (deepCopy (.Values.nodeSelector | default dict)) -}}
 {{- end -}}
