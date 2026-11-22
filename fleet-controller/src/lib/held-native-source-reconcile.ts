@@ -1,11 +1,13 @@
 import { isIP } from "node:net";
 import { isDeepStrictEqual } from "node:util";
 import { loadSnapshot } from "@octogee/core/broker-user-snapshot";
-import { requestHeldNativeSourceReconcile } from "@octogee/core/fleet-migration-client";
+import { requestHeldNativeSourceHold, requestHeldNativeSourceReconcile } from "@octogee/core/fleet-migration-client";
 import { createCachedHouseModelResolver, createCachedUserAgentDefaultResolver } from "@octogee/core/model-broker/model-config";
+import { assertHeldNativeReturnRepairClaim } from "@octogee/core/fleet-state";
 import type { PlatformStateStore } from "@octogee/core/platform-state";
 import { snapshotConfigFingerprint } from "@octogee/core/user-snapshot-mapping";
 import type { HeldNativeSourceBinding } from "@octogee/shared/types/fleet-controller";
+import type { NativeReturnOwnerHold } from "./held-native-return-backup.js";
 import type { UserDocuments } from "../user-documents.js";
 import type { GatewayVmClient } from "./compute-vm.js";
 
@@ -17,6 +19,72 @@ interface SourceDeps {
   privateKey: string;
   port: string;
   vm: Pick<GatewayVmClient, "describe" | "readAttachedGuestDisks">;
+}
+
+async function readBoundUrl(deps: Pick<SourceDeps, "store" | "vm" | "port">, scope: Scope, backing: Backing) {
+  const runtime = await deps.store.fleetRegistry.get(scope.sourceGatewayId);
+  const recorded = runtime?.vm;
+  if (runtime?.runtime !== "gce-vm" || !recorded?.instanceName || !recorded.zone || !recorded.internalIp ||
+      isIP(recorded.internalIp) !== 4 || recorded.instanceId !== backing.vmId || recorded.status !== "RUNNING") {
+    throw new Error("Held source registry does not identify the backed-up VM");
+  }
+  const [live, disks, owner] = await Promise.all([
+    deps.vm.describe(recorded.instanceName, recorded.zone),
+    deps.vm.readAttachedGuestDisks(recorded.instanceName, recorded.zone, scope.uid, backing.vmId),
+    deps.store.users.records.get(scope.uid),
+  ]);
+  if (!live) throw new Error("Held source backed-up VM is unavailable");
+  const identityMatches = [
+    live.gatewayId === scope.sourceGatewayId, live.status === "RUNNING", live.metadata["octogee-owner-uid"] === scope.uid,
+    live.instanceId === backing.vmId, live.internalIp === recorded.internalIp, disks.homeDiskId === backing.homeDiskId,
+    disks.bootDiskId === backing.bootDiskId, owner?.home.homeDisk?.id === backing.homeDiskId,
+  ].every(Boolean);
+  if (!identityMatches) throw new Error("Held source VM or disks differ from the verified backup");
+  return { url: `http://${live.internalIp}:${deps.port}`, vm: live };
+}
+
+export type ReadNativeReturnSourceHold = (
+  scope: Scope, expectedBacking: Backing & { serviceAccountEmail: string }, action: "acquire" | "read",
+) => Promise<NativeReturnOwnerHold>;
+
+function verifyBoundServiceAccount(actual: readonly { email: string }[], expected: string): void {
+  if (!expected || actual.length !== 1 || actual[0]?.email !== expected) {
+    throw new Error("Held source Compute service account differs from the verified source binding");
+  }
+}
+
+export function createHeldNativeSourceHoldReader(deps: Pick<SourceDeps, "store" | "privateKey" | "port" | "vm"> & {
+  projectId: string;
+  request?: typeof requestHeldNativeSourceHold;
+}): ReadNativeReturnSourceHold {
+  const request = deps.request ?? requestHeldNativeSourceHold;
+  return async (scope, expected, action) => {
+    const { serviceAccountEmail, ...backing } = expected;
+    const op = await deps.store.journal.operations.get(scope.operationId);
+    const claimStartedAt = op?.startedAt;
+    if (op?.status !== "running" || typeof claimStartedAt !== "number" || !Number.isSafeInteger(claimStartedAt) || claimStartedAt <= 0) {
+      throw new Error("Held source has no current running claim");
+    }
+    const assertCurrent = () => assertHeldNativeReturnRepairClaim(deps.store, { authority: scope, claimStartedAt });
+    await assertCurrent();
+    const bound = await readBoundUrl(deps, scope, backing);
+    verifyBoundServiceAccount(bound.vm.serviceAccounts, serviceAccountEmail);
+    const { sourceGatewayId: gatewayId, ...claimScope } = scope;
+    await assertCurrent();
+    const proof = await request({
+      action, privateKey: deps.privateKey, sourceUrl: bound.url,
+      claim: { ...claimScope, ...backing, gatewayId, claimStartedAt },
+      gce: { projectId: deps.projectId, instanceName: bound.vm.name, zone: bound.vm.zone, serviceAccountEmail },
+    });
+    const final = await readBoundUrl(deps, scope, backing);
+    verifyBoundServiceAccount(final.vm.serviceAccounts, serviceAccountEmail);
+    if (final.url !== bound.url || final.vm.name !== bound.vm.name || final.vm.zone !== bound.vm.zone ||
+        final.vm.lastStartedAt !== bound.vm.lastStartedAt || !isDeepStrictEqual(proof.source, backing) || !isDeepStrictEqual(proof.scope, scope)) {
+      throw new Error("Held source binding changed while reading the signed source proof");
+    }
+    await assertCurrent();
+    return proof;
+  };
 }
 
 export function createHeldNativeSourceReconciler(deps: SourceDeps) {
@@ -44,40 +112,18 @@ export function createHeldNativeSourceReconciler(deps: SourceDeps) {
     return { fingerprint: snapshotConfigFingerprint(snapshot), roster: [...snapshot.agentIds].sort() };
   }
 
-  async function readBoundUrl(scope: Scope, backing: Backing) {
-    const runtime = await deps.store.fleetRegistry.get(scope.sourceGatewayId);
-    const recorded = runtime?.vm;
-    if (runtime?.runtime !== "gce-vm" || !recorded?.instanceName || !recorded.zone || !recorded.internalIp ||
-        isIP(recorded.internalIp) !== 4 || recorded.instanceId !== backing.vmId || recorded.status !== "RUNNING") {
-      throw new Error("Held source registry does not identify the backed-up VM");
-    }
-    const [live, disks, owner] = await Promise.all([
-      deps.vm.describe(recorded.instanceName, recorded.zone),
-      deps.vm.readAttachedGuestDisks(recorded.instanceName, recorded.zone, scope.uid, backing.vmId),
-      deps.store.users.records.get(scope.uid),
-    ]);
-    if (!live) throw new Error("Held source backed-up VM is unavailable");
-    const identityMatches = [
-      live.gatewayId === scope.sourceGatewayId, live.status === "RUNNING", live.metadata["octogee-owner-uid"] === scope.uid,
-      live.instanceId === backing.vmId, live.internalIp === recorded.internalIp, disks.homeDiskId === backing.homeDiskId,
-      disks.bootDiskId === backing.bootDiskId, owner?.home.homeDisk?.id === backing.homeDiskId,
-    ].every(Boolean);
-    if (!identityMatches) throw new Error("Held source VM or disks differ from the verified backup");
-    return `http://${live.internalIp}:${deps.port}`;
-  }
-
   return async (authority: Scope & { claimStartedAt: number }, assertCurrent: () => Promise<void>,
     backedUp: { scope: Scope; source: Backing; holdGeneration: string }) => {
     const { claimStartedAt, ...scope } = authority;
     if (!isDeepStrictEqual(scope, backedUp.scope)) throw new Error("Held source backup has a different scope");
     await assertCurrent();
-    const [sourceUrl, desired] = await Promise.all([readBoundUrl(scope, backedUp.source), readDesired(scope)]);
+    const [{ url: sourceUrl }, desired] = await Promise.all([readBoundUrl(deps, scope, backedUp.source), readDesired(scope)]);
     const { sourceGatewayId: gatewayId, ...rest } = scope;
     const binding = { ...rest, ...backedUp.source, claimStartedAt, gatewayId, holdGeneration: backedUp.holdGeneration };
     await assertCurrent();
     const proof = await requestHeldNativeSourceReconcile({ binding, privateKey: deps.privateKey, sourceUrl });
     await assertCurrent();
-    const [finalUrl, finalDesired] = await Promise.all([readBoundUrl(scope, backedUp.source), readDesired(scope)]);
+    const [{ url: finalUrl }, finalDesired] = await Promise.all([readBoundUrl(deps, scope, backedUp.source), readDesired(scope)]);
     if (finalUrl !== sourceUrl || !isDeepStrictEqual(finalDesired, desired) || proof.appliedFingerprint !== desired.fingerprint) {
       throw new Error("Held source successful apply could not be matched to its current owner configuration");
     }

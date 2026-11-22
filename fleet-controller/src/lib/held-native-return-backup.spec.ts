@@ -47,6 +47,21 @@ describe("held Native source and store backup custody", () => {
     expect(readers.verifyRestoredSource).toHaveBeenCalledTimes(1);
   });
 
+  it("acquires once, verifies the same hold independently, and only reads thereafter", async () => {
+    const { hold, readers, assertCurrent, authority } = harness();
+    authority.claimStartedAt = 950;
+    const acquireAuthenticatedOwnerHold = vi.fn(async () => structuredClone(hold));
+    const adapter = createHeldNativeReturnBackupVerifier({ ...readers, acquireAuthenticatedOwnerHold });
+    const binding = await adapter.verifyBackup(authority, assertCurrent);
+    await adapter.assertBackupCurrent(binding, scope, assertCurrent);
+    expect(acquireAuthenticatedOwnerHold).toHaveBeenCalledExactlyOnceWith(authority);
+    expect(readers.readAuthenticatedOwnerHold.mock.calls.length).toBeGreaterThan(1);
+    readers.readAuthenticatedOwnerHold.mockResolvedValueOnce({ ...hold, generation: "b".repeat(64) });
+    await expect(adapter.verifyBackup(authority, assertCurrent)).rejects.toThrow("changed after acquisition");
+    expect(readers.verifyRestoredSource).toHaveBeenCalledOnce();
+    await expect(adapter.verifyBackup({ ...authority, claimStartedAt: 1100 }, assertCurrent)).rejects.toThrow("predates its current claim");
+  });
+
   it("does not count separately timed, individually restored backups that predate the owner hold", async () => {
     const { adapter, home, assertCurrent, authority } = harness();
     home.captureStartedAt = 900;

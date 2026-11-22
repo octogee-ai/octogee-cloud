@@ -181,7 +181,7 @@ import { createMigrateUserHandler, type MigrateUserDeps } from "./handlers/migra
 import { createHeldNativeReturnBackupVerifier, type NativeReturnBackupReaders } from "./lib/held-native-return-backup.js";
 import { createHeldNativeReturnDestinationVerifier } from "./lib/held-native-return-destination.js";
 import { createHeldNativeReturnWorker } from "./lib/held-native-return-worker.js";
-import { createHeldNativeSourceReconciler } from "./lib/held-native-source-reconcile.js";
+import { createHeldNativeSourceHoldReader, createHeldNativeSourceReconciler, type ReadNativeReturnSourceHold } from "./lib/held-native-source-reconcile.js";
 import {
   migrationSourceReady,
   migrationTargetRootIsStable,
@@ -2978,7 +2978,7 @@ interface ControllerRuntimeSeams {
   gatewayGitKeys: GatewayGitKeyRelease | null;
   resolveHobbyCheckpointPod?: ResolveHobbyCheckpointPod;
   requiresInitialGatewayRelease?: RequiresInitialGatewayRelease;
-  heldNativeReturnBackupReaders?: NativeReturnBackupReaders | null;
+  heldNativeReturnBackupReaders?: ControllerProduct["heldNativeReturnBackupReaders"];
 }
 
 function provisioningSeams(runtime: ProvisioningServiceRuntime | null): Pick<ControllerRuntimeSeams, "provisioning" | "gatewayGitKeys"> {
@@ -3209,7 +3209,7 @@ function configureNativeReturnSupport(deps: Parameters<typeof buildHeldNativeRet
 }
 
 function buildHeldNativeReturnHandler(deps: {
-  readers: NativeReturnBackupReaders | null | undefined;
+  readers: ControllerProduct["heldNativeReturnBackupReaders"];
   store: PlatformStateStore;
   documents: UserDocuments;
   privateKey: string;
@@ -3218,7 +3218,11 @@ function buildHeldNativeReturnHandler(deps: {
 }): MigrateUserDeps["reconcileHeldNativeReturn"] {
   if (environmentName !== "test" || !deps.readers || !deps.documents.projectRecipes) return undefined;
   const { store, documents, privateKey } = deps;
-  const backup = createHeldNativeReturnBackupVerifier(deps.readers);
+  const vm = createGatewayComputeClient(store, log);
+  const readHold = createHeldNativeSourceHoldReader({ store, privateKey, vm, port: FLEET_CONTROLLER_PORT, projectId: gatewayComputeProjectId() });
+  const readers = deps.readers(store, readHold);
+  if (!readers) return undefined;
+  const backup = createHeldNativeReturnBackupVerifier(readers);
   const verifyPod = createHeldNativeReturnDestinationVerifier({ namespace: NAMESPACE, privateKey, runKubectl: deps.runKubectl });
   const verifyStores = createHeldReturnStoreCustodyVerifier(deps.agentStoreAdminDsn);
   return createHeldNativeReturnWorker({
@@ -3233,12 +3237,12 @@ function buildHeldNativeReturnHandler(deps: {
     verifyBackup: backup.verifyBackup,
     assertBackupCurrent: (binding, { claimStartedAt: _claimStartedAt, ...scope }, assertCurrent) =>
       backup.assertBackupCurrent(binding, scope, assertCurrent),
-    reconcile: createHeldNativeSourceReconciler({ store, documents, privateKey, port: FLEET_CONTROLLER_PORT, vm: createGatewayComputeClient(store, log) }),
+    reconcile: createHeldNativeSourceReconciler({ store, documents, privateKey, port: FLEET_CONTROLLER_PORT, vm }),
   });
 }
 
 export interface ControllerProduct {
-  heldNativeReturnBackupReaders?: (store: PlatformStateStore) => NativeReturnBackupReaders | null;
+  heldNativeReturnBackupReaders?: (store: PlatformStateStore, readHold: ReadNativeReturnSourceHold) => NativeReturnBackupReaders | null;
   resolveHobbyCheckpointPod?: ResolveHobbyCheckpointPod;
   requiresInitialGatewayRelease?: RequiresInitialGatewayRelease;
   createHostingCleanup?: (log: (message: string) => void) => HostingCleanup;
@@ -3309,7 +3313,7 @@ export async function main(product: ControllerProduct): Promise<void> {
       accounts, documents, ...provisioningSeams(provisioning),
       resolveHobbyCheckpointPod: product.resolveHobbyCheckpointPod,
       requiresInitialGatewayRelease: product.requiresInitialGatewayRelease,
-      heldNativeReturnBackupReaders: environmentName === "test" ? product.heldNativeReturnBackupReaders?.(store) : undefined,
+      heldNativeReturnBackupReaders: environmentName === "test" ? product.heldNativeReturnBackupReaders : undefined,
     });
 
   log(

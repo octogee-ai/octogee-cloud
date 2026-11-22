@@ -64,6 +64,7 @@ export interface NativeReturnVerifiedBackup {
 }
 
 export interface NativeReturnBackupReaders {
+  acquireAuthenticatedOwnerHold?(authority: NativeReturnBackupScope & { claimStartedAt: number }): Promise<NativeReturnOwnerHold>;
   readAuthenticatedOwnerHold(scope: NativeReturnBackupScope): Promise<NativeReturnOwnerHold | null>;
   verifyRestoredSource(hold: NativeReturnOwnerHold, assertCurrent: () => Promise<void>): Promise<RestoredNativeHome>;
   verifyRestoredStores(hold: NativeReturnOwnerHold, assertCurrent: () => Promise<void>): Promise<RestoredNativeStore[]>;
@@ -136,7 +137,20 @@ export function createHeldNativeReturnBackupVerifier(readers: NativeReturnBackup
     if (!Number.isSafeInteger(claimStartedAt) || claimStartedAt <= 0 || claimStartedAt > readers.now()) {
       throw new Error("Native return backup has no current repair claim");
     }
+    const acquire = readers.acquireAuthenticatedOwnerHold;
+    let acquired: NativeReturnOwnerHold | undefined;
+    if (acquire) {
+      await assertCurrent();
+      acquired = await acquire(authority);
+      assertExactHold(acquired, scope, readers.now());
+      if (acquired.heldSince < claimStartedAt) throw new Error("Native return owner hold predates its current claim");
+    }
     const pinnedHold = structuredClone(await requireCurrentHold(scope, assertCurrent));
+    if (acquired) {
+      if (!isDeepStrictEqual({ ...acquired, stores: normalizedStores(acquired.stores) }, pinnedHold)) {
+        throw new Error("Native return owner hold changed after acquisition");
+      }
+    }
     const assertPinned = async () => {
       const latest = await requireCurrentHold(scope, assertCurrent);
       if (!isDeepStrictEqual(pinnedHold, latest)) {
