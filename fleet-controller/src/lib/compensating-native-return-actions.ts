@@ -7,7 +7,7 @@ import type { CompensatingNativeReturnActions, CompensatingNativeReturnAuthority
 
 export function createCompensatingNativeReturnActions(deps: {
   prepareSourceStores: PrepareMigrationAgentStores;
-  sourceClient(source: CompensatingNativeReturnAuthority["source"], authority: AgentStoreHandoffAuthority): Promise<MigrationClient>;
+  sourceClient(gatewayId: string, source: CompensatingNativeReturnAuthority["source"], authority: AgentStoreHandoffAuthority): Promise<MigrationClient>;
   verifySourceServing: CompensatingNativeReturnActions["verifySourceServing"];
 }): CompensatingNativeReturnActions {
   const owned = (authority: CompensatingNativeReturnAuthority, assertCurrent: () => Promise<void>) =>
@@ -16,12 +16,12 @@ export function createCompensatingNativeReturnActions(deps: {
     prepareSourceStores: (authority, assertCurrent) =>
       deps.prepareSourceStores(authority.sourceGatewayId, authority.slug, owned(authority, assertCurrent)),
     async resumeSourceScheduler(authority, assertCurrent) {
-      const client = await deps.sourceClient(authority.source, owned(authority, assertCurrent));
+      const client = await deps.sourceClient(authority.sourceGatewayId, authority.source, owned(authority, assertCurrent));
       await assertCurrent();
       await client.scheduler({ gatewayId: authority.sourceGatewayId, migrationId: authority.schedulerMigrationId, slug: authority.slug, phase: "resume" });
     },
     async resumeSourceIngress(authority, assertCurrent) {
-      const client = await deps.sourceClient(authority.source, owned(authority, assertCurrent));
+      const client = await deps.sourceClient(authority.sourceGatewayId, authority.source, owned(authority, assertCurrent));
       await assertCurrent();
       await client.resume({ gatewayId: authority.sourceGatewayId, migrationId: `mig-${authority.operationId}`, slug: authority.slug, requireExactAcknowledgement: true });
     },

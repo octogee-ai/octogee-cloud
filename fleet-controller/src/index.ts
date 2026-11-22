@@ -3248,6 +3248,40 @@ async function createControllerRuntime(
 
 type HostingCleanup = NonNullable<NukeCloudDeps["deleteHostingSites"]>;
 
+function configureEnrolledNativeRecovery(deps: {
+  store: PlatformStateStore;
+  privateKey: string;
+  runKubectl: KubectlSubprocess;
+  agentStoreAdminDsn: string;
+  kubeOps: KubeOps;
+  prepareMigrationAgentStores: PrepareMigrationAgentStores;
+  nativeRecoveryFactory?: ControllerProduct["nativeRecoveryComposition"];
+}) {
+  if (environmentName !== "test") return undefined;
+  const enrollment = deps.nativeRecoveryFactory?.(deps.store);
+  if (!enrollment) return undefined;
+  const { store, privateKey, prepareMigrationAgentStores } = deps;
+  return createNativeRecoveryComposition(environmentName, NAMESPACE, store, Date.now, {
+    target: {
+      privateKey, runKubectl: deps.runKubectl, agentStoreAdminDsn: deps.agentStoreAdminDsn,
+      readRetainedCompletion: enrollment.readRetainedCompletion,
+      verifyWholeRetirement: buildNativeReturnTargetRetirementVerifier(store, deps.kubeOps),
+    },
+    source: {
+      prepareSourceStores: prepareMigrationAgentStores, vm: createGatewayComputeClient(store, log),
+      serving: { privateKey, port: Number(FLEET_CONTROLLER_PORT), edgePort: GATEWAY_EDGE_PORT },
+      async sourceClient(gatewayId, source, authority) {
+        return createMigrationClientUser(store, privateKey, log,
+          (id, slug) => prepareMigrationAgentStores(id, slug, authority))(id => {
+            if (id !== gatewayId) throw new Error("compensating Native return source transport changed");
+            return `http://${source.internalIp}:${FLEET_CONTROLLER_PORT}`;
+          });
+      },
+    },
+    inert: enrollment.inert, registerOperatorActions: enrollment.registerOperatorActions,
+  });
+}
+
 function configureNativeReturnSupport(deps: Parameters<typeof buildHeldNativeReturnHandler>[0] & {
   kubeOps: KubeOps;
   prepareMigrationAgentStores: PrepareMigrationAgentStores;
@@ -3255,8 +3289,7 @@ function configureNativeReturnSupport(deps: Parameters<typeof buildHeldNativeRet
   offlineFactory?: ControllerProduct["heldNativeOfflineSource"];
   nativeRecoveryFactory?: ControllerProduct["nativeRecoveryComposition"];
 }) {
-  const composition = createNativeRecoveryComposition(environmentName, NAMESPACE, deps.store, Date.now,
-    environmentName === "test" ? deps.nativeRecoveryFactory?.(deps.store) : undefined);
+  const composition = configureEnrolledNativeRecovery(deps);
   const offline = environmentName === "test" ? deps.offlineFactory?.(deps.store, {
     verifyDestination: heldNativeDestinationCustody(deps), fleetPrivateKey: deps.privateKey,
   }) : undefined;
