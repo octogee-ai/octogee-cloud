@@ -7,6 +7,7 @@ export interface SharedMaintenanceStartupEnrollment {
     attemptId: string;
     role: SharedMaintenanceRole;
     buildId: string;
+    artifactSetId: string;
 }
 type Request = SharedMaintenanceStartupEnrollment & {
     nonce: string;
@@ -15,7 +16,6 @@ type Response = {
     raw: string;
     signature: string;
 };
-export declare function readSharedMaintenanceLaunch(enrollment: SharedMaintenanceStartupEnrollment): (request: Request, signal: AbortSignal) => Promise<Response | null>;
 export declare function allowSharedMaintenanceLaunch(input: {
     request: Request;
     proof: Response;
@@ -41,5 +41,37 @@ interface Startup {
     retryMs?: number;
 }
 export declare function runSharedMaintenanceStartup(input: Startup): Promise<void>;
+interface InertOperatorOptions {
+    publicKey: string;
+    directory?: string;
+    onSocket?(path: string): void;
+}
+export declare function openSharedMaintenancePermitSocket({ publicKey, directory, onSocket }: InertOperatorOptions): Promise<{
+    socket: string;
+    read(request: Request, signal: AbortSignal): Promise<Response>;
+    close(): Promise<void>;
+}>;
+export type SharedMaintenanceStartupScope = Omit<SharedMaintenanceStartupEnrollment, "role">;
+export interface SharedMaintenancePublishedRelease {
+    release: number;
+    payloadHash: string;
+    publishedAt: number;
+}
+export interface SharedMaintenanceCompletionReceipt {
+    scope: SharedMaintenanceStartupScope;
+    images: Record<SharedMaintenanceRole, string>;
+    restoredArchiveSha256: string;
+    publication: SharedMaintenancePublishedRelease;
+}
+export declare function sharedMaintenanceCompletionPurpose(scope: SharedMaintenanceStartupScope): string;
+export declare function isSharedMaintenancePublication(publication: SharedMaintenancePublishedRelease | undefined, now: number): boolean;
+export declare function allowSharedMaintenanceRestart(input: {
+    scope: SharedMaintenanceStartupScope;
+    localBoundPodUid: string | null;
+    proof: Response;
+    publicKey: string;
+    now: number;
+}): boolean;
+export declare function projectedSharedMaintenancePodUid(token: string, namespace: string): string | null;
 export declare function waitForInstalledSharedMaintenanceGate(role: SharedMaintenanceRole, env: NodeJS.ProcessEnv): Promise<void>;
 export {};

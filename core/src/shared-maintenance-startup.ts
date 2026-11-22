@@ -1,11 +1,11 @@
-import { randomBytes } from "node:crypto";
+import { createPublicKey, randomBytes } from "node:crypto";
 import { constants } from "node:fs";
-import { open } from "node:fs/promises";
-import { createServer, type Server } from "node:http";
+import { chmod, mkdtemp, open, readFile, rm } from "node:fs/promises";
+import { createServer, type IncomingMessage, type Server } from "node:http";
+import { join } from "node:path";
 import { setTimeout } from "node:timers/promises";
 import { isDeepStrictEqual } from "node:util";
 import { gatewayScopedJobId, verifyFleetRequest } from "./fleet-signature.js";
-import { gatewayCredentialHeaders, internalFetch, sidecarBrokerHeaders } from "./internal-fetch.js";
 
 export type SharedMaintenanceRole = "gateway" | "gateway-edge";
 
@@ -16,6 +16,7 @@ export interface SharedMaintenanceStartupEnrollment {
   attemptId: string;
   role: SharedMaintenanceRole;
   buildId: string;
+  artifactSetId: string;
 }
 
 type Request = SharedMaintenanceStartupEnrollment & { nonce: string };
@@ -30,22 +31,6 @@ type Response = { raw: string; signature: string };
 const signaturePurpose = (request: Request) =>
   gatewayScopedJobId(`shared-maintenance-startup/${request.attemptId}/${request.role}`, request.gatewayId);
 const archiveHash = /^[a-f0-9]{64}$/;
-
-export function readSharedMaintenanceLaunch(enrollment: SharedMaintenanceStartupEnrollment) {
-  return async (request: Request, signal: AbortSignal): Promise<Response | null> => {
-    const roleHeaders = request.role === "gateway-edge" ? await sidecarBrokerHeaders() : {};
-    const response = await internalFetch(
-      `http://octogee-api.${enrollment.namespace}.svc.cluster.local:3001/internal/fleet/shared-maintenance/startup/${request.role}`,
-      { method: "POST", redirect: "error", signal,
-        headers: { "Content-Type": "application/json", ...await gatewayCredentialHeaders(), ...roleHeaders }, body: JSON.stringify(request) },
-      { internalServiceKey: "", requireProjectedToken: true, timeoutMs: 5_000 },
-    );
-    if (response.status === 409) return null;
-    if (!response.ok) throw new Error("Shared maintenance startup broker is unavailable");
-    const { raw, signature } = await response.json() as Response;
-    return { raw, signature };
-  };
-}
 
 export function allowSharedMaintenanceLaunch(input: {
   request: Request;
@@ -107,14 +92,18 @@ async function waitForSharedMaintenanceRelease(input: Startup, enrollment: Share
   }
 }
 
+function startupIdentityMatches(enrollment: SharedMaintenanceStartupEnrollment, role: SharedMaintenanceRole) {
+  return enrollment.role === role && /^[a-f0-9]{40}$/.test(enrollment.buildId) &&
+    archiveHash.test(enrollment.artifactSetId) && Boolean(enrollment.attemptId) && Boolean(enrollment.podUid);
+}
+
 export async function runSharedMaintenanceStartup(input: Startup): Promise<void> {
   const { enrollment, local } = input;
   if (!enrollment || enrollment.namespace !== local.namespace || enrollment.gatewayId !== local.gatewayId) {
     await input.launch();
     return;
   }
-  if (enrollment.role !== local.role || !/^[a-f0-9]{40}$/.test(enrollment.buildId) ||
-      !enrollment.attemptId || !enrollment.podUid) throw new Error("Shared maintenance role enrollment does not match the allocation");
+  if (!startupIdentityMatches(enrollment, local.role)) throw new Error("Shared maintenance role enrollment does not match the allocation");
 
   const health = createInertProbeServer(enrollment.role);
   const readiness = enrollment.role === "gateway"
@@ -136,9 +125,166 @@ export async function runSharedMaintenanceStartup(input: Startup): Promise<void>
 }
 
 
+interface InertOperatorOptions {
+  publicKey: string;
+  directory?: string;
+  onSocket?(path: string): void;
+}
+
+async function permitBody(request: IncomingMessage): Promise<Response> {
+  const chunks: Buffer[] = [];
+  let bytes = 0;
+  for await (const chunk of request) {
+    const buffer = Buffer.from(chunk);
+    bytes += buffer.length;
+    if (bytes > 16_384) throw new Error("Shared maintenance permit exceeds the local socket limit");
+    chunks.push(buffer);
+  }
+  const proof = JSON.parse(Buffer.concat(chunks).toString("utf8")) as Response;
+  if (typeof proof?.raw !== "string" || typeof proof.signature !== "string") throw new Error("Shared maintenance permit is malformed");
+  return proof;
+}
+
+export async function openSharedMaintenancePermitSocket({ publicKey, directory = "/tmp", onSocket }: InertOperatorOptions) {
+  const privateDirectory = await mkdtemp(join(directory, "octogee-shared-held-"));
+  const socket = join(privateDirectory, "permit.sock");
+  let pending: { request: Request; resolve(proof: Response): void } | undefined;
+  const server = createServer((message, response) => {
+    const current = pending;
+    if (!current) { response.writeHead(409).end(); return; }
+    if (message.method === "GET" && message.url === "/nonce") {
+      response.writeHead(200, { "Content-Type": "text/plain", "Cache-Control": "no-store" }).end(current.request.nonce);
+      return;
+    }
+    if (message.method !== "POST" || message.url !== "/permit") { response.writeHead(404).end(); return; }
+    void permitBody(message).then(proof => {
+      if (pending !== current || !allowSharedMaintenanceLaunch({ request: current.request, proof, publicKey, now: Date.now() })) {
+        response.writeHead(403).end();
+        return;
+      }
+      pending = undefined;
+      response.writeHead(204).end(() => current.resolve(proof));
+    }).catch(() => { response.writeHead(400).end(); });
+  });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(socket, resolve);
+    });
+    await chmod(socket, 0o600);
+    onSocket?.(socket);
+  } catch (error) {
+    server.close();
+    await rm(privateDirectory, { recursive: true, force: true });
+    throw error;
+  }
+  return {
+    socket,
+    async read(request: Request, signal: AbortSignal): Promise<Response> {
+      signal.throwIfAborted();
+      if (pending) throw new Error("Shared maintenance already has an outstanding nonce");
+      return new Promise((resolve, reject) => {
+        const abort = () => { pending = undefined; reject(signal.reason); };
+        signal.addEventListener("abort", abort, { once: true });
+        pending = { request, resolve(proof) {
+          signal.removeEventListener("abort", abort);
+          resolve(proof);
+        } };
+      });
+    },
+    async close() {
+      await new Promise<void>(resolve => {
+        server.close(() => resolve());
+        server.closeAllConnections();
+      });
+      await rm(privateDirectory, { recursive: true, force: true });
+    },
+  };
+}
+
+export type SharedMaintenanceStartupScope = Omit<SharedMaintenanceStartupEnrollment, "role">;
+export interface SharedMaintenancePublishedRelease {
+  release: number;
+  payloadHash: string;
+  publishedAt: number;
+}
+export interface SharedMaintenanceCompletionReceipt {
+  scope: SharedMaintenanceStartupScope;
+  images: Record<SharedMaintenanceRole, string>;
+  restoredArchiveSha256: string;
+  publication: SharedMaintenancePublishedRelease;
+}
+
+export function sharedMaintenanceCompletionPurpose(scope: SharedMaintenanceStartupScope) {
+  return gatewayScopedJobId(`shared-maintenance-completion/${scope.attemptId}`, scope.gatewayId);
+}
+
+export function isSharedMaintenancePublication(publication: SharedMaintenancePublishedRelease | undefined, now: number) {
+  return !!publication && Number.isSafeInteger(publication.release) && publication.release > 0 &&
+    typeof publication.payloadHash === "string" && archiveHash.test(publication.payloadHash) &&
+    Number.isSafeInteger(publication.publishedAt) && publication.publishedAt > 0 && publication.publishedAt <= now;
+}
+
+export function allowSharedMaintenanceRestart(input: {
+  scope: SharedMaintenanceStartupScope;
+  localBoundPodUid: string | null;
+  proof: Response;
+  publicKey: string;
+  now: number;
+}) {
+  const { scope, localBoundPodUid, proof, publicKey, now } = input;
+  if (!localBoundPodUid || localBoundPodUid !== scope.podUid ||
+      typeof proof.raw !== "string" || proof.raw.length > 8192 ||
+      !verifyFleetRequest(publicKey, sharedMaintenanceCompletionPurpose(scope), proof.raw, proof.signature)) return false;
+  const receipt = JSON.parse(proof.raw) as SharedMaintenanceCompletionReceipt;
+  return isDeepStrictEqual(receipt.scope, scope) && archiveHash.test(receipt.restoredArchiveSha256) &&
+    isSharedMaintenancePublication(receipt.publication, now) && [receipt.images?.gateway, receipt.images?.["gateway-edge"]]
+      .every(image => typeof image === "string" && /^sha256:[a-f0-9]{64}$/.test(image)) &&
+    receipt.images.gateway !== receipt.images["gateway-edge"];
+}
+
+export function projectedSharedMaintenancePodUid(token: string, namespace: string): string | null {
+  const [, payload] = token.trim().split(".");
+  if (!payload || payload.length > 8192) return null;
+  try {
+    const claims = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as {
+      aud?: string[];
+      "kubernetes.io"?: { namespace?: string; pod?: { uid?: string } };
+    };
+    const identity = claims["kubernetes.io"];
+    return Array.isArray(claims.aud) && claims.aud.includes("octogee-api-gateway-credentials") &&
+      identity?.namespace === namespace && typeof identity.pod?.uid === "string" ? identity.pod.uid : null;
+  } catch {
+    return null;
+  }
+}
+
+async function hasSharedMaintenanceCompletion(scope: SharedMaintenanceStartupScope, publicKey: string) {
+  const file = await open("/home/node/.octogee-shared-maintenance-completion.json",
+    constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  });
+  if (!file) return false;
+  try {
+    const info = await file.stat();
+    if (!info.isFile() || info.size <= 0 || info.size > 16_384) return false;
+    const token = await readFile("/var/run/secrets/octogee-gateway-credentials/token", "utf8");
+    return allowSharedMaintenanceRestart({
+      scope, localBoundPodUid: projectedSharedMaintenancePodUid(token, scope.namespace),
+      proof: JSON.parse(await file.readFile("utf8")) as Response, publicKey, now: Date.now(),
+    });
+  } catch (error) {
+    if (error instanceof SyntaxError || (error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  } finally {
+    await file.close();
+  }
+}
+
 interface InertStartupDocument extends Omit<SharedMaintenanceStartupEnrollment, "role"> {
   version: 1;
-  fleetPublicKey: string;
+  enrolledIssuerPublicKey: string;
 }
 
 async function readInertStartupDocument() {
@@ -165,17 +311,32 @@ export async function waitForInstalledSharedMaintenanceGate(role: SharedMaintena
   if (env.GATEWAY_CLASS !== "shared") return;
   const document = await readInertStartupDocument();
   if (!document) return;
-  const { version, fleetPublicKey, ...scope } = document;
+  const { version, enrolledIssuerPublicKey, ...scope } = document;
   if (version !== 1 || scope.namespace !== "octogee-test" || !scope.gatewayId || !scope.attemptId || !scope.podUid ||
-      !/^[a-f0-9]{40}$/.test(scope.buildId) || typeof fleetPublicKey !== "string" || !fleetPublicKey.includes("PUBLIC KEY")) {
+      !/^[a-f0-9]{40}$/.test(scope.buildId) || !archiveHash.test(scope.artifactSetId) || typeof enrolledIssuerPublicKey !== "string" || createPublicKey(enrolledIssuerPublicKey).asymmetricKeyType !== "ed25519") {
     throw new Error("Shared maintenance startup enrollment is malformed");
   }
   if (document.namespace !== env.K8S_NAMESPACE || document.gatewayId !== env.GATEWAY_ID) return;
+  if (await hasSharedMaintenanceCompletion(scope, enrolledIssuerPublicKey)) return;
   const enrollment = { ...scope, role };
-  await runSharedMaintenanceStartup({
-    enrollment, local: enrollment, publicKey: fleetPublicKey, signal: new AbortController().signal,
-    read: readSharedMaintenanceLaunch(enrollment),
-    async launch() {},
-    onUnavailable() { process.stderr.write("Shared maintenance retained launch authority is unavailable\n"); },
+  const abort = new AbortController();
+  const shutdown = () => abort.abort();
+  process.once("SIGTERM", shutdown);
+  process.once("SIGINT", shutdown);
+  const localPermit = await openSharedMaintenancePermitSocket({
+    publicKey: enrolledIssuerPublicKey,
+    onSocket(path) { process.stderr.write(`Shared maintenance ${role} local permit socket: ${path}\n`); },
   });
+  try {
+    await runSharedMaintenanceStartup({
+      enrollment, local: enrollment, publicKey: enrolledIssuerPublicKey, signal: abort.signal,
+      read: localPermit.read,
+      async launch() {},
+      onUnavailable() { process.stderr.write("Shared maintenance retained launch authority is unavailable\n"); },
+    });
+  } finally {
+    await localPermit.close();
+    process.off("SIGTERM", shutdown);
+    process.off("SIGINT", shutdown);
+  }
 }

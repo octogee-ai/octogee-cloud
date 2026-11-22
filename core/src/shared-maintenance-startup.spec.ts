@@ -8,7 +8,7 @@ const keys = generateKeyPairSync("ed25519", {
   publicKeyEncoding: { format: "pem", type: "spki" }, privateKeyEncoding: { format: "pem", type: "pkcs8" },
 });
 const scope = { namespace: "octogee-test", gatewayId: "fixture-shared", podUid: "fixture-pod",
-  attemptId: "fixture-attempt", buildId: "d".repeat(40), role: "gateway" } satisfies SharedMaintenanceStartupEnrollment;
+  attemptId: "fixture-attempt", buildId: "d".repeat(40), artifactSetId: "d".repeat(64), role: "gateway" } satisfies SharedMaintenanceStartupEnrollment;
 type Request = SharedMaintenanceStartupEnrollment & { nonce: string };
 const archive = "b".repeat(64);
 const issue = (request: Request, restoredArchiveSha256 = archive, expiresAt = Date.now() + 10_000) => {
@@ -69,5 +69,45 @@ it.each(["gateway", "gateway-edge"] as const)("preserves only %s legacy probe be
   } finally {
     controller.abort();
     await pending.catch(() => {});
+  }
+});
+
+it("gives an operator only its socket nonce, refuses foreign permits, and aborts without launching", async () => {
+  const { request: httpRequest } = await import("node:http");
+  const { stat } = await import("node:fs/promises");
+  const { openSharedMaintenancePermitSocket } = await import("./shared-maintenance-startup.js");
+  const local = await openSharedMaintenancePermitSocket({ publicKey: keys.publicKey });
+  const call = (method: string, path: string, body?: string) => new Promise<{ code: number; body: string }>((resolve, reject) => {
+    const request = httpRequest({ socketPath: local.socket, method, path }, response => {
+      const chunks: Buffer[] = [];
+      response.on("data", chunk => chunks.push(chunk));
+      response.on("end", () => resolve({ code: response.statusCode ?? 0, body: Buffer.concat(chunks).toString("utf8") }));
+    });
+    request.on("error", reject);
+    request.end(body);
+  });
+  try {
+    expect((await stat(local.socket)).mode & 0o777).toBe(0o600);
+    const first = new AbortController();
+    const initial = { ...scope, nonce: "2".repeat(64) };
+    const abandoned = local.read(initial, first.signal);
+    const stopped = expect(abandoned).rejects.toThrow();
+    expect(await call("GET", "/nonce")).toEqual({ code: 200, body: initial.nonce });
+    expect((await call("GET", "/debug")).code).toBe(404);
+    expect((await call("POST", "/permit", JSON.stringify(issue({ ...initial, podUid: "foreign" })))).code).toBe(403);
+    first.abort(new Error("operator withdrew"));
+    await stopped;
+    expect((await call("GET", "/nonce")).code).toBe(409);
+
+    const next = { ...scope, nonce: "3".repeat(64) };
+    const waiting = local.read(next, new AbortController().signal);
+    expect((await call("POST", "/permit", JSON.stringify(issue(initial)))).code).toBe(403);
+    expect((await call("POST", "/permit", JSON.stringify(issue(next, archive, Date.now() - 1)))).code).toBe(403);
+    const valid = issue(next);
+    expect((await call("POST", "/permit", JSON.stringify(valid))).code).toBe(204);
+    await expect(waiting).resolves.toEqual(valid);
+    expect((await call("POST", "/permit", JSON.stringify(valid))).code).toBe(409);
+  } finally {
+    await local.close();
   }
 });

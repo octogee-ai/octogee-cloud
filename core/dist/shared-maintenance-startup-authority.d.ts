@@ -1,4 +1,4 @@
-import type { SharedMaintenanceRole, SharedMaintenanceStartupEnrollment } from "./shared-maintenance-startup.js";
+import { type SharedMaintenanceRole, type SharedMaintenanceStartupEnrollment, type SharedMaintenanceCompletionReceipt } from "./shared-maintenance-startup.js";
 type LaunchRequest = SharedMaintenanceStartupEnrollment & {
     nonce: string;
 };
@@ -15,7 +15,7 @@ type PodBinding = {
     gatewayId: string;
     podUid: string;
     serviceAccountName: string;
-    sidecarAudience: boolean;
+    execRole: SharedMaintenanceRole;
 };
 type LaunchAuthority = {
     namespace: string;
@@ -23,17 +23,40 @@ type LaunchAuthority = {
     podUid: string;
     serviceAccountName: string;
     attemptId: string;
+    artifactSetId: string;
     roles: VerifiedRoleInventory;
     verifiedRestoredArchive: {
         attemptId: string;
         sha256: string;
     };
 };
-export declare function issueSharedMaintenanceStartupPermit(input: {
+type ScopedRole = {
     request: LaunchRequest;
     binding: PodBinding;
+};
+export declare function issueSharedMaintenanceStartupPair(input: {
+    gateway: ScopedRole;
+    edge: ScopedRole;
     readVerifiedAuthority(): Promise<LaunchAuthority | null>;
-    fleetPrivateKey: string;
+    enrolledIssuerPrivateKey: string;
+    now?: () => number;
+}): Promise<{
+    gateway: {
+        raw: string;
+        signature: string;
+    };
+    "gateway-edge": {
+        raw: string;
+        signature: string;
+    };
+} | null>;
+export declare function issueSharedMaintenanceCompletion(input: {
+    gateway: ScopedRole;
+    edge: ScopedRole;
+    readVerifiedPublication(): Promise<(LaunchAuthority & {
+        publication: SharedMaintenanceCompletionReceipt["publication"];
+    }) | null>;
+    enrolledIssuerPrivateKey: string;
     now?: () => number;
 }): Promise<{
     raw: string;
