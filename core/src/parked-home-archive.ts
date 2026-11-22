@@ -118,7 +118,7 @@ function schedulerReturnCompleted(returned: OperationRecord, custody: OpaqueMap)
     typeof returned.completedAt === "number" && returned.completedAt >= custody.completedAt;
 }
 
-function schedulerReturnMatches(owner: PlatformUserRecord, input: ParkedInput, returned: OperationRecord, custody: OpaqueMap): boolean {
+export function schedulerReturnMatches(owner: PlatformUserRecord, input: ParkedInput, returned: OperationRecord, custody: OpaqueMap): boolean {
   const handoff = returned.schedulerHandoff;
   return handoff !== undefined && custody.uid === owner.uid && custody.slug === owner.slug && custody.slug === handoff.slug &&
     custody.returnOperationId === input.returnOperationId && typeof custody.migrationId === "string" &&

@@ -174,7 +174,7 @@ function sharedMaintenanceFixture() {
   t.targetRuntime.heartbeat.mountedCustomers = owners.map(owner => owner.slug);
   for (const owner of owners) {
     const { uid: ownerUid, slug: ownerSlug, epoch } = owner;
-    t.docs.set(`users/${ownerUid}`, { username: ownerSlug, provisioning: { openclaw: { slug: ownerSlug, gatewayId: targetGatewayId } } });
+    t.docs.set(`users/${ownerUid}`, { username: ownerSlug, onboardingStep: "complete", provisioning: { openclaw: { slug: ownerSlug, gatewayId: targetGatewayId } } });
     t.docs.set(`gateways/${targetGatewayId}/assignments/${ownerUid}`, { uid: ownerUid, slug: ownerSlug,
       gatewayId: targetGatewayId, epoch, state: "serving", updatedByOperationId: null, source: "onboarding", createdAt: 1, updatedAt: 1 });
   }
@@ -243,6 +243,62 @@ it("does not reserve Shared maintenance during any active or touched placement, 
     expect(h.docs).toEqual(before);
   }
 });
+
+function setDormantNativeSchedulerReference(h: ReturnType<typeof sharedMaintenanceFixture>, index: number) {
+  const { uid: ownerUid, slug: ownerSlug } = h.admission.owners[index]!;
+  const oldSource = `${ownerSlug}-parked`;
+  const oldShared = "shared-prior";
+  const returnOperationId = `builder-return-${oldSource}-g3`;
+  const localOwner = h.docs.get(`users/${ownerUid}`)!;
+  const provisioning = localOwner.provisioning as Record<string, unknown>;
+  const reference = {
+    uid: ownerUid, slug: ownerSlug, sourceGatewayId: oldSource, sharedGatewayId: oldShared, migrationId: "first-native-return",
+    returnOperationId, instanceId: "2200", instanceName: `${oldSource}-vm`, zone: "example-a",
+    homeDiskId: "3100", homeDiskSource: "projects/example/zones/example-a/disks/original-home",
+    completedAt: 330, cutoverCommittedAt: 320,
+  };
+  Object.assign(provisioning, {
+    homeDisk: { id: reference.homeDiskId, source: reference.homeDiskSource },
+    pendingNativeSchedulerRetirement: reference,
+  });
+  const historical = {
+    kind: "migrate-user", status: "succeeded", inputUid: ownerUid, startedAt: 310, completedAt: 340, createdAt: 300,
+    input: { uid: ownerUid, fromGatewayId: oldSource, toGatewayId: oldShared },
+    schedulerHandoff: { uid: ownerUid, slug: ownerSlug, fromGatewayId: oldSource, toGatewayId: oldShared, migrationId: reference.migrationId },
+    steps: [], cutoverCommittedAt: reference.cutoverCommittedAt, output: { nativeSourcePark: { parked: "suspended" } },
+  };
+  h.docs.set(`glmOperations/${returnOperationId}`, historical);
+  return { oldSource, ownerUid, ownerSlug, reference, historical };
+}
+
+it("accepts terminal dormant scheduler history after Shared replacement without retiring the referenced home", async () => {
+  const h = sharedMaintenanceFixture();
+  const parked = setDormantNativeSchedulerReference(h, 0);
+  const absent = setDormantNativeSchedulerReference(h, 1);
+  h.docs.set(`gateways/${parked.oldSource}`, gatewayRoot(parked.oldSource,
+    { gatewayClass: "isolated", desiredStatus: "paused", ownerUid: parked.ownerUid, builderSlug: parked.ownerSlug }));
+  h.docs.set(`glmGateways/${parked.oldSource}`, { docKind: "runtime", runtime: "gce-vm", release: 1, lifecycle: "paused", gatewayId: parked.oldSource, vm: { status: "TERMINATED", instanceId: "3300" } });
+  const claim = await h.acquire();
+  await expect(assertSharedHeldReturnMaintenance(h.store, claim)).resolves.toBe("reserved");
+  for (const owner of [parked, absent]) {
+    expect((await h.store.users.records.get(owner.ownerUid))?.fences.pendingNativeSchedulerRetirement).toEqual(owner.reference);
+  }
+});
+
+it.each(["incomplete", "wrong-return", "source-running", "other-fence"] as const)(
+  "refuses a historical-looking record with unverified authority or source state (%s)", async reason => {
+    const h = sharedMaintenanceFixture();
+    const caseData = setDormantNativeSchedulerReference(h, 0);
+    if (reason === "incomplete") Object.assign(caseData.reference, { completedAt: undefined });
+    if (reason === "wrong-return") caseData.historical.input.toGatewayId = targetGatewayId;
+    if (reason === "source-running") h.docs.set(`gateways/${caseData.oldSource}`, gatewayRoot(caseData.oldSource,
+      { gatewayClass: "isolated", desiredStatus: "running", ownerUid: caseData.ownerUid, builderSlug: caseData.ownerSlug }));
+    if (reason === "other-fence") await h.store.users.records.setFence(caseData.ownerUid, "restoreFence", { operationId: "existing-restore" }, "absent");
+    const before = structuredClone(h.docs);
+    await expect(h.acquire()).rejects.toThrow(/owner custody changed/);
+    expect(h.docs).toEqual(before);
+  },
+);
 
 it("gives the reservation precedence over inbound and outbound queue claims, and retains it through verified rollback", async () => {
   const h = sharedMaintenanceFixture();

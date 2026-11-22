@@ -4,6 +4,7 @@ import { hasFreshReadyKubernetesObservation, releasePayloadHash } from "@octogee
 import { gatewayHeartbeatMatchesImageTag, isGatewayImageTag } from "@octogee/shared/types/image-tag";
 import { appendRetainedSharedMaintenanceReleaseInStore } from "./gateway-release-append.js";
 import { readHeldNativeReturnForTargetMaintenance, } from "./held-native-return-repair.js";
+import { schedulerReturnMatches } from "./parked-home-archive.js";
 import { buildOperationAuditIntent } from "./operation-audit.js";
 import { CONTINUOUS_PLACEMENT_SOURCE, PLACEMENT_MIGRATION_ACTOR, sharedDrainMoveNeverClaimed } from "./placement-migrations.js";
 export const SHARED_HELD_RETURN_MAINTENANCE = "shared-held-return-maintenance";
@@ -70,6 +71,63 @@ export async function assertSharedHeldReturnMaintenanceUnfenced(state, operation
     const roots = await state.gateways.roots.getMany(gateways);
     requireMaintenance(![...roots.values()].some(root => root.runtimeRestartFence?.kind === SHARED_HELD_RETURN_MAINTENANCE), "Shared held return maintenance blocks this operation");
 }
+function isDocumentId(value) {
+    return typeof value === "string" && value.length > 0 && !value.includes("/");
+}
+function referencesOwnedHome(owner, reference) {
+    const home = owner.home.homeDisk;
+    return Boolean(home?.id && home.id === reference.homeDiskId && home.source === reference.homeDiskSource &&
+        typeof reference.instanceId === "string" && /^[1-9]\d{0,19}$/.test(reference.instanceId));
+}
+function hasTerminalReturn(owner, returned, reference, ids) {
+    const { returnOperationId, sourceGatewayId, sharedGatewayId } = ids;
+    const park = returned.output?.nativeSourcePark;
+    const input = { gatewayId: sourceGatewayId, sharedId: sharedGatewayId, returnOperationId };
+    return [returned.kind === "migrate-user", returned.status === "succeeded", returned.input?.uid === owner.uid,
+        returned.input?.fromGatewayId === sourceGatewayId, returned.input?.toGatewayId === sharedGatewayId,
+        schedulerReturnMatches(owner, input, returned, reference),
+        park?.parked === "stopped" || park?.parked === "suspended"].every(Boolean);
+}
+async function sourceIsDormant(state, owner, sourceGatewayId) {
+    const source = await state.gateways.roots.get(sourceGatewayId);
+    const observation = await state.fleetRegistry.get(sourceGatewayId);
+    if (!(await state.gateways.assignments.isEmpty(sourceGatewayId)))
+        return false;
+    if (source === null && observation === null)
+        return true;
+    if (!source || !observation)
+        return false;
+    return [source.gatewayClass === "isolated", source.ownerUid === owner.uid, source.builderSlug === owner.slug,
+        source.desiredStatus === "paused", source.runtimeRestartFence === undefined, source.retirementClaim == null,
+        observation.runtime === "gce-vm", ["SUSPENDED", "TERMINATED", "STOPPED"].includes(observation.vm?.status ?? "")].every(Boolean);
+}
+async function dormantSchedulerReferenceDoesNotHoldShared(state, owner) {
+    const { pendingNativeSchedulerRetirement: reference, ...active } = owner.fences;
+    if (Object.keys(active).length !== 0)
+        return false;
+    if (reference === undefined)
+        return true;
+    const { returnOperationId, sourceGatewayId, sharedGatewayId } = reference;
+    if (!isDocumentId(returnOperationId) || !isDocumentId(sourceGatewayId) || !isDocumentId(sharedGatewayId) ||
+        !referencesOwnedHome(owner, reference))
+        return false;
+    const returned = await state.journal.operations.get(returnOperationId);
+    if (!returned || !hasTerminalReturn(owner, returned, reference, { returnOperationId, sourceGatewayId, sharedGatewayId }))
+        return false;
+    return sourceIsDormant(state, owner, sourceGatewayId);
+}
+async function assertRetainedCrewOwner(state, gatewayId, owner) {
+    const user = await state.users.records.get(owner.uid);
+    const assignments = await state.gateways.assignments.listForUid(owner.uid);
+    const [assigned] = assignments;
+    requireMaintenance(user && assigned, "Shared maintenance owner custody changed");
+    const lease = user.activationLease;
+    requireMaintenance([user.gateway?.gatewayId === gatewayId, user.slug === owner.slug, user.admitted,
+        user.accountLifecycle == null || user.accountLifecycle.status === "active",
+        !lease || lease.status === "parked" || lease.status === "failed",
+        assigned.gatewayId === gatewayId, assigned.epoch === owner.epoch, assignments.length === 1].every(Boolean) &&
+        await dormantSchedulerReferenceDoesNotHoldShared(state, user), "Shared maintenance owner custody changed");
+}
 async function assertCrew(state, plan, guard) {
     const { selection, targetRelease, owners } = plan;
     const gatewayId = selection.targetGatewayId;
@@ -83,12 +141,8 @@ async function assertCrew(state, plan, guard) {
     requireMaintenance(held.targetRelease === targetRelease && root && root.latestRelease === root.desiredRelease, "Shared maintenance desired release changed");
     const actual = sortedOwners(assignments.map(({ uid, slug, epoch }) => ({ uid, slug, epoch })));
     requireMaintenance(isDeepStrictEqual(actual, ownerScope(owners)) && assignments.every(row => row.state === "serving"), "Shared maintenance assignment roster or epoch changed");
-    for (const { uid, slug, epoch } of owners) {
-        const user = await state.users.records.get(uid);
-        const [assigned, ...rest] = await state.gateways.assignments.listForUid(uid);
-        requireMaintenance(user?.gateway?.gatewayId === gatewayId && user.slug === slug &&
-            Object.keys(user.fences).length === 0 && assigned?.gatewayId === gatewayId && assigned.epoch === epoch && rest.length === 0, "Shared maintenance owner custody changed");
-    }
+    for (const owner of owners)
+        await assertRetainedCrewOwner(state, gatewayId, owner);
     const conflict = active.some(op => op.id !== selection.operationId && touchesScope(op, gatewayId, owners) && !canLeaveQueued(op, gatewayId, owners));
     requireMaintenance(!conflict, "Another operation holds the Shared maintenance gateway or an owner");
 }
