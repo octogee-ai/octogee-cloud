@@ -2058,6 +2058,7 @@ it("uses the exact claim-selected snapshot and compatible graphical isolated run
   expect(args.find(arg => arg.startsWith("nodeSelector="))).toContain("us-central1-c");
   expect(args).not.toContain("--wait");
   expect(args.find(arg => arg.startsWith("nodeSelector="))).toContain("supported-cpu-platform.cloud.google.com/Intel_Ice_Lake");
+  expect(args.find(arg => arg.startsWith("nodeSelector="))).not.toContain("cloud.google.com/machine-family");
   expect(() => buildUpgradeArgs({ ...opts, gatewayClass: "shared" })).toThrow(/isolated/);
   expect(() => buildUpgradeArgs({ ...opts, gatewayId: "hobby-slot-bbbee012ab78" })).toThrow(/slot/);
 });

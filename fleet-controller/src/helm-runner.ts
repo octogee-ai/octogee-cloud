@@ -604,7 +604,6 @@ function appendHobbyCheckpointArgs(args: string[], opts: BuildUpgradeArgsOpts): 
   pushSetJson(args, "hobbyCheckpoint", { slotId: checkpoint.slotId, restoreSnapshot: checkpoint.restoreSnapshot });
   pushSetJson(args, "nodeSelector", {
     "topology.kubernetes.io/zone": checkpoint.zone,
-    "cloud.google.com/machine-family": checkpoint.machineFamily,
     "supported-cpu-platform.cloud.google.com/Intel_Ice_Lake": "true",
   });
   args.push(
