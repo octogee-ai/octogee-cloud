@@ -47,6 +47,7 @@ export interface MigrationClient {
         transportId?: string;
         slug: string;
         role?: "target";
+        requireExactAcknowledgement?: boolean;
     }): Promise<void>;
     quiesce(opts: {
         stopMattermost?: boolean;

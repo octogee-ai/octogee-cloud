@@ -220,7 +220,7 @@ export function createMigrationClient(deps) {
                 return "unavailable";
             }
         },
-        async resume({ migrationId, gatewayId, transportId, slug, role }) {
+        async resume({ migrationId, gatewayId, transportId, slug, role, requireExactAcknowledgement }) {
             await deps.prepareAgentStores?.(gatewayId, slug);
             const response = await postSignedJson({
                 transportId: transportId ?? gatewayId, path: `/resume/${gatewayId}`,
@@ -228,6 +228,8 @@ export function createMigrationClient(deps) {
             });
             if (response.resumed !== true)
                 throw new Error(`source ingress did not resume for ${slug}`);
+            if (requireExactAcknowledgement && (response.migrationId !== migrationId || response.slug !== slug))
+                throw new Error("source ingress resume acknowledgement did not match");
         },
         async quiesce({ migrationId, gatewayId, transportId, slug, timeoutMs, stopMattermost, schedulerHandoff, schedulerMigrationId, retainNonportable }) {
             const handoff = schedulerHandoff
