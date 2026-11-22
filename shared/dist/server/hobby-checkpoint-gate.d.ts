@@ -1,17 +1,25 @@
-export interface HobbyCheckpointClaim {
-    version: 1;
+interface HobbyCheckpointOwner {
     slotId: string;
     gatewayId: string;
-    snapshotName: string;
     podUid: string;
     uid: string;
     slug: string;
     assignmentEpoch: 0;
 }
+export interface HobbyCheckpointClaim extends HobbyCheckpointOwner {
+    version: 1;
+    snapshotName: string;
+}
+export interface HobbyLiveStandbyClaim extends HobbyCheckpointOwner {
+    version: 2;
+    mode: "live";
+    namespace: string;
+}
+type HobbyPodClaim = HobbyCheckpointClaim | HobbyLiveStandbyClaim;
 export declare function readCheckpointRestore(boot: NodeJS.ProcessEnv, fresh: NodeJS.ProcessEnv, receipt: unknown): HobbyCheckpointClaim | null;
-export declare function readMountedCheckpointClaim(): Promise<HobbyCheckpointClaim | null>;
-export declare function waitForCheckpointClaim(role: "gateway" | "edge"): Promise<HobbyCheckpointClaim>;
-export declare function matchesRestartedCheckpoint(env: NodeJS.ProcessEnv, claim: HobbyCheckpointClaim | null, restoredPodUid: string): claim is HobbyCheckpointClaim;
+export declare function readMountedCheckpointClaim(): Promise<HobbyPodClaim | null>;
+export declare function waitForCheckpointClaim(role: "gateway" | "edge"): Promise<HobbyPodClaim>;
+export declare function matchesRestartedCheckpoint(env: NodeJS.ProcessEnv, claim: HobbyPodClaim | null, restoredPodUid: string): claim is HobbyCheckpointClaim;
 declare function readCheckpointCredentials(): Promise<{
     token: string;
     agentStoreDsn: string;

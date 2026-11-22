@@ -168,3 +168,53 @@ describe('checkpoint credential projection', () => {
     expect(wait).not.toHaveBeenCalled();
   });
 });
+
+describe('single-use live standby boot', () => {
+  const standby = { ...source, OCTOGEE_CHECKPOINT_MODE: 'live', OCTOGEE_CHECKPOINT_SNAPSHOT: '' };
+  const liveClaim = {
+    version: 2, mode: 'live', namespace: source.K8S_NAMESPACE, slotId: source.GATEWAY_ID, gatewayId: source.GATEWAY_ID,
+    podUid: source.POD_UID, uid: claim.uid, slug: claim.slug, assignmentEpoch: 0,
+  } as const;
+  const missing = Object.assign(new Error('not mounted'), { code: 'ENOENT' });
+
+  async function admit(receipt: object, previousOwner?: string) {
+    for (const [name, value] of Object.entries(standby)) vi.stubEnv(name, value);
+    if (previousOwner) {
+      vi.mocked(writeFile).mockImplementation(path => String(path).endsWith('-live-owner') ?
+        Promise.reject(Object.assign(new Error('already exists'), { code: 'EEXIST' })) : Promise.resolve());
+    }
+    vi.mocked(readFile).mockImplementation(async path => {
+      const file = String(path);
+      if (file.endsWith('/claim.json')) return JSON.stringify(receipt);
+      if (file.endsWith('-live-owner') && previousOwner) return previousOwner;
+      if (file.endsWith('/token')) return 'test-token';
+      if (file.endsWith('/agent-store-dsn')) return 'postgres://test/store';
+      throw missing;
+    });
+    return waitForCheckpointClaim('gateway');
+  }
+
+  it('opens the same originally prepared Pod only after its exact live owner proof and credential projection', async () => {
+    await expect(admit(liveClaim)).resolves.toEqual(liveClaim);
+    expect(vi.mocked(readFile).mock.calls.some(([path]) => String(path).includes('/proc/gvisor/'))).toBe(false);
+    expect(vi.mocked(writeFile).mock.calls.some(([path,body,options]) =>
+      String(path).endsWith('-live-owner') && String(body).includes(liveClaim.uid) && (options as { flag?: string } | undefined)?.flag === 'wx')).toBe(true);
+  });
+
+  it.each([
+    ['foreign Pod', { ...liveClaim, podUid: current.POD_UID }],
+    ['foreign slot', { ...liveClaim, slotId: 'hobby-slot-two' }],
+    ['foreign namespace', { ...liveClaim, namespace: 'other' }],
+    ['later assignment epoch', { ...liveClaim, assignmentEpoch: 1 }],
+    ['snapshot grant', claim],
+  ])('refuses a %s before reading credentials', async (_name, receipt) => {
+    await expect(admit(receipt)).rejects.toThrow();
+    expect(vi.mocked(readFile).mock.calls.some(([path]) => String(path).includes('/checkpoint-credentials/'))).toBe(false);
+  });
+
+  it('never rebinds the same running Pod to a different account after a restart', async () => {
+    const original = JSON.stringify([liveClaim.uid, liveClaim.slug, 0, liveClaim.slotId, liveClaim.podUid, liveClaim.namespace]);
+    await expect(admit({ ...liveClaim, uid: 'other-user', slug: 'other-builder' }, original)).rejects.toThrow(/already bound/);
+    expect(vi.mocked(readFile).mock.calls.some(([path]) => String(path).includes('/checkpoint-credentials/'))).toBe(false);
+  });
+});
