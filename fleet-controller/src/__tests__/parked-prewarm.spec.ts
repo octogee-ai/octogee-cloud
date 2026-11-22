@@ -69,6 +69,7 @@ function fixture(now = () => 625) {
       root.desiredStatus = "paused";
       notify("gateways");
     },
+    recordGuestVerification: (guestVerifiedAt: number) => { persisted = { ...operation, output: { ...claim, prewarmState: "parked", guestVerifiedAt } }; },
     persistRepair: () => { persisted = { ...operation, output: { prewarmState: "repairing", previousBootImageId: "100", repairStartedAt: 625 } }; },
     clearVm: () => { registry.vm = null; notify("fleetRegistry"); },
     runVm: (instanceId = "998") => { registry.vm = { status: "RUNNING", instanceId }; notify("fleetRegistry"); },
@@ -104,8 +105,9 @@ describe("parked prewarm operation", () => {
     h.notify("fleetRegistry");
     await vi.waitFor(() => expect(h.updateGuestAgentImage).toHaveBeenCalledWith("builder-alice", "alice", "987", `${gateway}:${tag}@${gatewayDigest}`));
     await vi.waitFor(() => expect(finishParkedGatewayPrewarm).toHaveBeenCalled());
+    h.recordGuestVerification(627);
     h.suspendVm();
-    await expect(result).resolves.toMatchObject({ success: true, output: { prewarmState: "parked", instanceId: "987",
+    await expect(result).resolves.toMatchObject({ success: true, output: { prewarmState: "parked", instanceId: "987", guestVerifiedAt: 627,
       bootImageId: "100", bootDiskId: "101", homeDiskId: "102" } });
   });
 
