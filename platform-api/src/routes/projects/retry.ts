@@ -50,6 +50,11 @@ async function markRetryFailed(ctx: ProjectCtx, provisioningError: string): Prom
   });
 }
 
+function presentationPendingDeletion(ctx: ProjectCtx): boolean {
+  const marker = (ctx.project as { pendingDeletion?: unknown }).pendingDeletion;
+  return marker !== undefined && marker !== null;
+}
+
 async function claimProjectRetry(ctx: ProjectCtx): Promise<boolean> {
   return platformStateStore.transaction({ label: "project-retry.claim" }, async (tx) => {
     const { projects, channels } = tx.workspaces;
@@ -343,6 +348,10 @@ router.post("/:wid/:pid/retry-provisioning", strictRateLimit, async (req: Reques
     logTag: "[projects] Retry provisioning crashed for",
     errorMessage: "Retry provisioning failed",
   }, async (ctx) => {
+    if (presentationPendingDeletion(ctx)) {
+      res.status(409).json({ error: "Project is being deleted and cannot be retried.", code: "project_pending_deletion" });
+      return;
+    }
     if (!(await claimProjectRetry(ctx))) {
       res.status(409).json({ error: "Project setup is already running or no longer needs retrying." });
       return;

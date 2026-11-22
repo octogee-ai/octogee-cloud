@@ -228,6 +228,21 @@ describe("POST /api/projects/:wid/:pid/retry-provisioning", () => {
     expect(h.provisionProjectRepo).not.toHaveBeenCalled();
   });
 
+  it("refuses to revive a project whose presentation document is marked for deletion", async () => {
+    h.project = { ...h.project, pendingDeletion: { ownerUid: "owner-1", repoProvider: "gitea" } };
+
+    await request(app())
+      .post("/api/projects/mira/orbit/retry-provisioning")
+      .expect(409, {
+        error: "Project is being deleted and cannot be retried.",
+        code: "project_pending_deletion",
+      });
+
+    expect(h.docs.get(PROJECT)).toMatchObject({ provisioningState: "failed" });
+    expect(h.mmApi).not.toHaveBeenCalled();
+    expect(h.provisionProjectRepo).not.toHaveBeenCalled();
+  });
+
   it("rejects retrying an active project with its primary channel already recorded", async () => {
     h.project.provisioningState = "active";
     h.docs.set(GENERAL, { mattermost: { channelId: "channel-1" } });

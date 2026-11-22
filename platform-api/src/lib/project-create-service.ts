@@ -20,6 +20,7 @@ import { requestedProjectRecipe } from "./project-recipe.js";
 import { userEntitlements } from "@octogee/shared/types/user-entitlements";
 import type { FleetBrokerProjectCreateInput } from "@octogee/shared/types/fleet-broker";
 import { provisionProjectAgent } from "./project-agent-service.js";
+import { projectRepoProvider, removeProjectPlatformRecords } from "./project-platform-state.js";
 import { projectCreateAdmission } from "./project-create-admission.js";
 import {
   isValidProjectStarter,
@@ -85,6 +86,8 @@ interface NormalizedProjectCreateRequest {
   recipe: unknown;
   starter: unknown;
 }
+
+type ReadyWorkspaceMmContext = WorkspaceMmContext & { teamId: string };
 
 interface MattermostMemberAdd {
   id: string | null;
@@ -159,13 +162,11 @@ export async function createProjectForActor(
   const limitFailure = await enforceProjectLimit(plan);
   if (limitFailure) return limitFailure;
 
-  if (plan.ghRepoSource) {
-    if (!actor.proveRepoSource) {
-      return bad(503, "GitHub repository authorization could not be verified");
-    }
-    const proofFailure = await actor.proveRepoSource(plan.ghRepoSource);
-    if (proofFailure) return proofFailure;
-  }
+  const chat = await readyWorkspaceChat(plan);
+  if (!chat) return bad(503, "workspace_chat_not_ready");
+
+  const proofFailure = await proveCreateRepoSource(actor, plan);
+  if (proofFailure) return proofFailure;
 
   const starterFiles = await projectCreateStarterFiles(plan);
   if (!starterFiles.ok) return starterFiles.result;
@@ -186,8 +187,7 @@ export async function createProjectForActor(
   try {
     await writeProjectProductFields(plan);
     await writeProjectOwnerMember(plan);
-    const callerCtx = await getWorkspaceMmContext(plan.uid, plan.workspaceId);
-    const channel = await provisionProjectMattermost(plan, callerCtx, artifacts);
+    const channel = await provisionProjectMattermost(plan, chat, artifacts);
     await provisionProjectCodeRepo(plan, starterFiles.files, artifacts);
     await markProjectActive(plan);
     await provisionProjectAgentByDefault(plan);
@@ -208,6 +208,26 @@ export async function createProjectForActor(
   } catch (error) {
     return failProjectProvisioning(plan, artifacts, error);
   }
+}
+
+async function proveCreateRepoSource(
+  actor: ProjectCreateActor,
+  plan: ProjectCreatePlan,
+): Promise<ProjectCreateResult | null> {
+  if (!plan.ghRepoSource) return null;
+  if (!actor.proveRepoSource) {
+    return bad(503, "GitHub repository authorization could not be verified");
+  }
+  return actor.proveRepoSource(plan.ghRepoSource);
+}
+
+async function readyWorkspaceChat(plan: ProjectCreatePlan): Promise<ReadyWorkspaceMmContext | null> {
+  const context = await getWorkspaceMmContext(plan.uid, plan.workspaceId);
+  if (context?.teamId) return { ...context, teamId: context.teamId };
+  logger.warn(`[projects] Create refused for ${plan.workspaceId}/${plan.slug}: workspace chat is not ready`, {
+    uid: plan.uid,
+  });
+  return null;
 }
 
 async function admitProjectCreate(plan: ProjectCreatePlan): Promise<ProjectCreateResult | null> {
@@ -449,6 +469,7 @@ async function writeProjectProductFields(plan: ProjectCreatePlan): Promise<void>
     publishedUrl: null,
     starCount: 0,
     memberCount: 1,
+    pendingDeletion: null,
   });
 }
 
@@ -464,17 +485,10 @@ async function writeProjectOwnerMember(plan: ProjectCreatePlan): Promise<void> {
 
 async function provisionProjectMattermost(
   plan: ProjectCreatePlan,
-  callerCtx: WorkspaceMmContext | null,
+  callerCtx: ReadyWorkspaceMmContext,
   artifacts: ProjectProvisioningArtifacts,
 ): Promise<{ teamId: string; mmChannelId: string }> {
-  const teamId = callerCtx?.teamId;
-  if (!teamId) {
-    throw new ProjectProvisioningError(
-      "Workspace has no Mattermost team context",
-      "Project provisioning failed - workspace chat is not ready",
-    );
-  }
-
+  const { teamId } = callerCtx;
   const mmChannelId = await createMattermostProjectChannel(plan, teamId, artifacts);
   try {
     await writeProjectGeneralChannel(plan, mmChannelId);
@@ -594,40 +608,26 @@ async function failProjectProvisioning(
   const responseError = error instanceof ProjectProvisioningError
     ? error.responseError
     : "Project provisioning failed - could not complete setup";
-  await platformStateStore.workspaces.projects.patch(plan.workspaceId, plan.slug, {
+  await recordProvisioningFailure(plan, "provisioning failure", {
     provisioningState: "failed",
     provisioningError: provisioningError.slice(0, 500),
     provisioningCleanup: {
       status: "in_progress",
       error: null,
     },
-    updatedAt: { serverNow: true },
   });
   logger.error(`[projects] Provisioning failed for ${plan.workspaceId}/${plan.slug}: ${provisioningError}`);
 
   try {
     await cleanupProjectProvisioning(plan, artifacts);
-    await platformStateStore.workspaces.projects.patch(plan.workspaceId, plan.slug, {
-      provisioningCleanup: {
-        status: "complete",
-        error: null,
-        completedAt: { serverNow: true },
-      },
-      updatedAt: { serverNow: true },
-    });
-    return bad(502, responseError, {
-      workspaceId: plan.workspaceId,
-      slug: plan.slug,
-      cleanupState: "complete",
-    });
+    await removeProjectPlatformRecords(plan.workspaceId, plan.slug);
   } catch (cleanupError) {
     const cleanupMessage = errorMessage(cleanupError);
-    await platformStateStore.workspaces.projects.patch(plan.workspaceId, plan.slug, {
+    await recordProvisioningFailure(plan, "provisioning cleanup failure", {
       provisioningCleanup: {
         status: "failed",
         error: cleanupMessage.slice(0, 500),
       },
-      updatedAt: { serverNow: true },
     });
     logger.error(
       `[projects] Provisioning cleanup failed for ${plan.workspaceId}/${plan.slug}: ${cleanupMessage}`,
@@ -637,6 +637,41 @@ async function failProjectProvisioning(
       slug: plan.slug,
       cleanupState: "failed",
     });
+  }
+  return bad(502, responseError, {
+    workspaceId: plan.workspaceId,
+    slug: plan.slug,
+    cleanupState: await markRemovedProjectPresentation(plan),
+  });
+}
+
+async function recordProvisioningFailure(
+  plan: ProjectCreatePlan,
+  what: string,
+  patch: Record<string, unknown>,
+): Promise<void> {
+  try {
+    await platformStateStore.workspaces.projects.patch(plan.workspaceId, plan.slug, {
+      ...patch,
+      updatedAt: { serverNow: true },
+    });
+  } catch (error) {
+    logger.error(`[projects] Could not record ${what} for ${plan.workspaceId}/${plan.slug}`, { error });
+  }
+}
+
+async function markRemovedProjectPresentation(plan: ProjectCreatePlan): Promise<"complete" | "presentation_failed"> {
+  try {
+    await projectPresentation().markProjectPendingDeletion(plan.workspaceId, plan.slug, {
+      ownerUid: plan.uid,
+      repoProvider: projectRepoProvider({ repoSource: plan.ghRepoSource }),
+    });
+    return "complete";
+  } catch (error) {
+    logger.error(
+      `[projects] Presentation cleanup failed for ${plan.workspaceId}/${plan.slug} after its platform state was removed: ${errorMessage(error)}`,
+    );
+    return "presentation_failed";
   }
 }
 
@@ -666,18 +701,24 @@ async function archiveUnstoredProjectChannel(
   channel: NonNullable<ProjectProvisioningArtifacts["primaryChannel"]>,
 ): Promise<void> {
   const initial = await verifiedProjectChannel(channel);
-  if (channelIsArchived(initial)) return;
+  if (initial === null || channelIsArchived(initial)) return;
   await mmApi(`/channels/${channel.channelId}`, "DELETE");
   const archived = await verifiedProjectChannel(channel);
-  if (!channelIsArchived(archived)) {
+  if (archived !== null && !channelIsArchived(archived)) {
     throw new Error(`Mattermost channel ${channel.channelId} was not archived`);
   }
 }
 
 async function verifiedProjectChannel(
   expected: NonNullable<ProjectProvisioningArtifacts["primaryChannel"]>,
-): Promise<Record<string, unknown>> {
-  const raw = await mmApi(`/channels/${expected.channelId}`);
+): Promise<Record<string, unknown> | null> {
+  let raw: unknown;
+  try {
+    raw = await mmApi(`/channels/${expected.channelId}`);
+  } catch (error) {
+    if ((error as { status?: unknown } | null)?.status === 404) return null;
+    throw error;
+  }
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     throw new Error(`Mattermost returned an invalid channel for ${expected.channelId}`);
   }
