@@ -145,21 +145,31 @@ function postCutoverReturnBlocksRollout(rollout: OperationRef, returning: Operat
 }
 
 function heldNativeReturnSource(operation: OperationRef): string | undefined {
-  if (operation.kind !== MIGRATE_USER_KIND || operation.cutoverCommittedAt !== undefined ||
-      operation.input?.source !== "builder-activation-lease") return;
+  if (operation.kind !== MIGRATE_USER_KIND || operation.cutoverCommittedAt !== undefined) return;
   const source = inputString(operation.input, "fromGatewayId");
-  const target = inputString(operation.input, "toGatewayId");
   const handoff = operation.schedulerHandoff as Operation["schedulerHandoff"];
   const recovery = handoff?.forwardRecovery;
-  if (source && !source.startsWith("shared-") && target?.startsWith("shared-") &&
-      isUserReturnOperationIdFor(operation.id, source) && handoff?.fromGatewayId === source &&
-      handoff.toGatewayId === target && readSchedulerMigrationIdentity(operation.id, handoff.migrationId) &&
-      recovery?.schemaVersion === 1 && recovery.phase === "source-flushed" &&
-      Number.isSafeInteger(recovery.sourceEpoch) && recovery.sourceEpoch >= 0) return source;
+  if (source === undefined || !isUserReturnOperationIdFor(operation.id, source) ||
+      handoff?.fromGatewayId !== source || handoff.toGatewayId !== inputString(operation.input, "toGatewayId") ||
+      !readSchedulerMigrationIdentity(operation.id, handoff.migrationId)) return;
+  if (recovery?.schemaVersion === 1 && recovery.phase === "source-flushed") return source;
 }
 
 function vmRolloutGateway(operation: OperationRef): string | undefined {
   if (operation.kind === "rollout" && operation.rolloutLane === "builder-vm") return inputString(operation.input, "gatewayId");
+}
+
+function pendingRolloutScope({ op, pendingOpsSameKind, runningOpsSameKind }: OperationClaimDecisionInput) {
+  const candidateGateway = vmRolloutGateway(op);
+  if (candidateGateway === undefined) return pendingOpsSameKind;
+  const heldSources = new Set([...runningOpsSameKind, ...pendingOpsSameKind].flatMap(operation => {
+    const source = heldNativeReturnSource(operation);
+    return source === undefined ? [] : [source];
+  }));
+  return pendingOpsSameKind.filter(pending => {
+    const gateway = vmRolloutGateway(pending);
+    return gateway === undefined || gateway === candidateGateway || !heldSources.has(gateway);
+  });
 }
 
 function isBackingOffReleasedOperation(pending: PendingOperationRef, now: number): boolean {
@@ -369,7 +379,7 @@ function findOlderPendingSameScope(
 export function decideOperationClaim(
   input: OperationClaimDecisionInput,
 ): OperationClaimDecision {
-  const { op, now, runningOpsSameKind, pendingOpsSameKind } = input;
+  const { op, now, runningOpsSameKind } = input;
   if (op.status !== "pending") return { outcome: "skip" };
   if (typeof op.nextAttemptAt === "number" && op.nextAttemptAt > now) {
     return { outcome: "skip" };
@@ -386,21 +396,7 @@ export function decideOperationClaim(
   }
   const runningConflict = findSerialConflict(op, runningOpsSameKind);
   if (runningConflict) return { outcome: "queue", waitingOn: runningConflict.waitingOn };
-  let pendingInScope = pendingOpsSameKind;
-  const rolloutGateway = vmRolloutGateway(op);
-  if (rolloutGateway) {
-    const heldSources = new Map<string, OperationRef>();
-    for (const migration of [...runningOpsSameKind, ...pendingOpsSameKind]) {
-      const source = heldNativeReturnSource(migration);
-      if (source) heldSources.set(source, migration);
-    }
-    const sourceReturn = heldSources.get(rolloutGateway);
-    if (sourceReturn) return { outcome: "queue", waitingOn: describeWaitingOn(sourceReturn) };
-    pendingInScope = pendingOpsSameKind.filter(pending => {
-      const gateway = vmRolloutGateway(pending);
-      return gateway === undefined || !heldSources.has(gateway);
-    });
-  }
+  const pendingInScope = pendingRolloutScope(input);
   const postCutoverReturn = pendingInScope.find((pending) =>
     pending.id !== op.id && postCutoverReturnBlocksRollout(op, pending));
   if (postCutoverReturn) return { outcome: "queue", waitingOn: describeWaitingOn(postCutoverReturn) };
