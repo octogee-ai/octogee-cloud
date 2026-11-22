@@ -4,7 +4,7 @@ import { isSharedMaintenancePublication, sharedMaintenanceCompletionPurpose, } f
 const sha256 = /^[a-f0-9]{64}$/;
 const image = /^sha256:[a-f0-9]{64}$/;
 function bindingMatches(request, binding) {
-    return request.namespace === "octogee-test" && binding.namespace === request.namespace &&
+    return binding.namespace === request.namespace &&
         binding.gatewayId === request.gatewayId && binding.podUid === request.podUid && binding.serviceAccountName.length > 0 &&
         request.role === binding.execRole;
 }
@@ -27,7 +27,7 @@ function signScopedLaunch(request, authority, key, expiresAt) {
     return { raw, signature: signFleetRequest(key, purpose, raw) };
 }
 export async function issueSharedMaintenanceStartupPair(input) {
-    if (input.gateway.request.role !== "gateway" || input.edge.request.role !== "gateway-edge" ||
+    if (input.environment !== "test" || input.gateway.request.role !== "gateway" || input.edge.request.role !== "gateway-edge" ||
         input.gateway.request.nonce === input.edge.request.nonce)
         return null;
     const scoped = [input.gateway, input.edge];
@@ -45,7 +45,7 @@ export async function issueSharedMaintenanceStartupPair(input) {
 }
 export async function issueSharedMaintenanceCompletion(input) {
     const scoped = [input.gateway, input.edge];
-    if (input.gateway.request.role !== "gateway" || input.edge.request.role !== "gateway-edge" ||
+    if (input.environment !== "test" || input.gateway.request.role !== "gateway" || input.edge.request.role !== "gateway-edge" ||
         !scoped.every(({ request, binding }) => bindingMatches(request, binding)))
         return null;
     const final = await input.readVerifiedPublication();

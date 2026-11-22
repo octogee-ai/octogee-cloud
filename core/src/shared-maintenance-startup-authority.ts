@@ -36,7 +36,7 @@ const sha256 = /^[a-f0-9]{64}$/;
 const image = /^sha256:[a-f0-9]{64}$/;
 
 function bindingMatches(request: LaunchRequest, binding: PodBinding) {
-  return request.namespace === "octogee-test" && binding.namespace === request.namespace &&
+  return binding.namespace === request.namespace &&
     binding.gatewayId === request.gatewayId && binding.podUid === request.podUid && binding.serviceAccountName.length > 0 &&
     request.role === binding.execRole;
 }
@@ -63,13 +63,14 @@ function signScopedLaunch(request: LaunchRequest, authority: LaunchAuthority, ke
 }
 
 export async function issueSharedMaintenanceStartupPair(input: {
+  environment: "test";
   gateway: ScopedRole;
   edge: ScopedRole;
   readVerifiedAuthority(): Promise<LaunchAuthority | null>;
   enrolledIssuerPrivateKey: string;
   now?: () => number;
 }) {
-  if (input.gateway.request.role !== "gateway" || input.edge.request.role !== "gateway-edge" ||
+  if (input.environment !== "test" || input.gateway.request.role !== "gateway" || input.edge.request.role !== "gateway-edge" ||
       input.gateway.request.nonce === input.edge.request.nonce) return null;
   const scoped = [input.gateway, input.edge];
   if (!scoped.every(({ request, binding }) => bindingMatches(request, binding) && sha256.test(request.nonce))) return null;
@@ -85,6 +86,7 @@ export async function issueSharedMaintenanceStartupPair(input: {
 
 
 export async function issueSharedMaintenanceCompletion(input: {
+  environment: "test";
   gateway: ScopedRole;
   edge: ScopedRole;
   readVerifiedPublication(): Promise<(LaunchAuthority & { publication: SharedMaintenanceCompletionReceipt["publication"] }) | null>;
@@ -92,7 +94,7 @@ export async function issueSharedMaintenanceCompletion(input: {
   now?: () => number;
 }) {
   const scoped = [input.gateway, input.edge];
-  if (input.gateway.request.role !== "gateway" || input.edge.request.role !== "gateway-edge" ||
+  if (input.environment !== "test" || input.gateway.request.role !== "gateway" || input.edge.request.role !== "gateway-edge" ||
       !scoped.every(({ request, binding }) => bindingMatches(request, binding))) return null;
   const final = await input.readVerifiedPublication();
   const now = (input.now ?? Date.now)();

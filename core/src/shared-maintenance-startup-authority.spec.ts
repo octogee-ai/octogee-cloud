@@ -23,7 +23,7 @@ const edge = { request, binding };
 it("binds separately observed exec roles and actual replaced runtime roles to one launch window", async () => {
   const readVerifiedAuthority = vi.fn(async () => authority);
   const proof = await issueSharedMaintenanceStartupPair({
-    gateway, edge, readVerifiedAuthority, enrolledIssuerPrivateKey: keys.privateKey, now: () => 10,
+    environment: "test", gateway, edge, readVerifiedAuthority, enrolledIssuerPrivateKey: keys.privateKey, now: () => 10,
   });
   expect(readVerifiedAuthority).toHaveBeenCalledTimes(2);
   expect(proof).not.toBeNull();
@@ -33,7 +33,8 @@ it("binds separately observed exec roles and actual replaced runtime roles to on
 
 it("fails before trusted custody reads for wrong Pod or container role and refuses a retained old writer", async () => {
   const readVerifiedAuthority = vi.fn(async () => authority);
-  const input = { gateway, edge, readVerifiedAuthority, enrolledIssuerPrivateKey: keys.privateKey };
+  const input = { environment: "test" as const, gateway, edge, readVerifiedAuthority, enrolledIssuerPrivateKey: keys.privateKey };
+  await expect(issueSharedMaintenanceStartupPair({ ...input, environment: "prod" as never })).resolves.toBeNull();
   await expect(issueSharedMaintenanceStartupPair({ ...input, edge: { ...edge, binding: { ...binding, podUid: "another" } } })).resolves.toBeNull();
   await expect(issueSharedMaintenanceStartupPair({ ...input, edge: { ...edge, binding: { ...binding, execRole: "gateway" } } })).resolves.toBeNull();
   expect(readVerifiedAuthority).not.toHaveBeenCalled();
@@ -45,7 +46,7 @@ it("fails before trusted custody reads for wrong Pod or container role and refus
 
 it("fails closed on an old restore attempt, wrong artifact, or physical custody change", async () => {
   const readVerifiedAuthority = vi.fn(async () => authority);
-  const input = { gateway, edge, readVerifiedAuthority, enrolledIssuerPrivateKey: keys.privateKey };
+  const input = { environment: "test" as const, gateway, edge, readVerifiedAuthority, enrolledIssuerPrivateKey: keys.privateKey };
   readVerifiedAuthority.mockResolvedValueOnce({ ...authority, verifiedRestoredArchive: { attemptId: "prior-attempt", sha256: "c".repeat(64) } });
   await expect(issueSharedMaintenanceStartupPair(input)).resolves.toBeNull();
   readVerifiedAuthority.mockResolvedValueOnce({ ...authority, roles: { ...authority.roles, gateway: { ...authority.roles.gateway,
@@ -63,7 +64,7 @@ it("authorizes reboot only after one stable publication for the exact Pod and ar
   const { nonce: _nonce, role: _role, ...scope } = gateway.request;
   const publication = { release: 7, payloadHash: "a".repeat(64), publishedAt: 25 };
   const readVerifiedPublication = vi.fn(async () => ({ ...authority, publication }));
-  const input = { gateway, edge, readVerifiedPublication, enrolledIssuerPrivateKey: keys.privateKey, now: () => 30 };
+  const input = { environment: "test" as const, gateway, edge, readVerifiedPublication, enrolledIssuerPrivateKey: keys.privateKey, now: () => 30 };
   const proof = await issueSharedMaintenanceCompletion(input);
   expect(proof).not.toBeNull();
   const validate = { scope, localBoundPodUid: scope.podUid, proof: proof!, publicKey: keys.publicKey, now: 30 };

@@ -35,6 +35,7 @@ type ScopedRole = {
     binding: PodBinding;
 };
 export declare function issueSharedMaintenanceStartupPair(input: {
+    environment: "test";
     gateway: ScopedRole;
     edge: ScopedRole;
     readVerifiedAuthority(): Promise<LaunchAuthority | null>;
@@ -51,6 +52,7 @@ export declare function issueSharedMaintenanceStartupPair(input: {
     };
 } | null>;
 export declare function issueSharedMaintenanceCompletion(input: {
+    environment: "test";
     gateway: ScopedRole;
     edge: ScopedRole;
     readVerifiedPublication(): Promise<(LaunchAuthority & {

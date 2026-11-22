@@ -1,7 +1,7 @@
 import { type Server } from "node:http";
 export type SharedMaintenanceRole = "gateway" | "gateway-edge";
 export interface SharedMaintenanceStartupEnrollment {
-    namespace: "octogee-test";
+    namespace: string;
     gatewayId: string;
     podUid: string;
     attemptId: string;

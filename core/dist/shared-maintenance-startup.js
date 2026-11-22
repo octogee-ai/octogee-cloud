@@ -242,17 +242,22 @@ async function readInertStartupDocument() {
         await file.close();
     }
 }
+function validInstalledMaintenanceDocument(document) {
+    return document.version === 1 && document.environment === "test" && /^[a-z0-9][a-z0-9-]{0,62}$/.test(document.namespace) &&
+        Boolean(document.gatewayId) && Boolean(document.attemptId) && Boolean(document.podUid) &&
+        /^[a-f0-9]{40}$/.test(document.buildId) && archiveHash.test(document.artifactSetId) &&
+        typeof document.enrolledIssuerPublicKey === "string" &&
+        createPublicKey(document.enrolledIssuerPublicKey).asymmetricKeyType === "ed25519";
+}
 export async function waitForInstalledSharedMaintenanceGate(role, env) {
     if (env.GATEWAY_CLASS !== "shared")
         return;
     const document = await readInertStartupDocument();
     if (!document)
         return;
-    const { version, enrolledIssuerPublicKey, ...scope } = document;
-    if (version !== 1 || scope.namespace !== "octogee-test" || !scope.gatewayId || !scope.attemptId || !scope.podUid ||
-        !/^[a-f0-9]{40}$/.test(scope.buildId) || !archiveHash.test(scope.artifactSetId) || typeof enrolledIssuerPublicKey !== "string" || createPublicKey(enrolledIssuerPublicKey).asymmetricKeyType !== "ed25519") {
+    if (!validInstalledMaintenanceDocument(document))
         throw new Error("Shared maintenance startup enrollment is malformed");
-    }
+    const { version: _version, environment: _environment, enrolledIssuerPublicKey, ...scope } = document;
     if (document.namespace !== env.K8S_NAMESPACE || document.gatewayId !== env.GATEWAY_ID)
         return;
     if (await hasSharedMaintenanceCompletion(scope, enrolledIssuerPublicKey))
