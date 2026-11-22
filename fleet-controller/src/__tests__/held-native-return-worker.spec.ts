@@ -943,6 +943,21 @@ it("withholds the stock launch permit until the paired SQL restoration is record
   await expect(readAuthorizedSharedInertStock(h.store, h.claim)).resolves.toEqual(common);
 });
 
+it("can restore exact SQL even when the unchanged fenced peer loses application readiness", async () => {
+  const h = await emptyPeerFixture();
+  await h.hold();
+  h.runtime.kubernetes.status = "not-ready";
+  h.runtime.kubernetes.readyPods = 0;
+  h.runtime.heartbeat.status = "not-ready";
+  await expect(assertSharedInertEmptyPeerHeld(h.store, h.claim, h.peer, () => 530)).rejects.toThrow(/fresh Kubernetes/);
+  const exactRestore = vi.fn(async (current: () => Promise<void>) => { await current(); });
+  await releaseSharedInertEmptyPeer(h.store, h.claim, h.peer, exactRestore, () => 530);
+  expect(exactRestore).toHaveBeenCalledOnce();
+  expect((await h.store.gateways.roots.get(h.peer.gatewayId))?.runtimeRestartFence).toBeUndefined();
+  expect((await h.store.gateways.roots.get(h.claim.gatewayId))?.runtimeRestartFence?.attemptId).toBe(h.claim.attemptId);
+});
+
+
 it("keeps the paired hold if peer custody drifts after reservation or if the action scope differs", async () => {
   const h = await emptyPeerFixture();
   await h.hold();
