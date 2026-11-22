@@ -62,6 +62,41 @@ function expectedDisk(
     isDeepStrictEqual(disk.users, [instanceResource(vm)]));
 }
 
+function verifyStoppedOriginal(
+  source: OfflineVmObservation | null, originalDisk: OfflineDiskObservation | null, original: OfflineNativeReturnCustody["original"],
+): asserts source is OfflineVmObservation {
+  if (!exactBoot(source, original) || source.status !== "TERMINATED" ||
+      !source.attachedDisks.some(disk => disk.id === original.homeDiskId) ||
+      !expectedDisk(originalDisk, original.homeDiskId, original)) {
+    throw new Error("Held Native offline recovery lost the stopped original and original-home custody");
+  }
+}
+
+function verifyIsolatedMaintenance(
+  worker: OfflineVmObservation | null, clone: OfflineDiskObservation | null, expected: OfflineNativeReturnCustody,
+) {
+  const { original, maintenance, immutableHomeSnapshotId } = expected;
+  if (!exactBoot(worker, maintenance) || worker.status !== "RUNNING" || worker.publicAccess ||
+      worker.bootImageId !== maintenance.imageId ||
+      !isDeepStrictEqual(worker.serviceAccounts, maintenance.serviceAccountEmail ? [maintenance.serviceAccountEmail] : []) ||
+      worker.attachedDisks.some(disk => disk.id === original.homeDiskId || disk.id === original.bootDiskId) ||
+      !worker.attachedDisks.some(disk => disk.id === maintenance.readOnlyCloneDiskId && disk.mode === "READ_ONLY") ||
+      !expectedDisk(clone, maintenance.readOnlyCloneDiskId, maintenance) || clone.sourceSnapshotId !== immutableHomeSnapshotId) {
+    throw new Error("Held Native offline recovery lost the isolated maintenance boot or immutable clone");
+  }
+}
+
+function verifyHomeSnapshot(
+  snapshot: OfflineSnapshotObservation | null, source: OfflineVmObservation, expected: OfflineNativeReturnCustody,
+) {
+  const { original, immutableHomeSnapshotId } = expected;
+  if (!snapshot || snapshot.status !== "READY" || snapshot.id !== immutableHomeSnapshotId || snapshot.projectId !== original.projectId ||
+      snapshot.sourceDiskId !== original.homeDiskId || source.lastStoppedAt === null || !Number.isSafeInteger(snapshot.createdAt) ||
+      snapshot.createdAt < source.lastStoppedAt) {
+    throw new Error("Held Native offline recovery snapshot is not from the exact original home");
+  }
+}
+
 export async function assertHeldNativeOfflineCustody(input: {
   expected: OfflineNativeReturnCustody;
   compute: ReadOfflineReturnCompute;
@@ -81,24 +116,9 @@ export async function assertHeldNativeOfflineCustody(input: {
     compute.disk(maintenance.projectId, maintenance.zone, maintenance.readOnlyCloneDiskId),
     compute.snapshot(original.projectId, immutableHomeSnapshotId),
   ]);
-  if (!exactBoot(source, original) || source.status !== "TERMINATED" ||
-      !source.attachedDisks.some(disk => disk.id === original.homeDiskId) ||
-      !expectedDisk(originalDisk, original.homeDiskId, original)) {
-    throw new Error("Held Native offline recovery lost the stopped original and original-home custody");
-  }
-  if (!exactBoot(worker, maintenance) || worker.status !== "RUNNING" || worker.publicAccess ||
-      worker.bootImageId !== maintenance.imageId ||
-      !isDeepStrictEqual(worker.serviceAccounts, maintenance.serviceAccountEmail ? [maintenance.serviceAccountEmail] : []) ||
-      worker.attachedDisks.some(disk => disk.id === original.homeDiskId || disk.id === original.bootDiskId) ||
-      !worker.attachedDisks.some(disk => disk.id === maintenance.readOnlyCloneDiskId && disk.mode === "READ_ONLY") ||
-      !expectedDisk(clone, maintenance.readOnlyCloneDiskId, maintenance) || clone.sourceSnapshotId !== immutableHomeSnapshotId) {
-    throw new Error("Held Native offline recovery lost the isolated maintenance boot or immutable clone");
-  }
-  if (!snapshot || snapshot.status !== "READY" || snapshot.id !== immutableHomeSnapshotId || snapshot.projectId !== original.projectId ||
-      snapshot.sourceDiskId !== original.homeDiskId || source.lastStoppedAt === null || !Number.isSafeInteger(snapshot.createdAt) ||
-      snapshot.createdAt < source.lastStoppedAt) {
-    throw new Error("Held Native offline recovery snapshot is not from the exact original home");
-  }
+  verifyStoppedOriginal(source, originalDisk, original);
+  verifyIsolatedMaintenance(worker, clone, input.expected);
+  verifyHomeSnapshot(snapshot, source, input.expected);
   await input.assertOwnerStoreBarrier(scope);
   await input.assertCanonicalSourceAndDestinationHold(scope);
 }

@@ -119,6 +119,10 @@ export function createHeldNativeSourceAcquisition(deps: SourceHoldBackend) {
   return { acquire, read, getHeldSourceKeeper: () => acquiring ? undefined : live?.keeper };
 }
 
+function isCurrentHoldDeadline(value: unknown, now: number): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= now && value <= now + 90_000;
+}
+
 function parseSignedHoldRequest(input: {
   req: Request;
   action: HeldNativeSourceHoldAction;
@@ -134,7 +138,7 @@ function parseSignedHoldRequest(input: {
   const { claim, nonce, expiresAt } = parsed as Record<string, unknown>;
   if (!isHeldNativeSourceClaim(claim) || claim.gatewayId !== gatewayId || req.params.gatewayId !== gatewayId ||
       typeof nonce !== "string" || !/^[a-f0-9]{64}$/.test(nonce) ||
-      typeof expiresAt !== "number" || !Number.isSafeInteger(expiresAt) || expiresAt < now || expiresAt > now + 90_000 ||
+      !isCurrentHoldDeadline(expiresAt, now) ||
       !verifyFleetRequest(publicKey, heldNativeSourceHoldJobId(action, claim.operationId, gatewayId), raw, req.header(SIGNATURE_HEADER))) return null;
   return { claim, nonce, expiresAt, raw };
 }

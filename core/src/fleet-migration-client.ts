@@ -296,12 +296,14 @@ async function isUnregisteredActivationReadinessRoute(response: Response, path: 
 
 export { reconcileHeldNativeSource } from "./held-native-source-reconcile.js";
 
+type HeldSourceInstance = { projectId: string; zone: string; instanceName: string; serviceAccountEmail: string };
+
 export async function requestHeldNativeSourceHold(input: {
   claim: HeldNativeSourceClaim;
   action: HeldNativeSourceHoldAction;
   sourceUrl: string;
   privateKey: string;
-  gce: { projectId: string; zone: string; instanceName: string; serviceAccountEmail: string };
+  gce: HeldSourceInstance;
   fetch?: typeof globalThis.fetch;
   verifyInstanceIdentity?: VerifyGoogleIdToken;
 }): Promise<HeldNativeSourceHoldProof> {
@@ -330,14 +332,27 @@ export async function requestHeldNativeSourceHold(input: {
     throw new Error("Held Native source returned a stale hold acknowledgement");
   }
   const hold = validateSourceHold(reply.hold, claim, Date.now());
-  if (typeof reply.instanceIdentity !== "string") throw new Error("Held Native source returned no instance attestation");
-  const verify = input.verifyInstanceIdentity ?? createGoogleIdTokenVerifier();
-  const payload = await verify(reply.instanceIdentity, heldNativeSourceHoldAudience(action, JSON.stringify(body), hold));
-  const instance = payload && GOOGLE_TOKEN_ISSUERS.has(String(payload.iss)) && computeInstanceFromPayload(payload, input.gce);
-  if (!instance || instance.instanceId !== claim.vmId || instance.zone !== input.gce.zone || instance.instanceName !== input.gce.instanceName) {
+  await assertHeldSourceInstance({
+    token: reply.instanceIdentity, audience: heldNativeSourceHoldAudience(action, JSON.stringify(body), hold),
+    expected: { ...input.gce, vmId: claim.vmId }, verify: input.verifyInstanceIdentity ?? createGoogleIdTokenVerifier(),
+  });
+  if (Date.now() > body.expiresAt) throw new Error("Held Native source returned a stale hold acknowledgement");
+  return hold;
+}
+
+async function assertHeldSourceInstance(input: {
+  token: unknown;
+  audience: string;
+  expected: HeldSourceInstance & { vmId: string };
+  verify: VerifyGoogleIdToken;
+}): Promise<void> {
+  const { token, audience, expected, verify } = input;
+  if (typeof token !== "string") throw new Error("Held Native source returned no instance attestation");
+  const payload = await verify(token, audience);
+  const instance = payload && GOOGLE_TOKEN_ISSUERS.has(String(payload.iss)) && computeInstanceFromPayload(payload, expected);
+  if (!instance || instance.instanceId !== expected.vmId || instance.zone !== expected.zone || instance.instanceName !== expected.instanceName) {
     throw new Error("Held Native source returned an unexpected GCE instance attestation");
   }
-  return hold;
 }
 
 function assertHeldSourceOrigin(source: URL): void {

@@ -127,17 +127,18 @@ export declare class MigrationTransportError extends Error {
 }
 export declare function isDefinitiveConfigRpcRejection(error: unknown): boolean;
 export { reconcileHeldNativeSource } from "./held-native-source-reconcile.js";
+type HeldSourceInstance = {
+    projectId: string;
+    zone: string;
+    instanceName: string;
+    serviceAccountEmail: string;
+};
 export declare function requestHeldNativeSourceHold(input: {
     claim: HeldNativeSourceClaim;
     action: HeldNativeSourceHoldAction;
     sourceUrl: string;
     privateKey: string;
-    gce: {
-        projectId: string;
-        zone: string;
-        instanceName: string;
-        serviceAccountEmail: string;
-    };
+    gce: HeldSourceInstance;
     fetch?: typeof globalThis.fetch;
     verifyInstanceIdentity?: VerifyGoogleIdToken;
 }): Promise<HeldNativeSourceHoldProof>;

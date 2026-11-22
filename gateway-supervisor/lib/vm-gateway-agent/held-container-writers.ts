@@ -11,6 +11,7 @@ export interface HeldContainerWriter {
 }
 
 const dockerId = /^[a-f0-9]{64}$/;
+const ordinaryRestartPolicy = "on-failure";
 
 export async function acquireHeldContainerWriters(deps: {
   engine: DockerEngine;
@@ -35,10 +36,10 @@ export async function acquireHeldContainerWriters(deps: {
   }
 
   await assertHostHold();
-  for (const writer of writers) await assertWriter(writer, false, "on-failure");
+  for (const writer of writers) await assertWriter(writer, false, ordinaryRestartPolicy);
   for (const writer of writers) {
     await assertHostHold();
-    await assertWriter(writer, false, "on-failure");
+    await assertWriter(writer, false, ordinaryRestartPolicy);
     await setContainerRestartPolicy(engine, writer.id, "no");
     await assertHostHold();
     await assertWriter(writer, false, "no");
@@ -63,11 +64,11 @@ export async function acquireHeldContainerWriters(deps: {
       for (const writer of writers) {
         await assertHostHold();
         await assertWriter(writer, true, "no");
-        await setContainerRestartPolicy(engine, writer.id, "on-failure");
+        await setContainerRestartPolicy(engine, writer.id, ordinaryRestartPolicy);
         await assertHostHold();
-        await assertWriter(writer, true, "on-failure");
+        await assertWriter(writer, true, ordinaryRestartPolicy);
         await setContainerPaused(engine, writer.id, false);
-        await assertWriter(writer, false, "on-failure");
+        await assertWriter(writer, false, ordinaryRestartPolicy);
       }
       await assertHostHold();
     },
