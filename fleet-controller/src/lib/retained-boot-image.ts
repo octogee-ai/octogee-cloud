@@ -1,5 +1,7 @@
 import { retainedBootPreservesScheduler } from "@octogee/core/admin-fleet-router";
-import type { OpaqueMap, PlatformStateRepositories, PlatformStateStore, PlatformUserRecord } from "@octogee/core/platform-state";
+import { isolatedRuntimeMutationFenced } from "@octogee/core/gateway-retirement-claim";
+import { readActiveParkedPrewarm } from "@octogee/core/isolated-gateway-lifecycle";
+import type { GatewayRoot, OpaqueMap, PlatformStateRepositories, PlatformStateStore, PlatformUserRecord, Stored } from "@octogee/core/platform-state";
 import type { GatewayVmSpec, RetainedUserHome } from "@octogee/shared/types/glm";
 import type { ComputeImageRef, GatewayVmClient } from "./compute-vm.js";
 import { hasHistoricalSchedulerBootLineage, preservesLegacySchedulerRetirement, readNativeSchedulerRetirement } from "./native-scheduler-retirement.js";
@@ -13,7 +15,8 @@ export interface RetainedBootImage extends ComputeImageRef {
   nativeSchedulerRetirement?: OpaqueMap;
   legacySchedulerRetirement?: OpaqueMap;
 }
-type BootImages = Pick<GatewayVmClient, "readImage" | "readFamilyImage">;
+type BootImages = Pick<GatewayVmClient, "readImage" | "readFamilyImage"> &
+  Partial<Pick<GatewayVmClient, "verifyBootReplacement">>;
 
 const imageName = /^[a-z](?:[-a-z0-9]{0,61}[a-z0-9])?$/u;
 
@@ -47,8 +50,9 @@ function assertSchedulerSource(owner: PlatformUserRecord, home: RetainedUserHome
   }
 }
 
-async function schedulerRetirementForReplacement(state: PlatformStateRepositories, owner: PlatformUserRecord, input: {
+async function schedulerRetirementForReplacement(state: PlatformStateRepositories, owner: Stored<PlatformUserRecord>, input: {
   home: RetainedUserHome; source: BootSource; previous: ComputeImageRef; pinned: RetainedBootImage | undefined;
+  candidate: RetainedBootImage; verifyReplacement: BootImages["verifyBootReplacement"];
 }): Promise<Pick<RetainedBootImage, "nativeSchedulerRetirement" | "legacySchedulerRetirement">> {
   const { home, source, previous, pinned } = input;
   const pending = readNativeSchedulerRetirement(owner.fences.pendingNativeSchedulerRetirement);
@@ -64,16 +68,66 @@ async function schedulerRetirementForReplacement(state: PlatformStateRepositorie
     throw new Error("Retained boot replacement cannot prove scheduler lineage from the previous image");
   }
   if (retainedBootPreservesScheduler({ ...pinned }, pending, [source.gatewayId])) return { nativeSchedulerRetirement: pending };
-  if (await preservesHistoricalBoot(state, owner, source, pinned, pending)) return { legacySchedulerRetirement: pending };
+  const provisioning = provisionedSuccessor(owner, source.gatewayId, pending.sourceGatewayId);
+  if ((provisioning || await ownsParkedReplacement(state, owner, source, pending, input.candidate)) &&
+      await preservesHistoricalBoot(state, owner, pending, { source, pinned, verifyReplacement: input.verifyReplacement })) {
+    return { legacySchedulerRetirement: pending };
+  }
   throw new Error("Retained boot replacement cannot prove scheduler lineage from the previous image");
 }
 
+type ParkedBootScope = { owner: Stored<PlatformUserRecord>; source: BootSource; generation: number; sharedGatewayId: string };
+
+function parkedBootScope(owner: Stored<PlatformUserRecord>, source: BootSource,
+  pending: SchedulerRetirement, candidate: RetainedBootImage): ParkedBootScope | null {
+  const lease = owner.activationLease, sharedGatewayId = owner.gateway?.gatewayId;
+  if (source.gatewayId !== pending.sourceGatewayId || lease?.status !== "parked" || lease.targetGatewayId !== source.gatewayId ||
+      !sharedGatewayId?.startsWith("shared-") || isolatedRuntimeMutationFenced(owner) ||
+      candidate.operationId !== `boot-${source.gatewayId}-${source.instanceId}-${candidate.id}`) return null;
+  return { owner, source, generation: lease.generation, sharedGatewayId };
+}
+
+function parkedClaimMatches(operation: Awaited<ReturnType<typeof readActiveParkedPrewarm>>,
+  scope: ParkedBootScope, imageId: string): operation is NonNullable<typeof operation> {
+  const { owner, source, generation, sharedGatewayId } = scope;
+  return operation?.status === "running" && operation.gatewayId === source.gatewayId &&
+    operation.input.uid === owner.uid && operation.input.gatewayId === source.gatewayId &&
+    operation.input.generation === generation && operation.input.bootImageId === imageId &&
+    operation.output?.prewarmState === "booting" && operation.output.previousInstanceId === source.instanceId &&
+    operation.output.sourceGatewayId === sharedGatewayId;
+}
+
+function parkedRootMatches(root: GatewayRoot | null, scope: ParkedBootScope,
+  operation: NonNullable<Awaited<ReturnType<typeof readActiveParkedPrewarm>>>): boolean {
+  return root?.ownerUid === scope.owner.uid && root.gatewayClass === "isolated" &&
+    root.allocation?.generation === scope.generation && root.desiredStatus === "running" &&
+    root.desiredRelease === operation.output?.release && root.updatedBy === operation.id;
+}
+
+async function parkedBootStateMatches(state: PlatformStateRepositories, scope: ParkedBootScope,
+  operation: NonNullable<Awaited<ReturnType<typeof readActiveParkedPrewarm>>>): Promise<boolean> {
+  const { owner, source, sharedGatewayId } = scope;
+  const [root, runtime, assignment, empty] = await Promise.all([
+    state.gateways.roots.get(source.gatewayId), state.fleetRegistry.get(source.gatewayId),
+    state.gateways.assignments.get(sharedGatewayId, owner.uid), state.gateways.assignments.isEmpty(source.gatewayId),
+  ]);
+  return parkedRootMatches(root, scope, operation) && runtime?.vm?.instanceId === source.instanceId && runtime.vm.status === "SUSPENDED" && empty &&
+    assignment?.slug === owner.slug && assignment.state === "serving" && assignment.epoch === operation.output?.sourceAssignmentEpoch;
+}
+
+async function ownsParkedReplacement(state: PlatformStateRepositories, owner: Stored<PlatformUserRecord>, source: BootSource,
+  pending: SchedulerRetirement, candidate: RetainedBootImage): Promise<boolean> {
+  const scope = parkedBootScope(owner, source, pending, candidate);
+  if (!scope) return false;
+  const operation = await readActiveParkedPrewarm(state, owner.uid);
+  return parkedClaimMatches(operation, scope, candidate.id) && await parkedBootStateMatches(state, scope, operation);
+}
+
 async function preservesHistoricalBoot(state: PlatformStateRepositories, owner: PlatformUserRecord,
-  source: NonNullable<RetainedBootImage["sourceComputer"]>, pinned: RetainedBootImage,
-  pending: SchedulerRetirement): Promise<boolean> {
-  if (!provisionedSuccessor(owner, source.gatewayId, pending.sourceGatewayId)) return false;
+  pending: SchedulerRetirement, input: { source: BootSource; pinned: RetainedBootImage; verifyReplacement: BootImages["verifyBootReplacement"] }): Promise<boolean> {
+  const { source, pinned, verifyReplacement } = input;
   return preservesLegacySchedulerRetirement({ ...pinned }, pending, [pending.sourceGatewayId, source.gatewayId]) ||
-    await hasHistoricalSchedulerBootLineage(state, owner, pending, { ...pinned }, source.instanceId);
+    await hasHistoricalSchedulerBootLineage(state, owner, pending, { image: { ...pinned }, instanceId: source.instanceId }, verifyReplacement);
 }
 
 export async function selectRetainedBootImage(input: { store: PlatformStateStore; vm: BootImages; ownerUid: string;
@@ -98,7 +152,8 @@ export async function selectRetainedBootImage(input: { store: PlatformStateStore
       const currentImage = current.bootImage as RetainedBootImage | undefined;
       if (currentImage?.id !== prior?.id || currentImage?.operationId !== prior?.operationId) throw new Error("retained boot selection changed concurrently");
       const retirement = previous && input.sourceComputer
-        ? await schedulerRetirementForReplacement(tx, fresh, { home, source: input.sourceComputer, previous, pinned: currentImage }) : {};
+        ? await schedulerRetirementForReplacement(tx, fresh, { home, source: input.sourceComputer, previous, pinned: currentImage,
+          candidate, verifyReplacement: vm.verifyBootReplacement }) : {};
       const selected = { ...candidate, ...retirement };
       await tx.users.records.patch(ownerUid, { home: { homeDisk: { ...current, bootImage: selected } } }, { revision: fresh.revision });
       return selected;

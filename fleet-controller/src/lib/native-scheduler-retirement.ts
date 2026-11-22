@@ -151,12 +151,12 @@ function orderedParkedTimes(operation: OperationRecord, startedAt: number, compl
   return operation.createdAt <= startedAt && startedAt <= activeAttemptAt && activeAttemptAt <= completedAt && completedAt <= Date.now();
 }
 
-function parseParkedEdge(operation: OperationRecord): ParkedEdge | null {
+function parseParkedEdge(operation: OperationRecord, sameInstance = false): ParkedEdge | null {
   const { previousInstanceId: previous, instanceId: current, bootImageId: imageId } = operation.output ?? {};
   const startedAt = operation.firstStartedAt ?? operation.startedAt;
   const { completedAt } = operation;
   if (!numericIdentifier(previous) || !numericIdentifier(current) || !numericIdentifier(imageId) ||
-      previous === current || imageId !== operation.input.bootImageId ||
+      (previous === current) !== sameInstance || imageId !== operation.input.bootImageId ||
       typeof startedAt !== "number" || typeof completedAt !== "number") return null;
   if (!orderedParkedTimes(operation, startedAt, completedAt)) return null;
   const edge = { previous, current, imageId, startedAt, completedAt };
@@ -216,7 +216,8 @@ async function historicalBootReplacement(
   const path = uniqueParkedPath(edges, pending.instanceId, instanceId, returned.completedAt);
   if (historicalEndpointMatches(path, image, pending.sourceGatewayId)) return true;
   if (!allowInterrupted) return null;
-  return interruptedBootReplacement(prewarms, edges, pending, target, returned.completedAt);
+  return interruptedBootReplacement(prewarms, edges, pending, target, returned.completedAt) ??
+    interruptedIntermediateBoot(prewarms, edges, pending, target, returned.completedAt);
 }
 
 function interruptedBootReplacement(
@@ -236,6 +237,42 @@ function interruptedBootReplacement(
   return window ? { instanceName: pending.instanceName, zone: pending.zone, previousInstanceId, instanceId, ...window } : null;
 }
 
+function interruptedIntermediateBoot(
+  prewarms: readonly OperationRecord[], edges: readonly ParkedEdge[], pending: Retirement,
+  target: HistoricalBootTarget, returnedAt: number,
+): BootReplacementWindow | null {
+  const confirmations = prewarms.flatMap(operation => {
+    const receipt = operation.output?.prewarmState === "parked" ? parseParkedEdge(operation, true) : null;
+    return receipt ? [receipt] : [];
+  });
+  const interrupted = prewarms.filter(operation => operation.output?.prewarmState === "ineligible");
+  const candidates: BootReplacementWindow[] = [];
+  for (const confirmation of confirmations) {
+    const onward = uniqueParkedPath(edges, confirmation.current, target.instanceId, confirmation.completedAt);
+    if (!onward.length) continue;
+    for (const prior of edges) {
+      if (edges.some(edge => edge.previous === prior.current)) continue;
+      if (!uniqueParkedPath(edges, pending.instanceId, prior.current, returnedAt).length) continue;
+      const window = intermediateAttemptWindow(interrupted, prior, confirmation);
+      if (!window) continue;
+      const gap: ParkedEdge = { previous: prior.current, current: confirmation.current, imageId: confirmation.imageId,
+        startedAt: window.startedAt, completedAt: confirmation.completedAt };
+      const stitched = uniqueParkedPath([...edges, gap], pending.instanceId, target.instanceId, returnedAt);
+      if (!historicalEndpointMatches(stitched, target.image, pending.sourceGatewayId)) continue;
+      candidates.push({ instanceName: pending.instanceName, zone: pending.zone,
+        previousInstanceId: gap.previous, instanceId: gap.current, ...window });
+    }
+  }
+  return candidates.length === 1 ? candidates[0] : null;
+}
+
+function intermediateAttemptWindow(operations: readonly OperationRecord[], prior: ParkedEdge, target: ParkedEdge) {
+  const eligible = operations.filter(op => op.input.bootImageId === target.imageId &&
+    typeof op.completedAt === "number" && op.completedAt <= target.startedAt &&
+    typeof op.firstStartedAt === "number" && op.firstStartedAt >= prior.completedAt);
+  return eligible.length === 1 ? interruptedAttemptWindow(eligible[0]) : null;
+}
+
 function interruptedAttemptWindow(operation: OperationRecord): Pick<BootReplacementWindow, "startedAt" | "endedAt"> | null {
   const { firstStartedAt, startedAt, completedAt } = operation;
   if (typeof firstStartedAt !== "number" || typeof startedAt !== "number" ||
@@ -245,9 +282,11 @@ function interruptedAttemptWindow(operation: OperationRecord): Pick<BootReplacem
 }
 
 export async function hasHistoricalSchedulerBootLineage(
-  state: PlatformStateRepositories, owner: PlatformUserRecord, pending: Retirement, image: UntypedRecord, instanceId: string,
+  state: PlatformStateRepositories, owner: PlatformUserRecord, pending: Retirement, target: HistoricalBootTarget,
+  verifyReplacement?: (window: BootReplacementWindow) => Promise<boolean>,
 ): Promise<boolean> {
-  return await historicalBootReplacement(state, owner, pending, { image, instanceId }, false) === true;
+  const lineage = await historicalBootReplacement(state, owner, pending, target, verifyReplacement !== undefined);
+  return lineage === true || (lineage !== null && verifyReplacement !== undefined && await verifyReplacement(lineage));
 }
 
 async function admittedReplacementImage(state: PlatformStateRepositories, user: PlatformUserRecord, pending: Retirement,

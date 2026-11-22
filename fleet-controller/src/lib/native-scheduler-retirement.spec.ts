@@ -45,6 +45,10 @@ function fixture(options: { snapshotSource?: string; generation?: number; attach
       pendingNativeSchedulerRetirement: retirement,
       openclaw: { slug, gatewayId, activationLease: { status: "activating", leaseId: "restored-demand", generation: options.generation ?? 2, targetGatewayId: gatewayId } },
     } }],
+    [`gateways/${source}`, { gatewayId: source, ownerUid: uid, builderSlug: slug, gatewayClass: "isolated",
+      desiredStatus: "running", desiredRelease: 1, latestRelease: 1, allocation: { generation: 2 }, updatedBy: "parked-prewarm" }],
+    [`glmGateways/${source}`, { docKind:"runtime", gatewayId: source, release: 1, lifecycle:"serving", runtime:"gce-vm",
+      vm: { instanceId:"201", instanceName:retirement.instanceName, zone, status:"SUSPENDED" } }],
     [`gateways/${gatewayId}`, { gatewayId, ownerUid: uid, builderSlug: slug, gatewayClass: "isolated", desiredStatus: "running", desiredRelease: 1, latestRelease: 1 }],
     [`glmGateways/${gatewayId}`, { docKind: "runtime", release: 1, lifecycle: "serving", gatewayId, runtime: "gce-vm", vm: { instanceId: "201", instanceName: describedName, zone } }],
     [`glmOperations/${returnOperationId}`, {
@@ -137,7 +141,82 @@ async function historicalFixture(mismatch?: string, attachedDisk?: string) {
   return h;
 }
 
+async function fixtureWithInterruptedIntermediateBoot() {
+  const h = fixture({ retainedBoot: "historical" });
+  await h.store.journal.operations.create(completedPrewarm("100", "150", "405", 12));
+  const interrupted = completedPrewarm("150", "175", "406", 20);
+  await h.store.journal.operations.create({
+    ...interrupted, startedAt: 23, completedAt: 24, steps: [], output: { prewarmState: "ineligible" },
+  });
+  await h.store.journal.operations.create(completedPrewarm("175", "175", "406", 25));
+  await h.store.journal.operations.create(completedPrewarm("175", "200", "408", 28));
+  await h.store.journal.operations.create(completedPrewarm("200", "201", "409", 32));
+  return h;
+}
+
 describe("adopt independently verified historical scheduler lineage", () => {
+  it("authenticates an interrupted intermediate boot using the exact provider replacement and standalone readiness receipt", async () => {
+    const h = await fixtureWithInterruptedIntermediateBoot();
+    await h.run();
+    expect(h.vm.verifyBootReplacement).toHaveBeenCalledWith({
+      instanceName: retirement.instanceName, zone, previousInstanceId: "150", instanceId: "175",
+      startedAt: 20, endedAt: 23,
+    });
+    expect(h.scheduler).toHaveBeenCalledOnce();
+  });
+
+  it("holds the scheduler fence if the intermediate provider operation cannot be verified", async () => {
+    const h = await fixtureWithInterruptedIntermediateBoot();
+    h.vm.verifyBootReplacement.mockResolvedValue(false);
+    await expect(h.run()).rejects.toThrow(/authority changed/);
+    expect(h.vm.verifyBootReplacement).toHaveBeenCalledOnce();
+    expect(h.scheduler).not.toHaveBeenCalled();
+    expect((await h.store.users.records.get(uid))?.fences.pendingNativeSchedulerRetirement).toEqual(retirement);
+  });
+
+  it("refuses an interrupted intermediate replacement without a matching readiness receipt", async () => {
+    const h = await fixtureWithInterruptedIntermediateBoot();
+    await h.store.journal.operations.patch("ship-175-175", { steps: [] });
+    await expect(h.run()).rejects.toThrow(/authority changed/);
+    expect(h.vm.verifyBootReplacement).not.toHaveBeenCalled();
+    expect(h.scheduler).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])("preserves the original receipt for the exact current parked boot claim (drift: %s)", async drift => {
+    const h = await fixtureWithInterruptedIntermediateBoot();
+    await h.store.users.records.setGatewayMirror(uid, { gatewayId: shared });
+    await h.store.users.records.setActivationLease(uid, { status: "parked", generation: 2,
+      leaseId: "restored-demand", targetGatewayId: source }, { leaseId: "restored-demand", generation: 2 });
+    await h.store.gateways.assignments.create({ uid, slug, gatewayId: shared, state: "serving", source: "migrate-user",
+      epoch: 38, createdAt: 10, updatedAt: 20, updatedByOperationId: returnOperationId });
+    const next = { id: "410", name: "next-qualified", homeAdmission: true } as const;
+    await h.store.journal.operations.create({
+      ...completedPrewarm("201", "202", next.id, 37), id: "parked-prewarm", status: "running", completedAt: null,
+      input: { uid, gatewayId: source, generation: 2, bootImageId: next.id, sourceSha: "b".repeat(40) },
+      output: { prewarmState: "booting", previousInstanceId: "201", release: 1, previousRelease: 1,
+        sourceGatewayId: shared, sourceAssignmentEpoch: drift ? 37 : 38 },
+    });
+    const spec: GatewayVmSpec = { zones: [zone], desktop: "x11", imageFamily: "boot-family", imageProject: "test",
+      diskSizeGb: 80, bootDiskType: "pd-balanced", homeDiskSizeGb: 10, machineType: "e2-medium", provisioningModel: "STANDARD",
+      serviceAccountEmail: "fixture@example.invalid", subnetwork: "fixture" };
+    const result = selectRetainedBootImage({ store: h.store,
+      vm: { ...h.vm, readFamilyImage: vi.fn(async () => next) }, ownerUid: uid, home: h.oldDiskRecord, spec,
+      previous: { id: h.boot.id, name: h.boot.name }, operationId: `boot-${source}-201-410`,
+      sourceComputer: { instanceId: "201", zone, name: retirement.instanceName, gatewayId: source },
+    });
+    if (drift) {
+      await expect(result).rejects.toThrow(/scheduler lineage/);
+      expect(h.vm.verifyBootReplacement).not.toHaveBeenCalled();
+      expect((await h.store.users.records.get(uid))?.home.homeDisk?.bootImage).toEqual(h.boot);
+    } else {
+      await expect(result).resolves.toMatchObject({ legacySchedulerRetirement: retirement, sourceComputer: { instanceId: "201" } });
+      expect(h.vm.verifyBootReplacement).toHaveBeenCalledOnce();
+      const owner = (await h.store.users.records.get(uid))!;
+      expect(owner.fences.pendingNativeSchedulerRetirement).toEqual(retirement);
+      expect(() => archivedSchedulerSourceImage(owner, source, "202", retirement)).toThrow(/scheduler replacement lineage/);
+    }
+  });
+
   it("uses the untouched home only after verifying the full parked chain and prior native receipt", async () => {
     const h = await historicalFixture();
     await h.run();
