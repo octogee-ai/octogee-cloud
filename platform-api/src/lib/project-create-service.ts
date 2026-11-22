@@ -469,6 +469,7 @@ async function writeProjectProductFields(plan: ProjectCreatePlan): Promise<void>
     publishedUrl: null,
     starCount: 0,
     memberCount: 1,
+    pendingDeletion: null,
   });
 }
 
@@ -607,14 +608,13 @@ async function failProjectProvisioning(
   const responseError = error instanceof ProjectProvisioningError
     ? error.responseError
     : "Project provisioning failed - could not complete setup";
-  await platformStateStore.workspaces.projects.patch(plan.workspaceId, plan.slug, {
+  await recordProvisioningFailure(plan, "provisioning failure", {
     provisioningState: "failed",
     provisioningError: provisioningError.slice(0, 500),
     provisioningCleanup: {
       status: "in_progress",
       error: null,
     },
-    updatedAt: { serverNow: true },
   });
   logger.error(`[projects] Provisioning failed for ${plan.workspaceId}/${plan.slug}: ${provisioningError}`);
 
@@ -623,12 +623,11 @@ async function failProjectProvisioning(
     await removeProjectPlatformRecords(plan.workspaceId, plan.slug);
   } catch (cleanupError) {
     const cleanupMessage = errorMessage(cleanupError);
-    await platformStateStore.workspaces.projects.patch(plan.workspaceId, plan.slug, {
+    await recordProvisioningFailure(plan, "provisioning cleanup failure", {
       provisioningCleanup: {
         status: "failed",
         error: cleanupMessage.slice(0, 500),
       },
-      updatedAt: { serverNow: true },
     });
     logger.error(
       `[projects] Provisioning cleanup failed for ${plan.workspaceId}/${plan.slug}: ${cleanupMessage}`,
@@ -644,6 +643,21 @@ async function failProjectProvisioning(
     slug: plan.slug,
     cleanupState: await markRemovedProjectPresentation(plan),
   });
+}
+
+async function recordProvisioningFailure(
+  plan: ProjectCreatePlan,
+  what: string,
+  patch: Record<string, unknown>,
+): Promise<void> {
+  try {
+    await platformStateStore.workspaces.projects.patch(plan.workspaceId, plan.slug, {
+      ...patch,
+      updatedAt: { serverNow: true },
+    });
+  } catch (error) {
+    logger.error(`[projects] Could not record ${what} for ${plan.workspaceId}/${plan.slug}`, { error });
+  }
 }
 
 async function markRemovedProjectPresentation(plan: ProjectCreatePlan): Promise<"complete" | "presentation_failed"> {
@@ -687,18 +701,24 @@ async function archiveUnstoredProjectChannel(
   channel: NonNullable<ProjectProvisioningArtifacts["primaryChannel"]>,
 ): Promise<void> {
   const initial = await verifiedProjectChannel(channel);
-  if (channelIsArchived(initial)) return;
+  if (initial === null || channelIsArchived(initial)) return;
   await mmApi(`/channels/${channel.channelId}`, "DELETE");
   const archived = await verifiedProjectChannel(channel);
-  if (!channelIsArchived(archived)) {
+  if (archived !== null && !channelIsArchived(archived)) {
     throw new Error(`Mattermost channel ${channel.channelId} was not archived`);
   }
 }
 
 async function verifiedProjectChannel(
   expected: NonNullable<ProjectProvisioningArtifacts["primaryChannel"]>,
-): Promise<Record<string, unknown>> {
-  const raw = await mmApi(`/channels/${expected.channelId}`);
+): Promise<Record<string, unknown> | null> {
+  let raw: unknown;
+  try {
+    raw = await mmApi(`/channels/${expected.channelId}`);
+  } catch (error) {
+    if ((error as { status?: unknown } | null)?.status === 404) return null;
+    throw error;
+  }
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     throw new Error(`Mattermost returned an invalid channel for ${expected.channelId}`);
   }

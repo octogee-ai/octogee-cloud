@@ -8,6 +8,8 @@ const h = vi.hoisted(() => ({
   pendingDeletions: [] as Array<{ workspaceSlug: string; projectSlug: string; pending: unknown }>,
   presentationDocs: new Map<string, Record<string, unknown>>(),
   failStateDelete: false,
+  failProjectPatch: false,
+  channelGone: false,
   mmContext: null as Record<string, unknown> | null,
   mmApi: vi.fn(),
   provisionProjectRepoResult: vi.fn(),
@@ -24,6 +26,11 @@ vi.mock("@octogee/core/identity/platform-state-store", async () => {
     if (h.failStateDelete && options.label === "project.delete") throw new Error("platform state unavailable");
     return transaction(options as never, body);
   }) as typeof store.transaction;
+  const patch = store.workspaces.projects.patch.bind(store.workspaces.projects);
+  store.workspaces.projects.patch = ((...args: Parameters<typeof patch>) => {
+    if (h.failProjectPatch) throw new Error("platform state down");
+    return patch(...args);
+  }) as typeof patch;
   return { platformStateStore: store };
 });
 vi.mock("@octogee/core/http/logging", () => ({ logger: h.logger }));
@@ -70,6 +77,7 @@ const { createProjectForActor } = await import("../lib/project-create-service.js
 const { default: retryRoutes } = await import("../routes/projects/retry.js");
 const { installProjectPresentation, NO_PROJECT_PRESENTATION } = await import("@octogee/core/identity/project-presentation");
 const { installProjectStarterFiles, PLATFORM_RECIPE_STARTER_FILES } = await import("../lib/project-starter-files.js");
+const { deleteProjectPlatformState } = await import("../lib/project-platform-state.js");
 
 const PROJECT = "workspaces/mira/projects/orbit";
 const READY_CHAT = { teamId: "team-1", userId: "owner-mm", coachUserId: "coach-mm" };
@@ -98,6 +106,8 @@ beforeEach(() => {
   h.pendingDeletions.length = 0;
   h.presentationDocs.clear();
   h.failStateDelete = false;
+  h.failProjectPatch = false;
+  h.channelGone = false;
   vi.clearAllMocks();
   h.mmContext = READY_CHAT;
   installProjectStarterFiles(PLATFORM_RECIPE_STARTER_FILES);
@@ -121,6 +131,11 @@ beforeEach(() => {
   h.mmApi.mockImplementation(async (path: string, method?: string) => {
     if (method === "POST" && path === "/channels") return { id: "channel-1" };
     if (method === undefined && path === "/channels/channel-1") {
+      if (h.channelGone) {
+        const error = new Error("not found") as Error & { status: number };
+        error.status = 404;
+        throw error;
+      }
       return { id: "channel-1", name: "mira-proj-orbit-general", team_id: "team-1", type: "P", delete_at: 1 };
     }
     if (method === undefined && path.startsWith("/teams/")) {
@@ -185,6 +200,39 @@ describe("a create that fails after the project is reserved", () => {
 
     expect(retried.status).toBe(200);
     expect(h.docs.get(PROJECT)).toMatchObject({ provisioningState: "active" });
+    expect(h.presentationDocs.get("mira/orbit")).toHaveProperty("pendingDeletion", null);
+  });
+
+  it("counts a chat channel that is already gone as cleaned up", async () => {
+    h.provisionProjectRepoResult.mockResolvedValueOnce({ created: true, error: "seed push failed" });
+    h.channelGone = true;
+
+    const failed = await create();
+
+    expect(failed.body).toMatchObject({ cleanupState: "complete" });
+    expect(storedProjectPaths()).toEqual([]);
+  });
+
+  it("still answers the structured 502 when platform state cannot record the failed cleanup", async () => {
+    h.provisionProjectRepoResult.mockResolvedValueOnce({ created: true, error: "seed push failed" });
+    h.failStateDelete = true;
+    h.failProjectPatch = true;
+
+    const failed = await create();
+
+    expect(failed).toEqual({
+      status: 502,
+      body: {
+        error: "Project provisioning failed - could not create code repo",
+        workspaceId: "mira",
+        slug: "orbit",
+        cleanupState: "failed",
+      },
+    });
+    expect(h.logger.error).toHaveBeenCalledWith(
+      "[projects] Could not record provisioning cleanup failure for mira/orbit",
+      expect.objectContaining({ error: expect.objectContaining({ message: "platform state down" }) }),
+    );
   });
 
   it("keeps the failed record when cleanup does not complete, and the retry route finishes it", async () => {
@@ -243,6 +291,41 @@ describe("a create that fails after the project is reserved", () => {
 
     expect(retried.status).toBe(200);
     expect(h.docs.get(PROJECT)).toMatchObject({ provisioningState: "active" });
-    expect(h.presentationDocs.get("mira/orbit")).not.toHaveProperty("pendingDeletion");
+    expect(h.presentationDocs.get("mira/orbit")).toHaveProperty("pendingDeletion", null);
+  });
+
+  it("finishes through the retry route after the chat channel and repository are already gone", async () => {
+    h.provisionProjectRepoResult.mockResolvedValueOnce({ created: true, error: "seed push failed" });
+    h.failStateDelete = true;
+    h.channelGone = true;
+
+    expect((await create()).body).toMatchObject({ cleanupState: "failed" });
+    h.failStateDelete = false;
+
+    const retried = await request(retryApp()).post("/api/projects/mira/orbit/retry-provisioning");
+
+    expect(retried.status).toBe(200);
+    expect(h.mmApi).toHaveBeenCalledWith("/channels", "POST", expect.objectContaining({ name: "mira-proj-orbit-general" }));
+    expect(h.provisionProjectRepo).toHaveBeenCalledWith(expect.objectContaining({ slug: "orbit" }));
+    expect(h.docs.get(PROJECT)).toMatchObject({ provisioningState: "active" });
+  });
+});
+
+describe("retrying a project that is being deleted", () => {
+  it("refuses a failed project whose delete marked it and then could not remove its state", async () => {
+    h.provisionProjectRepoResult.mockResolvedValueOnce({ created: true, error: "seed push failed" });
+    h.deleteProjectRepo.mockRejectedValueOnce(new Error("gitea unavailable"));
+    await create();
+    h.failStateDelete = true;
+    await expect(deleteProjectPlatformState("mira", "orbit", { ownerUid: "owner-1", repoProvider: "gitea" }))
+      .rejects.toThrow("platform state unavailable");
+    h.failStateDelete = false;
+
+    const retried = await request(retryApp()).post("/api/projects/mira/orbit/retry-provisioning");
+
+    expect(retried.status).toBe(409);
+    expect(retried.body).toMatchObject({ code: "project_pending_deletion" });
+    expect(h.docs.get(PROJECT)).toMatchObject({ provisioningState: "failed" });
+    expect(h.provisionProjectRepo).not.toHaveBeenCalled();
   });
 });
