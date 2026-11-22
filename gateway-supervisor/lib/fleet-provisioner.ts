@@ -222,8 +222,8 @@ export interface ConvergenceHooks {
 // level-triggered loop keeps selecting the slug — and ensureSlug recognizes it and retries
 // ONLY the checkout. Restart-safe on durable disks because the marker persists with the
 // applied-fingerprint store.
-export { pendingCloneAppliedFingerprint, pendingCloneOnlyStale } from "./pending-clone-fingerprint.js";
-import { pendingCloneAppliedFingerprint, pendingCloneOnlyStale } from "./pending-clone-fingerprint.js";
+export { NEEDS_FULL_ATTACH_FINGERPRINT, pendingCloneAppliedFingerprint, pendingCloneOnlyStale } from "./pending-clone-fingerprint.js";
+import { NEEDS_FULL_ATTACH_FINGERPRINT, pendingCloneAppliedFingerprint, pendingCloneOnlyStale } from "./pending-clone-fingerprint.js";
 import { userClaimSlug } from "@octogee/shared/server/user-claim";
 import { configuredUserReport } from "./user-claim.js";
 
@@ -289,8 +289,6 @@ export async function finalizeConvergedMount(input: FinalizeConvergedMountInput)
   writeMountMarker?.(input.slug);
   settleConvergence(convergence, hooks);
 }
-
-export const NEEDS_FULL_ATTACH_FINGERPRINT = "";
 
 function requireFullAttachNextConverge(slug: string, hooks: ConvergenceHooks): void {
   hooks.forgetRetry(slug);

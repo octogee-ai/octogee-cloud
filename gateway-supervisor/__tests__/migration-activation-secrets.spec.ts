@@ -23,8 +23,12 @@ afterEach(async () => {
 });
 
 describe("migration activation Mattermost secrets", () => {
-  it("rejects export until the source has an applied fingerprint", async () => {
+  it.each([undefined, "!import-reconcile-pending", "invalid!import-reconcile-pending"])(
+    "rejects export without a genuine applied fingerprint (%s)", async (fingerprint) => {
     const openclawDir = await tmp();
+    if (fingerprint !== undefined) {
+      saveAppliedFingerprints(path.join(openclawDir, "applied-fingerprints.json"), new Map([["alice", fingerprint]]));
+    }
 
     await expect(exportActivationManifestWithSecret(
       path.join(openclawDir, "system_config", "openclaw.json"),
@@ -33,7 +37,8 @@ describe("migration activation Mattermost secrets", () => {
     )).rejects.toThrow("source has no applied fingerprint; converge it before migration");
   });
 
-  it("exports a transient manifest with the token resolved outside tracked config", async () => {
+  it.each(["fp-alice-v1", "0123456789abcdef!import-reconcile-pending"])(
+    "exports the applied receipt and token outside tracked config (%s)", async (fingerprint) => {
     const openclawDir = await tmp();
     const configPath = path.join(openclawDir, "system_config", "openclaw.json");
     await fs.mkdir(path.dirname(configPath), { recursive: true });
@@ -70,13 +75,13 @@ describe("migration activation Mattermost secrets", () => {
     });
     saveAppliedFingerprints(
       path.join(openclawDir, "applied-fingerprints.json"),
-      new Map([["alice", "fp-alice-v1"]]),
+      new Map([["alice", fingerprint]]),
     );
 
     const manifest = await exportActivationManifestWithSecret(configPath, openclawDir, "alice");
 
     expect(manifest.mattermostAccount.botToken).toBe("default-agent-pat");
-    expect(manifest.appliedFingerprint).toBe("fp-alice-v1");
+    expect(manifest.appliedFingerprint).toBe(fingerprint);
     expect(manifest.projectAgents).toMatchObject([
       {
         agentId: "octogee-alice-proj-orbit-coach",

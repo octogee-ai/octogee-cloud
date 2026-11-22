@@ -237,6 +237,7 @@ describe("settleConvergence — the applied-fingerprint gate", () => {
     expect(pendingCloneOnlyStale(pendingCloneAppliedFingerprint("fp1"), "fp2")).toBe(false);
     expect(pendingCloneOnlyStale("fp1", "fp1")).toBe(false);
     expect(pendingCloneOnlyStale(undefined, "fp1")).toBe(false);
+    expect(pendingCloneOnlyStale("0123456789abcdef!import-reconcile-pending", "0123456789abcdef")).toBe(false);
   });
 
   it("records the post-attach fingerprint instead of relaunching a newly provisioned user as stale", () => {
