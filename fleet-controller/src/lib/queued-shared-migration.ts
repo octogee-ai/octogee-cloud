@@ -108,15 +108,18 @@ type SharedMountObservation = Pick<GatewayRuntimeDoc, 'gatewayId' | 'kubernetes'
 };
 
 export function sharedSourceRemountedAfterFailure(row: UntypedRecord, runtime: SharedMountObservation, now: number): boolean {
-  if (!(row.nextAttemptAt > now) || row.input?.fromGatewayId !== runtime.gatewayId ||
+  if (typeof row.nextAttemptAt !== 'number' || row.nextAttemptAt <= now || row.input?.fromGatewayId !== runtime.gatewayId ||
       row.schedulerHandoff?.forwardRecovery !== undefined || !queuedSharedMigrationBeforeTransport(row, row.id)) return false;
   const failedAt = row.attemptHistory.at(-1).completedAt;
-  const { heartbeat, kubernetes } = runtime;
-  return kubernetes?.readyPods === 1 && kubernetes.observedAt > failedAt &&
+  return runtime.kubernetes?.readyPods === 1 && runtime.kubernetes.observedAt > failedAt &&
     hasFreshReadyKubernetesObservation(runtime, now, GATEWAY_UNREACHABLE_AFTER_MS) &&
-    heartbeat.status === 'ready' && heartbeat.lastHeartbeatAt !== null && heartbeat.lastHeartbeatAt > failedAt &&
-    heartbeat.lastHeartbeatAt <= now && now - heartbeat.lastHeartbeatAt <= GATEWAY_UNREACHABLE_AFTER_MS &&
-    heartbeat.mountedCustomers.includes(row.input.userSlug);
+    heartbeatConfirmsRemount(runtime.heartbeat, row.input.userSlug, failedAt, now);
+}
+
+function heartbeatConfirmsRemount(heartbeat: SharedMountObservation['heartbeat'], slug: string, failedAt: number, now: number): boolean {
+  const heartbeatAt = heartbeat.lastHeartbeatAt;
+  return heartbeat.status === 'ready' && heartbeatAt !== null && heartbeatAt > failedAt &&
+    heartbeatAt <= now && now - heartbeatAt <= GATEWAY_UNREACHABLE_AFTER_MS && heartbeat.mountedCustomers.includes(slug);
 }
 
 export function rearmRemountedSharedSource(store: PlatformStateStore, listed: Stored<OperationRecord>, now: number) {
