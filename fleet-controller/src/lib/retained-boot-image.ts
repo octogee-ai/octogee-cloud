@@ -41,6 +41,10 @@ function provisionedSuccessor(owner: PlatformUserRecord, sourceGatewayId: string
   return lease?.status === "provisioning" && (sourceGatewayId === previousGatewayId || lease.targetGatewayId === sourceGatewayId);
 }
 
+export class RetainedBootSchedulerLineageError extends Error {
+  constructor() { super("Retained boot replacement cannot prove scheduler lineage from the previous image"); }
+}
+
 type SchedulerRetirement = NonNullable<ReturnType<typeof readNativeSchedulerRetirement>>;
 type BootSource = NonNullable<RetainedBootImage["sourceComputer"]>;
 function assertSchedulerSource(owner: PlatformUserRecord, home: RetainedUserHome, source: BootSource, pending: SchedulerRetirement): void {
@@ -65,7 +69,7 @@ async function schedulerRetirementForReplacement(state: PlatformStateRepositorie
     return {};
   }
   if (pending.completedAt === undefined || !hasExactPredecessor(pinned, previous)) {
-    throw new Error("Retained boot replacement cannot prove scheduler lineage from the previous image");
+    throw new RetainedBootSchedulerLineageError();
   }
   if (retainedBootPreservesScheduler({ ...pinned }, pending, [source.gatewayId])) return { nativeSchedulerRetirement: pending };
   const provisioning = provisionedSuccessor(owner, source.gatewayId, pending.sourceGatewayId);
@@ -73,7 +77,7 @@ async function schedulerRetirementForReplacement(state: PlatformStateRepositorie
       await preservesHistoricalBoot(state, owner, pending, { source, pinned, verifyReplacement: input.verifyReplacement })) {
     return { legacySchedulerRetirement: pending };
   }
-  throw new Error("Retained boot replacement cannot prove scheduler lineage from the previous image");
+  throw new RetainedBootSchedulerLineageError();
 }
 
 type ParkedBootScope = { owner: Stored<PlatformUserRecord>; source: BootSource; generation: number; sharedGatewayId: string };

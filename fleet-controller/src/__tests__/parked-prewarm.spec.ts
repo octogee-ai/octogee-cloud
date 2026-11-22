@@ -61,6 +61,11 @@ function fixture(now = () => 625) {
   return {
     run: (op = operation) => handler(op, { reportStep }),
     bootImage, observe, probeReady, reportStep, notify, close, root, registry, owner, readRegistry,
+    rejectBoot: (prewarmState: string) => {
+      persisted = { ...operation, output: { ...claim, prewarmState, prewarmBootRejection: "Retained boot replacement cannot prove scheduler lineage from the previous image" } };
+      root.desiredStatus = "paused";
+      notify("gateways");
+    },
     persistRepair: () => { persisted = { ...operation, output: { prewarmState: "repairing", previousBootImageId: "100", repairStartedAt: 625 } }; },
     clearVm: () => { registry.vm = null; notify("fleetRegistry"); },
     runVm: (instanceId = "998") => { registry.vm = { status: "RUNNING", instanceId }; notify("fleetRegistry"); },
@@ -212,6 +217,22 @@ describe("parked prewarm operation", () => {
     h.suspendVm();
     await expect(running).resolves.toMatchObject({ success: true, output: { prewarmState: "parked", instanceId: "998", bootImageId: "123" } });
     expect(h.probeReady.mock.calls).toEqual([["builder-alice", "987"], ["builder-alice", "998"]]);
+  });
+
+  it.each(["parked", "demand-won"])("finishes on the reconciler's exact boot rejection without waiting: %s", async prewarmState => {
+    const h = fixture();
+    const running = h.run();
+    const complete = vi.fn();
+    void running.then(complete, complete);
+    await vi.waitFor(() => expect(h.readRegistry).toHaveBeenCalledOnce());
+    expect(complete).not.toHaveBeenCalled();
+    h.rejectBoot(prewarmState);
+    await vi.waitFor(() => expect(complete).toHaveBeenCalledOnce());
+    const result = await running;
+    expect(result).toMatchObject({ success: prewarmState === "demand-won", output: { prewarmState } });
+    if (prewarmState === "parked") expect(result.error).toMatch(/cannot prove scheduler lineage/);
+    expect(finishParkedGatewayPrewarm).not.toHaveBeenCalled();
+    expect(h.close).toHaveBeenCalledTimes(3);
   });
 
   it("rolls back a running computer whose actual boot image differs from the requested image", async () => {

@@ -281,6 +281,12 @@ function prewarmFinishWindow(claim: PrewarmClaim, phase: unknown) {
   };
 }
 
+interface ParkedBootRejection {
+  instanceId: string;
+  bootImageId: string;
+  reason: string;
+}
+
 async function writePrewarmPark(tx: PlatformStateTransaction, input: {
   current: OperationRecord;
   root: Stored<GatewayRoot>;
@@ -289,8 +295,9 @@ async function writePrewarmPark(tx: PlatformStateTransaction, input: {
   claim: PrewarmClaim;
   now: number;
   mode: PrewarmFinishMode;
+  bootRejection?: ParkedBootRejection;
 }) {
-  const { current, root, owner, runtime, claim, now, mode } = input;
+  const { current, root, owner, runtime, claim, now, mode, bootRejection } = input;
   const state = finishedParkPhase(owner, mode);
   await tx.gateways.roots.patch(root.gatewayId, {
     desiredStatus: "paused",
@@ -299,9 +306,20 @@ async function writePrewarmPark(tx: PlatformStateTransaction, input: {
   }, { revision: root.revision });
   await tx.journal.operations.patch(current.id, { output: {
     ...current.output, ...claim, prewarmState: state,
+    ...(bootRejection ? { prewarmBootRejection: bootRejection.reason } : {}),
     ...(state === REPAIR_PARKING ? { repairedBootRecovery: runtime?.vmBootRecovery } : {}),
   } });
   return state;
+}
+
+function assertParkedBootRejection(input: {
+  current: OperationRecord; root: GatewayRoot | null; runtime: FleetRegistryRecord | null;
+  request: ParkedPrewarmInput; claim: PrewarmClaim; mode: PrewarmFinishMode; bootRejection: ParkedBootRejection;
+}): void {
+  const { current, root, runtime, request, claim, mode, bootRejection } = input;
+  if (mode !== "rollback" || current.output?.prewarmState !== BOOTING || root?.updatedBy !== current.id ||
+      bootRejection.bootImageId !== request.bootImageId || bootRejection.instanceId !== claim.previousInstanceId ||
+      runtime?.vm?.instanceId !== bootRejection.instanceId) throw new Error("Parked computer boot rejection authority changed");
 }
 
 export async function finishParkedGatewayPrewarm(
@@ -309,6 +327,7 @@ export async function finishParkedGatewayPrewarm(
   operation: Operation,
   now: number,
   mode: PrewarmFinishMode,
+  bootRejection?: ParkedBootRejection,
 ): Promise<"parked" | typeof HANDOFF | typeof DEMAND_WON | typeof REPAIR_PARKING> {
   const request = parkedPrewarmInput(operation);
   const { uid, gatewayId } = request;
@@ -321,6 +340,7 @@ export async function finishParkedGatewayPrewarm(
     const resolved = finishAlreadyResolved(current, root, owner, request, mode);
     if (resolved) return resolved;
     const claim = prewarmClaim(current);
+    if (bootRejection) assertParkedBootRejection({ current, root, runtime, request, claim, mode, bootRejection });
     const window = prewarmFinishWindow(claim, current.output?.prewarmState);
     const liveRelease = window.release;
     assertOwnedPrewarmRoot(root, request, window);
@@ -331,7 +351,7 @@ export async function finishParkedGatewayPrewarm(
       await tx.journal.operations.patch(operation.id, { output: { ...claim, prewarmState: HANDOFF, release: liveRelease } });
       return HANDOFF;
     }
-    return writePrewarmPark(tx, { current, root, owner, runtime, claim, now, mode });
+    return writePrewarmPark(tx, { current, root, owner, runtime, claim, now, mode, bootRejection });
   });
 }
 
