@@ -2,7 +2,7 @@ import type { RetainedUserHome } from "@octogee/shared/types/glm";
 import type { ComputeRequest } from "./compute-vm.js";
 
 interface HomeDisk {
-  id?: string; name?: string; sizeGb?: string; type?: string;
+  id?: string; name?: string; sizeGb?: string; type?: string; sourceImageId?: string;
   labels?: Record<string, string>; labelFingerprint?: string; users?: string[];
 }
 export interface HomeInstance {
@@ -111,6 +111,32 @@ export function createVmHomeClient(deps: {
     return home;
   }
 
+  function guestReleaseAttachments(instance: HomeInstance | null, ownerUid: string, instanceId: string) {
+    if (instance?.id !== instanceId || ownerOf(instance) !== ownerUid) throw new Error("Guest release VM identity changed");
+    const boot = instance.disks?.find(disk => disk.boot);
+    const home = instance.disks?.find(disk => disk.deviceName === VM_HOME_DISK_DEVICE_NAME && !disk.boot);
+    if (!boot?.source || !home?.source || home.autoDelete !== false) {
+      throw new Error("Guest release requires an attached protected home and boot disk");
+    }
+    return { boot: boot.source, home: home.source };
+  }
+
+  async function readAttachedGuestDisks(instanceName: string, zone: string, ownerUid: string, instanceId: string) {
+    const disks = guestReleaseAttachments(await readInstance(instanceName, zone), ownerUid, instanceId);
+    const homeDisk = homeName(disks.home, zone);
+    const [baseDisk, dataDisk] = await Promise.all([readHome(homeName(disks.boot, zone), zone), readHome(homeDisk, zone)]);
+    const retained = retainedHome(dataDisk, homeDisk, zone);
+    assertRetainedHomeDisk(dataDisk, retained, ownerUid, "guest release");
+    const bootImageId = baseDisk.sourceImageId;
+    const bootDiskId = baseDisk.id;
+    if (!bootImageId || !bootDiskId || ![bootImageId, bootDiskId].every(id => /^[1-9]\d{0,19}$/u.test(id))) {
+      throw new Error("Guest release boot disk provenance is missing");
+    }
+    const confirmed = guestReleaseAttachments(await readInstance(instanceName, zone), ownerUid, instanceId);
+    if (confirmed.boot !== disks.boot || confirmed.home !== disks.home) throw new Error("Guest release disk attachment changed during observation");
+    return { bootImageId, bootDiskId, homeDiskId: retained.id };
+  }
+
   async function verifyDetachedHome(home: RetainedUserHome, ownerUid: string): Promise<void> {
     if (home.projectId !== deps.projectId || homeName(home.source, home.zone) !== home.name) throw new Error("retained home project/zone mismatch");
     const disk = await readHome(home.name, home.zone);
@@ -173,5 +199,5 @@ export function createVmHomeClient(deps: {
     return expanded;
   }
 
-  return { retainHome, verifyDetachedHome, deleteRetainedHome, deleteRetainingHome, expandHome };
+  return { retainHome, readAttachedGuestDisks, verifyDetachedHome, deleteRetainedHome, deleteRetainingHome, expandHome };
 }

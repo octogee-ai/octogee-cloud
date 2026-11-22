@@ -1,16 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { seedServingGateway, sharedPayload } from "@octogee/core-testing/admin-fleet-releases-app";
-import { enqueueParkedGatewayPrewarm } from "./parked-gateway-prewarm.js";
+import { enqueueParkedGatewayPrewarm, enqueueParkedGuestRelease } from "./parked-gateway-prewarm.js";
 
 const request = { gatewayId: "isolated", uid: "alice", sourceSha: "a".repeat(40), bootImageId: "123", payload: sharedPayload(), createdBy: "ship-test" };
 
-function fixture(status = "paused") {
-  const docs = seedServingGateway("isolated", request.payload, undefined, {
+function fixture(status = "paused", payload = request.payload, vmImages?: Record<string, unknown>) {
+  const docs = seedServingGateway("isolated", payload, undefined, {
     desiredStatus: status, liveRelease: 1, gatewayClass: "isolated", ownerUid: "alice",
     allocation: { kind: "disposable-builder", schemaVersion: 1, generation: 2, claimedByUid: "alice", leaseId: "one" },
   });
   docs["glmGateways/isolated"].vm = { status: "SUSPENDED", instanceId: "456" };
+  if (vmImages) docs["glmGateways/isolated"].vmImages = vmImages;
   return createDocumentFixtureStore(new Map(Object.entries(docs)));
 }
 
@@ -70,5 +71,39 @@ describe("Ship parked computer admission", () => {
     expect(queued).not.toEqual(active);
     expect(await enqueueParkedGatewayPrewarm(store, newer)).toEqual(queued);
     expect((await store.journal.operations.get(active.operationId))?.status).toBe("running");
+  });
+});
+
+describe("Ship retained guest release admission", () => {
+  const tag = "abcdef1";
+  const gatewayDigest = `sha256:${"a".repeat(64)}`;
+  const edgeDigest = `sha256:${"b".repeat(64)}`;
+  const gateway = request.payload.imageRepository;
+  const edge = gateway.replace(/octogee-gateway$/u, "gateway-edge");
+  const live = { imageRepository: gateway, imageTag: `${tag}@${gatewayDigest}`, openclawSourceSha: "d".repeat(40),
+    gatewayEdgeImage: { imageRepository: edge, imageTag: `${tag}@${edgeDigest}` } };
+  const candidate = { ...live, imageTag: `abcdef2@${gatewayDigest}`, gatewayEdgeImage: { ...live.gatewayEdgeImage, imageTag: `abcdef2@${edgeDigest}` } };
+  const queued = { gatewayId: request.gatewayId, uid: request.uid, sourceSha: request.sourceSha, createdBy: request.createdBy, payload: candidate };
+  const images = { instanceId: "456", observedAt: 1_000, containers: [
+    { name: "gateway", running: true, imageReference: `${gateway}:${tag}@${gatewayDigest}`, digests: [`${gateway}@${gatewayDigest}`] },
+    { name: "gateway-edge", running: true, imageReference: `${edge}:${tag}@${edgeDigest}`, digests: [`${edge}@${edgeDigest}`] },
+  ] };
+
+  it("does not queue a wake or write a release when both installed digests already match", async () => {
+    const store = fixture("paused", live, images);
+    await expect(enqueueParkedGuestRelease(store, queued)).resolves.toEqual({ status: "already-current" });
+    expect(await store.journal.operations.listForUid(request.uid, { statuses: ["pending"] })).toEqual([]);
+    expect((await store.gateways.roots.get(request.gatewayId))?.desiredStatus).toBe("paused");
+  });
+
+  it("queues one guest update when installed custody is unproven, irrespective of generated tags", async () => {
+    const store = fixture("paused", live, { ...images, instanceId: "different" });
+    const first = await enqueueParkedGuestRelease(store, queued);
+    expect(first.status).toBe("queued");
+    await expect(enqueueParkedGuestRelease(store, { ...queued, payload: live })).resolves.toEqual(first);
+    const pending = await store.journal.operations.listForUid(request.uid, { statuses: ["pending"] });
+    expect(pending).toHaveLength(1);
+    expect(pending[0].input).toMatchObject({ mode: "guest-release", sourceSha: request.sourceSha });
+    expect(pending[0].input).not.toHaveProperty("bootImageId");
   });
 });

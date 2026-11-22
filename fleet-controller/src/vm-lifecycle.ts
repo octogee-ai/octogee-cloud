@@ -1,5 +1,6 @@
+import { isDeepStrictEqual } from "node:util";
 import { rearmRestoredHomeForDemand, restoreArchivedHome } from "./lib/archived-home-restore.js";
-import { finishParkedGatewayPrewarm, parkedPrewarmInput, readActiveParkedPrewarm } from "@octogee/core/isolated-gateway-lifecycle";
+import { GUEST_RELEASE_MODE, finishParkedGatewayPrewarm, parkedPrewarmInput, readActiveParkedPrewarm, readRetainedGuestDisks, sameGuestImageRef } from "@octogee/core/isolated-gateway-lifecycle";
 import {
   MissingRecordError,
   type PlatformUserRecord,
@@ -946,35 +947,35 @@ async function bindParkedVm(deps: VmLifecycleDeps, gatewayId: string, descriptio
 
 type ActiveParkedPrewarm = NonNullable<Awaited<ReturnType<typeof readActiveParkedPrewarm>>>;
 
-async function upgradeStoppedBoot(deps: VmLifecycleDeps, gatewayId: string, description: GatewayVmDescription, spec: GatewayVmSpec, prewarm?: ActiveParkedPrewarm): Promise<GatewayVmDescription | null> {
+function explicitPrewarmBootImage(prewarm: ActiveParkedPrewarm): string {
+  const request = parkedPrewarmInput(prewarm);
+  if (request.mode === GUEST_RELEASE_MODE) throw new Error("Guest releases cannot replace the boot image");
+  return request.bootImageId;
+}
+
+async function upgradeStoppedBoot(deps: VmLifecycleDeps, gatewayId: string, description: GatewayVmDescription, spec: GatewayVmSpec, prewarm: ActiveParkedPrewarm): Promise<GatewayVmDescription | null> {
   const instanceId = description.instanceId;
-  if (!instanceId || !(prewarm ? PARKED_STATUSES : STOPPED_STATUSES).has(description.status)) return description;
-  const requested = prewarm ? parkedPrewarmInput(prewarm) : undefined;
+  if (!instanceId || !PARKED_STATUSES.has(description.status)) return description;
+  const requested = explicitPrewarmBootImage(prewarm);
   try {
     const [current, latest] = await Promise.all([
       deps.vm.readBootImage(description.name, description.zone),
       deps.vm.readFamilyImage(spec.imageFamily, spec.imageProject),
     ]);
-    if (requested && latest.id !== requested.bootImageId) throw new Error("Parked computer prewarm boot image changed");
+    if (latest.id !== requested) throw new Error("Parked computer prewarm boot image changed");
     if (current.id === latest.id) return description;
     const ownerUid = nonEmptyString(description.metadata["octogee-owner-uid"]);
     if (!ownerUid) throw new Error("VM boot upgrade requires the recorded owner");
     const operationId = `boot-${gatewayId}-${instanceId}-${latest.id}`;
     await deps.journalBootUpgrade({ gatewayId, ownerUid, instanceId, imageId: latest.id }, async (assertAuthority) => {
-      await replaceStoppedVm(deps, gatewayId, operationId, assertAuthority, { boot: true, expectedImageId: latest.id, preserveSuspension: prewarm !== undefined });
+      await replaceStoppedVm(deps, gatewayId, operationId, assertAuthority, { boot: true, expectedImageId: latest.id, preserveSuspension: true });
     });
     return null;
   } catch (error) {
-    if (prewarm) {
-      if (error instanceof RetainedBootSchedulerLineageError) await finishParkedGatewayPrewarm(deps.store, prewarm, deps.now(), "rollback", {
-        instanceId, bootImageId: parkedPrewarmInput(prewarm).bootImageId, reason: error.message,
-      });
-      throw error;
-    }
-    const observed = await deps.vm.describe(description.name, description.zone);
-    if (!observed || observed.instanceId !== description.instanceId || !PARKED_STATUSES.has(observed.status)) throw error;
-    deps.log(`[vm-gateway-runtime] ⚠ ${gatewayId}: boot image upgrade skipped; retaining ${description.name}: ${errorMessage(error)}`);
-    return observed;
+    if (error instanceof RetainedBootSchedulerLineageError) await finishParkedGatewayPrewarm(deps.store, prewarm, deps.now(), "rollback", {
+      instanceId, bootImageId: requested, reason: error.message,
+    });
+    throw error;
   }
 }
 
@@ -998,7 +999,7 @@ async function adoptParkedBootRecovery(deps: VmLifecycleDeps, gatewayId: string,
 }
 
 async function prepareParkedUpgrade(deps: VmLifecycleDeps, input: {
-  gatewayId: string; ownerUid: string; image: string; description: GatewayVmDescription; spec: GatewayVmSpec;
+  gatewayId: string; ownerUid: string; description: GatewayVmDescription; spec: GatewayVmSpec;
   bind: (description: GatewayVmDescription) => Promise<GatewayVmDescription>;
   prewarm?: ActiveParkedPrewarm;
 }): Promise<GatewayVmDescription | null> {
@@ -1008,10 +1009,8 @@ async function prepareParkedUpgrade(deps: VmLifecycleDeps, input: {
   if (description.gatewayId !== gatewayId) {
     description = await adoptParkedBootRecovery(deps, gatewayId, ownerUid, description, input.bind);
   }
+  if (!input.prewarm) return description;
   if (description.metadata["octogee-owner-uid"] === ownerUid) {
-    if (!input.prewarm && description.status === "SUSPENDED" && description.metadata["gateway-image"] !== input.image) {
-      description = await input.bind(description);
-    }
     return upgradeStoppedBoot(deps, gatewayId, description, spec, input.prewarm);
   }
   deps.log(`[vm-gateway-runtime] ${gatewayId}: boot image upgrade skipped; VM owner binding requires reconciliation`);
@@ -1042,28 +1041,6 @@ async function recoverMissingReplacement(deps: VmLifecycleDeps, input: {
   }
   deps.log(`[vm-gateway-runtime] ⚠ ${gatewayId}: ${vm?.instanceName ?? "computer"} is absent from Compute while the gateway expects it`);
 }
-
-async function upgradePreemptedBoot(deps: VmLifecycleDeps, gatewayId: string, description: GatewayVmDescription, ensureVm: VmLifecycle["ensureVm"]): Promise<GatewayVmDescription | null> {
-  const image = description.metadata["gateway-image"];
-  const owner = description.metadata["octogee-owner-uid"];
-  let bridge: string | undefined;
-  try {
-    const url = new URL(description.metadata["octogee-api-url"]);
-    if (url.protocol === "http:" && url.port === "3001" && url.pathname === "/") bridge = url.hostname;
-  } catch { bridge = undefined; }
-  if (!image || !owner || !bridge) {
-    deps.log(`[vm-gateway-runtime] ${gatewayId}: boot image upgrade skipped during preemption recovery; VM binding is incomplete`);
-    return description;
-  }
-  const { data } = await readVmRecord(deps.store, gatewayId);
-  const spec = recordedSpecInConfiguredZones(data?.vmSpec, deps.vmSpec);
-  const upgraded = await upgradeStoppedBoot(deps, gatewayId, description, spec);
-  if (upgraded) return upgraded;
-  await ensureVm(gatewayId, image, owner, bridge);
-  await deps.reconcileRoutes();
-  return null;
-}
-
 
 function vmCreations(deps: VmLifecycleDeps) {
   const creations = new Map<string, VmCreation>();
@@ -1310,6 +1287,52 @@ function parkedPrewarmBootImage(prewarm: Awaited<ReturnType<typeof readActivePar
   return prewarm && output?.prewarmState === "booting" ? parkedPrewarmInput(prewarm).bootImageId : undefined;
 }
 
+function assertGuestReleaseRoot(root: GatewayRoot | null, prewarm: ActiveParkedPrewarm): void {
+  if (!root || ![
+    root.desiredStatus === "running", root.retirementClaim == null, root.desiredRelease === prewarm.output?.release,
+    root.updatedBy === prewarm.id || (root.updatedBy === "converge-gateway" && root.liveRelease === root.desiredRelease),
+  ].every(Boolean)) throw new Error("Retained guest release custody changed before wake");
+}
+
+async function ensureRetainedGuestReleaseVm(deps: VmLifecycleDeps, input: {
+  gatewayId: string; ownerUid: string; description: GatewayVmDescription | null; prewarm: ActiveParkedPrewarm; spec: GatewayVmSpec;
+}, wakeVm: EnsureVmOperations["wakeVm"]): Promise<GatewayVmState> {
+  const { gatewayId, ownerUid, prewarm, spec } = input;
+  let { description } = input;
+  const expected = readRetainedGuestDisks(prewarm.output?.guestDisks);
+  const instanceId = prewarm.output?.previousInstanceId;
+  if (!expected || typeof instanceId !== "string" || !description ||
+    ![description.instanceId === instanceId, description.gatewayId === gatewayId, description.metadata["octogee-owner-uid"] === ownerUid].every(Boolean)) {
+    throw new Error("Guest release requires the same retained owner VM");
+  }
+  const actual = await deps.vm.readAttachedGuestDisks(description.name, description.zone, ownerUid, instanceId);
+  if (!isDeepStrictEqual(expected, actual)) throw new Error("The guest release VM disks changed");
+  const [root, owner] = await Promise.all([deps.store.gateways.roots.get(gatewayId), deps.store.users.records.get(ownerUid)]);
+  assertGuestReleaseRoot(root, prewarm);
+  if (owner?.home.homeDisk?.id !== actual.homeDiskId) throw new Error("Retained guest release home custody changed before wake");
+  if (PARKED_STATUSES.has(description.status)) description = await wakeVm(gatewayId, description);
+  if (description.instanceId !== instanceId || description.status !== "RUNNING") {
+    throw new Error("Guest release did not wake the retained owner VM");
+  }
+  return recordEnsuredVm(deps, gatewayId, spec, description);
+}
+
+async function readBoundPrewarm(
+  store: PlatformStateStore, ownerUid: string, gatewayId: string, owner: PlatformUserRecord | null,
+): Promise<ActiveParkedPrewarm | null> {
+  const pending = await readActiveParkedPrewarm(store, ownerUid);
+  if (pending?.gatewayId !== gatewayId) return null;
+  const lease = owner?.activationLease;
+  if (pending.input?.mode === GUEST_RELEASE_MODE && pending.output?.prewarmState === "handoff" && lease?.targetGatewayId === gatewayId &&
+    typeof pending.input.generation === "number" && lease.generation > pending.input.generation) return null;
+  return pending;
+}
+
+async function locateOwnerVm(deps: VmLifecycleDeps, ownerUid: string, existing: GatewayVmState | null): Promise<GatewayVmDescription | null> {
+  const recorded = existing ? await deps.vm.describe(existing.instanceName, existing.zone) : null;
+  return recorded ?? deps.vm.findByLabels(ownerVmLabels(deps.environment, ownerUid));
+}
+
 async function ensureBoundVm(deps: VmLifecycleDeps, request: {
   gatewayId: string; image: string; ownerUid: string | undefined; bridge: string;
 }, operations: EnsureVmOperations): Promise<GatewayVmState> {
@@ -1323,11 +1346,13 @@ async function ensureBoundVm(deps: VmLifecycleDeps, request: {
   const input = gatewayVmInstanceInput({ gatewayId, ownerUid, spec, environment: deps.environment, image, bridgeIp: bridge });
   const archive = unhandledHomeArchive(owner);
   if (archive) return ensureSnapshotBackedVm(deps, { gatewayId, ownerUid, spec, input, archive }, operations);
-  let description = existing ? await deps.vm.describe(existing.instanceName, existing.zone) : null;
-  if (!description) description = await deps.vm.findByLabels(ownerVmLabels(deps.environment, ownerUid));
+  let description = await locateOwnerVm(deps, ownerUid, existing);
   await rearmRestoredHomeForDemand(deps, { gatewayId, ownerUid }, description, owner);
-  const prewarm = await readActiveParkedPrewarm(deps.store, ownerUid);
-  const prewarmOutput = prewarm?.gatewayId === gatewayId ? prewarm.output : undefined;
+  const prewarm = await readBoundPrewarm(deps.store, ownerUid, gatewayId, owner);
+  const prewarmOutput = prewarm?.output;
+  if (prewarm?.input?.mode === GUEST_RELEASE_MODE) {
+    return ensureRetainedGuestReleaseVm(deps, { gatewayId, ownerUid, description, prewarm, spec }, operations.wakeVm);
+  }
   if (prewarmOutput?.prewarmState === "repairing") {
     const { previousInstanceId, previousBootImageId } = prewarmOutput;
     return recoverOriginalParkedVm(deps, { gatewayId, ownerUid, binding: input, spec, description, existing, previousInstanceId, previousBootImageId }, operations.wakeVm);
@@ -1335,7 +1360,7 @@ async function ensureBoundVm(deps: VmLifecycleDeps, request: {
   const recovery = await requireHomeRecovery(deps, { gatewayId, ownerUid, data, description });
   const expectedPrewarmImageId = parkedPrewarmBootImage(prewarm, prewarmOutput);
   if (expectedPrewarmImageId) await verifyParkedPrewarmImage(deps, { gatewayId, ownerUid, spec, expectedImageId: expectedPrewarmImageId, description, existing, data });
-  if (description) description = await prepareParkedUpgrade(deps, { gatewayId, ownerUid, image, description, spec,
+  if (description) description = await prepareParkedUpgrade(deps, { gatewayId, ownerUid, description, spec,
     bind: (parked) => operations.reconcileVmBinding(gatewayId, ownerUid, input, parked),
     prewarm: expectedPrewarmImageId ? prewarm ?? undefined : undefined });
   const prepared = await prepareEnsuredHome(deps, {
@@ -1425,7 +1450,9 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
     } else {
       description = await reconcileVmIdentity(gatewayId, description, input.serviceAccountEmail);
       description = await prepareDesktopChange(gatewayId, description, input.desktop);
-      if (["gateway-image", "octogee-api-url", "octogee-owner-uid", COMPUTER_DESKTOP_METADATA_KEY].some((key) => description.metadata[key] !== input.metadata[key])) {
+      const gatewayImageChanged = !sameGuestImageRef(description.metadata["gateway-image"] ?? "", input.metadata["gateway-image"]);
+      const otherMetadataChanged = ["octogee-api-url", "octogee-owner-uid", COMPUTER_DESKTOP_METADATA_KEY].some(key => description.metadata[key] !== input.metadata[key]);
+      if (gatewayImageChanged || otherMetadataChanged) {
         description = await bindParkedVm(deps, gatewayId, description, input);
         deps.log(`[vm-gateway-runtime] ${gatewayId}: refreshed bootstrap metadata for ${description.name}`);
       }
@@ -1510,9 +1537,6 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
   }
 
   async function restartPreempted(gatewayId: string, description: GatewayVmDescription): Promise<void> {
-    const upgraded = await upgradePreemptedBoot(deps, gatewayId, description, ensureVm);
-    if (!upgraded) return;
-    description = upgraded;
     if (!(await recordVm(gatewayId, stateFrom(description, deps.now(), "preempted"), "preempted"))) return;
     deps.log(`[vm-gateway-runtime] ${gatewayId}: ${description.name} was preempted (${description.status}); restarting`);
     const after = await startVm(gatewayId, description, "restarted");

@@ -1163,24 +1163,54 @@ describe("parked isolated gateway reuse", () => {
     expect((await h.state.gateways.roots.get(h.parkedGatewayId))?.desiredStatus).toBe("running");
   });
 
-  it("retires a parked gateway on another release and mints a fresh one", async () => {
+  it("queues an in-guest update once on the original parked root for same-tier demand", async () => {
     const h = await parkedHarness();
-    const release = h.docs.get(`gateways/${h.parkedGatewayId}/releases/1`)!;
-    h.docs.set(`gateways/${h.parkedGatewayId}/releases/1`, {
-      ...release,
-      payload: { ...(release.payload as Record<string, unknown>), imageTag: `abc1234@sha256:${"d".repeat(64)}` },
-    });
+    const shared = h.docs.get("gateways/shared-blue/releases/3")!;
+    const original = shared.payload as ReleasePayload;
+    const payload = { ...original, openclawSourceSha: "f".repeat(40) };
+    Object.assign(shared, { payload, payloadHash: releasePayloadHash(payload) });
+    const homeDisk = { id: "456" };
+    await h.state.users.records.patch(request.uid, { home: { homeDisk } });
+    const runtime = h.docs.get(`glmGateways/${h.parkedGatewayId}`)!;
+    runtime.vm = { instanceId: "123", status: "SUSPENDED" };
 
-    const gatewayId = await h.run();
-
-    expect(gatewayId).not.toBe(h.parkedGatewayId);
-    expect(h.retirementOf()).toMatchObject({
-      kind: "retire-gateway",
-      createdBy: "glm-controller-placement-policy",
-      input: { gatewayId: h.parkedGatewayId, uid: "uid-alice", userSlug: "alice", reason: "parked-computer-replaced" },
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await expect(h.allocate()).rejects.toThrow("waiting for its in-guest release");
+    }
+    expect(h.retirementOf()).toBeUndefined();
+    expect(h.ensureAuthSecret).not.toHaveBeenCalled();
+    expect(userRoots(h.docs)).toEqual([`gateways/${h.parkedGatewayId}`]);
+    expect(h.root).toMatchObject({ desiredStatus: "paused", allocation: { generation: 1 } });
+    const operations = await h.state.journal.operations.listForUid(request.uid, { kind: "prewarm-gateway", statuses: ["pending"] });
+    expect(operations).toHaveLength(1);
+    const row = operations[0];
+    expect(row.input).toMatchObject({ mode: "guest-release", generation: 1, demandSource: { gatewayId: "shared-blue", release: 3 }, payload });
+    await h.state.journal.operations.patch(row.id, { status: "running", startedAt: 2_100 });
+    const current = { ...row, status: "running" as const, startedAt: 2_100 };
+    await expect(startParkedGatewayPrewarm(h.state, current, 2_200, {
+      instanceId: "123", bootImageId: "124", needsRepair: false, guestDisks: { bootImageId: "124", bootDiskId: "125", homeDiskId: "456" },
+    })).resolves.toMatchObject({ state: "booting", claim: { previousInstanceId: "123", previousRelease: 1, release: 2 } });
+    await expect(h.allocate()).rejects.toThrow("prewarm has not released");
+    expect(userRoots(h.docs)).toEqual([`gateways/${h.parkedGatewayId}`]);
+    const root = await h.state.gateways.roots.get(h.parkedGatewayId);
+    await h.state.gateways.roots.patch(h.parkedGatewayId, { liveRelease: root!.desiredRelease });
+    const profile = (payload.profileImages as { builder: { imageRepository: string; imageTag: string } }).builder;
+    const edge = payload.gatewayEdgeImage!;
+    runtime.vm = { instanceId: "123", status: "RUNNING" };
+    await expect(finishParkedGatewayPrewarm(h.state, current, 2_300, "ready")).rejects.toThrow("no exact installed image receipt");
+    runtime.heartbeat = { mountedCustomers: [] };
+    const image = (name: string, value: { imageRepository: string; imageTag: string }) => ({
+      name, running: true, imageReference: `${value.imageRepository}:${value.imageTag}`,
+      digests: [`${value.imageRepository}@${value.imageTag.split("@").at(-1)}`],
     });
-    expect(h.docs.get(`gateways/${gatewayId}`)).toMatchObject({ desiredStatus: "running", allocation: { generation: 2 } });
-    expect(h.docs.get(`gateways/${h.parkedGatewayId}`)?.desiredStatus).toBe("retired");
+    runtime.vmImages = { instanceId: "123", observedAt: 2_250, containers: [image("gateway", profile), image("gateway-edge", edge)] };
+    await expect(finishParkedGatewayPrewarm(h.state, current, 2_300, "ready")).resolves.toBe("handoff");
+    const digestObservation = runtime.vmImages;
+    delete runtime.vmImages;
+    await expect(h.allocate()).rejects.toThrow("handoff lost installed image");
+    runtime.vmImages = digestObservation;
+    await expect(h.run()).resolves.toBe(h.parkedGatewayId);
+    expect(await h.state.gateways.roots.get(h.parkedGatewayId)).toMatchObject({ allocation: { generation: 2 }, desiredStatus: "running" });
   });
 
   it("refuses to retire and replace a parked gateway while its activation still recovers its source", async () => {
@@ -1220,12 +1250,12 @@ describe("parked isolated gateway reuse", () => {
     expect(userRoots(h.docs)).toEqual([`gateways/${h.parkedGatewayId}`]);
   });
 
-  it("refuses to mint while a parked gateway on another release cannot be retired", async () => {
+  it("keeps a parked same-tier gateway when the source lacks verified guest provenance", async () => {
     const h = await parkedHarness();
     h.docs.get(`gateways/${h.parkedGatewayId}`)!.desiredRelease = 2;
     h.blockRetirement();
 
-    await expect(h.run()).rejects.toThrow(/could not be retired/);
+    await expect(h.run()).rejects.toThrow(/requires the exact immutable gateway, edge and OpenClaw release/);
     expect(userRoots(h.docs)).toEqual([`gateways/${h.parkedGatewayId}`]);
   });
 

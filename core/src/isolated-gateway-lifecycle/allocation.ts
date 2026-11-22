@@ -11,6 +11,7 @@ import { isolatedSizingTier, type GatewaySizingProfile } from "@octogee/shared/t
 import type { FleetRegistryRecord } from "../platform-state/fleet-registry.js";
 import type { GatewayRoot } from "../platform-state/gateways.js";
 import { isPlatformStateError } from "../platform-state/errors.js";
+import type { OperationRecord } from "../platform-state/operations.js";
 import type { GatewayAssignment } from "../platform-state/gateways.js";
 import type { PlatformUserRecord, UserActivationLease } from "../platform-state/users.js";
 import type { PlatformStateStore, PlatformStateTransaction, Stored } from "../platform-state/store.js";
@@ -36,7 +37,9 @@ import {
 } from "./inputs.js";
 import { exactLeaseFence, userAllowsInteractiveAccess } from "./lease.js";
 import { retireOwnedIsolatedGateway } from "./retirement.js";
-import { parkedPrewarmInput, readActiveParkedPrewarm } from "./prewarm.js";
+import { enqueueDemandGuestRelease } from "../parked-gateway-prewarm.js";
+import { GUEST_RELEASE_MODE, guestReleaseImagesMatch, guestReleaseInstalled, hasCompleteGuestRelease } from "./guest-release.js";
+import { parkedPrewarmInput, readActiveParkedPrewarm, readRetainedGuestDisks } from "./prewarm.js";
 import type { HomeReadinessFence } from "./home-readiness.js";
 
 export interface IsolatedGatewayAllocationDeps extends IsolatedLifecycleDeps {
@@ -212,7 +215,12 @@ export function sharedSourceRelease(value: unknown, gatewayId: string): number |
 }
 
 type ParkedGateway = NonNullable<AllocateIsolatedGatewayInput["parkedGateway"]>;
-type ParkedSource = { release: number; liveRelease: number; handoffOperationId?: string };
+type ParkedSource = {
+  release: number;
+  liveRelease: number;
+  handoffOperationId?: string;
+  installedGuest?: { payload: GatewayArtifact; instanceId: string };
+};
 type DesiredRoot = ReturnType<typeof projectGatewayDesiredRootForGateway>;
 
 function parkedRootMatches(root: DesiredRoot, request: AllocateIsolatedGatewayInput, parked: ParkedGateway): boolean {
@@ -306,14 +314,48 @@ async function verifyPrewarmHandoff(
   request: AllocateIsolatedGatewayInput,
   parked: ParkedGateway,
   expected: string | undefined,
-): Promise<boolean> {
+): Promise<OperationRecord | null> {
   const prewarm = await readActiveParkedPrewarm(transaction, request.uid);
   if (prewarm && prewarm.output?.prewarmState !== "handoff") {
     throw new IsolatedGatewayFenceError("Owner computer prewarm has not released the allocation");
   }
   const handoff = prewarm?.gatewayId === parked.gatewayId ? prewarm : null;
   if ((handoff?.id ?? undefined) !== expected) throw new IsolatedGatewayFenceError("Owner computer prewarm handoff changed");
-  return handoff !== null;
+  return handoff;
+}
+
+function assertGuestHandoffInstalled(runtime: FleetRegistryRecord | null, owner: PlatformUserRecord | null, handoff: OperationRecord): void {
+  const request = parkedPrewarmInput(handoff);
+  if (request.mode !== GUEST_RELEASE_MODE) return;
+  const expected = readRetainedGuestDisks(handoff.output?.guestDisks);
+  const id = handoff.output?.previousInstanceId;
+  if (!expected || typeof id !== "string" || runtime?.vm?.instanceId !== id ||
+      owner?.home.homeDisk?.id !== expected.homeDiskId ||
+      !guestReleaseInstalled(request.payload, id, runtime.vmImages, handoff.startedAt ?? undefined)) {
+    throw new IsolatedGatewayFenceError("Guest release handoff lost installed image or retained VM authority");
+  }
+}
+
+function assertInstalledGuestForAllocation(runtime: FleetRegistryRecord | null, installed: ParkedSource["installedGuest"]): void {
+  if (installed && (runtime?.vm?.instanceId !== installed.instanceId ||
+      !guestReleaseInstalled(installed.payload, installed.instanceId, runtime.vmImages))) {
+    throw new IsolatedGatewayFenceError("Installed guest release changed before allocation");
+  }
+}
+
+async function assertGuestAllocationReady(input: {
+  transaction: PlatformStateTransaction; runtime: FleetRegistryRecord | null; user: PlatformUserRecord | null;
+  handoff: OperationRecord | null; source: ParkedSource; gatewayId: string;
+}): Promise<void> {
+  const { transaction, runtime, user, handoff, source, gatewayId } = input;
+  if (handoff?.input.mode === GUEST_RELEASE_MODE) {
+    if (runtime?.heartbeat?.mountedCustomers.length !== 0 || !await transaction.gateways.assignments.isEmpty(gatewayId)) {
+      throw new IsolatedGatewayFenceError("Owner computer prewarm handoff no longer has an empty roster");
+    }
+    assertGuestHandoffInstalled(runtime, user, handoff);
+  } else {
+    assertInstalledGuestForAllocation(runtime, source.installedGuest);
+  }
 }
 
 async function resumeParkedIsolatedGateway(
@@ -336,7 +378,8 @@ async function resumeParkedIsolatedGateway(
       assertCurrent(user);
       const stored = roots.get(parked.gatewayId) ?? null;
       const handoff = await verifyPrewarmHandoff(transaction, request, parked, source.handoffOperationId);
-      const root = assertParkedRootResumable({ stored, runtime, request, parked, liveRelease: source.liveRelease, handoff });
+      const root = assertParkedRootResumable({ stored, runtime, request, parked, liveRelease: source.liveRelease, handoff: handoff !== null });
+      await assertGuestAllocationReady({ transaction, runtime, user, handoff, source, gatewayId: parked.gatewayId });
       if (sharedSourceRelease(roots.get(request.sourceGatewayId), request.sourceGatewayId) !== source.release) {
         throw new IsolatedGatewayFenceError(`isolated gateway source ${request.sourceGatewayId} changed`);
       }
@@ -383,6 +426,38 @@ async function resumeParkedIsolatedGateway(
   });
 }
 
+async function resumeMatchingGuestRelease(options: {
+  input: IsolatedLifecycleDeps & Pick<IsolatedGatewayAllocationDeps, "requireHomeReady">;
+  request: AllocateIsolatedGatewayInput; parked: ParkedGateway; root: NonNullable<DesiredRoot>;
+  source: { release: number; artifact: GatewayArtifact }; mode: LifecycleMode;
+}): Promise<string> {
+  const { input, request, parked, root, source, mode } = options;
+  if (await gatewayRunsArtifact(input.store, root, source.artifact)) {
+    await resumeParkedIsolatedGateway(input, request, parked, { release: source.release, liveRelease: root.liveRelease! }, mode);
+    return parked.gatewayId;
+  }
+  if (!hasCompleteGuestRelease(source.artifact)) {
+    throw new IsolatedGatewayFenceError("Same-tier guest upgrade requires the exact immutable gateway, edge and OpenClaw release");
+  }
+  const runtime = await input.store.fleetRegistry.get(parked.gatewayId);
+  const live = await readGatewayArtifactInStore(input.store, parked.gatewayId, root.liveRelease);
+  const instanceId = runtime?.vm?.instanceId;
+  if (live && instanceId && rootOnLiveRelease(root) && guestReleaseImagesMatch(live, source.artifact) &&
+    guestReleaseInstalled(source.artifact, instanceId, runtime.vmImages)) {
+    await resumeParkedIsolatedGateway(input, request, parked, { release: source.release, liveRelease: root.liveRelease!,
+      installedGuest: { instanceId, payload: source.artifact } }, mode);
+    return parked.gatewayId;
+  }
+  if (mode === "apply") {
+    const queued = await enqueueDemandGuestRelease(input.store, {
+      uid: request.uid, gatewayId: parked.gatewayId, demandSource: { gatewayId: request.sourceGatewayId, release: source.release },
+      payload: source.artifact, createdBy: ISOLATED_GATEWAY_LIFECYCLE_ACTOR,
+    });
+    if (queued.status === "ineligible") throw new IsolatedGatewayFenceError(queued.reason);
+  }
+  throw new IsolatedGatewayFenceError("The retained computer is waiting for its in-guest release");
+}
+
 async function resumeOrRetireParkedGateway(
   input: IsolatedLifecycleDeps & Pick<IsolatedGatewayAllocationDeps, "requireHomeReady">,
   request: AllocateIsolatedGatewayInput,
@@ -392,10 +467,7 @@ async function resumeOrRetireParkedGateway(
 ): Promise<string | null> {
   const root = await readParkedRoot(input.store, request, parked);
   const sameProfile = root.sizingProfile === request.sizingKey;
-  if (sameProfile && await gatewayRunsArtifact(input.store, root, source.artifact)) {
-    await resumeParkedIsolatedGateway(input, request, parked, { release: source.release, liveRelease: root.liveRelease! }, mode);
-    return parked.gatewayId;
-  }
+  if (sameProfile) return resumeMatchingGuestRelease({ input, request, parked, root, source, mode });
   const retirement = await retireOwnedIsolatedGateway(input, {
     uid: request.uid,
     builderSlug: request.builderSlug,
@@ -404,8 +476,7 @@ async function resumeOrRetireParkedGateway(
     reason: "parked-computer-replaced",
   }, mode);
   if (!retirement.retired) {
-    const obsolete = sameProfile ? "runs another release" : `was not created from sizing profile ${request.sizingKey}`;
-    throw new IsolatedGatewayFenceError(`parked gateway ${parked.gatewayId} ${obsolete} and could not be retired`);
+    throw new IsolatedGatewayFenceError(`parked gateway ${parked.gatewayId} was not created from sizing profile ${request.sizingKey} and could not be retired`);
   }
   return null;
 }
@@ -413,7 +484,6 @@ async function resumeOrRetireParkedGateway(
 async function matchingParkedGateway(
   state: Pick<PlatformStateStore, "gateways" | "fleetRegistry">,
   request: AllocateIsolatedGatewayInput,
-  artifact: GatewayArtifact,
 ): Promise<ParkedGateway | undefined> {
   const roots = await state.gateways.roots.list({ gatewayClass: "isolated", ownerUid: request.uid });
   const matches: ParkedGateway[] = [];
@@ -422,8 +492,7 @@ async function matchingParkedGateway(
     const parked = { gatewayId: root.gatewayId, generation: root.allocation.generation };
     const projected = projectGatewayDesiredRootForGateway(root, root.gatewayId);
     if (projected && parkedRootMatches(projected, request, parked) &&
-        (await state.fleetRegistry.get(root.gatewayId))?.runtime === "gce-vm" &&
-        await gatewayRunsArtifact(state, projected, artifact)) {
+        (await state.fleetRegistry.get(root.gatewayId))?.runtime === "gce-vm") {
       matches.push(parked);
     }
   }
@@ -481,6 +550,24 @@ async function checkHomeReadiness(input: IsolatedGatewayAllocationDeps, request:
   ));
 }
 
+async function resumeGuestPrewarmHandoff(
+  input: IsolatedGatewayAllocationDeps, request: AllocateIsolatedGatewayInput, source: { release: number; artifact: GatewayArtifact },
+  prewarm: OperationRecord, mode: LifecycleMode,
+): Promise<IsolatedGatewayAllocation> {
+  const { gatewayId, generation, mode: upgradeMode } = parkedPrewarmInput(prewarm);
+  const root = projectGatewayDesiredRootForGateway(await input.store.gateways.roots.get(gatewayId), gatewayId);
+  if (!root || root.sizingProfile !== request.sizingKey) throw new IsolatedGatewayFenceError("Owner computer prewarm handoff sizing changed");
+  const guestArtifact = upgradeMode === GUEST_RELEASE_MODE
+    ? await readGatewayArtifactInStore(input.store, root.gatewayId, root.liveRelease) : null;
+  const matches = guestArtifact ? guestReleaseImagesMatch(guestArtifact, source.artifact)
+    : await gatewayRunsArtifact(input.store, root, source.artifact);
+  if (!matches) throw new IsolatedGatewayFenceError("Owner computer prewarm handoff no longer matches the current Shared release");
+  await resumeParkedIsolatedGateway(input, request, { gatewayId, generation }, {
+    release: source.release, liveRelease: root.liveRelease!, handoffOperationId: prewarm.id,
+  }, mode);
+  return { gatewayId, outcome: "resumed" };
+}
+
 export async function allocateIsolatedGateway(
   input: IsolatedGatewayAllocationDeps,
   request: AllocateIsolatedGatewayInput,
@@ -492,18 +579,8 @@ export async function allocateIsolatedGateway(
   const prewarm = await readActiveParkedPrewarm(input.store, request.uid);
   if (prewarm && prewarm.output?.prewarmState !== "handoff") throw new IsolatedGatewayFenceError("Owner computer prewarm has not released the allocation");
   const source = await readAllocationSource(input.store, request);
-  if (prewarm?.output?.prewarmState === "handoff") {
-    const { gatewayId: warmingGatewayId, generation } = parkedPrewarmInput(prewarm);
-    const root = projectGatewayDesiredRootForGateway(await input.store.gateways.roots.get(warmingGatewayId), warmingGatewayId);
-    if (!root || root.sizingProfile !== request.sizingKey || !(await gatewayRunsArtifact(input.store, root, source.artifact))) {
-      throw new IsolatedGatewayFenceError("Owner computer prewarm handoff no longer matches the current Shared release");
-    }
-    await resumeParkedIsolatedGateway(input, request, { gatewayId: warmingGatewayId, generation }, {
-      release: source.release, liveRelease: root.liveRelease!, handoffOperationId: prewarm.id,
-    }, mode);
-    return { gatewayId: warmingGatewayId, outcome: "resumed" };
-  }
-  const parked = request.parkedGateway ?? await matchingParkedGateway(input.store, request, source.artifact);
+  if (prewarm?.output?.prewarmState === "handoff") return resumeGuestPrewarmHandoff(input, request, source, prewarm, mode);
+  const parked = request.parkedGateway ?? await matchingParkedGateway(input.store, request);
   if (parked) {
     const resumed = await resumeOrRetireParkedGateway(input, request, parked, source, mode);
     if (resumed) return { gatewayId: resumed, outcome: "resumed" };
@@ -563,7 +640,7 @@ export async function allocateIsolatedGateway(
       throw new IsolatedGatewayFenceError(`isolated gateway demand fence changed for ${request.uid}`);
     }
     if (await readActiveParkedPrewarm(transaction, request.uid)) throw new IsolatedGatewayFenceError("Owner computer prewarm changed before fresh allocation");
-    if (await matchingParkedGateway(transaction, request, source.artifact)) throw new IsolatedGatewayFenceError("A matching parked computer became available before allocation");
+    if (await matchingParkedGateway(transaction, request)) throw new IsolatedGatewayFenceError("A matching parked computer became available before allocation");
     input.requireHomeReady({ user, request, sizingProfile });
     if (mode === "plan") return;
     await writeInitialGatewayReleaseInTransaction(transaction, {

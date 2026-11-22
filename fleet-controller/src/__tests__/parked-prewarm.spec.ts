@@ -3,7 +3,7 @@ import { bootRepairedParkedGateway, finishParkedGatewayPrewarm, startParkedGatew
 import type { PlatformStateStore } from "@octogee/core/platform-state";
 import type { Operation } from "@octogee/shared/types/glm";
 import { createParkedPrewarmHandler } from "../handlers/parked-prewarm.js";
-import type { VmGatewayRuntime } from "../vm-gateway-runtime.js";
+import type { ParkedPrewarmVmObservation, VmGatewayRuntime } from "../vm-gateway-runtime.js";
 
 vi.mock("@octogee/core/isolated-gateway-lifecycle", async (original) => ({
   ...await original<typeof import("@octogee/core/isolated-gateway-lifecycle")>(),
@@ -25,7 +25,7 @@ function fixture(now = () => 625) {
   const close = vi.fn(async () => undefined);
   const notify = (aggregate: string) => listeners.get(aggregate)?.({ kind: "resync", reason: "notification-gap" });
   const root = { gatewayClass: "isolated", ownerUid: "alice", desiredStatus: "running", desiredRelease: 2, liveRelease: 2, allocation: { generation: 5 } };
-  const registry = { runtime: "gce-vm", release: 2, vm: { status: "SUSPENDED", instanceId: "987" } as { status: string; instanceId: string } | null, vmBootRecovery: {} };
+  const registry = { runtime: "gce-vm", release: 2, vm: { status: "SUSPENDED", instanceId: "987" } as { status: string; instanceId: string } | null, vmBootRecovery: {}, vmImages: {} as Record<string, unknown> };
   const owner = { gateway: { gatewayId: "shared" }, activationLease: { status: "parked" } };
   const readRegistry = vi.fn(async () => registry);
   let persisted = operation;
@@ -39,13 +39,16 @@ function fixture(now = () => 625) {
     users: { records: { get: async () => owner } },
     journal: { operations: { get: async () => persisted } },
   } as unknown as PlatformStateStore;
-  const observe = vi.fn(async () => {
+  const observe = vi.fn(async (_gatewayId: string, _uid: string, requireGuestDisks = false): Promise<ParkedPrewarmVmObservation | null> => {
     const vm = registry.vm;
     if (!vm) return null;
-    return { ...vm, bootImageId: vm.instanceId === "987" ? "100" : "123", recoveryReady: true };
+    return { ...vm, bootImageId: vm.instanceId === "987" ? "100" : "123", recoveryReady: true,
+      ...(requireGuestDisks ? { guestDisks: { bootImageId: "100", bootDiskId: "101", homeDiskId: "102" } } : {}) };
   });
   const bootImage = vi.fn(async () => "123");
+  const updateGuestAgentImage = vi.fn(async () => undefined);
   const runtime = {
+    updateGuestAgentImage,
     prewarmBootImageId: bootImage,
     prewarmVmObservation: observe,
   } as unknown as VmGatewayRuntime;
@@ -60,7 +63,7 @@ function fixture(now = () => 625) {
   const handler = createParkedPrewarmHandler({ store, readVmRuntime: () => runtime, requestReconcileTick, probeReady, now });
   return {
     run: (op = operation) => handler(op, { reportStep }),
-    bootImage, observe, probeReady, reportStep, notify, close, root, registry, owner, readRegistry,
+    bootImage, observe, updateGuestAgentImage, probeReady, reportStep, notify, close, root, registry, owner, readRegistry,
     rejectBoot: (prewarmState: string) => {
       persisted = { ...operation, output: { ...claim, prewarmState, prewarmBootRejection: "Retained boot replacement cannot prove scheduler lineage from the previous image" } };
       root.desiredStatus = "paused";
@@ -74,6 +77,38 @@ function fixture(now = () => 625) {
 }
 
 describe("parked prewarm operation", () => {
+  it("publishes the new guest agent only after exact installed digests on the original disks, then parks it", async () => {
+    const h = fixture();
+    const tag = "abcdef1";
+    const gateway = "registry/images/octogee-gateway";
+    const edge = "registry/images/gateway-edge";
+    const gatewayDigest = `sha256:${"a".repeat(64)}`;
+    const edgeDigest = `sha256:${"b".repeat(64)}`;
+    const payload = { imageRepository: gateway, imageTag: `${tag}@${gatewayDigest}`, openclawSourceSha: "c".repeat(40),
+      gatewayEdgeImage: { imageRepository: edge, imageTag: `${tag}@${edgeDigest}` } };
+    const { bootImageId: baseImage, ...input } = operation.input;
+    expect(baseImage).toBe("123");
+    const result = h.run({ ...operation, input: { ...input, mode: "guest-release", payload } });
+    h.root.desiredStatus = "paused";
+    const guestDisks = { bootImageId: "100", bootDiskId: "101", homeDiskId: "102" };
+    vi.mocked(startParkedGatewayPrewarm).mockResolvedValue({ state: "booting", claim: { ...claim, guestDisks } });
+    await vi.waitFor(() => expect(startParkedGatewayPrewarm).toHaveBeenCalled());
+    h.root.desiredStatus = "running";
+    h.runVm("987");
+    expect(h.bootImage).not.toHaveBeenCalled();
+    expect(h.updateGuestAgentImage).not.toHaveBeenCalled();
+    h.registry.vmImages = { instanceId: "987", observedAt: 626, containers: [
+      { name: "gateway", imageReference: `${gateway}:${tag}@${gatewayDigest}`, digests: [`${gateway}@${gatewayDigest}`], running: true },
+      { name: "gateway-edge", imageReference: `${edge}:${tag}@${edgeDigest}`, digests: [`${edge}@${edgeDigest}`], running: true },
+    ] };
+    h.notify("fleetRegistry");
+    await vi.waitFor(() => expect(h.updateGuestAgentImage).toHaveBeenCalledWith("builder-alice", "alice", "987", `${gateway}:${tag}@${gatewayDigest}`));
+    await vi.waitFor(() => expect(finishParkedGatewayPrewarm).toHaveBeenCalled());
+    h.suspendVm();
+    await expect(result).resolves.toMatchObject({ success: true, output: { prewarmState: "parked", instanceId: "987",
+      bootImageId: "100", bootDiskId: "101", homeDiskId: "102" } });
+  });
+
   it("waits for a replacement to be recorded and suspended on retry, then verifies its readiness", async () => {
     const h = fixture();
     h.root.desiredStatus = "paused";

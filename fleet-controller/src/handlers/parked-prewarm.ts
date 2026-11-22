@@ -1,10 +1,14 @@
+import { dualReadIsolatedProfileImage } from "@octogee/shared/types/gateway-releases";
 import {
   bootRepairedParkedGateway,
   finishParkedGatewayPrewarm,
+  guestReleaseInstalled,
+  GUEST_RELEASE_MODE,
   isFreshParkedPrewarmRecovery,
   parkedPrewarmInput,
   startParkedGatewayPrewarm,
 } from "@octogee/core/isolated-gateway-lifecycle";
+import { isDeepStrictEqual } from "node:util";
 import type { FleetRegistryRecord, GatewayRoot, PlatformStateStore, PlatformUserRecord, WatchAggregate, WatchEvent, WatchRecords } from "@octogee/core/platform-state";
 import type { Operation, OperationStep } from "@octogee/shared/types/glm";
 import type { OperationContext, OperationHandler, OperationResult } from "../operation-router.js";
@@ -50,7 +54,7 @@ function phaseWake(deps: ParkedPrewarmDeps, gatewayId: string, uid: string) {
     onEvent: whenChanged<"gateways">((root) => JSON.stringify([root.desiredStatus, root.desiredRelease, root.liveRelease, root.allocation?.generation])), onError,
   });
   const runtime = deps.store.watch({ aggregate: "fleetRegistry", filter: { gatewayId } }, {
-    onEvent: whenChanged<"fleetRegistry">((record) => JSON.stringify([record.release, record.vm?.status, record.vm?.instanceId, record.heartbeat.status, record.vmBootRecovery?.observedAt])), onError,
+    onEvent: whenChanged<"fleetRegistry">((record) => JSON.stringify([record.release, record.vm?.status, record.vm?.instanceId, record.heartbeat.status, record.vmBootRecovery?.observedAt, record.vmImages?.observedAt])), onError,
   });
   const owner = deps.store.watch({ aggregate: "builders", filter: { uid } }, {
     onEvent: whenChanged<"builders">((record) => JSON.stringify([record.gateway?.gatewayId, record.activationLease?.status, record.activationLease?.generation])), onError,
@@ -92,7 +96,8 @@ interface PrewarmRun {
 function prewarmResult(run: PrewarmRun, prewarmState: typeof PARKED | typeof DEMAND_WON, instanceId?: string | null): OperationResult {
   return {
     success: true, steps: run.steps,
-    output: { ...run.claim, prewarmState, bootImageId: run.request.bootImageId, instanceId },
+    output: { ...run.claim, prewarmState, bootImageId: run.claim.guestDisks?.bootImageId ?? run.request.bootImageId, instanceId,
+      ...(run.claim.guestDisks ? { homeDiskId: run.claim.guestDisks.homeDiskId, bootDiskId: run.claim.guestDisks.bootDiskId } : {}) },
   };
 }
 
@@ -121,35 +126,70 @@ async function originalVmRecovered(run: PrewarmRun, state: State): Promise<boole
   return true;
 }
 
-async function verifiedCandidateVm(run: PrewarmRun, state: State): Promise<string | null> {
-  const { gatewayId, uid, bootImageId } = run.request;
+function observePrewarmVm(run: Pick<PrewarmRun, "runtime" | "request">): Promise<ParkedPrewarmVmObservation | null> {
+  const { gatewayId, uid, mode } = run.request;
+  return mode === GUEST_RELEASE_MODE ? run.runtime.prewarmVmObservation(gatewayId, uid, true) : run.runtime.prewarmVmObservation(gatewayId, uid);
+}
+
+function verifyPrewarmDisks(run: PrewarmRun, observed: ParkedPrewarmVmObservation): void {
+  if (run.request.mode === GUEST_RELEASE_MODE) {
+    if (!run.claim.guestDisks || observed.instanceId !== run.claim.previousInstanceId ||
+      !isDeepStrictEqual(observed.guestDisks, run.claim.guestDisks)) throw new Error("Guest release changed the original VM or its disks");
+  } else if (observed.bootImageId !== run.request.bootImageId) {
+    throw new Error("Prewarm booted an image other than the requested image");
+  }
+}
+
+function livePrewarmInstance(state: State, release: number): string | null {
   const { root, registry } = state;
-  const release = run.claim.release;
-  if (root?.liveRelease !== release || registry?.release !== release || registry.vm?.status !== "RUNNING" ||
-      !registry.vm.instanceId || !await run.deps.probeReady(gatewayId, registry.vm.instanceId)) return null;
-  const observed = await run.runtime.prewarmVmObservation(gatewayId, uid);
-  if (observed?.status !== "RUNNING" || observed.instanceId !== registry.vm.instanceId) return null;
-  if (observed.bootImageId !== bootImageId) throw new Error("Prewarm booted an image other than the requested image");
-  await recordVerifiedStep(run, VERIFY_PREWARM_STEP, observed.instanceId, bootImageId);
-  return observed.instanceId;
+  if (root?.liveRelease !== release || registry?.release !== release || registry.vm?.status !== "RUNNING") return null;
+  return registry.vm.instanceId;
+}
+
+async function publishVerifiedGuestAgent(run: PrewarmRun, instanceId: string): Promise<void> {
+  if (run.request.mode !== GUEST_RELEASE_MODE) return;
+  await run.ctx.assertActiveClaim?.();
+  const { gatewayId, uid, payload } = run.request;
+  const image = payload.profileImages ? dualReadIsolatedProfileImage(payload.profileImages) : payload;
+  await run.runtime.updateGuestAgentImage(gatewayId, uid, instanceId, `${image.imageRepository}:${image.imageTag}`);
+}
+
+async function verifiedCandidateVm(run: PrewarmRun, state: State): Promise<string | null> {
+  const { gatewayId } = run.request;
+  const instanceId = livePrewarmInstance(state, run.claim.release);
+  if (!instanceId) return null;
+  if (run.request.mode === GUEST_RELEASE_MODE &&
+      !guestReleaseInstalled(run.request.payload, instanceId, state.registry?.vmImages, run.op.startedAt ?? run.op.createdAt)) return null;
+  if (!await run.deps.probeReady(gatewayId, instanceId)) return null;
+  const observed = await observePrewarmVm(run);
+  if (observed?.status !== "RUNNING" || observed.instanceId !== instanceId) return null;
+  verifyPrewarmDisks(run, observed);
+  await publishVerifiedGuestAgent(run, instanceId);
+  await recordVerifiedStep(run, VERIFY_PREWARM_STEP, instanceId, observed.bootImageId);
+  return instanceId;
 }
 
 function ownerHasDemand(state: State, gatewayId: string) {
   return state.owner?.activationLease?.status === "requested" || state.owner?.gateway?.gatewayId === gatewayId;
 }
 
+function prewarmVerificationRecorded(run: PrewarmRun, observed: ParkedPrewarmVmObservation): boolean {
+  if (run.request.mode === GUEST_RELEASE_MODE && Number.isSafeInteger(run.claim.guestVerifiedAt)) return true;
+  const proof = `instance=${observed.instanceId} bootImage=${observed.bootImageId}`;
+  return run.steps.some(step => step.name === VERIFY_PREWARM_STEP && step.status === "done" && step.detail === proof);
+}
+
 async function parkedCandidateResult(run: PrewarmRun, state: State): Promise<OperationResult | null> {
-  const { gatewayId, uid, generation, bootImageId } = run.request;
+  const { gatewayId, generation } = run.request;
   const { root, registry } = state;
   if (root?.allocation?.generation !== generation || ownerHasDemand(state, gatewayId)) {
     return prewarmResult(run, DEMAND_WON, registry?.vm?.instanceId);
   }
   if (root.desiredStatus !== "paused" || registry?.vm?.status !== "SUSPENDED") return null;
-  const observed = await run.runtime.prewarmVmObservation(gatewayId, uid);
+  const observed = await observePrewarmVm(run);
   if (observed?.status !== "SUSPENDED") return null;
-  const proof = `instance=${observed.instanceId} bootImage=${bootImageId}`;
-  if (observed.bootImageId !== bootImageId || !run.steps.some(step =>
-    step.name === VERIFY_PREWARM_STEP && step.status === "done" && step.detail === proof)) {
+  verifyPrewarmDisks(run, observed);
+  if (!prewarmVerificationRecorded(run, observed)) {
     throw new Error("Computer suspended without readiness verification for this instance and boot image");
   }
   return prewarmResult(run, PARKED, observed.instanceId);
@@ -258,7 +298,7 @@ function ownsParkedComputer(root: GatewayRoot | null, request: PrewarmRun["reque
 }
 
 async function waitForParkedRetry(run: Pick<PrewarmRun, "deps" | "ctx" | "runtime" | "request">): Promise<ParkedPrewarmVmObservation | null> {
-  const { deps, ctx, runtime, request } = run;
+  const { deps, ctx, request } = run;
   const { gatewayId, uid } = request;
   const deadline = deps.now() + (deps.timeoutMs ?? PREWARM_TIMEOUT_MS);
   const wake = phaseWake(deps, gatewayId, uid);
@@ -267,10 +307,10 @@ async function waitForParkedRetry(run: Pick<PrewarmRun, "deps" | "ctx" | "runtim
       await ctx.assertActiveClaim?.();
       const revision = wake.revision();
       const state = await readPrewarmState(run);
-      if (!ownsParkedComputer(state.root, request) || ownerHasDemand(state, gatewayId)) return null;
+      if (!ownsParkedComputer(state.root, request) || (request.mode !== GUEST_RELEASE_MODE && ownerHasDemand(state, gatewayId))) return null;
       const vm = state.registry?.vm;
       if (vm?.status === "SUSPENDED" && vm.instanceId && state.root.liveRelease === state.root.desiredRelease) {
-        const observed = await runtime.prewarmVmObservation(gatewayId, uid);
+        const observed = await observePrewarmVm(run);
         if (observed?.status === "SUSPENDED" && observed.instanceId === vm.instanceId) return observed;
       }
       await wake.wait(revision, Math.max(0, Math.min(5_000, deadline - deps.now())));
@@ -292,34 +332,49 @@ async function retryIfStillSuspending(store: PlatformStateStore, request: Prewar
 
 async function startingVm(run: Pick<PrewarmRun, "deps" | "ctx" | "op" | "runtime" | "request">) {
   if ((run.op.attempts ?? 0) > 0) return waitForParkedRetry(run);
-  const { deps, runtime, request } = run;
-  const source = await runtime.prewarmVmObservation(request.gatewayId, request.uid);
+  const { deps, request } = run;
+  const source = await observePrewarmVm(run);
   if (source?.status === "SUSPENDED") return source;
   await retryIfStillSuspending(deps.store, request, source?.status);
   return null;
 }
 
+async function readStartingPrewarm(run: Pick<PrewarmRun, "deps" | "ctx" | "op" | "runtime" | "request">): Promise<
+  { source: ParkedPrewarmVmObservation } | OperationResult
+> {
+  const { request, runtime } = run;
+  if (request.mode !== GUEST_RELEASE_MODE) {
+    const publishedImageId = await runtime.prewarmBootImageId(request.gatewayId);
+    if (publishedImageId !== request.bootImageId) {
+      return { success: true, steps: [], output: { prewarmState: "superseded", bootImageId: request.bootImageId, publishedImageId } };
+    }
+  }
+  const source = await startingVm(run);
+  return source ? { source } : { success: true, steps: [], output: { prewarmState: "ineligible" } };
+}
+
+function originalPrewarmVm(source: ParkedPrewarmVmObservation, request: PrewarmRun["request"]) {
+  return {
+    instanceId: source.instanceId, bootImageId: source.bootImageId,
+    needsRepair: request.mode !== GUEST_RELEASE_MODE && source.bootImageId !== request.bootImageId && !source.recoveryReady,
+    ...(source.guestDisks ? { guestDisks: source.guestDisks } : {}),
+  };
+}
+
 export function createParkedPrewarmHandler(deps: ParkedPrewarmDeps): OperationHandler {
   return async (op, ctx) => {
     const request = parkedPrewarmInput(op);
-    const { gatewayId, bootImageId } = request;
     const runtime = deps.readVmRuntime();
     if (!runtime) throw new Error("Parked computer prewarm requires the GCE runtime");
     const existing = await deps.store.journal.operations.get(op.id);
     let source;
     if (existing?.output?.prewarmState === undefined) {
-      const publishedImageId = await runtime.prewarmBootImageId(gatewayId);
-      if (publishedImageId !== bootImageId) {
-        return { success: true, steps: [], output: { prewarmState: "superseded", bootImageId, publishedImageId } };
-      }
-      source = await startingVm({ deps, op, ctx, runtime, request });
-      if (!source) return { success: true, steps: [], output: { prewarmState: "ineligible" } };
+      const starting = await readStartingPrewarm({ deps, op, ctx, runtime, request });
+      if (!("source" in starting)) return starting;
+      source = starting.source;
     }
     await ctx.assertActiveClaim?.();
-    const started = await startParkedGatewayPrewarm(deps.store, op, deps.now(), source ? {
-      instanceId: source.instanceId, bootImageId: source.bootImageId,
-      needsRepair: source.bootImageId !== bootImageId && !source.recoveryReady,
-    } : undefined);
+    const started = await startParkedGatewayPrewarm(deps.store, op, deps.now(), source && originalPrewarmVm(source, request));
     if (!("claim" in started)) return { success: true, steps: [], output: {
       ...(started.state === DEMAND_WON && typeof existing?.output?.prewarmBootRejection === "string" ? existing.output : {}),
       prewarmState: started.state,
