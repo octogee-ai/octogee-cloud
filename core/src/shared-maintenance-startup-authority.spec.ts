@@ -14,7 +14,7 @@ const gatewayDigest = "sha256:" + "d".repeat(64), edgeDigest = "sha256:" + "e".r
 const authority = { ...binding, attemptId: request.attemptId, artifactSetId: request.artifactSetId, roles: {
   gateway: { previousContainerId: "g1", runningContainerId: "g2", buildId: request.buildId, acceptedImageId: gatewayDigest, runningImageId: gatewayDigest },
   "gateway-edge": { previousContainerId: "e1", runningContainerId: "e2", buildId: request.buildId, acceptedImageId: edgeDigest, runningImageId: edgeDigest },
-}, verifiedRestoredArchive: { attemptId: request.attemptId, sha256: "c".repeat(64) } };
+}, verifiedRestoredArchive: { attemptId: String(request.attemptId), sha256: "c".repeat(64) } };
 
 const gateway = { request: { ...request, role: "gateway" as const, nonce: "f".repeat(64) },
   binding: { ...binding, execRole: "gateway" as const } };

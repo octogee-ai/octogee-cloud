@@ -45,7 +45,9 @@ it.each(["gateway", "gateway-edge"] as const)("preserves only %s legacy probe be
   const enrollment = { ...scope, role };
   let release = false;
   const launch = vi.fn();
-  const { promise: probes, resolve } = Promise.withResolvers<{ health: Server; readiness: Server | null }>();
+  type Probes = { health: Server; readiness: Server | null };
+  let resolve!: (value: Probes) => void;
+  const probes = new Promise<Probes>(receive => { resolve = receive; });
   const controller = new AbortController();
   const pending = runSharedMaintenanceStartup({ enrollment, local: enrollment, publicKey: keys.publicKey, signal: controller.signal,
     launch, observeProbes: (health, readiness) => resolve({ health, readiness }),
