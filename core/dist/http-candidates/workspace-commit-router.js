@@ -165,6 +165,7 @@ router.post("/commit", clientRequestLimit(1200, true), async (req, res) => {
         committed: r.result.committed,
         pushed: r.result.pushed,
         nothingToCommit: r.result.nothingToCommit,
+        commit: r.result.commit,
         divertedBlobs,
     });
 });

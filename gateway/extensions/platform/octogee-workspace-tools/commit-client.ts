@@ -9,8 +9,11 @@ export interface CommitResult {
   committed: boolean;
   pushed: boolean;
   nothingToCommit: boolean;
+  commit: string;
   divertedBlobs: number;
 }
+
+const FULL_COMMIT_HASH = /^[0-9a-f]{40}$/u;
 
 /** Minimal structural shape of fetch — keeps the client testable without a real Response. */
 export type FetchLike = (
@@ -114,25 +117,28 @@ export function createCommitClient(opts: CommitClientOptions = {}): CommitClient
       );
     }
 
-    const committed = boolField(parsed, "committed");
-    const pushed = boolField(parsed, "pushed");
-    const nothingToCommit = boolField(parsed, "nothingToCommit");
-    const divertedBlobs = nonNegativeIntegerField(parsed, "divertedBlobs");
-    if (committed === undefined || pushed === undefined || nothingToCommit === undefined || divertedBlobs === undefined) {
-      throw new WorkspaceToolError("bad-response", "commit endpoint returned an incomplete response");
-    }
-    if (!pushed) {
-      throw new WorkspaceToolError(CONTROL_ERROR, "commit did not reach the remote repository");
-    }
-    return {
-      committed,
-      pushed,
-      nothingToCommit,
-      divertedBlobs,
-    };
+    return pushedCommitResult(parsed);
   }
 
   return { commit };
+}
+
+function pushedCommitResult(parsed: unknown): CommitResult {
+  const committed = boolField(parsed, "committed");
+  const pushed = boolField(parsed, "pushed");
+  const nothingToCommit = boolField(parsed, "nothingToCommit");
+  const divertedBlobs = nonNegativeIntegerField(parsed, "divertedBlobs");
+  if (committed === undefined || pushed === undefined || nothingToCommit === undefined || divertedBlobs === undefined) {
+    throw new WorkspaceToolError("bad-response", "commit endpoint returned an incomplete response");
+  }
+  if (!pushed) {
+    throw new WorkspaceToolError(CONTROL_ERROR, "commit did not reach the remote repository");
+  }
+  const pushedCommit = strField(parsed, "commit");
+  if (pushedCommit === undefined || !FULL_COMMIT_HASH.test(pushedCommit)) {
+    throw new WorkspaceToolError("bad-response", "commit endpoint did not name the pushed commit");
+  }
+  return { committed, pushed, nothingToCommit, commit: pushedCommit, divertedBlobs };
 }
 
 function strField(source: unknown, key: string): string | undefined {

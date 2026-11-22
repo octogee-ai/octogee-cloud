@@ -30,12 +30,15 @@ workspace_commit({ "message": "optional summary of what changed" })
 It returns:
 
 ```json
-{ "committed": true, "pushed": true, "nothing_to_commit": false, "diverted_blobs": 0 }
+{ "committed": true, "pushed": true, "nothing_to_commit": false, "commit": "0123456789abcdef0123456789abcdef01234567", "diverted_blobs": 0 }
 ```
 
 - **`committed`** — whether there were changes to commit.
 - **`pushed`** — whether the commit reached the remote.
 - **`nothing_to_commit`** — `true` when the workspace was already clean (a clean no-op).
+- **`commit`** — the full 40-character hash of the commit the remote branch is at
+  after the save, including a clean no-op. Pass it to any later step that needs
+  the exact pushed commit.
 - **`diverted_blobs`** — how many binary files were moved into blob storage instead
   of being committed. Text is versioned in git; binaries are stored unversioned
   but backed up, and still show up in the Files view. You don't have to sort them
