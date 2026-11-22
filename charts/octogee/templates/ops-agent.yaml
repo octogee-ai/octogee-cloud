@@ -47,7 +47,7 @@ spec:
       initContainers:
         - name: prepare-tmp
           image: {{ $image | quote }}
-          command: ["/bin/sh", "-ec", "mkdir -p /tmp-volume/private && chmod 0700 /tmp-volume/private"]
+          command: ["/bin/sh", "-ec", "mkdir -p /tmp-volume/private /state-volume/private && chmod 0700 /tmp-volume/private && chmod 0700 /state-volume/private"]
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -56,6 +56,8 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp-volume
+            - name: openclaw-state
+              mountPath: /state-volume
       containers:
         - name: ops-agent
           image: {{ $image | quote }}
@@ -119,10 +121,11 @@ spec:
               subPath: private
             - name: openclaw-state
               mountPath: /home/node/.openclaw
+              subPath: private
       volumes:
         - name: tmp
           emptyDir:
-            sizeLimit: 64Mi
+            sizeLimit: 256Mi
         - name: openclaw-state
           emptyDir:
             sizeLimit: 256Mi
