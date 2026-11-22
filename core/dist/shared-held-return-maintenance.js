@@ -220,12 +220,23 @@ export async function readSharedHeldReturnMaintenanceDispatch(store, claim) {
         return { phase: staged.phase, release: staged.release };
     });
 }
-export async function advanceSharedHeldReturnMaintenance(store, claim, phase, now = Date.now) {
+export async function assertSharedHeldReturnMaintenanceReserved(store, claim) {
+    await store.transaction({ label: "shared-held-return-maintenance.assert-reserved", readOnly: true }, async (tx) => {
+        const current = await readClaim(tx, claim);
+        requireMaintenance(current.phase === "reserved" && !current.stagedRelease, "Shared maintenance reservation has dispatched or withdrawn");
+    });
+}
+export async function advanceSharedHeldReturnMaintenance(store, claim, phase, now = Date.now, verifyDispatch) {
+    if (phase === "dispatched" && await assertSharedHeldReturnMaintenance(store, claim) !== "dispatched") {
+        requireMaintenance(verifyDispatch, "Shared maintenance dispatch requires a verified held migration policy and rollback backup");
+        await assertSharedHeldReturnMaintenanceReserved(store, claim);
+        await verifyDispatch();
+    }
     await store.transaction({ label: "shared-held-return-maintenance.advance" }, async (tx) => {
         const current = await readClaim(tx, claim);
         if (current.phase === phase)
             return;
-        requireMaintenance(phase === "dispatched" ? current.phase === "reserved" : current.phase === "dispatched", "Shared held return maintenance transition is invalid");
+        requireMaintenance(phase === "dispatched" ? current.phase === "reserved" && !current.stagedRelease : current.phase === "dispatched", "Shared held return maintenance transition is invalid");
         await tx.gateways.roots.compareAndSetRuntimeRestartFence(claim.gatewayId, current, { ...current, phase, phaseStartedAt: now() });
     });
 }

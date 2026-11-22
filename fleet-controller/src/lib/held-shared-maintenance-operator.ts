@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
 import {
-  acquireSharedHeldReturnMaintenance, advanceSharedHeldReturnMaintenance, assertSharedHeldReturnMaintenance,
+  acquireSharedHeldReturnMaintenance, advanceSharedHeldReturnMaintenance, assertSharedHeldReturnMaintenance, assertSharedHeldReturnMaintenanceReserved,
   completeSharedHeldReturnMaintenance, readSharedHeldReturnMaintenanceDispatch, readSharedHeldReturnMaintenanceTerminal, resumeSharedHeldReturnMaintenance,
   stageSharedHeldReturnMaintenanceRelease, withdrawSharedHeldReturnMaintenance, SharedHeldReturnMaintenanceConflict,
   type HeldNativeReturnSelection, type ObservedSharedMaintenanceHelm, type SharedHeldReturnMaintenanceAdmin,
@@ -13,6 +13,8 @@ type CheckCurrent = () => Promise<void>;
 
 export interface SharedHeldReturnMaintenancePhysical {
   readVerifiedAdmission(selection: HeldNativeReturnSelection): Promise<SharedHeldReturnMaintenanceAdmission>;
+  holdMigrationPolicy(claim: SharedHeldReturnMaintenanceClaim, assertReserved: CheckCurrent): Promise<void>;
+  verifyReadyToDispatch(claim: SharedHeldReturnMaintenanceClaim, assertReserved: CheckCurrent): Promise<void>;
   applyStagedRelease(claim: SharedHeldReturnMaintenanceClaim, staged: SharedHeldReturnMaintenanceDispatch, assertCurrent: CheckCurrent): Promise<void>;
   restoreMigrationPolicy(claim: SharedHeldReturnMaintenanceClaim, assertWithdrawing: CheckCurrent): Promise<void>;
   readVerifiedWithdrawal(claim: SharedHeldReturnMaintenanceClaim): Promise<SharedHeldReturnMaintenanceWithdrawal>;
@@ -59,15 +61,21 @@ export function createSharedHeldReturnMaintenanceOperator(deps: {
 
 async function runMaintenanceStep(
   deps: { store: PlatformStateStore; physical: SharedHeldReturnMaintenancePhysical; now: () => number },
-  claim: SharedHeldReturnMaintenanceClaim, action: "dispatch" | "stage" | "apply" | "rollback" | "withdraw" | "complete",
+  claim: SharedHeldReturnMaintenanceClaim, action: "hold-migration-policy" | "dispatch" | "stage" | "apply" | "rollback" | "withdraw" | "complete",
 ): Promise<unknown> {
   const { store, physical, now } = deps;
   const status = { gatewayId: claim.gatewayId, attemptId: claim.attemptId, auditId: claim.auditId };
+  const assertReserved = () => assertSharedHeldReturnMaintenanceReserved(store, claim);
   switch (action) {
+    case "hold-migration-policy":
+      await assertReserved();
+      await physical.holdMigrationPolicy(claim, assertReserved);
+      await assertReserved();
+      return { ...status, phase: "reserved" };
     case "dispatch":
     case "rollback": {
       const phase = action === "dispatch" ? "dispatched" : "rollback";
-      await advanceSharedHeldReturnMaintenance(store, claim, phase, now);
+      await advanceSharedHeldReturnMaintenance(store, claim, phase, now, () => physical.verifyReadyToDispatch(claim, assertReserved));
       return { ...status, phase };
     }
     case "stage":

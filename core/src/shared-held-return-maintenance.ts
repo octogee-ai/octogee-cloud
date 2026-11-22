@@ -88,7 +88,7 @@ export type SharedHeldReturnMaintenanceDispatch = {
 type ScopedMaintenance = { operationId: string; gatewayId: string; attemptId: string };
 export type SharedHeldReturnMaintenanceCommand =
   | { action: "acquire"; attemptId: string; selection: HeldNativeReturnSelection }
-  | ({ action: "status" | "dispatch" | "stage" | "apply" | "rollback" | "withdraw" | "complete" } & ScopedMaintenance);
+  | ({ action: "status" | "hold-migration-policy" | "dispatch" | "stage" | "apply" | "rollback" | "withdraw" | "complete" } & ScopedMaintenance);
 
 export type SharedHeldReturnMaintenanceAdmin = (
   actor: string, command: SharedHeldReturnMaintenanceCommand, dryRun: boolean,
@@ -357,13 +357,28 @@ export async function readSharedHeldReturnMaintenanceDispatch(
   });
 }
 
+export async function assertSharedHeldReturnMaintenanceReserved(
+  store: PlatformStateStore, claim: SharedHeldReturnMaintenanceClaim,
+): Promise<void> {
+  await store.transaction({ label: "shared-held-return-maintenance.assert-reserved", readOnly: true }, async tx => {
+    const current = await readClaim(tx, claim);
+    requireMaintenance(current.phase === "reserved" && !current.stagedRelease, "Shared maintenance reservation has dispatched or withdrawn");
+  });
+}
+
 export async function advanceSharedHeldReturnMaintenance(
   store: PlatformStateStore, claim: SharedHeldReturnMaintenanceClaim, phase: "dispatched" | "rollback", now: () => number = Date.now,
+  verifyDispatch?: () => Promise<void>,
 ): Promise<void> {
+  if (phase === "dispatched" && await assertSharedHeldReturnMaintenance(store, claim) !== "dispatched") {
+    requireMaintenance(verifyDispatch, "Shared maintenance dispatch requires a verified held migration policy and rollback backup");
+    await assertSharedHeldReturnMaintenanceReserved(store, claim);
+    await verifyDispatch();
+  }
   await store.transaction({ label: "shared-held-return-maintenance.advance" }, async tx => {
     const current = await readClaim(tx, claim);
     if (current.phase === phase) return;
-    requireMaintenance(phase === "dispatched" ? current.phase === "reserved" : current.phase === "dispatched",
+    requireMaintenance(phase === "dispatched" ? current.phase === "reserved" && !current.stagedRelease : current.phase === "dispatched",
       "Shared held return maintenance transition is invalid");
     await tx.gateways.roots.compareAndSetRuntimeRestartFence(claim.gatewayId, current, { ...current, phase, phaseStartedAt: now() });
   });

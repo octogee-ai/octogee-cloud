@@ -212,7 +212,7 @@ function parseHeldNativeReturnSelection(operationId, body) {
     return { operationId, sourceGatewayId, targetGatewayId, sourceEpoch, schedulerMigrationId };
 }
 function isSharedMaintenanceStep(action) {
-    return ["status", "dispatch", "stage", "apply", "rollback", "withdraw", "complete"].includes(action);
+    return ["status", "hold-migration-policy", "dispatch", "stage", "apply", "rollback", "withdraw", "complete"].includes(action);
 }
 function parseSharedHeldMaintenanceCommand(operationId, action, body) {
     const attemptId = body?.attemptId;

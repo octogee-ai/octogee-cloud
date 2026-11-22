@@ -307,6 +307,15 @@ it("authenticates scoped controller steps and refuses physical work before the e
   const scope = { operationId, gatewayId: targetGatewayId, attemptId: "00000000-0000-4000-8000-000000000004" };
   const actor = "protected-operator";
   const readVerifiedAdmission = vi.fn(async () => h.admission);
+  let policyHeld = false;
+  const holdMigrationPolicy = vi.fn<SharedHeldReturnMaintenancePhysical["holdMigrationPolicy"]>(async (_claim, assertReserved) => {
+    await assertReserved();
+    policyHeld = true;
+  });
+  const verifyReadyToDispatch = vi.fn<SharedHeldReturnMaintenancePhysical["verifyReadyToDispatch"]>(async (_claim, assertReserved) => {
+    await assertReserved();
+    if (!policyHeld) throw new Error("migration policy was not held");
+  });
   const applyStagedRelease = vi.fn<SharedHeldReturnMaintenancePhysical["applyStagedRelease"]>(
     async (_claim, staged, assertCurrent) => {
       expect(staged).toEqual({ phase: "dispatched", release: 2 });
@@ -315,7 +324,7 @@ it("authenticates scoped controller steps and refuses physical work before the e
   );
   const admin = createSharedHeldReturnMaintenanceOperator({
     store: h.store, now: () => 520,
-    physical: { readVerifiedAdmission, applyStagedRelease, restoreMigrationPolicy: vi.fn(),
+    physical: { readVerifiedAdmission, holdMigrationPolicy, verifyReadyToDispatch, applyStagedRelease, restoreMigrationPolicy: vi.fn(),
       readVerifiedWithdrawal: vi.fn(), readVerifiedResult: vi.fn(), readInstalledHelm: vi.fn() },
   });
   await expect(admin(actor, { action: "acquire", attemptId: scope.attemptId, selection }, true)).resolves.toMatchObject({ dryRun: true });
@@ -323,7 +332,11 @@ it("authenticates scoped controller steps and refuses physical work before the e
   await expect(admin(actor, { action: "acquire", attemptId: scope.attemptId, selection }, false)).resolves.toMatchObject({ phase: "reserved" });
   await expect(admin("another-operator", { action: "dispatch", ...scope }, false)).rejects.toThrow(/another operation or operator/);
   await expect(admin(actor, { action: "apply", ...scope }, false)).rejects.toThrow(/matching staged release/);
+  await expect(admin(actor, { action: "dispatch", ...scope }, false)).rejects.toThrow(/policy was not held/);
+  await expect(admin(actor, { action: "hold-migration-policy", ...scope }, false)).resolves.toMatchObject({ phase: "reserved" });
   await expect(admin(actor, { action: "dispatch", ...scope }, false)).resolves.toMatchObject({ phase: "dispatched" });
+  await expect(admin(actor, { action: "hold-migration-policy", ...scope }, false)).rejects.toThrow(/dispatched or withdrawn/);
+  expect(holdMigrationPolicy).toHaveBeenCalledTimes(1);
   await expect(admin(actor, { action: "apply", ...scope }, false)).rejects.toThrow(/matching staged release/);
   expect(applyStagedRelease).not.toHaveBeenCalled();
   await expect(admin(actor, { action: "stage", ...scope }, false)).resolves.toMatchObject({ release: 2 });
@@ -344,7 +357,7 @@ it("withdraws an untouched reservation only after restoring policy and verifying
   const restoreMigrationPolicy = vi.fn(async () => {
     now = 550;
     await expect(assertSharedHeldReturnMaintenance(h.store, claim)).resolves.toBe("withdrawing");
-    await expect(advanceSharedHeldReturnMaintenance(h.store, claim, "dispatched", () => 530)).rejects.toThrow(/transition/);
+    await expect(advanceSharedHeldReturnMaintenance(h.store, claim, "dispatched", () => 530, async () => {})).rejects.toThrow(/dispatched or withdrawn/);
     await expect(stageSharedHeldReturnMaintenanceRelease(h.store, claim, () => 530)).rejects.toThrow(/before dispatch/);
   });
   const readVerifiedWithdrawal = vi.fn(async () => original);
@@ -374,7 +387,7 @@ it("withdraws an untouched reservation only after restoring policy and verifying
 it("does not restore the policy through withdrawal after dispatch", async () => {
   const h = sharedMaintenanceFixture();
   const claim = await h.acquire();
-  await advanceSharedHeldReturnMaintenance(h.store, claim, "dispatched", () => 520);
+  await advanceSharedHeldReturnMaintenance(h.store, claim, "dispatched", () => 520, async () => {});
   const restoreMigrationPolicy = vi.fn();
   const readVerifiedWithdrawal = vi.fn();
   await expect(withdrawSharedHeldReturnMaintenance(h.store, claim, { restoreMigrationPolicy, readVerifiedWithdrawal, now: () => 550 }))
@@ -395,7 +408,7 @@ it("gives the reservation precedence over inbound and outbound queue claims, and
   }
   const testOnlyOwnerAction = { input: { uid: h.admission.owners[2]!.uid }, gatewayId: "unrelated" };
   await expect(assertSharedHeldReturnMaintenanceUnfenced(h.store, testOnlyOwnerAction)).rejects.toThrow(/blocks this operation/);
-  await advanceSharedHeldReturnMaintenance(h.store, claim, "dispatched", () => 520);
+  await advanceSharedHeldReturnMaintenance(h.store, claim, "dispatched", () => 520, async () => {});
   expect(await stageSharedHeldReturnMaintenanceRelease(h.store, claim, () => 522)).toBe(2);
   expect(await stageSharedHeldReturnMaintenanceRelease(h.store, claim, () => 523)).toBe(2);
   expect(await h.store.gateways.roots.get(targetGatewayId)).toMatchObject({ desiredRelease: 2, liveRelease: 1 });
@@ -434,7 +447,7 @@ it("gives the reservation precedence over inbound and outbound queue claims, and
 it("publishes the immutable retained Shared release from normal health plus observed running images under the original boot env", async () => {
   const h = sharedMaintenanceFixture();
   const claim = await h.acquire();
-  await advanceSharedHeldReturnMaintenance(h.store, claim, "dispatched", () => 520);
+  await advanceSharedHeldReturnMaintenance(h.store, claim, "dispatched", () => 520, async () => {});
   expect(await stageSharedHeldReturnMaintenanceRelease(h.store, claim, () => 525)).toBe(2);
   const root = await h.store.gateways.roots.get(targetGatewayId);
   expect(root).toMatchObject({ desiredRelease: 2, liveRelease: 1 });

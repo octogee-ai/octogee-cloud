@@ -88,7 +88,7 @@ export type SharedHeldReturnMaintenanceCommand = {
     attemptId: string;
     selection: HeldNativeReturnSelection;
 } | ({
-    action: "status" | "dispatch" | "stage" | "apply" | "rollback" | "withdraw" | "complete";
+    action: "status" | "hold-migration-policy" | "dispatch" | "stage" | "apply" | "rollback" | "withdraw" | "complete";
 } & ScopedMaintenance);
 export type SharedHeldReturnMaintenanceAdmin = (actor: string, command: SharedHeldReturnMaintenanceCommand, dryRun: boolean) => Promise<unknown>;
 type Phase = "reserved" | "withdrawing" | "dispatched" | "rollback";
@@ -111,7 +111,8 @@ export declare function readSharedHeldReturnMaintenanceTerminal(store: PlatformS
 export declare function resumeSharedHeldReturnMaintenance(store: PlatformStateStore, gatewayId: string, attemptId: string): Promise<SharedHeldReturnMaintenanceClaim>;
 export declare function assertSharedHeldReturnMaintenance(store: PlatformStateStore, claim: SharedHeldReturnMaintenanceClaim): Promise<Phase>;
 export declare function readSharedHeldReturnMaintenanceDispatch(store: PlatformStateStore, claim: SharedHeldReturnMaintenanceClaim): Promise<SharedHeldReturnMaintenanceDispatch>;
-export declare function advanceSharedHeldReturnMaintenance(store: PlatformStateStore, claim: SharedHeldReturnMaintenanceClaim, phase: "dispatched" | "rollback", now?: () => number): Promise<void>;
+export declare function assertSharedHeldReturnMaintenanceReserved(store: PlatformStateStore, claim: SharedHeldReturnMaintenanceClaim): Promise<void>;
+export declare function advanceSharedHeldReturnMaintenance(store: PlatformStateStore, claim: SharedHeldReturnMaintenanceClaim, phase: "dispatched" | "rollback", now?: () => number, verifyDispatch?: () => Promise<void>): Promise<void>;
 export declare function stageSharedHeldReturnMaintenanceRelease(store: PlatformStateStore, claim: SharedHeldReturnMaintenanceClaim, now: () => number): Promise<number>;
 export declare function completeSharedHeldReturnMaintenance(store: PlatformStateStore, claim: SharedHeldReturnMaintenanceClaim, deps: {
     readVerifiedResult(): Promise<SharedHeldReturnMaintenanceResult>;

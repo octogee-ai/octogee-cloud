@@ -491,7 +491,7 @@ function parseHeldNativeReturnSelection(operationId: string, body: Record<string
 }
 
 function isSharedMaintenanceStep(action: string): action is Exclude<SharedHeldReturnMaintenanceCommand["action"], "acquire"> {
-  return ["status", "dispatch", "stage", "apply", "rollback", "withdraw", "complete"].includes(action);
+  return ["status", "hold-migration-policy", "dispatch", "stage", "apply", "rollback", "withdraw", "complete"].includes(action);
 }
 
 function parseSharedHeldMaintenanceCommand(
