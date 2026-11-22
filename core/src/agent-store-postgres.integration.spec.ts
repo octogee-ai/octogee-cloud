@@ -94,6 +94,8 @@ describe.skipIf(!dsn)("PostgreSQL agent store", () => {
     const db = decodeURIComponent(new URL(dsn!).pathname.slice(1));
     const gatewayId = `shared-${suffix}`;
     const gateway = pg.escapeIdentifier(roleFor("gateway", `${db}:${gatewayId}`));
+    const emptyPeerGatewayId = gatewayId + "a";
+    const peer = pg.escapeIdentifier(roleFor("gateway", `${db}:${emptyPeerGatewayId}`));
     const shared = pg.escapeIdentifier(roleFor("shared", db));
     const alternate = pg.escapeIdentifier("alternate_" + suffix);
     const owners = Array.from({ length: 6 }, (_, i) => ({ uid: "uid-" + i, schemas: [`inert_${suffix}_${i}`] }));
@@ -129,9 +131,32 @@ describe.skipIf(!dsn)("PostgreSQL agent store", () => {
       })).resolves.toBe("verified");
       await barrier.restore(scope, binding, current);
       await expect(barrier.runWhileHeld(scope, binding, current, async () => "stale")).rejects.toThrow(/admits new connections/);
+
+      await execute(`CREATE ROLE ${peer} LOGIN CONNECTION LIMIT 3; GRANT ${shared} TO ${peer} WITH INHERIT TRUE, SET TRUE`);
+      let placementExcluded = true;
+      const joint = { ...scope, emptyPeer: { gatewayId: emptyPeerGatewayId, assertPlacementExcluded: async () => {
+        if (!placementExcluded) throw new Error("peer placement exclusion changed");
+      } } };
+      const jointBinding = await barrier.inspect(joint, current);
+      expect(jointBinding.writers.map(writer => writer.previousLimit)).toEqual([-1, 3]);
+      await expect(barrier.hold(joint, binding, current)).rejects.toThrow(/writer count/);
+      placementExcluded = false;
+      await expect(barrier.hold(joint, jointBinding, current)).rejects.toThrow(/peer placement exclusion changed/);
+      placementExcluded = true;
+      await barrier.hold(joint, jointBinding, current);
+      await barrier.drainIdle(joint, jointBinding, current);
+      await expect(barrier.runWhileHeld(joint, jointBinding, current, async held => {
+        await held(); return "joint verified";
+      })).resolves.toBe("joint verified");
+      await execute(`CREATE ROLE ${alternate} LOGIN; GRANT ${shared} TO ${alternate} WITH INHERIT TRUE, SET TRUE`);
+      const archive = () => Promise.reject(new Error("unexpected archive callback"));
+      await expect(barrier.runWhileHeld(joint, jointBinding, current, archive)).rejects.toThrow(/Unexpected effective owner store writer/);
+      await execute(`DROP ROLE ${alternate}`);
+      await barrier.restore(joint, jointBinding, current);
+      expect((await barrier.inspect(joint, current)).writers).toEqual(jointBinding.writers);
     } finally {
       await execute(`${owners.map(owner => `DROP SCHEMA IF EXISTS ${pg.escapeIdentifier(owner.schemas[0]!)} CASCADE`).join(";")};
-        DROP ROLE IF EXISTS ${gateway}; DROP ROLE IF EXISTS ${alternate}`);
+        DROP ROLE IF EXISTS ${gateway}; DROP ROLE IF EXISTS ${peer}; DROP ROLE IF EXISTS ${alternate}`);
     }
   });
 

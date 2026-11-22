@@ -1,4 +1,4 @@
-export type { HeldSharedDatabaseBarrier, HeldSharedDatabaseWriterScope } from "./held-return-database-barrier.js";
+export type { HeldSharedDatabaseBarrier, HeldSharedDatabaseBinding, HeldSharedDatabaseWriterScope } from "./held-return-database-barrier.js";
 export type { HeldDatabaseWriterBinding, HeldDatabaseWriterScope } from "./held-return-database-barrier.js";
 export interface AgentStoreGatewayIdentity {
     gatewayId: string;

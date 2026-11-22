@@ -19,14 +19,14 @@ relations AS MATERIALIZED (
   UNION SELECT oid FROM pg_roles WHERE rolsuper OR rolcreaterole OR rolname='pg_write_all_data'
 )
 SELECT r.oid::text AS oid,r.rolname AS name,r.rolsuper OR r.rolcreaterole AS administrator
-FROM pg_roles r WHERE r.rolcanlogin AND r.oid<>$2 AND EXISTS (
+FROM pg_roles r WHERE r.rolcanlogin AND NOT(r.oid=ANY($2::oid[])) AND EXISTS (
   SELECT FROM grants g WHERE CASE WHEN g.grantee=0 THEN true ELSE
     r.oid=g.grantee OR pg_has_role(r.oid,g.grantee,'SET') OR pg_has_role(r.oid,g.grantee,'USAGE') END)
 ORDER BY r.oid`;
-async function assertWriters(client, scope, binding, exactSchemas) {
+async function assertWriters(client, scope, binding, exactSchemas, writerOids = [binding.roleOid]) {
     const { rows } = await client.query(writersSql, [
         binding.ownerOid,
-        binding.roleOid,
+        writerOids,
         exactSchemas ?? null,
     ]);
     if (!scope.trustedOperators.length ||
@@ -166,10 +166,17 @@ export function heldSharedDatabaseBarrier(adminDsn, roleFor, credentialLock) {
         throw new Error("Held Shared database requires the exact agent store");
     async function run(input, current, options) {
         const scope = retainedSharedScope(input);
-        const source = roleFor("gateway", db + ":" + scope.sourceGatewayId);
+        const gateways = input.emptyPeer ? [input.gatewayId, input.emptyPeer.gatewayId] : [input.gatewayId];
+        if (new Set(gateways).size !== gateways.length || gateways.some(gateway => !/^shared-[a-z0-9]+$/.test(gateway)))
+            throw new Error("Shared store barrier requires distinct retained and empty gateway identities");
+        const sources = gateways.map(gateway => roleFor("gateway", db + ":" + gateway));
         const owner = roleFor("shared", db);
         const client = new pg.Client({ connectionString: adminDsn, connectionTimeoutMillis: 5000, statement_timeout: 5000 });
-        await current();
+        const assertScope = async () => {
+            await current();
+            await input.emptyPeer?.assertPlacementExcluded();
+        };
+        await assertScope();
         await client.connect();
         try {
             await client.query("BEGIN");
@@ -177,23 +184,40 @@ export function heldSharedDatabaseBarrier(adminDsn, roleFor, credentialLock) {
             await client.query("SET LOCAL lock_timeout='2s'");
             await client.query(credentialLock);
             const observeCurrent = async () => {
-                await current();
-                const binding = await observe(client, source, owner, scope, scope.schemas);
-                if (options.expected)
-                    compareBinding(binding, options.expected);
-                await assertWriters(client, scope, binding, scope.schemas);
-                await assertNoConcurrentOperators(client, scope, binding);
-                return binding;
+                await assertScope();
+                const writers = [];
+                for (const source of sources)
+                    writers.push(await observe(client, source, owner, scope, scope.schemas));
+                if (options.expected && options.expected.writers.length !== writers.length)
+                    throw new Error("Held Shared database writer count changed");
+                const first = writers[0];
+                for (const [index, writer] of writers.entries()) {
+                    if (options.expected)
+                        compareBinding(writer, options.expected.writers[index]);
+                    if (writer.ownerOid !== first.ownerOid || writer.databaseOid !== first.databaseOid ||
+                        !isDeepStrictEqual(writer.schemas, first.schemas))
+                        throw new Error("Held Shared database writer scopes changed");
+                }
+                await assertWriters(client, scope, first, scope.schemas, writers.map(writer => writer.roleOid));
+                await assertNoConcurrentOperators(client, scope, first);
+                return writers;
             };
-            const binding = await observeCurrent();
-            await apply(client, source, options.action, binding, options.expected);
-            const assertHeld = async () => assertSessions(client, await observeHeld(observeCurrent), false);
+            const writers = await observeCurrent();
+            for (const [index, writer] of writers.entries())
+                await apply(client, sources[index], options.action, writer, options.expected?.writers[index]);
+            const assertHeld = async () => {
+                for (const writer of await observeCurrent()) {
+                    if (writer.previousLimit !== 0)
+                        throw new Error("Shared gateway login still admits new connections");
+                    await assertSessions(client, writer, false);
+                }
+            };
             const value = options.work ? await options.work(assertHeld) : undefined;
             if (options.work)
                 await assertHeld();
-            await current();
+            await assertScope();
             await client.query("COMMIT");
-            return { binding, value };
+            return { binding: { writers }, value };
         }
         catch (err) {
             await client.query("ROLLBACK");
@@ -213,10 +237,4 @@ export function heldSharedDatabaseBarrier(adminDsn, roleFor, credentialLock) {
             return result.value;
         },
     };
-}
-async function observeHeld(observeCurrent) {
-    const binding = await observeCurrent();
-    if (binding.previousLimit !== 0)
-        throw new Error("Shared gateway login still admits new connections");
-    return binding;
 }
