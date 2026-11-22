@@ -48,6 +48,8 @@ function harness(
     resume: unused("resume"),
     verifyBootReplacement: unused("verifyBootReplacement"),
     readBootImage: unused("readBootImage"),
+    readAttachedGuestDisks: unused("readAttachedGuestDisks"),
+    updateGuestAgentImage: unused("updateGuestAgentImage"),
     readFamilyImage: unused("readFamilyImage"),
     readImage: unused("readImage"),
     create: vi.fn(async () => ({ description, provisioningModel: "SPOT" as const, fellBackToStandard: false, alreadyExisted: false })),

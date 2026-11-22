@@ -1,5 +1,9 @@
 import { releasePayloadHash, type ReleasePayload } from "@octogee/shared/types/gateway-releases";
-import { activeParkedPrewarmGatewayIds, PARKED_PREWARM_KIND, parkedPrewarmInput } from "./isolated-gateway-lifecycle/prewarm.js";
+import { activeParkedPrewarmGatewayIds, PARKED_PREWARM_KIND, parkedPrewarmInput, latestGuestReleaseRequest, type DemandGuestSource } from "./isolated-gateway-lifecycle/prewarm.js";
+import { GUEST_RELEASE_MODE, guestReleaseImagesMatch, guestReleaseInstalled } from "./isolated-gateway-lifecycle/guest-release.js";
+import type { FleetRegistryRecord } from "./platform-state/fleet-registry.js";
+import type { GatewayRoot } from "./platform-state/gateways.js";
+import type { PlatformUserRecord } from "./platform-state/users.js";
 import type { OperationRecord } from "./platform-state/operations.js";
 import type { PlatformStateStore, PlatformStateTransaction } from "./platform-state/store.js";
 
@@ -58,6 +62,65 @@ export function enqueueParkedGatewayPrewarm(store: PlatformStateStore, request: 
     if (previous) return { status: "queued", operationId: previous.id };
     const operationId = await tx.journal.operations.enqueue({
       kind: PARKED_PREWARM_KIND, status: "pending", createdBy, createdAt: Date.now(), startedAt: null, completedAt: null,
+      input, inputUid: uid, gatewayId, steps: [],
+    });
+    return { status: "queued", operationId };
+  });
+}
+type GuestReleaseRequest = Omit<ParkedGatewayPrewarmRequest, "bootImageId" | "sourceSha">;
+export type ParkedGuestReleaseRequest = GuestReleaseRequest & { sourceSha: string };
+type DemandGuestReleaseRequest = GuestReleaseRequest & { demandSource: DemandGuestSource };
+export type ParkedGuestReleaseAdmission = Admission | { status: "already-current" };
+
+export function enqueueParkedGuestRelease(store: PlatformStateStore, request: ParkedGuestReleaseRequest): Promise<ParkedGuestReleaseAdmission> {
+  return enqueueGuestRelease(store, request);
+}
+
+export function enqueueDemandGuestRelease(store: PlatformStateStore, request: DemandGuestReleaseRequest): Promise<ParkedGuestReleaseAdmission> {
+  return enqueueGuestRelease(store, request);
+}
+
+function guestReleaseRootMatches(root: GatewayRoot | null, owner: PlatformUserRecord | null, uid: string): root is GatewayRoot & { allocation: NonNullable<GatewayRoot["allocation"]> } {
+  return root?.gatewayClass === "isolated" && root.ownerUid === uid && root.retirementClaim == null &&
+    root.allocation?.kind === "disposable-builder" && root.allocation.claimedByUid === uid && !parkedHomeUnderSnapshotCustody(owner);
+}
+
+async function parkedGuestAlreadyInstalled(
+  tx: PlatformStateTransaction, root: GatewayRoot, runtime: FleetRegistryRecord | null, payload: ReleasePayload,
+): Promise<boolean> {
+  if (root.desiredStatus !== "paused" || root.liveRelease === null || root.liveRelease !== root.desiredRelease ||
+    runtime?.vm?.status !== "SUSPENDED" || !runtime.vm.instanceId) return false;
+  const release = await tx.gateways.releases.get(root.gatewayId, root.liveRelease);
+  return release !== null && guestReleaseImagesMatch(release.payload, payload) &&
+    guestReleaseInstalled(payload, runtime.vm.instanceId, runtime.vmImages);
+}
+
+function enqueueGuestRelease(store: PlatformStateStore, request: ParkedGuestReleaseRequest | DemandGuestReleaseRequest): Promise<ParkedGuestReleaseAdmission> {
+  const { gatewayId, uid, payload, createdBy } = request;
+  const origin = "sourceSha" in request ? { sourceSha: request.sourceSha } : { demandSource: request.demandSource };
+  return store.transaction({ label: "isolated-gateway.enqueue-guest-release" }, async tx => {
+    const [root, owner, runtime] = await Promise.all([
+      tx.gateways.roots.get(gatewayId), tx.users.records.get(uid), tx.fleetRegistry.get(gatewayId),
+    ]);
+    if (!guestReleaseRootMatches(root, owner, uid)) {
+      return { status: "ineligible", reason: "parked owner, allocation or home custody changed" };
+    }
+    const input = { uid, gatewayId, generation: root.allocation.generation, ...origin, mode: GUEST_RELEASE_MODE, payload } as const;
+    parkedPrewarmInput({ input });
+    const history = await tx.journal.operations.listForUid(uid, { kind: PARKED_PREWARM_KIND });
+    const relevant = history.filter(op => op.gatewayId === gatewayId && op.input.generation === input.generation);
+    const latest = latestGuestReleaseRequest(relevant, input);
+    const active = latest?.status === "pending" || latest?.status === "running";
+    if (active && guestReleaseImagesMatch(parkedPrewarmInput(latest).payload, payload)) {
+      return { status: "queued", operationId: latest.id };
+    }
+    const prewarming = activeParkedPrewarmGatewayIds(relevant).has(gatewayId);
+    if (root.desiredStatus !== "paused" && (root.desiredStatus !== "running" || !prewarming)) {
+      return { status: "ineligible", reason: "gateway is no longer parked" };
+    }
+    if (!active && await parkedGuestAlreadyInstalled(tx, root, runtime, payload)) return { status: "already-current" };
+    const operationId = await tx.journal.operations.enqueue({
+      kind: PARKED_PREWARM_KIND, status: "pending", createdBy, createdAt: Math.max(Date.now(), (latest?.createdAt ?? 0) + 1), startedAt: null, completedAt: null,
       input, inputUid: uid, gatewayId, steps: [],
     });
     return { status: "queued", operationId };

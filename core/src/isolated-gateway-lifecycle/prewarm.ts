@@ -9,30 +9,74 @@ import type { GatewayRoot } from "../platform-state/gateways.js";
 import type { PlatformUserRecord } from "../platform-state/users.js";
 import type { OperationRecord } from "../platform-state/operations.js";
 import type { PlatformStateStore, PlatformStateTransaction, Stored } from "../platform-state/store.js";
+import { GUEST_RELEASE_MODE, guestReleaseImagesMatch, guestReleaseInstalled, hasCompleteGuestRelease } from "./guest-release.js";
 import { userAllowsInteractiveAccess } from "./lease.js";
 
 export const PARKED_PREWARM_KIND = "prewarm-gateway";
 export const ACTIVE_PARKED_PREWARM_STATUSES = ["pending", "running"] as const;
 
-export interface ParkedPrewarmInput {
+interface ParkedPrewarmCommon {
   uid: string;
   gatewayId: string;
   generation: number;
-  sourceSha: string;
-  bootImageId: string;
   payload: ReleasePayload;
 }
 
-export function parkedPrewarmInput(operation: Pick<Operation, "input">): ParkedPrewarmInput {
-  const { uid, gatewayId, generation, sourceSha, bootImageId, payload } = operation.input;
+export interface DemandGuestSource {
+  gatewayId: string;
+  release: number;
+}
+
+type GuestReleaseOrigin = { sourceSha: string; demandSource?: undefined } | { sourceSha?: undefined; demandSource: DemandGuestSource };
+
+export type ParkedPrewarmInput = ParkedPrewarmCommon & (
+  { mode?: undefined; bootImageId: string; sourceSha: string } |
+  ({ mode: typeof GUEST_RELEASE_MODE; bootImageId?: undefined } & GuestReleaseOrigin)
+);
+
+function readDemandGuestSource(value: unknown): DemandGuestSource | undefined {
+  if (!value || typeof value !== "object") return;
+  const source = value as Partial<DemandGuestSource>;
+  if (typeof source.gatewayId !== "string" || !source.gatewayId ||
+      typeof source.release !== "number" || !Number.isSafeInteger(source.release) || source.release < 1) return;
+  return { gatewayId: source.gatewayId, release: source.release };
+}
+
+function readPrewarmCommon(input: Operation["input"]): ParkedPrewarmCommon {
+  const { uid, gatewayId, generation, payload } = input;
   if (typeof uid !== "string" || !uid || typeof gatewayId !== "string" || !gatewayId ||
-      typeof generation !== "number" || !Number.isSafeInteger(generation) || generation < 1 ||
-      typeof sourceSha !== "string" || !/^[0-9a-f]{40}$/.test(sourceSha) ||
-      typeof bootImageId !== "string" || !/^[1-9]\d{0,19}$/.test(bootImageId) ||
-      !isReleasePayload(payload)) {
+      typeof generation !== "number" || !Number.isSafeInteger(generation) || generation < 1 || !isReleasePayload(payload)) {
     throw new Error("Invalid parked computer prewarm operation input");
   }
-  return { uid, gatewayId, generation, sourceSha, bootImageId, payload };
+  return { uid, gatewayId, generation, payload };
+}
+
+export function parkedPrewarmInput(operation: Pick<Operation, "input">): ParkedPrewarmInput {
+  const { sourceSha, bootImageId, mode, demandSource } = operation.input;
+  const common = readPrewarmCommon(operation.input);
+  const exactSha = typeof sourceSha === "string" && /^[0-9a-f]{40}$/.test(sourceSha) ? sourceSha : null;
+  if (mode === GUEST_RELEASE_MODE && bootImageId === undefined && hasCompleteGuestRelease(common.payload)) {
+    if (exactSha && demandSource === undefined) return { ...common, mode, sourceSha: exactSha };
+    const source = readDemandGuestSource(demandSource);
+    if (sourceSha === undefined && source) return { ...common, mode, demandSource: source };
+  }
+  if (exactSha && mode === undefined && demandSource === undefined && typeof bootImageId === "string" &&
+      /^[1-9]\d{0,19}$/.test(bootImageId)) return { ...common, sourceSha: exactSha, bootImageId };
+  throw new Error("Invalid parked computer prewarm image intent");
+}
+
+export interface RetainedGuestDisks {
+  bootImageId: string;
+  bootDiskId: string;
+  homeDiskId: string;
+}
+
+export function readRetainedGuestDisks(value: unknown): RetainedGuestDisks | undefined {
+  if (!value || typeof value !== "object") return;
+  const row = value as Partial<RetainedGuestDisks>;
+  if ([row.bootImageId, row.bootDiskId, row.homeDiskId].every(id => typeof id === "string" && /^[1-9]\d{0,19}$/.test(id))) {
+    return { bootImageId: row.bootImageId!, bootDiskId: row.bootDiskId!, homeDiskId: row.homeDiskId! };
+  }
 }
 
 export async function readActiveParkedPrewarm(
@@ -49,6 +93,8 @@ type PrewarmClaim = {
   previousInstanceId: string;
   sourceGatewayId: string;
   sourceAssignmentEpoch: number;
+  guestDisks?: RetainedGuestDisks;
+  guestVerifiedAt?: number;
 };
 const BOOTING = "booting";
 const HANDOFF = "handoff";
@@ -84,7 +130,11 @@ function prewarmClaim(operation: Operation): PrewarmClaim {
       typeof sourceGatewayId !== "string" || typeof sourceAssignmentEpoch !== "number") {
     throw new Error("Parked computer prewarm claim is missing its original VM or release");
   }
-  return { release, previousRelease, previousInstanceId, sourceGatewayId, sourceAssignmentEpoch };
+  const guestDisks = readRetainedGuestDisks(operation.output?.guestDisks);
+  if (operation.input.mode === GUEST_RELEASE_MODE && !guestDisks) throw new Error("Parked guest release is missing original disk identity");
+  const guestVerifiedAt = operation.output?.guestVerifiedAt;
+  return { release, previousRelease, previousInstanceId, sourceGatewayId, sourceAssignmentEpoch,
+    ...(guestDisks ? { guestDisks } : {}), ...(typeof guestVerifiedAt === "number" ? { guestVerifiedAt } : {}) };
 }
 
 function assertPrewarmWorker(operation: Operation, current: OperationRecord | null): asserts current is OperationRecord {
@@ -97,14 +147,14 @@ function hasCustomerDemand(status: string | undefined): boolean {
   return status !== undefined && status !== "parked" && status !== "failed";
 }
 
-type OriginalVm = { instanceId: string; bootImageId: string; needsRepair: boolean };
+type OriginalVm = { instanceId: string; bootImageId: string; needsRepair: boolean; guestDisks?: RetainedGuestDisks };
 
 function parkedRootEligible(
   root: GatewayRoot | null,
   uid: string,
   generation: number,
 ): root is GatewayRoot & { liveRelease: number } {
-  return root?.desiredStatus === "paused" && root.gatewayClass === "isolated" &&
+  return root?.desiredStatus === "paused" && root.gatewayClass === "isolated" && root.retirementClaim == null &&
     root.ownerUid === uid && root.allocation?.claimedByUid === uid && root.allocation.generation === generation &&
     root.allocation.kind === "disposable-builder" && root.liveRelease !== null && root.liveRelease === root.desiredRelease;
 }
@@ -130,10 +180,33 @@ function conflictingPrewarmOwnerOperation(conflicts: readonly OperationRecord[],
     (entry.kind !== PARKED_PREWARM_KIND || isPrewarmClaimActive(entry.output?.prewarmState)));
 }
 
+export function latestGuestReleaseRequest(
+  operations: readonly OperationRecord[],
+  request: Pick<ParkedPrewarmCommon, "gatewayId" | "generation">,
+): OperationRecord | undefined {
+  return operations.reduce<OperationRecord | undefined>((latest, operation) => {
+    if (operation.input.mode !== GUEST_RELEASE_MODE || operation.gatewayId !== request.gatewayId ||
+      operation.input.generation !== request.generation) return latest;
+    if (!latest || operation.createdAt > latest.createdAt) return operation;
+    return latest;
+  }, undefined);
+}
+
+async function supersededGuestRelease(
+  tx: PlatformStateTransaction, current: OperationRecord, request: ParkedPrewarmInput,
+): Promise<boolean> {
+  if (request.mode !== GUEST_RELEASE_MODE) return false;
+  const history = await tx.journal.operations.listForUid(request.uid, { kind: PARKED_PREWARM_KIND });
+  const latest = latestGuestReleaseRequest(history, request);
+  return latest !== undefined && latest.createdAt > current.createdAt;
+}
+
 function existingOrDemandOperation(current: OperationRecord, owner: PlatformUserRecord | null): PrewarmStart | null {
   const phase = current.output?.prewarmState;
   if (phase === "parked" || isPrewarmClaimActive(phase)) return { state: phase, claim: prewarmClaim(current) };
-  if (phase === DEMAND_WON || hasCustomerDemand(owner?.activationLease?.status)) return { state: DEMAND_WON };
+  const lease = owner?.activationLease;
+  const mayServeDemand = current.input.mode === GUEST_RELEASE_MODE && lease?.status === "requested";
+  if (phase === DEMAND_WON || (!mayServeDemand && hasCustomerDemand(lease?.status))) return { state: DEMAND_WON };
   return null;
 }
 
@@ -163,6 +236,33 @@ async function writePrewarmStart(tx: PlatformStateTransaction, input: {
   return { state, claim };
 }
 
+async function demandSourceHasGuestRelease(
+  tx: PlatformStateTransaction, sharedId: string, request: Extract<ParkedPrewarmInput, { mode: typeof GUEST_RELEASE_MODE }>,
+): Promise<boolean> {
+  const source = await tx.gateways.roots.get(sharedId);
+  if (request.demandSource && ![
+    request.demandSource.gatewayId === sharedId, source?.liveRelease === request.demandSource.release,
+  ].every(Boolean)) return false;
+  const artifact = await readGatewayArtifactInStore(tx, sharedId, source?.liveRelease ?? null);
+  return artifact !== null && guestReleaseImagesMatch(artifact, request.payload);
+}
+
+async function readGuestDisksForPrewarm(tx: PlatformStateTransaction, input: {
+  request: ParkedPrewarmInput; root: GatewayRoot; owner: PlatformUserRecord | null;
+  sharedId: string; epoch: number; sourceVm?: OriginalVm;
+}): Promise<RetainedGuestDisks | undefined> {
+  const { request, root, owner, sharedId, epoch, sourceVm } = input;
+  if (request.mode !== GUEST_RELEASE_MODE) return;
+  const disks = readRetainedGuestDisks(sourceVm?.guestDisks);
+  if (!disks || owner?.home.homeDisk?.id !== disks.homeDiskId) return;
+  const lease = owner.activationLease;
+  if (lease?.status !== "requested") return request.demandSource ? undefined : disks;
+  if (![lease.generation === request.generation + 1, lease.targetGatewayId == null,
+    lease.sourceGatewayId === sharedId, lease.sourceAssignmentEpoch === epoch,
+    lease.entitlementTier === root.sizingProfile, lease.sizingTier === root.sizingTier].every(Boolean)) return;
+  if (await demandSourceHasGuestRelease(tx, sharedId, request)) return disks;
+}
+
 export async function startParkedGatewayPrewarm(
   store: PlatformStateStore,
   operation: Operation,
@@ -182,20 +282,24 @@ export async function startParkedGatewayPrewarm(
     const result = existingOrDemandOperation(current, owner);
     if (result) return result;
     const sharedId = eligibleSharedSource(owner, pool?.sharedGatewayIds ?? []);
-    if (!sharedId || !empty || !parkedRootEligible(root, uid, generation) ||
-        conflictingPrewarmOwnerOperation(conflicts, operation.id)) return { state: "ineligible" };
+    if (!sharedId || !parkedRootEligible(root, uid, generation)) return { state: "ineligible" };
+    if (![empty, !conflictingPrewarmOwnerOperation(conflicts, operation.id),
+      !(await supersededGuestRelease(tx, current, request))].every(Boolean)) return { state: "ineligible" };
     const instanceId = parkedInstanceId(runtime, sourceVm);
     if (!instanceId) return { state: "ineligible" };
     const [assignment, release] = await Promise.all([
       tx.gateways.assignments.get(sharedId, uid), tx.gateways.releases.get(gatewayId, root.liveRelease),
       assertGatewayRuntimeMutationUnfencedInStore(tx, gatewayId),
     ]);
-    if (assignment?.state !== "serving" || assignment.slug !== root.builderSlug || !release) return { state: "ineligible" };
-    const sameRelease = release.payloadHash === releasePayloadHash(payload);
+    if (!assignment || ![assignment.state === "serving", assignment.slug === root.builderSlug, release].every(Boolean)) return { state: "ineligible" };
+    const guestDisks = await readGuestDisksForPrewarm(tx, { request, root, owner, sharedId, epoch: assignment.epoch, sourceVm });
+    if (request.mode === GUEST_RELEASE_MODE && !guestDisks) return { state: "ineligible" };
+    const sameRelease = release!.payloadHash === releasePayloadHash(payload);
     const claim = {
       release: sameRelease ? root.liveRelease : root.latestRelease + 1,
       previousRelease: root.liveRelease, previousInstanceId: instanceId,
       sourceGatewayId: sharedId, sourceAssignmentEpoch: assignment.epoch,
+      ...(guestDisks ? { guestDisks } : {}),
     };
     return writePrewarmStart(tx, { operation, request, root, claim, now, sourceVm });
   });
@@ -231,7 +335,7 @@ function assertOwnedPrewarmRoot(
   request: ParkedPrewarmInput,
   expected: { status: "running" | "paused"; release: number },
 ): asserts root is GatewayRoot {
-  if (!root || root.desiredStatus !== expected.status || root.ownerUid !== request.uid ||
+  if (!root || root.desiredStatus !== expected.status || root.ownerUid !== request.uid || root.retirementClaim != null ||
       root.allocation?.claimedByUid !== request.uid || root.allocation.generation !== request.generation ||
       root.desiredRelease !== expected.release) {
     throw new Error("Parked computer prewarm no longer owns the unassigned gateway");
@@ -254,18 +358,20 @@ async function sameDemandArtifact(
   root: GatewayRoot,
   owner: PlatformUserRecord | null,
   liveRelease: number,
+  guestRelease: boolean,
 ): Promise<boolean> {
   const lease = owner?.activationLease;
   const requestedSource = lease?.sourceGatewayId;
-  if (lease?.status !== "requested" || !requestedSource ||
-      owner?.gateway?.gatewayId !== requestedSource || lease.entitlementTier !== root.sizingProfile) return false;
+  if (!requestedSource || ![lease.status === "requested", owner?.gateway?.gatewayId === requestedSource,
+    lease.entitlementTier === root.sizingProfile].every(Boolean)) return false;
   const source = await tx.gateways.roots.get(requestedSource);
   if (source?.gatewayClass !== "shared" || source.liveRelease !== source.desiredRelease) return false;
   const [sourceArtifact, destinationArtifact] = await Promise.all([
     readGatewayArtifactInStore(tx, requestedSource, source.liveRelease),
     readGatewayArtifactInStore(tx, root.gatewayId, liveRelease),
   ]);
-  return destinationArtifact !== null && isDeepStrictEqual(sourceArtifact, destinationArtifact);
+  return sourceArtifact !== null && destinationArtifact !== null && (guestRelease
+    ? guestReleaseImagesMatch(sourceArtifact, destinationArtifact) : isDeepStrictEqual(sourceArtifact, destinationArtifact));
 }
 
 function finishedParkPhase(owner: PlatformUserRecord | null, mode: PrewarmFinishMode) {
@@ -322,6 +428,16 @@ function assertParkedBootRejection(input: {
       runtime?.vm?.instanceId !== bootRejection.instanceId) throw new Error("Parked computer boot rejection authority changed");
 }
 
+function verifyGuestReleaseLive(request: ParkedPrewarmInput, claim: PrewarmClaim, runtime: FleetRegistryRecord | null, after: number): number | undefined {
+  if (request.mode !== GUEST_RELEASE_MODE) return;
+  const observedAt = runtime?.vmImages?.observedAt;
+  if (runtime?.vm?.status !== "RUNNING" || runtime.vm.instanceId !== claim.previousInstanceId ||
+      typeof observedAt !== "number" || !guestReleaseInstalled(request.payload, claim.previousInstanceId, runtime.vmImages, after)) {
+    throw new Error("Retained guest release has no exact installed image receipt");
+  }
+  return observedAt;
+}
+
 export async function finishParkedGatewayPrewarm(
   store: PlatformStateStore,
   operation: Operation,
@@ -345,9 +461,13 @@ export async function finishParkedGatewayPrewarm(
     const liveRelease = window.release;
     assertOwnedPrewarmRoot(root, request, window);
     if (!empty || owner?.gateway?.gatewayId === gatewayId) throw new Error("Parked computer prewarm no longer owns the unassigned gateway");
-    if (mode !== "rollback" && root.liveRelease !== liveRelease) throw new Error("Prewarmed release is not live");
+    if (mode !== "rollback") {
+      if (root.liveRelease !== liveRelease) throw new Error("Prewarmed release is not live");
+      const verified = verifyGuestReleaseLive(request, claim, runtime, current.startedAt ?? current.createdAt);
+      if (verified !== undefined) claim.guestVerifiedAt = verified;
+    }
     if (mode === "repaired") assertOriginalVmRecovery(current, claim.previousInstanceId, runtime);
-    if (mode !== "rollback" && await sameDemandArtifact(tx, root, owner, liveRelease)) {
+    if (mode !== "rollback" && await sameDemandArtifact(tx, root, owner, liveRelease, request.mode === GUEST_RELEASE_MODE)) {
       await tx.journal.operations.patch(operation.id, { output: { ...claim, prewarmState: HANDOFF, release: liveRelease } });
       return HANDOFF;
     }

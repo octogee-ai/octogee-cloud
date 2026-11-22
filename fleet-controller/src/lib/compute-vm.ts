@@ -1,3 +1,4 @@
+import { sameGuestImageRef, type RetainedGuestDisks } from "@octogee/core/isolated-gateway-lifecycle";
 import { createVmHomeClient } from "./compute-home.js";
 import { createVmHomeSnapshotClient, type ArchivedBootDisk, type RestoreHomeFromSnapshotInput, type SnapshotStoppedHomeInput } from "./compute-home-snapshot.js";
 import type { GatewayVmBootDiskType, GatewayVmDesktop, GatewayVmProvisioningModel, RetainedUserHome, RetainedUserHomeSnapshot } from "@octogee/shared/types/glm";
@@ -91,6 +92,13 @@ export interface BootReplacementWindow {
   endedAt: number;
 }
 
+export interface GuestAgentImageUpdate {
+  instanceId: string;
+  ownerUid: string;
+  gatewayId: string;
+  image: string;
+}
+
 export interface GatewayVmClient {
   snapshotStoppedHome(input: SnapshotStoppedHomeInput): Promise<RetainedUserHomeSnapshot | null>;
   restoreHomeFromSnapshot(input: RestoreHomeFromSnapshotInput): Promise<RetainedUserHome | null>;
@@ -100,6 +108,7 @@ export interface GatewayVmClient {
   archiveDisksAbsent(home: RetainedUserHome, boot: ArchivedBootDisk): Promise<boolean>;
   expandHome(home: RetainedUserHome, ownerUid: string, sizeGb: number): Promise<RetainedUserHome>;
   retainHome(instanceName: string, zone: string, ownerUid: string): Promise<RetainedUserHome>;
+  readAttachedGuestDisks(instanceName: string, zone: string, ownerUid: string, instanceId: string): Promise<RetainedGuestDisks>;
   verifyDetachedHome(home: RetainedUserHome, ownerUid: string): Promise<void>;
   deleteRetainedHome(home: RetainedUserHome, ownerUid: string): Promise<void>;
   deleteRetainingHome(instanceName: string, zone: string, ownerUid: string, home: RetainedUserHome, instanceId: string): Promise<void>;
@@ -109,6 +118,7 @@ export interface GatewayVmClient {
   findByLabels(labels: Record<string, string>): Promise<GatewayVmDescription | null>;
   list(input: ListGatewayVmsInput): Promise<GatewayVmDescription[]>;
   bind(instanceName: string, zone: string, input: BindGatewayVmInput): Promise<void>;
+  updateGuestAgentImage(instanceName: string, zone: string, input: GuestAgentImageUpdate): Promise<void>;
   setServiceAccount(instanceName: string, zone: string, email: string): Promise<void>;
   setMachineType(instanceName: string, zone: string, machineType: string): Promise<void>;
   setProvisioningModel(instanceName: string, zone: string, provisioningModel: GatewayVmProvisioningModel): Promise<void>;
@@ -484,6 +494,29 @@ function operationWaiter(deps: GatewayVmClientDeps, base: string) {
   };
 }
 
+async function updateGuestAgentImage(input: {
+  request: ComputeRequest; base: string; instance: ComputeInstance | null;
+  name: string; zone: string; update: GuestAgentImageUpdate;
+}): Promise<ComputeOperation | null> {
+  const { request, base, instance, name, zone, update } = input;
+  const metadata = metadataRecord(instance?.metadata?.items);
+  const fingerprint = instance?.metadata?.fingerprint;
+  if (!fingerprint || instance?.id !== update.instanceId || instance.status !== "RUNNING" ||
+    metadata["gateway-id"] !== update.gatewayId || metadata["octogee-owner-uid"] !== update.ownerUid ||
+    !/@sha256:[a-f0-9]{64}$/u.test(update.image)) throw new Error("Guest agent image update lost VM authority");
+  if (sameGuestImageRef(metadata["gateway-image"] ?? "", update.image)) return null;
+  const res = await request({
+    url: `${base}/zones/${zone}/instances/${name}/setMetadata`, method: "POST",
+    body: { fingerprint, items: metadataItems({ ...metadata, "gateway-image": update.image }) },
+  });
+  return (res.data ?? {}) as ComputeOperation;
+}
+
+async function publishGuestAgentImage(input: Parameters<typeof updateGuestAgentImage>[0], waitForOperation: (zone: string, op: ComputeOperation, what: string) => Promise<void>): Promise<void> {
+  const operation = await updateGuestAgentImage(input);
+  if (operation) await waitForOperation(input.zone, operation, `set guest agent image ${input.name}`);
+}
+
 export function createGatewayVmClient(deps: GatewayVmClientDeps): GatewayVmClient {
   const base = `https://compute.googleapis.com/compute/v1/projects/${deps.projectId}`;
 
@@ -689,6 +722,9 @@ export function createGatewayVmClient(deps: GatewayVmClientDeps): GatewayVmClien
     findByLabels,
     list,
     bind,
+    updateGuestAgentImage: async (name, zone, update) => publishGuestAgentImage({
+      request: deps.request, base, instance: await readInstance(name, zone), name, zone, update,
+    }, waitForOperation),
     setServiceAccount,
     setMachineType,
     setProvisioningModel,

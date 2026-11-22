@@ -370,6 +370,22 @@ describe("snapshot reconciliation filters", () => {
     expect(runtimeChangeIsRelevant([{ type: "modified", doc: { id: "default", data: () => routed("desktop", 2) } }], fingerprints)).toBe(false);
   });
 
+  it("wakes for a meaningful same-instance image observation and ignores its repeated timestamps", () => {
+    const fingerprints = new Map<string, string>();
+    const vmImages = (edgeHex: string, observedAt: number) => ({
+      instanceId: "4242", observedAt, containers: [
+        { name: "gateway", running: true, imageReference: "registry/gateway:abcdef1", digests: [`registry/gateway@sha256:${"a".repeat(64)}`] },
+        { name: "gateway-edge", running: true, imageReference: "registry/gateway-edge:abcdef1", digests: [`registry/gateway-edge@sha256:${edgeHex.repeat(64)}`] },
+      ],
+    });
+    const change = (type: "added" | "modified", edge: string, time: number) =>
+      runtimeChangeIsRelevant([{ type, doc: { id: "vm", data: () => servingRuntime({ runtime: "gce-vm", vmImages: vmImages(edge, time) }) } }], fingerprints);
+    expect(change("added", "b", 1)).toBe(true);
+    expect(change("modified", "b", 2)).toBe(false);
+    expect(change("modified", "c", 3)).toBe(true);
+    expect(change("modified", "c", 4)).toBe(false);
+  });
+
   it("ignores VM container image observations without hiding release changes", () => {
     const fingerprints = new Map<string, string>();
     const first = servingRuntime({ vmImages: { instanceId: "4242", observedAt: 1, containers: [] } });

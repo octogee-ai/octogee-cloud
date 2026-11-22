@@ -1,3 +1,4 @@
+import type { RetainedGuestDisks } from "@octogee/core/isolated-gateway-lifecycle";
 import { isDeepStrictEqual } from "node:util";
 import {
   type PlatformUserRecord,
@@ -33,7 +34,8 @@ const VM_ROUTES_CONFIGMAP_KEY = "routes.json";
 export interface VmGatewayRuntime extends HelmRunner {
   assertVmPauseNotPending(gatewayId: string, ownerUid?: string): void;
   prewarmBootImageId(gatewayId: string): Promise<string>;
-  prewarmVmObservation(gatewayId: string, uid: string): Promise<ParkedPrewarmVmObservation | null>;
+  prewarmVmObservation(gatewayId: string, uid: string, requireGuestDisks?: boolean): Promise<ParkedPrewarmVmObservation | null>;
+  updateGuestAgentImage(gatewayId: string, uid: string, instanceId: string, image: string): Promise<void>;
   readDeploymentPrerequisiteError(gatewayId: string): Promise<string | null>;
   recoverUnreachable(gatewayId: string): Promise<void>;
   deleteVm(ownerUid: string): Promise<boolean>;
@@ -46,6 +48,7 @@ export interface ParkedPrewarmVmObservation {
   status: string;
   bootImageId: string;
   recoveryReady: boolean;
+  guestDisks?: RetainedGuestDisks;
 }
 
 export interface VmGatewayRuntimeDeps {
@@ -481,14 +484,15 @@ export function createVmGatewayRuntime(deps: VmGatewayRuntimeDeps): VmGatewayRun
       const spec = runtime?.vmSpec ?? deps.vmSpec;
       return (await deps.vm.readFamilyImage(spec.imageFamily, spec.imageProject)).id;
     },
-    async prewarmVmObservation(gatewayId, uid) {
+    async prewarmVmObservation(gatewayId, uid, requireGuestDisks = false) {
       const runtime = await deps.store.fleetRegistry.get(gatewayId);
       const vm = runtime?.vm;
       if (!vm?.instanceId) return null;
       const observed = await deps.vm.describe(vm.instanceName, vm.zone);
       if (!isOwnedVm(observed, vm.instanceId, gatewayId, uid)) return null;
-      if (observed.status !== "RUNNING" && observed.status !== "SUSPENDED") return null;
-      const bootImage = await deps.vm.readBootImage(vm.instanceName, vm.zone);
+      if (!["RUNNING", "SUSPENDED"].includes(observed.status)) return null;
+      const guestDisks = requireGuestDisks ? await deps.vm.readAttachedGuestDisks(vm.instanceName, vm.zone, uid, vm.instanceId) : undefined;
+      const bootImageId = guestDisks?.bootImageId ?? (await deps.vm.readBootImage(vm.instanceName, vm.zone)).id;
       const checked = await deps.vm.describe(vm.instanceName, vm.zone);
       if (!isOwnedVm(checked, vm.instanceId, gatewayId, uid) || checked.status !== observed.status) return null;
       let recoveryReady = true;
@@ -497,7 +501,13 @@ export function createVmGatewayRuntime(deps: VmGatewayRuntimeDeps): VmGatewayRun
       } catch {
         recoveryReady = false;
       }
-      return { instanceId: vm.instanceId, status: observed.status, bootImageId: bootImage.id, recoveryReady };
+      return { instanceId: vm.instanceId, status: observed.status, bootImageId, recoveryReady, ...(guestDisks ? { guestDisks } : {}) };
+    },
+    async updateGuestAgentImage(gatewayId, uid, instanceId, image) {
+      const runtime = await deps.store.fleetRegistry.get(gatewayId);
+      const vm = runtime?.vm;
+      if (!vm || vm.instanceId !== instanceId) throw new Error("Verified guest VM changed before publishing the agent image");
+      await deps.vm.updateGuestAgentImage(vm.instanceName, vm.zone, { instanceId, gatewayId, ownerUid: uid, image });
     },
     readDeploymentPrerequisiteError: vmLifecycle.readDeploymentPrerequisiteError,
     recoverUnreachable: vmLifecycle.recoverUnreachable,
