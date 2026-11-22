@@ -70,3 +70,35 @@ There is no migration Job. Each replica creates and upgrades the service's
 schema at startup under an advisory lock, so the database user must own its
 schema. An image older than the schema refuses to start: rolling back across a
 schema upgrade crash-loops by design. Roll forward instead.
+
+## Preview gateway
+
+The preview gateway serves previews at `https://<label>.<domain>/` through a
+GKE Gateway of class `gke-l7-global-external-managed`, separate from the edge
+Ingress. Every host under the domain reaches the platform API, which decides
+from the `Host` header what to serve. It is off by default, and while it is off
+the chart renders exactly what it rendered before.
+
+Turn on the Gateway API on the cluster first, and create the address,
+certificate map and Cloud Armor policy outside the chart. Then set:
+
+| Value | Meaning |
+| --- | --- |
+| `previewGateway.enabled` | `true` to render the gateway |
+| `previewGateway.domain` | base domain, such as `previews.example.com`; the gateway serves `*.<domain>` |
+| `previewGateway.certificateMapName` | Certificate Manager certificate map, by name, with a certificate for `*.<domain>` |
+| `previewGateway.staticIpName` | reserved global external IP address, by name |
+| `previewGateway.securityPolicyName` | Cloud Armor backend security policy, by name |
+| `previewGateway.name` | optional; names the Gateway and HTTPRoute (default `preview-gateway`) |
+
+A Certificate Manager wildcard certificate needs DNS authorization. Point the
+wildcard DNS record at the address without a proxy in front, so Cloud Armor
+sees client addresses.
+
+The chart renders the Gateway with one HTTPS listener on port 443, an
+HTTPRoute, and a Service named `<name>-backend` that selects the platform API
+pods. A `GCPBackendPolicy` applies the Cloud Armor policy to that Service and a
+`HealthCheckPolicy` checks `/health` on the serving port. The Service is
+separate from `octogee-api` so these policies never meet the edge Ingress
+`BackendConfig`. There is no HTTP listener; serve the domain over HTTPS only,
+for example from a top-level domain on the HSTS preload list.

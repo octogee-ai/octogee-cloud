@@ -1,0 +1,91 @@
+{{- if .Values.previewGateway.enabled }}
+{{- $preview := .Values.previewGateway -}}
+{{- $name := $preview.name | default "preview-gateway" -}}
+{{- $backend := printf "%s-backend" $name -}}
+{{- $host := printf "*.%s" $preview.domain -}}
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "octogee.labels" . | nindent 4 }}
+  annotations:
+    networking.gke.io/certmap: {{ $preview.certificateMapName | quote }}
+spec:
+  gatewayClassName: gke-l7-global-external-managed
+  addresses:
+    - type: NamedAddress
+      value: {{ $preview.staticIpName | quote }}
+  listeners:
+    - name: https
+      protocol: HTTPS
+      port: 443
+      hostname: {{ $host | quote }}
+      allowedRoutes:
+        namespaces:
+          from: Same
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "octogee.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ $name }}
+      sectionName: https
+  hostnames:
+    - {{ $host | quote }}
+  rules:
+    - backendRefs:
+        - name: {{ $backend }}
+          port: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $backend }}
+  labels:
+    {{- include "octogee.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app: octogee-api
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: networking.gke.io/v1
+kind: GCPBackendPolicy
+metadata:
+  name: {{ $backend }}
+  labels:
+    {{- include "octogee.labels" . | nindent 4 }}
+spec:
+  default:
+    securityPolicy: {{ $preview.securityPolicyName | quote }}
+  targetRef:
+    group: ""
+    kind: Service
+    name: {{ $backend }}
+---
+apiVersion: networking.gke.io/v1
+kind: HealthCheckPolicy
+metadata:
+  name: {{ $backend }}
+  labels:
+    {{- include "octogee.labels" . | nindent 4 }}
+spec:
+  default:
+    config:
+      type: HTTP
+      httpHealthCheck:
+        portSpecification: USE_SERVING_PORT
+        requestPath: /health
+  targetRef:
+    group: ""
+    kind: Service
+    name: {{ $backend }}
+{{- end }}
