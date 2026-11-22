@@ -2130,6 +2130,24 @@ describe("createRuntimeDispatchingHelmRunner", () => {
     };
   }
 
+  it("verifies Shared installations through the cluster runner and rejects conflicting VM custody", async () => {
+    const instance = { enabled: true, gatewayId: "shared-a", image: { repository: "r", tag: "t" } };
+    const observation = { instance, manifestDigest: "manifest" };
+    const cluster = fakeRunner("cluster", { "shared-a": instance });
+    cluster.readSharedInstallation = vi.fn(async () => observation);
+    cluster.matchesDeployedManifest = vi.fn(async () => true);
+    let vmStamped = false;
+    const runner = createRuntimeDispatchingHelmRunner({ cluster, vm: fakeRunner("vm", {}), isVmGateway: async () => vmStamped });
+    const input = { namespace: "ns", gatewayId: "shared-a" };
+
+    await expect(runner.readSharedInstallation!(input)).resolves.toEqual(observation);
+    const opts = { ...input, chartPath: "/chart", imageRepository: "r", imageTag: "t" };
+    await expect(runner.matchesDeployedManifest!(opts, 1)).resolves.toBe(true);
+    expect(cluster.matchesDeployedManifest).toHaveBeenCalledWith(opts, 1);
+    vmStamped = true;
+    await expect(runner.readSharedInstallation!(input)).rejects.toThrow(/conflicting cluster and VM/);
+  });
+
   it("rejects simultaneous Helm and VM deployments instead of hiding the cluster observation", async () => {
     const instance = { enabled: true, gatewayId: "b-x", image: { repository: "r", tag: "t" } };
     const cluster = fakeRunner("cluster", { "b-x": instance });

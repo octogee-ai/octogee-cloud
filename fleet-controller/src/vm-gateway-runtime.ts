@@ -536,6 +536,12 @@ export function createRuntimeDispatchingHelmRunner(input: {
     }
   }
   return {
+    async readSharedInstallation(opts) {
+      const [cluster, vm] = await Promise.all([input.cluster.readSharedInstallation?.(opts), input.vm.readDeployedInstance(opts)]);
+      await assertObservedRuntime(opts.gatewayId, Boolean(cluster), Boolean(vm));
+      return cluster ?? null;
+    },
+    matchesDeployedManifest: input.cluster.matchesDeployedManifest?.bind(input.cluster),
     async readDeployedInstances(opts) {
       const [cluster, vm] = await Promise.all([input.cluster.readDeployedInstances(opts), input.vm.readDeployedInstances(opts)]);
       await Promise.all([...new Set([...Object.keys(cluster), ...Object.keys(vm)])]
