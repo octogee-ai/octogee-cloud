@@ -97,7 +97,10 @@ export function matchesRestartedCheckpoint(
 
 async function resumeClaimedCheckpoint(env: NodeJS.ProcessEnv, prefix: string): Promise<HobbyCheckpointClaim> {
   const claim = await readMountedCheckpointClaim();
-  const restoredPodUid = await readFile(`${prefix}-restored`, "utf8");
+  const restoredPodUid = await readFile(`${prefix}-restored`, "utf8").catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return "";
+    throw error;
+  });
   if (!matchesRestartedCheckpoint(env, claim, restoredPodUid)) {
     throw new Error("Expected previous checkpoint restoration in the same admitted pod");
   }
@@ -120,10 +123,12 @@ export async function checkpointGatewayCredentials(
   for (;;) {
     try {
       const credentials = await read();
-      if (!credentials.token.trim() || !credentials.agentStoreDsn.trim()) {
+      const token = credentials.token.trim();
+      const agentStoreDsn = credentials.agentStoreDsn.trim();
+      if (!token || !agentStoreDsn) {
         throw new Error("Gateway checkpoint credentials are unavailable");
       }
-      return credentials;
+      return { token, agentStoreDsn };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }

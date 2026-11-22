@@ -83,7 +83,11 @@ export function matchesRestartedCheckpoint(env, claim, restoredPodUid) {
 }
 async function resumeClaimedCheckpoint(env, prefix) {
     const claim = await readMountedCheckpointClaim();
-    const restoredPodUid = await readFile(`${prefix}-restored`, "utf8");
+    const restoredPodUid = await readFile(`${prefix}-restored`, "utf8").catch((error) => {
+        if (error.code === "ENOENT")
+            return "";
+        throw error;
+    });
     if (!matchesRestartedCheckpoint(env, claim, restoredPodUid)) {
         throw new Error("Expected previous checkpoint restoration in the same admitted pod");
     }
@@ -101,10 +105,12 @@ export async function checkpointGatewayCredentials(read = readCheckpointCredenti
     for (;;) {
         try {
             const credentials = await read();
-            if (!credentials.token.trim() || !credentials.agentStoreDsn.trim()) {
+            const token = credentials.token.trim();
+            const agentStoreDsn = credentials.agentStoreDsn.trim();
+            if (!token || !agentStoreDsn) {
                 throw new Error("Gateway checkpoint credentials are unavailable");
             }
-            return credentials;
+            return { token, agentStoreDsn };
         }
         catch (error) {
             if (error.code !== "ENOENT")

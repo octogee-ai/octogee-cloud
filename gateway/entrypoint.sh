@@ -6,12 +6,7 @@ GATEWAY_CLASS_EFFECTIVE="$(dual_read_gateway_class "${GATEWAY_CLASS:-shared}")"
 
 if [ "$GATEWAY_CLASS_EFFECTIVE" = isolated ] && [ "${GATEWAY_COMPUTER_DESKTOP:-}" = x11 ] && [ "${OCTOGEE_X11_SESSION:-0}" != 1 ]; then
   if [ -n "${OCTOGEE_CHECKPOINT_SLOT_ID:-}" ]; then
-    POD_UID="$(/octogee/scripts/node_modules/.bin/tsx /octogee/scripts/entrypoints/hobby-checkpoint-gate.ts)"
-    OPENCLAW_GATEWAY_TOKEN="$(cat /var/run/octogee/checkpoint-credentials/token)"
-    OPENCLAW_AGENT_STORE_DSN="$(cat /var/run/octogee/checkpoint-credentials/agent-store-dsn)"
-    : "${OPENCLAW_GATEWAY_TOKEN:?missing restored gateway token}"
-    : "${OPENCLAW_AGENT_STORE_DSN:?missing restored agent store credentials}"
-    export POD_UID OPENCLAW_GATEWAY_TOKEN OPENCLAW_AGENT_STORE_DSN
+    exec node /octogee/scripts/entrypoints/hobby-checkpoint-gate.mjs
   fi
   exec /usr/local/bin/octogee-hobby-desktop
 fi

@@ -82,14 +82,14 @@ export async function runUserIdentityEntrypoint(input: Parameters<typeof resolve
   return 0;
 }
 
-async function main(): Promise<void> {
+export async function main(): Promise<void> {
   const gatewayId = process.env.GATEWAY_ID?.trim() ?? "";
-  const client = createFleetBrokerClient(gatewayId);
   const checkpointClaim = process.env.OCTOGEE_CHECKPOINT_SLOT_ID ? await readMountedCheckpointClaim() : undefined;
   if (checkpointClaim === null || (checkpointClaim &&
     (checkpointClaim.gatewayId !== gatewayId || checkpointClaim.podUid !== process.env.POD_UID))) {
     throw new Error("Expected the restored pod's exact gateway checkpoint claim");
   }
+  const client = createFleetBrokerClient(gatewayId);
   const exitCode = await runUserIdentityEntrypoint({
     env: process.env,
     fetchIdentity: async () => {
