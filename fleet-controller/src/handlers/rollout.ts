@@ -1,3 +1,6 @@
+import { readGatewayAuthorizationInStore } from "@octogee/core/gateway-live-release";
+import type { GatewayRootPatch, PlatformStateStore, PlatformStateTransaction } from "@octogee/core/platform-state";
+import { withGatewayRuntimeMutation } from "../lib/gateway-runtime-mutation.js";
 import type { UserActivationTargetRollbackProof } from '../user-activation-roll-recovery.js';
 import type { Operation, OperationStep, StepStatus } from "@octogee/shared/types/glm";
 import type { GatewayMutableConfig } from "@octogee/shared/types/gateway-mutable-config";
@@ -112,6 +115,41 @@ export function planDesiredReleaseActivation(
       updatedBy: `rollout:${operationId}`,
     },
   };
+}
+
+export type GatewayRolloutActivationGuard = (input: {
+  gateway: Readonly<GatewayDoc>;
+  config: Readonly<GatewayMutableConfig>;
+  readUser: PlatformStateTransaction["users"]["records"]["get"];
+  listGatewayAssignments: () => ReturnType<PlatformStateTransaction["gateways"]["assignments"]["list"]>;
+  targetRelease: number;
+  operationId: string;
+}) => Promise<string | null>;
+
+export function activateGatewayDesiredRelease(
+  store: PlatformStateStore,
+  { gatewayId, targetRelease, operationId }: Parameters<RolloutDeps["activateDesiredRelease"]>[0],
+  now: () => number,
+  requiresInitialGatewayRelease?: RequiresInitialGatewayRelease,
+  activationGuard?: GatewayRolloutActivationGuard,
+): ReturnType<RolloutDeps["activateDesiredRelease"]> {
+  return withGatewayRuntimeMutation(store, gatewayId, async transaction => {
+    const authorization = await readGatewayAuthorizationInStore(transaction, gatewayId);
+    if (!authorization) return { success: false, error: `gateway ${gatewayId} durable root is unavailable` };
+    const { gateway, config } = authorization;
+    const activation = planDesiredReleaseActivation(gateway, targetRelease, now(), operationId, requiresInitialGatewayRelease);
+    if (!activation.success || activation.patch === null) return activation;
+    const hold = await activationGuard?.({
+      gateway, config, targetRelease, operationId,
+      readUser: uid => transaction.users.records.get(uid),
+      listGatewayAssignments: () => transaction.gateways.assignments.list(gatewayId),
+    });
+    if (hold !== undefined && hold !== null) {
+      return { success: false, error: `gateway ${gatewayId} rollout activation deferred; fleet will retry: ${hold}` };
+    }
+    await transaction.gateways.roots.patch(gatewayId, activation.patch as GatewayRootPatch);
+    return { success: true };
+  });
 }
 
 function converged(gw: GatewayDoc, targetRelease: number): boolean {

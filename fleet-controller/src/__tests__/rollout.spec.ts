@@ -1,6 +1,10 @@
 import { describe, it, expect, vi } from "vitest";
+import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
+import { classifyOperationFailure } from "../operation-retry.js";
 import {
+  activateGatewayDesiredRelease,
   createRolloutHandler,
+  type GatewayRolloutActivationGuard,
   planDesiredReleaseActivation,
   type RolloutDeps,
 } from "../handlers/rollout.js";
@@ -72,6 +76,42 @@ function mkDeps(overrides: Partial<RolloutDeps> = {}): RolloutDeps & { logs: str
     ...overrides,
   };
 }
+
+it("holds the durable desired pointer until the product activation guard allows the rollout", async () => {
+  const gatewayId = "builder-source";
+  const gateway = {
+    ...mkGateway({ gatewayId, desiredRelease: 1 }), configSchemaVersion: 1,
+    gatewayClass: "isolated", profile: null, imageProfile: "isolated", sizingTier: "s",
+    gcpProject: null, gatewayContainerSecurityContext: null, serviceAccountName: null,
+    serviceAccount: null, builderAccess: null, ownerUid: "owner", builderSlug: "alice", modelBrokerLimits: null,
+  };
+  const store = createDocumentFixtureStore({ [`gateways/${gatewayId}`]: gateway }, { serializeTransactions: true });
+  const input = { gatewayId, targetRelease: 2, operationId: "queued-rollout" };
+  let blocked = true;
+  const check: GatewayRolloutActivationGuard = async ({ gateway, config, targetRelease, operationId, listGatewayAssignments }) => {
+    expect([gateway.gatewayId, gateway.desiredRelease, targetRelease, operationId]).toEqual([gatewayId, 1, 2, input.operationId]);
+    expect(config.ownerUid).toBe("owner");
+    expect(await listGatewayAssignments()).toEqual([]);
+    return blocked ? "retained source recovery is pending" : null;
+  };
+  const guard = vi.fn(check);
+
+  const held = await activateGatewayDesiredRelease(store, input, () => 20, undefined, guard);
+  expect(held.success).toBe(false);
+  if (!held.success) {
+    expect(held.error).toContain("retained source recovery is pending");
+    expect(classifyOperationFailure(held.error)).toBe("transient");
+  }
+  expect(await store.gateways.roots.get(gatewayId)).toMatchObject({ desiredRelease: 1, updatedAt: 1 });
+
+  blocked = false;
+  await expect(activateGatewayDesiredRelease(store, input, () => 30, undefined, guard)).resolves.toEqual({ success: true });
+  expect(await store.gateways.roots.get(gatewayId)).toMatchObject({ desiredRelease: 2, updatedAt: 30 });
+  await expect(activateGatewayDesiredRelease(store, input, () => 40, undefined, guard)).resolves.toMatchObject({ success: true });
+  const stale = await activateGatewayDesiredRelease(store, { ...input, targetRelease: 1 }, () => 50, undefined, guard);
+  expect(stale.success).toBe(false);
+  expect(guard).toHaveBeenCalledTimes(2);
+});
 
 describe("rollout op — durable root validation", () => {
   it("lets a protected first release become live before activating the queued successor", async () => {

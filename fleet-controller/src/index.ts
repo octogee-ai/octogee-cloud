@@ -26,7 +26,7 @@ import {
   startIsolatedPodBlockerObserver,
 } from "./isolated-pod-home.js";
 import { runNormalFleetMutation } from "@octogee/core/normal-fleet-mutation";
-import { platformStateStoreFromEnvironment, MissingRecordError, type WorkspaceProject, type FleetHeartbeatReport, type FleetRegistryRecord, type GatewayRoot, type OpaqueMap, type GatewayRootFields, type GatewayRootPatch, type OperationRecord, type PlatformStateStore, type PlatformStateTransaction, type Stored, type WatchChange, type WatchEvent, type FleetRegistryInventory } from "@octogee/core/platform-state";
+import { platformStateStoreFromEnvironment, MissingRecordError, type WorkspaceProject, type FleetHeartbeatReport, type FleetRegistryRecord, type GatewayRoot, type OpaqueMap, type GatewayRootFields, type OperationRecord, type PlatformStateStore, type PlatformStateTransaction, type Stored, type WatchChange, type WatchEvent, type FleetRegistryInventory } from "@octogee/core/platform-state";
 import { restartGatewayProcess, restartGatewayDeployment } from './lib/runtime-restart-transport.js';
 import { assertMigrationRestartUnfenced } from './lib/runtime-restart-coordinator.js';
 import { assertOwnerOperationUnfenced } from './lib/vm-recovery-fence.js';
@@ -229,7 +229,8 @@ import {
   createRolloutHandler,
   initialGatewayReleasePending,
   type RequiresInitialGatewayRelease,
-  planDesiredReleaseActivation,
+  activateGatewayDesiredRelease,
+  type GatewayRolloutActivationGuard,
 } from "./handlers/rollout.js";
 import {
   createDeprovisionUserHandler,
@@ -3004,6 +3005,7 @@ interface ControllerRuntimeSeams {
   gatewayGitKeys: GatewayGitKeyRelease | null;
   resolveHobbyCheckpointPod?: ResolveHobbyCheckpointPod;
   requiresInitialGatewayRelease?: RequiresInitialGatewayRelease;
+  checkGatewayRolloutActivation?: GatewayRolloutActivationGuard;
   heldNativeReturnBackupReaders?: NativeReturnBackupReaders | null;
   sharedHeldReturnMaintenancePhysical?: SharedHeldReturnMaintenancePhysical | null;
   heldNativeOfflineSource?: ControllerProduct["heldNativeOfflineSource"];
@@ -3017,7 +3019,7 @@ async function createControllerRuntime(
   store: PlatformStateStore,
   createHostingCleanup: ControllerProduct["createHostingCleanup"],
   userLifecycle: ProductUserLifecycle | null,
-  { accounts, documents, provisioning, gatewayGitKeys, resolveHobbyCheckpointPod, requiresInitialGatewayRelease, heldNativeReturnBackupReaders, heldNativeOfflineSource, sharedHeldReturnMaintenancePhysical }: ControllerRuntimeSeams,
+  { accounts, documents, provisioning, gatewayGitKeys, resolveHobbyCheckpointPod, requiresInitialGatewayRelease, checkGatewayRolloutActivation, heldNativeReturnBackupReaders, heldNativeOfflineSource, sharedHeldReturnMaintenancePhysical }: ControllerRuntimeSeams,
 ): Promise<ControllerRuntime> {
   const runKubectl: KubectlSubprocess = (args, opts) => spawnKubectl(args, opts);
   const authSecretEnsurer = createAuthSecretEnsurer({ runKubectl, randomTokenHex: defaultRandomTokenHex, log });
@@ -3182,7 +3184,7 @@ async function createControllerRuntime(
     syncFleetIngress: handlerSyncFleetIngress, privateKey: fleetControllerPrivateKey,
     modelKeySourceIssuer, prepareGatewayConfig, chartFingerprint,
     runRuntimeRecovery: convergeGateways.runExclusive,
-    prepareMigrationAgentStores, ...nativeReturn.handlers, store, requiresInitialGatewayRelease,
+    prepareMigrationAgentStores, ...nativeReturn.handlers, store, requiresInitialGatewayRelease, checkGatewayRolloutActivation,
     deleteHostingSites: createHostingCleanup?.(log),
     userLifecycle,
     accounts,
@@ -3311,6 +3313,7 @@ export interface ControllerProduct {
   }) => HeldNativeOfflineSourceBackend | null;
   resolveHobbyCheckpointPod?: ResolveHobbyCheckpointPod;
   requiresInitialGatewayRelease?: RequiresInitialGatewayRelease;
+  checkGatewayRolloutActivation?: GatewayRolloutActivationGuard;
   createHostingCleanup?: (log: (message: string) => void) => HostingCleanup;
   userLifecycle: ProductUserLifecycleFactory | null;
   addAdminRoutes?: ProductAdminRoutes;
@@ -3389,6 +3392,7 @@ export async function main(product: ControllerProduct): Promise<void> {
       accounts, documents, ...provisioningSeams(provisioning),
       resolveHobbyCheckpointPod: product.resolveHobbyCheckpointPod,
       requiresInitialGatewayRelease: product.requiresInitialGatewayRelease,
+      checkGatewayRolloutActivation: product.checkGatewayRolloutActivation,
       ...controllerNativeReturnSeams(product, store, environmentName),
     });
 
@@ -3684,6 +3688,7 @@ async function buildHandlers(
     reconcileHeldNativeReturn?: MigrateUserDeps["reconcileHeldNativeReturn"];
     reconcileHeldNativeOfflineReturn?: MigrateUserDeps["reconcileHeldNativeOfflineReturn"];
     requiresInitialGatewayRelease?: RequiresInitialGatewayRelease;
+    checkGatewayRolloutActivation?: GatewayRolloutActivationGuard;
     store: PlatformStateStore;
     deleteHostingSites?: HostingCleanup;
     userLifecycle: ProductUserLifecycle | null;
@@ -4055,26 +4060,9 @@ async function buildHandlers(
       if (!vmRuntime) return `gateway ${gatewayId}: gce-vm deployment requires configured VM runtime`;
       return vmRuntime.readDeploymentPrerequisiteError(gatewayId);
     },
-    activateDesiredRelease: async ({ gatewayId, targetRelease, operationId }) =>
-      withGatewayRuntimeMutation(store,gatewayId,async (transaction) => {
-        const gateway = (await readGatewayAuthorizationInStore(transaction, gatewayId))?.gateway;
-        if (!gateway) {
-          return {
-            success: false as const,
-            error: `gateway ${gatewayId} durable root is unavailable`,
-          };
-        }
-        const activation = planDesiredReleaseActivation(
-          gateway,
-          targetRelease,
-          Date.now(),
-          operationId,
-          fleetOps.requiresInitialGatewayRelease,
-        );
-        if (!activation.success || activation.patch === null) return activation;
-        await transaction.gateways.roots.patch(gatewayId, activation.patch as GatewayRootPatch);
-        return { success: true as const };
-      }),
+    activateDesiredRelease: input => activateGatewayDesiredRelease(
+      store, input, Date.now, fleetOps.requiresInitialGatewayRelease, fleetOps.checkGatewayRolloutActivation,
+    ),
     requestReconcileTick: (gatewayId) => requestReconcileTickRef.fire?.(gatewayId),
     releaseRecordTimeoutMs: 60_000,
     convergeTimeoutMs: 45 * 60_000,
