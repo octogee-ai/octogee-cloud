@@ -260,7 +260,7 @@ SELECT
   ) AS target_locks
 `;
 
-export function createHeldReturnStoreCustodyVerifier(adminDsn: string) {
+export function createHeldReturnStoreCustodyVerifier(adminDsn: string, options?: { serializeCredentialChanges?: boolean }) {
   const scope = decodeURIComponent(new URL(adminDsn).pathname.slice(1));
   if (!scope) throw new Error("Held Native return store verification requires a database");
   const pool = new pg.Pool({ connectionString: adminDsn, max: 1, connectionTimeoutMillis: 10_000, statement_timeout: 5_000, allowExitOnIdle: true });
@@ -271,16 +271,31 @@ export function createHeldReturnStoreCustodyVerifier(adminDsn: string) {
         !schemas.length || new Set(schemas).size !== schemas.length || schemas.some(schema => !schema)) {
       throw new Error("Held Native return store identity is incomplete");
     }
-    const { rows: [result] } = await pool.query<{
-      found: number; source_owns: boolean; target_grants: boolean; target_locks: boolean;
-    }>(HELD_RETURN_STORE_CUSTODY, [
+    const inputs = [
       roleFor("gateway", `${scope}:${sourceGatewayId}`), roleFor("gateway", `${scope}:${targetGatewayId}`),
       roleFor("builder", `${scope}:${uid}`), roleFor("shared", scope), schemas,
-    ]);
+    ];
+    const { rows: [result] } = await readHeldReturnStoreCustody(pool, inputs, options?.serializeCredentialChanges === true);
     if (!result || result.found !== schemas.length || !result.source_owns || result.target_grants || result.target_locks) {
       throw new Error("Held Native return agent-store source custody or destination exclusion is unavailable");
     }
   };
+}
+
+type HeldStoreCustody = { found: number; source_owns: boolean; target_grants: boolean; target_locks: boolean };
+
+async function readHeldReturnStoreCustody(pool: pg.Pool, input: (string | string[])[], serialize: boolean) {
+  if (!serialize) return pool.query<HeldStoreCustody>(HELD_RETURN_STORE_CUSTODY, input);
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN READ ONLY");
+    const lock = await client.query("SELECT pg_try_advisory_xact_lock(hashtextextended('octogee-agent-store-credentials', 0)) AS acquired");
+    if (lock.rows[0]?.acquired !== true) throw new Error("Agent-store ownership is changing during old target exclusion");
+    const result = await client.query<HeldStoreCustody>(HELD_RETURN_STORE_CUSTODY, input);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) { await client.query("ROLLBACK"); throw error; }
+  finally { client.release(); }
 }
 
 export function createAgentStoreCredentialRevoker(adminDsn: string) {

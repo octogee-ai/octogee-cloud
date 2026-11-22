@@ -1,3 +1,4 @@
+import { nativeReturnTargetDenied } from "./native-return-target-deny.js";
 import { createHash } from "node:crypto";
 import { isIP } from "node:net";
 import { isDeepStrictEqual } from "node:util";
@@ -379,7 +380,17 @@ export function heldNativeReturnBlocksDestination(op, gatewayId) {
     return !receipt || ![Number.isSafeInteger(receipt.verifiedAt), receipt.verifiedAt >= forward.sourceReconcile.requestedAt,
         /^[a-f0-9]{16}$/.test(receipt.appliedFingerprint), /^[a-f0-9]{64}$/.test(receipt.activationManifestSha256)].every(Boolean);
 }
+export async function readHeldNativeReturnForTargetExclusion(state, selection) {
+    const hold = journalHold(await state.journal.operations.get(selection.operationId), selection);
+    const forward = hold.handoff.forwardRecovery;
+    requireConflict(hold.op.status === "pending" && hold.op.startedAt === null && hold.op.completedAt === null &&
+        !forward.sourceReconcile && !forward.offlineSourceRecovery && missingFingerprintAttempt(hold), "Held Native return does not admit an old target exclusion");
+    requireConflict(!forward.sharedTargetImportHold || forward.sharedTargetImportHold.gatewayId === selection.targetGatewayId, "Held Native return old target authority changed");
+    return { ...await holdingCustody(state, hold), uid: hold.uid, slug: hold.slug };
+}
 export async function heldNativeReturnBlocksOwnerDestination(store, gatewayId, owner) {
+    if (await nativeReturnTargetDenied(store, owner.uid, gatewayId))
+        return true;
     const id = owner.fences.migration?.operationId;
     if (!id)
         return false;

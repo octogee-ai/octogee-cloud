@@ -2076,7 +2076,7 @@ function assignmentClockMatches(current: number, expected: number | undefined): 
 
 export {
   assertHeldNativeReturnRepairClaim, completeHeldNativeReturnRepair, heldNativeReturnBlocksDestination, heldNativeReturnBlocksOwnerDestination,
-  requestHeldNativeReturnRepair, HeldNativeReturnConflict, reserveHeldNativeOfflineSource, readReservedHeldNativeOfflineSource, bindHeldNativeStoppedOriginal,
+  requestHeldNativeReturnRepair, readHeldNativeReturnForTargetExclusion, HeldNativeReturnConflict, reserveHeldNativeOfflineSource, readReservedHeldNativeOfflineSource, bindHeldNativeStoppedOriginal,
   assertHeldNativeOfflineSourceClaim, assertHeldNativeOfflineSourceClaimable, assertPendingHeldNativeOfflineProjection, recordHeldNativeOfflineStage, recordHeldNativeOriginalRestart, HELD_NATIVE_OFFLINE_SOURCE_FENCE_KIND,
   type HeldNativeReturnAuthority, type HeldNativeReturnSelection, type HeldNativeReturnSourceProof, type HeldNativeStoppedOriginalWitness, type HeldNativeOriginalRestartWitness,
 } from "./held-native-return-repair.js";
@@ -2089,3 +2089,5 @@ export {
   type SharedHeldReturnMaintenanceCommand, type SharedHeldReturnMaintenanceDispatch,
   type SharedHeldReturnMaintenancePlan, type SharedHeldReturnMaintenanceResult, type SharedHeldReturnMaintenanceWithdrawal,
 } from "./shared-held-return-maintenance.js";
+
+export { NATIVE_RETURN_TARGET_EXCLUSION, nativeReturnTargetExclusionId, nativeReturnTargetDenied, nativeReturnSharedStoreHandoffDenied } from "./native-return-target-deny.js";

@@ -14,6 +14,8 @@ import { createGatewayCredentialAuth } from "../middleware/gateway-credential-au
 import { createTenantEnforcementMiddleware } from "../middleware/tenant-enforcement.js";
 import { gatewayVmPodName } from "@octogee/shared/types/glm";
 import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
+import { nativeReturnTargetExclusionId, NATIVE_RETURN_TARGET_EXCLUSION } from "@octogee/core/fleet-state";
+import { buildOperationAuditIntent } from "@octogee/core/operation-audit";
 import { createFleetBrokerRoutes } from "./fleet-broker.js";
 
 function harness(metadata: Record<string, unknown> = { generation: "17", size: "3", md5Hash: "kAFQmDzST7DWlj99KOF/cg==" }) {
@@ -118,23 +120,26 @@ function preparingHarness(scenario = "valid") {
   if (scenario === "changed-source") owner.provisioning.openclaw.gatewayId = "other-source";
   if (scenario === "retired") gateway.desiredStatus = "retired";
   const operationCount = scenario === "missing-operation" ? 0 : scenario === "duplicate-operation" ? 2 : 1;
-  const docs: Record<string, Record<string, unknown>> = {
+  const docs = new Map<string, Record<string, unknown>>(Object.entries({
     "users/uid-owner": owner, "gateways/b-owner": gateway, "glmGateways/b-owner": runtime,
     ...Object.fromEntries(Array.from({ length: operationCount }, (_, index) => [`glmOperations/move-${index}`, operation])),
-  };
+  }));
   operation.inputUid = "uid-owner";
   const readBlobMetadata = vi.fn(async () => ({ generation: "17", size: "3", md5Hash: "kAFQmDzST7DWlj99KOF/cg==" }));
   const createBlobSignedUrl = vi.fn(async (input: { gcsPath: string }) => ({ url: `https://signed.test/${input.gcsPath}`, method: "GET" as const, gcsPath: input.gcsPath, expiresAt: "2026-10-07T12:00:00Z" }));
-  const app = express(); app.disable("x-powered-by"); app.use(express.json());
-  app.use((req, _res, next) => { req.boundTenant = { kind: "gateway", gatewayId: "b-owner", ownerUid: "uid-owner", podUid: "4242", podName: gatewayVmPodName("b-owner", "4242"), saName: "octogee-gw-b-owner" }; next(); });
-  app.use(createTenantEnforcementMiddleware({ readFlowGateway: async () => null, store: createDocumentFixtureStore(docs), onDenied: async () => {} }));
-  const credentialAuth = createGatewayCredentialAuth({ namespace: "octogee-test",
-    reviewer: async () => ({ authenticated: true, saName: "octogee-gw-b-owner", namespace: "octogee-test", audiences: [GATEWAY_CREDENTIAL_TOKEN_AUDIENCE],
-      podName: gatewayVmPodName("b-owner", "4242"), podUid: scenario === "wrong-credential" ? "9999" : "4242" }),
-    mapIdentity: async () => ({ kind: "gateway", gatewayId: "b-owner" }), logger: { warn: vi.fn() } });
-  app.use((req, res, next) => GATEWAY_CREDENTIAL_ROUTES.has(req.path) ? credentialAuth(req, res, next) : next());
-  app.use("/internal/fleet", createFleetBrokerRoutes({ store: createDocumentFixtureStore(docs), readBlobMetadata, createBlobSignedUrl }));
-  return { app, owner, operation, readBlobMetadata, createBlobSignedUrl };
+  function makeApp() {
+    const app = express(); app.disable("x-powered-by"); app.use(express.json());
+    app.use((req, _res, next) => { req.boundTenant = { kind: "gateway", gatewayId: "b-owner", ownerUid: "uid-owner", podUid: "4242", podName: gatewayVmPodName("b-owner", "4242"), saName: "octogee-gw-b-owner" }; next(); });
+    app.use(createTenantEnforcementMiddleware({ readFlowGateway: async () => null, store: createDocumentFixtureStore(docs), onDenied: async () => {} }));
+    const credentialAuth = createGatewayCredentialAuth({ namespace: "octogee-test",
+      reviewer: async () => ({ authenticated: true, saName: "octogee-gw-b-owner", namespace: "octogee-test", audiences: [GATEWAY_CREDENTIAL_TOKEN_AUDIENCE],
+        podName: gatewayVmPodName("b-owner", "4242"), podUid: scenario === "wrong-credential" ? "9999" : "4242" }),
+      mapIdentity: async () => ({ kind: "gateway", gatewayId: "b-owner" }), logger: { warn: vi.fn() } });
+    app.use((req, res, next) => GATEWAY_CREDENTIAL_ROUTES.has(req.path) ? credentialAuth(req, res, next) : next());
+    app.use("/internal/fleet", createFleetBrokerRoutes({ store: createDocumentFixtureStore(docs), readBlobMetadata, createBlobSignedUrl }));
+    return app;
+  }
+  return { app: makeApp(), makeApp, owner, operation, docs, readBlobMetadata, createBlobSignedUrl };
 }
 
 describe("source-owned held target project reads", () => {
@@ -215,6 +220,25 @@ describe("cancelled forward user preparation", () => {
     }
     expect((await admit()).status).toBe(204);
     expect((await readManifest(h)).status).toBe(200);
+  });
+  it("denies an old target after the migration fence is gone and a fresh broker is created", async () => {
+    const h = forward("legacy");
+    const uid = "uid-owner";
+    const audit = buildOperationAuditIntent({
+      actor: "test-operator", forced: false, what: "Exclude old target", why: "Qualified retained owner",
+      mutation: { kind: NATIVE_RETURN_TARGET_EXCLUSION }, target: { uid, targetGatewayId: "b-owner" },
+      preActionStatus: {}, idempotencyKey: `${NATIVE_RETURN_TARGET_EXCLUSION}:${uid}`,
+    });
+    const store = createDocumentFixtureStore(h.docs);
+    expect(audit.id).toBe(nativeReturnTargetExclusionId(uid));
+    await store.journal.audits.create({ ...audit.document, id: audit.id });
+    await store.journal.operations.patch("move-0", { status: "failed" });
+    const broker = h.makeApp();
+    const permit = (slug: string) => request(broker).post("/internal/fleet/migration/target-import-permit")
+      .set(GATEWAY_CREDENTIAL_TOKEN_HEADER, JWT).send({ slug });
+    expect((await permit("owner")).status).toBe(409);
+    h.docs.set("users/uid-other", { username: "other", provisioning: { openclaw: { slug: "other", gatewayId: "b-owner" } } });
+    expect((await permit("other")).status).toBe(204);
   });
   it.each(["v2", "legacy"] as const)("materializes the held target for the exact cancelled %s migration", async kind => {
     const h = forward(kind);

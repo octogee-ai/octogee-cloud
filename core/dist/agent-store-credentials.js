@@ -251,7 +251,7 @@ SELECT
       AND (locks.pid IS NULL OR locks.pid IN (SELECT pid FROM target_activity))
   ) AS target_locks
 `;
-export function createHeldReturnStoreCustodyVerifier(adminDsn) {
+export function createHeldReturnStoreCustodyVerifier(adminDsn, options) {
     const scope = decodeURIComponent(new URL(adminDsn).pathname.slice(1));
     if (!scope)
         throw new Error("Held Native return store verification requires a database");
@@ -263,14 +263,36 @@ export function createHeldReturnStoreCustodyVerifier(adminDsn) {
             !schemas.length || new Set(schemas).size !== schemas.length || schemas.some(schema => !schema)) {
             throw new Error("Held Native return store identity is incomplete");
         }
-        const { rows: [result] } = await pool.query(HELD_RETURN_STORE_CUSTODY, [
+        const inputs = [
             roleFor("gateway", `${scope}:${sourceGatewayId}`), roleFor("gateway", `${scope}:${targetGatewayId}`),
             roleFor("builder", `${scope}:${uid}`), roleFor("shared", scope), schemas,
-        ]);
+        ];
+        const { rows: [result] } = await readHeldReturnStoreCustody(pool, inputs, options?.serializeCredentialChanges === true);
         if (!result || result.found !== schemas.length || !result.source_owns || result.target_grants || result.target_locks) {
             throw new Error("Held Native return agent-store source custody or destination exclusion is unavailable");
         }
     };
+}
+async function readHeldReturnStoreCustody(pool, input, serialize) {
+    if (!serialize)
+        return pool.query(HELD_RETURN_STORE_CUSTODY, input);
+    const client = await pool.connect();
+    try {
+        await client.query("BEGIN READ ONLY");
+        const lock = await client.query("SELECT pg_try_advisory_xact_lock(hashtextextended('octogee-agent-store-credentials', 0)) AS acquired");
+        if (lock.rows[0]?.acquired !== true)
+            throw new Error("Agent-store ownership is changing during old target exclusion");
+        const result = await client.query(HELD_RETURN_STORE_CUSTODY, input);
+        await client.query("COMMIT");
+        return result;
+    }
+    catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+    }
+    finally {
+        client.release();
+    }
 }
 export function createAgentStoreCredentialRevoker(adminDsn) {
     const scope = decodeURIComponent(new URL(adminDsn).pathname.slice(1));

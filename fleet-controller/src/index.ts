@@ -1,3 +1,4 @@
+import { nativeReturnSharedStoreHandoffDenied } from "@octogee/core/fleet-state";
 import {
   createSharedHeldReturnMaintenanceOperator, type SharedHeldReturnMaintenancePhysical,
 } from "./lib/held-shared-maintenance-operator.js";
@@ -3015,6 +3016,10 @@ function provisioningSeams(runtime: ProvisioningServiceRuntime | null): Pick<Con
   return { provisioning: runtime?.sync ?? null, gatewayGitKeys: runtime?.client ?? null };
 }
 
+async function assertNativeSharedHandoffAllowed(store: PlatformStateStore, uid: string) {
+  if (await nativeReturnSharedStoreHandoffDenied(store, uid)) throw new Error("Held Native source remains excluded from Shared store handoff");
+}
+
 async function createControllerRuntime(
   store: PlatformStateStore,
   createHostingCleanup: ControllerProduct["createHostingCleanup"],
@@ -3040,6 +3045,7 @@ async function createControllerRuntime(
       return { uid: userRecord.uid, slug };
     },
     ensureCredentials: gatewayId => ensureGatewayCredentials({ namespace: NAMESPACE, gatewayId }),
+    assertSharedHandoffAllowed: uid => assertNativeSharedHandoffAllowed(store, uid),
     transferOwnership: createAgentStoreOwnershipTransferer(agentStore.adminDsn, userRecord => readUserAgentStoreInventory(store.users.agentStores, userRecord.uid)),
   });
   const serviceAccountEnsurer = createGatewayServiceAccountEnsurer({
