@@ -56,6 +56,10 @@ async function sharedCrossGatewayAgentAnchorScope(tx: PlatformStateRepositories,
     ...(!sourceRequest && sourceRoot.gatewayClass === "shared" && target?.gatewayClass === "shared"
       ? { sharedToShared: true as const }
       : {}),
+    ...(!sourceRequest && target?.gatewayClass === "shared" && sourceRoot.gatewayClass === "isolated" &&
+      sourceRoot.ownerUid === uid && sourceRoot.builderSlug === slug && assignment.updatedByOperationId === operationId
+      ? { builderToShared: true as const }
+      : {}),
   };
 }
 

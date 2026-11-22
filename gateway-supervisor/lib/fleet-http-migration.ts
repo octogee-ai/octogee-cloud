@@ -2151,12 +2151,10 @@ export function createPushRsyncStateHandler(deps: MigrationHandlerDeps): Request
               log(`[migration-rsync] OpenClaw is held for migration ${body.migrationId}; carrying ${agentIds.length} closed anchors without detach`);
               return;
             }
-            if (agentIds.length === 1 || deps.adapter.isIsolatedGateway?.() === true) {
+            if (agentIds.length === 1) {
+              controller.signal.throwIfAborted();
               if (!deps.adapter.releaseAgent) throw new Error("Gateway cannot detach PostgreSQL agents");
-              for (const agentId of agentIds) {
-                controller.signal.throwIfAborted();
-                await deps.adapter.releaseAgent(agentId);
-              }
+              await deps.adapter.releaseAgent(agentIds[0]!);
               return;
             }
             await retained?.assertCurrent();

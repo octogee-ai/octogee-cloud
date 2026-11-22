@@ -2298,6 +2298,7 @@ async function readIsolatedRuntimeStateScope(
 
 interface SharedAgentAnchorScope {
   sharedToShared?: true;
+  builderToShared?: true;
   migration?: FleetBrokerAgentAnchorMigration;
   sourceSurge?: FleetBrokerAgentAnchorMigration;
   gatewayId: string;
@@ -2722,7 +2723,8 @@ function installAgentAnchorRoutes(router: Router, deps: ResolvedFleetBrokerRoute
       const records = "assignmentEpoch" in scope && sharedAnchorMigrationBound(scope)
         ? await store.transaction({ label: "fleet-broker.read-agent-anchors", readOnly: true }, async (tx) => {
           const current = await recheckSharedAnchorMigration(tx, scope);
-          if (!current || current.uid !== scope.uid) return null;
+          if (!current || current.uid !== scope.uid ||
+              ("builderToShared" in current ? current.builderToShared : undefined) !== scope.builderToShared) return null;
           return tx.users.agentStores.list(scope.uid);
         })
         : await store.users.agentStores.list(scope.uid);
@@ -2737,6 +2739,7 @@ function installAgentAnchorRoutes(router: Router, deps: ResolvedFleetBrokerRoute
             assignment: { uid: scope.uid, epoch: scope.assignmentEpoch, state: scope.assignmentState },
             ...(scope.migration ? { migration: scope.migration } : {}),
             ...(scope.sharedToShared ? { sharedToShared: true } : {}),
+            ...(scope.builderToShared ? { builderToShared: true } : {}),
           } satisfies FleetBrokerAgentAnchors);
         } catch (error) {
           if (!(error instanceof AgentAnchorConflictError)) throw error;

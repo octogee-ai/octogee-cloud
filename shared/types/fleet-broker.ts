@@ -205,6 +205,7 @@ export interface FleetBrokerAgentAnchorMigration {
 
 export interface FleetBrokerAgentAnchors {
   sharedToShared?: true;
+  builderToShared?: true;
   migration?: FleetBrokerAgentAnchorMigration;
   anchors: FleetBrokerAgentAnchor[];
   state?: FleetBrokerGatewayStateAnchor;
