@@ -88,10 +88,11 @@ it("holds the durable desired pointer until the product activation guard allows 
   const store = createDocumentFixtureStore({ [`gateways/${gatewayId}`]: gateway }, { serializeTransactions: true });
   const input = { gatewayId, targetRelease: 2, operationId: "queued-rollout" };
   let blocked = true;
-  const check: GatewayRolloutActivationGuard = async ({ gateway, config, targetRelease, operationId, listGatewayAssignments }) => {
+  const check: GatewayRolloutActivationGuard = async ({ gateway, config, targetRelease, operationId, listGatewayAssignments, readOperationAudit }) => {
     expect([gateway.gatewayId, gateway.desiredRelease, targetRelease, operationId]).toEqual([gatewayId, 1, 2, input.operationId]);
     expect(config.ownerUid).toBe("owner");
     expect(await listGatewayAssignments()).toEqual([]);
+    expect(await readOperationAudit("fixture-missing")).toBeNull();
     return blocked ? "retained source recovery is pending" : null;
   };
   const guard = vi.fn(check);

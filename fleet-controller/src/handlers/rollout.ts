@@ -121,6 +121,7 @@ export type GatewayRolloutActivationGuard = (input: {
   gateway: Readonly<GatewayDoc>;
   config: Readonly<GatewayMutableConfig>;
   readUser: PlatformStateTransaction["users"]["records"]["get"];
+  readOperationAudit: PlatformStateTransaction["journal"]["audits"]["get"];
   listGatewayAssignments: () => ReturnType<PlatformStateTransaction["gateways"]["assignments"]["list"]>;
   targetRelease: number;
   operationId: string;
@@ -142,6 +143,7 @@ export function activateGatewayDesiredRelease(
     const hold = await activationGuard?.({
       gateway, config, targetRelease, operationId,
       readUser: uid => transaction.users.records.get(uid),
+      readOperationAudit: id => transaction.journal.audits.get(id),
       listGatewayAssignments: () => transaction.gateways.assignments.list(gatewayId),
     });
     if (hold !== undefined && hold !== null) {
