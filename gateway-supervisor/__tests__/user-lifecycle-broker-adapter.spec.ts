@@ -677,7 +677,7 @@ describe("buildBrokeredLifecycleAdapter migration import activation", () => {
     process.env.OPENCLAW_STATE_DIR = originalOpenClawStateDir;
   });
 
-  it.each(["activate", "resume", "quiescing-resume", "quiescing-missing", "quiescing-source-migration", "quiescing-source-migration-missing", "quiescing-source-surge", "quiescing-source-surge-missing", "pre-cutover", "pre-cutover-retained-batch", "pre-cutover-retained-wrong-pod", "pre-cutover-retained-missing-witness", "pre-cutover-first", "pre-cutover-known-surge", "pre-cutover-known-surge-replacement", "pre-cutover-known-surge-missing-record", "pre-cutover-partial", "pre-cutover-missing-record", "pre-cutover-local-conflict", "pre-cutover-wrong-claim", "pre-cutover-no-claim", "pre-cutover-missing-pg", "stale-migration"])("preserves and durably reports Shared imported identities before activation (%s)", async (mode) => {
+  it.each(["activate", "resume", "quiescing-resume", "quiescing-missing", "quiescing-source-migration", "quiescing-source-migration-missing", "quiescing-source-surge", "quiescing-source-surge-missing", "pre-cutover", "pre-cutover-retained-batch", "pre-cutover-retained-builder-return", "pre-cutover-retained-builder-return-missing-witness", "pre-cutover-retained-wrong-pod", "pre-cutover-retained-missing-witness", "pre-cutover-first", "pre-cutover-known-surge", "pre-cutover-known-surge-replacement", "pre-cutover-known-surge-missing-record", "pre-cutover-partial", "pre-cutover-missing-record", "pre-cutover-local-conflict", "pre-cutover-wrong-claim", "pre-cutover-no-claim", "pre-cutover-missing-pg", "stale-migration"])("preserves and durably reports Shared imported identities before activation (%s)", async (mode) => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "shared-anchor-import-"));
     const priorConfig = await fs.readFile(OPENCLAW_CONFIG).catch(() => undefined);
     const priorState = process.env.OPENCLAW_STATE_DIR;
@@ -690,6 +690,7 @@ describe("buildBrokeredLifecycleAdapter migration import activation", () => {
     ];
     const migrating = mode.startsWith("pre-cutover") || mode === "stale-migration";
     const retainedBatch = mode.startsWith("pre-cutover-retained");
+    const builderReturn = mode.startsWith("pre-cutover-retained-builder-return");
     if (retainedBatch) {
       vi.stubEnv("GATEWAY_ID", "shared-target");
       vi.stubEnv("POD_UID", "target-pod");
@@ -717,7 +718,7 @@ describe("buildBrokeredLifecycleAdapter migration import activation", () => {
     });
     mocks.readActivationManifest.mockResolvedValue({
       slug: "tester10", appliedFingerprint: "retained-import", agentId: anchors[0].agentId,
-      ...(retainedBatch && mode !== "pre-cutover-retained-missing-witness" ? { targetWorkspaceIdentities: {
+      ...(retainedBatch && !mode.endsWith("-missing-witness") ? { targetWorkspaceIdentities: {
         migrationId: migration.migrationId, uid: "uid-tester10", gatewayId: "shared-target",
         podUid: mode === "pre-cutover-retained-wrong-pod" ? "different-pod" : "target-pod",
         files: anchors.map(({ agentId }) => ({ agentId, content: null, sha256: null })),
@@ -730,12 +731,12 @@ describe("buildBrokeredLifecycleAdapter migration import activation", () => {
     });
     const read = vi.fn(async () => {
       if (mode === "stale-migration") throw new Error("migration custody changed");
-      return { ...(retainedBatch ? { sharedToShared: true as const } : {}), ...((migrating || sourceMigration) && mode !== "pre-cutover-no-claim" ? { migration: mode === "pre-cutover-wrong-claim" ? { ...migration, migrationId: "mig-other" } : migration } : {}), anchors: mode === "pre-cutover-missing-record" || mode === "pre-cutover-known-surge-missing-record" ? anchors.slice(0, 1) : anchors, assignment: { uid: "uid-tester10", epoch: 0, state: quiescing ? "quiescing" as const : "serving" as const } }; });
+      return { ...(builderReturn ? { builderToShared: true as const } : retainedBatch ? { sharedToShared: true as const } : {}), ...((migrating || sourceMigration) && mode !== "pre-cutover-no-claim" ? { migration: mode === "pre-cutover-wrong-claim" ? { ...migration, migrationId: "mig-other" } : migration } : {}), anchors: mode === "pre-cutover-missing-record" || mode === "pre-cutover-known-surge-missing-record" ? anchors.slice(0, 1) : anchors, assignment: { uid: "uid-tester10", epoch: 0, state: quiescing ? "quiescing" as const : "serving" as const } }; });
     let release!: () => void;
     const recorded = new Promise<void>((resolve) => { release = resolve; });
     let reportStarted!: () => void;
     const reportEntered = new Promise<void>((resolve) => { reportStarted = resolve; });
-    const report = vi.fn(async () => { reportStarted(); if (!retainedBatch || mode === "pre-cutover-retained-batch") await recorded; });
+    const report = vi.fn(async () => { reportStarted(); if (!retainedBatch || mode === "pre-cutover-retained-builder-return" || mode === "pre-cutover-retained-batch") await recorded; });
     const resuming = !migrating && mode !== "activate";
     if (resuming) { vi.stubEnv("GATEWAY_ID", "shared-source"); vi.stubEnv("POD_UID", "source-pod"); }
     const batch = vi.fn(async ({ agents }: Parameters<GatewayRpcClient["agentsRestoreMany"]>[0]) => {
@@ -756,6 +757,7 @@ describe("buildBrokeredLifecycleAdapter migration import activation", () => {
     const observed = activation.catch((error) => error);
     try {
       const refusals: Partial<Record<string, string>> = {
+        "pre-cutover-retained-builder-return-missing-witness": "identity capture is missing",
         "pre-cutover-retained-wrong-pod": "custody changed", "pre-cutover-retained-missing-witness": "identity capture is missing",
         "quiescing-missing": "existing local", "quiescing-source-migration-missing": "existing local", "quiescing-source-surge-missing": "existing local", "stale-migration": "custody changed",
         "pre-cutover-missing-record": "every recorded agent identity", "pre-cutover-known-surge-missing-record": "every recorded agent identity", "pre-cutover-local-conflict": "different identity",
@@ -7043,6 +7045,64 @@ it("releases a PostgreSQL roster entry through detach while preserving its ancho
     else process.env.OPENCLAW_STATE_DIR = previousStateDir;
     await fs.rm(path.dirname(directory), { recursive: true, force: true });
   }
+});
+
+it.each([true, false])("batches only configured Builder projects and completes singleton detach (workspace configured: %s)", async (workspaceConfigured) => {
+  const workspace = "octogee-alice-coach";
+  const first = "octogee-alice-proj-one-coach";
+  const second = "octogee-alice-proj-two-coach";
+  const missing = "octogee-alice-proj-absent-coach";
+  await withPostgresAgentConfig({}, async () => {
+    const rpc = mkGatewayRpc({
+      configGet: vi.fn(async () => configSnapshot({ agents: { entries: keyedRoster(workspaceConfigured ? [workspace, first, second] : [first, second]) } })),
+      agentsDetachMany: vi.fn(async () => ({ ok: true, results: [] })),
+      agentsDetach: vi.fn(async ({ agentId }) => ({ ok: true, agentId })),
+    });
+    const adapter = buildBrokeredLifecycleAdapter({ client: mkClient(), rpc, log: vi.fn(), isIsolatedGateway: () => true });
+    await adapter.detachSourceAgents!("alice", [workspace, first, second, missing], new AbortController().signal);
+    if (workspaceConfigured) {
+      expect(rpc.agentsDetachMany).toHaveBeenCalledExactlyOnceWith({ agentIds: [first, second] });
+      expect(rpc.agentsDetach).toHaveBeenNthCalledWith(1, { agentId: workspace });
+      expect(rpc.agentsDetach).toHaveBeenNthCalledWith(2, { agentId: missing });
+    } else {
+      expect(rpc.agentsDetachMany).not.toHaveBeenCalled();
+      expect(rpc.agentsDetach).toHaveBeenCalledTimes(4);
+    }
+  });
+});
+
+it("rechecks the configured Builder roster before retrying an uncertain batch", async () => {
+  const workspace = "octogee-alice-coach";
+  const projects = ["one", "two"].map(project => `octogee-alice-proj-${project}-coach`);
+  let configured = [workspace, ...projects];
+  await withPostgresAgentConfig({}, async () => {
+    const rpc = mkGatewayRpc({
+      configGet: vi.fn(async () => configSnapshot({ agents: { entries: keyedRoster(configured) } })),
+      agentsDetachMany: vi.fn(async () => {
+        configured = [workspace];
+        throw new Error("Native acknowledgement lost");
+      }),
+      agentsDetach: vi.fn(async ({ agentId }) => ({ ok: true, agentId })),
+    });
+    const adapter = buildBrokeredLifecycleAdapter({ client: mkClient(), rpc, log: vi.fn(), isIsolatedGateway: () => true });
+    const signal = new AbortController().signal;
+    await expect(adapter.detachSourceAgents!("alice", [workspace, ...projects], signal)).rejects.toThrow("acknowledgement lost");
+    expect(rpc.agentsDetach).not.toHaveBeenCalled();
+    await adapter.detachSourceAgents!("alice", [workspace, ...projects], signal);
+    expect(rpc.agentsDetachMany).toHaveBeenCalledOnce();
+    expect(rpc.agentsDetach).toHaveBeenCalledTimes(3);
+  });
+});
+
+it("never detaches a foreign agent while exporting a Builder roster", async () => {
+  const rpc = mkGatewayRpc({
+    agentsDetachMany: vi.fn(),
+    agentsDetach: vi.fn(),
+  });
+  const adapter = buildBrokeredLifecycleAdapter({ client: mkClient(), rpc, log: vi.fn(), isIsolatedGateway: () => true });
+  await expect(adapter.detachSourceAgents!("alice", ["octogee-alice-coach", "octogee-bob-proj-two-coach"], new AbortController().signal)).rejects.toThrow("foreign agent");
+  expect(rpc.agentsDetachMany).not.toHaveBeenCalled();
+  expect(rpc.agentsDetach).not.toHaveBeenCalled();
 });
 
 async function withPostgresAgentConfig(config: Record<string, unknown>, run: () => Promise<void>): Promise<void> {

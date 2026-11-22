@@ -2298,6 +2298,7 @@ async function readIsolatedRuntimeStateScope(
 
 interface SharedAgentAnchorScope {
   sharedToShared?: true;
+  builderToShared?: true;
   migration?: FleetBrokerAgentAnchorMigration;
   sourceSurge?: FleetBrokerAgentAnchorMigration;
   gatewayId: string;
@@ -2644,7 +2645,10 @@ async function recheckSharedAnchorMigration(tx: PlatformStateRepositories, scope
   const migration = scope.sourceSurge ?? scope.migration;
   if (!migration) return null;
   const request = { gatewayId: scope.gatewayId, podUid: scope.podUid, slug: scope.slug, migrationId: migration.migrationId, expected: migration };
-  return scope.sourceSurge ? sharedAssignedSourceSurgeAnchorScope(tx, { ...request, uid: scope.uid }) : sharedAgentAnchorMigrationScope(tx, request);
+  const current = await (scope.sourceSurge ? sharedAssignedSourceSurgeAnchorScope(tx, { ...request, uid: scope.uid }) : sharedAgentAnchorMigrationScope(tx, request));
+  if (!current) return null;
+  const builderToShared = "builderToShared" in current ? current.builderToShared : undefined;
+  return builderToShared === scope.builderToShared ? current : null;
 }
 
 async function recordSharedAgentAnchors(
@@ -2737,6 +2741,7 @@ function installAgentAnchorRoutes(router: Router, deps: ResolvedFleetBrokerRoute
             assignment: { uid: scope.uid, epoch: scope.assignmentEpoch, state: scope.assignmentState },
             ...(scope.migration ? { migration: scope.migration } : {}),
             ...(scope.sharedToShared ? { sharedToShared: true } : {}),
+            builderToShared: scope.builderToShared,
           } satisfies FleetBrokerAgentAnchors);
         } catch (error) {
           if (!(error instanceof AgentAnchorConflictError)) throw error;

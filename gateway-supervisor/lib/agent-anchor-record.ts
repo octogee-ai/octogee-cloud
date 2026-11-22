@@ -102,7 +102,7 @@ interface SharedUserAgentAnchorsInput {
   slug: string;
   agentIds: readonly string[];
   allowQuiescingExisting?: boolean;
-  sharedToSharedWorkspace?: MigrationTargetIdentityCustody | null;
+  sharedTargetWorkspace?: MigrationTargetIdentityCustody | null;
   sourceResume?: MigrationSourceIdentityCustody;
   broker: Pick<FleetBrokerClient, "readAgentAnchors" | "reportAgentAnchors">;
 }
@@ -181,9 +181,10 @@ export async function prepareSharedUserAgentAnchors(input: SharedUserAgentAnchor
   const migrationImport = input.migrationId !== undefined && recorded.migration?.migrationId === input.migrationId;
   const quiescingExisting = assignmentState === "quiescing" && !migrationImport;
   const assignmentEpoch = assignment.epoch;
-  const retainedSharedRoster = input.sharedToSharedWorkspace !== undefined && recorded.sharedToShared === true;
+  const retainedSharedRoster = input.sharedTargetWorkspace !== undefined &&
+    [recorded.sharedToShared, recorded.builderToShared].includes(true);
   if (retainedSharedRoster) {
-    assertRetainedSharedWorkspace(input.sharedToSharedWorkspace, uid, input.migrationId, recorded.migration, assignmentEpoch);
+    assertRetainedSharedWorkspace(input.sharedTargetWorkspace, uid, input.migrationId, recorded.migration, assignmentEpoch);
   }
   const expected = sharedRecordedAnchors(slug, agentIds, recorded.anchors);
   const sameIdentity = (left: FleetBrokerAgentAnchor, right: FleetBrokerAgentAnchor) =>

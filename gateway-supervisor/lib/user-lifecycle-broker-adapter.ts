@@ -1,3 +1,4 @@
+import { agentIdsFromConfig } from "@octogee/core/byosub-restore";
 import { isGithubProjectCheckpoint } from "@octogee/core/workspace/workspace-git";
 import { initializeRelocatedProjectAgent, projectAgentWorkspace, restoreProjectAgentWorkspaces } from "@octogee/core/project-agent-workspaces";
 import { enableSystemConfigWatch } from "./system-config-watch-state.js";
@@ -366,7 +367,7 @@ function postgresAgentStoreConfigured(): boolean {
 
 async function prepareUserSharedAnchors(ctx: BrokerCtx, input: {
   uid?: string; slug: string; agentIds: readonly string[]; allowQuiescingExisting?: boolean; migrationId?: string;
-  sharedToSharedWorkspace?: MigrationActivationManifest["targetWorkspaceIdentities"] | null;
+  sharedTargetWorkspace?: MigrationActivationManifest["targetWorkspaceIdentities"] | null;
   sourceResume?: MigrationSourceIdentityCustody;
 }) {
   if (ctx.isIsolatedGateway() || !postgresAgentStoreConfigured()) return undefined;
@@ -374,7 +375,7 @@ async function prepareUserSharedAnchors(ctx: BrokerCtx, input: {
   if (!uid && !input.migrationId) throw new Error(`Shared imported agent anchors require an assigned owner for ${input.slug}`);
   const surgeTarget = !input.allowQuiescingExisting && process.env.GATEWAY_ID &&
     input.migrationId?.startsWith(`surge-${process.env.GATEWAY_ID}-`);
-  const migrationBound = !uid || surgeTarget || input.sharedToSharedWorkspace !== undefined;
+  const migrationBound = !uid || surgeTarget || input.sharedTargetWorkspace !== undefined;
   return prepareSharedUserAgentAnchors({
     ...input, uid: uid ?? undefined, migrationId: migrationBound ? input.migrationId : undefined,
     stateDir: resolveOpenClawStateDir(), broker: ctx.client,
@@ -421,6 +422,24 @@ async function detachAgentsInBatches(ctx: BrokerCtx, slug: string, agentIds: rea
     }
   } finally {
     invalidateConfigCache(ctx);
+  }
+}
+
+async function detachBuilderSourceAgents(ctx: BrokerCtx, slug: string, agentIds: readonly string[], signal: AbortSignal): Promise<void> {
+  if (agentIds.some(agentId => !agentIdBelongsToSlug(agentId, slug))) {
+    throw new Error("Builder source roster contains a foreign agent");
+  }
+  signal.throwIfAborted();
+  const requested = new Set(agentIds);
+  const configured = new Set(agentIdsFromConfig(await freshRosterConfig(ctx)));
+  const projects = [...requested].filter(agentId => configured.has(agentId) && parseAgentId(agentId).kind === "project");
+  if (projects.length === configured.size) projects.pop();
+  const batched = projects.length > 1 ? projects : [];
+  await detachAgentsInBatches(ctx, slug, batched, () => signal.throwIfAborted());
+  const batchedIds = new Set(batched);
+  for (const agentId of requested) {
+    signal.throwIfAborted();
+    if (!batchedIds.has(agentId)) await releaseAgentsAndInvalidateCache(ctx, [agentId], `[release:${agentId}]`);
   }
 }
 
@@ -2256,7 +2275,7 @@ function prepareImportedSharedAnchors(
     allowQuiescingExisting: opts.resumeExistingSharedCustody,
     migrationId: opts.migrationId,
     ...(sourceIdentity && manifest.sourceWorkspaceIdentities ? { sourceResume: sourceIdentity } : {}),
-    ...(useWorkspaceWitness ? { sharedToSharedWorkspace: manifest.targetWorkspaceIdentities ?? null } : {}),
+    ...(useWorkspaceWitness ? { sharedTargetWorkspace: manifest.targetWorkspaceIdentities ?? null } : {}),
   });
 }
 
@@ -2704,7 +2723,8 @@ function runtimeUpdateOperations(ctx: BrokerCtx): Pick<UserLifecycleAdapter,
     releaseAgent: (agentId) => openClawRuntimeUpdateGuard.run(() =>
       releaseAgentsAndInvalidateCache(ctx, [agentId], `[release:${agentId}]`)),
     detachSourceAgents: (slug, agentIds, signal) => openClawRuntimeUpdateGuard.run(
-      () => detachAgentsInBatches(ctx, slug, agentIds, () => signal.throwIfAborted()),
+      () => ctx.isIsolatedGateway() ? detachBuilderSourceAgents(ctx, slug, agentIds, signal)
+        : detachAgentsInBatches(ctx, slug, agentIds, () => signal.throwIfAborted()),
       { signal, slug },
     ),
   };
