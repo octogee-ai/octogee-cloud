@@ -3,7 +3,7 @@ import { SIGNATURE_HEADER } from "@octogee/shared/types/fleet-controller";
 import { createHeldNativeReturnDestinationVerifier } from "../lib/held-native-return-destination.js";
 import { FLEET_KEY_PAIR } from "./fixtures/fleet-keys.js";
 import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
-import { bindHeldNativeStoppedOriginal, heldNativeReturnBlocksDestination, requestHeldNativeReturnRepair, reserveHeldNativeOfflineSource } from "@octogee/core/fleet-state";
+import { bindHeldNativeStoppedOriginal, heldNativeReturnBlocksDestination, recordHeldNativeOriginalRestart, requestHeldNativeReturnRepair, reserveHeldNativeOfflineSource } from "@octogee/core/fleet-state";
 import type { Operation } from "@octogee/shared/types/glm";
 import { expect, it, vi } from "vitest";
 import { createHeldNativeOfflineReturnWorker, createHeldNativeReturnWorker } from "../lib/held-native-return-worker.js";
@@ -147,6 +147,19 @@ it("reserves a stopped-original alternate without making an online receipt or re
   expect(heldNativeReturnBlocksDestination(finished, targetGatewayId)).toBe(true);
   expect(finished.cutoverCommittedAt).toBeUndefined();
   expect((await store.gateways.assignments.get(sourceGatewayId, uid))?.state).toBe("quiescing");
+  await store.journal.operations.patch(operationId, { status: "pending", startedAt: null });
+  const restart = { originalInstanceId: "1234", restartedAt: 710, internalIp: "10.1.2.3",
+    cleanFileSha256: "d".repeat(64), restartedFileSha256: "d".repeat(64), ownerAnchorSha256: stage.ownerAnchorSha256 };
+  await expect(recordHeldNativeOriginalRestart(store, selection, { ...restart, restartedFileSha256: "e".repeat(64) }, "test-operator", 720))
+    .rejects.toThrow("restart is not verified");
+  expect((await store.gateways.roots.get(sourceGatewayId))?.runtimeRestartFence?.phase).toBe("staged-offline");
+  await expect(recordHeldNativeOriginalRestart(store, selection, restart, "test-operator", 720)).resolves.toEqual(reserved);
+  const restored = (await store.journal.operations.get(operationId))!;
+  expect(restored.schedulerHandoff?.forwardRecovery?.offlineSourceRecovery?.phase).toBe("original-restored");
+  expect((await store.gateways.roots.get(sourceGatewayId))?.runtimeRestartFence).toBeUndefined();
+  expect((await store.fleetRegistry.get(sourceGatewayId))?.vm).toMatchObject({ instanceId: "1234", status: "RUNNING" });
+  expect(heldNativeReturnBlocksDestination(restored, targetGatewayId)).toBe(true);
+
 });
 
 it("requires a live scoped import denial from the same ready destination pod", async () => {

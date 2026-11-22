@@ -182,7 +182,7 @@ import { createHeldNativeReturnBackupVerifier, type NativeReturnBackupReaders, t
 import { createHeldNativeReturnDestinationVerifier } from "./lib/held-native-return-destination.js";
 import { createHeldNativeOfflineReturnWorker, createHeldNativeReturnWorker,
   type ReconcileHeldNativeOfflineSource, type VerifyHeldNativeReturnCustody } from "./lib/held-native-return-worker.js";
-import type { HeldNativeReturnSelection, HeldNativeStoppedOriginalWitness } from "@octogee/core/fleet-state";
+import type { HeldNativeOriginalRestartWitness, HeldNativeReturnSelection, HeldNativeStoppedOriginalWitness } from "@octogee/core/fleet-state";
 import { createHeldNativeSourceReconciler } from "./lib/held-native-source-reconcile.js";
 import {
   migrationSourceReady,
@@ -528,6 +528,7 @@ interface ControllerDeps {
   handlers: OperationHandlers;
   heldNativeReturnRepairAvailable?: boolean;
   observeHeldNativeStoppedOriginal?: HeldNativeOfflineSourceBackend["observeStoppedOriginal"];
+  observeHeldNativeOriginalRestart?: HeldNativeOfflineSourceBackend["observeOriginalRestart"];
   requestNativeReturnSourceRecovery?: ReturnType<typeof createNativeReturnSourceRecoveryOwner>["request"];
   log: (msg: string) => void;
   syncFleetIngress?: (
@@ -2635,6 +2636,7 @@ function adminNativeReturnOptions(deps: ControllerDeps) {
   return {
     heldNativeReturnRepairAvailable: deps.heldNativeReturnRepairAvailable,
     observeHeldNativeStoppedOriginal: deps.observeHeldNativeStoppedOriginal,
+    observeHeldNativeOriginalRestart: deps.observeHeldNativeOriginalRestart,
     requestNativeReturnSourceRecovery: deps.requestNativeReturnSourceRecovery,
   };
 }
@@ -3211,6 +3213,7 @@ function configureNativeReturnSupport(deps: Parameters<typeof buildHeldNativeRet
     admin: {
       heldNativeReturnRepairAvailable: reconcileHeldNativeReturn !== undefined,
       observeHeldNativeStoppedOriginal: reconcileHeldNativeOfflineReturn ? deps.offline?.observeStoppedOriginal : undefined,
+      observeHeldNativeOriginalRestart: reconcileHeldNativeOfflineReturn ? deps.offline?.observeOriginalRestart : undefined,
       requestNativeReturnSourceRecovery: nativeReturnRecovery.request,
     },
   };
@@ -3252,6 +3255,7 @@ function heldNativeDestinationCustody(deps: Pick<Parameters<typeof buildHeldNati
 export interface HeldNativeOfflineSourceBackend {
   readers: NativeReturnBackupReaders;
   observeStoppedOriginal(selection: HeldNativeReturnSelection): Promise<HeldNativeStoppedOriginalWitness>;
+  observeOriginalRestart?(selection: HeldNativeReturnSelection): Promise<HeldNativeOriginalRestartWitness>;
   stageAlternateSource: ReconcileHeldNativeOfflineSource<NativeReturnVerifiedBackup>;
 }
 

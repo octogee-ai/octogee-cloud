@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { isIP } from "node:net";
 import { isDeepStrictEqual } from "node:util";
 import { builderReturnOperationId } from "@octogee/shared/types/isolated-operation-ids";
 import { readSchedulerMigrationIdentity, type HeldNativeReturnRepair, type HeldNativeOfflineSourceRecovery, type HeldNativeOfflineStageReceipt, type SchedulerHandoffState } from "@octogee/shared/types/glm";
@@ -316,6 +317,55 @@ export async function bindHeldNativeStoppedOriginal(
       actionClaimId: offline.requestId, actionStartedAt: now, actionRecoveryCount: 0, completedAt: now, outcome: "completed" });
     await tx.journal.operations.patch(hold.op.id, { schedulerHandoff: offlineHandoff(hold, next), nextAttemptAt: { clear: true } },
       { revision: hold.op.revision, status: ["pending"] });
+    return authority;
+  });
+}
+
+export interface HeldNativeOriginalRestartWitness {
+  originalInstanceId: string;
+  restartedAt: number;
+  internalIp: string;
+  cleanFileSha256: string;
+  restartedFileSha256: string;
+  ownerAnchorSha256: string;
+}
+
+function validOriginalRestart(
+  offline: HeldNativeOfflineSourceRecovery, witness: HeldNativeOriginalRestartWitness, now: number,
+): boolean {
+  return (offline.phase === "stopped-original" || offline.phase === "staged-offline") &&
+    offline.originalInstanceId === witness.originalInstanceId && typeof offline.stoppedAt === "number" &&
+    Number.isSafeInteger(witness.restartedAt) && witness.restartedAt > offline.stoppedAt && witness.restartedAt <= now &&
+    isIP(witness.internalIp) === 4 && witness.cleanFileSha256 === witness.restartedFileSha256 &&
+    [witness.cleanFileSha256, witness.ownerAnchorSha256].every(value => /^[a-f0-9]{64}$/.test(value)) &&
+    (!offline.stage || offline.stage.ownerAnchorSha256 === witness.ownerAnchorSha256);
+}
+
+export async function recordHeldNativeOriginalRestart(
+  store: PlatformStateStore, selection: HeldNativeReturnSelection, witness: HeldNativeOriginalRestartWitness, actor: string, now: number,
+): Promise<HeldNativeReturnAuthority> {
+  return store.transaction({ label: "held-native-return.record-original-restart" }, async tx => {
+    const hold = journalHold(await tx.journal.operations.get(selection.operationId), selection);
+    const authority = offlineAuthority(selection, hold);
+    const offline = hold.handoff.forwardRecovery.offlineSourceRecovery;
+    requireConflict(offline?.requestId === authority.requestId && hold.op.status === "pending" && hold.op.startedAt === null &&
+      validOriginalRestart(offline, witness, now), "Held Native offline original restart is not verified");
+    await verifyOfflineReleaseCustody(tx, hold, offline);
+    const source = await tx.fleetRegistry.get(authority.sourceGatewayId);
+    requireConflict(source?.vm?.instanceId === witness.originalInstanceId, "Held Native original runtime changed during rollback");
+    const audit = buildOperationAuditIntent({
+      actor, forced: false, what: "Record the verified restart of the original Native source",
+      why: "Restore the original quiesced source after alternate maintenance",
+      target: { ...authority }, preActionStatus: { ...offline }, mutation: { ...witness },
+      idempotencyKey: `held-native-offline-original-restored:${offline.requestId}`, now: () => now,
+    });
+    await tx.journal.audits.create({ ...audit.document, id: audit.id, status: "completed", lifecycleStage: "action-completed",
+      actionClaimId: offline.requestId, actionStartedAt: now, actionRecoveryCount: 0, completedAt: now, outcome: "completed" });
+    await tx.fleetRegistry.patch(authority.sourceGatewayId, { vm: { ...source.vm, status: "RUNNING", stopReason: null, internalIp: witness.internalIp } },
+      { vmInstanceId: witness.originalInstanceId });
+    await tx.gateways.roots.compareAndSetRuntimeRestartFence(authority.sourceGatewayId, offlineFence(authority.sourceGatewayId, offline), null);
+    const next: HeldNativeOfflineSourceRecovery = { ...offline, phase: "original-restored", originalRestoredAt: witness.restartedAt };
+    await tx.journal.operations.patch(hold.op.id, { schedulerHandoff: offlineHandoff(hold, next) }, { revision: hold.op.revision, status: ["pending"] });
     return authority;
   });
 }

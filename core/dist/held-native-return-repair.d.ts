@@ -33,6 +33,15 @@ export interface HeldNativeStoppedOriginalWitness {
     stoppedAt: number;
 }
 export declare function bindHeldNativeStoppedOriginal(store: PlatformStateStore, selection: HeldNativeReturnSelection, witness: HeldNativeStoppedOriginalWitness, actor: string, now: number): Promise<HeldNativeReturnAuthority>;
+export interface HeldNativeOriginalRestartWitness {
+    originalInstanceId: string;
+    restartedAt: number;
+    internalIp: string;
+    cleanFileSha256: string;
+    restartedFileSha256: string;
+    ownerAnchorSha256: string;
+}
+export declare function recordHeldNativeOriginalRestart(store: PlatformStateStore, selection: HeldNativeReturnSelection, witness: HeldNativeOriginalRestartWitness, actor: string, now: number): Promise<HeldNativeReturnAuthority>;
 export declare function assertHeldNativeOfflineSourceClaim(store: PlatformStateStore, claim: HeldClaim): Promise<void>;
 export declare function recordHeldNativeOfflineStage(store: PlatformStateStore, claim: HeldClaim, stage: HeldNativeOfflineStageReceipt, now: number): Promise<SchedulerHandoffState>;
 export declare function heldNativeReturnBlocksDestination(op: Pick<OperationRecord, "input" | "schedulerHandoff">, gatewayId: string): boolean;

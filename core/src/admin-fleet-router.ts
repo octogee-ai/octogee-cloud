@@ -1,6 +1,6 @@
 export { archivedSchedulerSourceImage, archiveSchedulerCustodyMatches, enqueueParkedHomeArchive, isAuthorizedHomeArchiveOrigin, planArchiveAfterBackupRelease, planReturnedHomeArchive, resolveParkedHomeArchiveGrant, retainedBootPreservesScheduler, simpleHomePreparation } from "./parked-home-archive.js";
-import { bindHeldNativeStoppedOriginal, HeldNativeReturnConflict, requestHeldNativeReturnRepair, reserveHeldNativeOfflineSource,
-  type HeldNativeReturnSelection, type HeldNativeStoppedOriginalWitness } from "./held-native-return-repair.js";
+import { bindHeldNativeStoppedOriginal, HeldNativeReturnConflict, recordHeldNativeOriginalRestart, requestHeldNativeReturnRepair, reserveHeldNativeOfflineSource,
+  type HeldNativeOriginalRestartWitness, type HeldNativeReturnSelection, type HeldNativeStoppedOriginalWitness } from "./held-native-return-repair.js";
 import { migrationCancellationDeferred } from "./fleet-state.js";
 import { readSharedSourceRecoveryAuthority, readSharedSourceRecoverySupersession, SharedSourceRecoveryConflict } from "./shared-source-recovery.js";
 import { randomUUID } from "node:crypto";
@@ -260,6 +260,7 @@ export interface FleetRouterDeps {
 
   heldNativeReturnRepairAvailable?: boolean;
   observeHeldNativeStoppedOriginal?: (selection: HeldNativeReturnSelection) => Promise<HeldNativeStoppedOriginalWitness>;
+  observeHeldNativeOriginalRestart?: (selection: HeldNativeReturnSelection) => Promise<HeldNativeOriginalRestartWitness>;
   requestNativeReturnSourceRecovery?: (input: { uid: string; operationId: string; requestedAt: number; requestedBy: string }) => Promise<boolean>;
   suspendAuthUser: (uid: string) => Promise<void>;
   revokeConnectorGrantsForUser: (uid: string) => Promise<void>;
@@ -488,6 +489,26 @@ function parseHeldNativeReturnSelection(operationId: string, body: Record<string
       typeof sourceEpoch !== "number" || !Number.isSafeInteger(sourceEpoch) || sourceEpoch < 1 ||
       typeof schedulerMigrationId !== "string" || !schedulerMigrationId.startsWith(`mig-${operationId}:scheduler:`)) return null;
   return { operationId, sourceGatewayId, targetGatewayId, sourceEpoch, schedulerMigrationId };
+}
+
+async function respondHeldNativeOriginalRestart(input: {
+  store: PlatformStateStore;
+  observe?: (selection: HeldNativeReturnSelection) => Promise<HeldNativeOriginalRestartWitness>;
+  selection: HeldNativeReturnSelection;
+  actor: string;
+  dryRun: boolean;
+  res: Response;
+}): Promise<void> {
+  const { store, observe, selection, actor, dryRun, res } = input;
+  if (!observe) {
+    res.status(503).json({ error: "Offline held Native original restart verifier is unavailable" }); return;
+  }
+  const witness = await observe(selection);
+  if (dryRun) {
+    res.json({ operationId: selection.operationId, phase: "original-restored", witness, dryRun: true }); return;
+  }
+  const { requestId } = await recordHeldNativeOriginalRestart(store, selection, witness, actor, Date.now());
+  res.status(202).json({ operationId: selection.operationId, requestId, phase: "original-restored" });
 }
 
 export function resolveFleetNamespace(env: NodeJS.ProcessEnv = process.env): string {
@@ -5587,7 +5608,7 @@ router.post(
   router.post("/operations/:id/held-native-offline/:phase", async (req, res, next) => {
     try {
       const phase = req.params.phase;
-      if (deps.releaseEnvironment !== "test" || (phase !== "reserve" && phase !== "stopped-original")) {
+      if (deps.releaseEnvironment !== "test" || (phase !== "reserve" && phase !== "stopped-original" && phase !== "original-restored")) {
         res.status(404).json({ error: "Offline held Native source phase is unavailable" }); return;
       }
       const selection = parseHeldNativeReturnSelection(req.params.id as string, req.body);
@@ -5599,6 +5620,10 @@ router.post(
         res.status(503).json({ error: "Offline held Native source backend is unavailable" }); return;
       }
       const dryRun = isAdminDryRun(req);
+      if (phase === "original-restored") {
+        await respondHeldNativeOriginalRestart({ store, observe: deps.observeHeldNativeOriginalRestart, selection, actor, dryRun, res });
+        return;
+      }
       if (phase === "stopped-original" && dryRun) {
         const witness = await deps.observeHeldNativeStoppedOriginal(selection);
         res.json({ operationId: selection.operationId, phase, witness, dryRun: true }); return;

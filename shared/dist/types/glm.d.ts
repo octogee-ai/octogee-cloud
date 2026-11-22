@@ -471,9 +471,10 @@ export interface HeldNativeOfflineSourceRecovery {
     sourceRelease: number;
     targetRelease: number;
     failureAttempt: number;
-    phase: "reserved" | "stopped-original" | "staged-offline";
+    phase: "reserved" | "stopped-original" | "staged-offline" | "original-restored";
     originalInstanceId: string;
     stoppedAt?: number;
+    originalRestoredAt?: number;
     stage?: HeldNativeOfflineStageReceipt;
 }
 export interface MigrationForwardRecovery {
