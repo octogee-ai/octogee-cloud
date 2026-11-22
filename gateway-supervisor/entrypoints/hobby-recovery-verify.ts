@@ -48,7 +48,7 @@ try {
   const proof = input.restore
     ? await restoreHobbyHome("/home/node", tmpdir(), archive, input satisfies ExpectedHome, key, assertSeal)
     : await preflightRollback(archive, input, key, assertSeal);
-  process.stdout.write(JSON.stringify(proof)+"\n");
+  process.stdout.write(JSON.stringify(input.restore ? { ...proof, restored: true } : proof)+"\n");
 } finally {
   key.fill(0);
 }
