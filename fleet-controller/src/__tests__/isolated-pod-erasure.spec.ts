@@ -77,7 +77,9 @@ describe("erasing a user whose isolated gateway is a parked pod", () => {
 
     expect(root).toMatchObject({ desiredStatus: "retired", retirementClaim: { previousDesiredStatus: "paused", phase: "claimed" } });
     expect(result).toMatchObject({ success: true });
-    expect(helmUninstall).toHaveBeenCalledWith(GATEWAY_ID);
+    expect(helmUninstall).toHaveBeenCalledWith(GATEWAY_ID, expect.objectContaining({
+      operationId: `delete-retire-delete-1-${GATEWAY_ID}`, version: 1,
+    }));
     expect(deletePvc).toHaveBeenCalledWith(GATEWAY_ID);
   });
 
