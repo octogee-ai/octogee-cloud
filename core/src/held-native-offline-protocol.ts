@@ -18,6 +18,7 @@ export interface OfflineNativeRecoveryIdentity {
   cleanFileSha256: string;
   ownerAnchorSha256: string;
   ownerStoreSha256: string;
+  desiredSnapshotSha256: string;
 }
 
 type OfflineAction = "reconcile" | "rollback";
@@ -53,7 +54,7 @@ export function verifyOfflineNativeRequest(input: {
 }): OfflineNativeRequest {
   if (input.raw.length > 8192) throw new Error("Held Native offline request exceeds its bounded scope");
   const request = JSON.parse(input.raw) as OfflineNativeRequest | null;
-  if (!request || !isDeepStrictEqual(request.identity, input.expected) ||
+  if (!request || !isDeepStrictEqual(request.identity, input.expected) || !digest.test(request.identity.desiredSnapshotSha256) ||
       (request.action !== "reconcile" && request.action !== "rollback") ||
       typeof request.nonce !== "string" || !digest.test(request.nonce) ||
       !Number.isSafeInteger(request.expiresAt) || request.expiresAt < input.now || request.expiresAt > input.now + 120_000 ||
@@ -92,3 +93,7 @@ export function verifyOfflineNativeResult(input: {
   }
   return result;
 }
+
+export {
+  readHeldNativeOfflineDesiredProjection, signHeldNativeOfflineDesiredProjection, type HeldNativeProjectionScope,
+} from "./held-native-offline-projection.js";

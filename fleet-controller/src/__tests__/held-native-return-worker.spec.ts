@@ -6,7 +6,7 @@ import { createHeldNativeReturnDestinationVerifier } from "../lib/held-native-re
 import { FLEET_KEY_PAIR } from "./fixtures/fleet-keys.js";
 import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import {
-  bindHeldNativeStoppedOriginal, recordHeldNativeOriginalRestart, reserveHeldNativeOfflineSource,
+  assertPendingHeldNativeOfflineProjection, bindHeldNativeStoppedOriginal, recordHeldNativeOriginalRestart, reserveHeldNativeOfflineSource,
   acquireSharedHeldReturnMaintenance, advanceSharedHeldReturnMaintenance, assertSharedHeldReturnMaintenance,
   assertSharedHeldReturnMaintenanceUnfenced, completeSharedHeldReturnMaintenance, heldNativeReturnBlocksDestination,
   requestHeldNativeReturnRepair, resumeSharedHeldReturnMaintenance, stageSharedHeldReturnMaintenanceRelease, withdrawSharedHeldReturnMaintenance,
@@ -144,7 +144,11 @@ it("reserves a stopped-original alternate without making an online receipt or re
   await expect(bindHeldNativeStoppedOriginal(store, selection, { ...witness, originalInstanceId: "2345" }, "test-operator", 530)).rejects.toThrow("reserved source");
   await expect(bindHeldNativeStoppedOriginal(store, selection, witness, "test-operator", 530)).resolves.toEqual(reserved);
   expect((await store.fleetRegistry.get(sourceGatewayId))?.vm).toMatchObject({ instanceId: "1234", status: "TERMINATED", stopReason: "operator" });
+  await expect(assertPendingHeldNativeOfflineProjection(store, reserved)).resolves.toBeUndefined();
+  await expect(assertPendingHeldNativeOfflineProjection(store, { ...reserved, uid: "foreign-owner" }))
+    .rejects.toThrow("does not match the pending owner");
   await store.journal.operations.patch(operationId, { status: "running", startedAt: 600 });
+  await expect(assertPendingHeldNativeOfflineProjection(store, reserved)).rejects.toThrow("no pending stopped-original claim");
   const operation = { ...(await store.journal.operations.get(operationId))!, id: operationId } as Operation;
   const stage = { verifiedAt: 650, holdGeneration: "a".repeat(64), maintenanceInstanceId: "5678", immutableSnapshotId: "90",
     fileSha256: "b".repeat(64), ownerAnchorSha256: "c".repeat(64) };
