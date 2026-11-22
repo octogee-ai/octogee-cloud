@@ -1804,6 +1804,35 @@ function userActivationDeferredForIdle(op: Operation, previous: SchedulerHandoff
     (lastStep.name === "wait-for-active-work" || lastStep.name === "quiesce-source");
 }
 
+async function resumePreviousSource(
+  deps: MigrateUserDeps,
+  previous: SchedulerHandoffState,
+  input: {
+    migrationId: string;
+    resumeSourceScheduler: boolean;
+    releaseSourceIngress: boolean;
+    assertRecoveryCurrent?: () => Promise<void>;
+    assertNativeReturnCurrent?: () => Promise<void>;
+  },
+): Promise<void> {
+  const { fromGatewayId: gatewayId, slug } = previous;
+  await input.assertRecoveryCurrent?.();
+  const url = input.assertRecoveryCurrent
+    ? await deps.resolveGatewayUrl(gatewayId, { allowUnready: true })
+    : await deps.resolveGatewayUrl(gatewayId);
+  const client = deps.buildClient(() => url);
+  const assertCurrent = input.assertRecoveryCurrent ?? input.assertNativeReturnCurrent;
+  await assertCurrent?.();
+  if (input.resumeSourceScheduler) {
+    await client.scheduler({ migrationId: previous.migrationId, slug, gatewayId, phase: "resume" });
+    await assertCurrent?.();
+  }
+  if (input.releaseSourceIngress) {
+    await client.resume({ migrationId: input.migrationId, slug, gatewayId });
+    await assertCurrent?.();
+  }
+}
+
 async function resumePreviousSchedulerAttempt(
   deps: MigrateUserDeps,
   op: Operation,
@@ -1822,20 +1851,12 @@ async function resumePreviousSchedulerAttempt(
   const assertNativeReturnCurrent = await previousNativeReturnCleanupAuthority(deps, op, ctx, previous);
   await cleanupPreviousSchedulerTarget(deps, op, ctx, previous, { sharedScope: scope.sharedScope, recovery, assertNativeReturnCurrent });
   await preparePreviousSourceAgentStores(deps, ctx, previous, { resumeSourceScheduler: scope.resumeSourceScheduler, recovery, assertNativeReturnCurrent });
-  const url = await deps.resolveGatewayUrl(previous.fromGatewayId);
-  const client = deps.buildClient(() => url);
-  if (recovery) await deps.assertMigrationRecoveryAuthority!(recovery);
-  await assertNativeReturnCurrent?.();
-  if (scope.resumeSourceScheduler) {
-    await client.scheduler({
-      migrationId: previous.migrationId, slug: previous.slug, gatewayId: previous.fromGatewayId, phase: "resume",
-    });
-    await assertNativeReturnCurrent?.();
-  }
-  if (scope.releaseSourceIngress) {
-    await client.resume({ migrationId: deps.genMigrationId(op.id), slug: user.slug, gatewayId: user.currentGatewayId });
-    await assertNativeReturnCurrent?.();
-  }
+  await resumePreviousSource(deps, previous, {
+    ...scope,
+    migrationId: deps.genMigrationId(op.id),
+    assertRecoveryCurrent: recovery ? activeRecoveryAuthority(deps, ctx, recovery) : undefined,
+    assertNativeReturnCurrent,
+  });
   if (recovery) await deps.completeMigrationRecovery!(recovery);
   return recovery !== undefined;
 }

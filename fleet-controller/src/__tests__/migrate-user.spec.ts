@@ -417,7 +417,7 @@ describe("PostgreSQL agent context transfer", () => {
 });
 
 describe("abandoned Shared migration recovery", () => {
-  it.each(["success", "missing-callback", "ownership-failed", "authority-lost", "claim-lost", "missing-claim", "cleanup-failed"] as const)("prepares source store ownership before recovery scheduler resume: %s", async scenario => {
+  it.each(["success", "missing-callback", "ownership-failed", "authority-lost", "claim-lost", "endpoint-claim-lost", "missing-claim", "cleanup-failed"] as const)("prepares source store ownership before recovery scheduler resume: %s", async scenario => {
     const h = mkDeps({ sourceGatewayId: "shared-blue" });
     const handoff = { migrationId: "mig-op-1:scheduler:1:claim:1000", fromGatewayId: "shared-blue", toGatewayId: "shared-green",
       uid: "uid-alice", slug: "alice", stageAfterCutover: true as const,
@@ -426,9 +426,12 @@ describe("abandoned Shared migration recovery", () => {
     const order: string[] = [];
     let prepared = false, authorityLost = false, claimLost = false;
     h.deps.assertMigrationRecoveryAuthority = vi.fn(async () => { if (authorityLost) throw new Error("recovery authority changed after ownership await"); });
-    vi.mocked(h.deps.resolveGatewayUrl).mockImplementation(async gatewayId => {
-      if (gatewayId === "shared-blue" && !prepared) throw new Error("source runtime is not ready until store ownership is restored");
-      return `http://${gatewayId}.svc:3003`;
+    vi.mocked(h.deps.resolveGatewayUrl).mockImplementation(async (gatewayId, options) => {
+      if (gatewayId !== "shared-blue") return `http://${gatewayId}.svc:3003`;
+      if (!prepared) throw new Error("source runtime is not ready until store ownership is restored");
+      if (!options?.allowUnready) throw new Error("Shared Service excludes the recovery Pod while ingress is held");
+      if (scenario === "endpoint-claim-lost") claimLost = true;
+      return "http://10.0.0.8:3003";
     });
     h.ctx.assertActiveClaim = scenario === "missing-claim" ? undefined : vi.fn(async () => { if (claimLost) throw new Error("operation claim replaced after ownership await"); });
     h.client.abortImport = vi.fn(async ({ mode }) => { order.push(`abort:${mode}`); });
@@ -459,6 +462,7 @@ describe("abandoned Shared migration recovery", () => {
     if (scenario === "success") {
       expect(result, JSON.stringify(result)).toMatchObject({ success: false, rolledBack: true });
       expect(order).toEqual(["abort:keys", "abort:pre", "abort:final", "unmount", "ownership", "scheduler:resume", "resume", "complete"]);
+      expect(h.deps.resolveGatewayUrl).toHaveBeenCalledWith("shared-blue", { allowUnready: true });
       expect(prepare).toHaveBeenCalledOnce();
     } else {
       expect(result.rolledBack).not.toBe(true);
@@ -790,7 +794,9 @@ describe("abandoned Shared migration recovery", () => {
 
     expect(order.filter(step => step !== "authority")).toEqual(["scheduler:resume:shared-blue", "resume:shared-blue", "complete"]);
     expect(order[0]).toBe("authority");
-    expect(order.lastIndexOf("authority")).toBeLessThan(order.indexOf("scheduler:resume:shared-blue"));
+    expect(order[order.indexOf("scheduler:resume:shared-blue") - 1]).toBe("authority");
+    expect(order[order.indexOf("resume:shared-blue") - 1]).toBe("authority");
+    expect(order[order.indexOf("complete") - 1]).toBe("authority");
     expect(h.deps.resolveGatewayUrl).not.toHaveBeenCalledWith(target, expect.anything());
     expect(h.deps.resolveGatewayUrl).not.toHaveBeenCalledWith(target);
     expect(h.client.abortImport).not.toHaveBeenCalled();
