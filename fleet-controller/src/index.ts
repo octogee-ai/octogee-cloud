@@ -1229,7 +1229,8 @@ async function convergeAvailableGateway(
     instance,
   });
   const desiredOpts = desiredIntent?.opts ?? null;
-  if (await beginLiveStandbyAdmission(passDeps, { gateway, artifact, runtime, desiredOpts })) return;
+  const liveAdmission = await beginLiveStandbyAdmission(passDeps, { gateway, artifact, runtime, desiredOpts });
+  if (liveAdmission === "bootstrapping") return;
   const desiredChartFingerprint = desiredOpts?.chartFingerprint;
   const desiredDeploymentIntentFingerprint = desiredIntent?.comparisonFingerprint;
   const initialAction = planGatewayConvergence({
@@ -1262,6 +1263,7 @@ async function convergeAvailableGateway(
       await uninstallGateway(passDeps, gateway);
       return;
     case "upsert":
+      if (liveAdmission === "admitted") return;
       await upsertGateway(passDeps, {
         gateway,
         artifact,
@@ -1286,10 +1288,10 @@ function readPendingGatewayArtifact(store: PlatformStateStore, gateway: DurableG
 async function beginLiveStandbyAdmission(
   passDeps: GatewayConvergencePassDeps,
   input: { gateway: DurableGateway; artifact: ReleasePayload | null; runtime: ConvergingGatewayRuntime | undefined; desiredOpts: GatewayUpsertOpts | null },
-): Promise<boolean> {
-  if (input.desiredOpts?.hobbyCheckpoint?.mode !== "live" || input.gateway.liveRelease !== null) return false;
+): Promise<"ordinary" | "bootstrapping" | "admitted"> {
+  if (input.desiredOpts?.hobbyCheckpoint?.mode !== "live" || input.gateway.liveRelease !== null) return "ordinary";
   await upsertGateway(passDeps, { ...input, replicas: 1 });
-  return !input.runtime;
+  return input.runtime ? "admitted" : "bootstrapping";
 }
 
 async function uninstallGateway(

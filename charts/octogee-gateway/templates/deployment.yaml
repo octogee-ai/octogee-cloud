@@ -107,6 +107,8 @@ spec:
       annotations:
         {{- if $checkpointLive }}
         octogee.ai/checkpoint-live-slot: {{ $checkpointSlot | quote }}
+        dev.gvisor.spec.mount.checkpoint-owner.share: "pod"
+        dev.gvisor.spec.mount.checkpoint-owner.type: "bind"
         {{- else }}
         podsnapshot.gke.io/ps-name: {{ $checkpointSnapshot | quote }}
         {{- end }}
@@ -520,6 +522,10 @@ spec:
             {{- end }}
           volumeMounts:
             {{- if $checkpointSealed }}
+            {{- if $checkpointLive }}
+            - name: checkpoint-owner
+              mountPath: /var/run/octogee/checkpoint-owner
+            {{- end }}
             - name: checkpoint-claim
               mountPath: /var/run/octogee/checkpoint-claim
               readOnly: true
@@ -798,6 +804,10 @@ spec:
             {{- toYaml .Values.gatewayEdge.resources | nindent 12 }}
           volumeMounts:
             {{- if $checkpointSealed }}
+            {{- if $checkpointLive }}
+            - name: checkpoint-owner
+              mountPath: /var/run/octogee/checkpoint-owner
+            {{- end }}
             - name: checkpoint-claim
               mountPath: /var/run/octogee/checkpoint-claim
               readOnly: true
@@ -864,6 +874,11 @@ spec:
           {{- end }}
         {{- end }}
       volumes:
+        {{- if $checkpointLive }}
+        - name: checkpoint-owner
+          emptyDir:
+            sizeLimit: 1Mi
+        {{- end }}
         {{- if $checkpointSealed }}
         - name: checkpoint-claim
           configMap:

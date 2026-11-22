@@ -1100,15 +1100,16 @@ describe("gateway convergence pass outcomes", () => {
     expect(h.upserted("ordinary")).not.toHaveProperty("hobbyCheckpoint");
   });
 
-  it("admits an already installed live standby before fleet readiness without provisioning a home claim", async () => {
+  it.each([false, true])("admits an already installed live standby once without provisioning a home claim, previous runtime %s", async hasRuntime => {
     const id = "hobby-slot-aaaeff123456";
     const ownerUid = "u";
     const roots = { [id]: durableRoot({ gatewayId: id, gatewayClass: "isolated", profile: null, imageProfile: "isolated",
       sizingTier: "s", ownerUid, builderSlug: "alice", liveRelease: null }) };
-    const h = isolatedPodPass(roots, {}, { pod: POD_PROFILE });
+    const runtimes = hasRuntime ? { [id]: servingRuntime({ gatewayId: id, runtime: "cluster" }) } : {};
+    const h = isolatedPodPass(roots, runtimes, { pod: POD_PROFILE });
     const prepared = BUILDER_RELEASE.profileImages.builder;
     h.helm.readDeployedInstances.mockResolvedValue({ [id]: {
-      gatewayId: id, replicas: 1, chartFingerprint: "chart", image: { repository: prepared.imageRepository, tag: prepared.imageTag },
+      gatewayId: id, replicas: 1, chartFingerprint: "chart", image: { repository: prepared.imageRepository, tag: hasRuntime ? "stale-observation" : prepared.imageTag },
     } });
     const witness = { podName: "standby-pod", podUid: "pod-uid", deploymentUid: "deploy-uid" };
     await runGatewayConvergencePass({ ...h.deps, resolveHobbyCheckpointPod: async () => ({

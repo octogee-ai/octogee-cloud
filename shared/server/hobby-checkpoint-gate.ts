@@ -1,10 +1,12 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { link, readFile, unlink, writeFile } from "node:fs/promises";
 import { setTimeout } from "node:timers/promises";
 import { isValidGatewayId } from "../types/glm.js";
 import { isValidUsername } from "../types/identity.js";
 import { isUserOwnerUid } from "../types/user-identity.js";
 
 const CLAIM_PATH = "/var/run/octogee/checkpoint-claim/claim.json";
+const LIVE_OWNER_PATH = "/var/run/octogee/checkpoint-owner/owner.json";
 const RESTORED_ENV_PATH = "/proc/gvisor/spec_environ";
 const POD_UID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const SNAPSHOT_NAME = /^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$/;
@@ -78,14 +80,17 @@ export async function readMountedCheckpointClaim(): Promise<HobbyPodClaim | null
   }
 }
 
-async function rememberLiveOwner(prefix: string, claim: HobbyLiveStandbyClaim): Promise<void> {
-  const path = `${prefix}-live-owner`;
+async function rememberLiveOwner(claim: HobbyLiveStandbyClaim): Promise<void> {
+  const staged = `${LIVE_OWNER_PATH}.${randomUUID()}`;
   const owner = JSON.stringify([claim.uid, claim.slug, claim.assignmentEpoch, claim.slotId, claim.podUid, claim.namespace]);
+  await writeFile(staged, owner, { mode: 0o600, flag: "wx" });
   try {
-    await writeFile(path, owner, { mode: 0o600, flag: "wx" });
+    await link(staged, LIVE_OWNER_PATH);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-    if (await readFile(path, "utf8") !== owner) throw new Error("Live standby is already bound to another owner");
+    if (await readFile(LIVE_OWNER_PATH, "utf8") !== owner) throw new Error("Live standby is already bound to another owner");
+  } finally {
+    await unlink(staged);
   }
 }
 
@@ -113,7 +118,7 @@ export async function waitForCheckpointClaim(role: "gateway" | "edge"): Promise<
     if (receipt !== null) {
       if (live) {
         assertLiveCheckpointClaim(boot, receipt);
-        await rememberLiveOwner(prefix, receipt);
+        await rememberLiveOwner(receipt);
         await checkpointGatewayCredentials();
         return receipt;
       }

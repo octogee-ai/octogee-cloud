@@ -1,9 +1,11 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { link, readFile, unlink, writeFile } from 'node:fs/promises';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { checkpointGatewayCredentials, initializeCheckpointEdge, matchesRestartedCheckpoint, readCheckpointRestore, waitForCheckpointClaim } from './hobby-checkpoint-gate.js';
 
 vi.mock("node:fs/promises", async importOriginal => ({
   ...await importOriginal<typeof import("node:fs/promises")>(),
+  link: vi.fn(),
+  unlink: vi.fn(),
   readFile: vi.fn(),
   writeFile: vi.fn(),
 }));
@@ -180,13 +182,12 @@ describe('single-use live standby boot', () => {
   async function admit(receipt: object, previousOwner?: string) {
     for (const [name, value] of Object.entries(standby)) vi.stubEnv(name, value);
     if (previousOwner) {
-      vi.mocked(writeFile).mockImplementation(path => String(path).endsWith('-live-owner') ?
-        Promise.reject(Object.assign(new Error('already exists'), { code: 'EEXIST' })) : Promise.resolve());
+      vi.mocked(link).mockRejectedValue(Object.assign(new Error('already exists'), { code: 'EEXIST' }));
     }
     vi.mocked(readFile).mockImplementation(async path => {
       const file = String(path);
       if (file.endsWith('/claim.json')) return JSON.stringify(receipt);
-      if (file.endsWith('-live-owner') && previousOwner) return previousOwner;
+      if (file.endsWith('/checkpoint-owner/owner.json') && previousOwner) return previousOwner;
       if (file.endsWith('/token')) return 'test-token';
       if (file.endsWith('/agent-store-dsn')) return 'postgres://test/store';
       throw missing;
@@ -197,8 +198,9 @@ describe('single-use live standby boot', () => {
   it('opens the same originally prepared Pod only after its exact live owner proof and credential projection', async () => {
     await expect(admit(liveClaim)).resolves.toEqual(liveClaim);
     expect(vi.mocked(readFile).mock.calls.some(([path]) => String(path).includes('/proc/gvisor/'))).toBe(false);
-    expect(vi.mocked(writeFile).mock.calls.some(([path,body,options]) =>
-      String(path).endsWith('-live-owner') && String(body).includes(liveClaim.uid) && (options as { flag?: string } | undefined)?.flag === 'wx')).toBe(true);
+    expect(vi.mocked(link)).toHaveBeenCalledWith(expect.stringContaining('/checkpoint-owner/'),
+      '/var/run/octogee/checkpoint-owner/owner.json');
+    expect(vi.mocked(unlink)).toHaveBeenCalledOnce();
   });
 
   it.each([
@@ -212,9 +214,22 @@ describe('single-use live standby boot', () => {
     expect(vi.mocked(readFile).mock.calls.some(([path]) => String(path).includes('/checkpoint-credentials/'))).toBe(false);
   });
 
-  it('never rebinds the same running Pod to a different account after a restart', async () => {
+  it('permits both roles and a same-Pod restart to replay the identical owner', async () => {
+    const original = JSON.stringify([liveClaim.uid, liveClaim.slug, 0, liveClaim.slotId, liveClaim.podUid, liveClaim.namespace]);
+    await expect(admit(liveClaim, original)).resolves.toEqual(liveClaim);
+    await expect(waitForCheckpointClaim('edge')).resolves.toEqual(liveClaim);
+    await expect(waitForCheckpointClaim('gateway')).resolves.toEqual(liveClaim);
+    expect(vi.mocked(link).mock.calls.map(([, destination]) => destination)).toEqual(
+      Array(3).fill('/var/run/octogee/checkpoint-owner/owner.json'));
+  });
+
+  it('never rebinds either role on the same running Pod to a different account after a restart', async () => {
     const original = JSON.stringify([liveClaim.uid, liveClaim.slug, 0, liveClaim.slotId, liveClaim.podUid, liveClaim.namespace]);
     await expect(admit({ ...liveClaim, uid: 'other-user', slug: 'other-builder' }, original)).rejects.toThrow(/already bound/);
     expect(vi.mocked(readFile).mock.calls.some(([path]) => String(path).includes('/checkpoint-credentials/'))).toBe(false);
+    await expect(waitForCheckpointClaim('edge')).rejects.toThrow(/already bound/);
+    expect(vi.mocked(link).mock.calls.map(([, destination]) => destination)).toEqual([
+      '/var/run/octogee/checkpoint-owner/owner.json', '/var/run/octogee/checkpoint-owner/owner.json',
+    ]);
   });
 });
