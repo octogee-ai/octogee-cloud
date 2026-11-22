@@ -71,9 +71,11 @@ export async function acquireHeldNativeSourceKeeper(binding: HeldNativeSourceBin
     },
     async close() {
       if (inUse) throw new Error("Held Native source keeper cannot release its lock during maintenance");
-      if (closed) return;
-      closed = true;
-      await mount.close();
+      if (!closed) {
+        closed = true;
+        await mount.close();
+      }
+      return { maintenanceAttempted: attempted };
     },
   };
 }
