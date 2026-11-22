@@ -1,4 +1,4 @@
-import { runHeldSourceReconcile, type HeldNativeSourceKeeper } from "./held-native-source-reconcile.js";
+import { runHeldSourceReconcile, type HeldNativeSourceKeeper, type HeldSourceActions } from "./held-native-source-reconcile.js";
 import type { FleetBrokerUserSnapshot } from "@octogee/shared/types/fleet-broker";
 import { projectAgentWorkspace } from "@octogee/core/project-agent-workspaces";
 import { assertSafeStagedSymlinks, RSYNC_DAEMON_SYMLINK_POLICY, STAGED_RSYNC_COPY_OPTIONS } from "./rsync-staged-symlinks.js";
@@ -1019,28 +1019,48 @@ async function restoreHeldSourceRuntime(
   }
 }
 
-export function createHeldNativeSourceReconcileHandler(deps: MigrationHandlerDeps) {
+export function createScopedHeldNativeSourceReconcileHandler(deps: Pick<MigrationHandlerDeps, "publicKey" | "gatewayId" | "log" | "now"> & {
+  getHeldSourceKeeper: () => HeldNativeSourceKeeper | undefined;
+  actionsFor: (body: HeldNativeSourceReconcileRequest) => HeldSourceActions | null;
+}) {
   const log = deps.log ?? provisionerLog;
   return (req: Request, res: Response) => withLogContext({}, async () => {
     const body = parseAndVerifyJsonBody<HeldNativeSourceReconcileRequest>(req, res, deps, log, heldNativeSourceReconcileJobId);
     if (!body) return;
-    const { binding, migrationId, slug } = body;
+    const { binding, slug } = body;
     const now = (deps.now ?? Date.now)();
     if (!validHeldSourceBinding(body, deps.gatewayId, now)) {
       res.status(400).json({ error: "invalid_held_source_binding" });
       return;
     }
-    const { readHeldSourceSnapshot, flushLocalState } = deps;
-    const heldSourceKeeper = deps.getHeldSourceKeeper?.();
-    const exportManifest = deps.adapter.exportOpenClawActivationManifest;
-    if (!heldSourceKeeper || !readHeldSourceSnapshot || !flushLocalState || !exportManifest ||
-        !deps.adapter.seedUserSnapshotForMigration || !deps.adapter.recordAppliedFingerprint ||
-        deps.adapter.isIsolatedGateway?.() !== true) {
+    const keeper = deps.getHeldSourceKeeper();
+    const actions = keeper ? deps.actionsFor(body) : null;
+    if (!keeper || !actions) {
       res.status(409).json({ error: "held_source_maintenance_unavailable" });
       return;
     }
     try {
-      const proof = await runHeldSourceReconcile(body, heldSourceKeeper, {
+      const proof = await runHeldSourceReconcile(body, keeper, actions);
+      res.json({ requestId: binding.requestId, holdGeneration: binding.holdGeneration, nonce: body.nonce, proof });
+    } catch (error) {
+      log(`[migration-http] held source reconciliation refused for ${slug} (${error instanceof Error ? error.name : "unknown error"})`, { status: "failed" });
+      res.status(409).json({ error: "held_source_reconciliation_incomplete" });
+    }
+  });
+}
+
+export function createHeldNativeSourceReconcileHandler(deps: MigrationHandlerDeps) {
+  return createScopedHeldNativeSourceReconcileHandler({
+    publicKey: deps.publicKey, gatewayId: deps.gatewayId, log: deps.log, now: deps.now,
+    getHeldSourceKeeper: () => deps.getHeldSourceKeeper?.(),
+    actionsFor: body => {
+      const { readHeldSourceSnapshot, flushLocalState } = deps;
+      const exportManifest = deps.adapter.exportOpenClawActivationManifest;
+      if (!readHeldSourceSnapshot || !flushLocalState || !exportManifest ||
+          !deps.adapter.seedUserSnapshotForMigration || !deps.adapter.recordAppliedFingerprint ||
+          deps.adapter.isIsolatedGateway?.() !== true) return null;
+      const { binding, migrationId, slug } = body;
+      return {
         readSnapshot: readHeldSourceSnapshot,
         restore: (full, assertHeld) => restoreHeldSourceRuntime(deps, body, full, assertHeld),
         drain: async () => {
@@ -1050,12 +1070,8 @@ export function createHeldNativeSourceReconcileHandler(deps: MigrationHandlerDep
         },
         flush: () => flushLocalState({ slug, reason: "native-return" }),
         exportManifest: () => exportManifest.call(deps.adapter, slug),
-      });
-      res.json({ requestId: binding.requestId, holdGeneration: binding.holdGeneration, nonce: body.nonce, proof });
-    } catch (error) {
-      log(`[migration-http] held source reconciliation refused for ${slug} (${error instanceof Error ? error.name : "unknown error"})`, { status: "failed" });
-      res.status(409).json({ error: "held_source_reconciliation_incomplete" });
-    }
+      };
+    },
   });
 }
 

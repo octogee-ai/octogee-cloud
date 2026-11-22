@@ -1,9 +1,12 @@
 import { generateKeyPairSync } from "node:crypto";
 import type { Request, Response } from "express";
+import supertest from "supertest";
 import { describe, expect, it, vi } from "vitest";
-import { heldNativeSourceHoldAudience, heldNativeSourceHoldJobId, signFleetRequest } from "@octogee/core/fleet-signature";
+import { heldNativeSourceHoldAudience, heldNativeSourceHoldJobId, heldNativeSourceReconcileJobId, signFleetRequest } from "@octogee/core/fleet-signature";
 import { SIGNATURE_HEADER, type HeldNativeSourceClaim } from "@octogee/shared/types/fleet-controller";
 import { createHeldNativeSourceAcquisition, createHeldNativeSourceHoldHandler } from "../lib/held-native-source-acquisition.js";
+
+import { createHeldNativeSourceMaintenanceApp } from "../lib/held-native-source-maintenance-app.js";
 
 const key = generateKeyPairSync("ed25519", {
   publicKeyEncoding: { format: "pem", type: "spki" },
@@ -63,5 +66,24 @@ describe("held Native source ingress", () => {
     await handler(signed(raw, "read"), cast, vi.fn());
     expect(res.status).toHaveBeenCalledWith(409);
     expect(identityToken).not.toHaveBeenCalled();
+  });
+});
+
+describe("dedicated held Native maintenance app", () => {
+  it("only exposes the signed held paths and requires a current real keeper there", async () => {
+    const acquisition = createHeldNativeSourceAcquisition({ acquireHostHold: vi.fn(), now: Date.now });
+    const actions = { readSnapshot: vi.fn(), restore: vi.fn(), drain: vi.fn(), flush: vi.fn(), exportManifest: vi.fn() };
+    const app = createHeldNativeSourceMaintenanceApp({ gatewayId: claim.gatewayId, publicKey: key.publicKey, acquisition, actions });
+    for (const endpoint of ["/restore/isolated", "/resume/isolated", "/scheduler/isolated", "/export/isolated"]) {
+      await supertest(app).post(endpoint).send({}).expect(404);
+    }
+    const migrationId = `mig-${claim.operationId}`;
+    const raw = JSON.stringify({ migrationId, slug: claim.slug, binding: { ...claim, holdGeneration: "c".repeat(64) }, nonce: "d".repeat(64), expiresAt: Date.now() + 10_000 });
+    const url = "/held-native-source-reconcile/isolated";
+    const signature = signFleetRequest(key.privateKey, heldNativeSourceReconcileJobId(migrationId, claim.gatewayId), raw);
+    await supertest(app).post(url).set("Content-Type", "application/json").send(raw).expect(401);
+    await supertest(app).post(url).set("Content-Type", "application/json").set(SIGNATURE_HEADER, signature).send(raw).expect(409);
+    expect(actions.readSnapshot).not.toHaveBeenCalled();
+    expect(actions.restore).not.toHaveBeenCalled();
   });
 });
