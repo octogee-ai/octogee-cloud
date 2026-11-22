@@ -106,6 +106,23 @@ function heldNativeReturnFleet(): Seed {
   };
 }
 
+const sharedDrainPeer = "shared-c";
+
+function heldNativeDrainFleet(): Seed {
+  const old = heldNative.targetGatewayId;
+  const fleet = { ...heldNativeReturnFleet(), ...servingSharedGateway(sharedDrainPeer), ...placedUser("uid-terry", "terry", old) };
+  const observedAt = Date.now();
+  for (const [gatewayId, uid, mountedCustomers] of [[old, "old-pod", ["terry"]], [sharedDrainPeer, "peer-pod", []]] as const) {
+    const runtime = fleet[`glmGateways/${gatewayId}`]!;
+    fleet[`glmGateways/${gatewayId}`] = { ...runtime,
+      heartbeat: { ...runtime.heartbeat as object, mountedCustomers },
+      kubernetes: { status: "ready", totalPods: 1, readyPods: 1, observedAt, pods: [{ name: uid, uid }] } };
+  }
+  fleet["glmControllerState/sharedPoolScaler"] = { schemaVersion: 1, actionSequence: 1, lastActionAt: 1,
+    replacements: [{ sourceGatewayId: old, targetGatewayId: sharedDrainPeer, updatedAt: 1 }] };
+  return fleet;
+}
+
 afterEach(() => vi.unstubAllEnvs());
 
 describe("a dry run of a changing request", () => {
@@ -380,6 +397,12 @@ describe("every changing route", () => {
       method: "post", path: `/operations/${heldNative.operationId}/reconcile-held-native-source`, seed: heldNativeReturnFleet,
       body: { sourceGatewayId: heldNative.sourceGatewayId, targetGatewayId: heldNative.targetGatewayId,
         sourceEpoch: heldNative.sourceEpoch, schedulerMigrationId: heldNative.schedulerMigrationId },
+    },
+    "POST /operations/:id/hold-native-return-for-shared-drain": {
+      method: "post", path: `/operations/${heldNative.operationId}/hold-native-return-for-shared-drain`, seed: heldNativeDrainFleet,
+      body: { sourceGatewayId: heldNative.sourceGatewayId, targetGatewayId: heldNative.targetGatewayId,
+        sourceEpoch: heldNative.sourceEpoch, schedulerMigrationId: heldNative.schedulerMigrationId,
+        replacementGatewayId: sharedDrainPeer, oldPodUid: "old-pod", replacementPodUid: "peer-pod", ownerCount: 1 },
     },
     "POST /placement-automation/owner": { method: "post", path: "/placement-automation/owner", body: { owner: "client" } },
   };

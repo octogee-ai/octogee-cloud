@@ -1,7 +1,9 @@
+import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
-import { readHeldNativeReturnForTargetMaintenance, type HeldNativeReturnSelection } from "@octogee/core/fleet-state";
+import { readHeldNativeReturnForRetiredTargetCompensation, readHeldNativeReturnForTargetMaintenance, type HeldNativeReturnSelection, type NativeOldTargetRetirement } from "@octogee/core/fleet-state";
 import { buildOperationAuditIntent, operationAuditDocumentId } from "@octogee/core/operation-audit";
 import type { GatewayRuntimeRestartFenceValue, OperationRecord, PlatformStateStore, PlatformStateTransaction } from "@octogee/core/platform-state";
+import { readRetiredTargetOperatorScope } from "./native-return-target-exclusion.js";
 import type { OperationHandler, OperationResult } from "../operation-router.js";
 
 export const COMPENSATING_NATIVE_RETURN = "compensating-native-return";
@@ -10,7 +12,8 @@ export type OriginalNativeProviderIdentity = {
   instanceId: string; instanceName: string; zone: string; internalIp: string; bootDiskId: string; homeDiskId: string;
 };
 export type OldTargetExclusionScope = HeldNativeReturnSelection & { uid: string; slug: string; exclusionId: string };
-export type CompensatingNativeReturnAuthority = OldTargetExclusionScope & { attemptId: string; auditId: string; sourceRelease: number; targetRelease: number; source: OriginalNativeProviderIdentity };
+export type RetiredNativeTarget = NativeOldTargetRetirement & { oldPodUid: string };
+export type CompensatingNativeReturnAuthority = OldTargetExclusionScope & { attemptId: string; auditId: string; sourceRelease: number; targetRelease: number; retiredTarget?: RetiredNativeTarget; source: OriginalNativeProviderIdentity };
 type Phase = "reserved" | "checkpoint-released" | "stores-prepared" | "scheduler-resumed" | "ingress-resumed";
 type Guard = GatewayRuntimeRestartFenceValue & { phase: Phase; authority: CompensatingNativeReturnAuthority; archive: ArchivedReturn };
 type ArchivedReturn = { handoff: NonNullable<OperationRecord["schedulerHandoff"]>; attempt: NonNullable<OperationRecord["attemptHistory"]>[number] };
@@ -24,10 +27,12 @@ export type CompensatingNativeReturnActions = {
 export type CompensatingNativeReturnProviders = {
   readOldTargetExclusion(tx: PlatformStateTransaction, scope: OldTargetExclusionScope): Promise<boolean>;
   verifyOldTargetExclusion(scope: OldTargetExclusionScope): Promise<void>;
+  readRetiredTargetExclusion?(tx: PlatformStateTransaction, scope: OldTargetExclusionScope): Promise<RetiredNativeTarget | null>;
+  verifyRetiredTargetExclusion?(scope: OldTargetExclusionScope, retirement: RetiredNativeTarget): Promise<void>;
   observeOriginalSource(scope: OldTargetExclusionScope): Promise<OriginalNativeProviderIdentity>;
 };
 type Dependencies = { store: PlatformStateStore; now: () => number; provider?: CompensatingNativeReturnProviders; actions: CompensatingNativeReturnActions };
-type Request = { environment: "test" | "prod"; actor: string; attemptId: string; exclusionId: string; selection: HeldNativeReturnSelection };
+type Request = { environment: "test" | "prod"; actor: string; attemptId: string; exclusionId: string; selection: HeldNativeReturnSelection; targetMode?: "retired" };
 
 function requireRollback(ok: unknown, why: string): asserts ok {
   if (!ok) throw new Error(`Compensating Native return: ${why}`);
@@ -53,13 +58,13 @@ function phaseAdvance(guard: Guard, phase: Phase): Guard {
   return { ...guard, phase };
 }
 
-async function requireNoTargetWork(tx: PlatformStateTransaction, authority: OldTargetExclusionScope) {
+async function requireNoTargetWork(tx: PlatformStateTransaction, authority: CompensatingNativeReturnAuthority) {
   const { operationId, sourceGatewayId, targetGatewayId, uid, slug } = authority;
   const [target, runtime, targetAssignment, transfers, active] = await Promise.all([
     tx.gateways.roots.get(targetGatewayId), tx.fleetRegistry.get(targetGatewayId), tx.gateways.assignments.get(targetGatewayId, uid),
     tx.migrationTasks.listByStatus(["running"]), tx.journal.operations.listForUid(uid, { statuses: ["pending", "running"] }),
   ]);
-  requireRollback(target?.gatewayClass === "shared" && target.desiredStatus === "running" && !target.runtimeRestartFence &&
+  if (!authority.retiredTarget) requireRollback(target?.gatewayClass === "shared" && target.desiredStatus === "running" && !target.runtimeRestartFence &&
     !target.retirementClaim && runtime?.heartbeat.mountedCustomers.includes(slug) === false &&
     !runtime.heartbeat.migratingIn?.includes(slug) && !targetAssignment, "old target may hold this owner");
   const scopedIds = new Set([operationId, `mig-${operationId}`, authority.schedulerMigrationId]);
@@ -68,12 +73,32 @@ async function requireNoTargetWork(tx: PlatformStateTransaction, authority: OldT
     active.length === 1 && active[0]?.id === operationId, "competing owner or transfer claim");
 }
 
+async function readTarget(tx: PlatformStateTransaction, provider: CompensatingNativeReturnProviders, authority: CompensatingNativeReturnAuthority) {
+  const scope = oldTargetScope(authority);
+  if (!authority.retiredTarget) return provider.readOldTargetExclusion(tx, scope);
+  return isDeepStrictEqual(await provider.readRetiredTargetExclusion?.(tx, scope), authority.retiredTarget);
+}
+
+async function verifyTarget(provider: CompensatingNativeReturnProviders, scope: OldTargetExclusionScope, retirement?: RetiredNativeTarget) {
+  if (!retirement) return provider.verifyOldTargetExclusion(scope);
+  requireRollback(provider.verifyRetiredTargetExclusion, "independent retired target verifier unavailable");
+  await provider.verifyRetiredTargetExclusion(scope, retirement);
+}
+
 async function reserveAdmission(tx: PlatformStateTransaction, request: Request) {
-  const enrolled = await readHeldNativeReturnForTargetMaintenance(tx, request.selection);
+  const retired = request.targetMode === "retired"
+    ? await readHeldNativeReturnForRetiredTargetCompensation(tx, request.selection) : null;
+  if (retired) {
+    const scope = await readRetiredTargetOperatorScope(tx, request.actor, request.selection.operationId);
+    requireRollback(retired.exclusionId === request.exclusionId && scope.exclusionId === request.exclusionId,
+      "old target retirement belongs to a different protected drain");
+  }
+  const enrolled = retired ?? await readHeldNativeReturnForTargetMaintenance(tx, request.selection);
   const operation = await tx.journal.operations.get(request.selection.operationId);
   requireRollback(operation?.schedulerHandoff && operation.attemptHistory?.length && !operation.input.compensatingNativeReturn,
     "original forward history unavailable");
-  return { operation, releases: { sourceRelease: enrolled.sourceRelease, targetRelease: enrolled.targetRelease }, archived: { handoff: operation.schedulerHandoff, attempt: operation.attemptHistory.at(-1)! },
+  return { operation, releases: { sourceRelease: enrolled.sourceRelease, targetRelease: enrolled.targetRelease },
+    retirement: retired ? { ...retired.retirement, oldPodUid: retired.oldPodUid } : null, archived: { handoff: operation.schedulerHandoff, attempt: operation.attemptHistory.at(-1)! },
     scope: { ...request.selection, uid: enrolled.uid, slug: enrolled.slug, exclusionId: request.exclusionId } };
 }
 
@@ -84,7 +109,7 @@ async function readPriorReservation(tx: PlatformStateTransaction, request: Reque
   const op = await tx.journal.operations.get(request.selection.operationId);
   const prior = op?.input.compensatingNativeReturn as CompensatingNativeReturnAuthority | undefined;
   requireRollback(audit.actor === request.actor && prior?.auditId === auditId && prior.attemptId === request.attemptId &&
-    prior.exclusionId === request.exclusionId && Object.entries(request.selection).every(([field, value]) => prior[field as keyof CompensatingNativeReturnAuthority] === value),
+    prior.exclusionId === request.exclusionId && !!prior.retiredTarget === (request.targetMode === "retired") && Object.entries(request.selection).every(([field, value]) => prior[field as keyof CompensatingNativeReturnAuthority] === value),
   "prior reservation belongs to a different authority");
   return prior;
 }
@@ -96,12 +121,15 @@ export function createCompensatingNativeReturn(deps: Dependencies) {
     requireRollback(request.environment === "test" && request.actor && /^[a-f0-9-]{36}$/.test(request.attemptId),
       "protected TEST operator required");
     requireRollback(provider, "independent old target exclusion provider is unavailable");
+    requireRollback(request.targetMode === undefined || request.targetMode === "retired", "unsupported target compensation mode");
     const lookup = (tx: PlatformStateTransaction) => readPriorReservation(tx, request);
     const prior = await store.transaction({ label: "compensating-native-return.replay", readOnly: true }, lookup);
     if (prior) return prior;
     const admitted = await store.transaction({ label: "compensating-native-return.read", readOnly: true }, tx => reserveAdmission(tx, request));
     const source = await provider.observeOriginalSource(admitted.scope);
-    await provider.verifyOldTargetExclusion(admitted.scope);
+    const retiredTarget = admitted.retirement;
+    requireRollback(request.targetMode !== "retired" || retiredTarget, "durable retired target exclusion missing");
+    await verifyTarget(provider, admitted.scope, retiredTarget ?? undefined);
     const audit = buildOperationAuditIntent({
       actor: request.actor, forced: false, what: "Restore the original Native return source",
       why: "Independently exclude the held return target before resuming the original owner",
@@ -110,14 +138,16 @@ export function createCompensatingNativeReturn(deps: Dependencies) {
       preActionStatus: { placement: "quiescing", operationStatus: "pending" },
       idempotencyKey: `${COMPENSATING_NATIVE_RETURN}:${request.attemptId}`, now,
     });
-    const authority = { ...admitted.scope, ...admitted.releases, attemptId: request.attemptId, auditId: audit.id, source };
+    const authority = { ...admitted.scope, ...admitted.releases, attemptId: request.attemptId, auditId: audit.id, source,
+      ...(retiredTarget ? { retiredTarget } : {}) };
     return store.transaction({ label: "compensating-native-return.reserve" }, async tx => {
       const already = await lookup(tx);
       if (already) return already;
       const current = await reserveAdmission(tx, request);
-      requireRollback(isDeepStrictEqual(current.scope, admitted.scope) && current.operation.revision === admitted.operation.revision,
+      requireRollback(isDeepStrictEqual(current.scope, admitted.scope) && current.operation.revision === admitted.operation.revision &&
+        isDeepStrictEqual(current.retirement, retiredTarget),
         "original return changed before reservation");
-      requireRollback(await provider.readOldTargetExclusion(tx, admitted.scope), "durable old target exclusion missing");
+      requireRollback(await readTarget(tx, provider, authority), "durable old target exclusion missing");
       await requireNoTargetWork(tx, authority);
       requireRollback(exactSource(source, await tx.fleetRegistry.get(authority.sourceGatewayId)), "original VM provider identity changed");
       const guard: Guard = { kind: COMPENSATING_NATIVE_RETURN, phase: "reserved", gatewayId: authority.sourceGatewayId,
@@ -131,6 +161,17 @@ export function createCompensatingNativeReturn(deps: Dependencies) {
       }, { status: ["pending"], startedAt: null, revision: current.operation.revision });
       return authority;
     });
+  }
+
+  async function requestRetired(input: { environment: "test"; actor: string; operationId: string }) {
+    requireRollback(input.environment === "test" && input.actor, "protected TEST operator required");
+    const { exclusionId, uid: _uid, slug: _slug, ...selection } = await store.transaction(
+      { label: "compensating-native-return.retired-operator-scope", readOnly: true },
+      tx => readRetiredTargetOperatorScope(tx, input.actor, input.operationId),
+    );
+    const hex = createHash("sha256").update(JSON.stringify([COMPENSATING_NATIVE_RETURN, "retired", selection.operationId, exclusionId])).digest("hex");
+    const attemptId = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+    return request({ environment: input.environment, actor: input.actor, attemptId, exclusionId, selection, targetMode: "retired" });
   }
 
   async function assertClaimable(tx: PlatformStateTransaction, operation: OperationRecord): Promise<void> {
@@ -154,7 +195,7 @@ export function createCompensatingNativeReturn(deps: Dependencies) {
         const before = await current();
         requireRollback(!before.done, "rollback already completed");
         const scope = oldTargetScope(authority);
-        await provider.verifyOldTargetExclusion(scope);
+        await verifyTarget(provider, scope, authority.retiredTarget);
         requireRollback(isDeepStrictEqual(await provider.observeOriginalSource(scope), authority.source),
           "original VM or attached disks changed");
         const after = await current();
@@ -207,7 +248,7 @@ export function createCompensatingNativeReturn(deps: Dependencies) {
     }
   };
 
-  return { request, recover, assertClaimable };
+  return { request, requestRetired, recover, assertClaimable };
 }
 
 type ActiveClaim = Exclude<Awaited<ReturnType<typeof readClaim>>, { done: true }>;
@@ -232,9 +273,11 @@ async function readClaim(tx: PlatformStateTransaction, provider: CompensatingNat
     !root.retirementClaim, exactSource(authority.source, runtime)].every(Boolean), "source owner or provider runtime changed");
   assertSourceAssignment(user, assignments, authority);
   await requireNoTargetWork(tx, authority);
-  const target = await tx.gateways.roots.get(authority.targetGatewayId);
-  requireRollback(target?.liveRelease === authority.targetRelease && target.desiredRelease === authority.targetRelease,
-    "old target release changed");
+  if (!authority.retiredTarget) {
+    const target = await tx.gateways.roots.get(authority.targetGatewayId);
+    requireRollback(target?.liveRelease === authority.targetRelease && target?.desiredRelease === authority.targetRelease,
+      "old target release changed");
+  }
   return { done: false, guard, operation, audit, runtime } as const;
 }
 
@@ -264,7 +307,7 @@ async function assertWorkerClaim(tx: PlatformStateTransaction, provider: Compens
     input.uid === uid, input.userSlug === slug, input.fromGatewayId === sourceGatewayId, input.toGatewayId === targetGatewayId,
     isDeepStrictEqual(input.compensatingNativeReturn, authority), audit.actionClaimId === attemptId].every(Boolean),
   "worker claim changed");
-  requireRollback(await provider.readOldTargetExclusion(tx, oldTargetScope(authority)), "durable exclusion changed");
+  requireRollback(await readTarget(tx, provider, authority), "durable exclusion changed");
 }
 
 async function releaseOriginalCheckpoint(tx: PlatformStateTransaction, authority: CompensatingNativeReturnAuthority, state: ActiveClaim) {

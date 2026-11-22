@@ -12,6 +12,7 @@ import type { PlatformStateStore, Stored } from "./platform-state/store.js";
 export declare const SHARED_POOL_AUTOMATION_SOURCE = "shared-pool-scaler";
 export interface AdminSharedPoolRouterDeps {
     store: PlatformStateStore;
+    observeNativeReturnSharedDrains?: boolean;
     readInstalledSharedRelease?: InstalledSharedReleaseReader | undefined;
     platformArtifact?: GatewayArtifact;
     controllerStartedAt?: number | undefined;
@@ -41,6 +42,7 @@ export interface FleetStateUser {
 }
 export declare function readFleetState(store: PlatformStateStore, input: {
     operationStatuses: readonly OperationStatus[];
+    observeNativeReturnSharedDrains?: boolean;
     readInstalledSharedRelease?: InstalledSharedReleaseReader | undefined;
     platformArtifact?: GatewayArtifact | undefined;
     controllerStartedAt?: number | undefined;
@@ -65,5 +67,11 @@ export declare function readFleetState(store: PlatformStateStore, input: {
     assignments: readonly Stored<import("@octogee/shared/types/gateway-releases").AssignmentDoc>[];
     runtimes: readonly Stored<FleetRegistryRecord>[];
     operations: readonly Stored<OperationRecord>[];
+    heldNativeSharedDrains?: {
+        operationId: string;
+        oldGatewayId: string;
+        replacementGatewayId: string;
+        supersedableInboundOperationIds: string[];
+    }[] | undefined;
 }>;
 export declare function addAdminSharedPoolRoutes(router: Router, deps: AdminSharedPoolRouterDeps): void;

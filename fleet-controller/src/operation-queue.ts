@@ -103,6 +103,7 @@ function describeWaitingOn(op: OperationRef): string {
 }
 
 export interface PendingOperationRef extends OperationRef {
+  heldForSharedDeparture?: boolean;
   sharedDestinationReleased?: boolean;
   unstartedPlacementMove?: boolean;
   createdAt: number;
@@ -353,6 +354,7 @@ function findOlderPendingSameScope(
     .filter(
       (pending) =>
         pending.id !== candidate.id &&
+        !pending.heldForSharedDeparture &&
         !rolloutWaitsForUserActivation(pending, candidate) &&
         !postCutoverReturnBlocksRollout(pending, candidate) &&
         !recoveryYieldsToTargetRoll(pending, candidate) &&

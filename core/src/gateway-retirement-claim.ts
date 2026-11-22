@@ -9,6 +9,7 @@ import {
   type GatewayRetirementClaim as RetirementClaim,
 } from "@octogee/shared/types/gateway-releases";
 import { findActiveGatewayMigration } from "./fleet-operation-lock.js";
+import { readNativeReturnTargetDrain, sharedDrainPodMatches, type NativeReturnTargetDrain } from "./native-return-target-deny.js";
 import type { PlatformUserRecord } from "./platform-state/users.js";
 import type { NewOperation, OperationRecord } from "./platform-state/operations.js";
 import type { PlatformStateStore, PlatformStateTransaction, Stored } from "./platform-state/store.js";
@@ -313,6 +314,62 @@ function activeMigrationConflict(gatewayId: string, operations: readonly Stored<
   ) !== null;
 }
 
+async function drainedOwnerMoved(
+  transaction: PlatformStateTransaction, old: string, destination: string, owner: NativeReturnTargetDrain["owners"][number],
+): Promise<boolean> {
+  const [ownerRecord, assignments] = await Promise.all([
+    transaction.users.records.get(owner.uid), transaction.gateways.assignments.listForUid(owner.uid),
+  ]);
+  const assignment = assignments[0];
+  if (!assignment?.updatedByOperationId || ![assignments.length === 1, assignment.gatewayId === destination,
+    assignment.slug === owner.slug, assignment.epoch === owner.epoch + 1, assignment.state === "serving",
+    ownerRecord?.gateway?.gatewayId === destination].every(Boolean)) return false;
+  const departure = await transaction.journal.operations.get(assignment.updatedByOperationId);
+  return !!departure && [departure.kind === "migrate-user", departure.status === "succeeded", typeof departure.cutoverCommittedAt === "number",
+    departure.input.uid === owner.uid, departure.input.fromGatewayId === old, departure.input.toGatewayId === destination].every(Boolean);
+}
+
+async function nativeReturnRetirementHolds(
+  transaction: PlatformStateTransaction, old: string, active: readonly Stored<OperationRecord>[], now: number,
+): Promise<{ operationId: string; dormantInboundOperationIds: string[] } | null> {
+  for (const operation of active) {
+    if (![operation.status === "pending", operation.startedAt === null, operation.input.toGatewayId === old,
+      operation.schedulerHandoff?.forwardRecovery?.phase === "source-flushed", operation.cutoverCommittedAt === undefined].every(Boolean)) continue;
+    const drain = await readNativeReturnTargetDrain(transaction, operation);
+    if (!drain || !await transaction.gateways.assignments.isEmpty(old)) continue;
+    const [left, tasks, oldRuntime, replacement, departed] = await Promise.all([
+      transaction.users.records.listByGateway(old, { limit: 1 }), transaction.migrationTasks.listByStatus(["running"]),
+      transaction.fleetRegistry.get(old), transaction.fleetRegistry.get(drain.replacementGatewayId),
+      Promise.all(drain.owners.map(owner => drainedOwnerMoved(transaction, old, drain.replacementGatewayId, owner))),
+    ]);
+    if (!sharedDrainPodMatches(oldRuntime, drain.oldPodUid, now) || !sharedDrainPodMatches(replacement, drain.replacementPodUid, now)) continue;
+    if (![left.length === 0, !oldRuntime.heartbeat.migratingIn?.length, replacement.heartbeat.status === "ready",
+      drain.owners.every(owner => replacement.heartbeat.mountedCustomers.includes(owner.slug)),
+      !tasks.some(task => task.targetGatewayId === old || task.sourceGatewayId === old), departed.every(Boolean)].every(Boolean)) continue;
+    return { operationId: operation.id, dormantInboundOperationIds: drain.dormantInboundOperationIds };
+  }
+  return null;
+}
+
+async function supersededRetirementMigrations(
+  transaction: PlatformStateTransaction, input: ClaimGatewayRetirementInStoreInput, active: readonly Stored<OperationRecord>[], shared: boolean,
+) {
+  const nativeHold = shared && input.operation.input.source === "shared-pool-scaler"
+    ? await nativeReturnRetirementHolds(transaction, input.gatewayId, active, input.now) : null;
+  const reasons = new Map(input.supersededMoves?.operationIds.map(id => [id, input.supersededMoves!.cancelledBecause]));
+  for (const operation of active) {
+    if (nativeHold?.dormantInboundOperationIds.includes(operation.id) && moveHasNotBegun(operation, input.gatewayId) && !reasons.has(operation.id)) {
+      reasons.set(operation.id, "Shared destination retired before the move started");
+    }
+  }
+  const stillWaiting = active.filter(operation => reasons.has(operation.id) && moveHasNotBegun(operation, input.gatewayId));
+  if (stillWaiting.length !== reasons.size || activeMigrationConflict(input.gatewayId, active.filter(operation =>
+    !reasons.has(operation.id) && operation.id !== nativeHold?.operationId))) {
+    throw new GatewayRetirementConflictError(`user migration is in flight for gateway ${input.gatewayId}`);
+  }
+  return stillWaiting.map(operation => ({ id: operation.id, reason: reasons.get(operation.id)! }));
+}
+
 function inspectRetirementRuntime(
   input: Pick<ClaimGatewayRetirementInStoreInput, "gatewayId" | "now" | "telemetryObservedAfter">,
   root: RetirableGateway,
@@ -346,15 +403,7 @@ export async function claimGatewayRetirementInStore(
       transaction.journal.operations.listByStatus(["pending", "running"]),
     ]);
     const { rootData } = claimableGatewayRetirementRoot(input.gatewayId, stored ?? undefined);
-    const superseded = new Set(input.supersededMoves?.operationIds ?? []);
-    const stillWaiting = activeOperations.filter((operation) =>
-      superseded.has(operation.id) && moveHasNotBegun(operation, input.gatewayId));
-    if (stillWaiting.length !== superseded.size ||
-        activeMigrationConflict(input.gatewayId, activeOperations.filter((operation) => !superseded.has(operation.id)))) {
-      throw new GatewayRetirementConflictError(
-        `user migration is in flight for gateway ${input.gatewayId}`,
-      );
-    }
+    const stillWaiting = await supersededRetirementMigrations(transaction, input, activeOperations, stored?.gatewayClass === "shared");
 
     await assertGatewayRuntimeMutationUnfencedInStore(transaction, input.gatewayId);
 
@@ -392,11 +441,11 @@ export async function claimGatewayRetirementInStore(
       },
       { retirementVersion: rootData.retirementVersion ?? null, updatedAt: rootData.updatedAt },
     );
-    for (const operation of stillWaiting) {
-      await transaction.journal.operations.patch(operation.id, {
+    for (const { id, reason } of stillWaiting) {
+      await transaction.journal.operations.patch(id, {
         status: "failed",
         completedAt: input.now,
-        error: input.supersededMoves!.cancelledBecause,
+        error: reason,
         nextAttemptAt: { clear: true },
       }, { status: ["pending"], startedAt: null });
     }

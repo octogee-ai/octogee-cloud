@@ -575,6 +575,23 @@ describe("decideOperationClaim", () => {
 describe("decideOperationClaim — FIFO per scope (an older pending op blocks a newer claimer)", () => {
   const now = 1_000_000;
 
+  it("lets an enrolled Shared departure pass its held Native return in FIFO, while preserving the running lock", () => {
+    const held = { id: "return", kind: "migrate-user", createdAt: 1,
+      input: { uid: "isolated-owner", fromGatewayId: "builder-old", toGatewayId: "shared-old" } };
+    const choice = {
+      op: { id: "departure", kind: "migrate-user", status: "pending", createdAt: 2,
+        input: { uid: "shared-owner", fromGatewayId: "shared-old", toGatewayId: "shared-next" } },
+      now,
+      pendingOpsSameKind: [held],
+      runningOpsSameKind: [],
+    };
+    expect(decideOperationClaim(choice).outcome).toBe("queue");
+    expect(decideOperationClaim({ ...choice, pendingOpsSameKind: [{ ...held, heldForSharedDeparture: true }] }).outcome)
+      .toBe("claim");
+    expect(decideOperationClaim({ ...choice, pendingOpsSameKind: [], runningOpsSameKind: [held] }).outcome)
+      .toBe("queue");
+  });
+
   it("queues behind an OLDER same-scope pending rollout even when nothing is running — the fast path must not let a newcomer jump the queue", () => {
     const decision = decideOperationClaim({
       op: { id: "op-new", kind: "rollout", status: "pending", createdAt: 3 },

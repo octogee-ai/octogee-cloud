@@ -325,6 +325,8 @@ import {
   assertWorkspaceMigrationRecoveryAuthority,
   assertWorkspaceMigrationSourcePreparationAuthority,
   assertSharedHeldReturnMaintenanceUnfenced,
+  nativeReturnAllowsSharedDeparture,
+  readNativeReturnTargetDrain,
   type CutoverDeps,
   type FleetStateDeps,
 } from "@octogee/core/fleet-state";
@@ -2131,6 +2133,7 @@ async function allowMigrationWorkerClaim(tx: PlatformStateTransaction, operation
     await deps.assertCompensatingNativeReturnClaimable(tx, operation);
     return true;
   }
+  if (operation.schedulerHandoff?.forwardRecovery && await readNativeReturnTargetDrain(tx, operation)) return false;
   if (operation.schedulerHandoff?.forwardRecovery?.offlineSourceRecovery) return allowOfflineMigrationWorkerClaim(tx, operation, deps);
   await assertMigrationRestartUnfenced(tx, operation.input);
   return true;
@@ -2168,6 +2171,7 @@ async function attemptClaimOrQueueOperation(
           tx.journal.operations.listByStatus(["running"]),
           tx.journal.operations.listByStatus(["pending"]),
         ]);
+        const heldForDeparture = await nativeReturnAllowsSharedDeparture(tx, stored, pending, Date.now());
         runningOpsSameKind = running.flatMap((runningOperation) =>
           isSeriallyExclusiveKind(runningOperation.kind) ? [{
             id: runningOperation.id,
@@ -2179,6 +2183,7 @@ async function attemptClaimOrQueueOperation(
           }] : []);
         pendingOpsSameKind = await Promise.all(pending.filter(operation => isSeriallyExclusiveKind(operation.kind))
           .map(async (pendingOperation) => ({
+            heldForSharedDeparture: heldForDeparture.has(pendingOperation.id),
             sharedDestinationReleased: usesOnlySharedDestinationWhileBackingOff(freshOperation, pendingOperation, Date.now()) &&
               await queuedSharedMigrationNeverTouchedDestinationInStore(tx, pendingOperation, pendingOperation.id),
             id: pendingOperation.id,
@@ -3262,9 +3267,9 @@ function configureEnrolledNativeRecovery(deps: {
   if (!enrollment) return undefined;
   const { store, privateKey, prepareMigrationAgentStores } = deps;
   return createNativeRecoveryComposition(environmentName, NAMESPACE, store, Date.now, {
+    ...enrollment,
     target: {
       privateKey, runKubectl: deps.runKubectl, agentStoreAdminDsn: deps.agentStoreAdminDsn,
-      readRetainedCompletion: enrollment.readRetainedCompletion,
       verifyWholeRetirement: buildNativeReturnTargetRetirementVerifier(store, deps.kubeOps),
     },
     source: {
@@ -3278,7 +3283,6 @@ function configureEnrolledNativeRecovery(deps: {
           });
       },
     },
-    inert: enrollment.inert, registerOperatorActions: enrollment.registerOperatorActions,
   });
 }
 
