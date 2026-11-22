@@ -2083,6 +2083,7 @@ export {
 } from "./held-native-return-repair.js";
 
 export {
+  assertSharedInertEmptyPeerHeld, holdSharedInertEmptyPeer, releaseSharedInertEmptyPeer, type SharedInertEmptyPeerScope,
   acquireSharedHeldReturnMaintenance, advanceSharedHeldReturnMaintenance, assertSharedHeldReturnMaintenance,
   authorizeSharedInertMaintenance, assertSharedInertPreLaunch, authorizeSharedInertStockLaunch, readAuthorizedSharedInertStock, rollbackSharedInertBeforeStock,
   type SharedInertMaintenancePriorProof, type SharedInertMaintenanceCommonProof,

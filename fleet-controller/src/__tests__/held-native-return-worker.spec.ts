@@ -10,6 +10,7 @@ import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store"
 import {
   assertPendingHeldNativeOfflineProjection, bindHeldNativeStoppedOriginal, recordHeldNativeOriginalRestart, reserveHeldNativeOfflineSource,
   acquireSharedHeldReturnMaintenance, advanceSharedHeldReturnMaintenance, assertSharedHeldReturnMaintenance,
+  assertSharedInertEmptyPeerHeld, holdSharedInertEmptyPeer, releaseSharedInertEmptyPeer,
   assertSharedInertPreLaunch, authorizeSharedInertMaintenance, authorizeSharedInertStockLaunch, readAuthorizedSharedInertStock, rollbackSharedInertBeforeStock,
   assertSharedHeldReturnMaintenanceUnfenced, completeSharedHeldReturnMaintenance, heldNativeReturnBlocksDestination,
   requestHeldNativeReturnRepair, resumeSharedHeldReturnMaintenance, stageSharedHeldReturnMaintenanceRelease, withdrawSharedHeldReturnMaintenance,
@@ -866,6 +867,93 @@ function inertPriorFixture(claim: Awaited<ReturnType<ReturnType<typeof sharedMai
     ownerBackups: claim.plan.owners.map((owner, index) => ({ ...owner, restoredArchiveSha256: index.toString(16).repeat(64) })),
   };
 }
+
+async function emptyPeerFixture() {
+  const h = sharedMaintenanceFixture();
+  const claim = await h.acquire();
+  await authorizeSharedInertMaintenance(h.store, claim, async () => inertPriorFixture(claim), () => 510);
+  const peer = {
+    gatewayId: "shared-other",
+    workload: { podName: "peer-pod", podUid: "00000000-0000-4000-8000-000000000011",
+      deploymentUid: "00000000-0000-4000-8000-000000000012", replicaSetUid: "00000000-0000-4000-8000-000000000013" },
+  };
+  const rootPath = `gateways/${peer.gatewayId}`;
+  h.docs.set(rootPath, { gatewayId: peer.gatewayId, gatewayClass: "shared", desiredStatus: "running",
+    desiredRelease: 1, liveRelease: 1, latestRelease: 1 });
+  const runtime = { ...h.targetRuntime, gatewayId: peer.gatewayId, heartbeat: { status: "ready", mountedCustomers: [], migratingIn: [] as string[] },
+    kubernetes: { status: "ready", totalPods: 1, readyPods: 1, observedAt: 520, pods: [
+      { name: peer.workload.podName, uid: peer.workload.podUid, replicaSetUid: peer.workload.replicaSetUid,
+        nodeName: null, instanceId: null, nodePool: null },
+    ] } };
+  h.docs.set(`glmGateways/${peer.gatewayId}`, runtime);
+  const verifyExactWorkload = vi.fn(async () => {});
+  const hold = () => holdSharedInertEmptyPeer(h.store, claim, peer, verifyExactWorkload, () => 525);
+  return { ...h, claim, peer, rootPath, runtime, verifyExactWorkload, hold };
+}
+
+it("holds the exact empty peer in the normal queue across replay and clears it only after verified SQL restoration", async () => {
+  const h = await emptyPeerFixture();
+  const untouched = await h.store.journal.operations.get(h.outboundId);
+  await h.hold();
+  await h.hold();
+  expect(h.verifyExactWorkload).toHaveBeenCalledTimes(4);
+  await expect(assertSharedInertEmptyPeerHeld(h.store, h.claim, h.peer, () => 530)).resolves.toBeUndefined();
+  await expect(assertSharedHeldReturnMaintenanceUnfenced(h.store, {
+    gatewayId: h.peer.gatewayId, input: { gatewayId: h.peer.gatewayId },
+  })).rejects.toThrow(/blocks this operation/);
+  const failedRestore = vi.fn(async () => { throw new Error("credential restoration differs"); });
+  await expect(releaseSharedInertEmptyPeer(h.store, h.claim, h.peer, failedRestore, () => 530)).rejects.toThrow(/credential restoration/);
+  expect((await h.store.gateways.roots.get(h.peer.gatewayId))?.runtimeRestartFence?.attemptId).toBe(h.claim.attemptId);
+  const restore = vi.fn(async (current: () => Promise<void>) => { await current(); });
+  await releaseSharedInertEmptyPeer(h.store, h.claim, h.peer, restore, () => 535);
+  await releaseSharedInertEmptyPeer(h.store, h.claim, h.peer, restore, () => 540);
+  expect(restore).toHaveBeenCalledOnce();
+  expect((await h.store.gateways.roots.get(h.peer.gatewayId))?.runtimeRestartFence).toBeUndefined();
+  expect((await h.store.gateways.roots.get(h.claim.gatewayId))?.runtimeRestartFence?.attemptId).toBe(h.claim.attemptId);
+  expect((await h.store.journal.audits.get(h.claim.auditId))?.target).toMatchObject({ emptyPeer: { scope: h.peer, restoredAt: 535 } });
+  expect(await h.store.journal.operations.get(h.outboundId)).toEqual(untouched);
+});
+
+it("refuses a mounted, changed or actively targeted peer before any durable reservation", async () => {
+  const mounted = await emptyPeerFixture();
+  mounted.runtime.heartbeat.migratingIn.push("incoming");
+  const stale = await emptyPeerFixture();
+  stale.runtime.kubernetes.pods[0]!.uid = "another-pod";
+  const busy = await emptyPeerFixture();
+  busy.docs.set("glmOperations/peer-operation", {
+    kind: "rollout", gatewayId: busy.peer.gatewayId, input: { gatewayId: busy.peer.gatewayId }, status: "running",
+    createdAt: 110, startedAt: 515, completedAt: null, attempts: 1, steps: [],
+  });
+  for (const h of [mounted, stale, busy]) {
+    await expect(h.hold()).rejects.toThrow(/active custody/);
+    expect((await h.store.gateways.roots.get(h.peer.gatewayId))?.runtimeRestartFence).toBeUndefined();
+  }
+});
+
+it("withholds the stock launch permit until the paired SQL restoration is recorded", async () => {
+  const h = await emptyPeerFixture();
+  await h.hold();
+  const { ownerBackups: _backups, ...prior } = inertPriorFixture(h.claim);
+  const common = { ...prior, heldContainerIds: { gateway: "held-gateway", "gateway-edge": "held-edge" },
+    observedImageIds: h.claim.plan.maintenanceImages, ownerHomes: h.claim.plan.owners,
+    custodyGeneration: "b".repeat(64), restoredArchiveSha256: "c".repeat(64), writersHeldAt: 526, capturedAt: 530, restoredAt: 540 };
+  await authorizeSharedInertStockLaunch(h.store, h.claim, async () => common, () => 545);
+  await expect(readAuthorizedSharedInertStock(h.store, h.claim)).rejects.toThrow(/no launch-authorized common restore/);
+  await releaseSharedInertEmptyPeer(h.store, h.claim, h.peer, async current => current(), () => 550);
+  await expect(readAuthorizedSharedInertStock(h.store, h.claim)).resolves.toEqual(common);
+});
+
+it("keeps the paired hold if peer custody drifts after reservation or if the action scope differs", async () => {
+  const h = await emptyPeerFixture();
+  await h.hold();
+  const wrong = { ...h.peer, workload: { ...h.peer.workload, deploymentUid: "other-deployment" } };
+  await expect(assertSharedInertEmptyPeerHeld(h.store, h.claim, wrong, () => 530)).rejects.toThrow(/active attempt/);
+  h.runtime.kubernetes.pods[0]!.uid = "another-pod";
+  const restore = vi.fn();
+  await expect(releaseSharedInertEmptyPeer(h.store, h.claim, h.peer, restore, () => 530)).rejects.toThrow(/active custody/);
+  expect(restore).not.toHaveBeenCalled();
+  expect((await h.store.gateways.roots.get(h.peer.gatewayId))?.runtimeRestartFence?.attemptId).toBe(h.claim.attemptId);
+});
 
 it("separately authorizes inert replacement and refuses any stock authority before a verified current common restore", async () => {
   const h = sharedMaintenanceFixture();

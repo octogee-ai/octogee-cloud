@@ -10,6 +10,10 @@ type Workload = {
     replicaSetUid: string;
     deploymentUid: string;
 };
+export type SharedInertEmptyPeerScope = {
+    gatewayId: string;
+    workload: Workload;
+};
 type RoleImages = {
     gateway: string;
     "gateway-edge": string;
@@ -116,6 +120,9 @@ export interface SharedInertMaintenanceCommonProof {
 }
 type Phase = "reserved" | "withdrawing" | "dispatched" | "rollback";
 export declare function assertSharedHeldReturnMaintenanceUnfenced(state: PlatformStateRepositories, operation: Pick<OperationRecord, "input" | "inputUid" | "gatewayId" | "schedulerHandoff">): Promise<void>;
+export declare function assertSharedInertEmptyPeerHeld(store: PlatformStateStore, claim: SharedHeldReturnMaintenanceClaim, peer: SharedInertEmptyPeerScope, now: () => number): Promise<void>;
+export declare function holdSharedInertEmptyPeer(store: PlatformStateStore, claim: SharedHeldReturnMaintenanceClaim, peer: SharedInertEmptyPeerScope, verifyExactEmptyWorkload: () => Promise<void>, now: () => number): Promise<void>;
+export declare function releaseSharedInertEmptyPeer(store: PlatformStateStore, claim: SharedHeldReturnMaintenanceClaim, peer: SharedInertEmptyPeerScope, restoreAndVerifySql: (assertHeld: () => Promise<void>) => Promise<void>, now: () => number): Promise<void>;
 export declare function acquireSharedHeldReturnMaintenance(store: PlatformStateStore, deps: {
     environment: "test" | "prod";
     actor: string;
