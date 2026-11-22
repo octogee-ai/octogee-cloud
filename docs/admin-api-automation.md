@@ -40,6 +40,7 @@ One consistent read of the fleet:
   "users": [],
   "gateways": [],
   "latestReleasePayloadHashes": { "shared-a": "<hash>" },
+  "platformCurrentSharedGatewayIds": ["shared-a"],
   "assignments": [],
   "runtimes": [],
   "operations": []
@@ -50,7 +51,13 @@ One consistent read of the fleet:
 `operations` holds the operations in the statuses named by
 `?operationStatus=` (default `pending,running`). `latestReleasePayloadHashes`
 covers shared gateways only and is `null` for one whose latest release has no
-readable payload. Each user carries only `uid`, `slug`, `admitted`,
+readable payload. `platformCurrentSharedGatewayIds` contains gateways with the exact
+platform release and those verified to run equivalent Shared software and configuration.
+For a build-tag change, verification requires matching immutable gateway and edge
+images, OpenClaw source, installed intent, override bytes and the complete rendered
+manifest at the deployed Helm revision. Without that proof, rollout follows the normal
+replacement path. The durable release hashes retain their original values.
+Each user carries only `uid`, `slug`, `admitted`,
 `accountLifecycle`, `provisioning.status`, `gateway.gatewayId`,
 `openclaw.managedBy` and its restore and source-transfer fences.
 
@@ -111,10 +118,8 @@ repeated `sections` parameter, answers `400`.
   runtime, no observation, a malformed one or one stamped in the future is
   `unknown` with `ageMs` and `kubernetesObservedAt` `null`. The reading is never
   inferred from anything else.
-- `releases`: `platformArtifactHash` and `latestReleasePayloadHashes` as
-  above, plus `platformCurrentSharedGatewayIds`, the shared gateways whose
-  latest release payload hash equals `platformArtifactHash` (empty when the
-  server has no platform artifact).
+- `releases` includes the three release fields described above. Without a platform
+  artifact, `platformCurrentSharedGatewayIds` is empty.
 - `migrations`: the `migrate-user` operations that are `pending` or
   `running`, whatever `?operationStatus=` says. Each carries
   `sourceRecoveryPending` (see [Source recovery](#source-recovery)).

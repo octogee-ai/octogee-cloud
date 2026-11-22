@@ -101,8 +101,16 @@ export interface CommitAndPushResult {
     committed: boolean;
     pushed: boolean;
     nothingToCommit: boolean;
+    commit?: string;
     pushError?: string;
 }
+export declare function gitHeadCommit(customerDir: string): Promise<{
+    ok: true;
+    commit: string;
+} | {
+    ok: false;
+    error: WorkspaceGitError;
+}>;
 export type WorkspaceCommitPreparation = {
     ok: true;
     excludePaths?: string[];
@@ -120,6 +128,7 @@ export interface CommitAndPushDeps {
     gitCommit: typeof gitCommit;
     gitPreparePush: typeof gitPreparePush;
     gitPush: typeof gitPush;
+    gitHeadCommit: typeof gitHeadCommit;
     acquireMutationLease: typeof acquireWorkspaceMutationLeaseSync;
 }
 export type WorkspaceRemoteSyncState = "fast-forwarded" | "up-to-date" | "dirty" | "no-upstream";

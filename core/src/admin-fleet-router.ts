@@ -115,7 +115,7 @@ import {
 import { addAdminComputerRoutes } from "./admin-vm-router.js";
 import { addAdminUserRoutes, type UserAccounts, type UserSignInHosts } from "./admin-user-router.js";
 import { addAdminSharedPoolRoutes, type AdminSharedPoolRouterDeps } from "./admin-shared-pool-router.js";
-import { withSourceRecoveryPending, type GatewayKubernetesReader, type SourceRecoveryPendingReader } from "./fleet-state-sections.js";
+import { withSourceRecoveryPending, type InstalledSharedReleaseReader, type GatewayKubernetesReader, type SourceRecoveryPendingReader } from "./fleet-state-sections.js";
 import { addAdminPlacementOwnerRoutes } from "./admin-placement-owner-router.js";
 import { addAdminPlacementRoutes, type AdminPlacementCapabilities } from "./admin-placement-router.js";
 import { addAdminPlacementSharedRoutes, type AdminPlacementSharedCapabilities } from "./admin-placement-shared-router.js";
@@ -247,6 +247,7 @@ export interface FleetRouterDeps {
   }) => Promise<unknown[]>;
   releaseEnvironment?: "test" | "prod" | null;
   releaseAuthority?: CentralReleaseAuthority;
+  readInstalledSharedRelease?: InstalledSharedReleaseReader | undefined;
   platformArtifact?: GatewayArtifact;
   controllerStartedAt?: number;
   readGatewayKubernetes?: GatewayKubernetesReader;
@@ -4831,6 +4832,7 @@ export function addAdminFleetRoutes(
   addAdminSharedPoolRoutes(router, {
     store,
     platformArtifact: deps.platformArtifact,
+    readInstalledSharedRelease: deps.readInstalledSharedRelease,
     controllerStartedAt: deps.controllerStartedAt,
     journal: runAdminFleetMutation,
     provisioningReadiness: deps.provisioningReadiness,

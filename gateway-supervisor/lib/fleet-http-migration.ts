@@ -98,7 +98,7 @@ import { upgradeImportedAgentStores } from "./openclaw-import-upgrade.js";
 import { reattachUserAgents } from "./reattach-user-agents.js";
 import { activeAgentProjectIds } from "./openclaw-config-users.js";
 import { PROC_ROOT } from "./held-files.js";
-import { gatewayScopedJobId, verifyFleetRequest } from "./fleet-signature.js";
+import { gatewayScopedJobId, sourceActivationReadinessJobId, verifyFleetRequest } from "./fleet-signature.js";
 import { rejectMisaddressedGateway } from "./fleet-gateway-path.js";
 import type { UserLifecycleAdapter, RemoveUserResult } from "./user-lifecycle.js";
 import {
@@ -146,7 +146,7 @@ import {
 import { OpenclawWireError } from "./gateway-rpc.js";
 import { isRetryableSchedulerFailure, SchedulerRefusal } from "./scheduler-failure.js";
 import type { SurgeOpenClawProcessGateState } from "./surge-openclaw-process-gate.js";
-import { pendingCloneAppliedFingerprint } from "./pending-clone-fingerprint.js";
+import { NEEDS_FULL_ATTACH_FINGERPRINT, importReconciliationPending, pendingCloneAppliedFingerprint, pendingImportAppliedFingerprint } from "./pending-clone-fingerprint.js";
 import { userClaimSlug } from "@octogee/shared/server/user-claim";
 
 const SYSTEM_CONFIG_COMMIT = /^[0-9a-f]{40,64}$/;
@@ -388,20 +388,32 @@ async function activateImportedUserForMigration(input: {
     (input.sharedToSharedRoster || mode === "default") ? true : undefined;
   const options = importedActivationOptions(signal, input.migrationId, beforeRuntimePublish, input.deferRuntimeVerification, sharedToSharedRoster);
   const activation = options ? await deps.adapter.activateImportedUser(slug, options) : await deps.adapter.activateImportedUser(slug);
-  if (loadStrategy === "standard") {
-    deps.adapter.recordAppliedFingerprint?.(
-      slug,
-      deferredCheckouts.length > 0
-        ? pendingCloneAppliedFingerprint(activation.appliedFingerprint)
-        : activation.appliedFingerprint,
-    );
-  } else {
+  recordImportedActivationFingerprint(deps, slug, activation, loadStrategy, deferredCheckouts.length > 0);
+  if (loadStrategy === "expedited") {
     deps.log?.(`[migration-http] expedited activation defers project hydration slug=${slug}`);
   }
   if (mode === "default") {
     await resumeSystemConfigWatchForUser(deps, slug, fenceGeneration);
   }
   return activation.verificationPending;
+}
+
+function recordImportedActivationFingerprint(
+  deps: MigrationHandlerDeps,
+  slug: string,
+  activation: Awaited<ReturnType<UserLifecycleAdapter["activateImportedUser"]>>,
+  loadStrategy: MigrationLoadStrategy,
+  deferredCheckouts: boolean,
+): void {
+  const { appliedFingerprint, verificationPending } = activation;
+  if (loadStrategy === "expedited" || importReconciliationPending(appliedFingerprint)) {
+    const receipt = verificationPending === undefined ? pendingImportAppliedFingerprint(appliedFingerprint) : undefined;
+    deps.adapter.recordAppliedFingerprint?.(slug, receipt ?? NEEDS_FULL_ATTACH_FINGERPRINT);
+    return;
+  }
+  deps.adapter.recordAppliedFingerprint?.(
+    slug, deferredCheckouts ? pendingCloneAppliedFingerprint(appliedFingerprint) : appliedFingerprint,
+  );
 }
 
 async function ensureMigrationGiteaKey(
@@ -459,6 +471,7 @@ function parseAndVerifyJsonBody<T extends MigrationRequestBody>(
   res: Response,
   deps: Pick<MigrationHandlerDeps, "publicKey" | "gatewayId">,
   log: (msg: string, fields?: LogContext) => void,
+  scopeJobId = gatewayScopedJobId,
 ): T | null {
   const rawBody: string = (req as unknown as { rawBody?: string }).rawBody ?? "";
   let body: T;
@@ -468,7 +481,7 @@ function parseAndVerifyJsonBody<T extends MigrationRequestBody>(
     res.status(400).json({ error: "invalid JSON body" });
     return null;
   }
-  if (!body?.migrationId || !body?.slug) {
+  if (typeof body?.migrationId !== "string" || !body.migrationId || typeof body.slug !== "string" || !body.slug) {
     res.status(400).json({ error: "missing migrationId/slug" });
     return null;
   }
@@ -478,7 +491,7 @@ function parseAndVerifyJsonBody<T extends MigrationRequestBody>(
 
 const sigValid = verifyFleetRequest(
     deps.publicKey,
-    gatewayScopedJobId(body.migrationId, deps.gatewayId),
+    scopeJobId(body.migrationId, deps.gatewayId),
     rawBody,
     sigHeader ?? undefined,
   );
@@ -1007,6 +1020,20 @@ export function createExportPathsHandler(deps: MigrationHandlerDeps): RequestHan
       );
       res.status(500).json({ error: "export-paths failed", message });
     }
+  });
+}
+
+export function createSourceActivationReadinessHandler(deps: MigrationHandlerDeps): RequestHandler {
+  const log = deps.log ?? provisionerLog;
+  return (req, res) => withLogContext({}, async () => {
+    const body = parseAndVerifyJsonBody<MigrationRequestBody>(req, res, deps, log, sourceActivationReadinessJobId);
+    if (!body) return;
+
+    const exportable = await deps.adapter.exportOpenClawActivationManifest?.(body.slug).then(
+      () => true,
+      () => false,
+    ) ?? false;
+    res.status(200).json({ migrationId: body.migrationId, slug: body.slug, exportable });
   });
 }
 
@@ -2151,12 +2178,10 @@ export function createPushRsyncStateHandler(deps: MigrationHandlerDeps): Request
               log(`[migration-rsync] OpenClaw is held for migration ${body.migrationId}; carrying ${agentIds.length} closed anchors without detach`);
               return;
             }
-            if (agentIds.length === 1 || deps.adapter.isIsolatedGateway?.() === true) {
+            if (agentIds.length === 1) {
+              controller.signal.throwIfAborted();
               if (!deps.adapter.releaseAgent) throw new Error("Gateway cannot detach PostgreSQL agents");
-              for (const agentId of agentIds) {
-                controller.signal.throwIfAborted();
-                await deps.adapter.releaseAgent(agentId);
-              }
+              await deps.adapter.releaseAgent(agentIds[0]!);
               return;
             }
             await retained?.assertCurrent();

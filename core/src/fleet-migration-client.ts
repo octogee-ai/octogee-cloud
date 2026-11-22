@@ -1,6 +1,6 @@
 
 
-import { gatewayScopedJobId, signFleetRequest } from "./fleet-signature.js";
+import { gatewayScopedJobId, signFleetRequest, sourceActivationReadinessJobId } from "./fleet-signature.js";
 import {
   SIGNATURE_HEADER,
   MIGRATION_QUIESCE_TIMEOUT_MS,
@@ -73,6 +73,7 @@ export interface MigrationClient {
   schedules(opts: ScheduleRemoveRequestBody & GatewayAddress): Promise<ScheduleRemoveResult>;
   schedules(opts: ScheduleCheckRequestBody & GatewayAddress): Promise<ScheduleCheckResult>;
   schedules(opts: ScheduleTransferRequestBody & GatewayAddress): Promise<ScheduleTransferResult>;
+  sourceActivationReadiness(opts: GatewayAddress & { migrationId: string; slug: string }): Promise<"ready" | "unavailable" | "unsupported">;
   resume(opts: { migrationId: string; gatewayId: string; transportId?: string; slug: string; role?: "target" }): Promise<void>;
   quiesce(opts: {
     stopMattermost?: boolean;
@@ -197,7 +198,8 @@ function createFetchWithTimeout(fetchImpl: typeof globalThis.fetch): FetchWithTi
       controller.abort();
     }, timeoutMs);
     try {
-      return await fetchImpl(url, { ...init, signal: controller.signal });
+      const signal = init.signal ? AbortSignal.any([init.signal, controller.signal]) : controller.signal;
+      return await fetchImpl(url, { ...init, signal });
     } catch (err) {
       if (didTimeout) {
         throw new MigrationTransportError(
@@ -223,22 +225,24 @@ interface SignedGatewayPost {
   migrationId: string;
   body: Record<string, unknown>;
   timeoutMs: number;
+  jobId?: string;
+  signal?: AbortSignal;
 }
 
-function createSignedJsonPoster(deps: {
+function createSignedGatewayPoster(deps: {
   privateKey: string;
   resolveGatewayUrl: (transportId: string) => string;
   fetchWithTimeout: FetchWithTimeout;
-}): <Resp>(request: SignedGatewayPost) => Promise<Resp> {
-  return async <Resp>(request: SignedGatewayPost): Promise<Resp> => {
+}): (request: SignedGatewayPost) => Promise<Response> {
+  return async request => {
     const { path, timeoutMs } = request;
     const rawBody = JSON.stringify(request.body);
     const signature = signFleetRequest(
       deps.privateKey,
-      gatewayScopedJobId(request.migrationId, request.gatewayId),
+      request.jobId ?? gatewayScopedJobId(request.migrationId, request.gatewayId),
       rawBody,
     );
-    const res = await deps.fetchWithTimeout(
+    return deps.fetchWithTimeout(
       path,
       `${deps.resolveGatewayUrl(request.transportId)}${path}`,
       {
@@ -248,19 +252,37 @@ function createSignedJsonPoster(deps: {
           [SIGNATURE_HEADER]: signature,
         },
         body: rawBody,
+        ...(request.signal ? { signal: request.signal, redirect: "error" } : {}),
       },
       timeoutMs,
     );
-    if (!res.ok) throw await migrationRpcError(path, res);
-    try {
-      return (await res.json()) as Resp;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      throw new MigrationTransportError(`${path} response body was incomplete: ${message}`, {
-        cause: err,
-      });
-    }
   };
+}
+
+async function readSignedJsonResponse<Resp>(response: Response, path: string): Promise<Resp> {
+  if (!response.ok) throw await migrationRpcError(path, response);
+  try {
+    return (await response.json()) as Resp;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new MigrationTransportError(`${path} response body was incomplete: ${message}`, { cause: err });
+  }
+}
+
+function isActivationReadinessAcknowledgement(value: unknown, migrationId: string, slug: string): boolean {
+  if (typeof value !== "object" || value === null || Object.keys(value).length !== 3) return false;
+  const reply = value as Record<string, unknown>;
+  return reply.migrationId === migrationId && reply.slug === slug && reply.exportable === true;
+}
+
+async function isUnregisteredActivationReadinessRoute(response: Response, path: string): Promise<boolean> {
+  if (response.status !== 404 || response.headers.get("content-type") !== "text/html; charset=utf-8" ||
+      response.headers.get("x-content-type-options") !== "nosniff" ||
+      response.headers.get("content-security-policy") !== "default-src 'none'") return false;
+  return (await response.text()) === [
+    "<!DOCTYPE html>", '<html lang="en">', "<head>", '<meta charset="utf-8">', "<title>Error</title>", "</head>",
+    "<body>", `<pre>Cannot POST ${path}</pre>`, "</body>", "</html>", "",
+  ].join("\n");
 }
 
 export function createMigrationClient(deps: MigrationClientDeps): MigrationClient {
@@ -269,11 +291,13 @@ export function createMigrationClient(deps: MigrationClientDeps): MigrationClien
   const transferMs = deps.timeouts?.transferMs ?? MIGRATION_TRANSFER_TIMEOUT_MS;
   const unmountMs = deps.timeouts?.unmountMs ?? MIGRATION_UNMOUNT_TIMEOUT_MS;
   const verifyMs = deps.timeouts?.verifyMs ?? MIGRATION_VERIFY_TIMEOUT_MS;
-  const postSignedJson = createSignedJsonPoster({
+  const postSigned = createSignedGatewayPoster({
     privateKey: deps.privateKey,
     resolveGatewayUrl: deps.resolveGatewayUrl,
     fetchWithTimeout: createFetchWithTimeout(deps.fetch ?? globalThis.fetch),
   });
+  const postSignedJson = async <Resp>(request: SignedGatewayPost): Promise<Resp> =>
+    readSignedJsonResponse(await postSigned(request), request.path);
 
   return {
     async abortImport({ migrationId, gatewayId, slug, mode }) {
@@ -328,6 +352,24 @@ export function createMigrationClient(deps: MigrationClientDeps): MigrationClien
         `[migration-client] ✅ restoreTarget migrationId=${migrationId} slug=${slug} gateway=${gatewayId} steps=${res.steps.join(",")}`,
       );
       return res;
+    },
+
+    async sourceActivationReadiness({ gatewayId, transportId, migrationId, slug }) {
+      const path = `/source-activation-ready/${gatewayId}`;
+      try {
+        const response = await postSigned({
+          transportId: transportId ?? gatewayId, path, gatewayId, migrationId,
+          jobId: sourceActivationReadinessJobId(migrationId, gatewayId),
+          body: { migrationId, slug }, timeoutMs: verifyMs, signal: AbortSignal.timeout(verifyMs),
+        });
+        if (await isUnregisteredActivationReadinessRoute(response, path)) return "unsupported";
+        if (response.status !== 200 || !/^application\/json(?:; charset=utf-8)?$/i.test(response.headers.get("content-type") ?? "")) {
+          return "unavailable";
+        }
+        return isActivationReadinessAcknowledgement(await response.json(), migrationId, slug) ? "ready" : "unavailable";
+      } catch {
+        return "unavailable";
+      }
     },
 
     async resume({ migrationId, gatewayId, transportId, slug, role }) {
@@ -462,17 +504,19 @@ export async function reportMigrationProgress(
   gatewayId: string,
   body: MigrationProgressRequestBody,
 ): Promise<void> {
-  const post = createSignedJsonPoster({
+  const post = createSignedGatewayPoster({
     privateKey: deps.privateKey,
     resolveGatewayUrl: deps.resolveGatewayUrl,
     fetchWithTimeout: createFetchWithTimeout(deps.fetch ?? globalThis.fetch),
   });
-  await post({
+  const path = `/migration-progress/${gatewayId}`;
+  const response = await post({
     transportId: gatewayId,
-    path: `/migration-progress/${gatewayId}`,
+    path,
     gatewayId,
     migrationId: body.migrationId,
     body: { ...body },
     timeoutMs: 2_000,
   });
+  await readSignedJsonResponse(response, path);
 }

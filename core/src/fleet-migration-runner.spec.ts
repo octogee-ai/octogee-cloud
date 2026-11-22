@@ -16,6 +16,7 @@ function happyClient(): MigrationClient & { calls: string[] } {
       if (request.op === "remove") return { migrationId: request.migrationId, slug: request.slug, op: "remove", removed: request.jobIds.length, failed: [] };
       return { migrationId: request.migrationId, slug: request.slug, op: "restore", created: request.records.length, existing: 0, failed: [] };
     }) as unknown as MigrationClient["schedules"],
+    sourceActivationReadiness: vi.fn(async () => "ready" as const),
     resume: vi.fn(async () => undefined),
     restoreTarget: vi.fn(async ({ slug }) => {
       calls.push(`restore:${slug}`);

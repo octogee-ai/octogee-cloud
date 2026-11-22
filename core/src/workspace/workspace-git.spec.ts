@@ -8,6 +8,7 @@ import {
   gitBranches,
   gitCheckout,
   gitCommit,
+  gitHeadCommit,
   commitAndPushWorkspace,
   gitDiff,
   gitLog,
@@ -32,6 +33,14 @@ function git(cwd: string, args: string[]): void {
   if (r.status !== 0) {
     throw new Error(`git ${args.join(" ")} failed: ${r.stderr}`);
   }
+}
+
+function gitOutput(cwd: string, args: string[]): string {
+  const r = spawnSync("git", args, { cwd, encoding: "utf-8" });
+  if (r.status !== 0) {
+    throw new Error(`git ${args.join(" ")} failed: ${r.stderr}`);
+  }
+  return r.stdout.trim();
 }
 
 async function makeRepo(): Promise<string> {
@@ -316,7 +325,7 @@ describe("platform-owned user Git metadata", () => {
       assertCurrent: async () => { if (!current) throw new Error("custody changed"); },
     }, {
       acquireMutationLease: () => ({ release }) as never,
-      gitCommit, gitPush,
+      gitCommit, gitPush, gitHeadCommit: vi.fn(),
       gitPreparePush: async () => { current = false; return { ok: true, target: { branch: "main", setUpstream: false } }; },
     });
     await expect(save).rejects.toThrow("custody changed");
@@ -462,6 +471,7 @@ describe("platform-owned user Git metadata", () => {
             target: { branch: "main", setUpstream: false },
           })),
           gitPush: vi.fn(async () => ({ ok: true as const })),
+          gitHeadCommit: vi.fn(async () => ({ ok: true as const, commit: "0123456789abcdef0123456789abcdef01234567" })),
         },
       );
 
@@ -563,6 +573,7 @@ describe("platform-owned user Git metadata", () => {
         gitCommit: vi.fn(),
         gitPreparePush: vi.fn(),
         gitPush: vi.fn(),
+        gitHeadCommit: vi.fn(),
       },
     );
 
@@ -759,6 +770,23 @@ const cfg = spawnSync("git", ["config", "user.email"], { cwd: repo, encoding: "u
   });
 });
 
+describe("gitHeadCommit", () => {
+  it("returns the full 40-character hash of HEAD", async () => {
+    const dir = await makeRepo();
+
+    const result = await gitHeadCommit(dir);
+
+    expect(result).toEqual({ ok: true, commit: gitOutput(dir, ["rev-parse", "HEAD"]) });
+    expect(result.ok && result.commit).toMatch(/^[0-9a-f]{40}$/);
+  });
+
+  it("returns NOT_A_REPO for a directory without a repository", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "wsgit-head-"));
+
+    expect(await gitHeadCommit(dir)).toMatchObject({ ok: false, error: { code: "NOT_A_REPO" } });
+  });
+});
+
 describe("gitPush (Phase 6.C.2)", () => {
 
 let repo: string;
@@ -869,7 +897,7 @@ describe("commitAndPushWorkspace remote convergence", () => {
 
       expect(result).toEqual({
         ok: true,
-        result: { committed: true, pushed: true, nothingToCommit: false },
+        result: { committed: true, pushed: true, nothingToCommit: false, commit: gitOutput(remote, ["rev-parse", "main"]) },
       });
       const remoteFiles = spawnSync(
         "git",
@@ -894,7 +922,12 @@ describe("commitAndPushWorkspace remote convergence", () => {
 
       expect(branchResult).toEqual({
         ok: true,
-        result: { committed: true, pushed: true, nothingToCommit: false },
+        result: {
+          committed: true,
+          pushed: true,
+          nothingToCommit: false,
+          commit: gitOutput(remote, ["rev-parse", "refs/heads/feature/agent-edit"]),
+        },
       });
       const upstream = spawnSync(
         "git",

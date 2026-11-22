@@ -165,10 +165,22 @@ export async function gitCommit(customerDir, options) {
         return shaRes;
     return { ok: true, result: { sha: shaRes.stdout.trim(), empty: false } };
 }
+const FULL_COMMIT_HASH = /^[0-9a-f]{40}$/u;
+export async function gitHeadCommit(customerDir) {
+    const head = await runGit(customerDir, ["rev-parse", "--verify", "HEAD^{commit}"]);
+    if (!head.ok)
+        return head;
+    const commit = head.stdout.trim();
+    if (!FULL_COMMIT_HASH.test(commit)) {
+        return { ok: false, error: { code: "INTERNAL", message: "HEAD is not a full 40-character commit hash" } };
+    }
+    return { ok: true, commit };
+}
 const COMMIT_AND_PUSH_DEPS = {
     gitCommit,
     gitPreparePush,
     gitPush,
+    gitHeadCommit,
     acquireMutationLease: acquireWorkspaceMutationLeaseSync,
 };
 export async function syncCleanWorkspaceToRemote(customerDir) {
@@ -295,9 +307,12 @@ export async function commitAndPushWorkspace(customerDir, options, deps = COMMIT
                 },
             };
         }
+        const head = await deps.gitHeadCommit(customerDir);
+        if (!head.ok)
+            return head;
         return {
             ok: true,
-            result: { committed, pushed: true, nothingToCommit: !committed },
+            result: { committed, pushed: true, nothingToCommit: !committed, commit: head.commit },
         };
     }
     finally {

@@ -374,6 +374,7 @@ import { resumeOrphanedRunningOps } from "./resume-orphaned-ops.js";
 import { computeChartFingerprint } from "./chart-fingerprint.js";
 import { startSharedGatewayRetirementLoop } from "./shared-gateway-retirement-loop.js";
 import { createPlacementAutomationGate } from "@octogee/core/placement-automation-handoff";
+import { gatewayDeploymentSettings, installedSharedReleaseReader } from "./shared-release-selection.js";
 import { startPlacement, type PlacementProductDeps, type PlacementProductFactory } from "./placement-product.js";
 import {
   platformGatewayArtifactFromEnvironment,
@@ -1521,6 +1522,13 @@ function assertProvenCheckpointContinuation(gateway: DurableGateway, hobbyCheckp
   }
 }
 
+function currentGatewaySettings(chartFingerprint: string) {
+  return gatewayDeploymentSettings({
+    namespace: NAMESPACE, environment: ENVIRONMENT_SETTINGS,
+    chartPath: GATEWAY_CHART, valuesFile: GATEWAY_VALUES_FILE, chartFingerprint,
+  });
+}
+
 async function prepareDesiredGatewayIntent(input: {
   passDeps: Pick<GatewayConvergencePassDeps, "prepareGatewayConfig" | "chartFingerprint" | "store" | "resolveHobbyCheckpointPod">;
   gateway: DurableGateway;
@@ -1533,20 +1541,11 @@ async function prepareDesiredGatewayIntent(input: {
   const hobbyCheckpoint = await passDeps.resolveHobbyCheckpointPod?.({ store: passDeps.store, gateway, artifact });
   assertProvenCheckpointContinuation(gateway, hobbyCheckpoint);
   const opts = gatewayUpsertOptsFromRelease({
-    namespace: NAMESPACE,
+    ...currentGatewaySettings(passDeps.chartFingerprint),
     gateway: prepared,
     artifact,
     hobbyCheckpoint,
     replicas: gateway.desiredStatus === "paused" ? 0 : 1,
-    chartPath: GATEWAY_CHART,
-    valuesFile: GATEWAY_VALUES_FILE,
-    chartFingerprint: passDeps.chartFingerprint,
-    kmsKeyName: ENVIRONMENT_SETTINGS.kmsKeyName,
-    deploymentTargetId: ENVIRONMENT_SETTINGS.targetId,
-    deploymentProjectId: ENVIRONMENT_SETTINGS.firebaseProjectId,
-    gatewayServiceAccount: ENVIRONMENT_SETTINGS.firebaseProjectId
-      ? `octogee-gateway@${ENVIRONMENT_SETTINGS.firebaseProjectId}.iam.gserviceaccount.com`
-      : undefined,
   });
   return {
     opts,
@@ -2557,6 +2556,7 @@ interface ControllerBackgroundTasksDeps {
   fleetControllerPrivateKey: string;
   platformArtifact: GatewayArtifact;
   controllerStartedAt: number;
+  readInstalledSharedRelease: ReturnType<typeof installedSharedReleaseReader>;
   provisioning: ProvisioningServiceRuntime | null;
 }
 
@@ -2610,6 +2610,7 @@ function startControllerBackgroundTasks({
   fleetControllerPrivateKey,
   platformArtifact,
   controllerStartedAt,
+  readInstalledSharedRelease,
   provisioning,
 }: ControllerBackgroundTasksDeps): ControllerStopper[] {
   if (!deps.kubeOps) {
@@ -2713,7 +2714,7 @@ function startControllerBackgroundTasks({
     policyInputs,
     readSizingKey,
     namespace: NAMESPACE,
-    platformArtifact,
+    platformArtifact, readInstalledSharedRelease,
     now: () => Date.now(),
     log,
     error: (message) => logger.error(message),
@@ -2742,7 +2743,7 @@ function startControllerBackgroundTasks({
     provisionGatewayAuthSecret,
     listGatewayBuilds,
     ...CENTRAL_RELEASE_ROUTE_DEPS,
-    platformArtifact,
+    platformArtifact, readInstalledSharedRelease,
     controllerStartedAt,
     provisioning: provisioning?.client ?? null,
     gatewayGitKeys: provisioning?.client ?? null,
@@ -3278,6 +3279,7 @@ export async function main(product: ControllerProduct): Promise<void> {
     fleetControllerPrivateKey,
     platformArtifact,
     controllerStartedAt,
+    readInstalledSharedRelease: installedSharedReleaseReader(currentGatewaySettings(chartFingerprint), deps.helm, log),
     userAccounts,
     discoverDeletionProductContext: userLifecycle?.discover,
     productAdminUserDetail: adminUserDetail,

@@ -17,6 +17,7 @@ import {
   createMigrationProgressHandler,
   createActivateImportHandler,
   createActivationManifestExportHandler,
+  createSourceActivationReadinessHandler,
   createAbortRsyncImportHandler,
   createCompleteSurgeHandoffHandler,
   migrationImportBusy,
@@ -37,7 +38,7 @@ import {
   findPathTraversalViolation,
   type MigrationHandlerDeps,
 } from "../lib/fleet-http-migration.js";
-import { gatewayScopedJobId, signFleetRequest } from "../lib/fleet-signature.js";
+import { gatewayScopedJobId, signFleetRequest, sourceActivationReadinessJobId } from "../lib/fleet-signature.js";
 import { reserveLoopbackPort } from "../lib/migration-rsync-tls.js";
 import { liveImportAdmissionPath } from "../lib/migration-staging.js";
 import {
@@ -1948,6 +1949,48 @@ describe("queued-rsync migration control handlers", () => {
     expect(getBody()).toEqual({ migrationId: "mig-1", slug: "chris", manifest });
   });
 
+  it.each([true, false])("source activation readiness returns only the scoped exportable acknowledgement (%s)", async exportable => {
+    const exportOpenClawActivationManifest = vi.fn(async () => {
+      if (!exportable) throw new Error("unexpected secret-shaped failure");
+      return {
+        version: 2, slug: "chris", appliedFingerprint: "applied", agentId: "octogee-chris-coach",
+        accountId: "chris-coach", agent: {}, mattermostAccount: { botToken: "token" }, bindings: [],
+      };
+    });
+    const adapter = mkAdapter({ exportOpenClawActivationManifest });
+    const log = vi.fn();
+    const body = { migrationId: "mig-1", slug: "chris" };
+    const signature = signFleetRequest(PRIVATE_KEY, sourceActivationReadinessJobId("mig-1", GATEWAY_ID), JSON.stringify(body));
+    const { res, getStatus, getBody } = mkResponse();
+
+    await createSourceActivationReadinessHandler(mkDeps({ adapter, log }))(mkRequest(body, { signature }), res, vi.fn());
+
+    expect(exportOpenClawActivationManifest).toHaveBeenCalledExactlyOnceWith("chris");
+    expect(getStatus()).toBe(200);
+    expect(getBody()).toEqual({ ...body, exportable });
+    expect(log).not.toHaveBeenCalled();
+  });
+
+  it("prevents legacy manifest access with a readiness request signature", async () => {
+    const exportOpenClawActivationManifest = vi.fn();
+    const adapter = mkAdapter({ exportOpenClawActivationManifest });
+    const body = { migrationId: "mig-1", slug: "chris" };
+    const raw = JSON.stringify(body);
+    const readiness = mkRequest(body, { signature: signFleetRequest(PRIVATE_KEY, sourceActivationReadinessJobId("mig-1", GATEWAY_ID), raw) });
+    const legacy = mkRequest(body, { signature: signForPod("mig-1", raw) });
+    const probes = [
+      [createActivationManifestExportHandler, readiness],
+      [createSourceActivationReadinessHandler, legacy],
+    ] as const;
+
+    for (const [handler, request] of probes) {
+      const { res, getStatus } = mkResponse();
+      await handler(mkDeps({ adapter }))(request, res, vi.fn());
+      expect(getStatus()).toBe(401);
+    }
+    expect(exportOpenClawActivationManifest).not.toHaveBeenCalled();
+  });
+
   it("createActivateImportHandler records a completed standard activation", async () => {
     const markUserMigratingIn = vi.fn();
     const onMounted = vi.fn();
@@ -2076,7 +2119,10 @@ describe("queued-rsync migration control handlers", () => {
     expect(getBody()).toMatchObject({ migrationId: "mig-github-deferred", slug: "chris", imported: true });
   });
 
-  it("activates an import onto the owner's own isolated runtime with its GitHub checkout left for the post-cutover reconcile", async () => {
+  it.each([
+    ["fp-chris", pendingCloneAppliedFingerprint("fp-chris")],
+    ["0123456789abcdef!import-reconcile-pending", "0123456789abcdef!import-reconcile-pending"],
+  ])("preserves deferred reconciliation after standard import of %s", async (appliedFingerprint, expectedReceipt) => {
     const cloneProjectRepo = vi.fn(async () => false);
     const recordAppliedFingerprint = vi.fn();
     const adapter = mkAdapter({
@@ -2086,7 +2132,7 @@ describe("queued-rsync migration control handlers", () => {
         { projectSlug: "octogee", giteaRepoName: null, repoSource: { provider: "github", owner: "octogee-ai", repo: "octogee" } },
       ]),
       cloneProjectRepo,
-      activateImportedUser: vi.fn(async () => ({ appliedFingerprint: "fp-chris" })),
+      activateImportedUser: vi.fn(async () => ({ appliedFingerprint })),
       recordAppliedFingerprint,
     });
     const body: ActivateImportRequestBody = {
@@ -2104,7 +2150,7 @@ describe("queued-rsync migration control handlers", () => {
     expect(getStatus()).toBe(200);
     expect(cloneProjectRepo).not.toHaveBeenCalled();
     expect(adapter.activateImportedUser).toHaveBeenCalledWith("chris", expect.objectContaining({ migrationId: body.migrationId }));
-    expect(recordAppliedFingerprint).toHaveBeenCalledWith("chris", pendingCloneAppliedFingerprint("fp-chris"));
+    expect(recordAppliedFingerprint).toHaveBeenCalledWith("chris", expectedReceipt);
     expect(getBody()).toMatchObject({ migrationId: "mig-github-owner-runtime", slug: "chris", imported: true });
   });
 
@@ -2985,11 +3031,12 @@ describe("queued-rsync migration control handlers", () => {
     }
   });
 
-  it("createFinishRsyncImportHandler leaves expedited project convergence to reconciliation", async () => {
+  it.each([undefined, "runtime verification pending"])(
+    "keeps expedited hydration outstanding while recording verified activation (%s)", async (verificationPending) => {
     const recordAppliedFingerprint = vi.fn();
     const adapter = mkAdapter({
       prepareImportDir: vi.fn(async () => "/openclaw"),
-      activateImportedUser: vi.fn(async () => ({ appliedFingerprint: "fp-chris" })),
+      activateImportedUser: vi.fn(async () => ({ appliedFingerprint: "0123456789abcdef", verificationPending })),
       markUserMigratingIn: vi.fn(),
       recordAppliedFingerprint,
       onMounted: vi.fn(),
@@ -3055,7 +3102,8 @@ describe("queued-rsync migration control handlers", () => {
     expect(adapter.activateImportedUser).toHaveBeenCalledWith("chris", expect.any(Object));
     expect(deps.pauseSystemConfigWatch).toHaveBeenCalledWith("chris");
     expect(deps.resumeSystemConfigWatch).not.toHaveBeenCalled();
-    expect(recordAppliedFingerprint).not.toHaveBeenCalled();
+    if (verificationPending) expect(recordAppliedFingerprint).toHaveBeenCalledExactlyOnceWith("chris", "");
+    else expect(recordAppliedFingerprint).toHaveBeenCalledExactlyOnceWith("chris", "0123456789abcdef!import-reconcile-pending");
     expect(adapter.listProjectsNeedingClone).not.toHaveBeenCalled();
     expect(adapter.writeMountMarker).toHaveBeenCalledWith("chris");
     expect(adapter.onMounted).toHaveBeenCalledWith("chris");
@@ -3664,12 +3712,13 @@ describe("PostgreSQL agent anchors across an rsync carry", () => {
     expect(snapshotCarried).toBe(true);
   });
 
-  it.each(["complete", "running", "batch refused", "archived", "archived missing anchor", "archived directory symlink", "foreign extra anchor", "missing authority", "foreign custody", "foreign anchor", "missing anchor", "authority changed"])("carries the retained roster after current source roster shrinks (%s)", async (scenario) => {
+  it.each(["complete", "running", "builder running", "batch refused", "archived", "archived missing anchor", "archived directory symlink", "foreign extra anchor", "missing authority", "foreign custody", "foreign anchor", "missing anchor", "authority changed"])("carries the retained roster after current source roster shrinks (%s)", async (scenario) => {
     const stateDir = await mkTempRoot(), migrationId = "held-roster-retry";
     vi.stubEnv("POD_UID", "source-pod");
     const ids = ["octogee-chris-coach", "octogee-chris-proj-one-coach", "octogee-chris-proj-two-coach"];
     for (const id of ids) await writeStore(stateDir, `agents/${id}/agent/openclaw-agent.sqlite`, () => {});
-    const { handler, adapter, req } = pushRsync(stateDir, migrationId, { surgeSourceOpenClawHeld: async () => scenario !== "running" && scenario !== "batch refused" });
+    const { handler, adapter, req } = pushRsync(stateDir, migrationId, { surgeSourceOpenClawHeld: async () => scenario !== "running" && scenario !== "builder running" && scenario !== "batch refused" });
+    if (scenario === "builder running") adapter.isIsolatedGateway = () => true;
     const manifest = await adapter.exportOpenClawActivationManifest!("chris");
     manifest.projectAgents = ids.slice(1).map((agentId, index) => ({ agentId, accountId: agentId.replace(/^octogee-/, "").replace(/-coach$/, ""), agent: { id: agentId, workspace: path.join(stateDir, "customers/chris/projects", index ? "two" : "one") }, mattermostAccount: { botToken: "synthetic-project-token" }, bindings: [{ agentId, match: { channel: "mattermost", accountId: agentId.replace(/^octogee-/, "").replace(/-coach$/, "") } }] }));
     for (const project of manifest.projectAgents) await fs.mkdir(String(project.agent.workspace), { recursive: true });
@@ -3695,7 +3744,7 @@ describe("PostgreSQL agent anchors across an rsync carry", () => {
     if (scenario === "batch refused") vi.mocked(adapter.detachSourceAgents!).mockRejectedValueOnce(new Error("detach not confirmed"));
     spawnMock.mockReturnValueOnce(mkFakeChild({ exitCode: 0 }));
     const response = mkResponse(); await handler(req, response.res, vi.fn());
-    if (scenario !== "complete" && scenario !== "running" && scenario !== "archived") {
+    if (scenario !== "complete" && scenario !== "running" && scenario !== "builder running" && scenario !== "archived") {
       const errors = {
         "batch refused": "detach not confirmed",
         "missing authority": "Retained source requires current migration anchor authority",
@@ -3716,7 +3765,7 @@ describe("PostgreSQL agent anchors across an rsync carry", () => {
     expect(response.getStatus(), JSON.stringify(response.getBody())).toBe(200);
     const args = spawnMock.mock.calls[0]![1] as string[];
     for (const id of ids) expect(args.some(arg => arg.endsWith(`/./agents/${id}/agent/.octogee-snapshot`))).toBe(true);
-    if (scenario === "running") {
+    if (scenario === "running" || scenario === "builder running") {
       expect(adapter.detachSourceAgents).toHaveBeenCalledExactlyOnceWith("chris", ids, expect.any(AbortSignal));
     } else {
       expect(adapter.detachSourceAgents).not.toHaveBeenCalled();

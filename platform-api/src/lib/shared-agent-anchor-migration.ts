@@ -56,7 +56,20 @@ async function sharedCrossGatewayAgentAnchorScope(tx: PlatformStateRepositories,
     ...(!sourceRequest && sourceRoot.gatewayClass === "shared" && target?.gatewayClass === "shared"
       ? { sharedToShared: true as const }
       : {}),
+    ...builderReturnRosterScope(sourceRoot, target, { sourceRequest, uid, slug, operationId, assignment }),
   };
+}
+
+function builderReturnRosterScope(
+  source: NonNullable<ReturnType<typeof projectGatewayDesiredRootForGateway>>,
+  target: ReturnType<typeof projectGatewayDesiredRootForGateway>,
+  input: { sourceRequest: boolean; uid: string; slug: string; operationId: string; assignment: GatewayAssignment },
+): { builderToShared?: true } {
+  const { sourceRequest, uid, slug, operationId, assignment } = input;
+  return !sourceRequest && target?.gatewayClass === "shared" && source.gatewayClass === "isolated" &&
+    source.ownerUid === uid && source.builderSlug === slug && assignment.updatedByOperationId === operationId
+    ? { builderToShared: true }
+    : {};
 }
 
 function migrationTargetAuthority({ operationId, operation, input, user, sourceEpoch, targetRoot, target }: {

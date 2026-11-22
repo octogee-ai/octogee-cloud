@@ -1,17 +1,19 @@
 import { describe, expect, it } from "vitest";
 import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { seedServingGateway, sharedPayload } from "@octogee/core-testing/admin-fleet-releases-app";
-import { enqueueParkedGatewayPrewarm, enqueueParkedGuestRelease } from "./parked-gateway-prewarm.js";
+import { placedUser } from "@octogee/core-testing/admin-dry-run-app";
+import { enqueueDemandGuestRelease, enqueueParkedGatewayPrewarm, enqueueParkedGuestRelease } from "./parked-gateway-prewarm.js";
 
 const request = { gatewayId: "isolated", uid: "alice", sourceSha: "a".repeat(40), bootImageId: "123", payload: sharedPayload(), createdBy: "ship-test" };
 
-function fixture(status = "paused", payload = request.payload, vmImages?: Record<string, unknown>) {
+function fixture(status = "paused", payload = request.payload, vmImages?: Record<string, unknown>, sharedGatewayId?: string) {
   const docs = seedServingGateway("isolated", payload, undefined, {
     desiredStatus: status, liveRelease: 1, gatewayClass: "isolated", ownerUid: "alice",
     allocation: { kind: "disposable-builder", schemaVersion: 1, generation: 2, claimedByUid: "alice", leaseId: "one" },
   });
   docs["glmGateways/isolated"].vm = { status: "SUSPENDED", instanceId: "456" };
   if (vmImages) docs["glmGateways/isolated"].vmImages = vmImages;
+  if (sharedGatewayId) Object.assign(docs, placedUser("alice", "alice", sharedGatewayId));
   return createDocumentFixtureStore(new Map(Object.entries(docs)));
 }
 
@@ -88,6 +90,32 @@ describe("Ship retained guest release admission", () => {
     { name: "gateway", running: true, imageReference: `${gateway}:${tag}@${gatewayDigest}`, digests: [`${gateway}@${gatewayDigest}`] },
     { name: "gateway-edge", running: true, imageReference: `${edge}:${tag}@${edgeDigest}`, digests: [`${edge}@${edgeDigest}`] },
   ] };
+
+  const sourceGatewayId = "shared-aaaaaaaaaaaa";
+  const targetGatewayId = "shared-bbbbbbbbbbbb";
+  async function replacing() {
+    const store = fixture("paused", live, undefined, sourceGatewayId);
+    await store.controllerState.sharedPoolScaler.put({
+      schemaVersion: 1, actionSequence: 1, lastActionAt: 1,
+      replacements: [{ sourceGatewayId, targetGatewayId, updatedAt: 1 }],
+    }, "absent");
+    return store;
+  }
+
+  it("leaves a background guest upgrade for the post-cutover pass when the owner's Shared gateway is being replaced", async () => {
+    const store = await replacing();
+    await expect(enqueueParkedGuestRelease(store, queued)).resolves.toMatchObject({ status: "ineligible", reason: expect.stringContaining("Shared") });
+    expect(await store.journal.operations.listForUid(request.uid, { statuses: ["pending"] })).toHaveLength(0);
+    await store.users.records.setGatewayMirror("alice", { gatewayId: targetGatewayId }, { gatewayId: sourceGatewayId });
+    await expect(enqueueParkedGuestRelease(store, queued)).resolves.toMatchObject({ status: "queued" });
+  });
+
+  it("continues to queue owner demand while a Shared replacement is pending", async () => {
+    const store = await replacing();
+    const demand = { gatewayId: queued.gatewayId, uid: queued.uid, createdBy: "placement", payload: queued.payload,
+      demandSource: { gatewayId: sourceGatewayId, release: 1 } };
+    await expect(enqueueDemandGuestRelease(store, demand)).resolves.toMatchObject({ status: "queued" });
+  });
 
   it("does not queue a wake or write a release when both installed digests already match", async () => {
     const store = fixture("paused", live, images);

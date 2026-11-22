@@ -757,8 +757,25 @@ interface NativeReturnProvision {
 
 type SourceAssignment = Omit<Parameters<MigrateUserDeps["setAssignmentState"]>[0], "state" | "createIfMissing">;
 
+const NATIVE_RETURN_ACTIVATION_UNAVAILABLE = "native return source activation export unavailable: status 503";
+
+async function nativeSourceActivationAvailable(input: NativeReturnProvision, client: MigrationClient): Promise<boolean> {
+  if (input.op.schedulerHandoff?.forwardRecovery || input.nativeReturn.checkpointRequested) return true;
+  const readiness = await client.sourceActivationReadiness({
+    migrationId: input.migrationId, gatewayId: input.targets.fromGatewayId, slug: input.slug,
+  });
+  if (readiness === "unsupported") {
+    input.deps.log(`[migrate-customer] ${input.targets.fromGatewayId} migrationId=${input.migrationId}: legacy guest lacks source activation readiness`);
+  }
+  return readiness === "ready" || readiness === "unsupported";
+}
+
 async function runNativeReturn(input: NativeReturnProvision): Promise<OperationResult> {
   const { deps, targets, uid, slug, migrationId, automatic } = input;
+  const baseClient = await gatewayClient(deps, [targets.fromGatewayId, targets.toGatewayId]);
+  if (!await nativeSourceActivationAvailable(input, baseClient)) {
+    return failure(NATIVE_RETURN_ACTIVATION_UNAVAILABLE, false);
+  }
   const handoff = await persistNativeReturnHandoff(input);
   const assertClaim = input.ctx.assertActiveClaim;
   input = { ...input, ctx: { ...input.ctx, ...(assertClaim ? {
@@ -770,7 +787,7 @@ async function runNativeReturn(input: NativeReturnProvision): Promise<OperationR
     `[migrate-customer] ${targets.fromGatewayId} → ${targets.toGatewayId} slug=${slug}: ` +
     "native-return",
   );
-  const client = withImportProgress(await gatewayClient(deps, [targets.fromGatewayId, targets.toGatewayId]), progress);
+  const client = withImportProgress(baseClient, progress);
   const step = async (name: string, action: () => Promise<unknown>): Promise<void> => {
     await reportNativeReturnStep(deps, ctx, name, action);
   };
@@ -882,6 +899,9 @@ async function closeSourceForNativeReturnProvision(
         slug,
         reason: "native-return",
       }));
+    }
+    if (!await nativeSourceActivationAvailable(input, client)) {
+      throw new Error(NATIVE_RETURN_ACTIVATION_UNAVAILABLE);
     }
   }
   await input.ctx.assertActiveClaim(recovering);

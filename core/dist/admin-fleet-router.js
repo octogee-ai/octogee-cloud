@@ -3347,6 +3347,7 @@ export function addAdminFleetRoutes(router, deps) {
     addAdminSharedPoolRoutes(router, {
         store,
         platformArtifact: deps.platformArtifact,
+        readInstalledSharedRelease: deps.readInstalledSharedRelease,
         controllerStartedAt: deps.controllerStartedAt,
         journal: runAdminFleetMutation,
         provisioningReadiness: deps.provisioningReadiness,

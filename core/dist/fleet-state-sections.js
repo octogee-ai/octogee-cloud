@@ -41,6 +41,29 @@ export async function latestReleasePayloadHash(transaction, root) {
     const release = await transaction.gateways.releases.get(root.gatewayId, root.latestRelease);
     return release !== null && isReleasePayload(release.payload) ? releasePayloadHash(release.payload) : null;
 }
+export async function readSharedReleaseRows(gateways, roots) {
+    return Promise.all(roots.filter(isSharedPoolMemberRoot).map(async (root) => {
+        const release = Number.isSafeInteger(root.latestRelease) && root.latestRelease >= 0
+            ? await gateways.releases.get(root.gatewayId, root.latestRelease) : null;
+        const payload = release && isReleasePayload(release.payload) ? release.payload : null;
+        const hash = payload && releasePayloadHash(payload);
+        const verified = release?.gatewayId === root.gatewayId && release.release === root.latestRelease && release.payloadHash === hash;
+        return { root, payload, hash, verified };
+    }));
+}
+export async function selectSharedReleases(rows, artifact, readInstalled) {
+    const platformHash = platformArtifactHash(artifact);
+    const current = await Promise.all(rows.map(async ({ root, payload, hash, verified }) => {
+        if (!artifact || !payload || !verified)
+            return false;
+        return hash === platformHash || (await readInstalled?.(root, payload, artifact)) === true;
+    }));
+    return {
+        platformArtifactHash: platformHash,
+        latestReleasePayloadHashes: Object.fromEntries(rows.map(({ root, hash }) => [root.gatewayId, hash])),
+        platformCurrentSharedGatewayIds: rows.filter((_row, i) => current[i]).map(({ root }) => root.gatewayId),
+    };
+}
 export function readSharedGatewayAutoscalingOrNull(transaction) {
     return readSharedGatewayAutoscalingConfigInStore(transaction).catch((error) => {
         if (error instanceof InvalidSharedGatewayAutoscalingConfigError)
@@ -75,7 +98,7 @@ function once(load) {
     };
 }
 export async function readFleetStateSections(store, input) {
-    return store.transaction({ label: "admin.fleet.state", readOnly: true }, async (transaction) => {
+    const answers = await store.transaction({ label: "admin.fleet.state", readOnly: true }, async (transaction) => {
         const roots = once(() => transaction.gateways.roots.list());
         const runtimes = once(() => transaction.fleetRegistry.list());
         const readKubernetes = input.readGatewayKubernetes ?? (() => UNKNOWN_GATEWAY_KUBERNETES);
@@ -113,16 +136,8 @@ export async function readFleetStateSections(store, input) {
                 };
             },
             releases: async () => {
-                const sharedGateways = (await roots()).filter(isSharedPoolMemberRoot);
-                const hashes = await Promise.all(sharedGateways.map((root) => latestReleasePayloadHash(transaction, root)));
-                const platformHash = platformArtifactHash(input.platformArtifact);
-                return {
-                    platformArtifactHash: platformHash,
-                    latestReleasePayloadHashes: Object.fromEntries(sharedGateways.map((root, index) => [root.gatewayId, hashes[index] ?? null])),
-                    platformCurrentSharedGatewayIds: platformHash === null
-                        ? []
-                        : sharedGateways.filter((_root, index) => hashes[index] === platformHash).map((root) => root.gatewayId),
-                };
+                const rows = await readSharedReleaseRows(transaction.gateways, await roots());
+                return () => selectSharedReleases(rows, input.platformArtifact, input.readInstalledSharedRelease);
             },
             assignments: async () => ({ assignments: await transaction.gateways.assignments.listAll() }),
             runtimes: async () => ({ runtimes: await runtimes() }),
@@ -133,7 +148,7 @@ export async function readFleetStateSections(store, input) {
             },
             placementAutomation: async () => ({ placementAutomation: placementAutomationState(await readPlacementAutomationOwnership(transaction)) }),
         };
-        const answered = await Promise.all(input.sections.map((section) => loaders[section]()));
-        return Object.assign({ generatedAt: input.now, fleetControllerStartedAt: input.controllerStartedAt ?? null, sections: input.sections }, ...answered);
+        return Promise.all(input.sections.map((section) => loaders[section]()));
     });
+    return Object.assign({ generatedAt: input.now, fleetControllerStartedAt: input.controllerStartedAt ?? null, sections: input.sections }, ...await Promise.all(answers.map(answer => typeof answer === "function" ? answer() : answer)));
 }
