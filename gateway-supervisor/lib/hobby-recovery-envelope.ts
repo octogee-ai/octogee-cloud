@@ -93,13 +93,17 @@ function openEnvelope(
 
 export async function verifyHobbyHomeEnvelope(
   chunks: AsyncIterable<Buffer>, expected: Pick<HobbyHomeEnvelopeHeader,"attemptId"|"podUid"|"keyVersion">,
-  dataKey: Buffer, assertSeal: () => Promise<void>,
+  dataKey: Buffer, assertSeal: () => Promise<void>, stage?: (chunk: Buffer) => Promise<void>,
 ): Promise<{ ownerManifestSha256: string; cipherSha256: string }> {
   if (dataKey.length!==32) throw new Error("Invalid Hobby home envelope data key");
   await assertSeal();
   let decipher: DecipherGCM | undefined;
   let pending=Buffer.alloc(0);
   const clearDigest=createHash("sha256"), cipherDigest=createHash("sha256");
+  async function recordCleartext(chunk: Buffer): Promise<void> {
+    clearDigest.update(chunk);
+    await stage?.(chunk);
+  }
   for await (const bytes of chunks) {
     cipherDigest.update(bytes);
     pending=Buffer.concat([pending,bytes]);
@@ -113,13 +117,13 @@ export async function verifyHobbyHomeEnvelope(
       pending=pending.subarray(4+headerLength);
     }
     if (pending.length>16) {
-      clearDigest.update(decipher.update(pending.subarray(0,-16)));
+      await recordCleartext(decipher.update(pending.subarray(0,-16)));
       pending=pending.subarray(-16);
     }
   }
   if (!decipher || pending.length!==16) throw new Error("Incomplete Hobby home envelope");
   decipher.setAuthTag(pending);
-  clearDigest.update(decipher.final());
+  await recordCleartext(decipher.final());
   await assertSeal();
   return {ownerManifestSha256:clearDigest.digest("hex"),cipherSha256:cipherDigest.digest("hex")};
 }

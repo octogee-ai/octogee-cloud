@@ -1,7 +1,7 @@
-import { spawn } from "node:child_process";
-import { once } from "node:events";
 import { assertRetainedHobbySeal } from "@octogee/shared/server/hobby-checkpoint-gate";
 import { sealHobbyHome, type HobbyHomeEnvelopeInput } from "../lib/hobby-recovery-envelope.js";
+
+import { readHomeTar } from "../lib/hobby-recovery-home-tar.js";
 
 async function readInput(): Promise<HobbyHomeEnvelopeInput> {
   const parts: Buffer[] = [];
@@ -20,21 +20,13 @@ if (inputs.podUid !== process.env.POD_UID) throw new Error("Hobby archive does n
 const assertSeal = async () => { await assertRetainedHobbySeal(inputs.attemptId,"gateway"); };
 await assertSeal();
 
-const child=spawn("/usr/bin/tar",["--one-file-system","--sort=name","--numeric-owner","-C","/home/node","-cf","-","."],{
-  stdio:["ignore","pipe","ignore"],
-});
-const completion=once(child,"exit");
+const { child, completed } = await readHomeTar("/home/node");
 try {
-  const proof=await sealHobbyHome(inputs,child.stdout,process.stdout,async()=>{
+  const [proof] = await Promise.all([sealHobbyHome(inputs, child.stdout, process.stdout, async () => {
     await assertSeal();
-    if (child.stdout.readableEnded) {
-      const [code]=await completion;
-      if (code!==0) throw new Error("Hobby home tar did not finish successfully");
-    }
-  });
-  const [code]=await completion;
-  if (code!==0) throw new Error("Hobby home tar did not finish successfully");
-  process.stderr.write("OCTOGEE_HOBBY_HOME_ARCHIVE:"+JSON.stringify(proof)+"\n");
+    if (child.stdout.readableEnded) await completed;
+  }), completed]);
+  process.stderr.write("OCTOGEE_HOBBY_HOME_ARCHIVE:" + JSON.stringify(proof) + "\n");
 } catch (error) {
   child.kill();
   throw error;
