@@ -102,3 +102,13 @@ pods. A `GCPBackendPolicy` applies the Cloud Armor policy to that Service and a
 separate from `octogee-api` so these policies never meet the edge Ingress
 `BackendConfig`. There is no HTTP listener; serve the domain over HTTPS only,
 for example from a top-level domain on the HSTS preload list.
+
+The Gateway reaches the pods through container-native load balancing with
+`GCE_VM_IP_PORT` zonal NEGs
+([GatewayClass capabilities](https://docs.cloud.google.com/kubernetes-engine/docs/how-to/gatewayclass-capabilities)).
+For those backends a global external Application Load Balancer sends traffic
+from `35.191.0.0/16` and `130.211.0.0/22` and health checks from
+`35.191.0.0/16`
+([firewall rules](https://docs.cloud.google.com/load-balancing/docs/firewall-rules)).
+With `networkPolicy.enforceDefaultDeny`, `octogee-api-ingress` already allows
+those ranges on the API port, so the gateway needs no further policy.

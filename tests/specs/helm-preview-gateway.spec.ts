@@ -122,6 +122,30 @@ describe("preview gateway", () => {
     });
   });
 
+  it("lets the load balancer's proxies and health checks reach the backend pods under default deny", () => {
+    const out = chart.helmTemplate({
+      extraValues: enabledValues,
+      sets: {
+        "networkPolicy.enforceDefaultDeny": "true",
+        "networkPolicy.controlPlaneCidr": "172.16.0.0/28",
+        "networkPolicy.privateServicesCidr": "10.10.0.0/16",
+      },
+    });
+    const service = find(out, "Service", "preview-gateway-backend");
+    const policy = find(out, "NetworkPolicy", "octogee-api-ingress");
+    const rules = policy.spec.ingress as { from: { ipBlock?: { cidr: string } }[]; ports: { port: number }[] }[];
+    const loadBalancerRule = rules.find((rule) => rule.from.some((peer) => peer.ipBlock));
+
+    expect(policy.spec.podSelector).toEqual({ matchLabels: service.spec.selector });
+    expect(loadBalancerRule).toEqual({
+      from: [{ ipBlock: { cidr: "35.191.0.0/16" } }, { ipBlock: { cidr: "130.211.0.0/22" } }],
+      ports: [{ protocol: "TCP", port: 3001 }],
+    });
+    expect(find(out, "Deployment", "octogee-api")).toMatchObject({
+      spec: { template: { spec: { containers: [{ ports: [{ name: "http", containerPort: 3001 }] }] } } },
+    });
+  });
+
   it.each(["domain", "certificateMapName", "staticIpName", "securityPolicyName"])(
     "refuses to render when enabled without %s",
     (key) => {
