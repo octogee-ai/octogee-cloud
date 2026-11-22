@@ -34,6 +34,7 @@ declare function readCheckpointCredentials(): Promise<{
     token: string;
     agentStoreDsn: string;
 }>;
+export declare function assertRetainedHobbySeal(attemptId: string, role: "gateway" | "edge"): Promise<HobbyLiveRecoveryClaim>;
 export declare function checkpointGatewayCredentials(read?: typeof readCheckpointCredentials, wait?: () => Promise<void>): Promise<{
     token: string;
     agentStoreDsn: string;

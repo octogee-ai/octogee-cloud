@@ -209,6 +209,23 @@ async function readCheckpointCredentials() {
     ]);
     return { token, agentStoreDsn };
 }
+export async function assertRetainedHobbySeal(attemptId, role) {
+    const boot = process.env;
+    const claim = await readMountedCheckpointClaim();
+    if (!claim)
+        throw new Error("Hobby retained seal has no original claim");
+    assertLiveCheckpointClaim(boot, claim);
+    const recovery = await readMountedRecovery(claim);
+    if (recovery?.phase !== "seal" || recovery.attemptId !== attemptId) {
+        throw new Error("Hobby retained seal is unavailable");
+    }
+    await rememberLiveOwner({ ...claim, recovery });
+    const markerPath = `/tmp/octogee-hobby-checkpoint-${role}-recovery-sealed`;
+    const expected = JSON.stringify([attemptId, claim.podUid, recovery.gatewayImageTag]);
+    if (await readFile(markerPath, "utf8") !== expected)
+        throw new Error("Hobby retained seal role is not confirmed");
+    return recovery;
+}
 export async function checkpointGatewayCredentials(read = readCheckpointCredentials, wait = () => setTimeout(500)) {
     for (;;) {
         try {
