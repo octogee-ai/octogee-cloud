@@ -1,5 +1,6 @@
+import { isDeepStrictEqual } from "node:util";
 import { operationAuditDocumentId } from "./operation-audit.js";
-import type { PlatformStateRepositories } from "./platform-state/index.js";
+import type { GatewayRoot, OperationRecord, PlatformStateRepositories } from "./platform-state/index.js";
 
 export const NATIVE_RETURN_TARGET_EXCLUSION = "native-return-target-exclusion";
 
@@ -7,9 +8,10 @@ export function nativeReturnTargetExclusionId(uid: string): string {
   return operationAuditDocumentId(`${NATIVE_RETURN_TARGET_EXCLUSION}:${uid}`);
 }
 
-export async function nativeReturnTargetDenied(
-  store: Pick<PlatformStateRepositories, "journal" | "gateways">, uid: string, gatewayId: string,
-): Promise<boolean> {
+type ExclusionReader = Pick<PlatformStateRepositories, "journal" | "gateways" | "fleetRegistry" | "users">;
+export type NativeOldTargetRetirement = { operationId: string; version: number; createdAt: number; completedAt: number };
+
+export async function nativeReturnTargetDenied(store: ExclusionReader, uid: string, gatewayId: string): Promise<boolean> {
   const record = await store.journal.audits.get(nativeReturnTargetExclusionId(uid));
   if (!record) return false;
   const target = record.target;
@@ -17,11 +19,64 @@ export async function nativeReturnTargetDenied(
       typeof target.targetGatewayId !== "string") return true;
   if (target.targetGatewayId === gatewayId) return true;
   const root = await store.gateways.roots.get(gatewayId);
-  return root?.gatewayClass !== "isolated";
+  if (!root) return true;
+  return root.gatewayClass !== "isolated" && !await sharedHandoffReleaseCurrent(store, uid, record);
 }
 
-export async function nativeReturnSharedStoreHandoffDenied(
-  store: Pick<PlatformStateRepositories, "journal">, uid: string,
-): Promise<boolean> {
-  return (await store.journal.audits.get(nativeReturnTargetExclusionId(uid))) !== null;
+export async function nativeReturnSharedStoreHandoffDenied(store: ExclusionReader, uid: string): Promise<boolean> {
+  const record = await store.journal.audits.get(nativeReturnTargetExclusionId(uid));
+  return record !== null && !await sharedHandoffReleaseCurrent(store, uid, record);
+}
+
+async function sharedHandoffReleaseCurrent(store: ExclusionReader, uid: string,
+  record: NonNullable<Awaited<ReturnType<ExclusionReader["journal"]["audits"]["get"]>>>) {
+  const target = record.target;
+  const release = target.sharedHandoffRelease as { retirement?: NativeOldTargetRetirement; verifiedAt?: number; actor?: string } | undefined;
+  if (record.mutation.kind !== NATIVE_RETURN_TARGET_EXCLUSION || target.uid !== uid || typeof target.targetGatewayId !== "string" ||
+      record.status !== "completed" || record.outcome !== "completed" || !release?.retirement ||
+      typeof release.verifiedAt !== "number" || !Number.isSafeInteger(release.verifiedAt) || release.verifiedAt < release.retirement.completedAt || !release.actor) return false;
+  const current = await readNativeOldTargetRetirement(store, target.targetGatewayId);
+  return current !== null && isDeepStrictEqual(current, release.retirement);
+}
+
+export async function readNativeOldTargetRetirement(store: ExclusionReader, gatewayId: string): Promise<NativeOldTargetRetirement | null> {
+  if (!/^shared-[a-z0-9]+$/.test(gatewayId)) return null;
+  const operationId = `shared-pool-retire-${gatewayId}`;
+  const [root, runtime, operation, empty, owners, history] = await Promise.all([
+    store.gateways.roots.get(gatewayId), store.fleetRegistry.get(gatewayId), store.journal.operations.get(operationId),
+    store.gateways.assignments.isEmpty(gatewayId), store.users.records.listByGateway(gatewayId, { limit: 1 }),
+    store.journal.operations.listByGateway(gatewayId),
+  ]);
+  if (!operation || runtime || !empty || owners.length || !qualifiedRetirement(operation, gatewayId)) return null;
+  const identity = qualifiedRetirementIdentity(operation, operationId);
+  if (!identity || (root && !retiredRootMatches(root, operationId, identity.version)) ||
+      targetRecreationAppeared(history, identity.createdAt)) return null;
+  return identity;
+}
+
+function qualifiedRetirementIdentity(operation: OperationRecord, operationId: string): NativeOldTargetRetirement | null {
+  const { retirementClaimVersion: version } = operation.input;
+  if (typeof version !== "number" || !Number.isSafeInteger(version) || version <= 0 ||
+      typeof operation.completedAt !== "number" || !Number.isSafeInteger(operation.completedAt) ||
+      !Number.isSafeInteger(operation.createdAt) || operation.completedAt < operation.createdAt) return null;
+  return { operationId, version, createdAt: operation.createdAt, completedAt: operation.completedAt };
+}
+
+function retiredRootMatches(root: GatewayRoot, operationId: string, version: number): boolean {
+  return [root.gatewayClass === "shared", root.ownerUid == null, root.desiredStatus === "retired",
+    root.retirementVersion === version, root.retirementClaim?.version === version,
+    root.retirementClaim?.operationId === operationId, root.retirementClaim?.phase === "claimed"].every(Boolean);
+}
+
+function targetRecreationAppeared(history: readonly OperationRecord[], retiredAt: number): boolean {
+  return history.some(candidate => candidate.kind === "add-gateway" &&
+    (!["succeeded", "failed"].includes(candidate.status) || !Number.isSafeInteger(candidate.createdAt) || candidate.createdAt >= retiredAt));
+}
+
+function qualifiedRetirement(operation: OperationRecord, gatewayId: string) {
+  return [operation.kind === "retire-gateway", operation.status === "succeeded", operation.gatewayId === gatewayId,
+    operation.input.gatewayId === gatewayId, operation.input.source === "shared-pool-scaler",
+    operation.input.retainData !== true, operation.input.retainServiceAccount !== true,
+    ["helm-uninstall", "revoke-agent-store-credentials"].every(name =>
+      operation.steps.some(step => step.name === name && step.status === "done"))].every(Boolean);
 }

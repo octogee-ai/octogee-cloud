@@ -2090,4 +2090,4 @@ export {
   type SharedHeldReturnMaintenancePlan, type SharedHeldReturnMaintenanceResult, type SharedHeldReturnMaintenanceWithdrawal,
 } from "./shared-held-return-maintenance.js";
 
-export { NATIVE_RETURN_TARGET_EXCLUSION, nativeReturnTargetExclusionId, nativeReturnTargetDenied, nativeReturnSharedStoreHandoffDenied } from "./native-return-target-deny.js";
+export { NATIVE_RETURN_TARGET_EXCLUSION, nativeReturnTargetExclusionId, nativeReturnTargetDenied, nativeReturnSharedStoreHandoffDenied, readNativeOldTargetRetirement, type NativeOldTargetRetirement } from "./native-return-target-deny.js";

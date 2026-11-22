@@ -636,6 +636,7 @@ function exclusionFixture() {
     readRetainedCompletion: vi.fn(async () => proof),
     verifyPod: vi.fn(async (_reservation, assertCurrent: () => Promise<void>) => assertCurrent()),
     verifyStores: vi.fn(async (_scope, assertCurrent: () => Promise<void>) => assertCurrent()),
+    verifyWholeRetirement: vi.fn(async (_gatewayId, assertCurrent: () => Promise<void>) => { await assertCurrent(); return true; }),
   };
   const deps = { store: h.store, provider, now: () => 550 };
   return { ...h, proof, provider, deps, exclusion: createNativeReturnTargetExclusion(deps), actor: "test-operator" };
@@ -676,4 +677,44 @@ it("keeps the verified former-target hold after the owner migration fence and op
   h.provider.readRetainedCompletion.mockResolvedValueOnce({ ...h.proof, images: { ...h.proof.images, gateway: "sha256:" + "9".repeat(64) } });
   await expect(restarted.verifyOldTargetExclusion(reserved.scope)).rejects.toThrow(/published Shared release/);
   expect(await nativeReturnTargetDenied(h.store, uid, targetGatewayId)).toBe(true);
+});
+
+it("lifts only Shared-wide quarantine after a completed rollback and independently verified whole retirement", async () => {
+  const h = exclusionFixture();
+  const { scope } = await h.exclusion.reserve("test", h.actor, selection);
+  await h.exclusion.verifyReserved(h.actor, { scope, podUid: h.proof.podUid });
+  const source = `gateways/${sourceGatewayId}/assignments/${uid}`;
+  h.docs.set(source, { ...h.docs.get(source), state: "serving" });
+  await h.store.users.records.setFence(uid, "migration", { clear: true });
+  await h.store.journal.operations.patch(operationId, { status: "failed", completedAt: 510,
+    rolledBack: true, schedulerHandoffReleased: true, input: { ...h.operations.input, compensatingNativeReturn: scope } });
+  await expect(h.exclusion.releaseSharedHandoff("test", h.actor, scope)).rejects.toThrow(/whole retirement missing/);
+  const target = `gateways/${targetGatewayId}`;
+  h.docs.delete(target);
+  h.docs.delete(targetRuntimePath);
+  for (const other of h.admission.owners) h.docs.delete(`${target}/assignments/${other.uid}`);
+  for (const [path, data] of h.docs) {
+    if (path.startsWith("users/") && path !== ownerPath) {
+      const current = structuredClone(data);
+      const provisioning = current.provisioning as { openclaw?: Record<string, unknown> } | undefined;
+      if (provisioning?.openclaw?.gatewayId === targetGatewayId) {
+        provisioning.openclaw.gatewayId = "shared-successor";
+        h.docs.set(path, current);
+      }
+    }
+  }
+  const retirementId = `shared-pool-retire-${targetGatewayId}`;
+  const retirementPath = `glmOperations/${retirementId}`;
+  h.docs.set(retirementPath, { kind: "retire-gateway", status: "succeeded", gatewayId: targetGatewayId,
+    createdAt: 520, completedAt: 530, input: { gatewayId: targetGatewayId, source: "shared-pool-scaler", retirementClaimVersion: 1 },
+    steps: [{ name: "helm-uninstall", status: "done" }, { name: "revoke-agent-store-credentials", status: "done" }] });
+  h.provider.verifyWholeRetirement.mockResolvedValueOnce(false);
+  await expect(h.exclusion.releaseSharedHandoff("test", h.actor, scope)).rejects.toThrow(/runtime or credential still exists/);
+  expect(await nativeReturnSharedStoreHandoffDenied(h.store, uid)).toBe(true);
+  await h.exclusion.releaseSharedHandoff("test", h.actor, scope);
+  await h.exclusion.releaseSharedHandoff("test", h.actor, scope);
+  expect(await nativeReturnSharedStoreHandoffDenied(h.store, uid)).toBe(false);
+  expect(await nativeReturnTargetDenied(h.store, uid, targetGatewayId)).toBe(true);
+  h.docs.set(targetRuntimePath, h.targetRuntime);
+  expect(await nativeReturnSharedStoreHandoffDenied(h.store, uid)).toBe(true);
 });

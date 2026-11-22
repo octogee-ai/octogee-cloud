@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
 import { createHeldReturnStoreCustodyVerifier } from "@octogee/core/agent-store-credentials";
-import { NATIVE_RETURN_TARGET_EXCLUSION, nativeReturnTargetExclusionId, readHeldNativeReturnForTargetExclusion,
+import { NATIVE_RETURN_TARGET_EXCLUSION, nativeReturnTargetExclusionId, readHeldNativeReturnForTargetExclusion, readNativeOldTargetRetirement,
   type HeldNativeReturnSelection } from "@octogee/core/fleet-state";
 import { buildOperationAuditIntent } from "@octogee/core/operation-audit";
 import type { PlatformStateStore, PlatformStateTransaction } from "@octogee/core/platform-state";
@@ -25,6 +25,7 @@ type Providers = {
   readRetainedCompletion(reservation: Reservation): Promise<VerifiedRetainedSharedRoles>;
   verifyPod(reservation: Reservation, assertCurrent: () => Promise<void>): Promise<void>;
   verifyStores(scope: NativeOldTargetScope, assertCurrent: () => Promise<void>): Promise<void>;
+  verifyWholeRetirement?(gatewayId: string, assertCurrent: () => Promise<void>): Promise<boolean>;
 };
 
 function requireExclusion(condition: unknown, reason: string): asserts condition {
@@ -139,7 +140,53 @@ export function createNativeReturnTargetExclusion(deps: { store: PlatformStateSt
     requireExclusion(isDeepStrictEqual(live, before.completion), "verified old target build changed");
   }
 
-  return { reserve, verifyReserved, readOldTargetExclusion, verifyOldTargetExclusion };
+  async function releaseSharedHandoff(environment: "test" | "prod", actor: string, scope: NativeOldTargetScope) {
+    requireExclusion(environment === "test" && actor && provider?.verifyWholeRetirement,
+      "protected TEST whole retirement verifier required");
+    const read = (tx: PlatformStateTransaction) => readReleaseAuthority(tx, scope);
+    const before = await store.transaction({ label: "native-old-target-exclusion.retirement-read", readOnly: true }, read);
+    const assertCurrent = async () => {
+      const current = await store.transaction({ label: "native-old-target-exclusion.retirement-recheck", readOnly: true }, read);
+      requireExclusion(isDeepStrictEqual(current.retirement, before.retirement) && current.audit.revision === before.audit.revision,
+        "whole retirement or exclusion changed");
+    };
+    requireExclusion(await provider.verifyWholeRetirement(scope.targetGatewayId, assertCurrent),
+      "old Shared runtime or credential still exists");
+    await store.transaction({ label: "native-old-target-exclusion.release-shared-handoff" }, async tx => {
+      const { audit, retirement } = await read(tx);
+      requireExclusion(isDeepStrictEqual(retirement, before.retirement) && audit.revision === before.audit.revision,
+        "whole retirement changed before publication");
+      const prior = audit.target.sharedHandoffRelease as { retirement?: unknown; actor?: string } | undefined;
+      if (prior) {
+        requireExclusion(prior.actor === actor && isDeepStrictEqual(prior.retirement, retirement), "existing release proof changed");
+        return;
+      }
+      await tx.journal.audits.patch(audit.id, { target: { ...audit.target,
+        sharedHandoffRelease: { retirement, actor, verifiedAt: now() } } }, { revision: audit.revision });
+    });
+  }
+
+  return { reserve, verifyReserved, readOldTargetExclusion, verifyOldTargetExclusion, releaseSharedHandoff };
+}
+
+async function readReleaseAuthority(tx: PlatformStateTransaction, scope: NativeOldTargetScope) {
+  const [audit, operation, owner, assignments, retirement] = await Promise.all([
+    tx.journal.audits.get(scope.exclusionId), tx.journal.operations.get(scope.operationId),
+    tx.users.records.get(scope.uid), tx.gateways.assignments.listForUid(scope.uid),
+    readNativeOldTargetRetirement(tx, scope.targetGatewayId),
+  ]);
+  const binding = readBinding(audit, scope);
+  requireExclusion(audit && binding && audit.status === "completed" && audit.outcome === "completed" &&
+    matchesRetainedRoles(binding, audit.target.retainedCompletion as VerifiedRetainedSharedRoles), "verified old target exclusion missing");
+  requireExclusion(operation && retirement && typeof operation.completedAt === "number" &&
+    retirement.createdAt >= operation.completedAt, "exact whole retirement missing after rollback");
+  const stored = operation.input.compensatingNativeReturn as Record<string, unknown> | undefined;
+  requireExclusion([operation.status === "failed", operation.rolledBack === true, operation.schedulerHandoffReleased === true,
+    operation.cutoverCommittedAt === undefined, Object.entries(scope).every(([key, value]) => stored?.[key] === value),
+    owner?.gateway?.gatewayId === scope.sourceGatewayId, !owner?.fences.migration, assignments.length === 1,
+    assignments[0]?.gatewayId === scope.sourceGatewayId, assignments[0]?.epoch === scope.sourceEpoch,
+    assignments[0]?.state === "serving"].every(Boolean), "original source rollback is not complete");
+  return { audit, retirement };
 }
 
 function validEvidence(value: unknown): value is VerifiedRetainedSharedRoles {
@@ -182,10 +229,12 @@ export function createNativeOldTargetPhysicalProvider(deps: {
   store: PlatformStateStore;
   agentStoreAdminDsn: string;
   readRetainedCompletion: Providers["readRetainedCompletion"];
+  verifyWholeRetirement?: Providers["verifyWholeRetirement"];
 }): Providers {
   const verifyStores = createHeldReturnStoreCustodyVerifier(deps.agentStoreAdminDsn, { serializeCredentialChanges: true });
   return {
     readRetainedCompletion: deps.readRetainedCompletion,
+    verifyWholeRetirement: deps.verifyWholeRetirement,
     verifyPod: ({ scope, podUid }, assertCurrent) =>
       createHeldNativeReturnDestinationVerifier({ ...deps, loopbackPodUid: podUid })(scope, assertCurrent),
     async verifyStores(scope, assertCurrent) {
