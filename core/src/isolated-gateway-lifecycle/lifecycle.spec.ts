@@ -1019,6 +1019,25 @@ describe("parked isolated gateway reuse", () => {
     });
   });
 
+  it.each([false, true])("atomically rolls back a rejected exact prewarm and preserves new demand: %s", async demand => {
+    const h = await prewarmHarness();
+    h.setParked();
+    await expect(startParkedGatewayPrewarm(h.state, h.operation, 2100)).resolves.toMatchObject({ state: "booting" });
+    const rejection = { instanceId: "old-instance", bootImageId: "123", reason: "cannot prove scheduler lineage" };
+    await expect(finishParkedGatewayPrewarm(h.state, { ...h.operation, startedAt: 2002 }, 2200, "rollback", rejection)).rejects.toThrow("worker claim changed");
+    await expect(finishParkedGatewayPrewarm(h.state, h.operation, 2200, "rollback", { ...rejection, bootImageId: "124" })).rejects.toThrow("rejection authority changed");
+    expect(await h.state.gateways.roots.get(h.parkedGatewayId)).toMatchObject({ desiredStatus: "running", desiredRelease: 1 });
+    if (demand) h.requestDemand();
+    const phase = demand ? "demand-won" : "parked";
+    await expect(finishParkedGatewayPrewarm(h.state, h.operation, 2200, "rollback", rejection)).resolves.toBe(phase);
+    expect(await h.state.gateways.roots.get(h.parkedGatewayId)).toMatchObject({ desiredStatus: "paused", desiredRelease: 1, liveRelease: 1 });
+    expect(await h.state.journal.operations.get(h.operation.id)).toMatchObject({
+      output: { prewarmState: phase, prewarmBootRejection: rejection.reason, previousInstanceId: rejection.instanceId },
+    });
+    expect(await h.state.fleetRegistry.get(h.parkedGatewayId)).toMatchObject({ vm: { instanceId: rejection.instanceId } });
+    if (demand) await expect(h.run()).resolves.toBe(h.parkedGatewayId);
+  });
+
   it("reparks a verified release when no demand arrived, allowing a later generation to claim it normally", async () => {
     const h = await prewarmHarness();
     h.setParked();

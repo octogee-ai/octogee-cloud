@@ -205,7 +205,7 @@ function prewarmFinishWindow(claim, phase) {
     };
 }
 async function writePrewarmPark(tx, input) {
-    const { current, root, owner, runtime, claim, now, mode } = input;
+    const { current, root, owner, runtime, claim, now, mode, bootRejection } = input;
     const state = finishedParkPhase(owner, mode);
     await tx.gateways.roots.patch(root.gatewayId, {
         desiredStatus: "paused",
@@ -214,11 +214,19 @@ async function writePrewarmPark(tx, input) {
     }, { revision: root.revision });
     await tx.journal.operations.patch(current.id, { output: {
             ...current.output, ...claim, prewarmState: state,
+            ...(bootRejection ? { prewarmBootRejection: bootRejection.reason } : {}),
             ...(state === REPAIR_PARKING ? { repairedBootRecovery: runtime?.vmBootRecovery } : {}),
         } });
     return state;
 }
-export async function finishParkedGatewayPrewarm(store, operation, now, mode) {
+function assertParkedBootRejection(input) {
+    const { current, root, runtime, request, claim, mode, bootRejection } = input;
+    if (mode !== "rollback" || current.output?.prewarmState !== BOOTING || root?.updatedBy !== current.id ||
+        bootRejection.bootImageId !== request.bootImageId || bootRejection.instanceId !== claim.previousInstanceId ||
+        runtime?.vm?.instanceId !== bootRejection.instanceId)
+        throw new Error("Parked computer boot rejection authority changed");
+}
+export async function finishParkedGatewayPrewarm(store, operation, now, mode, bootRejection) {
     const request = parkedPrewarmInput(operation);
     const { uid, gatewayId } = request;
     return store.transaction({ label: "isolated-gateway.prewarm-finish" }, async (tx) => {
@@ -231,6 +239,8 @@ export async function finishParkedGatewayPrewarm(store, operation, now, mode) {
         if (resolved)
             return resolved;
         const claim = prewarmClaim(current);
+        if (bootRejection)
+            assertParkedBootRejection({ current, root, runtime, request, claim, mode, bootRejection });
         const window = prewarmFinishWindow(claim, current.output?.prewarmState);
         const liveRelease = window.release;
         assertOwnedPrewarmRoot(root, request, window);
@@ -244,7 +254,7 @@ export async function finishParkedGatewayPrewarm(store, operation, now, mode) {
             await tx.journal.operations.patch(operation.id, { output: { ...claim, prewarmState: HANDOFF, release: liveRelease } });
             return HANDOFF;
         }
-        return writePrewarmPark(tx, { current, root, owner, runtime, claim, now, mode });
+        return writePrewarmPark(tx, { current, root, owner, runtime, claim, now, mode, bootRejection });
     });
 }
 export async function bootRepairedParkedGateway(store, operation, now) {

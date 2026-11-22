@@ -1,3 +1,4 @@
+import { RetainedBootSchedulerLineageError } from "../lib/retained-boot-image.js";
 import { createVmHomeClient } from "../lib/compute-home.js";
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi, type Mock } from "vitest";
@@ -2656,6 +2657,46 @@ describe("stopped retained-home boot replacement", () => {
     expect(h.vm.create).toHaveBeenCalledWith(expect.objectContaining({
       retainedHome: expect.objectContaining(home), image: expect.objectContaining(accepted),
     }));
+  });
+
+  it.each([false, true])("publishes only a deterministic scheduler refusal to the owning prewarm: %s", async transient => {
+    const rejection = transient ? new Error("HTTP 503") : new RetainedBootSchedulerLineageError();
+    const docs = vmDoc();
+    docs["glmGateways/b-x"].vm = { ...recorded, status: "SUSPENDED" };
+    let physical = { ...ownedStopped, status: "SUSPENDED" };
+    const h = harness({
+      ...docs,
+      "gateways/b-x": { gatewayId: "b-x", gatewayClass: "isolated", desiredStatus: "running", desiredRelease: 2, liveRelease: 1,
+        latestRelease: 2, ownerUid: "UidA", updatedBy: "prewarm-one", allocation: { kind: "disposable-builder", leaseId: "lease-old", generation: 1, claimedByUid: "UidA" } },
+      "users/UidA": { provisioning: { openclaw: { gatewayId: "shared-a", slug: "mama" } } },
+      "glmOperations/prewarm-one": {
+        kind: "prewarm-gateway", status: "running", createdAt: 900, startedAt: 950, createdBy: "ship-test",
+        gatewayId: "b-x", inputUid: "UidA",
+        output: { prewarmState: "booting", release: 2, previousRelease: 1, previousInstanceId: "4242", sourceGatewayId: "shared-a", sourceAssignmentEpoch: 1 },
+        input: { gatewayId: "b-x", uid: "UidA", generation: 1, sourceSha: "a".repeat(40), bootImageId: accepted.id, payload: { imageRepository: "registry/images/octogee-gateway", imageTag: `abc1234@sha256:${"a".repeat(64)}` } },
+      },
+    }, {
+      describe: vi.fn(async () => physical),
+      stop: vi.fn(async () => { physical = { ...ownedStopped }; }),
+      readBootImage: vi.fn(async () => CURRENT_IMAGE),
+      readFamilyImage: vi.fn(async () => accepted),
+    });
+    h.journalBootUpgrade.mockRejectedValueOnce(rejection);
+    await expect(h.runtime.upsertInstance(upsertOpts)).rejects.toThrow(rejection.message);
+    expect(h.journalBootUpgrade).toHaveBeenCalledOnce();
+    expect(h.vm.deleteRetainingHome).not.toHaveBeenCalled();
+    const operation = await h.store.journal.operations.get("prewarm-one");
+    if (transient) {
+      expect(operation?.output).toMatchObject({ prewarmState: "booting" });
+      expect(operation?.output?.prewarmBootRejection).toBeUndefined();
+      expect(await h.store.gateways.roots.get("b-x")).toMatchObject({ desiredStatus: "running", desiredRelease: 2 });
+    } else {
+      expect(operation?.output).toMatchObject({ prewarmState: "parked", prewarmBootRejection: rejection.message });
+      expect(h.vm.stop).not.toHaveBeenCalled();
+      expect(await h.store.gateways.roots.get("b-x")).toMatchObject({ desiredStatus: "paused", desiredRelease: 1 });
+      await h.runtime.upsertInstance({ ...upsertOpts, replicas: 0 });
+      expect(h.journalBootUpgrade).toHaveBeenCalledOnce();
+    }
   });
 
   it("journals the boot upgrade it starts", async () => {

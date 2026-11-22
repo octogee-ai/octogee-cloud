@@ -43,6 +43,11 @@ type OriginalVm = {
 export declare function startParkedGatewayPrewarm(store: PlatformStateStore, operation: Operation, now: number, sourceVm?: OriginalVm): Promise<PrewarmStart>;
 export declare function isFreshParkedPrewarmRecovery(value: unknown, instanceId: string, notBefore: unknown): boolean;
 type PrewarmFinishMode = "ready" | "rollback" | "repaired";
-export declare function finishParkedGatewayPrewarm(store: PlatformStateStore, operation: Operation, now: number, mode: PrewarmFinishMode): Promise<"parked" | typeof HANDOFF | typeof DEMAND_WON | typeof REPAIR_PARKING>;
+interface ParkedBootRejection {
+    instanceId: string;
+    bootImageId: string;
+    reason: string;
+}
+export declare function finishParkedGatewayPrewarm(store: PlatformStateStore, operation: Operation, now: number, mode: PrewarmFinishMode, bootRejection?: ParkedBootRejection): Promise<"parked" | typeof HANDOFF | typeof DEMAND_WON | typeof REPAIR_PARKING>;
 export declare function bootRepairedParkedGateway(store: PlatformStateStore, operation: Operation, now: number): Promise<typeof BOOTING | typeof DEMAND_WON>;
 export {};

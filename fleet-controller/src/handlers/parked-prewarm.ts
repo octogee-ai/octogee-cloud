@@ -12,6 +12,8 @@ import type { ParkedPrewarmVmObservation, VmGatewayRuntime } from "../vm-gateway
 
 const PREWARM_TIMEOUT_MS = 20 * 60_000;
 const VERIFY_PREWARM_STEP = "verify-prewarmed-computer";
+const PARKED = "parked";
+const DEMAND_WON = "demand-won";
 
 export interface ParkedPrewarmDeps {
   store: PlatformStateStore;
@@ -71,7 +73,7 @@ function phaseWake(deps: ParkedPrewarmDeps, gatewayId: string, uid: string) {
 }
 
 type Claim = Extract<Awaited<ReturnType<typeof startParkedGatewayPrewarm>>, { claim: unknown }>["claim"];
-type Phase = "booting" | "repairing" | "repair-parking" | "parked" | "handoff";
+type Phase = "booting" | "repairing" | "repair-parking" | typeof PARKED | "handoff";
 type State = {
   root: GatewayRoot | null;
   registry: FleetRegistryRecord | null;
@@ -87,7 +89,7 @@ interface PrewarmRun {
   steps: OperationStep[];
 }
 
-function prewarmResult(run: PrewarmRun, prewarmState: "parked" | "demand-won", instanceId?: string | null): OperationResult {
+function prewarmResult(run: PrewarmRun, prewarmState: typeof PARKED | typeof DEMAND_WON, instanceId?: string | null): OperationResult {
   return {
     success: true, steps: run.steps,
     output: { ...run.claim, prewarmState, bootImageId: run.request.bootImageId, instanceId },
@@ -140,7 +142,7 @@ async function parkedCandidateResult(run: PrewarmRun, state: State): Promise<Ope
   const { gatewayId, uid, generation, bootImageId } = run.request;
   const { root, registry } = state;
   if (root?.allocation?.generation !== generation || ownerHasDemand(state, gatewayId)) {
-    return prewarmResult(run, "demand-won", registry?.vm?.instanceId);
+    return prewarmResult(run, DEMAND_WON, registry?.vm?.instanceId);
   }
   if (root.desiredStatus !== "paused" || registry?.vm?.status !== "SUSPENDED") return null;
   const observed = await run.runtime.prewarmVmObservation(gatewayId, uid);
@@ -150,7 +152,7 @@ async function parkedCandidateResult(run: PrewarmRun, state: State): Promise<Ope
     step.name === VERIFY_PREWARM_STEP && step.status === "done" && step.detail === proof)) {
     throw new Error("Computer suspended without readiness verification for this instance and boot image");
   }
-  return prewarmResult(run, "parked", observed.instanceId);
+  return prewarmResult(run, PARKED, observed.instanceId);
 }
 
 async function authorizedRepairPark(run: PrewarmRun, state: State): Promise<boolean> {
@@ -165,7 +167,7 @@ function handoffProgress(run: PrewarmRun, state: State): Phase | OperationResult
   const { uid, gatewayId, generation } = run.request;
   const taken = state.root?.ownerUid === uid && state.root.allocation?.generation !== generation &&
     state.owner?.activationLease?.targetGatewayId === gatewayId;
-  return taken ? prewarmResult(run, "demand-won", state.registry?.vm?.instanceId) : "handoff";
+  return taken ? prewarmResult(run, DEMAND_WON, state.registry?.vm?.instanceId) : "handoff";
 }
 
 async function assertPrewarmSourceAssignment(run: PrewarmRun, owner: State["owner"]): Promise<void> {
@@ -179,13 +181,13 @@ async function assertPrewarmSourceAssignment(run: PrewarmRun, owner: State["owne
 
 async function progressPhase(run: PrewarmRun, phase: Phase, state: State): Promise<Phase | OperationResult> {
   const { deps, op } = run;
-  if (phase === "parked") return await parkedCandidateResult(run, state) ?? phase;
+  if (phase === PARKED) return await parkedCandidateResult(run, state) ?? phase;
   if (phase === "handoff") return handoffProgress(run, state);
   await assertPrewarmSourceAssignment(run, state.owner);
   if (phase === "repair-parking") {
     if (!await authorizedRepairPark(run, state)) return phase;
     const next = await bootRepairedParkedGateway(deps.store, op, deps.now());
-    return next === "demand-won" ? prewarmResult(run, next, state.registry?.vm?.instanceId) : next;
+    return next === DEMAND_WON ? prewarmResult(run, next, state.registry?.vm?.instanceId) : next;
   }
   let instanceId: string | null;
   if (phase === "repairing") {
@@ -196,7 +198,7 @@ async function progressPhase(run: PrewarmRun, phase: Phase, state: State): Promi
     if (!instanceId) return phase;
   }
   const next = await finishParkedGatewayPrewarm(deps.store, op, deps.now(), phase === "repairing" ? "repaired" : "ready");
-  return next === "demand-won" ? prewarmResult(run, next, instanceId) : next;
+  return next === DEMAND_WON ? prewarmResult(run, next, instanceId) : next;
 }
 
 async function readPrewarmState(run: Pick<PrewarmRun, "deps" | "request">): Promise<State> {
@@ -206,6 +208,16 @@ async function readPrewarmState(run: Pick<PrewarmRun, "deps" | "request">): Prom
     store.gateways.roots.get(gatewayId), store.fleetRegistry.get(gatewayId), store.users.records.get(uid),
   ]);
   return { root, registry, owner };
+}
+
+async function rejectedBootResult(run: PrewarmRun, root: State["root"]): Promise<OperationResult | null> {
+  if (root?.desiredStatus === "running" && root.allocation?.generation === run.request.generation) return null;
+  const output = (await run.deps.store.journal.operations.get(run.op.id))?.output;
+  if (typeof output?.prewarmBootRejection !== "string") return null;
+  run.deps.requestReconcileTick(run.request.gatewayId);
+  if (output.prewarmState === DEMAND_WON) return { success: true, steps: run.steps, output };
+  if (output.prewarmState !== PARKED) throw new Error("Rejected parked boot did not roll back");
+  return { success: false, error: output.prewarmBootRejection, steps: run.steps, rolledBack: true, output };
 }
 
 async function drivePrewarm(run: PrewarmRun, initialPhase: Phase): Promise<OperationResult> {
@@ -220,7 +232,7 @@ async function drivePrewarm(run: PrewarmRun, initialPhase: Phase): Promise<Opera
       await ctx.assertActiveClaim?.();
       const revision = wake.revision();
       const state = await readPrewarmState(run);
-      const next = await progressPhase(run, phase, state);
+      const next = await rejectedBootResult(run, state.root) ?? await progressPhase(run, phase, state);
       if (typeof next !== "string") return next;
       if (phase !== next) deps.requestReconcileTick(gatewayId);
       phase = next;
@@ -229,7 +241,7 @@ async function drivePrewarm(run: PrewarmRun, initialPhase: Phase): Promise<Opera
     }
     throw new Error("Timed out waiting for the prewarmed computer to reach a verified suspended state");
   } catch (error) {
-    if (phase !== "parked") {
+    if (phase !== PARKED) {
       await ctx.assertActiveClaim?.();
       await finishParkedGatewayPrewarm(deps.store, op, deps.now(), "rollback");
       deps.requestReconcileTick(gatewayId);
@@ -308,7 +320,10 @@ export function createParkedPrewarmHandler(deps: ParkedPrewarmDeps): OperationHa
       instanceId: source.instanceId, bootImageId: source.bootImageId,
       needsRepair: source.bootImageId !== bootImageId && !source.recoveryReady,
     } : undefined);
-    if (!("claim" in started)) return { success: true, steps: [], output: { prewarmState: started.state } };
+    if (!("claim" in started)) return { success: true, steps: [], output: {
+      ...(started.state === DEMAND_WON && typeof existing?.output?.prewarmBootRejection === "string" ? existing.output : {}),
+      prewarmState: started.state,
+    } };
     return drivePrewarm({ deps, op, ctx, runtime, request, claim: started.claim, steps: [...op.steps] }, started.state);
   };
 }
