@@ -95,7 +95,10 @@ export type SharedHeldReturnMaintenanceAdmin = (
 ) => Promise<unknown>;
 
 type Phase = "reserved" | "withdrawing" | "dispatched" | "rollback";
-type Guard = GatewayRuntimeRestartFenceValue & { phase: Phase; phaseStartedAt: number; maintenance: SharedHeldReturnMaintenancePlan; stagedRelease?: StagedRelease };
+type Guard = GatewayRuntimeRestartFenceValue & {
+  phase: Phase; phaseStartedAt: number; maintenance: SharedHeldReturnMaintenancePlan;
+  stagedRelease?: StagedRelease; restoringMigrationPolicy?: true;
+};
 
 function requireMaintenance(condition: unknown, message: string): asserts condition {
   if (!condition) throw new SharedHeldReturnMaintenanceConflict(message);
@@ -352,6 +355,7 @@ export async function readSharedHeldReturnMaintenanceDispatch(
   return store.transaction({ label: "shared-held-return-maintenance.read-dispatch", readOnly: true }, async tx => {
     const guard = await readClaim(tx, claim);
     const staged = guard.stagedRelease;
+    requireMaintenance(!guard.restoringMigrationPolicy, "Shared maintenance is completing");
     requireMaintenance(staged && staged.phase === guard.phase, "Shared maintenance physical dispatch requires a matching staged release");
     return { phase: staged.phase, release: staged.release };
   });
@@ -377,6 +381,7 @@ export async function advanceSharedHeldReturnMaintenance(
   }
   await store.transaction({ label: "shared-held-return-maintenance.advance" }, async tx => {
     const current = await readClaim(tx, claim);
+    requireMaintenance(!current.restoringMigrationPolicy, "Shared maintenance is completing");
     if (current.phase === phase) return;
     requireMaintenance(phase === "dispatched" ? current.phase === "reserved" && !current.stagedRelease : current.phase === "dispatched",
       "Shared held return maintenance transition is invalid");
@@ -407,7 +412,7 @@ async function stagedReleasePayload(state: PlatformStateRepositories, guard: Gua
   requireMaintenance(gateway.imageRepository === original.payload.imageRepository &&
     gatewayEdgeImage.imageRepository === original.payload.gatewayEdgeImage?.imageRepository,
   "Shared maintenance replacement must use the original protected registry repositories");
-  return { ...original.payload, ...gateway, gatewayEdgeImage };
+  return { ...original.payload, ...gateway, gatewayEdgeImage, openclawSourceSha: guard.maintenance.acceptedNativeSource };
 }
 
 export async function stageSharedHeldReturnMaintenanceRelease(
@@ -416,6 +421,7 @@ export async function stageSharedHeldReturnMaintenanceRelease(
   return store.transaction({ label: "shared-held-return-maintenance.stage-release" }, async tx => {
     const guard = await readClaim(tx, claim);
     const { phase, stagedRelease } = guard;
+    requireMaintenance(!guard.restoringMigrationPolicy, "Shared maintenance is completing");
     requireMaintenance(phase === "dispatched" || phase === "rollback", "Shared maintenance release cannot stage before dispatch");
     if (stagedRelease?.phase === phase) return stagedRelease.release;
     const payload = await stagedReleasePayload(tx, guard);
@@ -488,10 +494,10 @@ function assertRetainedHelm(
   ].every(Boolean), "Shared maintenance has no canonical retained Helm observation for the verified release");
 }
 
-async function publishObservedRetainedRelease(
-  tx: import("./platform-state/index.js").PlatformStateTransaction,
+async function readVerifiedRetainedRelease(
+  tx: PlatformStateRepositories,
   guard: Guard, observed: ObservedSharedMaintenanceHelm, physicalVerifiedAt: number, now: number,
-): Promise<void> {
+) {
   const staged = guard.stagedRelease;
   requireMaintenance(staged?.phase === guard.phase, "Shared maintenance has no staged release for the observed outcome");
   const row = await tx.gateways.releases.get(guard.gatewayId, staged.release);
@@ -499,21 +505,48 @@ async function publishObservedRetainedRelease(
   const runtime = await assertMountedCrew(tx, guard.maintenance);
   assertRetainedRuntimeReadiness(runtime, guard, row.payload.imageTag, physicalVerifiedAt, now);
   assertRetainedHelm(guard, observed, row.payload, runtime.helm, now);
-  const { installed } = observed;
-  await tx.fleetRegistry.patch(guard.gatewayId, { release: staged.release, lifecycle: "serving", helm: installed }, { revision: runtime.revision });
-  await tx.gateways.roots.patch(guard.gatewayId, { liveRelease: staged.release, updatedAt: now, updatedBy: guard.attemptId });
+  return { staged, runtime };
 }
 
 export async function completeSharedHeldReturnMaintenance(
   store: PlatformStateStore, claim: SharedHeldReturnMaintenanceClaim,
-  deps: { readVerifiedResult(): Promise<SharedHeldReturnMaintenanceResult>; readInstalledHelm(): Promise<ObservedSharedMaintenanceHelm>; now(): number },
+  deps: {
+    readVerifiedResult(): Promise<SharedHeldReturnMaintenanceResult>;
+    readInstalledHelm(): Promise<ObservedSharedMaintenanceHelm>;
+    restoreMigrationPolicy(assertCurrent: () => Promise<void>): Promise<void>;
+    now(): number;
+  },
 ): Promise<void> {
   const [result, installed] = await Promise.all([deps.readVerifiedResult(), deps.readInstalledHelm()]);
-  await store.transaction({ label: "shared-held-return-maintenance.complete" }, async tx => {
+  await store.transaction({ label: "shared-held-return-maintenance.begin-completion" }, async tx => {
     const guard = await readClaim(tx, claim);
     const clock = deps.now();
     assertResult(guard, result, clock);
-    await publishObservedRetainedRelease(tx, guard, installed, result.verifiedAt, clock);
+    await readVerifiedRetainedRelease(tx, guard, installed, result.verifiedAt, clock);
+    if (!guard.restoringMigrationPolicy) {
+      await tx.gateways.roots.compareAndSetRuntimeRestartFence(claim.gatewayId, guard, {
+        ...guard, restoringMigrationPolicy: true,
+      });
+    }
+  });
+  await deps.restoreMigrationPolicy(() => store.transaction({
+    label: "shared-held-return-maintenance.assert-completing", readOnly: true,
+  }, async tx => {
+    requireMaintenance((await readClaim(tx, claim)).restoringMigrationPolicy,
+      "Shared maintenance lost authority to restore migration ingress");
+  }));
+  await store.transaction({ label: "shared-held-return-maintenance.complete" }, async tx => {
+    const guard = await readClaim(tx, claim);
+    const clock = deps.now();
+    requireMaintenance(guard.restoringMigrationPolicy, "Shared maintenance completion lost its policy restoration claim");
+    assertResult(guard, result, clock);
+    const { staged, runtime } = await readVerifiedRetainedRelease(tx, guard, installed, result.verifiedAt, clock);
+    await tx.fleetRegistry.patch(claim.gatewayId, {
+      release: staged.release, lifecycle: "serving", helm: installed.installed,
+    }, { revision: runtime.revision });
+    await tx.gateways.roots.patch(claim.gatewayId, {
+      liveRelease: staged.release, updatedAt: clock, updatedBy: claim.attemptId,
+    });
     const rolledBack = result.outcome === "rolled-back";
     await tx.journal.audits.patch(claim.auditId, {
       status: "completed", lifecycleStage: rolledBack ? "action-partial" : "action-completed", completedAt: result.verifiedAt,

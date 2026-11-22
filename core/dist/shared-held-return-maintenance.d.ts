@@ -117,6 +117,7 @@ export declare function stageSharedHeldReturnMaintenanceRelease(store: PlatformS
 export declare function completeSharedHeldReturnMaintenance(store: PlatformStateStore, claim: SharedHeldReturnMaintenanceClaim, deps: {
     readVerifiedResult(): Promise<SharedHeldReturnMaintenanceResult>;
     readInstalledHelm(): Promise<ObservedSharedMaintenanceHelm>;
+    restoreMigrationPolicy(assertCurrent: () => Promise<void>): Promise<void>;
     now(): number;
 }): Promise<void>;
 export declare function withdrawSharedHeldReturnMaintenance(store: PlatformStateStore, claim: SharedHeldReturnMaintenanceClaim, deps: {

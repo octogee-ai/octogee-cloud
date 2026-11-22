@@ -1,9 +1,10 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import {
   planSharedMigrationIngress,
   assertSharedMigrationIngressHeld,
   changeSharedMigrationIngress,
 } from "../lib/shared-maintenance-ingress.js";
+import { createSharedMaintenancePolicyRuntime } from "../lib/shared-maintenance-policy-runtime.js";
 const gatewayId = "shared-fixture",
   namespace = "fixture-test",
   uid = "aa000000-0000-4000-8000-000000000001";
@@ -85,6 +86,30 @@ it.each(["named", "all", "range", "duplicate", "blank"])(
     expect(() => planSharedMigrationIngress([override, vm], scope)).toThrow();
   },
 );
+
+it("changes only the pinned policy and verifies readback before releasing its authority", async () => {
+  const saved = planSharedMigrationIngress([owner, vm], scope);
+  const current = vi.fn(async () => {});
+  const patch = vi.fn();
+  let actual: unknown = owner;
+  const runtime = createSharedMaintenancePolicyRuntime(async (args) => {
+    if (args[2] === "get") return { code: 0, stdout: JSON.stringify({ items: [actual, vm] }), stderr: "" };
+    const operations = JSON.parse(args.at(-1)!);
+    patch(args[4], operations);
+    actual = { ...owner, metadata: { ...owner.metadata, resourceVersion: "2" }, spec: operations.at(-1).value };
+    return { code: 0, stdout: "", stderr: "" };
+  }, namespace);
+  current.mockRejectedValueOnce(new Error("reservation changed"));
+  await expect(runtime.change(scope, saved, "hold", current)).rejects.toThrow("reservation changed");
+  expect(patch).not.toHaveBeenCalled();
+  await runtime.change(scope, saved, "hold", current);
+  await runtime.change(scope, saved, "hold", current);
+  await runtime.change(scope, saved, "restore", current);
+  await runtime.verify(scope, saved, "original");
+  expect(patch.mock.calls.map(([name, operations]) => [name, operations[1].value, operations.at(-1).value])).toEqual(
+    [[owner.metadata.name, "1", saved.held], [owner.metadata.name, "2", saved.original]],
+  );
+});
 
 import { assertLegacySharedTransferIdle } from "../lib/shared-maintenance-ingress.js";
 it("reads the old member's actual socket, daemon and staging evidence before allowing migration exclusion", () => {

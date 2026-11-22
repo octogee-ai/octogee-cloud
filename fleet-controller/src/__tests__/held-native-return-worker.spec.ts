@@ -414,6 +414,7 @@ it("gives the reservation precedence over inbound and outbound queue claims, and
   expect(await h.store.gateways.roots.get(targetGatewayId)).toMatchObject({ desiredRelease: 2, liveRelease: 1 });
   await expect(completeSharedHeldReturnMaintenance(h.store, claim, {
     readVerifiedResult: async () => { throw new Error("physical readiness unavailable"); },
+    restoreMigrationPolicy: vi.fn(),
     readInstalledHelm: h.observeInstalledHelm, now: () => 525,
   })).rejects.toThrow(/readiness unavailable/);
   expect(await assertSharedHeldReturnMaintenance(h.store, claim)).toBe("dispatched");
@@ -428,7 +429,8 @@ it("gives the reservation precedence over inbound and outbound queue claims, and
     nativeSource: h.admission.originalNativeSource, noInFlightTasks: true, noPreparedImports: true, exclusiveReady: true, verifiedAt: 540,
   };
   const complete = (readback: SharedHeldReturnMaintenanceResult, readInstalledHelm = h.observeInstalledHelm) =>
-    completeSharedHeldReturnMaintenance(h.store, claim, { readVerifiedResult: async () => readback, readInstalledHelm, now: () => 550 });
+    completeSharedHeldReturnMaintenance(h.store, claim, { readVerifiedResult: async () => readback,
+      restoreMigrationPolicy: async assertCurrent => { await assertCurrent(); }, readInstalledHelm, now: () => 550 });
   for (const invalid of [{ ...result, verifiedAt: 529 }, { ...result, images: h.admission.maintenanceImages },
     { ...result, workload: { ...result.workload, podUid: "replacement" } }]) {
     await expect(complete(invalid)).rejects.toThrow(/exact verified completion/);
@@ -452,14 +454,19 @@ it("publishes the immutable retained Shared release from normal health plus obse
   const root = await h.store.gateways.roots.get(targetGatewayId);
   expect(root).toMatchObject({ desiredRelease: 2, liveRelease: 1 });
   const staged = await h.store.gateways.releases.get(targetGatewayId, 2);
-  expect(staged?.payload.openclawSourceSha).toBe(h.originalPayload.openclawSourceSha);
+  expect(staged?.payload.openclawSourceSha).toBe(h.admission.acceptedNativeSource);
   const result: SharedHeldReturnMaintenanceResult = {
     attemptId: claim.attemptId, outcome: "installed", workload: h.admission.workload, owners: h.admission.owners,
     images: h.admission.maintenanceImages, runningImageIds: h.admission.maintenanceImages, retainedBoot: h.admission.retainedBoot,
     nativeSource: h.admission.acceptedNativeSource, noInFlightTasks: true, noPreparedImports: true, exclusiveReady: true, verifiedAt: 540,
   };
+  const restoreMigrationPolicy = vi.fn(async (assertCurrent: () => Promise<void>) => {
+    await assertCurrent();
+    await expect(advanceSharedHeldReturnMaintenance(h.store, claim, "rollback")).rejects.toThrow(/completing/);
+  }).mockRejectedValueOnce(new Error("could not restore and verify ingress"));
   const complete = (readback: SharedHeldReturnMaintenanceResult) => completeSharedHeldReturnMaintenance(h.store, claim, {
     readVerifiedResult: async () => readback,
+    restoreMigrationPolicy,
     readInstalledHelm: async () => {
       const previous = await h.observeInstalledHelm();
       return { ...previous, installed: { ...previous.installed, imageTag: staged!.payload.imageTag },
@@ -468,8 +475,14 @@ it("publishes the immutable retained Shared release from normal health plus obse
     now: () => 550,
   });
   await expect(complete({ ...result, runningImageIds: h.admission.originalImages })).rejects.toThrow(/exact verified completion/);
+  expect(restoreMigrationPolicy).not.toHaveBeenCalled();
+  await expect(complete(result)).rejects.toThrow("could not restore and verify ingress");
+  expect(await h.store.gateways.roots.get(targetGatewayId)).toMatchObject({
+    desiredRelease: 2, liveRelease: 1, runtimeRestartFence: { restoringMigrationPolicy: true },
+  });
   expect(await assertSharedHeldReturnMaintenance(h.store, claim)).toBe("dispatched");
   await complete(result);
+  expect(restoreMigrationPolicy).toHaveBeenCalledTimes(2);
   expect(await h.store.gateways.roots.get(targetGatewayId)).toMatchObject({ desiredRelease: 2, liveRelease: 2 });
   expect((await h.store.fleetRegistry.get(targetGatewayId))?.heartbeat.version).toBe("abcdef1");
   expect((await h.store.journal.operations.get(operationId))?.status).toBe("pending");

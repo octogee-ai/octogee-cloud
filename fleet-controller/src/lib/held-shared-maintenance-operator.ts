@@ -16,7 +16,7 @@ export interface SharedHeldReturnMaintenancePhysical {
   holdMigrationPolicy(claim: SharedHeldReturnMaintenanceClaim, assertReserved: CheckCurrent): Promise<void>;
   verifyReadyToDispatch(claim: SharedHeldReturnMaintenanceClaim, assertReserved: CheckCurrent): Promise<void>;
   applyStagedRelease(claim: SharedHeldReturnMaintenanceClaim, staged: SharedHeldReturnMaintenanceDispatch, assertCurrent: CheckCurrent): Promise<void>;
-  restoreMigrationPolicy(claim: SharedHeldReturnMaintenanceClaim, assertWithdrawing: CheckCurrent): Promise<void>;
+  restoreMigrationPolicy(claim: SharedHeldReturnMaintenanceClaim, assertCurrent: CheckCurrent): Promise<void>;
   readVerifiedWithdrawal(claim: SharedHeldReturnMaintenanceClaim): Promise<SharedHeldReturnMaintenanceWithdrawal>;
   readVerifiedResult(claim: SharedHeldReturnMaintenanceClaim): Promise<SharedHeldReturnMaintenanceResult>;
   readInstalledHelm(claim: SharedHeldReturnMaintenanceClaim): Promise<ObservedSharedMaintenanceHelm>;
@@ -93,6 +93,7 @@ async function runMaintenanceStep(
     case "complete":
       await completeSharedHeldReturnMaintenance(store, claim, {
         readVerifiedResult: () => physical.readVerifiedResult(claim),
+        restoreMigrationPolicy: assertCurrent => physical.restoreMigrationPolicy(claim, assertCurrent),
         readInstalledHelm: () => physical.readInstalledHelm(claim), now,
       });
       return { ...status, phase: "completed" };
