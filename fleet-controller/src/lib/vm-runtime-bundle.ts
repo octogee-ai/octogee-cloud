@@ -119,6 +119,7 @@ export interface GatewayVmIdentity {
 }
 
 export interface RenderVmRuntimeBundleInput {
+  previous?: GatewayVmRuntimeBundle | null;
   gatewayId: string;
   builderIdentity?: RuntimeUserIdentity;
   homeStorageId?: string;
@@ -268,6 +269,30 @@ export function bundleVersion(bundle: Omit<GatewayVmRuntimeBundle, "version" | "
   return createHash("sha256").update(JSON.stringify(bundle)).digest("hex").slice(0, 16);
 }
 
+function keepPinnedImage(container: GatewayVmRuntimeContainer, previous?: GatewayVmRuntimeContainer | null): void {
+  if (!previous || previous.name !== container.name || previous.image === container.image) return;
+  const pinned = /^([^@]+):([^/:@]+)@(sha256:[a-f0-9]{64})$/u;
+  const current = pinned.exec(container.image);
+  const old = pinned.exec(previous.image);
+  if (!old || !current || old[1] !== current[1] || old[3] !== current[3]) return;
+  const oldTag = `${old[2]}@${old[3]}`;
+  if (container.env.GATEWAY_IMAGE_TAG === `${current[2]}@${current[3]}` && previous.env.GATEWAY_IMAGE_TAG === oldTag) {
+    container.env.GATEWAY_IMAGE_TAG = oldTag;
+  }
+  container.image = previous.image;
+}
+
+function keepPinnedImages(
+  input: RenderVmRuntimeBundleInput, init: GatewayVmRuntimeContainer | null, containers: GatewayVmRuntimeContainer[],
+): void {
+  const { previous } = input;
+  if (!previous || previous.gatewayId !== input.gatewayId) return;
+  if (init) keepPinnedImage(init, previous.init);
+  for (const container of containers) {
+    keepPinnedImage(container, previous.containers.find(prior => prior.name === container.name));
+  }
+}
+
 export async function renderVmRuntimeBundle(input: RenderVmRuntimeBundleInput): Promise<GatewayVmRuntimeBundle> {
   const deployment = findDeployment(input.manifests);
   const podSpec = deployment.spec?.template?.spec;
@@ -286,6 +311,7 @@ export async function renderVmRuntimeBundle(input: RenderVmRuntimeBundleInput): 
     containers.push(renderDesktopNode(gateway));
     volumes.push({ name: GATEWAY_DESKTOP_NODE_STATE_VOLUME, kind: "emptyDir" }, { name: GATEWAY_DESKTOP_NODE_IDENTITY_VOLUME, kind: "emptyDir" });
   }
+  keepPinnedImages(input, init, containers);
   configureHomeIdentity(input.homeStorageId, init, containers);
   const builderIdentity = bindUserIdentity(input.builderIdentity, containers);
   const unversioned = {

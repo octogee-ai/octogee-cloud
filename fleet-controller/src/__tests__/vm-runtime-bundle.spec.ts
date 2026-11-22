@@ -59,6 +59,35 @@ describe("helmTemplateArgsFromUpgradeArgs", () => {
 });
 
 describe("renderVmRuntimeBundle", () => {
+  it("updates the edge alone when an unchanged gateway and init were retagged", async () => {
+    const keep = "a".repeat(64);
+    const fixture = (tag: string, edgeDigest: string, version: string) => {
+      type Container = { name: string; image: string; env?: { name: string; value: string }[] };
+      const resources = structuredClone(manifests) as Array<{ kind: string; spec?: { template: { spec: {
+        initContainers: Container[]; containers: Container[];
+      } } } }>;
+      const pod = resources.find(item => item.kind === "Deployment")!.spec!.template.spec;
+      for (const container of [...pod.initContainers, ...pod.containers]) {
+        const digest = container.name === "gateway-edge" ? edgeDigest : keep;
+        const ref = `${tag}@sha256:${digest}`;
+        container.image = container.image.replace("main.abc123", ref);
+        const stamp = container.env?.find(entry => entry.name === "GATEWAY_IMAGE_TAG");
+        if (stamp) stamp.value = ref;
+        if (container.name === "gateway-edge") container.env?.push({ name: "EXAMPLE_SETTING", value: version });
+      }
+      return resources;
+    };
+    const before = await render({ manifests: fixture("first", keep, "one") });
+    const after = await render({ manifests: fixture("second", "b".repeat(64), "two"), previous: before });
+
+    expect(after.init).toEqual(before.init);
+    expect(after.containers.find(c => c.name === "gateway")).toEqual(before.containers.find(c => c.name === "gateway"));
+    expect(after.containers.find(c => c.name === "gateway-edge")).toMatchObject({
+      image: expect.stringContaining("second@sha256:"), env: { EXAMPLE_SETTING: "two" },
+    });
+    expect(after.version).not.toBe(before.version);
+  });
+
   it.each([
     ["agent-control-router", "secret"],
     ["byot-sync-internal", "secret"],
