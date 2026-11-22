@@ -63,6 +63,16 @@ describe.skipIf(process.platform !== "linux")("staged rollback of a retained Hob
       expect(await homeTarDigest(home)).toBe(failed);
       const interrupted = () => assert.doesNotReject(lstat(marker), "Interrupted publication after replacing active home entries");
       await expect(restore(encrypted, interrupted)).rejects.toThrow(/Interrupted publication/);
+      const entered = Promise.withResolvers<void>();
+      const released = Promise.withResolvers<void>();
+      const active = restore(encrypted, async () => { entered.resolve(); await released.promise; });
+      try {
+        await entered.promise;
+        await expect(restore(encrypted)).rejects.toThrow(/active restoration/);
+      } finally {
+        released.resolve();
+        await active;
+      }
       expect(await restore(encrypted)).toEqual(proof);
       expect(await restore(encrypted)).toEqual(proof);
       expect(await homeTarDigest(home)).toBe(proof.ownerManifestSha256);

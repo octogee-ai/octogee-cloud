@@ -1,4 +1,6 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import { once } from "node:events";
+import { constants } from "node:fs";
 import { mkdtemp, mkdir, open, readdir, rename, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -15,6 +17,18 @@ export async function hobbyHomeSpoolLimit(home: string): Promise<number> {
     throw new Error("Hobby home needs more headroom for an isolated staged rollback");
   }
   return Math.floor((restoreBudget - occupied) / 9);
+}
+
+async function withHomeMountLock<T>(home: string, operation: () => Promise<T>): Promise<T> {
+  const mount = await open(home, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_DIRECTORY);
+  try {
+    const flock = spawn("/usr/bin/flock", ["--nonblock", "3"], { stdio: ["ignore", "ignore", "ignore", mount.fd] });
+    const [code] = await once(flock, "close");
+    if (code !== 0) throw new Error("Hobby home already has an active restoration");
+    return await operation();
+  } finally {
+    await mount.close();
+  }
 }
 
 export type ExpectedHome = Pick<HobbyHomeEnvelopeHeader, "attemptId" | "podUid" | "keyVersion"> & {
@@ -58,7 +72,7 @@ async function restoreStaged(
   await rm(stage, { recursive: true, force: true });
 }
 
-export async function restoreHobbyHome(
+async function restoreLockedHobbyHome(
   home: string, temporaryRoot: string, chunks: AsyncIterable<Buffer>,
   expected: ExpectedHome, dataKey: Buffer, assertSeal: () => Promise<void>,
 ) {
@@ -98,4 +112,11 @@ export async function restoreHobbyHome(
   } finally {
     await rm(temporary, { recursive: true, force: true });
   }
+}
+
+export function restoreHobbyHome(
+  home: string, temporaryRoot: string, chunks: AsyncIterable<Buffer>,
+  expected: ExpectedHome, dataKey: Buffer, assertSeal: () => Promise<void>,
+) {
+  return withHomeMountLock(home, () => restoreLockedHobbyHome(home, temporaryRoot, chunks, expected, dataKey, assertSeal));
 }
