@@ -223,7 +223,7 @@ async function assertPublishedRelease(store: PlatformStateStore, reservation: Re
 }
 
 export function createNativeOldTargetPhysicalProvider(deps: {
-  namespace: "octogee-test";
+  namespace: string;
   privateKey: string;
   runKubectl: SurgeKubectl;
   store: PlatformStateStore;

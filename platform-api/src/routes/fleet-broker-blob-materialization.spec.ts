@@ -1,4 +1,5 @@
 import express from "express";
+import { rateLimit } from "express-rate-limit";
 import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
 vi.mock("@octogee/core/identity/platform-state-store", async (importOriginal) => {
@@ -129,6 +130,7 @@ function preparingHarness(scenario = "valid") {
   const createBlobSignedUrl = vi.fn(async (input: { gcsPath: string }) => ({ url: `https://signed.test/${input.gcsPath}`, method: "GET" as const, gcsPath: input.gcsPath, expiresAt: "2026-10-07T12:00:00Z" }));
   function makeApp() {
     const app = express(); app.disable("x-powered-by"); app.use(express.json());
+    app.use(rateLimit({ windowMs: 60_000, limit: 100 }));
     app.use((req, _res, next) => { req.boundTenant = { kind: "gateway", gatewayId: "b-owner", ownerUid: "uid-owner", podUid: "4242", podName: gatewayVmPodName("b-owner", "4242"), saName: "octogee-gw-b-owner" }; next(); });
     app.use(createTenantEnforcementMiddleware({ readFlowGateway: async () => null, store: createDocumentFixtureStore(docs), onDenied: async () => {} }));
     const credentialAuth = createGatewayCredentialAuth({ namespace: "octogee-test",
