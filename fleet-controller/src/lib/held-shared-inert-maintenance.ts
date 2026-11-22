@@ -15,6 +15,7 @@ export function createHeldSharedInertMaintenance(input: {
   emptyPeer?: {
     readEnrollment(claim: SharedHeldReturnMaintenanceClaim): Promise<SharedInertEmptyPeerScope>;
     verifyExactEmptyWorkload(peer: SharedInertEmptyPeerScope): Promise<void>;
+    verifyExactPeerForRestoration(peer: SharedInertEmptyPeerScope): Promise<void>;
     restoreAndVerifySql(claim: SharedHeldReturnMaintenanceClaim, peer: SharedInertEmptyPeerScope, assertHeld: () => Promise<void>): Promise<void>;
   };
   verifyPriorRestoreAndIsolation(claim: SharedHeldReturnMaintenanceClaim, assertCurrent: () => Promise<void>): Promise<SharedInertMaintenancePriorProof>;
@@ -35,9 +36,9 @@ export function createHeldSharedInertMaintenance(input: {
     async releaseEmptyPeer(claim: SharedHeldReturnMaintenanceClaim) {
       const { backend, scope } = await readPeer(claim);
       await releaseSharedInertEmptyPeer(input.store, claim, scope, async current => {
-        await backend.verifyExactEmptyWorkload(scope);
+        await backend.verifyExactPeerForRestoration(scope);
         await backend.restoreAndVerifySql(claim, scope, current);
-        await backend.verifyExactEmptyWorkload(scope);
+        await backend.verifyExactPeerForRestoration(scope);
       }, input.now);
     },
     async reserveInert(claim: SharedHeldReturnMaintenanceClaim) {

@@ -155,7 +155,19 @@ async function assertCrew(state, plan, guard) {
     const conflict = active.some(op => op.id !== selection.operationId && touchesScope(op, gatewayId, owners) && !canLeaveQueued(op, gatewayId, owners));
     requireMaintenance(!conflict, "Another operation holds the Shared maintenance gateway or an owner");
 }
-async function readEmptyPeerRoot(tx, claim, peer, clock) {
+function assertEmptyPeerWorkload(kube, peer, clock, restoring) {
+    const fresh = restoring
+        ? ["ready", "not-ready"].includes(kube.status) && Number.isFinite(kube.observedAt) &&
+            clock >= kube.observedAt && clock - kube.observedAt <= GATEWAY_UNREACHABLE_AFTER_MS
+        : hasFreshReadyKubernetesObservation({ kubernetes: kube }, clock, GATEWAY_UNREACHABLE_AFTER_MS);
+    requireMaintenance(fresh, "Shared maintenance empty peer lacks a fresh Kubernetes observation");
+    const pod = kube.pods?.[0];
+    requireMaintenance([
+        kube.totalPods === 1, restoring || kube.readyPods === 1, kube.pods?.length === 1,
+        pod?.uid === peer.workload.podUid, pod?.name === peer.workload.podName, pod?.replicaSetUid === peer.workload.replicaSetUid,
+    ].every(Boolean), "Shared maintenance empty peer has changed workload or active custody");
+}
+async function readEmptyPeerRoot(tx, claim, peer, clock, restoring = false) {
     requireMaintenance(/^shared-[a-z0-9]+$/.test(peer.gatewayId) && peer.gatewayId !== claim.gatewayId && matchesWorkload(peer.workload), "Shared maintenance requires an exact distinct empty peer");
     const [root, runtime, assignments, active, tasks] = await Promise.all([
         tx.gateways.roots.get(peer.gatewayId), tx.fleetRegistry.get(peer.gatewayId), tx.gateways.assignments.list(peer.gatewayId),
@@ -166,14 +178,11 @@ async function readEmptyPeerRoot(tx, claim, peer, clock) {
         root.gatewayClass === "shared", root.desiredStatus === "running", root.retirementClaim == null,
         root.liveRelease === root.desiredRelease, root.latestRelease === root.liveRelease,
     ].every(Boolean), "Shared maintenance empty peer desired state changed");
-    requireMaintenance(runtime && hasFreshReadyKubernetesObservation(runtime, clock, GATEWAY_UNREACHABLE_AFTER_MS), "Shared maintenance empty peer lacks a fresh Kubernetes observation");
-    const pods = runtime.kubernetes?.pods;
-    const pod = pods?.[0];
+    requireMaintenance(runtime?.kubernetes, "Shared maintenance empty peer lacks a Kubernetes observation");
+    assertEmptyPeerWorkload(runtime.kubernetes, peer, clock, restoring);
     requireMaintenance([
-        runtime.runtime === "cluster", runtime.release === root.liveRelease, runtime.heartbeat.status === "ready",
+        runtime.runtime === "cluster", runtime.release === root.liveRelease, restoring || runtime.heartbeat.status === "ready",
         runtime.heartbeat.mountedCustomers.length === 0, !runtime.heartbeat.migratingIn?.length, assignments.length === 0,
-        runtime.kubernetes?.totalPods === 1, runtime.kubernetes?.readyPods === 1, pods?.length === 1,
-        pod?.uid === peer.workload.podUid, pod?.name === peer.workload.podName, pod?.replicaSetUid === peer.workload.replicaSetUid,
         !tasks.some(task => task.sourceGatewayId === peer.gatewayId || task.targetGatewayId === peer.gatewayId),
         !active.some(op => touchesScope(op, peer.gatewayId, []) && !canLeaveQueued(op, claim.gatewayId, claim.plan.owners)),
     ].every(Boolean), "Shared maintenance empty peer has changed workload or active custody");
@@ -183,17 +192,20 @@ function emptyPeerFence(claim, saved) {
     return { kind: SHARED_INERT_EMPTY_PEER, phase: "held", gatewayId: saved.scope.gatewayId, attemptId: claim.attemptId,
         auditId: claim.auditId, startedAt: saved.acquiredAt, retainedGatewayId: claim.gatewayId, workload: saved.scope.workload };
 }
-async function readHeldEmptyPeer(tx, claim, peer, clock) {
+async function readHeldEmptyPeer(tx, claim, peer, clock, restoring = false) {
     const guard = await readClaim(tx, claim);
     const saved = guard.emptyPeer;
     requireMaintenance(saved && saved.restoredAt === undefined && isDeepStrictEqual(saved.scope, peer), "Shared maintenance empty peer does not belong to this active attempt");
-    const root = await readEmptyPeerRoot(tx, claim, peer, clock);
+    const root = await readEmptyPeerRoot(tx, claim, peer, clock, restoring);
     const fence = emptyPeerFence(claim, saved);
     requireMaintenance(isDeepStrictEqual(root.runtimeRestartFence, fence), "Shared maintenance empty peer fence changed");
     return { guard, saved, fence };
 }
 export async function assertSharedInertEmptyPeerHeld(store, claim, peer, now) {
     await store.transaction({ label: "shared-held-return-maintenance.assert-empty-peer", readOnly: true }, async (tx) => { await readHeldEmptyPeer(tx, claim, peer, now()); });
+}
+export async function assertSharedInertEmptyPeerRestorable(store, claim, peer, now) {
+    await store.transaction({ label: "shared-held-return-maintenance.assert-empty-peer-restore", readOnly: true }, async (tx) => { await readHeldEmptyPeer(tx, claim, peer, now(), true); });
 }
 export async function holdSharedInertEmptyPeer(store, claim, peer, verifyExactEmptyWorkload, now) {
     await verifyExactEmptyWorkload();
@@ -223,14 +235,14 @@ export async function releaseSharedInertEmptyPeer(store, claim, peer, restoreAnd
     };
     if (await store.transaction({ label: "shared-held-return-maintenance.empty-peer-status", readOnly: true }, readReleased))
         return;
-    const assertHeld = () => assertSharedInertEmptyPeerHeld(store, claim, peer, now);
+    const assertHeld = () => assertSharedInertEmptyPeerRestorable(store, claim, peer, now);
     await assertHeld();
     await restoreAndVerifySql(assertHeld);
     await store.transaction({ label: "shared-held-return-maintenance.release-empty-peer" }, async (tx) => {
         const clock = now();
         if (await readReleased(tx))
             return;
-        const { guard, saved, fence } = await readHeldEmptyPeer(tx, claim, peer, clock);
+        const { guard, saved, fence } = await readHeldEmptyPeer(tx, claim, peer, clock, true);
         await tx.gateways.roots.compareAndSetRuntimeRestartFence(peer.gatewayId, fence, null);
         const restored = { ...saved, restoredAt: clock };
         await tx.gateways.roots.compareAndSetRuntimeRestartFence(claim.gatewayId, guard, { ...guard, emptyPeer: restored });
