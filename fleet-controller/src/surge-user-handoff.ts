@@ -28,6 +28,7 @@ export interface SurgeReadyFleetState {
 
 export interface SurgePod {
   image?: string;
+  checkpointRelease?: number;
   uid: string;
   name: string;
   podIP: string;
@@ -206,6 +207,7 @@ export interface SurgeUserHandoffDeps {
 export interface ReconcileSurgeUserHandoffInput {
   gatewayId: string;
   desiredImageTag: string;
+  desiredCheckpointRelease?: number;
   requiresUserMigration: boolean;
   isolatedGateway?: boolean;
   ownerlessOperatorPrewarm?: boolean;
@@ -330,12 +332,17 @@ async function abandonedLeaseReason(
     : `owning operation is ${operation.status}`;
 }
 
+function matchesCheckpointRelease(pod: SurgePod, expected?: number): boolean {
+  return expected === undefined || pod.checkpointRelease === expected;
+}
+
 function selectTarget(
   pods: readonly SurgePod[],
   healthByUid: ReadonlyMap<string, SurgePodHealth>,
-  desiredImageTag: string,
+  { desiredImageTag, desiredCheckpointRelease }: ReconcileSurgeUserHandoffInput,
 ): SurgePod | null {
-  const desired = pods.filter((pod) => !pod.terminating && gatewayHeartbeatMatchesImageTag(
+  const desired = pods.filter((pod) => !pod.terminating &&
+    matchesCheckpointRelease(pod, desiredCheckpointRelease) && gatewayHeartbeatMatchesImageTag(
     healthByUid.get(pod.uid)?.version,
     desiredImageTag,
   ));
@@ -1750,6 +1757,7 @@ async function evictCrashLoopingSurgeTargets(
   const predecessorServing = pods.some((pod) =>
     pod.ready && !pod.terminating && healthByUid.has(pod.uid));
   const wedged = pods.filter((pod) =>
+    matchesCheckpointRelease(pod, input.desiredCheckpointRelease) &&
     pod.crashLooping && !pod.ready && !pod.terminating && !healthByUid.has(pod.uid));
   if (!predecessorServing || wedged.length === 0) return false;
   let evicted = false;
@@ -1794,7 +1802,7 @@ async function observeSurgePass(
     healthEntries.filter((entry): entry is readonly [string, SurgePodHealth] => entry[1] !== null),
   );
   if (await evictCrashLoopingSurgeTargets(deps, input, pods, healthByUid)) return null;
-  const target = selectTarget(pods, healthByUid, input.desiredImageTag);
+  const target = selectTarget(pods, healthByUid, input);
   if (!target) {
     const assignments = await deps.readAssignments(input.gatewayId);
     if (!configuredUserProcessGateRequired(input)) {

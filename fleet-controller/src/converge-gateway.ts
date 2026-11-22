@@ -310,6 +310,9 @@ export function gatewayUpsertOptsFromRelease(input: {
   }
   const gatewayClass = resolveGatewayClass(classKnobs(gateway));
   const gatewayImage = gatewayImageFor(gateway, artifact);
+  const checkpoint = input.hobbyCheckpoint?.mode === "cold"
+    ? { ...input.hobbyCheckpoint, releaseNumber: gateway.desiredRelease }
+    : input.hobbyCheckpoint;
   const intent: Omit<GatewayUpsertOpts, "deploymentIntentFingerprint"> = {
     namespace: input.namespace,
     gatewayId: gateway.gatewayId,
@@ -334,8 +337,8 @@ export function gatewayUpsertOptsFromRelease(input: {
     deploymentTargetId: input.deploymentTargetId,
     deploymentProjectId: input.deploymentProjectId,
     gatewayServiceAccount: input.gatewayServiceAccount,
-    rollStrategy: input.hobbyCheckpoint ? "recreate" : "surge",
-    ...(input.hobbyCheckpoint ? { hobbyCheckpoint: input.hobbyCheckpoint } : {}),
+    rollStrategy: checkpoint && checkpoint.mode !== "cold" ? "recreate" : "surge",
+    ...(checkpoint ? { hobbyCheckpoint: checkpoint } : {}),
     waitForReady: false,
   };
   return {

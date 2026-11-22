@@ -83,6 +83,14 @@ describe("surge handoff Kubernetes projection", () => {
     });
   });
 
+  it.each(["2", "02", "2.5", "0"])("projects only a canonical checkpoint release label %s", value => {
+    const observed = parseSurgePodSnapshot(JSON.stringify({ items: [{
+      metadata: { uid: target.uid, name: target.name, labels: { "octogee.ai/checkpoint-release": value } },
+      status: { phase: "Running", podIP: target.podIP },
+    }] }));
+    expect(observed.pods[0]?.checkpointRelease).toBe(value === "2" ? 2 : undefined);
+  });
+
   it.each([0, 1])("deletes only the exact cancelled target UID (exit %s)", async code => {
     const runKubectl = vi.fn(async () => ({ code, stdout: "", stderr: code ? "UID precondition failed" : "" }));
     const result = deleteCancelledSurgePod(runKubectl, "octogee-test", target);

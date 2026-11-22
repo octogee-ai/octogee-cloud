@@ -2061,4 +2061,13 @@ it("uses the exact claim-selected snapshot and compatible graphical isolated run
   expect(args.find(arg => arg.startsWith("nodeSelector="))).not.toContain("cloud.google.com/machine-family");
   expect(() => buildUpgradeArgs({ ...opts, gatewayClass: "shared" })).toThrow(/isolated/);
   expect(() => buildUpgradeArgs({ ...opts, gatewayId: "hobby-slot-bbbee012ab78" })).toThrow(/slot/);
+  const { restoreSnapshot: _snapshot, ...hardware } = opts.hobbyCheckpoint;
+  const coldArgs = buildUpgradeArgs({ ...opts, rollStrategy: "recreate", hobbyCheckpoint: { ...hardware, mode: "cold", releaseNumber: 2 } });
+  expect(coldArgs.filter(arg => arg.startsWith("rollStrategy="))).toEqual(["rollStrategy=surge"]);
+  expect(coldArgs.find(arg => arg.startsWith("hobbyCheckpoint="))).toContain('"mode":"cold"');
+  expect(coldArgs.find(arg => arg.startsWith("hobbyCheckpoint="))).toContain('"releaseNumber":2');
+  expect(() => buildUpgradeArgs({ ...opts, hobbyCheckpoint: { ...hardware, mode: "cold" } })).toThrow(/release number/);
+  expect(coldArgs.join(" ")).not.toContain(opts.hobbyCheckpoint.restoreSnapshot);
+  expect(coldArgs).not.toContain("--wait");
+  expect(() => buildUpgradeArgs({ ...opts, hobbyCheckpoint: { ...opts.hobbyCheckpoint, mode: "cold" } })).toThrow(/snapshot/);
 });
