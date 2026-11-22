@@ -311,7 +311,7 @@ export async function requestHeldNativeSourceHold(input: {
   const { gatewayId, operationId } = claim;
   const path = `/held-native-source-hold/${action}/${encodeURIComponent(gatewayId)}`;
   const nonce = randomBytes(32).toString("hex");
-  const body = { claim, nonce, expiresAt: Date.now() + 60_000 };
+  const body = { claim, nonce, expiresAt: Date.now() + (action === "acquire" ? 90_000 : 10_000) };
   const post = createSignedGatewayPoster({
     privateKey: input.privateKey,
     resolveGatewayUrl: () => sourceUrl.origin,
@@ -326,7 +326,9 @@ export async function requestHeldNativeSourceHold(input: {
     throw new Error(`Held Native source hold ${action} returned HTTP ${response.status}`);
   }
   const reply = await response.json() as { nonce?: string; hold?: HeldNativeSourceHoldProof; instanceIdentity?: string } | null;
-  if (reply?.nonce !== nonce || !reply.hold) throw new Error("Held Native source returned a stale hold acknowledgement");
+  if (reply?.nonce !== nonce || !reply.hold || Date.now() > body.expiresAt) {
+    throw new Error("Held Native source returned a stale hold acknowledgement");
+  }
   const hold = validateSourceHold(reply.hold, claim, Date.now());
   if (typeof reply.instanceIdentity !== "string") throw new Error("Held Native source returned no instance attestation");
   const verify = input.verifyInstanceIdentity ?? createGoogleIdTokenVerifier();

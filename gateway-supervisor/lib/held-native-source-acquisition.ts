@@ -98,7 +98,7 @@ function parseSignedHoldRequest(input: {
       typeof nonce !== "string" || !/^[a-f0-9]{64}$/.test(nonce) ||
       typeof expiresAt !== "number" || !Number.isSafeInteger(expiresAt) || expiresAt < now || expiresAt > now + 90_000 ||
       !verifyFleetRequest(publicKey, heldNativeSourceHoldJobId(action, claim.operationId, gatewayId), raw, req.header(SIGNATURE_HEADER))) return null;
-  return { claim, nonce, raw };
+  return { claim, nonce, expiresAt, raw };
 }
 
 export function createHeldNativeSourceHoldHandler(deps: {
@@ -110,17 +110,23 @@ export function createHeldNativeSourceHoldHandler(deps: {
   identityToken?: (audience: string) => Promise<string>;
 }): RequestHandler {
   const identityToken = deps.identityToken ?? createMetadataClient().identityToken;
+  const now = deps.now ?? Date.now;
   return async (req, res) => {
     let request;
     try {
-      request = parseSignedHoldRequest({ ...deps, req, now: (deps.now ?? Date.now)() });
+      request = parseSignedHoldRequest({ ...deps, req, now: now() });
     } catch {
       res.status(400).json({ error: "invalid_held_native_source_hold_request" }); return;
     }
     if (!request) { res.status(403).json({ error: "held_native_source_hold_unauthorized" }); return; }
     try {
       const hold = await deps.acquisition[deps.action](request.claim);
+      if (now() > request.expiresAt) throw new Error("Held Native source hold request expired");
       const instanceIdentity = await identityToken(heldNativeSourceHoldAudience(deps.action, request.raw, hold));
+      const verified = await deps.acquisition.read(request.claim);
+      if (!isDeepStrictEqual(verified, hold) || now() > request.expiresAt) {
+        throw new Error("Held Native source changed while attesting its hold");
+      }
       res.set("Cache-Control", "no-store").json({ nonce: request.nonce, hold, instanceIdentity });
     } catch {
       res.status(409).json({ error: "held_native_source_hold_unavailable" });

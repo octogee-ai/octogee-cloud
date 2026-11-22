@@ -48,6 +48,19 @@ describe("held Native source ingress", () => {
     expect(res.json).toHaveBeenCalledWith({ hold, nonce, instanceIdentity: "signed-by-instance" });
   });
 
+  it("withholds a minted identity token when the live hold changes during attestation", async () => {
+    const read = vi.fn().mockResolvedValueOnce({ generation: "c".repeat(64) }).mockResolvedValueOnce({ generation: "e".repeat(64) });
+    const identityToken = vi.fn().mockResolvedValue("signed-by-instance");
+    const acquisition = { read } as unknown as ReturnType<typeof createHeldNativeSourceAcquisition>;
+    const handler = createHeldNativeSourceHoldHandler({ action: "read", publicKey: key.publicKey, gatewayId: "isolated", acquisition, identityToken, now: () => now });
+    const raw = JSON.stringify({ claim, nonce: "d".repeat(64), expiresAt: now + 100 });
+    const { res, cast } = response();
+    await handler(signed(raw, "read"), cast, vi.fn());
+    expect(identityToken).toHaveBeenCalledOnce();
+    expect(res.status).toHaveBeenCalledWith(409);
+    expect(res.json).toHaveBeenCalledWith({ error: "held_native_source_hold_unavailable" });
+  });
+
   it("refuses unsigned, wrong-action, stale, and lost authority before issuing identity proof", async () => {
     const read = vi.fn().mockRejectedValue(new Error("owner SQL write hold was lost"));
     const identityToken = vi.fn();
