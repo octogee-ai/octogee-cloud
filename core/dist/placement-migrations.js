@@ -623,7 +623,7 @@ export async function enqueuePlacementMigrationInTransaction(transaction, contex
     });
     return "rearmed";
 }
-function sharedDrainMoveNeverClaimed(data) {
+export function sharedDrainMoveNeverClaimed(data) {
     const history = data.attemptHistory;
     return [
         data.status === "pending",

@@ -1,5 +1,5 @@
 import { type SchedulerHandoffState } from "@octogee/shared/types/glm";
-import type { OperationRecord, PlatformStateRepositories, PlatformStateStore } from "./platform-state/index.js";
+import type { GatewayRuntimeRestartFenceValue, OperationRecord, PlatformStateRepositories, PlatformStateStore } from "./platform-state/index.js";
 export declare class HeldNativeReturnConflict extends Error {
 }
 export interface HeldNativeReturnSelection {
@@ -19,6 +19,15 @@ export interface HeldNativeReturnSourceProof {
     appliedFingerprint: string;
     activationManifestSha256: string;
 }
+export declare function readHeldNativeReturnForTargetMaintenance(state: PlatformStateRepositories, selection: HeldNativeReturnSelection, targetFence?: GatewayRuntimeRestartFenceValue, maintenanceRelease?: {
+    original: number;
+    desired: number;
+}): Promise<{
+    sourceRelease: number;
+    targetRelease: number;
+    uid: string;
+    slug: string;
+}>;
 export declare function requestHeldNativeReturnRepair(store: PlatformStateStore, selection: HeldNativeReturnSelection, actor: string, now: number, dryRun?: boolean): Promise<HeldNativeReturnAuthority>;
 type HeldClaim = {
     authority: HeldNativeReturnAuthority;

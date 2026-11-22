@@ -4,7 +4,7 @@ export { updateRuntimeRestart, type RuntimeRestartFence } from '@octogee/core/ga
 import { assertGatewayRuntimeMutationUnfencedInStore } from '@octogee/core/gateway-retirement-claim';
 import { findActiveGatewayMigration, type FleetOperationLockRef } from '@octogee/core/fleet-operation-lock';
 import { runNormalFleetMutation } from '@octogee/core/normal-fleet-mutation';
-import type { PlatformStateRepositories, PlatformStateStore } from '@octogee/core/platform-state';
+import type { GatewayRuntimeRestartFenceValue, PlatformStateRepositories, PlatformStateStore } from '@octogee/core/platform-state';
 import { runGatewayRuntimeExclusive } from './gateway-runtime-mutation.js';
 
 export type RuntimeRestartObservation = 'completed' | 'abandoned';
@@ -28,11 +28,11 @@ export async function acquireRuntimeRestart(store:PlatformStateStore,fence:Runti
     await transaction.gateways.roots.compareAndSetRuntimeRestartFence(fence.gatewayId,null,fence);
   });
 }
-async function savedRuntimeRestart(store:PlatformStateStore,gatewayId:string):Promise<RuntimeRestartFence|undefined> {
-  return (await store.gateways.roots.get(gatewayId))?.runtimeRestartFence as RuntimeRestartFence|undefined;
+async function savedRuntimeRestart(store:PlatformStateStore,gatewayId:string):Promise<GatewayRuntimeRestartFenceValue|undefined> {
+  return (await store.gateways.roots.get(gatewayId))?.runtimeRestartFence;
 }
-function observable(fence:RuntimeRestartFence|undefined):fence is RuntimeRestartFence {
-  return fence?.phase==='dispatched' || fence?.phase==='acknowledged';
+function observable(fence:GatewayRuntimeRestartFenceValue|undefined):fence is RuntimeRestartFence {
+  return (fence?.kind==='process' || fence?.kind==='deployment') && (fence.phase==='dispatched' || fence.phase==='acknowledged');
 }
 function messageOf(error:unknown):string {
   return error instanceof Error ? error.message : String(error);

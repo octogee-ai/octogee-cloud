@@ -1,9 +1,17 @@
+import { gatewayRoot } from "@octogee/core-testing/admin-dry-run-app";
 import { gatewayScopedJobId, verifyFleetRequest } from "@octogee/core/fleet-signature";
 import { SIGNATURE_HEADER } from "@octogee/shared/types/fleet-controller";
+import { releasePayloadHash } from "@octogee/shared/types/gateway-releases";
 import { createHeldNativeReturnDestinationVerifier } from "../lib/held-native-return-destination.js";
 import { FLEET_KEY_PAIR } from "./fixtures/fleet-keys.js";
 import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
-import { heldNativeReturnBlocksDestination, requestHeldNativeReturnRepair } from "@octogee/core/fleet-state";
+import {
+  acquireSharedHeldReturnMaintenance, advanceSharedHeldReturnMaintenance, assertSharedHeldReturnMaintenance,
+  assertSharedHeldReturnMaintenanceUnfenced, completeSharedHeldReturnMaintenance, heldNativeReturnBlocksDestination,
+  requestHeldNativeReturnRepair, resumeSharedHeldReturnMaintenance, stageSharedHeldReturnMaintenanceRelease,
+  type SharedHeldReturnMaintenanceAdmission,
+  type SharedHeldReturnMaintenanceResult,
+} from "@octogee/core/fleet-state";
 import type { Operation } from "@octogee/shared/types/glm";
 import { expect, it, vi } from "vitest";
 import { createHeldNativeReturnWorker } from "../lib/held-native-return-worker.js";
@@ -155,4 +163,162 @@ it("requires a live scoped import denial from the same ready destination pod", a
   } finally {
     http.mockRestore();
   }
+});
+
+function sharedMaintenanceFixture() {
+  const t = fixture();
+  t.docs.set(`gateways/${targetGatewayId}`, gatewayRoot(targetGatewayId, { liveRelease: 1 }));
+  const owners = Array.from({ length: 6 }, (_, index) => ({
+    uid: `uid-seat-${index}`, slug: `seat-${index}`, epoch: index + 1, homeIdentitySha256: String(index + 1).repeat(64),
+  }));
+  t.targetRuntime.heartbeat.mountedCustomers = owners.map(owner => owner.slug);
+  for (const owner of owners) {
+    const { uid: ownerUid, slug: ownerSlug, epoch } = owner;
+    t.docs.set(`users/${ownerUid}`, { username: ownerSlug, provisioning: { openclaw: { slug: ownerSlug, gatewayId: targetGatewayId } } });
+    t.docs.set(`gateways/${targetGatewayId}/assignments/${ownerUid}`, { uid: ownerUid, slug: ownerSlug,
+      gatewayId: targetGatewayId, epoch, state: "serving", updatedByOperationId: null, source: "onboarding", createdAt: 1, updatedAt: 1 });
+  }
+  const outboundId = "placement-" + "c".repeat(32);
+  const outboundPath = `glmOperations/${outboundId}`;
+  t.docs.set(outboundPath, {
+    kind: "migrate-user", origin: "automatic", status: "pending", inputUid: owners[0]!.uid, startedAt: null, completedAt: null,
+    createdBy: "glm-controller-placement-policy",
+    input: { uid: owners[0]!.uid, userSlug: owners[0]!.slug, fromGatewayId: targetGatewayId, toGatewayId: "shared-other",
+      source: "continuous-placement-policy" }, steps: [],
+  });
+  const imageRepository = "registry.example/octogee/octogee-gateway";
+  const edgeRepository = "registry.example/octogee/gateway-edge";
+  const originalTag = "abcdef1@sha256:" + "a".repeat(64);
+  const originalEdgeTag = "abcdef1@sha256:" + "b".repeat(64);
+  const admission: SharedHeldReturnMaintenanceAdmission = {
+    selection, targetRelease: 1, owners,
+    retainedBoot: { gatewayImageTag: originalTag, completedInitImageId: imageRepository + "@sha256:" + "a".repeat(64) },
+    workload: {
+      podName: "shared-target-pod", podUid: "00000000-0000-4000-8000-000000000001",
+      deploymentUid: "00000000-0000-4000-8000-000000000002", replicaSetUid: "00000000-0000-4000-8000-000000000003",
+    },
+    originalImages: { gateway: `${imageRepository}:${originalTag}`, "gateway-edge": `${edgeRepository}:${originalEdgeTag}` },
+    maintenanceImages: { gateway: imageRepository + ":abcdef2@sha256:" + "c".repeat(64), "gateway-edge": edgeRepository + ":abcdef2@sha256:" + "d".repeat(64) },
+    acceptedMaintenanceSource: "e".repeat(40), acceptedNativeSource: "d".repeat(40), originalNativeSource: "c".repeat(40),
+    installedChartFingerprint: "8".repeat(64),
+    exactWorkloadObserved: true, noInFlightTasks: true, noPreparedImports: true, rollbackVerified: true, observedAt: 500,
+  };
+  const payload = { imageRepository, imageTag: originalTag, gatewayEdgeImage: { imageRepository: edgeRepository, imageTag: originalEdgeTag },
+    openclawSourceSha: "f".repeat(40) };
+  t.docs.set(`gateways/${targetGatewayId}/releases/1`, {
+    gatewayId: targetGatewayId, release: 1, createdAt: 1, createdBy: "test", sourceRelease: null, note: null, payload,
+    payloadHash: releasePayloadHash(payload),
+  });
+  const installedHelm = { imageRepository, imageTag: originalTag, deploymentName: "shared-deployment", releaseName: "shared-helm",
+    gatewayServiceName: "shared", gatewayEdgeServiceName: "shared-edge", serviceAccountName: "shared-sa", replicas: 1,
+    availableReplicas: 1, lastAppliedAt: 540 };
+  Object.assign(t.targetRuntime, {
+    helm: installedHelm,
+    kubernetes: { status: "ready", totalPods: 1, readyPods: 1, observedAt: 540, pods: [{
+      uid: admission.workload.podUid, name: admission.workload.podName, replicaSetUid: admission.workload.replicaSetUid,
+      nodeName: null, nodePool: null, instanceId: null,
+    }] },
+  });
+  Object.assign(t.targetRuntime.heartbeat, { lastHeartbeatAt: 540, version: "abcdef1" });
+  const observeInstalledHelm = async () => ({
+    installed: installedHelm, chartFingerprint: admission.installedChartFingerprint,
+    edgeImage: admission.originalImages["gateway-edge"], verifiedAt: 540,
+  });
+  const acquire = () => acquireSharedHeldReturnMaintenance(t.store, {
+    environment: "test", actor: "protected-operator", attemptId: "00000000-0000-4000-8000-000000000004",
+    now: () => 500, readVerifiedAdmission: async () => admission,
+  });
+  return { ...t, acquire, admission, outboundId, outboundPath, observeInstalledHelm, originalPayload: payload };
+}
+
+it("does not reserve Shared maintenance during any active or touched placement, roster drift, or a stale preflight", async () => {
+  for (const reason of ["inbound", "outbound", "roster", "stale"] as const) {
+    const h = sharedMaintenanceFixture();
+    if (reason === "inbound") h.docs.set(operationPath, { ...h.operations, status: "running", startedAt: 501 });
+    if (reason === "outbound") Object.assign(h.docs.get(h.outboundPath)!, { attempts: 1 });
+    if (reason === "roster") h.admission.owners[0]!.epoch++;
+    if (reason === "stale") h.admission.observedAt = 500 - 61_000;
+    const before = structuredClone(h.docs);
+    await expect(h.acquire()).rejects.toThrow();
+    expect(h.docs).toEqual(before);
+  }
+});
+
+it("gives the reservation precedence over inbound and outbound queue claims, and retains it through verified rollback", async () => {
+  const h = sharedMaintenanceFixture();
+  const claim = await h.acquire();
+  expect(await resumeSharedHeldReturnMaintenance(h.store, claim.gatewayId, claim.attemptId)).toEqual(claim);
+  expect(await assertSharedHeldReturnMaintenance(h.store, claim)).toBe("reserved");
+  for (const blocked of [operationId, h.outboundId]) {
+    const op = (await h.store.journal.operations.get(blocked))!;
+    await expect(assertSharedHeldReturnMaintenanceUnfenced(h.store, op)).rejects.toThrow(/blocks this operation/);
+    expect(op.status).toBe("pending");
+  }
+  const testOnlyOwnerAction = { input: { uid: h.admission.owners[2]!.uid }, gatewayId: "unrelated" };
+  await expect(assertSharedHeldReturnMaintenanceUnfenced(h.store, testOnlyOwnerAction)).rejects.toThrow(/blocks this operation/);
+  await advanceSharedHeldReturnMaintenance(h.store, claim, "dispatched", () => 520);
+  expect(await stageSharedHeldReturnMaintenanceRelease(h.store, claim, () => 522)).toBe(2);
+  expect(await stageSharedHeldReturnMaintenanceRelease(h.store, claim, () => 523)).toBe(2);
+  expect(await h.store.gateways.roots.get(targetGatewayId)).toMatchObject({ desiredRelease: 2, liveRelease: 1 });
+  await expect(completeSharedHeldReturnMaintenance(h.store, claim, {
+    readVerifiedResult: async () => { throw new Error("physical readiness unavailable"); },
+    readInstalledHelm: h.observeInstalledHelm, now: () => 525,
+  })).rejects.toThrow(/readiness unavailable/);
+  expect(await assertSharedHeldReturnMaintenance(h.store, claim)).toBe("dispatched");
+  await advanceSharedHeldReturnMaintenance(h.store, claim, "rollback", () => 530);
+  expect(await stageSharedHeldReturnMaintenanceRelease(h.store, claim, () => 535)).toBe(3);
+  expect(await h.store.gateways.roots.get(targetGatewayId)).toMatchObject({ desiredRelease: 3, liveRelease: 1 });
+  expect((await h.store.gateways.releases.get(targetGatewayId, 3))?.payload).toEqual(h.originalPayload);
+  expect((await h.store.journal.operations.listByStatus(["pending"])).map(op => op.id).sort()).toEqual([operationId, h.outboundId].sort());
+  const result: SharedHeldReturnMaintenanceResult = {
+    attemptId: claim.attemptId, outcome: "rolled-back", workload: h.admission.workload, owners: h.admission.owners,
+    images: h.admission.originalImages, runningImageIds: h.admission.originalImages, retainedBoot: h.admission.retainedBoot,
+    nativeSource: h.admission.originalNativeSource, noInFlightTasks: true, noPreparedImports: true, exclusiveReady: true, verifiedAt: 540,
+  };
+  const complete = (readback: SharedHeldReturnMaintenanceResult, readInstalledHelm = h.observeInstalledHelm) =>
+    completeSharedHeldReturnMaintenance(h.store, claim, { readVerifiedResult: async () => readback, readInstalledHelm, now: () => 550 });
+  for (const invalid of [{ ...result, verifiedAt: 529 }, { ...result, images: h.admission.maintenanceImages },
+    { ...result, workload: { ...result.workload, podUid: "replacement" } }]) {
+    await expect(complete(invalid)).rejects.toThrow(/exact verified completion/);
+    expect(await assertSharedHeldReturnMaintenance(h.store, claim)).toBe("rollback");
+  }
+  await expect(complete(result, async () => ({ ...await h.observeInstalledHelm(), chartFingerprint: "0".repeat(64) })))
+    .rejects.toThrow(/canonical retained Helm/);
+  await complete(result);
+  expect(await h.store.gateways.roots.get(targetGatewayId)).toMatchObject({ desiredRelease: 3, liveRelease: 3 });
+  expect((await h.store.journal.audits.get(claim.auditId))?.status).toBe("completed");
+  expect((await h.store.gateways.roots.get(targetGatewayId))?.runtimeRestartFence).toBeUndefined();
+  expect((await h.store.journal.operations.get(operationId))?.status).toBe("pending");
+  expect((await h.store.journal.operations.get(h.outboundId))?.status).toBe("pending");
+});
+
+it("publishes the immutable retained Shared release from normal health plus observed running images under the original boot env", async () => {
+  const h = sharedMaintenanceFixture();
+  const claim = await h.acquire();
+  await advanceSharedHeldReturnMaintenance(h.store, claim, "dispatched", () => 520);
+  expect(await stageSharedHeldReturnMaintenanceRelease(h.store, claim, () => 525)).toBe(2);
+  const root = await h.store.gateways.roots.get(targetGatewayId);
+  expect(root).toMatchObject({ desiredRelease: 2, liveRelease: 1 });
+  const staged = await h.store.gateways.releases.get(targetGatewayId, 2);
+  expect(staged?.payload.openclawSourceSha).toBe(h.originalPayload.openclawSourceSha);
+  const result: SharedHeldReturnMaintenanceResult = {
+    attemptId: claim.attemptId, outcome: "installed", workload: h.admission.workload, owners: h.admission.owners,
+    images: h.admission.maintenanceImages, runningImageIds: h.admission.maintenanceImages, retainedBoot: h.admission.retainedBoot,
+    nativeSource: h.admission.acceptedNativeSource, noInFlightTasks: true, noPreparedImports: true, exclusiveReady: true, verifiedAt: 540,
+  };
+  const complete = (readback: SharedHeldReturnMaintenanceResult) => completeSharedHeldReturnMaintenance(h.store, claim, {
+    readVerifiedResult: async () => readback,
+    readInstalledHelm: async () => {
+      const previous = await h.observeInstalledHelm();
+      return { ...previous, installed: { ...previous.installed, imageTag: staged!.payload.imageTag },
+        edgeImage: h.admission.maintenanceImages["gateway-edge"] };
+    },
+    now: () => 550,
+  });
+  await expect(complete({ ...result, runningImageIds: h.admission.originalImages })).rejects.toThrow(/exact verified completion/);
+  expect(await assertSharedHeldReturnMaintenance(h.store, claim)).toBe("dispatched");
+  await complete(result);
+  expect(await h.store.gateways.roots.get(targetGatewayId)).toMatchObject({ desiredRelease: 2, liveRelease: 2 });
+  expect((await h.store.fleetRegistry.get(targetGatewayId))?.heartbeat.version).toBe("abcdef1");
+  expect((await h.store.journal.operations.get(operationId))?.status).toBe("pending");
 });

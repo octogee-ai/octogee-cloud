@@ -1527,3 +1527,4 @@ function assignmentClockMatches(current, expected) {
     return expected === undefined || Number.isSafeInteger(expected) && expected > 0 && current === expected;
 }
 export { assertHeldNativeReturnRepairClaim, completeHeldNativeReturnRepair, heldNativeReturnBlocksDestination, heldNativeReturnBlocksOwnerDestination, requestHeldNativeReturnRepair, HeldNativeReturnConflict, } from "./held-native-return-repair.js";
+export { acquireSharedHeldReturnMaintenance, advanceSharedHeldReturnMaintenance, assertSharedHeldReturnMaintenance, assertSharedHeldReturnMaintenanceUnfenced, completeSharedHeldReturnMaintenance, resumeSharedHeldReturnMaintenance, stageSharedHeldReturnMaintenanceRelease, SHARED_HELD_RETURN_MAINTENANCE, } from "./shared-held-return-maintenance.js";

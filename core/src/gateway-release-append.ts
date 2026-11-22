@@ -159,6 +159,15 @@ async function appendStoredGatewayRelease(
   args: AppendGatewayReleaseArgs,
   record: { release: number; payload: ReleasePayload; activate?: boolean },
 ): Promise<string> {
+  await appendImmutableGatewayRelease(transaction, args, record);
+  return transaction.journal.operations.enqueue(rolloutOperation(args, record.release, record.payload));
+}
+
+async function appendImmutableGatewayRelease(
+  transaction: PlatformStateTransaction,
+  args: AppendGatewayReleaseArgs,
+  record: { release: number; payload: ReleasePayload; activate?: boolean },
+): Promise<void> {
   const { release, payload, activate = false } = record;
   await transaction.gateways.releases.append({
     gatewayId: args.gateway.gatewayId,
@@ -172,7 +181,29 @@ async function appendStoredGatewayRelease(
     activate,
     updatedBy: args.createdBy,
   });
-  return transaction.journal.operations.enqueue(rolloutOperation(args, release, payload));
+}
+
+export async function appendRetainedSharedMaintenanceReleaseInStore(
+  transaction: PlatformStateTransaction,
+  input: { gatewayId: string; attemptId: string; phase: "dispatched" | "rollback"; originalRelease: number; payload: ReleasePayload; now: number },
+): Promise<number> {
+  const root = await transaction.gateways.roots.get(input.gatewayId);
+  const current = asDurableGatewayRoot(root, input.gatewayId);
+  const guard = root?.runtimeRestartFence;
+  const maintenance = guard?.maintenance as UntypedRecord | undefined;
+  const images = input.phase === "rollback" ? maintenance?.originalImages : maintenance?.maintenanceImages;
+  if (!recoveredSharedRoot(current) || guard?.kind !== "shared-held-return-maintenance" ||
+      guard.attemptId !== input.attemptId || guard.phase !== input.phase || maintenance?.targetRelease !== input.originalRelease ||
+      !isDeepStrictEqual(images, recoveredReleaseImages(input.payload))) {
+    throw new Error("Shared maintenance release authorization changed");
+  }
+  const release = current.latestRelease + 1;
+  await assertStoredReleaseIsNew(transaction, input.gatewayId, release);
+  const args: AppendGatewayReleaseArgs = { gateway: current, artifact: gatewayArtifactFromReleasePayload(input.payload),
+    payload: input.payload, createdBy: input.attemptId, now: input.now, sourceRelease: input.originalRelease,
+    note: input.phase === "rollback" ? "Retained Shared maintenance reversal" : "Retained Shared maintenance", origin: "operator" };
+  await appendImmutableGatewayRelease(transaction, args, { release, payload: releasePayloadFor(args), activate: true });
+  return release;
 }
 
 export interface RecoveredGatewayReleaseInput {

@@ -2079,3 +2079,11 @@ export {
   requestHeldNativeReturnRepair, HeldNativeReturnConflict,
   type HeldNativeReturnAuthority, type HeldNativeReturnSelection, type HeldNativeReturnSourceProof,
 } from "./held-native-return-repair.js";
+
+export {
+  acquireSharedHeldReturnMaintenance, advanceSharedHeldReturnMaintenance, assertSharedHeldReturnMaintenance,
+  assertSharedHeldReturnMaintenanceUnfenced, completeSharedHeldReturnMaintenance, resumeSharedHeldReturnMaintenance,
+  stageSharedHeldReturnMaintenanceRelease, type ObservedSharedMaintenanceHelm,
+  SHARED_HELD_RETURN_MAINTENANCE, type SharedHeldReturnMaintenanceAdmission, type SharedHeldReturnMaintenanceClaim,
+  type SharedHeldReturnMaintenancePlan, type SharedHeldReturnMaintenanceResult,
+} from "./shared-held-return-maintenance.js";

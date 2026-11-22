@@ -313,6 +313,7 @@ import {
   completeWorkspaceMigrationRecovery,
   assertWorkspaceMigrationRecoveryAuthority,
   assertWorkspaceMigrationSourcePreparationAuthority,
+  assertSharedHeldReturnMaintenanceUnfenced,
   type CutoverDeps,
   type FleetStateDeps,
 } from "@octogee/core/fleet-state";
@@ -2108,6 +2109,7 @@ async function attemptClaimOrQueueOperation(
     return await deps.store.transaction({ label: "operation-worker.claim" }, async (tx) => {
       const stored = await tx.journal.operations.get(op.id);
       if (stored === null) return { outcome: "skipped" as const };
+      await assertSharedHeldReturnMaintenanceUnfenced(tx, stored);
       const blockingArchive = GATEWAY_VM_SPEC ? await rearmArchiveBeforeAccountOperation(tx, stored) : null;
       if (blockingArchive) {
         const waitingOn = `home archive ${blockingArchive}`;

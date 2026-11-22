@@ -1061,13 +1061,14 @@ describe("pending operation watch", () => {
       const ready = (await db.journal.operations.get("move"))!;
       expect(ready.nextAttemptAt).toBeUndefined();
       expect((await db.journal.operations.get("other"))?.nextAttemptAt).toBe(retryAt);
-      await db.journal.operations.patch("unrelated", { waitingOn: { clear: true }, nextAttemptAt: { clear: true } });
+      expect((await db.journal.operations.get("unrelated"))?.nextAttemptAt).toBe(retryAt);
       await emit({ kind: "changes", changes: [
         { type: "modified", key: ready.id, record: ready },
         { type: "modified", key: "unrelated", record: (await db.journal.operations.get("unrelated"))! },
       ], cursor: "c2" as never });
       await vi.waitFor(async () => expect((await db.journal.operations.get("move"))?.status).toBe("succeeded"));
       expect((await db.journal.operations.get("unrelated"))?.status).toBe("pending");
+
     } finally {
       stop();
     }
@@ -1268,6 +1269,29 @@ describe("claim admission fences", () => {
     expect(handler).not.toHaveBeenCalled();
     expect(store.get("op-move")?.status).toBe("pending");
     expect(log).toHaveBeenCalledWith(expect.stringMatching(/claim transaction failed op=op-move: .*(VM recovery is in progress|restart outcome is unresolved)/));
+  });
+
+  it("keeps the exact Shared maintenance target and its assigned owners out of the real queue claim", async () => {
+    const migration = vi.fn<OperationHandler>(async () => ({ steps: [], success: true }));
+    const suspension = vi.fn<OperationHandler>(async () => ({ steps: [], success: true }));
+    const { db, store } = createOperationsFixture({
+      "builder-return-builder-source-g22": baseOp({ id: "builder-return-builder-source-g22", kind: "migrate-user", input: { uid: "inbound",
+        fromGatewayId: "builder-source", toGatewayId: "shared-a" } }),
+      "placement-outbound": baseOp({ id: "placement-outbound", kind: "migrate-user", input: { uid: "alice", fromGatewayId: "shared-a", toGatewayId: "shared-b" } }),
+      "suspend-alice": baseOp({ id: "suspend-alice", kind: "suspend-user", input: { uid: "alice" } }),
+    }, {
+      users: { alice: { username: "alice", provisioning: { openclaw: { slug: "alice", gatewayId: "shared-a" } } } },
+      gateways: { "shared-a": { gatewayId: "shared-a", gatewayClass: "shared", runtimeRestartFence: {
+        attemptId: "exact-maintenance", gatewayId: "shared-a", kind: "shared-held-return-maintenance", phase: "reserved", startedAt: 1,
+      } } },
+    });
+
+    await drainPendingOperationsOnce(buildDeps(db, { "migrate-user": migration, "suspend-user": suspension }));
+    expect(migration).not.toHaveBeenCalled();
+    expect(suspension).not.toHaveBeenCalled();
+    for (const id of ["builder-return-builder-source-g22", "placement-outbound", "suspend-alice"]) {
+      expect(store.get(id)?.status).toBe("pending");
+    }
   });
 
   it("lets the recovery's own operation claim the fenced user", async () => {

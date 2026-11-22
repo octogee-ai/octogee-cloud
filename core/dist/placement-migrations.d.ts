@@ -77,6 +77,7 @@ interface RepairedPostgresSourceObservation {
 export declare function repairedPostgresSourceConverged(input: RepairedPostgresSourceObservation): boolean;
 export type EnqueuePlacementMigrationOutcome = "created" | "rearmed" | "already-enqueued";
 export declare function enqueuePlacementMigrationInTransaction(transaction: PlatformStateTransaction, context: PlacementMigrationEnqueueContext, request: EnqueuePlacementMigrationRequest, admit?: () => Promise<void>): Promise<EnqueuePlacementMigrationOutcome>;
+export declare function sharedDrainMoveNeverClaimed(data: Record<string, unknown>): boolean;
 export type SupersedePendingSharedDrainMoveOutcome = {
     kind: "superseded";
 } | {
