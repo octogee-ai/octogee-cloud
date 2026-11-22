@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from "node:util";
 import pg from "pg";
 const writersSql = `
-WITH schemas AS MATERIALIZED (SELECT oid,nspowner,nspacl FROM pg_namespace WHERE nspowner=$1),
+WITH schemas AS MATERIALIZED (SELECT oid,nspowner,nspacl FROM pg_namespace WHERE nspowner=$1 AND ($3::text[] IS NULL OR nspname=ANY($3))),
 relations AS MATERIALIZED (
   SELECT c.oid,c.relowner,c.relacl FROM pg_class c JOIN schemas n ON c.relnamespace=n.oid
   WHERE c.relkind IN ('r','p','S','v','m','f')
@@ -19,14 +19,15 @@ relations AS MATERIALIZED (
   UNION SELECT oid FROM pg_roles WHERE rolsuper OR rolcreaterole OR rolname='pg_write_all_data'
 )
 SELECT r.oid::text AS oid,r.rolname AS name,r.rolsuper OR r.rolcreaterole AS administrator
-FROM pg_roles r WHERE r.rolcanlogin AND r.oid<>$2 AND EXISTS (
+FROM pg_roles r WHERE r.rolcanlogin AND NOT(r.oid=ANY($2::oid[])) AND EXISTS (
   SELECT FROM grants g WHERE CASE WHEN g.grantee=0 THEN true ELSE
     r.oid=g.grantee OR pg_has_role(r.oid,g.grantee,'SET') OR pg_has_role(r.oid,g.grantee,'USAGE') END)
 ORDER BY r.oid`;
-async function assertWriters(client, scope, binding) {
+async function assertWriters(client, scope, binding, exactSchemas, writerOids = [binding.roleOid]) {
     const { rows } = await client.query(writersSql, [
         binding.ownerOid,
-        binding.roleOid,
+        writerOids,
+        exactSchemas ?? null,
     ]);
     if (!scope.trustedOperators.length ||
         rows.some((r) => !r.administrator ||
@@ -35,7 +36,7 @@ async function assertWriters(client, scope, binding) {
         throw new Error("Unexpected effective owner store writer or database operator");
     }
 }
-async function observe(client, source, owner, scope) {
+async function observe(client, source, owner, scope, exactSchemas) {
     const { rows: [role], } = await client.query(`
     SELECT s.oid::text AS "roleOid",o.oid::text AS "ownerOid",d.oid::text AS "databaseOid",s.rolconnlimit AS "limit"
     FROM pg_roles s,pg_roles o,pg_database d WHERE s.rolname=$1 AND o.rolname=$2 AND d.datname=current_database()
@@ -43,7 +44,7 @@ async function observe(client, source, owner, scope) {
       AND pg_has_role(s.oid,o.oid,'USAGE') AND pg_has_role(s.oid,o.oid,'SET')`, [source, owner]);
     if (!role)
         throw new Error("Original isolated login or owner identity changed");
-    const schemas = (await client.query('SELECT nspname AS name,oid::text FROM pg_namespace WHERE nspowner=$1 ORDER BY nspname COLLATE "C"', [role.ownerOid])).rows;
+    const schemas = (await client.query('SELECT nspname AS name,oid::text FROM pg_namespace WHERE nspowner=$1 AND ($2::text[] IS NULL OR nspname=ANY($2)) ORDER BY nspname COLLATE "C"', [role.ownerOid, exactSchemas ?? null])).rows;
     if (!schemas.length ||
         !isDeepStrictEqual(schemas.map((s) => s.name), [...scope.schemas].sort()))
         throw new Error("Original database schema roster changed");
@@ -139,4 +140,101 @@ async function apply(client, source, action, binding, expected) {
     if (binding.previousLimit !== 0)
         throw new Error("Original database login still admits new connections");
     await assertSessions(client, binding, action === "drain-idle");
+}
+function retainedSharedScope(input) {
+    const schemas = [...input.owners.flatMap(owner => owner.schemas), input.gatewayStateSchema];
+    if (!/^shared-[a-z0-9]+$/.test(input.gatewayId) || input.owners.length !== 6 ||
+        new Set(input.owners.map(owner => owner.uid)).size !== 6 || new Set(schemas).size !== schemas.length ||
+        input.owners.some(owner => !owner.uid || !owner.schemas.length) ||
+        schemas.some(schema => !/^[a-z_][a-z0-9_]{0,62}$/.test(schema))) {
+        throw new Error("Shared store barrier requires the exact six retained owner inventories");
+    }
+    return { sourceGatewayId: input.gatewayId, schemas, trustedOperators: input.trustedOperators };
+}
+async function assertNoConcurrentOperators(client, scope, binding) {
+    await client.query("SELECT pg_stat_clear_snapshot()");
+    const { rows: [result] } = await client.query(`
+    SELECT EXISTS(SELECT FROM pg_stat_activity WHERE datid=$1 AND pid<>pg_backend_pid()
+      AND backend_type='client backend' AND usesysid=ANY($2::oid[])) AS busy
+  `, [binding.databaseOid, scope.trustedOperators.map(role => role.oid)]);
+    if (result?.busy !== false)
+        throw new Error("Another privileged session is connected to the held Shared stores");
+}
+export function heldSharedDatabaseBarrier(adminDsn, roleFor, credentialLock) {
+    const db = decodeURIComponent(new URL(adminDsn).pathname.slice(1));
+    if (!db)
+        throw new Error("Held Shared database requires the exact agent store");
+    async function run(input, current, options) {
+        const scope = retainedSharedScope(input);
+        const gateways = input.emptyPeer ? [input.gatewayId, input.emptyPeer.gatewayId] : [input.gatewayId];
+        if (new Set(gateways).size !== gateways.length || gateways.some(gateway => !/^shared-[a-z0-9]+$/.test(gateway)))
+            throw new Error("Shared store barrier requires distinct retained and empty gateway identities");
+        const sources = gateways.map(gateway => roleFor("gateway", db + ":" + gateway));
+        const owner = roleFor("shared", db);
+        const client = new pg.Client({ connectionString: adminDsn, connectionTimeoutMillis: 5000, statement_timeout: 5000 });
+        const assertScope = async () => {
+            await current();
+            await input.emptyPeer?.assertPlacementExcluded();
+        };
+        await assertScope();
+        await client.connect();
+        try {
+            await client.query("BEGIN");
+            await client.query("SET LOCAL search_path=pg_catalog");
+            await client.query("SET LOCAL lock_timeout='2s'");
+            await client.query(credentialLock);
+            const observeCurrent = async () => {
+                await assertScope();
+                const writers = [];
+                for (const source of sources)
+                    writers.push(await observe(client, source, owner, scope, scope.schemas));
+                if (options.expected && options.expected.writers.length !== writers.length)
+                    throw new Error("Held Shared database writer count changed");
+                const first = writers[0];
+                for (const [index, writer] of writers.entries()) {
+                    if (options.expected)
+                        compareBinding(writer, options.expected.writers[index]);
+                    if (writer.ownerOid !== first.ownerOid || writer.databaseOid !== first.databaseOid ||
+                        !isDeepStrictEqual(writer.schemas, first.schemas))
+                        throw new Error("Held Shared database writer scopes changed");
+                }
+                await assertWriters(client, scope, first, scope.schemas, writers.map(writer => writer.roleOid));
+                await assertNoConcurrentOperators(client, scope, first);
+                return writers;
+            };
+            const writers = await observeCurrent();
+            for (const [index, writer] of writers.entries())
+                await apply(client, sources[index], options.action, writer, options.expected?.writers[index]);
+            const assertHeld = async () => {
+                for (const writer of await observeCurrent()) {
+                    if (writer.previousLimit !== 0)
+                        throw new Error("Shared gateway login still admits new connections");
+                    await assertSessions(client, writer, false);
+                }
+            };
+            const value = options.work ? await options.work(assertHeld) : undefined;
+            if (options.work)
+                await assertHeld();
+            await assertScope();
+            await client.query("COMMIT");
+            return { binding: { writers }, value };
+        }
+        catch (err) {
+            await client.query("ROLLBACK");
+            throw err;
+        }
+        finally {
+            await client.end();
+        }
+    }
+    return {
+        inspect: (scope, current) => run(scope, current, { action: "inspect" }).then(result => result.binding),
+        hold: (scope, expected, current) => run(scope, current, { action: "hold", expected }).then(() => undefined),
+        drainIdle: (scope, expected, current) => run(scope, current, { action: "drain-idle", expected }).then(() => undefined),
+        restore: (scope, expected, current) => run(scope, current, { action: "restore", expected }).then(() => undefined),
+        runWhileHeld: async (scope, expected, current, work) => {
+            const result = await run(scope, current, { action: "verify", expected, work });
+            return result.value;
+        },
+    };
 }

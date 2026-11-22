@@ -6,6 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { heldSharedDatabaseBarrier } from "./held-return-database-barrier.js";
 import { createAgentStoreCredentialProvisioner, createAgentStoreCredentialRevoker, createAgentStoreOwnershipTransferer, createHeldReturnStoreCustodyVerifier, assertNoUserAgentStores, eraseUserAgentStores, type AgentStoreErasureTarget } from "./agent-store-credentials.js";
 import { readAuthProfileStore, readAuthProfileState, writeAuthProfileStore, deleteAuthProfileStore, sharedAuthStoreUsable } from "./auth-profile-store.js";
 import { purgeUserOauthRuntimeArtifacts } from "./byosub-restore.js";
@@ -45,6 +46,83 @@ const roots: string[] = [];
 afterEach(async () => { for (const root of roots.splice(0)) await fs.rm(root, { recursive: true, force: true }); });
 
 describe.skipIf(!dsn)("PostgreSQL agent store", () => {
+  it("holds the exact six Shared stores and refuses an alternate writable login or credential lock overlap", async () => {
+    const suffix = randomUUID().replaceAll("-", "");
+    const db = decodeURIComponent(new URL(dsn!).pathname.slice(1));
+    const gatewayId = `shared-${suffix}`;
+    const fixtureRoleFor = (kind: string, id: string) => roleFor(kind, `${suffix}:${id}`);
+    const gateway = pg.escapeIdentifier(fixtureRoleFor("gateway", `${db}:${gatewayId}`));
+    const emptyPeerGatewayId = gatewayId + "a";
+    const peer = pg.escapeIdentifier(fixtureRoleFor("gateway", `${db}:${emptyPeerGatewayId}`));
+    const shared = pg.escapeIdentifier(fixtureRoleFor("shared", db));
+    const alternate = pg.escapeIdentifier("alternate_" + suffix);
+    const owners = Array.from({ length: 6 }, (_, i) => ({ uid: "uid-" + i, schemas: [`inert_${suffix}_${i}`] }));
+    const execute = async (sql: string) => {
+      const client = new pg.Client({ connectionString: dsn });
+      await client.connect();
+      try { return await client.query(sql); }
+      finally { await client.end(); }
+    };
+    const operators = await execute("SELECT rolname AS name, oid::text AS oid FROM pg_roles WHERE rolcanlogin AND (rolsuper OR rolcreaterole)");
+    const gatewayStateSchema = `root_${suffix}`;
+    const allSchemas = [...owners.flatMap(owner => owner.schemas), gatewayStateSchema];
+    const scope = { gatewayId, owners, gatewayStateSchema, trustedOperators: operators.rows };
+    const barrier = heldSharedDatabaseBarrier(dsn!, fixtureRoleFor, "SELECT pg_advisory_xact_lock(hashtextextended('octogee-agent-store-credentials', 0))");
+    await execute(`CREATE ROLE ${shared} NOLOGIN;
+      GRANT ${shared} TO CURRENT_USER WITH SET TRUE;
+      CREATE ROLE ${gateway} LOGIN;
+      GRANT ${shared} TO ${gateway} WITH INHERIT TRUE, SET TRUE;
+      ${allSchemas.map(schema => `CREATE SCHEMA ${pg.escapeIdentifier(schema)} AUTHORIZATION ${shared};
+        CREATE TABLE ${pg.escapeIdentifier(schema)}.fixture (value int);
+        ALTER TABLE ${pg.escapeIdentifier(schema)}.fixture OWNER TO ${shared}`).join(";")}`);
+    const current = async () => {};
+    try {
+      const binding = await barrier.inspect(scope, current);
+      expect(binding.writers[0]?.schemas.map(schema => schema.name)).toEqual(allSchemas.sort());
+      await expect(barrier.inspect({ ...scope, gatewayStateSchema: owners[0]!.schemas[0]! }, current)).rejects.toThrow(/exact six/);
+      await execute(`CREATE ROLE ${alternate} LOGIN; GRANT ${shared} TO ${alternate} WITH INHERIT TRUE, SET TRUE`);
+      await expect(barrier.hold(scope, binding, current)).rejects.toThrow(/Unexpected effective owner store writer/);
+      await execute(`DROP ROLE ${alternate}`);
+      await barrier.hold(scope, binding, current);
+      await barrier.drainIdle(scope, binding, current);
+      await expect(barrier.runWhileHeld(scope, binding, current, async assertHeld => {
+        await assertHeld();
+        const { rows } = await execute("SELECT pg_try_advisory_xact_lock(hashtextextended('octogee-agent-store-credentials', 0)) AS acquired");
+        expect(rows[0]?.acquired).toBe(false);
+        await assertHeld();
+        return "verified";
+      })).resolves.toBe("verified");
+      await barrier.restore(scope, binding, current);
+      await expect(barrier.runWhileHeld(scope, binding, current, async () => "stale")).rejects.toThrow(/admits new connections/);
+
+      await execute(`CREATE ROLE ${peer} LOGIN CONNECTION LIMIT 3; GRANT ${shared} TO ${peer} WITH INHERIT TRUE, SET TRUE`);
+      let placementExcluded = true;
+      const joint = { ...scope, emptyPeer: { gatewayId: emptyPeerGatewayId, assertPlacementExcluded: async () => {
+        if (!placementExcluded) throw new Error("peer placement exclusion changed");
+      } } };
+      const jointBinding = await barrier.inspect(joint, current);
+      expect(jointBinding.writers.map(writer => writer.previousLimit)).toEqual([-1, 3]);
+      await expect(barrier.hold(joint, binding, current)).rejects.toThrow(/writer count/);
+      placementExcluded = false;
+      await expect(barrier.hold(joint, jointBinding, current)).rejects.toThrow(/peer placement exclusion changed/);
+      placementExcluded = true;
+      await barrier.hold(joint, jointBinding, current);
+      await barrier.drainIdle(joint, jointBinding, current);
+      await expect(barrier.runWhileHeld(joint, jointBinding, current, async held => {
+        await held(); return "joint verified";
+      })).resolves.toBe("joint verified");
+      await execute(`CREATE ROLE ${alternate} LOGIN; GRANT ${shared} TO ${alternate} WITH INHERIT TRUE, SET TRUE`);
+      const archive = () => Promise.reject(new Error("unexpected archive callback"));
+      await expect(barrier.runWhileHeld(joint, jointBinding, current, archive)).rejects.toThrow(/Unexpected effective owner store writer/);
+      await execute(`DROP ROLE ${alternate}`);
+      await barrier.restore(joint, jointBinding, current);
+      expect((await barrier.inspect(joint, current)).writers).toEqual(jointBinding.writers);
+    } finally {
+      await execute(`${allSchemas.map(schema => `DROP SCHEMA IF EXISTS ${pg.escapeIdentifier(schema)} CASCADE`).join(";")};
+        DROP ROLE IF EXISTS ${gateway}; DROP ROLE IF EXISTS ${peer}; DROP ROLE IF EXISTS ${alternate}; DROP ROLE IF EXISTS ${shared}`);
+    }
+  });
+
   it("proves every held owner store excludes Shared inherited writes and active handles", async () => {
     const suffix = randomUUID().replaceAll("-", "");
     const scope = decodeURIComponent(new URL(dsn!).pathname.slice(1));
