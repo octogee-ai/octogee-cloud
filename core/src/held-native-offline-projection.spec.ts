@@ -16,7 +16,13 @@ const snapshot: FleetBrokerUserSnapshot = {
   contextTemplateKey: "fixture", planInputs: {}, agentIds: ["octogee-fixture-coach"],
   email: "fixture@email.invalid", displayName: "Fixture", ownerName: "Fixture", lastName: "Example", photoURL: "",
   persona: null, repoUrl: "https://unexpected-fixture-user:fixture-repo-secret@fixture-repository.invalid/owner/repo",
-  mattermostUserId: null, customerMmUserId: null, coachMmUserId: null, coachToken, channels: [], projects: [],
+  mattermostUserId: null, customerMmUserId: null, coachMmUserId: null, coachToken, channels: [],
+  projects: [{ projectSlug: "work", giteaRepoName: null, repoSource: {
+    provider: "github", owner: "fixture", repo: "synthetic", workingCopy: {
+      id: "synthetic", repositoryId: 1, baseBranch: "main", baseCommit: "synthetic", ready: true,
+      pullRequestUrl: "https://unexpected:fixture-pr-secret@fixture-repository.invalid/changes/1",
+    },
+  } }],
   projectAgents: [{ projectId: "work", enabled: true, mmUserId: null, token: projectToken }],
 };
 
@@ -25,6 +31,7 @@ test("publishes only credential-free desired inputs and reconstructs the canonic
   expect(signed.raw).not.toContain(coachToken);
   expect(signed.raw).not.toContain(projectToken);
   expect(signed.raw).not.toContain("fixture-repo-secret");
+  expect(signed.raw).not.toContain("fixture-pr-secret");
   expect(signed.raw).not.toContain("fixture@email.invalid");
   const readRestoredCredential = vi.fn(async account => account === "fixture-coach" ? coachToken : projectToken);
   const restored = await readHeldNativeOfflineDesiredProjection({

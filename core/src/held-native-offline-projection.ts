@@ -50,6 +50,19 @@ function safeByotBase(snapshot: FleetBrokerUserSnapshot) {
   }
 }
 
+function projectRestoreFields(snapshot: FleetBrokerUserSnapshot): FleetBrokerUserSnapshot["projects"] {
+  return snapshot.projects.map(({ projectSlug, giteaRepoName, repoSource, provisioningState, checkoutEnabled, recipe }) => {
+    if (!repoSource) return { projectSlug, giteaRepoName, repoSource, provisioningState, checkoutEnabled, recipe };
+    const { provider, owner, repo, workingCopy } = repoSource;
+    const checkout = workingCopy && {
+      id: workingCopy.id, repositoryId: workingCopy.repositoryId, baseBranch: workingCopy.baseBranch,
+      baseCommit: workingCopy.baseCommit, ready: workingCopy.ready,
+    };
+    return { projectSlug, giteaRepoName, repoSource: { provider, owner, repo, workingCopy: checkout },
+      provisioningState, checkoutEnabled, recipe };
+  });
+}
+
 function redactAccountSecrets(snapshot: FleetBrokerUserSnapshot) {
   const { coachToken, projectAgents } = snapshot;
   if (!coachToken) throw new Error("Held Native broker projection has no enrolled coach credential");
@@ -71,7 +84,7 @@ function redactAccountSecrets(snapshot: FleetBrokerUserSnapshot) {
     mattermostUserId: snapshot.mattermostUserId, customerMmUserId: snapshot.customerMmUserId,
     coachMmUserId: snapshot.coachMmUserId, coachIdentity: snapshot.coachIdentity, coachToken: null,
     channels: snapshot.channels, projectCheckoutScope: snapshot.projectCheckoutScope,
-    projects: snapshot.projects, ...(projects ? { projectAgents: projects } : {}),
+    projects: projectRestoreFields(snapshot), ...(projects ? { projectAgents: projects } : {}),
     freeTierModelRef: snapshot.freeTierModelRef, builderAgentDefault: snapshot.builderAgentDefault,
     byotActive: snapshot.byotActive, systemConfig: snapshot.systemConfig, timeZone: snapshot.timeZone,
     ownerName: "", email: "", displayName: "", lastName: "", photoURL: "", repoUrl: "", persona: null,
