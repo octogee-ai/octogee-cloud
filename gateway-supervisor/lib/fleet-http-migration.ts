@@ -1,3 +1,5 @@
+import { runHeldSourceReconcile, type HeldNativeSourceKeeper } from "./held-native-source-reconcile.js";
+import type { FleetBrokerUserSnapshot } from "@octogee/shared/types/fleet-broker";
 import { projectAgentWorkspace } from "@octogee/core/project-agent-workspaces";
 import { assertSafeStagedSymlinks, RSYNC_DAEMON_SYMLINK_POLICY, STAGED_RSYNC_COPY_OPTIONS } from "./rsync-staged-symlinks.js";
 import { isDeepStrictEqual } from "node:util";
@@ -59,6 +61,7 @@ import {
   type RsyncMigrationRpcPhase,
   type RestoreMigrationRequestBody,
   type RestoreMigrationResponse,
+  type HeldNativeSourceReconcileRequest,
   type UnmountRequestBody,
   type UnmountResponse,
   type VerifyMigrationRequestBody,
@@ -98,7 +101,7 @@ import { upgradeImportedAgentStores } from "./openclaw-import-upgrade.js";
 import { reattachUserAgents } from "./reattach-user-agents.js";
 import { activeAgentProjectIds } from "./openclaw-config-users.js";
 import { PROC_ROOT } from "./held-files.js";
-import { gatewayScopedJobId, sourceActivationReadinessJobId, verifyFleetRequest } from "./fleet-signature.js";
+import { heldNativeSourceReconcileJobId, gatewayScopedJobId, sourceActivationReadinessJobId, verifyFleetRequest } from "./fleet-signature.js";
 import { rejectMisaddressedGateway } from "./fleet-gateway-path.js";
 import type { UserLifecycleAdapter, RemoveUserResult } from "./user-lifecycle.js";
 import {
@@ -159,6 +162,8 @@ export interface SourceMountRefusal {
 }
 
 export interface MigrationHandlerDeps {
+  getHeldSourceKeeper?: () => HeldNativeSourceKeeper | undefined;
+  readHeldSourceSnapshot?: (uid: string) => Promise<FleetBrokerUserSnapshot | null>;
   voiceMigration?: (input: VoiceMigrationInput) => Promise<{ activeCalls: number }>;
   voiceDrainWaitMs?: number;
   voiceDrainSleep?: (ms: number) => Promise<void>;
@@ -978,6 +983,67 @@ export function createRestoreHandler(deps: MigrationHandlerDeps): RequestHandler
       const message = err instanceof Error ? err.message : String(err);
       log(`[migration-http] 🔴 restore migrationId=${body.migrationId} slug=${body.slug}: ${message}`, { status: "failed" });
       res.status(500).json({ error: "restore failed", message });
+    }
+  });
+}
+
+export function createHeldNativeSourceReconcileHandler(deps: MigrationHandlerDeps): RequestHandler {
+  const log = deps.log ?? provisionerLog;
+  return (req, res) => withLogContext({}, async () => {
+    const body = parseAndVerifyJsonBody<HeldNativeSourceReconcileRequest>(req, res, deps, log, heldNativeSourceReconcileJobId);
+    if (!body) return;
+    const { binding, migrationId, slug } = body;
+    const now = (deps.now ?? Date.now)();
+    if (!binding || binding.gatewayId !== deps.gatewayId || binding.slug !== slug || migrationId !== `mig-${binding.operationId}` ||
+        !/^[a-f0-9]{64}$/.test(body.nonce) || !Number.isSafeInteger(body.expiresAt) || body.expiresAt < now || body.expiresAt > now + 90_000) {
+      res.status(400).json({ error: "invalid_held_source_binding" });
+      return;
+    }
+    const { readHeldSourceSnapshot, flushLocalState } = deps;
+    const heldSourceKeeper = deps.getHeldSourceKeeper?.();
+    const exportManifest = deps.adapter.exportOpenClawActivationManifest;
+    if (!heldSourceKeeper || !readHeldSourceSnapshot || !flushLocalState || !exportManifest ||
+        !deps.adapter.seedUserSnapshotForMigration || !deps.adapter.recordAppliedFingerprint ||
+        deps.adapter.isIsolatedGateway?.() !== true) {
+      res.status(409).json({ error: "held_source_maintenance_unavailable" });
+      return;
+    }
+    try {
+      const proof = await runHeldSourceReconcile(body, heldSourceKeeper, {
+        readSnapshot: readHeldSourceSnapshot,
+        restore: async (full, assertHeld) => {
+          const snapshot = snapshotFromRestoreBody({ migrationId, uid: binding.uid, slug, snapshot: full });
+          if (typeof snapshot === "string") throw new Error("The held source broker snapshot is invalid");
+          await pauseSystemConfigWatchForUser(deps, slug);
+          await assertHeld();
+          deps.adapter.seedUserSnapshotForMigration!(full);
+          let settled: Promise<void> | undefined;
+          try {
+            const restored = await restoreUserRuntimeFromSnapshot(deps.adapter, snapshot, {
+              keepSourceQuiescing: true, beforeRuntimePublish: assertHeld, onWorkSettled: value => { settled = value; },
+            });
+            await assertHeld();
+            if (!restored.convergedState || !restored.appliedFingerprint || restored.pendingProjectClones.length) {
+              throw new Error("The held source did not converge");
+            }
+            recordRestoredConvergence(deps, slug, restored);
+            return { migrationId, slug, restored: restored.restored, steps: restored.steps };
+          } finally {
+            await settled;
+          }
+        },
+        drain: async () => {
+          const voice = await waitForVoiceDrain(deps, slug, migrationId);
+          if (voice.activeCalls) return { drained: false, runningCount: voice.activeCalls };
+          return deps.adapter.quiesceUser(slug, 60_000, { stopMattermost: true, schedulerMigrationId: binding.schedulerMigrationId, retainNonportable: true });
+        },
+        flush: () => flushLocalState({ slug, reason: "native-return" }),
+        exportManifest: () => exportManifest.call(deps.adapter, slug),
+      });
+      res.json({ requestId: binding.requestId, holdGeneration: binding.holdGeneration, nonce: body.nonce, proof });
+    } catch (error) {
+      log(`[migration-http] held source reconciliation refused for ${slug} (${error instanceof Error ? error.name : "unknown error"})`, { status: "failed" });
+      res.status(409).json({ error: "held_source_reconciliation_incomplete" });
     }
   });
 }

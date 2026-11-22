@@ -120,7 +120,7 @@ function validateManifestAgent(value, slug, expectedId, expectedAccount) {
         bindings: normalizedBindings,
     };
 }
-function validateManifestShape(value, slug) {
+export function validateActivationManifest(value, slug) {
     if (!isRecord(value)) {
         throw new Error(`[migration-activation:${slug}] activation manifest is not an object`);
     }
@@ -478,7 +478,7 @@ export async function extractOpenClawActivationManifest(configPath, slug, opts) 
             isWorkspace: false,
         });
     }));
-    return validateManifestShape({
+    return validateActivationManifest({
         version: 2,
         slug,
         appliedFingerprint: opts.appliedFingerprint,
@@ -612,7 +612,7 @@ export async function readActivationManifest(openclawDir, slug) {
         if (size !== before.size || after.mtimeMs !== before.mtimeMs || after.ctimeMs !== before.ctimeMs) {
             throw new Error("Source activation manifest changed during read");
         }
-        return validateManifestShape(JSON.parse(bytes.toString("utf-8", 0, size)), slug);
+        return validateActivationManifest(JSON.parse(bytes.toString("utf-8", 0, size)), slug);
     }
     finally {
         await file.close();

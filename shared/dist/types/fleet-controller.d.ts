@@ -418,3 +418,29 @@ export interface ScheduleRestoreFailureRecord {
     sourceJobId?: string;
     error: string;
 }
+export interface HeldNativeSourceBinding {
+    requestId: string;
+    holdGeneration: string;
+    vmId: string;
+    bootId: string;
+    bootDiskId: string;
+    homeDiskId: string;
+    uid: string;
+    slug: string;
+    gatewayId: string;
+    targetGatewayId: string;
+    operationId: string;
+    sourceEpoch: number;
+    schedulerMigrationId: string;
+    claimStartedAt: number;
+}
+export interface HeldNativeSourceReconcileRequest extends MigrationRequestBody {
+    binding: HeldNativeSourceBinding;
+    nonce: string;
+    expiresAt: number;
+}
+export interface HeldNativeSourceReconcileProof {
+    verifiedAt: number;
+    appliedFingerprint: string;
+    activationManifestSha256: string;
+}

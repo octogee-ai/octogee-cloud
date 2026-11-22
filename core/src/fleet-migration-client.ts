@@ -1,6 +1,7 @@
 
 
-import { gatewayScopedJobId, signFleetRequest, sourceActivationReadinessJobId } from "./fleet-signature.js";
+import { randomBytes } from "node:crypto";
+import { heldNativeSourceReconcileJobId, gatewayScopedJobId, signFleetRequest, sourceActivationReadinessJobId } from "./fleet-signature.js";
 import {
   SIGNATURE_HEADER,
   MIGRATION_QUIESCE_TIMEOUT_MS,
@@ -20,6 +21,8 @@ import {
   type SchedulerMigrationRequestBody,
   type SchedulerMigrationResult,
   type FlushGatewayResponse,
+  type HeldNativeSourceBinding,
+  type HeldNativeSourceReconcileProof,
   type ImportResponse,
   type MigrationProgressRequestBody,
   type QuiesceResponse,
@@ -283,6 +286,43 @@ async function isUnregisteredActivationReadinessRoute(response: Response, path: 
     "<!DOCTYPE html>", '<html lang="en">', "<head>", '<meta charset="utf-8">', "<title>Error</title>", "</head>",
     "<body>", `<pre>Cannot POST ${path}</pre>`, "</body>", "</html>", "",
   ].join("\n");
+}
+
+export { reconcileHeldNativeSource } from "./held-native-source-reconcile.js";
+
+export async function requestHeldNativeSourceReconcile(input: {
+  binding: HeldNativeSourceBinding;
+  sourceUrl: string;
+  privateKey: string;
+  fetch?: typeof globalThis.fetch;
+}): Promise<HeldNativeSourceReconcileProof> {
+  const { binding } = input;
+  const { gatewayId, slug } = binding;
+  const migrationId = `mig-${binding.operationId}`;
+  const path = `/held-native-source-reconcile/${encodeURIComponent(gatewayId)}`;
+  const nonce = randomBytes(32).toString("hex");
+  const post = createSignedGatewayPoster({
+    privateKey: input.privateKey,
+    resolveGatewayUrl: () => input.sourceUrl,
+    fetchWithTimeout: createFetchWithTimeout((url, init) => (input.fetch ?? globalThis.fetch)(url, { ...init, redirect: "error" })),
+  });
+  const response = await post({ path, transportId: gatewayId, gatewayId, migrationId, timeoutMs: MIGRATION_TRANSFER_TIMEOUT_MS,
+    jobId: heldNativeSourceReconcileJobId(migrationId, gatewayId),
+    body: { migrationId, slug, binding, nonce, expiresAt: Date.now() + 60_000 },
+  });
+  if (!response.ok) {
+    await response.body?.cancel();
+    throw new Error(`Held source reconciliation returned HTTP ${response.status}`);
+  }
+  const reply = await response.json() as Record<string, unknown>;
+  const proof = reply?.proof as Partial<HeldNativeSourceReconcileProof> | undefined;
+  if (reply?.nonce !== nonce || reply?.requestId !== binding.requestId || reply?.holdGeneration !== binding.holdGeneration ||
+      typeof proof?.verifiedAt !== "number" || !Number.isSafeInteger(proof.verifiedAt) || proof.verifiedAt < binding.claimStartedAt ||
+      typeof proof.appliedFingerprint !== "string" || !/^[0-9a-f]{16}$/.test(proof.appliedFingerprint) ||
+      typeof proof.activationManifestSha256 !== "string" || !/^[0-9a-f]{64}$/.test(proof.activationManifestSha256)) {
+    throw new Error("Held source returned a mismatched reconciliation proof");
+  }
+  return { verifiedAt: proof.verifiedAt, appliedFingerprint: proof.appliedFingerprint, activationManifestSha256: proof.activationManifestSha256 };
 }
 
 export function createMigrationClient(deps: MigrationClientDeps): MigrationClient {

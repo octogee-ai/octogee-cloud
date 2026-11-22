@@ -214,7 +214,7 @@ function validateManifestAgent(
   };
 }
 
-function validateManifestShape(
+export function validateActivationManifest(
   value: unknown,
   slug: string,
 ): MigrationActivationManifest {
@@ -576,7 +576,7 @@ export async function extractOpenClawActivationManifest(
         });
       }),
   );
-  return validateManifestShape(
+  return validateActivationManifest(
     {
       version: 2,
       slug,
@@ -714,7 +714,7 @@ export async function readActivationManifest(
     if (size !== before.size || after.mtimeMs !== before.mtimeMs || after.ctimeMs !== before.ctimeMs) {
       throw new Error("Source activation manifest changed during read");
     }
-    return validateManifestShape(JSON.parse(bytes.toString("utf-8", 0, size)), slug);
+    return validateActivationManifest(JSON.parse(bytes.toString("utf-8", 0, size)), slug);
   } finally {
     await file.close();
   }

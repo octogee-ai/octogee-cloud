@@ -34,12 +34,13 @@ import {
   createScheduleTransferHandler,
   createResumeHandler,
   createRestoreHandler,
+  createHeldNativeSourceReconcileHandler,
   createUnmountHandler,
   createVerifyHandler,
   findPathTraversalViolation,
   type MigrationHandlerDeps,
 } from "../lib/fleet-http-migration.js";
-import { gatewayScopedJobId, signFleetRequest, sourceActivationReadinessJobId } from "../lib/fleet-signature.js";
+import { heldNativeSourceReconcileJobId, gatewayScopedJobId, signFleetRequest, sourceActivationReadinessJobId } from "../lib/fleet-signature.js";
 import { reserveLoopbackPort } from "../lib/migration-rsync-tls.js";
 import { liveImportAdmissionPath } from "../lib/migration-staging.js";
 import {
@@ -1089,6 +1090,29 @@ describe("createVerifyHandler", () => {
       },
     });
     expect(adapter.waitForAccountHealthy).not.toHaveBeenCalled();
+  });
+});
+
+describe("held Native source maintenance admission", () => {
+  const request = () => ({
+    migrationId: "mig-op", slug: "alice", binding: { gatewayId: GATEWAY_ID, operationId: "op", slug: "alice" },
+    expiresAt: Date.now() + 30_000, nonce: "f".repeat(64),
+  });
+  it("refuses an ordinary restore signature and never reads the customer's snapshot", async () => {
+    const readHeldSourceSnapshot = vi.fn(), req = request(), res = mkResponse();
+    await createHeldNativeSourceReconcileHandler(mkDeps({ readHeldSourceSnapshot }))(mkRequest(req, {
+      signature: signForPod(req.migrationId, JSON.stringify(req)),
+    }), res.res, vi.fn());
+    expect(res.getStatus()).toBe(401);
+    expect(readHeldSourceSnapshot).not.toHaveBeenCalled();
+  });
+  it("requires the in-guest keeper even on a correctly signed request", async () => {
+    const readHeldSourceSnapshot = vi.fn(), req = request(), res = mkResponse();
+    await createHeldNativeSourceReconcileHandler(mkDeps({ readHeldSourceSnapshot }))(mkRequest(req, {
+      signature: signFleetRequest(PRIVATE_KEY, heldNativeSourceReconcileJobId(req.migrationId, GATEWAY_ID), JSON.stringify(req)),
+    }), res.res, vi.fn());
+    expect(res.getStatus()).toBe(409);
+    expect(readHeldSourceSnapshot).not.toHaveBeenCalled();
   });
 });
 

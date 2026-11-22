@@ -253,3 +253,5 @@ export function mapUserDocToSnapshot(
     persona: null,
   };
 }
+
+export { snapshotConfigFingerprint } from "./broker-snapshot-fingerprint.js";

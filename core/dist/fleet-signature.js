@@ -46,3 +46,6 @@ function normalizeKeyMaterial(raw) {
     }
     return value;
 }
+export function heldNativeSourceReconcileJobId(migrationId, gatewayId) {
+    return gatewayScopedJobId(`held-native-source-reconcile/${migrationId}`, gatewayId);
+}

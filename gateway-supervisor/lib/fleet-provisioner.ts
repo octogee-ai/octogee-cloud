@@ -1,3 +1,4 @@
+import { requireHeldSourceMaintenance, type HeldNativeSourceKeeper } from "./held-native-source-reconcile.js";
 import { createRepeatSquelch } from "@octogee/shared/server/repeat-squelch";
 import { isValidUsername, parseAgentId } from "@octogee/shared/types/identity";
 import { PROJECT_AGENT_WORKSPACE_PARTS } from "@octogee/shared/types/project";
@@ -57,6 +58,7 @@ import {
   createScheduleTransferHandler,
   createResumeHandler,
   createRestoreHandler,
+  createHeldNativeSourceReconcileHandler,
   createUnmountHandler,
   createVerifyHandler,
   createCompleteSurgeHandoffHandler,
@@ -352,6 +354,7 @@ export function registerByosubDeviceAuth(
 }
 
 export interface StartFleetOptions {
+  getHeldSourceKeeper?: () => HeldNativeSourceKeeper | undefined;
   rpc: GatewayRpcClient;
   adapter: UserLifecycleAdapter;
   gatewayId: string;
@@ -2001,6 +2004,7 @@ function registerMigrationRoutes(
   const quota = rateLimit({ windowMs: 60_000, limit: 1200, standardHeaders: "draft-7", legacyHeaders: false });
   const restore = createRestoreHandler(migrationDeps);
   app.post("/restore/:gatewayId", quota, restore);
+  app.post("/held-native-source-reconcile/:gatewayId", quota, createHeldNativeSourceReconcileHandler(migrationDeps));
   app.post("/resume-restore/:gatewayId", quota, restore);
   app.post("/target-import-hold/:gatewayId", quota, createTargetImportHoldWitnessHandler(migrationDeps));
   app.post("/migration-progress/:gatewayId", quota, createMigrationProgressHandler(migrationDeps));
@@ -2698,6 +2702,7 @@ export async function startFleetController(
 
   const app = express();
   app.disable("x-powered-by");
+  if (opts.getHeldSourceKeeper) app.use(requireHeldSourceMaintenance(opts.gatewayId, () => Boolean(opts.getHeldSourceKeeper?.())));
   app.use(["/scheduler", "/schedules"], express.json({
     limit: "9mb",
     verify: (req: express.Request & { rawBody?: string }, _res, buf) => {
@@ -2791,6 +2796,8 @@ export async function startFleetController(
     configuredUserAssigned,
   });
   const migrationDeps = {
+    getHeldSourceKeeper: opts.getHeldSourceKeeper,
+    readHeldSourceSnapshot: opts.readUserSnapshotForRuntimeReset,
     publicKey: opts.publicKey,
     gatewayId: opts.gatewayId,
     adapter: wrappedAdapter,

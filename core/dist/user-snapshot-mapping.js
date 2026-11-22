@@ -183,3 +183,4 @@ export function mapUserDocToSnapshot(uid, data, channels) {
         persona: null,
     };
 }
+export { snapshotConfigFingerprint } from "./broker-snapshot-fingerprint.js";

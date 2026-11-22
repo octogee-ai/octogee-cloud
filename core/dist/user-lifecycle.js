@@ -169,10 +169,12 @@ async function restoreUserRuntimeFromSnapshotInner(adapter, snapshot, opts) {
         throw new Error(`[restore:${slug}] project agents are not connected to their configured channels`);
     }
     throwIfAborted(signal, uid);
-    markStep("report-provisioned");
-    steps.push(...(await reportProvisioned(adapter, ctx, false)));
-    throwIfAborted(signal, uid);
-    adapter.writeMountMarker?.(slug);
+    if (!opts.keepSourceQuiescing) {
+        markStep("report-provisioned");
+        steps.push(...(await reportProvisioned(adapter, ctx, false)));
+        throwIfAborted(signal, uid);
+        adapter.writeMountMarker?.(slug);
+    }
     adapter.log(`[restore:${slug}] durable restore complete in ${Date.now() - startedAt}ms`);
     return {
         restored: true,
