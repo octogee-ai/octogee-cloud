@@ -7,13 +7,15 @@ const CLAIM_PATH = "/var/run/octogee/checkpoint-claim/claim.json";
 const RESTORED_ENV_PATH = "/proc/gvisor/spec_environ";
 const POD_UID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const SNAPSHOT_NAME = /^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$/;
+function validClaimOwner(claim) {
+    return claim.assignmentEpoch === 0 && isValidGatewayId(claim.gatewayId) && claim.slotId === claim.gatewayId &&
+        typeof claim.podUid === "string" && POD_UID.test(claim.podUid) && isUserOwnerUid(claim.uid) && isValidUsername(claim.slug);
+}
 function parseClaim(value) {
     if (!value || typeof value !== "object")
         return null;
     const claim = value;
-    if (claim.assignmentEpoch !== 0 || !isValidGatewayId(claim.gatewayId) || claim.slotId !== claim.gatewayId ||
-        typeof claim.podUid !== "string" || !POD_UID.test(claim.podUid) ||
-        !isUserOwnerUid(claim.uid) || !isValidUsername(claim.slug))
+    if (!validClaimOwner(claim))
         return null;
     if (claim.version === 1 && claim.mode === undefined &&
         typeof claim.snapshotName === "string" && SNAPSHOT_NAME.test(claim.snapshotName))

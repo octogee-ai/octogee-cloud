@@ -1100,6 +1100,28 @@ describe("gateway convergence pass outcomes", () => {
     expect(h.upserted("ordinary")).not.toHaveProperty("hobbyCheckpoint");
   });
 
+  it("admits an already installed live standby before fleet readiness without provisioning a home claim", async () => {
+    const id = "hobby-slot-aaaeff123456";
+    const ownerUid = "u";
+    const roots = { [id]: durableRoot({ gatewayId: id, gatewayClass: "isolated", profile: null, imageProfile: "isolated",
+      sizingTier: "s", ownerUid, builderSlug: "alice", liveRelease: null }) };
+    const h = isolatedPodPass(roots, {}, { pod: POD_PROFILE });
+    const prepared = BUILDER_RELEASE.profileImages.builder;
+    h.helm.readDeployedInstances.mockResolvedValue({ [id]: {
+      gatewayId: id, replicas: 1, chartFingerprint: "chart", image: { repository: prepared.imageRepository, tag: prepared.imageTag },
+    } });
+    const witness = { podName: "standby-pod", podUid: "pod-uid", deploymentUid: "deploy-uid" };
+    await runGatewayConvergencePass({ ...h.deps, resolveHobbyCheckpointPod: async () => ({
+      slotId: id, mode: "live", livePod: witness, zone: "us-central1-c", machineFamily: "n2",
+    }) });
+    expect(h.helm.upsertInstance).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      gatewayId: id, builderIdentity: { ownerUid, builderSlug: "alice" },
+      hobbyCheckpoint: expect.objectContaining({ mode: "live", livePod: witness }),
+    }));
+    expect(h.ensureIsolatedPodHome).not.toHaveBeenCalled();
+    expect(roots[id].liveRelease).toBeNull();
+  });
+
   it.each([null, 1])("requires an earlier live checkpoint release before a diskless cold surge: %s", async liveRelease => {
     const id = "hobby-slot-aaaeff123456";
     const roots = { [id]: durableRoot({ gatewayId: id, gatewayClass: "isolated", profile: null, imageProfile: "isolated",

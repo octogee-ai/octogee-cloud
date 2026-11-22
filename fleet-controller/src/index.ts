@@ -1220,10 +1220,7 @@ async function convergeAvailableGateway(
     gateway.desiredStatus === "retired"
       ? null
       : await readGatewayArtifactInStore(store, gateway.gatewayId, gateway.desiredRelease);
-  const pendingArtifact =
-    artifact && gateway.latestRelease > gateway.desiredRelease
-      ? await readGatewayArtifactInStore(store, gateway.gatewayId, gateway.latestRelease)
-      : null;
+  const pendingArtifact = await readPendingGatewayArtifact(store, gateway, artifact);
   const runtime = runtimeById.get(gateway.gatewayId);
   const desiredIntent = await prepareDesiredGatewayIntent({
     passDeps,
@@ -1232,6 +1229,7 @@ async function convergeAvailableGateway(
     instance,
   });
   const desiredOpts = desiredIntent?.opts ?? null;
+  if (await beginLiveStandbyAdmission(passDeps, { gateway, artifact, runtime, desiredOpts })) return;
   const desiredChartFingerprint = desiredOpts?.chartFingerprint;
   const desiredDeploymentIntentFingerprint = desiredIntent?.comparisonFingerprint;
   const initialAction = planGatewayConvergence({
@@ -1277,6 +1275,21 @@ async function convergeAvailableGateway(
       await markGatewayLive(passDeps, gateway, artifact, action.prelaunchRefresh, action.vmReady);
       return;
   }
+}
+
+function readPendingGatewayArtifact(store: PlatformStateStore, gateway: DurableGateway, artifact: ReleasePayload | null) {
+  return artifact && gateway.latestRelease > gateway.desiredRelease
+    ? readGatewayArtifactInStore(store, gateway.gatewayId, gateway.latestRelease)
+    : null;
+}
+
+async function beginLiveStandbyAdmission(
+  passDeps: GatewayConvergencePassDeps,
+  input: { gateway: DurableGateway; artifact: ReleasePayload | null; runtime: ConvergingGatewayRuntime | undefined; desiredOpts: GatewayUpsertOpts | null },
+): Promise<boolean> {
+  if (input.desiredOpts?.hobbyCheckpoint?.mode !== "live" || input.gateway.liveRelease !== null) return false;
+  await upsertGateway(passDeps, { ...input, replicas: 1 });
+  return !input.runtime;
 }
 
 async function uninstallGateway(
@@ -1497,6 +1510,15 @@ function observedHelmInstance(
   };
 }
 
+function assertProvenCheckpointContinuation(gateway: DurableGateway, hobbyCheckpoint: HobbyCheckpointPod | undefined): void {
+  if (hobbyCheckpoint?.mode === "cold" && gateway.liveRelease === null) {
+    throw new Error(`Cannot continue checkpoint ${gateway.gatewayId} before its first live release`);
+  }
+  if (hobbyCheckpoint?.mode === "live" && gateway.desiredStatus !== "running") {
+    throw new Error(`Cannot reuse paused or draining live standby ${gateway.gatewayId}`);
+  }
+}
+
 async function prepareDesiredGatewayIntent(input: {
   passDeps: Pick<GatewayConvergencePassDeps, "prepareGatewayConfig" | "chartFingerprint" | "store" | "resolveHobbyCheckpointPod">;
   gateway: DurableGateway;
@@ -1507,9 +1529,7 @@ async function prepareDesiredGatewayIntent(input: {
   if (!artifact || gateway.desiredStatus === "retired") return null;
   const prepared = await passDeps.prepareGatewayConfig(gateway);
   const hobbyCheckpoint = await passDeps.resolveHobbyCheckpointPod?.({ store: passDeps.store, gateway, artifact });
-  if (hobbyCheckpoint?.mode === "cold" && gateway.liveRelease === null) {
-    throw new Error(`Cannot continue checkpoint ${gateway.gatewayId} before its first live release`);
-  }
+  assertProvenCheckpointContinuation(gateway, hobbyCheckpoint);
   const opts = gatewayUpsertOptsFromRelease({
     namespace: NAMESPACE,
     gateway: prepared,
@@ -1528,7 +1548,7 @@ async function prepareDesiredGatewayIntent(input: {
   });
   return {
     opts,
-    comparisonFingerprint: deploymentIntentFingerprintForComparison({
+    comparisonFingerprint: hobbyCheckpoint?.mode === "live" ? undefined : deploymentIntentFingerprintForComparison({
       desired: opts,
       observedChartFingerprint: instance?.chartFingerprint,
       observedDeploymentIntentFingerprint: instance?.deploymentIntentFingerprint,

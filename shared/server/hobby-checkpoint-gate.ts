@@ -31,12 +31,15 @@ export interface HobbyLiveStandbyClaim extends HobbyCheckpointOwner {
 
 type HobbyPodClaim = HobbyCheckpointClaim | HobbyLiveStandbyClaim;
 
+function validClaimOwner(claim: Partial<HobbyCheckpointOwner>): boolean {
+  return claim.assignmentEpoch === 0 && isValidGatewayId(claim.gatewayId) && claim.slotId === claim.gatewayId &&
+    typeof claim.podUid === "string" && POD_UID.test(claim.podUid) && isUserOwnerUid(claim.uid) && isValidUsername(claim.slug);
+}
+
 function parseClaim(value: unknown): HobbyPodClaim | null {
   if (!value || typeof value !== "object") return null;
   const claim = value as Partial<HobbyCheckpointOwner> & Record<string, unknown>;
-  if (claim.assignmentEpoch !== 0 || !isValidGatewayId(claim.gatewayId) || claim.slotId !== claim.gatewayId ||
-    typeof claim.podUid !== "string" || !POD_UID.test(claim.podUid) ||
-    !isUserOwnerUid(claim.uid) || !isValidUsername(claim.slug)) return null;
+  if (!validClaimOwner(claim)) return null;
   if (claim.version === 1 && claim.mode === undefined &&
     typeof claim.snapshotName === "string" && SNAPSHOT_NAME.test(claim.snapshotName)) return claim as unknown as HobbyCheckpointClaim;
   if (claim.version === 2 && claim.mode === "live" && claim.snapshotName === undefined &&
