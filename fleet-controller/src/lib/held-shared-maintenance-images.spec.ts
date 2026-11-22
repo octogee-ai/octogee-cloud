@@ -4,15 +4,16 @@ import { existingOwnedPod, json, recoveredPodReady } from "./shared-restore-runt
 import { transitionHeldSharedPod } from "./held-shared-maintenance-images.js";
 
 vi.mock("./shared-source-images.js");
+vi.mock("./held-shared-maintenance-helm.js");
 vi.mock("./shared-restore-runtime.js", async load => ({
   ...await load<typeof import("./shared-restore-runtime.js")>(), existingOwnedPod: vi.fn(), json: vi.fn(), recoveredPodReady: vi.fn(),
 }));
 const old = { gateway: "gateway@" + "sha256:" + "1".repeat(64), "gateway-edge": "edge@sha256:" + "2".repeat(64) };
 const next = { gateway: "gateway@sha256:" + "3".repeat(64), "gateway-edge": "edge@sha256:" + "4".repeat(64) };
 const workload = { deploymentName: "octogee-gateway-shared-t", deploymentUid: "dep", replicaSetName: "rs-name", replicaSetUid: "rs" };
-const bound = { gatewayId: "shared-t", workload: { podName: "pod", podUid: "original", deploymentUid: "dep", replicaSetUid: "rs" },
+const bound = { installedChartFingerprint:"a".repeat(64), gatewayId: "shared-t", workload: { podName: "pod", podUid: "original", deploymentUid: "dep", replicaSetUid: "rs" },
   originalImages: old, maintenanceImages: next };
-const deps = { namespace: "octogee-test", runKubectl: vi.fn(), assertCurrent: vi.fn(async () => {}), wait: vi.fn(async () => {}) };
+const deps = { chart:"retained-chart",runHelm:vi.fn(),namespace: "octogee-test", runKubectl: vi.fn(), assertCurrent: vi.fn(async () => {}), wait: vi.fn(async () => {}) };
 const pod = (images: typeof old) => ({ metadata: { name: "pod", uid: "original", resourceVersion: "23" },
   spec: { containers: Object.entries(images).map(([name,image]) => ({ name, image })) } });
 beforeEach(() => {

@@ -1,16 +1,21 @@
 import { isDeepStrictEqual } from "node:util";
 import { setTimeout as delay } from "node:timers/promises";
 import { captureSourceRecoveryWorkload, pinSourceRecoveryImages, resumeSourceRecoveryWorkload } from "./shared-source-images.js";
+import { adoptRetainedSharedHelm } from "./held-shared-maintenance-helm.js";
+import type { HelmSubprocess } from "../helm-runner.js";
 import { existingOwnedPod, imagePatch, json, recoveredPodReady, type SharedPodRecoveryDeps } from "./shared-restore-runtime.js";
 
 interface MaintenanceTarget {
   gatewayId: string;
+  installedChartFingerprint: string;
   workload: { podName: string; podUid: string; replicaSetUid: string; deploymentUid: string };
   originalImages: Record<"gateway" | "gateway-edge", string>;
   maintenanceImages: Record<"gateway" | "gateway-edge", string>;
 }
 
 type Dependencies = Pick<SharedPodRecoveryDeps, "namespace" | "runKubectl" | "now" | "wait"> & {
+  chart: string;
+  runHelm: HelmSubprocess;
   assertCurrent(): Promise<void>;
 };
 
@@ -47,6 +52,7 @@ export async function transitionHeldSharedPod(deps: Dependencies, bound: Mainten
   while (now() < deadline) {
     const observed = await readHeldWorkload(deps, bound);
     if (recoveredPodReady(observed.pod, bound.workload, to)) {
+      await adoptRetainedSharedHelm(deps, workload, { gatewayId: bound.gatewayId, chart: deps.chart, installedChartFingerprint: bound.installedChartFingerprint, from, to }, assertHeld);
       await resumeSourceRecoveryWorkload(deps, workload, to, assertHeld);
       const resumed = await readHeldWorkload(deps, bound);
       if (!recoveredPodReady(resumed.pod, bound.workload, to)) throw new Error("Retained Shared Pod lost readiness after Deployment resume");
