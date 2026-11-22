@@ -5742,7 +5742,11 @@ router.post(
       const dryRun = isAdminDryRun(req);
       const result = await reserveNativeReturnTargetDrain(store, selection, { replacementGatewayId, oldPodUid, replacementPodUid, ownerCount },
         { actor, now: Date.now(), dryRun });
-      res.status(dryRun ? 200 : 202).json({ ...result, dryRun });
+      if (dryRun) {
+        res.json({ ...result, dryRun, plans: [{ what: "Allow ordinary Shared departures while holding the Native return", forced: false, mutation: result }] });
+        return;
+      }
+      res.status(202).json({ ...result, dryRun });
     } catch (error) {
       if (error instanceof HeldNativeReturnConflict) { res.status(409).json({ error: error.message }); return; }
       next(error);

@@ -886,7 +886,7 @@ it("compensates the same Native operation only after the enrolled old member is 
 it("refuses stale retirement, stale routes and target recreation without releasing the Native checkpoint", async () => {
   const h = await retiredCompensationFixture();
   h.docs.set(h.retirementPath, { ...h.retirement, createdAt: 500 });
-  await expect(h.worker.request(h.request)).rejects.toThrow(/retirement after Native drain reservation/);
+  await expect(h.worker.request(h.request)).rejects.toThrow(/Shared retirement predates or differs from Native drain reservation/);
   h.docs.set(h.retirementPath, h.retirement);
   h.physical.verifyRetiredRoutes.mockResolvedValueOnce(false);
   await expect(h.worker.request(h.request)).rejects.toThrow(/routes still exist/);
