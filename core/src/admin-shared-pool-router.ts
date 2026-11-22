@@ -32,6 +32,7 @@ import {
   type SourceRecoveryPendingReader,
 } from "./fleet-state-sections.js";
 import { FleetMutationRefusedError } from "./normal-fleet-mutation.js";
+import { isNativeReturnDrainPairProtected, readNativeReturnSharedDrains } from "./held-native-return-repair.js";
 import { timestampMillis } from "./timestamps.js";
 import type { ProvisioningReadiness } from "./provisioning-sync.js";
 import { FenceMismatchError } from "./platform-state/errors.js";
@@ -47,6 +48,7 @@ const OPERATION_STATUSES = ["pending", "running", "succeeded", "failed", "rolled
 
 export interface AdminSharedPoolRouterDeps {
   store: PlatformStateStore;
+  observeNativeReturnSharedDrains?: boolean;
   readInstalledSharedRelease?: InstalledSharedReleaseReader | undefined;
   platformArtifact?: GatewayArtifact;
   controllerStartedAt?: number | undefined;
@@ -238,6 +240,7 @@ function fleetStateUser(
 
 export async function readFleetState(store: PlatformStateStore, input: {
   operationStatuses: readonly OperationStatus[];
+  observeNativeReturnSharedDrains?: boolean;
   readInstalledSharedRelease?: InstalledSharedReleaseReader | undefined;
   platformArtifact?: GatewayArtifact | undefined;
   controllerStartedAt?: number | undefined;
@@ -270,6 +273,7 @@ export async function readFleetState(store: PlatformStateStore, input: {
       assignments,
       runtimes,
       operations,
+      ...(input.observeNativeReturnSharedDrains ? { heldNativeSharedDrains: await readNativeReturnSharedDrains(transaction, operations, input.now) } : {}),
     };
   });
   return { ...state, ...await selectSharedReleases(releaseRows, input.platformArtifact, input.readInstalledSharedRelease) };
@@ -429,6 +433,7 @@ export function addAdminSharedPoolRoutes(router: Router, deps: AdminSharedPoolRo
       }
       res.json(await readFleetState(store, {
         operationStatuses,
+        observeNativeReturnSharedDrains: deps.observeNativeReturnSharedDrains,
         platformArtifact: deps.platformArtifact,
         readInstalledSharedRelease: deps.readInstalledSharedRelease,
         controllerStartedAt: deps.controllerStartedAt,
@@ -549,6 +554,9 @@ export function addAdminSharedPoolRoutes(router: Router, deps: AdminSharedPoolRo
           await assertAutomationSequence(transaction, automationState.expectedSequence);
           const root = automationMember(await transaction.gateways.roots.get(gatewayId), gatewayId);
           if (root.updatedAt !== expectedUpdatedAt) throw new PreconditionFailed(`gateway ${gatewayId} changed since it was read`);
+          if (deps.observeNativeReturnSharedDrains && decision !== "begin-drain" && await isNativeReturnDrainPairProtected(transaction, gatewayId, "source")) {
+            throw new PreconditionFailed(`gateway ${gatewayId} has an active Native return drain`);
+          }
           const fromDesiredStatus = root.desiredStatus as GatewayDesiredStatus;
           if (!(transition.from as readonly string[]).includes(fromDesiredStatus)) {
             throw new PreconditionFailed(`gateway ${gatewayId} is ${fromDesiredStatus}; ${decision} needs ${transition.from.join(" or ")}`);
@@ -640,6 +648,9 @@ export function addAdminSharedPoolRoutes(router: Router, deps: AdminSharedPoolRo
               await assertAutomationSequence(transaction, expectedAutomationSequence);
               automationMember(await transaction.gateways.roots.get(gatewayId), gatewayId);
               if (root.updatedAt !== expectedUpdatedAt) throw new PreconditionFailed(`gateway ${gatewayId} changed since it was read`);
+              if (deps.observeNativeReturnSharedDrains && await isNativeReturnDrainPairProtected(transaction, gatewayId, "replacement")) {
+                throw new PreconditionFailed(`gateway ${gatewayId} is the replacement for an active Native return drain`);
+              }
               await assertAssignmentCount(transaction, gatewayId, body.expectedAssignmentCount);
               fromDesiredStatus = root.desiredStatus;
             },

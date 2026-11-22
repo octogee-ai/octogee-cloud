@@ -1,8 +1,26 @@
 import { isDeepStrictEqual } from "node:util";
+import { GATEWAY_UNREACHABLE_AFTER_MS } from "@octogee/shared/types/fleet-controller";
+import { hasFreshReadyKubernetesObservation } from "@octogee/shared/types/gateway-releases";
 import { operationAuditDocumentId } from "./operation-audit.js";
 export const NATIVE_RETURN_TARGET_EXCLUSION = "native-return-target-exclusion";
 export function nativeReturnTargetExclusionId(uid) {
     return operationAuditDocumentId(`${NATIVE_RETURN_TARGET_EXCLUSION}:${uid}`);
+}
+export async function readNativeReturnTargetDrain(store, operation) {
+    const { uid, toGatewayId } = operation.input;
+    if (typeof uid !== "string" || typeof toGatewayId !== "string")
+        return null;
+    const audit = await store.journal.audits.get(nativeReturnTargetExclusionId(uid));
+    const drain = audit?.target.drain;
+    if (!audit || !drain || audit.status !== "in-progress" || audit.mutation.kind !== NATIVE_RETURN_TARGET_EXCLUSION ||
+        audit.target.uid !== uid || audit.target.targetGatewayId !== toGatewayId || drain.operationId !== operation.id)
+        return null;
+    return drain;
+}
+export function sharedDrainPodMatches(runtime, podUid, now) {
+    return !!runtime && hasFreshReadyKubernetesObservation(runtime, now, GATEWAY_UNREACHABLE_AFTER_MS) &&
+        runtime.kubernetes?.totalPods === 1 && runtime.kubernetes.readyPods === 1 && runtime.kubernetes.pods?.length === 1 &&
+        runtime.kubernetes.pods[0]?.uid === podUid;
 }
 export async function nativeReturnTargetDenied(store, uid, gatewayId) {
     const record = await store.journal.audits.get(nativeReturnTargetExclusionId(uid));

@@ -1,6 +1,8 @@
 import { isDeepStrictEqual } from "node:util";
+import { GATEWAY_UNREACHABLE_AFTER_MS } from "@octogee/shared/types/fleet-controller";
+import { hasFreshReadyKubernetesObservation } from "@octogee/shared/types/gateway-releases";
 import { operationAuditDocumentId } from "./operation-audit.js";
-import type { GatewayRoot, OperationRecord, PlatformStateRepositories } from "./platform-state/index.js";
+import type { FleetRegistryRecord, GatewayRoot, OperationRecord, PlatformStateRepositories } from "./platform-state/index.js";
 
 export const NATIVE_RETURN_TARGET_EXCLUSION = "native-return-target-exclusion";
 
@@ -10,6 +12,31 @@ export function nativeReturnTargetExclusionId(uid: string): string {
 
 type ExclusionReader = Pick<PlatformStateRepositories, "journal" | "gateways" | "fleetRegistry" | "users">;
 export type NativeOldTargetRetirement = { operationId: string; version: number; createdAt: number; completedAt: number };
+
+export interface NativeReturnTargetDrain {
+  operationId: string;
+  replacementGatewayId: string;
+  oldPodUid: string;
+  replacementPodUid: string;
+  owners: Array<{ uid: string; slug: string; epoch: number }>;
+  dormantInboundOperationIds: string[];
+}
+
+export async function readNativeReturnTargetDrain(store: ExclusionReader, operation: Pick<OperationRecord, "id" | "input">): Promise<NativeReturnTargetDrain | null> {
+  const { uid, toGatewayId } = operation.input;
+  if (typeof uid !== "string" || typeof toGatewayId !== "string") return null;
+  const audit = await store.journal.audits.get(nativeReturnTargetExclusionId(uid));
+  const drain = audit?.target.drain as NativeReturnTargetDrain | undefined;
+  if (!audit || !drain || audit.status !== "in-progress" || audit.mutation.kind !== NATIVE_RETURN_TARGET_EXCLUSION ||
+      audit.target.uid !== uid || audit.target.targetGatewayId !== toGatewayId || drain.operationId !== operation.id) return null;
+  return drain;
+}
+
+export function sharedDrainPodMatches(runtime: FleetRegistryRecord | null, podUid: string, now: number): runtime is FleetRegistryRecord {
+  return !!runtime && hasFreshReadyKubernetesObservation(runtime, now, GATEWAY_UNREACHABLE_AFTER_MS) &&
+    runtime.kubernetes?.totalPods === 1 && runtime.kubernetes.readyPods === 1 && runtime.kubernetes.pods?.length === 1 &&
+    runtime.kubernetes.pods[0]?.uid === podUid;
+}
 
 export async function nativeReturnTargetDenied(store: ExclusionReader, uid: string, gatewayId: string): Promise<boolean> {
   const record = await store.journal.audits.get(nativeReturnTargetExclusionId(uid));

@@ -69,6 +69,42 @@ export declare function readHeldNativeReturnForTargetExclusion(state: PlatformSt
     uid: string;
     slug: string;
 }>;
+type ObservedSharedDrain = {
+    replacementGatewayId: string;
+    oldPodUid: string;
+    replacementPodUid: string;
+    ownerCount: number;
+};
+export declare function reserveNativeReturnTargetDrain(store: PlatformStateStore, selection: HeldNativeReturnSelection, expected: ObservedSharedDrain, { actor, now, dryRun }: {
+    actor: string;
+    now: number;
+    dryRun: boolean;
+}): Promise<{
+    exclusionId: string;
+    operationId: string;
+    oldGatewayId: string;
+    replacementGatewayId: string;
+    ownerCount: number;
+    dormantInboundCount: number;
+}>;
+export declare function isNativeReturnDrainPairProtected(state: PlatformStateRepositories, gatewayId: string, side: "source" | "replacement"): Promise<boolean>;
+export declare function readNativeReturnSharedDrains(state: PlatformStateRepositories, active: readonly Stored<OperationRecord>[], now: number): Promise<{
+    operationId: string;
+    oldGatewayId: string;
+    replacementGatewayId: string;
+    supersedableInboundOperationIds: string[];
+}[]>;
+export declare function readHeldNativeReturnForRetiredTargetCompensation(state: PlatformStateRepositories, selection: HeldNativeReturnSelection): Promise<{
+    sourceRelease: number;
+    targetRelease: number;
+    originalInstanceId: string | null | undefined;
+    uid: string;
+    slug: string;
+    exclusionId: string;
+    oldPodUid: string;
+    retirement: import("./native-return-target-deny.js").NativeOldTargetRetirement;
+}>;
+export declare function nativeReturnAllowsSharedDeparture(state: PlatformStateRepositories, candidate: OperationRecord, pending: readonly Stored<OperationRecord>[], now: number): Promise<ReadonlySet<string>>;
 export declare function heldNativeReturnBlocksOwnerDestination(store: PlatformStateRepositories, gatewayId: string, owner: {
     uid: string;
     fences: {

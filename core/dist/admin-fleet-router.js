@@ -1,6 +1,6 @@
 import { SharedHeldReturnMaintenanceConflict } from "./shared-held-return-maintenance.js";
 export { archivedSchedulerSourceImage, archiveSchedulerCustodyMatches, enqueueParkedHomeArchive, isAuthorizedHomeArchiveOrigin, planArchiveAfterBackupRelease, planReturnedHomeArchive, resolveParkedHomeArchiveGrant, retainedBootPreservesScheduler, simpleHomePreparation } from "./parked-home-archive.js";
-import { bindHeldNativeStoppedOriginal, HeldNativeReturnConflict, recordHeldNativeOriginalRestart, requestHeldNativeReturnRepair, reserveHeldNativeOfflineSource } from "./held-native-return-repair.js";
+import { bindHeldNativeStoppedOriginal, HeldNativeReturnConflict, recordHeldNativeOriginalRestart, requestHeldNativeReturnRepair, reserveHeldNativeOfflineSource, reserveNativeReturnTargetDrain } from "./held-native-return-repair.js";
 import { migrationCancellationDeferred } from "./fleet-state.js";
 import { readSharedSourceRecoveryAuthority, readSharedSourceRecoverySupersession, SharedSourceRecoveryConflict } from "./shared-source-recovery.js";
 import { randomUUID } from "node:crypto";
@@ -3393,6 +3393,7 @@ export function addAdminFleetRoutes(router, deps) {
     addAdminUserRoutes(router, { store, accounts: deps.userAccounts, signIn: deps.userSignIn, journal: runAdminFleetMutation });
     addAdminSharedPoolRoutes(router, {
         store,
+        observeNativeReturnSharedDrains: deps.releaseEnvironment === "test",
         platformArtifact: deps.platformArtifact,
         readInstalledSharedRelease: deps.readInstalledSharedRelease,
         controllerStartedAt: deps.controllerStartedAt,
@@ -4165,6 +4166,36 @@ export function addAdminFleetRoutes(router, deps) {
                 return;
             }
             res.status(202).json({ operationId, requestId });
+        }
+        catch (error) {
+            if (error instanceof HeldNativeReturnConflict) {
+                res.status(409).json({ error: error.message });
+                return;
+            }
+            next(error);
+        }
+    });
+    router.post("/operations/:id/hold-native-return-for-shared-drain", async (req, res, next) => {
+        try {
+            if (deps.releaseEnvironment !== "test") {
+                res.sendStatus(404);
+                return;
+            }
+            const actor = req.uid;
+            if (!actor) {
+                res.sendStatus(403);
+                return;
+            }
+            const { replacementGatewayId, oldPodUid, replacementPodUid, ownerCount, ...scope } = (req.body ?? {});
+            const selection = parseHeldNativeReturnSelection(req.params.id, scope);
+            if (!selection || typeof replacementGatewayId !== "string" || !/^shared-[a-z0-9-]{1,56}$/.test(replacementGatewayId) ||
+                typeof oldPodUid !== "string" || typeof replacementPodUid !== "string" || typeof ownerCount !== "number") {
+                res.status(400).json({ error: "Exact held return and Shared workload observation required" });
+                return;
+            }
+            const dryRun = isAdminDryRun(req);
+            const result = await reserveNativeReturnTargetDrain(store, selection, { replacementGatewayId, oldPodUid, replacementPodUid, ownerCount }, { actor, now: Date.now(), dryRun });
+            res.status(dryRun ? 200 : 202).json({ ...result, dryRun });
         }
         catch (error) {
             if (error instanceof HeldNativeReturnConflict) {

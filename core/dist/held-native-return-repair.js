@@ -1,9 +1,10 @@
-import { nativeReturnTargetDenied } from "./native-return-target-deny.js";
+import { NATIVE_RETURN_TARGET_EXCLUSION, nativeReturnTargetDenied, nativeReturnTargetExclusionId, readNativeOldTargetRetirement, readNativeReturnTargetDrain, sharedDrainPodMatches } from "./native-return-target-deny.js";
 import { createHash } from "node:crypto";
 import { isIP } from "node:net";
 import { isDeepStrictEqual } from "node:util";
 import { builderReturnOperationId } from "@octogee/shared/types/isolated-operation-ids";
 import { readSchedulerMigrationIdentity } from "@octogee/shared/types/glm";
+import { moveHasNotBegun } from "./gateway-retirement-claim.js";
 import { buildOperationAuditIntent } from "./operation-audit.js";
 export class HeldNativeReturnConflict extends Error {
 }
@@ -84,9 +85,14 @@ function sourceFenceMatches(fence, maintenance) {
     return fence?.kind === HELD_NATIVE_OFFLINE_SOURCE_FENCE_KIND && fence.attemptId === maintenance.requestId && fence.phase === maintenance.phase;
 }
 function targetHoldsReturn(target, runtime, slug, check) {
-    return [target.gatewayClass === "shared", target.desiredStatus === "running", targetReleaseMatches(target, check?.release),
+    return [target.gatewayClass === "shared", target.desiredStatus === "running" || check?.allowDraining && target.desiredStatus === "draining", targetReleaseMatches(target, check?.release),
         Number.isSafeInteger(target.liveRelease), target.retirementClaim == null, isDeepStrictEqual(target.runtimeRestartFence, check?.fence),
         heldReturnTargetHeartbeatMatches(runtime.heartbeat, slug, check?.requireReady ?? true)].every(Boolean);
+}
+function heldTargetRelease(target, runtime, slug, check) {
+    if (check && "retiredRelease" in check)
+        return runtime === null ? check.retiredRelease : null;
+    return target && runtime && targetHoldsReturn(target, runtime, slug, check) ? target.liveRelease : null;
 }
 async function holdingCustody(state, { op, handoff, uid, slug }, maintenance, targetCheck) {
     const { fromGatewayId, toGatewayId, forwardRecovery } = handoff;
@@ -98,7 +104,8 @@ async function holdingCustody(state, { op, handoff, uid, slug }, maintenance, ta
     const [assignment, ...otherAssignments] = await state.gateways.assignments.listForUid(uid);
     const sourceRuntime = await state.fleetRegistry.get(fromGatewayId);
     const targetRuntime = await state.fleetRegistry.get(toGatewayId);
-    requireConflict(user && lease && marker && source && target && assignment && targetRuntime, "Held Native return custody cannot be verified");
+    requireConflict(user && lease && marker && source && assignment, "Held Native return custody cannot be verified");
+    const targetRelease = heldTargetRelease(target, targetRuntime, slug, targetCheck);
     requireConflict([
         user.gateway?.gatewayId === fromGatewayId, user.slug === slug, Object.keys(user.fences).length === 1,
         lease.status === "returning", lease.targetGatewayId === fromGatewayId, lease.returnOperationId === op.id,
@@ -110,11 +117,11 @@ async function holdingCustody(state, { op, handoff, uid, slug }, maintenance, ta
         isHeldBuilderRuntime(source, sourceRuntime, lease, maintenance),
         source.desiredStatus === "running", source.liveRelease === source.desiredRelease, Number.isSafeInteger(source.liveRelease),
         source.retirementClaim == null, sourceFenceMatches(source.runtimeRestartFence, maintenance),
-        targetHoldsReturn(target, targetRuntime, slug, targetCheck),
+        typeof targetRelease === "number" && Number.isSafeInteger(targetRelease),
     ].every(Boolean), "Held Native return source or target custody changed");
     const active = await state.journal.operations.listForUid(uid, { statuses: ["pending", "running"] });
     requireConflict(active.length === 1 && active[0]?.id === op.id, "A different operation holds the Native return owner");
-    return { sourceRelease: source.liveRelease, targetRelease: target.liveRelease, originalInstanceId: sourceRuntime?.vm?.instanceId };
+    return { sourceRelease: source.liveRelease, targetRelease: targetRelease, originalInstanceId: sourceRuntime?.vm?.instanceId };
 }
 export async function readHeldNativeReturnForTargetMaintenance(state, selection, targetFence, maintenanceRelease) {
     const hold = journalHold(await state.journal.operations.get(selection.operationId), selection);
@@ -136,6 +143,7 @@ export async function requestHeldNativeReturnRepair(store, selection, actor, now
     return store.transaction({ label: "held-native-return.request-source-reconcile", readOnly: dryRun }, async (tx) => {
         const hold = journalHold(await tx.journal.operations.get(selection.operationId), selection);
         const authority = { ...selection, uid: hold.uid, slug: hold.slug, requestId: id };
+        requireConflict(!await readNativeReturnTargetDrain(tx, hold.op), "Held Native return is reserved for a Shared target drain");
         requireConflict(!hold.handoff.forwardRecovery.offlineSourceRecovery, "Held Native return selected an offline source");
         requireConflict(!hold.handoff.forwardRecovery.sharedTargetImportHold, "Held Native return requires offline custody for the retained Shared target");
         const previous = hold.handoff.forwardRecovery.sourceReconcile;
@@ -203,6 +211,7 @@ export async function reserveHeldNativeOfflineSource(store, selection, actor, no
     return store.transaction({ label: "held-native-return.reserve-offline-source", readOnly: dryRun }, async (tx) => {
         const hold = journalHold(await tx.journal.operations.get(selection.operationId), selection);
         const authority = offlineAuthority(selection, hold);
+        requireConflict(!await readNativeReturnTargetDrain(tx, hold.op), "Held Native return is reserved for a Shared target drain");
         const previous = hold.handoff.forwardRecovery.offlineSourceRecovery;
         if (previous) {
             requireConflict(previous.requestId === authority.requestId, "Held Native offline request changed");
@@ -387,6 +396,181 @@ export async function readHeldNativeReturnForTargetExclusion(state, selection) {
         !forward.sourceReconcile && !forward.offlineSourceRecovery && missingFingerprintAttempt(hold), "Held Native return does not admit an old target exclusion");
     requireConflict(!forward.sharedTargetImportHold || forward.sharedTargetImportHold.gatewayId === selection.targetGatewayId, "Held Native return old target authority changed");
     return { ...await holdingCustody(state, hold), uid: hold.uid, slug: hold.slug };
+}
+async function readSharedDrainRoster(tx, old, expected, owner, now) {
+    const replacement = expected.replacementGatewayId;
+    const [oldRuntime, peerRuntime, peer, oldAssignments, peerAssignments, tasks, scaler] = await Promise.all([
+        tx.fleetRegistry.get(old), tx.fleetRegistry.get(replacement), tx.gateways.roots.get(replacement),
+        tx.gateways.assignments.list(old), tx.gateways.assignments.list(replacement),
+        tx.migrationTasks.listByStatus(["running"]), tx.controllerState.sharedPoolScaler.get(),
+    ]);
+    requireConflict(scaler?.replacements.some(pair => pair.sourceGatewayId === old && pair.targetGatewayId === replacement), "Exact Shared replacement pairing is unavailable");
+    requireConflict(sharedDrainPodMatches(oldRuntime, expected.oldPodUid, now) && sharedDrainPodMatches(peerRuntime, expected.replacementPodUid, now), "Exact ready Shared workloads changed");
+    requireConflict(peer && [peer.gatewayClass === "shared", peer.desiredStatus === "running", !peer.runtimeRestartFence, !peer.retirementClaim,
+        peer.liveRelease === peer.desiredRelease, peerRuntime.release === peer.liveRelease, peerAssignments.length === 0,
+        peerRuntime.heartbeat.mountedCustomers.length === 0, !peerRuntime.heartbeat.migratingIn?.length].every(Boolean), "Exact empty Shared replacement is unavailable");
+    const mounted = new Set(oldRuntime.heartbeat.mountedCustomers);
+    requireConflict([oldAssignments.length === expected.ownerCount, mounted.size === oldAssignments.length,
+        oldAssignments.every(row => row.uid !== owner.uid && row.state === "serving" && mounted.has(row.slug)),
+        !oldRuntime.heartbeat.migratingIn?.length, !tasks.some(task => task.slug === owner.slug || task.targetGatewayId === old),
+    ].every(Boolean), "Old Shared roster or pending transfer changed");
+    return oldAssignments.map(row => ({ uid: row.uid, slug: row.slug, epoch: row.epoch })).sort((a, b) => a.uid.localeCompare(b.uid));
+}
+export async function reserveNativeReturnTargetDrain(store, selection, expected, { actor, now, dryRun }) {
+    const old = selection.targetGatewayId;
+    const replacement = expected.replacementGatewayId;
+    requireConflict(actor && old !== replacement && typeof expected.oldPodUid === "string" && typeof expected.replacementPodUid === "string" &&
+        expected.oldPodUid !== expected.replacementPodUid && Number.isSafeInteger(expected.ownerCount) && expected.ownerCount > 0, "Exact Shared drain observation required");
+    return store.transaction({ label: "held-native-return.reserve-target-drain", readOnly: dryRun }, async (tx) => {
+        const { uid, op } = journalHold(await tx.journal.operations.get(selection.operationId), selection);
+        const exclusionId = nativeReturnTargetExclusionId(uid);
+        const prior = await tx.journal.audits.get(exclusionId);
+        if (prior) {
+            const drain = await readNativeReturnTargetDrain(tx, op);
+            const recorded = prior.target.reservation;
+            requireConflict(prior.actor === actor && drain && isDeepStrictEqual(recorded, { ...expected, selection, targetRelease: recorded?.targetRelease }), "A different target exclusion already exists");
+            return { exclusionId, operationId: drain.operationId, oldGatewayId: old, replacementGatewayId: replacement,
+                ownerCount: drain.owners.length, dormantInboundCount: drain.dormantInboundOperationIds.length };
+        }
+        const { slug, targetRelease } = await readHeldNativeReturnForTargetMaintenance(tx, selection);
+        const [owners, active, oldRoot] = await Promise.all([
+            readSharedDrainRoster(tx, old, expected, { uid, slug }, now), tx.journal.operations.listByStatus(["pending", "running"]),
+            tx.gateways.roots.get(old),
+        ]);
+        requireConflict(oldRoot?.desiredStatus === "running", "Old Shared gateway cannot enter the drain");
+        const inbound = active.filter(operation => operation.id !== selection.operationId && operation.input.toGatewayId === old);
+        requireConflict(inbound.every(operation => moveHasNotBegun(operation, old)), "A second inbound move already owns Shared state");
+        const drain = { operationId: selection.operationId, replacementGatewayId: replacement,
+            oldPodUid: expected.oldPodUid, replacementPodUid: expected.replacementPodUid,
+            owners, dormantInboundOperationIds: inbound.map(waiting => waiting.id).sort() };
+        const reservation = { ...expected, selection, targetRelease };
+        if (!dryRun) {
+            const audit = buildOperationAuditIntent({ actor, forced: false, what: "Allow Shared owners to move past a held Native return",
+                why: "Drain the old Shared gateway through ordinary migrations before compensating the held return",
+                mutation: { kind: NATIVE_RETURN_TARGET_EXCLUSION, operationId: selection.operationId },
+                target: { uid, targetGatewayId: old, drain, reservation }, preActionStatus: { placement: "quiescing" },
+                idempotencyKey: `${NATIVE_RETURN_TARGET_EXCLUSION}:${uid}`, now: () => now });
+            await tx.journal.audits.create({ ...audit.document, id: audit.id, status: "in-progress", lifecycleStage: "action-started",
+                actionClaimId: exclusionId, actionStartedAt: now, actionRecoveryCount: 0 });
+            await tx.gateways.roots.patch(old, { desiredStatus: "draining", updatedAt: now, updatedBy: actor }, { revision: oldRoot.revision });
+        }
+        return { exclusionId, operationId: drain.operationId, oldGatewayId: old, replacementGatewayId: replacement,
+            ownerCount: owners.length, dormantInboundCount: inbound.length };
+    });
+}
+export async function isNativeReturnDrainPairProtected(state, gatewayId, side) {
+    const scaler = await state.controllerState.sharedPoolScaler.get();
+    const pair = scaler?.replacements.find(pair => (side === "source" ? pair.sourceGatewayId : pair.targetGatewayId) === gatewayId);
+    if (!pair)
+        return false;
+    const operations = await state.journal.operations.listByGateway(pair.sourceGatewayId);
+    for (const operation of operations) {
+        if (operation.status !== "pending" || operation.input.toGatewayId !== pair.sourceGatewayId || !operation.schedulerHandoff?.forwardRecovery)
+            continue;
+        const drain = await readNativeReturnTargetDrain(state, operation);
+        if (drain?.replacementGatewayId === pair.targetGatewayId)
+            return true;
+    }
+    return false;
+}
+export async function readNativeReturnSharedDrains(state, active, now) {
+    const result = [];
+    const scaler = await state.controllerState.sharedPoolScaler.get();
+    for (const pair of scaler?.replacements ?? []) {
+        const oldGatewayId = pair.sourceGatewayId;
+        const replacementGatewayId = pair.targetGatewayId;
+        for (const operation of active) {
+            const handoff = operation.schedulerHandoff;
+            if (!handoff?.forwardRecovery || ![operation.status === "pending", operation.startedAt === null,
+                operation.input.toGatewayId === oldGatewayId, handoff.forwardRecovery.phase === "source-flushed"].every(Boolean))
+                continue;
+            const drain = await readNativeReturnTargetDrain(state, operation);
+            if (!drain || drain.replacementGatewayId !== replacementGatewayId)
+                continue;
+            const [old, peer] = await Promise.all([state.fleetRegistry.get(oldGatewayId), state.fleetRegistry.get(replacementGatewayId)]);
+            if (!sharedDrainPodMatches(old, drain.oldPodUid, now) || !sharedDrainPodMatches(peer, drain.replacementPodUid, now))
+                continue;
+            try {
+                const selection = { operationId: operation.id, sourceGatewayId: handoff.fromGatewayId, targetGatewayId: oldGatewayId,
+                    sourceEpoch: handoff.forwardRecovery.sourceEpoch, schedulerMigrationId: handoff.migrationId };
+                await holdingCustody(state, journalHold(operation, selection), undefined, { requireReady: true, allowDraining: true });
+            }
+            catch (error) {
+                if (!(error instanceof HeldNativeReturnConflict))
+                    throw error;
+                continue;
+            }
+            const supersedableInboundOperationIds = active.filter(waiting => drain.dormantInboundOperationIds.includes(waiting.id) &&
+                moveHasNotBegun(waiting, oldGatewayId)).map(waiting => waiting.id);
+            result.push({ operationId: drain.operationId, oldGatewayId, replacementGatewayId, supersedableInboundOperationIds });
+        }
+    }
+    return result;
+}
+export async function readHeldNativeReturnForRetiredTargetCompensation(state, selection) {
+    const hold = journalHold(await state.journal.operations.get(selection.operationId), selection);
+    const forward = hold.handoff.forwardRecovery;
+    const exclusionId = nativeReturnTargetExclusionId(hold.uid);
+    requireConflict(hold.op.status === "pending" && hold.op.startedAt === null && hold.op.completedAt === null &&
+        !forward.sourceReconcile && !forward.offlineSourceRecovery && !forward.sharedTargetImportHold && missingFingerprintAttempt(hold), "Retired Shared target has no original pending Native return");
+    const [drain, audit, retirement] = await Promise.all([
+        readNativeReturnTargetDrain(state, hold.op), state.journal.audits.get(exclusionId), readNativeOldTargetRetirement(state, selection.targetGatewayId),
+    ]);
+    const reservation = audit?.target.reservation;
+    requireConflict(drain && audit && retirement && reservation, "Exact Shared retirement after Native drain reservation is unavailable");
+    requireConflict(typeof audit.actionStartedAt === "number" && retirement.createdAt > audit.actionStartedAt &&
+        isDeepStrictEqual(selection, reservation.selection), "Shared retirement predates or differs from Native drain reservation");
+    requireConflict(typeof reservation.targetRelease === "number" && typeof reservation.oldPodUid === "string", "Native drain workload binding is unavailable");
+    const releases = await holdingCustody(state, hold, undefined, { retiredRelease: reservation.targetRelease });
+    return { ...releases, uid: hold.uid, slug: hold.slug, exclusionId, oldPodUid: reservation.oldPodUid, retirement };
+}
+function sharedDepartureRoute(candidate) {
+    if (![candidate.kind === "migrate-user", candidate.origin === "automatic", candidate.createdBy === "glm-controller-placement-policy",
+        candidate.input.source === "continuous-placement-policy"].every(Boolean))
+        return null;
+    const { uid, userSlug, fromGatewayId: old, toGatewayId: replacement } = candidate.input;
+    if (typeof uid !== "string" || typeof userSlug !== "string" || typeof old !== "string" || !old.startsWith("shared-") ||
+        typeof replacement !== "string" || !replacement.startsWith("shared-"))
+        return null;
+    return { uid, userSlug, old, replacement };
+}
+function departureAssignmentMatches(assignments, route, epoch, operationId) {
+    const assignment = assignments[0];
+    if (assignments.length !== 1 || !assignment || assignment.slug !== route.userSlug)
+        return false;
+    if (assignment.gatewayId === route.old) {
+        return assignment.epoch === epoch && (assignment.state === "serving" || assignment.updatedByOperationId === operationId);
+    }
+    return [assignment.gatewayId === route.replacement, assignment.epoch === epoch + 1, assignment.state === "serving",
+        assignment.updatedByOperationId === operationId].every(Boolean);
+}
+export async function nativeReturnAllowsSharedDeparture(state, candidate, pending, now) {
+    const route = sharedDepartureRoute(candidate);
+    if (!route)
+        return new Set();
+    const { uid, userSlug, old, replacement } = route;
+    for (const operation of pending) {
+        if (operation.input.toGatewayId !== old || operation.schedulerHandoff?.forwardRecovery?.phase !== "source-flushed")
+            continue;
+        const drain = await readNativeReturnTargetDrain(state, operation);
+        if (!drain || drain.replacementGatewayId !== replacement)
+            continue;
+        const enrollment = drain.owners.find(owner => owner.uid === uid && owner.slug === userSlug);
+        if (!enrollment)
+            continue;
+        const [oldRuntime, peerRuntime, scaler] = await Promise.all([
+            state.fleetRegistry.get(old), state.fleetRegistry.get(replacement), state.controllerState.sharedPoolScaler.get(),
+        ]);
+        if (!sharedDrainPodMatches(oldRuntime, drain.oldPodUid, now) || !sharedDrainPodMatches(peerRuntime, drain.replacementPodUid, now) ||
+            !scaler?.replacements.some(pair => pair.sourceGatewayId === old && pair.targetGatewayId === replacement))
+            continue;
+        const assignments = await state.gateways.assignments.listForUid(uid);
+        if (!departureAssignmentMatches(assignments, route, enrollment.epoch, candidate.id))
+            continue;
+        return new Set([operation.id, ...pending.filter(waiting => drain.dormantInboundOperationIds.includes(waiting.id) &&
+                moveHasNotBegun(waiting, old)).map(waiting => waiting.id)]);
+    }
+    return new Set();
 }
 export async function heldNativeReturnBlocksOwnerDestination(store, gatewayId, owner) {
     if (await nativeReturnTargetDenied(store, owner.uid, gatewayId))
