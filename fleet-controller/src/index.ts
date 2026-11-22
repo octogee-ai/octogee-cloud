@@ -1,3 +1,4 @@
+import type { CompensatingNativeReturnClaimGate } from "./lib/compensating-native-return.js";
 import { gatewayRetirementUninstaller, type GatewayRetirementUninstallPolicy } from "./lib/gateway-retirement-uninstaller.js";
 import {
   createSharedHeldReturnMaintenanceOperator, type SharedHeldReturnMaintenancePhysical,
@@ -535,6 +536,7 @@ interface ControllerDeps {
   handlers: OperationHandlers;
   heldNativeReturnRepairAvailable?: boolean;
   sharedHeldReturnMaintenance?: SharedHeldReturnMaintenanceAdmin;
+  assertCompensatingNativeReturnClaimable?: CompensatingNativeReturnClaimGate;
   observeHeldNativeStoppedOriginal?: HeldNativeOfflineSourceBackend["observeStoppedOriginal"];
   observeHeldNativeOriginalRestart?: HeldNativeOfflineSourceBackend["observeOriginalRestart"];
   requestNativeReturnSourceRecovery?: ReturnType<typeof createNativeReturnSourceRecoveryOwner>["request"];
@@ -2121,6 +2123,17 @@ async function allowOfflineMigrationWorkerClaim(tx: PlatformStateTransaction, op
   return true;
 }
 
+async function allowMigrationWorkerClaim(tx: PlatformStateTransaction, operation: Stored<OperationRecord>, deps: ControllerDeps): Promise<boolean> {
+  if (operation.input.compensatingNativeReturn !== undefined) {
+    if (!deps.assertCompensatingNativeReturnClaimable) return false;
+    await deps.assertCompensatingNativeReturnClaimable(tx, operation);
+    return true;
+  }
+  if (operation.schedulerHandoff?.forwardRecovery?.offlineSourceRecovery) return allowOfflineMigrationWorkerClaim(tx, operation, deps);
+  await assertMigrationRestartUnfenced(tx, operation.input);
+  return true;
+}
+
 async function queueOperationBehindHomeArchive(tx: PlatformStateTransaction, operation: Stored<OperationRecord>, archive: string) {
   const waitingOn = `home archive ${archive}`;
   if (operation.waitingOn !== waitingOn) await tx.journal.operations.patch(operation.id, { waitingOn });
@@ -2141,8 +2154,7 @@ async function attemptClaimOrQueueOperation(
       const freshOperation = operationFromRecord(stored);
       await assertOwnerOperationUnfenced(tx, op.id, freshOperation.input);
       if (freshOperation.kind === "migrate-user") {
-        if (!stored.schedulerHandoff?.forwardRecovery?.offlineSourceRecovery) await assertMigrationRestartUnfenced(tx, freshOperation.input);
-        else if (!(await allowOfflineMigrationWorkerClaim(tx, stored, deps))) return { outcome: "skipped" as const };
+        if (!(await allowMigrationWorkerClaim(tx, stored, deps))) return { outcome: "skipped" as const };
       }
       let runningOpsSameKind: OperationRef[] = [];
       let pendingOpsSameKind: PendingOperationRef[] = [];

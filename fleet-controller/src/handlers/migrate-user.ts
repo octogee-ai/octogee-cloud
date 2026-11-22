@@ -101,6 +101,7 @@ export interface MigrateUserDeps {
   reportMigrationProgress: (gatewayId: string, event: MigrationProgressRequestBody) => Promise<void>;
   recordMigrationProgress: (input: { operation: Operation; event: MigrationProgressRecord }) => Promise<void>;
   recoverNativeReturnSource?: OperationHandler;
+  recoverCompensatingNativeReturn?: OperationHandler;
   reconcileHeldNativeReturn?: (op: Operation, ctx: OperationContext) => Promise<SchedulerHandoffState>;
   reconcileHeldNativeOfflineReturn?: MigrateUserDeps["reconcileHeldNativeReturn"];
   recoverAbandonedNativeScheduler?: RecoverAbandonedNativeScheduler;
@@ -2572,10 +2573,20 @@ async function reconcileHeldNativeReturnIfRequested(deps: MigrateUserDeps, op: O
   return updated;
 }
 
+function recoverCompensatingNativeReturn(deps: MigrateUserDeps, op: Operation, ctx: OperationContext) {
+  if (!deps.recoverCompensatingNativeReturn) {
+    return failure("compensating Native return pending: status 503: independent exclusion provider is unavailable", false);
+  }
+  return deps.recoverCompensatingNativeReturn(op, ctx);
+}
+
 export function createMigrateUserHandler(deps: MigrateUserDeps): OperationHandler {
   return async (op: Operation, ctx: OperationContext): Promise<OperationResult> => {
     if (op.input.sourceTransferMode !== undefined && op.input.sourceTransferMode !== RETAINED_POD) throw new Error('unsupported source transfer mode');
     if (op.input.sourceTransferMode === RETAINED_POD && (!deps.observeSourceTransfer || (typeof op.input.fromGatewayId !== 'string' || !op.input.fromGatewayId.startsWith('shared-')))) throw new Error('retained source transfer requires a Shared source');
+    if (op.input.compensatingNativeReturn !== undefined) {
+      return recoverCompensatingNativeReturn(deps, op, ctx);
+    }
     if (op.input.recoverSourceOnly === true && op.input.nativeReturnSourceRecovery !== undefined) {
       if (!deps.recoverNativeReturnSource) throw new Error("native return source recovery owner is unavailable");
       return deps.recoverNativeReturnSource(op, ctx);
