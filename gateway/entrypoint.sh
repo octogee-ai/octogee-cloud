@@ -4,6 +4,10 @@ set -e
 . "${OCTOGEE_LIBEXEC_DIR:-/usr/local/libexec}/gateway-class-dual-read.sh"
 GATEWAY_CLASS_EFFECTIVE="$(dual_read_gateway_class "${GATEWAY_CLASS:-shared}")"
 
+if [ "$GATEWAY_CLASS_EFFECTIVE" = shared ] && { [ -e /etc/octogee/shared-maintenance-startup.json ] || [ -L /etc/octogee/shared-maintenance-startup.json ]; }; then
+  /octogee/scripts/node_modules/.bin/tsx /octogee/scripts/entrypoints/shared-maintenance-startup.ts
+fi
+
 if [ "$GATEWAY_CLASS_EFFECTIVE" = isolated ] && [ "${GATEWAY_COMPUTER_DESKTOP:-}" = x11 ] && [ "${OCTOGEE_X11_SESSION:-0}" != 1 ]; then
   if [ -n "${OCTOGEE_CHECKPOINT_SLOT_ID:-}" ]; then
     exec node /octogee/scripts/entrypoints/hobby-checkpoint-gate.mjs

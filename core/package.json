@@ -550,6 +550,10 @@
       "types": "./dist/project-blob-materialization.d.ts",
       "default": "./dist/project-blob-materialization.js"
     },
+    "./shared-maintenance-startup": {
+      "types": "./dist/shared-maintenance-startup.d.ts",
+      "default": "./dist/shared-maintenance-startup.js"
+    },
     "./shared-source-recovery": {
       "types": "./dist/shared-source-recovery.d.ts",
       "default": "./dist/shared-source-recovery.js"

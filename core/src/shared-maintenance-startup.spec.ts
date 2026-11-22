@@ -1,0 +1,73 @@
+import { generateKeyPairSync } from "node:crypto";
+import type { Server } from "node:http";
+import { expect, it, vi } from "vitest";
+import { signFleetRequest } from "./fleet-signature.js";
+import { allowSharedMaintenanceLaunch, runSharedMaintenanceStartup, type SharedMaintenanceStartupEnrollment } from "./shared-maintenance-startup.js";
+
+const keys = generateKeyPairSync("ed25519", {
+  publicKeyEncoding: { format: "pem", type: "spki" }, privateKeyEncoding: { format: "pem", type: "pkcs8" },
+});
+const scope = { namespace: "octogee-test", gatewayId: "fixture-shared", podUid: "fixture-pod",
+  attemptId: "fixture-attempt", buildId: "d".repeat(40), role: "gateway" } satisfies SharedMaintenanceStartupEnrollment;
+type Request = SharedMaintenanceStartupEnrollment & { nonce: string };
+const archive = "b".repeat(64);
+const issue = (request: Request, restoredArchiveSha256 = archive, expiresAt = Date.now() + 10_000) => {
+  const raw = JSON.stringify({ request, restoredArchiveSha256, observedImageId: "sha256:" + "d".repeat(64), expiresAt });
+  return { raw, signature: signFleetRequest(keys.privateKey, `shared-maintenance-startup/${request.attemptId}/${request.role}@${request.gatewayId}`, raw) };
+};
+function port(server: Server) {
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Fixture server did not open");
+  return address.port;
+}
+
+it("does not consult or replace readiness for a non-enrolled Shared role", async () => {
+  const launch = vi.fn(), read = vi.fn(), observeProbes = vi.fn();
+  await runSharedMaintenanceStartup({ enrollment: scope, local: { ...scope, gatewayId: "another-shared" },
+    publicKey: keys.publicKey, signal: new AbortController().signal, launch, read, observeProbes, onUnavailable: vi.fn() });
+  expect(launch).toHaveBeenCalledOnce();
+  expect(read).not.toHaveBeenCalled();
+  expect(observeProbes).not.toHaveBeenCalled();
+});
+
+it("rejects a signed release for a different pod, role, attempt nonce or archive", () => {
+  const request = { ...scope, nonce: "a".repeat(64) }, now = Date.now();
+  const validate = (proof: ReturnType<typeof issue>) => allowSharedMaintenanceLaunch({ request, proof, publicKey: keys.publicKey, now });
+  expect(validate(issue(request))).toBe(true);
+  expect(validate(issue({ ...request, podUid: "foreign" }))).toBe(false);
+  expect(validate(issue({ ...request, role: "gateway-edge" }))).toBe(false);
+  expect(validate(issue({ ...request, nonce: "f".repeat(64) }))).toBe(false);
+  expect(validate(issue(request, "not-restored"))).toBe(false);
+  expect(validate(issue(request, archive, now - 1))).toBe(false);
+});
+
+it.each(["gateway", "gateway-edge"] as const)("preserves only %s legacy probe behavior and launches only after a fresh gate", async role => {
+  const enrollment = { ...scope, role };
+  let release = false;
+  const launch = vi.fn();
+  const { promise: probes, resolve } = Promise.withResolvers<{ health: Server; readiness: Server | null }>();
+  const controller = new AbortController();
+  const pending = runSharedMaintenanceStartup({ enrollment, local: enrollment, publicKey: keys.publicKey, signal: controller.signal,
+    launch, observeProbes: (health, readiness) => resolve({ health, readiness }),
+    probePort: 0, readinessPort: 0, probeHost: "127.0.0.1", retryMs: 3,
+    async read(request) {
+      return release ? issue(request) : null;
+    },
+    onUnavailable() { throw new Error("Fixture should remain responsive"); },
+  });
+  try {
+    const { health, readiness } = await probes;
+    expect((await fetch(`http://127.0.0.1:${port(health)}${role === "gateway" ? "/healthz" : "/health"}`)).status).toBe(200);
+    expect((await fetch(`http://127.0.0.1:${port(health)}/workspace`)).status).toBe(503);
+    if (readiness) expect((await fetch(`http://127.0.0.1:${port(readiness)}/surge-ready`)).status).toBe(503);
+    expect(launch).not.toHaveBeenCalled();
+    release = true;
+    await pending;
+    expect(health.listening).toBe(false);
+    expect(readiness?.listening ?? false).toBe(false);
+    expect(launch).toHaveBeenCalledOnce();
+  } finally {
+    controller.abort();
+    await pending.catch(() => {});
+  }
+});
