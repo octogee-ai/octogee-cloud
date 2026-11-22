@@ -632,10 +632,12 @@ function compensationFixture() {
   const runtime = h.docs.get(runtimePath)!;
   h.docs.set(runtimePath, { ...runtime, vm: { ...runtime.vm as object, internalIp: "10.0.0.1" }, vmHome: home });
   const source = { internalIp: "10.0.0.1", instanceId: "1234", instanceName: "vm-owner", zone: "us-central1-a", bootDiskId: "10", homeDiskId: "11" };
+  const exactScope = { ...selection, uid, slug, exclusionId: "persistent-old-target-denial" };
+  const assertScope = (scope: unknown) => { expect(scope).toEqual(exactScope); };
   const provider = {
-    readOldTargetExclusion: vi.fn(async () => true),
-    verifyOldTargetExclusion: vi.fn(async () => {}),
-    observeOriginalSource: vi.fn(async () => source),
+    readOldTargetExclusion: vi.fn(async (_tx: unknown, scope: unknown) => { assertScope(scope); return true; }),
+    verifyOldTargetExclusion: vi.fn(async (scope: unknown) => { assertScope(scope); }),
+    observeOriginalSource: vi.fn(async (scope: unknown) => { assertScope(scope); return source; }),
   };
   const actions = {
     prepareSourceStores: vi.fn(async () => {}),

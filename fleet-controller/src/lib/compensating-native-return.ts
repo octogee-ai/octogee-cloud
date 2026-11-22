@@ -33,6 +33,11 @@ function requireRollback(ok: unknown, why: string): asserts ok {
   if (!ok) throw new Error(`Compensating Native return: ${why}`);
 }
 
+function oldTargetScope({ operationId, sourceGatewayId, targetGatewayId, sourceEpoch, schedulerMigrationId,
+  uid, slug, exclusionId }: OldTargetExclusionScope): OldTargetExclusionScope {
+  return { operationId, sourceGatewayId, targetGatewayId, sourceEpoch, schedulerMigrationId, uid, slug, exclusionId };
+}
+
 function exactSource(source: OriginalNativeProviderIdentity, runtime: Awaited<ReturnType<PlatformStateTransaction["fleetRegistry"]["get"]>>) {
   return runtime?.runtime === "gce-vm" && runtime.vm?.status === "RUNNING" &&
     runtime.vm.internalIp === source.internalIp && runtime.vm.instanceId === source.instanceId && runtime.vm.instanceName === source.instanceName && runtime.vm.zone === source.zone &&
@@ -112,7 +117,7 @@ export function createCompensatingNativeReturn(deps: Dependencies) {
       const current = await reserveAdmission(tx, request);
       requireRollback(isDeepStrictEqual(current.scope, admitted.scope) && current.operation.revision === admitted.operation.revision,
         "original return changed before reservation");
-      requireRollback(await provider.readOldTargetExclusion(tx, authority), "durable old target exclusion missing");
+      requireRollback(await provider.readOldTargetExclusion(tx, admitted.scope), "durable old target exclusion missing");
       await requireNoTargetWork(tx, authority);
       requireRollback(exactSource(source, await tx.fleetRegistry.get(authority.sourceGatewayId)), "original VM provider identity changed");
       const guard: Guard = { kind: COMPENSATING_NATIVE_RETURN, phase: "reserved", gatewayId: authority.sourceGatewayId,
@@ -148,8 +153,9 @@ export function createCompensatingNativeReturn(deps: Dependencies) {
         await ctx.assertActiveClaim!();
         const before = await current();
         requireRollback(!before.done, "rollback already completed");
-        await provider.verifyOldTargetExclusion(authority);
-        requireRollback(isDeepStrictEqual(await provider.observeOriginalSource(authority), authority.source),
+        const scope = oldTargetScope(authority);
+        await provider.verifyOldTargetExclusion(scope);
+        requireRollback(isDeepStrictEqual(await provider.observeOriginalSource(scope), authority.source),
           "original VM or attached disks changed");
         const after = await current();
         requireRollback(!after.done && isDeepStrictEqual(after.guard, before.guard) && after.operation.revision === before.operation.revision,
@@ -258,7 +264,7 @@ async function assertWorkerClaim(tx: PlatformStateTransaction, provider: Compens
     input.uid === uid, input.userSlug === slug, input.fromGatewayId === sourceGatewayId, input.toGatewayId === targetGatewayId,
     isDeepStrictEqual(input.compensatingNativeReturn, authority), audit.actionClaimId === attemptId].every(Boolean),
   "worker claim changed");
-  requireRollback(await provider.readOldTargetExclusion(tx, authority), "durable exclusion changed");
+  requireRollback(await provider.readOldTargetExclusion(tx, oldTargetScope(authority)), "durable exclusion changed");
 }
 
 async function releaseOriginalCheckpoint(tx: PlatformStateTransaction, authority: CompensatingNativeReturnAuthority, state: ActiveClaim) {
