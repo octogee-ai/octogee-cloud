@@ -3255,7 +3255,7 @@ function configureNativeReturnSupport(deps: Parameters<typeof buildHeldNativeRet
   offlineFactory?: ControllerProduct["heldNativeOfflineSource"];
   nativeRecoveryFactory?: ControllerProduct["nativeRecoveryComposition"];
 }) {
-  const composition = createNativeRecoveryComposition(environmentName, deps.store, Date.now,
+  const composition = createNativeRecoveryComposition(environmentName, NAMESPACE, deps.store, Date.now,
     environmentName === "test" ? deps.nativeRecoveryFactory?.(deps.store) : undefined);
   const offline = environmentName === "test" ? deps.offlineFactory?.(deps.store, {
     verifyDestination: heldNativeDestinationCustody(deps), fleetPrivateKey: deps.privateKey,

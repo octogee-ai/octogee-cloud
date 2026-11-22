@@ -8,12 +8,12 @@ const noStore = new Proxy({} as PlatformStateStore, {
 
 describe("native recovery product enrollment", () => {
   it("installs no worker or operator hooks without TEST enrollment", () => {
-    expect(createNativeRecoveryComposition("test", noStore, Date.now)).toBeUndefined();
-    expect(createNativeRecoveryComposition("test", noStore, Date.now, null)).toBeUndefined();
+    expect(createNativeRecoveryComposition("test", "fixture", noStore, Date.now)).toBeUndefined();
+    expect(createNativeRecoveryComposition("test", "fixture", noStore, Date.now, null)).toBeUndefined();
   });
 
   it("never reads enrollment in production", () => {
-    expect(createNativeRecoveryComposition("prod", noStore, Date.now, new Proxy({} as never, {
+    expect(createNativeRecoveryComposition("prod", "fixture", noStore, Date.now, new Proxy({} as never, {
       get() { throw new Error("production recovery touched TEST enrollment"); },
     }))).toBeUndefined();
   });

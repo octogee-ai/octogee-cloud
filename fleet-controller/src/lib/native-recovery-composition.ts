@@ -26,6 +26,7 @@ type NativeRecoveryOperatorActions = {
 
 export function createNativeRecoveryComposition(
   environment: string,
+  namespace: string,
   store: PlatformStateStore,
   now: () => number,
   enrolled?: NativeRecoveryComposition | null,
@@ -33,7 +34,7 @@ export function createNativeRecoveryComposition(
   if (environment !== "test" || !enrolled) return undefined;
   const target = createNativeReturnTargetExclusion({
     store, now,
-    provider: createNativeOldTargetPhysicalProvider({ ...enrolled.target, namespace: "octogee-test", store }),
+    provider: createNativeOldTargetPhysicalProvider({ ...enrolled.target, namespace, store }),
   });
   const compensation = createCompensatingNativeReturn({
     store, now, actions: createCompensatingNativeReturnActions(enrolled.source),
