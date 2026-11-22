@@ -2157,6 +2157,7 @@ async function attemptClaimOrQueueOperation(
             id: runningOperation.id,
             kind: runningOperation.kind,
             input: runningOperation.input,
+            schedulerHandoff: runningOperation.schedulerHandoff,
             userMigrationV2: runningOperation.userMigrationV2,
             cutoverCommittedAt: runningOperation.cutoverCommittedAt,
           }] : []);

@@ -34,6 +34,10 @@ async function readHeldWorkload(deps: Dependencies, bound: MaintenanceTarget) {
 }
 
 export async function transitionHeldSharedPod(deps: Dependencies, bound: MaintenanceTarget, direction: "install" | "rollback") {
+  await (await holdSharedMaintenanceImages(deps, bound, direction)).publishReady();
+}
+
+export async function holdSharedMaintenanceImages(deps: Dependencies, bound: MaintenanceTarget, direction: "install" | "rollback") {
   if (deps.environment !== "test") throw new Error("Shared held maintenance requires TEST");
   const { pod, workload } = await readHeldWorkload(deps, bound);
   const [from, to] = direction === "install" ? [bound.originalImages, bound.maintenanceImages] : [bound.maintenanceImages, bound.originalImages];
@@ -48,18 +52,20 @@ export async function transitionHeldSharedPod(deps: Dependencies, bound: Mainten
     await deps.assertCurrent();
     await json(deps, ["patch", "pod", bound.workload.podName, "--type=json", "-p", JSON.stringify(patch)]);
   }
-  const now = deps.now ?? Date.now, wait = deps.wait ?? delay;
-  const deadline = now() + 10 * 60_000;
-  while (now() < deadline) {
-    const observed = await readHeldWorkload(deps, bound);
-    if (recoveredPodReady(observed.pod, bound.workload, to)) {
-      await adoptRetainedSharedHelm(deps, workload, { gatewayId: bound.gatewayId, chart: deps.chart, installedChartFingerprint: bound.installedChartFingerprint, from, to }, assertHeld);
-      await resumeSourceRecoveryWorkload(deps, workload, to, assertHeld);
-      const resumed = await readHeldWorkload(deps, bound);
-      if (!recoveredPodReady(resumed.pod, bound.workload, to)) throw new Error("Retained Shared Pod lost readiness after Deployment resume");
-      return;
+  return { async publishReady() {
+    const now = deps.now ?? Date.now, wait = deps.wait ?? delay;
+    const deadline = now() + 10 * 60_000;
+    while (now() < deadline) {
+      const observed = await readHeldWorkload(deps, bound);
+      if (recoveredPodReady(observed.pod, bound.workload, to)) {
+        await adoptRetainedSharedHelm(deps, workload, { gatewayId: bound.gatewayId, chart: deps.chart, installedChartFingerprint: bound.installedChartFingerprint, from, to }, assertHeld);
+        await resumeSourceRecoveryWorkload(deps, workload, to, assertHeld);
+        const resumed = await readHeldWorkload(deps, bound);
+        if (!recoveredPodReady(resumed.pod, bound.workload, to)) throw new Error("Retained Shared Pod lost readiness after Deployment resume");
+        return;
+      }
+      await wait(2_000);
     }
-    await wait(2_000);
-  }
-  throw new Error("Retained Shared Pod did not become ready on both accepted role images");
+    throw new Error("Retained Shared Pod did not become ready on both accepted role images");
+  } };
 }

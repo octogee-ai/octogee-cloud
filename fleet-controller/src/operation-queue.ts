@@ -1,6 +1,6 @@
 import { hasUserActivationTargetRollback } from './user-activation-roll-recovery.js';
 import { isUserActivateOperationIdFor, isUserReturnOperationIdFor } from "@octogee/shared/types/isolated-operation-ids";
-import type { Operation } from "@octogee/shared/types/glm";
+import { readSchedulerMigrationIdentity, type Operation } from "@octogee/shared/types/glm";
 import { fleetOperationLockResources, serialFleetOperationsConflict, type RolloutLane } from "@octogee/core/fleet-operation-lock";
 import { PARKED_PREWARM_KIND } from "@octogee/core/isolated-gateway-lifecycle";
 import { MIGRATE_USER_KIND } from "./operation-kinds.js";
@@ -142,6 +142,34 @@ export function compareOperationQueueOrder(
 function postCutoverReturnBlocksRollout(rollout: OperationRef, returning: OperationRef): boolean {
   return rollout.kind === "rollout" && returning.kind === MIGRATE_USER_KIND &&
     typeof returning.cutoverCommittedAt === "number" && operationsConflict(rollout, returning);
+}
+
+function heldNativeReturnSource(operation: OperationRef): string | undefined {
+  if (operation.kind !== MIGRATE_USER_KIND || operation.cutoverCommittedAt !== undefined) return;
+  const source = inputString(operation.input, "fromGatewayId");
+  const handoff = operation.schedulerHandoff as Operation["schedulerHandoff"];
+  const recovery = handoff?.forwardRecovery;
+  if (source === undefined || !isUserReturnOperationIdFor(operation.id, source) ||
+      handoff?.fromGatewayId !== source || handoff.toGatewayId !== inputString(operation.input, "toGatewayId") ||
+      !readSchedulerMigrationIdentity(operation.id, handoff.migrationId)) return;
+  if (recovery?.schemaVersion === 1 && recovery.phase === "source-flushed") return source;
+}
+
+function vmRolloutGateway(operation: OperationRef): string | undefined {
+  if (operation.kind === "rollout" && operation.rolloutLane === "builder-vm") return inputString(operation.input, "gatewayId");
+}
+
+function pendingRolloutScope({ op, pendingOpsSameKind, runningOpsSameKind }: OperationClaimDecisionInput) {
+  const candidateGateway = vmRolloutGateway(op);
+  if (candidateGateway === undefined) return pendingOpsSameKind;
+  const heldSources = new Set([...runningOpsSameKind, ...pendingOpsSameKind].flatMap(operation => {
+    const source = heldNativeReturnSource(operation);
+    return source === undefined ? [] : [source];
+  }));
+  return pendingOpsSameKind.filter(pending => {
+    const gateway = vmRolloutGateway(pending);
+    return gateway === undefined || gateway === candidateGateway || !heldSources.has(gateway);
+  });
 }
 
 function isBackingOffReleasedOperation(pending: PendingOperationRef, now: number): boolean {
@@ -351,7 +379,7 @@ function findOlderPendingSameScope(
 export function decideOperationClaim(
   input: OperationClaimDecisionInput,
 ): OperationClaimDecision {
-  const { op, now, runningOpsSameKind, pendingOpsSameKind } = input;
+  const { op, now, runningOpsSameKind } = input;
   if (op.status !== "pending") return { outcome: "skip" };
   if (typeof op.nextAttemptAt === "number" && op.nextAttemptAt > now) {
     return { outcome: "skip" };
@@ -368,15 +396,16 @@ export function decideOperationClaim(
   }
   const runningConflict = findSerialConflict(op, runningOpsSameKind);
   if (runningConflict) return { outcome: "queue", waitingOn: runningConflict.waitingOn };
-  const postCutoverReturn = pendingOpsSameKind.find((pending) =>
+  const pendingInScope = pendingRolloutScope(input);
+  const postCutoverReturn = pendingInScope.find((pending) =>
     pending.id !== op.id && postCutoverReturnBlocksRollout(op, pending));
   if (postCutoverReturn) return { outcome: "queue", waitingOn: describeWaitingOn(postCutoverReturn) };
-  const eligibleRolls = eligibleOperatorPriorityRolls(input);
-  const activation = pendingOpsSameKind.find((pending) =>
+  const eligibleRolls = eligibleOperatorPriorityRolls({ ...input, pendingOpsSameKind: pendingInScope });
+  const activation = pendingInScope.find((pending) =>
     rolloutWaitsForUserActivation(op, pending) || placementMoveYieldsToUserActivation(op, pending) ||
     recoveryYieldsToTargetRoll(op, pending) || compatibilityWaitYieldsToRoll(op, pending) || unstartedReturnYieldsToOperatorRoll(op, pending, eligibleRolls));
   if (activation) return { outcome: "queue", waitingOn: describeWaitingOn(activation) };
-  const olderPending = findOlderPendingSameScope(op, pendingOpsSameKind, now, eligibleRolls);
+  const olderPending = findOlderPendingSameScope(op, pendingInScope, now, eligibleRolls);
   if (olderPending) return { outcome: "queue", waitingOn: olderPending.waitingOn };
   return { outcome: "claim" };
 }

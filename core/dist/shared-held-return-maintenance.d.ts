@@ -91,6 +91,29 @@ export type SharedHeldReturnMaintenanceCommand = {
     action: "status" | "hold-migration-policy" | "dispatch" | "stage" | "apply" | "rollback" | "withdraw" | "complete";
 } & ScopedMaintenance);
 export type SharedHeldReturnMaintenanceAdmin = (actor: string, command: SharedHeldReturnMaintenanceCommand, dryRun: boolean) => Promise<unknown>;
+export interface SharedInertMaintenancePriorProof {
+    attemptId: string;
+    podUid: string;
+    artifactSetId: string;
+    originalContainerIds: RoleImages;
+    ownerBackups: (RetainedOwner & {
+        restoredArchiveSha256: string;
+    })[];
+}
+export interface SharedInertMaintenanceCommonProof {
+    attemptId: string;
+    podUid: string;
+    artifactSetId: string;
+    originalContainerIds: RoleImages;
+    heldContainerIds: RoleImages;
+    observedImageIds: RoleImages;
+    ownerHomes: RetainedOwner[];
+    custodyGeneration: string;
+    restoredArchiveSha256: string;
+    writersHeldAt: number;
+    capturedAt: number;
+    restoredAt: number;
+}
 type Phase = "reserved" | "withdrawing" | "dispatched" | "rollback";
 export declare function assertSharedHeldReturnMaintenanceUnfenced(state: PlatformStateRepositories, operation: Pick<OperationRecord, "input" | "inputUid" | "gatewayId" | "schedulerHandoff">): Promise<void>;
 export declare function acquireSharedHeldReturnMaintenance(store: PlatformStateStore, deps: {
@@ -113,6 +136,11 @@ export declare function assertSharedHeldReturnMaintenance(store: PlatformStateSt
 export declare function readSharedHeldReturnMaintenanceDispatch(store: PlatformStateStore, claim: SharedHeldReturnMaintenanceClaim): Promise<SharedHeldReturnMaintenanceDispatch>;
 export declare function assertSharedHeldReturnMaintenanceReserved(store: PlatformStateStore, claim: SharedHeldReturnMaintenanceClaim): Promise<void>;
 export declare function advanceSharedHeldReturnMaintenance(store: PlatformStateStore, claim: SharedHeldReturnMaintenanceClaim, phase: "dispatched" | "rollback", now?: () => number, verifyDispatch?: () => Promise<void>): Promise<void>;
+export declare function authorizeSharedInertMaintenance(store: PlatformStateStore, claim: SharedHeldReturnMaintenanceClaim, readVerifiedPrior: (assertCurrent: () => Promise<void>) => Promise<SharedInertMaintenancePriorProof>, now?: () => number): Promise<void>;
+export declare function assertSharedInertPreLaunch(store: PlatformStateStore, claim: SharedHeldReturnMaintenanceClaim): Promise<SharedInertMaintenancePriorProof>;
+export declare function authorizeSharedInertStockLaunch(store: PlatformStateStore, claim: SharedHeldReturnMaintenanceClaim, readVerifiedCommon: (assertCurrent: () => Promise<void>) => Promise<SharedInertMaintenanceCommonProof>, now?: () => number): Promise<void>;
+export declare function readAuthorizedSharedInertStock(store: PlatformStateStore, claim: SharedHeldReturnMaintenanceClaim): Promise<SharedInertMaintenanceCommonProof>;
+export declare function rollbackSharedInertBeforeStock(store: PlatformStateStore, claim: SharedHeldReturnMaintenanceClaim, restoreAndVerifyOriginal: (assertCurrent: () => Promise<void>) => Promise<SharedHeldReturnMaintenanceResult>, now?: () => number): Promise<void>;
 export declare function stageSharedHeldReturnMaintenanceRelease(store: PlatformStateStore, claim: SharedHeldReturnMaintenanceClaim, now: () => number): Promise<number>;
 export declare function completeSharedHeldReturnMaintenance(store: PlatformStateStore, claim: SharedHeldReturnMaintenanceClaim, deps: {
     readVerifiedResult(): Promise<SharedHeldReturnMaintenanceResult>;
