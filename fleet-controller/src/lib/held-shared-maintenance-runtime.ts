@@ -1,16 +1,18 @@
 import { isDeepStrictEqual } from "node:util";
 import { setTimeout as delay } from "node:timers/promises";
-import type {
-  HeldNativeReturnSelection,
-  ObservedSharedMaintenanceHelm,
-  SharedHeldReturnMaintenanceClaim,
-  SharedHeldReturnMaintenancePlan,
-  SharedHeldReturnMaintenanceResult,
+import {
+  assertSharedHeldReturnMaintenance,
+  type HeldNativeReturnSelection,
+  type ObservedSharedMaintenanceHelm,
+  type SharedHeldReturnMaintenanceClaim,
+  type SharedHeldReturnMaintenancePlan,
+  type SharedHeldReturnMaintenanceResult,
 } from "@octogee/core/fleet-state";
 import type { PlatformStateStore } from "@octogee/core/platform-state";
 import type { HelmSubprocess } from "../helm-runner.js";
 import type { SurgeKubectl } from "../surge-user-handoff-runtime.js";
 import { computeChartFingerprint } from "../chart-fingerprint.js";
+import { createHeldNativeReturnDestinationVerifier } from "./held-native-return-destination.js";
 import { transitionHeldSharedPod } from "./held-shared-maintenance-images.js";
 import type { SharedHeldReturnMaintenancePhysical } from "./held-shared-maintenance-operator.js";
 import { createSharedHardwareObserver } from "./shared-maintenance-hardware.js";
@@ -25,13 +27,13 @@ export interface SharedMaintenanceEnrollment {
 interface Dependencies {
   environment: "test" | "prod";
   namespace: string;
+  privateKey: string;
   store: PlatformStateStore;
   runKubectl: SurgeKubectl;
   runHelm: HelmSubprocess;
   readEnrollment(selection: HeldNativeReturnSelection): Promise<SharedMaintenanceEnrollment>;
   verifyRollback(enrollment: SharedMaintenanceEnrollment, point: "admission" | "dispatch"): Promise<void>;
   verifyClosedMigrationIngress(enrollment: SharedMaintenanceEnrollment): Promise<void>;
-  verifyImportHold(claim: SharedHeldReturnMaintenanceClaim): Promise<void>;
   observeInstalledHelm(gatewayId: string): Promise<ObservedSharedMaintenanceHelm>;
   now?: () => number;
   wait?: (ms: number) => Promise<void>;
@@ -98,11 +100,24 @@ export function createSharedHeldReturnMaintenancePhysical(deps: Dependencies): S
     }
   }
 
+  async function verifyImportHold(claim: SharedHeldReturnMaintenanceClaim) {
+    const { selection } = claim.plan;
+    const operation = await deps.store.journal.operations.get(selection.operationId);
+    const slug = operation?.schedulerHandoff?.slug;
+    requireCustody(typeof slug === "string" && slug === operation?.input.userSlug,
+      "cannot bind the return owner to the destination witness");
+    const verify = createHeldNativeReturnDestinationVerifier({ ...deps, loopbackPodUid: claim.plan.workload.podUid });
+    await verify({ ...selection, slug }, async () => {
+      requireCustody(await assertSharedHeldReturnMaintenance(deps.store, claim) === "dispatched",
+        "lost authority to verify the retained owner import hold");
+    });
+  }
+
   async function result(claim: SharedHeldReturnMaintenanceClaim): Promise<SharedHeldReturnMaintenanceResult> {
     await enrolled(claim.plan.selection, claim.plan);
     const observed = await readHardware(claim.plan);
     const outcome = imageOutcome(claim.plan, observed);
-    if (outcome === "installed") await deps.verifyImportHold(claim);
+    if (outcome === "installed") await verifyImportHold(claim);
     await waitForCanonicalObservation(claim, observed.observedAt);
     return {
       attemptId: claim.attemptId, outcome, verifiedAt: observed.observedAt,
@@ -155,7 +170,7 @@ export function createSharedHeldReturnMaintenancePhysical(deps: Dependencies): S
     async restoreMigrationPolicy(claim, assertCurrent) {
       const binding = await enrolled(claim.plan.selection, claim.plan);
       const observed = await readHardware(claim.plan);
-      if (imageOutcome(claim.plan, observed) === "installed") await deps.verifyImportHold(claim);
+      if (imageOutcome(claim.plan, observed) === "installed") await verifyImportHold(claim);
       await migration.change(policyScope(binding, observed), binding.migrationPolicy, "restore", assertCurrent);
     },
     async readVerifiedWithdrawal(claim) {

@@ -208,6 +208,33 @@ it("requires a live scoped import denial from the same ready destination pod", a
   }
 });
 
+it("witnesses the exact held owner over retained Pod loopback while migration ingress is closed", async () => {
+  const { privateKey, publicKey } = FLEET_KEY_PAIR;
+  const pod = { name: "retained-shared", uid: "retained-uid" };
+  let observedUid = pod.uid;
+  const execute = vi.fn();
+  const verify = createHeldNativeReturnDestinationVerifier({
+    namespace: "test", privateKey, loopbackPodUid: pod.uid,
+    runKubectl: async (args, options) => {
+      if (args.includes("get")) return { code: 0, stderr: "", stdout: JSON.stringify({ items: [{
+        metadata: { ...pod, uid: observedUid },
+        status: { phase: "Running", podIP: "10.1.2.3", conditions: [{ type: "Ready", status: "True" }] },
+      }] }) };
+      execute(args);
+      const request = JSON.parse(options!.stdin!);
+      expect(request.path).toBe(`/target-import-hold/${targetGatewayId}`);
+      expect(verifyFleetRequest(publicKey, gatewayScopedJobId(schedulerMigrationId, targetGatewayId), request.body, request.signature)).toBe(true);
+      return { code: 0, stderr: "", stdout: JSON.stringify({ status: 200, proof: { ...JSON.parse(request.body), held: true } }) };
+    },
+  });
+  await verify({ ...selection, slug }, async () => {});
+  expect(execute).toHaveBeenCalledOnce();
+  expect(execute.mock.calls[0]?.[0].slice(0, 8)).toEqual(["-n", "test", "exec", "-i", pod.name, "-c", "gateway", "--"]);
+  observedUid = "different";
+  await expect(verify({ ...selection, slug }, async () => {})).rejects.toThrow(/exactly one ready pod/);
+  expect(execute).toHaveBeenCalledOnce();
+});
+
 function sharedMaintenanceFixture() {
   const t = fixture();
   t.docs.set(`gateways/${targetGatewayId}`, gatewayRoot(targetGatewayId, { liveRelease: 1 }));
@@ -441,6 +468,9 @@ it("does not restore the policy through withdrawal after dispatch", async () => 
 it("gives the reservation precedence over inbound and outbound queue claims, and retains it through verified rollback", async () => {
   const h = sharedMaintenanceFixture();
   const claim = await h.acquire();
+  const heldReturn = await h.store.journal.operations.get(operationId);
+  expect(heldNativeReturnBlocksDestination(heldReturn!, targetGatewayId)).toBe(true);
+  expect(heldNativeReturnBlocksDestination(heldReturn!, sourceGatewayId)).toBe(false);
   expect(await resumeSharedHeldReturnMaintenance(h.store, claim.gatewayId, claim.attemptId)).toEqual(claim);
   expect(await assertSharedHeldReturnMaintenance(h.store, claim)).toBe("reserved");
   for (const blocked of [operationId, h.outboundId]) {
@@ -484,6 +514,7 @@ it("gives the reservation precedence over inbound and outbound queue claims, and
   expect(await h.store.gateways.roots.get(targetGatewayId)).toMatchObject({ desiredRelease: 3, liveRelease: 3 });
   expect((await h.store.journal.audits.get(claim.auditId))?.status).toBe("completed");
   expect((await h.store.gateways.roots.get(targetGatewayId))?.runtimeRestartFence).toBeUndefined();
+  expect(heldNativeReturnBlocksDestination((await h.store.journal.operations.get(operationId))!, targetGatewayId)).toBe(false);
   expect((await h.store.journal.operations.get(operationId))?.status).toBe("pending");
   expect((await h.store.journal.operations.get(h.outboundId))?.status).toBe("pending");
 });
@@ -527,5 +558,9 @@ it("publishes the immutable retained Shared release from normal health plus obse
   expect(restoreMigrationPolicy).toHaveBeenCalledTimes(2);
   expect(await h.store.gateways.roots.get(targetGatewayId)).toMatchObject({ desiredRelease: 2, liveRelease: 2 });
   expect((await h.store.fleetRegistry.get(targetGatewayId))?.heartbeat.version).toBe("abcdef1");
-  expect((await h.store.journal.operations.get(operationId))?.status).toBe("pending");
+  const stillHeld = await h.store.journal.operations.get(operationId);
+  expect(stillHeld?.status).toBe("pending");
+  expect((await h.store.gateways.roots.get(targetGatewayId))?.runtimeRestartFence).toBeUndefined();
+  expect(heldNativeReturnBlocksDestination(stillHeld!, targetGatewayId)).toBe(true);
+  await expect(assertSharedHeldReturnMaintenanceUnfenced(h.store, stillHeld!)).rejects.toThrow(/offline source custody/);
 });

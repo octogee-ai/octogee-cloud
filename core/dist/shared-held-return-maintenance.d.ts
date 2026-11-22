@@ -92,7 +92,7 @@ export type SharedHeldReturnMaintenanceCommand = {
 } & ScopedMaintenance);
 export type SharedHeldReturnMaintenanceAdmin = (actor: string, command: SharedHeldReturnMaintenanceCommand, dryRun: boolean) => Promise<unknown>;
 type Phase = "reserved" | "withdrawing" | "dispatched" | "rollback";
-export declare function assertSharedHeldReturnMaintenanceUnfenced(state: PlatformStateRepositories, operation: Pick<OperationRecord, "input" | "inputUid" | "gatewayId">): Promise<void>;
+export declare function assertSharedHeldReturnMaintenanceUnfenced(state: PlatformStateRepositories, operation: Pick<OperationRecord, "input" | "inputUid" | "gatewayId" | "schedulerHandoff">): Promise<void>;
 export declare function acquireSharedHeldReturnMaintenance(store: PlatformStateStore, deps: {
     environment: "test" | "prod";
     actor: string;

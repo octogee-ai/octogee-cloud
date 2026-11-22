@@ -210,7 +210,7 @@ export function assertLegacySharedTransferIdle(
   ensure(
     value.rsyncProcesses === 0 &&
       value.temporaryEntries === 0 &&
-      isDeepStrictEqual(value.controlSockets, ["0A"]) &&
+      isDeepStrictEqual(value.controlSockets.filter((state) => state !== "06"), ["0A"]) &&
       isDeepStrictEqual(value.transferSockets, []),
     "cannot prove an idle original migration listener",
   );

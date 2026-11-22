@@ -123,6 +123,7 @@ it("reads the old member's actual socket, daemon and staging evidence before all
     transferSockets: [],
   };
   expect(() => assertLegacySharedTransferIdle(idle, { podUid, gatewayId })).not.toThrow();
+  expect(() => assertLegacySharedTransferIdle({ ...idle, controlSockets: ["0A", "06"] }, { podUid, gatewayId })).not.toThrow();
   for (const altered of [
     { podUid: "foreign" },
     { temporaryEntries: 1 },

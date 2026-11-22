@@ -1056,6 +1056,7 @@ export interface MigrationForwardRecovery {
   targetReleased?: true;
   sourceReconcile?: HeldNativeReturnRepair;
   offlineSourceRecovery?: HeldNativeOfflineSourceRecovery;
+  sharedTargetImportHold?: { gatewayId: string; maintenanceAttemptId: string };
 }
 
 export interface SchedulerHandoffState {

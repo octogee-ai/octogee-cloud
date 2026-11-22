@@ -117,8 +117,12 @@ async function holdingCustody(state, { op, handoff, uid, slug }, maintenance, ta
 }
 export async function readHeldNativeReturnForTargetMaintenance(state, selection, targetFence, maintenanceRelease) {
     const hold = journalHold(await state.journal.operations.get(selection.operationId), selection);
+    const targetImportHold = hold.handoff.forwardRecovery.sharedTargetImportHold;
     requireConflict(hold.op.status === "pending" && hold.op.startedAt === null && hold.op.completedAt === null &&
         !hold.handoff.forwardRecovery.sourceReconcile && hold.handoff.forwardRecovery.offlineSourceRecovery === undefined && missingFingerprintAttempt(hold), "Held Native return is not the original unclaimed missing-fingerprint checkpoint");
+    requireConflict(targetFence
+        ? targetImportHold?.gatewayId === selection.targetGatewayId && targetImportHold.maintenanceAttemptId === targetFence.attemptId
+        : targetImportHold === undefined, "Held Native return Shared import hold changed");
     const releases = await holdingCustody(state, hold, undefined, { fence: targetFence, requireReady: targetFence === undefined, release: maintenanceRelease });
     return { ...releases, uid: hold.uid, slug: hold.slug };
 }
@@ -132,6 +136,7 @@ export async function requestHeldNativeReturnRepair(store, selection, actor, now
         const hold = journalHold(await tx.journal.operations.get(selection.operationId), selection);
         const authority = { ...selection, uid: hold.uid, slug: hold.slug, requestId: id };
         requireConflict(!hold.handoff.forwardRecovery.offlineSourceRecovery, "Held Native return selected an offline source");
+        requireConflict(!hold.handoff.forwardRecovery.sharedTargetImportHold, "Held Native return requires offline custody for the retained Shared target");
         const previous = hold.handoff.forwardRecovery.sourceReconcile;
         if (previous?.requestId !== id) {
             requireConflict(!previous && hold.op.status === "pending" && hold.op.startedAt === null && hold.op.completedAt === null &&
@@ -338,6 +343,8 @@ export function heldNativeReturnBlocksDestination(op, gatewayId) {
     const forward = op.schedulerHandoff?.forwardRecovery;
     if (gatewayId !== op.input.toGatewayId && gatewayId !== op.schedulerHandoff?.toGatewayId)
         return false;
+    if (forward?.sharedTargetImportHold?.gatewayId === gatewayId)
+        return true;
     if (forward?.offlineSourceRecovery)
         return true;
     if (!forward?.sourceReconcile)

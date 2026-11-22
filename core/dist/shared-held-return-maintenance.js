@@ -68,10 +68,12 @@ export async function assertSharedHeldReturnMaintenanceUnfenced(state, operation
     const gateways = [...new Set([operation.gatewayId, input.gatewayId, input.fromGatewayId, input.toGatewayId,
             input.sourceGatewayId, input.targetGatewayId, owner?.gateway?.gatewayId]
             .filter((id) => typeof id === "string" && id !== "" && !id.includes("/")))];
-    if (!gateways.length)
-        return;
-    const roots = await state.gateways.roots.getMany(gateways);
-    requireMaintenance(![...roots.values()].some(root => root.runtimeRestartFence?.kind === SHARED_HELD_RETURN_MAINTENANCE), "Shared held return maintenance blocks this operation");
+    if (gateways.length) {
+        const roots = await state.gateways.roots.getMany(gateways);
+        requireMaintenance(![...roots.values()].some(root => root.runtimeRestartFence?.kind === SHARED_HELD_RETURN_MAINTENANCE), "Shared held return maintenance blocks this operation");
+    }
+    const forward = operation.schedulerHandoff?.forwardRecovery;
+    requireMaintenance(!forward?.sharedTargetImportHold || forward.offlineSourceRecovery?.phase === "stopped-original", "Shared maintenance holds the original return for offline source custody");
 }
 function isDocumentId(value) {
     return typeof value === "string" && value.length > 0 && !value.includes("/");
@@ -148,6 +150,21 @@ async function assertCrew(state, plan, guard) {
     const conflict = active.some(op => op.id !== selection.operationId && touchesScope(op, gatewayId, owners) && !canLeaveQueued(op, gatewayId, owners));
     requireMaintenance(!conflict, "Another operation holds the Shared maintenance gateway or an owner");
 }
+async function changeTargetImportHold(tx, claim, action) {
+    const { selection } = claim.plan;
+    const op = await tx.journal.operations.get(selection.operationId);
+    const handoff = op?.schedulerHandoff;
+    const forward = handoff?.forwardRecovery;
+    const hold = { gatewayId: selection.targetGatewayId, maintenanceAttemptId: claim.attemptId };
+    requireMaintenance(op && forward && handoff.toGatewayId === hold.gatewayId &&
+        (action === "hold" ? forward.sharedTargetImportHold === undefined : isDeepStrictEqual(forward.sharedTargetImportHold, hold)), "Shared maintenance cannot change a different target import hold");
+    const { sharedTargetImportHold: _hold, ...checkpoint } = forward;
+    await tx.journal.operations.patch(selection.operationId, {
+        schedulerHandoff: { ...handoff, forwardRecovery: {
+                ...checkpoint, ...(action === "hold" && { sharedTargetImportHold: hold }),
+            } },
+    }, { revision: op.revision, status: ["pending"] });
+}
 export async function acquireSharedHeldReturnMaintenance(store, deps) {
     requireMaintenance(deps.environment === "test" && deps.actor && /^[a-f0-9-]{36}$/.test(deps.attemptId), "Shared held return maintenance requires protected TEST operator authority");
     const admission = await deps.readVerifiedAdmission();
@@ -176,6 +193,7 @@ export async function acquireSharedHeldReturnMaintenance(store, deps) {
             startedAt: now, phase: "reserved", phaseStartedAt: now, maintenance: plan };
         await tx.journal.audits.create({ ...audit.document, id: audit.id, status: "in-progress", lifecycleStage: "action-started",
             actionClaimId: claim.attemptId, actionStartedAt: now, actionRecoveryCount: 0 });
+        await changeTargetImportHold(tx, claim, "hold");
         await tx.gateways.roots.compareAndSetRuntimeRestartFence(gatewayId, null, guard);
         return claim;
     });
@@ -373,6 +391,8 @@ export async function completeSharedHeldReturnMaintenance(store, claim, deps) {
             liveRelease: staged.release, updatedAt: clock, updatedBy: claim.attemptId,
         });
         const rolledBack = result.outcome === "rolled-back";
+        if (rolledBack)
+            await changeTargetImportHold(tx, claim, "restore");
         await tx.journal.audits.patch(claim.auditId, {
             status: "completed", lifecycleStage: rolledBack ? "action-partial" : "action-completed", completedAt: result.verifiedAt,
             outcome: rolledBack ? "partial" : "completed",
@@ -416,6 +436,7 @@ export async function withdrawSharedHeldReturnMaintenance(store, claim, deps) {
         assertRetainedHelm(guard, original.installed, payload, runtime.helm, now);
         const audit = await tx.journal.audits.get(claim.auditId);
         requireMaintenance(audit, "Shared maintenance withdrawal lost its audit");
+        await changeTargetImportHold(tx, claim, "restore");
         await tx.journal.audits.patch(claim.auditId, {
             status: "completed", lifecycleStage: "action-partial", completedAt: now, outcome: "partial",
             partialOutcome: { summary: "Shared maintenance withdrawn before image dispatch; original custody and migration policy verified" },
