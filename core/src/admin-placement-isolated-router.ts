@@ -13,6 +13,7 @@ import {
   checkUnreachableRecoveryFence,
   completeActivationLease,
   failActivationLease,
+  tryFailActivationLeaseAndPark,
   leaseOperationIdBelongs,
   recoverUnreachableIsolatedGateway,
   refreshRequestedAllocation,
@@ -498,6 +499,20 @@ function addLeaseVerbs({ deps, journal, lifecycle, verb }: IsolatedRoutes): void
       },
     });
   });
+
+  verb("/users/:uid/activation-lease/fail-and-park", parseFail, (req, input) => journal({
+    req,
+    what: "park isolated computer after activation rollback",
+    why: "the Shared source recovered from a failed activation before cutover",
+    target: { uid: input.uid, gatewayId: input.targetGatewayId },
+    preActionStatus: { leaseId: input.leaseId, generation: input.generation },
+    mutation: { kind: "fail-activation-lease-and-park", operationId: input.operationId },
+    dryRunRefusal: async () => await tryFailActivationLeaseAndPark(lifecycle, input, "plan") ? null : { parked: false },
+    action: async () => ({ parked: await tryFailActivationLeaseAndPark(lifecycle, input) }),
+    classifyResult: ({ parked }) => parked
+      ? { outcome: "completed" }
+      : { outcome: "failed", error: "isolated target does not have completed rollback custody" },
+  }));
 
   verb("/users/:uid/activation-lease/sizing-transition", parseSizingTransition, (req, input) => journal({
     req,

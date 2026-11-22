@@ -372,22 +372,25 @@ export async function failActivationLease(input, request, mode = "apply") {
         });
         if (mode === "plan")
             return;
-        await transaction.users.placementReceipts.create(request.uid, buildPlacementReceipt({
-            kind: "activation-failed",
-            uid: request.uid,
-            lease,
-            leaseId: request.leaseId,
-            generation: request.generation,
-            now,
-            overrides: {
-                wakeDurationMs: durationSince(readMillis(lease.requestedAt), now),
-                operationId: request.operationId,
-                retirementOperationId: placementRetireOperationId(request.uid, request.targetGatewayId, request.generation),
-                error: request.message,
-            },
-        }));
+        await recordActivationFailure(transaction, lease, request, now);
         await transaction.users.records.setActivationLease(request.uid, next, exactLeaseFence(lease, ["provisioning", "activating"]));
     });
+}
+export async function recordActivationFailure(transaction, lease, request, now, parked = false) {
+    await transaction.users.placementReceipts.create(request.uid, buildPlacementReceipt({
+        kind: "activation-failed",
+        uid: request.uid,
+        lease,
+        leaseId: request.leaseId,
+        generation: request.generation,
+        now,
+        overrides: {
+            wakeDurationMs: durationSince(readMillis(lease.requestedAt), now),
+            operationId: request.operationId,
+            retirementOperationId: parked ? null : placementRetireOperationId(request.uid, request.targetGatewayId, request.generation),
+            error: request.message,
+        },
+    }));
 }
 export function nextSizingKeyTransitionLease(user, sizingKey, request, now) {
     const lease = user.activationLease;

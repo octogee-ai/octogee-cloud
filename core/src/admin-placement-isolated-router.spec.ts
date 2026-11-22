@@ -258,6 +258,31 @@ describe("POST /users/:uid/activation-lease/complete", () => {
   });
 });
 
+describe("POST /users/:uid/activation-lease/fail-and-park", () => {
+  const failure = { leaseId: "lease-one", generation: 1, targetGatewayId: TARGET, message: "target prepare failed" };
+  const park = (query = "") => request(app()).post(`/users/${OWNER}/activation-lease/fail-and-park${query}`).send(failure);
+
+  it.each(["", "?dryRun=true"])("reports false without failing the lease while rollback is unproved (%s)", async query => {
+    seed({
+      [`users/${OWNER}`]: user("shared-blue", lease()),
+      [`gateways/${TARGET}`]: isolatedRoot({ desiredStatus: "running" }),
+      [`glmOperations/${ACTIVATION}`]: { ...migration({ uid: OWNER }), status: "failed", completedAt: 3 },
+    });
+    const response = await park(query).expect(200);
+    expect(response.body).toEqual({ parked: false });
+    expect(storedLease().status).toBe("activating");
+    expect(docs.get(`gateways/${TARGET}`)?.desiredStatus).toBe("running");
+    expect(receipts()).toEqual([]);
+  });
+
+  it("requires the external placement writer before attempting a rollback mutation", async () => {
+    seed({ [`users/${OWNER}`]: user("shared-blue", lease()) }, { placementAutomationOwner: "fleet-controller", placementAutomationYieldedAt: null });
+    await park().expect(409);
+    expect(storedLease().status).toBe("activating");
+    expect(receipts()).toEqual([]);
+  });
+});
+
 describe("POST /users/:uid/activation-lease/fail", () => {
   const fail = (body: Data) => request(app()).post(`/users/${OWNER}/activation-lease/fail`).send(body);
   const failure = { leaseId: "lease-one", generation: 1, targetGatewayId: TARGET, message: "target prepare failed" };

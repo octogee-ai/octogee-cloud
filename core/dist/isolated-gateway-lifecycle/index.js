@@ -10,3 +10,4 @@ export * from "./home-preparation.js";
 export * from "./prewarm.js";
 export * from "./home-backup-release.js";
 export { assertFailedHomeRestoreReleased } from "./home-archive-recovery.js";
+export { tryFailActivationLeaseAndPark } from "./rollback-park.js";

@@ -3,7 +3,7 @@ import { projectGatewayDesiredRootForGateway } from "@octogee/shared/types/gatew
 import { builderActivateOperationId } from "@octogee/shared/types/isolated-operation-ids";
 import { isSizingTier } from "@octogee/shared/types/sizing";
 import { GatewayRetirementConflictError } from "./gateway-retirement-claim.js";
-import { IsolatedGatewayFenceError, PLACEMENT_RETIREMENT_REASONS, advanceActivationLease, allocateIsolatedGateway, checkUnreachableRecoveryFence, completeActivationLease, failActivationLease, leaseOperationIdBelongs, recoverUnreachableIsolatedGateway, refreshRequestedAllocation, prepareIsolatedHome, requestSizingKeyTransition, requireStoredHomeReadiness, unauditedLifecycleMutations, retireOwnedIsolatedGateway, reparkOwnedGateway, } from "./isolated-gateway-lifecycle/index.js";
+import { IsolatedGatewayFenceError, PLACEMENT_RETIREMENT_REASONS, advanceActivationLease, allocateIsolatedGateway, checkUnreachableRecoveryFence, completeActivationLease, failActivationLease, tryFailActivationLeaseAndPark, leaseOperationIdBelongs, recoverUnreachableIsolatedGateway, refreshRequestedAllocation, prepareIsolatedHome, requestSizingKeyTransition, requireStoredHomeReadiness, unauditedLifecycleMutations, retireOwnedIsolatedGateway, reparkOwnedGateway, } from "./isolated-gateway-lifecycle/index.js";
 import { FleetMutationPartialError, FleetMutationRefusedError } from "./normal-fleet-mutation.js";
 import { assertClientOwnsPlacementAutomation, placementOwnerRefusalBody } from "./placement-automation-owner.js";
 import { PlacementPreconditionFailed } from "./placement-refusal.js";
@@ -437,6 +437,19 @@ function addLeaseVerbs({ deps, journal, lifecycle, verb }) {
             },
         });
     });
+    verb("/users/:uid/activation-lease/fail-and-park", parseFail, (req, input) => journal({
+        req,
+        what: "park isolated computer after activation rollback",
+        why: "the Shared source recovered from a failed activation before cutover",
+        target: { uid: input.uid, gatewayId: input.targetGatewayId },
+        preActionStatus: { leaseId: input.leaseId, generation: input.generation },
+        mutation: { kind: "fail-activation-lease-and-park", operationId: input.operationId },
+        dryRunRefusal: async () => await tryFailActivationLeaseAndPark(lifecycle, input, "plan") ? null : { parked: false },
+        action: async () => ({ parked: await tryFailActivationLeaseAndPark(lifecycle, input) }),
+        classifyResult: ({ parked }) => parked
+            ? { outcome: "completed" }
+            : { outcome: "failed", error: "isolated target does not have completed rollback custody" },
+    }));
     verb("/users/:uid/activation-lease/sizing-transition", parseSizingTransition, (req, input) => journal({
         req,
         what: "request user sizing transition",
