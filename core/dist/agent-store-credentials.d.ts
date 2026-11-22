@@ -1,3 +1,4 @@
+export type { HeldSharedDatabaseBarrier, HeldSharedDatabaseBinding, HeldSharedDatabaseWriterScope } from "./held-return-database-barrier.js";
 export type { HeldDatabaseWriterBinding, HeldDatabaseWriterScope } from "./held-return-database-barrier.js";
 export interface AgentStoreGatewayIdentity {
     gatewayId: string;
@@ -64,3 +65,4 @@ export declare function eraseUserAgentStores(adminDsn: string, user: {
     slug: string;
 }, custody: AgentStoreErasureCustody): Promise<void>;
 export declare function createHeldReturnDatabaseBarrier(adminDsn: string): import("./held-return-database-barrier.js").HeldReturnDatabaseBarrier;
+export declare function createHeldSharedDatabaseBarrier(adminDsn: string): import("./held-return-database-barrier.js").HeldSharedDatabaseBarrier;
