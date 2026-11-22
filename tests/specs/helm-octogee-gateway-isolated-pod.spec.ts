@@ -119,18 +119,21 @@ describe("charts/octogee-gateway/ — isolated gateway as a Kubernetes pod", () 
     }
   });
 
-  it("keeps live standby unready before claim and preserves the ordinary initializer", () => {
-    const values = { computerDesktop: "x11", "hobbyCheckpoint.slotId": ISOLATED_POD.gatewayId!,
+  it("keeps headless live standby unready before claim and preserves the ordinary initializer", () => {
+    const values = { computerDesktop: "none", "hobbyCheckpoint.slotId": ISOLATED_POD.gatewayId!,
       "hobbyCheckpoint.mode": "live", computeClass: "Balanced" };
     const { deployment, rendered } = renderDeployment(values);
     expect(rendered).not.toContain("podsnapshot.gke.io/ps-name");
+    expect(container(deployment, "gateway").command).toEqual(["node", "/octogee/scripts/entrypoints/hobby-checkpoint-gate.mjs"]);
+    expect(container(deployment, "gateway-edge").command).toBeUndefined();
+    expect(deployment.spec.template.spec.volumes.map(volume => volume.name)).not.toContain("desktop-runtime");
     expect(deployment.spec.template.spec.initContainers[0]?.name).toBe("fix-perms");
     expect(deployment.spec.template.spec.volumes).toContainEqual({ name: "data", emptyDir: { sizeLimit: "4Gi" } });
     expect(deployment.spec.template.spec.volumes).toContainEqual({ name: "checkpoint-owner", emptyDir: { sizeLimit: "1Mi" } });
     expect(rendered).toContain('dev.gvisor.spec.mount.checkpoint-owner.share: "pod"');
     for (const role of ["gateway", "gateway-edge"]) {
       const runtime = container(deployment, role);
-      expect(envOf(runtime)).toMatchObject({ OCTOGEE_CHECKPOINT_MODE: "live", OCTOGEE_CHECKPOINT_SNAPSHOT: "" });
+      expect(envOf(runtime)).toMatchObject({ OCTOGEE_CHECKPOINT_MODE: "live", OCTOGEE_CHECKPOINT_SNAPSHOT: "", GATEWAY_COMPUTER_DESKTOP: "none" });
       expect(envOf(runtime)).not.toHaveProperty("OPENCLAW_GATEWAY_TOKEN");
       expect(envOf(runtime)).not.toHaveProperty("OPENCLAW_AGENT_STORE_DSN");
       expect(runtime.volumeMounts).toContainEqual({ name: "checkpoint-owner", mountPath: "/var/run/octogee/checkpoint-owner" });
@@ -138,6 +141,7 @@ describe("charts/octogee-gateway/ — isolated gateway as a Kubernetes pod", () 
       expect(runtime).not.toHaveProperty("livenessProbe");
       expect(runtime).not.toHaveProperty("startupProbe");
     }
+    expect(renderFailure({ ...values, computerDesktop: "x11" })).toContain("live standby must be headless");
     expect(renderFailure({ ...values, "hobbyCheckpoint.restoreSnapshot": "foreign" })).toContain("cannot restore a snapshot");
   });
 
@@ -161,8 +165,22 @@ describe("charts/octogee-gateway/ — isolated gateway as a Kubernetes pod", () 
     expect(renderFailure({ ...cold, rollStrategy: "recreate" })).toContain("must use surge");
   });
 
+  it("surges a consumed headless slot with ordinary startup and no standby gate", () => {
+    const { deployment } = renderDeployment({ computerDesktop: "none", "hobbyCheckpoint.slotId": ISOLATED_POD.gatewayId!,
+      "hobbyCheckpoint.mode": "cold", "hobbyCheckpoint.releaseNumber": "2", rollStrategy: "surge" });
+    expect(deployment.spec.strategy).toEqual({ type: "RollingUpdate", rollingUpdate: { maxSurge: 1, maxUnavailable: 0 } });
+    expect(container(deployment, "gateway").command).toBeUndefined();
+    for (const role of ["gateway", "gateway-edge"]) {
+      const runtime = container(deployment, role);
+      expect(envOf(runtime)).toMatchObject({ GATEWAY_RUNTIME_KIND: "cluster", GATEWAY_COMPUTER_DESKTOP: "none" });
+      expect(envOf(runtime)).not.toHaveProperty("OCTOGEE_CHECKPOINT_SLOT_ID");
+      expect(envOf(runtime)).toHaveProperty("OPENCLAW_GATEWAY_TOKEN");
+    }
+  });
+
   it("rejects a checkpoint on an unrelated gateway and an x11 pod without a slot", () => {
-    expect(renderFailure({ computerDesktop: "x11", "hobbyCheckpoint.slotId": "different-slot" })).toContain("dedicated small graphical isolated");
+    expect(renderFailure({ computerDesktop: "x11", "hobbyCheckpoint.slotId": "different-slot" })).toContain("dedicated small isolated");
+    expect(renderFailure({ computerDesktop: "none", "hobbyCheckpoint.slotId": ISOLATED_POD.gatewayId! })).toContain("snapshot checkpoints require x11");
     expect(renderFailure({ computerDesktop: "x11" })).toContain("isolated pod gateway has no desktop");
   });
 
