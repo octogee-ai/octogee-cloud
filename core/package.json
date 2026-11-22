@@ -281,6 +281,10 @@
       "types": "./dist/fleet-signature.d.ts",
       "default": "./dist/fleet-signature.js"
     },
+    "./held-native-offline-protocol": {
+      "types": "./dist/held-native-offline-protocol.d.ts",
+      "default": "./dist/held-native-offline-protocol.js"
+    },
     "./gce-instance-identity": {
       "types": "./dist/gce-instance-identity.d.ts",
       "default": "./dist/gce-instance-identity.js"
