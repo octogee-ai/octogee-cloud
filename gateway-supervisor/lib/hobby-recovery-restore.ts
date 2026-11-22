@@ -72,8 +72,10 @@ async function restoreStaged(
   await rm(stage, { recursive: true, force: true });
 }
 
+type HomeLocation = { home: string; temporaryRoot: string };
+
 async function restoreLockedHobbyHome(
-  home: string, temporaryRoot: string, chunks: AsyncIterable<Buffer>,
+  { home, temporaryRoot }: HomeLocation, chunks: AsyncIterable<Buffer>,
   expected: ExpectedHome, dataKey: Buffer, assertSeal: () => Promise<void>,
 ) {
   await assertSeal();
@@ -115,8 +117,8 @@ async function restoreLockedHobbyHome(
 }
 
 export function restoreHobbyHome(
-  home: string, temporaryRoot: string, chunks: AsyncIterable<Buffer>,
+  location: HomeLocation, chunks: AsyncIterable<Buffer>,
   expected: ExpectedHome, dataKey: Buffer, assertSeal: () => Promise<void>,
 ) {
-  return withHomeMountLock(home, () => restoreLockedHobbyHome(home, temporaryRoot, chunks, expected, dataKey, assertSeal));
+  return withHomeMountLock(location.home, () => restoreLockedHobbyHome(location, chunks, expected, dataKey, assertSeal));
 }

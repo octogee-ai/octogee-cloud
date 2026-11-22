@@ -57,7 +57,7 @@ describe.skipIf(process.platform !== "linux")("staged rollback of a retained Hob
       const corrupted = Buffer.from(encrypted);
       corrupted[corrupted.length - 3] ^= 1;
       const restore = (bytes: Buffer, guard = async () => {}, expected = scope) =>
-        restoreHobbyHome(home, scratch, Readable.from([bytes]), expected, key, guard);
+        restoreHobbyHome({ home, temporaryRoot: scratch }, Readable.from([bytes]), expected, key, guard);
       await expect(restore(corrupted)).rejects.toThrow(/authenticate/);
       await expect(restore(encrypted, undefined, { ...scope, attemptId: "a".repeat(64) })).rejects.toThrow(/exact operation/);
       expect(await homeTarDigest(home)).toBe(failed);

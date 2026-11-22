@@ -46,7 +46,7 @@ try {
   const assertSeal = async () => { await assertRetainedHobbySeal(input.attemptId,"gateway"); };
   const archive = withFirst(first.value);
   const proof = input.restore
-    ? await restoreHobbyHome("/home/node", tmpdir(), archive, input satisfies ExpectedHome, key, assertSeal)
+    ? await restoreHobbyHome({ home: "/home/node", temporaryRoot: tmpdir() }, archive, input satisfies ExpectedHome, key, assertSeal)
     : await preflightRollback(archive, input, key, assertSeal);
   process.stdout.write(JSON.stringify(input.restore ? { ...proof, restored: true } : proof)+"\n");
 } finally {
