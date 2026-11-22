@@ -17,6 +17,8 @@ import type { KubectlSubprocess } from "./fleet-ingress.js";
 
 export interface HobbyCheckpointPod {
   slotId: string;
+  mode?: "cold";
+  releaseNumber?: number;
   restoreSnapshot?: string;
   zone: string;
   machineFamily: string;
@@ -551,6 +553,7 @@ function baseUpgradeArgs(opts: BuildUpgradeArgsOpts): string[] {
 
 function appendOptionalStringArgs(args: string[], opts: BuildUpgradeArgsOpts): void {
   for (const { option, key } of UPGRADE_STRING_OPTIONS) {
+    if (option === "rollStrategy" && opts.hobbyCheckpoint) continue;
     const value = opts[option];
     if (typeof value === "string" && value.length > 0) args.push(HELM_SET_STRING, `${key}=${value}`);
   }
@@ -601,7 +604,13 @@ function appendHobbyCheckpointArgs(args: string[], opts: BuildUpgradeArgsOpts): 
        !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(checkpoint.restoreSnapshot))) {
     throw new Error("Invalid Hobby checkpoint slot, snapshot or node");
   }
-  pushSetJson(args, "hobbyCheckpoint", { slotId: checkpoint.slotId, restoreSnapshot: checkpoint.restoreSnapshot });
+  if (checkpoint.mode === "cold") assertColdCheckpoint(checkpoint);
+  pushSetJson(args, "hobbyCheckpoint", {
+    slotId: checkpoint.slotId,
+    mode: checkpoint.mode,
+    restoreSnapshot: checkpoint.restoreSnapshot,
+    releaseNumber: checkpoint.releaseNumber,
+  });
   pushSetJson(args, "nodeSelector", {
     "topology.kubernetes.io/zone": checkpoint.zone,
     "supported-cpu-platform.cloud.google.com/Intel_Ice_Lake": "true",
@@ -611,8 +620,15 @@ function appendHobbyCheckpointArgs(args: string[], opts: BuildUpgradeArgsOpts): 
     HELM_SET_STRING, "runtimeClassName=gvisor",
     HELM_SET_STRING, "computerDesktop=x11",
     HELM_SET_STRING, "computeClass=Balanced",
-    HELM_SET_STRING, "rollStrategy=recreate",
+    HELM_SET_STRING, checkpoint.mode === "cold" ? "rollStrategy=surge" : "rollStrategy=recreate",
   );
+}
+
+function assertColdCheckpoint(checkpoint: HobbyCheckpointPod): void {
+  if (checkpoint.restoreSnapshot !== undefined) throw new Error("Cold checkpoint continuation cannot restore a snapshot");
+  if (!Number.isSafeInteger(checkpoint.releaseNumber) || (checkpoint.releaseNumber ?? 0) < 1) {
+    throw new Error("Cold checkpoint continuation requires the exact desired release number");
+  }
 }
 
 export function buildUpgradeArgs(opts: BuildUpgradeArgsOpts): string[] {

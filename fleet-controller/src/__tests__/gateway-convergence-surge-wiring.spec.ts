@@ -65,6 +65,27 @@ function passDeps(
 }
 
 describe("gateway convergence surge wiring", () => {
+  it.each([null, 1])("uses the configured isolated handoff for a checkpoint with live release %s", async liveRelease => {
+    const current = {
+      ...gateway(), gatewayId: "hobby-slot-aaaeff123456", gatewayClass: "isolated", imageProfile: "isolated",
+      ownerUid: "uid-builder", builderSlug: "builder", liveRelease,
+    } as DurableGateway;
+    const checkpoint = { slotId: current.gatewayId, zone: "us-central1-c", machineFamily: "n2" };
+    const reconcileSurgeHandoff = vi.fn(async () => ({ ready: false }));
+    await refineGatewayConvergenceAction({
+      passDeps: passDeps(reconcileSurgeHandoff, current), gateway: current, artifact: { ...artifact, profileImages: { isolated: { imageRepository: userRepository, imageTag: artifact.imageTag } } },
+      runtime: runtime(artifact.imageTag), helmObserved: null, action: { kind: "steady" },
+      desiredOpts: { hobbyCheckpoint: liveRelease === null ? { ...checkpoint, restoreSnapshot: "fixture" } : { ...checkpoint, mode: "cold" } },
+    });
+    expect(reconcileSurgeHandoff).toHaveBeenCalledWith(expect.objectContaining({
+      gatewayId: current.gatewayId,
+      isolatedGateway: true,
+      requiresUserMigration: liveRelease !== null,
+      ownerlessOperatorPrewarm: false,
+      ...(liveRelease !== null ? { desiredCheckpointRelease: current.desiredRelease } : {}),
+    }));
+  });
+
   it("rechecks an initial disposable isolated prelaunch after an unavailable poll", async () => {
     const prelaunch = {
       ...gateway(),

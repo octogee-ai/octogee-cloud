@@ -41,8 +41,9 @@ interface Volume {
 
 interface Deployment {
   spec: {
-    strategy: { type: string };
+    strategy: { type: string; rollingUpdate?: { maxSurge: number; maxUnavailable: number } };
     template: {
+      metadata?: { labels?: Record<string, string>; annotations?: Record<string, string> };
       spec: {
         nodeSelector?: Record<string, string>;
         initContainers: Container[];
@@ -116,6 +117,26 @@ describe("charts/octogee-gateway/ — isolated gateway as a Kubernetes pod", () 
       }
       expect(envOf(deployment.spec.template.spec.initContainers[0]!)).toEqual({});
     }
+  });
+
+  it("surges a consumed graphical slot as an ordinary durable, authenticated Pod without its old snapshot", () => {
+    const cold = { computerDesktop: "x11", "hobbyCheckpoint.slotId": ISOLATED_POD.gatewayId!,
+      "hobbyCheckpoint.mode": "cold", "hobbyCheckpoint.releaseNumber": "2", rollStrategy: "surge" };
+    const { deployment, rendered } = renderDeployment(cold);
+    expect(deployment.spec.strategy).toEqual({ type: "RollingUpdate", rollingUpdate: { maxSurge: 1, maxUnavailable: 0 } });
+    expect(deployment.spec.template.spec.volumes).toContainEqual({ name: "data", emptyDir: { sizeLimit: "4Gi" } });
+    expect(rendered).not.toContain("podsnapshot.gke.io/ps-name");
+    expect(deployment.spec.template.metadata?.labels).not.toHaveProperty("octogee-hobby-checkpoint-slot");
+    expect(deployment.spec.template.metadata?.labels?.["octogee.ai/checkpoint-release"]).toBe("2");
+    expect(deployment.spec.template.spec.volumes.map(volume => volume.name)).not.toContain("checkpoint-claim");
+    for (const role of ["gateway", "gateway-edge"]) {
+      const runtime = container(deployment, role);
+      expect(runtime.env?.map(entry => entry.name)).toEqual(expect.arrayContaining(["OPENCLAW_GATEWAY_TOKEN", "OPENCLAW_AGENT_STORE_DSN"]));
+      expect(envOf(runtime)).toMatchObject({ GATEWAY_RUNTIME_KIND: "cluster", GATEWAY_COMPUTER_DESKTOP: "x11" });
+      expect(envOf(runtime)).not.toHaveProperty("OCTOGEE_CHECKPOINT_SLOT_ID");
+    }
+    expect(renderFailure({ ...cold, "hobbyCheckpoint.restoreSnapshot": "spent" })).toContain("cannot restore a snapshot");
+    expect(renderFailure({ ...cold, rollStrategy: "recreate" })).toContain("must use surge");
   });
 
   it("rejects a checkpoint on an unrelated gateway and an x11 pod without a slot", () => {

@@ -36,6 +36,7 @@ interface PodList {
       uid?: string;
       name?: string;
       deletionTimestamp?: string;
+      labels?: Record<string, string>;
     };
     spec?: { containers?: Array<{ name?: string; image?: string }> };
     status?: {
@@ -69,12 +70,19 @@ function surgePodImage(item: NonNullable<PodList['items']>[number]): { image?: s
   return image ? { image } : {};
 }
 
+function surgePodCheckpointRelease(label: string | undefined): { checkpointRelease?: number } {
+  const checkpointRelease = Number(label);
+  return Number.isSafeInteger(checkpointRelease) && checkpointRelease > 0 && String(checkpointRelease) === label
+    ? { checkpointRelease }
+    : {};
+}
+
 export function parseSurgePodSnapshot(raw: string): SurgePodSnapshot {
   const parsed = JSON.parse(raw) as PodList;
   const observedPodUids: string[] = [];
   const pods: SurgePod[] = [];
   for (const item of parsed.items ?? []) {
-    const { uid, name, deletionTimestamp } = item.metadata ?? {};
+    const { uid, name, deletionTimestamp, labels } = item.metadata ?? {};
     const { phase, podIP, conditions, containerStatuses } = item.status ?? {};
     if (uid) observedPodUids.push(uid);
     if (phase !== "Running" || !uid || !name || !podIP) continue;
@@ -83,6 +91,7 @@ export function parseSurgePodSnapshot(raw: string): SurgePodSnapshot {
       name,
       podIP,
       ...surgePodImage(item),
+      ...surgePodCheckpointRelease(labels?.["octogee.ai/checkpoint-release"]),
       ready: (conditions ?? []).some((condition) =>
         condition.type === "Ready" && condition.status === "True"),
       terminating: Boolean(deletionTimestamp),

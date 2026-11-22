@@ -953,6 +953,7 @@ function reconcileGatewaySurgeHandoff(input: {
   pendingArtifact: ReleasePayload | null;
   helmObserved: ObservedHelmInstance | null;
   prelaunchRefresh: boolean;
+  hobbyCheckpoint?: HobbyCheckpointPod;
 }): Promise<SurgeUserHandoffResult> {
   const {
     passDeps,
@@ -973,7 +974,8 @@ function reconcileGatewaySurgeHandoff(input: {
     gatewayId: gateway.gatewayId,
     desiredImageTag: desiredImage.imageTag,
     requiresUserMigration: !input.prelaunchRefresh && requiresSurgeUserMigration(gateway),
-    isolatedGateway: isIsolatedGateway(gateway),
+    isolatedGateway: isIsolatedGateway(gateway) || (gateway.gatewayClass === "isolated" && input.hobbyCheckpoint?.slotId === gateway.gatewayId),
+    ...(input.hobbyCheckpoint?.mode === "cold" ? { desiredCheckpointRelease: gateway.desiredRelease } : {}),
     ownerlessOperatorPrewarm: false,
     ...(supersedingImageTag ? { supersedingImageTag } : {}),
   });
@@ -1020,6 +1022,7 @@ export async function refineGatewayConvergenceAction(input: {
   helmObserved: ObservedHelmInstance | null;
   desiredChartFingerprint?: string;
   desiredDeploymentIntentFingerprint?: string;
+  desiredOpts?: Pick<GatewayUpsertOpts, "hobbyCheckpoint"> | null;
   action: GatewayConvergenceAction;
 }): Promise<GatewayConvergenceAction> {
   const {
@@ -1050,6 +1053,7 @@ export async function refineGatewayConvergenceAction(input: {
     pendingArtifact,
     helmObserved,
     prelaunchRefresh,
+    hobbyCheckpoint: input.desiredOpts?.hobbyCheckpoint,
   });
   if (prelaunchRefresh && handoff.prelaunchHeld) {
     return { kind: "mark-live", prelaunchRefresh: true };
@@ -1209,6 +1213,7 @@ async function convergeAvailableGateway(
     helmObserved,
     desiredChartFingerprint,
     desiredDeploymentIntentFingerprint,
+    desiredOpts,
     action: initialAction,
   });
   switch (action.kind) {
@@ -1317,7 +1322,7 @@ async function upsertGateway(
   await ensureGatewayPodHome(passDeps, { gateway, isolatedPod, desiredOpts, replicas });
   await helm.upsertInstance({
     ...desiredOpts,
-    ...(isolatedPod ? { rollStrategy: "recreate" as const } : {}),
+    ...(isolatedPod && !desiredOpts.hobbyCheckpoint ? { rollStrategy: "recreate" as const } : {}),
     ...(runtimeKind === "gce-vm" && replicas === 0 ? { deferVmPause: true } : {}),
     ...runtimeUserIdentity(gateway),
   });
@@ -1450,6 +1455,9 @@ async function prepareDesiredGatewayIntent(input: {
   if (!artifact || gateway.desiredStatus === "retired") return null;
   const prepared = await passDeps.prepareGatewayConfig(gateway);
   const hobbyCheckpoint = await passDeps.resolveHobbyCheckpointPod?.({ store: passDeps.store, gateway, artifact });
+  if (hobbyCheckpoint?.mode === "cold" && gateway.liveRelease === null) {
+    throw new Error(`Cannot continue checkpoint ${gateway.gatewayId} before its first live release`);
+  }
   const opts = gatewayUpsertOptsFromRelease({
     namespace: NAMESPACE,
     gateway: prepared,

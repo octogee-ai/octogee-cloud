@@ -1084,6 +1084,25 @@ describe("gateway convergence pass outcomes", () => {
     expect(h.upserted("ordinary")).not.toHaveProperty("hobbyCheckpoint");
   });
 
+  it.each([null, 1])("requires an earlier live checkpoint release before a diskless cold surge: %s", async liveRelease => {
+    const id = "hobby-slot-aaaeff123456";
+    const roots = { [id]: durableRoot({ gatewayId: id, gatewayClass: "isolated", profile: null, imageProfile: "isolated",
+      sizingTier: "s", ownerUid: "u", builderSlug: "alice", liveRelease }) };
+    const h = isolatedPodPass(roots, {}, { pod: POD_PROFILE });
+    const checkpoint = { slotId: id, mode: "cold", zone: "us-central1-c", machineFamily: "n2", releaseNumber: 99 } as const;
+    const pass = runGatewayConvergencePass({ ...h.deps, resolveHobbyCheckpointPod: async () => checkpoint });
+    if (liveRelease === null) {
+      await expect(pass).rejects.toThrow("before its first live release");
+      expect(h.upserted(id)).toBeUndefined();
+    } else {
+      await pass;
+      expect(h.upserted(id)).toMatchObject({
+        hobbyCheckpoint: { ...checkpoint, releaseNumber: 2 }, waitForReady: false, rollStrategy: "surge",
+      });
+    }
+    expect(h.ensureIsolatedPodHome).not.toHaveBeenCalled();
+  });
+
   it("neither claims nor checks a pod gateway's home once its runtime mutation stops being allowed during the pass", async () => {
     const roots: Record<string, Record<string, unknown>> = {
       pod: durableRoot({ gatewayId: "pod", gatewayClass: "isolated", profile: null, imageProfile: "isolated", sizingTier: "s", ownerUid: "u", builderSlug: "alice", liveRelease: null }),

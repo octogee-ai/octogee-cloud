@@ -9,20 +9,33 @@
 {{- $checkpoint := .Values.hobbyCheckpoint | default dict -}}
 {{- $checkpointSlot := $checkpoint.slotId | default "" -}}
 {{- $checkpointSnapshot := $checkpoint.restoreSnapshot | default "" -}}
-{{- $checkpointPreparing := and $checkpointSlot (not $checkpointSnapshot) -}}
+{{- $checkpointMode := $checkpoint.mode | default "" -}}
+{{- $checkpointCold := eq $checkpointMode "cold" -}}
+{{- $checkpointReleaseNumber := $checkpoint.releaseNumber | default 0 | toString -}}
+{{- $checkpointSealed := and $checkpointSlot (not $checkpointCold) -}}
+{{- $checkpointPreparing := and $checkpointSealed (not $checkpointSnapshot) -}}
 {{- $computerDesktop := include "octogee-gateway.computerDesktop" . -}}
 {{- $x11Desktop := and $isolatedClass (eq $computerDesktop "x11") -}}
 {{- $vmRuntime := eq (.Values.runtimeKind | default "cluster") "gce-vm" -}}
 {{- $vmIsolated := and $isolatedClass $vmRuntime -}}
 {{- $isolatedPod := and $isolatedClass (not $vmRuntime) -}}
-{{- if and $checkpointSnapshot (not $checkpointSlot) -}}
+{{- if and (or $checkpointSnapshot $checkpointMode) (not $checkpointSlot) -}}
 {{- fail "octogee-gateway: a restored checkpoint requires its own slot" -}}
+{{- end -}}
+{{- if and $checkpointMode (not $checkpointCold) -}}
+{{- fail "octogee-gateway: unsupported checkpoint continuation mode" -}}
+{{- end -}}
+{{- if and $checkpointCold $checkpointSnapshot -}}
+{{- fail "octogee-gateway: a cold checkpoint continuation cannot restore a snapshot" -}}
+{{- end -}}
+{{- if and $checkpointCold (not (regexMatch "^[1-9][0-9]*$" $checkpointReleaseNumber)) -}}
+{{- fail "octogee-gateway: cold checkpoint continuation requires the exact desired release number" -}}
 {{- end -}}
 {{- if and $checkpointSlot (not (and $isolatedPod $x11Desktop (eq $tier "s") (eq $checkpointSlot .Values.gatewayId) (eq .Values.runtimeClassName "gvisor") .Values.gatewayEdge.enabled)) -}}
 {{- fail "octogee-gateway: checkpoint requires a dedicated small graphical isolated gVisor gateway and edge" -}}
 {{- end -}}
 
-{{- if and $checkpointSlot (or (hasKey .Values.gatewayEdge.env "OPENCLAW_GATEWAY_TOKEN") (hasKey .Values.gatewayEdge.env "OPENCLAW_AGENT_STORE_DSN")) -}}
+{{- if and $checkpointSealed (or (hasKey .Values.gatewayEdge.env "OPENCLAW_GATEWAY_TOKEN") (hasKey .Values.gatewayEdge.env "OPENCLAW_AGENT_STORE_DSN")) -}}
 {{- fail "octogee-gateway: checkpoint edge credentials must be published after restore" -}}
 {{- end -}}
 {{- $isolatedPodNodeSelector := dict -}}
@@ -31,7 +44,10 @@
 {{- fail (printf "octogee-gateway: isolated pod gateway has no desktop; computerDesktop=%s renders only as a GCE VM bundle (runtimeKind=gce-vm)" $computerDesktop) -}}
 {{- end -}}
 {{- $podRollStrategy := .Values.rollStrategy | default "recreate" -}}
-{{- if ne $podRollStrategy "recreate" -}}
+{{- if and $checkpointCold (ne $podRollStrategy "surge") -}}
+{{- fail "octogee-gateway: a cold checkpoint continuation must use surge" -}}
+{{- end -}}
+{{- if and (not $checkpointCold) (ne $podRollStrategy "recreate") -}}
 {{- fail (printf "octogee-gateway: isolated pod gateway %s mounts one home claim; rollStrategy must be recreate, not %s" .Values.gatewayId $podRollStrategy) -}}
 {{- end -}}
 {{- $operatorArch := index (.Values.nodeSelector | default dict) "kubernetes.io/arch" | default "amd64" -}}
@@ -91,8 +107,11 @@ spec:
         podsnapshot.gke.io/ps-name: {{ $checkpointSnapshot | quote }}
       {{- end }}
       labels:
-        {{- if $checkpointSlot }}
+        {{- if $checkpointSealed }}
         octogee-hobby-checkpoint-slot: {{ $checkpointSlot | quote }}
+        {{- end }}
+        {{- if $checkpointCold }}
+        octogee.ai/checkpoint-release: {{ $checkpointReleaseNumber | quote }}
         {{- end }}
         app: octogee-gateway
         gateway-id: {{ .Values.gatewayId }}
@@ -198,7 +217,7 @@ spec:
                 {{- end }}
                 install -m 0500 /octogee/scripts/secret-resolver.mjs /octogee-secret-resolver/secret-resolver.mjs
               '
-          {{- if not $checkpointSlot }}
+          {{- if not $checkpointSealed }}
           env:
             {{- if $vmIsolated }}
             - name: GATEWAY_ID
@@ -335,7 +354,7 @@ spec:
               value: {{ .Values.env.agentPrefix | quote }}
             - name: GATEWAY_ID
               value: {{ .Values.gatewayId | quote }}
-            {{- if $checkpointSlot }}
+            {{- if $checkpointSealed }}
             - name: OCTOGEE_CHECKPOINT_SLOT_ID
               value: {{ $checkpointSlot | quote }}
             - name: OCTOGEE_CHECKPOINT_SNAPSHOT
@@ -475,7 +494,7 @@ spec:
             # container env block for the rationale). Pinned via the chart
             # so kubectl-set-env side-channels can't drift the value out
             # from under helm again.
-            {{- if not $checkpointSlot }}
+            {{- if not $checkpointSealed }}
             - name: OPENCLAW_AGENT_STORE_DSN
               valueFrom:
                 secretKeyRef:
@@ -488,7 +507,7 @@ spec:
                   key: token
             {{- end }}
           volumeMounts:
-            {{- if $checkpointSlot }}
+            {{- if $checkpointSealed }}
             - name: checkpoint-claim
               mountPath: /var/run/octogee/checkpoint-claim
               readOnly: true
@@ -618,7 +637,7 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
-            {{- if $checkpointSlot }}
+            {{- if $checkpointSealed }}
             - name: POD_UID
               valueFrom:
                 fieldRef:
@@ -648,7 +667,7 @@ spec:
             {{- end }}
             - name: GATEWAY_ID
               value: {{ .Values.gatewayId | quote }}
-            {{- if $checkpointSlot }}
+            {{- if $checkpointSealed }}
             - name: OCTOGEE_CHECKPOINT_SLOT_ID
               value: {{ $checkpointSlot | quote }}
             - name: OCTOGEE_CHECKPOINT_SNAPSHOT
@@ -732,7 +751,7 @@ spec:
             # init container env block for the rationale). chat-proxy is
             # folded into this container and needs the same token openclaw
             # uses for its in-pod RPC.
-            {{- if not $checkpointSlot }}
+            {{- if not $checkpointSealed }}
             - name: OPENCLAW_AGENT_STORE_DSN
               valueFrom:
                 secretKeyRef:
@@ -762,7 +781,7 @@ spec:
           resources:
             {{- toYaml .Values.gatewayEdge.resources | nindent 12 }}
           volumeMounts:
-            {{- if $checkpointSlot }}
+            {{- if $checkpointSealed }}
             - name: checkpoint-claim
               mountPath: /var/run/octogee/checkpoint-claim
               readOnly: true
@@ -829,7 +848,7 @@ spec:
           {{- end }}
         {{- end }}
       volumes:
-        {{- if $checkpointSlot }}
+        {{- if $checkpointSealed }}
         - name: checkpoint-claim
           configMap:
             name: hobby-checkpoint-claim-{{ $checkpointSlot }}

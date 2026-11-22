@@ -10,6 +10,28 @@ import { oldPod, targetPod, abandonedPodUid, abandonedOperationId,
 const harness = (input: Parameters<typeof createSurgeHandoffHarness>[1] = {}) => createSurgeHandoffHarness(vi.fn, input);
 
 describe("surge user handoff", () => {
+  it("does not mark an edge-only checkpoint rollout live from its old gateway image", async () => {
+    const source = { ...oldPod, checkpointRelease: 1 };
+    const h = harness({ pods: [source], assignments: [assignment("u1", "alice")] });
+    const input = { gatewayId: "default", desiredImageTag: "old-sha", desiredCheckpointRelease: 2,
+      requiresUserMigration: true, isolatedGateway: true };
+    await expect(reconcileSurgeUserHandoff(h.deps, input)).resolves.toEqual({ ready: false });
+    expect(h.deps.releaseTarget).not.toHaveBeenCalled();
+    expect(h.deps.transfer).not.toHaveBeenCalled();
+  });
+
+  it("hands off to the new checkpoint revision sharing its source gateway image", async () => {
+    const source = { ...oldPod, checkpointRelease: 1 };
+    const target = { ...targetPod, checkpointRelease: 2 };
+    const h = harness({ pods: [source, target], assignments: [assignment("u1", "alice")], targetVersion: "old-sha" });
+    await expect(reconcileSurgeUserHandoff(h.deps, {
+      gatewayId: "default", desiredImageTag: "old-sha", desiredCheckpointRelease: 2,
+      requiresUserMigration: true, isolatedGateway: true,
+    })).resolves.toEqual({ ready: false });
+    expect(h.deps.transfer).toHaveBeenCalledWith(expect.objectContaining({ sourcePod: source, targetPod: target }));
+    expect(h.deps.releaseTarget).toHaveBeenCalledWith(expect.objectContaining({ pod: target }));
+  });
+
   it("retries a Shared import forward after the target may upgrade its store", async () => {
     const scenario = { assignments: [assignment("u1", "alice")], transferError: new Error("failed after upgrade") as Error | undefined };
     const h = harness(scenario);
