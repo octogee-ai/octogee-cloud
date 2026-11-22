@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from contextlib import contextmanager, suppress
 
 MIB = 1024 * 1024
 MAX_SECONDS = 600
@@ -84,13 +85,34 @@ def scratch_size(scratch):
     return sum(p.stat().st_size for p in pathlib.Path(scratch).rglob('*') if p.is_file())
 
 
+@contextmanager
+def transfer_child(argv, env, scratch, stderr, address_space):
+    interrupts = (signal.SIGTERM, signal.SIGINT, signal.SIGALRM)
+    previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, interrupts)
+    try:
+        def configure_child():
+            signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+            child_limits(address_space)
+
+        child = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=stderr,
+                                 env=env, cwd=scratch, start_new_session=True, preexec_fn=configure_child)
+        try:
+            signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+            yield child
+        finally:
+            signal.pthread_sigmask(signal.SIG_BLOCK, interrupts)
+            with suppress(ProcessLookupError):
+                os.killpg(child.pid, signal.SIGKILL)
+            child.wait()
+            child.stdout.close()
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+
+
 def run_child(argv, env, scratch, output, deadline, address_space=1536 * MIB):
     with open(output, 'wb') as out, open(os.devnull, 'wb') as err:
-        child = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=err,
-                                 env=env, cwd=scratch, start_new_session=True,
-                                 preexec_fn=lambda: child_limits(address_space))
-        written = 0
-        try:
+        with transfer_child(argv, env, scratch, err, address_space) as child:
+            written = 0
             while True:
                 if time.monotonic() >= deadline:
                     raise TimeoutError('transfer deadline exceeded')
@@ -111,13 +133,6 @@ def run_child(argv, env, scratch, output, deadline, address_space=1536 * MIB):
                     continue
             if child.returncode != 0:
                 raise ValueError('transfer subprocess failed')
-        finally:
-            try:
-                os.killpg(child.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            child.wait()
-            child.stdout.close()
     if scratch_size(scratch) > MAX_SCRATCH:
         raise ValueError('scratch limit exceeded')
 

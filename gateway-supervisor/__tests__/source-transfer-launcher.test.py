@@ -123,6 +123,32 @@ class LauncherTest(unittest.TestCase):
                     process.kill()
                     process.wait()
 
+    def test_sigterm_during_spawn_reaps_the_started_child(self):
+        popen = subprocess.Popen
+        child = None
+        def spawn_and_interrupt(*args, **kwargs):
+            nonlocal child
+            child = popen(*args, **kwargs)
+            os.kill(os.getpid(), signal.SIGTERM)
+            return child
+        previous = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGALRM)}
+        launcher.install_signal_handlers()
+        try:
+            with tempfile.TemporaryDirectory() as scratch, patch.object(launcher, 'child_limits'), patch.object(launcher.subprocess, 'Popen', side_effect=spawn_and_interrupt):
+                with self.assertRaises(InterruptedError):
+                    launcher.run_child([sys.executable, '-c', 'import time; time.sleep(20)'], dict(os.environ), scratch, pathlib.Path(scratch, 'out'), time.monotonic() + 5)
+                self.assertIsNotNone(child)
+                with self.assertRaises(ProcessLookupError):
+                    os.kill(child.pid, 0)
+        finally:
+            signal.alarm(0)
+            for sig, handler in previous.items():
+                signal.signal(sig, handler)
+            if child is not None and child.poll() is None:
+                os.killpg(child.pid, signal.SIGKILL)
+                child.wait()
+                child.stdout.close()
+
     @unittest.skipUnless(sys.platform == "linux", "Linux address-space enforcement tested in immutable image")
     def test_transfer_address_space_limit_rejects_oversized_mapping(self):
         with tempfile.TemporaryDirectory() as scratch:
