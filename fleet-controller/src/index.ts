@@ -3153,12 +3153,8 @@ async function createControllerRuntime(
     }, gatewayIds);
   const convergeGateways = serializeGatewayConvergence(runGatewayConvergence);
   const convergeSettledVm = convergeAfterVmRuntimeChange(convergeGateways, log);
-  const offlineCustody = {
-    verifyDestination: heldNativeDestinationCustody({ store, privateKey: fleetControllerPrivateKey, runKubectl, agentStoreAdminDsn: agentStore.adminDsn }),
-    fleetPrivateKey: fleetControllerPrivateKey,
-  };
   const nativeReturn = configureNativeReturnSupport({
-    readers: heldNativeReturnBackupReaders, offline: heldNativeOfflineSource?.(store, offlineCustody), store, documents, privateKey: fleetControllerPrivateKey,
+    readers: heldNativeReturnBackupReaders, offlineFactory: heldNativeOfflineSource, store, documents, privateKey: fleetControllerPrivateKey,
     runKubectl, kubeOps, prepareMigrationAgentStores, agentStoreAdminDsn: agentStore.adminDsn,
   });
   const handlers = await buildHandlers(documents, log, helm, kubeOps, {
@@ -3207,17 +3203,20 @@ type HostingCleanup = NonNullable<NukeCloudDeps["deleteHostingSites"]>;
 function configureNativeReturnSupport(deps: Parameters<typeof buildHeldNativeReturnHandler>[0] & {
   kubeOps: KubeOps;
   prepareMigrationAgentStores: PrepareMigrationAgentStores;
-  offline: HeldNativeOfflineSourceBackend | null | undefined;
+  offlineFactory?: ControllerProduct["heldNativeOfflineSource"];
 }) {
+  const offline = environmentName === "test" ? deps.offlineFactory?.(deps.store, {
+    verifyDestination: heldNativeDestinationCustody(deps), fleetPrivateKey: deps.privateKey,
+  }) : undefined;
   const nativeReturnRecovery = buildNativeReturnSourceRecoveryOwner(deps.store, deps.kubeOps, deps.privateKey, deps.prepareMigrationAgentStores);
   const reconcileHeldNativeReturn = buildHeldNativeReturnHandler(deps);
-  const reconcileHeldNativeOfflineReturn = buildHeldNativeOfflineReturnHandler(deps);
+  const reconcileHeldNativeOfflineReturn = buildHeldNativeOfflineReturnHandler({ ...deps, offline });
   return {
     handlers: { nativeReturnRecovery, reconcileHeldNativeReturn, reconcileHeldNativeOfflineReturn },
     admin: {
       heldNativeReturnRepairAvailable: reconcileHeldNativeReturn !== undefined,
-      observeHeldNativeStoppedOriginal: reconcileHeldNativeOfflineReturn ? deps.offline?.observeStoppedOriginal : undefined,
-      observeHeldNativeOriginalRestart: reconcileHeldNativeOfflineReturn ? deps.offline?.observeOriginalRestart : undefined,
+      observeHeldNativeStoppedOriginal: reconcileHeldNativeOfflineReturn ? offline?.observeStoppedOriginal : undefined,
+      observeHeldNativeOriginalRestart: reconcileHeldNativeOfflineReturn ? offline?.observeOriginalRestart : undefined,
       requestNativeReturnSourceRecovery: nativeReturnRecovery.request,
     },
   };
@@ -3356,7 +3355,7 @@ export async function main(product: ControllerProduct): Promise<void> {
       resolveHobbyCheckpointPod: product.resolveHobbyCheckpointPod,
       requiresInitialGatewayRelease: product.requiresInitialGatewayRelease,
       heldNativeReturnBackupReaders: environmentName === "test" ? product.heldNativeReturnBackupReaders?.(store) : undefined,
-      heldNativeOfflineSource: environmentName === "test" ? product.heldNativeOfflineSource : undefined,
+      heldNativeOfflineSource: product.heldNativeOfflineSource,
     });
 
   log(

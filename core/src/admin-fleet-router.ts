@@ -5608,7 +5608,7 @@ router.post(
   router.post("/operations/:id/held-native-offline/:phase", async (req, res, next) => {
     try {
       const phase = req.params.phase;
-      if (deps.releaseEnvironment !== "test" || (phase !== "reserve" && phase !== "stopped-original" && phase !== "original-restored")) {
+      if (deps.releaseEnvironment !== "test" || !["reserve", "stopped-original", "original-restored"].includes(String(phase))) {
         res.status(404).json({ error: "Offline held Native source phase is unavailable" }); return;
       }
       const selection = parseHeldNativeReturnSelection(req.params.id as string, req.body);
@@ -5617,9 +5617,6 @@ router.post(
         res.status(400).json({ error: "Exact held return scope and authenticated operator are required" }); return;
       }
       const dryRun = isAdminDryRun(req);
-      if (!dryRun && !deps.observeHeldNativeStoppedOriginal) {
-        res.status(503).json({ error: "Offline held Native source backend is unavailable" }); return;
-      }
       if (dryRun && phase === "reserve") {
         const { requestId } = await reserveHeldNativeOfflineSource(store, selection, actor, Date.now(), true);
         res.json({ operationId: selection.operationId, requestId, phase, dryRun: true, plans: [{
