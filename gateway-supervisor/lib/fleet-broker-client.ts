@@ -463,6 +463,20 @@ function assignmentRosterFromResponse(data: unknown): FleetBrokerAssignmentRoste
   });
 }
 
+export async function readMigrationTargetImportPermit(gatewayId: string, slug: string): Promise<"permitted" | "held"> {
+  const path = "/internal/fleet/migration/target-import-permit";
+  const resp = await internalFetch(`${baseUrl()}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...await defaultGatewayCredentialHeaders() },
+    body: JSON.stringify({ gatewayId, slug }),
+  });
+  if (resp.status === 204) return "permitted";
+  if (resp.status === 409 && (await resp.json() as { error?: string }).error === "held_native_return_target_excluded") {
+    return "held";
+  }
+  throw new Error(`Migration target import permit unavailable (${resp.status})`);
+}
+
 export function createFleetBrokerClient(
   gatewayId: string,
   revisionId = gatewayId,

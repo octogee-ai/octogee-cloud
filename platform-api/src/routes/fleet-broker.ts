@@ -16,7 +16,7 @@ import {
 } from "../lib/assigned-isolated-agent-anchor-scope.js";
 import { sharedAgentAnchorMigrationScope, sharedAssignedSourceSurgeAnchorScope } from "../lib/shared-agent-anchor-migration.js";
 import { installWorkspaceBlobBrokerRoute, type WorkspaceBlobStore } from "./fleet-broker-workspace-blob.js";
-import { readUserRestoreAuthoritySnapshot } from "@octogee/core/fleet-state";
+import { heldNativeReturnBlocksOwnerDestination, readUserRestoreAuthoritySnapshot } from "@octogee/core/fleet-state";
 import {
   FenceMismatchError,
   MalformedRecordError,
@@ -1316,7 +1316,10 @@ async function requireAssignedSlug(
   }
   const assignedUid = await findAssignedUidBySlug(store, bound.gatewayId, slug);
   const uid = assignedUid ?? (preparingProjectRead ? (await configuredUserNpmSubject(store, bound, slug, "preparation"))?.uid : null);
-  if (!uid) {
+  if (!uid || (preparingProjectRead && await store.transaction({ readOnly: true, label: "fleet-broker.blob-target-import-hold" }, async tx => {
+    const owner = await tx.users.records.get(uid);
+    return owner ? heldNativeReturnBlocksOwnerDestination(tx, bound.gatewayId, owner) : true;
+  }))) {
     res.status(403).json(FORBIDDEN);
     return null;
   }
@@ -1856,7 +1859,7 @@ async function userSnapshotAdmission(
     store.gateways.roots.get(gatewayId),
   ]);
   const gatewayData = gateway ?? undefined;
-  if (!userRecord) return null;
+  if (!userRecord || await heldNativeReturnBlocksOwnerDestination(store, gatewayId, userRecord)) return null;
   if (userRecord.gateway?.gatewayId === gatewayId) {
     return { userRecord, gatewayData };
   }
@@ -2174,6 +2177,21 @@ function installSnapshotRoutes(
 
   router.post("/configured-builder-bootstrap", async (req, res) => {
     await handleConfiguredUserBootstrap(deps, req, res);
+  });
+
+  router.post("/migration/target-import-permit", async (req, res) => {
+    const bound = boundGateway(req, res);
+    if (!bound) return;
+    const slug = req.body?.slug;
+    if (typeof slug !== "string" || !isValidUsername(slug)) {
+      res.status(400).json({ error: "invalid_slug" }); return;
+    }
+    const held = await store.transaction({ readOnly: true, label: "fleet-broker.target-import-hold" }, async tx => {
+      const owner = await tx.users.records.findBySlug(slug);
+      return owner ? heldNativeReturnBlocksOwnerDestination(tx, bound.gatewayId, owner) : false;
+    });
+    if (held) { res.status(409).json({ error: "held_native_return_target_excluded" }); return; }
+    res.status(204).end();
   });
 
   router.post("/user-snapshot", async (req, res) => {

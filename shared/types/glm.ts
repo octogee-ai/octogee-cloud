@@ -1016,12 +1016,23 @@ export interface UserActivationTargetRollbackProof {
   completedAt: number;
 }
 
+export interface HeldNativeReturnRepair {
+  requestId: string;
+  requestedAt: number;
+  requestedBy: string;
+  sourceRelease: number;
+  targetRelease: number;
+  failureAttempt: number;
+  receipt?: { verifiedAt: number; appliedFingerprint: string; activationManifestSha256: string };
+}
+
 export interface MigrationForwardRecovery {
   schemaVersion: 1;
   phase: "source-flushed";
   sourceEpoch: number;
   sourceSystemConfigCommit?: string;
   targetReleased?: true;
+  sourceReconcile?: HeldNativeReturnRepair;
 }
 
 export interface SchedulerHandoffState {

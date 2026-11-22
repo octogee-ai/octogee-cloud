@@ -1,4 +1,5 @@
 export { archivedSchedulerSourceImage, archiveSchedulerCustodyMatches, enqueueParkedHomeArchive, isAuthorizedHomeArchiveOrigin, planArchiveAfterBackupRelease, planReturnedHomeArchive, resolveParkedHomeArchiveGrant, retainedBootPreservesScheduler, simpleHomePreparation } from "./parked-home-archive.js";
+import { HeldNativeReturnConflict, requestHeldNativeReturnRepair } from "./held-native-return-repair.js";
 import { migrationCancellationDeferred } from "./fleet-state.js";
 import { readSharedSourceRecoveryAuthority, readSharedSourceRecoverySupersession, SharedSourceRecoveryConflict } from "./shared-source-recovery.js";
 import { randomUUID } from "node:crypto";
@@ -475,6 +476,17 @@ function isTruthyQueryFlag(value: unknown): boolean {
 }
 
 // The K8s namespace this fleet runs in — scopes the Grafana deep-link to the env.
+function parseHeldNativeReturnSelection(operationId: string, body: Record<string, unknown> | null | undefined) {
+  if (!body || Object.keys(body).length !== 4 || !/^builder-return-[a-z0-9-]+-g[1-9]\d*$/.test(operationId)) return null;
+  const { sourceGatewayId, targetGatewayId, sourceEpoch, schedulerMigrationId } = body;
+  const validGateway = (value: unknown): value is string => typeof value === "string" && /^[a-z0-9][a-z0-9-]{1,62}$/.test(value);
+  if (!validGateway(sourceGatewayId) || sourceGatewayId.startsWith("shared-") ||
+      !validGateway(targetGatewayId) || !targetGatewayId.startsWith("shared-") ||
+      typeof sourceEpoch !== "number" || !Number.isSafeInteger(sourceEpoch) || sourceEpoch < 1 ||
+      typeof schedulerMigrationId !== "string" || !schedulerMigrationId.startsWith(`mig-${operationId}:scheduler:`)) return null;
+  return { operationId, sourceGatewayId, targetGatewayId, sourceEpoch, schedulerMigrationId };
+}
+
 export function resolveFleetNamespace(env: NodeJS.ProcessEnv = process.env): string {
   const ns = env.K8S_NAMESPACE;
   return typeof ns === "string" && ns.length > 0 ? ns : "octogee";
@@ -5565,6 +5577,27 @@ router.post(
     } catch (error) {
       if (error instanceof SharedSourceRecoveryConflict) { res.status(409).json({ error: error.message }); return; }
       if (respondCentralReleaseError(res, error)) return;
+      next(error);
+    }
+  });
+
+  router.post("/operations/:id/reconcile-held-native-source", async (req, res, next) => {
+    try {
+      if (deps.releaseEnvironment !== "test") {
+        res.status(404).json({ error: "Held Native source reconciling is available only in TEST" }); return;
+      }
+      const operationId = req.params.id as string;
+      const selection = parseHeldNativeReturnSelection(operationId, req.body);
+      if (!selection) {
+        res.status(400).json({ error: "Exact held return operation, source, target, epoch and scheduler identity are required" }); return;
+      }
+      const actor = (req as ActorRequest).uid;
+      if (!actor) { res.status(403).json({ error: "Authenticated operator identity is required" }); return; }
+      const dryRun = isAdminDryRun(req);
+      const { requestId } = await requestHeldNativeReturnRepair(store, selection, actor, Date.now(), dryRun);
+      res.status(dryRun ? 200 : 202).json({ operationId, requestId, ...(dryRun ? { dryRun: true } : {}) });
+    } catch (error) {
+      if (error instanceof HeldNativeReturnConflict) { res.status(409).json({ error: error.message }); return; }
       next(error);
     }
   });

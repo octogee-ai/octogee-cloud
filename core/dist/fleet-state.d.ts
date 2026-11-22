@@ -195,4 +195,4 @@ export declare function rebindSharedSurgeForwardRecovery(deps: FleetStateDeps, p
 }): Promise<void>;
 export declare function markAssignmentState(deps: FleetStateDeps, params: MarkAssignmentStateParams): Promise<void>;
 export declare function markAssignmentStateInTransaction(tx: PlatformStateTransaction, params: MarkAssignmentStateParams, now: number): Promise<void>;
-export {};
+export { assertHeldNativeReturnRepairClaim, completeHeldNativeReturnRepair, heldNativeReturnBlocksDestination, heldNativeReturnBlocksOwnerDestination, requestHeldNativeReturnRepair, HeldNativeReturnConflict, type HeldNativeReturnAuthority, type HeldNativeReturnSelection, type HeldNativeReturnSourceProof, } from "./held-native-return-repair.js";

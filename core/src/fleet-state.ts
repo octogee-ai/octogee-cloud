@@ -2073,3 +2073,9 @@ function assertAssignmentStateUpdateMatches(
 function assignmentClockMatches(current: number, expected: number | undefined): boolean {
   return expected === undefined || Number.isSafeInteger(expected) && expected > 0 && current === expected;
 }
+
+export {
+  assertHeldNativeReturnRepairClaim, completeHeldNativeReturnRepair, heldNativeReturnBlocksDestination, heldNativeReturnBlocksOwnerDestination,
+  requestHeldNativeReturnRepair, HeldNativeReturnConflict,
+  type HeldNativeReturnAuthority, type HeldNativeReturnSelection, type HeldNativeReturnSourceProof,
+} from "./held-native-return-repair.js";

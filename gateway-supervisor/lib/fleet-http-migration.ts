@@ -165,6 +165,7 @@ export interface MigrationHandlerDeps {
   publicKey: string;
   gatewayId: string;
   adapter: UserLifecycleAdapter;
+  readTargetImportPermit?: (slug: string) => Promise<"permitted" | "held">;
   scheduleTransfer?: (
     body: ScheduleTransferRequestBody,
   ) => Promise<ScheduleSnapshotResult | ScheduleRestoreResult | ScheduleRemoveResult | ScheduleCheckResult>;
@@ -1023,6 +1024,36 @@ export function createExportPathsHandler(deps: MigrationHandlerDeps): RequestHan
   });
 }
 
+async function assertTargetImportAllowed(deps: MigrationHandlerDeps, slug: string): Promise<void> {
+  if (await deps.readTargetImportPermit?.(slug) === "held") throw new Error("Migration target import is held");
+}
+
+function hasQuietTargetImportState(deps: MigrationHandlerDeps, slug: string): boolean {
+  return deps.getMountedUsers?.().includes(slug) === false &&
+    !migrationImportBusy() && !Array.from(rsyncImportSessions.values()).some(session => session.slug === slug);
+}
+
+export function createTargetImportHoldWitnessHandler(deps: MigrationHandlerDeps): RequestHandler {
+  const log = deps.log ?? provisionerLog;
+  return (req, res) => withLogContext({}, async () => {
+    const body = parseAndVerifyJsonBody<MigrationRequestBody & { nonce: string }>(req, res, deps, log);
+    if (!body) return;
+    if (typeof body.nonce !== "string" || !/^[a-f0-9]{32}$/.test(body.nonce)) {
+      res.status(400).json({ error: "Invalid target hold nonce" });
+      return;
+    }
+    try {
+      if (await deps.readTargetImportPermit?.(body.slug) === "held" && hasQuietTargetImportState(deps, body.slug)) {
+        res.status(200).json({ migrationId: body.migrationId, slug: body.slug, nonce: body.nonce, held: true });
+        return;
+      }
+      res.status(409).json({ error: "Migration target import is not held" });
+    } catch {
+      res.status(503).json({ error: "Migration target import hold unavailable" });
+    }
+  });
+}
+
 export function createSourceActivationReadinessHandler(deps: MigrationHandlerDeps): RequestHandler {
   const log = deps.log ?? provisionerLog;
   return (req, res) => withLogContext({}, async () => {
@@ -1101,6 +1132,7 @@ export function createPrepareImportHandler(deps: MigrationHandlerDeps): RequestH
     if (!mode) return;
 
     try {
+      await assertTargetImportAllowed(deps, body.slug);
       const importDir = mode === "keys"
         ? await deps.adapter.prepareKeyImportDir(body.slug)
         : await deps.adapter.prepareImportDir(body.slug, mode);
@@ -1136,6 +1168,7 @@ export function createActivateImportHandler(deps: MigrationHandlerDeps): Request
     if (!body) return;
 
     try {
+      await assertTargetImportAllowed(deps, body.slug);
       deps.adapter.markUserMigratingIn?.(body.slug);
       const verificationPending = await activateImportedUserForMigration({
         deps,
@@ -1980,6 +2013,7 @@ export function createPrepareRsyncImportHandler(deps: MigrationHandlerDeps): Req
     preparingRsyncImport = true;
     let activation: ConfiguredUserActivation | null = null;
     try {
+      await assertTargetImportAllowed(deps, body.slug);
       activation = await configuredUserActivationRequest(deps, body, mode, configTransferMode);
       if (activation?.live) {
         await admitLiveConfiguredUserImport(deps, activation);
@@ -2842,6 +2876,7 @@ export function createFinishRsyncImportHandler(deps: MigrationHandlerDeps): Requ
     let preserveStage = false;
     let sessionReleased = false;
     try {
+      await assertTargetImportAllowed(deps, body.slug);
       const startedAt = Date.now();
       await stopRsyncTransfer(session);
       const rejection = await validateStagedRsyncImport(session, body.slug, mode, configTransferMode, log);

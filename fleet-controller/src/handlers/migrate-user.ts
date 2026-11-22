@@ -47,7 +47,7 @@ import type {
 import type { OperationContext, OperationHandler, OperationResult } from "../operation-router.js";
 import { vmPreemptionError } from "../operation-retry.js";
 import { MigrationDrainPendingError, MigrationRpcError, MigrationTransportError, type MigrationClient } from "@octogee/core/fleet-migration-client";
-import { retiredTargetSourceRecovery, sharedRecoveryTargetCleaned, type WorkspaceMigrationPreparationParams, type WorkspaceMigrationRecoveryParams, type WorkspaceMigrationSourcePreparationParams } from "@octogee/core/fleet-state";
+import { heldNativeReturnBlocksDestination, retiredTargetSourceRecovery, sharedRecoveryTargetCleaned, type WorkspaceMigrationPreparationParams, type WorkspaceMigrationRecoveryParams, type WorkspaceMigrationSourcePreparationParams } from "@octogee/core/fleet-state";
 import {
   advanceUserMigrationV2,
   beginUserMigrationV2Abort,
@@ -101,6 +101,7 @@ export interface MigrateUserDeps {
   reportMigrationProgress: (gatewayId: string, event: MigrationProgressRequestBody) => Promise<void>;
   recordMigrationProgress: (input: { operation: Operation; event: MigrationProgressRecord }) => Promise<void>;
   recoverNativeReturnSource?: OperationHandler;
+  reconcileHeldNativeReturn?: (op: Operation, ctx: OperationContext) => Promise<SchedulerHandoffState>;
   recoverAbandonedNativeScheduler?: RecoverAbandonedNativeScheduler;
   prepareNativeVmReturn: (input: NativeVmReturnInput) => Promise<NativeVmReturn | null>;
   retireNativeSchedulerBeforeStage: (input: NativeSchedulerRetirementInput, scheduler: MigrationClient["scheduler"]) => Promise<void>;
@@ -875,6 +876,11 @@ async function deferNativeReturnProvision(
   return { steps: [], success: false, waitingForUserIdle: true, rolledBack: false };
 }
 
+function nativeSourceFlushedCheckpoint(handoff: SchedulerHandoffState, sourceEpoch: number): NonNullable<SchedulerHandoffState["forwardRecovery"]> {
+  const sourceReconcile = handoff.forwardRecovery?.sourceReconcile;
+  return { schemaVersion: 1, phase: "source-flushed", sourceEpoch, ...(sourceReconcile && { sourceReconcile }) };
+}
+
 async function closeSourceForNativeReturnProvision(
   input: NativeReturnProvision,
   client: MigrationClient,
@@ -912,9 +918,7 @@ async function closeSourceForNativeReturnProvision(
     throw new Error("native return forward recovery placement changed; source remains fenced");
   }
   assertForwardRecoveryScope(targets);
-  handoff.forwardRecovery = {
-    schemaVersion: 1, phase: "source-flushed", sourceEpoch: targets.fromEpoch,
-  };
+  handoff.forwardRecovery = nativeSourceFlushedCheckpoint(handoff, targets.fromEpoch);
   await input.ctx.persistSchedulerHandoff(handoff);
   await step("transfer-agent-store", async () => {
     const transferred = await client.transferState({
@@ -2543,6 +2547,15 @@ async function attributePreemption(
   };
 }
 
+async function reconcileHeldNativeReturnIfRequested(deps: MigrateUserDeps, op: Operation, ctx: OperationContext): Promise<Operation> {
+  const target = op.input.toGatewayId;
+  if (typeof target !== "string" || !heldNativeReturnBlocksDestination(op, target)) return op;
+  if (!deps.reconcileHeldNativeReturn) throw new Error("held Native return source reconciliation is unavailable");
+  const updated = { ...op, schedulerHandoff: await deps.reconcileHeldNativeReturn(op, ctx) };
+  if (heldNativeReturnBlocksDestination(updated, target)) throw new Error("held Native return source reconciliation is still fenced");
+  return updated;
+}
+
 export function createMigrateUserHandler(deps: MigrateUserDeps): OperationHandler {
   return async (op: Operation, ctx: OperationContext): Promise<OperationResult> => {
     if (op.input.sourceTransferMode !== undefined && op.input.sourceTransferMode !== RETAINED_POD) throw new Error('unsupported source transfer mode');
@@ -2550,6 +2563,11 @@ export function createMigrateUserHandler(deps: MigrateUserDeps): OperationHandle
     if (op.input.recoverSourceOnly === true && op.input.nativeReturnSourceRecovery !== undefined) {
       if (!deps.recoverNativeReturnSource) throw new Error("native return source recovery owner is unavailable");
       return deps.recoverNativeReturnSource(op, ctx);
+    }
+    try {
+      op = await reconcileHeldNativeReturnIfRequested(deps, op, ctx);
+    } catch (error) {
+      return failure(errorMessage(error), false);
     }
     const scoped: MigrateUserDeps = { ...deps, log: operationScopedLog(deps.log) };
     return withLogContext({

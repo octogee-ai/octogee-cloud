@@ -4,7 +4,7 @@ import { PROJECT_AGENT_WORKSPACE_PARTS } from "@octogee/shared/types/project";
 import type { ProjectBlobHydrator } from "./project-blob-materialization.js";
 import { unassignedConfiguredAgents, stagedSecretOwnersOnly, unmaterializedProjectAccountIds } from "./shared-broker-profile-readiness.js";
 import { createAgentAnchorReporter } from "./agent-anchor-record.js";
-import { createFleetBrokerClient } from "./fleet-broker-client.js";
+import { readMigrationTargetImportPermit, createFleetBrokerClient } from "./fleet-broker-client.js";
 import { isolatedToolchainRoot } from "./user-storage.js";
 import { waitForPreparedIsolatedToolchain } from "./isolated-toolchain-preparation.js";
 import express from "express";
@@ -50,6 +50,7 @@ import {
   createPrepareRsyncImportHandler,
   createPushRsyncStateHandler,
   createMigrationProgressHandler,
+  createTargetImportHoldWitnessHandler,
   createQuiesceHandler,
   createSchedulerMigrationHandler,
   createSchedulerReadyHandler,
@@ -2001,6 +2002,7 @@ function registerMigrationRoutes(
   const restore = createRestoreHandler(migrationDeps);
   app.post("/restore/:gatewayId", quota, restore);
   app.post("/resume-restore/:gatewayId", quota, restore);
+  app.post("/target-import-hold/:gatewayId", quota, createTargetImportHoldWitnessHandler(migrationDeps));
   app.post("/migration-progress/:gatewayId", quota, createMigrationProgressHandler(migrationDeps));
   app.post("/resume/:gatewayId", quota, createResumeHandler(migrationDeps));
   app.post("/scheduler/:gatewayId", quota, createSchedulerMigrationHandler(migrationDeps));
@@ -2597,6 +2599,10 @@ export function createIsolatedSurgeGateWiring(input: IsolatedSurgeGateWiringOpti
 }
 
 
+function bindSharedTargetImportPermit(adapter: { isIsolatedGateway?: () => boolean }, gatewayId: string) {
+  return adapter.isIsolatedGateway?.() === true ? undefined : (slug: string) => readMigrationTargetImportPermit(gatewayId, slug);
+}
+
 // eslint-disable-next-line max-lines-per-function -- controller startup owns one ordered lifecycle for listeners, reconciliation, health, and shutdown.
 export async function startFleetController(
   opts: StartFleetOptions,
@@ -2789,6 +2795,7 @@ export async function startFleetController(
     gatewayId: opts.gatewayId,
     adapter: wrappedAdapter,
     log: opts.log,
+    readTargetImportPermit: bindSharedTargetImportPermit(wrappedAdapter, opts.gatewayId),
     getMountedUsers: () => runtime.mountedCustomers,
     sourceMountRefusal: (slug: string) => runtime.mountRefusal(slug),
     userAttachPending: createVerifyAttachPending({ provision: caps.provision, opts }),
