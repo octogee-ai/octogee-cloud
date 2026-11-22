@@ -19,6 +19,7 @@ import {
   type ScheduleTransferRequestBody,
   type SchedulerMigrationRequestBody,
   type SchedulerMigrationResult,
+  type ActivationManifestExportResponse,
   type FlushGatewayResponse,
   type ImportResponse,
   type MigrationProgressRequestBody,
@@ -73,6 +74,7 @@ export interface MigrationClient {
   schedules(opts: ScheduleRemoveRequestBody & GatewayAddress): Promise<ScheduleRemoveResult>;
   schedules(opts: ScheduleCheckRequestBody & GatewayAddress): Promise<ScheduleCheckResult>;
   schedules(opts: ScheduleTransferRequestBody & GatewayAddress): Promise<ScheduleTransferResult>;
+  canExportSourceActivation(opts: GatewayAddress & { migrationId: string; slug: string }): Promise<boolean>;
   resume(opts: { migrationId: string; gatewayId: string; transportId?: string; slug: string; role?: "target" }): Promise<void>;
   quiesce(opts: {
     stopMattermost?: boolean;
@@ -328,6 +330,20 @@ export function createMigrationClient(deps: MigrationClientDeps): MigrationClien
         `[migration-client] ✅ restoreTarget migrationId=${migrationId} slug=${slug} gateway=${gatewayId} steps=${res.steps.join(",")}`,
       );
       return res;
+    },
+
+    async canExportSourceActivation({ gatewayId, transportId, migrationId, slug }) {
+      try {
+        const result = await postSignedJson<ActivationManifestExportResponse>({
+          transportId: transportId ?? gatewayId, path: `/export-activation-manifest/${gatewayId}`,
+          gatewayId, migrationId, body: { migrationId, slug }, timeoutMs: verifyMs,
+        });
+        return result?.migrationId === migrationId && result.slug === slug &&
+          result.manifest?.version === 2 && result.manifest.slug === slug &&
+          typeof result.manifest.appliedFingerprint === "string" && result.manifest.appliedFingerprint.length > 0;
+      } catch {
+        return false;
+      }
     },
 
     async resume({ migrationId, gatewayId, transportId, slug, role }) {

@@ -47,6 +47,37 @@ function captureFetch(handler: (call: CapturedCall) => Response | Promise<Respon
 
 const PRIVATE_KEY = FLEET_KEY_PAIR.privateKey;
 
+describe("MigrationClient Native source activation preflight", () => {
+  const scope = { migrationId: "mig-1", gatewayId: "source", slug: "alice" };
+  const manifest = { version: 2, slug: "alice", appliedFingerprint: "1234567890abcdef", botToken: "mock-secret" };
+
+  it("signs the existing guest route and returns only a boolean", async () => {
+    const { calls, fakeFetch } = captureFetch(() => Response.json({ ...scope, manifest }));
+    const client = createMigrationClient({ privateKey: PRIVATE_KEY, resolveGatewayUrl: () => "http://source", fetch: fakeFetch, transferState: transferNotUnderTest });
+    expect(await client.canExportSourceActivation(scope)).toBe(true);
+    expect(calls[0]).toMatchObject({
+      method: "POST", url: "http://source/export-activation-manifest/source",
+      headers: { [SIGNATURE_HEADER.toLowerCase()]: expect.any(String) },
+    });
+    expect(JSON.parse(calls[0].body!)).toEqual({ migrationId: "mig-1", slug: "alice" });
+  });
+
+  it.each([
+    () => Response.json({ ...scope, manifest: null }),
+    () => Response.json({ ...scope, migrationId: "other", manifest }),
+    () => Response.json({ ...scope, slug: "other", manifest }),
+    () => Response.json({ ...scope, manifest: { ...manifest, slug: "other" } }),
+    () => Response.json({ ...scope, manifest: { ...manifest, appliedFingerprint: "" } }),
+    () => new Response("mock-secret", { status: 500 }),
+    () => new Response("malformed mock-secret", { status: 200 }),
+  ])("rejects missing, mismatched and failed proofs without surfacing the body", async response => {
+    const log = vi.fn();
+    const client = createMigrationClient({ privateKey: PRIVATE_KEY, resolveGatewayUrl: () => "http://source", fetch: captureFetch(response).fakeFetch, transferState: transferNotUnderTest, log });
+    expect(await client.canExportSourceActivation(scope)).toBe(false);
+    expect(log).not.toHaveBeenCalled();
+  });
+});
+
 describe("MigrationClient abandoned import cleanup", () => {
   it("resolves abandoned attempt ownership before signing recovery cleanup", async () => {
     const { calls, fakeFetch } = captureFetch(() => Response.json({ migrationId: "mig-1", slug: "alice", imported: false }));

@@ -37,6 +37,10 @@ export interface MigrationClient {
     schedules(opts: ScheduleRemoveRequestBody & GatewayAddress): Promise<ScheduleRemoveResult>;
     schedules(opts: ScheduleCheckRequestBody & GatewayAddress): Promise<ScheduleCheckResult>;
     schedules(opts: ScheduleTransferRequestBody & GatewayAddress): Promise<ScheduleTransferResult>;
+    canExportSourceActivation(opts: GatewayAddress & {
+        migrationId: string;
+        slug: string;
+    }): Promise<boolean>;
     resume(opts: {
         migrationId: string;
         gatewayId: string;

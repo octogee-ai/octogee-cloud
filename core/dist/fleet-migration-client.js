@@ -147,6 +147,20 @@ export function createMigrationClient(deps) {
             log(`[migration-client] ✅ restoreTarget migrationId=${migrationId} slug=${slug} gateway=${gatewayId} steps=${res.steps.join(",")}`);
             return res;
         },
+        async canExportSourceActivation({ gatewayId, transportId, migrationId, slug }) {
+            try {
+                const result = await postSignedJson({
+                    transportId: transportId ?? gatewayId, path: `/export-activation-manifest/${gatewayId}`,
+                    gatewayId, migrationId, body: { migrationId, slug }, timeoutMs: verifyMs,
+                });
+                return result?.migrationId === migrationId && result.slug === slug &&
+                    result.manifest?.version === 2 && result.manifest.slug === slug &&
+                    typeof result.manifest.appliedFingerprint === "string" && result.manifest.appliedFingerprint.length > 0;
+            }
+            catch {
+                return false;
+            }
+        },
         async resume({ migrationId, gatewayId, transportId, slug, role }) {
             await deps.prepareAgentStores?.(gatewayId, slug);
             const response = await postSignedJson({
