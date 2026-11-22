@@ -408,6 +408,22 @@ async function releaseAgentsAndInvalidateCache(
   }
 }
 
+async function detachAgentsInBatches(ctx: BrokerCtx, slug: string, agentIds: readonly string[], assertCurrent: () => void | Promise<void>): Promise<void> {
+  try {
+    const batchSize = 5;
+    for (let index = 0; index < agentIds.length; index += batchSize) {
+      await assertCurrent();
+      const batch = agentIds.slice(index, index + batchSize);
+      const start = Date.now();
+      ctx.log(`[release:${slug}] agents.detachMany started agentCount=${batch.length}`);
+      await ctx.rpc.agentsDetachMany({ agentIds: batch });
+      ctx.log(`[release:${slug}] agents.detachMany completed agentCount=${batch.length} elapsedMs=${Date.now() - start}`);
+    }
+  } finally {
+    invalidateConfigCache(ctx);
+  }
+}
+
 function agentStateRelease(ctx: BrokerCtx, logPrefix: string): AgentStateRelease {
   return {
     releaseAgents: (agentIds) => releaseAgentsAndInvalidateCache(ctx, agentIds, logPrefix),
@@ -486,8 +502,9 @@ async function reconcileUserRosterAgents(
   slug: string,
   evictionSlugs: readonly string[],
   keepAgentIds: readonly string[],
-  agentEntries: readonly unknown[],
+  input: { agentEntries: readonly unknown[]; assignedIdentity?: AssignedWorkspaceIdentityReplay },
 ): Promise<void> {
+  await input.assignedIdentity?.detachRetired?.();
   const logPrefix = `[add:${slug}]`;
   await deleteSupersededUserAgents(ctx, {
     slug,
@@ -496,7 +513,7 @@ async function reconcileUserRosterAgents(
     logPrefix,
     purpose: "reconcile",
   });
-  await ensureUserRosterAgents(ctx, agentEntries, logPrefix);
+  await ensureUserRosterAgents(ctx, input.agentEntries, logPrefix);
 }
 
 function cacheSnapshot(ctx: BrokerCtx, snapshot: FleetBrokerUserSnapshot): FleetBrokerUserSnapshot {
@@ -1264,7 +1281,7 @@ function assertAssignedIdentityMode(input: AssignedWorkspaceIdentityInput, curre
   } else if (assigned.state !== "serving" || current.restoreAuthority !== undefined || current.runtimeMutationFenced !== false) throw new Error("Ordinary Shared identity capture requires unfenced serving custody");
 }
 
-async function readAssignedWorkspaceIdentityAuthority(ctx: BrokerCtx, input: AssignedWorkspaceIdentityInput) {
+async function readAssignedWorkspaceIdentityAuthority(ctx: BrokerCtx, input: AssignedWorkspaceIdentityInput, retiredAgentIds: readonly string[] = []) {
   input.callOpts?.signal?.throwIfAborted();
   const { snapshot } = input;
   const [current, assignments] = await Promise.all([ctx.client.userSnapshot(snapshot.uid), ctx.client.assignmentRoster()]);
@@ -1272,6 +1289,10 @@ async function readAssignedWorkspaceIdentityAuthority(ctx: BrokerCtx, input: Ass
   const gatewayId = process.env.GATEWAY_ID?.trim(), podUid = process.env.POD_UID?.trim();
   if (!currentAssignedIdentityOwner({ current, snapshot, assigned, gatewayId, podUid })) throw new Error("Assigned Shared workspace identity authority changed");
   assertAssignedIdentityMode(input, current!, assigned[0]);
+  const currentProjects = (current!.projectAgents ?? []).map(project => projectAgentId(snapshot.slug, project.projectId));
+  if (retiredAgentIds.some(agentId => current!.agentIds.includes(agentId) || currentProjects.includes(agentId))) {
+    throw new Error("Assigned Shared identity roster changed");
+  }
   const custody: MigrationTargetIdentityCustody = { ...(input.callOpts?.migrationId ? { migrationId: input.callOpts.migrationId } : {}), uid: snapshot.uid, gatewayId: gatewayId!, podUid: podUid!, assignmentEpoch: assigned[0].epoch };
   return { custody, restoreAuthority: current!.restoreAuthority };
 }
@@ -1295,9 +1316,9 @@ async function optionalAssignedIdentityManifest(slug: string): Promise<Migration
 
 type AssignedIdentityAuthority = Awaited<ReturnType<typeof readAssignedWorkspaceIdentityAuthority>>;
 
-function assignedIdentityCurrent(ctx: BrokerCtx, input: AssignedWorkspaceIdentityInput, authority: AssignedIdentityAuthority, retained: MigrationActivationManifest | null) {
+function assignedIdentityCurrent(ctx: BrokerCtx, input: AssignedWorkspaceIdentityInput, authority: AssignedIdentityAuthority, retained: MigrationActivationManifest | null, retiredAgentIds?: readonly string[]) {
   return async () => {
-    if (!isDeepStrictEqual(await readAssignedWorkspaceIdentityAuthority(ctx, input), authority)) throw new Error("Assigned Shared workspace identity authority changed");
+    if (!isDeepStrictEqual(await readAssignedWorkspaceIdentityAuthority(ctx, input, retiredAgentIds), authority)) throw new Error("Assigned Shared workspace identity authority changed");
     if (!isDeepStrictEqual(await optionalAssignedIdentityManifest(input.snapshot.slug), retained)) throw new Error("Assigned Shared workspace identity capture changed");
     input.callOpts?.signal?.throwIfAborted();
   };
@@ -1331,7 +1352,61 @@ async function retainAssignedIdentityCapture(ctx: BrokerCtx, input: AssignedWork
   return retained;
 }
 
-async function assignedWorkspaceIdentityRestore(ctx: BrokerCtx, input: Omit<AssignedWorkspaceIdentityInput, "brokerSnapshot"> & { brokerSnapshot: FleetBrokerUserSnapshot | null }): Promise<{ restore: () => Promise<void>; complete: () => Promise<void>; verifyRoster: (current: unknown) => void } | undefined> {
+interface AssignedWorkspaceIdentityReplay {
+  restore: () => Promise<void>;
+  complete: () => Promise<void>;
+  verifyRoster: (current: unknown) => void;
+  detachRetired?: () => Promise<void>;
+}
+
+interface AssignedWorkspaceIdentityReplayState {
+  authority: AssignedIdentityAuthority;
+  previous: MigrationActivationManifest | null;
+  sameMount: boolean;
+  ids: string[];
+  missing: string[];
+  verifyRoster: AssignedWorkspaceIdentityReplay["verifyRoster"];
+}
+
+async function replayRetiredSharedProjectIdentities(ctx: BrokerCtx, input: AssignedWorkspaceIdentityInput, state: AssignedWorkspaceIdentityReplayState): Promise<AssignedWorkspaceIdentityReplay | undefined> {
+  const { authority, previous, sameMount, ids, missing, verifyRoster } = state;
+  const capture = previous?.targetWorkspaceIdentities;
+  if (!previous || !capture || !sameMount || capture.migrationId || previous.sourceWorkspaceIdentities) return;
+  const previousIds = activationManifestAgentIds(previous);
+  const retiredAgentIds = previousIds.filter(agentId => !ids.includes(agentId));
+  const keptFiles = capture.files.filter(file => ids.includes(file.agentId));
+  if (retiredAgentIds.length === 0 || previous.agentId !== ids[0] || ids.some(agentId => !previousIds.includes(agentId)) ||
+      missing.some(agentId => !keptFiles.some(file => file.agentId === agentId))) return;
+  const slug = input.snapshot.slug;
+  const assertCurrent = assignedIdentityCurrent(ctx, input, authority, previous, retiredAgentIds);
+  await assertCurrent();
+  return {
+    verifyRoster,
+    restore: keptFiles.length === 0 ? assertCurrent : () => restoreTargetWorkspaceIdentities(
+      { ...capture, files: keptFiles }, slug, ids, resolveOpenClawStateDir(),
+      { custody: capture, assertCurrent, privateWorkspaces: privateProjectWorkspaceAgentIds(previous) },
+    ),
+    detachRetired: async () => {
+      const current = new Set(userAgentIdsInRoster(await freshRosterConfig(ctx), slug));
+      await detachAgentsInBatches(ctx, slug, retiredAgentIds.filter(agentId => current.has(agentId)), assertCurrent);
+      await assertCurrent();
+    },
+    complete: async () => { await assertCurrent(); await removeActivationManifest(OPENCLAW_DIR, slug); },
+  };
+}
+
+async function replayAssignedWorkspaceIdentity(ctx: BrokerCtx, input: AssignedWorkspaceIdentityInput, state: AssignedWorkspaceIdentityReplayState): Promise<AssignedWorkspaceIdentityReplay> {
+  const replay = await replayRetiredSharedProjectIdentities(ctx, input, state);
+  if (replay) return replay;
+  const { authority, previous, missing, ids, verifyRoster } = state;
+  const retained = await retainAssignedIdentityCapture(ctx, input, { authority, previous, missing });
+  const assertCurrent = assignedIdentityCurrent(ctx, input, authority, retained);
+  await assertCurrent();
+  return { verifyRoster, restore: () => restoreTargetWorkspaceIdentities(retained.targetWorkspaceIdentities!, input.snapshot.slug, ids, resolveOpenClawStateDir(), { custody: retained.targetWorkspaceIdentities!, assertCurrent, privateWorkspaces: privateProjectWorkspaceAgentIds(retained) }),
+    complete: async () => { await assertCurrent(); await removeActivationManifest(OPENCLAW_DIR, input.snapshot.slug); } };
+}
+
+async function assignedWorkspaceIdentityRestore(ctx: BrokerCtx, input: Omit<AssignedWorkspaceIdentityInput, "brokerSnapshot"> & { brokerSnapshot: FleetBrokerUserSnapshot | null }): Promise<AssignedWorkspaceIdentityReplay | undefined> {
   if (ctx.isIsolatedGateway() || input.callOpts?.beforeRuntimePublish || input.brokerSnapshot?.status !== "complete") return undefined;
   const scoped = { ...input, brokerSnapshot: input.brokerSnapshot };
   const authority = await readAssignedWorkspaceIdentityAuthority(ctx, scoped);
@@ -1347,11 +1422,7 @@ async function assignedWorkspaceIdentityRestore(ctx: BrokerCtx, input: Omit<Assi
     const assertCurrent = assignedIdentityCurrent(ctx, scoped, authority, previous);
     return { restore: assertCurrent, verifyRoster, complete: async () => { await assertCurrent(); if (previous) await removeActivationManifest(OPENCLAW_DIR, input.snapshot.slug); } };
   }
-  const retained = await retainAssignedIdentityCapture(ctx, scoped, { authority, previous, missing });
-  const assertCurrent = assignedIdentityCurrent(ctx, scoped, authority, retained);
-  await assertCurrent();
-  return { verifyRoster, restore: () => restoreTargetWorkspaceIdentities(retained.targetWorkspaceIdentities!, input.snapshot.slug, ids, resolveOpenClawStateDir(), { custody: retained.targetWorkspaceIdentities!, assertCurrent, privateWorkspaces: privateProjectWorkspaceAgentIds(retained) }),
-    complete: async () => { await assertCurrent(); await removeActivationManifest(OPENCLAW_DIR, input.snapshot.slug); } };
+  return replayAssignedWorkspaceIdentity(ctx, scoped, { authority, previous, sameMount, ids, missing, verifyRoster });
 }
 
 async function prepareAssignedUserRuntimePublication(callOpts: AddUserConfigPatchOptions, assigned: Awaited<ReturnType<typeof assignedWorkspaceIdentityRestore>>): Promise<void> {
@@ -1449,7 +1520,7 @@ async function applyAddUserConfigPatch(
     snapshot.slug,
     evictionSlugs,
     brokerAgentIds,
-    userAgentEntries,
+    { agentEntries: userAgentEntries, assignedIdentity },
   );
   await sharedAnchors?.report();
   await materializeUserBrokerProfiles(brokerAgentIds, snapshot.slug, ctx.log, secretMaterial);
@@ -2632,21 +2703,10 @@ function runtimeUpdateOperations(ctx: BrokerCtx): Pick<UserLifecycleAdapter,
         removeImportedUserBySlug(ctx, slug, { evictionBatch, currentEvictionBatch, targetCleanup, erasureAgentIds }), { slug, evicting: evictionBatch }),
     releaseAgent: (agentId) => openClawRuntimeUpdateGuard.run(() =>
       releaseAgentsAndInvalidateCache(ctx, [agentId], `[release:${agentId}]`)),
-    detachSourceAgents: (slug, agentIds, signal) => openClawRuntimeUpdateGuard.run(async () => {
-      try {
-        const batchSize = 5;
-        for (let index = 0; index < agentIds.length; index += batchSize) {
-          signal.throwIfAborted();
-          const batch = agentIds.slice(index, index + batchSize);
-          const start = Date.now();
-          ctx.log(`[release:${slug}] agents.detachMany started agentCount=${batch.length}`);
-          await ctx.rpc.agentsDetachMany({ agentIds: batch });
-          ctx.log(`[release:${slug}] agents.detachMany completed agentCount=${batch.length} elapsedMs=${Date.now() - start}`);
-        }
-      } finally {
-        invalidateConfigCache(ctx);
-      }
-    }, { signal, slug }),
+    detachSourceAgents: (slug, agentIds, signal) => openClawRuntimeUpdateGuard.run(
+      () => detachAgentsInBatches(ctx, slug, agentIds, () => signal.throwIfAborted()),
+      { signal, slug },
+    ),
   };
 }
 
