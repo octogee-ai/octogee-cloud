@@ -202,12 +202,30 @@ describe("gateway convergence surge wiring", () => {
       passDeps: passDeps(reconcileSurgeHandoff, drainingGateway),
       gateway: drainingGateway,
       artifact,
-      runtime: { ...runtime("def5678-oc2026.7.1"), lifecycle: "serving" },
+      runtime: { ...runtime(artifact.imageTag), lifecycle: "serving", heartbeat: {
+        ...runtime(artifact.imageTag).heartbeat, lastHeartbeatAt: Date.now(),
+      } },
       helmObserved: { imageRepository: repository, imageTag: artifact.imageTag, replicas: 1 },
       action: { kind: "steady" },
     })).resolves.toEqual({ kind: "steady" });
 
     expect(reconcileSurgeHandoff).not.toHaveBeenCalled();
+  });
+
+  it("checks a same-release draining Shared gateway after its serving heartbeat expires", async () => {
+    const reconcileSurgeHandoff = vi.fn(async () => ({ ready: false }));
+    const current = { ...gateway(), desiredStatus: "draining" as const, liveRelease: 2 };
+    const lastHeartbeatAt = Date.now() - 600_000;
+    const observed = runtime(artifact.imageTag);
+    await expect(refineGatewayConvergenceAction({
+      passDeps: passDeps(reconcileSurgeHandoff, current), gateway: current, artifact,
+      runtime: { ...observed, lifecycle: "serving", heartbeat: { ...observed.heartbeat, lastHeartbeatAt } },
+      helmObserved: { imageRepository: repository, imageTag: artifact.imageTag, replicas: 1 },
+      action: { kind: "steady" },
+    })).resolves.toEqual({ kind: "steady" });
+    expect(reconcileSurgeHandoff).toHaveBeenCalledWith(expect.objectContaining({
+      gatewayId: "walter", requiresUserMigration: false, recoverSharedPodAfter: lastHeartbeatAt,
+    }));
   });
 
   it("uses the isolated image receipt for isolated gateway handoff and readiness", async () => {

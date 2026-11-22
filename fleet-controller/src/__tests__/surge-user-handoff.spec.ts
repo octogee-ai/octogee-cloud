@@ -802,6 +802,25 @@ describe("surge user handoff", () => {
     expect(h.deps.recheckGatewayLater).toHaveBeenCalledWith("default");
   });
 
+  it.each([
+    { startedAt: 101, state: "serving", migratingIn: [], release: true },
+    { startedAt: 99, state: "serving", migratingIn: [], release: false },
+    { startedAt: 101, state: "quiescing", migratingIn: [], release: false },
+    { startedAt: 101, state: "serving", migratingIn: ["alice"], release: false },
+  ] as const)("recovers a same-release Shared replacement with proof of a fresh, unclaimed boot: %j", async ({ startedAt, state, migratingIn, release }) => {
+    const h = harness({ pods: [targetPod], assignments: [assignment("u1", "alice", { state })], targetMountedUsers: [] });
+    const read = vi.mocked(h.deps.readPodHealth).getMockImplementation()!;
+    vi.mocked(h.deps.readPodHealth).mockImplementation(async (pod, gatewayId) => {
+      const health = await read(pod, gatewayId);
+      return health && { ...health, migratingIn, signedFleetState: { status: "ready", startedAt, users: [] } };
+    });
+    const input = { gatewayId: "default", desiredImageTag: "new-sha", requiresUserMigration: false, recoverSharedPodAfter: 100 };
+
+    await expect(reconcileSurgeUserHandoff(h.deps, input)).resolves.toEqual({ ready: false });
+    expect(h.deps.releaseTarget).toHaveBeenCalledTimes(release ? 1 : 0);
+    expect(h.deps.transfer).not.toHaveBeenCalled();
+  });
+
   describe("sourceless Shared target with a leftover assignment", () => {
     const now = 900_000;
     const placed = (slug: string, gatewayId: string) => ({

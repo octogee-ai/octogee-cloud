@@ -209,6 +209,7 @@ export interface ReconcileSurgeUserHandoffInput {
   requiresUserMigration: boolean;
   isolatedGateway?: boolean;
   ownerlessOperatorPrewarm?: boolean;
+  recoverSharedPodAfter?: number;
   /** Image tag a queued rollout will put on this gateway, when it replaces the current one. */
   supersedingImageTag?: string;
 }
@@ -920,7 +921,15 @@ async function releaseSourcelessSharedTarget(
   input: ReconcileSurgeUserHandoffInput,
   context: { targetPod: SurgePod; targetHealth: SurgePodHealth; ownedBy: string; assignments: readonly SurgeAssignment[] },
 ): Promise<void> {
-  if (!targetMountedAssignedUsers(context.assignments, context.targetHealth.mountedCustomers)) {
+  const { targetHealth, assignments } = context;
+  const startedAt = targetHealth.signedFleetState?.startedAt;
+  const canRebuildRoster = input.recoverSharedPodAfter !== undefined &&
+    !input.requiresUserMigration && input.supersedingImageTag === undefined &&
+    typeof startedAt === "number" && startedAt > input.recoverSharedPodAfter &&
+    targetHealth.prelaunchState === "none" && !targetHealth.terminalTarget &&
+    targetHealth.mountedCustomers.length === 0 && (targetHealth.migratingIn?.length ?? 0) === 0 &&
+    assignments.every(row => row.state === "serving" && !row.sharedSurgeForwardRecovery);
+  if (!canRebuildRoster && !targetMountedAssignedUsers(assignments, targetHealth.mountedCustomers)) {
     deps.log(`[surge-handoff] sourceless Shared target is missing its assigned mounted roster gateway=${input.gatewayId} target=${context.targetPod.name}`);
     deps.recheckGatewayLater(input.gatewayId);
     return;
