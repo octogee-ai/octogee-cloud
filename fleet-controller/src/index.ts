@@ -214,6 +214,8 @@ import { clearHomeCheckpointRequest, readHomeCheckpointCompletedAt, requestHomeC
 import { clearParkedVm, readParkedVm } from "./lib/parked-vm.js";
 import {
   createRolloutHandler,
+  initialGatewayReleasePending,
+  type RequiresInitialGatewayRelease,
   planDesiredReleaseActivation,
 } from "./handlers/rollout.js";
 import {
@@ -880,6 +882,7 @@ type ResolveHobbyCheckpointPod = (input: {
 interface GatewayConvergencePassDeps {
   store: PlatformStateStore;
   resolveHobbyCheckpointPod?: ResolveHobbyCheckpointPod;
+  requiresInitialGatewayRelease?: RequiresInitialGatewayRelease;
   assertVmPauseNotPending?: (gatewayId: string, ownerUid?: string) => void;
   helm: HelmRunner;
   kubeOps: KubeOps;
@@ -948,7 +951,7 @@ function reportsDesiredBuildOrVerifiedInitialPrelaunch(input: {
 }
 
 function reconcileGatewaySurgeHandoff(input: {
-  passDeps: Pick<GatewayConvergencePassDeps, "reconcileSurgeHandoff">;
+  passDeps: Pick<GatewayConvergencePassDeps, "reconcileSurgeHandoff" | "requiresInitialGatewayRelease">;
   gateway: DurableGateway;
   runtime: ConvergingGatewayRuntime | undefined;
   desiredImage: { imageRepository: string; imageTag: string };
@@ -964,7 +967,8 @@ function reconcileGatewaySurgeHandoff(input: {
     pendingArtifact,
     helmObserved,
   } = input;
-  const supersedingImageTag = supersedingGatewayImageTag({
+  const supersedingImageTag = initialGatewayReleasePending(gateway, passDeps.requiresInitialGatewayRelease)
+    ? undefined : supersedingGatewayImageTag({
     gateway,
     desiredImage,
     pendingArtifact,
@@ -1026,7 +1030,7 @@ function readyVmFromHandoff(
 }
 
 export async function refineGatewayConvergenceAction(input: {
-  passDeps: Pick<GatewayConvergencePassDeps, "store" | "reconcileSurgeHandoff">;
+  passDeps: Pick<GatewayConvergencePassDeps, "store" | "reconcileSurgeHandoff" | "requiresInitialGatewayRelease">;
   gateway: DurableGateway;
   artifact: ReleasePayload | null;
   pendingArtifact?: ReleasePayload | null;
@@ -2840,6 +2844,7 @@ interface ControllerRuntimeSeams {
   provisioning: ErasureProvisioning | null;
   gatewayGitKeys: GatewayGitKeyRelease | null;
   resolveHobbyCheckpointPod?: ResolveHobbyCheckpointPod;
+  requiresInitialGatewayRelease?: RequiresInitialGatewayRelease;
 }
 
 function provisioningSeams(runtime: ProvisioningServiceRuntime | null): Pick<ControllerRuntimeSeams, "provisioning" | "gatewayGitKeys"> {
@@ -2850,7 +2855,7 @@ async function createControllerRuntime(
   store: PlatformStateStore,
   createHostingCleanup: ControllerProduct["createHostingCleanup"],
   userLifecycle: ProductUserLifecycle | null,
-  { accounts, documents, provisioning, gatewayGitKeys, resolveHobbyCheckpointPod }: ControllerRuntimeSeams,
+  { accounts, documents, provisioning, gatewayGitKeys, resolveHobbyCheckpointPod, requiresInitialGatewayRelease }: ControllerRuntimeSeams,
 ): Promise<ControllerRuntime> {
   const runKubectl: KubectlSubprocess = (args, opts) => spawnKubectl(args, opts);
   const authSecretEnsurer = createAuthSecretEnsurer({
@@ -2999,7 +3004,7 @@ async function createControllerRuntime(
   const runGatewayConvergence = (gatewayIds?: readonly string[]) =>
     runGatewayConvergencePass({
       store,
-      resolveHobbyCheckpointPod,
+      resolveHobbyCheckpointPod, requiresInitialGatewayRelease,
       assertVmPauseNotPending: vmRuntime?.assertVmPauseNotPending,
       helm,
       kubeOps,
@@ -3016,7 +3021,7 @@ async function createControllerRuntime(
     syncFleetIngress: handlerSyncFleetIngress, privateKey: fleetControllerPrivateKey,
     modelKeySourceIssuer, prepareGatewayConfig, chartFingerprint,
     runRuntimeRecovery: convergeGateways.runExclusive,
-    prepareMigrationAgentStores, nativeReturnRecovery, store,
+    prepareMigrationAgentStores, nativeReturnRecovery, store, requiresInitialGatewayRelease,
     deleteHostingSites: createHostingCleanup?.(log),
     userLifecycle,
     accounts,
@@ -3057,6 +3062,7 @@ type HostingCleanup = NonNullable<NukeCloudDeps["deleteHostingSites"]>;
 
 export interface ControllerProduct {
   resolveHobbyCheckpointPod?: ResolveHobbyCheckpointPod;
+  requiresInitialGatewayRelease?: RequiresInitialGatewayRelease;
   createHostingCleanup?: (log: (message: string) => void) => HostingCleanup;
   userLifecycle: ProductUserLifecycleFactory | null;
   addAdminRoutes?: ProductAdminRoutes;
@@ -3124,6 +3130,7 @@ export async function main(product: ControllerProduct): Promise<void> {
     await createControllerRuntime(store, product.createHostingCleanup, userLifecycle, {
       accounts, documents, ...provisioningSeams(provisioning),
       resolveHobbyCheckpointPod: product.resolveHobbyCheckpointPod,
+      requiresInitialGatewayRelease: product.requiresInitialGatewayRelease,
     });
 
   log(
@@ -3414,6 +3421,7 @@ async function buildHandlers(
     runRuntimeRecovery: (work: () => Promise<void>) => Promise<void>;
     prepareMigrationAgentStores: PrepareMigrationAgentStores;
     nativeReturnRecovery: ReturnType<typeof createNativeReturnSourceRecoveryOwner>;
+    requiresInitialGatewayRelease?: RequiresInitialGatewayRelease;
     store: PlatformStateStore;
     deleteHostingSites?: HostingCleanup;
     userLifecycle: ProductUserLifecycle | null;
@@ -3773,6 +3781,7 @@ async function buildHandlers(
     now: Date.now, wait: () => new Promise(resolve => setTimeout(resolve, 1000)), log: logFn,
   });
   const rollout = createRolloutHandler({
+    requiresInitialGatewayRelease: fleetOps.requiresInitialGatewayRelease,
     rollbackUnadmittedActivationTarget,
     readGatewayDoc: (gatewayId) => readDesiredRoot(store, gatewayId),
     readReleasePayload: (gatewayId, release) => readGatewayArtifactInStore(store, gatewayId, release),
@@ -3796,6 +3805,7 @@ async function buildHandlers(
           targetRelease,
           Date.now(),
           operationId,
+          fleetOps.requiresInitialGatewayRelease,
         );
         if (!activation.success || activation.patch === null) return activation;
         await transaction.gateways.roots.patch(gatewayId, activation.patch as GatewayRootPatch);
