@@ -1,4 +1,4 @@
-import { type SchedulerHandoffState } from "@octogee/shared/types/glm";
+import { type HeldNativeOfflineStageReceipt, type SchedulerHandoffState } from "@octogee/shared/types/glm";
 import type { GatewayRuntimeRestartFenceValue, OperationRecord, PlatformStateRepositories, PlatformStateStore } from "./platform-state/index.js";
 export declare class HeldNativeReturnConflict extends Error {
 }
@@ -19,12 +19,14 @@ export interface HeldNativeReturnSourceProof {
     appliedFingerprint: string;
     activationManifestSha256: string;
 }
+export declare const HELD_NATIVE_OFFLINE_SOURCE_FENCE_KIND = "held-native-offline-source";
 export declare function readHeldNativeReturnForTargetMaintenance(state: PlatformStateRepositories, selection: HeldNativeReturnSelection, targetFence?: GatewayRuntimeRestartFenceValue, maintenanceRelease?: {
     original: number;
     desired: number;
 }): Promise<{
     sourceRelease: number;
     targetRelease: number;
+    originalInstanceId: string | null | undefined;
     uid: string;
     slug: string;
 }>;
@@ -35,6 +37,28 @@ type HeldClaim = {
 };
 export declare function assertHeldNativeReturnRepairClaim(store: PlatformStateStore, claim: HeldClaim): Promise<void>;
 export declare function completeHeldNativeReturnRepair(store: PlatformStateStore, claim: HeldClaim, proof: HeldNativeReturnSourceProof, now: number): Promise<SchedulerHandoffState>;
+export declare function reserveHeldNativeOfflineSource(store: PlatformStateStore, selection: HeldNativeReturnSelection, actor: string, now: number, dryRun?: boolean): Promise<HeldNativeReturnAuthority>;
+export interface HeldNativeStoppedOriginalWitness {
+    originalInstanceId: string;
+    stoppedAt: number;
+}
+export declare function readReservedHeldNativeOfflineSource(store: PlatformStateStore, selection: HeldNativeReturnSelection): Promise<{
+    authority: HeldNativeReturnAuthority;
+    originalInstanceId: string;
+    reservedAt: number;
+}>;
+export declare function bindHeldNativeStoppedOriginal(store: PlatformStateStore, selection: HeldNativeReturnSelection, witness: HeldNativeStoppedOriginalWitness, actor: string, now: number): Promise<HeldNativeReturnAuthority>;
+export interface HeldNativeOriginalRestartWitness {
+    originalInstanceId: string;
+    restartedAt: number;
+    internalIp: string;
+    cleanFileSha256: string;
+    restartedFileSha256: string;
+    ownerAnchorSha256: string;
+}
+export declare function recordHeldNativeOriginalRestart(store: PlatformStateStore, selection: HeldNativeReturnSelection, witness: HeldNativeOriginalRestartWitness, actor: string, now: number): Promise<HeldNativeReturnAuthority>;
+export declare function assertHeldNativeOfflineSourceClaim(store: PlatformStateStore, claim: HeldClaim): Promise<void>;
+export declare function recordHeldNativeOfflineStage(store: PlatformStateStore, claim: HeldClaim, stage: HeldNativeOfflineStageReceipt, now: number): Promise<SchedulerHandoffState>;
 export declare function heldNativeReturnBlocksDestination(op: Pick<OperationRecord, "input" | "schedulerHandoff">, gatewayId: string): boolean;
 export declare function heldNativeReturnBlocksOwnerDestination(store: PlatformStateRepositories, gatewayId: string, owner: {
     fences: {

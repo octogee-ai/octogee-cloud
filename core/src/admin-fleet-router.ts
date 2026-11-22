@@ -1,6 +1,7 @@
 import { SharedHeldReturnMaintenanceConflict, type SharedHeldReturnMaintenanceAdmin, type SharedHeldReturnMaintenanceCommand } from "./shared-held-return-maintenance.js";
 export { archivedSchedulerSourceImage, archiveSchedulerCustodyMatches, enqueueParkedHomeArchive, isAuthorizedHomeArchiveOrigin, planArchiveAfterBackupRelease, planReturnedHomeArchive, resolveParkedHomeArchiveGrant, retainedBootPreservesScheduler, simpleHomePreparation } from "./parked-home-archive.js";
-import { HeldNativeReturnConflict, requestHeldNativeReturnRepair } from "./held-native-return-repair.js";
+import { bindHeldNativeStoppedOriginal, HeldNativeReturnConflict, recordHeldNativeOriginalRestart, requestHeldNativeReturnRepair, reserveHeldNativeOfflineSource,
+  type HeldNativeOriginalRestartWitness, type HeldNativeReturnSelection, type HeldNativeStoppedOriginalWitness } from "./held-native-return-repair.js";
 import { migrationCancellationDeferred } from "./fleet-state.js";
 import { readSharedSourceRecoveryAuthority, readSharedSourceRecoverySupersession, SharedSourceRecoveryConflict } from "./shared-source-recovery.js";
 import { randomUUID } from "node:crypto";
@@ -260,6 +261,8 @@ export interface FleetRouterDeps {
 
   heldNativeReturnRepairAvailable?: boolean;
   sharedHeldReturnMaintenance?: SharedHeldReturnMaintenanceAdmin;
+  observeHeldNativeStoppedOriginal?: (selection: HeldNativeReturnSelection) => Promise<HeldNativeStoppedOriginalWitness>;
+  observeHeldNativeOriginalRestart?: (selection: HeldNativeReturnSelection) => Promise<HeldNativeOriginalRestartWitness>;
   requestNativeReturnSourceRecovery?: (input: { uid: string; operationId: string; requestedAt: number; requestedBy: string }) => Promise<boolean>;
   suspendAuthUser: (uid: string) => Promise<void>;
   revokeConnectorGrantsForUser: (uid: string) => Promise<void>;
@@ -508,6 +511,26 @@ function parseSharedHeldMaintenanceCommand(
   const { gatewayId } = scope;
   if (Object.keys(scope).length !== 1 || typeof gatewayId !== "string" || !/^shared-[a-z0-9-]{1,56}$/.test(gatewayId)) return null;
   return isSharedMaintenanceStep(action) ? { action, operationId, gatewayId, attemptId } : null;
+}
+
+async function respondHeldNativeOriginalRestart(input: {
+  store: PlatformStateStore;
+  observe?: (selection: HeldNativeReturnSelection) => Promise<HeldNativeOriginalRestartWitness>;
+  selection: HeldNativeReturnSelection;
+  actor: string;
+  dryRun: boolean;
+  res: Response;
+}): Promise<void> {
+  const { store, observe, selection, actor, dryRun, res } = input;
+  if (!observe) {
+    res.status(503).json({ error: "Offline held Native original restart verifier is unavailable" }); return;
+  }
+  const witness = await observe(selection);
+  if (dryRun) {
+    res.json({ operationId: selection.operationId, phase: "original-restored", witness, dryRun: true }); return;
+  }
+  const { requestId } = await recordHeldNativeOriginalRestart(store, selection, witness, actor, Date.now());
+  res.status(202).json({ operationId: selection.operationId, requestId, phase: "original-restored" });
 }
 
 export function resolveFleetNamespace(env: NodeJS.ProcessEnv = process.env): string {
@@ -5627,6 +5650,48 @@ router.post(
       if (error instanceof SharedHeldReturnMaintenanceConflict || error instanceof HeldNativeReturnConflict) {
         res.status(409).json({ error: error.message }); return;
       }
+      next(error);
+    }
+  });
+
+  router.post("/operations/:id/held-native-offline/:phase", async (req, res, next) => {
+    try {
+      const phase = req.params.phase;
+      if (deps.releaseEnvironment !== "test" || !["reserve", "stopped-original", "original-restored"].includes(String(phase))) {
+        res.status(404).json({ error: "Offline held Native source phase is unavailable" }); return;
+      }
+      const selection = parseHeldNativeReturnSelection(req.params.id as string, req.body);
+      const actor = (req as ActorRequest).uid;
+      if (!selection || !actor) {
+        res.status(400).json({ error: "Exact held return scope and authenticated operator are required" }); return;
+      }
+      const dryRun = isAdminDryRun(req);
+      if (dryRun && phase === "reserve") {
+        const { requestId } = await reserveHeldNativeOfflineSource(store, selection, actor, Date.now(), true);
+        res.json({ operationId: selection.operationId, requestId, phase, dryRun: true, plans: [{
+          what: "Reserve offline Native source recovery", forced: false, kind: "migrate-user",
+          target: selection, mutation: { ...selection, requestId },
+        }] });
+        return;
+      }
+      if (phase === "original-restored") {
+        await respondHeldNativeOriginalRestart({ store, observe: deps.observeHeldNativeOriginalRestart, selection, actor, dryRun, res });
+        return;
+      }
+      const observeStoppedOriginal = deps.observeHeldNativeStoppedOriginal;
+      if (!observeStoppedOriginal) {
+        res.status(503).json({ error: "Offline held Native source backend is unavailable" }); return;
+      }
+      if (phase === "stopped-original" && dryRun) {
+        const witness = await observeStoppedOriginal(selection);
+        res.json({ operationId: selection.operationId, phase, witness, dryRun: true }); return;
+      }
+      const authority = phase === "reserve"
+        ? await reserveHeldNativeOfflineSource(store, selection, actor, Date.now(), dryRun)
+        : await bindHeldNativeStoppedOriginal(store, selection, await observeStoppedOriginal(selection), actor, Date.now());
+      res.status(dryRun ? 200 : 202).json({ operationId: selection.operationId, requestId: authority.requestId, phase, dryRun });
+    } catch (error) {
+      if (error instanceof HeldNativeReturnConflict) { res.status(409).json({ error: error.message }); return; }
       next(error);
     }
   });
