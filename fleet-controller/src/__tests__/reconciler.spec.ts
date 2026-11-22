@@ -1105,7 +1105,7 @@ describe("gateway convergence pass outcomes", () => {
     const ownerUid = "u";
     const roots = { [id]: durableRoot({ gatewayId: id, gatewayClass: "isolated", profile: null, imageProfile: "isolated",
       sizingTier: "s", ownerUid, builderSlug: "alice", liveRelease: null }) };
-    const runtimes = hasRuntime ? { [id]: servingRuntime({ gatewayId: id, runtime: "cluster" }) } : {};
+    const runtimes: Record<string, Record<string, unknown>> = hasRuntime ? { [id]: servingRuntime({ gatewayId: id, runtime: "cluster" }) } : {};
     const h = isolatedPodPass(roots, runtimes, { pod: POD_PROFILE });
     const prepared = BUILDER_RELEASE.profileImages.builder;
     h.helm.readDeployedInstances.mockResolvedValue({ [id]: {
