@@ -82,6 +82,38 @@ describe('checkpoint credential projection', () => {
     expect(wait).toHaveBeenCalledOnce();
   });
 
+  it('normalizes projected Secret text once for the gateway and edge', async () => {
+    await expect(checkpointGatewayCredentials(async () => ({
+      token: '  example-token\r\n', agentStoreDsn: '\tpostgres://example/db\n',
+    }))).resolves.toEqual({ token: 'example-token', agentStoreDsn: 'postgres://example/db' });
+  });
+
+  it.each([
+    ['matching restart', current.POD_UID, claim, true],
+    ['marker absent', null, claim, false],
+    ['different marked pod', source.POD_UID, claim, false],
+    ['different claim pod', current.POD_UID, { ...claim, podUid: source.POD_UID }, false],
+    ['claim absent', current.POD_UID, null, false],
+  ] as const)('%s checks restored edge custody before exposing credentials', async (_name, marker, receipt, allowed) => {
+    for (const [name, value] of Object.entries(current)) vi.stubEnv(name, value);
+    const missing = Object.assign(new Error('missing'), { code: 'ENOENT' });
+    const reads: string[] = [];
+    vi.mocked(readFile).mockImplementation(async path => {
+      const file = String(path);
+      reads.push(file);
+      if (file.endsWith('/claim.json') && receipt) return JSON.stringify(receipt);
+      if (file === '/tmp/octogee-hobby-checkpoint-edge-restored' && marker) return marker;
+      if (file.endsWith('/token')) return 'example-token';
+      if (file.endsWith('/agent-store-dsn')) return 'postgres://example/db';
+      throw missing;
+    });
+    const admitted = waitForCheckpointClaim('edge');
+    if (allowed) await expect(admitted).resolves.toEqual(claim);
+    else await expect(admitted).rejects.toThrow('Expected previous checkpoint restoration in the same admitted pod');
+    expect(reads.some(file => file.includes('/checkpoint-credentials/'))).toBe(allowed);
+    expect(writeFile).not.toHaveBeenCalled();
+  });
+
   it('refuses a malformed Secret without turning it into a wait', async () => {
     const read = vi.fn().mockResolvedValue({ token: '', agentStoreDsn: 'postgres://test/store' });
     const wait = vi.fn();
