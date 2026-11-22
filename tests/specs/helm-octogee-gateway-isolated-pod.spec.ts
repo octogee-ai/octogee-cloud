@@ -119,6 +119,28 @@ describe("charts/octogee-gateway/ — isolated gateway as a Kubernetes pod", () 
     }
   });
 
+  it("keeps live standby unready before claim and preserves the ordinary initializer", () => {
+    const values = { computerDesktop: "x11", "hobbyCheckpoint.slotId": ISOLATED_POD.gatewayId!,
+      "hobbyCheckpoint.mode": "live", computeClass: "Balanced" };
+    const { deployment, rendered } = renderDeployment(values);
+    expect(rendered).not.toContain("podsnapshot.gke.io/ps-name");
+    expect(deployment.spec.template.spec.initContainers[0]?.name).toBe("fix-perms");
+    expect(deployment.spec.template.spec.volumes).toContainEqual({ name: "data", emptyDir: { sizeLimit: "4Gi" } });
+    expect(deployment.spec.template.spec.volumes).toContainEqual({ name: "checkpoint-owner", emptyDir: { sizeLimit: "1Mi" } });
+    expect(rendered).toContain('dev.gvisor.spec.mount.checkpoint-owner.share: "pod"');
+    for (const role of ["gateway", "gateway-edge"]) {
+      const runtime = container(deployment, role);
+      expect(envOf(runtime)).toMatchObject({ OCTOGEE_CHECKPOINT_MODE: "live", OCTOGEE_CHECKPOINT_SNAPSHOT: "" });
+      expect(envOf(runtime)).not.toHaveProperty("OPENCLAW_GATEWAY_TOKEN");
+      expect(envOf(runtime)).not.toHaveProperty("OPENCLAW_AGENT_STORE_DSN");
+      expect(runtime.volumeMounts).toContainEqual({ name: "checkpoint-owner", mountPath: "/var/run/octogee/checkpoint-owner" });
+      expect(runtime).toHaveProperty("readinessProbe");
+      expect(runtime).not.toHaveProperty("livenessProbe");
+      expect(runtime).not.toHaveProperty("startupProbe");
+    }
+    expect(renderFailure({ ...values, "hobbyCheckpoint.restoreSnapshot": "foreign" })).toContain("cannot restore a snapshot");
+  });
+
   it("surges a consumed graphical slot as an ordinary durable, authenticated Pod without its old snapshot", () => {
     const cold = { computerDesktop: "x11", "hobbyCheckpoint.slotId": ISOLATED_POD.gatewayId!,
       "hobbyCheckpoint.mode": "cold", "hobbyCheckpoint.releaseNumber": "2", rollStrategy: "surge" };

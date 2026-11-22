@@ -2071,3 +2071,49 @@ it("uses the exact claim-selected snapshot and compatible graphical isolated run
   expect(coldArgs).not.toContain("--wait");
   expect(() => buildUpgradeArgs({ ...opts, hobbyCheckpoint: { ...opts.hobbyCheckpoint, mode: "cold" } })).toThrow(/snapshot/);
 });
+
+describe("adopting a prepared live Hobby standby", () => {
+  const gatewayId = "hobby-slot-aaaeff123456";
+  const podUid = "a14b565b-622b-43f6-b064-4df67e4ba917";
+  const deploymentUid = "298d9765-ee20-43b4-9512-ff11a342ef64";
+  const podName = "prepared-slot-aaa";
+  const imageTag = "build@sha256:" + "e".repeat(64);
+  const edgeTag = "build@sha256:" + "a".repeat(64);
+  const roleImages = [{ name: "gateway", image: REPO + ":" + imageTag }, { name: "gateway-edge", image: REPO + ":" + edgeTag }];
+  const input = {
+    namespace: "gateway-test", gatewayId, gatewayClass: "isolated" as const, replicas: 1,
+    imageRepository: REPO, imageTag, gatewayEdgeImageRepository: REPO, gatewayEdgeImageTag: edgeTag,
+    chartPath: "/charts/octogee-gateway", builderIdentity: { ownerUid: "test-owner", builderSlug: "test-builder" },
+    hobbyCheckpoint: { mode: "live" as const, slotId: gatewayId, zone: "us-central1-c", machineFamily: "n2",
+      livePod: { podUid, podName, deploymentUid } },
+  };
+  function execution(observedPodUid = podUid) {
+    const runHelm = vi.fn<HelmSubprocess>(async () => ({ code: 0, stderr: "", stdout: JSON.stringify({ info: { status: "deployed" } }) }));
+    const runKubectl = vi.fn(async () => ({ code: 0, stderr: "", stdout: JSON.stringify({ items: [
+      { kind: "Pod", metadata: { name: podName, uid: observedPodUid, namespace: input.namespace,
+        annotations: { "octogee.ai/checkpoint-live-slot": gatewayId } },
+        spec: { runtimeClassName: "gvisor", containers: roleImages }, status: { phase: "Running" } },
+      { kind: "Deployment", metadata: { name: `octogee-gateway-${gatewayId}`, uid: deploymentUid, namespace: input.namespace },
+        spec: { replicas: 1 } },
+    ] }) }));
+    const ensureAuthSecret = vi.fn();
+    return { runHelm, runKubectl, ensureAuthSecret, client: createHelmSubprocessRunner({
+      runHelm, runKubectl, ensureAuthSecret, log: vi.fn(),
+    }) };
+  }
+
+  it("authorizes the already-installed Pod without an upgrade or template replacement", async () => {
+    const fixture = execution();
+    await fixture.client.upsertInstance(input);
+    expect(fixture.runKubectl).toHaveBeenCalledOnce();
+    expect(fixture.ensureAuthSecret).toHaveBeenCalledWith({ namespace: input.namespace, gatewayId });
+    expect(fixture.runHelm.mock.calls.map(([argv]) => argv[0])).toEqual(["status"]);
+  });
+
+  it("refuses an automatic replacement before publishing credentials", async () => {
+    const fixture = execution("9c303676-6ffe-422c-ae77-c6af43f8a611");
+    await expect(fixture.client.upsertInstance(input)).rejects.toThrow(/standby Pod/);
+    expect(fixture.ensureAuthSecret).not.toHaveBeenCalled();
+    expect(fixture.runHelm.mock.calls.some(([argv]) => argv[0] === "upgrade")).toBe(false);
+  });
+});

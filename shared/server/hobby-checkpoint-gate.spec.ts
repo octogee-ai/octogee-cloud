@@ -1,9 +1,11 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { link, readFile, unlink, writeFile } from 'node:fs/promises';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { checkpointGatewayCredentials, initializeCheckpointEdge, matchesRestartedCheckpoint, readCheckpointRestore, waitForCheckpointClaim } from './hobby-checkpoint-gate.js';
 
 vi.mock("node:fs/promises", async importOriginal => ({
   ...await importOriginal<typeof import("node:fs/promises")>(),
+  link: vi.fn(),
+  unlink: vi.fn(),
   readFile: vi.fn(),
   writeFile: vi.fn(),
 }));
@@ -166,5 +168,68 @@ describe('checkpoint credential projection', () => {
     const wait = vi.fn();
     await expect(checkpointGatewayCredentials(read, wait)).rejects.toThrow('credentials are unavailable');
     expect(wait).not.toHaveBeenCalled();
+  });
+});
+
+describe('single-use live standby boot', () => {
+  const standby = { ...source, OCTOGEE_CHECKPOINT_MODE: 'live', OCTOGEE_CHECKPOINT_SNAPSHOT: '' };
+  const liveClaim = {
+    version: 2, mode: 'live', namespace: source.K8S_NAMESPACE, slotId: source.GATEWAY_ID, gatewayId: source.GATEWAY_ID,
+    podUid: source.POD_UID, uid: claim.uid, slug: claim.slug, assignmentEpoch: 0,
+  } as const;
+  const missing = Object.assign(new Error('not mounted'), { code: 'ENOENT' });
+
+  async function admit(receipt: object, previousOwner?: string) {
+    for (const [name, value] of Object.entries(standby)) vi.stubEnv(name, value);
+    if (previousOwner) {
+      vi.mocked(link).mockRejectedValue(Object.assign(new Error('already exists'), { code: 'EEXIST' }));
+    }
+    vi.mocked(readFile).mockImplementation(async path => {
+      const file = String(path);
+      if (file.endsWith('/claim.json')) return JSON.stringify(receipt);
+      if (file.endsWith('/checkpoint-owner/owner.json') && previousOwner) return previousOwner;
+      if (file.endsWith('/token')) return 'test-token';
+      if (file.endsWith('/agent-store-dsn')) return 'postgres://test/store';
+      throw missing;
+    });
+    return waitForCheckpointClaim('gateway');
+  }
+
+  it('opens the same originally prepared Pod only after its exact live owner proof and credential projection', async () => {
+    await expect(admit(liveClaim)).resolves.toEqual(liveClaim);
+    expect(vi.mocked(readFile).mock.calls.some(([path]) => String(path).includes('/proc/gvisor/'))).toBe(false);
+    expect(vi.mocked(link)).toHaveBeenCalledWith(expect.stringContaining('/checkpoint-owner/'),
+      '/var/run/octogee/checkpoint-owner/owner.json');
+    expect(vi.mocked(unlink)).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ['foreign Pod', { ...liveClaim, podUid: current.POD_UID }],
+    ['foreign slot', { ...liveClaim, slotId: 'hobby-slot-two' }],
+    ['foreign namespace', { ...liveClaim, namespace: 'other' }],
+    ['later assignment epoch', { ...liveClaim, assignmentEpoch: 1 }],
+    ['snapshot grant', claim],
+  ])('refuses a %s before reading credentials', async (_name, receipt) => {
+    await expect(admit(receipt)).rejects.toThrow();
+    expect(vi.mocked(readFile).mock.calls.some(([path]) => String(path).includes('/checkpoint-credentials/'))).toBe(false);
+  });
+
+  it('permits both roles and a same-Pod restart to replay the identical owner', async () => {
+    const original = JSON.stringify([liveClaim.uid, liveClaim.slug, 0, liveClaim.slotId, liveClaim.podUid, liveClaim.namespace]);
+    await expect(admit(liveClaim, original)).resolves.toEqual(liveClaim);
+    await expect(waitForCheckpointClaim('edge')).resolves.toEqual(liveClaim);
+    await expect(waitForCheckpointClaim('gateway')).resolves.toEqual(liveClaim);
+    expect(vi.mocked(link).mock.calls.map(([, destination]) => destination)).toEqual(
+      Array(3).fill('/var/run/octogee/checkpoint-owner/owner.json'));
+  });
+
+  it('never rebinds either role on the same running Pod to a different account after a restart', async () => {
+    const original = JSON.stringify([liveClaim.uid, liveClaim.slug, 0, liveClaim.slotId, liveClaim.podUid, liveClaim.namespace]);
+    await expect(admit({ ...liveClaim, uid: 'other-user', slug: 'other-builder' }, original)).rejects.toThrow(/already bound/);
+    expect(vi.mocked(readFile).mock.calls.some(([path]) => String(path).includes('/checkpoint-credentials/'))).toBe(false);
+    await expect(waitForCheckpointClaim('edge')).rejects.toThrow(/already bound/);
+    expect(vi.mocked(link).mock.calls.map(([, destination]) => destination)).toEqual([
+      '/var/run/octogee/checkpoint-owner/owner.json', '/var/run/octogee/checkpoint-owner/owner.json',
+    ]);
   });
 });

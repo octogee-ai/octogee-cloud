@@ -1100,6 +1100,29 @@ describe("gateway convergence pass outcomes", () => {
     expect(h.upserted("ordinary")).not.toHaveProperty("hobbyCheckpoint");
   });
 
+  it.each([false, true])("admits an already installed live standby once without provisioning a home claim, previous runtime %s", async hasRuntime => {
+    const id = "hobby-slot-aaaeff123456";
+    const ownerUid = "u";
+    const roots = { [id]: durableRoot({ gatewayId: id, gatewayClass: "isolated", profile: null, imageProfile: "isolated",
+      sizingTier: "s", ownerUid, builderSlug: "alice", liveRelease: null }) };
+    const runtimes: Record<string, Record<string, unknown>> = hasRuntime ? { [id]: servingRuntime({ gatewayId: id, runtime: "cluster" }) } : {};
+    const h = isolatedPodPass(roots, runtimes, { pod: POD_PROFILE });
+    const prepared = BUILDER_RELEASE.profileImages.builder;
+    h.helm.readDeployedInstances.mockResolvedValue({ [id]: {
+      gatewayId: id, replicas: 1, chartFingerprint: "chart", image: { repository: prepared.imageRepository, tag: hasRuntime ? "stale-observation" : prepared.imageTag },
+    } });
+    const witness = { podName: "standby-pod", podUid: "pod-uid", deploymentUid: "deploy-uid" };
+    await runGatewayConvergencePass({ ...h.deps, resolveHobbyCheckpointPod: async () => ({
+      slotId: id, mode: "live", livePod: witness, zone: "us-central1-c", machineFamily: "n2",
+    }) });
+    expect(h.helm.upsertInstance).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      gatewayId: id, builderIdentity: { ownerUid, builderSlug: "alice" },
+      hobbyCheckpoint: expect.objectContaining({ mode: "live", livePod: witness }),
+    }));
+    expect(h.ensureIsolatedPodHome).not.toHaveBeenCalled();
+    expect(roots[id].liveRelease).toBeNull();
+  });
+
   it.each([null, 1])("requires an earlier live checkpoint release before a diskless cold surge: %s", async liveRelease => {
     const id = "hobby-slot-aaaeff123456";
     const roots = { [id]: durableRoot({ gatewayId: id, gatewayClass: "isolated", profile: null, imageProfile: "isolated",
