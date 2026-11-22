@@ -721,7 +721,7 @@ async function getReleaseObservation(
   deps: HelmSubprocessRunnerDeps,
   namespace: string,
   release: string,
-): Promise<{ status: string; deployedRevision: number | null } | null> {
+): Promise<{ status: string; deployedRevision: number | null; manifest: string | null } | null> {
   const result = await deps.runHelm([
     "status", release, "-n", namespace, "-o", "json",
   ]);
@@ -731,7 +731,7 @@ async function getReleaseObservation(
       `helm status ${release} (ns=${namespace}) failed (code=${result.code}): ${result.stderr.trim() || result.stdout.trim()}`,
     );
   }
-  let parsed: { info?: { status?: unknown }; version?: unknown };
+  let parsed: { info?: { status?: unknown }; version?: unknown; manifest?: unknown };
   try {
     parsed = JSON.parse(result.stdout) as typeof parsed;
   } catch (e) {
@@ -747,7 +747,7 @@ async function getReleaseObservation(
       `helm status ${release} (ns=${namespace}): info.status missing or non-string in response (got ${typeof status}). stdout[:200]: ${sample}`,
     );
   }
-  return { status, deployedRevision: deployedHelmRevision(status, parsed.version) };
+  return { status, deployedRevision: deployedHelmRevision(status, parsed.version), manifest: typeof parsed.manifest === "string" ? parsed.manifest : null };
 }
 
 interface HelmHistoryItem {
@@ -966,14 +966,11 @@ export function createHelmSubprocessRunner(deps: HelmSubprocessRunnerDeps): Helm
   return {
     async matchesDeployedManifest(opts, revision) {
       const release = releaseNameForGateway(opts.gatewayId);
-      const [installed, rendered] = await Promise.all([
-        deps.runHelm(["get", "manifest", release, "-n", opts.namespace, "--revision", String(revision)]),
-        deps.runHelm(buildChartArgs({ ...opts, release, upgradeTimeout }, "template")),
-      ]);
-      if (installed.code !== 0 || rendered.code !== 0) {
-        throw new Error(`Shared Helm comparison for ${release} failed (get=${installed.code}, template=${rendered.code})`);
-      }
-      return rendered.stdout.trim().length > 0 && rendered.stdout.trim() === installed.stdout.trim();
+      const rendered = await deps.runHelm(buildChartArgs({ ...opts, release, upgradeTimeout }, "template"));
+      if (rendered.code !== 0) throw new Error(`Helm template for ${release} failed (code=${rendered.code})`);
+      const current = await getReleaseObservation(deps, opts.namespace, release);
+      return current?.deployedRevision === revision && !!current.manifest?.trim() &&
+        rendered.stdout.trim() === current.manifest.trim();
     },
 
     async readDeployedInstances({ namespace }) {

@@ -37,7 +37,7 @@ describe("selecting the installed Shared release", () => {
     const receipt = sharedRuntimeIntentForValues(immutable, null);
     const helm = createHelmSubprocessRunner({ log: () => {}, runHelm: async args => {
       let stdout: string;
-      if (args[0] === "status") stdout = JSON.stringify({ info: { status: "deployed" }, version: 4 });
+      if (args[0] === "status") stdout = JSON.stringify({ info: { status: "deployed" }, version: 4, manifest: "drifted resources" });
       else if (args[1] === "values") stdout = JSON.stringify({
         gatewayId: gateway.gatewayId, gatewayClass: "shared", imageTag: before.imageTag, image: { repository: before.imageRepository },
         gatewayEdge: { image: { repository: before.gatewayEdgeImage.imageRepository, tag: before.gatewayEdgeImage.imageTag } },
@@ -49,15 +49,15 @@ describe("selecting the installed Shared release", () => {
     expect(await installedSharedReleaseReader(noFile, helm, () => {})(gateway, before, after)).toBe(false);
   });
 
-  it.each([["same", true], ["different deployment", false]])("compares the actual installed manifest at the observed revision: %s", async (installed, expected) => {
+  it.each([["same", 4, true], ["different deployment", 4, false], ["same", 5, false]])("compares the current manifest and revision: %s r%s", async (installed, version, expected) => {
     const commands: string[][] = [];
     const helm = createHelmSubprocessRunner({ log: () => {}, runHelm: async args => {
       commands.push(args);
-      return { stdout: args[0] === "template" ? "same" : installed, stderr: "", code: 0 };
+      return { stdout: args[0] === "template" ? "same" : JSON.stringify({ info: { status: "deployed" }, version, manifest: installed }), stderr: "", code: 0 };
     } });
 
     expect(await helm.matchesDeployedManifest!({ ...opts, sharedRuntimeIntent: instance.sharedRuntimeIntent.fingerprint }, 4)).toBe(expected);
-    expect(commands).toContainEqual(["get", "manifest", "octogee-gw-shared-aaaaaaaaaaaa", "-n", "test", "--revision", "4"]);
+    expect(commands).toContainEqual(["status", "octogee-gw-shared-aaaaaaaaaaaa", "-n", "test", "-o", "json"]);
     expect(commands.find(args => args[0] === "template")).toEqual(expect.arrayContaining(["-f", "/values", `sharedRuntimeIntent=${instance.sharedRuntimeIntent.fingerprint}`]));
   });
 
