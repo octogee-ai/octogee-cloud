@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { constants, generateKeyPairSync, privateDecrypt } from "node:crypto";
 import { link, lstat, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { setTimeout } from "node:timers/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { once } from "node:events";
 import { Readable, Writable } from "node:stream";
 import { describe, expect, it } from "vitest";
 import { sealHobbyHome } from "../lib/hobby-recovery-envelope.js";
@@ -18,10 +20,12 @@ const input = {
 async function fixtureArchive(home: string) {
   const keys = generateKeyPairSync("rsa", { modulusLength: 3072 });
   const stream = await readHomeTar(home);
+  await once(stream.child, "exit");
+  await setTimeout(25);
   const chunks: Buffer[] = [];
   const sink = new Writable({ write(chunk: Buffer, _, callback) { chunks.push(chunk); callback(); } });
   const [proof] = await Promise.all([
-    sealHobbyHome({ ...input, keyPem: keys.publicKey.export({ type: "spki", format: "pem" }) }, stream.child.stdout, sink, async () => {}),
+    sealHobbyHome({ ...input, keyPem: keys.publicKey.export({ type: "spki", format: "pem" }) }, stream.tar, sink, async () => {}),
     stream.completed,
   ]);
   const encrypted = Buffer.concat(chunks);
@@ -29,6 +33,7 @@ async function fixtureArchive(home: string) {
   const key = privateDecrypt({
     key: keys.privateKey, padding: constants.RSA_PKCS1_OAEP_PADDING, oaepHash: "sha256",
   }, Buffer.from(header.wrappedDataKey, "base64"));
+  expect(proof.ownerManifestSha256).not.toBe("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
   return { encrypted, key, proof };
 }
 
@@ -81,6 +86,22 @@ describe.skipIf(process.platform !== "linux")("staged rollback of a retained Hob
       expect(await readFile(join(home, "symbolic"), "utf8")).toBe("original private state");
       await expect(lstat(marker)).rejects.toMatchObject({ code: "ENOENT" });
       expect(await stat(home)).toMatchObject({ ino: originalRoot.ino, mode: originalRoot.mode, uid: originalRoot.uid, gid: originalRoot.gid });
+    } finally {
+      await rm(scratch, { recursive: true, force: true });
+    }
+  }, 20_000);
+  it("produces a complete empty-directory tar and restores an empty home", async () => {
+    const scratch = await mkdtemp(join(tmpdir(), "retained-empty-home-spec-"));
+    const home = join(scratch, "home");
+    const marker = join(home, "failed-marker");
+    try {
+      await mkdir(home);
+      const { encrypted, key, proof } = await fixtureArchive(home);
+      expect(proof.ownerManifestSha256).toBe(await homeTarDigest(home));
+      await writeFile(marker, "failed installer");
+      expect(await restoreHobbyHome({ home, temporaryRoot: scratch }, Readable.from([encrypted]),
+        { ...input, ...proof }, key, async () => {})).toEqual(proof);
+      await expect(lstat(marker)).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
       await rm(scratch, { recursive: true, force: true });
     }
