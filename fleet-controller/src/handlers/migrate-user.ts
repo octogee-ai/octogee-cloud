@@ -2553,7 +2553,11 @@ async function reconcileHeldNativeReturnIfRequested(deps: MigrateUserDeps, op: O
   const offline = op.schedulerHandoff?.forwardRecovery?.offlineSourceRecovery;
   if (offline) {
     if (offline.phase === "stopped-original" && deps.reconcileHeldNativeOfflineReturn) {
-      await deps.reconcileHeldNativeOfflineReturn(op, ctx);
+      try {
+        await deps.reconcileHeldNativeOfflineReturn(op, ctx);
+      } catch (error) {
+        throw new Error(`held Native offline source remains fenced: ${errorMessage(error)}`);
+      }
     }
     throw new Error("held Native offline source still requires independently verified portable publication");
   }

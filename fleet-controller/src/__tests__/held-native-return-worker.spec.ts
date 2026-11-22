@@ -6,6 +6,8 @@ import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store"
 import { bindHeldNativeStoppedOriginal, heldNativeReturnBlocksDestination, recordHeldNativeOriginalRestart, requestHeldNativeReturnRepair, reserveHeldNativeOfflineSource } from "@octogee/core/fleet-state";
 import type { Operation } from "@octogee/shared/types/glm";
 import { expect, it, vi } from "vitest";
+import { processOperation } from "../index.js";
+import { createMigrateUserHandler, type MigrateUserDeps } from "../handlers/migrate-user.js";
 import { createHeldNativeOfflineReturnWorker, createHeldNativeReturnWorker } from "../lib/held-native-return-worker.js";
 
 const uid = "uid-owner", slug = "owner", sourceGatewayId = "owner-s-retained", targetGatewayId = "shared-target";
@@ -146,8 +148,8 @@ it("reserves a stopped-original alternate without making an online receipt or re
   const finished = (await store.journal.operations.get(operationId))!;
   expect(heldNativeReturnBlocksDestination(finished, targetGatewayId)).toBe(true);
   expect(finished.cutoverCommittedAt).toBeUndefined();
+  expect(finished).toMatchObject({ status: "pending", startedAt: null, waitingOn: "held-native-offline-publication" });
   expect((await store.gateways.assignments.get(sourceGatewayId, uid))?.state).toBe("quiescing");
-  await store.journal.operations.patch(operationId, { status: "pending", startedAt: null });
   const restart = { originalInstanceId: "1234", restartedAt: 710, internalIp: "10.1.2.3",
     cleanFileSha256: "d".repeat(64), restartedFileSha256: "d".repeat(64), ownerAnchorSha256: stage.ownerAnchorSha256 };
   await expect(recordHeldNativeOriginalRestart(store, selection, { ...restart, restartedFileSha256: "e".repeat(64) }, "test-operator", 720))
@@ -160,6 +162,53 @@ it("reserves a stopped-original alternate without making an online receipt or re
   expect((await store.fleetRegistry.get(sourceGatewayId))?.vm).toMatchObject({ instanceId: "1234", status: "RUNNING" });
   expect(heldNativeReturnBlocksDestination(restored, targetGatewayId)).toBe(true);
 
+});
+
+it("runs only the exact stopped-original claim and holds the same journal after staging", async () => {
+  const { store, docs } = fixture();
+  const reserved = await reserveHeldNativeOfflineSource(store, selection, "test-operator", 500);
+  const witness = { originalInstanceId: "1234", stoppedAt: 520 };
+  const current = async () => (await store.journal.operations.get(operationId))! as unknown as Operation;
+  const stage = vi.fn(async (_authority, assertHeld) => {
+    await assertHeld();
+    const active = await current();
+    expect(active).toMatchObject({ status: "running", completedAt: null });
+    return { verifiedAt: active.startedAt!, holdGeneration: "a".repeat(64), maintenanceInstanceId: "5678", immutableSnapshotId: "90",
+      fileSha256: "b".repeat(64), ownerAnchorSha256: "c".repeat(64) };
+  });
+  const reconcileHeldNativeOfflineReturn = createHeldNativeOfflineReturnWorker({
+    store, now: Date.now, verifyDestination: async () => {}, verifyBackup: async () => ({ verified: true }),
+    assertBackupCurrent: async () => {}, reconcile: stage,
+  });
+  const handler = createMigrateUserHandler({ reconcileHeldNativeOfflineReturn } as MigrateUserDeps);
+  const observeHeldNativeStoppedOriginal = async () => witness;
+  const deps = { store, handlers: { "migrate-user": handler }, observeHeldNativeStoppedOriginal,
+    log: vi.fn() } as unknown as Parameters<typeof processOperation>[1];
+  await processOperation(await current(), deps);
+  expect(stage).not.toHaveBeenCalled();
+  await bindHeldNativeStoppedOriginal(store, selection, witness, "test-operator", 530);
+  await processOperation(await current(), { ...deps, observeHeldNativeStoppedOriginal: undefined });
+  expect(stage).not.toHaveBeenCalled();
+
+  const source = `gateways/${sourceGatewayId}`;
+  const before = docs.get(source)!;
+  docs.set(source, { ...before, runtimeRestartFence: { ...before.runtimeRestartFence as object, attemptId: "another-request" } });
+  await processOperation(await current(), deps);
+  expect(stage).not.toHaveBeenCalled();
+  docs.set(source, before);
+
+  stage.mockRejectedValueOnce(new Error("independent backup read failed before staging"));
+  await processOperation(await current(), deps);
+  expect(await current()).toMatchObject({ status: "pending", startedAt: null, completedAt: null,
+    schedulerHandoff: { forwardRecovery: { offlineSourceRecovery: { phase: "stopped-original", requestId: reserved.requestId } } } });
+  await store.journal.operations.patch(operationId, { nextAttemptAt: { clear: true } });
+  await processOperation(await current(), deps);
+  expect(stage).toHaveBeenCalledTimes(2);
+  expect(await current()).toMatchObject({ status: "pending", startedAt: null, completedAt: null, waitingOn: "held-native-offline-publication",
+    schedulerHandoff: { forwardRecovery: { offlineSourceRecovery: { phase: "staged-offline", requestId: reserved.requestId } } } });
+  await processOperation(await current(), deps);
+  expect(stage).toHaveBeenCalledTimes(2);
+  expect(heldNativeReturnBlocksDestination((await store.journal.operations.get(operationId))!, targetGatewayId)).toBe(true);
 });
 
 it("requires a live scoped import denial from the same ready destination pod", async () => {

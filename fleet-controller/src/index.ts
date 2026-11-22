@@ -182,7 +182,7 @@ import { createHeldNativeReturnBackupVerifier, type NativeReturnBackupReaders, t
 import { createHeldNativeReturnDestinationVerifier } from "./lib/held-native-return-destination.js";
 import { createHeldNativeOfflineReturnWorker, createHeldNativeReturnWorker,
   type ReconcileHeldNativeOfflineSource, type VerifyHeldNativeReturnCustody } from "./lib/held-native-return-worker.js";
-import type { HeldNativeOriginalRestartWitness, HeldNativeReturnSelection, HeldNativeStoppedOriginalWitness } from "@octogee/core/fleet-state";
+import { assertHeldNativeOfflineSourceClaimable, type HeldNativeOriginalRestartWitness, type HeldNativeReturnSelection, type HeldNativeStoppedOriginalWitness } from "@octogee/core/fleet-state";
 import { createHeldNativeSourceReconciler } from "./lib/held-native-source-reconcile.js";
 import {
   migrationSourceReady,
@@ -2104,6 +2104,19 @@ function operationIsRestartResumable(op: Operation): boolean {
   return operationNeedsDurableRestartResume(op);
 }
 
+async function allowOfflineMigrationWorkerClaim(tx: PlatformStateTransaction, operation: Stored<OperationRecord>, deps: ControllerDeps): Promise<boolean> {
+  const recovery = operation.schedulerHandoff?.forwardRecovery?.offlineSourceRecovery;
+  if (recovery?.phase !== "stopped-original" || !deps.observeHeldNativeStoppedOriginal) return false;
+  await assertHeldNativeOfflineSourceClaimable(tx, operation);
+  return true;
+}
+
+async function queueOperationBehindHomeArchive(tx: PlatformStateTransaction, operation: Stored<OperationRecord>, archive: string) {
+  const waitingOn = `home archive ${archive}`;
+  if (operation.waitingOn !== waitingOn) await tx.journal.operations.patch(operation.id, { waitingOn });
+  return { outcome: "queued" as const };
+}
+
 async function attemptClaimOrQueueOperation(
   op: Operation,
   deps: ControllerDeps,
@@ -2113,14 +2126,13 @@ async function attemptClaimOrQueueOperation(
       const stored = await tx.journal.operations.get(op.id);
       if (stored === null) return { outcome: "skipped" as const };
       const blockingArchive = GATEWAY_VM_SPEC ? await rearmArchiveBeforeAccountOperation(tx, stored) : null;
-      if (blockingArchive) {
-        const waitingOn = `home archive ${blockingArchive}`;
-        if (stored.waitingOn !== waitingOn) await tx.journal.operations.patch(op.id, { waitingOn });
-        return { outcome: "queued" as const };
-      }
+      if (blockingArchive) return queueOperationBehindHomeArchive(tx, stored, blockingArchive);
       const freshOperation = operationFromRecord(stored);
       await assertOwnerOperationUnfenced(tx, op.id, freshOperation.input);
-      if (freshOperation.kind === 'migrate-user') await assertMigrationRestartUnfenced(tx, freshOperation.input);
+      if (freshOperation.kind === "migrate-user") {
+        if (!stored.schedulerHandoff?.forwardRecovery?.offlineSourceRecovery) await assertMigrationRestartUnfenced(tx, freshOperation.input);
+        else if (!(await allowOfflineMigrationWorkerClaim(tx, stored, deps))) return { outcome: "skipped" as const };
+      }
       let runningOpsSameKind: OperationRef[] = [];
       let pendingOpsSameKind: PendingOperationRef[] = [];
       if (freshOperation.kind === PARKED_PREWARM_KIND) {

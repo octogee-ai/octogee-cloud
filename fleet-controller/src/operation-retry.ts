@@ -35,6 +35,7 @@ export function isAgentStoreRetirementSessionDrain(error: unknown, gatewayId?: s
 // get an automatic retry.
 const TRANSIENT_ERROR_PATTERNS: readonly RegExp[] = [
   /^source management health unconfirmed; outcome remains fenced$/,
+  /^held Native offline source remains fenced: /,
   /^restore recovery Kubernetes outcome is unresolved$/,
   /^restore recovery images are not ready; outcome remains fenced$/,
   /rsync import port \d+ is already serving migrationId=/,
