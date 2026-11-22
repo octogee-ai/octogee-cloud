@@ -1,3 +1,4 @@
+import { homeTarDigest } from "../lib/hobby-recovery-home-tar.js";
 import { tmpdir } from "node:os";
 import { hobbyHomeSpoolLimit, restoreHobbyHome, type ExpectedHome } from "../lib/hobby-recovery-restore.js";
 import { assertRetainedHobbySeal } from "@octogee/shared/server/hobby-checkpoint-gate";
@@ -28,10 +29,15 @@ async function* archiveInput(
 async function preflightRollback(chunks: AsyncIterable<Buffer>, input: Verification, key: Buffer, assertSeal: () => Promise<void>) {
   const limit = await hobbyHomeSpoolLimit("/home/node");
   let decoded = 0;
-  return verifyHobbyHomeEnvelope(chunks, input, key, assertSeal, async chunk => {
+  const proof = await verifyHobbyHomeEnvelope(chunks, input, key, assertSeal, async chunk => {
     decoded += chunk.length;
     if (decoded > limit) throw new Error("Hobby backup cannot be safely staged within the original home volume");
   });
+  if (decoded < 1024 || decoded % 512 !== 0 || await homeTarDigest("/home/node") !== proof.ownerManifestSha256) {
+    throw new Error("Hobby backup does not archive the complete sealed home");
+  }
+  await assertSeal();
+  return proof;
 }
 
 const control: { received?: Verification } = {};
