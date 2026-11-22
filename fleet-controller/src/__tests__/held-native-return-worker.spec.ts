@@ -231,11 +231,12 @@ function sharedMaintenanceFixture() {
   return { ...t, acquire, admission, outboundId, outboundPath, observeInstalledHelm, originalPayload: payload };
 }
 
-it("does not reserve Shared maintenance during any active or touched placement, roster drift, or a stale preflight", async () => {
-  for (const reason of ["inbound", "outbound", "roster", "stale"] as const) {
+it("does not reserve Shared maintenance during conflicting placements, source maintenance, roster drift, or a stale preflight", async () => {
+  for (const reason of ["inbound", "outbound", "offline", "roster", "stale"] as const) {
     const h = sharedMaintenanceFixture();
     if (reason === "inbound") h.docs.set(operationPath, { ...h.operations, status: "running", startedAt: 501 });
     if (reason === "outbound") Object.assign(h.docs.get(h.outboundPath)!, { attempts: 1 });
+    if (reason === "offline") Object.assign(h.operations.schedulerHandoff.forwardRecovery, { offlineSourceRecovery: { phase: "reserved" } });
     if (reason === "roster") h.admission.owners[0]!.epoch++;
     if (reason === "stale") h.admission.observedAt = 500 - 61_000;
     const before = structuredClone(h.docs);

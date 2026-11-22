@@ -100,7 +100,7 @@ async function holdingCustody(state, { op, handoff, uid, slug }, targetFence, ve
 export async function readHeldNativeReturnForTargetMaintenance(state, selection, targetFence, maintenanceRelease) {
     const hold = journalHold(await state.journal.operations.get(selection.operationId), selection);
     requireConflict(hold.op.status === "pending" && hold.op.startedAt === null && hold.op.completedAt === null &&
-        !hold.handoff.forwardRecovery.sourceReconcile && missingFingerprintAttempt(hold), "Held Native return is not the original unclaimed missing-fingerprint checkpoint");
+        !hold.handoff.forwardRecovery.sourceReconcile && !("offlineSourceRecovery" in hold.handoff.forwardRecovery) && missingFingerprintAttempt(hold), "Held Native return is not the original unclaimed missing-fingerprint checkpoint");
     const releases = await holdingCustody(state, hold, targetFence, targetFence === undefined, maintenanceRelease);
     return { ...releases, uid: hold.uid, slug: hold.slug };
 }
