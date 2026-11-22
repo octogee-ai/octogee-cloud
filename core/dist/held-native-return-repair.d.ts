@@ -62,7 +62,15 @@ export declare function assertPendingHeldNativeOfflineProjection(store: Platform
 export declare function assertHeldNativeOfflineSourceClaim(store: PlatformStateStore, claim: HeldClaim): Promise<void>;
 export declare function recordHeldNativeOfflineStage(store: PlatformStateStore, claim: HeldClaim, stage: HeldNativeOfflineStageReceipt, now: number): Promise<SchedulerHandoffState>;
 export declare function heldNativeReturnBlocksDestination(op: Pick<OperationRecord, "input" | "schedulerHandoff">, gatewayId: string): boolean;
+export declare function readHeldNativeReturnForTargetExclusion(state: PlatformStateRepositories, selection: HeldNativeReturnSelection): Promise<{
+    sourceRelease: number;
+    targetRelease: number;
+    originalInstanceId: string | null | undefined;
+    uid: string;
+    slug: string;
+}>;
 export declare function heldNativeReturnBlocksOwnerDestination(store: PlatformStateRepositories, gatewayId: string, owner: {
+    uid: string;
     fences: {
         migration?: {
             operationId?: string;

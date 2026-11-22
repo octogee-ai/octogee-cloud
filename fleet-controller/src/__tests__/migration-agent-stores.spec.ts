@@ -33,6 +33,18 @@ describe("migration agent-store ownership", () => {
     expect(classifyUserMigrationV2Error(error)).toBe("terminal");
     expect(classifyOperationFailure(error.message)).toBe("terminal");
   });
+  it("rechecks Shared exclusion inside the PostgreSQL owner handoff guard", async () => {
+    const h = harness({ gatewayClass: "shared", ownerUid: null, builderSlug: null });
+    const assertSharedHandoffAllowed = vi.fn(async () => {});
+    h.transferOwnership.mockImplementation(async (_owner, _target, assertCurrent) => {
+      assertSharedHandoffAllowed.mockRejectedValueOnce(new Error("durable old target exclusion"));
+      await assertCurrent!();
+    });
+    const prepare = createMigrationAgentStorePreparer({ ...h, assertSharedHandoffAllowed });
+    await expect(prepare("shared-target", "alice")).rejects.toThrow(/durable old target exclusion/);
+    expect(assertSharedHandoffAllowed.mock.calls).toEqual([["uid-alice"], ["uid-alice"]]);
+  });
+
   it.each(["shared", "isolated"] as const)("prepares %s ownership from the authoritative user identity", async gatewayClass => {
     const h = harness({ gatewayClass, ownerUid: gatewayClass === "isolated" ? "uid-alice" : null, builderSlug: gatewayClass === "isolated" ? "alice" : null });
     await h.prepare("target", "alice");

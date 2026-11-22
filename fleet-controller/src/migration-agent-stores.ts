@@ -37,10 +37,18 @@ function isPostgresHandoffTimeout(error: unknown): boolean {
   return pg?.code === "55P03" || pg?.code === "57014" && typeof pg.message === "string" && /statement timeout/i.test(pg.message);
 }
 
+function handoffGuard(gateway: Gateway, user: User, authority: AgentStoreHandoffAuthority | undefined,
+  check: ((uid: string) => Promise<void>) | undefined) {
+  if (gateway.gatewayClass !== "shared" || !check) return { assertTransfer: authority?.assertCurrent };
+  const assertAllowed = () => check(user.uid);
+  return { assertAllowed, async assertTransfer() { await authority?.assertCurrent(); await assertAllowed(); } };
+}
+
 export function createMigrationAgentStorePreparer(deps: {
   readGateway(gatewayId: string): Promise<Gateway | null>;
   readUserBySlug(slug: string): Promise<User>;
   ensureCredentials(gatewayId: string): Promise<void>;
+  assertSharedHandoffAllowed?(uid: string): Promise<void>;
   transferOwnership(user: User, target: "shared" | "isolated", assertCurrent?: () => Promise<void>): Promise<void>;
 }): PrepareMigrationAgentStores {
   return async (gatewayId, slug, authority) => {
@@ -51,6 +59,8 @@ export function createMigrationAgentStorePreparer(deps: {
     const user = await deps.readUserBySlug(slug);
     assertUserIdentity(user, slug, authority?.expectedUserUid);
     assertGatewayOwner(gateway, gatewayId, user);
+    const { assertAllowed, assertTransfer } = handoffGuard(gateway, user, authority, deps.assertSharedHandoffAllowed);
+    await assertAllowed?.();
     await authority?.assertCurrent();
     await deps.ensureCredentials(gatewayId);
     if (authority) {
@@ -61,7 +71,7 @@ export function createMigrationAgentStorePreparer(deps: {
       await authority.assertCurrent();
     }
     try {
-      if (authority) await deps.transferOwnership(user, gateway.gatewayClass, authority.assertCurrent);
+      if (assertTransfer) await deps.transferOwnership(user, gateway.gatewayClass, assertTransfer);
       else await deps.transferOwnership(user, gateway.gatewayClass);
     } catch (error) {
       if (isPostgresHandoffTimeout(error)) {
