@@ -3,7 +3,7 @@ import { projectGatewayDesiredRootForGateway } from "@octogee/shared/types/gatew
 import { builderActivateOperationId } from "@octogee/shared/types/isolated-operation-ids";
 import { isSizingTier } from "@octogee/shared/types/sizing";
 import { GatewayRetirementConflictError } from "./gateway-retirement-claim.js";
-import { IsolatedGatewayFenceError, PLACEMENT_RETIREMENT_REASONS, advanceActivationLease, allocateIsolatedGateway, checkUnreachableRecoveryFence, completeActivationLease, failActivationLease, leaseOperationIdBelongs, recoverUnreachableIsolatedGateway, refreshRequestedAllocation, prepareIsolatedHome, requestSizingKeyTransition, requireStoredHomeReadiness, unauditedLifecycleMutations, retireOwnedIsolatedGateway, } from "./isolated-gateway-lifecycle/index.js";
+import { IsolatedGatewayFenceError, PLACEMENT_RETIREMENT_REASONS, advanceActivationLease, allocateIsolatedGateway, checkUnreachableRecoveryFence, completeActivationLease, failActivationLease, leaseOperationIdBelongs, recoverUnreachableIsolatedGateway, refreshRequestedAllocation, prepareIsolatedHome, requestSizingKeyTransition, requireStoredHomeReadiness, unauditedLifecycleMutations, retireOwnedIsolatedGateway, reparkOwnedGateway, } from "./isolated-gateway-lifecycle/index.js";
 import { FleetMutationPartialError, FleetMutationRefusedError } from "./normal-fleet-mutation.js";
 import { assertClientOwnsPlacementAutomation, placementOwnerRefusalBody } from "./placement-automation-owner.js";
 import { PlacementPreconditionFailed } from "./placement-refusal.js";
@@ -161,6 +161,27 @@ function parseSizingTransition(req) {
     return { ...identity, targetGatewayId, sizingKey };
 }
 const AUTHORITATIVE_STATUSES = ["provisioning", "activating", "returning"];
+function parseRepark(req) {
+    const body = bodyOf(req);
+    const builderSlug = text(body, "builderSlug");
+    const gatewayId = text(body, "gatewayId");
+    const generation = positiveInteger(body, "generation");
+    if (!builderSlug || !gatewayId || generation === null)
+        return { invalid: "builderSlug, gatewayId and a positive generation are required" };
+    return { uid: req.params.uid, builderSlug, gatewayId, generation };
+}
+function parseIdleRetirementObservation(body) {
+    if (body.reason !== "owned-gateway-not-kept")
+        return {};
+    const { expectedDesiredStatus } = body;
+    const expectedUpdatedAt = nonNegativeInteger(body, "expectedUpdatedAt");
+    if (expectedDesiredStatus !== "running" && expectedDesiredStatus !== "paused" && expectedDesiredStatus !== "draining") {
+        return { invalid: "expectedDesiredStatus must describe the observed running, paused or draining gateway" };
+    }
+    if (expectedUpdatedAt === null)
+        return { invalid: "expectedUpdatedAt must describe the observed gateway revision timestamp" };
+    return { expectedDesiredStatus, expectedUpdatedAt };
+}
 function parseRetire(req) {
     const body = bodyOf(req);
     const uid = text(body, "ownerUid");
@@ -173,7 +194,10 @@ function parseRetire(req) {
     if (!PLACEMENT_RETIREMENT_REASONS.includes(reason)) {
         return { invalid: `reason must be one of ${PLACEMENT_RETIREMENT_REASONS.join(", ")}` };
     }
-    const optional = {};
+    const observation = parseIdleRetirementObservation(body);
+    if (invalid(observation))
+        return observation;
+    const optional = { ...observation };
     for (const key of ["leaseId", "telemetryFenceOperationId", "authoritativeGatewayId", "zeroWorkloadRecoveryOperationId"]) {
         if (body[key] === undefined)
             continue;
@@ -431,6 +455,16 @@ function addLeaseVerbs({ deps, journal, lifecycle, verb }) {
     }));
 }
 function addIsolatedGatewayVerbs({ deps, journal, lifecycle, verb }) {
+    verb("/users/:uid/isolated-gateway/repark", parseRepark, (req, input) => journal({
+        req,
+        what: "repark returned isolated gateway",
+        why: "the returned owner computer resumed without an activation",
+        target: { uid: input.uid, gatewayId: input.gatewayId },
+        preActionStatus: { generation: input.generation },
+        mutation: { kind: "repark-owned-isolated-gateway" },
+        dryRunRefusal: async () => await reparkOwnedGateway(lifecycle, input, "plan") ? null : { parked: false },
+        action: async () => ({ parked: await reparkOwnedGateway(lifecycle, input) }),
+    }));
     verb("/isolated-gateways/:id/retire-owned", parseRetire, async (req, input) => {
         const root = projectGatewayDesiredRootForGateway(await deps.store.gateways.roots.get(input.gatewayId), input.gatewayId);
         if (root === null || root.ownerUid !== input.uid || !root.builderSlug) {
@@ -445,7 +479,8 @@ function addIsolatedGatewayVerbs({ deps, journal, lifecycle, verb }) {
             what: "retire owned isolated gateway",
             why: `placement automation retires it: ${input.reason}`,
             target: { gatewayId: input.gatewayId, uid: input.uid },
-            preActionStatus: { generation: input.generation, desiredStatus: root.desiredStatus },
+            preActionStatus: { generation: input.generation, desiredStatus: input.expectedDesiredStatus ?? root.desiredStatus,
+                ...(input.expectedUpdatedAt === undefined ? {} : { updatedAt: input.expectedUpdatedAt }) },
             mutation: { kind: "retire-owned-isolated-gateway", reason: input.reason, leaseId: input.leaseId ?? null },
             dryRunRefusal: async () => {
                 const plan = await retireOwnedIsolatedGateway(lifecycle, request, "plan");

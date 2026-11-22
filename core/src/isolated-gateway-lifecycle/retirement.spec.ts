@@ -60,7 +60,7 @@ function harness(seed: Record<string, Record<string, unknown>> = {}) {
   const store = createDocumentFixtureStore(docs);
   const log = vi.fn();
   const diagnostics = vi.fn(async (_gatewayId: string): Promise<PodObservation> => ({ status: "missing", totalPods: 0 }));
-  const deps = { store, now: () => 10_000, log, requireOwner, readGatewayPodDiagnostics: diagnostics, sourceRecoveryPending: () => false };
+  const deps = { store, now: () => 10_000, readSizingKey: async () => "hobby", log, requireOwner, readGatewayPodDiagnostics: diagnostics, sourceRecoveryPending: () => false };
   const request = { uid: "uid-alice", builderSlug: "alice", gatewayId: GATEWAY, leaseId: "lease-one", generation: 1, authoritativeGatewayId: "shared-blue" };
   return { docs, store, log, diagnostics, deps, request };
 }
