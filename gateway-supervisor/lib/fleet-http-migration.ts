@@ -1019,9 +1019,9 @@ async function restoreHeldSourceRuntime(
   }
 }
 
-export function createHeldNativeSourceReconcileHandler(deps: MigrationHandlerDeps): RequestHandler {
+export function createHeldNativeSourceReconcileHandler(deps: MigrationHandlerDeps) {
   const log = deps.log ?? provisionerLog;
-  return (req, res) => withLogContext({}, async () => {
+  return (req: Request, res: Response) => withLogContext({}, async () => {
     const body = parseAndVerifyJsonBody<HeldNativeSourceReconcileRequest>(req, res, deps, log, heldNativeSourceReconcileJobId);
     if (!body) return;
     const { binding, migrationId, slug } = body;
@@ -1110,9 +1110,9 @@ function hasQuietTargetImportState(deps: MigrationHandlerDeps, slug: string): bo
     !migrationImportBusy() && !Array.from(rsyncImportSessions.values()).some(session => session.slug === slug);
 }
 
-export function createTargetImportHoldWitnessHandler(deps: MigrationHandlerDeps): RequestHandler {
+export function createTargetImportHoldWitnessHandler(deps: MigrationHandlerDeps) {
   const log = deps.log ?? provisionerLog;
-  return (req, res) => withLogContext({}, async () => {
+  return (req: Request, res: Response) => withLogContext({}, async () => {
     const body = parseAndVerifyJsonBody<MigrationRequestBody & { nonce: string }>(req, res, deps, log);
     if (!body) return;
     if (typeof body.nonce !== "string" || !/^[a-f0-9]{32}$/.test(body.nonce)) {

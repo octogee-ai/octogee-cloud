@@ -1102,7 +1102,7 @@ describe("held Native source maintenance admission", () => {
     const readHeldSourceSnapshot = vi.fn(), req = request(), res = mkResponse();
     await createHeldNativeSourceReconcileHandler(mkDeps({ readHeldSourceSnapshot }))(mkRequest(req, {
       signature: signForPod(req.migrationId, JSON.stringify(req)),
-    }), res.res, vi.fn());
+    }), res.res);
     expect(res.getStatus()).toBe(401);
     expect(readHeldSourceSnapshot).not.toHaveBeenCalled();
   });
@@ -1110,7 +1110,7 @@ describe("held Native source maintenance admission", () => {
     const readHeldSourceSnapshot = vi.fn(), req = request(), res = mkResponse();
     await createHeldNativeSourceReconcileHandler(mkDeps({ readHeldSourceSnapshot }))(mkRequest(req, {
       signature: signFleetRequest(PRIVATE_KEY, heldNativeSourceReconcileJobId(req.migrationId, GATEWAY_ID), JSON.stringify(req)),
-    }), res.res, vi.fn());
+    }), res.res);
     expect(res.getStatus()).toBe(409);
     expect(readHeldSourceSnapshot).not.toHaveBeenCalled();
   });
@@ -1980,7 +1980,7 @@ describe("queued-rsync migration control handlers", () => {
     const call = async (readTargetImportPermit: MigrationHandlerDeps["readTargetImportPermit"], mountedUsers: string[], sig = signature) => {
       const fixture = mkResponse();
       const handler = createTargetImportHoldWitnessHandler(mkDeps({ readTargetImportPermit, getMountedUsers: () => mountedUsers }));
-      await handler(mkRequest(body, { signature: sig }), fixture.res, vi.fn());
+      await handler(mkRequest(body, { signature: sig }), fixture.res);
       return { status: fixture.getStatus(), body: fixture.getBody() };
     };
     const permit = vi.fn(async () => "held" as const);
