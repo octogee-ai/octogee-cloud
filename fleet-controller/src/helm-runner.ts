@@ -23,7 +23,7 @@ export interface HobbyCheckpointPod {
   slotId: string;
   mode?: "cold" | "live";
   coldDesktop?: "none";
-  livePod?: { podName: string; podUid: string; deploymentUid: string };
+  livePod?: { podName: string; podUid: string; deploymentUid: string; retainedImageRecovery?: true };
   releaseNumber?: number;
   restoreSnapshot?: string;
   zone: string;

@@ -1123,6 +1123,46 @@ describe("gateway convergence pass outcomes", () => {
     expect(roots[id].liveRelease).toBeNull();
   });
 
+  it.each(["ready", "wrong-pod", "old-image", "wrong-owner", "stale", "different-deployment"])(
+    "requires exact retained Pod readiness for repaired live standby publication: %s",
+    async observation => {
+      const id = "hobby-slot-aaaeff123456";
+      const root = durableRoot({ gatewayId: id, gatewayClass: "isolated", profile: null, imageProfile: "isolated",
+        sizingTier: "s", ownerUid: "u", builderSlug: "alice", liveRelease: null });
+      const roots = { [id]: root };
+      const observedAt = Date.now() - (observation === "stale" ? 3_600_000 : 0);
+      const desiredImage = BUILDER_RELEASE.profileImages.builder;
+      const retained = { podName: "standby-pod", podUid: "original-pod", deploymentUid: "deploy-uid", retainedImageRecovery: true } as const;
+      const oldHelm = { gatewayId: id, replicas: 1, chartFingerprint: "old-chart", image: { repository: desiredImage.imageRepository, tag: "old-image" } };
+      const runtimes = { [id]: servingRuntime({
+        gatewayId: id, runtime: "cluster", lifecycle: "provisioning", release: 1, helm: { imageTag: oldHelm.image.tag },
+        kubernetes: { status: "ready", totalPods: 1, readyPods: 1, observedAt,
+          pods: [{ uid: observation === "wrong-pod" ? "replacement" : retained.podUid, name: retained.podName, nodeName: "node" }] },
+        heartbeat: { status: "ready", lastHeartbeatAt: observedAt,
+          version: observation === "old-image" ? "old-image" : desiredImage.imageTag,
+          mountedCustomers: [observation === "wrong-owner" ? "other" : "alice"], configuredBuilder: { state: "claimed", generation: null } },
+      }) };
+      const h = isolatedPodPass(roots, runtimes, { pod: POD_PROFILE });
+      h.helm.readDeployedInstances.mockResolvedValue({ [id]: oldHelm });
+      if (observation === "different-deployment") h.helm.upsertInstance.mockRejectedValue(new Error("original Deployment changed"));
+      const pass = runGatewayConvergencePass({ ...h.deps, resolveHobbyCheckpointPod: async () => ({
+        slotId: id, mode: "live", livePod: retained, zone: "us-central1-c", machineFamily: "n2",
+      }) });
+      if (observation === "different-deployment") await expect(pass).rejects.toThrow(/original Deployment changed/);
+      else await pass;
+
+      expect(h.helm.upsertInstance).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+        imageTag: desiredImage.imageTag, hobbyCheckpoint: expect.objectContaining({ livePod: retained, mode: "live" }),
+      }));
+      expect(roots[id].liveRelease).toBe(observation === "ready" ? 2 : null);
+      expect(runtimes[id]).toMatchObject({
+        release: observation === "ready" ? 2 : 1, helm: { imageTag: "old-image" },
+      });
+      expect(h.ensureIsolatedPodHome).not.toHaveBeenCalled();
+      expect(h.deps.reconcileSurgeHandoff).not.toHaveBeenCalled();
+    },
+  );
+
   it.each([null, 1])("requires an earlier live checkpoint release before a diskless cold surge: %s", async liveRelease => {
     const id = "hobby-slot-aaaeff123456";
     const roots = { [id]: durableRoot({ gatewayId: id, gatewayClass: "isolated", profile: null, imageProfile: "isolated",
