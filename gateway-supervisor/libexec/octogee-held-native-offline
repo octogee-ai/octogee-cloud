@@ -2,7 +2,12 @@
 set -eu
 [ "$#" -eq 1 ] && [ "$1" = "--stdio" ] || exit 64
 umask 077
+runtime=/opt/octogee-held-native-offline-runtime
+case ",$(/usr/bin/findmnt --mountpoint "$runtime" --noheadings --output OPTIONS)," in
+  *,ro,*) ;;
+  *) exit 77 ;;
+esac
 exec /usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 \
   HOME=/home/node OPENCLAW_DIR=/home/node/.openclaw GATEWAY_CLASS=isolated \
-  /usr/local/bin/node --import /octogee/scripts/node_modules/tsx/dist/loader.mjs \
-  /octogee/scripts/entrypoints/held-native-offline-maintenance.ts --stdio
+  /usr/local/bin/node --import "$runtime/scripts/node_modules/tsx/dist/loader.mjs" \
+  "$runtime/scripts/entrypoints/held-native-offline-maintenance.ts" --stdio

@@ -123,13 +123,14 @@ async function verifiedDesired(
     throw new Error("Held Native projection credential reference is not the exact restored file");
   }
   const envelope = JSON.parse(desired.toString("utf8")) as { raw: string; signature: string };
-  const secrets = asRecord(JSON.parse((await stableFile(cleanCredential, maxConfigBytes)).toString("utf8")));
+  let secrets: Promise<Record<string, unknown> | null> | undefined;
   const snapshot = await readHeldNativeOfflineDesiredProjection({
     ...envelope, expectedSha256: identity.desiredSnapshotSha256, fleetPublicKey: publicKey,
     scope: { uid: identity.uid, slug: identity.slug, gatewayId: identity.sourceGatewayId,
       operationId: identity.operationId, requestId: identity.requestId, holdGeneration: identity.holdGeneration },
     async readRestoredCredential(accountId) {
-      const secret = secrets?.[accountId];
+      secrets ??= stableFile(cleanCredential, maxConfigBytes).then(bytes => asRecord(JSON.parse(bytes.toString("utf8"))));
+      const secret = (await secrets)?.[accountId];
       return typeof secret === "string" ? secret : null;
     },
   });
