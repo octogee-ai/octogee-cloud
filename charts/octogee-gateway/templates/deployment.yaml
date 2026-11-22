@@ -32,8 +32,15 @@
 {{- if and $checkpointCold (not (regexMatch "^[1-9][0-9]*$" $checkpointReleaseNumber)) -}}
 {{- fail "octogee-gateway: cold checkpoint continuation requires the exact desired release number" -}}
 {{- end -}}
-{{- if and $checkpointSlot (not (and $isolatedPod $x11Desktop (eq $tier "s") (eq $checkpointSlot .Values.gatewayId) (eq .Values.runtimeClassName "gvisor") .Values.gatewayEdge.enabled)) -}}
-{{- fail "octogee-gateway: checkpoint requires a dedicated small graphical isolated gVisor gateway and edge" -}}
+{{- if and $checkpointSlot (not (and $isolatedPod (eq $tier "s") (eq $checkpointSlot .Values.gatewayId) (eq .Values.runtimeClassName "gvisor") .Values.gatewayEdge.enabled)) -}}
+{{- fail "octogee-gateway: checkpoint requires a dedicated small isolated gVisor gateway and edge" -}}
+{{- end -}}
+
+{{- if and $checkpointLive (ne $computerDesktop "none") -}}
+{{- fail "octogee-gateway: live standby must be headless" -}}
+{{- end -}}
+{{- if and $checkpointSlot (not $checkpointLive) (not $x11Desktop) (not (and $checkpointCold (eq $computerDesktop "none"))) -}}
+{{- fail "octogee-gateway: snapshot checkpoints require x11 and cold continuation requires none or x11" -}}
 {{- end -}}
 
 {{- if and $checkpointSealed (or (hasKey .Values.gatewayEdge.env "OPENCLAW_GATEWAY_TOKEN") (hasKey .Values.gatewayEdge.env "OPENCLAW_AGENT_STORE_DSN")) -}}
@@ -285,6 +292,9 @@ spec:
       containers:
         - name: gateway
           image: "{{ required "image.repository is required" .Values.image.repository }}:{{ .Values.image.tag | default .Values.imageTag }}"
+          {{- if $checkpointLive }}
+          command: ["node", "/octogee/scripts/entrypoints/hobby-checkpoint-gate.mjs"]
+          {{- end }}
           ports:
             - containerPort: 18789
             - containerPort: 9092
@@ -389,6 +399,10 @@ spec:
             {{- if and $isolatedPod (not $x11Desktop) }}
             - name: GATEWAY_RUNTIME_KIND
               value: cluster
+            {{- if $checkpointSlot }}
+            - name: GATEWAY_COMPUTER_DESKTOP
+              value: none
+            {{- end }}
             {{- end }}
             {{- if $x11Desktop }}
             - name: GATEWAY_RUNTIME_KIND
@@ -704,6 +718,10 @@ spec:
             {{- if and $isolatedPod (not $x11Desktop) }}
             - name: GATEWAY_RUNTIME_KIND
               value: cluster
+            {{- if $checkpointSlot }}
+            - name: GATEWAY_COMPUTER_DESKTOP
+              value: none
+            {{- end }}
             {{- end }}
             {{- if $x11Desktop }}
             - name: GATEWAY_RUNTIME_KIND

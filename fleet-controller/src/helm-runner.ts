@@ -22,6 +22,7 @@ import type { KubectlSubprocess } from "./fleet-ingress.js";
 export interface HobbyCheckpointPod {
   slotId: string;
   mode?: "cold" | "live";
+  coldDesktop?: "none";
   livePod?: { podName: string; podUid: string; deploymentUid: string };
   releaseNumber?: number;
   restoreSnapshot?: string;
@@ -649,7 +650,8 @@ function appendHobbyCheckpointArgs(args: string[], opts: BuildUpgradeArgsOpts): 
        !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(checkpoint.restoreSnapshot))) {
     throw new Error("Invalid Hobby checkpoint slot, snapshot or node");
   }
-  if (checkpoint.mode === "cold") assertColdCheckpoint(checkpoint);
+  const cold = checkpoint.mode === "cold";
+  if (cold) assertColdCheckpoint(checkpoint);
   pushSetJson(args, "hobbyCheckpoint", {
     slotId: checkpoint.slotId,
     mode: checkpoint.mode,
@@ -660,12 +662,13 @@ function appendHobbyCheckpointArgs(args: string[], opts: BuildUpgradeArgsOpts): 
     "topology.kubernetes.io/zone": checkpoint.zone,
     "supported-cpu-platform.cloud.google.com/Intel_Ice_Lake": "true",
   });
+  const desktop = checkpoint.mode === "live" || (cold && checkpoint.coldDesktop === "none") ? "none" : "x11";
   args.push(
     HELM_SET_STRING, "runtimeKind=cluster",
     HELM_SET_STRING, "runtimeClassName=gvisor",
-    HELM_SET_STRING, "computerDesktop=x11",
+    HELM_SET_STRING, `computerDesktop=${desktop}`,
     HELM_SET_STRING, "computeClass=Balanced",
-    HELM_SET_STRING, checkpoint.mode === "cold" ? "rollStrategy=surge" : "rollStrategy=recreate",
+    HELM_SET_STRING, cold ? "rollStrategy=surge" : "rollStrategy=recreate",
   );
 }
 

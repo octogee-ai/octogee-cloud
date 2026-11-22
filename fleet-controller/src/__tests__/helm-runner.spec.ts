@@ -2216,6 +2216,11 @@ it("uses the exact claim-selected snapshot and compatible graphical isolated run
   expect(() => buildUpgradeArgs({ ...opts, gatewayId: "hobby-slot-bbbee012ab78" })).toThrow(/slot/);
   const { restoreSnapshot: _snapshot, ...hardware } = opts.hobbyCheckpoint;
   const coldArgs = buildUpgradeArgs({ ...opts, rollStrategy: "recreate", hobbyCheckpoint: { ...hardware, mode: "cold", releaseNumber: 2 } });
+  expect(coldArgs).toContain("computerDesktop=x11");
+  const coldHeadlessArgs = buildUpgradeArgs({ ...opts, hobbyCheckpoint: { ...hardware, mode: "cold", coldDesktop: "none", releaseNumber: 2 } });
+  expect(coldHeadlessArgs.filter(arg => arg.startsWith("computerDesktop="))).toEqual(["computerDesktop=none"]);
+  const liveArgs = buildUpgradeArgs({ ...opts, hobbyCheckpoint: { ...hardware, mode: "live" } });
+  expect(liveArgs.filter(arg => arg.startsWith("computerDesktop="))).toEqual(["computerDesktop=none"]);
   expect(coldArgs.filter(arg => arg.startsWith("rollStrategy="))).toEqual(["rollStrategy=surge"]);
   expect(coldArgs.find(arg => arg.startsWith("hobbyCheckpoint="))).toContain('"mode":"cold"');
   expect(coldArgs.find(arg => arg.startsWith("hobbyCheckpoint="))).toContain('"releaseNumber":2');
