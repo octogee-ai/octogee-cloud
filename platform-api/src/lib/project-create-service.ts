@@ -20,6 +20,7 @@ import { requestedProjectRecipe } from "./project-recipe.js";
 import { userEntitlements } from "@octogee/shared/types/user-entitlements";
 import type { FleetBrokerProjectCreateInput } from "@octogee/shared/types/fleet-broker";
 import { provisionProjectAgent } from "./project-agent-service.js";
+import { deleteProjectPlatformState, projectRepoProvider } from "./project-platform-state.js";
 import { projectCreateAdmission } from "./project-create-admission.js";
 import {
   isValidProjectStarter,
@@ -85,6 +86,8 @@ interface NormalizedProjectCreateRequest {
   recipe: unknown;
   starter: unknown;
 }
+
+type ReadyWorkspaceMmContext = WorkspaceMmContext & { teamId: string };
 
 interface MattermostMemberAdd {
   id: string | null;
@@ -159,13 +162,11 @@ export async function createProjectForActor(
   const limitFailure = await enforceProjectLimit(plan);
   if (limitFailure) return limitFailure;
 
-  if (plan.ghRepoSource) {
-    if (!actor.proveRepoSource) {
-      return bad(503, "GitHub repository authorization could not be verified");
-    }
-    const proofFailure = await actor.proveRepoSource(plan.ghRepoSource);
-    if (proofFailure) return proofFailure;
-  }
+  const chat = await readyWorkspaceChat(plan);
+  if (!chat) return bad(503, "workspace_chat_not_ready");
+
+  const proofFailure = await proveCreateRepoSource(actor, plan);
+  if (proofFailure) return proofFailure;
 
   const starterFiles = await projectCreateStarterFiles(plan);
   if (!starterFiles.ok) return starterFiles.result;
@@ -186,8 +187,7 @@ export async function createProjectForActor(
   try {
     await writeProjectProductFields(plan);
     await writeProjectOwnerMember(plan);
-    const callerCtx = await getWorkspaceMmContext(plan.uid, plan.workspaceId);
-    const channel = await provisionProjectMattermost(plan, callerCtx, artifacts);
+    const channel = await provisionProjectMattermost(plan, chat, artifacts);
     await provisionProjectCodeRepo(plan, starterFiles.files, artifacts);
     await markProjectActive(plan);
     await provisionProjectAgentByDefault(plan);
@@ -208,6 +208,26 @@ export async function createProjectForActor(
   } catch (error) {
     return failProjectProvisioning(plan, artifacts, error);
   }
+}
+
+async function proveCreateRepoSource(
+  actor: ProjectCreateActor,
+  plan: ProjectCreatePlan,
+): Promise<ProjectCreateResult | null> {
+  if (!plan.ghRepoSource) return null;
+  if (!actor.proveRepoSource) {
+    return bad(503, "GitHub repository authorization could not be verified");
+  }
+  return actor.proveRepoSource(plan.ghRepoSource);
+}
+
+async function readyWorkspaceChat(plan: ProjectCreatePlan): Promise<ReadyWorkspaceMmContext | null> {
+  const context = await getWorkspaceMmContext(plan.uid, plan.workspaceId);
+  if (context?.teamId) return { ...context, teamId: context.teamId };
+  logger.warn(`[projects] Create refused for ${plan.workspaceId}/${plan.slug}: workspace chat is not ready`, {
+    uid: plan.uid,
+  });
+  return null;
 }
 
 async function admitProjectCreate(plan: ProjectCreatePlan): Promise<ProjectCreateResult | null> {
@@ -464,17 +484,10 @@ async function writeProjectOwnerMember(plan: ProjectCreatePlan): Promise<void> {
 
 async function provisionProjectMattermost(
   plan: ProjectCreatePlan,
-  callerCtx: WorkspaceMmContext | null,
+  callerCtx: ReadyWorkspaceMmContext,
   artifacts: ProjectProvisioningArtifacts,
 ): Promise<{ teamId: string; mmChannelId: string }> {
-  const teamId = callerCtx?.teamId;
-  if (!teamId) {
-    throw new ProjectProvisioningError(
-      "Workspace has no Mattermost team context",
-      "Project provisioning failed - workspace chat is not ready",
-    );
-  }
-
+  const { teamId } = callerCtx;
   const mmChannelId = await createMattermostProjectChannel(plan, teamId, artifacts);
   try {
     await writeProjectGeneralChannel(plan, mmChannelId);
@@ -607,13 +620,9 @@ async function failProjectProvisioning(
 
   try {
     await cleanupProjectProvisioning(plan, artifacts);
-    await platformStateStore.workspaces.projects.patch(plan.workspaceId, plan.slug, {
-      provisioningCleanup: {
-        status: "complete",
-        error: null,
-        completedAt: { serverNow: true },
-      },
-      updatedAt: { serverNow: true },
+    await deleteProjectPlatformState(plan.workspaceId, plan.slug, {
+      ownerUid: plan.uid,
+      repoProvider: projectRepoProvider({ repoSource: plan.ghRepoSource }),
     });
     return bad(502, responseError, {
       workspaceId: plan.workspaceId,
