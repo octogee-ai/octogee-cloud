@@ -93,10 +93,12 @@ interface PrewarmRun {
   steps: OperationStep[];
 }
 
-function prewarmResult(run: PrewarmRun, prewarmState: typeof PARKED | typeof DEMAND_WON, instanceId?: string | null): OperationResult {
+async function prewarmResult(run: PrewarmRun, prewarmState: typeof PARKED | typeof DEMAND_WON, instanceId?: string | null): Promise<OperationResult> {
+  const guestVerifiedAt = run.request.mode === GUEST_RELEASE_MODE
+    ? (await run.deps.store.journal.operations.get(run.op.id))?.output?.guestVerifiedAt : undefined;
   return {
     success: true, steps: run.steps,
-    output: { ...run.claim, prewarmState, bootImageId: run.claim.guestDisks?.bootImageId ?? run.request.bootImageId, instanceId,
+    output: { ...run.claim, ...(typeof guestVerifiedAt === "number" ? { guestVerifiedAt } : {}), prewarmState, bootImageId: run.claim.guestDisks?.bootImageId ?? run.request.bootImageId, instanceId,
       ...(run.claim.guestDisks ? { homeDiskId: run.claim.guestDisks.homeDiskId, bootDiskId: run.claim.guestDisks.bootDiskId } : {}) },
   };
 }
@@ -203,7 +205,7 @@ async function authorizedRepairPark(run: PrewarmRun, state: State): Promise<bool
   return observed?.status === "SUSPENDED" && observed.instanceId === run.claim.previousInstanceId;
 }
 
-function handoffProgress(run: PrewarmRun, state: State): Phase | OperationResult {
+function handoffProgress(run: PrewarmRun, state: State): Phase | Promise<OperationResult> {
   const { uid, gatewayId, generation } = run.request;
   const taken = state.root?.ownerUid === uid && state.root.allocation?.generation !== generation &&
     state.owner?.activationLease?.targetGatewayId === gatewayId;
