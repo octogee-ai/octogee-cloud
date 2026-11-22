@@ -451,6 +451,7 @@ it("authenticates scoped controller steps and refuses physical work before the e
   await expect(admin(actor, { action: "acquire", attemptId: scope.attemptId, selection }, true)).resolves.toMatchObject({ dryRun: true });
   expect(readVerifiedAdmission).not.toHaveBeenCalled();
   await expect(admin(actor, { action: "acquire", attemptId: scope.attemptId, selection }, false)).resolves.toMatchObject({ phase: "reserved" });
+  expect(readVerifiedAdmission).toHaveBeenCalledWith(selection, scope.attemptId);
   await expect(admin("another-operator", { action: "dispatch", ...scope }, false)).rejects.toThrow(/another operation or operator/);
   await expect(admin(actor, { action: "apply", ...scope }, false)).rejects.toThrow(/matching staged release/);
   await expect(admin(actor, { action: "dispatch", ...scope }, false)).rejects.toThrow(/policy was not held/);

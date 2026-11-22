@@ -32,7 +32,7 @@ interface Dependencies {
   runKubectl: SurgeKubectl;
   runHelm: HelmSubprocess;
   readEnrollment(selection: HeldNativeReturnSelection): Promise<SharedMaintenanceEnrollment>;
-  verifyRollback(enrollment: SharedMaintenanceEnrollment, point: "admission" | "dispatch"): Promise<void>;
+  verifyRollback(enrollment: SharedMaintenanceEnrollment, attemptId: string, point: "admission" | "dispatch"): Promise<void>;
   verifyClosedMigrationIngress(enrollment: SharedMaintenanceEnrollment): Promise<void>;
   observeInstalledHelm(gatewayId: string): Promise<ObservedSharedMaintenanceHelm>;
   now?: () => number;
@@ -129,10 +129,10 @@ export function createSharedHeldReturnMaintenancePhysical(deps: Dependencies): S
   }
 
   return {
-    async readVerifiedAdmission(selection) {
+    async readVerifiedAdmission(selection, attemptId) {
       const binding = await enrolled(selection);
       const { plan } = binding;
-      await deps.verifyRollback(binding, "admission");
+      await deps.verifyRollback(binding, attemptId, "admission");
       const observed = await readHardware(plan);
       requireCustody(imageOutcome(plan, observed) === ROLLED_BACK, "original images changed before admission");
       await migration.verify(policyScope(binding, observed), binding.migrationPolicy, "original");
@@ -152,7 +152,7 @@ export function createSharedHeldReturnMaintenancePhysical(deps: Dependencies): S
       requireCustody(imageOutcome(claim.plan, observed) === ROLLED_BACK, "original images changed before dispatch");
       await migration.verify(scope, binding.migrationPolicy, "held");
       await deps.verifyClosedMigrationIngress(binding);
-      await deps.verifyRollback(binding, "dispatch");
+      await deps.verifyRollback(binding, claim.attemptId, "dispatch");
       await assertReserved();
       await migration.verify(scope, binding.migrationPolicy, "held");
       await readHardware(claim.plan);

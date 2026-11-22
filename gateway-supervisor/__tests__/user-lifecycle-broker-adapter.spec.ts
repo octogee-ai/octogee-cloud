@@ -4886,6 +4886,38 @@ describe("buildBrokeredLifecycleAdapter add config patch", () => {
     expect(events).toEqual(["patch", "remove-secret"]);
   });
 
+  it("registers Mattermost before activating the first configured owner's routing after prelaunch", async () => {
+    vi.stubEnv("GATEWAY_CLASS", "isolated");
+    stubUserClaim("alice");
+    const snapshot = aliceSnapshot({ gatewayId: "alice-user" });
+    const config = { channels: { mattermost: { enabled: false, accounts: {} } }, bindings: [] };
+    let registered = false;
+    const rpc = mkGatewayRpc({
+      ...rosterRpc(config),
+      channelsStart: vi.fn(async ({ channel, accountId }) => {
+        if (!registered) throw new Error("invalid channels.start channel");
+        return { channel, accountId, started: true };
+      }),
+    });
+    patchMocks.applyConfigPatch.mockImplementationOnce(async ({ buildPatch }) => {
+      const patch = buildPatch(config);
+      registered = patch.channels?.mattermost?.enabled === true;
+      expect(patch.channels?.mattermost?.accounts).toHaveProperty("alice-coach");
+      return { mode: "rpc", attempts: 1 };
+    });
+    routingActivationMocks.activate.mockImplementationOnce(async () => {
+      await rpc.channelsStart({ channel: "mattermost", accountId: "alice-coach" });
+    });
+    const adapter = buildBrokeredLifecycleAdapter({
+      client: mkClient({ userSnapshot: vi.fn(async () => snapshot) }),
+      rpc, log: vi.fn(), isIsolatedGateway: () => true,
+    });
+
+    await adapter.applyAddUserConfigPatch(snapshot, { _coachPersonalToken: "default-agent-pat" });
+
+    expect(rpc.channelsStart).toHaveBeenCalledExactlyOnceWith({ channel: "mattermost", accountId: "alice-coach" });
+  });
+
   it("refreshes runtime credentials before activating changed routing bindings", async () => {
     const events: string[] = [];
     routingActivationMocks.activate.mockImplementationOnce(async () => {

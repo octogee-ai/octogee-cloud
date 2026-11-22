@@ -1467,6 +1467,7 @@ type BrokerUserMountConfig = {
   projectAccounts: ReturnType<typeof buildProjectAgentAccounts>;
   bindings: ReturnType<typeof buildUserBindings>;
   normalizeAccountEndpoints: boolean;
+  enableMattermost?: boolean;
 };
 
 function brokerUserMountReplacePaths(current: unknown, { snapshot, isolatedGateway, evictionSlugs }: BrokerUserMountConfig): string[] {
@@ -1499,7 +1500,12 @@ export function composeBrokerUserMountConfig(current: unknown, input: BrokerUser
       ...userAgentRosterPatch(current, snapshot.slug, rebindPlatformEmbeddingRefs(roster)),
     },
     bindings: mergeUserBindings(currentBindings, [snapshot.slug, ...evictionSlugs], bindings),
-    channels: { mattermost: { accounts: mountMattermostAccountsPatch(current, snapshot.slug, evictionSlugs, accounts) } },
+    channels: {
+      mattermost: {
+        ...(input.enableMattermost ? { enabled: true } : {}),
+        accounts: mountMattermostAccountsPatch(current, snapshot.slug, evictionSlugs, accounts),
+      },
+    },
   };
   return { patch: projectMountPolicy(current, mountPatch, snapshot, isolatedGateway), replacePaths: brokerUserMountReplacePaths(current, input) };
 }
@@ -1635,6 +1641,7 @@ async function applyAddUserConfigPatch(
     || routingActivationRequired;
   await prepareAssignedUserRuntimePublication(callOpts, assignedIdentity);
   const mountConfig = {
+    enableMattermost: isolatedGateway,
     snapshot, isolatedGateway, evictionSlugs, brokerSnapshot, projectAgents, identity, defaultAgentModelDefaults,
     agentEntry, userAgentEntries, accountId, accountEntry, projectAccounts, bindings,
     normalizeAccountEndpoints: !ctx.isIsolatedGateway(),
