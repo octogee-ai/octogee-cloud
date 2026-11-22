@@ -2080,3 +2080,12 @@ export {
   assertHeldNativeOfflineSourceClaim, assertHeldNativeOfflineSourceClaimable, recordHeldNativeOfflineStage, recordHeldNativeOriginalRestart, HELD_NATIVE_OFFLINE_SOURCE_FENCE_KIND,
   type HeldNativeReturnAuthority, type HeldNativeReturnSelection, type HeldNativeReturnSourceProof, type HeldNativeStoppedOriginalWitness, type HeldNativeOriginalRestartWitness,
 } from "./held-native-return-repair.js";
+
+export {
+  acquireSharedHeldReturnMaintenance, advanceSharedHeldReturnMaintenance, assertSharedHeldReturnMaintenance,
+  assertSharedHeldReturnMaintenanceReserved, assertSharedHeldReturnMaintenanceUnfenced, completeSharedHeldReturnMaintenance, readSharedHeldReturnMaintenanceDispatch, readSharedHeldReturnMaintenanceTerminal, resumeSharedHeldReturnMaintenance,
+  stageSharedHeldReturnMaintenanceRelease, withdrawSharedHeldReturnMaintenance, type ObservedSharedMaintenanceHelm,
+  SHARED_HELD_RETURN_MAINTENANCE, SharedHeldReturnMaintenanceConflict, type SharedHeldReturnMaintenanceAdmin, type SharedHeldReturnMaintenanceAdmission, type SharedHeldReturnMaintenanceClaim,
+  type SharedHeldReturnMaintenanceCommand, type SharedHeldReturnMaintenanceDispatch,
+  type SharedHeldReturnMaintenancePlan, type SharedHeldReturnMaintenanceResult, type SharedHeldReturnMaintenanceWithdrawal,
+} from "./shared-held-return-maintenance.js";

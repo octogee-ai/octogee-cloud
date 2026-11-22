@@ -1,3 +1,7 @@
+import {
+  createSharedHeldReturnMaintenanceOperator, type SharedHeldReturnMaintenancePhysical,
+} from "./lib/held-shared-maintenance-operator.js";
+import type { SharedHeldReturnMaintenanceAdmin } from "@octogee/core/fleet-state";
 import { persistOperationCompletion } from "./legacy-migration-recovery.js";
 import type { HobbyCheckpointPod } from "./helm-runner.js";
 import { installDefaultUserEntitlements, userEntitlements } from "@octogee/shared/types/user-entitlements";
@@ -315,6 +319,7 @@ import {
   completeWorkspaceMigrationRecovery,
   assertWorkspaceMigrationRecoveryAuthority,
   assertWorkspaceMigrationSourcePreparationAuthority,
+  assertSharedHeldReturnMaintenanceUnfenced,
   type CutoverDeps,
   type FleetStateDeps,
 } from "@octogee/core/fleet-state";
@@ -527,6 +532,7 @@ interface ControllerDeps {
   restartGatewayDeployment?: (revisionId: string) => Promise<void>;
   handlers: OperationHandlers;
   heldNativeReturnRepairAvailable?: boolean;
+  sharedHeldReturnMaintenance?: SharedHeldReturnMaintenanceAdmin;
   observeHeldNativeStoppedOriginal?: HeldNativeOfflineSourceBackend["observeStoppedOriginal"];
   observeHeldNativeOriginalRestart?: HeldNativeOfflineSourceBackend["observeOriginalRestart"];
   requestNativeReturnSourceRecovery?: ReturnType<typeof createNativeReturnSourceRecoveryOwner>["request"];
@@ -2125,6 +2131,7 @@ async function attemptClaimOrQueueOperation(
     return await deps.store.transaction({ label: "operation-worker.claim" }, async (tx) => {
       const stored = await tx.journal.operations.get(op.id);
       if (stored === null) return { outcome: "skipped" as const };
+      await assertSharedHeldReturnMaintenanceUnfenced(tx, stored);
       const blockingArchive = GATEWAY_VM_SPEC ? await rearmArchiveBeforeAccountOperation(tx, stored) : null;
       if (blockingArchive) return queueOperationBehindHomeArchive(tx, stored, blockingArchive);
       const freshOperation = operationFromRecord(stored);
@@ -2647,6 +2654,7 @@ function releasingDeadKeyHolders(
 function adminNativeReturnOptions(deps: ControllerDeps) {
   return {
     heldNativeReturnRepairAvailable: deps.heldNativeReturnRepairAvailable,
+    sharedHeldReturnMaintenance: deps.sharedHeldReturnMaintenance,
     observeHeldNativeStoppedOriginal: deps.observeHeldNativeStoppedOriginal,
     observeHeldNativeOriginalRestart: deps.observeHeldNativeOriginalRestart,
     requestNativeReturnSourceRecovery: deps.requestNativeReturnSourceRecovery,
@@ -2997,6 +3005,7 @@ interface ControllerRuntimeSeams {
   resolveHobbyCheckpointPod?: ResolveHobbyCheckpointPod;
   requiresInitialGatewayRelease?: RequiresInitialGatewayRelease;
   heldNativeReturnBackupReaders?: NativeReturnBackupReaders | null;
+  sharedHeldReturnMaintenancePhysical?: SharedHeldReturnMaintenancePhysical | null;
   heldNativeOfflineSource?: ControllerProduct["heldNativeOfflineSource"];
 }
 
@@ -3008,7 +3017,7 @@ async function createControllerRuntime(
   store: PlatformStateStore,
   createHostingCleanup: ControllerProduct["createHostingCleanup"],
   userLifecycle: ProductUserLifecycle | null,
-  { accounts, documents, provisioning, gatewayGitKeys, resolveHobbyCheckpointPod, requiresInitialGatewayRelease, heldNativeReturnBackupReaders, heldNativeOfflineSource }: ControllerRuntimeSeams,
+  { accounts, documents, provisioning, gatewayGitKeys, resolveHobbyCheckpointPod, requiresInitialGatewayRelease, heldNativeReturnBackupReaders, heldNativeOfflineSource, sharedHeldReturnMaintenancePhysical }: ControllerRuntimeSeams,
 ): Promise<ControllerRuntime> {
   const runKubectl: KubectlSubprocess = (args, opts) => spawnKubectl(args, opts);
   const authSecretEnsurer = createAuthSecretEnsurer({ runKubectl, randomTokenHex: defaultRandomTokenHex, log });
@@ -3166,7 +3175,7 @@ async function createControllerRuntime(
   const convergeGateways = serializeGatewayConvergence(runGatewayConvergence);
   const convergeSettledVm = convergeAfterVmRuntimeChange(convergeGateways, log);
   const nativeReturn = configureNativeReturnSupport({
-    readers: heldNativeReturnBackupReaders, offlineFactory: heldNativeOfflineSource, store, documents, privateKey: fleetControllerPrivateKey,
+    readers: heldNativeReturnBackupReaders, offlineFactory: heldNativeOfflineSource, store, documents, privateKey: fleetControllerPrivateKey, sharedHeldReturnMaintenancePhysical,
     runKubectl, kubeOps, prepareMigrationAgentStores, agentStoreAdminDsn: agentStore.adminDsn,
   });
   const handlers = await buildHandlers(documents, log, helm, kubeOps, {
@@ -3215,6 +3224,7 @@ type HostingCleanup = NonNullable<NukeCloudDeps["deleteHostingSites"]>;
 function configureNativeReturnSupport(deps: Parameters<typeof buildHeldNativeReturnHandler>[0] & {
   kubeOps: KubeOps;
   prepareMigrationAgentStores: PrepareMigrationAgentStores;
+  sharedHeldReturnMaintenancePhysical?: SharedHeldReturnMaintenancePhysical | null;
   offlineFactory?: ControllerProduct["heldNativeOfflineSource"];
 }) {
   const offline = environmentName === "test" ? deps.offlineFactory?.(deps.store, {
@@ -3227,6 +3237,8 @@ function configureNativeReturnSupport(deps: Parameters<typeof buildHeldNativeRet
     handlers: { nativeReturnRecovery, reconcileHeldNativeReturn, reconcileHeldNativeOfflineReturn },
     admin: {
       heldNativeReturnRepairAvailable: reconcileHeldNativeReturn !== undefined,
+      sharedHeldReturnMaintenance: deps.sharedHeldReturnMaintenancePhysical
+        ? createSharedHeldReturnMaintenanceOperator({ store: deps.store, physical: deps.sharedHeldReturnMaintenancePhysical, now: Date.now }) : undefined,
       observeHeldNativeStoppedOriginal: reconcileHeldNativeOfflineReturn ? offline?.observeStoppedOriginal : undefined,
       observeHeldNativeOriginalRestart: reconcileHeldNativeOfflineReturn ? offline?.observeOriginalRestart : undefined,
       requestNativeReturnSourceRecovery: nativeReturnRecovery.request,
@@ -3291,6 +3303,7 @@ function buildHeldNativeOfflineReturnHandler(deps: Parameters<typeof buildHeldNa
 }
 
 export interface ControllerProduct {
+  sharedHeldReturnMaintenancePhysical?: (store: PlatformStateStore) => SharedHeldReturnMaintenancePhysical | null;
   heldNativeReturnBackupReaders?: (store: PlatformStateStore) => NativeReturnBackupReaders | null;
   heldNativeOfflineSource?: (store: PlatformStateStore, custody: {
     verifyDestination: VerifyHeldNativeReturnCustody;
@@ -3345,6 +3358,16 @@ function createUserLifecycle(
   return product.userLifecycle({ store, log });
 }
 
+function controllerNativeReturnSeams(product: ControllerProduct, store: PlatformStateStore, environmentName: string) {
+  const shared = { heldNativeOfflineSource: product.heldNativeOfflineSource };
+  if (environmentName !== "test") return shared;
+  return {
+    ...shared,
+    heldNativeReturnBackupReaders: product.heldNativeReturnBackupReaders?.(store),
+    sharedHeldReturnMaintenancePhysical: product.sharedHeldReturnMaintenancePhysical?.(store),
+  };
+}
+
 export async function main(product: ControllerProduct): Promise<void> {
   installDefaultUserEntitlements();
   const controllerStartedAt = Date.now();
@@ -3366,8 +3389,7 @@ export async function main(product: ControllerProduct): Promise<void> {
       accounts, documents, ...provisioningSeams(provisioning),
       resolveHobbyCheckpointPod: product.resolveHobbyCheckpointPod,
       requiresInitialGatewayRelease: product.requiresInitialGatewayRelease,
-      heldNativeReturnBackupReaders: environmentName === "test" ? product.heldNativeReturnBackupReaders?.(store) : undefined,
-      heldNativeOfflineSource: product.heldNativeOfflineSource,
+      ...controllerNativeReturnSeams(product, store, environmentName),
     });
 
   log(

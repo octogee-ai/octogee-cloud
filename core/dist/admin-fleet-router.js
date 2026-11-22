@@ -1,3 +1,4 @@
+import { SharedHeldReturnMaintenanceConflict } from "./shared-held-return-maintenance.js";
 export { archivedSchedulerSourceImage, archiveSchedulerCustodyMatches, enqueueParkedHomeArchive, isAuthorizedHomeArchiveOrigin, planArchiveAfterBackupRelease, planReturnedHomeArchive, resolveParkedHomeArchiveGrant, retainedBootPreservesScheduler, simpleHomePreparation } from "./parked-home-archive.js";
 import { bindHeldNativeStoppedOriginal, HeldNativeReturnConflict, recordHeldNativeOriginalRestart, requestHeldNativeReturnRepair, reserveHeldNativeOfflineSource } from "./held-native-return-repair.js";
 import { migrationCancellationDeferred } from "./fleet-state.js";
@@ -209,6 +210,25 @@ function parseHeldNativeReturnSelection(operationId, body) {
         typeof schedulerMigrationId !== "string" || !schedulerMigrationId.startsWith(`mig-${operationId}:scheduler:`))
         return null;
     return { operationId, sourceGatewayId, targetGatewayId, sourceEpoch, schedulerMigrationId };
+}
+function isSharedMaintenanceStep(action) {
+    return ["status", "hold-migration-policy", "dispatch", "stage", "apply", "rollback", "withdraw", "complete"].includes(action);
+}
+function parseSharedHeldMaintenanceCommand(operationId, action, body) {
+    const attemptId = body?.attemptId;
+    if (typeof attemptId !== "string" || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(attemptId))
+        return null;
+    if (!body || !/^builder-return-[a-z0-9-]+-g[1-9]\d*$/.test(operationId))
+        return null;
+    const { attemptId: _attempt, ...scope } = body;
+    if (action === "acquire") {
+        const selection = parseHeldNativeReturnSelection(operationId, scope);
+        return selection ? { action, attemptId, selection } : null;
+    }
+    const { gatewayId } = scope;
+    if (Object.keys(scope).length !== 1 || typeof gatewayId !== "string" || !/^shared-[a-z0-9-]{1,56}$/.test(gatewayId))
+        return null;
+    return isSharedMaintenanceStep(action) ? { action, operationId, gatewayId, attemptId } : null;
 }
 async function respondHeldNativeOriginalRestart(input) {
     const { store, observe, selection, actor, dryRun, res } = input;
@@ -4028,6 +4048,40 @@ export function addAdminFleetRoutes(router, deps) {
             }
             if (respondCentralReleaseError(res, error))
                 return;
+            next(error);
+        }
+    });
+    router.post("/operations/:id/maintain-held-shared/:action", async (req, res, next) => {
+        try {
+            if (deps.releaseEnvironment !== "test") {
+                res.status(404).json({ error: "Held Shared maintenance is available only in TEST" });
+                return;
+            }
+            const command = parseSharedHeldMaintenanceCommand(req.params.id, req.params.action, req.body);
+            if (!command) {
+                res.status(400).json({ error: "Exact held return, Shared gateway and maintenance attempt are required" });
+                return;
+            }
+            const actor = req.uid;
+            if (!actor) {
+                res.status(403).json({ error: "Authenticated operator identity is required" });
+                return;
+            }
+            if (isAdminDryRun(req)) {
+                res.json({ dryRun: true, plans: [{ what: "Run a retained Shared maintenance step", forced: false, mutation: command }] });
+                return;
+            }
+            if (!deps.sharedHeldReturnMaintenance) {
+                res.status(503).json({ error: "Held Shared maintenance backend is unavailable" });
+                return;
+            }
+            res.json(await deps.sharedHeldReturnMaintenance(actor, command, false));
+        }
+        catch (error) {
+            if (error instanceof SharedHeldReturnMaintenanceConflict || error instanceof HeldNativeReturnConflict) {
+                res.status(409).json({ error: error.message });
+                return;
+            }
             next(error);
         }
     });

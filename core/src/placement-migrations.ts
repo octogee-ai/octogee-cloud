@@ -821,7 +821,7 @@ export async function enqueuePlacementMigrationInTransaction(
   return "rearmed";
 }
 
-function sharedDrainMoveNeverClaimed(data: Record<string, unknown>): boolean {
+export function sharedDrainMoveNeverClaimed(data: Record<string, unknown>): boolean {
   const history = data.attemptHistory;
   return [
     data.status === "pending",

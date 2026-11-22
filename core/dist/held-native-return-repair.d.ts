@@ -1,5 +1,5 @@
 import { type HeldNativeOfflineStageReceipt, type SchedulerHandoffState } from "@octogee/shared/types/glm";
-import type { OperationRecord, PlatformStateRepositories, PlatformStateStore, Stored } from "./platform-state/index.js";
+import type { GatewayRuntimeRestartFenceValue, OperationRecord, PlatformStateRepositories, PlatformStateStore, Stored } from "./platform-state/index.js";
 export declare class HeldNativeReturnConflict extends Error {
 }
 export interface HeldNativeReturnSelection {
@@ -20,6 +20,16 @@ export interface HeldNativeReturnSourceProof {
     activationManifestSha256: string;
 }
 export declare const HELD_NATIVE_OFFLINE_SOURCE_FENCE_KIND = "held-native-offline-source";
+export declare function readHeldNativeReturnForTargetMaintenance(state: PlatformStateRepositories, selection: HeldNativeReturnSelection, targetFence?: GatewayRuntimeRestartFenceValue, maintenanceRelease?: {
+    original: number;
+    desired: number;
+}): Promise<{
+    sourceRelease: number;
+    targetRelease: number;
+    originalInstanceId: string | null | undefined;
+    uid: string;
+    slug: string;
+}>;
 export declare function requestHeldNativeReturnRepair(store: PlatformStateStore, selection: HeldNativeReturnSelection, actor: string, now: number, dryRun?: boolean): Promise<HeldNativeReturnAuthority>;
 type HeldClaim = {
     authority: HeldNativeReturnAuthority;

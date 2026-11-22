@@ -68,13 +68,26 @@ function isHeldBuilderRuntime(source, runtime, lease, maintenance) {
         allocation.generation === lease.generation && runtime?.runtime === "gce-vm" && mayHoldOriginalVm(runtime.vm?.status, maintenance) &&
         (!maintenance || runtime.vm?.instanceId === maintenance.originalInstanceId);
 }
+function targetReleaseMatches(target, maintenance) {
+    return maintenance ? target.desiredRelease === maintenance.desired && target.liveRelease === maintenance.original :
+        target.liveRelease === target.desiredRelease;
+}
+function heldReturnTargetHeartbeatMatches(heartbeat, slug, verifyReady) {
+    return (!verifyReady || heartbeat.status === "ready") && !heartbeat.mountedCustomers.includes(slug) &&
+        !heartbeat.migratingIn?.includes(slug);
+}
 export const HELD_NATIVE_OFFLINE_SOURCE_FENCE_KIND = "held-native-offline-source";
 function sourceFenceMatches(fence, maintenance) {
     if (!maintenance)
         return !fence;
     return fence?.kind === HELD_NATIVE_OFFLINE_SOURCE_FENCE_KIND && fence.attemptId === maintenance.requestId && fence.phase === maintenance.phase;
 }
-async function holdingCustody(state, { op, handoff, uid, slug }, maintenance) {
+function targetHoldsReturn(target, runtime, slug, check) {
+    return [target.gatewayClass === "shared", target.desiredStatus === "running", targetReleaseMatches(target, check?.release),
+        Number.isSafeInteger(target.liveRelease), target.retirementClaim == null, isDeepStrictEqual(target.runtimeRestartFence, check?.fence),
+        heldReturnTargetHeartbeatMatches(runtime.heartbeat, slug, check?.requireReady ?? true)].every(Boolean);
+}
+async function holdingCustody(state, { op, handoff, uid, slug }, maintenance, targetCheck) {
     const { fromGatewayId, toGatewayId, forwardRecovery } = handoff;
     const user = await state.users.records.get(uid);
     const lease = user?.activationLease;
@@ -96,14 +109,22 @@ async function holdingCustody(state, { op, handoff, uid, slug }, maintenance) {
         isHeldBuilderRuntime(source, sourceRuntime, lease, maintenance),
         source.desiredStatus === "running", source.liveRelease === source.desiredRelease, Number.isSafeInteger(source.liveRelease),
         source.retirementClaim == null, sourceFenceMatches(source.runtimeRestartFence, maintenance),
-        target.gatewayClass === "shared", target.desiredStatus === "running", target.liveRelease === target.desiredRelease,
-        Number.isSafeInteger(target.liveRelease), target.retirementClaim == null, target.runtimeRestartFence === undefined,
-        targetRuntime.heartbeat.status === "ready", !targetRuntime.heartbeat.mountedCustomers.includes(slug),
-        !targetRuntime.heartbeat.migratingIn?.includes(slug),
+        targetHoldsReturn(target, targetRuntime, slug, targetCheck),
     ].every(Boolean), "Held Native return source or target custody changed");
     const active = await state.journal.operations.listForUid(uid, { statuses: ["pending", "running"] });
     requireConflict(active.length === 1 && active[0]?.id === op.id, "A different operation holds the Native return owner");
     return { sourceRelease: source.liveRelease, targetRelease: target.liveRelease, originalInstanceId: sourceRuntime?.vm?.instanceId };
+}
+export async function readHeldNativeReturnForTargetMaintenance(state, selection, targetFence, maintenanceRelease) {
+    const hold = journalHold(await state.journal.operations.get(selection.operationId), selection);
+    const targetImportHold = hold.handoff.forwardRecovery.sharedTargetImportHold;
+    requireConflict(hold.op.status === "pending" && hold.op.startedAt === null && hold.op.completedAt === null &&
+        !hold.handoff.forwardRecovery.sourceReconcile && hold.handoff.forwardRecovery.offlineSourceRecovery === undefined && missingFingerprintAttempt(hold), "Held Native return is not the original unclaimed missing-fingerprint checkpoint");
+    requireConflict(targetFence
+        ? targetImportHold?.gatewayId === selection.targetGatewayId && targetImportHold.maintenanceAttemptId === targetFence.attemptId
+        : targetImportHold === undefined, "Held Native return Shared import hold changed");
+    const releases = await holdingCustody(state, hold, undefined, { fence: targetFence, requireReady: targetFence === undefined, release: maintenanceRelease });
+    return { ...releases, uid: hold.uid, slug: hold.slug };
 }
 function requestId(selection) {
     return createHash("sha256").update(JSON.stringify([selection.operationId, selection.sourceGatewayId, selection.targetGatewayId,
@@ -115,6 +136,7 @@ export async function requestHeldNativeReturnRepair(store, selection, actor, now
         const hold = journalHold(await tx.journal.operations.get(selection.operationId), selection);
         const authority = { ...selection, uid: hold.uid, slug: hold.slug, requestId: id };
         requireConflict(!hold.handoff.forwardRecovery.offlineSourceRecovery, "Held Native return selected an offline source");
+        requireConflict(!hold.handoff.forwardRecovery.sharedTargetImportHold, "Held Native return requires offline custody for the retained Shared target");
         const previous = hold.handoff.forwardRecovery.sourceReconcile;
         if (previous?.requestId !== id) {
             requireConflict(!previous && hold.op.status === "pending" && hold.op.startedAt === null && hold.op.completedAt === null &&
@@ -340,6 +362,8 @@ export function heldNativeReturnBlocksDestination(op, gatewayId) {
     const forward = op.schedulerHandoff?.forwardRecovery;
     if (gatewayId !== op.input.toGatewayId && gatewayId !== op.schedulerHandoff?.toGatewayId)
         return false;
+    if (forward?.sharedTargetImportHold?.gatewayId === gatewayId)
+        return true;
     if (forward?.offlineSourceRecovery)
         return true;
     if (!forward?.sourceReconcile)

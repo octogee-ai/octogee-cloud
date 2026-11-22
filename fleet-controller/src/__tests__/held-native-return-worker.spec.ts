@@ -1,14 +1,24 @@
+import { gatewayRoot } from "@octogee/core-testing/admin-dry-run-app";
 import { gatewayScopedJobId, verifyFleetRequest } from "@octogee/core/fleet-signature";
 import { SIGNATURE_HEADER } from "@octogee/shared/types/fleet-controller";
+import { releasePayloadHash } from "@octogee/shared/types/gateway-releases";
 import { createHeldNativeReturnDestinationVerifier } from "../lib/held-native-return-destination.js";
 import { FLEET_KEY_PAIR } from "./fixtures/fleet-keys.js";
 import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
-import { bindHeldNativeStoppedOriginal, heldNativeReturnBlocksDestination, recordHeldNativeOriginalRestart, requestHeldNativeReturnRepair, reserveHeldNativeOfflineSource } from "@octogee/core/fleet-state";
+import {
+  bindHeldNativeStoppedOriginal, recordHeldNativeOriginalRestart, reserveHeldNativeOfflineSource,
+  acquireSharedHeldReturnMaintenance, advanceSharedHeldReturnMaintenance, assertSharedHeldReturnMaintenance,
+  assertSharedHeldReturnMaintenanceUnfenced, completeSharedHeldReturnMaintenance, heldNativeReturnBlocksDestination,
+  requestHeldNativeReturnRepair, resumeSharedHeldReturnMaintenance, stageSharedHeldReturnMaintenanceRelease, withdrawSharedHeldReturnMaintenance,
+  type SharedHeldReturnMaintenanceAdmission,
+  type SharedHeldReturnMaintenanceResult,
+} from "@octogee/core/fleet-state";
 import type { Operation } from "@octogee/shared/types/glm";
 import { expect, it, vi } from "vitest";
 import { processOperation } from "../index.js";
 import { createMigrateUserHandler, type MigrateUserDeps } from "../handlers/migrate-user.js";
 import { createHeldNativeOfflineReturnWorker, createHeldNativeReturnWorker } from "../lib/held-native-return-worker.js";
+import { createSharedHeldReturnMaintenanceOperator, type SharedHeldReturnMaintenancePhysical } from "../lib/held-shared-maintenance-operator.js";
 
 const uid = "uid-owner", slug = "owner", sourceGatewayId = "owner-s-retained", targetGatewayId = "shared-target";
 const operationId = `builder-return-${sourceGatewayId}-g4`, sourceEpoch = 7;
@@ -164,8 +174,11 @@ it("reserves a stopped-original alternate without making an online receipt or re
 
 });
 
-it("runs only the exact stopped-original claim and holds the same journal after staging", async () => {
-  const { store, docs } = fixture();
+it.each([false, true])("runs only the exact stopped-original claim and holds the journal after staging (Shared hold: %s)", async sharedHold => {
+  const { store, docs, operations } = fixture();
+  if (sharedHold) Object.assign(operations.schedulerHandoff.forwardRecovery, {
+    sharedTargetImportHold: { gatewayId: targetGatewayId, maintenanceAttemptId: "verified-target-maintenance" },
+  });
   const reserved = await reserveHeldNativeOfflineSource(store, selection, "test-operator", 500);
   const witness = { originalInstanceId: "1234", stoppedAt: 520 };
   const current = async () => (await store.journal.operations.get(operationId))! as unknown as Operation;
@@ -245,4 +258,361 @@ it("requires a live scoped import denial from the same ready destination pod", a
   } finally {
     http.mockRestore();
   }
+});
+
+it("witnesses the exact held owner over retained Pod loopback while migration ingress is closed", async () => {
+  const { privateKey, publicKey } = FLEET_KEY_PAIR;
+  const pod = { name: "retained-shared", uid: "retained-uid" };
+  let observedUid = pod.uid;
+  const execute = vi.fn();
+  const verify = createHeldNativeReturnDestinationVerifier({
+    namespace: "test", privateKey, loopbackPodUid: pod.uid,
+    runKubectl: async (args, options) => {
+      if (args.includes("get")) return { code: 0, stderr: "", stdout: JSON.stringify({ items: [{
+        metadata: { ...pod, uid: observedUid },
+        status: { phase: "Running", podIP: "10.1.2.3", conditions: [{ type: "Ready", status: "True" }] },
+      }] }) };
+      execute(args);
+      const request = JSON.parse(options!.stdin!);
+      expect(request.path).toBe(`/target-import-hold/${targetGatewayId}`);
+      expect(verifyFleetRequest(publicKey, gatewayScopedJobId(schedulerMigrationId, targetGatewayId), request.body, request.signature)).toBe(true);
+      return { code: 0, stderr: "", stdout: JSON.stringify({ status: 200, proof: { ...JSON.parse(request.body), held: true } }) };
+    },
+  });
+  await verify({ ...selection, slug }, async () => {});
+  expect(execute).toHaveBeenCalledOnce();
+  expect(execute.mock.calls[0]?.[0].slice(0, 8)).toEqual(["-n", "test", "exec", "-i", pod.name, "-c", "gateway", "--"]);
+  observedUid = "different";
+  await expect(verify({ ...selection, slug }, async () => {})).rejects.toThrow(/exactly one ready pod/);
+  expect(execute).toHaveBeenCalledOnce();
+});
+
+function sharedMaintenanceFixture() {
+  const t = fixture();
+  t.docs.set(`gateways/${targetGatewayId}`, gatewayRoot(targetGatewayId, { liveRelease: 1 }));
+  const owners = Array.from({ length: 6 }, (_, index) => ({
+    uid: `uid-seat-${index}`, slug: `seat-${index}`, epoch: index + 1, homeIdentitySha256: String(index + 1).repeat(64),
+  }));
+  t.targetRuntime.heartbeat.mountedCustomers = owners.map(owner => owner.slug);
+  for (const owner of owners) {
+    const { uid: ownerUid, slug: ownerSlug, epoch } = owner;
+    t.docs.set(`users/${ownerUid}`, { username: ownerSlug, onboardingStep: "complete", provisioning: { openclaw: { slug: ownerSlug, gatewayId: targetGatewayId } } });
+    t.docs.set(`gateways/${targetGatewayId}/assignments/${ownerUid}`, { uid: ownerUid, slug: ownerSlug,
+      gatewayId: targetGatewayId, epoch, state: "serving", updatedByOperationId: null, source: "onboarding", createdAt: 1, updatedAt: 1 });
+  }
+  const outboundId = "placement-" + "c".repeat(32);
+  const outboundPath = `glmOperations/${outboundId}`;
+  t.docs.set(outboundPath, {
+    kind: "migrate-user", origin: "automatic", status: "pending", inputUid: owners[0]!.uid, startedAt: null, completedAt: null,
+    createdBy: "glm-controller-placement-policy",
+    input: { uid: owners[0]!.uid, userSlug: owners[0]!.slug, fromGatewayId: targetGatewayId, toGatewayId: "shared-other",
+      source: "continuous-placement-policy" }, steps: [],
+  });
+  const imageRepository = "registry.example/octogee/octogee-gateway";
+  const edgeRepository = "registry.example/octogee/gateway-edge";
+  const originalTag = "abcdef1@sha256:" + "a".repeat(64);
+  const originalEdgeTag = "abcdef1@sha256:" + "b".repeat(64);
+  const admission: SharedHeldReturnMaintenanceAdmission = {
+    selection, targetRelease: 1, owners,
+    retainedBoot: { gatewayImageTag: originalTag, completedInitImageId: imageRepository + "@sha256:" + "a".repeat(64) },
+    workload: {
+      podName: "shared-target-pod", podUid: "00000000-0000-4000-8000-000000000001",
+      deploymentUid: "00000000-0000-4000-8000-000000000002", replicaSetUid: "00000000-0000-4000-8000-000000000003",
+    },
+    originalImages: { gateway: `${imageRepository}:${originalTag}`, "gateway-edge": `${edgeRepository}:${originalEdgeTag}` },
+    maintenanceImages: { gateway: imageRepository + ":abcdef2@sha256:" + "c".repeat(64), "gateway-edge": edgeRepository + ":abcdef2@sha256:" + "d".repeat(64) },
+    acceptedMaintenanceSource: "e".repeat(40), acceptedNativeSource: "d".repeat(40), originalNativeSource: "c".repeat(40),
+    installedChartFingerprint: "8".repeat(64),
+    exactWorkloadObserved: true, noInFlightTasks: true, noPreparedImports: true, rollbackVerified: true, observedAt: 500,
+  };
+  const payload = { imageRepository, imageTag: originalTag, gatewayEdgeImage: { imageRepository: edgeRepository, imageTag: originalEdgeTag },
+    openclawSourceSha: "f".repeat(40) };
+  t.docs.set(`gateways/${targetGatewayId}/releases/1`, {
+    gatewayId: targetGatewayId, release: 1, createdAt: 1, createdBy: "test", sourceRelease: null, note: null, payload,
+    payloadHash: releasePayloadHash(payload),
+  });
+  const installedHelm = { imageRepository, imageTag: originalTag, deploymentName: "shared-deployment", releaseName: "shared-helm",
+    gatewayServiceName: "shared", gatewayEdgeServiceName: "shared-edge", serviceAccountName: "shared-sa", replicas: 1,
+    availableReplicas: 1, lastAppliedAt: 540 };
+  Object.assign(t.targetRuntime, {
+    helm: installedHelm,
+    kubernetes: { status: "ready", totalPods: 1, readyPods: 1, observedAt: 540, pods: [{
+      uid: admission.workload.podUid, name: admission.workload.podName, replicaSetUid: admission.workload.replicaSetUid,
+      nodeName: null, nodePool: null, instanceId: null,
+    }] },
+  });
+  Object.assign(t.targetRuntime.heartbeat, { lastHeartbeatAt: 540, version: "abcdef1" });
+  const observeInstalledHelm = async () => ({
+    installed: installedHelm, chartFingerprint: admission.installedChartFingerprint,
+    edgeImage: admission.originalImages["gateway-edge"], verifiedAt: 540,
+  });
+  const acquire = () => acquireSharedHeldReturnMaintenance(t.store, {
+    environment: "test", actor: "protected-operator", attemptId: "00000000-0000-4000-8000-000000000004",
+    now: () => 500, readVerifiedAdmission: async () => admission,
+  });
+  return { ...t, acquire, admission, outboundId, outboundPath, observeInstalledHelm, originalPayload: payload };
+}
+
+it("does not reserve Shared maintenance during conflicting placements, source maintenance, roster drift, or a stale preflight", async () => {
+  for (const reason of ["inbound", "outbound", "offline", "roster", "stale"] as const) {
+    const h = sharedMaintenanceFixture();
+    if (reason === "inbound") h.docs.set(operationPath, { ...h.operations, status: "running", startedAt: 501 });
+    if (reason === "outbound") Object.assign(h.docs.get(h.outboundPath)!, { attempts: 1 });
+    if (reason === "offline") Object.assign(h.operations.schedulerHandoff.forwardRecovery, { offlineSourceRecovery: { phase: "reserved" } });
+    if (reason === "roster") h.admission.owners[0]!.epoch++;
+    if (reason === "stale") h.admission.observedAt = 500 - 61_000;
+    const before = structuredClone(h.docs);
+    await expect(h.acquire()).rejects.toThrow();
+    expect(h.docs).toEqual(before);
+  }
+});
+
+function setDormantNativeSchedulerReference(h: ReturnType<typeof sharedMaintenanceFixture>, index: number) {
+  const { uid: ownerUid, slug: ownerSlug } = h.admission.owners[index]!;
+  const oldSource = `${ownerSlug}-parked`;
+  const oldShared = "shared-prior";
+  const returnOperationId = `builder-return-${oldSource}-g3`;
+  const localOwner = h.docs.get(`users/${ownerUid}`)!;
+  const provisioning = localOwner.provisioning as Record<string, unknown>;
+  const reference = {
+    uid: ownerUid, slug: ownerSlug, sourceGatewayId: oldSource, sharedGatewayId: oldShared, migrationId: "first-native-return",
+    returnOperationId, instanceId: "2200", instanceName: `${oldSource}-vm`, zone: "example-a",
+    homeDiskId: "3100", homeDiskSource: "projects/example/zones/example-a/disks/original-home",
+    completedAt: 330, cutoverCommittedAt: 320,
+  };
+  Object.assign(provisioning, {
+    homeDisk: { id: reference.homeDiskId, source: reference.homeDiskSource },
+    pendingNativeSchedulerRetirement: reference,
+  });
+  const historical = {
+    kind: "migrate-user", status: "succeeded", inputUid: ownerUid, startedAt: 310, completedAt: 340, createdAt: 300,
+    input: { uid: ownerUid, fromGatewayId: oldSource, toGatewayId: oldShared },
+    schedulerHandoff: { uid: ownerUid, slug: ownerSlug, fromGatewayId: oldSource, toGatewayId: oldShared, migrationId: reference.migrationId },
+    steps: [], cutoverCommittedAt: reference.cutoverCommittedAt, output: { nativeSourcePark: { parked: "suspended" } },
+  };
+  h.docs.set(`glmOperations/${returnOperationId}`, historical);
+  return { oldSource, ownerUid, ownerSlug, reference, historical };
+}
+
+it("accepts terminal dormant scheduler history after Shared replacement without retiring the referenced home", async () => {
+  const h = sharedMaintenanceFixture();
+  const parked = setDormantNativeSchedulerReference(h, 0);
+  const absent = setDormantNativeSchedulerReference(h, 1);
+  h.docs.set(`gateways/${parked.oldSource}`, gatewayRoot(parked.oldSource,
+    { gatewayClass: "isolated", desiredStatus: "paused", ownerUid: parked.ownerUid, builderSlug: parked.ownerSlug }));
+  h.docs.set(`glmGateways/${parked.oldSource}`, { docKind: "runtime", runtime: "gce-vm", release: 1, lifecycle: "paused", gatewayId: parked.oldSource, vm: { status: "TERMINATED", instanceId: "3300" } });
+  const claim = await h.acquire();
+  await expect(assertSharedHeldReturnMaintenance(h.store, claim)).resolves.toBe("reserved");
+  for (const owner of [parked, absent]) {
+    expect((await h.store.users.records.get(owner.ownerUid))?.fences.pendingNativeSchedulerRetirement).toEqual(owner.reference);
+  }
+});
+
+it.each(["incomplete", "wrong-return", "source-running", "other-fence"] as const)(
+  "refuses a historical-looking record with unverified authority or source state (%s)", async reason => {
+    const h = sharedMaintenanceFixture();
+    const caseData = setDormantNativeSchedulerReference(h, 0);
+    if (reason === "incomplete") Object.assign(caseData.reference, { completedAt: undefined });
+    if (reason === "wrong-return") caseData.historical.input.toGatewayId = targetGatewayId;
+    if (reason === "source-running") h.docs.set(`gateways/${caseData.oldSource}`, gatewayRoot(caseData.oldSource,
+      { gatewayClass: "isolated", desiredStatus: "running", ownerUid: caseData.ownerUid, builderSlug: caseData.ownerSlug }));
+    if (reason === "other-fence") await h.store.users.records.setFence(caseData.ownerUid, "restoreFence", { operationId: "existing-restore" }, "absent");
+    const before = structuredClone(h.docs);
+    await expect(h.acquire()).rejects.toThrow(/owner custody changed/);
+    expect(h.docs).toEqual(before);
+  },
+);
+
+it("authenticates scoped controller steps and refuses physical work before the exact staged release", async () => {
+  const h = sharedMaintenanceFixture();
+  const scope = { operationId, gatewayId: targetGatewayId, attemptId: "00000000-0000-4000-8000-000000000004" };
+  const actor = "protected-operator";
+  const readVerifiedAdmission = vi.fn(async () => h.admission);
+  let policyHeld = false;
+  const holdMigrationPolicy = vi.fn<SharedHeldReturnMaintenancePhysical["holdMigrationPolicy"]>(async (_claim, assertReserved) => {
+    await assertReserved();
+    policyHeld = true;
+  });
+  const verifyReadyToDispatch = vi.fn<SharedHeldReturnMaintenancePhysical["verifyReadyToDispatch"]>(async (_claim, assertReserved) => {
+    await assertReserved();
+    if (!policyHeld) throw new Error("migration policy was not held");
+  });
+  const applyStagedRelease = vi.fn<SharedHeldReturnMaintenancePhysical["applyStagedRelease"]>(
+    async (_claim, staged, assertCurrent) => {
+      expect(staged).toEqual({ phase: "dispatched", release: 2 });
+      await expect(assertCurrent()).resolves.toBeUndefined();
+    },
+  );
+  const admin = createSharedHeldReturnMaintenanceOperator({
+    store: h.store, now: () => 520,
+    physical: { readVerifiedAdmission, holdMigrationPolicy, verifyReadyToDispatch, applyStagedRelease, restoreMigrationPolicy: vi.fn(),
+      readVerifiedWithdrawal: vi.fn(), readVerifiedResult: vi.fn(), readInstalledHelm: vi.fn() },
+  });
+  await expect(admin(actor, { action: "acquire", attemptId: scope.attemptId, selection }, true)).resolves.toMatchObject({ dryRun: true });
+  expect(readVerifiedAdmission).not.toHaveBeenCalled();
+  await expect(admin(actor, { action: "acquire", attemptId: scope.attemptId, selection }, false)).resolves.toMatchObject({ phase: "reserved" });
+  await expect(admin("another-operator", { action: "dispatch", ...scope }, false)).rejects.toThrow(/another operation or operator/);
+  await expect(admin(actor, { action: "apply", ...scope }, false)).rejects.toThrow(/matching staged release/);
+  await expect(admin(actor, { action: "dispatch", ...scope }, false)).rejects.toThrow(/policy was not held/);
+  await expect(admin(actor, { action: "hold-migration-policy", ...scope }, false)).resolves.toMatchObject({ phase: "reserved" });
+  await expect(admin(actor, { action: "dispatch", ...scope }, false)).resolves.toMatchObject({ phase: "dispatched" });
+  await expect(admin(actor, { action: "hold-migration-policy", ...scope }, false)).rejects.toThrow(/dispatched or withdrawn/);
+  expect(holdMigrationPolicy).toHaveBeenCalledTimes(1);
+  await expect(admin(actor, { action: "apply", ...scope }, false)).rejects.toThrow(/matching staged release/);
+  expect(applyStagedRelease).not.toHaveBeenCalled();
+  await expect(admin(actor, { action: "stage", ...scope }, false)).resolves.toMatchObject({ release: 2 });
+  await expect(admin(actor, { action: "apply", ...scope }, false)).resolves.toMatchObject({ phase: "dispatched", release: 2 });
+  expect(applyStagedRelease).toHaveBeenCalledTimes(1);
+});
+
+it("withdraws an untouched reservation only after restoring policy and verifying original custody", async () => {
+  const h = sharedMaintenanceFixture();
+  const claim = await h.acquire();
+  const original = {
+    attemptId: claim.attemptId, workload: h.admission.workload, owners: h.admission.owners,
+    images: h.admission.originalImages, runningImageIds: h.admission.originalImages, retainedBoot: h.admission.retainedBoot,
+    nativeSource: h.admission.originalNativeSource, noInFlightTasks: true, noPreparedImports: true, exclusiveReady: true, verifiedAt: 540,
+    migrationPolicyRestored: true, installed: await h.observeInstalledHelm(),
+  } as const;
+  let now = 520;
+  const restoreMigrationPolicy = vi.fn(async () => {
+    now = 550;
+    await expect(assertSharedHeldReturnMaintenance(h.store, claim)).resolves.toBe("withdrawing");
+    await expect(advanceSharedHeldReturnMaintenance(h.store, claim, "dispatched", () => 530, async () => {})).rejects.toThrow(/dispatched or withdrawn/);
+    await expect(stageSharedHeldReturnMaintenanceRelease(h.store, claim, () => 530)).rejects.toThrow(/before dispatch/);
+  });
+  const readVerifiedWithdrawal = vi.fn(async () => original);
+  const withdraw = () => withdrawSharedHeldReturnMaintenance(h.store, claim, { restoreMigrationPolicy, readVerifiedWithdrawal, now: () => now });
+
+  restoreMigrationPolicy.mockRejectedValueOnce(new Error("policy restoration interrupted"));
+  await expect(withdraw()).rejects.toThrow(/interrupted/);
+  await expect(assertSharedHeldReturnMaintenance(h.store, claim)).resolves.toBe("withdrawing");
+  readVerifiedWithdrawal.mockResolvedValueOnce({ ...original, workload: { ...original.workload, podUid: "changed" } });
+  await expect(withdraw()).rejects.toThrow(/exact verified completion/);
+  expect((await h.store.journal.audits.get(claim.auditId))?.status).toBe("in-progress");
+
+  await expect(withdraw()).resolves.toBeUndefined();
+  await expect(withdraw()).resolves.toBeUndefined();
+  expect(restoreMigrationPolicy).toHaveBeenCalledTimes(3);
+  expect(await h.store.gateways.roots.get(targetGatewayId)).toMatchObject({ desiredRelease: 1, latestRelease: 1, liveRelease: 1 });
+  expect((await h.store.gateways.roots.get(targetGatewayId))?.runtimeRestartFence).toBeUndefined();
+  expect(await h.store.gateways.releases.get(targetGatewayId, 2)).toBeNull();
+  expect(await h.store.journal.audits.get(claim.auditId)).toMatchObject({
+    status: "completed", outcome: "partial", target: { withdrawnBeforeDispatch: true },
+  });
+  for (const id of [operationId, h.outboundId]) {
+    expect((await h.store.journal.operations.get(id))?.status).toBe("pending");
+  }
+});
+
+it("does not restore the policy through withdrawal after dispatch", async () => {
+  const h = sharedMaintenanceFixture();
+  const claim = await h.acquire();
+  await advanceSharedHeldReturnMaintenance(h.store, claim, "dispatched", () => 520, async () => {});
+  const restoreMigrationPolicy = vi.fn();
+  const readVerifiedWithdrawal = vi.fn();
+  await expect(withdrawSharedHeldReturnMaintenance(h.store, claim, { restoreMigrationPolicy, readVerifiedWithdrawal, now: () => 550 }))
+    .rejects.toThrow(/before image dispatch/);
+  expect(restoreMigrationPolicy).not.toHaveBeenCalled();
+  expect(readVerifiedWithdrawal).not.toHaveBeenCalled();
+});
+
+it("gives the reservation precedence over inbound and outbound queue claims, and retains it through verified rollback", async () => {
+  const h = sharedMaintenanceFixture();
+  const claim = await h.acquire();
+  const heldReturn = await h.store.journal.operations.get(operationId);
+  expect(heldNativeReturnBlocksDestination(heldReturn!, targetGatewayId)).toBe(true);
+  expect(heldNativeReturnBlocksDestination(heldReturn!, sourceGatewayId)).toBe(false);
+  expect(await resumeSharedHeldReturnMaintenance(h.store, claim.gatewayId, claim.attemptId)).toEqual(claim);
+  expect(await assertSharedHeldReturnMaintenance(h.store, claim)).toBe("reserved");
+  for (const blocked of [operationId, h.outboundId]) {
+    const op = (await h.store.journal.operations.get(blocked))!;
+    await expect(assertSharedHeldReturnMaintenanceUnfenced(h.store, op)).rejects.toThrow(/blocks this operation/);
+    expect(op.status).toBe("pending");
+  }
+  const testOnlyOwnerAction = { input: { uid: h.admission.owners[2]!.uid }, gatewayId: "unrelated" };
+  await expect(assertSharedHeldReturnMaintenanceUnfenced(h.store, testOnlyOwnerAction)).rejects.toThrow(/blocks this operation/);
+  await advanceSharedHeldReturnMaintenance(h.store, claim, "dispatched", () => 520, async () => {});
+  expect(await stageSharedHeldReturnMaintenanceRelease(h.store, claim, () => 522)).toBe(2);
+  expect(await stageSharedHeldReturnMaintenanceRelease(h.store, claim, () => 523)).toBe(2);
+  expect(await h.store.gateways.roots.get(targetGatewayId)).toMatchObject({ desiredRelease: 2, liveRelease: 1 });
+  await expect(completeSharedHeldReturnMaintenance(h.store, claim, {
+    readVerifiedResult: async () => { throw new Error("physical readiness unavailable"); },
+    restoreMigrationPolicy: vi.fn(),
+    readInstalledHelm: h.observeInstalledHelm, now: () => 525,
+  })).rejects.toThrow(/readiness unavailable/);
+  expect(await assertSharedHeldReturnMaintenance(h.store, claim)).toBe("dispatched");
+  await advanceSharedHeldReturnMaintenance(h.store, claim, "rollback", () => 530);
+  expect(await stageSharedHeldReturnMaintenanceRelease(h.store, claim, () => 535)).toBe(3);
+  expect(await h.store.gateways.roots.get(targetGatewayId)).toMatchObject({ desiredRelease: 3, liveRelease: 1 });
+  expect((await h.store.gateways.releases.get(targetGatewayId, 3))?.payload).toEqual(h.originalPayload);
+  expect((await h.store.journal.operations.listByStatus(["pending"])).map(op => op.id).sort()).toEqual([operationId, h.outboundId].sort());
+  const result: SharedHeldReturnMaintenanceResult = {
+    attemptId: claim.attemptId, outcome: "rolled-back", workload: h.admission.workload, owners: h.admission.owners,
+    images: h.admission.originalImages, runningImageIds: h.admission.originalImages, retainedBoot: h.admission.retainedBoot,
+    nativeSource: h.admission.originalNativeSource, noInFlightTasks: true, noPreparedImports: true, exclusiveReady: true, verifiedAt: 540,
+  };
+  const complete = (readback: SharedHeldReturnMaintenanceResult, readInstalledHelm = h.observeInstalledHelm) =>
+    completeSharedHeldReturnMaintenance(h.store, claim, { readVerifiedResult: async () => readback,
+      restoreMigrationPolicy: async assertCurrent => { await assertCurrent(); }, readInstalledHelm, now: () => 550 });
+  for (const invalid of [{ ...result, verifiedAt: 529 }, { ...result, images: h.admission.maintenanceImages },
+    { ...result, workload: { ...result.workload, podUid: "replacement" } }]) {
+    await expect(complete(invalid)).rejects.toThrow(/exact verified completion/);
+    expect(await assertSharedHeldReturnMaintenance(h.store, claim)).toBe("rollback");
+  }
+  await expect(complete(result, async () => ({ ...await h.observeInstalledHelm(), chartFingerprint: "0".repeat(64) })))
+    .rejects.toThrow(/canonical retained Helm/);
+  await complete(result);
+  expect(await h.store.gateways.roots.get(targetGatewayId)).toMatchObject({ desiredRelease: 3, liveRelease: 3 });
+  expect((await h.store.journal.audits.get(claim.auditId))?.status).toBe("completed");
+  expect((await h.store.gateways.roots.get(targetGatewayId))?.runtimeRestartFence).toBeUndefined();
+  expect(heldNativeReturnBlocksDestination((await h.store.journal.operations.get(operationId))!, targetGatewayId)).toBe(false);
+  expect((await h.store.journal.operations.get(operationId))?.status).toBe("pending");
+  expect((await h.store.journal.operations.get(h.outboundId))?.status).toBe("pending");
+});
+
+it("publishes the immutable retained Shared release from normal health plus observed running images under the original boot env", async () => {
+  const h = sharedMaintenanceFixture();
+  const claim = await h.acquire();
+  await advanceSharedHeldReturnMaintenance(h.store, claim, "dispatched", () => 520, async () => {});
+  expect(await stageSharedHeldReturnMaintenanceRelease(h.store, claim, () => 525)).toBe(2);
+  const root = await h.store.gateways.roots.get(targetGatewayId);
+  expect(root).toMatchObject({ desiredRelease: 2, liveRelease: 1 });
+  const staged = await h.store.gateways.releases.get(targetGatewayId, 2);
+  expect(staged?.payload.openclawSourceSha).toBe(h.admission.acceptedNativeSource);
+  const result: SharedHeldReturnMaintenanceResult = {
+    attemptId: claim.attemptId, outcome: "installed", workload: h.admission.workload, owners: h.admission.owners,
+    images: h.admission.maintenanceImages, runningImageIds: h.admission.maintenanceImages, retainedBoot: h.admission.retainedBoot,
+    nativeSource: h.admission.acceptedNativeSource, noInFlightTasks: true, noPreparedImports: true, exclusiveReady: true, verifiedAt: 540,
+  };
+  const restoreMigrationPolicy = vi.fn(async (assertCurrent: () => Promise<void>) => {
+    await assertCurrent();
+    await expect(advanceSharedHeldReturnMaintenance(h.store, claim, "rollback")).rejects.toThrow(/completing/);
+  }).mockRejectedValueOnce(new Error("could not restore and verify ingress"));
+  const complete = (readback: SharedHeldReturnMaintenanceResult) => completeSharedHeldReturnMaintenance(h.store, claim, {
+    readVerifiedResult: async () => readback,
+    restoreMigrationPolicy,
+    readInstalledHelm: async () => {
+      const previous = await h.observeInstalledHelm();
+      return { ...previous, installed: { ...previous.installed, imageTag: staged!.payload.imageTag },
+        edgeImage: h.admission.maintenanceImages["gateway-edge"] };
+    },
+    now: () => 550,
+  });
+  await expect(complete({ ...result, runningImageIds: h.admission.originalImages })).rejects.toThrow(/exact verified completion/);
+  expect(restoreMigrationPolicy).not.toHaveBeenCalled();
+  await expect(complete(result)).rejects.toThrow("could not restore and verify ingress");
+  expect(await h.store.gateways.roots.get(targetGatewayId)).toMatchObject({
+    desiredRelease: 2, liveRelease: 1, runtimeRestartFence: { restoringMigrationPolicy: true },
+  });
+  expect(await assertSharedHeldReturnMaintenance(h.store, claim)).toBe("dispatched");
+  await complete(result);
+  expect(restoreMigrationPolicy).toHaveBeenCalledTimes(2);
+  expect(await h.store.gateways.roots.get(targetGatewayId)).toMatchObject({ desiredRelease: 2, liveRelease: 2 });
+  expect((await h.store.fleetRegistry.get(targetGatewayId))?.heartbeat.version).toBe("abcdef1");
+  const stillHeld = await h.store.journal.operations.get(operationId);
+  expect(stillHeld?.status).toBe("pending");
+  expect((await h.store.gateways.roots.get(targetGatewayId))?.runtimeRestartFence).toBeUndefined();
+  expect(heldNativeReturnBlocksDestination(stillHeld!, targetGatewayId)).toBe(true);
+  await expect(assertSharedHeldReturnMaintenanceUnfenced(h.store, stillHeld!)).rejects.toThrow(/offline source custody/);
 });

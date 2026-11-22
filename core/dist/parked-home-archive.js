@@ -96,7 +96,7 @@ function schedulerReturnCompleted(returned, custody) {
         custody.completedAt >= custody.cutoverCommittedAt &&
         typeof returned.completedAt === "number" && returned.completedAt >= custody.completedAt;
 }
-function schedulerReturnMatches(owner, input, returned, custody) {
+export function schedulerReturnMatches(owner, input, returned, custody) {
     const handoff = returned.schedulerHandoff;
     return handoff !== undefined && custody.uid === owner.uid && custody.slug === owner.slug && custody.slug === handoff.slug &&
         custody.returnOperationId === input.returnOperationId && typeof custody.migrationId === "string" &&

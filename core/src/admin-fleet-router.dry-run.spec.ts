@@ -366,6 +366,11 @@ describe("every changing route", () => {
       method: "post",
       path: "/shared-gateways/shared-b/add-operations/op-1/complete",
     },
+    "POST /operations/:id/maintain-held-shared/:action": {
+      method: "post", path: `/operations/${heldNative.operationId}/maintain-held-shared/acquire`, seed: heldNativeReturnFleet,
+      body: { sourceGatewayId: heldNative.sourceGatewayId, targetGatewayId: heldNative.targetGatewayId,
+        sourceEpoch: heldNative.sourceEpoch, schedulerMigrationId: heldNative.schedulerMigrationId, attemptId: "00000000-0000-4000-8000-000000000004" },
+    },
     "POST /operations/:id/held-native-offline/:phase": {
       method: "post", path: `/operations/${heldNative.operationId}/held-native-offline/reserve`, seed: heldNativeReturnFleet,
       body: { sourceGatewayId: heldNative.sourceGatewayId, targetGatewayId: heldNative.targetGatewayId,
@@ -421,6 +426,16 @@ describe("every changing route", () => {
     expect(res.status).toBe(200);
     expect(h.snapshot()).toBe(before);
     for (const effect of Object.values(h.effects)) expect(effect).not.toHaveBeenCalled();
+  });
+
+  it("refuses unconfigured Shared maintenance and rejects caller-supplied observations", async () => {
+    const h = harness(heldNativeReturnFleet());
+    const path = `/operations/${heldNative.operationId}/maintain-held-shared/apply`;
+    const scope = { gatewayId: heldNative.targetGatewayId, attemptId: "00000000-0000-4000-8000-000000000004" };
+    const before = h.snapshot();
+    await request(h.app).post(path).send(scope).expect(503);
+    await request(h.app).post(path).send({ ...scope, exclusiveReady: true }).expect(400);
+    expect(h.snapshot()).toBe(before);
   });
 
   it("refuses a dry run of a changing route that does not plan, instead of letting it apply", async () => {

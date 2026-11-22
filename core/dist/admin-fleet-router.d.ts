@@ -1,3 +1,4 @@
+import { type SharedHeldReturnMaintenanceAdmin } from "./shared-held-return-maintenance.js";
 export { archivedSchedulerSourceImage, archiveSchedulerCustodyMatches, enqueueParkedHomeArchive, isAuthorizedHomeArchiveOrigin, planArchiveAfterBackupRelease, planReturnedHomeArchive, resolveParkedHomeArchiveGrant, retainedBootPreservesScheduler, simpleHomePreparation } from "./parked-home-archive.js";
 import { type HeldNativeOriginalRestartWitness, type HeldNativeReturnSelection, type HeldNativeStoppedOriginalWitness } from "./held-native-return-repair.js";
 import { Router, type Request, type Response, type NextFunction } from "express";
@@ -79,6 +80,7 @@ export interface FleetRouterDeps {
     readGatewayPodDiagnostics?: (gatewayId: string) => Promise<GatewayPodDiagnostics>;
     readGatewayPodDiagnosticsBatch?: (gatewayIds: readonly string[]) => Promise<Record<string, GatewayPodDiagnostics>>;
     heldNativeReturnRepairAvailable?: boolean;
+    sharedHeldReturnMaintenance?: SharedHeldReturnMaintenanceAdmin;
     observeHeldNativeStoppedOriginal?: (selection: HeldNativeReturnSelection) => Promise<HeldNativeStoppedOriginalWitness>;
     observeHeldNativeOriginalRestart?: (selection: HeldNativeReturnSelection) => Promise<HeldNativeOriginalRestartWitness>;
     requestNativeReturnSourceRecovery?: (input: {

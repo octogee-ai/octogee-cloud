@@ -34,6 +34,14 @@ export declare function appendGatewayRelease(store: PlatformStateStore, args: Ap
     release: number;
     operationId: string | null;
 }>;
+export declare function appendRetainedSharedMaintenanceReleaseInStore(transaction: PlatformStateTransaction, input: {
+    gatewayId: string;
+    attemptId: string;
+    phase: "dispatched" | "rollback";
+    originalRelease: number;
+    payload: ReleasePayload;
+    now: number;
+}): Promise<number>;
 export interface RecoveredGatewayReleaseInput {
     gatewayId: string;
     operationId: string;

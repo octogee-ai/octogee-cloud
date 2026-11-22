@@ -485,6 +485,10 @@ export interface MigrationForwardRecovery {
     targetReleased?: true;
     sourceReconcile?: HeldNativeReturnRepair;
     offlineSourceRecovery?: HeldNativeOfflineSourceRecovery;
+    sharedTargetImportHold?: {
+        gatewayId: string;
+        maintenanceAttemptId: string;
+    };
 }
 export interface SchedulerHandoffState {
     /** New user moves use best-effort schedule snapshots, not native handoff. */
