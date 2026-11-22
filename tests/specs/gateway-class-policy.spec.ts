@@ -30,6 +30,9 @@ const userStructuredTools = [
   "octogee_project_services",
   "octogee_project_attach_services",
   "octogee_project_deploy_rules",
+  "octogee_project_enable_database",
+  "octogee_project_deploy_database",
+  "octogee_project_restore_database",
   "octogee_project_set_recipe",
   "octogee_board_list",
   "octogee_board_card_read",
@@ -585,9 +588,18 @@ describe("gateway/apply-gateway-class-policy.mjs", () => {
       "octogee_project_services",
       "octogee_project_attach_services",
       "octogee_project_deploy_rules",
+      "octogee_project_enable_database",
+      "octogee_project_deploy_database",
+      "octogee_project_restore_database",
     ]));
     expect(out.agents.entries["octogee-alice-proj-garden-coach"].tools.alsoAllow).toContain("octogee_project_services");
-    for (const tool of ["octogee_project_attach_services", "octogee_project_deploy_rules"]) {
+    for (const tool of [
+      "octogee_project_attach_services",
+      "octogee_project_deploy_rules",
+      "octogee_project_enable_database",
+      "octogee_project_deploy_database",
+      "octogee_project_restore_database",
+    ]) {
       expect(out.agents.entries["octogee-alice-proj-garden-coach"].tools.deny, tool).toContain(tool);
       expect(out.agents.entries["octogee-alice-proj-garden-coach"].tools.alsoAllow, tool).not.toContain(tool);
     }

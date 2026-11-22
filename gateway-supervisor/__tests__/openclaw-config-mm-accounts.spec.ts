@@ -135,7 +135,7 @@ describe("buildUserAgent", () => {
     expect(PROJECT_AGENT_DENIED_TOOLS).toContain("octogee_project_publish");
   });
 
-  it("exposes service attach and rules deploy only to the Workspace Agent, and the services read to both", () => {
+  it("exposes service attach, rules deploy and the database tools only to the Workspace Agent, and the services read to both", () => {
     const defaultAgent = buildUserAgent({
       uid: "uid-chris",
       slug: "chris",
@@ -147,7 +147,13 @@ describe("buildUserAgent", () => {
     expect(alsoAllow).toContain("octogee_project_services");
     expect(PROJECT_AGENT_ALLOWED_TOOLS).toContain("octogee_project_services");
     expect(PROJECT_AGENT_DENIED_TOOLS).not.toContain("octogee_project_services");
-    for (const tool of ["octogee_project_attach_services", "octogee_project_deploy_rules"]) {
+    for (const tool of [
+      "octogee_project_attach_services",
+      "octogee_project_deploy_rules",
+      "octogee_project_enable_database",
+      "octogee_project_deploy_database",
+      "octogee_project_restore_database",
+    ]) {
       expect(alsoAllow, tool).toContain(tool);
       expect(PROJECT_AGENT_ALLOWED_TOOLS, tool).not.toContain(tool);
       expect(PROJECT_AGENT_DENIED_TOOLS, tool).toContain(tool);
