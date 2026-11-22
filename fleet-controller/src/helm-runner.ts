@@ -1,3 +1,7 @@
+import { createHash } from "node:crypto";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { spawn } from "node:child_process";
 import type {
   GatewayClass,
@@ -290,6 +294,7 @@ interface PerReleaseValues {
   image?: { repository?: unknown; tag?: unknown };
   chartFingerprint?: unknown;
   deploymentIntentFingerprint?: unknown;
+  sharedRuntimeIntent?: unknown;
   serviceAccountName?: unknown;
   serviceAccount?: unknown;
   gatewayContainerSecurityContext?: unknown;
@@ -331,10 +336,25 @@ async function listGatewayReleases(
   return (JSON.parse(list.stdout || "[]") as HelmListItem[]) ?? [];
 }
 
+function readSharedRuntimeIntent(
+  values: PerReleaseValues,
+  releaseName: string,
+  gatewayId: string,
+  deployedRevision: number | null,
+): HelmInstancesMap[string]["sharedRuntimeIntent"] {
+  if (deployedRevision === null || values.gatewayClass !== "shared" ||
+    gatewayIdFromRelease(releaseName) !== gatewayId) return undefined;
+  const fingerprint = nonEmptyString(values.sharedRuntimeIntent);
+  return fingerprint && /^v1:[a-f0-9]{64}$/.test(fingerprint)
+    ? { fingerprint, helmRevision: deployedRevision }
+    : undefined;
+}
+
 async function readInstanceValue(
   deps: HelmSubprocessRunnerDeps,
   namespace: string,
   releaseName: string,
+  deployedRevision: number | null,
 ): Promise<HelmInstancesMap[string] | null> {
   const valuesResult = await deps.runHelm([
     "get",
@@ -344,6 +364,7 @@ async function readInstanceValue(
     namespace,
     "-o",
     "json",
+    ...(deployedRevision === null ? [] : ["--revision", String(deployedRevision)]),
   ]);
   if (valuesResult.code !== 0) {
     if (isReleaseNotFound(valuesResult.stderr)) return null;
@@ -363,12 +384,14 @@ async function readInstanceValue(
   }
   const chartFingerprint = nonEmptyString(v.chartFingerprint);
   const deploymentIntentFingerprint = nonEmptyString(v.deploymentIntentFingerprint);
+  const sharedRuntimeIntent = readSharedRuntimeIntent(v, releaseName, gatewayId, deployedRevision);
   return {
     enabled: true,
     image: { repository: imageRepo, tag: imageTag },
     gatewayId,
     ...(chartFingerprint ? { chartFingerprint } : {}),
     ...(deploymentIntentFingerprint ? { deploymentIntentFingerprint } : {}),
+    ...(sharedRuntimeIntent ? { sharedRuntimeIntent } : {}),
     ...readPersonalKnobs(v),
   };
 }
@@ -446,6 +469,7 @@ export interface BuildUpgradeArgsOpts {
   upgradeTimeout: string;
   chartFingerprint?: string;
   deploymentIntentFingerprint?: string;
+  sharedRuntimeIntent?: string;
   profile?: string;
   gatewayClass?: GatewayClass;
   imageProfile?: GatewayImageProfile;
@@ -640,6 +664,7 @@ export function buildUpgradeArgs(opts: BuildUpgradeArgsOpts): string[] {
   // want number semantics.
   const args = baseUpgradeArgs(opts);
   appendOptionalStringArgs(args, opts);
+  if (opts.gatewayClass === "shared") args.push(HELM_SET_STRING, `sharedRuntimeIntent=${opts.sharedRuntimeIntent ?? ""}`);
   appendOptionalNumberArgs(args, opts);
   appendOptionalJsonArgs(args, opts);
   appendOptionalFileArgs(args, opts);
@@ -670,11 +695,17 @@ const PENDING_STATUSES = new Set([
   "pending-rollback",
 ]);
 
-async function getReleaseStatus(
+function deployedHelmRevision(status: string, revision: unknown): number | null {
+  const candidate = typeof revision === "string" && /^[1-9]\d*$/.test(revision) ? Number(revision) : revision;
+  return status === "deployed" && typeof candidate === "number" && Number.isSafeInteger(candidate) &&
+    candidate > 0 ? candidate : null;
+}
+
+async function getReleaseObservation(
   deps: HelmSubprocessRunnerDeps,
   namespace: string,
   release: string,
-): Promise<string | null> {
+): Promise<{ status: string; deployedRevision: number | null } | null> {
   const result = await deps.runHelm([
     "status", release, "-n", namespace, "-o", "json",
   ]);
@@ -684,23 +715,23 @@ async function getReleaseStatus(
       `helm status ${release} (ns=${namespace}) failed (code=${result.code}): ${result.stderr.trim() || result.stdout.trim()}`,
     );
   }
-  let parsed: { info?: { status?: unknown } };
+  let parsed: { info?: { status?: unknown }; version?: unknown };
   try {
-    parsed = JSON.parse(result.stdout) as { info?: { status?: unknown } };
+    parsed = JSON.parse(result.stdout) as typeof parsed;
   } catch (e) {
     throw new Error(
       `helm status ${release} (ns=${namespace}): could not parse JSON output: ${(e as Error).message}`,
     );
   }
 
-const status = parsed.info?.status;
+  const status = parsed.info?.status;
   if (typeof status !== "string" || status.length === 0) {
     const sample = result.stdout.slice(0, 200);
     throw new Error(
       `helm status ${release} (ns=${namespace}): info.status missing or non-string in response (got ${typeof status}). stdout[:200]: ${sample}`,
     );
   }
-  return status;
+  return { status, deployedRevision: deployedHelmRevision(status, parsed.version) };
 }
 
 interface HelmHistoryItem {
@@ -796,6 +827,70 @@ const hist = await deps.runHelm([
   return `rolled back ${release} to revision ${target}`;
 }
 
+async function getReleaseStatus(
+  deps: HelmSubprocessRunnerDeps,
+  namespace: string,
+  release: string,
+): Promise<string | null> {
+  return (await getReleaseObservation(deps, namespace, release))?.status ?? null;
+}
+
+type SharedRuntimeInputs = Pick<
+  BuildUpgradeArgsOpts,
+  "gatewayClass" | "imageTag" | "gatewayEdgeImageTag" | "chartFingerprint" |
+  "deploymentIntentFingerprint" | "valuesFile"
+>;
+
+export function sharedRuntimeIntentForValues(
+  opts: SharedRuntimeInputs,
+  values: Buffer | null,
+): string | undefined {
+  const immutable = /^[a-z0-9][a-z0-9._-]*@sha256:[a-f0-9]{64}$/;
+  const fingerprint = /^[a-f0-9]{64}$/;
+  if (opts.gatewayClass !== "shared" || !immutable.test(opts.imageTag) ||
+    !immutable.test(opts.gatewayEdgeImageTag ?? "") || !fingerprint.test(opts.chartFingerprint ?? "") ||
+    !opts.deploymentIntentFingerprint || !fingerprint.test(opts.deploymentIntentFingerprint)) return undefined;
+  if (Boolean(opts.valuesFile) !== (values !== null)) return undefined;
+  const hash = createHash("sha256")
+    .update(JSON.stringify([
+      "v1", opts.deploymentIntentFingerprint, opts.chartFingerprint, opts.imageTag,
+      opts.gatewayEdgeImageTag, values !== null,
+    ]))
+    .update("\0")
+    .update(values ?? "");
+  return `v1:${hash.digest("hex")}`;
+}
+
+interface SharedRuntimeInstallation {
+  values: Pick<BuildUpgradeArgsOpts, "valuesFile" | "sharedRuntimeIntent">;
+  cleanup: () => Promise<void>;
+}
+
+const noSharedReceipt: SharedRuntimeInstallation = { values: {}, cleanup: async () => {} };
+
+function receiptFilesystemError(error: unknown): string {
+  const code = error instanceof Error && "code" in error ? error.code : undefined;
+  return typeof code === "string" && /^E[A-Z0-9_]{1,31}$/.test(code) ? code : "unknown filesystem error";
+}
+
+async function prepareSharedRuntimeInstallation(opts: SharedRuntimeInputs): Promise<SharedRuntimeInstallation> {
+  if (opts.gatewayClass !== "shared") return noSharedReceipt;
+  const bytes = opts.valuesFile ? await readFile(opts.valuesFile) : null;
+  const sharedRuntimeIntent = sharedRuntimeIntentForValues(opts, bytes);
+  if (!sharedRuntimeIntent) return noSharedReceipt;
+  if (bytes === null) return { ...noSharedReceipt, values: { sharedRuntimeIntent } };
+  const directory = await mkdtemp(join(tmpdir(), "octogee-helm-values-"));
+  const cleanup = () => rm(directory, { recursive: true, force: true });
+  const valuesFile = join(directory, "values.yaml");
+  try {
+    await writeFile(valuesFile, bytes, { mode: 0o600 });
+    return { values: { valuesFile, sharedRuntimeIntent }, cleanup };
+  } catch (error) {
+    await cleanup();
+    throw error;
+  }
+}
+
 type HelmUpsert = Parameters<HelmRunner["upsertInstance"]>[0];
 
 interface StandbyObject {
@@ -859,7 +954,7 @@ export function createHelmSubprocessRunner(deps: HelmSubprocessRunnerDeps): Helm
       for (const item of items) {
         const gatewayId = gatewayIdFromRelease(item.name);
         if (!gatewayId) continue;
-        const value = await readInstanceValue(deps, namespace, item.name);
+        const value = await readInstanceValue(deps, namespace, item.name, null);
         if (value) entries.push([gatewayId, value]);
       }
       return Object.fromEntries(entries);
@@ -867,9 +962,9 @@ export function createHelmSubprocessRunner(deps: HelmSubprocessRunnerDeps): Helm
 
     async readDeployedInstance({ namespace, gatewayId }) {
       const release = releaseNameForGateway(gatewayId);
-      const status = await getReleaseStatus(deps, namespace, release);
-      if (status === null || status === "uninstalled") return null;
-      return readInstanceValue(deps, namespace, release);
+      const observation = await getReleaseObservation(deps, namespace, release);
+      if (!observation || observation.status === "uninstalled") return null;
+      return readInstanceValue(deps, namespace, release, observation.deployedRevision);
     },
 
     async upsertInstance(opts) {
@@ -878,11 +973,6 @@ export function createHelmSubprocessRunner(deps: HelmSubprocessRunnerDeps): Helm
       // (octogee-gw-{revisionId}); legacy callers omit revisionId → gatewayId.
       const revisionId = opts.revisionId ?? gatewayId;
       const release = releaseNameForGateway(revisionId);
-      const args = buildUpgradeArgs({
-        ...opts,
-        release,
-        upgradeTimeout,
-      });
 
       const ensureServiceAccount = async () => {
         if (!deps.ensureServiceAccount) return;
@@ -933,7 +1023,17 @@ export function createHelmSubprocessRunner(deps: HelmSubprocessRunnerDeps): Helm
       }
 
       let result: HelmSubprocessResult;
+      const installation = await prepareSharedRuntimeInstallation(opts).catch((error: unknown) => {
+        deps.log(`[helm-runner] ${release} could not snapshot Shared values; proceeding without an installed intent receipt (${receiptFilesystemError(error)})`);
+        return noSharedReceipt;
+      });
       try {
+        const args = buildUpgradeArgs({
+          ...opts,
+          ...installation.values,
+          release,
+          upgradeTimeout,
+        });
         result = await deps.runHelm(args);
         if (
           result.code !== 0 &&
@@ -953,7 +1053,11 @@ export function createHelmSubprocessRunner(deps: HelmSubprocessRunnerDeps): Helm
           result = await deps.runHelm(args);
         }
       } finally {
-        await ensureServiceAccount();
+        try {
+          await installation.cleanup();
+        } finally {
+          await ensureServiceAccount();
+        }
       }
       if (result.code !== 0) {
         throw new Error(

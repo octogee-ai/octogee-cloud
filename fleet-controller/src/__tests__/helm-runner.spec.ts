@@ -1,9 +1,14 @@
+import { createHash } from "node:crypto";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it, expect, vi, type Mock } from "vitest";
 import {
   buildUpgradeArgs,
   createHelmSubprocessRunner,
   isRetryableUninstallFailure,
   readPersonalKnobs,
+  sharedRuntimeIntentForValues,
   spawnHelm,
   type HelmSubprocess,
 } from "../helm-runner";
@@ -36,6 +41,106 @@ function withPreflightStatusNotFound(inner: HelmSubprocess): HelmSubprocess {
 }
 
 const REPO = "us-central1-docker.pkg.dev/octogee/octogee/octogee-gateway";
+
+describe("Shared Helm runtime intent receipts", () => {
+  const gatewayId = "shared-aaa";
+  const namespace = "octogee-test";
+  const digest = `sha256:${"a".repeat(64)}`;
+  const imageTag = `release@${digest}`;
+  const chartFingerprint = "b".repeat(64);
+  const deploymentIntentFingerprint = "c".repeat(64);
+
+  it("requires immutable paired images and a complete chart and deployment intent", () => {
+    const opts = {
+      gatewayClass: "shared" as const, imageTag, gatewayEdgeImageTag: imageTag, chartFingerprint,
+      deploymentIntentFingerprint,
+    };
+    const installed = sharedRuntimeIntentForValues(opts, null);
+    expect(installed).toMatch(/^v1:[a-f0-9]{64}$/);
+    expect(sharedRuntimeIntentForValues({ ...opts, valuesFile: "/unknown/values.yaml" }, null)).toBeUndefined();
+    expect(sharedRuntimeIntentForValues({ ...opts, gatewayClass: "isolated" }, null)).toBeUndefined();
+    expect(sharedRuntimeIntentForValues({ ...opts, gatewayEdgeImageTag: "moving-tag" }, null)).toBeUndefined();
+    expect(sharedRuntimeIntentForValues({ ...opts, chartFingerprint: undefined }, null)).toBeUndefined();
+    expect(sharedRuntimeIntentForValues({ ...opts, deploymentIntentFingerprint: undefined }, null)).toBeUndefined();
+    expect(sharedRuntimeIntentForValues({ ...opts, chartFingerprint: "d".repeat(64) }, null)).not.toBe(installed);
+    expect(sharedRuntimeIntentForValues({ ...opts, deploymentIntentFingerprint: "e".repeat(64) }, null)).not.toBe(installed);
+    expect(sharedRuntimeIntentForValues({ ...opts, gatewayEdgeImageTag: `release@sha256:${"f".repeat(64)}` }, null)).not.toBe(installed);
+  });
+
+  it("binds the deployed receipt to the exact override bytes Helm consumes", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "shared-intent-spec-"));
+    const valuesFile = join(directory, "values.yaml");
+    const original = "gatewayEdge:\n  publicAppOrigins: [https://original.example]\n";
+    const replacement = "gatewayEdge:\n  publicAppOrigins: [https://changed.example]\n";
+    const receipts: string[] = [];
+    const appliedFiles: string[] = [];
+    const argumentsToHelm: string[][] = [];
+    const runHelm = withPreflightStatusNotFound(async (args) => {
+      argumentsToHelm.push(args);
+      const path = args[args.indexOf("-f") + 1]!;
+      appliedFiles.push(path);
+      if (appliedFiles.length === 1) await writeFile(valuesFile, replacement);
+      const values = await readFile(path, "utf8");
+      const receipt = args.find((arg) => arg.startsWith("sharedRuntimeIntent="));
+      expect(values).toBe(appliedFiles.length === 1 ? original : replacement);
+      expect(receipt).toMatch(/^sharedRuntimeIntent=v1:[a-f0-9]{64}$/);
+      receipts.push(receipt!);
+      return { code: 0, stdout: "", stderr: "" };
+    });
+    const runner = createHelmSubprocessRunner({ runHelm, log: vi.fn() });
+    const opts = {
+      namespace, gatewayId, gatewayClass: "shared" as const, chartPath: "/charts/share",
+      valuesFile, imageRepository: REPO, imageTag,
+      gatewayEdgeImageRepository: `${REPO}/edge`, gatewayEdgeImageTag: imageTag,
+      chartFingerprint, deploymentIntentFingerprint,
+    };
+    try {
+      await writeFile(valuesFile, original);
+      await runner.upsertInstance(opts);
+      await runner.upsertInstance(opts);
+      expect(receipts[0]).not.toBe(receipts[1]);
+      expect(argumentsToHelm.flat()).not.toContain(original);
+      for (const path of appliedFiles) {
+        expect(path).not.toBe(valuesFile);
+        await expect(readFile(path)).rejects.toMatchObject({ code: "ENOENT" });
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("still uses ordinary Helm install when override bytes cannot be captured", async () => {
+    const { runHelm, calls } = mockSubprocess([{}]);
+    const log = vi.fn();
+    const runner = createHelmSubprocessRunner({ runHelm: withPreflightStatusNotFound(runHelm), log });
+    const valuesFile = "/nonexistent/shared-runtime-receipt/values.yaml";
+    await runner.upsertInstance({
+      namespace, gatewayId, gatewayClass: "shared", chartPath: "/charts/shared",
+      valuesFile, imageRepository: REPO, imageTag, gatewayEdgeImageTag: imageTag,
+      chartFingerprint, deploymentIntentFingerprint,
+    });
+    expect(calls[0]).toContain(valuesFile);
+    expect(calls[0]).toContain("sharedRuntimeIntent=");
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("without an installed intent receipt (ENOENT)"));
+    expect(log.mock.calls.flat().join(" ")).not.toContain(valuesFile);
+  });
+
+  it.each([["deployed", 2, true], ["deployed", undefined, false], ["pending-upgrade", 2, false], ["failed", 2, false]] as const)(
+    "only returns a positive receipt when Helm reports %s with an exact revision %s",
+    async (status, version, installed) => {
+      const sharedRuntimeIntent = `v1:${createHash("sha256").update("test intent").digest("hex")}`;
+      const { runHelm, calls } = mockSubprocess([
+        { stdout: JSON.stringify({ version, info: { status } }) },
+        { stdout: JSON.stringify({ gatewayId, gatewayClass: "shared", imageTag, image: { repository: REPO }, sharedRuntimeIntent }) },
+      ]);
+      const runner = createHelmSubprocessRunner({ runHelm, log: vi.fn() });
+      const instance = await runner.readDeployedInstance({ namespace, gatewayId });
+      expect(instance?.sharedRuntimeIntent).toEqual(installed ? { fingerprint: sharedRuntimeIntent, helmRevision: 2 } : undefined);
+      if (installed) expect(calls[1]?.slice(-2)).toEqual(["--revision", "2"]);
+      else expect(calls[1]).not.toContain("--revision");
+    },
+  );
+});
 
 describe("helm-runner helpers", () => {
   it("reads supported personal knobs while dropping invalid values from helm values", () => {

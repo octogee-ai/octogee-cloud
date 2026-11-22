@@ -1184,6 +1184,7 @@ export interface HelmInstanceValue {
 
   chartFingerprint?: string;
   deploymentIntentFingerprint?: string;
+  sharedRuntimeIntent?: { fingerprint: string; helmRevision: number };
   serviceAccountName?: string;
   serviceAccount?: GatewayServiceAccountSpec;
   gatewayContainerSecurityContext?: Record<string, unknown>;

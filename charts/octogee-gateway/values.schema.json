@@ -113,6 +113,10 @@
     "chartFingerprint": {
       "type": "string"
     },
+    "sharedRuntimeIntent": {
+      "type": "string",
+      "pattern": "^$|^v1:[a-f0-9]{64}$"
+    },
     "deploymentIntentFingerprint": {
       "type": "string"
     },
