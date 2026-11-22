@@ -117,6 +117,7 @@ export interface ContainerInspection {
   Id: string;
   State?: { Status?: string; Running?: boolean; Paused?: boolean; ExitCode?: number };
   Config?: { Labels?: Record<string, string>; Image?: string };
+  HostConfig?: { RestartPolicy?: { Name?: string; MaximumRetryCount?: number } };
   Image?: string;
 }
 
