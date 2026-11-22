@@ -69,6 +69,7 @@ export async function waitForCheckpointClaim(role) {
             const claim = readCheckpointRestore(boot, current, receipt);
             if (!claim)
                 throw new Error("Gateway checkpoint does not match this restored slot and pod");
+            await checkpointGatewayCredentials();
             await writeFile(`${prefix}-restored`, claim.podUid, { mode: 0o600 });
             return claim;
         }
@@ -86,14 +87,29 @@ async function resumeClaimedCheckpoint(env, prefix) {
     if (!matchesRestartedCheckpoint(env, claim, restoredPodUid)) {
         throw new Error("Expected previous checkpoint restoration in the same admitted pod");
     }
+    await checkpointGatewayCredentials();
     return claim;
 }
-export async function checkpointGatewayCredentials() {
+async function readCheckpointCredentials() {
     const [token, agentStoreDsn] = await Promise.all([
         readFile("/var/run/octogee/checkpoint-credentials/token", "utf8"),
         readFile("/var/run/octogee/checkpoint-credentials/agent-store-dsn", "utf8"),
     ]);
-    if (!token || !agentStoreDsn)
-        throw new Error("Gateway checkpoint credentials are unavailable");
     return { token, agentStoreDsn };
+}
+export async function checkpointGatewayCredentials(read = readCheckpointCredentials, wait = () => setTimeout(500)) {
+    for (;;) {
+        try {
+            const credentials = await read();
+            if (!credentials.token.trim() || !credentials.agentStoreDsn.trim()) {
+                throw new Error("Gateway checkpoint credentials are unavailable");
+            }
+            return credentials;
+        }
+        catch (error) {
+            if (error.code !== "ENOENT")
+                throw error;
+        }
+        await wait();
+    }
 }
