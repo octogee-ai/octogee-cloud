@@ -2645,7 +2645,10 @@ async function recheckSharedAnchorMigration(tx: PlatformStateRepositories, scope
   const migration = scope.sourceSurge ?? scope.migration;
   if (!migration) return null;
   const request = { gatewayId: scope.gatewayId, podUid: scope.podUid, slug: scope.slug, migrationId: migration.migrationId, expected: migration };
-  return scope.sourceSurge ? sharedAssignedSourceSurgeAnchorScope(tx, { ...request, uid: scope.uid }) : sharedAgentAnchorMigrationScope(tx, request);
+  const current = await (scope.sourceSurge ? sharedAssignedSourceSurgeAnchorScope(tx, { ...request, uid: scope.uid }) : sharedAgentAnchorMigrationScope(tx, request));
+  if (!current) return null;
+  const builderToShared = "builderToShared" in current ? current.builderToShared : undefined;
+  return builderToShared === scope.builderToShared ? current : null;
 }
 
 async function recordSharedAgentAnchors(
@@ -2723,8 +2726,7 @@ function installAgentAnchorRoutes(router: Router, deps: ResolvedFleetBrokerRoute
       const records = "assignmentEpoch" in scope && sharedAnchorMigrationBound(scope)
         ? await store.transaction({ label: "fleet-broker.read-agent-anchors", readOnly: true }, async (tx) => {
           const current = await recheckSharedAnchorMigration(tx, scope);
-          if (!current || current.uid !== scope.uid ||
-              ("builderToShared" in current ? current.builderToShared : undefined) !== scope.builderToShared) return null;
+          if (!current || current.uid !== scope.uid) return null;
           return tx.users.agentStores.list(scope.uid);
         })
         : await store.users.agentStores.list(scope.uid);
@@ -2739,7 +2741,7 @@ function installAgentAnchorRoutes(router: Router, deps: ResolvedFleetBrokerRoute
             assignment: { uid: scope.uid, epoch: scope.assignmentEpoch, state: scope.assignmentState },
             ...(scope.migration ? { migration: scope.migration } : {}),
             ...(scope.sharedToShared ? { sharedToShared: true } : {}),
-            ...(scope.builderToShared ? { builderToShared: true } : {}),
+            builderToShared: scope.builderToShared,
           } satisfies FleetBrokerAgentAnchors);
         } catch (error) {
           if (!(error instanceof AgentAnchorConflictError)) throw error;

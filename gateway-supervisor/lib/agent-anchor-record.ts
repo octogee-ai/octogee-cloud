@@ -182,7 +182,7 @@ export async function prepareSharedUserAgentAnchors(input: SharedUserAgentAnchor
   const quiescingExisting = assignmentState === "quiescing" && !migrationImport;
   const assignmentEpoch = assignment.epoch;
   const retainedSharedRoster = input.sharedTargetWorkspace !== undefined &&
-    (recorded.sharedToShared === true || recorded.builderToShared === true);
+    [recorded.sharedToShared, recorded.builderToShared].includes(true);
   if (retainedSharedRoster) {
     assertRetainedSharedWorkspace(input.sharedTargetWorkspace, uid, input.migrationId, recorded.migration, assignmentEpoch);
   }
