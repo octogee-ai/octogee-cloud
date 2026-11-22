@@ -18,6 +18,7 @@ import {
   createActivateImportHandler,
   createActivationManifestExportHandler,
   createSourceActivationReadinessHandler,
+  createTargetImportHoldWitnessHandler,
   createAbortRsyncImportHandler,
   createCompleteSurgeHandoffHandler,
   migrationImportBusy,
@@ -1947,6 +1948,24 @@ describe("queued-rsync migration control handlers", () => {
 
     expect(getStatus()).toBe(200);
     expect(getBody()).toEqual({ migrationId: "mig-1", slug: "chris", manifest });
+  });
+
+  it("attests a held import only with a scoped signature, canonical denial and no active destination owner", async () => {
+    const body = { migrationId: "mig-1", slug: "chris", nonce: "1".repeat(32) };
+    const signature = signForPod(body.migrationId, JSON.stringify(body));
+    const call = async (readTargetImportPermit: MigrationHandlerDeps["readTargetImportPermit"], mountedUsers: string[], sig = signature) => {
+      const fixture = mkResponse();
+      const handler = createTargetImportHoldWitnessHandler(mkDeps({ readTargetImportPermit, getMountedUsers: () => mountedUsers }));
+      await handler(mkRequest(body, { signature: sig }), fixture.res, vi.fn());
+      return { status: fixture.getStatus(), body: fixture.getBody() };
+    };
+    const permit = vi.fn(async () => "held" as const);
+    expect((await call(permit, [], "invalid")).status).toBe(401);
+    expect(permit).not.toHaveBeenCalled();
+    expect((await call(undefined, [])).status).toBe(409);
+    expect((await call(async () => "permitted", [])).status).toBe(409);
+    expect((await call(permit, ["chris"])).status).toBe(409);
+    expect(await call(permit, ["unrelated"])).toEqual({ status: 200, body: { ...body, held: true } });
   });
 
   it.each([true, false])("source activation readiness returns only the scoped exportable acknowledgement (%s)", async exportable => {
