@@ -263,8 +263,11 @@ async function assertWorkerClaim(tx: PlatformStateTransaction, provider: Compens
 
 async function releaseOriginalCheckpoint(tx: PlatformStateTransaction, authority: CompensatingNativeReturnAuthority, state: ActiveClaim) {
   const home = state.runtime.vmHome;
+  if (home?.returnOperationId == null && home?.checkpointRequestedAt == null && home?.parkRequestedAt == null) return;
   requireRollback(home?.returnOperationId === authority.operationId && typeof home.checkpointRequestedAt === "number" &&
-    home.checkpointAcknowledgedAt === home.checkpointRequestedAt, "original checkpoint no longer matches its request");
+    Number.isSafeInteger(home.checkpointRequestedAt) && home.checkpointRequestedAt > 0 &&
+    home.parkRequestedAt === home.checkpointRequestedAt && home.checkpointAcknowledgedAt === home.checkpointRequestedAt,
+  "original checkpoint no longer matches its request");
   const { returnOperationId: _, checkpointRequestedAt: _request, parkRequestedAt: _park, ...kept } = home;
   await tx.fleetRegistry.patch(authority.sourceGatewayId, { vmHome: kept }, { revision: state.runtime.revision });
 }

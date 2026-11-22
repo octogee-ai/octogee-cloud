@@ -727,3 +727,35 @@ it("completes the ordinary queued rollback while retaining the prior forward che
   });
   expect((await h.store.gateways.roots.get(sourceGatewayId))?.runtimeRestartFence).toBeUndefined();
 });
+
+
+it("rolls back a source-flushed failure before the VM checkpoint request without rewriting historical home fields", async () => {
+  const h = compensationFixture();
+  const runtimePath = `glmGateways/${sourceGatewayId}`;
+  const historical = { checkpointAcknowledgedAt: null, lastCheckpoint: { instanceId: "1234", completedAt: 23 } };
+  h.docs.set(runtimePath, { ...h.docs.get(runtimePath), vmHome: historical });
+  const runtime = await h.store.fleetRegistry.get(sourceGatewayId);
+  await h.worker.request(h.request);
+  await expect(h.worker.recover(await h.claim(), h.ctx)).resolves.toMatchObject({ rolledBack: true });
+  expect(await h.store.fleetRegistry.get(sourceGatewayId)).toEqual(runtime);
+  expect((await h.store.gateways.assignments.get(sourceGatewayId, uid))?.state).toBe("serving");
+});
+
+it.each([
+  { returnOperationId: "foreign" },
+  { checkpointRequestedAt: 90 },
+  { parkRequestedAt: 90 },
+  { returnOperationId: operationId, checkpointRequestedAt: 90, checkpointAcknowledgedAt: 90, parkRequestedAt: 91 },
+  { returnOperationId: operationId, checkpointRequestedAt: 90, parkRequestedAt: 90 },
+])("refuses mixed or foreign checkpoint state without releasing it (%j)", async home => {
+  const h = compensationFixture();
+  const runtimePath = `glmGateways/${sourceGatewayId}`;
+  h.docs.set(runtimePath, { ...h.docs.get(runtimePath), vmHome: home });
+  const runtime = await h.store.fleetRegistry.get(sourceGatewayId);
+  await h.worker.request(h.request);
+  await expect(h.worker.recover(await h.claim(), h.ctx)).resolves.toMatchObject({
+    rolledBack: false, error: expect.stringContaining("checkpoint no longer matches its request"),
+  });
+  expect(await h.store.fleetRegistry.get(sourceGatewayId)).toEqual(runtime);
+  expect(h.actions.prepareSourceStores).not.toHaveBeenCalled();
+});
