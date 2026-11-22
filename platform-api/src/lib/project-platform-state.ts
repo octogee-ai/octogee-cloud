@@ -68,6 +68,10 @@ export async function deleteProjectPlatformState(
   const stored = await platformStateStore.workspaces.projects.get(workspaceSlug, projectSlug);
   const workingCopy = projectRepoSourceFromDoc(stored?.repoSource)?.workingCopy;
   if (workingCopy) await giteaDeleteVerifiedRepo(workspaceSlug, githubCheckpointRepo(workingCopy.id));
+  await removeProjectPlatformRecords(workspaceSlug, projectSlug);
+}
+
+export async function removeProjectPlatformRecords(workspaceSlug: string, projectSlug: string): Promise<void> {
   await platformStateStore.transaction({ label: "project.delete" }, async (tx) => {
     const { projects, projectMembers, channels } = tx.workspaces;
     const scope = { workspaceSlug, projectSlug };

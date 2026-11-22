@@ -6,6 +6,8 @@ const h = vi.hoisted(() => ({
   docs: new Map<string, Record<string, unknown>>(),
   presentationCreates: [] as Array<{ workspaceSlug: string; projectSlug: string }>,
   pendingDeletions: [] as Array<{ workspaceSlug: string; projectSlug: string; pending: unknown }>,
+  presentationDocs: new Map<string, Record<string, unknown>>(),
+  failStateDelete: false,
   mmContext: null as Record<string, unknown> | null,
   mmApi: vi.fn(),
   provisionProjectRepoResult: vi.fn(),
@@ -16,7 +18,13 @@ const h = vi.hoisted(() => ({
 
 vi.mock("@octogee/core/identity/platform-state-store", async () => {
   const { createDocumentFixtureStore } = await import("@octogee/core-testing/journal-store");
-  return { platformStateStore: createDocumentFixtureStore(h.docs) };
+  const store = createDocumentFixtureStore(h.docs);
+  const transaction = store.transaction.bind(store);
+  store.transaction = ((options: { label?: string }, body: never) => {
+    if (h.failStateDelete && options.label === "project.delete") throw new Error("platform state unavailable");
+    return transaction(options as never, body);
+  }) as typeof store.transaction;
+  return { platformStateStore: store };
 });
 vi.mock("@octogee/core/http/logging", () => ({ logger: h.logger }));
 vi.mock("@octogee/core/http/security", () => ({
@@ -88,16 +96,23 @@ beforeEach(() => {
   h.docs.clear();
   h.presentationCreates.length = 0;
   h.pendingDeletions.length = 0;
+  h.presentationDocs.clear();
+  h.failStateDelete = false;
   vi.clearAllMocks();
   h.mmContext = READY_CHAT;
   installProjectStarterFiles(PLATFORM_RECIPE_STARTER_FILES);
   installProjectPresentation({
     ...NO_PROJECT_PRESENTATION,
-    createProject: async (workspaceSlug, projectSlug) => {
+    readProject: async (workspaceSlug, projectSlug) => h.presentationDocs.get(`${workspaceSlug}/${projectSlug}`) ?? null,
+    createProject: async (workspaceSlug, projectSlug, fields) => {
       h.presentationCreates.push({ workspaceSlug, projectSlug });
+      const key = `${workspaceSlug}/${projectSlug}`;
+      h.presentationDocs.set(key, { ...h.presentationDocs.get(key), ...fields });
     },
     markProjectPendingDeletion: async (workspaceSlug, projectSlug, pending) => {
       h.pendingDeletions.push({ workspaceSlug, projectSlug, pending });
+      const key = `${workspaceSlug}/${projectSlug}`;
+      h.presentationDocs.set(key, { ...h.presentationDocs.get(key), pendingDeletion: pending });
     },
   });
   h.provisionProjectRepoResult.mockResolvedValue({ created: true, error: null });
@@ -191,5 +206,43 @@ describe("a create that fails after the project is reserved", () => {
 
     expect(retried.status).toBe(200);
     expect(h.docs.get(PROJECT)).toMatchObject({ provisioningState: "active" });
+  });
+
+  it("reports and logs a presentation marker that fails after the platform state is gone, and still admits a new create", async () => {
+    h.provisionProjectRepoResult.mockResolvedValueOnce({ created: true, error: "seed push failed" });
+    installProjectPresentation({
+      ...NO_PROJECT_PRESENTATION,
+      markProjectPendingDeletion: async () => {
+        throw new Error("presentation store unavailable");
+      },
+    });
+
+    const failed = await create();
+
+    expect(failed.body).toMatchObject({ cleanupState: "presentation_failed" });
+    expect(storedProjectPaths()).toEqual([]);
+    expect(h.logger.error).toHaveBeenCalledWith(expect.stringContaining("presentation store unavailable"));
+    expect((await create()).status).toBe(200);
+  });
+
+  it("leaves the presentation document unmarked when removing the platform state fails, and the retry route finishes it", async () => {
+    h.provisionProjectRepoResult.mockResolvedValueOnce({ created: true, error: "seed push failed" });
+    h.failStateDelete = true;
+
+    const failed = await create();
+
+    expect(failed.body).toMatchObject({ cleanupState: "failed" });
+    expect(h.pendingDeletions).toEqual([]);
+    expect(h.docs.get(PROJECT)).toMatchObject({
+      provisioningState: "failed",
+      provisioningCleanup: { status: "failed", error: "platform state unavailable" },
+    });
+    h.failStateDelete = false;
+
+    const retried = await request(retryApp()).post("/api/projects/mira/orbit/retry-provisioning");
+
+    expect(retried.status).toBe(200);
+    expect(h.docs.get(PROJECT)).toMatchObject({ provisioningState: "active" });
+    expect(h.presentationDocs.get("mira/orbit")).not.toHaveProperty("pendingDeletion");
   });
 });

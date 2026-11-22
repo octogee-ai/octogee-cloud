@@ -20,7 +20,7 @@ import { requestedProjectRecipe } from "./project-recipe.js";
 import { userEntitlements } from "@octogee/shared/types/user-entitlements";
 import type { FleetBrokerProjectCreateInput } from "@octogee/shared/types/fleet-broker";
 import { provisionProjectAgent } from "./project-agent-service.js";
-import { deleteProjectPlatformState, projectRepoProvider } from "./project-platform-state.js";
+import { projectRepoProvider, removeProjectPlatformRecords } from "./project-platform-state.js";
 import { projectCreateAdmission } from "./project-create-admission.js";
 import {
   isValidProjectStarter,
@@ -620,15 +620,7 @@ async function failProjectProvisioning(
 
   try {
     await cleanupProjectProvisioning(plan, artifacts);
-    await deleteProjectPlatformState(plan.workspaceId, plan.slug, {
-      ownerUid: plan.uid,
-      repoProvider: projectRepoProvider({ repoSource: plan.ghRepoSource }),
-    });
-    return bad(502, responseError, {
-      workspaceId: plan.workspaceId,
-      slug: plan.slug,
-      cleanupState: "complete",
-    });
+    await removeProjectPlatformRecords(plan.workspaceId, plan.slug);
   } catch (cleanupError) {
     const cleanupMessage = errorMessage(cleanupError);
     await platformStateStore.workspaces.projects.patch(plan.workspaceId, plan.slug, {
@@ -646,6 +638,26 @@ async function failProjectProvisioning(
       slug: plan.slug,
       cleanupState: "failed",
     });
+  }
+  return bad(502, responseError, {
+    workspaceId: plan.workspaceId,
+    slug: plan.slug,
+    cleanupState: await markRemovedProjectPresentation(plan),
+  });
+}
+
+async function markRemovedProjectPresentation(plan: ProjectCreatePlan): Promise<"complete" | "presentation_failed"> {
+  try {
+    await projectPresentation().markProjectPendingDeletion(plan.workspaceId, plan.slug, {
+      ownerUid: plan.uid,
+      repoProvider: projectRepoProvider({ repoSource: plan.ghRepoSource }),
+    });
+    return "complete";
+  } catch (error) {
+    logger.error(
+      `[projects] Presentation cleanup failed for ${plan.workspaceId}/${plan.slug} after its platform state was removed: ${errorMessage(error)}`,
+    );
+    return "presentation_failed";
   }
 }
 
