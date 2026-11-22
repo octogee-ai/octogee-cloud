@@ -21,7 +21,8 @@ import type { KubectlSubprocess } from "./fleet-ingress.js";
 
 export interface HobbyCheckpointPod {
   slotId: string;
-  mode?: "cold";
+  mode?: "cold" | "live";
+  livePod?: { podName: string; podUid: string; deploymentUid: string };
   releaseNumber?: number;
   restoreSnapshot?: string;
   zone: string;
@@ -826,6 +827,14 @@ const hist = await deps.runHelm([
   return `rolled back ${release} to revision ${target}`;
 }
 
+async function getReleaseStatus(
+  deps: HelmSubprocessRunnerDeps,
+  namespace: string,
+  release: string,
+): Promise<string | null> {
+  return (await getReleaseObservation(deps, namespace, release))?.status ?? null;
+}
+
 type SharedRuntimeInputs = Pick<
   BuildUpgradeArgsOpts,
   "gatewayClass" | "imageTag" | "gatewayEdgeImageTag" | "chartFingerprint" |
@@ -874,6 +883,58 @@ async function prepareSharedRuntimeInstallation(opts: SharedRuntimeInputs): Prom
   } catch (error) {
     await cleanup();
     throw error;
+  }
+}
+
+type HelmUpsert = Parameters<HelmRunner["upsertInstance"]>[0];
+
+interface StandbyObject {
+  kind: string;
+  metadata: { name: string; uid: string; namespace: string; deletionTimestamp?: string; annotations?: Record<string, string> };
+  spec?: { replicas?: number; runtimeClassName?: string; containers?: { name: string; image: string }[] };
+  status?: { phase?: string };
+}
+
+function matchingStandbyImages(pod: StandbyObject, opts: HelmUpsert): boolean {
+  const containers = pod.spec?.containers ?? [];
+  const expected = [
+    ["gateway", `${opts.imageRepository}:${opts.imageTag}`],
+    ["gateway-edge", `${opts.gatewayEdgeImageRepository}:${opts.gatewayEdgeImageTag}`],
+  ];
+  return containers.length === expected.length && expected.every(([role, image]) =>
+    /@sha256:[a-f0-9]{64}$/.test(image) && containers.find(container => container.name === role)?.image === image);
+}
+
+function isExactLiveStandbyPod(pod: StandbyObject | undefined, proof: NonNullable<HobbyCheckpointPod["livePod"]>, opts: HelmUpsert): boolean {
+  return pod !== undefined && pod.metadata.name === proof.podName && pod.metadata.uid === proof.podUid &&
+    pod.status?.phase === "Running" && pod.metadata.annotations?.["octogee.ai/checkpoint-live-slot"] === opts.gatewayId &&
+    pod.metadata.annotations?.["podsnapshot.gke.io/ps-name"] === undefined && pod.spec?.runtimeClassName === "gvisor" &&
+    matchingStandbyImages(pod, opts);
+}
+
+function isExactLiveStandbyDeployment(deployment: StandbyObject | undefined, uid: string): boolean {
+  return deployment?.metadata.uid === uid && deployment.spec?.replicas === 1;
+}
+
+async function assertProvisionedLiveStandby(deps: HelmSubprocessRunnerDeps, opts: HelmUpsert, release: string): Promise<void> {
+  const proof = opts.hobbyCheckpoint?.livePod;
+  const { runKubectl } = deps;
+  if (!proof || !runKubectl || opts.replicas !== 1 || opts.gatewayClass !== "isolated" || !opts.builderIdentity ||
+      opts.hobbyCheckpoint?.restoreSnapshot !== undefined || !/^[a-z0-9-]{1,253}$/.test(proof.podName)) {
+    throw new Error("Live standby admission requires an exact prepared workload and canonical owner");
+  }
+  const result = await runKubectl(["-n", opts.namespace, "get", `pod/${proof.podName}`,
+    `deployment/octogee-gateway-${opts.gatewayId}`, "-o", "json"], { timeoutMs: 30_000 });
+  if (result.code !== 0) throw new Error(`Failed to observe live standby Pod: ${result.stderr.trim()}`);
+  const { items } = JSON.parse(result.stdout) as { items: StandbyObject[] };
+  const pod = items.find(item => item.kind === "Pod");
+  const deployment = items.find(item => item.kind === "Deployment");
+  if (!isExactLiveStandbyPod(pod, proof, opts) || !isExactLiveStandbyDeployment(deployment, proof.deploymentUid) ||
+      items.some(item => item.metadata.namespace !== opts.namespace || item.metadata.deletionTimestamp)) {
+    throw new Error("Live standby Pod or Deployment no longer matches its immutable admission");
+  }
+  if (await getReleaseStatus(deps, opts.namespace, release) !== "deployed") {
+    throw new Error("Live standby requires its original deployed Helm release");
   }
 }
 
@@ -927,14 +988,22 @@ export function createHelmSubprocessRunner(deps: HelmSubprocessRunnerDeps): Helm
         });
       };
 
+      if (opts.hobbyCheckpoint?.mode === "live") {
+        await assertProvisionedLiveStandby(deps, opts, release);
+        await ensureServiceAccount();
+        if (!deps.ensureAuthSecret) throw new Error("Live standby owner credentials are unavailable");
+        await deps.ensureAuthSecret({ namespace, gatewayId });
+        return;
+      }
+
       await ensureServiceAccount();
 
       if (deps.ensureAuthSecret) {
         await deps.ensureAuthSecret({ namespace, gatewayId });
       }
 
-      const preFlightStatus = (await getReleaseObservation(deps, namespace, release))?.status;
-      if (preFlightStatus !== undefined && PENDING_STATUSES.has(preFlightStatus)) {
+      const preFlightStatus = await getReleaseStatus(deps, namespace, release);
+      if (preFlightStatus !== null && PENDING_STATUSES.has(preFlightStatus)) {
         deps.log(
           `[helm-runner] ⚠ ${release} pre-flight detected stuck state '${preFlightStatus}' — running recovery before upgrade`,
         );

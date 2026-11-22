@@ -1,27 +1,35 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { link, readFile, unlink, writeFile } from "node:fs/promises";
 import { setTimeout } from "node:timers/promises";
 import { isValidGatewayId } from "../types/glm.js";
 import { isValidUsername } from "../types/identity.js";
 import { isUserOwnerUid } from "../types/user-identity.js";
 const CLAIM_PATH = "/var/run/octogee/checkpoint-claim/claim.json";
+const LIVE_OWNER_PATH = "/var/run/octogee/checkpoint-owner/owner.json";
 const RESTORED_ENV_PATH = "/proc/gvisor/spec_environ";
 const POD_UID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const SNAPSHOT_NAME = /^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$/;
+function validClaimOwner(claim) {
+    return claim.assignmentEpoch === 0 && isValidGatewayId(claim.gatewayId) && claim.slotId === claim.gatewayId &&
+        typeof claim.podUid === "string" && POD_UID.test(claim.podUid) && isUserOwnerUid(claim.uid) && isValidUsername(claim.slug);
+}
 function parseClaim(value) {
     if (!value || typeof value !== "object")
         return null;
     const claim = value;
-    if (claim.version !== 1 || claim.assignmentEpoch !== 0 ||
-        !isValidGatewayId(claim.gatewayId) || claim.slotId !== claim.gatewayId ||
-        typeof claim.snapshotName !== "string" || !SNAPSHOT_NAME.test(claim.snapshotName) ||
-        typeof claim.podUid !== "string" || !POD_UID.test(claim.podUid) ||
-        !isUserOwnerUid(claim.uid) || !isValidUsername(claim.slug))
+    if (!validClaimOwner(claim))
         return null;
-    return claim;
+    if (claim.version === 1 && claim.mode === undefined &&
+        typeof claim.snapshotName === "string" && SNAPSHOT_NAME.test(claim.snapshotName))
+        return claim;
+    if (claim.version === 2 && claim.mode === "live" && claim.snapshotName === undefined &&
+        typeof claim.namespace === "string" && SNAPSHOT_NAME.test(claim.namespace))
+        return claim;
+    return null;
 }
 export function readCheckpointRestore(boot, fresh, receipt) {
     const claim = parseClaim(receipt);
-    if (!claim || boot.OCTOGEE_CHECKPOINT_SNAPSHOT || !boot.POD_UID ||
+    if (claim?.version !== 1 || boot.OCTOGEE_CHECKPOINT_SNAPSHOT || !boot.POD_UID ||
         !POD_UID.test(boot.POD_UID) || boot.POD_UID === fresh.POD_UID ||
         !boot.K8S_NAMESPACE || boot.K8S_NAMESPACE !== fresh.K8S_NAMESPACE)
         return null;
@@ -50,9 +58,35 @@ export async function readMountedCheckpointClaim() {
         throw error;
     }
 }
+async function rememberLiveOwner(claim) {
+    const staged = `${LIVE_OWNER_PATH}.${randomUUID()}`;
+    const owner = JSON.stringify([claim.uid, claim.slug, claim.assignmentEpoch, claim.slotId, claim.podUid, claim.namespace]);
+    await writeFile(staged, owner, { mode: 0o600, flag: "wx" });
+    try {
+        await link(staged, LIVE_OWNER_PATH);
+    }
+    catch (error) {
+        if (error.code !== "EEXIST")
+            throw error;
+        if (await readFile(LIVE_OWNER_PATH, "utf8") !== owner)
+            throw new Error("Live standby is already bound to another owner");
+    }
+    finally {
+        await unlink(staged);
+    }
+}
+function assertLiveCheckpointClaim(boot, claim) {
+    if (claim.version !== 2 || claim.namespace !== boot.K8S_NAMESPACE || claim.podUid !== boot.POD_UID ||
+        claim.gatewayId !== boot.GATEWAY_ID || claim.slotId !== boot.OCTOGEE_CHECKPOINT_SLOT_ID) {
+        throw new Error("Gateway live standby does not match this exact claimed pod");
+    }
+}
 export async function waitForCheckpointClaim(role) {
     const boot = process.env;
     const prefix = `/tmp/octogee-hobby-checkpoint-${role}`;
+    const live = boot.OCTOGEE_CHECKPOINT_MODE === "live";
+    if (live && boot.OCTOGEE_CHECKPOINT_SNAPSHOT)
+        throw new Error("Live standby cannot restore a snapshot");
     if (boot.OCTOGEE_CHECKPOINT_SNAPSHOT) {
         return resumeClaimedCheckpoint(boot, prefix);
     }
@@ -64,6 +98,12 @@ export async function waitForCheckpointClaim(role) {
     for (;;) {
         const receipt = await readMountedCheckpointClaim();
         if (receipt !== null) {
+            if (live) {
+                assertLiveCheckpointClaim(boot, receipt);
+                await rememberLiveOwner(receipt);
+                await checkpointGatewayCredentials();
+                return receipt;
+            }
             const current = restoreEnvironment(await readFile(RESTORED_ENV_PATH, "utf8"));
             const claim = readCheckpointRestore(boot, current, receipt);
             if (!claim)
@@ -76,7 +116,7 @@ export async function waitForCheckpointClaim(role) {
     }
 }
 export function matchesRestartedCheckpoint(env, claim, restoredPodUid) {
-    return claim !== null && env.POD_UID === claim.podUid && restoredPodUid === claim.podUid &&
+    return claim?.version === 1 && env.POD_UID === claim.podUid && restoredPodUid === claim.podUid &&
         env.GATEWAY_ID === claim.gatewayId && env.OCTOGEE_CHECKPOINT_SLOT_ID === claim.slotId &&
         env.OCTOGEE_CHECKPOINT_SNAPSHOT === claim.snapshotName;
 }

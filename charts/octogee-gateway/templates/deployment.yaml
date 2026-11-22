@@ -11,6 +11,7 @@
 {{- $checkpointSnapshot := $checkpoint.restoreSnapshot | default "" -}}
 {{- $checkpointMode := $checkpoint.mode | default "" -}}
 {{- $checkpointCold := eq $checkpointMode "cold" -}}
+{{- $checkpointLive := eq $checkpointMode "live" -}}
 {{- $checkpointReleaseNumber := $checkpoint.releaseNumber | default 0 | toString -}}
 {{- $checkpointSealed := and $checkpointSlot (not $checkpointCold) -}}
 {{- $checkpointPreparing := and $checkpointSealed (not $checkpointSnapshot) -}}
@@ -22,11 +23,11 @@
 {{- if and (or $checkpointSnapshot $checkpointMode) (not $checkpointSlot) -}}
 {{- fail "octogee-gateway: a restored checkpoint requires its own slot" -}}
 {{- end -}}
-{{- if and $checkpointMode (not $checkpointCold) -}}
+{{- if and $checkpointMode (not (or $checkpointCold $checkpointLive)) -}}
 {{- fail "octogee-gateway: unsupported checkpoint continuation mode" -}}
 {{- end -}}
-{{- if and $checkpointCold $checkpointSnapshot -}}
-{{- fail "octogee-gateway: a cold checkpoint continuation cannot restore a snapshot" -}}
+{{- if and (or $checkpointCold $checkpointLive) $checkpointSnapshot -}}
+{{- fail "octogee-gateway: a live or cold checkpoint continuation cannot restore a snapshot" -}}
 {{- end -}}
 {{- if and $checkpointCold (not (regexMatch "^[1-9][0-9]*$" $checkpointReleaseNumber)) -}}
 {{- fail "octogee-gateway: cold checkpoint continuation requires the exact desired release number" -}}
@@ -102,13 +103,22 @@ spec:
       gateway-instance: {{ $revision }}
   template:
     metadata:
-      {{- if $checkpointSnapshot }}
+      {{- if or $checkpointSnapshot $checkpointLive }}
       annotations:
+        {{- if $checkpointLive }}
+        octogee.ai/checkpoint-live-slot: {{ $checkpointSlot | quote }}
+        dev.gvisor.spec.mount.checkpoint-owner.share: "pod"
+        dev.gvisor.spec.mount.checkpoint-owner.type: "bind"
+        {{- else }}
         podsnapshot.gke.io/ps-name: {{ $checkpointSnapshot | quote }}
+        {{- end }}
       {{- end }}
       labels:
         {{- if $checkpointSealed }}
         octogee-hobby-checkpoint-slot: {{ $checkpointSlot | quote }}
+        {{- end }}
+        {{- if $checkpointLive }}
+        octogee.ai/checkpoint-mode: live
         {{- end }}
         {{- if $checkpointCold }}
         octogee.ai/checkpoint-release: {{ $checkpointReleaseNumber | quote }}
@@ -359,6 +369,10 @@ spec:
               value: {{ $checkpointSlot | quote }}
             - name: OCTOGEE_CHECKPOINT_SNAPSHOT
               value: {{ $checkpointSnapshot | quote }}
+            {{- if $checkpointLive }}
+            - name: OCTOGEE_CHECKPOINT_MODE
+              value: live
+            {{- end }}
             {{- end }}
             # Identity alias — always the bare gatewayId under simple-roll.
             # gateway-edge stamps it into the Dashboard-bridge capability file.
@@ -508,6 +522,10 @@ spec:
             {{- end }}
           volumeMounts:
             {{- if $checkpointSealed }}
+            {{- if $checkpointLive }}
+            - name: checkpoint-owner
+              mountPath: /var/run/octogee/checkpoint-owner
+            {{- end }}
             - name: checkpoint-claim
               mountPath: /var/run/octogee/checkpoint-claim
               readOnly: true
@@ -672,6 +690,10 @@ spec:
               value: {{ $checkpointSlot | quote }}
             - name: OCTOGEE_CHECKPOINT_SNAPSHOT
               value: {{ $checkpointSnapshot | quote }}
+            {{- if $checkpointLive }}
+            - name: OCTOGEE_CHECKPOINT_MODE
+              value: live
+            {{- end }}
             {{- end }}
             # Identity alias — always the bare gatewayId under simple-roll.
             # gateway-edge stamps it into the Dashboard-bridge capability file.
@@ -782,6 +804,10 @@ spec:
             {{- toYaml .Values.gatewayEdge.resources | nindent 12 }}
           volumeMounts:
             {{- if $checkpointSealed }}
+            {{- if $checkpointLive }}
+            - name: checkpoint-owner
+              mountPath: /var/run/octogee/checkpoint-owner
+            {{- end }}
             - name: checkpoint-claim
               mountPath: /var/run/octogee/checkpoint-claim
               readOnly: true
@@ -848,6 +874,11 @@ spec:
           {{- end }}
         {{- end }}
       volumes:
+        {{- if $checkpointLive }}
+        - name: checkpoint-owner
+          emptyDir:
+            sizeLimit: 1Mi
+        {{- end }}
         {{- if $checkpointSealed }}
         - name: checkpoint-claim
           configMap:

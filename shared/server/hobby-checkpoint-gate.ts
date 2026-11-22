@@ -1,41 +1,59 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { link, readFile, unlink, writeFile } from "node:fs/promises";
 import { setTimeout } from "node:timers/promises";
 import { isValidGatewayId } from "../types/glm.js";
 import { isValidUsername } from "../types/identity.js";
 import { isUserOwnerUid } from "../types/user-identity.js";
 
 const CLAIM_PATH = "/var/run/octogee/checkpoint-claim/claim.json";
+const LIVE_OWNER_PATH = "/var/run/octogee/checkpoint-owner/owner.json";
 const RESTORED_ENV_PATH = "/proc/gvisor/spec_environ";
 const POD_UID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const SNAPSHOT_NAME = /^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$/;
 
-export interface HobbyCheckpointClaim {
-  version: 1;
+interface HobbyCheckpointOwner {
   slotId: string;
   gatewayId: string;
-  snapshotName: string;
   podUid: string;
   uid: string;
   slug: string;
   assignmentEpoch: 0;
 }
 
-function parseClaim(value: unknown): HobbyCheckpointClaim | null {
+export interface HobbyCheckpointClaim extends HobbyCheckpointOwner {
+  version: 1;
+  snapshotName: string;
+}
+
+export interface HobbyLiveStandbyClaim extends HobbyCheckpointOwner {
+  version: 2;
+  mode: "live";
+  namespace: string;
+}
+
+type HobbyPodClaim = HobbyCheckpointClaim | HobbyLiveStandbyClaim;
+
+function validClaimOwner(claim: Partial<HobbyCheckpointOwner>): boolean {
+  return claim.assignmentEpoch === 0 && isValidGatewayId(claim.gatewayId) && claim.slotId === claim.gatewayId &&
+    typeof claim.podUid === "string" && POD_UID.test(claim.podUid) && isUserOwnerUid(claim.uid) && isValidUsername(claim.slug);
+}
+
+function parseClaim(value: unknown): HobbyPodClaim | null {
   if (!value || typeof value !== "object") return null;
-  const claim = value as Partial<HobbyCheckpointClaim>;
-  if (claim.version !== 1 || claim.assignmentEpoch !== 0 ||
-    !isValidGatewayId(claim.gatewayId) || claim.slotId !== claim.gatewayId ||
-    typeof claim.snapshotName !== "string" || !SNAPSHOT_NAME.test(claim.snapshotName) ||
-    typeof claim.podUid !== "string" || !POD_UID.test(claim.podUid) ||
-    !isUserOwnerUid(claim.uid) || !isValidUsername(claim.slug)) return null;
-  return claim as HobbyCheckpointClaim;
+  const claim = value as Partial<HobbyCheckpointOwner> & Record<string, unknown>;
+  if (!validClaimOwner(claim)) return null;
+  if (claim.version === 1 && claim.mode === undefined &&
+    typeof claim.snapshotName === "string" && SNAPSHOT_NAME.test(claim.snapshotName)) return claim as unknown as HobbyCheckpointClaim;
+  if (claim.version === 2 && claim.mode === "live" && claim.snapshotName === undefined &&
+    typeof claim.namespace === "string" && SNAPSHOT_NAME.test(claim.namespace)) return claim as unknown as HobbyLiveStandbyClaim;
+  return null;
 }
 
 export function readCheckpointRestore(
   boot: NodeJS.ProcessEnv, fresh: NodeJS.ProcessEnv, receipt: unknown,
 ): HobbyCheckpointClaim | null {
   const claim = parseClaim(receipt);
-  if (!claim || boot.OCTOGEE_CHECKPOINT_SNAPSHOT || !boot.POD_UID ||
+  if (claim?.version !== 1 || boot.OCTOGEE_CHECKPOINT_SNAPSHOT || !boot.POD_UID ||
     !POD_UID.test(boot.POD_UID) || boot.POD_UID === fresh.POD_UID ||
     !boot.K8S_NAMESPACE || boot.K8S_NAMESPACE !== fresh.K8S_NAMESPACE) return null;
   if (boot.GATEWAY_ID !== claim.gatewayId || fresh.GATEWAY_ID !== claim.gatewayId ||
@@ -51,7 +69,7 @@ function restoreEnvironment(body: string): NodeJS.ProcessEnv {
   }));
 }
 
-export async function readMountedCheckpointClaim(): Promise<HobbyCheckpointClaim | null> {
+export async function readMountedCheckpointClaim(): Promise<HobbyPodClaim | null> {
   try {
     const claim = parseClaim(JSON.parse(await readFile(CLAIM_PATH, "utf8")) as unknown);
     if (!claim) throw new Error("Invalid gateway checkpoint claim projection");
@@ -62,9 +80,32 @@ export async function readMountedCheckpointClaim(): Promise<HobbyCheckpointClaim
   }
 }
 
-export async function waitForCheckpointClaim(role: "gateway" | "edge"): Promise<HobbyCheckpointClaim> {
+async function rememberLiveOwner(claim: HobbyLiveStandbyClaim): Promise<void> {
+  const staged = `${LIVE_OWNER_PATH}.${randomUUID()}`;
+  const owner = JSON.stringify([claim.uid, claim.slug, claim.assignmentEpoch, claim.slotId, claim.podUid, claim.namespace]);
+  await writeFile(staged, owner, { mode: 0o600, flag: "wx" });
+  try {
+    await link(staged, LIVE_OWNER_PATH);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    if (await readFile(LIVE_OWNER_PATH, "utf8") !== owner) throw new Error("Live standby is already bound to another owner");
+  } finally {
+    await unlink(staged);
+  }
+}
+
+function assertLiveCheckpointClaim(boot: NodeJS.ProcessEnv, claim: HobbyPodClaim): asserts claim is HobbyLiveStandbyClaim {
+  if (claim.version !== 2 || claim.namespace !== boot.K8S_NAMESPACE || claim.podUid !== boot.POD_UID ||
+    claim.gatewayId !== boot.GATEWAY_ID || claim.slotId !== boot.OCTOGEE_CHECKPOINT_SLOT_ID) {
+    throw new Error("Gateway live standby does not match this exact claimed pod");
+  }
+}
+
+export async function waitForCheckpointClaim(role: "gateway" | "edge"): Promise<HobbyPodClaim> {
   const boot = process.env;
   const prefix = `/tmp/octogee-hobby-checkpoint-${role}`;
+  const live = boot.OCTOGEE_CHECKPOINT_MODE === "live";
+  if (live && boot.OCTOGEE_CHECKPOINT_SNAPSHOT) throw new Error("Live standby cannot restore a snapshot");
   if (boot.OCTOGEE_CHECKPOINT_SNAPSHOT) {
     return resumeClaimedCheckpoint(boot, prefix);
   }
@@ -75,6 +116,12 @@ export async function waitForCheckpointClaim(role: "gateway" | "edge"): Promise<
   for (;;) {
     const receipt = await readMountedCheckpointClaim();
     if (receipt !== null) {
+      if (live) {
+        assertLiveCheckpointClaim(boot, receipt);
+        await rememberLiveOwner(receipt);
+        await checkpointGatewayCredentials();
+        return receipt;
+      }
       const current = restoreEnvironment(await readFile(RESTORED_ENV_PATH, "utf8"));
       const claim = readCheckpointRestore(boot, current, receipt);
       if (!claim) throw new Error("Gateway checkpoint does not match this restored slot and pod");
@@ -87,9 +134,9 @@ export async function waitForCheckpointClaim(role: "gateway" | "edge"): Promise<
 }
 
 export function matchesRestartedCheckpoint(
-  env: NodeJS.ProcessEnv, claim: HobbyCheckpointClaim | null, restoredPodUid: string,
+  env: NodeJS.ProcessEnv, claim: HobbyPodClaim | null, restoredPodUid: string,
 ): claim is HobbyCheckpointClaim {
-  return claim !== null && env.POD_UID === claim.podUid && restoredPodUid === claim.podUid &&
+  return claim?.version === 1 && env.POD_UID === claim.podUid && restoredPodUid === claim.podUid &&
     env.GATEWAY_ID === claim.gatewayId && env.OCTOGEE_CHECKPOINT_SLOT_ID === claim.slotId &&
     env.OCTOGEE_CHECKPOINT_SNAPSHOT === claim.snapshotName;
 }
