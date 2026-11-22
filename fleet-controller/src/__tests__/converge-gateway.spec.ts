@@ -177,6 +177,18 @@ describe("planGatewayConvergence", () => {
     ).toEqual({ kind: "steady" });
   });
 
+  it("leaves a worker-guarded retired gateway to its explicit retirement operation", () => {
+    expect(
+      planGatewayConvergence({
+        gateway: gateway({ desiredStatus: "retired" }),
+        artifact: null,
+        helm: { imageRepository: REPO, imageTag: "def5678", replicas: 1 },
+        deploymentReady: false,
+        retirementPolicy: { requiresWorker: () => true },
+      }),
+    ).toEqual({ kind: "steady" });
+  });
+
   it("uninstalls a retired gateway's release, then forgets it", () => {
     expect(
       planGatewayConvergence({

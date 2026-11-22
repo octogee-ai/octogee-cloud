@@ -26,7 +26,11 @@ export interface RetireGatewayDeps {
 
   // Stable-name Helm uninstall (octogee-gw-{gatewayId}) — must tolerate an
   // already-absent release so a crashed retire re-drives cleanly.
-  helmUninstallGateway: (gatewayId: string) => Promise<void>;
+  helmUninstallGateway: (gatewayId: string, claim: {
+    operationId: string;
+    version: number;
+    assertActiveClaim?(): Promise<void>;
+  }) => Promise<void>;
 
   revokeAgentStoreCredentials: (gatewayId: string, assertCurrent: () => Promise<void>) => Promise<void>;
 
@@ -141,8 +145,12 @@ export function createRetireGatewayHandler(deps: RetireGatewayDeps): OperationHa
     const mountedFailure = await assertNoMountedUsers(deps, gatewayId, op.id, retirementClaimVersion);
     if (mountedFailure) return mountedFailure;
 
+    const assertActiveClaim = ctx.assertActiveClaim;
     const uninstall = await runReportedStep(ctx, deps, "helm-uninstall", () =>
-      deps.helmUninstallGateway(gatewayId),
+      deps.helmUninstallGateway(gatewayId, {
+        operationId: op.id, version: retirementClaimVersion,
+        assertActiveClaim,
+      }),
     );
     if (!uninstall.ok) {
       return failure(`helm uninstall failed: ${uninstall.error ?? UNKNOWN_ERROR}`);
