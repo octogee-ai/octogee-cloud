@@ -1,11 +1,24 @@
 import type { UserActivationTargetRollbackProof } from '../user-activation-roll-recovery.js';
 import type { Operation, OperationStep, StepStatus } from "@octogee/shared/types/glm";
+import type { GatewayMutableConfig } from "@octogee/shared/types/gateway-mutable-config";
 import type { GatewayDoc, ReleasePayload } from "@octogee/shared/types/gateway-releases";
 import type { OperationContext, OperationHandler, OperationResult } from "../operation-router.js";
 import { classifyOperationFailure } from "../operation-retry.js";
 
 
+export type RequiresInitialGatewayRelease = (gateway: GatewayDoc & Partial<GatewayMutableConfig>) => boolean;
+
+const INITIAL_RELEASE_PENDING = "initial gateway release is still provisioning; fleet will retry";
+
+export function initialGatewayReleasePending(
+  gateway: GatewayDoc & Partial<GatewayMutableConfig>,
+  requiresInitialGatewayRelease?: RequiresInitialGatewayRelease,
+): boolean {
+  return gateway.liveRelease === null && requiresInitialGatewayRelease?.(gateway) === true;
+}
+
 export interface RolloutDeps {
+  requiresInitialGatewayRelease?: RequiresInitialGatewayRelease;
   rollbackUnadmittedActivationTarget?: (op: Operation, ctx: OperationContext) => Promise<UserActivationTargetRollbackProof | null>;
   readGatewayDoc: (gatewayId: string) => Promise<GatewayDoc | null>;
   readReleasePayload: (gatewayId: string, release: number) => Promise<ReleasePayload | null>;
@@ -72,6 +85,7 @@ export function planDesiredReleaseActivation(
   targetRelease: number,
   updatedAt: number,
   operationId: string,
+  requiresInitialGatewayRelease?: RequiresInitialGatewayRelease,
 ):
   | { success: true; patch: Record<string, unknown> | null }
   | { success: false; error: string } {
@@ -87,6 +101,9 @@ export function planDesiredReleaseActivation(
     };
   }
   if (gateway.desiredRelease === targetRelease) return { success: true, patch: null };
+  if (initialGatewayReleasePending(gateway, requiresInitialGatewayRelease)) {
+    return { success: false, error: INITIAL_RELEASE_PENDING };
+  }
   return {
     success: true,
     patch: {
@@ -186,7 +203,11 @@ type DeploymentPrerequisite =
 async function readDeploymentPrerequisite(
   deps: RolloutDeps,
   gateway: GatewayDoc,
+  targetRelease: number,
 ): Promise<DeploymentPrerequisite> {
+  if (gateway.desiredRelease !== targetRelease && initialGatewayReleasePending(gateway, deps.requiresInitialGatewayRelease)) {
+    return { status: "transient", error: INITIAL_RELEASE_PENDING };
+  }
   if (gateway.desiredStatus === "paused") return { status: "ready" };
   try {
     const error = await deps.readDeploymentPrerequisiteError(gateway.gatewayId);
@@ -209,7 +230,7 @@ async function awaitDeploymentPrerequisites(
     const gateway = await deps.readGatewayDoc(target.gatewayId);
     if (!gateway) return { success: false, error: `gateway ${target.gatewayId} disappeared during deployment prerequisite validation` };
     if (converged(gateway, target.targetRelease)) return { success: true };
-    const prerequisite = await readDeploymentPrerequisite(deps, gateway);
+    const prerequisite = await readDeploymentPrerequisite(deps, gateway, target.targetRelease);
     if (prerequisite.status === "ready") return { success: true };
     if (prerequisite.status === "terminal") return { success: false, error: prerequisite.error };
     if (lastError !== prerequisite.error) {
@@ -314,7 +335,7 @@ async function awaitConvergence(
     if (outcome) return outcome;
     const recovery = await progress.checkTargetRecovery();
     if (recovery) return recovery;
-    const prerequisite = await readDeploymentPrerequisite(deps, gw);
+    const prerequisite = await readDeploymentPrerequisite(deps, gw, target.targetRelease);
     if (prerequisite.status === "terminal") return { success: false, error: prerequisite.error };
     if (prerequisite.status === "transient" && prerequisite.error !== narration.lastError) {
       narration.lastError = prerequisite.error;

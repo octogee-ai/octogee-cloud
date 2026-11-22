@@ -74,6 +74,40 @@ function mkDeps(overrides: Partial<RolloutDeps> = {}): RolloutDeps & { logs: str
 }
 
 describe("rollout op — durable root validation", () => {
+  it("lets a protected first release become live before activating the queued successor", async () => {
+    let gateway = mkGateway({ desiredRelease: 1, liveRelease: null, desiredStatus: "paused" });
+    const activateDesiredRelease = vi.fn(async () => {
+      expect(gateway.liveRelease).toBe(1);
+      gateway = { ...gateway, desiredRelease: 2, liveRelease: 2 };
+      return { success: true as const };
+    });
+    const wait = vi.fn(async () => { gateway = { ...gateway, liveRelease: 1 }; });
+    const handler = createRolloutHandler(mkDeps({
+      requiresInitialGatewayRelease: candidate => candidate.gatewayId === "default",
+      readGatewayDoc: async () => gateway,
+      activateDesiredRelease,
+      wait,
+    }));
+    const result = await handler(mkOp({ gatewayId: "default", targetRelease: 2, imageTag: "cafe123-ocbeta2" }), ctx);
+    expect(result.success).toBe(true);
+    expect(wait).toHaveBeenCalledOnce();
+    expect(activateDesiredRelease).toHaveBeenCalledOnce();
+  });
+
+  it("fences the exact transactional activation plan even if a prerequisite read raced", () => {
+    const gateway = mkGateway({ desiredRelease: 1, liveRelease: null });
+    const requiresInitialGatewayRelease = () => true;
+    expect(planDesiredReleaseActivation(gateway, 2, 1, "op", requiresInitialGatewayRelease)).toMatchObject({
+      success: false, error: expect.stringContaining("initial gateway release"),
+    });
+    expect(planDesiredReleaseActivation({ ...gateway, liveRelease: 1 }, 2, 1, "op", requiresInitialGatewayRelease))
+      .toMatchObject({ success: true, patch: { desiredRelease: 2 } });
+    expect(planDesiredReleaseActivation({ ...gateway, latestRelease: 3 }, 2, 1, "op", requiresInitialGatewayRelease))
+      .toMatchObject({ success: false, error: expect.stringContaining("superseded") });
+    expect(planDesiredReleaseActivation({ ...gateway, latestRelease: 1 }, 1, 1, "op", requiresInitialGatewayRelease))
+      .toEqual({ success: true, patch: null });
+  });
+
   it("activates a release without consulting source version metadata", async () => {
     const deps = mkDeps({ readGatewayDoc: async () => mkGateway({ liveRelease: 2 }) });
     Object.assign(deps, { readGatewayOpenclawVersion: vi.fn(async () => { throw new Error("version unavailable"); }) });

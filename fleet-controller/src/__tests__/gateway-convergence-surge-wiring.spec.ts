@@ -456,6 +456,24 @@ describe("gateway convergence surge wiring", () => {
     }));
   });
 
+  it.each([null, 2])("suppresses queued supersession only before a protected first live release: %s", async liveRelease => {
+    const current = { ...gateway(), latestRelease: 3, liveRelease };
+    const reconcileSurgeHandoff = vi.fn(async () => ({ ready: true }));
+    await refineGatewayConvergenceAction({
+      passDeps: { ...passDeps(reconcileSurgeHandoff, current), requiresInitialGatewayRelease: () => true },
+      gateway: current,
+      artifact,
+      pendingArtifact: { imageRepository: repository, imageTag: "ghi9012-oc2026.7.1" },
+      runtime: runtime(artifact.imageTag),
+      helmObserved: { imageRepository: repository, imageTag: artifact.imageTag, replicas: 1 },
+      action: { kind: "steady" },
+    });
+    const marker = expect.objectContaining({ supersedingImageTag: "ghi9012-oc2026.7.1" });
+    expect(reconcileSurgeHandoff).toHaveBeenCalledWith(liveRelease === null
+      ? expect.not.objectContaining({ supersedingImageTag: expect.anything() })
+      : marker);
+  });
+
   it("keeps an already-updated target handoff active while its release record catches up", async () => {
     const reconcileSurgeHandoff = vi.fn(async () => ({ ready: false }));
     const pendingRoll = { ...gateway(), latestRelease: 3 };
