@@ -66,6 +66,13 @@ async function parkedGuestAlreadyInstalled(tx, root, runtime, payload) {
     return release !== null && guestReleaseImagesMatch(release.payload, payload) &&
         guestReleaseInstalled(payload, runtime.vm.instanceId, runtime.vmImages);
 }
+async function replacingParkedOwnerSource(tx, request, owner) {
+    const source = owner?.gateway?.gatewayId;
+    if (!source || !("sourceSha" in request))
+        return false;
+    const scaler = await tx.controllerState.sharedPoolScaler.get();
+    return scaler?.replacements.some(replacement => replacement.sourceGatewayId === source) === true;
+}
 function enqueueGuestRelease(store, request) {
     const { gatewayId, uid, payload, createdBy } = request;
     const origin = "sourceSha" in request ? { sourceSha: request.sourceSha } : { demandSource: request.demandSource };
@@ -91,6 +98,9 @@ function enqueueGuestRelease(store, request) {
         }
         if (!active && await parkedGuestAlreadyInstalled(tx, root, runtime, payload))
             return { status: "already-current" };
+        if (await replacingParkedOwnerSource(tx, request, owner)) {
+            return { status: "ineligible", reason: "owner's Shared gateway is being replaced" };
+        }
         const operationId = await tx.journal.operations.enqueue({
             kind: PARKED_PREWARM_KIND, status: "pending", createdBy, createdAt: Math.max(Date.now(), (latest?.createdAt ?? 0) + 1), startedAt: null, completedAt: null,
             input, inputUid: uid, gatewayId, steps: [],
