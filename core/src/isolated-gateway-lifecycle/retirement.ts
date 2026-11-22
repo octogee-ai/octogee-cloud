@@ -8,6 +8,7 @@ import {
   GatewayRetirementConflictError,
   claimGatewayRetirementInStore,
 } from "../gateway-retirement-claim.js";
+import { withCurrentSizingKey, type CurrentSizingKey } from "../sizing-key.js";
 import { FenceMismatchError } from "../platform-state/errors.js";
 import type { FleetRegistryRecord } from "../platform-state/fleet-registry.js";
 import type { GatewayAssignment, GatewayRoot } from "../platform-state/gateways.js";
@@ -31,8 +32,10 @@ import {
 } from "./inputs.js";
 
 import { readActiveParkedPrewarm } from "./prewarm.js";
+import { retainsEntitledParkedCohort } from "./repark.js";
 
 type RetirementDeps = Pick<IsolatedLifecycleDeps, "store" | "now" | "log" | "requireOwner" | "sourceRecoveryPending">;
+type OwnedRetirementDeps = RetirementDeps & Pick<IsolatedLifecycleDeps, "readSizingKey">;
 
 export type OwnedGatewayRetirement =
   | { retired: true; operationId: string }
@@ -432,8 +435,22 @@ async function readRetirementTelemetryFence(
   return { blocked: null, observedAfter: completedAt };
 }
 
+async function assertIdleRetirementObservation(
+  tx: PlatformStateTransaction,
+  root: { desiredStatus: string; updatedAt: number },
+  request: RetireOwnedIsolatedGatewayInput,
+  sizing: CurrentSizingKey,
+): Promise<void> {
+  if (root.desiredStatus !== request.expectedDesiredStatus || root.updatedAt !== request.expectedUpdatedAt) {
+    throw new GatewayRetirementConflictError("idle retirement gateway observation changed");
+  }
+  if (await retainsEntitledParkedCohort(tx, request, sizing)) {
+    throw new GatewayRetirementConflictError("the owner remains entitled to the returned computer");
+  }
+}
+
 export async function retireOwnedIsolatedGateway(
-  input: RetirementDeps,
+  input: OwnedRetirementDeps,
   request: RetireOwnedIsolatedGatewayInput,
   mode: LifecycleMode = "apply",
 ): Promise<OwnedGatewayRetirement> {
@@ -447,7 +464,7 @@ export async function retireOwnedIsolatedGateway(
   const telemetry = await readRetirementTelemetryFence(input, request);
   if (telemetry.blocked !== null) return blocked(telemetry.blocked);
   try {
-    await claimGatewayRetirementInStore({
+    const claim = (sizing?: CurrentSizingKey) => claimGatewayRetirementInStore({
       store: input.store,
       gatewayId: request.gatewayId,
       operationId,
@@ -482,6 +499,7 @@ export async function retireOwnedIsolatedGateway(
             `gateway ${request.gatewayId} no longer matches isolated allocation for ${request.uid}`,
           );
         }
+        if (sizing) await assertIdleRetirementObservation(transaction, root, request, sizing);
         await assertRetirementAuthorityFence(transaction, request);
         await assertZeroWorkloadRecoveryReceipt(transaction, request);
         await assertActivationSourceRecoveryReleased(input, transaction, {
@@ -491,6 +509,11 @@ export async function retireOwnedIsolatedGateway(
         });
       },
     });
+    if (request.reason === "owned-gateway-not-kept") {
+      await withCurrentSizingKey({ store: input.store, readSizingKey: input.readSizingKey, uid: request.uid, now }, claim);
+    } else {
+      await claim();
+    }
     return { retired: true, operationId };
   } catch (error) {
     if (!(error instanceof GatewayRetirementConflictError) && !(error instanceof FenceMismatchError)) throw error;

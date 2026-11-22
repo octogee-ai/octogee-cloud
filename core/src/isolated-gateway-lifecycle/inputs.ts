@@ -136,6 +136,8 @@ export const PLACEMENT_RETIREMENT_REASONS = [
 export type PlacementRetirementReason = typeof PLACEMENT_RETIREMENT_REASONS[number];
 
 export interface RetireOwnedIsolatedGatewayInput {
+  expectedDesiredStatus?: "running" | "paused" | "draining";
+  expectedUpdatedAt?: number;
   uid: string;
   builderSlug: string;
   gatewayId: string;

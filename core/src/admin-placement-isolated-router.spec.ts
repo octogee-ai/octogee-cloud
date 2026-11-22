@@ -375,6 +375,98 @@ describe("POST /users/:uid/activation-lease/sizing-transition", () => {
   });
 });
 
+describe("POST /users/:uid/isolated-gateway/repark", () => {
+  const returnId = `builder-return-${TARGET}-g1`;
+  const repark = (query = "") => request(app()).post(`/users/${OWNER}/isolated-gateway/repark${query}`)
+    .send({ builderSlug: "alice", gatewayId: TARGET, generation: 1 });
+  function returned(activation: Data = {}) {
+    const owner = user("shared-blue", lease({ status: "parked", ...activation }));
+    Object.assign(owner.provisioning as Data, {
+      homeDisk: { id: "456", projectId: "test-project", zone: "us-central1-b", name: "owner-home",
+        source: "projects/test-project/zones/us-central1-b/disks/owner-home" },
+      homeCheckpoint: { instanceId: "123", completedAt: 2_000, name: "20261122T050000Z.tar.gz",
+        sha256: "a".repeat(64), size: 42, generation: "1", coverage: "builder-home-v2", writerProtocol: 3 },
+    });
+    seed({
+      [`users/${OWNER}`]: owner,
+      [`users/${OWNER}/placement_receipts/lease-one-1-returned`]: { schemaVersion: 1, kind: "returned",
+        leaseId: "lease-one", generation: 1, gatewayId: TARGET, sharedGatewayId: "shared-blue", operationId: returnId,
+        builderSlug: "alice", sizingTier: "s", entitlementTier: "default", retirementOperationId: null, operatorTerminated: false, at: 2_500 },
+      [`gateways/${TARGET}`]: isolatedRoot({ desiredStatus: "running" }),
+      "gateways/shared-blue": { ...isolatedRoot(), gatewayId: "shared-blue", gatewayClass: "shared",
+        desiredStatus: "running", ownerUid: null, builderSlug: null, allocation: null },
+      [`gateways/shared-blue/assignments/${OWNER}`]: { uid: OWNER, slug: "alice", gatewayId: "shared-blue",
+        state: "serving", source: "migrate-user", epoch: 4, updatedAt: 2_100 },
+      [`glmGateways/${TARGET}`]: { docKind: "runtime", gatewayId: TARGET, release: 1, lifecycle: "serving", runtime: "gce-vm",
+        vm: { instanceId: "123", instanceName: "owner-computer", zone: "us-central1-b", status: "RUNNING" },
+        heartbeat: { status: "ready", lastHeartbeatAt: 49_000, mountedCustomers: [] } },
+      [`glmOperations/${returnId}`]: { ...migration({ uid: OWNER, userSlug: "alice", fromGatewayId: TARGET, toGatewayId: "shared-blue" }),
+        status: "succeeded", completedAt: 2_400 },
+    });
+  }
+
+  it("reparks the previously returned computer without replacing it or changing its lease", async () => {
+    returned();
+    await repark("?dryRun=true").expect(200);
+    expect(docs.get(`gateways/${TARGET}`)?.desiredStatus).toBe("running");
+    await repark().expect(200, { parked: true });
+    await repark().expect(200, { parked: true });
+    expect(docs.get(`gateways/${TARGET}`)).toMatchObject({ desiredStatus: "paused", allocation: { generation: 1 } });
+    expect(storedLease()).toMatchObject({ status: "parked", generation: 1 });
+    expect(docs.has(`glmOperations/${RETIREMENT}`)).toBe(false);
+  });
+
+  it("uses the prior successful parked return when the next request already exists", async () => {
+    returned({ status: "requested", leaseId: "lease-two", generation: 2, targetGatewayId: null });
+    await repark().expect(200, { parked: true });
+    expect(storedLease()).toMatchObject({ status: "requested", generation: 2 });
+  });
+
+  it.each([
+    { expectedDesiredStatus: "running", expectedUpdatedAt: 5 },
+    { expectedDesiredStatus: "paused", expectedUpdatedAt: 1 },
+    { expectedDesiredStatus: "paused", expectedUpdatedAt: 50_000 },
+  ])("refuses idle retirement of the resulting parked cohort with observation %j", async (observation) => {
+    returned();
+    await repark().expect(200, { parked: true });
+    await request(app()).post(`/isolated-gateways/${TARGET}/retire-owned`)
+      .send({ ownerUid: OWNER, generation: 1, reason: "owned-gateway-not-kept", ...observation })
+      .expect(409);
+    expect(docs.get(`gateways/${TARGET}`)?.desiredStatus).toBe("paused");
+    expect(docs.has(`glmOperations/${RETIREMENT}`)).toBe(false);
+  });
+
+  it("allows an exact idle cleanup when the parked owner no longer has the gateway's sizing entitlement", async () => {
+    returned();
+    await repark().expect(200, { parked: true });
+    docs.get(`gateways/${TARGET}`)!.sizingProfile = "pro";
+    await request(app()).post(`/isolated-gateways/${TARGET}/retire-owned`)
+      .send({ ownerUid: OWNER, generation: 1, reason: "owned-gateway-not-kept", expectedDesiredStatus: "paused", expectedUpdatedAt: 50_000 })
+      .expect(200);
+    expect(docs.get(`gateways/${TARGET}`)?.desiredStatus).toBe("retired");
+  });
+
+  it.each(["mount", "assignment", "owner", "retirement", "vm", "source", "receipt", "lease", "competing operation"])(
+    "leaves the target untouched when the %s fence disagrees", async (conflict) => {
+      returned(conflict === "receipt" ? { status: "requested", leaseId: "lease-two", generation: 2, targetGatewayId: null } : {});
+      const root = docs.get(`gateways/${TARGET}`)!;
+      const runtime = docs.get(`glmGateways/${TARGET}`)!;
+      if (conflict === "mount") (runtime.heartbeat as Data).mountedCustomers = ["another-user"];
+      if (conflict === "assignment") docs.set(`gateways/${TARGET}/assignments/bob`, { uid: "bob", gatewayId: TARGET, slug: "bob", state: "serving", source: "onboarding", epoch: 1 });
+      if (conflict === "owner") root.ownerUid = "another-owner";
+      if (conflict === "retirement") root.retirementClaim = { operationId: RETIREMENT, version: 1, phase: "claimed", claimedAt: 3_000 };
+      if (conflict === "vm") (runtime.vm as Data).instanceId = "999";
+      if (conflict === "source") docs.get(`gateways/shared-blue/assignments/${OWNER}`)!.state = "quiescing";
+      if (conflict === "receipt") docs.delete(`users/${OWNER}/placement_receipts/lease-one-1-returned`);
+      if (conflict === "lease") storedLease().status = "provisioning";
+      if (conflict === "competing operation") docs.set("glmOperations/moving", migration({ uid: OWNER, fromGatewayId: "shared-blue", toGatewayId: TARGET }));
+      const response = await repark();
+      expect({ status: response.status, body: response.body }).toEqual({ status: 200, body: { parked: false } });
+      expect(root.desiredStatus).toBe("running");
+    },
+  );
+});
+
 describe("POST /isolated-gateways/:id/retire-owned", () => {
   const retire = (body: Data, query = "") => request(app()).post(`/isolated-gateways/${TARGET}/retire-owned${query}`).send(body);
   const body = { ownerUid: OWNER, generation: 1, leaseId: "lease-one", reason: "builder-returned" };

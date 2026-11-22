@@ -961,7 +961,7 @@ describe("parked isolated gateway reuse", () => {
     const parkedGatewayId = await h.run();
     const root = h.docs.get(`gateways/${parkedGatewayId}`)!;
     Object.assign(root, { desiredStatus: "paused", liveRelease: 1 });
-    h.docs.set(`glmGateways/${parkedGatewayId}`, runtimeDoc(parkedGatewayId, "gce-vm"));
+    h.docs.set(`glmGateways/${parkedGatewayId}`, { ...runtimeDoc(parkedGatewayId, "gce-vm"), vm: { instanceId: "123", status: "SUSPENDED" } });
     const user = userData();
     Object.assign(user.provisioning.openclaw.activationLease, { leaseId: "lease-two", generation: 2 });
     h.docs.set("users/uid-alice", user);
@@ -997,6 +997,17 @@ describe("parked isolated gateway reuse", () => {
     expect(h.ensureAuthSecret).not.toHaveBeenCalled();
     expect(h.retirementOf()).toBeUndefined();
     await expect(h.allocate()).rejects.toThrow(/parked gateway/);
+  });
+
+  it("waits for recorded physical suspension before claiming a reparked computer", async () => {
+    const h = await parkedHarness();
+    const runtime = h.docs.get(`glmGateways/${h.parkedGatewayId}`)!;
+    runtime.vm = { instanceId: "123", status: "RUNNING" };
+    await expect(h.allocate()).rejects.toThrow("waiting for VM suspension");
+    expect(h.root.allocation).toMatchObject({ generation: 1 });
+    expect(h.ensureAuthSecret).not.toHaveBeenCalled();
+    runtime.vm = { instanceId: "123", status: "SUSPENDED" };
+    await expect(h.run()).resolves.toBe(h.parkedGatewayId);
   });
 
   async function prewarmHarness() {

@@ -8,6 +8,8 @@ import type { GatewayMutableConfig } from "@octogee/shared/types/gateway-mutable
 import type { SizingTier } from "@octogee/shared/types/sizing";
 import { projectGatewayDesiredRootForGateway } from "@octogee/shared/types/gateway-releases";
 import { isolatedSizingTier, type GatewaySizingProfile } from "@octogee/shared/types/sizing-profile";
+import type { FleetRegistryRecord } from "../platform-state/fleet-registry.js";
+import type { GatewayRoot } from "../platform-state/gateways.js";
 import { isPlatformStateError } from "../platform-state/errors.js";
 import type { GatewayAssignment } from "../platform-state/gateways.js";
 import type { PlatformUserRecord, UserActivationLease } from "../platform-state/users.js";
@@ -275,8 +277,8 @@ function provisioningLease(lease: UserActivationLease, targetGatewayId: string, 
 }
 
 function assertParkedRootResumable(input: {
-  stored: unknown;
-  runtime: { readonly runtime?: unknown } | null;
+  stored: Stored<GatewayRoot> | null;
+  runtime: FleetRegistryRecord | null;
   request: AllocateIsolatedGatewayInput;
   parked: ParkedGateway;
   liveRelease: number;
@@ -286,12 +288,15 @@ function assertParkedRootResumable(input: {
   const root = projectGatewayDesiredRootForGateway(input.stored, parked.gatewayId);
   const resumable = input.handoff && root?.desiredStatus === "running"
     ? { ...root, desiredStatus: "paused" as const } : root;
-  if (!input.stored || !parkedRootMatches(resumable, input.request, parked) || root!.liveRelease !== input.liveRelease ||
-      !rootOnLiveRelease(root!)) {
+  if (![input.stored, input.stored?.retirementClaim == null, parkedRootMatches(resumable, input.request, parked),
+    root?.liveRelease === input.liveRelease, root && rootOnLiveRelease(root)].every(Boolean)) {
     throw new IsolatedGatewayFenceError(`parked gateway ${parked.gatewayId} changed before resuming`);
   }
   if (input.runtime?.runtime !== "gce-vm") {
     throw new IsolatedGatewayFenceError(`parked gateway ${parked.gatewayId} is not a VM runtime`);
+  }
+  if (!input.handoff && (!input.runtime.vm?.instanceId || !["SUSPENDED", "TERMINATED", "STOPPED"].includes(input.runtime.vm.status ?? ""))) {
+    throw new IsolatedGatewayFenceError(`parked gateway ${parked.gatewayId} is waiting for VM suspension to be recorded`);
   }
   return root!;
 }
