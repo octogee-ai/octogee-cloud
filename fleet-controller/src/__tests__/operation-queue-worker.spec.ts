@@ -1,3 +1,4 @@
+import type { FleetInformer, MirrorSubscriber } from "../fleet-informer.js";
 import type { DurableGateway } from "../converge-gateway.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GLM_OPERATIONS_COLLECTION, type Operation, type OperationAttemptRecord } from "@octogee/shared/types/glm";
@@ -981,6 +982,44 @@ describe("queued op bookkeeping is write-quiet", () => {
 });
 
 describe("pending operation watch", () => {
+  it.each([["original", 0, true], ["superseded", 3_000, false]] as const)(
+    "handles a Shared remount event with the %s source assignment", async (_, epochChanged, expected) => {
+      const now = Date.now(), began = now - 5_000, gatewayId = "shared-a", uid = "alice";
+      const error = "expected exactly one ready pod for transport=shared-a; found 0";
+      const input = { uid, userSlug: uid, fromGatewayId: gatewayId, toGatewayId: "shared-b" };
+      const attempt = { startedAt: began, completedAt: began + 500, attempt: 1, classification: "transient" as const,
+        error, steps: [{ name: "keys-sync-state", status: "failed" as const, error }] };
+      const move = { ...baseOp({ id: "move", kind: "migrate-user", input, nextAttemptAt: now + 480_000 }), attempts: 1,
+        attemptHistory: [attempt], schedulerHandoff: { ...input, slug: uid, migrationId: `mig-move:scheduler:1:claim:${began}` } };
+      const h = createOperationsFixture({ move }, {
+        users: { alice: { provisioning: { openclaw: { gatewayId, status: "complete" } } } },
+        runtimes: { [gatewayId]: { heartbeat: { status: "ready", lastHeartbeatAt: now, mountedCustomers: [uid] },
+          kubernetes: { status: "ready", readyPods: 1, totalPods: 1, observedAt: now } } },
+        documents: { "gateways/shared-a/assignments/alice": { uid, slug: uid, gatewayId, source: "migrate-user",
+          state: "serving", epoch: 6, createdAt: began - 1, updatedAt: began - 1 + epochChanged, updatedByOperationId: null } },
+      });
+      let onMount: MirrorSubscriber<"fleetRegistry"> | undefined;
+      const informer = { fleetRegistry: () => null, subscribe: (_key: string, cb: typeof onMount) => {
+        onMount = cb; return () => { onMount = undefined; };
+      } } as unknown as FleetInformer;
+      const handler = vi.fn(async () => ({ success: true, steps: [] }));
+      const stop = startOperationWorker(buildDeps(h.db, { "migrate-user": handler }), informer);
+      try {
+        const pending = (await h.db.journal.operations.get("move"))!;
+        await h.emit({ kind: "snapshot", cursor: "c" as never, records: [pending] });
+        const runtime = (await h.db.fleetRegistry.get(gatewayId))!;
+        onMount!({ kind: "reset", records: [runtime] });
+        if (expected) {
+          await vi.waitFor(() => expect(handler).toHaveBeenCalledOnce());
+        } else {
+          await new Promise(resolve => setImmediate(resolve));
+          expect((await h.db.journal.operations.get("move"))?.nextAttemptAt).toBe(pending.nextAttemptAt);
+          expect(handler).not.toHaveBeenCalled();
+        }
+      } finally { stop(); }
+    },
+  );
+
   it("claims a waiting operator move when its isolated gateway publishes the first live release", async () => {
     const retryAt = Date.now() + 60_000;
     const move = {

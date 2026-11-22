@@ -1,8 +1,9 @@
 import { readSchedulerMigrationIdentity } from "@octogee/shared/types/glm";
-import type { AssignmentDoc } from '@octogee/shared/types/gateway-releases';
+import { GATEWAY_UNREACHABLE_AFTER_MS } from '@octogee/shared/types/fleet-controller';
+import { hasFreshReadyKubernetesObservation, type AssignmentDoc, type GatewayRuntimeDoc } from '@octogee/shared/types/gateway-releases';
 import { readWorkspaceMigrationMarker } from '@octogee/shared/types/workspace-migration';
 import { isolatedRuntimeMutationFenced } from '@octogee/core/gateway-retirement-claim';
-import type { PlatformUserRecord, PlatformStateRepositories, Stored, UntypedRecord } from '@octogee/core/platform-state';
+import type { PlatformUserRecord, PlatformStateRepositories, PlatformStateStore, OperationRecord, Stored, UntypedRecord } from '@octogee/core/platform-state';
 import { MAX_OPERATION_ATTEMPT_HISTORY } from '../operation-retry.js';
 
 function positiveInteger(value: unknown): boolean {
@@ -79,14 +80,15 @@ function sourceAssignmentMatches(row: UntypedRecord, id: string, assignment: Unt
 type SharedMigrationState = Pick<PlatformStateRepositories, 'users' | 'gateways'>;
 
 async function verifyQueuedSharedSourceCustody(
-  state: SharedMigrationState, row: UntypedRecord, id: string, requirePreparation: boolean,
+  state: SharedMigrationState, row: UntypedRecord, id: string, requirePreparation: boolean, assignedBefore?: number,
 ): Promise<boolean> {
   if (!queuedSharedMigrationBeforeTransport(row, id)) return false;
   const { uid, fromGatewayId, toGatewayId } = row.input;
   const [owner, source, target] = await Promise.all([
     state.users.records.get(uid), state.gateways.assignments.get(fromGatewayId, uid), state.gateways.assignments.get(toGatewayId, uid),
   ]);
-  return target === null && userOwnerMatches(row, id, owner, requirePreparation) && sourceAssignmentMatches(row, id, source);
+  return target === null && (assignedBefore === undefined || source !== null && source.updatedAt <= assignedBefore) &&
+    userOwnerMatches(row, id, owner, requirePreparation) && sourceAssignmentMatches(row, id, source);
 }
 
 export function queuedSharedMigrationOwnsSourceInStore(
@@ -99,4 +101,32 @@ export function queuedSharedMigrationNeverTouchedDestinationInStore(
   state: SharedMigrationState, row: UntypedRecord, id: string,
 ): Promise<boolean> {
   return verifyQueuedSharedSourceCustody(state, row, id, false);
+}
+
+type SharedMountObservation = Pick<GatewayRuntimeDoc, 'gatewayId' | 'kubernetes'> & {
+  heartbeat: { status: string; mountedCustomers: readonly string[]; lastHeartbeatAt: number | null };
+};
+
+export function sharedSourceRemountedAfterFailure(row: UntypedRecord, runtime: SharedMountObservation, now: number): boolean {
+  if (!(row.nextAttemptAt > now) || row.input?.fromGatewayId !== runtime.gatewayId ||
+      row.schedulerHandoff?.forwardRecovery !== undefined || !queuedSharedMigrationBeforeTransport(row, row.id)) return false;
+  const failedAt = row.attemptHistory.at(-1).completedAt;
+  const { heartbeat, kubernetes } = runtime;
+  return kubernetes?.readyPods === 1 && kubernetes.observedAt > failedAt &&
+    hasFreshReadyKubernetesObservation(runtime, now, GATEWAY_UNREACHABLE_AFTER_MS) &&
+    heartbeat.status === 'ready' && heartbeat.lastHeartbeatAt !== null && heartbeat.lastHeartbeatAt > failedAt &&
+    heartbeat.lastHeartbeatAt <= now && now - heartbeat.lastHeartbeatAt <= GATEWAY_UNREACHABLE_AFTER_MS &&
+    heartbeat.mountedCustomers.includes(row.input.userSlug);
+}
+
+export function rearmRemountedSharedSource(store: PlatformStateStore, listed: Stored<OperationRecord>, now: number) {
+  return store.transaction({ label: 'migration.rearm-remounted-shared-source' }, async tx => {
+    const row = await tx.journal.operations.get(listed.id);
+    if (!row || row.revision !== listed.revision || typeof row.input.fromGatewayId !== "string") return null;
+    const runtime = await tx.fleetRegistry.get(row.input.fromGatewayId);
+    if (!runtime || !sharedSourceRemountedAfterFailure(row, runtime, now) ||
+        !await verifyQueuedSharedSourceCustody(tx, row, row.id, false, row.attemptHistory!.at(-1)!.startedAt)) return null;
+    await tx.journal.operations.patch(row.id, { nextAttemptAt: { clear: true } }, { revision: row.revision });
+    return { ...row, nextAttemptAt: null };
+  });
 }
