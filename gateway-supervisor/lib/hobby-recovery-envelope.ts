@@ -22,7 +22,7 @@ export interface HobbyHomeEnvelopeHeader {
 
 function requiredIdentity(input: HobbyHomeEnvelopeInput): void {
   if (!/^[0-9a-f]{64}$/.test(input.attemptId) || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(input.podUid) ||
-    !/^projects\/[a-z0-9-]+\/locations\/[a-z0-9-]+\/keyRings\/[a-zA-Z0-9_-]+\/cryptoKeys\/[a-zA-Z0-9_-]+\/cryptoKeyVersions\/[1-9][0-9]*$/.test(input.keyVersion) ||
+    !/^projects\/[a-z0-9-]+\/locations\/[a-z0-9-]+\/keyRings\/[a-zA-Z0-9_-]+\/cryptoKeys\/[a-zA-Z0-9_-]+\/cryptoKeyVersions\/[1-9]\d*$/.test(input.keyVersion) ||
     typeof input.keyPem !== "string" || input.keyPem.length > 8192) {
     throw new Error("Hobby home envelope requires exact Pod and KMS identities");
   }
@@ -78,6 +78,19 @@ export async function sealHobbyHome(
   return { ownerManifestSha256: plaintextDigest.digest("hex"), cipherSha256: ciphertextDigest.digest("hex") };
 }
 
+function openEnvelope(
+  aad: Buffer, expected: Pick<HobbyHomeEnvelopeHeader,"attemptId"|"podUid"|"keyVersion">, dataKey: Buffer,
+): DecipherGCM {
+  const header=JSON.parse(aad.subarray(4).toString("utf8")) as HobbyHomeEnvelopeHeader;
+  if (header.version!==1 || header.attemptId!==expected.attemptId || header.podUid!==expected.podUid ||
+    header.keyVersion!==expected.keyVersion || Buffer.from(header.nonce,"base64").length!==12) {
+    throw new Error("Hobby home envelope does not match its exact operation");
+  }
+  const decipher=createDecipheriv("aes-256-gcm",dataKey,Buffer.from(header.nonce,"base64"));
+  decipher.setAAD(aad);
+  return decipher;
+}
+
 export async function verifyHobbyHomeEnvelope(
   chunks: AsyncIterable<Buffer>, expected: Pick<HobbyHomeEnvelopeHeader,"attemptId"|"podUid"|"keyVersion">,
   dataKey: Buffer, assertSeal: () => Promise<void>,
@@ -96,13 +109,7 @@ export async function verifyHobbyHomeEnvelope(
       if (headerLength<64 || headerLength>8192) throw new Error("Invalid Hobby home envelope header length");
       if (pending.length<4+headerLength) continue;
       const aad=pending.subarray(0,4+headerLength);
-      const header=JSON.parse(aad.subarray(4).toString("utf8")) as HobbyHomeEnvelopeHeader;
-      if (header.version!==1 || header.attemptId!==expected.attemptId || header.podUid!==expected.podUid ||
-        header.keyVersion!==expected.keyVersion || Buffer.from(header.nonce,"base64").length!==12) {
-        throw new Error("Hobby home envelope does not match its exact operation");
-      }
-      decipher=createDecipheriv("aes-256-gcm",dataKey,Buffer.from(header.nonce,"base64"));
-      decipher.setAAD(aad);
+      decipher = openEnvelope(aad, expected, dataKey);
       pending=pending.subarray(4+headerLength);
     }
     if (pending.length>16) {
