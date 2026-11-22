@@ -212,6 +212,13 @@ selection and rollout are a separate operator step.
 
 ## Current Gateway overlay
 
+The November 22 release at `167165fcccaead35772d0d56938ec0f5b0debb6b`
+closes the retained PostgreSQL anchor writer when explicit detach finds the
+agent already absent. It preserves the anchor and roster, and reports pending
+work classes in detach timeout diagnostics. The exact installed archives passed
+the PostgreSQL state pin roll and the retained-roster and anchor-writer checks.
+[Native source and release evidence](https://github.com/ceckert/openclaw/pull/14)
+
 The November 21 release at `1543016b7f4252be4b78f53bcda08338a2e2d2b7` adds
 `agents.detachMany` for final export from a running shared gateway. The
 Gateway validates each PostgreSQL store, applies one roster revision, and
