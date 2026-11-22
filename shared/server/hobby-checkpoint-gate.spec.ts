@@ -172,7 +172,7 @@ describe('checkpoint credential projection', () => {
 });
 
 describe('single-use live standby boot', () => {
-  const standby = { ...source, OCTOGEE_CHECKPOINT_MODE: 'live', OCTOGEE_CHECKPOINT_SNAPSHOT: '' };
+  const standby = { ...source, OCTOGEE_CHECKPOINT_MODE: 'live', OCTOGEE_CHECKPOINT_SNAPSHOT: '', GATEWAY_COMPUTER_DESKTOP: 'none' };
   const liveClaim = {
     version: 2, mode: 'live', namespace: source.K8S_NAMESPACE, slotId: source.GATEWAY_ID, gatewayId: source.GATEWAY_ID,
     podUid: source.POD_UID, uid: claim.uid, slug: claim.slug, assignmentEpoch: 0,
@@ -211,7 +211,7 @@ describe('single-use live standby boot', () => {
     ['snapshot grant', claim],
   ])('refuses a %s before reading credentials', async (_name, receipt) => {
     await expect(admit(receipt)).rejects.toThrow();
-    expect(vi.mocked(readFile).mock.calls.some(([path]) => String(path).includes('/checkpoint-credentials/'))).toBe(false);
+    expect(vi.mocked(readFile).mock.calls.some(([path]) => /\/(token|agent-store-dsn)$/.test(String(path)))).toBe(false);
   });
 
   it('permits both roles and a same-Pod restart to replay the identical owner', async () => {
@@ -226,10 +226,133 @@ describe('single-use live standby boot', () => {
   it('never rebinds either role on the same running Pod to a different account after a restart', async () => {
     const original = JSON.stringify([liveClaim.uid, liveClaim.slug, 0, liveClaim.slotId, liveClaim.podUid, liveClaim.namespace]);
     await expect(admit({ ...liveClaim, uid: 'other-user', slug: 'other-builder' }, original)).rejects.toThrow(/already bound/);
-    expect(vi.mocked(readFile).mock.calls.some(([path]) => String(path).includes('/checkpoint-credentials/'))).toBe(false);
+    expect(vi.mocked(readFile).mock.calls.some(([path]) => /\/(token|agent-store-dsn)$/.test(String(path)))).toBe(false);
     await expect(waitForCheckpointClaim('edge')).rejects.toThrow(/already bound/);
     expect(vi.mocked(link).mock.calls.map(([, destination]) => destination)).toEqual([
       '/var/run/octogee/checkpoint-owner/owner.json', '/var/run/octogee/checkpoint-owner/owner.json',
     ]);
   });
+  const gatewayImageTag = `release-oc2026.11.5@sha256:${"c".repeat(64)}`;
+  const ownerLatch = JSON.stringify([liveClaim.uid, liveClaim.slug, 0, liveClaim.slotId, liveClaim.podUid, liveClaim.namespace]);
+
+  it.each(["gateway", "edge"] as const)("holds %s inert until the same authenticated recovery is installed", async role => {
+    vi.useFakeTimers();
+    const attemptId = "a".repeat(64);
+    const auth = { ...liveClaim, recovery: { attemptId, phase: "seal", gatewayImageTag } };
+    for (const [name, value] of Object.entries({ ...standby, GATEWAY_RUNTIME_KIND: "cluster", GATEWAY_COMPUTER_DESKTOP: "x11" })) vi.stubEnv(name, value);
+    let observed = auth;
+    vi.mocked(readFile).mockImplementation(async path => {
+      if (String(path).endsWith('/claim.json')) return JSON.stringify(liveClaim);
+      if (String(path).endsWith('/recovery.json')) return JSON.stringify({ ...liveClaim, ...observed.recovery });
+      if (String(path).endsWith("/owner.json")) return ownerLatch;
+      if (String(path).endsWith('/token')) return 'test-token';
+      if (String(path).endsWith('/agent-store-dsn')) return 'postgres://test/store';
+      throw missing;
+    });
+    const result = waitForCheckpointClaim(role);
+    try {
+      await vi.advanceTimersByTimeAsync(500);
+      expect(writeFile).toHaveBeenCalledWith(`/tmp/octogee-hobby-checkpoint-${role}-recovery-sealed`,
+        JSON.stringify([attemptId, standby.POD_UID, gatewayImageTag]), { mode: 0o600 });
+      expect(vi.mocked(readFile).mock.calls.some(([file]) => /\/(token|agent-store-dsn)$/.test(String(file)))).toBe(false);
+      observed = { ...auth, recovery: { attemptId, phase: "install", gatewayImageTag } };
+      await vi.advanceTimersByTimeAsync(500);
+      await expect(result).resolves.toEqual(observed);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("rejects a different operation after emitting a seal", async () => {
+    vi.useFakeTimers();
+    const auth = { ...liveClaim, recovery: { attemptId: "a".repeat(64), phase: "seal", gatewayImageTag } };
+    for (const [name, value] of Object.entries({ ...standby, GATEWAY_RUNTIME_KIND: "cluster", GATEWAY_COMPUTER_DESKTOP: "x11" })) vi.stubEnv(name, value);
+    let observed = auth;
+    vi.mocked(readFile).mockImplementation(async path => {
+      const file = String(path);
+      if (file.endsWith("/owner.json")) return ownerLatch;
+      if (file.endsWith("/recovery.json")) return JSON.stringify({ ...liveClaim, ...observed.recovery });
+      return JSON.stringify(liveClaim);
+    });
+    const result = waitForCheckpointClaim("gateway").catch((error: unknown) => error);
+    try {
+      await vi.advanceTimersByTimeAsync(500);
+      observed = { ...auth, recovery: { attemptId: "b".repeat(64), phase: "install", gatewayImageTag } };
+      await vi.advanceTimersByTimeAsync(500);
+      await expect(result).resolves.toMatchObject({ message: "Hobby live recovery claim changed after seal" });
+      expect(vi.mocked(readFile).mock.calls.some(([file]) => /\/(token|agent-store-dsn)$/.test(String(file)))).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([[], { attemptId: "unverified", phase: "install", gatewayImageTag }, { attemptId: "a".repeat(64), phase: "other" }])(
+    "rejects malformed recovery %s before reading credentials", async recovery => {
+      await expect(admit({ ...liveClaim, recovery })).rejects.toThrow("Invalid gateway checkpoint claim projection");
+      expect(vi.mocked(readFile).mock.calls.some(([file]) => /\/(token|agent-store-dsn)$/.test(String(file)))).toBe(false);
+    });
+
+  it("starts edge in headless mode only behind its exact authenticated retained recovery claim", async () => {
+    const recovery = { attemptId: "a".repeat(64), phase: "install", gatewayImageTag };
+    for (const [name, value] of Object.entries({ ...standby, GATEWAY_RUNTIME_KIND: "cluster", GATEWAY_COMPUTER_DESKTOP: "x11" })) vi.stubEnv(name, value);
+    vi.mocked(readFile).mockImplementation(async path => {
+      if (String(path).endsWith('/claim.json')) return JSON.stringify(liveClaim);
+      if (String(path).endsWith('/recovery.json')) return JSON.stringify({ ...liveClaim, ...recovery });
+      if (String(path).endsWith('/owner.json')) return ownerLatch;
+      if (String(path).endsWith('/token')) return 'test-token';
+      if (String(path).endsWith('/agent-store-dsn')) return 'postgres://test/store';
+      throw missing;
+    });
+    await initializeCheckpointEdge(true);
+    expect(process.env.GATEWAY_COMPUTER_DESKTOP).toBe("none");
+    expect(process.env.GATEWAY_IMAGE_TAG).toBe(gatewayImageTag);
+  });
+  it("waits for the separate protected Secret projection without reading role credentials", async () => {
+    vi.useFakeTimers();
+    for (const [name, value] of Object.entries({ ...standby, GATEWAY_RUNTIME_KIND: "cluster", GATEWAY_COMPUTER_DESKTOP: "x11" })) vi.stubEnv(name, value);
+    let projected = false;
+    const recovery = { attemptId: "a".repeat(64), phase: "install", gatewayImageTag };
+    vi.mocked(readFile).mockImplementation(async path => {
+      const file = String(path);
+      if (file.endsWith("/owner.json")) return ownerLatch;
+      if (file.endsWith("/claim.json")) return JSON.stringify(liveClaim);
+      if (file.endsWith("/recovery.json") && projected) return JSON.stringify({ ...liveClaim, ...recovery });
+      if (file.endsWith("/token")) return "test-token";
+      if (file.endsWith("/agent-store-dsn")) return "postgres://test/store";
+      throw missing;
+    });
+    const result = waitForCheckpointClaim("edge");
+    try {
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(vi.mocked(readFile).mock.calls.some(([file]) => /\/(token|agent-store-dsn)$/.test(String(file)))).toBe(false);
+      projected = true;
+      await vi.advanceTimersByTimeAsync(500);
+      await expect(result).resolves.toEqual({ ...liveClaim, recovery });
+    } finally { vi.useRealTimers(); }
+  });
+
+  it.each([{ uid: "foreign" }, { podUid: current.POD_UID }, { assignmentEpoch: 1 }, { gatewayImageTag: "mutable" }])(
+    "rejects a foreign or malformed protected projection %s", async overwrite => {
+      for (const [name, value] of Object.entries({ ...standby, GATEWAY_RUNTIME_KIND: "cluster", GATEWAY_COMPUTER_DESKTOP: "x11" })) vi.stubEnv(name, value);
+      vi.mocked(readFile).mockImplementation(async path => {
+        if (String(path).endsWith("/claim.json")) return JSON.stringify(liveClaim);
+        if (String(path).endsWith("/recovery.json")) {
+          return JSON.stringify({ ...liveClaim, attemptId: "a".repeat(64), phase: "install", gatewayImageTag, ...overwrite });
+        }
+        throw new Error("should not read another file");
+      });
+      await expect(waitForCheckpointClaim("gateway")).rejects.toThrow("projection does not match");
+    });
+
+  it("rejects a projected recovery with a missing preexisting owner latch", async () => {
+    for (const [name, value] of Object.entries({ ...standby, GATEWAY_RUNTIME_KIND: "cluster", GATEWAY_COMPUTER_DESKTOP: "x11" })) vi.stubEnv(name, value);
+    vi.mocked(readFile).mockImplementation(async path => {
+      if (String(path).endsWith("/claim.json")) return JSON.stringify(liveClaim);
+      if (String(path).endsWith("/recovery.json")) return JSON.stringify({ ...liveClaim, attemptId: "a".repeat(64), phase: "install", gatewayImageTag });
+      throw missing;
+    });
+    await expect(waitForCheckpointClaim("edge")).rejects.toMatchObject({ code: "ENOENT" });
+    expect(link).not.toHaveBeenCalled();
+  });
+
 });

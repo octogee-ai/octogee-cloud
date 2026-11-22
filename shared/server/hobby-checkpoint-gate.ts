@@ -7,6 +7,7 @@ import { isUserOwnerUid } from "../types/user-identity.js";
 
 const CLAIM_PATH = "/var/run/octogee/checkpoint-claim/claim.json";
 const LIVE_OWNER_PATH = "/var/run/octogee/checkpoint-owner/owner.json";
+const RECOVERY_PATH = "/var/run/octogee/checkpoint-credentials/recovery.json";
 const RESTORED_ENV_PATH = "/proc/gvisor/spec_environ";
 const POD_UID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const SNAPSHOT_NAME = /^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$/;
@@ -25,10 +26,21 @@ export interface HobbyCheckpointClaim extends HobbyCheckpointOwner {
   snapshotName: string;
 }
 
+export interface HobbyLiveRecoveryClaim {
+  attemptId: string;
+  phase: "seal" | "install";
+  gatewayImageTag: string;
+}
+
+export interface HobbyLiveRecoveryProjection extends HobbyCheckpointOwner, HobbyLiveRecoveryClaim {
+  namespace: string;
+}
+
 export interface HobbyLiveStandbyClaim extends HobbyCheckpointOwner {
   version: 2;
   mode: "live";
   namespace: string;
+  recovery?: HobbyLiveRecoveryClaim;
 }
 
 type HobbyPodClaim = HobbyCheckpointClaim | HobbyLiveStandbyClaim;
@@ -38,10 +50,18 @@ function validClaimOwner(claim: Partial<HobbyCheckpointOwner>): boolean {
     typeof claim.podUid === "string" && POD_UID.test(claim.podUid) && isUserOwnerUid(claim.uid) && isValidUsername(claim.slug);
 }
 
+function validRecoveryClaim(value: unknown): value is HobbyLiveRecoveryClaim {
+  if (!value || typeof value !== "object") return false;
+  const recovery = value as Partial<HobbyLiveRecoveryClaim>;
+  return typeof recovery.attemptId === "string" && /^[0-9a-f]{64}$/.test(recovery.attemptId) &&
+    (recovery.phase === "seal" || recovery.phase === "install") && typeof recovery.gatewayImageTag === "string" &&
+    /^[a-z0-9][a-z0-9._-]*@sha256:[0-9a-f]{64}$/.test(recovery.gatewayImageTag);
+}
+
 function parseClaim(value: unknown): HobbyPodClaim | null {
   if (!value || typeof value !== "object") return null;
   const claim = value as Partial<HobbyCheckpointOwner> & Record<string, unknown>;
-  if (!validClaimOwner(claim)) return null;
+  if (!validClaimOwner(claim) || claim.recovery !== undefined) return null;
   if (claim.version === 1 && claim.mode === undefined &&
     typeof claim.snapshotName === "string" && SNAPSHOT_NAME.test(claim.snapshotName)) return claim as unknown as HobbyCheckpointClaim;
   if (claim.version === 2 && claim.mode === "live" && claim.snapshotName === undefined &&
@@ -80,9 +100,30 @@ export async function readMountedCheckpointClaim(): Promise<HobbyPodClaim | null
   }
 }
 
+async function readMountedRecovery(claim: HobbyLiveStandbyClaim): Promise<HobbyLiveRecoveryClaim | undefined> {
+  let value: unknown;
+  try {
+    value = JSON.parse(await readFile(RECOVERY_PATH, "utf8"));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+  const projection = value as Partial<HobbyLiveRecoveryProjection>;
+  if (!validRecoveryClaim(value) || projection.uid !== claim.uid || projection.slug !== claim.slug ||
+    projection.assignmentEpoch !== claim.assignmentEpoch || projection.namespace !== claim.namespace ||
+    projection.gatewayId !== claim.gatewayId || projection.slotId !== claim.slotId || projection.podUid !== claim.podUid) {
+    throw new Error("Hobby retained recovery projection does not match this exact owner and Pod");
+  }
+  return { attemptId: value.attemptId, phase: value.phase, gatewayImageTag: value.gatewayImageTag };
+}
+
 async function rememberLiveOwner(claim: HobbyLiveStandbyClaim): Promise<void> {
-  const staged = `${LIVE_OWNER_PATH}.${randomUUID()}`;
   const owner = JSON.stringify([claim.uid, claim.slug, claim.assignmentEpoch, claim.slotId, claim.podUid, claim.namespace]);
+  if (claim.recovery) {
+    if (await readFile(LIVE_OWNER_PATH, "utf8") !== owner) throw new Error("Hobby retained recovery owner latch changed");
+    return;
+  }
+  const staged = `${LIVE_OWNER_PATH}.${randomUUID()}`;
   await writeFile(staged, owner, { mode: 0o600, flag: "wx" });
   try {
     await link(staged, LIVE_OWNER_PATH);
@@ -101,6 +142,18 @@ function assertLiveCheckpointClaim(boot: NodeJS.ProcessEnv, claim: HobbyPodClaim
   }
 }
 
+export function checkpointDesktop(claim: HobbyPodClaim, boot: NodeJS.ProcessEnv): string | undefined {
+  if (claim.version === 1) return boot.GATEWAY_COMPUTER_DESKTOP;
+  if (claim.recovery) {
+    if (boot.GATEWAY_RUNTIME_KIND !== "cluster" || boot.GATEWAY_COMPUTER_DESKTOP !== "x11") {
+      throw new Error("Hobby retained recovery requires the original isolated Pod runtime");
+    }
+    return "none";
+  }
+  if (boot.GATEWAY_COMPUTER_DESKTOP !== "none") throw new Error("Hobby live standby must be headless");
+  return "none";
+}
+
 export async function waitForCheckpointClaim(role: "gateway" | "edge"): Promise<HobbyPodClaim> {
   const boot = process.env;
   const prefix = `/tmp/octogee-hobby-checkpoint-${role}`;
@@ -113,14 +166,33 @@ export async function waitForCheckpointClaim(role: "gateway" | "edge"): Promise<
   if (!boot.OCTOGEE_CHECKPOINT_SLOT_ID || boot.OCTOGEE_CHECKPOINT_SLOT_ID !== boot.GATEWAY_ID ||
     !podUid || !POD_UID.test(podUid)) throw new Error("Expected the original unclaimed gateway checkpoint process");
   await writeFile(`${prefix}-prepared`, podUid, { mode: 0o600 });
+  let sealed: HobbyLiveRecoveryClaim | undefined;
   for (;;) {
     const receipt = await readMountedCheckpointClaim();
     if (receipt !== null) {
       if (live) {
         assertLiveCheckpointClaim(boot, receipt);
-        await rememberLiveOwner(receipt);
+        const recovery = await readMountedRecovery(receipt);
+        if (!recovery && boot.GATEWAY_COMPUTER_DESKTOP === "x11" && !sealed) {
+          await setTimeout(500);
+          continue;
+        }
+        if (sealed && (recovery?.attemptId !== sealed.attemptId || recovery.gatewayImageTag !== sealed.gatewayImageTag)) {
+          throw new Error("Hobby live recovery claim changed after seal");
+        }
+        const authorizedClaim = recovery ? { ...receipt, recovery } : receipt;
+        checkpointDesktop(authorizedClaim, boot);
+        await rememberLiveOwner(authorizedClaim);
+        if (recovery?.phase === "seal") {
+          if (!sealed) {
+            sealed = recovery;
+            await writeFile(`${prefix}-recovery-sealed`, JSON.stringify([sealed.attemptId, podUid, sealed.gatewayImageTag]), { mode: 0o600 });
+          }
+          await setTimeout(500);
+          continue;
+        }
         await checkpointGatewayCredentials();
-        return receipt;
+        return authorizedClaim;
       }
       const current = restoreEnvironment(await readFile(RESTORED_ENV_PATH, "utf8"));
       const claim = readCheckpointRestore(boot, current, receipt);
@@ -189,6 +261,10 @@ export async function initializeCheckpointEdge(isSidecar: boolean): Promise<void
   const claim = await waitForCheckpointClaim("edge");
   const credentials = await checkpointGatewayCredentials();
   env.POD_UID = claim.podUid;
+  if (claim.version === 2) {
+    env.GATEWAY_COMPUTER_DESKTOP = checkpointDesktop(claim, env);
+    if (claim.recovery) env.GATEWAY_IMAGE_TAG = claim.recovery.gatewayImageTag;
+  }
   env.OPENCLAW_GATEWAY_TOKEN = credentials.token;
   env.OPENCLAW_AGENT_STORE_DSN = credentials.agentStoreDsn;
   process.stderr.write("[hobby-checkpoint] edge claim and credentials ready\n");
