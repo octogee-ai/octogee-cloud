@@ -15,6 +15,7 @@ export interface HeldSharedDatabaseWriterScope {
   gatewayId: string;
   emptyPeer?: { gatewayId: string; assertPlacementExcluded: Current };
   owners: { uid: string; schemas: string[] }[];
+  gatewayStateSchema: string;
   trustedOperators: OperatorRole[];
 }
 export interface HeldDatabaseWriterBinding {
@@ -274,7 +275,7 @@ export interface HeldSharedDatabaseBarrier {
 }
 
 function retainedSharedScope(input: HeldSharedDatabaseWriterScope): WriterScope {
-  const schemas = input.owners.flatMap(owner => owner.schemas);
+  const schemas = [...input.owners.flatMap(owner => owner.schemas), input.gatewayStateSchema];
   if (!/^shared-[a-z0-9]+$/.test(input.gatewayId) || input.owners.length !== 6 ||
       new Set(input.owners.map(owner => owner.uid)).size !== 6 || new Set(schemas).size !== schemas.length ||
       input.owners.some(owner => !owner.uid || !owner.schemas.length) ||

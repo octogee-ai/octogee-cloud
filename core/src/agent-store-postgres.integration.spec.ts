@@ -106,17 +106,21 @@ describe.skipIf(!dsn)("PostgreSQL agent store", () => {
       finally { await client.end(); }
     };
     const operators = await execute("SELECT rolname AS name, oid::text AS oid FROM pg_roles WHERE rolcanlogin AND (rolsuper OR rolcreaterole)");
-    const scope = { gatewayId, owners, trustedOperators: operators.rows };
+    const gatewayStateSchema = `root_${suffix}`;
+    const allSchemas = [...owners.flatMap(owner => owner.schemas), gatewayStateSchema];
+    const scope = { gatewayId, owners, gatewayStateSchema, trustedOperators: operators.rows };
     const barrier = createHeldSharedDatabaseBarrier(dsn!);
     await execute(`DO $$ BEGIN CREATE ROLE ${shared} NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
       CREATE ROLE ${gateway} LOGIN;
       GRANT ${shared} TO ${gateway} WITH INHERIT TRUE, SET TRUE;
-      ${owners.map(owner => `CREATE SCHEMA ${pg.escapeIdentifier(owner.schemas[0]!)} AUTHORIZATION ${shared};
-        CREATE TABLE ${pg.escapeIdentifier(owner.schemas[0]!)}.fixture (value int);
-        ALTER TABLE ${pg.escapeIdentifier(owner.schemas[0]!)}.fixture OWNER TO ${shared}`).join(";")}`);
+      ${allSchemas.map(schema => `CREATE SCHEMA ${pg.escapeIdentifier(schema)} AUTHORIZATION ${shared};
+        CREATE TABLE ${pg.escapeIdentifier(schema)}.fixture (value int);
+        ALTER TABLE ${pg.escapeIdentifier(schema)}.fixture OWNER TO ${shared}`).join(";")}`);
     const current = async () => {};
     try {
       const binding = await barrier.inspect(scope, current);
+      expect(binding.writers[0]?.schemas.map(schema => schema.name)).toEqual(allSchemas.sort());
+      await expect(barrier.inspect({ ...scope, gatewayStateSchema: owners[0]!.schemas[0]! }, current)).rejects.toThrow(/exact six/);
       await execute(`CREATE ROLE ${alternate} LOGIN; GRANT ${shared} TO ${alternate} WITH INHERIT TRUE, SET TRUE`);
       await expect(barrier.hold(scope, binding, current)).rejects.toThrow(/Unexpected effective owner store writer/);
       await execute(`DROP ROLE ${alternate}`);
@@ -155,7 +159,7 @@ describe.skipIf(!dsn)("PostgreSQL agent store", () => {
       await barrier.restore(joint, jointBinding, current);
       expect((await barrier.inspect(joint, current)).writers).toEqual(jointBinding.writers);
     } finally {
-      await execute(`${owners.map(owner => `DROP SCHEMA IF EXISTS ${pg.escapeIdentifier(owner.schemas[0]!)} CASCADE`).join(";")};
+      await execute(`${allSchemas.map(schema => `DROP SCHEMA IF EXISTS ${pg.escapeIdentifier(schema)} CASCADE`).join(";")};
         DROP ROLE IF EXISTS ${gateway}; DROP ROLE IF EXISTS ${peer}; DROP ROLE IF EXISTS ${alternate}`);
     }
   });

@@ -24,6 +24,7 @@ export interface HeldSharedDatabaseWriterScope {
         uid: string;
         schemas: string[];
     }[];
+    gatewayStateSchema: string;
     trustedOperators: OperatorRole[];
 }
 export interface HeldDatabaseWriterBinding {

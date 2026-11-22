@@ -142,7 +142,7 @@ async function apply(client, source, action, binding, expected) {
     await assertSessions(client, binding, action === "drain-idle");
 }
 function retainedSharedScope(input) {
-    const schemas = input.owners.flatMap(owner => owner.schemas);
+    const schemas = [...input.owners.flatMap(owner => owner.schemas), input.gatewayStateSchema];
     if (!/^shared-[a-z0-9]+$/.test(input.gatewayId) || input.owners.length !== 6 ||
         new Set(input.owners.map(owner => owner.uid)).size !== 6 || new Set(schemas).size !== schemas.length ||
         input.owners.some(owner => !owner.uid || !owner.schemas.length) ||
