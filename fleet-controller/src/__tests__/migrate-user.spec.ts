@@ -101,6 +101,7 @@ function happyClient(): MigrationClient & { calls: string[] } {
       calls.push(`restore:${gatewayId}`);
       return { migrationId: "mig-op-1", slug, restored: true, steps: [] };
     }) as MigrationClient["restoreTarget"],
+    canExportSourceActivation: vi.fn(async () => true),
     resume: vi.fn(async () => undefined),
     quiesce: vi.fn(async ({ gatewayId, slug }) => {
       calls.push(`quiesce:${gatewayId}`);
@@ -971,6 +972,40 @@ describe("native VM return", () => {
     expect(vi.mocked(h.client.quiesce).mock.calls.filter(([request]) => request.schedulerHandoff)).toHaveLength(2);
   });
 
+  it("leaves a Native source serving when its current guest cannot export activation", async () => {
+    const h = mkDeps();
+    const native = nativeReturn(h);
+    vi.mocked(h.client.canExportSourceActivation).mockResolvedValue(false);
+
+    const result = await createMigrateUserHandler(h.deps)(mkOp({}), h.ctx);
+
+    expect(result).toMatchObject({ success: false, rolledBack: false, error: "native return source activation export unavailable: status 503" });
+    expect(classifyOperationFailure(result.error)).toBe("transient");
+    expect(h.client.canExportSourceActivation).toHaveBeenCalledExactlyOnceWith({ migrationId: "mig-op-1", gatewayId: "gw-blue", slug: "alice" });
+    expect(h.ctx.persistSchedulerHandoff).not.toHaveBeenCalled();
+    expect(h.client.transferState).not.toHaveBeenCalled();
+    expect(h.client.quiesce).not.toHaveBeenCalled();
+    expect(h.client.resume).not.toHaveBeenCalled();
+    expect(h.deps.setAssignmentState).not.toHaveBeenCalled();
+    expect(native.requestCheckpoint).not.toHaveBeenCalled();
+  });
+
+  it("rolls back before forward recovery if source activation becomes unavailable during Native drain", async () => {
+    const h = mkDeps();
+    const native = nativeReturn(h);
+    vi.mocked(h.client.canExportSourceActivation).mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+
+    const result = await createMigrateUserHandler(h.deps)(mkOp({}), h.ctx);
+
+    expect(result).toMatchObject({ success: false, rolledBack: true, error: "native return source activation export unavailable: status 503" });
+    expect(h.client.transferState).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ mode: "keys" }));
+    expect(h.client.quiesce).toHaveBeenCalledTimes(2);
+    expect(h.client.resume).toHaveBeenCalledExactlyOnceWith({ migrationId: "mig-op-1", gatewayId: "gw-blue", slug: "alice" });
+    expect(h.deps.setAssignmentState).toHaveBeenLastCalledWith(expect.objectContaining({ gatewayId: "gw-blue", state: "serving" }));
+    expect(vi.mocked(h.ctx.persistSchedulerHandoff!).mock.calls.every(([state]) => !state.forwardRecovery)).toBe(true);
+    expect(native.requestCheckpoint).not.toHaveBeenCalled();
+  });
+
   it("continues a validated Native forward recovery on its live source release", async () => {
     const h = mkDeps();
     const native = nativeReturn(h);
@@ -985,6 +1020,7 @@ describe("native VM return", () => {
     expect(native.park).toHaveBeenCalledOnce();
     expect(h.deps.useDurableMigration).toHaveBeenCalledWith("gw-blue", "gw-green", 1);
     expect(h.ctx.assertActiveClaim).toHaveBeenCalledWith(true);
+    expect(h.client.canExportSourceActivation).not.toHaveBeenCalled();
   });
 
   it("retains the live Native source release before the forward checkpoint", async () => {
@@ -1012,6 +1048,7 @@ describe("native VM return", () => {
     });
     expect(await createMigrateUserHandler(h.deps)(mkOp({}), h.ctx)).toMatchObject({ success: false, error: "source gateway not migration-ready" });
     expect(h.client.transferState).not.toHaveBeenCalled();
+    expect(h.client.canExportSourceActivation).not.toHaveBeenCalled();
   });
 
   it("does not relax source readiness when the forward recovery scope changed", async () => {
@@ -2002,6 +2039,7 @@ describe("native VM return", () => {
       vi.mocked(h.deps.commitCutover).mockImplementation(async () => { order.push("cutover"); });
 
       expect(await createMigrateUserHandler(h.deps)(mkOp({ schedulerHandoff: previous, attempts: 1, startedAt: 6_000 }), h.ctx)).toMatchObject({ success: true });
+      expect(h.client.canExportSourceActivation).not.toHaveBeenCalled();
       expect(order).toEqual([
         `gw-green:abort:${handoffId}`, `gw-blue:resume:${handoffId}`,
         "quiesce:gw-blue:undefined:undefined",
