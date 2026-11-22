@@ -1005,13 +1005,19 @@ function gatewayNeedsLiveVerification(gateway: DurableGateway, runtime: Convergi
      expiredDrainingSharedHeartbeat(gateway, runtime) !== undefined);
 }
 
+function requiresSignedVmReadiness(
+  gateway: DurableGateway, runtime: VmRuntimeIdentity | null | undefined, artifact: ReleasePayload,
+): boolean {
+  return runtime?.runtime === "gce-vm" && gateway.liveRelease !== null && hasCompleteGuestRelease(artifact);
+}
+
 function expectedReadyImageTag(
   gateway: DurableGateway, runtime: VmRuntimeIdentity | null | undefined, artifact: ReleasePayload,
 ): string | null {
   const image = gatewayImageFor(gateway, artifact);
-  if (runtime?.runtime !== "gce-vm" || gateway.liveRelease === null || !hasCompleteGuestRelease(artifact)) return image.imageTag;
-  const sample = runtime.vmImages;
-  if (!runtime.vm?.instanceId || !isGatewayVmImageObservation(sample) ||
+  if (!requiresSignedVmReadiness(gateway, runtime, artifact)) return image.imageTag;
+  const sample = runtime?.vmImages;
+  if (!runtime?.vm?.instanceId || !isGatewayVmImageObservation(sample) ||
     !guestReleaseInstalled(artifact, runtime.vm.instanceId, sample, runtime.vm.startedAt ?? 0)) return null;
   const reference = sample.containers.find(container => container.name === "gateway")!.imageReference;
   const prefix = `${image.imageRepository}:`;
@@ -1093,17 +1099,15 @@ export async function refineGatewayConvergenceAction(input: {
   }
   const vmReady = readyVmFromHandoff(gateway, runtime, handoff, readyImageTag);
   if (vmReady) return { kind: "mark-live", vmReady };
+  const legacyReadinessAllowed = !requiresSignedVmReadiness(gateway, runtime, artifact);
   const desiredBuildReported = reportsDesiredBuildOrVerifiedInitialPrelaunch({
     runtime,
     desiredImageTag: readyImageTag,
     gateway,
     handoffReady: handoff.ready,
   });
-  if (
-    handoff.ready &&
-    desiredBuildReported &&
-    runtime?.lifecycle !== "serving"
-  ) {
+  const deploymentReady = [legacyReadinessAllowed, handoff.ready, desiredBuildReported].every(Boolean);
+  if (deploymentReady && runtime?.lifecycle !== "serving") {
     return { kind: "mark-live" };
   }
   return planGatewayConvergence({
@@ -1112,7 +1116,7 @@ export async function refineGatewayConvergenceAction(input: {
     helm: helmObserved,
     desiredChartFingerprint,
     desiredDeploymentIntentFingerprint,
-    deploymentReady: handoff.ready && desiredBuildReported,
+    deploymentReady,
   });
 }
 
@@ -1423,6 +1427,20 @@ async function wakeIsolatedGatewayMoves(transaction: PlatformStateTransaction, r
   }
 }
 
+function canPublishVmReadiness(input: {
+  gateway: DurableGateway;
+  root: GatewayRoot;
+  runtime: FleetRegistryRecord | null;
+  artifact: ReleasePayload;
+  readyImageTag: string;
+  prelaunchRefresh: boolean;
+  vmReady?: ReadyVmObservation;
+}): boolean {
+  const { gateway, root, runtime, artifact, readyImageTag, prelaunchRefresh, vmReady } = input;
+  if (vmReady) return currentReadyVm(gateway, root, runtime, vmReady, readyImageTag);
+  return prelaunchRefresh || !requiresSignedVmReadiness(root, runtime, artifact);
+}
+
 export async function markGatewayLive(
   passDeps: Pick<GatewayConvergencePassDeps, "store" | "log">,
   gateway: DurableGateway,
@@ -1440,7 +1458,7 @@ export async function markGatewayLive(
     const runtimePatch = markLiveRuntimePatch(gateway);
     const runtime = prelaunchRefresh || runtimePatch ? await transaction.fleetRegistry.get(gateway.gatewayId) : null;
     const readyImageTag = expectedReadyImageTag(root, runtime, artifact);
-    if (readyImageTag === null || (vmReady && !currentReadyVm(gateway, root, runtime, vmReady, readyImageTag))) {
+    if (!readyImageTag || !canPublishVmReadiness({ gateway, root, runtime, artifact, readyImageTag, prelaunchRefresh, vmReady })) {
       log(`[converge-gateway] ${gateway.gatewayId} VM readiness identity changed; deferring release`);
       return false;
     }

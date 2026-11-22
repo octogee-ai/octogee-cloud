@@ -1,3 +1,4 @@
+import { enqueueParkedGuestRelease } from "../parked-gateway-prewarm.js";
 import { describe, expect, it, vi } from "vitest";
 import { MalformedRecordError, type UserActivationLease } from "../platform-state/index.js";
 import { createDocumentFixtureStore, FIXTURE_SIZING_PROFILES } from "@octogee/core-testing/journal-store";
@@ -1161,6 +1162,36 @@ describe("parked isolated gateway reuse", () => {
     h.requestDemand();
     await expect(h.allocate(null)).resolves.toEqual({ gatewayId: h.parkedGatewayId, outcome: "resumed" });
     expect((await h.state.gateways.roots.get(h.parkedGatewayId))?.desiredStatus).toBe("running");
+  });
+
+  it.each(["pending", "succeeded"] as const)("does not boot an obsolete guest release after a newer request is %s", async status => {
+    const h = await prewarmHarness();
+    h.setParked();
+    await h.state.journal.operations.patch(h.operation.id, { status: "succeeded", completedAt: 2_001 });
+    const payload = { ...h.docs.get("gateways/shared-blue/releases/3")!.payload as ReleasePayload, openclawSourceSha: "e".repeat(40) };
+    h.docs.get(`glmGateways/${h.parkedGatewayId}`)!.vm = { instanceId: "123", status: "SUSPENDED" };
+    await h.state.users.records.patch(request.uid, { home: { homeDisk: { id: "456" } } });
+    const inputs = { uid: request.uid, gatewayId: h.parkedGatewayId, sourceSha: "a".repeat(40), createdBy: "ship-test" };
+    const first = await enqueueParkedGuestRelease(h.state, { ...inputs, payload });
+    const next = await enqueueParkedGuestRelease(h.state, { ...inputs, sourceSha: "b".repeat(40),
+      payload: { ...payload, openclawSourceSha: "f".repeat(40) } });
+    if (first.status !== "queued" || next.status !== "queued") throw new Error("Expected two queued releases");
+    if (status === "succeeded") await h.state.journal.operations.patch(next.operationId, { status, completedAt: 2_100 });
+    const now = 2_200;
+    await h.state.journal.operations.patch(first.operationId, { status: "running", startedAt: now });
+    const older = (await h.state.journal.operations.get(first.operationId))!;
+    await expect(startParkedGatewayPrewarm(h.state, older, now, {
+      instanceId: "123", bootImageId: "124", needsRepair: false, guestDisks: { bootImageId: "124", bootDiskId: "125", homeDiskId: "456" },
+    })).resolves.toEqual({ state: "ineligible" });
+    expect(await h.state.gateways.roots.get(h.parkedGatewayId)).toMatchObject({ desiredStatus: "paused", latestRelease: 1 });
+    if (status === "pending") {
+      await h.state.journal.operations.patch(first.operationId, { status: "succeeded", completedAt: now });
+      await h.state.journal.operations.patch(next.operationId, { status: "running", startedAt: now });
+      const latest = (await h.state.journal.operations.get(next.operationId))!;
+      await expect(startParkedGatewayPrewarm(h.state, latest, now, {
+        instanceId: "123", bootImageId: "124", needsRepair: false, guestDisks: { bootImageId: "124", bootDiskId: "125", homeDiskId: "456" },
+      })).resolves.toMatchObject({ state: "booting" });
+    }
   });
 
   it("queues an in-guest update once on the original parked root for same-tier demand", async () => {

@@ -67,6 +67,7 @@ type OriginalVm = {
     needsRepair: boolean;
     guestDisks?: RetainedGuestDisks;
 };
+export declare function latestGuestReleaseRequest(operations: readonly OperationRecord[], request: Pick<ParkedPrewarmCommon, "gatewayId" | "generation">): OperationRecord | undefined;
 export declare function startParkedGatewayPrewarm(store: PlatformStateStore, operation: Operation, now: number, sourceVm?: OriginalVm): Promise<PrewarmStart>;
 export declare function isFreshParkedPrewarmRecovery(value: unknown, instanceId: string, notBefore: unknown): boolean;
 type PrewarmFinishMode = "ready" | "rollback" | "repaired";

@@ -180,6 +180,27 @@ function conflictingPrewarmOwnerOperation(conflicts: readonly OperationRecord[],
     (entry.kind !== PARKED_PREWARM_KIND || isPrewarmClaimActive(entry.output?.prewarmState)));
 }
 
+export function latestGuestReleaseRequest(
+  operations: readonly OperationRecord[],
+  request: Pick<ParkedPrewarmCommon, "gatewayId" | "generation">,
+): OperationRecord | undefined {
+  return operations.reduce<OperationRecord | undefined>((latest, operation) => {
+    if (operation.input.mode !== GUEST_RELEASE_MODE || operation.gatewayId !== request.gatewayId ||
+      operation.input.generation !== request.generation) return latest;
+    if (!latest || operation.createdAt > latest.createdAt) return operation;
+    return latest;
+  }, undefined);
+}
+
+async function supersededGuestRelease(
+  tx: PlatformStateTransaction, current: OperationRecord, request: ParkedPrewarmInput,
+): Promise<boolean> {
+  if (request.mode !== GUEST_RELEASE_MODE) return false;
+  const history = await tx.journal.operations.listForUid(request.uid, { kind: PARKED_PREWARM_KIND });
+  const latest = latestGuestReleaseRequest(history, request);
+  return latest !== undefined && latest.createdAt > current.createdAt;
+}
+
 function existingOrDemandOperation(current: OperationRecord, owner: PlatformUserRecord | null): PrewarmStart | null {
   const phase = current.output?.prewarmState;
   if (phase === "parked" || isPrewarmClaimActive(phase)) return { state: phase, claim: prewarmClaim(current) };
@@ -262,7 +283,8 @@ export async function startParkedGatewayPrewarm(
     if (result) return result;
     const sharedId = eligibleSharedSource(owner, pool?.sharedGatewayIds ?? []);
     if (!sharedId || !parkedRootEligible(root, uid, generation)) return { state: "ineligible" };
-    if (![empty, !conflictingPrewarmOwnerOperation(conflicts, operation.id)].every(Boolean)) return { state: "ineligible" };
+    if (![empty, !conflictingPrewarmOwnerOperation(conflicts, operation.id),
+      !(await supersededGuestRelease(tx, current, request))].every(Boolean)) return { state: "ineligible" };
     const instanceId = parkedInstanceId(runtime, sourceVm);
     if (!instanceId) return { state: "ineligible" };
     const [assignment, release] = await Promise.all([

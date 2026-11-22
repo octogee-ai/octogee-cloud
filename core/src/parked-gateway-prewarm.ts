@@ -1,5 +1,5 @@
 import { releasePayloadHash, type ReleasePayload } from "@octogee/shared/types/gateway-releases";
-import { activeParkedPrewarmGatewayIds, PARKED_PREWARM_KIND, parkedPrewarmInput, type DemandGuestSource } from "./isolated-gateway-lifecycle/prewarm.js";
+import { activeParkedPrewarmGatewayIds, PARKED_PREWARM_KIND, parkedPrewarmInput, latestGuestReleaseRequest, type DemandGuestSource } from "./isolated-gateway-lifecycle/prewarm.js";
 import { GUEST_RELEASE_MODE, guestReleaseImagesMatch, guestReleaseInstalled } from "./isolated-gateway-lifecycle/guest-release.js";
 import type { FleetRegistryRecord } from "./platform-state/fleet-registry.js";
 import type { GatewayRoot } from "./platform-state/gateways.js";
@@ -107,21 +107,20 @@ function enqueueGuestRelease(store: PlatformStateStore, request: ParkedGuestRele
     }
     const input = { uid, gatewayId, generation: root.allocation.generation, ...origin, mode: GUEST_RELEASE_MODE, payload } as const;
     parkedPrewarmInput({ input });
-    const history = await tx.journal.operations.listForUid(uid, { kind: PARKED_PREWARM_KIND, statuses: ["pending", "running"] });
+    const history = await tx.journal.operations.listForUid(uid, { kind: PARKED_PREWARM_KIND });
     const relevant = history.filter(op => op.gatewayId === gatewayId && op.input.generation === input.generation);
-    const existing = relevant.find(op => {
-      if (op.input.mode !== input.mode) return false;
-      const candidate = parkedPrewarmInput(op);
-      return guestReleaseImagesMatch(candidate.payload, payload);
-    });
-    if (existing) return { status: "queued", operationId: existing.id };
+    const latest = latestGuestReleaseRequest(relevant, input);
+    const active = latest?.status === "pending" || latest?.status === "running";
+    if (active && guestReleaseImagesMatch(parkedPrewarmInput(latest).payload, payload)) {
+      return { status: "queued", operationId: latest.id };
+    }
     const prewarming = activeParkedPrewarmGatewayIds(relevant).has(gatewayId);
     if (root.desiredStatus !== "paused" && (root.desiredStatus !== "running" || !prewarming)) {
       return { status: "ineligible", reason: "gateway is no longer parked" };
     }
-    if (await parkedGuestAlreadyInstalled(tx, root, runtime, payload)) return { status: "already-current" };
+    if (!active && await parkedGuestAlreadyInstalled(tx, root, runtime, payload)) return { status: "already-current" };
     const operationId = await tx.journal.operations.enqueue({
-      kind: PARKED_PREWARM_KIND, status: "pending", createdBy, createdAt: Date.now(), startedAt: null, completedAt: null,
+      kind: PARKED_PREWARM_KIND, status: "pending", createdBy, createdAt: Math.max(Date.now(), (latest?.createdAt ?? 0) + 1), startedAt: null, completedAt: null,
       input, inputUid: uid, gatewayId, steps: [],
     });
     return { status: "queued", operationId };

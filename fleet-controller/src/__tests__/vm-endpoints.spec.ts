@@ -200,7 +200,7 @@ describe("first-boot VM gateway handoff", () => {
     })).resolves.toMatchObject({ kind: "mark-live", vmReady: { state: signedFleetState } });
   });
 
-  it.each([true, false])("settles an edge-only release with its older signed gateway tag only when edge digest matches: %s", async matchingEdge => {
+  it.each([[true, true], [false, true], [true, false]])("settles an edge-only release only with matching edge digest (%s) and signed fleet state (%s)", async (matchingEdge, signed) => {
     const previous = "abcdef1";
     const next = "abcdef2";
     const gatewayDigest = `sha256:${"b".repeat(64)}`;
@@ -214,7 +214,7 @@ describe("first-boot VM gateway handoff", () => {
     };
     const signedFleetState = { status: "ready", version: `${previous}@${gatewayDigest}`, users: [], startedAt: 100 };
     const health = { status: "ready" as const, version: signedFleetState.version, fleetSignatureCapability: "gateway-scoped" as const,
-      handoffReleased: true, prelaunchState: "serving" as const, mountedCustomers: [], signedFleetState };
+      handoffReleased: true, prelaunchState: "serving" as const, mountedCustomers: [], signedFleetState: signed ? signedFleetState : undefined };
     const { deps } = handoffDeps({ ready: true, health });
     const updating = { ...gateway, latestRelease: 2, desiredRelease: 2, liveRelease: 1 };
     const seenEdge = matchingEdge ? edgeDigest : staleEdge;
@@ -233,7 +233,7 @@ describe("first-boot VM gateway handoff", () => {
       helmObserved: { imageRepository: gatewayRepository, imageTag: `${next}@${gatewayDigest}`, replicas: 1 },
       action: { kind: "steady" },
     });
-    if (matchingEdge) await expect(converge).resolves.toMatchObject({ kind: "mark-live", vmReady: { state: signedFleetState } });
+    if (matchingEdge && signed) await expect(converge).resolves.toMatchObject({ kind: "mark-live", vmReady: { state: signedFleetState } });
     else await expect(converge).resolves.toEqual({ kind: "steady" });
   });
 
