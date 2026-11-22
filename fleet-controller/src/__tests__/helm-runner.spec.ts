@@ -2040,7 +2040,7 @@ describe("createHelmSubprocessRunner — recoverRelease", () => {
    expect(args.some(arg => arg.startsWith("userHome"))).toBe(false);
  });
 
-it("uses the exact claim-selected snapshot and graphical isolated chart on TEST only", () => {
+it("uses the exact claim-selected snapshot and compatible graphical isolated runtime", () => {
   const opts = {
     release: "octogee-gw-hobby-slot-aaaeff123456",
     chartPath: "/charts/octogee-gateway",
@@ -2057,6 +2057,7 @@ it("uses the exact claim-selected snapshot and graphical isolated chart on TEST 
   expect(args).toEqual(expect.arrayContaining(["runtimeKind=cluster", "runtimeClassName=gvisor", "computerDesktop=x11", "computeClass=Balanced", "rollStrategy=recreate"]));
   expect(args.find(arg => arg.startsWith("nodeSelector="))).toContain("us-central1-c");
   expect(args).not.toContain("--wait");
-  expect(() => buildUpgradeArgs({ ...opts, namespace: "octogee" })).toThrow(/TEST/);
+  expect(args.find(arg => arg.startsWith("nodeSelector="))).toContain("supported-cpu-platform.cloud.google.com/Intel_Ice_Lake");
+  expect(() => buildUpgradeArgs({ ...opts, gatewayClass: "shared" })).toThrow(/isolated/);
   expect(() => buildUpgradeArgs({ ...opts, gatewayId: "hobby-slot-bbbee012ab78" })).toThrow(/slot/);
 });

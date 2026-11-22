@@ -2956,13 +2956,15 @@ async function createControllerRuntime(
     }).then(() => undefined);
 
   const chartFingerprint = computeChartFingerprint(GATEWAY_CHART);
-  const prepareGatewayConfig = createGatewayRuntimeConfigPreparer(
-    createCachedApiServerEgressResolver((args) => spawnKubectl(args), log),
+  const resolveApiServerEgressCidrs = createCachedApiServerEgressResolver(
+    (args) => spawnKubectl(args),
+    log,
   );
+  const prepareGatewayConfig =
+    createGatewayRuntimeConfigPreparer(resolveApiServerEgressCidrs);
 
-  const handlerSyncFleetIngress = async () => {
-    await syncEdgeIngressForGateways(await readDurableServingFleetGateways(store));
-  };
+  const handlerSyncFleetIngress = async () =>
+    syncEdgeIngressForGateways(await readDurableServingFleetGateways(store));
 
   const fleetControllerPrivateKey = requireEnv(
     "FLEET_CONTROLLER_PRIVATE_KEY",

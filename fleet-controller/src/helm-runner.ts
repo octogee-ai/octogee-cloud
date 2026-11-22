@@ -592,8 +592,8 @@ function appendUpgradeApplyArgs(args: string[], opts: BuildUpgradeArgsOpts): voi
 function appendHobbyCheckpointArgs(args: string[], opts: BuildUpgradeArgsOpts): void {
   const checkpoint = opts.hobbyCheckpoint;
   if (!checkpoint) return;
-  if (opts.namespace !== "octogee-test" || opts.gatewayClass !== "isolated") {
-    throw new Error("Hobby checkpoints require an isolated TEST gateway");
+  if (opts.gatewayClass !== "isolated") {
+    throw new Error("Hobby checkpoints require an isolated gateway");
   }
   if (opts.gatewayId !== checkpoint.slotId || !/^hobby-slot-[a-f0-9]{12}$/.test(checkpoint.slotId) ||
       !/^us-central1-[a-z]$/.test(checkpoint.zone) || checkpoint.machineFamily !== "n2" ||
@@ -605,6 +605,7 @@ function appendHobbyCheckpointArgs(args: string[], opts: BuildUpgradeArgsOpts): 
   pushSetJson(args, "nodeSelector", {
     "topology.kubernetes.io/zone": checkpoint.zone,
     "cloud.google.com/machine-family": checkpoint.machineFamily,
+    "supported-cpu-platform.cloud.google.com/Intel_Ice_Lake": "true",
   });
   args.push(
     HELM_SET_STRING, "runtimeKind=cluster",

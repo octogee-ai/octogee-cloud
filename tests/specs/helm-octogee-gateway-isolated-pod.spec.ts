@@ -55,7 +55,9 @@ interface Deployment {
 
 function helm(values: Record<string, string>): { status: number | null; stdout: string; stderr: string } {
   const args = ["template", "octogee-gw-isolated", CHART_PATH, "--namespace=octogee-test"];
-  for (const [key, value] of Object.entries({ ...REQUIRED_VALUES, ...values })) args.push("--set", `${key}=${value}`);
+  for (const [key, value] of Object.entries({ ...REQUIRED_VALUES, ...values })) {
+    args.push(key.startsWith("nodeSelector.") ? "--set-string" : "--set", `${key}=${value}`);
+  }
   return spawnSync("helm", args, { encoding: "utf-8" });
 }
 
@@ -88,7 +90,7 @@ describe("charts/octogee-gateway/ — isolated gateway as a Kubernetes pod", () 
   it("keeps a checkpoint preparer private and restores the same Pod mounts without embedded auth or a PVC", () => {
     const values = {
       computerDesktop: "x11", "hobbyCheckpoint.slotId": ISOLATED_POD.gatewayId!, computeClass: "Balanced",
-      "nodeSelector.cloud\\.google\\.com/min-cpu-platform": "Intel_Ice_Lake",
+      "nodeSelector.supported-cpu-platform\\.cloud\\.google\\.com/Intel_Ice_Lake": "true",
     };
     const prepared = renderDeployment(values);
     const restored = renderDeployment({ ...values, "hobbyCheckpoint.restoreSnapshot": "single-use-snapshot" });
@@ -97,7 +99,7 @@ describe("charts/octogee-gateway/ — isolated gateway as a Kubernetes pod", () 
     expect(prepared.deployment.spec.template.spec.volumes).toEqual(restored.deployment.spec.template.spec.volumes);
     expect(restored.deployment.spec.template.spec.nodeSelector).toEqual({
       "cloud.google.com/compute-class": "Balanced", "kubernetes.io/arch": "amd64",
-      "cloud.google.com/min-cpu-platform": "Intel_Ice_Lake",
+      "supported-cpu-platform.cloud.google.com/Intel_Ice_Lake": "true",
     });
     expect(prepared.deployment.spec.template.spec.volumes).toContainEqual({ name: "data", emptyDir: { sizeLimit: "4Gi" } });
     for (const deployment of [prepared.deployment, restored.deployment]) {
