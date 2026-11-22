@@ -105,6 +105,9 @@ describe("charts/octogee-gateway/ — isolated gateway as a Kubernetes pod", () 
     for (const deployment of [prepared.deployment, restored.deployment]) {
       for (const role of ["gateway", "gateway-edge"]) {
         const runtime = container(deployment, role);
+        expect(runtime.env?.filter(variable => variable.name === "GATEWAY_RUNTIME_KIND")).toEqual([
+          { name: "GATEWAY_RUNTIME_KIND", value: "cluster" },
+        ]);
         expect(envOf(runtime)).not.toHaveProperty("OPENCLAW_GATEWAY_TOKEN");
         expect(envOf(runtime)).not.toHaveProperty("OPENCLAW_AGENT_STORE_DSN");
         expect(runtime.volumeMounts).toContainEqual({

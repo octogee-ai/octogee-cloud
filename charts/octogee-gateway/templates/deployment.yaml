@@ -353,7 +353,7 @@ spec:
             {{- end }}
             - name: GATEWAY_PROFILE
               value: {{ $imageProfile | quote }}
-            {{- if $isolatedPod }}
+            {{- if and $isolatedPod (not $x11Desktop) }}
             - name: GATEWAY_RUNTIME_KIND
               value: cluster
             {{- end }}
@@ -660,7 +660,7 @@ spec:
               value: {{ $revision | quote }}
             - name: GATEWAY_PROFILE
               value: {{ $imageProfile | quote }}
-            {{- if $isolatedPod }}
+            {{- if and $isolatedPod (not $x11Desktop) }}
             - name: GATEWAY_RUNTIME_KIND
               value: cluster
             {{- end }}
