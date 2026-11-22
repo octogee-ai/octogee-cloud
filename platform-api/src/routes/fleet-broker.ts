@@ -9,6 +9,11 @@ import { noProvisioningProjection, type ProvisioningProjection } from "@octogee/
 import { mirroredState, mmUpdateFromChatOutputs, type MirroredState } from "@octogee/core/provisioning-mirror";
 import { gatewayKeyOwnerId } from "@octogee/core/gitea-naming";
 import { holdsServiceGitKeys, respondProvisioningNotReady, respondProvisioningPending, routeBudget, SERVICE_GIT_KEYS_NOT_FOR_GATEWAY, type LegacyProvisioning, type ProvisioningWait, type RouteBudget } from "../lib/legacy-provisioning.js";
+import {
+  assignedIsolatedAgentAnchorScopeIsCurrent,
+  readAssignedIsolatedAgentAnchorScope,
+  type AssignedIsolatedAgentAnchorScope,
+} from "../lib/assigned-isolated-agent-anchor-scope.js";
 import { sharedAgentAnchorMigrationScope, sharedAssignedSourceSurgeAnchorScope } from "../lib/shared-agent-anchor-migration.js";
 import { installWorkspaceBlobBrokerRoute, type WorkspaceBlobStore } from "./fleet-broker-workspace-blob.js";
 import { readUserRestoreAuthoritySnapshot } from "@octogee/core/fleet-state";
@@ -2310,7 +2315,21 @@ interface SharedAgentAnchorScope {
   assignmentState: "serving" | "quiescing";
 }
 
-type AgentAnchorScope = IsolatedRuntimeStateScope | SharedAgentAnchorScope;
+type ConfiguredAgentAnchorScope = IsolatedRuntimeStateScope | AssignedIsolatedAgentAnchorScope;
+type AgentAnchorScope = ConfiguredAgentAnchorScope | SharedAgentAnchorScope;
+
+async function requireNonMigratingIsolatedAgentAnchorScope(
+  store: PlatformStateStore, req: Request, res: Response,
+  { bound, gateway, slug }: { bound: GatewayBinding; gateway: Stored<GatewayRoot> | null; slug: string }, now: number,
+): Promise<ConfiguredAgentAnchorScope | null> {
+  if (gateway?.allocation != null) return requireConfiguredIsolatedRuntimeState(store, req, res);
+  const scope = await readAssignedIsolatedAgentAnchorScope(store, {
+    gatewayId: bound.gatewayId, podName: bound.podName, podUid: bound.podUid, boundOwnerUid: bound.ownerUid, slug,
+    requestedUid: req.body.uid, requestedEpoch: req.body.assignmentEpoch,
+  }, now);
+  if (!scope) res.status(403).json(FORBIDDEN);
+  return scope;
+}
 
 function agentAnchorAssignment(
   scope: Pick<SharedAgentAnchorScope, "gatewayId" | "uid" | "slug">,
@@ -2336,14 +2355,14 @@ function sharedAgentAnchorScopeCurrent(
   return { ...scope, podName: undefined, ...assignment };
 }
 
-async function requireAgentAnchorScope(store: PlatformStateStore, req: Request, res: Response): Promise<AgentAnchorScope | null> {
+async function requireAgentAnchorScope(store: PlatformStateStore, req: Request, res: Response, now: number): Promise<AgentAnchorScope | null> {
   const bound = boundGateway(req, res);
   if (!bound) return null;
   const request = configuredUserBootstrapRequest(bound.gatewayId, bound.podName, req.body);
   if (!request) { res.status(403).json(FORBIDDEN); return null; }
   const gateway = await store.gateways.roots.get(bound.gatewayId);
   if (projectGatewayDesiredRootForGateway(gateway, bound.gatewayId)?.gatewayClass !== "shared") {
-    if (!migrationAnchorRequest(req)) return requireConfiguredIsolatedRuntimeState(store, req, res);
+    if (!migrationAnchorRequest(req)) return requireNonMigratingIsolatedAgentAnchorScope(store, req, res, { bound, gateway, slug: request.slug }, now);
     if (!req.path.endsWith("/read")) { res.status(403).json(FORBIDDEN); return null; }
     if (await migrationSourceGatewayId(store, req) === bound.gatewayId) return requireConfiguredIsolatedRuntimeState(store, req, res);
     return requireMigratingAgentAnchorScope(store, req, res, bound, request.slug);
@@ -2479,15 +2498,22 @@ function agentStoreKey(record: AgentStoreRecord): string {
   return record.agentId;
 }
 
-function recordedAuxiliaryAnchor(scope: IsolatedRuntimeStateScope, record: AgentStoreRecord): FleetBrokerAuxiliaryAnchor | null {
-  if (record.kind !== "auxiliary" || record.gatewayId !== scope.gatewayId || record.generation !== scope.generation) return null;
+function ownsConfiguredAnchor(scope: ConfiguredAgentAnchorScope, record: AgentStoreRecord): boolean {
+  if (record.gatewayId !== scope.gatewayId) return false;
+  return "ownerAssignmentEpoch" in scope
+    ? record.generation === null && record.assignmentEpoch === scope.ownerAssignmentEpoch
+    : record.generation === scope.generation;
+}
+
+function recordedAuxiliaryAnchor(scope: ConfiguredAgentAnchorScope, record: AgentStoreRecord): FleetBrokerAuxiliaryAnchor | null {
+  if (record.kind !== "auxiliary" || !ownsConfiguredAnchor(scope, record)) return null;
   const anchor = auxiliaryAnchor({ family: record.family, storeId: record.storeId, schema: record.schema });
   if (!anchor) throw new AgentAnchorConflictError(agentStoreKey(record));
   return anchor;
 }
 
-function recordedGatewayStateAnchor(scope: IsolatedRuntimeStateScope, record: AgentStoreRecord): FleetBrokerGatewayStateAnchor | null {
-  if (record.kind !== GATEWAY_STATE_KIND || record.gatewayId !== scope.gatewayId || record.generation !== scope.generation) return null;
+function recordedGatewayStateAnchor(scope: ConfiguredAgentAnchorScope, record: AgentStoreRecord): FleetBrokerGatewayStateAnchor | null {
+  if (record.kind !== GATEWAY_STATE_KIND || !ownsConfiguredAnchor(scope, record)) return null;
   return gatewayStateAnchor(record);
 }
 
@@ -2517,8 +2543,8 @@ function reportedAgentAnchors(slug: string, body: unknown): AgentAnchorReport | 
   return { anchors: parsed as FleetBrokerAgentAnchor[], configuredAgentIds, state, auxiliary };
 }
 
-function recordedAgentAnchor(scope: IsolatedRuntimeStateScope, record: AgentStoreRecord): FleetBrokerAgentAnchor | null {
-  if (record.kind !== "agent" || record.gatewayId !== scope.gatewayId || record.generation !== scope.generation) return null;
+function recordedAgentAnchor(scope: ConfiguredAgentAnchorScope, record: AgentStoreRecord): FleetBrokerAgentAnchor | null {
+  if (record.kind !== "agent" || !ownsConfiguredAnchor(scope, record)) return null;
   return agentAnchorFor(scope.slug, record);
 }
 
@@ -2531,7 +2557,7 @@ class AgentAnchorConflictError extends Error {
 }
 
 function userAgentAnchorPruningAllowed(
-  scope: IsolatedRuntimeStateScope,
+  scope: ConfiguredAgentAnchorScope,
   userRecord: Stored<PlatformUserRecord> | null,
   assignment: GatewayAssignment | null,
 ): boolean {
@@ -2540,7 +2566,7 @@ function userAgentAnchorPruningAllowed(
     userRecord.fences.migration === undefined && !isolatedRuntimeMutationFenced(userRecord);
 }
 
-function globalAnchorUnchanged(scope: IsolatedRuntimeStateScope, record: AgentStoreRecord, report: AgentAnchorReport): boolean {
+function globalAnchorUnchanged(scope: ConfiguredAgentAnchorScope, record: AgentStoreRecord, report: AgentAnchorReport): boolean {
   if (record.kind === "agent") return false;
   const prior = record.kind === GATEWAY_STATE_KIND ? recordedGatewayStateAnchor(scope, record) : recordedAuxiliaryAnchor(scope, record);
   if (!prior) return true;
@@ -2561,15 +2587,46 @@ function archivedProjectAgentIds(scope: { uid: string; slug: string }, projects:
   }).map(project => projectAgentId(scope.slug, project.projectSlug)));
 }
 
+function checkAssignedIsolatedAnchorCustody(
+  scope: AssignedIsolatedAgentAnchorScope,
+  existing: readonly AgentStoreRecord[],
+  report: AgentAnchorReport,
+): void {
+  const requested = new Set(report.anchors.map(anchor => anchor.agentId));
+  for (const anchor of report.auxiliary) requested.add(`_gateway-${anchor.family}`);
+  if (report.state) requested.add(GATEWAY_STATE_ANCHOR_DOC);
+  for (const record of existing) {
+    const key = agentStoreKey(record);
+    if (requested.has(key) && !ownsConfiguredAnchor(scope, record)) throw new AgentAnchorConflictError(key);
+  }
+}
+
+async function assertConfiguredAnchorCustody(
+  tx: PlatformStateRepositories,
+  scope: ConfiguredAgentAnchorScope,
+  { gateway, existing, report }: { gateway: Stored<GatewayRoot> | null; existing: readonly AgentStoreRecord[]; report: AgentAnchorReport },
+  now: number,
+): Promise<void> {
+  const current = "ownerAssignmentEpoch" in scope
+    ? await assignedIsolatedAgentAnchorScopeIsCurrent(tx, scope, now)
+    : userAnchorAllocationCurrent(scope, gateway);
+  if (!current) throw new SharedAgentAnchorCustodyError("Isolated gateway custody changed before anchor reporting");
+  if ("ownerAssignmentEpoch" in scope) checkAssignedIsolatedAnchorCustody(scope, existing, report);
+}
+
 async function recordAgentAnchors(
   store: PlatformStateStore,
-  scope: IsolatedRuntimeStateScope,
+  scope: ConfiguredAgentAnchorScope,
   report: AgentAnchorReport,
-  recordedAt: number,
+  now: () => number,
 ): Promise<void> {
   const { anchors, configuredAgentIds, state, auxiliary } = report;
   const reported = new Map(anchors.map((anchor) => [anchor.agentId, anchor]));
-  const custody = { gatewayId: scope.gatewayId, generation: scope.generation, assignmentEpoch: null, recordedAt };
+  const custody = { gatewayId: scope.gatewayId, recordedAt: now(),
+    ...("ownerAssignmentEpoch" in scope
+      ? { generation: null, assignmentEpoch: scope.ownerAssignmentEpoch }
+      : { generation: scope.generation, assignmentEpoch: null }) };
+
   await store.transaction({ label: "fleet-broker.record-agent-anchors" }, async (tx) => {
     const [existing, userRecord, assignment, gateway, projects] = await Promise.all([
       tx.users.agentStores.list(scope.uid),
@@ -2578,9 +2635,7 @@ async function recordAgentAnchors(
       tx.gateways.roots.get(scope.gatewayId),
       tx.workspaces.projects.list(scope.slug),
     ]);
-    if (!userAnchorAllocationCurrent(scope, gateway)) {
-      throw new SharedAgentAnchorCustodyError("Isolated gateway allocation changed before anchor reporting");
-    }
+    await assertConfiguredAnchorCustody(tx, scope, { gateway, existing, report }, now());
     const canPrune = userAgentAnchorPruningAllowed(scope, userRecord, assignment);
     const archived = archivedProjectAgentIds(scope, projects);
     const pruned: string[] = [];
@@ -2689,11 +2744,29 @@ async function recordSharedAgentAnchors(
   });
 }
 
+async function readScopedAgentAnchorRecords(
+  store: PlatformStateStore, scope: AgentAnchorScope, now: () => number,
+): Promise<readonly AgentStoreRecord[] | null> {
+  if ("ownerAssignmentEpoch" in scope) {
+    return store.transaction({ label: "fleet-broker.read-agent-anchors", readOnly: true }, async tx => {
+      if (!await assignedIsolatedAgentAnchorScopeIsCurrent(tx, scope, now())) return null;
+      return tx.users.agentStores.list(scope.uid);
+    });
+  }
+  if ("assignmentEpoch" in scope && sharedAnchorMigrationBound(scope)) {
+    return store.transaction({ label: "fleet-broker.read-agent-anchors", readOnly: true }, async tx => {
+      const current = await recheckSharedAnchorMigration(tx, scope);
+      return current?.uid === scope.uid ? tx.users.agentStores.list(scope.uid) : null;
+    });
+  }
+  return store.users.agentStores.list(scope.uid);
+}
+
 function installAgentAnchorRoutes(router: Router, deps: ResolvedFleetBrokerRouteDeps): void {
   const { store } = deps;
 
   router.post("/agent-anchors/report", async (req, res) => {
-    const scope = await requireAgentAnchorScope(store, req, res);
+    const scope = await requireAgentAnchorScope(store, req, res, deps.now());
     if (!scope) return;
     const report = reportedAgentAnchors(scope.slug, req.body);
     if (!report || ("assignmentEpoch" in scope && (report.state || report.auxiliary.length > 0 ||
@@ -2705,7 +2778,7 @@ function installAgentAnchorRoutes(router: Router, deps: ResolvedFleetBrokerRoute
       const recordedAt = deps.now();
       try {
         if ("assignmentEpoch" in scope) await recordSharedAgentAnchors(store, scope, report, recordedAt);
-        else await recordAgentAnchors(store, scope, report, recordedAt);
+        else await recordAgentAnchors(store, scope, report, deps.now);
       } catch (error) {
         if (error instanceof SharedAgentAnchorCustodyError) { res.status(403).json(FORBIDDEN); return; }
         if (!(error instanceof AgentAnchorConflictError)) throw error;
@@ -2720,16 +2793,10 @@ function installAgentAnchorRoutes(router: Router, deps: ResolvedFleetBrokerRoute
   });
 
   router.post("/agent-anchors/read", async (req, res) => {
-    const scope = await requireAgentAnchorScope(store, req, res);
+    const scope = await requireAgentAnchorScope(store, req, res, deps.now());
     if (!scope) return;
     await runBrokered(res, async () => {
-      const records = "assignmentEpoch" in scope && sharedAnchorMigrationBound(scope)
-        ? await store.transaction({ label: "fleet-broker.read-agent-anchors", readOnly: true }, async (tx) => {
-          const current = await recheckSharedAnchorMigration(tx, scope);
-          if (!current || current.uid !== scope.uid) return null;
-          return tx.users.agentStores.list(scope.uid);
-        })
-        : await store.users.agentStores.list(scope.uid);
+      const records = await readScopedAgentAnchorRecords(store, scope, deps.now);
       if (!records) { res.status(403).json(FORBIDDEN); return; }
       if ("assignmentEpoch" in scope) {
         try {
