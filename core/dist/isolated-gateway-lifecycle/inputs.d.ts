@@ -92,6 +92,8 @@ export type AuthoritativeLeaseStatus = "provisioning" | "activating" | "returnin
 export declare const PLACEMENT_RETIREMENT_REASONS: readonly ["provisioning-timeout", "provisioning-target-paused", "builder-authorization-ended", "activation-failed", "builder-returned", "operator-terminated", "parked-computer-replaced", "owned-gateway-not-kept"];
 export type PlacementRetirementReason = typeof PLACEMENT_RETIREMENT_REASONS[number];
 export interface RetireOwnedIsolatedGatewayInput {
+    expectedDesiredStatus?: "running" | "paused" | "draining";
+    expectedUpdatedAt?: number;
     uid: string;
     builderSlug: string;
     gatewayId: string;
