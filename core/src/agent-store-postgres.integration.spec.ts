@@ -6,7 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { createAgentStoreCredentialProvisioner, createAgentStoreCredentialRevoker, createAgentStoreOwnershipTransferer, assertNoUserAgentStores, eraseUserAgentStores, type AgentStoreErasureTarget } from "./agent-store-credentials.js";
+import { createAgentStoreCredentialProvisioner, createAgentStoreCredentialRevoker, createAgentStoreOwnershipTransferer, createHeldReturnStoreCustodyVerifier, assertNoUserAgentStores, eraseUserAgentStores, type AgentStoreErasureTarget } from "./agent-store-credentials.js";
 import { readAuthProfileStore, readAuthProfileState, writeAuthProfileStore, deleteAuthProfileStore, sharedAuthStoreUsable } from "./auth-profile-store.js";
 import { purgeUserOauthRuntimeArtifacts } from "./byosub-restore.js";
 import { assertTrustedAgentStoreRoutines } from "./agent-store-routines.js";
@@ -45,6 +45,50 @@ const roots: string[] = [];
 afterEach(async () => { for (const root of roots.splice(0)) await fs.rm(root, { recursive: true, force: true }); });
 
 describe.skipIf(!dsn)("PostgreSQL agent store", () => {
+  it("proves every held owner store excludes Shared inherited writes and active handles", async () => {
+    const suffix = randomUUID().replaceAll("-", "");
+    const scope = decodeURIComponent(new URL(dsn!).pathname.slice(1));
+    const sourceGatewayId = `isolated-${suffix}`, targetGatewayId = `shared-${suffix}`;
+    const user = { uid: `owner-${suffix}`, slug: `owner-${suffix}` };
+    const schemas = [`held_agent_${suffix}`, `held_state_${suffix}`];
+    const [agent, state] = schemas.map(pg.escapeIdentifier);
+    const shared = pg.escapeIdentifier(roleFor("shared", scope));
+    const id = pg.escapeIdentifier;
+    const provision = createAgentStoreCredentialProvisioner(dsn!, dsn!);
+    const source = new pg.Client({ connectionString: await provision({
+      gatewayId: sourceGatewayId, gatewayClass: "isolated", token: "fixture-source", user,
+    }, async () => {}) });
+    const target = new pg.Client({ connectionString: await provision({
+      gatewayId: targetGatewayId, gatewayClass: "shared", token: "fixture-target",
+    }, async () => {}) });
+    const admin = new pg.Client({ connectionString: dsn });
+    const verify = createHeldReturnStoreCustodyVerifier(dsn!);
+    const authority = { sourceGatewayId, targetGatewayId, uid: user.uid, schemas };
+    try {
+      await Promise.all([source.connect(), target.connect(), admin.connect()]);
+      await source.query(`CREATE SCHEMA ${agent}; CREATE SCHEMA ${state};
+        CREATE TABLE ${agent}.data (value int); CREATE SEQUENCE ${state}.ids`);
+      await expect(verify(authority)).resolves.toBeUndefined();
+      await expect(verify({ ...authority, schemas: [...schemas, "missing_owner_fixture"] })).rejects.toThrow(/destination exclusion/);
+      await admin.query(`GRANT INSERT (value) ON ${agent}.data TO ${shared}`);
+      await expect(verify(authority)).rejects.toThrow(/destination exclusion/);
+      await admin.query(`REVOKE INSERT (value) ON ${agent}.data FROM ${shared}`);
+      await admin.query(`GRANT USAGE ON SEQUENCE ${state}.ids TO ${shared}`);
+      await expect(verify(authority)).rejects.toThrow(/destination exclusion/);
+      await admin.query(`REVOKE USAGE ON SEQUENCE ${state}.ids FROM ${shared}`);
+      await admin.query(`GRANT USAGE ON SCHEMA ${agent} TO ${shared}; GRANT SELECT ON ${agent}.data TO ${shared}`);
+      await target.query(`BEGIN; SELECT * FROM ${agent}.data`);
+      await admin.query(`REVOKE USAGE ON SCHEMA ${agent} FROM ${shared}; REVOKE SELECT ON ${agent}.data FROM ${shared}`);
+      await expect(verify(authority)).rejects.toThrow(/destination exclusion/);
+      await target.query("ROLLBACK");
+      await expect(verify(authority)).resolves.toBeUndefined();
+    } finally {
+      await target.end();
+      for (const schema of schemas) await admin.query(`DROP SCHEMA IF EXISTS ${id(schema)} CASCADE`);
+      await Promise.all([source.end(), admin.end()]);
+    }
+  });
+
   it("reads, restores, and removes shared auth in PostgreSQL state without changing its runtime state or legacy agent store", async () => {
     const client = new pg.Client({ connectionString: dsn }); await client.connect();
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "octogee-state-pg-auth-")); roots.push(root);

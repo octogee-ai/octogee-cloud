@@ -314,9 +314,15 @@ export async function requestHeldNativeSourceReconcile(input: {
     await response.body?.cancel();
     throw new Error(`Held source reconciliation returned HTTP ${response.status}`);
   }
-  const reply = await response.json() as Record<string, unknown>;
-  const proof = reply?.proof as Partial<HeldNativeSourceReconcileProof> | undefined;
-  if (reply?.nonce !== nonce || reply?.requestId !== binding.requestId || reply?.holdGeneration !== binding.holdGeneration ||
+  return readHeldSourceProof(await response.json() as Record<string, unknown>, binding, nonce);
+}
+
+function readHeldSourceProof(
+  reply: Record<string, unknown>, binding: HeldNativeSourceBinding, nonce: string,
+): HeldNativeSourceReconcileProof {
+  if (!reply) throw new Error("Held source returned an empty reconciliation proof");
+  const proof = reply.proof as Partial<HeldNativeSourceReconcileProof> | undefined;
+  if (reply.nonce !== nonce || reply.requestId !== binding.requestId || reply.holdGeneration !== binding.holdGeneration ||
       typeof proof?.verifiedAt !== "number" || !Number.isSafeInteger(proof.verifiedAt) || proof.verifiedAt < binding.claimStartedAt ||
       typeof proof.appliedFingerprint !== "string" || !/^[0-9a-f]{16}$/.test(proof.appliedFingerprint) ||
       typeof proof.activationManifestSha256 !== "string" || !/^[0-9a-f]{64}$/.test(proof.activationManifestSha256)) {

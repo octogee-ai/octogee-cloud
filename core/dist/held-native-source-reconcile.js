@@ -13,6 +13,28 @@ function requireSnapshot(identity, snapshot) {
         throw new Error("Held source snapshot has different custody");
     }
 }
+async function drainHeldSource(identity, deps) {
+    await deps.assertCurrent();
+    const quiescence = await deps.client.quiesce();
+    requireAcknowledgement(identity, quiescence);
+    if (!quiescence.drained || quiescence.runningCount !== 0)
+        throw new Error("Held source failed to drain");
+}
+function validateHeldSourceExport(identity, snapshot, exported, fingerprint) {
+    const manifest = validateActivationManifest(exported, identity.slug);
+    const actualRoster = [manifest.agentId, ...manifest.projectAgents.map(agent => agent.agentId)].sort();
+    const expectedRoster = [...snapshot.agentIds].sort();
+    const projectTokens = new Map((snapshot.projectAgents ?? []).filter(agent => agent.enabled && agent.token)
+        .map(agent => [projectAgentId(identity.slug, agent.projectId), agent.token]));
+    if (manifest.projectAgents.some(agent => projectTokens.get(agent.agentId) !== agent.mattermostAccount.botToken)) {
+        throw new Error("Held source project identity differs from the broker snapshot");
+    }
+    if (manifest.appliedFingerprint !== fingerprint || manifest.mattermostAccount.botToken !== snapshot.coachToken ||
+        actualRoster.length !== expectedRoster.length || actualRoster.some((id, i) => id !== expectedRoster[i])) {
+        throw new Error("Held source activation export differs from its broker snapshot");
+    }
+    return expectedRoster;
+}
 export async function reconcileHeldNativeSource(identity, deps) {
     const { assertCurrent, readSnapshot, client } = deps;
     await assertCurrent();
@@ -28,11 +50,7 @@ export async function reconcileHeldNativeSource(identity, deps) {
         }
     }
     finally {
-        await assertCurrent();
-        const quiescence = await client.quiesce();
-        requireAcknowledgement(identity, quiescence);
-        if (!quiescence.drained || quiescence.runningCount !== 0)
-            throw new Error("Held source failed to drain");
+        await drainHeldSource(identity, deps);
     }
     await assertCurrent();
     const flushed = await client.flush();
@@ -44,18 +62,7 @@ export async function reconcileHeldNativeSource(identity, deps) {
     await assertCurrent();
     const exported = await client.exportManifest();
     requireAcknowledgement(identity, exported);
-    const manifest = validateActivationManifest(exported.manifest, identity.slug);
-    const actualRoster = [manifest.agentId, ...manifest.projectAgents.map(agent => agent.agentId)].sort();
-    const expectedRoster = [...snapshot.agentIds].sort();
-    const projectTokens = new Map((snapshot.projectAgents ?? []).filter(agent => agent.enabled && agent.token)
-        .map(agent => [projectAgentId(identity.slug, agent.projectId), agent.token]));
-    if (manifest.projectAgents.some(agent => projectTokens.get(agent.agentId) !== agent.mattermostAccount.botToken)) {
-        throw new Error("Held source project identity differs from the broker snapshot");
-    }
-    if (manifest.appliedFingerprint !== fingerprint || manifest.mattermostAccount.botToken !== snapshot.coachToken ||
-        actualRoster.length !== expectedRoster.length || actualRoster.some((id, i) => id !== expectedRoster[i])) {
-        throw new Error("Held source activation export differs from its broker snapshot");
-    }
+    const expectedRoster = validateHeldSourceExport(identity, snapshot, exported.manifest, fingerprint);
     await assertCurrent();
     const current = await readSnapshot();
     requireSnapshot(identity, current);

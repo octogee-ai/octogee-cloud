@@ -195,6 +195,82 @@ export function createAgentStoreCredentialProvisioner(adminDsn, clientDsn) {
         }
     };
 }
+const HELD_RETURN_STORE_CUSTODY = `
+WITH roles AS (
+  SELECT source.oid AS source, target.oid AS target, owner.oid AS owner,
+    shared.oid AS shared, source.rolcanlogin AND target.rolcanlogin AND NOT source.rolsuper AS valid
+  FROM pg_roles source, pg_roles target, pg_roles owner, pg_roles shared
+  WHERE source.rolname = $1 AND target.rolname = $2 AND owner.rolname = $3 AND shared.rolname = $4
+), target_roles AS (
+  SELECT r.oid, r.rolsuper, r.rolcreaterole
+  FROM pg_roles r, roles
+  WHERE r.oid IN (roles.target, roles.shared)
+    OR pg_has_role(roles.target, r.oid, 'USAGE')
+    OR pg_has_role(roles.target, r.oid, 'SET')
+), stores AS (
+  SELECT n.oid, n.nspowner
+  FROM pg_namespace n WHERE n.nspname = ANY($5::text[])
+), relations AS (
+  SELECT c.oid, c.relkind
+  FROM pg_class c JOIN stores n ON n.oid = c.relnamespace
+), target_activity AS (
+  SELECT activity.pid
+  FROM pg_stat_activity activity JOIN roles ON activity.usesysid = roles.target OR activity.usesysid = roles.shared
+  WHERE activity.datname = current_database()
+)
+SELECT
+  (SELECT count(*)::integer FROM stores) AS found,
+  EXISTS (
+    SELECT FROM roles
+    WHERE valid AND pg_has_role(source, owner, 'USAGE') AND pg_has_role(source, owner, 'SET')
+      AND NOT EXISTS (SELECT FROM stores WHERE nspowner <> roles.owner)
+  ) AS source_owns,
+  EXISTS (
+    SELECT FROM target_roles r, roles
+    WHERE r.rolsuper OR r.rolcreaterole OR r.oid = roles.owner
+      OR EXISTS (SELECT FROM stores n WHERE has_schema_privilege(r.oid, n.oid, 'USAGE,CREATE'))
+      OR EXISTS (
+        SELECT FROM relations c
+        WHERE CASE
+          WHEN c.relkind = 'S' THEN has_sequence_privilege(r.oid, c.oid, 'USAGE,UPDATE')
+          WHEN c.relkind IN ('r', 'p', 'v', 'f', 'm') THEN
+            has_table_privilege(r.oid, c.oid, 'INSERT,UPDATE,DELETE,TRUNCATE,TRIGGER')
+            OR has_any_column_privilege(r.oid, c.oid, 'INSERT,UPDATE')
+          ELSE false
+        END
+      )
+      OR EXISTS (
+        SELECT FROM stores n JOIN pg_proc p ON p.pronamespace = n.oid
+        WHERE p.prosecdef AND has_function_privilege(r.oid, p.oid, 'EXECUTE')
+      )
+  ) AS target_grants,
+  EXISTS (
+    SELECT FROM pg_locks locks JOIN relations c ON locks.relation = c.oid
+    WHERE locks.database = (SELECT oid FROM pg_database WHERE datname = current_database())
+      AND (locks.pid IS NULL OR locks.pid IN (SELECT pid FROM target_activity))
+  ) AS target_locks
+`;
+export function createHeldReturnStoreCustodyVerifier(adminDsn) {
+    const scope = decodeURIComponent(new URL(adminDsn).pathname.slice(1));
+    if (!scope)
+        throw new Error("Held Native return store verification requires a database");
+    const pool = new pg.Pool({ connectionString: adminDsn, max: 1, connectionTimeoutMillis: 10_000, statement_timeout: 5_000, allowExitOnIdle: true });
+    pool.on("error", error => console.error("Held Native return store connection failed", error.message));
+    return async (input) => {
+        const { uid, sourceGatewayId, targetGatewayId, schemas } = input;
+        if (!uid || !sourceGatewayId || !targetGatewayId || sourceGatewayId === targetGatewayId ||
+            !schemas.length || new Set(schemas).size !== schemas.length || schemas.some(schema => !schema)) {
+            throw new Error("Held Native return store identity is incomplete");
+        }
+        const { rows: [result] } = await pool.query(HELD_RETURN_STORE_CUSTODY, [
+            roleFor("gateway", `${scope}:${sourceGatewayId}`), roleFor("gateway", `${scope}:${targetGatewayId}`),
+            roleFor("builder", `${scope}:${uid}`), roleFor("shared", scope), schemas,
+        ]);
+        if (!result || result.found !== schemas.length || !result.source_owns || result.target_grants || result.target_locks) {
+            throw new Error("Held Native return agent-store source custody or destination exclusion is unavailable");
+        }
+    };
+}
 export function createAgentStoreCredentialRevoker(adminDsn) {
     const scope = decodeURIComponent(new URL(adminDsn).pathname.slice(1));
     if (!scope)

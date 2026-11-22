@@ -122,6 +122,7 @@ export interface HttpServerDeps {
   readGatewayPodDiagnosticsBatch?: (
     gatewayIds: readonly string[],
   ) => Promise<Record<string, GatewayPodDiagnostics>>;
+  heldNativeReturnRepairAvailable?: boolean;
   requestNativeReturnSourceRecovery?: (input: { uid: string; operationId: string; requestedAt: number; requestedBy: string }) => Promise<boolean>;
   strandedSource?: StrandedSourceGatewayCalls;
   userHome?: AdminUserHome;
@@ -515,6 +516,7 @@ export function createHttpServer(deps: HttpServerDeps): Express {
     readGatewayKubernetes: readAdminGatewayKubernetes,
     readGatewayPodDiagnostics: deps.readGatewayPodDiagnostics,
     readGatewayPodDiagnosticsBatch: deps.readGatewayPodDiagnosticsBatch,
+    heldNativeReturnRepairAvailable: deps.heldNativeReturnRepairAvailable,
     requestNativeReturnSourceRecovery: deps.requestNativeReturnSourceRecovery,
     suspendAuthUser: deps.suspendAuthUser,
     revokeConnectorGrantsForUser: deps.revokeConnectorGrantsForUser,

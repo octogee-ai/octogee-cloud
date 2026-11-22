@@ -257,6 +257,7 @@ export interface FleetRouterDeps {
     gatewayIds: readonly string[],
   ) => Promise<Record<string, GatewayPodDiagnostics>>;
 
+  heldNativeReturnRepairAvailable?: boolean;
   requestNativeReturnSourceRecovery?: (input: { uid: string; operationId: string; requestedAt: number; requestedBy: string }) => Promise<boolean>;
   suspendAuthUser: (uid: string) => Promise<void>;
   revokeConnectorGrantsForUser: (uid: string) => Promise<void>;
@@ -5594,6 +5595,9 @@ router.post(
       const actor = (req as ActorRequest).uid;
       if (!actor) { res.status(403).json({ error: "Authenticated operator identity is required" }); return; }
       const dryRun = isAdminDryRun(req);
+      if (!dryRun && deps.heldNativeReturnRepairAvailable !== true) {
+        res.status(503).json({ error: "Held Native source reconciliation backend is unavailable" }); return;
+      }
       const { requestId } = await requestHeldNativeReturnRepair(store, selection, actor, Date.now(), dryRun);
       res.status(dryRun ? 200 : 202).json({ operationId, requestId, ...(dryRun ? { dryRun: true } : {}) });
     } catch (error) {

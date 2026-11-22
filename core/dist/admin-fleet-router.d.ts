@@ -77,6 +77,7 @@ export interface FleetRouterDeps {
     readGatewayKubernetes?: GatewayKubernetesReader;
     readGatewayPodDiagnostics?: (gatewayId: string) => Promise<GatewayPodDiagnostics>;
     readGatewayPodDiagnosticsBatch?: (gatewayIds: readonly string[]) => Promise<Record<string, GatewayPodDiagnostics>>;
+    heldNativeReturnRepairAvailable?: boolean;
     requestNativeReturnSourceRecovery?: (input: {
         uid: string;
         operationId: string;

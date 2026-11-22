@@ -56,11 +56,13 @@ export function createHeldNativeSourceReconciler(deps: SourceDeps) {
       deps.vm.readAttachedGuestDisks(recorded.instanceName, recorded.zone, scope.uid, backing.vmId),
       deps.store.users.records.get(scope.uid),
     ]);
-    if (!live || live.gatewayId !== scope.sourceGatewayId || live.status !== "RUNNING" || live.metadata["octogee-owner-uid"] !== scope.uid ||
-        live.instanceId !== backing.vmId || live.internalIp !== recorded.internalIp || disks.homeDiskId !== backing.homeDiskId ||
-        disks.bootDiskId !== backing.bootDiskId || owner?.home.homeDisk?.id !== backing.homeDiskId) {
-      throw new Error("Held source VM or disks differ from the verified backup");
-    }
+    if (!live) throw new Error("Held source backed-up VM is unavailable");
+    const identityMatches = [
+      live.gatewayId === scope.sourceGatewayId, live.status === "RUNNING", live.metadata["octogee-owner-uid"] === scope.uid,
+      live.instanceId === backing.vmId, live.internalIp === recorded.internalIp, disks.homeDiskId === backing.homeDiskId,
+      disks.bootDiskId === backing.bootDiskId, owner?.home.homeDisk?.id === backing.homeDiskId,
+    ].every(Boolean);
+    if (!identityMatches) throw new Error("Held source VM or disks differ from the verified backup");
     return `http://${live.internalIp}:${deps.port}`;
   }
 

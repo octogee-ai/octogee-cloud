@@ -4035,6 +4035,10 @@ export function addAdminFleetRoutes(router, deps) {
                 return;
             }
             const dryRun = isAdminDryRun(req);
+            if (!dryRun && deps.heldNativeReturnRepairAvailable !== true) {
+                res.status(503).json({ error: "Held Native source reconciliation backend is unavailable" });
+                return;
+            }
             const { requestId } = await requestHeldNativeReturnRepair(store, selection, actor, Date.now(), dryRun);
             res.status(dryRun ? 200 : 202).json({ operationId, requestId, ...(dryRun ? { dryRun: true } : {}) });
         }

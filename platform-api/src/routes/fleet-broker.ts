@@ -85,7 +85,6 @@ import {
   workspaceDefaultAgentChannelName,
 } from "@octogee/shared/types/identity";
 import { MANIFEST_OBJECT_SUFFIX } from "@octogee/core/workspace-manifest";
-import { userEntitlements } from "@octogee/shared/types/user-entitlements";
 import { projectAgentConfigured } from "@octogee/shared/types/project";
 import {
   createCachedUserAgentDefaultResolver,

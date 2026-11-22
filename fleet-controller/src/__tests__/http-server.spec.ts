@@ -354,6 +354,21 @@ describe("createHttpServer — admin gateway routes", () => {
 
   afterEach(() => vi.unstubAllEnvs());
 
+  it("requires the TEST held return backend before reserving a repair", async () => {
+    const route = "/api/admin/operations/builder-return-owner-builder-g4/reconcile-held-native-source";
+    const body = { sourceGatewayId: "owner-builder", targetGatewayId: "shared-target", sourceEpoch: 7,
+      schedulerMigrationId: "mig-builder-return-owner-builder-g4:scheduler:1:claim:100" };
+    const submit = (app: Express, path = route, token = "admin-token") => request(app)
+      .post(path).set("Authorization", `Bearer ${token}`).send(body);
+    const test = createHttpServer(buildDeps(store, { releaseEnvironment: "test" }));
+    const prod = createHttpServer(buildDeps(store, { releaseEnvironment: "prod", heldNativeReturnRepairAvailable: true }));
+    await submit(test, route, "user-token").expect(403);
+    await submit(prod).expect(404);
+    await submit(test).expect(503, { error: "Held Native source reconciliation backend is unavailable" });
+    await submit(test, `${route}?dryRun=true`).expect(409, { error: "Held Native return journal scope changed" });
+    expect(store.glmOperations).toEqual([]);
+  });
+
   it("/healthz responds without auth", async () => {
     const app = createHttpServer(buildDeps(store));
     const res = await request(app).get("/healthz");

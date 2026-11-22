@@ -987,6 +987,38 @@ export function createRestoreHandler(deps: MigrationHandlerDeps): RequestHandler
   });
 }
 
+function validHeldSourceBinding(body: HeldNativeSourceReconcileRequest, gatewayId: string, now: number): boolean {
+  const { binding, migrationId, slug, nonce, expiresAt } = body;
+  return Boolean(binding && binding.gatewayId === gatewayId && binding.slug === slug &&
+    migrationId === `mig-${binding.operationId}` && /^[a-f0-9]{64}$/.test(nonce) &&
+    Number.isSafeInteger(expiresAt) && expiresAt >= now && expiresAt <= now + 90_000);
+}
+
+async function restoreHeldSourceRuntime(
+  deps: MigrationHandlerDeps, body: HeldNativeSourceReconcileRequest, full: FleetBrokerUserSnapshot, assertHeld: () => Promise<void>,
+) {
+  const { binding, migrationId, slug } = body;
+  const snapshot = snapshotFromRestoreBody({ migrationId, uid: binding.uid, slug, snapshot: full });
+  if (typeof snapshot === "string") throw new Error("The held source broker snapshot is invalid");
+  await pauseSystemConfigWatchForUser(deps, slug);
+  await assertHeld();
+  deps.adapter.seedUserSnapshotForMigration!(full);
+  let settled: Promise<void> | undefined;
+  try {
+    const restored = await restoreUserRuntimeFromSnapshot(deps.adapter, snapshot, {
+      keepSourceQuiescing: true, beforeRuntimePublish: assertHeld, onWorkSettled: value => { settled = value; },
+    });
+    await assertHeld();
+    if (!restored.convergedState || !restored.appliedFingerprint || restored.pendingProjectClones.length) {
+      throw new Error("The held source did not converge");
+    }
+    recordRestoredConvergence(deps, slug, restored);
+    return { migrationId, slug, restored: restored.restored, steps: restored.steps };
+  } finally {
+    await settled;
+  }
+}
+
 export function createHeldNativeSourceReconcileHandler(deps: MigrationHandlerDeps): RequestHandler {
   const log = deps.log ?? provisionerLog;
   return (req, res) => withLogContext({}, async () => {
@@ -994,8 +1026,7 @@ export function createHeldNativeSourceReconcileHandler(deps: MigrationHandlerDep
     if (!body) return;
     const { binding, migrationId, slug } = body;
     const now = (deps.now ?? Date.now)();
-    if (!binding || binding.gatewayId !== deps.gatewayId || binding.slug !== slug || migrationId !== `mig-${binding.operationId}` ||
-        !/^[a-f0-9]{64}$/.test(body.nonce) || !Number.isSafeInteger(body.expiresAt) || body.expiresAt < now || body.expiresAt > now + 90_000) {
+    if (!validHeldSourceBinding(body, deps.gatewayId, now)) {
       res.status(400).json({ error: "invalid_held_source_binding" });
       return;
     }
@@ -1011,27 +1042,7 @@ export function createHeldNativeSourceReconcileHandler(deps: MigrationHandlerDep
     try {
       const proof = await runHeldSourceReconcile(body, heldSourceKeeper, {
         readSnapshot: readHeldSourceSnapshot,
-        restore: async (full, assertHeld) => {
-          const snapshot = snapshotFromRestoreBody({ migrationId, uid: binding.uid, slug, snapshot: full });
-          if (typeof snapshot === "string") throw new Error("The held source broker snapshot is invalid");
-          await pauseSystemConfigWatchForUser(deps, slug);
-          await assertHeld();
-          deps.adapter.seedUserSnapshotForMigration!(full);
-          let settled: Promise<void> | undefined;
-          try {
-            const restored = await restoreUserRuntimeFromSnapshot(deps.adapter, snapshot, {
-              keepSourceQuiescing: true, beforeRuntimePublish: assertHeld, onWorkSettled: value => { settled = value; },
-            });
-            await assertHeld();
-            if (!restored.convergedState || !restored.appliedFingerprint || restored.pendingProjectClones.length) {
-              throw new Error("The held source did not converge");
-            }
-            recordRestoredConvergence(deps, slug, restored);
-            return { migrationId, slug, restored: restored.restored, steps: restored.steps };
-          } finally {
-            await settled;
-          }
-        },
+        restore: (full, assertHeld) => restoreHeldSourceRuntime(deps, body, full, assertHeld),
         drain: async () => {
           const voice = await waitForVoiceDrain(deps, slug, migrationId);
           if (voice.activeCalls) return { drained: false, runningCount: voice.activeCalls };
