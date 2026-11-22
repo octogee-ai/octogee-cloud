@@ -192,8 +192,14 @@ export function projectedSharedMaintenancePodUid(token, namespace) {
         return null;
     }
 }
-async function hasSharedMaintenanceCompletion(scope, publicKey) {
-    const file = await open("/home/node/.octogee-shared-maintenance-completion.json", constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK).catch((error) => {
+const installedFiles = {
+    enrollment: "/etc/octogee/shared-maintenance-startup.json",
+    completion: "/home/node/.octogee-shared-maintenance-completion.json",
+    projectedToken: "/var/run/secrets/octogee-gateway-credentials/token",
+    enrollmentOwnerUid: 0,
+};
+async function hasSharedMaintenanceCompletion(scope, publicKey, files) {
+    const file = await open(files.completion, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK).catch((error) => {
         if (error.code === "ENOENT")
             return null;
         throw error;
@@ -204,7 +210,7 @@ async function hasSharedMaintenanceCompletion(scope, publicKey) {
         const info = await file.stat();
         if (!info.isFile() || info.size <= 0 || info.size > 16_384)
             return false;
-        const token = await readFile("/var/run/secrets/octogee-gateway-credentials/token", "utf8");
+        const token = await readFile(files.projectedToken, "utf8");
         return allowSharedMaintenanceRestart({
             scope, localBoundPodUid: projectedSharedMaintenancePodUid(token, scope.namespace),
             proof: JSON.parse(await file.readFile("utf8")), publicKey, now: Date.now(),
@@ -219,8 +225,8 @@ async function hasSharedMaintenanceCompletion(scope, publicKey) {
         await file.close();
     }
 }
-async function readInertStartupDocument() {
-    const file = await open("/etc/octogee/shared-maintenance-startup.json", constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+async function readInertStartupDocument(files) {
+    const file = await open(files.enrollment, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
         .catch((error) => {
         if (error.code === "ENOENT")
             return null;
@@ -230,7 +236,7 @@ async function readInertStartupDocument() {
         return null;
     try {
         const stat = await file.stat();
-        if (!stat.isFile() || stat.uid !== 0 || (stat.mode & 0o022) !== 0 || stat.size <= 0 || stat.size > 8192) {
+        if (!stat.isFile() || stat.uid !== files.enrollmentOwnerUid || (stat.mode & 0o022) !== 0 || stat.size <= 0 || stat.size > 8192) {
             throw new Error("Shared maintenance startup enrollment is not an immutable image file");
         }
         const contents = await file.readFile();
@@ -249,10 +255,10 @@ function validInstalledMaintenanceDocument(document) {
         typeof document.enrolledIssuerPublicKey === "string" &&
         createPublicKey(document.enrolledIssuerPublicKey).asymmetricKeyType === "ed25519";
 }
-export async function waitForInstalledSharedMaintenanceGate(role, env) {
+export async function waitForInstalledSharedMaintenanceGate(role, env, deps = { files: installedFiles, hold: holdInstalledMaintenance }) {
     if (env.GATEWAY_CLASS !== "shared")
         return;
-    const document = await readInertStartupDocument();
+    const document = await readInertStartupDocument(deps.files);
     if (!document)
         return;
     if (!validInstalledMaintenanceDocument(document))
@@ -260,9 +266,12 @@ export async function waitForInstalledSharedMaintenanceGate(role, env) {
     const { version: _version, environment: _environment, enrolledIssuerPublicKey, ...scope } = document;
     if (document.namespace !== env.K8S_NAMESPACE || document.gatewayId !== env.GATEWAY_ID)
         return;
-    if (await hasSharedMaintenanceCompletion(scope, enrolledIssuerPublicKey))
+    if (await hasSharedMaintenanceCompletion(scope, enrolledIssuerPublicKey, deps.files))
         return;
-    const enrollment = { ...scope, role };
+    await deps.hold({ ...scope, role }, enrolledIssuerPublicKey);
+}
+async function holdInstalledMaintenance(enrollment, enrolledIssuerPublicKey) {
+    const { role } = enrollment;
     const abort = new AbortController();
     const shutdown = () => abort.abort();
     process.once("SIGTERM", shutdown);

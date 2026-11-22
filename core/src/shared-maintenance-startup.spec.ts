@@ -113,3 +113,56 @@ it("gives an operator only its socket nonce, refuses foreign permits, and aborts
     await local.close();
   }
 });
+
+it("guards the actual entry point with a reviewed regular enrollment file and exact local restart receipt", async () => {
+  const { chmod, mkdtemp, rm, symlink, writeFile } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { sharedMaintenanceCompletionPurpose, waitForInstalledSharedMaintenanceGate } = await import("./shared-maintenance-startup.js");
+  const directory = await mkdtemp(join(tmpdir(), "held-shared-entry-"));
+  const files = {
+    enrollment: join(directory, "enrollment.json"), completion: join(directory, "completed.json"),
+    projectedToken: join(directory, "projected"), enrollmentOwnerUid: process.getuid!(),
+  };
+  const { role, ...scopeOnly } = scope;
+  const enrollment = { ...scopeOnly, version: 1, environment: "test", enrolledIssuerPublicKey: keys.publicKey };
+  const env = { GATEWAY_CLASS: "shared", K8S_NAMESPACE: scope.namespace, GATEWAY_ID: scope.gatewayId };
+  const hold = vi.fn(async () => {});
+  const start = (environment = env, paths = files) => waitForInstalledSharedMaintenanceGate(role, environment, { files: paths, hold });
+  const token = (uid: string) => "unused." + Buffer.from(JSON.stringify({
+    aud: ["octogee-api-gateway-credentials"], "kubernetes.io": { namespace: scope.namespace, pod: { uid } },
+  })).toString("base64url") + ".fixture";
+  try {
+    await start();
+    expect(hold).not.toHaveBeenCalled();
+    await writeFile(files.enrollment, "not-json");
+    await start({ ...env, GATEWAY_CLASS: "isolated" });
+    await expect(start()).rejects.toThrow();
+    await writeFile(files.enrollment, JSON.stringify(enrollment));
+    await start({ ...env, GATEWAY_ID: "ordinary-shared" });
+    await start({ ...env, K8S_NAMESPACE: "another-namespace" });
+    expect(hold).not.toHaveBeenCalled();
+    await expect(start(env, { ...files, enrollmentOwnerUid: files.enrollmentOwnerUid + 1 })).rejects.toThrow(/immutable image file/);
+    await chmod(files.enrollment, 0o666);
+    await expect(start()).rejects.toThrow(/immutable image file/);
+    await chmod(files.enrollment, 0o644);
+    const linkName = join(directory, "symlink");
+    await symlink(files.enrollment, linkName);
+    await expect(start(env, { ...files, enrollment: linkName })).rejects.toThrow(/ELOOP/);
+
+    const raw = JSON.stringify({ scope: scopeOnly, restoredArchiveSha256: archive,
+      images: { gateway: "sha256:" + "1".repeat(64), "gateway-edge": "sha256:" + "2".repeat(64) },
+      publication: { release: 7, payloadHash: archive, publishedAt: Date.now() - 100 },
+    });
+    await writeFile(files.completion, JSON.stringify({ raw, signature: signFleetRequest(keys.privateKey,
+      sharedMaintenanceCompletionPurpose(scopeOnly), raw) }));
+    await writeFile(files.projectedToken, token("foreign-pod"));
+    await start();
+    expect(hold).toHaveBeenCalledExactlyOnceWith(scope, keys.publicKey);
+    await writeFile(files.projectedToken, token(scope.podUid));
+    await start();
+    expect(hold).toHaveBeenCalledOnce();
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});

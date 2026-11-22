@@ -73,5 +73,15 @@ export declare function allowSharedMaintenanceRestart(input: {
     now: number;
 }): boolean;
 export declare function projectedSharedMaintenancePodUid(token: string, namespace: string): string | null;
-export declare function waitForInstalledSharedMaintenanceGate(role: SharedMaintenanceRole, env: NodeJS.ProcessEnv): Promise<void>;
+interface StartupFiles {
+    enrollment: string;
+    completion: string;
+    projectedToken: string;
+    enrollmentOwnerUid: number;
+}
+export declare function waitForInstalledSharedMaintenanceGate(role: SharedMaintenanceRole, env: NodeJS.ProcessEnv, deps?: {
+    files: StartupFiles;
+    hold: typeof holdInstalledMaintenance;
+}): Promise<void>;
+declare function holdInstalledMaintenance(enrollment: SharedMaintenanceStartupEnrollment, enrolledIssuerPublicKey: string): Promise<void>;
 export {};
