@@ -77,7 +77,7 @@ export interface MigrationClient {
   schedules(opts: ScheduleCheckRequestBody & GatewayAddress): Promise<ScheduleCheckResult>;
   schedules(opts: ScheduleTransferRequestBody & GatewayAddress): Promise<ScheduleTransferResult>;
   sourceActivationReadiness(opts: GatewayAddress & { migrationId: string; slug: string }): Promise<"ready" | "unavailable" | "unsupported">;
-  resume(opts: { migrationId: string; gatewayId: string; transportId?: string; slug: string; role?: "target" }): Promise<void>;
+  resume(opts: { migrationId: string; gatewayId: string; transportId?: string; slug: string; role?: "target"; requireExactAcknowledgement?: boolean }): Promise<void>;
   quiesce(opts: {
     stopMattermost?: boolean;
     schedulerHandoff?: boolean;
@@ -418,13 +418,16 @@ export function createMigrationClient(deps: MigrationClientDeps): MigrationClien
       }
     },
 
-    async resume({ migrationId, gatewayId, transportId, slug, role }) {
+    async resume({ migrationId, gatewayId, transportId, slug, role, requireExactAcknowledgement }) {
       await deps.prepareAgentStores?.(gatewayId, slug);
-      const response = await postSignedJson<{ resumed: boolean }>({
+      const response = await postSignedJson<{ resumed: boolean; migrationId?: string; slug?: string }>({
         transportId: transportId ?? gatewayId, path: `/resume/${gatewayId}`,
         gatewayId, migrationId, body: { migrationId, slug, ...(role ? { role } : {}) }, timeoutMs: quiesceMs,
       });
       if (response.resumed !== true) throw new Error(`source ingress did not resume for ${slug}`);
+      if (requireExactAcknowledgement && (response.migrationId !== migrationId || response.slug !== slug))
+        throw new Error("source ingress resume acknowledgement did not match");
+
     },
 
     async quiesce({ migrationId, gatewayId, transportId, slug, timeoutMs, stopMattermost, schedulerHandoff, schedulerMigrationId, retainNonportable }) {

@@ -23,7 +23,7 @@ export function createCompensatingNativeReturnActions(deps: {
     async resumeSourceIngress(authority, assertCurrent) {
       const client = await deps.sourceClient(authority.source, owned(authority, assertCurrent));
       await assertCurrent();
-      await client.resume({ gatewayId: authority.sourceGatewayId, migrationId: `mig-${authority.operationId}`, slug: authority.slug });
+      await client.resume({ gatewayId: authority.sourceGatewayId, migrationId: `mig-${authority.operationId}`, slug: authority.slug, requireExactAcknowledgement: true });
     },
     verifySourceServing: deps.verifySourceServing,
   };

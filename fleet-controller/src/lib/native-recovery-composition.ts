@@ -1,4 +1,5 @@
 import type { PlatformStateStore } from "@octogee/core/platform-state";
+import { createCompensatingSourceServingVerifier, type CompensatingSourceServingInputs } from "./compensating-native-source-serving.js";
 import { createCompensatingNativeReturn } from "./compensating-native-return.js";
 import { createCompensatingNativeOriginalObserver, createCompensatingNativeReturnActions } from "./compensating-native-return-actions.js";
 import { createHeldSharedInertMaintenance } from "./held-shared-inert-maintenance.js";
@@ -11,7 +12,7 @@ type SourceDependencies = Parameters<typeof createCompensatingNativeOriginalObse
 
 export type NativeRecoveryComposition = {
   target: Omit<TargetDependencies, "namespace" | "store"> & Required<Pick<TargetDependencies, "verifyWholeRetirement">>;
-  source: ActionDependencies & Pick<SourceDependencies, "vm">;
+  source: Omit<ActionDependencies, "verifySourceServing"> & Pick<SourceDependencies, "vm"> & { serving: CompensatingSourceServingInputs };
   inert: Omit<InertDependencies, "store" | "now">;
   registerOperatorActions(actions: NativeRecoveryOperatorActions): void;
 };
@@ -37,7 +38,9 @@ export function createNativeRecoveryComposition(
     provider: createNativeOldTargetPhysicalProvider({ ...enrolled.target, namespace, store }),
   });
   const compensation = createCompensatingNativeReturn({
-    store, now, actions: createCompensatingNativeReturnActions(enrolled.source),
+    store, now, actions: createCompensatingNativeReturnActions({
+      ...enrolled.source, verifySourceServing: createCompensatingSourceServingVerifier({ ...enrolled.source.serving, store }),
+    }),
     provider: {
       readOldTargetExclusion: target.readOldTargetExclusion,
       verifyOldTargetExclusion: target.verifyOldTargetExclusion,

@@ -758,6 +758,23 @@ describe("MigrationClient.resume", () => {
     expect(calls[0].url).toBe("https://source.example.com/resume/source");
     expect(calls[0].headers[SIGNATURE_HEADER.toLowerCase()]).toBeTruthy();
   });
+
+  it.each([
+    [{ resumed: true, migrationId: "m1", slug: "alice" }, true],
+    [{ resumed: true, migrationId: "m2", slug: "alice" }, false],
+    [{ resumed: true, migrationId: "m1", slug: "wrong" }, false],
+    [{ resumed: true }, false],
+  ])("requires the exact acknowledged migration and owner for protected resume (%j)", async (body, accepted) => {
+    const { fakeFetch } = captureFetch(() => Response.json(body));
+    const client = createMigrationClient({
+      privateKey: PRIVATE_KEY, resolveGatewayUrl: () => "https://source.example.com", fetch: fakeFetch,
+      transferState: transferNotUnderTest,
+    });
+    const result = client.resume({ migrationId: "m1", gatewayId: "source", slug: "alice", requireExactAcknowledgement: true });
+    if (accepted) await expect(result).resolves.toBeUndefined();
+    else await expect(result).rejects.toThrow("resume acknowledgement did not match");
+  });
+
 });
 
 describe("MigrationClient.schedules", () => {
