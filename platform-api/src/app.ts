@@ -34,6 +34,7 @@ import { createOwnerAutomationAuthorizationBrokerRoutes } from "./routes/owner-a
 import { subscriptionFlowGatewayReader, createByokBrokerRoutes } from "./routes/byok-broker.js";
 import { createGatewayVmContextRoutes } from "./routes/gateway-vm-context.js";
 import { createFleetBrokerRoutes, type ProvisionedUserReport } from "./routes/fleet-broker.js";
+import type { AssignedPodInitialBootAuthority } from "./lib/assigned-isolated-initial-boot.js";
 import { createOpenClawControlBrokerRoutes } from "./routes/openclaw-control-broker.js";
 import { createAutomationAuthorizationBrokerRoutes } from "./routes/automation-authorization-broker.js";
 import { createWorkspaceGitAuthorizationBrokerRoutes } from "./routes/workspace-git-authorization-broker.js";
@@ -205,6 +206,7 @@ export interface ProductRuntime {
   connectorDisconnected?: ConnectorDisconnected;
   brokerRecords?: BrokerRecords;
   provisioningProjection?: ProvisioningProjection;
+  assignedPodInitialBoot?: AssignedPodInitialBootAuthority;
   chatArtifactJobs?: ArtifactJobStore;
   adminUserDetail?: AdminUserProductDetail;
   adminUserDirectory?: AdminUserDirectorySource;
@@ -631,6 +633,7 @@ export function createPlatformApp(opts: PlatformAppOptions = {}) {
     onBudgetInterruption: product?.onBudgetInterruption,
     onUserProvisioned: product?.onUserProvisioned,
     provisioningProjection: product?.provisioningProjection,
+    assignedPodInitialBoot: product?.assignedPodInitialBoot,
     legacyProvisioning,
   }));
   // octogee-api-only: broker sidecar GitHub file-browser token reads
