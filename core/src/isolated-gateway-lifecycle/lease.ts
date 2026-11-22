@@ -10,6 +10,7 @@ import {
 import type { PlacementReceipt, PlacementReceiptKind } from "@octogee/shared/types/placement-receipts";
 import { isolatedSizingTier, type GatewaySizingProfile } from "@octogee/shared/types/sizing-profile";
 import { withCurrentSizingKey } from "../sizing-key.js";
+import type { PlatformStateTransaction } from "../platform-state/store.js";
 import type { GatewayAssignment } from "../platform-state/gateways.js";
 import type { PlatformUserRecord, UserActivationLease } from "../platform-state/users.js";
 import {
@@ -479,26 +480,36 @@ export async function failActivationLease(
       failedActivationCleanup: request.operationId === builderActivateOperationId(request.targetGatewayId, request.generation),
     });
     if (mode === "plan") return;
-    await transaction.users.placementReceipts.create(request.uid, buildPlacementReceipt({
-      kind: "activation-failed",
-      uid: request.uid,
-      lease,
-      leaseId: request.leaseId,
-      generation: request.generation,
-      now,
-      overrides: {
-        wakeDurationMs: durationSince(readMillis(lease.requestedAt), now),
-        operationId: request.operationId,
-        retirementOperationId: placementRetireOperationId(
-          request.uid,
-          request.targetGatewayId,
-          request.generation,
-        ),
-        error: request.message,
-      },
-    }));
+    await recordActivationFailure(transaction, lease, request, now);
     await transaction.users.records.setActivationLease(request.uid, next, exactLeaseFence(lease, ["provisioning", "activating"]));
   });
+}
+
+export async function recordActivationFailure(
+  transaction: PlatformStateTransaction,
+  lease: UserActivationLease,
+  request: FailActivationLeaseInput,
+  now: number,
+  parked = false,
+): Promise<void> {
+  await transaction.users.placementReceipts.create(request.uid, buildPlacementReceipt({
+    kind: "activation-failed",
+    uid: request.uid,
+    lease,
+    leaseId: request.leaseId,
+    generation: request.generation,
+    now,
+    overrides: {
+      wakeDurationMs: durationSince(readMillis(lease.requestedAt), now),
+      operationId: request.operationId,
+      retirementOperationId: parked ? null : placementRetireOperationId(
+        request.uid,
+        request.targetGatewayId,
+        request.generation,
+      ),
+      error: request.message,
+    },
+  }));
 }
 
 export function nextSizingKeyTransitionLease(

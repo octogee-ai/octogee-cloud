@@ -14,6 +14,7 @@ import {
   startParkedGatewayPrewarm,
   isolatedAllocationFenceAllows,
   failActivationLease,
+  tryFailActivationLeaseAndPark,
   nextActivationLease,
   nextCompletedActivationLease,
   nextFailedActivationLease,
@@ -727,6 +728,105 @@ describe("placement receipts", () => {
     expect(
       docs.get("users/uid-alice/placement_receipts/lease-one-1-activation-failed"),
     ).toMatchObject({ at: 25_000 });
+  });
+
+  describe("parking a clean failed activation", () => {
+    const gatewayId = activatingLease.targetGatewayId;
+    const operationId = activatingLease.activationOperationId;
+    const failure = { uid: "uid-alice", leaseId: "lease-one", generation: 1, targetGatewayId: gatewayId, operationId, message: "failed" };
+    const steps = [
+      { name: "quiesce-source", status: "done", completedAt: 12_000 },
+      { name: "final-sync-state", status: "failed", completedAt: 13_000 },
+      { name: "rollback:unmount-target", status: "done", completedAt: 14_000 },
+      { name: "rollback:resume-ingress", status: "done", completedAt: 15_000 },
+    ];
+
+    function seed(options: { operation?: Record<string, unknown>; runtime?: Record<string, unknown>; assignment?: Record<string, unknown>; root?: Record<string, unknown>; busy?: boolean; dormant?: Record<string, unknown> } = {}) {
+      const userDoc = leaseUserDoc(activatingLease);
+      if (options.dormant) {
+        const provisioning = userDoc.provisioning as Record<string, unknown>;
+        provisioning.pendingNativeSchedulerRetirement = options.dormant;
+        provisioning.homeDisk = { id: "990", source: "projects/test/zones/test-a/disks/alice-home" };
+      }
+      const { state, docs } = fixtureFirestore({
+        "users/uid-alice": userDoc,
+        "gateways/shared-blue": sharedSourceRoot(),
+        "gateways/shared-blue/assignments/uid-alice": {
+          ...assignmentDoc(4), updatedByOperationId: operationId, updatedAt: 16_000, ...options.assignment,
+        },
+        [`gateways/${gatewayId}`]: {
+          ...sharedSourceRoot(), gatewayId, gatewayClass: "isolated", ownerUid: "uid-alice", builderSlug: "alice",
+          sizingTier: "s", allocation: { kind: "disposable-builder", claimedByUid: "uid-alice", leaseId: "lease-one", generation: 1 },
+          ...options.root,
+        },
+        [`glmGateways/${gatewayId}`]: {
+          ...runtimeDoc(gatewayId, "gce-vm"), release: 3, vm: { instanceId: "1234", status: "RUNNING", startedAt: 9_000 },
+          heartbeat: { status: "ready", lastHeartbeatAt: 19_000, mountedCustomers: [], migratingIn: [], migratingOut: [] },
+          ...options.runtime,
+        },
+        [`glmOperations/${operationId}`]: {
+          kind: "migrate-user", status: "failed", createdAt: 1, createdBy: "test", startedAt: 11_000, completedAt: 17_000,
+          input: { uid: "uid-alice", userSlug: "alice", fromGatewayId: "shared-blue", toGatewayId: gatewayId, source: "builder-activation-lease" },
+          steps, attempts: 1, schedulerHandoffReleased: true, schedulerHandoffReleasedAt: 16_000,
+          schedulerHandoff: {
+            migrationId: `mig-${operationId}:scheduler:1:claim:11000`, uid: "uid-alice", slug: "alice",
+            fromGatewayId: "shared-blue", toGatewayId: gatewayId, stageAfterCutover: true,
+          },
+          ...options.operation,
+        },
+        ...(options.busy ? { "glmOperations/busy": {
+          kind: "retire-gateway", status: "pending", createdAt: 18_000, createdBy: "test", steps: [], input: { gatewayId },
+        } } : {}),
+      });
+      return { docs, input: { store: state, now: () => 25_000, requireOwner, sourceRecoveryPending: () => false } };
+    }
+
+    it("parks the exact detached VM root in the same transaction as recording its failed lease", async () => {
+      const { input, docs } = seed();
+      await expect(tryFailActivationLeaseAndPark(input, failure, "plan")).resolves.toBe(true);
+      expect(docs.get(`gateways/${gatewayId}`)?.desiredStatus).toBe("running");
+      await expect(tryFailActivationLeaseAndPark(input, failure)).resolves.toBe(true);
+      expect(docs.get(`gateways/${gatewayId}`)).toMatchObject({ desiredStatus: "paused", allocation: { generation: 1 } });
+      expect(docs.get("users/uid-alice")).toMatchObject({ provisioning: { openclaw: { activationLease: { status: "failed" } } } });
+      expect(docs.get("users/uid-alice/placement_receipts/lease-one-1-activation-failed")).toMatchObject({ retirementOperationId: null, operationId });
+      await expect(tryFailActivationLeaseAndPark(input, failure)).resolves.toBe(true);
+    });
+
+    it("keeps the previous dormant scheduler receipt bound to the same retained home", async () => {
+      const dormant = { uid: "uid-alice", slug: "alice", homeDiskId: "990", homeDiskSource: "projects/test/zones/test-a/disks/alice-home" };
+      const { input } = seed({ dormant });
+      await expect(tryFailActivationLeaseAndPark(input, failure)).resolves.toBe(true);
+      expect((await input.store.users.records.get("uid-alice"))?.fences.pendingNativeSchedulerRetirement).toEqual(dormant);
+    });
+
+    it("leaves a newly requested generation and its target untouched", async () => {
+      const { input } = seed();
+      await expect(tryFailActivationLeaseAndPark(input, failure)).resolves.toBe(true);
+      await input.store.users.records.setActivationLease("uid-alice", {
+        ...activatingLease, generation: 2, leaseId: "lease-two", status: "requested",
+      }, { leaseId: failure.leaseId, generation: failure.generation, status: ["failed"] });
+      await expect(tryFailActivationLeaseAndPark(input, failure)).resolves.toBe(false);
+      expect((await input.store.users.records.get("uid-alice"))?.activationLease).toMatchObject({ generation: 2, status: "requested" });
+    });
+
+    it.each([
+      { dormant: { uid: "other", slug: "alice", homeDiskId: "990", homeDiskSource: "projects/test/zones/test-a/disks/alice-home" } },
+      { operation: { cutoverCommittedAt: 13_000 } },
+      { operation: { schedulerHandoffReleased: false } },
+      { operation: { steps: steps.slice(0, -1) } },
+      { assignment: { epoch: 5 } },
+      { assignment: { updatedByOperationId: "other-attempt" } },
+      { runtime: { heartbeat: { status: "ready", lastHeartbeatAt: 13_000, mountedCustomers: [], migratingIn: [], migratingOut: [] } } },
+      { runtime: { heartbeat: { status: "ready", lastHeartbeatAt: 19_000, mountedCustomers: ["alice"], migratingIn: [], migratingOut: [] } } },
+      { root: { ownerUid: "somebody-else" } },
+      { busy: true },
+    ])("does not park or end the lease without exact rollback and VM custody: %j", async (options) => {
+      const { input, docs } = seed(options);
+      await expect(tryFailActivationLeaseAndPark(input, failure)).resolves.toBe(false);
+      expect(docs.get(`gateways/${gatewayId}`)?.desiredStatus).toBe("running");
+      expect(docs.get("users/uid-alice")).toMatchObject({ provisioning: { openclaw: { activationLease: { status: "activating" } } } });
+      expect(docs.has("users/uid-alice/placement_receipts/lease-one-1-activation-failed")).toBe(false);
+    });
   });
 
   describe("while the activation is still recovering its source", () => {
