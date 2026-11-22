@@ -70,6 +70,17 @@ edgeIngress:
     preview: ""
   managedCertificates: []
 
+# GKE Gateway that serves previews at https://<label>.<domain>/ from the
+# platform API. Create the certificate map, global static address and Cloud
+# Armor policy before enabling it; the chart README lists each value.
+previewGateway:
+  enabled: false
+  name: preview-gateway
+  domain: ""
+  certificateMapName: ""
+  staticIpName: ""
+  securityPolicyName: ""
+
 # ── cloud-sql-proxy ─────────────────────────────────────────────────────────
 cloud-sql-proxy:
   enabled: false
