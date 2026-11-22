@@ -9,11 +9,10 @@ import { gatewayHeartbeatMatchesImageTag } from "@octogee/shared/types/image-tag
 import { requestFleetState } from "../fleet-state-client.js";
 import type { CompensatingNativeReturnActions, CompensatingNativeReturnAuthority } from "./compensating-native-return.js";
 
-type Current = () => Promise<void>;
 export type CompensatingSourceServingInputs = {
   privateKey: string;
   port: number;
-  verifyOwnerRoute(authority: CompensatingNativeReturnAuthority, assertCurrent: Current): Promise<void>;
+  edgePort: number;
   fetchImpl?: typeof fetch;
 };
 
@@ -77,25 +76,27 @@ export function createCompensatingSourceServingVerifier(input: CompensatingSourc
   const fetchDirect: typeof fetch = (url, options) => (input.fetchImpl ?? fetch)(url, { ...options, redirect: "error" });
   const timeoutMs = 5000;
   return async (scope, current) => {
-    requireServing(Number.isInteger(input.port) && input.port > 0 && input.port <= 65535);
+    requireServing([input.port, input.edgePort].every(port => Number.isInteger(port) && port > 0 && port <= 65535) && input.port !== input.edgePort);
     await current();
     const before = await readOriginalServing(input.store, scope);
     const baseUrl = `http://${scope.source.internalIp}:${input.port}`;
-    const [health, ready, state] = await Promise.all([
+    const edgeUrl = `http://${scope.source.internalIp}:${input.edgePort}/health`;
+    const [health, ready, state, edge] = await Promise.all([
       fetchDirect(baseUrl + "/health", { signal: AbortSignal.timeout(timeoutMs) }).then(fetchBody),
       fetchDirect(baseUrl + "/surge-ready", { signal: AbortSignal.timeout(timeoutMs) }).then(fetchBody),
       requestFleetState({ baseUrl, gatewayId: scope.sourceGatewayId, privateKey: input.privateKey, timeoutMs,
         fetchImpl: fetchDirect, newRequestId: randomUUID }).then(fetchBody),
+      fetchDirect(edgeUrl, { signal: AbortSignal.timeout(timeoutMs) }).then(fetchBody),
     ]);
     requireServing(health?.status === "ready" && ready && state && typeof state.version === "string");
     requireServing([
+      edge?.service === "gateway-edge", edge?.status === "ok",
       ready.ready === true, ready.openclawUp === true, ready.handoffReleased === true,
       ready.brokerProfilesSettled === true, ready.dashboardBridgeReady === true,
       state.gatewayId === scope.sourceGatewayId, state.status === "ready", gatewayHeartbeatMatchesImageTag(state.version, before.tag),
       isDeepStrictEqual(state.customers, [scope.slug]), state.migratingIn === undefined || isDeepStrictEqual(state.migratingIn, []),
     ].every(Boolean));
     await current();
-    await input.verifyOwnerRoute(scope, current);
     requireServing(isDeepStrictEqual(await readOriginalServing(input.store, scope), before));
     await current();
   };

@@ -49,12 +49,13 @@ function fixture() {
       input: { uid: scope.uid, userSlug: scope.slug, fromGatewayId: scope.sourceGatewayId, toGatewayId: scope.targetGatewayId } }],
   ]);
   const state = { gatewayId: scope.sourceGatewayId, status: "ready", version: "a8b9c10", customers: [scope.slug], migratingIn: [] as string[] };
-  const responses = { ready: { ...ready }, state };
+  const responses = { ready: { ...ready }, state, edge: { service: "gateway-edge", status: "ok" } };
   const store = createDocumentFixtureStore(docs);
   const current = vi.fn(async () => {});
   const fetchImpl = vi.fn<typeof fetch>(async (url, options) => {
-    expect(new URL(String(url)).origin).toBe("http://10.20.30.40:3003");
     expect(options?.redirect).toBe("error");
+    if (String(url) === "http://10.20.30.40:3001/health") return Response.json(responses.edge);
+    expect(new URL(String(url)).origin).toBe("http://10.20.30.40:3003");
     if (String(url).endsWith("/health")) return Response.json({ status: "ready" });
     if (String(url).endsWith("/surge-ready")) return Response.json(responses.ready);
     const raw = String(options?.body);
@@ -62,29 +63,29 @@ function fixture() {
     expect(verifyFleetRequest(keys.publicKey, requestId, raw, new Headers(options?.headers).get(SIGNATURE_HEADER)!)).toBe(true);
     return Response.json(responses.state);
   });
-  const verifyOwnerRoute = vi.fn(async (_scope, check: () => Promise<void>) => check());
-  const verify = createCompensatingSourceServingVerifier({ store, privateKey: keys.privateKey, port: 3003, fetchImpl, verifyOwnerRoute });
-  return { docs, verify, fetchImpl, verifyOwnerRoute, responses, current };
+  const verify = createCompensatingSourceServingVerifier({ store, privateKey: keys.privateKey, port: 3003, edgePort: 3001, fetchImpl });
+  return { docs, verify, fetchImpl, responses, current };
 }
 
 describe("original Native serving after compensating ingress resume", () => {
   it("binds signed stock Fleet readiness and both installed roles to the sole canonical owner", async () => {
     const h = fixture();
     await expect(h.verify(scope, h.current)).resolves.toBeUndefined();
-    expect(h.fetchImpl).toHaveBeenCalledTimes(3);
-    expect(h.verifyOwnerRoute).toHaveBeenCalledOnce();
+    expect(h.fetchImpl).toHaveBeenCalledTimes(4);
   });
 
   it("rejects gate drift, wrong owner roster and later epoch without accepting ingress", async () => {
     const gated = fixture();
     gated.responses.ready.handoffReleased = false;
     await expect(gated.verify(scope, gated.current)).rejects.toThrow(/serving witness/);
-    expect(gated.verifyOwnerRoute).not.toHaveBeenCalled();
+    const wrongEdge = fixture();
+    wrongEdge.responses.edge.service = "wrong-service";
+    await expect(wrongEdge.verify(scope, wrongEdge.current)).rejects.toThrow(/serving witness/);
     const wrong = fixture();
     wrong.responses.state.customers.push("other");
     await expect(wrong.verify(scope, wrong.current)).rejects.toThrow(/serving witness/);
     const changed = fixture();
-    changed.verifyOwnerRoute.mockImplementationOnce(async () => {
+    changed.current.mockResolvedValueOnce(undefined).mockImplementationOnce(async () => {
       changed.docs.get(assignmentPath)!.epoch = scope.sourceEpoch + 1;
     });
     await expect(changed.verify(scope, changed.current)).rejects.toThrow(/serving witness/);
