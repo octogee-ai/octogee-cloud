@@ -972,14 +972,17 @@ describe("native VM return", () => {
     expect(vi.mocked(h.client.quiesce).mock.calls.filter(([request]) => request.schedulerHandoff)).toHaveLength(2);
   });
 
-  it("leaves a Native source serving when its current guest cannot export activation", async () => {
+  it.each(["unavailable", "unsupported"] as const)("leaves a Native source serving when activation readiness is %s", async (readiness) => {
     const h = mkDeps();
     const native = nativeReturn(h);
-    vi.mocked(h.client.sourceActivationReadiness).mockResolvedValue("unavailable");
+    vi.mocked(h.client.sourceActivationReadiness).mockResolvedValue(readiness);
 
     const result = await createMigrateUserHandler(h.deps)(mkOp({}), h.ctx);
 
-    expect(result).toMatchObject({ success: false, rolledBack: false, error: "native return source activation export unavailable: status 503" });
+    expect(result).toMatchObject({
+      success: false, rolledBack: false, error: "native return source activation export unavailable: status 503",
+      output: { gatewayCompatibilityPending: true },
+    });
     expect(classifyOperationFailure(result.error)).toBe("transient");
     expect(h.client.sourceActivationReadiness).toHaveBeenCalledExactlyOnceWith({ migrationId: "mig-op-1", gatewayId: "gw-blue", slug: "alice" });
     expect(h.ctx.persistSchedulerHandoff).not.toHaveBeenCalled();
@@ -990,22 +993,10 @@ describe("native VM return", () => {
     expect(native.requestCheckpoint).not.toHaveBeenCalled();
   });
 
-  it("continues a Native return on an explicitly unsupported legacy readiness route", async () => {
-    const h = mkDeps();
-    nativeReturn(h);
-    vi.mocked(h.client.sourceActivationReadiness).mockResolvedValue("unsupported");
-
-    const result = await createMigrateUserHandler(h.deps)(mkOp({}), h.ctx);
-
-    expect(result).toMatchObject({ success: true });
-    expect(h.deps.log).toHaveBeenCalledWith(expect.stringContaining("legacy guest lacks source activation readiness"));
-    expect(h.client.transferState).toHaveBeenCalledWith(expect.objectContaining({ mode: "final", includeActivationManifest: true }));
-  });
-
-  it("rolls back before forward recovery if source activation becomes unavailable during Native drain", async () => {
+  it.each(["unavailable", "unsupported"] as const)("rolls back before forward recovery if source readiness becomes %s during Native drain", async (readiness) => {
     const h = mkDeps();
     const native = nativeReturn(h);
-    vi.mocked(h.client.sourceActivationReadiness).mockResolvedValueOnce("ready").mockResolvedValueOnce("unavailable");
+    vi.mocked(h.client.sourceActivationReadiness).mockResolvedValueOnce("ready").mockResolvedValueOnce(readiness);
 
     const result = await createMigrateUserHandler(h.deps)(mkOp({}), h.ctx);
 
@@ -1016,6 +1007,24 @@ describe("native VM return", () => {
     expect(h.deps.setAssignmentState).toHaveBeenLastCalledWith(expect.objectContaining({ gatewayId: "gw-blue", state: "serving" }));
     expect(vi.mocked(h.ctx.persistSchedulerHandoff!).mock.calls.every(([state]) => !state.forwardRecovery)).toBe(true);
     expect(native.requestCheckpoint).not.toHaveBeenCalled();
+  });
+
+  it("keeps rollout exclusion for a Native return with an existing scheduler handoff", async () => {
+    const h = mkDeps();
+    nativeReturn(h);
+    vi.mocked(h.client.sourceActivationReadiness).mockResolvedValue("unsupported");
+    const schedulerHandoff = {
+      migrationId: "mig-op-1:scheduler:1:claim:4000", uid: "uid-alice", slug: "alice",
+      fromGatewayId: "gw-blue", toGatewayId: "gw-green",
+    };
+
+    const result = await createMigrateUserHandler(h.deps)(mkOp({ schedulerHandoff }), h.ctx);
+
+    expect(result).toEqual({
+      steps: [], success: false, rolledBack: false, error: "native return source activation export unavailable: status 503",
+    });
+    expect(h.ctx.persistSchedulerHandoff).not.toHaveBeenCalled();
+    expect(h.client.transferState).not.toHaveBeenCalled();
   });
 
   it("continues a validated Native forward recovery on its live source release", async () => {

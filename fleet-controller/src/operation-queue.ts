@@ -164,7 +164,7 @@ function rolloutWaitsForUserActivation(rollout: OperationRef, activation: Operat
 }
 
 function compatibilityWaitYieldsToRoll(waiting: OperationRef, rollout: OperationRef): boolean {
-  return waiting.kind === MIGRATE_USER_KIND && waiting.gatewayCompatibilityPending === true &&
+  return waiting.kind === MIGRATE_USER_KIND && waiting.gatewayCompatibilityPending === true && waiting.schedulerHandoff === undefined &&
     rollout.kind === "rollout" && operationsConflict(waiting, rollout);
 }
 

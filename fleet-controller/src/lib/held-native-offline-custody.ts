@@ -142,6 +142,7 @@ export interface AuthorizedOfflineNativeSourceHold {
 
 export type ReadHeldNativeOfflineSourceHold = (scope: NativeReturnBackupScope) => Promise<NativeReturnOwnerHold | null>;
 
+/** @public */
 export function createHeldNativeOfflineSourceHoldReader(input: {
   readAuthorizedHold(scope: NativeReturnBackupScope): Promise<AuthorizedOfflineNativeSourceHold | null>;
   verifyCustody: (arg: Parameters<typeof assertHeldNativeOfflineCustody>[0]["expected"]) => Promise<void>;

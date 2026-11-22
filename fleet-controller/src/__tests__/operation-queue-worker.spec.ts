@@ -168,6 +168,9 @@ describe("gateway operation queue — enqueue instead of reject (glmOperations w
     { name: "source step", returning: { steps: [{ name: "quiesce-source", status: "done" }] } },
     { name: "transfer dispatch", returning: { sourceTransferExecution: { status: "dispatched" } } },
     { name: "scheduler custody", returning: { schedulerHandoff: { migrationId: "original" } } },
+    { name: "scheduler custody after a compatibility wait", returning: {
+      schedulerHandoff: { migrationId: "original" }, output: { gatewayCompatibilityPending: true },
+    } },
     { name: "released scheduler custody", returning: { schedulerHandoffReleased: true } },
     { name: "migration state", returning: { userMigrationV2: { phase: "initialized" } } },
     { name: "cancellation", returning: { cancellationRequestedAt: 10 } },
