@@ -366,6 +366,11 @@ describe("every changing route", () => {
       method: "post",
       path: "/shared-gateways/shared-b/add-operations/op-1/complete",
     },
+    "POST /operations/:id/held-native-offline/:phase": {
+      method: "post", path: `/operations/${heldNative.operationId}/held-native-offline/reserve`, seed: heldNativeReturnFleet,
+      body: { sourceGatewayId: heldNative.sourceGatewayId, targetGatewayId: heldNative.targetGatewayId,
+        sourceEpoch: heldNative.sourceEpoch, schedulerMigrationId: heldNative.schedulerMigrationId },
+    },
     "POST /operations/:id/reconcile-held-native-source": {
       method: "post", path: `/operations/${heldNative.operationId}/reconcile-held-native-source`, seed: heldNativeReturnFleet,
       body: { sourceGatewayId: heldNative.sourceGatewayId, targetGatewayId: heldNative.targetGatewayId,

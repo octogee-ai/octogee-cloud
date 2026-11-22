@@ -1526,4 +1526,4 @@ function assertAssignmentStateUpdateMatches(assignment, params) {
 function assignmentClockMatches(current, expected) {
     return expected === undefined || Number.isSafeInteger(expected) && expected > 0 && current === expected;
 }
-export { assertHeldNativeReturnRepairClaim, completeHeldNativeReturnRepair, heldNativeReturnBlocksDestination, heldNativeReturnBlocksOwnerDestination, requestHeldNativeReturnRepair, HeldNativeReturnConflict, } from "./held-native-return-repair.js";
+export { assertHeldNativeReturnRepairClaim, completeHeldNativeReturnRepair, heldNativeReturnBlocksDestination, heldNativeReturnBlocksOwnerDestination, requestHeldNativeReturnRepair, HeldNativeReturnConflict, reserveHeldNativeOfflineSource, readReservedHeldNativeOfflineSource, bindHeldNativeStoppedOriginal, assertHeldNativeOfflineSourceClaim, recordHeldNativeOfflineStage, recordHeldNativeOriginalRestart, HELD_NATIVE_OFFLINE_SOURCE_FENCE_KIND, } from "./held-native-return-repair.js";
