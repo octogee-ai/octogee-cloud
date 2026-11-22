@@ -404,7 +404,7 @@ describe("addUserToGateway — first-time provisioning", () => {
     state.user = snap({ status: "provisioning", mattermostUserId: "mm-user", channels: [] });
     const adapter = makeAdapter(state);
     const apply = adapter.applyAddUserConfigPatch;
-    adapter.applyAddUserConfigPatch = vi.fn(async (...args) => {
+    adapter.applyAddUserConfigPatch = vi.fn(async (...args: Parameters<typeof apply>) => {
       const result = await apply(...args);
       state.user = { ...state.user!, channels: [{ scope: "workspace", kind: "coach-dm", channelId: "c".repeat(26) }] };
       return result;
