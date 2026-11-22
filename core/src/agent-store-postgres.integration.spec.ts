@@ -140,13 +140,17 @@ describe.skipIf(!dsn)("PostgreSQL agent store", () => {
       gatewayId: targetGatewayId, gatewayClass: "shared", token: "fixture-target",
     }, async () => {}) });
     const admin = new pg.Client({ connectionString: dsn });
-    const verify = createHeldReturnStoreCustodyVerifier(dsn!);
+    const verify = createHeldReturnStoreCustodyVerifier(dsn!, { serializeCredentialChanges: true });
     const authority = { sourceGatewayId, targetGatewayId, uid: user.uid, schemas };
     try {
       await Promise.all([source.connect(), target.connect(), admin.connect()]);
       await source.query(`CREATE SCHEMA ${agent}; CREATE SCHEMA ${state};
         CREATE TABLE ${agent}.data (value int); CREATE SEQUENCE ${state}.ids`);
       await expect(verify(authority)).resolves.toBeUndefined();
+      await admin.query("BEGIN; SELECT pg_advisory_xact_lock(hashtextextended('octogee-agent-store-credentials', 0))");
+      try {
+        await expect(verify(authority)).rejects.toThrow(/ownership is changing/);
+      } finally { await admin.query("ROLLBACK"); }
       await expect(verify({ ...authority, schemas: [...schemas, "missing_owner_fixture"] })).rejects.toThrow(/destination exclusion/);
       await admin.query(`GRANT INSERT (value) ON ${agent}.data TO ${shared}`);
       await expect(verify(authority)).rejects.toThrow(/destination exclusion/);

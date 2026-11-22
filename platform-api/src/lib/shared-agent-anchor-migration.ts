@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
 import { DuplicateRecordError, type PlatformUserRecord, type GatewayAssignment, type GatewayRoot, type PlatformStateRepositories, type Stored } from "@octogee/core/platform-state";
-import { userActivationRecoveryTargetMatches, sharedRecoveryTargetCleaned, migrationCancellationDeferred, heldNativeReturnBlocksDestination, isolatedTargetBelongsToUser } from "@octogee/core/fleet-state";
+import { userActivationRecoveryTargetMatches, sharedRecoveryTargetCleaned, migrationCancellationDeferred, heldNativeReturnBlocksDestination, nativeReturnTargetDenied, isolatedTargetBelongsToUser } from "@octogee/core/fleet-state";
 import { isolatedRuntimeMutationFenced } from "@octogee/core/gateway-retirement-claim";
 import { readSchedulerMigrationIdentity, type UserMigrationV2State } from "@octogee/shared/types/glm";
 import { projectGatewayDesiredRootForGateway } from "@octogee/shared/types/gateway-releases";
@@ -36,6 +36,7 @@ async function sharedCrossGatewayAgentAnchorScope(tx: PlatformStateRepositories,
       heldNativeReturnBlocksDestination({ input, schedulerHandoff: operation.schedulerHandoff }, gatewayId)) return null;
   const sourceGatewayId: string = input.fromGatewayId, targetGatewayId: string = input.toGatewayId, uid: string = input.uid;
   const sourceRequest = gatewayId === sourceGatewayId;
+  if (await nativeCrossGatewayTargetExcluded(tx, uid, gatewayId, sourceRequest)) return null;
   const [gateway, source, user, assignment, targetAssignment] = await Promise.all([
     tx.gateways.roots.get(targetGatewayId),
     tx.gateways.roots.get(sourceGatewayId),
@@ -59,6 +60,10 @@ async function sharedCrossGatewayAgentAnchorScope(tx: PlatformStateRepositories,
       : {}),
     ...builderReturnRosterScope(sourceRoot, target, { sourceRequest, uid, slug, operationId, assignment }),
   };
+}
+
+async function nativeCrossGatewayTargetExcluded(tx: PlatformStateRepositories, uid: string, gatewayId: string, sourceRequest: boolean) {
+  return !sourceRequest && await nativeReturnTargetDenied(tx, uid, gatewayId);
 }
 
 function builderReturnRosterScope(
