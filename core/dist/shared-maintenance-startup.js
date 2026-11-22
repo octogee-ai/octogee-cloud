@@ -169,11 +169,11 @@ export function isSharedMaintenancePublication(publication, now) {
 export function allowSharedMaintenanceRestart(input) {
     const { scope, localBoundPodUid, proof, publicKey, now } = input;
     if (!localBoundPodUid || localBoundPodUid !== scope.podUid ||
-        typeof proof.raw !== "string" || proof.raw.length > 8192 ||
+        typeof proof?.raw !== "string" || proof.raw.length > 8192 ||
         !verifyFleetRequest(publicKey, sharedMaintenanceCompletionPurpose(scope), proof.raw, proof.signature))
         return false;
     const receipt = JSON.parse(proof.raw);
-    return isDeepStrictEqual(receipt.scope, scope) && archiveHash.test(receipt.restoredArchiveSha256) &&
+    return receipt !== null && isDeepStrictEqual(receipt.scope, scope) && archiveHash.test(receipt.restoredArchiveSha256) &&
         isSharedMaintenancePublication(receipt.publication, now) && [receipt.images?.gateway, receipt.images?.["gateway-edge"]]
         .every(image => typeof image === "string" && /^sha256:[a-f0-9]{64}$/.test(image)) &&
         receipt.images.gateway !== receipt.images["gateway-edge"];
@@ -211,10 +211,13 @@ async function hasSharedMaintenanceCompletion(scope, publicKey, files) {
         if (!info.isFile() || info.size <= 0 || info.size > 16_384)
             return false;
         const token = await readFile(files.projectedToken, "utf8");
-        return allowSharedMaintenanceRestart({
+        const released = allowSharedMaintenanceRestart({
             scope, localBoundPodUid: projectedSharedMaintenancePodUid(token, scope.namespace),
             proof: JSON.parse(await file.readFile("utf8")), publicKey, now: Date.now(),
         });
+        if (!released)
+            process.stderr.write("Shared maintenance completion receipt could not authorize this restart\n");
+        return released;
     }
     catch (error) {
         if (error instanceof SyntaxError || error.code === "ENOENT")

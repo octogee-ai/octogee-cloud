@@ -162,6 +162,9 @@ it("guards the actual entry point with a reviewed regular enrollment file and ex
     await writeFile(files.projectedToken, token(scope.podUid));
     await start();
     expect(hold).toHaveBeenCalledOnce();
+    await writeFile(files.completion, "null");
+    await start();
+    expect(hold).toHaveBeenCalledTimes(2);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

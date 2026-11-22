@@ -439,8 +439,8 @@ export async function advanceSharedHeldReturnMaintenance(
   await store.transaction({ label: "shared-held-return-maintenance.advance" }, async tx => {
     const current = await readClaim(tx, claim);
     requireMaintenance(!current.restoringMigrationPolicy, "Shared maintenance is completing");
-    requireMaintenance(!current.inertStartup, "Shared maintenance has a distinct inert launch authority");
     if (current.phase === phase) return;
+    requireMaintenance(!current.inertStartup, "Shared maintenance has a distinct inert launch authority");
     requireMaintenance(phase === "dispatched" ? current.phase === "reserved" && !current.stagedRelease : current.phase === "dispatched",
       "Shared held return maintenance transition is invalid");
     await tx.gateways.roots.compareAndSetRuntimeRestartFence(claim.gatewayId, current, { ...current, phase, phaseStartedAt: now() });

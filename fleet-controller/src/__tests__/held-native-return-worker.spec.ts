@@ -663,6 +663,8 @@ it("separately authorizes inert replacement and refuses any stock authority befo
   await expect(readAuthorizedSharedInertStock(h.store, claim)).resolves.toEqual(common);
   await expect(assertSharedInertPreLaunch(h.store, claim)).rejects.toThrow("no longer permits");
   await expect(rollbackSharedInertBeforeStock(h.store, claim, vi.fn())).rejects.toThrow("no longer permits");
+  await expect(advanceSharedHeldReturnMaintenance(h.store, claim, "rollback", () => 555)).rejects.toThrow("distinct inert launch authority");
+  await expect(advanceSharedHeldReturnMaintenance(h.store, claim, "dispatched", () => 557)).resolves.toBeUndefined();
   await expect(stageSharedHeldReturnMaintenanceRelease(h.store, claim, () => 560)).resolves.toBe(2);
 });
 
