@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
-import { queuedSharedMigrationNeverTouchedDestinationInStore, queuedSharedMigrationOwnsSourceInStore } from "./queued-shared-migration.js";
+import { sharedSourceRemountedAfterFailure, queuedSharedMigrationNeverTouchedDestinationInStore, queuedSharedMigrationOwnsSourceInStore } from "./queued-shared-migration.js";
 
 const preparingMarker = { state: "preparing", phase: "preparing", startedAt: 1_000, operationId: "op-1" };
 
@@ -63,5 +63,30 @@ describe("queued Shared destination custody", () => {
   it("preserves the target dependency once a target assignment exists", async () => {
     const h = fixture("mig-op-1:scheduler:1:claim:1000", null, true);
     expect(await queuedSharedMigrationNeverTouchedDestinationInStore(h.store, h.row, "op-1")).toBe(false);
+  });
+});
+
+describe("Shared source transport retry", () => {
+  const now = 10_000;
+  const runtime = {
+    gatewayId: "shared-a",
+    heartbeat: { status: "ready", mountedCustomers: ["alice"], lastHeartbeatAt: 9_000 },
+    kubernetes: { status: "ready", totalPods: 1, readyPods: 1, observedAt: 9_500 },
+  } as const;
+  const move = { id: "op-1", ...fixture("mig-op-1:scheduler:1:claim:1000").row, nextAttemptAt: now + 480_000 };
+  it("recognizes a mounted source after the transport failure and before the retry deadline", () => {
+    expect(sharedSourceRemountedAfterFailure(move, runtime, now)).toBe(true);
+  });
+  it.each([
+    { ...runtime, gatewayId: "shared-b" },
+    { ...runtime, heartbeat: { ...runtime.heartbeat, mountedCustomers: ["other"] } },
+    { ...runtime, heartbeat: { ...runtime.heartbeat, lastHeartbeatAt: 1_999 } },
+    { ...runtime, kubernetes: { ...runtime.kubernetes, readyPods: 2 } },
+    { ...runtime, kubernetes: { ...runtime.kubernetes, observedAt: 1_999 } },
+  ])("retains the delay when the source observation cannot resolve the failed selection %#", observed => {
+    expect(sharedSourceRemountedAfterFailure(move, observed, now)).toBe(false);
+  });
+  it("only wakes a pending pre-transport retry", () => {
+    expect(sharedSourceRemountedAfterFailure({ ...move, cutoverCommittedAt: 1 }, runtime, now)).toBe(false);
   });
 });

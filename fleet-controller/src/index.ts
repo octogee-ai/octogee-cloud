@@ -162,7 +162,7 @@ import {
   type PendingOperationRef,
   usesOnlySharedDestinationWhileBackingOff,
 } from "./operation-queue.js";
-import { queuedSharedMigrationNeverTouchedDestinationInStore } from "./lib/queued-shared-migration.js";
+import { queuedSharedMigrationNeverTouchedDestinationInStore, rearmRemountedSharedSource, sharedSourceRemountedAfterFailure } from "./lib/queued-shared-migration.js";
 import { readOperationRolloutLanes, withOperationRolloutLane } from "./operation-rollout-lanes.js";
 import {
   WAITING_FOR_ISOLATED_GATEWAY,
@@ -1896,7 +1896,7 @@ function operationWatchWakeups(
   return [...wakeups.values()];
 }
 
-export function startOperationWorker(deps: ControllerDeps): () => void {
+export function startOperationWorker(deps: ControllerDeps, informer?: FleetInformer): () => void {
   const active = new Map<string, Stored<OperationRecord>>();
   const queued = new Map<string, Stored<OperationRecord>>();
   const providerTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -1939,16 +1939,43 @@ export function startOperationWorker(deps: ControllerDeps): () => void {
       wake();
     }, due - Date.now()));
   };
+  const rearming = new Set<string>();
+  const onMountedSource = (record: Stored<OperationRecord>, runtime: FleetRegistryRecord) => {
+    const now = Date.now();
+    if (rearming.has(record.id) || !sharedSourceRemountedAfterFailure(record, runtime, now)) return;
+    rearming.add(record.id);
+    void rearmRemountedSharedSource(deps.store, record, now).then(ready => {
+      if (ready && !stopped) {
+        queueRecord(ready);
+        wake();
+      }
+    }).catch(reportFailure).finally(() => rearming.delete(record.id));
+  };
+  const stopMounts = informer?.subscribe("fleetRegistry", delivery => {
+    if (stopped) return;
+    const runtimes = delivery.kind === "reset" ? delivery.records : delivery.changes.flatMap(c => c.record ? [c.record] : []);
+    for (const runtime of runtimes) {
+      if (!runtime.gatewayId.startsWith("shared-")) continue;
+      for (const record of active.values()) onMountedSource(record, runtime);
+    }
+  });
   const subscription = deps.store.watch({ aggregate: "operations", filter: { statuses: ["pending", "running"] } }, {
     onEvent: (event) => {
       if (stopped) return;
-      for (const record of operationWatchWakeups(event, active)) queueRecord(record);
+      for (const record of operationWatchWakeups(event, active)) {
+        queueRecord(record);
+        if (record.kind === MIGRATE_USER_KIND && record.nextAttemptAt && typeof record.input.fromGatewayId === "string" && record.input.fromGatewayId.startsWith("shared-")) {
+          const runtime = informer?.fleetRegistry()?.find(r => r.gatewayId === record.input.fromGatewayId);
+          if (runtime) onMountedSource(record, runtime);
+        }
+      }
       wake();
     },
     onError: (err) => deps.log(`[glm-controller] ⚠ operations snapshot error: ${String(err)}`),
   });
   return () => {
     stopped = true;
+    stopMounts?.();
     active.clear();
     queued.clear();
     for (const timer of providerTimers.values()) clearTimeout(timer);
@@ -2528,7 +2555,7 @@ function startControllerBackgroundTasks({
   }
   const informer = createFleetInformer({ store: deps.store, log });
   const stopReconciler = startReconciler({ ...deps, informer });
-  const stopWorker = startOperationWorker(deps);
+  const stopWorker = startOperationWorker(deps, informer);
   const stopOperationQueueDrain = startOperationQueueDrain(deps);
   const stopPoller = startGatewayHeartbeatPoller(
     buildGatewayHeartbeatPollerDeps(deps.store, log, fleetControllerPrivateKey, informer),
