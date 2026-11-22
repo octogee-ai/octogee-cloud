@@ -1299,7 +1299,7 @@ describe("buildBrokeredLifecycleAdapter migration import activation", () => {
     expect(modelCredentialMocks.restoreModelCredentialOauthStoreForSlug).not.toHaveBeenCalled();
   });
 
-  async function sourcePersonaFixture(epoch = 4) {
+  async function sourcePersonaFixture(epoch = 4, captureSource = true) {
     const workspace = path.join(testRuntime.dir, "customers", "tester10");
     const project = path.join(workspace, "projects", "persona");
     const userDefaultAgentId = "octogee-tester10-coach", projectId = "octogee-tester10-proj-persona-coach";
@@ -1311,12 +1311,13 @@ describe("buildBrokeredLifecycleAdapter migration import activation", () => {
     vi.stubEnv("GATEWAY_ID", "shared-source");
     vi.stubEnv("POD_UID", "source-pod");
     const binding = { migrationId: "migration-source-persona", uid: "uid-tester10", gatewayId: "shared-source", podUid: "source-pod", epoch };
-    const manifest = await captureSourceWorkspaceIdentities({
+    const baseManifest: Parameters<typeof captureSourceWorkspaceIdentities>[0] = {
       version: 2, slug: "tester10", appliedFingerprint: "source-persona", agentId: userDefaultAgentId, accountId: "tester10-coach",
       agent: { id: userDefaultAgentId, workspace, identity: { name: "Config agent differs" } },
       mattermostAccount: { botToken: "coach-token" }, bindings: [{ agentId: userDefaultAgentId, match: { channel: "mattermost", accountId: "tester10-coach" } }],
       projectAgents: [{ agentId: projectId, accountId: "tester10-proj-persona", agent: { id: projectId, workspace: project, identity: { name: "Config project differs" } }, mattermostAccount: { botToken: "project-token" }, bindings: [{ agentId: projectId, match: { channel: "mattermost", accountId: "tester10-proj-persona" } }] }],
-    }, testRuntime.dir, binding);
+    };
+    const manifest = captureSource ? await captureSourceWorkspaceIdentities(baseManifest, testRuntime.dir, binding) : baseManifest;
     await writeActivationManifest(testRuntime.dir, manifest);
     mocks.readActivationManifest.mockImplementation(() => realReadActivationManifest(testRuntime.dir, "tester10"));
     const client = mkClient({
@@ -1374,8 +1375,8 @@ describe("buildBrokeredLifecycleAdapter migration import activation", () => {
     } finally { vi.unstubAllEnvs(); }
   });
 
-  async function assignedPersonaFixture() {
-    const f = await sourcePersonaFixture();
+  async function assignedPersonaFixture(captureSource = true) {
+    const f = await sourcePersonaFixture(4, captureSource);
     await fs.unlink(path.join(testRuntime.dir, activationManifestTarPath("tester10")));
     const snapshot = aliceSnapshot({ uid: "uid-tester10", slug: "tester10", gatewayId: "shared-source", status: "complete", runtimeMutationFenced: false, customerMmUserId: TESTER_OWNER_MM_ID, mattermostUserId: TESTER_OWNER_MM_ID,
       coachIdentity: { name: "Config name differs" }, coachToken: "coach-token", projectAgents: [{ projectId: "persona", enabled: true, status: "ready", token: "project-token", mmUserId: "pppppppppppppppppppppppppp" }] });
@@ -1542,6 +1543,69 @@ describe("buildBrokeredLifecycleAdapter migration import activation", () => {
       expect(await fs.readFile(path.join(f.project, "IDENTITY.md"))).toEqual(f.originals.get(f.project));
       expect(await fs.readFile(path.join(f.workspace, "IDENTITY.md"))).toEqual(currentDefaultAgent);
       expect(patchMocks.applyConfigPatch).toHaveBeenCalledOnce();
+    } finally { vi.unstubAllEnvs(); }
+  });
+
+  it.each(["removed", "active", "migration"])("replays a Shared retained identity after three late projects: %s", async mode => {
+    try {
+      const f = await assignedPersonaFixture(false);
+      const retired = ["persona", "second", "third"].map(project => ({
+        ...f.manifest.projectAgents[0],
+        agentId: `octogee-tester10-proj-${project}-coach`,
+        accountId: `tester10-proj-${project}`,
+        agent: { id: `octogee-tester10-proj-${project}-coach`, workspace: path.join(f.workspace, "projects", project) },
+        bindings: [{ agentId: `octogee-tester10-proj-${project}-coach`, match: { channel: "mattermost", accountId: `tester10-proj-${project}` } }],
+      }));
+      const ids = retired.map(agent => agent.agentId);
+      const originals = new Map(retired.map(agent => [agent.agent.workspace as string, Buffer.from(`# Identity\n${agent.agentId}\n`)]));
+      for (const [dir, bytes] of originals) {
+        await fs.mkdir(dir, { recursive: true });
+        await fs.writeFile(path.join(dir, "IDENTITY.md"), bytes);
+      }
+      const restoreAuthority = mode === "migration" ? assignedRestoreAuthority() : undefined;
+      const captureMode = restoreAuthority ? { migrationId: restoreAuthority.migrationId } : { assignmentEpoch: 4 };
+      const retained = {
+        ...f.manifest, projectAgents: retired,
+        targetWorkspaceIdentities: {
+          ...captureMode, uid: f.snapshot.uid, gatewayId: "shared-source", podUid: "source-pod",
+          files: [...(mode === "migration" ? [{ agentId: f.userDefaultAgentId, content: null, sha256: null }] : []),
+            ...retired.map(agent => {
+              const bytes = originals.get(agent.agent.workspace as string)!;
+              return { agentId: agent.agentId, content: bytes.toString("base64"), sha256: createHash("sha256").update(bytes).digest("hex") };
+            })],
+        },
+      };
+      await writeActivationManifest(testRuntime.dir, retained);
+      const snapshot = { ...f.snapshot, projectAgents: [], agentIds: mode === "active" ? [f.userDefaultAgentId, ids[0]] : [f.userDefaultAgentId],
+        ...(restoreAuthority ? { restoreAuthority, runtimeMutationFenced: true } : {}), };
+      vi.mocked(f.client.userSnapshot).mockResolvedValue(snapshot);
+      const rostered = [f.userDefaultAgentId, ...ids];
+      vi.mocked(f.rpc.configGet).mockImplementation(async () => {
+        const config = assignedPersonaRoster(f, rostered);
+        for (const agent of retired) {
+          const entry = config.config.agents.entries[agent.agentId];
+          if (entry) entry.workspace = agent.agent.workspace as string;
+        }
+        return config;
+      });
+      f.rpc.agentsDetachMany = vi.fn(async ({ agentIds }) => {
+        expect(agentIds).toEqual(ids);
+        rostered.splice(1);
+      });
+      vi.mocked(f.rpc.agentsCreate).mockRejectedValue(new OpenclawWireError("rpc-error", `agent "${f.userDefaultAgentId}" already exists`));
+
+      if (mode === "removed") {
+        await f.mount();
+        expect(f.rpc.agentsDetachMany).toHaveBeenCalledExactlyOnceWith({ agentIds: ids });
+        expect(await fs.readFile(path.join(f.workspace, "IDENTITY.md"))).toEqual(f.originals.get(f.workspace));
+        await expect(fs.access(path.join(testRuntime.dir, activationManifestTarPath("tester10")))).rejects.toMatchObject({ code: "ENOENT" });
+      } else {
+        await expect(f.mount(restoreAuthority ? { migrationId: restoreAuthority.migrationId } : {})).rejects.toThrow("Assigned Shared identity roster changed");
+        expect(f.rpc.agentsDetachMany).not.toHaveBeenCalled();
+        expect((await realReadActivationManifest(testRuntime.dir, "tester10")).targetWorkspaceIdentities).toEqual(retained.targetWorkspaceIdentities);
+      }
+      expect(f.rpc.agentsDelete).not.toHaveBeenCalled();
+      for (const [dir, bytes] of originals) expect(await fs.readFile(path.join(dir, "IDENTITY.md"))).toEqual(bytes);
     } finally { vi.unstubAllEnvs(); }
   });
 
