@@ -113,8 +113,10 @@ async function isFreshNativeLayout(stateDir: string): Promise<boolean> {
 }
 
 function supportedFreshRuntime(env: NodeJS.ProcessEnv): boolean {
-  return env.GATEWAY_CLASS === "isolated" && env.GATEWAY_RUNTIME_KIND === "gce-vm" &&
-    Boolean(env.OPENCLAW_AGENT_STORE_DSN?.trim());
+  if (env.GATEWAY_CLASS !== "isolated" || !env.OPENCLAW_AGENT_STORE_DSN?.trim()) return false;
+  if (env.GATEWAY_RUNTIME_KIND === "gce-vm") return true;
+  return env.GATEWAY_RUNTIME_KIND === "cluster" && Boolean(env.OCTOGEE_CHECKPOINT_SLOT_ID) &&
+    env.OCTOGEE_CHECKPOINT_SLOT_ID === env.GATEWAY_ID;
 }
 
 async function fileStat(file: string) {
