@@ -796,13 +796,25 @@ async function verifyChannelReady(adapter, slug, verifyTimeoutMs) {
     adapter.log(`[add:${slug}] ✅ verify: channel ready (running+connected) in ${elapsed}ms`);
     await adapter.materializeBrokerProfiles?.(slug);
 }
+function workspaceCoachChannels(snapshot) {
+    return snapshot.channels.filter(channel => channel.scope === "workspace" && channel.kind === "coach-dm");
+}
+async function initialCoachChannelId(adapter, snapshot, mmUpdate) {
+    if (mmUpdate)
+        return mmUpdate["mattermost.channelId"];
+    let channels = workspaceCoachChannels(snapshot);
+    if (channels.length === 0) {
+        const current = await adapter.loadUserSnapshot(snapshot.uid, { refresh: true });
+        if (current?.uid === snapshot.uid && current.slug === snapshot.slug)
+            channels = workspaceCoachChannels(current);
+    }
+    return channels.length === 1 ? channels[0].channelId : null;
+}
 async function markCompleteIfNeeded(adapter, uid, snapshot, newUser, mmUpdate) {
     if (!newUser && snapshot.agentIds.length > 0)
         return [];
     if (newUser) {
-        const defaultAgentChannels = snapshot.channels.filter((channel) => channel.scope === "workspace" && channel.kind === "coach-dm");
-        const existingDefaultAgentChannelId = defaultAgentChannels.length === 1 ? defaultAgentChannels[0].channelId : null;
-        const coachChannelId = mmUpdate ? mmUpdate["mattermost.channelId"] : existingDefaultAgentChannelId;
+        const coachChannelId = await initialCoachChannelId(adapter, snapshot, mmUpdate);
         if (typeof coachChannelId !== "string" || !coachChannelId) {
             throw new Error(`Initial agent monitoring for ${snapshot.slug} has no private agent channel`);
         }

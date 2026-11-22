@@ -400,6 +400,22 @@ describe("addUserToGateway — first-time provisioning", () => {
     }));
   });
 
+  it("completes the same native mount when the private coach channel arrives during attach", async () => {
+    state.user = snap({ status: "provisioning", mattermostUserId: "mm-user", channels: [] });
+    const adapter = makeAdapter(state);
+    const apply = adapter.applyAddUserConfigPatch;
+    adapter.applyAddUserConfigPatch = vi.fn(async (...args) => {
+      const result = await apply(...args);
+      state.user = { ...state.user!, channels: [{ scope: "workspace", kind: "coach-dm", channelId: "c".repeat(26) }] };
+      return result;
+    });
+    adapter.provisionDefaultAgentAutomation = vi.fn(async () => {});
+    await addUserToGateway(adapter, "uid-test");
+    expect(adapter.applyAddUserConfigPatch).toHaveBeenCalledTimes(1);
+    expect(adapter.provisionDefaultAgentAutomation).toHaveBeenCalledWith({ slug: "test", coachChannelId: "c".repeat(26) });
+    expect(state.writes).toContainEqual({ field: "provisioning.openclaw.status", value: "complete" });
+  });
+
   it("refuses a missing private agent channel before monitoring or completion", async () => {
     const adapter = makeAdapter(state);
     adapter.provisionMattermostUser = async () => ({});
