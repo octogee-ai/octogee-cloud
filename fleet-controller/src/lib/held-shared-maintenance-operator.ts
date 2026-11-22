@@ -12,7 +12,7 @@ import type { PlatformStateStore } from "@octogee/core/platform-state";
 type CheckCurrent = () => Promise<void>;
 
 export interface SharedHeldReturnMaintenancePhysical {
-  readVerifiedAdmission(selection: HeldNativeReturnSelection): Promise<SharedHeldReturnMaintenanceAdmission>;
+  readVerifiedAdmission(selection: HeldNativeReturnSelection, attemptId: string): Promise<SharedHeldReturnMaintenanceAdmission>;
   holdMigrationPolicy(claim: SharedHeldReturnMaintenanceClaim, assertReserved: CheckCurrent): Promise<void>;
   verifyReadyToDispatch(claim: SharedHeldReturnMaintenanceClaim, assertReserved: CheckCurrent): Promise<void>;
   applyStagedRelease(claim: SharedHeldReturnMaintenanceClaim, staged: SharedHeldReturnMaintenanceDispatch, assertCurrent: CheckCurrent): Promise<void>;
@@ -120,7 +120,7 @@ async function acquireMaintenanceForOperator(
   const claim = await acquireSharedHeldReturnMaintenance(store, {
     environment: "test", actor, attemptId, now,
     readVerifiedAdmission: async () => {
-      const admission = await physical.readVerifiedAdmission(selection);
+      const admission = await physical.readVerifiedAdmission(selection, attemptId);
       requireOperator(isDeepStrictEqual(admission.selection, selection), "Shared maintenance admission has different scope");
       return admission;
     },
