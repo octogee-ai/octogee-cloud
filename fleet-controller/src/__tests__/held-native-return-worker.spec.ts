@@ -1,3 +1,4 @@
+import { createCompensatingNativeReturn } from "../lib/compensating-native-return.js";
 import { gatewayRoot } from "@octogee/core-testing/admin-dry-run-app";
 import { gatewayScopedJobId, verifyFleetRequest } from "@octogee/core/fleet-signature";
 import { SIGNATURE_HEADER } from "@octogee/shared/types/fleet-controller";
@@ -8,6 +9,7 @@ import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store"
 import {
   assertPendingHeldNativeOfflineProjection, bindHeldNativeStoppedOriginal, recordHeldNativeOriginalRestart, reserveHeldNativeOfflineSource,
   acquireSharedHeldReturnMaintenance, advanceSharedHeldReturnMaintenance, assertSharedHeldReturnMaintenance,
+  assertSharedInertPreLaunch, authorizeSharedInertMaintenance, authorizeSharedInertStockLaunch, readAuthorizedSharedInertStock, rollbackSharedInertBeforeStock,
   assertSharedHeldReturnMaintenanceUnfenced, completeSharedHeldReturnMaintenance, heldNativeReturnBlocksDestination,
   requestHeldNativeReturnRepair, resumeSharedHeldReturnMaintenance, stageSharedHeldReturnMaintenanceRelease, withdrawSharedHeldReturnMaintenance,
   type SharedHeldReturnMaintenanceAdmission,
@@ -620,4 +622,208 @@ it("publishes the immutable retained Shared release from normal health plus obse
   expect((await h.store.gateways.roots.get(targetGatewayId))?.runtimeRestartFence).toBeUndefined();
   expect(heldNativeReturnBlocksDestination(stillHeld!, targetGatewayId)).toBe(true);
   await expect(assertSharedHeldReturnMaintenanceUnfenced(h.store, stillHeld!)).rejects.toThrow(/offline source custody/);
+});
+
+
+function compensationFixture() {
+  const h = fixture();
+  const runtimePath = `glmGateways/${sourceGatewayId}`;
+  const home = { returnOperationId: operationId, checkpointRequestedAt: 90, checkpointAcknowledgedAt: 90, parkRequestedAt: 90 };
+  const runtime = h.docs.get(runtimePath)!;
+  h.docs.set(runtimePath, { ...runtime, vm: { ...runtime.vm as object, internalIp: "10.0.0.1" }, vmHome: home });
+  const source = { internalIp: "10.0.0.1", instanceId: "1234", instanceName: "vm-owner", zone: "us-central1-a", bootDiskId: "10", homeDiskId: "11" };
+  const exactScope = { ...selection, uid, slug, exclusionId: "persistent-old-target-denial" };
+  const assertScope = (scope: unknown) => { expect(scope).toEqual(exactScope); };
+  const provider = {
+    readOldTargetExclusion: vi.fn(async (_tx: unknown, scope: unknown) => { assertScope(scope); return true; }),
+    verifyOldTargetExclusion: vi.fn(async (scope: unknown) => { assertScope(scope); }),
+    observeOriginalSource: vi.fn(async (scope: unknown) => { assertScope(scope); return source; }),
+  };
+  const actions = {
+    prepareSourceStores: vi.fn(async () => {}),
+    resumeSourceScheduler: vi.fn(async () => {}),
+    resumeSourceIngress: vi.fn(async () => {}),
+    verifySourceServing: vi.fn(async () => {}),
+  };
+  const deps = { store: h.store, provider, actions, now: () => 600 };
+  const worker = createCompensatingNativeReturn(deps);
+  const request = { environment: "test" as const, actor: "protected-operator", attemptId: "00000000-0000-4000-8000-000000000004",
+    exclusionId: "persistent-old-target-denial", selection };
+  const claim = async (startedAt = 610) => {
+    await h.store.journal.operations.patch(operationId, { status: "running", startedAt });
+    return (await h.store.journal.operations.get(operationId))!;
+  };
+  const ctx = { reportStep: vi.fn(), assertActiveClaim: vi.fn(async () => {}) };
+  return { ...h, deps, provider, actions, worker, request, claim, ctx, home, source };
+}
+
+it("admits only with independent durable exclusion and preserves the untouched journal on refusal", async () => {
+  const h = compensationFixture();
+  const before = structuredClone(h.docs);
+  await expect(createCompensatingNativeReturn({ ...h.deps, provider: undefined }).request(h.request)).rejects.toThrow(/provider is unavailable/);
+  h.provider.readOldTargetExclusion.mockResolvedValue(false);
+  await expect(h.worker.request(h.request)).rejects.toThrow(/durable old target exclusion/);
+  expect(h.docs).toEqual(before);
+});
+
+it("retries a compensated source after worker interruption with the original checkpoint and scheduler in history", async () => {
+  const h = compensationFixture();
+  const authority = await h.worker.request(h.request);
+  await expect(h.worker.request(h.request)).resolves.toEqual(authority);
+  await expect(h.worker.request({ ...h.request, actor: "different" })).rejects.toThrow(/different authority/);
+  h.actions.resumeSourceScheduler.mockRejectedValueOnce(new Error("worker interrupted"));
+  const running = await h.claim();
+  await expect(h.worker.recover(running, h.ctx)).resolves.toMatchObject({ rolledBack: false, error: expect.stringContaining("interrupted") });
+  expect((await h.store.fleetRegistry.get(sourceGatewayId))?.vmHome?.returnOperationId).toBeUndefined();
+  expect((await h.store.gateways.assignments.get(sourceGatewayId, uid))?.state).toBe("quiescing");
+  const replay = await h.claim(620);
+  const fresh = createCompensatingNativeReturn(h.deps);
+  await expect(fresh.recover(replay, h.ctx)).resolves.toMatchObject({ rolledBack: true });
+  expect(h.actions.prepareSourceStores).toHaveBeenCalledTimes(1);
+  expect(h.actions.resumeSourceScheduler).toHaveBeenCalledTimes(2);
+  expect(h.actions.resumeSourceIngress).toHaveBeenCalledTimes(1);
+  expect((await h.store.gateways.assignments.get(sourceGatewayId, uid))?.state).toBe("serving");
+  expect((await h.store.users.records.get(uid))?.fences.migration).toBeUndefined();
+  expect(await h.store.journal.operations.get(operationId)).toMatchObject({
+    schedulerHandoff: h.operations.schedulerHandoff, attemptHistory: [h.latest], schedulerHandoffReleased: true,
+  });
+  await expect(fresh.recover(replay, h.ctx)).resolves.toMatchObject({ rolledBack: true });
+  expect(h.actions.resumeSourceIngress).toHaveBeenCalledTimes(1);
+});
+
+it("cannot run source actions when a provider disk, claim or old target exclusion changes", async () => {
+  const h = compensationFixture();
+  await h.worker.request(h.request);
+  const op = await h.claim();
+  h.provider.observeOriginalSource.mockResolvedValueOnce({ ...h.source, homeDiskId: "12" });
+  await expect(h.worker.recover(op, h.ctx)).resolves.toMatchObject({ rolledBack: false, error: expect.stringContaining("attached disks changed") });
+  h.provider.verifyOldTargetExclusion.mockRejectedValueOnce(new Error("target still accepts imports"));
+  await expect(h.worker.recover(op, h.ctx)).resolves.toMatchObject({ rolledBack: false, error: expect.stringContaining("accepts imports") });
+  h.provider.readOldTargetExclusion.mockResolvedValue(false);
+  await expect(h.worker.recover(op, h.ctx)).resolves.toMatchObject({ rolledBack: false, error: expect.stringContaining("durable exclusion changed") });
+  expect((await h.store.fleetRegistry.get(sourceGatewayId))?.vmHome?.returnOperationId).toBe(operationId);
+  expect(h.actions.prepareSourceStores).not.toHaveBeenCalled();
+});
+
+it("fails closed at ordinary migration dispatch when the compensating provider is absent", async () => {
+  const h = compensationFixture();
+  await h.worker.request(h.request);
+  const operation = await h.claim();
+  const handler = createMigrateUserHandler({} as MigrateUserDeps);
+  await expect(handler(operation, h.ctx)).resolves.toMatchObject({ rolledBack: false, error: expect.stringContaining("provider is unavailable") });
+});
+
+it("completes the ordinary queued rollback while retaining the prior forward checkpoint as historical evidence", async () => {
+  const h = compensationFixture();
+  const authority = await h.worker.request(h.request);
+  const handler = createMigrateUserHandler({ recoverCompensatingNativeReturn: h.worker.recover } as MigrateUserDeps);
+  const deps = { store: h.store, handlers: { "migrate-user": handler }, log: vi.fn() } as unknown as Parameters<typeof processOperation>[1];
+  await processOperation((await h.store.journal.operations.get(operationId))!, deps);
+  expect((await h.store.journal.operations.get(operationId))?.status).toBe("pending");
+  await processOperation((await h.store.journal.operations.get(operationId))!, { ...deps, assertCompensatingNativeReturnClaimable: h.worker.assertClaimable });
+  const finished = await h.store.journal.operations.get(operationId);
+  expect(finished).toMatchObject({ status: "failed", rolledBack: true, schedulerHandoffReleased: true,
+    schedulerHandoff: h.operations.schedulerHandoff });
+  expect(finished?.attemptHistory).toContainEqual(h.latest);
+  expect((await h.store.journal.audits.get(authority.auditId))?.target.archivedReturn).toEqual({
+    handoff: h.operations.schedulerHandoff, attempt: h.latest,
+  });
+  expect((await h.store.gateways.roots.get(sourceGatewayId))?.runtimeRestartFence).toBeUndefined();
+});
+
+
+it("rolls back a source-flushed failure before the VM checkpoint request without rewriting historical home fields", async () => {
+  const h = compensationFixture();
+  const runtimePath = `glmGateways/${sourceGatewayId}`;
+  const historical = { checkpointAcknowledgedAt: null, lastCheckpoint: { instanceId: "1234", completedAt: 23 } };
+  h.docs.set(runtimePath, { ...h.docs.get(runtimePath), vmHome: historical });
+  const runtime = await h.store.fleetRegistry.get(sourceGatewayId);
+  await h.worker.request(h.request);
+  await expect(h.worker.recover(await h.claim(), h.ctx)).resolves.toMatchObject({ rolledBack: true });
+  expect(await h.store.fleetRegistry.get(sourceGatewayId)).toEqual(runtime);
+  expect((await h.store.gateways.assignments.get(sourceGatewayId, uid))?.state).toBe("serving");
+});
+
+it.each([
+  { returnOperationId: "foreign" },
+  { checkpointRequestedAt: 90 },
+  { parkRequestedAt: 90 },
+  { returnOperationId: operationId, checkpointRequestedAt: 90, checkpointAcknowledgedAt: 90, parkRequestedAt: 91 },
+  { returnOperationId: operationId, checkpointRequestedAt: 90, parkRequestedAt: 90 },
+])("refuses mixed or foreign checkpoint state without releasing it (%j)", async home => {
+  const h = compensationFixture();
+  const runtimePath = `glmGateways/${sourceGatewayId}`;
+  h.docs.set(runtimePath, { ...h.docs.get(runtimePath), vmHome: home });
+  const runtime = await h.store.fleetRegistry.get(sourceGatewayId);
+  await h.worker.request(h.request);
+  await expect(h.worker.recover(await h.claim(), h.ctx)).resolves.toMatchObject({
+    rolledBack: false, error: expect.stringContaining("checkpoint no longer matches its request"),
+  });
+  expect(await h.store.fleetRegistry.get(sourceGatewayId)).toEqual(runtime);
+  expect(h.actions.prepareSourceStores).not.toHaveBeenCalled();
+});
+
+function inertPriorFixture(claim: Awaited<ReturnType<ReturnType<typeof sharedMaintenanceFixture>["acquire"]>>) {
+  return {
+    attemptId: claim.attemptId, podUid: claim.plan.workload.podUid, artifactSetId: "e".repeat(64),
+    originalContainerIds: { gateway: "old-gateway", "gateway-edge": "old-edge" },
+    ownerBackups: claim.plan.owners.map((owner, index) => ({ ...owner, restoredArchiveSha256: index.toString(16).repeat(64) })),
+  };
+}
+
+it("separately authorizes inert replacement and refuses any stock authority before a verified current common restore", async () => {
+  const h = sharedMaintenanceFixture();
+  const claim = await h.acquire();
+  const prior = inertPriorFixture(claim);
+  await expect(authorizeSharedInertMaintenance(h.store, claim, async () => ({ ...prior, ownerBackups: prior.ownerBackups.slice(1) }), () => 510))
+    .rejects.toThrow("all six independently verified owner backups");
+  await authorizeSharedInertMaintenance(h.store, claim, async assertCurrent => { await assertCurrent(); return prior; }, () => 510);
+  await expect(assertSharedInertPreLaunch(h.store, claim)).resolves.toEqual(prior);
+  const ordinaryDispatch = vi.fn();
+  await expect(advanceSharedHeldReturnMaintenance(h.store, claim, "dispatched", () => 515, ordinaryDispatch)).rejects.toThrow("dispatched or withdrawn");
+  expect(ordinaryDispatch).not.toHaveBeenCalled();
+  await expect(stageSharedHeldReturnMaintenanceRelease(h.store, claim, () => 515)).rejects.toThrow("before dispatch");
+  await expect(readAuthorizedSharedInertStock(h.store, claim)).rejects.toThrow("no launch-authorized common restore");
+  const { ownerBackups: _priorBackups, ...binding } = prior;
+  const common = {
+    ...binding, heldContainerIds: { gateway: "held-gateway", "gateway-edge": "held-edge" },
+    observedImageIds: claim.plan.maintenanceImages, ownerHomes: claim.plan.owners,
+    custodyGeneration: "b".repeat(64), restoredArchiveSha256: "c".repeat(64),
+    writersHeldAt: 520, capturedAt: 530, restoredAt: 540,
+  };
+  for (const observed of [
+    { ...common, capturedAt: 512 },
+    { ...common, observedImageIds: claim.plan.originalImages },
+    { ...common, heldContainerIds: { ...common.heldContainerIds, gateway: prior.originalContainerIds.gateway } },
+  ]) {
+    await expect(authorizeSharedInertStockLaunch(h.store, claim, async () => observed, () => 550)).rejects.toThrow("verified common restore");
+  }
+  await authorizeSharedInertStockLaunch(h.store, claim, async assertCurrent => { await assertCurrent(); return common; }, () => 550);
+  await expect(readAuthorizedSharedInertStock(h.store, claim)).resolves.toEqual(common);
+  await expect(assertSharedInertPreLaunch(h.store, claim)).rejects.toThrow("no longer permits");
+  await expect(rollbackSharedInertBeforeStock(h.store, claim, vi.fn())).rejects.toThrow("no longer permits");
+  await expect(advanceSharedHeldReturnMaintenance(h.store, claim, "rollback", () => 555)).rejects.toThrow("distinct inert launch authority");
+  await expect(advanceSharedHeldReturnMaintenance(h.store, claim, "dispatched", () => 557)).resolves.toBeUndefined();
+  await expect(stageSharedHeldReturnMaintenanceRelease(h.store, claim, () => 560)).resolves.toBe(2);
+});
+
+it("permits a retried pre-launch rollback only with verified original role and six-owner custody", async () => {
+  const h = sharedMaintenanceFixture();
+  const claim = await h.acquire();
+  const prior = inertPriorFixture(claim);
+  await authorizeSharedInertMaintenance(h.store, claim, async () => prior, () => 510);
+  const original = {
+    attemptId: claim.attemptId, outcome: "rolled-back" as const, workload: claim.plan.workload, owners: claim.plan.owners,
+    images: claim.plan.originalImages, runningImageIds: claim.plan.originalImages, retainedBoot: claim.plan.retainedBoot,
+    nativeSource: claim.plan.originalNativeSource, noInFlightTasks: true, noPreparedImports: true, exclusiveReady: true, verifiedAt: 540,
+  } as const;
+  await expect(rollbackSharedInertBeforeStock(h.store, claim, async assertCurrent => {
+    await assertCurrent();
+    await expect(assertSharedInertPreLaunch(h.store, claim)).rejects.toThrow("no longer permits");
+    return { ...original, verifiedAt: 510 };
+  }, () => 520)).rejects.toThrow("exact verified completion");
+  await expect(rollbackSharedInertBeforeStock(h.store, claim, async current => { await current(); return original; }, () => 550))
+    .resolves.toBeUndefined();
+  await expect(readAuthorizedSharedInertStock(h.store, claim)).rejects.toThrow("no launch-authorized common restore");
+  expect(await h.store.gateways.roots.get(targetGatewayId)).toMatchObject({ desiredRelease: 1, latestRelease: 1, liveRelease: 1 });
 });

@@ -1,3 +1,5 @@
+import type { CompensatingNativeReturnClaimGate } from "./lib/compensating-native-return.js";
+import { gatewayRetirementUninstaller, type GatewayRetirementUninstallPolicy } from "./lib/gateway-retirement-uninstaller.js";
 import {
   createSharedHeldReturnMaintenanceOperator, type SharedHeldReturnMaintenancePhysical,
 } from "./lib/held-shared-maintenance-operator.js";
@@ -534,6 +536,7 @@ interface ControllerDeps {
   handlers: OperationHandlers;
   heldNativeReturnRepairAvailable?: boolean;
   sharedHeldReturnMaintenance?: SharedHeldReturnMaintenanceAdmin;
+  assertCompensatingNativeReturnClaimable?: CompensatingNativeReturnClaimGate;
   observeHeldNativeStoppedOriginal?: HeldNativeOfflineSourceBackend["observeStoppedOriginal"];
   observeHeldNativeOriginalRestart?: HeldNativeOfflineSourceBackend["observeOriginalRestart"];
   requestNativeReturnSourceRecovery?: ReturnType<typeof createNativeReturnSourceRecoveryOwner>["request"];
@@ -903,6 +906,7 @@ interface GatewayConvergencePassDeps {
   store: PlatformStateStore;
   resolveHobbyCheckpointPod?: ResolveHobbyCheckpointPod;
   requiresInitialGatewayRelease?: RequiresInitialGatewayRelease;
+  retirementUninstallPolicy?: GatewayRetirementUninstallPolicy;
   assertVmPauseNotPending?: (gatewayId: string, ownerUid?: string) => void;
   helm: HelmRunner;
   kubeOps: KubeOps;
@@ -1258,6 +1262,7 @@ async function convergeAvailableGateway(
     desiredChartFingerprint,
     desiredDeploymentIntentFingerprint,
     deploymentReady: false,
+    retirementPolicy: passDeps.retirementUninstallPolicy,
   });
   const action = await refineGatewayConvergenceAction({
     passDeps,
@@ -2118,6 +2123,17 @@ async function allowOfflineMigrationWorkerClaim(tx: PlatformStateTransaction, op
   return true;
 }
 
+async function allowMigrationWorkerClaim(tx: PlatformStateTransaction, operation: Stored<OperationRecord>, deps: ControllerDeps): Promise<boolean> {
+  if (operation.input.compensatingNativeReturn !== undefined) {
+    if (!deps.assertCompensatingNativeReturnClaimable) return false;
+    await deps.assertCompensatingNativeReturnClaimable(tx, operation);
+    return true;
+  }
+  if (operation.schedulerHandoff?.forwardRecovery?.offlineSourceRecovery) return allowOfflineMigrationWorkerClaim(tx, operation, deps);
+  await assertMigrationRestartUnfenced(tx, operation.input);
+  return true;
+}
+
 async function queueOperationBehindHomeArchive(tx: PlatformStateTransaction, operation: Stored<OperationRecord>, archive: string) {
   const waitingOn = `home archive ${archive}`;
   if (operation.waitingOn !== waitingOn) await tx.journal.operations.patch(operation.id, { waitingOn });
@@ -2138,8 +2154,7 @@ async function attemptClaimOrQueueOperation(
       const freshOperation = operationFromRecord(stored);
       await assertOwnerOperationUnfenced(tx, op.id, freshOperation.input);
       if (freshOperation.kind === "migrate-user") {
-        if (!stored.schedulerHandoff?.forwardRecovery?.offlineSourceRecovery) await assertMigrationRestartUnfenced(tx, freshOperation.input);
-        else if (!(await allowOfflineMigrationWorkerClaim(tx, stored, deps))) return { outcome: "skipped" as const };
+        if (!(await allowMigrationWorkerClaim(tx, stored, deps))) return { outcome: "skipped" as const };
       }
       let runningOpsSameKind: OperationRef[] = [];
       let pendingOpsSameKind: PendingOperationRef[] = [];
@@ -3007,6 +3022,7 @@ interface ControllerRuntimeSeams {
   resolveHobbyCheckpointPod?: ResolveHobbyCheckpointPod;
   requiresInitialGatewayRelease?: RequiresInitialGatewayRelease;
   checkGatewayRolloutActivation?: GatewayRolloutActivationGuard;
+  retirementUninstallPolicy?: GatewayRetirementUninstallPolicy;
   heldNativeReturnBackupReaders?: NativeReturnBackupReaders | null;
   sharedHeldReturnMaintenancePhysical?: SharedHeldReturnMaintenancePhysical | null;
   heldNativeOfflineSource?: ControllerProduct["heldNativeOfflineSource"];
@@ -3020,7 +3036,7 @@ async function createControllerRuntime(
   store: PlatformStateStore,
   createHostingCleanup: ControllerProduct["createHostingCleanup"],
   userLifecycle: ProductUserLifecycle | null,
-  { accounts, documents, provisioning, gatewayGitKeys, resolveHobbyCheckpointPod, requiresInitialGatewayRelease, checkGatewayRolloutActivation, heldNativeReturnBackupReaders, heldNativeOfflineSource, sharedHeldReturnMaintenancePhysical }: ControllerRuntimeSeams,
+  { accounts, documents, provisioning, gatewayGitKeys, resolveHobbyCheckpointPod, requiresInitialGatewayRelease, checkGatewayRolloutActivation, retirementUninstallPolicy, heldNativeReturnBackupReaders, heldNativeOfflineSource, sharedHeldReturnMaintenancePhysical }: ControllerRuntimeSeams,
 ): Promise<ControllerRuntime> {
   const runKubectl: KubectlSubprocess = (args, opts) => spawnKubectl(args, opts);
   const authSecretEnsurer = createAuthSecretEnsurer({ runKubectl, randomTokenHex: defaultRandomTokenHex, log });
@@ -3165,7 +3181,7 @@ async function createControllerRuntime(
   const runGatewayConvergence = (gatewayIds?: readonly string[]) =>
     runGatewayConvergencePass({
       store,
-      resolveHobbyCheckpointPod, requiresInitialGatewayRelease,
+      resolveHobbyCheckpointPod, requiresInitialGatewayRelease, retirementUninstallPolicy,
       assertVmPauseNotPending: vmRuntime?.assertVmPauseNotPending,
       helm,
       kubeOps,
@@ -3185,7 +3201,7 @@ async function createControllerRuntime(
     syncFleetIngress: handlerSyncFleetIngress, privateKey: fleetControllerPrivateKey,
     modelKeySourceIssuer, prepareGatewayConfig, chartFingerprint,
     runRuntimeRecovery: convergeGateways.runExclusive,
-    prepareMigrationAgentStores, ...nativeReturn.handlers, store, requiresInitialGatewayRelease, checkGatewayRolloutActivation,
+    prepareMigrationAgentStores, ...nativeReturn.handlers, store, requiresInitialGatewayRelease, checkGatewayRolloutActivation, retirementUninstallPolicy,
     deleteHostingSites: createHostingCleanup?.(log),
     userLifecycle,
     accounts,
@@ -3315,6 +3331,7 @@ export interface ControllerProduct {
   resolveHobbyCheckpointPod?: ResolveHobbyCheckpointPod;
   requiresInitialGatewayRelease?: RequiresInitialGatewayRelease;
   checkGatewayRolloutActivation?: GatewayRolloutActivationGuard;
+  retirementUninstallPolicy?: (store: PlatformStateStore) => GatewayRetirementUninstallPolicy;
   createHostingCleanup?: (log: (message: string) => void) => HostingCleanup;
   userLifecycle: ProductUserLifecycleFactory | null;
   addAdminRoutes?: ProductAdminRoutes;
@@ -3394,6 +3411,7 @@ export async function main(product: ControllerProduct): Promise<void> {
       resolveHobbyCheckpointPod: product.resolveHobbyCheckpointPod,
       requiresInitialGatewayRelease: product.requiresInitialGatewayRelease,
       checkGatewayRolloutActivation: product.checkGatewayRolloutActivation,
+      retirementUninstallPolicy: product.retirementUninstallPolicy?.(store),
       ...controllerNativeReturnSeams(product, store, environmentName),
     });
 
@@ -3690,6 +3708,7 @@ async function buildHandlers(
     reconcileHeldNativeOfflineReturn?: MigrateUserDeps["reconcileHeldNativeOfflineReturn"];
     requiresInitialGatewayRelease?: RequiresInitialGatewayRelease;
     checkGatewayRolloutActivation?: GatewayRolloutActivationGuard;
+    retirementUninstallPolicy?: GatewayRetirementUninstallPolicy;
     store: PlatformStateStore;
     deleteHostingSites?: HostingCleanup;
     userLifecycle: ProductUserLifecycle | null;
@@ -3975,12 +3994,9 @@ async function buildHandlers(
       const runtime = await store.fleetRegistry.get(gatewayId);
       return runtime === null ? [] : readMountedUsers(runtime as unknown as Record<string, unknown>);
     },
-    helmUninstallGateway: async (gatewayId) => {
-      await runGatewayRuntimeExclusive(async () => {
-        if (!(await gatewayRuntimeMutationAllowed(store, gatewayId))) throw new Error('gateway retirement runtime unavailable');
-        await helm.removeInstance({ namespace: NAMESPACE, gatewayId });
-      });
-    },
+    helmUninstallGateway: gatewayRetirementUninstaller(
+      store, gatewayId => helm.removeInstance({ namespace: NAMESPACE, gatewayId }), fleetOps.retirementUninstallPolicy,
+    ),
     readAssignmentsForGateway: async (gatewayId) => {
       const assignments = await store.gateways.assignments.list(gatewayId);
       return assignments.map((a) => ({ uid: a.uid, slug: a.slug }));
