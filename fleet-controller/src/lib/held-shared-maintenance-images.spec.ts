@@ -1,7 +1,7 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import { captureSourceRecoveryWorkload, pinSourceRecoveryImages, resumeSourceRecoveryWorkload } from "./shared-source-images.js";
 import { existingOwnedPod, json, recoveredPodReady } from "./shared-restore-runtime.js";
-import { transitionHeldSharedPod } from "./held-shared-maintenance-images.js";
+import { holdSharedMaintenanceImages, transitionHeldSharedPod } from "./held-shared-maintenance-images.js";
 
 vi.mock("./shared-source-images.js");
 vi.mock("./held-shared-maintenance-helm.js");
@@ -51,4 +51,18 @@ it("refuses a replacement ReplicaSet and observes a lost Fleet claim before each
   deps.assertCurrent.mockRejectedValue(new Error("lost maintenance claim"));
   await expect(transitionHeldSharedPod(deps,bound,"install")).rejects.toThrow(/claim/);
   expect(pinSourceRecoveryImages).not.toHaveBeenCalled();
+});
+
+
+it("separates the initial retained Pod image change from rollout readiness and Helm publication", async () => {
+  const current = pod(old);
+  vi.mocked(existingOwnedPod).mockResolvedValue(current);
+  vi.mocked(json).mockImplementation(async () => { Object.assign(current, pod(next)); return current; });
+  const pending = await holdSharedMaintenanceImages(deps, bound, "install");
+  expect(json).toHaveBeenCalledOnce();
+  expect(recoveredPodReady).not.toHaveBeenCalled();
+  expect(resumeSourceRecoveryWorkload).not.toHaveBeenCalled();
+  vi.mocked(recoveredPodReady).mockReturnValue(true);
+  await pending.publishReady();
+  expect(resumeSourceRecoveryWorkload).toHaveBeenCalledOnce();
 });

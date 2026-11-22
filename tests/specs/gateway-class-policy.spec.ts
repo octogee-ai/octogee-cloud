@@ -28,6 +28,7 @@ const userStructuredTools = [
   "octogee_project_run_status",
   "octogee_project_publish",
   "octogee_project_services",
+  "octogee_project_server_logs",
   "octogee_project_attach_services",
   "octogee_project_deploy_rules",
   "octogee_project_enable_database",
@@ -586,6 +587,7 @@ describe("gateway/apply-gateway-class-policy.mjs", () => {
     expect(out.agents.entries["octogee-alice-proj-garden-coach"].tools.alsoAllow).not.toContain("octogee_project_publish");
     expect(out.agents.list[0].tools.alsoAllow).toEqual(expect.arrayContaining([
       "octogee_project_services",
+      "octogee_project_server_logs",
       "octogee_project_attach_services",
       "octogee_project_deploy_rules",
       "octogee_project_enable_database",
@@ -593,6 +595,8 @@ describe("gateway/apply-gateway-class-policy.mjs", () => {
       "octogee_project_restore_database",
     ]));
     expect(out.agents.entries["octogee-alice-proj-garden-coach"].tools.alsoAllow).toContain("octogee_project_services");
+    expect(out.agents.entries["octogee-alice-proj-garden-coach"].tools.alsoAllow).toContain("octogee_project_server_logs");
+    expect(out.agents.entries["octogee-alice-proj-garden-coach"].tools.deny).not.toContain("octogee_project_server_logs");
     for (const tool of [
       "octogee_project_attach_services",
       "octogee_project_deploy_rules",

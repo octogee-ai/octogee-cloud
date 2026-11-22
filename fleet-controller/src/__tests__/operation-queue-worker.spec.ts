@@ -94,6 +94,35 @@ function buildDeps(
 }
 
 describe("gateway operation queue — enqueue instead of reject (glmOperations wiring)", () => {
+  it.each(["pending", "running"] as const)("rolls another VM while a source rollout waits on a %s forward return", async (status) => {
+    const operationId = "builder-return-builder-a-g2";
+    const returning = baseOp({ id: operationId, kind: "migrate-user", origin: "automatic", createdAt: 1, status,
+      startedAt: status === "running" ? 10 : null,
+      input: { uid: "alice", userSlug: "alice", source: "builder-activation-lease", fromGatewayId: "builder-a", toGatewayId: "shared-a" },
+      schedulerHandoff: {
+        uid: "alice", slug: "alice", fromGatewayId: "builder-a", toGatewayId: "shared-a",
+        migrationId: `mig-${operationId}:scheduler:1:claim:10`,
+        forwardRecovery: { schemaVersion: 1, phase: "source-flushed", sourceEpoch: 3 },
+      },
+    });
+    const blocked = baseOp({ id: "source-roll", origin: "operator", createdAt: 2, input: { gatewayId: "builder-a" } });
+    const unrelated = baseOp({ id: "other-roll", origin: "operator", createdAt: 3, input: { gatewayId: "builder-b" } });
+    const { db, store } = createOperationsFixture({ [operationId]: returning, "source-roll": blocked, "other-roll": unrelated }, {
+      gateways: { "builder-a": { gatewayId: "builder-a", gatewayClass: "isolated" }, "builder-b": { gatewayId: "builder-b", gatewayClass: "isolated" } },
+      runtimes: { "builder-a": { runtime: "gce-vm" }, "builder-b": { runtime: "gce-vm" } },
+    });
+    const rollout = vi.fn(async () => ({ success: true, steps: [] }));
+    const deps = buildDeps(db, { rollout });
+
+    await processOperation(blocked as unknown as Operation, deps);
+    await processOperation(unrelated as unknown as Operation, deps);
+
+    expect(rollout).toHaveBeenCalledOnce();
+    expect(store.get("other-roll")?.status).toBe("succeeded");
+    expect(store.get("source-roll")).toMatchObject({ status: "pending", waitingOn: "migration builder-a → shared-a" });
+    expect(store.get(operationId)).toEqual(returning);
+  });
+
   it.each(["wake", "idle return"] as const)("lets a target rollout release a compatibility-blocked %s", async direction => {
     const wake = direction === "wake";
     const fromGatewayId = wake ? "shared-a" : "builder-a", toGatewayId = wake ? "builder-a" : "shared-a";
