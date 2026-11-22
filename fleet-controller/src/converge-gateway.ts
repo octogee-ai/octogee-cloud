@@ -1,3 +1,4 @@
+import type { GatewayRetirementUninstallPolicy } from "./lib/gateway-retirement-uninstaller.js";
 import type { HobbyCheckpointPod } from "./helm-runner.js";
 import type { SurgeReadyFleetState } from "./surge-user-handoff.js";
 import { createHash } from "node:crypto";
@@ -127,6 +128,7 @@ export interface GatewayConvergencePlanInput {
   desiredChartFingerprint?: string;
   desiredDeploymentIntentFingerprint?: string;
   deploymentReady: boolean;
+  retirementPolicy?: Pick<GatewayRetirementUninstallPolicy, "requiresWorker">;
 }
 
 export type ReadyVmObservation = SurgeReadyFleetState & { vmStartedAt: number | null | undefined };
@@ -156,7 +158,7 @@ export function planGatewayConvergence(
 ): GatewayConvergenceAction {
   const { gateway, artifact, helm } = input;
   if (gateway.desiredStatus === "retired") {
-    return helm ? { kind: "uninstall" } : { kind: "steady" };
+    return helm && !input.retirementPolicy?.requiresWorker(gateway) ? { kind: "uninstall" } : { kind: "steady" };
   }
   if (!artifact) {
     return {
