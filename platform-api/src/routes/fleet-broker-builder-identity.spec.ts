@@ -154,6 +154,14 @@ describe("initial Native boot of a previously prepared assigned Pod", () => {
     }, NOW);
   });
 
+  it("authorizes the observed desired release while a later archive exists when its preparation is proven", async () => {
+    const authority = vi.fn(async () => true);
+    const response = await broker(pod, observed, { firstAssignedOwner: true, root: { latestRelease: 2 },
+      assignedPodInitialBoot: authority })({ nativeBoot: true }).expect(200);
+    expect(response.body.identity.bootMode).toBe("prelaunch");
+    expect(authority).toHaveBeenCalledExactlyOnceWith(expect.anything(), expect.objectContaining({ release: 1 }), NOW);
+  });
+
   it("keeps generic assigned or rejected Pods held without a positive preparation proof", async () => {
     for (const authority of [undefined, vi.fn(async () => false)]) {
       const response = await broker(pod, observed, { firstAssignedOwner: true, assignedPodInitialBoot: authority })({ nativeBoot: true }).expect(200);

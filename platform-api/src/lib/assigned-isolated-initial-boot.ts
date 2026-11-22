@@ -18,7 +18,7 @@ export async function assignedPodInitialBootAllowed(
   authorize: AssignedPodInitialBootAuthority,
 ): Promise<boolean> {
   const { builderSlug, desiredRelease } = gateway;
-  if (!builderSlug || gateway.liveRelease !== null || desiredRelease !== gateway.latestRelease) return false;
+  if (!builderSlug || gateway.liveRelease !== null) return false;
   const scope = await readAssignedIsolatedAgentAnchorScope(reader, {
     ...caller,
     slug: builderSlug,
