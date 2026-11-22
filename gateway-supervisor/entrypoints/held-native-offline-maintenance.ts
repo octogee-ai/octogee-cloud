@@ -78,10 +78,10 @@ function assertSupportedConfig(value: unknown) {
   }
 }
 
-function validateEnrollment(value: Enrollment) {
+export function validateHeldNativeMaintenanceEnrollment(value: Enrollment, uid = process.getuid?.()) {
   if (![
     value.version === 1, Number.isSafeInteger(value.maintenanceUid), value.maintenanceUid >= 1000,
-    value.maintenanceUid === process.getuid?.(), Number.isSafeInteger(value.earliestClaimStartedAt),
+    value.maintenanceUid === uid, Number.isSafeInteger(value.earliestClaimStartedAt),
     value.earliestClaimStartedAt > 0, value.expected?.maintenance,
     sha256.test(value.expected?.desiredSnapshotSha256),
   ].every(Boolean)) {
@@ -101,7 +101,7 @@ async function loadEnrollment() {
     stableFile(join(enrollmentRoot, "maintenance-private.pem"), 16384, true).then(key => key.toString("utf8")),
   ]);
   const enrollment = JSON.parse(bytes.toString("utf8")) as Enrollment;
-  validateEnrollment(enrollment);
+  validateHeldNativeMaintenanceEnrollment(enrollment);
   if (createPublicKey(fleetPublicKey).asymmetricKeyType !== "ed25519" ||
       createPrivateKey(maintenancePrivateKey).asymmetricKeyType !== "ed25519") {
     throw new Error("Held Native maintenance keys are not Ed25519");
@@ -109,16 +109,15 @@ async function loadEnrollment() {
   return { enrollment, fleetPublicKey, maintenancePrivateKey };
 }
 
-async function verifiedDesired(
-  request: Parameters<HeldNativeOfflineStdioOptions["prepareProjection"]>[0], enrollment: Enrollment, publicKey: string,
+export async function readVerifiedHeldNativeDesired(
+  request: Parameters<HeldNativeOfflineStdioOptions["prepareProjection"]>[0],
+  enrolledAgentIds: Enrollment["agentIds"], publicKey: string,
+  { cleanCredential, aliasCredential, readReviewedDesired }: {
+    cleanCredential: string; aliasCredential: string; readReviewedDesired(): Promise<Buffer>;
+  },
 ) {
   const { identity } = request;
-  const cleanCredential = join(dirname(clonePath(enrollment.originalConfig)), localMattermostAccounts);
-  const aliasCredential = join(sourceState, localMattermostAccounts);
-  const [desired, clean, alias] = await Promise.all([
-    stableFile(join(enrollmentRoot, "desired.json"), 256 * 1024, true),
-    stat(cleanCredential), stat(aliasCredential),
-  ]);
+  const [desired, clean, alias] = await Promise.all([readReviewedDesired(), stat(cleanCredential), stat(aliasCredential)]);
   if (clean.dev !== alias.dev || clean.ino !== alias.ino) {
     throw new Error("Held Native projection credential reference is not the exact restored file");
   }
@@ -134,7 +133,7 @@ async function verifiedDesired(
       return typeof secret === "string" ? secret : null;
     },
   });
-  if (!isDeepStrictEqual([...snapshot.agentIds].sort(), enrolledOwnerAgents(enrollment.agentIds))) {
+  if (!isDeepStrictEqual([...snapshot.agentIds].sort(), enrolledOwnerAgents(enrolledAgentIds))) {
     throw new Error("Held Native broker roster differs from the verified retained owner");
   }
   const compose = prepareHeldBrokerNativeProjectionFromSnapshot(snapshot);
@@ -182,12 +181,16 @@ async function main() {
   };
   const result = await runHeldNativeOfflineStdio({
     expected, earliestClaimStartedAt, fleetPublicKey, maintenancePrivateKey, workspace,
-    prepareProjection: request => verifiedDesired(request, enrollment, fleetPublicKey),
+    prepareProjection: request => readVerifiedHeldNativeDesired(request, enrollment.agentIds, fleetPublicKey, {
+      cleanCredential: join(dirname(clonePath(enrollment.originalConfig)), localMattermostAccounts),
+      aliasCredential: join(sourceState, localMattermostAccounts),
+      readReviewedDesired: () => stableFile(join(enrollmentRoot, "desired.json"), 256 * 1024, true),
+    }),
   }, process.stdin);
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }
 
-void main().catch(() => {
+if (import.meta.main) void main().catch(() => {
   process.stderr.write("Held Native offline maintenance refused; no receipt emitted.\n");
   process.exitCode = 1;
 });
