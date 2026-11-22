@@ -258,6 +258,10 @@
       "types": "./dist/server/repeat-squelch.d.ts",
       "default": "./dist/server/repeat-squelch.js"
     },
+    "./server/hobby-checkpoint-gate": {
+      "types": "./dist/server/hobby-checkpoint-gate.d.ts",
+      "default": "./dist/server/hobby-checkpoint-gate.js"
+    },
     "./server/user-claim": {
       "types": "./dist/server/user-claim.d.ts",
       "default": "./dist/server/user-claim.js"
