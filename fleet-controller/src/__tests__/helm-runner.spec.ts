@@ -121,7 +121,8 @@ describe("Shared Helm runtime intent receipts", () => {
     });
     expect(calls[0]).toContain(valuesFile);
     expect(calls[0]).toContain("sharedRuntimeIntent=");
-    expect(log).toHaveBeenCalledWith(expect.stringContaining("without an installed intent receipt"));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("without an installed intent receipt (ENOENT)"));
+    expect(log.mock.calls.flat().join(" ")).not.toContain(valuesFile);
   });
 
   it.each([["deployed", 2, true], ["deployed", undefined, false], ["pending-upgrade", 2, false], ["failed", 2, false]] as const)(

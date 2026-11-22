@@ -868,6 +868,11 @@ interface SharedRuntimeInstallation {
 
 const noSharedReceipt: SharedRuntimeInstallation = { values: {}, cleanup: async () => {} };
 
+function receiptFilesystemError(error: unknown): string {
+  const code = error instanceof Error && "code" in error ? error.code : undefined;
+  return typeof code === "string" && /^E[A-Z0-9_]{1,31}$/.test(code) ? code : "unknown filesystem error";
+}
+
 async function prepareSharedRuntimeInstallation(opts: SharedRuntimeInputs): Promise<SharedRuntimeInstallation> {
   if (opts.gatewayClass !== "shared") return noSharedReceipt;
   const bytes = opts.valuesFile ? await readFile(opts.valuesFile) : null;
@@ -1018,8 +1023,8 @@ export function createHelmSubprocessRunner(deps: HelmSubprocessRunnerDeps): Helm
       }
 
       let result: HelmSubprocessResult;
-      const installation = await prepareSharedRuntimeInstallation(opts).catch(() => {
-        deps.log(`[helm-runner] ${release} could not snapshot Shared values; proceeding without an installed intent receipt`);
+      const installation = await prepareSharedRuntimeInstallation(opts).catch((error: unknown) => {
+        deps.log(`[helm-runner] ${release} could not snapshot Shared values; proceeding without an installed intent receipt (${receiptFilesystemError(error)})`);
         return noSharedReceipt;
       });
       try {
