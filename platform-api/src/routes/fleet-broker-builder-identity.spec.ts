@@ -151,7 +151,7 @@ describe("initial Native boot of a previously prepared assigned Pod", () => {
     expect(response.body.identity).toMatchObject({ ownerUid: "uid-bob", bootMode: "prelaunch", leaseId: null, generation: null });
     expect(authority).toHaveBeenCalledExactlyOnceWith(expect.anything(), {
       gatewayId: "b-x", podName: pod.podName, podUid: pod.podUid, slug: "bob", uid: "uid-bob", ownerAssignmentEpoch: 0, release,
-    });
+    }, NOW);
   });
 
   it("keeps generic assigned or rejected Pods held without a positive preparation proof", async () => {

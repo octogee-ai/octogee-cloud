@@ -1,16 +1,17 @@
-import type { GatewayRoot, PlatformStateRepositories } from "@octogee/core/platform-state";
+import type { GatewayRoot, PlatformStateTransaction } from "@octogee/core/platform-state";
 import {
   readAssignedIsolatedAgentAnchorScope,
   type AssignedIsolatedAgentAnchorScope,
 } from "./assigned-isolated-agent-anchor-scope.js";
 
 export type AssignedPodInitialBootAuthority = (
-  reader: Pick<PlatformStateRepositories, "gateways" | "journal">,
+  reader: PlatformStateTransaction,
   scope: AssignedIsolatedAgentAnchorScope & { release: number },
+  now: number,
 ) => Promise<boolean>;
 
 export async function assignedPodInitialBootAllowed(
-  reader: PlatformStateRepositories,
+  reader: PlatformStateTransaction,
   gateway: GatewayRoot,
   caller: { gatewayId: string; ownerUid?: string | undefined; podName?: string | undefined; podUid?: string | undefined },
   now: number,
@@ -23,5 +24,5 @@ export async function assignedPodInitialBootAllowed(
     slug: builderSlug,
     boundOwnerUid: caller.ownerUid,
   }, now);
-  return scope !== null && await authorize(reader, { ...scope, release: desiredRelease });
+  return scope !== null && await authorize(reader, { ...scope, release: desiredRelease }, now);
 }
