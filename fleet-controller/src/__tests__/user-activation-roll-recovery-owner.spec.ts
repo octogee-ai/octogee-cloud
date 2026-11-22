@@ -7,7 +7,7 @@ import { readUserActivationRollRecovery, hasUserActivationTargetRollback } from 
 import { createSurgePodTransport, type SurgeControlRequest } from '../surge-user-handoff-runtime.js';
 import { FLEET_KEY_PAIR } from './fixtures/fleet-keys.js';
 import { buildOperationCompletionUpdate, classifyOperationFailure } from '../operation-retry.js';
-import { rearmOwnedLegacyMigration } from '../legacy-migration-recovery.js';
+import { rearmOwnedLegacyMigration, persistOperationCompletion } from '../legacy-migration-recovery.js';
 import { createDocumentFixtureStore } from '@octogee/core-testing/journal-store';
 
 function runtimeDoc(fields: Record<string, unknown>): Record<string, unknown> {
@@ -177,11 +177,34 @@ describe('retained rollback proof fences the entire source-recovery custody peri
     delete (h.user.provisioning.openclaw as { migration?: unknown }).migration;
     expect(await readUserActivationRollRecoveryCustody({ state: h.store, gatewayId: 'builder-a' })).toBeNull();
   });
-  it('retains the custody proof through normal failed completion and the existing source-recovery rearm owner', async () => {
+  it.each([true, false])('immediately queues first activation recovery only under its original ownership (same epoch=%s)', async sameEpoch => {
+    const h = fixture();
+    const op = h.documents.get(`glmOperations/${h.operationId}`)!;
+    const handoff = { ...h.recovery.schedulerHandoff, sourceRecovery: undefined };
+    const input = { ...h.recovery.input, recoverSourceOnly: undefined };
+    Object.assign(op, { input, schedulerHandoff: handoff, status: 'running', startedAt: 1000, attempts: 0 });
+    if (!sameEpoch) h.assignment.epoch++;
+    const steps = [{ name: 'quiesce-source', status: 'done' as const }, { name: 'rollback:resume-ingress', status: 'failed' as const }];
+    await h.store.transaction({ label: 'operation-worker.complete' }, async tx => {
+      const claimed = (await tx.journal.operations.get(h.operationId))!;
+      const patch = buildOperationCompletionUpdate({ op: claimed, result: { success: false, steps, error: 'source ingress did not resume' }, steps, now: 2000 });
+      await persistOperationCompletion(tx, claimed, patch, 2000);
+    });
+    const current = (await h.store.journal.operations.get(h.operationId))!;
+    expect(current.status).toBe(sameEpoch ? 'pending' : 'failed');
+    expect(current.attemptHistory?.[0]).toMatchObject({ attempt: 1, steps });
+    if (sameEpoch) {
+      expect(current.input.recoverSourceOnly).toBe(true);
+      expect(current.schedulerHandoff?.sourceRecovery).toMatchObject({ sourceEpoch: 7, steps });
+    }
+  });
+
+  it('retains the custody proof through a failed recovery attempt and its existing retry policy', async () => {
     const h = fixture(); await h.run();
     Object.assign(h.documents.get(`glmOperations/${h.operationId}`) as object, { status: 'running', startedAt: 6000 });
     const operation = (await h.store.journal.operations.get(h.operationId))!;
-    await h.store.journal.operations.patch(h.operationId, buildOperationCompletionUpdate({ op: operation, result: { success: false, steps: [], error: 'target cleanup refused' }, steps: [], now: 7000 }));
+    const completion = buildOperationCompletionUpdate({ op: operation, result: { success: false, steps: [], error: 'target cleanup refused' }, steps: [], now: 7000 });
+    await h.store.transaction({ label: 'operation-worker.complete' }, tx => persistOperationCompletion(tx, operation, completion, 7000));
     const failed = (await h.store.journal.operations.get(h.operationId))!;
     expect(failed.status).toBe('failed');
     expect(hasUserActivationTargetRollback(failed)).toBe(true);

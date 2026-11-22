@@ -1,7 +1,8 @@
+import { MIGRATE_USER_KIND } from "./operation-kinds.js";
 import { isDeepStrictEqual } from "node:util";
 import { isUserActivateOperationIdFor } from "@octogee/shared/types/isolated-operation-ids";
 import { gatewayRetiredInStore, isolatedRuntimeMutationFenced } from "@octogee/core/gateway-retirement-claim";
-import type { PlatformUserRecord, GatewayAssignment, OperationPatch, PlatformStateStore, PlatformStateTransaction, Stored } from "@octogee/core/platform-state";
+import type { PlatformUserRecord, GatewayAssignment, OperationRecord, OperationPatch, PlatformStateStore, PlatformStateTransaction, Stored } from "@octogee/core/platform-state";
 import { readSchedulerMigrationIdentity, type Operation, type SchedulerHandoffState } from "@octogee/shared/types/glm";
 import { readWorkspaceMigrationMarker } from "@octogee/shared/types/workspace-migration";
 import { retiredTargetSourceRecovery, userActivationRecoveryTargetMatches } from "@octogee/core/fleet-state";
@@ -43,7 +44,7 @@ function failedActivationHeldSource(operation: Partial<Operation>): boolean {
 
 export function userActivationSourceRecoveryPending(operation: Partial<Operation>): boolean {
   const input = operation.input;
-  return operation.kind === "migrate-user" && input?.source === "builder-activation-lease" &&
+  return operation.kind === MIGRATE_USER_KIND && input?.source === "builder-activation-lease" &&
     isUserActivateOperationIdFor(operation.id, input.toGatewayId) &&
     typeof input.fromGatewayId === "string" && input.fromGatewayId.startsWith("shared-") &&
     operation.schedulerHandoff?.stageAfterCutover === true && operation.userMigrationV2 === undefined &&
@@ -144,7 +145,7 @@ function recoverableLegacyScope(operation: Operation & { cancellationRequestedAt
   if (!handoff || typeof input.fromGatewayId !== "string" || typeof input.toGatewayId !== "string") return false;
   const identity = readSchedulerMigrationIdentity(operation.id, handoff.migrationId);
   return [
-    operation.kind === "migrate-user", operation.userMigrationV2 === undefined, handoff.forwardRecovery === undefined || releasedUserActivationSourceRecovery(operation),
+    operation.kind === MIGRATE_USER_KIND, operation.userMigrationV2 === undefined, handoff.forwardRecovery === undefined || releasedUserActivationSourceRecovery(operation),
     operation.cutoverCommittedAt === undefined, operation.cancellationRequestedAt === undefined,
     operation.sourceTransferExecution === undefined, input.sourceTransferMode === undefined,
     Array.isArray(operation.steps),
@@ -236,35 +237,57 @@ async function targetCheckedRecoveryIntent(
     openclaw: { activationLease: owner.activationLease ?? undefined }, sourceEpoch: recovered.sourceEpoch, targetRoot: root }) ? recovered : null;
 }
 
+async function ownedRecoveryPatch(tx: PlatformStateTransaction, operation: Operation, now: number): Promise<OperationPatch | null> {
+  if (!recoverableLegacyScope(operation) || operation.input.recoverSourceOnly === true && operation.schedulerHandoffReleased === true) return null;
+  const { uid, fromGatewayId, toGatewayId } = operation.input as { uid: string; fromGatewayId: string; toGatewayId: string };
+  const [owner, source, target] = await Promise.all([
+    tx.users.records.get(uid),
+    tx.gateways.assignments.get(fromGatewayId, uid),
+    tx.gateways.assignments.get(toGatewayId, uid),
+  ]);
+  if (!ownsLegacySource(operation, owner, source, target !== null)) return null;
+  const intent = await targetCheckedRecoveryIntent(tx, operation, owner!, source!.epoch);
+  return intent ? recoveryRearmPatch(operation, intent, now) : null;
+}
+
+function newlyFailedActivation(claimed: OperationRecord, completion: OperationPatch): Operation | null {
+  if (claimed.kind !== MIGRATE_USER_KIND || claimed.input.source !== "builder-activation-lease" || claimed.input.recoverSourceOnly === true ||
+      completion.status !== "failed" || completion.rolledBack !== false || completion.schedulerHandoffReleased === true ||
+      typeof completion.attempts !== "number" || !Array.isArray(completion.attemptHistory) || !Array.isArray(completion.steps)) return null;
+  const failed: Operation = { ...claimed, status: "failed", rolledBack: false, steps: completion.steps,
+    attempts: completion.attempts, attemptHistory: completion.attemptHistory };
+  return userActivationSourceRecoveryPending(failed) ? failed : null;
+}
+
+export async function persistOperationCompletion(
+  tx: PlatformStateTransaction, claimed: OperationRecord, completion: OperationPatch, now: number,
+): Promise<OperationPatch> {
+  const failed = newlyFailedActivation(claimed, completion);
+  const recovery = failed && await ownedRecoveryPatch(tx, failed, now);
+  const patch = recovery ? { ...completion, ...recovery } : completion;
+  await tx.journal.operations.patch(claimed.id, patch);
+  return patch;
+}
+
 export async function rearmOwnedLegacyMigration(input: {
   store: PlatformStateStore;
   operationId: string;
   now: number;
   admitted: (operation: Operation) => boolean;
 }): Promise<boolean> {
-  return input.store.transaction({ label: "legacy-migration-recovery.rearm" }, async (tx) => {
+  return input.store.transaction({ label: "legacy-migration-recovery.rearm" }, async tx => {
     const operation = await tx.journal.operations.get(input.operationId);
-    if (!operation || operation.kind !== "migrate-user" || !operation.input ||
-        !input.admitted(operation) || !recoverableLegacyScope(operation)) return false;
-    if (operation.input.recoverSourceOnly === true && operation.schedulerHandoffReleased === true) return false;
-    const { uid, fromGatewayId, toGatewayId } = operation.input as { uid: string; fromGatewayId: string; toGatewayId: string };
-    const [owner, source, target] = await Promise.all([
-      tx.users.records.get(uid),
-      tx.gateways.assignments.get(fromGatewayId, uid),
-      tx.gateways.assignments.get(toGatewayId, uid),
-    ]);
-    if (!ownsLegacySource(operation, owner, source, target !== null)) return false;
-    const intent = await targetCheckedRecoveryIntent(tx, operation, owner!, source!.epoch);
-    if (!intent) return false;
-    await tx.journal.operations.patch(operation.id, recoveryRearmPatch(operation, intent, input.now),
-      { status: [operation.status], startedAt: operation.startedAt });
+    if (!operation || operation.kind !== MIGRATE_USER_KIND || !operation.input || !input.admitted(operation)) return false;
+    const patch = await ownedRecoveryPatch(tx, operation, input.now);
+    if (!patch) return false;
+    await tx.journal.operations.patch(operation.id, patch, { status: [operation.status], startedAt: operation.startedAt });
     return true;
   });
 }
 
 function preparationAwaitingTargetUnmount(operation: Operation & { cancellationRequestedAt?: number }): boolean {
   return [
-    operation.kind === "migrate-user", operation.status === "failed",
+    operation.kind === MIGRATE_USER_KIND, operation.status === "failed",
     operation.input?.source !== "builder-activation-lease",
     operation.cutoverCommittedAt === undefined, operation.userMigrationV2 === undefined,
     operation.cancellationRequestedAt === undefined,
