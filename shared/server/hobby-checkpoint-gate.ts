@@ -71,7 +71,6 @@ export async function waitForCheckpointClaim(role: "gateway" | "edge"): Promise<
   const podUid = boot.POD_UID;
   if (!boot.OCTOGEE_CHECKPOINT_SLOT_ID || boot.OCTOGEE_CHECKPOINT_SLOT_ID !== boot.GATEWAY_ID ||
     !podUid || !POD_UID.test(podUid)) throw new Error("Expected the original unclaimed gateway checkpoint process");
-  await readFile(RESTORED_ENV_PATH, "utf8");
   await writeFile(`${prefix}-prepared`, podUid, { mode: 0o600 });
   for (;;) {
     const receipt = await readMountedCheckpointClaim();
@@ -134,4 +133,16 @@ export async function checkpointGatewayCredentials(
     }
     await wait();
   }
+}
+
+export async function initializeCheckpointEdge(isSidecar: boolean): Promise<void> {
+  const env = process.env;
+  if (!env.OCTOGEE_CHECKPOINT_SLOT_ID) return;
+  if (!isSidecar) throw new Error("A gateway checkpoint requires a private edge sidecar");
+  const claim = await waitForCheckpointClaim("edge");
+  const credentials = await checkpointGatewayCredentials();
+  env.POD_UID = claim.podUid;
+  env.OPENCLAW_GATEWAY_TOKEN = credentials.token;
+  env.OPENCLAW_AGENT_STORE_DSN = credentials.agentStoreDsn;
+  process.stderr.write("[hobby-checkpoint] edge claim and credentials ready\n");
 }
