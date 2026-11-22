@@ -985,8 +985,10 @@ function sharedInspectionCommands(deps: HelmSubprocessRunnerDeps, upgradeTimeout
       const rendered = await deps.runHelm(buildChartArgs({ ...opts, release, upgradeTimeout }, "template"), 10_000);
       if (rendered.code !== 0) throw new Error(`Helm template for ${release} failed (code=${rendered.code})`);
       const current = await getReleaseObservation(deps, opts.namespace, release, 10_000);
-      return current?.deployedRevision === revision && !!current.manifest?.trim() &&
-        rendered.stdout.trim() === current.manifest.trim();
+      if (current?.deployedRevision !== revision) return false;
+      const matches = !!current.manifest?.trim() && rendered.stdout.trim() === current.manifest.trim();
+      if (!matches) deps.log(`[helm-runner] rendered manifest differs from ${release} revision ${revision}`);
+      return matches;
     },
 
   };
