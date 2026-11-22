@@ -1452,6 +1452,58 @@ async function completeAssignedWorkspaceIdentity(assigned: Awaited<ReturnType<ty
   await assigned?.complete();
 }
 
+type BrokerUserMountConfig = {
+  snapshot: UserSnapshot;
+  isolatedGateway: boolean;
+  evictionSlugs: string[];
+  brokerSnapshot: FleetBrokerUserSnapshot;
+  projectAgents: NonNullable<UserSnapshot["projectAgents"]>;
+  identity: ReturnType<typeof resolveDefaultAgentIdentity>;
+  defaultAgentModelDefaults: Record<string, object> | null;
+  agentEntry: ReturnType<typeof buildDefaultAgentEntry>;
+  userAgentEntries: readonly unknown[];
+  accountId: string;
+  accountEntry: Awaited<ReturnType<typeof requiredDefaultAgentMattermostAccount>>;
+  projectAccounts: ReturnType<typeof buildProjectAgentAccounts>;
+  bindings: ReturnType<typeof buildUserBindings>;
+  normalizeAccountEndpoints: boolean;
+};
+
+function brokerUserMountReplacePaths(current: unknown, { snapshot, isolatedGateway, evictionSlugs }: BrokerUserMountConfig): string[] {
+  return [...new Set([
+    ...[snapshot.slug, ...evictionSlugs].flatMap(slug => userConfigAgentRosterReplacePaths(current, slug)),
+    ...(isolatedGateway ? [] : [PLATFORM_MODEL_POLICY_ALLOW_PATH]),
+    ...(!isolatedGateway && !userModelCredentialsActive(snapshot) ? userSecurityProjectionReplacePaths(current) : []),
+  ])];
+}
+
+export function composeBrokerUserMountConfig(current: unknown, input: BrokerUserMountConfig) {
+  const {
+    snapshot, isolatedGateway, evictionSlugs, brokerSnapshot, projectAgents, identity, defaultAgentModelDefaults,
+    agentEntry, userAgentEntries, accountId, accountEntry, projectAccounts, bindings, normalizeAccountEndpoints,
+  } = input;
+  const ownerMmUserId = brokerUserMattermostUserId(brokerSnapshot, snapshot);
+  const ownedAgents = isolatedGateway
+    ? [agentEntry, ...buildUserProjectAgents(brokerSnapshot, projectAgents, identity, { ownerMmUserId, isolatedGateway, currentConfig: current })]
+    : userAgentEntries;
+  const currentCfg = current as { bindings?: Array<{ agentId?: unknown }> };
+  const currentBindings = Array.isArray(currentCfg.bindings) ? currentCfg.bindings : [];
+  const roster = userGatewayAgentRoster(current, snapshot.slug, ownedAgents, isolatedGateway);
+  const ownerCommands = isolatedGateway ? userOwnerCommandsPatch(current, snapshot.slug, ownerMmUserId) : undefined;
+  const accounts = mattermostAccountEndpointsForTarget(current, { [accountId]: accountEntry, ...projectAccounts }, normalizeAccountEndpoints);
+  const mountPatch = {
+    ...(ownerCommands ? { commands: ownerCommands } : {}),
+    agents: {
+      ownership: "explicit",
+      defaults: userAgentDefaults(current, defaultAgentModelDefaults, isolatedGateway),
+      ...userAgentRosterPatch(current, snapshot.slug, rebindPlatformEmbeddingRefs(roster)),
+    },
+    bindings: mergeUserBindings(currentBindings, [snapshot.slug, ...evictionSlugs], bindings),
+    channels: { mattermost: { accounts: mountMattermostAccountsPatch(current, snapshot.slug, evictionSlugs, accounts) } },
+  };
+  return { patch: projectMountPolicy(current, mountPatch, snapshot, isolatedGateway), replacePaths: brokerUserMountReplacePaths(current, input) };
+}
+
 async function applyAddUserConfigPatch(
   ctx: BrokerCtx,
   snapshot: UserSnapshot,
@@ -1548,6 +1600,11 @@ async function applyAddUserConfigPatch(
   routingActivationRequired = markPendingProjectActivations(routingActivationReason, pendingProjectAccountIds, routingActivationBaseline)
     || routingActivationRequired;
   await prepareAssignedUserRuntimePublication(callOpts, assignedIdentity);
+  const mountConfig = {
+    snapshot, isolatedGateway, evictionSlugs, brokerSnapshot, projectAgents, identity, defaultAgentModelDefaults,
+    agentEntry, userAgentEntries, accountId, accountEntry, projectAccounts, bindings,
+    normalizeAccountEndpoints: !ctx.isIsolatedGateway(),
+  };
   const startedAt = Date.now();
   let configBefore: unknown;
   const configPatch = await applyConfigPatch(
@@ -1570,53 +1627,9 @@ async function applyAddUserConfigPatch(
           );
           routingActivationRequired = true;
         }
-        const agentDefaults = userAgentDefaults(current, defaultAgentModelDefaults, isolatedGateway);
-        const roster = userGatewayAgentRoster(
-          current,
-          snapshot.slug,
-          isolatedGateway ? [agentEntry, ...buildUserProjectAgents(brokerSnapshot, projectAgents, identity, { ownerMmUserId: brokerUserMattermostUserId(brokerSnapshot, snapshot), isolatedGateway: true, currentConfig: current })] : userAgentEntries,
-          isolatedGateway,
-        );
-        const ownerCommands = isolatedGateway
-          ? userOwnerCommandsPatch(current, snapshot.slug, brokerUserMattermostUserId(brokerSnapshot, snapshot))
-          : undefined;
-        const mountPatch = {
-          ...(ownerCommands ? { commands: ownerCommands } : {}),
-          agents: {
-            ownership: "explicit",
-            defaults: agentDefaults,
-            ...userAgentRosterPatch(
-              current,
-              snapshot.slug,
-              rebindPlatformEmbeddingRefs(roster),
-            ),
-          },
-          bindings: mergeUserBindings(
-            currentBindings,
-            [snapshot.slug, ...evictionSlugs],
-            bindings,
-          ),
-          channels: {
-            mattermost: {
-              accounts: mountMattermostAccountsPatch(current, snapshot.slug, evictionSlugs,
-                mattermostAccountEndpointsForTarget(current, {
-                  [accountId]: accountEntry,
-                  ...projectAccounts,
-                }, !ctx.isIsolatedGateway()),
-              ),
-            },
-          },
-        };
-        return projectMountPolicy(current, mountPatch, snapshot, isolatedGateway);
+        return composeBrokerUserMountConfig(current, mountConfig).patch;
       },
-      buildReplacePaths: (current) => [...new Set([
-        ...[snapshot.slug, ...evictionSlugs].flatMap((slug) =>
-          userConfigAgentRosterReplacePaths(current, slug)
-        ),
-        ...(isolatedGateway ? [] : [PLATFORM_MODEL_POLICY_ALLOW_PATH]),
-        ...(!isolatedGateway && !userModelCredentialsActive(snapshot)
-          ? userSecurityProjectionReplacePaths(current) : []),
-      ])],
+      buildReplacePaths: (current) => brokerUserMountReplacePaths(current, mountConfig),
       logPrefix: `[add:${snapshot.slug}]`,
     },
     {
