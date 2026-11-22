@@ -2076,7 +2076,10 @@ describe("queued-rsync migration control handlers", () => {
     expect(getBody()).toMatchObject({ migrationId: "mig-github-deferred", slug: "chris", imported: true });
   });
 
-  it("activates an import onto the owner's own isolated runtime with its GitHub checkout left for the post-cutover reconcile", async () => {
+  it.each([
+    ["fp-chris", pendingCloneAppliedFingerprint("fp-chris")],
+    ["0123456789abcdef!import-reconcile-pending", "0123456789abcdef!import-reconcile-pending"],
+  ])("preserves deferred reconciliation after standard import of %s", async (appliedFingerprint, expectedReceipt) => {
     const cloneProjectRepo = vi.fn(async () => false);
     const recordAppliedFingerprint = vi.fn();
     const adapter = mkAdapter({
@@ -2086,7 +2089,7 @@ describe("queued-rsync migration control handlers", () => {
         { projectSlug: "octogee", giteaRepoName: null, repoSource: { provider: "github", owner: "octogee-ai", repo: "octogee" } },
       ]),
       cloneProjectRepo,
-      activateImportedUser: vi.fn(async () => ({ appliedFingerprint: "fp-chris" })),
+      activateImportedUser: vi.fn(async () => ({ appliedFingerprint })),
       recordAppliedFingerprint,
     });
     const body: ActivateImportRequestBody = {
@@ -2104,7 +2107,7 @@ describe("queued-rsync migration control handlers", () => {
     expect(getStatus()).toBe(200);
     expect(cloneProjectRepo).not.toHaveBeenCalled();
     expect(adapter.activateImportedUser).toHaveBeenCalledWith("chris", expect.objectContaining({ migrationId: body.migrationId }));
-    expect(recordAppliedFingerprint).toHaveBeenCalledWith("chris", pendingCloneAppliedFingerprint("fp-chris"));
+    expect(recordAppliedFingerprint).toHaveBeenCalledWith("chris", expectedReceipt);
     expect(getBody()).toMatchObject({ migrationId: "mig-github-owner-runtime", slug: "chris", imported: true });
   });
 
@@ -2985,11 +2988,12 @@ describe("queued-rsync migration control handlers", () => {
     }
   });
 
-  it("createFinishRsyncImportHandler leaves expedited project convergence to reconciliation", async () => {
+  it.each([undefined, "runtime verification pending"])(
+    "keeps expedited hydration outstanding while recording verified activation (%s)", async (verificationPending) => {
     const recordAppliedFingerprint = vi.fn();
     const adapter = mkAdapter({
       prepareImportDir: vi.fn(async () => "/openclaw"),
-      activateImportedUser: vi.fn(async () => ({ appliedFingerprint: "fp-chris" })),
+      activateImportedUser: vi.fn(async () => ({ appliedFingerprint: "0123456789abcdef", verificationPending })),
       markUserMigratingIn: vi.fn(),
       recordAppliedFingerprint,
       onMounted: vi.fn(),
@@ -3055,7 +3059,8 @@ describe("queued-rsync migration control handlers", () => {
     expect(adapter.activateImportedUser).toHaveBeenCalledWith("chris", expect.any(Object));
     expect(deps.pauseSystemConfigWatch).toHaveBeenCalledWith("chris");
     expect(deps.resumeSystemConfigWatch).not.toHaveBeenCalled();
-    expect(recordAppliedFingerprint).not.toHaveBeenCalled();
+    if (verificationPending) expect(recordAppliedFingerprint).toHaveBeenCalledExactlyOnceWith("chris", "");
+    else expect(recordAppliedFingerprint).toHaveBeenCalledExactlyOnceWith("chris", "0123456789abcdef!import-reconcile-pending");
     expect(adapter.listProjectsNeedingClone).not.toHaveBeenCalled();
     expect(adapter.writeMountMarker).toHaveBeenCalledWith("chris");
     expect(adapter.onMounted).toHaveBeenCalledWith("chris");

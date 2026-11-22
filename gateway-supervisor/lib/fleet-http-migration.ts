@@ -146,7 +146,7 @@ import {
 import { OpenclawWireError } from "./gateway-rpc.js";
 import { isRetryableSchedulerFailure, SchedulerRefusal } from "./scheduler-failure.js";
 import type { SurgeOpenClawProcessGateState } from "./surge-openclaw-process-gate.js";
-import { pendingCloneAppliedFingerprint } from "./pending-clone-fingerprint.js";
+import { NEEDS_FULL_ATTACH_FINGERPRINT, importReconciliationPending, pendingCloneAppliedFingerprint, pendingImportAppliedFingerprint } from "./pending-clone-fingerprint.js";
 import { userClaimSlug } from "@octogee/shared/server/user-claim";
 
 const SYSTEM_CONFIG_COMMIT = /^[0-9a-f]{40,64}$/;
@@ -388,20 +388,32 @@ async function activateImportedUserForMigration(input: {
     (input.sharedToSharedRoster || mode === "default") ? true : undefined;
   const options = importedActivationOptions(signal, input.migrationId, beforeRuntimePublish, input.deferRuntimeVerification, sharedToSharedRoster);
   const activation = options ? await deps.adapter.activateImportedUser(slug, options) : await deps.adapter.activateImportedUser(slug);
-  if (loadStrategy === "standard") {
-    deps.adapter.recordAppliedFingerprint?.(
-      slug,
-      deferredCheckouts.length > 0
-        ? pendingCloneAppliedFingerprint(activation.appliedFingerprint)
-        : activation.appliedFingerprint,
-    );
-  } else {
+  recordImportedActivationFingerprint(deps, slug, activation, loadStrategy, deferredCheckouts.length > 0);
+  if (loadStrategy === "expedited") {
     deps.log?.(`[migration-http] expedited activation defers project hydration slug=${slug}`);
   }
   if (mode === "default") {
     await resumeSystemConfigWatchForUser(deps, slug, fenceGeneration);
   }
   return activation.verificationPending;
+}
+
+function recordImportedActivationFingerprint(
+  deps: MigrationHandlerDeps,
+  slug: string,
+  activation: Awaited<ReturnType<UserLifecycleAdapter["activateImportedUser"]>>,
+  loadStrategy: MigrationLoadStrategy,
+  deferredCheckouts: boolean,
+): void {
+  const { appliedFingerprint, verificationPending } = activation;
+  if (loadStrategy === "expedited" || importReconciliationPending(appliedFingerprint)) {
+    const receipt = verificationPending === undefined ? pendingImportAppliedFingerprint(appliedFingerprint) : undefined;
+    deps.adapter.recordAppliedFingerprint?.(slug, receipt ?? NEEDS_FULL_ATTACH_FINGERPRINT);
+    return;
+  }
+  deps.adapter.recordAppliedFingerprint?.(
+    slug, deferredCheckouts ? pendingCloneAppliedFingerprint(appliedFingerprint) : appliedFingerprint,
+  );
 }
 
 async function ensureMigrationGiteaKey(

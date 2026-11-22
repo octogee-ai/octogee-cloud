@@ -9,6 +9,7 @@ import {
 } from "./mattermost-account-secrets.js";
 import * as path from "node:path";
 import { loadAppliedFingerprints } from "./applied-fingerprint-store.js";
+import { importReconciliationPending, pendingImportAppliedFingerprint } from "./pending-clone-fingerprint.js";
 
 export async function exportActivationManifestWithSecret(
   configPath: string,
@@ -18,7 +19,8 @@ export async function exportActivationManifestWithSecret(
   const appliedFingerprint = loadAppliedFingerprints(
     path.join(openclawDir, "applied-fingerprints.json"),
   ).get(slug);
-  if (!appliedFingerprint) {
+  if (!appliedFingerprint || (importReconciliationPending(appliedFingerprint) &&
+      pendingImportAppliedFingerprint(appliedFingerprint) !== appliedFingerprint)) {
     throw new Error(
       `[migration-activation:${slug}] source has no applied fingerprint; converge it before migration`,
     );
