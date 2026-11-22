@@ -769,14 +769,17 @@ async function nativeSourceActivationAvailable(input: NativeReturnProvision, cli
   if (readiness === "unsupported") {
     input.deps.log(`[migrate-customer] ${input.targets.fromGatewayId} migrationId=${input.migrationId}: legacy guest lacks source activation readiness`);
   }
-  return readiness === "ready" || readiness === "unsupported";
+  return readiness === "ready";
 }
 
 async function runNativeReturn(input: NativeReturnProvision): Promise<OperationResult> {
   const { deps, targets, uid, slug, migrationId, automatic } = input;
   const baseClient = await gatewayClient(deps, [targets.fromGatewayId, targets.toGatewayId]);
   if (!await nativeSourceActivationAvailable(input, baseClient)) {
-    return failure(NATIVE_RETURN_ACTIVATION_UNAVAILABLE, false);
+    const result = failure(NATIVE_RETURN_ACTIVATION_UNAVAILABLE, false);
+    return input.op.schedulerHandoff === undefined
+      ? { ...result, output: { gatewayCompatibilityPending: true } }
+      : result;
   }
   const handoff = await persistNativeReturnHandoff(input);
   const assertClaim = input.ctx.assertActiveClaim;
