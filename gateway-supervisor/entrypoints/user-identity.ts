@@ -6,6 +6,8 @@ import {
   writeUserClaim,
 } from "@octogee/shared/server/user-claim";
 import type { UserIdentity } from "@octogee/shared/types/user-identity";
+import { readMountedCheckpointClaim } from "@octogee/shared/server/hobby-checkpoint-gate";
+import type { FleetBrokerAssignmentRosterEntry } from "@octogee/shared/types/fleet-broker";
 import { GATEWAY_BINDING_MISMATCH_REASON } from "@octogee/shared/types/fleet-broker";
 import { createFleetBrokerClient, FleetBrokerHttpError } from "../lib/fleet-broker-client.js";
 
@@ -15,6 +17,17 @@ export const USER_IDENTITY_REBOUND_EXIT = 72;
 export type UserIdentityBootResult =
   | { exitCode: 0; builderSlug: string }
   | { exitCode: 1 | typeof USER_IDENTITY_FATAL_EXIT | typeof USER_IDENTITY_REBOUND_EXIT };
+
+export function checkCheckpointIdentity(
+  claim: NonNullable<Awaited<ReturnType<typeof readMountedCheckpointClaim>>>,
+  identity: UserIdentity,
+  roster: readonly FleetBrokerAssignmentRosterEntry[],
+): boolean {
+  return identity.state === "claimed" && identity.gatewayId === claim.gatewayId &&
+    identity.ownerUid === claim.uid && identity.builderSlug === claim.slug &&
+    roster.length === 1 && roster[0]?.uid === claim.uid &&
+    roster[0].epoch === claim.assignmentEpoch && roster[0].state === "serving";
+}
 
 export async function resolveUserIdentityBoot(input: {
   env: NodeJS.ProcessEnv;
@@ -71,9 +84,21 @@ export async function runUserIdentityEntrypoint(input: Parameters<typeof resolve
 
 async function main(): Promise<void> {
   const gatewayId = process.env.GATEWAY_ID?.trim() ?? "";
+  const client = createFleetBrokerClient(gatewayId);
+  const checkpointClaim = process.env.OCTOGEE_CHECKPOINT_SLOT_ID ? await readMountedCheckpointClaim() : undefined;
+  if (checkpointClaim === null || (checkpointClaim &&
+    (checkpointClaim.gatewayId !== gatewayId || checkpointClaim.podUid !== process.env.POD_UID))) {
+    throw new Error("Expected the restored pod's exact gateway checkpoint claim");
+  }
   const exitCode = await runUserIdentityEntrypoint({
     env: process.env,
-    fetchIdentity: () => createFleetBrokerClient(gatewayId).builderIdentity(),
+    fetchIdentity: async () => {
+      const identity = await client.builderIdentity();
+      if (checkpointClaim && !checkCheckpointIdentity(checkpointClaim, identity, await client.assignmentRoster())) {
+        throw new FleetBrokerHttpError("checkpoint claim differs from the gateway assignment", 403, GATEWAY_BINDING_MISMATCH_REASON);
+      }
+      return identity;
+    },
     now: Date.now,
     log: (message) => process.stderr.write(`${message}\n`),
     stdout: process.stdout,

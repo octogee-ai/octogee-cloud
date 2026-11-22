@@ -2039,3 +2039,26 @@ describe("createHelmSubprocessRunner — recoverRelease", () => {
    const args = buildUpgradeArgs({ release: "octogee-gw-shared-0", chartPath: "/c", namespace: "octogee", gatewayId: "shared-0", gatewayClass: "shared", imageRepository: REPO, imageTag: "abc", upgradeTimeout: "10m" });
    expect(args.some(arg => arg.startsWith("userHome"))).toBe(false);
  });
+
+it("uses the exact claim-selected snapshot and compatible graphical isolated runtime", () => {
+  const opts = {
+    release: "octogee-gw-hobby-slot-aaaeff123456",
+    chartPath: "/charts/octogee-gateway",
+    namespace: "octogee-test",
+    gatewayId: "hobby-slot-aaaeff123456",
+    gatewayClass: "isolated" as const,
+    imageRepository: REPO,
+    imageTag: "abc",
+    upgradeTimeout: "1m",
+    hobbyCheckpoint: { slotId: "hobby-slot-aaaeff123456", restoreSnapshot: "af0345ef-11ba-49ab-9c1e-f2a0a3984abd", zone: "us-central1-c", machineFamily: "n2" },
+  };
+  const args = buildUpgradeArgs(opts);
+  expect(args.find(arg => arg.startsWith("hobbyCheckpoint="))).toContain(opts.hobbyCheckpoint.restoreSnapshot);
+  expect(args).toEqual(expect.arrayContaining(["runtimeKind=cluster", "runtimeClassName=gvisor", "computerDesktop=x11", "computeClass=Balanced", "rollStrategy=recreate"]));
+  expect(args.find(arg => arg.startsWith("nodeSelector="))).toContain("us-central1-c");
+  expect(args).not.toContain("--wait");
+  expect(args.find(arg => arg.startsWith("nodeSelector="))).toContain("supported-cpu-platform.cloud.google.com/Intel_Ice_Lake");
+  expect(args.find(arg => arg.startsWith("nodeSelector="))).not.toContain("cloud.google.com/machine-family");
+  expect(() => buildUpgradeArgs({ ...opts, gatewayClass: "shared" })).toThrow(/isolated/);
+  expect(() => buildUpgradeArgs({ ...opts, gatewayId: "hobby-slot-bbbee012ab78" })).toThrow(/slot/);
+});

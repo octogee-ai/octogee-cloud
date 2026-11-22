@@ -15,6 +15,13 @@ import {
 import type { GatewayServiceAccountIdentity } from "./gateway-service-account-ensurer.js";
 import type { KubectlSubprocess } from "./fleet-ingress.js";
 
+export interface HobbyCheckpointPod {
+  slotId: string;
+  restoreSnapshot?: string;
+  zone: string;
+  machineFamily: string;
+}
+
 export interface HelmRunner {
 
 readDeployedInstances(opts: { namespace: string }): Promise<HelmInstancesMap>;
@@ -61,6 +68,7 @@ deploymentProjectId?: string;
 gatewayServiceAccount?: string;
     rollStrategy?: "recreate" | "surge";
     waitForReady?: boolean;
+    hobbyCheckpoint?: HobbyCheckpointPod;
     deferVmPause?: boolean;
   }): Promise<void>;
 
@@ -452,6 +460,7 @@ export interface BuildUpgradeArgsOpts {
   valuesFile?: string;
   rollStrategy?: "recreate" | "surge";
   waitForReady?: boolean;
+  hobbyCheckpoint?: HobbyCheckpointPod;
 }
 
 type UpgradeStringOption = {
@@ -565,7 +574,7 @@ function appendOptionalFileArgs(args: string[], opts: BuildUpgradeArgsOpts): voi
 function appendUpgradeApplyArgs(args: string[], opts: BuildUpgradeArgsOpts): void {
   args.push("--server-side=true", "--force-conflicts");
   args.push("--take-ownership");
-  if (opts.waitForReady !== false) args.push("--wait");
+  if (opts.waitForReady !== false && !opts.hobbyCheckpoint) args.push("--wait");
   args.push(`--timeout=${opts.upgradeTimeout}`);
 }
 
@@ -580,6 +589,32 @@ function appendUpgradeApplyArgs(args: string[], opts: BuildUpgradeArgsOpts): voi
  * (no fleet controller --set, no kubectl-set-env field-manager collision risk on
  * the next upgrade — see post-mortem in PR #TBD).
  */
+function appendHobbyCheckpointArgs(args: string[], opts: BuildUpgradeArgsOpts): void {
+  const checkpoint = opts.hobbyCheckpoint;
+  if (!checkpoint) return;
+  if (opts.gatewayClass !== "isolated") {
+    throw new Error("Hobby checkpoints require an isolated gateway");
+  }
+  if (opts.gatewayId !== checkpoint.slotId || !/^hobby-slot-[a-f0-9]{12}$/.test(checkpoint.slotId) ||
+      !/^us-central1-[a-z]$/.test(checkpoint.zone) || checkpoint.machineFamily !== "n2" ||
+      (checkpoint.restoreSnapshot !== undefined &&
+       !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(checkpoint.restoreSnapshot))) {
+    throw new Error("Invalid Hobby checkpoint slot, snapshot or node");
+  }
+  pushSetJson(args, "hobbyCheckpoint", { slotId: checkpoint.slotId, restoreSnapshot: checkpoint.restoreSnapshot });
+  pushSetJson(args, "nodeSelector", {
+    "topology.kubernetes.io/zone": checkpoint.zone,
+    "supported-cpu-platform.cloud.google.com/Intel_Ice_Lake": "true",
+  });
+  args.push(
+    HELM_SET_STRING, "runtimeKind=cluster",
+    HELM_SET_STRING, "runtimeClassName=gvisor",
+    HELM_SET_STRING, "computerDesktop=x11",
+    HELM_SET_STRING, "computeClass=Balanced",
+    HELM_SET_STRING, "rollStrategy=recreate",
+  );
+}
+
 export function buildUpgradeArgs(opts: BuildUpgradeArgsOpts): string[] {
   // String-typed fields use `--set-string` so a digit-only value (e.g.
   // imageTag="3280519" from a CI build-number tag without a SHA suffix)
@@ -591,6 +626,7 @@ export function buildUpgradeArgs(opts: BuildUpgradeArgsOpts): string[] {
   appendOptionalNumberArgs(args, opts);
   appendOptionalJsonArgs(args, opts);
   appendOptionalFileArgs(args, opts);
+  appendHobbyCheckpointArgs(args, opts);
   // Server-side apply + force-conflicts: matches the umbrella install path
   // that the CI deploy job has used since #913 + #1056. Strategic merge
   // collides a live kubectl-set `OPENCLAW_GATEWAY_TOKEN: value=<hex>` with

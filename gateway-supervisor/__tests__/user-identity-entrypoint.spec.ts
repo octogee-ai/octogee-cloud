@@ -10,6 +10,7 @@ import type { UserIdentity } from "@octogee/shared/types/user-identity";
 import { FleetBrokerHttpError } from "../lib/fleet-broker-client.js";
 import {
   USER_IDENTITY_FATAL_EXIT,
+  checkCheckpointIdentity,
   resolveUserIdentityBoot,
   runUserIdentityEntrypoint,
 } from "../entrypoints/user-identity.js";
@@ -45,6 +46,18 @@ function boot(dir: string, fetchIdentity: () => Promise<UserIdentity>) {
 }
 
 describe("User identity pre-boot", () => {
+  it("admits only the checkpoint receipt's real assigned owner and serving assignment", () => {
+    const claim = { version: 1, slotId: "gw-alice", gatewayId: "gw-alice", snapshotName: "slot",
+      podUid: "pod-uid", uid: "uid-alice", slug: "alice", assignmentEpoch: 0 } as const;
+    const row = { uid: "uid-alice", state: "serving", epoch: 0 } as const;
+    expect(checkCheckpointIdentity(claim, CLAIMED, [row])).toBe(true);
+    expect(checkCheckpointIdentity(claim, CLAIMED, [{ ...row, epoch: 1 }])).toBe(false);
+    expect(checkCheckpointIdentity(claim, CLAIMED, [{ ...row, state: "quiescing" }])).toBe(false);
+    expect(checkCheckpointIdentity(claim, { ...CLAIMED, ownerUid: "other" }, [row])).toBe(false);
+    expect(checkCheckpointIdentity(claim, CLAIMED, [row, { ...row, uid: "other" }])).toBe(false);
+  });
+
+
   it("writes the claimed identity to the claim file and reports its slug", async () => {
     const dir = openclawDir();
     const { result } = boot(dir, async () => CLAIMED);

@@ -6,14 +6,28 @@
 {{- $isolatedClass := eq (include "octogee-gateway.dualReadGatewayClass" .) "isolated" -}}
 {{- $computeClass := .Values.computeClass -}}
 {{- $imageProfile := include "octogee-gateway.imageProfile" . -}}
+{{- $checkpoint := .Values.hobbyCheckpoint | default dict -}}
+{{- $checkpointSlot := $checkpoint.slotId | default "" -}}
+{{- $checkpointSnapshot := $checkpoint.restoreSnapshot | default "" -}}
+{{- $checkpointPreparing := and $checkpointSlot (not $checkpointSnapshot) -}}
 {{- $computerDesktop := include "octogee-gateway.computerDesktop" . -}}
 {{- $x11Desktop := and $isolatedClass (eq $computerDesktop "x11") -}}
 {{- $vmRuntime := eq (.Values.runtimeKind | default "cluster") "gce-vm" -}}
 {{- $vmIsolated := and $isolatedClass $vmRuntime -}}
 {{- $isolatedPod := and $isolatedClass (not $vmRuntime) -}}
+{{- if and $checkpointSnapshot (not $checkpointSlot) -}}
+{{- fail "octogee-gateway: a restored checkpoint requires its own slot" -}}
+{{- end -}}
+{{- if and $checkpointSlot (not (and $isolatedPod $x11Desktop (eq $tier "s") (eq $checkpointSlot .Values.gatewayId) (eq .Values.runtimeClassName "gvisor") .Values.gatewayEdge.enabled)) -}}
+{{- fail "octogee-gateway: checkpoint requires a dedicated small graphical isolated gVisor gateway and edge" -}}
+{{- end -}}
+
+{{- if and $checkpointSlot (or (hasKey .Values.gatewayEdge.env "OPENCLAW_GATEWAY_TOKEN") (hasKey .Values.gatewayEdge.env "OPENCLAW_AGENT_STORE_DSN")) -}}
+{{- fail "octogee-gateway: checkpoint edge credentials must be published after restore" -}}
+{{- end -}}
 {{- $isolatedPodNodeSelector := dict -}}
 {{- if $isolatedPod -}}
-{{- if ne $computerDesktop "none" -}}
+{{- if and (ne $computerDesktop "none") (not $checkpointSlot) -}}
 {{- fail (printf "octogee-gateway: isolated pod gateway has no desktop; computerDesktop=%s renders only as a GCE VM bundle (runtimeKind=gce-vm)" $computerDesktop) -}}
 {{- end -}}
 {{- $podRollStrategy := .Values.rollStrategy | default "recreate" -}}
@@ -26,6 +40,9 @@
 {{- end -}}
 {{- if $computeClass -}}
 {{- $isolatedPodNodeSelector = dict "cloud.google.com/compute-class" $computeClass "kubernetes.io/arch" "amd64" -}}
+{{- if $checkpointSlot -}}
+{{- $isolatedPodNodeSelector = merge $isolatedPodNodeSelector (deepCopy (.Values.nodeSelector | default dict)) -}}
+{{- end -}}
 {{- else -}}
 {{- $isolatedPodNodeSelector = merge (dict "kubernetes.io/arch" "amd64") (deepCopy (.Values.nodeSelector | default dict)) -}}
 {{- end -}}
@@ -69,7 +86,14 @@ spec:
       gateway-instance: {{ $revision }}
   template:
     metadata:
+      {{- if $checkpointSnapshot }}
+      annotations:
+        podsnapshot.gke.io/ps-name: {{ $checkpointSnapshot | quote }}
+      {{- end }}
       labels:
+        {{- if $checkpointSlot }}
+        octogee-hobby-checkpoint-slot: {{ $checkpointSlot | quote }}
+        {{- end }}
         app: octogee-gateway
         gateway-id: {{ .Values.gatewayId }}
         gateway-instance: {{ $revision }}
@@ -174,6 +198,7 @@ spec:
                 {{- end }}
                 install -m 0500 /octogee/scripts/secret-resolver.mjs /octogee-secret-resolver/secret-resolver.mjs
               '
+          {{- if not $checkpointSlot }}
           env:
             {{- if $vmIsolated }}
             - name: GATEWAY_ID
@@ -196,6 +221,7 @@ spec:
                 secretKeyRef:
                   name: gateway-auth-token-{{ .Values.gatewayId }}
                   key: token
+          {{- end }}
           securityContext:
             runAsUser: 0
             runAsNonRoot: false
@@ -206,7 +232,7 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /home/node
-              {{- if $isolatedPod }}
+              {{- if and $isolatedPod (not $checkpointSlot) }}
               subPath: home
               {{- end }}
             {{- if $isolatedClass }}
@@ -309,6 +335,12 @@ spec:
               value: {{ .Values.env.agentPrefix | quote }}
             - name: GATEWAY_ID
               value: {{ .Values.gatewayId | quote }}
+            {{- if $checkpointSlot }}
+            - name: OCTOGEE_CHECKPOINT_SLOT_ID
+              value: {{ $checkpointSlot | quote }}
+            - name: OCTOGEE_CHECKPOINT_SNAPSHOT
+              value: {{ $checkpointSnapshot | quote }}
+            {{- end }}
             # Identity alias — always the bare gatewayId under simple-roll.
             # gateway-edge stamps it into the Dashboard-bridge capability file.
             - name: GATEWAY_REVISION_ID
@@ -321,7 +353,7 @@ spec:
             {{- end }}
             - name: GATEWAY_PROFILE
               value: {{ $imageProfile | quote }}
-            {{- if $isolatedPod }}
+            {{- if and $isolatedPod (not $x11Desktop) }}
             - name: GATEWAY_RUNTIME_KIND
               value: cluster
             {{- end }}
@@ -443,6 +475,7 @@ spec:
             # container env block for the rationale). Pinned via the chart
             # so kubectl-set-env side-channels can't drift the value out
             # from under helm again.
+            {{- if not $checkpointSlot }}
             - name: OPENCLAW_AGENT_STORE_DSN
               valueFrom:
                 secretKeyRef:
@@ -453,10 +486,19 @@ spec:
                 secretKeyRef:
                   name: gateway-auth-token-{{ .Values.gatewayId }}
                   key: token
+            {{- end }}
           volumeMounts:
+            {{- if $checkpointSlot }}
+            - name: checkpoint-claim
+              mountPath: /var/run/octogee/checkpoint-claim
+              readOnly: true
+            - name: checkpoint-credentials
+              mountPath: /var/run/octogee/checkpoint-credentials
+              readOnly: true
+            {{- end }}
             - name: data
               mountPath: /home/node
-              {{- if $isolatedPod }}
+              {{- if and $isolatedPod (not $checkpointSlot) }}
               subPath: home
               {{- end }}
             {{- if $isolatedClass }}
@@ -497,6 +539,7 @@ spec:
           # starts after durable-config repair; the startup budget bounds one
           # identity-pure attempt. Readiness stays closed until the fleet controller finishes
           # the surge user handoff and OpenClaw is healthy.
+          {{- if not $checkpointPreparing }}
           startupProbe:
             {{- if eq $gatewayClass "shared" }}
             httpGet:
@@ -528,6 +571,7 @@ spec:
             periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
             failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
             timeoutSeconds: {{ .Values.probes.liveness.timeoutSeconds }}
+          {{- end }}
           readinessProbe:
             httpGet:
               path: /surge-ready
@@ -574,6 +618,12 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            {{- if $checkpointSlot }}
+            - name: POD_UID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.uid
+            {{- end }}
             - name: K8S_SERVICE_ACCOUNT_NAME
               value: {{ include "octogee-gateway.serviceAccountName" . | quote }}
             - name: OPENCLAW_GATEWAY_URL
@@ -598,13 +648,19 @@ spec:
             {{- end }}
             - name: GATEWAY_ID
               value: {{ .Values.gatewayId | quote }}
+            {{- if $checkpointSlot }}
+            - name: OCTOGEE_CHECKPOINT_SLOT_ID
+              value: {{ $checkpointSlot | quote }}
+            - name: OCTOGEE_CHECKPOINT_SNAPSHOT
+              value: {{ $checkpointSnapshot | quote }}
+            {{- end }}
             # Identity alias — always the bare gatewayId under simple-roll.
             # gateway-edge stamps it into the Dashboard-bridge capability file.
             - name: GATEWAY_REVISION_ID
               value: {{ $revision | quote }}
             - name: GATEWAY_PROFILE
               value: {{ $imageProfile | quote }}
-            {{- if $isolatedPod }}
+            {{- if and $isolatedPod (not $x11Desktop) }}
             - name: GATEWAY_RUNTIME_KIND
               value: cluster
             {{- end }}
@@ -676,6 +732,7 @@ spec:
             # init container env block for the rationale). chat-proxy is
             # folded into this container and needs the same token openclaw
             # uses for its in-pod RPC.
+            {{- if not $checkpointSlot }}
             - name: OPENCLAW_AGENT_STORE_DSN
               valueFrom:
                 secretKeyRef:
@@ -686,6 +743,7 @@ spec:
                 secretKeyRef:
                   name: gateway-auth-token-{{ .Values.gatewayId }}
                   key: token
+            {{- end }}
             {{- /* Platform secrets are intentionally absent. Locality routes
                 that still need platform authority fail closed or are served by
                 octogee-api/fleet controller, while gateway-local callers use the
@@ -704,9 +762,17 @@ spec:
           resources:
             {{- toYaml .Values.gatewayEdge.resources | nindent 12 }}
           volumeMounts:
+            {{- if $checkpointSlot }}
+            - name: checkpoint-claim
+              mountPath: /var/run/octogee/checkpoint-claim
+              readOnly: true
+            - name: checkpoint-credentials
+              mountPath: /var/run/octogee/checkpoint-credentials
+              readOnly: true
+            {{- end }}
             - name: data
               mountPath: /home/node
-              {{- if $isolatedPod }}
+              {{- if and $isolatedPod (not $checkpointSlot) }}
               subPath: home
               {{- end }}
             {{- if $isolatedClass }}
@@ -745,6 +811,7 @@ spec:
               port: {{ .Values.gatewayEdge.port }}
             initialDelaySeconds: {{ .Values.gatewayEdge.probes.readiness.initialDelaySeconds }}
             periodSeconds: {{ .Values.gatewayEdge.probes.readiness.periodSeconds }}
+          {{- if not $checkpointPreparing }}
           startupProbe:
             httpGet:
               path: /health
@@ -759,8 +826,19 @@ spec:
               port: {{ .Values.gatewayEdge.port }}
             initialDelaySeconds: {{ .Values.gatewayEdge.probes.liveness.initialDelaySeconds }}
             periodSeconds: {{ .Values.gatewayEdge.probes.liveness.periodSeconds }}
+          {{- end }}
         {{- end }}
       volumes:
+        {{- if $checkpointSlot }}
+        - name: checkpoint-claim
+          configMap:
+            name: hobby-checkpoint-claim-{{ $checkpointSlot }}
+            optional: true
+        - name: checkpoint-credentials
+          secret:
+            secretName: gateway-auth-token-{{ $checkpointSlot }}
+            optional: true
+        {{- end }}
         {{- if $isolatedClass }}
         - name: builder-cache
           emptyDir:
@@ -770,6 +848,10 @@ spec:
         - name: project-materializations
           emptyDir:
             sizeLimit: 2Gi
+        - name: data
+          emptyDir:
+            sizeLimit: 4Gi
+        {{- else if $checkpointSlot }}
         - name: data
           emptyDir:
             sizeLimit: 4Gi
