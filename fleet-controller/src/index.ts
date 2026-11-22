@@ -1248,6 +1248,22 @@ async function uninstallGateway(
   await store.fleetRegistry.delete(gateway.gatewayId);
 }
 
+async function ensureGatewayPodHome(
+  deps: Pick<GatewayConvergencePassDeps, "ensureIsolatedPodHome" | "store">,
+  input: { gateway: DurableGateway; isolatedPod: boolean; desiredOpts: GatewayUpsertOpts; replicas: number },
+): Promise<void> {
+  const { gateway, isolatedPod, desiredOpts, replicas } = input;
+  if (desiredOpts.hobbyCheckpoint && !isolatedPod) {
+    throw new Error(`Hobby checkpoint ${gateway.gatewayId} requires an isolated cluster runtime`);
+  }
+  if (!isolatedPod || replicas === 0 || desiredOpts.hobbyCheckpoint) return;
+  await deps.ensureIsolatedPodHome({
+    gatewayId: gateway.gatewayId,
+    homeSizeGiB: await isolatedPodHomeSizeGiB(deps.store, gateway),
+    served: gateway.liveRelease !== null,
+  });
+}
+
 async function upsertGateway(
   passDeps: GatewayConvergencePassDeps,
   input: {
@@ -1298,16 +1314,7 @@ async function upsertGateway(
   });
   if (!(await gatewayRuntimeMutationAllowed(store, gateway.gatewayId))) return;
   const isolatedPod = runtimeKind === "cluster" && gateway.gatewayClass === "isolated";
-  if (desiredOpts.hobbyCheckpoint && !isolatedPod) {
-    throw new Error(`Hobby checkpoint ${gateway.gatewayId} requires an isolated cluster runtime`);
-  }
-  if (isolatedPod && replicas > 0 && !desiredOpts.hobbyCheckpoint) {
-    await passDeps.ensureIsolatedPodHome({
-      gatewayId: gateway.gatewayId,
-      homeSizeGiB: await isolatedPodHomeSizeGiB(store, gateway),
-      served: gateway.liveRelease !== null,
-    });
-  }
+  await ensureGatewayPodHome(passDeps, { gateway, isolatedPod, desiredOpts, replicas });
   await helm.upsertInstance({
     ...desiredOpts,
     ...(isolatedPod ? { rollStrategy: "recreate" as const } : {}),
@@ -2949,12 +2956,9 @@ async function createControllerRuntime(
     }).then(() => undefined);
 
   const chartFingerprint = computeChartFingerprint(GATEWAY_CHART);
-  const resolveApiServerEgressCidrs = createCachedApiServerEgressResolver(
-    (args) => spawnKubectl(args),
-    log,
+  const prepareGatewayConfig = createGatewayRuntimeConfigPreparer(
+    createCachedApiServerEgressResolver((args) => spawnKubectl(args), log),
   );
-  const prepareGatewayConfig =
-    createGatewayRuntimeConfigPreparer(resolveApiServerEgressCidrs);
 
   const handlerSyncFleetIngress = async () => {
     await syncEdgeIngressForGateways(await readDurableServingFleetGateways(store));
