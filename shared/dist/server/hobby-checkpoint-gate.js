@@ -126,6 +126,28 @@ export function checkpointDesktop(claim, boot) {
         throw new Error("Hobby live standby must be headless");
     return "none";
 }
+async function admitLiveCheckpoint(boot, receipt, prefix, state) {
+    assertLiveCheckpointClaim(boot, receipt);
+    const recovery = await readMountedRecovery(receipt);
+    if (!recovery && boot.GATEWAY_COMPUTER_DESKTOP === "x11" && !state.sealed)
+        return null;
+    const sealed = state.sealed;
+    if (sealed && (recovery?.attemptId !== sealed.attemptId || recovery.gatewayImageTag !== sealed.gatewayImageTag)) {
+        throw new Error("Hobby live recovery claim changed after seal");
+    }
+    const authorized = recovery ? { ...receipt, recovery } : receipt;
+    checkpointDesktop(authorized, boot);
+    await rememberLiveOwner(authorized);
+    if (recovery?.phase !== "seal") {
+        await checkpointGatewayCredentials();
+        return authorized;
+    }
+    if (!sealed) {
+        state.sealed = recovery;
+        await writeFile(`${prefix}-recovery-sealed`, JSON.stringify([recovery.attemptId, authorized.podUid, recovery.gatewayImageTag]), { mode: 0o600 });
+    }
+    return null;
+}
 export async function waitForCheckpointClaim(role) {
     const boot = process.env;
     const prefix = `/tmp/octogee-hobby-checkpoint-${role}`;
@@ -140,33 +162,16 @@ export async function waitForCheckpointClaim(role) {
         !podUid || !POD_UID.test(podUid))
         throw new Error("Expected the original unclaimed gateway checkpoint process");
     await writeFile(`${prefix}-prepared`, podUid, { mode: 0o600 });
-    let sealed;
+    const state = {};
     for (;;) {
         const receipt = await readMountedCheckpointClaim();
         if (receipt !== null) {
             if (live) {
-                assertLiveCheckpointClaim(boot, receipt);
-                const recovery = await readMountedRecovery(receipt);
-                if (!recovery && boot.GATEWAY_COMPUTER_DESKTOP === "x11" && !sealed) {
-                    await setTimeout(500);
-                    continue;
-                }
-                if (sealed && (recovery?.attemptId !== sealed.attemptId || recovery.gatewayImageTag !== sealed.gatewayImageTag)) {
-                    throw new Error("Hobby live recovery claim changed after seal");
-                }
-                const authorizedClaim = recovery ? { ...receipt, recovery } : receipt;
-                checkpointDesktop(authorizedClaim, boot);
-                await rememberLiveOwner(authorizedClaim);
-                if (recovery?.phase === "seal") {
-                    if (!sealed) {
-                        sealed = recovery;
-                        await writeFile(`${prefix}-recovery-sealed`, JSON.stringify([sealed.attemptId, podUid, sealed.gatewayImageTag]), { mode: 0o600 });
-                    }
-                    await setTimeout(500);
-                    continue;
-                }
-                await checkpointGatewayCredentials();
-                return authorizedClaim;
+                const admitted = await admitLiveCheckpoint(boot, receipt, prefix, state);
+                if (admitted)
+                    return admitted;
+                await setTimeout(500);
+                continue;
             }
             const current = restoreEnvironment(await readFile(RESTORED_ENV_PATH, "utf8"));
             const claim = readCheckpointRestore(boot, current, receipt);
