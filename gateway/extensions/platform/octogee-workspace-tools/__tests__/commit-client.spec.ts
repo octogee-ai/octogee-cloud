@@ -20,6 +20,7 @@ function fakeFetch(res: { ok: boolean; status: number; payload: unknown } | (() 
 }
 
 const CONTROL = "http://127.0.0.1:3001";
+const PUSHED = "0123456789abcdef0123456789abcdef01234567";
 const AGENT_ID = "octogee-acme-coach";
 const SECRET = "coach-mattermost-pat";
 
@@ -34,12 +35,12 @@ function clientOptions(fetchImpl: ReturnType<typeof fakeFetch>["impl"]) {
 
 describe("commit-client.commit", () => {
   it("POSTs slug + message to the internal commit path and returns the result", async () => {
-    const { impl, calls } = fakeFetch({ ok: true, status: 200, payload: { committed: true, pushed: true, nothingToCommit: false, divertedBlobs: 0 } });
+    const { impl, calls } = fakeFetch({ ok: true, status: 200, payload: { committed: true, pushed: true, nothingToCommit: false, commit: PUSHED, divertedBlobs: 0 } });
     const client = createCommitClient(clientOptions(impl));
 
     const r = await client.commit(AGENT_ID, "acme", "agent: finished onboarding");
 
-    expect(r).toEqual({ committed: true, pushed: true, nothingToCommit: false, divertedBlobs: 0 });
+    expect(r).toEqual({ committed: true, pushed: true, nothingToCommit: false, commit: PUSHED, divertedBlobs: 0 });
     expect(calls[0]).toMatchObject({
       url: `${CONTROL}${COMMIT_PATH}`,
       method: "POST",
@@ -58,7 +59,7 @@ describe("commit-client.commit", () => {
     const { impl, calls } = fakeFetch({
       ok: true,
       status: 200,
-      payload: { committed: true, pushed: true, nothingToCommit: false, divertedBlobs: 0 },
+      payload: { committed: true, pushed: true, nothingToCommit: false, commit: PUSHED, divertedBlobs: 0 },
     });
     const client = createCommitClient(clientOptions(impl));
     await client.commit(AGENT_ID, "acme");
@@ -66,13 +67,29 @@ describe("commit-client.commit", () => {
   });
 
   it("reports a clean no-op when there was nothing to commit", async () => {
-    const { impl } = fakeFetch({ ok: true, status: 200, payload: { committed: false, pushed: true, nothingToCommit: true, divertedBlobs: 2 } });
+    const { impl } = fakeFetch({ ok: true, status: 200, payload: { committed: false, pushed: true, nothingToCommit: true, commit: PUSHED, divertedBlobs: 2 } });
     const client = createCommitClient(clientOptions(impl));
-    expect(await client.commit(AGENT_ID, "acme")).toEqual({ committed: false, pushed: true, nothingToCommit: true, divertedBlobs: 2 });
+    expect(await client.commit(AGENT_ID, "acme")).toEqual({ committed: false, pushed: true, nothingToCommit: true, commit: PUSHED, divertedBlobs: 2 });
   });
 
   it("rejects an incomplete success response", async () => {
     const { impl } = fakeFetch({ ok: true, status: 200, payload: { committed: true } });
+    const client = createCommitClient(clientOptions(impl));
+    await expect(client.commit(AGENT_ID, "acme")).rejects.toMatchObject({ code: "bad-response" });
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["abbreviated", "0123456"],
+    ["uppercase", PUSHED.toUpperCase()],
+    ["SHA-256 length", `${PUSHED}${"0".repeat(24)}`],
+    ["not a string", 7],
+  ])("rejects a pushed response whose commit is %s", async (_label, commit) => {
+    const { impl } = fakeFetch({
+      ok: true,
+      status: 200,
+      payload: { committed: true, pushed: true, nothingToCommit: false, commit, divertedBlobs: 0 },
+    });
     const client = createCommitClient(clientOptions(impl));
     await expect(client.commit(AGENT_ID, "acme")).rejects.toMatchObject({ code: "bad-response" });
   });
@@ -148,7 +165,7 @@ describe("commit-client — multi-agent project lane", () => {
     const client = createCommitClient({
       fetchImpl: async (url, init) => {
         calls.push({ url, body: init?.body ?? "" });
-        return { ok: true, status: 200, json: async () => ({ committed: true, pushed: true, nothingToCommit: false, divertedBlobs: 0 }) };
+        return { ok: true, status: 200, json: async () => ({ committed: true, pushed: true, nothingToCommit: false, commit: PUSHED, divertedBlobs: 0 }) };
       },
       agentProofSecretProvider: async () => SECRET,
     });

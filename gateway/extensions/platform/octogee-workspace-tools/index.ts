@@ -80,6 +80,7 @@ export default definePluginEntry({
               committed: result.committed,
               pushed: result.pushed,
               nothing_to_commit: result.nothingToCommit,
+              commit: result.commit,
               diverted_blobs: result.divertedBlobs,
             });
           } catch (err) {

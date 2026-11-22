@@ -55,6 +55,8 @@ function app() {
   return server;
 }
 
+const PUSHED_COMMIT = "0123456789abcdef0123456789abcdef01234567";
+
 beforeEach(() => {
   vi.clearAllMocks();
   h.isSafeSlug.mockImplementation((slug: string) => /^[a-z0-9-]+$/.test(slug));
@@ -65,7 +67,7 @@ beforeEach(() => {
   h.commitAndPushWorkspace.mockImplementation(async (_dir, options) => {
     const prepared = await options.beforeCommit?.();
     if (prepared && !prepared.ok) return prepared;
-    return { ok: true, result: { committed: true, pushed: true, nothingToCommit: false } };
+    return { ok: true, result: { committed: true, pushed: true, nothingToCommit: false, commit: PUSHED_COMMIT } };
   });
   h.verifyWorkspaceCommitProofViaBroker.mockResolvedValue(true);
   h.divertWorktreeBinaries.mockResolvedValue({ diverted: [], failures: [], failedPaths: [] });
@@ -151,8 +153,34 @@ describe("internal workspace commit route", () => {
       author: { name: "Octogee Agent", email: "agent@octogee.test" },
       beforeCommit: expect.any(Function),
     }));
-    expect(res.body).toEqual({ committed: true, pushed: true, nothingToCommit: false, divertedBlobs: 0 });
+    expect(res.body).toEqual({
+      committed: true,
+      pushed: true,
+      nothingToCommit: false,
+      commit: PUSHED_COMMIT,
+      divertedBlobs: 0,
+    });
     expect(h.info).toHaveBeenCalledWith(expect.stringContaining("internal/workspace/commit slug=acme"));
+  });
+
+  it("names the commit the remote branch is at when there was nothing new to commit", async () => {
+    h.commitAndPushWorkspace.mockResolvedValueOnce({
+      ok: true,
+      result: { committed: false, pushed: true, nothingToCommit: true, commit: PUSHED_COMMIT },
+    });
+
+    const res = await request(app())
+      .post("/internal/workspace/commit")
+      .send({ agentId: "octogee-acme-coach", slug: "acme" })
+      .expect(200);
+
+    expect(res.body).toEqual({
+      committed: false,
+      pushed: true,
+      nothingToCommit: true,
+      commit: PUSHED_COMMIT,
+      divertedBlobs: 0,
+    });
   });
 
   it("uses the default commit message and custom user root when no message is provided", async () => {
