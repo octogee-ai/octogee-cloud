@@ -13,12 +13,17 @@ const next = { gateway: "gateway@sha256:" + "3".repeat(64), "gateway-edge": "edg
 const workload = { deploymentName: "octogee-gateway-shared-t", deploymentUid: "dep", replicaSetName: "rs-name", replicaSetUid: "rs" };
 const bound = { installedChartFingerprint:"a".repeat(64), gatewayId: "shared-t", workload: { podName: "pod", podUid: "original", deploymentUid: "dep", replicaSetUid: "rs" },
   originalImages: old, maintenanceImages: next };
-const deps = { chart:"retained-chart",runHelm:vi.fn(),namespace: "octogee-test", runKubectl: vi.fn(), assertCurrent: vi.fn(async () => {}), wait: vi.fn(async () => {}) };
+const deps = { environment: "test" as const, chart:"retained-chart",runHelm:vi.fn(),namespace: "octogee-test", runKubectl: vi.fn(), assertCurrent: vi.fn(async () => {}), wait: vi.fn(async () => {}) };
 const pod = (images: typeof old) => ({ metadata: { name: "pod", uid: "original", resourceVersion: "23" },
   spec: { containers: Object.entries(images).map(([name,image]) => ({ name, image })) } });
 beforeEach(() => {
   vi.resetAllMocks();
   vi.mocked(captureSourceRecoveryWorkload).mockResolvedValue(workload);
+});
+it("refuses production before opening any workload or Helm transport", async () => {
+  await expect(transitionHeldSharedPod({ ...deps, environment: "prod" }, bound, "install")).rejects.toThrow(/requires TEST/);
+  expect(existingOwnedPod).not.toHaveBeenCalled();
+  expect(deps.runHelm).not.toHaveBeenCalled();
 });
 it("refuses a replacement for the retained home before pausing the Deployment", async () => {
   vi.mocked(existingOwnedPod).mockResolvedValue({ ...pod(old), metadata: { name: "pod", uid: "replacement" } });

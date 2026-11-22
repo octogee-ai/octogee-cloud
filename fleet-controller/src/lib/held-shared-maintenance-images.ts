@@ -14,6 +14,7 @@ interface MaintenanceTarget {
 }
 
 type Dependencies = Pick<SharedPodRecoveryDeps, "namespace" | "runKubectl" | "now" | "wait"> & {
+  environment: "test" | "prod";
   chart: string;
   runHelm: HelmSubprocess;
   assertCurrent(): Promise<void>;
@@ -33,7 +34,7 @@ async function readHeldWorkload(deps: Dependencies, bound: MaintenanceTarget) {
 }
 
 export async function transitionHeldSharedPod(deps: Dependencies, bound: MaintenanceTarget, direction: "install" | "rollback") {
-  if (deps.namespace !== "octogee-test") throw new Error("Shared held maintenance requires TEST");
+  if (deps.environment !== "test") throw new Error("Shared held maintenance requires TEST");
   const { pod, workload } = await readHeldWorkload(deps, bound);
   const [from, to] = direction === "install" ? [bound.originalImages, bound.maintenanceImages] : [bound.maintenanceImages, bound.originalImages];
   const saved = { target: { originalImages: from } };

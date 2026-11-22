@@ -6,7 +6,7 @@ import type { SourceRecoveryWorkload } from "./shared-source-images.js";
 import { json, type SharedPodRecoveryDeps } from "./shared-restore-runtime.js";
 
 type Images = Record<"gateway" | "gateway-edge", string>;
-type Dependencies = Pick<SharedPodRecoveryDeps, "namespace" | "runKubectl"> & { runHelm: HelmSubprocess };
+type Dependencies = Pick<SharedPodRecoveryDeps, "namespace" | "runKubectl"> & { environment: "test" | "prod"; runHelm: HelmSubprocess };
 
 function tag(image: string) {
   const match = /^([^@]+):([a-f0-9]{7}[a-zA-Z0-9.-]*@sha256:[a-f0-9]{64})$/.exec(image);
@@ -71,7 +71,7 @@ export async function adoptRetainedSharedHelm(
   deps: Dependencies, workload: SourceRecoveryWorkload, selection: Adoption, assertCurrent: () => Promise<void>,
 ) {
   const { gatewayId, chart, installedChartFingerprint, from, to } = selection;
-  if (![deps.namespace === "octogee-test", workload.deploymentName === `octogee-gateway-${gatewayId}`,
+  if (![deps.environment === "test", workload.deploymentName === `octogee-gateway-${gatewayId}`,
     computeChartFingerprint(chart) === installedChartFingerprint].every(Boolean)) {
     throw new Error("Unexpected Shared maintenance installation");
   }
