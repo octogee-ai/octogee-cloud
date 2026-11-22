@@ -6,12 +6,6 @@ import type { PlatformStateStore } from "@octogee/core/platform-state";
 import type { HeldNativeOfflineStageReceipt, Operation, SchedulerHandoffState } from "@octogee/shared/types/glm";
 import type { OperationContext } from "../operation-router.js";
 
-export type ReconcileHeldNativeReturnSource<Backup extends object> = (
-  authority: HeldNativeReturnAuthority & { claimStartedAt: number },
-  assertCurrent: () => Promise<void>,
-  backup: Backup,
-) => Promise<HeldNativeReturnSourceProof>;
-
 export type VerifyHeldNativeReturnCustody = (
   authority: HeldNativeReturnAuthority,
   assertCurrent: () => Promise<void>,
