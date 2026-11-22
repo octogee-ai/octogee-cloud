@@ -200,6 +200,43 @@ describe("first-boot VM gateway handoff", () => {
     })).resolves.toMatchObject({ kind: "mark-live", vmReady: { state: signedFleetState } });
   });
 
+  it.each([true, false])("settles an edge-only release with its older signed gateway tag only when edge digest matches: %s", async matchingEdge => {
+    const previous = "abcdef1";
+    const next = "abcdef2";
+    const gatewayDigest = `sha256:${"b".repeat(64)}`;
+    const edgeDigest = `sha256:${"c".repeat(64)}`;
+    const staleEdge = `sha256:${"d".repeat(64)}`;
+    const gatewayRepository = artifact.imageRepository + "-builder";
+    const edgeRepository = artifact.imageRepository.replace(/octogee-gateway$/u, "gateway-edge");
+    const expected: ReleasePayload = { ...artifact, imageTag: `${next}@${gatewayDigest}`,
+      profileImages: { isolated: { imageRepository: gatewayRepository, imageTag: `${next}@${gatewayDigest}` } },
+      gatewayEdgeImage: { imageRepository: edgeRepository, imageTag: `${next}@${edgeDigest}` },
+    };
+    const signedFleetState = { status: "ready", version: `${previous}@${gatewayDigest}`, users: [], startedAt: 100 };
+    const health = { status: "ready" as const, version: signedFleetState.version, fleetSignatureCapability: "gateway-scoped" as const,
+      handoffReleased: true, prelaunchState: "serving" as const, mountedCustomers: [], signedFleetState };
+    const { deps } = handoffDeps({ ready: true, health });
+    const updating = { ...gateway, latestRelease: 2, desiredRelease: 2, liveRelease: 1 };
+    const seenEdge = matchingEdge ? edgeDigest : staleEdge;
+    const converge = refineGatewayConvergenceAction({
+      passDeps: {
+        store: createDocumentFixtureStore({ [`gateways/${gateway.gatewayId}`]: updating }),
+        reconcileSurgeHandoff: input => reconcileSurgeUserHandoff(deps, input),
+      },
+      gateway: updating, artifact: expected,
+      runtime: { gatewayId: gateway.gatewayId, runtime: "gce-vm", lifecycle: "provisioning", vm,
+        heartbeat: { status: "ready", version: signedFleetState.version },
+        vmImages: { instanceId: vm.instanceId, observedAt: 125, containers: [
+          { name: "gateway", running: true, imageReference: `${gatewayRepository}:${previous}@${gatewayDigest}`, digests: [`${gatewayRepository}@${gatewayDigest}`] },
+          { name: "gateway-edge", running: true, imageReference: `${edgeRepository}:${next}@${seenEdge}`, digests: [`${edgeRepository}@${seenEdge}`] },
+        ] } } as never,
+      helmObserved: { imageRepository: gatewayRepository, imageTag: `${next}@${gatewayDigest}`, replicas: 1 },
+      action: { kind: "steady" },
+    });
+    if (matchingEdge) await expect(converge).resolves.toMatchObject({ kind: "mark-live", vmReady: { state: signedFleetState } });
+    else await expect(converge).resolves.toEqual({ kind: "steady" });
+  });
+
   it("settles a released VM whose endpoint reports ready", async () => {
     const { deps } = handoffDeps({
       ready: true,

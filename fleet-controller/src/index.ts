@@ -46,6 +46,7 @@ import {
   resolveGatewayClass,
   isGatewayClass,
   isGatewayProfile,
+  isGatewayVmImageObservation,
   type GatewayClass,
   type HelmInstancesMap,
   type OperationAuditRecord,
@@ -202,7 +203,7 @@ import { recoverSharedRestoreRuntime } from "./lib/shared-restore-runtime.js";
 import { schedulerHandoffAwaitingRelease, startSchedulerHandoffRelease } from "./scheduler-handoff-release.js";
 import { createRecycleGatewayHandler } from "./handlers/recycle-gateway.js";
 import { createParkedPrewarmHandler } from "./handlers/parked-prewarm.js";
-import { PARKED_PREWARM_KIND } from "@octogee/core/isolated-gateway-lifecycle";
+import { guestReleaseInstalled, hasCompleteGuestRelease, PARKED_PREWARM_KIND } from "@octogee/core/isolated-gateway-lifecycle";
 import { createGatewayVmHandler } from "./handlers/gateway-vm.js";
 import { createHomeArchiveHandler } from "./handlers/home-archive.js";
 import { createHomeBackupReleaseHandler } from "./handlers/home-backup-release.js";
@@ -870,7 +871,7 @@ async function syncDurableRuntimeDependencies(
   await restartGatewayDeploymentsForModelKeyChanges(deps, gateways, changedModelKeyGateways);
 }
 
-type VmRuntimeIdentity = Pick<FleetRegistryRecord, "runtime" | "vm">;
+type VmRuntimeIdentity = Pick<FleetRegistryRecord, "runtime" | "vm" | "vmImages">;
 type ConvergingGatewayRuntime = GatewayRuntimeDoc & VmRuntimeIdentity;
 
 type ResolveHobbyCheckpointPod = (input: {
@@ -955,6 +956,7 @@ function reconcileGatewaySurgeHandoff(input: {
   gateway: DurableGateway;
   runtime: ConvergingGatewayRuntime | undefined;
   desiredImage: { imageRepository: string; imageTag: string };
+  readyImageTag: string;
   pendingArtifact: ReleasePayload | null;
   helmObserved: ObservedHelmInstance | null;
   prelaunchRefresh: boolean;
@@ -979,7 +981,7 @@ function reconcileGatewaySurgeHandoff(input: {
   const recoverSharedPodAfter = expiredDrainingSharedHeartbeat(gateway, input.runtime);
   return passDeps.reconcileSurgeHandoff({
     gatewayId: gateway.gatewayId,
-    desiredImageTag: desiredImage.imageTag,
+    desiredImageTag: input.readyImageTag,
     requiresUserMigration: !input.prelaunchRefresh && requiresSurgeUserMigration(gateway),
     isolatedGateway: isIsolatedGateway(gateway) || (gateway.gatewayClass === "isolated" && input.hobbyCheckpoint?.slotId === gateway.gatewayId),
     ...(input.hobbyCheckpoint?.mode === "cold" ? { desiredCheckpointRelease: gateway.desiredRelease } : {}),
@@ -1001,6 +1003,19 @@ function gatewayNeedsLiveVerification(gateway: DurableGateway, runtime: Convergi
   return gateway.desiredStatus === "draining" &&
     (gateway.liveRelease !== gateway.desiredRelease || runtime?.lifecycle !== "serving" ||
      expiredDrainingSharedHeartbeat(gateway, runtime) !== undefined);
+}
+
+function expectedReadyImageTag(
+  gateway: DurableGateway, runtime: VmRuntimeIdentity | null | undefined, artifact: ReleasePayload,
+): string | null {
+  const image = gatewayImageFor(gateway, artifact);
+  if (runtime?.runtime !== "gce-vm" || gateway.liveRelease === null || !hasCompleteGuestRelease(artifact)) return image.imageTag;
+  const sample = runtime.vmImages;
+  if (!runtime.vm?.instanceId || !isGatewayVmImageObservation(sample) ||
+    !guestReleaseInstalled(artifact, runtime.vm.instanceId, sample, runtime.vm.startedAt ?? 0)) return null;
+  const reference = sample.containers.find(container => container.name === "gateway")!.imageReference;
+  const prefix = `${image.imageRepository}:`;
+  return reference.startsWith(prefix) ? reference.slice(prefix.length) : image.imageTag;
 }
 
 function matchesReadyVm(
@@ -1052,12 +1067,13 @@ export async function refineGatewayConvergenceAction(input: {
     desiredDeploymentIntentFingerprint,
     action,
   } = input;
-  if (action.kind !== "steady" || !artifact) return action;
-  if (!gatewayNeedsLiveVerification(gateway, runtime)) return action;
+  if (!artifact || ![action.kind === "steady", gatewayNeedsLiveVerification(gateway, runtime)].every(Boolean)) return action;
   if (!(await gatewayDesiredRootPresent(passDeps.store, gateway.gatewayId))) {
     return { kind: "steady" };
   }
   const desiredImage = gatewayImageFor(gateway, artifact);
+  const readyImageTag = expectedReadyImageTag(gateway, runtime, artifact);
+  if (readyImageTag === null) return action;
   const prelaunchRefresh = await readIsolatedPrelaunchRefresh({
     reader: passDeps.store, gateway, runtime, image: desiredImage, observedImage: helmObserved,
   });
@@ -1066,6 +1082,7 @@ export async function refineGatewayConvergenceAction(input: {
     gateway,
     runtime,
     desiredImage,
+    readyImageTag,
     pendingArtifact,
     helmObserved,
     prelaunchRefresh,
@@ -1074,11 +1091,11 @@ export async function refineGatewayConvergenceAction(input: {
   if (prelaunchRefresh && handoff.prelaunchHeld) {
     return { kind: "mark-live", prelaunchRefresh: true };
   }
-  const vmReady = readyVmFromHandoff(gateway, runtime, handoff, desiredImage.imageTag);
+  const vmReady = readyVmFromHandoff(gateway, runtime, handoff, readyImageTag);
   if (vmReady) return { kind: "mark-live", vmReady };
   const desiredBuildReported = reportsDesiredBuildOrVerifiedInitialPrelaunch({
     runtime,
-    desiredImageTag: desiredImage.imageTag,
+    desiredImageTag: readyImageTag,
     gateway,
     handoffReady: handoff.ready,
   });
@@ -1355,9 +1372,9 @@ function currentReadyVm(
   root: GatewayRoot,
   runtime: FleetRegistryRecord | null,
   vmReady: ReadyVmObservation,
-  imageTag: string,
+  imageTag: string | null,
 ): boolean {
-  return root.updatedAt === gateway.updatedAt && runtime?.vm?.startedAt === vmReady.vmStartedAt &&
+  return imageTag !== null && root.updatedAt === gateway.updatedAt && runtime?.vm?.startedAt === vmReady.vmStartedAt &&
     matchesReadyVm(gateway.gatewayId, runtime, vmReady, imageTag);
 }
 
@@ -1418,12 +1435,12 @@ export async function markGatewayLive(
   const now = Date.now();
   const markedLive = await store.transaction({ label: "converge-gateway.mark-live" }, async (transaction) => {
     const root = await transaction.gateways.roots.get(gateway.gatewayId);
-    if (!root || !fleetControllerMayMarkGatewayLive(root, gateway.desiredRelease) ||
-      root.desiredStatus !== gateway.desiredStatus || root.runtimeRestartFence !== undefined ||
-      root.retirementClaim != null) return false;
+    if (!root || ![fleetControllerMayMarkGatewayLive(root, gateway.desiredRelease), root.desiredStatus === gateway.desiredStatus,
+      root.runtimeRestartFence === undefined, root.retirementClaim == null].every(Boolean)) return false;
     const runtimePatch = markLiveRuntimePatch(gateway);
     const runtime = prelaunchRefresh || runtimePatch ? await transaction.fleetRegistry.get(gateway.gatewayId) : null;
-    if (vmReady && !currentReadyVm(gateway, root, runtime, vmReady, imageTag)) {
+    const readyImageTag = expectedReadyImageTag(root, runtime, artifact);
+    if (readyImageTag === null || (vmReady && !currentReadyVm(gateway, root, runtime, vmReady, readyImageTag))) {
       log(`[converge-gateway] ${gateway.gatewayId} VM readiness identity changed; deferring release`);
       return false;
     }
@@ -1615,7 +1632,11 @@ function reconcileRelevantFingerprint(record: object): string {
   const { heartbeat, kubernetes, helm, revision: _revision, ...rest } = record as Record<string, unknown>;
   delete rest.podReplacements;
   delete rest.vmDisk;
+  const vmImages = rest.vmImages;
   delete rest.vmImages;
+  if (rest.runtime === "gce-vm" && isGatewayVmImageObservation(vmImages)) {
+    rest.vmImages = { instanceId: vmImages.instanceId, containers: vmImages.containers };
+  }
   delete rest.vmEgress;
   const heartbeatRecord =
     heartbeat !== null && typeof heartbeat === "object" && !Array.isArray(heartbeat)
