@@ -291,6 +291,22 @@ async function verifyOfflineReleaseCustody(state, hold, offline) {
     const current = await holdingCustody(state, hold, offline);
     requireConflict(current.sourceRelease === offline.sourceRelease && current.targetRelease === offline.targetRelease, "Held Native offline source or target release custody changed");
 }
+export async function assertHeldNativeOfflineSourceClaimable(state, op) {
+    const handoff = op.schedulerHandoff;
+    const recovery = handoff?.forwardRecovery;
+    const offline = recovery?.offlineSourceRecovery;
+    requireConflict(handoff && recovery && offline?.phase === "stopped-original" &&
+        recovery.sourceReconcile === undefined && op.status === "pending" && op.startedAt === null &&
+        op.completedAt === null && typeof offline.stoppedAt === "number" && Number.isSafeInteger(offline.stoppedAt) &&
+        offline.stoppedAt >= offline.requestedAt, "Held Native offline source has no pending stopped-original claim");
+    const selection = {
+        operationId: op.id, sourceGatewayId: handoff.fromGatewayId, targetGatewayId: handoff.toGatewayId,
+        sourceEpoch: recovery.sourceEpoch, schedulerMigrationId: handoff.migrationId,
+    };
+    const hold = journalHold(op, selection);
+    requireConflict(offline.requestId === offlineRequestId(selection), "Held Native offline request changed before claim");
+    await verifyOfflineReleaseCustody(state, hold, offline);
+}
 async function currentOfflineClaim(tx, { authority, claimStartedAt }) {
     const hold = journalHold(await tx.journal.operations.get(authority.operationId), authority);
     const offline = hold.handoff.forwardRecovery.offlineSourceRecovery;
@@ -313,7 +329,10 @@ export async function recordHeldNativeOfflineStage(store, claim, stage, now) {
         const next = { ...offline, phase: "staged-offline", stage };
         await tx.gateways.roots.compareAndSetRuntimeRestartFence(claim.authority.sourceGatewayId, offlineFence(claim.authority.sourceGatewayId, offline), offlineFence(claim.authority.sourceGatewayId, next));
         const schedulerHandoff = offlineHandoff(hold, next);
-        await tx.journal.operations.patch(hold.op.id, { schedulerHandoff }, { status: ["running"], startedAt: claim.claimStartedAt, revision: hold.op.revision });
+        await tx.journal.operations.patch(hold.op.id, {
+            schedulerHandoff, status: "pending", startedAt: null, lastProgressAt: now,
+            waitingOn: "held-native-offline-publication", error: { clear: true }, nextAttemptAt: { clear: true },
+        }, { status: ["running"], startedAt: claim.claimStartedAt, revision: hold.op.revision });
         return schedulerHandoff;
     });
 }

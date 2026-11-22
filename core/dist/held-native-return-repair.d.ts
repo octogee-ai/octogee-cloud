@@ -1,5 +1,5 @@
 import { type HeldNativeOfflineStageReceipt, type SchedulerHandoffState } from "@octogee/shared/types/glm";
-import type { OperationRecord, PlatformStateRepositories, PlatformStateStore } from "./platform-state/index.js";
+import type { OperationRecord, PlatformStateRepositories, PlatformStateStore, Stored } from "./platform-state/index.js";
 export declare class HeldNativeReturnConflict extends Error {
 }
 export interface HeldNativeReturnSelection {
@@ -47,6 +47,7 @@ export interface HeldNativeOriginalRestartWitness {
     ownerAnchorSha256: string;
 }
 export declare function recordHeldNativeOriginalRestart(store: PlatformStateStore, selection: HeldNativeReturnSelection, witness: HeldNativeOriginalRestartWitness, actor: string, now: number): Promise<HeldNativeReturnAuthority>;
+export declare function assertHeldNativeOfflineSourceClaimable(state: PlatformStateRepositories, op: Stored<OperationRecord>): Promise<void>;
 export declare function assertHeldNativeOfflineSourceClaim(store: PlatformStateStore, claim: HeldClaim): Promise<void>;
 export declare function recordHeldNativeOfflineStage(store: PlatformStateStore, claim: HeldClaim, stage: HeldNativeOfflineStageReceipt, now: number): Promise<SchedulerHandoffState>;
 export declare function heldNativeReturnBlocksDestination(op: Pick<OperationRecord, "input" | "schedulerHandoff">, gatewayId: string): boolean;
