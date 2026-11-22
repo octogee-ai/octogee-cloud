@@ -406,10 +406,13 @@ export function createVmGatewayRuntime(deps: VmGatewayRuntimeDeps): VmGatewayRun
       if (deps.ensureAuthSecret) await deps.ensureAuthSecret({ namespace: deps.namespace, gatewayId });
       const previousRuntime = await deps.store.fleetRegistry.get(gatewayId);
       const desktop = vmSpecDesktop(previousRuntime?.vmSpec, deps.vmSpec);
-      const [manifests, bridge] = await Promise.all([renderManifests(opts, desktop), bridgeIp()]);
+      const [manifests, bridge, previous] = await Promise.all([
+        renderManifests(opts, desktop), bridgeIp(), deps.store.gateways.vmRuntime.get(gatewayId),
+      ]);
       const ownerUid = opts.builderIdentity?.ownerUid;
       const homeStorageId = ownerUid ? homeStorageIdOf(ownerUid, await deps.store.users.records.get(ownerUid)) : undefined;
       const bundle = await renderVmRuntimeBundle({
+        previous,
         ...(homeStorageId ? { homeStorageId } : {}),
         ...(opts.builderIdentity ? { builderIdentity: opts.builderIdentity } : {}),
         gatewayId,
