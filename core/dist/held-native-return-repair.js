@@ -215,6 +215,17 @@ async function persistOfflineReservation(tx, authority, hold, offline, options) 
 function offlineHandoff(hold, offline) {
     return { ...hold.handoff, forwardRecovery: { ...hold.handoff.forwardRecovery, offlineSourceRecovery: offline } };
 }
+export async function readReservedHeldNativeOfflineSource(store, selection) {
+    return store.transaction({ label: "held-native-return.read-reserved-offline-source", readOnly: true }, async (tx) => {
+        const hold = journalHold(await tx.journal.operations.get(selection.operationId), selection);
+        const authority = offlineAuthority(selection, hold);
+        const offline = hold.handoff.forwardRecovery.offlineSourceRecovery;
+        requireConflict(offline?.requestId === authority.requestId && offline.phase === "reserved" &&
+            hold.op.status === "pending" && hold.op.startedAt === null && hold.op.completedAt === null, "Held Native offline original no longer has an unclaimed reservation");
+        await verifyOfflineReleaseCustody(tx, hold, offline);
+        return { authority, originalInstanceId: offline.originalInstanceId, reservedAt: offline.requestedAt };
+    });
+}
 export async function bindHeldNativeStoppedOriginal(store, selection, witness, actor, now) {
     return store.transaction({ label: "held-native-return.bind-stopped-original" }, async (tx) => {
         const hold = journalHold(await tx.journal.operations.get(selection.operationId), selection);

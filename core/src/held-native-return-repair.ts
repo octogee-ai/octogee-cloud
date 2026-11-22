@@ -287,6 +287,21 @@ export interface HeldNativeStoppedOriginalWitness {
   stoppedAt: number;
 }
 
+export async function readReservedHeldNativeOfflineSource(
+  store: PlatformStateStore, selection: HeldNativeReturnSelection,
+): Promise<{ authority: HeldNativeReturnAuthority; originalInstanceId: string; reservedAt: number }> {
+  return store.transaction({ label: "held-native-return.read-reserved-offline-source", readOnly: true }, async tx => {
+    const hold = journalHold(await tx.journal.operations.get(selection.operationId), selection);
+    const authority = offlineAuthority(selection, hold);
+    const offline = hold.handoff.forwardRecovery.offlineSourceRecovery;
+    requireConflict(offline?.requestId === authority.requestId && offline.phase === "reserved" &&
+      hold.op.status === "pending" && hold.op.startedAt === null && hold.op.completedAt === null,
+    "Held Native offline original no longer has an unclaimed reservation");
+    await verifyOfflineReleaseCustody(tx, hold, offline);
+    return { authority, originalInstanceId: offline.originalInstanceId, reservedAt: offline.requestedAt };
+  });
+}
+
 export async function bindHeldNativeStoppedOriginal(
   store: PlatformStateStore, selection: HeldNativeReturnSelection, witness: HeldNativeStoppedOriginalWitness, actor: string, now: number,
 ): Promise<HeldNativeReturnAuthority> {

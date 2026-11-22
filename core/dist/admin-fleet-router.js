@@ -4044,23 +4044,36 @@ export function addAdminFleetRoutes(router, deps) {
                 res.status(400).json({ error: "Exact held return scope and authenticated operator are required" });
                 return;
             }
-            if (!deps.observeHeldNativeStoppedOriginal) {
+            const dryRun = isAdminDryRun(req);
+            if (!dryRun && !deps.observeHeldNativeStoppedOriginal) {
                 res.status(503).json({ error: "Offline held Native source backend is unavailable" });
                 return;
             }
-            const dryRun = isAdminDryRun(req);
+            if (dryRun && phase === "reserve") {
+                const { requestId } = await reserveHeldNativeOfflineSource(store, selection, actor, Date.now(), true);
+                res.json({ operationId: selection.operationId, requestId, phase, dryRun: true, plans: [{
+                            what: "Reserve offline Native source recovery", forced: false, kind: "migrate-user",
+                            target: selection, mutation: { ...selection, requestId },
+                        }] });
+                return;
+            }
             if (phase === "original-restored") {
                 await respondHeldNativeOriginalRestart({ store, observe: deps.observeHeldNativeOriginalRestart, selection, actor, dryRun, res });
                 return;
             }
+            const observeStoppedOriginal = deps.observeHeldNativeStoppedOriginal;
+            if (!observeStoppedOriginal) {
+                res.status(503).json({ error: "Offline held Native source backend is unavailable" });
+                return;
+            }
             if (phase === "stopped-original" && dryRun) {
-                const witness = await deps.observeHeldNativeStoppedOriginal(selection);
+                const witness = await observeStoppedOriginal(selection);
                 res.json({ operationId: selection.operationId, phase, witness, dryRun: true });
                 return;
             }
             const authority = phase === "reserve"
                 ? await reserveHeldNativeOfflineSource(store, selection, actor, Date.now(), dryRun)
-                : await bindHeldNativeStoppedOriginal(store, selection, await deps.observeHeldNativeStoppedOriginal(selection), actor, Date.now());
+                : await bindHeldNativeStoppedOriginal(store, selection, await observeStoppedOriginal(selection), actor, Date.now());
             res.status(dryRun ? 200 : 202).json({ operationId: selection.operationId, requestId: authority.requestId, phase, dryRun });
         }
         catch (error) {

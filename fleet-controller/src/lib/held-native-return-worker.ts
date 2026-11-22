@@ -13,7 +13,7 @@ export type ReconcileHeldNativeReturnSource<Backup extends object> = (
 ) => Promise<HeldNativeReturnSourceProof>;
 
 export type VerifyHeldNativeReturnCustody = (
-  authority: HeldNativeReturnAuthority & { claimStartedAt: number },
+  authority: HeldNativeReturnAuthority,
   assertCurrent: () => Promise<void>,
 ) => Promise<void>;
 

@@ -2985,7 +2985,7 @@ interface ControllerRuntimeSeams {
   resolveHobbyCheckpointPod?: ResolveHobbyCheckpointPod;
   requiresInitialGatewayRelease?: RequiresInitialGatewayRelease;
   heldNativeReturnBackupReaders?: NativeReturnBackupReaders | null;
-  heldNativeOfflineSource?: HeldNativeOfflineSourceBackend | null;
+  heldNativeOfflineSource?: ControllerProduct["heldNativeOfflineSource"];
 }
 
 function provisioningSeams(runtime: ProvisioningServiceRuntime | null): Pick<ControllerRuntimeSeams, "provisioning" | "gatewayGitKeys"> {
@@ -3153,8 +3153,12 @@ async function createControllerRuntime(
     }, gatewayIds);
   const convergeGateways = serializeGatewayConvergence(runGatewayConvergence);
   const convergeSettledVm = convergeAfterVmRuntimeChange(convergeGateways, log);
+  const offlineCustody = {
+    verifyDestination: heldNativeDestinationCustody({ store, privateKey: fleetControllerPrivateKey, runKubectl, agentStoreAdminDsn: agentStore.adminDsn }),
+    fleetPrivateKey: fleetControllerPrivateKey,
+  };
   const nativeReturn = configureNativeReturnSupport({
-    readers: heldNativeReturnBackupReaders, offline: heldNativeOfflineSource, store, documents, privateKey: fleetControllerPrivateKey,
+    readers: heldNativeReturnBackupReaders, offline: heldNativeOfflineSource?.(store, offlineCustody), store, documents, privateKey: fleetControllerPrivateKey,
     runKubectl, kubeOps, prepareMigrationAgentStores, agentStoreAdminDsn: agentStore.adminDsn,
   });
   const handlers = await buildHandlers(documents, log, helm, kubeOps, {
@@ -3277,7 +3281,10 @@ function buildHeldNativeOfflineReturnHandler(deps: Parameters<typeof buildHeldNa
 
 export interface ControllerProduct {
   heldNativeReturnBackupReaders?: (store: PlatformStateStore) => NativeReturnBackupReaders | null;
-  heldNativeOfflineSource?: (store: PlatformStateStore) => HeldNativeOfflineSourceBackend | null;
+  heldNativeOfflineSource?: (store: PlatformStateStore, custody: {
+    verifyDestination: VerifyHeldNativeReturnCustody;
+    fleetPrivateKey: string;
+  }) => HeldNativeOfflineSourceBackend | null;
   resolveHobbyCheckpointPod?: ResolveHobbyCheckpointPod;
   requiresInitialGatewayRelease?: RequiresInitialGatewayRelease;
   createHostingCleanup?: (log: (message: string) => void) => HostingCleanup;
@@ -3327,10 +3334,6 @@ function createUserLifecycle(
   return product.userLifecycle({ store, log });
 }
 
-function productOfflineNativeBackend(product: ControllerProduct, store: PlatformStateStore): HeldNativeOfflineSourceBackend | null | undefined {
-  return environmentName === "test" ? product.heldNativeOfflineSource?.(store) : undefined;
-}
-
 export async function main(product: ControllerProduct): Promise<void> {
   installDefaultUserEntitlements();
   const controllerStartedAt = Date.now();
@@ -3353,7 +3356,7 @@ export async function main(product: ControllerProduct): Promise<void> {
       resolveHobbyCheckpointPod: product.resolveHobbyCheckpointPod,
       requiresInitialGatewayRelease: product.requiresInitialGatewayRelease,
       heldNativeReturnBackupReaders: environmentName === "test" ? product.heldNativeReturnBackupReaders?.(store) : undefined,
-      heldNativeOfflineSource: productOfflineNativeBackend(product, store),
+      heldNativeOfflineSource: environmentName === "test" ? product.heldNativeOfflineSource : undefined,
     });
 
   log(

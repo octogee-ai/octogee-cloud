@@ -32,6 +32,11 @@ export interface HeldNativeStoppedOriginalWitness {
     originalInstanceId: string;
     stoppedAt: number;
 }
+export declare function readReservedHeldNativeOfflineSource(store: PlatformStateStore, selection: HeldNativeReturnSelection): Promise<{
+    authority: HeldNativeReturnAuthority;
+    originalInstanceId: string;
+    reservedAt: number;
+}>;
 export declare function bindHeldNativeStoppedOriginal(store: PlatformStateStore, selection: HeldNativeReturnSelection, witness: HeldNativeStoppedOriginalWitness, actor: string, now: number): Promise<HeldNativeReturnAuthority>;
 export interface HeldNativeOriginalRestartWitness {
     originalInstanceId: string;
