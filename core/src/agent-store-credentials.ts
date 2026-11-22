@@ -1,3 +1,5 @@
+import { heldReturnDatabaseBarrier } from "./held-return-database-barrier.js";
+export type { HeldDatabaseWriterBinding, HeldDatabaseWriterScope } from "./held-return-database-barrier.js";
 import { assertTrustedAgentStoreRoutines } from "./agent-store-routines.js";
 import { createHash } from "node:crypto";
 import pg, { type PoolClient } from "pg";
@@ -639,4 +641,8 @@ async function dropAgentStoreObjectsRestricted(client: pg.Client, target: AgentS
   const configurations = await client.query("SELECT cfgname FROM pg_catalog.pg_ts_config WHERE cfgnamespace = $1::oid ORDER BY oid", [target.namespaceOid]);
   for (const row of configurations.rows) await client.query(`DROP TEXT SEARCH CONFIGURATION ${qualified(row.cfgname)} RESTRICT`);
   await client.query(`DROP SCHEMA ${identifier(target.namespace)} RESTRICT`);
+}
+
+export function createHeldReturnDatabaseBarrier(adminDsn: string) {
+  return heldReturnDatabaseBarrier(adminDsn, roleFor, AGENT_STORE_CREDENTIAL_LOCK);
 }
