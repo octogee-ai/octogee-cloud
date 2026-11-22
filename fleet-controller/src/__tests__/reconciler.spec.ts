@@ -1145,9 +1145,10 @@ describe("gateway convergence pass outcomes", () => {
       const h = isolatedPodPass(roots, runtimes, { pod: POD_PROFILE });
       h.helm.readDeployedInstances.mockResolvedValue({ [id]: oldHelm });
       if (observation === "different-deployment") h.helm.upsertInstance.mockRejectedValue(new Error("original Deployment changed"));
-      const pass = runGatewayConvergencePass({ ...h.deps, resolveHobbyCheckpointPod: async () => ({
-        slotId: id, mode: "live", livePod: retained, zone: "us-central1-c", machineFamily: "n2",
-      }) });
+      const deps = { ...h.deps, resolveHobbyCheckpointPod: async () => ({
+        slotId: id, mode: "live" as const, livePod: retained, zone: "us-central1-c", machineFamily: "n2",
+      }) };
+      const pass = runGatewayConvergencePass(deps);
       if (observation === "different-deployment") await expect(pass).rejects.toThrow(/original Deployment changed/);
       else await pass;
 
@@ -1160,6 +1161,15 @@ describe("gateway convergence pass outcomes", () => {
       });
       expect(h.ensureIsolatedPodHome).not.toHaveBeenCalled();
       expect(h.deps.reconcileSurgeHandoff).not.toHaveBeenCalled();
+      if (observation === "ready") {
+        const published = structuredClone({ root: roots[id], runtime: runtimes[id] });
+        await runGatewayConvergencePass(deps);
+        expect({ root: roots[id], runtime: runtimes[id] }).toEqual(published);
+        expect(h.helm.upsertInstance).toHaveBeenCalledTimes(2);
+        expect(h.helm.upsertInstance).toHaveBeenLastCalledWith(expect.objectContaining({
+          hobbyCheckpoint: expect.objectContaining({ mode: "live", livePod: retained }),
+        }));
+      }
     },
   );
 
