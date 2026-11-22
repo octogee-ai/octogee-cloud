@@ -265,6 +265,7 @@ import {
   collectStoredProjectAgentStates,
 } from "@octogee/core/user-snapshot-mapping";
 import {
+  GATEWAY_UNREACHABLE_AFTER_MS,
   MIGRATION_UNMOUNT_TIMEOUT_MS,
   SIGNATURE_HEADER,
 } from "@octogee/shared/types/fleet-controller";
@@ -892,6 +893,7 @@ interface GatewayConvergencePassDeps {
     requiresUserMigration: boolean;
     isolatedGateway: boolean;
     ownerlessOperatorPrewarm: boolean;
+    recoverSharedPodAfter?: number;
   }) => Promise<SurgeUserHandoffResult>;
   ensureIsolatedPodHome: (input: { gatewayId: string; homeSizeGiB: number; served: boolean }) => Promise<void>;
   log: (msg: string) => void;
@@ -970,6 +972,7 @@ function reconcileGatewaySurgeHandoff(input: {
       ? { imageRepository: helmObserved.imageRepository, imageTag: helmObserved.imageTag }
       : null,
   });
+  const recoverSharedPodAfter = expiredDrainingSharedHeartbeat(gateway, input.runtime);
   return passDeps.reconcileSurgeHandoff({
     gatewayId: gateway.gatewayId,
     desiredImageTag: desiredImage.imageTag,
@@ -977,14 +980,23 @@ function reconcileGatewaySurgeHandoff(input: {
     isolatedGateway: isIsolatedGateway(gateway) || (gateway.gatewayClass === "isolated" && input.hobbyCheckpoint?.slotId === gateway.gatewayId),
     ...(input.hobbyCheckpoint?.mode === "cold" ? { desiredCheckpointRelease: gateway.desiredRelease } : {}),
     ownerlessOperatorPrewarm: false,
+    ...(recoverSharedPodAfter === undefined ? {} : { recoverSharedPodAfter }),
     ...(supersedingImageTag ? { supersedingImageTag } : {}),
   });
+}
+
+function expiredDrainingSharedHeartbeat(gateway: DurableGateway, runtime: ConvergingGatewayRuntime | undefined): number | undefined {
+  if (gateway.gatewayClass !== "shared" || gateway.desiredStatus !== "draining" ||
+      gateway.liveRelease !== gateway.desiredRelease || runtime?.lifecycle !== "serving") return undefined;
+  const observedAt = runtime.heartbeat?.lastHeartbeatAt;
+  return typeof observedAt === "number" && Date.now() - observedAt > GATEWAY_UNREACHABLE_AFTER_MS ? observedAt : undefined;
 }
 
 function gatewayNeedsLiveVerification(gateway: DurableGateway, runtime: ConvergingGatewayRuntime | undefined): boolean {
   if (gateway.desiredStatus === "running") return true;
   return gateway.desiredStatus === "draining" &&
-    (gateway.liveRelease !== gateway.desiredRelease || runtime?.lifecycle !== "serving");
+    (gateway.liveRelease !== gateway.desiredRelease || runtime?.lifecycle !== "serving" ||
+     expiredDrainingSharedHeartbeat(gateway, runtime) !== undefined);
 }
 
 function matchesReadyVm(
