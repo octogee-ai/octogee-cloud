@@ -1,3 +1,4 @@
+import type { HobbyCheckpointPod } from "./helm-runner.js";
 import { installDefaultUserEntitlements, userEntitlements } from "@octogee/shared/types/user-entitlements";
 import { createUserActivationRollRecoveryOwner } from './user-activation-roll-recovery-owner.js';
 import { hasUserActivationTargetRollback, readUserActivationRollRecoveryCustody } from './user-activation-roll-recovery.js';
@@ -869,8 +870,15 @@ async function syncDurableRuntimeDependencies(
 type VmRuntimeIdentity = Pick<FleetRegistryRecord, "runtime" | "vm">;
 type ConvergingGatewayRuntime = GatewayRuntimeDoc & VmRuntimeIdentity;
 
+type ResolveHobbyCheckpointPod = (input: {
+  store: PlatformStateStore;
+  gateway: DurableGateway;
+  artifact: ReleasePayload;
+}) => Promise<HobbyCheckpointPod | undefined>;
+
 interface GatewayConvergencePassDeps {
   store: PlatformStateStore;
+  resolveHobbyCheckpointPod?: ResolveHobbyCheckpointPod;
   assertVmPauseNotPending?: (gatewayId: string, ownerUid?: string) => void;
   helm: HelmRunner;
   kubeOps: KubeOps;
@@ -1290,7 +1298,10 @@ async function upsertGateway(
   });
   if (!(await gatewayRuntimeMutationAllowed(store, gateway.gatewayId))) return;
   const isolatedPod = runtimeKind === "cluster" && gateway.gatewayClass === "isolated";
-  if (isolatedPod && replicas > 0) {
+  if (desiredOpts.hobbyCheckpoint && !isolatedPod) {
+    throw new Error(`Hobby checkpoint ${gateway.gatewayId} requires an isolated cluster runtime`);
+  }
+  if (isolatedPod && replicas > 0 && !desiredOpts.hobbyCheckpoint) {
     await passDeps.ensureIsolatedPodHome({
       gatewayId: gateway.gatewayId,
       homeSizeGiB: await isolatedPodHomeSizeGiB(store, gateway),
@@ -1423,7 +1434,7 @@ function observedHelmInstance(
 }
 
 async function prepareDesiredGatewayIntent(input: {
-  passDeps: Pick<GatewayConvergencePassDeps, "prepareGatewayConfig" | "chartFingerprint">;
+  passDeps: Pick<GatewayConvergencePassDeps, "prepareGatewayConfig" | "chartFingerprint" | "store" | "resolveHobbyCheckpointPod">;
   gateway: DurableGateway;
   artifact: ReleasePayload | null;
   instance: HelmInstancesMap[string] | undefined;
@@ -1431,10 +1442,12 @@ async function prepareDesiredGatewayIntent(input: {
   const { passDeps, gateway, artifact, instance } = input;
   if (!artifact || gateway.desiredStatus === "retired") return null;
   const prepared = await passDeps.prepareGatewayConfig(gateway);
+  const hobbyCheckpoint = await passDeps.resolveHobbyCheckpointPod?.({ store: passDeps.store, gateway, artifact });
   const opts = gatewayUpsertOptsFromRelease({
     namespace: NAMESPACE,
     gateway: prepared,
     artifact,
+    hobbyCheckpoint,
     replicas: gateway.desiredStatus === "paused" ? 0 : 1,
     chartPath: GATEWAY_CHART,
     valuesFile: GATEWAY_VALUES_FILE,
@@ -2799,6 +2812,7 @@ interface ControllerRuntimeSeams {
   documents: UserDocuments;
   provisioning: ErasureProvisioning | null;
   gatewayGitKeys: GatewayGitKeyRelease | null;
+  resolveHobbyCheckpointPod?: ResolveHobbyCheckpointPod;
 }
 
 function provisioningSeams(runtime: ProvisioningServiceRuntime | null): Pick<ControllerRuntimeSeams, "provisioning" | "gatewayGitKeys"> {
@@ -2809,7 +2823,7 @@ async function createControllerRuntime(
   store: PlatformStateStore,
   createHostingCleanup: ControllerProduct["createHostingCleanup"],
   userLifecycle: ProductUserLifecycle | null,
-  { accounts, documents, provisioning, gatewayGitKeys }: ControllerRuntimeSeams,
+  { accounts, documents, provisioning, gatewayGitKeys, resolveHobbyCheckpointPod }: ControllerRuntimeSeams,
 ): Promise<ControllerRuntime> {
   const runKubectl: KubectlSubprocess = (args, opts) => spawnKubectl(args, opts);
   const authSecretEnsurer = createAuthSecretEnsurer({
@@ -2959,6 +2973,7 @@ async function createControllerRuntime(
   const runGatewayConvergence = (gatewayIds?: readonly string[]) =>
     runGatewayConvergencePass({
       store,
+      resolveHobbyCheckpointPod,
       assertVmPauseNotPending: vmRuntime?.assertVmPauseNotPending,
       helm,
       kubeOps,
@@ -3015,6 +3030,7 @@ async function createControllerRuntime(
 type HostingCleanup = NonNullable<NukeCloudDeps["deleteHostingSites"]>;
 
 export interface ControllerProduct {
+  resolveHobbyCheckpointPod?: ResolveHobbyCheckpointPod;
   createHostingCleanup?: (log: (message: string) => void) => HostingCleanup;
   userLifecycle: ProductUserLifecycleFactory | null;
   addAdminRoutes?: ProductAdminRoutes;
@@ -3079,7 +3095,10 @@ export async function main(product: ControllerProduct): Promise<void> {
     log,
   });
   const { deps, fleetControllerPrivateKey, chartFingerprint } =
-    await createControllerRuntime(store, product.createHostingCleanup, userLifecycle, { accounts, documents, ...provisioningSeams(provisioning) });
+    await createControllerRuntime(store, product.createHostingCleanup, userLifecycle, {
+      accounts, documents, ...provisioningSeams(provisioning),
+      resolveHobbyCheckpointPod: product.resolveHobbyCheckpointPod,
+    });
 
   log(
     `[glm-controller] boot sha=${process.env.BUILD_SHA ?? "unknown"} oc=${process.env.OPENCLAW_VERSION ?? "n/a"} fork=${process.env.OPENCLAW_FORK_SHA ?? "n/a"} node=${process.version} — namespace=${NAMESPACE} gatewayChart=${GATEWAY_CHART} chartFingerprint=${chartFingerprint.slice(0, 12)} chartDriftPolicy=release-gated valuesFile=${GATEWAY_VALUES_FILE}`,

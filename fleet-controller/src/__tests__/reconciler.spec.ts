@@ -1064,6 +1064,26 @@ describe("gateway convergence pass outcomes", () => {
     expect(h.upserted("healthy")).toMatchObject({ rollStrategy: "surge" });
   });
 
+  it("keeps ordinary pod home claims while restoring the exact claimed slot without a PVC", async () => {
+    const id = "hobby-slot-aaaeff123456";
+    const isolated = { gatewayClass: "isolated", profile: null, imageProfile: "isolated", sizingTier: "s", ownerUid: "u", builderSlug: "alice", liveRelease: null };
+    const roots = {
+      [id]: durableRoot({ ...isolated, gatewayId: id }),
+      ordinary: durableRoot({ ...isolated, gatewayId: "ordinary" }),
+    };
+    const h = isolatedPodPass(roots, {}, { pod: POD_PROFILE });
+    const checkpoint = { slotId: id, restoreSnapshot: "af0345ef-11ba-49ab-9c1e-f2a0a3984abd", zone: "us-central1-c", machineFamily: "n2" };
+
+    await runGatewayConvergencePass({
+      ...h.deps,
+      resolveHobbyCheckpointPod: async ({ gateway }) => gateway.gatewayId === id ? checkpoint : undefined,
+    });
+
+    expect(h.upserted(id)).toMatchObject({ hobbyCheckpoint: checkpoint, waitForReady: false, rollStrategy: "recreate" });
+    expect(h.ensureIsolatedPodHome).toHaveBeenCalledExactlyOnceWith({ gatewayId: "ordinary", homeSizeGiB: 10, served: false });
+    expect(h.upserted("ordinary")).not.toHaveProperty("hobbyCheckpoint");
+  });
+
   it("neither claims nor checks a pod gateway's home once its runtime mutation stops being allowed during the pass", async () => {
     const roots: Record<string, Record<string, unknown>> = {
       pod: durableRoot({ gatewayId: "pod", gatewayClass: "isolated", profile: null, imageProfile: "isolated", sizingTier: "s", ownerUid: "u", builderSlug: "alice", liveRelease: null }),

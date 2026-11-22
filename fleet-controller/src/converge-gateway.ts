@@ -1,3 +1,4 @@
+import type { HobbyCheckpointPod } from "./helm-runner.js";
 import type { SurgeReadyFleetState } from "./surge-user-handoff.js";
 import { createHash } from "node:crypto";
 import {
@@ -237,6 +238,7 @@ export interface GatewayUpsertOpts {
   deploymentProjectId?: string;
   gatewayServiceAccount?: string;
   rollStrategy: "surge" | "recreate";
+  hobbyCheckpoint?: HobbyCheckpointPod;
   waitForReady: false;
   deploymentIntentFingerprint: string;
 }
@@ -298,6 +300,7 @@ export function gatewayUpsertOptsFromRelease(input: {
   deploymentTargetId?: string;
   deploymentProjectId?: string;
   gatewayServiceAccount?: string;
+  hobbyCheckpoint?: HobbyCheckpointPod;
 }): GatewayUpsertOpts {
   const { gateway, artifact } = input;
   if (!artifact.gatewayEdgeImage) {
@@ -331,7 +334,8 @@ export function gatewayUpsertOptsFromRelease(input: {
     deploymentTargetId: input.deploymentTargetId,
     deploymentProjectId: input.deploymentProjectId,
     gatewayServiceAccount: input.gatewayServiceAccount,
-    rollStrategy: "surge",
+    rollStrategy: input.hobbyCheckpoint ? "recreate" : "surge",
+    ...(input.hobbyCheckpoint ? { hobbyCheckpoint: input.hobbyCheckpoint } : {}),
     waitForReady: false,
   };
   return {
