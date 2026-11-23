@@ -3633,9 +3633,6 @@ function buildDurableGatewayPatch(args: {
     }
     const desired = validateDesiredStatusPatch(args.body.desiredStatus);
     if ("error" in desired) return { error: desired.error };
-    if (desired.ok === "paused" && args.current.allocation?.ephemeralHomeGiB !== undefined) {
-      return { error: { status: 409, body: { error: "return this builder to a shared gateway before pausing its ephemeral home" } } };
-    }
     if (desired.ok === "draining") {
       return {
         error: {
@@ -3709,9 +3706,6 @@ async function resolveRollbackRelease(args: {
         body: { error: ERR_GATEWAY_NOT_FOUND, gatewayId: args.gatewayId },
       },
     };
-  }
-  if (gateway.allocation?.ephemeralHomeGiB !== undefined) {
-    return { error: { status: 409, body: { error: "return this builder to a shared gateway before changing its release", gatewayId: args.gatewayId } } };
   }
   if (gateway.desiredStatus === "retired") {
     return {
@@ -5419,6 +5413,10 @@ router.post(
           res.status(409).json({ error: "gateway durable root is invalid", gatewayId: id });
           return;
         }
+        if (body.desiredStatus === "paused" && root.allocation?.ephemeralHomeGiB !== undefined) {
+          res.status(409).json({ error: "return this builder to a shared gateway before pausing its ephemeral home", gatewayId: id });
+          return;
+        }
         const built = buildDurableGatewayPatch({
           gatewayId: id,
           current: root,
@@ -5986,6 +5984,10 @@ router.post(
           return;
         }
         const { gateway, artifact, release, note } = resolved.ok;
+        if (gateway.allocation?.ephemeralHomeGiB !== undefined) {
+          res.status(409).json({ error: "return this builder to a shared gateway before changing its release", gatewayId: id });
+          return;
+        }
         let appended: { release: number; operationId: string | null };
         try {
           appended = await runAdminFleetMutation({
