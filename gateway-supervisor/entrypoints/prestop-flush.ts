@@ -43,6 +43,7 @@ export interface PreStopFlushConfig {
 }
 
 export const PRESTOP_SESSION_QUIESCE_TIMEOUT_MS = 5_000;
+const EPHEMERAL_PRESTOP_REPORT_TIMEOUT_MS = 1_000;
 
 export function createPreStopSessionQuiesce(
   builderSlug: string,
@@ -183,12 +184,13 @@ export async function main(): Promise<void> {
   announcePreStopToSupervisor();
   const { builderSlug, gatewayClass, gatewayId } = resolvePreStopFlushConfig();
   const brokerClient = createFleetBrokerClient(gatewayId);
+  const ephemeralHome = process.env.GATEWAY_EPHEMERAL_HOME === "true";
   await brokerClient
     .recordPreStopFlush({
       gatewayClass,
       phase: "started",
       reason: "prestop",
-    })
+    }, ephemeralHome ? AbortSignal.timeout(EPHEMERAL_PRESTOP_REPORT_TIMEOUT_MS) : undefined)
     .catch((err) => {
       log(
         `[prestop-flush] broker start report failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -212,7 +214,7 @@ export async function main(): Promise<void> {
         }),
     syncSystemConfig: createPreStopSystemConfigFlush(builderSlug),
     syncRuntimeState: createEphemeralRuntimeCheckpoint({
-      ephemeralHome: process.env.GATEWAY_EPHEMERAL_HOME === "true",
+      ephemeralHome,
       slug: builderSlug,
       gatewayId,
       broker: brokerClient,
@@ -226,7 +228,7 @@ export async function main(): Promise<void> {
       phase: "completed",
       reason: "prestop",
       result,
-    })
+    }, ephemeralHome ? AbortSignal.timeout(EPHEMERAL_PRESTOP_REPORT_TIMEOUT_MS) : undefined)
     .catch((err) => {
       log(
         `[prestop-flush] broker completion report failed: ${err instanceof Error ? err.message : String(err)}`,
