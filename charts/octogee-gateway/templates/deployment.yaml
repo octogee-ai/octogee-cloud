@@ -20,6 +20,10 @@
 {{- $vmRuntime := eq (.Values.runtimeKind | default "cluster") "gce-vm" -}}
 {{- $vmIsolated := and $isolatedClass $vmRuntime -}}
 {{- $isolatedPod := and $isolatedClass (not $vmRuntime) -}}
+{{- $ephemeralHomeGiB := .Values.ephemeralHomeGiB | default 0 -}}
+{{- if and $ephemeralHomeGiB (not (and $isolatedPod (not $checkpointSlot) (eq .Values.runtimeClassName "gvisor") .Values.gatewayEdge.enabled)) -}}
+{{- fail "octogee-gateway: ephemeral home requires an ordinary isolated gVisor gateway with an edge" -}}
+{{- end -}}
 {{- if and (or $checkpointSnapshot $checkpointMode) (not $checkpointSlot) -}}
 {{- fail "octogee-gateway: a restored checkpoint requires its own slot" -}}
 {{- end -}}
@@ -396,6 +400,10 @@ spec:
             {{- end }}
             - name: GATEWAY_PROFILE
               value: {{ $imageProfile | quote }}
+            {{- if $ephemeralHomeGiB }}
+            - name: GATEWAY_EPHEMERAL_HOME
+              value: "true"
+            {{- end }}
             {{- if and $isolatedPod (not $x11Desktop) }}
             - name: GATEWAY_RUNTIME_KIND
               value: cluster
@@ -923,6 +931,10 @@ spec:
         - name: data
           emptyDir:
             sizeLimit: 4Gi
+        {{- else if $ephemeralHomeGiB }}
+        - name: data
+          emptyDir:
+            sizeLimit: {{ printf "%dGi" (int $ephemeralHomeGiB) }}
         {{- else if $isolatedPod }}
         - name: data
           persistentVolumeClaim:

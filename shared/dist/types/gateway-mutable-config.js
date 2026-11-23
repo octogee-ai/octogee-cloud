@@ -96,7 +96,7 @@ function isNullableModelBrokerLimits(value) {
 export function isIsolatedGatewayAllocation(value) {
     if (!isRecord(value))
         return false;
-    const fields = new Set(["kind", "schemaVersion", "leaseId", "generation", "claimedByUid"]);
+    const fields = new Set(["kind", "schemaVersion", "leaseId", "generation", "claimedByUid", "ephemeralHomeGiB"]);
     return Object.keys(value).every((field) => fields.has(field)) &&
         value.kind === "disposable-builder" &&
         value.schemaVersion === 1 &&
@@ -105,7 +105,8 @@ export function isIsolatedGatewayAllocation(value) {
         Number.isSafeInteger(value.generation) &&
         value.generation > 0 &&
         typeof value.claimedByUid === "string" &&
-        value.claimedByUid.length > 0;
+        value.claimedByUid.length > 0 &&
+        (value.ephemeralHomeGiB === undefined || (Number.isSafeInteger(value.ephemeralHomeGiB) && value.ephemeralHomeGiB > 0));
 }
 function isOptionalIsolatedGatewayAllocation(value) {
     return value === undefined || value === null || isIsolatedGatewayAllocation(value);

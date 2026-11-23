@@ -18,7 +18,7 @@ export interface IsolatedGatewayAllocation {
     gatewayId: string;
     outcome: "allocated" | "resumed";
 }
-export declare function buildIsolatedGatewayConfig(gatewayId: string, request: AllocateIsolatedGatewayInput): GatewayMutableConfig;
+export declare function buildIsolatedGatewayConfig(gatewayId: string, request: AllocateIsolatedGatewayInput, sizingProfile?: GatewaySizingProfile | null): GatewayMutableConfig;
 export declare function allocatedIsolatedGatewayId(request: AllocateIsolatedGatewayInput): string;
 export declare function isolatedAllocationFenceAllows(input: {
     request: AllocateIsolatedGatewayInput;

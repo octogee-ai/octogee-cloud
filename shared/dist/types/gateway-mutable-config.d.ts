@@ -25,6 +25,7 @@ export interface IsolatedGatewayAllocation {
     leaseId: string;
     generation: number;
     claimedByUid: string;
+    ephemeralHomeGiB?: number;
 }
 export declare function isIsolatedGatewayAllocation(value: unknown): value is IsolatedGatewayAllocation;
 export declare function isBareGatewayId(value: unknown): value is string;

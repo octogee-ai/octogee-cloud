@@ -7,6 +7,7 @@ import { blobSyncAllWithOptions, blobSyncForSlug } from "../lib/blob-sync.js";
 import {
   GATEWAY_CLASS,
   GATEWAY_ID,
+  OPENCLAW_CONFIG,
   log,
 } from "../lib/config.js";
 import { createBrokeredBlobStore } from "../lib/blob-sync-broker.js";
@@ -28,7 +29,10 @@ import {
   checkpointDurableSystemConfigForSlug,
   syncSystemConfigForSlug,
 } from "../lib/system-config.js";
+import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
+import { openclawStateRoot } from "../lib/openclaw-state-store.js";
+import { checkpointUserStoreAnchors } from "../lib/user-store-anchor-checkpoint.js";
 import { userClaimSlug } from "@octogee/shared/server/user-claim";
 import { isIsolatedGatewayClassValue } from "@octogee/shared/types/glm";
 
@@ -155,6 +159,26 @@ export function announcePreStopToSupervisor(mark: () => void = () => markPreStop
   }
 }
 
+export function createEphemeralRuntimeCheckpoint(input: {
+  ephemeralHome: boolean;
+  slug: string;
+  gatewayId: string;
+  broker: Pick<FleetBrokerClient, "reportAgentAnchors" | "readAgentAnchors">;
+}): (() => Promise<void>) | undefined {
+  if (!input.ephemeralHome) return undefined;
+  return async () => {
+    if (!input.slug) throw new Error("Ephemeral gateway checkpoint requires the claimed user");
+    const config: unknown = JSON.parse(await readFile(OPENCLAW_CONFIG, "utf8"));
+    await checkpointUserStoreAnchors({
+      stateDir: openclawStateRoot(process.env),
+      slug: input.slug,
+      gatewayId: input.gatewayId,
+      config,
+      broker: input.broker,
+    });
+  };
+}
+
 export async function main(): Promise<void> {
   announcePreStopToSupervisor();
   const { builderSlug, gatewayClass, gatewayId } = resolvePreStopFlushConfig();
@@ -187,6 +211,12 @@ export async function main(): Promise<void> {
           storeForSlug: () => createBrokeredBlobStore(brokerClient),
         }),
     syncSystemConfig: createPreStopSystemConfigFlush(builderSlug),
+    syncRuntimeState: createEphemeralRuntimeCheckpoint({
+      ephemeralHome: process.env.GATEWAY_EPHEMERAL_HOME === "true",
+      slug: builderSlug,
+      gatewayId,
+      broker: brokerClient,
+    }),
     releaseGiteaKey: createPreStopGiteaKeyRelease(builderSlug),
     log,
   });

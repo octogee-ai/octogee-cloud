@@ -1,6 +1,7 @@
 import { GATEWAY_UNREACHABLE_AFTER_MS } from "@octogee/shared/types/fleet-controller";
 import { projectGatewayDesiredRootForGateway } from "@octogee/shared/types/gateway-releases";
 import {
+  builderReturnOperationId,
   isolatedRecoverOperationId,
   placementRetireOperationId,
 } from "@octogee/shared/types/isolated-operation-ids";
@@ -417,6 +418,19 @@ async function assertZeroWorkloadRecoveryReceipt(
   }
 }
 
+async function assertEphemeralReturnVerified(tx: PlatformStateTransaction, request: RetireOwnedIsolatedGatewayInput): Promise<void> {
+  if (!["builder-returned", "operator-terminated"].includes(request.reason)) return;
+  if ((await tx.gateways.roots.get(request.gatewayId))?.allocation?.ephemeralHomeGiB === undefined) return;
+  if (request.generation === undefined || !request.authoritativeGatewayId) throw new GatewayRetirementConflictError("ephemeral home requires a verified Shared return");
+  const operation = await tx.journal.operations.get(builderReturnOperationId(request.gatewayId, request.generation));
+  const returned = operation?.input;
+  const required = ["flush-source", "final-sync-state", "verify-target", "cutover-firestore"];
+  if (operation?.status !== "succeeded" || returned?.uid !== request.uid || returned.fromGatewayId !== request.gatewayId ||
+    returned.toGatewayId !== request.authoritativeGatewayId || !required.every(name => operation.steps?.some(step => step.name === name && step.status === "done"))) {
+    throw new GatewayRetirementConflictError("ephemeral home requires a verified Shared return");
+  }
+}
+
 async function readRetirementTelemetryFence(
   input: RetirementDeps,
   request: RetireOwnedIsolatedGatewayInput,
@@ -501,6 +515,7 @@ export async function retireOwnedIsolatedGateway(
         }
         if (sizing) await assertIdleRetirementObservation(transaction, root, request, sizing);
         await assertRetirementAuthorityFence(transaction, request);
+        await assertEphemeralReturnVerified(transaction, request);
         await assertZeroWorkloadRecoveryReceipt(transaction, request);
         await assertActivationSourceRecoveryReleased(input, transaction, {
           targetGatewayId: request.gatewayId,

@@ -71,6 +71,7 @@ export const GATEWAYS_TABLE: TableSpec = {
     column("allocationLeaseId", "text"),
     column("allocationGeneration", "integer"),
     column("allocationClaimedByUid", "text"),
+    column("allocationEphemeralHomeGiB", "integer", { column: "allocation_ephemeral_home_gib" }),
     column("lastError", "jsonb"),
     column("lastPreStopFlush", "jsonb"),
     column("configBackfill", "jsonb"),
@@ -142,13 +143,16 @@ type Fields = Record<string, unknown>;
 
 function allocationColumns(gatewayId: string, allocation: unknown): Fields {
   if (allocation === null || isClearField(allocation)) {
-    return { allocationLeaseId: null, allocationGeneration: null, allocationClaimedByUid: null };
+    return { allocationLeaseId: null, allocationGeneration: null, allocationClaimedByUid: null, allocationEphemeralHomeGiB: null };
   }
   const value = allocation as IsolatedGatewayAllocation;
   if (value.kind !== ALLOCATION_KIND || value.schemaVersion !== ALLOCATION_SCHEMA_VERSION) {
     throw new MalformedRecordError(rootKey(gatewayId), `allocation ${JSON.stringify(allocation)} is not a disposable isolated allocation`);
   }
-  return { allocationLeaseId: value.leaseId, allocationGeneration: value.generation, allocationClaimedByUid: value.claimedByUid };
+  return {
+    allocationLeaseId: value.leaseId, allocationGeneration: value.generation, allocationClaimedByUid: value.claimedByUid,
+    allocationEphemeralHomeGiB: value.ephemeralHomeGiB ?? null,
+  };
 }
 
 function rootColumns(gatewayId: string, input: object): Fields {
@@ -160,7 +164,7 @@ function rootColumns(gatewayId: string, input: object): Fields {
 }
 
 export function decodeGatewayRoot(row: Row): Stored<GatewayRoot> {
-  const { allocationLeaseId, allocationGeneration, allocationClaimedByUid, ...stored } = decodeStored<Fields>(GATEWAYS_TABLE, row);
+  const { allocationLeaseId, allocationGeneration, allocationClaimedByUid, allocationEphemeralHomeGiB, ...stored } = decodeStored<Fields>(GATEWAYS_TABLE, row);
   if (allocationLeaseId === undefined) return stored as unknown as Stored<GatewayRoot>;
   const allocation: IsolatedGatewayAllocation = {
     kind: ALLOCATION_KIND,
@@ -168,6 +172,7 @@ export function decodeGatewayRoot(row: Row): Stored<GatewayRoot> {
     leaseId: allocationLeaseId as string,
     generation: allocationGeneration as number,
     claimedByUid: allocationClaimedByUid as string,
+    ...(typeof allocationEphemeralHomeGiB === "number" ? { ephemeralHomeGiB: allocationEphemeralHomeGiB } : {}),
   };
   return { ...stored, allocation } as unknown as Stored<GatewayRoot>;
 }

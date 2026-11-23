@@ -2428,6 +2428,9 @@ function buildDurableGatewayPatch(args) {
         const desired = validateDesiredStatusPatch(args.body.desiredStatus);
         if ("error" in desired)
             return { error: desired.error };
+        if (desired.ok === "paused" && args.current.allocation?.ephemeralHomeGiB !== undefined) {
+            return { error: { status: 409, body: { error: "return this builder to a shared gateway before pausing its ephemeral home" } } };
+        }
         if (desired.ok === "draining") {
             return {
                 error: {
@@ -2477,6 +2480,9 @@ async function resolveRollbackRelease(args) {
                 body: { error: ERR_GATEWAY_NOT_FOUND, gatewayId: args.gatewayId },
             },
         };
+    }
+    if (gateway.allocation?.ephemeralHomeGiB !== undefined) {
+        return { error: { status: 409, body: { error: "return this builder to a shared gateway before changing its release", gatewayId: args.gatewayId } } };
     }
     if (gateway.desiredStatus === "retired") {
         return {
@@ -4265,6 +4271,10 @@ export function addAdminFleetRoutes(router, deps) {
                 res.status(409).json({ error: "cannot restart a retired gateway", gatewayId: id });
                 return;
             }
+            if (gateway.allocation?.ephemeralHomeGiB !== undefined) {
+                res.status(409).json({ error: "return this builder to a shared gateway before restarting its ephemeral home", gatewayId: id });
+                return;
+            }
             const runtime = resolveGatewayRuntime((await store.fleetRegistry.get(id))?.runtime);
             if (runtime === "gce-vm") {
                 res.status(409).json({
@@ -4318,6 +4328,10 @@ export function addAdminFleetRoutes(router, deps) {
             const gateway = await readGatewayDoc(store, id);
             if (!gateway) {
                 res.status(404).json({ error: ERR_GATEWAY_NOT_FOUND, gatewayId: id });
+                return;
+            }
+            if (gateway.allocation?.ephemeralHomeGiB !== undefined) {
+                res.status(409).json({ error: "return this builder to a shared gateway before changing its release", gatewayId: id });
                 return;
             }
             if (gateway.desiredStatus === "retired") {

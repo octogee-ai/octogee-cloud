@@ -94,7 +94,7 @@ export interface SourcePlacement {
 }
 
 type PlacementResolution =
-  | { ok: true; release: number | null; gatewayClass: GatewayClass }
+  | { ok: true; release: number | null; gatewayClass: GatewayClass; ephemeralHome?: true }
   | { ok: false; reason: string; blocker?: string };
 
 export interface MigrateUserDeps {
@@ -589,6 +589,7 @@ function reportedToOperationStep(rep: ReportedStep, now: number): OperationStep 
 interface MigrationTargets {
   toGatewayId: string;
   toGatewayClass: GatewayClass;
+  toEphemeralHome?: true;
   fromGatewayId: string;
   fromGatewayClass?: GatewayClass;
   toRelease: number | null;
@@ -626,6 +627,7 @@ async function resolveMigrationTargets(
     targets: {
       toGatewayId,
       toGatewayClass: placement.gatewayClass,
+      ...(placement.ephemeralHome ? { toEphemeralHome: true as const } : {}),
       fromGatewayId: user.currentGatewayId,
       ...(source.gatewayClass ? { fromGatewayClass: source.gatewayClass } : {}),
       toRelease: placement.release,
@@ -2422,6 +2424,7 @@ async function executeMigrationAttempt(
       projectCheckoutScope: prepared.projectCheckoutScope,
       includeActivationManifest: true,
       ...(sourceOwnedUserActivation(prepared.targets) && !handoff.forwardRecovery ? { preserveSource: true as const } : {}),
+      ...(prepared.targets.toEphemeralHome ? { verifyPreparedTarget: true as const } : {}),
     },
     {
       ...buildRunnerDeps({ deps, client: withImportProgress(client, progress), ctx: destinationContext, automatic, operationId, uid: prepared.uid, sourceGatewayId: prepared.user.currentGatewayId }),
