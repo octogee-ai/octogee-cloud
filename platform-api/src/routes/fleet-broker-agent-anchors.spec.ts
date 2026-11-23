@@ -13,6 +13,9 @@ const UID = "uid-alice";
 const POD_NAME = "octogee-gateway-isolated-a-5bc59-p946t";
 const POD_UID = "5c3cb6d0-ba45-4908-ac88-9136a92bedd9";
 const OTHER_POD = "30c87f7c-89d8-4d56-b802-a7dbfc7c5b07";
+const OPERATION = "placement-ancestor";
+const MIGRATION = "mig-" + OPERATION;
+const TARGET = "shared-return";
 const NOW = 1_800_000_000_000;
 const STORE_ID = "92c817cc-770f-466d-b4a6-4e9b02998363";
 const ANCHOR = { agentId: "octogee-alice-coach", storeId: STORE_ID, schema: "octogee_agent_92c817cc770f466d" };
@@ -38,21 +41,34 @@ interface Options {
   observedAt?: number;
   root?: Record<string, unknown>;
   mirrorGatewayId?: string;
+  migrating?: boolean;
 }
 
 async function fixture(options: Options = {}) {
   const documents = new RecordingDocuments({
     [`gateways/${GATEWAY}`]: { ...ROOT, ...options.root },
+    [`gateways/${TARGET}`]: { ...ROOT, gatewayId: TARGET, gatewayClass: "shared", imageProfile: "shared", ownerUid: null, builderSlug: null },
     [`users/${UID}`]: { username: "alice", provisioning: { openclaw: { gatewayId: options.mirrorGatewayId ?? GATEWAY, slug: "alice" } } },
     [`glmGateways/${GATEWAY}`]: {
-      docKind: "runtime", gatewayId: GATEWAY, release: 1, lifecycle: "provisioning", runtime: "cluster",
-      kubernetes: { status: "not-ready", totalPods: 1, readyPods: 0, observedAt: options.observedAt ?? NOW - 500,
+      docKind: "runtime", gatewayId: GATEWAY, release: 1, lifecycle: options.migrating ? "serving" : "provisioning", runtime: "cluster",
+      kubernetes: { status: options.migrating ? "ready" : "not-ready", totalPods: 1, readyPods: options.migrating ? 1 : 0, observedAt: options.observedAt ?? NOW - 500,
         pods: [{ name: POD_NAME, uid: options.observedUid ?? POD_UID, nodeName: "node-a", replicaSetUid: "rs-a", instanceId: null, nodePool: null }] },
       heartbeat: { status: "unreachable", mountedCustomers: [] }, createdAt: NOW - 1000,
     },
   });
   const store = createDocumentFixtureStore(documents);
-  await store.gateways.assignments.put({ ...ASSIGNMENT, epoch: options.assignedEpoch ?? ASSIGNMENT.epoch });
+  await store.gateways.assignments.put({ ...ASSIGNMENT, epoch: options.assignedEpoch ?? ASSIGNMENT.epoch,
+    ...(options.migrating ? { state: "quiescing", updatedByOperationId: OPERATION } : {}),
+  });
+  if (options.migrating) {
+    await store.users.records.setFence(UID, "migration", { operationId: OPERATION, state: "moving", startedAt: NOW - 80 });
+    await store.journal.operations.create({
+      id: OPERATION, kind: "migrate-user", status: "running", origin: "automatic", createdBy: "glm-controller-placement-policy",
+      createdAt: NOW - 100, startedAt: NOW - 40, completedAt: null, steps: [],
+      input: { fromGatewayId: GATEWAY, toGatewayId: TARGET, uid: UID, userSlug: "alice", source: "continuous-placement-policy" },
+    });
+    await store.users.agentStores.put(UID, { kind: "agent", ...ANCHOR, gatewayId: GATEWAY, generation: null, assignmentEpoch: 0, recordedAt: NOW });
+  }
 
   const app = express();
   app.use(express.json());
@@ -128,5 +144,56 @@ describe("agent anchors on an assignment-backed isolated Pod", () => {
       expect(observe.mock.calls.some(([options]) => options.label === label)).toBe(true);
       expect(await store.users.agentStores.list(UID)).toEqual([]);
     }
+  });
+});
+
+describe("allocation-free isolated outbound source anchor reads", () => {
+  const outbound = { migrationId: MIGRATION, uid: UID };
+  const live = { migrating: true, root: { liveRelease: 1 } };
+
+  it("reads the current source owner's anchors during the exact move without granting a report", async () => {
+    const { read, report, store } = await fixture(live);
+    await read(outbound).expect(200, { anchors: [ANCHOR] });
+    await report(outbound).expect(403);
+    await read().expect(403);
+    expect(await store.users.agentStores.list(UID)).toHaveLength(1);
+  });
+
+  it.each([
+    ["a different Pod", { boundUid: OTHER_POD }],
+    ["a stale Pod observation", { observedAt: NOW - GATEWAY_UNREACHABLE_AFTER_MS - 1 }],
+  ] as const)("rejects %s", async (_reason, options) => {
+    const { read } = await fixture({ ...live, ...options });
+    expect((await read(outbound)).status).toBe(403);
+  });
+
+  it("rejects a foreign owner, epoch, operation, pending claim, and committed cutover", async () => {
+    const { read, store } = await fixture(live);
+    await read({ ...outbound, uid: "uid-other" }).expect(403);
+    await read({ ...outbound, assignmentEpoch: 1 }).expect(403);
+    await read({ ...outbound, migrationId: "mig-some-other-operation" }).expect(403);
+    await store.journal.operations.patch(OPERATION, { status: "pending", startedAt: null });
+    await read(outbound).expect(403);
+    await store.journal.operations.patch(OPERATION, { status: "running", startedAt: NOW - 30, cutoverCommittedAt: NOW - 1 });
+    expect((await read(outbound)).status).toBe(403);
+  });
+
+  it("refuses source anchor reads when a different gateway also holds an assignment", async () => {
+    const { read, store } = await fixture(live);
+    await store.gateways.assignments.put({ ...ASSIGNMENT, gatewayId: "shared-other" });
+    expect((await read(outbound)).status).toBe(403);
+  });
+
+  it("rechecks the same active claim inside the anchor read transaction", async () => {
+    const { read, store } = await fixture(live);
+    const transact = store.transaction.bind(store);
+    const observe = vi.spyOn(store, "transaction").mockImplementation((async (options, work) => {
+      if (options.label === "fleet-broker.read-agent-anchors") {
+        await store.journal.operations.patch(OPERATION, { startedAt: NOW - 20 });
+      }
+      return transact(options, work);
+    }) as PlatformStateStore["transaction"]);
+    await read(outbound).expect(403);
+    expect(observe.mock.calls.some(([options]) => options.label === "fleet-broker.read-agent-anchors")).toBe(true);
   });
 });
