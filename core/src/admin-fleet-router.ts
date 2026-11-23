@@ -5413,6 +5413,10 @@ router.post(
           res.status(409).json({ error: "gateway durable root is invalid", gatewayId: id });
           return;
         }
+        if (body.desiredStatus === "paused" && root.allocation?.ephemeralHomeGiB !== undefined) {
+          res.status(409).json({ error: "return this builder to a shared gateway before pausing its ephemeral home", gatewayId: id });
+          return;
+        }
         const built = buildDurableGatewayPatch({
           gatewayId: id,
           current: root,
@@ -5799,6 +5803,10 @@ router.post(
           res.status(409).json({ error: "cannot restart a retired gateway", gatewayId: id });
           return;
         }
+        if (gateway.allocation?.ephemeralHomeGiB !== undefined) {
+          res.status(409).json({ error: "return this builder to a shared gateway before restarting its ephemeral home", gatewayId: id });
+          return;
+        }
         const runtime = resolveGatewayRuntime((await store.fleetRegistry.get(id))?.runtime);
         if (runtime === "gce-vm") {
           res.status(409).json({
@@ -5857,6 +5865,10 @@ router.post(
         const gateway = await readGatewayDoc(store, id);
         if (!gateway) {
           res.status(404).json({ error: ERR_GATEWAY_NOT_FOUND, gatewayId: id });
+          return;
+        }
+        if (gateway.allocation?.ephemeralHomeGiB !== undefined) {
+          res.status(409).json({ error: "return this builder to a shared gateway before changing its release", gatewayId: id });
           return;
         }
         if (gateway.desiredStatus === "retired") {
@@ -5972,6 +5984,10 @@ router.post(
           return;
         }
         const { gateway, artifact, release, note } = resolved.ok;
+        if (gateway.allocation?.ephemeralHomeGiB !== undefined) {
+          res.status(409).json({ error: "return this builder to a shared gateway before changing its release", gatewayId: id });
+          return;
+        }
         let appended: { release: number; operationId: string | null };
         try {
           appended = await runAdminFleetMutation({

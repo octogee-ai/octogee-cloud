@@ -3840,6 +3840,10 @@ export function addAdminFleetRoutes(router, deps) {
                 res.status(409).json({ error: "gateway durable root is invalid", gatewayId: id });
                 return;
             }
+            if (body.desiredStatus === "paused" && root.allocation?.ephemeralHomeGiB !== undefined) {
+                res.status(409).json({ error: "return this builder to a shared gateway before pausing its ephemeral home", gatewayId: id });
+                return;
+            }
             const built = buildDurableGatewayPatch({
                 gatewayId: id,
                 current: root,
@@ -4265,6 +4269,10 @@ export function addAdminFleetRoutes(router, deps) {
                 res.status(409).json({ error: "cannot restart a retired gateway", gatewayId: id });
                 return;
             }
+            if (gateway.allocation?.ephemeralHomeGiB !== undefined) {
+                res.status(409).json({ error: "return this builder to a shared gateway before restarting its ephemeral home", gatewayId: id });
+                return;
+            }
             const runtime = resolveGatewayRuntime((await store.fleetRegistry.get(id))?.runtime);
             if (runtime === "gce-vm") {
                 res.status(409).json({
@@ -4318,6 +4326,10 @@ export function addAdminFleetRoutes(router, deps) {
             const gateway = await readGatewayDoc(store, id);
             if (!gateway) {
                 res.status(404).json({ error: ERR_GATEWAY_NOT_FOUND, gatewayId: id });
+                return;
+            }
+            if (gateway.allocation?.ephemeralHomeGiB !== undefined) {
+                res.status(409).json({ error: "return this builder to a shared gateway before changing its release", gatewayId: id });
                 return;
             }
             if (gateway.desiredStatus === "retired") {
@@ -4430,6 +4442,10 @@ export function addAdminFleetRoutes(router, deps) {
                 return;
             }
             const { gateway, artifact, release, note } = resolved.ok;
+            if (gateway.allocation?.ephemeralHomeGiB !== undefined) {
+                res.status(409).json({ error: "return this builder to a shared gateway before changing its release", gatewayId: id });
+                return;
+            }
             let appended;
             try {
                 appended = await runAdminFleetMutation({

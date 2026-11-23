@@ -210,6 +210,7 @@ interface GatewayRuntimeStampInput {
   gatewayClass: string | null | undefined;
   sizingTier?: SizingTier | null;
   sizingProfile?: string | null;
+  ephemeralHomeGiB?: number;
   vmSpec: GatewayVmSpec | null;
   assertStorage?: (runtime: GatewayRuntime) => Promise<void>;
   log: (msg: string) => void;
@@ -258,12 +259,15 @@ export async function stampGatewayRuntime(input: GatewayRuntimeStampInput): Prom
   if (input.initial.gatewayId !== input.gatewayId) throw new Error(`gateway ${input.gatewayId}: initial runtime record names ${input.initial.gatewayId}`);
   const data: Partial<FleetRegistryRecord> = (await input.store.fleetRegistry.get(input.gatewayId)) ?? {};
   validateRuntimeObservation(data, input.gatewayId);
+  if (input.ephemeralHomeGiB !== undefined && (input.gatewayClass !== "isolated" || data.runtime === "gce-vm")) {
+    throw new Error(`gateway ${input.gatewayId}: ephemeral home requires an isolated cluster runtime`);
+  }
   if (isGatewayRuntime(data.runtime)) {
     await input.assertStorage?.(data.runtime);
     await reconcileStampedVmSpec(input, data);
     return data.runtime;
   }
-  const policy = await newGatewayVmPolicy(input, data);
+  const policy = input.ephemeralHomeGiB === undefined ? await newGatewayVmPolicy(input, data) : null;
   const runtime: GatewayRuntime = policy?.runtime ?? "cluster";
   if (policy && !input.vmSpec) throw new Error(`gateway ${input.gatewayId}: gce-vm runtime needs a vmSpec`);
   await input.assertStorage?.(runtime);

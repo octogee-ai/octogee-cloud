@@ -1349,6 +1349,10 @@ async function ensureGatewayPodHome(
   input: { gateway: DurableGateway; isolatedPod: boolean; desiredOpts: GatewayUpsertOpts; replicas: number },
 ): Promise<void> {
   const { gateway, isolatedPod, desiredOpts, replicas } = input;
+  if (desiredOpts.ephemeralHomeGiB !== undefined) {
+    if (!isolatedPod || desiredOpts.hobbyCheckpoint) throw new Error(`gateway ${gateway.gatewayId}: ephemeral home requires an ordinary isolated Pod`);
+    return;
+  }
   if (desiredOpts.hobbyCheckpoint && !isolatedPod) {
     throw new Error(`Hobby checkpoint ${gateway.gatewayId} requires an isolated cluster runtime`);
   }
@@ -1391,6 +1395,7 @@ async function upsertGateway(
     gatewayClass: gateway.gatewayClass,
     sizingTier: gateway.sizingTier,
     sizingProfile: gateway.sizingProfile,
+    ephemeralHomeGiB: gateway.allocation?.ephemeralHomeGiB,
     vmSpec: GATEWAY_VM_SPEC,
     assertStorage: gateway.gatewayClass === "isolated" && replicas > 0
       ? (runtime) => assertIsolatedRuntimeStorage({ store, runtime, ownerUid: gateway.ownerUid })
@@ -4824,7 +4829,7 @@ export async function resolveGatewayPlacement(
   state: GatewayStateReader,
   toGatewayId: string,
 ): Promise<
-  | { ok: true; revisionId: string; release: number | null; gatewayClass: GatewayClass }
+  | { ok: true; revisionId: string; release: number | null; gatewayClass: GatewayClass; ephemeralHome?: true }
   | { ok: false; reason: "no-live-revision" | "revision-not-ready"; blocker?: string }
   | null
 > {
@@ -4844,6 +4849,7 @@ export async function resolveGatewayPlacement(
     ok: true,
     revisionId: toGatewayId,
     release: gateway.liveRelease,
+    ...(gateway.allocation?.ephemeralHomeGiB === undefined ? {} : { ephemeralHome: true as const }),
     gatewayClass: resolveGatewayClass({
       gatewayClass: gateway.gatewayClass ?? undefined,
       profile: gateway.profile ?? undefined,

@@ -54,6 +54,10 @@
       "type": "string",
       "description": "Environment-owned regional Spot-first ComputeClass selected by owner-bound gateway pods."
     },
+    "ephemeralHomeGiB": {
+      "type": "integer",
+      "minimum": 1
+    },
     "runtimeClassName": {
       "type": "string",
       "description": "Sandbox RuntimeClass for the gateway pod; empty uses the node's default runtime."

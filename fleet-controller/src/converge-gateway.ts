@@ -241,6 +241,7 @@ export interface GatewayUpsertOpts {
   gatewayServiceAccount?: string;
   rollStrategy: "surge" | "recreate";
   hobbyCheckpoint?: HobbyCheckpointPod;
+  ephemeralHomeGiB?: number;
   waitForReady: false;
   deploymentIntentFingerprint: string;
 }
@@ -341,6 +342,7 @@ export function gatewayUpsertOptsFromRelease(input: {
     gatewayServiceAccount: input.gatewayServiceAccount,
     rollStrategy: checkpoint && checkpoint.mode !== "cold" ? "recreate" : "surge",
     ...(checkpoint ? { hobbyCheckpoint: checkpoint } : {}),
+    ...(gateway.allocation?.ephemeralHomeGiB === undefined ? {} : { ephemeralHomeGiB: gateway.allocation.ephemeralHomeGiB }),
     waitForReady: false,
   };
   return {

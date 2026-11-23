@@ -33,6 +33,7 @@ export interface GatewayPodDiagnostics {
     phase?: string;
     deleting?: boolean;
     gatewayContainerStartedAt?: number | null;
+    createdAt?: number;
     uid?: string | null;
     name?: string | null;
     replicaSetUid?: string | null;

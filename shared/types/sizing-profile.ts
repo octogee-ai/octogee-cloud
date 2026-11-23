@@ -23,6 +23,7 @@ export interface GatewayVmProfile {
 export interface GatewayPodProfile {
   readonly runtime: Extract<GatewayRuntime, "cluster">;
   readonly homeSizeGiB: number;
+  readonly homeStorage?: "emptyDir";
 }
 
 export type GatewayComputerProfile = GatewayVmProfile | GatewayPodProfile;
@@ -55,7 +56,14 @@ export function isGatewayVmProfile(value: unknown): value is GatewayVmProfile {
 }
 
 export function isGatewayPodProfile(value: unknown): value is GatewayPodProfile {
-  return isFieldMap(value) && value.runtime === "cluster" && typeof value.homeSizeGiB === "number";
+  return isFieldMap(value) && value.runtime === "cluster" && typeof value.homeSizeGiB === "number" &&
+    (value.homeStorage === undefined ||
+      (value.homeStorage === "emptyDir" && Number.isSafeInteger(value.homeSizeGiB) && value.homeSizeGiB > 0));
+}
+
+export function ephemeralPodHomeGiB(profile: GatewaySizingProfile | null | undefined): number | undefined {
+  return profile?.isolation === "isolated" && profile.computer.runtime === "cluster" && profile.computer.homeStorage === "emptyDir"
+    ? profile.computer.homeSizeGiB : undefined;
 }
 
 export function isGatewaySizingProfile(value: unknown): value is GatewaySizingProfile {

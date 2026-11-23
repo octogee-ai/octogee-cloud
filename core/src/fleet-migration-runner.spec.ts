@@ -1115,3 +1115,22 @@ it("retains target ownership and source files when assigned target startup fails
   expect(owner).toBe(h.input.toGatewayId);
   expect(h.client.unmount).not.toHaveBeenCalled();
 });
+
+it("verifies a disposable target before cutover and again before cleaning up the source", async () => {
+  const h = harness({ gateAssignment: true, fromGatewayId: "shared-blue" });
+  h.deps.readTargetSystemConfigCommit = async () => "a".repeat(40);
+  expect(await runMigration({ ...h.input, preserveSource: true, verifyPreparedTarget: true, convergeTargetSystemConfig: "target-commit" }, h.deps)).toMatchObject({ success: true });
+  const [prepared, serving] = vi.mocked(h.client.verifyTarget).mock.invocationCallOrder;
+  const [cutover] = vi.mocked(h.deps.commitCutover).mock.invocationCallOrder;
+  expect(prepared).toBeLessThan(cutover);
+  expect(serving).toBeGreaterThan(cutover);
+  expect(serving).toBeLessThan(vi.mocked(h.client.unmount).mock.invocationCallOrder[0]);
+});
+
+it("keeps the Shared owner when a disposable target's prepared import cannot be verified", async () => {
+  const h = harness({ gateAssignment: true, fromGatewayId: "shared-blue" });
+  vi.mocked(h.client.verifyTarget).mockRejectedValueOnce(new Error("prepared target is incomplete"));
+  expect(await runMigration({ ...h.input, preserveSource: true, verifyPreparedTarget: true }, h.deps)).toMatchObject({ success: false });
+  expect(h.deps.commitCutover).not.toHaveBeenCalled();
+  expect(h.client.unmount).not.toHaveBeenCalledWith(expect.objectContaining({ gatewayId: h.input.fromGatewayId }));
+});

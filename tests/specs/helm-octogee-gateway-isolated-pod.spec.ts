@@ -28,6 +28,7 @@ const ISOLATED_POD: Record<string, string> = {
 interface Container {
   name: string;
   command?: string[];
+  lifecycle?: { preStop?: { exec?: { command?: string[] } } };
   env?: Array<{ name: string; value?: string }>;
   volumeMounts?: Array<{ name: string; mountPath: string; subPath?: string }>;
   resources?: Record<string, Record<string, string>>;
@@ -231,6 +232,17 @@ describe("charts/octogee-gateway/ — isolated gateway as a Kubernetes pod", () 
     const { deployment } = renderDeployment();
     expect(deployment.spec.template.spec.volumes).toContainEqual({ name: "builder-cache", emptyDir: { sizeLimit: "2Gi" } });
     expect(container(deployment, "gateway").volumeMounts).toContainEqual({ name: "builder-cache", mountPath: "/work/cache" });
+  });
+
+  it("uses bounded scratch for an ephemeral home without creating a home claim or desktop", () => {
+    const { deployment } = renderDeployment({ ephemeralHomeGiB: "4" });
+    const pod = deployment.spec.template.spec;
+    expect(pod.volumes.find((volume) => volume.name === "data")).toEqual({ name: "data", emptyDir: { sizeLimit: "4Gi" } });
+    expect(pod.volumes.some((volume) => "persistentVolumeClaim" in volume)).toBe(false);
+    const gateway = container(deployment, "gateway");
+    expect(envOf(gateway)).toHaveProperty("GATEWAY_EPHEMERAL_HOME", "true");
+    expect(envOf(gateway)).not.toHaveProperty("GATEWAY_COMPUTER_DESKTOP");
+    expect(gateway.lifecycle?.preStop?.exec?.command?.join(" ")).toContain("/entrypoints/prestop-flush.ts");
   });
 
   it("tells the gateway and its edge that they run in the cluster with no desktop", () => {

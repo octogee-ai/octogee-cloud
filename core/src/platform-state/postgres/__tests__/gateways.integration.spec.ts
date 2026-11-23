@@ -191,7 +191,7 @@ describe.skipIf(!dsn)("PostgreSQL gateway repositories", { timeout: 30_000 }, ()
           configBackfill: { sourceRelease: 1, sourcePayloadHash: "hash", at: NOW },
         },
         {
-          allocation: ALLOCATION,
+          allocation: { ...ALLOCATION, ephemeralHomeGiB: 4 },
           gcpProject: "octogee-test",
           gatewayContainerSecurityContext: { runAsUser: 1000 },
           serviceAccountName: "octogee-gw-walter",

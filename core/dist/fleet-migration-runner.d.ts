@@ -57,6 +57,7 @@ export interface MigrationRunnerInput {
     projectCheckoutScope?: FleetBrokerProjectCheckoutScope;
     includeActivationManifest?: boolean;
     preserveSource?: true;
+    verifyPreparedTarget?: true;
     convergeTargetSystemConfig?: TargetSystemConfigConvergence;
 }
 export type TargetSystemConfigConvergence = "source-commit" | "target-commit";

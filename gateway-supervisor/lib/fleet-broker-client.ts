@@ -107,11 +107,13 @@ async function postNoContent(
   path: string,
   body: unknown,
   headers: Record<string, string> = {},
+  signal?: AbortSignal,
 ): Promise<void> {
   const resp = await internalFetch(`${baseUrl()}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...headers },
     body: JSON.stringify(body),
+    ...(signal ? { signal } : {}),
   });
   if (!resp.ok) throw await brokerHttpError(path, resp);
 }
@@ -154,7 +156,7 @@ export interface FleetBrokerClient {
     agentId: string;
     usage: FleetBrokerUsageData;
   }): Promise<void>;
-  recordPreStopFlush(input: FleetBrokerPreStopFlushEvent): Promise<void>;
+  recordPreStopFlush(input: FleetBrokerPreStopFlushEvent, signal?: AbortSignal): Promise<void>;
   recordSystemConfigStatus(input: SystemConfigObservedStatus): Promise<void>;
   blobDownloadUrl(input: {
     slug: string;
@@ -623,8 +625,8 @@ export function createFleetBrokerClient(
     recordUsageEvent(input) {
       return postNoContent("/internal/fleet/usage-event", { gatewayId, ...input });
     },
-    recordPreStopFlush(input) {
-      return postNoContent("/internal/fleet/prestop-flush", { gatewayId, ...input });
+    recordPreStopFlush(input, signal) {
+      return postNoContent("/internal/fleet/prestop-flush", { gatewayId, ...input }, undefined, signal);
     },
     recordSystemConfigStatus(status) {
       return postNoContent("/internal/fleet/system-config-status", {

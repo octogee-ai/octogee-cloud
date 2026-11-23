@@ -2,7 +2,7 @@ import { isDeepStrictEqual } from "node:util";
 import { isolatedGatewayId } from "@octogee/shared/types/isolated-gateway-id";
 import { ISOLATED_GATEWAY_LOCKED_SERVICE_ACCOUNT, isolatedGatewayServiceAccountName, } from "@octogee/shared/types/glm";
 import { projectGatewayDesiredRootForGateway } from "@octogee/shared/types/gateway-releases";
-import { isolatedSizingTier } from "@octogee/shared/types/sizing-profile";
+import { ephemeralPodHomeGiB, isolatedSizingTier } from "@octogee/shared/types/sizing-profile";
 import { isPlatformStateError } from "../platform-state/errors.js";
 import { readSharedGatewayPoolConfigInStore } from "../shared-gateway-pool-read.js";
 import { assertGatewayRuntimeMutationUnfencedInStore, isolatedRuntimeMutationFenced, } from "../gateway-retirement-claim.js";
@@ -36,7 +36,8 @@ function isolatedRuntimeConfig(gatewayId, sizingTier) {
         modelBrokerLimits: null,
     };
 }
-export function buildIsolatedGatewayConfig(gatewayId, request) {
+export function buildIsolatedGatewayConfig(gatewayId, request, sizingProfile) {
+    const ephemeralHomeGiB = ephemeralPodHomeGiB(sizingProfile);
     return {
         ...isolatedRuntimeConfig(gatewayId, request.sizingTier),
         sizingProfile: request.sizingKey,
@@ -48,6 +49,7 @@ export function buildIsolatedGatewayConfig(gatewayId, request) {
             leaseId: request.leaseId,
             generation: request.generation,
             claimedByUid: request.uid,
+            ...(ephemeralHomeGiB === undefined ? {} : { ephemeralHomeGiB }),
         },
     };
 }
@@ -337,6 +339,8 @@ async function resumeOrRetireParkedGateway(input, request, parked, source, mode)
     return null;
 }
 async function matchingParkedGateway(state, request) {
+    if (ephemeralPodHomeGiB(await state.config.orchestrator.getSizingProfile(request.sizingKey)) !== undefined)
+        return undefined;
     const roots = await state.gateways.roots.list({ gatewayClass: "isolated", ownerUid: request.uid });
     const matches = [];
     for (const root of roots) {
@@ -414,6 +418,10 @@ export async function allocateIsolatedGateway(input, request, mode = "apply") {
     if (prewarm && prewarm.output?.prewarmState !== "handoff")
         throw new IsolatedGatewayFenceError("Owner computer prewarm has not released the allocation");
     const source = await readAllocationSource(input.store, request);
+    const ephemeralHome = ephemeralPodHomeGiB(await input.store.config.orchestrator.getSizingProfile(request.sizingKey)) !== undefined;
+    if (ephemeralHome && (prewarm || request.parkedGateway)) {
+        throw new IsolatedGatewayFenceError("Ephemeral allocation requires a fresh gateway");
+    }
     if (prewarm?.output?.prewarmState === "handoff")
         return resumeGuestPrewarmHandoff(input, request, source, prewarm, mode);
     const parked = request.parkedGateway ?? await matchingParkedGateway(input.store, request);
@@ -425,7 +433,6 @@ export async function allocateIsolatedGateway(input, request, mode = "apply") {
     if (mode === "apply")
         await input.ensureAuthSecret({ namespace: input.namespace, gatewayId });
     const now = input.now();
-    const config = buildIsolatedGatewayConfig(gatewayId, request);
     const sizingKeyRead = { store: input.store, readSizingKey: input.readSizingKey, uid: request.uid, now };
     await withCurrentSizingKey(sizingKeyRead, ({ sizingKey, profile: sizingProfile, assertCurrent }) => input.store.transaction({ label: "disposable-gateway.allocate", readOnly: mode === "plan" }, async (transaction) => {
         await input.requireOwner(transaction);
@@ -477,7 +484,7 @@ export async function allocateIsolatedGateway(input, request, mode = "apply") {
             return;
         await writeInitialGatewayReleaseInTransaction(transaction, {
             gatewayId,
-            config,
+            config: buildIsolatedGatewayConfig(gatewayId, request, sizingProfile),
             artifact: source.artifact,
             createdBy: ISOLATED_GATEWAY_LIFECYCLE_ACTOR,
             now,

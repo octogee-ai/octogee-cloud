@@ -43,6 +43,7 @@ export const GATEWAYS_TABLE = {
         column("allocationLeaseId", "text"),
         column("allocationGeneration", "integer"),
         column("allocationClaimedByUid", "text"),
+        column("allocationEphemeralHomeGiB", "integer", { column: "allocation_ephemeral_home_gib" }),
         column("lastError", "jsonb"),
         column("lastPreStopFlush", "jsonb"),
         column("configBackfill", "jsonb"),
@@ -105,13 +106,16 @@ const ASSIGNMENT_UPDATED_AT = columnFor(GATEWAY_ASSIGNMENTS_TABLE, assignmentKey
 const ASSIGNMENT_STATE = columnFor(GATEWAY_ASSIGNMENTS_TABLE, assignmentKey("", ""), "state");
 function allocationColumns(gatewayId, allocation) {
     if (allocation === null || isClearField(allocation)) {
-        return { allocationLeaseId: null, allocationGeneration: null, allocationClaimedByUid: null };
+        return { allocationLeaseId: null, allocationGeneration: null, allocationClaimedByUid: null, allocationEphemeralHomeGiB: null };
     }
     const value = allocation;
     if (value.kind !== ALLOCATION_KIND || value.schemaVersion !== ALLOCATION_SCHEMA_VERSION) {
         throw new MalformedRecordError(rootKey(gatewayId), `allocation ${JSON.stringify(allocation)} is not a disposable isolated allocation`);
     }
-    return { allocationLeaseId: value.leaseId, allocationGeneration: value.generation, allocationClaimedByUid: value.claimedByUid };
+    return {
+        allocationLeaseId: value.leaseId, allocationGeneration: value.generation, allocationClaimedByUid: value.claimedByUid,
+        allocationEphemeralHomeGiB: value.ephemeralHomeGiB ?? null,
+    };
 }
 function rootColumns(gatewayId, input) {
     const { allocation, preemption, ...fields } = input;
@@ -121,7 +125,7 @@ function rootColumns(gatewayId, input) {
     return allocation === undefined ? fields : { ...fields, ...allocationColumns(gatewayId, allocation) };
 }
 export function decodeGatewayRoot(row) {
-    const { allocationLeaseId, allocationGeneration, allocationClaimedByUid, ...stored } = decodeStored(GATEWAYS_TABLE, row);
+    const { allocationLeaseId, allocationGeneration, allocationClaimedByUid, allocationEphemeralHomeGiB, ...stored } = decodeStored(GATEWAYS_TABLE, row);
     if (allocationLeaseId === undefined)
         return stored;
     const allocation = {
@@ -130,6 +134,7 @@ export function decodeGatewayRoot(row) {
         leaseId: allocationLeaseId,
         generation: allocationGeneration,
         claimedByUid: allocationClaimedByUid,
+        ...(typeof allocationEphemeralHomeGiB === "number" ? { ephemeralHomeGiB: allocationEphemeralHomeGiB } : {}),
     };
     return { ...stored, allocation };
 }

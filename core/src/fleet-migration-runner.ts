@@ -110,6 +110,7 @@ export interface MigrationRunnerInput {
   projectCheckoutScope?: FleetBrokerProjectCheckoutScope;
   includeActivationManifest?: boolean;
   preserveSource?: true;
+  verifyPreparedTarget?: true;
   convergeTargetSystemConfig?: TargetSystemConfigConvergence;
 }
 
@@ -359,6 +360,7 @@ interface MigrationStepExecution {
   projectCheckoutScope: FleetBrokerProjectCheckoutScope | undefined;
   includeActivationManifest: boolean | undefined;
   preserveSource?: true;
+  verifyPreparedTarget?: true;
   crossGateway: boolean;
   targetGatewayId: string;
   schedules: ScheduleTransferState;
@@ -436,6 +438,7 @@ async function executeStep(params: MigrationStepExecution): Promise<StepTimings 
         const activationStartedAt = clock();
         await deps.client.resume({ migrationId, gatewayId: params.targetGatewayId, slug, role: "target" });
         await convergeTargetSystemConfig({ deps, migrationId, slug, targetGatewayId: params.targetGatewayId, systemConfig: params.systemConfig });
+        if (params.verifyPreparedTarget) await deps.client.verifyTarget({ migrationId, gatewayId: params.targetGatewayId, slug });
         return { targetActivationMs: clock() - activationStartedAt };
       }
       return;
@@ -581,6 +584,7 @@ function executeForwardStep(execution: MigrationExecution, step: MigrationStep):
     projectCheckoutScope: input.projectCheckoutScope,
     includeActivationManifest: input.includeActivationManifest,
     preserveSource: input.preserveSource,
+    verifyPreparedTarget: input.verifyPreparedTarget,
     crossGateway: execution.crossGateway,
     targetGatewayId: input.toGatewayId,
     schedules: execution.schedules,
@@ -623,7 +627,7 @@ async function runNextMigrationStep(
 ): Promise<MigrationRunnerResult | null> {
   const step = nextMigrationStep(execution.state);
   if (step.action === "complete") return migrationComplete(execution);
-  if (step.action === "verify-target" && execution.input.preserveSource) {
+  if (step.action === "verify-target" && execution.input.preserveSource && !execution.input.verifyPreparedTarget) {
     await report(execution.deps, { name: "verify-target", status: "skipped" });
     execution.state = { ...execution.state, phase: advancePhase(execution.state.phase) };
     return null;

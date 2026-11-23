@@ -55,6 +55,7 @@ export interface IsolatedGatewayAllocation {
   leaseId: string;
   generation: number;
   claimedByUid: string;
+  ephemeralHomeGiB?: number;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -153,7 +154,7 @@ export function isIsolatedGatewayAllocation(
   value: unknown,
 ): value is IsolatedGatewayAllocation {
   if (!isRecord(value)) return false;
-  const fields = new Set(["kind", "schemaVersion", "leaseId", "generation", "claimedByUid"]);
+  const fields = new Set(["kind", "schemaVersion", "leaseId", "generation", "claimedByUid", "ephemeralHomeGiB"]);
   return Object.keys(value).every((field) => fields.has(field)) &&
     value.kind === "disposable-builder" &&
     value.schemaVersion === 1 &&
@@ -162,7 +163,8 @@ export function isIsolatedGatewayAllocation(
     Number.isSafeInteger(value.generation) &&
     (value.generation as number) > 0 &&
     typeof value.claimedByUid === "string" &&
-    value.claimedByUid.length > 0;
+    value.claimedByUid.length > 0 &&
+    (value.ephemeralHomeGiB === undefined || (Number.isSafeInteger(value.ephemeralHomeGiB) && (value.ephemeralHomeGiB as number) > 0));
 }
 
 function isOptionalIsolatedGatewayAllocation(

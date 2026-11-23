@@ -1396,6 +1396,11 @@ ALTER TABLE users ADD COLUMN home_archive jsonb
   CHECK (home_archive IS NULL OR jsonb_typeof(home_archive) = 'object');
 `;
 
+const EPHEMERAL_GATEWAY_HOME = `
+ALTER TABLE gateways ADD COLUMN allocation_ephemeral_home_gib integer
+  CHECK (allocation_ephemeral_home_gib IS NULL OR (allocation_lease_id IS NOT NULL AND allocation_ephemeral_home_gib > 0));
+`;
+
 export const PLATFORM_STATE_MIGRATIONS: readonly PlatformStateMigration[] = [
   { version: 1, name: "core-schema", sql: CORE_SCHEMA },
   { version: 2, name: "change-feed", sql: CHANGE_FEED },
@@ -1420,4 +1425,5 @@ export const PLATFORM_STATE_MIGRATIONS: readonly PlatformStateMigration[] = [
   { version: 21, name: "placement-automation-owner", sql: PLACEMENT_AUTOMATION_OWNER },
   { version: 22, name: "parked-computer-upgrade", sql: PARKED_COMPUTER_UPGRADE },
   { version: 23, name: "user-home-archive", sql: HOME_ARCHIVE },
+  { version: 24, name: "ephemeral-gateway-home", sql: EPHEMERAL_GATEWAY_HOME },
 ];

@@ -16,7 +16,13 @@ export function isGatewayVmProfile(value) {
         typeof homeSizeGiB === "number");
 }
 export function isGatewayPodProfile(value) {
-    return isFieldMap(value) && value.runtime === "cluster" && typeof value.homeSizeGiB === "number";
+    return isFieldMap(value) && value.runtime === "cluster" && typeof value.homeSizeGiB === "number" &&
+        (value.homeStorage === undefined ||
+            (value.homeStorage === "emptyDir" && Number.isSafeInteger(value.homeSizeGiB) && value.homeSizeGiB > 0));
+}
+export function ephemeralPodHomeGiB(profile) {
+    return profile?.isolation === "isolated" && profile.computer.runtime === "cluster" && profile.computer.homeStorage === "emptyDir"
+        ? profile.computer.homeSizeGiB : undefined;
 }
 export function isGatewaySizingProfile(value) {
     if (!isFieldMap(value))

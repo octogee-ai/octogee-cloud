@@ -81,6 +81,7 @@ gatewayServiceAccount?: string;
     rollStrategy?: "recreate" | "surge";
     waitForReady?: boolean;
     hobbyCheckpoint?: HobbyCheckpointPod;
+    ephemeralHomeGiB?: number;
     deferVmPause?: boolean;
   }): Promise<void>;
 
@@ -510,6 +511,7 @@ export interface BuildUpgradeArgsOpts {
   rollStrategy?: "recreate" | "surge";
   waitForReady?: boolean;
   hobbyCheckpoint?: HobbyCheckpointPod;
+  ephemeralHomeGiB?: number;
 }
 
 type UpgradeStringOption = {
@@ -614,6 +616,7 @@ function appendOptionalJsonArgs(args: string[], opts: BuildUpgradeArgsOpts): voi
 
 function appendOptionalNumberArgs(args: string[], opts: BuildUpgradeArgsOpts): void {
   if (opts.replicas !== undefined) args.push(HELM_SET, `replicas=${opts.replicas}`);
+  if (opts.ephemeralHomeGiB !== undefined) args.push(HELM_SET, `ephemeralHomeGiB=${opts.ephemeralHomeGiB}`);
 }
 
 function appendOptionalFileArgs(args: string[], opts: BuildUpgradeArgsOpts): void {
