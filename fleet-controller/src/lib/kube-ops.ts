@@ -72,6 +72,7 @@ export interface GatewayPodDiagnostic {
   gatewayId: string | null;
   deleting: boolean;
   gatewayContainerStartedAt: number | null;
+  createdAt?: number;
   uid: string | null;
   replicaSetUid: string | null;
   phase: string;
@@ -264,6 +265,7 @@ function projectPodDiagnostic(
     phase: stringOrNull(status.phase) ?? "Unknown",
     ...projectPodContainers(status),
     ...projectPodPlacement(spec, factsByNodeName),
+    ...(Number.isFinite(createdMs) ? { createdAt: createdMs } : {}),
     ageMs: Number.isFinite(createdMs) ? Math.max(0, now - createdMs) : null,
   };
 }
