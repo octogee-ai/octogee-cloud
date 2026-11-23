@@ -22,6 +22,9 @@ interface HomeProviderDeps {
 type ObservedHomeDisk = CopyHomeDisk & { users?: string[]; ownerUid?: string };
 type LegacyVm = NonNullable<UserHomeOwner["computer"]>;
 
+function isRecordedVm(owned: { name: string; instanceId: string | null; zone: string } | null, recorded: LegacyVm): boolean {
+  return owned?.name === recorded.instanceName && owned.instanceId === recorded.instanceId && owned.zone === recorded.zone;
+}
 function assertLegacyInstance(instance: ComputeHomeResource, uid: string, recorded: LegacyVm, environment: string): void {
   if (![instance.id === recorded.instanceId, instance.status === "TERMINATED",
     instance.metadata?.items?.find(item => item.key === "octogee-owner-uid")?.value === uid,
@@ -61,7 +64,9 @@ class UserHomeProvider {
     return owned;
   }
   async stoppedOwnedVm(uid: string) {
-    const owned = await this.ownedVm(uid, PARKED_STATUSES);
+    return this.stopIfSuspended(uid, await this.ownedVm(uid, PARKED_STATUSES));
+  }
+  async stopIfSuspended(uid: string, owned: Awaited<ReturnType<UserHomeProvider["ownedVm"]>>) {
     if (owned?.status !== "SUSPENDED") return owned;
     await this.deps.journal("stop-suspended-builder-computer", uid, () => this.deps.vm.stop(owned.name, owned.zone), `zones/${owned.zone}/instances/${owned.name}`);
     const stopped = await this.ownedVm(uid);
@@ -76,9 +81,10 @@ class UserHomeProvider {
     return { runtime: "gce-vm", disk: observed, layout: "portable", ...(owned ? { computer: { name: owned.name, zone: owned.zone, id: owned.instanceId! } } : {}) };
   }
   async legacySource(uid: string, recorded: LegacyVm) {
-    const owned = await this.ownedVm(uid);
-    if (![owned?.name === recorded.instanceName, owned?.instanceId === recorded.instanceId,
-      owned?.zone === recorded.zone, owned?.status === "TERMINATED"].every(Boolean)) throw new Error("legacy home VM identity changed");
+    const parked = await this.ownedVm(uid, PARKED_STATUSES);
+    if (!isRecordedVm(parked, recorded)) throw new Error("legacy home VM identity changed");
+    const owned = await this.stopIfSuspended(uid, parked);
+    if (!isRecordedVm(owned, recorded) || owned?.status !== "TERMINATED") throw new Error("legacy home VM identity changed");
     const instanceSource = `projects/${this.deps.projectId}/zones/${recorded.zone}/instances/${recorded.instanceName}`;
     const instance = await this.compute(`https://compute.googleapis.com/compute/v1/${instanceSource}`, "GET");
     assertLegacyInstance(instance, uid, recorded, this.deps.environment);
