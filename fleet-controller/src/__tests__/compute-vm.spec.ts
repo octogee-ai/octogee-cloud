@@ -44,11 +44,12 @@ function http(status: number): Error {
   return Object.assign(new Error(`http ${status}`), { response: { status } });
 }
 
-function clientWith(request: ComputeRequest) {
+function clientWith(request: ComputeRequest, journalProvisioningModel?: Parameters<typeof createGatewayVmClient>[0]["journalProvisioningModel"]) {
   const log = vi.fn();
   let clock = 0;
   const client = createGatewayVmClient({
     request,
+    journalProvisioningModel,
     projectId: "octogee-test",
     log,
     wait: async () => { clock += 1_000; },
@@ -363,16 +364,19 @@ describe("createGatewayVmClient lifecycle", () => {
       if (call.url.endsWith("/operations/op-1")) {
         return { status: 200, data: { name: "op-1", status: "DONE", error: { errors: [{ code: "ZONE_RESOURCE_POOL_EXHAUSTED_WITH_DETAILS", message: "no spot" }] } } };
       }
+      if (call.url.endsWith(`/instances/${input.instanceName}`)) return instance({ status: "TERMINATED" });
       if (call.url.includes("/operations/op-")) return { status: 200, data: { name: call.url.split("/").pop(), status: "DONE" } };
       return new Error(`unexpected ${call.method} ${call.url}`);
     });
-    const { client, log } = clientWith(request);
+    const journal = vi.fn<NonNullable<Parameters<typeof createGatewayVmClient>[0]["journalProvisioningModel"]>>(async (_input, action) => action());
+    const { client, log } = clientWith(request, journal);
 
     const result = await client.start(input.instanceName, "us-west1-b");
 
     expect(result).toEqual({ fellBackToStandard: true });
     expect(posts.map((c) => c.url.split("/").pop())).toEqual(["start", "setScheduling", "start"]);
     expect(posts[1].body).toEqual({ provisioningModel: "STANDARD", automaticRestart: true, onHostMaintenance: "MIGRATE" });
+    expect(journal).toHaveBeenCalledExactlyOnceWith({ instanceName: input.instanceName, provisioningModel: "STANDARD", zone: "us-west1-b" }, expect.any(Function));
     expect(log).toHaveBeenCalledWith(expect.stringMatching(/spot capacity exhausted .* restarting on-demand/));
 
     const other = fakeCompute((call) => {
@@ -397,6 +401,7 @@ describe("createGatewayVmClient lifecycle", () => {
       if (call.url.endsWith("/operations/op-1") || call.url.endsWith("/operations/op-3")) {
         return { status: 200, data: { name: call.url.split("/").pop(), ...exhausted } };
       }
+      if (call.url.endsWith(`/instances/${input.instanceName}`)) return instance({ status: posts.length === 1 ? "SUSPENDED" : "TERMINATED" });
       if (call.url.includes("/operations/op-")) return { status: 200, data: { name: call.url.split("/").pop(), status: "DONE" } };
       return new Error(`unexpected ${call.method} ${call.url}`);
     });
@@ -417,6 +422,22 @@ describe("createGatewayVmClient lifecycle", () => {
     });
     await expect(clientWith(other.request).client.resume(input.instanceName, "us-west1-b")).rejects.toThrow(/QUOTA_EXCEEDED/);
     expect(other.calls.filter((c) => c.method === "POST")).toHaveLength(1);
+  });
+
+  it.each(["start", "resume"] as const)("leaves capacity errors on a Standard %s to the caller", async (action) => {
+    const { request, calls } = fakeCompute((call) => {
+      if (call.method === "POST") return { status: 200, data: { name: "op-capacity", status: "RUNNING" } };
+      if (call.url.endsWith("/operations/op-capacity")) {
+        return { status: 200, data: { name: "op-capacity", status: "DONE", error: { errors: [{ code: "ZONE_RESOURCE_POOL_EXHAUSTED", message: "no on-demand capacity" }] } } };
+      }
+      if (call.url.endsWith(`/instances/${input.instanceName}`)) {
+        return instance({ status: action === "start" ? "TERMINATED" : "SUSPENDED", scheduling: { provisioningModel: "STANDARD" } });
+      }
+      return new Error(`unexpected ${call.method} ${call.url}`);
+    });
+
+    await expect(clientWith(request).client[action](input.instanceName, "us-west1-b")).rejects.toThrow(/ZONE_RESOURCE_POOL_EXHAUSTED/);
+    expect(calls.filter((call) => call.method === "POST").map((call) => call.url.split("/").pop())).toEqual([action]);
   });
 
   it("find locates a VM by name across zones and refuses an ambiguous answer", async () => {

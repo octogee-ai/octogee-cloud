@@ -1761,6 +1761,48 @@ describe("createVmGatewayRuntime.upsertInstance after a park", () => {
 describe("createVmGatewayRuntime.recoverUnreachable", () => {
   const live = (vm: Record<string, unknown> = recorded) => ({ "glmGateways/b-x": { docKind: "runtime", gatewayId: "b-x", runtime: "gce-vm", vm, vmInstance: { enabled: true, gatewayId: "b-x" } } });
 
+  it("retries Spot on the same stopped on-demand fallback before restarting it", async () => {
+    const docs = live({ ...recorded, provisioningModel: "STANDARD" });
+    let description: GatewayVmDescription = { ...stopped, provisioningModel: "STANDARD" };
+    const h = harness({ "glmGateways/b-x": { ...docs["glmGateways/b-x"], vmSpec: spec } }, {
+      describe: vi.fn(async () => description),
+      setProvisioningModel: vi.fn(async (_name, _zone, provisioningModel) => { description = { ...description, provisioningModel }; }),
+      start: vi.fn(async () => { description = { ...description, status: "RUNNING" }; return { fellBackToStandard: false }; }),
+    });
+
+    await h.runtime.recoverUnreachable("b-x");
+
+    expect(h.vm.setProvisioningModel).toHaveBeenCalledExactlyOnceWith(VM, "us-west1-b", "SPOT");
+    expect(h.vm.setProvisioningModel.mock.invocationCallOrder[0]).toBeLessThan(h.vm.start.mock.invocationCallOrder[0]);
+    expect(h.docs["glmGateways/b-x"].vm).toMatchObject({ instanceId: recorded.instanceId, provisioningModel: "SPOT", status: "RUNNING" });
+    expect(h.vm.stop).not.toHaveBeenCalled();
+    expect(h.vm.delete).not.toHaveBeenCalled();
+  });
+
+  it("leaves a running on-demand fallback serving until a safe restart", async () => {
+    const fallback = { ...recorded, provisioningModel: "STANDARD" };
+    const h = harness({ "glmGateways/b-x": { ...live(fallback)["glmGateways/b-x"], vmSpec: spec } }, {
+      describe: vi.fn(async () => ({ ...running, provisioningModel: "STANDARD" })),
+    });
+
+    await h.runtime.recoverUnreachable("b-x");
+
+    expect(h.vm.stop).not.toHaveBeenCalled();
+    expect(h.vm.start).not.toHaveBeenCalled();
+    expect(h.vm.setProvisioningModel).not.toHaveBeenCalled();
+  });
+
+  it("refuses a Spot retry when the stopped on-demand instance replaced the recorded VM", async () => {
+    const fallback = { ...recorded, provisioningModel: "STANDARD" };
+    const h = harness({ "glmGateways/b-x": { ...live(fallback)["glmGateways/b-x"], vmSpec: spec } }, {
+      describe: vi.fn(async () => ({ ...stopped, instanceId: "5252", provisioningModel: "STANDARD" })),
+    });
+
+    await expect(h.runtime.recoverUnreachable("b-x")).rejects.toThrow(/Spot retry requires the same stopped gateway VM/);
+    expect(h.vm.setProvisioningModel).not.toHaveBeenCalled();
+    expect(h.vm.start).not.toHaveBeenCalled();
+  });
+
   it("restarts a preempted VM, records the preemption first, and republishes its route", async () => {
     const h = harness(live(), {
       describe: vi.fn(async () => running).mockResolvedValueOnce(stopped),
@@ -2671,9 +2713,10 @@ describe("stopped retained-home boot replacement", () => {
     expect(h.vm.start).not.toHaveBeenCalled();
   });
 
-  it("updates the guest bundle and resumes the same boot and home on the first post-upgrade wake", async () => {
+  it.each(["SUSPENDED", "TERMINATED"] as const)("wakes the same boot and home after a guest upgrade from %s", async (status) => {
     const guestDisks = { bootImageId: CURRENT_IMAGE.id, bootDiskId: "124", homeDiskId: home.id };
-    let actual: GatewayVmDescription = { ...ownedStopped, status: "SUSPENDED" };
+    let actual: GatewayVmDescription = { ...ownedStopped, status, provisioningModel: status === "TERMINATED" ? "STANDARD" : "SPOT" };
+    const wake = async () => { actual = { ...actual, status: "RUNNING", internalIp: "172.20.0.9" }; return { fellBackToStandard: false }; };
     const imageTag = `abcdef1@sha256:${"e".repeat(64)}`;
     const opts = { ...upsertOpts, imageTag, replicas: 1 };
     const currentImage = `${opts.imageRepository}:${opts.imageTag}`;
@@ -2691,12 +2734,22 @@ describe("stopped retained-home boot replacement", () => {
       },
     }, {
       describe: vi.fn(async () => actual),
-      resume: vi.fn(async () => { actual = { ...actual, status: "RUNNING", internalIp: "172.20.0.9" }; return { fellBackToStandard: false }; }),
+      resume: vi.fn(wake),
+      start: vi.fn(wake),
+      setProvisioningModel: vi.fn(async (_name, _zone, provisioningModel) => { actual = { ...actual, provisioningModel }; }),
       readAttachedGuestDisks: vi.fn(async () => guestDisks),
       readFamilyImage: vi.fn(async () => accepted),
     });
     await h.runtime.upsertInstance(opts);
-    expect(h.vm.resume).toHaveBeenCalledTimes(1);
+    if (status === "TERMINATED") {
+      expect(h.vm.setProvisioningModel).toHaveBeenCalledExactlyOnceWith(VM, ownedStopped.zone, "SPOT");
+      expect(h.vm.setProvisioningModel).toHaveBeenCalledBefore(h.vm.start);
+      expect(h.vm.resume).not.toHaveBeenCalled();
+    } else {
+      expect(h.vm.resume).toHaveBeenCalledTimes(1);
+      expect(h.vm.setProvisioningModel).not.toHaveBeenCalled();
+      expect(h.vm.start).not.toHaveBeenCalled();
+    }
     expect(h.vm.readAttachedGuestDisks).toHaveBeenCalledWith(VM, ownedStopped.zone, "UidA", "4242");
     expect(h.vm.bind).not.toHaveBeenCalled();
     expect(h.docs["glmGateways/b-x/vm/runtime"]).toMatchObject({ version: expect.any(String) });
@@ -2704,7 +2757,7 @@ describe("stopped retained-home boot replacement", () => {
     await h.store.journal.operations.patch("guest-prewarm", { status: "succeeded", completedAt: 1_100 });
     actual = { ...actual, status: "SUSPENDED", metadata: { ...actual.metadata, "gateway-image": currentImage } };
     await h.runtime.upsertInstance(opts);
-    expect(h.vm.resume).toHaveBeenCalledTimes(2);
+    expect(h.vm.resume).toHaveBeenCalledTimes(status === "SUSPENDED" ? 2 : 1);
     expect(h.vm.stop).not.toHaveBeenCalled();
     expect(h.vm.readFamilyImage).not.toHaveBeenCalled();
     expect(h.vm.deleteRetainingHome).not.toHaveBeenCalled();
