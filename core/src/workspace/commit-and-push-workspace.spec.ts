@@ -107,6 +107,7 @@ describe("commitAndPushWorkspace", () => {
     expect(push).toHaveBeenCalledWith("/d", {
       branch: "feature/agent-edit",
       setUpstream: true,
+      commit: HEAD,
     });
   });
 
@@ -123,13 +124,14 @@ describe("commitAndPushWorkspace", () => {
       expect(r.result.pushError).toContain("git failed");
       expect(r.result).not.toHaveProperty("commit");
     }
-    expect(head).not.toHaveBeenCalled();
+    expect(head).toHaveBeenCalledOnce();
   });
 
-  it("reads the pushed commit only after the push succeeds", async () => {
+  it("captures the commit before push and acknowledges that exact revision afterward", async () => {
     const order: string[] = [];
-    const push: PushFn = async () => {
+    const push: PushFn = async (_cwd, options) => {
       order.push("push");
+      expect(options?.commit).toBe(HEAD);
       return { ok: true };
     };
     const head: HeadFn = async () => {
@@ -137,18 +139,21 @@ describe("commitAndPushWorkspace", () => {
       return { ok: true, commit: HEAD };
     };
 
-    await commitAndPushWorkspace("/d", { message: "m", author }, mutationDeps(commitOk(false), push, vi.fn(), prepareMain, head));
+    const result = await commitAndPushWorkspace("/d", { message: "m", author }, mutationDeps(commitOk(false), push, vi.fn(), prepareMain, head));
 
-    expect(order).toEqual(["push", "head"]);
+    expect(order).toEqual(["head", "push"]);
+    expect(result).toMatchObject({ ok: true, result: { pushed: true, commit: HEAD } });
   });
 
-  it("fails when the pushed commit cannot be read rather than answering without it", async () => {
+  it("does not push when the commit to publish cannot be read", async () => {
     const release = vi.fn();
     const head: HeadFn = async () => ({ ok: false, error: { code: "INTERNAL", message: "HEAD is not a full commit hash" } });
 
-    const r = await commitAndPushWorkspace("/d", { message: "m", author }, mutationDeps(commitOk(false), pushOk, release, prepareMain, head));
+    const push = vi.fn(pushOk);
+    const r = await commitAndPushWorkspace("/d", { message: "m", author }, mutationDeps(commitOk(false), push, release, prepareMain, head));
 
     expect(r).toEqual({ ok: false, error: { code: "INTERNAL", message: "HEAD is not a full commit hash" } });
+    expect(push).not.toHaveBeenCalled();
     expect(release).toHaveBeenCalledOnce();
   });
 

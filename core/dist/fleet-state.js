@@ -1,3 +1,8 @@
+import { GATEWAY_UNREACHABLE_AFTER_MS } from "@octogee/shared/types/fleet-controller";
+import { workspaceDefaultAgentId } from "@octogee/shared/types/identity";
+import { ephemeralSourceMatches, excludedDisklessActivation, excludedDisklessWriter } from "./isolated-gateway-lifecycle/ephemeral-recovery-state.js";
+import { parseWorkspaceCheckpoint } from "./gateway-schedule-checkpoint.js";
+import { readSharedGatewayAutoscalingConfigInStore, readSharedGatewayPoolConfigInStore } from "./shared-gateway-pool-read.js";
 import { isDeepStrictEqual } from "node:util";
 import { resolveGatewayRuntime, resolveUserGatewayControlState, readSchedulerMigrationIdentity, } from "@octogee/shared/types/glm";
 import { hasFreshReadyKubernetesObservation, isGatewayRuntimeDoc, projectGatewayDesiredRootForGateway, } from "@octogee/shared/types/gateway-releases";
@@ -5,7 +10,7 @@ import { accountAllowsInteractiveAccess } from "@octogee/shared/types/account-li
 import { readWorkspaceMigrationMarker } from "@octogee/shared/types/workspace-migration";
 import { userMigrationV2GatewayRootFenceEqual, userMigrationV2GatewayRootFenceMatches, } from "./user-migration-v2.js";
 import { withCurrentSizingKey, } from "./sizing-key.js";
-import { builderActivateOperationId } from "@octogee/shared/types/isolated-operation-ids";
+import { builderActivateOperationId, builderReturnOperationId } from "@octogee/shared/types/isolated-operation-ids";
 import { gatewayAuthorizationFromRootDocument } from "./gateway-live-release.js";
 import { gatewayRetiredInStore } from "./gateway-retirement-claim.js";
 import { requireFleetControllerPlacementOwner } from "./placement-automation-owner.js";
@@ -638,7 +643,8 @@ export function migrationCancellationDeferred(operation, operationId) {
     const durableV2 = state.operationId === operationId && state.uid === input.uid &&
         state.sourceGatewayId === input.fromGatewayId && state.targetGatewayId === input.toGatewayId &&
         ["sourceQuiesced", "finalSynced", "targetVerified", "cutover", "sourceRetired", "complete"].includes(String(state.phase));
-    return legacyForwardRecoveryMatches(operationId, input, recordOrEmpty(operation.schedulerHandoff)) || durableV2;
+    return legacyForwardRecoveryMatches(operationId, input, recordOrEmpty(operation.schedulerHandoff)) || durableV2 ||
+        (input.durableRecovery === true && typeof operation.cutoverCommittedAt === "number");
 }
 function userMigrationV2FenceIsExact(operation, fence) {
     const state = recordOrEmpty(operation?.userMigrationV2);
@@ -687,9 +693,37 @@ async function commitCutoverInStore(deps, params, now, current) {
                 return;
         }
         const activationSourceMove = await userActivationSourceCutoverMove({ tx, params, user, prior, targetRoot });
+        await seedDisklessActivationCheckpoints(tx, params, user, prior, targetRoot);
         await updateUserMirror(tx, params, user, targetRoot, activationSourceMove);
         await updateAssignment(tx, params, prior, now);
     });
+}
+function disklessActivationMatches(params, user, prior, target) {
+    const lease = user?.activationLease;
+    if (!lease || !ephemeralSourceMatches(target, params.uid))
+        return false;
+    return [
+        params.flipMirror, params.automatic === true, params.assignment !== null,
+        params.fromGatewayId !== params.toGatewayId, user?.slug === params.slug,
+        lease.status === "activating", prior.assignment?.state === "quiescing",
+        lease.sourceGatewayId === params.fromGatewayId, lease.sourceAssignmentEpoch === prior.epoch,
+        lease.targetGatewayId === params.toGatewayId, target.builderSlug === params.slug,
+        target.allocation?.leaseId === lease.leaseId, target.allocation?.generation === lease.generation,
+    ].every(Boolean);
+}
+async function seedDisklessActivationCheckpoints(tx, params, user, prior, target) {
+    if (!disklessActivationMatches(params, user, prior, target))
+        return;
+    const { workspaceCheckpoint, scheduleCheckpoint } = user;
+    const isSourceCheckpoint = (checkpoint) => checkpoint.gatewayId === params.fromGatewayId && checkpoint.assignmentEpoch === prior.epoch;
+    const binding = { gatewayId: params.toGatewayId, assignmentEpoch: prior.epoch + 1 };
+    const workspace = workspaceCheckpoint && isSourceCheckpoint(workspaceCheckpoint)
+        ? { workspaceCheckpoint: { ...workspaceCheckpoint, ...binding } } : {};
+    const schedule = scheduleCheckpoint && isSourceCheckpoint(scheduleCheckpoint)
+        ? { scheduleCheckpoint: { ...scheduleCheckpoint, ...binding } } : {};
+    if (Object.keys(workspace).length || Object.keys(schedule).length) {
+        await tx.users.records.patch(user.uid, { ...workspace, ...schedule }, { revision: user.revision, gatewayId: params.fromGatewayId });
+    }
 }
 function activationSourceAssignmentCurrent(assignment, params, leaseEpoch) {
     if (assignment === null)
@@ -1149,6 +1183,148 @@ async function validateRecoverySource(tx, params, sourceRootData, sourceRuntime)
         sourceRuntime: resolveGatewayRuntime(sourceRuntime?.runtime),
     });
 }
+function assertDisklessOperation(input, operation) {
+    if (!operation || operation.kind !== MIGRATE_USER_OPERATION_KIND || operation.origin !== "automatic" || operation.status !== "running" ||
+        operation.startedAt !== input.claimStartedAt || operation.input.durableRecovery !== true ||
+        operation.input.uid !== input.uid || operation.input.userSlug !== input.slug ||
+        operation.input.fromGatewayId !== input.fromGatewayId || operation.input.toGatewayId !== input.toGatewayId ||
+        input.migrationId !== `mig-${input.operationId}`) {
+        throw new FleetStatePreconditionError("diskless return claim changed");
+    }
+    if (operation.cancellationRequestedAt !== undefined && operation.cutoverCommittedAt === undefined) {
+        throw new FleetStatePreconditionError("diskless return was cancelled before cutover");
+    }
+}
+function disklessAuthority(lease, source, input) {
+    const activation = recordOrEmpty(lease);
+    const { leaseId, generation, status, targetGatewayId } = activation;
+    if (typeof leaseId !== "string" || typeof generation !== "number" || targetGatewayId !== input.fromGatewayId)
+        return false;
+    return (status === "active" || status === "returning" || status === "activating") &&
+        input.operationId === builderReturnOperationId(input.fromGatewayId, generation) &&
+        excludedDisklessWriter(source, { uid: input.uid, slug: input.slug, leaseId, generation });
+}
+function disklessCheckpointFor(user, sourceEpoch, input) {
+    const workspace = user.workspaceCheckpoint;
+    const schedule = user.scheduleCheckpoint;
+    if (!workspace || !schedule || [workspace, schedule].some(checkpoint => checkpoint.gatewayId !== input.fromGatewayId || checkpoint.assignmentEpoch !== sourceEpoch)) {
+        throw new FleetStatePreconditionError("diskless return waits for same-epoch workspace and scheduler checkpoints");
+    }
+    return { workspace, schedule };
+}
+function disklessResume(input, user, target, operation, transfer) {
+    const intent = recordOrEmpty(operation.restoreAttempt);
+    const commits = parseWorkspaceCheckpoint(intent.workspaceCommits);
+    if (!target || target.updatedByOperationId !== input.operationId || user.gateway?.gatewayId !== input.toGatewayId ||
+        target.state !== "serving" || target.epoch !== intent.assignmentEpoch || !commits ||
+        !transfer?.nativeExport || transfer.sourceGatewayId !== input.fromGatewayId || transfer.targetGatewayId !== input.toGatewayId ||
+        (intent.phase !== "dispatched" && intent.phase !== "acknowledged")) {
+        throw new FleetStatePreconditionError("diskless return no longer owns its restore intent");
+    }
+    return { targetEpoch: target.epoch, restorePending: intent.phase === "dispatched", workspaceCommits: commits, scheduler: transfer.nativeExport };
+}
+function assertDisklessOwner(user, input) {
+    if (!user || user.slug !== input.slug || user.openclaw.status !== "complete" || !interactiveAccess(user) ||
+        user.openclaw.managedBy === "operator")
+        throw new FleetStatePreconditionError("diskless return owner changed");
+}
+function assertDisklessSource(input, user, source, assignment, targetAlreadyReserved) {
+    if (!source || !disklessAuthority(user.activationLease, source, input)) {
+        throw new FleetStatePreconditionError("diskless return waits for verified exclusion of the original writer");
+    }
+    assertRestoreUnfenced(user);
+    if (Object.keys(user.fences).length || !assignment || assignment.slug !== input.slug ||
+        assignment.state !== "serving" || user.gateway?.gatewayId !== input.fromGatewayId || targetAlreadyReserved) {
+        throw new FleetStatePreconditionError("diskless return source assignment changed");
+    }
+}
+function assertDisklessTarget(gatewayId, target, runtime, sharedGatewayIds, now) {
+    assertRecoveryTargetReady({
+        params: { toGatewayId: gatewayId, sharedGatewayIds, targetHeartbeatMaxAgeMs: GATEWAY_UNREACHABLE_AFTER_MS },
+        targetRootData: withoutRevision(target), targetRuntimeData: runtimeDocument(runtime), now,
+    });
+    if (target?.runtimeRestartFence || target?.retirementClaim)
+        throw new FleetStatePreconditionError("diskless return target is fenced");
+}
+async function assertDisklessTargetCapacity(tx, toGatewayId) {
+    const [config, assignments] = await Promise.all([
+        readSharedGatewayAutoscalingConfigInStore(tx),
+        tx.gateways.assignments.list(toGatewayId),
+    ]);
+    if (assignments.length >= config.buildersPerGateway) {
+        throw new FleetStatePreconditionError(`diskless return target ${toGatewayId} has reached its configured capacity`);
+    }
+}
+function defaultAgentStoreHasDisklessCustody(anchor, user, source) {
+    if (anchor.kind !== "agent" || anchor.agentId !== workspaceDefaultAgentId(source.slug))
+        return false;
+    if (anchor.gatewayId === source.gatewayId)
+        return true;
+    const lease = user.activationLease;
+    return lease?.sourceGatewayId === anchor.gatewayId && lease.sourceAssignmentEpoch === anchor.assignmentEpoch &&
+        typeof anchor.assignmentEpoch === "number" && source.epoch === anchor.assignmentEpoch + 1;
+}
+export async function commitDisklessSharedRecovery(deps, input) {
+    const now = nowMs(deps);
+    const { uid, slug, fromGatewayId, toGatewayId, operationId, migrationId, claimStartedAt } = input;
+    return deps.store.transaction({ label: "fleet-state.commitDisklessSharedRecovery" }, async (tx) => {
+        const [operation, user, source, target, sourceAssignment, targetAssignment, runtime, pool, transfer] = await Promise.all([
+            tx.journal.operations.get(operationId), tx.users.records.get(uid), tx.gateways.roots.get(fromGatewayId),
+            tx.gateways.roots.get(toGatewayId), tx.gateways.assignments.get(fromGatewayId, uid), tx.gateways.assignments.get(toGatewayId, uid),
+            tx.fleetRegistry.get(toGatewayId), readSharedGatewayPoolConfigInStore(tx), tx.users.scheduleTransfers.get(uid, migrationId),
+        ]);
+        assertDisklessOperation(input, operation);
+        assertDisklessOwner(user, input);
+        if (operation.cutoverCommittedAt !== undefined)
+            return disklessResume(input, user, targetAssignment, operation, transfer);
+        assertDisklessSource(input, user, source, sourceAssignment, targetAssignment !== null || transfer !== null);
+        const interruptedActivation = user.activationLease?.status === "activating" ? user.activationLease : null;
+        if (interruptedActivation && !await excludedDisklessActivation(tx, { uid, slug, gatewayId: fromGatewayId })) {
+            throw new FleetStatePreconditionError("diskless return has no completed exclusion of the interrupted activation");
+        }
+        const targetRootData = withoutRevision(target);
+        assertDisklessTarget(toGatewayId, target, runtime, pool?.sharedGatewayIds ?? [], now);
+        await assertDisklessTargetCapacity(tx, toGatewayId);
+        const { workspace, schedule } = disklessCheckpointFor(user, sourceAssignment.epoch, input);
+        const anchors = await tx.users.agentStores.list(uid);
+        if (!anchors.some(anchor => defaultAgentStoreHasDisklessCustody(anchor, user, sourceAssignment))) {
+            throw new FleetStatePreconditionError("diskless return has no durable default-agent store anchor");
+        }
+        const scheduler = { agentIds: schedule.snapshot.agentIds, snapshot: { ...schedule.snapshot, operationId: migrationId } };
+        const targetEpoch = sourceAssignment.epoch + 1;
+        const intent = { uid, slug, gatewayId: toGatewayId, fromGatewayId, assignmentEpoch: targetEpoch,
+            operationId, claimStartedAt, attemptId: `${operationId}-${claimStartedAt}`, dispatchClaimStartedAt: claimStartedAt,
+            phase: "dispatched", dispatchedAt: now, workspaceCommits: workspace.commits };
+        const control = resolveUserGatewayControlState(targetRootData, uid);
+        await tx.users.scheduleTransfers.put(uid, {
+            migrationId, slug, sourceGatewayId: fromGatewayId, targetGatewayId: toGatewayId,
+            nativeExport: scheduler, records: [], skipped: [], snapshotAt: schedule.observedAt,
+        });
+        await tx.gateways.roots.patch(fromGatewayId, { desiredStatus: "paused", updatedBy: operationId, updatedAt: now }, { revision: source.revision });
+        await tx.gateways.assignments.put({
+            gatewayId: toGatewayId, uid, slug, state: "serving", source: MIGRATE_USER_OPERATION_KIND,
+            epoch: targetEpoch, createdAt: now, updatedAt: now, updatedByOperationId: operationId,
+        });
+        await tx.gateways.assignments.delete(fromGatewayId, uid, { epoch: sourceAssignment.epoch });
+        await tx.users.records.setGatewayMirror(uid, {
+            gatewayId: toGatewayId, gatewayAssignedAt: now, gatewayProfile: control.gatewayProfile, controlUiEnabled: control.controlUiEnabled,
+        }, { gatewayId: fromGatewayId, revision: user.revision });
+        await tx.users.records.setFence(uid, "restoreFence", intent, "absent");
+        if (interruptedActivation) {
+            await tx.users.records.patchActivationLease(uid, {
+                status: "returning", returnOperationId: operationId, returningAt: now, returnReason: "source-unavailable",
+            }, { leaseId: interruptedActivation.leaseId, generation: interruptedActivation.generation, status: ["activating"] });
+        }
+        await tx.journal.operations.patch(operationId, {
+            cutoverCommittedAt: now, restoreAttempt: intent, lastProgressAt: now,
+            schedulerHandoff: { uid, slug, migrationId, fromGatewayId, toGatewayId, stageAfterCutover: true },
+        }, { status: ["running"], startedAt: claimStartedAt });
+        return { targetEpoch, restorePending: true, workspaceCommits: workspace.commits, scheduler };
+    });
+}
+export function readDisklessActivationWriterExcluded(store, input) {
+    return store.transaction({ label: "diskless-recovery.activation-exclusion", readOnly: true }, tx => excludedDisklessActivation(tx, input));
+}
 export async function commitUnavailableGatewayRecoveryAtomic(deps, params) {
     const now = nowMs(deps);
     await deps.store.transaction({ label: "fleet-state.commitUnavailableGatewayRecoveryAtomic" }, (tx) => commitUnavailableGatewayRecoveryInTransaction(tx, { ...params, requireOwner: requireFleetControllerPlacementOwner }, now));
@@ -1576,3 +1752,4 @@ function assignmentClockMatches(current, expected) {
 export { assertHeldNativeReturnRepairClaim, completeHeldNativeReturnRepair, heldNativeReturnBlocksDestination, heldNativeReturnBlocksOwnerDestination, requestHeldNativeReturnRepair, readHeldNativeReturnForTargetExclusion, readHeldNativeReturnForTargetMaintenance, reserveNativeReturnTargetDrain, nativeReturnAllowsSharedDeparture, readHeldNativeReturnForRetiredTargetCompensation, readNativeReturnSharedDrains, HeldNativeReturnConflict, reserveHeldNativeOfflineSource, readReservedHeldNativeOfflineSource, bindHeldNativeStoppedOriginal, assertHeldNativeOfflineSourceClaim, assertHeldNativeOfflineSourceClaimable, assertPendingHeldNativeOfflineProjection, recordHeldNativeOfflineStage, recordHeldNativeOriginalRestart, HELD_NATIVE_OFFLINE_SOURCE_FENCE_KIND, } from "./held-native-return-repair.js";
 export { assertSharedInertEmptyPeerHeld, assertSharedInertEmptyPeerRestorable, holdSharedInertEmptyPeer, releaseSharedInertEmptyPeer, acquireSharedHeldReturnMaintenance, advanceSharedHeldReturnMaintenance, assertSharedHeldReturnMaintenance, authorizeSharedInertMaintenance, assertSharedInertPreLaunch, authorizeSharedInertStockLaunch, readAuthorizedSharedInertStock, rollbackSharedInertBeforeStock, assertSharedHeldReturnMaintenanceReserved, assertSharedHeldReturnMaintenanceUnfenced, completeSharedHeldReturnMaintenance, readSharedHeldReturnMaintenanceDispatch, readSharedHeldReturnMaintenanceTerminal, resumeSharedHeldReturnMaintenance, stageSharedHeldReturnMaintenanceRelease, withdrawSharedHeldReturnMaintenance, SHARED_HELD_RETURN_MAINTENANCE, SharedHeldReturnMaintenanceConflict, } from "./shared-held-return-maintenance.js";
 export { NATIVE_RETURN_TARGET_EXCLUSION, nativeReturnTargetExclusionId, nativeReturnTargetDenied, nativeReturnSharedStoreHandoffDenied, readNativeOldTargetRetirement, readNativeReturnTargetDrain } from "./native-return-target-deny.js";
+export { parseScheduleCheckpoint, parseWorkspaceCheckpoint, recordGatewayScheduleCheckpoint, recordGatewayWorkspaceCheckpoint } from "./gateway-schedule-checkpoint.js";

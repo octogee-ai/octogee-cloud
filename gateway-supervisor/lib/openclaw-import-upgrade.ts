@@ -9,6 +9,7 @@ import { runOpenClaw, type OpenClawCommand } from "./openclaw-cli.js";
 import { readOpenClawFileSnapshot, readPostgresAnchorSnapshot, sameOpenClawFileSnapshot } from "./openclaw-file-snapshot.js";
 
 const descriptorCache = new WeakMap<OpenClawCommand, Promise<number>>();
+const METADATA_BATCH_SIZE = 4;
 
 async function cachedDevelopmentProbe(root: string, agentId: string, run: OpenClawCommand, env: NodeJS.ProcessEnv, assertCurrent: () => Promise<void>): Promise<number> {
   await assertCurrent();
@@ -85,7 +86,6 @@ export async function upgradeImportedAgentStores(input: {
     }
     input.signal?.throwIfAborted();
   };
-  await assertCurrent();
   const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "import-upgrade-")));
   try {
     const configPath = path.join(root, "openclaw.json");
@@ -95,9 +95,7 @@ export async function upgradeImportedAgentStores(input: {
       return version ?? cachedDevelopmentProbe(root, captured[0]!.agentId, run, env, assertCurrent);
     });
     const verifyMetadata = async (exact: boolean) => {
-      let needsUpgrade = false;
-      for (const store of captured) {
-        await assertCurrent();
+      const readVersion = async (store: typeof captured[number]) => {
         const rows = await (input.query ?? queryAgentStore)({ storeId: store.storeId, schema: store.schema },
           `SELECT physical.store_id, physical.version, owner.role, owner.agent_id, owner.schema_version
            FROM $schema.openclaw_schema_meta physical CROSS JOIN $schema.schema_meta owner
@@ -106,7 +104,16 @@ export async function upgradeImportedAgentStores(input: {
         if (!postgresSourceMetadataMatches({ rows, store: metadataStore, expectedVersion: expectedSchemaVersion, exact })) {
           throw new Error(`import upgrade PostgreSQL identity/version metadata mismatch: ${store.agentId}`);
         }
-        if (Number(rows[0]!.version) < expectedSchemaVersion) needsUpgrade = true;
+        return Number(rows[0]!.version);
+      };
+      await assertCurrent();
+      let needsUpgrade = false;
+      try {
+        for (let offset = 0; offset < captured.length; offset += METADATA_BATCH_SIZE) {
+          const versions = await Promise.all(captured.slice(offset, offset + METADATA_BATCH_SIZE).map(readVersion));
+          needsUpgrade ||= versions.some(version => version < expectedSchemaVersion);
+        }
+      } finally {
         await assertCurrent();
       }
       return needsUpgrade;

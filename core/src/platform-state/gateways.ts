@@ -31,7 +31,23 @@ export interface GatewayConfigBackfill {
   readonly at: number;
 }
 
+export interface EphemeralGatewayWriterNode {
+  readonly providerId: string;
+  readonly instanceId: string;
+}
+
+export interface EphemeralGatewayWriter {
+  readonly podUid: string;
+  readonly podName: string;
+  readonly node?: EphemeralGatewayWriterNode;
+  readonly exclusion?: {
+    readonly at: number;
+    readonly method: "terminal-pod" | "compute-instance-gone";
+  };
+}
+
 export interface GatewayRootFields {
+  readonly ephemeralWriter?: EphemeralGatewayWriter;
   readonly runtimeRestartFence?: GatewayRuntimeRestartFenceValue;
   readonly lastError?: GatewayLastErrorRecord | null;
   readonly lastPreStopFlush?: OpaqueMap;

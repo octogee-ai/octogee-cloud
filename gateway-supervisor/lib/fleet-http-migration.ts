@@ -1,7 +1,8 @@
+import { acknowledgedWorkspaceCommitIsCurrent, materializeAcknowledgedWorkspaceCommit } from "./git.js";
 import { runHeldSourceReconcile, type HeldNativeSourceKeeper } from "./held-native-source-reconcile.js";
 import type { FleetBrokerUserSnapshot } from "@octogee/shared/types/fleet-broker";
 import { projectAgentWorkspace } from "@octogee/core/project-agent-workspaces";
-import { assertSafeStagedSymlinks, RSYNC_DAEMON_SYMLINK_POLICY, STAGED_RSYNC_COPY_OPTIONS } from "./rsync-staged-symlinks.js";
+import { assertSafeStagedSymlinks, readStagedRsyncInventory, RSYNC_DAEMON_SYMLINK_POLICY, STAGED_RSYNC_COPY_OPTIONS } from "./rsync-staged-symlinks.js";
 import { isDeepStrictEqual } from "node:util";
 import { projectCheckoutEnabled } from "@octogee/shared/types/project";
 import { agentIdBelongsToSlug } from "@octogee/shared/types/agent-models";
@@ -13,7 +14,7 @@ import {
 import { sourceTransferRsyncArgs } from "./source-transfer-rsync.js";
 import { deferredProjectPlaceholderPaths } from "./deferred-project-workspace.js";
 import { sourcesForPushMode } from "./source-transfer-plan.js";
-import { log as provisionerLog } from "@octogee/core/config";
+import { CUSTOMERS_DIR, log as provisionerLog } from "@octogee/core/config";
 import { withLogContext, setLogContext, type LogContext } from "@octogee/shared/server/service-logger";
 
 
@@ -72,14 +73,14 @@ import {
   SIGNATURE_HEADER,
 } from "@octogee/shared/types/fleet-controller";
 import type { FleetBrokerAgentAnchor } from "@octogee/shared/types/fleet-broker";
-import { isValidUsername, parseAgentId } from "@octogee/shared/types/identity";
+import { isValidProjectId, isValidUsername, parseAgentId } from "@octogee/shared/types/identity";
 import {
   findUnreadableStore,
   listSqliteStores,
 } from "./agent-store-carry.js";
 import {
-  findPortableAgentStores,
-  AGENT_STORE_BASENAME,
+  planPostgresAgentExport,
+  type PostgresAgentExport,
   exportAgentStoreSnapshots,
   findStagedAgentSnapshots,
   findStagedLiveAgentStores,
@@ -923,6 +924,92 @@ function snapshotFromRestoreBody(body: RestoreMigrationRequestBody): UserSnapsho
   };
 }
 
+function acknowledgedProjectCheckouts(projects: FleetBrokerUserSnapshot["projects"], commits: Record<string, unknown>) {
+  const checkouts = new Map([["workspace", ""]]);
+  for (const project of projects) {
+    if (project.provisioningState !== undefined && project.provisioningState !== "active") continue;
+    const repo = project.giteaRepoName;
+    if (!repo || !projectCheckoutEnabled(project.checkoutEnabled) || !Object.hasOwn(commits, repo)) continue;
+    if (!isValidProjectId(project.projectSlug) || checkouts.has(repo) ||
+        (project.repoSource?.provider === "github" && !project.repoSource.workingCopy?.ready)) {
+      throw new Error("Workspace restore project has no unique canonical Gitea checkout");
+    }
+    checkouts.set(repo, path.join("projects", project.projectSlug));
+  }
+  return checkouts;
+}
+
+function acknowledgedWorkspaceCheckouts(body: RestoreMigrationRequestBody): Map<string, string> {
+  const commits = body.workspaceCommits;
+  if (!isRecord(commits) || !Object.hasOwn(commits, "workspace") || !body.snapshot.repoUrl) {
+    throw new Error("Workspace restore requires an acknowledged canonical user workspace");
+  }
+  const checkouts = acknowledgedProjectCheckouts(body.snapshot.projects, commits);
+  for (const [repo, commit] of Object.entries(commits)) {
+    if (!checkouts.has(repo) || typeof commit !== "string" || !/^[0-9a-f]{40}$/.test(commit)) {
+      throw new Error("Workspace restore contains an unknown repository or invalid commit");
+    }
+  }
+  return checkouts;
+}
+
+async function checkedWorkspaceRestore(deps: MigrationHandlerDeps, body: RestoreMigrationRequestBody) {
+  if (deps.adapter.isIsolatedGateway?.() !== false) {
+    throw new Error("Acknowledged workspace restore requires the Shared resume route");
+  }
+  const checkouts = acknowledgedWorkspaceCheckouts(body);
+  const expected = body.snapshot.restoreAuthority;
+  if (!expected || expected.uid !== body.uid || expected.slug !== body.slug || expected.gatewayId !== deps.gatewayId ||
+      expected.migrationId !== body.migrationId || expected.phase !== "dispatched") {
+    throw new Error("Acknowledged workspace restore has no matching dispatched authority");
+  }
+  const assertCurrent = async () => {
+    const fresh = await deps.readHeldSourceSnapshot?.(body.uid);
+    if (fresh?.uid !== body.uid || fresh.slug !== body.slug || fresh.gatewayId !== deps.gatewayId ||
+        fresh.status !== "complete" || fresh.runtimeMutationFenced !== true ||
+        !isDeepStrictEqual(fresh.restoreAuthority, expected)) {
+      throw new Error("Acknowledged workspace restore authority changed");
+    }
+    const observed = acknowledgedWorkspaceCheckouts({ ...body, snapshot: fresh });
+    if (!isDeepStrictEqual(observed, checkouts)) throw new Error("Acknowledged workspace restore repository scope changed");
+  };
+  const assertQuiet = () => {
+    if (!hasQuietTargetImportState(deps, body.slug)) throw new Error("Acknowledged workspace restore target is in use");
+  };
+  const isMounted = deps.getMountedUsers?.().includes(body.slug) === true;
+  const assertReplayReady = async () => {
+    if (deps.adapter.userMountMarked?.(body.slug) !== true ||
+        !(await verifyMigrationResponse(deps, body)).ready ||
+        deps.getMountedUsers?.().includes(body.slug) !== true) {
+      throw new Error("Acknowledged workspace restore replay has no completed ready mount");
+    }
+  };
+  await assertCurrent();
+  if (!isMounted) assertQuiet();
+  return {
+    isMounted,
+    async materialize() {
+      if (isMounted) await assertReplayReady();
+      for (const [repo, commit] of Object.entries(body.workspaceCommits!)) {
+        await assertCurrent();
+        const checkout = path.join(CUSTOMERS_DIR, body.slug, checkouts.get(repo)!);
+        if (await fs.realpath(checkout) !== checkout) throw new Error("Acknowledged workspace path is not canonical");
+        if (isMounted) {
+          if (!acknowledgedWorkspaceCommitIsCurrent(checkout, repo, commit)) {
+            throw new Error("Acknowledged workspace restore replay found changed work");
+          }
+        } else {
+          assertQuiet();
+          materializeAcknowledgedWorkspaceCommit(checkout, repo, commit);
+        }
+      }
+      await assertCurrent();
+      if (isMounted) await assertReplayReady();
+      else assertQuiet();
+    },
+  };
+}
+
 export function createRestoreHandler(deps: MigrationHandlerDeps): RequestHandler {
   const log = deps.log ?? provisionerLog;
   const active = new Map<string, { identity: string; result: Promise<RestoreMigrationResponse> }>();
@@ -946,11 +1033,19 @@ export function createRestoreHandler(deps: MigrationHandlerDeps): RequestHandler
     }
 
     try {
+      if (body.workspaceCommits !== undefined && req.path !== `/resume-restore/${deps.gatewayId}`) {
+        throw new Error("Acknowledged workspace restore requires the Shared resume route");
+      }
       const identity = JSON.stringify(body);
       let entry = active.get(body.uid);
       if (entry && entry.identity !== identity) throw new Error("user restore is still settling under a different request");
       if (!entry) {
         const result = Promise.resolve().then(async () => {
+          const restoreWorkspace = body.workspaceCommits === undefined ? undefined : await checkedWorkspaceRestore(deps, body);
+          if (restoreWorkspace?.isMounted) {
+            await restoreWorkspace.materialize();
+            return { migrationId: body.migrationId, slug: body.slug, restored: true, steps: ["verify-restored-workspace"] };
+          }
           await pauseSystemConfigWatchForUser(deps, body.slug);
           deps.adapter.markUserMigratingIn?.(body.slug);
           deps.adapter.seedUserSnapshotForMigration?.(body.snapshot);
@@ -961,6 +1056,14 @@ export function createRestoreHandler(deps: MigrationHandlerDeps): RequestHandler
               return uid === snapshot.uid ? fresh ?? snapshot : fresh;
             },
             uidForSlug: async (slug) => slug === snapshot.slug ? snapshot.uid : deps.adapter.uidForSlug(slug),
+            ...(restoreWorkspace ? {
+              applyAddUserConfigPatch: async (owner, update, options) => {
+                options?.signal?.throwIfAborted();
+                await restoreWorkspace.materialize();
+                options?.signal?.throwIfAborted();
+                return deps.adapter.applyAddUserConfigPatch(owner, update, options);
+              },
+            } : {}),
           };
           const restored = await restoreUserRuntimeFromSnapshot(adapter, snapshot, deps.adapter.isIsolatedGateway?.() === false ? { migrationId: body.migrationId } : {});
           recordRestoredConvergence(deps, body.slug, restored);
@@ -1301,13 +1404,11 @@ async function retainedSourcePaths(plan: ConfiguredUserPortableStatePlan, stateD
   return sources;
 }
 
-async function assertRetainedSourceAnchors(sources: Array<{ cwd: string; path: string }>, authority: FleetBrokerAgentAnchor[]) {
-  const stores = await findPortableAgentStores(sources);
+function assertRetainedSourceAnchors(stores: readonly PostgresAgentExport[], authority: FleetBrokerAgentAnchor[]) {
   if (stores.length !== authority.length) throw new Error("Retained source is missing an authorized agent anchor");
-  for (const store of stores) {
-    const actual = readPostgresAgentAnchor(path.join(store.sourceAgentDir, AGENT_STORE_BASENAME));
-    const expected = authority.find(anchor => anchor.agentId === store.agentId);
-    if (!actual || !expected || actual.storeId !== expected.storeId || actual.schema !== expected.schema) {
+  for (const { store, anchor } of stores) {
+    const expected = authority.find(candidate => candidate.agentId === store.agentId);
+    if (!expected || anchor.storeId !== expected.storeId || anchor.schema !== expected.schema) {
       throw new Error(`Retained source agent anchor does not match migration authority: ${store.agentId}`);
     }
   }
@@ -1333,7 +1434,8 @@ async function retainedSourceExport(deps: MigrationHandlerDeps, body: MigrationR
   const plan = configuredUserPortableStatePlanFromConfig({ agents: { entries: Object.fromEntries(agents.map(agent => [agent.agentId, agent.agent])) } }, stateDir);
   assertConfiguredUserPortableStatePlanOnDisk(stateDir, plan);
   const sources = await retainedSourcePaths(plan, stateDir, body.slug, authority);
-  await assertRetainedSourceAnchors(sources, authority);
+  const postgres = await planPostgresAgentExport(sources, signal);
+  assertRetainedSourceAnchors(postgres, authority);
   const assertCurrent = async () => {
     signal.throwIfAborted();
     assertSourceIdentityCustody(custody, await readCustody(body.slug, body.migrationId));
@@ -1345,7 +1447,7 @@ async function retainedSourceExport(deps: MigrationHandlerDeps, body: MigrationR
     signal.throwIfAborted();
   };
   await assertCurrent();
-  return { sources, assertCurrent };
+  return { sources, assertCurrent, postgres };
 }
 
 async function sourceExportInventory(deps: MigrationHandlerDeps, body: PushRsyncStateRequestBody, mode: MigrationTransferMode, signal: AbortSignal) {
@@ -1356,7 +1458,9 @@ async function sourceExportInventory(deps: MigrationHandlerDeps, body: PushRsync
   }) : null;
   const retained = retainedManifest?.sourceWorkspaceIdentities ? await retainedSourceExport(deps, body, signal, sourceHeld) : null;
   const allSources = retained?.sources ?? await deps.adapter.listExportPaths(body.slug);
-  return { sourceHeld, retained, sources: sourcesForPushMode(allSources, body.slug, mode) };
+  const sources = sourcesForPushMode(allSources, body.slug, mode);
+  const postgres = mode === "final" ? retained?.postgres ?? await planPostgresAgentExport(sources, signal) : [];
+  return { sourceHeld, retained, sources, postgres };
 }
 
 async function maybeMaterializeActivationManifest(
@@ -1837,34 +1941,17 @@ async function writeRsyncDaemonConfig(params: {
   return { configPath, secretsPath };
 }
 
-async function listRelativeEntries(root: string): Promise<string[]> {
-  const entries: string[] = [];
-  async function walk(absDir: string, relDir: string): Promise<void> {
-    const dirents = await fs.readdir(absDir, { withFileTypes: true });
-    for (const dirent of dirents) {
-      const rel = relDir ? path.posix.join(relDir, dirent.name) : dirent.name;
-      entries.push(dirent.isDirectory() ? `${rel}/` : rel);
-      if (dirent.isDirectory()) {
-        await walk(path.join(absDir, dirent.name), rel);
-      }
-    }
-  }
-  await walk(root, "");
-  return entries;
-}
-
 async function copyStageToOpenClaw(
   stageDir: string,
   importDir: string,
   slug: string,
-  options: { baselineEntries?: readonly string[]; deferAgentState: boolean },
+  options: { baselineEntries?: readonly string[]; deferAgentState: boolean; stagedEntries: ReadonlySet<string> },
 ): Promise<void> {
-  const { baselineEntries, deferAgentState } = options;
+  const { baselineEntries, deferAgentState, stagedEntries } = options;
   const mountMarker = path.join("customers", slug, ".system", ".mounted");
   if (baselineEntries) {
-    const current = new Set(await listRelativeEntries(stageDir));
     for (const relative of baselineEntries) {
-      if (relative !== mountMarker && !(relative.endsWith("/") && mountMarker.startsWith(relative)) && !current.has(relative)) {
+      if (relative !== mountMarker && !(relative.endsWith("/") && mountMarker.startsWith(relative)) && !stagedEntries.has(relative)) {
         await fs.rm(path.join(importDir, relative), { recursive: true, force: true });
       }
     }
@@ -2256,23 +2343,20 @@ export function createPushRsyncStateHandler(deps: MigrationHandlerDeps): Request
     const { controller, detach } = attachImportDisconnectHandlers(res, body.migrationId, body.slug, log, "export");
     const transferTimer = setTimeout(() => controller.abort(new Error("rsync push-state transfer deadline exceeded")), Math.max(0, deadline - Date.now()));
     try {
-      const { sourceHeld, retained, sources } = await sourceExportInventory(deps, body, mode, controller.signal);
+      const { sourceHeld, retained, sources, postgres } = await sourceExportInventory(deps, body, mode, controller.signal);
       if (sources.length === 0) {
         res
           .status(404)
           .json({ error: "no export paths", message: `nothing to push for slug=${body.slug}` });
         return;
       }
-      const postgresHandoff = mode === "final" && (await findPortableAgentStores(sources)).some(store =>
-        readPostgresAgentAnchor(path.join(store.sourceAgentDir, AGENT_STORE_BASENAME)) !== null);
-
       const manifestRequest = configTransferMode === USER_SYSTEM_CONFIG_TRANSFER ? { ...body, includeActivationManifest: false } : body;
       const activationManifest = mode === "keys"
         ? { source: null, cleanup: async () => {} }
         : await maybeMaterializeActivationManifest(deps, manifestRequest, {
             signal: controller.signal,
             timeoutMs: remainingTransferTimeout(deadline, controller.signal),
-            preserveForRollback: postgresHandoff,
+            preserveForRollback: postgres.length > 0,
             sourceHeld,
             convergeSource: convergence.convergeSource,
           });
@@ -2280,6 +2364,7 @@ export function createPushRsyncStateHandler(deps: MigrationHandlerDeps): Request
       if (mode === "final") {
         sources.push(...await exportAgentStoreSnapshots({
           sources,
+          postgres,
           exportRoot: path.join(tmpDir, "snapshots"),
           signal: controller.signal,
           log,
@@ -2389,7 +2474,7 @@ async function validateStagedRsyncImport(
   mode: MigrationTransferMode,
   configTransferMode: MigrationConfigTransferMode,
   log: (message: string, fields?: LogContext) => void,
-): Promise<string | null> {
+): Promise<string | ReadonlySet<string>> {
   const unsafeGitMetadata = await validateStagedGitMetadata(session.stageDir, slug);
   if (unsafeGitMetadata !== null) return unsafeGitMetadata;
   if (mode !== "keys") {
@@ -2398,15 +2483,16 @@ async function validateStagedRsyncImport(
       log(`[migration-rsync] omitted system fallback state from staged import: ${omitted.join(",")}`);
     }
   }
-  const entries = await listRelativeEntries(session.stageDir);
+  const { entries, symlinks } = await readStagedRsyncInventory(session.stageDir);
   const configuredUserStateDir = resolveOpenClawStateDir();
   const configuredUserStatePlan = configTransferMode === USER_SYSTEM_CONFIG_TRANSFER
     ? configuredUserPortableStatePlan(openClawConfigPath(), configuredUserStateDir)
     : undefined;
   const violation = findPathTraversalViolation(entries, slug, mode, [], configuredUserStatePlan);
   if (violation !== null) return violation;
-  await omitStagedCodexTemporaryFiles(session.stageDir, log);
-  await assertSafeStagedSymlinks(session.stageDir, session.importDir, slug);
+  const removedTemporaryDirs = await omitStagedCodexTemporaryFiles(session.stageDir, log);
+  const retainedLinks = symlinks.filter(relative => !removedTemporaryDirs.has(relative.split("/").slice(0, 5).join("/")));
+  await assertSafeStagedSymlinks(session.stageDir, session.importDir, slug, retainedLinks);
   const liveStores = await findStagedLiveAgentStores(session.stageDir);
   if (liveStores.length > 0) {
     return `carried live agent database files instead of snapshots: ${liveStores.join(", ")}`;
@@ -2426,7 +2512,7 @@ async function validateStagedRsyncImport(
     assertConfiguredUserPortableStatePlanOnDisk(session.stageDir, configuredUserStatePlan);
     assertConfiguredUserPortableStatePlanOnDisk(session.importDir, configuredUserStatePlan);
   }
-  return null;
+  return new Set(entries.filter(entry => entry.startsWith(`customers/${slug}/`) || entry.startsWith(`${GIT_METADATA_DIR}/${slug}/`)));
 }
 
 type UserImportTarget = { migrationId: string; slug: string; targetPodUid: string };
@@ -2729,6 +2815,7 @@ interface StagedImportInput {
   preserveSource?: true;
   deps: MigrationHandlerDeps;
   session: RSyncImportSession;
+  stagedEntries: ReadonlySet<string>;
   slug: string;
   mode: MigrationTransferMode;
   activation: ConfiguredUserActivation | null;
@@ -2822,7 +2909,7 @@ async function deliverStagedImport(input: StagedImportInput): Promise<void> {
     throw new Error("Isolated target did not finish normal startup before import; source retained");
   }
   const deferAgentState = input.mode === "pre" && (!input.activation || input.activation.live);
-  const copyOptions = { baselineEntries: session.baselineEntries, deferAgentState };
+  const copyOptions = { baselineEntries: session.baselineEntries, deferAgentState, stagedEntries: input.stagedEntries };
   if (input.mode !== "final") {
     if (input.activation) await removeObsoletePreparedProjects(deps, session, input.slug);
     await copyStageToOpenClaw(session.stageDir, session.importDir, input.slug, copyOptions);
@@ -2875,17 +2962,15 @@ async function deliverStagedImport(input: StagedImportInput): Promise<void> {
 
 async function finishTargetPreparation(
   deps: MigrationHandlerDeps,
-  session: RSyncImportSession,
+  stage: { directory: string; entries: ReadonlySet<string> },
   body: FinishRsyncImportRequestBody,
   configTransferMode: MigrationConfigTransferMode,
   signal: AbortSignal,
 ): Promise<void> {
   const activation = await configuredUserActivationRequest(deps, body, "pre", configTransferMode);
-  const placeholders = new Set(activation ? deferredProjectPlaceholderPaths(session.stageDir, body.slug) : []);
-  const sourceEntries = (await listRelativeEntries(session.stageDir)).filter(entry =>
-    (entry.startsWith(`customers/${body.slug}/`) || entry.startsWith(`${GIT_METADATA_DIR}/${body.slug}/`)) &&
-    !placeholders.has(entry));
-  await fs.writeFile(path.join(path.dirname(session.stageDir), "source-entries.json"), JSON.stringify(sourceEntries), { mode: 0o600 });
+  const placeholders = new Set(activation ? deferredProjectPlaceholderPaths(stage.directory, body.slug) : []);
+  const sourceEntries = [...stage.entries].filter(entry => !placeholders.has(entry));
+  await fs.writeFile(path.join(path.dirname(stage.directory), "source-entries.json"), JSON.stringify(sourceEntries), { mode: 0o600 });
   if (!activation || activation.live) return;
   if (!deps.prepareSurgeTarget) throw new Error("Isolated target preparation is unavailable");
   await deps.prepareSurgeTarget(activation.request, signal);
@@ -2956,12 +3041,12 @@ export function createFinishRsyncImportHandler(deps: MigrationHandlerDeps): Requ
       await assertTargetImportAllowed(deps, body.slug);
       const startedAt = Date.now();
       await stopRsyncTransfer(session);
-      const rejection = await validateStagedRsyncImport(session, body.slug, mode, configTransferMode, log);
-      if (rejection !== null) {
+      const stagedEntries = await validateStagedRsyncImport(session, body.slug, mode, configTransferMode, log);
+      if (typeof stagedEntries === "string") {
         log(
-          `[migration-rsync] 🔴 finish-import migrationId=${body.migrationId} slug=${body.slug} rejected: ${rejection}`, { status: "failed" },
+          `[migration-rsync] 🔴 finish-import migrationId=${body.migrationId} slug=${body.slug} rejected: ${stagedEntries}`, { status: "failed" },
         );
-        res.status(400).json({ error: "rsync import failed validation", message: rejection });
+        res.status(400).json({ error: "rsync import failed validation", message: stagedEntries });
         return;
       }
       const activation = await configuredUserActivationRequest(deps, body, mode, configTransferMode);
@@ -2970,6 +3055,7 @@ export function createFinishRsyncImportHandler(deps: MigrationHandlerDeps): Requ
         preserveSource: body.preserveSource,
         deps,
         session,
+        stagedEntries,
         slug: body.slug,
         mode,
         activation,
@@ -2979,7 +3065,7 @@ export function createFinishRsyncImportHandler(deps: MigrationHandlerDeps): Requ
       });
       const stagedAt = Date.now();
       if (mode === "pre") {
-        await finishTargetPreparation(deps, session, body, configTransferMode, controller.signal);
+        await finishTargetPreparation(deps, { directory: session.stageDir, entries: stagedEntries }, body, configTransferMode, controller.signal);
         preserveStage = true;
       }
       const verificationPending = mode === "final"

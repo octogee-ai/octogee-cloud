@@ -1,3 +1,4 @@
+import { startGatewayScheduleObserver } from "../lib/gateway-schedule-observer.js";
 import "../src/main.js";
 import { createBrokeredProjectBlobHydrator } from "../lib/project-blob-materialization.js";
 import { persistUserProjects, persistSharedUserFiles, persistAssignedSharedUsers, startProjectAutosave } from "../lib/project-persistence.js";
@@ -320,12 +321,15 @@ async function main(): Promise<void> {
     throw new Error("fleet controller public key unavailable: expected FLEET_CONTROLLER_PUBLIC_KEY");
   }
   const isolated = isIsolatedGateway();
+  const ephemeralHome = process.env.GATEWAY_EPHEMERAL_HOME === "true";
   let persistProjects: ((slug: string) => Promise<void>) | undefined;
   if (isolated) persistProjects = persistUserProjects;
   else if (GATEWAY_CLASS === "shared") persistProjects = persistSharedUserFiles;
   const brokerClient = createFleetBrokerClient(entrypointConfig.gatewayId);
   const builderSlug = entrypointConfig.builderSlug;
   let stopUserServices: (() => void) | undefined;
+  let wakeProjectAutosave: (() => void) | undefined;
+  let reportConfigStatus: (() => Promise<void>) | undefined;
   const startUserServices = (slug: string): void => {
     const runtimeHealthPublisher = createSystemConfigStatusPublisher({
       openclawDir: OPENCLAW_DIR,
@@ -337,15 +341,22 @@ async function main(): Promise<void> {
       publish: (status) => brokerClient.recordSystemConfigStatus(status),
       log,
     });
-    void runtimeHealthPublisher.publishNow();
-    const stopProjectAutosave = isolated
-      ? startProjectAutosave({ save: () => persistUserProjects(slug), log })
+    reportConfigStatus = runtimeHealthPublisher.publishNow;
+    void reportConfigStatus();
+    const projectAutosave = isolated
+      ? startProjectAutosave({ save: () => persistUserProjects(slug), log, startImmediately: ephemeralHome })
       : undefined;
+    wakeProjectAutosave = projectAutosave?.wake;
     stopUserServices = () => {
-      stopProjectAutosave?.();
+      projectAutosave?.close();
+      wakeProjectAutosave = undefined;
+      reportConfigStatus = undefined;
       runtimeHealthPublisher.close();
     };
   };
+  const scheduleObserver = startGatewayScheduleObserver({
+    rpc, broker: brokerClient, log, onConfigChange: () => { void reportConfigStatus?.(); },
+  });
   const adapter = buildBrokeredLifecycleAdapter({
     client: brokerClient,
     rpc,
@@ -372,7 +383,13 @@ async function main(): Promise<void> {
       adapter.seedUserSnapshotForMigration,
     ),
     readEnsureAdmission: (uid) => readUserEnsureAdmission(brokerClient, uid),
-    stampMounted: (uid, mounted) => brokerClient.setMounted(uid, mounted),
+    stampMounted: async (uid, mounted) => {
+      await brokerClient.setMounted(uid, mounted);
+      if (mounted && ephemeralHome) {
+        wakeProjectAutosave?.();
+        scheduleObserver.wake();
+      }
+    },
     readUserSnapshotForRuntimeReset: (uid) => brokerClient.userSnapshot(uid),
     acknowledgeRuntimeReset: (uid, operationId, generation) =>
       brokerClient.acknowledgeRuntimeReset(uid, operationId, generation),
@@ -398,7 +415,7 @@ async function main(): Promise<void> {
   // retired status server (the probes moved to :3003/health and OpenClaw's own
   // :18789; GATEWAY-SIMPLE-ROLL-SPEC).
   if (builderSlug) startUserServices(builderSlug);
-  const stopSharedAutosave = GATEWAY_CLASS === "shared" ? startProjectAutosave({
+  const sharedAutosave = GATEWAY_CLASS === "shared" ? startProjectAutosave({
     save: createSharedAutosave(brokerClient, persistSharedUserFiles, log), log,
   }) : undefined;
 
@@ -425,7 +442,8 @@ async function main(): Promise<void> {
   log(`Local fleet controller running (profile=${GATEWAY_PROFILE}). Press Ctrl+C to stop.`);
   const cleanup = async () => {
     stopUserServices?.();
-    stopSharedAutosave?.();
+    scheduleObserver.close();
+    sharedAutosave?.close();
     clearInterval(blobSyncTimer);
     if (usageTimer) clearInterval(usageTimer);
     try { await fleetHandle.stop(); } catch {}

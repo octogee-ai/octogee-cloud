@@ -225,7 +225,7 @@ import { createHomeArchiveHandler } from "./handlers/home-archive.js";
 import { createHomeBackupReleaseHandler } from "./handlers/home-backup-release.js";
 import { RELEASE_RESTORED_HOME_BACKUP } from "@octogee/core/isolated-gateway-lifecycle";
 import { resolveParkedHomeArchiveGrant } from "@octogee/core/admin-fleet-router";
-import { createGatewayVmClient } from "./lib/compute-vm.js";
+import { createGatewayVmClient, ephemeralComputeWriterExcluded } from "./lib/compute-vm.js";
 import { pausedIsolatedRetirementSourceFencedOff } from "./lib/native-retirement-telemetry.js";
 import { clearHomeCheckpointRequest, readHomeCheckpointCompletedAt, requestHomeCheckpoint } from "./lib/home-checkpoint.js";
 import { clearParkedVm, readParkedVm } from "./lib/parked-vm.js";
@@ -316,6 +316,9 @@ import {
   beginUserRestore,
   acknowledgeUserRestore,
   commitCutoverAtomic,
+  commitDisklessSharedRecovery,
+  readDisklessActivationWriterExcluded,
+  readUserRestoreAuthoritySnapshot,
   markAssignmentState,
   markSharedSurgeForwardRecovery,
   rebindSharedSurgeForwardRecovery,
@@ -600,6 +603,11 @@ function createGatewayComputeClient(store: PlatformStateStore, logFn: (msg: stri
       return { status: res.status, data: res.data };
     },
   });
+}
+
+function observeEphemeralNodeWithCompute(store: PlatformStateStore, log: (message: string) => void) {
+  return (identity: Parameters<typeof ephemeralComputeWriterExcluded>[2]) =>
+    ephemeralComputeWriterExcluded(gatewayComputeProjectId(), createGatewayComputeClient(store, log), identity);
 }
 
 async function isVmGateway(state: GatewayRuntimeReader, gatewayId: string): Promise<boolean> {
@@ -2820,10 +2828,10 @@ function startControllerBackgroundTasks({
     ensureAuthSecret: deps.ensureGatewayAuthSecret,
     readGatewayPodDiagnostics: deps.kubeOps.readGatewayPodDiagnostics,
     readGatewayPodDiagnosticsBatch: deps.kubeOps.readGatewayPodDiagnosticsBatch,
+    observeEphemeralNodeExclusion: observeEphemeralNodeWithCompute(deps.store, log),
     ...(userHome ? { userHome } : {}),
   });
   const stopDisruptionObserver = deps.startDisruptionObserver?.() ?? (() => undefined);
-  const httpKubeOps = deps.kubeOps;
   const decryptConnectorSecret = createConnectorSecretDecryptor();
   const stopHttp = startHttpServer({
     addProductAdminRoutes,
@@ -2847,14 +2855,10 @@ function startControllerBackgroundTasks({
     gatewayGitKeys: provisioning?.client ?? null,
     provisioningReadiness: provisioning?.sync.readiness,
     provisioningSync: provisioning?.sync,
-    ...(httpKubeOps
-      ? {
-          readGatewayPodDiagnostics: (gatewayId: string) =>
-            httpKubeOps.readGatewayPodDiagnostics({ namespace: NAMESPACE, gatewayId }),
-          readGatewayPodDiagnosticsBatch: (gatewayIds: readonly string[]) =>
-            httpKubeOps.readGatewayPodDiagnosticsBatch({ namespace: NAMESPACE, gatewayIds }),
-        }
-      : {}),
+    readGatewayPodDiagnostics: (gatewayId) =>
+      kubeOps.readGatewayPodDiagnostics({ namespace: NAMESPACE, gatewayId }),
+    readGatewayPodDiagnosticsBatch: (gatewayIds) =>
+      kubeOps.readGatewayPodDiagnosticsBatch({ namespace: NAMESPACE, gatewayIds }),
     ...adminNativeReturnOptions(deps),
     strandedSource: strandedSourceGateway,
     ...(GATEWAY_VM_SPEC ? { userHome: adminUserHome(deps.store, GATEWAY_VM_SPEC) } : {}),
@@ -3887,6 +3891,9 @@ async function buildHandlers(
       gatewayId, privateKey, privateProjectCoachSlug: slug, timeoutMs: GATEWAY_HEALTH_TIMEOUT_MS,
       fetchImpl: fetch, newRequestId: randomUUID,
     }),
+    commitDisklessSharedRecovery: input => commitDisklessSharedRecovery(cutoverDeps, input),
+    readExcludedDisklessActivation: input => readDisklessActivationWriterExcluded(store, input),
+    readDisklessRestoreAuthority: scope => readUserRestoreAuthoritySnapshot({ store }, scope),
     readScheduleTransfer: (uid, migrationId) => store.users.scheduleTransfers.get(uid, migrationId),
     saveScheduleTransfer: (uid, doc) => store.users.scheduleTransfers.put(uid, doc),
     recordScheduleRestore: (uid, migrationId, restore) => store.users.scheduleTransfers.patch(uid, migrationId, restore),

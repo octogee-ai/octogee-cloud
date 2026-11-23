@@ -3,6 +3,7 @@ import {
   COMPUTER_HOME_RESTORE_METADATA_KEY,
   ComputeOperationError,
   createGatewayVmClient,
+  ephemeralComputeWriterExcluded,
   instanceInsertBody,
   type ComputeRequest,
   type CreateGatewayVmInput,
@@ -71,6 +72,31 @@ const instance = (overrides: Record<string, unknown> = {}) => ({
     ...overrides,
   },
 });
+
+describe("ephemeral Compute writer exclusion", () => {
+  const node = { providerId: "gce://octogee-test/us-west1-b/spot-node", instanceId: "170" };
+
+  it.each([
+    { response: { status: 200, data: { id: "170", status: "TERMINATED" } }, excluded: false },
+    { response: { status: 200, data: { id: "450", status: "RUNNING" } }, excluded: true },
+    { response: { status: 200, data: {} }, excluded: false },
+    { response: http(404), excluded: true },
+  ])("checks the observed zone and immutable instance identity (%o)", async ({ response, excluded }) => {
+    const { request, calls } = fakeCompute(() => response);
+    const { client } = clientWith(request);
+    await expect(ephemeralComputeWriterExcluded("octogee-test", client, node)).resolves.toBe(excluded);
+    expect(calls).toEqual([{ method: "GET", url: `${BASE}/zones/us-west1-b/instances/spot-node` }]);
+  });
+
+  it("refuses foreign project evidence and surfaces provider uncertainty", async () => {
+    const { request, calls } = fakeCompute(() => http(503));
+    const { client } = clientWith(request);
+    await expect(ephemeralComputeWriterExcluded("other-project", client, node)).resolves.toBe(false);
+    expect(calls).toEqual([]);
+    await expect(ephemeralComputeWriterExcluded("octogee-test", client, node)).rejects.toThrow("http 503");
+  });
+});
+
 
 describe("instanceInsertBody", () => {
   it("retains an owned home disk independently of the disposable boot disk", () => {

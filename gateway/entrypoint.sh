@@ -221,6 +221,10 @@ else
   export OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH:-$OPENCLAW_DIR/openclaw.json}"
 fi
 
+if [ "${GATEWAY_EPHEMERAL_HOME:-}" = "true" ]; then
+  "$TSX" /octogee/scripts/entrypoints/claim-ephemeral-writer.ts
+fi
+
 # ── Gateway lock records of an earlier gateway container in this pod ────────
 GATEWAY_CLASS="$GATEWAY_CLASS_EFFECTIVE" "$TSX" /octogee/scripts/entrypoints/recover-restarted-gateway-container-locks.ts
 

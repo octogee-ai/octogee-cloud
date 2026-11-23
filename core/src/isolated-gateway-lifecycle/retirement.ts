@@ -418,17 +418,25 @@ async function assertZeroWorkloadRecoveryReceipt(
   }
 }
 
+function hasVerifiedReturnSteps(operation: NonNullable<Awaited<ReturnType<PlatformStateTransaction["journal"]["operations"]["get"]>>>): boolean {
+  const steps = operation.steps ?? [];
+  const carriedSteps = (operation.attemptHistory ?? []).flatMap(attempt => attempt.steps);
+  if (operation.input.durableRecovery === true) {
+    const required = ["exclude-old-writer", "restore-target", "stage-durable-scheduler", "verify-target", "activate-scheduler", "cutover-firestore"];
+    return required.every(name => [...steps, ...carriedSteps].some(step => step.name === name && step.status === "done"));
+  }
+  return ["flush-source", "final-sync-state", "verify-target", "cutover-firestore"]
+    .every(name => steps.some(step => step.name === name && step.status === "done"));
+}
+
 async function assertEphemeralReturnVerified(tx: PlatformStateTransaction, request: RetireOwnedIsolatedGatewayInput): Promise<void> {
   if (!["builder-returned", "operator-terminated"].includes(request.reason)) return;
   if ((await tx.gateways.roots.get(request.gatewayId))?.allocation?.ephemeralHomeGiB === undefined) return;
-  if (request.generation === undefined || !request.authoritativeGatewayId) throw new GatewayRetirementConflictError("ephemeral home requires a verified Shared return");
+  const refusal = () => new GatewayRetirementConflictError("ephemeral home requires a verified Shared return");
+  if (request.generation === undefined || !request.authoritativeGatewayId) throw refusal();
   const operation = await tx.journal.operations.get(builderReturnOperationId(request.gatewayId, request.generation));
-  const returned = operation?.input;
-  const required = ["flush-source", "final-sync-state", "verify-target", "cutover-firestore"];
-  if (operation?.status !== "succeeded" || returned?.uid !== request.uid || returned.fromGatewayId !== request.gatewayId ||
-    returned.toGatewayId !== request.authoritativeGatewayId || !required.every(name => operation.steps?.some(step => step.name === name && step.status === "done"))) {
-    throw new GatewayRetirementConflictError("ephemeral home requires a verified Shared return");
-  }
+  if (operation?.status !== "succeeded" || operation.input.uid !== request.uid || operation.input.fromGatewayId !== request.gatewayId ||
+    operation.input.toGatewayId !== request.authoritativeGatewayId || !hasVerifiedReturnSteps(operation)) throw refusal();
 }
 
 async function readRetirementTelemetryFence(

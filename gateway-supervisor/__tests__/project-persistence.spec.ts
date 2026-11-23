@@ -44,16 +44,30 @@ describe("project remote save client", () => {
     let release!: () => void;
     const save = vi.fn().mockImplementationOnce(() => new Promise<void>(resolve => { release = resolve; })).mockRejectedValueOnce(new Error("offline")).mockResolvedValue(undefined);
     const log = vi.fn();
-    const close = startProjectAutosave({ save, log }, 100);
+    const autosave = startProjectAutosave({ save, log }, 100);
     await vi.advanceTimersByTimeAsync(500);
     expect(save).toHaveBeenCalledTimes(1);
     release();
     await vi.advanceTimersByTimeAsync(100);
     expect(log).toHaveBeenCalledWith(expect.stringContaining("offline"));
     await vi.advanceTimersByTimeAsync(100);
-    expect(save).toHaveBeenCalledTimes(3);
-    close();
+    expect(save).toHaveBeenCalledTimes(4);
+    autosave.close();
     await vi.advanceTimersByTimeAsync(1000);
-    expect(save).toHaveBeenCalledTimes(3);
+    expect(save).toHaveBeenCalledTimes(4);
+  });
+
+  it("keeps a mount-triggered wake that arrived during the first save", async () => {
+    let release!: () => void;
+    const save = vi.fn().mockImplementationOnce(() => new Promise<void>(resolve => { release = resolve; })).mockResolvedValue(undefined);
+    const autosave = startProjectAutosave({ save, log: vi.fn(), startImmediately: true });
+    try {
+      autosave.wake();
+      expect(save).toHaveBeenCalledTimes(1);
+      release();
+      await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(2));
+    } finally {
+      autosave.close();
+    }
   });
 });

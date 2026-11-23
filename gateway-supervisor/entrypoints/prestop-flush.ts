@@ -1,3 +1,5 @@
+import { checkpointGatewaySchedules } from "../lib/gateway-schedule-observer.js";
+import { createGatewayRpc } from "../lib/gateway-rpc.js";
 import "../src/main.js";
 import { createServiceLogger } from "@octogee/shared/server/service-logger";
 const runtimeLogger = createServiceLogger("prestop-flush");
@@ -164,19 +166,18 @@ export function createEphemeralRuntimeCheckpoint(input: {
   ephemeralHome: boolean;
   slug: string;
   gatewayId: string;
-  broker: Pick<FleetBrokerClient, "reportAgentAnchors" | "readAgentAnchors">;
+  broker: Pick<FleetBrokerClient, "reportAgentAnchors" | "readAgentAnchors" | "recordScheduleCheckpoint" | "assignmentRoster" | "assignedUsers">;
 }): (() => Promise<void>) | undefined {
   if (!input.ephemeralHome) return undefined;
   return async () => {
     if (!input.slug) throw new Error("Ephemeral gateway checkpoint requires the claimed user");
     const config: unknown = JSON.parse(await readFile(OPENCLAW_CONFIG, "utf8"));
-    await checkpointUserStoreAnchors({
-      stateDir: openclawStateRoot(process.env),
-      slug: input.slug,
-      gatewayId: input.gatewayId,
-      config,
-      broker: input.broker,
-    });
+    await Promise.all([
+      checkpointUserStoreAnchors({
+        stateDir: openclawStateRoot(process.env), slug: input.slug, gatewayId: input.gatewayId, config, broker: input.broker,
+      }),
+      checkpointGatewaySchedules({ broker: input.broker, rpc: createGatewayRpc({ callTimeoutMs: 3_000 }), log }, { requireSlug: input.slug }),
+    ]);
   };
 }
 

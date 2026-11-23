@@ -1,3 +1,5 @@
+export const DISKLESS_ACTIVATION_WRITER_EXCLUDED = "diskless activation destination writer was permanently excluded";
+
 function runtimeOperationSuffix(gatewayId: string, generation: number): string {
   if (gatewayId.length === 0) throw new Error("Isolated runtime operation needs a gateway id");
   if (!Number.isSafeInteger(generation) || generation < 1) {

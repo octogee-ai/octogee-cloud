@@ -61,25 +61,39 @@ async function assertTargetWithinBoundary(stageDir: string, importDir: string, b
   }
 }
 
-export async function assertSafeStagedSymlinks(stageDir: string, importDir: string, slug: string): Promise<void> {
+export interface StagedRsyncInventory {
+  entries: string[];
+  symlinks: string[];
+}
+
+export async function readStagedRsyncInventory(stageDir: string): Promise<StagedRsyncInventory> {
+  const inventory: StagedRsyncInventory = { entries: [], symlinks: [] };
   async function walk(directory: string): Promise<void> {
     for (const entry of await fs.readdir(path.join(stageDir, directory), { withFileTypes: true })) {
       const relative = path.posix.join(directory, entry.name);
-      if (entry.isDirectory()) await walk(relative);
-      if (!entry.isSymbolicLink()) continue;
-      try {
-        const parts = relative.split("/");
-        if (parts[0] !== "customers" || parts[1] !== slug || parts.length < 3) {
-          throw new Error("link is outside user workspace files");
-        }
-        const boundary = parts[2] === "projects" ? parts.slice(0, 4).join("/") : parts.slice(0, 2).join("/");
-        if (relative === boundary) throw new Error("workspace boundary is a symlink");
-        const value = decodedTarget(await fs.readlink(path.join(stageDir, relative)), true);
-        await assertTargetWithinBoundary(stageDir, importDir, boundary, relative, value);
-      } catch (error) {
-        throw new Error(`unsafe staged symlink ${relative}: ${error instanceof Error ? error.message : String(error)}`);
-      }
+      const isDirectory = entry.isDirectory();
+      inventory.entries.push(isDirectory ? `${relative}/` : relative);
+      if (isDirectory) await walk(relative);
+      if (entry.isSymbolicLink()) inventory.symlinks.push(relative);
     }
   }
   await walk("");
+  return inventory;
+}
+
+export async function assertSafeStagedSymlinks(stageDir: string, importDir: string, slug: string, symlinks?: readonly string[]): Promise<void> {
+  for (const relative of symlinks ?? (await readStagedRsyncInventory(stageDir)).symlinks) {
+    try {
+      const parts = relative.split("/");
+      if (parts[0] !== "customers" || parts[1] !== slug || parts.length < 3) {
+        throw new Error("link is outside user workspace files");
+      }
+      const boundary = parts[2] === "projects" ? parts.slice(0, 4).join("/") : parts.slice(0, 2).join("/");
+      if (relative === boundary) throw new Error("workspace boundary is a symlink");
+      const value = decodedTarget(await fs.readlink(path.join(stageDir, relative)), true);
+      await assertTargetWithinBoundary(stageDir, importDir, boundary, relative, value);
+    } catch (error) {
+      throw new Error(`unsafe staged symlink ${relative}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
 }

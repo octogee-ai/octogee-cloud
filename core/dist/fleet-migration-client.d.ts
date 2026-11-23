@@ -76,6 +76,7 @@ export interface MigrationClient {
         uid: string;
         slug: string;
         snapshot: FleetBrokerUserSnapshot;
+        workspaceCommits?: Readonly<Record<string, string>>;
     }): Promise<RestoreMigrationResponse>;
     transferState(opts: {
         migrationId: string;

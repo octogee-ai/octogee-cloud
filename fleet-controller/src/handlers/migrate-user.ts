@@ -1,3 +1,6 @@
+import type { DisklessSharedRecoveryInput, DisklessSharedRestore, readDisklessActivationWriterExcluded } from "@octogee/core/fleet-state";
+import type { FleetBrokerUserRestoreAuthority } from "@octogee/shared/types/fleet-broker";
+import { DISKLESS_ACTIVATION_WRITER_EXCLUDED } from "@octogee/shared/types/isolated-operation-ids";
 import { sourceTransferBlocksRelease } from '../lib/source-transfer-execution.js';
 import type { RetainedSourceContext } from '../lib/retained-source-transfer.js';
 import type { MigrationProgressRecord, SourceTransferExecution } from '@octogee/shared/types/glm';
@@ -59,6 +62,7 @@ import {
 import {
   isTargetSchedulerNotReady,
   restoreScheduleTransfer,
+  callReleasedTargetScheduler,
   runMigration,
   type CutoverCommit,
   type MigrationRunnerDeps,
@@ -98,6 +102,9 @@ type PlacementResolution =
   | { ok: false; reason: string; blocker?: string };
 
 export interface MigrateUserDeps {
+  commitDisklessSharedRecovery?: (input: DisklessSharedRecoveryInput) => Promise<DisklessSharedRestore>;
+  readDisklessRestoreAuthority?: (scope: { uid: string; slug: string; gatewayId: string }) => Promise<FleetBrokerUserRestoreAuthority | undefined>;
+  readExcludedDisklessActivation?: (scope: Parameters<typeof readDisklessActivationWriterExcluded>[1]) => Promise<boolean>;
   reportMigrationProgress: (gatewayId: string, event: MigrationProgressRequestBody) => Promise<void>;
   recordMigrationProgress: (input: { operation: Operation; event: MigrationProgressRecord }) => Promise<void>;
   recoverNativeReturnSource?: OperationHandler;
@@ -1576,6 +1583,10 @@ async function completeSchedulerHandoff(
   const migrationId = deps.genMigrationId(op.id);
   if (handoff.stageAfterCutover && !handoff.forwardRecovery && handoff.fromGatewayId.startsWith("shared-")) {
     try {
+      if (typeof op.startedAt === "number" && await deps.readExcludedDisklessActivation?.({
+        uid: request.uid, slug: user.slug, gatewayId: request.toGatewayId,
+        claim: { operationId: op.id, startedAt: op.startedAt },
+      })) return { ...failure(DISKLESS_ACTIVATION_WRITER_EXCLUDED, false), failedAfterCutover: true };
       const client = await gatewayClient(deps, [handoff.toGatewayId]);
       await client.resume({ migrationId, gatewayId: handoff.toGatewayId, slug: handoff.slug, role: "target" });
       const expectedSystemConfigCommit = await awaitTargetSystemConfigCommit(deps, handoff.toGatewayId, ctx.assertActiveClaim);
@@ -2590,8 +2601,66 @@ function recoverCompensatingNativeReturn(deps: MigrateUserDeps, op: Operation, c
   return deps.recoverCompensatingNativeReturn(op, ctx);
 }
 
+async function restoreDisklessDestination(
+  deps: MigrateUserDeps,
+  input: DisklessSharedRecoveryInput,
+  client: MigrationClient,
+  recovery: DisklessSharedRestore,
+): Promise<void> {
+  const { uid, slug, toGatewayId, migrationId } = input;
+  const [snapshot, authority] = await Promise.all([
+    deps.readUserSnapshot(uid, toGatewayId),
+    deps.readDisklessRestoreAuthority?.({ uid, slug, gatewayId: toGatewayId }),
+  ]);
+  if (!snapshot || snapshot.uid !== uid || snapshot.slug !== slug || snapshot.gatewayId !== toGatewayId ||
+      snapshot.status !== "complete" || !authority || authority.migrationId !== migrationId ||
+      authority.assignmentEpoch !== recovery.targetEpoch) {
+    throw new Error("diskless return target does not own the dispatched durable restore");
+  }
+  const restored = await client.restoreTarget({
+    migrationId, uid, slug, gatewayId: toGatewayId, resume: true, workspaceCommits: recovery.workspaceCommits,
+    snapshot: { ...snapshot, restoreAuthority: authority, runtimeMutationFenced: true },
+  });
+  if (!restored.restored || restored.slug !== slug || restored.migrationId !== migrationId) {
+    throw new Error("diskless Shared restore did not acknowledge its exact owner");
+  }
+}
+
+async function runDisklessSharedReturn(deps: MigrateUserDeps, op: Operation, ctx: OperationContext): Promise<OperationResult> {
+  const { uid, userSlug: slug, fromGatewayId, toGatewayId } = op.input;
+  if (typeof uid !== "string" || typeof slug !== "string" || typeof fromGatewayId !== "string" ||
+      typeof toGatewayId !== "string" || typeof op.startedAt !== "number" || !ctx.assertActiveClaim ||
+      !deps.commitDisklessSharedRecovery || !ctx.withUserRestoreFence) {
+    return failure("diskless return requires current claim, target restore, and durable coordination", false);
+  }
+  const input = { uid, slug, fromGatewayId, toGatewayId, operationId: op.id, claimStartedAt: op.startedAt, migrationId: deps.genMigrationId(op.id) };
+  try {
+    await ctx.assertActiveClaim(true);
+    const recovery = await reportNativeReturnStep(deps, ctx, "cutover-firestore", () => deps.commitDisklessSharedRecovery!(input));
+    await ctx.reportStep(reportedToOperationStep({ name: "exclude-old-writer", status: "done" }, deps.now()));
+    const client = schedulerRetirementClient(await gatewayClient(deps, [toGatewayId]), deps, {
+      uid, slug, gatewayId: toGatewayId, operationId: op.id, claimedStartedAt: op.startedAt,
+    });
+    const scheduler = { migrationId: input.migrationId, slug, gatewayId: toGatewayId };
+    if (recovery.restorePending) {
+      await ctx.withUserRestoreFence({ uid, slug, gatewayId: toGatewayId, fromGatewayId, assignmentEpoch: recovery.targetEpoch, resume: true }, async () => {
+        await reportNativeReturnStep(deps, ctx, "restore-target", () => restoreDisklessDestination(deps, input, client, recovery));
+        await reportNativeReturnStep(deps, ctx, "stage-durable-scheduler", () => callReleasedTargetScheduler({ client, log: deps.log, now: deps.now, wait: deps.sleep }, {
+          ...scheduler, phase: "stage", ...recovery.scheduler, retainNonportable: true,
+        }));
+        await reportNativeReturnStep(deps, ctx, "verify-target", () => verifyNativeReturnTarget(deps, input));
+      });
+    }
+    await ctx.assertActiveClaim(true);
+    await reportNativeReturnStep(deps, ctx, "activate-scheduler", () => client.scheduler({ ...scheduler, phase: "activate" }));
+    return { steps: [], success: true, rolledBack: false };
+  } catch (error) {
+    return failure(`diskless Shared return pending: status 503: ${errorMessage(error)}`, false);
+  }
+}
+
 export function createMigrateUserHandler(deps: MigrateUserDeps): OperationHandler {
-  return async (op: Operation, ctx: OperationContext): Promise<OperationResult> => {
+  const runLiveMigration: OperationHandler = async (op, ctx) => {
     if (op.input.sourceTransferMode !== undefined && op.input.sourceTransferMode !== RETAINED_POD) throw new Error('unsupported source transfer mode');
     if (op.input.sourceTransferMode === RETAINED_POD && (!deps.observeSourceTransfer || (typeof op.input.fromGatewayId !== 'string' || !op.input.fromGatewayId.startsWith('shared-')))) throw new Error('retained source transfer requires a Shared source');
     if (op.input.compensatingNativeReturn !== undefined) {
@@ -2615,4 +2684,7 @@ export function createMigrateUserHandler(deps: MigrateUserDeps): OperationHandle
       attributePreemption(scoped, op, await runMigrateUser(scoped, op, ctx)),
     ));
   };
+  return (op, ctx) => op.input.durableRecovery === true
+    ? runDisklessSharedReturn(deps, op, ctx)
+    : runLiveMigration(op, ctx);
 }

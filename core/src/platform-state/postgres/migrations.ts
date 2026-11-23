@@ -1406,6 +1406,15 @@ ALTER TABLE schedule_transfers ADD COLUMN native_export jsonb
   CHECK (native_export IS NULL OR jsonb_typeof(native_export) = 'object');
 `;
 
+const EPHEMERAL_GATEWAY_RECOVERY_STATE = `
+ALTER TABLE gateways
+  ADD COLUMN ephemeral_writer jsonb CHECK (ephemeral_writer IS NULL OR jsonb_typeof(ephemeral_writer) = 'object');
+ALTER TABLE users ADD COLUMN schedule_checkpoint jsonb
+  CHECK (schedule_checkpoint IS NULL OR jsonb_typeof(schedule_checkpoint) = 'object');
+ALTER TABLE users ADD COLUMN workspace_checkpoint jsonb
+  CHECK (workspace_checkpoint IS NULL OR jsonb_typeof(workspace_checkpoint) = 'object');
+`;
+
 export const PLATFORM_STATE_MIGRATIONS: readonly PlatformStateMigration[] = [
   { version: 1, name: "core-schema", sql: CORE_SCHEMA },
   { version: 2, name: "change-feed", sql: CHANGE_FEED },
@@ -1432,4 +1441,5 @@ export const PLATFORM_STATE_MIGRATIONS: readonly PlatformStateMigration[] = [
   { version: 23, name: "user-home-archive", sql: HOME_ARCHIVE },
   { version: 24, name: "ephemeral-gateway-home", sql: EPHEMERAL_GATEWAY_HOME },
   { version: 25, name: "native-scheduler-export", sql: NATIVE_SCHEDULER_EXPORT },
+  { version: 26, name: "ephemeral-gateway-recovery-state", sql: EPHEMERAL_GATEWAY_RECOVERY_STATE },
 ];

@@ -30,6 +30,7 @@ export function isGatewayPodPlacement(value) {
         typeof value.name === "string" &&
         isNullableString(value.replicaSetUid) &&
         isNullableString(value.nodeName) &&
+        (value.providerId === undefined || typeof value.providerId === "string") &&
         isNullableString(value.instanceId) &&
         isNullableString(value.nodePool));
 }

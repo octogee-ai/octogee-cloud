@@ -41,6 +41,7 @@ export function observedPodPlacements(
       name: pod.name ?? pod.uid,
       replicaSetUid: pod.replicaSetUid ?? null,
       nodeName: pod.nodeName ?? null,
+      ...(pod.providerId ? { providerId: pod.providerId } : {}),
       instanceId: pod.instanceId ?? null,
       nodePool: pod.nodePool ?? null,
     });

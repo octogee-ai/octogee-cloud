@@ -151,6 +151,49 @@ it("skips Doctor when all authorized PostgreSQL agents already match the install
   expect(f.log).toHaveBeenCalledWith(expect.stringContaining("upgrade=skipped"));
 });
 
+it("checks stored schema versions in bounded parallel reads under a single custody check pair", async () => {
+  const descriptor = await import("../lib/openclaw-agent-schema-descriptor.js");
+  const read = vi.spyOn(descriptor, "readImageAgentSchemaVersion").mockResolvedValue(38);
+  try {
+    const f = await fixture();
+    for (const index of [1, 2, 3, 4]) {
+      const agentId = `octogee-alice-project-${index}`;
+      const storeId = `14d620f0-129f-4a72-b1cd-55ad563db8d${index}`;
+      const schema = `octogee_agent_${index}`;
+      const anchorPath = path.join(f.root, `${agentId}.sqlite`);
+      const db = new DatabaseSync(anchorPath);
+      db.exec("CREATE TABLE openclaw_engine_anchor (store_id TEXT, engine TEXT, schema TEXT)");
+      db.prepare("INSERT INTO openclaw_engine_anchor VALUES (?, 'postgres', ?)").run(storeId, schema);
+      db.close();
+      f.stores.push({ agentId, storeId, schema, anchorPath });
+    }
+    let active = 0;
+    let peak = 0;
+    const query = vi.fn(async ({ schema }: { schema: string }) => {
+      const store = f.stores.find(entry => entry.schema === schema)!;
+      peak = Math.max(peak, ++active);
+      await Promise.resolve();
+      active--;
+      return [{ store_id: store.storeId, version: 38, role: "agent", agent_id: store.agentId, schema_version: 38 }];
+    });
+    await upgradeImportedAgentStores({ ...f, query: query as unknown as typeof f.query });
+    expect(query).toHaveBeenCalledTimes(5);
+    expect(peak).toBe(4);
+    expect(f.assertCurrent).toHaveBeenCalledTimes(2);
+    expect(f.run).not.toHaveBeenCalled();
+
+    query.mockImplementationOnce(async () => {
+      f.assertCurrent.mockRejectedValue(new Error("custody changed during metadata batch"));
+      const store = f.stores[0]!;
+      return [{ store_id: store.storeId, version: 38, role: "agent", agent_id: store.agentId, schema_version: 38 }];
+    });
+    await expect(upgradeImportedAgentStores({ ...f, query: query as unknown as typeof f.query }))
+      .rejects.toThrow("custody changed during metadata batch");
+  } finally {
+    read.mockRestore();
+  }
+});
+
 it.each(["newer", "wrong-owner", "partial-upgrade"] as const)("refuses agent adoption when PostgreSQL metadata is %s", async problem => {
   const f = await fixture();
   const version = problem === "newer" ? 39 : 37;

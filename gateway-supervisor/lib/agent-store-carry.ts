@@ -110,3 +110,11 @@ export async function findUnreadableStore(input: {
   }
   return null;
 }
+
+export function agentStateSourceRoot(source: { cwd: string; path: string }): string | undefined {
+  const absolute = path.resolve(path.join(source.cwd, source.path));
+  const relative = path.relative(source.cwd, absolute);
+  if (!relative) return path.join(absolute, "agents");
+  if (relative === "agents" || relative.startsWith(`agents${path.sep}`)) return absolute;
+  return undefined;
+}

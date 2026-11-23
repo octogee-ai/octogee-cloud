@@ -254,6 +254,7 @@ export interface UnmountResponse {
 export interface RestoreMigrationRequestBody extends MigrationRequestBody {
     uid: string;
     snapshot: FleetBrokerUserSnapshot;
+    workspaceCommits?: Readonly<Record<string, string>>;
 }
 export interface RestoreMigrationResponse {
     migrationId: string;
@@ -297,7 +298,7 @@ export interface MigrationProgressRequestBody extends MigrationRequestBody {
     status: "pending" | "running" | "done" | "failed" | "skipped";
     elapsedMs?: number;
 }
-export type SchedulerMigrationPhase = "hold" | "export" | "stage-requester" | "stage" | "activate" | "resume" | "retire" | "abort";
+export type SchedulerMigrationPhase = "checkpoint" | "hold" | "export" | "stage-requester" | "stage" | "activate" | "resume" | "retire" | "abort";
 export interface SchedulerMigrationRequest {
     resolveAgentScope?: true;
     operationId: string;
@@ -336,6 +337,23 @@ export interface ScheduleSkip {
     jobId: string;
     name: string;
     reason: string;
+}
+export interface NativeScheduleCheckpoint {
+    version: 1;
+    operationId: string;
+    agentIds: string[];
+    jobs: Array<{
+        id: string;
+        agentId: string;
+    } & Record<string, unknown>>;
+    scratch: Array<{
+        jobId: string;
+        content: string | null;
+        revision: number;
+        sourceSha256: string | null;
+        updatedAtMs: number;
+    }>;
+    retainedJobIds?: string[];
 }
 export interface ScheduleSnapshotRequestBody extends MigrationRequestBody {
     op: "snapshot";

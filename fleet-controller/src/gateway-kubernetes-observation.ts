@@ -8,7 +8,7 @@ import {
   type GatewayPodPlacement,
   type GatewayPodReplacements,
 } from "@octogee/shared/types/gateway-pod-replacements";
-import type { FleetRegistryRecord, PlatformStateStore } from "@octogee/core/platform-state";
+import type { EphemeralGatewayWriter, EphemeralGatewayWriterNode, FleetRegistryRecord, PlatformStateStore, PlatformStateTransaction } from "@octogee/core/platform-state";
 import {
   nextPodReplacementTransition,
   observedPodPlacements,
@@ -32,12 +32,14 @@ export interface GatewayPodDiagnostics {
     gatewayId?: string | null;
     phase?: string;
     deleting?: boolean;
+    writerTerminated?: true;
     gatewayContainerStartedAt?: number | null;
     createdAt?: number;
     uid?: string | null;
     name?: string | null;
     replicaSetUid?: string | null;
     nodeName?: string | null;
+    providerId?: string;
     instanceId?: string | null;
     nodePool?: string | null;
   }>;
@@ -129,6 +131,7 @@ function storedPodPlacements(
       name: pod.name,
       replicaSetUid: pod.replicaSetUid,
       nodeName: pod.nodeName,
+      ...(pod.providerId ? { providerId: pod.providerId } : {}),
       instanceId: pod.instanceId,
       nodePool: pod.nodePool,
     });
@@ -141,6 +144,7 @@ function samePodPlacement(left: GatewayPodPlacement, right: GatewayPodPlacement)
     left.name === right.name &&
     left.replicaSetUid === right.replicaSetUid &&
     left.nodeName === right.nodeName &&
+    left.providerId === right.providerId &&
     left.instanceId === right.instanceId &&
     left.nodePool === right.nodePool;
 }
@@ -277,6 +281,24 @@ export interface ScannedGatewayRuntime {
   kubernetes: unknown;
 }
 
+async function recordEphemeralWriterNode(
+  transaction: PlatformStateTransaction,
+  gatewayId: string,
+  diagnostics: GatewayPodDiagnostics | undefined,
+): Promise<void> {
+  if (!diagnostics?.pods || gatewayKubernetesStatus(diagnostics) === "unknown") return;
+  const candidates = diagnostics.pods.filter(pod => pod.providerId && pod.instanceId);
+  if (!candidates.length) return;
+  const root = await transaction.gateways.roots.get(gatewayId);
+  const writer = root?.ephemeralWriter;
+  if (!root || !writer || writer.node) return;
+  const pod = candidates.find(candidate => candidate.uid === writer.podUid && candidate.name === writer.podName);
+  if (!pod?.providerId || !pod.instanceId) return;
+  await transaction.gateways.roots.patch(gatewayId, {
+    ephemeralWriter: { ...writer, node: { providerId: pod.providerId, instanceId: pod.instanceId } },
+  }, { revision: root.revision });
+}
+
 export async function persistKubernetesObservations(
   store: PlatformStateStore,
   runtimes: ReadonlyArray<ScannedGatewayRuntime>,
@@ -308,6 +330,7 @@ export async function persistKubernetesObservations(
         const storedKubernetes = record(current.kubernetes);
         const storedObservedAt = storedKubernetes?.observedAt;
         if (typeof storedObservedAt === "number" && storedObservedAt > now) return null;
+        await recordEphemeralWriterNode(transaction, scanned.gatewayId, diagnostics);
         const malformedReplacements = current.podReplacements !== undefined &&
           !isGatewayPodReplacements(current.podReplacements);
         const transition = nextPodReplacementTransition({
@@ -337,12 +360,52 @@ export type ReadGatewayPodDiagnosticsBatch = (input: {
   includeReplicaSets?: boolean;
 }) => Promise<Record<string, GatewayPodDiagnostics>>;
 
+export type ObserveEphemeralNodeExclusion = (writer: EphemeralGatewayWriterNode) => Promise<boolean>;
+
+function writerLostInCompletePodList(diagnostics: GatewayPodDiagnostics | undefined, writer: EphemeralGatewayWriter): boolean {
+  if (gatewayKubernetesStatus(diagnostics) === "unknown" || !diagnostics?.pods) return false;
+  return diagnostics.pods.length === diagnostics.totalPods &&
+    diagnostics.pods.every(pod => typeof pod.uid === "string" && pod.uid !== writer.podUid);
+}
+
+function terminalWriterObserved(diagnostics: GatewayPodDiagnostics | undefined, writer: EphemeralGatewayWriter): boolean {
+  if (gatewayKubernetesStatus(diagnostics) === "unknown") return false;
+  return diagnostics?.pods?.some(
+    pod => pod.uid === writer.podUid && pod.name === writer.podName && pod.writerTerminated === true,
+  ) === true;
+}
+
+async function persistEphemeralNodeExclusions(
+  input: ObserveGatewayKubernetesInput,
+  diagnostics: Readonly<Record<string, GatewayPodDiagnostics>>,
+  check: ObserveEphemeralNodeExclusion,
+): Promise<void> {
+  const roots = await input.store.gateways.roots.getMany(input.gatewayIds);
+  for (const root of roots.values()) {
+    const writer = root.ephemeralWriter;
+    const node = writer?.node;
+    if (!writer || writer.exclusion) continue;
+    const observed = diagnostics[root.gatewayId];
+    try {
+      const terminalPod = terminalWriterObserved(observed, writer);
+      if (!terminalPod && (!node || !writerLostInCompletePodList(observed, writer) || !await check(node))) continue;
+      const method = terminalPod ? "terminal-pod" : "compute-instance-gone";
+      await input.store.gateways.roots.patch(root.gatewayId, {
+        ephemeralWriter: { ...writer, exclusion: { at: input.now, method } },
+      }, { revision: root.revision });
+    } catch (error) {
+      input.log(`[kubernetes-observation] provider exclusion for ${root.gatewayId} could not be recorded: ${String(error)}`);
+    }
+  }
+}
+
 export interface ObserveGatewayKubernetesInput {
   store: PlatformStateStore;
   namespace: string;
   now: number;
   log(message: string): void;
   readGatewayPodDiagnosticsBatch: ReadGatewayPodDiagnosticsBatch;
+  observeEphemeralNodeExclusion?: ObserveEphemeralNodeExclusion;
   gatewayIds: readonly string[];
   runtimes: ReadonlyArray<Pick<FleetRegistryRecord, "gatewayId" | "runtime" | "kubernetes">>;
 }
@@ -375,6 +438,9 @@ export async function observeGatewayKubernetes(
     log: input.log,
     namespace: input.namespace,
   });
+  if (input.observeEphemeralNodeExclusion) {
+    await persistEphemeralNodeExclusions(input, kubernetesByGatewayId, input.observeEphemeralNodeExclusion);
+  }
   return kubernetesByGatewayId;
 }
 
@@ -386,6 +452,7 @@ export interface GatewayKubernetesObserverDeps {
   now(): number;
   log(message: string): void;
   readGatewayPodDiagnosticsBatch: ReadGatewayPodDiagnosticsBatch;
+  observeEphemeralNodeExclusion?: ObserveEphemeralNodeExclusion;
   listGatewayIds(): Promise<readonly string[]>;
   listRuntimes(): Promise<ReadonlyArray<Pick<FleetRegistryRecord, "gatewayId" | "runtime" | "kubernetes">>>;
   afterObservation?(kubernetesByGatewayId: Readonly<Record<string, GatewayPodDiagnostics>>): Promise<void>;
@@ -399,6 +466,7 @@ export async function observeGatewayKubernetesOnce(deps: GatewayKubernetesObserv
     now: deps.now(),
     log: deps.log,
     readGatewayPodDiagnosticsBatch: deps.readGatewayPodDiagnosticsBatch,
+    observeEphemeralNodeExclusion: deps.observeEphemeralNodeExclusion,
     gatewayIds,
     runtimes,
   });

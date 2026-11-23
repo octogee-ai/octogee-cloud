@@ -1043,6 +1043,9 @@ function userRepositories(documents: FixtureDocuments, write: Write, transaction
       const row = documents.get(transferPath(uid, migrationId));
       return row === undefined ? null : storedTransfer(row);
     },
+    put: async (uid, transfer) => {
+      write(() => documents.set(transferPath(uid, transfer.migrationId), { ...structuredClone(transfer) }));
+    },
     patch: async (uid, migrationId, patch) => {
       const path = transferPath(uid, migrationId);
       const row = documents.get(path);
@@ -1050,7 +1053,7 @@ function userRepositories(documents: FixtureDocuments, write: Write, transaction
       write(() => documents.set(path, applyPatch(row, structuredClone(patch))));
     },
     listUnrestored: async () => documents.group(SCHEDULE_TRANSFERS_SUBCOLLECTION)
-      .flatMap(([path, row]) => (row.restoredTo === undefined ? [{ uid: path.split("/")[1], transfer: storedTransfer(row) }] : []))
+      .flatMap(([path, row]) => (row.restoredTo === undefined && row.nativeExport === undefined ? [{ uid: path.split("/")[1], transfer: storedTransfer(row) }] : []))
       .sort((a, b) => a.transfer.snapshotAt - b.transfer.snapshotAt || a.uid.localeCompare(b.uid) ||
         a.transfer.migrationId.localeCompare(b.transfer.migrationId)),
   });

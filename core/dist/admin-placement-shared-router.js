@@ -332,6 +332,14 @@ function unusableRollSource(source, gatewayId, runtime) {
         return `${gatewayId} runs as ${runtime}, not as pods; its Kubernetes status is unknown`;
     return null;
 }
+function parseDisklessRecoveryIntent(body, source) {
+    if (body.durableRecovery === undefined)
+        return undefined;
+    if (body.durableRecovery !== true || source === CONTINUOUS_PLACEMENT_SOURCE || body.sharedDrain !== undefined) {
+        throw new BadRequest("durableRecovery requires a diskless builder return");
+    }
+    return true;
+}
 function enqueuePlacementMigrationIntent(req, deps) {
     const body = bodyOf(req);
     const source = body.source;
@@ -348,6 +356,9 @@ function enqueuePlacementMigrationIntent(req, deps) {
     };
     if (request.fromGatewayId === request.toGatewayId)
         throw new BadRequest("toGatewayId must differ from fromGatewayId");
+    const durableRecovery = parseDisklessRecoveryIntent(body, request.source);
+    if (durableRecovery)
+        request.durableRecovery = durableRecovery;
     const drain = body.sharedDrain;
     if (drain !== undefined) {
         const paired = drain !== null && typeof drain === "object" ? drain.pairedTargetGatewayId : undefined;

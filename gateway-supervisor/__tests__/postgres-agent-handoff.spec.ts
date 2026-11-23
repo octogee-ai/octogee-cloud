@@ -1,9 +1,10 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { DatabaseSync } from "node:sqlite";
-import * as fs from "node:fs/promises";
+import fs from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
-import { exportAgentStoreSnapshots, prepareAgentStoreSnapshots, findPortableAgentStores, installPreparedAgentStores } from "../lib/agent-store-snapshot.js";
+import { exportAgentStoreSnapshots, prepareAgentStoreSnapshots, findPortableAgentStores, installPreparedAgentStores, planPostgresAgentExport } from "../lib/agent-store-snapshot.js";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -95,6 +96,58 @@ it("refuses duplicate source roots for one agent before detaching either store",
   const detachAgents = vi.fn(async () => undefined);
   await expect(exportAgentStoreSnapshots({ sources: [first, second].map(item => ({ cwd: item.root, path: `agents/${item.agentId}` })), exportRoot: path.join(first.root, "stage"), detachAgents })).rejects.toThrow("more than one database");
   expect(detachAgents).not.toHaveBeenCalled();
+});
+
+it("does not recursively inventory the workspace or Git metadata for an agent anchor", async () => {
+  const { root, agentId, file } = await fixture();
+  const sourcePaths = [`agents/${agentId}`, "customers/alice", "git-metadata/alice"];
+  for (const relative of sourcePaths.slice(1)) {
+    await fs.mkdir(path.join(root, relative), { recursive: true });
+    await fs.writeFile(path.join(root, relative, "user.sqlite"), "outside portable agent state");
+  }
+  const sources = sourcePaths.map(relative => ({ cwd: root, path: relative }));
+  const readdir = vi.spyOn(fs, "readdir");
+  syncBuiltinESMExports();
+  try {
+    expect((await findPortableAgentStores(sources)).map(store => store.sourceAgentDir)).toEqual([path.dirname(file)]);
+    const visits = readdir.mock.calls.map(([dir]) => dir);
+    expect(visits).not.toContain(path.join(root, "customers/alice"));
+    expect(visits).not.toContain(path.join(root, "git-metadata/alice"));
+  } finally {
+    readdir.mockRestore();
+    syncBuiltinESMExports();
+  }
+});
+
+it("reuses the pre-detach inventory for the PostgreSQL export while leaving Codex independent", async () => {
+  const { root, agentId } = await fixture();
+  const source = `agents/${agentId}`;
+  const sources = [{ cwd: root, path: source }];
+  const postgres = await planPostgresAgentExport(sources);
+  const readdir = vi.spyOn(fs, "readdir");
+  syncBuiltinESMExports();
+  try {
+    const detachAgents = vi.fn(async () => undefined);
+    const carried = await exportAgentStoreSnapshots({ sources, postgres, exportRoot: path.join(root, "stage"), detachAgents });
+    expect(detachAgents).toHaveBeenCalledExactlyOnceWith([agentId]);
+    expect(carried).toHaveLength(1);
+    expect(readdir.mock.calls.filter(([dir]) => dir === path.join(root, source))).toHaveLength(1);
+  } finally {
+    readdir.mockRestore();
+    syncBuiltinESMExports();
+  }
+});
+
+it("rejects a different anchor copied after the source detach", async () => {
+  const { root, agentId, file } = await fixture();
+  const detachAgents = async () => {
+    const db = new DatabaseSync(file);
+    db.exec("UPDATE openclaw_engine_anchor SET schema = 'octogee_unexpected'");
+    db.close();
+  };
+  await expect(exportAgentStoreSnapshots({
+    sources: [{ cwd: root, path: `agents/${agentId}` }], exportRoot: path.join(root, "stage"), detachAgents,
+  })).rejects.toThrow("anchor changed during handoff");
 });
 
 it.each([

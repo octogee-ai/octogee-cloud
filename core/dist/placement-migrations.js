@@ -6,6 +6,7 @@ import { isReleasePayload, projectGatewayDesiredRootForGateway, releasePayloadHa
 import { GatewayRetirementConflictError, isolatedRuntimeMutationFenced } from "./gateway-retirement-claim.js";
 import { builderReturnOperationId, isUserReturnOperationIdFor } from "@octogee/shared/types/isolated-operation-ids";
 import { nativeReturnTargetDenied, nativeReturnTargetExclusionId } from "./native-return-target-deny.js";
+import { excludedDisklessActivation, excludedDisklessWriter } from "./isolated-gateway-lifecycle/ephemeral-recovery-state.js";
 import { readSharedGatewayPoolConfigInStore } from "./shared-gateway-pool-read.js";
 export const PLACEMENT_MIGRATION_KIND = "migrate-user";
 export const PLACEMENT_MIGRATION_ACTOR = "glm-controller-placement-policy";
@@ -654,6 +655,58 @@ async function assertNoOtherActivePlacementMigration(transaction, request) {
         throw new PlacementMigrationAuthorityError(`user ${request.uid} already has ${other.status} migration ${other.id}`);
     }
 }
+function sameDisklessCheckpointEpoch(user, gatewayId, epoch) {
+    const { workspaceCheckpoint: workspace, scheduleCheckpoint: schedule } = user;
+    return !!workspace && !!schedule && [workspace, schedule].every(checkpoint => checkpoint.gatewayId === gatewayId && checkpoint.assignmentEpoch === epoch);
+}
+async function assertDisklessPlacementDemand(transaction, user, request) {
+    const lease = activationLeaseOf(user.activationLease);
+    const denial = () => new PlacementMigrationAuthorityError("diskless return requires the current excluded writer and its durable checkpoints");
+    if (!lease || request.source !== ACTIVATION_LEASE_SOURCE || lease.targetGatewayId !== request.fromGatewayId ||
+        !["activating", "active", "returning"].includes(lease.status) || userGatewayId(user) !== request.fromGatewayId ||
+        request.operationId !== builderReturnOperationId(request.fromGatewayId, lease.generation))
+        throw denial();
+    if (lease.status === "activating" && !await excludedDisklessActivation(transaction, {
+        uid: request.uid, slug: request.builderSlug, gatewayId: request.fromGatewayId,
+    }))
+        throw denial();
+    const [source, assignment] = await Promise.all([
+        transaction.gateways.roots.get(request.fromGatewayId),
+        transaction.gateways.assignments.get(request.fromGatewayId, request.uid),
+    ]);
+    const owner = { uid: request.uid, slug: request.builderSlug, leaseId: lease.leaseId, generation: lease.generation };
+    if (!excludedDisklessWriter(source, owner) || assignment?.state !== "serving" ||
+        !sameDisklessCheckpointEpoch(user, request.fromGatewayId, assignment.epoch))
+        throw denial();
+}
+function exactExistingDisklessDemand(existing, request) {
+    return existing.kind === PLACEMENT_MIGRATION_KIND && existing.origin === "automatic" &&
+        existing.createdBy === PLACEMENT_MIGRATION_ACTOR && existing.input.uid === request.uid &&
+        existing.input.userSlug === request.builderSlug && existing.input.fromGatewayId === request.fromGatewayId &&
+        existing.input.toGatewayId === request.toGatewayId && existing.input.source === request.source;
+}
+async function disklessPlacementReplay(transaction, user, request, existing, admit) {
+    if (existing?.input.durableRecovery === true) {
+        if (!request.durableRecovery || !exactExistingDisklessDemand(existing, request)) {
+            throw new PlacementMigrationAuthorityError("an existing diskless return cannot switch authority or destination");
+        }
+        return "already-enqueued";
+    }
+    if (request.durableRecovery) {
+        await assertDisklessPlacementDemand(transaction, user, request);
+        if (existing) {
+            if (!exactExistingDisklessDemand(existing, request) || !sharedDrainMoveNeverClaimed({ ...existing })) {
+                throw new PlacementMigrationAuthorityError("the existing live return has already claimed work");
+            }
+            await admit();
+            await transaction.journal.operations.patch(request.operationId, {
+                input: operationInputWithout(existing, [], { durableRecovery: true }),
+            }, { status: ["pending"], startedAt: null });
+            return "rearmed";
+        }
+    }
+    return undefined;
+}
 export async function enqueuePlacementMigrationInTransaction(transaction, context, request, admit = async () => undefined) {
     await context.requireOwner(transaction);
     const userRecord = await transaction.users.records.get(request.uid);
@@ -666,6 +719,9 @@ export async function enqueuePlacementMigrationInTransaction(transaction, contex
     if (sharedDrain)
         await assertSharedDrainAuthority(transaction, { ...request, sharedDrain });
     const existing = await transaction.journal.operations.get(request.operationId);
+    const disklessReplay = await disklessPlacementReplay(transaction, userRecord, request, existing, admit);
+    if (disklessReplay !== undefined)
+        return disklessReplay;
     if (existing === null) {
         await assertNoOtherActivePlacementMigration(transaction, request);
         await admit();
@@ -684,6 +740,7 @@ export async function enqueuePlacementMigrationInTransaction(transaction, contex
                 fromGatewayId: request.fromGatewayId,
                 toGatewayId: request.toGatewayId,
                 source: request.source,
+                ...(request.durableRecovery ? { durableRecovery: true } : {}),
             },
             steps: [],
             gatewayId: request.toGatewayId,

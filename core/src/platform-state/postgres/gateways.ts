@@ -74,6 +74,7 @@ export const GATEWAYS_TABLE: TableSpec = {
     column("allocationEphemeralHomeGiB", "integer", { column: "allocation_ephemeral_home_gib" }),
     column("lastError", "jsonb"),
     column("lastPreStopFlush", "jsonb"),
+    column("ephemeralWriter", "jsonb"),
     column("configBackfill", "jsonb"),
   ],
   immutableFields: ["gatewayId", "createdAt", "createdBy", "latestRelease"],

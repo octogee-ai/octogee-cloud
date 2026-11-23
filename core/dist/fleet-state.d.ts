@@ -1,3 +1,4 @@
+import { type ScheduleTransferDoc } from "@octogee/shared/types/fleet-controller";
 import { type GatewayRuntime, type UserMigrationV2GatewayRootFence } from "@octogee/shared/types/glm";
 import { type AssignmentSource, type AssignmentState } from "@octogee/shared/types/gateway-releases";
 import type { FleetBrokerUserRestoreAuthority } from "@octogee/shared/types/fleet-broker";
@@ -140,6 +141,31 @@ export interface UnavailableGatewayRecoveryTargetValidationContext {
     targetRoot: Record<string, unknown>;
     targetRuntime: Record<string, unknown>;
 }
+export interface DisklessSharedRecoveryInput {
+    operationId: string;
+    migrationId: string;
+    claimStartedAt: number;
+    uid: string;
+    slug: string;
+    fromGatewayId: string;
+    toGatewayId: string;
+}
+export interface DisklessSharedRestore {
+    targetEpoch: number;
+    restorePending: boolean;
+    workspaceCommits: Readonly<Record<string, string>>;
+    scheduler: NonNullable<ScheduleTransferDoc["nativeExport"]>;
+}
+export declare function commitDisklessSharedRecovery(deps: FleetStateDeps, input: DisklessSharedRecoveryInput): Promise<DisklessSharedRestore>;
+export declare function readDisklessActivationWriterExcluded(store: PlatformStateStore, input: {
+    uid: string;
+    slug: string;
+    gatewayId: string;
+    claim: {
+        operationId: string;
+        startedAt: number;
+    };
+}): Promise<boolean>;
 export declare function commitUnavailableGatewayRecoveryAtomic(deps: FleetStateDeps, params: Omit<UnavailableGatewayRecoveryParams, "requireOwner">): Promise<{
     operationId: string;
 }>;
@@ -198,3 +224,4 @@ export declare function markAssignmentStateInTransaction(tx: PlatformStateTransa
 export { assertHeldNativeReturnRepairClaim, completeHeldNativeReturnRepair, heldNativeReturnBlocksDestination, heldNativeReturnBlocksOwnerDestination, requestHeldNativeReturnRepair, readHeldNativeReturnForTargetExclusion, readHeldNativeReturnForTargetMaintenance, reserveNativeReturnTargetDrain, nativeReturnAllowsSharedDeparture, readHeldNativeReturnForRetiredTargetCompensation, readNativeReturnSharedDrains, HeldNativeReturnConflict, reserveHeldNativeOfflineSource, readReservedHeldNativeOfflineSource, bindHeldNativeStoppedOriginal, assertHeldNativeOfflineSourceClaim, assertHeldNativeOfflineSourceClaimable, assertPendingHeldNativeOfflineProjection, recordHeldNativeOfflineStage, recordHeldNativeOriginalRestart, HELD_NATIVE_OFFLINE_SOURCE_FENCE_KIND, type HeldNativeReturnAuthority, type HeldNativeReturnSelection, type HeldNativeReturnSourceProof, type HeldNativeStoppedOriginalWitness, type HeldNativeOriginalRestartWitness, } from "./held-native-return-repair.js";
 export { assertSharedInertEmptyPeerHeld, assertSharedInertEmptyPeerRestorable, holdSharedInertEmptyPeer, releaseSharedInertEmptyPeer, type SharedInertEmptyPeerScope, acquireSharedHeldReturnMaintenance, advanceSharedHeldReturnMaintenance, assertSharedHeldReturnMaintenance, authorizeSharedInertMaintenance, assertSharedInertPreLaunch, authorizeSharedInertStockLaunch, readAuthorizedSharedInertStock, rollbackSharedInertBeforeStock, type SharedInertMaintenancePriorProof, type SharedInertMaintenanceCommonProof, assertSharedHeldReturnMaintenanceReserved, assertSharedHeldReturnMaintenanceUnfenced, completeSharedHeldReturnMaintenance, readSharedHeldReturnMaintenanceDispatch, readSharedHeldReturnMaintenanceTerminal, resumeSharedHeldReturnMaintenance, stageSharedHeldReturnMaintenanceRelease, withdrawSharedHeldReturnMaintenance, type ObservedSharedMaintenanceHelm, SHARED_HELD_RETURN_MAINTENANCE, SharedHeldReturnMaintenanceConflict, type SharedHeldReturnMaintenanceAdmin, type SharedHeldReturnMaintenanceAdmission, type SharedHeldReturnMaintenanceClaim, type SharedHeldReturnMaintenanceCommand, type SharedHeldReturnMaintenanceDispatch, type SharedHeldReturnMaintenancePlan, type SharedHeldReturnMaintenanceResult, type SharedHeldReturnMaintenanceWithdrawal, } from "./shared-held-return-maintenance.js";
 export { NATIVE_RETURN_TARGET_EXCLUSION, nativeReturnTargetExclusionId, nativeReturnTargetDenied, nativeReturnSharedStoreHandoffDenied, readNativeOldTargetRetirement, readNativeReturnTargetDrain, type NativeOldTargetRetirement } from "./native-return-target-deny.js";
+export { parseScheduleCheckpoint, parseWorkspaceCheckpoint, recordGatewayScheduleCheckpoint, recordGatewayWorkspaceCheckpoint } from "./gateway-schedule-checkpoint.js";

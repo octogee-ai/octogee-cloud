@@ -188,14 +188,14 @@ export function createMigrationClient(deps) {
             }
             return result;
         }),
-        async restoreTarget({ migrationId, gatewayId, transportId, uid, slug, snapshot, resume }) {
+        async restoreTarget({ migrationId, gatewayId, transportId, uid, slug, snapshot, resume, workspaceCommits }) {
             await deps.prepareAgentStores?.(gatewayId, slug);
             const res = await postSignedJson({
                 transportId: transportId ?? gatewayId,
                 path: `/${resume === true ? "resume-restore" : "restore"}/${gatewayId}`,
                 gatewayId,
                 migrationId,
-                body: { migrationId, uid, slug, snapshot },
+                body: { migrationId, uid, slug, snapshot, ...(workspaceCommits === undefined ? {} : { workspaceCommits }) },
                 timeoutMs: transferMs,
             });
             log(`[migration-client] ✅ restoreTarget migrationId=${migrationId} slug=${slug} gateway=${gatewayId} steps=${res.steps.join(",")}`);

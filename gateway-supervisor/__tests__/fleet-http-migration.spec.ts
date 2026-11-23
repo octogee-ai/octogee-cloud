@@ -7,6 +7,7 @@ import type { Request, Response } from "express";
 import { EventEmitter } from "node:events";
 import * as fsSync from "node:fs";
 import fs from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -1117,6 +1118,41 @@ describe("held Native source maintenance admission", () => {
 });
 
 describe("createRestoreHandler", () => {
+  it("refuses an acknowledged workspace restore on the ordinary restore route", async () => {
+    const body = { migrationId: "mig-1", uid: "uid-chris", slug: "chris", snapshot: RESTORE_SNAPSHOT,
+      workspaceCommits: { workspace: "a".repeat(40) } };
+    const adapter = mkAdapter({ isIsolatedGateway: () => false, cloneWorkspaceRepo: vi.fn() });
+    const response = mkResponse();
+    const req = { ...mkRequest(body, { signature: signForPod(body.migrationId, JSON.stringify(body)) }),
+      path: `/restore/${GATEWAY_ID}` } as Request;
+    await createRestoreHandler(mkDeps({ adapter }))(req, response.res, vi.fn());
+    expect(response.getStatus()).toBe(500);
+    expect(adapter.cloneWorkspaceRepo).not.toHaveBeenCalled();
+  });
+
+  it.each(["changed claim", "mounted without a completed marker"] as const)("refuses a workspace restore with %s before touching Git", async (scenario) => {
+    const authority = { uid: "uid-chris", slug: "chris", gatewayId: GATEWAY_ID, fromGatewayId: "old",
+      assignmentEpoch: 2, operationId: "1", claimStartedAt: 10, phase: "dispatched" as const, attemptId: "attempt",
+      dispatchedAt: 11, dispatchClaimStartedAt: 10, migrationId: "mig-1" };
+    const snapshot = { ...RESTORE_SNAPSHOT, agentIds: [...RESTORE_SNAPSHOT.agentIds], channels: [], projects: [],
+      runtimeMutationFenced: true, restoreAuthority: authority };
+    const body = { migrationId: "mig-1", uid: "uid-chris", slug: "chris", snapshot,
+      workspaceCommits: { workspace: "a".repeat(40) } };
+    const adapter = mkAdapter({ isIsolatedGateway: () => false, cloneWorkspaceRepo: vi.fn(), userMountMarked: () => false });
+    const response = mkResponse();
+    const req = { ...mkRequest(body, { signature: signForPod(body.migrationId, JSON.stringify(body)) }),
+      path: `/resume-restore/${GATEWAY_ID}` } as Request;
+    const sameClaim = scenario !== "changed claim";
+    const readHeldSourceSnapshot = async () => ({ ...snapshot, restoreAuthority: { ...authority, claimStartedAt: sameClaim ? 10 : 12 } });
+    const getMountedUsers = () => sameClaim ? [snapshot.slug] : [];
+    await createRestoreHandler(mkDeps({ adapter, readHeldSourceSnapshot, getMountedUsers }))(req, response.res, vi.fn());
+    expect(response.getStatus()).toBe(500);
+    expect(response.getBody()).toMatchObject({
+      message: sameClaim ? "Acknowledged workspace restore replay has no completed ready mount" : "Acknowledged workspace restore authority changed",
+    });
+    expect(adapter.cloneWorkspaceRepo).not.toHaveBeenCalled();
+  });
+
   it("joins a matching restore retry instead of starting competing mount work", async () => {
     let release!: () => void;
     const blocked = new Promise<void>((resolve) => { release = resolve; });
@@ -6102,8 +6138,17 @@ describe("prepared migration staging", () => {
     await fs.rm(path.join(stageDir, "customers/chris/.system"), { recursive: true });
     await fs.rm(path.join(stageDir, "customers/chris/projects/deleted-repo"), { recursive: true });
     await writeSharedTargetManifest(stageDir, importDir);
-    const completed = await finish("final");
+    const readdir = vi.spyOn(fs, "readdir");
+    syncBuiltinESMExports();
+    const checkout = path.join(stageDir, "customers/chris/projects/active-repo");
+    let checkoutReads = 0;
+    const completed = await finish("final").finally(() => {
+      checkoutReads = readdir.mock.calls.filter(([directory]) => directory === checkout).length;
+      readdir.mockRestore();
+      syncBuiltinESMExports();
+    });
     expect(completed.getBody()).toEqual({ migrationId, slug: "chris", imported: true });
+    expect(checkoutReads).toBe(4);
     expect(completed.getStatus()).toBe(200);
     expect(uidForSlug).not.toHaveBeenCalled();
     expect(loadUserSnapshot).not.toHaveBeenCalled();

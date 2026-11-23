@@ -18,7 +18,7 @@ import { buildOperationCompletionUpdate, classifyOperationFailure, MAX_OPERATION
 import { markGatewayLive, resolveSourceRevision } from "../index.js";
 import type { DurableGateway } from "../converge-gateway.js";
 import { assertUserRestoreSettled, createOperationContext, PendingUserRestoreError } from "../operation-context";
-import { builderReturnOperationId } from "@octogee/shared/types/isolated-operation-ids";
+import { builderReturnOperationId, DISKLESS_ACTIVATION_WRITER_EXCLUDED } from "@octogee/shared/types/isolated-operation-ids";
 import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import type { NativeReturnPark, NativeSourcePark } from "../lib/native-vm-return";
 import { retireNativeSchedulerBeforeStage } from "../lib/native-scheduler-retirement";
@@ -2343,6 +2343,22 @@ describe("migrate-customer — User activation onto a held VM", () => {
     expect(h.transfers.get("uid-alice/mig-op-1")?.restoredTo).toBeUndefined();
   });
 
+  it("ends a committed activation without resuming an excluded diskless writer", async () => {
+    const h = heldActivation({ sourceGatewayId: "gw-green" });
+    h.deps.readExcludedDisklessActivation = vi.fn(async () => true);
+    const op = mkOp({ schedulerHandoff: { ...deferred, fromGatewayId: "shared-blue" }, cutoverCommittedAt: 4_100 });
+
+    const result = await createMigrateUserHandler(h.deps)(op, h.ctx);
+
+    expect(result).toMatchObject({ success: false, rolledBack: false, failedAfterCutover: true, error: DISKLESS_ACTIVATION_WRITER_EXCLUDED });
+    expect(h.deps.readExcludedDisklessActivation).toHaveBeenCalledWith({
+      uid: "uid-alice", slug: "alice", gatewayId: "gw-green", claim: { operationId: op.id, startedAt: op.startedAt },
+    });
+    expect(h.client.resume).not.toHaveBeenCalled();
+    expect(h.client.flushGateway).not.toHaveBeenCalled();
+    expect(h.client.unmount).not.toHaveBeenCalled();
+  });
+
   it("keeps a committed cutover in forward recovery while its transfer record cannot be read, and restores the schedules on the retry", async () => {
     const h = heldActivation({ sourceGatewayId: "gw-green" });
     h.transfers.set("uid-alice/mig-op-1", PENDING_SCHEDULES);
@@ -3256,6 +3272,44 @@ describe("migrate-customer — legacy data-plane migration (shared class)", () =
     expect(result.error).toMatch(/agents busy/u);
     expect(events.some((event) => event.startsWith("cutover:"))).toBe(false);
     expect(events).toContain("assignment:gw-blue:serving");
+  });
+});
+
+describe("direct diskless Hobby return", () => {
+  it("restores and stages on Shared without resolving a replacement or the old writer", async () => {
+    const { deps, client, ctx } = mkDeps();
+    const order: string[] = [];
+    const workspaceCommits = { workspace: "a".repeat(40) };
+    const scheduler = { agentIds: ["octogee-alice-coach"], snapshot: { version: 1, operationId: "mig-op-1", jobs: [], scratch: [] } };
+    deps.commitDisklessSharedRecovery = vi.fn(async () => ({ targetEpoch: 5, restorePending: true, workspaceCommits, scheduler }));
+    deps.readDisklessRestoreAuthority = vi.fn(async () => ({
+      uid: "uid-alice", slug: "alice", fromGatewayId: "gw-blue", gatewayId: "shared-green",
+      operationId: "op-1", assignmentEpoch: 5, migrationId: "mig-op-1", attemptId: "attempt", claimStartedAt: 4_000,
+      dispatchClaimStartedAt: 4_000, dispatchedAt: 4_000, phase: "dispatched" as const,
+    }));
+    vi.mocked(deps.readUserSnapshot).mockResolvedValue({ ...SNAPSHOT, gatewayId: "shared-green" });
+    vi.mocked(deps.resolveGatewayUrl).mockImplementation(async gatewayId => {
+      if (gatewayId !== "shared-green") throw new Error("the Spot writer is gone");
+      return "http://shared-green";
+    });
+    const original = vi.mocked(client.scheduler).getMockImplementation()!;
+    vi.mocked(client.scheduler).mockImplementation(async request => {
+      order.push(request.phase);
+      return original(request);
+    });
+    ctx.withUserRestoreFence = vi.fn(async (_, work) => {
+      order.push("held");
+      await work();
+      order.push("released");
+    });
+    const result = await createMigrateUserHandler(deps)(mkOp({ input: {
+      uid: "uid-alice", userSlug: "alice", fromGatewayId: "gw-blue", toGatewayId: "shared-green", durableRecovery: true,
+    } }), ctx);
+    expect(result).toMatchObject({ success: true, rolledBack: false });
+    expect(client.restoreTarget).toHaveBeenCalledWith(expect.objectContaining({ workspaceCommits, resume: true, gatewayId: "shared-green" }));
+    expect(client.calls).toEqual(["restore:shared-green", "verify:shared-green"]);
+    expect(order).toEqual(["held", "stage", "released", "activate"]);
+    expect(client.transferState).not.toHaveBeenCalled();
   });
 });
 

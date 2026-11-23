@@ -212,6 +212,22 @@ selection and rollout are a separate operator step.
 
 ## Current Gateway overlay
 
+### November 23 scheduler checkpoint
+
+The signed overlay at `5098a64c8dc5eacd11555eeb7fe0febbbec9753d` extends the
+existing operator-only scheduler migration RPC with a read-only checkpoint.
+The Gateway snapshots portable jobs and scheduler scratch in one database
+read transaction. The caller can persist the result during normal service
+and restore it after an isolated writer is excluded. Remove this overlay
+once the native scheduler exposes the same scoped snapshot and scratch
+without shifting scheduler custody.
+
+The exact [package and Linux installer qualification](https://console.cloud.google.com/cloud-build/builds/d72d3d5b-9501-4702-ad34-f0dcbedf2c83)
+passed the focused scheduler and gateway RPC tests, core typecheck, installed
+package and bundled source checks. The [installed pin roll](https://console.cloud.google.com/cloud-build/builds/e607c249-b5ff-4754-8812-f423f90eabcf)
+passed on PostgreSQL 16 with pgvector 0.8.7 and retained the same routine
+catalog. The Mattermost package bytes are unchanged.
+
 ### November 23 main refresh
 
 The selected upstream is `6c8c6dd946b79646c917bf0c1dece9bc710b78f5`.

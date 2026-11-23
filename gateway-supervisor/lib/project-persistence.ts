@@ -44,15 +44,34 @@ export async function persistAssignedSharedUsers(deps: {
   }
 }
 
-export function startProjectAutosave(deps: { save: () => Promise<void>; log: (message: string) => void }, intervalMs = 30_000): () => void {
+export function startProjectAutosave(deps: {
+  save: () => Promise<void>;
+  log: (message: string) => void;
+  startImmediately?: boolean;
+}, intervalMs = 30_000) {
+  let closed = false;
+  let pending = false;
   let running = false;
-  const timer = setInterval(async () => {
+  async function saveOnce() {
+    if (closed) return;
+    pending = true;
     if (running) return;
     running = true;
-    try { await deps.save(); }
-    catch (error) { deps.log(`[project-autosave] ${String(error)}; local work retained`); }
-    finally { running = false; }
-  }, intervalMs);
+    try {
+      while (pending && !closed) {
+        pending = false;
+        try { await deps.save(); }
+        catch (error) { deps.log(`[project-autosave] ${String(error)}; local work retained`); }
+      }
+    } finally {
+      running = false;
+    }
+  }
+  const timer = setInterval(saveOnce, intervalMs);
   timer.unref();
-  return () => clearInterval(timer);
+  if (deps.startImmediately) void saveOnce();
+  return {
+    wake: () => { void saveOnce(); },
+    close: () => { closed = true; clearInterval(timer); },
+  };
 }

@@ -30,6 +30,7 @@ export interface EnqueuePlacementMigrationRequest {
     sharedDrain?: {
         pairedTargetGatewayId: string | null;
     };
+    durableRecovery?: true;
 }
 export interface SupersedePendingSharedDrainMoveRequest {
     operationId: string;

@@ -63,6 +63,8 @@ export declare const TOP_LEVEL_PATHS: {
     readonly mattermostUserId: "mattermost.userId";
     readonly workspaceId: "workspaceId";
     readonly accountLifecycle: "accountLifecycle";
+    readonly scheduleCheckpoint: "scheduleCheckpoint";
+    readonly workspaceCheckpoint: "workspaceCheckpoint";
 };
 export declare const PATCH_GROUPS: {
     readonly provisioning: {

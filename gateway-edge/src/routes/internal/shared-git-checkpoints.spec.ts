@@ -27,6 +27,7 @@ let remoteRoot: string;
 let snapshot: Record<string, unknown>;
 let broker: ReturnType<typeof vi.fn>;
 let assignment: { uid: string; state: string; epoch: number };
+let checkpointStatus: number;
 let reviewed: { authenticated: true; namespace: string; saName: string; audiences: string[] };
 const personas = { workspace: "# Agent\nExact agent persona α\n", demo: "# Project\nExact project persona β\n" };
 function git(cwd: string, ...args: string[]): string {
@@ -78,11 +79,13 @@ beforeEach(() => {
   vi.stubEnv("TEST_GIT_SSH", ssh);
   snapshot = { uid: "uid-alice", slug: "alice", gatewayId: "shared-one", status: "complete", projects: [{ projectSlug: "demo", giteaRepoName: "demo", provisioningState: "active" }] };
   assignment = { uid: "uid-alice", state: "serving", epoch: 3 };
+  checkpointStatus = 200;
   broker = vi.fn(async (url: string, init: RequestInit) => {
     const body = JSON.parse(String(init.body));
     if (url.endsWith("/uid-for-slug")) return Response.json({ uid: body.slug === "alice" ? "uid-alice" : "uid-bob" });
     if (url.endsWith("/user-snapshot")) return Response.json({ user: snapshot });
     if (url.endsWith("/assignment-roster")) return Response.json({ assignments: [assignment] });
+    if (url.endsWith("/workspace-checkpoint")) return new Response(null, { status: checkpointStatus });
     throw new Error(`unexpected network call ${url}`);
   });
   vi.stubGlobal("fetch", broker);
@@ -90,12 +93,28 @@ beforeEach(() => {
   writeFileSync(path.join(user, "IDENTITY.md"), personas.workspace);
   writeFileSync(path.join(user, "projects/demo/IDENTITY.md"), personas.demo);
 });
+
+linuxTest("continues a Shared Git save when the current writer receipt has to retry", async () => {
+  checkpointStatus = 409;
+  expect((await flush()).status).toBe(200);
+  expect(restored("workspace")).toEqual(Buffer.from(personas.workspace));
+  expect(broker.mock.calls.some(([url]) => String(url).endsWith("/workspace-checkpoint"))).toBe(true);
+});
 afterEach(() => { _setGatewayTokenReviewerForTests(null); vi.unstubAllGlobals(); vi.unstubAllEnvs(); rmSync(root, { recursive: true, force: true }); });
 
 linuxTest("checkpoints exact Shared agent and Gitea project persona bytes for a cold clone", async () => {
   expect((await flush()).status).toBe(200);
   expect(restored("workspace")).toEqual(Buffer.from(personas.workspace));
   expect(restored("demo")).toEqual(Buffer.from(personas.demo));
+  const receipts = broker.mock.calls.filter(([url]) => String(url).endsWith("/workspace-checkpoint"));
+  expect(receipts).toHaveLength(1);
+  expect(JSON.parse(String(receipts[0]?.[1]?.body))).toEqual({
+    uid: assignment.uid, gatewayId: "shared-one", assignmentEpoch: assignment.epoch,
+    observedAt: expect.any(Number),
+    commits: Object.fromEntries(["workspace", "demo"].map(name => [
+      name, git(path.join(remoteRoot, `${name}.git`), "rev-parse", "refs/heads/main"),
+    ])),
+  });
 });
 
 linuxTest("accepts a checkpoint already published in an archived remote and retains unpublished changes", async () => {

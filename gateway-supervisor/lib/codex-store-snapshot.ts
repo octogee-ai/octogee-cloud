@@ -5,7 +5,7 @@ import { constants } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { promisify } from "node:util";
-import { listSqliteStores } from "./agent-store-carry.js";
+import { agentStateSourceRoot, listSqliteStores } from "./agent-store-carry.js";
 import { assertNotHeld, matchFiles, sqliteFamily } from "./held-files.js";
 
 const exec = promisify(execFile);
@@ -106,7 +106,9 @@ export async function exportCodexStoreSnapshots(input: Options & { sources: read
   let bytes = 0, count = 0;
   const visited = new Set<string>();
   for (const source of input.sources) {
-    for (const file of await listSqliteStores(path.join(source.cwd, source.path))) {
+    const root = agentStateSourceRoot(source);
+    if (!root) continue;
+    for (const file of await listSqliteStores(root)) {
       const relative = path.relative(source.cwd, file).split(path.sep).join("/");
       if (!isCodexDatabase(relative) || visited.has(relative)) continue;
       visited.add(relative);
@@ -150,7 +152,8 @@ async function codexHomes(root: string): Promise<string[]> {
   return homes;
 }
 
-export async function omitStagedCodexTemporaryFiles(stageDir: string, log: Log): Promise<void> {
+export async function omitStagedCodexTemporaryFiles(stageDir: string, log: Log): Promise<ReadonlySet<string>> {
+  const removed = new Set<string>();
   for (const home of await codexHomes(stageDir)) {
     const relative = `${home}/tmp`;
     const temporary = path.join(stageDir, relative);
@@ -160,8 +163,10 @@ export async function omitStagedCodexTemporaryFiles(stageDir: string, log: Log):
       throw error;
     }
     await fs.rm(temporary, { recursive: true, force: true });
+    removed.add(relative);
     log(`[migration-rsync] omitted staged Codex temporary files: ${relative}`);
   }
+  return removed;
 }
 
 export async function omitRawCodexDatabases(stageDir: string, log: Log): Promise<void> {

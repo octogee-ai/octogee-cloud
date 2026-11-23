@@ -1,3 +1,4 @@
+import type { NativeScheduleCheckpoint } from "@octogee/shared/types/fleet-controller";
 import { watchFleetAssignments } from "./fleet-assignment-watch.js";
 import type {
   FleetBrokerAgentAnchor,
@@ -156,6 +157,8 @@ export interface FleetBrokerClient {
     agentId: string;
     usage: FleetBrokerUsageData;
   }): Promise<void>;
+  claimEphemeralWriter(): Promise<void>;
+  recordScheduleCheckpoint(input: { snapshot: NativeScheduleCheckpoint; uid: string; assignmentEpoch: number; observedAt: number }): Promise<void>;
   recordPreStopFlush(input: FleetBrokerPreStopFlushEvent, signal?: AbortSignal): Promise<void>;
   recordSystemConfigStatus(input: SystemConfigObservedStatus): Promise<void>;
   blobDownloadUrl(input: {
@@ -624,6 +627,12 @@ export function createFleetBrokerClient(
     },
     recordUsageEvent(input) {
       return postNoContent("/internal/fleet/usage-event", { gatewayId, ...input });
+    },
+    async claimEphemeralWriter() {
+      return postNoContent("/internal/fleet/ephemeral-writer/claim", { gatewayId }, await gatewayCredentialHeaders());
+    },
+    async recordScheduleCheckpoint(schedules) {
+      return postNoContent("/internal/fleet/schedule-checkpoint", { gatewayId, ...schedules }, await gatewayCredentialHeaders());
     },
     recordPreStopFlush(input, signal) {
       return postNoContent("/internal/fleet/prestop-flush", { gatewayId, ...input }, undefined, signal);
