@@ -24,6 +24,10 @@ function matchesDeclaration(value: unknown, expected: unknown): boolean {
   return !!actual && Object.entries(pattern).every(([key, item]) => matchesDeclaration(actual[key], item));
 }
 
+function boundedText(value: unknown, max: number): value is string {
+  return typeof value === "string" && !!value.trim() && value.length <= max;
+}
+
 function ownerDeclaration(job: CheckpointJob, tenant: OwnerAutomationTenant): Record<string, unknown> | undefined {
   const prefix = ownerAutomationKeyPrefix(tenant);
   if (typeof job.declarationKey !== "string" || !job.declarationKey.startsWith(prefix)) return;
@@ -32,8 +36,7 @@ function ownerDeclaration(job: CheckpointJob, tenant: OwnerAutomationTenant): Re
   const { message } = record(job.payload) ?? {};
   const name = job.displayName ?? job.name;
   if (!OWNER_AUTOMATION_KEY.test(key) || typeof expr !== "string" || typeof tz !== "string" ||
-      typeof message !== "string" || !message.trim() || message.length > 4_000 ||
-      typeof name !== "string" || !name.trim() || name.length > 100) return;
+      !boundedText(message, 4_000) || !boundedText(name, 100)) return;
   const definition = ownerAutomationDefinition(tenant, { key, name, prompt: message, schedule: { expr, tz } });
   const scope = ["agentId", "owner", "sessionTarget", "schedule", "payload", "delivery", "scheduledToolPolicy", "toolsAllowProvenance"];
   if (!scope.every(field => matchesDeclaration(job[field], definition[field]))) return;

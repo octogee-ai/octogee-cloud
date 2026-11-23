@@ -207,18 +207,19 @@ async function restoreRecord(
   const restored = isRecord(response) && isRecord(response.job) ? response.job : response;
   if (!isRecord(restored) || typeof restored.id !== "string") throw new Error("cron.add returned no job id");
   if (typeof scratch === "string") {
-    if (reconcileDeclaration) {
-      await reconcileRecoveredScratch(call, restored.id, scratch);
-    } else {
-      await writeRecoveredScratch(call, restored.id, scratch, 0);
-    }
-    if (job.enabled !== false) {
-      await call("cron.update", { id: restored.id, patch: { enabled: true } });
-      restored.enabled = true;
-    }
+    await restoreScheduleScratch(call, restored.id, scratch, reconcileDeclaration, job.enabled !== false);
+    restored.enabled = job.enabled !== false;
   }
   present.set(key, restored);
   return !existing && (!isRecord(response) || response.created !== false);
+}
+
+async function restoreScheduleScratch(
+  call: GatewayCall, id: string, scratch: string, reconcileDeclaration: boolean, enabled: boolean,
+): Promise<void> {
+  if (reconcileDeclaration) await reconcileRecoveredScratch(call, id, scratch);
+  else await writeRecoveredScratch(call, id, scratch, 0);
+  if (enabled) await call("cron.update", { id, patch: { enabled: true } });
 }
 
 function recoveredDeclaration(record: ScheduleRecord, existing?: CronJob): boolean {

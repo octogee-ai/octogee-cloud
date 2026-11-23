@@ -2646,6 +2646,15 @@ async function recoverDisklessScheduleDeclarations(
   if (plan.retained.length) deps.log(`[migrate-customer] ${slug}: saved ${plan.retained.length} schedules for reauthorization from their original requester`);
 }
 
+async function readDisklessCompleteSnapshot(deps: MigrateUserDeps, input: DisklessSharedRecoveryInput): Promise<FleetBrokerUserSnapshot> {
+  const snapshot = await deps.readUserSnapshot(input.uid, input.toGatewayId);
+  if (!snapshot || snapshot.uid !== input.uid || snapshot.slug !== input.slug ||
+      snapshot.gatewayId !== input.toGatewayId || snapshot.status !== "complete") {
+    throw new Error("diskless return target does not own the completed user snapshot");
+  }
+  return snapshot;
+}
+
 async function runDisklessSharedReturn(deps: MigrateUserDeps, op: Operation, ctx: OperationContext): Promise<OperationResult> {
   const { uid, userSlug: slug, fromGatewayId, toGatewayId } = op.input;
   if (typeof uid !== "string" || typeof slug !== "string" || typeof fromGatewayId !== "string" ||
@@ -2662,10 +2671,7 @@ async function runDisklessSharedReturn(deps: MigrateUserDeps, op: Operation, ctx
       uid, slug, gatewayId: toGatewayId, operationId: op.id, claimedStartedAt: op.startedAt,
     });
     const scheduler = { migrationId: input.migrationId, slug, gatewayId: toGatewayId };
-    const snapshot = await deps.readUserSnapshot(uid, toGatewayId);
-    if (!snapshot || snapshot.uid !== uid || snapshot.slug !== slug || snapshot.gatewayId !== toGatewayId || snapshot.status !== "complete") {
-      throw new Error("diskless return target does not own the completed user snapshot");
-    }
+    const snapshot = await readDisklessCompleteSnapshot(deps, input);
     const requester = await client.scheduler({ ...scheduler, phase: "stage-requester" });
     const plan = planDisklessScheduleRecovery({ snapshot: recovery.scheduler.snapshot, migrationId: scheduler.migrationId,
       requesterProfileId: requester.stageRequesterProfileId ?? null, owner: snapshot });
