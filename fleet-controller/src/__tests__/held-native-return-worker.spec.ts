@@ -77,7 +77,7 @@ it("can plan the exact failed held return without changing the pending operation
   expect(await store.journal.operations.get(operationId)).toEqual(before);
 });
 
-it("keeps the original return unclaimed and yields only to the enrolled Shared owner and replacement", async () => {
+it.each(["pointer", "legacy"] as const)("keeps the original return unclaimed and retires an exact %s Shared departure", async mode => {
   const { store, docs, targetRuntime } = fixture();
   const replacementGatewayId = "shared-replacement";
   const ready = (uid: string) => ({ status: "ready", totalPods: 1, readyPods: 1, observedAt: 400,
@@ -95,7 +95,7 @@ it("keeps the original return unclaimed and yields only to the enrolled Shared o
   const departureInput = { uid: departing.uid, userSlug: departing.slug, fromGatewayId: targetGatewayId, toGatewayId: replacementGatewayId,
     source: "continuous-placement-policy" };
   docs.set("glmOperations/ordinary-departure", { kind: "migrate-user", origin: "automatic", createdBy: "glm-controller-placement-policy",
-    gatewayId: replacementGatewayId, input: departureInput, status: "pending", createdAt: 200, startedAt: null, completedAt: null, steps: [] });
+    gatewayId: replacementGatewayId, inputUid: departing.uid, input: departureInput, status: "pending", createdAt: 200, startedAt: null, completedAt: null, steps: [] });
   const departure = (await store.journal.operations.get("ordinary-departure"))!;
   const retirementId = `shared-pool-retire-${targetGatewayId}`;
   const retire = () => claimGatewayRetirementInStore({ store, gatewayId: targetGatewayId, operationId: retirementId, now: 550,
@@ -137,6 +137,40 @@ it("keeps the original return unclaimed and yields only to the enrolled Shared o
     heartbeat: { ...targetRuntime.heartbeat, mountedCustomers: [departing.slug], lastHeartbeatAt: 530 }, kubernetes: ready("replacement-pod") });
   await expect(retire()).rejects.toThrow(/migration is in flight/);
   await store.journal.operations.patch(departure.id, { status: "succeeded", cutoverCommittedAt: 535, completedAt: 540 });
+  if (mode === "legacy") {
+    const targetPath = `gateways/${replacementGatewayId}/assignments/${departing.uid}`;
+    const target = docs.get(targetPath)!;
+    docs.set(targetPath, { ...target, updatedByOperationId: null, createdAt: 533, updatedAt: 533 });
+    const historyPath = "glmOperations/ordinary-departure";
+    const terminal = { ...docs.get(historyPath)!, startedAt: 501, attempts: 1, schedulerHandoffReleased: false,
+      schedulerHandoff: { uid: departing.uid, slug: departing.slug, fromGatewayId: targetGatewayId, toGatewayId: replacementGatewayId,
+        migrationId: `mig-${departure.id}:scheduler:1:claim:501`, forwardRecovery: { schemaVersion: 1, phase: "source-flushed", sourceEpoch: departing.epoch } },
+      steps: [
+        { name: "verify-target", status: "done", startedAt: 521, completedAt: 525 },
+        { name: "cutover-firestore", status: "done", startedAt: 530, completedAt: 536 },
+        { name: "unmount-source", status: "done", startedAt: 537, completedAt: 540 },
+      ] };
+    docs.set(historyPath, { ...terminal, schedulerHandoff: { ...terminal.schedulerHandoff,
+      forwardRecovery: { ...terminal.schedulerHandoff.forwardRecovery, sourceEpoch: departing.epoch + 1 } } });
+    await expect(retire()).rejects.toThrow(/migration is in flight/);
+    docs.set(historyPath, { ...terminal, steps: terminal.steps.map(s => s.name === "unmount-source" ? { ...s, status: "failed" } : s) });
+    await expect(retire()).rejects.toThrow(/migration is in flight/);
+    docs.set(historyPath, { ...terminal, startedAt: 499, schedulerHandoff: { ...terminal.schedulerHandoff,
+      migrationId: `mig-${departure.id}:scheduler:1:claim:499` } });
+    await expect(retire()).rejects.toThrow(/migration is in flight/);
+    docs.set(historyPath, terminal);
+    docs.set(targetPath, { ...docs.get(targetPath), createdAt: 538, updatedAt: 538 });
+    await expect(retire()).rejects.toThrow(/migration is in flight/);
+    docs.set(targetPath, { ...docs.get(targetPath), createdAt: 533, updatedAt: 533 });
+    docs.set("glmOperations/later-owner-cutover", { ...terminal, cutoverCommittedAt: 545,
+      input: { ...departureInput, toGatewayId: "shared-different" } });
+    await expect(retire()).rejects.toThrow(/migration is in flight/);
+    docs.delete("glmOperations/later-owner-cutover");
+    docs.set("glmOperations/ambiguous-owner-cutover", { ...terminal, schedulerHandoff: { ...terminal.schedulerHandoff,
+      migrationId: "mig-ambiguous-owner-cutover:scheduler:1:claim:501" } });
+    await expect(retire()).rejects.toThrow(/migration is in flight/);
+    docs.delete("glmOperations/ambiguous-owner-cutover");
+  }
   await expect(retire()).resolves.toMatchObject({ version: 1 });
   expect(await store.journal.operations.get(operationId)).toEqual(original);
 });
