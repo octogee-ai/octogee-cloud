@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { isIPv4 } from "node:net";
 import { isDeepStrictEqual } from "node:util";
 import { guestReleaseInstalled } from "@octogee/core/isolated-gateway-lifecycle";
-import type { PlatformStateStore, PlatformStateTransaction } from "@octogee/core/platform-state";
+import type { GatewayRoot, OperationRecord, PlatformStateStore, PlatformStateTransaction, PlatformUserRecord } from "@octogee/core/platform-state";
 import { dualReadIsolatedProfileImage, releasePayloadHash } from "@octogee/shared/types/gateway-releases";
 import { isGatewayVmImageObservation } from "@octogee/shared/types/glm";
 import { gatewayHeartbeatMatchesImageTag } from "@octogee/shared/types/image-tag";
@@ -21,7 +21,7 @@ function requireServing(condition: unknown): asserts condition {
 }
 
 async function requireOriginalServingClaim(tx: PlatformStateTransaction, scope: CompensatingNativeReturnAuthority, terminal: boolean) {
-  const { uid, slug, sourceGatewayId, sourceEpoch, operationId, sourceRelease, attemptId } = scope;
+  const { uid, slug, sourceGatewayId, sourceEpoch, operationId, sourceRelease } = scope;
   const [owner, assignments, root, operation] = await Promise.all([
     tx.users.records.get(uid), tx.gateways.assignments.listForUid(uid), tx.gateways.roots.get(sourceGatewayId),
     tx.journal.operations.get(operationId),
@@ -33,12 +33,22 @@ async function requireOriginalServingClaim(tx: PlatformStateTransaction, scope: 
     original.epoch === sourceEpoch, original.state === (terminal ? "serving" : "quiescing"),
     owner.slug === slug, owner.gateway?.gatewayId === sourceGatewayId,
     root.liveRelease === sourceRelease, root.desiredRelease === sourceRelease,
-    terminal ? !owner.fences.migration && !root.runtimeRestartFence && operation.status === "failed" &&
-      operation.rolledBack === true && operation.schedulerHandoffReleased === true :
-      owner.fences.migration?.operationId === operationId && root.runtimeRestartFence?.attemptId === attemptId &&
-      root.runtimeRestartFence?.phase === "ingress-resumed" && operation.status === "running",
+    originalServingPhaseMatches(owner, root, operation, scope, terminal),
     operation.cutoverCommittedAt === undefined,
   ].every(Boolean));
+}
+
+function originalServingPhaseMatches(
+  owner: PlatformUserRecord, root: GatewayRoot, operation: OperationRecord, scope: CompensatingNativeReturnAuthority,
+  terminal: boolean,
+) {
+  if (terminal) {
+    return !owner.fences.migration && !root.runtimeRestartFence && operation.status === "failed" &&
+      operation.rolledBack === true && operation.schedulerHandoffReleased === true;
+  }
+  const fence = root.runtimeRestartFence;
+  return owner.fences.migration?.operationId === scope.operationId && fence?.attemptId === scope.attemptId &&
+    fence?.phase === "ingress-resumed" && operation.status === "running";
 }
 
 async function readOriginalServing(store: PlatformStateStore, scope: CompensatingNativeReturnAuthority, terminal: boolean) {
