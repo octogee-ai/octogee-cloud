@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { ScheduleTransferDoc } from "@octogee/shared/types/fleet-controller";
 import type { WorkspaceMigrationPhase } from "@octogee/shared/types/workspace-migration";
 import type {
   UserMigrationV2GatewayRootFence,
@@ -140,6 +141,8 @@ export interface UserMigrationV2Deps {
   log: (message: string) => void;
   wait?: (delayMs: number) => Promise<void>;
   setMigrationPhase?: (phase: WorkspaceMigrationPhase) => Promise<void>;
+  readScheduleTransfer: (migrationId: string) => Promise<ScheduleTransferDoc | null>;
+  saveScheduleTransfer: (transfer: ScheduleTransferDoc) => Promise<void>;
 }
 
 export async function advanceUserMigrationV2(
@@ -232,7 +235,7 @@ async function advanceForward(
     case "preSynced":
       return advanceSourceQuiescence(state, deps);
     case "sourceQuiesced": {
-      await deps.client.scheduler({ migrationId: state.migrationId, slug: state.slug, gatewayId: state.sourceGatewayId, phase: "export" });
+      await readOrPublishSchedulerExport(state, deps);
       const expectedSystemConfigCommit = acceptedSystemConfigCommit(
         state.sourceSystemConfigCommit,
       );
@@ -298,12 +301,35 @@ async function advanceForward(
   }
 }
 
+async function readOrPublishSchedulerExport(
+  state: UserMigrationV2State,
+  deps: UserMigrationV2Deps,
+): Promise<NonNullable<ScheduleTransferDoc["nativeExport"]>> {
+  const { migrationId, slug, sourceGatewayId, targetGatewayId } = state;
+  const transfer = await deps.readScheduleTransfer(migrationId);
+  if (transfer) {
+    if (transfer.slug !== slug || transfer.sourceGatewayId !== sourceGatewayId || transfer.targetGatewayId !== targetGatewayId ||
+        transfer.migrationId !== migrationId || !transfer.nativeExport) {
+      throw new Error("user migration V2 scheduler export scope changed");
+    }
+    return transfer.nativeExport;
+  }
+  const result = await deps.client.scheduler({ migrationId, slug, gatewayId: sourceGatewayId, phase: "export" });
+  if (!result.drained || !result.snapshot) throw new MigrationDrainPendingError("source scheduler export is pending");
+  const nativeExport = { agentIds: result.agentIds, snapshot: result.snapshot };
+  await deps.saveScheduleTransfer({
+    migrationId, slug, sourceGatewayId, targetGatewayId, nativeExport,
+    records: [], skipped: [], snapshotAt: deps.now(),
+  });
+  return nativeExport;
+}
+
 async function stageSchedulesOnReleasedTarget(
   state: UserMigrationV2State,
   deps: UserMigrationV2Deps,
 ): Promise<UserMigrationV2State> {
   const request = { migrationId: state.migrationId, slug: state.slug };
-  const exported = await deps.client.scheduler({ ...request, gatewayId: state.sourceGatewayId, phase: "export" });
+  const exported = await readOrPublishSchedulerExport(state, deps);
   await callReleasedTargetScheduler(deps, {
     ...request, gatewayId: state.targetGatewayId, phase: "stage", agentIds: exported.agentIds, snapshot: exported.snapshot,
   });

@@ -519,11 +519,16 @@ async function buildV2DriverDeps(
   automatic: boolean,
 ) {
   const claimFence = op.input.sourceTransferMode === RETAINED_POD ? {claimStartedAt: requiredClaimStartedAt(op)} : {};
+  const readScheduleTransfer = (migrationId: string) => deps.readScheduleTransfer(state.uid, migrationId);
+  const schedulerTransfer = state.phase === "cutover" && state.schedulerStagedAt === undefined
+    ? await readScheduleTransfer(state.migrationId)
+    : undefined;
   const transportIds = new Set([
     ...v2PhaseTransportIds(state),
     // Every source-driven push resolves the target URL too.
     state.targetGatewayId,
   ]);
+  if (schedulerTransfer?.nativeExport) transportIds.delete(state.sourceGatewayId);
   const urls = new Map<string, string>();
   await Promise.all([...transportIds].map(async (transportId) => {
     urls.set(transportId, await deps.resolveGatewayUrl(transportId));
@@ -538,6 +543,8 @@ async function buildV2DriverDeps(
   { uid: state.uid, slug: state.slug, gatewayId: state.targetGatewayId, operationId: op.id, claimedStartedAt: op.startedAt });
   return {
     client,
+    readScheduleTransfer: schedulerTransfer === undefined ? readScheduleTransfer : async () => schedulerTransfer,
+    saveScheduleTransfer: (transfer: ScheduleTransferDoc) => deps.saveScheduleTransfer(state.uid, transfer),
     setMigrationPhase: (phase: WorkspaceMigrationPhase) => deps.setMigrationPhase?.({ uid: state.uid, sourceGatewayId: state.sourceGatewayId, operationId: state.operationId, phase }) ?? Promise.resolve(),
     setSourceAssignmentState: (assignmentState: "serving" | "quiescing") =>
       deps.setAssignmentState({

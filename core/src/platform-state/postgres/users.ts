@@ -78,6 +78,7 @@ const SCHEDULE_TRANSFERS_TABLE: TableSpec = {
     column("records", "jsonb"),
     column("skipped", "jsonb"),
     column("snapshotAt", "bigint"),
+    column("nativeExport", "jsonb"),
     column("restoreAttemptedTo", "text"),
     column("restoreAttemptedAt", "bigint"),
     column("restoredTo", "text"),
@@ -312,7 +313,7 @@ function createScheduleTransfersRepository(session: PostgresSession): ScheduleTr
       const rows = await selectRecords(
         session,
         "builders.scheduleTransfers.listUnrestored",
-        "SELECT * FROM $schema.schedule_transfers WHERE restored_to IS NULL ORDER BY snapshot_at, uid, migration_id",
+        "SELECT * FROM $schema.schedule_transfers WHERE restored_to IS NULL AND native_export IS NULL ORDER BY snapshot_at, uid, migration_id",
       );
       return rows.map((row) => ({
         uid: row.uid as string,

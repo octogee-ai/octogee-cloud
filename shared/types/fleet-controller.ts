@@ -580,6 +580,7 @@ export interface ScheduleTransferDoc {
   records: ScheduleRecord[];
   skipped: ScheduleSkip[];
   snapshotAt: number;
+  nativeExport?: { agentIds: string[]; snapshot: unknown };
   restoreAttemptedTo?: string;
   restoreAttemptedAt?: number;
   restoredTo?: string;

@@ -1373,6 +1373,10 @@ const EPHEMERAL_GATEWAY_HOME = `
 ALTER TABLE gateways ADD COLUMN allocation_ephemeral_home_gib integer
   CHECK (allocation_ephemeral_home_gib IS NULL OR (allocation_lease_id IS NOT NULL AND allocation_ephemeral_home_gib > 0));
 `;
+const NATIVE_SCHEDULER_EXPORT = `
+ALTER TABLE schedule_transfers ADD COLUMN native_export jsonb
+  CHECK (native_export IS NULL OR jsonb_typeof(native_export) = 'object');
+`;
 export const PLATFORM_STATE_MIGRATIONS = [
     { version: 1, name: "core-schema", sql: CORE_SCHEMA },
     { version: 2, name: "change-feed", sql: CHANGE_FEED },
@@ -1398,4 +1402,5 @@ export const PLATFORM_STATE_MIGRATIONS = [
     { version: 22, name: "parked-computer-upgrade", sql: PARKED_COMPUTER_UPGRADE },
     { version: 23, name: "user-home-archive", sql: HOME_ARCHIVE },
     { version: 24, name: "ephemeral-gateway-home", sql: EPHEMERAL_GATEWAY_HOME },
+    { version: 25, name: "native-scheduler-export", sql: NATIVE_SCHEDULER_EXPORT },
 ];
