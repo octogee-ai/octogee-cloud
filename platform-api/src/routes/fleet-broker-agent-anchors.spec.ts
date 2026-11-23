@@ -178,6 +178,12 @@ describe("allocation-free isolated outbound source anchor reads", () => {
     expect((await read(outbound)).status).toBe(403);
   });
 
+  it("refuses source anchor reads when a different gateway also holds an assignment", async () => {
+    const { read, store } = await fixture(live);
+    await store.gateways.assignments.put({ ...ASSIGNMENT, gatewayId: "shared-other" });
+    expect((await read(outbound)).status).toBe(403);
+  });
+
   it("rechecks the same active claim inside the anchor read transaction", async () => {
     const { read, store } = await fixture(live);
     const transact = store.transaction.bind(store);

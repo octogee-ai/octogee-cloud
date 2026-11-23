@@ -115,6 +115,13 @@ function sourceMigrationOperationId(input: AssignedAnchorRequest, context: Sourc
     marker.state === "moving" ? operationId : null;
 }
 
+function isSoleSourceAssignment(assignments: readonly GatewayAssignment[], source: GatewayAssignment): boolean {
+  if (assignments.length !== 1) return false;
+  const [current] = assignments;
+  return current.uid === source.uid && current.slug === source.slug && current.gatewayId === source.gatewayId &&
+    current.epoch === source.epoch && current.state === source.state && current.updatedByOperationId === source.updatedByOperationId;
+}
+
 async function readSourceMigrationClaim(
   store: PlatformStateRepositories, input: AssignedAnchorRequest, context: SourceMigrationContext, now: number,
 ): Promise<SourceMigrationClaim | null> {
@@ -125,10 +132,11 @@ async function readSourceMigrationClaim(
   if (!activeSourceClaim(operation, input, user.uid, now)) return null;
   const targetGatewayId = operation.input.toGatewayId;
   if (typeof targetGatewayId !== "string" || !targetGatewayId || targetGatewayId === root.gatewayId) return null;
-  const [target, targetAssignment] = await Promise.all([
-    store.gateways.roots.get(targetGatewayId), store.gateways.assignments.get(targetGatewayId, user.uid),
+  const [target, assignments] = await Promise.all([
+    store.gateways.roots.get(targetGatewayId), store.gateways.assignments.listForUid(user.uid),
   ]);
-  if (target?.gatewayClass !== "shared" || target.desiredStatus !== "running" || target.retirementClaim != null || targetAssignment !== null) return null;
+  if (target?.gatewayClass !== "shared" || target.desiredStatus !== "running" || target.retirementClaim != null ||
+      !isSoleSourceAssignment(assignments, context.assignment)) return null;
   return { operationId, claimStartedAt: operation.startedAt, targetGatewayId, release: root.desiredRelease };
 }
 
