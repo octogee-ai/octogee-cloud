@@ -1,5 +1,6 @@
-import type { DisklessSharedRecoveryInput, DisklessSharedRestore } from "@octogee/core/fleet-state";
+import type { DisklessSharedRecoveryInput, DisklessSharedRestore, readDisklessActivationWriterExcluded } from "@octogee/core/fleet-state";
 import type { FleetBrokerUserRestoreAuthority } from "@octogee/shared/types/fleet-broker";
+import { DISKLESS_ACTIVATION_WRITER_EXCLUDED } from "@octogee/shared/types/isolated-operation-ids";
 import { sourceTransferBlocksRelease } from '../lib/source-transfer-execution.js';
 import type { RetainedSourceContext } from '../lib/retained-source-transfer.js';
 import type { MigrationProgressRecord, SourceTransferExecution } from '@octogee/shared/types/glm';
@@ -103,6 +104,7 @@ type PlacementResolution =
 export interface MigrateUserDeps {
   commitDisklessSharedRecovery?: (input: DisklessSharedRecoveryInput) => Promise<DisklessSharedRestore>;
   readDisklessRestoreAuthority?: (scope: { uid: string; slug: string; gatewayId: string }) => Promise<FleetBrokerUserRestoreAuthority | undefined>;
+  readExcludedDisklessActivation?: (scope: Parameters<typeof readDisklessActivationWriterExcluded>[1]) => Promise<boolean>;
   reportMigrationProgress: (gatewayId: string, event: MigrationProgressRequestBody) => Promise<void>;
   recordMigrationProgress: (input: { operation: Operation; event: MigrationProgressRecord }) => Promise<void>;
   recoverNativeReturnSource?: OperationHandler;
@@ -1581,6 +1583,10 @@ async function completeSchedulerHandoff(
   const migrationId = deps.genMigrationId(op.id);
   if (handoff.stageAfterCutover && !handoff.forwardRecovery && handoff.fromGatewayId.startsWith("shared-")) {
     try {
+      if (typeof op.startedAt === "number" && await deps.readExcludedDisklessActivation?.({
+        uid: request.uid, slug: user.slug, gatewayId: request.toGatewayId,
+        claim: { operationId: op.id, startedAt: op.startedAt },
+      })) return { ...failure(DISKLESS_ACTIVATION_WRITER_EXCLUDED, false), failedAfterCutover: true };
       const client = await gatewayClient(deps, [handoff.toGatewayId]);
       await client.resume({ migrationId, gatewayId: handoff.toGatewayId, slug: handoff.slug, role: "target" });
       const expectedSystemConfigCommit = await awaitTargetSystemConfigCommit(deps, handoff.toGatewayId, ctx.assertActiveClaim);

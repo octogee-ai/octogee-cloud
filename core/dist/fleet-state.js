@@ -1,6 +1,6 @@
 import { GATEWAY_UNREACHABLE_AFTER_MS } from "@octogee/shared/types/fleet-controller";
 import { workspaceDefaultAgentId } from "@octogee/shared/types/identity";
-import { ephemeralSourceMatches, excludedDisklessWriter } from "./isolated-gateway-lifecycle/ephemeral-recovery-state.js";
+import { ephemeralSourceMatches, excludedDisklessActivation, excludedDisklessWriter } from "./isolated-gateway-lifecycle/ephemeral-recovery-state.js";
 import { parseWorkspaceCheckpoint } from "./gateway-schedule-checkpoint.js";
 import { readSharedGatewayAutoscalingConfigInStore, readSharedGatewayPoolConfigInStore } from "./shared-gateway-pool-read.js";
 import { isDeepStrictEqual } from "node:util";
@@ -1200,7 +1200,7 @@ function disklessAuthority(lease, source, input) {
     const { leaseId, generation, status, targetGatewayId } = activation;
     if (typeof leaseId !== "string" || typeof generation !== "number" || targetGatewayId !== input.fromGatewayId)
         return false;
-    return (status === "active" || status === "returning") &&
+    return (status === "active" || status === "returning" || status === "activating") &&
         input.operationId === builderReturnOperationId(input.fromGatewayId, generation) &&
         excludedDisklessWriter(source, { uid: input.uid, slug: input.slug, leaseId, generation });
 }
@@ -1278,6 +1278,10 @@ export async function commitDisklessSharedRecovery(deps, input) {
         if (operation.cutoverCommittedAt !== undefined)
             return disklessResume(input, user, targetAssignment, operation, transfer);
         assertDisklessSource(input, user, source, sourceAssignment, targetAssignment !== null || transfer !== null);
+        const interruptedActivation = user.activationLease?.status === "activating" ? user.activationLease : null;
+        if (interruptedActivation && !await excludedDisklessActivation(tx, { uid, slug, gatewayId: fromGatewayId })) {
+            throw new FleetStatePreconditionError("diskless return has no completed exclusion of the interrupted activation");
+        }
         const targetRootData = withoutRevision(target);
         assertDisklessTarget(toGatewayId, target, runtime, pool?.sharedGatewayIds ?? [], now);
         await assertDisklessTargetCapacity(tx, toGatewayId);
@@ -1306,12 +1310,20 @@ export async function commitDisklessSharedRecovery(deps, input) {
             gatewayId: toGatewayId, gatewayAssignedAt: now, gatewayProfile: control.gatewayProfile, controlUiEnabled: control.controlUiEnabled,
         }, { gatewayId: fromGatewayId, revision: user.revision });
         await tx.users.records.setFence(uid, "restoreFence", intent, "absent");
+        if (interruptedActivation) {
+            await tx.users.records.patchActivationLease(uid, {
+                status: "returning", returnOperationId: operationId, returningAt: now, returnReason: "source-unavailable",
+            }, { leaseId: interruptedActivation.leaseId, generation: interruptedActivation.generation, status: ["activating"] });
+        }
         await tx.journal.operations.patch(operationId, {
             cutoverCommittedAt: now, restoreAttempt: intent, lastProgressAt: now,
             schedulerHandoff: { uid, slug, migrationId, fromGatewayId, toGatewayId, stageAfterCutover: true },
         }, { status: ["running"], startedAt: claimStartedAt });
         return { targetEpoch, restorePending: true, workspaceCommits: workspace.commits, scheduler };
     });
+}
+export function readDisklessActivationWriterExcluded(store, input) {
+    return store.transaction({ label: "diskless-recovery.activation-exclusion", readOnly: true }, tx => excludedDisklessActivation(tx, input));
 }
 export async function commitUnavailableGatewayRecoveryAtomic(deps, params) {
     const now = nowMs(deps);

@@ -157,6 +157,15 @@ export interface DisklessSharedRestore {
     scheduler: NonNullable<ScheduleTransferDoc["nativeExport"]>;
 }
 export declare function commitDisklessSharedRecovery(deps: FleetStateDeps, input: DisklessSharedRecoveryInput): Promise<DisklessSharedRestore>;
+export declare function readDisklessActivationWriterExcluded(store: PlatformStateStore, input: {
+    uid: string;
+    slug: string;
+    gatewayId: string;
+    claim: {
+        operationId: string;
+        startedAt: number;
+    };
+}): Promise<boolean>;
 export declare function commitUnavailableGatewayRecoveryAtomic(deps: FleetStateDeps, params: Omit<UnavailableGatewayRecoveryParams, "requireOwner">): Promise<{
     operationId: string;
 }>;

@@ -18,7 +18,7 @@ import { buildOperationCompletionUpdate, classifyOperationFailure, MAX_OPERATION
 import { markGatewayLive, resolveSourceRevision } from "../index.js";
 import type { DurableGateway } from "../converge-gateway.js";
 import { assertUserRestoreSettled, createOperationContext, PendingUserRestoreError } from "../operation-context";
-import { builderReturnOperationId } from "@octogee/shared/types/isolated-operation-ids";
+import { builderReturnOperationId, DISKLESS_ACTIVATION_WRITER_EXCLUDED } from "@octogee/shared/types/isolated-operation-ids";
 import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import type { NativeReturnPark, NativeSourcePark } from "../lib/native-vm-return";
 import { retireNativeSchedulerBeforeStage } from "../lib/native-scheduler-retirement";
@@ -2341,6 +2341,22 @@ describe("migrate-customer — User activation onto a held VM", () => {
     expect(h.order).toEqual([]);
     expect(h.transfers.get("uid-alice/mig-op-1")).toMatchObject({ restoreAttemptedTo: "gw-green" });
     expect(h.transfers.get("uid-alice/mig-op-1")?.restoredTo).toBeUndefined();
+  });
+
+  it("ends a committed activation without resuming an excluded diskless writer", async () => {
+    const h = heldActivation({ sourceGatewayId: "gw-green" });
+    h.deps.readExcludedDisklessActivation = vi.fn(async () => true);
+    const op = mkOp({ schedulerHandoff: { ...deferred, fromGatewayId: "shared-blue" }, cutoverCommittedAt: 4_100 });
+
+    const result = await createMigrateUserHandler(h.deps)(op, h.ctx);
+
+    expect(result).toMatchObject({ success: false, rolledBack: false, failedAfterCutover: true, error: DISKLESS_ACTIVATION_WRITER_EXCLUDED });
+    expect(h.deps.readExcludedDisklessActivation).toHaveBeenCalledWith({
+      uid: "uid-alice", slug: "alice", gatewayId: "gw-green", claim: { operationId: op.id, startedAt: op.startedAt },
+    });
+    expect(h.client.resume).not.toHaveBeenCalled();
+    expect(h.client.flushGateway).not.toHaveBeenCalled();
+    expect(h.client.unmount).not.toHaveBeenCalled();
   });
 
   it("keeps a committed cutover in forward recovery while its transfer record cannot be read, and restores the schedules on the retry", async () => {

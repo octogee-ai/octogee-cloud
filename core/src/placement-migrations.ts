@@ -17,7 +17,7 @@ import type { OperationPatch, OperationRecord } from "./platform-state/operation
 import type { PlatformStateTransaction, Stored } from "./platform-state/store.js";
 import type { PlatformUserRecord } from "./platform-state/users.js";
 import { nativeReturnTargetDenied, nativeReturnTargetExclusionId } from "./native-return-target-deny.js";
-import { excludedDisklessWriter } from "./isolated-gateway-lifecycle/ephemeral-recovery-state.js";
+import { excludedDisklessActivation, excludedDisklessWriter } from "./isolated-gateway-lifecycle/ephemeral-recovery-state.js";
 import { readSharedGatewayPoolConfigInStore } from "./shared-gateway-pool-read.js";
 
 export const PLACEMENT_MIGRATION_KIND = "migrate-user";
@@ -881,8 +881,11 @@ async function assertDisklessPlacementDemand(
   const lease = activationLeaseOf(user.activationLease);
   const denial = () => new PlacementMigrationAuthorityError("diskless return requires the current excluded writer and its durable checkpoints");
   if (!lease || request.source !== ACTIVATION_LEASE_SOURCE || lease.targetGatewayId !== request.fromGatewayId ||
-      !["active", "returning"].includes(lease.status) || userGatewayId(user) !== request.fromGatewayId ||
+      !["activating", "active", "returning"].includes(lease.status) || userGatewayId(user) !== request.fromGatewayId ||
       request.operationId !== builderReturnOperationId(request.fromGatewayId, lease.generation)) throw denial();
+  if (lease.status === "activating" && !await excludedDisklessActivation(transaction, {
+    uid: request.uid, slug: request.builderSlug, gatewayId: request.fromGatewayId,
+  })) throw denial();
   const [source, assignment] = await Promise.all([
     transaction.gateways.roots.get(request.fromGatewayId),
     transaction.gateways.assignments.get(request.fromGatewayId, request.uid),

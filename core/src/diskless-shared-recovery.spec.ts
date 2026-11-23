@@ -1,6 +1,7 @@
 import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
+import { builderActivateOperationId, DISKLESS_ACTIVATION_WRITER_EXCLUDED } from "@octogee/shared/types/isolated-operation-ids";
 import { describe, expect, it } from "vitest";
-import { commitCutoverAtomic, commitDisklessSharedRecovery, readUserRestoreAuthoritySnapshot } from "./fleet-state.js";
+import { commitCutoverAtomic, commitDisklessSharedRecovery, readDisklessActivationWriterExcluded, readUserRestoreAuthoritySnapshot } from "./fleet-state.js";
 
 const NOW = 10_000;
 const uid = "uid-alice";
@@ -113,5 +114,34 @@ describe("atomic diskless Shared recovery", () => {
       : { gatewayId: toGatewayId, assignmentEpoch: checkpointEpoch };
     expect(user?.workspaceCheckpoint).toMatchObject({ ...expected, observedAt: 8_500, commits });
     expect(user?.scheduleCheckpoint).toMatchObject({ ...expected, observedAt: 8_500 });
+  });
+
+  it("lets the exact interrupted activation end before the same lease returns to Shared", async () => {
+    const { docs, deps, store } = await harness();
+    const sourceShared = "shared-origin";
+    const original = docs.get(`users/${uid}`)!;
+    docs.set(`users/${uid}`, { ...original, provisioning: { status: "complete", openclaw: {
+      slug, status: "complete", gatewayId: fromGatewayId, activationLease: {
+        leaseId: "one", generation: 1, status: "activating", targetGatewayId: fromGatewayId,
+        sourceGatewayId: sourceShared, sourceAssignmentEpoch: 3,
+      },
+    } } });
+    const activationId = builderActivateOperationId(fromGatewayId, 1);
+    await store.journal.operations.create({
+      id: activationId, kind: "migrate-user", status: "running", origin: "automatic",
+      createdAt: 7_000, createdBy: "glm-controller-placement-policy", startedAt: 8_000, completedAt: null, steps: [],
+      input: { uid, userSlug: slug, fromGatewayId: sourceShared, toGatewayId: fromGatewayId, source: "builder-activation-lease" },
+      cutoverCommittedAt: 8_450,
+    });
+    const scope = { uid, slug, gatewayId: fromGatewayId, claim: { operationId: activationId, startedAt: 8_000 } };
+    await expect(readDisklessActivationWriterExcluded(store, scope)).resolves.toBe(true);
+    await expect(readDisklessActivationWriterExcluded(store, { ...scope, claim: { ...scope.claim, startedAt: 8_001 } })).resolves.toBe(false);
+    await expect(commitDisklessSharedRecovery(deps, input)).rejects.toThrow(/completed exclusion/);
+    await store.journal.operations.patch(activationId, { status: "failed", error: DISKLESS_ACTIVATION_WRITER_EXCLUDED, completedAt: 9_020 });
+
+    await expect(commitDisklessSharedRecovery(deps, input)).resolves.toMatchObject({ targetEpoch: 5, restorePending: true });
+    expect((await store.users.records.get(uid))?.activationLease).toMatchObject({
+      status: "returning", returnOperationId: operationId, returnReason: "source-unavailable",
+    });
   });
 });

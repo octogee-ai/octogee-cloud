@@ -1,4 +1,5 @@
 import { podBelongsToGateway } from "../gateway-live-release.js";
+import { builderActivateOperationId, DISKLESS_ACTIVATION_WRITER_EXCLUDED } from "@octogee/shared/types/isolated-operation-ids";
 export function sameEphemeralWriter(writer, pod) {
     return writer?.podUid === pod.podUid && writer.podName === pod.podName;
 }
@@ -12,6 +13,40 @@ export function excludedDisklessWriter(root, owner) {
         return false;
     return root.allocation.leaseId === owner.leaseId && root.allocation.generation === owner.generation &&
         root.ephemeralWriter?.exclusion !== undefined;
+}
+export async function excludedDisklessActivation(tx, input) {
+    const { uid, slug, gatewayId, claim } = input;
+    const [user, root, assignment] = await Promise.all([
+        tx.users.records.get(uid), tx.gateways.roots.get(gatewayId), tx.gateways.assignments.get(gatewayId, uid),
+    ]);
+    const lease = user?.activationLease;
+    if (!lease || lease.sourceAssignmentEpoch === undefined)
+        return false;
+    if (![
+        lease.status === "activating", lease.targetGatewayId === gatewayId, user?.slug === slug,
+        user?.gateway?.gatewayId === gatewayId, assignment?.state === "serving", assignment?.slug === slug,
+        assignment?.epoch === lease.sourceAssignmentEpoch + 1,
+        excludedDisklessWriter(root, { uid, slug, leaseId: lease.leaseId, generation: lease.generation }),
+    ].every(Boolean))
+        return false;
+    const operationId = builderActivateOperationId(gatewayId, lease.generation);
+    if (claim && claim.operationId !== operationId)
+        return false;
+    const operation = await tx.journal.operations.get(operationId);
+    return matchesInterruptedActivation(operation, { uid, slug, gatewayId, fromGatewayId: lease.sourceGatewayId, claim });
+}
+function matchesInterruptedActivation(operation, input) {
+    if (!operation)
+        return false;
+    const { uid, slug, gatewayId, fromGatewayId, claim } = input;
+    const matches = [
+        operation.kind === "migrate-user", operation.origin === "automatic", operation.cutoverCommittedAt !== undefined,
+        operation.input.source === "builder-activation-lease", operation.input.uid === uid, operation.input.userSlug === slug,
+        operation.input.toGatewayId === gatewayId, operation.input.fromGatewayId === fromGatewayId,
+    ].every(Boolean);
+    return matches && (claim
+        ? operation.status === "running" && operation.startedAt === claim.startedAt
+        : operation.status === "failed" && operation.error === DISKLESS_ACTIVATION_WRITER_EXCLUDED);
 }
 async function mayReplaceStartupWriter(tx, root, ownerUid) {
     const { gatewayId, allocation } = root;
