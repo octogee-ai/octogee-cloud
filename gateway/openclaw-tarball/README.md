@@ -212,6 +212,79 @@ selection and rollout are a separate operator step.
 
 ## Current Gateway overlay
 
+### November 23 main refresh
+
+The selected upstream is `6c8c6dd946b79646c917bf0c1dece9bc710b78f5`.
+Its [push CI](https://github.com/openclaw/openclaw/actions/runs/45178284632)
+passed `security-fast` and skipped 42 jobs. The skips include artifact builds,
+core type and lint, Control UI unit and real-Gateway E2E, Docker seed E2E,
+PostgreSQL conformance, Skills Python, native platform jobs, and the final CI gate.
+The latest successful [scheduled full CI](https://github.com/openclaw/openclaw/actions/runs/43129347832)
+was on `cda0b61ac4d23fb0a5fa5530e37f9e74ce3face5` with 151 passes and 11
+conditional skips. The nearer [scheduled run](https://github.com/openclaw/openclaw/actions/runs/45165162201)
+on `d838008bf20243cb319dbbd4f70e63c63dbb4047` had 123 passes, 12 skips, and
+33 failures. Octogee qualifies the frozen tip independently.
+
+Native owns hook types after [#203017](https://github.com/openclaw/openclaw/pull/203017)
+and the Worker Environment projection after the upstream SDK declaration fix
+at `a48440bbdf3`. The overlay keeps only the final-reply classification at the
+new hook type owner. The workspace icon follows native HTTP request admission
+from [#203590](https://github.com/openclaw/openclaw/pull/203590) and preserves
+session membership checks before opening resources and before returning icon
+bytes. Cron restore uses native requester admission from
+[#202513](https://github.com/openclaw/openclaw/pull/202513). It still requires the
+same requester and narrows the receiving grant before admitting the staged job.
+Approval resolution, outbound and retained-store custody, strict channel stop,
+and admitted Doctor recovery retain their Octogee boundaries.
+
+The unpatched tip completed the full package build with matching build-info
+and a clean tree. Its Control UI reporting flagged six bundle-size or request
+budget violations. The overlay passed the production core, Control UI, and
+extension typechecks. Its focused suites passed 204 tests across Cron migration,
+Gateway channel stop, membership, approval resolution, Doctor recovery, and
+Mattermost. Separate Cloud Build runs provide the [package and Linux installer
+qualification](https://console.cloud.google.com/cloud-build/builds/250dc04e-d88c-4bbe-aa90-e0b199aa5b77)
+and the [native checks](https://console.cloud.google.com/cloud-build/builds/4366c7c0-826a-4ca7-9c7c-fdc92ed26f9f).
+The native check graph passed preflight and production, script, and root test
+typechecks, then failed lint. Core and extension diagnostics include Solid
+reactivity, expression-style, max-lines, and Promise callback rules. The
+aggregate command stopped before policy.
+
+Upstream [#190129](https://github.com/openclaw/openclaw/pull/190129) is included
+in this base. It sizes transcript read pools and lanes. The overlay still
+refreshes PostgreSQL admission before a retained reader opens its transaction.
+[#167431](https://github.com/openclaw/openclaw/pull/167431),
+[#178755](https://github.com/openclaw/openclaw/pull/178755),
+[#186891](https://github.com/openclaw/openclaw/pull/186891),
+[#186893](https://github.com/openclaw/openclaw/pull/186893),
+[#189418](https://github.com/openclaw/openclaw/pull/189418),
+[#193636](https://github.com/openclaw/openclaw/pull/193636), and
+[#196215](https://github.com/openclaw/openclaw/pull/196215) remain open.
+
+
+Both packages came from the clean signed overlay at
+`a0b8aefc5c1682df82b155f694f68007b9349a63` and were packed sequentially.
+The Linux AMD64 installer passed CUA artifact lint, native registry refresh,
+bundled source matching and the three Codex native-hook imports. The installed
+npm controls passed, and the Browser projection and hosted Control UI were
+built from the same source.
+
+The [installed state pin roll](https://console.cloud.google.com/cloud-build/builds/4f898a60-2ea8-4433-aa4f-c278c26085c8)
+passed from `e9c9cd30` on PostgreSQL 16 with pgvector 0.8.7 and a non-superuser
+role. Regenerating the catalog from this source preserved all 11 routine
+definitions.
+
+The [GitHub prerelease mirror](https://github.com/ceckert/openclaw/releases/tag/gateway-a0b8aefc5c16-20261123)
+uses the same archive names and SHA-256 hashes as the generation-zero GCS
+objects. Readback verified both generations and complete hashes.
+
+| Object | Generation | SHA-256 |
+| --- | --- | --- |
+| `openclaw-fork-0d82f796.tgz` | `1795443224700289` | `0d82f7969e011dc3d1717bf97ba91ea03148d09000f5979d42c496c13ae3bde2` |
+| `openclaw-mattermost-76d8d1d3.tgz` | `1795443240155453` | `76d8d1d3c787e5f913aef84efb60b75cf00ca56e3621d0aed579beb02ecdb00c` |
+
+### November 22 and earlier
+
 The November 22 release at `167165fcccaead35772d0d56938ec0f5b0debb6b`
 closes the retained PostgreSQL anchor writer when explicit detach finds the
 agent already absent. It preserves the anchor and roster, and reports pending
