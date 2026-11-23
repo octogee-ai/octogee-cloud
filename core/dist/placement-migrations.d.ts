@@ -1,8 +1,9 @@
 import { type ReleasePayload } from "@octogee/shared/types/gateway-releases";
 import type { PlacementOwnerFence } from "./placement-automation-owner.js";
 import { GatewayRetirementConflictError } from "./gateway-retirement-claim.js";
-import type { OperationRecord } from "./platform-state/operations.js";
+import type { OperationPatch, OperationRecord } from "./platform-state/operations.js";
 import type { PlatformStateTransaction, Stored } from "./platform-state/store.js";
+import type { PlatformUserRecord } from "./platform-state/users.js";
 export declare const PLACEMENT_MIGRATION_KIND = "migrate-user";
 export declare const PLACEMENT_MIGRATION_ACTOR = "glm-controller-placement-policy";
 export declare const CONTINUOUS_PLACEMENT_SOURCE = "continuous-placement-policy";
@@ -75,6 +76,7 @@ interface RepairedPostgresSourceObservation {
     now: number;
 }
 export declare function repairedPostgresSourceConverged(input: RepairedPostgresSourceObservation): boolean;
+export declare function rearmCompensatedNativeReturn(now: number, transaction: PlatformStateTransaction, user: Stored<PlatformUserRecord> | null, request: EnqueuePlacementMigrationRequest, operation: Stored<OperationRecord>): Promise<OperationPatch>;
 export type EnqueuePlacementMigrationOutcome = "created" | "rearmed" | "already-enqueued";
 export declare function enqueuePlacementMigrationInTransaction(transaction: PlatformStateTransaction, context: PlacementMigrationEnqueueContext, request: EnqueuePlacementMigrationRequest, admit?: () => Promise<void>): Promise<EnqueuePlacementMigrationOutcome>;
 export declare function sharedDrainMoveNeverClaimed(data: Record<string, unknown>): boolean;

@@ -10,12 +10,13 @@ import {
 } from "@octogee/shared/types/gateway-releases";
 import type { PlacementOwnerFence } from "./placement-automation-owner.js";
 import { GatewayRetirementConflictError, isolatedRuntimeMutationFenced } from "./gateway-retirement-claim.js";
-import { isUserReturnOperationIdFor } from "@octogee/shared/types/isolated-operation-ids";
+import { builderReturnOperationId, isUserReturnOperationIdFor } from "@octogee/shared/types/isolated-operation-ids";
 import type { FleetRegistryRecord } from "./platform-state/fleet-registry.js";
-import type { GatewayAssignment } from "./platform-state/gateways.js";
+import type { GatewayAssignment, GatewayRoot } from "./platform-state/gateways.js";
 import type { OperationPatch, OperationRecord } from "./platform-state/operations.js";
 import type { PlatformStateTransaction, Stored } from "./platform-state/store.js";
 import type { PlatformUserRecord } from "./platform-state/users.js";
+import { nativeReturnTargetDenied, nativeReturnTargetExclusionId } from "./native-return-target-deny.js";
 import { readSharedGatewayPoolConfigInStore } from "./shared-gateway-pool-read.js";
 
 export const PLACEMENT_MIGRATION_KIND = "migrate-user";
@@ -699,6 +700,97 @@ function nativeReturnRecoveryCompleted(operation: Stored<OperationRecord>): bool
   return typeof recovery?.completedAt === "number" && recovery.completedAt > 0;
 }
 
+function compensatedReturnMatchesDemand(
+  user: Stored<PlatformUserRecord>, lease: ActivationLease, request: EnqueuePlacementMigrationRequest,
+  operation: Stored<OperationRecord>, compensation: Record<string, unknown>,
+): boolean {
+  return [
+    lease.status === "active", lease.targetGatewayId === request.fromGatewayId, lease.raw.returnOperationId === undefined,
+    request.operationId === builderReturnOperationId(request.fromGatewayId, lease.generation),
+    user.slug === request.builderSlug, userGatewayId(user) === request.fromGatewayId, Object.keys(user.fences).length === 0,
+    operation.kind === PLACEMENT_MIGRATION_KIND, operation.status === "failed", operation.rolledBack === true,
+    operation.schedulerHandoffReleased === true, operation.cutoverCommittedAt === undefined, operation.userMigrationV2 === undefined,
+    operation.sourceTransferExecution === undefined, operation.restoreAttempt === undefined, operation.schedulerHandoffLost === undefined,
+    operation.cancellationRequestedAt === undefined,
+    operation.inputUid === request.uid, operation.input.uid === request.uid, operation.input.userSlug === request.builderSlug,
+    operation.input.fromGatewayId === request.fromGatewayId, operation.input.source === ACTIVATION_LEASE_SOURCE,
+    request.source === ACTIVATION_LEASE_SOURCE, nonEmptyString(operation.input.toGatewayId),
+    compensation.targetGatewayId !== request.toGatewayId,
+    compensation.uid === request.uid, compensation.slug === request.builderSlug,
+    compensation.operationId === request.operationId, compensation.exclusionId === nativeReturnTargetExclusionId(request.uid),
+    compensation.sourceGatewayId === request.fromGatewayId, compensation.targetGatewayId === operation.input.toGatewayId,
+  ].every(Boolean);
+}
+
+type PlacementJournalAudit = Awaited<ReturnType<PlatformStateTransaction["journal"]["audits"]["get"]>>;
+
+function compensatedReturnAuditMatches(
+  audit: PlacementJournalAudit, completed: PlacementJournalAudit, lease: ActivationLease,
+  operation: Stored<OperationRecord>, compensation: Record<string, unknown>,
+): boolean {
+  const restored = record(audit?.target.retiredLeaseRestoration);
+  if (!audit || !restored || !completed) return false;
+  return [
+    audit.target.targetGatewayId === operation.input.toGatewayId, restored.operationId === operation.id,
+    restored.compensationAuditId === completed.id, restored.leaseId === lease.leaseId,
+    restored.generation === lease.generation, restored.sourceEpoch === compensation.sourceEpoch,
+    millis(restored.restoredAt) !== null, completed.status === "completed", completed.outcome === "completed",
+    completed.actionClaimId === compensation.attemptId, completed.target.operationId === operation.id,
+    isDeepStrictEqual(completed.target.original, compensation.source), operation.schedulerHandoff,
+    isDeepStrictEqual(record(completed.target.archivedReturn)?.handoff, operation.schedulerHandoff),
+  ].every(Boolean);
+}
+
+function compensatedReturnTargetReady(
+  root: GatewayRoot, runtime: Stored<FleetRegistryRecord> | null, request: EnqueuePlacementMigrationRequest, now: number,
+): boolean {
+  return runtime !== null && !root.runtimeRestartFence && !root.retirementClaim &&
+    sharedReturnTargetReady(projectGatewayDesiredRootForGateway(root, request.toGatewayId), runtime, request, now) &&
+    !runtime.heartbeat.mountedCustomers.includes(request.builderSlug) && !runtime.heartbeat.migratingIn?.includes(request.builderSlug);
+}
+
+export async function rearmCompensatedNativeReturn(
+  now: number,
+  transaction: PlatformStateTransaction,
+  user: Stored<PlatformUserRecord> | null,
+  request: EnqueuePlacementMigrationRequest,
+  operation: Stored<OperationRecord>,
+): Promise<OperationPatch> {
+  const refusal = new TerminalPlacementMigrationConflictError(request.operationId, operation.status);
+  const lease = activationLeaseOf(user?.activationLease);
+  const compensation = record(operation.input.compensatingNativeReturn);
+  const auditId = nonEmptyString(compensation?.auditId);
+  if (!lease || !user || !auditId || !compensation || !record(compensation.retiredTarget) ||
+      !compensatedReturnMatchesDemand(user, lease, request, operation, compensation)) throw refusal;
+  const exclusionId = nativeReturnTargetExclusionId(request.uid);
+  const [audit, completed, assignments, roots, runtime, pool, denied, active] = await Promise.all([
+    transaction.journal.audits.get(exclusionId),
+    transaction.journal.audits.get(auditId),
+    transaction.gateways.assignments.listForUid(request.uid),
+    transaction.gateways.roots.getMany([request.fromGatewayId, request.toGatewayId]),
+    transaction.fleetRegistry.get(request.toGatewayId),
+    readSharedGatewayPoolConfigInStore(transaction),
+    nativeReturnTargetDenied(transaction, request.uid, request.toGatewayId),
+    transaction.journal.operations.listForUid(request.uid, { statuses: ["pending", "running"] }),
+  ]);
+  const assignment = assignments[0] ?? null;
+  const sourceRoot = roots.get(request.fromGatewayId);
+  const targetRoot = roots.get(request.toGatewayId);
+  if (!sourceRoot || !targetRoot || !retrySourceAssignmentMatches(assignment, request)) throw refusal;
+  if (![
+    !denied, compensatedReturnAuditMatches(audit, completed, lease, operation, compensation),
+    assignments.length === 1, assignment.slug === request.builderSlug, assignment.epoch === compensation.sourceEpoch,
+    startupReturnSourceMatches(projectGatewayDesiredRootForGateway(sourceRoot, request.fromGatewayId), lease, request),
+    sourceRoot.desiredStatus === "running", sourceRoot.liveRelease === sourceRoot.desiredRelease,
+    !sourceRoot.runtimeRestartFence, !sourceRoot.retirementClaim, active.length === 0,
+    pool?.sharedGatewayIds.includes(request.toGatewayId), compensatedReturnTargetReady(targetRoot, runtime, request, now),
+  ].every(Boolean)) throw refusal;
+  return { ...rearmedPlacementMigrationPatch(), gatewayId: request.toGatewayId,
+    input: operationInputWithout(operation, ["compensatingNativeReturn"], { toGatewayId: request.toGatewayId }),
+    schedulerHandoff: CLEAR, schedulerHandoffReleased: CLEAR, schedulerHandoffReleasedAt: CLEAR,
+    retryRequestedAt: CLEAR, retryRequestedBy: CLEAR };
+}
+
 async function placementMigrationRearm(
   context: PlacementMigrationEnqueueContext,
   transaction: PlatformStateTransaction,
@@ -707,6 +799,9 @@ async function placementMigrationRearm(
   existing: Stored<OperationRecord>,
 ): Promise<OperationPatch | null> {
   const data = existing as unknown as Record<string, unknown>;
+  if (existing.input.compensatingNativeReturn !== undefined) {
+    return rearmCompensatedNativeReturn(context.now, transaction, userRecord, request, existing);
+  }
   const retarget = { input: operationInputWithout(existing, [], { toGatewayId: request.toGatewayId }), gatewayId: request.toGatewayId };
   if (sharedRevisionReturnMatchesDemand(data, request)) {
     await assertSharedRevisionReturnAuthority(context, transaction, userRecord, {
