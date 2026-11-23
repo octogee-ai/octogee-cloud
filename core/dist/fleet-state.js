@@ -702,6 +702,52 @@ function activationSourceAssignmentCurrent(assignment, params, leaseEpoch) {
         assignment.state === "serving" || assignment.state === "quiescing",
     ].every(Boolean);
 }
+function isolatedOnboardingSource(source, user, assignment) {
+    return [
+        source?.gatewayClass === "isolated", source?.desiredStatus === "running", source?.liveRelease === source?.desiredRelease,
+        source?.allocation == null, source?.retirementClaim == null, source?.runtimeRestartFence === undefined,
+        source?.ownerUid === user.uid, source?.builderSlug === user.slug,
+        assignment?.source === "onboarding", assignment?.state === "quiescing", assignment?.slug === user.slug,
+        user.fences.computerRecovery === undefined,
+        user.home.computer == null, user.home.homeDisk == null, user.home.homeStorage == null, user.home.homeCheckpoint == null,
+    ].every(Boolean);
+}
+function exactOnboardingMove(operation, id, params, epoch) {
+    const handoff = recordOrEmpty(operation?.schedulerHandoff);
+    return [
+        operation?.kind === MIGRATE_USER_OPERATION_KIND, operation?.origin === "automatic", operation?.status === "running",
+        typeof operation?.startedAt === "number" && Number.isSafeInteger(operation.startedAt) && operation.startedAt > 0,
+        operation?.cancellationRequestedAt === undefined, operation?.cutoverCommittedAt === undefined,
+        operation?.input.uid === params.uid, operation?.input.fromGatewayId === params.fromGatewayId,
+        operation?.input.toGatewayId === params.toGatewayId, handoff.slug === params.slug,
+        recordOrEmpty(handoff.forwardRecovery).sourceEpoch === epoch,
+        legacyForwardRecoveryMatches(id, operation?.input ?? {}, handoff),
+    ].every(Boolean);
+}
+function isolatedOnboardingRuntimeMatches(runtime, source) {
+    return runtime?.gatewayId === source.gatewayId && runtime.runtime === "cluster" &&
+        runtime.release === source.liveRelease && runtime.kubernetes?.totalPods === 1;
+}
+async function canMoveUnallocatedOnboardingActivation(input) {
+    const { tx, params, user, prior, source } = input;
+    const lease = user.activationLease;
+    if (params.automatic !== true || lease?.status !== "requested" || lease.targetGatewayId != null ||
+        !isolatedOnboardingSource(source, user, prior.assignment))
+        return false;
+    const marker = user.fences.migration;
+    const operationId = prior.assignment?.updatedByOperationId;
+    if (!operationId || marker?.operationId !== operationId || marker.state !== "moving")
+        return false;
+    const [operation, runtime, assignments] = await Promise.all([
+        tx.journal.operations.get(operationId), tx.fleetRegistry.get(params.fromGatewayId),
+        tx.gateways.assignments.listForUid(params.uid),
+    ]);
+    return [
+        assignments.length === 1, assignments[0]?.gatewayId === params.fromGatewayId, assignments[0]?.epoch === prior.epoch,
+        isolatedOnboardingRuntimeMatches(runtime, source),
+        exactOnboardingMove(operation, operationId, params, prior.epoch),
+    ].every(Boolean);
+}
 async function userActivationSourceCutoverMove(input) {
     const { params, prior, user } = input;
     const lease = user?.activationLease ?? null;
@@ -710,18 +756,19 @@ async function userActivationSourceCutoverMove(input) {
         input.targetRoot?.gatewayClass === "shared",
         ["requested", "provisioning", "activating"].includes(String(lease?.status)),
     ].every(Boolean);
-    if (!applies || lease === null)
+    if (!applies || lease === null || user === null)
         return null;
     const source = await input.tx.gateways.roots.get(params.fromGatewayId);
     const exact = [
         lease.status !== "activating",
-        source?.gatewayClass === "shared",
-        user?.gateway?.gatewayId === params.fromGatewayId,
+        user.gateway?.gatewayId === params.fromGatewayId,
         lease.sourceGatewayId === params.fromGatewayId,
         activationSourceAssignmentCurrent(prior.assignment, params, lease.sourceAssignmentEpoch),
     ].every(Boolean);
-    if (!exact)
+    if (!exact || (source?.gatewayClass !== "shared" &&
+        !await canMoveUnallocatedOnboardingActivation({ tx: input.tx, params, user, prior, source }))) {
         throw new Error("User activation source changed before Shared cutover");
+    }
     return {
         fence: { leaseId: lease.leaseId, generation: lease.generation },
         sourceAssignmentEpoch: prior.epoch + 1,

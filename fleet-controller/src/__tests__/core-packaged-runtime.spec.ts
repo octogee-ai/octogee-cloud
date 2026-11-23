@@ -49,7 +49,7 @@ function migrationCutoverSeed(): Record<string, Record<string, unknown>> {
   };
 }
 
-function cutover(documents: Record<string, Record<string, unknown>>, now: number) {
+function cutover(documents: Record<string, Record<string, unknown>>, now: number, automatic = false) {
   const deps: CutoverDeps = {
     store: createDocumentFixtureStore(documents),
     readSizingKey: async () => {
@@ -64,11 +64,40 @@ function cutover(documents: Record<string, Record<string, unknown>>, now: number
     toGatewayId: "target",
     fromGatewayId: "source",
     flipMirror: true,
+    automatic,
     assignment: {
       source: "migrate-user",
       updatedByOperationId: "op-1",
     },
   });
+}
+
+function activationCutoverSeed(sourceClass: "shared" | "isolated" = "isolated") {
+  const docs = migrationCutoverSeed();
+  docs["gateways/source"] = { ...durableRoot("source", 3), gatewayClass: sourceClass, ownerUid: "uid-a", builderSlug: "alice" };
+  docs["users/uid-a"] = { username: "alice", provisioning: { openclaw: {
+    gatewayId: "source", migration: { state: "moving", operationId: "op-1", startedAt: 10_000 },
+    activationLease: { leaseId: "lease-1", generation: 1, status: "requested", sourceGatewayId: "source", sourceAssignmentEpoch: 4 },
+  } } };
+  docs["gateways/source/assignments/uid-a"].updatedByOperationId = "op-1";
+  docs["glmGateways/source"] = { docKind: "runtime", gatewayId: "source", createdAt: 1, release: 3,
+    runtime: "cluster", lifecycle: "serving", kubernetes: { status: "ready", totalPods: 1, readyPods: 1, observedAt: 90_000 }, heartbeat: { status: "ready", mountedCustomers: ["alice"] } };
+  docs["glmOperations/op-1"] = { id: "op-1", kind: "migrate-user", status: "running", origin: "automatic",
+    createdBy: "glm-controller-placement-policy", createdAt: 1, startedAt: 10_000, completedAt: null, gatewayId: "target",
+    input: { uid: "uid-a", userSlug: "alice", fromGatewayId: "source", toGatewayId: "target", source: "continuous-placement-policy" },
+    steps: [{ name: "verify-target", status: "done" }],
+    schedulerHandoff: { migrationId: "mig-op-1:scheduler:1:claim:10000", uid: "uid-a", slug: "alice", fromGatewayId: "source", toGatewayId: "target",
+      forwardRecovery: { schemaVersion: 1, phase: "source-flushed", sourceEpoch: 4 } } };
+  return docs;
+}
+
+function expectRequestedActivationCutover(docs: ReturnType<typeof activationCutoverSeed>) {
+  expect(docs["users/uid-a"]).toMatchObject({ provisioning: { openclaw: {
+    gatewayId: "target",
+    activationLease: { leaseId: "lease-1", generation: 1, status: "requested", sourceGatewayId: "target", sourceAssignmentEpoch: 5 },
+  } } });
+  expect(docs["gateways/source/assignments/uid-a"]).toBeUndefined();
+  expect(docs["gateways/target/assignments/uid-a"]).toMatchObject({ state: "serving", epoch: 5 });
 }
 
 describe("installed @octogee/core runtime", () => {
@@ -88,6 +117,46 @@ describe("installed @octogee/core runtime", () => {
     expect(documents["users/uid-a"]).toMatchObject({
       provisioning: { openclaw: { gatewayId: "target" } },
     });
+  });
+
+  it("carries an unallocated isolated onboarding owner's requested activation into its verified Shared cutover", async () => {
+    const docs = activationCutoverSeed();
+    await cutover(docs, 100_000, true);
+    expectRequestedActivationCutover(docs);
+    const after = structuredClone(docs);
+    await expect(cutover(docs, 100_001, true)).rejects.toThrow("User activation source changed");
+    expect(docs).toEqual(after);
+  });
+
+  it("continues moving a requested activation across ordinary Shared cutover", async () => {
+    const docs = activationCutoverSeed("shared");
+    await cutover(docs, 100_000);
+    expectRequestedActivationCutover(docs);
+  });
+
+  it.each([
+    ["operator isolated assignment", "gateways/source/assignments/uid-a", { source: "repair" }],
+    ["allocated isolated root", "gateways/source", { allocation: {
+      kind: "disposable-builder", schemaVersion: 1, leaseId: "another", generation: 1, claimedByUid: "uid-a",
+    } }],
+    ["disk-backed VM", "glmGateways/source", { runtime: "vm" }],
+    ["inactive journal claim", "glmOperations/op-1", { status: "pending", startedAt: null }],
+    ["stale assignment author", "gateways/source/assignments/uid-a", { updatedByOperationId: "another-move" }],
+  ] as const)("preserves placement and lease when the source is %s", async (_reason, path, patch) => {
+    const docs = activationCutoverSeed();
+    Object.assign(docs[path], patch);
+    const before = structuredClone(docs);
+    await expect(cutover(docs, 100_000, true)).rejects.toThrow("User activation source changed");
+    expect(docs).toEqual(before);
+  });
+
+  it("refuses to reparent a provisioned activation from an isolated onboarding source", async () => {
+    const docs = activationCutoverSeed();
+    const openclaw = (docs["users/uid-a"].provisioning as { openclaw: { activationLease: Record<string, unknown> } }).openclaw;
+    Object.assign(openclaw.activationLease, { status: "provisioning", targetGatewayId: "allocated-target" });
+    const before = structuredClone(docs);
+    await expect(cutover(docs, 100_000, true)).rejects.toThrow("User activation source changed");
+    expect(docs).toEqual(before);
   });
 
   it("refuses a cutover onto a retirement-claimed target at the transaction boundary", async () => {
