@@ -887,9 +887,10 @@ async function retiredCompensationFixture() {
     verifyWholeRetirement: vi.fn(async (_id: string, assertCurrent: () => Promise<void>) => { await assertCurrent(); return true; }),
     verifyRetiredRoutes: vi.fn(async (_reservation, assertCurrent: () => Promise<void>) => { await assertCurrent(); return true; }),
   };
-  const exclusion = createNativeReturnTargetExclusion({ store: h.store, now: Date.now, provider: physical });
+  const verifyRestoredSource = vi.fn(async (_authority, check: () => Promise<void>) => check());
+  const exclusion = createNativeReturnTargetExclusion({ store: h.store, now: Date.now, provider: physical, verifyRestoredSource });
   const provider = { ...exclusion, observeOriginalSource: vi.fn(async () => h.source) };
-  return { ...h, request, scope, physical, exclusion, retirement, retirementPath,
+  return { ...h, request, scope, physical, exclusion, retirement, retirementPath, verifyRestoredSource,
     worker: createCompensatingNativeReturn({ ...h.deps, provider }) };
 }
 
@@ -916,7 +917,7 @@ it("uses read-only retired source-store verification for preparation and authent
   expect(prepareSourceStores).not.toHaveBeenCalled();
 });
 
-it("compensates the same Native operation only after the enrolled old member is retired and keeps its permanent denial", async () => {
+it.each([false, true])("restores the compensated Native lease and preserves permanent denial (handoff previously released: %s)", async previouslyReleased => {
   const h = await retiredCompensationFixture();
   const input = { environment: "test" as const, actor: h.request.actor, operationId };
   await expect(h.worker.requestRetired({ ...input, actor: "unrelated" })).rejects.toThrow(/exact protected drain/);
@@ -934,8 +935,26 @@ it("compensates the same Native operation only after the enrolled old member is 
   expect(finished?.attemptHistory).toContainEqual(h.latest);
   expect(await h.store.gateways.assignments.get(sourceGatewayId, uid)).toMatchObject({ state: "serving", epoch: sourceEpoch });
   expect(await nativeReturnSharedStoreHandoffDenied(h.store, uid)).toBe(true);
+  if (previouslyReleased) {
+    const audit = (await h.store.journal.audits.get(authority.exclusionId))!;
+    await h.store.journal.audits.patch(audit.id, { status: "completed", outcome: "completed",
+      completedAt: 550, lifecycleStage: "action-completed", target: { ...audit.target,
+        sharedHandoffRelease: { retirement: { operationId: "shared-pool-retire-" + targetGatewayId, version: 1,
+          createdAt: 520, completedAt: 530 }, actor: input.actor, verifiedAt: 550 },
+      } }, { revision: audit.revision });
+  }
+  h.verifyRestoredSource.mockRejectedValueOnce(new Error("original guest unavailable"));
+  await expect(h.exclusion.releaseRetiredSharedHandoff(input)).rejects.toThrow("original guest unavailable");
+  expect(await nativeReturnSharedStoreHandoffDenied(h.store, uid)).toBe(!previouslyReleased);
   await h.exclusion.releaseRetiredSharedHandoff(input);
+  await expect(h.store.users.records.get(uid)).resolves.toMatchObject({ activationLease: {
+    status: "active", generation: 4, leaseId: "lease4", targetGatewayId: sourceGatewayId,
+  } });
+  const restored = (await h.store.users.records.get(uid))?.activationLease;
+  expect(restored?.returnOperationId).toBeUndefined();
+  expect(restored?.lastActiveAt).toBeUndefined();
   await h.exclusion.releaseRetiredSharedHandoff(input);
+  expect((await h.store.users.records.get(uid))?.activationLease).toEqual(restored);
   await expect(h.worker.requestRetired(input)).resolves.toEqual(authority);
   expect(await nativeReturnSharedStoreHandoffDenied(h.store, uid)).toBe(false);
   expect(await nativeReturnTargetDenied(h.store, uid, targetGatewayId)).toBe(true);

@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import type { PlatformStateStore } from "@octogee/core/platform-state";
 import { createCompensatingSourceServingVerifier, type CompensatingSourceServingInputs } from "./compensating-native-source-serving.js";
 import { createCompensatingNativeReturn } from "./compensating-native-return.js";
@@ -48,7 +49,21 @@ export function createNativeRecoveryComposition(
   enrolled?: NativeRecoveryCompositionInput | null,
 ) {
   if (environment !== "test" || !enrolled) return undefined;
+  const observeOriginalSource = createCompensatingNativeOriginalObserver({ store, vm: enrolled.source.vm });
+  const verifyRestoredServing = createCompensatingSourceServingVerifier({ ...enrolled.source.serving, store, terminal: true });
   const target = createNativeReturnTargetExclusion({
+    async verifyRestoredSource(authority, assertCurrent) {
+      const verifyInstance = async () => {
+        await assertCurrent();
+        if (!isDeepStrictEqual(await observeOriginalSource(authority), authority.source)) {
+          throw new Error("Original Native instance or disks changed");
+        }
+        await assertCurrent();
+      };
+      await verifyInstance();
+      await verifyRestoredServing(authority, assertCurrent);
+      await verifyInstance();
+    },
     store, now,
     provider: createNativeOldTargetPhysicalProvider({ ...enrolled.target, namespace, store,
       readRetainedCompletion: enrolled.mode === "retired-only" ? undefined : enrolled.readRetainedCompletion }),
@@ -63,7 +78,7 @@ export function createNativeRecoveryComposition(
       verifyOldTargetExclusion: target.verifyOldTargetExclusion,
       readRetiredTargetExclusion: target.readRetiredTargetExclusion,
       verifyRetiredTargetExclusion: target.verifyRetiredTargetExclusion,
-      observeOriginalSource: createCompensatingNativeOriginalObserver({ store, vm: enrolled.source.vm }),
+      observeOriginalSource,
     },
   });
   if (enrolled.mode === "retired-only") {

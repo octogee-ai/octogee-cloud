@@ -4,7 +4,7 @@ import { NATIVE_RETURN_TARGET_EXCLUSION, nativeReturnTargetExclusionId, readHeld
   type HeldNativeReturnSelection } from "@octogee/core/fleet-state";
 import { buildOperationAuditIntent } from "@octogee/core/operation-audit";
 import type { PlatformStateStore, PlatformStateTransaction } from "@octogee/core/platform-state";
-import type { RetiredNativeTarget } from "./compensating-native-return.js";
+import type { CompensatingNativeReturnAuthority, RetiredNativeTarget } from "./compensating-native-return.js";
 import type { SurgeKubectl } from "../surge-user-handoff-runtime.js";
 import { createHeldNativeReturnDestinationVerifier } from "./held-native-return-destination.js";
 
@@ -96,7 +96,10 @@ async function readRetirementBinding(tx: PlatformStateTransaction, scope: Native
   return { audit, retirement, podUid };
 }
 
-export function createNativeReturnTargetExclusion(deps: { store: PlatformStateStore; now: () => number; provider?: Providers }) {
+export function createNativeReturnTargetExclusion(deps: {
+  store: PlatformStateStore; now: () => number; provider?: Providers;
+  verifyRestoredSource?(authority: CompensatingNativeReturnAuthority, assertCurrent: () => Promise<void>): Promise<void>;
+}) {
   const { store, now, provider } = deps;
 
   async function reserve(environment: "test" | "prod", actor: string, selection: HeldNativeReturnSelection) {
@@ -213,13 +216,13 @@ export function createNativeReturnTargetExclusion(deps: { store: PlatformStateSt
     const read = async (tx: PlatformStateTransaction) => {
       const current = await readReleaseAuthority(tx, scope);
       requireExclusion(!current.retiredMode || current.audit.actor === actor, "operator does not own the exact protected drain");
-      return current;
+      return { ...current, restore: current.retiredMode ? await readRetiredLeaseRestoration(tx, scope, current) : null };
     };
     const before = await store.transaction({ label: "native-old-target-exclusion.retirement-read", readOnly: true }, read);
     const assertCurrent = async () => {
       const current = await store.transaction({ label: "native-old-target-exclusion.retirement-recheck", readOnly: true }, read);
-      requireExclusion(isDeepStrictEqual(current.retirement, before.retirement) && current.audit.revision === before.audit.revision,
-        "whole retirement or exclusion changed");
+      requireExclusion(isDeepStrictEqual(current.retirement, before.retirement) && current.audit.revision === before.audit.revision &&
+        isDeepStrictEqual(current.restore, before.restore), "whole retirement, exclusion or original lease changed");
     };
     if (before.retiredMode) {
       await verifyRetiredTargetExclusion(scope, { ...before.retirement, oldPodUid: before.retiredMode });
@@ -227,18 +230,24 @@ export function createNativeReturnTargetExclusion(deps: { store: PlatformStateSt
       requireExclusion(await provider.verifyWholeRetirement(scope.targetGatewayId, assertCurrent),
         "old Shared runtime or credential still exists");
     }
+    if (before.restore) {
+      requireExclusion(deps.verifyRestoredSource, "independent original serving verifier required");
+      await deps.verifyRestoredSource(before.restore.authority, assertCurrent);
+    }
     await store.transaction({ label: "native-old-target-exclusion.release-shared-handoff" }, async tx => {
-      const { audit, retirement } = await read(tx);
-      requireExclusion(isDeepStrictEqual(retirement, before.retirement) && audit.revision === before.audit.revision,
-        "whole retirement changed before publication");
+      const { audit, retirement, restore } = await read(tx);
+      requireExclusion(isDeepStrictEqual(retirement, before.retirement) && audit.revision === before.audit.revision &&
+        isDeepStrictEqual(restore, before.restore), "whole retirement or original lease changed before publication");
       const prior = audit.target.sharedHandoffRelease as { retirement?: unknown; actor?: string } | undefined;
       if (prior) {
         requireExclusion(prior.actor === actor && isDeepStrictEqual(prior.retirement, retirement), "existing release proof changed");
-        return;
+        if (!restore) return;
       }
-      await tx.journal.audits.patch(audit.id, { ...(before.retiredMode ? { status: "completed", lifecycleStage: "action-completed",
-        outcome: "completed", completedAt: now() } as const : {}), target: { ...audit.target,
-        sharedHandoffRelease: { retirement, actor, verifiedAt: now() } } }, { revision: audit.revision });
+      const at = now();
+      const restored = restore ? await restoreCompensatedLease(tx, scope.uid, restore, at) : {};
+      await tx.journal.audits.patch(audit.id, { ...(before.retiredMode && !prior ? { status: "completed", lifecycleStage: "action-completed",
+        outcome: "completed", completedAt: at } as const : {}), target: { ...audit.target, ...restored,
+        sharedHandoffRelease: prior ?? { retirement, actor, verifiedAt: at } } }, { revision: audit.revision });
     });
   }
 
@@ -271,7 +280,61 @@ async function readReleaseAuthority(tx: PlatformStateTransaction, scope: NativeO
     owner?.gateway?.gatewayId === scope.sourceGatewayId, !owner?.fences.migration, assignments.length === 1,
     assignments[0]?.gatewayId === scope.sourceGatewayId, assignments[0]?.epoch === scope.sourceEpoch,
     assignments[0]?.state === "serving"].every(Boolean), "original source rollback is not complete");
-  return { audit, retirement, retiredMode };
+  return { audit, retirement, retiredMode, operation, owner };
+}
+
+async function readRetiredLeaseRestoration(
+  tx: PlatformStateTransaction, scope: NativeOldTargetScope, current: Awaited<ReturnType<typeof readReleaseAuthority>>,
+) {
+  const { operation, owner } = current;
+  const stored = operation.input.compensatingNativeReturn as CompensatingNativeReturnAuthority;
+  const prior = current.audit.target.retiredLeaseRestoration as Record<string, unknown> | undefined;
+  if (prior !== undefined) {
+    requireExclusion(prior && current.audit.target.sharedHandoffRelease && prior.operationId === scope.operationId &&
+      prior.sourceEpoch === scope.sourceEpoch && prior.compensationAuditId === stored.auditId &&
+      typeof prior.restoredAt === "number", "compensated lease restoration receipt changed");
+    return null;
+  }
+  const lease = owner?.activationLease;
+  const root = await tx.gateways.roots.get(scope.sourceGatewayId);
+  requireExclusion(owner && lease && root?.allocation?.kind === "disposable-builder" && typeof root.liveRelease === "number",
+    "original compensated lease or allocation missing");
+  const { allocation } = root;
+  requireExclusion([owner.slug === scope.slug, Object.keys(owner.fences).length === 0, lease.status === "returning",
+    lease.targetGatewayId === scope.sourceGatewayId, lease.returnOperationId === scope.operationId, lease.operatorTerminateRequestedAt == null,
+    root.gatewayClass === "isolated", root.ownerUid === scope.uid, root.builderSlug === scope.slug,
+    root.desiredStatus === "running", root.liveRelease === root.desiredRelease, !root.runtimeRestartFence, !root.retirementClaim,
+    allocation.claimedByUid === scope.uid, allocation.leaseId === lease.leaseId, allocation.generation === lease.generation].every(Boolean),
+  "original compensated lease or allocation changed");
+  await assertCompletedCompensationAudit(tx, operation, stored);
+  const active = await tx.journal.operations.listForUid(scope.uid, { statuses: ["pending", "running"] });
+  requireExclusion(active.length === 0, "competing owner operation prevents compensation finalization");
+  return { lease, authority: { ...stored, sourceRelease: root.liveRelease } };
+}
+
+async function assertCompletedCompensationAudit(
+  tx: PlatformStateTransaction, operation: Awaited<ReturnType<typeof readReleaseAuthority>>["operation"],
+  authority: CompensatingNativeReturnAuthority,
+) {
+  requireExclusion(typeof authority.auditId === "string" && typeof authority.attemptId === "string" && authority.source,
+    "completed compensation identity missing");
+  const audit = await tx.journal.audits.get(authority.auditId);
+  const history = audit?.target.archivedReturn as { handoff?: unknown } | undefined;
+  requireExclusion(audit?.status === "completed" && audit.outcome === "completed" && audit.actionClaimId === authority.attemptId &&
+    isDeepStrictEqual(audit.target.original, authority.source) && isDeepStrictEqual(history?.handoff, operation.schedulerHandoff),
+    "completed compensation audit changed");
+}
+
+async function restoreCompensatedLease(
+  tx: PlatformStateTransaction, uid: string, restore: NonNullable<Awaited<ReturnType<typeof readRetiredLeaseRestoration>>>, at: number,
+) {
+  const { lease, authority } = restore;
+  const { returnOperationId: _operation, returningAt: _returning, returnRequestedAt: _requested, returnRequestedBy: _actor, returnReason: _reason, ...retained } = lease;
+  await tx.users.records.setActivationLease(uid, { ...retained, status: "active", activeAt: at }, {
+    leaseId: lease.leaseId, generation: lease.generation, status: ["returning"],
+  });
+  return { retiredLeaseRestoration: { leaseId: lease.leaseId, generation: lease.generation, operationId: authority.operationId,
+    compensationAuditId: authority.auditId, sourceEpoch: authority.sourceEpoch, restoredAt: at } };
 }
 
 function verifiedRetainedBinding(audit: Audit, binding: Reservation | null) {
