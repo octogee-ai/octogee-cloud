@@ -20,7 +20,7 @@ function requireServing(condition: unknown): asserts condition {
   if (!condition) throw new Error("Original Native serving witness is unavailable or changed");
 }
 
-async function requireOriginalServingClaim(tx: PlatformStateTransaction, scope: CompensatingNativeReturnAuthority) {
+async function requireOriginalServingClaim(tx: PlatformStateTransaction, scope: CompensatingNativeReturnAuthority, terminal: boolean) {
   const { uid, slug, sourceGatewayId, sourceEpoch, operationId, sourceRelease, attemptId } = scope;
   const [owner, assignments, root, operation] = await Promise.all([
     tx.users.records.get(uid), tx.gateways.assignments.listForUid(uid), tx.gateways.roots.get(sourceGatewayId),
@@ -30,19 +30,21 @@ async function requireOriginalServingClaim(tx: PlatformStateTransaction, scope: 
   requireServing(original && owner && root && operation);
   requireServing([
     assignments.length === 1, original.gatewayId === sourceGatewayId,
-    original.epoch === sourceEpoch, original.state === "quiescing",
+    original.epoch === sourceEpoch, original.state === (terminal ? "serving" : "quiescing"),
     owner.slug === slug, owner.gateway?.gatewayId === sourceGatewayId,
-    owner.fences.migration?.operationId === operationId,
     root.liveRelease === sourceRelease, root.desiredRelease === sourceRelease,
-    root.runtimeRestartFence?.attemptId === attemptId, root.runtimeRestartFence?.phase === "ingress-resumed",
-    operation.status === "running", operation.cutoverCommittedAt === undefined,
+    terminal ? !owner.fences.migration && !root.runtimeRestartFence && operation.status === "failed" &&
+      operation.rolledBack === true && operation.schedulerHandoffReleased === true :
+      owner.fences.migration?.operationId === operationId && root.runtimeRestartFence?.attemptId === attemptId &&
+      root.runtimeRestartFence?.phase === "ingress-resumed" && operation.status === "running",
+    operation.cutoverCommittedAt === undefined,
   ].every(Boolean));
 }
 
-async function readOriginalServing(store: PlatformStateStore, scope: CompensatingNativeReturnAuthority) {
+async function readOriginalServing(store: PlatformStateStore, scope: CompensatingNativeReturnAuthority, terminal: boolean) {
   return store.transaction({ readOnly: true, label: "compensating-native-return.source-serving" }, async tx => {
     const { slug, sourceGatewayId, sourceRelease, source } = scope;
-    await requireOriginalServingClaim(tx, scope);
+    await requireOriginalServingClaim(tx, scope, terminal);
     const [runtime, release] = await Promise.all([
       tx.fleetRegistry.get(sourceGatewayId), tx.gateways.releases.get(sourceGatewayId, sourceRelease),
     ]);
@@ -72,13 +74,14 @@ async function fetchBody(response: Response) {
 
 export function createCompensatingSourceServingVerifier(input: CompensatingSourceServingInputs & {
   store: PlatformStateStore;
+  terminal?: boolean;
 }): CompensatingNativeReturnActions["verifySourceServing"] {
   const fetchDirect: typeof fetch = (url, options) => (input.fetchImpl ?? fetch)(url, { ...options, redirect: "error" });
   const timeoutMs = 5000;
   return async (scope, current) => {
     requireServing([input.port, input.edgePort].every(port => Number.isInteger(port) && port > 0 && port <= 65535) && input.port !== input.edgePort);
     await current();
-    const before = await readOriginalServing(input.store, scope);
+    const before = await readOriginalServing(input.store, scope, input.terminal === true);
     const baseUrl = `http://${scope.source.internalIp}:${input.port}`;
     const edgeUrl = `http://${scope.source.internalIp}:${input.edgePort}/health`;
     const [health, ready, state, edge] = await Promise.all([
@@ -97,7 +100,7 @@ export function createCompensatingSourceServingVerifier(input: CompensatingSourc
       isDeepStrictEqual(state.customers, [scope.slug]), state.migratingIn === undefined || isDeepStrictEqual(state.migratingIn, []),
     ].every(Boolean));
     await current();
-    requireServing(isDeepStrictEqual(await readOriginalServing(input.store, scope), before));
+    requireServing(isDeepStrictEqual(await readOriginalServing(input.store, scope, input.terminal === true), before));
     await current();
   };
 }
