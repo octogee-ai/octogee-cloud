@@ -79,8 +79,8 @@ import {
   listSqliteStores,
 } from "./agent-store-carry.js";
 import {
-  findPortableAgentStores,
-  AGENT_STORE_BASENAME,
+  planPostgresAgentExport,
+  type PostgresAgentExport,
   exportAgentStoreSnapshots,
   findStagedAgentSnapshots,
   findStagedLiveAgentStores,
@@ -1404,13 +1404,11 @@ async function retainedSourcePaths(plan: ConfiguredUserPortableStatePlan, stateD
   return sources;
 }
 
-async function assertRetainedSourceAnchors(sources: Array<{ cwd: string; path: string }>, authority: FleetBrokerAgentAnchor[]) {
-  const stores = await findPortableAgentStores(sources);
+function assertRetainedSourceAnchors(stores: readonly PostgresAgentExport[], authority: FleetBrokerAgentAnchor[]) {
   if (stores.length !== authority.length) throw new Error("Retained source is missing an authorized agent anchor");
-  for (const store of stores) {
-    const actual = readPostgresAgentAnchor(path.join(store.sourceAgentDir, AGENT_STORE_BASENAME));
-    const expected = authority.find(anchor => anchor.agentId === store.agentId);
-    if (!actual || !expected || actual.storeId !== expected.storeId || actual.schema !== expected.schema) {
+  for (const { store, anchor } of stores) {
+    const expected = authority.find(candidate => candidate.agentId === store.agentId);
+    if (!expected || anchor.storeId !== expected.storeId || anchor.schema !== expected.schema) {
       throw new Error(`Retained source agent anchor does not match migration authority: ${store.agentId}`);
     }
   }
@@ -1436,7 +1434,8 @@ async function retainedSourceExport(deps: MigrationHandlerDeps, body: MigrationR
   const plan = configuredUserPortableStatePlanFromConfig({ agents: { entries: Object.fromEntries(agents.map(agent => [agent.agentId, agent.agent])) } }, stateDir);
   assertConfiguredUserPortableStatePlanOnDisk(stateDir, plan);
   const sources = await retainedSourcePaths(plan, stateDir, body.slug, authority);
-  await assertRetainedSourceAnchors(sources, authority);
+  const postgres = await planPostgresAgentExport(sources, signal);
+  assertRetainedSourceAnchors(postgres, authority);
   const assertCurrent = async () => {
     signal.throwIfAborted();
     assertSourceIdentityCustody(custody, await readCustody(body.slug, body.migrationId));
@@ -1448,7 +1447,7 @@ async function retainedSourceExport(deps: MigrationHandlerDeps, body: MigrationR
     signal.throwIfAborted();
   };
   await assertCurrent();
-  return { sources, assertCurrent };
+  return { sources, assertCurrent, postgres };
 }
 
 async function sourceExportInventory(deps: MigrationHandlerDeps, body: PushRsyncStateRequestBody, mode: MigrationTransferMode, signal: AbortSignal) {
@@ -1459,7 +1458,9 @@ async function sourceExportInventory(deps: MigrationHandlerDeps, body: PushRsync
   }) : null;
   const retained = retainedManifest?.sourceWorkspaceIdentities ? await retainedSourceExport(deps, body, signal, sourceHeld) : null;
   const allSources = retained?.sources ?? await deps.adapter.listExportPaths(body.slug);
-  return { sourceHeld, retained, sources: sourcesForPushMode(allSources, body.slug, mode) };
+  const sources = sourcesForPushMode(allSources, body.slug, mode);
+  const postgres = mode === "final" ? retained?.postgres ?? await planPostgresAgentExport(sources, signal) : [];
+  return { sourceHeld, retained, sources, postgres };
 }
 
 async function maybeMaterializeActivationManifest(
@@ -2342,23 +2343,20 @@ export function createPushRsyncStateHandler(deps: MigrationHandlerDeps): Request
     const { controller, detach } = attachImportDisconnectHandlers(res, body.migrationId, body.slug, log, "export");
     const transferTimer = setTimeout(() => controller.abort(new Error("rsync push-state transfer deadline exceeded")), Math.max(0, deadline - Date.now()));
     try {
-      const { sourceHeld, retained, sources } = await sourceExportInventory(deps, body, mode, controller.signal);
+      const { sourceHeld, retained, sources, postgres } = await sourceExportInventory(deps, body, mode, controller.signal);
       if (sources.length === 0) {
         res
           .status(404)
           .json({ error: "no export paths", message: `nothing to push for slug=${body.slug}` });
         return;
       }
-      const postgresHandoff = mode === "final" && (await findPortableAgentStores(sources)).some(store =>
-        readPostgresAgentAnchor(path.join(store.sourceAgentDir, AGENT_STORE_BASENAME)) !== null);
-
       const manifestRequest = configTransferMode === USER_SYSTEM_CONFIG_TRANSFER ? { ...body, includeActivationManifest: false } : body;
       const activationManifest = mode === "keys"
         ? { source: null, cleanup: async () => {} }
         : await maybeMaterializeActivationManifest(deps, manifestRequest, {
             signal: controller.signal,
             timeoutMs: remainingTransferTimeout(deadline, controller.signal),
-            preserveForRollback: postgresHandoff,
+            preserveForRollback: postgres.length > 0,
             sourceHeld,
             convergeSource: convergence.convergeSource,
           });
@@ -2366,6 +2364,7 @@ export function createPushRsyncStateHandler(deps: MigrationHandlerDeps): Request
       if (mode === "final") {
         sources.push(...await exportAgentStoreSnapshots({
           sources,
+          postgres,
           exportRoot: path.join(tmpDir, "snapshots"),
           signal: controller.signal,
           log,

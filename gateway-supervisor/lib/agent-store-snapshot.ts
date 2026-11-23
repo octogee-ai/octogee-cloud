@@ -2,10 +2,10 @@ import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { listSqliteStores } from "./agent-store-carry.js";
+import { agentStateSourceRoot, listSqliteStores } from "./agent-store-carry.js";
 import { assertNotHeld, matchFiles, sqliteFamily } from "./held-files.js";
 import { exportCodexStoreSnapshots, isCodexDatabase } from "./codex-store-snapshot.js";
-import { readPostgresAgentAnchor } from "@octogee/core/agent-postgres";
+import { readPostgresAgentAnchor, type PostgresAgentAnchor } from "@octogee/core/agent-postgres";
 
 export const AGENT_STORE_BASENAME = "openclaw-agent.sqlite";
 export const AGENT_SNAPSHOT_DIRNAME = ".octogee-snapshot";
@@ -36,7 +36,9 @@ export async function findPortableAgentStores(
 ): Promise<PortableAgentStore[]> {
   const byAgent = new Map<string, PortableAgentStore>();
   for (const source of sources) {
-    for (const store of await listSqliteStores(path.join(source.cwd, source.path))) {
+    const root = agentStateSourceRoot(source);
+    if (!root) continue;
+    for (const store of await listSqliteStores(root)) {
       const relative = posixRelative(source.cwd, store);
       if (isCodexDatabase(relative)) continue;
       const agentId = agentIdOfStateRelativePath(relative);
@@ -81,6 +83,26 @@ async function mapConcurrently<T, R>(items: readonly T[], work: (item: T) => Pro
   return results;
 }
 
+export interface PostgresAgentExport {
+  store: PortableAgentStore;
+  file: string;
+  anchor: PostgresAgentAnchor;
+}
+
+export async function planPostgresAgentExport(
+  sources: ReadonlyArray<{ cwd: string; path: string }>,
+  signal?: AbortSignal,
+): Promise<PostgresAgentExport[]> {
+  const stores = await findPortableAgentStores(sources);
+  return stores.map(store => {
+    const file = path.join(store.sourceAgentDir, AGENT_STORE_BASENAME);
+    signal?.throwIfAborted();
+    const anchor = readPostgresAgentAnchor(file);
+    if (!anchor) throw new Error("SQLite agent handoff is unsupported after the PostgreSQL cutover");
+    return { store, file, anchor };
+  });
+}
+
 export async function exportAgentStoreSnapshots(
   input: {
     signal?: AbortSignal;
@@ -88,19 +110,13 @@ export async function exportAgentStoreSnapshots(
     exportRoot: string;
     log?: (message: string) => void;
     detachAgents?: (agentIds: readonly string[]) => Promise<void>;
+    postgres?: readonly PostgresAgentExport[];
   },
 ): Promise<Array<{ cwd: string; path: string }>> {
-  const stores = await findPortableAgentStores(input.sources);
-  if (stores.length === 0) return exportCodexStoreSnapshots(input);
-  const anchored = stores.map(store => {
-    const file = path.join(store.sourceAgentDir, AGENT_STORE_BASENAME);
-    input.signal?.throwIfAborted();
-    const anchor = readPostgresAgentAnchor(file);
-    if (!anchor) throw new Error("SQLite agent handoff is unsupported after the PostgreSQL cutover");
-    return { store, file, anchor };
-  });
+  const anchored = input.postgres ?? await planPostgresAgentExport(input.sources, input.signal);
+  if (anchored.length === 0) return exportCodexStoreSnapshots(input);
   if (!input.detachAgents) throw new Error("PostgreSQL agents must be detached before handoff");
-  await input.detachAgents(stores.map(store => store.agentId));
+  await input.detachAgents(anchored.map(({ store }) => store.agentId));
   const carried: Array<{ cwd: string; path: string }> = [];
   for (const { store, file, anchor } of anchored) {
     input.signal?.throwIfAborted();
@@ -117,6 +133,10 @@ export async function exportAgentStoreSnapshots(
     const artifact = path.join(directory, SNAPSHOT_ARTIFACT_BASENAME);
     await fs.copyFile(file, artifact, fs.constants.COPYFILE_EXCL);
     await fs.chmod(artifact, 0o600);
+    const copiedAnchor = readPostgresAgentAnchor(artifact);
+    if (copiedAnchor?.storeId !== anchor.storeId || copiedAnchor.schema !== anchor.schema) {
+      throw new Error(`PostgreSQL agent ${store.agentId} anchor changed during handoff`);
+    }
     await fs.writeFile(path.join(directory, SNAPSHOT_MANIFEST_BASENAME), JSON.stringify({
       schemaVersion: 1,
       database: { role: "agent", agentId: store.agentId, engine: "postgres", ...anchor },
