@@ -83,6 +83,7 @@ beforeEach(() => {
     if (url.endsWith("/uid-for-slug")) return Response.json({ uid: body.slug === "alice" ? "uid-alice" : "uid-bob" });
     if (url.endsWith("/user-snapshot")) return Response.json({ user: snapshot });
     if (url.endsWith("/assignment-roster")) return Response.json({ assignments: [assignment] });
+    if (url.endsWith("/workspace-checkpoint")) return Response.json({ ok: true });
     throw new Error(`unexpected network call ${url}`);
   });
   vi.stubGlobal("fetch", broker);
@@ -96,6 +97,15 @@ linuxTest("checkpoints exact Shared agent and Gitea project persona bytes for a 
   expect((await flush()).status).toBe(200);
   expect(restored("workspace")).toEqual(Buffer.from(personas.workspace));
   expect(restored("demo")).toEqual(Buffer.from(personas.demo));
+  const receipts = broker.mock.calls.filter(([url]) => String(url).endsWith("/workspace-checkpoint"));
+  expect(receipts).toHaveLength(1);
+  expect(JSON.parse(String(receipts[0]?.[1]?.body))).toEqual({
+    uid: assignment.uid, gatewayId: "shared-one", assignmentEpoch: assignment.epoch,
+    observedAt: expect.any(Number),
+    commits: Object.fromEntries(["workspace", "demo"].map(name => [
+      name, git(path.join(remoteRoot, `${name}.git`), "rev-parse", "refs/heads/main"),
+    ])),
+  });
 });
 
 linuxTest("accepts a checkpoint already published in an archived remote and retains unpublished changes", async () => {
