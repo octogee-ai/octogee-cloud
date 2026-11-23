@@ -339,6 +339,31 @@ export function createNativeOldTargetPhysicalProvider(deps: {
   };
 }
 
+function isKubeRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function endpointTargetUid(endpoint: unknown): string | undefined {
+  requireExclusion(isKubeRecord(endpoint) && Array.isArray(endpoint.addresses) && endpoint.addresses.length > 0 &&
+    endpoint.addresses.every(address => typeof address === "string" && address.length > 0), "invalid retired target EndpointSlice endpoint");
+  const target = endpoint.targetRef;
+  if (target == null) return undefined;
+  requireExclusion(isKubeRecord(target) && (target.uid === undefined || typeof target.uid === "string"),
+    "invalid retired target EndpointSlice reference");
+  return target.uid;
+}
+
+function readEndpointSlice(slice: unknown) {
+  requireExclusion(isKubeRecord(slice) && isKubeRecord(slice.metadata) && typeof slice.metadata.name === "string" &&
+    slice.metadata.name.length > 0 && (slice.endpoints === null || Array.isArray(slice.endpoints)),
+  "invalid retired target EndpointSlice");
+  const labels = slice.metadata.labels;
+  requireExclusion(labels == null || isKubeRecord(labels), "invalid retired target EndpointSlice labels");
+  const service = labels?.["kubernetes.io/service-name"];
+  requireExclusion(service === undefined || typeof service === "string", "invalid retired target EndpointSlice service");
+  return { service, targetUids: (slice.endpoints ?? []).map(endpointTargetUid) };
+}
+
 export async function retiredTargetRoutesAbsent(
   deps: { namespace: string; runKubectl: SurgeKubectl }, gatewayId: string, podUid: string, assertCurrent: () => Promise<void>,
 ) {
@@ -353,12 +378,10 @@ export async function retiredTargetRoutesAbsent(
   await assertCurrent();
   const endpoints = await deps.runKubectl([...prefix, "endpointslices", "-o", "json"]);
   requireExclusion(endpoints.code === 0, "could not read retired target EndpointSlices");
-  const { items } = JSON.parse(endpoints.stdout) as { items: Array<{
-    metadata: { labels?: Record<string, string> }; endpoints: Array<{ targetRef?: { uid?: string } }>;
-  }> };
-  requireExclusion(Array.isArray(items), "invalid retired target EndpointSlice census");
-  const absent = !items.some(slice => services.has(slice.metadata.labels?.["kubernetes.io/service-name"] ?? "") ||
-    slice.endpoints.some(endpoint => endpoint.targetRef?.uid === podUid));
+  const census: unknown = JSON.parse(endpoints.stdout);
+  requireExclusion(isKubeRecord(census) && Array.isArray(census.items), "invalid retired target EndpointSlice census");
+  const absent = !census.items.map(readEndpointSlice).some(slice => services.has(slice.service ?? "") ||
+    slice.targetUids.includes(podUid));
   await assertCurrent();
   return absent;
 }

@@ -1,31 +1,61 @@
 import { isIPv4 } from "node:net";
+import { isDeepStrictEqual } from "node:util";
+import { createHeldReturnStoreCustodyVerifier } from "@octogee/core/agent-store-credentials";
 import type { PlatformStateStore } from "@octogee/core/platform-state";
 import type { GatewayVmClient } from "./compute-vm.js";
 import type { MigrationClient } from "@octogee/core/fleet-migration-client";
-import type { AgentStoreHandoffAuthority, PrepareMigrationAgentStores } from "../migration-agent-stores.js";
+import type { PrepareMigrationAgentStores } from "../migration-agent-stores.js";
 import type { CompensatingNativeReturnActions, CompensatingNativeReturnAuthority, CompensatingNativeReturnProviders } from "./compensating-native-return.js";
 
 export function createCompensatingNativeReturnActions(deps: {
   prepareSourceStores: PrepareMigrationAgentStores;
-  sourceClient(gatewayId: string, source: CompensatingNativeReturnAuthority["source"], authority: AgentStoreHandoffAuthority): Promise<MigrationClient>;
+  sourceClient(gatewayId: string, source: CompensatingNativeReturnAuthority["source"], prepareStores: PrepareMigrationAgentStores): Promise<Pick<MigrationClient, "resume" | "scheduler">>;
+  verifyRetiredSourceStores: CompensatingNativeReturnActions["prepareSourceStores"];
   verifySourceServing: CompensatingNativeReturnActions["verifySourceServing"];
 }): CompensatingNativeReturnActions {
-  const owned = (authority: CompensatingNativeReturnAuthority, assertCurrent: () => Promise<void>) =>
-    ({ expectedUserUid: authority.uid, assertCurrent });
+  function prepareStores(authority: CompensatingNativeReturnAuthority, assertCurrent: () => Promise<void>): PrepareMigrationAgentStores {
+    return async (gatewayId, slug) => {
+      if (gatewayId !== authority.sourceGatewayId || slug !== authority.slug) {
+        throw new Error("Compensating Native return store scope changed");
+      }
+      if (authority.retiredTarget) await deps.verifyRetiredSourceStores(authority, assertCurrent);
+      else await deps.prepareSourceStores(gatewayId, slug, { expectedUserUid: authority.uid, assertCurrent });
+    };
+  }
+
   return {
     prepareSourceStores: (authority, assertCurrent) =>
-      deps.prepareSourceStores(authority.sourceGatewayId, authority.slug, owned(authority, assertCurrent)),
+      prepareStores(authority, assertCurrent)(authority.sourceGatewayId, authority.slug),
     async resumeSourceScheduler(authority, assertCurrent) {
-      const client = await deps.sourceClient(authority.sourceGatewayId, authority.source, owned(authority, assertCurrent));
+      const client = await deps.sourceClient(authority.sourceGatewayId, authority.source, prepareStores(authority, assertCurrent));
       await assertCurrent();
       await client.scheduler({ gatewayId: authority.sourceGatewayId, migrationId: authority.schedulerMigrationId, slug: authority.slug, phase: "resume" });
     },
     async resumeSourceIngress(authority, assertCurrent) {
-      const client = await deps.sourceClient(authority.sourceGatewayId, authority.source, owned(authority, assertCurrent));
+      const client = await deps.sourceClient(authority.sourceGatewayId, authority.source, prepareStores(authority, assertCurrent));
       await assertCurrent();
       await client.resume({ gatewayId: authority.sourceGatewayId, migrationId: `mig-${authority.operationId}`, slug: authority.slug, requireExactAcknowledgement: true });
     },
     verifySourceServing: deps.verifySourceServing,
+  };
+}
+
+export function createRetiredNativeSourceStoreVerifier(
+  store: PlatformStateStore, adminDsn: string,
+): CompensatingNativeReturnActions["prepareSourceStores"] {
+  const verify = createHeldReturnStoreCustodyVerifier(adminDsn, { targetState: "retired" });
+  return async (authority, assertCurrent) => {
+    await assertCurrent();
+    const read = () => store.users.agentStores.list(authority.uid);
+    const before = await read();
+    if (!before.length || before.some(row => row.gatewayId !== authority.sourceGatewayId)) {
+      throw new Error("Compensating Native return original agent-store inventory is unavailable or changed");
+    }
+    await verify({ ...authority, schemas: before.map(row => row.schema) });
+    if (!isDeepStrictEqual(await read(), before)) {
+      throw new Error("Compensating Native return original agent-store inventory changed during verification");
+    }
+    await assertCurrent();
   };
 }
 

@@ -131,6 +131,7 @@ describe.skipIf(!dsn)("PostgreSQL agent store", () => {
     const schemas = [`held_agent_${suffix}`, `held_state_${suffix}`];
     const [agent, state] = schemas.map(pg.escapeIdentifier);
     const shared = pg.escapeIdentifier(roleFor("shared", scope));
+    const targetLogin = pg.escapeIdentifier(roleFor("gateway", `${scope}:${targetGatewayId}`));
     const id = pg.escapeIdentifier;
     const provision = createAgentStoreCredentialProvisioner(dsn!, dsn!);
     const source = new pg.Client({ connectionString: await provision({
@@ -141,7 +142,9 @@ describe.skipIf(!dsn)("PostgreSQL agent store", () => {
     }, async () => {}) });
     const admin = new pg.Client({ connectionString: dsn });
     const verify = createHeldReturnStoreCustodyVerifier(dsn!, { serializeCredentialChanges: true });
+    const verifyRetired = createHeldReturnStoreCustodyVerifier(dsn!, { targetState: "retired" });
     const authority = { sourceGatewayId, targetGatewayId, uid: user.uid, schemas };
+    let targetClosed = false;
     try {
       await Promise.all([source.connect(), target.connect(), admin.connect()]);
       await source.query(`CREATE SCHEMA ${agent}; CREATE SCHEMA ${state};
@@ -164,8 +167,22 @@ describe.skipIf(!dsn)("PostgreSQL agent store", () => {
       await expect(verify(authority)).rejects.toThrow(/destination exclusion/);
       await target.query("ROLLBACK");
       await expect(verify(authority)).resolves.toBeUndefined();
-    } finally {
+      await expect(verifyRetired(authority)).rejects.toThrow(/destination exclusion/);
+      await admin.query(`ALTER ROLE ${targetLogin} NOLOGIN`);
+      await expect(verifyRetired(authority)).rejects.toThrow(/destination exclusion/);
       await target.end();
+      targetClosed = true;
+      await expect(verifyRetired(authority)).resolves.toBeUndefined();
+      await expect(verifyRetired({ ...authority, targetGatewayId: `absent-${suffix}` })).resolves.toBeUndefined();
+      await expect(verify(authority)).rejects.toThrow(/destination exclusion/);
+      await admin.query("BEGIN; SELECT pg_advisory_xact_lock(hashtextextended('octogee-agent-store-credentials', 0))");
+      try {
+        await expect(verifyRetired(authority)).rejects.toThrow(/ownership is changing/);
+      } finally { await admin.query("ROLLBACK"); }
+      await admin.query(`GRANT INSERT (value) ON ${agent}.data TO ${shared}`);
+      await expect(verifyRetired(authority)).rejects.toThrow(/destination exclusion/);
+    } finally {
+      if (!targetClosed) await target.end();
       for (const schema of schemas) await admin.query(`DROP SCHEMA IF EXISTS ${id(schema)} CASCADE`);
       await Promise.all([source.end(), admin.end()]);
     }

@@ -3275,9 +3275,8 @@ function configureEnrolledNativeRecovery(deps: {
     source: {
       prepareSourceStores: prepareMigrationAgentStores, vm: createGatewayComputeClient(store, log),
       serving: { privateKey, port: Number(FLEET_CONTROLLER_PORT), edgePort: GATEWAY_EDGE_PORT },
-      async sourceClient(gatewayId, source, authority) {
-        return createMigrationClientUser(store, privateKey, log,
-          (id, slug) => prepareMigrationAgentStores(id, slug, authority))(id => {
+      async sourceClient(gatewayId, source, prepareStores) {
+        return createMigrationClientUser(store, privateKey, log, prepareStores)(id => {
             if (id !== gatewayId) throw new Error("compensating Native return source transport changed");
             return `http://${source.internalIp}:${FLEET_CONTROLLER_PORT}`;
           });

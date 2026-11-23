@@ -1,7 +1,7 @@
 import type { PlatformStateStore } from "@octogee/core/platform-state";
 import { createCompensatingSourceServingVerifier, type CompensatingSourceServingInputs } from "./compensating-native-source-serving.js";
 import { createCompensatingNativeReturn } from "./compensating-native-return.js";
-import { createCompensatingNativeOriginalObserver, createCompensatingNativeReturnActions } from "./compensating-native-return-actions.js";
+import { createCompensatingNativeOriginalObserver, createCompensatingNativeReturnActions, createRetiredNativeSourceStoreVerifier } from "./compensating-native-return-actions.js";
 import { createHeldSharedInertMaintenance } from "./held-shared-inert-maintenance.js";
 import { createNativeOldTargetPhysicalProvider, createNativeReturnTargetExclusion } from "./native-return-target-exclusion.js";
 
@@ -29,7 +29,7 @@ export type NativeRecoveryComposition = RetainedComposition | RetiredComposition
 
 type NativeRecoveryCompositionInput = NativeRecoveryComposition & {
   target: Omit<TargetDependencies, "namespace" | "store" | "readRetainedCompletion"> & Required<Pick<TargetDependencies, "verifyWholeRetirement">>;
-  source: Omit<ActionDependencies, "verifySourceServing"> & Pick<SourceDependencies, "vm"> & { serving: CompensatingSourceServingInputs };
+  source: Omit<ActionDependencies, "verifySourceServing" | "verifyRetiredSourceStores"> & Pick<SourceDependencies, "vm"> & { serving: CompensatingSourceServingInputs };
 };
 
 type NativeRecoveryOperatorActions = {
@@ -55,7 +55,8 @@ export function createNativeRecoveryComposition(
   });
   const compensation = createCompensatingNativeReturn({
     store, now, actions: createCompensatingNativeReturnActions({
-      ...enrolled.source, verifySourceServing: createCompensatingSourceServingVerifier({ ...enrolled.source.serving, store }),
+      ...enrolled.source, verifyRetiredSourceStores: createRetiredNativeSourceStoreVerifier(store, enrolled.target.agentStoreAdminDsn),
+      verifySourceServing: createCompensatingSourceServingVerifier({ ...enrolled.source.serving, store }),
     }),
     provider: {
       readOldTargetExclusion: target.readOldTargetExclusion,

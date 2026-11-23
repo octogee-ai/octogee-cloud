@@ -1,3 +1,4 @@
+import { createCompensatingNativeReturnActions } from "../lib/compensating-native-return-actions.js";
 import { buildOperationAuditIntent } from "@octogee/core/operation-audit";
 import { createNativeReturnTargetExclusion, retiredTargetRoutesAbsent } from "../lib/native-return-target-exclusion.js";
 import { createCompensatingNativeReturn } from "../lib/compensating-native-return.js";
@@ -892,6 +893,29 @@ async function retiredCompensationFixture() {
     worker: createCompensatingNativeReturn({ ...h.deps, provider }) };
 }
 
+it("uses read-only retired source-store verification for preparation and authenticated ingress resume", async () => {
+  const h = await retiredCompensationFixture();
+  const authority = await h.worker.requestRetired({ environment: "test", actor: h.request.actor, operationId });
+  const assertCurrent = vi.fn(async () => {});
+  const prepareSourceStores = vi.fn(async () => { throw new Error("nested credential lock"); });
+  const verifyRetiredSourceStores = vi.fn(async (_authority, check: () => Promise<void>) => check());
+  const deps = {
+    prepareSourceStores, verifyRetiredSourceStores, verifySourceServing: vi.fn(async () => {}),
+    sourceClient: async (_id: string, _source: typeof h.source, prepare: unknown) => ({
+      scheduler: vi.fn(),
+      async resume() {
+        if (typeof prepare !== "function") await prepareSourceStores();
+        else await prepare(sourceGatewayId, slug);
+      },
+    }),
+  };
+  const actions = createCompensatingNativeReturnActions(deps);
+  await actions.prepareSourceStores(authority, assertCurrent);
+  await actions.resumeSourceIngress(authority, assertCurrent);
+  expect(verifyRetiredSourceStores.mock.calls).toEqual([[authority, assertCurrent], [authority, assertCurrent]]);
+  expect(prepareSourceStores).not.toHaveBeenCalled();
+});
+
 it("compensates the same Native operation only after the enrolled old member is retired and keeps its permanent denial", async () => {
   const h = await retiredCompensationFixture();
   const input = { environment: "test" as const, actor: h.request.actor, operationId };
@@ -940,10 +964,19 @@ it("refuses Services and EndpointSlices bound to the retired target even when an
   }
   const assertCurrent = vi.fn(async () => {});
   const verify = (deps: ReturnType<typeof makeKube>) => retiredTargetRoutesAbsent(deps, targetGatewayId, "old-pod", assertCurrent);
+  const slice = (endpoints: unknown, labels: Record<string, string> = {}) => ({ metadata: { name: "test-slice", labels }, endpoints });
+  const gatewayService = { "kubernetes.io/service-name": `octogee-gateway-${targetGatewayId}` };
+  const endpoint = (uid: string) => ({ addresses: ["10.0.0.1"], targetRef: { uid } });
   await expect(verify(makeKube(`service/gateway-edge-${targetGatewayId}`, []))).resolves.toBe(false);
-  await expect(verify(makeKube("", [{ metadata: { labels: { "kubernetes.io/service-name": `octogee-gateway-${targetGatewayId}` } }, endpoints: [] }]))).resolves.toBe(false);
-  await expect(verify(makeKube("", [{ metadata: {}, endpoints: [{ targetRef: { uid: "old-pod" } }] }]))).resolves.toBe(false);
-  await expect(verify(makeKube("", [{ metadata: {}, endpoints: [{ targetRef: { uid: "unrelated" } }] }]))).resolves.toBe(true);
+  await expect(verify(makeKube("", [slice([], gatewayService)]))).resolves.toBe(false);
+  await expect(verify(makeKube("", [slice(null, gatewayService)]))).resolves.toBe(false);
+  await expect(verify(makeKube("", [slice(null)]))).resolves.toBe(true);
+  await expect(verify(makeKube("", [slice(null), slice([endpoint("old-pod")])]))).resolves.toBe(false);
+  await expect(verify(makeKube("", [slice([endpoint("unrelated")])]))).resolves.toBe(true);
+  for (const malformed of [null, { metadata: { name: "test" } }, slice({}), slice([null]), slice([{}]),
+    slice([{ ...endpoint("unrelated"), targetRef: { uid: 12 } }])]) {
+    await expect(verify(makeKube("", [malformed]))).rejects.toThrow(/invalid retired target EndpointSlice/);
+  }
 });
 
 it("admits only with independent durable exclusion and preserves the untouched journal on refusal", async () => {
