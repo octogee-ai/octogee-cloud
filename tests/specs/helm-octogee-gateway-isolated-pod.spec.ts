@@ -244,10 +244,15 @@ describe("charts/octogee-gateway/ — isolated gateway as a Kubernetes pod", () 
     expect(envOf(container(deployment, "gateway-edge"))).toHaveProperty("GATEWAY_EPHEMERAL_HOME", "true");
     expect(envOf(gateway)).not.toHaveProperty("GATEWAY_COMPUTER_DESKTOP");
     expect(gateway.lifecycle?.preStop?.exec?.command?.join(" ")).toContain("/entrypoints/prestop-flush.ts");
+    expect(gateway.lifecycle?.preStop?.exec?.command?.join(" ")).toContain("touch /home/node/.openclaw/prestop-finished");
+    expect(container(deployment, "gateway-edge").lifecycle?.preStop?.exec?.command?.join(" ")).toContain(
+      "while [ ! -f /home/node/.openclaw/prestop-finished ]",
+    );
   });
 
   it("tells the gateway and its edge that they run in the cluster with no desktop", () => {
     const { deployment } = renderDeployment();
+    expect(container(deployment, "gateway-edge").lifecycle?.preStop).toBeUndefined();
     for (const name of ["gateway", "gateway-edge"]) {
       const env = envOf(container(deployment, name));
       expect(env.GATEWAY_RUNTIME_KIND, name).toBe("cluster");

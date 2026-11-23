@@ -239,6 +239,11 @@ describe("fleet-controller entrypoint config", () => {
     }, "owner-uid")).rejects.toThrow("missing canonical assignment for owner-uid");
   });
 
+  it("blocks the reconciler while the assigned owner is held for an explicit restore", async () => {
+    const assignmentRoster = async () => [{ uid: "returning", state: "serving" as const, epoch: 3, restorePending: true as const }];
+    await expect(readUserEnsureAdmission({ assignmentRoster }, "returning")).resolves.toBe(false);
+  });
+
   it("normalizes local gateways and reads the dedicated user slug from the claim", () => {
     expect(resolveFleetControllerEntrypointConfig(withUserClaim({
       BUILD_SHA: "abc123",

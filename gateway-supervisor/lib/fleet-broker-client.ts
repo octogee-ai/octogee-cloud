@@ -460,11 +460,12 @@ function assignmentRosterFromResponse(data: unknown): FleetBrokerAssignmentRoste
     const row = value as Partial<FleetBrokerAssignmentRosterEntry> | null;
     if (!row || typeof row.uid !== "string" || !row.uid || seen.has(row.uid) ||
         !isAssignmentState(row.state) || typeof row.epoch !== "number" ||
-        !Number.isSafeInteger(row.epoch) || row.epoch < 0) {
+        !Number.isSafeInteger(row.epoch) || row.epoch < 0 ||
+        (row.restorePending !== undefined && row.restorePending !== true)) {
       throw new Error("fleet-broker invalid assignment roster");
     }
     seen.add(row.uid);
-    return { uid: row.uid, state: row.state, epoch: row.epoch };
+    return { uid: row.uid, state: row.state, epoch: row.epoch, ...(row.restorePending ? { restorePending: true } : {}) };
   });
 }
 

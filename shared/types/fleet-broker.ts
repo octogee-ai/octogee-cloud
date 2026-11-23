@@ -36,6 +36,7 @@ export interface FleetBrokerAssignmentRosterEntry {
   uid: string;
   state: AssignmentState;
   epoch: number;
+  restorePending?: true;
 }
 
 export interface FleetBrokerConfiguredUserProjectCredential {

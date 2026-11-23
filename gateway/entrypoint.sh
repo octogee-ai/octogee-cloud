@@ -23,6 +23,9 @@ fi
 # OPENCLAW_GATEWAY_TOKEN (L57) and GATEWAY_ID (L92).
 export OPENCLAW_DIR=/home/node/.openclaw
 export OPENCLAW_STATE_DIR="$OPENCLAW_DIR"
+if [ "${GATEWAY_EPHEMERAL_HOME:-}" = "true" ]; then
+  rm -f "$OPENCLAW_DIR/prestop-finished"
+fi
 TEMPLATES_DIR="${OCTOGEE_TEMPLATES_DIR:-/octogee/templates}"
 TSX=/octogee/scripts/node_modules/.bin/tsx
 case "$GATEWAY_CLASS_EFFECTIVE" in

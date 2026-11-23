@@ -35,7 +35,7 @@ export function desiredUsers(
       uid: user.uid,
       fingerprint: snapshotConfigFingerprint(user),
       lane: user.status === "complete" ? "move" : "create",
-      ensureAllowed: assignment.state !== "quiescing",
+      ensureAllowed: assignment.state !== "quiescing" && !assignment.restorePending && !user.restoreAuthority,
     });
   }
   return map;

@@ -247,7 +247,7 @@ export async function readUserEnsureAdmission(
 ): Promise<boolean> {
   const assignment = (await brokerClient.assignmentRoster()).find((row) => row.uid === uid);
   if (!assignment) throw new Error(`missing canonical assignment for ${uid}`);
-  return assignment.state !== "quiescing";
+  return assignment.state !== "quiescing" && !assignment.restorePending;
 }
 
 export function createSystemConfigMutationGatedRpc(

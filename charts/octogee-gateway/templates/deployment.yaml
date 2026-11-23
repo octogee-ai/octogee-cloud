@@ -320,6 +320,9 @@ spec:
                     exec > /proc/1/fd/1 2> /proc/1/fd/2
                     timeout {{ .Values.preStopFlush.timeoutSeconds | default 10 }}s /octogee/scripts/node_modules/.bin/tsx /octogee/scripts/entrypoints/prestop-flush.ts
                     status=$?
+                    {{- if $ephemeralHomeGiB }}
+                    touch /home/node/.openclaw/prestop-finished
+                    {{- end }}
                     if [ "$status" -ne 0 ]; then
                       echo "🔴 [prestop-flush] failed exitCode=$status" >&2
                     fi
@@ -652,6 +655,20 @@ spec:
         # API, the chat WS surface, and /metrics.
         - name: gateway-edge
           image: "{{ required "gatewayEdge.image.repository is required" .Values.gatewayEdge.image.repository }}:{{ .Values.gatewayEdge.image.tag | default .Values.imageTag }}"
+          {{- if and $ephemeralHomeGiB .Values.preStopFlush.enabled }}
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - sh
+                  - -c
+                  - |
+                    remaining={{ add (.Values.preStopFlush.timeoutSeconds | default 10) 2 }}
+                    while [ ! -f /home/node/.openclaw/prestop-finished ] && [ "$remaining" -gt 0 ]; do
+                      sleep 1
+                      remaining=$((remaining - 1))
+                    done
+          {{- end }}
           ports:
             - containerPort: {{ .Values.gatewayEdge.port }}
               name: gateway-edge
