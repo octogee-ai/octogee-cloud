@@ -947,13 +947,15 @@ it.each(["fresh", "released", "rearmed", "claimed", "target-mounted", "target-st
   }
   if (scenario !== "fresh" && scenario !== "released") {
     const next = "shared-new";
-    const initial = h.docs.get(operationPath);
-    h.docs.set(operationPath, { ...initial, status: "pending", startedAt: null, completedAt: null, output: undefined,
+    const history = finished?.attemptHistory;
+    const latestAttempt = history?.at(-1);
+    if (!finished || !history || !latestAttempt) throw new Error("Missing terminal compensation fixture");
+    h.docs.set(operationPath, { ...h.docs.get(operationPath), status: "pending", startedAt: null, completedAt: null, output: undefined,
       rolledBack: undefined, error: undefined, expireAt: undefined, lastProgressAt: undefined, steps: [],
       ...(scenario === "claimed" ? { status: "running", startedAt: Date.now() } : {}),
-      ...(scenario === "changed-attempt" ? { attemptHistory: [...initial.attemptHistory.slice(0, -1),
-        { ...initial.attemptHistory.at(-1), error: "different result" }] } : {}),
-      input: { ...initial.input, toGatewayId: next }, gatewayId: next });
+      ...(scenario === "changed-attempt" ? { attemptHistory: [...history.slice(0, -1),
+        { ...latestAttempt, error: "different result" }] } : {}),
+      input: { ...finished.input, toGatewayId: next }, gatewayId: next });
     h.docs.set(`gateways/${next}`, { gatewayId: next, gatewayClass: "shared", desiredStatus: "running",
       liveRelease: 1, latestRelease: 1, desiredRelease: 1 });
     h.docs.set(`glmGateways/${next}`, { docKind: "runtime", gatewayId: next, runtime: "cluster", release: 1, lifecycle: "serving",
