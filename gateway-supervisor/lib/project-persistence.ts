@@ -48,17 +48,30 @@ export function startProjectAutosave(deps: {
   save: () => Promise<void>;
   log: (message: string) => void;
   startImmediately?: boolean;
-}, intervalMs = 30_000): () => void {
+}, intervalMs = 30_000) {
+  let closed = false;
+  let pending = false;
   let running = false;
   async function saveOnce() {
+    if (closed) return;
+    pending = true;
     if (running) return;
     running = true;
-    try { await deps.save(); }
-    catch (error) { deps.log(`[project-autosave] ${String(error)}; local work retained`); }
-    finally { running = false; }
+    try {
+      while (pending && !closed) {
+        pending = false;
+        try { await deps.save(); }
+        catch (error) { deps.log(`[project-autosave] ${String(error)}; local work retained`); }
+      }
+    } finally {
+      running = false;
+    }
   }
   const timer = setInterval(saveOnce, intervalMs);
   timer.unref();
   if (deps.startImmediately) void saveOnce();
-  return () => clearInterval(timer);
+  return {
+    wake: () => { void saveOnce(); },
+    close: () => { closed = true; clearInterval(timer); },
+  };
 }

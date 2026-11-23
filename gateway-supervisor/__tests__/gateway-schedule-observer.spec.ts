@@ -22,7 +22,7 @@ it("refreshes on connect, publishes changes and removals per owner, and never mu
     snapshot: { version: 1, operationId, agentIds, jobs: jobs.filter(job => agentIds.includes(job.agentId)), scratch: [] },
   }));
   const recordScheduleCheckpoint = vi.fn(async () => {});
-  const stop = startGatewayScheduleObserver({
+  const observer = startGatewayScheduleObserver({
     rpc: {
       schedulerMigration, watchScheduleInventory,
       configGet: async () => ({ config: { agents: { list: [{ id: alice }, { id: bob }] } }, hash: "hash", appliedConfigHash: "hash", configRevisionHash: "hash" }),
@@ -48,8 +48,11 @@ it("refreshes on connect, publishes changes and removals per owner, and never mu
     expect(onConfigChange).toHaveBeenCalledTimes(1);
     notify?.("config.changed");
     expect(onConfigChange).toHaveBeenCalledTimes(2);
+    await vi.waitFor(() => expect(recordScheduleCheckpoint).toHaveBeenCalledTimes(6));
+    observer.wake();
+    await vi.waitFor(() => expect(recordScheduleCheckpoint).toHaveBeenCalledTimes(8));
     expect(new Set(schedulerMigration.mock.calls.map(([request]) => request.phase))).toEqual(new Set(["checkpoint"]));
   } finally {
-    stop();
+    observer.close();
   }
 });

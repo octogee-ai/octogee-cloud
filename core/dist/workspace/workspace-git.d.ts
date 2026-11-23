@@ -179,6 +179,7 @@ export declare function gitCheckout(customerDir: string, options: {
 export declare function gitPush(customerDir: string, options?: {
     branch?: string;
     setUpstream?: boolean;
+    commit?: string;
 }): Promise<{
     ok: true;
 } | {

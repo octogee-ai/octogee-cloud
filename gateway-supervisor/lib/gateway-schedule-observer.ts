@@ -63,7 +63,7 @@ export async function checkpointGatewaySchedules(
   }
 }
 
-export function startGatewayScheduleObserver(input: CheckpointInput, auditMs = 30_000): () => void {
+export function startGatewayScheduleObserver(input: CheckpointInput, auditMs = 30_000) {
   const subscribeInventory = input.rpc.watchScheduleInventory;
   if (!subscribeInventory) throw new Error("Schedule inventory notifications are unavailable");
   const watch = subscribeInventory.bind(input.rpc);
@@ -107,5 +107,8 @@ export function startGatewayScheduleObserver(input: CheckpointInput, auditMs = 3
   void subscribe().catch(error => {
     if (!signal.aborted) input.log(`[gateway-schedules] observer stopped: ${error instanceof Error ? error.message : String(error)}`);
   });
-  return () => { clearInterval(audit); control.abort(); };
+  return {
+    wake: () => notify(),
+    close: () => { clearInterval(audit); control.abort(); },
+  };
 }

@@ -402,7 +402,9 @@ export async function commitAndPushWorkspace(
       };
     }
     await options.assertCurrent?.();
-    const pushRes = await deps.gitPush(customerDir, prepareRes.target);
+    const head = await deps.gitHeadCommit(customerDir);
+    if (!head.ok) return head;
+    const pushRes = await deps.gitPush(customerDir, { ...prepareRes.target, commit: head.commit });
     if (!pushRes.ok) {
       return {
         ok: true,
@@ -414,8 +416,6 @@ export async function commitAndPushWorkspace(
         },
       };
     }
-    const head = await deps.gitHeadCommit(customerDir);
-    if (!head.ok) return head;
     return {
       ok: true,
       result: { committed, pushed: true, nothingToCommit: !committed, commit: head.commit },
@@ -493,7 +493,7 @@ async function assertCheckpointBranch(cwd: string, branch: string): Promise<{ ok
 
 export async function gitPush(
   customerDir: string,
-  options: { branch?: string; setUpstream?: boolean } = {},
+  options: { branch?: string; setUpstream?: boolean; commit?: string } = {},
 ): Promise<{ ok: true } | { ok: false; error: WorkspaceGitError }> {
   if (isTrustedGithubUserCheckout(customerDir)) {
     return { ok: false, error: { code: "INTERNAL", message: GITHUB_PUBLISH_REQUIRED } };
@@ -505,39 +505,54 @@ export async function gitPush(
     }
     const checked = await assertCheckpointBranch(customerDir, checkpoint);
     if (!checked.ok) return checked;
-    return pushWorkspaceBranch(customerDir, { branch: checkpoint });
+    return pushWorkspaceBranch(customerDir, { branch: checkpoint, ...(options.commit ? { commit: options.commit } : {}) });
   }
   return pushWorkspaceBranch(customerDir, options);
 }
 
 async function pushWorkspaceBranch(
   customerDir: string,
-  options: { branch?: string; setUpstream?: boolean },
+  options: { branch?: string; setUpstream?: boolean; commit?: string },
 ): Promise<{ ok: true } | GitFailure> {
-  if (options.branch && !options.setUpstream) {
-    const head = await runGit(customerDir, ["rev-parse", "HEAD"]);
-    if (!head.ok) return head;
-    const remote = await runGit(customerDir, ["ls-remote", END_OF_OPTIONS, "origin", `refs/heads/${options.branch}`], {
-      timeoutMs: GIT_PUSH_TIMEOUT_MS,
-    });
-    if (!remote.ok) return remote;
-    if (/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/u.test(head.stdout.trim()) &&
-        remote.stdout.trim() === `${head.stdout.trim()}\trefs/heads/${options.branch}`) return { ok: true };
+  const { branch, commit, setUpstream } = options;
+  if (commit !== undefined && (!branch || !FULL_COMMIT_HASH.test(commit))) {
+    return { ok: false, error: { code: "INTERNAL", message: "pinned push requires a branch and a full commit hash" } };
   }
-  const args = options.branch
-    ? [
-        "push",
-        ...(options.setUpstream ? ["--set-upstream"] : []),
-        END_OF_OPTIONS,
-        "origin",
-        `HEAD:refs/heads/${options.branch}`,
-      ]
+  if (branch && !setUpstream) return pushTrackedWorkspaceBranch(customerDir, branch, commit);
+  const args = branch
+    ? ["push", "--set-upstream", END_OF_OPTIONS, "origin", `HEAD:refs/heads/${branch}`]
     : ["push", END_OF_OPTIONS];
-  const r = await runGit(customerDir, args, {
+  const pushed = await runGit(customerDir, args, {
     timeoutMs: GIT_PUSH_TIMEOUT_MS,
   });
-  if (!r.ok) return r;
+  if (!pushed.ok) return pushed;
+  if (branch && commit) {
+    const remote = await readRemoteWorkspaceBranch(customerDir, branch);
+    if (!remote.ok) return remote;
+    if (remote.stdout.trim() !== `${commit}\trefs/heads/${branch}`) {
+      return { ok: false, error: { code: "INTERNAL", message: "initial push did not publish the pinned commit" } };
+    }
+  }
   return { ok: true };
+}
+
+function readRemoteWorkspaceBranch(customerDir: string, branch: string) {
+  return runGit(customerDir, ["ls-remote", END_OF_OPTIONS, "origin", `refs/heads/${branch}`], {
+    timeoutMs: GIT_PUSH_TIMEOUT_MS,
+  });
+}
+
+async function pushTrackedWorkspaceBranch(customerDir: string, branch: string, commit?: string): Promise<{ ok: true } | GitFailure> {
+  const head = commit === undefined ? await runGit(customerDir, ["rev-parse", "HEAD"]) : { ok: true as const, stdout: commit };
+  if (!head.ok) return head;
+  const remote = await readRemoteWorkspaceBranch(customerDir, branch);
+  if (!remote.ok) return remote;
+  const sha = head.stdout.trim();
+  if (/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/u.test(sha) && remote.stdout.trim() === `${sha}\trefs/heads/${branch}`) return { ok: true };
+  const pushed = await runGit(customerDir, ["push", END_OF_OPTIONS, "origin", `${commit ?? "HEAD"}:refs/heads/${branch}`], {
+    timeoutMs: GIT_PUSH_TIMEOUT_MS,
+  });
+  return pushed.ok ? { ok: true } : pushed;
 }
 
 interface WorkspacePushTarget {

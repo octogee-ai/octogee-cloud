@@ -854,6 +854,28 @@ try { git(repo, ["remote", "remove", "origin"]); } catch { /* ok */ }
 });
 
 describe("commitAndPushWorkspace remote convergence", () => {
+  it("publishes the captured commit even if the local branch advances before push", async () => {
+    const checkout = await makeRepo();
+    const remote = await fs.mkdtemp(path.join(os.tmpdir(), "wspush-remote-"));
+    const ssh = path.join(remote, "test-ssh");
+    const previousSsh = process.env.GIT_SSH;
+    try {
+      git(remote, ["init", "--bare", "--initial-branch=main"]);
+      await fs.writeFile(ssh, '#!/bin/sh\nshift\nexec /bin/sh -c "$1"\n', { mode: 0o755 });
+      process.env.GIT_SSH = ssh;
+      git(checkout, ["remote", "add", "origin", `ssh://git@localhost${remote}`]);
+      const accepted = gitOutput(checkout, ["rev-parse", "HEAD"]);
+      git(checkout, ["commit", "--allow-empty", "-m", "concurrent local update"]);
+      expect(await gitPush(checkout, { branch: "main", commit: accepted })).toEqual({ ok: true });
+      expect(gitOutput(remote, ["rev-parse", "main"])).toBe(accepted);
+      expect(gitOutput(checkout, ["rev-parse", "HEAD"])).not.toBe(accepted);
+    } finally {
+      if (previousSsh === undefined) delete process.env.GIT_SSH;
+      else process.env.GIT_SSH = previousSsh;
+      await Promise.all([checkout, remote].map(directory => fs.rm(directory, { recursive: true, force: true })));
+    }
+  });
+
   it("converges Canvas races, publishes a new branch, and aborts conflicts safely", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "ws-converge-"));
     const remote = path.join(root, "remote.git");
