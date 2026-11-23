@@ -16,6 +16,14 @@ interface AssignedAnchorRequest extends PodIdentity {
   boundOwnerUid?: string | undefined;
   requestedUid?: unknown;
   requestedEpoch?: unknown;
+  sourceMigrationId?: string | undefined;
+}
+
+interface SourceMigrationClaim {
+  operationId: string;
+  claimStartedAt: number;
+  targetGatewayId: string;
+  release: number;
 }
 
 export interface AssignedIsolatedAgentAnchorScope {
@@ -25,6 +33,7 @@ export interface AssignedIsolatedAgentAnchorScope {
   slug: string;
   uid: string;
   ownerAssignmentEpoch: number;
+  sourceMigration?: SourceMigrationClaim;
 }
 
 function freshSinglePodObservation(observation: GatewayKubernetesObservation, now: number): boolean {
@@ -57,9 +66,9 @@ function configuredAnchorOwner(root: GatewayRoot | null, input: AssignedAnchorRe
   return uid;
 }
 
-function isServingOwner(user: Stored<PlatformUserRecord> | null, input: AssignedAnchorRequest): boolean {
+function ownerHasInteractiveAccess(user: Stored<PlatformUserRecord> | null, input: AssignedAnchorRequest): user is Stored<PlatformUserRecord> {
   return user !== null && user.slug === input.slug && user.gateway?.gatewayId === input.gatewayId &&
-    user.fences.migration === undefined && !isolatedRuntimeMutationFenced(user) &&
+    !isolatedRuntimeMutationFenced(user) &&
     accountAllowsInteractiveAccess({ accountLifecycle: user.accountLifecycle });
 }
 
@@ -69,9 +78,58 @@ function currentAnchorAssignmentEpoch(
   uid: string,
 ): number | null {
   if (!assignment || assignment.uid !== uid || assignment.slug !== input.slug || assignment.gatewayId !== input.gatewayId ||
-      assignment.state !== "serving" || !Number.isSafeInteger(assignment.epoch) || assignment.epoch < 0 ||
+      assignment.state !== (input.sourceMigrationId === undefined ? "serving" : "quiescing") ||
+      !Number.isSafeInteger(assignment.epoch) || assignment.epoch < 0 ||
       (input.requestedEpoch !== undefined && input.requestedEpoch !== assignment.epoch)) return null;
   return assignment.epoch;
+}
+
+function activeSourceClaim(
+  operation: Awaited<ReturnType<PlatformStateRepositories["journal"]["operations"]["get"]>>,
+  { gatewayId, slug }: AssignedAnchorRequest,
+  uid: string,
+  now: number,
+): operation is NonNullable<typeof operation> & { startedAt: number } {
+  return operation?.kind === "migrate-user" && operation.status === "running" && operation.completedAt === null &&
+    operation.startedAt !== null && Number.isSafeInteger(operation.startedAt) && operation.startedAt > 0 && operation.startedAt <= now &&
+    operation.cancellationRequestedAt === undefined && operation.cutoverCommittedAt === undefined &&
+    operation.input.fromGatewayId === gatewayId && operation.input.uid === uid &&
+    (operation.input.userSlug === undefined || operation.input.userSlug === slug);
+}
+
+interface SourceMigrationContext {
+  root: GatewayRoot;
+  user: Stored<PlatformUserRecord>;
+  assignment: GatewayAssignment;
+  runtime: FleetRegistryRecord | null;
+}
+
+function sourceMigrationOperationId(input: AssignedAnchorRequest, context: SourceMigrationContext): string | null {
+  const { root, user, assignment, runtime } = context;
+  const id = input.sourceMigrationId;
+  if (!id || !/^mig-[a-zA-Z0-9_-]+$/.test(id) || runtime?.lifecycle !== "serving" ||
+      root.liveRelease !== root.desiredRelease || root.runtimeRestartFence !== undefined) return null;
+  const operationId = id.slice(4);
+  const marker = user.fences.migration;
+  return assignment.updatedByOperationId === operationId && marker?.operationId === operationId &&
+    marker.state === "moving" ? operationId : null;
+}
+
+async function readSourceMigrationClaim(
+  store: PlatformStateRepositories, input: AssignedAnchorRequest, context: SourceMigrationContext, now: number,
+): Promise<SourceMigrationClaim | null> {
+  const operationId = sourceMigrationOperationId(input, context);
+  if (!operationId) return null;
+  const { root, user } = context;
+  const operation = await store.journal.operations.get(operationId);
+  if (!activeSourceClaim(operation, input, user.uid, now)) return null;
+  const targetGatewayId = operation.input.toGatewayId;
+  if (typeof targetGatewayId !== "string" || !targetGatewayId || targetGatewayId === root.gatewayId) return null;
+  const [target, targetAssignment] = await Promise.all([
+    store.gateways.roots.get(targetGatewayId), store.gateways.assignments.get(targetGatewayId, user.uid),
+  ]);
+  if (target?.gatewayClass !== "shared" || target.desiredStatus !== "running" || target.retirementClaim != null || targetAssignment !== null) return null;
+  return { operationId, claimStartedAt: operation.startedAt, targetGatewayId, release: root.desiredRelease };
 }
 
 export async function readAssignedIsolatedAgentAnchorScope(
@@ -90,8 +148,12 @@ export async function readAssignedIsolatedAgentAnchorScope(
     store.fleetRegistry.get(gatewayId),
   ]);
   const epoch = currentAnchorAssignmentEpoch(assignment, input, uid);
-  if (!isServingOwner(user, input) || epoch === null || !observedOwnerPod(runtime, root.desiredRelease, input, now)) return null;
-  return { gatewayId, podName, podUid, slug, uid, ownerAssignmentEpoch: epoch };
+  if (!ownerHasInteractiveAccess(user, input) || !assignment || epoch === null ||
+      !observedOwnerPod(runtime, root.desiredRelease, input, now)) return null;
+  const scope = { gatewayId, podName, podUid, slug, uid, ownerAssignmentEpoch: epoch };
+  if (input.sourceMigrationId === undefined) return user.fences.migration === undefined ? scope : null;
+  const sourceMigration = await readSourceMigrationClaim(store, input, { root, user, assignment, runtime }, now);
+  return sourceMigration ? { ...scope, sourceMigration } : null;
 }
 
 export async function assignedIsolatedAgentAnchorScopeIsCurrent(
@@ -99,7 +161,14 @@ export async function assignedIsolatedAgentAnchorScopeIsCurrent(
   scope: AssignedIsolatedAgentAnchorScope,
   now: number,
 ): Promise<boolean> {
-  return await readAssignedIsolatedAgentAnchorScope(store, {
+  const captured = scope.sourceMigration;
+  const current = await readAssignedIsolatedAgentAnchorScope(store, {
     ...scope, requestedUid: scope.uid, requestedEpoch: scope.ownerAssignmentEpoch,
-  }, now) !== null;
+    sourceMigrationId: captured && `mig-${captured.operationId}`,
+  }, now);
+  if (!current) return false;
+  if (!captured) return current.sourceMigration === undefined;
+  const active = current.sourceMigration;
+  return active?.operationId === captured.operationId && active.claimStartedAt === captured.claimStartedAt &&
+    active.targetGatewayId === captured.targetGatewayId && active.release === captured.release;
 }

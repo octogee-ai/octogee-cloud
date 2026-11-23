@@ -2079,6 +2079,23 @@ async function requireNonMigratingIsolatedAgentAnchorScope(
   return scope;
 }
 
+async function requireAssignedIsolatedMigrationAnchors(
+  store: PlatformStateStore, req: Request, res: Response, { bound, slug }: { bound: GatewayBinding; slug: string }, now: number,
+): Promise<AssignedIsolatedAgentAnchorScope | null> {
+  const migrationId: unknown = req.body.migrationId;
+  if (typeof migrationId !== "string" || req.body.migration !== undefined) {
+    res.status(403).json(FORBIDDEN);
+    return null;
+  }
+  const scope = await store.transaction({ label: "fleet-broker.assigned-isolated-anchor-source", readOnly: true }, tx =>
+    readAssignedIsolatedAgentAnchorScope(tx, {
+      gatewayId: bound.gatewayId, podName: bound.podName, podUid: bound.podUid, boundOwnerUid: bound.ownerUid, slug,
+      requestedUid: req.body.uid, requestedEpoch: req.body.assignmentEpoch, sourceMigrationId: migrationId,
+    }, now));
+  if (!scope) res.status(403).json(FORBIDDEN);
+  return scope;
+}
+
 function agentAnchorAssignment(
   scope: Pick<SharedAgentAnchorScope, "gatewayId" | "uid" | "slug">,
   assignment: GatewayAssignment | null,
@@ -2112,7 +2129,11 @@ async function requireAgentAnchorScope(store: PlatformStateStore, req: Request, 
   if (projectGatewayDesiredRootForGateway(gateway, bound.gatewayId)?.gatewayClass !== "shared") {
     if (!migrationAnchorRequest(req)) return requireNonMigratingIsolatedAgentAnchorScope(store, req, res, { bound, gateway, slug: request.slug }, now);
     if (!req.path.endsWith("/read")) { res.status(403).json(FORBIDDEN); return null; }
-    if (await migrationSourceGatewayId(store, req) === bound.gatewayId) return requireConfiguredIsolatedRuntimeState(store, req, res);
+    if (await migrationSourceGatewayId(store, req) === bound.gatewayId) {
+      return gateway?.allocation != null
+        ? requireConfiguredIsolatedRuntimeState(store, req, res)
+        : requireAssignedIsolatedMigrationAnchors(store, req, res, { bound, slug: request.slug }, now);
+    }
     return requireMigratingAgentAnchorScope(store, req, res, bound, request.slug);
   }
   if (migrationAnchorRequest(req)) {
@@ -2568,6 +2589,10 @@ function installAgentAnchorRoutes(router: Router, deps: ResolvedFleetBrokerRoute
         .map((record) => recordedAgentAnchor(scope, record))
         .filter((anchor): anchor is FleetBrokerAgentAnchor => anchor !== null)
         .sort((left, right) => left.agentId.localeCompare(right.agentId));
+      if ("ownerAssignmentEpoch" in scope && scope.sourceMigration) {
+        res.json({ anchors } satisfies FleetBrokerAgentAnchors);
+        return;
+      }
       const stateRecord = records.find((record) => record.kind === GATEWAY_STATE_KIND);
       const state = stateRecord ? recordedGatewayStateAnchor(scope, stateRecord) : null;
       let auxiliary: FleetBrokerAuxiliaryAnchor[];
