@@ -97,7 +97,9 @@ sees client addresses.
 
 The chart renders the Gateway with one HTTPS listener on port 443, an
 HTTPRoute, and a Service named `<name>-backend` that selects the platform API
-pods. A `GCPBackendPolicy` applies the Cloud Armor policy to that Service and a
+pods. A `GCPBackendPolicy` applies the Cloud Armor policy to that Service and
+logs every request on its backend service, as GKE Ingress does by default, so
+Cloud Armor decisions appear in the load balancer logs. A
 `HealthCheckPolicy` checks `/health` on the serving port. The Service is
 separate from `octogee-api` so these policies never meet the edge Ingress
 `BackendConfig`. There is no HTTP listener; serve the domain over HTTPS only,
