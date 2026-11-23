@@ -1,6 +1,6 @@
 import { GATEWAY_UNREACHABLE_AFTER_MS } from "@octogee/shared/types/fleet-controller";
 import { workspaceDefaultAgentId } from "@octogee/shared/types/identity";
-import { excludedDisklessWriter } from "./isolated-gateway-lifecycle/ephemeral-recovery-state.js";
+import { ephemeralSourceMatches, excludedDisklessWriter } from "./isolated-gateway-lifecycle/ephemeral-recovery-state.js";
 import { parseWorkspaceCheckpoint } from "./gateway-schedule-checkpoint.js";
 import { readSharedGatewayAutoscalingConfigInStore, readSharedGatewayPoolConfigInStore } from "./shared-gateway-pool-read.js";
 import { isDeepStrictEqual } from "node:util";
@@ -693,9 +693,37 @@ async function commitCutoverInStore(deps, params, now, current) {
                 return;
         }
         const activationSourceMove = await userActivationSourceCutoverMove({ tx, params, user, prior, targetRoot });
+        await seedDisklessActivationCheckpoints(tx, params, user, prior, targetRoot);
         await updateUserMirror(tx, params, user, targetRoot, activationSourceMove);
         await updateAssignment(tx, params, prior, now);
     });
+}
+function disklessActivationMatches(params, user, prior, target) {
+    const lease = user?.activationLease;
+    if (!lease || !ephemeralSourceMatches(target, params.uid))
+        return false;
+    return [
+        params.flipMirror, params.automatic === true, params.assignment !== null,
+        params.fromGatewayId !== params.toGatewayId, user?.slug === params.slug,
+        lease.status === "activating", prior.assignment?.state === "quiescing",
+        lease.sourceGatewayId === params.fromGatewayId, lease.sourceAssignmentEpoch === prior.epoch,
+        lease.targetGatewayId === params.toGatewayId, target.builderSlug === params.slug,
+        target.allocation?.leaseId === lease.leaseId, target.allocation?.generation === lease.generation,
+    ].every(Boolean);
+}
+async function seedDisklessActivationCheckpoints(tx, params, user, prior, target) {
+    if (!disklessActivationMatches(params, user, prior, target))
+        return;
+    const { workspaceCheckpoint, scheduleCheckpoint } = user;
+    const isSourceCheckpoint = (checkpoint) => checkpoint.gatewayId === params.fromGatewayId && checkpoint.assignmentEpoch === prior.epoch;
+    const binding = { gatewayId: params.toGatewayId, assignmentEpoch: prior.epoch + 1 };
+    const workspace = workspaceCheckpoint && isSourceCheckpoint(workspaceCheckpoint)
+        ? { workspaceCheckpoint: { ...workspaceCheckpoint, ...binding } } : {};
+    const schedule = scheduleCheckpoint && isSourceCheckpoint(scheduleCheckpoint)
+        ? { scheduleCheckpoint: { ...scheduleCheckpoint, ...binding } } : {};
+    if (Object.keys(workspace).length || Object.keys(schedule).length) {
+        await tx.users.records.patch(user.uid, { ...workspace, ...schedule }, { revision: user.revision, gatewayId: params.fromGatewayId });
+    }
 }
 function activationSourceAssignmentCurrent(assignment, params, leaseEpoch) {
     if (assignment === null)
@@ -1227,6 +1255,15 @@ async function assertDisklessTargetCapacity(tx, toGatewayId) {
         throw new FleetStatePreconditionError(`diskless return target ${toGatewayId} has reached its configured capacity`);
     }
 }
+function defaultAgentStoreHasDisklessCustody(anchor, user, source) {
+    if (anchor.kind !== "agent" || anchor.agentId !== workspaceDefaultAgentId(source.slug))
+        return false;
+    if (anchor.gatewayId === source.gatewayId)
+        return true;
+    const lease = user.activationLease;
+    return lease?.sourceGatewayId === anchor.gatewayId && lease.sourceAssignmentEpoch === anchor.assignmentEpoch &&
+        typeof anchor.assignmentEpoch === "number" && source.epoch === anchor.assignmentEpoch + 1;
+}
 export async function commitDisklessSharedRecovery(deps, input) {
     const now = nowMs(deps);
     const { uid, slug, fromGatewayId, toGatewayId, operationId, migrationId, claimStartedAt } = input;
@@ -1246,7 +1283,7 @@ export async function commitDisklessSharedRecovery(deps, input) {
         await assertDisklessTargetCapacity(tx, toGatewayId);
         const { workspace, schedule } = disklessCheckpointFor(user, sourceAssignment.epoch, input);
         const anchors = await tx.users.agentStores.list(uid);
-        if (!anchors.some(anchor => anchor.kind === "agent" && anchor.agentId === workspaceDefaultAgentId(slug) && anchor.gatewayId === fromGatewayId)) {
+        if (!anchors.some(anchor => defaultAgentStoreHasDisklessCustody(anchor, user, sourceAssignment))) {
             throw new FleetStatePreconditionError("diskless return has no durable default-agent store anchor");
         }
         const scheduler = { agentIds: schedule.snapshot.agentIds, snapshot: { ...schedule.snapshot, operationId: migrationId } };

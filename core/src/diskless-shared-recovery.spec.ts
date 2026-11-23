@@ -1,6 +1,6 @@
 import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { describe, expect, it } from "vitest";
-import { commitDisklessSharedRecovery, readUserRestoreAuthoritySnapshot } from "./fleet-state.js";
+import { commitCutoverAtomic, commitDisklessSharedRecovery, readUserRestoreAuthoritySnapshot } from "./fleet-state.js";
 
 const NOW = 10_000;
 const uid = "uid-alice";
@@ -60,7 +60,7 @@ async function harness(excluded = true, workspaceEpoch = 4) {
     kind: "agent", agentId, storeId: "durable-store", schema: "alice", gatewayId: fromGatewayId,
     generation: 1, assignmentEpoch: 4, recordedAt: 8_900,
   });
-  return { store, deps: { store, now: () => new Date(NOW) } };
+  return { docs, store, deps: { store, now: () => new Date(NOW) } };
 }
 
 describe("atomic diskless Shared recovery", () => {
@@ -85,5 +85,33 @@ describe("atomic diskless Shared recovery", () => {
     await expect(commitDisklessSharedRecovery(deps, input)).rejects.toThrow(reason);
     expect(await store.gateways.assignments.get(toGatewayId, uid)).toBeNull();
     expect(await store.users.records.get(uid)).toMatchObject({ gateway: { gatewayId: fromGatewayId }, fences: {} });
+  });
+
+  it.each([2, 3])("seeds immediate recovery only from the serving Shared epoch (%s)", async checkpointEpoch => {
+    const { docs, deps, store } = await harness();
+    const target = docs.get(`gateways/${fromGatewayId}`)!;
+    docs.set(`gateways/${fromGatewayId}`, { ...target, ephemeralWriter: { podUid: "new", podName: "builder-alice-new" } });
+    docs.delete(`gateways/${fromGatewayId}/assignments/${uid}`);
+    docs.set(`gateways/${toGatewayId}/assignments/${uid}`, {
+      uid, slug, gatewayId: toGatewayId, state: "quiescing", source: "migrate-user", epoch: 3, createdAt: 1, updatedAt: 1,
+    });
+    docs.set(`users/${uid}`, {
+      username: slug, provisioning: { status: "complete", openclaw: { slug, status: "complete", gatewayId: toGatewayId,
+        activationLease: { leaseId: "one", generation: 1, status: "activating", targetGatewayId: fromGatewayId,
+          sourceGatewayId: toGatewayId, sourceAssignmentEpoch: 3 } } },
+      workspaceCheckpoint: { gatewayId: toGatewayId, assignmentEpoch: checkpointEpoch, observedAt: 8_500, commits },
+      scheduleCheckpoint: { gatewayId: toGatewayId, assignmentEpoch: checkpointEpoch, observedAt: 8_500,
+        snapshot: { version: 1, operationId: "checkpoint-alice", agentIds: [agentId], jobs: [], scratch: [] } },
+    });
+    await commitCutoverAtomic({ ...deps, readSizingKey: async () => "hobby" }, {
+      uid, slug, fromGatewayId: toGatewayId, toGatewayId: fromGatewayId, flipMirror: true, automatic: true,
+      assignment: { source: "migrate-user", updatedByOperationId: "activate-builder" },
+    });
+
+    const user = await store.users.records.get(uid);
+    const expected = checkpointEpoch === 3 ? { gatewayId: fromGatewayId, assignmentEpoch: 4 }
+      : { gatewayId: toGatewayId, assignmentEpoch: checkpointEpoch };
+    expect(user?.workspaceCheckpoint).toMatchObject({ ...expected, observedAt: 8_500, commits });
+    expect(user?.scheduleCheckpoint).toMatchObject({ ...expected, observedAt: 8_500 });
   });
 });

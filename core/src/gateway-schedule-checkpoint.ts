@@ -37,8 +37,13 @@ export function parseScheduleCheckpoint(value: unknown): NativeScheduleCheckpoin
   return { version: 1, operationId, agentIds, jobs, scratch, ...(retainedJobIds ? { retainedJobIds } : {}) };
 }
 
+function allowsUserCheckpoint(root: GatewayRoot): boolean {
+  const canServe = root.desiredStatus === "running" || (root.gatewayClass === "shared" && root.desiredStatus === "draining");
+  return canServe && !root.retirementClaim && !root.runtimeRestartFence;
+}
+
 function servingScheduleWriter(root: GatewayRoot, runtime: FleetRegistryRecord | null, pod: EphemeralGatewayWriter, now: number): boolean {
-  if (root.retirementClaim || root.runtimeRestartFence || root.desiredStatus !== "running") return false;
+  if (!allowsUserCheckpoint(root)) return false;
   if (root.allocation?.ephemeralHomeGiB !== undefined) {
     return !root.ephemeralWriter?.exclusion && sameEphemeralWriter(root.ephemeralWriter, pod);
   }
@@ -89,9 +94,8 @@ function ownsAssignment(user: PlatformUserRecord, assignment: GatewayAssignment,
 }
 
 function canPublishWorkspace(user: PlatformUserRecord, assignment: GatewayAssignment): boolean {
-  const fences = Object.keys(user.fences);
-  return assignment.state === "serving" && fences.length === 0 ||
-    assignment.state === "quiescing" && fences.every(fence => fence === "migration");
+  return (assignment.state === "serving" || assignment.state === "quiescing") &&
+    Object.keys(user.fences).every(fence => fence === "migration");
 }
 
 function alreadyCaptured(

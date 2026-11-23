@@ -133,9 +133,18 @@ async function recordWorkspaceCheckpoint(input: {
   if (!response.ok) throw new Error(`Workspace checkpoint was not acknowledged: HTTP ${response.status}`);
 }
 
+async function publishWorkspaceCheckpoint(input: Parameters<typeof recordWorkspaceCheckpoint>[0]): Promise<void> {
+  try {
+    await recordWorkspaceCheckpoint(input);
+  } catch (error) {
+    if (process.env.GATEWAY_EPHEMERAL_HOME === "true") throw error;
+    logger.warn("Git revisions were saved but the Fleet checkpoint was not acknowledged", { error: String(error) });
+  }
+}
+
 const sharedDefaults: SharedPersistenceDeps = {
   readUser: readPersistenceUser, resolveUser: resolveUserDir, resolveProject: resolveProjectDir,
-  commit: commitAndPushWorkspace, trustedGitea: isTrustedGiteaUserCheckout, recordCheckpoint: recordWorkspaceCheckpoint,
+  commit: commitAndPushWorkspace, trustedGitea: isTrustedGiteaUserCheckout, recordCheckpoint: publishWorkspaceCheckpoint,
   divert: (dir, target, options) => divertWorktreeBinaries(dir, target, undefined, { retainLocalFiles: target.projectSlug !== null, ...options }),
 };
 

@@ -90,6 +90,15 @@ describe("durable scheduler checkpoints", () => {
     await expect(recordGatewayScheduleCheckpoint({ ...report, pod: replacement })).resolves.toBe(false);
   });
 
+  it("accepts the writer of a draining Shared member while that member still serves the owner", async () => {
+    const { docs, report } = harness();
+    const key = `gateways/${gatewayId}`;
+    docs.set(key, { ...docs.get(key), desiredStatus: "draining", gatewayClass: "shared", allocation: undefined, ownerUid: null, builderSlug: null });
+    docs.set(`glmGateways/${gatewayId}`, registryWithPod());
+    await expect(recordGatewayScheduleCheckpoint(report)).resolves.toBe(true);
+    await expect(recordGatewayWorkspaceCheckpoint({ ...report, commits: { workspace: "a".repeat(40) } })).resolves.toBe(true);
+  });
+
   it("records removals and ignores a delayed earlier capture", async () => {
     const { store, report, claim } = harness();
     await claim();

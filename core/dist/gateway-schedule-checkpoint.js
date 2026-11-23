@@ -33,8 +33,12 @@ export function parseScheduleCheckpoint(value) {
         return null;
     return { version: 1, operationId, agentIds, jobs, scratch, ...(retainedJobIds ? { retainedJobIds } : {}) };
 }
+function allowsUserCheckpoint(root) {
+    const canServe = root.desiredStatus === "running" || (root.gatewayClass === "shared" && root.desiredStatus === "draining");
+    return canServe && !root.retirementClaim && !root.runtimeRestartFence;
+}
 function servingScheduleWriter(root, runtime, pod, now) {
-    if (root.retirementClaim || root.runtimeRestartFence || root.desiredStatus !== "running")
+    if (!allowsUserCheckpoint(root))
         return false;
     if (root.allocation?.ephemeralHomeGiB !== undefined) {
         return !root.ephemeralWriter?.exclusion && sameEphemeralWriter(root.ephemeralWriter, pod);
@@ -66,9 +70,8 @@ function ownsAssignment(user, assignment, input) {
         assignment.slug === user.slug && assignment.epoch === input.assignmentEpoch;
 }
 function canPublishWorkspace(user, assignment) {
-    const fences = Object.keys(user.fences);
-    return assignment.state === "serving" && fences.length === 0 ||
-        assignment.state === "quiescing" && fences.every(fence => fence === "migration");
+    return (assignment.state === "serving" || assignment.state === "quiescing") &&
+        Object.keys(user.fences).every(fence => fence === "migration");
 }
 function alreadyCaptured(last, input) {
     return last?.gatewayId === input.gatewayId && last.assignmentEpoch === input.assignmentEpoch &&
