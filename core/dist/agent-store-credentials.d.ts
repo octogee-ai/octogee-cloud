@@ -17,6 +17,7 @@ export interface AgentStoreHandoffIdentity {
 export declare function createAgentStoreCredentialProvisioner(adminDsn: string, clientDsn: string): (identity: AgentStoreGatewayIdentity, assertCurrent: () => Promise<void>) => Promise<string>;
 export declare function createHeldReturnStoreCustodyVerifier(adminDsn: string, options?: {
     serializeCredentialChanges?: boolean;
+    targetState?: "retired";
 }): (input: {
     uid: string;
     sourceGatewayId: string;

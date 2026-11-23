@@ -199,9 +199,11 @@ export function createAgentStoreCredentialProvisioner(adminDsn, clientDsn) {
 const HELD_RETURN_STORE_CUSTODY = `
 WITH roles AS (
   SELECT source.oid AS source, target.oid AS target, owner.oid AS owner,
-    shared.oid AS shared, source.rolcanlogin AND target.rolcanlogin AND NOT source.rolsuper AS valid
-  FROM pg_roles source, pg_roles target, pg_roles owner, pg_roles shared
-  WHERE source.rolname = $1 AND target.rolname = $2 AND owner.rolname = $3 AND shared.rolname = $4
+    shared.oid AS shared, source.rolcanlogin AND NOT source.rolsuper
+      AND CASE WHEN $6::boolean THEN target.oid IS NULL OR NOT target.rolcanlogin ELSE target.rolcanlogin END AS valid
+  FROM pg_roles source LEFT JOIN pg_roles target ON target.rolname = $2
+  CROSS JOIN pg_roles owner CROSS JOIN pg_roles shared
+  WHERE source.rolname = $1 AND owner.rolname = $3 AND shared.rolname = $4
 ), target_roles AS (
   SELECT r.oid, r.rolsuper, r.rolcreaterole
   FROM pg_roles r, roles
@@ -249,9 +251,12 @@ SELECT
     SELECT FROM pg_locks locks JOIN relations c ON locks.relation = c.oid
     WHERE locks.database = (SELECT oid FROM pg_database WHERE datname = current_database())
       AND (locks.pid IS NULL OR locks.pid IN (SELECT pid FROM target_activity))
-  ) AS target_locks
+  ) AS target_locks,
+  EXISTS (SELECT FROM pg_stat_activity JOIN roles ON pg_stat_activity.usesysid = roles.target) AS target_sessions
 `;
 export function createHeldReturnStoreCustodyVerifier(adminDsn, options) {
+    const retired = options?.targetState === "retired";
+    const serialize = retired || options?.serializeCredentialChanges === true;
     const scope = decodeURIComponent(new URL(adminDsn).pathname.slice(1));
     if (!scope)
         throw new Error("Held Native return store verification requires a database");
@@ -265,10 +270,11 @@ export function createHeldReturnStoreCustodyVerifier(adminDsn, options) {
         }
         const inputs = [
             roleFor("gateway", `${scope}:${sourceGatewayId}`), roleFor("gateway", `${scope}:${targetGatewayId}`),
-            roleFor("builder", `${scope}:${uid}`), roleFor("shared", scope), schemas,
+            roleFor("builder", `${scope}:${uid}`), roleFor("shared", scope), schemas, retired,
         ];
-        const { rows: [result] } = await readHeldReturnStoreCustody(pool, inputs, options?.serializeCredentialChanges === true);
-        if (!result || result.found !== schemas.length || !result.source_owns || result.target_grants || result.target_locks) {
+        const { rows: [result] } = await readHeldReturnStoreCustody(pool, inputs, serialize);
+        if (!result || result.found !== schemas.length || !result.source_owns || result.target_grants || result.target_locks ||
+            retired && result.target_sessions) {
             throw new Error("Held Native return agent-store source custody or destination exclusion is unavailable");
         }
     };
@@ -279,6 +285,7 @@ async function readHeldReturnStoreCustody(pool, input, serialize) {
     const client = await pool.connect();
     try {
         await client.query("BEGIN READ ONLY");
+        await client.query(AGENT_STORE_SEARCH_PATH);
         const lock = await client.query("SELECT pg_try_advisory_xact_lock(hashtextextended('octogee-agent-store-credentials', 0)) AS acquired");
         if (lock.rows[0]?.acquired !== true)
             throw new Error("Agent-store ownership is changing during old target exclusion");

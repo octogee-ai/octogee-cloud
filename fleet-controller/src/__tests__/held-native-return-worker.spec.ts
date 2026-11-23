@@ -1,3 +1,4 @@
+import { createCompensatingNativeReturnActions } from "../lib/compensating-native-return-actions.js";
 import { buildOperationAuditIntent } from "@octogee/core/operation-audit";
 import { createNativeReturnTargetExclusion, retiredTargetRoutesAbsent } from "../lib/native-return-target-exclusion.js";
 import { createCompensatingNativeReturn } from "../lib/compensating-native-return.js";
@@ -891,6 +892,29 @@ async function retiredCompensationFixture() {
   return { ...h, request, scope, physical, exclusion, retirement, retirementPath,
     worker: createCompensatingNativeReturn({ ...h.deps, provider }) };
 }
+
+it("uses read-only retired source-store verification for preparation and authenticated ingress resume", async () => {
+  const h = await retiredCompensationFixture();
+  const authority = await h.worker.requestRetired({ environment: "test", actor: h.request.actor, operationId });
+  const assertCurrent = vi.fn(async () => {});
+  const prepareSourceStores = vi.fn(async () => { throw new Error("nested credential lock"); });
+  const verifyRetiredSourceStores = vi.fn(async (_authority, check: () => Promise<void>) => check());
+  const deps = {
+    prepareSourceStores, verifyRetiredSourceStores, verifySourceServing: vi.fn(async () => {}),
+    sourceClient: async (_id: string, _source: typeof h.source, prepare: unknown) => ({
+      scheduler: vi.fn(),
+      async resume() {
+        if (typeof prepare !== "function") await prepareSourceStores();
+        else await prepare(sourceGatewayId, slug);
+      },
+    }),
+  };
+  const actions = createCompensatingNativeReturnActions(deps);
+  await actions.prepareSourceStores(authority, assertCurrent);
+  await actions.resumeSourceIngress(authority, assertCurrent);
+  expect(verifyRetiredSourceStores.mock.calls).toEqual([[authority, assertCurrent], [authority, assertCurrent]]);
+  expect(prepareSourceStores).not.toHaveBeenCalled();
+});
 
 it("compensates the same Native operation only after the enrolled old member is retired and keeps its permanent denial", async () => {
   const h = await retiredCompensationFixture();
