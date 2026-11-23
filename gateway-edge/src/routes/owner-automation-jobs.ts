@@ -1,4 +1,14 @@
 import {
+  OWNER_AUTOMATION_KEY,
+  OWNER_AUTOMATION_TOOLS,
+  ownerAutomationAccountId as accountId,
+  ownerAutomationDefinition,
+  ownerAutomationKeyPrefix as keyPrefix,
+  ownerAutomationSessionKey as ownerSessionKey,
+  type OwnerAutomationSave,
+  type OwnerAutomationTenant,
+} from "@octogee/shared/types/automations";
+import {
   AutomationBrokerError,
   automationRecord,
   scanAutomationInventory,
@@ -6,36 +16,16 @@ import {
   type AutomationRecord,
 } from "./automation-native.js";
 
-export interface OwnerAutomationTenant {
-  slug: string;
-  agentId: string;
-  ownerMattermostUserId: string;
-  coachChannelId: string;
-}
-
-export interface OwnerAutomationSave {
-  key: string;
-  name: string;
-  schedule: { expr: string; tz: string };
-  prompt: string;
-}
+export { OWNER_AUTOMATION_KEY_PREFIX, OWNER_AUTOMATION_TOOLS, ownerAutomationDefinition } from "@octogee/shared/types/automations";
+export type { OwnerAutomationSave, OwnerAutomationTenant } from "@octogee/shared/types/automations";
 
 export type OwnerAutomationRequest =
   | { action: "list" }
   | { action: "save"; params: OwnerAutomationSave }
   | { action: "remove"; params: { key: string } };
 
-export const OWNER_AUTOMATION_TOOLS = [
-  "octogee_google_calendar_events",
-  "octogee_google_gmail_search",
-  "octogee_google_gmail_get",
-  "octogee_google_tasks_lists",
-  "octogee_google_tasks_list",
-] as const;
-export const OWNER_AUTOMATION_KEY_PREFIX = "octogee:owner-automation:";
 export const MAX_OWNER_AUTOMATIONS = 10;
 
-const KEY = /^[a-z0-9][a-z0-9-]{0,39}$/u;
 const CRON_MINUTE = /^(?:\d|[1-5]\d)$/u;
 const CRON_FIELD = /^[0-9A-Za-z*,/-]{1,40}$/u;
 const MAX_NAME = 100;
@@ -73,7 +63,7 @@ function cronExpression(value: unknown): string | null {
 }
 
 function automationKey(value: unknown): string | null {
-  return typeof value === "string" && KEY.test(value) ? value : null;
+  return typeof value === "string" && OWNER_AUTOMATION_KEY.test(value) ? value : null;
 }
 
 function saveParams(params: AutomationRecord): OwnerAutomationSave {
@@ -106,42 +96,6 @@ export function parseOwnerAutomationRequest(action: unknown, params: unknown): O
   }
   if (action === "save") return { action, params: saveParams(record) };
   return fail(400, "unsupported_owner_automation_action");
-}
-
-function accountId(tenant: OwnerAutomationTenant): string {
-  return `${tenant.slug}-coach`;
-}
-
-function ownerSessionKey(tenant: OwnerAutomationTenant): string {
-  return `agent:${tenant.agentId}:mattermost:group:${tenant.coachChannelId}`;
-}
-
-function keyPrefix(tenant: OwnerAutomationTenant): string {
-  return `${OWNER_AUTOMATION_KEY_PREFIX}${tenant.agentId}:`;
-}
-
-export function ownerAutomationDefinition(tenant: OwnerAutomationTenant, save: OwnerAutomationSave): AutomationRecord {
-  const sessionKey = ownerSessionKey(tenant);
-  return {
-    name: save.key,
-    displayName: save.name,
-    declarationKey: `${keyPrefix(tenant)}${save.key}`,
-    owner: { agentId: tenant.agentId, sessionKey, accountId: accountId(tenant) },
-    agentId: tenant.agentId,
-    enabled: true,
-    schedule: { kind: "cron", expr: save.schedule.expr, tz: save.schedule.tz },
-    sessionTarget: "isolated",
-    wakeMode: "now",
-    payload: { kind: "agentTurn", message: save.prompt, toolsAllow: [...OWNER_AUTOMATION_TOOLS] },
-    delivery: { mode: "announce", channel: "mattermost", accountId: accountId(tenant), to: `channel:${tenant.coachChannelId}` },
-    scheduledToolPolicy: { version: 1, mode: "account", ownerSessionKey: sessionKey, ownerAccountId: accountId(tenant) },
-    toolsAllowProvenance: {
-      version: 1,
-      source: "authenticated-requester",
-      callerOrigin: { kind: "external", channel: "mattermost" },
-      channelRequester: { version: 1, channel: "mattermost", accountId: accountId(tenant), senderId: tenant.ownerMattermostUserId },
-    },
-  };
 }
 
 function exactTools(value: unknown): boolean {

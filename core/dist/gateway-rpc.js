@@ -968,11 +968,14 @@ async function openAndConnect(params) {
     return ws;
 }
 export function provisionDefaultAgentAutomation(rpc, user) {
+    return rpc.cronAdd(defaultAgentAutomationDefinition(user));
+}
+export function defaultAgentAutomationDefinition(user) {
     if (!user.coachChannelId || !/^[a-z0-9]{26}$/u.test(user.coachChannelId)) {
         throw new Error(`Agent automation for ${user.slug} requires its workspace's private agent channel ID`);
     }
     const agentId = `octogee-${user.slug}-coach`;
-    return rpc.cronAdd({
+    return {
         declarationKey: `octogee:coach-monitor:${agentId}`,
         name: `Proactive check (${agentId})`,
         agentId,
@@ -993,5 +996,5 @@ export function provisionDefaultAgentAutomation(rpc, user) {
             accountId: `${user.slug}-coach`,
             to: `channel:${user.coachChannelId}`,
         },
-    });
+    };
 }

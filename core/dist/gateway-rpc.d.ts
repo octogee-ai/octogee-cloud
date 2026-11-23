@@ -306,3 +306,7 @@ export declare function provisionDefaultAgentAutomation(rpc: Pick<GatewayRpcClie
     slug: string;
     coachChannelId: string | null;
 }): Promise<CronAddResult>;
+export declare function defaultAgentAutomationDefinition(user: {
+    slug: string;
+    coachChannelId: string | null;
+}): CronAddSpec;

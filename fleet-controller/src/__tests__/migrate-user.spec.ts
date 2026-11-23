@@ -3280,14 +3280,20 @@ describe("direct diskless Hobby return", () => {
     const { deps, client, ctx } = mkDeps();
     const order: string[] = [];
     const workspaceCommits = { workspace: "a".repeat(40) };
-    const scheduler = { agentIds: ["octogee-alice-coach"], snapshot: { version: 1, operationId: "mig-op-1", jobs: [], scratch: [] } };
+    const agentId = "octogee-alice-coach";
+    const coachChannelId = "a".repeat(26);
+    const job = { id: "monitor", agentId, enabled: true, declarationKey: `octogee:coach-monitor:${agentId}`,
+      operatorSource: { source: { kind: "gateway", snapshot: { profileId: "old-provisioner" } } } };
+    const scheduler = { agentIds: [agentId], snapshot: { version: 1, operationId: "mig-op-1", agentIds: [agentId], jobs: [job], scratch: [] } };
     deps.commitDisklessSharedRecovery = vi.fn(async () => ({ targetEpoch: 5, restorePending: true, workspaceCommits, scheduler }));
     deps.readDisklessRestoreAuthority = vi.fn(async () => ({
       uid: "uid-alice", slug: "alice", fromGatewayId: "gw-blue", gatewayId: "shared-green",
       operationId: "op-1", assignmentEpoch: 5, migrationId: "mig-op-1", attemptId: "attempt", claimStartedAt: 4_000,
       dispatchClaimStartedAt: 4_000, dispatchedAt: 4_000, phase: "dispatched" as const,
     }));
-    vi.mocked(deps.readUserSnapshot).mockResolvedValue({ ...SNAPSHOT, gatewayId: "shared-green" });
+    vi.mocked(deps.readUserSnapshot).mockResolvedValue({ ...SNAPSHOT, gatewayId: "shared-green",
+      channels: [{ scope: "workspace", kind: "coach-dm", channelId: coachChannelId }],
+    });
     vi.mocked(deps.resolveGatewayUrl).mockImplementation(async gatewayId => {
       if (gatewayId !== "shared-green") throw new Error("the Spot writer is gone");
       return "http://shared-green";
@@ -3296,6 +3302,11 @@ describe("direct diskless Hobby return", () => {
     vi.mocked(client.scheduler).mockImplementation(async request => {
       order.push(request.phase);
       return original(request);
+    });
+    const schedules = vi.mocked(client.schedules).getMockImplementation()!;
+    vi.mocked(client.schedules).mockImplementation(async request => {
+      order.push("restore-declarations");
+      return schedules(request);
     });
     ctx.withUserRestoreFence = vi.fn(async (_, work) => {
       order.push("held");
@@ -3307,8 +3318,12 @@ describe("direct diskless Hobby return", () => {
     } }), ctx);
     expect(result).toMatchObject({ success: true, rolledBack: false });
     expect(client.restoreTarget).toHaveBeenCalledWith(expect.objectContaining({ workspaceCommits, resume: true, gatewayId: "shared-green" }));
-    expect(client.calls).toEqual(["restore:shared-green", "verify:shared-green"]);
-    expect(order).toEqual(["held", "stage", "released", "activate"]);
+    expect(client.calls).toEqual(["restore:shared-green", "verify:shared-green", "schedules:shared-green:restore"]);
+    expect(order).toEqual(["stage-requester", "held", "stage", "activate", "restore-declarations", "released"]);
+    expect(client.scheduler).toHaveBeenCalledWith(expect.objectContaining({ phase: "stage", snapshot: expect.objectContaining({ jobs: [] }) }));
+    expect(client.schedules).toHaveBeenCalledWith(expect.objectContaining({ records: [expect.objectContaining({
+      sourceJobId: "monitor", agentId, job: expect.objectContaining({ declarationKey: `octogee:coach-monitor:${agentId}` }),
+    })] }));
     expect(client.transferState).not.toHaveBeenCalled();
   });
 });

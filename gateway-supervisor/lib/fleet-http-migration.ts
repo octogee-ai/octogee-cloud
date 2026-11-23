@@ -669,7 +669,9 @@ function isScheduleRecord(value: unknown): value is ScheduleRecord {
 function isScheduleTransferRequest(body: ScheduleTransferRequestBody): boolean {
   if (body.op === "snapshot") return true;
   if (body.op === "remove") return Array.isArray(body.jobIds) && body.jobIds.every(id => typeof id === "string" && id.length > 0);
-  return (body.op === "restore" || body.op === "check") && Array.isArray(body.records) && body.records.every(isScheduleRecord);
+  if (body.op !== "restore" && body.op !== "check") return false;
+  if (body.op === "restore" && body.reconcileDeclarations !== undefined && body.reconcileDeclarations !== true) return false;
+  return Array.isArray(body.records) && body.records.every(isScheduleRecord);
 }
 
 export function createScheduleTransferHandler(deps: MigrationHandlerDeps): RequestHandler {

@@ -3,6 +3,7 @@ import type { FleetBrokerUserRestoreAuthority } from "@octogee/shared/types/flee
 import { DISKLESS_ACTIVATION_WRITER_EXCLUDED } from "@octogee/shared/types/isolated-operation-ids";
 import { sourceTransferBlocksRelease } from '../lib/source-transfer-execution.js';
 import type { RetainedSourceContext } from '../lib/retained-source-transfer.js';
+import { planDisklessScheduleRecovery } from "../lib/diskless-schedule-recovery.js";
 import type { MigrationProgressRecord, SourceTransferExecution } from '@octogee/shared/types/glm';
 import type { PrepareMigrationAgentStores } from "../migration-agent-stores.js";
 import { createMigrationProgress } from "../migration-progress.js";
@@ -2606,15 +2607,11 @@ async function restoreDisklessDestination(
   input: DisklessSharedRecoveryInput,
   client: MigrationClient,
   recovery: DisklessSharedRestore,
+  snapshot: FleetBrokerUserSnapshot,
 ): Promise<void> {
   const { uid, slug, toGatewayId, migrationId } = input;
-  const [snapshot, authority] = await Promise.all([
-    deps.readUserSnapshot(uid, toGatewayId),
-    deps.readDisklessRestoreAuthority?.({ uid, slug, gatewayId: toGatewayId }),
-  ]);
-  if (!snapshot || snapshot.uid !== uid || snapshot.slug !== slug || snapshot.gatewayId !== toGatewayId ||
-      snapshot.status !== "complete" || !authority || authority.migrationId !== migrationId ||
-      authority.assignmentEpoch !== recovery.targetEpoch) {
+  const authority = await deps.readDisklessRestoreAuthority?.({ uid, slug, gatewayId: toGatewayId });
+  if (!authority || authority.migrationId !== migrationId || authority.assignmentEpoch !== recovery.targetEpoch) {
     throw new Error("diskless return target does not own the dispatched durable restore");
   }
   const restored = await client.restoreTarget({
@@ -2624,6 +2621,38 @@ async function restoreDisklessDestination(
   if (!restored.restored || restored.slug !== slug || restored.migrationId !== migrationId) {
     throw new Error("diskless Shared restore did not acknowledge its exact owner");
   }
+}
+
+async function recoverDisklessScheduleDeclarations(
+  deps: MigrateUserDeps,
+  input: DisklessSharedRecoveryInput,
+  client: MigrationClient,
+  plan: ReturnType<typeof planDisklessScheduleRecovery>,
+): Promise<void> {
+  const { uid, slug, toGatewayId: gatewayId, migrationId } = input;
+  const existing = await deps.readScheduleTransfer(uid, migrationId);
+  if (existing?.restoreAttemptedTo === gatewayId && existing.restoredAt !== undefined) return;
+  const outcome = plan.declarations.length
+    ? await client.schedules({ migrationId, slug, gatewayId, op: "restore", reconcileDeclarations: true, records: plan.declarations })
+    : { failed: [] };
+  const completed = outcome.failed.length === 0;
+  const at = deps.now();
+  await deps.recordScheduleRestore(uid, migrationId, {
+    restoreAttemptedTo: gatewayId, restoreAttemptedAt: at,
+    ...(completed ? { restoredTo: gatewayId, restoredAt: at } : {}),
+    restoreFailures: [...plan.retained, ...outcome.failed],
+  });
+  if (!completed) throw new Error(`Could not restore ${outcome.failed.length} recovered schedule declarations: ${outcome.failed[0].error}`);
+  if (plan.retained.length) deps.log(`[migrate-customer] ${slug}: saved ${plan.retained.length} schedules for reauthorization from their original requester`);
+}
+
+async function readDisklessCompleteSnapshot(deps: MigrateUserDeps, input: DisklessSharedRecoveryInput): Promise<FleetBrokerUserSnapshot> {
+  const snapshot = await deps.readUserSnapshot(input.uid, input.toGatewayId);
+  if (!snapshot || snapshot.uid !== input.uid || snapshot.slug !== input.slug ||
+      snapshot.gatewayId !== input.toGatewayId || snapshot.status !== "complete") {
+    throw new Error("diskless return target does not own the completed user snapshot");
+  }
+  return snapshot;
 }
 
 async function runDisklessSharedReturn(deps: MigrateUserDeps, op: Operation, ctx: OperationContext): Promise<OperationResult> {
@@ -2642,17 +2671,27 @@ async function runDisklessSharedReturn(deps: MigrateUserDeps, op: Operation, ctx
       uid, slug, gatewayId: toGatewayId, operationId: op.id, claimedStartedAt: op.startedAt,
     });
     const scheduler = { migrationId: input.migrationId, slug, gatewayId: toGatewayId };
+    const snapshot = await readDisklessCompleteSnapshot(deps, input);
+    const requester = await client.scheduler({ ...scheduler, phase: "stage-requester" });
+    const plan = planDisklessScheduleRecovery({ snapshot: recovery.scheduler.snapshot, migrationId: scheduler.migrationId,
+      requesterProfileId: requester.stageRequesterProfileId ?? null, owner: snapshot });
+    const finishSchedules = async () => {
+      await ctx.assertActiveClaim!(true);
+      await reportNativeReturnStep(deps, ctx, "activate-scheduler", () => client.scheduler({ ...scheduler, phase: "activate" }));
+      await reportNativeReturnStep(deps, ctx, "restore-durable-schedule-declarations", () => recoverDisklessScheduleDeclarations(deps, input, client, plan));
+    };
     if (recovery.restorePending) {
       await ctx.withUserRestoreFence({ uid, slug, gatewayId: toGatewayId, fromGatewayId, assignmentEpoch: recovery.targetEpoch, resume: true }, async () => {
-        await reportNativeReturnStep(deps, ctx, "restore-target", () => restoreDisklessDestination(deps, input, client, recovery));
+        await reportNativeReturnStep(deps, ctx, "restore-target", () => restoreDisklessDestination(deps, input, client, recovery, snapshot));
         await reportNativeReturnStep(deps, ctx, "stage-durable-scheduler", () => callReleasedTargetScheduler({ client, log: deps.log, now: deps.now, wait: deps.sleep }, {
-          ...scheduler, phase: "stage", ...recovery.scheduler, retainNonportable: true,
+          ...scheduler, phase: "stage", agentIds: plan.native.agentIds, snapshot: plan.native, retainNonportable: true,
         }));
         await reportNativeReturnStep(deps, ctx, "verify-target", () => verifyNativeReturnTarget(deps, input));
+        await finishSchedules();
       });
+    } else {
+      await finishSchedules();
     }
-    await ctx.assertActiveClaim(true);
-    await reportNativeReturnStep(deps, ctx, "activate-scheduler", () => client.scheduler({ ...scheduler, phase: "activate" }));
     return { steps: [], success: true, rolledBack: false };
   } catch (error) {
     return failure(`diskless Shared return pending: status 503: ${errorMessage(error)}`, false);

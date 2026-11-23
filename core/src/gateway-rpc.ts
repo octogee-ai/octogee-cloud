@@ -1492,11 +1492,15 @@ export function provisionDefaultAgentAutomation(
   rpc: Pick<GatewayRpcClient, "cronAdd">,
   user: { slug: string; coachChannelId: string | null },
 ): Promise<CronAddResult> {
+  return rpc.cronAdd(defaultAgentAutomationDefinition(user));
+}
+
+export function defaultAgentAutomationDefinition(user: { slug: string; coachChannelId: string | null }): CronAddSpec {
   if (!user.coachChannelId || !/^[a-z0-9]{26}$/u.test(user.coachChannelId)) {
     throw new Error(`Agent automation for ${user.slug} requires its workspace's private agent channel ID`);
   }
   const agentId = `octogee-${user.slug}-coach`;
-  return rpc.cronAdd({
+  return {
     declarationKey: `octogee:coach-monitor:${agentId}`,
     name: `Proactive check (${agentId})`,
     agentId,
@@ -1517,5 +1521,5 @@ export function provisionDefaultAgentAutomation(
       accountId: `${user.slug}-coach`,
       to: `channel:${user.coachChannelId}`,
     },
-  });
+  };
 }

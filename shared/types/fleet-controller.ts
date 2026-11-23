@@ -521,6 +521,7 @@ export interface ScheduleSnapshotRequestBody extends MigrationRequestBody {
 export interface ScheduleRestoreRequestBody extends MigrationRequestBody {
   op: "restore";
   records: ScheduleRecord[];
+  reconcileDeclarations?: true;
 }
 
 export interface ScheduleRemoveRequestBody extends MigrationRequestBody {
