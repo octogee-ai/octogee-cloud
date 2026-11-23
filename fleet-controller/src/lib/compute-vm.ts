@@ -230,6 +230,12 @@ function isZoneExhausted(err: unknown): boolean {
   return err instanceof ComputeOperationError && err.codes.some((code) => ZONE_EXHAUSTED_CODES.has(code));
 }
 
+async function exhaustedSpot(error: unknown, state: "TERMINATED" | "SUSPENDED", observe: () => Promise<GatewayVmDescription | null>): Promise<boolean> {
+  if (!isZoneExhausted(error)) return false;
+  const instance = await observe();
+  return instance?.status === state && instance.provisioningModel === "SPOT";
+}
+
 function schedulingFor(provisioningModel: GatewayVmProvisioningModel): Record<string, unknown> {
   return provisioningModel === "SPOT"
     ? { provisioningModel: "SPOT", instanceTerminationAction: "STOP", automaticRestart: false, onHostMaintenance: "TERMINATE" }
@@ -669,7 +675,7 @@ export function createGatewayVmClient(deps: GatewayVmClientDeps): GatewayVmClien
       await lifecycle("start", instanceName, zone);
       return { fellBackToStandard: false };
     } catch (err) {
-      if (!isZoneExhausted(err)) throw err;
+      if (!await exhaustedSpot(err, "TERMINATED", () => describe(instanceName, zone))) throw err;
     }
     deps.log(`[gateway-vm] ${instanceName}: spot capacity exhausted in ${zone}; restarting on-demand`);
       await setProvisioningModel(instanceName, zone, "STANDARD");
@@ -682,7 +688,7 @@ export function createGatewayVmClient(deps: GatewayVmClientDeps): GatewayVmClien
       await lifecycle("resume", instanceName, zone);
       return { fellBackToStandard: false };
     } catch (err) {
-      if (!isZoneExhausted(err)) throw err;
+      if (!await exhaustedSpot(err, "SUSPENDED", () => describe(instanceName, zone))) throw err;
     }
     deps.log(`[gateway-vm] ${instanceName}: spot capacity exhausted in ${zone} on resume; stopping and restarting`);
     await lifecycle("stop", instanceName, zone);

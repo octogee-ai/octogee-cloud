@@ -931,6 +931,17 @@ async function resumeVm(deps: VmLifecycleDeps, gatewayId: string, description: G
   return after;
 }
 
+function canRetrySpot(description: GatewayVmDescription, preferred: GatewayVmSpec["provisioningModel"]): boolean {
+  return preferred === "SPOT" && description.provisioningModel === "STANDARD" && STOPPED_STATUSES.has(description.status);
+}
+
+async function retrySpot(deps: VmLifecycleDeps, description: GatewayVmDescription): Promise<GatewayVmDescription> {
+  await deps.vm.setProvisioningModel(description.name, description.zone, "SPOT");
+  const updated = verifiedStoppedVm(description, await deps.vm.describe(description.name, description.zone));
+  if (updated.provisioningModel !== "SPOT") throw new Error(`VM ${description.name}: provisioning model did not converge to SPOT`);
+  return updated;
+}
+
 async function bindParkedVm(deps: VmLifecycleDeps, gatewayId: string, description: GatewayVmDescription, input: CreateGatewayVmInput): Promise<GatewayVmDescription> {
   if (description.metadata["gateway-image"] !== input.metadata["gateway-image"]) {
     description = await stopSuspendedVm(deps, gatewayId, description, "change its Gateway image");
@@ -1296,6 +1307,11 @@ function assertGuestReleaseRoot(root: GatewayRoot | null, prewarm: ActiveParkedP
   ].every(Boolean)) throw new Error("Retained guest release custody changed before wake");
 }
 
+async function assertGuestReleaseDisks(vm: VmLifecycleDeps["vm"], description: GatewayVmDescription, ownerUid: string, instanceId: string, expected: NonNullable<ReturnType<typeof readRetainedGuestDisks>>): Promise<void> {
+  const actual = await vm.readAttachedGuestDisks(description.name, description.zone, ownerUid, instanceId);
+  if (!isDeepStrictEqual(expected, actual)) throw new Error("The guest release VM disks changed");
+}
+
 async function ensureRetainedGuestReleaseVm(deps: VmLifecycleDeps, input: {
   gatewayId: string; ownerUid: string; description: GatewayVmDescription | null; prewarm: ActiveParkedPrewarm; spec: GatewayVmSpec;
 }, wakeVm: EnsureVmOperations["wakeVm"]): Promise<GatewayVmState> {
@@ -1307,11 +1323,15 @@ async function ensureRetainedGuestReleaseVm(deps: VmLifecycleDeps, input: {
     ![description.instanceId === instanceId, description.gatewayId === gatewayId, description.metadata["octogee-owner-uid"] === ownerUid].every(Boolean)) {
     throw new Error("Guest release requires the same retained owner VM");
   }
-  const actual = await deps.vm.readAttachedGuestDisks(description.name, description.zone, ownerUid, instanceId);
-  if (!isDeepStrictEqual(expected, actual)) throw new Error("The guest release VM disks changed");
+  await assertGuestReleaseDisks(deps.vm, description, ownerUid, instanceId, expected);
   const [root, owner] = await Promise.all([deps.store.gateways.roots.get(gatewayId), deps.store.users.records.get(ownerUid)]);
   assertGuestReleaseRoot(root, prewarm);
-  if (owner?.home.homeDisk?.id !== actual.homeDiskId) throw new Error("Retained guest release home custody changed before wake");
+  if (owner?.home.homeDisk?.id !== expected.homeDiskId) throw new Error("Retained guest release home custody changed before wake");
+  if (canRetrySpot(description, spec.provisioningModel)) {
+    description = await retrySpot(deps, description);
+    await assertGuestReleaseDisks(deps.vm, description, ownerUid, instanceId, expected);
+    assertGuestReleaseRoot(await deps.store.gateways.roots.get(gatewayId), prewarm);
+  }
   if (PARKED_STATUSES.has(description.status)) description = await wakeVm(gatewayId, description);
   if (description.instanceId !== instanceId || description.status !== "RUNNING") {
     throw new Error("Guest release did not wake the retained owner VM");
@@ -1558,16 +1578,14 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
   }
 
   async function restartPreempted(gatewayId: string, lastSeen: GatewayVmState, description: GatewayVmDescription, preferredModel: GatewayVmSpec["provisioningModel"]): Promise<void> {
-    const retrySpot = preferredModel === "SPOT" && description.provisioningModel === "STANDARD";
-    if (retrySpot && (!lastSeen.instanceId || description.instanceId !== lastSeen.instanceId || description.gatewayId !== gatewayId)) {
+    const retry = canRetrySpot(description, preferredModel);
+    if (retry && (!lastSeen.instanceId || description.instanceId !== lastSeen.instanceId || description.gatewayId !== gatewayId)) {
       throw new Error(`VM ${description.name}: Spot retry requires the same stopped gateway VM`);
     }
     if (!(await recordVm(gatewayId, stateFrom(description, deps.now(), "preempted"), "preempted"))) return;
-    if (retrySpot) {
+    if (retry) {
       await assertNotHeldOfflineSource(gatewayId);
-      await deps.vm.setProvisioningModel(description.name, description.zone, "SPOT");
-      description = verifiedStoppedVm(description, await deps.vm.describe(description.name, description.zone));
-      if (description.provisioningModel !== "SPOT") throw new Error(`VM ${description.name}: provisioning model did not converge to SPOT`);
+      description = await retrySpot(deps, description);
     }
     deps.log(`[vm-gateway-runtime] ${gatewayId}: ${description.name} was preempted (${description.status}); restarting`);
     const after = await startVm(gatewayId, description, "restarted");
