@@ -252,6 +252,31 @@ describe("projectGatewaySummary — pod replacement projection", () => {
   });
 });
 
+describe("projectGatewaySummary — storage mode", () => {
+  it.each([
+    { desiredStatus: "running", expectedMode: "gce-vm-disk" },
+    { desiredStatus: "paused", expectedMode: "gce-vm-disk" },
+  ])("reports the VM home disk while $desiredStatus", ({ desiredStatus, expectedMode }) => {
+    const summary = projectGatewaySummary(
+      { id: "owner-vm", data: () => ({}) },
+      { gatewayClass: "isolated", runtime: "gce-vm", desiredStatus },
+      Date.now(),
+    );
+
+    expect(summary.storage.mode).toBe(expectedMode);
+  });
+
+  it("keeps the diskless Hobby checkpoint on emptyDir", () => {
+    const summary = projectGatewaySummary(
+      { id: "hobby-slot", data: () => ({}) },
+      { gatewayClass: "isolated", runtime: "cluster", sizingProfile: "hobby-checkpoint" },
+      Date.now(),
+    );
+
+    expect(summary.storage.mode).toBe("emptyDir");
+  });
+});
+
 describe("projectGatewaySummary — monthly cost", () => {
   const vmSpec = {
     zones: ["us-central1-b"], machineType: "e2-standard-2", imageFamily: "gateway", diskSizeGb: 80, bootDiskType: "pd-ssd",

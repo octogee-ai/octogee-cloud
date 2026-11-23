@@ -1060,17 +1060,14 @@ export async function readGatewayRegistrationReadiness(store, gatewayId) {
             : null,
     };
 }
-function emptyDirGatewayStorage() {
+function projectGatewayStorage(glmDoc) {
     return {
-        mode: "emptyDir",
+        mode: resolveGatewayRuntime(glmDoc?.runtime) === "gce-vm" ? "gce-vm-disk" : "emptyDir",
         pvcName: null,
         size: null,
         storageClassName: null,
         accessModes: [],
     };
-}
-function projectGatewayStorage(_gatewayId, _glmDoc) {
-    return emptyDirGatewayStorage();
 }
 export function projectGatewayReservation(glmDoc, observedCapacityType) {
     const vm = vmGatewayFacts(glmDoc);
@@ -1141,7 +1138,7 @@ export function projectGatewaySummary(doc, glmDoc, now) {
         uptimeMs: ageMsOrNull(toMillis(data.startedAt), now),
         lastError: projectLastError(data.lastError),
         sizing: resolveSizingForResponse(glmDoc, reservation),
-        storage: projectGatewayStorage(gatewayId, glmDoc),
+        storage: projectGatewayStorage(glmDoc),
         reservation,
         profile: normalizeGatewayProfile(glmDoc?.profile),
         gatewayClass: normalizeGatewayClass(glmDoc),
