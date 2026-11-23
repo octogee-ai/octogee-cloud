@@ -131,6 +131,24 @@ async function unschedulableReason(deps: KubectlDeps, gatewayId: string): Promis
   return amd64Nodes.length === 0 ? NO_AMD64_NODE : `the gateway pod cannot be scheduled: ${condition.message ?? condition.reason}`;
 }
 
+interface CheckpointPodTemplate {
+  metadata?: { labels?: Record<string, string> };
+  spec?: { volumes?: Array<{ name?: string; emptyDir?: object | null; persistentVolumeClaim?: unknown }> };
+}
+
+async function usesDisklessCheckpointHome(deps: KubectlDeps, gatewayId: string): Promise<boolean> {
+  const deployment = await kubectlJson<{ spec?: { template?: CheckpointPodTemplate } }>(
+    deps, ["get", "deployment", `octogee-gateway-${gatewayId}`, "-n", deps.namespace],
+  );
+  const template = deployment?.spec?.template;
+  const labels = template?.metadata?.labels;
+  if (labels?.["gateway-instance"] !== gatewayId) return false;
+  const checkpoint = labels["octogee-hobby-checkpoint-slot"] === gatewayId ||
+    /^[1-9]\d*$/u.test(labels["octogee.ai/checkpoint-release"] ?? "");
+  const home = template?.spec?.volumes?.find((volume) => volume.name === "data");
+  return checkpoint && home?.emptyDir != null && home.persistentVolumeClaim === undefined;
+}
+
 export async function readIsolatedPodBlocker(
   deps: KubectlDeps,
   input: { gatewayId: string; now: number },
@@ -139,7 +157,11 @@ export async function readIsolatedPodBlocker(
   const claim = await kubectlJson<{ metadata?: { creationTimestamp?: string }; status?: { phase?: string } }>(
     deps, ["get", "pvc", name, "-n", deps.namespace],
   );
-  if (claim === null) return `home claim ${name} is missing`;
+  if (claim === null) {
+    return await usesDisklessCheckpointHome(deps, input.gatewayId)
+      ? unschedulableReason(deps, input.gatewayId)
+      : `home claim ${name} is missing`;
+  }
   const pending = claim.status?.phase === "Pending";
   const claimEvents = pending
     ? await kubectlItems<KubeEvent>(deps, [

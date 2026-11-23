@@ -48,6 +48,7 @@ const unschedulable = (message: string) =>
 const nodes = (count: number) => json({ items: Array.from({ length: count }, (_, index) => ({ metadata: { name: `node-${index}` } })) });
 
 const GET_CLAIM = `get pvc ${CLAIM} -n ${NAMESPACE}`;
+const GET_DEPLOYMENT = `get deployment octogee-gateway-${GATEWAY} -n ${NAMESPACE}`;
 const GET_EVENTS = `get events -n ${NAMESPACE}`;
 const GET_PODS = `get pods -n ${NAMESPACE}`;
 const GET_NODES = "get nodes";
@@ -153,8 +154,52 @@ describe("reading why an isolated pod gateway is not running", () => {
   });
 
   it("names a missing claim", async () => {
-    await expect(read({ [GET_CLAIM]: notFound("persistentvolumeclaims", CLAIM) }))
+    await expect(read({
+      [GET_CLAIM]: notFound("persistentvolumeclaims", CLAIM),
+      [GET_DEPLOYMENT]: notFound("deployments", `octogee-gateway-${GATEWAY}`),
+    }))
       .resolves.toBe(`home claim ${CLAIM} is missing`);
+  });
+
+  function deployment(labels: Record<string, string>, volume: Record<string, unknown>): Reply {
+    return json({
+      metadata: { name: `octogee-gateway-${GATEWAY}` },
+      spec: { template: {
+        metadata: { labels: { "gateway-instance": GATEWAY, ...labels } },
+        spec: { volumes: [{ name: "data", ...volume }] },
+      } },
+    });
+  }
+
+  const disklessLabels: Record<string, string>[] = [
+    { "octogee-hobby-checkpoint-slot": GATEWAY },
+    { "octogee.ai/checkpoint-release": "2" },
+  ];
+  it.each(disklessLabels)("checks scheduling instead of reporting a missing PVC for diskless checkpoints", async (labels) => {
+    await expect(read({
+      [GET_CLAIM]: notFound("persistentvolumeclaims", CLAIM),
+      [GET_DEPLOYMENT]: deployment(labels, { emptyDir: { sizeLimit: "4Gi" } }),
+      [GET_PODS]: pods({ type: "PodScheduled", status: "True" }),
+    })).resolves.toBeNull();
+  });
+
+  it("still reports a real scheduling blocker on a diskless checkpoint", async () => {
+    await expect(read({
+      [GET_CLAIM]: notFound("persistentvolumeclaims", CLAIM),
+      [GET_DEPLOYMENT]: deployment({ "octogee-hobby-checkpoint-slot": GATEWAY }, { emptyDir: {} }),
+      [GET_PODS]: unschedulable("0/3 nodes are available: 3 Insufficient memory."),
+      [GET_NODES]: nodes(3),
+    })).resolves.toBe("the gateway pod cannot be scheduled: 0/3 nodes are available: 3 Insufficient memory.");
+  });
+
+  it.each([
+    [{ "octogee-hobby-checkpoint-slot": "another-slot" }, { emptyDir: {} }],
+    [{ "octogee-hobby-checkpoint-slot": GATEWAY }, { persistentVolumeClaim: { claimName: CLAIM } }],
+  ])("does not suppress a missing claim without matching checkpoint volume evidence", async (labels, volume) => {
+    await expect(read({
+      [GET_CLAIM]: notFound("persistentvolumeclaims", CLAIM),
+      [GET_DEPLOYMENT]: deployment(labels, volume),
+    })).resolves.toBe(`home claim ${CLAIM} is missing`);
   });
 
   it("names the newest warning on a pending claim, such as a storage class that does not exist", async () => {
