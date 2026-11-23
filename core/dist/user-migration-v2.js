@@ -155,7 +155,7 @@ async function advanceForward(state, deps) {
         case "preSynced":
             return advanceSourceQuiescence(state, deps);
         case "sourceQuiesced": {
-            await deps.client.scheduler({ migrationId: state.migrationId, slug: state.slug, gatewayId: state.sourceGatewayId, phase: "export" });
+            await readOrPublishSchedulerExport(state, deps);
             const expectedSystemConfigCommit = acceptedSystemConfigCommit(state.sourceSystemConfigCommit);
             await deps.client.transferState({
                 migrationId: state.migrationId,
@@ -219,9 +219,29 @@ async function advanceForward(state, deps) {
             throw new Error(`user migration V2 forward path cannot advance ${state.phase}`);
     }
 }
+async function readOrPublishSchedulerExport(state, deps) {
+    const { migrationId, slug, sourceGatewayId, targetGatewayId } = state;
+    const transfer = await deps.readScheduleTransfer(migrationId);
+    if (transfer) {
+        if (transfer.slug !== slug || transfer.sourceGatewayId !== sourceGatewayId || transfer.targetGatewayId !== targetGatewayId ||
+            transfer.migrationId !== migrationId || !transfer.nativeExport) {
+            throw new Error("user migration V2 scheduler export scope changed");
+        }
+        return transfer.nativeExport;
+    }
+    const result = await deps.client.scheduler({ migrationId, slug, gatewayId: sourceGatewayId, phase: "export" });
+    if (!result.drained || !result.snapshot)
+        throw new MigrationDrainPendingError("source scheduler export is pending");
+    const nativeExport = { agentIds: result.agentIds, snapshot: result.snapshot };
+    await deps.saveScheduleTransfer({
+        migrationId, slug, sourceGatewayId, targetGatewayId, nativeExport,
+        records: [], skipped: [], snapshotAt: deps.now(),
+    });
+    return nativeExport;
+}
 async function stageSchedulesOnReleasedTarget(state, deps) {
     const request = { migrationId: state.migrationId, slug: state.slug };
-    const exported = await deps.client.scheduler({ ...request, gatewayId: state.sourceGatewayId, phase: "export" });
+    const exported = await readOrPublishSchedulerExport(state, deps);
     await callReleasedTargetScheduler(deps, {
         ...request, gatewayId: state.targetGatewayId, phase: "stage", agentIds: exported.agentIds, snapshot: exported.snapshot,
     });

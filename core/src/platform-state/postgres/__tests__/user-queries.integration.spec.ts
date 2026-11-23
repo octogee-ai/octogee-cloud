@@ -229,6 +229,19 @@ describe.skipIf(!dsn)("PostgreSQL user records: transactions", () => {
 describe.skipIf(!dsn)("PostgreSQL user records: deletion", () => {
   const fixture = useUserFixture();
 
+  it("round trips a fenced native export without queuing it for the legacy schedule restorer", async () => {
+    const { users } = fixture();
+    await seedFleet(fixture());
+    const transfer = { migrationId: "mig-1", slug: "bob", sourceGatewayId: "g2", targetGatewayId: "g1",
+      records: [], skipped: [], snapshotAt: NOW };
+    const nativeExport = { agentIds: ["octogee-bob-coach"], snapshot: { jobs: [], scratch: [] } };
+    await users.scheduleTransfers.put("bob", { ...transfer, nativeExport });
+    await users.scheduleTransfers.put("bob", { ...transfer, migrationId: "legacy" });
+
+    expect(await users.scheduleTransfers.get("bob", transfer.migrationId)).toMatchObject({ nativeExport });
+    expect((await users.scheduleTransfers.listUnrestored()).map(({ transfer }) => transfer.migrationId)).toEqual(["legacy"]);
+  });
+
   it("deletes the user with its roster, child records and assignments, and leaves other users alone", async () => {
     const { records, users, count, row } = fixture();
     await seedFleet(fixture());

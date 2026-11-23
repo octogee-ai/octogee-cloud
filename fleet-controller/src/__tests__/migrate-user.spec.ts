@@ -3306,19 +3306,25 @@ describe("migrate-customer — durable V2 migration", () => {
   it("moves a user onto a held VM: nothing reaches its scheduler until cutover releases it", async () => {
     const h = mkDeps({ durable: true });
     let cutOver = false;
+    let staged = false;
     const order: string[] = [];
     vi.mocked(h.deps.commitV2Cutover).mockImplementation(async () => { cutOver = true; order.push("cutover"); });
+    vi.mocked(h.deps.resolveGatewayUrl).mockImplementation(async gatewayId => {
+      if (gatewayId === "gw-blue" && cutOver && !staged) throw new Error("source lookup unavailable after cutover");
+      return `http://${gatewayId}`;
+    });
     vi.mocked(h.client.scheduler).mockImplementation(async ({ migrationId, phase, gatewayId }) => {
       if (gatewayId === "gw-green" && !cutOver) {
         throw new Error('/scheduler/gw-green: 500 {"message":"OpenClaw workspace identities are not initialized for this boot"}');
       }
+      if (phase === "stage") staged = true;
       order.push(`${gatewayId}:${phase}`);
       return { operationId: migrationId, phase, agentIds: ["octogee-alice-coach"], drained: true, snapshot: {} };
     });
 
     expect(await createMigrateUserHandler(h.deps)(mkOp({}), h.ctx)).toMatchObject({ success: true });
 
-    expect(order).toEqual(["gw-blue:export", "cutover", "gw-blue:export", "gw-green:stage", "gw-blue:retire", "gw-green:activate"]);
+    expect(order).toEqual(["gw-blue:export", "cutover", "gw-green:stage", "gw-blue:retire", "gw-green:activate"]);
     expect(h.persisted.find((state) => state.phase === "cutover" && state.schedulerStagedAt !== undefined)).toBeDefined();
   });
 

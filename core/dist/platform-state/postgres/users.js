@@ -48,6 +48,7 @@ const SCHEDULE_TRANSFERS_TABLE = {
         column("records", "jsonb"),
         column("skipped", "jsonb"),
         column("snapshotAt", "bigint"),
+        column("nativeExport", "jsonb"),
         column("restoreAttemptedTo", "text"),
         column("restoreAttemptedAt", "bigint"),
         column("restoredTo", "text"),
@@ -258,7 +259,7 @@ function createScheduleTransfersRepository(session) {
             await updateRecord(session, "builders.scheduleTransfers.patch", { table: SCHEDULE_TRANSFERS_TABLE, key: [uid, migrationId] }, patch, []);
         },
         async listUnrestored() {
-            const rows = await selectRecords(session, "builders.scheduleTransfers.listUnrestored", "SELECT * FROM $schema.schedule_transfers WHERE restored_to IS NULL ORDER BY snapshot_at, uid, migration_id");
+            const rows = await selectRecords(session, "builders.scheduleTransfers.listUnrestored", "SELECT * FROM $schema.schedule_transfers WHERE restored_to IS NULL AND native_export IS NULL ORDER BY snapshot_at, uid, migration_id");
             return rows.map((row) => ({
                 uid: row.uid,
                 transfer: withoutKeys(decodeStored(SCHEDULE_TRANSFERS_TABLE, row), ["uid"]),

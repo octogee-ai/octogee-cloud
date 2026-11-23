@@ -77,6 +77,8 @@ function deps(): UserMigrationV2Deps {
   } as unknown as MigrationClient;
   return {
     client,
+    readScheduleTransfer: vi.fn(async () => null),
+    saveScheduleTransfer: vi.fn(async () => undefined),
     setSourceAssignmentState: vi.fn(async () => undefined),
     commitCutover: vi.fn(async () => undefined),
     now: vi.fn(() => 1_000),
@@ -468,6 +470,30 @@ describe("durable scheduler handoff onto a held gateway VM", () => {
 
     expect(await advanceUserMigrationV2(staged, d)).toMatchObject({ phase: "sourceRetired" });
     expect(calls.slice(2)).toEqual(["source:retire", "target:activate"]);
+  });
+
+  it("reuses the persisted fenced export across cutover without exporting from the old gateway again", async () => {
+    const d = deps();
+    const calls = heldTarget(d);
+    let stored: Parameters<NonNullable<UserMigrationV2Deps["saveScheduleTransfer"]>>[0] | null = null;
+    d.readScheduleTransfer = vi.fn(async () => stored);
+    d.saveScheduleTransfer = vi.fn(async transfer => { stored = transfer; });
+
+    const synced = await advanceUserMigrationV2(state("sourceQuiesced"), d);
+    expect(synced.phase).toBe("finalSynced");
+    expect(stored).toMatchObject({
+      slug: "alice", sourceGatewayId: "source", targetGatewayId: "target",
+      nativeExport: { agentIds: ["octogee-alice-coach"], snapshot: { jobs: ["daily"] } },
+    });
+
+    const staged = await advanceUserMigrationV2(state("cutover"), { ...d });
+
+    expect(staged).toMatchObject({ phase: "cutover", schedulerStagedAt: 1_000 });
+    expect(calls).toEqual([
+      "source:export",
+      `target:stage:${JSON.stringify({ agentIds: ["octogee-alice-coach"], snapshot: { jobs: ["daily"] } })}`,
+    ]);
+    expect(d.saveScheduleTransfer).toHaveBeenCalledTimes(1);
   });
 
   it("waits for the released target's OpenClaw before staging", async () => {
