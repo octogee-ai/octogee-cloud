@@ -5,10 +5,34 @@ import * as path from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 
 const { spawn } = vi.hoisted(() => ({ spawn: vi.fn() }));
-vi.mock('node:child_process', () => ({ spawn }));
+vi.mock(import('node:child_process'), async (importOriginal) => ({ ...await importOriginal(), spawn }));
 import { bootFreshUserHost } from '../lib/isolated-native-bootstrap.js';
 
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.clearAllMocks(); });
+
+it.each([false, true])('bounds delayed native readiness for ephemeral home=%s', async (ephemeral) => {
+  vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'isolated-native-process-'));
+  const child = Object.assign(new EventEmitter(), {
+    kill: vi.fn(() => { queueMicrotask(() => child.emit('close', 0, null)); return true; }),
+  });
+  spawn.mockReturnValue(child);
+  let started: number | undefined;
+  const probe = vi.fn(async () => {
+    started ??= Date.now();
+    return { ok: Date.now() - started >= 210_000 };
+  });
+  vi.stubGlobal('fetch', probe);
+  try {
+    const result = bootFreshUserHost(root, { HOME: root, GATEWAY_EPHEMERAL_HOME: String(ephemeral) });
+    const outcome = result.then(() => 'ready', (error: unknown) => String(error));
+    await vi.waitFor(() => expect(probe).toHaveBeenCalled());
+    await vi.advanceTimersByTimeAsync(211_000);
+    expect(await outcome).toBe(ephemeral ? 'ready' : 'Error: native initialization readiness timed out');
+    expect(child.kill).toHaveBeenCalledExactlyOnceWith('SIGTERM');
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
 it('lets a PostgreSQL-state Native gateway finish a graceful stop that outlasts ten seconds, then releases the stop timer', async () => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'isolated-native-process-'));
