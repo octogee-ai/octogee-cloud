@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
+import { nativeReturnTargetDenied } from "@octogee/core/fleet-state";
+import { compensatedReturnAllowsAlternateTransfer } from "./compensated-native-return-transfer.js";
 import { isUserReturnOperationIdFor } from "@octogee/shared/types/isolated-operation-ids";
 import type { MigrationClient } from "@octogee/core/fleet-migration-client";
 import {
@@ -106,7 +108,7 @@ function isTerminalReturnTransfer(task: MigrationTransferTask, input: TransferSc
   ].every(Boolean);
 }
 
-async function retiredReturnTransfer(tx: PlatformStateTransaction, input: TransferScope, task: MigrationTransferTask): Promise<boolean> {
+async function retiredReturnTransfer(tx: PlatformStateTransaction, input: TransferScope, task: MigrationTransferTask, cleanup: boolean): Promise<boolean> {
   const { sourceGatewayId: source, targetGatewayId: retired } = task;
   const operationId = input.migrationId.slice(4);
   if (!input.migrationId.startsWith("mig-") || !isUserReturnOperationIdFor(operationId, source) ||
@@ -124,13 +126,14 @@ async function retiredReturnTransfer(tx: PlatformStateTransaction, input: Transf
     typeof candidate.completedAt === "number", Number(candidate.completedAt) >= completedAt,
   ].every(Boolean));
   const retirement = receipt?.targetRetirement;
-  return retirement !== null && typeof retirement === "object" &&
-    await completedRetirementMatches(tx, retired, retirement as Record<string, unknown>, completedAt);
+  if (retirement !== null && typeof retirement === "object" &&
+      await completedRetirementMatches(tx, retired, retirement as Record<string, unknown>, completedAt)) return true;
+  return compensatedReturnAllowsAlternateTransfer(tx, { ...op, inputUid: op.inputUid }, task, input.gatewayId, cleanup);
 }
 
-async function selectTransferTask(tx: PlatformStateTransaction, taskId: string, input: TransferScope): Promise<TaskSelection> {
+async function selectTransferTask(tx: PlatformStateTransaction, taskId: string, input: TransferScope, cleanup = false): Promise<TaskSelection> {
   const existing = await tx.migrationTasks.get(taskId);
-  if (!existing || existing.targetGatewayId === input.gatewayId || !await retiredReturnTransfer(tx, input, existing)) {
+  if (!existing || existing.targetGatewayId === input.gatewayId || !await retiredReturnTransfer(tx, input, existing, cleanup)) {
     return { taskId, migrationId: input.migrationId, existing };
   }
   const migrationId = retargetedMigrationTransferId(input.migrationId, input.gatewayId);
@@ -149,7 +152,7 @@ export async function readTransferAttemptForCleanup(
 ): Promise<string | undefined> {
   const taskId = migrationTransferTaskId(input);
   const read = () => deps.store.transaction({ label: "migration-transfer-lease.cleanup", readOnly: true },
-    tx => selectTransferTask(tx, taskId, input));
+    tx => selectTransferTask(tx, taskId, input, true));
   const selection = await read();
   const observed = selection.existing;
   if (!observed) return undefined;
@@ -184,6 +187,16 @@ function runningTask(deps: LeaseDeps, claim: {
   };
 }
 
+async function assertReturnTransferTargetAllowed(tx: PlatformStateTransaction, input: TransferScope): Promise<void> {
+  const operationId = input.migrationId.slice(4);
+  if (!input.migrationId.startsWith("mig-") || !isUserReturnOperationIdFor(operationId, input.fromGatewayId)) return;
+  const operation = await tx.journal.operations.get(operationId);
+  if (operation?.inputUid && operation.input.userSlug === input.slug &&
+      await nativeReturnTargetDenied(tx, operation.inputUid, input.gatewayId)) {
+    throw new Error("transfer task destination is permanently excluded for this Native return");
+  }
+}
+
 export async function claimTransferTask(deps: LeaseDeps, taskId: string, input: Parameters<MigrationClient["transferState"]>[0]): Promise<TransferClaim> {
   const scope = { ...input, gatewayId: input.toGatewayId, mode: input.mode ?? "pre" as const };
   const select = (tx: PlatformStateTransaction) => selectTransferTask(tx, taskId, scope);
@@ -193,6 +206,7 @@ export async function claimTransferTask(deps: LeaseDeps, taskId: string, input: 
   if (ownPod && (ownPod.gone || !Number.isSafeInteger(ownPod.restartCount) || ownPod.restartCount! < 0)) throw new Error("controller container identity unavailable");
   const attemptId = randomUUID();
   const claim = await deps.store.transaction({ label: "migration-transfer-lease.claim" }, async tx => {
+    await assertReturnTransferTargetAllowed(tx, scope);
     const selected = await select(tx);
     const { taskId, existing, migrationId } = selected;
     const now = deps.now();
