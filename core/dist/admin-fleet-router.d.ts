@@ -229,13 +229,13 @@ export declare function readGatewayRegistrationReadiness(store: PlatformStateSto
     gatewayClass: DurableGatewayRoot["gatewayClass"] | null;
 }>;
 type ProjectedGatewayStorage = {
-    mode: "emptyDir" | "pvc";
+    mode: "emptyDir" | "pvc" | "gce-vm-disk";
     pvcName: string | null;
     size: string | null;
     storageClassName: string | null;
     accessModes: string[];
 };
-declare function projectGatewayStorage(_gatewayId: string, _glmDoc: GlmDoc | undefined): ProjectedGatewayStorage;
+declare function projectGatewayStorage(glmDoc: GlmDoc | undefined): ProjectedGatewayStorage;
 export declare function projectGatewayReservation(glmDoc: GlmDoc | undefined, observedCapacityType?: GatewayPodCapacityType): {
     type: GatewayPricingMode;
     priceMultiplier: number;
