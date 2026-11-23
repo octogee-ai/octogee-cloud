@@ -22,14 +22,14 @@ export interface NativeReturnTargetDrain {
   dormantInboundOperationIds: string[];
 }
 
-export async function readNativeReturnTargetDrain(store: ExclusionReader, operation: Pick<OperationRecord, "id" | "input">): Promise<NativeReturnTargetDrain | null> {
+export async function readNativeReturnTargetDrain(store: ExclusionReader, operation: Pick<OperationRecord, "id" | "input">): Promise<(NativeReturnTargetDrain & { holdStartedAt: number | undefined }) | null> {
   const { uid, toGatewayId } = operation.input;
   if (typeof uid !== "string" || typeof toGatewayId !== "string") return null;
   const audit = await store.journal.audits.get(nativeReturnTargetExclusionId(uid));
   const drain = audit?.target.drain as NativeReturnTargetDrain | undefined;
   if (!audit || !drain || audit.status !== "in-progress" || audit.mutation.kind !== NATIVE_RETURN_TARGET_EXCLUSION ||
       audit.target.uid !== uid || audit.target.targetGatewayId !== toGatewayId || drain.operationId !== operation.id) return null;
-  return drain;
+  return { ...drain, holdStartedAt: audit.actionStartedAt };
 }
 
 export function sharedDrainPodMatches(runtime: FleetRegistryRecord | null, podUid: string, now: number): runtime is FleetRegistryRecord {

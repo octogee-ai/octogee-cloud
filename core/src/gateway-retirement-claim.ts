@@ -1,3 +1,4 @@
+import { readSchedulerMigrationIdentity } from "@octogee/shared/types/glm";
 import {
   GATEWAY_HEARTBEAT_INTERVAL_MS,
   GATEWAY_UNREACHABLE_AFTER_MS,
@@ -314,19 +315,74 @@ function activeMigrationConflict(gatewayId: string, operations: readonly Stored<
   ) !== null;
 }
 
+type DrainedOwner = NativeReturnTargetDrain["owners"][number];
+
+function doneStepTime(steps: OperationRecord["steps"], name: string) {
+  const matches = steps.filter(step => step.name === name);
+  const step = matches[0];
+  return matches.length === 1 && step?.status === "done" &&
+    typeof step.startedAt === "number" && Number.isSafeInteger(step.startedAt) &&
+    typeof step.completedAt === "number" && Number.isSafeInteger(step.completedAt) &&
+    step.startedAt <= step.completedAt ? { start: step.startedAt, end: step.completedAt } : null;
+}
+
+function matchesLegacyDepartureScope(op: Stored<OperationRecord>, old: string, destination: string, owner: DrainedOwner) {
+  const handoff = op.schedulerHandoff;
+  const forward = handoff?.forwardRecovery;
+  const claim = readSchedulerMigrationIdentity(op.id, handoff?.migrationId);
+  return [op.status === "succeeded", op.origin === "automatic", op.createdBy === "glm-controller-placement-policy",
+    op.input.source === "continuous-placement-policy", op.userMigrationV2 === undefined, op.rolledBack !== true,
+    op.inputUid === owner.uid, op.input.uid === owner.uid, op.input.userSlug === owner.slug,
+    op.input.fromGatewayId === old, op.input.toGatewayId === destination,
+    handoff?.uid === owner.uid, handoff?.slug === owner.slug, handoff?.fromGatewayId === old, handoff?.toGatewayId === destination,
+    forward?.schemaVersion === 1, forward?.phase === "source-flushed", forward?.sourceEpoch === owner.epoch, claim !== null,
+    claim?.attempt === op.attempts, claim?.claimStartedAt === op.startedAt].every(Boolean);
+}
+
+function legacyDepartureRecordedCutover(op: Stored<OperationRecord>, assignmentAt: number, holdStartedAt: number) {
+  const { startedAt, completedAt, cutoverCommittedAt: committed, steps } = op;
+  if (typeof startedAt !== "number" || typeof completedAt !== "number" ||
+      typeof committed !== "number" || ![startedAt, completedAt, committed].every(Number.isSafeInteger)) return false;
+  const verify = doneStepTime(steps, "verify-target");
+  const cutover = doneStepTime(steps, "cutover-firestore");
+  const cleanup = doneStepTime(steps, "unmount-source");
+  return !!verify && !!cutover && !!cleanup && [holdStartedAt <= startedAt, startedAt <= verify.start,
+    verify.end <= cutover.start, cutover.start <= assignmentAt, assignmentAt <= committed, committed <= cutover.end,
+    cutover.end <= cleanup.start, cleanup.end <= completedAt].every(Boolean);
+}
+
 async function drainedOwnerMoved(
-  transaction: PlatformStateTransaction, old: string, destination: string, owner: NativeReturnTargetDrain["owners"][number],
+  transaction: PlatformStateTransaction, old: string, drain: NativeReturnTargetDrain & { holdStartedAt?: number }, owner: DrainedOwner,
 ): Promise<boolean> {
+  const destination = drain.replacementGatewayId;
   const [ownerRecord, assignments] = await Promise.all([
     transaction.users.records.get(owner.uid), transaction.gateways.assignments.listForUid(owner.uid),
   ]);
   const assignment = assignments[0];
-  if (!assignment?.updatedByOperationId || ![assignments.length === 1, assignment.gatewayId === destination,
+  if (!assignment || ![assignments.length === 1, assignment.gatewayId === destination,
     assignment.slug === owner.slug, assignment.epoch === owner.epoch + 1, assignment.state === "serving",
     ownerRecord?.gateway?.gatewayId === destination].every(Boolean)) return false;
-  const departure = await transaction.journal.operations.get(assignment.updatedByOperationId);
-  return !!departure && [departure.kind === "migrate-user", departure.status === "succeeded", typeof departure.cutoverCommittedAt === "number",
-    departure.input.uid === owner.uid, departure.input.fromGatewayId === old, departure.input.toGatewayId === destination].every(Boolean);
+  if (assignment.updatedByOperationId) {
+    const departure = await transaction.journal.operations.get(assignment.updatedByOperationId);
+    return !!departure && [departure.kind === "migrate-user", departure.status === "succeeded", typeof departure.cutoverCommittedAt === "number",
+      departure.input.uid === owner.uid, departure.input.fromGatewayId === old, departure.input.toGatewayId === destination].every(Boolean);
+  }
+  if (![assignment.updatedByOperationId === null, assignment.uid === owner.uid, ownerRecord?.slug === owner.slug,
+    assignment.source === "migrate-user", assignment.createdAt === assignment.updatedAt].every(Boolean)) return false;
+  return readLegacyDrainDeparture(transaction, owner, { old, destination, at: assignment.updatedAt, holdStartedAt: drain.holdStartedAt });
+}
+
+async function readLegacyDrainDeparture(
+  transaction: PlatformStateTransaction, owner: DrainedOwner,
+  scope: { old: string; destination: string; at: number; holdStartedAt?: number },
+): Promise<boolean> {
+  const { old, destination, at, holdStartedAt } = scope;
+  if (!Number.isSafeInteger(at) || typeof holdStartedAt !== "number" || !Number.isSafeInteger(holdStartedAt)) return false;
+  const history = await transaction.journal.operations.listForUid(owner.uid, { kind: "migrate-user" });
+  const matching = history.filter(op => matchesLegacyDepartureScope(op, old, destination, owner));
+  const departure = matching[0];
+  return matching.length === 1 && !!departure && legacyDepartureRecordedCutover(departure, at, holdStartedAt) &&
+    !history.some(op => op.id !== departure.id && typeof op.cutoverCommittedAt === "number" && op.cutoverCommittedAt >= at);
 }
 
 async function nativeReturnRetirementHolds(
@@ -340,7 +396,7 @@ async function nativeReturnRetirementHolds(
     const [left, tasks, oldRuntime, replacement, departed] = await Promise.all([
       transaction.users.records.listByGateway(old, { limit: 1 }), transaction.migrationTasks.listByStatus(["running"]),
       transaction.fleetRegistry.get(old), transaction.fleetRegistry.get(drain.replacementGatewayId),
-      Promise.all(drain.owners.map(owner => drainedOwnerMoved(transaction, old, drain.replacementGatewayId, owner))),
+      Promise.all(drain.owners.map(owner => drainedOwnerMoved(transaction, old, drain, owner))),
     ]);
     if (!sharedDrainPodMatches(oldRuntime, drain.oldPodUid, now) || !sharedDrainPodMatches(replacement, drain.replacementPodUid, now)) continue;
     if (![left.length === 0, !oldRuntime.heartbeat.migratingIn?.length, replacement.heartbeat.status === "ready",

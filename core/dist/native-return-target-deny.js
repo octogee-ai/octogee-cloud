@@ -15,7 +15,7 @@ export async function readNativeReturnTargetDrain(store, operation) {
     if (!audit || !drain || audit.status !== "in-progress" || audit.mutation.kind !== NATIVE_RETURN_TARGET_EXCLUSION ||
         audit.target.uid !== uid || audit.target.targetGatewayId !== toGatewayId || drain.operationId !== operation.id)
         return null;
-    return drain;
+    return { ...drain, holdStartedAt: audit.actionStartedAt };
 }
 export function sharedDrainPodMatches(runtime, podUid, now) {
     return !!runtime && hasFreshReadyKubernetesObservation(runtime, now, GATEWAY_UNREACHABLE_AFTER_MS) &&

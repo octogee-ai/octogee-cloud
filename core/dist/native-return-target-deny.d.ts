@@ -20,7 +20,9 @@ export interface NativeReturnTargetDrain {
     }>;
     dormantInboundOperationIds: string[];
 }
-export declare function readNativeReturnTargetDrain(store: ExclusionReader, operation: Pick<OperationRecord, "id" | "input">): Promise<NativeReturnTargetDrain | null>;
+export declare function readNativeReturnTargetDrain(store: ExclusionReader, operation: Pick<OperationRecord, "id" | "input">): Promise<(NativeReturnTargetDrain & {
+    holdStartedAt: number | undefined;
+}) | null>;
 export declare function sharedDrainPodMatches(runtime: FleetRegistryRecord | null, podUid: string, now: number): runtime is FleetRegistryRecord;
 export declare function nativeReturnTargetDenied(store: ExclusionReader, uid: string, gatewayId: string): Promise<boolean>;
 export declare function nativeReturnSharedStoreHandoffDenied(store: ExclusionReader, uid: string): Promise<boolean>;
