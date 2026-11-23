@@ -176,7 +176,9 @@ export function createEphemeralRuntimeCheckpoint(input: {
       checkpointUserStoreAnchors({
         stateDir: openclawStateRoot(process.env), slug: input.slug, gatewayId: input.gatewayId, config, broker: input.broker,
       }),
-      checkpointGatewaySchedules({ broker: input.broker, rpc: createGatewayRpc({ callTimeoutMs: 3_000 }), log }, { requireSlug: input.slug }),
+      checkpointGatewaySchedules({ broker: input.broker, rpc: createGatewayRpc({
+        allowLegacyGatewayTokenFallback: true, connectTimeoutMs: 3_000, callTimeoutMs: 3_000,
+      }), log }, { requireSlug: input.slug }),
     ]);
   };
 }

@@ -1419,7 +1419,11 @@ async function readAssignmentRosterForGateway(
 ): Promise<FleetBrokerAssignmentRosterEntry[] | null> {
   try {
     const assignments = await store.gateways.assignments.list(gatewayId);
-    return assignments.map(({ uid, state, epoch }) => ({ uid, state, epoch }));
+    const users = await store.users.records.listByGateway(gatewayId);
+    const restoring = new Set(users.filter(user => user.fences.restoreFence !== undefined).map(user => user.uid));
+    return assignments.map(({ uid, state, epoch }) => ({
+      uid, state, epoch, ...(restoring.has(uid) ? { restorePending: true } : {}),
+    }));
   } catch (error) {
     if (error instanceof MalformedRecordError) return null;
     throw error;

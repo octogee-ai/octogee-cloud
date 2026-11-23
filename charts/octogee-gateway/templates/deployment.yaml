@@ -21,6 +21,7 @@
 {{- $vmIsolated := and $isolatedClass $vmRuntime -}}
 {{- $isolatedPod := and $isolatedClass (not $vmRuntime) -}}
 {{- $ephemeralHomeGiB := .Values.ephemeralHomeGiB | default 0 -}}
+{{- $preStopTimeout := .Values.preStopFlush.timeoutSeconds | default 10 -}}
 {{- if and $ephemeralHomeGiB (not (and $isolatedPod (not $checkpointSlot) (eq .Values.runtimeClassName "gvisor") .Values.gatewayEdge.enabled)) -}}
 {{- fail "octogee-gateway: ephemeral home requires an ordinary isolated gVisor gateway with an edge" -}}
 {{- end -}}
@@ -318,8 +319,11 @@ spec:
                   - -c
                   - |
                     exec > /proc/1/fd/1 2> /proc/1/fd/2
-                    timeout {{ .Values.preStopFlush.timeoutSeconds | default 10 }}s /octogee/scripts/node_modules/.bin/tsx /octogee/scripts/entrypoints/prestop-flush.ts
+                    timeout {{ $preStopTimeout }}s /octogee/scripts/node_modules/.bin/tsx /octogee/scripts/entrypoints/prestop-flush.ts
                     status=$?
+                    {{- if $ephemeralHomeGiB }}
+                    touch /home/node/.openclaw/prestop-finished
+                    {{- end }}
                     if [ "$status" -ne 0 ]; then
                       echo "🔴 [prestop-flush] failed exitCode=$status" >&2
                     fi
@@ -652,6 +656,20 @@ spec:
         # API, the chat WS surface, and /metrics.
         - name: gateway-edge
           image: "{{ required "gatewayEdge.image.repository is required" .Values.gatewayEdge.image.repository }}:{{ .Values.gatewayEdge.image.tag | default .Values.imageTag }}"
+          {{- if and $ephemeralHomeGiB .Values.preStopFlush.enabled }}
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - sh
+                  - -c
+                  - |
+                    remaining={{ add $preStopTimeout 2 }}
+                    while [ ! -f /home/node/.openclaw/prestop-finished ] && [ "$remaining" -gt 0 ]; do
+                      sleep 1
+                      remaining=$((remaining - 1))
+                    done
+          {{- end }}
           ports:
             - containerPort: {{ .Values.gatewayEdge.port }}
               name: gateway-edge

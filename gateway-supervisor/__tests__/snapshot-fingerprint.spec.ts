@@ -374,6 +374,11 @@ describe("desiredUsers", () => {
     expect(map.size).toBe(1);
   });
 
+  it("retains the desired owner without authorizing an ordinary mount during restore", () => {
+    const map = desiredUsers([snap()], [{ uid: "u1", state: "serving", epoch: 3, restorePending: true }]);
+    expect(map.get("alice")).toMatchObject({ uid: "u1", ensureAllowed: false });
+  });
+
   it("lanes a user that has completed provisioning as a move and an unprovisioned one as a create", () => {
     const map = desiredUsers([
       snap({ status: "complete" }),
