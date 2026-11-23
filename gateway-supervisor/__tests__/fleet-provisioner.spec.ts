@@ -1052,6 +1052,76 @@ describe("configured user surge release", () => {
     }
   });
 
+  it("waits for exact running no-source owner before an assignment wake mounts", async () => {
+    vi.useFakeTimers();
+    let wake: () => void = () => undefined;
+    let phase: "starting" | "running" = "starting";
+    let podUid = "exact-headless-pod";
+    let assigned = true;
+    const ensureSlug = vi.fn(async () => "mounted" as const);
+    const stop = startReconcileLoop({
+      gatewayId: "configured-owner",
+      intervalMs: 60_000,
+      subscribe: (listener) => {
+        wake = listener;
+        return () => undefined;
+      },
+      canReconcile: createConfiguredUserReconcileAdmission({
+        expectedPodUid: "exact-headless-pod",
+        processGate: { status: async () => ({ version: 1, podUid, role: "normal", mode: "permitted", phase }) },
+        hasServingAssignment: async () => assigned,
+        log: () => undefined,
+      }),
+      getMountObserved: () => [],
+      getEvictObserved: () => [],
+      readDesired: async () => ["configured-owner"],
+      ensureSlug,
+      unmountSlug: async () => "drained",
+      log: () => undefined,
+    });
+    try {
+      wake();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(ensureSlug).not.toHaveBeenCalled();
+
+      phase = "running";
+      podUid = "foreign-pod";
+      wake();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(ensureSlug).not.toHaveBeenCalled();
+
+      podUid = "exact-headless-pod";
+      assigned = false;
+      wake();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(ensureSlug).not.toHaveBeenCalled();
+
+      assigned = true;
+      wake();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(ensureSlug).toHaveBeenCalledOnce();
+    } finally {
+      stop();
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    { role: "target", migrationId: "active-target", slug: "configured-owner", targetPodUid: "target-pod" },
+    { role: "source", migrationId: "active-source", slug: "configured-owner", targetPodUid: "target-pod" },
+    { role: "normal", terminalTarget: { migrationId: "completed-target", slug: "configured-owner", targetPodUid: "target-pod" } },
+  ] as const)("preserves permitted migration and recovered target admission for $role", async (scope) => {
+    const admission = createConfiguredUserReconcileAdmission({
+      expectedPodUid: "target-pod",
+      processGate: {
+        status: async () => ({ version: 1, podUid: "target-pod", mode: "permitted", phase: "starting", ...scope }),
+      },
+      hasServingAssignment: async () => true,
+      log: () => undefined,
+    });
+    await expect(admission()).resolves.toBe(true);
+  });
+
   it("fails closed without repeating a user process-gate status error", async () => {
     const logs: string[] = [];
     const admission = createConfiguredUserReconcileAdmission({
