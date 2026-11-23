@@ -97,12 +97,15 @@ describe("preview gateway", () => {
     });
   });
 
-  it("puts the Cloud Armor policy on the preview backend Service", () => {
+  it("puts the Cloud Armor policy and full request logging on the preview backend Service", () => {
     const policy = find(chart.helmTemplate({ extraValues: enabledValues }), "GCPBackendPolicy", "preview-gateway-backend");
 
     expect(policy.apiVersion).toBe("networking.gke.io/v1");
     expect(policy.spec).toEqual({
-      default: { securityPolicy: "previews-example-policy" },
+      default: {
+        securityPolicy: "previews-example-policy",
+        logging: { enabled: true, sampleRate: 1000000 },
+      },
       targetRef: { group: "", kind: "Service", name: "preview-gateway-backend" },
     });
   });
