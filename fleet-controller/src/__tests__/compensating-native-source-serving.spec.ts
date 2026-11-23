@@ -4,6 +4,7 @@ import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store"
 import { verifyFleetRequest } from "@octogee/core/fleet-signature";
 import { SIGNATURE_HEADER } from "@octogee/shared/types/fleet-controller";
 import { releasePayloadHash } from "@octogee/shared/types/gateway-releases";
+import { COMPENSATED_NATIVE_RETURN_RESULT } from "../lib/compensated-native-return-history.js";
 import { createCompensatingSourceServingVerifier } from "../lib/compensating-native-source-serving.js";
 import type { CompensatingNativeReturnAuthority } from "../lib/compensating-native-return.js";
 
@@ -26,7 +27,7 @@ const assignmentPath = `${rootPath}/assignments/${scope.uid}`;
 const runtimePath = `glmGateways/${scope.sourceGatewayId}`;
 const ready = { ready: true, openclawUp: true, handoffReleased: true, brokerProfilesSettled: true, dashboardBridgeReady: true };
 
-function fixture() {
+function fixture(terminal = false) {
   const docs = new Map<string, Record<string, unknown>>([
     [`users/${scope.uid}`, { username: scope.slug, provisioning: { openclaw: {
       gatewayId: scope.sourceGatewayId, migration: { operationId: scope.operationId, phase: "transferring", state: "moving", startedAt: 100 },
@@ -63,7 +64,7 @@ function fixture() {
     expect(verifyFleetRequest(keys.publicKey, requestId, raw, new Headers(options?.headers).get(SIGNATURE_HEADER)!)).toBe(true);
     return Response.json(responses.state);
   });
-  const verify = createCompensatingSourceServingVerifier({ store, privateKey: keys.privateKey, port: 3003, edgePort: 3001, fetchImpl });
+  const verify = createCompensatingSourceServingVerifier({ store, privateKey: keys.privateKey, port: 3003, edgePort: 3001, fetchImpl, terminal });
   return { docs, verify, fetchImpl, responses, current };
 }
 
@@ -71,6 +72,25 @@ describe("original Native serving after compensating ingress resume", () => {
   it("binds signed stock Fleet readiness and both installed roles to the sole canonical owner", async () => {
     const h = fixture();
     await expect(h.verify(scope, h.current)).resolves.toBeUndefined();
+    expect(h.fetchImpl).toHaveBeenCalledTimes(4);
+  });
+
+  it("authenticates the original serving VM during a pristine stale rearm and rejects a new claim", async () => {
+    const h = fixture(true);
+    h.docs.set(`users/${scope.uid}`, { username: scope.slug, provisioning: { openclaw: { gatewayId: scope.sourceGatewayId } } });
+    delete h.docs.get(rootPath)!.runtimeRestartFence;
+    h.docs.get(assignmentPath)!.state = "serving";
+    const op = h.docs.get(`glmOperations/${scope.operationId}`)!;
+    Object.assign(op, {
+      origin: "automatic", status: "pending", startedAt: null, gatewayId: "shared-other", schedulerHandoffReleased: true,
+      input: { source: "builder-activation-lease", uid: scope.uid, toGatewayId: "shared-other" },
+      schedulerHandoff: { toGatewayId: scope.targetGatewayId },
+      attemptHistory: [{ attempt: 3, startedAt: 105, completedAt: 120, classification: "terminal", error: COMPENSATED_NATIVE_RETURN_RESULT, steps: [] }],
+    });
+    await expect(h.verify(scope, h.current)).resolves.toBeUndefined();
+    expect(h.fetchImpl).toHaveBeenCalledTimes(4);
+    Object.assign(op, { status: "running", startedAt: 121 });
+    await expect(h.verify(scope, h.current)).rejects.toThrow(/serving witness/);
     expect(h.fetchImpl).toHaveBeenCalledTimes(4);
   });
 

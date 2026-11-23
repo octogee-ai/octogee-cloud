@@ -5,7 +5,7 @@ import type { PlatformStateStore } from "@octogee/core/platform-state";
 import type { GatewayVmClient } from "./compute-vm.js";
 import type { MigrationClient } from "@octogee/core/fleet-migration-client";
 import type { PrepareMigrationAgentStores } from "../migration-agent-stores.js";
-import type { CompensatingNativeReturnActions, CompensatingNativeReturnAuthority, CompensatingNativeReturnProviders } from "./compensating-native-return.js";
+import type { CompensatingNativeReturnActions, CompensatingNativeReturnAuthority, CompensatingNativeReturnProviders, OldTargetExclusionScope } from "./compensating-native-return.js";
 
 export function createCompensatingNativeReturnActions(deps: {
   prepareSourceStores: PrepareMigrationAgentStores;
@@ -40,10 +40,11 @@ export function createCompensatingNativeReturnActions(deps: {
   };
 }
 
-export function createRetiredNativeSourceStoreVerifier(
-  store: PlatformStateStore, adminDsn: string,
-): CompensatingNativeReturnActions["prepareSourceStores"] {
-  const verify = createHeldReturnStoreCustodyVerifier(adminDsn, { targetState: "retired" });
+export function createCompensatingNativeSourceStoreVerifier(
+  store: PlatformStateStore, adminDsn: string, targetState: "retired" | "active",
+): (scope: OldTargetExclusionScope, assertCurrent: () => Promise<void>) => Promise<void> {
+  const verify = createHeldReturnStoreCustodyVerifier(adminDsn, targetState === "retired"
+    ? { targetState: "retired" } : { serializeCredentialChanges: true });
   return async (authority, assertCurrent) => {
     await assertCurrent();
     const read = () => store.users.agentStores.list(authority.uid);

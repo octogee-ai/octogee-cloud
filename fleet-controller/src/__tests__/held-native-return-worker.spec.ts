@@ -888,10 +888,11 @@ async function retiredCompensationFixture() {
     verifyRetiredRoutes: vi.fn(async (_reservation, assertCurrent: () => Promise<void>) => { await assertCurrent(); return true; }),
   };
   const verifyRestoredSource = vi.fn(async (_authority, check: () => Promise<void>) => check());
-  const exclusion = createNativeReturnTargetExclusion({ store: h.store, now: Date.now, provider: physical, verifyRestoredSource });
+  const verifyRearmedTargetStores = vi.fn(async (_scope, check: () => Promise<void>) => check());
+  const exclusion = createNativeReturnTargetExclusion({ store: h.store, now: Date.now, provider: physical, verifyRestoredSource, verifyRearmedTargetStores });
   const provider = { ...exclusion, observeOriginalSource: vi.fn(async () => h.source) };
-  return { ...h, request, scope, physical, exclusion, retirement, retirementPath, verifyRestoredSource,
-    worker: createCompensatingNativeReturn({ ...h.deps, provider }) };
+  return { ...h, request, scope, physical, exclusion, retirement, retirementPath, verifyRestoredSource, verifyRearmedTargetStores,
+    worker: createCompensatingNativeReturn({ ...h.deps, now: Date.now, provider }) };
 }
 
 it("uses read-only retired source-store verification for preparation and authenticated ingress resume", async () => {
@@ -917,7 +918,8 @@ it("uses read-only retired source-store verification for preparation and authent
   expect(prepareSourceStores).not.toHaveBeenCalled();
 });
 
-it.each([false, true])("restores the compensated Native lease and preserves permanent denial (handoff previously released: %s)", async previouslyReleased => {
+it.each(["fresh", "released", "rearmed", "claimed", "target-mounted", "target-store-grant", "target-transfer", "changed-attempt", "changed-epoch", "claim-race"])("restores the compensated Native lease and preserves permanent denial (%s)", async scenario => {
+  const previouslyReleased = scenario !== "fresh";
   const h = await retiredCompensationFixture();
   const input = { environment: "test" as const, actor: h.request.actor, operationId };
   await expect(h.worker.requestRetired({ ...input, actor: "unrelated" })).rejects.toThrow(/exact protected drain/);
@@ -943,6 +945,42 @@ it.each([false, true])("restores the compensated Native lease and preserves perm
           createdAt: 520, completedAt: 530 }, actor: input.actor, verifiedAt: 550 },
       } }, { revision: audit.revision });
   }
+  if (scenario !== "fresh" && scenario !== "released") {
+    const next = "shared-new";
+    const history = finished?.attemptHistory;
+    const latestAttempt = history?.at(-1);
+    if (!finished || !history || !latestAttempt) throw new Error("Missing terminal compensation fixture");
+    h.docs.set(operationPath, { ...h.docs.get(operationPath), status: "pending", startedAt: null, completedAt: null, output: undefined,
+      rolledBack: undefined, error: undefined, expireAt: undefined, lastProgressAt: undefined, steps: [],
+      ...(scenario === "claimed" ? { status: "running", startedAt: Date.now() } : {}),
+      ...(scenario === "changed-attempt" ? { attemptHistory: [...history.slice(0, -1),
+        { ...latestAttempt, error: "different result" }] } : {}),
+      input: { ...finished.input, toGatewayId: next }, gatewayId: next });
+    h.docs.set(`gateways/${next}`, { gatewayId: next, gatewayClass: "shared", desiredStatus: "running",
+      liveRelease: 1, latestRelease: 1, desiredRelease: 1 });
+    h.docs.set(`glmGateways/${next}`, { docKind: "runtime", gatewayId: next, runtime: "cluster", release: 1, lifecycle: "serving",
+      heartbeat: { status: "ready", mountedCustomers: scenario === "target-mounted" ? [slug] : [],
+        migratingIn: [], lastHeartbeatAt: Date.now() } });
+    if (scenario === "target-transfer") h.docs.set("glmMigrationTransferTasks/new-target-transfer", {
+      status: "running", slug, sourceGatewayId, targetGatewayId: next,
+    });
+    if (scenario === "changed-epoch") {
+      const path = `gateways/${sourceGatewayId}/assignments/${uid}`;
+      h.docs.set(path, { ...h.docs.get(path), epoch: sourceEpoch+1 });
+    }
+    if (scenario === "target-store-grant") h.verifyRearmedTargetStores.mockRejectedValueOnce(new Error("target has write grants"));
+    if (scenario === "claim-race") h.verifyRearmedTargetStores.mockImplementationOnce(async (_scope, assertCurrent) => {
+      await h.store.journal.operations.patch(operationId, { status: "running", startedAt: Date.now() });
+      await assertCurrent();
+    });
+    if (scenario !== "rearmed") {
+      await expect(h.exclusion.releaseRetiredSharedHandoff(input)).rejects.toThrow();
+      await expect(h.store.users.records.get(uid)).resolves.toMatchObject({ activationLease: { status: "returning" } });
+      await expect(h.store.journal.operations.get(operationId)).resolves.toMatchObject({ input: { toGatewayId: next } });
+      expect(await nativeReturnTargetDenied(h.store, uid, targetGatewayId)).toBe(true);
+      return;
+    }
+  }
   h.verifyRestoredSource.mockRejectedValueOnce(new Error("original guest unavailable"));
   await expect(h.exclusion.releaseRetiredSharedHandoff(input)).rejects.toThrow("original guest unavailable");
   expect(await nativeReturnSharedStoreHandoffDenied(h.store, uid)).toBe(!previouslyReleased);
@@ -950,6 +988,10 @@ it.each([false, true])("restores the compensated Native lease and preserves perm
   await expect(h.store.users.records.get(uid)).resolves.toMatchObject({ activationLease: {
     status: "active", generation: 4, leaseId: "lease4", targetGatewayId: sourceGatewayId,
   } });
+  await expect(h.store.journal.operations.get(operationId)).resolves.toMatchObject({
+    status: "failed", rolledBack: true, gatewayId: targetGatewayId, input: { toGatewayId: targetGatewayId },
+    attemptHistory: finished?.attemptHistory, completedAt: finished?.completedAt,
+  });
   const restored = (await h.store.users.records.get(uid))?.activationLease;
   expect(restored?.returnOperationId).toBeUndefined();
   expect(restored?.lastActiveAt).toBeUndefined();

@@ -4,6 +4,7 @@ import { readHeldNativeReturnForRetiredTargetCompensation, readHeldNativeReturnF
 import { buildOperationAuditIntent, operationAuditDocumentId } from "@octogee/core/operation-audit";
 import type { GatewayRuntimeRestartFenceValue, OperationRecord, PlatformStateStore, PlatformStateTransaction } from "@octogee/core/platform-state";
 import { readRetiredTargetOperatorScope } from "./native-return-target-exclusion.js";
+import { COMPENSATED_NATIVE_RETURN_RESULT } from "./compensated-native-return-history.js";
 import type { OperationHandler, OperationResult } from "../operation-router.js";
 
 export const COMPENSATING_NATIVE_RETURN = "compensating-native-return";
@@ -51,7 +52,7 @@ function exactSource(source: OriginalNativeProviderIdentity, runtime: Awaited<Re
 }
 
 function result(): OperationResult {
-  return { steps: [], success: false, rolledBack: true, error: "compensating Native return completed on original source" };
+  return { steps: [], success: false, rolledBack: true, error: COMPENSATED_NATIVE_RETURN_RESULT };
 }
 
 function phaseAdvance(guard: Guard, phase: Phase): Guard {
