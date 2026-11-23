@@ -1832,6 +1832,7 @@ export function createConfiguredUserAssignmentMatcher(
 }
 
 export function createConfiguredUserReconcileAdmission(input: {
+  expectedPodUid?: string;
   processGate: Pick<SurgeOpenClawProcessSupervisorClient, "status"> | null;
   hasServingAssignment: () => Promise<boolean>;
   log: (message: string) => void;
@@ -1843,11 +1844,17 @@ export function createConfiguredUserReconcileAdmission(input: {
       const state = await input.processGate.status();
       let blocked = `${state.role}/${state.mode}`;
       if (state.mode === "permitted") {
-        if (await input.hasServingAssignment()) {
+        const normalWithoutMigration = state.role === "normal" && state.terminalTarget === undefined;
+        if (normalWithoutMigration && input.expectedPodUid && state.podUid !== input.expectedPodUid) {
+          blocked = "awaiting this Pod's OpenClaw process";
+        } else if (normalWithoutMigration && state.phase !== "running") {
+          blocked = "awaiting running OpenClaw process";
+        } else if (await input.hasServingAssignment()) {
           lastBlocked = null;
           return true;
+        } else {
+          blocked = "awaiting canonical user assignment";
         }
-        blocked = "awaiting canonical user assignment";
       }
       if (lastBlocked !== blocked) {
         input.log(`[surge-handoff] reconcile paused while configured user process gate is ${blocked}`);
@@ -2620,7 +2627,8 @@ export async function startFleetController(
 
   const runtime = createFleetRuntime();
   const openclawDir = opts.openclawDir ?? path.join(process.env.HOME ?? "/home/node", ".openclaw");
-  const surgeReadiness = createSurgeReadinessGate(openclawDir, process.env.POD_UID?.trim() || undefined);
+  const podUid = process.env.POD_UID?.trim() || undefined;
+  const surgeReadiness = createSurgeReadinessGate(openclawDir, podUid);
   const wrappedAdapter = wrapAdapterWithRuntime(adapter, runtime);
   const userProcessGate = adapter.isIsolatedGateway?.() === true
     ? opts.surgeOpenClawProcessGate ?? createSurgeOpenClawProcessSupervisorClient(openclawDir)
@@ -2628,6 +2636,7 @@ export async function startFleetController(
   await clearInheritedUserMountProof(wrappedAdapter, userProcessGate, opts.log);
   const configuredUserAssigned = createConfiguredUserAssignmentMatcher(opts);
   const canReconcile = createConfiguredUserReconcileAdmission({
+    expectedPodUid: podUid,
     processGate: userProcessGate,
     hasServingAssignment: async () => {
       const slug = configuredUserSlug(wrappedAdapter);
