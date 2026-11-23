@@ -12,9 +12,9 @@ const store = storeWith(FIXTURE_SIZING_PROFILES);
 
 describe("User tier VM placement", () => {
   it.each([
-    ["hobby", "s", "gce-vm", "x11", "e2-medium", "STANDARD", { sizeGb: 80, type: "pd-balanced" }, 10, 100],
-    ["pro", "m", "gce-vm", "omarchy", "e2-standard-2", "STANDARD", { sizeGb: 80, type: "pd-ssd" }, 50, 500],
-    ["team", "l", "gce-vm", "omarchy", "e2-standard-4", "STANDARD", { sizeGb: 80, type: "pd-ssd" }, 100, 1024],
+    ["hobby", "s", "gce-vm", "x11", "e2-medium", "SPOT", { sizeGb: 80, type: "pd-balanced" }, 10, 100],
+    ["pro", "m", "gce-vm", "omarchy", "e2-standard-2", "SPOT", { sizeGb: 80, type: "pd-ssd" }, 50, 500],
+    ["team", "l", "gce-vm", "omarchy", "e2-standard-4", "SPOT", { sizeGb: 80, type: "pd-ssd" }, 100, 1024],
   ] as const)("keeps %s home capacity separate from project storage", async (tier, sizing, runtime, desktop, machineType, provisioningModel, bootDisk, homeSizeGiB, projectStorageGb) => {
     expect(FIXTURE_SIZING_PROFILES[tier]).toMatchObject({ sizingTier: sizing, fallbackStorageGb: projectStorageGb });
     await expect(resolveGatewayVmPolicy(store, sizing)).resolves.toEqual({ runtime, desktop, machineType, provisioningModel, bootDisk, homeSizeGiB });
