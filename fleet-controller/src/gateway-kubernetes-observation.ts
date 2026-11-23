@@ -384,14 +384,14 @@ async function persistEphemeralNodeExclusions(
   for (const root of roots.values()) {
     const writer = root.ephemeralWriter;
     const node = writer?.node;
-    if (!writer || !node || node.permanentlyExcludedAt !== undefined) continue;
+    if (!writer || writer.exclusion) continue;
     const observed = diagnostics[root.gatewayId];
     try {
       const terminalPod = terminalWriterObserved(observed, writer);
-      if (!terminalPod && (!writerLostInCompletePodList(observed, writer) || !await check(node))) continue;
-      const exclusionMethod = terminalPod ? "terminal-pod" : "compute-instance-gone";
+      if (!terminalPod && (!node || !writerLostInCompletePodList(observed, writer) || !await check(node))) continue;
+      const method = terminalPod ? "terminal-pod" : "compute-instance-gone";
       await input.store.gateways.roots.patch(root.gatewayId, {
-        ephemeralWriter: { ...writer, node: { ...node, permanentlyExcludedAt: input.now, exclusionMethod } },
+        ephemeralWriter: { ...writer, exclusion: { at: input.now, method } },
       }, { revision: root.revision });
     } catch (error) {
       input.log(`[kubernetes-observation] provider exclusion for ${root.gatewayId} could not be recorded: ${String(error)}`);

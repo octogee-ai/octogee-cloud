@@ -30,7 +30,8 @@ async function harness(excluded = true, workspaceEpoch = 4) {
       ...root(fromGatewayId, true),
       allocation: { kind: "disposable-builder", schemaVersion: 1, leaseId: "one", generation: 1, claimedByUid: uid, ephemeralHomeGiB: 4 },
       ephemeralWriter: { podUid: "original", podName: "builder-alice-original",
-        node: { providerId: "gce://test-proj/us-central1-a/original", instanceId: "127", ...(excluded ? { permanentlyExcludedAt: 8_900 } : {}) } },
+        node: { providerId: "gce://test-proj/us-central1-a/original", instanceId: "127" },
+        ...(excluded ? { exclusion: { at: 8_900, method: "compute-instance-gone" } } : {}) },
     }],
     [`gateways/${toGatewayId}`, root(toGatewayId, false)],
     [`gateways/${fromGatewayId}/assignments/${uid}`, {

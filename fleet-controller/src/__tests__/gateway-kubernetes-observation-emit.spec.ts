@@ -95,7 +95,7 @@ describe("persistKubernetesObservations — emission is outside the transaction"
 });
 
 
-it("remembers a terminal exact writer independently of a replacement or a provider VM lookup", async () => {
+it.each([true, false])("remembers an exact terminal Pod with node identity available: %s", async withNode => {
   const gatewayId = "builder-alice";
   const node = { providerId: "gce://octogee-test/us-central1-a/node-a", instanceId: "123" };
   const pod = { uid: "original", name: "octogee-gateway-builder-alice-rs-original" };
@@ -107,7 +107,7 @@ it("remembers a terminal exact writer independently of a replacement or a provid
       gcpProject: null, gatewayContainerSecurityContext: null, serviceAccountName: null, serviceAccount: null,
       builderAccess: null, ownerUid: "uid-alice", builderSlug: "alice", modelBrokerLimits: null,
       allocation: { kind: "disposable-builder", schemaVersion: 1, leaseId: "one", generation: 1, claimedByUid: "uid-alice", ephemeralHomeGiB: 4 },
-      ephemeralWriter: { podUid: pod.uid, podName: pod.name, node },
+      ephemeralWriter: { podUid: pod.uid, podName: pod.name, ...(withNode ? { node } : {}) },
     }],
     [`glmGateways/${gatewayId}`, { ...runtimeDoc({}), gatewayId }],
   ]);
@@ -124,10 +124,10 @@ it("remembers a terminal exact writer independently of a replacement or a provid
   });
 
   await check();
-  expect((await store.gateways.roots.get(gatewayId))?.ephemeralWriter?.node).toEqual(node);
+  expect((await store.gateways.roots.get(gatewayId))?.ephemeralWriter?.exclusion).toBeUndefined();
   await check(true);
-  expect((await store.gateways.roots.get(gatewayId))?.ephemeralWriter?.node).toMatchObject({
-    permanentlyExcludedAt: 4_000, exclusionMethod: "terminal-pod",
+  expect((await store.gateways.roots.get(gatewayId))?.ephemeralWriter?.exclusion).toEqual({
+    at: 4_000, method: "terminal-pod",
   });
   expect(checkCompute).not.toHaveBeenCalled();
 });

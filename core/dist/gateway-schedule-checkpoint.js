@@ -1,4 +1,3 @@
-import { isDeepStrictEqual } from "node:util";
 import { parseAgentId } from "@octogee/shared/types/identity";
 import { gatewayVmPodName } from "@octogee/shared/types/glm";
 import { sameEphemeralWriter } from "./isolated-gateway-lifecycle/ephemeral-recovery-state.js";
@@ -37,8 +36,9 @@ export function parseScheduleCheckpoint(value) {
 function servingScheduleWriter(root, runtime, pod, now) {
     if (root.retirementClaim || root.runtimeRestartFence || root.desiredStatus !== "running")
         return false;
-    if (root.allocation?.ephemeralHomeGiB !== undefined)
-        return sameEphemeralWriter(root.ephemeralWriter, pod);
+    if (root.allocation?.ephemeralHomeGiB !== undefined) {
+        return !root.ephemeralWriter?.exclusion && sameEphemeralWriter(root.ephemeralWriter, pod);
+    }
     if (runtime?.runtime === "gce-vm") {
         return runtime.vm?.status === "RUNNING" && runtime.vm.instanceId === pod.podUid &&
             gatewayVmPodName(root.gatewayId, pod.podUid) === pod.podName;
@@ -71,12 +71,8 @@ function canPublishWorkspace(user, assignment) {
         assignment.state === "quiescing" && fences.every(fence => fence === "migration");
 }
 function alreadyCaptured(last, input) {
-    if (last?.gatewayId !== input.gatewayId || last.assignmentEpoch !== input.assignmentEpoch)
-        return false;
-    if (last.observedAt >= input.observedAt)
-        return true;
-    return input.observedAt - last.observedAt < MAX_CHECKPOINT_AGE_MS &&
-        isDeepStrictEqual(last.snapshot, input.snapshot);
+    return last?.gatewayId === input.gatewayId && last.assignmentEpoch === input.assignmentEpoch &&
+        last.observedAt >= input.observedAt;
 }
 export async function recordGatewayScheduleCheckpoint(input) {
     const { store, gatewayId, uid, assignmentEpoch, pod, now, observedAt, snapshot } = input;
@@ -124,9 +120,7 @@ export async function recordGatewayWorkspaceCheckpoint(input) {
             return false;
         if (!canPublishWorkspace(user, assignment))
             return false;
-        const last = user.workspaceCheckpoint;
-        if (last?.gatewayId === gatewayId && last.assignmentEpoch === assignmentEpoch &&
-            (last.observedAt >= observedAt || isDeepStrictEqual(last.commits, commits)))
+        if (alreadyCaptured(user.workspaceCheckpoint, input))
             return true;
         await tx.users.records.patch(uid, {
             workspaceCheckpoint: { gatewayId, assignmentEpoch, observedAt, commits },

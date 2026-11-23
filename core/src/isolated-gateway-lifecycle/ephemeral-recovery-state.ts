@@ -17,7 +17,7 @@ export function excludedDisklessWriter(
 ): boolean {
   if (!ephemeralSourceMatches(root, owner.uid) || !root.allocation || root.builderSlug !== owner.slug) return false;
   return root.allocation.leaseId === owner.leaseId && root.allocation.generation === owner.generation &&
-    typeof root.ephemeralWriter?.node?.permanentlyExcludedAt === "number";
+    root.ephemeralWriter?.exclusion !== undefined;
 }
 
 async function mayReplaceStartupWriter(tx: PlatformStateTransaction, root: GatewayRoot, ownerUid: string): Promise<boolean> {
@@ -42,7 +42,7 @@ export async function claimEphemeralWriter(input: {
     if (!ephemeralSourceMatches(root, ownerUid)) return false;
     const previous = root.ephemeralWriter;
     if (previous) {
-      if (previous.node?.permanentlyExcludedAt === undefined) return sameEphemeralWriter(previous, pod);
+      if (previous.exclusion === undefined) return sameEphemeralWriter(previous, pod);
       if (sameEphemeralWriter(previous, pod) || !await mayReplaceStartupWriter(tx, root, ownerUid)) return false;
     }
     const runtime = await tx.fleetRegistry.get(gatewayId);

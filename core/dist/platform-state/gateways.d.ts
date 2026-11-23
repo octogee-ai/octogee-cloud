@@ -24,13 +24,15 @@ export interface GatewayConfigBackfill {
 export interface EphemeralGatewayWriterNode {
     readonly providerId: string;
     readonly instanceId: string;
-    readonly permanentlyExcludedAt?: number;
-    readonly exclusionMethod?: "terminal-pod" | "compute-instance-gone";
 }
 export interface EphemeralGatewayWriter {
     readonly podUid: string;
     readonly podName: string;
     readonly node?: EphemeralGatewayWriterNode;
+    readonly exclusion?: {
+        readonly at: number;
+        readonly method: "terminal-pod" | "compute-instance-gone";
+    };
 }
 export interface GatewayRootFields {
     readonly ephemeralWriter?: EphemeralGatewayWriter;

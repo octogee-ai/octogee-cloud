@@ -56,7 +56,8 @@ describe("durable scheduler checkpoints", () => {
     await expect(claim()).resolves.toBe(true);
     const gateway = `gateways/${gatewayId}`;
     docs.set(gateway, { ...docs.get(gateway), ephemeralWriter: { ...pod,
-      node: { providerId: "gce://test-project/us-central1-a/test-node", instanceId: "1234", permanentlyExcludedAt: 4_000 } } });
+      node: { providerId: "gce://test-project/us-central1-a/test-node", instanceId: "1234" },
+      exclusion: { at: 4_000, method: "compute-instance-gone" } } });
     await expect(claim(replacement)).resolves.toBe(false);
     await store.gateways.assignments.delete(gatewayId, uid);
     const moveLease = (status: "provisioning" | "returning") => docs.set(`users/${uid}`, {
@@ -112,6 +113,17 @@ describe("durable scheduler checkpoints", () => {
 
 
 describe("durable workspace checkpoints", () => {
+  it("keeps a reaffirmed revision ahead of a delayed intermediate update", async () => {
+    const { store, report, claim } = harness();
+    await claim();
+    const stable = { workspace: "a".repeat(40) };
+    const intermediate = { workspace: "b".repeat(40) };
+    await recordGatewayWorkspaceCheckpoint({ ...report, commits: stable });
+    await recordGatewayWorkspaceCheckpoint({ ...report, observedAt: 4_075, commits: stable });
+    await recordGatewayWorkspaceCheckpoint({ ...report, observedAt: 4_050, commits: intermediate });
+    expect((await store.users.records.get(uid))?.workspaceCheckpoint?.commits).toEqual(stable);
+  });
+
   it("acknowledges a managed commit from the same serving epoch and retains it over a late report", async () => {
     const { store, report, claim } = harness();
     await claim();

@@ -1,4 +1,3 @@
-import { isDeepStrictEqual } from "node:util";
 import { parseAgentId } from "@octogee/shared/types/identity";
 import type { NativeScheduleCheckpoint } from "@octogee/shared/types/fleet-controller";
 import { gatewayVmPodName } from "@octogee/shared/types/glm";
@@ -40,7 +39,9 @@ export function parseScheduleCheckpoint(value: unknown): NativeScheduleCheckpoin
 
 function servingScheduleWriter(root: GatewayRoot, runtime: FleetRegistryRecord | null, pod: EphemeralGatewayWriter, now: number): boolean {
   if (root.retirementClaim || root.runtimeRestartFence || root.desiredStatus !== "running") return false;
-  if (root.allocation?.ephemeralHomeGiB !== undefined) return sameEphemeralWriter(root.ephemeralWriter, pod);
+  if (root.allocation?.ephemeralHomeGiB !== undefined) {
+    return !root.ephemeralWriter?.exclusion && sameEphemeralWriter(root.ephemeralWriter, pod);
+  }
   if (runtime?.runtime === "gce-vm") {
     return runtime.vm?.status === "RUNNING" && runtime.vm.instanceId === pod.podUid &&
       gatewayVmPodName(root.gatewayId, pod.podUid) === pod.podName;
@@ -93,11 +94,12 @@ function canPublishWorkspace(user: PlatformUserRecord, assignment: GatewayAssign
     assignment.state === "quiescing" && fences.every(fence => fence === "migration");
 }
 
-function alreadyCaptured(last: PlatformUserRecord["scheduleCheckpoint"], input: CheckpointRequest): boolean {
-  if (last?.gatewayId !== input.gatewayId || last.assignmentEpoch !== input.assignmentEpoch) return false;
-  if (last.observedAt >= input.observedAt) return true;
-  return input.observedAt - last.observedAt < MAX_CHECKPOINT_AGE_MS &&
-    isDeepStrictEqual(last.snapshot, input.snapshot);
+function alreadyCaptured(
+  last: { gatewayId: string; assignmentEpoch: number; observedAt: number } | undefined,
+  input: GatewayCheckpointScope,
+): boolean {
+  return last?.gatewayId === input.gatewayId && last.assignmentEpoch === input.assignmentEpoch &&
+    last.observedAt >= input.observedAt;
 }
 
 export async function recordGatewayScheduleCheckpoint(input: CheckpointRequest): Promise<boolean> {
@@ -144,9 +146,7 @@ export async function recordGatewayWorkspaceCheckpoint(
     ]);
     if (!root || !user || !assignment || !servingScheduleWriter(root, runtime, pod, now) || !ownsAssignment(user, assignment, input)) return false;
     if (!canPublishWorkspace(user, assignment)) return false;
-    const last = user.workspaceCheckpoint;
-    if (last?.gatewayId === gatewayId && last.assignmentEpoch === assignmentEpoch &&
-        (last.observedAt >= observedAt || isDeepStrictEqual(last.commits, commits))) return true;
+    if (alreadyCaptured(user.workspaceCheckpoint, input)) return true;
     await tx.users.records.patch(uid, {
       workspaceCheckpoint: { gatewayId, assignmentEpoch, observedAt, commits },
     }, { revision: user.revision, gatewayId });
