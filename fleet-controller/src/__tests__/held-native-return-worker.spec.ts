@@ -940,10 +940,19 @@ it("refuses Services and EndpointSlices bound to the retired target even when an
   }
   const assertCurrent = vi.fn(async () => {});
   const verify = (deps: ReturnType<typeof makeKube>) => retiredTargetRoutesAbsent(deps, targetGatewayId, "old-pod", assertCurrent);
+  const slice = (endpoints: unknown, labels: Record<string, string> = {}) => ({ metadata: { name: "test-slice", labels }, endpoints });
+  const gatewayService = { "kubernetes.io/service-name": `octogee-gateway-${targetGatewayId}` };
+  const endpoint = (uid: string) => ({ addresses: ["10.0.0.1"], targetRef: { uid } });
   await expect(verify(makeKube(`service/gateway-edge-${targetGatewayId}`, []))).resolves.toBe(false);
-  await expect(verify(makeKube("", [{ metadata: { labels: { "kubernetes.io/service-name": `octogee-gateway-${targetGatewayId}` } }, endpoints: [] }]))).resolves.toBe(false);
-  await expect(verify(makeKube("", [{ metadata: {}, endpoints: [{ targetRef: { uid: "old-pod" } }] }]))).resolves.toBe(false);
-  await expect(verify(makeKube("", [{ metadata: {}, endpoints: [{ targetRef: { uid: "unrelated" } }] }]))).resolves.toBe(true);
+  await expect(verify(makeKube("", [slice([], gatewayService)]))).resolves.toBe(false);
+  await expect(verify(makeKube("", [slice(null, gatewayService)]))).resolves.toBe(false);
+  await expect(verify(makeKube("", [slice(null)]))).resolves.toBe(true);
+  await expect(verify(makeKube("", [slice(null), slice([endpoint("old-pod")])]))).resolves.toBe(false);
+  await expect(verify(makeKube("", [slice([endpoint("unrelated")])]))).resolves.toBe(true);
+  for (const malformed of [null, { metadata: { name: "test" } }, slice({}), slice([null]), slice([{}]),
+    slice([{ ...endpoint("unrelated"), targetRef: { uid: 12 } }])]) {
+    await expect(verify(makeKube("", [malformed]))).rejects.toThrow(/invalid retired target EndpointSlice/);
+  }
 });
 
 it("admits only with independent durable exclusion and preserves the untouched journal on refusal", async () => {
