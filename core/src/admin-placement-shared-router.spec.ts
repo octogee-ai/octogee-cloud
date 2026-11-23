@@ -6,6 +6,9 @@ import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store"
 import { addAdminFleetRoutes, createAdminFleetMutationRunner, respondToAdminFleetMutationError } from "./admin-fleet-router.js";
 import { addAdminPlacementSharedRoutes, type AdminPlacementSharedCapabilities } from "./admin-placement-shared-router.js";
 import { continuousPlacementMigrationOperationId } from "./placement-migrations.js";
+import { buildOperationAuditIntent } from "./operation-audit.js";
+import { NATIVE_RETURN_TARGET_EXCLUSION, nativeReturnTargetDenied, nativeReturnTargetExclusionId } from "./native-return-target-deny.js";
+import { builderReturnOperationId } from "@octogee/shared/types/isolated-operation-ids";
 import { noUserAccounts } from "./user-account.js";
 
 type Data = Record<string, unknown>;
@@ -715,7 +718,108 @@ const OTHER_PLACEMENT = continuousPlacementMigrationOperationId({
 });
 const enqueue = (body: Data = enqueueBody(), query = "") => request(app()).post(`/users/${UID}/placement-migrations${query}`).send(body);
 
+async function compensatedReturn() {
+  const source = "alice-s-native";
+  const retired = "shared-retired";
+  const operationId = builderReturnOperationId(source, 22);
+  const lease = { status: "active", generation: 22, leaseId: "same-lease", targetGatewayId: source,
+    activeAt: NOW - 900_001, pendingDemand: { eventKey: "keep-demand" } };
+  const handoff = { migrationId: "original-scheduler", uid: UID, slug: SLUG, fromGatewayId: source, toGatewayId: retired };
+  const retirement = { operationId: "shared-pool-retire-" + retired, version: 1, createdAt: NOW - 902_000, completedAt: NOW - 901_000 };
+  const attemptHistory = [{ attempt: 121, startedAt: NOW - 900_900, completedAt: NOW - 900_100,
+    classification: "terminal", error: "compensating Native return completed on original source", steps: [] }];
+  const original = { instanceId: "original-vm" };
+  seed({ ...pool(),
+    [`gateways/${source}`]: sharedRoot(source, { gatewayClass: "isolated", imageProfile: "isolated", ownerUid: UID, builderSlug: SLUG,
+      allocation: { kind: "disposable-builder", schemaVersion: 1, claimedByUid: UID, leaseId: lease.leaseId, generation: lease.generation } }),
+    [`gateways/${source}/assignments/${UID}`]: assignment(source, UID),
+    [`users/${UID}`]: user(source, { activationLease: lease }),
+    [`glmOperations/${retirement.operationId}`]: { kind: "retire-gateway", status: "succeeded", gatewayId: retired,
+      createdAt: retirement.createdAt, completedAt: retirement.completedAt,
+      input: { gatewayId: retired, source: "shared-pool-scaler", retirementClaimVersion: 1 },
+      steps: [{ name: "helm-uninstall", status: "done" }, { name: "revoke-agent-store-credentials", status: "done" }] },
+  });
+  records.delete(`gateways/${SOURCE}/assignments/${UID}`);
+  const store = createDocumentFixtureStore(records);
+  const actor = "protected-operator";
+  const scope = { uid: UID, slug: SLUG, operationId, sourceGatewayId: source, targetGatewayId: retired, sourceEpoch: 3,
+    exclusionId: nativeReturnTargetExclusionId(UID) };
+  async function saveAudit(key: string, kind: string, target: Data) {
+    const audit = buildOperationAuditIntent({ actor, forced: false, what: kind, why: kind, idempotencyKey: key,
+      now: () => NOW - 903_000, mutation: { kind, operationId }, preActionStatus: {}, target });
+    await store.journal.audits.create({ ...audit.document, id: audit.id, status: "completed", outcome: "completed",
+      lifecycleStage: "action-completed", completedAt: NOW - 900_001, actionClaimId: "attempt", actionStartedAt: NOW - 903_000, actionRecoveryCount: 0 });
+    return audit.id;
+  }
+  const auditId = await saveAudit("compensation", "compensating-native-return", { ...scope, original, archivedReturn: { handoff } });
+  await saveAudit(NATIVE_RETURN_TARGET_EXCLUSION + ":" + UID, NATIVE_RETURN_TARGET_EXCLUSION, {
+    uid: UID, targetGatewayId: retired, sharedHandoffRelease: { retirement, actor, verifiedAt: NOW - 900_001 },
+    retiredLeaseRestoration: { leaseId: lease.leaseId, generation: lease.generation, operationId,
+      compensationAuditId: auditId, sourceEpoch: scope.sourceEpoch, restoredAt: NOW - 900_001 },
+  });
+  const path = `glmOperations/${operationId}`;
+  records.set(path, { kind: "migrate-user", status: "failed", origin: "automatic", createdBy: "glm-controller-placement-policy",
+    startedAt: attemptHistory[0].startedAt, completedAt: attemptHistory[0].completedAt, steps: [], attempts: 121, attemptHistory,
+    inputUid: UID, gatewayId: retired, rolledBack: true, schedulerHandoff: handoff, schedulerHandoffReleased: true,
+    schedulerHandoffReleasedAt: NOW - 900_101, input: { uid: UID, userSlug: SLUG, source: "builder-activation-lease",
+      fromGatewayId: source, toGatewayId: retired, compensatingNativeReturn: { ...scope, auditId, source: original, attemptId: "attempt",
+        retiredTarget: { ...retirement, oldPodUid: "old-pod" } } } });
+  const body = enqueueBody({ source: "builder-activation-lease", operationId, fromGatewayId: source });
+  return { body, store, lease, path, source, retired, operationId, auditId, exclusionId: scope.exclusionId, attemptHistory };
+}
+
 describe("POST /users/:uid/placement-migrations", () => {
+  it("enqueues a fresh ordinary return on the recovered lease through the audited client route", async () => {
+    const h = await compensatedReturn();
+    const originalAudit = await h.store.journal.audits.get(h.auditId);
+    const originalExclusion = await h.store.journal.audits.get(h.exclusionId);
+    expect((await enqueue(h.body).expect(200)).body).toEqual({ operationId: h.operationId, outcome: "rearmed" });
+    const op = await h.store.journal.operations.get(h.operationId);
+    expect(op).toMatchObject({ status: "pending", startedAt: null, completedAt: null, attemptHistory: h.attemptHistory,
+      attempts: 121, gatewayId: TARGET, input: { toGatewayId: TARGET } });
+    expect(op?.input.compensatingNativeReturn).toBeUndefined();
+    expect(op?.schedulerHandoff).toBeUndefined();
+    expect(op?.schedulerHandoffReleased).toBeUndefined();
+    expect(op?.schedulerHandoffReleasedAt).toBeUndefined();
+    await expect(h.store.users.records.get(UID)).resolves.toMatchObject({ activationLease: h.lease });
+    await expect(h.store.journal.audits.get(h.auditId)).resolves.toEqual(originalAudit);
+    await expect(h.store.journal.audits.get(h.exclusionId)).resolves.toEqual(originalExclusion);
+    await expect(nativeReturnTargetDenied(h.store, UID, h.retired)).resolves.toBe(true);
+    expect((await enqueue(h.body).expect(200)).body).toEqual({ operationId: h.operationId, outcome: "already-enqueued" });
+  });
+
+  it.each(["old target", "missing clearance", "changed epoch", "target mounted", "competing owner operation", "filled target"])(
+    "refuses a compensated return with %s without changing its history",
+    async (invalid) => {
+      const h = await compensatedReturn();
+      const pre = structuredClone(records.get(h.path));
+      if (invalid === "missing clearance") {
+        const audit = (await h.store.journal.audits.get(h.exclusionId))!;
+        const { retiredLeaseRestoration: _, ...target } = audit.target;
+        await h.store.journal.audits.patch(audit.id, { target }, { revision: audit.revision });
+      }
+      if (invalid === "changed epoch") {
+        records.set(`gateways/${h.source}/assignments/${UID}`, assignment(h.source, UID, { epoch: 4 }));
+      }
+      if (invalid === "target mounted") {
+        records.set(`glmGateways/${TARGET}`, runtime(TARGET, {
+          heartbeat: { status: "ready", lastHeartbeatAt: NOW - 1_000, mountedCustomers: [SLUG] },
+        }));
+      }
+      if (invalid === "competing owner operation") {
+        records.set("glmOperations/competing", { kind: "migrate-user", status: "running", startedAt: NOW - 1,
+          completedAt: null, inputUid: UID, input: { uid: UID }, steps: [] });
+      }
+      if (invalid === "filled target") {
+        records.set(`gateways/${TARGET}/assignments/other`, assignment(TARGET, "other"));
+      }
+      const toGatewayId = invalid === "old target" ? h.retired : TARGET;
+      const expectedTargetUsersAtMost = invalid === "filled target" ? 0 : 5;
+      await enqueue({ ...h.body, toGatewayId, expectedTargetUsersAtMost }).expect(409);
+      expect(records.get(h.path)).toEqual(pre);
+    },
+  );
+
   it("creates the pending migration the operation runner drives", async () => {
     seed(pool());
 

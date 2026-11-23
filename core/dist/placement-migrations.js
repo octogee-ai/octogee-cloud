@@ -4,7 +4,8 @@ import { agentIdBelongsToSlug } from "@octogee/shared/types/agent-models";
 import { GATEWAY_UNREACHABLE_AFTER_MS } from "@octogee/shared/types/fleet-controller";
 import { isReleasePayload, projectGatewayDesiredRootForGateway, releasePayloadHash, } from "@octogee/shared/types/gateway-releases";
 import { GatewayRetirementConflictError, isolatedRuntimeMutationFenced } from "./gateway-retirement-claim.js";
-import { isUserReturnOperationIdFor } from "@octogee/shared/types/isolated-operation-ids";
+import { builderReturnOperationId, isUserReturnOperationIdFor } from "@octogee/shared/types/isolated-operation-ids";
+import { nativeReturnTargetDenied, nativeReturnTargetExclusionId } from "./native-return-target-deny.js";
 import { readSharedGatewayPoolConfigInStore } from "./shared-gateway-pool-read.js";
 export const PLACEMENT_MIGRATION_KIND = "migrate-user";
 export const PLACEMENT_MIGRATION_ACTOR = "glm-controller-placement-policy";
@@ -516,8 +517,86 @@ function nativeReturnRecoveryCompleted(operation) {
     const recovery = record(operation.input.nativeReturnSourceRecovery);
     return typeof recovery?.completedAt === "number" && recovery.completedAt > 0;
 }
+function compensatedReturnMatchesDemand(user, lease, request, operation, compensation) {
+    return [
+        lease.status === "active", lease.targetGatewayId === request.fromGatewayId, lease.raw.returnOperationId === undefined,
+        request.operationId === builderReturnOperationId(request.fromGatewayId, lease.generation),
+        user.slug === request.builderSlug, userGatewayId(user) === request.fromGatewayId, Object.keys(user.fences).length === 0,
+        operation.kind === PLACEMENT_MIGRATION_KIND, operation.status === "failed", operation.rolledBack === true,
+        operation.schedulerHandoffReleased === true, operation.cutoverCommittedAt === undefined, operation.userMigrationV2 === undefined,
+        operation.sourceTransferExecution === undefined, operation.restoreAttempt === undefined, operation.schedulerHandoffLost === undefined,
+        operation.cancellationRequestedAt === undefined,
+        operation.inputUid === request.uid, operation.input.uid === request.uid, operation.input.userSlug === request.builderSlug,
+        operation.input.fromGatewayId === request.fromGatewayId, operation.input.source === ACTIVATION_LEASE_SOURCE,
+        request.source === ACTIVATION_LEASE_SOURCE, nonEmptyString(operation.input.toGatewayId),
+        compensation.targetGatewayId !== request.toGatewayId,
+        compensation.uid === request.uid, compensation.slug === request.builderSlug,
+        compensation.operationId === request.operationId, compensation.exclusionId === nativeReturnTargetExclusionId(request.uid),
+        compensation.sourceGatewayId === request.fromGatewayId, compensation.targetGatewayId === operation.input.toGatewayId,
+    ].every(Boolean);
+}
+function compensatedReturnAuditMatches(audit, completed, lease, operation, compensation) {
+    const restored = record(audit?.target.retiredLeaseRestoration);
+    if (!audit || !restored || !completed)
+        return false;
+    return [
+        audit.target.targetGatewayId === operation.input.toGatewayId, restored.operationId === operation.id,
+        restored.compensationAuditId === completed.id, restored.leaseId === lease.leaseId,
+        restored.generation === lease.generation, restored.sourceEpoch === compensation.sourceEpoch,
+        millis(restored.restoredAt) !== null, completed.status === "completed", completed.outcome === "completed",
+        completed.actionClaimId === compensation.attemptId, completed.target.operationId === operation.id,
+        isDeepStrictEqual(completed.target.original, compensation.source), operation.schedulerHandoff,
+        isDeepStrictEqual(record(completed.target.archivedReturn)?.handoff, operation.schedulerHandoff),
+    ].every(Boolean);
+}
+function compensatedReturnTargetReady(root, runtime, request, now) {
+    return runtime !== null && !root.runtimeRestartFence && !root.retirementClaim &&
+        sharedReturnTargetReady(projectGatewayDesiredRootForGateway(root, request.toGatewayId), runtime, request, now) &&
+        !runtime.heartbeat.mountedCustomers.includes(request.builderSlug) && !runtime.heartbeat.migratingIn?.includes(request.builderSlug);
+}
+export async function rearmCompensatedNativeReturn(now, transaction, user, request, operation) {
+    const refusal = new TerminalPlacementMigrationConflictError(request.operationId, operation.status);
+    const lease = activationLeaseOf(user?.activationLease);
+    const compensation = record(operation.input.compensatingNativeReturn);
+    const auditId = nonEmptyString(compensation?.auditId);
+    if (!lease || !user || !auditId || !compensation || !record(compensation.retiredTarget) ||
+        !compensatedReturnMatchesDemand(user, lease, request, operation, compensation))
+        throw refusal;
+    const exclusionId = nativeReturnTargetExclusionId(request.uid);
+    const [audit, completed, assignments, roots, runtime, pool, denied, active] = await Promise.all([
+        transaction.journal.audits.get(exclusionId),
+        transaction.journal.audits.get(auditId),
+        transaction.gateways.assignments.listForUid(request.uid),
+        transaction.gateways.roots.getMany([request.fromGatewayId, request.toGatewayId]),
+        transaction.fleetRegistry.get(request.toGatewayId),
+        readSharedGatewayPoolConfigInStore(transaction),
+        nativeReturnTargetDenied(transaction, request.uid, request.toGatewayId),
+        transaction.journal.operations.listForUid(request.uid, { statuses: ["pending", "running"] }),
+    ]);
+    const assignment = assignments[0] ?? null;
+    const sourceRoot = roots.get(request.fromGatewayId);
+    const targetRoot = roots.get(request.toGatewayId);
+    if (!sourceRoot || !targetRoot || !retrySourceAssignmentMatches(assignment, request))
+        throw refusal;
+    if (![
+        !denied, compensatedReturnAuditMatches(audit, completed, lease, operation, compensation),
+        assignments.length === 1, assignment.slug === request.builderSlug, assignment.epoch === compensation.sourceEpoch,
+        startupReturnSourceMatches(projectGatewayDesiredRootForGateway(sourceRoot, request.fromGatewayId), lease, request),
+        sourceRoot.desiredStatus === "running", sourceRoot.liveRelease === sourceRoot.desiredRelease,
+        !sourceRoot.runtimeRestartFence, !sourceRoot.retirementClaim, active.length === 0,
+        pool?.sharedGatewayIds.includes(request.toGatewayId), compensatedReturnTargetReady(targetRoot, runtime, request, now),
+    ].every(Boolean))
+        throw refusal;
+    return { ...rearmedPlacementMigrationPatch(), gatewayId: request.toGatewayId,
+        input: operationInputWithout(operation, ["compensatingNativeReturn"], { toGatewayId: request.toGatewayId }),
+        schedulerHandoff: CLEAR, schedulerHandoffReleased: CLEAR, schedulerHandoffReleasedAt: CLEAR,
+        retryRequestedAt: CLEAR, retryRequestedBy: CLEAR };
+}
 async function placementMigrationRearm(context, transaction, userRecord, request, existing) {
     const data = existing;
+    if (existing.input.compensatingNativeReturn !== undefined) {
+        return rearmCompensatedNativeReturn(context.now, transaction, userRecord, request, existing);
+    }
     const retarget = { input: operationInputWithout(existing, [], { toGatewayId: request.toGatewayId }), gatewayId: request.toGatewayId };
     if (sharedRevisionReturnMatchesDemand(data, request)) {
         await assertSharedRevisionReturnAuthority(context, transaction, userRecord, {
