@@ -3,9 +3,11 @@ import { createHeldReturnStoreCustodyVerifier } from "@octogee/core/agent-store-
 import { NATIVE_RETURN_TARGET_EXCLUSION, nativeReturnTargetExclusionId, readHeldNativeReturnForTargetExclusion, readNativeOldTargetRetirement,
   type HeldNativeReturnSelection } from "@octogee/core/fleet-state";
 import { buildOperationAuditIntent } from "@octogee/core/operation-audit";
-import type { PlatformStateStore, PlatformStateTransaction } from "@octogee/core/platform-state";
+import { GATEWAY_UNREACHABLE_AFTER_MS } from "@octogee/shared/types/fleet-controller";
+import type { GatewayAssignment, OperationRecord, PlatformStateStore, PlatformStateTransaction, Stored } from "@octogee/core/platform-state";
 import type { CompensatingNativeReturnAuthority, RetiredNativeTarget } from "./compensating-native-return.js";
 import type { SurgeKubectl } from "../surge-user-handoff-runtime.js";
+import { staleCompensatedReturnAttempt } from "./compensated-native-return-history.js";
 import { createHeldNativeReturnDestinationVerifier } from "./held-native-return-destination.js";
 
 export type NativeOldTargetScope = HeldNativeReturnSelection & { uid: string; slug: string; exclusionId: string };
@@ -98,6 +100,7 @@ async function readRetirementBinding(tx: PlatformStateTransaction, scope: Native
 
 export function createNativeReturnTargetExclusion(deps: {
   store: PlatformStateStore; now: () => number; provider?: Providers;
+  verifyRearmedTargetStores?(scope: NativeOldTargetScope, assertCurrent: () => Promise<void>): Promise<void>;
   verifyRestoredSource?(authority: CompensatingNativeReturnAuthority, assertCurrent: () => Promise<void>): Promise<void>;
 }) {
   const { store, now, provider } = deps;
@@ -214,7 +217,7 @@ export function createNativeReturnTargetExclusion(deps: {
     requireExclusion(environment === "test" && actor && provider?.verifyWholeRetirement,
       "protected TEST whole retirement verifier required");
     const read = async (tx: PlatformStateTransaction) => {
-      const current = await readReleaseAuthority(tx, scope);
+      const current = await readReleaseAuthority(tx, scope, now());
       requireExclusion(!current.retiredMode || current.audit.actor === actor, "operator does not own the exact protected drain");
       return { ...current, restore: current.retiredMode ? await readRetiredLeaseRestoration(tx, scope, current) : null };
     };
@@ -222,6 +225,7 @@ export function createNativeReturnTargetExclusion(deps: {
     const assertCurrent = async () => {
       const current = await store.transaction({ label: "native-old-target-exclusion.retirement-recheck", readOnly: true }, read);
       requireExclusion(isDeepStrictEqual(current.retirement, before.retirement) && current.audit.revision === before.audit.revision &&
+        current.operation.revision === before.operation.revision && isDeepStrictEqual(current.staleRearm, before.staleRearm) &&
         isDeepStrictEqual(current.restore, before.restore), "whole retirement, exclusion or original lease changed");
     };
     if (before.retiredMode) {
@@ -234,9 +238,14 @@ export function createNativeReturnTargetExclusion(deps: {
       requireExclusion(deps.verifyRestoredSource, "independent original serving verifier required");
       await deps.verifyRestoredSource(before.restore.authority, assertCurrent);
     }
+    if (before.staleRearm) {
+      requireExclusion(deps.verifyRearmedTargetStores, "independent rearmed target store verifier required");
+      await deps.verifyRearmedTargetStores({ ...scope, targetGatewayId: before.staleRearm.targetGatewayId }, assertCurrent);
+    }
     await store.transaction({ label: "native-old-target-exclusion.release-shared-handoff" }, async tx => {
-      const { audit, retirement, restore } = await read(tx);
+      const { audit, retirement, restore, operation, staleRearm } = await read(tx);
       requireExclusion(isDeepStrictEqual(retirement, before.retirement) && audit.revision === before.audit.revision &&
+        operation.revision === before.operation.revision && isDeepStrictEqual(staleRearm, before.staleRearm) &&
         isDeepStrictEqual(restore, before.restore), "whole retirement or original lease changed before publication");
       const prior = audit.target.sharedHandoffRelease as { retirement?: unknown; actor?: string } | undefined;
       if (prior) {
@@ -244,6 +253,7 @@ export function createNativeReturnTargetExclusion(deps: {
         if (!restore) return;
       }
       const at = now();
+      if (staleRearm) await restoreCompensatedJournal(tx, operation, scope, staleRearm.attempt);
       const restored = restore ? await restoreCompensatedLease(tx, scope.uid, restore, at) : {};
       await tx.journal.audits.patch(audit.id, { ...(before.retiredMode && !prior ? { status: "completed", lifecycleStage: "action-completed",
         outcome: "completed", completedAt: at } as const : {}), target: { ...audit.target, ...restored,
@@ -261,7 +271,7 @@ export function createNativeReturnTargetExclusion(deps: {
   return { reserve, verifyReserved, readOldTargetExclusion, verifyOldTargetExclusion, readRetiredTargetExclusion, verifyRetiredTargetExclusion, releaseSharedHandoff, releaseRetiredSharedHandoff };
 }
 
-async function readReleaseAuthority(tx: PlatformStateTransaction, scope: NativeOldTargetScope) {
+async function readReleaseAuthority(tx: PlatformStateTransaction, scope: NativeOldTargetScope, now: number) {
   const [audit, operation, owner, assignments, retirement] = await Promise.all([
     tx.journal.audits.get(scope.exclusionId), tx.journal.operations.get(scope.operationId),
     tx.users.records.get(scope.uid), tx.gateways.assignments.listForUid(scope.uid),
@@ -270,17 +280,102 @@ async function readReleaseAuthority(tx: PlatformStateTransaction, scope: NativeO
   const binding = readBinding(audit, scope);
   const retiredMode = readDrainPod(audit, scope);
   requireExclusion(audit && (retiredMode || verifiedRetainedBinding(audit, binding)), "verified old target exclusion missing");
-  requireExclusion(operation && retirement && typeof operation.completedAt === "number" &&
-    (retiredMode ? retirement.completedAt <= operation.completedAt : retirement.createdAt >= operation.completedAt),
+  requireExclusion(operation && retirement, "exact whole retirement missing at the required rollback stage");
+  const staleRearm = retiredMode ? await readStaleCompensatedRearm(tx, scope, audit, operation, now) : null;
+  const completedAt = staleRearm?.attempt.completedAt ?? operation.completedAt;
+  requireExclusion(typeof completedAt === "number" &&
+    (retiredMode ? retirement.completedAt <= completedAt : retirement.createdAt >= completedAt),
     "exact whole retirement missing at the required rollback stage");
+  requireExclusion(originalCompensationJournalMatches(operation, scope, retiredMode ? { ...retirement, oldPodUid: retiredMode } : null, !!staleRearm),
+    "original source rollback is not complete");
+  requireExclusion(owner?.gateway?.gatewayId === scope.sourceGatewayId && !owner.fences.migration &&
+    originalCompensationAssignmentMatches(assignments, scope, staleRearm?.attempt),
+  "original source custody changed");
+  return { audit, retirement, retiredMode, operation, owner, staleRearm };
+}
+
+function originalCompensationJournalMatches(
+  operation: OperationRecord, scope: NativeOldTargetScope, retired: RetiredNativeTarget | null, staleRearm: boolean,
+): boolean {
   const stored = operation.input.compensatingNativeReturn as Record<string, unknown> | undefined;
-  requireExclusion([operation.status === "failed", operation.rolledBack === true, operation.schedulerHandoffReleased === true,
-    !retiredMode || isDeepStrictEqual(stored?.retiredTarget, { ...retirement, oldPodUid: retiredMode }),
-    operation.cutoverCommittedAt === undefined, Object.entries(scope).every(([key, value]) => stored?.[key] === value),
-    owner?.gateway?.gatewayId === scope.sourceGatewayId, !owner?.fences.migration, assignments.length === 1,
-    assignments[0]?.gatewayId === scope.sourceGatewayId, assignments[0]?.epoch === scope.sourceEpoch,
-    assignments[0]?.state === "serving"].every(Boolean), "original source rollback is not complete");
-  return { audit, retirement, retiredMode, operation, owner };
+  return [
+    staleRearm || (operation.status === "failed" && operation.rolledBack === true), operation.schedulerHandoffReleased === true,
+    !retired || isDeepStrictEqual(stored?.retiredTarget, retired), operation.cutoverCommittedAt === undefined,
+    Object.entries(scope).every(([key, value]) => stored?.[key] === value),
+  ].every(Boolean);
+}
+
+async function readStaleCompensatedRearm(
+  tx: PlatformStateTransaction, scope: NativeOldTargetScope, audit: Audit, operation: Stored<OperationRecord>, now: number,
+) {
+  const targetGatewayId = operation.input.toGatewayId;
+  if (operation.status !== "pending" || targetGatewayId === scope.targetGatewayId) return null;
+  const attempt = staleCompensatedReturnAttempt(operation, scope.targetGatewayId);
+  requireExclusion(attempt && typeof targetGatewayId === "string" && audit.status === "completed" &&
+    audit.outcome === "completed" && audit.target.sharedHandoffRelease && audit.target.retiredLeaseRestoration === undefined &&
+    operation.inputUid === scope.uid && operation.input.fromGatewayId === scope.sourceGatewayId,
+  "stale pending Native rearm is unproven");
+  const authority = operation.input.compensatingNativeReturn as CompensatingNativeReturnAuthority;
+  const completed = await assertCompletedCompensationAudit(tx, operation, authority);
+  assertArchivedCompensationAttempt(operation, scope, completed, attempt);
+  await assertRearmedTargetUnoccupied(tx, scope, targetGatewayId, now);
+  return { targetGatewayId, attempt, compensationRevision: completed.revision };
+}
+
+type CompensatedAttempt = NonNullable<ReturnType<typeof staleCompensatedReturnAttempt>>;
+
+function assertArchivedCompensationAttempt(
+  operation: OperationRecord, scope: NativeOldTargetScope, completed: Audit, attempt: CompensatedAttempt,
+) {
+  const archived = completed.target.archivedReturn as { attempt?: CompensatedAttempt };
+  const originalAttempt = archived.attempt;
+  requireExclusion(originalAttempt && originalAttempt.attempt < attempt.attempt && originalAttempt.completedAt <= attempt.startedAt &&
+    operation.attemptHistory?.some(entry => isDeepStrictEqual(entry, originalAttempt)) &&
+    Object.entries(scope).every(([key, value]) => completed.target[key] === value),
+  "original archived attempt does not match the compensated operation");
+  const releasedAt = operation.schedulerHandoffReleasedAt;
+  requireExclusion(typeof releasedAt === "number" && typeof completed.completedAt === "number" &&
+    attempt.startedAt <= releasedAt && releasedAt <= completed.completedAt && completed.completedAt <= attempt.completedAt,
+  "recorded terminal attempt does not contain the completed compensation");
+}
+
+function originalCompensationAssignmentMatches(
+  assignments: readonly GatewayAssignment[], scope: NativeOldTargetScope, attempt?: CompensatedAttempt,
+): boolean {
+  const assignment = assignments[0];
+  return assignments.length === 1 && assignment?.gatewayId === scope.sourceGatewayId && assignment.epoch === scope.sourceEpoch &&
+    assignment.state === "serving" && (!attempt || (
+      assignment.updatedByOperationId === scope.operationId && assignment.updatedAt >= attempt.startedAt && assignment.updatedAt <= attempt.completedAt
+    ));
+}
+
+async function assertRearmedTargetUnoccupied(
+  tx: PlatformStateTransaction, scope: NativeOldTargetScope, gatewayId: string, now: number,
+) {
+  const [root, runtime, assignment, tasks] = await Promise.all([
+    tx.gateways.roots.get(gatewayId), tx.fleetRegistry.get(gatewayId), tx.gateways.assignments.get(gatewayId, scope.uid),
+    tx.migrationTasks.listByStatus(["running"]),
+  ]);
+  const beat = runtime?.heartbeat;
+  requireExclusion(root?.gatewayClass === "shared" && runtime?.runtime === "cluster" && beat && typeof beat.lastHeartbeatAt === "number" && !assignment,
+    "rearmed Shared target identity or owner assignment changed");
+  requireExclusion([
+    root.desiredStatus === "running", root.liveRelease !== null, root.desiredRelease === root.liveRelease,
+    !root.runtimeRestartFence, !root.retirementClaim, runtime.lifecycle === "serving", runtime.release === root.liveRelease,
+    beat.status === "ready", now - beat.lastHeartbeatAt <= GATEWAY_UNREACHABLE_AFTER_MS, beat.lastHeartbeatAt <= now,
+    !beat.mountedCustomers.includes(scope.slug), !beat.migratingIn?.includes(scope.slug),
+    !tasks.some(task => task.slug === scope.slug && (task.sourceGatewayId === gatewayId || task.targetGatewayId === gatewayId)),
+  ].every(Boolean), "rearmed Shared target has unverified or active owner runtime custody");
+}
+
+async function restoreCompensatedJournal(
+  tx: PlatformStateTransaction, operation: Awaited<ReturnType<typeof readReleaseAuthority>>["operation"],
+  scope: NativeOldTargetScope, attempt: CompensatedAttempt,
+) {
+  await tx.journal.operations.patch(operation.id, {
+    status: "failed", startedAt: attempt.startedAt, completedAt: attempt.completedAt, error: attempt.error,
+    rolledBack: true, gatewayId: scope.targetGatewayId, input: { ...operation.input, toGatewayId: scope.targetGatewayId },
+  }, { revision: operation.revision, startedAt: null, status: ["pending"] });
 }
 
 async function readRetiredLeaseRestoration(
@@ -308,7 +403,8 @@ async function readRetiredLeaseRestoration(
   "original compensated lease or allocation changed");
   await assertCompletedCompensationAudit(tx, operation, stored);
   const active = await tx.journal.operations.listForUid(scope.uid, { statuses: ["pending", "running"] });
-  requireExclusion(active.length === 0, "competing owner operation prevents compensation finalization");
+  requireExclusion(active.every(candidate => current.staleRearm && candidate.id === operation.id),
+    "competing owner operation prevents compensation finalization");
   return { lease, authority: { ...stored, sourceRelease: root.liveRelease } };
 }
 
@@ -316,13 +412,14 @@ async function assertCompletedCompensationAudit(
   tx: PlatformStateTransaction, operation: Awaited<ReturnType<typeof readReleaseAuthority>>["operation"],
   authority: CompensatingNativeReturnAuthority,
 ) {
-  requireExclusion(typeof authority.auditId === "string" && typeof authority.attemptId === "string" && authority.source,
+  requireExclusion(typeof authority?.auditId === "string" && typeof authority.attemptId === "string" && authority.source,
     "completed compensation identity missing");
   const audit = await tx.journal.audits.get(authority.auditId);
   const history = audit?.target.archivedReturn as { handoff?: unknown } | undefined;
   requireExclusion(audit?.status === "completed" && audit.outcome === "completed" && audit.actionClaimId === authority.attemptId &&
     isDeepStrictEqual(audit.target.original, authority.source) && isDeepStrictEqual(history?.handoff, operation.schedulerHandoff),
     "completed compensation audit changed");
+  return audit;
 }
 
 async function restoreCompensatedLease(

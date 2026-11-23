@@ -2,7 +2,7 @@ import { isDeepStrictEqual } from "node:util";
 import type { PlatformStateStore } from "@octogee/core/platform-state";
 import { createCompensatingSourceServingVerifier, type CompensatingSourceServingInputs } from "./compensating-native-source-serving.js";
 import { createCompensatingNativeReturn } from "./compensating-native-return.js";
-import { createCompensatingNativeOriginalObserver, createCompensatingNativeReturnActions, createRetiredNativeSourceStoreVerifier } from "./compensating-native-return-actions.js";
+import { createCompensatingNativeOriginalObserver, createCompensatingNativeReturnActions, createCompensatingNativeSourceStoreVerifier } from "./compensating-native-return-actions.js";
 import { createHeldSharedInertMaintenance } from "./held-shared-inert-maintenance.js";
 import { createNativeOldTargetPhysicalProvider, createNativeReturnTargetExclusion } from "./native-return-target-exclusion.js";
 
@@ -52,6 +52,7 @@ export function createNativeRecoveryComposition(
   const observeOriginalSource = createCompensatingNativeOriginalObserver({ store, vm: enrolled.source.vm });
   const verifyRestoredServing = createCompensatingSourceServingVerifier({ ...enrolled.source.serving, store, terminal: true });
   const target = createNativeReturnTargetExclusion({
+    verifyRearmedTargetStores: createCompensatingNativeSourceStoreVerifier(store, enrolled.target.agentStoreAdminDsn, "active"),
     async verifyRestoredSource(authority, assertCurrent) {
       const verifyInstance = async () => {
         await assertCurrent();
@@ -70,7 +71,7 @@ export function createNativeRecoveryComposition(
   });
   const compensation = createCompensatingNativeReturn({
     store, now, actions: createCompensatingNativeReturnActions({
-      ...enrolled.source, verifyRetiredSourceStores: createRetiredNativeSourceStoreVerifier(store, enrolled.target.agentStoreAdminDsn),
+      ...enrolled.source, verifyRetiredSourceStores: createCompensatingNativeSourceStoreVerifier(store, enrolled.target.agentStoreAdminDsn, "retired"),
       verifySourceServing: createCompensatingSourceServingVerifier({ ...enrolled.source.serving, store }),
     }),
     provider: {

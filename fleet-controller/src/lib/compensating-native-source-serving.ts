@@ -7,6 +7,7 @@ import { dualReadIsolatedProfileImage, releasePayloadHash } from "@octogee/share
 import { isGatewayVmImageObservation } from "@octogee/shared/types/glm";
 import { gatewayHeartbeatMatchesImageTag } from "@octogee/shared/types/image-tag";
 import { requestFleetState } from "../fleet-state-client.js";
+import { staleCompensatedReturnAttempt } from "./compensated-native-return-history.js";
 import type { CompensatingNativeReturnActions, CompensatingNativeReturnAuthority } from "./compensating-native-return.js";
 
 export type CompensatingSourceServingInputs = {
@@ -43,8 +44,9 @@ function originalServingPhaseMatches(
   terminal: boolean,
 ) {
   if (terminal) {
-    return !owner.fences.migration && !root.runtimeRestartFence && operation.status === "failed" &&
-      operation.rolledBack === true && operation.schedulerHandoffReleased === true;
+    const completed = operation.status === "failed" && operation.rolledBack === true && operation.schedulerHandoffReleased === true;
+    return !owner.fences.migration && !root.runtimeRestartFence &&
+      (completed || !!staleCompensatedReturnAttempt(operation, scope.targetGatewayId));
   }
   const fence = root.runtimeRestartFence;
   return owner.fences.migration?.operationId === scope.operationId && fence?.attemptId === scope.attemptId &&
