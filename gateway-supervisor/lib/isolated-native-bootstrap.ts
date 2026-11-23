@@ -11,6 +11,8 @@ import { recordIsolatedNativeInitialState } from "./isolated-native-initial-stat
 import { uninitializedUserState } from "./uninitialized-user-state.js";
 
 const NATIVE_STOP_GRACE_MS = 60_000;
+const NATIVE_READINESS_TIMEOUT_MS = 3 * 60_000;
+const EPHEMERAL_NATIVE_READINESS_TIMEOUT_MS = 5 * 60_000;
 const NATIVE_HOST_DIRECTORIES = ["state", "client", "agents"];
 
 async function entryNames(directory: string): Promise<Set<string> | null> {
@@ -96,7 +98,10 @@ export async function bootFreshUserHost(stateDir: string, env: NodeJS.ProcessEnv
     if (!ended) child.kill(value);
   };
   try {
-    const deadline = Date.now() + 180_000;
+    const timeoutMs = env.GATEWAY_EPHEMERAL_HOME === "true"
+      ? EPHEMERAL_NATIVE_READINESS_TIMEOUT_MS
+      : NATIVE_READINESS_TIMEOUT_MS;
+    const deadline = Date.now() + timeoutMs;
     for (;;) {
       if (ended || failure) throw failure ?? new Error("native initialization stopped");
       try {
