@@ -588,7 +588,7 @@ function createGatewayComputeClient(store: PlatformStateStore, logFn: (msg: stri
       actor: "cowboy", forced: false, what: "resize-builder-computer", why: "Apply the sizing profile capacity before starting its parked VM", target: { instanceName: input.instanceName, zone: input.zone, projectId: gatewayComputeProjectId() }, preActionStatus: {}, mutation: { machineType: input.machineType }, action,
     }),
     journalProvisioningModel: (input, action) => runNormalFleetMutation(store, {
-      actor: "cowboy", forced: false, what: "reprovision-builder-computer", why: "Apply the sizing profile provisioning model before starting its parked VM", target: { instanceName: input.instanceName, zone: input.zone, projectId: gatewayComputeProjectId() }, preActionStatus: {}, mutation: { provisioningModel: input.provisioningModel }, action,
+      actor: "cowboy", forced: false, what: "reprovision-builder-computer", why: "Select the provisioning model before starting the stopped VM", target: { instanceName: input.instanceName, zone: input.zone, projectId: gatewayComputeProjectId() }, preActionStatus: {}, mutation: { provisioningModel: input.provisioningModel }, action,
     }),
     log: logFn,
     wait: (ms) => new Promise((r) => setTimeout(r, ms)),

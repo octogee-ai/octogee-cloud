@@ -672,7 +672,7 @@ export function createGatewayVmClient(deps: GatewayVmClientDeps): GatewayVmClien
       if (!isZoneExhausted(err)) throw err;
     }
     deps.log(`[gateway-vm] ${instanceName}: spot capacity exhausted in ${zone}; restarting on-demand`);
-    await instanceAction("setScheduling", instanceName, zone, schedulingFor("STANDARD"));
+      await setProvisioningModel(instanceName, zone, "STANDARD");
     await lifecycle("start", instanceName, zone);
     return { fellBackToStandard: true };
   }

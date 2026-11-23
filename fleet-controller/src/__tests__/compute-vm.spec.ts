@@ -44,11 +44,12 @@ function http(status: number): Error {
   return Object.assign(new Error(`http ${status}`), { response: { status } });
 }
 
-function clientWith(request: ComputeRequest) {
+function clientWith(request: ComputeRequest, journalProvisioningModel?: Parameters<typeof createGatewayVmClient>[0]["journalProvisioningModel"]) {
   const log = vi.fn();
   let clock = 0;
   const client = createGatewayVmClient({
     request,
+    journalProvisioningModel,
     projectId: "octogee-test",
     log,
     wait: async () => { clock += 1_000; },
@@ -366,13 +367,15 @@ describe("createGatewayVmClient lifecycle", () => {
       if (call.url.includes("/operations/op-")) return { status: 200, data: { name: call.url.split("/").pop(), status: "DONE" } };
       return new Error(`unexpected ${call.method} ${call.url}`);
     });
-    const { client, log } = clientWith(request);
+    const journal = vi.fn<NonNullable<Parameters<typeof createGatewayVmClient>[0]["journalProvisioningModel"]>>(async (_input, action) => action());
+    const { client, log } = clientWith(request, journal);
 
     const result = await client.start(input.instanceName, "us-west1-b");
 
     expect(result).toEqual({ fellBackToStandard: true });
     expect(posts.map((c) => c.url.split("/").pop())).toEqual(["start", "setScheduling", "start"]);
     expect(posts[1].body).toEqual({ provisioningModel: "STANDARD", automaticRestart: true, onHostMaintenance: "MIGRATE" });
+    expect(journal).toHaveBeenCalledExactlyOnceWith({ instanceName: input.instanceName, provisioningModel: "STANDARD", zone: "us-west1-b" }, expect.any(Function));
     expect(log).toHaveBeenCalledWith(expect.stringMatching(/spot capacity exhausted .* restarting on-demand/));
 
     const other = fakeCompute((call) => {

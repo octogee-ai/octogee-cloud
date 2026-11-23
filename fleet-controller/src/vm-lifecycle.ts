@@ -193,6 +193,7 @@ function sameObservation(recorded: GatewayVmState, description: GatewayVmDescrip
   return recorded.status === description.status
     && recorded.internalIp === description.internalIp
     && recorded.instanceId === description.instanceId
+    && recorded.provisioningModel === description.provisioningModel
     && (recorded.startedAt ?? null) === description.lastStartedAt
     && (recorded.stopReason ?? null) === stopReason;
 }
@@ -1539,7 +1540,8 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
       return;
     }
     if (STOPPED_STATUSES.has(description.status)) {
-      await restartPreempted(gatewayId, description);
+      const preferredModel = data?.vmSpec?.provisioningModel ?? deps.vmSpec.provisioningModel;
+      await restartPreempted(gatewayId, vm, description, preferredModel);
       return;
     }
     if (description.status === "STOPPING") {
@@ -1555,8 +1557,18 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
     await recordRunningAgain(gatewayId, vm, description);
   }
 
-  async function restartPreempted(gatewayId: string, description: GatewayVmDescription): Promise<void> {
+  async function restartPreempted(gatewayId: string, lastSeen: GatewayVmState, description: GatewayVmDescription, preferredModel: GatewayVmSpec["provisioningModel"]): Promise<void> {
+    const retrySpot = preferredModel === "SPOT" && description.provisioningModel === "STANDARD";
+    if (retrySpot && (!lastSeen.instanceId || description.instanceId !== lastSeen.instanceId || description.gatewayId !== gatewayId)) {
+      throw new Error(`VM ${description.name}: Spot retry requires the same stopped gateway VM`);
+    }
     if (!(await recordVm(gatewayId, stateFrom(description, deps.now(), "preempted"), "preempted"))) return;
+    if (retrySpot) {
+      await assertNotHeldOfflineSource(gatewayId);
+      await deps.vm.setProvisioningModel(description.name, description.zone, "SPOT");
+      description = verifiedStoppedVm(description, await deps.vm.describe(description.name, description.zone));
+      if (description.provisioningModel !== "SPOT") throw new Error(`VM ${description.name}: provisioning model did not converge to SPOT`);
+    }
     deps.log(`[vm-gateway-runtime] ${gatewayId}: ${description.name} was preempted (${description.status}); restarting`);
     const after = await startVm(gatewayId, description, "restarted");
     await recordVm(gatewayId, stateFrom(after, deps.now(), null), "restart");

@@ -1761,6 +1761,48 @@ describe("createVmGatewayRuntime.upsertInstance after a park", () => {
 describe("createVmGatewayRuntime.recoverUnreachable", () => {
   const live = (vm: Record<string, unknown> = recorded) => ({ "glmGateways/b-x": { docKind: "runtime", gatewayId: "b-x", runtime: "gce-vm", vm, vmInstance: { enabled: true, gatewayId: "b-x" } } });
 
+  it("retries Spot on the same stopped on-demand fallback before restarting it", async () => {
+    const docs = live({ ...recorded, provisioningModel: "STANDARD" });
+    let description: GatewayVmDescription = { ...stopped, provisioningModel: "STANDARD" };
+    const h = harness({ "glmGateways/b-x": { ...docs["glmGateways/b-x"], vmSpec: spec } }, {
+      describe: vi.fn(async () => description),
+      setProvisioningModel: vi.fn(async (_name, _zone, provisioningModel) => { description = { ...description, provisioningModel }; }),
+      start: vi.fn(async () => { description = { ...description, status: "RUNNING" }; return { fellBackToStandard: false }; }),
+    });
+
+    await h.runtime.recoverUnreachable("b-x");
+
+    expect(h.vm.setProvisioningModel).toHaveBeenCalledExactlyOnceWith(VM, "us-west1-b", "SPOT");
+    expect(h.vm.setProvisioningModel.mock.invocationCallOrder[0]).toBeLessThan(h.vm.start.mock.invocationCallOrder[0]);
+    expect(h.docs["glmGateways/b-x"].vm).toMatchObject({ instanceId: recorded.instanceId, provisioningModel: "SPOT", status: "RUNNING" });
+    expect(h.vm.stop).not.toHaveBeenCalled();
+    expect(h.vm.delete).not.toHaveBeenCalled();
+  });
+
+  it("leaves a running on-demand fallback serving until a safe restart", async () => {
+    const fallback = { ...recorded, provisioningModel: "STANDARD" };
+    const h = harness({ "glmGateways/b-x": { ...live(fallback)["glmGateways/b-x"], vmSpec: spec } }, {
+      describe: vi.fn(async () => ({ ...running, provisioningModel: "STANDARD" })),
+    });
+
+    await h.runtime.recoverUnreachable("b-x");
+
+    expect(h.vm.stop).not.toHaveBeenCalled();
+    expect(h.vm.start).not.toHaveBeenCalled();
+    expect(h.vm.setProvisioningModel).not.toHaveBeenCalled();
+  });
+
+  it("refuses a Spot retry when the stopped on-demand instance replaced the recorded VM", async () => {
+    const fallback = { ...recorded, provisioningModel: "STANDARD" };
+    const h = harness({ "glmGateways/b-x": { ...live(fallback)["glmGateways/b-x"], vmSpec: spec } }, {
+      describe: vi.fn(async () => ({ ...stopped, instanceId: "5252", provisioningModel: "STANDARD" })),
+    });
+
+    await expect(h.runtime.recoverUnreachable("b-x")).rejects.toThrow(/Spot retry requires the same stopped gateway VM/);
+    expect(h.vm.setProvisioningModel).not.toHaveBeenCalled();
+    expect(h.vm.start).not.toHaveBeenCalled();
+  });
+
   it("restarts a preempted VM, records the preemption first, and republishes its route", async () => {
     const h = harness(live(), {
       describe: vi.fn(async () => running).mockResolvedValueOnce(stopped),
