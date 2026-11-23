@@ -57,7 +57,8 @@ export function createScheduleTransfer(deps: ScheduleTransferDeps) {
       if (body.op === "check") {
         return { ...envelope, op: "check", ...await checkSchedules(connection.request, agentIds, body.records) };
       }
-      return { ...envelope, op: "restore", ...await restoreSchedules(connection.request, agentIds, body.records, deps.log) };
+      return { ...envelope, op: "restore", ...await restoreSchedules(connection.request, agentIds, body.records, deps.log,
+        { reconcileDeclarations: body.reconcileDeclarations }) };
     } finally {
       connection.close();
     }
@@ -159,13 +160,14 @@ export async function restoreSchedules(
   agentIds: ReadonlySet<string>,
   records: readonly ScheduleRecord[],
   log: (msg: string) => void,
+  options: { reconcileDeclarations?: true } = {},
 ): Promise<Pick<ScheduleRestoreResult, "created" | "existing" | "failed">> {
   const present = presentJobs(await listJobs(call));
   const result: Pick<ScheduleRestoreResult, "created" | "existing" | "failed"> = { created: 0, existing: 0, failed: [] };
   for (const record of records) {
     const name = scheduleName(record);
     try {
-      if (await restoreRecord(call, agentIds, present, record)) result.created++;
+      if (await restoreRecord(call, agentIds, present, record, options.reconcileDeclarations === true)) result.created++;
       else result.existing++;
     } catch (error) {
       log(`🔴 [schedule-transfer] cron.add "${name}" failed: ${errorMessage(error)}`);
@@ -182,6 +184,7 @@ async function restoreRecord(
   agentIds: ReadonlySet<string>,
   present: Map<string, CronJob>,
   record: ScheduleRecord,
+  reconcileDeclaration: boolean,
 ): Promise<boolean> {
   if (!agentIds.has(record.agentId)) {
     throw new SchedulerRefusal(`agent ${record.agentId} is not this user's agent on this gateway`);
@@ -189,29 +192,56 @@ async function restoreRecord(
   const declarationKey = transferKey(record);
   const key = identityKey(record.agentId, declarationKey);
   const existing = presentJob(present, record);
-  if (existing) {
+  if (reconcileDeclaration && !recoveredDeclaration(record, existing)) {
+    throw new SchedulerRefusal("durable recovery requires an owned declaration with a matching key");
+  }
+  if (existing && !reconcileDeclaration) {
     await reconcileExisting(call, existing, record);
     return false;
   }
   const reason = unmovableReason({ ...record.job, declarationKey });
   if (reason) throw new SchedulerRefusal(reason);
   const job: CronJob = { ...cronAddJob(record.job, record.agentId), declarationKey };
-  const hasScratch = typeof record.scratch === "string";
-  const response = await call("cron.add", hasScratch ? { ...job, enabled: false } : job);
+  const scratch = record.scratch;
+  const response = await call("cron.add", typeof scratch === "string" ? { ...job, enabled: false } : job);
   const restored = isRecord(response) && isRecord(response.job) ? response.job : response;
   if (!isRecord(restored) || typeof restored.id !== "string") throw new Error("cron.add returned no job id");
-  if (hasScratch) {
-    const written = await call("cron.scratch.set", { id: restored.id, content: record.scratch, expectedRevision: 0 });
-    if (!isRecord(written) || written.ok !== true) throw new SchedulerRefusal("cron.scratch.set did not restore scratch");
+  if (typeof scratch === "string") {
+    if (reconcileDeclaration) {
+      await reconcileRecoveredScratch(call, restored.id, scratch);
+    } else {
+      await writeRecoveredScratch(call, restored.id, scratch, 0);
+    }
     if (job.enabled !== false) {
       await call("cron.update", { id: restored.id, patch: { enabled: true } });
       restored.enabled = true;
     }
   }
   present.set(key, restored);
-  return !isRecord(response) || response.created !== false;
+  return !existing && (!isRecord(response) || response.created !== false);
 }
 
+function recoveredDeclaration(record: ScheduleRecord, existing?: CronJob): boolean {
+  const key = record.job.declarationKey;
+  if (typeof key !== "string" || (existing && existing.declarationKey !== key)) return false;
+  return key === `octogee:coach-monitor:${record.agentId}` || key.startsWith(`octogee:owner-automation:${record.agentId}:`);
+}
+
+async function writeRecoveredScratch(call: GatewayCall, id: string, content: string, expectedRevision: number): Promise<void> {
+  const written = await call("cron.scratch.set", { id, content, expectedRevision });
+  if (!isRecord(written) || written.ok !== true) throw new SchedulerRefusal("cron.scratch.set did not restore scratch");
+}
+
+async function reconcileRecoveredScratch(call: GatewayCall, id: string, content: string): Promise<void> {
+  const response = await call("cron.scratch.get", { id });
+  if (!isRecord(response)) throw new SchedulerRefusal("cron.scratch.get returned an invalid acknowledgement");
+  const scratch = response.scratch;
+  if (scratch === null) return writeRecoveredScratch(call, id, content, 0);
+  if (!isRecord(scratch) || typeof scratch.revision !== "number" || !Number.isSafeInteger(scratch.revision) || scratch.revision < 1) {
+    throw new SchedulerRefusal("cron.scratch.get returned an invalid revision");
+  }
+  if (scratch.content !== content) await writeRecoveredScratch(call, id, content, scratch.revision);
+}
 function presentJobs(jobs: readonly CronJob[]): Map<string, CronJob> {
   const present = new Map<string, CronJob>();
   for (const job of jobs) {

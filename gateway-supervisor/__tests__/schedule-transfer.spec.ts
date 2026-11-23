@@ -41,6 +41,7 @@ function fakeGateway(initial: Job[], options: {
   failAdd?: (job: Job) => boolean;
   scratch?: Record<string, string>;
   failScratch?: "get" | "set";
+  reconcileDeclaration?: boolean;
 } = {}) {
   const store = initial.map((job) => ({ ...job }));
   const scratch = new Map(Object.entries(options.scratch ?? {}));
@@ -81,7 +82,10 @@ function fakeGateway(initial: Job[], options: {
     if (method === "cron.add") {
       if (options.failAdd?.(params)) throw new OpenclawWireError("rpc-error", `add ${String(params.name)} refused`);
       const existing = store.find(job => job.agentId === params.agentId && job.declarationKey === params.declarationKey);
-      if (existing) return { created: false, job: structuredClone(existing) };
+      if (existing) {
+        if (options.reconcileDeclaration) Object.assign(existing, params);
+        return { created: false, job: structuredClone(existing) };
+      }
       const job = { ...params, id: `new-${nextId++}`, effectiveAgentId: params.agentId, state: {} };
       store.push(job);
       return { created: true, job: structuredClone(job) };
@@ -90,6 +94,23 @@ function fakeGateway(initial: Job[], options: {
   });
   return { call, store, scratch };
 }
+
+it("reconciles a returning declaration and restores its scratch without duplicating the destination job", async () => {
+  const declarationKey = `octogee:coach-monitor:${ALICE}`;
+  const existing = listedJob("target-monitor", { declarationKey });
+  const destination = fakeGateway([existing], { scratch: { "target-monitor": "old" }, reconcileDeclaration: true });
+  const recovered = {
+    sourceJobId: "old-gateway-monitor", agentId: ALICE, scratch: "checkpointed",
+    job: { ...existing, declarationKey, enabled: true, name: "Recovered monitor" },
+  };
+  const options = { reconcileDeclarations: true } as const;
+  await expect(restoreSchedules(destination.call, ALICE_AGENTS, [recovered], vi.fn(), options)).resolves.toEqual({ created: 0, existing: 1, failed: [] });
+  expect(destination.call).toHaveBeenCalledWith("cron.scratch.set", { id: "target-monitor", content: "checkpointed", expectedRevision: 1 });
+  expect(destination.call).toHaveBeenCalledWith("cron.update", { id: "target-monitor", patch: { enabled: true } });
+  destination.call.mockClear();
+  await expect(restoreSchedules(destination.call, ALICE_AGENTS, [recovered], vi.fn(), options)).resolves.toMatchObject({ existing: 1, failed: [] });
+  expect(destination.call.mock.calls.map(([method]) => method)).not.toContain("cron.scratch.set");
+});
 
 describe("schedule snapshot", () => {
   it("records only the user's agents' jobs and leaves every other job running", async () => {
