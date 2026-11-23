@@ -2854,14 +2854,10 @@ function startControllerBackgroundTasks({
     gatewayGitKeys: provisioning?.client ?? null,
     provisioningReadiness: provisioning?.sync.readiness,
     provisioningSync: provisioning?.sync,
-    ...(deps.kubeOps
-      ? {
-          readGatewayPodDiagnostics: (gatewayId: string) =>
-            deps.kubeOps.readGatewayPodDiagnostics({ namespace: NAMESPACE, gatewayId }),
-          readGatewayPodDiagnosticsBatch: (gatewayIds: readonly string[]) =>
-            deps.kubeOps.readGatewayPodDiagnosticsBatch({ namespace: NAMESPACE, gatewayIds }),
-        }
-      : {}),
+    readGatewayPodDiagnostics: (gatewayId) =>
+      kubeOps.readGatewayPodDiagnostics({ namespace: NAMESPACE, gatewayId }),
+    readGatewayPodDiagnosticsBatch: (gatewayIds) =>
+      kubeOps.readGatewayPodDiagnosticsBatch({ namespace: NAMESPACE, gatewayIds }),
     ...adminNativeReturnOptions(deps),
     strandedSource: strandedSourceGateway,
     ...(GATEWAY_VM_SPEC ? { userHome: adminUserHome(deps.store, GATEWAY_VM_SPEC) } : {}),

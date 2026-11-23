@@ -356,7 +356,9 @@ function enqueuePlacementMigrationIntent(req, deps) {
     };
     if (request.fromGatewayId === request.toGatewayId)
         throw new BadRequest("toGatewayId must differ from fromGatewayId");
-    request.durableRecovery = parseDisklessRecoveryIntent(body, request.source);
+    const durableRecovery = parseDisklessRecoveryIntent(body, request.source);
+    if (durableRecovery)
+        request.durableRecovery = durableRecovery;
     const drain = body.sharedDrain;
     if (drain !== undefined) {
         const paired = drain !== null && typeof drain === "object" ? drain.pairedTargetGatewayId : undefined;
