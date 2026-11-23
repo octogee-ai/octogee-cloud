@@ -1,3 +1,4 @@
+import { claimEphemeralWriter, sameEphemeralWriter } from "@octogee/core/isolated-gateway-lifecycle";
 import { collectChannelBindings, CorruptStoredFieldError, defaultAgentMattermostSecret, loadSnapshot, snapshotDefaultAgentFields, storedRuntimeReset, storedTimeZone } from "@octogee/core/broker-user-snapshot";
 export { collectChannelBindings, CorruptStoredFieldError, projectCheckoutScopeForGatewayRoot, snapshotBaseFields, snapshotGreetingPosted, storedTimeZone } from "@octogee/core/broker-user-snapshot";
 import { builderActivateOperationId } from "@octogee/shared/types/isolated-operation-ids";
@@ -19,7 +20,7 @@ import {
 } from "../lib/assigned-isolated-agent-anchor-scope.js";
 import { sharedAgentAnchorMigrationScope, sharedAssignedSourceSurgeAnchorScope } from "../lib/shared-agent-anchor-migration.js";
 import { installWorkspaceBlobBrokerRoute, type WorkspaceBlobStore } from "./fleet-broker-workspace-blob.js";
-import { heldNativeReturnBlocksOwnerDestination } from "@octogee/core/fleet-state";
+import { heldNativeReturnBlocksOwnerDestination, parseScheduleCheckpoint, parseWorkspaceCheckpoint, recordGatewayScheduleCheckpoint, recordGatewayWorkspaceCheckpoint } from "@octogee/core/fleet-state";
 import {
   FenceMismatchError,
   MalformedRecordError,
@@ -72,7 +73,7 @@ import {
   validSha256,
   type VmHomeStore,
 } from "../lib/vm-home-checkpoint.js";
-import { Router, type Request, type Response } from "express";
+import { Router, type Request, type RequestHandler, type Response } from "express";
 
 import { logger, redactRequestPath } from "@octogee/core/http/logging";
 import { gcsBucket } from "@octogee/core/workspace/gcs-bucket";
@@ -3294,6 +3295,60 @@ function installBlobMaterializationRoute(router: Router, deps: ResolvedFleetBrok
   });
 }
 
+function installGatewayCheckpointRoutes(router: Router, { store, now }: ResolvedFleetBrokerRouteDeps): void {
+  router.post("/ephemeral-writer/claim", async (req, res) => {
+    const bound = boundGateway(req, res);
+    if (!bound) return;
+    if (!bound.ownerUid || !bound.podUid || !bound.podName) {
+      res.status(403).json(FORBIDDEN);
+      return;
+    }
+    const { gatewayId, ownerUid, podUid, podName } = bound;
+    await runBrokered(res, async () => {
+      if (!await claimEphemeralWriter({ store, gatewayId, ownerUid, pod: { podUid, podName } })) {
+        res.status(409).json({ error: "ephemeral_writer_claim_conflict" });
+        return;
+      }
+      res.status(204).end();
+    });
+  });
+
+  const checkpoint = (kind: "schedule" | "workspace"): RequestHandler => async (req, res) => {
+    const bound = boundGateway(req, res);
+    if (!bound) return;
+    if (!bound.podUid || !bound.podName) {
+      res.status(403).json(FORBIDDEN);
+      return;
+    }
+    const { uid, assignmentEpoch, observedAt, snapshot: value, commits: revisions } = objectBody(req);
+    if (typeof uid !== "string" || typeof assignmentEpoch !== "number" ||
+        !Number.isSafeInteger(assignmentEpoch) || typeof observedAt !== "number") {
+      res.status(400).json({ error: `invalid_${kind}_checkpoint` });
+      return;
+    }
+    const { gatewayId, podUid, podName } = bound;
+    const scope = { store, gatewayId, uid, assignmentEpoch, pod: { podUid, podName }, now: now(), observedAt };
+    const snapshot = kind === "schedule" ? parseScheduleCheckpoint(value) : null;
+    const commits = kind === "workspace" ? parseWorkspaceCheckpoint(revisions) : null;
+    if (!snapshot && !commits) {
+      res.status(400).json({ error: `invalid_${kind}_checkpoint` });
+      return;
+    }
+    await runBrokered(res, async () => {
+      const accepted = snapshot
+        ? await recordGatewayScheduleCheckpoint({ ...scope, snapshot })
+        : await recordGatewayWorkspaceCheckpoint({ ...scope, commits: commits! });
+      if (!accepted) {
+        res.status(409).json({ error: `${kind}_checkpoint_writer_conflict` });
+        return;
+      }
+      res.status(204).end();
+    });
+  };
+  router.post("/schedule-checkpoint", checkpoint("schedule"));
+  router.post("/workspace-checkpoint", checkpoint("workspace"));
+}
+
 function installGatewayOpsRoutes(
   router: Router,
   deps: ResolvedFleetBrokerRouteDeps,
@@ -3346,7 +3401,12 @@ function installGatewayOpsRoutes(
       const accepted = await deps.store.transaction({ label: "fleet-broker.prestop-flush" }, async (tx) => {
         const gateway = await tx.gateways.roots.get(bound.gatewayId);
         if (!gateway || !isDurableGatewayRoot(gateway, bound.gatewayId)) return false;
-        await tx.gateways.roots.patch(bound.gatewayId, { lastPreStopFlush: { ...event, at: { serverNow: true } } });
+        const { podUid, podName } = bound;
+        const ephemeral = gateway.allocation?.ephemeralHomeGiB !== undefined;
+        if (ephemeral && (!podUid || !podName || !sameEphemeralWriter(gateway.ephemeralWriter, { podUid, podName }))) return false;
+        await tx.gateways.roots.patch(bound.gatewayId, {
+          lastPreStopFlush: { ...event, ...(ephemeral ? { podUid, podName } : {}), at: { serverNow: true } },
+        }, ephemeral ? { revision: gateway.revision } : undefined);
         return true;
       });
       if (!accepted) {
@@ -4351,6 +4411,7 @@ export function createFleetBrokerRoutes(opts: FleetBrokerRouteOptions): Router {
   installProvisioningRoutes(router, deps);
   installServiceProvisioningRoutes(router, deps);
   installGatewayOpsRoutes(router, deps);
+  installGatewayCheckpointRoutes(router, deps);
   installVmRuntimeRoutes(router, deps);
   installVmEgressRoutes(router, deps);
   installAgentRoutes(router, deps);

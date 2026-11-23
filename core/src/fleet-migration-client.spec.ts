@@ -501,6 +501,7 @@ describe("MigrationClient.restoreTarget", () => {
       resolveGatewayUrl: () => `https://fleet.example.com`,
       fetch: fakeFetch,
     });
+    const workspaceCommits = resume ? { workspace: "a".repeat(40) } : undefined;
     const res = await client.restoreTarget({
       migrationId: "m1",
       gatewayId: "gw-green",
@@ -508,11 +509,13 @@ describe("MigrationClient.restoreTarget", () => {
       slug: "alice",
       snapshot: SNAPSHOT,
       resume,
+      workspaceCommits,
     });
     expect(ownershipPrepared).toBe(true);
     expect(res.restored).toBe(true);
     expect(calls[0].url).toBe(`https://fleet.example.com/${resume ? "resume-restore" : "restore"}/gw-green`);
     const parsed = JSON.parse(calls[0].body!);
+    expect(parsed.workspaceCommits).toEqual(workspaceCommits);
     expect(parsed).toMatchObject({
       migrationId: "m1",
       uid: "uid-alice",

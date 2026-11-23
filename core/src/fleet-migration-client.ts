@@ -107,6 +107,7 @@ export interface MigrationClient {
     uid: string;
     slug: string;
     snapshot: FleetBrokerUserSnapshot;
+    workspaceCommits?: Readonly<Record<string, string>>;
   }): Promise<RestoreMigrationResponse>;
 
   transferState(opts: {
@@ -384,14 +385,14 @@ export function createMigrationClient(deps: MigrationClientDeps): MigrationClien
       }
       return result;
     }) as MigrationClient["schedules"],
-    async restoreTarget({ migrationId, gatewayId, transportId, uid, slug, snapshot, resume }) {
+    async restoreTarget({ migrationId, gatewayId, transportId, uid, slug, snapshot, resume, workspaceCommits }) {
       await deps.prepareAgentStores?.(gatewayId, slug);
       const res = await postSignedJson<RestoreMigrationResponse>({
         transportId: transportId ?? gatewayId,
         path: `/${resume === true ? "resume-restore" : "restore"}/${gatewayId}`,
         gatewayId,
         migrationId,
-        body: { migrationId, uid, slug, snapshot },
+        body: { migrationId, uid, slug, snapshot, ...(workspaceCommits === undefined ? {} : { workspaceCommits }) },
         timeoutMs: transferMs,
       });
       log(

@@ -3259,6 +3259,44 @@ describe("migrate-customer — legacy data-plane migration (shared class)", () =
   });
 });
 
+describe("direct diskless Hobby return", () => {
+  it("restores and stages on Shared without resolving a replacement or the old writer", async () => {
+    const { deps, client, ctx } = mkDeps();
+    const order: string[] = [];
+    const workspaceCommits = { workspace: "a".repeat(40) };
+    const scheduler = { agentIds: ["octogee-alice-coach"], snapshot: { version: 1, operationId: "mig-op-1", jobs: [], scratch: [] } };
+    deps.commitDisklessSharedRecovery = vi.fn(async () => ({ targetEpoch: 5, restorePending: true, workspaceCommits, scheduler }));
+    deps.readDisklessRestoreAuthority = vi.fn(async () => ({
+      uid: "uid-alice", slug: "alice", fromGatewayId: "gw-blue", gatewayId: "shared-green",
+      operationId: "op-1", assignmentEpoch: 5, migrationId: "mig-op-1", attemptId: "attempt", claimStartedAt: 4_000,
+      dispatchClaimStartedAt: 4_000, dispatchedAt: 4_000, phase: "dispatched" as const,
+    }));
+    vi.mocked(deps.readUserSnapshot).mockResolvedValue({ ...SNAPSHOT, gatewayId: "shared-green" });
+    vi.mocked(deps.resolveGatewayUrl).mockImplementation(async gatewayId => {
+      if (gatewayId !== "shared-green") throw new Error("the Spot writer is gone");
+      return "http://shared-green";
+    });
+    const original = vi.mocked(client.scheduler).getMockImplementation()!;
+    vi.mocked(client.scheduler).mockImplementation(async request => {
+      order.push(request.phase);
+      return original(request);
+    });
+    ctx.withUserRestoreFence = vi.fn(async (_, work) => {
+      order.push("held");
+      await work();
+      order.push("released");
+    });
+    const result = await createMigrateUserHandler(deps)(mkOp({ input: {
+      uid: "uid-alice", userSlug: "alice", fromGatewayId: "gw-blue", toGatewayId: "shared-green", durableRecovery: true,
+    } }), ctx);
+    expect(result).toMatchObject({ success: true, rolledBack: false });
+    expect(client.restoreTarget).toHaveBeenCalledWith(expect.objectContaining({ workspaceCommits, resume: true, gatewayId: "shared-green" }));
+    expect(client.calls).toEqual(["restore:shared-green", "verify:shared-green"]);
+    expect(order).toEqual(["held", "stage", "released", "activate"]);
+    expect(client.transferState).not.toHaveBeenCalled();
+  });
+});
+
 describe("migrate-customer — durable V2 migration", () => {
   it("initializes durable state from exact root fences and drives to complete", async () => {
     const { deps, ctx, client, events, persisted } = mkDeps({ durable: true });

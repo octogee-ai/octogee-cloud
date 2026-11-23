@@ -387,6 +387,7 @@ export interface GatewayRpcClient {
   ): Promise<GatewayToolsCatalogResult>;
   schedulerMigration(params: SchedulerMigrationRequest): Promise<SchedulerMigrationResult>;
   cronRequest(method: ScheduleTransferCronMethod, params: Record<string, unknown>): Promise<unknown>;
+  watchScheduleInventory?(onChange: (event: GatewayInventoryEvent) => void, signal: AbortSignal): Promise<void>;
   cronJobCount(agentId: string, opts?: { includeDisabled?: boolean }): Promise<number>;
   cronAdd(spec: CronAddSpec): Promise<CronAddResult>;
   agentsCreate(params: GatewayAgentsCreateParams): Promise<GatewayAgentsCreateResult>;
@@ -397,6 +398,8 @@ export interface GatewayRpcClient {
   isGatewayUp(timeoutMs?: number): Promise<boolean>;
   close(): Promise<void>;
 }
+
+export type GatewayInventoryEvent = "connected" | "config.changed" | "cron.inventory.changed";
 
 type GatewayRpcCall = (method: string, params: unknown) => Promise<unknown>;
 
@@ -1096,6 +1099,14 @@ export function createGatewayRpc(opts: GatewayRpcClientOptions = {}): GatewayRpc
   });
 
   return {
+    async watchScheduleInventory(onChange, signal) {
+      if (signal.aborted) return;
+      const ws = await openAndConnect({
+        url, ...auth, connectTimeoutMs, identity: resolveIdentity(), scopes, onConnectTrace,
+      });
+      await observeScheduleInventory(ws, onChange, signal);
+    },
+
     async configGet() {
       return parseConfigGetResult(await call("config.get", {}));
     },
@@ -1255,6 +1266,35 @@ export function createGatewayRpc(opts: GatewayRpcClientOptions = {}): GatewayRpc
 
     close: statusConnection.close,
   };
+}
+
+async function observeScheduleInventory(ws: WebSocket, onChange: (event: GatewayInventoryEvent) => void, signal: AbortSignal): Promise<void> {
+  const onEvent = (data: Buffer) => {
+    let message: { type?: unknown; event?: unknown } | null;
+    try {
+      message = JSON.parse(data.toString("utf8"));
+    } catch {
+      return;
+    }
+    if (message?.type === "event" && (message.event === "cron.inventory.changed" || message.event === "config.changed")) {
+      onChange(message.event);
+    }
+  };
+  const abort = () => ws.close();
+  try {
+    if (signal.aborted || ws.readyState !== WebSocket.OPEN) return;
+    await new Promise<void>((resolve, reject) => {
+      ws.on("message", onEvent);
+      ws.once("close", resolve);
+      ws.once("error", reject);
+      signal.addEventListener("abort", abort, { once: true });
+      onChange("connected");
+    });
+  } finally {
+    signal.removeEventListener("abort", abort);
+    ws.off("message", onEvent);
+    ws.close();
+  }
 }
 
 interface GatewayRpcAuth {

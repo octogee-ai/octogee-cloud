@@ -623,6 +623,14 @@ export function createGatewayRpc(opts = {}) {
         scopes, onConnectTrace,
     });
     return {
+        async watchScheduleInventory(onChange, signal) {
+            if (signal.aborted)
+                return;
+            const ws = await openAndConnect({
+                url, ...auth, connectTimeoutMs, identity: resolveIdentity(), scopes, onConnectTrace,
+            });
+            await observeScheduleInventory(ws, onChange, signal);
+        },
         async configGet() {
             return parseConfigGetResult(await call("config.get", {}));
         },
@@ -759,6 +767,37 @@ export function createGatewayRpc(opts = {}) {
         },
         close: statusConnection.close,
     };
+}
+async function observeScheduleInventory(ws, onChange, signal) {
+    const onEvent = (data) => {
+        let message;
+        try {
+            message = JSON.parse(data.toString("utf8"));
+        }
+        catch {
+            return;
+        }
+        if (message?.type === "event" && (message.event === "cron.inventory.changed" || message.event === "config.changed")) {
+            onChange(message.event);
+        }
+    };
+    const abort = () => ws.close();
+    try {
+        if (signal.aborted || ws.readyState !== WebSocket.OPEN)
+            return;
+        await new Promise((resolve, reject) => {
+            ws.on("message", onEvent);
+            ws.once("close", resolve);
+            ws.once("error", reject);
+            signal.addEventListener("abort", abort, { once: true });
+            onChange("connected");
+        });
+    }
+    finally {
+        signal.removeEventListener("abort", abort);
+        ws.off("message", onEvent);
+        ws.close();
+    }
 }
 const IN_POD_SERVICE_IDENTITY = OPENCLAW_PROVISIONER_SERVICE_IDENTITY;
 function inPodProxyClientAddress() {

@@ -69,6 +69,8 @@ export const TOP_LEVEL_PATHS = {
     mattermostUserId: MATTERMOST_USER_ID_PATH,
     workspaceId: "workspaceId",
     accountLifecycle: "accountLifecycle",
+    scheduleCheckpoint: "scheduleCheckpoint",
+    workspaceCheckpoint: "workspaceCheckpoint",
 };
 export const PATCH_GROUPS = {
     provisioning: PROVISIONING_PATHS,
@@ -237,6 +239,8 @@ export function userRecordFromData(uid, data, updatedAt, role) {
         },
         accountLifecycle: fields.map(TOP_LEVEL_PATHS.accountLifecycle) ?? null,
         activationLease: decodeActivationLease(fields),
+        ...present({ scheduleCheckpoint: fields.map(TOP_LEVEL_PATHS.scheduleCheckpoint) }),
+        ...present({ workspaceCheckpoint: fields.map(TOP_LEVEL_PATHS.workspaceCheckpoint) }),
         fences: present({
             restoreFence: fields.map(USER_FENCE_PATHS.restoreFence),
             sourceTransferFence: fields.map(USER_FENCE_PATHS.sourceTransferFence),

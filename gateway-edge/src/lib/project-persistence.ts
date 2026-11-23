@@ -82,6 +82,7 @@ interface SharedPersistenceDeps {
   commit: typeof commitAndPushWorkspace;
   divert: (dir: string, target: WorkspaceBlobTarget, options?: { excludePaths: string[] }) => ReturnType<typeof divertWorktreeBinaries>;
   trustedGitea: typeof isTrustedGiteaUserCheckout;
+  recordCheckpoint: (input: { uid: string; gatewayId: string; assignmentEpoch: number; commits: Record<string, string> }) => Promise<void>;
 }
 
 async function readPersistenceUser(slug: string): Promise<PersistenceUser> {
@@ -120,9 +121,21 @@ function checkpointAssignmentEpoch(assignments: FleetBrokerAssignmentRosterEntry
   return owned[0].epoch;
 }
 
+async function recordWorkspaceCheckpoint(input: {
+  uid: string; gatewayId: string; assignmentEpoch: number; commits: Record<string, string>;
+}): Promise<void> {
+  const base = (process.env.FLEET_BROKER_URL || process.env.OCTOGEE_API_URL)?.replace(/\/$/u, "");
+  if (!base) throw new Error("Workspace checkpoint requires its fleet broker");
+  const response = await internalFetch(`${base}/internal/fleet/workspace-checkpoint`, {
+    method: "POST", headers: { "content-type": "application/json", ...await gatewayCredentialHeaders() },
+    body: JSON.stringify({ ...input, observedAt: Date.now() }),
+  });
+  if (!response.ok) throw new Error(`Workspace checkpoint was not acknowledged: HTTP ${response.status}`);
+}
+
 const sharedDefaults: SharedPersistenceDeps = {
   readUser: readPersistenceUser, resolveUser: resolveUserDir, resolveProject: resolveProjectDir,
-  commit: commitAndPushWorkspace, trustedGitea: isTrustedGiteaUserCheckout,
+  commit: commitAndPushWorkspace, trustedGitea: isTrustedGiteaUserCheckout, recordCheckpoint: recordWorkspaceCheckpoint,
   divert: (dir, target, options) => divertWorktreeBinaries(dir, target, undefined, { retainLocalFiles: target.projectSlug !== null, ...options }),
 };
 
@@ -170,6 +183,7 @@ export async function persistSharedUserFiles(input: { root: string; slug: string
     const user = await deps.readUser(input.slug);
     await saveGithubProjectAgents(input, user, deps.readUser);
     const projects = sharedGiteaProjects(user);
+    const commits = new Map<string, string>();
     for (const [project, repo] of [[null, "workspace"], ...projects] as Array<[string | null, string]>) {
       const assertCurrent = async () => {
         await assertCheckpointDirectory(input, project);
@@ -196,9 +210,13 @@ export async function persistSharedUserFiles(input: { root: string; slug: string
         },
       });
       if (!saved.ok) throw new Error(`Shared checkpoint failed: ${saved.error.code}`);
-      if (!saved.result.pushed) throw new Error(`Shared checkpoint remote push unconfirmed: ${saved.result.pushError || repo}`);
+      if (!saved.result.pushed || !saved.result.commit) throw new Error(`Workspace checkpoint remote push unconfirmed: ${saved.result.pushError || repo}`);
       await assertCurrent();
+      commits.set(repo, saved.result.commit);
     }
+    await deps.recordCheckpoint({
+      uid: user.uid, gatewayId: user.gatewayId, assignmentEpoch: user.checkpointEpoch, commits: Object.fromEntries(commits),
+    });
     return { projects: projects.size };
   });
 }

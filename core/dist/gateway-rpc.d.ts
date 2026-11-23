@@ -279,6 +279,7 @@ export interface GatewayRpcClient {
     }, timeoutMs?: number): Promise<GatewayToolsCatalogResult>;
     schedulerMigration(params: SchedulerMigrationRequest): Promise<SchedulerMigrationResult>;
     cronRequest(method: ScheduleTransferCronMethod, params: Record<string, unknown>): Promise<unknown>;
+    watchScheduleInventory?(onChange: (event: GatewayInventoryEvent) => void, signal: AbortSignal): Promise<void>;
     cronJobCount(agentId: string, opts?: {
         includeDisabled?: boolean;
     }): Promise<number>;
@@ -297,6 +298,7 @@ export interface GatewayRpcClient {
     isGatewayUp(timeoutMs?: number): Promise<boolean>;
     close(): Promise<void>;
 }
+export type GatewayInventoryEvent = "connected" | "config.changed" | "cron.inventory.changed";
 declare const SCHEDULE_TRANSFER_CRON_METHODS: readonly ["cron.list", "cron.add", "cron.remove", "cron.scratch.get", "cron.scratch.set", "cron.update"];
 export type ScheduleTransferCronMethod = (typeof SCHEDULE_TRANSFER_CRON_METHODS)[number];
 export declare function createGatewayRpc(opts?: GatewayRpcClientOptions): GatewayRpcClient;

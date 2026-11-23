@@ -17,6 +17,7 @@ export interface GatewayPodPlacement {
   name: string;
   replicaSetUid: string | null;
   nodeName: string | null;
+  providerId?: string;
   instanceId: string | null;
   nodePool: string | null;
 }
@@ -79,6 +80,7 @@ export function isGatewayPodPlacement(value: unknown): value is GatewayPodPlacem
     typeof value.name === "string" &&
     isNullableString(value.replicaSetUid) &&
     isNullableString(value.nodeName) &&
+    (value.providerId === undefined || typeof value.providerId === "string") &&
     isNullableString(value.instanceId) &&
     isNullableString(value.nodePool)
   );

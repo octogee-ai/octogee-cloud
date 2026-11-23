@@ -408,6 +408,14 @@ function unusableRollSource(source: SourceObservation, gatewayId: string, runtim
   return null;
 }
 
+function parseDisklessRecoveryIntent(body: Record<string, unknown>, source: PlacementMigrationSource): true | undefined {
+  if (body.durableRecovery === undefined) return undefined;
+  if (body.durableRecovery !== true || source === CONTINUOUS_PLACEMENT_SOURCE || body.sharedDrain !== undefined) {
+    throw new BadRequest("durableRecovery requires a diskless builder return");
+  }
+  return true;
+}
+
 function enqueuePlacementMigrationIntent(req: Request, deps: AdminPlacementSharedRouterDeps): RouteIntent<unknown> {
   const body = bodyOf(req);
   const source = body.source;
@@ -423,6 +431,7 @@ function enqueuePlacementMigrationIntent(req: Request, deps: AdminPlacementShare
     operationId: text(body, "operationId"),
   };
   if (request.fromGatewayId === request.toGatewayId) throw new BadRequest("toGatewayId must differ from fromGatewayId");
+  request.durableRecovery = parseDisklessRecoveryIntent(body, request.source);
   const drain = body.sharedDrain;
   if (drain !== undefined) {
     const paired = drain !== null && typeof drain === "object" ? drain.pairedTargetGatewayId : undefined;

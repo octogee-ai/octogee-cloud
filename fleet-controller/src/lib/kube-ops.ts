@@ -52,6 +52,7 @@ export type GatewayPodCapacityType = "spot" | "on-demand";
 // it was already recorded while the node still existed.
 export interface GatewayNodeFacts {
   capacityType: GatewayPodCapacityType;
+  providerId?: string;
   instanceId: string | null;
   nodePool: string | null;
 }
@@ -71,6 +72,7 @@ export interface GatewayPodDiagnostic {
   name: string;
   gatewayId: string | null;
   deleting: boolean;
+  writerTerminated?: true;
   gatewayContainerStartedAt: number | null;
   createdAt?: number;
   uid: string | null;
@@ -84,6 +86,7 @@ export interface GatewayPodDiagnostic {
   instanceId: string | null;
   nodePool: string | null;
   capacityType: GatewayPodCapacityType | null;
+  providerId?: string;
   ageMs: number | null;
 }
 
@@ -197,7 +200,7 @@ function projectPodContainers(status: Record<string, unknown>): {
 function projectPodPlacement(
   spec: Record<string, unknown>,
   factsByNodeName: ReadonlyMap<string, GatewayNodeFacts>,
-): Pick<GatewayPodDiagnostic, "nodeName" | "instanceId" | "nodePool" | "capacityType"> {
+): Pick<GatewayPodDiagnostic, "nodeName" | "instanceId" | "nodePool" | "capacityType" | "providerId"> {
   const nodeName = stringOrNull(spec.nodeName);
   const facts = nodeName ? factsByNodeName.get(nodeName) ?? null : null;
   return {
@@ -205,6 +208,7 @@ function projectPodPlacement(
     instanceId: facts?.instanceId ?? null,
     nodePool: facts?.nodePool ?? null,
     capacityType: facts?.capacityType ?? null,
+    ...(facts?.providerId ? { providerId: facts.providerId } : {}),
   };
 }
 
@@ -245,6 +249,18 @@ function gatewayContainerStartedAt(status: Record<string, unknown>): number | nu
   return Number.isFinite(startedAt) ? startedAt : null;
 }
 
+function gatewayWriterContainersTerminated(status: Record<string, unknown>): boolean {
+  if (status.phase !== "Failed" && status.phase !== "Succeeded" || !Array.isArray(status.containerStatuses)) return false;
+  const containers = status.containerStatuses.filter(isRecord);
+  return ["gateway", "gateway-edge"].every(name => containers.some(container => {
+    const state = isRecord(container.state) ? container.state : {};
+    const terminated = state.terminated;
+    return container.name === name && isRecord(terminated) &&
+      typeof terminated.containerID === "string" && terminated.containerID.length > 0 &&
+      typeof terminated.finishedAt === "string" && Number.isFinite(Date.parse(terminated.finishedAt));
+  }));
+}
+
 function projectPodDiagnostic(
   pod: Record<string, unknown>,
   now: number,
@@ -259,6 +275,7 @@ function projectPodDiagnostic(
     name: stringOrNull(metadata.name) ?? "unknown",
     gatewayId: gatewayIdForRecord(pod),
     deleting: metadata.deletionTimestamp != null,
+    ...(gatewayWriterContainersTerminated(status) ? { writerTerminated: true as const } : {}),
     gatewayContainerStartedAt: gatewayContainerStartedAt(status),
     uid: stringOrNull(metadata.uid),
     replicaSetUid: replicaSetOwnerUid(metadata),
@@ -292,8 +309,11 @@ function nodeFactsByName(stdout: string): Map<string, GatewayNodeFacts> {
     const spot =
       labels["cloud.google.com/gke-spot"] === "true" ||
       labels["cloud.google.com/gke-preemptible"] === "true";
+    const spec = isRecord(node.spec) ? node.spec : {};
+    const providerId = stringOrNull(spec.providerID);
     facts.set(name, {
       capacityType: spot ? "spot" : "on-demand",
+      ...(providerId ? { providerId } : {}),
       instanceId: stringOrNull(annotations["container.googleapis.com/instance_id"]),
       nodePool: stringOrNull(labels["cloud.google.com/gke-nodepool"]),
     });

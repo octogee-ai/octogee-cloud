@@ -150,7 +150,8 @@ async function codexHomes(root: string): Promise<string[]> {
   return homes;
 }
 
-export async function omitStagedCodexTemporaryFiles(stageDir: string, log: Log): Promise<void> {
+export async function omitStagedCodexTemporaryFiles(stageDir: string, log: Log): Promise<ReadonlySet<string>> {
+  const removed = new Set<string>();
   for (const home of await codexHomes(stageDir)) {
     const relative = `${home}/tmp`;
     const temporary = path.join(stageDir, relative);
@@ -160,8 +161,10 @@ export async function omitStagedCodexTemporaryFiles(stageDir: string, log: Log):
       throw error;
     }
     await fs.rm(temporary, { recursive: true, force: true });
+    removed.add(relative);
     log(`[migration-rsync] omitted staged Codex temporary files: ${relative}`);
   }
+  return removed;
 }
 
 export async function omitRawCodexDatabases(stageDir: string, log: Log): Promise<void> {

@@ -1,7 +1,7 @@
 import type { AccountLifecycle } from "@octogee/shared/types/account-lifecycle";
 import type { UserAuxiliaryFamily } from "@octogee/shared/types/fleet-broker";
 import { GATEWAY_PROFILES } from "@octogee/shared/types/glm";
-import type { AgentStoreRecord, IsolatedGatewayMirror, PlatformUserRecord, UserActivationLease, UserActivationLeaseStatus, UserFenceName, UserFences, UserHomeState, UserOpenClawState, UserPersona, UserProvisioning, UserRole } from "../users.js";
+import type { AgentStoreRecord, IsolatedGatewayMirror, PlatformUserRecord, UserActivationLease, UserActivationLeaseStatus, UserFenceName, UserFences, UserHomeState, UserOpenClawState, UserPersona, UserProvisioning, UserRole, UserScheduleCheckpoint, UserWorkspaceCheckpoint } from "../users.js";
 import { MalformedRecordError, type RecordKey } from "../errors.js";
 import type { OpaqueMap } from "../store.js";
 
@@ -82,6 +82,8 @@ export const TOP_LEVEL_PATHS = {
   mattermostUserId: MATTERMOST_USER_ID_PATH,
   workspaceId: "workspaceId",
   accountLifecycle: "accountLifecycle",
+  scheduleCheckpoint: "scheduleCheckpoint",
+  workspaceCheckpoint: "workspaceCheckpoint",
 } as const;
 
 export const PATCH_GROUPS = {
@@ -264,6 +266,8 @@ export function userRecordFromData(uid: string, data: PlainObject, updatedAt: nu
     },
     accountLifecycle: fields.map<AccountLifecycle>(TOP_LEVEL_PATHS.accountLifecycle) ?? null,
     activationLease: decodeActivationLease(fields),
+    ...present({ scheduleCheckpoint: fields.map<UserScheduleCheckpoint>(TOP_LEVEL_PATHS.scheduleCheckpoint) }),
+    ...present({ workspaceCheckpoint: fields.map<UserWorkspaceCheckpoint>(TOP_LEVEL_PATHS.workspaceCheckpoint) }),
     fences: present<UserFences>({
       restoreFence: fields.map(USER_FENCE_PATHS.restoreFence),
       sourceTransferFence: fields.map(USER_FENCE_PATHS.sourceTransferFence),

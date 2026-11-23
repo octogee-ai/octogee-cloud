@@ -23,7 +23,7 @@ vi.mock("../lib/config.js", () => ({
   AGENTS_DIR: path.join(TEST_ROOT, "agents"),
 }));
 
-const { userRepositoryHasCanonicalRemote, externalizeUserGitDir, gitExec } =
+const { userRepositoryHasCanonicalRemote, externalizeUserGitDir, gitExec, materializeAcknowledgedWorkspaceCommit } =
   await import("../lib/git.js");
 
 const CUSTOMERS_DIR = path.join(TEST_ROOT, "customers");
@@ -334,6 +334,42 @@ describe("user Git metadata refresh", () => {
     expect(userRepositoryHasCanonicalRemote(repoDir)).toBe(true);
     expect(externalizeUserGitDir(repoDir, { giteaRepoName: repoName, fetchCanonical: fetch })).toBe(metadataDir);
     expect(fetch).toHaveBeenCalledOnce();
+  });
+
+  it("reuses an exact clean acknowledged commit without touching ordinary or ignored local files", () => {
+    const canonical = createCanonicalRepo({ "README.md": "durable", ".gitignore": "local.cache\n" });
+    temporaryRoots.push(canonical.root);
+    const repoDir = path.join(CUSTOMERS_DIR, "exactcommit");
+    writeWorktree(repoDir, { "README.md": "durable", ".gitignore": "local.cache\n", "local.cache": "retain" });
+    externalizeUserGitDir(repoDir, { fetchCanonical: fetchCanonicalFrom(canonical.bare) });
+    materializeAcknowledgedWorkspaceCommit(repoDir, "workspace", canonical.head!);
+    expect(fs.readFileSync(path.join(repoDir, "local.cache"), "utf8")).toBe("retain");
+    expect(gitExec(repoDir, ["rev-parse", "HEAD"])).toBe(canonical.head);
+    fs.writeFileSync(path.join(repoDir, "README.md"), "unsaved local work");
+    expect(() => materializeAcknowledgedWorkspaceCommit(repoDir, "workspace", canonical.head!)).toThrow("clean canonical branch");
+    expect(fs.readFileSync(path.join(repoDir, "README.md"), "utf8")).toBe("unsaved local work");
+    expect(() => materializeAcknowledgedWorkspaceCommit(repoDir, "another-repo", canonical.head!)).toThrow("exact canonical Gitea");
+  });
+
+  it("advances a clean canonical branch to the exact prefetched acknowledgement", () => {
+    const canonical = createCanonicalRepo({ "README.md": "initial" });
+    temporaryRoots.push(canonical.root);
+    const repoDir = path.join(CUSTOMERS_DIR, "advancecommit");
+    writeWorktree(repoDir, { "README.md": "initial" });
+    const fetch = fetchCanonicalFrom(canonical.bare);
+    const metadata = externalizeUserGitDir(repoDir, { fetchCanonical: fetch })!;
+    const work = path.join(canonical.root, "work");
+    fs.writeFileSync(path.join(work, "README.md"), "acknowledged");
+    git(work, ["commit", "-am", "next"]);
+    git(work, ["push", canonical.bare, "main"]);
+    const acknowledged = git(work, ["rev-parse", "HEAD"]);
+    fetch(repoDir, metadata);
+    expect(() => materializeAcknowledgedWorkspaceCommit(repoDir, "workspace", "a".repeat(40))).toThrow("could not safely advance");
+    expect(fs.readFileSync(path.join(repoDir, "README.md"), "utf8")).toBe("initial");
+    materializeAcknowledgedWorkspaceCommit(repoDir, "workspace", acknowledged);
+    expect(gitExec(repoDir, ["symbolic-ref", "--short", "HEAD"])).toBe("main");
+    expect(gitExec(repoDir, ["rev-parse", "HEAD"])).toBe(acknowledged);
+    expect(fs.readFileSync(path.join(repoDir, "README.md"), "utf8")).toBe("acknowledged");
   });
 
   it("projects an empty canonical repository as an unborn main branch with an empty index", () => {

@@ -745,6 +745,10 @@ spec:
             {{- end }}
             - name: GATEWAY_CLASS
               value: {{ $gatewayClass | quote }}
+            {{- if $ephemeralHomeGiB }}
+            - name: GATEWAY_EPHEMERAL_HOME
+              value: "true"
+            {{- end }}
             - name: OPENROUTER_BASE_URL
               value: {{ printf "%s/v1" (trimSuffix "/" $llmBrokerUrl) | quote }}
             - name: PLATFORM_OPENAI_BASE_URL

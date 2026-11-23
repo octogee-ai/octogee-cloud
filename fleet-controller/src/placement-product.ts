@@ -7,6 +7,7 @@ import { createRepeatSquelch } from "@octogee/shared/server/repeat-squelch";
 import type { FleetInformer } from "./fleet-informer.js";
 import {
   startGatewayKubernetesObserver,
+  type ObserveEphemeralNodeExclusion,
   type ReadGatewayPodDiagnosticsBatch,
 } from "./gateway-kubernetes-observation.js";
 import { recordPlacementAutomation } from "./metrics.js";
@@ -39,6 +40,7 @@ export interface PlacementProductDeps {
     error?: string;
   }>;
   readGatewayPodDiagnosticsBatch: ReadGatewayPodDiagnosticsBatch;
+  observeEphemeralNodeExclusion?: ObserveEphemeralNodeExclusion;
   userHome?: Omit<UserHomeMigrationDeps, "store" | "readSizingKey" | "now" | "log">;
 }
 
@@ -92,6 +94,7 @@ function startPlatformObserver(deps: PlacementProductDeps): () => void {
     now: deps.now,
     log: deps.log,
     readGatewayPodDiagnosticsBatch: deps.readGatewayPodDiagnosticsBatch,
+    observeEphemeralNodeExclusion: deps.observeEphemeralNodeExclusion,
     listGatewayIds: async () => (informer.gateways() ?? await store.gateways.roots.list()).map((root) => root.gatewayId),
     listRuntimes: async () => informer.fleetRegistry() ?? store.fleetRegistry.list(),
     afterObservation: async () => {

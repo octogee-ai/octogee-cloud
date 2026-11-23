@@ -241,6 +241,7 @@ describe("charts/octogee-gateway/ — isolated gateway as a Kubernetes pod", () 
     expect(pod.volumes.some((volume) => "persistentVolumeClaim" in volume)).toBe(false);
     const gateway = container(deployment, "gateway");
     expect(envOf(gateway)).toHaveProperty("GATEWAY_EPHEMERAL_HOME", "true");
+    expect(envOf(container(deployment, "gateway-edge"))).toHaveProperty("GATEWAY_EPHEMERAL_HOME", "true");
     expect(envOf(gateway)).not.toHaveProperty("GATEWAY_COMPUTER_DESKTOP");
     expect(gateway.lifecycle?.preStop?.exec?.command?.join(" ")).toContain("/entrypoints/prestop-flush.ts");
   });
@@ -251,6 +252,7 @@ describe("charts/octogee-gateway/ — isolated gateway as a Kubernetes pod", () 
       const env = envOf(container(deployment, name));
       expect(env.GATEWAY_RUNTIME_KIND, name).toBe("cluster");
       expect(env, name).not.toHaveProperty("GATEWAY_COMPUTER_DESKTOP");
+      expect(env, name).not.toHaveProperty("GATEWAY_EPHEMERAL_HOME");
       expect(env, name).not.toHaveProperty("GATEWAY_COMPUTER_CONTROL_URL");
     }
     const volumes = deployment.spec.template.spec.volumes.map((volume) => volume.name);

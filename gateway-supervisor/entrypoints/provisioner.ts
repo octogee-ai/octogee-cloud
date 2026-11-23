@@ -1,3 +1,4 @@
+import { startGatewayScheduleObserver } from "../lib/gateway-schedule-observer.js";
 import "../src/main.js";
 import { createBrokeredProjectBlobHydrator } from "../lib/project-blob-materialization.js";
 import { persistUserProjects, persistSharedUserFiles, persistAssignedSharedUsers, startProjectAutosave } from "../lib/project-persistence.js";
@@ -326,6 +327,7 @@ async function main(): Promise<void> {
   const brokerClient = createFleetBrokerClient(entrypointConfig.gatewayId);
   const builderSlug = entrypointConfig.builderSlug;
   let stopUserServices: (() => void) | undefined;
+  let reportConfigStatus: (() => Promise<void>) | undefined;
   const startUserServices = (slug: string): void => {
     const runtimeHealthPublisher = createSystemConfigStatusPublisher({
       openclawDir: OPENCLAW_DIR,
@@ -337,15 +339,20 @@ async function main(): Promise<void> {
       publish: (status) => brokerClient.recordSystemConfigStatus(status),
       log,
     });
-    void runtimeHealthPublisher.publishNow();
+    reportConfigStatus = runtimeHealthPublisher.publishNow;
+    void reportConfigStatus();
     const stopProjectAutosave = isolated
-      ? startProjectAutosave({ save: () => persistUserProjects(slug), log })
+      ? startProjectAutosave({ save: () => persistUserProjects(slug), log, startImmediately: process.env.GATEWAY_EPHEMERAL_HOME === "true" })
       : undefined;
     stopUserServices = () => {
       stopProjectAutosave?.();
+      reportConfigStatus = undefined;
       runtimeHealthPublisher.close();
     };
   };
+  const stopScheduleObserver = startGatewayScheduleObserver({
+    rpc, broker: brokerClient, log, onConfigChange: () => { void reportConfigStatus?.(); },
+  });
   const adapter = buildBrokeredLifecycleAdapter({
     client: brokerClient,
     rpc,
@@ -425,6 +432,7 @@ async function main(): Promise<void> {
   log(`Local fleet controller running (profile=${GATEWAY_PROFILE}). Press Ctrl+C to stop.`);
   const cleanup = async () => {
     stopUserServices?.();
+    stopScheduleObserver();
     stopSharedAutosave?.();
     clearInterval(blobSyncTimer);
     if (usageTimer) clearInterval(usageTimer);

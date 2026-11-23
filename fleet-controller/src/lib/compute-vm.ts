@@ -1,3 +1,4 @@
+import type { EphemeralGatewayWriterNode } from "@octogee/core/platform-state";
 import { sameGuestImageRef, type RetainedGuestDisks } from "@octogee/core/isolated-gateway-lifecycle";
 import { createVmHomeClient } from "./compute-home.js";
 import { createVmHomeSnapshotClient, type ArchivedBootDisk, type RestoreHomeFromSnapshotInput, type SnapshotStoppedHomeInput } from "./compute-home-snapshot.js";
@@ -18,6 +19,18 @@ export interface GatewayVmClientDeps {
   journalHomeResize?: (input: { home: RetainedUserHome; ownerUid: string; sizeGb: number }, action: () => Promise<void>) => Promise<void>;
   operationTimeoutMs?: number;
   pollIntervalMs?: number;
+}
+
+export async function ephemeralComputeWriterExcluded(
+  projectId: string,
+  compute: Pick<GatewayVmClient, "describe">,
+  writer: EphemeralGatewayWriterNode,
+): Promise<boolean> {
+  const match = /^gce:\/\/([a-z][a-z0-9-]+)\/([a-z][a-z0-9-]+)\/([a-z][a-z0-9-]+)$/u.exec(writer.providerId);
+  if (!match || match[1] !== projectId || !/^\d+$/u.test(writer.instanceId)) return false;
+  const instance = await compute.describe(match[3], match[2]);
+  if (!instance) return true;
+  return typeof instance.instanceId === "string" && /^\d+$/u.test(instance.instanceId) && instance.instanceId !== writer.instanceId;
 }
 
 export interface CreateGatewayVmInput {

@@ -15,7 +15,7 @@ import { cloneGithubProjectViaBroker } from "./github-project-clone-broker.js";
 import { replaceFileAtomically, seedFileAtomically } from "./atomic-file.js";
 import { notesWelcomeSeed } from "@octogee/core/templates/project-seeds";
 
-import { acquireWorkspaceMutationLeaseSync } from "@octogee/core/workspace-mutation-lease";
+import { acquireWorkspaceMutationLeaseSync, projectMutationLeaseGitDir } from "@octogee/core/workspace-mutation-lease";
 import { findUnsafeGitMetadataEntry, readGitMetadataText } from "@octogee/core/git-metadata";
 import { githubCheckpointBranch, type ProjectRepoSource } from "@octogee/shared/types/project";
 import { isValidUsername } from "@octogee/shared/types/identity";
@@ -552,6 +552,46 @@ export function projectCheckoutMatchesSource(
   if (!current) return false;
   const expected = canonicalUserGitSource(identity, { giteaRepoName, repoSource });
   return sourceReceiptValue(current) === sourceReceiptValue(expected);
+}
+
+function acknowledgedWorkspaceCheckout(repoDir: string, repoName: string) {
+  const identity = userGitIdentity(repoDir);
+  const source = identity && trustedUserGitSource(identity);
+  if (!identity || source?.kind !== "gitea" || source.repoName !== repoName || !userRepositoryHasCanonicalRemote(repoDir)) {
+    throw new Error("Workspace restore requires the exact canonical Gitea checkout");
+  }
+  return { branch: sourceBranch(source), metadataDir: identity.metadataDir };
+}
+
+export function acknowledgedWorkspaceCommitIsCurrent(repoDir: string, repoName: string, commit: string): boolean {
+  const { branch } = acknowledgedWorkspaceCheckout(repoDir, repoName);
+  return gitExec(repoDir, ["symbolic-ref", "--short", "HEAD"]) === branch &&
+    gitExec(repoDir, ["rev-parse", "HEAD"]) === commit &&
+    gitExec(repoDir, ["status", "--porcelain", "--untracked-files=no"]) === "";
+}
+
+export function materializeAcknowledgedWorkspaceCommit(repoDir: string, repoName: string, commit: string): void {
+  const { branch, metadataDir } = acknowledgedWorkspaceCheckout(repoDir, repoName);
+  const gitDir = projectMutationLeaseGitDir(repoDir, CUSTOMERS_DIR) ?? metadataDir;
+  const lease = acquireWorkspaceMutationLeaseSync({ workspaceDir: repoDir, gitDir });
+  if (!lease) throw new Error("Workspace restore checkout is already in use");
+  try {
+    const run = (args: string[]) => gitExec(repoDir, args);
+    const head = run(["rev-parse", "HEAD"]);
+    if (run(["symbolic-ref", "--short", "HEAD"]) !== branch ||
+        run(["status", "--porcelain", "--untracked-files=no"]) !== "") {
+      throw new Error("Workspace restore requires a clean canonical branch");
+    }
+    if (head === commit) return;
+    if (run(["rev-parse", `refs/remotes/origin/${branch}^{commit}`]) !== commit ||
+        run(["merge-base", "--is-ancestor", "HEAD", commit]) === null ||
+        run(["checkout", "--no-overwrite-ignore", "-B", branch, commit]) === null ||
+        run(["rev-parse", "HEAD"]) !== commit) {
+      throw new Error("Workspace restore could not safely advance to its acknowledged commit");
+    }
+  } finally {
+    lease.release();
+  }
 }
 
 export function removePersistedRepoSshCommand(repoDir: string): void {

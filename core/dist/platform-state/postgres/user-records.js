@@ -42,6 +42,8 @@ const COLUMNS = {
     lifecycleSuspendedAt: column("lifecycleSuspendedAt", "bigint"),
     lifecycleEraseAfter: column("lifecycleEraseAfter", "bigint"),
     activationLease: column("activationLease", "jsonb"),
+    scheduleCheckpoint: column("scheduleCheckpoint", "jsonb"),
+    workspaceCheckpoint: column("workspaceCheckpoint", "jsonb"),
     restoreFence: column("restoreFence", "jsonb"),
     sourceTransferFence: column("sourceTransferFence", "jsonb"),
     computerRecovery: column("computerRecovery", "jsonb"),
@@ -62,6 +64,8 @@ const TOP_LEVEL_COLUMNS = {
     slug: COLUMNS.slug,
     workspaceId: COLUMNS.workspaceId,
     role: COLUMNS.role,
+    scheduleCheckpoint: COLUMNS.scheduleCheckpoint,
+    workspaceCheckpoint: COLUMNS.workspaceCheckpoint,
 };
 const PROVISIONING_COLUMNS = {
     status: COLUMNS.provisioningStatus,
@@ -285,6 +289,8 @@ export function decodeUserRow(row) {
         activationLease: fields.lease(),
         fences: decodeFences(fields),
         home: decodeHome(fields),
+        ...present({ scheduleCheckpoint: fields.map("schedule_checkpoint") }),
+        ...present({ workspaceCheckpoint: fields.map("workspace_checkpoint") }),
         revision: revisionOf(row),
     };
 }

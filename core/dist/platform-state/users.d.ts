@@ -1,7 +1,7 @@
 import type { AccountLifecycle } from "@octogee/shared/types/account-lifecycle";
 import type { UserAuxiliaryFamily, FleetBrokerUserRuntimeReset } from "@octogee/shared/types/fleet-broker";
 import type { ConnectorCaptureMethod, IntegrationStatus } from "@octogee/shared/types/connectors";
-import type { ScheduleTransferDoc } from "@octogee/shared/types/fleet-controller";
+import type { NativeScheduleCheckpoint, ScheduleTransferDoc } from "@octogee/shared/types/fleet-controller";
 import type { UserParkedVm, GatewayProfile, GatewayVmHomeCheckpoint, RetainedUserHome, RetainedUserHomeSnapshot } from "@octogee/shared/types/glm";
 import type { PlacementReceipt, PlacementReceiptKind } from "@octogee/shared/types/placement-receipts";
 import type { WorkspaceMigrationMarker } from "@octogee/shared/types/workspace-migration";
@@ -146,6 +146,18 @@ export interface UserAgentRoster {
     readonly activatedAgents: readonly string[];
 }
 export type UserPersona = OpaqueMap;
+export interface UserWorkspaceCheckpoint {
+    readonly gatewayId: string;
+    readonly assignmentEpoch: number;
+    readonly observedAt: number;
+    readonly commits: Readonly<Record<string, string>>;
+}
+export interface UserScheduleCheckpoint {
+    readonly snapshot: NativeScheduleCheckpoint;
+    readonly gatewayId: string;
+    readonly assignmentEpoch: number;
+    readonly observedAt: number;
+}
 export interface PlatformUserRecord {
     readonly uid: string;
     readonly slug: string | null;
@@ -164,6 +176,8 @@ export interface PlatformUserRecord {
     readonly activationLease: UserActivationLease | null;
     readonly fences: UserFences;
     readonly home: UserHomeState;
+    readonly scheduleCheckpoint?: UserScheduleCheckpoint;
+    readonly workspaceCheckpoint?: UserWorkspaceCheckpoint;
 }
 export interface NewUserRecord {
     readonly uid: string;
@@ -189,6 +203,8 @@ export interface UserPatch {
     };
     readonly accountLifecycle?: Clearable<AccountLifecycle>;
     readonly home?: RecordPatch<UserHomeState>;
+    readonly scheduleCheckpoint?: Clearable<UserScheduleCheckpoint>;
+    readonly workspaceCheckpoint?: Clearable<UserWorkspaceCheckpoint>;
 }
 export interface UserFence {
     readonly revision?: Revision;

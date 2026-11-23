@@ -7,6 +7,7 @@ export interface GatewayPodPlacement {
     name: string;
     replicaSetUid: string | null;
     nodeName: string | null;
+    providerId?: string;
     instanceId: string | null;
     nodePool: string | null;
 }
