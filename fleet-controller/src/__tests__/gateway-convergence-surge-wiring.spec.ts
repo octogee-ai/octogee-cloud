@@ -233,9 +233,9 @@ describe("gateway convergence surge wiring", () => {
     expect(reconcileSurgeHandoff).not.toHaveBeenCalled();
   });
 
-  it("checks a same-release draining Shared gateway after its serving heartbeat expires", async () => {
+  it.each(["draining", "running"] as const)("checks a same-release %s Shared gateway after its serving heartbeat expires", async (desiredStatus) => {
     const reconcileSurgeHandoff = vi.fn(async () => ({ ready: false }));
-    const current = { ...gateway(), desiredStatus: "draining" as const, liveRelease: 2 };
+    const current = { ...gateway(), desiredStatus, liveRelease: 2 };
     const lastHeartbeatAt = Date.now() - 600_000;
     const observed = runtime(artifact.imageTag);
     await expect(refineGatewayConvergenceAction({
@@ -247,6 +247,24 @@ describe("gateway convergence surge wiring", () => {
     expect(reconcileSurgeHandoff).toHaveBeenCalledWith(expect.objectContaining({
       gatewayId: "walter", requiresUserMigration: false, recoverSharedPodAfter: lastHeartbeatAt,
     }));
+  });
+
+  it.each([
+    { name: "a fresh heartbeat", gatewayClass: "shared", heartbeatAgeMs: 0 },
+    { name: "an isolated gateway", gatewayClass: "isolated", heartbeatAgeMs: 600_000 },
+  ] as const)("does not offer roster recovery to a running gateway with $name", async ({ gatewayClass, heartbeatAgeMs }) => {
+    const reconcileSurgeHandoff = vi.fn(async () => ({ ready: false }));
+    const current = { ...gateway(), gatewayClass, liveRelease: 2 } as DurableGateway;
+    const observed = runtime(artifact.imageTag);
+    await refineGatewayConvergenceAction({
+      passDeps: passDeps(reconcileSurgeHandoff, current), gateway: current, artifact,
+      runtime: { ...observed, lifecycle: "serving", heartbeat: { ...observed.heartbeat, lastHeartbeatAt: Date.now() - heartbeatAgeMs } },
+      helmObserved: { imageRepository: repository, imageTag: artifact.imageTag, replicas: 1 },
+      action: { kind: "steady" },
+    });
+    for (const [call] of reconcileSurgeHandoff.mock.calls as unknown as [Record<string, unknown>][]) {
+      expect(call).not.toHaveProperty("recoverSharedPodAfter");
+    }
   });
 
   it("uses the isolated image receipt for isolated gateway handoff and readiness", async () => {
