@@ -3,7 +3,7 @@ import { sameGuestImageRef, type RetainedGuestDisks } from "@octogee/core/isolat
 import { createVmHomeClient } from "./compute-home.js";
 import { createVmHomeSnapshotClient, type ArchivedBootDisk, type RestoreHomeFromSnapshotInput, type SnapshotStoppedHomeInput } from "./compute-home-snapshot.js";
 import type { GatewayVmBootDiskType, GatewayVmDesktop, GatewayVmProvisioningModel, RetainedUserHome, RetainedUserHomeSnapshot } from "@octogee/shared/types/glm";
-import type { ComputeInstanceIdentity } from "./compute-preemption.js";
+import type { ComputeInstanceIdentity } from "./compute-instance-termination.js";
 
 export interface ComputeRequest {
   (opts: { url: string; method: string; body?: unknown }): Promise<{ status: number; data?: unknown }>;
@@ -26,13 +26,13 @@ export async function ephemeralComputeWriterExcluded(
   projectId: string,
   compute: Pick<GatewayVmClient, "describe">,
   writer: EphemeralGatewayWriterNode,
-  confirmPreemption?: (instance: ComputeInstanceIdentity) => Promise<boolean>,
+  confirmTermination?: (instance: ComputeInstanceIdentity) => Promise<boolean>,
 ): Promise<boolean> {
   const match = /^gce:\/\/([a-z][a-z0-9-]+)\/([a-z][a-z0-9-]+)\/([a-z][a-z0-9-]+)$/u.exec(writer.providerId);
   if (!match || match[1] !== projectId || !/^\d+$/u.test(writer.instanceId)) return false;
   const [, , zone, name] = match;
   const instance = await compute.describe(name, zone);
-  if (!instance) return confirmPreemption?.({ projectId, zone, name, instanceId: writer.instanceId }) ?? false;
+  if (!instance) return confirmTermination?.({ projectId, zone, name, instanceId: writer.instanceId }) ?? false;
   return typeof instance.instanceId === "string" && /^\d+$/u.test(instance.instanceId) && instance.instanceId !== writer.instanceId;
 }
 

@@ -8,7 +8,7 @@ import {
   type ComputeRequest,
   type CreateGatewayVmInput,
 } from "../lib/compute-vm";
-import { readComputePreemption } from "../lib/compute-preemption.js";
+import { readComputeInstanceTermination } from "../lib/compute-instance-termination.js";
 
 const IMAGE = { name: "octogee-computer-20260927", id: "222" };
 
@@ -85,6 +85,11 @@ describe("ephemeral Compute writer exclusion", () => {
     protoPayload: { serviceName: "compute.googleapis.com", methodName: "compute.instances.preempted",
       resourceName: "projects/octogee-test/zones/us-west1-b/instances/spot-node", status: { message: "Instance was preempted." } },
   };
+  const deletion = {
+    ...event, logName: "projects/octogee-test/logs/cloudaudit.googleapis.com%2Factivity",
+    operation: { last: true }, protoPayload: { ...event.protoPayload, methodName: "v1.compute.instances.delete",
+      resourceName: "projects/1066043548451/zones/us-west1-b/instances/spot-node", status: {} },
+  };
 
   it.each([
     { response: { status: 200, data: { id: "170", status: "TERMINATED" } }, excluded: false },
@@ -110,7 +115,7 @@ describe("ephemeral Compute writer exclusion", () => {
     const { request, calls } = fakeCompute(call => call.method === "GET" ? http(404) : { status: 200, data: { entries: [event] } });
     const { client } = clientWith(request);
     await expect(ephemeralComputeWriterExcluded("octogee-test", client, node,
-      candidate => readComputePreemption(request, candidate, window))).resolves.toBe(true);
+      candidate => readComputeInstanceTermination(request, candidate, window))).resolves.toBe(true);
     expect(calls[1]).toMatchObject({ url: "https://logging.googleapis.com/v2/entries:list", method: "POST", body: {
       resourceNames: ["projects/octogee-test"], orderBy: "timestamp desc",
       filter: expect.stringContaining('resource.labels.instance_id="170"'),
@@ -125,15 +130,25 @@ describe("ephemeral Compute writer exclusion", () => {
     ["a different Compute event", { ...event, protoPayload: { ...event.protoPayload, methodName: "compute.instances.preempt" } }],
     ["a failed event", { ...event, protoPayload: { ...event.protoPayload, status: { code: 7 } } }],
     ["a different named instance", { ...event, protoPayload: { ...event.protoPayload, resourceName: `${event.protoPayload.resourceName}-other` } }],
+    ["a started deletion", { ...deletion, operation: { first: true } }],
+    ["a failed completed deletion", { ...deletion, protoPayload: { ...deletion.protoPayload, status: { code: 7 } } }],
     ["a malformed event", null],
   ])("refuses %s as preemption evidence", async (_description, candidate) => {
     const request = vi.fn(async () => ({ status: 200, data: { entries: [candidate] } }));
-    await expect(readComputePreemption(request, instance, window)).resolves.toBe(false);
+    await expect(readComputeInstanceTermination(request, instance, window)).resolves.toBe(false);
   });
 
-  it("keeps the writer excluded only by positive evidence when logging is unavailable", async () => {
+  it("accepts the confirmed deletion of the exact old instance during active migration", async () => {
+    const request = vi.fn(async () => ({ status: 200, data: { entries: [deletion] } }));
+    await expect(readComputeInstanceTermination(request, instance, window)).resolves.toBe(true);
+    expect(request).toHaveBeenCalledWith(expect.objectContaining({ body: expect.objectContaining({
+      filter: expect.stringContaining('operation.last=true'),
+    }) }));
+  });
+
+  it("reports unavailable provider audit evidence to the caller", async () => {
     const request = vi.fn(async () => ({ status: 503 }));
-    await expect(readComputePreemption(request, instance, window)).rejects.toThrow("audit lookup returned HTTP 503");
+    await expect(readComputeInstanceTermination(request, instance, window)).rejects.toThrow("audit lookup returned HTTP 503");
   });
 });
 

@@ -10,7 +10,7 @@ import {
 } from "@octogee/shared/types/gateway-pod-replacements";
 import type { EphemeralGatewayWriter, EphemeralGatewayWriterNode, FleetRegistryRecord, PlatformStateStore, PlatformStateTransaction } from "@octogee/core/platform-state";
 import { timestampMillis } from "@octogee/core/timestamps";
-import type { PreemptionObservationWindow } from "./lib/compute-preemption.js";
+import type { ComputeTerminationWindow } from "./lib/compute-instance-termination.js";
 import {
   nextPodReplacementTransition,
   observedPodPlacements,
@@ -362,7 +362,7 @@ export type ReadGatewayPodDiagnosticsBatch = (input: {
   includeReplicaSets?: boolean;
 }) => Promise<Record<string, GatewayPodDiagnostics>>;
 
-export type ObserveEphemeralNodeExclusion = (writer: EphemeralGatewayWriterNode, window: PreemptionObservationWindow) => Promise<boolean>;
+export type ObserveEphemeralNodeExclusion = (writer: EphemeralGatewayWriterNode, window: ComputeTerminationWindow) => Promise<boolean>;
 
 function writerLostInCompletePodList(diagnostics: GatewayPodDiagnostics | undefined, writer: EphemeralGatewayWriter): boolean {
   if (gatewayKubernetesStatus(diagnostics) === "unknown" || !diagnostics?.pods) return false;
