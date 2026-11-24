@@ -115,6 +115,20 @@ describe("durable scheduler checkpoints", () => {
     await expect(recordGatewayScheduleCheckpoint({ ...late, observedAt: now - 30 })).resolves.toBe("kubernetes_observation_stale");
   });
 
+  it("refuses the replaced Pod as soon as the observation records its successor or a second Pod", async () => {
+    const { docs, report } = harness();
+    const key = `gateways/${gatewayId}`;
+    docs.set(key, { ...docs.get(key), gatewayClass: "shared", allocation: undefined, ownerUid: null, builderSlug: null });
+    const registry = registryWithPod();
+    const [placed] = registry.kubernetes.pods;
+    const successor = { ...placed, uid: replacement.podUid, name: replacement.podName };
+    docs.set(`glmGateways/${gatewayId}`, { ...registry, kubernetes: { ...registry.kubernetes, totalPods: 2, pods: [placed, successor] } });
+    await expect(recordGatewayScheduleCheckpoint(report)).resolves.toBe("kubernetes_writer_unobserved");
+    docs.set(`glmGateways/${gatewayId}`, { ...registry, kubernetes: { ...registry.kubernetes, pods: [successor] } });
+    await expect(recordGatewayScheduleCheckpoint(report)).resolves.toBe("kubernetes_writer_mismatch");
+    await expect(recordGatewayScheduleCheckpoint({ ...report, pod: replacement })).resolves.toBe("accepted");
+  });
+
   it("accepts checkpoints from a returned owner whose computer only retains a completed scheduler retirement", async () => {
     const { docs, report } = harness();
     const key = `gateways/${gatewayId}`;
@@ -130,6 +144,24 @@ describe("durable scheduler checkpoints", () => {
     retain(retirement);
     await expect(recordGatewayScheduleCheckpoint({ ...report, observedAt: 4_060 })).resolves.toBe("user_fenced");
     await expect(recordGatewayWorkspaceCheckpoint({ ...report, observedAt: 4_070, commits: { workspace: "b".repeat(40) } })).resolves.toBe("user_fenced");
+  });
+
+  it.each([
+    ["completion without a committed cutover", { completedAt: 3_500 }],
+    ["completion before its cutover", { cutoverCommittedAt: 3_500, completedAt: 3_000 }],
+    ["a non-finite completion", { cutoverCommittedAt: 3_000, completedAt: Number.POSITIVE_INFINITY }],
+    ["another owner's retirement", { uid: "uid-bob", cutoverCommittedAt: 3_000, completedAt: 3_500 }],
+    ["another slug's retirement", { slug: "bob", cutoverCommittedAt: 3_000, completedAt: 3_500 }],
+  ])("keeps fencing checkpoints for %s", async (_case, custody) => {
+    const { docs, report } = harness();
+    const key = `gateways/${gatewayId}`;
+    docs.set(key, { ...docs.get(key), gatewayClass: "shared", allocation: undefined, ownerUid: null, builderSlug: null });
+    docs.set(`glmGateways/${gatewayId}`, registryWithPod());
+    docs.set(`users/${uid}`, {
+      provisioning: { pendingNativeSchedulerRetirement: { uid, slug: "alice", ...custody }, openclaw: { slug: "alice", gatewayId } },
+    });
+    await expect(recordGatewayScheduleCheckpoint(report)).resolves.toBe("user_fenced");
+    await expect(recordGatewayWorkspaceCheckpoint({ ...report, commits: { workspace: "a".repeat(40) } })).resolves.toBe("user_fenced");
   });
 
   it("records removals and ignores a delayed earlier capture", async () => {

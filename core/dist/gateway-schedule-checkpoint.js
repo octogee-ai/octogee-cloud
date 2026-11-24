@@ -69,9 +69,15 @@ function ownsAssignment(user, assignment, input) {
     return !!user.slug && user.gateway?.gatewayId === input.gatewayId &&
         assignment.slug === user.slug && assignment.epoch === input.assignmentEpoch;
 }
+function completedOwnRetirement(user, retirement) {
+    const { uid, slug, completedAt, cutoverCommittedAt } = retirement;
+    return uid === user.uid && slug === user.slug &&
+        typeof cutoverCommittedAt === "number" && Number.isFinite(cutoverCommittedAt) && cutoverCommittedAt > 0 &&
+        typeof completedAt === "number" && Number.isFinite(completedAt) && completedAt >= cutoverCommittedAt;
+}
 function activeFences(user) {
     const { pendingNativeSchedulerRetirement: retirement, ...fences } = user.fences;
-    const dormant = retirement === undefined || typeof retirement.completedAt === "number";
+    const dormant = retirement === undefined || completedOwnRetirement(user, retirement);
     return [...Object.keys(fences), ...(dormant ? [] : ["pendingNativeSchedulerRetirement"])];
 }
 async function checkpointOwner(tx, input) {
