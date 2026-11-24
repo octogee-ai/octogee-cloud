@@ -382,6 +382,18 @@ async function prepareUserSharedAnchors(ctx: BrokerCtx, input: {
   });
 }
 
+async function removeRetiredAgentState(ctx: BrokerCtx, agentId: string, logPrefix: string): Promise<void> {
+  const agentDir = path.join(resolveOpenClawStateDir(), "agents", agentId);
+  try {
+    await assertNotHeld(matchUnder(agentDir), ctx.procRoot);
+    await fsp.rm(agentDir, { recursive: true, force: true });
+    ctx.log(`${logPrefix} removed retired agent state agentId=${agentId}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    ctx.log(`🔴 ${logPrefix} kept retired agent state agentId=${agentId} path=${agentDir}: ${message}`, { status: "failed" });
+  }
+}
+
 async function releaseAgentsAndInvalidateCache(
   ctx: BrokerCtx,
   agentIds: readonly string[],
@@ -399,6 +411,7 @@ async function releaseAgentsAndInvalidateCache(
           rpc: ctx.rpc, log: ctx.log, logPrefix,
           preserveStore: !options.purgeStore && (postgres || readPostgresAgentAnchor(file) !== null),
         });
+        if (options.purgeStore) await removeRetiredAgentState(ctx, agentId, logPrefix);
       } catch (error) { failures.push(error); }
     }
     if (failures.length) throw new AggregateError(failures, failures.map(error => error instanceof Error ? error.message : String(error)).join("; "));
