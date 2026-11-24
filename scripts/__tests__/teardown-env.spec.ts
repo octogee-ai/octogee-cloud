@@ -30,6 +30,7 @@ type TeardownOptions = {
   firebaseProbeFailure?: boolean;
   sqlWritersAbsent?: boolean;
   platformWritersAbsent?: boolean;
+  strandedTunnelPod?: boolean;
   resume?: boolean;
   storageListFailure?: boolean;
   storageEmpty?: boolean;
@@ -277,6 +278,10 @@ case "$1 $2" in
     printf 'deployment.apps/glm-controller\\n'
     ;;
   "get pods")
+    if [[ "$*" == *"platform-state-migrate"* && "$FAKE_STRANDED_TUNNEL_POD" == "true" ]] \\
+      && ! grep -q '^kubectl delete pod .*platform-state-migrate' "$FAKE_CALL_LOG"; then
+      printf 'pod/platform-state-fleet-0123456789ab\\n'
+    fi
     if [[ "$*" == *"app=glm-controller"* && "$FAKE_GATEWAY_CONTROLLER_FAILURE" == "pods" ]]; then
       printf 'glm-controller pods are forbidden\\n' >&2
       exit 1
@@ -358,6 +363,11 @@ case "$1 $2" in
     printf 'deleted:%s\\n' "$pvc" >> "$FAKE_DELETED_PVCS"
     ;;
   "wait --for=delete")
+    if [[ "$*" == *"platform-state-migrate"* && "$FAKE_STRANDED_TUNNEL_POD" == "true" ]] \\
+      && ! grep -q '^kubectl delete pod .*platform-state-migrate' "$FAKE_CALL_LOG"; then
+      printf 'timed out waiting for the condition on pods/platform-state-fleet-0123456789ab\\n' >&2
+      exit 1
+    fi
     if [[ "$*" == *"app.kubernetes.io/name=gitea"* ]] \\
       && ! grep -Fxq "deployment/$FAKE_GITEA_WORKLOAD_NAME" "$FAKE_QUIESCED_SQL_WRITERS"; then
       printf 'gitea pod still running\\n' >&2
@@ -473,6 +483,7 @@ fi
       FAKE_FIREBASE_PROBE_FAILURE: options.firebaseProbeFailure ? "true" : "false",
       FAKE_SQL_WRITERS_ABSENT: options.sqlWritersAbsent ? "true" : "false",
       FAKE_PLATFORM_WRITERS_ABSENT: options.platformWritersAbsent ? "true" : "false",
+      FAKE_STRANDED_TUNNEL_POD: options.strandedTunnelPod ? "true" : "false",
       FAKE_STORAGE_LIST_FAILURE: options.storageListFailure ? "true" : "false",
       FAKE_STORAGE_EMPTY: options.storageEmpty ? "true" : "false",
       FAKE_STORAGE_RESIDUAL: options.storageResidual ? "true" : "false",
@@ -734,6 +745,17 @@ describe("full teardown for private-only Cloud SQL", { timeout: 180_000 }, () =>
     expect(result.stdout).toContain(`${TEST_TARGET.cloudSqlAgentStoreDatabaseName} — agent store emptied`);
     expect(result.stdout).toContain("platform — Cloud SQL API confirmed a newly-created empty database");
     expect(agentStoreJobManifest(result.sqlOwnerManifest)).toContain("- --private-ip\n");
+  });
+
+  it("removes a database tunnel pod a cancelled fleet run left behind before resetting the platform state database", () => {
+    const result = runPrivateCentralTeardown({ strandedTunnelPod: true });
+    const scoped = `-n ${TEST_TARGET.namespace} --context ${TEST_TARGET.kubeContext}`;
+    const platformInstance = `--instance=${TEST_TARGET.cloudSqlPlatformStateInstanceName} --project=${TEST_TARGET.cloudSqlProjectId}`;
+
+    expect(result.status, `${result.stderr}\n${result.stdout}`).toBe(0);
+    const tunnelDelete = result.calls.indexOf(`kubectl delete pod ${scoped} -l app in (platform-state-expiry,platform-state-migrate) --ignore-not-found=true --wait=true`);
+    expect(tunnelDelete).toBeGreaterThan(-1);
+    expect(tunnelDelete).toBeLessThan(result.calls.indexOf(`sql databases delete platform ${platformInstance} --quiet`));
   });
 
   it("resets the platform state and agent store through the public route when the instance has a public IP", () => {
