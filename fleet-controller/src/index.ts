@@ -1020,7 +1020,7 @@ function reconcileGatewaySurgeHandoff(input: {
       ? { imageRepository: helmObserved.imageRepository, imageTag: helmObserved.imageTag }
       : null,
   });
-  const recoverSharedPodAfter = expiredDrainingSharedHeartbeat(gateway, input.runtime);
+  const recoverSharedPodAfter = expiredServingSharedHeartbeat(gateway, input.runtime);
   return passDeps.reconcileSurgeHandoff({
     gatewayId: gateway.gatewayId,
     desiredImageTag: input.readyImageTag,
@@ -1033,8 +1033,8 @@ function reconcileGatewaySurgeHandoff(input: {
   });
 }
 
-function expiredDrainingSharedHeartbeat(gateway: DurableGateway, runtime: ConvergingGatewayRuntime | undefined): number | undefined {
-  if (gateway.gatewayClass !== "shared" || gateway.desiredStatus !== "draining" ||
+function expiredServingSharedHeartbeat(gateway: DurableGateway, runtime: ConvergingGatewayRuntime | undefined): number | undefined {
+  if (gateway.gatewayClass !== "shared" || (gateway.desiredStatus !== "running" && gateway.desiredStatus !== "draining") ||
       gateway.liveRelease !== gateway.desiredRelease || runtime?.lifecycle !== "serving") return undefined;
   const observedAt = runtime.heartbeat?.lastHeartbeatAt;
   return typeof observedAt === "number" && Date.now() - observedAt > GATEWAY_UNREACHABLE_AFTER_MS ? observedAt : undefined;
@@ -1044,7 +1044,7 @@ function gatewayNeedsLiveVerification(gateway: DurableGateway, runtime: Convergi
   if (gateway.desiredStatus === "running") return true;
   return gateway.desiredStatus === "draining" &&
     (gateway.liveRelease !== gateway.desiredRelease || runtime?.lifecycle !== "serving" ||
-     expiredDrainingSharedHeartbeat(gateway, runtime) !== undefined);
+     expiredServingSharedHeartbeat(gateway, runtime) !== undefined);
 }
 
 function requiresSignedVmReadiness(
