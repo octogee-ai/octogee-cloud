@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { readPostgresAgentAnchor } from "@octogee/core/agent-postgres";
 import { runAgentAnchorRestore } from "../entrypoints/agent-anchor-restore.js";
+import { prepareFreshIsolatedPostgresState } from "../lib/isolated-postgres-bootstrap.js";
 import { withUserClaim } from "./helpers/user-claim.js";
 
 const roots: string[] = [];
@@ -32,6 +33,31 @@ describe("agent-anchor-restore entrypoint", () => {
     })).resolves.toEqual({ landed: [], preserved: [], skipped: false });
     expect(prepareHost).toHaveBeenCalledOnce();
     expect(initializeHost).not.toHaveBeenCalled();
+  });
+  it("prepares the diskless host journal without replacing an existing Shared agent store", async () => {
+    const dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "agent-anchor-diskless-")));
+    roots.push(dir);
+    const initializeHost = vi.fn(async () => { throw new Error("temporary gateway should not start"); });
+    const prepareJournal = vi.fn(async () => undefined);
+    const verify = vi.fn(async () => undefined);
+    const result = await runAgentAnchorRestore({
+      env: withUserClaim({
+        GATEWAY_CLASS: "isolated", GATEWAY_RUNTIME_KIND: "cluster", GATEWAY_ID: "alice-s-diskless",
+        GATEWAY_EPHEMERAL_HOME: "true", OPENCLAW_STATE_DIR: dir, OPENCLAW_AGENT_STORE_DSN: "postgres://local-test/agents",
+      }, "alice"),
+      broker: { readAgentAnchors: async () => ({ anchors: [defaultAgent] }) },
+      readConfig: () => ({ agents: { entries: { [defaultAgent.agentId]: {} } } }),
+      prepareHost: (options) => prepareFreshIsolatedPostgresState(options, prepareJournal),
+      initializeHost,
+      verify,
+      log: () => {},
+    });
+    expect(result).toEqual({ landed: [defaultAgent.agentId], preserved: [], skipped: false });
+    expect(initializeHost).not.toHaveBeenCalled();
+    expect(prepareJournal).toHaveBeenCalledOnce();
+    expect(prepareJournal.mock.invocationCallOrder[0]).toBeLessThan(verify.mock.invocationCallOrder[0]);
+    expect(readPostgresAgentAnchor(path.join(dir, "agents", defaultAgent.agentId, "agent", "openclaw-agent.sqlite")))
+      .toEqual({ storeId: defaultAgent.storeId, schema: defaultAgent.schema });
   });
   it.each(['cluster', 'gce-vm'])("initializes a claimed %s host before its first migration records any anchors", async runtime => {
     const dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'agent-anchor-first-import-')));
@@ -104,23 +130,30 @@ describe("agent-anchor-restore entrypoint", () => {
   it("lands the recorded gateway state anchor on a cluster user only", async () => {
     const state = { storeId: "c8feb4c9-41a7-4be1-b863-fa07ef6d1bdd", schema: "octogee_state_c8feb4c941a74be1" };
     const readAgentAnchors = vi.fn(async () => ({ anchors: [defaultAgent], state }));
-    const restore = async (runtimeKind: string, verifyState = vi.fn(async () => undefined)) => {
+    const restore = async (runtimeKind: string, ephemeralHome = false) => {
       const dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "agent-anchor-restore-")));
       roots.push(dir);
+      const verifyState = vi.fn(async () => undefined);
+      const prepareJournal = vi.fn(async () => undefined);
       const initializeHost = vi.fn(async (root: string) => {
         expect(readPostgresAgentAnchor(path.join(root, "state", "openclaw.sqlite")))
           .toEqual(runtimeKind === "cluster" ? state : null);
         await expect(fs.stat(path.join(root, "agents", defaultAgent.agentId))).rejects.toThrow();
       });
       const result = await runAgentAnchorRestore({
-        env: withUserClaim({ GATEWAY_CLASS: "isolated", GATEWAY_RUNTIME_KIND: runtimeKind, GATEWAY_ID: "alice-s-abc", OPENCLAW_STATE_DIR: dir }, "alice"),
+        env: withUserClaim({
+          GATEWAY_CLASS: "isolated", GATEWAY_RUNTIME_KIND: runtimeKind, GATEWAY_ID: "alice-s-abc", OPENCLAW_STATE_DIR: dir,
+          GATEWAY_EPHEMERAL_HOME: String(ephemeralHome), OPENCLAW_AGENT_STORE_DSN: "postgres://local-test/agents",
+        }, "alice"),
         broker: { readAgentAnchors },
         readConfig: () => ({ agents: { entries: { [defaultAgent.agentId]: {} } } }),
         verify: async () => undefined,
         verifyState,
+        prepareHost: (options) => prepareFreshIsolatedPostgresState(options, prepareJournal),
         initializeHost,
         log: () => {},
       });
+      expect(prepareJournal).not.toHaveBeenCalled();
       return { dir, result, verifyState, initializeHost };
     };
 
@@ -129,6 +162,11 @@ describe("agent-anchor-restore entrypoint", () => {
     expect(cluster.verifyState).toHaveBeenCalledExactlyOnceWith(state);
     expect(cluster.verifyState.mock.invocationCallOrder[0]).toBeLessThan(cluster.initializeHost.mock.invocationCallOrder[0]);
     expect(readPostgresAgentAnchor(path.join(cluster.dir, "state", "openclaw.sqlite"))).toEqual(state);
+
+    const diskless = await restore("cluster", true);
+    expect(diskless.result.state).toBe("landed");
+    expect(diskless.verifyState).toHaveBeenCalledExactlyOnceWith(state);
+    expect(readPostgresAgentAnchor(path.join(diskless.dir, "state", "openclaw.sqlite"))).toEqual(state);
 
     const vm = await restore("gce-vm");
     expect(vm.result.state).toBeUndefined();

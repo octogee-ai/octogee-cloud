@@ -50,18 +50,20 @@ export async function runAgentAnchorRestore(input: {
   const recorded = await input.broker.readAgentAnchors({ slug });
   const { anchors, state, auxiliary = [] } = recorded;
   const stateRoot = openclawStateRoot(env);
-  if (await (input.prepareHost ?? prepareFreshIsolatedPostgresState)({
-    stateDir: stateRoot, env, noRecordedAnchors: !hasRecordedAnchors(recorded),
-  })) {
+  const noRecordedAnchors = !hasRecordedAnchors(recorded);
+  const preparedHost = await (input.prepareHost ?? prepareFreshIsolatedPostgresState)({
+    stateDir: stateRoot, env, noRecordedAnchors, noRecordedHostAnchors: !state && auxiliary.length === 0,
+  });
+  if (preparedHost) {
     input.log(`[agent-anchors] prepared Native PostgreSQL state before first import for ${slug}`);
-    return { landed: [], preserved: [], skipped: false };
+    if (noRecordedAnchors) return { landed: [], preserved: [], skipped: false };
   }
   const landedState = state && clusterIsolatedGateway(env)
     ? await landGatewayStateAnchor(stateRoot, state, input.verifyState)
     : undefined;
   await landAuxiliaryAnchors(stateRoot, auxiliary, input.verifyAuxiliary);
   if (auxiliary.length) input.log(`[agent-anchors] restored and verified ${auxiliary.length} auxiliary anchor(s) for ${slug}`);
-  await (input.initializeHost ?? ((root) => initializeIsolatedNativeState(root, undefined, env)))(stateRoot);
+  if (!preparedHost) await (input.initializeHost ?? ((root) => initializeIsolatedNativeState(root, undefined, env)))(stateRoot);
   const result = await landAgentAnchors(
     stateRoot,
     anchors.filter((anchor) => configured.has(anchor.agentId)),
