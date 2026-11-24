@@ -11,7 +11,8 @@ import {
   MAX_WORKSPACE_BINARY_BYTES,
   WORKSPACE_BINARY_SNIFF_BYTES,
 } from "../workspace-binary.js";
-import { gitStatus } from "./workspace-git.js";
+import { gitStatus, OPENCLAW_WORKSPACE_SCRATCH_PATH } from "./workspace-git.js";
+import { logger } from "../http/logging.js";
 import { storeWorkspaceBlob, type WorkspaceBlobTarget } from "./workspace-blob.js";
 import { getMimeType, getExtension } from "./route-helpers.js";
 
@@ -292,6 +293,17 @@ export async function divertWorktreeBinaries(
   deps: DivertBinariesDeps = DEFAULT_DEPS,
   options: { retainLocalFiles?: boolean; excludePaths?: string[] } = {},
 ): Promise<DivertBinariesResult> {
+  const result = await divertChangedBinaries(customerDir, target, deps, options);
+  if (result.failures.length) logger.error("workspace binary diversion failed", { cwd: customerDir, failures: result.failures });
+  return result;
+}
+
+async function divertChangedBinaries(
+  customerDir: string,
+  target: WorkspaceBlobTarget,
+  deps: DivertBinariesDeps,
+  options: { retainLocalFiles?: boolean; excludePaths?: string[] },
+): Promise<DivertBinariesResult> {
   const status = await deps.gitStatus(customerDir, { untracked: "all" });
   if (!status.ok) {
     return { diverted: [], failures: [`git status failed: ${status.error.code}`], failedPaths: [] };
@@ -329,8 +341,9 @@ export async function divertWorktreeBinaries(
   }
 
   const candidates = new Set([...status.entries.filter(entry => entry.change !== "deleted").map(entry => entry.path), ...assetPaths]);
+  const excludePaths = [OPENCLAW_WORKSPACE_SCRATCH_PATH, ...options.excludePaths ?? []];
   for (const name of candidates) {
-    if (options.excludePaths?.some(excluded => name === excluded || name.startsWith(`${excluded}/`))) continue;
+    if (excludePaths.some(excluded => name === excluded || name.startsWith(`${excluded}/`))) continue;
     if (!isDivertablePath(name)) continue;
     try {
       const divertedBlob = await divertBinaryEntry(customerDir, name, target, deps, { retainLocalFiles: options.retainLocalFiles, knownAsset: assetPaths.has(name), materializedManifest: materializedManifests.get(name) });

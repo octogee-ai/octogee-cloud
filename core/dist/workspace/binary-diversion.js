@@ -5,7 +5,8 @@ import { withMaterializedProjectAssets } from "../project-asset-state.js";
 import { dirname, join } from "node:path";
 import { link, lstat, mkdtemp, open, rename, rmdir, unlink } from "node:fs/promises";
 import { isDivertableWorkspacePath, looksLikeWorkspaceBinary, MAX_WORKSPACE_BINARY_BYTES, WORKSPACE_BINARY_SNIFF_BYTES, } from "../workspace-binary.js";
-import { gitStatus } from "./workspace-git.js";
+import { gitStatus, OPENCLAW_WORKSPACE_SCRATCH_PATH } from "./workspace-git.js";
+import { logger } from "../http/logging.js";
 import { storeWorkspaceBlob } from "./workspace-blob.js";
 import { getMimeType, getExtension } from "./route-helpers.js";
 export const BINARY_SNIFF_BYTES = WORKSPACE_BINARY_SNIFF_BYTES;
@@ -228,6 +229,12 @@ async function divertBinaryEntry(customerDir, relativePath, target, deps, option
     }
 }
 export async function divertWorktreeBinaries(customerDir, target, deps = DEFAULT_DEPS, options = {}) {
+    const result = await divertChangedBinaries(customerDir, target, deps, options);
+    if (result.failures.length)
+        logger.error("workspace binary diversion failed", { cwd: customerDir, failures: result.failures });
+    return result;
+}
+async function divertChangedBinaries(customerDir, target, deps, options) {
     const status = await deps.gitStatus(customerDir, { untracked: "all" });
     if (!status.ok) {
         return { diverted: [], failures: [`git status failed: ${status.error.code}`], failedPaths: [] };
@@ -272,8 +279,9 @@ export async function divertWorktreeBinaries(customerDir, target, deps = DEFAULT
         });
     }
     const candidates = new Set([...status.entries.filter(entry => entry.change !== "deleted").map(entry => entry.path), ...assetPaths]);
+    const excludePaths = [OPENCLAW_WORKSPACE_SCRATCH_PATH, ...options.excludePaths ?? []];
     for (const name of candidates) {
-        if (options.excludePaths?.some(excluded => name === excluded || name.startsWith(`${excluded}/`)))
+        if (excludePaths.some(excluded => name === excluded || name.startsWith(`${excluded}/`)))
             continue;
         if (!isDivertablePath(name))
             continue;

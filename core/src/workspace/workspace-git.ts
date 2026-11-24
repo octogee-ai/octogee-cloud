@@ -29,6 +29,8 @@ export type WorkspaceGitError =
   | { code: "BLOB_DIVERSION_FAILED"; cwd: string; paths: string[] }
   | { code: "INTERNAL"; message: string };
 
+export const OPENCLAW_WORKSPACE_SCRATCH_PATH = ".openclaw/tmp";
+
 export interface WorkspaceGitStatusEntry {
   path: string;
   change: "modified" | "added" | "deleted" | "untracked" | "renamed";
@@ -186,7 +188,7 @@ async function stageWorkspaceCommit(
   }
   const identity = userGitIdentity(customerDir);
   const workspace = identity && path.resolve(customerDir) === path.join(identity.usersRoot, identity.slug);
-  const excluded = [...new Set([...excludePaths, ...(workspace ? [PROJECT_AGENT_WORKSPACE_PARTS.join("/")] : [])])];
+  const excluded = [...new Set([...excludePaths, OPENCLAW_WORKSPACE_SCRATCH_PATH, ...(workspace ? [PROJECT_AGENT_WORKSPACE_PARTS.join("/")] : [])])];
   const reserved = checkpoint || isTrustedGithubUserCheckout(customerDir) ? GITHUB_PROJECT_METADATA_PATHS : [];
   const staged = await stageWorkspaceChanges(customerDir, excluded, reserved);
   if (!staged.ok) return staged;
