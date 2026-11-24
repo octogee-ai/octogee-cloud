@@ -2,6 +2,7 @@ import { withLogContext } from "@octogee/shared/server/service-logger";
 import { advancePhase, nextMigrationStep, rollbackPlan, } from "./fleet-migration.js";
 import { MigrationDrainPendingError, MigrationRpcError } from "./fleet-migration-client.js";
 const QUIESCE_SOURCE = "quiesce-source";
+const SYNC_STATE = "sync-state";
 const WAIT_FOR_ACTIVE_WORK = "wait-for-active-work";
 const RELEASE_ATTEMPTS = 3;
 const RELEASE_RETRY_DELAY_MS = 2_000;
@@ -224,7 +225,7 @@ async function executeStep(params) {
             params.systemConfig.sourceCommit = flush.systemConfigCommit;
             return;
         }
-        case "sync-state":
+        case SYNC_STATE:
             return transferMigrationState(params, step);
         case "verify-target":
             await deps.client.verifyTarget({
@@ -290,7 +291,7 @@ export async function callReleasedTargetScheduler(deps, request) {
     }
 }
 function reportName(step) {
-    if (step.action === "sync-state")
+    if (step.action === SYNC_STATE)
         return `${step.mode}-sync-state`;
     if (step.action === "unmount-gateway")
         return `unmount-${step.role}`;
@@ -308,6 +309,9 @@ export async function runMigration(input, deps) {
         sourceGateway: input.fromGatewayId, targetGateway: input.toGatewayId,
     }, async () => {
         const execution = createMigrationExecution(input, deps);
+        const keysPending = await resyncForwardRecoveryKeys(execution);
+        if (keysPending)
+            return keysPending;
         while (true) {
             const result = await runNextMigrationStep(execution);
             if (result)
@@ -334,6 +338,23 @@ function createMigrationExecution(input, deps) {
             toGatewayId: input.toGatewayId,
         },
     };
+}
+async function resyncForwardRecoveryKeys(execution) {
+    const { input, deps } = execution;
+    if (input.resumeForwardRecovery === undefined)
+        return null;
+    const step = { action: SYNC_STATE, mode: "keys", from: input.fromGatewayId, to: input.toGatewayId, slug: input.slug };
+    const name = reportName(step);
+    const phaseAtStart = execution.state.phase;
+    await report(deps, { name, status: "running" });
+    try {
+        await executeForwardStep(execution, step);
+        await report(deps, { name, status: "done" });
+        return null;
+    }
+    catch (error) {
+        return handleStepFailure(execution, { step, name, phaseAtStart, error });
+    }
 }
 async function markSourceQuiescing(execution, step) {
     if (step.action !== QUIESCE_SOURCE || execution.input.gateAssignment !== true)
@@ -415,7 +436,7 @@ async function runNextMigrationStep(execution) {
     if (handoffPending)
         return handoffPending;
     try {
-        if (step.action === "sync-state" && step.mode === "keys")
+        if (step.action === SYNC_STATE && step.mode === "keys")
             await execution.deps.setMigrationPhase?.("preparing");
         if (step.action === "verify-target")
             await execution.deps.setMigrationPhase?.("connecting");
@@ -433,7 +454,7 @@ async function runNextMigrationStep(execution) {
     }
 }
 async function persistFinalTransferFence(execution, step) {
-    if (step.action !== "sync-state" || step.mode !== "final" || !execution.deps.persistForwardRecovery)
+    if (step.action !== SYNC_STATE || step.mode !== "final" || !execution.deps.persistForwardRecovery)
         return;
     execution.forwardOnly = true;
     await execution.deps.persistForwardRecovery({

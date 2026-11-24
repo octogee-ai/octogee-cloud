@@ -72,6 +72,7 @@ export interface MigrationRunnerDeps {
 }
 
 const QUIESCE_SOURCE = "quiesce-source";
+const SYNC_STATE = "sync-state";
 const WAIT_FOR_ACTIVE_WORK = "wait-for-active-work";
 const RELEASE_ATTEMPTS = 3;
 const RELEASE_RETRY_DELAY_MS = 2_000;
@@ -338,7 +339,7 @@ async function convergeTargetSystemConfig(input: {
 async function convergeTargetAfterFinalCopy(input: {
   deps: MigrationRunnerDeps;
   migrationId: string;
-  step: Extract<MigrationStep, { action: "sync-state" }>;
+  step: Extract<MigrationStep, { action: typeof SYNC_STATE }>;
   systemConfig: SystemConfigConvergence;
 }): Promise<void> {
   if (input.step.mode !== "final" || !input.systemConfig.convergeTarget) return;
@@ -367,7 +368,7 @@ interface MigrationStepExecution {
   systemConfig: SystemConfigConvergence;
 }
 
-async function transferMigrationState(params: MigrationStepExecution, step: Extract<MigrationStep, { action: "sync-state" }>): Promise<StepTimings> {
+async function transferMigrationState(params: MigrationStepExecution, step: Extract<MigrationStep, { action: typeof SYNC_STATE }>): Promise<StepTimings> {
   const { deps, migrationId, projectCheckoutScope, includeActivationManifest } = params;
   const clock = deps.now ?? Date.now;
   const importStartedAt = clock();
@@ -413,7 +414,7 @@ async function executeStep(params: MigrationStepExecution): Promise<StepTimings 
       params.systemConfig.sourceCommit = flush.systemConfigCommit;
       return;
     }
-    case "sync-state":
+    case SYNC_STATE:
       return transferMigrationState(params, step);
     case "verify-target":
       await deps.client.verifyTarget({
@@ -486,7 +487,7 @@ export async function callReleasedTargetScheduler(
 }
 
 function reportName(step: MigrationStep): string {
-  if (step.action === "sync-state") return `${step.mode}-sync-state`;
+  if (step.action === SYNC_STATE) return `${step.mode}-sync-state`;
   if (step.action === "unmount-gateway") return `unmount-${step.role}`;
   return step.action;
 }
@@ -512,6 +513,8 @@ export async function runMigration(
     sourceGateway: input.fromGatewayId, targetGateway: input.toGatewayId,
   }, async () => {
     const execution = createMigrationExecution(input, deps);
+    const keysPending = await resyncForwardRecoveryKeys(execution);
+    if (keysPending) return keysPending;
     while (true) {
       const result = await runNextMigrationStep(execution);
       if (result) return result;
@@ -554,6 +557,22 @@ function createMigrationExecution(
       toGatewayId: input.toGatewayId,
     },
   };
+}
+
+async function resyncForwardRecoveryKeys(execution: MigrationExecution): Promise<MigrationRunnerResult | null> {
+  const { input, deps } = execution;
+  if (input.resumeForwardRecovery === undefined) return null;
+  const step: MigrationStep = { action: SYNC_STATE, mode: "keys", from: input.fromGatewayId, to: input.toGatewayId, slug: input.slug };
+  const name = reportName(step);
+  const phaseAtStart = execution.state.phase;
+  await report(deps, { name, status: "running" });
+  try {
+    await executeForwardStep(execution, step);
+    await report(deps, { name, status: "done" });
+    return null;
+  } catch (error) {
+    return handleStepFailure(execution, { step, name, phaseAtStart, error });
+  }
 }
 
 async function markSourceQuiescing(
@@ -642,7 +661,7 @@ async function runNextMigrationStep(
   const handoffPending = await finishPostCutoverScheduleHandoff(execution, step);
   if (handoffPending) return handoffPending;
   try {
-    if (step.action === "sync-state" && step.mode === "keys") await execution.deps.setMigrationPhase?.("preparing");
+    if (step.action === SYNC_STATE && step.mode === "keys") await execution.deps.setMigrationPhase?.("preparing");
     if (step.action === "verify-target") await execution.deps.setMigrationPhase?.("connecting");
     await markSourceQuiescing(execution, step);
     if (step.action === QUIESCE_SOURCE) execution.quiesceStarted = true;
@@ -657,7 +676,7 @@ async function runNextMigrationStep(
 }
 
 async function persistFinalTransferFence(execution: MigrationExecution, step: MigrationStep): Promise<void> {
-  if (step.action !== "sync-state" || step.mode !== "final" || !execution.deps.persistForwardRecovery) return;
+  if (step.action !== SYNC_STATE || step.mode !== "final" || !execution.deps.persistForwardRecovery) return;
   execution.forwardOnly = true;
   await execution.deps.persistForwardRecovery({
     ...(execution.systemConfig.sourceCommit ? { sourceSystemConfigCommit: execution.systemConfig.sourceCommit } : {}),

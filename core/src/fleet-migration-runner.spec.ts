@@ -1038,10 +1038,38 @@ it("retains the source fence after an ambiguous final upgrade and resumes from t
   const second = await runMigration({ ...h.input, resumeForwardRecovery: checkpoint }, h.deps);
   expect(second).toMatchObject({ success: true, rolledBack: false });
   expect(h.client.quiesce).not.toHaveBeenCalled();
-  expect(h.client.transferState).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ mode: "final" }));
+  expect(vi.mocked(h.client.transferState).mock.calls.map(([request]) => request.mode)).toEqual(["keys", "final"]);
   expect(h.client.unmount).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ gatewayId: h.input.fromGatewayId }));
   expect(h.client.calls.filter((call) => call.startsWith("schedules:"))).toEqual(["schedules:gw-blue:snapshot", "schedules:gw-blue:remove", "schedules:gw-green:restore"]);
   expect(h.transfers.get("m1")).toMatchObject({ records: [STANDUP], restoredTo: "gw-green" });
+});
+
+it("syncs the user's keys to the target again before the final sync when resuming forward recovery", async () => {
+  const h = harness({ gateAssignment: true });
+
+  expect(await runMigration({ ...h.input, resumeForwardRecovery: {} }, h.deps)).toMatchObject({ success: true, rolledBack: false });
+
+  expect(h.client.calls.filter((call) => call.startsWith("transfer:"))).toEqual(["transfer:alice:keys", "transfer:alice:final"]);
+  expect(h.client.quiesce).not.toHaveBeenCalled();
+  expect(h.client.flushGateway).not.toHaveBeenCalled();
+  expect(h.events.filter((event) => event.startsWith("report:")).slice(0, 4)).toEqual([
+    "report:keys-sync-state:running", "report:keys-sync-state:done",
+    "report:final-sync-state:running", "report:final-sync-state:done",
+  ]);
+});
+
+it("keeps forward recovery pending with the source fenced when the resumed keys sync fails", async () => {
+  const h = harness({ gateAssignment: true });
+  vi.mocked(h.client.transferState).mockRejectedValueOnce(new Error("target import port busy"));
+
+  const result = await runMigration({ ...h.input, resumeForwardRecovery: {} }, h.deps);
+
+  expect(result).toMatchObject({ success: false, rolledBack: false });
+  expect(result.errorAt?.error).toBe("migration forward recovery pending: status 503: target import port busy");
+  expect(h.events).toContain("report:keys-sync-state:failed");
+  expect(vi.mocked(h.client.transferState).mock.calls.map(([request]) => request.mode)).toEqual(["keys"]);
+  expect(h.client.resume).not.toHaveBeenCalled();
+  expect(h.client.unmount).not.toHaveBeenCalled();
 });
 
 it("does not dispatch final transfer or release the source when critical checkpoint persistence is ambiguous", async () => {
