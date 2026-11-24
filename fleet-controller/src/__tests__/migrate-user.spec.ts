@@ -4118,7 +4118,7 @@ describe("legacy migration forward recovery", () => {
     const result = await handler(mkOp({ schedulerHandoff: saved!, attempts: 1, startedAt: 6000, cancellationRequestedAt: 5500 }), h.ctx);
     expect(result).toMatchObject({ success: true, rolledBack: false });
     expect(h.client.quiesce).not.toHaveBeenCalled();
-    expect(h.client.transferState).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ mode: "final" }));
+    expect(vi.mocked(h.client.transferState).mock.calls.map(([request]) => request.mode)).toEqual(["keys", "final"]);
     expect(vi.mocked(h.client.scheduler).mock.calls.every(([request]) => request.migrationId === schedulerId)).toBe(true);
     expect(h.client.resume).not.toHaveBeenCalled();
     expect(h.client.unmount).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ gatewayId: "gw-blue" }));
