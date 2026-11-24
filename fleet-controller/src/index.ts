@@ -226,6 +226,8 @@ import { createHomeBackupReleaseHandler } from "./handlers/home-backup-release.j
 import { RELEASE_RESTORED_HOME_BACKUP } from "@octogee/core/isolated-gateway-lifecycle";
 import { resolveParkedHomeArchiveGrant } from "@octogee/core/admin-fleet-router";
 import { createGatewayVmClient, ephemeralComputeWriterExcluded } from "./lib/compute-vm.js";
+import { readComputeInstanceTermination } from "./lib/compute-instance-termination.js";
+import type { ObserveEphemeralNodeExclusion } from "./gateway-kubernetes-observation.js";
 import { pausedIsolatedRetirementSourceFencedOff } from "./lib/native-retirement-telemetry.js";
 import { clearHomeCheckpointRequest, readHomeCheckpointCompletedAt, requestHomeCheckpoint } from "./lib/home-checkpoint.js";
 import { clearParkedVm, readParkedVm } from "./lib/parked-vm.js";
@@ -605,9 +607,14 @@ function createGatewayComputeClient(store: PlatformStateStore, logFn: (msg: stri
   });
 }
 
-function observeEphemeralNodeWithCompute(store: PlatformStateStore, log: (message: string) => void) {
-  return (identity: Parameters<typeof ephemeralComputeWriterExcluded>[2]) =>
-    ephemeralComputeWriterExcluded(gatewayComputeProjectId(), createGatewayComputeClient(store, log), identity);
+function observeEphemeralNodeWithCompute(store: PlatformStateStore, log: (message: string) => void): ObserveEphemeralNodeExclusion {
+  const auth = new GoogleAuth({ scopes: ["https://www.googleapis.com/auth/logging.read"] });
+  return (identity, window) => ephemeralComputeWriterExcluded(gatewayComputeProjectId(), createGatewayComputeClient(store, log), identity,
+    (instance) => readComputeInstanceTermination(async ({ url, method, body }) => {
+      const client = await auth.getClient();
+      const result = await client.request<unknown>({ url, method, data: body, timeout: 5_000 });
+      return { status: result.status, data: result.data };
+    }, instance, window));
 }
 
 async function isVmGateway(state: GatewayRuntimeReader, gatewayId: string): Promise<boolean> {
