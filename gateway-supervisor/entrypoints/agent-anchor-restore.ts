@@ -28,8 +28,9 @@ function nonBlank(value: string | undefined): string {
   return value?.trim() ?? "";
 }
 
-function hasRecordedAnchors({ anchors, state, auxiliary }: Awaited<ReturnType<FleetBrokerClient["readAgentAnchors"]>>): boolean {
-  return anchors.length > 0 || Boolean(state) || Boolean(auxiliary?.length);
+function recordedAnchorAvailability({ anchors, state, auxiliary }: Awaited<ReturnType<FleetBrokerClient["readAgentAnchors"]>>) {
+  const noRecordedHostAnchors = !state && !auxiliary?.length;
+  return { noRecordedHostAnchors, noRecordedAnchors: !anchors.length && noRecordedHostAnchors };
 }
 
 export async function runAgentAnchorRestore(input: {
@@ -50,18 +51,16 @@ export async function runAgentAnchorRestore(input: {
   const recorded = await input.broker.readAgentAnchors({ slug });
   const { anchors, state, auxiliary = [] } = recorded;
   const stateRoot = openclawStateRoot(env);
-  if (await (input.prepareHost ?? prepareFreshIsolatedPostgresState)({
-    stateDir: stateRoot, env, noRecordedAnchors: !hasRecordedAnchors(recorded),
-  })) {
-    input.log(`[agent-anchors] prepared Native PostgreSQL state before first import for ${slug}`);
-    return { landed: [], preserved: [], skipped: false };
-  }
+  const preparedHost = await (input.prepareHost ?? prepareFreshIsolatedPostgresState)({
+    stateDir: stateRoot, env, ...recordedAnchorAvailability(recorded),
+  });
   const landedState = state && clusterIsolatedGateway(env)
     ? await landGatewayStateAnchor(stateRoot, state, input.verifyState)
     : undefined;
   await landAuxiliaryAnchors(stateRoot, auxiliary, input.verifyAuxiliary);
   if (auxiliary.length) input.log(`[agent-anchors] restored and verified ${auxiliary.length} auxiliary anchor(s) for ${slug}`);
-  await (input.initializeHost ?? ((root) => initializeIsolatedNativeState(root, undefined, env)))(stateRoot);
+  if (preparedHost) input.log(`[agent-anchors] prepared Native PostgreSQL state before first import for ${slug}`);
+  else await (input.initializeHost ?? ((root) => initializeIsolatedNativeState(root, undefined, env)))(stateRoot);
   const result = await landAgentAnchors(
     stateRoot,
     anchors.filter((anchor) => configured.has(anchor.agentId)),

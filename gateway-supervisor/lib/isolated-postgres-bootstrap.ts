@@ -22,6 +22,7 @@ interface BootstrapOptions {
   stateDir: string;
   env: NodeJS.ProcessEnv;
   noRecordedAnchors: boolean;
+  noRecordedHostAnchors?: boolean;
 }
 
 const execute = promisify(execFile);
@@ -112,9 +113,13 @@ async function isFreshNativeLayout(stateDir: string): Promise<boolean> {
   return true;
 }
 
+function disklessClusterRuntime(env: NodeJS.ProcessEnv): boolean {
+  return env.GATEWAY_RUNTIME_KIND === "cluster" && env.GATEWAY_EPHEMERAL_HOME === "true";
+}
+
 function supportedFreshRuntime(env: NodeJS.ProcessEnv): boolean {
   if (env.GATEWAY_CLASS !== "isolated" || !env.OPENCLAW_AGENT_STORE_DSN?.trim()) return false;
-  if (env.GATEWAY_RUNTIME_KIND === "gce-vm") return true;
+  if (env.GATEWAY_RUNTIME_KIND === "gce-vm" || disklessClusterRuntime(env)) return true;
   return env.GATEWAY_RUNTIME_KIND === "cluster" && Boolean(env.OCTOGEE_CHECKPOINT_SLOT_ID) &&
     env.OCTOGEE_CHECKPOINT_SLOT_ID === env.GATEWAY_ID;
 }
@@ -170,16 +175,17 @@ export async function prepareFreshIsolatedPostgresState(
 ): Promise<boolean> {
   const { stateDir, env, noRecordedAnchors } = options;
   if (!supportedFreshRuntime(env)) return false;
+  const canPrepare = noRecordedAnchors || (disklessClusterRuntime(env) && options.noRecordedHostAnchors === true);
   const pendingPath = path.join(stateDir, ".native-postgres-prepare");
   const stateFile = localStateStorePath(stateDir);
   if (await fs.realpath(stateDir) !== stateDir) return false;
   let anchor = await readPreparation(pendingPath);
   if (!anchor) {
-    if (!noRecordedAnchors || !await isFreshNativeLayout(stateDir)) return false;
+    if (!canPrepare || !await isFreshNativeLayout(stateDir)) return false;
     await assertUserStorePath(stateDir, stateFile);
     anchor = expectedAnchor(randomUUID());
     await publishPreparation(pendingPath, anchor);
-  } else if (!noRecordedAnchors) {
+  } else if (!canPrepare) {
     throw new Error("Recorded Native state appeared during pending PostgreSQL preparation");
   }
   await prepareAnchor(stateDir, stateFile, anchor);
