@@ -278,6 +278,117 @@ describe("user lifecycle config patch agent directories", () => {
     });
   });
 
+  describe("retiring a project agent", () => {
+    const retiredId = "octogee-alice-proj-orbit-coach";
+    const coachId = "octogee-alice-coach";
+    const evictedId = "octogee-bob-coach";
+
+    function retirementRpc(agentsDelete: ReturnType<typeof vi.fn>): GatewayRpcClient {
+      return {
+        channelsStatus: vi.fn(async () => ({ channelAccounts: { mattermost: [] } })),
+        channelsStop: vi.fn(async ({ channel, accountId }) => ({ channel, accountId, stopped: true as const })),
+        channelsStart: vi.fn(async ({ channel, accountId }) => ({ channel, accountId, started: true as const })),
+        configGet: vi.fn(async () => ({
+          config: { agents: { entries: { [coachId]: { model: "house" }, [retiredId]: {}, [evictedId]: {} } } },
+          hash: "cfg-hash",
+        })),
+        agentsDelete,
+        agentsCreate: vi.fn(async ({ name, workspace }: { name: string; workspace: string }) => ({
+          ok: true as const, agentId: name, name, workspace,
+        })),
+        secretsReload: vi.fn(async () => ({ ok: true, warningCount: 0 })),
+      } as unknown as GatewayRpcClient;
+    }
+
+    const provisioningSnapshot = { ...brokerSnapshot, status: "provisioning" as const };
+
+    async function seedAgentStates(tempRoot: string, agentsDir: string) {
+      const database = (agentId: string) => path.join(agentsDir, agentId, "agent", "openclaw-agent.sqlite");
+      for (const agentId of [coachId, retiredId, evictedId]) {
+        await fs.mkdir(path.dirname(database(agentId)), { recursive: true });
+        seedLocalAgentDatabase(database(agentId), agentId);
+      }
+      const projectFile = path.join(tempRoot, "customers", "alice", "projects", "orbit", "README.md");
+      await fs.mkdir(path.dirname(projectFile), { recursive: true });
+      await fs.writeFile(projectFile, "# orbit");
+      return { database, projectFile };
+    }
+
+    it("removes the retired agent's state folder and leaves other agents and the project files in place", async () => {
+      await withRuntimeMock(async ({ tempRoot, agentsDir }) => {
+        process.env.OPENCLAW_STATE_DIR = tempRoot;
+        const { database, projectFile } = await seedAgentStates(tempRoot, agentsDir);
+        const agentsDelete = vi.fn(async ({ agentId }: { agentId: string }) => ({ ok: true as const, agentId, removedBindings: 0 }));
+        const { buildBrokeredLifecycleAdapter } = await import("../lib/user-lifecycle-broker-adapter.js");
+        const adapter = buildBrokeredLifecycleAdapter({
+          client: mkClient(provisioningSnapshot),
+          rpc: retirementRpc(agentsDelete),
+          log: vi.fn(),
+          procRoot: await procRootHolding(tempRoot, []),
+        });
+
+        await adapter.applyAddUserConfigPatch(provisioningSnapshot, { _coachPersonalToken: "pat-1" }, { evictionBatch: ["bob"] });
+
+        expect(agentsDelete).toHaveBeenCalledWith({ agentId: retiredId, deleteFiles: false });
+        expect(agentsDelete).toHaveBeenCalledWith({ agentId: evictedId, deleteFiles: false });
+        expect(fsSync.existsSync(path.join(agentsDir, retiredId))).toBe(false);
+        expect(readLocalAgentFixtureState(database(coachId))).toBe(coachId);
+        expect(readLocalAgentFixtureState(database(evictedId))).toBe(evictedId);
+        expect(await fs.readFile(projectFile, "utf8")).toBe("# orbit");
+      });
+    });
+
+    it("removes a retired agent's state folder when the roster no longer has the agent", async () => {
+      await withRuntimeMock(async ({ tempRoot, agentsDir }) => {
+        process.env.OPENCLAW_STATE_DIR = tempRoot;
+        const { database } = await seedAgentStates(tempRoot, agentsDir);
+        const { OpenclawWireError } = await import("../lib/gateway-rpc.js");
+        const agentsDelete = vi.fn(async ({ agentId }: { agentId: string }) => {
+          if (agentId === retiredId) throw new OpenclawWireError("rpc-error", `agent "${agentId}" not found`, { serverCode: "INVALID_REQUEST" });
+          return { ok: true as const, agentId, removedBindings: 0 };
+        });
+        const { buildBrokeredLifecycleAdapter } = await import("../lib/user-lifecycle-broker-adapter.js");
+        const adapter = buildBrokeredLifecycleAdapter({
+          client: mkClient(provisioningSnapshot),
+          rpc: retirementRpc(agentsDelete),
+          log: vi.fn(),
+          procRoot: await procRootHolding(tempRoot, []),
+        });
+
+        await adapter.applyAddUserConfigPatch(provisioningSnapshot, { _coachPersonalToken: "pat-1" });
+
+        expect(agentsDelete).toHaveBeenCalledWith({ agentId: retiredId, deleteFiles: false });
+        expect(fsSync.existsSync(path.join(agentsDir, retiredId))).toBe(false);
+        expect(readLocalAgentFixtureState(database(coachId))).toBe(coachId);
+      });
+    });
+
+    it("keeps a retired agent's state folder a process still holds, logs it as failed, and still retires the agent", async () => {
+      await withRuntimeMock(async ({ tempRoot, agentsDir }) => {
+        process.env.OPENCLAW_STATE_DIR = tempRoot;
+        const { database } = await seedAgentStates(tempRoot, agentsDir);
+        const agentsDelete = vi.fn(async ({ agentId }: { agentId: string }) => ({ ok: true as const, agentId, removedBindings: 0 }));
+        const log = vi.fn();
+        const { buildBrokeredLifecycleAdapter } = await import("../lib/user-lifecycle-broker-adapter.js");
+        const adapter = buildBrokeredLifecycleAdapter({
+          client: mkClient(provisioningSnapshot),
+          rpc: retirementRpc(agentsDelete),
+          log,
+          procRoot: await procRootHolding(tempRoot, [database(retiredId)]),
+        });
+
+        await expect(adapter.applyAddUserConfigPatch(provisioningSnapshot, { _coachPersonalToken: "pat-1" })).resolves.toBeDefined();
+
+        expect(agentsDelete).toHaveBeenCalledWith({ agentId: retiredId, deleteFiles: false });
+        expect(readLocalAgentFixtureState(database(retiredId))).toBe(retiredId);
+        expect(log).toHaveBeenCalledWith(
+          expect.stringMatching(new RegExp(`agentId=${retiredId}.*still held open`)),
+          { status: "failed" },
+        );
+      });
+    });
+  });
+
   // Project checkouts clone AFTER the mount patch, so agents.create would
   // otherwise be handed a workspace path that does not exist yet.
   it.each([false, true])("broker prepares the project workspace before agents.create (GitHub=%s)", async github => {
