@@ -15,7 +15,7 @@ import { sourceTransferRsyncArgs } from "./source-transfer-rsync.js";
 import { deferredProjectPlaceholderPaths } from "./deferred-project-workspace.js";
 import { sourcesForPushMode } from "./source-transfer-plan.js";
 import { CUSTOMERS_DIR, log as provisionerLog } from "@octogee/core/config";
-import { withLogContext, setLogContext, type LogContext } from "@octogee/shared/server/service-logger";
+import { createServiceLogger, withLogContext, setLogContext, type LogContext } from "@octogee/shared/server/service-logger";
 
 
 import type { Request, Response, RequestHandler } from "express";
@@ -153,6 +153,7 @@ import type { SurgeOpenClawProcessGateState } from "./surge-openclaw-process-gat
 import { NEEDS_FULL_ATTACH_FINGERPRINT, importReconciliationPending, pendingCloneAppliedFingerprint, pendingImportAppliedFingerprint } from "./pending-clone-fingerprint.js";
 import { userClaimSlug } from "@octogee/shared/server/user-claim";
 
+const migrationWarningLogger = createServiceLogger("provisioner");
 const SYSTEM_CONFIG_COMMIT = /^[0-9a-f]{40,64}$/;
 const USER_SYSTEM_CONFIG_TRANSFER = "configured-builder-system-config" as const;
 const ACTIVATION_MANIFEST_TRANSFER = "activation-manifest" as const;
@@ -1381,6 +1382,28 @@ export function createActivateImportHandler(deps: MigrationHandlerDeps): Request
   });
 }
 
+function authorityBelongsToUser(authority: readonly FleetBrokerAgentAnchor[], slug: string): boolean {
+  return new Set(authority.map(anchor => anchor.agentId)).size === authority.length &&
+    authority.every(anchor => { const parsed = parseAgentId(anchor.agentId); return parsed.kind !== "unknown" && parsed.username === slug; });
+}
+
+async function authorizedAgentSources(stateDir: string, authority: readonly FleetBrokerAgentAnchor[], carried: readonly { cwd: string; path: string }[]) {
+  const sources = [];
+  for (const anchor of authority) {
+    const relative = path.join("agents", anchor.agentId);
+    if (carried.some(item => item.cwd === stateDir && (item.path === relative || item.path.startsWith(relative + path.sep)))) continue;
+    const file = path.join(stateDir, relative);
+    const stat = await fs.lstat(file).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return null;
+      throw error;
+    });
+    if (!stat) continue;
+    if (!stat.isDirectory() || await fs.realpath(file) !== file) throw new Error(`Carried agent directory is not canonical: ${anchor.agentId}`);
+    sources.push({ cwd: stateDir, path: relative });
+  }
+  return sources;
+}
+
 async function retainedSourcePaths(plan: ConfiguredUserPortableStatePlan, stateDir: string, slug: string, authority: FleetBrokerAgentAnchor[]) {
   const sources = [];
   for (const item of plan.paths.filter(item => !isSafeDefaultAgentPortableStatePath(item.relativePath))) {
@@ -1388,18 +1411,7 @@ async function retainedSourcePaths(plan: ConfiguredUserPortableStatePlan, stateD
     try { await fs.lstat(file); sources.push({ cwd: stateDir, path: item.relativePath }); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
   }
-  for (const anchor of authority) {
-    const relative = path.join("agents", anchor.agentId);
-    if (sources.some(item => item.cwd === stateDir && (item.path === relative || item.path.startsWith(relative + path.sep)))) continue;
-    const file = path.join(stateDir, relative);
-    const stat = await fs.lstat(file).catch((error: NodeJS.ErrnoException) => {
-      if (error.code === "ENOENT") return null;
-      throw error;
-    });
-    if (!stat) continue;
-    if (!stat.isDirectory() || await fs.realpath(file) !== file) throw new Error(`Retained agent directory is not canonical: ${anchor.agentId}`);
-    sources.push({ cwd: stateDir, path: relative });
-  }
+  sources.push(...await authorizedAgentSources(stateDir, authority, sources));
   for (const source of await userFileStatePaths(OPENCLAW_DIR, slug)) {
     if (!sources.some(item => item.cwd === source.cwd && item.path === source.path)) sources.push(source);
   }
@@ -1427,9 +1439,7 @@ async function retainedSourceExport(deps: MigrationHandlerDeps, body: MigrationR
   if (custody.gatewayId !== deps.gatewayId || custody.podUid !== process.env.POD_UID) throw new Error("Retained source custody addresses another allocation");
   const agents = [{ agentId: manifest.agentId, agent: manifest.agent }, ...manifest.projectAgents];
   const authority = await readAnchors(body.slug, body.migrationId);
-  if (new Set(authority.map(anchor => anchor.agentId)).size !== authority.length ||
-      authority.some(anchor => { const parsed = parseAgentId(anchor.agentId); return parsed.kind === "unknown" || parsed.username !== body.slug; }) ||
-      agents.some(agent => !authority.some(anchor => anchor.agentId === agent.agentId))) {
+  if (!authorityBelongsToUser(authority, body.slug) || agents.some(agent => !authority.some(anchor => anchor.agentId === agent.agentId))) {
     throw new Error("Retained source manifest roster does not match migration anchor authority");
   }
   const stateDir = resolveOpenClawStateDir();
@@ -1452,6 +1462,26 @@ async function retainedSourceExport(deps: MigrationHandlerDeps, body: MigrationR
   return { sources, assertCurrent, postgres };
 }
 
+async function sharedSourceExportPaths(deps: MigrationHandlerDeps, body: PushRsyncStateRequestBody) {
+  const readAnchors = deps.adapter.sourceMigrationAgentAnchors;
+  if (!readAnchors) throw new Error("Shared source export requires current migration anchor authority");
+  const listed = await deps.adapter.listExportPaths(body.slug);
+  const authority = await readAnchors(body.slug, body.migrationId);
+  if (!authorityBelongsToUser(authority, body.slug)) throw new Error("Shared source migration anchor authority does not belong to the user");
+  const stateDir = resolveOpenClawStateDir();
+  const agentId = (source: { cwd: string; path: string }) => source.cwd === stateDir && source.path.split(path.sep)[0] === "agents"
+    ? source.path.split(path.sep)[1] ?? null : null;
+  const files = listed.filter(source => agentId(source) === null);
+  const agents = await authorizedAgentSources(stateDir, authority, files);
+  const carried = new Set(agents.map(agentId));
+  for (const id of new Set(listed.map(agentId))) {
+    if (id === null || carried.has(id)) continue;
+    migrationWarningLogger.warn(`[migration-rsync] push-state migrationId=${body.migrationId} slug=${body.slug} leaves agent ${id} on the source: the migration authority does not name it`,
+      { migrationId: body.migrationId, builderSlug: body.slug, agentId: id });
+  }
+  return [...files, ...agents];
+}
+
 async function sourceExportInventory(deps: MigrationHandlerDeps, body: PushRsyncStateRequestBody, mode: MigrationTransferMode, signal: AbortSignal) {
   const sourceHeld = mode === "final" && await deps.surgeSourceOpenClawHeld?.({ migrationId: body.migrationId, slug: body.slug }) === true;
   const retainedManifest = mode === "final" ? await readActivationManifest(OPENCLAW_DIR, body.slug).catch((error: NodeJS.ErrnoException) => {
@@ -1459,7 +1489,9 @@ async function sourceExportInventory(deps: MigrationHandlerDeps, body: PushRsync
     throw error;
   }) : null;
   const retained = retainedManifest?.sourceWorkspaceIdentities ? await retainedSourceExport(deps, body, signal, sourceHeld) : null;
-  const allSources = retained?.sources ?? await deps.adapter.listExportPaths(body.slug);
+  const allSources = retained?.sources ?? (mode === "final" && deps.adapter.isIsolatedGateway?.() === false
+    ? await sharedSourceExportPaths(deps, body)
+    : await deps.adapter.listExportPaths(body.slug));
   const sources = sourcesForPushMode(allSources, body.slug, mode);
   const postgres = mode === "final" ? retained?.postgres ?? await planPostgresAgentExport(sources, signal) : [];
   return { sourceHeld, retained, sources, postgres };
@@ -2854,7 +2886,8 @@ function upgradesCarriedAgents(input: StagedImportInput): boolean {
   return input.deps.adapter.isIsolatedGateway?.() === false || Boolean(input.activation);
 }
 
-async function upgradeCarriedAgents(input: StagedImportInput, prepared: PreparedAgentStores): Promise<void> {
+async function authorizeCarriedAgents(input: StagedImportInput, prepared: PreparedAgentStores) {
+  if (!upgradesCarriedAgents(input)) return null;
   const readAuthority = input.deps.adapter.targetMigrationIdentityCustody;
   if (!readAuthority) throw new Error("target requires current migration agent authority");
   const authority = await readAuthority(input.slug, input.session.migrationId);
@@ -2866,12 +2899,17 @@ async function upgradeCarriedAgents(input: StagedImportInput, prepared: Prepared
       new Set(prepared.stores.map(store => store.agentId)).size !== prepared.stores.length) {
     throw new Error("carried agent roster does not match migration authority");
   }
-  if (prepared.stores.length === 0) return;
   const stores = prepared.stores.map(store => {
     const anchor = expected.find(item => item.agentId === store.agentId);
     if (!anchor) throw new Error(`carried agent is not authorized: ${store.agentId}`);
     return { ...anchor, anchorPath: store.destinationPath };
   });
+  return { readAuthority, authority, body, stores };
+}
+
+async function upgradeCarriedAgents(input: StagedImportInput, authorized: NonNullable<Awaited<ReturnType<typeof authorizeCarriedAgents>>>): Promise<void> {
+  const { readAuthority, authority, body, stores } = authorized;
+  if (stores.length === 0) return;
   const assertCurrent = async () => {
     input.signal.throwIfAborted();
     if (!isDeepStrictEqual(await readAuthority(input.slug, input.session.migrationId), authority)) {
@@ -2934,6 +2972,7 @@ async function deliverStagedImport(input: StagedImportInput): Promise<void> {
     log(`[migration-rsync] final-import file-copy migrationId=${session.migrationId} slug=${input.slug}`, { durationMs: Date.now() - copyStartedAt });
   };
   try {
+    const authorized = await authorizeCarriedAgents(input, prepared);
     const offlineTarget = await heldUserImport(input);
     if (!offlineTarget) await copyFinalFiles();
     const installStartedAt = Date.now();
@@ -2945,9 +2984,9 @@ async function deliverStagedImport(input: StagedImportInput): Promise<void> {
     });
     log(`[migration-rsync] final-import agent-install migrationId=${session.migrationId} slug=${input.slug}`, { durationMs: Date.now() - installStartedAt });
 
-    if (upgradesCarriedAgents(input)) {
+    if (authorized) {
       const upgradeStartedAt = Date.now();
-      await upgradeCarriedAgents(input, prepared);
+      await upgradeCarriedAgents(input, authorized);
       if (prepared.stores.length > 0) {
         log(`[migration-rsync] final-import agent-upgrade migrationId=${session.migrationId} slug=${input.slug}`, { durationMs: Date.now() - upgradeStartedAt });
       }

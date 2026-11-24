@@ -3831,7 +3831,7 @@ describe("PostgreSQL agent anchors across an rsync carry", () => {
         "foreign anchor": "Retained source agent anchor does not match migration authority",
         "missing anchor": "Retained source is missing an authorized agent anchor",
         "archived missing anchor": "Retained source is missing an authorized agent anchor",
-        "archived directory symlink": "Retained agent directory is not canonical",
+        "archived directory symlink": "Carried agent directory is not canonical",
         "foreign extra anchor": "Retained source manifest roster does not match migration anchor authority",
         "authority changed": "Retained source migration export authority changed",
       };
@@ -3863,6 +3863,53 @@ describe("PostgreSQL agent anchors across an rsync carry", () => {
 
     expect(getStatus()).toBe(200);
     expect(adapter.releaseAgent).toHaveBeenCalledExactlyOnceWith("octogee-chris-coach");
+  });
+
+  it("leaves a user-owned agent folder the migration authority does not name on the shared source", async () => {
+    const stateDir = await mkTempRoot();
+    const authorized = ["octogee-chris-coach", "octogee-chris-proj-one-coach"], retired = "octogee-chris-proj-retired-coach";
+    for (const id of [...authorized, retired]) await writeStore(stateDir, `agents/${id}/agent/openclaw-agent.sqlite`, () => {});
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    spawnMock.mockReturnValueOnce(mkFakeChild({ exitCode: 0 }));
+    const { handler, adapter, req } = pushRsync(stateDir, "shared-unauthorized-agent", { surgeSourceOpenClawHeld: async () => false });
+    Object.assign(adapter, {
+      isIsolatedGateway: () => false,
+      listExportPaths: vi.fn(async () => [...authorized, retired].map(id => ({ cwd: stateDir, path: path.join("agents", id) }))),
+      sourceMigrationAgentAnchors: vi.fn(async () => authorized.map(agentId => ({ agentId, storeId: "1514f000-4540-4f4e-92a1-831adeac3d5b", schema: "octogee_agent_fixture" }))),
+    });
+    const response = mkResponse();
+
+    await handler(req, response.res, vi.fn());
+    const warnings = warn.mock.calls.map(([line]) => String(line));
+    warn.mockRestore();
+
+    expect(response.getStatus(), JSON.stringify(response.getBody())).toBe(200);
+    const args = spawnMock.mock.calls[0]![1] as string[];
+    for (const id of authorized) expect(args.some(arg => arg.endsWith(`/./agents/${id}/agent/.octogee-snapshot`))).toBe(true);
+    expect(args.some(arg => arg.includes(retired))).toBe(false);
+    expect(adapter.detachSourceAgents).toHaveBeenCalledExactlyOnceWith("chris", authorized, expect.any(AbortSignal));
+    expect(warnings).toContainEqual(expect.stringMatching(new RegExp(`"severity":"WARNING".*"message":"[^"]*${retired}`)));
+  });
+
+  it.each([
+    ["another user's agent", ["octogee-chris-coach", "octogee-alice-coach"]],
+    ["a duplicate agent", ["octogee-chris-coach", "octogee-chris-coach"]],
+  ])("refuses a shared source export whose migration authority names %s", async (_scenario, ids) => {
+    const stateDir = await mkTempRoot();
+    await writeStore(stateDir, CARRIED_STORE, () => {});
+    const { handler, adapter, req } = pushRsync(stateDir, "shared-foreign-authority");
+    Object.assign(adapter, {
+      isIsolatedGateway: () => false,
+      sourceMigrationAgentAnchors: vi.fn(async () => ids.map(agentId => ({ agentId, storeId: "1514f000-4540-4f4e-92a1-831adeac3d5b", schema: "octogee_agent_fixture" }))),
+    });
+    const response = mkResponse();
+
+    await handler(req, response.res, vi.fn());
+
+    expect(response.getStatus()).toBe(500);
+    expect(response.getBody()).toMatchObject({ message: "Shared source migration anchor authority does not belong to the user" });
+    expect(spawnMock).not.toHaveBeenCalled();
+    expect(adapter.releaseAgent).not.toHaveBeenCalled();
   });
 
   it("pushes files only during pre-sync without snapshotting or transferring agent databases", async () => {
@@ -4201,6 +4248,32 @@ describe("PostgreSQL agent anchors across an rsync carry", () => {
     expect(order).toEqual([]);
     if (failure === "roster") expect(upgradeImportedAgents).not.toHaveBeenCalled();
     else expect(upgradeImportedAgents).toHaveBeenCalledOnce();
+  });
+
+  it("leaves agent state untouched when the carried roster exceeds the migration authority", async () => {
+    const importDir = await mkTempRoot(), procRoot = await mkTempRoot();
+    const migrationId = "shared-unauthorized-carried-agent";
+    const retired = "octogee-chris-proj-retired-coach";
+    const targetMigrationIdentityCustody = vi.fn(async () => ({ ...sharedTargetAuthority("chris", migrationId),
+      anchors: [{ agentId: "octogee-chris-coach", storeId: "1514f000-4540-4f4e-92a1-831adeac3d5b", schema: "octogee_agent_fixture" }] }));
+    const upgradeImportedAgents = vi.fn(async () => {});
+    const { deps, stageDir } = await prepareImport({ migrationId, importDir, daemon: mkFakeChild(),
+      adapter: { isIsolatedGateway: () => false, targetMigrationIdentityCustody },
+      deps: { procRoot, upgradeImportedAgents } as Partial<MigrationHandlerDeps> });
+    await stageSnapshot(stageDir, () => {});
+    await stageSnapshot(stageDir, () => {}, retired);
+    const spawnsBeforeFinish = spawnMock.mock.calls.length;
+    spawnMock.mockReturnValueOnce(mkFakeChild({ exitCode: 0 }));
+
+    const result = await finishImport(deps, migrationId);
+
+    expect(result.getStatus()).toBe(500);
+    expect(result.getBody()).toMatchObject({ message: "carried agent roster does not match migration authority" });
+    expect(spawnMock.mock.calls).toHaveLength(spawnsBeforeFinish);
+    for (const agentId of ["octogee-chris-coach", retired]) {
+      expect(fsSync.existsSync(path.join(importDir, "agents", agentId, "agent", "openclaw-agent.sqlite"))).toBe(false);
+    }
+    expect(upgradeImportedAgents).not.toHaveBeenCalled();
   });
 
   it("rejects a delayed user release while final import holds its in-process claim", async () => {

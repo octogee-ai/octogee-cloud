@@ -1223,6 +1223,23 @@ describe('fenced source management health availability', () => {
    expect(update).toMatchObject({ status: "pending", attempts: MAX_OPERATION_ATTEMPTS + 1 });
  });
 
+ it.each([
+   "carried agent roster does not match migration authority",
+   "carried agent is not authorized: octogee-alice-proj-retired-coach",
+ ])("fails a fenced final transfer whose target refuses the carried roster: %s", message => {
+   const error = `migration forward recovery pending: status 503: /finish-rsync-import/shared-new: 500 ${JSON.stringify({ error: "import failed", message })}`;
+   expect(classifyOperationFailure(error)).toBe("terminal");
+   const update = buildOperationCompletionUpdate({
+     op: { id: `placement-${"a".repeat(32)}`, kind: "migrate-user", origin: "automatic", attempts: 1,
+       input: { source: "continuous-placement-policy" },
+       schedulerHandoff: { migrationId: "stable", uid: "alice", slug: "alice", fromGatewayId: "shared-old", toGatewayId: "shared-new",
+         forwardRecovery: { schemaVersion: 1, phase: "source-flushed", sourceEpoch: 4 } } },
+     result: { steps: [], success: false, rolledBack: false, error },
+     steps: [], now: 1000,
+   });
+   expect(update).toMatchObject({ status: "failed", attemptHistory: [{ classification: "terminal", error }] });
+ });
+
 
 it.each([false, true])("keeps recovery on an assigned target pending beyond the activation attempt limit (recorded=%s)", recorded => {
   const update = buildOperationCompletionUpdate({
