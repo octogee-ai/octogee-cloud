@@ -4,7 +4,7 @@ import { createServiceLogger, withLogContext } from "@octogee/shared/server/serv
 
 export let logger = createServiceLogger("gateway-edge");
 
-export function setLogService(service: "api" | "gateway-edge"): void {
+export function setLogService(service: string): void {
   logger = createServiceLogger(service);
 }
 

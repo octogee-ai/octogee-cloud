@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { Request, Response } from "express";
-import { logger, requestLogger } from "./logging.js";
+import { logger, requestLogger, setLogService } from "./logging.js";
 
 // Two concerns under test:
 //
@@ -373,5 +373,19 @@ describe("middleware/logging — requestLogger probe-path noise gating", () => {
     requestLogger(req, res, vi.fn());
     fire("finish");
     expect(warnSpy).toHaveBeenCalledOnce();
+  });
+});
+
+describe("middleware/logging — setLogService", () => {
+  afterEach(() => setLogService("gateway-edge"));
+
+  it("names every later line with the process's own service name", () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    setLogService("octogee-project-deployer");
+
+    logger.info("deploy started");
+
+    expect(JSON.parse(String(logSpy.mock.calls[0]![0]))).toMatchObject({ service: "octogee-project-deployer", message: "deploy started" });
+    logSpy.mockRestore();
   });
 });
